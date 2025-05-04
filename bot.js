@@ -2,7 +2,7 @@ const mineflayer = require('mineflayer');
 
 // Connect settings
 const bot = mineflayer.createBot({
-  host: 'localhost',
+  //host: 'localhost',
   //host: '45.93.200.46',
   //port: '60101',
   host: 'oldfag.org',
