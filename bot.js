@@ -2,7 +2,6 @@ const mineflayer = require('mineflayer');
 
 const config = {
   host: 'oldfag.org',
-  //port: 25565
   username: 'WheatMagnate',
   auth: 'microsoft'
 };
@@ -67,5 +66,28 @@ async function eatFood() {
     console.error('[Bot] Error during eating:', err);
   }
 }
+
+function huntPiglins() {
+  setInterval(() => {
+    const piglin = bot.nearestEntity(entity =>
+      entity.name === 'zombified_piglin'
+    );
+
+    if (piglin) {
+      console.log('[Бот] Цель найдена: zombified_piglin. Атакую!');
+      bot.lookAt(piglin.position.offset(0, piglin.height, 0), true, () => {
+        bot.attack(piglin);
+      });
+    } else {
+      console.log('[Бот] Свинозомби не видно поблизости.');
+    }
+  }, 3000);
+}
+
+bot.on('death', () => {
+  console.log('[Бот] Я погиб героически...');
+});
+
+bot.on('error', err => console.error('[Ошибка]', err));
 
 createBot();
