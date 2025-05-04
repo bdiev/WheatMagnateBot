@@ -1,4 +1,5 @@
 const mineflayer = require('mineflayer');
+const { pathfinder, Movements, goals } = require('mineflayer-pathfinder');
 
 const config = {
   host: 'oldfag.org',
@@ -6,6 +7,8 @@ const config = {
   username: 'WheatMagnate',
   auth: 'microsoft'
 };
+
+bot.loadPlugin(pathfinder);
 
 let bot;
 let reconnectTimeout = 5000;
@@ -67,5 +70,27 @@ async function eatFood() {
     console.error('[Bot] Error during eating:', err);
   }
 }
+
+bot.once('spawn', () => {
+  const mcData = require('minecraft-data')(bot.version);
+  const defaultMove = new Movements(bot, mcData);
+  bot.pathfinder.setMovements(defaultMove);
+
+  setInterval(() => {
+    const piglin = bot.nearestEntity(entity =>
+      entity.name === 'zombified_piglin' &&
+      bot.entity.position.distanceTo(entity.position) <= 3
+    );
+
+    if (piglin) {
+      const sword = bot.inventory.items().find(item => item.name.includes('sword'));
+      if (sword) bot.equip(sword, 'hand');
+
+      bot.lookAt(piglin.position.offset(0, piglin.height / 2, 0), true, () => {
+        bot.attack(piglin);
+      });
+    }
+  }, 1000);
+});
 
 createBot();
