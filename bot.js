@@ -67,29 +67,5 @@ async function eatFood() {
   }
 }
 
-function huntPiglins() {
-  setInterval(() => {
-    const piglin = bot.nearestEntity(entity =>
-      entity.name === 'zombified_piglin'
-    );
-
-    if (piglin) {
-      console.log('[Бот] Цель найдена: zombified_piglin. Атакую!');
-      bot.lookAt(piglin.position.offset(0, piglin.height, 0), true, () => {
-        bot.attack(piglin);
-      });
-    } else {
-      console.log('[Бот] Свинозомби не видно поблизости.');
-    }
-  }, 3000);
-}
-
-bot.on('death', () => {
-  console.log('[Бот] Я погиб героически...');
-});
-
-bot.on('error', err => {
-  console.error('[Ошибка]', err);
-});
-
 createBot();
+
