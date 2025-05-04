@@ -1,1 +1,1 @@
-# WheatMagnateBot
+# wheatmagnate
