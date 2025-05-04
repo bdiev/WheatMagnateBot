@@ -88,6 +88,8 @@ bot.on('death', () => {
   console.log('[Бот] Я погиб героически...');
 });
 
-bot.on('error', err => console.error('[Ошибка]', err));
+bot.on('error', err => {
+  console.error('[Ошибка]', err);
+});
 
 createBot();
