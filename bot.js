@@ -4,17 +4,17 @@ const mineflayer = require('mineflayer');
 const bot = mineflayer.createBot({
   host: 'localhost',
   //host: '45.93.200.46',
-  host: 'oldfag.org',
   //port: '60101',
+  host: 'oldfag.org',
   username: 'WheatMagnate',
   auth: 'microsoft',
 });
 
 bot.on('spawn', () => {
-  console.log('[Бот] Запущен и готов к поеданию мира.');
+  console.log('[Bot] start working.');
 
   setInterval(() => {
-    const food = bot.food; // уровень насыщения от 0 до 20
+    const food = bot.food;
     if (food < 18 && !bot.foodTimeout) {
       eatFood();
     }
@@ -25,17 +25,17 @@ async function eatFood() {
   const foodItem = bot.inventory.items().find(item => item.name.includes('bread') || item.name.includes('apple') || item.name.includes('beef') || item.name.includes('golden_carrot'));
 
   if (!foodItem) {
-    console.log('[Бот] Еда закончилась. Пора голодать красиво.');
+    console.log('[Bot] Food is gone.');
     return;
   }
 
   try {
-    console.log(`[Бот] Голодаю (уровень ${bot.food}). Пытаюсь съесть: ${foodItem.name}`);
+    console.log(`[Bot] Im hungry (level ${bot.food}). Trying ate: ${foodItem.name}`);
     await bot.equip(foodItem, 'hand');
     await bot.consume();
-    console.log('[Бот] Ом-ном-ном! Поел.');
+    console.log('[Bot] Yum-yum-yum! Ate.');
   } catch (err) {
-    console.error('[Бот] Ошибка при попытке поесть:', err);
+    console.error('[Bot] Error while trying to eat:', err);
   }
 }
 
