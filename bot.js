@@ -1,26 +1,30 @@
 const mineflayer = require('mineflayer');
 
-// Connect settings
-const bot = mineflayer.createBot({
-  //host: 'localhost',
-  //host: '45.93.200.46',
-  //port: '60101',
+const config = {
   host: 'oldfag.org',
+  //port: 25565
   username: 'WheatMagnate',
-  auth: 'microsoft',
-});
+  auth: 'microsoft'
+};
 
-let reconnectTimeout = 5000; // Delay before reconnection.
+let bot;
+let reconnectTimeout = 5000;
 
 function createBot() {
   bot = mineflayer.createBot(config);
 
   bot.on('login', () => {
-    console.log(`[+] The bot has joined the server as ${bot.username}`);
+    console.log(`[+] Bot logged in as ${bot.username}`);
+  });
+
+  bot.on('spawn', () => {
+    console.log('[Bot] Spawned and ready to work.');
+
+    startFoodMonitor();
   });
 
   bot.on('end', () => {
-    console.log('[!] The bot has been disconnected. Reconnecting in 5 seconds...');
+    console.log('[!] Disconnected. Reconnecting in 5 seconds...');
     setTimeout(createBot, reconnectTimeout);
   });
 
@@ -28,39 +32,40 @@ function createBot() {
     console.log(`[x] Error: ${err.message}`);
   });
 
-  // Additionally, you can monitor events:
-   bot.on('kicked', (reason) => console.log(`Kicked: ${reason}`));
-   bot.on('death', () => console.log('The bot died heroically.'));
+  bot.on('kicked', (reason) => console.log(`Kicked: ${reason}`));
+  bot.on('death', () => console.log('[Bot] Died heroically.'));
 }
 
-createBot();
+function startFoodMonitor() {
+  setInterval(async () => {
+    if (!bot || !bot.health || bot.food === undefined) return;
 
-bot.on('spawn', () => {
-  console.log('[Bot] start working.');
-
-  setInterval(() => {
-    const food = bot.food;
-    if (food < 18 && !bot.foodTimeout) {
-      eatFood();
+    if (bot.food < 18 && !bot._isEating) {
+      bot._isEating = true;
+      await eatFood();
+      bot._isEating = false;
     }
   }, 1000);
-});
+}
 
 async function eatFood() {
-  const foodItem = bot.inventory.items().find(item => item.name.includes('bread') || item.name.includes('apple') || item.name.includes('beef') || item.name.includes('golden_carrot'));
+  const foodItem = bot.inventory.items().find(item =>
+    ['bread', 'apple', 'beef', 'golden_carrot'].some(name => item.name.includes(name))
+  );
 
   if (!foodItem) {
-    console.log('[Bot] Food is gone.');
+    console.log('[Bot] No food in inventory.');
     return;
   }
 
   try {
-    console.log(`[Bot] Im hungry (level ${bot.food}). Trying ate: ${foodItem.name}`);
+    console.log(`[Bot] I'm hungry (food level: ${bot.food}). Trying to eat ${foodItem.name}...`);
     await bot.equip(foodItem, 'hand');
     await bot.consume();
-    console.log('[Bot] Yum-yum-yum! Ate.');
+    console.log('[Bot] Yum! Food eaten.');
   } catch (err) {
-    console.error('[Bot] Error while trying to eat:', err);
+    console.error('[Bot] Error during eating:', err);
   }
 }
 
+createBot();
