@@ -67,5 +67,10 @@ async function eatFood() {
   }
 }
 
+if (process.env.DISABLE_BOT === 'true') {
+  console.log('Бот выключен через переменные окружения.');
+  process.exit(0);
+}
+
 createBot();
 
