@@ -10,7 +10,6 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "mineflayer": "^4.27.0",
-    "mineflayer-pathfinder": "^1.5.0"
+    "mineflayer": "^4.27.0"
   }
 }
