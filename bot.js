@@ -10,6 +10,32 @@ const bot = mineflayer.createBot({
   auth: 'microsoft',
 });
 
+let bot;
+let reconnectTimeout = 5000; // Delay before reconnection.
+
+function createBot() {
+  bot = mineflayer.createBot(config);
+
+  bot.on('login', () => {
+    console.log(`[+] The bot has joined the server as ${bot.username}`);
+  });
+
+  bot.on('end', () => {
+    console.log('[!] The bot has been disconnected. Reconnecting in 5 seconds...');
+    setTimeout(createBot, reconnectTimeout);
+  });
+
+  bot.on('error', (err) => {
+    console.log(`[x] Error: ${err.message}`);
+  });
+
+  // Additionally, you can monitor events:
+   bot.on('kicked', (reason) => console.log(`Kicked: ${reason}`));
+   bot.on('death', () => console.log('The bot died heroically.'));
+}
+
+createBot();
+
 bot.on('spawn', () => {
   console.log('[Bot] start working.');
 
