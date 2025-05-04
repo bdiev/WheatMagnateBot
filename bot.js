@@ -10,7 +10,6 @@ const bot = mineflayer.createBot({
   auth: 'microsoft',
 });
 
-let bot;
 let reconnectTimeout = 5000; // Delay before reconnection.
 
 function createBot() {
