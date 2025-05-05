@@ -7,7 +7,7 @@ const config = {
 };
 
 let bot;
-let reconnectTimeout = 5000;
+let reconnectTimeout = 15000;
 
 function createBot() {
   bot = mineflayer.createBot(config);
@@ -23,7 +23,7 @@ function createBot() {
   });
 
   bot.on('end', () => {
-    console.log('[!] Disconnected. Reconnecting in 5 seconds...');
+    console.log('[!] Disconnected. Reconnecting in 115 seconds...');
     setTimeout(createBot, reconnectTimeout);
   });
 
