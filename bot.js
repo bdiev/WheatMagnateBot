@@ -6,6 +6,8 @@ const config = {
   auth: 'microsoft',
 };
 
+const ignoredUsernames = ['Podrockian', 'drcola36', 'FunkyGamer26', 'QuickKitty_', 'Vendell', 'SliverSlide', 'piff_chiefington', 'chief_piffinton', 'bulbax', 'Deireide', 'liketinos2341', 'bdiev_', 'NinjaOverSurge']; // ← Игнорируемые ники
+
 let bot;
 const reconnectTimeout = 15000;
 let shouldReconnect = true;
@@ -109,16 +111,17 @@ function startNearbyPlayerScanner() {
         entity.type === 'player' &&
         entity.username &&
         entity.username !== bot.username &&
-        bot.entity.position.distanceTo(entity.position) < 45
+        !ignoredUsernames.includes(entity.username) &&
+        bot.entity.position.distanceTo(entity.position) < 10
       );
 
     if (nearbyPlayers.length > 0) {
-      console.log('[Bot] Nearby players:');
+      console.log('[Bot] Игроки рядом (не в игноре):');
       nearbyPlayers.forEach(player => {
         console.log(`- ${player.username}`);
       });
     }
-  }, 2000);
+  }, 5000);
 }
 // === Конец добавки ===
 
