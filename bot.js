@@ -43,28 +43,28 @@ function createBot() {
     console.log('[Bot] Died heroically.');
   });
 
-  // Реакция на команды в чате (только от bdiev_)
+  // Reaction to commands in the chat (only from bdiev_)
   bot.on('chat', (username, message) => {
     if (username !== 'bdiev_') return;
 
     if (message === '!restart') {
-      console.log(`[Команда] Получена команда от ${username}: ${message}`);
-      console.log('Бот завершает работу по команде владельца...');
-      bot.quit('Перезапуск по команде от bdiev_');
+      console.log(`[Команда] Command received from ${username}: ${message}`);
+      console.log('The bot stops working at the owners command...');
+      bot.quit('Restarting on command from bdiev_');
     }
 
     if (message === '!pause') {
-      console.log(`[Команда] Получена команда от ${username}: ${message}`);
-      console.log('[Bot] Ухожу на 10-минутный кофе-брейк... ☕');
+      console.log(`[Command] Command received from ${username}: ${message}`);
+      console.log('[Bot] I’m going for a 10-minute coffee break... ☕');
 
       shouldReconnect = false;
-      bot.quit('Пауза по команде bdiev_');
+      bot.quit('Pause on command from bdiev_');
 
       setTimeout(() => {
-        console.log('[Bot] Пауза закончилась. Возвращаюсь к работе!');
+        console.log('[Bot] The pause is over. I am returning to work!');
         shouldReconnect = true;
         createBot();
-      }, 10 * 60 * 1000); // 10 минут
+      }, 1 * 60 * 1000); // 10 minutes
     }
   });
 }
@@ -101,13 +101,13 @@ async function eatFood() {
 
 setInterval(() => {
   if (bot && bot.chat) {
-    console.log('[Bot] Авто-команда: !addfaq Farm Wheat!');
+    console.log('[Bot] Auto-command: !addfaq Farm Wheat!');
     bot.chat('!addfaq Farm Wheat!');
   }
 }, 3 * 60 * 60 * 1000); // каждые 3 часа
 
 if (process.env.DISABLE_BOT === 'true') {
-  console.log('Бот выключен через переменные окружения.');
+  console.log('The bot is turned off through environment variables.');
   process.exit(0);
 }
 
