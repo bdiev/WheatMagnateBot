@@ -8,6 +8,7 @@ const config = {
 
 let bot;
 const reconnectTimeout = 15000;
+let shouldReconnect = true;
 
 function createBot() {
   bot = mineflayer.createBot(config);
@@ -22,8 +23,12 @@ function createBot() {
   });
 
   bot.on('end', () => {
-    console.log('[!] Disconnected. Reconnecting in 15 seconds...');
-    setTimeout(createBot, reconnectTimeout);
+    if (shouldReconnect) {
+      console.log('[!] Disconnected. Reconnecting in 15 seconds...');
+      setTimeout(createBot, reconnectTimeout);
+    } else {
+      console.log('[!] Disconnected manually. Reconnect paused for 10 minutes.');
+    }
   });
 
   bot.on('error', (err) => {
@@ -38,7 +43,7 @@ function createBot() {
     console.log('[Bot] Died heroically.');
   });
 
-  // Реакция на чат (только от bdiev_)
+  // Реакция на команды в чате (только от bdiev_)
   bot.on('chat', (username, message) => {
     if (username !== 'bdiev_') return;
 
@@ -46,6 +51,20 @@ function createBot() {
       console.log(`[Команда] Получена команда от ${username}: ${message}`);
       console.log('Бот завершает работу по команде владельца...');
       bot.quit('Перезапуск по команде от bdiev_');
+    }
+
+    if (message === '!pause') {
+      console.log(`[Команда] Получена команда от ${username}: ${message}`);
+      console.log('[Bot] Ухожу на 10-минутный кофе-брейк... ☕');
+
+      shouldReconnect = false;
+      bot.quit('Пауза по команде bdiev_');
+
+      setTimeout(() => {
+        console.log('[Bot] Пауза закончилась. Возвращаюсь к работе!');
+        shouldReconnect = true;
+        createBot();
+      }, 10 * 60 * 1000); // 10 минут
     }
   });
 }
@@ -87,7 +106,6 @@ setInterval(() => {
   }
 }, 3 * 60 * 60 * 1000); // каждые 3 часа
 
-// Отключение бота через переменные окружения
 if (process.env.DISABLE_BOT === 'true') {
   console.log('Бот выключен через переменные окружения.');
   process.exit(0);
