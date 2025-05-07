@@ -80,6 +80,13 @@ async function eatFood() {
   }
 }
 
+setInterval(() => {
+  if (bot && bot.chat) {
+    console.log('[Bot] Авто-команда: !addfaq Farm Wheat!');
+    bot.chat('!addfaq Farm Wheat!');
+  }
+}, 3 * 60 * 60 * 1000); // каждые 3 часа
+
 // Отключение бота через переменные окружения
 if (process.env.DISABLE_BOT === 'true') {
   console.log('Бот выключен через переменные окружения.');
