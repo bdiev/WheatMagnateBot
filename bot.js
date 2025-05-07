@@ -23,7 +23,7 @@ function createBot() {
   });
 
   bot.on('end', () => {
-    console.log('[!] Disconnected. Reconnecting in 115 seconds...');
+    console.log('[!] Disconnected. Reconnecting in 15 seconds...');
     setTimeout(createBot, reconnectTimeout);
   });
 
