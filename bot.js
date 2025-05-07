@@ -113,7 +113,7 @@ function startNearbyPlayerScanner() {
       );
 
     if (nearbyPlayers.length > 0) {
-      console.log('[Bot] Игроки рядом:');
+      console.log('[Bot] Nearby players:');
       nearbyPlayers.forEach(player => {
         console.log(`- ${player.username}`);
       });
