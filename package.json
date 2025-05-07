@@ -10,6 +10,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "mineflayer": "^4.27.0"
+    "mineflayer": "^4.27.0",
+    "prismarine-auth": "^2.7.0"
   }
 }
