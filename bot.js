@@ -20,6 +20,7 @@ function createBot() {
   bot.on('spawn', () => {
     console.log('[Bot] Spawned and ready to work.');
     startFoodMonitor();
+    startNearbyPlayerScanner(); // ← Запуск сканера игроков
   });
 
   bot.on('end', () => {
@@ -43,7 +44,6 @@ function createBot() {
     console.log('[Bot] Died heroically.');
   });
 
-  // Reaction to commands in the chat (only from bdiev_)
   bot.on('chat', (username, message) => {
     if (username !== 'bdiev_') return;
 
@@ -98,6 +98,29 @@ async function eatFood() {
     console.error('[Bot] Error during eating:', err);
   }
 }
+
+// === Новый функционал: Сканирование игроков рядом ===
+function startNearbyPlayerScanner() {
+  setInterval(() => {
+    if (!bot || !bot.entity) return;
+
+    const nearbyPlayers = Object.values(bot.entities)
+      .filter(entity =>
+        entity.type === 'player' &&
+        entity.username &&
+        entity.username !== bot.username &&
+        bot.entity.position.distanceTo(entity.position) < 10
+      );
+
+    if (nearbyPlayers.length > 0) {
+      console.log('[Bot] Игроки рядом:');
+      nearbyPlayers.forEach(player => {
+        console.log(`- ${player.username}`);
+      });
+    }
+  }, 5000);
+}
+// === Конец добавки ===
 
 setInterval(() => {
   if (bot && bot.chat) {
