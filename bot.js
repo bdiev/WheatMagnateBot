@@ -72,5 +72,15 @@ if (process.env.DISABLE_BOT === 'true') {
   process.exit(0);
 }
 
+bot.on('chat', (username, message) => {
+  if (username !== 'bdiev_') return; // Игнорируем всех, кроме владельца
+
+  if (message === '!restart') {
+    console.log(`[Команда] Получена команда от ${username}: ${message}`);
+    console.log('Бот завершает работу по команде владельца...');
+    bot.quit('Перезапуск по команде от bdiev_');
+  }
+});
+
 createBot();
 
