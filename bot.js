@@ -64,7 +64,7 @@ function createBot() {
         console.log('[Bot] The pause is over. I am returning to work!');
         shouldReconnect = true;
         createBot();
-      }, 1 * 60 * 1000); // 10 minutes
+      }, 5 * 60 * 1000); // 5 minutes
     }
   });
 }
@@ -104,7 +104,7 @@ setInterval(() => {
     console.log('[Bot] Auto-command: !addfaq Farm Wheat!');
     bot.chat('!addfaq Farm Wheat!');
   }
-}, 3 * 60 * 60 * 1000); // каждые 3 часа
+}, 2 * 60 * 60 * 1000); // every 2 hrs
 
 if (process.env.DISABLE_BOT === 'true') {
   console.log('The bot is turned off through environment variables.');
