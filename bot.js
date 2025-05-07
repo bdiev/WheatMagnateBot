@@ -109,7 +109,7 @@ function startNearbyPlayerScanner() {
         entity.type === 'player' &&
         entity.username &&
         entity.username !== bot.username &&
-        bot.entity.position.distanceTo(entity.position) < 10
+        bot.entity.position.distanceTo(entity.position) < 45
       );
 
     if (nearbyPlayers.length > 0) {
@@ -118,7 +118,7 @@ function startNearbyPlayerScanner() {
         console.log(`- ${player.username}`);
       });
     }
-  }, 5000);
+  }, 2000);
 }
 // === Конец добавки ===
 
