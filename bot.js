@@ -72,8 +72,9 @@ if (process.env.DISABLE_BOT === 'true') {
   process.exit(0);
 }
 
+// Реакция на чат (только от bdiev_)
 bot.on('chat', (username, message) => {
-  if (username !== 'bdiev_') return; // Игнорируем всех, кроме владельца
+  if (username !== 'bdiev_') return;
 
   if (message === '!restart') {
     console.log(`[Команда] Получена команда от ${username}: ${message}`);
