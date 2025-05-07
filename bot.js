@@ -3,11 +3,11 @@ const mineflayer = require('mineflayer');
 const config = {
   host: 'oldfag.org',
   username: 'WheatMagnate',
-  auth: 'microsoft'
+  auth: 'microsoft',
 };
 
 let bot;
-let reconnectTimeout = 15000;
+const reconnectTimeout = 15000;
 
 function createBot() {
   bot = mineflayer.createBot(config);
@@ -18,7 +18,6 @@ function createBot() {
 
   bot.on('spawn', () => {
     console.log('[Bot] Spawned and ready to work.');
-
     startFoodMonitor();
   });
 
@@ -31,19 +30,33 @@ function createBot() {
     console.log(`[x] Error: ${err.message}`);
   });
 
-  bot.on('kicked', (reason) => console.log(`Kicked: ${reason}`));
-  bot.on('death', () => console.log('[Bot] Died heroically.'));
+  bot.on('kicked', (reason) => {
+    console.log(`[!] Kicked: ${reason}`);
+  });
+
+  bot.on('death', () => {
+    console.log('[Bot] Died heroically.');
+  });
+
+  // Реакция на чат (только от bdiev_)
+  bot.on('chat', (username, message) => {
+    if (username !== 'bdiev_') return;
+
+    if (message === '!restart') {
+      console.log(`[Команда] Получена команда от ${username}: ${message}`);
+      console.log('Бот завершает работу по команде владельца...');
+      bot.quit('Перезапуск по команде от bdiev_');
+    }
+  });
 }
 
 function startFoodMonitor() {
   setInterval(async () => {
-    if (!bot || !bot.health || bot.food === undefined) return;
+    if (!bot || bot.food === undefined || bot.food >= 18 || bot._isEating) return;
 
-    if (bot.food < 18 && !bot._isEating) {
-      bot._isEating = true;
-      await eatFood();
-      bot._isEating = false;
-    }
+    bot._isEating = true;
+    await eatFood();
+    bot._isEating = false;
   }, 1000);
 }
 
@@ -67,20 +80,10 @@ async function eatFood() {
   }
 }
 
+// Отключение бота через переменные окружения
 if (process.env.DISABLE_BOT === 'true') {
   console.log('Бот выключен через переменные окружения.');
   process.exit(0);
 }
 
-bot.on('chat', (username, message) => {
-  if (username !== 'bdiev_') return; // Игнорируем всех, кроме владельца
-
-  if (message === '!restart') {
-    console.log(`[Команда] Получена команда от ${username}: ${message}`);
-    console.log('Бот завершает работу по команде владельца...');
-    bot.quit('Перезапуск по команде от bdiev_');
-  }
-});
-
 createBot();
-
