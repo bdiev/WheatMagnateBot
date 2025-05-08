@@ -22,7 +22,7 @@ function createBot() {
   bot.on('spawn', () => {
     console.log('[Bot] Spawned and ready to work.');
     startFoodMonitor();
-    startNearbyPlayerScanner(); // ← Запуск сканера игроков
+    startNearbyPlayerScanner(); // ← Starting the player scanner
   });
 
   bot.on('end', () => {
@@ -50,7 +50,7 @@ function createBot() {
     if (username !== 'bdiev_') return;
 
     if (message === '!restart') {
-      console.log(`[Команда] Command received from ${username}: ${message}`);
+      console.log(`[Command] Command received from ${username}: ${message}`);
       console.log('The bot stops working at the owners command...');
       bot.quit('Restarting on command from bdiev_');
     }
@@ -116,7 +116,7 @@ function startNearbyPlayerScanner() {
       );
 
     if (nearbyPlayers.length > 0) {
-      console.log('[Bot] Игроки рядом (не в игноре):');
+      console.log('[Bot] Nearby players (not ignored):');
       nearbyPlayers.forEach(player => {
         console.log(`- ${player.username}`);
       });
