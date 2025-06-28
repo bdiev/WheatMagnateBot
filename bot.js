@@ -6,7 +6,11 @@ const config = {
   auth: 'microsoft',
 };
 
-const ignoredUsernames = ['Podrockian', 'drcola36', 'FunkyGamer26', 'QuickKitty_', 'Vendell', 'SliverSlide', 'piff_chiefington', 'chief_piffinton', 'bulbax', 'Deireide', 'liketinos2341', 'bdiev_', 'NinjaOverSurge']; // ← Игнорируемые ники
+const ignoredUsernames = [
+  'Podrockian', 'drcola36', 'FunkyGamer26', 'QuickKitty_',
+  'Vendell', 'SliverSlide', 'piff_chiefington', 'chief_piffinton',
+  'bulbax', 'Deireide', 'liketinos2341', 'bdiev_', 'NinjaOverSurge'
+];
 
 let bot;
 const reconnectTimeout = 15000;
@@ -22,7 +26,7 @@ function createBot() {
   bot.on('spawn', () => {
     console.log('[Bot] Spawned and ready to work.');
     startFoodMonitor();
-    startNearbyPlayerScanner(); // ← Starting the player scanner
+    startNearbyPlayerScanner();
   });
 
   bot.on('end', () => {
@@ -30,7 +34,7 @@ function createBot() {
       console.log('[!] Disconnected. Reconnecting in 15 seconds...');
       setTimeout(createBot, reconnectTimeout);
     } else {
-      console.log('[!] Disconnected manually. Reconnect paused for 10 minutes.');
+      console.log('[!] Disconnected manually. Reconnect paused.');
     }
   });
 
@@ -66,7 +70,28 @@ function createBot() {
         console.log('[Bot] The pause is over. I am returning to work!');
         shouldReconnect = true;
         createBot();
-      }, 5 * 60 * 1000); // 5 minutes
+      }, 10 * 60 * 1000); // 10 minutes
+    }
+
+    const pauseMatch = message.match(/^!pause\s+(\d+)$/);
+    if (pauseMatch) {
+      const minutes = parseInt(pauseMatch[1]);
+      if (isNaN(minutes) || minutes <= 0) {
+        console.log('[Bot] Invalid pause time specified.');
+        return;
+      }
+
+      console.log(`[Command] Command received from ${username}: ${message}`);
+      console.log(`[Bot] Pausing for ${minutes} minute(s)...`);
+
+      shouldReconnect = false;
+      bot.quit(`Paused for ${minutes} minute(s) on command from bdiev_`);
+
+      setTimeout(() => {
+        console.log('[Bot] Pause complete. Reconnecting now...');
+        shouldReconnect = true;
+        createBot();
+      }, minutes * 60 * 1000);
     }
   });
 }
@@ -101,7 +126,6 @@ async function eatFood() {
   }
 }
 
-// === Новый функционал: Сканирование игроков рядом ===
 function startNearbyPlayerScanner() {
   setInterval(() => {
     if (!bot || !bot.entity) return;
@@ -123,14 +147,13 @@ function startNearbyPlayerScanner() {
     }
   }, 5000);
 }
-// === Конец добавки ===
 
 setInterval(() => {
   if (bot && bot.chat) {
     console.log('[Bot] Auto-command: !addfaq Farm Wheat!');
     bot.chat('!addfaq Farm Wheat!');
   }
-}, 2 * 60 * 60 * 1000); // every 2 hrs
+}, 2 * 60 * 60 * 1000); // every 2 hours
 
 if (process.env.DISABLE_BOT === 'true') {
   console.log('The bot is turned off through environment variables.');
