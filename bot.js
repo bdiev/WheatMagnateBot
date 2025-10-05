@@ -148,12 +148,12 @@ function startNearbyPlayerScanner() {
   }, 5000);
 }
 
-setInterval(() => {
-  if (bot && bot.chat) {
-    console.log('[Bot] Auto-command: !addfaq Farm Wheat!');
-    bot.chat('!addfaq Farm Wheat!');
-  }
-}, 2 * 60 * 60 * 1000); // every 2 hours
+//setInterval(() => {
+//  if (bot && bot.chat) {
+ //   console.log('[Bot] Auto-command: !addfaq Farm Wheat!');
+ //   bot.chat('!addfaq Farm Wheat!');
+//  }
+//}, 2 * 60 * 60 * 1000); // every 2 hours 
 
 if (process.env.DISABLE_BOT === 'true') {
   console.log('The bot is turned off through environment variables.');
@@ -161,3 +161,4 @@ if (process.env.DISABLE_BOT === 'true') {
 }
 
 createBot();
+
