@@ -97,8 +97,23 @@ function createBot() {
 }
 
 function startFoodMonitor() {
+  let lastNoFoodWarning = 0;
+
   setInterval(async () => {
     if (!bot || bot.food === undefined || bot.food >= 18 || bot._isEating) return;
+
+    // если с момента последнего предупреждения прошло меньше 30 секунд — не спамим
+    if (Date.now() - lastNoFoodWarning < 30 * 1000) return;
+
+    const hasFood = bot.inventory.items().some(item =>
+      ['bread', 'apple', 'beef', 'golden_carrot'].some(name => item.name.includes(name))
+    );
+
+    if (!hasFood) {
+      console.log('[Bot] No food in inventory.');
+      lastNoFoodWarning = Date.now();
+      return;
+    }
 
     bot._isEating = true;
     await eatFood();
@@ -161,4 +176,5 @@ if (process.env.DISABLE_BOT === 'true') {
 }
 
 createBot();
+
 
