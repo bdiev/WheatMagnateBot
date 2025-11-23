@@ -13,9 +13,7 @@ const config = {
 };
 
 const ignoredUsernames = [
-  'Podrockian', 'drcola36', 'FunkyGamer26', 'QuickKitty_',
-  'Vendell', 'SliverSlide', 'piff_chiefington', 'chief_piffinton',
-  'bulbax', 'Deireide', 'liketinos2341', 'bdiev_', 'NinjaOverSurge'
+  
 ];
 
 let bot;
@@ -140,7 +138,7 @@ function startFoodMonitor() {
     if (!hasFood) {
       if (!warningSent) {
         console.log('[Bot] No food in inventory.');
-        sendDiscordNotification('В инвентаре закончилась еда!', 16711680); // Отправка уведомления
+        sendDiscordNotification('No food in inventory!', 16711680); // Отправка уведомления
         warningSent = true;
       }
       return;
@@ -203,7 +201,7 @@ function startNearbyPlayerScanner() {
     currentPlayers.forEach(username => {
       if (!inRange.has(username)) {
         console.log(`[Bot] Player entered range: ${username}`);
-        sendDiscordNotification(`Игрок **${username}** вошел в радиус 10 блоков!`, 16776960); // Yellow/Orange color
+        sendDiscordNotification(`Player **${username}** enter visible zone!`, 16776960); // Yellow/Orange color
         inRange.add(username);
       }
     });
@@ -212,7 +210,7 @@ function startNearbyPlayerScanner() {
     [...inRange].forEach(username => {
       if (!currentPlayers.has(username)) {
         console.log(`[Bot] Player left range: ${username}`);
-        sendDiscordNotification(`Игрок **${username}** покинул радиус 10 блоков.`, 3447003); // Blue color
+        sendDiscordNotification(`Player **${username}** left visible zone.`, 3447003); // Blue color
         inRange.delete(username);
       }
     });
