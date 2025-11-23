@@ -30,7 +30,7 @@ async function sendDiscordNotification(message, color = 3447003) {
   try {
     await axios.post(DISCORD_WEBHOOK_URL, {
       embeds: [{
-        title: "Minecraft Bot Status",
+        title: "WheatMagnate Bot Notification",
         description: message,
         color: color,
         timestamp: new Date(),
@@ -182,7 +182,7 @@ function startNearbyPlayerScanner() {
 
     const currentPlayers = new Set();
 
-    // collect players within 10 blocks
+    // collect players within 45 blocks
     for (const entity of Object.values(bot.entities)) {
       if (!entity) continue;
       if (entity.type !== 'player') continue;
@@ -192,7 +192,7 @@ function startNearbyPlayerScanner() {
       if (!entity.position || !bot.entity.position) continue;
 
       const distance = bot.entity.position.distanceTo(entity.position);
-      if (distance <= 10) {
+      if (distance <= 45) {
         currentPlayers.add(entity.username);
       }
     }
