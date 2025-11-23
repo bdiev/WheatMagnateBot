@@ -1,4 +1,9 @@
 const mineflayer = require('mineflayer');
+const axios = require('axios'); // Подключаем axios
+
+// --- Discord Configuration ---
+const DISCORD_WEBHOOK_URL = 'https://discord.com/api/webhooks/1441970745306517596/kXr40bb0hUDC6GO56HbFZvi2mz2ZUeWv2zghnp2KTyvWalxlWKSbfvtd0CrRFhmELuBu'; 
+// -----------------------------
 
 const config = {
   host: 'oldfag.org',
@@ -16,11 +21,33 @@ let bot;
 const reconnectTimeout = 15000;
 let shouldReconnect = true;
 
+// Helper function to send messages to Discord
+async function sendDiscordNotification(message, color = 3447003) {
+  if (!DISCORD_WEBHOOK_URL || DISCORD_WEBHOOK_URL === 'https://discord.com/api/webhooks/1441970745306517596/kXr40bb0hUDC6GO56HbFZvi2mz2ZUeWv2zghnp2KTyvWalxlWKSbfvtd0CrRFhmELuBu') {
+    console.log('[Discord] Webhook URL not set. Notification skipped.');
+    return;
+  }
+  
+  try {
+    await axios.post(DISCORD_WEBHOOK_URL, {
+      embeds: [{
+        title: "Minecraft Bot Status",
+        description: message,
+        color: color,
+        timestamp: new Date(),
+      }]
+    });
+  } catch (error) {
+    console.error('[Discord] Failed to send webhook:', error.message);
+  }
+}
+
 function createBot() {
   bot = mineflayer.createBot(config);
 
   bot.on('login', () => {
     console.log(`[+] Bot logged in as ${bot.username}`);
+    sendDiscordNotification(`Бот **${bot.username}** успешно вошел на сервер \`${config.host}\`.`, 65280); // Green color
   });
 
   bot.on('spawn', () => {
@@ -29,25 +56,30 @@ function createBot() {
     startNearbyPlayerScanner();
   });
 
-  bot.on('end', () => {
+  bot.on('end', (reason) => {
     if (shouldReconnect) {
       console.log('[!] Disconnected. Reconnecting in 15 seconds...');
+      sendDiscordNotification(`Бот отключен по причине: \`${reason}\`. Попытка переподключения через 15 секунд.`, 16776960); // Orange color
       setTimeout(createBot, reconnectTimeout);
     } else {
       console.log('[!] Disconnected manually. Reconnect paused.');
+      sendDiscordNotification(`Бот отключен вручную/по команде по причине: \`${reason}\`. Переподключение приостановлено.`, 16711680); // Red color
     }
   });
 
   bot.on('error', (err) => {
     console.log(`[x] Error: ${err.message}`);
+    sendDiscordNotification(`Критическая ошибка: \`${err.message}\``, 16711680); // Red color
   });
 
   bot.on('kicked', (reason) => {
     console.log(`[!] Kicked: ${reason}`);
+    sendDiscordNotification(`Бот был кикнут с сервера. Причина: \`${reason}\``, 16711680); // Red color
   });
 
   bot.on('death', () => {
     console.log('[Bot] Died heroically.');
+    sendDiscordNotification('Бот героически погиб. :skull:', 16711680); // Red color
   });
 
   // ------- CHAT COMMANDS -------
@@ -56,11 +88,14 @@ function createBot() {
 
     if (message === '!restart') {
       console.log(`[Command] ${username} → ${message}`);
+      sendDiscordNotification(`Получена команда от \`${username}\`: \`!restart\`.`, 16776960);
       bot.quit('Restarting on command');
     }
-
+    
+    // ... остальной код команд !pause остается без изменений ...
     if (message === '!pause') {
       console.log(`[Command] ${username} → ${message}`);
+      sendDiscordNotification(`Получена команда от \`${username}\`: \`!pause\` (на 10 минут).`, 16776960);
       console.log('[Bot] Pausing for 10 minutes...');
       shouldReconnect = false;
       bot.quit('Pause for 10 minutes');
@@ -76,6 +111,7 @@ function createBot() {
       const minutes = parseInt(pauseMatch[1]);
       if (minutes > 0) {
         console.log(`[Command] ${username} → pause ${minutes}m`);
+         sendDiscordNotification(`Получена команда от \`${username}\`: \`!pause ${minutes}\` (на ${minutes} минут).`, 16776960);
         shouldReconnect = false;
         bot.quit(`Paused for ${minutes} minutes`);
 
@@ -103,6 +139,7 @@ function startFoodMonitor() {
     if (!hasFood) {
       if (!warningSent) {
         console.log('[Bot] No food in inventory.');
+        sendDiscordNotification('В инвентаре закончилась еда!', 16711680); // Отправка уведомления
         warningSent = true;
       }
       return;
@@ -133,6 +170,7 @@ async function eatFood() {
     console.log('[Bot] Food eaten.');
   } catch (err) {
     console.error('[Bot] Error during eating:', err);
+    sendDiscordNotification(`Ошибка при попытке съесть ${foodItem.name}: \`${err.message}\``, 16711680);
   }
 }
 
@@ -151,14 +189,13 @@ function startNearbyPlayerScanner() {
         entity.username &&
         entity.username !== bot.username &&
         !ignoredUsernames.includes(entity.username) &&
-        bot.entity.position.distanceTo(entity.position) < 10
-      )
-      .forEach(entity => currentPlayers.add(entity.username));
+        bot.entity.position.distanceTo(entity.position)  currentPlayers.add(entity.username));
 
     // Вошли
     currentPlayers.forEach(username => {
       if (!inRange.has(username)) {
         console.log(`[Bot] Player entered range: ${username}`);
+        sendDiscordNotification(`Игрок **${username}** вошел в радиус 10 блоков!`, 16776960); // Yellow/Orange color
         inRange.add(username);
       }
     });
@@ -167,6 +204,7 @@ function startNearbyPlayerScanner() {
     [...inRange].forEach(username => {
       if (!currentPlayers.has(username)) {
         console.log(`[Bot] Player left range: ${username}`);
+        sendDiscordNotification(`Игрок **${username}** покинул радиус 10 блоков.`, 3447003); // Blue color
         inRange.delete(username);
       }
     });
