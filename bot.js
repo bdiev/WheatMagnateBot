@@ -2,7 +2,8 @@ const mineflayer = require('mineflayer');
 const axios = require('axios'); // Подключаем axios
 
 // --- Discord Configuration ---
-const DISCORD_WEBHOOK_URL = 'https://discord.com/api/webhooks/1441970745306517596/kXr40bb0hUDC6GO56HbFZvi2mz2ZUeWv2zghnp2KTyvWalxlWKSbfvtd0CrRFhmELuBu'; 
+// Use environment variable if provided; otherwise leave empty to disable notifications.
+const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || '';
 // -----------------------------
 
 const config = {
@@ -23,7 +24,7 @@ let shouldReconnect = true;
 
 // Helper function to send messages to Discord
 async function sendDiscordNotification(message, color = 3447003) {
-  if (!DISCORD_WEBHOOK_URL || DISCORD_WEBHOOK_URL === 'https://discord.com/api/webhooks/1441970745306517596/kXr40bb0hUDC6GO56HbFZvi2mz2ZUeWv2zghnp2KTyvWalxlWKSbfvtd0CrRFhmELuBu') {
+  if (!DISCORD_WEBHOOK_URL) {
     console.log('[Discord] Webhook URL not set. Notification skipped.');
     return;
   }
@@ -183,13 +184,20 @@ function startNearbyPlayerScanner() {
 
     const currentPlayers = new Set();
 
-    Object.values(bot.entities)
-      .filter(entity =>
-        entity.type === 'player' &&
-        entity.username &&
-        entity.username !== bot.username &&
-        !ignoredUsernames.includes(entity.username) &&
-        bot.entity.position.distanceTo(entity.position)  currentPlayers.add(entity.username));
+    // collect players within 10 blocks
+    for (const entity of Object.values(bot.entities)) {
+      if (!entity) continue;
+      if (entity.type !== 'player') continue;
+      if (!entity.username) continue;
+      if (entity.username === bot.username) continue;
+      if (ignoredUsernames.includes(entity.username)) continue;
+      if (!entity.position || !bot.entity.position) continue;
+
+      const distance = bot.entity.position.distanceTo(entity.position);
+      if (distance <= 10) {
+        currentPlayers.add(entity.username);
+      }
+    }
 
     // Вошли
     currentPlayers.forEach(username => {
