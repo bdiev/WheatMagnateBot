@@ -67,6 +67,7 @@ async function sendDiscordChatMessage(username, message) {
       {
         author: {
           name: username,
+          icon_url: avatarUrl
         },
         description: safeMessage || '*(empty message)*',
         color: 3447003,
