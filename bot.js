@@ -1,5 +1,6 @@
 const mineflayer = require('mineflayer');
 const axios = require('axios'); // Подключаем axios
+const { status } = require('minecraft-server-util'); // added: server status check
 
 // --- Discord Configuration ---
 // Use environment variable if provided; otherwise leave empty to disable notifications.
@@ -252,9 +253,36 @@ function startNearbyPlayerScanner() {
   }, 1000);
 }
 
+async function isAccountOnlineOnServer() {
+  try {
+    // query server status; adjust port in config if needed
+    const res = await status(config.host, { port: config.port || 25565, timeout: 2000 });
+    if (res && res.players && res.players.sample) {
+      return res.players.sample.some(p => p.name === config.username);
+    }
+    // если сервер не возвращает sample, считаем что проверки нет — разрешаем подключение
+    return false;
+  } catch (err) {
+    // при ошибке запроса — не блокировать подключение (или изменить логику по желанию)
+    console.warn('[ServerCheck] status failed:', err.message);
+    return false;
+  }
+}
+
+async function tryCreateBotWithCheck(retryDelayMs = 30_000) {
+  const online = await isAccountOnlineOnServer();
+  if (online) {
+    console.log(`[Bot] Аккаунт ${config.username} уже виден на сервере. Повтор через ${retryDelayMs/1000}s.`);
+    setTimeout(() => tryCreateBotWithCheck(retryDelayMs), retryDelayMs);
+    return;
+  }
+  createBot();
+}
+
 if (process.env.DISABLE_BOT === 'true') {
   console.log('The bot is turned off through environment variables.');
   process.exit(0);
 }
 
-createBot();
+// start with pre-check
+tryCreateBotWithCheck();
