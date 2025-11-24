@@ -34,7 +34,7 @@ async function sendDiscordNotification(message, color = 3447003) {
   try {
     await axios.post(DISCORD_WEBHOOK_URL, {
       embeds: [{
-        title: "WheatMagnate Bot Notification",
+        title: "||@everyone|| WheatMagnate Bot Notification",
         description: message,
         color: color,
         timestamp: new Date(),
@@ -244,7 +244,7 @@ function startNearbyPlayerScanner() {
     [...inRange].forEach(username => {
       if (!currentPlayers.has(username)) {
         console.log(`[Bot] Player left range: ${username}`);
-        sendDiscordNotification(`Player **${username}** left visible zone. ||@everyone||`, 3447003); // Blue color
+        sendDiscordNotification(`Player **${username}** left visible zone.`, 3447003); // Blue color
         inRange.delete(username);
       }
     });
