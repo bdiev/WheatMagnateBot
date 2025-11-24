@@ -1,11 +1,9 @@
 const mineflayer = require('mineflayer');
-const axios = require('axios'); // Connecting Axios for Discord webhooks
+const axios = require('axios'); // Подключаем axios
 
 // --- Discord Configuration ---
 // Use environment variable if provided; otherwise leave empty to disable notifications.
 const DISCORD_WEBHOOK_URL = 'https://discord.com/api/webhooks/1441970745306517596/kXr40bb0hUDC6GO56HbFZvi2mz2ZUeWv2zghnp2KTyvWalxlWKSbfvtd0CrRFhmELuBu';
-// New: webhook для пересылки чата в отдельный канал (или задайте через env: DISCORD_CHAT_WEBHOOK_URL)
-const DISCORD_CHAT_WEBHOOK_URL = process.env.DISCORD_CHAT_WEBHOOK_URL || 'https://discord.com/api/webhooks/1442371011470168104/joqAX7y-hPXqH8iCvUdCx9sdJ3bp0sTRo2TYLupUIJXLBc3iqkBghL33iX5NxzsPEVAV'; // вставьте сюда новый вебхук или установите переменную окружения
 // -----------------------------
 
 const config = {
@@ -22,7 +20,7 @@ let bot;
 const reconnectTimeout = 15000;
 let shouldReconnect = true;
 
-// Added: Storage of interval IDs so that they can be cleared
+// Добавлено: хранение ID интервалов, чтобы можно было их очищать
 let foodMonitorInterval = null;
 let playerScannerInterval = null;
 
@@ -36,7 +34,7 @@ async function sendDiscordNotification(message, color = 3447003) {
   try {
     await axios.post(DISCORD_WEBHOOK_URL, {
       embeds: [{
-        title: "WheatMagnate Bot Notification",
+        title: "||@everyone|| WheatMagnate Bot Notification",
         description: message,
         color: color,
         timestamp: new Date(),
@@ -47,46 +45,8 @@ async function sendDiscordNotification(message, color = 3447003) {
   }
 }
 
-// New helper: отправка простого текстового сообщения чата в другой вебхук
-async function sendDiscordChatMessage(username, message) {
-  if (!DISCORD_CHAT_WEBHOOK_URL) return;
-
-  // Prevent pings (разрываем @), обрезаем очень длинные сообщения и экранируем управляющие символы
-  const safeMessage = String(message)
-    .replace(/@/g, '@\u200b')                   // prevent mentions
-    .replace(/\r/g, '')                         // normalize CR
-    .replace(/\u0000/g, '')                     // remove nulls
-    .replace(/```/g, "`\u200b``")               // avoid breaking code blocks
-    .slice(0, 4000);                            // keep under embed limits
-
-  const avatarUrl = `https://minotar.net/avatar/${encodeURIComponent(username)}/64.png`;
-
-  const payload = {
-    username: 'WheatMagnate Chat Relay',
-    embeds: [
-      {
-        author: {
-          name: username,
-          icon_url: avatarUrl
-        },
-        description: safeMessage || '*(empty message)*',
-        color: 3447003,
-        timestamp: new Date().toISOString()
-      }
-    ],
-    // ensure webhook does not trigger any mentions
-    allowed_mentions: { parse: [] }
-  };
-
-  try {
-    await axios.post(DISCORD_CHAT_WEBHOOK_URL, payload);
-  } catch (err) {
-    console.error('[Discord] Failed to send chat message:', err.message);
-  }
-}
-
 function createBot() {
-  // Before creating a new bot, delete the handlers of the old one (if any remain)
+  // Перед созданием нового бота удаляем обработчики старого (если остался)
   if (bot) {
     try {
       bot.removeAllListeners();
@@ -103,7 +63,7 @@ function createBot() {
   bot.on('spawn', () => {
     console.log('[Bot] Spawned and ready to work.');
 
-    // Clearing previous intervals (if they remain from previous connections)
+    // Очистка предыдущих интервалов (если они остались от прошлых подключений)
     if (foodMonitorInterval) {
       clearInterval(foodMonitorInterval);
       foodMonitorInterval = null;
@@ -118,7 +78,7 @@ function createBot() {
   });
 
   bot.on('end', (reason) => {
-    // Clearing intervals when disconnected
+    // Очистка интервалов при дисконнекте
     if (foodMonitorInterval) {
       clearInterval(foodMonitorInterval);
       foodMonitorInterval = null;
@@ -156,11 +116,6 @@ Trying to reconnect in 15 seconds.`, 16776960); // Orange color
 
   // ------- CHAT COMMANDS -------
   bot.on('chat', (username, message) => {
-    // forward every chat message to Discord (skip messages from the bot itself)
-    if (bot && username !== bot.username) {
-      sendDiscordChatMessage(username, message);
-    }
-
     if (username !== 'bdiev_') return;
 
     if (message === '!restart') {
@@ -205,7 +160,7 @@ Trying to reconnect in 15 seconds.`, 16776960); // Orange color
 function startFoodMonitor() {
   let warningSent = false;
 
-  // We save the interval ID in a variable so that we can clear it.
+  // Сохраняем ID интервала в переменной, чтобы можно было его очистить
   foodMonitorInterval = setInterval(async () => {
     if (!bot || bot.food === undefined) return;
 
@@ -255,13 +210,13 @@ async function eatFood() {
 function startNearbyPlayerScanner() {
   const inRange = new Set();
 
-  // We save the interval ID in a variable so that we can clear it.
+  // Сохраняем ID интервала в переменной, чтобы можно было его очистить
   playerScannerInterval = setInterval(() => {
     if (!bot || !bot.entity) return;
 
     const currentPlayers = new Set();
 
-    // collect players within 300 blocks
+    // collect players within 45 blocks
     for (const entity of Object.values(bot.entities)) {
       if (!entity) continue;
       if (entity.type !== 'player') continue;
