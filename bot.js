@@ -20,6 +20,10 @@ let bot;
 const reconnectTimeout = 15000;
 let shouldReconnect = true;
 
+// Добавлено: хранение ID интервалов, чтобы можно было их очищать
+let foodMonitorInterval = null;
+let playerScannerInterval = null;
+
 // Helper function to send messages to Discord
 async function sendDiscordNotification(message, color = 3447003) {
   if (!DISCORD_WEBHOOK_URL) {
@@ -42,6 +46,13 @@ async function sendDiscordNotification(message, color = 3447003) {
 }
 
 function createBot() {
+  // Перед созданием нового бота удаляем обработчики старого (если остался)
+  if (bot) {
+    try {
+      bot.removeAllListeners();
+    } catch (e) {}
+  }
+
   bot = mineflayer.createBot(config);
 
   bot.on('login', () => {
@@ -51,14 +62,35 @@ function createBot() {
 
   bot.on('spawn', () => {
     console.log('[Bot] Spawned and ready to work.');
+
+    // Очистка предыдущих интервалов (если они остались от прошлых подключений)
+    if (foodMonitorInterval) {
+      clearInterval(foodMonitorInterval);
+      foodMonitorInterval = null;
+    }
+    if (playerScannerInterval) {
+      clearInterval(playerScannerInterval);
+      playerScannerInterval = null;
+    }
+
     startFoodMonitor();
     startNearbyPlayerScanner();
   });
 
   bot.on('end', (reason) => {
+    // Очистка интервалов при дисконнекте
+    if (foodMonitorInterval) {
+      clearInterval(foodMonitorInterval);
+      foodMonitorInterval = null;
+    }
+    if (playerScannerInterval) {
+      clearInterval(playerScannerInterval);
+      playerScannerInterval = null;
+    }
+
     if (shouldReconnect) {
       console.log('[!] Disconnected. Reconnecting in 15 seconds...');
-      sendDiscordNotification(`The bot has been disabled due to the following reason:: \`${reason}\`. 
+      sendDiscordNotification(`The bot has been disabled due to the following reason: \`${reason}\`. 
 Trying to reconnect in 15 seconds.`, 16776960); // Orange color
       setTimeout(createBot, reconnectTimeout);
     } else {
@@ -92,7 +124,6 @@ Trying to reconnect in 15 seconds.`, 16776960); // Orange color
       bot.quit('Restarting on command');
     }
     
-    // ... остальной код команд !pause остается без изменений ...
     if (message === '!pause') {
       console.log(`[Command] ${username} → ${message}`);
       sendDiscordNotification(`Received command from \`${username}\`: \`!pause\` (on 10 minutes).`, 16776960);
@@ -129,7 +160,8 @@ Trying to reconnect in 15 seconds.`, 16776960); // Orange color
 function startFoodMonitor() {
   let warningSent = false;
 
-  setInterval(async () => {
+  // Сохраняем ID интервала в переменной, чтобы можно было его очистить
+  foodMonitorInterval = setInterval(async () => {
     if (!bot || bot.food === undefined) return;
 
     const hasFood = bot.inventory.items().some(item =>
@@ -178,7 +210,8 @@ async function eatFood() {
 function startNearbyPlayerScanner() {
   const inRange = new Set();
 
-  setInterval(() => {
+  // Сохраняем ID интервала в переменной, чтобы можно было его очистить
+  playerScannerInterval = setInterval(() => {
     if (!bot || !bot.entity) return;
 
     const currentPlayers = new Set();
