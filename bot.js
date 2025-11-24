@@ -1,5 +1,5 @@
 const mineflayer = require('mineflayer');
-const axios = require('axios'); // Подключаем axios
+const axios = require('axios'); // Connecting Axios for Discord webhooks
 
 // --- Discord Configuration ---
 // Use environment variable if provided; otherwise leave empty to disable notifications.
@@ -20,7 +20,7 @@ let bot;
 const reconnectTimeout = 15000;
 let shouldReconnect = true;
 
-// Добавлено: хранение ID интервалов, чтобы можно было их очищать
+// Added: Storage of interval IDs so that they can be cleared
 let foodMonitorInterval = null;
 let playerScannerInterval = null;
 
@@ -34,7 +34,7 @@ async function sendDiscordNotification(message, color = 3447003) {
   try {
     await axios.post(DISCORD_WEBHOOK_URL, {
       embeds: [{
-        title: "||@everyone|| WheatMagnate Bot Notification",
+        title: "WheatMagnate Bot Notification",
         description: message,
         color: color,
         timestamp: new Date(),
@@ -46,7 +46,7 @@ async function sendDiscordNotification(message, color = 3447003) {
 }
 
 function createBot() {
-  // Перед созданием нового бота удаляем обработчики старого (если остался)
+  // Before creating a new bot, delete the handlers of the old one (if any remain)
   if (bot) {
     try {
       bot.removeAllListeners();
@@ -63,7 +63,7 @@ function createBot() {
   bot.on('spawn', () => {
     console.log('[Bot] Spawned and ready to work.');
 
-    // Очистка предыдущих интервалов (если они остались от прошлых подключений)
+    // Clearing previous intervals (if they remain from previous connections)
     if (foodMonitorInterval) {
       clearInterval(foodMonitorInterval);
       foodMonitorInterval = null;
@@ -78,7 +78,7 @@ function createBot() {
   });
 
   bot.on('end', (reason) => {
-    // Очистка интервалов при дисконнекте
+    // Clearing intervals when disconnected
     if (foodMonitorInterval) {
       clearInterval(foodMonitorInterval);
       foodMonitorInterval = null;
@@ -160,7 +160,7 @@ Trying to reconnect in 15 seconds.`, 16776960); // Orange color
 function startFoodMonitor() {
   let warningSent = false;
 
-  // Сохраняем ID интервала в переменной, чтобы можно было его очистить
+  // We save the interval ID in a variable so that we can clear it.
   foodMonitorInterval = setInterval(async () => {
     if (!bot || bot.food === undefined) return;
 
@@ -210,13 +210,13 @@ async function eatFood() {
 function startNearbyPlayerScanner() {
   const inRange = new Set();
 
-  // Сохраняем ID интервала в переменной, чтобы можно было его очистить
+  // We save the interval ID in a variable so that we can clear it.
   playerScannerInterval = setInterval(() => {
     if (!bot || !bot.entity) return;
 
     const currentPlayers = new Set();
 
-    // collect players within 45 blocks
+    // collect players within 300 blocks
     for (const entity of Object.values(bot.entities)) {
       if (!entity) continue;
       if (entity.type !== 'player') continue;
