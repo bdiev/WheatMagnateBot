@@ -34,7 +34,7 @@ async function sendDiscordNotification(message, color = 3447003) {
   try {
     await axios.post(DISCORD_WEBHOOK_URL, {
       embeds: [{
-        title: "||@everyone|| WheatMagnate Bot Notification",
+        title: "WheatMagnate Bot Notification",
         description: message,
         color: color,
         timestamp: new Date(),
