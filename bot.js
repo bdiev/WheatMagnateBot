@@ -20,10 +20,6 @@ let bot;
 const reconnectTimeout = 15000;
 let shouldReconnect = true;
 
-// Новые переменные для отслеживания ситуации, когда вы вошли в аккаунт
-let pausedDueToPlayerLogin = false;
-let accountMonitorInterval = null;
-
 // Добавлено: хранение ID интервалов, чтобы можно было их очищать
 let foodMonitorInterval = null;
 let playerScannerInterval = null;
@@ -49,83 +45,6 @@ async function sendDiscordNotification(message, color = 3447003) {
   }
 }
 
-// Помощник: проверка текста reason на смысл "аккаунт уже в сети"
-function reasonIndicatesPlayerLogin(reason) {
-  if (!reason) return false;
-  const r = String(reason).toLowerCase();
-  return /already|another|in use|logged in|duplicate|another location|other location/.test(r);
-}
-
-// Попытка "легкой" проверки — создаём временный бот и смотрим, удастся ли залогиниться
-function isAccountFree(timeout = 10000) {
-  return new Promise((resolve) => {
-    let finished = false;
-    const tmp = mineflayer.createBot(config);
-
-    const timer = setTimeout(() => {
-      if (finished) return;
-      finished = true;
-      try { tmp.removeAllListeners(); tmp.end(); } catch (e) {}
-      resolve(false);
-    }, timeout);
-
-    tmp.once('login', () => {
-      if (finished) return;
-      finished = true;
-      clearTimeout(timer);
-      try { tmp.end('check done'); } catch (e) {}
-      resolve(true);
-    });
-
-    tmp.once('kicked', (reason) => {
-      if (finished) return;
-      finished = true;
-      clearTimeout(timer);
-      try { tmp.end(); } catch (e) {}
-      resolve(false);
-    });
-
-    tmp.once('error', () => {
-      if (finished) return;
-      finished = true;
-      clearTimeout(timer);
-      try { tmp.end(); } catch (e) {}
-      resolve(false);
-    });
-  });
-}
-
-// Запустить монитор аккаунта — периодически проверять, свободен ли аккаунт
-function startAccountMonitor() {
-  if (accountMonitorInterval) return; // уже запущен
-  console.log('[Bot] Starting account monitor: will try to reconnect when account is free.');
-  accountMonitorInterval = setInterval(async () => {
-    try {
-      const free = await isAccountFree();
-      if (free) {
-        clearInterval(accountMonitorInterval);
-        accountMonitorInterval = null;
-        pausedDueToPlayerLogin = false;
-        shouldReconnect = true;
-        sendDiscordNotification(`Account **${config.username}** appears free — reconnecting now.`, 65280);
-        console.log('[Bot] Account free — reconnecting.');
-        createBot();
-      } else {
-        console.log('[Bot] Account still occupied. Waiting...');
-      }
-    } catch (e) {
-      console.error('[Bot] Account monitor error:', e.message);
-    }
-  }, 15000); // каждые 15 сек пробуем
-}
-
-function stopAccountMonitor() {
-  if (accountMonitorInterval) {
-    clearInterval(accountMonitorInterval);
-    accountMonitorInterval = null;
-  }
-}
-
 function createBot() {
   // Перед созданием нового бота удаляем обработчики старого (если остался)
   if (bot) {
@@ -139,9 +58,6 @@ function createBot() {
   bot.on('login', () => {
     console.log(`[+] Bot logged in as ${bot.username}`);
     sendDiscordNotification(`Bot **${bot.username}** successfully logged into the server \`${config.host}\`.`, 65280); // Green color
-    // Если до этого был монитор — остановим его (мы подключились)
-    pausedDueToPlayerLogin = false;
-    stopAccountMonitor();
   });
 
   bot.on('spawn', () => {
@@ -172,16 +88,6 @@ function createBot() {
       playerScannerInterval = null;
     }
 
-    // Если отключение связано с тем, что кто-то (вы) зашёл в аккаунт — переходим в режим ожидания
-    if (reasonIndicatesPlayerLogin(reason)) {
-      pausedDueToPlayerLogin = true;
-      shouldReconnect = false;
-      console.log('[!] Detected that account is used by player. Pausing reconnection and starting monitor.');
-      sendDiscordNotification(`Account **${config.username}** appears to be used by a player: \`${reason}\`. Bot will wait until you logout.`, 16711680);
-      startAccountMonitor();
-      return;
-    }
-
     if (shouldReconnect) {
       console.log('[!] Disconnected. Reconnecting in 15 seconds...');
       sendDiscordNotification(`The bot has been disabled due to the following reason: \`${reason}\`. 
@@ -195,31 +101,11 @@ Trying to reconnect in 15 seconds.`, 16776960); // Orange color
 
   bot.on('error', (err) => {
     console.log(`[x] Error: ${err.message}`);
-    // Если ошибка указывает, что аккаунт в использовании — пауза и монитор
-    if (reasonIndicatesPlayerLogin(err.message)) {
-      pausedDueToPlayerLogin = true;
-      shouldReconnect = false;
-      sendDiscordNotification(`Account **${config.username}** appears to be used by a player: \`${err.message}\`. Bot will wait until you logout.`, 16711680);
-      startAccountMonitor();
-      return;
-    }
-
     sendDiscordNotification(`Critical error: \`${err.message}\``, 16711680); // Red color
   });
 
   bot.on('kicked', (reason) => {
     console.log(`[!] Kicked: ${reason}`);
-
-    // Если кик из-за того, что вы вошли в аккаунт, ставим паузу и запускаем монитор
-    if (reasonIndicatesPlayerLogin(reason)) {
-      pausedDueToPlayerLogin = true;
-      shouldReconnect = false;
-      console.log('[!] Kicked because account used by player. Starting monitor.');
-      sendDiscordNotification(`The account **${config.username}** seems to be used by a player: \`${reason}\`. Bot will wait until you logout.`, 16711680);
-      startAccountMonitor();
-      return;
-    }
-
     sendDiscordNotification(`The bot was kicked from the server. Reason: \`${reason}\``, 16711680); // Red color
   });
 
