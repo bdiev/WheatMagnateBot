@@ -50,10 +50,38 @@ async function sendDiscordNotification(message, color = 3447003) {
 // New helper: отправка простого текстового сообщения чата в другой вебхук
 async function sendDiscordChatMessage(username, message) {
   if (!DISCORD_CHAT_WEBHOOK_URL) return;
+
+  // Prevent pings (разрываем @), обрезаем очень длинные сообщения и экранируем управляющие символы
+  const safeMessage = String(message)
+    .replace(/@/g, '@\u200b')                   // prevent mentions
+    .replace(/\r/g, '')                         // normalize CR
+    .replace(/\u0000/g, '')                     // remove nulls
+    .replace(/```/g, "`\u200b``")               // avoid breaking code blocks
+    .slice(0, 4000);                            // keep under embed limits
+
+  const avatarUrl = `https://minotar.net/avatar/${encodeURIComponent(username)}/64.png`;
+
+  const payload = {
+    username: 'Minecraft Chat',
+    // optional: avatar for the webhook itself, can be removed or changed
+    avatar_url: 'https://i.imgur.com/6YVYh2K.png',
+    embeds: [
+      {
+        author: {
+          name: username,
+          icon_url: avatarUrl
+        },
+        description: safeMessage || '*(empty message)*',
+        color: 3447003,
+        timestamp: new Date().toISOString()
+      }
+    ],
+    // ensure webhook does not trigger any mentions
+    allowed_mentions: { parse: [] }
+  };
+
   try {
-    await axios.post(DISCORD_CHAT_WEBHOOK_URL, {
-      content: `**${username}**: ${message}`
-    });
+    await axios.post(DISCORD_CHAT_WEBHOOK_URL, payload);
   } catch (err) {
     console.error('[Discord] Failed to send chat message:', err.message);
   }
