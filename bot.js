@@ -226,7 +226,7 @@ function startNearbyPlayerScanner() {
       if (!entity.position || !bot.entity.position) continue;
 
       const distance = bot.entity.position.distanceTo(entity.position);
-      if (distance <= 45) {
+      if (distance <= 300) {
         currentPlayers.add(entity.username);
       }
     }
@@ -244,7 +244,7 @@ function startNearbyPlayerScanner() {
     [...inRange].forEach(username => {
       if (!currentPlayers.has(username)) {
         console.log(`[Bot] Player left range: ${username}`);
-        sendDiscordNotification(`Player **${username}** left visible zone.`, 3447003); // Blue color
+        sendDiscordNotification(`@everyone Player **${username}** left visible zone.`, 3447003); // Blue color
         inRange.delete(username);
       }
     });
