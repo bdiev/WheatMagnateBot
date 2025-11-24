@@ -1,6 +1,5 @@
 const mineflayer = require('mineflayer');
 const axios = require('axios'); // Connecting Axios for Discord webhooks
-const { Client, GatewayIntentBits } = require('discord.js');
 
 // --- Discord Configuration ---
 // Use environment variable if provided; otherwise leave empty to disable notifications.
@@ -303,54 +302,6 @@ function startNearbyPlayerScanner() {
 if (process.env.DISABLE_BOT === 'true') {
   console.log('The bot is turned off through environment variables.');
   process.exit(0);
-}
-
-// New: Discord gateway listener to forward messages from a specific channel into Minecraft chat
-const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || '';
-const DISCORD_CHAT_CHANNEL_ID = process.env.DISCORD_CHAT_CHANNEL_ID || '';
-
-let discordClient = null;
-
-if (DISCORD_BOT_TOKEN && DISCORD_CHAT_CHANNEL_ID) {
-  discordClient = new Client({
-    intents: [
-      GatewayIntentBits.Guilds,
-      GatewayIntentBits.GuildMessages,
-      GatewayIntentBits.MessageContent
-    ]
-  });
-
-  discordClient.once('ready', () => {
-    console.log(`[Discord] Logged in as ${discordClient.user.tag}`);
-  });
-
-  // Receive messages from the channel and send them to Minecraft chat
-  discordClient.on('messageCreate', (message) => {
-    // only process messages in configured channel
-    if (message.channel.id !== DISCORD_CHAT_CHANNEL_ID) return;
-    // ignore bots and webhooks to avoid loops
-    if (message.author?.bot) return;
-    if (message.webhookId) return;
-    if (!bot) return;
-
-    const content = message.content.trim();
-    if (!content) return;
-
-    // Format to send to Minecraft (adjust formatting as you like)
-    const mcText = `${message.author.username}: ${content}`.slice(0, 256); // cap length for chat
-    try {
-      bot.chat(mcText);
-      console.log(`[Discord→MC] ${mcText}`);
-    } catch (err) {
-      console.error('[Discord] Failed to send message to MC:', err.message);
-    }
-  });
-
-  discordClient.login(DISCORD_BOT_TOKEN).catch(err => {
-    console.error('[Discord] Login failed:', err.message);
-  });
-} else {
-  console.log('[Discord] DISCORD_BOT_TOKEN or DISCORD_CHAT_CHANNEL_ID not set, gateway listener disabled.');
 }
 
 createBot();
