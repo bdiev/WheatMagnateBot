@@ -63,13 +63,10 @@ async function sendDiscordChatMessage(username, message) {
 
   const payload = {
     username: 'WheatMagnate Chat Relay',
-    // optional: avatar for the webhook itself, can be removed or changed
-    avatar_url: 'https://imgur.com/a/Qa5cXQr.png',
     embeds: [
       {
         author: {
           name: username,
-          icon_url: avatarUrl
         },
         description: safeMessage || '*(empty message)*',
         color: 3447003,
