@@ -4,6 +4,8 @@ const axios = require('axios'); // Connecting Axios for Discord webhooks
 // --- Discord Configuration ---
 // Use environment variable if provided; otherwise leave empty to disable notifications.
 const DISCORD_WEBHOOK_URL = 'https://discord.com/api/webhooks/1441970745306517596/kXr40bb0hUDC6GO56HbFZvi2mz2ZUeWv2zghnp2KTyvWalxlWKSbfvtd0CrRFhmELuBu';
+// New: webhook для пересылки чата в отдельный канал (или задайте через env: DISCORD_CHAT_WEBHOOK_URL)
+const DISCORD_CHAT_WEBHOOK_URL = process.env.DISCORD_CHAT_WEBHOOK_URL || 'https://discord.com/api/webhooks/1442371011470168104/joqAX7y-hPXqH8iCvUdCx9sdJ3bp0sTRo2TYLupUIJXLBc3iqkBghL33iX5NxzsPEVAV'; // вставьте сюда новый вебхук или установите переменную окружения
 // -----------------------------
 
 const config = {
@@ -42,6 +44,18 @@ async function sendDiscordNotification(message, color = 3447003) {
     });
   } catch (error) {
     console.error('[Discord] Failed to send webhook:', error.message);
+  }
+}
+
+// New helper: отправка простого текстового сообщения чата в другой вебхук
+async function sendDiscordChatMessage(username, message) {
+  if (!DISCORD_CHAT_WEBHOOK_URL) return;
+  try {
+    await axios.post(DISCORD_CHAT_WEBHOOK_URL, {
+      content: `**${username}**: ${message}`
+    });
+  } catch (err) {
+    console.error('[Discord] Failed to send chat message:', err.message);
   }
 }
 
@@ -116,6 +130,11 @@ Trying to reconnect in 15 seconds.`, 16776960); // Orange color
 
   // ------- CHAT COMMANDS -------
   bot.on('chat', (username, message) => {
+    // forward every chat message to Discord (skip messages from the bot itself)
+    if (bot && username !== bot.username) {
+      sendDiscordChatMessage(username, message);
+    }
+
     if (username !== 'bdiev_') return;
 
     if (message === '!restart') {
