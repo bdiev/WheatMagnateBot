@@ -19,12 +19,39 @@ function loadWhitelist() {
     const lines = data.split('\n').map(line => line.trim()).filter(line => line && !line.startsWith('#'));
     return lines;
   } catch (err) {
+    sendDiscordNotification('Error loading whitelist: ' + err.message, 16711680);
     console.log('Error loading whitelist:', err.message);
     return [];
   }
 }
 
 const ignoredUsernames = loadWhitelist();
+
+// Function to convert Minecraft chat component to plain text
+function chatComponentToString(component) {
+  if (typeof component === 'string') return component;
+  if (!component || typeof component !== 'object') return String(component);
+
+  if (component.type === 'string') return component.value || '';
+
+  if (component.type === 'compound') {
+    let text = '';
+    if (component.value && component.value.text) {
+      text += chatComponentToString(component.value.text);
+    }
+    // Handle siblings if present (for complex messages)
+    if (component.value && component.value.extra) {
+      for (const extra of component.value.extra) {
+        text += chatComponentToString(extra);
+      }
+    }
+    return text;
+  }
+
+  // For other types, try to extract text if possible
+  if (component.value && typeof component.value === 'string') return component.value;
+  return JSON.stringify(component);
+}
 
 let bot;
 const reconnectTimeout = 15000;
@@ -88,6 +115,7 @@ function createBot() {
   });
 
   bot.on('end', (reason) => {
+    const reasonStr = chatComponentToString(reason);
     // Clearing intervals on disconnect
         if (foodMonitorInterval) {
       clearInterval(foodMonitorInterval);
@@ -111,13 +139,13 @@ function createBot() {
         sendDiscordNotification(`The bot has been disabled due to server restart. Waiting 5 minutes before attempting reconnection.`, 16776960); // Orange color
       } else {
         console.log('[!] Disconnected. Reconnecting in 15 seconds...');
-        sendDiscordNotification(`The bot has been disabled due to the following reason: \`${reason}\`.
+        sendDiscordNotification(`The bot has been disabled due to the following reason: \`${reasonStr}\`.
 Trying to reconnect in 15 seconds.`, 16776960); // Orange color
       }
       setTimeout(createBot, timeout);
     } else {
       console.log('[!] Disconnected manually. Reconnect paused.');
-      sendDiscordNotification(`The bot was disabled manually/by command due to the following reason: \`${reason}\`. Reconnection paused.`, 16711680); // Red color
+      sendDiscordNotification(`The bot was disabled manually/by command due to the following reason: \`${reasonStr}\`. Reconnection paused.`, 16711680); // Red color
     }
   });
 
@@ -127,7 +155,7 @@ Trying to reconnect in 15 seconds.`, 16776960); // Orange color
   });
 
   bot.on('kicked', (reason) => {
-    const reasonText = typeof reason === 'object' ? JSON.stringify(reason, null, 2) : reason;
+    const reasonText = chatComponentToString(reason);
     console.log(`[!] Kicked: ${reasonText}`);
     sendDiscordNotification(`The bot was kicked from the server. Reason: \`${reasonText}\``, 16711680); // Red color
   });
