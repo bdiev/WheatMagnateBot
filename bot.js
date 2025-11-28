@@ -11,7 +11,7 @@ const config = {
   host: 'oldfag.org',
   username: 'WheatMagnate',
   auth: 'microsoft',
-  version: '1.8.9',
+  version: '1.21.4',
 };
 
 function loadWhitelist() {
