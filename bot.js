@@ -238,21 +238,13 @@ async function eatFood() {
 
 // -------------- PLAYER SCANNER  --------------
 function startNearbyPlayerScanner() {
-  const inRange = new Set();
   playerScannerInterval = setInterval(() => {
     if (!bot || !bot.entity) return;
-    const currentPlayers = new Set();
 
     for (const entity of Object.values(bot.entities)) {
       if (!entity || entity.type !== 'player') continue;
       if (!entity.username || entity.username === bot.username) continue;
-      if (ignoredUsernames.includes(entity.username)) {
-        // Whitelisted player
-        if (!entity.position || !bot.entity.position) continue;
-        const distance = bot.entity.position.distanceTo(entity.position);
-        if (distance <= 300) currentPlayers.add(entity.username);
-        continue;
-      }
+      if (ignoredUsernames.includes(entity.username)) continue; // Ignore whitelisted players
       // Non-whitelisted player
       if (!entity.position || !bot.entity.position) continue;
       const distance = bot.entity.position.distanceTo(entity.position);
@@ -265,22 +257,6 @@ function startNearbyPlayerScanner() {
         return; // Stop scanning after disconnect
       }
     }
-
-    currentPlayers.forEach(username => {
-      if (!inRange.has(username)) {
-        console.log(`[Bot] Whitelisted player entered: ${username}`);
-        sendDiscordNotification(`Player **${username}** entered range.`, 16776960);
-        inRange.add(username);
-      }
-    });
-
-    [...inRange].forEach(username => {
-      if (!currentPlayers.has(username)) {
-        console.log(`[Bot] Whitelisted player left: ${username}`);
-        sendDiscordNotification(`Player **${username}** left range.`, 3447003);
-        inRange.delete(username);
-      }
-    });
   }, 1000);
 }
 
