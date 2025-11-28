@@ -13,9 +13,11 @@ Lightweight Minecraft bot built with mineflayer. Monitors hunger, scans nearby p
 - Nearby player scanner:
   - Detects players within 300 blocks using bot.entities and distance checks.
   - Sends enter/leave notifications.
-  - Supports an `ignoredUsernames` list.
+  - Supports an `ignoredUsernames` list loaded from `whitelist.txt`.
+  - Enemy detection: If a non-whitelist player enters range, sends danger alert to Discord and disconnects without reconnecting. Includes instructions to allow via Discord command.
+- Discord bot integration: Listens for `!allow <username>` commands in a specified channel to temporarily allow players, preventing disconnection.
 - Graceful reconnect and pause controls:
-  - Automatic reconnect on disconnect unless paused.
+  - Automatic reconnect on disconnect unless paused or enemy detected.
   - Smart handling during server restarts: detects daily restart at 9 AM Kyiv time and waits 5 minutes before reconnecting to avoid notification spam.
   - In-game chat commands (authorized user) for restart and pause.
 - Safe interval management: clears monitoring intervals on spawn and on disconnect to prevent duplicates.
@@ -29,10 +31,11 @@ Lightweight Minecraft bot built with mineflayer. Monitors hunger, scans nearby p
 ## Dependencies
 - mineflayer
 - axios
+- discord.js
 
 Install:
 ```powershell
-npm install mineflayer axios
+npm install
 ```
 
 ## Configuration
@@ -44,8 +47,18 @@ Edit `bot.js`:
 
 Environment variables:
 - `DISCORD_WEBHOOK_URL` — Discord webhook URL (required for notifications)
+- `DISCORD_TOKEN` — Discord bot token (required for allow commands)
+- `DISCORD_CHANNEL_ID` — Discord channel ID where the bot listens for commands (required for allow commands)
 - `DISABLE_BOT=true` — prevents the bot from starting.
 - `AUTH_CACHE_DIR` — directory for Microsoft authentication cache (default: `~/.minecraft`). For persistent auth in containers, set to a mounted volume path.
+
+## Discord Bot Setup
+To enable temporary allow commands:
+1. Create a Discord bot at https://discord.com/developers/applications.
+2. Copy the bot token and set `DISCORD_TOKEN`.
+3. Invite the bot to your server with appropriate permissions (read messages, send messages).
+4. Get the channel ID (enable Developer Mode in Discord, right-click channel > Copy ID) and set `DISCORD_CHANNEL_ID`.
+5. Use `!allow <username>` in the specified channel to temporarily allow a player.
 
 ## In-Game Chat Commands
 Only messages from the authorized username (`bdiev_` by default) are processed:
@@ -65,16 +78,17 @@ Only messages from the authorized username (`bdiev_` by default) are processed:
 1. Install Node.js and dependencies:
    ```powershell
    npm install
-   npm install mineflayer axios
    ```
-2. Set the Discord webhook URL environment variable and start the bot:
+2. Set environment variables and start the bot:
    ```powershell
    set DISCORD_WEBHOOK_URL=your_webhook_url_here
+   set DISCORD_TOKEN=your_bot_token_here
+   set DISCORD_CHANNEL_ID=your_channel_id_here
    node bot.js
    ```
    Or in one command:
    ```powershell
-   set DISCORD_WEBHOOK_URL=your_webhook_url_here && node bot.js
+   set DISCORD_WEBHOOK_URL=your_webhook_url_here && set DISCORD_TOKEN=your_bot_token_here && set DISCORD_CHANNEL_ID=your_channel_id_here && node bot.js
    ```
 
 ## Deployment in Containers (e.g., Azure Container Instances)
@@ -93,6 +107,8 @@ For Azure Container Instances, use Azure Files for persistent storage.
 
 ## Troubleshooting
 - If Discord webhooks fail, verify `DISCORD_WEBHOOK_URL` and network access.
+- If Discord bot fails to connect, verify `DISCORD_TOKEN` and bot permissions. Ensure the bot is invited to the server and has access to the channel.
+- If allow commands don't work, check `DISCORD_CHANNEL_ID` and ensure messages are sent in the correct channel.
 - If Microsoft login fails, check cached credentials and follow mineflayer auth docs. For containers, ensure `AUTH_CACHE_DIR` is set to a persistent path.
 - Check console logs for runtime errors and webhook messages for critical events.
 

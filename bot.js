@@ -246,15 +246,29 @@ function startNearbyPlayerScanner() {
     for (const entity of Object.values(bot.entities)) {
       if (!entity || entity.type !== 'player') continue;
       if (!entity.username || entity.username === bot.username) continue;
-      if (ignoredUsernames.includes(entity.username)) continue;
+      if (ignoredUsernames.includes(entity.username)) {
+        // Whitelisted player
+        if (!entity.position || !bot.entity.position) continue;
+        const distance = bot.entity.position.distanceTo(entity.position);
+        if (distance <= 300) currentPlayers.add(entity.username);
+        continue;
+      }
+      // Non-whitelisted player
       if (!entity.position || !bot.entity.position) continue;
       const distance = bot.entity.position.distanceTo(entity.position);
-      if (distance <= 300) currentPlayers.add(entity.username);
+      if (distance <= 300) {
+        // Enemy detected!
+        console.log(`[Bot] Enemy detected: ${entity.username}`);
+        sendDiscordNotification(`🚨 **ENEMY DETECTED**: **${entity.username}** entered range! Disconnecting for safety.`, 16711680);
+        shouldReconnect = false;
+        bot.quit(`Enemy detected: ${entity.username}`);
+        return; // Stop scanning after disconnect
+      }
     }
 
     currentPlayers.forEach(username => {
       if (!inRange.has(username)) {
-        console.log(`[Bot] Player entered: ${username}`);
+        console.log(`[Bot] Whitelisted player entered: ${username}`);
         sendDiscordNotification(`Player **${username}** entered range.`, 16776960);
         inRange.add(username);
       }
@@ -262,7 +276,7 @@ function startNearbyPlayerScanner() {
 
     [...inRange].forEach(username => {
       if (!currentPlayers.has(username)) {
-        console.log(`[Bot] Player left: ${username}`);
+        console.log(`[Bot] Whitelisted player left: ${username}`);
         sendDiscordNotification(`Player **${username}** left range.`, 3447003);
         inRange.delete(username);
       }
