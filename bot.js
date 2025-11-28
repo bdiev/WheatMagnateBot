@@ -105,8 +105,9 @@ Trying to reconnect in 15 seconds.`, 16776960); // Orange color
   });
 
   bot.on('kicked', (reason) => {
-    console.log(`[!] Kicked: ${reason}`);
-    sendDiscordNotification(`The bot was kicked from the server. Reason: \`${reason}\``, 16711680); // Red color
+    const reasonText = typeof reason === 'object' ? JSON.stringify(reason, null, 2) : reason;
+    console.log(`[!] Kicked: ${reasonText}`);
+    sendDiscordNotification(`The bot was kicked from the server. Reason: \`${reasonText}\``, 16711680); // Red color
   });
 
   bot.on('death', () => {
