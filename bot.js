@@ -1,9 +1,6 @@
 const mineflayer = require('mineflayer');
 const axios = require('axios'); // Importing axios
 const fs = require('fs');
-const { Authflow } = require('prismarine-auth');
-const path = require('path');
-const os = require('os');
 
 // --- Discord Configuration ---
 // Use environment variable for webhook URL. Set DISCORD_WEBHOOK_URL in your environment.
@@ -13,12 +10,9 @@ const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 const config = {
   host: 'oldfag.org',
   username: 'WheatMagnate',
+  auth: 'microsoft',
   version: '1.21.4',
 };
-
-const cacheDir = process.env.AUTH_CACHE_DIR || path.join(os.homedir(), '.minecraft');
-const authflow = new Authflow(config.username, cacheDir);
-config.auth = authflow;
 
 function loadWhitelist() {
   try {
