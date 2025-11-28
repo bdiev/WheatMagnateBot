@@ -1,24 +1,24 @@
 const mineflayer = require('mineflayer');
-const axios = require('axios'); // Importing axios
+const axios = require('axios');
 const fs = require('fs');
 
-// --- Discord Configuration ---
-// Use environment variable for webhook URL. Set DISCORD_WEBHOOK_URL in your environment.
+// Discord webhook
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
-// -----------------------------
 
 const config = {
   host: 'oldfag.org',
   username: 'WheatMagnate',
   auth: 'microsoft',
-  version: '1.21.4',
+  version: '1.21.4'
 };
 
 function loadWhitelist() {
   try {
     const data = fs.readFileSync('whitelist.txt', 'utf8');
-    const lines = data.split('\n').map(line => line.trim()).filter(line => line && !line.startsWith('#'));
-    return lines;
+    return data
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => l && !l.startsWith('#'));
   } catch (err) {
     sendDiscordNotification('Error loading whitelist: ' + err.message, 16711680);
     console.log('Error loading whitelist:', err.message);
@@ -37,14 +37,9 @@ function chatComponentToString(component) {
 
   if (component.type === 'compound') {
     let text = '';
-    if (component.value && component.value.text) {
-      text += chatComponentToString(component.value.text);
-    }
-    // Handle siblings if present (for complex messages)
-    if (component.value && component.value.extra) {
-      for (const extra of component.value.extra) {
-        text += chatComponentToString(extra);
-      }
+    if (component.value?.text) text += chatComponentToString(component.value.text);
+    if (component.value?.extra) {
+      for (const extra of component.value.extra) text += chatComponentToString(extra);
     }
     return text;
   }
@@ -65,105 +60,83 @@ let playerScannerInterval = null;
 // Helper function to send messages to Discord
 async function sendDiscordNotification(message, color = 3447003) {
   if (!DISCORD_WEBHOOK_URL) {
-    console.log('[Discord] Webhook URL not set. Notification skipped.');
+    console.log('[Discord] Webhook URL not set. Skipped.');
     return;
   }
-  
   try {
     await axios.post(DISCORD_WEBHOOK_URL, {
       embeds: [{
-        title: "WheatMagnate Bot Notification",
+        title: 'WheatMagnate Bot Notification',
         description: message,
-        color: color,
-        timestamp: new Date(),
+        color,
+        timestamp: new Date()
       }]
     });
-  } catch (error) {
-    console.error('[Discord] Failed to send webhook:', error.message);
+  } catch (e) {
+    console.error('[Discord] Failed:', e.message);
   }
 }
 
 function createBot() {
   // Before creating a new bot, remove the old bot's listeners (if any remain)
   if (bot) {
-    try {
-      bot.removeAllListeners();
-    } catch (e) {}
+    try { bot.removeAllListeners(); } catch {}
   }
 
   bot = mineflayer.createBot(config);
 
   bot.on('login', () => {
-    console.log(`[+] Bot logged in as ${bot.username}`);
-    sendDiscordNotification(`Bot **${bot.username}** successfully logged into the server \`${config.host}\`.`, 65280); // Green color
+    console.log(`[+] Logged in as ${bot.username}`);
+    sendDiscordNotification(`Bot **${bot.username}** logged into \`${config.host}\`.`, 65280);
   });
 
   bot.on('spawn', () => {
-    console.log('[Bot] Spawned and ready to work.');
-
-    // Clearing previous intervals (if any remained from previous connections)
-        if (foodMonitorInterval) {
-      clearInterval(foodMonitorInterval);
-      foodMonitorInterval = null;
-    }
-    if (playerScannerInterval) {
-      clearInterval(playerScannerInterval);
-      playerScannerInterval = null;
-    }
-
+    console.log('[Bot] Spawned.');
+    clearIntervals();
     startFoodMonitor();
     startNearbyPlayerScanner();
   });
 
   bot.on('end', (reason) => {
     const reasonStr = chatComponentToString(reason);
-    // Clearing intervals on disconnect
-        if (foodMonitorInterval) {
-      clearInterval(foodMonitorInterval);
-      foodMonitorInterval = null;
-    }
-    if (playerScannerInterval) {
-      clearInterval(playerScannerInterval);
-      playerScannerInterval = null;
-    }
+    clearIntervals();
 
     if (shouldReconnect) {
       const now = new Date();
-      const kyivTime = new Date(now.toLocaleString("en-US", {timeZone: "Europe/Kiev"}));
+      const kyivTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Kiev' }));
       const hour = kyivTime.getHours();
       const minute = kyivTime.getMinutes();
-      const isRestartTime = hour === 9 && minute >= 0 && minute <= 30; // Assuming restart takes up to 30 minutes
-      const timeout = isRestartTime ? 5 * 60 * 1000 : reconnectTimeout; // 5 minutes during restart
+      const isRestartTime = hour === 9 && minute >= 0 && minute <= 30;
+      const timeout = isRestartTime ? 5 * 60 * 1000 : reconnectTimeout;
 
       if (isRestartTime) {
-        console.log('[!] Disconnected during server restart. Reconnecting in 5 minutes...');
-        sendDiscordNotification(`The bot has been disabled due to server restart. Waiting 5 minutes before attempting reconnection.`, 16776960); // Orange color
+        console.log('[!] Restart window. Reconnecting in 5 minutes...');
+        sendDiscordNotification('Server restart window detected. Reconnecting in 5 minutes.', 16776960);
       } else {
         console.log('[!] Disconnected. Reconnecting in 15 seconds...');
-        sendDiscordNotification(`The bot has been disabled due to the following reason: \`${reasonStr}\`.
-Trying to reconnect in 15 seconds.`, 16776960); // Orange color
+        sendDiscordNotification(`Disconnected: \`${reasonStr}\`. Reconnecting in 15 seconds.`, 16776960);
       }
       setTimeout(createBot, timeout);
     } else {
-      console.log('[!] Disconnected manually. Reconnect paused.');
-      sendDiscordNotification(`The bot was disabled manually/by command due to the following reason: \`${reasonStr}\`. Reconnection paused.`, 16711680); // Red color
+      console.log('[!] Manual pause. No reconnect.');
+      sendDiscordNotification(`Bot paused manually: \`${reasonStr}\`.`, 16711680);
     }
   });
 
   bot.on('error', (err) => {
     console.log(`[x] Error: ${err.message}`);
-    sendDiscordNotification(`Critical error: \`${err.message}\``, 16711680); // Red color
+    sendDiscordNotification(`Error: \`${err.message}\``, 16711680);
   });
 
   bot.on('kicked', (reason) => {
     const reasonText = chatComponentToString(reason);
     console.log(`[!] Kicked: ${reasonText}`);
-    sendDiscordNotification(`The bot was kicked from the server. Reason: \`${reasonText}\``, 16711680); // Red color
+    sendDiscordNotification(`Kicked. Reason: \`${reasonText}\``, 16711680);
   });
 
   bot.on('death', () => {
-    console.log('[Bot] Died heroically.');
-    sendDiscordNotification('The bot died heroically. :skull:', 16711680); // Red color
+    console.log('[Bot] Died.');
+    sendDiscordNotification('Bot died. :skull:', 16711680);
   });
 
   // ------- CHAT COMMANDS -------
@@ -171,19 +144,18 @@ Trying to reconnect in 15 seconds.`, 16776960); // Orange color
     if (username !== 'bdiev_') return;
 
     if (message === '!restart') {
-      console.log(`[Command] ${username} → ${message}`);
-      sendDiscordNotification(`Received command from \`${username}\`: \`!restart\`.`, 16776960);
-      bot.quit('Restarting on command');
+      console.log(`[Command] restart by ${username}`);
+      sendDiscordNotification(`Command: !restart by \`${username}\``, 16776960);
+      bot.quit('Restart command');
     }
-    
+
     if (message === '!pause') {
-      console.log(`[Command] ${username} → ${message}`);
-      sendDiscordNotification(`Received command from \`${username}\`: \`!pause\` (on 10 minutes).`, 16776960);
-      console.log('[Bot] Pausing for 10 minutes...');
+      console.log('[Command] pause 10m');
+      sendDiscordNotification(`Command: !pause (10m) by \`${username}\``, 16776960);
       shouldReconnect = false;
-      bot.quit('Pause for 10 minutes');
+      bot.quit('Pause 10m');
       setTimeout(() => {
-        console.log('[Bot] Pause ended. Reconnecting.');
+        console.log('[Bot] Pause ended.');
         shouldReconnect = true;
         createBot();
       }, 10 * 60 * 1000);
@@ -193,13 +165,12 @@ Trying to reconnect in 15 seconds.`, 16776960); // Orange color
     if (pauseMatch) {
       const minutes = parseInt(pauseMatch[1]);
       if (minutes > 0) {
-        console.log(`[Command] ${username} → pause ${minutes}m`);
-         sendDiscordNotification(`Received command from \`${username}\`: \`!pause ${minutes}\` (on ${minutes} minutes).`, 16776960);
+        console.log(`[Command] pause ${minutes}m`);
+        sendDiscordNotification(`Command: !pause ${minutes} by \`${username}\``, 16776960);
         shouldReconnect = false;
-        bot.quit(`Paused for ${minutes} minutes`);
-
+        bot.quit(`Paused ${minutes}m`);
         setTimeout(() => {
-          console.log('[Bot] Pause complete. Reconnecting now...');
+          console.log('[Bot] Custom pause ended.');
           shouldReconnect = true;
           createBot();
         }, minutes * 60 * 1000);
@@ -208,12 +179,22 @@ Trying to reconnect in 15 seconds.`, 16776960); // Orange color
   });
 }
 
+// -------------- INTERVALS MANAGEMENT --------------
+function clearIntervals() {
+  if (foodMonitorInterval) {
+    clearInterval(foodMonitorInterval);
+    foodMonitorInterval = null;
+  }
+  if (playerScannerInterval) {
+    clearInterval(playerScannerInterval);
+    playerScannerInterval = null;
+  }
+}
+
 // -------------- FOOD MONITOR --------------
 function startFoodMonitor() {
   let warningSent = false;
-
-  // Storing the interval ID in a variable so it can be cleared
-    foodMonitorInterval = setInterval(async () => {
+  foodMonitorInterval = setInterval(async () => {
     if (!bot || bot.food === undefined) return;
 
     const hasFood = bot.inventory.items().some(item =>
@@ -222,8 +203,8 @@ function startFoodMonitor() {
 
     if (!hasFood) {
       if (!warningSent) {
-        console.log('[Bot] No food in inventory.');
-        sendDiscordNotification('No food in inventory!', 16711680); // Sending a notification
+        console.log('[Bot] No food.');
+        sendDiscordNotification('No food in inventory!', 16711680);
         warningSent = true;
       }
       return;
@@ -236,7 +217,6 @@ function startFoodMonitor() {
       await eatFood();
       bot._isEating = false;
     }
-
   }, 1000);
 }
 
@@ -244,68 +224,54 @@ async function eatFood() {
   const foodItem = bot.inventory.items().find(item =>
     ['bread', 'apple', 'beef', 'golden_carrot'].some(n => item.name.includes(n))
   );
-
   if (!foodItem) return;
-
   try {
-    console.log(`[Bot] Eating ${foodItem.name} (food lvl: ${bot.food})...`);
+    console.log(`[Bot] Eating ${foodItem.name} (food: ${bot.food})`);
     await bot.equip(foodItem, 'hand');
     await bot.consume();
-    console.log('[Bot] Food eaten.');
+    console.log('[Bot] Ate.');
   } catch (err) {
-    console.error('[Bot] Error during eating:', err);
-    sendDiscordNotification(`Error when trying to eat ${foodItem.name}: \`${err.message}\``, 16711680);
+    console.error('[Bot] Eat error:', err.message);
+    sendDiscordNotification(`Eating ${foodItem.name} failed: \`${err.message}\``, 16711680);
   }
 }
 
 // -------------- PLAYER SCANNER  --------------
 function startNearbyPlayerScanner() {
   const inRange = new Set();
-
-  // Сохраняем ID интервала в переменной, чтобы можно было его очистить
   playerScannerInterval = setInterval(() => {
     if (!bot || !bot.entity) return;
-
     const currentPlayers = new Set();
 
-    // collect players within 300 blocks
     for (const entity of Object.values(bot.entities)) {
-      if (!entity) continue;
-      if (entity.type !== 'player') continue;
-      if (!entity.username) continue;
-      if (entity.username === bot.username) continue;
+      if (!entity || entity.type !== 'player') continue;
+      if (!entity.username || entity.username === bot.username) continue;
       if (ignoredUsernames.includes(entity.username)) continue;
       if (!entity.position || !bot.entity.position) continue;
-
       const distance = bot.entity.position.distanceTo(entity.position);
-      if (distance <= 300) {
-        currentPlayers.add(entity.username);
-      }
+      if (distance <= 300) currentPlayers.add(entity.username);
     }
 
-    // Entered
     currentPlayers.forEach(username => {
       if (!inRange.has(username)) {
-        console.log(`[Bot] Player entered range: ${username}`);
-        sendDiscordNotification(`Player **${username}** enter visible zone!`, 16776960); // Yellow/Orange color
+        console.log(`[Bot] Player entered: ${username}`);
+        sendDiscordNotification(`Player **${username}** entered range.`, 16776960);
         inRange.add(username);
       }
     });
 
-    // Left
     [...inRange].forEach(username => {
       if (!currentPlayers.has(username)) {
-        console.log(`[Bot] Player left range: ${username}`);
-        sendDiscordNotification(`Player **${username}** left visible zone.`, 3447003); // Blue color
+        console.log(`[Bot] Player left: ${username}`);
+        sendDiscordNotification(`Player **${username}** left range.`, 3447003);
         inRange.delete(username);
       }
     });
-
   }, 1000);
 }
 
 if (process.env.DISABLE_BOT === 'true') {
-  console.log('The bot is turned off through environment variables.');
+  console.log('Bot disabled by env.');
   process.exit(0);
 }
 
@@ -314,15 +280,13 @@ process.on('uncaughtException', (err) => {
   console.log('Uncaught Exception:', err);
   sendDiscordNotification(`Uncaught exception: \`${err.message}\``, 16711680);
   if (bot) {
-    try {
-      bot.quit();
-    } catch (e) {}
+    try { bot.quit(); } catch {}
   }
   setTimeout(createBot, 5000);
 });
 
-process.on('unhandledRejection', (reason, promise) => {
-  console.log('Unhandled Rejection at:', promise, 'reason:', reason);
+process.on('unhandledRejection', (reason) => {
+  console.log('Unhandled Rejection:', reason);
   sendDiscordNotification(`Unhandled rejection: \`${reason}\``, 16711680);
 });
 
