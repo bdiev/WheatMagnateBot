@@ -11,6 +11,7 @@ const config = {
   host: 'oldfag.org',
   username: 'WheatMagnate',
   auth: 'microsoft',
+  version: '1.8.9',
 };
 
 function loadWhitelist() {
@@ -307,5 +308,22 @@ if (process.env.DISABLE_BOT === 'true') {
   console.log('The bot is turned off through environment variables.');
   process.exit(0);
 }
+
+// Handle uncaught exceptions to prevent crashes
+process.on('uncaughtException', (err) => {
+  console.log('Uncaught Exception:', err);
+  sendDiscordNotification(`Uncaught exception: \`${err.message}\``, 16711680);
+  if (bot) {
+    try {
+      bot.quit();
+    } catch (e) {}
+  }
+  setTimeout(createBot, 5000);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.log('Unhandled Rejection at:', promise, 'reason:', reason);
+  sendDiscordNotification(`Unhandled rejection: \`${reason}\``, 16711680);
+});
 
 createBot();

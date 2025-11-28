@@ -232,7 +232,7 @@ function inject (bot, { physicsEnabled, maxCatchupTicks }) {
     }
     bot._client.write('entity_action', {
       entityId: bot.entity.id,
-      actionId: 8,
+      actionId: bot.supportFeature('entityActionUsesStringMapper') ? 'start_elytra_flying' : 8,
       jumpBoost: 0
     })
   }
@@ -247,15 +247,27 @@ function inject (bot, { physicsEnabled, maxCatchupTicks }) {
     } else if (control === 'sprint') {
       bot._client.write('entity_action', {
         entityId: bot.entity.id,
-        actionId: state ? 3 : 4,
+        actionId: bot.supportFeature('entityActionUsesStringMapper')
+          ? (state ? 'start_sprinting' : 'stop_sprinting')
+          : (state ? 3 : 4),
         jumpBoost: 0
       })
     } else if (control === 'sneak') {
-      bot._client.write('entity_action', {
-        entityId: bot.entity.id,
-        actionId: state ? 0 : 1,
-        jumpBoost: 0
-      })
+      if (bot.supportFeature('newPlayerInputPacket')) {
+        // In 1.21.6+, sneak is handled via player_input packet
+        bot._client.write('player_input', {
+          inputs: {
+            shift: state
+          }
+        })
+      } else {
+        // Legacy entity_action approach for older versions
+        bot._client.write('entity_action', {
+          entityId: bot.entity.id,
+          actionId: state ? 0 : 1,
+          jumpBoost: 0
+        })
+      }
     }
   }
 
@@ -296,7 +308,10 @@ function inject (bot, { physicsEnabled, maxCatchupTicks }) {
     // TODO: emit an explosion event with more info
     if (bot.physicsEnabled && bot.game.gameMode !== 'creative') {
       if (explosion.playerKnockback) { // 1.21.3+
-        bot.entity.velocity.add(explosion.playerMotionX, explosion.playerMotionY, explosion.playerMotionZ)
+        // Fixes issue #3635
+        bot.entity.velocity.x += explosion.playerKnockback.x
+        bot.entity.velocity.y += explosion.playerKnockback.y
+        bot.entity.velocity.z += explosion.playerKnockback.z
       }
       if ('playerMotionX' in explosion) {
         bot.entity.velocity.x += explosion.playerMotionX
@@ -354,38 +369,36 @@ function inject (bot, { physicsEnabled, maxCatchupTicks }) {
     // e.g. when crouching/crawling/swimming. Can someone confirm?
     bot.entity.height = 1.8
 
-    // Velocity is reset if the x, y, z flags are not set
     const vel = bot.entity.velocity
-    // If the x, y, z flags are not set, the position is absolute
     const pos = bot.entity.position
-
-    // TODO: this current mineflayer logic maybe incorrect. New (maybe even older) versions of minecraft have flag values for
-    // dx/dy/dz but mineflayer is assuming that 0b111 applies for both velocity and position.
-
     let newYaw, newPitch
 
-    if (bot.registry.version['>=']('1.21.3')) {
-      // flags is now an object with keys
-      // "flags": ["x", "y", "z", "yaw", "pitch", "dx", "dy", "dz", "yawDelta"]
-      const flags = packet.flags
+    // Note: 1.20.5+ uses a bitflags object, older versions use a bitmask number
+    if (typeof packet.flags === 'object') {
+      // Modern path with bitflags object
+      // Velocity is only set to 0 if the flag is not set, otherwise keep current velocity
       vel.set(
-        flags.x ? vel.x : 0,
-        flags.y ? vel.y : 0,
-        flags.z ? vel.z : 0
+        packet.flags.x ? vel.x : 0,
+        packet.flags.y ? vel.y : 0,
+        packet.flags.z ? vel.z : 0
       )
+      // If flag is set, then the corresponding value is relative, else it is absolute
       pos.set(
-        flags.x ? (pos.x + packet.x) : packet.x,
-        flags.y ? (pos.y + packet.y) : packet.y,
-        flags.z ? (pos.z + packet.z) : packet.z
+        packet.flags.x ? (pos.x + packet.x) : packet.x,
+        packet.flags.y ? (pos.y + packet.y) : packet.y,
+        packet.flags.z ? (pos.z + packet.z) : packet.z
       )
-      newYaw = (flags.yaw ? conv.toNotchianYaw(bot.entity.yaw) : 0) + packet.yaw
-      newPitch = (flags.pitch ? conv.toNotchianPitch(bot.entity.pitch) : 0) + packet.pitch
+      newYaw = (packet.flags.yaw ? conv.toNotchianYaw(bot.entity.yaw) : 0) + packet.yaw
+      newPitch = (packet.flags.pitch ? conv.toNotchianPitch(bot.entity.pitch) : 0) + packet.pitch
     } else {
+      // Legacy path with bitmask number
+      // Velocity is only set to 0 if the flag is not set, otherwise keep current velocity
       vel.set(
         packet.flags & 1 ? vel.x : 0,
         packet.flags & 2 ? vel.y : 0,
         packet.flags & 4 ? vel.z : 0
       )
+      // If flag is set, then the corresponding value is relative, else it is absolute
       pos.set(
         packet.flags & 1 ? (pos.x + packet.x) : packet.x,
         packet.flags & 2 ? (pos.y + packet.y) : packet.y,

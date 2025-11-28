@@ -5,7 +5,7 @@ Lightweight Minecraft bot built with mineflayer. Monitors hunger, scans nearby p
 
 ## Features
 - Auto-login to a configured Minecraft server (Microsoft auth supported).
-- Discord webhook notifications for: login, spawn, disconnect, errors, kicked (with proper reason display), death, low/no food, and player enter/leave.
+- Discord webhook notifications for: login, spawn, disconnect, errors, kicked (with readable reason display), death, low/no food, and player enter/leave.
 - Food monitor:
   - Detects common food items in inventory (bread, apple, beef, golden_carrot).
   - Auto-eats when hunger drops below a threshold (bot.food < 18).
@@ -58,7 +58,7 @@ Only messages from the authorized username (`bdiev_` by default) are processed:
 - Eating is handled via `bot.equip()` and `bot.consume()`.
 - Player scanning runs on a 1s interval and tracks enter/leave events with a Set.
 - Interval timers are cleared on spawn and end to avoid multiple active timers.
-- Kick reason is properly displayed: if an object, it's JSON stringified; if a string, shown as-is.
+- Disconnect and kick reasons are properly displayed: chat components are parsed to plain text for readability.
 - During server restarts (detected at 9 AM Kyiv time), reconnection waits 5 minutes instead of 15 seconds to prevent notification spam.
 
 ## Running the Bot (Windows)
