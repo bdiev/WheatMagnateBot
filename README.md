@@ -4,7 +4,7 @@
 Lightweight Minecraft bot built with mineflayer. Monitors hunger, scans nearby players, and sends Discord webhook notifications for important events. Designed to run on Windows with Node.js.
 
 ## Features
-- Auto-login to a configured Minecraft server (Microsoft auth supported).
+- Auto-login to a configured Minecraft server with persistent Microsoft authentication.
 - Discord webhook notifications for: login, spawn, disconnect, errors, kicked (with readable reason display), death, low/no food, and player enter/leave.
 - Food monitor:
   - Detects common food items in inventory (bread, apple, beef, golden_carrot).
@@ -39,13 +39,13 @@ npm install mineflayer axios
 Edit `bot.js`:
 - `config.host` — server hostname (default: `oldfag.org`)
 - `config.username` — bot account username (default: `WheatMagnate`)
-- `config.auth` — authentication method (e.g., `'microsoft'`)
 - `ignoredUsernames` — array of usernames to ignore
 - `reconnectTimeout` — milliseconds before reconnect on disconnect (default: 15000)
 
 Environment variables:
 - `DISCORD_WEBHOOK_URL` — Discord webhook URL (required for notifications)
 - `DISABLE_BOT=true` — prevents the bot from starting.
+- `AUTH_CACHE_DIR` — directory for Microsoft authentication cache (default: `~/.minecraft`). For persistent auth in containers, set to a mounted volume path.
 
 ## In-Game Chat Commands
 Only messages from the authorized username (`bdiev_` by default) are processed:
@@ -77,9 +77,23 @@ Only messages from the authorized username (`bdiev_` by default) are processed:
    set DISCORD_WEBHOOK_URL=your_webhook_url_here && node bot.js
    ```
 
+## Deployment in Containers (e.g., Azure Container Instances)
+To avoid re-authenticating on each redeploy:
+1. Authenticate locally first: Run the bot on your machine to complete Microsoft login and cache the tokens.
+2. In your container deployment, mount a persistent volume (e.g., Azure File Share) to a path like `/app/auth`.
+3. Set environment variable `AUTH_CACHE_DIR=/app/auth`.
+4. Copy the cached auth files from your local `~/.minecraft` to the mounted volume.
+
+Example Docker command:
+```bash
+docker run -e AUTH_CACHE_DIR=/app/auth -v /host/path/to/auth:/app/auth your-bot-image
+```
+
+For Azure Container Instances, use Azure Files for persistent storage.
+
 ## Troubleshooting
 - If Discord webhooks fail, verify `DISCORD_WEBHOOK_URL` and network access.
-- If Microsoft login fails, check cached credentials and follow mineflayer auth docs.
+- If Microsoft login fails, check cached credentials and follow mineflayer auth docs. For containers, ensure `AUTH_CACHE_DIR` is set to a persistent path.
 - Check console logs for runtime errors and webhook messages for critical events.
 
 ## Security & Privacy
