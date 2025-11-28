@@ -1,3 +1,4 @@
+![WheatMagnateBot](WheatMagnateBot.jpg)
 # WheatMagnateBot
 
 Lightweight Minecraft bot built with mineflayer. Monitors hunger, scans nearby players, and sends Discord webhook notifications for important events. Designed to run on Windows with Node.js.
