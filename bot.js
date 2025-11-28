@@ -176,6 +176,30 @@ function createBot() {
         }, minutes * 60 * 1000);
       }
     }
+
+    const allowMatch = message.match(/^!allow\s+(\w+)$/);
+    if (allowMatch) {
+      const targetUsername = allowMatch[1];
+      try {
+        const data = fs.readFileSync('whitelist.txt', 'utf8');
+        const lines = data.split('\n');
+        if (!lines.some(line => line.trim() === targetUsername)) {
+          lines.push(targetUsername);
+          fs.writeFileSync('whitelist.txt', lines.join('\n'));
+          // Reload whitelist
+          const newWhitelist = loadWhitelist();
+          ignoredUsernames.length = 0;
+          ignoredUsernames.push(...newWhitelist);
+          console.log(`[Command] Added ${targetUsername} to whitelist by ${username}`);
+          sendDiscordNotification(`Command: !allow ${targetUsername} by \`${username}\``, 65280);
+        } else {
+          sendDiscordNotification(`${targetUsername} is already in whitelist.`, 16776960);
+        }
+      } catch (err) {
+        console.error('[Command] Allow error:', err.message);
+        sendDiscordNotification(`Failed to add ${targetUsername} to whitelist: \`${err.message}\``, 16711680);
+      }
+    }
   });
 }
 
