@@ -1,9 +1,15 @@
 const mineflayer = require('mineflayer');
 const axios = require('axios');
 const fs = require('fs');
+const { Client, GatewayIntentBits } = require('discord.js');
 
 // Discord webhook
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
+
+// Discord bot
+const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
+const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
+const discordClient = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
 
 const config = {
   host: 'oldfag.org',
@@ -27,6 +33,7 @@ function loadWhitelist() {
 }
 
 const ignoredUsernames = loadWhitelist();
+let temporaryAllowed = new Set();
 
 // Function to convert Minecraft chat component to plain text
 function chatComponentToString(component) {
@@ -246,7 +253,7 @@ function startNearbyPlayerScanner() {
     for (const entity of Object.values(bot.entities)) {
       if (!entity || entity.type !== 'player') continue;
       if (!entity.username || entity.username === bot.username) continue;
-      if (ignoredUsernames.includes(entity.username)) continue;
+      if (ignoredUsernames.includes(entity.username) || temporaryAllowed.has(entity.username)) continue;
       if (!entity.position || !bot.entity.position) continue;
       const distance = bot.entity.position.distanceTo(entity.position);
       if (distance <= 300) currentPlayers.add(entity.username);
@@ -254,8 +261,10 @@ function startNearbyPlayerScanner() {
 
     currentPlayers.forEach(username => {
       if (!inRange.has(username)) {
-        console.log(`[Bot] Player entered: ${username}`);
-        sendDiscordNotification(`Player **${username}** entered range.`, 16776960);
+        console.log(`[Bot] Enemy detected: ${username}`);
+        sendDiscordNotification(`Danger! Enemy **${username}** entered range. Use \`!allow ${username}\` in Discord to allow. Disconnecting and not reconnecting.`, 16711680);
+        shouldReconnect = false;
+        bot.quit(`Enemy detected: ${username}`);
         inRange.add(username);
       }
     });
@@ -268,6 +277,27 @@ function startNearbyPlayerScanner() {
       }
     });
   }, 1000);
+}
+
+if (DISCORD_TOKEN) {
+  discordClient.on('ready', () => {
+    console.log('[Discord] Bot ready.');
+  });
+
+  discordClient.on('messageCreate', (message) => {
+    if (message.channel.id !== DISCORD_CHANNEL_ID || message.author.bot) return;
+    const content = message.content.trim();
+    if (content.startsWith('!allow ')) {
+      const username = content.slice(7).trim();
+      if (username) {
+        temporaryAllowed.add(username);
+        message.reply(`Temporarily allowed **${username}**.`);
+        console.log(`[Discord] Allowed ${username}`);
+      }
+    }
+  });
+
+  discordClient.login(DISCORD_TOKEN);
 }
 
 if (process.env.DISABLE_BOT === 'true') {
