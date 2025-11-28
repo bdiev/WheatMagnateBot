@@ -89,10 +89,22 @@ function createBot() {
     }
 
     if (shouldReconnect) {
-      console.log('[!] Disconnected. Reconnecting in 15 seconds...');
-      sendDiscordNotification(`The bot has been disabled due to the following reason: \`${reason}\`. 
+      const now = new Date();
+      const kyivTime = new Date(now.toLocaleString("en-US", {timeZone: "Europe/Kiev"}));
+      const hour = kyivTime.getHours();
+      const minute = kyivTime.getMinutes();
+      const isRestartTime = hour === 9 && minute >= 0 && minute <= 30; // Предполагаем, что рестарт занимает до 30 минут
+      const timeout = isRestartTime ? 5 * 60 * 1000 : reconnectTimeout; // 5 минут во время рестарта
+
+      if (isRestartTime) {
+        console.log('[!] Disconnected during server restart. Reconnecting in 5 minutes...');
+        sendDiscordNotification(`The bot has been disabled due to server restart. Waiting 5 minutes before attempting reconnection.`, 16776960); // Orange color
+      } else {
+        console.log('[!] Disconnected. Reconnecting in 15 seconds...');
+        sendDiscordNotification(`The bot has been disabled due to the following reason: \`${reason}\`.
 Trying to reconnect in 15 seconds.`, 16776960); // Orange color
-      setTimeout(createBot, reconnectTimeout);
+      }
+      setTimeout(createBot, timeout);
     } else {
       console.log('[!] Disconnected manually. Reconnect paused.');
       sendDiscordNotification(`The bot was disabled manually/by command due to the following reason: \`${reason}\`. Reconnection paused.`, 16711680); // Red color
