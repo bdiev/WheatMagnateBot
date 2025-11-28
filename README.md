@@ -4,7 +4,7 @@ Lightweight Minecraft bot built with mineflayer. Monitors hunger, scans nearby p
 
 ## Features
 - Auto-login to a configured Minecraft server (Microsoft auth supported).
-- Discord webhook notifications for: login, spawn, disconnect, errors, kicked, death, low/no food, and player enter/leave.
+- Discord webhook notifications for: login, spawn, disconnect, errors, kicked (with proper reason display), death, low/no food, and player enter/leave.
 - Food monitor:
   - Detects common food items in inventory (bread, apple, beef, golden_carrot).
   - Auto-eats when hunger drops below a threshold (bot.food < 18).
@@ -15,6 +15,7 @@ Lightweight Minecraft bot built with mineflayer. Monitors hunger, scans nearby p
   - Supports an `ignoredUsernames` list.
 - Graceful reconnect and pause controls:
   - Automatic reconnect on disconnect unless paused.
+  - Smart handling during server restarts: detects daily restart at 9 AM Kyiv time and waits 5 minutes before reconnecting to avoid notification spam.
   - In-game chat commands (authorized user) for restart and pause.
 - Safe interval management: clears monitoring intervals on spawn and on disconnect to prevent duplicates.
 - Environment switch to disable startup (DISABLE_BOT=true).
@@ -38,11 +39,11 @@ Edit `bot.js`:
 - `config.host` — server hostname (default: `oldfag.org`)
 - `config.username` — bot account username (default: `WheatMagnate`)
 - `config.auth` — authentication method (e.g., `'microsoft'`)
-- `DISCORD_WEBHOOK_URL` — Discord webhook URL (set in file or as an environment variable)
 - `ignoredUsernames` — array of usernames to ignore
-- `reconnectTimeout` — milliseconds before reconnect on disconnect
+- `reconnectTimeout` — milliseconds before reconnect on disconnect (default: 15000)
 
 Environment variables:
+- `DISCORD_WEBHOOK_URL` — Discord webhook URL (required for notifications)
 - `DISABLE_BOT=true` — prevents the bot from starting.
 
 ## In-Game Chat Commands
@@ -56,6 +57,8 @@ Only messages from the authorized username (`bdiev_` by default) are processed:
 - Eating is handled via `bot.equip()` and `bot.consume()`.
 - Player scanning runs on a 1s interval and tracks enter/leave events with a Set.
 - Interval timers are cleared on spawn and end to avoid multiple active timers.
+- Kick reason is properly displayed: if an object, it's JSON stringified; if a string, shown as-is.
+- During server restarts (detected at 9 AM Kyiv time), reconnection waits 5 minutes instead of 15 seconds to prevent notification spam.
 
 ## Running the Bot (Windows)
 1. Install Node.js and dependencies:
@@ -63,9 +66,14 @@ Only messages from the authorized username (`bdiev_` by default) are processed:
    npm install
    npm install mineflayer axios
    ```
-2. Start the bot:
+2. Set the Discord webhook URL environment variable and start the bot:
    ```powershell
+   set DISCORD_WEBHOOK_URL=your_webhook_url_here
    node bot.js
+   ```
+   Or in one command:
+   ```powershell
+   set DISCORD_WEBHOOK_URL=your_webhook_url_here && node bot.js
    ```
 
 ## Troubleshooting
@@ -74,7 +82,7 @@ Only messages from the authorized username (`bdiev_` by default) are processed:
 - Check console logs for runtime errors and webhook messages for critical events.
 
 ## Security & Privacy
-- Keep the Discord webhook URL private. Consider moving it to an environment variable.
+- The Discord webhook URL is set via environment variable to prevent exposure in source code.
 - Do not commit account credentials to source control.
 
 ## License
