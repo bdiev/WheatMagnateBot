@@ -1,5 +1,6 @@
 const mineflayer = require('mineflayer');
 const axios = require('axios'); // Importing axios
+const fs = require('fs');
 
 // --- Discord Configuration ---
 // Use environment variable for webhook URL. Set DISCORD_WEBHOOK_URL in your environment.
@@ -12,9 +13,18 @@ const config = {
   auth: 'microsoft',
 };
 
-const ignoredUsernames = [
-  
-];
+function loadWhitelist() {
+  try {
+    const data = fs.readFileSync('whitelist.txt', 'utf8');
+    const lines = data.split('\n').map(line => line.trim()).filter(line => line && !line.startsWith('#'));
+    return lines;
+  } catch (err) {
+    console.log('Error loading whitelist:', err.message);
+    return [];
+  }
+}
+
+const ignoredUsernames = loadWhitelist();
 
 let bot;
 const reconnectTimeout = 15000;
