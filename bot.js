@@ -1,5 +1,5 @@
 const mineflayer = require('mineflayer');
-const axios = require('axios'); // Подключаем axios
+const axios = require('axios'); // Importing axios
 
 // --- Discord Configuration ---
 // Use environment variable for webhook URL. Set DISCORD_WEBHOOK_URL in your environment.
@@ -20,7 +20,7 @@ let bot;
 const reconnectTimeout = 15000;
 let shouldReconnect = true;
 
-// Добавлено: хранение ID интервалов, чтобы можно было их очищать
+// Added: storing interval IDs so they can be cleared
 let foodMonitorInterval = null;
 let playerScannerInterval = null;
 
@@ -46,7 +46,7 @@ async function sendDiscordNotification(message, color = 3447003) {
 }
 
 function createBot() {
-  // Перед созданием нового бота удаляем обработчики старого (если остался)
+  // Before creating a new bot, remove the old bot's listeners (if any remain)
   if (bot) {
     try {
       bot.removeAllListeners();
@@ -63,8 +63,8 @@ function createBot() {
   bot.on('spawn', () => {
     console.log('[Bot] Spawned and ready to work.');
 
-    // Очистка предыдущих интервалов (если они остались от прошлых подключений)
-    if (foodMonitorInterval) {
+    // Clearing previous intervals (if any remained from previous connections)
+        if (foodMonitorInterval) {
       clearInterval(foodMonitorInterval);
       foodMonitorInterval = null;
     }
@@ -78,8 +78,8 @@ function createBot() {
   });
 
   bot.on('end', (reason) => {
-    // Очистка интервалов при дисконнекте
-    if (foodMonitorInterval) {
+    // Clearing intervals on disconnect
+        if (foodMonitorInterval) {
       clearInterval(foodMonitorInterval);
       foodMonitorInterval = null;
     }
@@ -93,8 +93,8 @@ function createBot() {
       const kyivTime = new Date(now.toLocaleString("en-US", {timeZone: "Europe/Kiev"}));
       const hour = kyivTime.getHours();
       const minute = kyivTime.getMinutes();
-      const isRestartTime = hour === 9 && minute >= 0 && minute <= 30; // Предполагаем, что рестарт занимает до 30 минут
-      const timeout = isRestartTime ? 5 * 60 * 1000 : reconnectTimeout; // 5 минут во время рестарта
+      const isRestartTime = hour === 9 && minute >= 0 && minute <= 30; // Assuming restart takes up to 30 minutes
+      const timeout = isRestartTime ? 5 * 60 * 1000 : reconnectTimeout; // 5 minutes during restart
 
       if (isRestartTime) {
         console.log('[!] Disconnected during server restart. Reconnecting in 5 minutes...');
@@ -173,8 +173,8 @@ Trying to reconnect in 15 seconds.`, 16776960); // Orange color
 function startFoodMonitor() {
   let warningSent = false;
 
-  // Сохраняем ID интервала в переменной, чтобы можно было его очистить
-  foodMonitorInterval = setInterval(async () => {
+  // Storing the interval ID in a variable so it can be cleared
+    foodMonitorInterval = setInterval(async () => {
     if (!bot || bot.food === undefined) return;
 
     const hasFood = bot.inventory.items().some(item =>
