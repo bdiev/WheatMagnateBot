@@ -2,8 +2,8 @@ const mineflayer = require('mineflayer');
 const axios = require('axios'); // Подключаем axios
 
 // --- Discord Configuration ---
-// Use environment variable if provided; otherwise leave empty to disable notifications.
-const DISCORD_WEBHOOK_URL = 'https://discord.com/api/webhooks/1441970745306517596/kXr40bb0hUDC6GO56HbFZvi2mz2ZUeWv2zghnp2KTyvWalxlWKSbfvtd0CrRFhmELuBu';
+// Use environment variable for webhook URL. Set DISCORD_WEBHOOK_URL in your environment.
+const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 // -----------------------------
 
 const config = {
