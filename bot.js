@@ -185,7 +185,7 @@ async function sendWhisperToDiscord(username, message) {
     if (channel && channel.isTextBased()) {
       const now = new Date();
       const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-      const newEntry = `[${timeStr}] 💬 ${username}: ${message}`;
+      const newEntry = `[${timeStr}] ⬅️ ${username}: ${message}`;
 
       if (whisperConversations.has(username)) {
         // Update existing conversation
@@ -779,6 +779,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             timestamp: new Date()
           }]
         });
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 1000);
       }
     } else if (interaction.isModalSubmit() && interaction.customId.startsWith('reply_modal_')) {
       await interaction.deferReply({ ephemeral: true });
@@ -800,7 +801,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         // Update the conversation message
         const now = new Date();
         const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-        const replyEntry = `[${timeStr}] ${bot.username}: ${replyMessage}`;
+        const replyEntry = `[${timeStr}] ➡️ ${bot.username}: ${replyMessage}`;
 
         if (whisperConversations.has(username)) {
           // Update existing conversation
@@ -876,6 +877,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             timestamp: new Date()
           }]
         });
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 1000);
       } else {
         await interaction.editReply({
           embeds: [{
