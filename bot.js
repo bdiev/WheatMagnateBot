@@ -10,24 +10,14 @@ const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
 
-// Minecraft credentials
-const MINECRAFT_USERNAME = process.env.MINECRAFT_USERNAME;
-const MINECRAFT_PASSWORD = process.env.MINECRAFT_PASSWORD;
-const MINECRAFT_SESSION = process.env.MINECRAFT_SESSION;
+// Minecraft credentials (not used for offline auth)
 
 const config = {
   host: 'oldfag.org',
-  username: MINECRAFT_USERNAME || 'WheatMagnate',
+  username: 'WheatMagnate',
   auth: 'microsoft',
   version: '1.21.4'
 };
-
-if (MINECRAFT_SESSION) {
-  config.session = JSON.parse(MINECRAFT_SESSION);
-} else {
-  config.password = MINECRAFT_PASSWORD;
-  config.sessionDirectory = process.env.MINECRAFT_SESSION_DIR || (process.env.NODE_ENV === 'production' ? '/app/.minecraft' : './.minecraft');
-}
 
 function loadWhitelist() {
   try {
@@ -154,23 +144,11 @@ function createBot() {
 
   bot.on('login', () => {
     console.log(`[+] Logged in as ${bot.username}`);
-    setTimeout(() => {
-      if (bot.client && bot.client.session) {
-        console.log('Session JSON for Railway:', JSON.stringify(bot.client.session));
-      } else if (bot._client && bot._client.session) {
-        console.log('Session JSON for Railway:', JSON.stringify(bot._client.session));
-      } else {
-        console.log('Session not found, check bot.client:', !!bot.client);
-      }
-    }, 1000);
     sendDiscordNotification(`Bot **${bot.username}** logged into \`${config.host}\`.`, 65280);
   });
 
   bot.on('spawn', () => {
     console.log('[Bot] Spawned.');
-    if (bot.client && bot.client.session) {
-      console.log('Session JSON for Railway:', JSON.stringify(bot.client.session));
-    }
     clearIntervals();
     startFoodMonitor();
     startNearbyPlayerScanner();
