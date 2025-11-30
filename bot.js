@@ -1,6 +1,7 @@
 const mineflayer = require('mineflayer');
 const fs = require('fs');
 const { Client, GatewayIntentBits } = require('discord.js');
+const tpsPlugin = require('mineflayer-tps');
 
 // Discord bot
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -136,9 +137,11 @@ async function updateStatusMessage() {
   const playerCount = Object.keys(bot.players || {}).length;
   const onlinePlayers = Object.values(bot.players || {}).map(p => p.username);
   const whitelistOnline = onlinePlayers.filter(username => ignoredUsernames.includes(username));
+  const tps = bot.getTps ? bot.getTps() : 'N/A';
 
   const description = `✅ Bot **${bot.username}** connected to \`${config.host}\`\n` +
     `👥 Players online: ${playerCount}\n` +
+    `⚡ TPS: ${tps}\n` +
     `📋 Whitelist online: ${whitelistOnline.length > 0 ? whitelistOnline.join(', ') : 'None'}`;
 
   try {
@@ -162,6 +165,7 @@ function createBot() {
   }
 
   bot = mineflayer.createBot(config);
+  bot.loadPlugin(tpsPlugin);
 
   bot.on('login', async () => {
     console.log(`[+] Logged in as ${bot.username}`);
@@ -183,7 +187,7 @@ function createBot() {
             statusMessage = await channel.send({
               embeds: [{
                 title: 'Server Status',
-                description: `✅ Bot **${bot.username}** connected to \`${config.host}\`\n👥 Players online: 0\n📋 Whitelist online: None`,
+                description: `✅ Bot **${bot.username}** connected to \`${config.host}\`\n👥 Players online: 0\n⚡ TPS: N/A\n📋 Whitelist online: None`,
                 color: 65280,
                 timestamp: new Date()
               }]
