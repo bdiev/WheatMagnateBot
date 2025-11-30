@@ -1,7 +1,6 @@
 const mineflayer = require('mineflayer');
 const fs = require('fs');
 const { Client, GatewayIntentBits } = require('discord.js');
-const util = require('minecraft-server-util');
 
 // Discord bot
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -23,7 +22,8 @@ let lastCommandUser = null;
 let pendingStatusMessage = null;
 let statusMessage = null;
 let statusUpdateInterval = null;
-let serverTps = null;
+let tpsHistory = [];
+let lastTime = 0;
 let mineflayerStarted = false;
 
 const config = {
@@ -116,7 +116,6 @@ let shouldReconnect = true;
 // Added: storing interval IDs so they can be cleared
 let foodMonitorInterval = null;
 let playerScannerInterval = null;
-let tpsMonitorInterval = null;
 
 
 // Helper function to send messages to Discord
@@ -150,7 +149,7 @@ function getStatusDescription() {
   const onlinePlayers = Object.values(bot.players || {}).map(p => p.username);
   const whitelistOnline = onlinePlayers.filter(username => ignoredUsernames.includes(username));
   const nearbyPlayers = getNearbyPlayers();
-  const avgTps = serverTps !== null ? serverTps.toFixed(1) : 'Calculating...';
+  const avgTps = tpsHistory.length > 0 ? (tpsHistory.reduce((a, b) => a + b, 0) / tpsHistory.length).toFixed(1) : 'Calculating...';
 
   const nearbyNames = nearbyPlayers.map(p => p.username).join(', ') || 'None';
   return `✅ Bot **${bot.username}** connected to \`${config.host}\`\n` +
@@ -208,7 +207,6 @@ function createBot() {
     clearIntervals();
     startFoodMonitor();
     startNearbyPlayerScanner();
-    startTpsMonitor();
 
     // Send initial status message after spawn
     if (!statusMessage && DISCORD_CHANNEL_ID && discordClient && discordClient.isReady()) {
@@ -232,6 +230,19 @@ function createBot() {
         }
       }, 2000); // Additional 2 seconds after spawn
     }
+  });
+  bot.on('time', (oldTime, newTime) => {
+    const now = Date.now();
+    if (lastTime > 0) {
+      const deltaTime = now - lastTime;
+      const deltaWorld = newTime - oldTime;
+      if (deltaTime > 0 && deltaWorld > 0) {
+        const tps = (deltaWorld / deltaTime) * 1000;
+        tpsHistory.push(tps);
+        if (tpsHistory.length > 20) tpsHistory.shift(); // Keep last 20
+      }
+    }
+    lastTime = now;
   });
 
 
@@ -392,10 +403,6 @@ function clearIntervals() {
     clearInterval(playerScannerInterval);
     playerScannerInterval = null;
   }
-  if (tpsMonitorInterval) {
-    clearInterval(tpsMonitorInterval);
-    tpsMonitorInterval = null;
-  }
 }
 
 // -------------- FOOD MONITOR --------------
@@ -475,17 +482,6 @@ function startNearbyPlayerScanner() {
   }, 1000);
 }
 
-// -------------- TPS MONITOR --------------
-function startTpsMonitor() {
-  tpsMonitorInterval = setInterval(async () => {
-    try {
-      const status = await util.status('oldfag.org', 25565);
-      serverTps = status.tps || null;
-    } catch (e) {
-      console.log('[Bot] Failed to get server TPS:', e.message);
-    }
-  }, 30000); // Update every 30 seconds
-}
 
 if (process.env.DISABLE_BOT === 'true') {
   console.log('Bot disabled by env.');
