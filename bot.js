@@ -268,6 +268,8 @@ function getStatusDescription() {
     `👥 Players online: ${playerCount}\n` +
     `👀 Players nearby: ${nearbyNames}\n` +
     `⚡ TPS: ${avgTps}\n` +
+    `🍎 Food: ${bot.food}/20\n` +
+    `❤️ Health: ${bot.health}/20\n` +
     `📋 Whitelist online: ${whitelistOnline.length > 0 ? whitelistOnline.join(', ') : 'None'}`;
 }
 
