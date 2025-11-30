@@ -30,7 +30,6 @@ Lightweight Minecraft bot built with mineflayer. Monitors hunger, scans nearby p
 
 ## Dependencies
 - mineflayer
-- axios
 - discord.js
 - minecraft-server-util
 - prismarine-auth
