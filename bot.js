@@ -1,6 +1,6 @@
 const mineflayer = require('mineflayer');
 const fs = require('fs');
-const { Client, GatewayIntentBits } = require('discord.js');
+const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
 // Discord bot
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -220,6 +220,21 @@ function getStatusDescription() {
     `📋 Whitelist online: ${whitelistOnline.length > 0 ? whitelistOnline.join(', ') : 'None'}`;
 }
 
+// Function to create status buttons
+function createStatusButtons() {
+  return new ActionRowBuilder()
+    .addComponents(
+      new ButtonBuilder()
+        .setCustomId('pause_button')
+        .setLabel('⏸️ Pause')
+        .setStyle(ButtonStyle.Danger),
+      new ButtonBuilder()
+        .setCustomId('resume_button')
+        .setLabel('▶️ Resume')
+        .setStyle(ButtonStyle.Success)
+    );
+}
+
 // Function to update server status message
 async function updateStatusMessage() {
   if (!statusMessage || !bot || !bot.entity) return;
@@ -233,7 +248,8 @@ async function updateStatusMessage() {
         description,
         color: 65280,
         timestamp: new Date()
-      }]
+      }],
+      components: [createStatusButtons()]
     });
   } catch (e) {
     console.error('[Discord] Failed to update status:', e.message);
@@ -289,7 +305,8 @@ function createBot() {
                   description: getStatusDescription(),
                   color: 65280,
                   timestamp: new Date()
-                }]
+                }],
+                components: [createStatusButtons()]
               });
             }
           } catch (e) {
@@ -575,6 +592,29 @@ process.on('unhandledRejection', (reason) => {
 
 // Discord bot commands
 if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
+  discordClient.on('interactionCreate', async (interaction) => {
+    if (!interaction.isButton()) return;
+    if (interaction.channel.id !== DISCORD_CHANNEL_ID) return;
+
+    if (interaction.customId === 'pause_button') {
+      console.log(`[Button] pause by ${interaction.user.tag}`);
+      lastCommandUser = interaction.user.tag;
+      shouldReconnect = false;
+      bot.quit('Pause until resume');
+      await interaction.reply({ content: '⏸️ Bot paused until resume.', ephemeral: true });
+    } else if (interaction.customId === 'resume_button') {
+      if (shouldReconnect) {
+        await interaction.reply({ content: 'Bot is already active or resuming.', ephemeral: true });
+        return;
+      }
+      console.log(`[Button] resume by ${interaction.user.tag}`);
+      lastCommandUser = interaction.user.tag;
+      shouldReconnect = true;
+      createBot();
+      await interaction.reply({ content: '▶️ Bot resumed.', ephemeral: true });
+    }
+  });
+
   discordClient.on('messageCreate', async message => {
     if (message.author.bot) return;
     if (message.channel.id !== DISCORD_CHANNEL_ID) return;
