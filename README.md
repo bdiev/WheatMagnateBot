@@ -1,12 +1,14 @@
 ![WheatMagnateBot](WheatMagnateBot.jpg)
 # WheatMagnateBot v1.0.0
 
-Lightweight Minecraft bot built with mineflayer. Monitors hunger, scans nearby players, and sends Discord webhook notifications for important events. Designed to run on Windows with Node.js.
+Lightweight Minecraft bot built with mineflayer. Monitors hunger, scans nearby players, sends Discord notifications for events, and provides server status updates. Runs on Windows, Linux, or cloud platforms like Railway.app with Node.js.
 
 ## Features
 - Auto-login to a configured Minecraft server with persistent Microsoft authentication.
 - Discord bot notifications for: login, spawn, disconnect, errors, kicked (with readable reason display), death, low/no food, and enemy detection.
-- Discord bot integration for remote control and status checks.
+- Discord bot integration for remote control, status checks, and server monitoring.
+- Server status messages: sends real-time status updates with player count, nearby players, TPS, and whitelist online players when bot connects and periodically.
+- Microsoft authentication link forwarding: automatically detects Microsoft login links from bot logs and sends them to Discord channel. Manual `!link` command available as fallback.
 - Food monitor:
   - Detects common food items in inventory (bread, apple, beef, golden_carrot).
   - Auto-eats when hunger drops below a threshold (bot.food < 18).
@@ -46,9 +48,11 @@ Edit `bot.js`:
 - `ignoredUsernames` — array of usernames to ignore
 - `reconnectTimeout` — milliseconds before reconnect on disconnect (default: 15000)
 
-Environment variables:
+Environment variables (see `.env.example` for template):
 - `DISCORD_BOT_TOKEN` — Discord bot token (required for Discord commands and notifications)
 - `DISCORD_CHANNEL_ID` — Discord channel ID for bot commands and notifications
+- `MINECRAFT_USERNAME` — Minecraft username (optional, default: `WheatMagnate`)
+- `MINECRAFT_SESSION` — cached Minecraft session for persistent auth (optional)
 - `DISABLE_BOT=true` — prevents the bot from starting.
 - `AUTH_CACHE_DIR` — directory for Microsoft authentication cache (default: `~/.minecraft`). For persistent auth in containers, set to a mounted volume path.
 
@@ -61,6 +65,7 @@ Commands are available in-game (authorized username `bdiev_` by default) and via
 - `!pause <minutes>` — pause for a custom number of minutes.
 - `!resume` — resume bot after pause (Discord only).
 - `!allow <username>` — adds the username to the whitelist to prevent enemy detection.
+- `!link <url>` — manually send Microsoft authentication link to the Discord channel.
 
 ## Behavior Notes
 - Food detection uses substring matching in item names.
@@ -71,17 +76,28 @@ Commands are available in-game (authorized username `bdiev_` by default) and via
 - During server restarts (detected at 9 AM Kyiv time), reconnection waits 5 minutes instead of 15 seconds to prevent notification spam.
 - Discord bot responds to commands in the configured channel and sends notifications there.
 
-## Running the Bot (Windows)
+## Running the Bot
+### Local (Windows/Linux)
 1. Install Node.js and dependencies:
-   ```powershell
+   ```bash
    npm install
    ```
 2. Set environment variables and start the bot:
-   ```powershell
-   set DISCORD_BOT_TOKEN=your_bot_token_here
-   set DISCORD_CHANNEL_ID=your_channel_id_here
+   ```bash
+   export DISCORD_BOT_TOKEN=your_bot_token_here
+   export DISCORD_CHANNEL_ID=your_channel_id_here
    node bot.js
    ```
+
+### Railway.app Deployment
+1. Push code to GitHub repository.
+2. Connect repository to Railway.app.
+3. Set environment variables in Railway dashboard:
+   - `DISCORD_BOT_TOKEN`
+   - `DISCORD_CHANNEL_ID`
+   - `MINECRAFT_USERNAME` (optional)
+   - `MINECRAFT_SESSION` (optional)
+4. Deploy. For Microsoft auth links, use `!link <url>` command in Discord if automatic detection fails.
 
 ## Deployment in Containers (e.g., Azure Container Instances)
 To avoid re-authenticating on each redeploy:
@@ -100,6 +116,7 @@ For Azure Container Instances, use Azure Files for persistent storage.
 ## Troubleshooting
 - If Discord bot fails to connect, verify `DISCORD_BOT_TOKEN` and `DISCORD_CHANNEL_ID`.
 - If Microsoft login fails, check cached credentials and follow mineflayer auth docs. For containers, ensure `AUTH_CACHE_DIR` is set to a persistent path.
+- Microsoft auth links may not auto-detect in Railway.app due to logging differences; use `!link <url>` command manually.
 - Check console logs for runtime errors and Discord messages for critical events.
 
 ## Security & Privacy

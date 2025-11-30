@@ -10,7 +10,13 @@ const originalError = console.error;
 const originalWarn = console.warn;
 
 console.log = function(...args) {
-  const message = args.join(' ');
+  let message = '';
+  if (args.length === 1 && typeof args[0] === 'object' && args[0] !== null && args[0].message) {
+    // Handle structured logs (e.g., Railway JSON format)
+    message = args[0].message;
+  } else {
+    message = args.join(' ');
+  }
   checkForMicrosoftLink(message);
   originalLog.apply(console, args);
 };
@@ -47,8 +53,14 @@ function sendPendingLink() {
       console.log('[DISCORD] Channel fetched:', channel?.id);
       if (channel && channel.isTextBased()) {
         console.log('[DISCORD] Sending link to channel');
-        channel.send(`🔗 Microsoft Login Link: ${pendingLoginLink}`);
-        pendingLoginLink = null;
+        channel.send(`🔗 Microsoft Login Link: ${pendingLoginLink}`)
+          .then(() => {
+            console.log('[DISCORD] Link sent successfully');
+            pendingLoginLink = null;
+          })
+          .catch(err => {
+            console.error('[DISCORD] Failed to send link:', err.message);
+          });
       } else {
         console.log('[DISCORD] Channel not text-based or not found');
       }
