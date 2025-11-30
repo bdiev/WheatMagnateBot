@@ -543,15 +543,9 @@ function startNearbyPlayerScanner() {
 
         // Enemy detected!
         console.log(`[Bot] Enemy detected: ${entity.username}`);
-        sendDiscordNotification(`🚨 **ENEMY DETECTED**: **${entity.username}** entered range! Disconnecting for 10 minutes.`, 16711680);
+        sendDiscordNotification(`🚨 **ENEMY DETECTED**: **${entity.username}** entered range! Bot paused until resume command.`, 16711680);
         shouldReconnect = false;
         bot.quit(`Enemy detected: ${entity.username}`);
-        setTimeout(() => {
-          console.log('[Bot] Enemy threat timeout ended. Resuming.');
-          sendDiscordNotification('Enemy threat timeout ended. Resuming bot.', 65280);
-          shouldReconnect = true;
-          createBot();
-        }, 10 * 60 * 1000); // 10 minutes
         return; // Stop scanning after disconnect
       }
     }
