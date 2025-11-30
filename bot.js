@@ -627,13 +627,14 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         await interaction.showModal(modal);
       }
     } else if (interaction.isModalSubmit() && interaction.customId === 'say_modal') {
+      await interaction.deferReply({ ephemeral: true });
       const message = interaction.fields.getTextInputValue('message_input');
       if (message && bot) {
         bot.chat(message);
         console.log(`[Modal] Say "${message}" by ${interaction.user.tag}`);
-        await interaction.reply({ content: `Sent to Minecraft: "${message}"`, ephemeral: true });
+        await interaction.editReply(`Sent to Minecraft: "${message}"`);
       } else {
-        await interaction.reply({ content: 'Bot is offline or message is empty.', ephemeral: true });
+        await interaction.editReply('Bot is offline or message is empty.');
       }
     }
   });
