@@ -1,6 +1,6 @@
 const mineflayer = require('mineflayer');
 const fs = require('fs');
-const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
+const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } = require('discord.js');
 
 // Discord bot
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -268,8 +268,8 @@ function getStatusDescription() {
     `👥 Players online: ${playerCount}\n` +
     `👀 Players nearby: ${nearbyNames}\n` +
     `⚡ TPS: ${avgTps}\n` +
-    `🍎 Food: ${bot.food}/20\n` +
-    `❤️ Health: ${bot.health}/20\n` +
+    `🍎 Food: ${Math.round(bot.food * 2) / 2}/20\n` +
+    `❤️ Health: ${Math.round(bot.health * 2) / 2}/20\n` +
     `📋 Whitelist online: ${whitelistOnline.length > 0 ? whitelistOnline.join(', ') : 'None'}`;
 }
 
@@ -292,6 +292,10 @@ function createStatusButtons() {
       new ButtonBuilder()
         .setCustomId('playerlist_button')
         .setLabel('👥 Players')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId('drop_button')
+        .setLabel('🗑️ Drop')
         .setStyle(ButtonStyle.Secondary)
     );
 }
@@ -723,6 +727,50 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             timestamp: new Date()
           }]
         });
+      } else if (interaction.customId === 'drop_button') {
+        await interaction.deferReply();
+        if (!bot) {
+          await interaction.editReply({
+            embeds: [{
+              description: 'Bot is offline.',
+              color: 16711680,
+              timestamp: new Date()
+            }]
+          });
+          return;
+        }
+        const inventory = bot.inventory.items();
+        if (inventory.length === 0) {
+          await interaction.editReply({
+            embeds: [{
+              description: 'Inventory is empty.',
+              color: 3447003,
+              timestamp: new Date()
+            }]
+          });
+          return;
+        }
+        const options = inventory.map(item => {
+          const name = item.displayName || item.name;
+          const count = item.count;
+          return new StringSelectMenuOptionBuilder()
+            .setLabel(`${name} x${count}`)
+            .setValue(`${item.slot}_${item.type}_${item.metadata || 0}`);
+        });
+        const selectMenu = new StringSelectMenuBuilder()
+          .setCustomId('drop_select')
+          .setPlaceholder('Select item to drop')
+          .addOptions(options.slice(0, 25)); // Discord limit 25 options
+        const row = new ActionRowBuilder().addComponents(selectMenu);
+        await interaction.editReply({
+          embeds: [{
+            title: 'Drop Item',
+            description: 'Select an item from inventory to drop.',
+            color: 3447003,
+            timestamp: new Date()
+          }],
+          components: [row]
+        });
       } else if (interaction.customId.startsWith('reply_')) {
         const parts = interaction.customId.split('_');
         const encodedUsername = parts[1];
@@ -882,6 +930,46 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         }
       }
       setTimeout(() => interaction.deleteReply().catch(() => {}), 100);
+    } else if (interaction.isStringSelectMenu() && interaction.customId === 'drop_select') {
+      await interaction.deferUpdate();
+      const selectedValue = interaction.values[0];
+      const [slot, type, metadata] = selectedValue.split('_').map((v, i) => i === 2 ? parseInt(v) : v);
+      const inventory = bot.inventory.items();
+      const item = inventory.find(i => i.slot == slot && i.type == type && (i.metadata || 0) == metadata);
+      if (!item) {
+        await interaction.editReply({
+          embeds: [{
+            description: 'Item not found.',
+            color: 16711680,
+            timestamp: new Date()
+          }],
+          components: []
+        });
+        return;
+      }
+      try {
+        await bot.toss(item.type, item.metadata || null, item.count);
+        console.log(`[Drop] Dropped ${item.count} x ${item.displayName || item.name} by ${interaction.user.tag}`);
+        await interaction.editReply({
+          embeds: [{
+            title: 'Item Dropped',
+            description: `Dropped ${item.count} x ${item.displayName || item.name}`,
+            color: 65280,
+            timestamp: new Date()
+          }],
+          components: []
+        });
+      } catch (err) {
+        console.error('[Drop] Error:', err.message);
+        await interaction.editReply({
+          embeds: [{
+            description: `Failed to drop item: ${err.message}`,
+            color: 16711680,
+            timestamp: new Date()
+          }],
+          components: []
+        });
+      }
     }
   });
 
