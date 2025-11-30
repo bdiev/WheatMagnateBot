@@ -682,6 +682,33 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             timestamp: new Date()
           }]
         });
+      } else if (interaction.customId.startsWith('reply_')) {
+        const parts = interaction.customId.split('_');
+        const username = parts[1];
+        const modal = new ModalBuilder()
+          .setCustomId(`reply_modal_${username}`)
+          .setTitle(`Reply to ${username}`);
+
+        const messageInput = new TextInputBuilder()
+          .setCustomId('reply_message')
+          .setLabel('Message')
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true);
+
+        const actionRow = new ActionRowBuilder().addComponents(messageInput);
+        modal.addComponents(actionRow);
+
+        await interaction.showModal(modal);
+      } else if (interaction.customId.startsWith('remove_')) {
+        const messageId = interaction.customId.split('_')[1];
+        try {
+          const message = await interaction.channel.messages.fetch(messageId);
+          await message.delete();
+          await interaction.deferUpdate();
+        } catch (e) {
+          console.error('[Discord] Failed to delete message:', e.message);
+          await interaction.reply({ content: 'Failed to delete message.', ephemeral: true });
+        }
       }
     } else if (interaction.isModalSubmit() && interaction.customId === 'say_modal') {
       await interaction.deferReply();
@@ -705,33 +732,6 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             timestamp: new Date()
           }]
         });
-      }
-    } else if (interaction.customId.startsWith('reply_')) {
-      const parts = interaction.customId.split('_');
-      const username = parts[1];
-      const modal = new ModalBuilder()
-        .setCustomId(`reply_modal_${username}`)
-        .setTitle(`Reply to ${username}`);
-
-      const messageInput = new TextInputBuilder()
-        .setCustomId('reply_message')
-        .setLabel('Message')
-        .setStyle(TextInputStyle.Paragraph)
-        .setRequired(true);
-
-      const actionRow = new ActionRowBuilder().addComponents(messageInput);
-      modal.addComponents(actionRow);
-
-      await interaction.showModal(modal);
-    } else if (interaction.customId.startsWith('remove_')) {
-      const messageId = interaction.customId.split('_')[1];
-      try {
-        const message = await interaction.channel.messages.fetch(messageId);
-        await message.delete();
-        await interaction.deferUpdate();
-      } catch (e) {
-        console.error('[Discord] Failed to delete message:', e.message);
-        await interaction.reply({ content: 'Failed to delete message.', ephemeral: true });
       }
     } else if (interaction.isModalSubmit() && interaction.customId.startsWith('reply_modal_')) {
       const username = interaction.customId.split('_')[2];
