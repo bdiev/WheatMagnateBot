@@ -51,6 +51,7 @@ let statusMessage = null;
 let statusUpdateInterval = null;
 let tpsHistory = [];
 let lastTime = 0;
+let mineflayerStarted = false;
 
 const config = {
   host: 'oldfag.org',
@@ -87,7 +88,15 @@ if (DISCORD_BOT_TOKEN) {
   discordClient.on('clientReady', () => {
     console.log(`[Discord] Bot logged in as ${discordClient.user.tag}`);
     sendPendingLink();
+    if (!mineflayerStarted) {
+      mineflayerStarted = true;
+      createBot();
+    }
   });
+} else {
+  // No Discord, start Mineflayer directly
+  mineflayerStarted = true;
+  createBot();
 }
 
 
@@ -628,5 +637,3 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
     }
   });
 }
-
-createBot();
