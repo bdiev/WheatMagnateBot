@@ -622,8 +622,13 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       if (nearby.length === 0) {
         await message.reply('No one nearby.');
       } else {
-        const list = nearby.map(p => `${p.username} (${p.distance} blocks)`).join('\n');
-        await message.reply(`Nearby players:\n${list}`);
+        const embed = {
+          title: '👀 Nearby Players',
+          description: nearby.map(p => `👤 **${p.username}** - ${p.distance} blocks`).join('\n'),
+          color: 3447003,
+          timestamp: new Date()
+        };
+        await message.reply({ embeds: [embed] });
       }
     }
 
