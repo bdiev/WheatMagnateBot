@@ -3,11 +3,49 @@ const fs = require('fs');
 const { Client, GatewayIntentBits } = require('discord.js');
 const tpsPlugin = require('mineflayer-tps');
 
-// Override console.log to catch Microsoft login links
+// Override console methods and stdout to catch Microsoft login links
 let pendingLoginLink = null;
 const originalLog = console.log;
+const originalError = console.error;
+const originalWarn = console.warn;
+
 console.log = function(...args) {
   const message = args.join(' ');
+  checkForMicrosoftLink(message);
+  originalLog.apply(console, args);
+};
+
+console.error = function(...args) {
+  const message = args.join(' ');
+  checkForMicrosoftLink(message);
+  originalError.apply(console, args);
+};
+
+console.warn = function(...args) {
+  const message = args.join(' ');
+  checkForMicrosoftLink(message);
+  originalWarn.apply(console, args);
+};
+
+// Also override stdout for cases where logging bypasses console.log
+let stdoutBuffer = '';
+const originalStdoutWrite = process.stdout.write;
+process.stdout.write = function(chunk, encoding, callback) {
+  const str = chunk.toString();
+  stdoutBuffer += str;
+  // Check for link in buffer
+  if (stdoutBuffer.includes('microsoft.com/link')) {
+    const lines = stdoutBuffer.split('\n');
+    for (const line of lines) {
+      checkForMicrosoftLink(line);
+    }
+    // Clear buffer after processing
+    stdoutBuffer = '';
+  }
+  return originalStdoutWrite.call(this, chunk, encoding, callback);
+};
+
+function checkForMicrosoftLink(message) {
   if (message.includes('microsoft.com')) {
     originalLog('[MICROSOFT LOG]', message); // Log all Microsoft related messages
     if (message.includes('/link')) {
@@ -20,8 +58,7 @@ console.log = function(...args) {
       }
     }
   }
-  originalLog.apply(console, args);
-};
+}
 
 function sendPendingLink() {
   console.log('[DISCORD] Attempting to send pending link:', pendingLoginLink);
