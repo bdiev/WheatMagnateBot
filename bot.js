@@ -83,7 +83,7 @@ const discordClient = new Client({
 if (DISCORD_BOT_TOKEN) {
   discordClient.login(DISCORD_BOT_TOKEN).catch(err => console.error('[Discord] Login failed:', err.message));
 
-  discordClient.on('clientReady', () => {
+  discordClient.on('ready', () => {
     console.log(`[Discord] Bot logged in as ${discordClient.user.tag}`);
     discordClient.user.setPresence({ status: 'online' });
     if (!mineflayerStarted) {
@@ -174,7 +174,6 @@ let bot;
 let reconnectTimeout = 15000;
 let shouldReconnect = true;
 
-// Added: storing interval IDs so they can be cleared
 let foodMonitorInterval = null;
 let playerScannerInterval = null;
 
@@ -556,8 +555,6 @@ function startNearbyPlayerScanner() {
       if (!entity.position || !bot.entity.position) continue;
       const distance = bot.entity.position.distanceTo(entity.position);
       if (distance <= 300) {
-        if (ignoredUsernames.includes(entity.username)) continue; // Ignore whitelisted players
-
         // Enemy detected!
         console.log(`[Bot] Enemy detected: ${entity.username}`);
         sendDiscordNotification(`🚨 **ENEMY DETECTED**: **${entity.username}** entered range! Bot paused until resume command.`, 16711680);
@@ -570,7 +567,7 @@ function startNearbyPlayerScanner() {
 }
 
 
-if (process.env.DISABLE_BOT === 'true') {
+if (Boolean(process.env.DISABLE_BOT)) {
   console.log('Bot disabled by env.');
   process.exit(0);
 }
@@ -596,7 +593,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
     if (!interaction.isButton()) return;
     if (interaction.channel.id !== DISCORD_CHANNEL_ID) return;
 
-    await interaction.deferUpdate(); // Откладываем обновление, без видимого ответа
+    await interaction.deferUpdate(); // Defer update to avoid timeout
 
     if (interaction.customId === 'pause_button') {
       console.log(`[Button] pause by ${interaction.user.tag}`);
