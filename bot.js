@@ -22,6 +22,8 @@ let lastCommandUser = null;
 let pendingStatusMessage = null;
 let statusMessage = null;
 let statusUpdateInterval = null;
+let tpsHistory = [];
+let lastTime = 0;
 
 const config = {
   host: 'oldfag.org',
@@ -137,7 +139,7 @@ async function updateStatusMessage() {
   const playerCount = Object.keys(bot.players || {}).length;
   const onlinePlayers = Object.values(bot.players || {}).map(p => p.username);
   const whitelistOnline = onlinePlayers.filter(username => ignoredUsernames.includes(username));
-  const tps = bot.getTps ? bot.getTps() : 'N/A';
+  const avgTps = tpsHistory.length > 0 ? (tpsHistory.reduce((a, b) => a + b, 0) / tpsHistory.length).toFixed(1) : 'Calculating...';
 
   const description = `✅ Bot **${bot.username}** connected to \`${config.host}\`\n` +
     `👥 Players online: ${playerCount}\n` +
@@ -187,7 +189,7 @@ function createBot() {
             statusMessage = await channel.send({
               embeds: [{
                 title: 'Server Status',
-                description: `✅ Bot **${bot.username}** connected to \`${config.host}\`\n👥 Players online: 0\n⚡ TPS: N/A\n📋 Whitelist online: None`,
+                description: `✅ Bot **${bot.username}** connected to \`${config.host}\`\n👥 Players online: 0\n⚡ TPS: Calculating...\n📋 Whitelist online: None`,
                 color: 65280,
                 timestamp: new Date()
               }]
@@ -208,6 +210,21 @@ function createBot() {
     clearIntervals();
     startFoodMonitor();
     startNearbyPlayerScanner();
+    lastTime = Date.now();
+    tpsHistory = [];
+  });
+
+  bot.on('time', () => {
+    const now = Date.now();
+    if (lastTime > 0) {
+      const delta = now - lastTime;
+      if (delta > 0 && delta < 1000) { // Reasonable tick time
+        const tps = 1000 / delta;
+        tpsHistory.push(tps);
+        if (tpsHistory.length > 20) tpsHistory.shift(); // Keep last 20
+      }
+    }
+    lastTime = now;
   });
 
   bot.on('end', (reason) => {
