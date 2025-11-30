@@ -596,22 +596,19 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
     if (!interaction.isButton()) return;
     if (interaction.channel.id !== DISCORD_CHANNEL_ID) return;
 
+    await interaction.deferUpdate(); // Откладываем обновление, без видимого ответа
+
     if (interaction.customId === 'pause_button') {
       console.log(`[Button] pause by ${interaction.user.tag}`);
       lastCommandUser = interaction.user.tag;
       shouldReconnect = false;
       bot.quit('Pause until resume');
-      await interaction.reply({ content: '⏸️ Bot paused until resume.', ephemeral: true });
     } else if (interaction.customId === 'resume_button') {
-      if (shouldReconnect) {
-        await interaction.reply({ content: 'Bot is already active or resuming.', ephemeral: true });
-        return;
-      }
+      if (shouldReconnect) return; // Уже активен
       console.log(`[Button] resume by ${interaction.user.tag}`);
       lastCommandUser = interaction.user.tag;
       shouldReconnect = true;
       createBot();
-      await interaction.reply({ content: '▶️ Bot resumed.', ephemeral: true });
     }
   });
 
