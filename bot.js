@@ -597,14 +597,14 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
     if (interaction.channel.id !== DISCORD_CHANNEL_ID) return;
 
     if (interaction.isButton()) {
-      await interaction.deferUpdate(); // Defer update to avoid timeout
-
       if (interaction.customId === 'pause_button') {
+        await interaction.deferUpdate(); // Defer update to avoid timeout
         console.log(`[Button] pause by ${interaction.user.tag}`);
         lastCommandUser = interaction.user.tag;
         shouldReconnect = false;
         bot.quit('Pause until resume');
       } else if (interaction.customId === 'resume_button') {
+        await interaction.deferUpdate(); // Defer update to avoid timeout
         if (shouldReconnect) return; // Уже активен
         console.log(`[Button] resume by ${interaction.user.tag}`);
         lastCommandUser = interaction.user.tag;
@@ -627,14 +627,28 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         await interaction.showModal(modal);
       }
     } else if (interaction.isModalSubmit() && interaction.customId === 'say_modal') {
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply();
       const message = interaction.fields.getTextInputValue('message_input');
       if (message && bot) {
         bot.chat(message);
         console.log(`[Modal] Say "${message}" by ${interaction.user.tag}`);
-        await interaction.editReply(`Sent to Minecraft: "${message}"`);
+        await interaction.editReply({
+          embeds: [{
+            title: 'WheatMagnate Bot Notification',
+            description: `Sent to Minecraft chat: "${message}"`,
+            color: 65280,
+            timestamp: new Date()
+          }]
+        });
       } else {
-        await interaction.editReply('Bot is offline or message is empty.');
+        await interaction.editReply({
+          embeds: [{
+            title: 'WheatMagnate Bot Notification',
+            description: 'Bot is offline or message is empty.',
+            color: 16711680,
+            timestamp: new Date()
+          }]
+        });
       }
     }
   });
