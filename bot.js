@@ -3,6 +3,23 @@ const fs = require('fs');
 const { Client, GatewayIntentBits } = require('discord.js');
 const tpsPlugin = require('mineflayer-tps');
 
+// Override console.log to catch Microsoft login links
+const originalLog = console.log;
+console.log = function(...args) {
+  const message = args.join(' ');
+  if (message.includes('microsoft.com/link')) {
+    // Send to Discord
+    if (DISCORD_CHANNEL_ID && discordClient && discordClient.isReady()) {
+      discordClient.channels.fetch(DISCORD_CHANNEL_ID).then(channel => {
+        if (channel && channel.isTextBased()) {
+          channel.send(`🔗 Microsoft Login Link: ${message.match(/http:\/\/microsoft\.com\/link\?otc=\w+/)[0]}`);
+        }
+      }).catch(console.error);
+    }
+  }
+  originalLog.apply(console, args);
+};
+
 // Discord bot
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
@@ -142,9 +159,10 @@ async function updateStatusMessage() {
   const nearbyPlayers = getNearbyPlayers();
   const avgTps = tpsHistory.length > 0 ? (tpsHistory.reduce((a, b) => a + b, 0) / tpsHistory.length).toFixed(1) : 'Calculating...';
 
+  const nearbyNames = nearbyPlayers.map(p => p.username).join(', ') || 'None';
   const description = `✅ Bot **${bot.username}** connected to \`${config.host}\`\n` +
     `👥 Players online: ${playerCount}\n` +
-    `👀 Players nearby: ${nearbyPlayers.length}\n` +
+    `👀 Players nearby: ${nearbyNames}\n` +
     `⚡ TPS: ${avgTps}\n` +
     `📋 Whitelist online: ${whitelistOnline.length > 0 ? whitelistOnline.join(', ') : 'None'}`;
 
@@ -183,26 +201,28 @@ function createBot() {
       }).catch(console.error);
       pendingStatusMessage = null;
     } else {
-      // Send initial status message
-      if (DISCORD_CHANNEL_ID && discordClient && discordClient.isReady()) {
-        try {
-          const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
-          if (channel && channel.isTextBased()) {
-            statusMessage = await channel.send({
-              embeds: [{
-                title: 'Server Status',
-                description: `✅ Bot **${bot.username}** connected to \`${config.host}\`\n👥 Players online: 0\n👀 Players nearby: 0\n⚡ TPS: Calculating...\n📋 Whitelist online: None`,
-                color: 65280,
-                timestamp: new Date()
-              }]
-            });
-            // Start updating every minute
-            statusUpdateInterval = setInterval(updateStatusMessage, 60000);
+      // Send initial status message after 5 seconds delay
+      setTimeout(async () => {
+        if (DISCORD_CHANNEL_ID && discordClient && discordClient.isReady()) {
+          try {
+            const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+            if (channel && channel.isTextBased()) {
+              statusMessage = await channel.send({
+                embeds: [{
+                  title: 'Server Status',
+                  description: `✅ Bot **${bot.username}** connected to \`${config.host}\`\n👥 Players online: 0\n👀 Players nearby: None\n⚡ TPS: Calculating...\n📋 Whitelist online: None`,
+                  color: 65280,
+                  timestamp: new Date()
+                }]
+              });
+              // Start updating every minute
+              statusUpdateInterval = setInterval(updateStatusMessage, 60000);
+            }
+          } catch (e) {
+            console.error('[Discord] Failed to send status:', e.message);
           }
-        } catch (e) {
-          console.error('[Discord] Failed to send status:', e.message);
         }
-      }
+      }, 5000);
     }
     lastCommandUser = null; // Reset after use
   });
