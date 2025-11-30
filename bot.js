@@ -29,6 +29,27 @@ let mineflayerStarted = false;
 let startTime = Date.now();
 let whisperConversations = new Map(); // username -> messageId
 
+function loadConversations() {
+  try {
+    const data = fs.readFileSync('conversations.json', 'utf8');
+    const obj = JSON.parse(data);
+    whisperConversations = new Map(Object.entries(obj));
+    console.log('[Bot] Loaded conversations:', whisperConversations.size);
+  } catch (e) {
+    whisperConversations = new Map();
+    console.log('[Bot] No conversations file found, starting fresh.');
+  }
+}
+
+function saveConversations() {
+  try {
+    const obj = Object.fromEntries(whisperConversations);
+    fs.writeFileSync('conversations.json', JSON.stringify(obj, null, 2));
+  } catch (e) {
+    console.error('[Bot] Failed to save conversations:', e.message);
+  }
+}
+
 const config = {
   host: 'oldfag.org',
   username: process.env.MINECRAFT_USERNAME || 'WheatMagnate',
@@ -53,6 +74,7 @@ function loadWhitelist() {
 }
 
 const ignoredUsernames = loadWhitelist();
+loadConversations();
 
 // Discord bot client
 const discordClient = new Client({
@@ -214,6 +236,7 @@ async function sendWhisperToDiscord(username, message) {
               )
           ]
         });
+        saveConversations();
       } else {
         // Create new conversation
         const sentMessage = await channel.send({
@@ -225,6 +248,7 @@ async function sendWhisperToDiscord(username, message) {
           }]
         });
         whisperConversations.set(username, sentMessage.id);
+        saveConversations();
         await sentMessage.edit({
           embeds: [{
             title: `Conversation with ${username}`,
@@ -243,7 +267,7 @@ async function sendWhisperToDiscord(username, message) {
                   .setCustomId(`remove_${sentMessage.id}`)
                   .setLabel('Remove')
                   .setStyle(ButtonStyle.Danger)
-              )
+                )
           ]
         });
       }
@@ -747,6 +771,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           for (const [username, msgId] of whisperConversations) {
             if (msgId === messageId) {
               whisperConversations.delete(username);
+              saveConversations();
               break;
             }
           }
