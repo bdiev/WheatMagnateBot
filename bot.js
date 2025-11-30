@@ -780,6 +780,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         });
       }
     } else if (interaction.isModalSubmit() && interaction.customId.startsWith('reply_modal_')) {
+      await interaction.deferReply({ ephemeral: true });
       const username = interaction.customId.split('_')[2];
       const replyMessage = interaction.fields.getTextInputValue('reply_message');
       if (replyMessage && bot) {
@@ -791,7 +792,19 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           command = `/msg ${username} ${replyMessage}`;
           console.log(`[Reply] Sent /msg ${username} ${replyMessage} by ${interaction.user.tag}`);
         }
-        bot.chat(command);
+        try {
+          bot.chat(command);
+        } catch (e) {
+          console.error('[Reply] Failed to send message:', e.message);
+          await interaction.editReply({
+            embeds: [{
+              description: `Failed to send message: ${e.message}`,
+              color: 16711680,
+              timestamp: new Date()
+            }]
+          });
+          return;
+        }
 
         // Update the conversation message
         if (whisperConversations.has(username)) {
@@ -818,9 +831,21 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           }
         }
 
-        await interaction.deferUpdate();
+        await interaction.editReply({
+          embeds: [{
+            description: 'Reply sent to Minecraft.',
+            color: 65280,
+            timestamp: new Date()
+          }]
+        });
       } else {
-        await interaction.deferUpdate();
+        await interaction.editReply({
+          embeds: [{
+            description: 'Bot is offline or message is empty.',
+            color: 16711680,
+            timestamp: new Date()
+          }]
+        });
       }
     }
   });
