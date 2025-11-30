@@ -643,6 +643,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         console.log(`[Modal] Say "${message}" by ${interaction.user.tag}`);
         await interaction.editReply({
           embeds: [{
+            title: 'Message Sent to Minecraft',
             description: `Sent to Minecraft chat: "${message}"`,
             color: 65280,
             timestamp: new Date()
@@ -838,7 +839,14 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       if (text) {
         bot.chat(text);
         console.log(`[Command] Say "${text}" by ${message.author.tag} via Discord`);
-        await message.reply(`Sent to Minecraft chat: "${text}"`);
+        await message.reply({
+          embeds: [{
+            title: 'Message Sent to Minecraft',
+            description: `Sent to Minecraft chat: "${text}"`,
+            color: 65280,
+            timestamp: new Date()
+          }]
+        });
       } else {
         await message.reply('Usage: !say <message>');
       }
