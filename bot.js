@@ -20,6 +20,8 @@ if (process.env.MINECRAFT_SESSION) {
   }
 }
 
+let lastCommandUser = null;
+
 const config = {
   host: 'oldfag.org',
   username: process.env.MINECRAFT_USERNAME || 'WheatMagnate',
@@ -155,7 +157,9 @@ function createBot() {
 
   bot.on('login', () => {
     console.log(`[+] Logged in as ${bot.username}`);
-    sendDiscordNotification(`✅ Bot **${bot.username}** connected to \`${config.host}\``, 65280);
+    const userInfo = lastCommandUser ? ` Requested by ${lastCommandUser}` : '';
+    sendDiscordNotification(`✅ Bot **${bot.username}** connected to \`${config.host}\`.${userInfo}`, 65280);
+    lastCommandUser = null; // Reset after use
   });
 
   bot.on('spawn', () => {
@@ -187,7 +191,8 @@ function createBot() {
       setTimeout(createBot, timeout);
     } else {
       console.log('[!] Manual pause. No reconnect.');
-      sendDiscordNotification(`Bot paused manually: \`${reasonStr}\`.`, 16711680);
+      const userInfo = lastCommandUser ? ` Requested by ${lastCommandUser}` : '';
+      sendDiscordNotification(`⏸️ Bot paused: \`${reasonStr}\`.${userInfo}`, 16711680);
     }
   });
 
@@ -225,13 +230,13 @@ function createBot() {
 
     if (message === '!restart') {
       console.log(`[Command] restart by ${username}`);
-      sendDiscordNotification(`Command: !restart by \`${username}\``, 16776960);
+      lastCommandUser = `${username} (in-game)`;
       bot.quit('Restart command');
     }
 
     if (message === '!pause') {
       console.log('[Command] pause 10m');
-      sendDiscordNotification(`Command: !pause (10m) by \`${username}\``, 16776960);
+      lastCommandUser = `${username} (in-game)`;
       shouldReconnect = false;
       bot.quit('Pause 10m');
       setTimeout(() => {
@@ -246,7 +251,7 @@ function createBot() {
       const minutes = parseInt(pauseMatch[1]);
       if (minutes > 0) {
         console.log(`[Command] pause ${minutes}m`);
-        sendDiscordNotification(`Command: !pause ${minutes} by \`${username}\``, 16776960);
+        lastCommandUser = `${username} (in-game)`;
         shouldReconnect = false;
         bot.quit(`Paused ${minutes}m`);
         setTimeout(() => {
@@ -271,7 +276,7 @@ function createBot() {
           ignoredUsernames.length = 0;
           ignoredUsernames.push(...newWhitelist);
           console.log(`[Command] Added ${targetUsername} to whitelist by ${username}`);
-          sendDiscordNotification(`Command: !allow ${targetUsername} by \`${username}\``, 65280);
+          sendDiscordNotification(`✅ Added ${targetUsername} to whitelist. Requested by ${username} (in-game)`, 65280);
         } else {
           sendDiscordNotification(`${targetUsername} is already in whitelist.`, 16776960);
         }
@@ -414,13 +419,14 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
     if (message.content === '!restart') {
       console.log(`[Command] restart by ${message.author.tag} via Discord`);
-      sendDiscordNotification(`🔄 Bot restarting... Requested by ${message.author.tag}`, 16776960);
+      lastCommandUser = message.author.tag;
+      sendDiscordNotification(`🔄 Bot restarting... Requested by ${lastCommandUser}`, 16776960);
       bot.quit('Restart command');
     }
 
     if (message.content === '!pause') {
       console.log(`[Command] pause until resume by ${message.author.tag} via Discord`);
-      sendDiscordNotification(`⏸️ Bot paused until resume. Requested by ${message.author.tag}`, 16776960);
+      lastCommandUser = message.author.tag;
       shouldReconnect = false;
       bot.quit('Pause until resume');
     }
@@ -448,7 +454,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         return;
       }
       console.log(`[Command] resume by ${message.author.tag} via Discord`);
-      sendDiscordNotification(`▶️ Bot resuming... Requested by ${message.author.tag}`, 65280);
+      lastCommandUser = message.author.tag;
+      sendDiscordNotification(`▶️ Bot resuming... Requested by ${lastCommandUser}`, 65280);
       shouldReconnect = true;
       createBot();
     }
