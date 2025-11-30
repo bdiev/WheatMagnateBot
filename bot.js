@@ -24,13 +24,23 @@ console.log = function(...args) {
 };
 
 function sendPendingLink() {
+  console.log('[DISCORD] Attempting to send pending link:', pendingLoginLink);
   if (pendingLoginLink && DISCORD_CHANNEL_ID && discordClient && discordClient.isReady()) {
+    console.log('[DISCORD] Discord ready, fetching channel:', DISCORD_CHANNEL_ID);
     discordClient.channels.fetch(DISCORD_CHANNEL_ID).then(channel => {
+      console.log('[DISCORD] Channel fetched:', channel?.id);
       if (channel && channel.isTextBased()) {
+        console.log('[DISCORD] Sending link to channel');
         channel.send(`🔗 Microsoft Login Link: ${pendingLoginLink}`);
         pendingLoginLink = null;
+      } else {
+        console.log('[DISCORD] Channel not text-based or not found');
       }
-    }).catch(console.error);
+    }).catch(err => {
+      console.error('[DISCORD] Failed to fetch channel:', err.message);
+    });
+  } else {
+    console.log('[DISCORD] Not ready to send link. Link:', !!pendingLoginLink, 'Channel:', !!DISCORD_CHANNEL_ID, 'Client:', !!discordClient, 'Ready:', discordClient?.isReady?.());
   }
 }
 
