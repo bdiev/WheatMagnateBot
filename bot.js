@@ -1,6 +1,6 @@
 const mineflayer = require('mineflayer');
 const fs = require('fs');
-const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 
 // Discord bot
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -39,23 +39,23 @@ const config = {
 };
 
 const activities = [
-  () => `Online: ${Object.keys(bot.players || {}).length}`,
+  () => `👥 Online: ${Object.keys(bot.players || {}).length}`,
   () => {
     const nearby = getNearbyPlayers();
-    return `Nearby: ${nearby.length}`;
+    return `👀 Nearby: ${nearby.map(p => p.username).join(', ') || 'None'}`;
   },
   () => {
     const onlinePlayers = Object.values(bot.players || {}).map(p => p.username);
     const whitelistOnline = onlinePlayers.filter(username => ignoredUsernames.includes(username));
-    return `Whitelist: ${whitelistOnline.length}`;
+    return `📋 Whitelist: ${whitelistOnline.length}`;
   },
   () => {
     const uptime = Math.floor((Date.now() - startTime) / 1000 / 60);
-    return `Uptime: ${uptime}m`;
+    return `⏱️ Uptime: ${uptime}m`;
   },
   () => {
     const avgTps = tpsHistory.length > 0 ? (tpsHistory.reduce((a, b) => a + b, 0) / tpsHistory.length).toFixed(1) : 'N/A';
-    return `TPS: ${avgTps}`;
+    return `⚡ TPS: ${avgTps}`;
   }
 ];
 
@@ -230,7 +230,11 @@ function createStatusButtons() {
       new ButtonBuilder()
         .setCustomId('resume_button')
         .setLabel('▶️ Resume')
-        .setStyle(ButtonStyle.Success)
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId('say_button')
+        .setLabel('💬 Say')
+        .setStyle(ButtonStyle.Primary)
     );
 }
 
@@ -590,22 +594,47 @@ process.on('unhandledRejection', (reason) => {
 // Discord bot commands
 if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
   discordClient.on('interactionCreate', async (interaction) => {
-    if (!interaction.isButton()) return;
     if (interaction.channel.id !== DISCORD_CHANNEL_ID) return;
 
-    await interaction.deferUpdate(); // Defer update to avoid timeout
+    if (interaction.isButton()) {
+      await interaction.deferUpdate(); // Defer update to avoid timeout
 
-    if (interaction.customId === 'pause_button') {
-      console.log(`[Button] pause by ${interaction.user.tag}`);
-      lastCommandUser = interaction.user.tag;
-      shouldReconnect = false;
-      bot.quit('Pause until resume');
-    } else if (interaction.customId === 'resume_button') {
-      if (shouldReconnect) return; // Уже активен
-      console.log(`[Button] resume by ${interaction.user.tag}`);
-      lastCommandUser = interaction.user.tag;
-      shouldReconnect = true;
-      createBot();
+      if (interaction.customId === 'pause_button') {
+        console.log(`[Button] pause by ${interaction.user.tag}`);
+        lastCommandUser = interaction.user.tag;
+        shouldReconnect = false;
+        bot.quit('Pause until resume');
+      } else if (interaction.customId === 'resume_button') {
+        if (shouldReconnect) return; // Уже активен
+        console.log(`[Button] resume by ${interaction.user.tag}`);
+        lastCommandUser = interaction.user.tag;
+        shouldReconnect = true;
+        createBot();
+      } else if (interaction.customId === 'say_button') {
+        const modal = new ModalBuilder()
+          .setCustomId('say_modal')
+          .setTitle('Send Message to Minecraft');
+
+        const messageInput = new TextInputBuilder()
+          .setCustomId('message_input')
+          .setLabel('Message')
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true);
+
+        const actionRow = new ActionRowBuilder().addComponents(messageInput);
+        modal.addComponents(actionRow);
+
+        await interaction.showModal(modal);
+      }
+    } else if (interaction.isModalSubmit() && interaction.customId === 'say_modal') {
+      const message = interaction.fields.getTextInputValue('message_input');
+      if (message && bot) {
+        bot.chat(message);
+        console.log(`[Modal] Say "${message}" by ${interaction.user.tag}`);
+        await interaction.reply({ content: `Sent to Minecraft: "${message}"`, ephemeral: true });
+      } else {
+        await interaction.reply({ content: 'Bot is offline or message is empty.', ephemeral: true });
+      }
     }
   });
 
@@ -626,7 +655,6 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           title: '👀 Nearby Players',
           description: nearby.map(p => `👤 **${p.username}** - ${p.distance} blocks`).join('\n'),
           color: 3447003,
-          footer: { text: 'GitHub: https://github.com/bdiev' },
           timestamp: new Date()
         };
         await message.reply({ embeds: [embed] });
@@ -721,6 +749,21 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         console.error('[Command] Allow error:', err.message);
         sendDiscordNotification(`Failed to add ${targetUsername} to whitelist: \`${err.message}\``, 16711680);
         await message.reply(`Error adding ${targetUsername} to whitelist: ${err.message}`);
+      }
+    }
+
+    if (message.content.startsWith('!say ')) {
+      if (!bot) {
+        await message.reply('Bot is offline.');
+        return;
+      }
+      const text = message.content.slice(5).trim();
+      if (text) {
+        bot.chat(text);
+        console.log(`[Command] Say "${text}" by ${message.author.tag} via Discord`);
+        await message.reply(`Sent to Minecraft chat: "${text}"`);
+      } else {
+        await message.reply('Usage: !say <message>');
       }
     }
   });
