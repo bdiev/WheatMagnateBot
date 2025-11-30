@@ -420,16 +420,11 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
     }
 
     if (message.content === '!pause') {
-      console.log(`[Command] pause 10m by ${message.author.tag} via Discord`);
-      sendDiscordNotification(`Command: !pause (10m) by \`${message.author.tag}\` via Discord`, 16776960);
+      console.log(`[Command] pause until resume by ${message.author.tag} via Discord`);
+      sendDiscordNotification(`Command: !pause until resume by \`${message.author.tag}\` via Discord`, 16776960);
       shouldReconnect = false;
-      bot.quit('Pause 10m');
-      setTimeout(() => {
-        console.log('[Bot] Pause ended.');
-        shouldReconnect = true;
-        createBot();
-      }, 10 * 60 * 1000);
-      await message.reply('Bot paused for 10 minutes.');
+      bot.quit('Pause until resume');
+      await message.reply('Bot paused. Use !resume to continue.');
     }
 
     const pauseMatch = message.content.match(/^!pause\s+(\d+)$/);
@@ -447,6 +442,18 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         }, minutes * 60 * 1000);
         await message.reply(`Bot paused for ${minutes} minutes.`);
       }
+    }
+
+    if (message.content === '!resume') {
+      if (shouldReconnect) {
+        await message.reply('Bot is already active or resuming.');
+        return;
+      }
+      console.log(`[Command] resume by ${message.author.tag} via Discord`);
+      sendDiscordNotification(`Command: !resume by \`${message.author.tag}\` via Discord`, 65280);
+      shouldReconnect = true;
+      createBot();
+      await message.reply('Bot resuming.');
     }
 
     const allowMatch = message.content.match(/^!allow\s+(\w+)$/);

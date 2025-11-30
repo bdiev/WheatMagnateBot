@@ -58,8 +58,9 @@ Commands are available in-game (authorized username `bdiev_` by default) and via
 
 - `!wn` — show nearby players (Discord only)
 - `!restart` — bot quits and reconnects.
-- `!pause` — pause for 10 minutes (bot quits and reconnects after 10 minutes).
+- `!pause` — pause until `!resume` is sent (bot quits and waits for resume command).
 - `!pause <minutes>` — pause for a custom number of minutes.
+- `!resume` — resume bot after pause (Discord only).
 - `!allow <username>` — adds the username to the whitelist to prevent enemy detection.
 
 ## Behavior Notes
