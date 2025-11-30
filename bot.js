@@ -18,7 +18,6 @@ const MINECRAFT_SESSION = process.env.MINECRAFT_SESSION;
 const config = {
   host: 'oldfag.org',
   username: MINECRAFT_USERNAME || 'WheatMagnate',
-  password: MINECRAFT_PASSWORD,
   auth: 'microsoft',
   version: '1.21.4'
 };
@@ -26,6 +25,7 @@ const config = {
 if (MINECRAFT_SESSION) {
   config.session = JSON.parse(MINECRAFT_SESSION);
 } else {
+  config.password = MINECRAFT_PASSWORD;
   config.sessionDirectory = process.env.MINECRAFT_SESSION_DIR || (process.env.NODE_ENV === 'production' ? '/app/.minecraft' : './.minecraft');
 }
 
