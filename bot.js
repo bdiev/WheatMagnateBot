@@ -636,7 +636,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       } else {
         await message.reply({
           embeds: [{
-            description: `Nearby players (${nearby.length}):\n${nearby.map(p => `👤 **${p.username}** - ${p.distance} blocks`).join('\n')}`,
+            title: `Nearby players (${nearby.length})`,
+            description: nearby.map(p => `👤 **${p.username}** - ${p.distance} blocks`).join('\n'),
             color: 3447003,
             timestamp: new Date()
           }]
