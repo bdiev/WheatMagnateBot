@@ -209,25 +209,33 @@ function createBot() {
     startFoodMonitor();
     startNearbyPlayerScanner();
 
-    // Send initial status message after spawn
-    if (!statusMessage && DISCORD_CHANNEL_ID && discordClient && discordClient.isReady()) {
+    // Send or update status message after spawn
+    if (DISCORD_CHANNEL_ID && discordClient && discordClient.isReady()) {
       setTimeout(async () => {
-        try {
-          const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
-          if (channel && channel.isTextBased()) {
-            statusMessage = await channel.send({
-              embeds: [{
-                title: 'Server Status',
-                description: getStatusDescription(),
-                color: 65280,
-                timestamp: new Date()
-              }]
-            });
-            // Start updating every minute
-            statusUpdateInterval = setInterval(updateStatusMessage, 60000);
+        if (statusMessage) {
+          // Update existing status message
+          updateStatusMessage();
+        } else {
+          // Send new status message
+          try {
+            const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+            if (channel && channel.isTextBased()) {
+              statusMessage = await channel.send({
+                embeds: [{
+                  title: 'Server Status',
+                  description: getStatusDescription(),
+                  color: 65280,
+                  timestamp: new Date()
+                }]
+              });
+            }
+          } catch (e) {
+            console.error('[Discord] Failed to send status:', e.message);
           }
-        } catch (e) {
-          console.error('[Discord] Failed to send status:', e.message);
+        }
+        // Ensure status update interval is running
+        if (statusMessage && !statusUpdateInterval) {
+          statusUpdateInterval = setInterval(updateStatusMessage, 60000);
         }
       }, 2000); // Additional 2 seconds after spawn
     }
