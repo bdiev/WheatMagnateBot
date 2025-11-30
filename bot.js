@@ -207,7 +207,7 @@ async function sendWhisperToDiscord(username, message) {
     if (channel && channel.isTextBased()) {
       const now = new Date();
       const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-      const newEntry = `[${timeStr}] 💬 **${username}**: ${message}`;
+      const newEntry = `[${timeStr}] 💬 ${username}: ${message}`;
 
       if (whisperConversations.has(username)) {
         // Update existing conversation
@@ -827,7 +827,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             const currentDesc = existingMessage.embeds[0]?.description || '';
             const now = new Date();
             const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-            const replyEntry = `[${timeStr}] ➡️ **You**: ${replyMessage}`;
+            const replyEntry = `[${timeStr}] ${bot.username}: ${replyMessage}`;
             let updatedDesc = currentDesc + '\n\n' + replyEntry;
             if (updatedDesc.length > 4096) {
               // Truncate to fit within Discord embed limit
@@ -840,7 +840,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
                 title: `Conversation with ${username}`,
                 description: updatedDesc,
                 color: 3447003,
-                timestamp: now
+                timestamp: existingMessage.embeds[0]?.timestamp || now
               }],
               components: existingMessage.components
             });
