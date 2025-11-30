@@ -796,15 +796,17 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         bot.chat(command);
 
         // Update the conversation message
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+        const replyEntry = `[${timeStr}] ${bot.username}: ${replyMessage}`;
+
         if (whisperConversations.has(username)) {
+          // Update existing conversation
           const messageId = whisperConversations.get(username);
           try {
             const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
             const existingMessage = await channel.messages.fetch(messageId);
             const currentDesc = existingMessage.embeds[0]?.description || '';
-            const now = new Date();
-            const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-            const replyEntry = `[${timeStr}] ${bot.username}: ${replyMessage}`;
             let updatedDesc = currentDesc + '\n\n' + replyEntry;
             if (updatedDesc.length > 4096) {
               // Truncate to fit within Discord embed limit
@@ -824,6 +826,44 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             console.log('[Discord] Conversation updated successfully');
           } catch (e) {
             console.error('[Discord] Failed to update conversation:', e.message);
+          }
+        } else {
+          // Create new conversation
+          try {
+            const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+            const sentMessage = await channel.send({
+              embeds: [{
+                title: `Conversation with ${username}`,
+                description: replyEntry,
+                color: 3447003,
+                timestamp: now
+              }]
+            });
+            whisperConversations.set(username, sentMessage.id);
+            await sentMessage.edit({
+              embeds: [{
+                title: `Conversation with ${username}`,
+                description: replyEntry,
+                color: 3447003,
+                timestamp: now
+              }],
+              components: [
+                new ActionRowBuilder()
+                  .addComponents(
+                    new ButtonBuilder()
+                      .setCustomId(`reply_${username}_${sentMessage.id}`)
+                      .setLabel('Reply')
+                      .setStyle(ButtonStyle.Primary),
+                    new ButtonBuilder()
+                      .setCustomId(`remove_${sentMessage.id}`)
+                      .setLabel('Remove')
+                      .setStyle(ButtonStyle.Danger)
+                  )
+              ]
+            });
+            console.log(`[Discord] Created new conversation for ${username}`);
+          } catch (e) {
+            console.error('[Discord] Failed to create conversation:', e.message);
           }
         }
 
