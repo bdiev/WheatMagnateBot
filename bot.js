@@ -619,12 +619,12 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
         const playerList = [];
         if (whitelistOnline.length > 0) {
-          playerList.push(`**Whitelist:** ${whitelistOnline.join(', ')}`);
+          playerList.push(`🛡️ **Whitelist:** ${whitelistOnline.join(', ')}`);
         }
         if (otherPlayers.length > 0) {
-          playerList.push(`**Others:** ${otherPlayers.join(', ')}`);
+          playerList.push(`👥 **Others:** ${otherPlayers.join(', ')}`);
         }
-        const description = playerList.length > 0 ? playerList.join('\n') : 'No players online.';
+        const description = playerList.length > 0 ? playerList.join('\n\n') : 'No players online.';
 
         await interaction.editReply({
           embeds: [{
