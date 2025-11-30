@@ -2,6 +2,7 @@ const mineflayer = require('mineflayer');
 const axios = require('axios');
 const fs = require('fs');
 const { Client, GatewayIntentBits } = require('discord.js');
+const express = require('express');
 
 // Discord webhook
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
@@ -57,6 +58,36 @@ if (DISCORD_BOT_TOKEN) {
   });
 }
 
+// Web server
+const app = express();
+
+app.get('/history', (req, res) => {
+  const sorted = Array.from(playerHistory.entries()).sort((a, b) => b[1].lastSeen - a[1].lastSeen);
+  let html = `
+  <html>
+  <head>
+    <title>Player History</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 20px; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+      th { background-color: #f2f2f2; }
+    </style>
+  </head>
+  <body>
+  <h1>История игроков</h1>
+  <table>
+  <tr><th>Игрок</th><th>Первый раз</th><th>Последний раз</th><th>Количество</th></tr>
+  `;
+  for (const [username, record] of sorted) {
+    const first = record.firstSeen.toLocaleString('ru-RU', { timeZone: 'Europe/Kiev' });
+    const last = record.lastSeen.toLocaleString('ru-RU', { timeZone: 'Europe/Kiev' });
+    html += `<tr><td>${username}</td><td>${first}</td><td>${last}</td><td>${record.count}</td></tr>`;
+  }
+  html += '</table></body></html>';
+  res.send(html);
+});
+
 // Function to get nearby players
 function getNearbyPlayers() {
   if (!bot || !bot.entity) return [];
@@ -104,6 +135,42 @@ let playerScannerInterval = null;
 
 // Player proximity history: username -> { firstSeen, lastSeen, count }
 let playerHistory = new Map();
+
+function loadHistory() {
+  try {
+    const data = fs.readFileSync('history.json', 'utf8');
+    const obj = JSON.parse(data);
+    for (const [username, record] of Object.entries(obj)) {
+      playerHistory.set(username, {
+        firstSeen: new Date(record.firstSeen),
+        lastSeen: new Date(record.lastSeen),
+        count: record.count
+      });
+    }
+    console.log('[Bot] Loaded player history.');
+  } catch (err) {
+    console.log('[Bot] No history file found, starting fresh.');
+  }
+}
+
+function saveHistory() {
+  try {
+    const obj = {};
+    for (const [username, record] of playerHistory) {
+      obj[username] = {
+        firstSeen: record.firstSeen.toISOString(),
+        lastSeen: record.lastSeen.toISOString(),
+        count: record.count
+      };
+    }
+    fs.writeFileSync('history.json', JSON.stringify(obj, null, 2));
+  } catch (err) {
+    console.error('[Bot] Failed to save history:', err.message);
+  }
+}
+
+// Load history on startup
+loadHistory();
 
 // Helper function to send messages to Discord
 async function sendDiscordNotification(message, color = 3447003) {
@@ -239,6 +306,11 @@ function createBot() {
         console.log('[Bot] Pause ended.');
         shouldReconnect = true;
         createBot();
+        
+        // Start web server
+        app.listen(3000, () => {
+          console.log('[Web] Server running on port 3000');
+        });
       }, 10 * 60 * 1000);
     }
 
@@ -362,6 +434,7 @@ function startNearbyPlayerScanner() {
         const record = playerHistory.get(entity.username);
         record.lastSeen = now;
         record.count++;
+        saveHistory();
 
         if (ignoredUsernames.includes(entity.username)) continue; // Ignore whitelisted players
 
