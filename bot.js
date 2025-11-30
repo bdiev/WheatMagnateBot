@@ -10,8 +10,6 @@ const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
 
-// Minecraft credentials (not used for offline auth)
-
 const config = {
   host: 'oldfag.org',
   username: 'WheatMagnate',
@@ -37,13 +35,13 @@ const ignoredUsernames = loadWhitelist();
 
 // Discord bot client
 const discordClient = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers]
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
 
 if (DISCORD_BOT_TOKEN) {
   discordClient.login(DISCORD_BOT_TOKEN).catch(err => console.error('[Discord] Login failed:', err.message));
 
-  discordClient.on('clientReady', () => {
+  discordClient.on('ready', () => {
     console.log(`[Discord] Bot logged in as ${discordClient.user.tag}`);
   });
 }
