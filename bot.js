@@ -138,7 +138,7 @@ function updateActivity() {
   if (!discordClient || !discordClient.isReady()) return;
   const activityText = activities[activityIndex]();
   console.log(`[Discord] Setting activity: ${activityText}`);
-  discordClient.user.setActivity(activityText, { type: 'STREAMING', url: 'https://github.com/bdiev' });
+  discordClient.user.setActivity(activityText, { type: 'PLAYING' });
   activityIndex = (activityIndex + 1) % activities.length;
 }
 
@@ -626,6 +626,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           title: '👀 Nearby Players',
           description: nearby.map(p => `👤 **${p.username}** - ${p.distance} blocks`).join('\n'),
           color: 3447003,
+          footer: { text: 'GitHub: https://github.com/bdiev' },
           timestamp: new Date()
         };
         await message.reply({ embeds: [embed] });
