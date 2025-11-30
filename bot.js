@@ -23,8 +23,6 @@ let lastCommandUser = null;
 let pendingStatusMessage = null;
 let statusMessage = null;
 let statusUpdateInterval = null;
-let tpsHistory = [];
-let lastTime = 0;
 let mineflayerStarted = false;
 
 const config = {
@@ -150,7 +148,7 @@ function getStatusDescription() {
   const onlinePlayers = Object.values(bot.players || {}).map(p => p.username);
   const whitelistOnline = onlinePlayers.filter(username => ignoredUsernames.includes(username));
   const nearbyPlayers = getNearbyPlayers();
-  const avgTps = tpsHistory.length > 0 ? (tpsHistory.reduce((a, b) => a + b, 0) / tpsHistory.length).toFixed(1) : 'Calculating...';
+  const avgTps = bot.tps ? bot.tps.toFixed(1) : 'Calculating...';
 
   const nearbyNames = nearbyPlayers.map(p => p.username).join(', ') || 'None';
   return `✅ Bot **${bot.username}** connected to \`${config.host}\`\n` +
@@ -209,8 +207,6 @@ function createBot() {
     clearIntervals();
     startFoodMonitor();
     startNearbyPlayerScanner();
-    lastTime = Date.now();
-    tpsHistory = [];
 
     // Send initial status message after spawn
     if (!statusMessage && DISCORD_CHANNEL_ID && discordClient && discordClient.isReady()) {
@@ -236,18 +232,6 @@ function createBot() {
     }
   });
 
-  bot.on('time', () => {
-    const now = Date.now();
-    if (lastTime > 0) {
-      const delta = now - lastTime;
-      if (delta > 0 && delta < 1000) { // Reasonable tick time
-        const tps = 1000 / delta;
-        tpsHistory.push(tps);
-        if (tpsHistory.length > 20) tpsHistory.shift(); // Keep last 20
-      }
-    }
-    lastTime = now;
-  });
 
   bot.on('end', (reason) => {
     const reasonStr = chatComponentToString(reason);
