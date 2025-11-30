@@ -780,7 +780,6 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         });
       }
     } else if (interaction.isModalSubmit() && interaction.customId.startsWith('reply_modal_')) {
-      await interaction.deferReply({ ephemeral: true });
       const username = interaction.customId.split('_')[2];
       const replyMessage = interaction.fields.getTextInputValue('reply_message');
       if (replyMessage && bot) {
@@ -792,19 +791,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           command = `/msg ${username} ${replyMessage}`;
           console.log(`[Reply] Sent /msg ${username} ${replyMessage} by ${interaction.user.tag}`);
         }
-        try {
-          bot.chat(command);
-        } catch (e) {
-          console.error('[Reply] Failed to send message:', e.message);
-          await interaction.editReply({
-            embeds: [{
-              description: `Failed to send message: ${e.message}`,
-              color: 16711680,
-              timestamp: new Date()
-            }]
-          });
-          return;
-        }
+        bot.chat(command);
 
         // Update the conversation message
         if (whisperConversations.has(username)) {
@@ -816,7 +803,13 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             const now = new Date();
             const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
             const replyEntry = `[${timeStr}] ➡️ **You**: ${replyMessage}`;
-            const updatedDesc = currentDesc + '\n\n' + replyEntry;
+            let updatedDesc = currentDesc + '\n\n' + replyEntry;
+            if (updatedDesc.length > 4096) {
+              // Truncate to fit within Discord embed limit
+              updatedDesc = updatedDesc.substring(updatedDesc.length - 4096 + 100);
+              updatedDesc = '...(truncated)\n\n' + updatedDesc.split('\n\n').slice(1).join('\n\n');
+            }
+            console.log(`[Discord] Updating conversation for ${username}, desc length: ${updatedDesc.length}`);
             await existingMessage.edit({
               embeds: [{
                 title: `Conversation with ${username}`,
@@ -826,26 +819,15 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
               }],
               components: existingMessage.components
             });
+            console.log('[Discord] Conversation updated successfully');
           } catch (e) {
             console.error('[Discord] Failed to update conversation:', e.message);
           }
         }
 
-        await interaction.editReply({
-          embeds: [{
-            description: 'Reply sent to Minecraft.',
-            color: 65280,
-            timestamp: new Date()
-          }]
-        });
+        await interaction.deferUpdate();
       } else {
-        await interaction.editReply({
-          embeds: [{
-            description: 'Bot is offline or message is empty.',
-            color: 16711680,
-            timestamp: new Date()
-          }]
-        });
+        await interaction.deferUpdate();
       }
     }
   });
