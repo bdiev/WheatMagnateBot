@@ -647,6 +647,17 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       createBot();
     }
 
+    if (message.content.startsWith('!link ')) {
+      const link = message.content.substring(6).trim();
+      if (link.match(/https?:\/\/microsoft\.com\/link\?otc=\w+/)) {
+        console.log(`[Command] Link provided by ${message.author.tag}: ${link}`);
+        sendDiscordNotification(`🔗 Microsoft Login Link: ${link}`, 3447003);
+        await message.reply('Link sent to channel.');
+      } else {
+        await message.reply('Invalid Microsoft link format.');
+      }
+    }
+
     const allowMatch = message.content.match(/^!allow\s+(\w+)$/);
     if (allowMatch) {
       const targetUsername = allowMatch[1];
