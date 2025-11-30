@@ -26,6 +26,9 @@ let channelCleanerInterval = null;
 let tpsHistory = [];
 let lastTickTime = 0;
 let mineflayerStarted = false;
+let startTime = Date.now();
+let activityIndex = 0;
+let activityInterval = null;
 
 const config = {
   host: 'oldfag.org',
@@ -34,6 +37,27 @@ const config = {
   version: false, // Auto-detect version
   session: loadedSession
 };
+
+const activities = [
+  () => `Online: ${Object.keys(bot.players || {}).length}`,
+  () => {
+    const nearby = getNearbyPlayers();
+    return `Nearby: ${nearby.length}`;
+  },
+  () => {
+    const onlinePlayers = Object.values(bot.players || {}).map(p => p.username);
+    const whitelistOnline = onlinePlayers.filter(username => ignoredUsernames.includes(username));
+    return `Whitelist: ${whitelistOnline.length}`;
+  },
+  () => {
+    const uptime = Math.floor((Date.now() - startTime) / 1000 / 60);
+    return `Uptime: ${uptime}m`;
+  },
+  () => {
+    const avgTps = tpsHistory.length > 0 ? (tpsHistory.reduce((a, b) => a + b, 0) / tpsHistory.length).toFixed(1) : 'N/A';
+    return `TPS: ${avgTps}`;
+  }
+];
 
 function loadWhitelist() {
   try {
@@ -106,6 +130,20 @@ function getNearbyPlayers() {
     }
   }
   return nearby;
+}
+
+// Function to update Discord bot activity
+function updateActivity() {
+  if (!discordClient || !discordClient.isReady()) return;
+  const activityText = activities[activityIndex]();
+  discordClient.user.setActivity(activityText, { type: 'WATCHING' });
+  activityIndex = (activityIndex + 1) % activities.length;
+}
+
+// Function to start activity update interval
+function startActivityInterval() {
+  if (activityInterval) clearInterval(activityInterval);
+  activityInterval = setInterval(updateActivity, 60000); // Every minute
 }
 
 // Function to convert Minecraft chat component to plain text
@@ -210,6 +248,8 @@ function createBot() {
 
   bot.on('login', async () => {
     console.log(`[+] Logged in as ${bot.username}`);
+    startTime = Date.now();
+    startActivityInterval();
     if (pendingStatusMessage) {
       await pendingStatusMessage.edit({
         embeds: [{
@@ -431,6 +471,10 @@ function clearIntervals() {
   if (playerScannerInterval) {
     clearInterval(playerScannerInterval);
     playerScannerInterval = null;
+  }
+  if (activityInterval) {
+    clearInterval(activityInterval);
+    activityInterval = null;
   }
 }
 
