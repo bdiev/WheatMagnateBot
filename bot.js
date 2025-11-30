@@ -19,6 +19,8 @@ if (process.env.MINECRAFT_SESSION) {
 
 let lastCommandUser = null;
 let pendingStatusMessage = null;
+let statusMessage = null;
+let statusUpdateInterval = null;
 
 const config = {
   host: 'oldfag.org',
@@ -127,6 +129,32 @@ async function sendDiscordNotification(message, color = 3447003) {
   }
 }
 
+// Function to update server status message
+async function updateStatusMessage() {
+  if (!statusMessage || !bot || !bot.entity) return;
+
+  const playerCount = Object.keys(bot.players || {}).length;
+  const onlinePlayers = Object.values(bot.players || {}).map(p => p.username);
+  const whitelistOnline = onlinePlayers.filter(username => ignoredUsernames.includes(username));
+
+  const description = `✅ Bot **${bot.username}** connected to \`${config.host}\`\n` +
+    `👥 Players online: ${playerCount}\n` +
+    `📋 Whitelist online: ${whitelistOnline.length > 0 ? whitelistOnline.join(', ') : 'None'}`;
+
+  try {
+    await statusMessage.edit({
+      embeds: [{
+        title: 'Server Status',
+        description,
+        color: 65280,
+        timestamp: new Date()
+      }]
+    });
+  } catch (e) {
+    console.error('[Discord] Failed to update status:', e.message);
+  }
+}
+
 function createBot() {
   // Before creating a new bot, remove the old bot's listeners (if any remain)
   if (bot) {
@@ -135,10 +163,10 @@ function createBot() {
 
   bot = mineflayer.createBot(config);
 
-  bot.on('login', () => {
+  bot.on('login', async () => {
     console.log(`[+] Logged in as ${bot.username}`);
     if (pendingStatusMessage) {
-      pendingStatusMessage.edit({
+      await pendingStatusMessage.edit({
         embeds: [{
           title: 'Bot Status',
           description: `✅ Connected to \`${config.host}\` as **${bot.username}**. Requested by ${lastCommandUser}`,
@@ -147,8 +175,26 @@ function createBot() {
       }).catch(console.error);
       pendingStatusMessage = null;
     } else {
-      const userInfo = lastCommandUser ? ` Requested by ${lastCommandUser}` : '';
-      sendDiscordNotification(`✅ Bot **${bot.username}** connected to \`${config.host}\`.${userInfo}`, 65280);
+      // Send initial status message
+      if (DISCORD_CHANNEL_ID && discordClient && discordClient.isReady()) {
+        try {
+          const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+          if (channel && channel.isTextBased()) {
+            statusMessage = await channel.send({
+              embeds: [{
+                title: 'Server Status',
+                description: `✅ Bot **${bot.username}** connected to \`${config.host}\`\n👥 Players online: 0\n📋 Whitelist online: None`,
+                color: 65280,
+                timestamp: new Date()
+              }]
+            });
+            // Start updating every minute
+            statusUpdateInterval = setInterval(updateStatusMessage, 60000);
+          }
+        } catch (e) {
+          console.error('[Discord] Failed to send status:', e.message);
+        }
+      }
     }
     lastCommandUser = null; // Reset after use
   });
@@ -163,6 +209,12 @@ function createBot() {
   bot.on('end', (reason) => {
     const reasonStr = chatComponentToString(reason);
     clearIntervals();
+
+    // Clear status update interval
+    if (statusUpdateInterval) {
+      clearInterval(statusUpdateInterval);
+      statusUpdateInterval = null;
+    }
 
     if (shouldReconnect) {
       const now = new Date();
@@ -194,6 +246,17 @@ function createBot() {
       } else {
         const userInfo = lastCommandUser ? ` Requested by ${lastCommandUser}` : '';
         sendDiscordNotification(`⏸️ Bot paused: \`${reasonStr}\`.${userInfo}`, 16711680);
+      }
+      // Update status message to offline
+      if (statusMessage) {
+        statusMessage.edit({
+          embeds: [{
+            title: 'Server Status',
+            description: `❌ Bot disconnected: \`${reasonStr}\``,
+            color: 16711680,
+            timestamp: new Date()
+          }]
+        }).catch(console.error);
       }
     }
   });
