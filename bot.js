@@ -102,6 +102,9 @@ let shouldReconnect = true;
 let foodMonitorInterval = null;
 let playerScannerInterval = null;
 
+// Player proximity history: username -> { firstSeen, lastSeen, count }
+let playerHistory = new Map();
+
 // Helper function to send messages to Discord
 async function sendDiscordNotification(message, color = 3447003) {
   // Try to send via Discord bot to channel
@@ -351,6 +354,17 @@ function startNearbyPlayerScanner() {
       if (!entity.position || !bot.entity.position) continue;
       const distance = bot.entity.position.distanceTo(entity.position);
       if (distance <= 300) {
+        // Log player proximity
+        const now = new Date();
+        if (!playerHistory.has(entity.username)) {
+          playerHistory.set(entity.username, { firstSeen: now, lastSeen: now, count: 0 });
+        }
+        const record = playerHistory.get(entity.username);
+        record.lastSeen = now;
+        record.count++;
+
+        if (ignoredUsernames.includes(entity.username)) continue; // Ignore whitelisted players
+
         // Enemy detected!
         console.log(`[Bot] Enemy detected: ${entity.username}`);
         sendDiscordNotification(`🚨 **ENEMY DETECTED**: **${entity.username}** entered range! Disconnecting for 10 minutes.`, 16711680);
@@ -395,6 +409,10 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
     if (message.channel.id !== DISCORD_CHANNEL_ID) return;
 
     if (message.content === '!wn') {
+      if (!bot || !bot.entity) {
+        await message.reply('Бот офлайн.');
+        return;
+      }
       const nearby = getNearbyPlayers();
       if (nearby.length === 0) {
         await message.reply('Никого рядом нет.');
@@ -402,6 +420,21 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         const list = nearby.map(p => `${p.username} (${p.distance} блоков)`).join('\n');
         await message.reply(`Игроки рядом:\n${list}`);
       }
+    }
+
+    if (message.content === '!history') {
+      if (playerHistory.size === 0) {
+        await message.reply('История пуста.');
+        return;
+      }
+      const sorted = Array.from(playerHistory.entries()).sort((a, b) => b[1].lastSeen - a[1].lastSeen);
+      const lines = sorted.map(([username, record]) => {
+        const first = record.firstSeen.toLocaleString('ru-RU', { timeZone: 'Europe/Kiev' });
+        const last = record.lastSeen.toLocaleString('ru-RU', { timeZone: 'Europe/Kiev' });
+        return `${username} - первый раз: ${first}, последний: ${last}, раз: ${record.count}`;
+      });
+      const response = '```\n' + lines.join('\n') + '\n```';
+      await message.reply(response);
     }
   });
 }
