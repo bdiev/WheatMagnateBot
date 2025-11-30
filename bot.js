@@ -328,7 +328,7 @@ function createBot() {
       statusUpdateInterval = null;
     }
 
-    if (shouldReconnect) {
+    if (shouldReconnect || reasonStr === 'socketClosed') {
       const now = new Date();
       const kyivTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Kiev' }));
       const hour = kyivTime.getHours();
