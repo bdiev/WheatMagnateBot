@@ -22,6 +22,7 @@ let lastCommandUser = null;
 let pendingStatusMessage = null;
 let statusMessage = null;
 let statusUpdateInterval = null;
+let channelCleanerInterval = null;
 let tpsHistory = [];
 let lastTickTime = 0;
 let mineflayerStarted = false;
@@ -63,6 +64,25 @@ if (DISCORD_BOT_TOKEN) {
     if (!mineflayerStarted) {
       mineflayerStarted = true;
       createBot();
+    }
+
+    // Start channel cleaner
+    if (!channelCleanerInterval) {
+      channelCleanerInterval = setInterval(async () => {
+        try {
+          const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+          if (channel && channel.isTextBased()) {
+            const messages = await channel.messages.fetch({ limit: 100 });
+            const messagesToDelete = messages.filter(msg => msg.id !== statusMessage?.id);
+            if (messagesToDelete.size > 0) {
+              await channel.bulkDelete(messagesToDelete);
+              console.log(`[Discord] Cleaned ${messagesToDelete.size} messages from channel.`);
+            }
+          }
+        } catch (e) {
+          console.error('[Discord] Failed to clean channel:', e.message);
+        }
+      }, 2 * 60 * 1000); // Every 2 minutes
     }
   });
 } else {
