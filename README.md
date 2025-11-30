@@ -5,7 +5,7 @@ Lightweight Minecraft bot built with mineflayer. Monitors hunger, scans nearby p
 
 ## Features
 - Auto-login to a configured Minecraft server with persistent Microsoft authentication.
-- Discord bot notifications for: login, spawn, disconnect, errors, kicked (with readable reason display), death, low/no food, and enemy detection.
+- Discord bot notifications for: login, spawn, disconnect, errors, kicked (with readable reason display), death, low/no food, enemy detection, and death messages from Minecraft chat.
 - Discord bot integration for remote control and status checks.
 - Server status messages: sends real-time status updates with player count, nearby players, TPS, and whitelist online players when bot connects and periodically.
 - Food monitor:
@@ -16,6 +16,7 @@ Lightweight Minecraft bot built with mineflayer. Monitors hunger, scans nearby p
   - Detects players within 300 blocks using bot.entities and distance checks.
   - Supports an `ignoredUsernames` list loaded from `whitelist.txt`.
   - Enemy detection: If a non-whitelist player enters range, sends danger alert to Discord and disconnects for 10 minutes. Use `!allow <username>` command to add players to whitelist.
+- Death message monitoring: Detects death-related messages in Minecraft chat (keywords: "died", "was slain", "perished") and sends notifications to Discord. Death messages are preserved in Discord channel and not deleted by the cleaner.
 - Graceful reconnect and pause controls:
   - Automatic reconnect on disconnect unless paused or enemy detected.
   - Smart handling during server restarts: detects daily restart at 9 AM Kyiv time and waits 5 minutes before reconnecting to avoid notification spam.
@@ -72,6 +73,7 @@ Commands are available in-game (authorized username `bdiev_` by default) and via
 - Disconnect and kick reasons are properly displayed: chat components are parsed to plain text for readability.
 - During server restarts (detected at 9 AM Kyiv time), reconnection waits 5 minutes instead of 15 seconds to prevent notification spam.
 - Discord bot responds to commands in the configured channel and sends notifications there.
+- Death messages from Minecraft chat are detected and sent to Discord; these messages are preserved in the channel and not deleted by the automatic cleaner.
 
 ## Running the Bot
 ### Local (Windows/Linux)

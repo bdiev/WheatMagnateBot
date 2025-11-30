@@ -76,7 +76,14 @@ if (DISCORD_BOT_TOKEN) {
           const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
           if (channel && channel.isTextBased()) {
             const messages = await channel.messages.fetch({ limit: 100 });
-            const messagesToDelete = messages.filter(msg => msg.id !== statusMessage?.id);
+            const messagesToDelete = messages.filter(msg => {
+              if (msg.id === statusMessage?.id) return false;
+              const desc = msg.embeds[0]?.description || '';
+              const lowerDesc = desc.toLowerCase();
+              // Don't delete death-related messages
+              if (lowerDesc.includes('died') || lowerDesc.includes('death') || lowerDesc.includes('perished') || lowerDesc.includes('💀') || desc.includes(':skull:')) return false;
+              return true;
+            });
             if (messagesToDelete.size > 0) {
               await channel.bulkDelete(messagesToDelete);
               console.log(`[Discord] Cleaned ${messagesToDelete.size} messages from channel.`);
@@ -443,6 +450,13 @@ function createBot() {
         console.error('[Command] Allow error:', err.message);
         sendDiscordNotification(`Failed to add ${targetUsername} to whitelist: \`${err.message}\``, 16711680);
       }
+    }
+
+    // Check for death messages in chat
+    const lowerMessage = message.toLowerCase();
+    if (lowerMessage.includes('died') || lowerMessage.includes('was slain') || lowerMessage.includes('perished')) {
+      console.log(`[Death] Detected death message: ${message}`);
+      sendDiscordNotification(`💀 Death: ${message}`, 16711680);
     }
   });
 }
