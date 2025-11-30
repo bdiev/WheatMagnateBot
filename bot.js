@@ -8,13 +8,16 @@ let pendingLoginLink = null;
 const originalLog = console.log;
 console.log = function(...args) {
   const message = args.join(' ');
-  if (message.includes('microsoft.com/link')) {
-    const link = message.match(/http:\/\/microsoft\.com\/link\?otc=\w+/);
-    if (link) {
-      pendingLoginLink = link[0];
-      originalLog('[LINK DETECTED]', message); // For debugging in logs
-      // Send to Discord if ready, else wait for clientReady
-      sendPendingLink();
+  if (message.includes('microsoft.com')) {
+    originalLog('[MICROSOFT LOG]', message); // Log all Microsoft related messages
+    if (message.includes('/link')) {
+      const link = message.match(/https?:\/\/microsoft\.com\/link\?otc=\w+/);
+      if (link) {
+        pendingLoginLink = link[0];
+        originalLog('[LINK DETECTED]', link[0]);
+        // Send to Discord if ready, else wait for clientReady
+        sendPendingLink();
+      }
     }
   }
   originalLog.apply(console, args);
@@ -170,9 +173,9 @@ async function sendDiscordNotification(message, color = 3447003) {
   }
 }
 
-// Function to update server status message
-async function updateStatusMessage() {
-  if (!statusMessage || !bot || !bot.entity) return;
+// Function to get server status description
+function getStatusDescription() {
+  if (!bot) return 'Bot not connected';
 
   const playerCount = Object.keys(bot.players || {}).length;
   const onlinePlayers = Object.values(bot.players || {}).map(p => p.username);
@@ -181,11 +184,18 @@ async function updateStatusMessage() {
   const avgTps = tpsHistory.length > 0 ? (tpsHistory.reduce((a, b) => a + b, 0) / tpsHistory.length).toFixed(1) : 'Calculating...';
 
   const nearbyNames = nearbyPlayers.map(p => p.username).join(', ') || 'None';
-  const description = `✅ Bot **${bot.username}** connected to \`${config.host}\`\n` +
+  return `✅ Bot **${bot.username}** connected to \`${config.host}\`\n` +
     `👥 Players online: ${playerCount}\n` +
     `👀 Players nearby: ${nearbyNames}\n` +
     `⚡ TPS: ${avgTps}\n` +
     `📋 Whitelist online: ${whitelistOnline.length > 0 ? whitelistOnline.join(', ') : 'None'}`;
+}
+
+// Function to update server status message
+async function updateStatusMessage() {
+  if (!statusMessage || !bot || !bot.entity) return;
+
+  const description = getStatusDescription();
 
   try {
     await statusMessage.edit({
@@ -242,7 +252,7 @@ function createBot() {
             statusMessage = await channel.send({
               embeds: [{
                 title: 'Server Status',
-                description: `✅ Bot **${bot.username}** connected to \`${config.host}\`\n👥 Players online: 0\n👀 Players nearby: None\n⚡ TPS: Calculating...\n📋 Whitelist online: None`,
+                description: getStatusDescription(),
                 color: 65280,
                 timestamp: new Date()
               }]
