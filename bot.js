@@ -204,7 +204,11 @@ function createStatusButtons() {
       new ButtonBuilder()
         .setCustomId('say_button')
         .setLabel('💬 Say')
-        .setStyle(ButtonStyle.Primary)
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId('playerlist_button')
+        .setLabel('👥 Players')
+        .setStyle(ButtonStyle.Secondary)
     );
 }
 
@@ -597,6 +601,39 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         modal.addComponents(actionRow);
 
         await interaction.showModal(modal);
+      } else if (interaction.customId === 'playerlist_button') {
+        await interaction.deferReply();
+        if (!bot) {
+          await interaction.editReply({
+            embeds: [{
+              description: 'Bot is offline.',
+              color: 16711680,
+              timestamp: new Date()
+            }]
+          });
+          return;
+        }
+        const onlinePlayers = Object.values(bot.players || {}).map(p => p.username);
+        const whitelistOnline = onlinePlayers.filter(username => ignoredUsernames.includes(username));
+        const otherPlayers = onlinePlayers.filter(username => !ignoredUsernames.includes(username));
+
+        const playerList = [];
+        if (whitelistOnline.length > 0) {
+          playerList.push(`**Whitelist:** ${whitelistOnline.join(', ')}`);
+        }
+        if (otherPlayers.length > 0) {
+          playerList.push(`**Others:** ${otherPlayers.join(', ')}`);
+        }
+        const description = playerList.length > 0 ? playerList.join('\n') : 'No players online.';
+
+        await interaction.editReply({
+          embeds: [{
+            title: `Online Players (${onlinePlayers.length})`,
+            description,
+            color: 3447003,
+            timestamp: new Date()
+          }]
+        });
       }
     } else if (interaction.isModalSubmit() && interaction.customId === 'say_modal') {
       await interaction.deferReply();
