@@ -21,6 +21,7 @@ Lightweight Minecraft bot built with mineflayer. Monitors hunger, scans nearby p
   - Automatic reconnect on disconnect unless paused or enemy detected.
   - Smart handling during server restarts: detects daily restart at 9 AM Kyiv time and waits 5 minutes before reconnecting to avoid notification spam.
   - Commands for restart and pause available in-game and via Discord bot.
+  - Player list button: Shows a detailed list of online players with whitelist players highlighted in the server status message.
 - Safe interval management: clears monitoring intervals on spawn and on disconnect to prevent duplicates.
 - Environment switch to disable startup (DISABLE_BOT=true).
 
