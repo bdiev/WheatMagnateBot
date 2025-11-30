@@ -138,7 +138,7 @@ function updateActivity() {
   if (!discordClient || !discordClient.isReady()) return;
   const activityText = activities[activityIndex]();
   console.log(`[Discord] Setting activity: ${activityText}`);
-  discordClient.user.setActivity(activityText, { type: 'WATCHING' });
+  discordClient.user.setActivity(activityText, { type: 'STREAMING', url: 'https://github.com/bdiev' });
   activityIndex = (activityIndex + 1) % activities.length;
 }
 
