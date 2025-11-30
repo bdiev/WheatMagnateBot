@@ -10,10 +10,15 @@ const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
 
+// Minecraft credentials
+const MINECRAFT_USERNAME = process.env.MINECRAFT_USERNAME;
+const MINECRAFT_PASSWORD = process.env.MINECRAFT_PASSWORD;
+
 const config = {
   host: 'oldfag.org',
-  username: 'WheatMagnate',
-  auth: 'microsoft',
+  username: MINECRAFT_USERNAME || 'WheatMagnate',
+  password: MINECRAFT_PASSWORD,
+  auth: MINECRAFT_PASSWORD ? 'mojang' : 'microsoft',
   version: '1.21.4'
 };
 
@@ -35,13 +40,13 @@ const ignoredUsernames = loadWhitelist();
 
 // Discord bot client
 const discordClient = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers]
 });
 
 if (DISCORD_BOT_TOKEN) {
   discordClient.login(DISCORD_BOT_TOKEN).catch(err => console.error('[Discord] Login failed:', err.message));
 
-  discordClient.on('ready', () => {
+  discordClient.on('clientReady', () => {
     console.log(`[Discord] Bot logged in as ${discordClient.user.tag}`);
   });
 }
