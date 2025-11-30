@@ -21,6 +21,7 @@ if (process.env.MINECRAFT_SESSION) {
 }
 
 let lastCommandUser = null;
+let pendingStatusMessage = null;
 
 const config = {
   host: 'oldfag.org',
@@ -157,8 +158,19 @@ function createBot() {
 
   bot.on('login', () => {
     console.log(`[+] Logged in as ${bot.username}`);
-    const userInfo = lastCommandUser ? ` Requested by ${lastCommandUser}` : '';
-    sendDiscordNotification(`✅ Bot **${bot.username}** connected to \`${config.host}\`.${userInfo}`, 65280);
+    if (pendingStatusMessage) {
+      pendingStatusMessage.edit({
+        embeds: [{
+          title: 'Bot Status',
+          description: `✅ Connected to \`${config.host}\` as **${bot.username}**. Requested by ${lastCommandUser}`,
+          color: 65280
+        }]
+      }).catch(console.error);
+      pendingStatusMessage = null;
+    } else {
+      const userInfo = lastCommandUser ? ` Requested by ${lastCommandUser}` : '';
+      sendDiscordNotification(`✅ Bot **${bot.username}** connected to \`${config.host}\`.${userInfo}`, 65280);
+    }
     lastCommandUser = null; // Reset after use
   });
 
@@ -191,8 +203,19 @@ function createBot() {
       setTimeout(createBot, timeout);
     } else {
       console.log('[!] Manual pause. No reconnect.');
-      const userInfo = lastCommandUser ? ` Requested by ${lastCommandUser}` : '';
-      sendDiscordNotification(`⏸️ Bot paused: \`${reasonStr}\`.${userInfo}`, 16711680);
+      if (pendingStatusMessage) {
+        pendingStatusMessage.edit({
+          embeds: [{
+            title: 'Bot Status',
+            description: `⏸️ Paused: \`${reasonStr}\`. Requested by ${lastCommandUser}`,
+            color: 16711680
+          }]
+        }).catch(console.error);
+        pendingStatusMessage = null;
+      } else {
+        const userInfo = lastCommandUser ? ` Requested by ${lastCommandUser}` : '';
+        sendDiscordNotification(`⏸️ Bot paused: \`${reasonStr}\`.${userInfo}`, 16711680);
+      }
     }
   });
 
@@ -420,13 +443,28 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
     if (message.content === '!restart') {
       console.log(`[Command] restart by ${message.author.tag} via Discord`);
       lastCommandUser = message.author.tag;
-      sendDiscordNotification(`🔄 Bot restarting... Requested by ${lastCommandUser}`, 16776960);
+      const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+      pendingStatusMessage = await channel.send({
+        embeds: [{
+          title: 'Bot Status',
+          description: `🔄 Restarting... Requested by ${lastCommandUser}`,
+          color: 16776960
+        }]
+      });
       bot.quit('Restart command');
     }
 
     if (message.content === '!pause') {
       console.log(`[Command] pause until resume by ${message.author.tag} via Discord`);
       lastCommandUser = message.author.tag;
+      const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+      pendingStatusMessage = await channel.send({
+        embeds: [{
+          title: 'Bot Status',
+          description: `⏸️ Pausing until resume... Requested by ${lastCommandUser}`,
+          color: 16776960
+        }]
+      });
       shouldReconnect = false;
       bot.quit('Pause until resume');
     }
@@ -455,7 +493,14 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       }
       console.log(`[Command] resume by ${message.author.tag} via Discord`);
       lastCommandUser = message.author.tag;
-      sendDiscordNotification(`▶️ Bot resuming... Requested by ${lastCommandUser}`, 65280);
+      const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+      pendingStatusMessage = await channel.send({
+        embeds: [{
+          title: 'Bot Status',
+          description: `▶️ Resuming... Requested by ${lastCommandUser}`,
+          color: 65280
+        }]
+      });
       shouldReconnect = true;
       createBot();
     }
