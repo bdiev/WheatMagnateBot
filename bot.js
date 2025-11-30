@@ -139,11 +139,13 @@ async function updateStatusMessage() {
   const playerCount = Object.keys(bot.players || {}).length;
   const onlinePlayers = Object.values(bot.players || {}).map(p => p.username);
   const whitelistOnline = onlinePlayers.filter(username => ignoredUsernames.includes(username));
+  const nearbyPlayers = getNearbyPlayers();
   const avgTps = tpsHistory.length > 0 ? (tpsHistory.reduce((a, b) => a + b, 0) / tpsHistory.length).toFixed(1) : 'Calculating...';
 
   const description = `✅ Bot **${bot.username}** connected to \`${config.host}\`\n` +
     `👥 Players online: ${playerCount}\n` +
-    `⚡ TPS: ${tps}\n` +
+    `👀 Players nearby: ${nearbyPlayers.length}\n` +
+    `⚡ TPS: ${avgTps}\n` +
     `📋 Whitelist online: ${whitelistOnline.length > 0 ? whitelistOnline.join(', ') : 'None'}`;
 
   try {
@@ -189,7 +191,7 @@ function createBot() {
             statusMessage = await channel.send({
               embeds: [{
                 title: 'Server Status',
-                description: `✅ Bot **${bot.username}** connected to \`${config.host}\`\n👥 Players online: 0\n⚡ TPS: Calculating...\n📋 Whitelist online: None`,
+                description: `✅ Bot **${bot.username}** connected to \`${config.host}\`\n👥 Players online: 0\n👀 Players nearby: 0\n⚡ TPS: Calculating...\n📋 Whitelist online: None`,
                 color: 65280,
                 timestamp: new Date()
               }]
