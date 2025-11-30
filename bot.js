@@ -27,6 +27,7 @@ let tpsHistory = [];
 let lastTickTime = 0;
 let mineflayerStarted = false;
 let startTime = Date.now();
+let whisperConversations = new Map(); // username -> messageId
 
 const config = {
   host: 'oldfag.org',
@@ -182,34 +183,62 @@ async function sendWhisperToDiscord(username, message) {
   try {
     const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
     if (channel && channel.isTextBased()) {
-      const sentMessage = await channel.send({
-        embeds: [{
-          description: `💬 **${username}** whispered: ${message}`,
-          color: 3447003,
-          timestamp: new Date()
-        }]
-      });
-      const messageId = sentMessage.id;
-      await sentMessage.edit({
-        embeds: [{
-          description: `💬 **${username}** whispered: ${message}`,
-          color: 3447003,
-          timestamp: new Date()
-        }],
-        components: [
-          new ActionRowBuilder()
-            .addComponents(
-              new ButtonBuilder()
-                .setCustomId(`reply_${username}_${messageId}`)
-                .setLabel('Reply')
-                .setStyle(ButtonStyle.Primary),
-              new ButtonBuilder()
-                .setCustomId(`remove_${messageId}`)
-                .setLabel('Remove')
-                .setStyle(ButtonStyle.Danger)
-            )
-        ]
-      });
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+      const newEntry = `[${timeStr}] 💬 **${username}**: ${message}`;
+
+      if (whisperConversations.has(username)) {
+        // Update existing conversation
+        const messageId = whisperConversations.get(username);
+        const existingMessage = await channel.messages.fetch(messageId);
+        const currentDesc = existingMessage.embeds[0]?.description || '';
+        const updatedDesc = currentDesc + '\n\n' + newEntry;
+        await existingMessage.edit({
+          embeds: [{
+            title: `Conversation with ${username}`,
+            description: updatedDesc,
+            color: 3447003,
+            timestamp: now
+          }],
+          components: [
+            new ActionRowBuilder()
+              .addComponents(
+                new ButtonBuilder()
+                  .setCustomId(`reply_${username}_${messageId}`)
+                  .setLabel('Reply')
+                  .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                  .setCustomId(`remove_${messageId}`)
+                  .setLabel('Remove')
+                  .setStyle(ButtonStyle.Danger)
+              )
+          ]
+        });
+      } else {
+        // Create new conversation
+        const sentMessage = await channel.send({
+          embeds: [{
+            title: `Conversation with ${username}`,
+            description: newEntry,
+            color: 3447003,
+            timestamp: now
+          }],
+          components: [
+            new ActionRowBuilder()
+              .addComponents(
+                new ButtonBuilder()
+                  .setCustomId(`reply_${username}_${sentMessage.id}`)
+                  .setLabel('Reply')
+                  .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                  .setCustomId(`remove_${sentMessage.id}`)
+                  .setLabel('Remove')
+                  .setStyle(ButtonStyle.Danger)
+              )
+          ]
+        });
+        whisperConversations.set(username, sentMessage.id);
+      }
     }
   } catch (e) {
     console.error('[Discord] Failed to send whisper:', e.message);
@@ -706,6 +735,13 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         try {
           const message = await interaction.channel.messages.fetch(messageId);
           await message.delete();
+          // Remove from conversations map
+          for (const [username, msgId] of whisperConversations) {
+            if (msgId === messageId) {
+              whisperConversations.delete(username);
+              break;
+            }
+          }
           await interaction.deferUpdate();
         } catch (e) {
           console.error('[Discord] Failed to delete message:', e.message);
@@ -748,6 +784,32 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           console.log(`[Reply] Sent /msg ${username} ${replyMessage} by ${interaction.user.tag}`);
         }
         bot.chat(command);
+
+        // Update the conversation message
+        if (whisperConversations.has(username)) {
+          const messageId = whisperConversations.get(username);
+          try {
+            const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+            const existingMessage = await channel.messages.fetch(messageId);
+            const currentDesc = existingMessage.embeds[0]?.description || '';
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+            const replyEntry = `[${timeStr}] ➡️ **You**: ${replyMessage}`;
+            const updatedDesc = currentDesc + '\n\n' + replyEntry;
+            await existingMessage.edit({
+              embeds: [{
+                title: `Conversation with ${username}`,
+                description: updatedDesc,
+                color: 3447003,
+                timestamp: now
+              }],
+              components: existingMessage.components
+            });
+          } catch (e) {
+            console.error('[Discord] Failed to update conversation:', e.message);
+          }
+        }
+
         await interaction.deferUpdate();
       } else {
         await interaction.deferUpdate();
