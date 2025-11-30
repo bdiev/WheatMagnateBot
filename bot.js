@@ -189,7 +189,6 @@ async function sendDiscordNotification(message, color = 3447003) {
     if (channel && channel.isTextBased()) {
       await channel.send({
         embeds: [{
-          title: 'WheatMagnate Bot Notification',
           description: message,
           color,
           timestamp: new Date()
@@ -634,7 +633,6 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         console.log(`[Modal] Say "${message}" by ${interaction.user.tag}`);
         await interaction.editReply({
           embeds: [{
-            title: 'WheatMagnate Bot Notification',
             description: `Sent to Minecraft chat: "${message}"`,
             color: 65280,
             timestamp: new Date()
@@ -643,7 +641,6 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       } else {
         await interaction.editReply({
           embeds: [{
-            title: 'WheatMagnate Bot Notification',
             description: 'Bot is offline or message is empty.',
             color: 16711680,
             timestamp: new Date()
