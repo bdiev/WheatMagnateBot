@@ -222,6 +222,15 @@ async function sendWhisperToDiscord(username, message) {
             description: newEntry,
             color: 3447003,
             timestamp: now
+          }]
+        });
+        whisperConversations.set(username, sentMessage.id);
+        await sentMessage.edit({
+          embeds: [{
+            title: `Conversation with ${username}`,
+            description: newEntry,
+            color: 3447003,
+            timestamp: now
           }],
           components: [
             new ActionRowBuilder()
@@ -237,7 +246,6 @@ async function sendWhisperToDiscord(username, message) {
               )
           ]
         });
-        whisperConversations.set(username, sentMessage.id);
       }
     }
   } catch (e) {
