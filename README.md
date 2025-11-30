@@ -1,6 +1,6 @@
 ![WheatMagnateBot](WheatMagnateBot.jpg)
 
-[![Lines of code](https://img.shields.io/badge/lines_of_code-1100-blue)](https://github.com/your-repo/WheatMagnateBot) [![Commits](https://img.shields.io/badge/commits-163-green)](https://github.com/your-repo/WheatMagnateBot/commits) [![License](https://img.shields.io/badge/license-ISC-lightgrey)](https://opensource.org/licenses/ISC) [![Node.js](https://img.shields.io/badge/node.js-14+-brightgreen)](https://nodejs.org/)
+[![Lines of code](https://img.shields.io/badge/lines_of_code-1093-blue)](https://github.com/your-repo/WheatMagnateBot) [![Commits](https://img.shields.io/badge/commits-163-green)](https://github.com/your-repo/WheatMagnateBot/commits) [![License](https://img.shields.io/badge/license-ISC-lightgrey)](https://opensource.org/licenses/ISC) [![Node.js](https://img.shields.io/badge/node.js-14+-brightgreen)](https://nodejs.org/)
 
 # WheatMagnateBot v1.0.0
 
@@ -20,7 +20,7 @@ Lightweight Minecraft bot built with mineflayer. Monitors hunger, scans nearby p
   - Supports an `ignoredUsernames` list loaded from `whitelist.txt`.
   - Enemy detection: If a non-whitelist player enters range, sends danger alert to Discord and disconnects for 10 minutes. Use `!allow <username>` command to add players to whitelist.
 - Death message monitoring: Detects death-related messages in Minecraft chat (keywords: "died", "was slain", "perished") and sends notifications to Discord. Death messages are preserved in Discord channel and not deleted by the cleaner.
-- Whisper handling: Receives whispers from Minecraft and creates/updates conversation threads in Discord with timestamps. Supports replying with custom messages or commands. Whisper messages are preserved and not deleted by the cleaner.
+- Conversations with players: Receives whispers from Minecraft and creates/updates conversation embeds in Discord with timestamps. Incoming messages marked with ⬅️, outgoing replies with ➡️. Supports replying with custom messages or commands (e.g., /r for Minecraft reply). If reply starts with "/r ", displays only the message text. Conversations are preserved and not deleted by the cleaner.
 - Private messaging: Button "📨 Msg" opens a modal to send private messages to any player. Reply modal supports arbitrary commands starting with "/".
 - Graceful reconnect and pause controls:
   - Automatic reconnect on disconnect unless paused or enemy detected.
@@ -78,7 +78,7 @@ Commands are available in-game (authorized username `bdiev_` by default) and via
 - **💬 Say**: Opens a modal to send a message to Minecraft chat.
 - **📨 Msg**: Opens a modal with fields for nickname and message to send a private message to a player.
 - **👥 Players**: Shows a list of online players.
-- **Reply** (in whisper conversations): Opens a modal to reply to the player. Supports arbitrary commands if message starts with "/".
+- **Reply** (in conversations): Opens a modal to reply to the player. Supports arbitrary commands if message starts with "/". If starts with "/r ", displays only the text after it in the conversation.
 - **Remove** (in whisper conversations): Deletes the conversation.
 
 ## Behavior Notes
@@ -90,8 +90,8 @@ Commands are available in-game (authorized username `bdiev_` by default) and via
 - During server restarts (detected at 9 AM Kyiv time), reconnection waits 5 minutes instead of 15 seconds to prevent notification spam.
 - Discord bot responds to commands in the configured channel and sends notifications there.
 - Death messages from Minecraft chat are detected and sent to Discord; these messages are preserved in the channel and not deleted by the automatic cleaner.
-- Whisper messages from Minecraft are grouped into conversation threads in Discord, showing history with timestamps. Replies update the same message. Whisper and conversation messages are not deleted by the automatic cleaner.
-- Modal submissions for messages and replies do not show confirmation messages to avoid clutter.
+- Conversations with players from Minecraft are grouped into embeds in Discord, showing history with timestamps and directional arrows (⬅️ for incoming, ➡️ for outgoing). Replies update the same embed. If reply uses "/r ", only the message text is displayed. Conversation embeds are not deleted by the automatic cleaner.
+- Modal submissions for messages and replies show ephemeral confirmations that auto-delete immediately to avoid clutter.
 
 ## Running the Bot
 ### Local (Windows/Linux)

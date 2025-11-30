@@ -878,24 +878,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             console.error('[Discord] Failed to create conversation:', e.message);
           }
         }
-
-        await interaction.editReply({
-          embeds: [{
-            description: 'Reply sent to Minecraft.',
-            color: 65280,
-            timestamp: new Date()
-          }]
-        });
-        setTimeout(() => interaction.deleteReply().catch(() => {}), 1000);
-      } else {
-        await interaction.editReply({
-          embeds: [{
-            description: 'Bot is offline or message is empty.',
-            color: 16711680,
-            timestamp: new Date()
-          }]
-        });
       }
+      setTimeout(() => interaction.deleteReply().catch(() => {}), 100);
     }
   });
 
