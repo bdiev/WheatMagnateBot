@@ -568,7 +568,7 @@ function startNearbyPlayerScanner() {
 
 
 if (Boolean(process.env.DISABLE_BOT)) {
-  console.log('Bot disabled by env.');
+  console.log(`Bot disabled by env. DISABLE_BOT=${process.env.DISABLE_BOT}`);
   process.exit(0);
 }
 
