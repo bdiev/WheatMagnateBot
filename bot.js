@@ -29,27 +29,6 @@ let mineflayerStarted = false;
 let startTime = Date.now();
 let whisperConversations = new Map(); // username -> messageId
 
-function loadConversations() {
-  try {
-    const data = fs.readFileSync('conversations.json', 'utf8');
-    const obj = JSON.parse(data);
-    whisperConversations = new Map(Object.entries(obj));
-    console.log('[Bot] Loaded conversations:', whisperConversations.size);
-  } catch (e) {
-    whisperConversations = new Map();
-    console.log('[Bot] No conversations file found, starting fresh.');
-  }
-}
-
-function saveConversations() {
-  try {
-    const obj = Object.fromEntries(whisperConversations);
-    fs.writeFileSync('conversations.json', JSON.stringify(obj, null, 2));
-  } catch (e) {
-    console.error('[Bot] Failed to save conversations:', e.message);
-  }
-}
-
 const config = {
   host: 'oldfag.org',
   username: process.env.MINECRAFT_USERNAME || 'WheatMagnate',
@@ -74,7 +53,6 @@ function loadWhitelist() {
 }
 
 const ignoredUsernames = loadWhitelist();
-loadConversations();
 
 // Discord bot client
 const discordClient = new Client({
@@ -166,7 +144,7 @@ function chatComponentToString(component) {
   return JSON.stringify(component);
 }
 
-let bot;
+var bot;
 let reconnectTimeout = 15000;
 let shouldReconnect = true;
 
@@ -236,7 +214,6 @@ async function sendWhisperToDiscord(username, message) {
               )
           ]
         });
-        saveConversations();
       } else {
         // Create new conversation
         const sentMessage = await channel.send({
@@ -248,7 +225,6 @@ async function sendWhisperToDiscord(username, message) {
           }]
         });
         whisperConversations.set(username, sentMessage.id);
-        saveConversations();
         await sentMessage.edit({
           embeds: [{
             title: `Conversation with ${username}`,
@@ -771,7 +747,6 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           for (const [username, msgId] of whisperConversations) {
             if (msgId === messageId) {
               whisperConversations.delete(username);
-              saveConversations();
               break;
             }
           }
@@ -805,8 +780,10 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         });
       }
     } else if (interaction.isModalSubmit() && interaction.customId.startsWith('reply_modal_')) {
+      await interaction.deferReply({ ephemeral: true });
       const username = interaction.customId.split('_')[2];
       const replyMessage = interaction.fields.getTextInputValue('reply_message');
+      console.log(`[Reply] Processing reply for ${username}, message: ${replyMessage}, has conversation: ${whisperConversations.has(username)}`);
       if (replyMessage && bot) {
         let command;
         if (replyMessage.startsWith('/')) {
@@ -850,9 +827,21 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           }
         }
 
-        await interaction.deferUpdate();
+        await interaction.editReply({
+          embeds: [{
+            description: 'Reply sent to Minecraft.',
+            color: 65280,
+            timestamp: new Date()
+          }]
+        });
       } else {
-        await interaction.deferUpdate();
+        await interaction.editReply({
+          embeds: [{
+            description: 'Bot is offline or message is empty.',
+            color: 16711680,
+            timestamp: new Date()
+          }]
+        });
       }
     }
   });
