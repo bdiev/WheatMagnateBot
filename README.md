@@ -6,9 +6,8 @@ Lightweight Minecraft bot built with mineflayer. Monitors hunger, scans nearby p
 ## Features
 - Auto-login to a configured Minecraft server with persistent Microsoft authentication.
 - Discord bot notifications for: login, spawn, disconnect, errors, kicked (with readable reason display), death, low/no food, and enemy detection.
-- Discord bot integration for remote control, status checks, and server monitoring.
+- Discord bot integration for remote control and status checks.
 - Server status messages: sends real-time status updates with player count, nearby players, TPS, and whitelist online players when bot connects and periodically.
-- Microsoft authentication link forwarding: automatically detects Microsoft login links from bot logs and sends them to Discord channel. Manual `!link` command available as fallback.
 - Food monitor:
   - Detects common food items in inventory (bread, apple, beef, golden_carrot).
   - Auto-eats when hunger drops below a threshold (bot.food < 18).
@@ -65,7 +64,6 @@ Commands are available in-game (authorized username `bdiev_` by default) and via
 - `!pause <minutes>` — pause for a custom number of minutes.
 - `!resume` — resume bot after pause (Discord only).
 - `!allow <username>` — adds the username to the whitelist to prevent enemy detection.
-- `!link <url>` — manually send Microsoft authentication link to the Discord channel.
 
 ## Behavior Notes
 - Food detection uses substring matching in item names.
@@ -97,7 +95,7 @@ Commands are available in-game (authorized username `bdiev_` by default) and via
    - `DISCORD_CHANNEL_ID`
    - `MINECRAFT_USERNAME` (optional)
    - `MINECRAFT_SESSION` (optional)
-4. Deploy. For Microsoft auth links, use `!link <url>` command in Discord if automatic detection fails.
+4. Deploy.
 
 ## Deployment in Containers (e.g., Azure Container Instances)
 To avoid re-authenticating on each redeploy:
@@ -116,7 +114,6 @@ For Azure Container Instances, use Azure Files for persistent storage.
 ## Troubleshooting
 - If Discord bot fails to connect, verify `DISCORD_BOT_TOKEN` and `DISCORD_CHANNEL_ID`.
 - If Microsoft login fails, check cached credentials and follow mineflayer auth docs. For containers, ensure `AUTH_CACHE_DIR` is set to a persistent path.
-- Microsoft auth links may not auto-detect in Railway.app due to logging differences; use `!link <url>` command manually.
 - Check console logs for runtime errors and Discord messages for critical events.
 
 ## Security & Privacy

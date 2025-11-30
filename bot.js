@@ -3,78 +3,10 @@ const fs = require('fs');
 const { Client, GatewayIntentBits } = require('discord.js');
 const tpsPlugin = require('mineflayer-tps');
 
-// Override console methods to catch Microsoft login links
-let pendingLoginLink = null;
-const originalLog = console.log;
-const originalError = console.error;
-const originalWarn = console.warn;
-
-console.log = function(...args) {
-  let message = '';
-  if (args.length === 1 && typeof args[0] === 'object' && args[0] !== null && args[0].message) {
-    // Handle structured logs (e.g., Railway JSON format)
-    message = args[0].message;
-  } else {
-    message = args.join(' ');
-  }
-  checkForMicrosoftLink(message);
-  originalLog.apply(console, args);
-};
-
-console.error = function(...args) {
-  const message = args.join(' ');
-  checkForMicrosoftLink(message);
-  originalError.apply(console, args);
-};
-
-console.warn = function(...args) {
-  const message = args.join(' ');
-  checkForMicrosoftLink(message);
-  originalWarn.apply(console, args);
-};
-
-function checkForMicrosoftLink(message) {
-  if (message.includes('microsoft.com') && message.includes('/link')) {
-    const link = message.match(/https?:\/\/microsoft\.com\/link\?otc=\w+/);
-    if (link) {
-      pendingLoginLink = link[0];
-      originalLog('[LINK DETECTED]', link[0]);
-      // Send to Discord if ready, else wait for clientReady
-      sendPendingLink();
-    }
-  }
-}
-
-function sendPendingLink() {
-  console.log('[DISCORD] Attempting to send pending link:', pendingLoginLink);
-  if (pendingLoginLink && DISCORD_CHANNEL_ID && discordClient && discordClient.isReady()) {
-    console.log('[DISCORD] Discord ready, fetching channel:', DISCORD_CHANNEL_ID);
-    discordClient.channels.fetch(DISCORD_CHANNEL_ID).then(channel => {
-      console.log('[DISCORD] Channel fetched:', channel?.id);
-      if (channel && channel.isTextBased()) {
-        console.log('[DISCORD] Sending link to channel');
-        channel.send(`🔗 Microsoft Login Link: ${pendingLoginLink}`)
-          .then(() => {
-            console.log('[DISCORD] Link sent successfully');
-            pendingLoginLink = null;
-          })
-          .catch(err => {
-            console.error('[DISCORD] Failed to send link:', err.message);
-          });
-      } else {
-        console.log('[DISCORD] Channel not text-based or not found');
-      }
-    }).catch(err => {
-      console.error('[DISCORD] Failed to fetch channel:', err.message);
-    });
-  } else {
-    console.log('[DISCORD] Not ready to send link. Link:', !!pendingLoginLink, 'Channel:', !!DISCORD_CHANNEL_ID, 'Client:', !!discordClient, 'Ready:', discordClient?.isReady?.());
-  }
-}
-
 // Discord bot
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
+
 
 // Discord bot
 let loadedSession = null;
@@ -129,7 +61,6 @@ if (DISCORD_BOT_TOKEN) {
 
   discordClient.on('clientReady', () => {
     console.log(`[Discord] Bot logged in as ${discordClient.user.tag}`);
-    sendPendingLink();
     if (!mineflayerStarted) {
       mineflayerStarted = true;
       createBot();
@@ -657,17 +588,6 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       });
       shouldReconnect = true;
       createBot();
-    }
-
-    if (message.content.startsWith('!link ')) {
-      const link = message.content.substring(6).trim();
-      if (link.match(/https?:\/\/microsoft\.com\/link\?otc=\w+/)) {
-        console.log(`[Command] Link provided by ${message.author.tag}: ${link}`);
-        sendDiscordNotification(`🔗 Microsoft Login Link: ${link}`, 3447003);
-        await message.reply('Link sent to channel.');
-      } else {
-        await message.reply('Invalid Microsoft link format.');
-      }
     }
 
     const allowMatch = message.content.match(/^!allow\s+(\w+)$/);
