@@ -10,11 +10,22 @@ const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
 
+let loadedSession = null;
+if (process.env.MINECRAFT_SESSION) {
+  try {
+    loadedSession = JSON.parse(process.env.MINECRAFT_SESSION);
+    console.log('[Bot] Loaded session from env.');
+  } catch (err) {
+    console.error('[Bot] Failed to parse session from env:', err.message);
+  }
+}
+
 const config = {
   host: 'oldfag.org',
-  username: 'WheatMagnate',
+  username: process.env.MINECRAFT_USERNAME || 'WheatMagnate',
   auth: 'microsoft',
-  version: '1.21.4'
+  version: false, // Auto-detect version
+  session: loadedSession
 };
 
 function loadWhitelist() {
@@ -84,7 +95,7 @@ function chatComponentToString(component) {
 }
 
 let bot;
-const reconnectTimeout = 15000;
+let reconnectTimeout = 15000;
 let shouldReconnect = true;
 
 // Added: storing interval IDs so they can be cleared
@@ -187,6 +198,18 @@ function createBot() {
     const reasonText = chatComponentToString(reason);
     console.log(`[!] Kicked: ${reasonText}`);
     sendDiscordNotification(`Kicked. Reason: \`${reasonText}\``, 16711680);
+
+    // If kicked due to throttling, increase reconnect timeout
+    if (reasonText.includes('throttled') || reasonText.includes('too fast') || reasonText.includes('delay')) {
+      reconnectTimeout = Math.min(reconnectTimeout * 2, 5 * 60 * 1000); // Max 5 minutes
+      console.log(`[!] Throttling detected. Increasing reconnect timeout to ${reconnectTimeout / 1000} seconds.`);
+    }
+
+    // If kicked with generic reason, stop reconnecting to avoid infinite loop
+    if (reasonText === 'You have been disconnected from the server.') {
+      console.log('[!] Generic kick detected. Stopping reconnection.');
+      shouldReconnect = false;
+    }
   });
 
   bot.on('death', () => {
