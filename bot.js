@@ -171,6 +171,49 @@ async function sendDiscordNotification(message, color = 3447003) {
   }
 }
 
+// Function to send whispers to Discord with buttons
+async function sendWhisperToDiscord(username, message) {
+  if (!DISCORD_CHANNEL_ID || !discordClient || !discordClient.isReady()) {
+    console.log('[Discord] Bot not ready for whisper.');
+    return;
+  }
+  try {
+    const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+    if (channel && channel.isTextBased()) {
+      const sentMessage = await channel.send({
+        embeds: [{
+          description: `💬 **${username}** whispered: ${message}`,
+          color: 3447003,
+          timestamp: new Date()
+        }]
+      });
+      const messageId = sentMessage.id;
+      await sentMessage.edit({
+        embeds: [{
+          description: `💬 **${username}** whispered: ${message}`,
+          color: 3447003,
+          timestamp: new Date()
+        }],
+        components: [
+          new ActionRowBuilder()
+            .addComponents(
+              new ButtonBuilder()
+                .setCustomId(`reply_${username}_${messageId}`)
+                .setLabel('Reply')
+                .setStyle(ButtonStyle.Primary),
+              new ButtonBuilder()
+                .setCustomId(`remove_${messageId}`)
+                .setLabel('Remove')
+                .setStyle(ButtonStyle.Danger)
+            )
+        ]
+      });
+    }
+  } catch (e) {
+    console.error('[Discord] Failed to send whisper:', e.message);
+  }
+}
+
 // Function to get server status description
 function getStatusDescription() {
   if (!bot) return 'Bot not connected';
@@ -463,6 +506,11 @@ function createBot() {
       sendDiscordNotification(`💀 Death: ${message}`, 16711680);
     }
   });
+
+  bot.on('whisper', (username, message, translate, jsonMsg, matches) => {
+    console.log(`[Whisper] ${username}: ${message}`);
+    sendWhisperToDiscord(username, message);
+  });
 }
 
 // -------------- INTERVALS MANAGEMENT --------------
@@ -657,6 +705,43 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             timestamp: new Date()
           }]
         });
+      }
+    } else if (interaction.customId.startsWith('reply_')) {
+      const parts = interaction.customId.split('_');
+      const username = parts[1];
+      const modal = new ModalBuilder()
+        .setCustomId(`reply_modal_${username}`)
+        .setTitle(`Reply to ${username}`);
+
+      const messageInput = new TextInputBuilder()
+        .setCustomId('reply_message')
+        .setLabel('Message')
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(true);
+
+      const actionRow = new ActionRowBuilder().addComponents(messageInput);
+      modal.addComponents(actionRow);
+
+      await interaction.showModal(modal);
+    } else if (interaction.customId.startsWith('remove_')) {
+      const messageId = interaction.customId.split('_')[1];
+      try {
+        const message = await interaction.channel.messages.fetch(messageId);
+        await message.delete();
+        await interaction.deferUpdate();
+      } catch (e) {
+        console.error('[Discord] Failed to delete message:', e.message);
+        await interaction.reply({ content: 'Failed to delete message.', ephemeral: true });
+      }
+    } else if (interaction.isModalSubmit() && interaction.customId.startsWith('reply_modal_')) {
+      const username = interaction.customId.split('_')[2];
+      const replyMessage = interaction.fields.getTextInputValue('reply_message');
+      if (replyMessage && bot) {
+        bot.chat(`/msg ${username} ${replyMessage}`);
+        console.log(`[Reply] Sent /msg ${username} ${replyMessage} by ${interaction.user.tag}`);
+        await interaction.reply({ content: `Replied to ${username}: ${replyMessage}`, ephemeral: true });
+      } else {
+        await interaction.reply({ content: 'Bot is offline or message is empty.', ephemeral: true });
       }
     }
   });
