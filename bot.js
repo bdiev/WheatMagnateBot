@@ -1,15 +1,12 @@
 const mineflayer = require('mineflayer');
-const axios = require('axios');
 const fs = require('fs');
 const { Client, GatewayIntentBits } = require('discord.js');
-
-// Discord webhook
-const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 
 // Discord bot
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
 
+// Discord bot
 let loadedSession = null;
 if (process.env.MINECRAFT_SESSION) {
   try {
@@ -109,30 +106,14 @@ let playerScannerInterval = null;
 
 // Helper function to send messages to Discord
 async function sendDiscordNotification(message, color = 3447003) {
-  // Try to send via Discord bot to channel
-  if (DISCORD_CHANNEL_ID && discordClient && discordClient.isReady()) {
-    try {
-      const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
-      if (channel && channel.isTextBased()) {
-        await channel.send({
-          embeds: [{
-            title: 'WheatMagnate Bot Notification',
-            description: message,
-            color,
-            timestamp: new Date()
-          }]
-        });
-        return;
-      }
-    } catch (e) {
-      console.error('[Discord Bot] Failed to send:', e.message);
-    }
+  if (!DISCORD_CHANNEL_ID || !discordClient || !discordClient.isReady()) {
+    console.log('[Discord] Bot not ready or no channel configured. Skipped.');
+    return;
   }
-
-  // Fallback to webhook
-  if (DISCORD_WEBHOOK_URL) {
-    try {
-      await axios.post(DISCORD_WEBHOOK_URL, {
+  try {
+    const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+    if (channel && channel.isTextBased()) {
+      await channel.send({
         embeds: [{
           title: 'WheatMagnate Bot Notification',
           description: message,
@@ -140,11 +121,9 @@ async function sendDiscordNotification(message, color = 3447003) {
           timestamp: new Date()
         }]
       });
-    } catch (e) {
-      console.error('[Discord Webhook] Failed:', e.message);
     }
-  } else {
-    console.log('[Discord] No webhook or bot configured. Skipped.');
+  } catch (e) {
+    console.error('[Discord Bot] Failed to send:', e.message);
   }
 }
 

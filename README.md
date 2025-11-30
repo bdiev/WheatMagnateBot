@@ -5,7 +5,7 @@ Lightweight Minecraft bot built with mineflayer. Monitors hunger, scans nearby p
 
 ## Features
 - Auto-login to a configured Minecraft server with persistent Microsoft authentication.
-- Discord webhook notifications for: login, spawn, disconnect, errors, kicked (with readable reason display), death, low/no food, and enemy detection.
+- Discord bot notifications for: login, spawn, disconnect, errors, kicked (with readable reason display), death, low/no food, and enemy detection.
 - Discord bot integration for remote control and status checks.
 - Food monitor:
   - Detects common food items in inventory (bread, apple, beef, golden_carrot).
@@ -47,8 +47,7 @@ Edit `bot.js`:
 - `reconnectTimeout` — milliseconds before reconnect on disconnect (default: 15000)
 
 Environment variables:
-- `DISCORD_WEBHOOK_URL` — Discord webhook URL (required for notifications)
-- `DISCORD_BOT_TOKEN` — Discord bot token (required for Discord commands)
+- `DISCORD_BOT_TOKEN` — Discord bot token (required for Discord commands and notifications)
 - `DISCORD_CHANNEL_ID` — Discord channel ID for bot commands and notifications
 - `DISABLE_BOT=true` — prevents the bot from starting.
 - `AUTH_CACHE_DIR` — directory for Microsoft authentication cache (default: `~/.minecraft`). For persistent auth in containers, set to a mounted volume path.
@@ -79,7 +78,6 @@ Commands are available in-game (authorized username `bdiev_` by default) and via
    ```
 2. Set environment variables and start the bot:
    ```powershell
-   set DISCORD_WEBHOOK_URL=your_webhook_url_here
    set DISCORD_BOT_TOKEN=your_bot_token_here
    set DISCORD_CHANNEL_ID=your_channel_id_here
    node bot.js
@@ -100,10 +98,9 @@ docker run -e AUTH_CACHE_DIR=/app/auth -v /host/path/to/auth:/app/auth your-bot-
 For Azure Container Instances, use Azure Files for persistent storage.
 
 ## Troubleshooting
-- If Discord webhooks fail, verify `DISCORD_WEBHOOK_URL` and network access.
 - If Discord bot fails to connect, verify `DISCORD_BOT_TOKEN` and `DISCORD_CHANNEL_ID`.
 - If Microsoft login fails, check cached credentials and follow mineflayer auth docs. For containers, ensure `AUTH_CACHE_DIR` is set to a persistent path.
-- Check console logs for runtime errors and webhook messages for critical events.
+- Check console logs for runtime errors and Discord messages for critical events.
 
 ## Security & Privacy
 - The Discord webhook URL is set via environment variable to prevent exposure in source code.
