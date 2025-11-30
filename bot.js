@@ -743,15 +743,14 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         if (replyMessage.startsWith('/')) {
           command = replyMessage;
           console.log(`[Reply] Sent command "${command}" by ${interaction.user.tag}`);
-          await interaction.reply({ content: `Sent command: ${command}`, ephemeral: true });
         } else {
           command = `/msg ${username} ${replyMessage}`;
           console.log(`[Reply] Sent /msg ${username} ${replyMessage} by ${interaction.user.tag}`);
-          await interaction.reply({ content: `Replied to ${username}: ${replyMessage}`, ephemeral: true });
         }
         bot.chat(command);
+        await interaction.deferUpdate();
       } else {
-        await interaction.reply({ content: 'Bot is offline or message is empty.', ephemeral: true });
+        await interaction.deferUpdate();
       }
     }
   });
