@@ -11,6 +11,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "badge-maker": "^5.0.2",
     "discord.js": "^14.14.1",
     "minecraft-server-util": "^5.4.4",
     "mineflayer": "^4.33.0",
