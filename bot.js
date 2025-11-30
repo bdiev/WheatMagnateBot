@@ -83,8 +83,8 @@ if (DISCORD_BOT_TOKEN) {
               const lowerDesc = desc.toLowerCase();
               // Don't delete death-related messages
               if (lowerDesc.includes('died') || lowerDesc.includes('death') || lowerDesc.includes('perished') || lowerDesc.includes('💀') || desc.includes(':skull:')) return false;
-              // Don't delete whisper messages
-              if (desc.includes('💬') || lowerDesc.includes('whispered')) return false;
+              // Don't delete whisper messages and conversations
+              if (desc.includes('💬') || lowerDesc.includes('whispered') || desc.includes('⬅️') || desc.includes('➡️') || (msg.embeds[0]?.title && msg.embeds[0].title.startsWith('Conversation with'))) return false;
               return true;
             });
             if (messagesToDelete.size > 0) {
@@ -801,7 +801,11 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         // Update the conversation message
         const now = new Date();
         const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-        const replyEntry = `[${timeStr}] ➡️ ${bot.username}: ${replyMessage}`;
+        let displayMessage = replyMessage;
+        if (replyMessage.startsWith('/r ')) {
+          displayMessage = replyMessage.slice(3).trim();
+        }
+        const replyEntry = `[${timeStr}] ➡️ ${bot.username}: ${displayMessage}`;
 
         if (whisperConversations.has(username)) {
           // Update existing conversation
@@ -834,6 +838,11 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           // Create new conversation
           try {
             const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+            let displayMessage = replyMessage;
+            if (replyMessage.startsWith('/r ')) {
+              displayMessage = replyMessage.slice(3).trim();
+            }
+            const replyEntry = `[${timeStr}] ➡️ ${bot.username}: ${displayMessage}`;
             const sentMessage = await channel.send({
               embeds: [{
                 title: `Conversation with ${username}`,
