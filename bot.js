@@ -12,6 +12,7 @@ console.log = function(...args) {
     const link = message.match(/http:\/\/microsoft\.com\/link\?otc=\w+/);
     if (link) {
       pendingLoginLink = link[0];
+      originalLog('[LINK DETECTED]', message); // For debugging in logs
       // Send to Discord if ready, else wait for clientReady
       sendPendingLink();
     }
