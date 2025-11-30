@@ -204,7 +204,7 @@ async function sendWhisperToDiscord(username, message) {
             new ActionRowBuilder()
               .addComponents(
                 new ButtonBuilder()
-                  .setCustomId(`reply_${username}_${messageId}`)
+                  .setCustomId(`reply_${username.replace(/_/g, '__')}_${messageId}`)
                   .setLabel('Reply')
                   .setStyle(ButtonStyle.Primary),
                 new ButtonBuilder()
@@ -236,7 +236,7 @@ async function sendWhisperToDiscord(username, message) {
             new ActionRowBuilder()
               .addComponents(
                 new ButtonBuilder()
-                  .setCustomId(`reply_${username}_${sentMessage.id}`)
+                  .setCustomId(`reply_${username.replace(/_/g, '__')}_${sentMessage.id}`)
                   .setLabel('Reply')
                   .setStyle(ButtonStyle.Primary),
                 new ButtonBuilder()
@@ -723,9 +723,10 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         });
       } else if (interaction.customId.startsWith('reply_')) {
         const parts = interaction.customId.split('_');
-        const username = parts[1];
+        const encodedUsername = parts[1];
+        const username = encodedUsername.replace(/__/g, '_');
         const modal = new ModalBuilder()
-          .setCustomId(`reply_modal_${username}`)
+          .setCustomId(`reply_modal_${encodedUsername}`)
           .setTitle(`Reply to ${username}`);
 
         const messageInput = new TextInputBuilder()
@@ -781,7 +782,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       }
     } else if (interaction.isModalSubmit() && interaction.customId.startsWith('reply_modal_')) {
       await interaction.deferReply({ ephemeral: true });
-      const username = interaction.customId.split('_')[2];
+      const encodedUsername = interaction.customId.split('_')[2];
+      const username = encodedUsername.replace(/__/g, '_');
       const replyMessage = interaction.fields.getTextInputValue('reply_message');
       console.log(`[Reply] Processing reply for ${username}, message: ${replyMessage}, has conversation: ${whisperConversations.has(username)}`);
       if (replyMessage && bot) {
