@@ -701,8 +701,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           return;
         }
         const onlinePlayers = Object.values(bot.players || {}).map(p => p.username);
-        const whitelistOnline = onlinePlayers.filter(username => ignoredUsernames.includes(username));
-        const otherPlayers = onlinePlayers.filter(username => !ignoredUsernames.includes(username));
+        const whitelistOnline = onlinePlayers.filter(username => ignoredUsernames.includes(username)).sort();
+        const otherPlayers = onlinePlayers.filter(username => !ignoredUsernames.includes(username)).sort();
 
         const playerList = [];
         if (whitelistOnline.length > 0) {
