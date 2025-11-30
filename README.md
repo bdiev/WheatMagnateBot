@@ -1,5 +1,7 @@
 ![WheatMagnateBot](WheatMagnateBot.jpg)
-![Lines of code](https://img.shields.io/badge/lines_of_code-940-blue)
+
+[![Lines of code](https://img.shields.io/badge/lines_of_code-940-blue)](https://github.com/your-repo/WheatMagnateBot) [![Commits](https://img.shields.io/badge/commits-163-green)](https://github.com/your-repo/WheatMagnateBot/commits) [![License](https://img.shields.io/badge/license-ISC-lightgrey)](https://opensource.org/licenses/ISC) [![Node.js](https://img.shields.io/badge/node.js-14+-brightgreen)](https://nodejs.org/)
+
 # WheatMagnateBot v1.0.0
 
 Lightweight Minecraft bot built with mineflayer. Monitors hunger, scans nearby players, sends Discord notifications for events, and provides server status updates. Runs on Windows, Linux, or cloud platforms like Railway.app with Node.js.
