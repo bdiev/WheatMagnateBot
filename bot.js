@@ -155,7 +155,7 @@ function createBot() {
 
   bot.on('login', () => {
     console.log(`[+] Logged in as ${bot.username}`);
-    sendDiscordNotification(`Bot **${bot.username}** logged into \`${config.host}\`.`, 65280);
+    sendDiscordNotification(`✅ Bot **${bot.username}** connected to \`${config.host}\``, 65280);
   });
 
   bot.on('spawn', () => {
@@ -414,17 +414,15 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
     if (message.content === '!restart') {
       console.log(`[Command] restart by ${message.author.tag} via Discord`);
-      sendDiscordNotification(`Command: !restart by \`${message.author.tag}\` via Discord`, 16776960);
+      sendDiscordNotification(`🔄 Bot restarting... Requested by ${message.author.tag}`, 16776960);
       bot.quit('Restart command');
-      await message.reply('Bot restarted.');
     }
 
     if (message.content === '!pause') {
       console.log(`[Command] pause until resume by ${message.author.tag} via Discord`);
-      sendDiscordNotification(`Command: !pause until resume by \`${message.author.tag}\` via Discord`, 16776960);
+      sendDiscordNotification(`⏸️ Bot paused until resume. Requested by ${message.author.tag}`, 16776960);
       shouldReconnect = false;
       bot.quit('Pause until resume');
-      await message.reply('Bot paused. Use !resume to continue.');
     }
 
     const pauseMatch = message.content.match(/^!pause\s+(\d+)$/);
@@ -450,10 +448,9 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         return;
       }
       console.log(`[Command] resume by ${message.author.tag} via Discord`);
-      sendDiscordNotification(`Command: !resume by \`${message.author.tag}\` via Discord`, 65280);
+      sendDiscordNotification(`▶️ Bot resuming... Requested by ${message.author.tag}`, 65280);
       shouldReconnect = true;
       createBot();
-      await message.reply('Bot resuming.');
     }
 
     const allowMatch = message.content.match(/^!allow\s+(\w+)$/);
