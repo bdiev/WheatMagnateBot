@@ -23,7 +23,7 @@ let pendingStatusMessage = null;
 let statusMessage = null;
 let statusUpdateInterval = null;
 let tpsHistory = [];
-let lastTime = 0;
+let lastTickTime = 0;
 let mineflayerStarted = false;
 
 const config = {
@@ -185,6 +185,7 @@ function createBot() {
     try { bot.removeAllListeners(); } catch {}
   }
 
+  lastTickTime = 0; // Reset TPS tracking for new bot
   bot = mineflayer.createBot(config);
 
   bot.on('login', async () => {
@@ -231,18 +232,18 @@ function createBot() {
       }, 2000); // Additional 2 seconds after spawn
     }
   });
-  bot.on('time', (oldTime, newTime) => {
+
+  bot.on('physicsTick', () => {
     const now = Date.now();
-    if (lastTime > 0) {
-      const deltaTime = now - lastTime;
-      const deltaWorld = newTime - oldTime;
-      if (deltaTime > 0 && deltaWorld > 0) {
-        const tps = (deltaWorld / deltaTime) * 1000;
+    if (lastTickTime > 0) {
+      const delta = now - lastTickTime;
+      if (delta > 0) {
+        const tps = 1000 / delta;
         tpsHistory.push(tps);
-        if (tpsHistory.length > 20) tpsHistory.shift(); // Keep last 20
+        if (tpsHistory.length > 20) tpsHistory.shift();
       }
     }
-    lastTime = now;
+    lastTickTime = now;
   });
 
 
