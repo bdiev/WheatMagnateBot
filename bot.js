@@ -4,21 +4,31 @@ const { Client, GatewayIntentBits } = require('discord.js');
 const tpsPlugin = require('mineflayer-tps');
 
 // Override console.log to catch Microsoft login links
+let pendingLoginLink = null;
 const originalLog = console.log;
 console.log = function(...args) {
   const message = args.join(' ');
   if (message.includes('microsoft.com/link')) {
-    // Send to Discord
-    if (DISCORD_CHANNEL_ID && discordClient && discordClient.isReady()) {
-      discordClient.channels.fetch(DISCORD_CHANNEL_ID).then(channel => {
-        if (channel && channel.isTextBased()) {
-          channel.send(`🔗 Microsoft Login Link: ${message.match(/http:\/\/microsoft\.com\/link\?otc=\w+/)[0]}`);
-        }
-      }).catch(console.error);
+    const link = message.match(/http:\/\/microsoft\.com\/link\?otc=\w+/);
+    if (link) {
+      pendingLoginLink = link[0];
+      // Send to Discord if ready, else wait for clientReady
+      sendPendingLink();
     }
   }
   originalLog.apply(console, args);
 };
+
+function sendPendingLink() {
+  if (pendingLoginLink && DISCORD_CHANNEL_ID && discordClient && discordClient.isReady()) {
+    discordClient.channels.fetch(DISCORD_CHANNEL_ID).then(channel => {
+      if (channel && channel.isTextBased()) {
+        channel.send(`🔗 Microsoft Login Link: ${pendingLoginLink}`);
+        pendingLoginLink = null;
+      }
+    }).catch(console.error);
+  }
+}
 
 // Discord bot
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -76,6 +86,7 @@ if (DISCORD_BOT_TOKEN) {
 
   discordClient.on('clientReady', () => {
     console.log(`[Discord] Bot logged in as ${discordClient.user.tag}`);
+    sendPendingLink();
   });
 }
 
@@ -200,29 +211,6 @@ function createBot() {
         }]
       }).catch(console.error);
       pendingStatusMessage = null;
-    } else {
-      // Send initial status message after 5 seconds delay
-      setTimeout(async () => {
-        if (DISCORD_CHANNEL_ID && discordClient && discordClient.isReady()) {
-          try {
-            const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
-            if (channel && channel.isTextBased()) {
-              statusMessage = await channel.send({
-                embeds: [{
-                  title: 'Server Status',
-                  description: `✅ Bot **${bot.username}** connected to \`${config.host}\`\n👥 Players online: 0\n👀 Players nearby: None\n⚡ TPS: Calculating...\n📋 Whitelist online: None`,
-                  color: 65280,
-                  timestamp: new Date()
-                }]
-              });
-              // Start updating every minute
-              statusUpdateInterval = setInterval(updateStatusMessage, 60000);
-            }
-          } catch (e) {
-            console.error('[Discord] Failed to send status:', e.message);
-          }
-        }
-      }, 5000);
     }
     lastCommandUser = null; // Reset after use
   });
@@ -234,6 +222,29 @@ function createBot() {
     startNearbyPlayerScanner();
     lastTime = Date.now();
     tpsHistory = [];
+
+    // Send initial status message after spawn
+    if (!statusMessage && DISCORD_CHANNEL_ID && discordClient && discordClient.isReady()) {
+      setTimeout(async () => {
+        try {
+          const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+          if (channel && channel.isTextBased()) {
+            statusMessage = await channel.send({
+              embeds: [{
+                title: 'Server Status',
+                description: `✅ Bot **${bot.username}** connected to \`${config.host}\`\n👥 Players online: 0\n👀 Players nearby: None\n⚡ TPS: Calculating...\n📋 Whitelist online: None`,
+                color: 65280,
+                timestamp: new Date()
+              }]
+            });
+            // Start updating every minute
+            statusUpdateInterval = setInterval(updateStatusMessage, 60000);
+          }
+        } catch (e) {
+          console.error('[Discord] Failed to send status:', e.message);
+        }
+      }, 2000); // Additional 2 seconds after spawn
+    }
   });
 
   bot.on('time', () => {
