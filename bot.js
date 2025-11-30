@@ -656,20 +656,32 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
     if (message.content === '!wn') {
       if (!bot || !bot.entity) {
-        await message.reply('Bot is offline.');
+        await message.reply({
+          embeds: [{
+            description: 'Bot is offline.',
+            color: 16711680,
+            timestamp: new Date()
+          }]
+        });
         return;
       }
       const nearby = getNearbyPlayers();
       if (nearby.length === 0) {
-        await message.reply('No one nearby.');
+        await message.reply({
+          embeds: [{
+            description: 'No one nearby.',
+            color: 3447003,
+            timestamp: new Date()
+          }]
+        });
       } else {
-        const embed = {
-          title: '👀 Nearby Players',
-          description: nearby.map(p => `👤 **${p.username}** - ${p.distance} blocks`).join('\n'),
-          color: 3447003,
-          timestamp: new Date()
-        };
-        await message.reply({ embeds: [embed] });
+        await message.reply({
+          embeds: [{
+            description: nearby.map(p => `👤 **${p.username}** - ${p.distance} blocks`).join('\n'),
+            color: 3447003,
+            timestamp: new Date()
+          }]
+        });
       }
     }
 
