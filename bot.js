@@ -85,6 +85,7 @@ if (DISCORD_BOT_TOKEN) {
 
   discordClient.on('clientReady', () => {
     console.log(`[Discord] Bot logged in as ${discordClient.user.tag}`);
+    discordClient.user.setPresence({ status: 'online' });
     if (!mineflayerStarted) {
       mineflayerStarted = true;
       createBot();
@@ -136,6 +137,7 @@ function getNearbyPlayers() {
 function updateActivity() {
   if (!discordClient || !discordClient.isReady()) return;
   const activityText = activities[activityIndex]();
+  console.log(`[Discord] Setting activity: ${activityText}`);
   discordClient.user.setActivity(activityText, { type: 'WATCHING' });
   activityIndex = (activityIndex + 1) % activities.length;
 }
@@ -143,6 +145,7 @@ function updateActivity() {
 // Function to start activity update interval
 function startActivityInterval() {
   if (activityInterval) clearInterval(activityInterval);
+  updateActivity(); // Set initial activity
   activityInterval = setInterval(updateActivity, 60000); // Every minute
 }
 
