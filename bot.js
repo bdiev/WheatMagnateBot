@@ -648,13 +648,25 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       console.log(`[Command] restart by ${message.author.tag} via Discord`);
       lastCommandUser = message.author.tag;
       const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
-      pendingStatusMessage = await channel.send({
-        embeds: [{
-          title: 'Bot Status',
-          description: `🔄 Restarting... Requested by ${lastCommandUser}`,
-          color: 16776960
-        }]
-      });
+      if (statusMessage) {
+        statusMessage.edit({
+          embeds: [{
+            title: 'Server Status',
+            description: `🔄 Restarting... Requested by ${lastCommandUser}`,
+            color: 16776960,
+            timestamp: new Date()
+          }],
+          components: [createStatusButtons()]
+        }).catch(console.error);
+      } else {
+        pendingStatusMessage = await channel.send({
+          embeds: [{
+            title: 'Bot Status',
+            description: `🔄 Restarting... Requested by ${lastCommandUser}`,
+            color: 16776960
+          }]
+        });
+      }
       bot.quit('Restart command');
     }
 
@@ -662,13 +674,25 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       console.log(`[Command] pause until resume by ${message.author.tag} via Discord`);
       lastCommandUser = message.author.tag;
       const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
-      pendingStatusMessage = await channel.send({
-        embeds: [{
-          title: 'Bot Status',
-          description: `⏸️ Pausing until resume... Requested by ${lastCommandUser}`,
-          color: 16776960
-        }]
-      });
+      if (statusMessage) {
+        statusMessage.edit({
+          embeds: [{
+            title: 'Server Status',
+            description: `⏸️ Pausing until resume... Requested by ${lastCommandUser}`,
+            color: 16776960,
+            timestamp: new Date()
+          }],
+          components: [createStatusButtons()]
+        }).catch(console.error);
+      } else {
+        pendingStatusMessage = await channel.send({
+          embeds: [{
+            title: 'Bot Status',
+            description: `⏸️ Pausing until resume... Requested by ${lastCommandUser}`,
+            color: 16776960
+          }]
+        });
+      }
       shouldReconnect = false;
       bot.quit('Pause until resume');
     }
@@ -692,19 +716,37 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
     if (message.content === '!resume') {
       if (shouldReconnect) {
-        await message.reply('Bot is already active or resuming.');
+        await message.reply({
+          embeds: [{
+            description: 'Bot is already active or resuming.',
+            color: 3447003,
+            timestamp: new Date()
+          }]
+        });
         return;
       }
       console.log(`[Command] resume by ${message.author.tag} via Discord`);
       lastCommandUser = message.author.tag;
       const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
-      pendingStatusMessage = await channel.send({
-        embeds: [{
-          title: 'Bot Status',
-          description: `▶️ Resuming... Requested by ${lastCommandUser}`,
-          color: 65280
-        }]
-      });
+      if (statusMessage) {
+        statusMessage.edit({
+          embeds: [{
+            title: 'Server Status',
+            description: `▶️ Resuming... Requested by ${lastCommandUser}`,
+            color: 65280,
+            timestamp: new Date()
+          }],
+          components: [createStatusButtons()]
+        }).catch(console.error);
+      } else {
+        pendingStatusMessage = await channel.send({
+          embeds: [{
+            title: 'Bot Status',
+            description: `▶️ Resuming... Requested by ${lastCommandUser}`,
+            color: 65280
+          }]
+        });
+      }
       shouldReconnect = true;
       createBot();
     }
