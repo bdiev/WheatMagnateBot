@@ -1,9 +1,14 @@
 const mineflayer = require('mineflayer');
 const axios = require('axios');
 const fs = require('fs');
+const { Client, GatewayIntentBits } = require('discord.js');
 
 // Discord webhook
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
+
+// Discord bot
+const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
+const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
 
 const config = {
   host: 'oldfag.org',
@@ -27,6 +32,35 @@ function loadWhitelist() {
 }
 
 const ignoredUsernames = loadWhitelist();
+
+// Discord bot client
+const discordClient = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
+});
+
+if (DISCORD_BOT_TOKEN) {
+  discordClient.login(DISCORD_BOT_TOKEN).catch(err => console.error('[Discord] Login failed:', err.message));
+
+  discordClient.on('ready', () => {
+    console.log(`[Discord] Bot logged in as ${discordClient.user.tag}`);
+  });
+}
+
+// Function to get nearby players
+function getNearbyPlayers() {
+  if (!bot || !bot.entity) return [];
+  const nearby = [];
+  for (const entity of Object.values(bot.entities)) {
+    if (!entity || entity.type !== 'player') continue;
+    if (!entity.username || entity.username === bot.username) continue;
+    if (!entity.position || !bot.entity.position) continue;
+    const distance = bot.entity.position.distanceTo(entity.position);
+    if (distance <= 300) {
+      nearby.push({ username: entity.username, distance: Math.round(distance) });
+    }
+  }
+  return nearby;
+}
 
 // Function to convert Minecraft chat component to plain text
 function chatComponentToString(component) {
@@ -59,21 +93,42 @@ let playerScannerInterval = null;
 
 // Helper function to send messages to Discord
 async function sendDiscordNotification(message, color = 3447003) {
-  if (!DISCORD_WEBHOOK_URL) {
-    console.log('[Discord] Webhook URL not set. Skipped.');
-    return;
+  // Try to send via Discord bot to channel
+  if (DISCORD_CHANNEL_ID && discordClient && discordClient.isReady()) {
+    try {
+      const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+      if (channel && channel.isTextBased()) {
+        await channel.send({
+          embeds: [{
+            title: 'WheatMagnate Bot Notification',
+            description: message,
+            color,
+            timestamp: new Date()
+          }]
+        });
+        return;
+      }
+    } catch (e) {
+      console.error('[Discord Bot] Failed to send:', e.message);
+    }
   }
-  try {
-    await axios.post(DISCORD_WEBHOOK_URL, {
-      embeds: [{
-        title: 'WheatMagnate Bot Notification',
-        description: message,
-        color,
-        timestamp: new Date()
-      }]
-    });
-  } catch (e) {
-    console.error('[Discord] Failed:', e.message);
+
+  // Fallback to webhook
+  if (DISCORD_WEBHOOK_URL) {
+    try {
+      await axios.post(DISCORD_WEBHOOK_URL, {
+        embeds: [{
+          title: 'WheatMagnate Bot Notification',
+          description: message,
+          color,
+          timestamp: new Date()
+        }]
+      });
+    } catch (e) {
+      console.error('[Discord Webhook] Failed:', e.message);
+    }
+  } else {
+    console.log('[Discord] No webhook or bot configured. Skipped.');
   }
 }
 
@@ -309,5 +364,23 @@ process.on('unhandledRejection', (reason) => {
   console.log('Unhandled Rejection:', reason);
   sendDiscordNotification(`Unhandled rejection: \`${reason}\``, 16711680);
 });
+
+// Discord bot commands
+if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
+  discordClient.on('messageCreate', async message => {
+    if (message.author.bot) return;
+    if (message.channel.id !== DISCORD_CHANNEL_ID) return;
+
+    if (message.content === '!wn') {
+      const nearby = getNearbyPlayers();
+      if (nearby.length === 0) {
+        await message.reply('Никого рядом нет.');
+      } else {
+        const list = nearby.map(p => `${p.username} (${p.distance} блоков)`).join('\n');
+        await message.reply(`Игроки рядом:\n${list}`);
+      }
+    }
+  });
+}
 
 createBot();
