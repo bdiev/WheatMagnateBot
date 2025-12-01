@@ -113,6 +113,7 @@ Commands are available in-game (authorized username `bdiev_` by default) and via
    - `DISCORD_CHANNEL_ID`
    - `MINECRAFT_USERNAME` (optional)
    - `MINECRAFT_SESSION` (optional)
+   - `STATUS_MESSAGE_ID` (optional, for updating existing status message)
 4. Deploy.
 
 ## Deployment in Containers (e.g., Azure Container Instances)

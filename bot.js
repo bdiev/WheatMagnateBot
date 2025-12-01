@@ -30,8 +30,7 @@ let mineflayerStarted = false;
 let startTime = Date.now();
 let whisperConversations = new Map(); // username -> messageId
 let tpsTabInterval = null;
-let statusMessageId = process.env.STATUS_MESSAGE_ID || '1441970705561555074-1444911947647553617';
-const excludedMessageIds = ['1441970705561555074-1444911947647553617'];
+const excludedMessageIds = [];
 
 const config = {
   host: 'oldfag.org',
@@ -385,19 +384,24 @@ function createBot() {
       }
     }, 10000); // Check every 10 seconds
 
-    // Send or update status message after spawn
+    // Send status message after spawn
     if (DISCORD_CHANNEL_ID && discordClient && discordClient.isReady()) {
       setTimeout(async () => {
-        if (statusMessageId) {
-          try {
-            const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
-            if (channel && channel.isTextBased()) {
-              statusMessage = await channel.messages.fetch(statusMessageId);
-              updateStatusMessage();
-            }
-          } catch (e) {
-            console.log('[Bot] Failed to fetch existing status message.');
+        try {
+          const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+          if (channel && channel.isTextBased()) {
+            statusMessage = await channel.send({
+              embeds: [{
+                title: 'Server Status',
+                description: getStatusDescription(),
+                color: 65280,
+                timestamp: new Date()
+              }],
+              components: createStatusButtons()
+            });
           }
+        } catch (e) {
+          console.error('[Discord] Failed to send status:', e.message);
         }
         // Ensure status update interval is running
         if (statusMessage && !statusUpdateInterval) {
