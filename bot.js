@@ -120,7 +120,7 @@ function getNearbyPlayers() {
       nearby.push({ username: entity.username, distance: Math.round(distance) });
     }
   }
-  return nearby;
+  return nearby.sort((a, b) => a.distance - b.distance);
 }
 
 
@@ -293,6 +293,10 @@ function createStatusButtons() {
       new ButtonBuilder()
         .setCustomId('drop_button')
         .setLabel('🗑️ Drop')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId('wn_button')
+        .setLabel('👀 Nearby')
         .setStyle(ButtonStyle.Secondary)
     );
 }
@@ -805,6 +809,37 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           }],
           components: [row]
         });
+      } else if (interaction.customId === 'wn_button') {
+        await interaction.deferReply();
+        if (!bot || !bot.entity) {
+          await interaction.editReply({
+            embeds: [{
+              description: 'Bot is offline.',
+              color: 16711680,
+              timestamp: new Date()
+            }]
+          });
+          return;
+        }
+        const nearby = getNearbyPlayers();
+        if (nearby.length === 0) {
+          await interaction.editReply({
+            embeds: [{
+              description: 'No one nearby.',
+              color: 3447003,
+              timestamp: new Date()
+            }]
+          });
+        } else {
+          await interaction.editReply({
+            embeds: [{
+              title: `Nearby players (${nearby.length})`,
+              description: nearby.map(p => `👤 **${p.username}** - ${p.distance} blocks`).join('\n'),
+              color: 3447003,
+              timestamp: new Date()
+            }]
+          });
+        }
       } else if (interaction.customId.startsWith('reply_')) {
         const parts = interaction.customId.split('_');
         const encodedUsername = parts[1];
