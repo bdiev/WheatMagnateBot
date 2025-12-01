@@ -128,33 +128,17 @@ function getNearbyPlayers() {
 // Function to convert Minecraft chat component to plain text
 function chatComponentToString(component) {
   if (typeof component === 'string') return component;
-  if (!component || typeof component !== 'object') return String(component);
+  if (!component || typeof component !== 'object') return '';
 
-  if (component.type === 'string') return component.value || '';
+  let text = component.text || '';
 
-  if (component.type === 'compound') {
-    let text = '';
-    if (component.value?.text) text += chatComponentToString(component.value.text);
-    if (component.value?.extra) {
-      for (const extra of component.value.extra) text += chatComponentToString(extra);
-    }
-    return text;
-  }
-
-  // For other types, try to extract text if possible
-  if (component.value && typeof component.value === 'string') return component.value;
-
-  // Handle complex objects like tablist
-  if (component.text) return component.text;
   if (component.extra) {
-    let text = '';
     for (const extra of component.extra) {
       text += chatComponentToString(extra);
     }
-    return text;
   }
 
-  return '';
+  return text;
 }
 
 var bot;
@@ -417,7 +401,7 @@ function createBot() {
         }
         // Ensure status update interval is running
         if (statusMessage && !statusUpdateInterval) {
-          statusUpdateInterval = setInterval(updateStatusMessage, 15000);
+          statusUpdateInterval = setInterval(updateStatusMessage, 5000);
         }
       }, 2000); // Additional 2 seconds after spawn
     }
