@@ -672,9 +672,18 @@ function createBot() {
     try {
       const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
       if (channel && channel.isTextBased()) {
+        const player = bot.players[username];
+        let avatarUrl = null;
+        if (player && player.uuid) {
+          avatarUrl = `https://crafatar.com/avatars/${player.uuid}?size=64&default=MHF_Steve&overlay`;
+        }
         await channel.send({
           embeds: [{
-            description: `**${username}**: ${message}`,
+            author: {
+              name: username,
+              icon_url: avatarUrl
+            },
+            description: message,
             color: 3447003,
             timestamp: new Date()
           }]
