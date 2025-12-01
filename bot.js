@@ -1,10 +1,24 @@
+require('dotenv').config();
 const mineflayer = require('mineflayer');
 const fs = require('fs');
 const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } = require('discord.js');
+const { Pool } = require('pg');
 
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
 const DISCORD_CHAT_CHANNEL_ID = process.env.DISCORD_CHAT_CHANNEL_ID;
+const IGNORED_CHAT_USERNAMES = process.env.IGNORED_CHAT_USERNAMES ? process.env.IGNORED_CHAT_USERNAMES.split(',').map(u => u.trim().toLowerCase()) : [];
+
+// Database connection
+let pool = null;
+if (process.env.DATABASE_URL) {
+  pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+  });
+  pool.on('error', (err) => {
+    console.error('[DB] Unexpected error on idle client', err);
+  });
+}
 
 let loadedSession = null;
 if (process.env.MINECRAFT_SESSION) {
@@ -71,6 +85,39 @@ function loadWhitelist() {
 
 const ignoredUsernames = loadWhitelist();
 
+// Load ignored chat usernames from DB
+async function loadIgnoredChatUsernames() {
+  if (!pool) return IGNORED_CHAT_USERNAMES;
+  try {
+    const res = await pool.query('SELECT username FROM ignored_users');
+    return res.rows.map(row => row.username.toLowerCase());
+  } catch (err) {
+    console.error('[DB] Failed to load ignored users:', err.message);
+    return IGNORED_CHAT_USERNAMES;
+  }
+}
+
+let ignoredChatUsernames = IGNORED_CHAT_USERNAMES; // Fallback
+
+// Initialize DB table and load ignored users
+async function initDatabase() {
+  if (!pool) return;
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ignored_users (
+        id SERIAL PRIMARY KEY,
+        username VARCHAR(255) UNIQUE NOT NULL,
+        added_by VARCHAR(255),
+        added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    console.log('[DB] Table initialized.');
+    ignoredChatUsernames = await loadIgnoredChatUsernames();
+  } catch (err) {
+    console.error('[DB] Failed to initialize:', err.message);
+  }
+}
+
 // Discord bot client
 const discordClient = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
@@ -79,9 +126,10 @@ const discordClient = new Client({
 if (DISCORD_BOT_TOKEN) {
   discordClient.login(DISCORD_BOT_TOKEN).catch(err => console.error('[Discord] Login failed:', err.message));
 
-  discordClient.on('clientReady', () => {
+  discordClient.on('clientReady', async () => {
     console.log(`[Discord] Bot logged in as ${discordClient.user.tag}`);
     discordClient.user.setPresence({ status: 'online' });
+    await initDatabase();
     if (!mineflayerStarted) {
       mineflayerStarted = true;
       createBot();
@@ -649,6 +697,52 @@ function createBot() {
         console.error('[Command] Allow error:', err.message);
         sendDiscordNotification(`Failed to add ${targetUsername} to whitelist: \`${err.message}\``, 16711680);
       }
+    }
+
+    const ignoreMatch = message.match(/^!ignore\s+(\w+)$/);
+    if (ignoreMatch) {
+      const targetUsername = ignoreMatch[1];
+      if (!pool) {
+        sendDiscordNotification('Database not configured.', 16711680);
+        return;
+      }
+      (async () => {
+        try {
+          await pool.query('INSERT INTO ignored_users (username, added_by) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING', [targetUsername.toLowerCase(), username]);
+          // Reload ignored
+          ignoredChatUsernames = await loadIgnoredChatUsernames();
+          console.log(`[Command] Added ${targetUsername} to ignore list by ${username}`);
+          sendDiscordNotification(`✅ Added ${targetUsername} to ignore list. Requested by ${username} (in-game)`, 65280);
+        } catch (err) {
+          console.error('[Command] Ignore error:', err.message);
+          sendDiscordNotification(`Failed to add ${targetUsername} to ignore list: \`${err.message}\``, 16711680);
+        }
+      })();
+    }
+
+    const unignoreMatch = message.match(/^!unignore\s+(\w+)$/);
+    if (unignoreMatch) {
+      const targetUsername = unignoreMatch[1];
+      if (!pool) {
+        sendDiscordNotification('Database not configured.', 16711680);
+        return;
+      }
+      (async () => {
+        try {
+          const result = await pool.query('DELETE FROM ignored_users WHERE username = $1', [targetUsername.toLowerCase()]);
+          if (result.rowCount > 0) {
+            // Reload ignored
+            ignoredChatUsernames = await loadIgnoredChatUsernames();
+            console.log(`[Command] Removed ${targetUsername} from ignore list by ${username}`);
+            sendDiscordNotification(`✅ Removed ${targetUsername} from ignore list. Requested by ${username} (in-game)`, 65280);
+          } else {
+            sendDiscordNotification(`${targetUsername} is not in ignore list.`, 16776960);
+          }
+        } catch (err) {
+          console.error('[Command] Unignore error:', err.message);
+          sendDiscordNotification(`Failed to remove ${targetUsername} from ignore list: \`${err.message}\``, 16711680);
+        }
+      })();
     }
 
     // Check for death messages in chat
@@ -1448,6 +1542,48 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         console.error('[Command] Allow error:', err.message);
         sendDiscordNotification(`Failed to add ${targetUsername} to whitelist: \`${err.message}\``, 16711680);
         await message.reply(`Error adding ${targetUsername} to whitelist: ${err.message}`);
+      }
+    }
+
+    const ignoreMatch = message.content.match(/^!ignore\s+(\w+)$/);
+    if (ignoreMatch) {
+      const targetUsername = ignoreMatch[1];
+      if (!pool) {
+        await message.reply('Database not configured.');
+        return;
+      }
+      try {
+        await pool.query('INSERT INTO ignored_users (username, added_by) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING', [targetUsername.toLowerCase(), message.author.tag]);
+        // Reload ignored
+        ignoredChatUsernames = await loadIgnoredChatUsernames();
+        console.log(`[Command] Added ${targetUsername} to ignore list by ${message.author.tag}`);
+        await message.reply(`✅ Added ${targetUsername} to ignore list.`);
+      } catch (err) {
+        console.error('[Command] Ignore error:', err.message);
+        await message.reply(`Failed to add ${targetUsername} to ignore list: ${err.message}`);
+      }
+    }
+
+    const unignoreMatch = message.content.match(/^!unignore\s+(\w+)$/);
+    if (unignoreMatch) {
+      const targetUsername = unignoreMatch[1];
+      if (!pool) {
+        await message.reply('Database not configured.');
+        return;
+      }
+      try {
+        const result = await pool.query('DELETE FROM ignored_users WHERE username = $1', [targetUsername.toLowerCase()]);
+        if (result.rowCount > 0) {
+          // Reload ignored
+          ignoredChatUsernames = await loadIgnoredChatUsernames();
+          console.log(`[Command] Removed ${targetUsername} from ignore list by ${message.author.tag}`);
+          await message.reply(`✅ Removed ${targetUsername} from ignore list.`);
+        } else {
+          await message.reply(`${targetUsername} is not in ignore list.`);
+        }
+      } catch (err) {
+        console.error('[Command] Unignore error:', err.message);
+        await message.reply(`Failed to remove ${targetUsername} from ignore list: ${err.message}`);
       }
     }
 

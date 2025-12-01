@@ -56,10 +56,20 @@ Edit `bot.js`:
 Environment variables (see `.env.example` for template):
 - `DISCORD_BOT_TOKEN` — Discord bot token (required for Discord commands and notifications)
 - `DISCORD_CHANNEL_ID` — Discord channel ID for bot commands and notifications
+- `DISCORD_CHAT_CHANNEL_ID` — Discord channel ID for chat bridge (optional)
+- `IGNORED_CHAT_USERNAMES` — comma-separated list of usernames to ignore in chat (optional, fallback if DB not used)
 - `MINECRAFT_USERNAME` — Minecraft username (optional, default: `WheatMagnate`)
 - `MINECRAFT_SESSION` — cached Minecraft session for persistent auth (optional, but now saved in DB if DATABASE_URL set)
 - `DATABASE_URL` — PostgreSQL connection string for storing session and other data (recommended for persistent auth across redeploys)
 - `DISABLE_BOT=true` — prevents the bot from starting.
+
+## Database Setup
+The bot uses PostgreSQL to store ignored chat usernames.
+
+1. Create a PostgreSQL database.
+2. Set `DATABASE_URL` in `.env` (e.g., `postgresql://user:pass@localhost:5432/dbname`).
+3. The bot will automatically create the `ignored_users` table on startup.
+4. Use `!ignore <username>` in Minecraft chat to add users to ignore list.
 - `AUTH_CACHE_DIR` — directory for Microsoft authentication cache (default: `~/.minecraft`). For persistent auth in containers, set to a mounted volume path.
 
 ## Commands
@@ -121,13 +131,19 @@ Commands are available in-game (authorized username `bdiev_` by default) and via
 ### Coolify Deployment
 1. Push code to GitHub repository.
 2. Connect repository to Coolify.
-3. Add PostgreSQL service in Coolify (Databases > Add PostgreSQL).
+3. Add PostgreSQL service in Coolify:
+   - Go to your project in Coolify.
+   - Click "Databases" > "Add Database".
+   - Select PostgreSQL, set name (e.g., "botdb"), and create.
+   - Wait for it to be ready. Note the connection details (host, port, user, password, database name).
 4. In bot service, set environment variables:
-    - `DISCORD_BOT_TOKEN`
-    - `DISCORD_CHANNEL_ID`
-    - `DATABASE_URL` (from PostgreSQL service, e.g., `postgresql://user:pass@db:5432/dbname`)
-    - `MINECRAFT_USERNAME` (optional)
-5. Deploy. Бот автоматически создаст таблицу и сохранит сессию в БД, избегая повторной авторизации.
+     - `DISCORD_BOT_TOKEN`
+     - `DISCORD_CHANNEL_ID`
+     - `DISCORD_CHAT_CHANNEL_ID` (optional)
+     - `IGNORED_CHAT_USERNAMES` (optional)
+     - `DATABASE_URL` (format: `postgresql://username:password@host:port/database_name`, get from PostgreSQL service in Coolify)
+     - `MINECRAFT_USERNAME` (optional)
+5. Deploy. The bot will automatically create the `ignored_users` table and save session in DB, avoiding re-authentication.
 
 ## Deployment in Containers (e.g., Azure Container Instances)
 To avoid re-authenticating on each redeploy:
