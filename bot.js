@@ -867,6 +867,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           .setCustomId('reply_message')
           .setLabel('Message')
           .setStyle(TextInputStyle.Paragraph)
+          .setValue(`/r ${username}`)
           .setRequired(true);
 
         const actionRow = new ActionRowBuilder().addComponents(messageInput);
