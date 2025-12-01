@@ -1026,7 +1026,9 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         }
       }
       setTimeout(() => interaction.deleteReply().catch(() => {}), 100);
+      setTimeout(() => interaction.deleteReply().catch(() => {}), 100);
     } else if (interaction.isModalSubmit() && interaction.customId.startsWith('message_modal_')) {
+      await interaction.deferReply({ flags: 64 });
       const selectedUsername = interaction.customId.split('_')[2];
       const messageText = interaction.fields.getTextInputValue('message_text');
       if (messageText && bot) {
