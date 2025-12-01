@@ -272,33 +272,38 @@ function getStatusDescription() {
 
 // Function to create status buttons
 function createStatusButtons() {
-  return new ActionRowBuilder()
-    .addComponents(
-      new ButtonBuilder()
-        .setCustomId('pause_button')
-        .setLabel('⏸️ Pause')
-        .setStyle(ButtonStyle.Danger),
-      new ButtonBuilder()
-        .setCustomId('resume_button')
-        .setLabel('▶️ Resume')
-        .setStyle(ButtonStyle.Success),
-      new ButtonBuilder()
-        .setCustomId('say_button')
-        .setLabel('💬 Say')
-        .setStyle(ButtonStyle.Primary),
-      new ButtonBuilder()
-        .setCustomId('playerlist_button')
-        .setLabel('👥 Players')
-        .setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder()
-        .setCustomId('drop_button')
-        .setLabel('🗑️ Drop')
-        .setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder()
-        .setCustomId('wn_button')
-        .setLabel('👀 Nearby')
-        .setStyle(ButtonStyle.Secondary)
-    );
+  return [
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('pause_button')
+          .setLabel('⏸️ Pause')
+          .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+          .setCustomId('resume_button')
+          .setLabel('▶️ Resume')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId('say_button')
+          .setLabel('💬 Say')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId('playerlist_button')
+          .setLabel('👥 Players')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('drop_button')
+          .setLabel('🗑️ Drop')
+          .setStyle(ButtonStyle.Secondary)
+      ),
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('wn_button')
+          .setLabel('👀 Nearby')
+          .setStyle(ButtonStyle.Secondary)
+      )
+  ];
 }
 
 // Function to update server status message
@@ -395,7 +400,7 @@ function createBot() {
                   color: 65280,
                   timestamp: new Date()
                 }],
-                components: [createStatusButtons()]
+                components: createStatusButtons()
               });
             }
           } catch (e) {
