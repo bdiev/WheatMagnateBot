@@ -928,7 +928,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         setTimeout(() => interaction.deleteReply().catch(() => {}), 1000);
       }
     } else if (interaction.isModalSubmit() && interaction.customId.startsWith('reply_modal_')) {
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: 64 });
       const encodedUsername = interaction.customId.split('_')[2];
       const username = atob(encodedUsername);
       const replyMessage = interaction.fields.getTextInputValue('reply_message');
@@ -1027,13 +1027,19 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       }
       setTimeout(() => interaction.deleteReply().catch(() => {}), 100);
     } else if (interaction.isModalSubmit() && interaction.customId.startsWith('message_modal_')) {
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: 64 });
       const selectedUsername = interaction.customId.split('_')[2];
       const messageText = interaction.fields.getTextInputValue('message_text');
       if (messageText && bot) {
-        const command = `/msg ${selectedUsername} ${messageText}`;
+        let command;
+        if (messageText.startsWith('/')) {
+          command = messageText;
+          console.log(`[Message] Sent command "${command}" by ${interaction.user.tag}`);
+        } else {
+          command = `/msg ${selectedUsername} ${messageText}`;
+          console.log(`[Message] Sent /msg ${selectedUsername} ${messageText} by ${interaction.user.tag}`);
+        }
         bot.chat(command);
-        console.log(`[Message] Sent /msg ${selectedUsername} ${messageText} by ${interaction.user.tag}`);
       }
       setTimeout(() => interaction.deleteReply().catch(() => {}), 100);
     } else if (interaction.isStringSelectMenu() && interaction.customId === 'message_select') {
