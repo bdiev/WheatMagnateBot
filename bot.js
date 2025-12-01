@@ -396,15 +396,27 @@ function createBot() {
         try {
           const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
           if (channel && channel.isTextBased()) {
-            statusMessage = await channel.send({
-              embeds: [{
-                title: 'Server Status',
-                description: getStatusDescription(),
-                color: 65280,
-                timestamp: new Date()
-              }],
-              components: createStatusButtons()
-            });
+            if (!statusMessage) {
+              statusMessage = await channel.send({
+                embeds: [{
+                  title: 'Server Status',
+                  description: getStatusDescription(),
+                  color: 65280,
+                  timestamp: new Date()
+                }],
+                components: createStatusButtons()
+              });
+            } else {
+              await statusMessage.edit({
+                embeds: [{
+                  title: 'Server Status',
+                  description: getStatusDescription(),
+                  color: 65280,
+                  timestamp: new Date()
+                }],
+                components: createStatusButtons()
+              });
+            }
           }
         } catch (e) {
           console.error('[Discord] Failed to send status:', e.message);
