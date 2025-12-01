@@ -371,6 +371,10 @@ function createStatusButtons() {
         new ButtonBuilder()
           .setCustomId('wn_button')
           .setLabel('👀 Nearby')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('chat_setting_button')
+          .setLabel('⚙️ Chat Settings')
           .setStyle(ButtonStyle.Secondary)
       )
   ];
@@ -1057,6 +1061,59 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             }]
           });
         }
+      } else if (interaction.customId === 'chat_setting_button') {
+        await interaction.deferReply();
+        if (!bot) {
+          await interaction.editReply({
+            embeds: [{
+              description: 'Bot is offline.',
+              color: 16711680,
+              timestamp: new Date()
+            }]
+          });
+          return;
+        }
+        const allOnlinePlayers = Object.values(bot.players || {}).map(p => p.username);
+        const playersToIgnore = allOnlinePlayers.filter(username => !ignoredChatUsernames.includes(username.toLowerCase()));
+        const playersToUnignore = ignoredChatUsernames.filter(username => allOnlinePlayers.some(p => p.toLowerCase() === username));
+
+        const ignoreOptions = playersToIgnore.map(username => {
+          return new StringSelectMenuOptionBuilder()
+            .setLabel(username)
+            .setValue(btoa(username));
+        });
+        const unignoreOptions = playersToUnignore.map(username => {
+          return new StringSelectMenuOptionBuilder()
+            .setLabel(username)
+            .setValue(btoa(username));
+        });
+
+        const ignoreMenu = new StringSelectMenuBuilder()
+          .setCustomId('ignore_select')
+          .setPlaceholder('Select player to ignore')
+          .addOptions(ignoreOptions.slice(0, 25));
+        const unignoreMenu = new StringSelectMenuBuilder()
+          .setCustomId('unignore_select')
+          .setPlaceholder('Select player to unignore')
+          .addOptions(unignoreOptions.slice(0, 25));
+
+        const components = [];
+        if (ignoreOptions.length > 0) {
+          components.push(new ActionRowBuilder().addComponents(ignoreMenu));
+        }
+        if (unignoreOptions.length > 0) {
+          components.push(new ActionRowBuilder().addComponents(unignoreMenu));
+        }
+
+        await interaction.editReply({
+          embeds: [{
+            title: 'Chat Settings',
+            description: 'Manage ignored players for chat messages.',
+            color: 3447003,
+            timestamp: new Date()
+          }],
+          components
+        });
       } else if (interaction.customId.startsWith('reply_')) {
         const parts = interaction.customId.split('_');
         const encodedUsername = parts[1];
@@ -1364,6 +1421,164 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       }
     }
   });
+  } else if (interaction.isStringSelectMenu() && interaction.customId === 'ignore_select') {
+      await interaction.deferUpdate();
+      const encodedUsername = interaction.values[0];
+      const selectedUsername = atob(encodedUsername);
+      if (!pool) {
+        await interaction.editReply({
+          embeds: [{
+            description: 'Database not configured.',
+            color: 16711680,
+            timestamp: new Date()
+          }],
+          components: []
+        });
+        return;
+      }
+      try {
+        await pool.query('INSERT INTO ignored_users (username, added_by) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING', [selectedUsername.toLowerCase(), interaction.user.tag]);
+        ignoredChatUsernames = await loadIgnoredChatUsernames();
+        console.log(`[Ignore] Added ${selectedUsername} to ignore list by ${interaction.user.tag}`);
+
+        // Update the message with new lists
+        const allOnlinePlayers = Object.values(bot.players || {}).map(p => p.username);
+        const playersToIgnore = allOnlinePlayers.filter(username => !ignoredChatUsernames.includes(username.toLowerCase()));
+        const playersToUnignore = ignoredChatUsernames.filter(username => allOnlinePlayers.some(p => p.toLowerCase() === username));
+
+        const ignoreOptions = playersToIgnore.map(username => {
+          return new StringSelectMenuOptionBuilder()
+            .setLabel(username)
+            .setValue(btoa(username));
+        });
+        const unignoreOptions = playersToUnignore.map(username => {
+          return new StringSelectMenuOptionBuilder()
+            .setLabel(username)
+            .setValue(btoa(username));
+        });
+
+        const ignoreMenu = new StringSelectMenuBuilder()
+          .setCustomId('ignore_select')
+          .setPlaceholder('Select player to ignore')
+          .addOptions(ignoreOptions.slice(0, 25));
+        const unignoreMenu = new StringSelectMenuBuilder()
+          .setCustomId('unignore_select')
+          .setPlaceholder('Select player to unignore')
+          .addOptions(unignoreOptions.slice(0, 25));
+
+        const components = [];
+        if (ignoreOptions.length > 0) {
+          components.push(new ActionRowBuilder().addComponents(ignoreMenu));
+        }
+        if (unignoreOptions.length > 0) {
+          components.push(new ActionRowBuilder().addComponents(unignoreMenu));
+        }
+
+        await interaction.editReply({
+          embeds: [{
+            title: 'Chat Settings',
+            description: `✅ Added ${selectedUsername} to ignore list.\n\nManage ignored players for chat messages.`,
+            color: 65280,
+            timestamp: new Date()
+          }],
+          components
+        });
+      } catch (err) {
+        console.error('[Ignore] Error:', err.message);
+        await interaction.editReply({
+          embeds: [{
+            description: `Failed to add ${selectedUsername} to ignore list: ${err.message}`,
+            color: 16711680,
+            timestamp: new Date()
+          }],
+          components: []
+        });
+      }
+    } else if (interaction.isStringSelectMenu() && interaction.customId === 'unignore_select') {
+      await interaction.deferUpdate();
+      const encodedUsername = interaction.values[0];
+      const selectedUsername = atob(encodedUsername);
+      if (!pool) {
+        await interaction.editReply({
+          embeds: [{
+            description: 'Database not configured.',
+            color: 16711680,
+            timestamp: new Date()
+          }],
+          components: []
+        });
+        return;
+      }
+      try {
+        const result = await pool.query('DELETE FROM ignored_users WHERE username = $1', [selectedUsername.toLowerCase()]);
+        if (result.rowCount > 0) {
+          ignoredChatUsernames = await loadIgnoredChatUsernames();
+          console.log(`[Unignore] Removed ${selectedUsername} from ignore list by ${interaction.user.tag}`);
+
+          // Update the message with new lists
+          const allOnlinePlayers = Object.values(bot.players || {}).map(p => p.username);
+          const playersToIgnore = allOnlinePlayers.filter(username => !ignoredChatUsernames.includes(username.toLowerCase()));
+          const playersToUnignore = ignoredChatUsernames.filter(username => allOnlinePlayers.some(p => p.toLowerCase() === username));
+
+          const ignoreOptions = playersToIgnore.map(username => {
+            return new StringSelectMenuOptionBuilder()
+              .setLabel(username)
+              .setValue(btoa(username));
+          });
+          const unignoreOptions = playersToUnignore.map(username => {
+            return new StringSelectMenuOptionBuilder()
+              .setLabel(username)
+              .setValue(btoa(username));
+          });
+
+          const ignoreMenu = new StringSelectMenuBuilder()
+            .setCustomId('ignore_select')
+            .setPlaceholder('Select player to ignore')
+            .addOptions(ignoreOptions.slice(0, 25));
+          const unignoreMenu = new StringSelectMenuBuilder()
+            .setCustomId('unignore_select')
+            .setPlaceholder('Select player to unignore')
+            .addOptions(unignoreOptions.slice(0, 25));
+
+          const components = [];
+          if (ignoreOptions.length > 0) {
+            components.push(new ActionRowBuilder().addComponents(ignoreMenu));
+          }
+          if (unignoreOptions.length > 0) {
+            components.push(new ActionRowBuilder().addComponents(unignoreMenu));
+          }
+
+          await interaction.editReply({
+            embeds: [{
+              title: 'Chat Settings',
+              description: `✅ Removed ${selectedUsername} from ignore list.\n\nManage ignored players for chat messages.`,
+              color: 65280,
+              timestamp: new Date()
+            }],
+            components
+          });
+        } else {
+          await interaction.editReply({
+            embeds: [{
+              description: `${selectedUsername} is not in ignore list.`,
+              color: 16776960,
+              timestamp: new Date()
+            }],
+            components: []
+          });
+        }
+      } catch (err) {
+        console.error('[Unignore] Error:', err.message);
+        await interaction.editReply({
+          embeds: [{
+            description: `Failed to remove ${selectedUsername} from ignore list: ${err.message}`,
+            color: 16711680,
+            timestamp: new Date()
+          }],
+          components: []
+        });
+      }
+    }
 
   discordClient.on('messageCreate', async message => {
     if (message.author.bot) return;
