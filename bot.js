@@ -1,8 +1,6 @@
 const mineflayer = require('mineflayer');
 const fs = require('fs');
 const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } = require('discord.js');
-const { Pool } = require('pg');
-const { Authflow } = require('prismarine-auth');
 
 // Discord bot
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -10,88 +8,13 @@ const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
 
 
 // Discord bot
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-
-async function initDB() {
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS bot_data (
-        key TEXT PRIMARY KEY,
-        value JSONB
-      );
-    `);
-    console.log('[DB] Initialized.');
-  } catch (err) {
-    console.error('[DB] Init error:', err);
-  }
-}
-
-async function loadSession() {
-  try {
-    const res = await pool.query('SELECT value FROM bot_data WHERE key = $1', ['minecraft_session']);
-    if (res.rows.length > 0) {
-      return res.rows[0].value;
-    }
-  } catch (err) {
-    console.error('[DB] Load session error:', err);
-  }
-  return null;
-}
-
-async function saveSession(session) {
-  try {
-    await pool.query('INSERT INTO bot_data (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value', ['minecraft_session', session]);
-    console.log('[DB] Session saved.');
-  } catch (err) {
-    console.error('[DB] Save session error:', err);
-  }
-}
-
 let loadedSession = null;
-
-async function loadMinecraftSession() {
-  const auth = process.env.MINECRAFT_AUTH || 'offline';
-  if (auth === 'offline') {
-    console.log('[Bot] Using offline auth, no session needed.');
-    loadedSession = null;
-    return;
-  }
-
-  if (process.env.MINECRAFT_SESSION) {
-    try {
-      loadedSession = JSON.parse(process.env.MINECRAFT_SESSION);
-      console.log('[Bot] Loaded session from env.');
-    } catch (err) {
-      console.error('[Bot] Failed to parse session from env:', err.message);
-    }
-  } else {
-    try {
-      loadedSession = await loadSession();
-      if (loadedSession) {
-        console.log('[Bot] Loaded session from DB.');
-      } else {
-        console.log('[Bot] No saved session found, will authenticate.');
-        // Authenticate with Microsoft
-        const flow = new Authflow('WheatMagnateBot', './auth-cache');
-        loadedSession = await flow.getMinecraftJavaToken();
-        console.log('[Bot] Authenticated with Microsoft.');
-        // Save to DB
-        await saveSession(loadedSession);
-        console.log('[Bot] Session saved after auth.');
-      }
-    } catch (err) {
-      console.error('[Bot] Failed to load session from DB:', err.message);
-      console.log('[Bot] Will authenticate.');
-      // Authenticate with Microsoft
-      const flow = new Authflow('WheatMagnateBot', './auth-cache');
-      loadedSession = await flow.getMinecraftJavaToken();
-      console.log('[Bot] Authenticated with Microsoft.');
-      // Save to DB
-      await saveSession(loadedSession);
-      console.log('[Bot] Session saved after auth.');
-    }
+if (process.env.MINECRAFT_SESSION) {
+  try {
+    loadedSession = JSON.parse(process.env.MINECRAFT_SESSION);
+    console.log('[Bot] Loaded session from env.');
+  } catch (err) {
+    console.error('[Bot] Failed to parse session from env:', err.message);
   }
 }
 
@@ -128,8 +51,8 @@ function loadStatusMessageId() {
 const config = {
   host: 'oldfag.org',
   username: process.env.MINECRAFT_USERNAME || 'WheatMagnate',
-  auth: process.env.MINECRAFT_AUTH || 'offline', // 'offline' or 'microsoft'
-  version: process.env.MINECRAFT_VERSION || false, // Auto-detect or specify version
+  auth: 'microsoft',
+  version: false, // Auto-detect version
   session: loadedSession
 };
 
@@ -158,13 +81,11 @@ const discordClient = new Client({
 if (DISCORD_BOT_TOKEN) {
   discordClient.login(DISCORD_BOT_TOKEN).catch(err => console.error('[Discord] Login failed:', err.message));
 
-  discordClient.on('clientReady', async () => {
+  discordClient.on('clientReady', () => {
     console.log(`[Discord] Bot logged in as ${discordClient.user.tag}`);
     discordClient.user.setPresence({ status: 'online' });
     if (!mineflayerStarted) {
       mineflayerStarted = true;
-      await initDB();
-      await loadMinecraftSession();
       createBot();
     }
 
@@ -200,11 +121,7 @@ if (DISCORD_BOT_TOKEN) {
 } else {
   // No Discord, start Mineflayer directly
   mineflayerStarted = true;
-  (async () => {
-    await initDB();
-    await loadMinecraftSession();
-    createBot();
-  })();
+  createBot();
 }
 
 
@@ -443,16 +360,6 @@ function createBot() {
   lastTickTime = 0; // Reset TPS tracking for new bot
   bot = mineflayer.createBot(config);
 
-  bot.on('session', async (session) => {
-    console.log('[Bot] Session updated, saving to DB...');
-    try {
-      await saveSession(session);
-      console.log('[Bot] Session saved successfully.');
-    } catch (err) {
-      console.error('[Bot] Failed to save session:', err.message);
-    }
-  });
-
   bot.on('login', async () => {
     console.log(`[+] Logged in as ${bot.username}`);
     startTime = Date.now();
@@ -471,14 +378,6 @@ function createBot() {
 
   bot.on('spawn', () => {
     console.log('[Bot] Spawned.');
-    console.log('[Bot] config.session in spawn:', config.session);
-    // Save session on spawn if available
-    if (config.session) {
-      console.log('[Bot] Saving session on spawn...');
-      saveSession(config.session).catch(err => console.error('[Bot] Failed to save session on spawn:', err.message));
-    } else {
-      console.log('[Bot] No session to save in spawn.');
-    }
     clearIntervals();
     startFoodMonitor();
     startNearbyPlayerScanner();
