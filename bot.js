@@ -1481,6 +1481,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
                 }],
                 components
               });
+              setTimeout(() => interaction.message.delete().catch(() => {}), 1000);
             } catch (err) {
               console.error('[Ignore] Error:', err.message);
               await interaction.editReply({
@@ -1555,6 +1556,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
                     }],
                     components
                   });
+                  setTimeout(() => interaction.message.delete().catch(() => {}), 1000);
                 } else {
                   await interaction.editReply({
                     embeds: [{
