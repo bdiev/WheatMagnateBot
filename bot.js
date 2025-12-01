@@ -1,6 +1,7 @@
 const mineflayer = require('mineflayer');
 const fs = require('fs');
 const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } = require('discord.js');
+const { Pool } = require('pg');
 
 // Discord bot
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -8,33 +9,62 @@ const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
 
 
 // Discord bot
-let loadedSession = null;
-const SESSION_FILE = process.env.SESSION_FILE || 'minecraft_session.json';
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+});
 
-if (process.env.MINECRAFT_SESSION) {
+async function initDB() {
   try {
-    loadedSession = JSON.parse(process.env.MINECRAFT_SESSION);
-    console.log('[Bot] Loaded session from env.');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS bot_data (
+        key TEXT PRIMARY KEY,
+        value JSONB
+      );
+    `);
+    console.log('[DB] Initialized.');
   } catch (err) {
-    console.error('[Bot] Failed to parse session from env:', err.message);
-  }
-} else {
-  // Load from file if env not set
-  try {
-    const sessionData = fs.readFileSync(SESSION_FILE, 'utf8');
-    loadedSession = JSON.parse(sessionData);
-    console.log('[Bot] Loaded session from file:', SESSION_FILE);
-  } catch (err) {
-    console.log('[Bot] No saved session found in', SESSION_FILE, ', will authenticate.');
+    console.error('[DB] Init error:', err);
   }
 }
 
-function saveMinecraftSession(session) {
+async function loadSession() {
   try {
-    fs.writeFileSync(SESSION_FILE, JSON.stringify(session, null, 2));
-    console.log('[Bot] Session saved to file:', SESSION_FILE);
+    const res = await pool.query('SELECT value FROM bot_data WHERE key = $1', ['minecraft_session']);
+    if (res.rows.length > 0) {
+      return res.rows[0].value;
+    }
   } catch (err) {
-    console.error('[Bot] Failed to save session:', err.message);
+    console.error('[DB] Load session error:', err);
+  }
+  return null;
+}
+
+async function saveSession(session) {
+  try {
+    await pool.query('INSERT INTO bot_data (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value', ['minecraft_session', session]);
+    console.log('[DB] Session saved.');
+  } catch (err) {
+    console.error('[DB] Save session error:', err);
+  }
+}
+
+let loadedSession = null;
+
+async function loadMinecraftSession() {
+  if (process.env.MINECRAFT_SESSION) {
+    try {
+      loadedSession = JSON.parse(process.env.MINECRAFT_SESSION);
+      console.log('[Bot] Loaded session from env.');
+    } catch (err) {
+      console.error('[Bot] Failed to parse session from env:', err.message);
+    }
+  } else {
+    loadedSession = await loadSession();
+    if (loadedSession) {
+      console.log('[Bot] Loaded session from DB.');
+    } else {
+      console.log('[Bot] No saved session found, will authenticate.');
+    }
   }
 }
 
@@ -101,11 +131,13 @@ const discordClient = new Client({
 if (DISCORD_BOT_TOKEN) {
   discordClient.login(DISCORD_BOT_TOKEN).catch(err => console.error('[Discord] Login failed:', err.message));
 
-  discordClient.on('clientReady', () => {
+  discordClient.on('clientReady', async () => {
     console.log(`[Discord] Bot logged in as ${discordClient.user.tag}`);
     discordClient.user.setPresence({ status: 'online' });
     if (!mineflayerStarted) {
       mineflayerStarted = true;
+      await initDB();
+      await loadMinecraftSession();
       createBot();
     }
 
@@ -141,7 +173,11 @@ if (DISCORD_BOT_TOKEN) {
 } else {
   // No Discord, start Mineflayer directly
   mineflayerStarted = true;
-  createBot();
+  (async () => {
+    await initDB();
+    await loadMinecraftSession();
+    createBot();
+  })();
 }
 
 
@@ -386,7 +422,7 @@ function createBot() {
     // Save session after successful login
     if (bot.session) {
       config.session = bot.session;
-      saveMinecraftSession(config.session);
+      await saveSession(config.session);
     }
     if (pendingStatusMessage) {
       await pendingStatusMessage.edit({
