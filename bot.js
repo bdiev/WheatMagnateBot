@@ -24,10 +24,12 @@ let statusMessage = null;
 let statusUpdateInterval = null;
 let channelCleanerInterval = null;
 let tpsHistory = [];
+let realTps = null;
 let lastTickTime = 0;
 let mineflayerStarted = false;
 let startTime = Date.now();
 let whisperConversations = new Map(); // username -> messageId
+let tpsTabInterval = null;
 
 const config = {
   host: 'oldfag.org',
@@ -261,7 +263,7 @@ function getStatusDescription() {
   const onlinePlayers = Object.values(bot.players || {}).map(p => p.username);
   const whitelistOnline = onlinePlayers.filter(username => ignoredUsernames.includes(username));
   const nearbyPlayers = getNearbyPlayers();
-  const avgTps = tpsHistory.length > 0 ? (tpsHistory.reduce((a, b) => a + b, 0) / tpsHistory.length).toFixed(1) : 'Calculating...';
+  const avgTps = realTps !== null ? realTps.toFixed(1) : (tpsHistory.length > 0 ? (tpsHistory.reduce((a, b) => a + b, 0) / tpsHistory.length).toFixed(1) : 'Calculating...');
 
   const nearbyNames = nearbyPlayers.map(p => p.username).join(', ') || 'None';
   return `✅ Bot **${bot.username}** connected to \`${config.host}\`\n` +
@@ -351,6 +353,17 @@ function createBot() {
     clearIntervals();
     startFoodMonitor();
     startNearbyPlayerScanner();
+
+    // Start TPS from TAB monitor
+    tpsTabInterval = setInterval(() => {
+      if (bot && bot.tablist && bot.tablist.footer) {
+        const footerText = chatComponentToString(bot.tablist.footer);
+        const tpsMatch = footerText.match(/TPS:\s*(\d+\.?\d*)/i);
+        if (tpsMatch) {
+          realTps = parseFloat(tpsMatch[1]);
+        }
+      }
+    }, 10000); // Check every 10 seconds
 
     // Send or update status message after spawn
     if (DISCORD_CHANNEL_ID && discordClient && discordClient.isReady()) {
@@ -567,6 +580,10 @@ function clearIntervals() {
   if (playerScannerInterval) {
     clearInterval(playerScannerInterval);
     playerScannerInterval = null;
+  }
+  if (tpsTabInterval) {
+    clearInterval(tpsTabInterval);
+    tpsTabInterval = null;
   }
 }
 
