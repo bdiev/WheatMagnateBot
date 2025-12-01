@@ -767,13 +767,23 @@ function createBot() {
     try {
       const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
       if (channel && channel.isTextBased()) {
-        let avatarUrl = `https://minotar.net/avatar/${username.toLowerCase()}/28`;
+        let displayUsername = username.toLowerCase();
+        let displayMessage = message;
+
+        // Parse messages from bots like LolRiTTeRBot that format as "> player: message"
+        const relayMatch = message.match(/^> (\w+): (.+)$/);
+        if (relayMatch) {
+          displayUsername = relayMatch[1].toLowerCase();
+          displayMessage = relayMatch[2];
+        }
+
+        let avatarUrl = `https://minotar.net/avatar/${displayUsername}/28`;
         await channel.send({
           embeds: [{
             author: {
-              name: username.toLowerCase()
+              name: displayUsername
             },
-            description: message,
+            description: displayMessage,
             color: 3447003,
             thumbnail: {
               url: avatarUrl
