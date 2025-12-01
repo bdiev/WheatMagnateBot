@@ -143,7 +143,18 @@ function chatComponentToString(component) {
 
   // For other types, try to extract text if possible
   if (component.value && typeof component.value === 'string') return component.value;
-  return JSON.stringify(component);
+
+  // Handle complex objects like tablist
+  if (component.text) return component.text;
+  if (component.extra) {
+    let text = '';
+    for (const extra of component.extra) {
+      text += chatComponentToString(extra);
+    }
+    return text;
+  }
+
+  return '';
 }
 
 var bot;
