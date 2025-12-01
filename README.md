@@ -39,6 +39,7 @@ Lightweight Minecraft bot built with mineflayer. Monitors hunger, scans nearby p
 - mineflayer
 - discord.js
 - prismarine-auth
+- pg (for PostgreSQL database)
 
 Install:
 ```powershell
@@ -56,7 +57,8 @@ Environment variables (see `.env.example` for template):
 - `DISCORD_BOT_TOKEN` — Discord bot token (required for Discord commands and notifications)
 - `DISCORD_CHANNEL_ID` — Discord channel ID for bot commands and notifications
 - `MINECRAFT_USERNAME` — Minecraft username (optional, default: `WheatMagnate`)
-- `MINECRAFT_SESSION` — cached Minecraft session for persistent auth (optional)
+- `MINECRAFT_SESSION` — cached Minecraft session for persistent auth (optional, but now saved in DB if DATABASE_URL set)
+- `DATABASE_URL` — PostgreSQL connection string for storing session and other data (recommended for persistent auth across redeploys)
 - `DISABLE_BOT=true` — prevents the bot from starting.
 - `AUTH_CACHE_DIR` — directory for Microsoft authentication cache (default: `~/.minecraft`). For persistent auth in containers, set to a mounted volume path.
 
@@ -109,12 +111,23 @@ Commands are available in-game (authorized username `bdiev_` by default) and via
 1. Push code to GitHub repository.
 2. Connect repository to Railway.app.
 3. Set environment variables in Railway dashboard:
-   - `DISCORD_BOT_TOKEN`
-   - `DISCORD_CHANNEL_ID`
-   - `MINECRAFT_USERNAME` (optional)
-   - `MINECRAFT_SESSION` (optional)
-   - `STATUS_MESSAGE_ID` (optional, for updating existing status message)
+    - `DISCORD_BOT_TOKEN`
+    - `DISCORD_CHANNEL_ID`
+    - `MINECRAFT_USERNAME` (optional)
+    - `MINECRAFT_SESSION` (optional)
+    - `STATUS_MESSAGE_ID` (optional, for updating existing status message)
 4. Deploy.
+
+### Coolify Deployment
+1. Push code to GitHub repository.
+2. Connect repository to Coolify.
+3. Add PostgreSQL service in Coolify (Databases > Add PostgreSQL).
+4. In bot service, set environment variables:
+    - `DISCORD_BOT_TOKEN`
+    - `DISCORD_CHANNEL_ID`
+    - `DATABASE_URL` (from PostgreSQL service, e.g., `postgresql://user:pass@db:5432/dbname`)
+    - `MINECRAFT_USERNAME` (optional)
+5. Deploy. Бот автоматически создаст таблицу и сохранит сессию в БД, избегая повторной авторизации.
 
 ## Deployment in Containers (e.g., Azure Container Instances)
 To avoid re-authenticating on each redeploy:
