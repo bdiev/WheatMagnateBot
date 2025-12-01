@@ -1368,217 +1368,216 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
       await interaction.showModal(modal);
     } else if (interaction.isStringSelectMenu() && interaction.customId === 'drop_select') {
-      await interaction.deferUpdate();
-      const encodedValue = interaction.values[0];
-      const selectedValue = atob(encodedValue);
-      const [slot, type, metadata] = selectedValue.split('_').map((v, i) => i === 2 ? parseInt(v) : v);
-      const inventory = bot.inventory.items();
-      const item = inventory.find(i => i.slot == slot && i.type == type && (i.metadata || 0) == metadata);
-      if (!item) {
-        await interaction.editReply({
-          embeds: [{
-            description: 'Item not found.',
-            color: 16711680,
-            timestamp: new Date()
-          }],
-          components: []
-        });
-        return;
-      }
-      try {
-        // Find nearest player and look at them before dropping
-        const nearby = getNearbyPlayers();
-        if (nearby.length > 0) {
-          const nearest = nearby.sort((a, b) => a.distance - b.distance)[0];
-          for (const entity of Object.values(bot.entities)) {
-            if (entity.username === nearest.username) {
-              await bot.lookAt(entity.position);
-              break;
+          await interaction.deferUpdate();
+          const encodedValue = interaction.values[0];
+          const selectedValue = atob(encodedValue);
+          const [slot, type, metadata] = selectedValue.split('_').map((v, i) => i === 2 ? parseInt(v) : v);
+          const inventory = bot.inventory.items();
+          const item = inventory.find(i => i.slot == slot && i.type == type && (i.metadata || 0) == metadata);
+          if (!item) {
+            await interaction.editReply({
+              embeds: [{
+                description: 'Item not found.',
+                color: 16711680,
+                timestamp: new Date()
+              }],
+              components: []
+            });
+            return;
+          }
+          try {
+            // Find nearest player and look at them before dropping
+            const nearby = getNearbyPlayers();
+            if (nearby.length > 0) {
+              const nearest = nearby.sort((a, b) => a.distance - b.distance)[0];
+              for (const entity of Object.values(bot.entities)) {
+                if (entity.username === nearest.username) {
+                  await bot.lookAt(entity.position);
+                  break;
+                }
+              }
             }
+            await bot.toss(item.type, item.metadata || null, item.count);
+            console.log(`[Drop] Dropped ${item.count} x ${item.displayName || item.name} by ${interaction.user.tag}`);
+            await interaction.editReply({
+              embeds: [{
+                title: 'Item Dropped',
+                description: `Dropped ${item.count} x ${item.displayName || item.name}`,
+                color: 65280,
+                timestamp: new Date()
+              }],
+              components: []
+            });
+          } catch (err) {
+            console.error('[Drop] Error:', err.message);
+            await interaction.editReply({
+              embeds: [{
+                description: `Failed to drop item: ${err.message}`,
+                color: 16711680,
+                timestamp: new Date()
+              }],
+              components: []
+            });
           }
-        }
-        await bot.toss(item.type, item.metadata || null, item.count);
-        console.log(`[Drop] Dropped ${item.count} x ${item.displayName || item.name} by ${interaction.user.tag}`);
-        await interaction.editReply({
-          embeds: [{
-            title: 'Item Dropped',
-            description: `Dropped ${item.count} x ${item.displayName || item.name}`,
-            color: 65280,
-            timestamp: new Date()
-          }],
-          components: []
-        });
-      } catch (err) {
-        console.error('[Drop] Error:', err.message);
-        await interaction.editReply({
-          embeds: [{
-            description: `Failed to drop item: ${err.message}`,
-            color: 16711680,
-            timestamp: new Date()
-          }],
-          components: []
-        });
-      }
-    }
-  });
-  } else if (interaction.isStringSelectMenu() && interaction.customId === 'ignore_select') {
-      await interaction.deferUpdate();
-      const encodedUsername = interaction.values[0];
-      const selectedUsername = atob(encodedUsername);
-      if (!pool) {
-        await interaction.editReply({
-          embeds: [{
-            description: 'Database not configured.',
-            color: 16711680,
-            timestamp: new Date()
-          }],
-          components: []
-        });
-        return;
-      }
-      try {
-        await pool.query('INSERT INTO ignored_users (username, added_by) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING', [selectedUsername.toLowerCase(), interaction.user.tag]);
-        ignoredChatUsernames = await loadIgnoredChatUsernames();
-        console.log(`[Ignore] Added ${selectedUsername} to ignore list by ${interaction.user.tag}`);
-
-        // Update the message with new lists
-        const allOnlinePlayers = Object.values(bot.players || {}).map(p => p.username);
-        const playersToIgnore = allOnlinePlayers.filter(username => !ignoredChatUsernames.includes(username.toLowerCase()));
-        const playersToUnignore = ignoredChatUsernames.filter(username => allOnlinePlayers.some(p => p.toLowerCase() === username));
-
-        const ignoreOptions = playersToIgnore.map(username => {
-          return new StringSelectMenuOptionBuilder()
-            .setLabel(username)
-            .setValue(btoa(username));
-        });
-        const unignoreOptions = playersToUnignore.map(username => {
-          return new StringSelectMenuOptionBuilder()
-            .setLabel(username)
-            .setValue(btoa(username));
-        });
-
-        const ignoreMenu = new StringSelectMenuBuilder()
-          .setCustomId('ignore_select')
-          .setPlaceholder('Select player to ignore')
-          .addOptions(ignoreOptions.slice(0, 25));
-        const unignoreMenu = new StringSelectMenuBuilder()
-          .setCustomId('unignore_select')
-          .setPlaceholder('Select player to unignore')
-          .addOptions(unignoreOptions.slice(0, 25));
-
-        const components = [];
-        if (ignoreOptions.length > 0) {
-          components.push(new ActionRowBuilder().addComponents(ignoreMenu));
-        }
-        if (unignoreOptions.length > 0) {
-          components.push(new ActionRowBuilder().addComponents(unignoreMenu));
-        }
-
-        await interaction.editReply({
-          embeds: [{
-            title: 'Chat Settings',
-            description: `✅ Added ${selectedUsername} to ignore list.\n\nManage ignored players for chat messages.`,
-            color: 65280,
-            timestamp: new Date()
-          }],
-          components
-        });
-      } catch (err) {
-        console.error('[Ignore] Error:', err.message);
-        await interaction.editReply({
-          embeds: [{
-            description: `Failed to add ${selectedUsername} to ignore list: ${err.message}`,
-            color: 16711680,
-            timestamp: new Date()
-          }],
-          components: []
-        });
-      }
-    } else if (interaction.isStringSelectMenu() && interaction.customId === 'unignore_select') {
-      await interaction.deferUpdate();
-      const encodedUsername = interaction.values[0];
-      const selectedUsername = atob(encodedUsername);
-      if (!pool) {
-        await interaction.editReply({
-          embeds: [{
-            description: 'Database not configured.',
-            color: 16711680,
-            timestamp: new Date()
-          }],
-          components: []
-        });
-        return;
-      }
-      try {
-        const result = await pool.query('DELETE FROM ignored_users WHERE username = $1', [selectedUsername.toLowerCase()]);
-        if (result.rowCount > 0) {
-          ignoredChatUsernames = await loadIgnoredChatUsernames();
-          console.log(`[Unignore] Removed ${selectedUsername} from ignore list by ${interaction.user.tag}`);
-
-          // Update the message with new lists
-          const allOnlinePlayers = Object.values(bot.players || {}).map(p => p.username);
-          const playersToIgnore = allOnlinePlayers.filter(username => !ignoredChatUsernames.includes(username.toLowerCase()));
-          const playersToUnignore = ignoredChatUsernames.filter(username => allOnlinePlayers.some(p => p.toLowerCase() === username));
-
-          const ignoreOptions = playersToIgnore.map(username => {
-            return new StringSelectMenuOptionBuilder()
-              .setLabel(username)
-              .setValue(btoa(username));
-          });
-          const unignoreOptions = playersToUnignore.map(username => {
-            return new StringSelectMenuOptionBuilder()
-              .setLabel(username)
-              .setValue(btoa(username));
-          });
-
-          const ignoreMenu = new StringSelectMenuBuilder()
-            .setCustomId('ignore_select')
-            .setPlaceholder('Select player to ignore')
-            .addOptions(ignoreOptions.slice(0, 25));
-          const unignoreMenu = new StringSelectMenuBuilder()
-            .setCustomId('unignore_select')
-            .setPlaceholder('Select player to unignore')
-            .addOptions(unignoreOptions.slice(0, 25));
-
-          const components = [];
-          if (ignoreOptions.length > 0) {
-            components.push(new ActionRowBuilder().addComponents(ignoreMenu));
-          }
-          if (unignoreOptions.length > 0) {
-            components.push(new ActionRowBuilder().addComponents(unignoreMenu));
-          }
-
-          await interaction.editReply({
-            embeds: [{
-              title: 'Chat Settings',
-              description: `✅ Removed ${selectedUsername} from ignore list.\n\nManage ignored players for chat messages.`,
-              color: 65280,
-              timestamp: new Date()
-            }],
-            components
-          });
-        } else {
-          await interaction.editReply({
-            embeds: [{
-              description: `${selectedUsername} is not in ignore list.`,
-              color: 16776960,
-              timestamp: new Date()
-            }],
-            components: []
-          });
-        }
-      } catch (err) {
-        console.error('[Unignore] Error:', err.message);
-        await interaction.editReply({
-          embeds: [{
-            description: `Failed to remove ${selectedUsername} from ignore list: ${err.message}`,
-            color: 16711680,
-            timestamp: new Date()
-          }],
-          components: []
-        });
-      }
-    }
+        } else if (interaction.isStringSelectMenu() && interaction.customId === 'ignore_select') {
+        await interaction.deferUpdate();
+            const encodedUsername = interaction.values[0];
+            const selectedUsername = atob(encodedUsername);
+            if (!pool) {
+              await interaction.editReply({
+                embeds: [{
+                  description: 'Database not configured.',
+                  color: 16711680,
+                  timestamp: new Date()
+                }],
+                components: []
+              });
+              return;
+            }
+            try {
+              await pool.query('INSERT INTO ignored_users (username, added_by) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING', [selectedUsername.toLowerCase(), interaction.user.tag]);
+              ignoredChatUsernames = await loadIgnoredChatUsernames();
+              console.log(`[Ignore] Added ${selectedUsername} to ignore list by ${interaction.user.tag}`);
+        
+              // Update the message with new lists
+              const allOnlinePlayers = Object.values(bot.players || {}).map(p => p.username);
+              const playersToIgnore = allOnlinePlayers.filter(username => !ignoredChatUsernames.includes(username.toLowerCase()));
+              const playersToUnignore = ignoredChatUsernames.filter(username => allOnlinePlayers.some(p => p.toLowerCase() === username));
+        
+              const ignoreOptions = playersToIgnore.map(username => {
+                return new StringSelectMenuOptionBuilder()
+                  .setLabel(username)
+                  .setValue(btoa(username));
+              });
+              const unignoreOptions = playersToUnignore.map(username => {
+                return new StringSelectMenuOptionBuilder()
+                  .setLabel(username)
+                  .setValue(btoa(username));
+              });
+        
+              const ignoreMenu = new StringSelectMenuBuilder()
+                .setCustomId('ignore_select')
+                .setPlaceholder('Select player to ignore')
+                .addOptions(ignoreOptions.slice(0, 25));
+              const unignoreMenu = new StringSelectMenuBuilder()
+                .setCustomId('unignore_select')
+                .setPlaceholder('Select player to unignore')
+                .addOptions(unignoreOptions.slice(0, 25));
+        
+              const components = [];
+              if (ignoreOptions.length > 0) {
+                components.push(new ActionRowBuilder().addComponents(ignoreMenu));
+              }
+              if (unignoreOptions.length > 0) {
+                components.push(new ActionRowBuilder().addComponents(unignoreMenu));
+              }
+        
+              await interaction.editReply({
+                embeds: [{
+                  title: 'Chat Settings',
+                  description: `✅ Added ${selectedUsername} to ignore list.\n\nManage ignored players for chat messages.`,
+                  color: 65280,
+                  timestamp: new Date()
+                }],
+                components
+              });
+            } catch (err) {
+              console.error('[Ignore] Error:', err.message);
+              await interaction.editReply({
+                embeds: [{
+                  description: `Failed to add ${selectedUsername} to ignore list: ${err.message}`,
+                  color: 16711680,
+                  timestamp: new Date()
+                }],
+                components: []
+              });
+            }
+          } else if (interaction.isStringSelectMenu() && interaction.customId === 'unignore_select') {
+          await interaction.deferUpdate();
+              const encodedUsername = interaction.values[0];
+              const selectedUsername = atob(encodedUsername);
+              if (!pool) {
+                await interaction.editReply({
+                  embeds: [{
+                    description: 'Database not configured.',
+                    color: 16711680,
+                    timestamp: new Date()
+                  }],
+                  components: []
+                });
+                return;
+              }
+              try {
+                const result = await pool.query('DELETE FROM ignored_users WHERE username = $1', [selectedUsername.toLowerCase()]);
+                if (result.rowCount > 0) {
+                  ignoredChatUsernames = await loadIgnoredChatUsernames();
+                  console.log(`[Unignore] Removed ${selectedUsername} from ignore list by ${interaction.user.tag}`);
+          
+                  // Update the message with new lists
+                  const allOnlinePlayers = Object.values(bot.players || {}).map(p => p.username);
+                  const playersToIgnore = allOnlinePlayers.filter(username => !ignoredChatUsernames.includes(username.toLowerCase()));
+                  const playersToUnignore = ignoredChatUsernames.filter(username => allOnlinePlayers.some(p => p.toLowerCase() === username));
+          
+                  const ignoreOptions = playersToIgnore.map(username => {
+                    return new StringSelectMenuOptionBuilder()
+                      .setLabel(username)
+                      .setValue(btoa(username));
+                  });
+                  const unignoreOptions = playersToUnignore.map(username => {
+                    return new StringSelectMenuOptionBuilder()
+                      .setLabel(username)
+                      .setValue(btoa(username));
+                  });
+          
+                  const ignoreMenu = new StringSelectMenuBuilder()
+                    .setCustomId('ignore_select')
+                    .setPlaceholder('Select player to ignore')
+                    .addOptions(ignoreOptions.slice(0, 25));
+                  const unignoreMenu = new StringSelectMenuBuilder()
+                    .setCustomId('unignore_select')
+                    .setPlaceholder('Select player to unignore')
+                    .addOptions(unignoreOptions.slice(0, 25));
+          
+                  const components = [];
+                  if (ignoreOptions.length > 0) {
+                    components.push(new ActionRowBuilder().addComponents(ignoreMenu));
+                  }
+                  if (unignoreOptions.length > 0) {
+                    components.push(new ActionRowBuilder().addComponents(unignoreMenu));
+                  }
+          
+                  await interaction.editReply({
+                    embeds: [{
+                      title: 'Chat Settings',
+                      description: `✅ Removed ${selectedUsername} from ignore list.\n\nManage ignored players for chat messages.`,
+                      color: 65280,
+                      timestamp: new Date()
+                    }],
+                    components
+                  });
+                } else {
+                  await interaction.editReply({
+                    embeds: [{
+                      description: `${selectedUsername} is not in ignore list.`,
+                      color: 16776960,
+                      timestamp: new Date()
+                    }],
+                    components: []
+                  });
+                }
+              } catch (err) {
+                console.error('[Unignore] Error:', err.message);
+                await interaction.editReply({
+                  embeds: [{
+                    description: `Failed to remove ${selectedUsername} from ignore list: ${err.message}`,
+                    color: 16711680,
+                    timestamp: new Date()
+                  }],
+                  components: []
+                });
+              }
+              }
+            });
 
   discordClient.on('messageCreate', async message => {
     if (message.author.bot) return;
