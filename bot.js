@@ -16,6 +16,24 @@ if (process.env.MINECRAFT_SESSION) {
   } catch (err) {
     console.error('[Bot] Failed to parse session from env:', err.message);
   }
+} else {
+  // Load from file if env not set
+  try {
+    const sessionData = fs.readFileSync('minecraft_session.json', 'utf8');
+    loadedSession = JSON.parse(sessionData);
+    console.log('[Bot] Loaded session from file.');
+  } catch (err) {
+    console.log('[Bot] No saved session found, will authenticate.');
+  }
+}
+
+function saveMinecraftSession(session) {
+  try {
+    fs.writeFileSync('minecraft_session.json', JSON.stringify(session, null, 2));
+    console.log('[Bot] Session saved to file.');
+  } catch (err) {
+    console.error('[Bot] Failed to save session:', err.message);
+  }
 }
 
 let lastCommandUser = null;
@@ -363,6 +381,10 @@ function createBot() {
   bot.on('login', async () => {
     console.log(`[+] Logged in as ${bot.username}`);
     startTime = Date.now();
+    // Save session after successful login
+    if (bot.session) {
+      saveMinecraftSession(bot.session);
+    }
     if (pendingStatusMessage) {
       await pendingStatusMessage.edit({
         embeds: [{
