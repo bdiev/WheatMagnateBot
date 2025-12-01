@@ -2,6 +2,7 @@ const mineflayer = require('mineflayer');
 const fs = require('fs');
 const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } = require('discord.js');
 const { Pool } = require('pg');
+const { Authflow } = require('prismarine-auth');
 
 // Discord bot
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -65,10 +66,24 @@ async function loadMinecraftSession() {
         console.log('[Bot] Loaded session from DB.');
       } else {
         console.log('[Bot] No saved session found, will authenticate.');
+        // Authenticate with Microsoft
+        const flow = new Authflow('WheatMagnateBot', './auth-cache');
+        loadedSession = await flow.getMinecraftJavaToken();
+        console.log('[Bot] Authenticated with Microsoft.');
+        // Save to DB
+        await saveSession(loadedSession);
+        console.log('[Bot] Session saved after auth.');
       }
     } catch (err) {
       console.error('[Bot] Failed to load session from DB:', err.message);
       console.log('[Bot] Will authenticate.');
+      // Authenticate with Microsoft
+      const flow = new Authflow('WheatMagnateBot', './auth-cache');
+      loadedSession = await flow.getMinecraftJavaToken();
+      console.log('[Bot] Authenticated with Microsoft.');
+      // Save to DB
+      await saveSession(loadedSession);
+      console.log('[Bot] Session saved after auth.');
     }
   }
 }
@@ -106,7 +121,6 @@ function loadStatusMessageId() {
 const config = {
   host: 'oldfag.org',
   username: process.env.MINECRAFT_USERNAME || 'WheatMagnate',
-  auth: 'microsoft',
   version: false, // Auto-detect version
   session: loadedSession
 };
