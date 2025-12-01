@@ -52,6 +52,13 @@ async function saveSession(session) {
 let loadedSession = null;
 
 async function loadMinecraftSession() {
+  const auth = process.env.MINECRAFT_AUTH || 'offline';
+  if (auth === 'offline') {
+    console.log('[Bot] Using offline auth, no session needed.');
+    loadedSession = null;
+    return;
+  }
+
   if (process.env.MINECRAFT_SESSION) {
     try {
       loadedSession = JSON.parse(process.env.MINECRAFT_SESSION);
@@ -121,6 +128,7 @@ function loadStatusMessageId() {
 const config = {
   host: 'oldfag.org',
   username: process.env.MINECRAFT_USERNAME || 'WheatMagnate',
+  auth: process.env.MINECRAFT_AUTH || 'offline', // 'offline' or 'microsoft'
   version: process.env.MINECRAFT_VERSION || false, // Auto-detect or specify version
   session: loadedSession
 };
