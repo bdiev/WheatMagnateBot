@@ -320,7 +320,7 @@ async function updateStatusMessage() {
         color: 65280,
         timestamp: new Date()
       }],
-      components: [createStatusButtons()]
+      components: createStatusButtons()
     });
   } catch (e) {
     console.error('[Discord] Failed to update status:', e.message);
@@ -1106,7 +1106,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             color: 16776960,
             timestamp: new Date()
           }],
-          components: [createStatusButtons()]
+          components: createStatusButtons()
         }).catch(console.error);
       } else {
         pendingStatusMessage = await channel.send({
@@ -1132,7 +1132,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             color: 16776960,
             timestamp: new Date()
           }],
-          components: [createStatusButtons()]
+          components: createStatusButtons()
         }).catch(console.error);
       } else {
         pendingStatusMessage = await channel.send({
@@ -1186,7 +1186,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             color: 65280,
             timestamp: new Date()
           }],
-          components: [createStatusButtons()]
+          components: createStatusButtons()
         }).catch(console.error);
       } else {
         pendingStatusMessage = await channel.send({
