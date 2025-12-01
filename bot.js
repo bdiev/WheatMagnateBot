@@ -31,7 +31,7 @@ let startTime = Date.now();
 let whisperConversations = new Map(); // username -> messageId
 let tpsTabInterval = null;
 let statusMessageId = process.env.STATUS_MESSAGE_ID || null;
-const excludedMessageIds = ['1441970705561555074', '1444906961878650932'];
+const excludedMessageIds = ['1441970705561555074-1444908391628542034'];
 
 const config = {
   host: 'oldfag.org',
