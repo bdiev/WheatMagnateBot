@@ -759,9 +759,9 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           });
           return;
         }
-        const onlinePlayers = Object.values(bot.players || {}).map(p => p.username).filter(username => ignoredUsernames.some(name => name.toLowerCase() === username.toLowerCase()));
-        const whitelistOnline = onlinePlayers.filter(username => ignoredUsernames.includes(username)).sort();
-        const otherPlayers = onlinePlayers.filter(username => !ignoredUsernames.includes(username)).sort();
+        const allOnlinePlayers = Object.values(bot.players || {}).map(p => p.username);
+        const whitelistOnline = allOnlinePlayers.filter(username => ignoredUsernames.some(name => name.toLowerCase() === username.toLowerCase()));
+        const otherPlayers = allOnlinePlayers.filter(username => !ignoredUsernames.some(name => name.toLowerCase() === username.toLowerCase()));
 
         const playerList = [];
         if (whitelistOnline.length > 0) {
@@ -772,7 +772,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         }
         const description = playerList.length > 0 ? playerList.join('\n\n') : 'No players online.';
 
-        const options = onlinePlayers.map(username => {
+        const options = whitelistOnline.map(username => {
           return new StringSelectMenuOptionBuilder()
             .setLabel(username)
             .setValue(username);
