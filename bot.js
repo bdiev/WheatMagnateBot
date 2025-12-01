@@ -1021,7 +1021,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         let command;
         let displayMessage = messageText;
         if (messageText.startsWith('/msg ')) {
-          displayMessage = messageText.slice(5).trim();
+          displayMessage = messageText.replace(`/msg ${selectedUsername} `, '');
         }
         if (messageText.startsWith('/')) {
           command = messageText;
