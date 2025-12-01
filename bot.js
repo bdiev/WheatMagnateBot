@@ -9,6 +9,8 @@ const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
 
 // Discord bot
 let loadedSession = null;
+const SESSION_FILE = process.env.SESSION_FILE || 'minecraft_session.json';
+
 if (process.env.MINECRAFT_SESSION) {
   try {
     loadedSession = JSON.parse(process.env.MINECRAFT_SESSION);
@@ -19,18 +21,18 @@ if (process.env.MINECRAFT_SESSION) {
 } else {
   // Load from file if env not set
   try {
-    const sessionData = fs.readFileSync('minecraft_session.json', 'utf8');
+    const sessionData = fs.readFileSync(SESSION_FILE, 'utf8');
     loadedSession = JSON.parse(sessionData);
-    console.log('[Bot] Loaded session from file.');
+    console.log('[Bot] Loaded session from file:', SESSION_FILE);
   } catch (err) {
-    console.log('[Bot] No saved session found, will authenticate.');
+    console.log('[Bot] No saved session found in', SESSION_FILE, ', will authenticate.');
   }
 }
 
 function saveMinecraftSession(session) {
   try {
-    fs.writeFileSync('minecraft_session.json', JSON.stringify(session, null, 2));
-    console.log('[Bot] Session saved to file.');
+    fs.writeFileSync(SESSION_FILE, JSON.stringify(session, null, 2));
+    console.log('[Bot] Session saved to file:', SESSION_FILE);
   } catch (err) {
     console.error('[Bot] Failed to save session:', err.message);
   }
@@ -383,7 +385,8 @@ function createBot() {
     startTime = Date.now();
     // Save session after successful login
     if (bot.session) {
-      saveMinecraftSession(bot.session);
+      config.session = bot.session;
+      saveMinecraftSession(config.session);
     }
     if (pendingStatusMessage) {
       await pendingStatusMessage.edit({

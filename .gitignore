@@ -1,0 +1,5 @@
+node_modules/
+.env
+minecraft_session.json
+status_message_id.txt
+*.log
