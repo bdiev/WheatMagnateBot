@@ -784,7 +784,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         const row = new ActionRowBuilder().addComponents(selectMenu);
         await interaction.editReply({
           embeds: [{
-            title: `Online Players (${onlinePlayers.length})`,
+            title: `Online Players (${allOnlinePlayers.length})`,
             description,
             color: 3447003,
             timestamp: new Date()
