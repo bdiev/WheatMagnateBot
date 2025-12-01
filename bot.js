@@ -948,6 +948,17 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         return;
       }
       try {
+        // Find nearest player and look at them before dropping
+        const nearby = getNearbyPlayers();
+        if (nearby.length > 0) {
+          const nearest = nearby.sort((a, b) => a.distance - b.distance)[0];
+          for (const entity of Object.values(bot.entities)) {
+            if (entity.username === nearest.username) {
+              await bot.lookAt(entity.position);
+              break;
+            }
+          }
+        }
         await bot.toss(item.type, item.metadata || null, item.count);
         console.log(`[Drop] Dropped ${item.count} x ${item.displayName || item.name} by ${interaction.user.tag}`);
         await interaction.editReply({
