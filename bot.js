@@ -425,13 +425,18 @@ function createBot() {
     console.log(`[+] Logged in as ${bot.username}`);
     startTime = Date.now();
     // Save session after successful login
+    console.log('[Bot] Checking session:', !!bot.session);
     if (bot.session) {
       config.session = bot.session;
+      console.log('[Bot] Saving session to DB...');
       try {
         await saveSession(config.session);
+        console.log('[Bot] Session saved successfully.');
       } catch (err) {
         console.error('[Bot] Failed to save session on login:', err.message);
       }
+    } else {
+      console.log('[Bot] No session to save.');
     }
     if (pendingStatusMessage) {
       await pendingStatusMessage.edit({
