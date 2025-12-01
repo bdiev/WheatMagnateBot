@@ -65,7 +65,7 @@ const discordClient = new Client({
 if (DISCORD_BOT_TOKEN) {
   discordClient.login(DISCORD_BOT_TOKEN).catch(err => console.error('[Discord] Login failed:', err.message));
 
-  discordClient.on('ready', () => {
+  discordClient.on('clientReady', () => {
     console.log(`[Discord] Bot logged in as ${discordClient.user.tag}`);
     discordClient.user.setPresence({ status: 'online' });
     if (!mineflayerStarted) {
@@ -780,7 +780,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         const selectMenu = new StringSelectMenuBuilder()
           .setCustomId('message_select')
           .setPlaceholder('Select player to message')
-          .addOptions(options.slice(0, 25)); // Discord limit 25 options
+          .addOptions(options.slice(0, 25).map(option => option.setValue(btoa(option.data.value)))); // Encode username
         const row = new ActionRowBuilder().addComponents(selectMenu);
         await interaction.editReply({
           embeds: [{
@@ -817,9 +817,10 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         const options = inventory.map(item => {
           const name = item.displayName || item.name;
           const count = item.count;
+          const value = `${item.slot}_${item.type}_${item.metadata || 0}`;
           return new StringSelectMenuOptionBuilder()
             .setLabel(`${name} x${count}`)
-            .setValue(`${item.slot}_${item.type}_${item.metadata || 0}`);
+            .setValue(btoa(value));
         });
         const selectMenu = new StringSelectMenuBuilder()
           .setCustomId('drop_select')
@@ -1014,7 +1015,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       setTimeout(() => interaction.deleteReply().catch(() => {}), 1000);
     } else if (interaction.isModalSubmit() && interaction.customId.startsWith('message_modal_')) {
       await interaction.deferReply({ flags: 64 });
-      const selectedUsername = interaction.customId.split('_')[2];
+      const encodedUsername = interaction.customId.split('_')[2];
+      const selectedUsername = atob(encodedUsername);
       const messageText = interaction.fields.getTextInputValue('message_text');
       if (messageText && bot) {
         let command;
@@ -1096,9 +1098,10 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         }
       }
     } else if (interaction.isStringSelectMenu() && interaction.customId === 'message_select') {
-      const selectedUsername = interaction.values[0];
+      const encodedUsername = interaction.values[0];
+      const selectedUsername = atob(encodedUsername);
       const modal = new ModalBuilder()
-        .setCustomId(`message_modal_${selectedUsername}`)
+        .setCustomId(`message_modal_${encodedUsername}`)
         .setTitle(`Message to ${selectedUsername}`);
 
       const messageInput = new TextInputBuilder()
@@ -1114,7 +1117,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       await interaction.showModal(modal);
     } else if (interaction.isStringSelectMenu() && interaction.customId === 'drop_select') {
       await interaction.deferUpdate();
-      const selectedValue = interaction.values[0];
+      const encodedValue = interaction.values[0];
+      const selectedValue = atob(encodedValue);
       const [slot, type, metadata] = selectedValue.split('_').map((v, i) => i === 2 ? parseInt(v) : v);
       const inventory = bot.inventory.items();
       const item = inventory.find(i => i.slot == slot && i.type == type && (i.metadata || 0) == metadata);
