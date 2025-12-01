@@ -421,24 +421,19 @@ function createBot() {
   lastTickTime = 0; // Reset TPS tracking for new bot
   bot = mineflayer.createBot(config);
 
+  bot.on('session', async (session) => {
+    console.log('[Bot] Session updated, saving to DB...');
+    try {
+      await saveSession(session);
+      console.log('[Bot] Session saved successfully.');
+    } catch (err) {
+      console.error('[Bot] Failed to save session:', err.message);
+    }
+  });
+
   bot.on('login', async () => {
     console.log(`[+] Logged in as ${bot.username}`);
     startTime = Date.now();
-    // Save session after successful login
-    console.log('[Bot] config.session:', config.session);
-    console.log('[Bot] bot.session:', bot.session);
-    if (config.session || bot.session) {
-      const sessionToSave = config.session || bot.session;
-      console.log('[Bot] Saving session to DB...');
-      try {
-        await saveSession(sessionToSave);
-        console.log('[Bot] Session saved successfully.');
-      } catch (err) {
-        console.error('[Bot] Failed to save session on login:', err.message);
-      }
-    } else {
-      console.log('[Bot] No session to save.');
-    }
     if (pendingStatusMessage) {
       await pendingStatusMessage.edit({
         embeds: [{
