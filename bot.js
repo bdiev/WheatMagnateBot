@@ -760,8 +760,17 @@ function createBot() {
 
   // Send all chat messages to Discord chat channel
   bot.on('chat', async (username, message) => {
-    if (!DISCORD_CHAT_CHANNEL_ID || !discordClient || !discordClient.isReady()) return;
-    if (username === bot.username) return; // Don't send own messages
+    if (username.toLowerCase() === 'lolritterbot') {
+      console.log(`[Debug LolRiTTeRBot] Received: username=${username}, message=${JSON.stringify(message)}`);
+    }
+    if (!DISCORD_CHAT_CHANNEL_ID || !discordClient || !discordClient.isReady()) {
+      if (username.toLowerCase() === 'lolritterbot') console.log('[Debug LolRiTTeRBot] Skipped: no channel or client not ready');
+      return;
+    }
+    if (username === bot.username) {
+      if (username.toLowerCase() === 'lolritterbot') console.log('[Debug LolRiTTeRBot] Skipped: own message');
+      return; // Don't send own messages
+    }
 
     try {
       const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
@@ -770,7 +779,14 @@ function createBot() {
         let displayMessage = message;
         let avatarUrl = `https://minotar.net/avatar/${displayUsername}/28`;
 
-        if (ignoredChatUsernames.includes(displayUsername)) return; // Ignore specified users
+        if (ignoredChatUsernames.includes(displayUsername)) {
+          if (username.toLowerCase() === 'lolritterbot') console.log('[Debug LolRiTTeRBot] Skipped: username in ignore list');
+          return; // Ignore specified users
+        }
+
+        if (username.toLowerCase() === 'lolritterbot') {
+          console.log(`[Debug LolRiTTeRBot] Sending: displayUsername=${displayUsername}, displayMessage=${JSON.stringify(displayMessage)}`);
+        }
 
         await channel.send({
           embeds: [{
@@ -785,9 +801,15 @@ function createBot() {
             timestamp: new Date()
           }]
         });
+        if (username.toLowerCase() === 'lolritterbot') {
+          console.log('[Debug LolRiTTeRBot] Sent successfully');
+        }
+      } else {
+        if (username.toLowerCase() === 'lolritterbot') console.log('[Debug LolRiTTeRBot] Skipped: channel not found or not text-based');
       }
     } catch (e) {
       console.error('[Discord] Failed to send chat message:', e.message);
+      if (username.toLowerCase() === 'lolritterbot') console.log(`[Debug LolRiTTeRBot] Error: ${e.message}`);
     }
   });
 
