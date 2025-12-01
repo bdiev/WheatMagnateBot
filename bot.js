@@ -30,7 +30,7 @@ let mineflayerStarted = false;
 let startTime = Date.now();
 let whisperConversations = new Map(); // username -> messageId
 let tpsTabInterval = null;
-let statusMessageId = process.env.STATUS_MESSAGE_ID || null;
+let statusMessageId = process.env.STATUS_MESSAGE_ID || '1441970705561555074-1444908391628542034';
 const excludedMessageIds = ['1441970705561555074-1444908391628542034'];
 
 const config = {
