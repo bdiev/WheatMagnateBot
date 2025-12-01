@@ -31,6 +31,7 @@ let startTime = Date.now();
 let whisperConversations = new Map(); // username -> messageId
 let tpsTabInterval = null;
 let statusMessageId = process.env.STATUS_MESSAGE_ID || null;
+const excludedMessageIds = ['1441970705561555074', '1444906961878650932'];
 
 const config = {
   host: 'oldfag.org',
@@ -82,6 +83,7 @@ if (DISCORD_BOT_TOKEN) {
             const messages = await channel.messages.fetch({ limit: 100 });
             const messagesToDelete = messages.filter(msg => {
               if (msg.id === statusMessage?.id) return false;
+              if (excludedMessageIds.includes(msg.id)) return false;
               const desc = msg.embeds[0]?.description || '';
               const lowerDesc = desc.toLowerCase();
               // Don't delete death-related messages
