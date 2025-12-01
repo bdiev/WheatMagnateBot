@@ -449,10 +449,13 @@ function createBot() {
 
   bot.on('spawn', () => {
     console.log('[Bot] Spawned.');
+    console.log('[Bot] config.session in spawn:', config.session);
     // Save session on spawn if available
     if (config.session) {
       console.log('[Bot] Saving session on spawn...');
       saveSession(config.session).catch(err => console.error('[Bot] Failed to save session on spawn:', err.message));
+    } else {
+      console.log('[Bot] No session to save in spawn.');
     }
     clearIntervals();
     startFoodMonitor();
