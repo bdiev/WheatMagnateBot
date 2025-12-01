@@ -759,7 +759,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           });
           return;
         }
-        const onlinePlayers = Object.values(bot.players || {}).map(p => p.username);
+        const onlinePlayers = Object.values(bot.players || {}).map(p => p.username).filter(username => ignoredUsernames.some(name => name.toLowerCase() === username.toLowerCase()));
         const whitelistOnline = onlinePlayers.filter(username => ignoredUsernames.includes(username)).sort();
         const otherPlayers = onlinePlayers.filter(username => !ignoredUsernames.includes(username)).sort();
 
@@ -1037,7 +1037,6 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       }
       setTimeout(() => interaction.deleteReply().catch(() => {}), 100);
     } else if (interaction.isStringSelectMenu() && interaction.customId === 'message_select') {
-      await interaction.deferReply();
       const selectedUsername = interaction.values[0];
       const modal = new ModalBuilder()
         .setCustomId(`message_modal_${selectedUsername}`)
