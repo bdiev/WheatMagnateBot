@@ -360,13 +360,12 @@ function createBot() {
         if (bot.tablist.footer) {
           text += chatComponentToString(bot.tablist.footer);
         }
-        console.log('[Bot] TAB text:', text);
         const tpsMatch = text.match(/(\d+\.?\d*)\s*tps/i);
-        console.log('[Bot] tpsMatch:', tpsMatch);
         if (tpsMatch) {
           realTps = parseFloat(tpsMatch[1]);
-          console.log('[Bot] Real TPS from TAB:', realTps);
           found = true;
+          // Update status immediately when TPS changes
+          if (statusMessage) updateStatusMessage();
         }
       }
       if (!found) {
