@@ -87,12 +87,18 @@ const ignoredUsernames = loadWhitelist();
 
 // Load ignored chat usernames from DB
 async function loadIgnoredChatUsernames() {
-  if (!pool) return IGNORED_CHAT_USERNAMES;
+  if (!pool) {
+    console.log('[DB] No pool, using env:', IGNORED_CHAT_USERNAMES);
+    return IGNORED_CHAT_USERNAMES;
+  }
   try {
     const res = await pool.query('SELECT username FROM ignored_users');
-    return res.rows.map(row => row.username.toLowerCase());
+    const usernames = res.rows.map(row => row.username.toLowerCase());
+    console.log('[DB] Loaded ignored users from DB:', usernames);
+    return usernames;
   } catch (err) {
     console.error('[DB] Failed to load ignored users:', err.message);
+    console.log('[DB] Falling back to env:', IGNORED_CHAT_USERNAMES);
     return IGNORED_CHAT_USERNAMES;
   }
 }
@@ -101,7 +107,10 @@ let ignoredChatUsernames = IGNORED_CHAT_USERNAMES; // Fallback
 
 // Initialize DB table and load ignored users
 async function initDatabase() {
-  if (!pool) return;
+  if (!pool) {
+    console.log('[DB] Pool not available, skipping DB init.');
+    return;
+  }
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS ignored_users (
@@ -113,6 +122,7 @@ async function initDatabase() {
     `);
     console.log('[DB] Table initialized.');
     ignoredChatUsernames = await loadIgnoredChatUsernames();
+    console.log('[DB] Initialized with ignored users:', ignoredChatUsernames);
   } catch (err) {
     console.error('[DB] Failed to initialize:', err.message);
   }
@@ -762,6 +772,9 @@ function createBot() {
   bot.on('chat', async (username, message) => {
     if (!DISCORD_CHAT_CHANNEL_ID || !discordClient || !discordClient.isReady()) return;
     if (username === bot.username) return; // Don't send own messages
+    const isIgnored = ignoredChatUsernames.includes(username.toLowerCase());
+    console.log(`[Chat] Checking ignore for ${username}: ${isIgnored}, ignored list: ${ignoredChatUsernames}`);
+    if (isIgnored) return; // Ignore specified users
 
     try {
       const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
