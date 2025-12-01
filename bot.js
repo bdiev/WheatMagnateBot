@@ -1025,8 +1025,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           }
         }
       }
-      setTimeout(() => interaction.deleteReply().catch(() => {}), 10);
-      setTimeout(() => interaction.deleteReply().catch(() => {}), 10);
+      setTimeout(() => interaction.deleteReply().catch(() => {}), 1000);
+      setTimeout(() => interaction.deleteReply().catch(() => {}), 1000);
     } else if (interaction.isModalSubmit() && interaction.customId.startsWith('message_modal_')) {
       await interaction.deferReply({ flags: 64 });
       const selectedUsername = interaction.customId.split('_')[2];
