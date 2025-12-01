@@ -762,7 +762,6 @@ function createBot() {
   bot.on('chat', async (username, message) => {
     if (!DISCORD_CHAT_CHANNEL_ID || !discordClient || !discordClient.isReady()) return;
     if (username === bot.username) return; // Don't send own messages
-    if (ignoredChatUsernames.includes(username.toLowerCase())) return; // Ignore specified users
 
     try {
       const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
@@ -776,6 +775,8 @@ function createBot() {
           displayUsername = relayMatch[1].toLowerCase();
           displayMessage = relayMatch[2];
         }
+
+        if (ignoredChatUsernames.includes(displayUsername)) return; // Ignore specified users
 
         let avatarUrl = `https://minotar.net/avatar/${displayUsername}/28`;
         await channel.send({
