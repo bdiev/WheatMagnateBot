@@ -771,7 +771,7 @@ function createBot() {
         await channel.send({
           embeds: [{
             author: {
-              name: username
+              name: username.toLowerCase()
             },
             description: message,
             color: 3447003,
