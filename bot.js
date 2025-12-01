@@ -769,8 +769,8 @@ function createBot() {
         let displayUsername = username.toLowerCase();
         let displayMessage = message;
 
-        // Parse messages from bots like LolRiTTeRBot that format as "> player: message"
-        const relayMatch = message.match(/^> (\w+): (.+)$/);
+        // Parse messages from bots like LolRiTTeRBot that format as "> player: message" or "> player message"
+        const relayMatch = message.match(/^> (\w+)(?::?\s+)(.+)$/);
         if (relayMatch) {
           displayUsername = relayMatch[1].toLowerCase();
           displayMessage = relayMatch[2];
