@@ -790,14 +790,9 @@ function createBot() {
 
         await channel.send({
           embeds: [{
-            author: {
-              name: displayUsername
-            },
+            title: displayUsername,
             description: displayMessage,
             color: 3447003,
-            thumbnail: {
-              url: avatarUrl
-            },
             timestamp: new Date()
           }]
         });
