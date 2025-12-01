@@ -776,7 +776,7 @@ function createBot() {
       const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
       if (channel && channel.isTextBased()) {
         let displayUsername = username.toLowerCase();
-        let displayMessage = message;
+        let displayMessage = message.startsWith('> ') ? message.slice(2) : message;
         let avatarUrl = `https://minotar.net/avatar/${displayUsername}/28`;
 
         if (ignoredChatUsernames.includes(displayUsername)) {
