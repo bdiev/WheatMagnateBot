@@ -1000,7 +1000,6 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       }
       setTimeout(() => interaction.deleteReply().catch(() => {}), 1000);
     } else if (interaction.isModalSubmit() && interaction.customId.startsWith('message_modal_')) {
-      await interaction.deferReply({ flags: 64 });
       const encodedUsername = interaction.customId.split('_')[2];
       const selectedUsername = atob(encodedUsername);
       const messageText = interaction.fields.getTextInputValue('message_text');
@@ -1018,6 +1017,9 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           console.log(`[Message] Sent /msg ${selectedUsername} ${messageText} by ${interaction.user.tag}`);
         }
         bot.chat(command);
+
+        await interaction.reply({ content: 'Message sent.', ephemeral: true });
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 1000);
 
         // Create conversation embed
         const now = new Date();
