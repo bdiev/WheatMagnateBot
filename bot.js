@@ -464,9 +464,31 @@ function createBot() {
       if (isRestartTime) {
         console.log('[!] Restart window. Reconnecting in 5 minutes...');
         sendDiscordNotification('Server restart window detected. Reconnecting in 5 minutes.', 16776960);
+        // Update status message to restarting
+        if (statusMessage) {
+          statusMessage.edit({
+            embeds: [{
+              title: 'Server Status',
+              description: `🔄 Server restart window detected. Reconnecting in 5 minutes.`,
+              color: 16776960,
+              timestamp: new Date()
+            }]
+          }).catch(console.error);
+        }
       } else if (reasonStr !== 'Restart command') {
         console.log('[!] Disconnected. Reconnecting in 15 seconds...');
         sendDiscordNotification(`Disconnected: \`${reasonStr}\`. Reconnecting in 15 seconds.`, 16776960);
+        // Update status message to offline
+        if (statusMessage) {
+          statusMessage.edit({
+            embeds: [{
+              title: 'Server Status',
+              description: `❌ Bot disconnected: \`${reasonStr}\``,
+              color: 16711680,
+              timestamp: new Date()
+            }]
+          }).catch(console.error);
+        }
       }
       setTimeout(createBot, timeout);
     } else {
