@@ -585,7 +585,7 @@ function createBot() {
 
   bot.on('message', (message) => {
     const text = chatComponentToString(message);
-    const tpsMatch = text.match(/TPS:\s*(\d+\.?\d*)/i);
+    const tpsMatch = text.match(/(\d+\.?\d*)\s*tps/i);
     if (tpsMatch) {
       realTps = parseFloat(tpsMatch[1]);
       console.log('[Bot] TPS from message:', realTps);
