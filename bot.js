@@ -464,7 +464,7 @@ function createBot() {
       if (isRestartTime) {
         console.log('[!] Restart window. Reconnecting in 5 minutes...');
         sendDiscordNotification('Server restart window detected. Reconnecting in 5 minutes.', 16776960);
-      } else {
+      } else if (reasonStr !== 'Restart command') {
         console.log('[!] Disconnected. Reconnecting in 15 seconds...');
         sendDiscordNotification(`Disconnected: \`${reasonStr}\`. Reconnecting in 15 seconds.`, 16776960);
       }
