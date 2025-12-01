@@ -4,6 +4,7 @@ const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle,
 
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
+const DISCORD_CHAT_CHANNEL_ID = process.env.DISCORD_CHAT_CHANNEL_ID;
 
 let loadedSession = null;
 if (process.env.MINECRAFT_SESSION) {
@@ -663,6 +664,27 @@ function createBot() {
     sendWhisperToDiscord(username, message);
   });
 
+  // Send all chat messages to Discord chat channel
+  bot.on('chat', async (username, message) => {
+    if (!DISCORD_CHAT_CHANNEL_ID || !discordClient || !discordClient.isReady()) return;
+    if (username === bot.username) return; // Don't send own messages
+
+    try {
+      const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
+      if (channel && channel.isTextBased()) {
+        await channel.send({
+          embeds: [{
+            description: `**${username}**: ${message}`,
+            color: 3447003,
+            timestamp: new Date()
+          }]
+        });
+      }
+    } catch (e) {
+      console.error('[Discord] Failed to send chat message:', e.message);
+    }
+  });
+
   bot.on('message', (message) => {
     const text = chatComponentToString(message);
     const tpsMatch = text.match(/(\d+\.?\d*)\s*tps/i);
@@ -1243,6 +1265,18 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
   discordClient.on('messageCreate', async message => {
     if (message.author.bot) return;
+
+    // Handle chat channel messages
+    if (message.channel.id === DISCORD_CHAT_CHANNEL_ID) {
+      if (!bot) return;
+      const text = message.content.trim();
+      if (text) {
+        bot.chat(text);
+        console.log(`[Chat] Sent "${text}" by ${message.author.tag}`);
+      }
+      return;
+    }
+
     if (message.channel.id !== DISCORD_CHANNEL_ID) return;
 
     if (message.content === '!wn') {
