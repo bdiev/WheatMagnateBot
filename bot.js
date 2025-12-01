@@ -904,29 +904,15 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         }
       }
     } else if (interaction.isModalSubmit() && interaction.customId === 'say_modal') {
-      await interaction.deferReply();
+      await interaction.deferReply({ flags: 64 });
       const message = interaction.fields.getTextInputValue('message_input');
       if (message && bot) {
         bot.chat(message);
         console.log(`[Modal] Say "${message}" by ${interaction.user.tag}`);
-        await interaction.editReply({
-          embeds: [{
-            title: 'Message Sent to Minecraft',
-            description: `Sent to Minecraft chat: "${message}"`,
-            color: 65280,
-            timestamp: new Date()
-          }]
-        });
       } else {
-        await interaction.editReply({
-          embeds: [{
-            description: 'Bot is offline or message is empty.',
-            color: 16711680,
-            timestamp: new Date()
-          }]
-        });
-        setTimeout(() => interaction.deleteReply().catch(() => {}), 1000);
+        // No message
       }
+      setTimeout(() => interaction.deleteReply().catch(() => {}), 1000);
     } else if (interaction.isModalSubmit() && interaction.customId.startsWith('reply_modal_')) {
       await interaction.deferReply({ flags: 64 });
       const encodedUsername = interaction.customId.split('_')[2];
