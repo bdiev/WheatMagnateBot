@@ -121,7 +121,7 @@ function loadStatusMessageId() {
 const config = {
   host: 'oldfag.org',
   username: process.env.MINECRAFT_USERNAME || 'WheatMagnate',
-  version: false, // Auto-detect version
+  version: process.env.MINECRAFT_VERSION || false, // Auto-detect or specify version
   session: loadedSession
 };
 
