@@ -672,7 +672,7 @@ function createBot() {
     try {
       const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
       if (channel && channel.isTextBased()) {
-        let avatarUrl = `https://crafatar.com/avatars/${username.toLowerCase()}?size=64&default=MHF_Steve&overlay`;
+        let avatarUrl = `https://minotar.net/avatar/${username.toLowerCase()}/64`;
         await channel.send({
           embeds: [{
             author: {
