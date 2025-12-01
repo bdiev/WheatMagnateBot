@@ -775,9 +775,9 @@ function createBot() {
     try {
       const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
       if (channel && channel.isTextBased()) {
-        let displayUsername = username.toLowerCase();
+        let displayUsername = username;
         let displayMessage = message.startsWith('> ') ? message.slice(2) : message;
-        let avatarUrl = `https://minotar.net/avatar/${displayUsername}/28`;
+        let avatarUrl = `https://minotar.net/avatar/${username.toLowerCase()}/28`;
 
         if (ignoredChatUsernames.includes(displayUsername)) {
           if (username.toLowerCase() === 'lolritterbot') console.log('[Debug LolRiTTeRBot] Skipped: username in ignore list');
