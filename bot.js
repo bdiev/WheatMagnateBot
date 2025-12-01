@@ -1032,6 +1032,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       const messageText = interaction.fields.getTextInputValue('message_text');
       if (messageText && bot) {
         let command;
+        let displayMessage = messageText;
         if (messageText.startsWith('/')) {
           command = messageText;
           console.log(`[Message] Sent command "${command}" by ${interaction.user.tag}`);
@@ -1040,6 +1041,70 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           console.log(`[Message] Sent /msg ${selectedUsername} ${messageText} by ${interaction.user.tag}`);
         }
         bot.chat(command);
+
+        // Create conversation embed
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+        const newEntry = `[${timeStr}] ➡️ ${bot.username}: ${displayMessage}`;
+
+        if (whisperConversations.has(selectedUsername)) {
+          // Update existing conversation
+          const messageId = whisperConversations.get(selectedUsername);
+          try {
+            const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+            const existingMessage = await channel.messages.fetch(messageId);
+            const currentDesc = existingMessage.embeds[0]?.description || '';
+            const updatedDesc = currentDesc + '\n\n' + newEntry;
+            await existingMessage.edit({
+              embeds: [{
+                title: `Conversation with ${selectedUsername}`,
+                description: updatedDesc,
+                color: 3447003,
+                timestamp: now
+              }],
+              components: existingMessage.components
+            });
+          } catch (e) {
+            console.error('[Discord] Failed to update conversation:', e.message);
+          }
+        } else {
+          // Create new conversation
+          try {
+            const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+            const sentMessage = await channel.send({
+              embeds: [{
+                title: `Conversation with ${selectedUsername}`,
+                description: newEntry,
+                color: 3447003,
+                timestamp: now
+              }]
+            });
+            whisperConversations.set(selectedUsername, sentMessage.id);
+            await sentMessage.edit({
+              embeds: [{
+                title: `Conversation with ${selectedUsername}`,
+                description: newEntry,
+                color: 3447003,
+                timestamp: now
+              }],
+              components: [
+                new ActionRowBuilder()
+                  .addComponents(
+                    new ButtonBuilder()
+                      .setCustomId(`reply_${btoa(selectedUsername)}_${sentMessage.id}`)
+                      .setLabel('Reply')
+                      .setStyle(ButtonStyle.Primary),
+                    new ButtonBuilder()
+                      .setCustomId(`remove_${sentMessage.id}`)
+                      .setLabel('Remove')
+                      .setStyle(ButtonStyle.Danger)
+                  )
+              ]
+            });
+          } catch (e) {
+            console.error('[Discord] Failed to create conversation:', e.message);
+          }
+        }
       }
       setTimeout(() => interaction.deleteReply().catch(() => {}), 100);
     } else if (interaction.isStringSelectMenu() && interaction.customId === 'message_select') {
