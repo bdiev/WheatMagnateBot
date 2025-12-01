@@ -400,7 +400,7 @@ function createBot() {
         }
         // Ensure status update interval is running
         if (statusMessage && !statusUpdateInterval) {
-          statusUpdateInterval = setInterval(updateStatusMessage, 1000);
+          statusUpdateInterval = setInterval(updateStatusMessage, 5000);
         }
       }, 2000); // Additional 2 seconds after spawn
     }
