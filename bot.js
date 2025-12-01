@@ -770,15 +770,7 @@ function createBot() {
         let displayMessage = message;
         let avatarUrl = `https://minotar.net/avatar/${displayUsername}/28`;
 
-        // Parse messages from bots like LolRiTTeRBot that format as "> player: message" or "> player message"
-        const relayMatch = message.match(/^> (\w+)(?::?\s+)(.+)$/);
-        if (relayMatch) {
-          const relayedUsername = relayMatch[1].toLowerCase();
-          if (ignoredChatUsernames.includes(relayedUsername)) return; // Ignore relayed messages from ignored users
-          // Keep original display for clarity
-        } else {
-          if (ignoredChatUsernames.includes(displayUsername)) return; // Ignore specified users
-        }
+        if (ignoredChatUsernames.includes(displayUsername)) return; // Ignore specified users
 
         await channel.send({
           embeds: [{
