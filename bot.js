@@ -65,7 +65,7 @@ const discordClient = new Client({
 if (DISCORD_BOT_TOKEN) {
   discordClient.login(DISCORD_BOT_TOKEN).catch(err => console.error('[Discord] Login failed:', err.message));
 
-  discordClient.on('clientReady', () => {
+  discordClient.on('ready', () => {
     console.log(`[Discord] Bot logged in as ${discordClient.user.tag}`);
     discordClient.user.setPresence({ status: 'online' });
     if (!mineflayerStarted) {
@@ -727,7 +727,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         bot.quit('Pause until resume');
       } else if (interaction.customId === 'resume_button') {
         await interaction.deferUpdate(); // Defer update to avoid timeout
-        if (shouldReconnect) return; // Уже активен
+        if (shouldReconnect) return; // Already active
         console.log(`[Button] resume by ${interaction.user.tag}`);
         lastCommandUser = interaction.user.tag;
         shouldReconnect = true;
@@ -1011,7 +1011,6 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           }
         }
       }
-      setTimeout(() => interaction.deleteReply().catch(() => {}), 1000);
       setTimeout(() => interaction.deleteReply().catch(() => {}), 1000);
     } else if (interaction.isModalSubmit() && interaction.customId.startsWith('message_modal_')) {
       await interaction.deferReply({ flags: 64 });
