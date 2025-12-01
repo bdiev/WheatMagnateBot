@@ -32,6 +32,22 @@ let whisperConversations = new Map(); // username -> messageId
 let tpsTabInterval = null;
 const excludedMessageIds = [];
 
+function saveStatusMessageId(id) {
+  try {
+    fs.writeFileSync('status_message_id.txt', id);
+  } catch (e) {
+    console.error('[Bot] Failed to save status message ID:', e.message);
+  }
+}
+
+function loadStatusMessageId() {
+  try {
+    return fs.readFileSync('status_message_id.txt', 'utf8').trim();
+  } catch (e) {
+    return null;
+  }
+}
+
 const config = {
   host: 'oldfag.org',
   username: process.env.MINECRAFT_USERNAME || 'WheatMagnate',
@@ -396,7 +412,33 @@ function createBot() {
         try {
           const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
           if (channel && channel.isTextBased()) {
-            if (!statusMessage) {
+            const savedId = loadStatusMessageId();
+            if (savedId && !statusMessage) {
+              try {
+                statusMessage = await channel.messages.fetch(savedId);
+                await statusMessage.edit({
+                  embeds: [{
+                    title: 'Server Status',
+                    description: getStatusDescription(),
+                    color: 65280,
+                    timestamp: new Date()
+                  }],
+                  components: createStatusButtons()
+                });
+              } catch (e) {
+                console.error('[Discord] Failed to fetch saved status message:', e.message);
+                statusMessage = await channel.send({
+                  embeds: [{
+                    title: 'Server Status',
+                    description: getStatusDescription(),
+                    color: 65280,
+                    timestamp: new Date()
+                  }],
+                  components: createStatusButtons()
+                });
+                saveStatusMessageId(statusMessage.id);
+              }
+            } else if (!statusMessage) {
               statusMessage = await channel.send({
                 embeds: [{
                   title: 'Server Status',
@@ -406,6 +448,7 @@ function createBot() {
                 }],
                 components: createStatusButtons()
               });
+              saveStatusMessageId(statusMessage.id);
             } else {
               await statusMessage.edit({
                 embeds: [{
