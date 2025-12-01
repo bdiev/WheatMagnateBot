@@ -760,51 +760,30 @@ function createBot() {
 
   // Send all chat messages to Discord chat channel
   bot.on('chat', async (username, message) => {
-    if (username.toLowerCase() === 'lolritterbot') {
-      console.log(`[Debug LolRiTTeRBot] Received: username=${username}, message=${JSON.stringify(message)}`);
-    }
-    if (!DISCORD_CHAT_CHANNEL_ID || !discordClient || !discordClient.isReady()) {
-      if (username.toLowerCase() === 'lolritterbot') console.log('[Debug LolRiTTeRBot] Skipped: no channel or client not ready');
-      return;
-    }
-    if (username === bot.username) {
-      if (username.toLowerCase() === 'lolritterbot') console.log('[Debug LolRiTTeRBot] Skipped: own message');
-      return; // Don't send own messages
-    }
+    if (!DISCORD_CHAT_CHANNEL_ID || !discordClient || !discordClient.isReady()) return;
+    if (username === bot.username) return; // Don't send own messages
+    if (ignoredChatUsernames.includes(username.toLowerCase())) return; // Ignore specified users
 
     try {
       const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
       if (channel && channel.isTextBased()) {
-        let displayUsername = username;
-        let displayMessage = message.startsWith('> ') ? message.slice(2) : message;
         let avatarUrl = `https://minotar.net/avatar/${username.toLowerCase()}/28`;
-
-        if (ignoredChatUsernames.includes(displayUsername)) {
-          if (username.toLowerCase() === 'lolritterbot') console.log('[Debug LolRiTTeRBot] Skipped: username in ignore list');
-          return; // Ignore specified users
-        }
-
-        if (username.toLowerCase() === 'lolritterbot') {
-          console.log(`[Debug LolRiTTeRBot] Sending: displayUsername=${displayUsername}, displayMessage=${JSON.stringify(displayMessage)}`);
-        }
-
         await channel.send({
           embeds: [{
-            title: displayUsername,
-            description: displayMessage,
+            author: {
+              name: username
+            },
+            description: message,
             color: 3447003,
+            thumbnail: {
+              url: avatarUrl
+            },
             timestamp: new Date()
           }]
         });
-        if (username.toLowerCase() === 'lolritterbot') {
-          console.log('[Debug LolRiTTeRBot] Sent successfully');
-        }
-      } else {
-        if (username.toLowerCase() === 'lolritterbot') console.log('[Debug LolRiTTeRBot] Skipped: channel not found or not text-based');
       }
     } catch (e) {
       console.error('[Discord] Failed to send chat message:', e.message);
-      if (username.toLowerCase() === 'lolritterbot') console.log(`[Debug LolRiTTeRBot] Error: ${e.message}`);
     }
   });
 
