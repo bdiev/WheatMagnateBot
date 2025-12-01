@@ -425,9 +425,8 @@ function createBot() {
     console.log(`[+] Logged in as ${bot.username}`);
     startTime = Date.now();
     // Save session after successful login
-    console.log('[Bot] Checking session:', !!bot.session);
-    if (bot.session) {
-      config.session = bot.session;
+    console.log('[Bot] Checking config.session:', !!config.session);
+    if (config.session) {
       console.log('[Bot] Saving session to DB...');
       try {
         await saveSession(config.session);
