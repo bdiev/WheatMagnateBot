@@ -356,12 +356,25 @@ function createBot() {
 
     // Start TPS from TAB monitor
     tpsTabInterval = setInterval(() => {
-      if (bot && bot.tablist && bot.tablist.footer) {
-        const footerText = chatComponentToString(bot.tablist.footer);
-        const tpsMatch = footerText.match(/TPS:\s*(\d+\.?\d*)/i);
+      let found = false;
+      if (bot && bot.tablist) {
+        let text = '';
+        if (bot.tablist.header) {
+          text += chatComponentToString(bot.tablist.header) + ' ';
+        }
+        if (bot.tablist.footer) {
+          text += chatComponentToString(bot.tablist.footer);
+        }
+        console.log('[Bot] TAB text:', text);
+        const tpsMatch = text.match(/TPS:\s*(\d+\.?\d*)/i);
         if (tpsMatch) {
           realTps = parseFloat(tpsMatch[1]);
+          console.log('[Bot] Real TPS from TAB:', realTps);
+          found = true;
         }
+      }
+      if (!found) {
+        bot.chat('/tps');
       }
     }, 10000); // Check every 10 seconds
 
@@ -568,6 +581,15 @@ function createBot() {
   bot.on('whisper', (username, message, translate, jsonMsg, matches) => {
     console.log(`[Whisper] ${username}: ${message}`);
     sendWhisperToDiscord(username, message);
+  });
+
+  bot.on('message', (message) => {
+    const text = chatComponentToString(message);
+    const tpsMatch = text.match(/TPS:\s*(\d+\.?\d*)/i);
+    if (tpsMatch) {
+      realTps = parseFloat(tpsMatch[1]);
+      console.log('[Bot] TPS from message:', realTps);
+    }
   });
 }
 
