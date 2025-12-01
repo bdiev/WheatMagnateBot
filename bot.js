@@ -30,6 +30,7 @@ let mineflayerStarted = false;
 let startTime = Date.now();
 let whisperConversations = new Map(); // username -> messageId
 let tpsTabInterval = null;
+let statusMessageId = process.env.STATUS_MESSAGE_ID || null;
 
 const config = {
   host: 'oldfag.org',
@@ -385,10 +386,19 @@ function createBot() {
     // Send or update status message after spawn
     if (DISCORD_CHANNEL_ID && discordClient && discordClient.isReady()) {
       setTimeout(async () => {
-        if (statusMessage) {
-          // Update existing status message
-          updateStatusMessage();
-        } else {
+        if (statusMessageId) {
+          try {
+            const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+            if (channel && channel.isTextBased()) {
+              statusMessage = await channel.messages.fetch(statusMessageId);
+              updateStatusMessage();
+            }
+          } catch (e) {
+            console.log('[Bot] Failed to fetch existing status message, sending new one.');
+            statusMessageId = null;
+          }
+        }
+        if (!statusMessage) {
           // Send new status message
           try {
             const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
