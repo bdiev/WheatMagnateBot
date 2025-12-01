@@ -59,11 +59,16 @@ async function loadMinecraftSession() {
       console.error('[Bot] Failed to parse session from env:', err.message);
     }
   } else {
-    loadedSession = await loadSession();
-    if (loadedSession) {
-      console.log('[Bot] Loaded session from DB.');
-    } else {
-      console.log('[Bot] No saved session found, will authenticate.');
+    try {
+      loadedSession = await loadSession();
+      if (loadedSession) {
+        console.log('[Bot] Loaded session from DB.');
+      } else {
+        console.log('[Bot] No saved session found, will authenticate.');
+      }
+    } catch (err) {
+      console.error('[Bot] Failed to load session from DB:', err.message);
+      console.log('[Bot] Will authenticate.');
     }
   }
 }
@@ -422,7 +427,11 @@ function createBot() {
     // Save session after successful login
     if (bot.session) {
       config.session = bot.session;
-      await saveSession(config.session);
+      try {
+        await saveSession(config.session);
+      } catch (err) {
+        console.error('[Bot] Failed to save session on login:', err.message);
+      }
     }
     if (pendingStatusMessage) {
       await pendingStatusMessage.edit({
