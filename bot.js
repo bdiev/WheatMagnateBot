@@ -772,13 +772,24 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         }
         const description = playerList.length > 0 ? playerList.join('\n\n') : 'No players online.';
 
+        const options = onlinePlayers.map(username => {
+          return new StringSelectMenuOptionBuilder()
+            .setLabel(username)
+            .setValue(username);
+        });
+        const selectMenu = new StringSelectMenuBuilder()
+          .setCustomId('message_select')
+          .setPlaceholder('Select player to message')
+          .addOptions(options.slice(0, 25)); // Discord limit 25 options
+        const row = new ActionRowBuilder().addComponents(selectMenu);
         await interaction.editReply({
           embeds: [{
             title: `Online Players (${onlinePlayers.length})`,
             description,
             color: 3447003,
             timestamp: new Date()
-          }]
+          }],
+          components: [row]
         });
       } else if (interaction.customId === 'drop_button') {
         await interaction.deferReply();
@@ -1015,6 +1026,34 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         }
       }
       setTimeout(() => interaction.deleteReply().catch(() => {}), 100);
+    } else if (interaction.isModalSubmit() && interaction.customId.startsWith('message_modal_')) {
+      await interaction.deferReply({ ephemeral: true });
+      const selectedUsername = interaction.customId.split('_')[2];
+      const messageText = interaction.fields.getTextInputValue('message_text');
+      if (messageText && bot) {
+        const command = `/msg ${selectedUsername} ${messageText}`;
+        bot.chat(command);
+        console.log(`[Message] Sent /msg ${selectedUsername} ${messageText} by ${interaction.user.tag}`);
+      }
+      setTimeout(() => interaction.deleteReply().catch(() => {}), 100);
+    } else if (interaction.isStringSelectMenu() && interaction.customId === 'message_select') {
+      await interaction.deferReply();
+      const selectedUsername = interaction.values[0];
+      const modal = new ModalBuilder()
+        .setCustomId(`message_modal_${selectedUsername}`)
+        .setTitle(`Message to ${selectedUsername}`);
+
+      const messageInput = new TextInputBuilder()
+        .setCustomId('message_text')
+        .setLabel('Message')
+        .setStyle(TextInputStyle.Paragraph)
+        .setValue(`/msg ${selectedUsername} `)
+        .setRequired(true);
+
+      const actionRow = new ActionRowBuilder().addComponents(messageInput);
+      modal.addComponents(actionRow);
+
+      await interaction.showModal(modal);
     } else if (interaction.isStringSelectMenu() && interaction.customId === 'drop_select') {
       await interaction.deferUpdate();
       const selectedValue = interaction.values[0];
