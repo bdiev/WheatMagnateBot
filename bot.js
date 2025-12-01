@@ -273,8 +273,8 @@ function getStatusDescription() {
     `👥 Players online: ${playerCount}\n` +
     `👀 Players nearby: ${nearbyNames}\n` +
     `⚡ TPS: ${avgTps}\n` +
-    `🍎 Food: ${Math.round(bot.food * 2) / 2}/20\n` +
-    `:hamburger: Health: ${Math.round(bot.health * 2) / 2}/20\n` +
+    `:hamburger: Food: ${Math.round(bot.food * 2) / 2}/20\n` +
+    `❤️ Health: ${Math.round(bot.health * 2) / 2}/20\n` +
     `📋 Whitelist online: ${whitelistOnline.length > 0 ? whitelistOnline.join(', ') : 'None'}`;
 }
 
