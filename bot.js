@@ -1027,12 +1027,14 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       }
       setTimeout(() => interaction.deleteReply().catch(() => {}), 100);
     } else if (interaction.isModalSubmit() && interaction.customId.startsWith('message_modal_')) {
-      await interaction.deferReply({ flags: 64 });
       const selectedUsername = interaction.customId.split('_')[2];
       const messageText = interaction.fields.getTextInputValue('message_text');
       if (messageText && bot) {
         let command;
         let displayMessage = messageText;
+        if (messageText.startsWith('/msg ')) {
+          displayMessage = messageText.slice(5).trim();
+        }
         if (messageText.startsWith('/')) {
           command = messageText;
           console.log(`[Message] Sent command "${command}" by ${interaction.user.tag}`);
@@ -1106,7 +1108,6 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           }
         }
       }
-      setTimeout(() => interaction.deleteReply().catch(() => {}), 100);
     } else if (interaction.isStringSelectMenu() && interaction.customId === 'message_select') {
       const selectedUsername = interaction.values[0];
       const modal = new ModalBuilder()
