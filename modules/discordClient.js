@@ -48,17 +48,21 @@ class DiscordClient {
     this.client.on('interactionCreate', async (interaction) => {
       if (interaction.channel.id !== config.DISCORD_CHANNEL_ID) return;
 
-      // Handle button interactions
-      if (interaction.isButton()) {
-        await this.handleButtonInteraction(interaction);
-      }
-      // Handle modal submissions
-      else if (interaction.isModalSubmit()) {
-        await this.handleModalInteraction(interaction);
-      }
-      // Handle string select menu interactions
-      else if (interaction.isStringSelectMenu()) {
-        await this.handleSelectMenuInteraction(interaction);
+      try {
+        // Handle button interactions
+        if (interaction.isButton()) {
+          await this.handleButtonInteraction(interaction);
+        }
+        // Handle modal submissions
+        else if (interaction.isModalSubmit()) {
+          await this.handleModalInteraction(interaction);
+        }
+        // Handle string select menu interactions
+        else if (interaction.isStringSelectMenu()) {
+          await this.handleSelectMenuInteraction(interaction);
+        }
+      } catch (error) {
+        console.error('[Discord] Error handling interaction:', error.message);
       }
     });
 
@@ -127,19 +131,125 @@ class DiscordClient {
 
   // Additional methods for handling interactions would go here
   async handleButtonInteraction(interaction) {
-    // Implementation for button interactions
+    try {
+      if (interaction.customId === 'pause_button') {
+        await interaction.deferUpdate();
+        console.log(`[Button] pause by ${interaction.user.tag}`);
+        // Here you would add logic to pause the bot
+        // For example: global.minecraftBot.shouldReconnect = false;
+        // global.minecraftBot.getBot().quit('Pause until resume');
+      } else if (interaction.customId === 'resume_button') {
+        await interaction.deferUpdate();
+        console.log(`[Button] resume by ${interaction.user.tag}`);
+        // Here you would add logic to resume the bot
+        // For example: global.minecraftBot.shouldReconnect = true;
+        // global.minecraftBot.createBot();
+      } else if (interaction.customId === 'say_button') {
+        const modal = new ModalBuilder()
+          .setCustomId('say_modal')
+          .setTitle('Send Message to Minecraft');
+
+        const messageInput = new TextInputBuilder()
+          .setCustomId('message_input')
+          .setLabel('Message')
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true);
+
+        const actionRow = new ActionRowBuilder().addComponents(messageInput);
+        modal.addComponents(actionRow);
+
+        await interaction.showModal(modal);
+      } else if (interaction.customId === 'playerlist_button') {
+        await interaction.deferReply();
+        // Here you would add logic to show player list
+        await interaction.editReply({
+          content: 'Player list functionality would be implemented here'
+        });
+      } else if (interaction.customId === 'drop_button') {
+        await interaction.deferReply();
+        // Here you would add logic to drop items
+        await interaction.editReply({
+          content: 'Drop functionality would be implemented here'
+        });
+      } else if (interaction.customId === 'wn_button') {
+        await interaction.deferReply();
+        // Here you would add logic to show nearby players
+        await interaction.editReply({
+          content: 'Nearby players functionality would be implemented here'
+        });
+      } else if (interaction.customId === 'chat_setting_button') {
+        await interaction.deferReply();
+        // Here you would add logic for chat settings
+        await interaction.editReply({
+          content: 'Chat settings functionality would be implemented here'
+        });
+      } else if (interaction.customId === 'killaura_button') {
+        await interaction.deferReply();
+        // Here you would add logic for kill aura
+        await interaction.editReply({
+          content: 'Kill aura functionality would be implemented here'
+        });
+      }
+    } catch (error) {
+      console.error('[Discord] Error in button interaction:', error.message);
+      await interaction.reply({
+        content: 'An error occurred while processing your request.',
+        ephemeral: true
+      });
+    }
   }
 
   async handleModalInteraction(interaction) {
-    // Implementation for modal interactions
+    try {
+      if (interaction.customId === 'say_modal') {
+        await interaction.deferReply({ ephemeral: true });
+        const message = interaction.fields.getTextInputValue('message_input');
+        if (message && global.minecraftBot && global.minecraftBot.getBot()) {
+          global.minecraftBot.getBot().chat(message);
+          console.log(`[Modal] Say "${message}" by ${interaction.user.tag}`);
+          await interaction.editReply({
+            content: `Message sent to Minecraft: "${message}"`
+          });
+        } else {
+          await interaction.editReply({
+            content: 'Bot is not connected to Minecraft.'
+          });
+        }
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 3000);
+      }
+    } catch (error) {
+      console.error('[Discord] Error in modal interaction:', error.message);
+      await interaction.reply({
+        content: 'An error occurred while processing your request.',
+        ephemeral: true
+      });
+    }
   }
 
   async handleSelectMenuInteraction(interaction) {
     // Implementation for select menu interactions
+    await interaction.deferUpdate();
+    await interaction.editReply({
+      content: 'Select menu functionality would be implemented here'
+    });
   }
 
   async handleMessage(message) {
     // Implementation for message handling
+    if (message.content === '!wn' && global.minecraftBot && global.minecraftBot.getBot()) {
+      const nearby = utils.getNearbyPlayers(global.minecraftBot.getBot());
+      if (nearby.length === 0) {
+        await message.reply('No one nearby.');
+      } else {
+        await message.reply({
+          embeds: [{
+            title: `Nearby players (${nearby.length})`,
+            description: nearby.map(p => `👤 **${p.username}** - ${p.distance} blocks`).join('\n'),
+            color: 3447003
+          }]
+        });
+      }
+    }
   }
 
   getClient() {
