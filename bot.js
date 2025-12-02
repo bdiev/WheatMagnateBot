@@ -772,23 +772,12 @@ function createBot() {
     startFoodMonitor();
     startNearbyPlayerScanner();
 
-    // Update player activity for all online players - only set is_online flag without updating last_seen
-    if (bot && bot.players && pool) {
+    // Update player activity for all online players
+    if (bot && bot.players) {
       setTimeout(async () => {
         for (const player of Object.values(bot.players)) {
           if (player.username && ignoredUsernames.some(name => name.toLowerCase() === player.username.toLowerCase())) {
-            try {
-              // Only update is_online flag, don't touch last_seen or last_online
-              await pool.query(`
-                INSERT INTO player_activity (username, is_online)
-                VALUES ($1, TRUE)
-                ON CONFLICT (username)
-                DO UPDATE SET is_online = TRUE
-              `, [player.username]);
-              console.log(`[Activity] ${player.username} marked as online (reconnect)`);
-            } catch (err) {
-              console.error(`[Activity] Failed to mark ${player.username} as online:`, err.message);
-            }
+            await updatePlayerActivity(player.username, true);
           }
         }
       }, 3000);
@@ -1070,11 +1059,10 @@ function createBot() {
     if (username === bot.username) return; // Don't send own messages
     if (ignoredChatUsernames.includes(username.toLowerCase())) return; // Ignore specified users
 
-    // Clean message from special characters and format codes
+    // Clean message - only remove Minecraft color codes and problematic control characters
     let cleanMessage = message
       .replace(/§[0-9a-fk-or]/gi, '') // Remove Minecraft color codes
-      .replace(/[\u0000-\u001F\u007F-\u009F]/g, '') // Remove control characters
-      .replace(/�+/g, '') // Remove replacement characters
+      .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '') // Remove control chars (keep newlines \n)
       .trim();
     
     if (!cleanMessage) return; // Skip empty messages
