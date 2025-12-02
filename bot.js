@@ -745,34 +745,37 @@ function createBot() {
     // Don't clear the global status update interval - let it continue
     // so status updates even when disconnected
 
-    if (shouldReconnect || reasonStr === 'socketClosed') {
-      const now = new Date();
-      const kyivTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Kyiv' }));
-      const hour = kyivTime.getHours();
-      const minute = kyivTime.getMinutes();
-      const isRestartTime = hour === 9 && minute >= 0 && minute <= 30;
-      const timeout = isRestartTime ? 5 * 60 * 1000 : reconnectTimeout;
-
-      // Set reconnect timestamp for countdown
-      reconnectTimestamp = Date.now() + timeout;
-
-      if (isRestartTime) {
-        console.log('[!] Restart window. Reconnecting in 5 minutes...');
-        // No Discord notification - status message will show countdown
-      } else if (reasonStr !== 'Restart command') {
-        console.log('[!] Disconnected. Reconnecting in 15 seconds...');
-        // No Discord notification - status message will show countdown
-      }
-      
-      setTimeout(() => {
-        reconnectTimestamp = 0;
-        createBot();
-      }, timeout);
-    } else {
+    // Don't reconnect if manually paused (shouldReconnect = false)
+    if (!shouldReconnect) {
       console.log('[!] Manual pause. No reconnect.');
       reconnectTimestamp = 0;
-      // Status will be updated by interval
+      if (statusMessage) updateStatusMessage();
+      return;
     }
+
+    // Reconnect logic for normal disconnects
+    const now = new Date();
+    const kyivTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Kyiv' }));
+    const hour = kyivTime.getHours();
+    const minute = kyivTime.getMinutes();
+    const isRestartTime = hour === 9 && minute >= 0 && minute <= 30;
+    const timeout = isRestartTime ? 5 * 60 * 1000 : reconnectTimeout;
+
+    // Set reconnect timestamp for countdown
+    reconnectTimestamp = Date.now() + timeout;
+
+    if (isRestartTime) {
+      console.log('[!] Restart window. Reconnecting in 5 minutes...');
+      // No Discord notification - status message will show countdown
+    } else if (reasonStr !== 'Restart command') {
+      console.log('[!] Disconnected. Reconnecting in 15 seconds...');
+      // No Discord notification - status message will show countdown
+    }
+    
+    setTimeout(() => {
+      reconnectTimestamp = 0;
+      createBot();
+    }, timeout);
   });
 
   bot.on('error', (err) => {
