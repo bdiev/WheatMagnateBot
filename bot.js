@@ -253,7 +253,40 @@ async function getWhitelistActivity() {
         CASE WHEN pa.is_online = FALSE OR pa.is_online IS NULL THEN pa.last_seen END DESC NULLS LAST
     `);
     
-    return { players: result.rows };
+    // Cross-check with actual online players from bot
+    const actualOnlinePlayers = new Set();
+    if (bot && bot.players) {
+      for (const player of Object.values(bot.players)) {
+        if (player.username) {
+          actualOnlinePlayers.add(player.username.toLowerCase());
+        }
+      }
+    }
+    
+    // Update is_online status based on actual bot data
+    const players = result.rows.map(row => {
+      const isActuallyOnline = actualOnlinePlayers.has(row.username.toLowerCase());
+      return {
+        ...row,
+        is_online: isActuallyOnline
+      };
+    });
+    
+    // Sort again after updating online status
+    players.sort((a, b) => {
+      if (a.is_online && !b.is_online) return -1;
+      if (!a.is_online && b.is_online) return 1;
+      if (a.is_online && b.is_online) {
+        return a.username.toLowerCase().localeCompare(b.username.toLowerCase());
+      }
+      // Both offline - sort by last_seen
+      if (!a.last_seen && !b.last_seen) return 0;
+      if (!a.last_seen) return 1;
+      if (!b.last_seen) return -1;
+      return new Date(b.last_seen) - new Date(a.last_seen);
+    });
+    
+    return { players };
   } catch (err) {
     console.error('[Activity] Failed to get whitelist activity:', err.message);
     return { error: err.message };
