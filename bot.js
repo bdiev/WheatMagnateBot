@@ -1089,16 +1089,18 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         if (shouldReconnect && bot) {
           // Currently running, pause it
           console.log(`[Button] pause by ${interaction.user.tag}`);
+          const botToQuit = bot; // Save reference before setting to null
           shouldReconnect = false;
-          bot.quit('Pause until resume');
+          bot = null; // Set to null immediately for status display
+          await updateStatusMessage(); // Update status before quit
+          if (botToQuit) botToQuit.quit('Pause until resume');
         } else {
           // Currently paused, resume it
           console.log(`[Button] resume by ${interaction.user.tag}`);
           shouldReconnect = true;
+          await updateStatusMessage(); // Update status immediately
           createBot();
         }
-        // Force immediate status update after state change
-        setTimeout(() => updateStatusMessage(), 100);
       } else if (interaction.customId === 'say_button') {
         const modal = new ModalBuilder()
           .setCustomId('say_modal')
@@ -2131,10 +2133,11 @@ Add candidates online: **${onlineCount}**`,
     if (message.content === '!pause') {
       console.log(`[Command] pause until resume by ${message.author.tag} via Discord`);
       lastCommandUser = message.author.tag;
+      const botToQuit = bot;
       shouldReconnect = false;
-      bot.quit('Pause until resume');
-      // Force immediate status update
-      setTimeout(() => updateStatusMessage(), 100);
+      bot = null;
+      await updateStatusMessage();
+      if (botToQuit) botToQuit.quit('Pause until resume');
     }
 
     const pauseMatch = message.content.match(/^!pause\s+(\d+)$/);
@@ -2168,9 +2171,8 @@ Add candidates online: **${onlineCount}**`,
       console.log(`[Command] resume by ${message.author.tag} via Discord`);
       lastCommandUser = message.author.tag;
       shouldReconnect = true;
+      await updateStatusMessage();
       createBot();
-      // Force immediate status update
-      setTimeout(() => updateStatusMessage(), 100);
     }
 
     // Whitelist management via command
