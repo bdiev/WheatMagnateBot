@@ -4,8 +4,9 @@
  */
 
 class KillAura {
-  constructor(bot) {
+  constructor(bot, notifier = null) {
     this.bot = bot;
+    this.notify = typeof notifier === 'function' ? notifier : null;
     this.enabled = false;
     this.interval = null;
     this.targets = {
@@ -15,6 +16,11 @@ class KillAura {
     };
     this.range = 4.5; // Attack range in blocks
     this.attackCooldown = 500; // ms between attacks
+    this.minSafeHealth = 18; // Auto-pause attacking below this health
+    this._lastHealth = null;
+    this._lastAttackTs = 0;
+    this._thornsHits = 0; // consecutive suspected thorns hits
+    this._healthListenerBound = null;
   }
 
   /**
@@ -32,6 +38,28 @@ class KillAura {
     this.interval = setInterval(() => {
       this.attack();
     }, this.attackCooldown);
+
+    // health monitoring
+    this._lastHealth = this.bot.health;
+    this._healthListenerBound = () => {
+      // Auto-pause if health is low
+      if (this.enabled && this.bot.health < this.minSafeHealth) {
+        this._safetyStop('Health low');
+      }
+
+      // Detect potential thorns: health drops shortly after attack
+      const now = Date.now();
+      if (this.enabled && this._lastAttackTs && (now - this._lastAttackTs) < 400) {
+        if (this.bot.health < this._lastHealth) {
+          this._thornsHits++;
+          if (this._thornsHits >= 2) {
+            this._safetyStop('Possible thorns detected');
+          }
+        }
+      }
+      this._lastHealth = this.bot.health;
+    };
+    this.bot.on('health', this._healthListenerBound);
   }
 
   /**
@@ -45,6 +73,12 @@ class KillAura {
       clearInterval(this.interval);
       this.interval = null;
     }
+    if (this._healthListenerBound) {
+      try { this.bot.removeListener('health', this._healthListenerBound); } catch {}
+      this._healthListenerBound = null;
+    }
+    this._thornsHits = 0;
+    this._lastAttackTs = 0;
     
     console.log('[KillAura] Disabled');
   }
@@ -111,6 +145,9 @@ class KillAura {
   attack() {
     if (!this.bot || !this.bot.entity || !this.enabled) return;
 
+    // safety: don't attack while eating or too low health
+    if (this.bot.health < this.minSafeHealth) return;
+
     let nearestEntity = null;
     let nearestDistance = this.range;
 
@@ -129,10 +166,24 @@ class KillAura {
     if (nearestEntity) {
       try {
         this.bot.attack(nearestEntity);
+        this._lastAttackTs = Date.now();
         console.log(`[KillAura] Attacked ${nearestEntity.name || nearestEntity.type} at ${nearestDistance.toFixed(1)} blocks`);
       } catch (err) {
         console.error('[KillAura] Attack error:', err.message);
       }
+    }
+  }
+
+  /**
+   * Internal: stop module due to safety reasons and notify
+   */
+  _safetyStop(reason) {
+    this.disable();
+    console.log(`[KillAura] Auto-disabled: ${reason}`);
+    if (this.notify) {
+      try {
+        this.notify(`⚠️ KillAura auto-disabled: ${reason}`);
+      } catch {}
     }
   }
 
@@ -143,7 +194,8 @@ class KillAura {
     return {
       enabled: this.enabled,
       targets: this.targets,
-      range: this.range
+      range: this.range,
+      minSafeHealth: this.minSafeHealth
     };
   }
 

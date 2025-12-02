@@ -585,13 +585,21 @@ function getStatusDescription() {
 function createStatusButtons() {
   // Determine if bot is paused: shouldReconnect=false means paused
   const isPaused = !shouldReconnect;
+  const isOnline = bot && bot.entity;
+  
   return [
     new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
-          .setCustomId('pause_resume_button')
-          .setLabel(isPaused ? '▶️ Resume' : '⏸️ Pause')
-          .setStyle(isPaused ? ButtonStyle.Success : ButtonStyle.Danger),
+          .setCustomId('pause_button')
+          .setLabel('⏸️ Pause')
+          .setStyle(ButtonStyle.Danger)
+          .setDisabled(isPaused || !isOnline),
+        new ButtonBuilder()
+          .setCustomId('resume_button')
+          .setLabel('▶️ Resume')
+          .setStyle(ButtonStyle.Success)
+          .setDisabled(!isPaused),
         new ButtonBuilder()
           .setCustomId('say_button')
           .setLabel('💬 Say')
@@ -599,12 +607,12 @@ function createStatusButtons() {
         new ButtonBuilder()
           .setCustomId('playerlist_button')
           .setLabel('👥 Players')
-          .setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder()
-          .setCustomId('drop_button')
-          .setLabel('🗑️ Drop')
           .setStyle(ButtonStyle.Secondary)
       ),
+            new ButtonBuilder()
+              .setCustomId('drop_button')
+              .setLabel('🗑️ Drop')
+              .setStyle(ButtonStyle.Secondary),
     new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
@@ -618,7 +626,10 @@ function createStatusButtons() {
         new ButtonBuilder()
           .setCustomId('whitelist_button')
           .setLabel('📋 Whitelist')
-          .setStyle(ButtonStyle.Secondary),
+          .setStyle(ButtonStyle.Secondary)
+      ),
+    new ActionRowBuilder()
+      .addComponents(
         new ButtonBuilder()
           .setCustomId('killaura_button')
           .setLabel(killAuraModule && killAuraModule.enabled ? '⚔️ KillAura (ON)' : '⚔️ KillAura')
@@ -665,7 +676,12 @@ function createBot() {
   bot = mineflayer.createBot(config);
   
   // Initialize modules
-  killAuraModule = new KillAura(bot);
+  killAuraModule = new KillAura(bot, (msg) => {
+    // Relay module notifications to Discord status channel
+    try { sendDiscordNotification(msg, 16776960); } catch {}
+    // Also refresh status to reflect module change
+    if (statusMessage) updateStatusMessage();
+  });
 
   bot.on('login', async () => {
     if (bot && bot.username) {
@@ -678,6 +694,7 @@ function createBot() {
   bot.on('spawn', () => {
     console.log('[Bot] Spawned.');
     reconnectTimestamp = 0; // Reset reconnect countdown when bot spawns
+      if (statusMessage) updateStatusMessage(); // Update immediately after spawn
     clearIntervals();
     startFoodMonitor();
     startNearbyPlayerScanner();
@@ -1113,23 +1130,41 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
 
     if (interaction.isButton()) {
-      if (interaction.customId === 'pause_resume_button') {
-        await interaction.deferUpdate(); // Defer update to avoid timeout
+      if (interaction.customId === 'pause_button') {
+        await interaction.deferUpdate();
         lastCommandUser = interaction.user.tag;
-        if (shouldReconnect && bot) {
-          // Currently running, pause it
-          console.log(`[Button] pause by ${interaction.user.tag}`);
-          const botToQuit = bot; // Save reference before setting to null
-          shouldReconnect = false;
-          bot = null; // Set to null immediately for status display
-          await updateStatusMessage(); // Update status before quit
-          if (botToQuit) botToQuit.quit('Pause until resume');
-        } else {
-          // Currently paused, resume it
-          console.log(`[Button] resume by ${interaction.user.tag}`);
-          shouldReconnect = true;
-          createBot();
-          // Status will be updated automatically when bot spawns
+        console.log(`[Button] pause by ${interaction.user.tag}`);
+        
+        // Immediately disable reconnect and clear intervals
+        shouldReconnect = false;
+        clearIntervals();
+        
+        // Save bot reference and set to null
+        const botToQuit = bot;
+        bot = null;
+        
+        // Update status immediately
+        if (statusMessage) await updateStatusMessage();
+        
+        // Quit the bot
+        if (botToQuit) {
+          try {
+            botToQuit.quit('Paused by user');
+          } catch (err) {
+            console.error('[Pause] Error quitting bot:', err.message);
+          }
+              } else if (interaction.customId === 'resume_button') {
+                await interaction.deferUpdate();
+                lastCommandUser = interaction.user.tag;
+                console.log(`[Button] resume by ${interaction.user.tag}`);
+        
+                shouldReconnect = true;
+                createBot();
+        
+                // Update status after a short delay to show connecting state
+                setTimeout(async () => {
+                  if (statusMessage) await updateStatusMessage();
+                }, 1000);
         }
       } else if (interaction.customId === 'say_button') {
         const modal = new ModalBuilder()
