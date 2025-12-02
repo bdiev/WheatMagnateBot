@@ -932,6 +932,8 @@ function createBot() {
 
   // ------- CHAT COMMANDS -------
   bot.on('chat', async (username, message) => {
+    console.log(`[Chat] ${username}: ${message}`);
+    
     // Handle commands from bdiev_
     if (username === 'bdiev_') {
       if (message === '!restart') {
@@ -1055,9 +1057,18 @@ function createBot() {
     }
 
     // Send all chat messages to Discord chat channel
-    if (!DISCORD_CHAT_CHANNEL_ID || !discordClient || !discordClient.isReady()) return;
-    if (username === bot.username) return; // Don't send own messages
-    if (ignoredChatUsernames.includes(username.toLowerCase())) return; // Ignore specified users
+    if (!DISCORD_CHAT_CHANNEL_ID || !discordClient || !discordClient.isReady()) {
+      console.log('[Chat->Discord] Skipped - Discord not ready or no chat channel configured');
+      return;
+    }
+    if (username === bot.username) {
+      console.log('[Chat->Discord] Skipped - own message');
+      return;
+    }
+    if (ignoredChatUsernames.includes(username.toLowerCase())) {
+      console.log(`[Chat->Discord] Skipped - ${username} is in ignore list`);
+      return;
+    }
 
     // Clean message - only remove Minecraft color codes and problematic control characters
     let cleanMessage = message
@@ -1065,7 +1076,12 @@ function createBot() {
       .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '') // Remove control chars (keep newlines \n)
       .trim();
     
-    if (!cleanMessage) return; // Skip empty messages
+    if (!cleanMessage) {
+      console.log('[Chat->Discord] Skipped - empty message after cleaning');
+      return;
+    }
+
+    console.log(`[Chat->Discord] Sending message from ${username}: ${cleanMessage}`);
 
     // Normalize special relay format: "> target: data" so author stays original sender
     const relayMatch = cleanMessage.match(/^>\s*([\w_]+):\s*(.+)$/);
@@ -1092,9 +1108,12 @@ function createBot() {
             timestamp: new Date()
           }]
         });
+        console.log(`[Chat->Discord] ✅ Message sent successfully`);
+      } else {
+        console.log('[Chat->Discord] ❌ Channel not found or not text-based');
       }
     } catch (e) {
-      console.error('[Discord] Failed to send chat message:', e.message);
+      console.error('[Chat->Discord] ❌ Failed to send chat message:', e.message);
     }
   });
 
