@@ -1455,6 +1455,9 @@ Add candidates online: **${onlineCount}**`,
             description: 'Manage ignored players for chat messages.',
             color: 3447003,
             timestamp: new Date()
+          }],
+          components
+        });
       } else if (interaction.customId === 'seen_button') {
         await interaction.deferReply();
         
@@ -1579,9 +1582,6 @@ Add candidates online: **${onlineCount}**`,
         setTimeout(() => {
           clearInterval(updateInterval);
         }, 5 * 60 * 1000);
-      } else if (interaction.customId.startsWith('reply_')) {
-          }]
-        });
       } else if (interaction.customId.startsWith('reply_')) {
         const parts = interaction.customId.split('_');
         const encodedUsername = parts[1];
