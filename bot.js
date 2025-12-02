@@ -4,6 +4,10 @@ const fs = require('fs');
 const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } = require('discord.js');
 const { Pool } = require('pg');
 
+// Base64 utils for Node.js (btoa/atob polyfill)
+const b64encode = (str) => Buffer.from(String(str), 'utf8').toString('base64');
+const b64decode = (str) => Buffer.from(String(str), 'base64').toString('utf8');
+
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
 const DISCORD_CHAT_CHANNEL_ID = process.env.DISCORD_CHAT_CHANNEL_ID;
@@ -63,7 +67,7 @@ function loadStatusMessageId() {
 const config = {
   host: 'oldfag.org',
   username: process.env.MINECRAFT_USERNAME || 'WheatMagnate',
-  auth: 'microsoft',
+  auth: process.env.MINECRAFT_AUTH || 'microsoft',
   version: false, // Auto-detect version
   session: loadedSession
 };
@@ -80,6 +84,31 @@ function loadWhitelist() {
     sendDiscordNotification('Error loading whitelist: ' + err.message, 16711680);
     console.log('Error loading whitelist:', err.message);
     return [];
+  }
+}
+
+async function loadWhitelistFromDB() {
+  if (!pool) return;
+  try {
+    const res = await pool.query('SELECT username FROM whitelist');
+    const dbWhitelist = res.rows.map(row => row.username);
+    return dbWhitelist;
+  } catch (err) {
+    console.error('[DB] Failed to load whitelist:', err.message);
+    return [];
+  }
+}
+
+async function migrateWhitelistToDB() {
+  if (!pool) return;
+  try {
+    const fileWhitelist = loadWhitelist();
+    for (const username of fileWhitelist) {
+      await pool.query('INSERT INTO whitelist (username, added_by) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING', [username, 'migration']);
+    }
+    console.log('[DB] Whitelist migrated to database');
+  } catch (err) {
+    console.error('[DB] Failed to migrate whitelist:', err.message);
   }
 }
 
@@ -111,8 +140,22 @@ async function initDatabase() {
         added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
-    console.log('[DB] Table initialized.');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS whitelist (
+        id SERIAL PRIMARY KEY,
+        username VARCHAR(255) UNIQUE NOT NULL,
+        added_by VARCHAR(255),
+        added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    console.log('[DB] Tables initialized.');
     ignoredChatUsernames = await loadIgnoredChatUsernames();
+    // Load whitelist from DB into memory (if available)
+    const wl = await loadWhitelistFromDB();
+    if (Array.isArray(wl) && wl.length > 0) {
+      ignoredUsernames.length = 0;
+      ignoredUsernames.push(...wl);
+    }
   } catch (err) {
     console.error('[DB] Failed to initialize:', err.message);
   }
@@ -126,10 +169,18 @@ const discordClient = new Client({
 if (DISCORD_BOT_TOKEN) {
   discordClient.login(DISCORD_BOT_TOKEN).catch(err => console.error('[Discord] Login failed:', err.message));
 
-  discordClient.on('clientReady', async () => {
+  // FIX: correct event name
+  discordClient.on('ready', async () => {
     console.log(`[Discord] Bot logged in as ${discordClient.user.tag}`);
     discordClient.user.setPresence({ status: 'online' });
     await initDatabase();
+    await migrateWhitelistToDB();
+    // Reload whitelist after migration
+    const wl = await loadWhitelistFromDB();
+    if (Array.isArray(wl) && wl.length > 0) {
+      ignoredUsernames.length = 0;
+      ignoredUsernames.push(...wl);
+    }
     if (!mineflayerStarted) {
       mineflayerStarted = true;
       createBot();
@@ -266,7 +317,7 @@ async function sendWhisperToDiscord(username, message) {
               new ActionRowBuilder()
                 .addComponents(
                   new ButtonBuilder()
-                    .setCustomId(`reply_${btoa(username)}_${messageId}`)
+                    .setCustomId(`reply_${b64encode(username)}_${messageId}`)
                     .setLabel('Reply')
                     .setStyle(ButtonStyle.Primary),
                   new ButtonBuilder()
@@ -303,7 +354,7 @@ async function sendWhisperToDiscord(username, message) {
             new ActionRowBuilder()
               .addComponents(
                 new ButtonBuilder()
-                  .setCustomId(`reply_${btoa(username)}_${sentMessage.id}`)
+                  .setCustomId(`reply_${b64encode(username)}_${sentMessage.id}`)
                   .setLabel('Reply')
                   .setStyle(ButtonStyle.Primary),
                 new ButtonBuilder()
@@ -375,6 +426,10 @@ function createStatusButtons() {
         new ButtonBuilder()
           .setCustomId('chat_setting_button')
           .setLabel('⚙️ Chat Settings')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('whitelist_button')
+          .setLabel('📋 Whitelist')
           .setStyle(ButtonStyle.Secondary)
       )
   ];
@@ -682,25 +737,24 @@ function createBot() {
     const allowMatch = message.match(/^!allow\s+(\w+)$/);
     if (allowMatch) {
       const targetUsername = allowMatch[1];
-      try {
-        const data = fs.readFileSync('whitelist.txt', 'utf8');
-        const lines = data.split('\n');
-        if (!lines.some(line => line.trim() === targetUsername)) {
-          lines.push(targetUsername);
-          fs.writeFileSync('whitelist.txt', lines.join('\n'));
+      (async () => {
+        try {
+          if (!pool) {
+            sendDiscordNotification('Database not configured.', 16711680);
+            return;
+          }
+          await pool.query('INSERT INTO whitelist (username, added_by) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING', [targetUsername, username]);
           // Reload whitelist
-          const newWhitelist = loadWhitelist();
+          const newWhitelist = await loadWhitelistFromDB();
           ignoredUsernames.length = 0;
           ignoredUsernames.push(...newWhitelist);
           console.log(`[Command] Added ${targetUsername} to whitelist by ${username}`);
           sendDiscordNotification(`✅ Added ${targetUsername} to whitelist. Requested by ${username} (in-game)`, 65280);
-        } else {
-          sendDiscordNotification(`${targetUsername} is already in whitelist.`, 16776960);
+        } catch (err) {
+          console.error('[Command] Allow error:', err.message);
+          sendDiscordNotification(`Failed to add ${targetUsername} to whitelist: \`${err.message}\``, 16711680);
         }
-      } catch (err) {
-        console.error('[Command] Allow error:', err.message);
-        sendDiscordNotification(`Failed to add ${targetUsername} to whitelist: \`${err.message}\``, 16711680);
-      }
+      })();
     }
 
     const ignoreMatch = message.match(/^!ignore\s+(\w+)$/);
@@ -891,6 +945,11 @@ if (Boolean(process.env.DISABLE_BOT)) {
   console.log(`Bot disabled by env. DISABLE_BOT=${process.env.DISABLE_BOT}`);
   process.exit(0);
 }
+// Change to strict check:
+if (String(process.env.DISABLE_BOT).toLowerCase() === 'true') {
+  console.log(`Bot disabled by env. DISABLE_BOT=${process.env.DISABLE_BOT}`);
+  process.exit(0);
+}
 
 // Handle uncaught exceptions to prevent crashes
 process.on('uncaughtException', (err) => {
@@ -966,15 +1025,15 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         }
         const description = playerList.length > 0 ? playerList.join('\n\n') : 'No players online.';
 
-        const options = whitelistOnline.map(username => {
-          return new StringSelectMenuOptionBuilder()
+        const options = whitelistOnline.slice(0, 25).map(username =>
+          new StringSelectMenuOptionBuilder()
             .setLabel(username)
-            .setValue(username);
-        });
+            .setValue(b64encode(username))
+        );
         const selectMenu = new StringSelectMenuBuilder()
           .setCustomId('message_select')
           .setPlaceholder('Select player to message')
-          .addOptions(options.slice(0, 25).map(option => option.setValue(btoa(option.data.value)))); // Encode username
+          .addOptions(options);
         const row = new ActionRowBuilder().addComponents(selectMenu);
         await interaction.editReply({
           embeds: [{
@@ -983,7 +1042,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             color: 3447003,
             timestamp: new Date()
           }],
-          components: [row]
+          components: options.length > 0 ? [row] : []
         });
       } else if (interaction.customId === 'drop_button') {
         await interaction.deferReply();
@@ -1014,7 +1073,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           const value = `${item.slot}_${item.type}_${item.metadata || 0}`;
           return new StringSelectMenuOptionBuilder()
             .setLabel(`${name} x${count}`)
-            .setValue(btoa(value));
+            .setValue(b64encode(value));
         });
         const selectMenu = new StringSelectMenuBuilder()
           .setCustomId('drop_select')
@@ -1080,12 +1139,12 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         const ignoreOptions = playersToIgnore.map(username => {
           return new StringSelectMenuOptionBuilder()
             .setLabel(username)
-            .setValue(btoa(username));
+            .setValue(b64encode(username));
         });
         const unignoreOptions = playersToUnignore.map(username => {
           return new StringSelectMenuOptionBuilder()
             .setLabel(username)
-            .setValue(btoa(username));
+            .setValue(b64encode(username));
         });
 
         const ignoreMenu = new StringSelectMenuBuilder()
@@ -1117,7 +1176,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       } else if (interaction.customId.startsWith('reply_')) {
         const parts = interaction.customId.split('_');
         const encodedUsername = parts[1];
-        const username = atob(encodedUsername);
+        const username = b64decode(encodedUsername);
         const modal = new ModalBuilder()
           .setCustomId(`reply_modal_${encodedUsername}`)
           .setTitle(`Reply to ${username}`);
@@ -1152,19 +1211,19 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         }
       }
     } else if (interaction.isModalSubmit() && interaction.customId === 'say_modal') {
-      await interaction.deferReply({ flags: 64 });
+      // FIX: ephemeral flags
+      await interaction.deferReply({ ephemeral: true });
       const message = interaction.fields.getTextInputValue('message_input');
       if (message && bot) {
         bot.chat(message);
         console.log(`[Modal] Say "${message}" by ${interaction.user.tag}`);
-      } else {
-        // No message
       }
       setTimeout(() => interaction.deleteReply().catch(() => {}), 1000);
     } else if (interaction.isModalSubmit() && interaction.customId.startsWith('reply_modal_')) {
-      await interaction.deferReply({ flags: 64 });
+      // FIX: ephemeral flags
+      await interaction.deferReply({ ephemeral: true });
       const encodedUsername = interaction.customId.split('_')[2];
-      const username = atob(encodedUsername);
+      const username = b64decode(encodedUsername);
       const replyMessage = interaction.fields.getTextInputValue('reply_message');
       console.log(`[Reply] Processing reply for ${username}, message: ${replyMessage}, has conversation: ${whisperConversations.has(username)}`);
       if (replyMessage && bot) {
@@ -1243,7 +1302,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
                 new ActionRowBuilder()
                   .addComponents(
                     new ButtonBuilder()
-                      .setCustomId(`reply_${username}_${sentMessage.id}`)
+                      .setCustomId(`reply_${b64encode(username)}_${sentMessage.id}`)
                       .setLabel('Reply')
                       .setStyle(ButtonStyle.Primary),
                     new ButtonBuilder()
@@ -1262,7 +1321,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       setTimeout(() => interaction.deleteReply().catch(() => {}), 1000);
     } else if (interaction.isModalSubmit() && interaction.customId.startsWith('message_modal_')) {
       const encodedUsername = interaction.customId.split('_')[2];
-      const selectedUsername = atob(encodedUsername);
+      const selectedUsername = b64decode(encodedUsername);
       const messageText = interaction.fields.getTextInputValue('message_text');
       if (messageText && bot) {
         let command;
@@ -1279,7 +1338,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         }
         bot.chat(command);
 
-        await interaction.reply({ content: 'Message sent.', flags: 64 });
+        await interaction.reply({ content: 'Message sent.', ephemeral: true });
         setTimeout(() => interaction.deleteReply().catch(() => {}), 1000);
 
         // Create conversation embed
@@ -1334,7 +1393,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
                 new ActionRowBuilder()
                   .addComponents(
                     new ButtonBuilder()
-                      .setCustomId(`reply_${btoa(selectedUsername)}_${sentMessage.id}`)
+                      .setCustomId(`reply_${b64encode(selectedUsername)}_${sentMessage.id}`)
                       .setLabel('Reply')
                       .setStyle(ButtonStyle.Primary),
                     new ButtonBuilder()
@@ -1351,7 +1410,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       }
     } else if (interaction.isStringSelectMenu() && interaction.customId === 'message_select') {
       const encodedUsername = interaction.values[0];
-      const selectedUsername = atob(encodedUsername);
+      const selectedUsername = b64decode(encodedUsername);
       const modal = new ModalBuilder()
         .setCustomId(`message_modal_${encodedUsername}`)
         .setTitle(`Message to ${selectedUsername}`);
@@ -1368,218 +1427,343 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
       await interaction.showModal(modal);
     } else if (interaction.isStringSelectMenu() && interaction.customId === 'drop_select') {
-          await interaction.deferUpdate();
-          const encodedValue = interaction.values[0];
-          const selectedValue = atob(encodedValue);
-          const [slot, type, metadata] = selectedValue.split('_').map((v, i) => i === 2 ? parseInt(v) : v);
-          const inventory = bot.inventory.items();
-          const item = inventory.find(i => i.slot == slot && i.type == type && (i.metadata || 0) == metadata);
-          if (!item) {
-            await interaction.editReply({
-              embeds: [{
-                description: 'Item not found.',
-                color: 16711680,
-                timestamp: new Date()
-              }],
-              components: []
-            });
-            return;
+      await interaction.deferUpdate();
+      const encodedValue = interaction.values[0];
+      const selectedValue = b64decode(encodedValue);
+      const [slot, type, metadata] = selectedValue.split('_').map((v, i) => i === 2 ? parseInt(v) : v);
+      const inventory = bot.inventory.items();
+      const item = inventory.find(i => i.slot == slot && i.type == type && (i.metadata || 0) == metadata);
+      if (!item) {
+        await interaction.editReply({
+          embeds: [{
+            description: 'Item not found.',
+            color: 16711680,
+            timestamp: new Date()
+          }],
+          components: []
+        });
+        return;
+      }
+      try {
+        // Find nearest player and look at them before dropping
+        const nearby = getNearbyPlayers();
+        if (nearby.length > 0) {
+          const nearest = nearby.sort((a, b) => a.distance - b.distance)[0];
+          for (const entity of Object.values(bot.entities)) {
+            if (entity.username === nearest.username) {
+              await bot.lookAt(entity.position);
+              break;
+            }
           }
-          try {
-            // Find nearest player and look at them before dropping
-            const nearby = getNearbyPlayers();
-            if (nearby.length > 0) {
-              const nearest = nearby.sort((a, b) => a.distance - b.distance)[0];
-              for (const entity of Object.values(bot.entities)) {
-                if (entity.username === nearest.username) {
-                  await bot.lookAt(entity.position);
-                  break;
-                }
-              }
-            }
-            await bot.toss(item.type, item.metadata || null, item.count);
-            console.log(`[Drop] Dropped ${item.count} x ${item.displayName || item.name} by ${interaction.user.tag}`);
-            await interaction.editReply({
-              embeds: [{
-                title: 'Item Dropped',
-                description: `Dropped ${item.count} x ${item.displayName || item.name}`,
-                color: 65280,
-                timestamp: new Date()
-              }],
-              components: []
-            });
-          } catch (err) {
-            console.error('[Drop] Error:', err.message);
-            await interaction.editReply({
-              embeds: [{
-                description: `Failed to drop item: ${err.message}`,
-                color: 16711680,
-                timestamp: new Date()
-              }],
-              components: []
-            });
+        }
+        await bot.toss(item.type, item.metadata || null, item.count);
+        console.log(`[Drop] Dropped ${item.count} x ${item.displayName || item.name} by ${interaction.user.tag}`);
+        await interaction.editReply({
+          embeds: [{
+            title: 'Item Dropped',
+            description: `Dropped ${item.count} x ${item.displayName || item.name}`,
+            color: 65280,
+            timestamp: new Date()
+          }],
+          components: []
+        });
+      } catch (err) {
+        console.error('[Drop] Error:', err.message);
+        await interaction.editReply({
+          embeds: [{
+            description: `Failed to drop item: ${err.message}`,
+            color: 16711680,
+            timestamp: new Date()
+          }],
+          components: []
+        });
+      }
+    } else if (interaction.isStringSelectMenu() && interaction.customId === 'ignore_select') {
+      await interaction.deferUpdate();
+      const encodedUsername = interaction.values[0];
+      const selectedUsername = b64decode(encodedUsername);
+      if (!pool) {
+        await interaction.editReply({
+          embeds: [{
+            description: 'Database not configured.',
+            color: 16711680,
+            timestamp: new Date()
+          }],
+          components: []
+        });
+        return;
+      }
+      try {
+        await pool.query('INSERT INTO ignored_users (username, added_by) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING', [selectedUsername.toLowerCase(), interaction.user.tag]);
+        ignoredChatUsernames = await loadIgnoredChatUsernames();
+        console.log(`[Ignore] Added ${selectedUsername} to ignore list by ${interaction.user.tag}`);
+
+        // Update the message with new lists
+        const allOnlinePlayers = Object.values(bot.players || {}).map(p => p.username);
+        const playersToIgnore = allOnlinePlayers.filter(username => !ignoredChatUsernames.includes(username.toLowerCase()));
+        const playersToUnignore = ignoredChatUsernames.filter(username => allOnlinePlayers.some(p => p.toLowerCase() === username));
+
+        const ignoreOptions = playersToIgnore.map(username => {
+          return new StringSelectMenuOptionBuilder()
+            .setLabel(username)
+            .setValue(b64encode(username));
+        });
+        const unignoreOptions = playersToUnignore.map(username => {
+          return new StringSelectMenuOptionBuilder()
+            .setLabel(username)
+            .setValue(b64encode(username));
+        });
+
+        const ignoreMenu = new StringSelectMenuBuilder()
+          .setCustomId('ignore_select')
+          .setPlaceholder('Select player to ignore')
+          .addOptions(ignoreOptions.slice(0, 25));
+        const unignoreMenu = new StringSelectMenuBuilder()
+          .setCustomId('unignore_select')
+          .setPlaceholder('Select player to unignore')
+          .addOptions(unignoreOptions.slice(0, 25));
+
+        const components = [];
+        if (ignoreOptions.length > 0) {
+          components.push(new ActionRowBuilder().addComponents(ignoreMenu));
+        }
+        if (unignoreOptions.length > 0) {
+          components.push(new ActionRowBuilder().addComponents(unignoreMenu));
+        }
+
+        await interaction.editReply({
+          embeds: [{
+            title: 'Chat Settings',
+            description: `✅ Added ${selectedUsername} to ignore list.\n\nManage ignored players for chat messages.`,
+            color: 65280,
+            timestamp: new Date()
+          }],
+          components
+        });
+        setTimeout(() => interaction.message.delete().catch(() => {}), 1000);
+      } catch (err) {
+        console.error('[Ignore] Error:', err.message);
+        await interaction.editReply({
+          embeds: [{
+            description: `Failed to add ${selectedUsername} to ignore list: ${err.message}`,
+            color: 16711680,
+            timestamp: new Date()
+          }],
+          components: []
+        });
+      }
+    } else if (interaction.isStringSelectMenu() && interaction.customId === 'unignore_select') {
+      await interaction.deferUpdate();
+      const encodedUsername = interaction.values[0];
+      const selectedUsername = b64decode(encodedUsername);
+      if (!pool) {
+        await interaction.editReply({
+          embeds: [{
+            description: 'Database not configured.',
+            color: 16711680,
+            timestamp: new Date()
+          }],
+          components: []
+        });
+        return;
+      }
+      try {
+        const result = await pool.query('DELETE FROM ignored_users WHERE username = $1', [selectedUsername.toLowerCase()]);
+        if (result.rowCount > 0) {
+          ignoredChatUsernames = await loadIgnoredChatUsernames();
+          console.log(`[Unignore] Removed ${selectedUsername} from ignore list by ${interaction.user.tag}`);
+
+          // Update the message with new lists
+          const allOnlinePlayers = Object.values(bot.players || {}).map(p => p.username);
+          const playersToIgnore = allOnlinePlayers.filter(username => !ignoredChatUsernames.includes(username.toLowerCase()));
+          const playersToUnignore = ignoredChatUsernames.filter(username => allOnlinePlayers.some(p => p.toLowerCase() === username));
+
+          const ignoreOptions = playersToIgnore.map(username => {
+            return new StringSelectMenuOptionBuilder()
+              .setLabel(username)
+              .setValue(b64encode(username));
+          });
+          const unignoreOptions = playersToUnignore.map(username => {
+            return new StringSelectMenuOptionBuilder()
+              .setLabel(username)
+              .setValue(b64encode(username));
+          });
+
+          const ignoreMenu = new StringSelectMenuBuilder()
+            .setCustomId('ignore_select')
+            .setPlaceholder('Select player to ignore')
+            .addOptions(ignoreOptions.slice(0, 25));
+          const unignoreMenu = new StringSelectMenuBuilder()
+            .setCustomId('unignore_select')
+            .setPlaceholder('Select player to unignore')
+            .addOptions(unignoreOptions.slice(0, 25));
+
+          const components = [];
+          if (ignoreOptions.length > 0) {
+            components.push(new ActionRowBuilder().addComponents(ignoreMenu));
           }
-        } else if (interaction.isStringSelectMenu() && interaction.customId === 'ignore_select') {
-        await interaction.deferUpdate();
-            const encodedUsername = interaction.values[0];
-            const selectedUsername = atob(encodedUsername);
-            if (!pool) {
-              await interaction.editReply({
-                embeds: [{
-                  description: 'Database not configured.',
-                  color: 16711680,
-                  timestamp: new Date()
-                }],
-                components: []
-              });
-              return;
-            }
-            try {
-              await pool.query('INSERT INTO ignored_users (username, added_by) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING', [selectedUsername.toLowerCase(), interaction.user.tag]);
-              ignoredChatUsernames = await loadIgnoredChatUsernames();
-              console.log(`[Ignore] Added ${selectedUsername} to ignore list by ${interaction.user.tag}`);
-        
-              // Update the message with new lists
-              const allOnlinePlayers = Object.values(bot.players || {}).map(p => p.username);
-              const playersToIgnore = allOnlinePlayers.filter(username => !ignoredChatUsernames.includes(username.toLowerCase()));
-              const playersToUnignore = ignoredChatUsernames.filter(username => allOnlinePlayers.some(p => p.toLowerCase() === username));
-        
-              const ignoreOptions = playersToIgnore.map(username => {
-                return new StringSelectMenuOptionBuilder()
-                  .setLabel(username)
-                  .setValue(btoa(username));
-              });
-              const unignoreOptions = playersToUnignore.map(username => {
-                return new StringSelectMenuOptionBuilder()
-                  .setLabel(username)
-                  .setValue(btoa(username));
-              });
-        
-              const ignoreMenu = new StringSelectMenuBuilder()
-                .setCustomId('ignore_select')
-                .setPlaceholder('Select player to ignore')
-                .addOptions(ignoreOptions.slice(0, 25));
-              const unignoreMenu = new StringSelectMenuBuilder()
-                .setCustomId('unignore_select')
-                .setPlaceholder('Select player to unignore')
-                .addOptions(unignoreOptions.slice(0, 25));
-        
-              const components = [];
-              if (ignoreOptions.length > 0) {
-                components.push(new ActionRowBuilder().addComponents(ignoreMenu));
-              }
-              if (unignoreOptions.length > 0) {
-                components.push(new ActionRowBuilder().addComponents(unignoreMenu));
-              }
-        
-              await interaction.editReply({
-                embeds: [{
-                  title: 'Chat Settings',
-                  description: `✅ Added ${selectedUsername} to ignore list.\n\nManage ignored players for chat messages.`,
-                  color: 65280,
-                  timestamp: new Date()
-                }],
-                components
-              });
-              setTimeout(() => interaction.message.delete().catch(() => {}), 1000);
-            } catch (err) {
-              console.error('[Ignore] Error:', err.message);
-              await interaction.editReply({
-                embeds: [{
-                  description: `Failed to add ${selectedUsername} to ignore list: ${err.message}`,
-                  color: 16711680,
-                  timestamp: new Date()
-                }],
-                components: []
-              });
-            }
-          } else if (interaction.isStringSelectMenu() && interaction.customId === 'unignore_select') {
-          await interaction.deferUpdate();
-              const encodedUsername = interaction.values[0];
-              const selectedUsername = atob(encodedUsername);
-              if (!pool) {
-                await interaction.editReply({
-                  embeds: [{
-                    description: 'Database not configured.',
-                    color: 16711680,
-                    timestamp: new Date()
-                  }],
-                  components: []
-                });
-                return;
-              }
-              try {
-                const result = await pool.query('DELETE FROM ignored_users WHERE username = $1', [selectedUsername.toLowerCase()]);
-                if (result.rowCount > 0) {
-                  ignoredChatUsernames = await loadIgnoredChatUsernames();
-                  console.log(`[Unignore] Removed ${selectedUsername} from ignore list by ${interaction.user.tag}`);
-          
-                  // Update the message with new lists
-                  const allOnlinePlayers = Object.values(bot.players || {}).map(p => p.username);
-                  const playersToIgnore = allOnlinePlayers.filter(username => !ignoredChatUsernames.includes(username.toLowerCase()));
-                  const playersToUnignore = ignoredChatUsernames.filter(username => allOnlinePlayers.some(p => p.toLowerCase() === username));
-          
-                  const ignoreOptions = playersToIgnore.map(username => {
-                    return new StringSelectMenuOptionBuilder()
-                      .setLabel(username)
-                      .setValue(btoa(username));
-                  });
-                  const unignoreOptions = playersToUnignore.map(username => {
-                    return new StringSelectMenuOptionBuilder()
-                      .setLabel(username)
-                      .setValue(btoa(username));
-                  });
-          
-                  const ignoreMenu = new StringSelectMenuBuilder()
-                    .setCustomId('ignore_select')
-                    .setPlaceholder('Select player to ignore')
-                    .addOptions(ignoreOptions.slice(0, 25));
-                  const unignoreMenu = new StringSelectMenuBuilder()
-                    .setCustomId('unignore_select')
-                    .setPlaceholder('Select player to unignore')
-                    .addOptions(unignoreOptions.slice(0, 25));
-          
-                  const components = [];
-                  if (ignoreOptions.length > 0) {
-                    components.push(new ActionRowBuilder().addComponents(ignoreMenu));
-                  }
-                  if (unignoreOptions.length > 0) {
-                    components.push(new ActionRowBuilder().addComponents(unignoreMenu));
-                  }
-          
-                  await interaction.editReply({
-                    embeds: [{
-                      title: 'Chat Settings',
-                      description: `✅ Removed ${selectedUsername} from ignore list.\n\nManage ignored players for chat messages.`,
-                      color: 65280,
-                      timestamp: new Date()
-                    }],
-                    components
-                  });
-                  setTimeout(() => interaction.message.delete().catch(() => {}), 1000);
-                } else {
-                  await interaction.editReply({
-                    embeds: [{
-                      description: `${selectedUsername} is not in ignore list.`,
-                      color: 16776960,
-                      timestamp: new Date()
-                    }],
-                    components: []
-                  });
-                }
-              } catch (err) {
-                console.error('[Unignore] Error:', err.message);
-                await interaction.editReply({
-                  embeds: [{
-                    description: `Failed to remove ${selectedUsername} from ignore list: ${err.message}`,
-                    color: 16711680,
-                    timestamp: new Date()
-                  }],
-                  components: []
-                });
-              }
-              }
-            });
+          if (unignoreOptions.length > 0) {
+            components.push(new ActionRowBuilder().addComponents(unignoreMenu));
+          }
+
+          await interaction.editReply({
+            embeds: [{
+              title: 'Chat Settings',
+              description: `✅ Removed ${selectedUsername} from ignore list.\n\nManage ignored players for chat messages.`,
+              color: 65280,
+              timestamp: new Date()
+            }],
+            components
+          });
+          setTimeout(() => interaction.message.delete().catch(() => {}), 1000);
+        } else {
+          await interaction.editReply({
+            embeds: [{
+              description: `${selectedUsername} is not in ignore list.`,
+              color: 16776960,
+              timestamp: new Date()
+            }],
+            components: []
+          });
+        }
+      } catch (err) {
+        console.error('[Unignore] Error:', err.message);
+        await interaction.editReply({
+          embeds: [{
+            description: `Failed to remove ${selectedUsername} from ignore list: ${err.message}`,
+            color: 16711680,
+            timestamp: new Date()
+          }],
+          components: []
+        });
+      }
+    } else if (interaction.isButton() && interaction.customId === 'whitelist_button') {
+      await interaction.deferReply();
+      if (!pool) {
+        await interaction.editReply({
+          embeds: [{
+            description: 'Database not configured.',
+            color: 16711680,
+            timestamp: new Date()
+          }]
+        });
+        return;
+      }
+
+      try {
+        const whitelist = await loadWhitelistFromDB();
+        const allOnlinePlayers = Object.values(bot.players || {}).map(p => p.username);
+        const whitelistOnline = whitelist.filter(username => allOnlinePlayers.some(p => p.toLowerCase() === username.toLowerCase()));
+
+        const whitelistOptions = whitelist.slice(0, 25).map(username =>
+          new StringSelectMenuOptionBuilder()
+            .setLabel(username)
+            .setValue(b64encode(username))
+        );
+
+        const selectMenu = new StringSelectMenuBuilder()
+          .setCustomId('whitelist_select')
+          .setPlaceholder('Select player to remove from whitelist')
+          .addOptions(whitelistOptions);
+
+        const row = new ActionRowBuilder().addComponents(selectMenu);
+
+        await interaction.editReply({
+          embeds: [{
+            title: `Whitelist Management (${whitelist.length})`,
+            description: `Online: ${whitelistOnline.length > 0 ? whitelistOnline.join(', ') : 'None'}`,
+            color: 3447003,
+            timestamp: new Date()
+          }],
+          components: [row]
+        });
+      } catch (err) {
+        console.error('[Whitelist] Error:', err.message);
+        await interaction.editReply({
+          embeds: [{
+            description: `Failed to load whitelist: ${err.message}`,
+            color: 16711680,
+            timestamp: new Date()
+          }]
+        });
+      }
+    } else if (interaction.isStringSelectMenu() && interaction.customId === 'whitelist_select') {
+      await interaction.deferUpdate();
+      const encodedUsername = interaction.values[0];
+      const selectedUsername = b64decode(encodedUsername);
+
+      if (!pool) {
+        await interaction.editReply({
+          embeds: [{
+            description: 'Database not configured.',
+            color: 16711680,
+            timestamp: new Date()
+          }],
+          components: []
+        });
+        return;
+      }
+
+      try {
+        const result = await pool.query('DELETE FROM whitelist WHERE username = $1', [selectedUsername]);
+        if (result.rowCount > 0) {
+          // Reload whitelist
+          const newWhitelist = await loadWhitelistFromDB();
+          ignoredUsernames.length = 0;
+          ignoredUsernames.push(...newWhitelist);
+
+          console.log(`[Whitelist] Removed ${selectedUsername} from whitelist by ${interaction.user.tag}`);
+
+          // Update the message
+          const whitelist = await loadWhitelistFromDB();
+          const allOnlinePlayers = Object.values(bot.players || {}).map(p => p.username);
+          const whitelistOnline = whitelist.filter(username => allOnlinePlayers.some(p => p.toLowerCase() === username.toLowerCase()));
+
+          const whitelistOptions = whitelist.slice(0, 25).map(username =>
+            new StringSelectMenuOptionBuilder()
+              .setLabel(username)
+              .setValue(b64encode(username))
+          );
+
+          const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId('whitelist_select')
+            .setPlaceholder('Select player to remove from whitelist')
+            .addOptions(whitelistOptions);
+
+          const row = new ActionRowBuilder().addComponents(selectMenu);
+
+          await interaction.editReply({
+            embeds: [{
+              title: `Whitelist Management (${whitelist.length})`,
+              description: `✅ Removed ${selectedUsername} from whitelist.\n\nOnline: ${whitelistOnline.length > 0 ? whitelistOnline.join(', ') : 'None'}`,
+              color: 65280,
+              timestamp: new Date()
+            }],
+            components: [row]
+          });
+        } else {
+          await interaction.editReply({
+            embeds: [{
+              description: `${selectedUsername} is not in whitelist.`,
+              color: 16776960,
+              timestamp: new Date()
+            }],
+            components: []
+          });
+        }
+      } catch (err) {
+        console.error('[Whitelist] Error:', err.message);
+        await interaction.editReply({
+          embeds: [{
+            description: `Failed to remove ${selectedUsername} from whitelist: ${err.message}`,
+            color: 16711680,
+            timestamp: new Date()
+          }],
+          components: []
+        });
+      }
+    }
+  });
 
   discordClient.on('messageCreate', async message => {
     if (message.author.bot) return;
@@ -1740,21 +1924,18 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
     if (allowMatch) {
       const targetUsername = allowMatch[1];
       try {
-        const data = fs.readFileSync('whitelist.txt', 'utf8');
-        const lines = data.split('\n');
-        if (!lines.some(line => line.trim() === targetUsername)) {
-          lines.push(targetUsername);
-          fs.writeFileSync('whitelist.txt', lines.join('\n'));
-          // Reload whitelist
-          const newWhitelist = loadWhitelist();
-          ignoredUsernames.length = 0;
-          ignoredUsernames.push(...newWhitelist);
-          console.log(`[Command] Added ${targetUsername} to whitelist by ${message.author.tag} via Discord`);
-          sendDiscordNotification(`Command: !allow ${targetUsername} by \`${message.author.tag}\` via Discord`, 65280);
-          await message.reply(`${targetUsername} added to whitelist.`);
-        } else {
-          await message.reply(`${targetUsername} is already in whitelist.`);
+        if (!pool) {
+          await message.reply('Database not configured.');
+          return;
         }
+        await pool.query('INSERT INTO whitelist (username, added_by) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING', [targetUsername, message.author.tag]);
+        // Reload whitelist
+        const newWhitelist = await loadWhitelistFromDB();
+        ignoredUsernames.length = 0;
+        ignoredUsernames.push(...newWhitelist);
+        console.log(`[Command] Added ${targetUsername} to whitelist by ${message.author.tag} via Discord`);
+        sendDiscordNotification(`Command: !allow ${targetUsername} by \`${message.author.tag}\` via Discord`, 65280);
+        await message.reply(`${targetUsername} added to whitelist.`);
       } catch (err) {
         console.error('[Command] Allow error:', err.message);
         sendDiscordNotification(`Failed to add ${targetUsername} to whitelist: \`${err.message}\``, 16711680);
