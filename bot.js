@@ -657,6 +657,7 @@ function createBot() {
 
   bot.on('spawn', () => {
     console.log('[Bot] Spawned.');
+    reconnectTimestamp = 0; // Reset reconnect countdown when bot spawns
     clearIntervals();
     startFoodMonitor();
     startNearbyPlayerScanner();
