@@ -16,13 +16,29 @@ const IGNORED_CHAT_USERNAMES = process.env.IGNORED_CHAT_USERNAMES ? process.env.
 // Database connection
 let pool = null;
 if (process.env.DATABASE_URL) {
+  console.log('[DB] Database URL found, attempting to connect...');
   pool = new Pool({
     connectionString: process.env.DATABASE_URL,
   });
   pool.on('error', (err) => {
     console.error('[DB] Unexpected error on idle client', err);
   });
+  pool.on('connect', () => {
+    console.log('[DB] ✅ Successfully connected to database!');
+  });
+} else {
+  console.log('[DB] ❌ No DATABASE_URL environment variable found. Database features disabled.');
 }
+
+// Add a startup summary
+console.log('=== DATABASE STATUS ===');
+if (pool) {
+  console.log('[DB] ✅ Database pool created');
+  console.log('[DB] 🔄 Waiting for connection...');
+} else {
+  console.log('[DB] ❌ Database disabled - no connection URL');
+}
+console.log('======================');
 
 let loadedSession = null;
 if (process.env.MINECRAFT_SESSION) {
@@ -88,13 +104,18 @@ function loadWhitelist() {
 }
 
 async function loadWhitelistFromDB() {
-  if (!pool) return;
+  if (!pool) {
+    console.log('[DB] ❌ Cannot load whitelist: database pool not available');
+    return [];
+  }
   try {
+    console.log('[DB] 📋 Querying whitelist from database...');
     const res = await pool.query('SELECT username FROM whitelist');
     const dbWhitelist = res.rows.map(row => row.username);
+    console.log(`[DB] 📋 Found ${dbWhitelist.length} whitelist entries in database.`);
     return dbWhitelist;
   } catch (err) {
-    console.error('[DB] Failed to load whitelist:', err.message);
+    console.error('[DB] ❌ Failed to load whitelist:', err.message);
     return [];
   }
 }
@@ -116,12 +137,18 @@ const ignoredUsernames = loadWhitelist();
 
 // Load ignored chat usernames from DB
 async function loadIgnoredChatUsernames() {
-  if (!pool) return IGNORED_CHAT_USERNAMES;
+  if (!pool) {
+    console.log('[DB] ❌ Cannot load ignored users: database pool not available');
+    return IGNORED_CHAT_USERNAMES;
+  }
   try {
+    console.log('[DB] 🚫 Querying ignored users from database...');
     const res = await pool.query('SELECT username FROM ignored_users');
-    return res.rows.map(row => row.username.toLowerCase());
+    const ignoredUsers = res.rows.map(row => row.username.toLowerCase());
+    console.log(`[DB] 🚫 Found ${ignoredUsers.length} ignored users in database.`);
+    return ignoredUsers;
   } catch (err) {
-    console.error('[DB] Failed to load ignored users:', err.message);
+    console.error('[DB] ❌ Failed to load ignored users:', err.message);
     return IGNORED_CHAT_USERNAMES;
   }
 }
@@ -130,8 +157,13 @@ let ignoredChatUsernames = IGNORED_CHAT_USERNAMES; // Fallback
 
 // Initialize DB table and load ignored users
 async function initDatabase() {
-  if (!pool) return;
+  if (!pool) {
+    console.log('[DB] ❌ Database pool not available, skipping initialization.');
+    return;
+  }
+
   try {
+    console.log('[DB] 🔧 Initializing database tables...');
     await pool.query(`
       CREATE TABLE IF NOT EXISTS ignored_users (
         id SERIAL PRIMARY KEY,
@@ -148,16 +180,24 @@ async function initDatabase() {
         added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
-    console.log('[DB] Tables initialized.');
+    console.log('[DB] ✅ Tables initialized successfully.');
+
+    console.log('[DB] 📖 Loading ignored users from database...');
     ignoredChatUsernames = await loadIgnoredChatUsernames();
+    console.log(`[DB] 📖 Loaded ${ignoredChatUsernames.length} ignored users.`);
+
     // Load whitelist from DB into memory (if available)
+    console.log('[DB] 📖 Loading whitelist from database...');
     const wl = await loadWhitelistFromDB();
     if (Array.isArray(wl) && wl.length > 0) {
       ignoredUsernames.length = 0;
       ignoredUsernames.push(...wl);
+      console.log(`[DB] 📖 Loaded ${wl.length} whitelist entries.`);
+    } else {
+      console.log('[DB] 📖 No whitelist entries found in database.');
     }
   } catch (err) {
-    console.error('[DB] Failed to initialize:', err.message);
+    console.error('[DB] ❌ Failed to initialize database:', err.message);
   }
 }
 
@@ -740,6 +780,7 @@ function createBot() {
       (async () => {
         try {
           if (!pool) {
+            console.log('[DB] ❌ Database operation attempted but pool not available');
             sendDiscordNotification('Database not configured.', 16711680);
             return;
           }
@@ -761,6 +802,7 @@ function createBot() {
     if (ignoreMatch) {
       const targetUsername = ignoreMatch[1];
       if (!pool) {
+        console.log('[DB] ❌ Database operation attempted but pool not available');
         sendDiscordNotification('Database not configured.', 16711680);
         return;
       }
@@ -782,6 +824,7 @@ function createBot() {
     if (unignoreMatch) {
       const targetUsername = unignoreMatch[1];
       if (!pool) {
+        console.log('[DB] ❌ Database operation attempted but pool not available');
         sendDiscordNotification('Database not configured.', 16711680);
         return;
       }
@@ -1640,6 +1683,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
     } else if (interaction.isButton() && interaction.customId === 'whitelist_button') {
       await interaction.deferReply();
       if (!pool) {
+        console.log('[DB] ❌ Database operation attempted but pool not available');
         await interaction.editReply({
           embeds: [{
             description: 'Database not configured.',
@@ -1925,6 +1969,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       const targetUsername = allowMatch[1];
       try {
         if (!pool) {
+          console.log('[DB] ❌ Database operation attempted but pool not available');
           await message.reply('Database not configured.');
           return;
         }
@@ -1947,6 +1992,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
     if (ignoreMatch) {
       const targetUsername = ignoreMatch[1];
       if (!pool) {
+        console.log('[DB] ❌ Database operation attempted but pool not available');
         await message.reply('Database not configured.');
         return;
       }
@@ -1966,6 +2012,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
     if (unignoreMatch) {
       const targetUsername = unignoreMatch[1];
       if (!pool) {
+        console.log('[DB] ❌ Database operation attempted but pool not available');
         await message.reply('Database not configured.');
         return;
       }
