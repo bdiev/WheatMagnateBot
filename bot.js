@@ -63,6 +63,7 @@ let tpsTabInterval = null;
 const excludedMessageIds = [];
 const pendingAuthLinks = [];
 const sentAuthCodes = new Set();
+const authMessageIds = new Set();
 
 function saveStatusMessageId(id) {
   try {
@@ -1375,6 +1376,12 @@ Add candidates online: **${onlineCount}**`,
         try {
           const message = await interaction.channel.messages.fetch(messageId);
           await message.delete();
+          // If it was an auth message, untrack and drop exclusion
+          if (authMessageIds.has(messageId)) {
+            authMessageIds.delete(messageId);
+            const idx = excludedMessageIds.indexOf(messageId);
+            if (idx !== -1) excludedMessageIds.splice(idx, 1);
+          }
           // Remove from conversations map
           for (const [username, msgId] of whisperConversations) {
             if (msgId === messageId) {
@@ -2337,6 +2344,7 @@ async function sendAuthLinkToDiscord(url) {
         }]
       });
       excludedMessageIds.push(sentMessage.id);
+      authMessageIds.add(sentMessage.id);
       // Add buttons: Open Link (Link style) and Remove to close the message
       await sentMessage.edit({
         embeds: [{
@@ -2364,10 +2372,35 @@ async function sendAuthLinkToDiscord(url) {
   }
 }
 
+// Delete or neutralize previously sent Microsoft Login messages after successful sign-in
+async function cleanupAuthMessages() {
+  if (!DISCORD_CHANNEL_ID || !discordClient || !discordClient.isReady()) return;
+  if (authMessageIds.size === 0) return;
+  try {
+    const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+    if (!channel || !channel.isTextBased()) return;
+    for (const id of Array.from(authMessageIds)) {
+      try {
+        const msg = await channel.messages.fetch(id);
+        // Remove buttons first to prevent further clicks
+        try { await msg.edit({ components: [] }); } catch {}
+        // Then delete the message
+        await msg.delete();
+      } catch {}
+      authMessageIds.delete(id);
+      const idx = excludedMessageIds.indexOf(id);
+      if (idx !== -1) excludedMessageIds.splice(idx, 1);
+    }
+  } catch (e) {
+    console.error('[Discord] cleanupAuthMessages failed:', e.message);
+  }
+}
+
 // Hook stdout/stderr to capture Microsoft login links (otc code)
 (function hookStdStreamsForAuthLinks() {
   const AUTH_LINK_REGEX = /https?:\/\/(?:www\.)?microsoft\.com\/link\?otc=([A-Z0-9]{8})/i;
   const AUTH_CODE_REGEX = /use\s+the\s+code\s+([A-Z0-9]{8})/i;
+  const MSA_SIGNED_REGEX = /\[msa\]\s+Signed in with Microsoft/i;
   const BASE_URL = 'http://microsoft.com/link?otc=';
 
   function intercept(chunk) {
@@ -2389,6 +2422,11 @@ async function sendAuthLinkToDiscord(url) {
           sentAuthCodes.add(code);
           sendAuthLinkToDiscord(BASE_URL + code);
         }
+        return;
+      }
+      // When Coolify logs indicate Microsoft sign-in success, cleanup auth messages
+      if (MSA_SIGNED_REGEX.test(str)) {
+        cleanupAuthMessages();
       }
     } catch {}
   }
