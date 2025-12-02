@@ -1582,7 +1582,16 @@ Add candidates online: **${onlineCount}**`,
             description,
             color: 3447003,
             timestamp: new Date()
-          }]
+          }],
+          components: [
+            new ActionRowBuilder()
+              .addComponents(
+                new ButtonBuilder()
+                  .setCustomId(`remove_${interaction.id}`)
+                  .setLabel('Remove')
+                  .setStyle(ButtonStyle.Danger)
+              )
+          ]
         });
         
         // Update the message every 5 seconds
@@ -1621,7 +1630,16 @@ Add candidates online: **${onlineCount}**`,
                 description: updatedDescription,
                 color: 3447003,
                 timestamp: new Date()
-              }]
+              }],
+              components: [
+                new ActionRowBuilder()
+                  .addComponents(
+                    new ButtonBuilder()
+                      .setCustomId(`remove_${interaction.id}`)
+                      .setLabel('Remove')
+                      .setStyle(ButtonStyle.Danger)
+                  )
+              ]
             });
           } catch (err) {
             console.error('[Activity] Failed to update activity message:', err.message);
