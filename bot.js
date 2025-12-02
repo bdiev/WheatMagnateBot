@@ -109,10 +109,8 @@ async function loadWhitelistFromDB() {
     return [];
   }
   try {
-    console.log('[DB] 📋 Querying whitelist from database...');
     const res = await pool.query('SELECT username FROM whitelist');
     const dbWhitelist = res.rows.map(row => row.username);
-    console.log(`[DB] 📋 Found ${dbWhitelist.length} whitelist entries in database.`);
     return dbWhitelist;
   } catch (err) {
     console.error('[DB] ❌ Failed to load whitelist:', err.message);
@@ -142,10 +140,8 @@ async function loadIgnoredChatUsernames() {
     return IGNORED_CHAT_USERNAMES;
   }
   try {
-    console.log('[DB] 🚫 Querying ignored users from database...');
     const res = await pool.query('SELECT username FROM ignored_users');
     const ignoredUsers = res.rows.map(row => row.username.toLowerCase());
-    console.log(`[DB] 🚫 Found ${ignoredUsers.length} ignored users in database.`);
     return ignoredUsers;
   } catch (err) {
     console.error('[DB] ❌ Failed to load ignored users:', err.message);
@@ -217,12 +213,7 @@ if (DISCORD_BOT_TOKEN) {
       console.error('[Discord] Full error:', err);
     });
 
-  // Add comprehensive Discord client event debugging
-  discordClient.on('debug', message => {
-    // Skip heartbeat messages to reduce noise
-    if (message.includes('Heartbeat acknowledged')) return;
-    console.log(`[Discord DEBUG] ${message}`);
-  });
+  // Debug event removed to reduce log noise
 
   discordClient.on('warn', message => {
     console.log(`[Discord WARN] ${message}`);
@@ -1067,19 +1058,13 @@ process.on('unhandledRejection', (reason) => {
 // Discord bot commands
 if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
   discordClient.on('interactionCreate', async (interaction) => {
-    console.log(`[Discord INTERACTION] ✅ Received interaction: ${interaction.type}`);
-    console.log(`[Discord INTERACTION] Custom ID: ${interaction.customId}`);
-    console.log(`[Discord INTERACTION] Channel ID: ${interaction.channelId}`);
-    console.log(`[Discord INTERACTION] User: ${interaction.user.tag} (${interaction.user.id})`);
-    console.log(`[Discord INTERACTION] Guild ID: ${interaction.guildId}`);
-    console.log(`[Discord INTERACTION] Message ID: ${interaction.message?.id || 'none'}`);
+    // Interaction logs reduced to minimize noise
 
     if (interaction.channelId !== DISCORD_CHANNEL_ID) {
-      console.log(`[Discord INTERACTION] ❌ Ignoring interaction from different channel (expected: ${DISCORD_CHANNEL_ID}, got: ${interaction.channelId})`);
+      // Ignore interactions from other channels
       return;
     }
 
-    console.log(`[Discord INTERACTION] ✅ Processing interaction in correct channel`);
 
     if (interaction.isButton()) {
       if (interaction.customId === 'pause_button') {
@@ -1158,12 +1143,12 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         // Show two dropdowns: Add (online players not in whitelist) and Delete (whitelisted players)
         await interaction.deferReply();
         try {
-          console.log('[Whitelist] Handler start');
+          //
           let entries = [];
           let source = 'database';
           if (pool) {
             try {
-              console.log('[Whitelist] Pool present, querying database...');
+              //
               const res = await pool.query('SELECT username FROM whitelist ORDER BY username ASC');
               entries = res.rows.map(r => r.username);
             } catch (dbErr) {
@@ -1172,13 +1157,12 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
               entries = loadWhitelist();
             }
           } else {
-            console.log('[Whitelist] No DB pool, using file whitelist');
+            //
             source = 'file';
             entries = loadWhitelist();
           }
 
           const total = entries.length;
-          console.log(`[Whitelist] Loaded ${total} entries from ${source}`);
 
           const allOnlinePlayers = bot ? Object.values(bot.players || {}).map(p => p.username) : [];
           const addCandidates = allOnlinePlayers.filter(u => !entries.some(n => n.toLowerCase() === u.toLowerCase()));
@@ -1215,7 +1199,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             }],
             components
           });
-          console.log('[Whitelist] Reply sent (with two menus)');
+          //
         } catch (e) {
           console.error('[Discord] Whitelist button handler failed:', e.message);
           await interaction.editReply({
@@ -1821,15 +1805,14 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         });
       }
     } else if (interaction.isStringSelectMenu() && interaction.customId === 'delete_whitelist_select') {
-      console.log(`[Whitelist Delete] Interaction started for username: ${interaction.values[0]}`);
 
       try {
         await interaction.deferUpdate();
-        console.log('[Whitelist Delete] Interaction deferred successfully');
+        
 
         const encodedUsername = interaction.values[0];
         const selectedUsername = b64decode(encodedUsername);
-        console.log(`[Whitelist Delete] Decoded username: ${selectedUsername}`);
+        
 
         let whitelist = [];
         let source = 'database';
@@ -1838,9 +1821,9 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         try {
           // Try database first
           if (pool) {
-            console.log(`[Whitelist Delete] Attempting database removal of ${selectedUsername}`);
+            
             const result = await pool.query('DELETE FROM whitelist WHERE username = $1', [selectedUsername]);
-            console.log(`[Whitelist Delete] Database result: ${result.rowCount} rows affected`);
+            
 
             if (result.rowCount > 0) {
               // Reload whitelist from database
@@ -1848,22 +1831,22 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
               ignoredUsernames.length = 0;
               ignoredUsernames.push(...newWhitelist);
               whitelist = newWhitelist;
-              console.log(`[Whitelist] Removed ${selectedUsername} from database whitelist by ${interaction.user.tag}`);
+              
               success = true;
             } else {
-              console.log(`[Whitelist Delete] Username ${selectedUsername} not found in database`);
+              
             }
           }
 
           // If database failed or not available, try file-based whitelist
           if (!success && !pool) {
             source = 'file';
-            console.log(`[Whitelist Delete] Attempting file-based removal of ${selectedUsername}`);
+            
             const fileWhitelist = loadWhitelist();
             const newWhitelist = fileWhitelist.filter(username => username !== selectedUsername);
 
             if (newWhitelist.length === fileWhitelist.length) {
-              console.log(`[Whitelist Delete] Username ${selectedUsername} not found in file whitelist`);
+              
               await interaction.editReply({
                 embeds: [{
                   description: `${selectedUsername} is not in whitelist.`,
@@ -1880,12 +1863,12 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             whitelist = newWhitelist;
             ignoredUsernames.length = 0;
             ignoredUsernames.push(...newWhitelist);
-            console.log(`[Whitelist] Removed ${selectedUsername} from file whitelist by ${interaction.user.tag}`);
+            
             success = true;
           }
 
           if (!success) {
-            console.log(`[Whitelist Delete] No success in removing ${selectedUsername}`);
+            
             await interaction.editReply({
               embeds: [{
                 description: `${selectedUsername} is not in whitelist.`,
@@ -1932,10 +1915,9 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             components
           });
 
-          console.log('[Whitelist Delete] Update reply sent successfully');
+          
         } catch (err) {
           console.error('[Whitelist Delete] Error:', err.message);
-          console.error('[Whitelist Delete] Stack:', err.stack);
 
           try {
             await interaction.editReply({
@@ -1946,29 +1928,29 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
               }],
               components: []
             });
-            console.log('[Whitelist Delete] Error reply sent');
+            
           } catch (finalErr) {
-            console.error('[Whitelist Delete] Failed to send error reply:', finalErr.message);
+            console.error('Failed to send error reply:', finalErr.message);
             try {
               await interaction.followUp({
                 content: `❌ Whitelist removal error: ${finalErr.message}`,
                 ephemeral: true
               });
-              console.log('[Whitelist Delete] Fallback message sent');
+              
             } catch (followUpErr) {
-              console.error('[Whitelist Delete] All reply methods failed:', followUpErr.message);
+              console.error('All reply methods failed:', followUpErr.message);
             }
           }
         }
       } catch (outerErr) {
-        console.error('[Whitelist Delete] Outer error:', outerErr.message);
+        console.error('Whitelist delete outer error:', outerErr.message);
         try {
           await interaction.reply({
             content: `❌ Critical whitelist error: ${outerErr.message}`,
             ephemeral: true
           });
         } catch (replyErr) {
-          console.error('[Whitelist Delete] Failed to send outer error reply:', replyErr.message);
+          console.error('Failed to send outer error reply:', replyErr.message);
         }
       }
     } else if (interaction.isStringSelectMenu() && interaction.customId === 'add_whitelist_select') {
