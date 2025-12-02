@@ -247,7 +247,10 @@ async function getWhitelistActivity() {
       SELECT w.username, pa.last_seen, pa.last_online, pa.is_online
       FROM whitelist w
       LEFT JOIN player_activity pa ON LOWER(w.username) = LOWER(pa.username)
-      ORDER BY pa.is_online DESC, LOWER(w.username) ASC
+      ORDER BY 
+        CASE WHEN pa.is_online = TRUE THEN 0 ELSE 1 END,
+        CASE WHEN pa.is_online = TRUE THEN LOWER(w.username) END ASC,
+        CASE WHEN pa.is_online = FALSE OR pa.is_online IS NULL THEN pa.last_seen END DESC NULLS LAST
     `);
     
     return { players: result.rows };
@@ -1452,9 +1455,6 @@ Add candidates online: **${onlineCount}**`,
             description: 'Manage ignored players for chat messages.',
             color: 3447003,
             timestamp: new Date()
-          }],
-          components
-        });
       } else if (interaction.customId === 'seen_button') {
         await interaction.deferReply();
         
@@ -1490,12 +1490,13 @@ Add candidates online: **${onlineCount}**`,
           const now = new Date();
           const lastSeen = new Date(timestamp);
           const diffMs = now - lastSeen;
-          const diffMins = Math.floor(diffMs / 60000);
+          const diffSecs = Math.floor(diffMs / 1000);
+          const diffMins = Math.floor(diffSecs / 60);
           const diffHours = Math.floor(diffMins / 60);
           const diffDays = Math.floor(diffHours / 24);
           
-          if (diffMins < 1) return 'Just now';
-          if (diffMins < 60) return `${diffMins}m ago`;
+          if (diffSecs < 60) return `${diffSecs}s ago`;
+          if (diffMins < 60) return `${diffMins}m ${diffSecs % 60}s ago`;
           if (diffHours < 24) return `${diffHours}h ${diffMins % 60}m ago`;
           return `${diffDays}d ${diffHours % 24}h ago`;
         };
@@ -1521,12 +1522,64 @@ Add candidates online: **${onlineCount}**`,
           offlinePlayers.length > 0 ? '\n**Offline:**\n' + offlinePlayers.join('\n') : ''
         ].filter(s => s).join('\n') || 'No activity data available.';
         
-        await interaction.editReply({
+        const activityMessage = await interaction.editReply({
           embeds: [{
             title: `🕒 Whitelist Activity (${activityData.players.length} players)`,
             description,
             color: 3447003,
             timestamp: new Date()
+          }]
+        });
+        
+        // Update the message every 5 seconds
+        const updateInterval = setInterval(async () => {
+          try {
+            const updatedData = await getWhitelistActivity();
+            if (updatedData.error || !updatedData.players) {
+              clearInterval(updateInterval);
+              return;
+            }
+            
+            const onlinePlayersUpdated = [];
+            const offlinePlayersUpdated = [];
+            
+            for (const player of updatedData.players) {
+              const timeStr = formatTimeDiff(player.last_seen);
+              const entry = `**${player.username}** - ${timeStr}`;
+              
+              if (player.is_online) {
+                onlinePlayersUpdated.push(`🟢 ${entry}`);
+              } else if (player.last_seen) {
+                offlinePlayersUpdated.push(`⚪ ${entry}`);
+              } else {
+                offlinePlayersUpdated.push(`⚪ **${player.username}** - Never seen`);
+              }
+            }
+            
+            const updatedDescription = [
+              onlinePlayersUpdated.length > 0 ? '**Online:**\n' + onlinePlayersUpdated.join('\n') : '',
+              offlinePlayersUpdated.length > 0 ? '\n**Offline:**\n' + offlinePlayersUpdated.join('\n') : ''
+            ].filter(s => s).join('\n') || 'No activity data available.';
+            
+            await activityMessage.edit({
+              embeds: [{
+                title: `🕒 Whitelist Activity (${updatedData.players.length} players)`,
+                description: updatedDescription,
+                color: 3447003,
+                timestamp: new Date()
+              }]
+            });
+          } catch (err) {
+            console.error('[Activity] Failed to update activity message:', err.message);
+            clearInterval(updateInterval);
+          }
+        }, 1000);
+        
+        // Stop updating after 5 minutes to avoid infinite updates
+        setTimeout(() => {
+          clearInterval(updateInterval);
+        }, 5 * 60 * 1000);
+      } else if (interaction.customId.startsWith('reply_')) {
           }]
         });
       } else if (interaction.customId.startsWith('reply_')) {
