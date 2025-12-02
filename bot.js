@@ -220,7 +220,6 @@ async function updatePlayerActivity(username, isOnline) {
         ON CONFLICT (username)
         DO UPDATE SET last_seen = $2, last_online = $2, is_online = TRUE
       `, [username, timestamp]);
-      console.log(`[Activity] ${username} is now online`);
     } else {
       // Player left - set as offline with last_seen timestamp
       await pool.query(`
@@ -229,10 +228,9 @@ async function updatePlayerActivity(username, isOnline) {
         ON CONFLICT (username)
         DO UPDATE SET last_seen = $2, is_online = FALSE
       `, [username, timestamp]);
-      console.log(`[Activity] ${username} is now offline (last seen: ${timestamp.toISOString()})`);
     }
   } catch (err) {
-    console.error(`[Activity] Failed to update ${username}:`, err.message);
+    // Silent error
   }
 }
 
@@ -288,7 +286,6 @@ async function getWhitelistActivity() {
     
     return { players };
   } catch (err) {
-    console.error('[Activity] Failed to get whitelist activity:', err.message);
     return { error: err.message };
   }
 }
@@ -932,8 +929,6 @@ function createBot() {
 
   // ------- CHAT COMMANDS -------
   bot.on('chat', async (username, message) => {
-    console.log(`[Chat] ${username}: ${message}`);
-    
     // Handle commands from bdiev_
     if (username === 'bdiev_') {
       if (message === '!restart') {
@@ -1058,18 +1053,15 @@ function createBot() {
 
     // Send all chat messages to Discord chat channel
     if (!DISCORD_CHAT_CHANNEL_ID || !discordClient || !discordClient.isReady()) {
-      console.log('[Chat->Discord] Skipped - Discord not ready or no chat channel configured');
       return;
     }
     
     // Only skip bot's own commands (starting with ! or /)
     if (username === bot.username && (message.startsWith('!') || message.startsWith('/'))) {
-      console.log('[Chat->Discord] Skipped - own command');
       return;
     }
     
     if (ignoredChatUsernames.includes(username.toLowerCase())) {
-      console.log(`[Chat->Discord] Skipped - ${username} is in ignore list`);
       return;
     }
 
@@ -1080,7 +1072,6 @@ function createBot() {
       .trim();
     
     if (!cleanMessage) {
-      console.log('[Chat->Discord] Skipped - empty message after cleaning');
       return;
     }
 
@@ -1107,17 +1098,13 @@ function createBot() {
             timestamp: new Date()
           }]
         });
-        console.log(`[Chat->Discord] ✅ Message sent successfully`);
-      } else {
-        console.log('[Chat->Discord] ❌ Channel not found or not text-based');
       }
     } catch (e) {
-      console.error('[Chat->Discord] ❌ Failed to send chat message:', e.message);
+      // Silent error
     }
   });
 
   bot.on('whisper', (username, message, translate, jsonMsg, matches) => {
-    console.log(`[Whisper] ${username}: ${message}`);
     sendWhisperToDiscord(username, message);
   });
 
@@ -1126,7 +1113,6 @@ function createBot() {
     const tpsMatch = text.match(/(\d+\.?\d*)\s*tps/i);
     if (tpsMatch) {
       realTps = parseFloat(tpsMatch[1]);
-      console.log('[Bot] TPS from message:', realTps);
     }
   });
 }
