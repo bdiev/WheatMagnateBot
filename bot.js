@@ -931,113 +931,120 @@ function createBot() {
   });
 
   // ------- CHAT COMMANDS -------
-  bot.on('chat', (username, message) => {
-    if (username !== 'bdiev_') return;
+  bot.on('chat', async (username, message) => {
+    // Handle commands from bdiev_
+    if (username === 'bdiev_') {
+      if (message === '!restart') {
+        console.log(`[Command] restart by ${username}`);
+        lastCommandUser = `${username} (in-game)`;
+        bot.quit('Restart command');
+        return;
+      }
 
-    if (message === '!restart') {
-      console.log(`[Command] restart by ${username}`);
-      lastCommandUser = `${username} (in-game)`;
-      bot.quit('Restart command');
-    }
-
-    if (message === '!pause') {
-      console.log('[Command] pause 10m');
-      lastCommandUser = `${username} (in-game)`;
-      shouldReconnect = false;
-      bot.quit('Pause 10m');
-      setTimeout(() => {
-        console.log('[Bot] Pause ended.');
-        shouldReconnect = true;
-        createBot();
-      }, 10 * 60 * 1000);
-    }
-
-    const pauseMatch = message.match(/^!pause\s+(\d+)$/);
-    if (pauseMatch) {
-      const minutes = parseInt(pauseMatch[1]);
-      if (minutes > 0) {
-        console.log(`[Command] pause ${minutes}m`);
+      if (message === '!pause') {
+        console.log('[Command] pause 10m');
         lastCommandUser = `${username} (in-game)`;
         shouldReconnect = false;
-        bot.quit(`Paused ${minutes}m`);
+        bot.quit('Pause 10m');
         setTimeout(() => {
-          console.log('[Bot] Custom pause ended.');
+          console.log('[Bot] Pause ended.');
           shouldReconnect = true;
           createBot();
-        }, minutes * 60 * 1000);
+        }, 10 * 60 * 1000);
+        return;
       }
-    }
 
-    const allowMatch = message.match(/^!allow\s+(\w+)$/);
-    if (allowMatch) {
-      const targetUsername = allowMatch[1];
-      (async () => {
-        try {
-          if (!pool) {
-            console.log('[DB] ❌ Database operation attempted but pool not available');
-            sendDiscordNotification('Database not configured.', 16711680);
-            return;
+      const pauseMatch = message.match(/^!pause\s+(\d+)$/);
+      if (pauseMatch) {
+        const minutes = parseInt(pauseMatch[1]);
+        if (minutes > 0) {
+          console.log(`[Command] pause ${minutes}m`);
+          lastCommandUser = `${username} (in-game)`;
+          shouldReconnect = false;
+          bot.quit(`Paused ${minutes}m`);
+          setTimeout(() => {
+            console.log('[Bot] Custom pause ended.');
+            shouldReconnect = true;
+            createBot();
+          }, minutes * 60 * 1000);
+        }
+        return;
+      }
+
+      const allowMatch = message.match(/^!allow\s+(\w+)$/);
+      if (allowMatch) {
+        const targetUsername = allowMatch[1];
+        (async () => {
+          try {
+            if (!pool) {
+              console.log('[DB] ❌ Database operation attempted but pool not available');
+              sendDiscordNotification('Database not configured.', 16711680);
+              return;
+            }
+            await pool.query('INSERT INTO whitelist (username, added_by) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING', [targetUsername, username]);
+            // Reload whitelist
+            const newWhitelist = await loadWhitelistFromDB();
+            ignoredUsernames.length = 0;
+            ignoredUsernames.push(...newWhitelist);
+            console.log(`[Command] Added ${targetUsername} to whitelist by ${username}`);
+            sendDiscordNotification(`✅ Added ${targetUsername} to whitelist. Requested by ${username} (in-game)`, 65280);
+          } catch (err) {
+            console.error('[Command] Allow error:', err.message);
+            sendDiscordNotification(`Failed to add ${targetUsername} to whitelist: \`${err.message}\``, 16711680);
           }
-          await pool.query('INSERT INTO whitelist (username, added_by) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING', [targetUsername, username]);
-          // Reload whitelist
-          const newWhitelist = await loadWhitelistFromDB();
-          ignoredUsernames.length = 0;
-          ignoredUsernames.push(...newWhitelist);
-          console.log(`[Command] Added ${targetUsername} to whitelist by ${username}`);
-          sendDiscordNotification(`✅ Added ${targetUsername} to whitelist. Requested by ${username} (in-game)`, 65280);
-        } catch (err) {
-          console.error('[Command] Allow error:', err.message);
-          sendDiscordNotification(`Failed to add ${targetUsername} to whitelist: \`${err.message}\``, 16711680);
-        }
-      })();
-    }
-
-    const ignoreMatch = message.match(/^!ignore\s+(\w+)$/);
-    if (ignoreMatch) {
-      const targetUsername = ignoreMatch[1];
-      if (!pool) {
-        console.log('[DB] ❌ Database operation attempted but pool not available');
-        sendDiscordNotification('Database not configured.', 16711680);
+        })();
         return;
       }
-      (async () => {
-        try {
-          await pool.query('INSERT INTO ignored_users (username, added_by) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING', [targetUsername.toLowerCase(), username]);
-          // Reload ignored
-          ignoredChatUsernames = await loadIgnoredChatUsernames();
-          console.log(`[Command] Added ${targetUsername} to ignore list by ${username}`);
-          sendDiscordNotification(`✅ Added ${targetUsername} to ignore list. Requested by ${username} (in-game)`, 65280);
-        } catch (err) {
-          console.error('[Command] Ignore error:', err.message);
-          sendDiscordNotification(`Failed to add ${targetUsername} to ignore list: \`${err.message}\``, 16711680);
-        }
-      })();
-    }
 
-    const unignoreMatch = message.match(/^!unignore\s+(\w+)$/);
-    if (unignoreMatch) {
-      const targetUsername = unignoreMatch[1];
-      if (!pool) {
-        console.log('[DB] ❌ Database operation attempted but pool not available');
-        sendDiscordNotification('Database not configured.', 16711680);
-        return;
-      }
-      (async () => {
-        try {
-          const result = await pool.query('DELETE FROM ignored_users WHERE username = $1', [targetUsername.toLowerCase()]);
-          if (result.rowCount > 0) {
+      const ignoreMatch = message.match(/^!ignore\s+(\w+)$/);
+      if (ignoreMatch) {
+        const targetUsername = ignoreMatch[1];
+        if (!pool) {
+          console.log('[DB] ❌ Database operation attempted but pool not available');
+          sendDiscordNotification('Database not configured.', 16711680);
+          return;
+        }
+        (async () => {
+          try {
+            await pool.query('INSERT INTO ignored_users (username, added_by) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING', [targetUsername.toLowerCase(), username]);
             // Reload ignored
             ignoredChatUsernames = await loadIgnoredChatUsernames();
-            console.log(`[Command] Removed ${targetUsername} from ignore list by ${username}`);
-            sendDiscordNotification(`✅ Removed ${targetUsername} from ignore list. Requested by ${username} (in-game)`, 65280);
-          } else {
-            sendDiscordNotification(`${targetUsername} is not in ignore list.`, 16776960);
+            console.log(`[Command] Added ${targetUsername} to ignore list by ${username}`);
+            sendDiscordNotification(`✅ Added ${targetUsername} to ignore list. Requested by ${username} (in-game)`, 65280);
+          } catch (err) {
+            console.error('[Command] Ignore error:', err.message);
+            sendDiscordNotification(`Failed to add ${targetUsername} to ignore list: \`${err.message}\``, 16711680);
           }
-        } catch (err) {
-          console.error('[Command] Unignore error:', err.message);
-          sendDiscordNotification(`Failed to remove ${targetUsername} from ignore list: \`${err.message}\``, 16711680);
+        })();
+        return;
+      }
+
+      const unignoreMatch = message.match(/^!unignore\s+(\w+)$/);
+      if (unignoreMatch) {
+        const targetUsername = unignoreMatch[1];
+        if (!pool) {
+          console.log('[DB] ❌ Database operation attempted but pool not available');
+          sendDiscordNotification('Database not configured.', 16711680);
+          return;
         }
-      })();
+        (async () => {
+          try {
+            const result = await pool.query('DELETE FROM ignored_users WHERE username = $1', [targetUsername.toLowerCase()]);
+            if (result.rowCount > 0) {
+              // Reload ignored
+              ignoredChatUsernames = await loadIgnoredChatUsernames();
+              console.log(`[Command] Removed ${targetUsername} from ignore list by ${username}`);
+              sendDiscordNotification(`✅ Removed ${targetUsername} from ignore list. Requested by ${username} (in-game)`, 65280);
+            } else {
+              sendDiscordNotification(`${targetUsername} is not in ignore list.`, 16776960);
+            }
+          } catch (err) {
+            console.error('[Command] Unignore error:', err.message);
+            sendDiscordNotification(`Failed to remove ${targetUsername} from ignore list: \`${err.message}\``, 16711680);
+          }
+        })();
+        return;
+      }
     }
 
     // Check for death messages in chat
@@ -1046,15 +1053,8 @@ function createBot() {
       console.log(`[Death] Detected death message: ${message}`);
       sendDiscordNotification(`💀 Death: ${message}`, 16711680);
     }
-  });
 
-  bot.on('whisper', (username, message, translate, jsonMsg, matches) => {
-    console.log(`[Whisper] ${username}: ${message}`);
-    sendWhisperToDiscord(username, message);
-  });
-
-  // Send all chat messages to Discord chat channel
-  bot.on('chat', async (username, message) => {
+    // Send all chat messages to Discord chat channel
     if (!DISCORD_CHAT_CHANNEL_ID || !discordClient || !discordClient.isReady()) return;
     if (username === bot.username) return; // Don't send own messages
     if (ignoredChatUsernames.includes(username.toLowerCase())) return; // Ignore specified users
@@ -1068,14 +1068,10 @@ function createBot() {
     if (!cleanMessage) return; // Skip empty messages
 
     // Normalize special relay format: "> target: data" so author stays original sender
-    // Pattern examples:
-    // > bdiev_: 25days
-    // > player123: 64 Days, 20 Hours, 1 Minute
     const relayMatch = cleanMessage.match(/^>\s*([\w_]+):\s*(.+)$/);
     if (relayMatch) {
       const target = relayMatch[1];
       const rest = relayMatch[2];
-      // Preserve target username visibly without hijacking author field
       cleanMessage = `> \`${target}\`: ${rest}`;
     }
 
@@ -1100,6 +1096,11 @@ function createBot() {
     } catch (e) {
       console.error('[Discord] Failed to send chat message:', e.message);
     }
+  });
+
+  bot.on('whisper', (username, message, translate, jsonMsg, matches) => {
+    console.log(`[Whisper] ${username}: ${message}`);
+    sendWhisperToDiscord(username, message);
   });
 
   bot.on('message', (message) => {
