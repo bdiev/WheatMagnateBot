@@ -1153,7 +1153,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           components: options.length > 0 ? [row] : []
         });
       } else if (interaction.customId === 'whitelist_button') {
-        // Show whitelist entries (DB first, fallback to file). Acknowledge quickly to avoid timeouts.
+        // Show two dropdowns: Add (online players not in whitelist) and Delete (whitelisted players)
         await interaction.deferReply();
         try {
           console.log('[Whitelist] Handler start');
@@ -1175,26 +1175,45 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             entries = loadWhitelist();
           }
 
-          const count = entries.length;
-          console.log(`[Whitelist] Loaded ${count} entries from ${source}`);
-          // Keep embed description within Discord limits
-          const maxShown = 200; // show up to 200 names to be safe
-          const shown = entries.slice(0, maxShown);
-          const overflow = count > maxShown ? `\n\n…and ${count - maxShown} more` : '';
-          const description = count > 0
-            ? `Total: **${count}** (source: ${source})\n\n` + shown.join(', ') + overflow
-            : `Whitelist is empty (source: ${source}).`;
+          const total = entries.length;
+          console.log(`[Whitelist] Loaded ${total} entries from ${source}`);
+
+          const allOnlinePlayers = bot ? Object.values(bot.players || {}).map(p => p.username) : [];
+          const addCandidates = allOnlinePlayers.filter(u => !entries.some(n => n.toLowerCase() === u.toLowerCase()));
+          const onlineCount = addCandidates.length;
+
+          const addOptions = addCandidates.slice(0, 25).map(username =>
+            new StringSelectMenuOptionBuilder().setLabel(username).setValue(b64encode(username))
+          );
+          const delOptions = entries.slice(0, 25).map(username =>
+            new StringSelectMenuOptionBuilder().setLabel(username).setValue(b64encode(username))
+          );
+
+          const components = [];
+          const addMenu = new StringSelectMenuBuilder()
+            .setCustomId('add_whitelist_select')
+            .setPlaceholder('Add to Whitelist (online)')
+            .addOptions(addOptions);
+          if (addOptions.length === 0) addMenu.setDisabled(true);
+          components.push(new ActionRowBuilder().addComponents(addMenu));
+
+          const delMenu = new StringSelectMenuBuilder()
+            .setCustomId('delete_whitelist_select')
+            .setPlaceholder('Delete from Whitelist')
+            .addOptions(delOptions);
+          if (delOptions.length === 0) delMenu.setDisabled(true);
+          components.push(new ActionRowBuilder().addComponents(delMenu));
 
           await interaction.editReply({
             embeds: [{
-              title: 'Whitelist',
-              description,
+              title: 'Whitelist Management',
+              description: `Total: **${total}** (source: ${source})\nAdd candidates online: **${onlineCount}**`,
               color: 3447003,
               timestamp: new Date()
             }],
-            components: []
+            components
           });
-          console.log('[Whitelist] Reply sent');
+          console.log('[Whitelist] Reply sent (with two menus)');
         } catch (e) {
           console.error('[Discord] Whitelist button handler failed:', e.message);
           await interaction.editReply({
@@ -1202,7 +1221,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
               description: `Failed to load whitelist: ${e.message}`,
               color: 16711680,
               timestamp: new Date()
-            }]
+            }],
+            components: []
           });
         }
       } else if (interaction.customId === 'drop_button') {
@@ -1798,16 +1818,16 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           components: []
         });
       }
-    } else if (interaction.isStringSelectMenu() && interaction.customId === 'whitelist_select') {
-      console.log(`[Whitelist Select] Interaction started for username: ${interaction.values[0]}`);
+    } else if (interaction.isStringSelectMenu() && interaction.customId === 'delete_whitelist_select') {
+      console.log(`[Whitelist Delete] Interaction started for username: ${interaction.values[0]}`);
 
       try {
         await interaction.deferUpdate();
-        console.log('[Whitelist Select] Interaction deferred successfully');
+        console.log('[Whitelist Delete] Interaction deferred successfully');
 
         const encodedUsername = interaction.values[0];
         const selectedUsername = b64decode(encodedUsername);
-        console.log(`[Whitelist Select] Decoded username: ${selectedUsername}`);
+        console.log(`[Whitelist Delete] Decoded username: ${selectedUsername}`);
 
         let whitelist = [];
         let source = 'database';
@@ -1816,9 +1836,9 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         try {
           // Try database first
           if (pool) {
-            console.log(`[Whitelist Select] Attempting database removal of ${selectedUsername}`);
+            console.log(`[Whitelist Delete] Attempting database removal of ${selectedUsername}`);
             const result = await pool.query('DELETE FROM whitelist WHERE username = $1', [selectedUsername]);
-            console.log(`[Whitelist Select] Database result: ${result.rowCount} rows affected`);
+            console.log(`[Whitelist Delete] Database result: ${result.rowCount} rows affected`);
 
             if (result.rowCount > 0) {
               // Reload whitelist from database
@@ -1829,19 +1849,19 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
               console.log(`[Whitelist] Removed ${selectedUsername} from database whitelist by ${interaction.user.tag}`);
               success = true;
             } else {
-              console.log(`[Whitelist Select] Username ${selectedUsername} not found in database`);
+              console.log(`[Whitelist Delete] Username ${selectedUsername} not found in database`);
             }
           }
 
           // If database failed or not available, try file-based whitelist
           if (!success && !pool) {
             source = 'file';
-            console.log(`[Whitelist Select] Attempting file-based removal of ${selectedUsername}`);
+            console.log(`[Whitelist Delete] Attempting file-based removal of ${selectedUsername}`);
             const fileWhitelist = loadWhitelist();
             const newWhitelist = fileWhitelist.filter(username => username !== selectedUsername);
 
             if (newWhitelist.length === fileWhitelist.length) {
-              console.log(`[Whitelist Select] Username ${selectedUsername} not found in file whitelist`);
+              console.log(`[Whitelist Delete] Username ${selectedUsername} not found in file whitelist`);
               await interaction.editReply({
                 embeds: [{
                   description: `${selectedUsername} is not in whitelist.`,
@@ -1863,7 +1883,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           }
 
           if (!success) {
-            console.log(`[Whitelist Select] No success in removing ${selectedUsername}`);
+            console.log(`[Whitelist Delete] No success in removing ${selectedUsername}`);
             await interaction.editReply({
               embeds: [{
                 description: `${selectedUsername} is not in whitelist.`,
@@ -1877,43 +1897,43 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
           // Update the message
           const allOnlinePlayers = bot ? Object.values(bot.players || {}).map(p => p.username) : [];
-          const whitelistOnline = whitelist.filter(username => allOnlinePlayers.some(p => p.toLowerCase() === username.toLowerCase()));
-
-          console.log(`[Whitelist Select] Preparing updated interface with ${whitelist.length} entries`);
-
-          // Create whitelist options
-          const whitelistOptions = whitelist.slice(0, 25).map(username =>
-            new StringSelectMenuOptionBuilder()
-              .setLabel(username)
-              .setValue(b64encode(username))
+          const addCandidates = allOnlinePlayers.filter(u => !whitelist.some(n => n.toLowerCase() === u.toLowerCase()));
+          const addOptions = addCandidates.slice(0, 25).map(username =>
+            new StringSelectMenuOptionBuilder().setLabel(username).setValue(b64encode(username))
+          );
+          const delOptions = whitelist.slice(0, 25).map(username =>
+            new StringSelectMenuOptionBuilder().setLabel(username).setValue(b64encode(username))
           );
 
-          // Create components only if there are options
           const components = [];
-          if (whitelistOptions.length > 0) {
-            const selectMenu = new StringSelectMenuBuilder()
-              .setCustomId('whitelist_select')
-              .setPlaceholder('Select player to remove from whitelist')
-              .addOptions(whitelistOptions);
+          const addMenu = new StringSelectMenuBuilder()
+            .setCustomId('add_whitelist_select')
+            .setPlaceholder('Add to Whitelist (online)')
+            .addOptions(addOptions);
+          if (addOptions.length === 0) addMenu.setDisabled(true);
+          components.push(new ActionRowBuilder().addComponents(addMenu));
 
-            const row = new ActionRowBuilder().addComponents(selectMenu);
-            components.push(row);
-          }
+          const delMenu = new StringSelectMenuBuilder()
+            .setCustomId('delete_whitelist_select')
+            .setPlaceholder('Delete from Whitelist')
+            .addOptions(delOptions);
+          if (delOptions.length === 0) delMenu.setDisabled(true);
+          components.push(new ActionRowBuilder().addComponents(delMenu));
 
           await interaction.editReply({
             embeds: [{
-              title: `Whitelist Management (${whitelist.length})`,
-              description: `✅ Removed ${selectedUsername} from ${source} whitelist.\n\nOnline: ${whitelistOnline.length > 0 ? whitelistOnline.join(', ') : 'None'}`,
+              title: 'Whitelist Management',
+              description: `✅ Removed ${selectedUsername} from ${source} whitelist.\n\nTotal: **${whitelist.length}** (source: ${source})\nAdd candidates online: **${addCandidates.length}**`,
               color: 65280,
               timestamp: new Date()
             }],
-            components: components
+            components
           });
 
-          console.log('[Whitelist Select] Update reply sent successfully');
+          console.log('[Whitelist Delete] Update reply sent successfully');
         } catch (err) {
-          console.error('[Whitelist Select] Error:', err.message);
-          console.error('[Whitelist Select] Stack:', err.stack);
+          console.error('[Whitelist Delete] Error:', err.message);
+          console.error('[Whitelist Delete] Stack:', err.stack);
 
           try {
             await interaction.editReply({
@@ -1924,30 +1944,105 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
               }],
               components: []
             });
-            console.log('[Whitelist Select] Error reply sent');
+            console.log('[Whitelist Delete] Error reply sent');
           } catch (finalErr) {
-            console.error('[Whitelist Select] Failed to send error reply:', finalErr.message);
+            console.error('[Whitelist Delete] Failed to send error reply:', finalErr.message);
             try {
               await interaction.followUp({
                 content: `❌ Whitelist removal error: ${finalErr.message}`,
                 ephemeral: true
               });
-              console.log('[Whitelist Select] Fallback message sent');
+              console.log('[Whitelist Delete] Fallback message sent');
             } catch (followUpErr) {
-              console.error('[Whitelist Select] All reply methods failed:', followUpErr.message);
+              console.error('[Whitelist Delete] All reply methods failed:', followUpErr.message);
             }
           }
         }
       } catch (outerErr) {
-        console.error('[Whitelist Select] Outer error:', outerErr.message);
+        console.error('[Whitelist Delete] Outer error:', outerErr.message);
         try {
           await interaction.reply({
             content: `❌ Critical whitelist error: ${outerErr.message}`,
             ephemeral: true
           });
         } catch (replyErr) {
-          console.error('[Whitelist Select] Failed to send outer error reply:', replyErr.message);
+          console.error('[Whitelist Delete] Failed to send outer error reply:', replyErr.message);
         }
+      }
+    } else if (interaction.isStringSelectMenu() && interaction.customId === 'add_whitelist_select') {
+      await interaction.deferUpdate();
+      const encodedUsername = interaction.values[0];
+      const selectedUsername = b64decode(encodedUsername);
+      try {
+        let whitelist = [];
+        let source = 'database';
+        let success = false;
+        if (pool) {
+          try {
+            await pool.query('INSERT INTO whitelist (username, added_by) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING', [selectedUsername, interaction.user.tag]);
+            const newWhitelist = await loadWhitelistFromDB();
+            ignoredUsernames.length = 0;
+            ignoredUsernames.push(...newWhitelist);
+            whitelist = newWhitelist;
+            success = true;
+          } catch (dbErr) {
+            console.error('[Whitelist Add] DB error:', dbErr.message);
+          }
+        }
+        if (!success && !pool) {
+          source = 'file';
+          const fileWhitelist = loadWhitelist();
+          if (!fileWhitelist.some(n => n.toLowerCase() === selectedUsername.toLowerCase())) {
+            fs.appendFileSync('whitelist.txt', `${selectedUsername}\n`);
+          }
+          whitelist = loadWhitelist();
+          ignoredUsernames.length = 0;
+          ignoredUsernames.push(...whitelist);
+          success = true;
+        }
+
+        const allOnlinePlayers = bot ? Object.values(bot.players || {}).map(p => p.username) : [];
+        const addCandidates = allOnlinePlayers.filter(u => !whitelist.some(n => n.toLowerCase() === u.toLowerCase()));
+        const addOptions = addCandidates.slice(0, 25).map(username =>
+          new StringSelectMenuOptionBuilder().setLabel(username).setValue(b64encode(username))
+        );
+        const delOptions = whitelist.slice(0, 25).map(username =>
+          new StringSelectMenuOptionBuilder().setLabel(username).setValue(b64encode(username))
+        );
+
+        const components = [];
+        const addMenu = new StringSelectMenuBuilder()
+          .setCustomId('add_whitelist_select')
+          .setPlaceholder('Add to Whitelist (online)')
+          .addOptions(addOptions);
+        if (addOptions.length === 0) addMenu.setDisabled(true);
+        components.push(new ActionRowBuilder().addComponents(addMenu));
+
+        const delMenu = new StringSelectMenuBuilder()
+          .setCustomId('delete_whitelist_select')
+          .setPlaceholder('Delete from Whitelist')
+          .addOptions(delOptions);
+        if (delOptions.length === 0) delMenu.setDisabled(true);
+        components.push(new ActionRowBuilder().addComponents(delMenu));
+
+        await interaction.editReply({
+          embeds: [{
+            title: 'Whitelist Management',
+            description: `${success ? `✅ Added ${selectedUsername} to whitelist.` : `No changes for ${selectedUsername}.`}\n\nTotal: **${whitelist.length}** (source: ${source})\nAdd candidates online: **${addCandidates.length}**`,
+            color: success ? 65280 : 16776960,
+            timestamp: new Date()
+          }],
+          components
+        });
+      } catch (err) {
+        console.error('[Whitelist Add] Error:', err.message);
+        await interaction.editReply({
+          embeds: [{
+            description: `Failed to add ${selectedUsername}: ${err.message}`,
+            color: 16711680,
+            timestamp: new Date()
+          }]
+        });
       }
     }
   });
