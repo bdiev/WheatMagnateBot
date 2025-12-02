@@ -1406,11 +1406,12 @@ Add candidates online: **${onlineCount}**`,
           } catch (e) {
             // If already deleted or not found, continue
           }
-          // Send ephemeral with a link button
+          // Send ephemeral with direct URL and a link button
           await interaction.editReply({
+            content: url,
             embeds: [{
               title: 'Microsoft Login',
-              description: 'Link opened. Original message removed.',
+              description: 'Original message removed. Click the link below or use the button.',
               color: 16776960,
               timestamp: new Date()
             }],
@@ -2419,11 +2420,7 @@ async function sendAuthLinkToDiscord(url) {
             new ButtonBuilder()
               .setCustomId(`open_remove_${b64encode(url)}_${sentMessage.id}`)
               .setLabel('Open & Remove')
-              .setStyle(ButtonStyle.Primary),
-            new ButtonBuilder()
-              .setCustomId(`remove_${sentMessage.id}`)
-              .setLabel('Remove')
-              .setStyle(ButtonStyle.Danger)
+              .setStyle(ButtonStyle.Primary)
           )
         ]
       });
