@@ -23,9 +23,8 @@ if (process.env.DATABASE_URL) {
   pool.on('error', (err) => {
     console.error('[DB] Unexpected error on idle client', err);
   });
-  pool.on('connect', () => {
-    console.log('[DB] ✅ Successfully connected to database!');
-  });
+  // Silenced DB successful connection log to reduce noise
+  pool.on('connect', () => {});
 } else {
   console.log('[DB] ❌ No DATABASE_URL environment variable found. Database features disabled.');
 }
@@ -1193,7 +1192,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           await interaction.editReply({
             embeds: [{
               title: 'Whitelist Management',
-              description: `Total: **${total}** (source: ${source})\nAdd candidates online: **${onlineCount}**`,
+              description: `Total: **${total}**\\nAdd candidates online: **${onlineCount}**`,
               color: 3447003,
               timestamp: new Date()
             }],
@@ -1908,12 +1907,15 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           await interaction.editReply({
             embeds: [{
               title: 'Whitelist Management',
-              description: `✅ Removed ${selectedUsername} from ${source} whitelist.\n\nTotal: **${whitelist.length}** (source: ${source})\nAdd candidates online: **${addCandidates.length}**`,
+              description: `✅ Removed ${selectedUsername} from whitelist.\n\nTotal: **${whitelist.length}**\nAdd candidates online: **${addCandidates.length}**`,
               color: 65280,
               timestamp: new Date()
             }],
             components
           });
+
+          // Close the Whitelist Management message shortly after the action
+          setTimeout(() => interaction.message?.delete().catch(() => {}), 1000);
 
           
         } catch (err) {
@@ -2012,12 +2014,15 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         await interaction.editReply({
           embeds: [{
             title: 'Whitelist Management',
-            description: `${success ? `✅ Added ${selectedUsername} to whitelist.` : `No changes for ${selectedUsername}.`}\n\nTotal: **${whitelist.length}** (source: ${source})\nAdd candidates online: **${addCandidates.length}**`,
+            description: `${success ? `✅ Added ${selectedUsername} to whitelist.` : `No changes for ${selectedUsername}.`}\n\nTotal: **${whitelist.length}**\nAdd candidates online: **${addCandidates.length}**`,
             color: success ? 65280 : 16776960,
             timestamp: new Date()
           }],
           components
         });
+
+        // Close the Whitelist Management message shortly after the action
+        setTimeout(() => interaction.message?.delete().catch(() => {}), 1000);
       } catch (err) {
         console.error('[Whitelist Add] Error:', err.message);
         await interaction.editReply({
