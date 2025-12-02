@@ -257,8 +257,6 @@ async function getWhitelistActivity() {
   }
 }
 
-let ignoredChatUsernames = IGNORED_CHAT_USERNAMES; // Fallback
-
 // Initialize DB table and load ignored users
 async function initDatabase() {
   if (!pool) {

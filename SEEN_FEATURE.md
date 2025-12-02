@@ -1,32 +1,32 @@
-# Функция "Seen" - Отслеживание активности игроков
+# "Seen" Feature - Player Activity Tracking
 
-## Описание
-Новая функция отслеживает последнюю активность игроков из whitelist на сервере Minecraft.
+## Description
+This new feature tracks the last activity of whitelist players on the Minecraft server.
 
-## Возможности
+## Features
 
-### 1. Автоматическое отслеживание
-- Бот автоматически записывает время входа и выхода игроков из whitelist
-- Данные сохраняются в базе данных PostgreSQL
-- Отслеживается статус: онлайн/оффлайн
+### 1. Automatic Tracking
+- The bot automatically records entry and exit times of whitelist players
+- Data is stored in PostgreSQL database
+- Tracks online/offline status
 
-### 2. Кнопка "🕒 Seen"
-Новая кнопка добавлена в интерфейс управления ботом (вторая строка кнопок).
+### 2. "🕒 Seen" Button
+A new button has been added to the bot management interface (second row of buttons).
 
-При нажатии показывает:
-- **Онлайн игроки** (🟢) - с временем последней активности
-- **Оффлайн игроки** (⚪) - с информацией когда последний раз были онлайн
+When clicked, it displays:
+- **Online players** (🟢) - with last activity time
+- **Offline players** (⚪) - with information about when they were last online
 
-### 3. Формат отображения времени
-- `Just now` - только что был онлайн
-- `5m ago` - 5 минут назад
-- `2h 30m ago` - 2 часа 30 минут назад
-- `3d 5h ago` - 3 дня 5 часов назад
-- `Never seen` - игрок ещё ни разу не был замечен
+### 3. Time Display Format
+- `Just now` - was online just now
+- `5m ago` - 5 minutes ago
+- `2h 30m ago` - 2 hours 30 minutes ago
+- `3d 5h ago` - 3 days 5 hours ago
+- `Never seen` - player has never been seen
 
-## Структура базы данных
+## Database Structure
 
-Создана новая таблица `player_activity`:
+A new `player_activity` table has been created:
 ```sql
 CREATE TABLE player_activity (
   id SERIAL PRIMARY KEY,
@@ -37,26 +37,26 @@ CREATE TABLE player_activity (
 );
 ```
 
-## Обновления кода
+## Code Updates
 
-### Новые функции:
-1. `updatePlayerActivity(username, isOnline)` - обновляет статус игрока
-2. `getWhitelistActivity()` - получает информацию об активности всех игроков из whitelist
+### New Functions:
+1. `updatePlayerActivity(username, isOnline)` - updates player status
+2. `getWhitelistActivity()` - retrieves activity information for all whitelist players
 
-### События отслеживания:
-- `bot.on('playerJoined')` - игрок зашёл на сервер
-- `bot.on('playerLeft')` - игрок вышел с сервера
-- `bot.on('spawn')` - обновление статуса всех онлайн игроков при подключении бота
+### Tracking Events:
+- `bot.on('playerJoined')` - player joined the server
+- `bot.on('playerLeft')` - player left the server
+- `bot.on('spawn')` - updates status of all online players when bot connects
 
-## Использование
+## Usage
 
-1. Запустите бота (данные будут автоматически мигрированы в БД)
-2. В Discord канале нажмите кнопку **"🕒 Seen"**
-3. Получите актуальную информацию о всех игроках из whitelist
+1. Start the bot (data will be automatically migrated to the database)
+2. In the Discord channel, click the **"🕒 Seen"** button
+3. Get current information about all whitelist players
 
-## Примечания
+## Notes
 
-- Требуется настроенная база данных PostgreSQL (переменная `DATABASE_URL`)
-- Отслеживаются только игроки из whitelist
-- Данные обновляются в реальном времени
-- История сохраняется даже при перезапуске бота
+- Requires configured PostgreSQL database (`DATABASE_URL` environment variable)
+- Only whitelist players are tracked
+- Data is updated in real-time
+- History is preserved even after bot restarts
