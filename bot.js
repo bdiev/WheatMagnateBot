@@ -230,12 +230,13 @@ if (DISCORD_BOT_TOKEN) {
     console.error('[Discord ERROR]', error);
   });
 
-  discordClient.on('disconnect', event => {
-    console.log('[Discord DISCONNECT]', event);
+  // Update to shard-level events for discord.js v14
+  discordClient.on('shardDisconnect', (event, shardId) => {
+    console.log(`[Discord SHARD DISCONNECT] shard ${shardId}`, event);
   });
 
-  discordClient.on('reconnecting', () => {
-    console.log('[Discord RECONNECTING] Attempting to reconnect...');
+  discordClient.on('shardReconnecting', (shardId) => {
+    console.log(`[Discord SHARD RECONNECTING] Attempting to reconnect shard ${shardId}...`);
   });
 
   discordClient.on('invalidated', () => {
@@ -288,9 +289,11 @@ if (DISCORD_BOT_TOKEN) {
           const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
           if (channel && channel.isTextBased()) {
             const messages = await channel.messages.fetch({ limit: 100 });
+            const twoWeeksAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
             const messagesToDelete = messages.filter(msg => {
               if (msg.id === statusMessage?.id) return false;
               if (excludedMessageIds.includes(msg.id)) return false;
+              if (msg.createdTimestamp < twoWeeksAgo) return false; // cannot bulk delete older than 14 days
               const desc = msg.embeds[0]?.description || '';
               const lowerDesc = desc.toLowerCase();
               // Don't delete death-related messages
@@ -698,7 +701,7 @@ function createBot() {
 
     if (shouldReconnect || reasonStr === 'socketClosed') {
       const now = new Date();
-      const kyivTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Kiev' }));
+      const kyivTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Kyiv' }));
       const hour = kyivTime.getHours();
       const minute = kyivTime.getMinutes();
       const isRestartTime = hour === 9 && minute >= 0 && minute <= 30;
@@ -1022,7 +1025,7 @@ function startNearbyPlayerScanner() {
     for (const entity of Object.values(bot.entities)) {
       if (!entity || entity.type !== 'player') continue;
       if (!entity.username || entity.username === bot.username) continue;
-      if (ignoredUsernames.includes(entity.username)) continue; // Ignore whitelisted players
+      if (ignoredUsernames.some(name => name.toLowerCase() === entity.username.toLowerCase())) continue; // Ignore whitelisted players (case-insensitive)
       // Non-whitelisted player
       if (!entity.position || !bot.entity.position) continue;
       const distance = bot.entity.position.distanceTo(entity.position);
@@ -1039,11 +1042,6 @@ function startNearbyPlayerScanner() {
 }
 
 
-if (Boolean(process.env.DISABLE_BOT)) {
-  console.log(`Bot disabled by env. DISABLE_BOT=${process.env.DISABLE_BOT}`);
-  process.exit(0);
-}
-// Change to strict check:
 if (String(process.env.DISABLE_BOT).toLowerCase() === 'true') {
   console.log(`Bot disabled by env. DISABLE_BOT=${process.env.DISABLE_BOT}`);
   process.exit(0);
@@ -1074,8 +1072,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
     console.log(`[Discord INTERACTION] Guild ID: ${interaction.guildId}`);
     console.log(`[Discord INTERACTION] Message ID: ${interaction.message?.id || 'none'}`);
 
-    if (interaction.channel.id !== DISCORD_CHANNEL_ID) {
-      console.log(`[Discord INTERACTION] ❌ Ignoring interaction from different channel (expected: ${DISCORD_CHANNEL_ID}, got: ${interaction.channel.id})`);
+    if (interaction.channelId !== DISCORD_CHANNEL_ID) {
+      console.log(`[Discord INTERACTION] ❌ Ignoring interaction from different channel (expected: ${DISCORD_CHANNEL_ID}, got: ${interaction.channelId})`);
       return;
     }
 
@@ -1113,6 +1111,54 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       } else if (interaction.customId === 'playerlist_button') {
         await interaction.deferReply();
         if (!bot) {
+      } else if (interaction.customId === 'whitelist_button') {
+        // Show whitelist entries (DB first, fallback to file). Acknowledge quickly to avoid timeouts.
+        await interaction.deferReply();
+        try {
+          let entries = [];
+          let source = 'database';
+          if (pool) {
+            try {
+              const res = await pool.query('SELECT username FROM whitelist ORDER BY username ASC');
+              entries = res.rows.map(r => r.username);
+            } catch (dbErr) {
+              console.error('[DB] Failed to fetch whitelist for UI, falling back to file:', dbErr.message);
+              source = 'file';
+              entries = loadWhitelist();
+            }
+          } else {
+            source = 'file';
+            entries = loadWhitelist();
+          }
+
+          const count = entries.length;
+          // Keep embed description within Discord limits
+          const maxShown = 200; // show up to 200 names to be safe
+          const shown = entries.slice(0, maxShown);
+          const overflow = count > maxShown ? `\n\n…and ${count - maxShown} more` : '';
+          const description = count > 0
+            ? `Total: **${count}** (source: ${source})\n\n` + shown.join(', ') + overflow
+            : `Whitelist is empty (source: ${source}).`;
+
+          await interaction.editReply({
+            embeds: [{
+              title: 'Whitelist',
+              description,
+              color: 3447003,
+              timestamp: new Date()
+            }],
+            components: []
+          });
+        } catch (e) {
+          console.error('[Discord] Whitelist button handler failed:', e.message);
+          await interaction.editReply({
+            embeds: [{
+              description: `Failed to load whitelist: ${e.message}`,
+              color: 16711680,
+              timestamp: new Date()
+            }]
+          });
+        }
           await interaction.editReply({
             embeds: [{
               description: 'Bot is offline.',
