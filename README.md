@@ -7,6 +7,14 @@
 Lightweight Minecraft bot built with mineflayer. Monitors hunger, scans nearby players, sends Discord notifications for events, and provides server status updates. Runs on Windows, Linux, or cloud platforms like Railway.app with Node.js.
 
 ## Features
+- **Modular Architecture**: The bot is now organized into clean, maintainable modules:
+  - `config.js`: Centralized configuration management
+  - `database.js`: PostgreSQL database operations
+  - `discordClient.js`: Discord bot functionality
+  - `minecraftBot.js`: Minecraft bot core logic
+  - `utils.js`: Utility functions and helpers
+  - `main.js`: Main entry point and orchestration
+
 - Auto-login to a configured Minecraft server with persistent Microsoft authentication.
 - Discord bot notifications for: login, spawn, disconnect, errors, kicked (with readable reason display), death, low/no food, enemy detection, and death messages from Minecraft chat.
 - Discord bot integration for remote control and status checks.
@@ -114,7 +122,7 @@ Commands are available in-game (authorized username `bdiev_` by default) and via
    ```bash
    export DISCORD_BOT_TOKEN=your_bot_token_here
    export DISCORD_CHANNEL_ID=your_channel_id_here
-   node bot.js
+   node modules/main.js
    ```
 
 ### Railway.app Deployment
