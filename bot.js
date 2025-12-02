@@ -1192,7 +1192,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           await interaction.editReply({
             embeds: [{
               title: 'Whitelist Management',
-              description: `Total: **${total}**\\nAdd candidates online: **${onlineCount}**`,
+              description: `Total: **${total}**
+Add candidates online: **${onlineCount}**`,
               color: 3447003,
               timestamp: new Date()
             }],
