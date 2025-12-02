@@ -716,12 +716,13 @@ function createBot() {
     const reasonStr = chatComponentToString(reason);
     clearIntervals();
 
+    // Mark bot reference null immediately for status display
+    bot = null;
+
     // Don't clear the global status update interval - let it continue
     // so status updates even when disconnected
 
     if (shouldReconnect || reasonStr === 'socketClosed') {
-    // Mark bot reference null so status buttons show Resume state until reconnect
-    bot = null;
       const now = new Date();
       const kyivTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Kyiv' }));
       const hour = kyivTime.getHours();
@@ -747,19 +748,7 @@ function createBot() {
     } else {
       console.log('[!] Manual pause. No reconnect.');
       reconnectTimestamp = 0;
-      const userInfo = lastCommandUser ? ` Requested by ${lastCommandUser}` : '';
-      // Update status message to offline
-      if (statusMessage) {
-        statusMessage.edit({
-          embeds: [{
-            title: 'Server Status',
-            description: `⏸️ Paused: \`${reasonStr}\`.${userInfo}`,
-            color: 16711680,
-            timestamp: new Date()
-          }],
-          components: createStatusButtons()
-        }).catch(console.error);
-      }
+      // Status will be updated by interval
     }
   });
 
@@ -1102,20 +1091,14 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           console.log(`[Button] pause by ${interaction.user.tag}`);
           shouldReconnect = false;
           bot.quit('Pause until resume');
-          // Immediately reflect new state in status message
-          if (statusMessage) {
-            try { await statusMessage.edit({ embeds: [{ title: 'Server Status', description: getStatusDescription(), color: 16776960, timestamp: new Date() }], components: createStatusButtons() }); } catch {}
-          }
         } else {
           // Currently paused, resume it
           console.log(`[Button] resume by ${interaction.user.tag}`);
           shouldReconnect = true;
           createBot();
-          // Show paused->resuming transition quickly if message exists
-          if (statusMessage) {
-            try { await statusMessage.edit({ embeds: [{ title: 'Server Status', description: '▶️ Resuming...', color: 65280, timestamp: new Date() }], components: createStatusButtons() }); } catch {}
-          }
         }
+        // Force immediate status update after state change
+        setTimeout(() => updateStatusMessage(), 100);
       } else if (interaction.customId === 'say_button') {
         const modal = new ModalBuilder()
           .setCustomId('say_modal')
@@ -2148,19 +2131,10 @@ Add candidates online: **${onlineCount}**`,
     if (message.content === '!pause') {
       console.log(`[Command] pause until resume by ${message.author.tag} via Discord`);
       lastCommandUser = message.author.tag;
-      if (statusMessage) {
-        statusMessage.edit({
-          embeds: [{
-            title: 'Server Status',
-            description: `⏸️ Pausing until resume... Requested by ${lastCommandUser}`,
-            color: 16776960,
-            timestamp: new Date()
-          }],
-          components: createStatusButtons()
-        }).catch(console.error);
-      }
       shouldReconnect = false;
       bot.quit('Pause until resume');
+      // Force immediate status update
+      setTimeout(() => updateStatusMessage(), 100);
     }
 
     const pauseMatch = message.content.match(/^!pause\s+(\d+)$/);
@@ -2193,19 +2167,10 @@ Add candidates online: **${onlineCount}**`,
       }
       console.log(`[Command] resume by ${message.author.tag} via Discord`);
       lastCommandUser = message.author.tag;
-      if (statusMessage) {
-        statusMessage.edit({
-          embeds: [{
-            title: 'Server Status',
-            description: `▶️ Resuming... Requested by ${lastCommandUser}`,
-            color: 65280,
-            timestamp: new Date()
-          }],
-          components: createStatusButtons()
-        }).catch(console.error);
-      }
       shouldReconnect = true;
       createBot();
+      // Force immediate status update
+      setTimeout(() => updateStatusMessage(), 100);
     }
 
     // Whitelist management via command
