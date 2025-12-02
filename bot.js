@@ -1084,11 +1084,13 @@ function createBot() {
     console.log(`[Chat->Discord] Sending message from ${username}: ${cleanMessage}`);
 
     // Normalize special relay format: "> target: data" so author stays original sender
-    const relayMatch = cleanMessage.match(/^>\s*([\w_]+):\s*(.+)$/);
+    // Only match if it follows the exact pattern: "> username: message"
+    const relayMatch = cleanMessage.match(/^>\s*([a-zA-Z0-9_]{3,16}):\s*(.+)$/);
     if (relayMatch) {
       const target = relayMatch[1];
       const rest = relayMatch[2];
       cleanMessage = `> \`${target}\`: ${rest}`;
+      console.log(`[Chat->Discord] Detected relay format for ${target}`);
     }
 
     try {
