@@ -1083,26 +1083,20 @@ function createBot() {
 
     console.log(`[Chat->Discord] Sending message from ${username}: ${cleanMessage}`);
 
-    // Normalize special relay format: "> target: data" so author stays original sender
-    // Only match if it follows the exact pattern: "> username: message"
-    const relayMatch = cleanMessage.match(/^>\s*([a-zA-Z0-9_]{3,16}):\s*(.+)$/);
-    if (relayMatch) {
-      const target = relayMatch[1];
-      const rest = relayMatch[2];
-      cleanMessage = `> \`${target}\`: ${rest}`;
-      console.log(`[Chat->Discord] Detected relay format for ${target}`);
-    }
-
     try {
       const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
       if (channel && channel.isTextBased()) {
         let avatarUrl = `https://minotar.net/avatar/${username.toLowerCase()}/28`;
+        
+        // Escape Discord markdown to prevent formatting issues
+        let displayMessage = cleanMessage.replace(/([*_`~|\\])/g, '\\$1');
+        
         await channel.send({
           embeds: [{
             author: {
               name: username
             },
-            description: cleanMessage,
+            description: displayMessage,
             color: 3447003,
             thumbnail: {
               url: avatarUrl
