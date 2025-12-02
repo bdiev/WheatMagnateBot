@@ -1061,10 +1061,13 @@ function createBot() {
       console.log('[Chat->Discord] Skipped - Discord not ready or no chat channel configured');
       return;
     }
-    if (username === bot.username) {
-      console.log('[Chat->Discord] Skipped - own message');
+    
+    // Only skip bot's own commands (starting with ! or /)
+    if (username === bot.username && (message.startsWith('!') || message.startsWith('/'))) {
+      console.log('[Chat->Discord] Skipped - own command');
       return;
     }
+    
     if (ignoredChatUsernames.includes(username.toLowerCase())) {
       console.log(`[Chat->Discord] Skipped - ${username} is in ignore list`);
       return;
