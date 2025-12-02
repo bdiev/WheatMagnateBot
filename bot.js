@@ -923,7 +923,7 @@ function createBot() {
     // Pattern examples:
     // > bdiev_: 25days
     // > player123: 64 Days, 20 Hours, 1 Minute
-    const relayMatch = message.match(/^>\s*(\w+):\s*(.+)$/);
+    const relayMatch = message.match(/^>\s*([\w_]+):\s*(.+)$/);
     if (relayMatch) {
       const target = relayMatch[1];
       const rest = relayMatch[2];
