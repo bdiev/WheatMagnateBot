@@ -50,7 +50,6 @@ if (process.env.MINECRAFT_SESSION) {
 }
 
 let lastCommandUser = null;
-let pendingStatusMessage = null;
 let statusMessage = null;
 let statusUpdateInterval = null;
 let channelCleanerInterval = null;
@@ -566,16 +565,6 @@ function createBot() {
   bot.on('login', async () => {
     console.log(`[+] Logged in as ${bot.username}`);
     startTime = Date.now();
-    if (pendingStatusMessage) {
-      await pendingStatusMessage.edit({
-        embeds: [{
-          title: 'Bot Status',
-          description: `✅ Connected to \`${config.host}\` as **${bot.username}**. Requested by ${lastCommandUser}`,
-          color: 65280
-        }]
-      }).catch(console.error);
-      pendingStatusMessage = null;
-    }
     lastCommandUser = null; // Reset after use
   });
 
@@ -700,6 +689,8 @@ function createBot() {
     }
 
     if (shouldReconnect || reasonStr === 'socketClosed') {
+    // Mark bot reference null so status buttons show Resume state until reconnect
+    bot = null;
       const now = new Date();
       const kyivTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Kyiv' }));
       const hour = kyivTime.getHours();
@@ -739,28 +730,17 @@ function createBot() {
       setTimeout(createBot, timeout);
     } else {
       console.log('[!] Manual pause. No reconnect.');
-      if (pendingStatusMessage) {
-        pendingStatusMessage.edit({
-          embeds: [{
-            title: 'Bot Status',
-            description: `⏸️ Paused: \`${reasonStr}\`. Requested by ${lastCommandUser}`,
-            color: 16711680
-          }]
-        }).catch(console.error);
-        pendingStatusMessage = null;
-      } else {
-        const userInfo = lastCommandUser ? ` Requested by ${lastCommandUser}` : '';
-        sendDiscordNotification(`⏸️ Bot paused: \`${reasonStr}\`.${userInfo}`, 16711680);
-      }
+      const userInfo = lastCommandUser ? ` Requested by ${lastCommandUser}` : '';
       // Update status message to offline
       if (statusMessage) {
         statusMessage.edit({
           embeds: [{
             title: 'Server Status',
-            description: `❌ Bot disconnected: \`${reasonStr}\``,
+            description: `⏸️ Paused: \`${reasonStr}\`.${userInfo}`,
             color: 16711680,
             timestamp: new Date()
-          }]
+          }],
+          components: createStatusButtons()
         }).catch(console.error);
       }
     }
@@ -1082,11 +1062,19 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           console.log(`[Button] pause by ${interaction.user.tag}`);
           shouldReconnect = false;
           bot.quit('Pause until resume');
+          // Immediately reflect new state in status message
+          if (statusMessage) {
+            try { await statusMessage.edit({ embeds: [{ title: 'Server Status', description: getStatusDescription(), color: 16776960, timestamp: new Date() }], components: createStatusButtons() }); } catch {}
+          }
         } else {
           // Currently paused, resume it
           console.log(`[Button] resume by ${interaction.user.tag}`);
           shouldReconnect = true;
           createBot();
+          // Show paused->resuming transition quickly if message exists
+          if (statusMessage) {
+            try { await statusMessage.edit({ embeds: [{ title: 'Server Status', description: '▶️ Resuming...', color: 65280, timestamp: new Date() }], components: createStatusButtons() }); } catch {}
+          }
         }
       } else if (interaction.customId === 'say_button') {
         const modal = new ModalBuilder()
@@ -2097,7 +2085,6 @@ Add candidates online: **${onlineCount}**`,
     if (message.content === '!restart') {
       console.log(`[Command] restart by ${message.author.tag} via Discord`);
       lastCommandUser = message.author.tag;
-      const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
       if (statusMessage) {
         statusMessage.edit({
           embeds: [{
@@ -2108,14 +2095,6 @@ Add candidates online: **${onlineCount}**`,
           }],
           components: createStatusButtons()
         }).catch(console.error);
-      } else {
-        pendingStatusMessage = await channel.send({
-          embeds: [{
-            title: 'Bot Status',
-            description: `🔄 Restarting... Requested by ${lastCommandUser}`,
-            color: 16776960
-          }]
-        });
       }
       bot.quit('Restart command');
     }
@@ -2123,7 +2102,6 @@ Add candidates online: **${onlineCount}**`,
     if (message.content === '!pause') {
       console.log(`[Command] pause until resume by ${message.author.tag} via Discord`);
       lastCommandUser = message.author.tag;
-      const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
       if (statusMessage) {
         statusMessage.edit({
           embeds: [{
@@ -2134,14 +2112,6 @@ Add candidates online: **${onlineCount}**`,
           }],
           components: createStatusButtons()
         }).catch(console.error);
-      } else {
-        pendingStatusMessage = await channel.send({
-          embeds: [{
-            title: 'Bot Status',
-            description: `⏸️ Pausing until resume... Requested by ${lastCommandUser}`,
-            color: 16776960
-          }]
-        });
       }
       shouldReconnect = false;
       bot.quit('Pause until resume');
@@ -2177,7 +2147,6 @@ Add candidates online: **${onlineCount}**`,
       }
       console.log(`[Command] resume by ${message.author.tag} via Discord`);
       lastCommandUser = message.author.tag;
-      const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
       if (statusMessage) {
         statusMessage.edit({
           embeds: [{
@@ -2188,14 +2157,6 @@ Add candidates online: **${onlineCount}**`,
           }],
           components: createStatusButtons()
         }).catch(console.error);
-      } else {
-        pendingStatusMessage = await channel.send({
-          embeds: [{
-            title: 'Bot Status',
-            description: `▶️ Resuming... Requested by ${lastCommandUser}`,
-            color: 65280
-          }]
-        });
       }
       shouldReconnect = true;
       createBot();
