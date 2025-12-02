@@ -588,53 +588,53 @@ function createStatusButtons() {
   const isOnline = bot && bot.entity;
   
   return [
-    new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId('pause_button')
-          .setLabel('⏸️ Pause')
-          .setStyle(ButtonStyle.Danger)
-          .setDisabled(isPaused || !isOnline),
-        new ButtonBuilder()
-          .setCustomId('resume_button')
-          .setLabel('▶️ Resume')
-          .setStyle(ButtonStyle.Success)
-          .setDisabled(!isPaused),
-        new ButtonBuilder()
-          .setCustomId('say_button')
-          .setLabel('💬 Say')
-          .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-          .setCustomId('playerlist_button')
-          .setLabel('👥 Players')
-          .setStyle(ButtonStyle.Secondary)
-      ),
-            new ButtonBuilder()
-              .setCustomId('drop_button')
-              .setLabel('🗑️ Drop')
-              .setStyle(ButtonStyle.Secondary),
-    new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId('wn_button')
-          .setLabel('👀 Nearby')
-          .setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder()
-          .setCustomId('chat_setting_button')
-          .setLabel('⚙️ Chat Settings')
-          .setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder()
-          .setCustomId('whitelist_button')
-          .setLabel('📋 Whitelist')
-          .setStyle(ButtonStyle.Secondary)
-      ),
-    new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId('killaura_button')
-          .setLabel(killAuraModule && killAuraModule.enabled ? '⚔️ KillAura (ON)' : '⚔️ KillAura')
-          .setStyle(killAuraModule && killAuraModule.enabled ? ButtonStyle.Success : ButtonStyle.Secondary)
-      )
+    // Row 1
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('pause_button')
+        .setLabel('⏸️ Pause')
+        .setStyle(ButtonStyle.Danger)
+        .setDisabled(isPaused || !isOnline),
+      new ButtonBuilder()
+        .setCustomId('resume_button')
+        .setLabel('▶️ Resume')
+        .setStyle(ButtonStyle.Success)
+        .setDisabled(!isPaused),
+      new ButtonBuilder()
+        .setCustomId('say_button')
+        .setLabel('💬 Say')
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId('playerlist_button')
+        .setLabel('👥 Players')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId('drop_button')
+        .setLabel('🗑️ Drop')
+        .setStyle(ButtonStyle.Secondary)
+    ),
+    // Row 2
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('wn_button')
+        .setLabel('👀 Nearby')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId('chat_setting_button')
+        .setLabel('⚙️ Chat Settings')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId('whitelist_button')
+        .setLabel('📋 Whitelist')
+        .setStyle(ButtonStyle.Secondary)
+    ),
+    // Row 3
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('killaura_button')
+        .setLabel(killAuraModule && killAuraModule.enabled ? '⚔️ KillAura (ON)' : '⚔️ KillAura')
+        .setStyle(killAuraModule && killAuraModule.enabled ? ButtonStyle.Success : ButtonStyle.Secondary)
+    )
   ];
 }
 
@@ -1153,7 +1153,10 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           } catch (err) {
             console.error('[Pause] Error quitting bot:', err.message);
           }
-              } else if (interaction.customId === 'resume_button') {
+        }
+          // Ephemeral confirmation
+          try { await interaction.followUp({ content: '⏸️ Paused.', ephemeral: true }); } catch {}
+      } else if (interaction.customId === 'resume_button') {
                 await interaction.deferUpdate();
                 lastCommandUser = interaction.user.tag;
                 console.log(`[Button] resume by ${interaction.user.tag}`);
@@ -1165,6 +1168,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
                 setTimeout(async () => {
                   if (statusMessage) await updateStatusMessage();
                 }, 1000);
+          // Ephemeral confirmation
+          try { await interaction.followUp({ content: '▶️ Resuming...', ephemeral: true }); } catch {}
         }
       } else if (interaction.customId === 'say_button') {
         const modal = new ModalBuilder()
