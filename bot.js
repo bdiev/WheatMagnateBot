@@ -206,6 +206,59 @@ async function loadIgnoredChatUsernames() {
 
 let ignoredChatUsernames = IGNORED_CHAT_USERNAMES; // Fallback
 
+// Track player online status
+async function updatePlayerActivity(username, isOnline) {
+  if (!pool) return;
+  
+  try {
+    const timestamp = new Date();
+    if (isOnline) {
+      // Player joined - set as online
+      await pool.query(`
+        INSERT INTO player_activity (username, last_seen, last_online, is_online)
+        VALUES ($1, $2, $2, TRUE)
+        ON CONFLICT (username)
+        DO UPDATE SET last_seen = $2, last_online = $2, is_online = TRUE
+      `, [username, timestamp]);
+      console.log(`[Activity] ${username} is now online`);
+    } else {
+      // Player left - set as offline with last_seen timestamp
+      await pool.query(`
+        INSERT INTO player_activity (username, last_seen, is_online)
+        VALUES ($1, $2, FALSE)
+        ON CONFLICT (username)
+        DO UPDATE SET last_seen = $2, is_online = FALSE
+      `, [username, timestamp]);
+      console.log(`[Activity] ${username} is now offline (last seen: ${timestamp.toISOString()})`);
+    }
+  } catch (err) {
+    console.error(`[Activity] Failed to update ${username}:`, err.message);
+  }
+}
+
+// Get last seen information for whitelist players
+async function getWhitelistActivity() {
+  if (!pool) {
+    return { error: 'Database not configured' };
+  }
+  
+  try {
+    const result = await pool.query(`
+      SELECT w.username, pa.last_seen, pa.last_online, pa.is_online
+      FROM whitelist w
+      LEFT JOIN player_activity pa ON LOWER(w.username) = LOWER(pa.username)
+      ORDER BY pa.is_online DESC, pa.last_seen DESC
+    `);
+    
+    return { players: result.rows };
+  } catch (err) {
+    console.error('[Activity] Failed to get whitelist activity:', err.message);
+    return { error: err.message };
+  }
+}
+
+let ignoredChatUsernames = IGNORED_CHAT_USERNAMES; // Fallback
+
 // Initialize DB table and load ignored users
 async function initDatabase() {
   if (!pool) {
@@ -229,6 +282,15 @@ async function initDatabase() {
         username VARCHAR(255) UNIQUE NOT NULL,
         added_by VARCHAR(255),
         added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS player_activity (
+        id SERIAL PRIMARY KEY,
+        username VARCHAR(255) UNIQUE NOT NULL,
+        last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_online TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        is_online BOOLEAN DEFAULT FALSE
       )
     `);
     console.log('[DB] ✅ Tables initialized successfully.');
@@ -605,6 +667,10 @@ function createStatusButtons() {
         new ButtonBuilder()
           .setCustomId('whitelist_button')
           .setLabel('📋 Whitelist')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('seen_button')
+          .setLabel('🕒 Seen')
           .setStyle(ButtonStyle.Secondary)
       )
   ];
@@ -661,6 +727,17 @@ function createBot() {
     clearIntervals();
     startFoodMonitor();
     startNearbyPlayerScanner();
+
+    // Update player activity for all online players
+    if (bot && bot.players) {
+      setTimeout(async () => {
+        for (const player of Object.values(bot.players)) {
+          if (player.username && ignoredUsernames.some(name => name.toLowerCase() === player.username.toLowerCase())) {
+            await updatePlayerActivity(player.username, true);
+          }
+        }
+      }, 3000);
+    }
 
     // Start TPS from TAB monitor
     tpsTabInterval = setInterval(() => {
@@ -792,6 +869,21 @@ function createBot() {
   bot.on('death', () => {
     console.log('[Bot] Died.');
     sendDiscordNotification('Bot died. :skull:', 16711680);
+  });
+
+  // Track player joins and leaves
+  bot.on('playerJoined', async (player) => {
+    if (player.username && ignoredUsernames.some(name => name.toLowerCase() === player.username.toLowerCase())) {
+      await updatePlayerActivity(player.username, true);
+      console.log(`[PlayerJoined] ${player.username} joined the server`);
+    }
+  });
+
+  bot.on('playerLeft', async (player) => {
+    if (player.username && ignoredUsernames.some(name => name.toLowerCase() === player.username.toLowerCase())) {
+      await updatePlayerActivity(player.username, false);
+      console.log(`[PlayerLeft] ${player.username} left the server`);
+    }
   });
 
   // ------- CHAT COMMANDS -------
@@ -1364,6 +1456,80 @@ Add candidates online: **${onlineCount}**`,
             timestamp: new Date()
           }],
           components
+        });
+      } else if (interaction.customId === 'seen_button') {
+        await interaction.deferReply();
+        
+        const activityData = await getWhitelistActivity();
+        
+        if (activityData.error) {
+          await interaction.editReply({
+            embeds: [{
+              title: '🕒 Player Activity',
+              description: `❌ Error: ${activityData.error}`,
+              color: 16711680,
+              timestamp: new Date()
+            }]
+          });
+          return;
+        }
+        
+        if (!activityData.players || activityData.players.length === 0) {
+          await interaction.editReply({
+            embeds: [{
+              title: '🕒 Player Activity',
+              description: 'No whitelist players found.',
+              color: 3447003,
+              timestamp: new Date()
+            }]
+          });
+          return;
+        }
+        
+        // Format the player activity information
+        const formatTimeDiff = (timestamp) => {
+          if (!timestamp) return 'Never seen';
+          const now = new Date();
+          const lastSeen = new Date(timestamp);
+          const diffMs = now - lastSeen;
+          const diffMins = Math.floor(diffMs / 60000);
+          const diffHours = Math.floor(diffMins / 60);
+          const diffDays = Math.floor(diffHours / 24);
+          
+          if (diffMins < 1) return 'Just now';
+          if (diffMins < 60) return `${diffMins}m ago`;
+          if (diffHours < 24) return `${diffHours}h ${diffMins % 60}m ago`;
+          return `${diffDays}d ${diffHours % 24}h ago`;
+        };
+        
+        const onlinePlayers = [];
+        const offlinePlayers = [];
+        
+        for (const player of activityData.players) {
+          const timeStr = formatTimeDiff(player.last_seen);
+          const entry = `**${player.username}** - ${timeStr}`;
+          
+          if (player.is_online) {
+            onlinePlayers.push(`🟢 ${entry}`);
+          } else if (player.last_seen) {
+            offlinePlayers.push(`⚪ ${entry}`);
+          } else {
+            offlinePlayers.push(`⚪ **${player.username}** - Never seen`);
+          }
+        }
+        
+        const description = [
+          onlinePlayers.length > 0 ? '**Online:**\n' + onlinePlayers.join('\n') : '',
+          offlinePlayers.length > 0 ? '\n**Offline:**\n' + offlinePlayers.join('\n') : ''
+        ].filter(s => s).join('\n') || 'No activity data available.';
+        
+        await interaction.editReply({
+          embeds: [{
+            title: `🕒 Whitelist Activity (${activityData.players.length} players)`,
+            description,
+            color: 3447003,
+            timestamp: new Date()
+          }]
         });
       } else if (interaction.customId.startsWith('reply_')) {
         const parts = interaction.customId.split('_');
