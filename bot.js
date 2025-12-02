@@ -571,7 +571,7 @@ function getStatusDescription() {
 // Function to create status buttons
 function createStatusButtons() {
   // Determine if bot is paused: shouldReconnect=false means paused
-  const isPaused = !shouldReconnect || !bot;
+  const isPaused = !shouldReconnect;
   return [
     new ActionRowBuilder()
       .addComponents(
