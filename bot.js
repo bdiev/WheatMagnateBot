@@ -3,6 +3,7 @@ const mineflayer = require('mineflayer');
 const fs = require('fs');
 const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } = require('discord.js');
 const { Pool } = require('pg');
+const KillAura = require('./modules/killaura');
 
 // Base64 utils for Node.js (btoa/atob polyfill)
 const b64encode = (str) => Buffer.from(String(str), 'utf8').toString('base64');
@@ -64,6 +65,9 @@ const excludedMessageIds = [];
 const pendingAuthLinks = [];
 const sentAuthCodes = new Set();
 const authMessageIds = new Set();
+
+// Modules
+let killAuraModule = null;
 
 function saveStatusMessageId(id) {
   try {
@@ -559,13 +563,22 @@ function getStatusDescription() {
 
   const nearbyNames = nearbyPlayers.map(p => p.username).join(', ') || 'None';
   const whitelistOnlineDisplay = whitelistOnline.length > 0 ? whitelistOnline.map(u => `\`${u}\``).join(', ') : 'None';
+  
+  // Active modules status
+  const activeModules = [];
+  if (killAuraModule && killAuraModule.enabled) {
+    activeModules.push(`KillAura: ${killAuraModule.getStatusString()}`);
+  }
+  const modulesStatus = activeModules.length > 0 ? `\n🔧 **Modules**: ${activeModules.join(' | ')}` : '';
+  
   return `✅ Bot **${bot.username}** connected to \`${config.host}\`\n` +
     `👥 Players online: ${playerCount}\n` +
     `👀 Players nearby: ${nearbyNames}\n` +
     `⚡ TPS: ${avgTps}\n` +
     `:hamburger: Food: ${Math.round(bot.food * 2) / 2}/20\n` +
     `❤️ Health: ${Math.round(bot.health * 2) / 2}/20\n` +
-    `📋 Whitelist online: ${whitelistOnlineDisplay}`;
+    `📋 Whitelist online: ${whitelistOnlineDisplay}` +
+    modulesStatus;
 }
 
 // Function to create status buttons
@@ -605,7 +618,11 @@ function createStatusButtons() {
         new ButtonBuilder()
           .setCustomId('whitelist_button')
           .setLabel('📋 Whitelist')
-          .setStyle(ButtonStyle.Secondary)
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('killaura_button')
+          .setLabel(killAuraModule && killAuraModule.enabled ? '⚔️ KillAura (ON)' : '⚔️ KillAura')
+          .setStyle(killAuraModule && killAuraModule.enabled ? ButtonStyle.Success : ButtonStyle.Secondary)
       )
   ];
 }
@@ -646,6 +663,9 @@ function createBot() {
 
   lastTickTime = 0; // Reset TPS tracking for new bot
   bot = mineflayer.createBot(config);
+  
+  // Initialize modules
+  killAuraModule = new KillAura(bot);
 
   bot.on('login', async () => {
     if (bot && bot.username) {
@@ -982,6 +1002,10 @@ function clearIntervals() {
     clearInterval(tpsTabInterval);
     tpsTabInterval = null;
   }
+  // Disable modules
+  if (killAuraModule && killAuraModule.enabled) {
+    killAuraModule.disable();
+  }
 }
 
 // -------------- FOOD MONITOR --------------
@@ -1163,6 +1187,67 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           }],
           components: options.length > 0 ? [row] : []
         });
+      } else if (interaction.customId === 'killaura_button') {
+        await interaction.deferReply();
+        if (!bot) {
+          await interaction.editReply({
+            embeds: [{
+              description: 'Bot is offline.',
+              color: 16711680,
+              timestamp: new Date()
+            }]
+          });
+          return;
+        }
+
+        if (killAuraModule && killAuraModule.enabled) {
+          // Already enabled, disable it
+          killAuraModule.disable();
+          await interaction.editReply({
+            embeds: [{
+              title: '⚔️ KillAura Module',
+              description: '❌ KillAura disabled',
+              color: 16711680,
+              timestamp: new Date()
+            }]
+          });
+          if (statusMessage) await updateStatusMessage();
+        } else {
+          // Show target selection menu
+          const targetMenu = new StringSelectMenuBuilder()
+            .setCustomId('killaura_targets')
+            .setPlaceholder('Select targets to attack')
+            .setMinValues(1)
+            .setMaxValues(3)
+            .addOptions(
+              new StringSelectMenuOptionBuilder()
+                .setLabel('Hostile Mobs')
+                .setDescription('Zombies, Skeletons, Creepers, etc.')
+                .setValue('hostile')
+                .setEmoji('💀'),
+              new StringSelectMenuOptionBuilder()
+                .setLabel('Passive Mobs')
+                .setDescription('Cows, Pigs, Sheep, etc.')
+                .setValue('passive')
+                .setEmoji('🐄'),
+              new StringSelectMenuOptionBuilder()
+                .setLabel('Players')
+                .setDescription('Attack other players')
+                .setValue('players')
+                .setEmoji('👤')
+            );
+
+          const row = new ActionRowBuilder().addComponents(targetMenu);
+          await interaction.editReply({
+            embeds: [{
+              title: '⚔️ KillAura Module',
+              description: 'Select which entities to attack:',
+              color: 3447003,
+              timestamp: new Date()
+            }],
+            components: [row]
+          });
+        }
       } else if (interaction.customId === 'whitelist_button') {
         // Show two dropdowns: Add (online players not in whitelist) and Delete (whitelisted players)
         await interaction.deferReply();
@@ -1605,6 +1690,41 @@ Add candidates online: **${onlineCount}**`,
             console.error('[Discord] Failed to create conversation:', e.message);
           }
         }
+      }
+    } else if (interaction.isStringSelectMenu() && interaction.customId === 'killaura_targets') {
+      await interaction.deferUpdate();
+      const selectedTargets = interaction.values;
+      
+      const targets = {
+        hostile: selectedTargets.includes('hostile'),
+        passive: selectedTargets.includes('passive'),
+        players: selectedTargets.includes('players')
+      };
+      
+      if (killAuraModule) {
+        killAuraModule.enable(targets);
+        
+        const targetsList = [];
+        if (targets.hostile) targetsList.push('💀 Hostile Mobs');
+        if (targets.passive) targetsList.push('🐄 Passive Mobs');
+        if (targets.players) targetsList.push('👤 Players');
+        
+        await interaction.editReply({
+          embeds: [{
+            title: '⚔️ KillAura Module',
+            description: `✅ KillAura enabled!\n\n**Targets:**\n${targetsList.join('\n')}`,
+            color: 65280,
+            timestamp: new Date()
+          }],
+          components: []
+        });
+        
+        if (statusMessage) await updateStatusMessage();
+        
+        // Delete the message after 3 seconds
+        setTimeout(() => {
+          interaction.message?.delete().catch(() => {});
+        }, 3000);
       }
     } else if (interaction.isStringSelectMenu() && interaction.customId === 'message_select') {
       const encodedUsername = interaction.values[0];
