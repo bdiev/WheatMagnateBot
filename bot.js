@@ -330,6 +330,12 @@ if (DISCORD_BOT_TOKEN) {
 
     console.log('[Discord] Bot is ready and waiting for interactions...');
 
+    // Start global status update interval (updates every 3 seconds)
+    if (!statusUpdateInterval) {
+      statusUpdateInterval = setInterval(updateStatusMessage, 3000);
+      console.log('[Discord] Status update interval started');
+    }
+
     // Flush any pending auth links captured before client was ready
     if (pendingAuthLinks.length > 0) {
       const links = pendingAuthLinks.splice(0);
@@ -527,7 +533,10 @@ async function sendWhisperToDiscord(username, message) {
 
 // Function to get server status description
 function getStatusDescription() {
-  if (!bot) return 'Bot not connected';
+  if (!bot || !bot.entity) {
+    const pausedText = shouldReconnect ? '❌ Bot not connected' : '⏸️ Bot paused';
+    return pausedText;
+  }
 
   const playerCount = Object.keys(bot.players || {}).length;
   const onlinePlayers = Object.values(bot.players || {}).map(p => p.username);
@@ -590,8 +599,9 @@ function createStatusButtons() {
 
 // Function to update server status message
 async function updateStatusMessage() {
-  if (!statusMessage || !bot || !bot.entity) return;
-
+  if (!statusMessage) return;
+  
+  // Allow status updates even if bot is not connected to show offline state
   const description = getStatusDescription();
 
   try {
@@ -599,13 +609,19 @@ async function updateStatusMessage() {
       embeds: [{
         title: 'Server Status',
         description,
-        color: 65280,
+        color: bot ? 65280 : 16711680,
         timestamp: new Date()
       }],
       components: createStatusButtons()
     });
   } catch (e) {
     console.error('[Discord] Failed to update status:', e.message);
+    // If message was deleted, try to recreate it
+    if (e.code === 10008 || e.message.includes('Unknown Message')) {
+      console.log('[Discord] Status message was deleted, recreating...');
+      statusMessage = null;
+      await ensureStatusMessage();
+    }
   }
 }
 
@@ -660,20 +676,9 @@ function createBot() {
         await ensureStatusMessage();
         if (statusMessage) {
           try {
-            await statusMessage.edit({
-              embeds: [{
-                title: 'Server Status',
-                description: getStatusDescription(),
-                color: 65280,
-                timestamp: new Date()
-              }],
-              components: createStatusButtons()
-            });
+            await updateStatusMessage();
           } catch (e) {
             console.error('[Discord] Failed to refresh status message after spawn:', e.message);
-          }
-          if (!statusUpdateInterval) {
-            statusUpdateInterval = setInterval(updateStatusMessage, 3000);
           }
         }
       }, 2000);
@@ -698,11 +703,8 @@ function createBot() {
     const reasonStr = chatComponentToString(reason);
     clearIntervals();
 
-    // Clear status update interval
-    if (statusUpdateInterval) {
-      clearInterval(statusUpdateInterval);
-      statusUpdateInterval = null;
-    }
+    // Don't clear the global status update interval - let it continue
+    // so status updates even when disconnected
 
     if (shouldReconnect || reasonStr === 'socketClosed') {
     // Mark bot reference null so status buttons show Resume state until reconnect
