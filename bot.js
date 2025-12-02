@@ -3,7 +3,6 @@ const mineflayer = require('mineflayer');
 const fs = require('fs');
 const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } = require('discord.js');
 const { Pool } = require('pg');
-const KillAura = require('./modules/killaura');
 
 // Base64 utils for Node.js (btoa/atob polyfill)
 const b64encode = (str) => Buffer.from(String(str), 'utf8').toString('base64');
@@ -65,9 +64,6 @@ const excludedMessageIds = [];
 const pendingAuthLinks = [];
 const sentAuthCodes = new Set();
 const authMessageIds = new Set();
-
-// Modules
-let killAuraModule = null;
 
 function saveStatusMessageId(id) {
   try {
@@ -563,43 +559,26 @@ function getStatusDescription() {
 
   const nearbyNames = nearbyPlayers.map(p => p.username).join(', ') || 'None';
   const whitelistOnlineDisplay = whitelistOnline.length > 0 ? whitelistOnline.map(u => `\`${u}\``).join(', ') : 'None';
-  
-  // Active modules status
-  const activeModules = [];
-  if (killAuraModule && killAuraModule.enabled) {
-    activeModules.push(`KillAura: ${killAuraModule.getStatusString()}`);
-  }
-  const modulesStatus = activeModules.length > 0 ? `\n🔧 **Modules**: ${activeModules.join(' | ')}` : '';
-  
   return `✅ Bot **${bot.username}** connected to \`${config.host}\`\n` +
     `👥 Players online: ${playerCount}\n` +
     `👀 Players nearby: ${nearbyNames}\n` +
     `⚡ TPS: ${avgTps}\n` +
     `:hamburger: Food: ${Math.round(bot.food * 2) / 2}/20\n` +
     `❤️ Health: ${Math.round(bot.health * 2) / 2}/20\n` +
-    `📋 Whitelist online: ${whitelistOnlineDisplay}` +
-    modulesStatus;
+    `📋 Whitelist online: ${whitelistOnlineDisplay}`;
 }
 
 // Function to create status buttons
 function createStatusButtons() {
   // Determine if bot is paused: shouldReconnect=false means paused
   const isPaused = !shouldReconnect;
-  const isOnline = bot && bot.entity;
-  
   return [
     new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
-          .setCustomId('pause_button')
-          .setLabel('⏸️ Pause')
-          .setStyle(ButtonStyle.Danger)
-          .setDisabled(isPaused || !isOnline),
-        new ButtonBuilder()
-          .setCustomId('resume_button')
-          .setLabel('▶️ Resume')
-          .setStyle(ButtonStyle.Success)
-          .setDisabled(!isPaused),
+          .setCustomId('pause_resume_button')
+          .setLabel(isPaused ? '▶️ Resume' : '⏸️ Pause')
+          .setStyle(isPaused ? ButtonStyle.Success : ButtonStyle.Danger),
         new ButtonBuilder()
           .setCustomId('say_button')
           .setLabel('💬 Say')
@@ -607,12 +586,12 @@ function createStatusButtons() {
         new ButtonBuilder()
           .setCustomId('playerlist_button')
           .setLabel('👥 Players')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('drop_button')
+          .setLabel('🗑️ Drop')
           .setStyle(ButtonStyle.Secondary)
       ),
-            new ButtonBuilder()
-              .setCustomId('drop_button')
-              .setLabel('🗑️ Drop')
-              .setStyle(ButtonStyle.Secondary),
     new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
@@ -627,13 +606,6 @@ function createStatusButtons() {
           .setCustomId('whitelist_button')
           .setLabel('📋 Whitelist')
           .setStyle(ButtonStyle.Secondary)
-      ),
-    new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId('killaura_button')
-          .setLabel(killAuraModule && killAuraModule.enabled ? '⚔️ KillAura (ON)' : '⚔️ KillAura')
-          .setStyle(killAuraModule && killAuraModule.enabled ? ButtonStyle.Success : ButtonStyle.Secondary)
       )
   ];
 }
@@ -674,14 +646,6 @@ function createBot() {
 
   lastTickTime = 0; // Reset TPS tracking for new bot
   bot = mineflayer.createBot(config);
-  
-  // Initialize modules
-  killAuraModule = new KillAura(bot, (msg) => {
-    // Relay module notifications to Discord status channel
-    try { sendDiscordNotification(msg, 16776960); } catch {}
-    // Also refresh status to reflect module change
-    if (statusMessage) updateStatusMessage();
-  });
 
   bot.on('login', async () => {
     if (bot && bot.username) {
@@ -694,7 +658,6 @@ function createBot() {
   bot.on('spawn', () => {
     console.log('[Bot] Spawned.');
     reconnectTimestamp = 0; // Reset reconnect countdown when bot spawns
-      if (statusMessage) updateStatusMessage(); // Update immediately after spawn
     clearIntervals();
     startFoodMonitor();
     startNearbyPlayerScanner();
@@ -762,37 +725,34 @@ function createBot() {
     // Don't clear the global status update interval - let it continue
     // so status updates even when disconnected
 
-    // Don't reconnect if manually paused (shouldReconnect = false)
-    if (!shouldReconnect) {
+    if (shouldReconnect || reasonStr === 'socketClosed') {
+      const now = new Date();
+      const kyivTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Kyiv' }));
+      const hour = kyivTime.getHours();
+      const minute = kyivTime.getMinutes();
+      const isRestartTime = hour === 9 && minute >= 0 && minute <= 30;
+      const timeout = isRestartTime ? 5 * 60 * 1000 : reconnectTimeout;
+
+      // Set reconnect timestamp for countdown
+      reconnectTimestamp = Date.now() + timeout;
+
+      if (isRestartTime) {
+        console.log('[!] Restart window. Reconnecting in 5 minutes...');
+        // No Discord notification - status message will show countdown
+      } else if (reasonStr !== 'Restart command') {
+        console.log('[!] Disconnected. Reconnecting in 15 seconds...');
+        // No Discord notification - status message will show countdown
+      }
+      
+      setTimeout(() => {
+        reconnectTimestamp = 0;
+        createBot();
+      }, timeout);
+    } else {
       console.log('[!] Manual pause. No reconnect.');
       reconnectTimestamp = 0;
-      if (statusMessage) updateStatusMessage();
-      return;
+      // Status will be updated by interval
     }
-
-    // Reconnect logic for normal disconnects
-    const now = new Date();
-    const kyivTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Kyiv' }));
-    const hour = kyivTime.getHours();
-    const minute = kyivTime.getMinutes();
-    const isRestartTime = hour === 9 && minute >= 0 && minute <= 30;
-    const timeout = isRestartTime ? 5 * 60 * 1000 : reconnectTimeout;
-
-    // Set reconnect timestamp for countdown
-    reconnectTimestamp = Date.now() + timeout;
-
-    if (isRestartTime) {
-      console.log('[!] Restart window. Reconnecting in 5 minutes...');
-      // No Discord notification - status message will show countdown
-    } else if (reasonStr !== 'Restart command') {
-      console.log('[!] Disconnected. Reconnecting in 15 seconds...');
-      // No Discord notification - status message will show countdown
-    }
-    
-    setTimeout(() => {
-      reconnectTimestamp = 0;
-      createBot();
-    }, timeout);
   });
 
   bot.on('error', (err) => {
@@ -841,14 +801,14 @@ function createBot() {
     if (message === '!restart') {
       console.log(`[Command] restart by ${username}`);
       lastCommandUser = `${username} (in-game)`;
-      if (bot) bot.quit('Restart command');
+      bot.quit('Restart command');
     }
 
     if (message === '!pause') {
       console.log('[Command] pause 10m');
       lastCommandUser = `${username} (in-game)`;
       shouldReconnect = false;
-      if (bot) bot.quit('Pause 10m');
+      bot.quit('Pause 10m');
       setTimeout(() => {
         console.log('[Bot] Pause ended.');
         shouldReconnect = true;
@@ -863,7 +823,7 @@ function createBot() {
         console.log(`[Command] pause ${minutes}m`);
         lastCommandUser = `${username} (in-game)`;
         shouldReconnect = false;
-        if (bot) bot.quit(`Paused ${minutes}m`);
+        bot.quit(`Paused ${minutes}m`);
         setTimeout(() => {
           console.log('[Bot] Custom pause ended.');
           shouldReconnect = true;
@@ -960,7 +920,7 @@ function createBot() {
   // Send all chat messages to Discord chat channel
   bot.on('chat', async (username, message) => {
     if (!DISCORD_CHAT_CHANNEL_ID || !discordClient || !discordClient.isReady()) return;
-    if (!bot || !bot.username || username === bot.username) return; // Don't send own messages
+    if (username === bot.username) return; // Don't send own messages
     if (ignoredChatUsernames.includes(username.toLowerCase())) return; // Ignore specified users
 
     // Normalize special relay format: "> target: data" so author stays original sender
@@ -1021,10 +981,6 @@ function clearIntervals() {
   if (tpsTabInterval) {
     clearInterval(tpsTabInterval);
     tpsTabInterval = null;
-  }
-  // Disable modules
-  if (killAuraModule && killAuraModule.enabled) {
-    killAuraModule.disable();
   }
 }
 
@@ -1130,41 +1086,23 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
 
     if (interaction.isButton()) {
-      if (interaction.customId === 'pause_button') {
-        await interaction.deferUpdate();
+      if (interaction.customId === 'pause_resume_button') {
+        await interaction.deferUpdate(); // Defer update to avoid timeout
         lastCommandUser = interaction.user.tag;
-        console.log(`[Button] pause by ${interaction.user.tag}`);
-        
-        // Immediately disable reconnect and clear intervals
-        shouldReconnect = false;
-        clearIntervals();
-        
-        // Save bot reference and set to null
-        const botToQuit = bot;
-        bot = null;
-        
-        // Update status immediately
-        if (statusMessage) await updateStatusMessage();
-        
-        // Quit the bot
-        if (botToQuit) {
-          try {
-            botToQuit.quit('Paused by user');
-          } catch (err) {
-            console.error('[Pause] Error quitting bot:', err.message);
-          }
-              } else if (interaction.customId === 'resume_button') {
-                await interaction.deferUpdate();
-                lastCommandUser = interaction.user.tag;
-                console.log(`[Button] resume by ${interaction.user.tag}`);
-        
-                shouldReconnect = true;
-                createBot();
-        
-                // Update status after a short delay to show connecting state
-                setTimeout(async () => {
-                  if (statusMessage) await updateStatusMessage();
-                }, 1000);
+        if (shouldReconnect && bot) {
+          // Currently running, pause it
+          console.log(`[Button] pause by ${interaction.user.tag}`);
+          const botToQuit = bot; // Save reference before setting to null
+          shouldReconnect = false;
+          bot = null; // Set to null immediately for status display
+          await updateStatusMessage(); // Update status before quit
+          if (botToQuit) botToQuit.quit('Pause until resume');
+        } else {
+          // Currently paused, resume it
+          console.log(`[Button] resume by ${interaction.user.tag}`);
+          shouldReconnect = true;
+          createBot();
+          // Status will be updated automatically when bot spawns
         }
       } else if (interaction.customId === 'say_button') {
         const modal = new ModalBuilder()
@@ -1225,67 +1163,6 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           }],
           components: options.length > 0 ? [row] : []
         });
-      } else if (interaction.customId === 'killaura_button') {
-        await interaction.deferReply();
-        if (!bot) {
-          await interaction.editReply({
-            embeds: [{
-              description: 'Bot is offline.',
-              color: 16711680,
-              timestamp: new Date()
-            }]
-          });
-          return;
-        }
-
-        if (killAuraModule && killAuraModule.enabled) {
-          // Already enabled, disable it
-          killAuraModule.disable();
-          await interaction.editReply({
-            embeds: [{
-              title: '⚔️ KillAura Module',
-              description: '❌ KillAura disabled',
-              color: 16711680,
-              timestamp: new Date()
-            }]
-          });
-          if (statusMessage) await updateStatusMessage();
-        } else {
-          // Show target selection menu
-          const targetMenu = new StringSelectMenuBuilder()
-            .setCustomId('killaura_targets')
-            .setPlaceholder('Select targets to attack')
-            .setMinValues(1)
-            .setMaxValues(3)
-            .addOptions(
-              new StringSelectMenuOptionBuilder()
-                .setLabel('Hostile Mobs')
-                .setDescription('Zombies, Skeletons, Creepers, etc.')
-                .setValue('hostile')
-                .setEmoji('💀'),
-              new StringSelectMenuOptionBuilder()
-                .setLabel('Passive Mobs')
-                .setDescription('Cows, Pigs, Sheep, etc.')
-                .setValue('passive')
-                .setEmoji('🐄'),
-              new StringSelectMenuOptionBuilder()
-                .setLabel('Players')
-                .setDescription('Attack other players')
-                .setValue('players')
-                .setEmoji('👤')
-            );
-
-          const row = new ActionRowBuilder().addComponents(targetMenu);
-          await interaction.editReply({
-            embeds: [{
-              title: '⚔️ KillAura Module',
-              description: 'Select which entities to attack:',
-              color: 3447003,
-              timestamp: new Date()
-            }],
-            components: [row]
-          });
-        }
       } else if (interaction.customId === 'whitelist_button') {
         // Show two dropdowns: Add (online players not in whitelist) and Delete (whitelisted players)
         await interaction.deferReply();
@@ -1728,41 +1605,6 @@ Add candidates online: **${onlineCount}**`,
             console.error('[Discord] Failed to create conversation:', e.message);
           }
         }
-      }
-    } else if (interaction.isStringSelectMenu() && interaction.customId === 'killaura_targets') {
-      await interaction.deferUpdate();
-      const selectedTargets = interaction.values;
-      
-      const targets = {
-        hostile: selectedTargets.includes('hostile'),
-        passive: selectedTargets.includes('passive'),
-        players: selectedTargets.includes('players')
-      };
-      
-      if (killAuraModule) {
-        killAuraModule.enable(targets);
-        
-        const targetsList = [];
-        if (targets.hostile) targetsList.push('💀 Hostile Mobs');
-        if (targets.passive) targetsList.push('🐄 Passive Mobs');
-        if (targets.players) targetsList.push('👤 Players');
-        
-        await interaction.editReply({
-          embeds: [{
-            title: '⚔️ KillAura Module',
-            description: `✅ KillAura enabled!\n\n**Targets:**\n${targetsList.join('\n')}`,
-            color: 65280,
-            timestamp: new Date()
-          }],
-          components: []
-        });
-        
-        if (statusMessage) await updateStatusMessage();
-        
-        // Delete the message after 3 seconds
-        setTimeout(() => {
-          interaction.message?.delete().catch(() => {});
-        }, 3000);
       }
     } else if (interaction.isStringSelectMenu() && interaction.customId === 'message_select') {
       const encodedUsername = interaction.values[0];
