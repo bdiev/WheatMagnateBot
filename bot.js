@@ -247,7 +247,7 @@ async function getWhitelistActivity() {
       SELECT w.username, pa.last_seen, pa.last_online, pa.is_online
       FROM whitelist w
       LEFT JOIN player_activity pa ON LOWER(w.username) = LOWER(pa.username)
-      ORDER BY pa.is_online DESC, pa.last_seen DESC
+      ORDER BY pa.is_online DESC, LOWER(w.username) ASC
     `);
     
     return { players: result.rows };
