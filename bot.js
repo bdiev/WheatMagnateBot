@@ -80,6 +80,60 @@ function loadStatusMessageId() {
   }
 }
 
+// Ensure we reuse a single persistent Server Status message.
+async function ensureStatusMessage() {
+  if (!DISCORD_CHANNEL_ID || !discordClient || !discordClient.isReady()) return;
+  try {
+    const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+    if (!channel || !channel.isTextBased()) return;
+
+    // Try saved ID first
+    const savedId = loadStatusMessageId();
+    if (savedId && !statusMessage) {
+      try {
+        const existing = await channel.messages.fetch(savedId);
+        statusMessage = existing;
+        if (!excludedMessageIds.includes(statusMessage.id)) excludedMessageIds.push(statusMessage.id);
+        return;
+      } catch (e) {
+        // Saved ID invalid, continue to scan
+      }
+    }
+
+    // If still not set, scan recent messages for an embed titled 'Server Status'
+    if (!statusMessage) {
+      try {
+        const recent = await channel.messages.fetch({ limit: 50 });
+        const found = [...recent.values()].find(m => m.embeds[0]?.title === 'Server Status');
+        if (found) {
+          statusMessage = found;
+          saveStatusMessageId(found.id);
+          if (!excludedMessageIds.includes(found.id)) excludedMessageIds.push(found.id);
+        }
+      } catch {}
+    }
+
+    // If still not found, create a new one
+    if (!statusMessage) {
+      statusMessage = await channel.send({
+        embeds: [{
+          title: 'Server Status',
+          description: getStatusDescription(),
+          color: 65280,
+          timestamp: new Date()
+        }],
+        components: createStatusButtons()
+      });
+      saveStatusMessageId(statusMessage.id);
+      if (!excludedMessageIds.includes(statusMessage.id)) excludedMessageIds.push(statusMessage.id);
+      // Try to pin for persistence across file resets
+      try { await statusMessage.pin(); } catch {}
+    }
+  } catch (e) {
+    console.error('[Discord] ensureStatusMessage failed:', e.message);
+  }
+}
+
 const config = {
   host: 'oldfag.org',
   username: process.env.MINECRAFT_USERNAME || 'WheatMagnate',
@@ -598,69 +652,29 @@ function createBot() {
       }
     }, 10000); // Check every 10 seconds
 
-    // Send status message after spawn
+    // Reuse or create single persistent status message after spawn
     if (DISCORD_CHANNEL_ID && discordClient && discordClient.isReady()) {
       setTimeout(async () => {
-        try {
-          const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
-          if (channel && channel.isTextBased()) {
-            const savedId = loadStatusMessageId();
-            if (savedId && !statusMessage) {
-              try {
-                statusMessage = await channel.messages.fetch(savedId);
-                await statusMessage.edit({
-                  embeds: [{
-                    title: 'Server Status',
-                    description: getStatusDescription(),
-                    color: 65280,
-                    timestamp: new Date()
-                  }],
-                  components: createStatusButtons()
-                });
-              } catch (e) {
-                console.error('[Discord] Failed to fetch saved status message:', e.message);
-                statusMessage = await channel.send({
-                  embeds: [{
-                    title: 'Server Status',
-                    description: getStatusDescription(),
-                    color: 65280,
-                    timestamp: new Date()
-                  }],
-                  components: createStatusButtons()
-                });
-                saveStatusMessageId(statusMessage.id);
-              }
-            } else if (!statusMessage) {
-              statusMessage = await channel.send({
-                embeds: [{
-                  title: 'Server Status',
-                  description: getStatusDescription(),
-                  color: 65280,
-                  timestamp: new Date()
-                }],
-                components: createStatusButtons()
-              });
-              saveStatusMessageId(statusMessage.id);
-            } else {
-              await statusMessage.edit({
-                embeds: [{
-                  title: 'Server Status',
-                  description: getStatusDescription(),
-                  color: 65280,
-                  timestamp: new Date()
-                }],
-                components: createStatusButtons()
-              });
-            }
+        await ensureStatusMessage();
+        if (statusMessage) {
+          try {
+            await statusMessage.edit({
+              embeds: [{
+                title: 'Server Status',
+                description: getStatusDescription(),
+                color: 65280,
+                timestamp: new Date()
+              }],
+              components: createStatusButtons()
+            });
+          } catch (e) {
+            console.error('[Discord] Failed to refresh status message after spawn:', e.message);
           }
-        } catch (e) {
-          console.error('[Discord] Failed to send status:', e.message);
+          if (!statusUpdateInterval) {
+            statusUpdateInterval = setInterval(updateStatusMessage, 3000);
+          }
         }
-        // Ensure status update interval is running
-        if (statusMessage && !statusUpdateInterval) {
-          statusUpdateInterval = setInterval(updateStatusMessage, 3000);
-        }
-      }, 2000); // Additional 2 seconds after spawn
+      }, 2000);
     }
   });
 
