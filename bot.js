@@ -1374,6 +1374,9 @@ Add candidates online: **${onlineCount}**`,
         try {
           const message = await interaction.channel.messages.fetch(messageId);
           await message.delete();
+          // Keep exclusion list tidy if this message was protected
+          const idx = excludedMessageIds.indexOf(messageId);
+          if (idx !== -1) excludedMessageIds.splice(idx, 1);
           // Remove from conversations map
           for (const [username, msgId] of whisperConversations) {
             if (msgId === messageId) {
@@ -1386,6 +1389,42 @@ Add candidates online: **${onlineCount}**`,
           console.error('[Discord] Failed to delete message:', e.message);
           await interaction.reply({ content: 'Failed to delete message.', ephemeral: true });
         }
+        } else if (interaction.customId.startsWith('open_remove_')) {
+          // Provide link via ephemeral reply and delete the original message
+          await interaction.deferReply({ ephemeral: true });
+          const parts = interaction.customId.split('_');
+          const encodedUrl = parts[2];
+          const messageId = parts[3];
+          const url = b64decode(encodedUrl);
+          try {
+            // Delete original message
+            const message = await interaction.channel.messages.fetch(messageId);
+            await message.delete();
+            // Remove from exclusion list if present
+            const idx = excludedMessageIds.indexOf(messageId);
+            if (idx !== -1) excludedMessageIds.splice(idx, 1);
+          } catch (e) {
+            // If already deleted or not found, continue
+          }
+          // Send ephemeral with a link button
+          await interaction.editReply({
+            embeds: [{
+              title: 'Microsoft Login',
+              description: 'Link opened. Original message removed.',
+              color: 16776960,
+              timestamp: new Date()
+            }],
+            components: [
+              new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                  .setLabel('Open Link')
+                  .setStyle(ButtonStyle.Link)
+                  .setURL(url)
+              )
+            ]
+          });
+          // Optionally auto-remove ephemeral after short delay
+          setTimeout(() => interaction.deleteReply().catch(() => {}), 5000);
       }
     } else if (interaction.isModalSubmit() && interaction.customId === 'say_modal') {
       // FIX: ephemeral flags
@@ -2377,6 +2416,10 @@ async function sendAuthLinkToDiscord(url) {
               .setLabel('Open Link')
               .setStyle(ButtonStyle.Link)
               .setURL(url),
+            new ButtonBuilder()
+              .setCustomId(`open_remove_${b64encode(url)}_${sentMessage.id}`)
+              .setLabel('Open & Remove')
+              .setStyle(ButtonStyle.Primary),
             new ButtonBuilder()
               .setCustomId(`remove_${sentMessage.id}`)
               .setLabel('Remove')
