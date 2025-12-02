@@ -419,6 +419,9 @@ function chatComponentToString(component) {
 var bot;
 let reconnectTimeout = 15000;
 let shouldReconnect = true;
+let reconnectTimeRemaining = 0;
+let reconnectTimestamp = 0;
+let reconnectCountdownInterval = null;
 
 let foodMonitorInterval = null;
 let playerScannerInterval = null;
@@ -534,8 +537,18 @@ async function sendWhisperToDiscord(username, message) {
 // Function to get server status description
 function getStatusDescription() {
   if (!bot || !bot.entity) {
-    const pausedText = shouldReconnect ? '❌ Bot not connected' : '⏸️ Bot paused';
-    return pausedText;
+    if (!shouldReconnect) {
+      return '⏸️ Bot paused';
+    }
+    // Show countdown if reconnecting
+    if (reconnectTimestamp > 0) {
+      const remaining = Math.max(0, reconnectTimestamp - Date.now());
+      const minutes = Math.floor(remaining / 60000);
+      const seconds = Math.floor((remaining % 60000) / 1000);
+      const timeStr = minutes > 0 ? `${minutes}:${seconds.toString().padStart(2, '0')}` : `${seconds}s`;
+      return `🔄 Reconnecting in ${timeStr}`;
+    }
+    return '❌ Bot not connected';
   }
 
   const playerCount = Object.keys(bot.players || {}).length;
@@ -716,38 +729,24 @@ function createBot() {
       const isRestartTime = hour === 9 && minute >= 0 && minute <= 30;
       const timeout = isRestartTime ? 5 * 60 * 1000 : reconnectTimeout;
 
+      // Set reconnect timestamp for countdown
+      reconnectTimestamp = Date.now() + timeout;
+
       if (isRestartTime) {
         console.log('[!] Restart window. Reconnecting in 5 minutes...');
-        sendDiscordNotification('Server restart window detected. Reconnecting in 5 minutes.', 16776960);
-        // Update status message to restarting
-        if (statusMessage) {
-          statusMessage.edit({
-            embeds: [{
-              title: 'Server Status',
-              description: `🔄 Server restart window detected. Reconnecting in 5 minutes.`,
-              color: 16776960,
-              timestamp: new Date()
-            }]
-          }).catch(console.error);
-        }
+        // No Discord notification - status message will show countdown
       } else if (reasonStr !== 'Restart command') {
         console.log('[!] Disconnected. Reconnecting in 15 seconds...');
-        sendDiscordNotification(`Disconnected: \`${reasonStr}\`. Reconnecting in 15 seconds.`, 16776960);
-        // Update status message to offline
-        if (statusMessage) {
-          statusMessage.edit({
-            embeds: [{
-              title: 'Server Status',
-              description: `❌ Bot disconnected: \`${reasonStr}\``,
-              color: 16711680,
-              timestamp: new Date()
-            }]
-          }).catch(console.error);
-        }
+        // No Discord notification - status message will show countdown
       }
-      setTimeout(createBot, timeout);
+      
+      setTimeout(() => {
+        reconnectTimestamp = 0;
+        createBot();
+      }, timeout);
     } else {
       console.log('[!] Manual pause. No reconnect.');
+      reconnectTimestamp = 0;
       const userInfo = lastCommandUser ? ` Requested by ${lastCommandUser}` : '';
       // Update status message to offline
       if (statusMessage) {
@@ -772,7 +771,18 @@ function createBot() {
   bot.on('kicked', (reason) => {
     const reasonText = chatComponentToString(reason);
     console.log(`[!] Kicked: ${reasonText}`);
-    sendDiscordNotification(`Kicked. Reason: \`${reasonText}\``, 16711680);
+    
+    // Check if it's restart time - don't spam notifications
+    const now = new Date();
+    const kyivTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Kyiv' }));
+    const hour = kyivTime.getHours();
+    const minute = kyivTime.getMinutes();
+    const isRestartTime = hour === 9 && minute >= 0 && minute <= 30;
+    
+    // Only send notification if not during restart window or if there's a meaningful reason
+    if (!isRestartTime && reasonText && reasonText.trim() !== '') {
+      sendDiscordNotification(`Kicked. Reason: \`${reasonText}\``, 16711680);
+    }
 
     // If kicked due to throttling, increase reconnect timeout
     if (reasonText.includes('throttled') || reasonText.includes('too fast') || reasonText.includes('delay')) {
