@@ -536,13 +536,14 @@ function getStatusDescription() {
   const avgTps = realTps !== null ? realTps.toFixed(1) : (tpsHistory.length > 0 ? (tpsHistory.reduce((a, b) => a + b, 0) / tpsHistory.length).toFixed(1) : 'Calculating...');
 
   const nearbyNames = nearbyPlayers.map(p => p.username).join(', ') || 'None';
+  const whitelistOnlineDisplay = whitelistOnline.length > 0 ? whitelistOnline.map(u => `\`${u}\``).join(', ') : 'None';
   return `✅ Bot **${bot.username}** connected to \`${config.host}\`\n` +
     `👥 Players online: ${playerCount}\n` +
     `👀 Players nearby: ${nearbyNames}\n` +
     `⚡ TPS: ${avgTps}\n` +
     `:hamburger: Food: ${Math.round(bot.food * 2) / 2}/20\n` +
     `❤️ Health: ${Math.round(bot.health * 2) / 2}/20\n` +
-    `📋 Whitelist online: ${whitelistOnline.length > 0 ? whitelistOnline.join(', ') : 'None'}`;
+    `📋 Whitelist online: ${whitelistOnlineDisplay}`;
 }
 
 // Function to create status buttons

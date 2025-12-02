@@ -1,6 +1,6 @@
 ![WheatMagnateBot](WheatMagnateBot.jpg)
 
-[![License](https://img.shields.io/badge/license-ISC-lightgrey)](https://opensource.org/licenses/ISC) [![Node.js](https://img.shields.io/badge/node.js-14+-brightgreen)](https://nodejs.org/)
+[![License: ISC](https://img.shields.io/badge/license-ISC-blue.svg?cacheSeconds=86400)](https://opensource.org/licenses/ISC) [![Node.js 14+](https://img.shields.io/badge/node.js-14%2B-green.svg?cacheSeconds=86400)](https://nodejs.org/) [![Lines](https://img.shields.io/badge/lines-166-blue.svg?cacheSeconds=3600)](https://github.com/your-repo)
 
 # WheatMagnateBot
 
