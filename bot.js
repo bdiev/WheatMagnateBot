@@ -648,7 +648,9 @@ function createBot() {
   bot = mineflayer.createBot(config);
 
   bot.on('login', async () => {
-    console.log(`[+] Logged in as ${bot.username}`);
+    if (bot && bot.username) {
+      console.log(`[+] Logged in as ${bot.username}`);
+    }
     startTime = Date.now();
     lastCommandUser = null; // Reset after use
   });
@@ -678,7 +680,7 @@ function createBot() {
           if (statusMessage) updateStatusMessage();
         }
       }
-      if (!found) {
+      if (!found && bot && bot.chat) {
         bot.chat('/tps');
       }
     }, 10000); // Check every 10 seconds
