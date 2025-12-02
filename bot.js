@@ -653,11 +653,13 @@ function createBot() {
     }
     startTime = Date.now();
     lastCommandUser = null; // Reset after use
+    if (statusMessage) await updateStatusMessage(); // Update immediately after login
   });
 
   bot.on('spawn', () => {
     console.log('[Bot] Spawned.');
     reconnectTimestamp = 0; // Reset reconnect countdown when bot spawns
+    if (statusMessage) updateStatusMessage(); // Update immediately after spawn
     clearIntervals();
     startFoodMonitor();
     startNearbyPlayerScanner();
@@ -751,7 +753,7 @@ function createBot() {
     } else {
       console.log('[!] Manual pause. No reconnect.');
       reconnectTimestamp = 0;
-      // Status will be updated by interval
+      if (statusMessage) updateStatusMessage(); // Update immediately after manual pause
     }
   });
 
@@ -1095,14 +1097,13 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           const botToQuit = bot; // Save reference before setting to null
           shouldReconnect = false;
           bot = null; // Set to null immediately for status display
-          await updateStatusMessage(); // Update status before quit
           if (botToQuit) botToQuit.quit('Pause until resume');
+          await updateStatusMessage(); // Update status after quit
         } else {
           // Currently paused, resume it
           console.log(`[Button] resume by ${interaction.user.tag}`);
           shouldReconnect = true;
           createBot();
-          // Status will be updated automatically when bot spawns
         }
       } else if (interaction.customId === 'say_button') {
         const modal = new ModalBuilder()
