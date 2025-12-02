@@ -508,6 +508,16 @@ function chatComponentToString(component) {
       text += chatComponentToString(extra);
     }
   }
+  
+  // Handle translate components
+  if (component.translate) {
+    text += component.translate;
+    if (component.with) {
+      for (const w of component.with) {
+        text += ' ' + chatComponentToString(w);
+      }
+    }
+  }
 
   return text;
 }
@@ -1049,16 +1059,25 @@ function createBot() {
     if (username === bot.username) return; // Don't send own messages
     if (ignoredChatUsernames.includes(username.toLowerCase())) return; // Ignore specified users
 
+    // Clean message from special characters and format codes
+    let cleanMessage = message
+      .replace(/§[0-9a-fk-or]/gi, '') // Remove Minecraft color codes
+      .replace(/[\u0000-\u001F\u007F-\u009F]/g, '') // Remove control characters
+      .replace(/�+/g, '') // Remove replacement characters
+      .trim();
+    
+    if (!cleanMessage) return; // Skip empty messages
+
     // Normalize special relay format: "> target: data" so author stays original sender
     // Pattern examples:
     // > bdiev_: 25days
     // > player123: 64 Days, 20 Hours, 1 Minute
-    const relayMatch = message.match(/^>\s*([\w_]+):\s*(.+)$/);
+    const relayMatch = cleanMessage.match(/^>\s*([\w_]+):\s*(.+)$/);
     if (relayMatch) {
       const target = relayMatch[1];
       const rest = relayMatch[2];
       // Preserve target username visibly without hijacking author field
-      message = `> \`${target}\`: ${rest}`;
+      cleanMessage = `> \`${target}\`: ${rest}`;
     }
 
     try {
@@ -1070,7 +1089,7 @@ function createBot() {
             author: {
               name: username
             },
-            description: message,
+            description: cleanMessage,
             color: 3447003,
             thumbnail: {
               url: avatarUrl
