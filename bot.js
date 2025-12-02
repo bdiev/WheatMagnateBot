@@ -1101,8 +1101,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           // Currently paused, resume it
           console.log(`[Button] resume by ${interaction.user.tag}`);
           shouldReconnect = true;
-          await updateStatusMessage(); // Update status immediately
           createBot();
+          // Status will be updated automatically when bot spawns
         }
       } else if (interaction.customId === 'say_button') {
         const modal = new ModalBuilder()
