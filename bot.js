@@ -207,12 +207,65 @@ const discordClient = new Client({
 });
 
 if (DISCORD_BOT_TOKEN) {
-  discordClient.login(DISCORD_BOT_TOKEN).catch(err => console.error('[Discord] Login failed:', err.message));
+  console.log('[Discord] Attempting to login with token...');
+  discordClient.login(DISCORD_BOT_TOKEN)
+    .then(() => {
+      console.log('[Discord] Login promise resolved');
+    })
+    .catch(err => {
+      console.error('[Discord] Login failed:', err.message);
+      console.error('[Discord] Full error:', err);
+    });
+
+  // Add comprehensive Discord client event debugging
+  discordClient.on('debug', message => {
+    console.log(`[Discord DEBUG] ${message}`);
+  });
+
+  discordClient.on('warn', message => {
+    console.log(`[Discord WARN] ${message}`);
+  });
+
+  discordClient.on('error', error => {
+    console.error('[Discord ERROR]', error);
+  });
+
+  discordClient.on('disconnect', event => {
+    console.log('[Discord DISCONNECT]', event);
+  });
+
+  discordClient.on('reconnecting', () => {
+    console.log('[Discord RECONNECTING] Attempting to reconnect...');
+  });
+
+  discordClient.on('invalidated', () => {
+    console.log('[Discord INVALIDATED] Session invalidated, need to reconnect');
+  });
 
   // FIX: correct event name
   discordClient.on('ready', async () => {
-    console.log(`[Discord] Bot logged in as ${discordClient.user.tag}`);
-    discordClient.user.setPresence({ status: 'online' });
+    console.log(`[Discord] ✅ Bot logged in as ${discordClient.user.tag}`);
+    console.log(`[Discord] Bot ID: ${discordClient.user.id}`);
+    console.log(`[Discord] Guilds: ${discordClient.guilds.cache.size}`);
+
+    try {
+      discordClient.user.setPresence({ status: 'online' });
+      console.log('[Discord] Presence set to online');
+    } catch (presenceErr) {
+      console.error('[Discord] Failed to set presence:', presenceErr.message);
+    }
+
+    // Check if we can see the configured channel
+    try {
+      const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+      console.log(`[Discord] ✅ Channel found: ${channel.name} (${channel.id})`);
+      console.log(`[Discord] Channel type: ${channel.type}`);
+      console.log(`[Discord] Bot permissions in channel: ${channel.permissionsFor(discordClient.user).toArray().join(', ')}`);
+    } catch (channelErr) {
+      console.error('[Discord] ❌ Failed to fetch channel:', channelErr.message);
+      console.error('[Discord] This means the bot cannot see the configured channel!');
+    }
+
     await initDatabase();
     await migrateWhitelistToDB();
     // Reload whitelist after migration
@@ -225,6 +278,8 @@ if (DISCORD_BOT_TOKEN) {
       mineflayerStarted = true;
       createBot();
     }
+
+    console.log('[Discord] Bot is ready and waiting for interactions...');
 
     // Start channel cleaner
     if (!channelCleanerInterval) {
@@ -1012,7 +1067,19 @@ process.on('unhandledRejection', (reason) => {
 // Discord bot commands
 if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
   discordClient.on('interactionCreate', async (interaction) => {
-    if (interaction.channel.id !== DISCORD_CHANNEL_ID) return;
+    console.log(`[Discord INTERACTION] ✅ Received interaction: ${interaction.type}`);
+    console.log(`[Discord INTERACTION] Custom ID: ${interaction.customId}`);
+    console.log(`[Discord INTERACTION] Channel ID: ${interaction.channelId}`);
+    console.log(`[Discord INTERACTION] User: ${interaction.user.tag} (${interaction.user.id})`);
+    console.log(`[Discord INTERACTION] Guild ID: ${interaction.guildId}`);
+    console.log(`[Discord INTERACTION] Message ID: ${interaction.message?.id || 'none'}`);
+
+    if (interaction.channel.id !== DISCORD_CHANNEL_ID) {
+      console.log(`[Discord INTERACTION] ❌ Ignoring interaction from different channel (expected: ${DISCORD_CHANNEL_ID}, got: ${interaction.channel.id})`);
+      return;
+    }
+
+    console.log(`[Discord INTERACTION] ✅ Processing interaction in correct channel`);
 
     if (interaction.isButton()) {
       if (interaction.customId === 'pause_button') {
