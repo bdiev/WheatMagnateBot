@@ -824,14 +824,14 @@ function createBot() {
     if (message === '!restart') {
       console.log(`[Command] restart by ${username}`);
       lastCommandUser = `${username} (in-game)`;
-      bot.quit('Restart command');
+      if (bot) bot.quit('Restart command');
     }
 
     if (message === '!pause') {
       console.log('[Command] pause 10m');
       lastCommandUser = `${username} (in-game)`;
       shouldReconnect = false;
-      bot.quit('Pause 10m');
+      if (bot) bot.quit('Pause 10m');
       setTimeout(() => {
         console.log('[Bot] Pause ended.');
         shouldReconnect = true;
@@ -846,7 +846,7 @@ function createBot() {
         console.log(`[Command] pause ${minutes}m`);
         lastCommandUser = `${username} (in-game)`;
         shouldReconnect = false;
-        bot.quit(`Paused ${minutes}m`);
+        if (bot) bot.quit(`Paused ${minutes}m`);
         setTimeout(() => {
           console.log('[Bot] Custom pause ended.');
           shouldReconnect = true;
@@ -943,7 +943,7 @@ function createBot() {
   // Send all chat messages to Discord chat channel
   bot.on('chat', async (username, message) => {
     if (!DISCORD_CHAT_CHANNEL_ID || !discordClient || !discordClient.isReady()) return;
-    if (username === bot.username) return; // Don't send own messages
+    if (!bot || !bot.username || username === bot.username) return; // Don't send own messages
     if (ignoredChatUsernames.includes(username.toLowerCase())) return; // Ignore specified users
 
     // Normalize special relay format: "> target: data" so author stays original sender
