@@ -62,6 +62,8 @@ let startTime = Date.now();
 let whisperConversations = new Map(); // username -> messageId
 let tpsTabInterval = null;
 const excludedMessageIds = [];
+const pendingAuthLinks = [];
+const sentAuthCodes = new Set();
 
 function saveStatusMessageId(id) {
   try {
@@ -273,6 +275,14 @@ if (DISCORD_BOT_TOKEN) {
     }
 
     console.log('[Discord] Bot is ready and waiting for interactions...');
+
+    // Flush any pending auth links captured before client was ready
+    if (pendingAuthLinks.length > 0) {
+      const links = pendingAuthLinks.splice(0);
+      for (const url of links) {
+        try { await sendAuthLinkToDiscord(url); } catch {}
+      }
+    }
 
     // Start channel cleaner
     if (!channelCleanerInterval) {
@@ -2333,3 +2343,70 @@ Add candidates online: **${onlineCount}**`,
     }
   });
 }
+
+// Send Microsoft auth link to Discord and protect message from cleaner
+async function sendAuthLinkToDiscord(url) {
+  if (!DISCORD_CHANNEL_ID || !discordClient) return;
+  try {
+    if (!discordClient.isReady()) {
+      pendingAuthLinks.push(url);
+      return;
+    }
+    const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+    if (channel && channel.isTextBased()) {
+      const sentMessage = await channel.send({
+        embeds: [{
+          title: 'Microsoft Login',
+          description: url,
+          color: 16776960,
+          timestamp: new Date()
+        }]
+      });
+      excludedMessageIds.push(sentMessage.id);
+    }
+  } catch (e) {
+    console.error('Failed to send auth link to Discord:', e.message);
+  }
+}
+
+// Hook stdout/stderr to capture Microsoft login links (otc code)
+(function hookStdStreamsForAuthLinks() {
+  const AUTH_LINK_REGEX = /https?:\/\/(?:www\.)?microsoft\.com\/link\?otc=([A-Z0-9]{8})/i;
+  const AUTH_CODE_REGEX = /use\s+the\s+code\s+([A-Z0-9]{8})/i;
+  const BASE_URL = 'http://microsoft.com/link?otc=';
+
+  function intercept(chunk) {
+    try {
+      const str = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
+      let m = str.match(AUTH_LINK_REGEX);
+      if (m) {
+        const code = m[1].toUpperCase();
+        if (!sentAuthCodes.has(code)) {
+          sentAuthCodes.add(code);
+          sendAuthLinkToDiscord(BASE_URL + code);
+        }
+        return;
+      }
+      m = str.match(AUTH_CODE_REGEX);
+      if (m) {
+        const code = m[1].toUpperCase();
+        if (!sentAuthCodes.has(code)) {
+          sentAuthCodes.add(code);
+          sendAuthLinkToDiscord(BASE_URL + code);
+        }
+      }
+    } catch {}
+  }
+
+  const origStdoutWrite = process.stdout.write.bind(process.stdout);
+  process.stdout.write = function(chunk, encoding, cb) {
+    intercept(chunk);
+    return origStdoutWrite(chunk, encoding, cb);
+  };
+
+  const origStderrWrite = process.stderr.write.bind(process.stderr);
+  process.stderr.write = function(chunk, encoding, cb) {
+    intercept(chunk);
+    return origStderrWrite(chunk, encoding, cb);
+  };
+})();
