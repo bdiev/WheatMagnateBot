@@ -219,6 +219,8 @@ if (DISCORD_BOT_TOKEN) {
 
   // Add comprehensive Discord client event debugging
   discordClient.on('debug', message => {
+    // Skip heartbeat messages to reduce noise
+    if (message.includes('Heartbeat acknowledged')) return;
     console.log(`[Discord DEBUG] ${message}`);
   });
 
@@ -2200,6 +2202,56 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       }
       shouldReconnect = true;
       createBot();
+    }
+
+    // Whitelist management via command
+    const wlAddMatch = message.content.match(/^!whitelist\s+add\s+(\w+)$/i);
+    if (wlAddMatch) {
+      const targetUsername = wlAddMatch[1];
+      try {
+        let success = false;
+        let source = 'database';
+        if (pool) {
+          try {
+            await pool.query('INSERT INTO whitelist (username, added_by) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING', [targetUsername, message.author.tag]);
+            const newWhitelist = await loadWhitelistFromDB();
+            ignoredUsernames.length = 0;
+            ignoredUsernames.push(...newWhitelist);
+            success = true;
+          } catch (dbErr) {
+            console.error('[Whitelist Add Cmd] DB error:', dbErr.message);
+          }
+        }
+        if (!success && !pool) {
+          source = 'file';
+          const fileWhitelist = loadWhitelist();
+          if (!fileWhitelist.some(n => n.toLowerCase() === targetUsername.toLowerCase())) {
+            fs.appendFileSync('whitelist.txt', `${targetUsername}\n`);
+          }
+          const newWhitelist = loadWhitelist();
+          ignoredUsernames.length = 0;
+          ignoredUsernames.push(...newWhitelist);
+          success = true;
+        }
+
+        await message.reply({
+          embeds: [{
+            title: 'Whitelist',
+            description: success ? `✅ Added ${targetUsername} to whitelist (${source}).` : `No changes for ${targetUsername}.`,
+            color: success ? 65280 : 16776960,
+            timestamp: new Date()
+          }]
+        });
+      } catch (err) {
+        console.error('[Whitelist Add Cmd] Error:', err.message);
+        await message.reply({
+          embeds: [{
+            description: `Failed to add ${targetUsername}: ${err.message}`,
+            color: 16711680,
+            timestamp: new Date()
+          }]
+        });
+      }
     }
 
     const allowMatch = message.content.match(/^!allow\s+(\w+)$/);
