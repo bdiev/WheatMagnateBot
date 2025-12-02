@@ -1696,21 +1696,29 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
       try {
         const whitelist = await loadWhitelistFromDB();
-        const allOnlinePlayers = Object.values(bot.players || {}).map(p => p.username);
+
+        // Check if bot is available
+        const allOnlinePlayers = bot ? Object.values(bot.players || {}).map(p => p.username) : [];
         const whitelistOnline = whitelist.filter(username => allOnlinePlayers.some(p => p.toLowerCase() === username.toLowerCase()));
 
+        // Create whitelist options
         const whitelistOptions = whitelist.slice(0, 25).map(username =>
           new StringSelectMenuOptionBuilder()
             .setLabel(username)
             .setValue(b64encode(username))
         );
 
-        const selectMenu = new StringSelectMenuBuilder()
-          .setCustomId('whitelist_select')
-          .setPlaceholder('Select player to remove from whitelist')
-          .addOptions(whitelistOptions);
+        // Create select menu only if there are options
+        const components = [];
+        if (whitelistOptions.length > 0) {
+          const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId('whitelist_select')
+            .setPlaceholder('Select player to remove from whitelist')
+            .addOptions(whitelistOptions);
 
-        const row = new ActionRowBuilder().addComponents(selectMenu);
+          const row = new ActionRowBuilder().addComponents(selectMenu);
+          components.push(row);
+        }
 
         await interaction.editReply({
           embeds: [{
@@ -1719,7 +1727,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             color: 3447003,
             timestamp: new Date()
           }],
-          components: [row]
+          components: components
         });
       } catch (err) {
         console.error('[Whitelist] Error:', err.message);
@@ -1760,21 +1768,27 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
           // Update the message
           const whitelist = await loadWhitelistFromDB();
-          const allOnlinePlayers = Object.values(bot.players || {}).map(p => p.username);
+          const allOnlinePlayers = bot ? Object.values(bot.players || {}).map(p => p.username) : [];
           const whitelistOnline = whitelist.filter(username => allOnlinePlayers.some(p => p.toLowerCase() === username.toLowerCase()));
 
+          // Create whitelist options
           const whitelistOptions = whitelist.slice(0, 25).map(username =>
             new StringSelectMenuOptionBuilder()
               .setLabel(username)
               .setValue(b64encode(username))
           );
 
-          const selectMenu = new StringSelectMenuBuilder()
-            .setCustomId('whitelist_select')
-            .setPlaceholder('Select player to remove from whitelist')
-            .addOptions(whitelistOptions);
+          // Create components only if there are options
+          const components = [];
+          if (whitelistOptions.length > 0) {
+            const selectMenu = new StringSelectMenuBuilder()
+              .setCustomId('whitelist_select')
+              .setPlaceholder('Select player to remove from whitelist')
+              .addOptions(whitelistOptions);
 
-          const row = new ActionRowBuilder().addComponents(selectMenu);
+            const row = new ActionRowBuilder().addComponents(selectMenu);
+            components.push(row);
+          }
 
           await interaction.editReply({
             embeds: [{
@@ -1783,7 +1797,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
               color: 65280,
               timestamp: new Date()
             }],
-            components: [row]
+            components: components
           });
         } else {
           await interaction.editReply({
