@@ -2345,27 +2345,6 @@ async function sendAuthLinkToDiscord(url) {
       });
       excludedMessageIds.push(sentMessage.id);
       authMessageIds.add(sentMessage.id);
-      // Add buttons: Open Link (Link style) and Remove to close the message
-      await sentMessage.edit({
-        embeds: [{
-          title: 'Microsoft Login',
-          description: url,
-          color: 16776960,
-          timestamp: new Date()
-        }],
-        components: [
-          new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setLabel('Open Link')
-              .setStyle(ButtonStyle.Link)
-              .setURL(url),
-            new ButtonBuilder()
-              .setCustomId(`remove_${sentMessage.id}`)
-              .setLabel('Remove')
-              .setStyle(ButtonStyle.Danger)
-          )
-        ]
-      });
     }
   } catch (e) {
     console.error('Failed to send auth link to Discord:', e.message);
