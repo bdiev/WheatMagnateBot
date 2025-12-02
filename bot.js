@@ -1111,54 +1111,6 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       } else if (interaction.customId === 'playerlist_button') {
         await interaction.deferReply();
         if (!bot) {
-      } else if (interaction.customId === 'whitelist_button') {
-        // Show whitelist entries (DB first, fallback to file). Acknowledge quickly to avoid timeouts.
-        await interaction.deferReply();
-        try {
-          let entries = [];
-          let source = 'database';
-          if (pool) {
-            try {
-              const res = await pool.query('SELECT username FROM whitelist ORDER BY username ASC');
-              entries = res.rows.map(r => r.username);
-            } catch (dbErr) {
-              console.error('[DB] Failed to fetch whitelist for UI, falling back to file:', dbErr.message);
-              source = 'file';
-              entries = loadWhitelist();
-            }
-          } else {
-            source = 'file';
-            entries = loadWhitelist();
-          }
-
-          const count = entries.length;
-          // Keep embed description within Discord limits
-          const maxShown = 200; // show up to 200 names to be safe
-          const shown = entries.slice(0, maxShown);
-          const overflow = count > maxShown ? `\n\n…and ${count - maxShown} more` : '';
-          const description = count > 0
-            ? `Total: **${count}** (source: ${source})\n\n` + shown.join(', ') + overflow
-            : `Whitelist is empty (source: ${source}).`;
-
-          await interaction.editReply({
-            embeds: [{
-              title: 'Whitelist',
-              description,
-              color: 3447003,
-              timestamp: new Date()
-            }],
-            components: []
-          });
-        } catch (e) {
-          console.error('[Discord] Whitelist button handler failed:', e.message);
-          await interaction.editReply({
-            embeds: [{
-              description: `Failed to load whitelist: ${e.message}`,
-              color: 16711680,
-              timestamp: new Date()
-            }]
-          });
-        }
           await interaction.editReply({
             embeds: [{
               description: 'Bot is offline.',
@@ -1200,6 +1152,59 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           }],
           components: options.length > 0 ? [row] : []
         });
+      } else if (interaction.customId === 'whitelist_button') {
+        // Show whitelist entries (DB first, fallback to file). Acknowledge quickly to avoid timeouts.
+        await interaction.deferReply();
+        try {
+          console.log('[Whitelist] Handler start');
+          let entries = [];
+          let source = 'database';
+          if (pool) {
+            try {
+              console.log('[Whitelist] Pool present, querying database...');
+              const res = await pool.query('SELECT username FROM whitelist ORDER BY username ASC');
+              entries = res.rows.map(r => r.username);
+            } catch (dbErr) {
+              console.error('[DB] Failed to fetch whitelist for UI, falling back to file:', dbErr.message);
+              source = 'file';
+              entries = loadWhitelist();
+            }
+          } else {
+            console.log('[Whitelist] No DB pool, using file whitelist');
+            source = 'file';
+            entries = loadWhitelist();
+          }
+
+          const count = entries.length;
+          console.log(`[Whitelist] Loaded ${count} entries from ${source}`);
+          // Keep embed description within Discord limits
+          const maxShown = 200; // show up to 200 names to be safe
+          const shown = entries.slice(0, maxShown);
+          const overflow = count > maxShown ? `\n\n…and ${count - maxShown} more` : '';
+          const description = count > 0
+            ? `Total: **${count}** (source: ${source})\n\n` + shown.join(', ') + overflow
+            : `Whitelist is empty (source: ${source}).`;
+
+          await interaction.editReply({
+            embeds: [{
+              title: 'Whitelist',
+              description,
+              color: 3447003,
+              timestamp: new Date()
+            }],
+            components: []
+          });
+          console.log('[Whitelist] Reply sent');
+        } catch (e) {
+          console.error('[Discord] Whitelist button handler failed:', e.message);
+          await interaction.editReply({
+            embeds: [{
+              description: `Failed to load whitelist: ${e.message}`,
+              color: 16711680,
+              timestamp: new Date()
+            }]
+          });
+        }
       } else if (interaction.customId === 'drop_button') {
         await interaction.deferReply();
         if (!bot) {
@@ -1792,128 +1797,6 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           }],
           components: []
         });
-      }
-    } else if (interaction.isButton() && interaction.customId === 'whitelist_button') {
-      console.log(`[Whitelist Button] Interaction started by ${interaction.user.tag}`);
-
-      try {
-        // First acknowledge the interaction immediately
-        await interaction.deferReply({ ephemeral: false });
-        console.log('[Whitelist Button] Interaction deferred successfully');
-
-        // Try to use database first, fall back to file-based whitelist if database not available
-        let whitelist = [];
-        let source = 'unknown';
-
-        if (pool) {
-          try {
-            whitelist = await loadWhitelistFromDB();
-            source = 'database';
-            console.log(`[Whitelist] Loaded ${whitelist.length} entries from database`);
-          } catch (err) {
-            console.error('[Whitelist] Failed to load from database, falling back to file:', err.message);
-          }
-        }
-
-        // If database failed or not available, try file-based whitelist
-        if ((whitelist.length === 0 || source !== 'database') && !pool) {
-          try {
-            whitelist = loadWhitelist();
-            source = 'file';
-            console.log(`[Whitelist] Loaded ${whitelist.length} entries from file`);
-          } catch (err) {
-            console.error('[Whitelist] Failed to load whitelist from file:', err.message);
-            await interaction.editReply({
-              embeds: [{
-                description: 'Failed to load whitelist from file or database.',
-                color: 16711680,
-                timestamp: new Date()
-              }]
-            });
-            console.log('[Whitelist Button] Error reply sent');
-            return;
-          }
-        }
-
-        // Debug: Check if we have any whitelist entries
-        console.log(`[Whitelist Button] Total entries: ${whitelist.length}, source: ${source}`);
-
-        try {
-          // Check if bot is available
-          const allOnlinePlayers = bot ? Object.values(bot.players || {}).map(p => p.username) : [];
-          const whitelistOnline = whitelist.filter(username => allOnlinePlayers.some(p => p.toLowerCase() === username.toLowerCase()));
-
-          console.log(`[Whitelist Button] Online players: ${whitelistOnline.length}`);
-
-          // Create whitelist options
-          const whitelistOptions = whitelist.slice(0, 25).map(username =>
-            new StringSelectMenuOptionBuilder()
-              .setLabel(username)
-              .setValue(b64encode(username))
-          );
-
-          // Create select menu only if there are options
-          const components = [];
-          if (whitelistOptions.length > 0) {
-            const selectMenu = new StringSelectMenuBuilder()
-              .setCustomId('whitelist_select')
-              .setPlaceholder('Select player to remove from whitelist')
-              .addOptions(whitelistOptions);
-
-            const row = new ActionRowBuilder().addComponents(selectMenu);
-            components.push(row);
-          }
-
-          console.log(`[Whitelist Button] Preparing to send reply with ${components.length} components`);
-
-          await interaction.editReply({
-            embeds: [{
-              title: `Whitelist Management (${whitelist.length})`,
-              description: `Source: ${source}\nOnline: ${whitelistOnline.length > 0 ? whitelistOnline.join(', ') : 'None'}`,
-              color: 3447003,
-              timestamp: new Date()
-            }],
-            components: components
-          });
-
-          console.log('[Whitelist Button] Reply sent successfully');
-        } catch (err) {
-          console.error('[Whitelist Button] Final error:', err.message);
-          console.error('[Whitelist Button] Stack:', err.stack);
-
-          try {
-            await interaction.editReply({
-              embeds: [{
-                description: `Failed to load whitelist: ${err.message}`,
-                color: 16711680,
-                timestamp: new Date()
-              }]
-            });
-            console.log('[Whitelist Button] Error reply sent after final catch');
-          } catch (finalErr) {
-            console.error('[Whitelist Button] Failed to send error reply:', finalErr.message);
-            // Last resort: try to send a simple message
-            try {
-              await interaction.followUp({
-                content: `❌ Whitelist error: ${err.message}`,
-                ephemeral: true
-              });
-              console.log('[Whitelist Button] Fallback message sent');
-            } catch (followUpErr) {
-              console.error('[Whitelist Button] All reply methods failed:', followUpErr.message);
-            }
-          }
-        }
-      } catch (outerErr) {
-        console.error('[Whitelist Button] Outer error:', outerErr.message);
-        try {
-          await interaction.reply({
-            content: `❌ Critical whitelist error: ${outerErr.message}`,
-            ephemeral: true
-          });
-        } catch (replyErr) {
-          console.error('[Whitelist Button] Failed to send outer error reply:', replyErr.message);
-        }
       }
     } else if (interaction.isStringSelectMenu() && interaction.customId === 'whitelist_select') {
       console.log(`[Whitelist Select] Interaction started for username: ${interaction.values[0]}`);
