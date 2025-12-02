@@ -493,17 +493,15 @@ function getStatusDescription() {
 
 // Function to create status buttons
 function createStatusButtons() {
+  // Determine if bot is paused: shouldReconnect=false means paused
+  const isPaused = !shouldReconnect || !bot;
   return [
     new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
-          .setCustomId('pause_button')
-          .setLabel('⏸️ Pause')
-          .setStyle(ButtonStyle.Danger),
-        new ButtonBuilder()
-          .setCustomId('resume_button')
-          .setLabel('▶️ Resume')
-          .setStyle(ButtonStyle.Success),
+          .setCustomId('pause_resume_button')
+          .setLabel(isPaused ? '▶️ Resume' : '⏸️ Pause')
+          .setStyle(isPaused ? ButtonStyle.Success : ButtonStyle.Danger),
         new ButtonBuilder()
           .setCustomId('say_button')
           .setLabel('💬 Say')
@@ -1076,19 +1074,20 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
 
     if (interaction.isButton()) {
-      if (interaction.customId === 'pause_button') {
+      if (interaction.customId === 'pause_resume_button') {
         await interaction.deferUpdate(); // Defer update to avoid timeout
-        console.log(`[Button] pause by ${interaction.user.tag}`);
         lastCommandUser = interaction.user.tag;
-        shouldReconnect = false;
-        bot.quit('Pause until resume');
-      } else if (interaction.customId === 'resume_button') {
-        await interaction.deferUpdate(); // Defer update to avoid timeout
-        if (shouldReconnect) return; // Already active
-        console.log(`[Button] resume by ${interaction.user.tag}`);
-        lastCommandUser = interaction.user.tag;
-        shouldReconnect = true;
-        createBot();
+        if (shouldReconnect && bot) {
+          // Currently running, pause it
+          console.log(`[Button] pause by ${interaction.user.tag}`);
+          shouldReconnect = false;
+          bot.quit('Pause until resume');
+        } else {
+          // Currently paused, resume it
+          console.log(`[Button] resume by ${interaction.user.tag}`);
+          shouldReconnect = true;
+          createBot();
+        }
       } else if (interaction.customId === 'say_button') {
         const modal = new ModalBuilder()
           .setCustomId('say_modal')
