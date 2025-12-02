@@ -772,12 +772,23 @@ function createBot() {
     startFoodMonitor();
     startNearbyPlayerScanner();
 
-    // Update player activity for all online players
-    if (bot && bot.players) {
+    // Update player activity for all online players - only set is_online flag without updating last_seen
+    if (bot && bot.players && pool) {
       setTimeout(async () => {
         for (const player of Object.values(bot.players)) {
           if (player.username && ignoredUsernames.some(name => name.toLowerCase() === player.username.toLowerCase())) {
-            await updatePlayerActivity(player.username, true);
+            try {
+              // Only update is_online flag, don't touch last_seen or last_online
+              await pool.query(`
+                INSERT INTO player_activity (username, is_online)
+                VALUES ($1, TRUE)
+                ON CONFLICT (username)
+                DO UPDATE SET is_online = TRUE
+              `, [player.username]);
+              console.log(`[Activity] ${player.username} marked as online (reconnect)`);
+            } catch (err) {
+              console.error(`[Activity] Failed to mark ${player.username} as online:`, err.message);
+            }
           }
         }
       }, 3000);
