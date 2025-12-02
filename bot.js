@@ -919,6 +919,18 @@ function createBot() {
     if (username === bot.username) return; // Don't send own messages
     if (ignoredChatUsernames.includes(username.toLowerCase())) return; // Ignore specified users
 
+    // Normalize special relay format: "> target: data" so author stays original sender
+    // Pattern examples:
+    // > bdiev_: 25days
+    // > player123: 64 Days, 20 Hours, 1 Minute
+    const relayMatch = message.match(/^>\s*(\w+):\s*(.+)$/);
+    if (relayMatch) {
+      const target = relayMatch[1];
+      const rest = relayMatch[2];
+      // Preserve target username visibly without hijacking author field
+      message = `> \`${target}\`: ${rest}`;
+    }
+
     try {
       const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
       if (channel && channel.isTextBased()) {
