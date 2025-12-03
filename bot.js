@@ -1090,7 +1090,7 @@ function createBot() {
       return;
     }
 
-    console.log(`[Chat->Discord] Sending message from ${username}: ${cleanMessage}`);
+    // Chat->Discord: silent send
 
     try {
       const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
