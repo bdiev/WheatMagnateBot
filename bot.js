@@ -1109,10 +1109,7 @@ function createBot() {
         const lowerMessage = cleanMessage.toLowerCase();
         const shouldMention = mentionNames.some(name => lowerMessage.includes(name));
         
-        const messageContent = shouldMention ? '<@1302319506524323952>' : '';
-        
-        await channel.send({
-          content: messageContent,
+        const sendOptions = {
           embeds: [{
             author: {
               name: username
@@ -1124,7 +1121,14 @@ function createBot() {
             },
             timestamp: new Date()
           }]
-        });
+        };
+        
+        if (shouldMention) {
+          sendOptions.content = '<@1302319506524323952>';
+          sendOptions.allowedMentions = { users: ['1302319506524323952'] };
+        }
+        
+        await channel.send(sendOptions);
       }
     } catch (e) {
       // Silent error
