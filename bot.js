@@ -143,7 +143,7 @@ async function ensureStatusMessage() {
 }
 
 const config = {
-  host: 'bdiev.bluenet-hosting.com',
+  host: 'oldfag.org',
   username: process.env.MINECRAFT_USERNAME || 'WheatMagnate',
   auth: process.env.MINECRAFT_AUTH || 'microsoft',
   version: false, // Auto-detect version
