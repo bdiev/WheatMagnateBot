@@ -730,7 +730,10 @@ async function updateStatusMessage() {
         title: 'Server Status',
         description,
         color: bot ? 65280 : 16711680,
-        timestamp: new Date()
+        timestamp: new Date(),
+        footer: {
+          text: 'Last updated'
+        }
       }],
       components: createStatusButtons()
     });
