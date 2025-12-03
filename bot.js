@@ -1697,7 +1697,7 @@ Add candidates online: **${onlineCount}**`,
           }
         }, 1000);
         
-        // Stop updating after 5 minutes to avoid infinite updates
+        // Stop updating after 5 minutes to avoid infinite updates.
         setTimeout(() => {
           clearInterval(updateInterval);
         }, 5 * 60 * 1000);
