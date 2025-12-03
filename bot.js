@@ -1104,7 +1104,15 @@ function createBot() {
         // Escape Discord markdown to prevent formatting issues
         let displayMessage = cleanMessage.replace(/([*_`~|\\])/g, '\\$1');
         
+        // Check if message mentions any of the tracked names
+        const mentionNames = ['bdiev', 'bdiev_', 'gibsinnep', 'wheatmagnate'];
+        const lowerMessage = cleanMessage.toLowerCase();
+        const shouldMention = mentionNames.some(name => lowerMessage.includes(name));
+        
+        const messageContent = shouldMention ? '<@1302319506524323952>' : '';
+        
         await channel.send({
+          content: messageContent,
           embeds: [{
             author: {
               name: username
