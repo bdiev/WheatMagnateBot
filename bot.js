@@ -860,7 +860,7 @@ function createBot() {
     }, 10000); // Check every 10 seconds
 
     // Reuse or create single persistent status message after spawn
-    if (DISCORD_CHANNEL_ID && discordClient && discordClient.isReady()) {
+    if (DISCORD_CHANNEL_IDS.length && discordClient && discordClient.isReady()) {
       setTimeout(async () => {
         await ensureStatusMessage();
         if (statusMessage) {
@@ -1293,7 +1293,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
   discordClient.on('interactionCreate', async (interaction) => {
     // Interaction logs reduced to minimize noise
 
-    if (interaction.channelId !== DISCORD_CHANNEL_ID) {
+    if (!DISCORD_CHANNEL_IDS.includes(interaction.channelId)) {
       // Ignore interactions from other channels
       return;
     }
@@ -1821,7 +1821,7 @@ Add candidates online: **${onlineCount}**`,
           // Update existing conversation
           const messageId = whisperConversations.get(username);
           try {
-            const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+            const channel = await discordClient.channels.fetch(interaction.channelId);
             const existingMessage = await channel.messages.fetch(messageId);
             const currentDesc = existingMessage.embeds[0]?.description || '';
             let updatedDesc = currentDesc + '\n\n' + replyEntry;
@@ -1847,7 +1847,7 @@ Add candidates online: **${onlineCount}**`,
         } else {
           // Create new conversation
           try {
-            const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+            const channel = await discordClient.channels.fetch(interaction.channelId);
             let displayMessage = replyMessage;
             if (replyMessage.startsWith('/r ')) {
               displayMessage = replyMessage.slice(3).trim();
@@ -1921,7 +1921,7 @@ Add candidates online: **${onlineCount}**`,
           // Update existing conversation
           const messageId = whisperConversations.get(selectedUsername);
           try {
-            const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+            const channel = await discordClient.channels.fetch(interaction.channelId);
             const existingMessage = await channel.messages.fetch(messageId);
             const currentDesc = existingMessage.embeds[0]?.description || '';
             const updatedDesc = currentDesc + '\n\n' + newEntry;
@@ -2700,24 +2700,28 @@ Add candidates online: **${onlineCount}**`,
 
 // Send Microsoft auth link to Discord and protect message from cleaner
 async function sendAuthLinkToDiscord(url) {
-  if (!DISCORD_CHANNEL_ID || !discordClient) return;
+  if (!DISCORD_CHANNEL_IDS.length || !discordClient) return;
   try {
     if (!discordClient.isReady()) {
       pendingAuthLinks.push(url);
       return;
     }
-    const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
-    if (channel && channel.isTextBased()) {
-      const sentMessage = await channel.send({
-        embeds: [{
-          title: 'Microsoft Login',
-          description: url,
-          color: 16776960,
-          timestamp: new Date()
-        }]
-      });
-      excludedMessageIds.push(sentMessage.id);
-      authMessageIds.add(sentMessage.id);
+    for (const channelId of DISCORD_CHANNEL_IDS) {
+      try {
+        const channel = await discordClient.channels.fetch(channelId);
+        if (channel && channel.isTextBased()) {
+          const sentMessage = await channel.send({
+            embeds: [{
+              title: 'Microsoft Login',
+              description: url,
+              color: 16776960,
+              timestamp: new Date()
+            }]
+          });
+          excludedMessageIds.push(sentMessage.id);
+          authMessageIds.add(sentMessage.id);
+        }
+      } catch {}
     }
   } catch (e) {
     console.error('Failed to send auth link to Discord:', e.message);
@@ -2726,22 +2730,22 @@ async function sendAuthLinkToDiscord(url) {
 
 // Delete or neutralize previously sent Microsoft Login messages after successful sign-in
 async function cleanupAuthMessages() {
-  if (!DISCORD_CHANNEL_ID || !discordClient || !discordClient.isReady()) return;
+  if (!DISCORD_CHANNEL_IDS.length || !discordClient || !discordClient.isReady()) return;
   if (authMessageIds.size === 0) return;
   try {
-    const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
-    if (!channel || !channel.isTextBased()) return;
-    for (const id of Array.from(authMessageIds)) {
-      try {
-        const msg = await channel.messages.fetch(id);
-        // Remove buttons first to prevent further clicks
-        try { await msg.edit({ components: [] }); } catch {}
-        // Then delete the message
-        await msg.delete();
-      } catch {}
-      authMessageIds.delete(id);
-      const idx = excludedMessageIds.indexOf(id);
-      if (idx !== -1) excludedMessageIds.splice(idx, 1);
+    for (const channelId of DISCORD_CHANNEL_IDS) {
+      const channel = await discordClient.channels.fetch(channelId).catch(() => null);
+      if (!channel || !channel.isTextBased()) continue;
+      for (const id of Array.from(authMessageIds)) {
+        try {
+          const msg = await channel.messages.fetch(id);
+          try { await msg.edit({ components: [] }); } catch {}
+          await msg.delete();
+        } catch {}
+        authMessageIds.delete(id);
+        const idx = excludedMessageIds.indexOf(id);
+        if (idx !== -1) excludedMessageIds.splice(idx, 1);
+      }
     }
   } catch (e) {
     console.error('[Discord] cleanupAuthMessages failed:', e.message);
