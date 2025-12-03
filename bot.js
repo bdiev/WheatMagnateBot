@@ -684,28 +684,20 @@ function createStatusButtons() {
           .setLabel(isPaused ? '▶️ Resume' : '⏸️ Pause')
           .setStyle(isPaused ? ButtonStyle.Success : ButtonStyle.Danger),
         new ButtonBuilder()
-          .setCustomId('say_button')
-          .setLabel('💬 Say')
-          .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
           .setCustomId('playerlist_button')
           .setLabel('👥 Players')
           .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
           .setCustomId('drop_button')
           .setLabel('🗑️ Drop')
-          .setStyle(ButtonStyle.Secondary)
-      ),
-    new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId('wn_button')
-          .setLabel('👀 Nearby')
           .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
           .setCustomId('chat_setting_button')
           .setLabel('⚙️ Chat Settings')
-          .setStyle(ButtonStyle.Secondary),
+          .setStyle(ButtonStyle.Secondary)
+      ),
+    new ActionRowBuilder()
+      .addComponents(
         new ButtonBuilder()
           .setCustomId('whitelist_button')
           .setLabel('📋 Whitelist')
