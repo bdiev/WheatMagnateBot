@@ -2412,8 +2412,9 @@ Add candidates online: **${onlineCount}**`,
       if (!bot) return;
       const text = message.content.trim();
       if (text) {
-        bot.chat(text);
-        console.log(`[Chat] Sent "${text}" by ${message.author.tag}`);
+        const username = message.author.username;
+        bot.chat(`[${username}] ${text}`);
+        console.log(`[Chat] Sent "[${username}] ${text}" by ${message.author.tag}`);
       }
       return;
     }
