@@ -1063,12 +1063,8 @@ function createBot() {
       }
     }
 
-    // Check for death messages in chat
-    const lowerMessage = message.toLowerCase();
-    if (lowerMessage.includes('died') || lowerMessage.includes('was slain') || lowerMessage.includes('perished')) {
-      console.log(`[Death] Detected death message: ${message}`);
-      sendDiscordNotification(`💀 Death: ${message}`, 16711680);
-    }
+    // Do NOT infer deaths from chat messages. We only notify on the bot's own death
+    // via the dedicated bot death event handler.
 
     // Send all chat messages to Discord chat channel
     if (!DISCORD_CHAT_CHANNEL_ID || !discordClient || !discordClient.isReady()) {
