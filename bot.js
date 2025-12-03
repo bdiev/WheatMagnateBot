@@ -1124,8 +1124,18 @@ function createBot() {
         };
         
         if (shouldMention) {
-          sendOptions.content = '<@1302319506524323952>';
-          sendOptions.allowedMentions = { users: ['1302319506524323952'] };
+          // Try to fetch and mention the user
+          try {
+            const guild = channel.guild;
+            if (guild) {
+              const member = await guild.members.fetch('1302319506524323952').catch(() => null);
+              if (member) {
+                sendOptions.content = `${member}`;
+              }
+            }
+          } catch (err) {
+            console.error('[Discord] Failed to fetch member for mention:', err.message);
+          }
         }
         
         await channel.send(sendOptions);
@@ -2640,6 +2650,11 @@ Add candidates online: **${onlineCount}**`,
       } else {
         await message.reply('Usage: !say <message>');
       }
+    }
+
+    // Debug command to get your Discord ID
+    if (message.content === '!myid') {
+      await message.reply(`Your Discord ID: ${message.author.id}\nMention test: <@${message.author.id}>`);
     }
   });
 }
