@@ -1124,18 +1124,7 @@ function createBot() {
         };
         
         if (shouldMention) {
-          // Try to fetch and mention the user
-          try {
-            const guild = channel.guild;
-            if (guild) {
-              const member = await guild.members.fetch('1302319506524323952').catch(() => null);
-              if (member) {
-                sendOptions.content = `${member}`;
-              }
-            }
-          } catch (err) {
-            console.error('[Discord] Failed to fetch member for mention:', err.message);
-          }
+          sendOptions.content = '<@623303738991443968>';
         }
         
         await channel.send(sendOptions);
