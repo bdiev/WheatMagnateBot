@@ -1620,7 +1620,7 @@ Add candidates online: **${onlineCount}**`,
             new ActionRowBuilder()
               .addComponents(
                 new ButtonBuilder()
-                  .setCustomId(`remove_${interaction.id}`)
+                  .setCustomId(`remove_${activityMessage.id}`)
                   .setLabel('Remove')
                   .setStyle(ButtonStyle.Danger)
               )
@@ -1668,7 +1668,7 @@ Add candidates online: **${onlineCount}**`,
                 new ActionRowBuilder()
                   .addComponents(
                     new ButtonBuilder()
-                      .setCustomId(`remove_${interaction.id}`)
+                      .setCustomId(`remove_${activityMessage.id}`)
                       .setLabel('Remove')
                       .setStyle(ButtonStyle.Danger)
                   )
