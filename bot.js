@@ -3,7 +3,6 @@ const mineflayer = require('mineflayer');
 const fs = require('fs');
 const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } = require('discord.js');
 const { Pool } = require('pg');
-const { status } = require('minecraft-server-util');
 
 // Base64 utils for Node.js (btoa/atob polyfill)
 const b64encode = (str) => Buffer.from(String(str), 'utf8').toString('base64');
@@ -66,11 +65,6 @@ const excludedMessageIds = [];
 const pendingAuthLinks = [];
 const sentAuthCodes = new Set();
 const authMessageIds = new Set();
-
-// Server monitoring variables
-let serverStatus = null;
-let serverUptime = null;
-let serverMonitorInterval = null;
 
 function saveStatusMessageId(id) {
   try {
@@ -149,69 +143,6 @@ const config = {
   version: false, // Auto-detect version
   session: loadedSession
 };
-
-// Function to get server status
-async function getServerStatus() {
-  try {
-    const response = await status(config.host, 25565, {
-      timeout: 5000,
-      enableSRV: true
-    });
-    
-    serverStatus = {
-      online: true,
-      players: {
-        online: response.players.online,
-        max: response.players.max
-      },
-      version: response.version.name,
-      motd: response.motd.clean,
-      latency: response.roundTripLatency
-    };
-    
-    return serverStatus;
-  } catch (err) {
-    serverStatus = {
-      online: false,
-      error: err.message
-    };
-    return serverStatus;
-  }
-}
-
-// Function to format uptime
-function formatUptime(ms) {
-  if (!ms) return 'Unknown';
-  const seconds = Math.floor(ms / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-  const days = Math.floor(hours / 24);
-  
-  if (days > 0) {
-    return `${days}d ${hours % 24}h ${minutes % 60}m`;
-  } else if (hours > 0) {
-    return `${hours}h ${minutes % 60}m`;
-  } else if (minutes > 0) {
-    return `${minutes}m ${seconds % 60}s`;
-  } else {
-    return `${seconds}s`;
-  }
-}
-
-// Start server monitoring
-function startServerMonitoring() {
-  if (serverMonitorInterval) {
-    clearInterval(serverMonitorInterval);
-  }
-  
-  // Initial check
-  getServerStatus();
-  
-  // Check every 30 seconds
-  serverMonitorInterval = setInterval(async () => {
-    await getServerStatus();
-  }, 30000);
-}
 
 
 function loadWhitelist() {
@@ -486,11 +417,6 @@ if (DISCORD_BOT_TOKEN) {
       ignoredUsernames.length = 0;
       ignoredUsernames.push(...wl);
     }
-    
-    // Start server monitoring
-    startServerMonitoring();
-    console.log('[Server Monitor] Started monitoring server status');
-    
     if (!mineflayerStarted) {
       mineflayerStarted = true;
       createBot();
@@ -714,26 +640,9 @@ async function sendWhisperToDiscord(username, message) {
 
 // Function to get server status description
 function getStatusDescription() {
-  // Server status section (always shown)
-  let serverInfo = '';
-  if (serverStatus && serverStatus.online) {
-    const uptime = bot ? formatUptime(Date.now() - startTime) : 'Unknown';
-    serverInfo = `🖥️ **Server:** \`${config.host}\`\n` +
-      `📊 **Online:** ${serverStatus.players.online}/${serverStatus.players.max}\n` +
-      `⏱️ **Uptime:** ${uptime}\n` +
-      `🌐 **Version:** ${serverStatus.version}\n\n`;
-  } else if (serverStatus && !serverStatus.online) {
-    serverInfo = `🖥️ **Server:** \`${config.host}\`\n` +
-      `❌ **Status:** Offline\n\n`;
-  } else {
-    serverInfo = `🖥️ **Server:** \`${config.host}\`\n` +
-      `🔍 **Status:** Checking...\n\n`;
-  }
-  
-  // Bot status section
   if (!bot || !bot.entity) {
     if (!shouldReconnect) {
-      return serverInfo + '⏸️ Bot paused';
+      return '⏸️ Bot paused';
     }
     // Show countdown if reconnecting
     if (reconnectTimestamp > 0) {
@@ -741,9 +650,9 @@ function getStatusDescription() {
       const minutes = Math.floor(remaining / 60000);
       const seconds = Math.floor((remaining % 60000) / 1000);
       const timeStr = minutes > 0 ? `${minutes}:${seconds.toString().padStart(2, '0')}` : `${seconds}s`;
-      return serverInfo + `🔄 Reconnecting in ${timeStr}`;
+      return `🔄 Reconnecting in ${timeStr}`;
     }
-    return serverInfo + '❌ Bot not connected';
+    return '❌ Bot not connected';
   }
 
   const playerCount = Object.keys(bot.players || {}).length;
@@ -754,8 +663,7 @@ function getStatusDescription() {
 
   const nearbyNames = nearbyPlayers.map(p => p.username).join(', ') || 'None';
   const whitelistOnlineDisplay = whitelistOnline.length > 0 ? whitelistOnline.map(u => `\`${u}\``).join(', ') : 'None';
-  return serverInfo +
-    `✅ Bot **${bot.username}** connected\n` +
+  return `✅ Bot **${bot.username}** connected to \`${config.host}\`\n` +
     `👥 Players online: ${playerCount}\n` +
     `👀 Players nearby: ${nearbyNames}\n` +
     `⚡ TPS: ${avgTps}\n` +
@@ -1249,8 +1157,8 @@ function clearIntervals() {
     clearInterval(tpsTabInterval);
     tpsTabInterval = null;
   }
-  // Note: statusUpdateInterval and serverMonitorInterval are NOT cleared here 
-  // as they are global Discord intervals that should persist across bot reconnections
+  // Note: statusUpdateInterval is NOT cleared here as it's a global Discord interval
+  // that should persist across bot reconnections
 }
 
 // -------------- FOOD MONITOR --------------
