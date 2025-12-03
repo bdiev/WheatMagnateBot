@@ -1675,8 +1675,13 @@ Add candidates online: **${onlineCount}**`,
               ]
             });
           } catch (err) {
-            console.error('[Activity] Failed to update activity message:', err.message);
-            clearInterval(updateInterval);
+            // If the message was deleted or is unknown, stop the interval quietly
+            const msg = (err && err.message) ? err.message : '';
+            if (err.code === 10008 || msg.includes('Unknown Message')) {
+              clearInterval(updateInterval);
+            } else {
+              clearInterval(updateInterval);
+            }
           }
         }, 1000);
         
