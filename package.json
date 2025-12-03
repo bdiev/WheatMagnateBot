@@ -13,7 +13,6 @@
   "dependencies": {
     "discord.js": "^14.14.1",
     "dotenv": "^17.2.3",
-    "minecraft-server-util": "^5.4.4",
     "mineflayer": "^4.33.0",
     "pg": "^8.11.3",
     "prismarine-auth": "^2.7.0"
