@@ -52,6 +52,7 @@ if (process.env.MINECRAFT_SESSION) {
 let lastCommandUser = null;
 let statusMessage = null;
 let statusUpdateInterval = null;
+let isUpdatingStatus = false; // Prevent concurrent updates
 let channelCleanerInterval = null;
 let tpsHistory = [];
 let realTps = null;
@@ -721,10 +722,14 @@ function createStatusButtons() {
 async function updateStatusMessage() {
   if (!statusMessage) return;
   
-  // Allow status updates even if bot is not connected to show offline state
-  const description = getStatusDescription();
-
+  // Prevent concurrent updates
+  if (isUpdatingStatus) return;
+  isUpdatingStatus = true;
+  
   try {
+    // Allow status updates even if bot is not connected to show offline state
+    const description = getStatusDescription();
+
     await statusMessage.edit({
       embeds: [{
         title: 'Server Status',
@@ -738,13 +743,24 @@ async function updateStatusMessage() {
       components: createStatusButtons()
     });
   } catch (e) {
-    console.error('[Discord] Failed to update status:', e.message);
-    // If message was deleted, try to recreate it
+    // Handle specific Discord API errors
     if (e.code === 10008 || e.message.includes('Unknown Message')) {
-      console.log('[Discord] Status message was deleted, recreating...');
+      console.error('[Discord] Status message was deleted, recreating...');
       statusMessage = null;
-      await ensureStatusMessage();
+      try {
+        await ensureStatusMessage();
+      } catch (err) {
+        console.error('[Discord] Failed to recreate status message:', err.message);
+      }
+    } else if (e.code === 50013) {
+      console.error('[Discord] Missing permissions to edit status message');
+    } else if (e.status === 429) {
+      // Rate limited - will retry on next interval
+    } else {
+      console.error('[Discord] Failed to update status:', e.message);
     }
+  } finally {
+    isUpdatingStatus = false;
   }
 }
 
@@ -1134,6 +1150,8 @@ function clearIntervals() {
     clearInterval(tpsTabInterval);
     tpsTabInterval = null;
   }
+  // Note: statusUpdateInterval is NOT cleared here as it's a global Discord interval
+  // that should persist across bot reconnections
 }
 
 // -------------- FOOD MONITOR --------------
