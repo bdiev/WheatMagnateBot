@@ -9,8 +9,15 @@ const b64encode = (str) => Buffer.from(String(str), 'utf8').toString('base64');
 const b64decode = (str) => Buffer.from(String(str), 'base64').toString('utf8');
 
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
-const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
-const DISCORD_CHAT_CHANNEL_ID = process.env.DISCORD_CHAT_CHANNEL_ID;
+// Support multiple Discord channels (comma-separated IDs)
+const DISCORD_CHANNEL_IDS = (process.env.DISCORD_CHANNEL_IDS || process.env.DISCORD_CHANNEL_ID || '')
+  .split(',')
+  .map(id => id.trim())
+  .filter(Boolean);
+const DISCORD_CHAT_CHANNEL_IDS = (process.env.DISCORD_CHAT_CHANNEL_IDS || process.env.DISCORD_CHAT_CHANNEL_ID || '')
+  .split(',')
+  .map(id => id.trim())
+  .filter(Boolean);
 const IGNORED_CHAT_USERNAMES = process.env.IGNORED_CHAT_USERNAMES ? process.env.IGNORED_CHAT_USERNAMES.split(',').map(u => u.trim().toLowerCase()) : [];
 
 // Database connection
@@ -50,7 +57,8 @@ if (process.env.MINECRAFT_SESSION) {
 }
 
 let lastCommandUser = null;
-let statusMessage = null;
+// Per-channel status message map
+let statusMessages = new Map(); // channelId -> Message
 let statusUpdateInterval = null;
 let isUpdatingStatus = false; // Prevent concurrent updates
 let channelCleanerInterval = null;
@@ -66,17 +74,17 @@ const pendingAuthLinks = [];
 const sentAuthCodes = new Set();
 const authMessageIds = new Set();
 
-function saveStatusMessageId(id) {
+function saveStatusMessageId(id, channelId) {
   try {
-    fs.writeFileSync('status_message_id.txt', id);
+    fs.writeFileSync(`status_message_id_${channelId}.txt`, id);
   } catch (e) {
     console.error('[Bot] Failed to save status message ID:', e.message);
   }
 }
 
-function loadStatusMessageId() {
+function loadStatusMessageId(channelId) {
   try {
-    return fs.readFileSync('status_message_id.txt', 'utf8').trim();
+    return fs.readFileSync(`status_message_id_${channelId}.txt`, 'utf8').trim();
   } catch (e) {
     return null;
   }
@@ -84,55 +92,58 @@ function loadStatusMessageId() {
 
 // Ensure we reuse a single persistent Server Status message.
 async function ensureStatusMessage() {
-  if (!DISCORD_CHANNEL_ID || !discordClient || !discordClient.isReady()) return;
-  try {
-    const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
-    if (!channel || !channel.isTextBased()) return;
+  if (!discordClient || !discordClient.isReady()) return;
+  const targetChannels = DISCORD_CHANNEL_IDS;
+  for (const channelId of targetChannels) {
+    try {
+      const channel = await discordClient.channels.fetch(channelId);
+      if (!channel || !channel.isTextBased()) continue;
 
-    // Try saved ID first
-    const savedId = loadStatusMessageId();
-    if (savedId && !statusMessage) {
-      try {
-        const existing = await channel.messages.fetch(savedId);
-        statusMessage = existing;
-        if (!excludedMessageIds.includes(statusMessage.id)) excludedMessageIds.push(statusMessage.id);
-        return;
-      } catch (e) {
-        // Saved ID invalid, continue to scan
-      }
-    }
-
-    // If still not set, scan recent messages for an embed titled 'Server Status'
-    if (!statusMessage) {
-      try {
-        const recent = await channel.messages.fetch({ limit: 50 });
-        const found = [...recent.values()].find(m => m.embeds[0]?.title === 'Server Status');
-        if (found) {
-          statusMessage = found;
-          saveStatusMessageId(found.id);
-          if (!excludedMessageIds.includes(found.id)) excludedMessageIds.push(found.id);
+      // Try saved ID first
+      const savedId = loadStatusMessageId(channelId);
+      if (savedId && !statusMessages.get(channelId)) {
+        try {
+          const existing = await channel.messages.fetch(savedId);
+          statusMessages.set(channelId, existing);
+          if (!excludedMessageIds.includes(existing.id)) excludedMessageIds.push(existing.id);
+          continue;
+        } catch (e) {
+          // Saved ID invalid, continue to scan
         }
-      } catch {}
-    }
+      }
 
-    // If still not found, create a new one
-    if (!statusMessage) {
-      statusMessage = await channel.send({
-        embeds: [{
-          title: 'Server Status',
-          description: getStatusDescription(),
-          color: 65280,
-          timestamp: new Date()
-        }],
-        components: createStatusButtons()
-      });
-      saveStatusMessageId(statusMessage.id);
-      if (!excludedMessageIds.includes(statusMessage.id)) excludedMessageIds.push(statusMessage.id);
-      // Try to pin for persistence across file resets
-      try { await statusMessage.pin(); } catch {}
+      // If still not set, scan recent messages for an embed titled 'Server Status'
+      if (!statusMessages.get(channelId)) {
+        try {
+          const recent = await channel.messages.fetch({ limit: 50 });
+          const found = [...recent.values()].find(m => m.embeds[0]?.title === 'Server Status');
+          if (found) {
+            statusMessages.set(channelId, found);
+            saveStatusMessageId(found.id, channelId);
+            if (!excludedMessageIds.includes(found.id)) excludedMessageIds.push(found.id);
+          }
+        } catch {}
+      }
+
+      // If still not found, create a new one
+      if (!statusMessages.get(channelId)) {
+        const msg = await channel.send({
+          embeds: [{
+            title: 'Server Status',
+            description: getStatusDescription(),
+            color: 65280,
+            timestamp: new Date()
+          }],
+          components: createStatusButtons()
+        });
+        statusMessages.set(channelId, msg);
+        saveStatusMessageId(msg.id, channelId);
+        if (!excludedMessageIds.includes(msg.id)) excludedMessageIds.push(msg.id);
+        try { await msg.pin(); } catch {}
+      }
+    } catch (e) {
+      console.error('[Discord] ensureStatusMessage failed:', e.message);
     }
-  } catch (e) {
-    console.error('[Discord] ensureStatusMessage failed:', e.message);
   }
 }
 
@@ -398,15 +409,14 @@ if (DISCORD_BOT_TOKEN) {
       console.error('[Discord] Failed to set presence:', presenceErr.message);
     }
 
-    // Check if we can see the configured channel
-    try {
-      const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
-      console.log(`[Discord] ✅ Channel found: ${channel.name} (${channel.id})`);
-      console.log(`[Discord] Channel type: ${channel.type}`);
-      console.log(`[Discord] Bot permissions in channel: ${channel.permissionsFor(discordClient.user).toArray().join(', ')}`);
-    } catch (channelErr) {
-      console.error('[Discord] ❌ Failed to fetch channel:', channelErr.message);
-      console.error('[Discord] This means the bot cannot see the configured channel!');
+    // Validate configured status channels
+    for (const channelId of DISCORD_CHANNEL_IDS) {
+      try {
+        const channel = await discordClient.channels.fetch(channelId);
+        console.log(`[Discord] ✅ Channel found: ${channel.name} (${channel.id})`);
+      } catch (channelErr) {
+        console.error(`[Discord] ❌ Failed to fetch channel ${channelId}:`, channelErr.message);
+      }
     }
 
     await initDatabase();
@@ -442,12 +452,14 @@ if (DISCORD_BOT_TOKEN) {
     if (!channelCleanerInterval) {
       channelCleanerInterval = setInterval(async () => {
         try {
-          const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
-          if (channel && channel.isTextBased()) {
+          for (const channelId of DISCORD_CHANNEL_IDS) {
+            const channel = await discordClient.channels.fetch(channelId).catch(() => null);
+            if (!channel || !channel.isTextBased()) continue;
             const messages = await channel.messages.fetch({ limit: 100 });
             const twoWeeksAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
             const messagesToDelete = messages.filter(msg => {
-              if (msg.id === statusMessage?.id) return false;
+              const trackedMsg = statusMessages.get(channelId);
+              if (trackedMsg && msg.id === trackedMsg.id) return false;
               if (excludedMessageIds.includes(msg.id)) return false;
               if (msg.createdTimestamp < twoWeeksAgo) return false; // cannot bulk delete older than 14 days
               const desc = msg.embeds[0]?.description || '';
@@ -533,20 +545,26 @@ let playerScannerInterval = null;
 
 // Helper function to send messages to Discord
 async function sendDiscordNotification(message, color = 3447003) {
-  if (!DISCORD_CHANNEL_ID || !discordClient || !discordClient.isReady()) {
+  if (!DISCORD_CHANNEL_IDS.length || !discordClient || !discordClient.isReady()) {
     console.log('[Discord] Bot not ready or no channel configured. Skipped.');
     return;
   }
   try {
-    const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
-    if (channel && channel.isTextBased()) {
-      await channel.send({
-        embeds: [{
-          description: message,
-          color,
-          timestamp: new Date()
-        }]
-      });
+    for (const channelId of DISCORD_CHANNEL_IDS) {
+      try {
+        const channel = await discordClient.channels.fetch(channelId);
+        if (channel && channel.isTextBased()) {
+          await channel.send({
+            embeds: [{
+              description: message,
+              color,
+              timestamp: new Date()
+            }]
+          });
+        }
+      } catch (e) {
+        console.error(`[Discord Bot] Failed to send to ${channelId}:`, e.message);
+      }
     }
   } catch (e) {
     console.error('[Discord Bot] Failed to send:', e.message);
@@ -720,7 +738,7 @@ function createStatusButtons() {
 
 // Function to update server status message
 async function updateStatusMessage() {
-  if (!statusMessage) return;
+  if (statusMessages.size === 0) return;
   
   // Prevent concurrent updates
   if (isUpdatingStatus) return;
@@ -730,18 +748,36 @@ async function updateStatusMessage() {
     // Allow status updates even if bot is not connected to show offline state
     const description = getStatusDescription();
 
-    await statusMessage.edit({
-      embeds: [{
-        title: 'Server Status',
-        description,
-        color: bot ? 65280 : 16711680,
-        timestamp: new Date(),
-        footer: {
-          text: 'Last updated'
+    for (const [channelId, msg] of statusMessages.entries()) {
+      try {
+        await msg.edit({
+          embeds: [{
+            title: 'Server Status',
+            description,
+            color: bot ? 65280 : 16711680,
+            timestamp: new Date(),
+            footer: {
+              text: 'Last updated'
+            }
+          }],
+          components: createStatusButtons()
+        });
+      } catch (e) {
+        if (e.code === 10008 || e.message.includes('Unknown Message')) {
+          console.error('[Discord] Status message was deleted, recreating...');
+          statusMessages.delete(channelId);
+          try {
+            await ensureStatusMessage();
+          } catch (err) {
+            console.error('[Discord] Failed to recreate status message:', err.message);
+          }
+        } else if (e.code === 50013) {
+          console.error('[Discord] Missing permissions to edit status message');
+        } else {
+          // ignore rate limit here; next interval will retry
         }
-      }],
-      components: createStatusButtons()
-    });
+      }
+    }
   } catch (e) {
     // Handle specific Discord API errors
     if (e.code === 10008 || e.message.includes('Unknown Message')) {
@@ -1067,7 +1103,7 @@ function createBot() {
     // via the dedicated bot death event handler.
 
     // Send all chat messages to Discord chat channel
-    if (!DISCORD_CHAT_CHANNEL_ID || !discordClient || !discordClient.isReady()) {
+    if (!DISCORD_CHAT_CHANNEL_IDS.length || !discordClient || !discordClient.isReady()) {
       return;
     }
     
@@ -1093,8 +1129,9 @@ function createBot() {
     // Chat->Discord: silent send
 
     try {
-      const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
-      if (channel && channel.isTextBased()) {
+      for (const chatChannelId of DISCORD_CHAT_CHANNEL_IDS) {
+        const channel = await discordClient.channels.fetch(chatChannelId).catch(() => null);
+        if (!channel || !channel.isTextBased()) continue;
         let avatarUrl = `https://minotar.net/avatar/${username.toLowerCase()}/28`;
         
         // Escape Discord markdown to prevent formatting issues
@@ -2408,7 +2445,7 @@ Add candidates online: **${onlineCount}**`,
     if (message.author.bot) return;
 
     // Handle chat channel messages
-    if (message.channel.id === DISCORD_CHAT_CHANNEL_ID) {
+    if (DISCORD_CHAT_CHANNEL_IDS.includes(message.channel.id)) {
       if (!bot) return;
       const text = message.content.trim();
       if (text) {
@@ -2418,7 +2455,7 @@ Add candidates online: **${onlineCount}**`,
       return;
     }
 
-    if (message.channel.id !== DISCORD_CHANNEL_ID) return;
+    if (!DISCORD_CHANNEL_IDS.includes(message.channel.id)) return;
 
     if (message.content === '!wn') {
       if (!bot || !bot.entity) {
