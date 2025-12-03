@@ -1609,7 +1609,19 @@ Add candidates online: **${onlineCount}**`,
           offlinePlayers.length > 0 ? '\n**Offline:**\n' + offlinePlayers.join('\n') : ''
         ].filter(s => s).join('\n') || 'No activity data available.';
         
-        const activityMessage = await interaction.editReply({
+        // First send the reply without the Remove button to obtain the message ID
+        await interaction.editReply({
+          embeds: [{
+            title: `🕒 Whitelist Activity (${activityData.players.length} players)`,
+            description,
+            color: 3447003,
+            timestamp: new Date()
+          }]
+        });
+
+        // Fetch the sent reply to get its ID, then add the Remove button bound to that ID
+        const activityMessage = await interaction.fetchReply();
+        await activityMessage.edit({
           embeds: [{
             title: `🕒 Whitelist Activity (${activityData.players.length} players)`,
             description,
