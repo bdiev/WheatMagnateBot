@@ -1072,42 +1072,31 @@ function createBot() {
       return;
     }
 
-    // Clean message - improved handling to preserve content while removing problematic characters
+    // Clean message - only remove Minecraft color codes and problematic control characters
     let cleanMessage = message
       .replace(/§[0-9a-fk-or]/gi, '') // Remove Minecraft color codes
       .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '') // Remove control chars (keep newlines \n)
       .trim();
-
-    // Skip empty messages
+    
     if (!cleanMessage) {
       return;
     }
 
-    // Additional validation: skip messages that are just whitespace or special characters
-    if (!cleanMessage.replace(/[^\w\s]/g, '').trim()) {
-      return;
-    }
-
     // Chat->Discord: silent send
+
     try {
       const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
       if (channel && channel.isTextBased()) {
         let avatarUrl = `https://minotar.net/avatar/${username.toLowerCase()}/28`;
-
-        // Improved Discord markdown escaping - handle more special characters
-        let displayMessage = cleanMessage
-          .replace(/([*_`~|\\<>@#])/g, '\\$1') // Escape basic formatting
-          .replace(/(\r\n|\n|\r)/gm, ' ') // Replace newlines with spaces
-          .replace(/\s+/g, ' ') // Collapse multiple spaces
-          .trim();
-
-        // Check if message mentions any of the tracked names (case-insensitive, whole word match)
+        
+        // Escape Discord markdown to prevent formatting issues
+        let displayMessage = cleanMessage.replace(/([*_`~|\\])/g, '\\$1');
+        
+        // Check if message mentions any of the tracked names
         const mentionNames = ['bdiev', 'bdiev_', 'gibsinnep', 'wheatmagnate'];
-        const lowerMessage = displayMessage.toLowerCase();
-        const shouldMention = mentionNames.some(name =>
-          new RegExp(`\\b${name}\\b`).test(lowerMessage)
-        );
-
+        const lowerMessage = cleanMessage.toLowerCase();
+        const shouldMention = mentionNames.some(name => lowerMessage.includes(name));
+        
         const sendOptions = {
           embeds: [{
             author: {
@@ -1122,16 +1111,12 @@ function createBot() {
             timestamp: new Date()
           }]
         };
-
-        // Only add mention if the message actually contains relevant content
-        if (shouldMention && displayMessage.length > 5) {
+        
+        if (shouldMention) {
           sendOptions.content = '<@623303738991443968>';
         }
-
-        // Skip sending if the message is too short or contains only special characters
-        if (displayMessage.length >= 2 && /[a-zA-Z0-9а-яА-Я]/.test(displayMessage)) {
-          await channel.send(sendOptions);
-        }
+        
+        await channel.send(sendOptions);
       }
     } catch (e) {
       // Silent error
