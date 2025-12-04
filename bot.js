@@ -1100,7 +1100,8 @@ function createBot() {
         const sendOptions = {
           embeds: [{
             author: {
-              name: username
+              name: username,
+              url: `https://namemc.com/profile/${username}`
             },
             description: displayMessage,
             color: 3447003,
