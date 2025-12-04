@@ -2405,8 +2405,8 @@ Add candidates online: **${onlineCount}**`,
       const text = message.content.trim();
       if (text) {
         const username = message.author.username;
-        // Don't add username prefix for commands (starting with /)
-        if (text.startsWith('/')) {
+        // Don't add username prefix for commands (starting with / or !)
+        if (text.startsWith('/') || text.startsWith('!')) {
           bot.chat(text);
           console.log(`[Chat] Sent "${text}" by ${message.author.tag}`);
         } else {
