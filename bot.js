@@ -2832,8 +2832,9 @@ Add candidates online: **${onlineCount}**`,
           bot.chat(text);
           console.log(`[Chat] Sent "${text}" by ${message.author.tag}`);
         } else {
-          bot.chat(`[${username}] ${text}`);
-          console.log(`[Chat] Sent "[${username}] ${text}" by ${message.author.tag}`);
+          // Add zero-width space after opening bracket to prevent Discord from treating [username] as mention
+          bot.chat(`[\u200B${username}] ${text}`);
+          console.log(`[Chat] Sent "[\u200B${username}] ${text}" by ${message.author.tag}`);
         }
       }
       return;
