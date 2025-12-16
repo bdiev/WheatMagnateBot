@@ -1410,6 +1410,21 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           components: options.length > 0 ? [row] : []
         });
       } else if (interaction.customId === 'whitelist_button') {
+        // Restrict Whitelist to owner/admin only
+        const OWNER_ID = '623303738991443968';
+        if (interaction.user.id !== OWNER_ID) {
+          try {
+            await interaction.reply({
+              embeds: [{
+                description: '❌ You do not have permission to manage the Whitelist.',
+                color: 16711680,
+                timestamp: new Date()
+              }],
+              ephemeral: true
+            });
+          } catch {}
+          return;
+        }
         // Show two dropdowns: Add (online players not in whitelist) and Delete (whitelisted players)
         await interaction.deferReply();
         try {
