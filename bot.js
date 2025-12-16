@@ -754,19 +754,8 @@ function createStatusButtons() {
           .setLabel('👥 Players')
           .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
-          .setCustomId('drop_button')
-          .setLabel('🗑️ Drop')
-          .setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder()
           .setCustomId('chat_setting_button')
           .setLabel('⚙️ Chat Settings')
-          .setStyle(ButtonStyle.Secondary)
-      ),
-    new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId('whitelist_button')
-          .setLabel('📋 Whitelist')
           .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
           .setCustomId('seen_button')
@@ -775,6 +764,17 @@ function createStatusButtons() {
         new ButtonBuilder()
           .setCustomId('mentions_button')
           .setLabel('🔔 Mentions')
+          .setStyle(ButtonStyle.Secondary)
+      ),
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('drop_button')
+          .setLabel('🗑️ Drop')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('whitelist_button')
+          .setLabel('📋 Whitelist')
           .setStyle(ButtonStyle.Secondary)
       )
   ];
