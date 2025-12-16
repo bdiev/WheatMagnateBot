@@ -754,10 +754,6 @@ function createStatusButtons() {
           .setLabel('👥 Players')
           .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
-          .setCustomId('chat_setting_button')
-          .setLabel('⚙️ Chat Settings')
-          .setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder()
           .setCustomId('seen_button')
           .setLabel('🕒 Seen')
           .setStyle(ButtonStyle.Secondary),
@@ -775,6 +771,10 @@ function createStatusButtons() {
         new ButtonBuilder()
           .setCustomId('whitelist_button')
           .setLabel('📋 Whitelist')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('chat_setting_button')
+          .setLabel('⚙️ Chat Settings')
           .setStyle(ButtonStyle.Secondary)
       )
   ];
@@ -1617,6 +1617,37 @@ Add candidates online: **${onlineCount}**`,
           });
         }
       } else if (interaction.customId === 'chat_setting_button') {
+        // Restrict Chat Settings to owner only
+        const OWNER_ID = '623303738991443968';
+        if (interaction.user.id !== OWNER_ID) {
+          try {
+            await interaction.reply({
+              embeds: [{
+                description: '❌ You do not have permission to manage Chat Settings.',
+                color: 16711680,
+                timestamp: new Date()
+              }],
+              ephemeral: true
+            });
+            
+            // Auto-hide after 2 minutes
+            setTimeout(async () => {
+              try {
+                await interaction.deleteReply();
+              } catch (err) {
+                try {
+                  await interaction.editReply({ embeds: [], components: [], content: '_ _' });
+                } catch (e) {
+                  // Ignore errors on cleanup
+                }
+              }
+            }, 120000);
+          } catch (err) {
+            console.error('[Discord] Error sending permission denied message:', err.message);
+          }
+          return;
+        }
+        
         await interaction.deferReply();
         if (!bot) {
           await interaction.editReply({
