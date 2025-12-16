@@ -1882,7 +1882,7 @@ Add candidates online: **${onlineCount}**`,
         const keywordInput = new TextInputBuilder()
           .setCustomId('keyword_input')
           .setLabel('Keyword')
-          .setPlaceholder('e.g., ninja, NinjaOverSurge')
+          .setPlaceholder('e.g., bdiev, bdiev_ or whatever you want')
           .setStyle(TextInputStyle.Short)
           .setRequired(true);
 
@@ -1928,6 +1928,7 @@ Add candidates online: **${onlineCount}**`,
             timestamp: new Date()
           }]
         });
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 2 * 60 * 1000);
       } else {
         await interaction.editReply(`❌ Failed to add keyword: ${result.error}`);
       }
@@ -1953,6 +1954,7 @@ Add candidates online: **${onlineCount}**`,
               timestamp: new Date()
             }]
           });
+          setTimeout(() => interaction.deleteReply().catch(() => {}), 2 * 60 * 1000);
         } else {
           await interaction.editReply(`Keyword "\`${keyword}\`" was not in your list.`);
         }
