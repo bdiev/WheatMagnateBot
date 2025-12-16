@@ -1483,6 +1483,21 @@ Add candidates online: **${onlineCount}**`,
           });
         }
       } else if (interaction.customId === 'drop_button') {
+        // Restrict Drop to owner/admin only
+        const OWNER_ID = '623303738991443968';
+        if (interaction.user.id !== OWNER_ID) {
+          try {
+            await interaction.reply({
+              embeds: [{
+                description: '❌ You do not have permission to use Drop.',
+                color: 16711680,
+                timestamp: new Date()
+              }],
+              ephemeral: true
+            });
+          } catch {}
+          return;
+        }
         await interaction.deferReply();
         if (!bot) {
           await interaction.editReply({
