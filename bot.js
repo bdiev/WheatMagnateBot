@@ -1832,6 +1832,8 @@ Add candidates online: **${onlineCount}**`,
           }],
           components
         });
+        
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 2 * 60 * 1000);
       } else if (interaction.customId.startsWith('reply_')) {
         const parts = interaction.customId.split('_');
         const encodedUsername = parts[1];
@@ -1928,7 +1930,7 @@ Add candidates online: **${onlineCount}**`,
             timestamp: new Date()
           }]
         });
-        setTimeout(() => interaction.deleteReply().catch(() => {}), 2 * 60 * 1000);
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 1 * 60 * 1000);
       } else {
         await interaction.editReply(`❌ Failed to add keyword: ${result.error}`);
       }
