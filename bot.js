@@ -291,6 +291,63 @@ async function getWhitelistActivity() {
   }
 }
 
+// Get mention keywords for checking mentions
+async function getMentionKeywords() {
+  if (!pool) return [];
+  try {
+    const res = await pool.query('SELECT discord_id, keyword FROM mention_keywords');
+    return res.rows;
+  } catch (err) {
+    console.error('[DB] ❌ Failed to load mention keywords:', err.message);
+    return [];
+  }
+}
+
+// Add mention keyword for user
+async function addMentionKeyword(discordId, keyword) {
+  if (!pool) return { success: false, error: 'Database not configured' };
+  try {
+    await pool.query(
+      'INSERT INTO mention_keywords (discord_id, keyword) VALUES ($1, $2) ON CONFLICT (discord_id, keyword) DO NOTHING',
+      [discordId, keyword.toLowerCase()]
+    );
+    return { success: true };
+  } catch (err) {
+    console.error('[DB] ❌ Failed to add mention keyword:', err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+// Remove mention keyword for user
+async function removeMentionKeyword(discordId, keyword) {
+  if (!pool) return { success: false, error: 'Database not configured' };
+  try {
+    const result = await pool.query(
+      'DELETE FROM mention_keywords WHERE discord_id = $1 AND keyword = $2',
+      [discordId, keyword.toLowerCase()]
+    );
+    return { success: true, removed: result.rowCount > 0 };
+  } catch (err) {
+    console.error('[DB] ❌ Failed to remove mention keyword:', err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+// Get user's mention keywords
+async function getUserMentionKeywords(discordId) {
+  if (!pool) return { success: false, error: 'Database not configured' };
+  try {
+    const res = await pool.query(
+      'SELECT keyword FROM mention_keywords WHERE discord_id = $1 ORDER BY keyword',
+      [discordId]
+    );
+    return { success: true, keywords: res.rows.map(r => r.keyword) };
+  } catch (err) {
+    console.error('[DB] ❌ Failed to get user mention keywords:', err.message);
+    return { success: false, error: err.message };
+  }
+}
+
 // Initialize DB table and load ignored users
 async function initDatabase() {
   if (!pool) {
@@ -323,6 +380,15 @@ async function initDatabase() {
         last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         last_online TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         is_online BOOLEAN DEFAULT FALSE
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS mention_keywords (
+        id SERIAL PRIMARY KEY,
+        discord_id VARCHAR(255) NOT NULL,
+        keyword VARCHAR(255) NOT NULL,
+        added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(discord_id, keyword)
       )
     `);
     console.log('[DB] ✅ Tables initialized successfully.');
@@ -705,6 +771,10 @@ function createStatusButtons() {
         new ButtonBuilder()
           .setCustomId('seen_button')
           .setLabel('🕒 Seen')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('mentions_button')
+          .setLabel('🔔 Mentions')
           .setStyle(ButtonStyle.Secondary)
       )
   ];
@@ -1092,10 +1162,16 @@ function createBot() {
         // Escape Discord markdown to prevent formatting issues
         let displayMessage = cleanMessage.replace(/([*_`~|\\])/g, '\\$1');
         
-        // Check if message mentions any of the tracked names
-        const mentionNames = ['bdiev', 'bdiev_', 'gibsinnep', 'wheatmagnate'];
+        // Check if message mentions any of the tracked keywords from database
         const lowerMessage = cleanMessage.toLowerCase();
-        const shouldMention = mentionNames.some(name => lowerMessage.includes(name));
+        const mentionKeywords = await getMentionKeywords();
+        const usersToMention = new Set();
+        
+        for (const { discord_id, keyword } of mentionKeywords) {
+          if (lowerMessage.includes(keyword.toLowerCase())) {
+            usersToMention.add(discord_id);
+          }
+        }
         
         const sendOptions = {
           embeds: [{
@@ -1112,8 +1188,8 @@ function createBot() {
           }]
         };
         
-        if (shouldMention) {
-          sendOptions.content = '<@623303738991443968>';
+        if (usersToMention.size > 0) {
+          sendOptions.content = Array.from(usersToMention).map(id => `<@${id}>`).join(' ');
         }
         
         await channel.send(sendOptions);
@@ -1694,6 +1770,63 @@ Add candidates online: **${onlineCount}**`,
         setTimeout(() => {
           clearInterval(updateInterval);
         }, 5 * 60 * 1000);
+      } else if (interaction.customId === 'mentions_button') {
+        await interaction.deferReply({ ephemeral: true });
+        
+        const result = await getUserMentionKeywords(interaction.user.id);
+        
+        if (!result.success) {
+          await interaction.editReply({
+            embeds: [{
+              title: '❌ Error',
+              description: `Failed to load keywords: ${result.error}`,
+              color: 16711680,
+              timestamp: new Date()
+            }]
+          });
+          return;
+        }
+
+        const keywords = result.keywords || [];
+        const description = keywords.length > 0
+          ? `**Your current mention keywords:**\n${keywords.map(k => `• \`${k}\``).join('\n')}\n\nYou will be mentioned in Discord when these words appear in game chat.`
+          : 'You have no mention keywords set.\n\nAdd keywords to get mentioned when they appear in game chat.';
+
+        const components = [
+          new ActionRowBuilder()
+            .addComponents(
+              new ButtonBuilder()
+                .setCustomId('add_mention_keyword')
+                .setLabel('➕ Add Keyword')
+                .setStyle(ButtonStyle.Success)
+            )
+        ];
+
+        // Add remove option if there are keywords
+        if (keywords.length > 0) {
+          const removeOptions = keywords.slice(0, 25).map(keyword =>
+            new StringSelectMenuOptionBuilder()
+              .setLabel(keyword)
+              .setValue(keyword)
+          );
+          
+          const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId('remove_mention_keyword_select')
+            .setPlaceholder('Select keyword to remove')
+            .addOptions(removeOptions);
+          
+          components.push(new ActionRowBuilder().addComponents(selectMenu));
+        }
+
+        await interaction.editReply({
+          embeds: [{
+            title: '🔔 Mention Keywords',
+            description,
+            color: 3447003,
+            timestamp: new Date()
+          }],
+          components
+        });
       } else if (interaction.customId.startsWith('reply_')) {
         const parts = interaction.customId.split('_');
         const encodedUsername = parts[1];
@@ -1736,6 +1869,46 @@ Add candidates online: **${onlineCount}**`,
           console.error('[Discord] Failed to delete message:', e.message);
           await interaction.reply({ content: 'Failed to delete message.', ephemeral: true });
         }
+      } else if (interaction.customId === 'add_mention_keyword') {
+        const modal = new ModalBuilder()
+          .setCustomId('add_keyword_modal')
+          .setTitle('Add Mention Keyword');
+
+        const keywordInput = new TextInputBuilder()
+          .setCustomId('keyword_input')
+          .setLabel('Keyword')
+          .setPlaceholder('e.g., ninja, NinjaOverSurge')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
+
+        const actionRow = new ActionRowBuilder().addComponents(keywordInput);
+        modal.addComponents(actionRow);
+
+        await interaction.showModal(modal);
+      }
+    } else if (interaction.isModalSubmit() && interaction.customId === 'add_keyword_modal') {
+      await interaction.deferReply({ ephemeral: true });
+      
+      const keyword = interaction.fields.getTextInputValue('keyword_input').trim().toLowerCase();
+      
+      if (!keyword) {
+        await interaction.editReply('❌ Keyword cannot be empty.');
+        return;
+      }
+
+      const result = await addMentionKeyword(interaction.user.id, keyword);
+      
+      if (result.success) {
+        await interaction.editReply({
+          embeds: [{
+            title: '✅ Keyword Added',
+            description: `You will now be mentioned when someone says "\`${keyword}\`" in game chat.`,
+            color: 65280,
+            timestamp: new Date()
+          }]
+        });
+      } else {
+        await interaction.editReply(`❌ Failed to add keyword: ${result.error}`);
       }
     } else if (interaction.isModalSubmit() && interaction.customId === 'say_modal') {
       // FIX: ephemeral flags
@@ -2003,6 +2176,65 @@ Add candidates online: **${onlineCount}**`,
             timestamp: new Date()
           }],
           components: []
+        });
+      }
+    } else if (interaction.isStringSelectMenu() && interaction.customId === 'remove_mention_keyword_select') {
+      await interaction.deferUpdate();
+      
+      const keyword = interaction.values[0];
+      const result = await removeMentionKeyword(interaction.user.id, keyword);
+      
+      if (result.success && result.removed) {
+        // Refresh the mention keywords list
+        const updatedResult = await getUserMentionKeywords(interaction.user.id);
+        const keywords = updatedResult.keywords || [];
+        
+        const description = keywords.length > 0
+          ? `**Your current mention keywords:**\n${keywords.map(k => `• \`${k}\``).join('\n')}\n\nYou will be mentioned in Discord when these words appear in game chat.`
+          : 'You have no mention keywords set.\n\nAdd keywords to get mentioned when they appear in game chat.';
+
+        const components = [
+          new ActionRowBuilder()
+            .addComponents(
+              new ButtonBuilder()
+                .setCustomId('add_mention_keyword')
+                .setLabel('➕ Add Keyword')
+                .setStyle(ButtonStyle.Success)
+            )
+        ];
+
+        if (keywords.length > 0) {
+          const removeOptions = keywords.slice(0, 25).map(kw =>
+            new StringSelectMenuOptionBuilder()
+              .setLabel(kw)
+              .setValue(kw)
+          );
+          
+          const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId('remove_mention_keyword_select')
+            .setPlaceholder('Select keyword to remove')
+            .addOptions(removeOptions);
+          
+          components.push(new ActionRowBuilder().addComponents(selectMenu));
+        }
+
+        await interaction.editReply({
+          embeds: [{
+            title: '🔔 Mention Keywords',
+            description: `✅ Removed keyword "\`${keyword}\`"\n\n${description}`,
+            color: 65280,
+            timestamp: new Date()
+          }],
+          components
+        });
+      } else {
+        await interaction.editReply({
+          embeds: [{
+            title: '❌ Error',
+            description: result.error || 'Failed to remove keyword',
+            color: 16711680,
+            timestamp: new Date()
+          }]
         });
       }
     } else if (interaction.isStringSelectMenu() && interaction.customId === 'ignore_select') {
@@ -2657,6 +2889,80 @@ Add candidates online: **${onlineCount}**`,
     // Debug command to get your Discord ID
     if (message.content === '!myid') {
       await message.reply(`Your Discord ID: ${message.author.id}\nMention test: <@${message.author.id}>`);
+    }
+
+    // Mention keywords management commands
+    if (message.content.startsWith('!addkeyword ')) {
+      const keyword = message.content.slice(12).trim().toLowerCase();
+      if (!keyword) {
+        await message.reply('Usage: !addkeyword <keyword>\nExample: !addkeyword ninja');
+        return;
+      }
+      const result = await addMentionKeyword(message.author.id, keyword);
+      if (result.success) {
+        await message.reply({
+          embeds: [{
+            title: '✅ Keyword Added',
+            description: `You will now be mentioned when someone says "${keyword}" in game chat.`,
+            color: 65280,
+            timestamp: new Date()
+          }]
+        });
+      } else {
+        await message.reply(`❌ Failed to add keyword: ${result.error}`);
+      }
+    }
+
+    if (message.content.startsWith('!removekeyword ')) {
+      const keyword = message.content.slice(15).trim().toLowerCase();
+      if (!keyword) {
+        await message.reply('Usage: !removekeyword <keyword>');
+        return;
+      }
+      const result = await removeMentionKeyword(message.author.id, keyword);
+      if (result.success) {
+        if (result.removed) {
+          await message.reply({
+            embeds: [{
+              title: '✅ Keyword Removed',
+              description: `You will no longer be mentioned for "${keyword}".`,
+              color: 65280,
+              timestamp: new Date()
+            }]
+          });
+        } else {
+          await message.reply(`Keyword "${keyword}" was not in your list.`);
+        }
+      } else {
+        await message.reply(`❌ Failed to remove keyword: ${result.error}`);
+      }
+    }
+
+    if (message.content === '!keywords' || message.content === '!listkeywords') {
+      const result = await getUserMentionKeywords(message.author.id);
+      if (result.success) {
+        if (result.keywords.length > 0) {
+          await message.reply({
+            embeds: [{
+              title: '📋 Your Mention Keywords',
+              description: `You will be mentioned when these words appear in game chat:\n\n${result.keywords.map(k => `• ${k}`).join('\n')}\n\nUse \`!addkeyword <word>\` to add more\nUse \`!removekeyword <word>\` to remove`,
+              color: 3447003,
+              timestamp: new Date()
+            }]
+          });
+        } else {
+          await message.reply({
+            embeds: [{
+              title: '📋 Your Mention Keywords',
+              description: 'You have no keywords set.\n\nUse `!addkeyword <word>` to add keywords that will trigger a mention when said in game chat.\n\nExample: `!addkeyword ninja`',
+              color: 16776960,
+              timestamp: new Date()
+            }]
+          });
+        }
+      } else {
+        await message.reply(`❌ Failed to get keywords: ${result.error}`);
+      }
     }
   });
 }
