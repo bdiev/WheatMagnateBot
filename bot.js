@@ -1166,15 +1166,19 @@ function createBot() {
         let displayMessage = cleanMessage.replace(/([*_`~|\\])/g, '\\$1');
         // Escape square brackets to prevent Discord from interpreting [username] as mentions
         displayMessage = displayMessage.replace(/\[/g, '\\[').replace(/\]/g, '\\]');
+
+        // Detect bridge-originated messages (they start with [\u200Busername]) to avoid pinging sender
+        const isBridgeMessage = cleanMessage.startsWith('[\u200B');
         
         // Check if message mentions any of the tracked keywords from database
         const lowerMessage = cleanMessage.toLowerCase();
-        const mentionKeywords = await getMentionKeywords();
         const usersToMention = new Set();
-        
-        for (const { discord_id, keyword } of mentionKeywords) {
-          if (lowerMessage.includes(keyword.toLowerCase())) {
-            usersToMention.add(discord_id);
+        if (!isBridgeMessage) {
+          const mentionKeywords = await getMentionKeywords();
+          for (const { discord_id, keyword } of mentionKeywords) {
+            if (lowerMessage.includes(keyword.toLowerCase())) {
+              usersToMention.add(discord_id);
+            }
           }
         }
         
