@@ -1771,7 +1771,7 @@ Add candidates online: **${onlineCount}**`,
           clearInterval(updateInterval);
         }, 5 * 60 * 1000);
       } else if (interaction.customId === 'mentions_button') {
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ ephemeral: false });
         
         const result = await getUserMentionKeywords(interaction.user.id);
         
@@ -1910,7 +1910,7 @@ Add candidates online: **${onlineCount}**`,
         await interaction.showModal(modal);
       }
     } else if (interaction.isModalSubmit() && interaction.customId === 'add_keyword_modal') {
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ ephemeral: false });
       
       const keyword = interaction.fields.getTextInputValue('keyword_input').trim().toLowerCase();
       
@@ -1935,7 +1935,7 @@ Add candidates online: **${onlineCount}**`,
         await interaction.editReply(`❌ Failed to add keyword: ${result.error}`);
       }
     } else if (interaction.isModalSubmit() && interaction.customId === 'remove_keyword_modal') {
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ ephemeral: false });
       
       const keyword = interaction.fields.getTextInputValue('keyword_remove_input').trim().toLowerCase();
       
