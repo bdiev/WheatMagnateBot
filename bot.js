@@ -1771,7 +1771,7 @@ Add candidates online: **${onlineCount}**`,
           clearInterval(updateInterval);
         }, 5 * 60 * 1000);
       } else if (interaction.customId === 'mentions_button') {
-        await interaction.deferReply({ ephemeral: false });
+        await interaction.deferReply({ ephemeral: true });
         
         const result = await getUserMentionKeywords(interaction.user.id);
         
@@ -1832,8 +1832,23 @@ Add candidates online: **${onlineCount}**`,
           }],
           components
         });
-        
-        setTimeout(() => interaction.deleteReply().catch(() => {}), 2 * 60 * 1000);
+        // Auto-hide: try deleting ephemeral reply, else collapse content
+        setTimeout(async () => {
+          try {
+            await interaction.deleteReply();
+          } catch (e) {
+            try {
+              await interaction.editReply({
+                embeds: [{
+                  description: '🔔 Mentions panel dismissed.',
+                  color: 3447003,
+                  timestamp: new Date()
+                }],
+                components: []
+              });
+            } catch {}
+          }
+        }, 2 * 60 * 1000);
       } else if (interaction.customId.startsWith('reply_')) {
         const parts = interaction.customId.split('_');
         const encodedUsername = parts[1];
@@ -1910,7 +1925,7 @@ Add candidates online: **${onlineCount}**`,
         await interaction.showModal(modal);
       }
     } else if (interaction.isModalSubmit() && interaction.customId === 'add_keyword_modal') {
-      await interaction.deferReply({ ephemeral: false });
+      await interaction.deferReply({ ephemeral: true });
       
       const keyword = interaction.fields.getTextInputValue('keyword_input').trim().toLowerCase();
       
@@ -1930,12 +1945,26 @@ Add candidates online: **${onlineCount}**`,
             timestamp: new Date()
           }]
         });
-        setTimeout(() => interaction.deleteReply().catch(() => {}), 1 * 60 * 1000);
+        setTimeout(async () => {
+          try {
+            await interaction.deleteReply();
+          } catch (e) {
+            try {
+              await interaction.editReply({
+                embeds: [{
+                  description: '✅ Keyword added (hidden).',
+                  color: 65280,
+                  timestamp: new Date()
+                }]
+              });
+            } catch {}
+          }
+        }, 2 * 60 * 1000);
       } else {
         await interaction.editReply(`❌ Failed to add keyword: ${result.error}`);
       }
     } else if (interaction.isModalSubmit() && interaction.customId === 'remove_keyword_modal') {
-      await interaction.deferReply({ ephemeral: false });
+      await interaction.deferReply({ ephemeral: true });
       
       const keyword = interaction.fields.getTextInputValue('keyword_remove_input').trim().toLowerCase();
       
@@ -1956,7 +1985,21 @@ Add candidates online: **${onlineCount}**`,
               timestamp: new Date()
             }]
           });
-          setTimeout(() => interaction.deleteReply().catch(() => {}), 2 * 60 * 1000);
+          setTimeout(async () => {
+            try {
+              await interaction.deleteReply();
+            } catch (e) {
+              try {
+                await interaction.editReply({
+                  embeds: [{
+                    description: '✅ Keyword removed (hidden).',
+                    color: 65280,
+                    timestamp: new Date()
+                  }]
+                });
+              } catch {}
+            }
+          }, 2 * 60 * 1000);
         } else {
           await interaction.editReply(`Keyword "\`${keyword}\`" was not in your list.`);
         }
