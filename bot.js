@@ -1161,6 +1161,8 @@ function createBot() {
         
         // Escape Discord markdown to prevent formatting issues
         let displayMessage = cleanMessage.replace(/([*_`~|\\])/g, '\\$1');
+        // Escape square brackets to prevent Discord from interpreting [username] as mentions
+        displayMessage = displayMessage.replace(/\[/g, '\\[').replace(/\]/g, '\\]');
         
         // Check if message mentions any of the tracked keywords from database
         const lowerMessage = cleanMessage.toLowerCase();
