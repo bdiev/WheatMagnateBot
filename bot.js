@@ -1147,10 +1147,7 @@ function createBot() {
       .replace(/§[0-9a-fk-or]/gi, '') // Remove Minecraft color codes
       .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '') // Remove control chars (keep newlines \n)
       .trim();
-    
-    // Add zero-width space after opening bracket to prevent Discord from interpreting [username] as mention
-    cleanMessage = cleanMessage.replace(/^\[/g, '[\u200B');
-    
+
     if (!cleanMessage) {
       return;
     }
@@ -1167,8 +1164,8 @@ function createBot() {
         // Escape square brackets to prevent Discord from interpreting [username] as mentions
         displayMessage = displayMessage.replace(/\[/g, '\\[').replace(/\]/g, '\\]');
 
-        // Detect bridge-originated messages (they start with [\u200Busername]) to avoid pinging sender
-        const isBridgeMessage = cleanMessage.startsWith('[\u200B');
+        // Detect bridge-originated messages (pattern [username] text) to avoid pinging sender
+        const isBridgeMessage = /^\[[^\]]+\]\s/.test(cleanMessage);
         
         // Check if message mentions any of the tracked keywords from database
         const lowerMessage = cleanMessage.toLowerCase();
@@ -2839,9 +2836,9 @@ Add candidates online: **${onlineCount}**`,
           bot.chat(text);
           console.log(`[Chat] Sent "${text}" by ${message.author.tag}`);
         } else {
-          // Add zero-width space after opening bracket to prevent Discord from treating [username] as mention
-          bot.chat(`[\u200B${username}] ${text}`);
-          console.log(`[Chat] Sent "[\u200B${username}] ${text}" by ${message.author.tag}`);
+          // Send without zero-width space so Minecraft chat is clean
+          bot.chat(`[${username}] ${text}`);
+          console.log(`[Chat] Sent "[${username}] ${text}" by ${message.author.tag}`);
         }
       }
       return;
