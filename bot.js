@@ -1148,6 +1148,9 @@ function createBot() {
       .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '') // Remove control chars (keep newlines \n)
       .trim();
     
+    // Add zero-width space after opening bracket to prevent Discord from interpreting [username] as mention
+    cleanMessage = cleanMessage.replace(/^\[/g, '[\u200B');
+    
     if (!cleanMessage) {
       return;
     }
