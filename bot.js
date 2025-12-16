@@ -2822,7 +2822,9 @@ Add candidates online: **${onlineCount}**`,
       if (!bot) return;
       const text = message.content.trim();
       if (text) {
-        const username = message.author.username;
+        let username = message.author.username;
+        // Escape @ symbols with zero-width space to prevent mentions
+        username = username.replace(/@/g, '@\u200B');
         // Don't add username prefix for commands (starting with / or !)
         if (text.startsWith('/') || text.startsWith('!')) {
           bot.chat(text);
