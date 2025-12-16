@@ -1366,7 +1366,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
         await interaction.showModal(modal);
       } else if (interaction.customId === 'playerlist_button') {
-        await interaction.deferReply();
+        await interaction.deferReply({ ephemeral: true });
         if (!bot) {
           await interaction.editReply({
             embeds: [{
@@ -1375,6 +1375,20 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
               timestamp: new Date()
             }]
           });
+          
+          // Auto-hide after 2 minutes
+          setTimeout(async () => {
+            try {
+              await interaction.deleteReply();
+            } catch (err) {
+              // If deletion fails, try to edit to minimal content
+              try {
+                await interaction.editReply({ embeds: [], components: [], content: '_ _' });
+              } catch (e) {
+                // Ignore errors on cleanup
+              }
+            }
+          }, 120000);
           return;
         }
         const allOnlinePlayers = Object.values(bot.players || {}).map(p => p.username);
@@ -1409,6 +1423,20 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           }],
           components: options.length > 0 ? [row] : []
         });
+        
+        // Auto-hide after 2 minutes
+        setTimeout(async () => {
+          try {
+            await interaction.deleteReply();
+          } catch (err) {
+            // If deletion fails, try to edit to minimal content
+            try {
+              await interaction.editReply({ embeds: [], components: [], content: '_ _' });
+            } catch (e) {
+              // Ignore errors on cleanup
+            }
+          }
+        }, 120000);
       } else if (interaction.customId === 'whitelist_button') {
         // Restrict Whitelist to owner/admin only
         const OWNER_ID = '623303738991443968';
