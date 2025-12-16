@@ -1798,7 +1798,12 @@ Add candidates online: **${onlineCount}**`,
               new ButtonBuilder()
                 .setCustomId('add_mention_keyword')
                 .setLabel('➕ Add Keyword')
-                .setStyle(ButtonStyle.Success)
+                .setStyle(ButtonStyle.Success),
+              new ButtonBuilder()
+                .setCustomId('remove_mention_keyword_button')
+                .setLabel('➖ Remove Keyword')
+                .setStyle(ButtonStyle.Danger)
+                .setDisabled(keywords.length === 0)
             )
         ];
 
@@ -1885,6 +1890,22 @@ Add candidates online: **${onlineCount}**`,
         modal.addComponents(actionRow);
 
         await interaction.showModal(modal);
+      } else if (interaction.customId === 'remove_mention_keyword_button') {
+        const modal = new ModalBuilder()
+          .setCustomId('remove_keyword_modal')
+          .setTitle('Remove Mention Keyword');
+
+        const keywordInput = new TextInputBuilder()
+          .setCustomId('keyword_remove_input')
+          .setLabel('Keyword to Remove')
+          .setPlaceholder('Enter keyword to remove')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
+
+        const actionRow = new ActionRowBuilder().addComponents(keywordInput);
+        modal.addComponents(actionRow);
+
+        await interaction.showModal(modal);
       }
     } else if (interaction.isModalSubmit() && interaction.customId === 'add_keyword_modal') {
       await interaction.deferReply({ ephemeral: true });
@@ -1909,6 +1930,34 @@ Add candidates online: **${onlineCount}**`,
         });
       } else {
         await interaction.editReply(`❌ Failed to add keyword: ${result.error}`);
+      }
+    } else if (interaction.isModalSubmit() && interaction.customId === 'remove_keyword_modal') {
+      await interaction.deferReply({ ephemeral: true });
+      
+      const keyword = interaction.fields.getTextInputValue('keyword_remove_input').trim().toLowerCase();
+      
+      if (!keyword) {
+        await interaction.editReply('❌ Keyword cannot be empty.');
+        return;
+      }
+
+      const result = await removeMentionKeyword(interaction.user.id, keyword);
+      
+      if (result.success) {
+        if (result.removed) {
+          await interaction.editReply({
+            embeds: [{
+              title: '✅ Keyword Removed',
+              description: `You will no longer be mentioned for "\`${keyword}\`".`,
+              color: 65280,
+              timestamp: new Date()
+            }]
+          });
+        } else {
+          await interaction.editReply(`Keyword "\`${keyword}\`" was not in your list.`);
+        }
+      } else {
+        await interaction.editReply(`❌ Failed to remove keyword: ${result.error}`);
       }
     } else if (interaction.isModalSubmit() && interaction.customId === 'say_modal') {
       // FIX: ephemeral flags
