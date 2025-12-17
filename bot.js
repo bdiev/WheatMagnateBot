@@ -62,11 +62,23 @@ let mineflayerStarted = false;
 let startTime = Date.now();
 let whisperConversations = new Map(); // username -> messageId
 let whisperChannels = new Map(); // key: `${ownerId}:${mcUsername}` -> channelId
+let pendingWhisperClaims = new Map(); // key: mcUsernameLower -> { messageId, lastMessage }
 let tpsTabInterval = null;
 const excludedMessageIds = [];
 const pendingAuthLinks = [];
 const sentAuthCodes = new Set();
 const authMessageIds = new Set();
+const WHISPER_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+// Get the owner Discord user ID for a dialog channel
+function getDialogOwnerId(channelId) {
+  for (const [key, value] of whisperChannels.entries()) {
+    if (value === channelId) {
+      return key.split(':')[0];
+    }
+  }
+  return null;
+}
 
 function saveStatusMessageId(id) {
   try {
@@ -82,6 +94,92 @@ function loadStatusMessageId() {
   } catch (e) {
     return null;
   }
+}
+
+// Send a styled whisper embed with auto-delete
+async function sendWhisperEmbed(channel, { title, headline, body, color = 3447003, directionIcon = '💬', ttlMs = WHISPER_TTL_MS, components = [] }) {
+  const now = new Date();
+  const description = `${directionIcon} ${headline}\n> ${body}`;
+  const message = await channel.send({
+    embeds: [{
+      title,
+      description,
+      color,
+      timestamp: now,
+      footer: { text: `Auto-deletes in ${Math.round(ttlMs / 60000)} minutes` }
+    }],
+    components
+  });
+
+  setTimeout(async () => {
+    try { await message.delete(); } catch (_) {}
+  }, ttlMs);
+
+  return message;
+}
+
+// Post or update a claim prompt in the status channel for unassigned whispers
+async function sendWhisperClaimPrompt(mcUsername, body) {
+  if (!DISCORD_CHANNEL_ID || !discordClient || !discordClient.isReady()) return;
+  const mcKey = mcUsername.toLowerCase();
+  const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+  if (!channel || !channel.isTextBased()) return;
+
+  const description = `Новая /msg от **${mcUsername}**\n> ${body}`;
+  const components = [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`claim_whisper_${mcKey}`)
+        .setLabel('Забрать диалог')
+        .setStyle(ButtonStyle.Success)
+    )
+  ];
+
+  const existing = pendingWhisperClaims.get(mcKey);
+  if (existing) {
+    try {
+      const msg = await channel.messages.fetch(existing.messageId);
+      await msg.edit({
+        embeds: [{
+          title: 'Новая личка из Minecraft',
+          description,
+          color: 16753920,
+          timestamp: new Date()
+        }],
+        components
+      });
+      pendingWhisperClaims.set(mcKey, { messageId: msg.id, lastMessage: body });
+      return;
+    } catch (_) {
+      pendingWhisperClaims.delete(mcKey);
+    }
+  }
+
+  try {
+    const msg = await channel.send({
+      embeds: [{
+        title: 'Новая личка из Minecraft',
+        description,
+        color: 16753920,
+        timestamp: new Date()
+      }],
+      components
+    });
+    pendingWhisperClaims.set(mcKey, { messageId: msg.id, lastMessage: body });
+  } catch (e) {
+    console.error('[Whisper] Failed to post claim prompt:', e.message);
+  }
+}
+
+function buildDeleteDialogComponents(channelId) {
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`delete_dialog_${channelId}`)
+        .setLabel('Delete dialog')
+        .setStyle(ButtonStyle.Danger)
+    )
+  ];
 }
 
 // Ensure or create a dedicated whisper channel for the requesting Discord user and target MC username
@@ -715,7 +813,8 @@ async function sendWhisperToDiscord(username, message) {
 
   const now = new Date();
   const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  const newEntry = `[${timeStr}] ⬅️ ${username}: ${message}`;
+  const headline = `${username} → you`;
+  const body = message;
 
   // Fan out to all private channels tied to this MC username
   const targets = [];
@@ -728,6 +827,7 @@ async function sendWhisperToDiscord(username, message) {
 
   if (targets.length === 0) {
     console.log(`[Whisper] No private channel for ${username}, skipping.`);
+    await sendWhisperClaimPrompt(username, body);
     return;
   }
 
@@ -741,13 +841,13 @@ async function sendWhisperToDiscord(username, message) {
         continue;
       }
 
-      await channel.send({
-        embeds: [{
-          title: `Conversation with ${username}`,
-          description: newEntry,
-          color: 3447003,
-          timestamp: now
-        }]
+      await sendWhisperEmbed(channel, {
+        title: `Dialog with ${username}`,
+        headline: `⬅️ ${headline}`,
+        body,
+        color: 3447003,
+        directionIcon: '💬',
+        components: buildDeleteDialogComponents(channel.id)
       });
     } catch (e) {
       console.error('[Whisper] Failed to deliver whisper:', e.message);
@@ -1184,8 +1284,8 @@ function createBot() {
       return;
     }
     
-    // Only skip bot's own commands (starting with ! or /)
-    if (username === bot.username && (message.startsWith('!') || message.startsWith('/'))) {
+    // Skip any messages from the bot itself to avoid echoing /msg or relayed messages back into Discord
+    if (username === bot.username) {
       return;
     }
     
@@ -1383,12 +1483,99 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
     // Interaction logs reduced to minimize noise
 
     if (interaction.channelId !== DISCORD_CHANNEL_ID) {
-      // Ignore interactions from other channels
-      return;
+      // Allow dialog delete buttons in their own channels
+      if (!(interaction.isButton() && (interaction.customId?.startsWith('delete_dialog_') || interaction.customId?.startsWith('claim_whisper_')))) {
+        return;
+      }
     }
 
 
     if (interaction.isButton()) {
+        if (interaction.customId.startsWith('claim_whisper_')) {
+          await interaction.deferReply({ ephemeral: true });
+          const mcUsername = interaction.customId.replace('claim_whisper_', '');
+          const pending = pendingWhisperClaims.get(mcUsername);
+          if (!pending) {
+            await interaction.editReply({ content: 'Диалог уже забрали или он устарел.', components: [] });
+            return;
+          }
+
+          const whisperChannel = await getOrCreateWhisperChannel(interaction.user.id, interaction.user.tag, mcUsername);
+          if (!whisperChannel) {
+            await interaction.editReply({ content: 'Не удалось создать приватный канал. Проверь DISCORD_DM_CATEGORY_ID и права.', components: [] });
+            return;
+          }
+
+          whisperChannels.set(`${interaction.user.id}:${mcUsername.toLowerCase()}`, whisperChannel.id);
+          pendingWhisperClaims.delete(mcUsername);
+
+          try {
+            // Drop delete button on the initial inbound message copy
+            await sendWhisperEmbed(whisperChannel, {
+              title: `Dialog with ${mcUsername}`,
+              headline: `⬅️ ${mcUsername} → you`,
+              body: pending.lastMessage,
+              color: 3447003,
+              directionIcon: '💬',
+              components: buildDeleteDialogComponents(whisperChannel.id)
+            });
+          } catch (e) {
+            console.error('[Whisper] Failed to deliver claimed whisper copy:', e.message);
+          }
+
+          // Mark claim message as claimed
+          try {
+            const statusChannel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+            const msg = await statusChannel.messages.fetch(pending.messageId);
+            await msg.edit({
+              embeds: [{
+                title: 'Диалог забран',
+                description: `MC: **${mcUsername}**\nDiscord: ${interaction.user.tag}`,
+                color: 65280,
+                timestamp: new Date()
+              }],
+              components: []
+            });
+          } catch (_) {}
+
+          await interaction.editReply({ content: `Канал создан: ${whisperChannel}`, components: [] });
+          return;
+        }
+      if (interaction.customId.startsWith('delete_dialog_')) {
+        await interaction.deferReply({ ephemeral: true });
+        const channelId = interaction.customId.replace('delete_dialog_', '');
+        const ownerId = getDialogOwnerId(channelId);
+
+        if (!ownerId) {
+          await interaction.editReply({ content: 'Cannot delete: dialog owner not found.', components: [] });
+          return;
+        }
+
+        if (interaction.user.id !== ownerId) {
+          await interaction.editReply({ content: 'Only the dialog owner can delete this channel.', components: [] });
+          return;
+        }
+
+        try {
+          // Remove mapping entries for this channel
+          for (const [key, value] of whisperChannels.entries()) {
+            if (value === channelId) {
+              whisperChannels.delete(key);
+            }
+          }
+
+          const channel = await discordClient.channels.fetch(channelId);
+          if (channel && channel.deletable) {
+            await channel.delete('Dialog deleted by owner');
+            await interaction.editReply({ content: 'Dialog channel deleted.', components: [] });
+          } else {
+            await interaction.editReply({ content: 'Cannot delete this channel (missing permission).', components: [] });
+          }
+        } catch (e) {
+          await interaction.editReply({ content: `Failed to delete dialog: ${e.message}`, components: [] });
+        }
+        return;
+      }
       if (interaction.customId === 'pause_resume_button') {
         await interaction.deferUpdate(); // Defer update to avoid timeout
         lastCommandUser = interaction.user.tag;
@@ -2290,19 +2477,15 @@ Add candidates online: **${onlineCount}**`,
         await interaction.reply({ content: 'Message sent.', ephemeral: true });
         setTimeout(() => interaction.deleteReply().catch(() => {}), 1000);
 
-        // Write conversation entry in the private channel
-        const now = new Date();
-        const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-        const newEntry = `[${timeStr}] ➡️ ${bot.username}: ${displayMessage}`;
-
+        // Write conversation entry in the private channel with styling and auto-delete
         try {
-          await whisperChannel.send({
-            embeds: [{
-              title: `Conversation with ${selectedUsername}`,
-              description: newEntry,
-              color: 3447003,
-              timestamp: now
-            }]
+          await sendWhisperEmbed(whisperChannel, {
+            title: `Dialog with ${selectedUsername}`,
+            headline: `➡️ You → ${selectedUsername}`,
+            body: displayMessage,
+            color: 3447003,
+            directionIcon: '💬',
+            components: buildDeleteDialogComponents(whisperChannel.id)
           });
           // Track channel for inbound replies routing
           whisperChannels.set(`${interaction.user.id}:${selectedUsername.toLowerCase()}`, whisperChannel.id);
