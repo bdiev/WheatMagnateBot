@@ -739,6 +739,7 @@ if (DISCORD_BOT_TOKEN) {
               if (msg.createdTimestamp < twoWeeksAgo) return false; // cannot bulk delete older than 14 days
               const desc = msg.embeds[0]?.description || '';
               const lowerDesc = desc.toLowerCase();
+              if (msg.embeds[0]?.title === 'New whisper from Minecraft') return false; // keep pending /msg claim cards
               // Don't delete death-related messages
               if (lowerDesc.includes('died') || lowerDesc.includes('death') || lowerDesc.includes('perished') || lowerDesc.includes('💀') || desc.includes(':skull:')) return false;
               // Don't delete whisper messages and conversations
@@ -1577,6 +1578,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           } catch (_) {}
 
           await interaction.editReply({ content: `Channel created: ${whisperChannel}`, components: [] });
+          setTimeout(() => interaction.deleteReply().catch(() => {}), 10_000);
           return;
         }
       if (interaction.customId.startsWith('delete_dialog_')) {
@@ -3051,6 +3053,47 @@ Add candidates online: **${onlineCount}**`,
 
   discordClient.on('messageCreate', async message => {
     if (message.author.bot) return;
+
+    // Dialog channel relay: convert plain text to /msg for the mapped Minecraft player
+    for (const [key, channelId] of whisperChannels.entries()) {
+      if (channelId === message.channel.id) {
+        const [ownerId, mcUsername] = key.split(':');
+        if (message.author.id !== ownerId) return; // Only channel owner can send
+        if (!bot) {
+          await message.reply({ content: 'Bot is offline, message not sent.' });
+          return;
+        }
+
+        const raw = message.content.trim();
+        if (!raw) return;
+
+        // Remove a leading /msg <user> if user typed it manually
+        const prefix = new RegExp(`^/msg\s+${mcUsername}\s+`, 'i');
+        const clean = raw.replace(prefix, '');
+        const command = `/msg ${mcUsername} ${clean}`;
+
+        bot.chat(command);
+        console.log(`[Whisper Relay] Sent to ${mcUsername}: ${clean} (by ${message.author.tag})`);
+
+        try {
+          await sendWhisperEmbed(message.channel, {
+            title: `Dialog with ${mcUsername}`,
+            headline: `➡️ You → ${mcUsername}`,
+            body: clean,
+            color: 3447003,
+            directionIcon: '💬',
+            components: buildDeleteDialogComponents(message.channel.id)
+          });
+          scheduleWhisperCleanup(message.channel.id);
+        } catch (e) {
+          console.error('[Whisper] Failed to mirror outbound message:', e.message);
+        }
+
+        // Keep channel clean from raw Discord messages
+        try { await message.delete(); } catch (_) {}
+        return;
+      }
+    }
 
     // Handle chat channel messages
     if (message.channel.id === DISCORD_CHAT_CHANNEL_ID) {
