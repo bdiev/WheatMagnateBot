@@ -1448,6 +1448,11 @@ function createBot() {
       return;
     }
 
+    // Skip /msg commands - these are relayed from dialog channels
+    if (cleanMessage.startsWith('/msg ')) {
+      return;
+    }
+
     // Chat->Discord: silent send
 
     try {
@@ -1469,7 +1474,9 @@ function createBot() {
         if (!isBridgeMessage) {
           const mentionKeywords = await getMentionKeywords();
           for (const { discord_id, keyword } of mentionKeywords) {
-            if (lowerMessage.includes(keyword.toLowerCase())) {
+            // Use word boundaries to match exact username only, not partial matches
+            const regex = new RegExp(`\\b${keyword.toLowerCase()}\\b`);
+            if (regex.test(lowerMessage)) {
               usersToMention.add(discord_id);
             }
           }
