@@ -18,8 +18,8 @@
 - **Player Detection System**: Identifies nearby players and distinguishes between whitelisted/non-whitelisted
 - **Enemy Detection**: Automatically disconnects when non-whitelisted players approach
 - **Whitelist Management**: Database-backed whitelist with Discord controls
-- **Chat Bridge**: Two-way communication between Minecraft and Discord channels
-- **Private Messaging**: Whisper handling with conversation history in Discord
+- **Chat Bridge**: Two-way communication between Minecraft and Discord channels, mention keyword pings, and NameMC links
+- **Private Messaging (/msg)**: Per-user private dialog channels, auto-delete whisper embeds, claim flow for unassigned inbound /msg, and in-channel delete button
 - **Death Monitoring**: Detects and reports player deaths with special preservation
 
 ### Discord Control Panel
@@ -35,9 +35,9 @@
 - **Error Handling**: Comprehensive error recovery and notification system
 
 ## 📋 Requirements
-- Node.js 14+
+- Node.js 16.11+ (discord.js v14)
 - Minecraft account (Microsoft authentication)
-- Discord bot token and channel access
+- Discord bot token and access to the target guild/category
 - PostgreSQL database (optional but recommended)
 
 ## 🔧 Installation
@@ -54,6 +54,7 @@ Create a `.env` file based on `.env.example`:
 DISCORD_BOT_TOKEN=your_discord_bot_token
 DISCORD_CHANNEL_ID=your_channel_id
 DISCORD_CHAT_CHANNEL_ID=your_chat_channel_id  # Optional
+DISCORD_DM_CATEGORY_ID=your_private_dm_category_id  # Required for /msg dialogs
 DATABASE_URL=postgresql://user:pass@host:port/dbname  # Optional but recommended
 MINECRAFT_USERNAME=YourBotUsername
 IGNORED_CHAT_USERNAMES=user1,user2  # Optional
@@ -80,6 +81,12 @@ IGNORED_CHAT_USERNAMES=user1,user2  # Optional
 - `!say <message>` - Send message to Minecraft
 - `!say` - Open modal for Minecraft message
 
+### /msg (whisper) Flow
+- Входящий /msg из Minecraft без назначенного канала: бот публикует карточку в статус-канале с кнопкой **«Забрать диалог»**.
+- Кто нажал кнопку, получает приватный канал `dialog-<mc>-<suffix>` в категории `DISCORD_DM_CATEGORY_ID` (доступ только этому пользователю и боту).
+- Все следующие /msg от этого MC-игрока падают в этот приватный канал в виде стилизованных автоудаляющихся embed-сообщений.
+- В канале есть кнопка **Delete dialog** для удаления канала и сброса привязки; следующая /msg снова предложит «Забрать диалог».
+
 ## 🖥️ Discord Interface
 
 ### Status Message
@@ -92,10 +99,11 @@ IGNORED_CHAT_USERNAMES=user1,user2  # Optional
   - 👀 Nearby - Scan for nearby players
   - ⚙️ Chat Settings - Manage ignored players
   - 📋 Whitelist - Manage whitelist
+  - (Status channel) «Забрать диалог» — забрать входящий /msg и создать приватный канал
 
 ### Interactive Features
 - **Player List**: Shows whitelisted and other players with selection options
-- **Whisper Conversations**: Threaded conversations with reply buttons
+- **Whisper Conversations**: Styled embeds with auto-delete, claim-to-own flow, and per-channel delete button
 - **Drop Interface**: Inventory management with item selection
 - **Chat Settings**: Ignore/unignore player management
 
