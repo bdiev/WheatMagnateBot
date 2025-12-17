@@ -64,6 +64,9 @@ let whisperConversations = new Map(); // username -> messageId
 let whisperChannels = new Map(); // key: `${ownerId}:${mcUsername}` -> channelId
 let pendingWhisperClaims = new Map(); // key: mcUsernameLower -> { messageId, lastMessage }
 let whisperCleanupTimers = new Map(); // channelId -> timeout handle
+let lastDialogMessages = new Map(); // channelId -> messageId of last message with delete button
+let whisperFooterUpdateIntervals = new Map(); // channelId -> interval handle for footer updates
+let whisperDeleteTimestamps = new Map(); // channelId -> timestamp when channel will be deleted
 let tpsTabInterval = null;
 const excludedMessageIds = [];
 const pendingAuthLinks = [];
@@ -97,23 +100,126 @@ function loadStatusMessageId() {
   }
 }
 
+// Format remaining time for footer
+function formatRemainingTime(ms) {
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+  return `${seconds}s`;
+}
+
+// Stop footer update interval for a channel
+function stopFooterUpdates(channelId) {
+  const existing = whisperFooterUpdateIntervals.get(channelId);
+  if (existing) {
+    clearInterval(existing);
+    whisperFooterUpdateIntervals.delete(channelId);
+  }
+}
+
+// Start footer update interval for a channel
+function startFooterUpdates(channelId) {
+  stopFooterUpdates(channelId);
+  
+  const interval = setInterval(async () => {
+    try {
+      const deleteTimestamp = whisperDeleteTimestamps.get(channelId);
+      const lastMsgId = lastDialogMessages.get(channelId);
+      
+      if (!deleteTimestamp || !lastMsgId) {
+        stopFooterUpdates(channelId);
+        return;
+      }
+      
+      const remaining = deleteTimestamp - Date.now();
+      if (remaining <= 0) {
+        stopFooterUpdates(channelId);
+        return;
+      }
+      
+      const ch = await discordClient.channels.fetch(channelId);
+      if (!ch || !ch.isTextBased()) {
+        stopFooterUpdates(channelId);
+        return;
+      }
+      
+      const msg = await ch.messages.fetch(lastMsgId);
+      const embed = msg.embeds[0];
+      
+      await msg.edit({
+        embeds: [{
+          description: embed.description,
+          color: embed.color,
+          timestamp: embed.timestamp,
+          footer: { text: `Auto-deletes in ${formatRemainingTime(remaining)}` }
+        }],
+        components: msg.components
+      });
+    } catch (e) {
+      // Silent error - message might be deleted
+      stopFooterUpdates(channelId);
+    }
+  }, 3000);
+  
+  whisperFooterUpdateIntervals.set(channelId, interval);
+}
+
 // Send a styled whisper embed with auto-delete
-async function sendWhisperEmbed(channel, { title, headline, body, color = 3447003, directionIcon = '💬', ttlMs = WHISPER_TTL_MS, components = [] }) {
+async function sendWhisperEmbed(channel, { title, headline, body, color = 3447003, directionIcon = '💬', ttlMs = WHISPER_TTL_MS, addDeleteButton = true }) {
   const now = new Date();
-  const description = `${directionIcon} ${headline}\n> ${body}`;
+  const deleteTimestamp = Date.now() + ttlMs;
+  const description = `${directionIcon} **${headline}**\n${body}`;
+  
+  // Remove delete button and footer from previous message
+  if (addDeleteButton && lastDialogMessages.has(channel.id)) {
+    try {
+      const prevMsgId = lastDialogMessages.get(channel.id);
+      const prevMsg = await channel.messages.fetch(prevMsgId);
+      const prevEmbed = prevMsg.embeds[0];
+      await prevMsg.edit({
+        embeds: [{
+          description: prevEmbed.description,
+          color: prevEmbed.color,
+          timestamp: prevEmbed.timestamp
+        }],
+        components: []
+      });
+    } catch (_) {}
+  }
+  
+  const components = addDeleteButton ? buildDeleteDialogComponents(channel.id) : [];
+  const embedData = {
+    description,
+    color,
+    timestamp: now
+  };
+  
+  // Add footer with countdown to the last message
+  if (addDeleteButton) {
+    embedData.footer = { text: `Auto-deletes in ${formatRemainingTime(ttlMs)}` };
+  }
+  
   const message = await channel.send({
-    embeds: [{
-      title,
-      description,
-      color,
-      timestamp: now,
-      footer: { text: `Auto-deletes in ${Math.round(ttlMs / 60000)} minutes` }
-    }],
+    embeds: [embedData],
     components
   });
+  
+  // Track this message as the last one with delete button
+  if (addDeleteButton) {
+    lastDialogMessages.set(channel.id, message.id);
+    whisperDeleteTimestamps.set(channel.id, deleteTimestamp);
+    startFooterUpdates(channel.id);
+  }
 
   setTimeout(async () => {
-    try { await message.delete(); } catch (_) {}
+    try {
+      stopFooterUpdates(channel.id);
+      await message.delete();
+    } catch (_) {}
   }, ttlMs);
 
   return message;
@@ -125,6 +231,9 @@ function removeWhisperChannelMappings(channelId) {
       whisperChannels.delete(key);
     }
   }
+  lastDialogMessages.delete(channelId);
+  stopFooterUpdates(channelId);
+  whisperDeleteTimestamps.delete(channelId);
 }
 
 function cancelWhisperCleanup(channelId) {
@@ -879,12 +988,10 @@ async function sendWhisperToDiscord(username, message) {
       }
 
       await sendWhisperEmbed(channel, {
-        title: `Dialog with ${username}`,
-        headline: `⬅️ ${headline}`,
+        headline: `${username} → You`,
         body,
         color: 3447003,
-        directionIcon: '💬',
-        components: buildDeleteDialogComponents(channel.id)
+        directionIcon: '⬅️'
       });
       scheduleWhisperCleanup(channel.id);
     } catch (e) {
@@ -1548,14 +1655,11 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           pendingWhisperClaims.delete(mcUsername);
 
           try {
-            // Drop delete button on the initial inbound message copy
             await sendWhisperEmbed(whisperChannel, {
-              title: `Dialog with ${mcUsername}`,
-              headline: `⬅️ ${mcUsername} → you`,
+              headline: `${mcUsername} → You`,
               body: pending.lastMessage,
               color: 3447003,
-              directionIcon: '💬',
-              components: buildDeleteDialogComponents(whisperChannel.id)
+              directionIcon: '⬅️'
             });
             scheduleWhisperCleanup(whisperChannel.id);
           } catch (e) {
