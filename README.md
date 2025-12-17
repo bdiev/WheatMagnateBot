@@ -82,10 +82,10 @@ IGNORED_CHAT_USERNAMES=user1,user2  # Optional
 - `!say` - Open modal for Minecraft message
 
 ### /msg (whisper) Flow
-- Входящий /msg из Minecraft без назначенного канала: бот публикует карточку в статус-канале с кнопкой **«Забрать диалог»**.
-- Кто нажал кнопку, получает приватный канал `dialog-<mc>-<suffix>` в категории `DISCORD_DM_CATEGORY_ID` (доступ только этому пользователю и боту).
-- Все следующие /msg от этого MC-игрока падают в этот приватный канал в виде стилизованных автоудаляющихся embed-сообщений.
-- В канале есть кнопка **Delete dialog** для удаления канала и сброса привязки; следующая /msg снова предложит «Забрать диалог».
+- Incoming /msg without an assigned dialog channel: the bot posts a card in the status channel with a **Claim dialog** button.
+- The first claimer gets a private channel `dialog-<mc>-<suffix>` under `DISCORD_DM_CATEGORY_ID` (only that user and the bot can view/send/read history).
+- All subsequent /msg from that MC player go to the private channel as styled auto-deleting embed messages.
+- The channel has a **Delete dialog** button to remove the channel and clear the mapping; the next /msg will surface a new **Claim dialog** prompt.
 
 ## 🖥️ Discord Interface
 
@@ -99,7 +99,7 @@ IGNORED_CHAT_USERNAMES=user1,user2  # Optional
   - 👀 Nearby - Scan for nearby players
   - ⚙️ Chat Settings - Manage ignored players
   - 📋 Whitelist - Manage whitelist
-  - (Status channel) «Забрать диалог» — забрать входящий /msg и создать приватный канал
+  - (Status channel) Claim dialog — claim an incoming /msg and create the private channel
 
 ### Interactive Features
 - **Player List**: Shows whitelisted and other players with selection options
