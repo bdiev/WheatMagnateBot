@@ -3180,16 +3180,29 @@ Add candidates online: **${onlineCount}**`,
 
         // Remove a leading /msg <user> if user typed it manually
         const prefix = new RegExp(`^/msg\s+${mcUsername}\s+`, 'i');
-        const clean = raw.replace(prefix, '');
-        const command = `/msg ${mcUsername} ${clean}`;
+        let clean = raw.replace(prefix, '');
+        
+        // Handle multiline messages - send each line as separate /msg
+        const lines = clean.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+        if (lines.length === 0) return;
 
-        bot.chat(command);
-        console.log(`[Whisper Relay] Sent to ${mcUsername}: ${clean} (by ${message.author.tag})`);
+        for (const line of lines) {
+          // Minecraft chat has a 256 character limit per message
+          const truncated = line.substring(0, 240);
+          const command = `/msg ${mcUsername} ${truncated}`;
+          
+          try {
+            bot.chat(command);
+            console.log(`[Whisper Relay] Sent to ${mcUsername}: ${truncated} (by ${message.author.tag})`);
+          } catch (e) {
+            console.error('[Whisper Relay] Failed to send message:', e.message);
+          }
+        }
 
         try {
           await sendWhisperEmbed(message.channel, {
             headline: `You → ${mcUsername}`,
-            body: clean,
+            body: clean, // Original message with newlines for display
             color: 3447003,
             directionIcon: '➡️'
           });
