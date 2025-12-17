@@ -3181,12 +3181,10 @@ Add candidates online: **${onlineCount}**`,
 
         try {
           await sendWhisperEmbed(message.channel, {
-            title: `Dialog with ${mcUsername}`,
-            headline: `➡️ You → ${mcUsername}`,
+            headline: `You → ${mcUsername}`,
             body: clean,
             color: 3447003,
-            directionIcon: '💬',
-            components: buildDeleteDialogComponents(message.channel.id)
+            directionIcon: '➡️'
           });
           scheduleWhisperCleanup(message.channel.id);
         } catch (e) {
