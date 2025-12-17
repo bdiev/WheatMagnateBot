@@ -1,7 +1,7 @@
 require('dotenv').config();
 const mineflayer = require('mineflayer');
 const fs = require('fs');
-const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ChannelType, PermissionsBitField } = require('discord.js');
 const { Pool } = require('pg');
 
 // Base64 utils for Node.js (btoa/atob polyfill)
@@ -11,6 +11,7 @@ const b64decode = (str) => Buffer.from(String(str), 'base64').toString('utf8');
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
 const DISCORD_CHAT_CHANNEL_ID = process.env.DISCORD_CHAT_CHANNEL_ID;
+const DISCORD_DM_CATEGORY_ID = process.env.DISCORD_DM_CATEGORY_ID;
 const IGNORED_CHAT_USERNAMES = process.env.IGNORED_CHAT_USERNAMES ? process.env.IGNORED_CHAT_USERNAMES.split(',').map(u => u.trim().toLowerCase()) : [];
 
 // Database connection
@@ -60,6 +61,7 @@ let lastTickTime = 0;
 let mineflayerStarted = false;
 let startTime = Date.now();
 let whisperConversations = new Map(); // username -> messageId
+let whisperChannels = new Map(); // key: `${ownerId}:${mcUsername}` -> channelId
 let tpsTabInterval = null;
 const excludedMessageIds = [];
 const pendingAuthLinks = [];
@@ -78,6 +80,91 @@ function loadStatusMessageId() {
   try {
     return fs.readFileSync('status_message_id.txt', 'utf8').trim();
   } catch (e) {
+    return null;
+  }
+}
+
+// Ensure or create a dedicated whisper channel for the requesting Discord user and target MC username
+async function getOrCreateWhisperChannel(ownerId, ownerTag, mcUsername) {
+  if (!discordClient || !discordClient.isReady()) return null;
+  if (!DISCORD_DM_CATEGORY_ID) {
+    console.error('[Whisper] DISCORD_DM_CATEGORY_ID not set. Cannot create private channel.');
+    return null;
+  }
+
+  // Use status channel guild as reference
+  const statusChannel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+  if (!statusChannel || !statusChannel.guild) {
+    console.error('[Whisper] Cannot resolve guild from status channel.');
+    return null;
+  }
+
+  const guild = statusChannel.guild;
+  const key = `${ownerId}:${mcUsername.toLowerCase()}`;
+
+  if (whisperChannels.has(key)) {
+    try {
+      const existing = await guild.channels.fetch(whisperChannels.get(key));
+      if (existing) return existing;
+    } catch (_) {
+      whisperChannels.delete(key);
+    }
+  }
+
+  let parent;
+  try {
+    parent = await guild.channels.fetch(DISCORD_DM_CATEGORY_ID);
+  } catch (err) {
+    console.error('[Whisper] Failed to fetch category:', err.message);
+    return null;
+  }
+
+  if (!parent || parent.type !== ChannelType.GuildCategory) {
+    console.error('[Whisper] Provided DISCORD_DM_CATEGORY_ID is not a category.');
+    return null;
+  }
+
+  const suffix = ownerId.slice(-4);
+  const baseName = `dialog-${mcUsername}-${suffix}`
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/--+/g, '-')
+    .slice(0, 90) || 'dialog';
+
+  try {
+    const channel = await guild.channels.create({
+      name: baseName,
+      type: ChannelType.GuildText,
+      parent: parent.id,
+      permissionOverwrites: [
+        {
+          id: guild.roles.everyone,
+          deny: [PermissionsBitField.Flags.ViewChannel]
+        },
+        {
+          id: ownerId,
+          allow: [
+            PermissionsBitField.Flags.ViewChannel,
+            PermissionsBitField.Flags.SendMessages,
+            PermissionsBitField.Flags.ReadMessageHistory
+          ]
+        },
+        {
+          id: discordClient.user.id,
+          allow: [
+            PermissionsBitField.Flags.ViewChannel,
+            PermissionsBitField.Flags.SendMessages,
+            PermissionsBitField.Flags.ReadMessageHistory
+          ]
+        }
+      ]
+    });
+
+    whisperChannels.set(key, channel.id);
+    console.log(`[Whisper] Created channel ${channel.name} for ${ownerTag} -> ${mcUsername}`);
+    return channel;
+  } catch (err) {
+    console.error('[Whisper] Failed to create channel:', err.message);
     return null;
   }
 }
@@ -625,82 +712,46 @@ async function sendWhisperToDiscord(username, message) {
     console.log('[Discord] Bot not ready for whisper.');
     return;
   }
-  try {
-    const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
-    if (channel && channel.isTextBased()) {
-      const now = new Date();
-      const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-      const newEntry = `[${timeStr}] ⬅️ ${username}: ${message}`;
 
-      try {
-        if (whisperConversations.has(username)) {
-          // Update existing conversation
-          const messageId = whisperConversations.get(username);
-          const existingMessage = await channel.messages.fetch(messageId);
-          const currentDesc = existingMessage.embeds[0]?.description || '';
-          const updatedDesc = currentDesc + '\n\n' + newEntry;
-          await existingMessage.edit({
-            embeds: [{
-              title: `Conversation with ${username}`,
-              description: updatedDesc,
-              color: 3447003,
-              timestamp: now
-            }],
-            components: [
-              new ActionRowBuilder()
-                .addComponents(
-                  new ButtonBuilder()
-                    .setCustomId(`reply_${b64encode(username)}_${messageId}`)
-                    .setLabel('Reply')
-                    .setStyle(ButtonStyle.Primary),
-                  new ButtonBuilder()
-                    .setCustomId(`remove_${messageId}`)
-                    .setLabel('Remove')
-                    .setStyle(ButtonStyle.Danger)
-                  )
-            ]
-          });
-        }
-      } catch (e) {
-        console.error('[Discord] Failed to update conversation:', e.message);
-        whisperConversations.delete(username);
-      }
-      if (!whisperConversations.has(username)) {
-        // Create new conversation
-        const sentMessage = await channel.send({
-          embeds: [{
-            title: `Conversation with ${username}`,
-            description: newEntry,
-            color: 3447003,
-            timestamp: now
-          }]
-        });
-        whisperConversations.set(username, sentMessage.id);
-        await sentMessage.edit({
-          embeds: [{
-            title: `Conversation with ${username}`,
-            description: newEntry,
-            color: 3447003,
-            timestamp: now
-          }],
-          components: [
-            new ActionRowBuilder()
-              .addComponents(
-                new ButtonBuilder()
-                  .setCustomId(`reply_${b64encode(username)}_${sentMessage.id}`)
-                  .setLabel('Reply')
-                  .setStyle(ButtonStyle.Primary),
-                new ButtonBuilder()
-                  .setCustomId(`remove_${sentMessage.id}`)
-                  .setLabel('Remove')
-                  .setStyle(ButtonStyle.Danger)
-                )
-          ]
-        });
-      }
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  const newEntry = `[${timeStr}] ⬅️ ${username}: ${message}`;
+
+  // Fan out to all private channels tied to this MC username
+  const targets = [];
+  for (const [key, channelId] of whisperChannels.entries()) {
+    const [ownerId, targetUser] = key.split(':');
+    if (targetUser === username.toLowerCase()) {
+      targets.push({ ownerId, channelId });
     }
-  } catch (e) {
-    console.error('[Discord] Failed to send whisper:', e.message);
+  }
+
+  if (targets.length === 0) {
+    console.log(`[Whisper] No private channel for ${username}, skipping.`);
+    return;
+  }
+
+  for (const target of targets) {
+    try {
+      const statusChannel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+      const guild = statusChannel.guild;
+      const channel = await guild.channels.fetch(target.channelId);
+      if (!channel || !channel.isTextBased()) {
+        whisperChannels.delete(`${target.ownerId}:${username.toLowerCase()}`);
+        continue;
+      }
+
+      await channel.send({
+        embeds: [{
+          title: `Conversation with ${username}`,
+          description: newEntry,
+          color: 3447003,
+          timestamp: now
+        }]
+      });
+    } catch (e) {
+      console.error('[Whisper] Failed to deliver whisper:', e.message);
+    }
   }
 }
 
@@ -2229,74 +2280,34 @@ Add candidates online: **${onlineCount}**`,
         }
         bot.chat(command);
 
+        // Ensure private channel per user+target
+        const whisperChannel = await getOrCreateWhisperChannel(interaction.user.id, interaction.user.tag, selectedUsername);
+        if (!whisperChannel) {
+          await interaction.reply({ content: 'Message sent in-game, but failed to create/find your private dialog channel. Check DISCORD_DM_CATEGORY_ID.', ephemeral: true });
+          return;
+        }
+
         await interaction.reply({ content: 'Message sent.', ephemeral: true });
         setTimeout(() => interaction.deleteReply().catch(() => {}), 1000);
 
-        // Create conversation embed
+        // Write conversation entry in the private channel
         const now = new Date();
         const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
         const newEntry = `[${timeStr}] ➡️ ${bot.username}: ${displayMessage}`;
 
-        if (whisperConversations.has(selectedUsername)) {
-          // Update existing conversation
-          const messageId = whisperConversations.get(selectedUsername);
-          try {
-            const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
-            const existingMessage = await channel.messages.fetch(messageId);
-            const currentDesc = existingMessage.embeds[0]?.description || '';
-            const updatedDesc = currentDesc + '\n\n' + newEntry;
-            await existingMessage.edit({
-              embeds: [{
-                title: `Conversation with ${selectedUsername}`,
-                description: updatedDesc,
-                color: 3447003,
-                timestamp: now
-              }],
-              components: existingMessage.components
-            });
-          } catch (e) {
-            console.error('[Discord] Failed to update conversation:', e.message);
-            // Remove from map and create new
-            whisperConversations.delete(selectedUsername);
-          }
-        }
-        if (!whisperConversations.has(selectedUsername)) {
-          // Create new conversation
-          try {
-            const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
-            const sentMessage = await channel.send({
-              embeds: [{
-                title: `Conversation with ${selectedUsername}`,
-                description: newEntry,
-                color: 3447003,
-                timestamp: now
-              }]
-            });
-            whisperConversations.set(selectedUsername, sentMessage.id);
-            await sentMessage.edit({
-              embeds: [{
-                title: `Conversation with ${selectedUsername}`,
-                description: newEntry,
-                color: 3447003,
-                timestamp: now
-              }],
-              components: [
-                new ActionRowBuilder()
-                  .addComponents(
-                    new ButtonBuilder()
-                      .setCustomId(`reply_${b64encode(selectedUsername)}_${sentMessage.id}`)
-                      .setLabel('Reply')
-                      .setStyle(ButtonStyle.Primary),
-                    new ButtonBuilder()
-                      .setCustomId(`remove_${sentMessage.id}`)
-                      .setLabel('Remove')
-                      .setStyle(ButtonStyle.Danger)
-                  )
-              ]
-            });
-          } catch (e) {
-            console.error('[Discord] Failed to create conversation:', e.message);
-          }
+        try {
+          await whisperChannel.send({
+            embeds: [{
+              title: `Conversation with ${selectedUsername}`,
+              description: newEntry,
+              color: 3447003,
+              timestamp: now
+            }]
+          });
+          // Track channel for inbound replies routing
+          whisperChannels.set(`${interaction.user.id}:${selectedUsername.toLowerCase()}`, whisperChannel.id);
+        } catch (e) {
+          console.error('[Whisper] Failed to write to dialog channel:', e.message);
         }
       }
     } else if (interaction.isStringSelectMenu() && interaction.customId === 'message_select') {
