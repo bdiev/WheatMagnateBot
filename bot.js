@@ -176,25 +176,25 @@ function startFooterUpdates(channelId) {
 }
 
 // Send a plain-text whisper message with auto-delete and live footer countdown
-async function sendWhisperEmbed(channel, { title, headline, body, color = 3447003, directionIcon = '💬', ttlMs = WHISPER_TTL_MS, addDeleteButton = true }) {
+async function sendWhisperEmbed(channel, { senderLabel = 'Message', body, ttlMs = WHISPER_TTL_MS, addDeleteButton = true }) {
   const now = new Date();
   const deleteTimestamp = Date.now() + ttlMs;
-  // Derive bracket label from headline (use left of '→' or the entire headline)
-  const rawLabel = (headline || '').split('→')[0].trim() || (headline || '').trim() || 'Message';
-  const firstLine = `[${rawLabel}] ${body}`;
+  const firstLine = `[${senderLabel}] ${body}`;
   const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-  const secondLine = addDeleteButton ? `Auto-deletes in ${formatRemainingTime(ttlMs)} • ${timeStr}` : `${timeStr}`;
-  const content = `${firstLine}\n${secondLine}`;
+  const footerLine = addDeleteButton ? `Auto-deletes in ${formatRemainingTime(ttlMs)} • ${timeStr}` : '';
+  const content = addDeleteButton ? `${firstLine}\n\n${footerLine}` : firstLine;
   
-  // Remove delete button and footer from previous message
+  // Remove footer from previous message (keep message and button, just remove the footer line)
   if (addDeleteButton && lastDialogMessages.has(channel.id)) {
     try {
       const prevMsgId = lastDialogMessages.get(channel.id);
       const prevMsg = await channel.messages.fetch(prevMsgId);
-      await prevMsg.edit({ components: [] });
+      const parts = (prevMsg.content || '').split('\n\n');
+      const headerOnly = parts[0];
+      await prevMsg.edit({ content: headerOnly, components: prevMsg.components });
     } catch (_) {}
   }
-  
+
   const components = addDeleteButton ? buildDeleteDialogComponents(channel.id) : [];
   const message = await channel.send({ content, components });
   
@@ -998,10 +998,8 @@ async function sendWhisperToDiscord(username, message) {
       }
 
       await sendWhisperEmbed(channel, {
-        headline: `${username} → You`,
-        body,
-        color: 3447003,
-        directionIcon: '⬅️'
+        senderLabel: username,
+        body
       });
       scheduleWhisperCleanup(channel.id);
     } catch (e) {
@@ -2760,12 +2758,8 @@ Add candidates online: **${onlineCount}**`,
         // Write conversation entry in the private channel with styling and auto-delete
         try {
           await sendWhisperEmbed(whisperChannel, {
-            title: `Dialog with ${selectedUsername}`,
-            headline: `➡️ You → ${selectedUsername}`,
-            body: displayMessage,
-            color: 3447003,
-            directionIcon: '💬',
-            components: buildDeleteDialogComponents(whisperChannel.id)
+            senderLabel: interaction.user.username,
+            body: displayMessage
           });
           scheduleWhisperCleanup(whisperChannel.id);
           // Track channel for inbound replies routing
@@ -3344,10 +3338,8 @@ Add candidates online: **${onlineCount}**`,
 
         try {
           await sendWhisperEmbed(message.channel, {
-            headline: `You → ${mcUsername}`,
-            body: clean, // Original message with newlines for display
-            color: 3447003,
-            directionIcon: '➡️'
+            senderLabel: message.author.username,
+            body: clean
           });
           scheduleWhisperCleanup(message.channel.id);
         } catch (e) {
