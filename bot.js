@@ -1525,16 +1525,22 @@ function createBot() {
   });
 
   bot.on('whisper', (username, message, translate, jsonMsg, matches) => {
+    console.log(`[Whisper] ⭐ EVENT FIRED for ${username}: "${message}"`);
+    
     // Clean the whisper message the same way as chat messages for comparison
     let cleanedWhisper = message
       .replace(/§[0-9a-fk-or]/gi, '') // Remove Minecraft color codes
       .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '') // Remove control chars
       .trim();
     
+    console.log(`[Whisper] Cleaned: "${cleanedWhisper}"`);
+    
     // Check if this was already processed as a non-whisper chat message
     const nonWhisperKey = `NON_WHISPER:${username}:${cleanedWhisper}`;
+    console.log(`[Whisper] Checking NON_WHISPER key: "${nonWhisperKey}" - exists: ${recentWhispers.has(nonWhisperKey)}`);
+    
     if (recentWhispers.has(nonWhisperKey)) {
-      console.log(`[Whisper] Skipping whisper from ${username} (already sent to chat channel)`);
+      console.log(`[Whisper] ✅ SKIPPED - Already sent to chat channel`);
       recentWhispers.delete(nonWhisperKey); // Clean up
       return;
     }
@@ -1542,7 +1548,7 @@ function createBot() {
     // Track this whisper to avoid processing it again in 'chat' event
     const key = `${username}:${cleanedWhisper}`;
     recentWhispers.set(key, Date.now());
-    console.log(`[Whisper] Tracked whisper from ${username}: "${cleanedWhisper}"`);
+    console.log(`[Whisper] ✅ TRACKED for chat dedup: "${key}"`);
     
     // Clean up old entries (older than 2 seconds)
     for (const [k, timestamp] of recentWhispers.entries()) {
@@ -1551,6 +1557,7 @@ function createBot() {
       }
     }
     
+    console.log(`[Whisper] Calling sendWhisperToDiscord...`);
     sendWhisperToDiscord(username, message);
   });
 
