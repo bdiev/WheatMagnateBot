@@ -1,7 +1,7 @@
 require('dotenv').config();
 const mineflayer = require('mineflayer');
 const fs = require('fs');
-const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ChannelType, PermissionsBitField } = require('discord.js');
+const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ChannelType, PermissionsBitField, MessageFlags } = require('discord.js');
 const { Pool } = require('pg');
 
 // Base64 utils for Node.js (btoa/atob polyfill)
@@ -961,9 +961,9 @@ async function safeEditInteraction(interaction, payload) {
     if (!isUnknownMessage) throw e;
     try {
       if (interaction.deferred || interaction.replied) {
-        await interaction.followUp({ ...payload, ephemeral: true });
+        await interaction.followUp({ ...payload, flags: MessageFlags.Ephemeral });
       } else {
-        await interaction.reply({ ...payload, ephemeral: true });
+        await interaction.reply({ ...payload, flags: MessageFlags.Ephemeral });
       }
     } catch (_) {
       // Final fallback: swallow error to avoid crashing
@@ -1713,7 +1713,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
     if (interaction.isButton()) {
         if (interaction.customId.startsWith('claim_whisper_')) {
-          await interaction.deferReply({ ephemeral: true });
+          await interaction.deferReply({ flags: MessageFlags.Ephemeral });
           const mcUsername = interaction.customId.replace('claim_whisper_', '');
           const pending = pendingWhisperClaims.get(mcUsername);
           if (!pending) {
@@ -1762,7 +1762,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           return;
         }
       if (interaction.customId.startsWith('delete_dialog_')) {
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const channelId = interaction.customId.replace('delete_dialog_', '');
         const ownerId = getDialogOwnerId(channelId);
 
@@ -1826,7 +1826,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
         await interaction.showModal(modal);
       } else if (interaction.customId === 'playerlist_button') {
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         if (!bot) {
           await interaction.editReply({
             embeds: [{
@@ -1908,7 +1908,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
                 color: 16711680,
                 timestamp: new Date()
               }],
-              ephemeral: true
+              flags: MessageFlags.Ephemeral
             });
           } catch {}
           return;
@@ -2320,7 +2320,7 @@ Add candidates online: **${onlineCount}**`,
           clearInterval(updateInterval);
         }, 5 * 60 * 1000);
       } else if (interaction.customId === 'mentions_button') {
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         
         const result = await getUserMentionKeywords(interaction.user.id);
         
@@ -2474,7 +2474,7 @@ Add candidates online: **${onlineCount}**`,
         await interaction.showModal(modal);
       }
     } else if (interaction.isModalSubmit() && interaction.customId === 'add_keyword_modal') {
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       
       const keyword = interaction.fields.getTextInputValue('keyword_input').trim().toLowerCase();
       
@@ -2513,7 +2513,7 @@ Add candidates online: **${onlineCount}**`,
         await interaction.editReply(`❌ Failed to add keyword: ${result.error}`);
       }
     } else if (interaction.isModalSubmit() && interaction.customId === 'remove_keyword_modal') {
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       
       const keyword = interaction.fields.getTextInputValue('keyword_remove_input').trim().toLowerCase();
       
@@ -2557,7 +2557,7 @@ Add candidates online: **${onlineCount}**`,
       }
     } else if (interaction.isModalSubmit() && interaction.customId === 'say_modal') {
       // FIX: ephemeral flags
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const message = interaction.fields.getTextInputValue('message_input');
       if (message && bot) {
         bot.chat(message);
@@ -2595,7 +2595,7 @@ Add candidates online: **${onlineCount}**`,
       }
     } else if (interaction.isModalSubmit() && interaction.customId.startsWith('reply_modal_')) {
       // FIX: ephemeral flags
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const encodedUsername = interaction.customId.split('_')[2];
       const username = b64decode(encodedUsername);
       const replyMessage = interaction.fields.getTextInputValue('reply_message');
@@ -2715,11 +2715,11 @@ Add candidates online: **${onlineCount}**`,
         // Ensure private channel per user+target
         const whisperChannel = await getOrCreateWhisperChannel(interaction.user.id, interaction.user.tag, selectedUsername);
         if (!whisperChannel) {
-          await interaction.reply({ content: 'Message sent in-game, but failed to create/find your private dialog channel. Check DISCORD_DM_CATEGORY_ID.', ephemeral: true });
+          await interaction.reply({ content: 'Message sent in-game, but failed to create/find your private dialog channel. Check DISCORD_DM_CATEGORY_ID.', flags: MessageFlags.Ephemeral });
           return;
         }
 
-        await interaction.reply({ content: 'Message sent.', ephemeral: true });
+        await interaction.reply({ content: 'Message sent.', flags: MessageFlags.Ephemeral });
         setTimeout(() => interaction.deleteReply().catch(() => {}), 1000);
 
         // Write conversation entry in the private channel with styling and auto-delete
@@ -3160,7 +3160,7 @@ Add candidates online: **${onlineCount}**`,
             try {
               await interaction.followUp({
                 content: `❌ Whitelist removal error: ${finalErr.message}`,
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
               });
               
             } catch (followUpErr) {
@@ -3173,7 +3173,7 @@ Add candidates online: **${onlineCount}**`,
         try {
           await interaction.reply({
             content: `❌ Critical whitelist error: ${outerErr.message}`,
-            ephemeral: true
+              flags: MessageFlags.Ephemeral
           });
         } catch (replyErr) {
           console.error('Failed to send outer error reply:', replyErr.message);
