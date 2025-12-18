@@ -1453,6 +1453,12 @@ function createBot() {
       return;
     }
 
+    // Skip private messages (whispers) - they are handled by bot.on('whisper') event
+    // Whisper messages typically contain arrows like "username ➤ you" or similar patterns
+    if (cleanMessage.includes('➤') || cleanMessage.includes('→') || cleanMessage.includes('⬅️') || cleanMessage.includes('➡️')) {
+      return;
+    }
+
     // Chat->Discord: silent send
 
     try {
