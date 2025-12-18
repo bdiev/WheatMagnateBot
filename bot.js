@@ -208,13 +208,6 @@ async function sendWhisperEmbed(channel, { senderLabel = 'Message', body, ttlMs 
     startFooterUpdates(channel.id);
   }
 
-  setTimeout(async () => {
-    try {
-      stopFooterUpdates(channel.id);
-      await message.delete();
-    } catch (_) {}
-  }, effectiveTTL);
-
   return message;
 }
 
