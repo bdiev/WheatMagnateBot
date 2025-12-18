@@ -2493,8 +2493,37 @@ Add candidates online: **${onlineCount}**`,
       if (message && bot) {
         bot.chat(message);
         console.log(`[Modal] Say "${message}" by ${interaction.user.tag}`);
+        
+        // Delete ephemeral reply after bot sends message
+        setTimeout(async () => {
+          try {
+            await interaction.deleteReply();
+          } catch (e) {
+            // Silent error
+          }
+        }, 500);
+        
+        // Send feedback message to status channel showing what bot sent
+        try {
+          const statusChannel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+          if (statusChannel && statusChannel.isTextBased()) {
+            await statusChannel.send({
+              embeds: [{
+                description: `✅ **${interaction.user.username}** sent:\n\`${message}\``,
+                color: 65280,
+                timestamp: new Date(),
+                footer: {
+                  text: 'Sent to game chat'
+                }
+              }]
+            });
+          }
+        } catch (e) {
+          console.error('[Say] Failed to send feedback:', e.message);
+        }
+      } else {
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 1000);
       }
-      setTimeout(() => interaction.deleteReply().catch(() => {}), 1000);
     } else if (interaction.isModalSubmit() && interaction.customId.startsWith('reply_modal_')) {
       // FIX: ephemeral flags
       await interaction.deferReply({ ephemeral: true });
