@@ -191,8 +191,10 @@ async function sendWhisperEmbed(channel, { senderLabel = 'Message', body, ttlMs 
       const prevMsg = await channel.messages.fetch(prevMsgId);
       const parts = (prevMsg.content || '').split('\n\n');
       const headerOnly = parts[0];
-      await prevMsg.edit({ content: headerOnly, components: prevMsg.components });
-    } catch (_) {}
+      await prevMsg.edit({ content: headerOnly });
+    } catch (e) {
+      debugLog(`[Whisper] Failed to remove footer from previous message:`, e.message);
+    }
   }
 
   const components = addDeleteButton ? buildDeleteDialogComponents(channel.id) : [];
