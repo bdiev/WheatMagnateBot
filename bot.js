@@ -1516,8 +1516,14 @@ function createBot() {
   });
 
   bot.on('whisper', (username, message, translate, jsonMsg, matches) => {
+    // Clean the whisper message the same way as chat messages for comparison
+    let cleanedWhisper = message
+      .replace(/§[0-9a-fk-or]/gi, '') // Remove Minecraft color codes
+      .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '') // Remove control chars
+      .trim();
+    
     // Track this whisper to avoid processing it again in 'chat' event
-    const key = `${username}:${message}`;
+    const key = `${username}:${cleanedWhisper}`;
     recentWhispers.set(key, Date.now());
     
     // Clean up old entries (older than 2 seconds)
