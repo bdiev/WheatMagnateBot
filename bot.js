@@ -3211,8 +3211,12 @@ Add candidates online: **${onlineCount}**`,
           console.error('[Whisper] Failed to mirror outbound message:', e.message);
         }
 
-        // Keep channel clean from raw Discord messages
-        try { await message.delete(); } catch (_) {}
+        // Always delete the original Discord message to keep channel clean
+        try { 
+          await message.delete(); 
+        } catch (e) {
+          console.error('[Whisper] Failed to delete original message:', e.message);
+        }
         return;
       }
     }
