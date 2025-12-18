@@ -133,7 +133,7 @@ function stopFooterUpdates(channelId) {
   }
 }
 
-// Start footer update interval for a channel
+// Start footer update interval for a channel (updates plain message footer line)
 function startFooterUpdates(channelId) {
   stopFooterUpdates(channelId);
   
@@ -160,17 +160,12 @@ function startFooterUpdates(channelId) {
       }
       
       const msg = await ch.messages.fetch(lastMsgId);
-      const embed = msg.embeds[0];
-      
-      await msg.edit({
-        embeds: [{
-          description: embed.description,
-          color: embed.color,
-          timestamp: embed.timestamp,
-          footer: { text: `Auto-deletes in ${formatRemainingTime(remaining)}` }
-        }],
-        components: msg.components
-      });
+      const parts = (msg.content || '').split('\n');
+      const headerLine = parts[0] || '';
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      const footerLine = `Auto-deletes in ${formatRemainingTime(remaining)} • ${timeStr}`;
+      await msg.edit({ content: `${headerLine}\n${footerLine}`, components: msg.components });
     } catch (e) {
       // Silent error - message might be deleted
       stopFooterUpdates(channelId);
@@ -180,45 +175,28 @@ function startFooterUpdates(channelId) {
   whisperFooterUpdateIntervals.set(channelId, interval);
 }
 
-// Send a styled whisper embed with auto-delete
+// Send a plain-text whisper message with auto-delete and live footer countdown
 async function sendWhisperEmbed(channel, { title, headline, body, color = 3447003, directionIcon = '💬', ttlMs = WHISPER_TTL_MS, addDeleteButton = true }) {
   const now = new Date();
   const deleteTimestamp = Date.now() + ttlMs;
-  const description = `${directionIcon} **${headline}**\n${body}`;
+  // Derive bracket label from headline (use left of '→' or the entire headline)
+  const rawLabel = (headline || '').split('→')[0].trim() || (headline || '').trim() || 'Message';
+  const firstLine = `[${rawLabel}] ${body}`;
+  const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  const secondLine = addDeleteButton ? `Auto-deletes in ${formatRemainingTime(ttlMs)} • ${timeStr}` : `${timeStr}`;
+  const content = `${firstLine}\n${secondLine}`;
   
   // Remove delete button and footer from previous message
   if (addDeleteButton && lastDialogMessages.has(channel.id)) {
     try {
       const prevMsgId = lastDialogMessages.get(channel.id);
       const prevMsg = await channel.messages.fetch(prevMsgId);
-      const prevEmbed = prevMsg.embeds[0];
-      await prevMsg.edit({
-        embeds: [{
-          description: prevEmbed.description,
-          color: prevEmbed.color,
-          timestamp: prevEmbed.timestamp
-        }],
-        components: []
-      });
+      await prevMsg.edit({ components: [] });
     } catch (_) {}
   }
   
   const components = addDeleteButton ? buildDeleteDialogComponents(channel.id) : [];
-  const embedData = {
-    description,
-    color,
-    timestamp: now
-  };
-  
-  // Add footer with countdown to the last message
-  if (addDeleteButton) {
-    embedData.footer = { text: `Auto-deletes in ${formatRemainingTime(ttlMs)}` };
-  }
-  
-  const message = await channel.send({
-    embeds: [embedData],
-    components
-  });
+  const message = await channel.send({ content, components });
   
   // Track this message as the last one with delete button
   if (addDeleteButton) {
