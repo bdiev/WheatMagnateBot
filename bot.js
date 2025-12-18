@@ -1003,7 +1003,7 @@ async function sendWhisperToDiscord(username, message) {
 
       await sendWhisperEmbed(channel, {
         senderLabel: username,
-        body
+        body: `**${body}**`
       });
       scheduleWhisperCleanup(channel.id);
     } catch (e) {
