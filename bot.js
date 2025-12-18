@@ -67,6 +67,7 @@ let whisperCleanupTimers = new Map(); // channelId -> timeout handle
 let lastDialogMessages = new Map(); // channelId -> messageId of last message with delete button
 let whisperFooterUpdateIntervals = new Map(); // channelId -> interval handle for footer updates
 let whisperDeleteTimestamps = new Map(); // channelId -> timestamp when channel will be deleted
+let recentWhispers = new Map(); // key: `${username}:${message}` -> timestamp, to track whispers and avoid duplicate chat events
 let tpsTabInterval = null;
 const excludedMessageIds = [];
 const pendingAuthLinks = [];
@@ -1306,8 +1307,6 @@ function createBot() {
 
   // ------- CHAT COMMANDS -------
   bot.on('chat', async (username, message) => {
-    // DEBUG: Log all chat messages to see their structure
-    console.log(`[CHAT DEBUG] ${username}: ${message}`);
     // Handle commands from bdiev_
     if (username === 'bdiev_') {
       if (message === '!restart') {
@@ -1455,18 +1454,9 @@ function createBot() {
       return;
     }
 
-    // Skip private messages (whispers) - they are handled by bot.on('whisper') event
-    // Whisper messages have patterns like:
-    // "[username -> you]: message" or "[username → you]: message" or
-    // "username whispered: message" or similar
-    const whisperPatterns = [
-      /^\[.+\s*(?:->|→|➤)\s*you\]:\s*.+/i,  // [username -> you]: message
-      /^\[.+\s*(?:->|→|➤)\s*you\]\s*.+/i,   // [username -> you] message
-      /^.+\s+whispered:\s*.+/i,              // username whispered: message
-      /^.+\s+(?:→|->|➤)\s+you:\s*.+/i,      // username → you: message
-    ];
-    
-    if (whisperPatterns.some(pattern => pattern.test(cleanMessage))) {
+    // Skip private messages (whispers) - check if this message was recently processed as whisper
+    const whisperKey = `${username}:${cleanMessage}`;
+    if (recentWhispers.has(whisperKey)) {
       return;
     }
 
@@ -1526,6 +1516,17 @@ function createBot() {
   });
 
   bot.on('whisper', (username, message, translate, jsonMsg, matches) => {
+    // Track this whisper to avoid processing it again in 'chat' event
+    const key = `${username}:${message}`;
+    recentWhispers.set(key, Date.now());
+    
+    // Clean up old entries (older than 2 seconds)
+    for (const [k, timestamp] of recentWhispers.entries()) {
+      if (Date.now() - timestamp > 2000) {
+        recentWhispers.delete(k);
+      }
+    }
+    
     sendWhisperToDiscord(username, message);
   });
 
