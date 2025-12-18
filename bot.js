@@ -1457,7 +1457,16 @@ function createBot() {
     // Skip private messages (whispers) - check if this message was recently processed as whisper
     const whisperKey = `${username}:${cleanMessage}`;
     if (recentWhispers.has(whisperKey)) {
+      console.log(`[Chat] Skipping whisper message from ${username}: "${cleanMessage}"`);
       return;
+    }
+    
+    // Mark this message as processed through chat (not whisper)
+    // This prevents whisper event from also sending it if it comes later
+    const nonWhisperKey = `NON_WHISPER:${username}:${cleanMessage}`;
+    if (!recentWhispers.has(nonWhisperKey)) {
+      recentWhispers.set(nonWhisperKey, Date.now());
+      console.log(`[Chat] Marked as non-whisper: ${username}: "${cleanMessage}"`);
     }
 
     // Chat->Discord: silent send
@@ -1522,9 +1531,18 @@ function createBot() {
       .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '') // Remove control chars
       .trim();
     
+    // Check if this was already processed as a non-whisper chat message
+    const nonWhisperKey = `NON_WHISPER:${username}:${cleanedWhisper}`;
+    if (recentWhispers.has(nonWhisperKey)) {
+      console.log(`[Whisper] Skipping whisper from ${username} (already sent to chat channel)`);
+      recentWhispers.delete(nonWhisperKey); // Clean up
+      return;
+    }
+    
     // Track this whisper to avoid processing it again in 'chat' event
     const key = `${username}:${cleanedWhisper}`;
     recentWhispers.set(key, Date.now());
+    console.log(`[Whisper] Tracked whisper from ${username}: "${cleanedWhisper}"`);
     
     // Clean up old entries (older than 2 seconds)
     for (const [k, timestamp] of recentWhispers.entries()) {
