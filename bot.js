@@ -160,14 +160,15 @@ function startFooterUpdates(channelId) {
       }
       
       const msg = await ch.messages.fetch(lastMsgId);
-      const parts = (msg.content || '').split('\n');
-      const headerLine = parts[0] || '';
+      const parts = (msg.content || '').split('\n\n');
+      const headerBody = parts[0] || '';
       const now = new Date();
       const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
       const footerLine = `Auto-deletes in ${formatRemainingTime(remaining)} • ${timeStr}`;
-      await msg.edit({ content: `${headerLine}\n${footerLine}`, components: msg.components });
+      await msg.edit({ content: `${headerBody}\n\n${footerLine}` });
     } catch (e) {
       // Silent error - message might be deleted
+      debugLog(`[Whisper] Footer update error:`, e.message);
       stopFooterUpdates(channelId);
     }
   }, 3000);
