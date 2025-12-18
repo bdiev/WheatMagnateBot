@@ -2837,6 +2837,13 @@ Add candidates online: **${onlineCount}**`,
       const ttlMs = minutes * 60 * 1000;
       customDialogTTL.set(channelId, ttlMs);
 
+      // Update the deletion timestamp for the current message to apply new TTL immediately
+      const newDeleteTimestamp = Date.now() + ttlMs;
+      whisperDeleteTimestamps.set(channelId, newDeleteTimestamp);
+
+      // Reschedule the cleanup with new TTL
+      scheduleWhisperCleanup(channelId, ttlMs);
+
       await interaction.editReply({ 
         content: `✅ Auto-delete time set to ${minutes} minute${minutes !== 1 ? 's' : ''}. This will apply to new messages in this dialog.`,
         components: []
