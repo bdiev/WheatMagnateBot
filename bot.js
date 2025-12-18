@@ -80,6 +80,12 @@ const WHISPER_MARK_TTL_MS = 3000; // how long to remember whisper markers for su
 const PENDING_CHAT_DELAY_MS = 400; // delay chat sends to detect whispers first
 const OUTBOUND_WHISPER_TTL_MS = 5000; // suppression window for our own /msg echoes
 
+// Debug logging (disabled by default). Enable by setting DEBUG_LOGS=true
+const DEBUG_LOGS = String(process.env.DEBUG_LOGS || '').toLowerCase() === 'true';
+function debugLog(...args) {
+  if (DEBUG_LOGS) console.log(...args);
+}
+
 // Get the owner Discord user ID for a dialog channel
 function getDialogOwnerId(channelId) {
   for (const [key, value] of whisperChannels.entries()) {
@@ -1482,7 +1488,7 @@ function createBot() {
     // Suppress whispers: if whisper arrives shortly, don't forward to public chat
     const whisperKey = `WHISPER:${username}:${cleanMessage}`;
     if (recentWhispers.has(whisperKey)) {
-      console.log(`[Chat] Suppressed whisper from ${username}: "${cleanMessage}"`);
+      debugLog(`[Chat] Suppressed whisper from ${username}: "${cleanMessage}"`);
       return;
     }
 
@@ -1493,7 +1499,7 @@ function createBot() {
       if (nowTs - ts > OUTBOUND_WHISPER_TTL_MS) outboundWhispers.delete(ok);
     }
     if (outboundWhispers.has(outboundKey)) {
-      console.log(`[Chat] Suppressed outbound echo to ${username}: "${cleanMessage}"`);
+      debugLog(`[Chat] Suppressed outbound echo to ${username}: "${cleanMessage}"`);
       return;
     }
 
@@ -1506,11 +1512,11 @@ function createBot() {
     const timer = setTimeout(async () => {
       try {
         if (recentWhispers.has(whisperKey)) {
-          console.log(`[Chat] Suppressed whisper (late mark) from ${username}: "${cleanMessage}"`);
+          debugLog(`[Chat] Suppressed whisper (late mark) from ${username}: "${cleanMessage}"`);
           return;
         }
         if (outboundWhispers.has(outboundKey)) {
-          console.log(`[Chat] Suppressed outbound echo (late) to ${username}: "${cleanMessage}"`);
+          debugLog(`[Chat] Suppressed outbound echo (late) to ${username}: "${cleanMessage}"`);
           return;
         }
         const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
@@ -1555,25 +1561,25 @@ function createBot() {
   });
 
   bot.on('whisper', (username, message, translate, jsonMsg, matches) => {
-    console.log(`[Whisper] ⭐ EVENT FIRED for ${username}: "${message}"`);
+    debugLog(`[Whisper] ⭐ EVENT FIRED for ${username}: "${message}"`);
 
     let cleanedWhisper = message
       .replace(/§[0-9a-fk-or]/gi, '')
       .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
       .trim();
 
-    console.log(`[Whisper] Cleaned: "${cleanedWhisper}"`);
+    debugLog(`[Whisper] Cleaned: "${cleanedWhisper}"`);
 
     const whisperKey = `WHISPER:${username}:${cleanedWhisper}`;
     recentWhispers.set(whisperKey, Date.now());
-    console.log(`[Whisper] ✅ MARKED whisper key: ${whisperKey}`);
+    debugLog(`[Whisper] ✅ MARKED whisper key: ${whisperKey}`);
 
     // Cancel any pending public chat send for this message
     const pendingKey = `CHAT:${username}:${cleanedWhisper}`;
     if (pendingChatTimers.has(pendingKey)) {
       clearTimeout(pendingChatTimers.get(pendingKey));
       pendingChatTimers.delete(pendingKey);
-      console.log(`[Whisper] 🛑 Canceled pending chat forward for: ${pendingKey}`);
+      debugLog(`[Whisper] 🛑 Canceled pending chat forward for: ${pendingKey}`);
     }
 
     // Cleanup old whisper marks
@@ -1583,7 +1589,7 @@ function createBot() {
       }
     }
 
-    console.log(`[Whisper] Calling sendWhisperToDiscord...`);
+    debugLog(`[Whisper] Calling sendWhisperToDiscord...`);
     sendWhisperToDiscord(username, message);
   });
 
@@ -1770,7 +1776,28 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       if (interaction.customId.startsWith('delete_dialog_')) {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const channelId = interaction.customId.replace('delete_dialog_', '');
-        const ownerId = getDialogOwnerId(channelId);
+        let ownerId = getDialogOwnerId(channelId);
+
+        if (!ownerId) {
+          // Fallback: derive owner from channel permission overwrites after restart
+          try {
+            const ch = await discordClient.channels.fetch(channelId);
+            if (ch && ch.isTextBased() && ch.guild) {
+              const overwrites = ch.permissionOverwrites?.cache ?? new Map();
+              for (const ov of overwrites.values()) {
+                // Skip everyone role and the bot itself
+                if (ov.id === ch.guild.roles.everyone.id || ov.id === discordClient.user.id) continue;
+                // Only consider member overwrites and those that explicitly allow ViewChannel
+                const allowsView = ov.allow?.has?.(PermissionsBitField.Flags.ViewChannel);
+                const isMemberType = (ov.type === 1 || ov.type === 'member');
+                if (isMemberType && allowsView) {
+                  ownerId = ov.id;
+                  break;
+                }
+              }
+            }
+          } catch (_) {}
+        }
 
         if (!ownerId) {
           await safeEditInteraction(interaction, { content: 'Cannot delete: dialog owner not found.', components: [] });
