@@ -69,6 +69,7 @@ let whisperFooterUpdateIntervals = new Map(); // channelId -> interval handle fo
 let whisperDeleteTimestamps = new Map(); // channelId -> timestamp when channel will be deleted
 let recentWhispers = new Map(); // key: `WHISPER:username:message` -> timestamp, to mark whispers and suppress chat forwarding
 let pendingChatTimers = new Map(); // key: `CHAT:username:message` -> timeout handle to delay chat forwarding
+let outboundWhispers = new Map(); // key: `OUTBOUND:targetUsername:message` -> timestamp, to suppress public echo of our own whispers
 let tpsTabInterval = null;
 const excludedMessageIds = [];
 const pendingAuthLinks = [];
@@ -77,6 +78,7 @@ const authMessageIds = new Set();
 const WHISPER_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const WHISPER_MARK_TTL_MS = 3000; // how long to remember whisper markers for suppression
 const PENDING_CHAT_DELAY_MS = 400; // delay chat sends to detect whispers first
+const OUTBOUND_WHISPER_TTL_MS = 5000; // suppression window for our own /msg echoes
 
 // Get the owner Discord user ID for a dialog channel
 function getDialogOwnerId(channelId) {
@@ -1484,6 +1486,17 @@ function createBot() {
       return;
     }
 
+    // Suppress any unexpected public echo of our own outgoing /msg to this username
+    const outboundKey = `OUTBOUND:${username.toLowerCase()}:${cleanMessage}`;
+    const nowTs = Date.now();
+    for (const [ok, ts] of outboundWhispers.entries()) {
+      if (nowTs - ts > OUTBOUND_WHISPER_TTL_MS) outboundWhispers.delete(ok);
+    }
+    if (outboundWhispers.has(outboundKey)) {
+      console.log(`[Chat] Suppressed outbound echo to ${username}: "${cleanMessage}"`);
+      return;
+    }
+
     const pendingKey = `CHAT:${username}:${cleanMessage}`;
     if (pendingChatTimers.has(pendingKey)) {
       clearTimeout(pendingChatTimers.get(pendingKey));
@@ -1494,6 +1507,10 @@ function createBot() {
       try {
         if (recentWhispers.has(whisperKey)) {
           console.log(`[Chat] Suppressed whisper (late mark) from ${username}: "${cleanMessage}"`);
+          return;
+        }
+        if (outboundWhispers.has(outboundKey)) {
+          console.log(`[Chat] Suppressed outbound echo (late) to ${username}: "${cleanMessage}"`);
           return;
         }
         const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
@@ -2600,6 +2617,20 @@ Add candidates online: **${onlineCount}**`,
         }
         bot.chat(command);
 
+        // Mark outbound whisper to suppress any unexpected public echo
+        let displayMessage = replyMessage;
+        if (replyMessage.startsWith('/r ')) {
+          displayMessage = replyMessage.slice(3).trim();
+        }
+        const normalizedOut = displayMessage
+          .replace(/§[0-9a-fk-or]/gi, '')
+          .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
+          .trim();
+        if (normalizedOut) {
+          const outKey = `OUTBOUND:${username.toLowerCase()}:${normalizedOut}`;
+          outboundWhispers.set(outKey, Date.now());
+        }
+
         // Update the conversation message
         const now = new Date();
         const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
@@ -2700,6 +2731,16 @@ Add candidates online: **${onlineCount}**`,
           console.log(`[Message] Sent /msg ${selectedUsername} ${messageText} by ${interaction.user.tag}`);
         }
         bot.chat(command);
+
+        // Mark outbound whisper(s) to suppress any unexpected public echoes
+        const normalized = displayMessage
+          .replace(/§[0-9a-fk-or]/gi, '')
+          .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
+          .trim();
+        if (normalized) {
+          const outKey = `OUTBOUND:${selectedUsername.toLowerCase()}:${normalized}`;
+          outboundWhispers.set(outKey, Date.now());
+        }
 
         // Ensure private channel per user+target
         const whisperChannel = await getOrCreateWhisperChannel(interaction.user.id, interaction.user.tag, selectedUsername);
@@ -3283,6 +3324,16 @@ Add candidates online: **${onlineCount}**`,
             console.log(`[Whisper Relay] Sent to ${mcUsername}: ${truncated} (by ${message.author.tag})`);
           } catch (e) {
             console.error('[Whisper Relay] Failed to send message:', e.message);
+          }
+
+          // Mark outbound whisper to suppress any unexpected public echo
+          const normalizedLine = truncated
+            .replace(/§[0-9a-fk-or]/gi, '')
+            .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
+            .trim();
+          if (normalizedLine) {
+            const outKey = `OUTBOUND:${mcUsername.toLowerCase()}:${normalizedLine}`;
+            outboundWhispers.set(outKey, Date.now());
           }
         }
 
