@@ -951,6 +951,26 @@ async function sendDiscordNotification(message, color = 3447003) {
   }
 }
 
+// Safely edit an interaction's reply, falling back if the original is unknown/deleted
+async function safeEditInteraction(interaction, payload) {
+  try {
+    await interaction.editReply(payload);
+  } catch (e) {
+    const msg = (e && e.message) ? e.message : '';
+    const isUnknownMessage = e?.code === 10008 || e?.status === 404 || msg.includes('Unknown Message');
+    if (!isUnknownMessage) throw e;
+    try {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.followUp({ ...payload, ephemeral: true });
+      } else {
+        await interaction.reply({ ...payload, ephemeral: true });
+      }
+    } catch (_) {
+      // Final fallback: swallow error to avoid crashing
+    }
+  }
+}
+
 // Function to send whispers to Discord with buttons
 async function sendWhisperToDiscord(username, message) {
   if (!DISCORD_CHANNEL_ID || !discordClient || !discordClient.isReady()) {
@@ -1747,12 +1767,12 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         const ownerId = getDialogOwnerId(channelId);
 
         if (!ownerId) {
-          await interaction.editReply({ content: 'Cannot delete: dialog owner not found.', components: [] });
+          await safeEditInteraction(interaction, { content: 'Cannot delete: dialog owner not found.', components: [] });
           return;
         }
 
         if (interaction.user.id !== ownerId) {
-          await interaction.editReply({ content: 'Only the dialog owner can delete this channel.', components: [] });
+          await safeEditInteraction(interaction, { content: 'Only the dialog owner can delete this channel.', components: [] });
           return;
         }
 
@@ -1763,12 +1783,12 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           const channel = await discordClient.channels.fetch(channelId);
           if (channel && channel.deletable) {
             await channel.delete('Dialog deleted by owner');
-            await interaction.editReply({ content: 'Dialog channel deleted.', components: [] });
+            await safeEditInteraction(interaction, { content: 'Dialog channel deleted.', components: [] });
           } else {
-            await interaction.editReply({ content: 'Cannot delete this channel (missing permission).', components: [] });
+            await safeEditInteraction(interaction, { content: 'Cannot delete this channel (missing permission).', components: [] });
           }
         } catch (e) {
-          await interaction.editReply({ content: `Failed to delete dialog: ${e.message}`, components: [] });
+          await safeEditInteraction(interaction, { content: `Failed to delete dialog: ${e.message}`, components: [] });
         }
         return;
       }
