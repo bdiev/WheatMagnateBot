@@ -3267,6 +3267,33 @@ Add candidates online: **${onlineCount}**`,
           bot.chat(`[${username}] ${text}`);
           console.log(`[Chat] Sent "[${username}] ${text}" by ${message.author.tag}`);
         }
+        
+        // Delete original message and send confirmation
+        try {
+          await message.delete();
+        } catch (e) {
+          console.error('[Chat] Failed to delete message:', e.message);
+        }
+        
+        // Send confirmation showing what was sent to game
+        try {
+          let sentText = text;
+          if (!text.startsWith('/') && !text.startsWith('!')) {
+            sentText = `[${username}] ${text}`;
+          }
+          await message.channel.send({
+            embeds: [{
+              description: `✅ **${message.author.username}** sent:\n\`${sentText}\``,
+              color: 65280,
+              timestamp: new Date(),
+              footer: {
+                text: 'Sent to game chat'
+              }
+            }]
+          });
+        } catch (e) {
+          console.error('[Chat] Failed to send confirmation:', e.message);
+        }
       }
       return;
     }
