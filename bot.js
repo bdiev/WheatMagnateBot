@@ -231,7 +231,7 @@ function cancelWhisperCleanup(channelId) {
   }
 }
 
-function scheduleWhisperCleanup(channelId) {
+function scheduleWhisperCleanup(channelId, ttlMs = WHISPER_TTL_MS) {
   cancelWhisperCleanup(channelId);
   const timer = setTimeout(async () => {
     try {
@@ -245,7 +245,7 @@ function scheduleWhisperCleanup(channelId) {
     } finally {
       cancelWhisperCleanup(channelId);
     }
-  }, WHISPER_TTL_MS);
+  }, ttlMs);
 
   whisperCleanupTimers.set(channelId, timer);
 }
@@ -1002,7 +1002,8 @@ async function sendWhisperToDiscord(username, message) {
         senderLabel: username,
         body: `**${body}**`
       });
-      scheduleWhisperCleanup(channel.id);
+      const effectiveTTL = customDialogTTL.get(channel.id) || WHISPER_TTL_MS;
+      scheduleWhisperCleanup(channel.id, effectiveTTL);
     } catch (e) {
       console.error('[Whisper] Failed to deliver whisper:', e.message);
     }
