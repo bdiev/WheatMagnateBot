@@ -67,6 +67,7 @@ let whisperCleanupTimers = new Map(); // channelId -> timeout handle
 let lastDialogMessages = new Map(); // channelId -> messageId of last message with delete button
 let whisperFooterUpdateIntervals = new Map(); // channelId -> interval handle for footer updates
 let whisperDeleteTimestamps = new Map(); // channelId -> timestamp when channel will be deleted
+let customDialogTTL = new Map(); // channelId -> custom TTL in ms (user-configured)
 let recentWhispers = new Map(); // key: `WHISPER:username:message` -> timestamp, to mark whispers and suppress chat forwarding
 let pendingChatTimers = new Map(); // key: `CHAT:username:message` -> timeout handle to delay chat forwarding
 let outboundWhispers = new Map(); // key: `OUTBOUND:targetUsername:message` -> timestamp, to suppress public echo of our own whispers
@@ -162,9 +163,7 @@ function startFooterUpdates(channelId) {
       const msg = await ch.messages.fetch(lastMsgId);
       const parts = (msg.content || '').split('\n\n');
       const headerBody = parts[0] || '';
-      const now = new Date();
-      const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-      const footerLine = `Auto-deletes in ${formatRemainingTime(remaining)} • ${timeStr}`;
+      const footerLine = `Auto-deletes in ${formatRemainingTime(remaining)}`;
       await msg.edit({ content: `${headerBody}\n\n${footerLine}` });
     } catch (e) {
       // Silent error - message might be deleted
@@ -178,11 +177,11 @@ function startFooterUpdates(channelId) {
 
 // Send a plain-text whisper message with auto-delete and live footer countdown
 async function sendWhisperEmbed(channel, { senderLabel = 'Message', body, ttlMs = WHISPER_TTL_MS, addDeleteButton = true }) {
-  const now = new Date();
-  const deleteTimestamp = Date.now() + ttlMs;
+  // Use custom TTL if set for this channel
+  const effectiveTTL = customDialogTTL.get(channel.id) || ttlMs;
+  const deleteTimestamp = Date.now() + effectiveTTL;
   const firstLine = `[${senderLabel}] ${body}`;
-  const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-  const footerLine = addDeleteButton ? `Auto-deletes in ${formatRemainingTime(ttlMs)} • ${timeStr}` : '';
+  const footerLine = addDeleteButton ? `Auto-deletes in ${formatRemainingTime(effectiveTTL)}` : '';
   const content = addDeleteButton ? `${firstLine}\n\n${footerLine}` : firstLine;
   
   // Stop footer updates for previous message and remove its footer/button
@@ -214,7 +213,7 @@ async function sendWhisperEmbed(channel, { senderLabel = 'Message', body, ttlMs 
       stopFooterUpdates(channel.id);
       await message.delete();
     } catch (_) {}
-  }, ttlMs);
+  }, effectiveTTL);
 
   return message;
 }
@@ -228,6 +227,7 @@ function removeWhisperChannelMappings(channelId) {
   lastDialogMessages.delete(channelId);
   stopFooterUpdates(channelId);
   whisperDeleteTimestamps.delete(channelId);
+  customDialogTTL.delete(channelId);
 }
 
 function cancelWhisperCleanup(channelId) {
@@ -316,7 +316,11 @@ function buildDeleteDialogComponents(channelId) {
       new ButtonBuilder()
         .setCustomId(`delete_dialog_${channelId}`)
         .setLabel('Delete dialog')
-        .setStyle(ButtonStyle.Danger)
+        .setStyle(ButtonStyle.Danger),
+      new ButtonBuilder()
+        .setCustomId(`set_ttl_${channelId}`)
+        .setLabel('Set auto-delete time')
+        .setStyle(ButtonStyle.Secondary)
     )
   ];
 }
@@ -1696,8 +1700,9 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
     // Interaction logs reduced to minimize noise
 
     if (interaction.channelId !== DISCORD_CHANNEL_ID) {
-      // Allow dialog delete buttons in their own channels
-      if (!(interaction.isButton() && (interaction.customId?.startsWith('delete_dialog_') || interaction.customId?.startsWith('claim_whisper_')))) {
+      // Allow dialog buttons and select menus in their own channels
+      if (!(interaction.isButton() && (interaction.customId?.startsWith('delete_dialog_') || interaction.customId?.startsWith('set_ttl_') || interaction.customId?.startsWith('claim_whisper_'))) && 
+          !(interaction.isStringSelectMenu() && interaction.customId?.startsWith('set_ttl_select_'))) {
         return;
       }
     }
@@ -1803,6 +1808,64 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         } catch (e) {
           await safeEditInteraction(interaction, { content: `Failed to delete dialog: ${e.message}`, components: [] });
         }
+        return;
+      }
+      if (interaction.customId.startsWith('set_ttl_')) {
+        const channelId = interaction.customId.replace('set_ttl_', '');
+        let ownerId = getDialogOwnerId(channelId);
+
+        if (!ownerId) {
+          // Fallback: derive owner from channel permission overwrites
+          try {
+            const ch = await discordClient.channels.fetch(channelId);
+            if (ch && ch.isTextBased() && ch.guild) {
+              const overwrites = ch.permissionOverwrites?.cache ?? new Map();
+              for (const ov of overwrites.values()) {
+                if (ov.id === ch.guild.roles.everyone.id || ov.id === discordClient.user.id) continue;
+                const allowsView = ov.allow?.has?.(PermissionsBitField.Flags.ViewChannel);
+                const isMemberType = (ov.type === 1 || ov.type === 'member');
+                if (isMemberType && allowsView) {
+                  ownerId = ov.id;
+                  break;
+                }
+              }
+            }
+          } catch (_) {}
+        }
+
+        if (!ownerId) {
+          await interaction.reply({ content: 'Cannot set auto-delete time: dialog owner not found.', flags: MessageFlags.Ephemeral });
+          return;
+        }
+
+        if (interaction.user.id !== ownerId) {
+          await interaction.reply({ content: 'Only the dialog owner can change auto-delete time.', flags: MessageFlags.Ephemeral });
+          return;
+        }
+
+        const selectMenu = new StringSelectMenuBuilder()
+          .setCustomId(`set_ttl_select_${channelId}`)
+          .setPlaceholder('Select auto-delete time')
+          .addOptions(
+            new StringSelectMenuOptionBuilder()
+              .setLabel('5 minutes')
+              .setValue('5')
+              .setEmoji('⏰'),
+            new StringSelectMenuOptionBuilder()
+              .setLabel('15 minutes')
+              .setValue('15')
+              .setEmoji('⏱️'),
+            new StringSelectMenuOptionBuilder()
+              .setLabel('30 minutes')
+              .setValue('30')
+              .setEmoji('⏲️')
+          );
+
+        await interaction.reply({
+          content: 'Choose auto-delete time for new messages:',
+          components: [new ActionRowBuilder().addComponents(selectMenu)],
+          flags: MessageFlags.Ephemeral
+        });
         return;
       }
       if (interaction.customId === 'pause_resume_button') {
@@ -2772,6 +2835,19 @@ Add candidates online: **${onlineCount}**`,
           console.error('[Whisper] Failed to write to dialog channel:', e.message);
         }
       }
+    } else if (interaction.isStringSelectMenu() && interaction.customId.startsWith('set_ttl_select_')) {
+      await interaction.deferUpdate();
+      const channelId = interaction.customId.replace('set_ttl_select_', '');
+      const minutes = parseInt(interaction.values[0], 10);
+
+      const ttlMs = minutes * 60 * 1000;
+      customDialogTTL.set(channelId, ttlMs);
+
+      await interaction.editReply({ 
+        content: `✅ Auto-delete time set to ${minutes} minute${minutes !== 1 ? 's' : ''}. This will apply to new messages in this dialog.`,
+        components: []
+      });
+      setTimeout(() => interaction.deleteReply().catch(() => {}), 5000);
     } else if (interaction.isStringSelectMenu() && interaction.customId === 'message_select') {
       const encodedUsername = interaction.values[0];
       const selectedUsername = b64decode(encodedUsername);
