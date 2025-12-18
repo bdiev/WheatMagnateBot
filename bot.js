@@ -67,13 +67,16 @@ let whisperCleanupTimers = new Map(); // channelId -> timeout handle
 let lastDialogMessages = new Map(); // channelId -> messageId of last message with delete button
 let whisperFooterUpdateIntervals = new Map(); // channelId -> interval handle for footer updates
 let whisperDeleteTimestamps = new Map(); // channelId -> timestamp when channel will be deleted
-let recentWhispers = new Map(); // key: `${username}:${message}` -> timestamp, to track whispers and avoid duplicate chat events
+let recentWhispers = new Map(); // key: `WHISPER:username:message` -> timestamp, to mark whispers and suppress chat forwarding
+let pendingChatTimers = new Map(); // key: `CHAT:username:message` -> timeout handle to delay chat forwarding
 let tpsTabInterval = null;
 const excludedMessageIds = [];
 const pendingAuthLinks = [];
 const sentAuthCodes = new Set();
 const authMessageIds = new Set();
 const WHISPER_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const WHISPER_MARK_TTL_MS = 3000; // how long to remember whisper markers for suppression
+const PENDING_CHAT_DELAY_MS = 400; // delay chat sends to detect whispers first
 
 // Get the owner Discord user ID for a dialog channel
 function getDialogOwnerId(channelId) {
@@ -1474,109 +1477,95 @@ function createBot() {
       return;
     }
 
-    // Skip private messages (whispers) - check if this message was recently processed as whisper
-    const whisperKey = `${username}:${cleanMessage}`;
+    // Suppress whispers: if whisper arrives shortly, don't forward to public chat
+    const whisperKey = `WHISPER:${username}:${cleanMessage}`;
     if (recentWhispers.has(whisperKey)) {
-      console.log(`[Chat] Skipping whisper message from ${username}: "${cleanMessage}"`);
+      console.log(`[Chat] Suppressed whisper from ${username}: "${cleanMessage}"`);
       return;
     }
-    
-    // Mark this message as processed through chat (not whisper)
-    // This prevents whisper event from also sending it if it comes later
-    const nonWhisperKey = `NON_WHISPER:${username}:${cleanMessage}`;
-    if (!recentWhispers.has(nonWhisperKey)) {
-      recentWhispers.set(nonWhisperKey, Date.now());
-      console.log(`[Chat] Marked as non-whisper: ${username}: "${cleanMessage}"`);
+
+    const pendingKey = `CHAT:${username}:${cleanMessage}`;
+    if (pendingChatTimers.has(pendingKey)) {
+      clearTimeout(pendingChatTimers.get(pendingKey));
+      pendingChatTimers.delete(pendingKey);
     }
 
-    // Chat->Discord: silent send
-
-    try {
-      const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
-      if (channel && channel.isTextBased()) {
-        let avatarUrl = `https://minotar.net/avatar/${username.toLowerCase()}/28`;
-        
-        // Escape Discord markdown to prevent formatting issues
-        let displayMessage = cleanMessage.replace(/([*_`~|\\])/g, '\\$1');
-        // Escape square brackets to prevent Discord from interpreting [username] as mentions
-        displayMessage = displayMessage.replace(/\[/g, '\\[').replace(/\]/g, '\\]');
-
-        // Detect bridge-originated messages (pattern [username] text) to avoid pinging sender
-        const isBridgeMessage = /^\[[^\]]+\]\s/.test(cleanMessage);
-        
-        // Check if message mentions any of the tracked keywords from database
-        const lowerMessage = cleanMessage.toLowerCase();
-        const usersToMention = new Set();
-        if (!isBridgeMessage) {
-          const mentionKeywords = await getMentionKeywords();
-          for (const { discord_id, keyword } of mentionKeywords) {
-            // Use word boundaries to match exact username only, not partial matches
-            const regex = new RegExp(`\\b${keyword.toLowerCase()}\\b`);
-            if (regex.test(lowerMessage)) {
-              usersToMention.add(discord_id);
+    const timer = setTimeout(async () => {
+      try {
+        if (recentWhispers.has(whisperKey)) {
+          console.log(`[Chat] Suppressed whisper (late mark) from ${username}: "${cleanMessage}"`);
+          return;
+        }
+        const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
+        if (channel && channel.isTextBased()) {
+          let avatarUrl = `https://minotar.net/avatar/${username.toLowerCase()}/28`;
+          let displayMessage = cleanMessage.replace(/([*_`~|\\])/g, '\\$1');
+          displayMessage = displayMessage.replace(/\[/g, '\\[').replace(/\]/g, '\\]');
+          const isBridgeMessage = /^\[[^\]]+\]\s/.test(cleanMessage);
+          const lowerMessage = cleanMessage.toLowerCase();
+          const usersToMention = new Set();
+          if (!isBridgeMessage) {
+            const mentionKeywords = await getMentionKeywords();
+            for (const { discord_id, keyword } of mentionKeywords) {
+              const regex = new RegExp(`\\b${keyword.toLowerCase()}\\b`);
+              if (regex.test(lowerMessage)) {
+                usersToMention.add(discord_id);
+              }
             }
           }
+          const sendOptions = {
+            embeds: [{
+              author: { name: username, url: `https://namemc.com/profile/${username}` },
+              description: displayMessage,
+              color: 3447003,
+              thumbnail: { url: avatarUrl },
+              timestamp: new Date()
+            }]
+          };
+          if (usersToMention.size > 0) {
+            sendOptions.content = Array.from(usersToMention).map(id => `<@${id}>`).join(' ');
+          }
+          await channel.send(sendOptions);
         }
-        
-        const sendOptions = {
-          embeds: [{
-            author: {
-              name: username,
-              url: `https://namemc.com/profile/${username}`
-            },
-            description: displayMessage,
-            color: 3447003,
-            thumbnail: {
-              url: avatarUrl
-            },
-            timestamp: new Date()
-          }]
-        };
-        
-        if (usersToMention.size > 0) {
-          sendOptions.content = Array.from(usersToMention).map(id => `<@${id}>`).join(' ');
-        }
-        
-        await channel.send(sendOptions);
+      } catch (e) {
+        // Silent
+      } finally {
+        pendingChatTimers.delete(pendingKey);
       }
-    } catch (e) {
-      // Silent error
-    }
+    }, PENDING_CHAT_DELAY_MS);
+
+    pendingChatTimers.set(pendingKey, timer);
   });
 
   bot.on('whisper', (username, message, translate, jsonMsg, matches) => {
     console.log(`[Whisper] ⭐ EVENT FIRED for ${username}: "${message}"`);
-    
-    // Clean the whisper message the same way as chat messages for comparison
+
     let cleanedWhisper = message
-      .replace(/§[0-9a-fk-or]/gi, '') // Remove Minecraft color codes
-      .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '') // Remove control chars
+      .replace(/§[0-9a-fk-or]/gi, '')
+      .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
       .trim();
-    
+
     console.log(`[Whisper] Cleaned: "${cleanedWhisper}"`);
-    
-    // Check if this was already processed as a non-whisper chat message
-    const nonWhisperKey = `NON_WHISPER:${username}:${cleanedWhisper}`;
-    console.log(`[Whisper] Checking NON_WHISPER key: "${nonWhisperKey}" - exists: ${recentWhispers.has(nonWhisperKey)}`);
-    
-    if (recentWhispers.has(nonWhisperKey)) {
-      console.log(`[Whisper] ✅ SKIPPED - Already sent to chat channel`);
-      recentWhispers.delete(nonWhisperKey); // Clean up
-      return;
+
+    const whisperKey = `WHISPER:${username}:${cleanedWhisper}`;
+    recentWhispers.set(whisperKey, Date.now());
+    console.log(`[Whisper] ✅ MARKED whisper key: ${whisperKey}`);
+
+    // Cancel any pending public chat send for this message
+    const pendingKey = `CHAT:${username}:${cleanedWhisper}`;
+    if (pendingChatTimers.has(pendingKey)) {
+      clearTimeout(pendingChatTimers.get(pendingKey));
+      pendingChatTimers.delete(pendingKey);
+      console.log(`[Whisper] 🛑 Canceled pending chat forward for: ${pendingKey}`);
     }
-    
-    // Track this whisper to avoid processing it again in 'chat' event
-    const key = `${username}:${cleanedWhisper}`;
-    recentWhispers.set(key, Date.now());
-    console.log(`[Whisper] ✅ TRACKED for chat dedup: "${key}"`);
-    
-    // Clean up old entries (older than 2 seconds)
-    for (const [k, timestamp] of recentWhispers.entries()) {
-      if (Date.now() - timestamp > 2000) {
+
+    // Cleanup old whisper marks
+    for (const [k, ts] of recentWhispers.entries()) {
+      if (k.startsWith('WHISPER:') && Date.now() - ts > WHISPER_MARK_TTL_MS) {
         recentWhispers.delete(k);
       }
     }
-    
+
     console.log(`[Whisper] Calling sendWhisperToDiscord...`);
     sendWhisperToDiscord(username, message);
   });
