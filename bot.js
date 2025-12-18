@@ -1306,6 +1306,8 @@ function createBot() {
 
   // ------- CHAT COMMANDS -------
   bot.on('chat', async (username, message) => {
+    // DEBUG: Log all chat messages to see their structure
+    console.log(`[CHAT DEBUG] ${username}: ${message}`);
     // Handle commands from bdiev_
     if (username === 'bdiev_') {
       if (message === '!restart') {
@@ -1454,8 +1456,17 @@ function createBot() {
     }
 
     // Skip private messages (whispers) - they are handled by bot.on('whisper') event
-    // Whisper messages typically contain arrows like "username ➤ you" or similar patterns
-    if (cleanMessage.includes('➤') || cleanMessage.includes('→') || cleanMessage.includes('⬅️') || cleanMessage.includes('➡️')) {
+    // Whisper messages have patterns like:
+    // "[username -> you]: message" or "[username → you]: message" or
+    // "username whispered: message" or similar
+    const whisperPatterns = [
+      /^\[.+\s*(?:->|→|➤)\s*you\]:\s*.+/i,  // [username -> you]: message
+      /^\[.+\s*(?:->|→|➤)\s*you\]\s*.+/i,   // [username -> you] message
+      /^.+\s+whispered:\s*.+/i,              // username whispered: message
+      /^.+\s+(?:→|->|➤)\s+you:\s*.+/i,      // username → you: message
+    ];
+    
+    if (whisperPatterns.some(pattern => pattern.test(cleanMessage))) {
       return;
     }
 
