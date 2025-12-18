@@ -2618,11 +2618,11 @@ Add candidates online: **${onlineCount}**`,
         bot.chat(command);
 
         // Mark outbound whisper to suppress any unexpected public echo
-        let displayMessage = replyMessage;
+        let outText = replyMessage;
         if (replyMessage.startsWith('/r ')) {
-          displayMessage = replyMessage.slice(3).trim();
+          outText = replyMessage.slice(3).trim();
         }
-        const normalizedOut = displayMessage
+        const normalizedOut = outText
           .replace(/§[0-9a-fk-or]/gi, '')
           .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
           .trim();
