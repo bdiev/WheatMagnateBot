@@ -1731,6 +1731,56 @@ function createBot() {
     if (lt.includes('lolritterbot') || lt.includes('lolritter') || lt.includes('lolritterbot') || lt.includes('lolritter')) {
       debugLog('[Message] Non-chat event text:', text, 'json:', JSON.stringify(message));
     }
+
+    // Forward likely command responses that arrive as non-chat messages
+    try {
+      if (DISCORD_CHAT_CHANNEL_ID && discordClient && discordClient.isReady()) {
+        const now = Date.now();
+        // Find an active pending window
+        let targetKey = null;
+        let pend = null;
+        for (const [k, v] of pendingBotResponses.entries()) {
+          if (now <= v.until) { targetKey = k; pend = v; break; }
+          // cleanup expired
+          if (now > v.until) pendingBotResponses.delete(k);
+        }
+        if (targetKey && text && text.trim()) {
+          const content = text.trim();
+          // Avoid echoing the command itself
+          if (pend && pend.cmd && content === pend.cmd) return;
+
+          (async () => {
+            try {
+              const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
+              if (channel && channel.isTextBased()) {
+                const asker = targetKey; // username in lowercase
+                const displayAuthor = 'LolRiTTeRBot';
+                const avatarUrl = `https://minotar.net/avatar/${displayAuthor.toLowerCase()}/28`;
+                let body = `> ${asker}: ${content}`;
+                // Escape markdown + leading '>'
+                body = body.replace(/([*_`~|\\])/g, '\\$1').replace(/\[/g, '\\[').replace(/\]/g, '\\]');
+                const beforeBQ2 = body; body = body.replace(/^>/gm, '\\>');
+                if (beforeBQ2 !== body) debugLog(`[Message] Escaped leading '>' for ${asker}`);
+                await channel.send({
+                  embeds: [{
+                    author: { name: displayAuthor, url: `https://namemc.com/profile/${displayAuthor}` },
+                    description: body,
+                    color: 3447003,
+                    thumbnail: { url: avatarUrl },
+                    timestamp: new Date()
+                  }]
+                });
+                debugLog(`[Message] Forwarded non-chat as LolRiTTeRBot via command-window (cmd=${pend?.cmd})`);
+                // Consume the pending once used to prevent duplicate forwards
+                pendingBotResponses.delete(targetKey);
+              }
+            } catch (e) {
+              debugLog('[Message] Forward error:', e.message || e);
+            }
+          })();
+        }
+      }
+    } catch (_) {}
   });
 }
 
