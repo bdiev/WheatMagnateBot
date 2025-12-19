@@ -913,9 +913,18 @@ function summarizeHtmlPayload(raw) {
   if (!raw) return null;
   if (!/(<\s*html|<!doctype\s+html|<body\b|<head\b)/i.test(raw)) return null;
 
+  const cleanInline = (s) => s
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&quot;/gi, '"')
+    .replace(/&amp;/gi, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
+
   const grab = (pattern) => {
     const m = raw.match(pattern);
-    return m && m[1] ? m[1].replace(/\s+/g, ' ').trim() : '';
+    return m && m[1] ? cleanInline(m[1]) : '';
   };
 
   const h1 = grab(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
