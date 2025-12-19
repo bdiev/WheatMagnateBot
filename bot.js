@@ -1791,7 +1791,12 @@ function createBot() {
                 // Consume the pending once used to prevent duplicate forwards
                 pendingBotResponses.delete(targetKey);
                 // Mark this message as forwarded to suppress chat handler duplicate
-                const fwdKey = `FORWARDED:${asker}:${content}`;
+                // Apply same cleaning as chat handler to ensure key match
+                const cleanContent = content
+                  .replace(/§[0-9a-fk-or]/gi, '')
+                  .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
+                  .trim();
+                const fwdKey = `FORWARDED:${asker}:${cleanContent}`;
                 forwardedMessages.set(fwdKey, Date.now());
                 debugLog(`[Message] Marked as forwarded: ${fwdKey}`);
               }
