@@ -1436,15 +1436,18 @@ function createBot() {
 
     // Send all chat messages to Discord chat channel
     if (!DISCORD_CHAT_CHANNEL_ID || !discordClient || !discordClient.isReady()) {
+      debugLog(`[Chat] Skip ${username}: Discord not ready or chat channel missing`);
       return;
     }
     
     // Skip any messages from the bot itself to avoid echoing /msg or relayed messages back into Discord
     if (username === bot.username) {
+      debugLog(`[Chat] Skip ${username}: message from self`);
       return;
     }
     
     if (ignoredChatUsernames.includes(username.toLowerCase())) {
+      debugLog(`[Chat] Skip ${username}: listed in ignoredChatUsernames`);
       return;
     }
 
@@ -1454,12 +1457,16 @@ function createBot() {
       .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '') // Remove control chars (keep newlines \n)
       .trim();
 
+    debugLog(`[Chat] Cleaned message from ${username}: "${cleanMessage}" (raw: "${message}")`);
+
     if (!cleanMessage) {
+      debugLog(`[Chat] Skip ${username}: message empty after cleaning`);
       return;
     }
 
     // Skip /msg commands - these are relayed from dialog channels
     if (cleanMessage.startsWith('/msg ')) {
+      debugLog(`[Chat] Skip ${username}: detected /msg command`);
       return;
     }
 
@@ -1499,6 +1506,7 @@ function createBot() {
         }
         const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
         if (channel && channel.isTextBased()) {
+          debugLog(`[Chat] Sending to Discord from ${username}: "${cleanMessage}"`);
           let avatarUrl = `https://minotar.net/avatar/${username.toLowerCase()}/28`;
           let displayMessage = cleanMessage.replace(/([*_`~|\\])/g, '\\$1');
           displayMessage = displayMessage.replace(/\[/g, '\\[').replace(/\]/g, '\\]');
@@ -1525,11 +1533,12 @@ function createBot() {
           };
           if (usersToMention.size > 0) {
             sendOptions.content = Array.from(usersToMention).map(id => `<@${id}>`).join(' ');
+            debugLog(`[Chat] Mentions added for ${username}: ${Array.from(usersToMention).join(', ')}`);
           }
           await channel.send(sendOptions);
         }
       } catch (e) {
-        // Silent
+        debugLog(`[Chat] Error while relaying ${username}: ${e.message || e}`);
       } finally {
         pendingChatTimers.delete(pendingKey);
       }
