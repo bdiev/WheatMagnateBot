@@ -1772,9 +1772,14 @@ function createBot() {
         // Forward if we have a pending window OR if message looks like bot content
         const shouldForward = targetKey || content.length > 5;
         if (shouldForward) {
-          const content = text.trim();
           // Avoid echoing the command itself
           if (pend && pend.cmd && content === pend.cmd) return;
+
+          // Apply same cleaning as chat handler FIRST to ensure key match
+          const cleanContent = content
+            .replace(/§[0-9a-fk-or]/gi, '')
+            .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
+            .trim();
 
           (async () => {
             try {
@@ -1784,7 +1789,7 @@ function createBot() {
                 const asker = targetKey || 'server';
                 const displayAuthor = targetKey ? 'LolRiTTeRBot' : 'Server';
                 const avatarUrl = `https://minotar.net/avatar/${displayAuthor.toLowerCase()}/28`;
-                let body = targetKey ? `> ${asker}: ${content}` : content;
+                let body = targetKey ? `> ${asker}: ${cleanContent}` : cleanContent;
                 // Escape markdown only (NOT leading '>' - we want to show quote prefix naturally)
                 body = body.replace(/([*_`~|\\])/g, '\\$1').replace(/\[/g, '\\[').replace(/\]/g, '\\]');
                 await channel.send({
@@ -1800,11 +1805,6 @@ function createBot() {
                 // Consume the pending once used to prevent duplicate forwards
                 if (targetKey) pendingBotResponses.delete(targetKey);
                 // Mark this message as forwarded to suppress chat handler duplicate
-                // Apply same cleaning as chat handler to ensure key match
-                const cleanContent = content
-                  .replace(/§[0-9a-fk-or]/gi, '')
-                  .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
-                  .trim();
                 const fwdKey = targetKey ? `FORWARDED:${asker}:${cleanContent}` : `FORWARDED:server:${cleanContent}`;
                 forwardedMessages.set(fwdKey, Date.now());
                 debugLog(`[Message] Marked as forwarded: ${fwdKey}`);
