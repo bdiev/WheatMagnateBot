@@ -971,12 +971,15 @@ async function sendDiscordNotification(message, color = 3447003) {
     console.log('[Discord] Bot not ready or no channel configured. Skipped.');
     return;
   }
+
+  const summarized = summarizeHtmlPayload(message) || message;
+
   try {
     const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
     if (channel && channel.isTextBased()) {
       await channel.send({
         embeds: [{
-          description: message,
+          description: summarized,
           color,
           timestamp: new Date()
         }]
