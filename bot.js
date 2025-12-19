@@ -1362,6 +1362,7 @@ function createBot() {
 
   // ------- CHAT COMMANDS -------
   bot.on('chat', async (username, message) => {
+    debugLog(`[Chat] Incoming ${username}: raw="${message}"`);
     // Handle commands from bdiev_
     if (username === 'bdiev_') {
       if (message === '!restart') {
@@ -1510,6 +1511,9 @@ function createBot() {
     }
 
     debugLog(`[Chat] Cleaned message from ${username}: "${cleanMessage}" (raw: "${message}")`);
+    if (cleanMessage.startsWith('>')) {
+      debugLog(`[Chat] Message starts with '>' for ${username}`);
+    }
 
     if (!cleanMessage) {
       debugLog(`[Chat] Skip ${username}: message empty after cleaning`);
@@ -1525,7 +1529,7 @@ function createBot() {
     // Suppress whispers: if whisper arrives shortly, don't forward to public chat
     const whisperKey = `WHISPER:${username}:${cleanMessage}`;
     if (recentWhispers.has(whisperKey)) {
-      debugLog(`[Chat] Suppressed whisper from ${username}: "${cleanMessage}"`);
+      debugLog(`[Chat] Suppressed whisper from ${username}: "${cleanMessage}" (age=${Date.now() - recentWhispers.get(whisperKey)}ms)`);
       return;
     }
 
@@ -1536,7 +1540,7 @@ function createBot() {
       if (nowTs - ts > OUTBOUND_WHISPER_TTL_MS) outboundWhispers.delete(ok);
     }
     if (outboundWhispers.has(outboundKey)) {
-      debugLog(`[Chat] Suppressed outbound echo to ${username}: "${cleanMessage}"`);
+      debugLog(`[Chat] Suppressed outbound echo to ${username}: "${cleanMessage}" (age=${Date.now() - outboundWhispers.get(outboundKey)}ms)`);
       return;
     }
 
@@ -1591,6 +1595,7 @@ function createBot() {
             debugLog(`[Chat] Mentions added for ${username}: ${Array.from(usersToMention).join(', ')}`);
           }
           await channel.send(sendOptions);
+          debugLog(`[Chat] Sent to Discord ${pendingKey}`);
         } else {
           debugLog(`[Chat] No text channel available for relay ${pendingKey}`);
         }
