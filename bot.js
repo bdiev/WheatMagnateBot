@@ -1753,9 +1753,14 @@ function createBot() {
 
     // Forward likely command responses that arrive as non-chat messages
     try {
-      if (DISCORD_CHAT_CHANNEL_ID && discordClient && discordClient.isReady()) {
+      if (DISCORD_CHAT_CHANNEL_ID && discordClient && discordClient.isReady() && text && text.trim()) {
+        const content = text.trim();
+        
+        // Skip system messages (TPS, etc.)
+        if (/^\d+\.?\d*\s*tps$/i.test(content)) return;
+        
         const now = Date.now();
-        // Find an active pending window
+        // Find an active pending window (for attribution)
         let targetKey = null;
         let pend = null;
         for (const [k, v] of pendingBotResponses.entries()) {
@@ -1763,7 +1768,10 @@ function createBot() {
           // cleanup expired
           if (now > v.until) pendingBotResponses.delete(k);
         }
-        if (targetKey && text && text.trim()) {
+        
+        // Forward if we have a pending window OR if message looks like bot content
+        const shouldForward = targetKey || content.length > 5;
+        if (shouldForward) {
           const content = text.trim();
           // Avoid echoing the command itself
           if (pend && pend.cmd && content === pend.cmd) return;
@@ -1772,31 +1780,32 @@ function createBot() {
             try {
               const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
               if (channel && channel.isTextBased()) {
-                const asker = targetKey; // username in lowercase
-                const displayAuthor = 'LolRiTTeRBot';
+                // If we have a target user, attribute to them; otherwise use generic bot name
+                const asker = targetKey || 'server';
+                const displayAuthor = targetKey ? 'LolRiTTeRBot' : 'Server';
                 const avatarUrl = `https://minotar.net/avatar/${displayAuthor.toLowerCase()}/28`;
-                let body = `> ${asker}: ${content}`;
+                let body = targetKey ? `> ${asker}: ${content}` : content;
                 // Escape markdown only (NOT leading '>' - we want to show quote prefix naturally)
                 body = body.replace(/([*_`~|\\])/g, '\\$1').replace(/\[/g, '\\[').replace(/\]/g, '\\]');
                 await channel.send({
                   embeds: [{
-                    author: { name: displayAuthor, url: `https://namemc.com/profile/${displayAuthor}` },
+                    author: { name: displayAuthor, url: targetKey ? `https://namemc.com/profile/${displayAuthor}` : undefined },
                     description: body,
                     color: 3447003,
-                    thumbnail: { url: avatarUrl },
+                    thumbnail: targetKey ? { url: avatarUrl } : undefined,
                     timestamp: new Date()
                   }]
                 });
-                debugLog(`[Message] Forwarded non-chat as LolRiTTeRBot via command-window (cmd=${pend?.cmd})`);
+                debugLog(`[Message] Forwarded non-chat${targetKey ? ` as ${displayAuthor} via command-window (cmd=${pend?.cmd})` : ' as Server'}`);
                 // Consume the pending once used to prevent duplicate forwards
-                pendingBotResponses.delete(targetKey);
+                if (targetKey) pendingBotResponses.delete(targetKey);
                 // Mark this message as forwarded to suppress chat handler duplicate
                 // Apply same cleaning as chat handler to ensure key match
                 const cleanContent = content
                   .replace(/§[0-9a-fk-or]/gi, '')
                   .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
                   .trim();
-                const fwdKey = `FORWARDED:${asker}:${cleanContent}`;
+                const fwdKey = targetKey ? `FORWARDED:${asker}:${cleanContent}` : `FORWARDED:server:${cleanContent}`;
                 forwardedMessages.set(fwdKey, Date.now());
                 debugLog(`[Message] Marked as forwarded: ${fwdKey}`);
               }
