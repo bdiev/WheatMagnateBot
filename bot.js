@@ -76,9 +76,6 @@ const excludedMessageIds = [];
 const pendingAuthLinks = [];
 const sentAuthCodes = new Set();
 const authMessageIds = new Set();
-// Track short-lived windows after a user issues a bang command (e.g., !pt)
-// Used to reattribute bot-style responses that appear as if authored by the user
-const pendingBotResponses = new Map(); // key: usernameLower -> { cmd, until }
 const WHISPER_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const WHISPER_MARK_TTL_MS = 3000; // how long to remember whisper markers for suppression
 const PENDING_CHAT_DELAY_MS = 400; // delay chat sends to detect whispers first
@@ -845,8 +842,6 @@ if (DISCORD_BOT_TOKEN) {
               if (msg.embeds[0]?.title === 'New whisper from Minecraft') return false; // keep pending /msg claim cards
               // Don't delete death-related messages
               if (lowerDesc.includes('died') || lowerDesc.includes('death') || lowerDesc.includes('perished') || lowerDesc.includes('💀') || desc.includes(':skull:')) return false;
-              // Don't delete HTML error summaries (e.g., 504)
-              if (lowerDesc.includes('gateway timeout') || lowerDesc.includes('azure front door') || lowerDesc.includes('errorinfo:') || lowerDesc.includes('x-azure-ref')) return false;
               // Don't delete whisper messages and conversations
               if (desc.includes('💬') || lowerDesc.includes('whispered') || desc.includes('⬅️') || desc.includes('➡️') || (msg.embeds[0]?.title && msg.embeds[0].title.startsWith('Conversation with'))) return false;
               return true;
@@ -913,74 +908,6 @@ function chatComponentToString(component) {
   return text;
 }
 
-// Simple HTML page summarizer for ugly error payloads in chat
-function summarizeHtmlPayload(raw) {
-  if (!raw) return null;
-  if (!/(<\s*html|<!doctype\s+html|<body\b|<head\b)/i.test(raw)) return null;
-
-  const cleanInline = (s) => s
-    .replace(/<br\s*\/?>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&quot;/gi, '"')
-    .replace(/&amp;/gi, '&')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  const grab = (pattern) => {
-    const m = raw.match(pattern);
-    return m && m[1] ? cleanInline(m[1]) : '';
-  };
-
-  const h1 = grab(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
-  const h2 = grab(/<h2[^>]*>([\s\S]*?)<\/h2>/i);
-  const p1 = grab(/<p[^>]*>([\s\S]*?)<\/p>/i);
-  const p2 = grab(/<p[^>]*>[\s\S]*?<\/p>[^<]*<p[^>]*>([\s\S]*?)<\/p>/i);
-  const errInfo = grab(/Error Info:<\/span><span[^>]*>([^<]*)<\/span>/i);
-  const xref = grab(/x-azure-ref[^<]*?<span[^>]*>([^<]*)<\/span>/i) || grab(/x-azure-ref[^:]*:\s*([A-Za-z0-9\-]+)/i);
-
-  const lines = [];
-  if (h1) lines.push(h1);
-  if (h2) lines.push(h2);
-  if (p1) lines.push(p1);
-  if (p2) lines.push(p2);
-  if (errInfo) lines.push(`ErrorInfo: ${errInfo}`);
-  if (xref) lines.push(`x-azure-ref: ${xref}`);
-
-  if (lines.length === 0) {
-    let text = raw
-      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ' ')
-      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, ' ')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/&nbsp;/gi, ' ')
-      .replace(/&quot;/gi, '"')
-      .replace(/&amp;/gi, '&')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (!text) return null;
-    const maxLen = 600;
-    if (text.length > maxLen) text = text.slice(0, maxLen) + '…';
-    return text;
-  }
-
-  const summary = lines.join('\n');
-  const maxLen = 600;
-  return summary.length > maxLen ? summary.slice(0, maxLen) + '…' : summary;
-}
-
-// Heuristic: detect LolRiTTeR-like response lines (e.g., playtime summary)
-function looksLikeLolritterResponse(text) {
-  if (!text) return false;
-  const s = String(text).trim();
-  // Examples: "66 Days, 8 Hours, 0 Minutes" or with Seconds
-  if (/^\d+\s+Days?,\s*\d+\s+Hours?,\s*\d+\s+Minutes?(?:,\s*\d+\s+Seconds?)?$/i.test(s)) return true;
-  // Common keywords from bot replies
-  if (/^Playtime\b/i.test(s)) return true;
-  if (/^Top\b/i.test(s)) return true;
-  if (/^(?:KDR|Kills|Deaths|Balance|Stats)\b/i.test(s)) return true;
-  return false;
-}
-
 var bot;
 let reconnectTimeout = 15000;
 let shouldReconnect = true;
@@ -998,15 +925,12 @@ async function sendDiscordNotification(message, color = 3447003) {
     console.log('[Discord] Bot not ready or no channel configured. Skipped.');
     return;
   }
-
-  const summarized = summarizeHtmlPayload(message) || message;
-
   try {
     const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
     if (channel && channel.isTextBased()) {
       await channel.send({
         embeds: [{
-          description: summarized,
+          description: message,
           color,
           timestamp: new Date()
         }]
@@ -1392,7 +1316,6 @@ function createBot() {
 
   // ------- CHAT COMMANDS -------
   bot.on('chat', async (username, message) => {
-    debugLog(`[Chat] Incoming ${username}: raw="${message}"`);
     // Handle commands from bdiev_
     if (username === 'bdiev_') {
       if (message === '!restart') {
@@ -1513,18 +1436,15 @@ function createBot() {
 
     // Send all chat messages to Discord chat channel
     if (!DISCORD_CHAT_CHANNEL_ID || !discordClient || !discordClient.isReady()) {
-      debugLog(`[Chat] Skip ${username}: Discord not ready or chat channel missing`);
       return;
     }
     
     // Skip any messages from the bot itself to avoid echoing /msg or relayed messages back into Discord
     if (username === bot.username) {
-      debugLog(`[Chat] Skip ${username}: message from self`);
       return;
     }
     
     if (ignoredChatUsernames.includes(username.toLowerCase())) {
-      debugLog(`[Chat] Skip ${username}: listed in ignoredChatUsernames`);
       return;
     }
 
@@ -1534,42 +1454,19 @@ function createBot() {
       .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '') // Remove control chars (keep newlines \n)
       .trim();
 
-    const htmlSummary = summarizeHtmlPayload(message);
-    if (htmlSummary) {
-      cleanMessage = htmlSummary;
-      debugLog(`[Chat] HTML summary applied for ${username}`);
-    }
-
-    debugLog(`[Chat] Cleaned message from ${username}: "${cleanMessage}" (raw: "${message}")`);
-    if (cleanMessage.startsWith('>')) {
-      debugLog(`[Chat] Message starts with '>' for ${username}`);
-    }
-
     if (!cleanMessage) {
-      debugLog(`[Chat] Skip ${username}: message empty after cleaning`);
       return;
     }
 
     // Skip /msg commands - these are relayed from dialog channels
     if (cleanMessage.startsWith('/msg ')) {
-      debugLog(`[Chat] Skip ${username}: detected /msg command`);
       return;
-    }
-
-    // If user issued a likely command (short message, any prefix), open a short window to reattribute bot responses
-    // This covers all LolRiTTeRBot commands: !pt, !faq, !stats, !top, etc.
-    const looksLikeCommand = cleanMessage.length <= 30 && /^[!/.#@-]/.test(cleanMessage);
-    if (looksLikeCommand) {
-      const key = username.toLowerCase();
-      const until = Date.now() + 4000; // 4s window
-      pendingBotResponses.set(key, { cmd: cleanMessage, until });
-      debugLog(`[Chat] Mark pending bot response for ${username}: cmd="${cleanMessage}", until=${new Date(until).toISOString()}`);
     }
 
     // Suppress whispers: if whisper arrives shortly, don't forward to public chat
     const whisperKey = `WHISPER:${username}:${cleanMessage}`;
     if (recentWhispers.has(whisperKey)) {
-      debugLog(`[Chat] Suppressed whisper from ${username}: "${cleanMessage}" (age=${Date.now() - recentWhispers.get(whisperKey)}ms)`);
+      debugLog(`[Chat] Suppressed whisper from ${username}: "${cleanMessage}"`);
       return;
     }
 
@@ -1580,7 +1477,7 @@ function createBot() {
       if (nowTs - ts > OUTBOUND_WHISPER_TTL_MS) outboundWhispers.delete(ok);
     }
     if (outboundWhispers.has(outboundKey)) {
-      debugLog(`[Chat] Suppressed outbound echo to ${username}: "${cleanMessage}" (age=${Date.now() - outboundWhispers.get(outboundKey)}ms)`);
+      debugLog(`[Chat] Suppressed outbound echo to ${username}: "${cleanMessage}"`);
       return;
     }
 
@@ -1590,11 +1487,8 @@ function createBot() {
       pendingChatTimers.delete(pendingKey);
     }
 
-    debugLog(`[Chat] Schedule relay ${pendingKey}`);
-
     const timer = setTimeout(async () => {
       try {
-        debugLog(`[Chat] Timer fire ${pendingKey}`);
         if (recentWhispers.has(whisperKey)) {
           debugLog(`[Chat] Suppressed whisper (late mark) from ${username}: "${cleanMessage}"`);
           return;
@@ -1603,65 +1497,11 @@ function createBot() {
           debugLog(`[Chat] Suppressed outbound echo (late) to ${username}: "${cleanMessage}"`);
           return;
         }
-        
-        // If there's an active pending bot response window, this might be a bot response
-        // Let message event handle it to properly attribute to LolRiTTeRBot
-        const now = Date.now();
-        for (const [key, pend] of pendingBotResponses.entries()) {
-          if (now <= pend.until) {
-            debugLog(`[Chat] Suppressed - active bot response window for ${key}, letting message event handle: "${cleanMessage}"`);
-            return;
-          }
-        }
-        
         const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
         if (channel && channel.isTextBased()) {
-          // Determine displayed author and content (handle relayed formats like "<LolRiTTeRBot> ...")
-          let displayAuthor = username;
-          let contentForDisplay = cleanMessage;
-          const angleTag = contentForDisplay.match(/^<([^>]+)>\s*(.*)$/);
-          if (angleTag) {
-            const innerSender = angleTag[1].trim();
-            const innerLower = innerSender.toLowerCase();
-            const remaining = angleTag[2] != null ? angleTag[2] : '';
-            // Prefer inner sender when it looks like a relay/bot (e.g., LolRiTTeRBot)
-            if (/(lolritter|loltitter)/i.test(innerSender)) {
-              displayAuthor = innerSender;
-              contentForDisplay = remaining.trim();
-              debugLog(`[Chat] Reattributed author to inner tag "${innerSender}"`);
-            }
-          }
-
-          // Fallback: if user recently sent a bang command and this looks like a bot response, reattribute to LolRiTTeRBot
-          if (displayAuthor === username) {
-            const pend = pendingBotResponses.get(username.toLowerCase());
-            if (pend && Date.now() <= pend.until && looksLikeLolritterResponse(contentForDisplay)) {
-              const startedAt = pend.until - 4000;
-              const age = Date.now() - startedAt;
-              displayAuthor = 'LolRiTTeRBot';
-              // Show who asked in the message body for clarity
-              contentForDisplay = `> ${username}: ${contentForDisplay}`;
-              pendingBotResponses.delete(username.toLowerCase());
-              debugLog(`[Chat] Reattributed to LolRiTTeRBot via command-window (cmd=${pend.cmd}, age=${age}ms)`);
-            } else {
-              // Clean up expired entries lazily
-              if (pend && Date.now() > pend.until) pendingBotResponses.delete(username.toLowerCase());
-            }
-          }
-
-          debugLog(`[Chat] Sending to Discord from ${displayAuthor}: "${contentForDisplay}"`);
-          let avatarUrl = `https://minotar.net/avatar/${displayAuthor.toLowerCase()}/28`;
-          let displayMessage = contentForDisplay.replace(/([*_`~|\\])/g, '\\$1');
+          let avatarUrl = `https://minotar.net/avatar/${username.toLowerCase()}/28`;
+          let displayMessage = cleanMessage.replace(/([*_`~|\\])/g, '\\$1');
           displayMessage = displayMessage.replace(/\[/g, '\\[').replace(/\]/g, '\\]');
-          // Prevent Discord blockquotes caused by leading '>' ONLY for messages we prepended with '>' (reattributed ones)
-          // Don't escape '>' for natural user messages to allow quote syntax
-          if (displayAuthor !== username && contentForDisplay.startsWith('> ')) {
-            const beforeBQ = displayMessage;
-            displayMessage = displayMessage.replace(/^>/gm, '\\>');
-            if (beforeBQ !== displayMessage) {
-              debugLog(`[Chat] Escaped leading '>' for reattributed message from ${username}`);
-            }
-          }
           const isBridgeMessage = /^\[[^\]]+\]\s/.test(cleanMessage);
           const lowerMessage = cleanMessage.toLowerCase();
           const usersToMention = new Set();
@@ -1676,7 +1516,7 @@ function createBot() {
           }
           const sendOptions = {
             embeds: [{
-              author: { name: displayAuthor, url: `https://namemc.com/profile/${displayAuthor}` },
+              author: { name: username, url: `https://namemc.com/profile/${username}` },
               description: displayMessage,
               color: 3447003,
               thumbnail: { url: avatarUrl },
@@ -1685,21 +1525,11 @@ function createBot() {
           };
           if (usersToMention.size > 0) {
             sendOptions.content = Array.from(usersToMention).map(id => `<@${id}>`).join(' ');
-            debugLog(`[Chat] Mentions added for ${username}: ${Array.from(usersToMention).join(', ')}`);
           }
           await channel.send(sendOptions);
-          debugLog(`[Chat] Sent to Discord ${pendingKey}`);
-          
-          // If this was a reattributed bot response, mark as consumed to prevent duplicate from message event
-          if (displayAuthor === 'LolRiTTeRBot') {
-            pendingBotResponses.delete(username.toLowerCase());
-            debugLog(`[Chat] Consumed pending bot response for ${username.toLowerCase()} to prevent duplicate`);
-          }
-        } else {
-          debugLog(`[Chat] No text channel available for relay ${pendingKey}`);
         }
       } catch (e) {
-        debugLog(`[Chat] Error while relaying ${username}: ${e.message || e}`);
+        // Silent
       } finally {
         pendingChatTimers.delete(pendingKey);
       }
@@ -1747,74 +1577,6 @@ function createBot() {
     if (tpsMatch) {
       realTps = parseFloat(tpsMatch[1]);
     }
-
-    // Debug: surface any non-chat messages mentioning LolRiTTeRBot to diagnose missing chat events
-    const lt = text.toLowerCase();
-    if (lt.includes('lolritterbot') || lt.includes('lolritter') || lt.includes('lolritterbot') || lt.includes('lolritter')) {
-      debugLog('[Message] Non-chat event text:', text, 'json:', JSON.stringify(message));
-    }
-
-    // Forward likely command responses that arrive as non-chat messages
-    try {
-      if (DISCORD_CHAT_CHANNEL_ID && discordClient && discordClient.isReady()) {
-        const now = Date.now();
-        // Find an active pending window
-        let targetKey = null;
-        let pend = null;
-        for (const [k, v] of pendingBotResponses.entries()) {
-          if (now <= v.until) { targetKey = k; pend = v; break; }
-          // cleanup expired
-          if (now > v.until) pendingBotResponses.delete(k);
-        }
-        if (targetKey && text && text.trim()) {
-          const content = text.trim();
-          // Avoid echoing the command itself
-          if (pend && pend.cmd && content === pend.cmd) {
-            debugLog(`[Message] Skipping duplicate command echo: "${content}"`);
-            return;
-          }
-
-          (async () => {
-            try {
-              const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
-              if (channel && channel.isTextBased()) {
-                const asker = targetKey; // username in lowercase
-                const displayAuthor = 'LolRiTTeRBot';
-                const avatarUrl = `https://minotar.net/avatar/${displayAuthor.toLowerCase()}/28`;
-                
-                // Extract target username from command if present (e.g., !pt Johnmcswag -> Johnmcswag)
-                let quotedName = asker;
-                if (pend && pend.cmd) {
-                  const cmdMatch = pend.cmd.match(/^[!/.#@-]\w+\s+(\w+)/);
-                  if (cmdMatch) {
-                    quotedName = cmdMatch[1];
-                  }
-                }
-                
-                let body = `> ${quotedName}: ${content}`;
-                // Escape markdown only (NOT leading '>' - we want to show quote prefix naturally)
-                body = body.replace(/([*_`~|\\])/g, '\\$1').replace(/\[/g, '\\[').replace(/\]/g, '\\]');
-                await channel.send({
-                  embeds: [{
-                    author: { name: displayAuthor, url: `https://namemc.com/profile/${displayAuthor}` },
-                    description: body,
-                    color: 3447003,
-                    thumbnail: { url: avatarUrl },
-                    timestamp: new Date()
-                  }]
-                });
-                debugLog(`[Message] Forwarded non-chat as LolRiTTeRBot via command-window (cmd=${pend?.cmd})`);
-                
-                // Consume the pending once used to prevent duplicate forwards
-                pendingBotResponses.delete(targetKey);
-              }
-            } catch (e) {
-              debugLog('[Message] Forward error:', e.message || e);
-            }
-          })();
-        }
-      }
-    } catch (_) {}
   });
 }
 
