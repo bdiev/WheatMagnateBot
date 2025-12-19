@@ -1662,6 +1662,12 @@ function createBot() {
     if (tpsMatch) {
       realTps = parseFloat(tpsMatch[1]);
     }
+
+    // Debug: surface any non-chat messages mentioning LolRiTTeRBot to diagnose missing chat events
+    const lt = text.toLowerCase();
+    if (lt.includes('lolritterbot') || lt.includes('lolritter') || lt.includes('lolritterbot') || lt.includes('lolritter')) {
+      debugLog('[Message] Non-chat event text:', text, 'json:', JSON.stringify(message));
+    }
   });
 }
 
