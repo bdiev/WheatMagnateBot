@@ -842,6 +842,8 @@ if (DISCORD_BOT_TOKEN) {
               if (msg.embeds[0]?.title === 'New whisper from Minecraft') return false; // keep pending /msg claim cards
               // Don't delete death-related messages
               if (lowerDesc.includes('died') || lowerDesc.includes('death') || lowerDesc.includes('perished') || lowerDesc.includes('💀') || desc.includes(':skull:')) return false;
+              // Don't delete HTML error summaries (e.g., 504)
+              if (lowerDesc.includes('gateway timeout') || lowerDesc.includes('azure front door') || lowerDesc.includes('errorinfo:') || lowerDesc.includes('x-azure-ref')) return false;
               // Don't delete whisper messages and conversations
               if (desc.includes('💬') || lowerDesc.includes('whispered') || desc.includes('⬅️') || desc.includes('➡️') || (msg.embeds[0]?.title && msg.embeds[0].title.startsWith('Conversation with'))) return false;
               return true;
@@ -934,15 +936,15 @@ function summarizeHtmlPayload(raw) {
   const errInfo = grab(/Error Info:<\/span><span[^>]*>([^<]*)<\/span>/i);
   const xref = grab(/x-azure-ref[^<]*?<span[^>]*>([^<]*)<\/span>/i) || grab(/x-azure-ref[^:]*:\s*([A-Za-z0-9\-]+)/i);
 
-  const parts = [];
-  if (h1) parts.push(h1);
-  if (h2) parts.push(h2);
-  if (p1) parts.push(p1);
-  if (p2) parts.push(p2);
-  if (errInfo) parts.push(`ErrorInfo=${errInfo}`);
-  if (xref) parts.push(`x-azure-ref=${xref}`);
+  const lines = [];
+  if (h1) lines.push(h1);
+  if (h2) lines.push(h2);
+  if (p1) lines.push(p1);
+  if (p2) lines.push(p2);
+  if (errInfo) lines.push(`ErrorInfo: ${errInfo}`);
+  if (xref) lines.push(`x-azure-ref: ${xref}`);
 
-  if (parts.length === 0) {
+  if (lines.length === 0) {
     let text = raw
       .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ' ')
       .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, ' ')
@@ -953,13 +955,13 @@ function summarizeHtmlPayload(raw) {
       .replace(/\s+/g, ' ')
       .trim();
     if (!text) return null;
-    const maxLen = 400;
+    const maxLen = 600;
     if (text.length > maxLen) text = text.slice(0, maxLen) + '…';
-    return `HTML page: ${text}`;
+    return text;
   }
 
-  const summary = parts.join(' — ');
-  const maxLen = 400;
+  const summary = lines.join('\n');
+  const maxLen = 600;
   return summary.length > maxLen ? summary.slice(0, maxLen) + '…' : summary;
 }
 
