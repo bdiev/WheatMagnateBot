@@ -1520,8 +1520,11 @@ function createBot() {
       pendingChatTimers.delete(pendingKey);
     }
 
+    debugLog(`[Chat] Schedule relay ${pendingKey}`);
+
     const timer = setTimeout(async () => {
       try {
+        debugLog(`[Chat] Timer fire ${pendingKey}`);
         if (recentWhispers.has(whisperKey)) {
           debugLog(`[Chat] Suppressed whisper (late mark) from ${username}: "${cleanMessage}"`);
           return;
@@ -1562,6 +1565,8 @@ function createBot() {
             debugLog(`[Chat] Mentions added for ${username}: ${Array.from(usersToMention).join(', ')}`);
           }
           await channel.send(sendOptions);
+        } else {
+          debugLog(`[Chat] No text channel available for relay ${pendingKey}`);
         }
       } catch (e) {
         debugLog(`[Chat] Error while relaying ${username}: ${e.message || e}`);
