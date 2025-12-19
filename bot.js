@@ -1678,6 +1678,12 @@ function createBot() {
           }
           await channel.send(sendOptions);
           debugLog(`[Chat] Sent to Discord ${pendingKey}`);
+          
+          // If this was a reattributed bot response, mark as consumed to prevent duplicate from message event
+          if (displayAuthor === 'LolRiTTeRBot') {
+            pendingBotResponses.delete(username.toLowerCase());
+            debugLog(`[Chat] Consumed pending bot response for ${username.toLowerCase()} to prevent duplicate`);
+          }
         } else {
           debugLog(`[Chat] No text channel available for relay ${pendingKey}`);
         }
