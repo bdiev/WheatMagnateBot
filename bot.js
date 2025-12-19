@@ -71,6 +71,7 @@ let customDialogTTL = new Map(); // channelId -> custom TTL in ms (user-configur
 let recentWhispers = new Map(); // key: `WHISPER:username:message` -> timestamp, to mark whispers and suppress chat forwarding
 let pendingChatTimers = new Map(); // key: `CHAT:username:message` -> timeout handle to delay chat forwarding
 let outboundWhispers = new Map(); // key: `OUTBOUND:targetUsername:message` -> timestamp, to suppress public echo of our own whispers
+let recentlySentMessages = new Map(); // key: message content -> timestamp, to prevent duplicate forwards from both chat and message events
 let tpsTabInterval = null;
 const excludedMessageIds = [];
 const pendingAuthLinks = [];
@@ -83,6 +84,7 @@ const WHISPER_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const WHISPER_MARK_TTL_MS = 3000; // how long to remember whisper markers for suppression
 const PENDING_CHAT_DELAY_MS = 400; // delay chat sends to detect whispers first
 const OUTBOUND_WHISPER_TTL_MS = 5000; // suppression window for our own /msg echoes
+const RECENTLY_SENT_TTL_MS = 2000; // how long to remember recently sent messages to prevent duplicates
 
 // Debug logging (disabled by default). Enable by setting DEBUG_LOGS=true
 const DEBUG_LOGS = String(process.env.DEBUG_LOGS || '').toLowerCase() === 'true';
@@ -1679,6 +1681,12 @@ function createBot() {
           await channel.send(sendOptions);
           debugLog(`[Chat] Sent to Discord ${pendingKey}`);
           
+          // Mark this message as recently sent to prevent duplicate from message event
+          const sentKey = `${displayAuthor}:${contentForDisplay}`;
+          recentlySentMessages.set(sentKey, Date.now());
+          setTimeout(() => recentlySentMessages.delete(sentKey), RECENTLY_SENT_TTL_MS);
+          debugLog(`[Chat] Marked as sent: ${sentKey}`);
+          
           // If this was a reattributed bot response, mark as consumed to prevent duplicate from message event
           if (displayAuthor === 'LolRiTTeRBot') {
             pendingBotResponses.delete(username.toLowerCase());
@@ -1758,7 +1766,43 @@ function createBot() {
         if (targetKey && text && text.trim()) {
           const content = text.trim();
           // Avoid echoing the command itself
-          if (pend && pend.cmd && content === pend.cmd) return;
+          if (pend && pend.cmd && content === pend.cmd) {
+            debugLog(`[Message] Skipping duplicate command echo: "${content}"`);
+            return;
+          }
+          
+          // CRITICAL: Check if this message was already sent via chat event
+          // Clean up expired entries first
+          const now = Date.now();
+          for (const [key, timestamp] of recentlySentMessages.entries()) {
+            if (now - timestamp > RECENTLY_SENT_TTL_MS) {
+              recentlySentMessages.delete(key);
+            }
+          }
+          
+          // Check all possible author:content combinations that might match
+          const displayAuthor = 'LolRiTTeRBot';
+          const asker = targetKey;
+          const quotedContent = `> ${asker}: ${content}`;
+          const checkKeys = [
+            `${displayAuthor}:${quotedContent}`,
+            `${displayAuthor}:${content}`,
+            `${asker}:${content}`
+          ];
+          
+          let alreadySent = false;
+          for (const checkKey of checkKeys) {
+            if (recentlySentMessages.has(checkKey)) {
+              debugLog(`[Message] Skipping duplicate - already sent via chat event: "${checkKey}"`);
+              alreadySent = true;
+              break;
+            }
+          }
+          
+          if (alreadySent) {
+            pendingBotResponses.delete(targetKey);
+            return;
+          }
 
           (async () => {
             try {
@@ -1780,6 +1824,12 @@ function createBot() {
                   }]
                 });
                 debugLog(`[Message] Forwarded non-chat as LolRiTTeRBot via command-window (cmd=${pend?.cmd})`);
+                
+                // Mark as sent to prevent any future duplicates
+                const sentKey = `${displayAuthor}:${body}`;
+                recentlySentMessages.set(sentKey, Date.now());
+                setTimeout(() => recentlySentMessages.delete(sentKey), RECENTLY_SENT_TTL_MS);
+                
                 // Consume the pending once used to prevent duplicate forwards
                 pendingBotResponses.delete(targetKey);
               }
