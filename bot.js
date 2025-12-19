@@ -76,6 +76,9 @@ const excludedMessageIds = [];
 const pendingAuthLinks = [];
 const sentAuthCodes = new Set();
 const authMessageIds = new Set();
+// Track short-lived windows after a user issues a bang command (e.g., !pt)
+// Used to reattribute bot-style responses that appear as if authored by the user
+const pendingBotResponses = new Map(); // key: usernameLower -> { cmd, until }
 const WHISPER_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const WHISPER_MARK_TTL_MS = 3000; // how long to remember whisper markers for suppression
 const PENDING_CHAT_DELAY_MS = 400; // delay chat sends to detect whispers first
@@ -965,6 +968,19 @@ function summarizeHtmlPayload(raw) {
   return summary.length > maxLen ? summary.slice(0, maxLen) + '…' : summary;
 }
 
+// Heuristic: detect LolRiTTeR-like response lines (e.g., playtime summary)
+function looksLikeLolritterResponse(text) {
+  if (!text) return false;
+  const s = String(text).trim();
+  // Examples: "66 Days, 8 Hours, 0 Minutes" or with Seconds
+  if (/^\d+\s+Days?,\s*\d+\s+Hours?,\s*\d+\s+Minutes?(?:,\s*\d+\s+Seconds?)?$/i.test(s)) return true;
+  // Common keywords from bot replies
+  if (/^Playtime\b/i.test(s)) return true;
+  if (/^Top\b/i.test(s)) return true;
+  if (/^(?:KDR|Kills|Deaths|Balance|Stats)\b/i.test(s)) return true;
+  return false;
+}
+
 var bot;
 let reconnectTimeout = 15000;
 let shouldReconnect = true;
@@ -1540,6 +1556,14 @@ function createBot() {
       return;
     }
 
+    // If user issued a bang command (e.g., !pt), open a short window to reattribute the next bot-style line
+    if (/^![a-z0-9]/i.test(cleanMessage)) {
+      const key = username.toLowerCase();
+      const until = Date.now() + 4000; // 4s window
+      pendingBotResponses.set(key, { cmd: cleanMessage, until });
+      debugLog(`[Chat] Mark pending bot response for ${username}: cmd="${cleanMessage}", until=${new Date(until).toISOString()}`);
+    }
+
     // Suppress whispers: if whisper arrives shortly, don't forward to public chat
     const whisperKey = `WHISPER:${username}:${cleanMessage}`;
     if (recentWhispers.has(whisperKey)) {
@@ -1592,6 +1616,23 @@ function createBot() {
               displayAuthor = innerSender;
               contentForDisplay = remaining.trim();
               debugLog(`[Chat] Reattributed author to inner tag "${innerSender}"`);
+            }
+          }
+
+          // Fallback: if user recently sent a bang command and this looks like a bot response, reattribute to LolRiTTeRBot
+          if (displayAuthor === username) {
+            const pend = pendingBotResponses.get(username.toLowerCase());
+            if (pend && Date.now() <= pend.until && looksLikeLolritterResponse(contentForDisplay)) {
+              const startedAt = pend.until - 4000;
+              const age = Date.now() - startedAt;
+              displayAuthor = 'LolRiTTeRBot';
+              // Show who asked in the message body for clarity
+              contentForDisplay = `> ${username}: ${contentForDisplay}`;
+              pendingBotResponses.delete(username.toLowerCase());
+              debugLog(`[Chat] Reattributed to LolRiTTeRBot via command-window (cmd=${pend.cmd}, age=${age}ms)`);
+            } else {
+              // Clean up expired entries lazily
+              if (pend && Date.now() > pend.until) pendingBotResponses.delete(username.toLowerCase());
             }
           }
 
