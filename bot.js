@@ -1556,8 +1556,10 @@ function createBot() {
       return;
     }
 
-    // If user issued a bang command (e.g., !pt), open a short window to reattribute the next bot-style line
-    if (/^![a-z0-9]/i.test(cleanMessage)) {
+    // If user issued a likely command (short message, any prefix), open a short window to reattribute bot responses
+    // This covers all LolRiTTeRBot commands: !pt, !faq, !stats, !top, etc.
+    const looksLikeCommand = cleanMessage.length <= 30 && /^[!/.#@-]/.test(cleanMessage);
+    if (looksLikeCommand) {
       const key = username.toLowerCase();
       const until = Date.now() + 4000; // 4s window
       pendingBotResponses.set(key, { cmd: cleanMessage, until });
@@ -1640,11 +1642,14 @@ function createBot() {
           let avatarUrl = `https://minotar.net/avatar/${displayAuthor.toLowerCase()}/28`;
           let displayMessage = contentForDisplay.replace(/([*_`~|\\])/g, '\\$1');
           displayMessage = displayMessage.replace(/\[/g, '\\[').replace(/\]/g, '\\]');
-          // Prevent Discord blockquotes caused by leading '>'
-          const beforeBQ = displayMessage;
-          displayMessage = displayMessage.replace(/^>/gm, '\\>');
-          if (beforeBQ !== displayMessage) {
-            debugLog(`[Chat] Escaped leading '>' for ${username}`);
+          // Prevent Discord blockquotes caused by leading '>' ONLY for messages we prepended with '>' (reattributed ones)
+          // Don't escape '>' for natural user messages to allow quote syntax
+          if (displayAuthor !== username && contentForDisplay.startsWith('> ')) {
+            const beforeBQ = displayMessage;
+            displayMessage = displayMessage.replace(/^>/gm, '\\>');
+            if (beforeBQ !== displayMessage) {
+              debugLog(`[Chat] Escaped leading '>' for reattributed message from ${username}`);
+            }
           }
           const isBridgeMessage = /^\[[^\]]+\]\s/.test(cleanMessage);
           const lowerMessage = cleanMessage.toLowerCase();
@@ -1757,10 +1762,8 @@ function createBot() {
                 const displayAuthor = 'LolRiTTeRBot';
                 const avatarUrl = `https://minotar.net/avatar/${displayAuthor.toLowerCase()}/28`;
                 let body = `> ${asker}: ${content}`;
-                // Escape markdown + leading '>'
+                // Escape markdown only (NOT leading '>' - we want to show quote prefix naturally)
                 body = body.replace(/([*_`~|\\])/g, '\\$1').replace(/\[/g, '\\[').replace(/\]/g, '\\]');
-                const beforeBQ2 = body; body = body.replace(/^>/gm, '\\>');
-                if (beforeBQ2 !== body) debugLog(`[Message] Escaped leading '>' for ${asker}`);
                 await channel.send({
                   embeds: [{
                     author: { name: displayAuthor, url: `https://namemc.com/profile/${displayAuthor}` },
