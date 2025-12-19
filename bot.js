@@ -1583,6 +1583,12 @@ function createBot() {
           let avatarUrl = `https://minotar.net/avatar/${username.toLowerCase()}/28`;
           let displayMessage = cleanMessage.replace(/([*_`~|\\])/g, '\\$1');
           displayMessage = displayMessage.replace(/\[/g, '\\[').replace(/\]/g, '\\]');
+          // Prevent Discord blockquotes caused by leading '>'
+          const beforeBQ = displayMessage;
+          displayMessage = displayMessage.replace(/^>/gm, '\\>');
+          if (beforeBQ !== displayMessage) {
+            debugLog(`[Chat] Escaped leading '>' for ${username}`);
+          }
           const isBridgeMessage = /^\[[^\]]+\]\s/.test(cleanMessage);
           const lowerMessage = cleanMessage.toLowerCase();
           const usersToMention = new Set();
