@@ -910,21 +910,27 @@ function chatComponentToString(component) {
 
 // Simple HTML page summarizer for ugly error payloads in chat
 function summarizeHtmlPayload(raw) {
-  if (!raw || !/(<\s*html|<!doctype\s+html)/i.test(raw)) return null;
+  if (!raw) return null;
+  if (!/(<\s*html|<!doctype\s+html|<body\b|<head\b)/i.test(raw)) return null;
+
   const grab = (pattern) => {
     const m = raw.match(pattern);
-    return m && m[1] ? m[1].trim() : '';
+    return m && m[1] ? m[1].replace(/\s+/g, ' ').trim() : '';
   };
 
   const h1 = grab(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
   const h2 = grab(/<h2[^>]*>([\s\S]*?)<\/h2>/i);
-  const firstP = grab(/<p[^>]*>([\s\S]*?)<\/p>/i);
+  const p1 = grab(/<p[^>]*>([\s\S]*?)<\/p>/i);
+  const p2 = grab(/<p[^>]*>[\s\S]*?<\/p>[^<]*<p[^>]*>([\s\S]*?)<\/p>/i);
+  const errInfo = grab(/Error Info:<\/span><span[^>]*>([^<]*)<\/span>/i);
   const xref = grab(/x-azure-ref[^<]*?<span[^>]*>([^<]*)<\/span>/i) || grab(/x-azure-ref[^:]*:\s*([A-Za-z0-9\-]+)/i);
 
-  let parts = [];
-  if (h1) parts.push(h1.replace(/\s+/g, ' '));
-  if (h2) parts.push(h2.replace(/\s+/g, ' '));
-  if (firstP) parts.push(firstP.replace(/\s+/g, ' '));
+  const parts = [];
+  if (h1) parts.push(h1);
+  if (h2) parts.push(h2);
+  if (p1) parts.push(p1);
+  if (p2) parts.push(p2);
+  if (errInfo) parts.push(`ErrorInfo=${errInfo}`);
   if (xref) parts.push(`x-azure-ref=${xref}`);
 
   if (parts.length === 0) {
@@ -943,7 +949,9 @@ function summarizeHtmlPayload(raw) {
     return `HTML page: ${text}`;
   }
 
-  return `HTML error: ${parts.join(' — ')}`;
+  const summary = parts.join(' — ');
+  const maxLen = 400;
+  return summary.length > maxLen ? summary.slice(0, maxLen) + '…' : summary;
 }
 
 var bot;
