@@ -79,6 +79,8 @@ const authMessageIds = new Set();
 // Track short-lived windows after a user issues a bang command (e.g., !pt)
 // Used to reattribute bot-style responses that appear as if authored by the user
 const pendingBotResponses = new Map(); // key: usernameLower -> { cmd, until }
+// Track messages forwarded via message handler to prevent duplicate relay in chat handler
+const forwardedMessages = new Map(); // key: `FORWARDED:username:content` -> timestamp
 const WHISPER_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const WHISPER_MARK_TTL_MS = 3000; // how long to remember whisper markers for suppression
 const PENDING_CHAT_DELAY_MS = 400; // delay chat sends to detect whispers first
@@ -1595,6 +1597,18 @@ function createBot() {
     const timer = setTimeout(async () => {
       try {
         debugLog(`[Chat] Timer fire ${pendingKey}`);
+        // Check if message was already forwarded via message handler
+        const fwdKey = `FORWARDED:${username.toLowerCase()}:${cleanMessage}`;
+        if (forwardedMessages.has(fwdKey)) {
+          debugLog(`[Chat] Suppressed already-forwarded message: ${fwdKey} (age=${Date.now() - forwardedMessages.get(fwdKey)}ms)`);
+          forwardedMessages.delete(fwdKey);
+          return;
+        }
+        // Cleanup old forwarded markers
+        const now = Date.now();
+        for (const [k, ts] of forwardedMessages.entries()) {
+          if (now - ts > 10000) forwardedMessages.delete(k);
+        }
         if (recentWhispers.has(whisperKey)) {
           debugLog(`[Chat] Suppressed whisper (late mark) from ${username}: "${cleanMessage}"`);
           return;
@@ -1776,13 +1790,10 @@ function createBot() {
                 debugLog(`[Message] Forwarded non-chat as LolRiTTeRBot via command-window (cmd=${pend?.cmd})`);
                 // Consume the pending once used to prevent duplicate forwards
                 pendingBotResponses.delete(targetKey);
-                // Cancel any pending chat timer for this message to prevent duplicate relay
-                const chatKey = `CHAT:${asker}:${content}`;
-                if (pendingChatTimers.has(chatKey)) {
-                  clearTimeout(pendingChatTimers.get(chatKey));
-                  pendingChatTimers.delete(chatKey);
-                  debugLog(`[Message] Cancelled duplicate chat timer for ${chatKey}`);
-                }
+                // Mark this message as forwarded to suppress chat handler duplicate
+                const fwdKey = `FORWARDED:${asker}:${content}`;
+                forwardedMessages.set(fwdKey, Date.now());
+                debugLog(`[Message] Marked as forwarded: ${fwdKey}`);
               }
             } catch (e) {
               debugLog('[Message] Forward error:', e.message || e);
