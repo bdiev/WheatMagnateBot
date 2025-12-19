@@ -1776,6 +1776,13 @@ function createBot() {
                 debugLog(`[Message] Forwarded non-chat as LolRiTTeRBot via command-window (cmd=${pend?.cmd})`);
                 // Consume the pending once used to prevent duplicate forwards
                 pendingBotResponses.delete(targetKey);
+                // Cancel any pending chat timer for this message to prevent duplicate relay
+                const chatKey = `CHAT:${asker}:${content}`;
+                if (pendingChatTimers.has(chatKey)) {
+                  clearTimeout(pendingChatTimers.get(chatKey));
+                  pendingChatTimers.delete(chatKey);
+                  debugLog(`[Message] Cancelled duplicate chat timer for ${chatKey}`);
+                }
               }
             } catch (e) {
               debugLog('[Message] Forward error:', e.message || e);
