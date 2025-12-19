@@ -1579,9 +1579,25 @@ function createBot() {
         }
         const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
         if (channel && channel.isTextBased()) {
-          debugLog(`[Chat] Sending to Discord from ${username}: "${cleanMessage}"`);
-          let avatarUrl = `https://minotar.net/avatar/${username.toLowerCase()}/28`;
-          let displayMessage = cleanMessage.replace(/([*_`~|\\])/g, '\\$1');
+          // Determine displayed author and content (handle relayed formats like "<LolRiTTeRBot> ...")
+          let displayAuthor = username;
+          let contentForDisplay = cleanMessage;
+          const angleTag = contentForDisplay.match(/^<([^>]+)>\s*(.*)$/);
+          if (angleTag) {
+            const innerSender = angleTag[1].trim();
+            const innerLower = innerSender.toLowerCase();
+            const remaining = angleTag[2] != null ? angleTag[2] : '';
+            // Prefer inner sender when it looks like a relay/bot (e.g., LolRiTTeRBot)
+            if (/(lolritter|loltitter)/i.test(innerSender)) {
+              displayAuthor = innerSender;
+              contentForDisplay = remaining.trim();
+              debugLog(`[Chat] Reattributed author to inner tag "${innerSender}"`);
+            }
+          }
+
+          debugLog(`[Chat] Sending to Discord from ${displayAuthor}: "${contentForDisplay}"`);
+          let avatarUrl = `https://minotar.net/avatar/${displayAuthor.toLowerCase()}/28`;
+          let displayMessage = contentForDisplay.replace(/([*_`~|\\])/g, '\\$1');
           displayMessage = displayMessage.replace(/\[/g, '\\[').replace(/\]/g, '\\]');
           // Prevent Discord blockquotes caused by leading '>'
           const beforeBQ = displayMessage;
@@ -1603,7 +1619,7 @@ function createBot() {
           }
           const sendOptions = {
             embeds: [{
-              author: { name: username, url: `https://namemc.com/profile/${username}` },
+              author: { name: displayAuthor, url: `https://namemc.com/profile/${displayAuthor}` },
               description: displayMessage,
               color: 3447003,
               thumbnail: { url: avatarUrl },
