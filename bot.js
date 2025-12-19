@@ -908,6 +908,26 @@ function chatComponentToString(component) {
   return text;
 }
 
+// Simple HTML page summarizer for ugly error payloads in chat
+function summarizeHtmlPayload(raw) {
+  if (!raw || !/(<\s*html|<!doctype\s+html)/i.test(raw)) return null;
+  let text = raw
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&quot;/gi, '"')
+    .replace(/&amp;/gi, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return null;
+  const maxLen = 400;
+  if (text.length > maxLen) {
+    text = text.slice(0, maxLen) + '…';
+  }
+  return `HTML page: ${text}`;
+}
+
 var bot;
 let reconnectTimeout = 15000;
 let shouldReconnect = true;
@@ -1456,6 +1476,12 @@ function createBot() {
       .replace(/§[0-9a-fk-or]/gi, '') // Remove Minecraft color codes
       .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '') // Remove control chars (keep newlines \n)
       .trim();
+
+    const htmlSummary = summarizeHtmlPayload(message);
+    if (htmlSummary) {
+      cleanMessage = htmlSummary;
+      debugLog(`[Chat] HTML summary applied for ${username}`);
+    }
 
     debugLog(`[Chat] Cleaned message from ${username}: "${cleanMessage}" (raw: "${message}")`);
 
