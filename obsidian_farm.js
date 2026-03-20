@@ -389,17 +389,25 @@ async function pourLava(bot, targetPos) {
     refBlock.position.y + 0.5,
     refBlock.position.z + (refFace.z === 1 ? 1.0 : refFace.z === -1 ? 0.0 : 0.5)
   );
+  const cursorPos = new Vec3(
+    refFace.x === 1 ? 1.0 : refFace.x === -1 ? 0.0 : 0.5,
+    0.5,
+    refFace.z === 1 ? 1.0 : refFace.z === -1 ? 0.0 : 0.5
+  );
 
-  try {
-    bot.setControlState('sneak', true);
-    await sleep(80);
-    await bot.lookAt(hitPoint, true);
-    await sleep(80);
-    await bot.activateItem(false); // plain right-click with lava bucket
-    await sleep(INTERACT_SETTLE_MS + 220);
-  } finally {
-    bot.setControlState('sneak', false);
+  await bot.lookAt(hitPoint, true);
+  await sleep(100);
+
+  const cursorBlock = bot.blockAtCursor(MAX_INTERACT_DISTANCE + 0.5);
+  if (!cursorBlock || !isSameBlockPos(cursorBlock.position, refBlock.position)) {
+    throw new Error(
+      `Aim miss before click via stone_bricks/${refLabel}: cursor=${cursorBlock?.name || 'null'}`
+    );
   }
+
+  // Exact right-click on stone_bricks face toward target cell.
+  await bot.activateBlock(refBlock, refFace, cursorPos);
+  await sleep(INTERACT_SETTLE_MS + 260);
 
   if (!didLavaPlacementLikelySucceed(bot, x, y, z)) {
     const adj = getAdjacentBlockDebug(bot, x, y, z);
