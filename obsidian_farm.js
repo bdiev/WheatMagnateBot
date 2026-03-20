@@ -352,15 +352,6 @@ async function pourLava(bot, targetPos) {
   await bot.equip(lavaBucket, 'hand');
   await sleep(INTERACT_SETTLE_MS);
 
-  // We need a solid reference block adjacent to the target position.
-  // Try all 6 faces; for each adjacent solid block, click its face toward target.
-  const faces = [
-    [0, -1,  0],  // below (most common — pour lava onto a surface)
-    [1,  0,  0], [-1,  0,  0],
-    [0,  0,  1], [0,   0, -1],
-    [0,  1,  0],  // above (rare)
-  ];
-
   let placed = false;
   const placementErrors = [];
   let triedRefs = 0;
@@ -371,76 +362,53 @@ async function pourLava(bot, targetPos) {
     return true;
   };
 
-  for (const [dx, dy, dz] of faces) {
-    const ref = bot.blockAt(new Vec3(x + dx, y + dy, z + dz));
-    if (!isUsableReference(ref)) continue;
-    triedRefs++;
-    const faceVector = new Vec3(-dx, -dy, -dz);
-    const hitPoint = new Vec3(
-      ref.position.x + 0.5 + faceVector.x * 0.5,
-      ref.position.y + 0.5 + faceVector.y * 0.5,
-      ref.position.z + 0.5 + faceVector.z * 0.5
+  // Deterministic placement: ONLY place into the exact target block using block below as support.
+  const belowRef = bot.blockAt(new Vec3(x, y - 1, z));
+  if (!isUsableReference(belowRef)) {
+    const belowName = belowRef?.name || 'null';
+    throw new Error(
+      `Cannot place lava into exact target (${x}, ${y}, ${z}): block below is not usable (${belowName}).`
     );
-
-    try {
-      // Sneak avoids opening interactive blocks like hopper/chest and forces item use.
-      bot.setControlState('sneak', true);
-      await sleep(80);
-      // Force exact face aim before right-click to reduce server-side miss clicks.
-      await bot.lookAt(hitPoint, true);
-      await sleep(70);
-
-      // For buckets, activateBlock is more reliable than placeBlock.
-      await bot.activateBlock(ref, faceVector);
-      await sleep(INTERACT_SETTLE_MS + 150);
-
-      if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
-        placed = true;
-        break;
-      }
-
-      placementErrors.push(`activateBlock no result on ${ref.name}`);
-
-      // Secondary try for the same face: direct item use at exact hit point.
-      await bot.lookAt(hitPoint, true);
-      await sleep(70);
-      await bot.activateItem(false);
-      await sleep(INTERACT_SETTLE_MS + 200);
-
-      if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
-        placed = true;
-        break;
-      }
-
-      placementErrors.push(`activateItem no result on ${ref.name}`);
-    } catch (e) {
-      placementErrors.push(e?.message || 'unknown placeBlock error');
-      // Some servers place liquid but mineflayer times out waiting blockUpdate.
-      await sleep(150);
-      if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
-        placed = true;
-        break;
-      }
-      // Try next adjacent block.
-    } finally {
-      bot.setControlState('sneak', false);
-    }
   }
 
-  if (!placed) {
-    // Fallback: face target and use lava bucket directly.
-    try {
-      bot.setControlState('sneak', true);
-      await bot.lookAt(new Vec3(x + 0.5, y + 0.5, z + 0.5), true);
-      await sleep(120);
+  triedRefs = 1;
+  const faceVector = new Vec3(0, 1, 0);
+  const hitPoint = new Vec3(
+    belowRef.position.x + 0.5,
+    belowRef.position.y + 1.0,
+    belowRef.position.z + 0.5
+  );
+
+  try {
+    bot.setControlState('sneak', true);
+    await sleep(80);
+    await bot.lookAt(hitPoint, true);
+    await sleep(70);
+    await bot.activateBlock(belowRef, faceVector);
+    await sleep(INTERACT_SETTLE_MS + 180);
+
+    if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
+      placed = true;
+    } else {
+      placementErrors.push(`activateBlock no result on ${belowRef.name}`);
+      await bot.lookAt(hitPoint, true);
+      await sleep(70);
       await bot.activateItem(false);
-      await sleep(INTERACT_SETTLE_MS + 200);
-      if (didLavaPlacementLikelySucceed(bot, x, y, z)) placed = true;
-    } catch (e) {
-      placementErrors.push(e?.message || 'unknown activateItem error');
-    } finally {
-      bot.setControlState('sneak', false);
+      await sleep(INTERACT_SETTLE_MS + 220);
+      if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
+        placed = true;
+      } else {
+        placementErrors.push(`activateItem no result on ${belowRef.name}`);
+      }
     }
+  } catch (e) {
+    placementErrors.push(e?.message || 'unknown placement error');
+    await sleep(150);
+    if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
+      placed = true;
+    }
+  } finally {
+    bot.setControlState('sneak', false);
   }
 
   if (!placed) {
