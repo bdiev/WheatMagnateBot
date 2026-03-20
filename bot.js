@@ -3,6 +3,8 @@ const mineflayer = require('mineflayer');
 const fs = require('fs');
 const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ChannelType, PermissionsBitField, MessageFlags } = require('discord.js');
 const { Pool } = require('pg');
+const { pathfinder } = require('mineflayer-pathfinder');
+const farm = require('./obsidian_farm');
 
 // Base64 utils for Node.js (btoa/atob polyfill)
 const b64encode = (str) => Buffer.from(String(str), 'utf8').toString('base64');
@@ -1126,7 +1128,11 @@ function createStatusButtons() {
         new ButtonBuilder()
           .setCustomId('chat_setting_button')
           .setLabel('⚙️ Chat Settings')
-          .setStyle(ButtonStyle.Secondary)
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('obsidian_farm_button')
+          .setLabel(farm.getStatus().enabled ? '⛏️ Obsidian 🟢' : '⛏️ Obsidian')
+          .setStyle(farm.getStatus().enabled ? ButtonStyle.Success : ButtonStyle.Secondary)
       )
   ];
 }
@@ -1185,6 +1191,7 @@ function createBot() {
 
   lastTickTime = 0; // Reset TPS tracking for new bot
   bot = mineflayer.createBot(config);
+  bot.loadPlugin(pathfinder);
 
   bot.on('login', async () => {
     if (bot && bot.username) {
@@ -1268,6 +1275,7 @@ function createBot() {
   bot.on('end', (reason) => {
     const reasonStr = chatComponentToString(reason);
     clearIntervals();
+    farm.stop(null); // halt obsidian farm loop on disconnect
 
     // Mark bot reference null immediately for status display
     bot = null;
@@ -3336,6 +3344,52 @@ Add candidates online: **${onlineCount}**`,
           console.error('Failed to send outer error reply:', replyErr.message);
         }
       }
+    } else if (interaction.isButton() && interaction.customId === 'obsidian_farm_button') {
+      if (interaction.user.id !== DISCORD_OWNER_ID) {
+        await interaction.reply({ embeds: [{ description: '❌ Only the owner can control the obsidian farm.', color: 16711680, timestamp: new Date() }], flags: MessageFlags.Ephemeral });
+        return;
+      }
+      const status = farm.getStatus();
+      if (status.enabled) {
+        farm.stop((msg, color) => sendDiscordNotification(msg, color));
+        await interaction.reply({ embeds: [{ description: `🛑 Obsidian farm stopped. Cycles completed: **${status.cyclesCompleted}**`, color: 16711680, timestamp: new Date() }], flags: MessageFlags.Ephemeral });
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 8000);
+      } else {
+        const modal = new ModalBuilder()
+          .setCustomId('obsidian_farm_modal')
+          .setTitle('Obsidian Farm — Target Coordinates');
+        const xInput = new TextInputBuilder().setCustomId('farm_x').setLabel('X coordinate').setStyle(TextInputStyle.Short).setPlaceholder('e.g. 120').setRequired(true);
+        const yInput = new TextInputBuilder().setCustomId('farm_y').setLabel('Y coordinate').setStyle(TextInputStyle.Short).setPlaceholder('e.g. 64').setRequired(true);
+        const zInput = new TextInputBuilder().setCustomId('farm_z').setLabel('Z coordinate').setStyle(TextInputStyle.Short).setPlaceholder('e.g. -300').setRequired(true);
+        const distInput = new TextInputBuilder().setCustomId('farm_dist').setLabel('Max cauldron search radius (blocks)').setStyle(TextInputStyle.Short).setPlaceholder('Default: 64').setRequired(false);
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(xInput),
+          new ActionRowBuilder().addComponents(yInput),
+          new ActionRowBuilder().addComponents(zInput),
+          new ActionRowBuilder().addComponents(distInput)
+        );
+        await interaction.showModal(modal);
+      }
+    } else if (interaction.isModalSubmit() && interaction.customId === 'obsidian_farm_modal') {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      if (interaction.user.id !== DISCORD_OWNER_ID) {
+        await interaction.editReply({ embeds: [{ description: '❌ Only the owner can configure the obsidian farm.', color: 16711680, timestamp: new Date() }] });
+        return;
+      }
+      const rawX = interaction.fields.getTextInputValue('farm_x').trim();
+      const rawY = interaction.fields.getTextInputValue('farm_y').trim();
+      const rawZ = interaction.fields.getTextInputValue('farm_z').trim();
+      const rawDist = interaction.fields.getTextInputValue('farm_dist').trim();
+      const x = Number(rawX), y = Number(rawY), z = Number(rawZ);
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+        await interaction.editReply({ embeds: [{ description: '❌ Invalid coordinates — X, Y and Z must be numbers.', color: 16711680, timestamp: new Date() }] });
+        return;
+      }
+      farm.configure(x, y, z, rawDist || undefined);
+      farm.start(bot, (msg, color) => sendDiscordNotification(msg, color));
+      const cf = farm.getStatus().config;
+      await interaction.editReply({ embeds: [{ description: `✅ Obsidian farm started at \`(${cf.x}, ${cf.y}, ${cf.z})\`. Cauldron radius: ${cf.maxCauldronDist} blocks.`, color: 65280, timestamp: new Date() }] });
+      setTimeout(() => interaction.deleteReply().catch(() => {}), 10000);
     } else if (interaction.isStringSelectMenu() && interaction.customId === 'add_whitelist_select') {
       await interaction.deferUpdate();
       const encodedUsername = interaction.values[0];
