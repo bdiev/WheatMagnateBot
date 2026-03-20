@@ -363,38 +363,86 @@ async function pourLava(bot, targetPos) {
     return true;
   };
 
-  // Deterministic placement: ONLY place into the exact target block using block below as support.
+  const isPreferredSolidSideRef = (block) => {
+    if (!block || !isUsableReference(block)) return false;
+    if (block.boundingBox !== 'block') return false;
+    const name = String(block.name || '');
+    if (name.includes('leaves') || name.includes('trapdoor')) return false;
+    if (name.includes('hopper') || name.includes('chest') || name.includes('barrel')) return false;
+    return true;
+  };
+
+  const cursorForFace = (face) => new Vec3(
+    face.x === 1 ? 1.0 : face.x === -1 ? 0.0 : 0.5,
+    face.y === 1 ? 1.0 : face.y === -1 ? 0.0 : 0.5,
+    face.z === 1 ? 1.0 : face.z === -1 ? 0.0 : 0.5
+  );
+
+  const refCandidates = [];
+
+  // Primary reference: directly below target (your hopper case).
   const belowRef = bot.blockAt(new Vec3(x, y - 1, z));
-  if (!isUsableReference(belowRef)) {
-    const belowName = belowRef?.name || 'null';
-    throw new Error(
-      `Cannot place lava into exact target (${x}, ${y}, ${z}): block below is not usable (${belowName}).`
-    );
+  if (isUsableReference(belowRef)) {
+    refCandidates.push({
+      block: belowRef,
+      faceVector: new Vec3(0, 1, 0),
+      label: 'below'
+    });
   }
 
-  triedRefs = 1;
-  const faceVector = new Vec3(0, 1, 0);
-  const topFaceCursorPoints = [
-    new Vec3(0.5, 1.0, 0.5),
-    new Vec3(0.35, 1.0, 0.35),
-    new Vec3(0.65, 1.0, 0.65),
-    new Vec3(0.5, 1.0, 0.35),
-    new Vec3(0.5, 1.0, 0.65),
+  // Deterministic side fallback: pick the first solid side in fixed order.
+  const sideOffsets = [
+    { dx: 1, dy: 0, dz: 0, label: 'east' },
+    { dx: -1, dy: 0, dz: 0, label: 'west' },
+    { dx: 0, dy: 0, dz: 1, label: 'south' },
+    { dx: 0, dy: 0, dz: -1, label: 'north' },
   ];
+  for (const off of sideOffsets) {
+    const sideRef = bot.blockAt(new Vec3(x + off.dx, y + off.dy, z + off.dz));
+    if (isPreferredSolidSideRef(sideRef)) {
+      refCandidates.push({
+        block: sideRef,
+        faceVector: new Vec3(-off.dx, -off.dy, -off.dz),
+        label: off.label
+      });
+      break;
+    }
+  }
+
+  if (refCandidates.length === 0) {
+    const belowName = belowRef?.name || 'null';
+    throw new Error(
+      `Cannot place lava into exact target (${x}, ${y}, ${z}): no usable reference block. Below=${belowName}`
+    );
+  }
 
   try {
     bot.setControlState('sneak', true);
     await sleep(80);
-    for (const cursorPos of topFaceCursorPoints) {
+
+    for (const refCandidate of refCandidates) {
+      triedRefs++;
+      const refBlock = refCandidate.block;
+      const faceVector = refCandidate.faceVector;
+      const centerCursor = cursorForFace(faceVector);
+      const topFaceCursorPoints = [
+        centerCursor,
+        new Vec3(0.35, centerCursor.y, 0.35),
+        new Vec3(0.65, centerCursor.y, 0.65),
+        new Vec3(0.5, centerCursor.y, 0.35),
+        new Vec3(0.5, centerCursor.y, 0.65),
+      ];
+
+      for (const cursorPos of topFaceCursorPoints) {
       const hitPoint = new Vec3(
-        belowRef.position.x + cursorPos.x,
-        belowRef.position.y + TOP_FACE_AIM_Y_OFFSET,
-        belowRef.position.z + cursorPos.z
+        refBlock.position.x + cursorPos.x,
+        refBlock.position.y + (faceVector.y === 1 ? TOP_FACE_AIM_Y_OFFSET : cursorPos.y),
+        refBlock.position.z + cursorPos.z
       );
 
       await bot.lookAt(hitPoint, true);
       await sleep(70);
-      await bot.activateBlock(belowRef, faceVector, cursorPos);
+      await bot.activateBlock(refBlock, faceVector, cursorPos);
       await sleep(INTERACT_SETTLE_MS + 180);
 
       if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
@@ -402,7 +450,7 @@ async function pourLava(bot, targetPos) {
         break;
       }
 
-      placementErrors.push(`activateBlock no result on ${belowRef.name} at ${cursorPos.x.toFixed(2)},${cursorPos.z.toFixed(2)}`);
+      placementErrors.push(`activateBlock no result on ${refBlock.name}/${refCandidate.label} at ${cursorPos.x.toFixed(2)},${cursorPos.z.toFixed(2)}`);
 
       await bot.lookAt(hitPoint, true);
       await sleep(70);
@@ -414,7 +462,10 @@ async function pourLava(bot, targetPos) {
         break;
       }
 
-      placementErrors.push(`activateItem no result on ${belowRef.name} at ${cursorPos.x.toFixed(2)},${cursorPos.z.toFixed(2)}`);
+      placementErrors.push(`activateItem no result on ${refBlock.name}/${refCandidate.label} at ${cursorPos.x.toFixed(2)},${cursorPos.z.toFixed(2)}`);
+      }
+
+      if (placed) break;
     }
   } catch (e) {
     placementErrors.push(e?.message || 'unknown placement error');
