@@ -17,6 +17,7 @@
 const { Movements, pathfinder } = require('mineflayer-pathfinder');
 const { GoalNear }              = require('mineflayer-pathfinder').goals;
 const Vec3                      = require('vec3');
+const fs                        = require('fs');
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 const PICKAXE_PRIORITY = [
@@ -32,6 +33,8 @@ const OBSIDIAN_TIMEOUT_MS   = 90_000; // max wait for lava→obsidian
 const CYCLE_PAUSE_MS        = 800;    // pause between cycles
 const INTERACT_SETTLE_MS    = 350;    // settle delay after block interaction
 const DEFAULT_CAULDRON_DIST = 64;     // default max search radius for cauldrons
+const MIN_PICKAXE_REMAINING_PERCENT = 5;
+const FARM_CONFIG_FILE = 'obsidian_farm_config.json';
 
 // ── Internal state ─────────────────────────────────────────────────────────────
 const farm = {
@@ -64,6 +67,7 @@ function configure(x, y, z, maxCauldronDist) {
       ? Math.max(8, Math.min(128, Math.round(Number(maxCauldronDist))))
       : DEFAULT_CAULDRON_DIST,
   };
+  saveFarmConfig();
 }
 
 /** Load pathfinder plugin into a freshly created bot. Call once from createBot(). */
@@ -75,10 +79,103 @@ function loadPlugin(bot) {
   }
 }
 
+function saveFarmConfig() {
+  try {
+    const payload = farm.config
+      ? {
+          x: farm.config.x,
+          y: farm.config.y,
+          z: farm.config.z,
+          maxCauldronDist: farm.config.maxCauldronDist,
+        }
+      : null;
+    fs.writeFileSync(FARM_CONFIG_FILE, JSON.stringify(payload, null, 2), 'utf8');
+  } catch (e) {
+    console.error('[Farm] Failed to save config:', e.message);
+  }
+}
+
+function loadFarmConfig() {
+  try {
+    if (!fs.existsSync(FARM_CONFIG_FILE)) return;
+    const raw = fs.readFileSync(FARM_CONFIG_FILE, 'utf8');
+    if (!raw || !raw.trim()) return;
+
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return;
+
+    const x = Number(parsed.x);
+    const y = Number(parsed.y);
+    const z = Number(parsed.z);
+    const maxCauldronDist = Number(parsed.maxCauldronDist);
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return;
+
+    farm.config = {
+      x: Math.round(x),
+      y: Math.round(y),
+      z: Math.round(z),
+      maxCauldronDist: Number.isFinite(maxCauldronDist)
+        ? Math.max(8, Math.min(128, Math.round(maxCauldronDist)))
+        : DEFAULT_CAULDRON_DIST,
+    };
+  } catch (e) {
+    console.error('[Farm] Failed to load config:', e.message);
+  }
+}
+
 // ── Internal helpers ───────────────────────────────────────────────────────────
 
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
+}
+
+function getItemMaxDurability(bot, item) {
+  if (!item) return null;
+  if (typeof item.maxDurability === 'number') return item.maxDurability;
+  const reg = bot.registry?.itemsByName?.[item.name];
+  return typeof reg?.maxDurability === 'number' ? reg.maxDurability : null;
+}
+
+function getItemDurabilityUsed(item) {
+  if (!item) return 0;
+  if (typeof item.durabilityUsed === 'number') return item.durabilityUsed;
+  // Fallback for versions where durability is stored in NBT Damage tag.
+  const nbtDamage = item.nbt?.value?.Damage?.value;
+  return typeof nbtDamage === 'number' ? nbtDamage : 0;
+}
+
+function getRemainingDurabilityPercent(bot, item) {
+  const maxDurability = getItemMaxDurability(bot, item);
+  if (!maxDurability || maxDurability <= 0) {
+    return 100; // Non-damageable or unknown; do not block usage.
+  }
+  const used = Math.max(0, getItemDurabilityUsed(item));
+  const remaining = Math.max(0, maxDurability - used);
+  return (remaining / maxDurability) * 100;
+}
+
+function findUsablePickaxe(bot, minRemainingPercent) {
+  const items = bot.inventory.items();
+  for (const name of PICKAXE_PRIORITY) {
+    const candidates = items.filter(i => i.name === name);
+    if (candidates.length === 0) continue;
+
+    let bestCandidate = null;
+    let bestPercent = -1;
+    for (const item of candidates) {
+      const percent = getRemainingDurabilityPercent(bot, item);
+      if (percent > bestPercent) {
+        bestPercent = percent;
+        bestCandidate = item;
+      }
+    }
+
+    if (bestCandidate && bestPercent > minRemainingPercent) {
+      return { item: bestCandidate, remainingPercent: bestPercent };
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -219,11 +316,25 @@ async function mineObsidian(bot) {
 
   await goNear(bot, x, y, z, 4);
 
-  const pick = bot.inventory.items().find(i => PICKAXE_PRIORITY.includes(i.name));
-  if (!pick) throw new Error('No pickaxe in inventory');
+  const selected = findUsablePickaxe(bot, MIN_PICKAXE_REMAINING_PERCENT);
+  if (!selected) {
+    throw new Error(
+      `No usable pickaxe found with durability > ${MIN_PICKAXE_REMAINING_PERCENT}%. ` +
+      'Add another pickaxe to inventory.'
+    );
+  }
+  const { item: pick, remainingPercent } = selected;
 
   await bot.equip(pick, 'hand');
   await sleep(200);
+
+  // Re-check just before mining in case durability info changed after equip.
+  const remainingAfterEquip = getRemainingDurabilityPercent(bot, pick);
+  if (remainingAfterEquip <= MIN_PICKAXE_REMAINING_PERCENT) {
+    throw new Error(
+      `Equipped pickaxe is at ${remainingAfterEquip.toFixed(1)}% durability (<= ${MIN_PICKAXE_REMAINING_PERCENT}%).`
+    );
+  }
 
   const block = bot.blockAt(new Vec3(x, y, z));
   if (!block || block.name !== 'obsidian') {
@@ -233,6 +344,13 @@ async function mineObsidian(bot) {
   // bot.dig() awaits until the block is broken
   await bot.dig(block);
   await sleep(300);
+
+  const remainingAfterDig = getRemainingDurabilityPercent(bot, pick);
+  if (remainingAfterDig <= MIN_PICKAXE_REMAINING_PERCENT) {
+    throw new Error(
+      `Pickaxe durability dropped to ${remainingAfterDig.toFixed(1)}% (<= ${MIN_PICKAXE_REMAINING_PERCENT}%).`
+    );
+  }
 }
 
 // ── Main loop ──────────────────────────────────────────────────────────────────
@@ -240,8 +358,25 @@ async function mineObsidian(bot) {
 async function runCycle(bot, notify) {
   if (!farm.config) throw new Error('Farm not configured — no target coordinates');
 
-  await fillBucket(bot);
-  await pourLava(bot);
+  const { x, y, z } = farm.config;
+  const targetPos = new Vec3(x, y, z);
+  const targetBlock = bot.blockAt(targetPos);
+  const hasLavaBucket = bot.inventory.items().some(i => i.name === 'lava_bucket');
+
+  // If obsidian is already present, mine it immediately.
+  if (targetBlock?.name === 'obsidian') {
+    await mineObsidian(bot);
+    farm.cyclesCompleted++;
+    return;
+  }
+
+  // If lava is already at target, skip fill/pour and only wait for conversion.
+  if (targetBlock?.name !== 'lava') {
+    if (!hasLavaBucket) {
+      await fillBucket(bot);
+    }
+    await pourLava(bot);
+  }
 
   const formed = await waitForObsidian(bot);
   if (!formed) {
@@ -322,5 +457,7 @@ function stop(notify) {
   }
   if (notify) notify(`🛑 Obsidian farm stopped. Cycles completed: **${farm.cyclesCompleted}**`, 16711680);
 }
+
+loadFarmConfig();
 
 module.exports = { start, stop, configure, getStatus, loadPlugin };
