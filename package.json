@@ -14,7 +14,9 @@
     "discord.js": "^14.14.1",
     "dotenv": "^17.2.3",
     "mineflayer": "^4.33.0",
+    "mineflayer-pathfinder": "^2.4.5",
     "pg": "^8.11.3",
-    "prismarine-auth": "^2.7.0"
+    "prismarine-auth": "^2.7.0",
+    "vec3": "^0.1.10"
   }
 }
