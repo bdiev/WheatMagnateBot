@@ -271,16 +271,27 @@ async function pourLava(bot) {
   ];
 
   let placed = false;
+  const isUsableReference = (block) => {
+    if (!block) return false;
+    if (block.name === 'air' || block.name === 'cave_air' || block.name === 'void_air') return false;
+    if (block.name === 'water' || block.name === 'lava') return false;
+    return true;
+  };
+
   for (const [dx, dy, dz] of faces) {
     const ref = bot.blockAt(new Vec3(x + dx, y + dy, z + dz));
-    if (!ref || ref.boundingBox !== 'block') continue; // only solid blocks
+    if (!isUsableReference(ref)) continue;
     try {
-      // The faceVector points from ref toward the target position
+      // Sneak avoids opening interactive blocks like hopper/chest and forces placement.
+      bot.setControlState('sneak', true);
+      // The faceVector points from ref toward the target position.
       await bot.placeBlock(ref, new Vec3(-dx, -dy, -dz));
       placed = true;
       break;
     } catch (_) {
-      // try next adjacent block
+      // Try next adjacent block.
+    } finally {
+      bot.setControlState('sneak', false);
     }
   }
 
