@@ -36,6 +36,7 @@ const DEFAULT_CAULDRON_DIST = 64;     // default max search radius for cauldrons
 const MIN_PICKAXE_REMAINING_PERCENT = 5;
 const FARM_CONFIG_FILE = 'obsidian_farm_config.json';
 const MAX_INTERACT_DISTANCE = 5.5;
+const TOP_FACE_AIM_Y_OFFSET = 0.98;
 
 // ── Internal state ─────────────────────────────────────────────────────────────
 const farm = {
@@ -375,7 +376,7 @@ async function pourLava(bot, targetPos) {
   const faceVector = new Vec3(0, 1, 0);
   const hitPoint = new Vec3(
     belowRef.position.x + 0.5,
-    belowRef.position.y + 1.0,
+    belowRef.position.y + TOP_FACE_AIM_Y_OFFSET,
     belowRef.position.z + 0.5
   );
 
@@ -399,6 +400,17 @@ async function pourLava(bot, targetPos) {
         placed = true;
       } else {
         placementErrors.push(`activateItem no result on ${belowRef.name}`);
+
+        // Final fallback for strict servers: explicit placeBlock call.
+        await bot.lookAt(hitPoint, true);
+        await sleep(70);
+        await bot.placeBlock(belowRef, faceVector);
+        await sleep(INTERACT_SETTLE_MS + 220);
+        if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
+          placed = true;
+        } else {
+          placementErrors.push(`placeBlock no result on ${belowRef.name}`);
+        }
       }
     }
   } catch (e) {
