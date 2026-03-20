@@ -317,7 +317,7 @@ async function pourLava(bot, targetPos) {
   const { x, y, z } = targetPos;
 
   farm.phase = 'navigating';
-  await goNear(bot, x, y, z, 2);
+  await goNear(bot, x, y, z, 1);
 
   farm.phase = 'pouring';
   const lavaBucket = bot.inventory.items().find(i => i.name === 'lava_bucket');
@@ -349,17 +349,17 @@ async function pourLava(bot, targetPos) {
     const ref = bot.blockAt(new Vec3(x + dx, y + dy, z + dz));
     if (!isUsableReference(ref)) continue;
     triedRefs++;
+    const faceVector = new Vec3(-dx, -dy, -dz);
+    const hitPoint = new Vec3(
+      ref.position.x + 0.5 + faceVector.x * 0.5,
+      ref.position.y + 0.5 + faceVector.y * 0.5,
+      ref.position.z + 0.5 + faceVector.z * 0.5
+    );
+
     try {
       // Sneak avoids opening interactive blocks like hopper/chest and forces item use.
       bot.setControlState('sneak', true);
       await sleep(80);
-      const faceVector = new Vec3(-dx, -dy, -dz);
-      const hitPoint = new Vec3(
-        ref.position.x + 0.5 + faceVector.x * 0.5,
-        ref.position.y + 0.5 + faceVector.y * 0.5,
-        ref.position.z + 0.5 + faceVector.z * 0.5
-      );
-
       // Force exact face aim before right-click to reduce server-side miss clicks.
       await bot.lookAt(hitPoint, true);
       await sleep(70);
@@ -374,6 +374,19 @@ async function pourLava(bot, targetPos) {
       }
 
       placementErrors.push(`activateBlock no result on ${ref.name}`);
+
+      // Secondary try for the same face: direct item use at exact hit point.
+      await bot.lookAt(hitPoint, true);
+      await sleep(70);
+      await bot.activateItem(false);
+      await sleep(INTERACT_SETTLE_MS + 200);
+
+      if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
+        placed = true;
+        break;
+      }
+
+      placementErrors.push(`activateItem no result on ${ref.name}`);
     } catch (e) {
       placementErrors.push(e?.message || 'unknown placeBlock error');
       // Some servers place liquid but mineflayer times out waiting blockUpdate.
