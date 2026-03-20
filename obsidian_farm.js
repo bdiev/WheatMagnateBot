@@ -129,6 +129,32 @@ function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
+function isReplaceableForLava(block) {
+  if (!block) return true;
+  const replaceable = new Set([
+    'air', 'cave_air', 'void_air',
+    'water', 'lava',
+    'short_grass', 'tall_grass', 'fern', 'large_fern',
+    'seagrass', 'tall_seagrass', 'snow'
+  ]);
+  return replaceable.has(block.name);
+}
+
+function getEffectiveTargetPos(bot) {
+  const { x, y, z } = farm.config;
+  const configured = new Vec3(x, y, z);
+  const configuredBlock = bot.blockAt(configured);
+
+  if (isReplaceableForLava(configuredBlock)) return configured;
+
+  // If configured block is occupied (e.g. hopper), use the block above as lava target.
+  const above = configured.offset(0, 1, 0);
+  const aboveBlock = bot.blockAt(above);
+  if (isReplaceableForLava(aboveBlock)) return above;
+
+  return configured;
+}
+
 function getItemMaxDurability(bot, item) {
   if (!item) return null;
   if (typeof item.maxDurability === 'number') return item.maxDurability;
@@ -248,11 +274,11 @@ async function fillBucket(bot) {
 }
 
 /** Phase 3+4: navigate to target, place lava. */
-async function pourLava(bot) {
-  const { x, y, z } = farm.config;
+async function pourLava(bot, targetPos) {
+  const { x, y, z } = targetPos;
 
   farm.phase = 'navigating';
-  await goNear(bot, x, y, z, 4);
+  await goNear(bot, x, y, z, 2);
 
   farm.phase = 'pouring';
   const lavaBucket = bot.inventory.items().find(i => i.name === 'lava_bucket');
@@ -271,6 +297,7 @@ async function pourLava(bot) {
   ];
 
   let placed = false;
+  const placementErrors = [];
   const isUsableReference = (block) => {
     if (!block) return false;
     if (block.name === 'air' || block.name === 'cave_air' || block.name === 'void_air') return false;
@@ -284,12 +311,31 @@ async function pourLava(bot) {
     try {
       // Sneak avoids opening interactive blocks like hopper/chest and forces placement.
       bot.setControlState('sneak', true);
+      await sleep(80);
       // The faceVector points from ref toward the target position.
       await bot.placeBlock(ref, new Vec3(-dx, -dy, -dz));
       placed = true;
       break;
-    } catch (_) {
+    } catch (e) {
+      placementErrors.push(e?.message || 'unknown placeBlock error');
       // Try next adjacent block.
+    } finally {
+      bot.setControlState('sneak', false);
+    }
+  }
+
+  if (!placed) {
+    // Fallback: face target and use lava bucket directly.
+    try {
+      bot.setControlState('sneak', true);
+      await bot.lookAt(new Vec3(x + 0.5, y + 0.5, z + 0.5), true);
+      await sleep(120);
+      await bot.activateItem(false);
+      await sleep(INTERACT_SETTLE_MS + 200);
+      const targetAfterUse = bot.blockAt(new Vec3(x, y, z));
+      if (targetAfterUse?.name === 'lava') placed = true;
+    } catch (e) {
+      placementErrors.push(e?.message || 'unknown activateItem error');
     } finally {
       bot.setControlState('sneak', false);
     }
@@ -298,7 +344,7 @@ async function pourLava(bot) {
   if (!placed) {
     throw new Error(
       `Could not place lava at (${x}, ${y}, ${z}). ` +
-      'There must be at least one solid block adjacent to the target.'
+      `Recent errors: ${placementErrors.slice(0, 3).join(' | ') || 'none'}`
     );
   }
 
@@ -306,8 +352,8 @@ async function pourLava(bot) {
 }
 
 /** Phase 5: wait until the target block becomes obsidian. */
-async function waitForObsidian(bot) {
-  const { x, y, z } = farm.config;
+async function waitForObsidian(bot, targetPos) {
+  const { x, y, z } = targetPos;
   farm.phase = 'waiting';
 
   const deadline = Date.now() + OBSIDIAN_TIMEOUT_MS;
@@ -321,8 +367,8 @@ async function waitForObsidian(bot) {
 }
 
 /** Phase 6: equip pickaxe and mine the obsidian. */
-async function mineObsidian(bot) {
-  const { x, y, z } = farm.config;
+async function mineObsidian(bot, targetPos) {
+  const { x, y, z } = targetPos;
   farm.phase = 'mining';
 
   await goNear(bot, x, y, z, 4);
@@ -369,14 +415,14 @@ async function mineObsidian(bot) {
 async function runCycle(bot, notify) {
   if (!farm.config) throw new Error('Farm not configured — no target coordinates');
 
-  const { x, y, z } = farm.config;
-  const targetPos = new Vec3(x, y, z);
+  const targetPos = getEffectiveTargetPos(bot);
+  const { x, y, z } = targetPos;
   const targetBlock = bot.blockAt(targetPos);
   const hasLavaBucket = bot.inventory.items().some(i => i.name === 'lava_bucket');
 
   // If obsidian is already present, mine it immediately.
   if (targetBlock?.name === 'obsidian') {
-    await mineObsidian(bot);
+    await mineObsidian(bot, targetPos);
     farm.cyclesCompleted++;
     return;
   }
@@ -386,10 +432,10 @@ async function runCycle(bot, notify) {
     if (!hasLavaBucket) {
       await fillBucket(bot);
     }
-    await pourLava(bot);
+    await pourLava(bot, targetPos);
   }
 
-  const formed = await waitForObsidian(bot);
+  const formed = await waitForObsidian(bot, targetPos);
   if (!formed) {
     notify(
       '⚠️ Lava did not convert to obsidian within 90s.\n' +
@@ -401,7 +447,7 @@ async function runCycle(bot, notify) {
     return;
   }
 
-  await mineObsidian(bot);
+  await mineObsidian(bot, targetPos);
   farm.cyclesCompleted++;
 }
 
