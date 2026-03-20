@@ -377,6 +377,15 @@ async function pourLava(bot, targetPos) {
     return true;
   };
 
+  const isPreferredDownRef = (block) => {
+    if (!block || !isUsableReference(block)) return false;
+    if (block.boundingBox !== 'block') return false;
+    const name = String(block.name || '');
+    if (name.includes('leaves') || name.includes('trapdoor')) return false;
+    if (name.includes('hopper') || name.includes('chest') || name.includes('barrel')) return false;
+    return true;
+  };
+
   const cursorForFace = (face) => new Vec3(
     face.x === 1 ? 1.0 : face.x === -1 ? 0.0 : 0.5,
     face.y === 1 ? 1.0 : face.y === -1 ? 0.0 : 0.5,
@@ -418,33 +427,44 @@ async function pourLava(bot, targetPos) {
 
   const refCandidates = [];
 
-  // Prefer a non-interactive full side block first (e.g. stone_bricks).
-  const sideOffsets = [
-    { dx: 1, dy: 0, dz: 0, label: 'east' },
-    { dx: -1, dy: 0, dz: 0, label: 'west' },
-    { dx: 0, dy: 0, dz: 1, label: 'south' },
-    { dx: 0, dy: 0, dz: -1, label: 'north' },
-  ];
-  for (const off of sideOffsets) {
-    const sideRef = bot.blockAt(new Vec3(x + off.dx, y + off.dy, z + off.dz));
-    if (isPreferredSolidSideRef(sideRef)) {
-      refCandidates.push({
-        block: sideRef,
-        faceVector: new Vec3(-off.dx, -off.dy, -off.dz),
-        label: off.label
-      });
-      break;
-    }
-  }
-
-  // Fallback reference: directly below target (hopper case).
   const belowRef = bot.blockAt(new Vec3(x, y - 1, z));
-  if (isUsableReference(belowRef)) {
+
+  // Best-case deterministic path: a solid full block directly below target.
+  // In this case we should ONLY use below to place into exact (x,y,z).
+  if (isPreferredDownRef(belowRef)) {
     refCandidates.push({
       block: belowRef,
       faceVector: new Vec3(0, 1, 0),
       label: 'below'
     });
+  } else {
+    // Prefer a non-interactive full side block first (e.g. stone_bricks).
+    const sideOffsets = [
+      { dx: 1, dy: 0, dz: 0, label: 'east' },
+      { dx: -1, dy: 0, dz: 0, label: 'west' },
+      { dx: 0, dy: 0, dz: 1, label: 'south' },
+      { dx: 0, dy: 0, dz: -1, label: 'north' },
+    ];
+    for (const off of sideOffsets) {
+      const sideRef = bot.blockAt(new Vec3(x + off.dx, y + off.dy, z + off.dz));
+      if (isPreferredSolidSideRef(sideRef)) {
+        refCandidates.push({
+          block: sideRef,
+          faceVector: new Vec3(-off.dx, -off.dy, -off.dz),
+          label: off.label
+        });
+        break;
+      }
+    }
+
+    // Fallback reference: directly below target (hopper or other interactives).
+    if (isUsableReference(belowRef)) {
+      refCandidates.push({
+        block: belowRef,
+        faceVector: new Vec3(0, 1, 0),
+        label: 'below'
+      });
+    }
   }
 
   if (refCandidates.length === 0) {
