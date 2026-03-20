@@ -380,17 +380,7 @@ async function pourLava(bot, targetPos) {
 
   const refCandidates = [];
 
-  // Primary reference: directly below target (your hopper case).
-  const belowRef = bot.blockAt(new Vec3(x, y - 1, z));
-  if (isUsableReference(belowRef)) {
-    refCandidates.push({
-      block: belowRef,
-      faceVector: new Vec3(0, 1, 0),
-      label: 'below'
-    });
-  }
-
-  // Deterministic side fallback: pick the first solid side in fixed order.
+  // Prefer a non-interactive full side block first (e.g. stone_bricks).
   const sideOffsets = [
     { dx: 1, dy: 0, dz: 0, label: 'east' },
     { dx: -1, dy: 0, dz: 0, label: 'west' },
@@ -407,6 +397,16 @@ async function pourLava(bot, targetPos) {
       });
       break;
     }
+  }
+
+  // Fallback reference: directly below target (hopper case).
+  const belowRef = bot.blockAt(new Vec3(x, y - 1, z));
+  if (isUsableReference(belowRef)) {
+    refCandidates.push({
+      block: belowRef,
+      faceVector: new Vec3(0, 1, 0),
+      label: 'below'
+    });
   }
 
   if (refCandidates.length === 0) {
@@ -483,7 +483,7 @@ async function pourLava(bot, targetPos) {
       `Could not place lava at (${x}, ${y}, ${z}). ` +
       `Refs tried: ${triedRefs}. ` +
       `Adjacent: ${adj}. ` +
-      `Recent errors: ${placementErrors.slice(0, 3).join(' | ') || 'none'}`
+      `Recent errors: ${placementErrors.slice(0, 8).join(' | ') || 'none'}`
     );
   }
 
