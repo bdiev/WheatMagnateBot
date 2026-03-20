@@ -2597,6 +2597,32 @@ Add candidates online: **${onlineCount}**`,
         modal.addComponents(actionRow);
 
         await interaction.showModal(modal);
+      } else if (interaction.customId === 'obsidian_farm_button') {
+        if (interaction.user.id !== DISCORD_OWNER_ID) {
+          await interaction.reply({ embeds: [{ description: '\u274c Only the owner can control the obsidian farm.', color: 16711680, timestamp: new Date() }], flags: MessageFlags.Ephemeral });
+          return;
+        }
+        const farmStatus = farm.getStatus();
+        if (farmStatus.enabled) {
+          farm.stop((msg, color) => sendDiscordNotification(msg, color));
+          await interaction.reply({ embeds: [{ description: `\ud83d\uded1 Obsidian farm stopped. Cycles completed: **${farmStatus.cyclesCompleted}**`, color: 16711680, timestamp: new Date() }], flags: MessageFlags.Ephemeral });
+          setTimeout(() => interaction.deleteReply().catch(() => {}), 8000);
+        } else {
+          const farmModal = new ModalBuilder()
+            .setCustomId('obsidian_farm_modal')
+            .setTitle('Obsidian Farm \u2014 Target Coordinates');
+          const xInput = new TextInputBuilder().setCustomId('farm_x').setLabel('X coordinate').setStyle(TextInputStyle.Short).setPlaceholder('e.g. 120').setRequired(true);
+          const yInput = new TextInputBuilder().setCustomId('farm_y').setLabel('Y coordinate').setStyle(TextInputStyle.Short).setPlaceholder('e.g. 64').setRequired(true);
+          const zInput = new TextInputBuilder().setCustomId('farm_z').setLabel('Z coordinate').setStyle(TextInputStyle.Short).setPlaceholder('e.g. -300').setRequired(true);
+          const distInput = new TextInputBuilder().setCustomId('farm_dist').setLabel('Max cauldron search radius (blocks)').setStyle(TextInputStyle.Short).setPlaceholder('Default: 64').setRequired(false);
+          farmModal.addComponents(
+            new ActionRowBuilder().addComponents(xInput),
+            new ActionRowBuilder().addComponents(yInput),
+            new ActionRowBuilder().addComponents(zInput),
+            new ActionRowBuilder().addComponents(distInput)
+          );
+          await interaction.showModal(farmModal);
+        }
       }
     } else if (interaction.isModalSubmit() && interaction.customId === 'add_keyword_modal') {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -3343,32 +3369,6 @@ Add candidates online: **${onlineCount}**`,
         } catch (replyErr) {
           console.error('Failed to send outer error reply:', replyErr.message);
         }
-      }
-    } else if (interaction.isButton() && interaction.customId === 'obsidian_farm_button') {
-      if (interaction.user.id !== DISCORD_OWNER_ID) {
-        await interaction.reply({ embeds: [{ description: '❌ Only the owner can control the obsidian farm.', color: 16711680, timestamp: new Date() }], flags: MessageFlags.Ephemeral });
-        return;
-      }
-      const status = farm.getStatus();
-      if (status.enabled) {
-        farm.stop((msg, color) => sendDiscordNotification(msg, color));
-        await interaction.reply({ embeds: [{ description: `🛑 Obsidian farm stopped. Cycles completed: **${status.cyclesCompleted}**`, color: 16711680, timestamp: new Date() }], flags: MessageFlags.Ephemeral });
-        setTimeout(() => interaction.deleteReply().catch(() => {}), 8000);
-      } else {
-        const modal = new ModalBuilder()
-          .setCustomId('obsidian_farm_modal')
-          .setTitle('Obsidian Farm — Target Coordinates');
-        const xInput = new TextInputBuilder().setCustomId('farm_x').setLabel('X coordinate').setStyle(TextInputStyle.Short).setPlaceholder('e.g. 120').setRequired(true);
-        const yInput = new TextInputBuilder().setCustomId('farm_y').setLabel('Y coordinate').setStyle(TextInputStyle.Short).setPlaceholder('e.g. 64').setRequired(true);
-        const zInput = new TextInputBuilder().setCustomId('farm_z').setLabel('Z coordinate').setStyle(TextInputStyle.Short).setPlaceholder('e.g. -300').setRequired(true);
-        const distInput = new TextInputBuilder().setCustomId('farm_dist').setLabel('Max cauldron search radius (blocks)').setStyle(TextInputStyle.Short).setPlaceholder('Default: 64').setRequired(false);
-        modal.addComponents(
-          new ActionRowBuilder().addComponents(xInput),
-          new ActionRowBuilder().addComponents(yInput),
-          new ActionRowBuilder().addComponents(zInput),
-          new ActionRowBuilder().addComponents(distInput)
-        );
-        await interaction.showModal(modal);
       }
     } else if (interaction.isModalSubmit() && interaction.customId === 'obsidian_farm_modal') {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
