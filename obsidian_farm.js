@@ -378,6 +378,39 @@ async function pourLava(bot, targetPos) {
     face.z === 1 ? 1.0 : face.z === -1 ? 0.0 : 0.5
   );
 
+  const buildCursorCandidatesForFace = (face) => {
+    const center = cursorForFace(face);
+
+    // Keep the clicked face axis fixed; vary only the two free axes.
+    if (face.x !== 0) {
+      return [
+        new Vec3(center.x, 0.50, 0.50),
+        new Vec3(center.x, 0.35, 0.35),
+        new Vec3(center.x, 0.65, 0.65),
+        new Vec3(center.x, 0.35, 0.65),
+        new Vec3(center.x, 0.65, 0.35),
+      ];
+    }
+
+    if (face.y !== 0) {
+      return [
+        new Vec3(0.50, center.y, 0.50),
+        new Vec3(0.35, center.y, 0.35),
+        new Vec3(0.65, center.y, 0.65),
+        new Vec3(0.50, center.y, 0.35),
+        new Vec3(0.50, center.y, 0.65),
+      ];
+    }
+
+    return [
+      new Vec3(0.50, 0.50, center.z),
+      new Vec3(0.35, 0.35, center.z),
+      new Vec3(0.65, 0.65, center.z),
+      new Vec3(0.35, 0.65, center.z),
+      new Vec3(0.65, 0.35, center.z),
+    ];
+  };
+
   const refCandidates = [];
 
   // Prefer a non-interactive full side block first (e.g. stone_bricks).
@@ -424,45 +457,38 @@ async function pourLava(bot, targetPos) {
       triedRefs++;
       const refBlock = refCandidate.block;
       const faceVector = refCandidate.faceVector;
-      const centerCursor = cursorForFace(faceVector);
-      const topFaceCursorPoints = [
-        centerCursor,
-        new Vec3(0.35, centerCursor.y, 0.35),
-        new Vec3(0.65, centerCursor.y, 0.65),
-        new Vec3(0.5, centerCursor.y, 0.35),
-        new Vec3(0.5, centerCursor.y, 0.65),
-      ];
+      const topFaceCursorPoints = buildCursorCandidatesForFace(faceVector);
 
       for (const cursorPos of topFaceCursorPoints) {
-      const hitPoint = new Vec3(
-        refBlock.position.x + cursorPos.x,
-        refBlock.position.y + (faceVector.y === 1 ? TOP_FACE_AIM_Y_OFFSET : cursorPos.y),
-        refBlock.position.z + cursorPos.z
-      );
+        const hitPoint = new Vec3(
+          refBlock.position.x + cursorPos.x,
+          refBlock.position.y + (faceVector.y === 1 ? TOP_FACE_AIM_Y_OFFSET : cursorPos.y),
+          refBlock.position.z + cursorPos.z
+        );
 
-      await bot.lookAt(hitPoint, true);
-      await sleep(70);
-      await bot.activateBlock(refBlock, faceVector, cursorPos);
-      await sleep(INTERACT_SETTLE_MS + 180);
+        await bot.lookAt(hitPoint, true);
+        await sleep(70);
+        await bot.activateBlock(refBlock, faceVector, cursorPos);
+        await sleep(INTERACT_SETTLE_MS + 180);
 
-      if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
-        placed = true;
-        break;
-      }
+        if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
+          placed = true;
+          break;
+        }
 
-      placementErrors.push(`activateBlock no result on ${refBlock.name}/${refCandidate.label} at ${cursorPos.x.toFixed(2)},${cursorPos.z.toFixed(2)}`);
+        placementErrors.push(`activateBlock no result on ${refBlock.name}/${refCandidate.label} at ${cursorPos.x.toFixed(2)},${cursorPos.y.toFixed(2)},${cursorPos.z.toFixed(2)}`);
 
-      await bot.lookAt(hitPoint, true);
-      await sleep(70);
-      await bot.activateItem(false);
-      await sleep(INTERACT_SETTLE_MS + 220);
+        await bot.lookAt(hitPoint, true);
+        await sleep(70);
+        await bot.activateItem(false);
+        await sleep(INTERACT_SETTLE_MS + 220);
 
-      if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
-        placed = true;
-        break;
-      }
+        if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
+          placed = true;
+          break;
+        }
 
-      placementErrors.push(`activateItem no result on ${refBlock.name}/${refCandidate.label} at ${cursorPos.x.toFixed(2)},${cursorPos.z.toFixed(2)}`);
+        placementErrors.push(`activateItem no result on ${refBlock.name}/${refCandidate.label} at ${cursorPos.x.toFixed(2)},${cursorPos.y.toFixed(2)},${cursorPos.z.toFixed(2)}`);
       }
 
       if (placed) break;
