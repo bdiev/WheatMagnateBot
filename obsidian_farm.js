@@ -468,6 +468,25 @@ async function pourLava(bot, targetPos) {
 
         await bot.lookAt(hitPoint, true);
         await sleep(70);
+        // Primary path: explicit face placement is most deterministic for liquids.
+        try {
+          await bot.placeBlock(refBlock, faceVector);
+          await sleep(INTERACT_SETTLE_MS + 180);
+        } catch (e) {
+          placementErrors.push(`placeBlock error on ${refBlock.name}/${refCandidate.label}: ${e?.message || 'unknown'}`);
+          await sleep(140);
+        }
+
+        if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
+          placed = true;
+          break;
+        }
+
+        placementErrors.push(`placeBlock no result on ${refBlock.name}/${refCandidate.label} at ${cursorPos.x.toFixed(2)},${cursorPos.y.toFixed(2)},${cursorPos.z.toFixed(2)}`);
+
+        // Fallback 1: activateBlock right-click flow.
+        await bot.lookAt(hitPoint, true);
+        await sleep(70);
         await bot.activateBlock(refBlock, faceVector, cursorPos);
         await sleep(INTERACT_SETTLE_MS + 180);
 
@@ -478,6 +497,7 @@ async function pourLava(bot, targetPos) {
 
         placementErrors.push(`activateBlock no result on ${refBlock.name}/${refCandidate.label} at ${cursorPos.x.toFixed(2)},${cursorPos.y.toFixed(2)},${cursorPos.z.toFixed(2)}`);
 
+        // Fallback 2: direct item use at same aim point.
         await bot.lookAt(hitPoint, true);
         await sleep(70);
         await bot.activateItem(false);
@@ -505,11 +525,18 @@ async function pourLava(bot, targetPos) {
 
   if (!placed) {
     const adj = getAdjacentBlockDebug(bot, x, y, z);
+    const stillHasLavaBucket = bot.inventory.items().some(i => i.name === 'lava_bucket');
+    const targetBlockName = bot.blockAt(new Vec3(x, y, z))?.name || 'null';
+    const likelyServerDeny = stillHasLavaBucket && targetBlockName !== 'lava' && !hasLavaNearTarget(bot, x, y, z);
+    const denyHint = likelyServerDeny
+      ? ' Likely cause: server/region denied liquid placement for this account at target block.'
+      : '';
     throw new Error(
       `Could not place lava at (${x}, ${y}, ${z}). ` +
       `Refs tried: ${triedRefs}. ` +
       `Adjacent: ${adj}. ` +
-      `Recent errors: ${placementErrors.slice(0, 8).join(' | ') || 'none'}`
+      `Recent errors: ${placementErrors.slice(0, 8).join(' | ') || 'none'}.` +
+      denyHint
     );
   }
 
