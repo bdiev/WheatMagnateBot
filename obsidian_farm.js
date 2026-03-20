@@ -155,6 +155,28 @@ function getEffectiveTargetPos(bot) {
   return configured;
 }
 
+function hasLavaNearTarget(bot, x, y, z) {
+  const checks = [
+    [0, 0, 0],
+    [0, 1, 0], [0, -1, 0],
+    [1, 0, 0], [-1, 0, 0],
+    [0, 0, 1], [0, 0, -1],
+  ];
+  return checks.some(([dx, dy, dz]) => {
+    const b = bot.blockAt(new Vec3(x + dx, y + dy, z + dz));
+    return b?.name === 'lava';
+  });
+}
+
+function didLavaPlacementLikelySucceed(bot, x, y, z) {
+  const targetBlock = bot.blockAt(new Vec3(x, y, z));
+  if (targetBlock?.name === 'lava') return true;
+
+  // Fallback: if bucket was spent and lava appeared adjacent, placement probably succeeded with flow.
+  const stillHasLavaBucket = bot.inventory.items().some(i => i.name === 'lava_bucket');
+  return !stillHasLavaBucket && hasLavaNearTarget(bot, x, y, z);
+}
+
 function getItemMaxDurability(bot, item) {
   if (!item) return null;
   if (typeof item.maxDurability === 'number') return item.maxDurability;
@@ -309,15 +331,27 @@ async function pourLava(bot, targetPos) {
     const ref = bot.blockAt(new Vec3(x + dx, y + dy, z + dz));
     if (!isUsableReference(ref)) continue;
     try {
-      // Sneak avoids opening interactive blocks like hopper/chest and forces placement.
+      // Sneak avoids opening interactive blocks like hopper/chest and forces item use.
       bot.setControlState('sneak', true);
       await sleep(80);
-      // The faceVector points from ref toward the target position.
-      await bot.placeBlock(ref, new Vec3(-dx, -dy, -dz));
-      placed = true;
-      break;
+      const faceVector = new Vec3(-dx, -dy, -dz);
+
+      // For buckets, activateBlock is more reliable than placeBlock.
+      await bot.activateBlock(ref, faceVector);
+      await sleep(INTERACT_SETTLE_MS + 150);
+
+      if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
+        placed = true;
+        break;
+      }
     } catch (e) {
       placementErrors.push(e?.message || 'unknown placeBlock error');
+      // Some servers place liquid but mineflayer times out waiting blockUpdate.
+      await sleep(150);
+      if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
+        placed = true;
+        break;
+      }
       // Try next adjacent block.
     } finally {
       bot.setControlState('sneak', false);
@@ -332,8 +366,7 @@ async function pourLava(bot, targetPos) {
       await sleep(120);
       await bot.activateItem(false);
       await sleep(INTERACT_SETTLE_MS + 200);
-      const targetAfterUse = bot.blockAt(new Vec3(x, y, z));
-      if (targetAfterUse?.name === 'lava') placed = true;
+      if (didLavaPlacementLikelySucceed(bot, x, y, z)) placed = true;
     } catch (e) {
       placementErrors.push(e?.message || 'unknown activateItem error');
     } finally {
