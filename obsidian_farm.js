@@ -389,6 +389,18 @@ async function pourLava(bot, targetPos) {
     refBlock.position.y + 0.5,
     refBlock.position.z + 0.5
   );
+  const cursorPos = new Vec3(
+    refFace.x === 1 ? 1.0 : refFace.x === -1 ? 0.0 : 0.5,
+    0.5,
+    refFace.z === 1 ? 1.0 : refFace.z === -1 ? 0.0 : 0.5
+  );
+  const clickDistance = bot.entity?.position?.distanceTo(hitPoint);
+  if (!Number.isFinite(clickDistance) || clickDistance > MAX_INTERACT_DISTANCE) {
+    throw new Error(
+      `Stone click point is out of reach (${Number.isFinite(clickDistance) ? clickDistance.toFixed(2) : 'unknown'}). ` +
+      'Move bot closer to target while keeping it stationary.'
+    );
+  }
 
   await bot.lookAt(hitPoint, true);
   await sleep(120);
@@ -400,8 +412,13 @@ async function pourLava(bot, targetPos) {
     );
   }
 
-  // Plain player-like right click with bucket while looking at stone_bricks.
-  await bot.activateItem();
+  // Plain player-like right click on stone_bricks face toward target.
+  try {
+    await bot.activateBlock(refBlock, refFace, cursorPos);
+  } catch (_) {
+    // Fallback if face click fails in this server build.
+    await bot.activateItem();
+  }
   await sleep(INTERACT_SETTLE_MS + 300);
 
   if (!didLavaPlacementLikelySucceed(bot, x, y, z)) {
