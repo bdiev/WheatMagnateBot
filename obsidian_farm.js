@@ -353,66 +353,65 @@ async function pourLava(bot, targetPos) {
   await bot.equip(lavaBucket, 'hand');
   await sleep(INTERACT_SETTLE_MS);
 
-  // Find any adjacent full block that can act as a stable click surface for placement.
+  // Try all adjacent directions and use any non-replaceable block as a click surface.
   const sideOffsets = [
     { dx: 1, dy: 0, dz: 0, label: 'east' },
     { dx: -1, dy: 0, dz: 0, label: 'west' },
     { dx: 0, dy: 0, dz: 1, label: 'south' },
     { dx: 0, dy: 0, dz: -1, label: 'north' },
+    { dx: 0, dy: -1, dz: 0, label: 'down' },
+    { dx: 0, dy: 1, dz: 0, label: 'up' },
   ];
 
-  let refBlock = null;
-  let refLabel = null;
-  for (const off of sideOffsets) {
-    const candidate = bot.blockAt(new Vec3(x + off.dx, y + off.dy, z + off.dz));
-    if (candidate && candidate.boundingBox === 'block') {
-      refBlock = candidate;
-      refLabel = off.label;
-      break;
-    }
-  }
+  const references = sideOffsets
+    .map(off => ({
+      label: off.label,
+      block: bot.blockAt(new Vec3(x + off.dx, y + off.dy, z + off.dz)),
+    }))
+    .filter(ref => ref.block && !isReplaceableForLava(ref.block));
 
-  if (!refBlock) {
+  if (references.length === 0) {
     const adj = getAdjacentBlockDebug(bot, x, y, z);
     throw new Error(`No solid adjacent block near target (${x}, ${y}, ${z}). Adjacent: ${adj}`);
   }
 
-  const hitPoint = new Vec3(
-    refBlock.position.x + 0.5,
-    refBlock.position.y + 0.5,
-    refBlock.position.z + 0.5
-  );
-  const clickDistance = bot.entity?.position?.distanceTo(hitPoint);
-  if (!Number.isFinite(clickDistance) || clickDistance > MAX_INTERACT_DISTANCE) {
-    throw new Error(
-      `Stone click point is out of reach (${Number.isFinite(clickDistance) ? clickDistance.toFixed(2) : 'unknown'}). ` +
-      'Move bot closer to target while keeping it stationary.'
-    );
-  }
-
   let clicked = false;
   let clickErrors = [];
+  const maxAttempts = 3;
   bot.setControlState('sneak', true);
   try {
-    for (let i = 0; i < 3; i++) {
-      await bot.lookAt(hitPoint, true);
-      await sleep(100);
-
-      try {
-        await bot.activateBlock(refBlock);
-      } catch (e) {
-        clickErrors.push(`activateBlock#${i + 1}: ${e?.message || 'failed'}`);
-        try {
-          await bot.activateItem();
-        } catch (e2) {
-          clickErrors.push(`activateItem#${i + 1}: ${e2?.message || 'failed'}`);
+    for (let attempt = 1; attempt <= maxAttempts && !clicked; attempt++) {
+      for (const ref of references) {
+        const hitPoint = new Vec3(
+          ref.block.position.x + 0.5,
+          ref.block.position.y + 0.5,
+          ref.block.position.z + 0.5
+        );
+        const clickDistance = bot.entity?.position?.distanceTo(hitPoint);
+        if (!Number.isFinite(clickDistance) || clickDistance > MAX_INTERACT_DISTANCE) {
+          clickErrors.push(`out_of_reach#${attempt}/${ref.label}:${Number.isFinite(clickDistance) ? clickDistance.toFixed(2) : 'unknown'}`);
+          continue;
         }
-      }
 
-      await sleep(INTERACT_SETTLE_MS + 260);
-      if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
-        clicked = true;
-        break;
+        await bot.lookAt(hitPoint, true);
+        await sleep(100);
+
+        try {
+          await bot.activateBlock(ref.block);
+        } catch (e) {
+          clickErrors.push(`activateBlock#${attempt}/${ref.label}: ${e?.message || 'failed'}`);
+          try {
+            await bot.activateItem();
+          } catch (e2) {
+            clickErrors.push(`activateItem#${attempt}/${ref.label}: ${e2?.message || 'failed'}`);
+          }
+        }
+
+        await sleep(INTERACT_SETTLE_MS + 260);
+        if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
+          clicked = true;
+          break;
+        }
       }
     }
   } finally {
@@ -421,8 +420,9 @@ async function pourLava(bot, targetPos) {
 
   if (!clicked && !didLavaPlacementLikelySucceed(bot, x, y, z)) {
     const adj = getAdjacentBlockDebug(bot, x, y, z);
+    const attempted = references.map(ref => `${ref.label}:${ref.block?.name || 'null'}`).join(', ');
     throw new Error(
-      `Could not place lava at (${x}, ${y}, ${z}) via stone_bricks/${refLabel}. ` +
+      `Could not place lava at (${x}, ${y}, ${z}) using adjacent blocks (${attempted}). ` +
       `Adjacent: ${adj}. ` +
       `Click diagnostics: ${clickErrors.slice(0, 6).join(' | ') || 'none'}.`
     );
