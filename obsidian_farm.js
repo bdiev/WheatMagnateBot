@@ -358,220 +358,54 @@ async function pourLava(bot, targetPos) {
   await bot.equip(lavaBucket, 'hand');
   await sleep(INTERACT_SETTLE_MS);
 
-  let placed = false;
-  const placementErrors = [];
-  let triedRefs = 0;
-  const isUsableReference = (block) => {
-    if (!block) return false;
-    if (block.name === 'air' || block.name === 'cave_air' || block.name === 'void_air') return false;
-    if (block.name === 'water' || block.name === 'lava') return false;
-    return true;
-  };
+  // User-requested strict behavior: aim at adjacent stone_bricks and do a single right-click.
+  const sideOffsets = [
+    { dx: 1, dy: 0, dz: 0, label: 'east' },
+    { dx: -1, dy: 0, dz: 0, label: 'west' },
+    { dx: 0, dy: 0, dz: 1, label: 'south' },
+    { dx: 0, dy: 0, dz: -1, label: 'north' },
+  ];
 
-  const isPreferredSolidSideRef = (block) => {
-    if (!block || !isUsableReference(block)) return false;
-    if (block.boundingBox !== 'block') return false;
-    const name = String(block.name || '');
-    if (name.includes('leaves') || name.includes('trapdoor')) return false;
-    if (name.includes('hopper') || name.includes('chest') || name.includes('barrel')) return false;
-    return true;
-  };
+  let refBlock = null;
+  let refFace = null;
+  let refLabel = null;
+  for (const off of sideOffsets) {
+    const candidate = bot.blockAt(new Vec3(x + off.dx, y + off.dy, z + off.dz));
+    if (candidate?.name === 'stone_bricks') {
+      refBlock = candidate;
+      refFace = new Vec3(-off.dx, -off.dy, -off.dz);
+      refLabel = off.label;
+      break;
+    }
+  }
 
-  const isPreferredDownRef = (block) => {
-    if (!block || !isUsableReference(block)) return false;
-    if (block.boundingBox !== 'block') return false;
-    const name = String(block.name || '');
-    if (name.includes('leaves') || name.includes('trapdoor')) return false;
-    if (name.includes('hopper') || name.includes('chest') || name.includes('barrel')) return false;
-    return true;
-  };
+  if (!refBlock) {
+    const adj = getAdjacentBlockDebug(bot, x, y, z);
+    throw new Error(`No stone_bricks adjacent to target (${x}, ${y}, ${z}). Adjacent: ${adj}`);
+  }
 
-  const cursorForFace = (face) => new Vec3(
-    face.x === 1 ? 1.0 : face.x === -1 ? 0.0 : 0.5,
-    face.y === 1 ? 1.0 : face.y === -1 ? 0.0 : 0.5,
-    face.z === 1 ? 1.0 : face.z === -1 ? 0.0 : 0.5
+  const hitPoint = new Vec3(
+    refBlock.position.x + (refFace.x === 1 ? 1.0 : refFace.x === -1 ? 0.0 : 0.5),
+    refBlock.position.y + 0.5,
+    refBlock.position.z + (refFace.z === 1 ? 1.0 : refFace.z === -1 ? 0.0 : 0.5)
   );
-
-  const buildCursorCandidatesForFace = (face) => {
-    const center = cursorForFace(face);
-
-    // Keep the clicked face axis fixed; vary only the two free axes.
-    if (face.x !== 0) {
-      return [
-        new Vec3(center.x, 0.50, 0.50),
-        new Vec3(center.x, 0.35, 0.35),
-        new Vec3(center.x, 0.65, 0.65),
-        new Vec3(center.x, 0.35, 0.65),
-        new Vec3(center.x, 0.65, 0.35),
-      ];
-    }
-
-    if (face.y !== 0) {
-      return [
-        new Vec3(0.50, center.y, 0.50),
-        new Vec3(0.35, center.y, 0.35),
-        new Vec3(0.65, center.y, 0.65),
-        new Vec3(0.50, center.y, 0.35),
-        new Vec3(0.50, center.y, 0.65),
-      ];
-    }
-
-    return [
-      new Vec3(0.50, 0.50, center.z),
-      new Vec3(0.35, 0.35, center.z),
-      new Vec3(0.65, 0.65, center.z),
-      new Vec3(0.35, 0.65, center.z),
-      new Vec3(0.65, 0.35, center.z),
-    ];
-  };
-
-  const refCandidates = [];
-
-  const belowRef = bot.blockAt(new Vec3(x, y - 1, z));
-
-  // Best-case deterministic path: a solid full block directly below target.
-  // In this case we should ONLY use below to place into exact (x,y,z).
-  if (isPreferredDownRef(belowRef)) {
-    refCandidates.push({
-      block: belowRef,
-      faceVector: new Vec3(0, 1, 0),
-      label: 'below'
-    });
-  } else {
-    // Prefer a non-interactive full side block first (e.g. stone_bricks).
-    const sideOffsets = [
-      { dx: 1, dy: 0, dz: 0, label: 'east' },
-      { dx: -1, dy: 0, dz: 0, label: 'west' },
-      { dx: 0, dy: 0, dz: 1, label: 'south' },
-      { dx: 0, dy: 0, dz: -1, label: 'north' },
-    ];
-    for (const off of sideOffsets) {
-      const sideRef = bot.blockAt(new Vec3(x + off.dx, y + off.dy, z + off.dz));
-      if (isPreferredSolidSideRef(sideRef)) {
-        refCandidates.push({
-          block: sideRef,
-          faceVector: new Vec3(-off.dx, -off.dy, -off.dz),
-          label: off.label
-        });
-        break;
-      }
-    }
-
-    // Fallback reference: directly below target (hopper or other interactives).
-    if (isUsableReference(belowRef)) {
-      refCandidates.push({
-        block: belowRef,
-        faceVector: new Vec3(0, 1, 0),
-        label: 'below'
-      });
-    }
-  }
-
-  if (refCandidates.length === 0) {
-    const belowName = belowRef?.name || 'null';
-    throw new Error(
-      `Cannot place lava into exact target (${x}, ${y}, ${z}): no usable reference block. Below=${belowName}`
-    );
-  }
 
   try {
     bot.setControlState('sneak', true);
     await sleep(80);
-
-    for (const refCandidate of refCandidates) {
-      triedRefs++;
-      const refBlock = refCandidate.block;
-      const faceVector = refCandidate.faceVector;
-      const topFaceCursorPoints = buildCursorCandidatesForFace(faceVector);
-
-      for (const cursorPos of topFaceCursorPoints) {
-        const hitPoint = new Vec3(
-          refBlock.position.x + cursorPos.x,
-          refBlock.position.y + (faceVector.y === 1 ? TOP_FACE_AIM_Y_OFFSET : cursorPos.y),
-          refBlock.position.z + cursorPos.z
-        );
-
-        await bot.lookAt(hitPoint, true);
-        await sleep(70);
-
-        // Ensure the client is actually aiming at the intended reference block.
-        const cursorBlock = bot.blockAtCursor(MAX_INTERACT_DISTANCE + 0.5);
-        if (!cursorBlock || !isSameBlockPos(cursorBlock.position, refBlock.position)) {
-          placementErrors.push(
-            `aim miss on ${refBlock.name}/${refCandidate.label}: cursor=${cursorBlock?.name || 'null'} at ${cursorPos.x.toFixed(2)},${cursorPos.y.toFixed(2)},${cursorPos.z.toFixed(2)}`
-          );
-          continue;
-        }
-
-        // Primary path: explicit face placement is most deterministic for liquids.
-        try {
-          await bot.placeBlock(refBlock, faceVector);
-          await sleep(INTERACT_SETTLE_MS + 180);
-        } catch (e) {
-          placementErrors.push(`placeBlock error on ${refBlock.name}/${refCandidate.label}: ${e?.message || 'unknown'}`);
-          await sleep(140);
-        }
-
-        if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
-          placed = true;
-          break;
-        }
-
-        placementErrors.push(`placeBlock no result on ${refBlock.name}/${refCandidate.label} at ${cursorPos.x.toFixed(2)},${cursorPos.y.toFixed(2)},${cursorPos.z.toFixed(2)}`);
-
-        // Fallback 1: activateBlock right-click flow.
-        await bot.lookAt(hitPoint, true);
-        await sleep(70);
-        await bot.activateBlock(refBlock, faceVector, cursorPos);
-        await sleep(INTERACT_SETTLE_MS + 180);
-
-        if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
-          placed = true;
-          break;
-        }
-
-        placementErrors.push(`activateBlock no result on ${refBlock.name}/${refCandidate.label} at ${cursorPos.x.toFixed(2)},${cursorPos.y.toFixed(2)},${cursorPos.z.toFixed(2)}`);
-
-        // Fallback 2: direct item use at same aim point.
-        await bot.lookAt(hitPoint, true);
-        await sleep(70);
-        await bot.activateItem(false);
-        await sleep(INTERACT_SETTLE_MS + 220);
-
-        if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
-          placed = true;
-          break;
-        }
-
-        placementErrors.push(`activateItem no result on ${refBlock.name}/${refCandidate.label} at ${cursorPos.x.toFixed(2)},${cursorPos.y.toFixed(2)},${cursorPos.z.toFixed(2)}`);
-      }
-
-      if (placed) break;
-    }
-  } catch (e) {
-    placementErrors.push(e?.message || 'unknown placement error');
-    await sleep(150);
-    if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
-      placed = true;
-    }
+    await bot.lookAt(hitPoint, true);
+    await sleep(80);
+    await bot.activateItem(false); // plain right-click with lava bucket
+    await sleep(INTERACT_SETTLE_MS + 220);
   } finally {
     bot.setControlState('sneak', false);
   }
 
-  if (!placed) {
+  if (!didLavaPlacementLikelySucceed(bot, x, y, z)) {
     const adj = getAdjacentBlockDebug(bot, x, y, z);
-    const stillHasLavaBucket = bot.inventory.items().some(i => i.name === 'lava_bucket');
-    const targetBlockName = bot.blockAt(new Vec3(x, y, z))?.name || 'null';
-    const likelyServerDeny = stillHasLavaBucket && targetBlockName !== 'lava' && !hasLavaNearTarget(bot, x, y, z);
-    const denyHint = likelyServerDeny
-      ? ' Likely cause: server/region denied liquid placement for this account at target block.'
-      : '';
     throw new Error(
-      `Could not place lava at (${x}, ${y}, ${z}). ` +
-      `Refs tried: ${triedRefs}. ` +
-      `Adjacent: ${adj}. ` +
-      `Recent errors: ${placementErrors.slice(0, 8).join(' | ') || 'none'}.` +
-      denyHint
+      `Could not place lava at (${x}, ${y}, ${z}) via stone_bricks/${refLabel}. ` +
+      `Adjacent: ${adj}.`
     );
   }
 
