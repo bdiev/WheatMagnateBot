@@ -374,44 +374,47 @@ async function pourLava(bot, targetPos) {
 
   triedRefs = 1;
   const faceVector = new Vec3(0, 1, 0);
-  const hitPoint = new Vec3(
-    belowRef.position.x + 0.5,
-    belowRef.position.y + TOP_FACE_AIM_Y_OFFSET,
-    belowRef.position.z + 0.5
-  );
+  const topFaceCursorPoints = [
+    new Vec3(0.5, 1.0, 0.5),
+    new Vec3(0.35, 1.0, 0.35),
+    new Vec3(0.65, 1.0, 0.65),
+    new Vec3(0.5, 1.0, 0.35),
+    new Vec3(0.5, 1.0, 0.65),
+  ];
 
   try {
     bot.setControlState('sneak', true);
     await sleep(80);
-    await bot.lookAt(hitPoint, true);
-    await sleep(70);
-    await bot.activateBlock(belowRef, faceVector);
-    await sleep(INTERACT_SETTLE_MS + 180);
+    for (const cursorPos of topFaceCursorPoints) {
+      const hitPoint = new Vec3(
+        belowRef.position.x + cursorPos.x,
+        belowRef.position.y + TOP_FACE_AIM_Y_OFFSET,
+        belowRef.position.z + cursorPos.z
+      );
 
-    if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
-      placed = true;
-    } else {
-      placementErrors.push(`activateBlock no result on ${belowRef.name}`);
+      await bot.lookAt(hitPoint, true);
+      await sleep(70);
+      await bot.activateBlock(belowRef, faceVector, cursorPos);
+      await sleep(INTERACT_SETTLE_MS + 180);
+
+      if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
+        placed = true;
+        break;
+      }
+
+      placementErrors.push(`activateBlock no result on ${belowRef.name} at ${cursorPos.x.toFixed(2)},${cursorPos.z.toFixed(2)}`);
+
       await bot.lookAt(hitPoint, true);
       await sleep(70);
       await bot.activateItem(false);
       await sleep(INTERACT_SETTLE_MS + 220);
+
       if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
         placed = true;
-      } else {
-        placementErrors.push(`activateItem no result on ${belowRef.name}`);
-
-        // Final fallback for strict servers: explicit placeBlock call.
-        await bot.lookAt(hitPoint, true);
-        await sleep(70);
-        await bot.placeBlock(belowRef, faceVector);
-        await sleep(INTERACT_SETTLE_MS + 220);
-        if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
-          placed = true;
-        } else {
-          placementErrors.push(`placeBlock no result on ${belowRef.name}`);
-        }
+        break;
       }
+
+      placementErrors.push(`activateItem no result on ${belowRef.name} at ${cursorPos.x.toFixed(2)},${cursorPos.z.toFixed(2)}`);
     }
   } catch (e) {
     placementErrors.push(e?.message || 'unknown placement error');
