@@ -385,29 +385,24 @@ async function pourLava(bot, targetPos) {
   }
 
   const hitPoint = new Vec3(
-    refBlock.position.x + (refFace.x === 1 ? 1.0 : refFace.x === -1 ? 0.0 : 0.5),
+    refBlock.position.x + 0.5,
     refBlock.position.y + 0.5,
-    refBlock.position.z + (refFace.z === 1 ? 1.0 : refFace.z === -1 ? 0.0 : 0.5)
-  );
-  const cursorPos = new Vec3(
-    refFace.x === 1 ? 1.0 : refFace.x === -1 ? 0.0 : 0.5,
-    0.5,
-    refFace.z === 1 ? 1.0 : refFace.z === -1 ? 0.0 : 0.5
+    refBlock.position.z + 0.5
   );
 
   await bot.lookAt(hitPoint, true);
-  await sleep(100);
+  await sleep(120);
 
   const cursorBlock = bot.blockAtCursor(MAX_INTERACT_DISTANCE + 0.5);
   if (!cursorBlock || !isSameBlockPos(cursorBlock.position, refBlock.position)) {
     throw new Error(
-      `Aim miss before click via stone_bricks/${refLabel}: cursor=${cursorBlock?.name || 'null'}`
+      `Aim miss before right-click via stone_bricks/${refLabel}: cursor=${cursorBlock?.name || 'null'}`
     );
   }
 
-  // Exact right-click on stone_bricks face toward target cell.
-  await bot.activateBlock(refBlock, refFace, cursorPos);
-  await sleep(INTERACT_SETTLE_MS + 260);
+  // Plain player-like right click with bucket while looking at stone_bricks.
+  await bot.activateItem();
+  await sleep(INTERACT_SETTLE_MS + 300);
 
   if (!didLavaPlacementLikelySucceed(bot, x, y, z)) {
     const adj = getAdjacentBlockDebug(bot, x, y, z);
