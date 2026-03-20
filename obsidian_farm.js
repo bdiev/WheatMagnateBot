@@ -35,7 +35,7 @@ const INTERACT_SETTLE_MS    = 350;    // settle delay after block interaction
 const DEFAULT_CAULDRON_DIST = 64;     // default max search radius for cauldrons
 const MIN_PICKAXE_REMAINING_PERCENT = 5;
 const FARM_CONFIG_FILE = 'obsidian_farm_config.json';
-const MAX_INTERACT_DISTANCE = 5.5;
+const MAX_INTERACT_DISTANCE = 4.25;
 const TOP_FACE_AIM_Y_OFFSET = 0.98;
 
 // ── Internal state ─────────────────────────────────────────────────────────────
@@ -280,6 +280,11 @@ function ensureInteractionRange(bot, pos, actionName) {
   }
 }
 
+function isSameBlockPos(a, b) {
+  if (!a || !b) return false;
+  return a.x === b.x && a.y === b.y && a.z === b.z;
+}
+
 /**
  * Find the nearest lava cauldron block.
  * Handles both 1.17+ (lava_cauldron block) and old cauldron with metadata ≥ 3.
@@ -468,6 +473,16 @@ async function pourLava(bot, targetPos) {
 
         await bot.lookAt(hitPoint, true);
         await sleep(70);
+
+        // Ensure the client is actually aiming at the intended reference block.
+        const cursorBlock = bot.blockAtCursor(MAX_INTERACT_DISTANCE + 0.5);
+        if (!cursorBlock || !isSameBlockPos(cursorBlock.position, refBlock.position)) {
+          placementErrors.push(
+            `aim miss on ${refBlock.name}/${refCandidate.label}: cursor=${cursorBlock?.name || 'null'} at ${cursorPos.x.toFixed(2)},${cursorPos.y.toFixed(2)},${cursorPos.z.toFixed(2)}`
+          );
+          continue;
+        }
+
         // Primary path: explicit face placement is most deterministic for liquids.
         try {
           await bot.placeBlock(refBlock, faceVector);
