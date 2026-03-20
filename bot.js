@@ -12,6 +12,7 @@ const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
 const DISCORD_CHAT_CHANNEL_ID = process.env.DISCORD_CHAT_CHANNEL_ID;
 const DISCORD_DM_CATEGORY_ID = process.env.DISCORD_DM_CATEGORY_ID;
+const DISCORD_OWNER_ID = process.env.DISCORD_OWNER_ID || '623303738991443968';
 const IGNORED_CHAT_USERNAMES = process.env.IGNORED_CHAT_USERNAMES ? process.env.IGNORED_CHAT_USERNAMES.split(',').map(u => u.trim().toLowerCase()) : [];
 
 // Database connection
@@ -80,12 +81,52 @@ const WHISPER_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const WHISPER_MARK_TTL_MS = 3000; // how long to remember whisper markers for suppression
 const PENDING_CHAT_DELAY_MS = 400; // delay chat sends to detect whispers first
 const OUTBOUND_WHISPER_TTL_MS = 5000; // suppression window for our own /msg echoes
+const WHISPER_CHANNELS_FILE = 'whisper_channels.json';
 
 // Debug logging (disabled by default). Enable by setting DEBUG_LOGS=true
 const DEBUG_LOGS = String(process.env.DEBUG_LOGS || '').toLowerCase() === 'true';
 function debugLog(...args) {
   if (DEBUG_LOGS) console.log(...args);
 }
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function saveWhisperChannels() {
+  try {
+    const payload = Object.fromEntries(whisperChannels.entries());
+    fs.writeFileSync(WHISPER_CHANNELS_FILE, JSON.stringify(payload, null, 2));
+  } catch (e) {
+    console.error('[Whisper] Failed to save channel mappings:', e.message);
+  }
+}
+
+function loadWhisperChannels() {
+  try {
+    const raw = fs.readFileSync(WHISPER_CHANNELS_FILE, 'utf8').trim();
+    if (!raw) return;
+
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      console.error('[Whisper] Ignoring invalid channel mapping file format.');
+      return;
+    }
+
+    whisperChannels = new Map(Object.entries(parsed));
+  } catch (e) {
+    if (e.code !== 'ENOENT') {
+      console.error('[Whisper] Failed to load channel mappings:', e.message);
+    }
+  }
+}
+
+function setWhisperChannelMapping(ownerId, mcUsername, channelId) {
+  whisperChannels.set(`${ownerId}:${mcUsername.toLowerCase()}`, channelId);
+  saveWhisperChannels();
+}
+
+loadWhisperChannels();
 
 // Get the owner Discord user ID for a dialog channel
 function getDialogOwnerId(channelId) {
@@ -212,11 +253,14 @@ async function sendWhisperEmbed(channel, { senderLabel = 'Message', body, ttlMs 
 }
 
 function removeWhisperChannelMappings(channelId) {
+  let changed = false;
   for (const [key, value] of whisperChannels.entries()) {
     if (value === channelId) {
       whisperChannels.delete(key);
+      changed = true;
     }
   }
+  if (changed) saveWhisperChannels();
   lastDialogMessages.delete(channelId);
   stopFooterUpdates(channelId);
   whisperDeleteTimestamps.delete(channelId);
@@ -342,6 +386,7 @@ async function getOrCreateWhisperChannel(ownerId, ownerTag, mcUsername) {
       if (existing) return existing;
     } catch (_) {
       whisperChannels.delete(key);
+      saveWhisperChannels();
     }
   }
 
@@ -394,7 +439,7 @@ async function getOrCreateWhisperChannel(ownerId, ownerTag, mcUsername) {
       ]
     });
 
-    whisperChannels.set(key, channel.id);
+    setWhisperChannelMapping(ownerId, mcUsername, channel.id);
     console.log(`[Whisper] Created channel ${channel.name} for ${ownerTag} -> ${mcUsername}`);
     return channel;
   } catch (err) {
@@ -1508,7 +1553,10 @@ function createBot() {
           if (!isBridgeMessage) {
             const mentionKeywords = await getMentionKeywords();
             for (const { discord_id, keyword } of mentionKeywords) {
-              const regex = new RegExp(`\\b${keyword.toLowerCase()}\\b`);
+              const normalizedKeyword = keyword.toLowerCase().trim();
+              if (!normalizedKeyword) continue;
+
+              const regex = new RegExp(`\\b${escapeRegExp(normalizedKeyword)}\\b`);
               if (regex.test(lowerMessage)) {
                 usersToMention.add(discord_id);
               }
@@ -1680,7 +1728,11 @@ process.on('uncaughtException', (err) => {
   if (bot) {
     try { bot.quit(); } catch {}
   }
-  setTimeout(createBot, 5000);
+  if (shouldReconnect) {
+    setTimeout(() => {
+      if (!bot && shouldReconnect) createBot();
+    }, 5000);
+  }
 });
 
 process.on('unhandledRejection', (reason) => {
@@ -1718,15 +1770,13 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             return;
           }
 
-          whisperChannels.set(`${interaction.user.id}:${mcUsername.toLowerCase()}`, whisperChannel.id);
+          setWhisperChannelMapping(interaction.user.id, mcUsername, whisperChannel.id);
           pendingWhisperClaims.delete(mcUsername);
 
           try {
             await sendWhisperEmbed(whisperChannel, {
-              headline: `${mcUsername} → You`,
-              body: pending.lastMessage,
-              color: 3447003,
-              directionIcon: '⬅️'
+              senderLabel: mcUsername,
+              body: pending.lastMessage
             });
             scheduleWhisperCleanup(whisperChannel.id);
           } catch (e) {
@@ -1969,8 +2019,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         }, 120000);
       } else if (interaction.customId === 'whitelist_button') {
         // Restrict Whitelist to owner/admin only
-        const OWNER_ID = '623303738991443968';
-        if (interaction.user.id !== OWNER_ID) {
+        if (interaction.user.id !== DISCORD_OWNER_ID) {
           try {
             await interaction.reply({
               embeds: [{
@@ -2057,8 +2106,7 @@ Add candidates online: **${onlineCount}**`,
         }
       } else if (interaction.customId === 'drop_button') {
         // Restrict Drop to owner/admin only
-        const OWNER_ID = '623303738991443968';
-        if (interaction.user.id !== OWNER_ID) {
+        if (interaction.user.id !== DISCORD_OWNER_ID) {
           try {
             await interaction.reply({
               embeds: [{
@@ -2148,8 +2196,7 @@ Add candidates online: **${onlineCount}**`,
         }
       } else if (interaction.customId === 'chat_setting_button') {
         // Restrict Chat Settings to owner only
-        const OWNER_ID = '623303738991443968';
-        if (interaction.user.id !== OWNER_ID) {
+        if (interaction.user.id !== DISCORD_OWNER_ID) {
           try {
             await interaction.reply({
               embeds: [{
@@ -2487,6 +2534,22 @@ Add candidates online: **${onlineCount}**`,
         modal.addComponents(actionRow);
 
         await interaction.showModal(modal);
+      } else if (interaction.customId === 'remove_mention_keyword_button') {
+        const modal = new ModalBuilder()
+          .setCustomId('remove_keyword_modal')
+          .setTitle('Remove Mention Keyword');
+
+        const keywordInput = new TextInputBuilder()
+          .setCustomId('keyword_remove_input')
+          .setLabel('Keyword to Remove')
+          .setPlaceholder('Enter keyword to remove')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
+
+        const actionRow = new ActionRowBuilder().addComponents(keywordInput);
+        modal.addComponents(actionRow);
+
+        await interaction.showModal(modal);
       } else if (interaction.customId.startsWith('remove_')) {
         const messageId = interaction.customId.split('_')[1];
         try {
@@ -2519,22 +2582,6 @@ Add candidates online: **${onlineCount}**`,
           .setCustomId('keyword_input')
           .setLabel('Keyword')
           .setPlaceholder('e.g., bdiev, bdiev_ or whatever you want')
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true);
-
-        const actionRow = new ActionRowBuilder().addComponents(keywordInput);
-        modal.addComponents(actionRow);
-
-        await interaction.showModal(modal);
-      } else if (interaction.customId === 'remove_mention_keyword_button') {
-        const modal = new ModalBuilder()
-          .setCustomId('remove_keyword_modal')
-          .setTitle('Remove Mention Keyword');
-
-        const keywordInput = new TextInputBuilder()
-          .setCustomId('keyword_remove_input')
-          .setLabel('Keyword to Remove')
-          .setPlaceholder('Enter keyword to remove')
           .setStyle(TextInputStyle.Short)
           .setRequired(true);
 
@@ -2824,7 +2871,7 @@ Add candidates online: **${onlineCount}**`,
           });
           scheduleWhisperCleanup(whisperChannel.id);
           // Track channel for inbound replies routing
-          whisperChannels.set(`${interaction.user.id}:${selectedUsername.toLowerCase()}`, whisperChannel.id);
+          setWhisperChannelMapping(interaction.user.id, selectedUsername, whisperChannel.id);
         } catch (e) {
           console.error('[Whisper] Failed to write to dialog channel:', e.message);
         }
@@ -3522,6 +3569,12 @@ Add candidates online: **${onlineCount}**`,
     if (message.content === '!restart') {
       console.log(`[Command] restart by ${message.author.tag} via Discord`);
       lastCommandUser = message.author.tag;
+      if (!bot) {
+        shouldReconnect = true;
+        createBot();
+        await message.reply('Bot is offline. Started a new connection attempt.');
+        return;
+      }
       if (statusMessage) {
         statusMessage.edit({
           embeds: [{
@@ -3553,7 +3606,10 @@ Add candidates online: **${onlineCount}**`,
         console.log(`[Command] pause ${minutes}m by ${message.author.tag} via Discord`);
         sendDiscordNotification(`Command: !pause ${minutes} by \`${message.author.tag}\` via Discord`, 16776960);
         shouldReconnect = false;
-        bot.quit(`Paused ${minutes}m`);
+        const botToQuit = bot;
+        bot = null;
+        await updateStatusMessage();
+        if (botToQuit) botToQuit.quit(`Paused ${minutes}m`);
         setTimeout(() => {
           console.log('[Bot] Custom pause ended.');
           shouldReconnect = true;
