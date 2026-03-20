@@ -177,6 +177,23 @@ function didLavaPlacementLikelySucceed(bot, x, y, z) {
   return !stillHasLavaBucket && hasLavaNearTarget(bot, x, y, z);
 }
 
+function getAdjacentBlockDebug(bot, x, y, z) {
+  const checks = [
+    ['down', 0, -1, 0],
+    ['up', 0, 1, 0],
+    ['east', 1, 0, 0],
+    ['west', -1, 0, 0],
+    ['south', 0, 0, 1],
+    ['north', 0, 0, -1],
+  ];
+  return checks
+    .map(([name, dx, dy, dz]) => {
+      const b = bot.blockAt(new Vec3(x + dx, y + dy, z + dz));
+      return `${name}:${b?.name || 'null'}`;
+    })
+    .join(', ');
+}
+
 function getItemMaxDurability(bot, item) {
   if (!item) return null;
   if (typeof item.maxDurability === 'number') return item.maxDurability;
@@ -320,6 +337,7 @@ async function pourLava(bot, targetPos) {
 
   let placed = false;
   const placementErrors = [];
+  let triedRefs = 0;
   const isUsableReference = (block) => {
     if (!block) return false;
     if (block.name === 'air' || block.name === 'cave_air' || block.name === 'void_air') return false;
@@ -330,11 +348,21 @@ async function pourLava(bot, targetPos) {
   for (const [dx, dy, dz] of faces) {
     const ref = bot.blockAt(new Vec3(x + dx, y + dy, z + dz));
     if (!isUsableReference(ref)) continue;
+    triedRefs++;
     try {
       // Sneak avoids opening interactive blocks like hopper/chest and forces item use.
       bot.setControlState('sneak', true);
       await sleep(80);
       const faceVector = new Vec3(-dx, -dy, -dz);
+      const hitPoint = new Vec3(
+        ref.position.x + 0.5 + faceVector.x * 0.5,
+        ref.position.y + 0.5 + faceVector.y * 0.5,
+        ref.position.z + 0.5 + faceVector.z * 0.5
+      );
+
+      // Force exact face aim before right-click to reduce server-side miss clicks.
+      await bot.lookAt(hitPoint, true);
+      await sleep(70);
 
       // For buckets, activateBlock is more reliable than placeBlock.
       await bot.activateBlock(ref, faceVector);
@@ -344,6 +372,8 @@ async function pourLava(bot, targetPos) {
         placed = true;
         break;
       }
+
+      placementErrors.push(`activateBlock no result on ${ref.name}`);
     } catch (e) {
       placementErrors.push(e?.message || 'unknown placeBlock error');
       // Some servers place liquid but mineflayer times out waiting blockUpdate.
@@ -375,8 +405,11 @@ async function pourLava(bot, targetPos) {
   }
 
   if (!placed) {
+    const adj = getAdjacentBlockDebug(bot, x, y, z);
     throw new Error(
       `Could not place lava at (${x}, ${y}, ${z}). ` +
+      `Refs tried: ${triedRefs}. ` +
+      `Adjacent: ${adj}. ` +
       `Recent errors: ${placementErrors.slice(0, 3).join(' | ') || 'none'}`
     );
   }
