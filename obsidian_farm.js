@@ -495,16 +495,22 @@ async function mineObsidian(bot, targetPos) {
 async function runCycle(bot, notify) {
   if (!farm.config) throw new Error('Farm not configured — no target coordinates');
 
+  const configuredPos = new Vec3(farm.config.x, farm.config.y, farm.config.z);
+  const configuredBlock = bot.blockAt(configuredPos);
+
+  // Always clear pre-existing obsidian at configured coordinates first.
+  if (configuredBlock?.name === 'obsidian') {
+    await mineObsidian(bot, configuredPos);
+  }
+
   const targetPos = getEffectiveTargetPos(bot);
   const { x, y, z } = targetPos;
   const targetBlock = bot.blockAt(targetPos);
   const hasLavaBucket = bot.inventory.items().some(i => i.name === 'lava_bucket');
 
-  // If obsidian is already present, mine it immediately.
+  // Safety: if obsidian exists at effective placement target, clear it too.
   if (targetBlock?.name === 'obsidian') {
     await mineObsidian(bot, targetPos);
-    farm.cyclesCompleted++;
-    return;
   }
 
   // If lava is already at target, skip fill/pour and only wait for conversion.
