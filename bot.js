@@ -2608,13 +2608,18 @@ Add candidates online: **${onlineCount}**`,
           await interaction.reply({ embeds: [{ description: `\ud83d\uded1 Obsidian farm stopped. Cycles completed: **${farmStatus.cyclesCompleted}**`, color: 16711680, timestamp: new Date() }], flags: MessageFlags.Ephemeral });
           setTimeout(() => interaction.deleteReply().catch(() => {}), 8000);
         } else {
+          const savedConfig = farmStatus.config;
           const farmModal = new ModalBuilder()
             .setCustomId('obsidian_farm_modal')
             .setTitle('Obsidian Farm \u2014 Target Coordinates');
           const xInput = new TextInputBuilder().setCustomId('farm_x').setLabel('X coordinate').setStyle(TextInputStyle.Short).setPlaceholder('e.g. 120').setRequired(true);
+          if (savedConfig?.x != null) xInput.setValue(String(savedConfig.x));
           const yInput = new TextInputBuilder().setCustomId('farm_y').setLabel('Y coordinate').setStyle(TextInputStyle.Short).setPlaceholder('e.g. 64').setRequired(true);
+          if (savedConfig?.y != null) yInput.setValue(String(savedConfig.y));
           const zInput = new TextInputBuilder().setCustomId('farm_z').setLabel('Z coordinate').setStyle(TextInputStyle.Short).setPlaceholder('e.g. -300').setRequired(true);
+          if (savedConfig?.z != null) zInput.setValue(String(savedConfig.z));
           const distInput = new TextInputBuilder().setCustomId('farm_dist').setLabel('Max cauldron search radius (blocks)').setStyle(TextInputStyle.Short).setPlaceholder('Default: 64').setRequired(false);
+          if (savedConfig?.maxCauldronDist != null) distInput.setValue(String(savedConfig.maxCauldronDist));
           farmModal.addComponents(
             new ActionRowBuilder().addComponents(xInput),
             new ActionRowBuilder().addComponents(yInput),
