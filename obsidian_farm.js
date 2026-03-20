@@ -35,6 +35,7 @@ const INTERACT_SETTLE_MS    = 350;    // settle delay after block interaction
 const DEFAULT_CAULDRON_DIST = 64;     // default max search radius for cauldrons
 const MIN_PICKAXE_REMAINING_PERCENT = 5;
 const FARM_CONFIG_FILE = 'obsidian_farm_config.json';
+const MAX_INTERACT_DISTANCE = 5.5;
 
 // ── Internal state ─────────────────────────────────────────────────────────────
 const farm = {
@@ -255,6 +256,29 @@ async function goNear(bot, x, y, z, range = 2) {
   await bot.pathfinder.goto(new GoalNear(x, y, z, range));
 }
 
+function stopAllMovement(bot) {
+  try {
+    if (bot.pathfinder) {
+      bot.pathfinder.setGoal(null);
+      bot.pathfinder.stop();
+    }
+  } catch (_) {}
+
+  if (typeof bot.clearControlStates === 'function') {
+    bot.clearControlStates();
+  }
+}
+
+function ensureInteractionRange(bot, pos, actionName) {
+  const dist = bot.entity?.position?.distanceTo(pos);
+  if (!Number.isFinite(dist) || dist > MAX_INTERACT_DISTANCE) {
+    throw new Error(
+      `${actionName} is too far (${Number.isFinite(dist) ? dist.toFixed(2) : 'unknown'} blocks). ` +
+      'Stationary mode is enabled: move bot manually closer.'
+    );
+  }
+}
+
 /**
  * Find the nearest lava cauldron block.
  * Handles both 1.17+ (lava_cauldron block) and old cauldron with metadata ≥ 3.
@@ -295,7 +319,8 @@ async function fillBucket(bot) {
   }
 
   farm.phase = 'filling';
-  await goNear(bot, cauldron.position.x, cauldron.position.y, cauldron.position.z, 2);
+  stopAllMovement(bot);
+  ensureInteractionRange(bot, cauldron.position.offset(0.5, 0.5, 0.5), 'Cauldron interaction');
 
   const emptyBucket = bot.inventory.items().find(i => i.name === 'bucket');
   if (!emptyBucket) throw new Error('No empty bucket in inventory');
@@ -317,7 +342,8 @@ async function pourLava(bot, targetPos) {
   const { x, y, z } = targetPos;
 
   farm.phase = 'navigating';
-  await goNear(bot, x, y, z, 1);
+  stopAllMovement(bot);
+  ensureInteractionRange(bot, new Vec3(x + 0.5, y + 0.5, z + 0.5), 'Lava placement');
 
   farm.phase = 'pouring';
   const lavaBucket = bot.inventory.items().find(i => i.name === 'lava_bucket');
@@ -449,8 +475,8 @@ async function waitForObsidian(bot, targetPos) {
 async function mineObsidian(bot, targetPos) {
   const { x, y, z } = targetPos;
   farm.phase = 'mining';
-
-  await goNear(bot, x, y, z, 4);
+  stopAllMovement(bot);
+  ensureInteractionRange(bot, new Vec3(x + 0.5, y + 0.5, z + 0.5), 'Obsidian mining');
 
   const selected = findUsablePickaxe(bot, MIN_PICKAXE_REMAINING_PERCENT);
   if (!selected) {
