@@ -355,20 +355,28 @@ async function pourLava(bot, targetPos) {
 
   // Try all adjacent directions and use any non-replaceable block as a click surface.
   const sideOffsets = [
+    { dx: 0, dy: -1, dz: 0, label: 'down' },
     { dx: 1, dy: 0, dz: 0, label: 'east' },
     { dx: -1, dy: 0, dz: 0, label: 'west' },
     { dx: 0, dy: 0, dz: 1, label: 'south' },
     { dx: 0, dy: 0, dz: -1, label: 'north' },
-    { dx: 0, dy: -1, dz: 0, label: 'down' },
     { dx: 0, dy: 1, dz: 0, label: 'up' },
   ];
 
   const references = sideOffsets
     .map(off => ({
       label: off.label,
+      face: new Vec3(-off.dx, -off.dy, -off.dz),
       block: bot.blockAt(new Vec3(x + off.dx, y + off.dy, z + off.dz)),
     }))
     .filter(ref => ref.block && !isReplaceableForLava(ref.block));
+
+  // Prefer stable full blocks first, but keep partial/interactable neighbors as fallback anchors.
+  references.sort((a, b) => {
+    const aScore = (a.label === 'down' ? 3 : 0) + (a.block?.boundingBox === 'block' ? 2 : 0);
+    const bScore = (b.label === 'down' ? 3 : 0) + (b.block?.boundingBox === 'block' ? 2 : 0);
+    return bScore - aScore;
+  });
 
   if (references.length === 0) {
     const adj = getAdjacentBlockDebug(bot, x, y, z);
@@ -400,10 +408,21 @@ async function pourLava(bot, targetPos) {
           await bot.activateBlock(ref.block);
         } catch (e) {
           clickErrors.push(`activateBlock#${attempt}/${ref.label}: ${e?.message || 'failed'}`);
+        }
+
+        if (!didLavaPlacementLikelySucceed(bot, x, y, z)) {
+          try {
+            await bot.placeBlock(ref.block, ref.face);
+          } catch (e2) {
+            clickErrors.push(`placeBlock#${attempt}/${ref.label}: ${e2?.message || 'failed'}`);
+          }
+        }
+
+        if (!didLavaPlacementLikelySucceed(bot, x, y, z)) {
           try {
             await bot.activateItem();
-          } catch (e2) {
-            clickErrors.push(`activateItem#${attempt}/${ref.label}: ${e2?.message || 'failed'}`);
+          } catch (e3) {
+            clickErrors.push(`activateItem#${attempt}/${ref.label}: ${e3?.message || 'failed'}`);
           }
         }
 
@@ -412,6 +431,8 @@ async function pourLava(bot, targetPos) {
           clicked = true;
           break;
         }
+
+        clickErrors.push(`no_change#${attempt}/${ref.label}`);
       }
     }
   } finally {
