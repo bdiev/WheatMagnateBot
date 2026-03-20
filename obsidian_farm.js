@@ -280,11 +280,6 @@ function ensureInteractionRange(bot, pos, actionName) {
   }
 }
 
-function isSameBlockPos(a, b) {
-  if (!a || !b) return false;
-  return a.x === b.x && a.y === b.y && a.z === b.z;
-}
-
 /**
  * Find the nearest lava cauldron block.
  * Handles both 1.17+ (lava_cauldron block) and old cauldron with metadata ≥ 3.
@@ -358,7 +353,7 @@ async function pourLava(bot, targetPos) {
   await bot.equip(lavaBucket, 'hand');
   await sleep(INTERACT_SETTLE_MS);
 
-  // User-requested strict behavior: aim at adjacent stone_bricks and do a single right-click.
+  // Find any adjacent full block that can act as a stable click surface for placement.
   const sideOffsets = [
     { dx: 1, dy: 0, dz: 0, label: 'east' },
     { dx: -1, dy: 0, dz: 0, label: 'west' },
@@ -367,13 +362,11 @@ async function pourLava(bot, targetPos) {
   ];
 
   let refBlock = null;
-  let refFace = null;
   let refLabel = null;
   for (const off of sideOffsets) {
     const candidate = bot.blockAt(new Vec3(x + off.dx, y + off.dy, z + off.dz));
-    if (candidate?.name === 'stone_bricks') {
+    if (candidate && candidate.boundingBox === 'block') {
       refBlock = candidate;
-      refFace = new Vec3(-off.dx, -off.dy, -off.dz);
       refLabel = off.label;
       break;
     }
@@ -381,18 +374,13 @@ async function pourLava(bot, targetPos) {
 
   if (!refBlock) {
     const adj = getAdjacentBlockDebug(bot, x, y, z);
-    throw new Error(`No stone_bricks adjacent to target (${x}, ${y}, ${z}). Adjacent: ${adj}`);
+    throw new Error(`No solid adjacent block near target (${x}, ${y}, ${z}). Adjacent: ${adj}`);
   }
 
   const hitPoint = new Vec3(
     refBlock.position.x + 0.5,
     refBlock.position.y + 0.5,
     refBlock.position.z + 0.5
-  );
-  const cursorPos = new Vec3(
-    refFace.x === 1 ? 1.0 : refFace.x === -1 ? 0.0 : 0.5,
-    0.5,
-    refFace.z === 1 ? 1.0 : refFace.z === -1 ? 0.0 : 0.5
   );
   const clickDistance = bot.entity?.position?.distanceTo(hitPoint);
   if (!Number.isFinite(clickDistance) || clickDistance > MAX_INTERACT_DISTANCE) {
@@ -402,30 +390,41 @@ async function pourLava(bot, targetPos) {
     );
   }
 
-  await bot.lookAt(hitPoint, true);
-  await sleep(120);
-
-  const cursorBlock = bot.blockAtCursor(MAX_INTERACT_DISTANCE + 0.5);
-  if (!cursorBlock || !isSameBlockPos(cursorBlock.position, refBlock.position)) {
-    throw new Error(
-      `Aim miss before right-click via stone_bricks/${refLabel}: cursor=${cursorBlock?.name || 'null'}`
-    );
-  }
-
-  // Plain player-like right click on stone_bricks face toward target.
+  let clicked = false;
+  let clickErrors = [];
+  bot.setControlState('sneak', true);
   try {
-    await bot.activateBlock(refBlock, refFace, cursorPos);
-  } catch (_) {
-    // Fallback if face click fails in this server build.
-    await bot.activateItem();
-  }
-  await sleep(INTERACT_SETTLE_MS + 300);
+    for (let i = 0; i < 3; i++) {
+      await bot.lookAt(hitPoint, true);
+      await sleep(100);
 
-  if (!didLavaPlacementLikelySucceed(bot, x, y, z)) {
+      try {
+        await bot.activateBlock(refBlock);
+      } catch (e) {
+        clickErrors.push(`activateBlock#${i + 1}: ${e?.message || 'failed'}`);
+        try {
+          await bot.activateItem();
+        } catch (e2) {
+          clickErrors.push(`activateItem#${i + 1}: ${e2?.message || 'failed'}`);
+        }
+      }
+
+      await sleep(INTERACT_SETTLE_MS + 260);
+      if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
+        clicked = true;
+        break;
+      }
+    }
+  } finally {
+    bot.setControlState('sneak', false);
+  }
+
+  if (!clicked && !didLavaPlacementLikelySucceed(bot, x, y, z)) {
     const adj = getAdjacentBlockDebug(bot, x, y, z);
     throw new Error(
       `Could not place lava at (${x}, ${y}, ${z}) via stone_bricks/${refLabel}. ` +
-      `Adjacent: ${adj}.`
+      `Adjacent: ${adj}. ` +
+      `Click diagnostics: ${clickErrors.slice(0, 6).join(' | ') || 'none'}.`
     );
   }
 
