@@ -555,6 +555,78 @@ async function migrateWhitelistToDB() {
   }
 }
 
+async function addUsernameToWhitelist(targetUsername, addedBy = 'system') {
+  const safeUsername = String(targetUsername || '').trim();
+  if (!safeUsername) {
+    throw new Error('Username is required.');
+  }
+
+  if (pool) {
+    try {
+      const insertResult = await pool.query(
+        'INSERT INTO whitelist (username, added_by) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING',
+        [safeUsername, addedBy]
+      );
+      const newWhitelist = await loadWhitelistFromDB();
+      ignoredUsernames.length = 0;
+      ignoredUsernames.push(...newWhitelist);
+      return {
+        whitelist: newWhitelist,
+        source: 'database',
+        changed: insertResult.rowCount > 0
+      };
+    } catch (dbErr) {
+      console.error('[Whitelist Add] DB error:', dbErr.message);
+    }
+  }
+
+  const fileWhitelist = loadWhitelist();
+  const alreadyListed = fileWhitelist.some(name => name.toLowerCase() === safeUsername.toLowerCase());
+  if (!alreadyListed) {
+    fs.appendFileSync('whitelist.txt', `${safeUsername}\n`);
+  }
+
+  const newWhitelist = loadWhitelist();
+  ignoredUsernames.length = 0;
+  ignoredUsernames.push(...newWhitelist);
+  return {
+    whitelist: newWhitelist,
+    source: 'file',
+    changed: !alreadyListed
+  };
+}
+
+function buildSecurityAlertComponents(playerName) {
+  const safePlayerName = String(playerName || '').trim();
+  if (!safePlayerName) return [];
+
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`security_add_whitelist_${b64encode(safePlayerName)}`)
+        .setLabel('Add to whitelist')
+        .setStyle(ButtonStyle.Success)
+    )
+  ];
+}
+
+async function whitelistAlertPlayerAndReconnect(playerName, requestedBy) {
+  const result = await addUsernameToWhitelist(playerName, requestedBy);
+
+  shouldReconnect = true;
+  reconnectTimestamp = 0;
+  reconnectTimeRemaining = 0;
+
+  const reconnectMode = bot ? 'scheduled' : 'immediate';
+  if (reconnectMode === 'immediate') {
+    createBot();
+  } else {
+    updateStatusMessage().catch(() => {});
+  }
+
+  return { ...result, reconnectMode };
+}
+
 const ignoredUsernames = loadWhitelist();
 
 // Load ignored chat usernames from DB
@@ -1012,7 +1084,8 @@ async function sendDiscordStatusMention({ playerName, distance, serverAction = '
           color: 16711680,
           footer: { text: 'WheatMagnate Security System' },
           timestamp: new Date()
-        }]
+        }],
+        components: buildSecurityAlertComponents(playerName)
       });
       if (sentMessage && !excludedMessageIds.includes(sentMessage.id)) {
         excludedMessageIds.push(sentMessage.id);
@@ -1970,6 +2043,52 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
           await interaction.editReply({ content: `Channel created: ${whisperChannel}`, components: [] });
           setTimeout(() => interaction.deleteReply().catch(() => {}), 10_000);
+          return;
+        }
+        if (interaction.customId.startsWith('security_add_whitelist_')) {
+          if (interaction.user.id !== DISCORD_OWNER_ID) {
+            await interaction.reply({
+              content: 'Only the owner can whitelist players from security alerts.',
+              flags: MessageFlags.Ephemeral
+            });
+            return;
+          }
+
+          await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+          const encodedUsername = interaction.customId.replace('security_add_whitelist_', '');
+          const selectedUsername = b64decode(encodedUsername);
+
+          try {
+            const { changed, reconnectMode } = await whitelistAlertPlayerAndReconnect(selectedUsername, interaction.user.tag);
+
+            await interaction.message.edit({
+              embeds: [{
+                title: '✅ Security Alert Resolved',
+                description: [
+                  `**Player:** ${selectedUsername}`,
+                  `**Action:** Added to whitelist by ${interaction.user.tag}`,
+                  `**Bot:** ${reconnectMode === 'immediate' ? 'Reconnecting to the server now.' : 'Reconnect is enabled and will happen automatically.'}`,
+                  changed ? '**Result:** whitelist updated.' : '**Result:** player was already in whitelist.'
+                ].join('\n'),
+                color: 65280,
+                footer: { text: 'WheatMagnate Security System' },
+                timestamp: new Date()
+              }],
+              components: []
+            }).catch(() => {});
+
+            await interaction.editReply({
+              content: reconnectMode === 'immediate'
+                ? `✅ ${selectedUsername} added to whitelist. Bot is reconnecting now.`
+                : `✅ ${selectedUsername} is approved. Bot will reconnect automatically.`
+            });
+            setTimeout(() => interaction.deleteReply().catch(() => {}), 10_000);
+          } catch (err) {
+            console.error('[Security Alert] Failed to whitelist player:', err.message);
+            await interaction.editReply({
+              content: `❌ Failed to add ${selectedUsername} to whitelist: ${err.message}`
+            });
+          }
           return;
         }
       if (interaction.customId.startsWith('delete_dialog_')) {
@@ -3503,32 +3622,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       const encodedUsername = interaction.values[0];
       const selectedUsername = b64decode(encodedUsername);
       try {
-        let whitelist = [];
-        let source = 'database';
-        let success = false;
-        if (pool) {
-          try {
-            await pool.query('INSERT INTO whitelist (username, added_by) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING', [selectedUsername, interaction.user.tag]);
-            const newWhitelist = await loadWhitelistFromDB();
-            ignoredUsernames.length = 0;
-            ignoredUsernames.push(...newWhitelist);
-            whitelist = newWhitelist;
-            success = true;
-          } catch (dbErr) {
-            console.error('[Whitelist Add] DB error:', dbErr.message);
-          }
-        }
-        if (!success && !pool) {
-          source = 'file';
-          const fileWhitelist = loadWhitelist();
-          if (!fileWhitelist.some(n => n.toLowerCase() === selectedUsername.toLowerCase())) {
-            fs.appendFileSync('whitelist.txt', `${selectedUsername}\n`);
-          }
-          whitelist = loadWhitelist();
-          ignoredUsernames.length = 0;
-          ignoredUsernames.push(...whitelist);
-          success = true;
-        }
+        const { whitelist, changed } = await addUsernameToWhitelist(selectedUsername, interaction.user.tag);
 
         const allOnlinePlayers = bot ? Object.values(bot.players || {}).map(p => p.username) : [];
         const addCandidates = allOnlinePlayers.filter(u => !whitelist.some(n => n.toLowerCase() === u.toLowerCase()));
@@ -3537,8 +3631,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           buildWhitelistManagementView(
             whitelist,
             addCandidates,
-            success ? `✅ Added ${selectedUsername} to whitelist.` : `No changes for ${selectedUsername}.`,
-            success ? 65280 : 16776960
+            changed ? `✅ Added ${selectedUsername} to whitelist.` : `${selectedUsername} is already in whitelist.`,
+            changed ? 65280 : 16776960
           )
         );
 
