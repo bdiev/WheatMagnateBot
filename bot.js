@@ -964,6 +964,7 @@ let reconnectCountdownInterval = null;
 
 let foodMonitorInterval = null;
 let playerScannerInterval = null;
+let lastEnemyMentionAt = 0;
 
 
 // Helper function to send messages to Discord
@@ -985,6 +986,25 @@ async function sendDiscordNotification(message, color = 3447003) {
     }
   } catch (e) {
     console.error('[Discord Bot] Failed to send:', e.message);
+  }
+}
+
+async function sendDiscordStatusMention(message) {
+  if (!DISCORD_CHANNEL_ID || !discordClient || !discordClient.isReady()) {
+    console.log('[Discord] Bot not ready or no channel configured. Skipped mention.');
+    return;
+  }
+  try {
+    const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+    if (channel && channel.isTextBased()) {
+      const mentionPrefix = DISCORD_OWNER_ID ? `<@${DISCORD_OWNER_ID}> ` : '@bdiev ';
+      const sentMessage = await channel.send({ content: `${mentionPrefix}${message}` });
+      if (sentMessage && !excludedMessageIds.includes(sentMessage.id)) {
+        excludedMessageIds.push(sentMessage.id);
+      }
+    }
+  } catch (e) {
+    console.error('[Discord Bot] Failed to send mention:', e.message);
   }
 }
 
@@ -1713,8 +1733,13 @@ function startNearbyPlayerScanner() {
       const distance = bot.entity.position.distanceTo(entity.position);
       if (distance <= 300) {
         // Enemy detected!
-        console.log(`[Bot] Enemy detected: ${entity.username}`);
-        sendDiscordNotification(`🚨 **ENEMY DETECTED**: **${entity.username}** entered range! Bot paused until resume command.`, 16711680);
+        const roundedDistance = Math.round(distance);
+        console.log(`[Bot] Enemy detected: ${entity.username} (${roundedDistance} blocks)`);
+        sendDiscordNotification(`🚨 **ENEMY DETECTED**: **${entity.username}** entered range (${roundedDistance} blocks)! Bot paused until resume command.`, 16711680);
+        if (Date.now() - lastEnemyMentionAt > 15000) {
+          lastEnemyMentionAt = Date.now();
+          sendDiscordStatusMention(`non-whitelisted player detected nearby: **${entity.username}** (${roundedDistance} blocks). Bot is leaving the server.`);
+        }
         shouldReconnect = false;
         bot.quit(`Enemy detected: ${entity.username}`);
         return; // Stop scanning after disconnect
