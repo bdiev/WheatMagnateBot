@@ -1008,6 +1008,95 @@ async function sendDiscordStatusMention(message) {
   }
 }
 
+function buildChunkedSelectRows(items, customIdBase, placeholder, { maxRows = 4, disabledLabel = 'Nothing available' } = {}) {
+  const rows = [];
+  const chunks = [];
+
+  for (let i = 0; i < items.length && chunks.length < maxRows; i += 25) {
+    chunks.push(items.slice(i, i + 25));
+  }
+
+  if (chunks.length === 0) {
+    const emptyMenu = new StringSelectMenuBuilder()
+      .setCustomId(`${customIdBase}_0`)
+      .setPlaceholder(placeholder)
+      .setDisabled(true)
+      .addOptions(
+        new StringSelectMenuOptionBuilder()
+          .setLabel(disabledLabel)
+          .setValue(`${customIdBase}_empty`)
+      );
+    rows.push(new ActionRowBuilder().addComponents(emptyMenu));
+    return rows;
+  }
+
+  chunks.forEach((chunk, index) => {
+    const menu = new StringSelectMenuBuilder()
+      .setCustomId(`${customIdBase}_${index}`)
+      .setPlaceholder(chunks.length > 1 ? `${placeholder} (${index + 1}/${chunks.length})` : placeholder)
+      .addOptions(
+        chunk.map(username =>
+          new StringSelectMenuOptionBuilder().setLabel(username).setValue(b64encode(username))
+        )
+      );
+    rows.push(new ActionRowBuilder().addComponents(menu));
+  });
+
+  return rows;
+}
+
+function formatWhitelistNames(entries, maxChars = 2200) {
+  if (!entries || entries.length === 0) return '_No whitelist players._';
+
+  const lines = [];
+  let totalChars = 0;
+
+  for (const username of entries) {
+    const line = `• ${username}`;
+    if (totalChars + line.length + 1 > maxChars) {
+      const remaining = entries.length - lines.length;
+      if (remaining > 0) lines.push(`… and ${remaining} more`);
+      break;
+    }
+    lines.push(line);
+    totalChars += line.length + 1;
+  }
+
+  return lines.join('\n');
+}
+
+function buildWhitelistManagementView(entries, addCandidates, notice = '', color = 3447003) {
+  const components = [
+    ...buildChunkedSelectRows(addCandidates, 'add_whitelist_select', 'Add to Whitelist (online)', {
+      maxRows: 1,
+      disabledLabel: 'No online players available'
+    }),
+    ...buildChunkedSelectRows(entries, 'delete_whitelist_select', 'Delete from Whitelist', {
+      maxRows: 4,
+      disabledLabel: 'Whitelist is empty'
+    })
+  ];
+
+  const description = [
+    notice || null,
+    `Total: **${entries.length}**`,
+    `Add candidates online: **${addCandidates.length}**`,
+    '',
+    '**Whitelist players:**',
+    formatWhitelistNames(entries)
+  ].filter(part => part !== null).join('\n');
+
+  return {
+    embeds: [{
+      title: 'Whitelist Management',
+      description,
+      color,
+      timestamp: new Date()
+    }],
+    components
+  };
+}
+
 // Safely edit an interaction's reply, falling back if the original is unknown/deleted
 async function safeEditInteraction(interaction, payload) {
   try {
@@ -2087,44 +2176,12 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             entries = loadWhitelist();
           }
 
-          const total = entries.length;
-
           const allOnlinePlayers = bot ? Object.values(bot.players || {}).map(p => p.username) : [];
           const addCandidates = allOnlinePlayers.filter(u => !entries.some(n => n.toLowerCase() === u.toLowerCase()));
-          const onlineCount = addCandidates.length;
 
-          const addOptions = addCandidates.slice(0, 25).map(username =>
-            new StringSelectMenuOptionBuilder().setLabel(username).setValue(b64encode(username))
+          await interaction.editReply(
+            buildWhitelistManagementView(entries, addCandidates, '', 3447003)
           );
-          const delOptions = entries.slice(0, 25).map(username =>
-            new StringSelectMenuOptionBuilder().setLabel(username).setValue(b64encode(username))
-          );
-
-          const components = [];
-          const addMenu = new StringSelectMenuBuilder()
-            .setCustomId('add_whitelist_select')
-            .setPlaceholder('Add to Whitelist (online)')
-            .addOptions(addOptions);
-          if (addOptions.length === 0) addMenu.setDisabled(true);
-          components.push(new ActionRowBuilder().addComponents(addMenu));
-
-          const delMenu = new StringSelectMenuBuilder()
-            .setCustomId('delete_whitelist_select')
-            .setPlaceholder('Delete from Whitelist')
-            .addOptions(delOptions);
-          if (delOptions.length === 0) delMenu.setDisabled(true);
-          components.push(new ActionRowBuilder().addComponents(delMenu));
-
-          await interaction.editReply({
-            embeds: [{
-              title: 'Whitelist Management',
-              description: `Total: **${total}**
-Add candidates online: **${onlineCount}**`,
-              color: 3447003,
-              timestamp: new Date()
-            }],
-            components
-          });
           //
         } catch (e) {
           console.error('[Discord] Whitelist button handler failed:', e.message);
@@ -3248,7 +3305,7 @@ Add candidates online: **${onlineCount}**`,
           components: []
         });
       }
-    } else if (interaction.isStringSelectMenu() && interaction.customId === 'delete_whitelist_select') {
+    } else if (interaction.isStringSelectMenu() && interaction.customId.startsWith('delete_whitelist_select')) {
 
       try {
         await interaction.deferUpdate();
@@ -3327,37 +3384,10 @@ Add candidates online: **${onlineCount}**`,
           // Update the message
           const allOnlinePlayers = bot ? Object.values(bot.players || {}).map(p => p.username) : [];
           const addCandidates = allOnlinePlayers.filter(u => !whitelist.some(n => n.toLowerCase() === u.toLowerCase()));
-          const addOptions = addCandidates.slice(0, 25).map(username =>
-            new StringSelectMenuOptionBuilder().setLabel(username).setValue(b64encode(username))
+
+          await interaction.editReply(
+            buildWhitelistManagementView(whitelist, addCandidates, `✅ Removed ${selectedUsername} from whitelist.`, 65280)
           );
-          const delOptions = whitelist.slice(0, 25).map(username =>
-            new StringSelectMenuOptionBuilder().setLabel(username).setValue(b64encode(username))
-          );
-
-          const components = [];
-          const addMenu = new StringSelectMenuBuilder()
-            .setCustomId('add_whitelist_select')
-            .setPlaceholder('Add to Whitelist (online)')
-            .addOptions(addOptions);
-          if (addOptions.length === 0) addMenu.setDisabled(true);
-          components.push(new ActionRowBuilder().addComponents(addMenu));
-
-          const delMenu = new StringSelectMenuBuilder()
-            .setCustomId('delete_whitelist_select')
-            .setPlaceholder('Delete from Whitelist')
-            .addOptions(delOptions);
-          if (delOptions.length === 0) delMenu.setDisabled(true);
-          components.push(new ActionRowBuilder().addComponents(delMenu));
-
-          await interaction.editReply({
-            embeds: [{
-              title: 'Whitelist Management',
-              description: `✅ Removed ${selectedUsername} from whitelist.\n\nTotal: **${whitelist.length}**\nAdd candidates online: **${addCandidates.length}**`,
-              color: 65280,
-              timestamp: new Date()
-            }],
-            components
-          });
 
           // Close the Whitelist Management message shortly after the action
           setTimeout(() => interaction.message?.delete().catch(() => {}), 1000);
@@ -3420,7 +3450,7 @@ Add candidates online: **${onlineCount}**`,
       const cf = farm.getStatus().config;
       await interaction.editReply({ embeds: [{ description: `✅ Obsidian farm started at \`(${cf.x}, ${cf.y}, ${cf.z})\`. Cauldron radius: ${cf.maxCauldronDist} blocks.`, color: 65280, timestamp: new Date() }] });
       setTimeout(() => interaction.deleteReply().catch(() => {}), 10000);
-    } else if (interaction.isStringSelectMenu() && interaction.customId === 'add_whitelist_select') {
+    } else if (interaction.isStringSelectMenu() && interaction.customId.startsWith('add_whitelist_select')) {
       await interaction.deferUpdate();
       const encodedUsername = interaction.values[0];
       const selectedUsername = b64decode(encodedUsername);
@@ -3454,37 +3484,15 @@ Add candidates online: **${onlineCount}**`,
 
         const allOnlinePlayers = bot ? Object.values(bot.players || {}).map(p => p.username) : [];
         const addCandidates = allOnlinePlayers.filter(u => !whitelist.some(n => n.toLowerCase() === u.toLowerCase()));
-        const addOptions = addCandidates.slice(0, 25).map(username =>
-          new StringSelectMenuOptionBuilder().setLabel(username).setValue(b64encode(username))
+
+        await interaction.editReply(
+          buildWhitelistManagementView(
+            whitelist,
+            addCandidates,
+            success ? `✅ Added ${selectedUsername} to whitelist.` : `No changes for ${selectedUsername}.`,
+            success ? 65280 : 16776960
+          )
         );
-        const delOptions = whitelist.slice(0, 25).map(username =>
-          new StringSelectMenuOptionBuilder().setLabel(username).setValue(b64encode(username))
-        );
-
-        const components = [];
-        const addMenu = new StringSelectMenuBuilder()
-          .setCustomId('add_whitelist_select')
-          .setPlaceholder('Add to Whitelist (online)')
-          .addOptions(addOptions);
-        if (addOptions.length === 0) addMenu.setDisabled(true);
-        components.push(new ActionRowBuilder().addComponents(addMenu));
-
-        const delMenu = new StringSelectMenuBuilder()
-          .setCustomId('delete_whitelist_select')
-          .setPlaceholder('Delete from Whitelist')
-          .addOptions(delOptions);
-        if (delOptions.length === 0) delMenu.setDisabled(true);
-        components.push(new ActionRowBuilder().addComponents(delMenu));
-
-        await interaction.editReply({
-          embeds: [{
-            title: 'Whitelist Management',
-            description: `${success ? `✅ Added ${selectedUsername} to whitelist.` : `No changes for ${selectedUsername}.`}\n\nTotal: **${whitelist.length}**\nAdd candidates online: **${addCandidates.length}**`,
-            color: success ? 65280 : 16776960,
-            timestamp: new Date()
-          }],
-          components
-        });
 
         // Close the Whitelist Management message shortly after the action
         setTimeout(() => interaction.message?.delete().catch(() => {}), 1000);
