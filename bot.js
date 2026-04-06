@@ -989,7 +989,7 @@ async function sendDiscordNotification(message, color = 3447003) {
   }
 }
 
-async function sendDiscordStatusMention(message) {
+async function sendDiscordStatusMention({ playerName, distance, serverAction = 'Bot is leaving the server.' }) {
   if (!DISCORD_CHANNEL_ID || !discordClient || !discordClient.isReady()) {
     console.log('[Discord] Bot not ready or no channel configured. Skipped mention.');
     return;
@@ -997,8 +997,23 @@ async function sendDiscordStatusMention(message) {
   try {
     const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
     if (channel && channel.isTextBased()) {
-      const mentionPrefix = DISCORD_OWNER_ID ? `<@${DISCORD_OWNER_ID}> ` : '@bdiev ';
-      const sentMessage = await channel.send({ content: `${mentionPrefix}${message}` });
+      const mentionPrefix = DISCORD_OWNER_ID ? `<@${DISCORD_OWNER_ID}>` : '@bdiev';
+      const sentMessage = await channel.send({
+        content: mentionPrefix,
+        embeds: [{
+          title: '🚨 Security Alert',
+          description: [
+            `A non-whitelisted player was detected near the bot.`,
+            '',
+            `**Player:** ${playerName}`,
+            `**Distance:** ${distance} blocks`,
+            `**Action:** ${serverAction}`
+          ].join('\n'),
+          color: 16711680,
+          footer: { text: 'WheatMagnate Security System' },
+          timestamp: new Date()
+        }]
+      });
       if (sentMessage && !excludedMessageIds.includes(sentMessage.id)) {
         excludedMessageIds.push(sentMessage.id);
       }
@@ -1008,82 +1023,112 @@ async function sendDiscordStatusMention(message) {
   }
 }
 
-function buildChunkedSelectRows(items, customIdBase, placeholder, { maxRows = 4, disabledLabel = 'Nothing available' } = {}) {
-  const rows = [];
-  const chunks = [];
+function clampSelectPage(page, items) {
+  const totalPages = Math.max(1, Math.ceil((items?.length || 0) / 25));
+  const numericPage = Number.isFinite(page) ? page : 0;
+  return Math.min(Math.max(0, numericPage), totalPages - 1);
+}
 
-  for (let i = 0; i < items.length && chunks.length < maxRows; i += 25) {
-    chunks.push(items.slice(i, i + 25));
-  }
+function buildPagedSelectRow(items, customIdBase, placeholder, page = 0, disabledLabel = 'Nothing available') {
+  const safePage = clampSelectPage(page, items);
+  const pageItems = items.slice(safePage * 25, safePage * 25 + 25);
 
-  if (chunks.length === 0) {
-    const emptyMenu = new StringSelectMenuBuilder()
-      .setCustomId(`${customIdBase}_0`)
-      .setPlaceholder(placeholder)
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(`${customIdBase}_${safePage}`)
+    .setPlaceholder(placeholder);
+
+  if (pageItems.length === 0) {
+    menu
       .setDisabled(true)
       .addOptions(
         new StringSelectMenuOptionBuilder()
           .setLabel(disabledLabel)
           .setValue(`${customIdBase}_empty`)
       );
-    rows.push(new ActionRowBuilder().addComponents(emptyMenu));
-    return rows;
+  } else {
+    menu.addOptions(
+      pageItems.map(username =>
+        new StringSelectMenuOptionBuilder().setLabel(username).setValue(b64encode(username))
+      )
+    );
   }
 
-  chunks.forEach((chunk, index) => {
-    const menu = new StringSelectMenuBuilder()
-      .setCustomId(`${customIdBase}_${index}`)
-      .setPlaceholder(chunks.length > 1 ? `${placeholder} (${index + 1}/${chunks.length})` : placeholder)
-      .addOptions(
-        chunk.map(username =>
-          new StringSelectMenuOptionBuilder().setLabel(username).setValue(b64encode(username))
-        )
-      );
-    rows.push(new ActionRowBuilder().addComponents(menu));
-  });
-
-  return rows;
+  return new ActionRowBuilder().addComponents(menu);
 }
 
-function formatWhitelistNames(entries, maxChars = 2200) {
-  if (!entries || entries.length === 0) return '_No whitelist players._';
+function buildWhitelistPagerRow(target, currentPage, totalPages, addPage, deletePage) {
+  if (totalPages <= 1) return null;
 
-  const lines = [];
-  let totalChars = 0;
+  const prevAddPage = target === 'add' ? currentPage - 1 : addPage;
+  const nextAddPage = target === 'add' ? currentPage + 1 : addPage;
+  const prevDeletePage = target === 'delete' ? currentPage - 1 : deletePage;
+  const nextDeletePage = target === 'delete' ? currentPage + 1 : deletePage;
 
-  for (const username of entries) {
-    const line = `• ${username}`;
-    if (totalChars + line.length + 1 > maxChars) {
-      const remaining = entries.length - lines.length;
-      if (remaining > 0) lines.push(`… and ${remaining} more`);
-      break;
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`whitelist_page_${prevAddPage}_${prevDeletePage}`)
+      .setLabel('◀ Previous')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(currentPage <= 0),
+    new ButtonBuilder()
+      .setCustomId(`whitelist_page_info_${target}_${currentPage}`)
+      .setLabel(`${target === 'add' ? 'Add list' : 'Whitelist'} ${currentPage + 1}/${totalPages}`)
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(true),
+    new ButtonBuilder()
+      .setCustomId(`whitelist_page_${nextAddPage}_${nextDeletePage}`)
+      .setLabel('Next ▶')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(currentPage >= totalPages - 1)
+  );
+}
+
+function formatPageList(items, page, emptyText) {
+  const safePage = clampSelectPage(page, items);
+  const pageItems = items.slice(safePage * 25, safePage * 25 + 25);
+  if (pageItems.length === 0) return emptyText;
+  return pageItems.map(username => `• ${username}`).join('\n');
+}
+
+async function getWhitelistEntriesForUI() {
+  if (pool) {
+    try {
+      const res = await pool.query('SELECT username FROM whitelist ORDER BY username ASC');
+      return res.rows.map(r => r.username);
+    } catch (dbErr) {
+      console.error('[DB] Failed to fetch whitelist for UI, falling back to file:', dbErr.message);
     }
-    lines.push(line);
-    totalChars += line.length + 1;
   }
-
-  return lines.join('\n');
+  return loadWhitelist();
 }
 
-function buildWhitelistManagementView(entries, addCandidates, notice = '', color = 3447003) {
+function buildWhitelistManagementView(entries, addCandidates, notice = '', color = 3447003, addPage = 0, deletePage = 0) {
+  const safeAddPage = clampSelectPage(addPage, addCandidates);
+  const safeDeletePage = clampSelectPage(deletePage, entries);
+  const addTotalPages = Math.max(1, Math.ceil(addCandidates.length / 25));
+  const deleteTotalPages = Math.max(1, Math.ceil(entries.length / 25));
+
   const components = [
-    ...buildChunkedSelectRows(addCandidates, 'add_whitelist_select', 'Add to Whitelist (online)', {
-      maxRows: 1,
-      disabledLabel: 'No online players available'
-    }),
-    ...buildChunkedSelectRows(entries, 'delete_whitelist_select', 'Delete from Whitelist', {
-      maxRows: 4,
-      disabledLabel: 'Whitelist is empty'
-    })
+    buildPagedSelectRow(addCandidates, 'add_whitelist_select', 'Add to Whitelist (online)', safeAddPage, 'No online players available'),
+    buildPagedSelectRow(entries, 'delete_whitelist_select', 'Delete from Whitelist', safeDeletePage, 'Whitelist is empty')
   ];
+
+  const addPagerRow = buildWhitelistPagerRow('add', safeAddPage, addTotalPages, safeAddPage, safeDeletePage);
+  const deletePagerRow = buildWhitelistPagerRow('delete', safeDeletePage, deleteTotalPages, safeAddPage, safeDeletePage);
+  if (addPagerRow) components.push(addPagerRow);
+  if (deletePagerRow) components.push(deletePagerRow);
 
   const description = [
     notice || null,
-    `Total: **${entries.length}**`,
+    `Total whitelist: **${entries.length}**`,
     `Add candidates online: **${addCandidates.length}**`,
     '',
-    '**Whitelist players:**',
-    formatWhitelistNames(entries)
+    `**Online players page ${safeAddPage + 1}/${addTotalPages}:**`,
+    formatPageList(addCandidates, safeAddPage, '_No online players available._'),
+    '',
+    `**Whitelist page ${safeDeletePage + 1}/${deleteTotalPages}:**`,
+    formatPageList(entries, safeDeletePage, '_Whitelist is empty._'),
+    (addTotalPages > 1 || deleteTotalPages > 1) ? '\n_Use the buttons below to browse all pages._' : null
   ].filter(part => part !== null).join('\n');
 
   return {
@@ -1827,7 +1872,11 @@ function startNearbyPlayerScanner() {
         sendDiscordNotification(`🚨 **ENEMY DETECTED**: **${entity.username}** entered range (${roundedDistance} blocks)! Bot paused until resume command.`, 16711680);
         if (Date.now() - lastEnemyMentionAt > 15000) {
           lastEnemyMentionAt = Date.now();
-          sendDiscordStatusMention(`non-whitelisted player detected nearby: **${entity.username}** (${roundedDistance} blocks). Bot is leaving the server.`);
+          sendDiscordStatusMention({
+            playerName: entity.username,
+            distance: roundedDistance,
+            serverAction: 'Bot is leaving the server.'
+          });
         }
         shouldReconnect = false;
         bot.quit(`Enemy detected: ${entity.username}`);
@@ -2034,6 +2083,24 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         });
         return;
       }
+      if (interaction.customId.startsWith('whitelist_page_')) {
+        if (interaction.customId.startsWith('whitelist_page_info_')) return;
+        await interaction.deferUpdate();
+
+        const match = interaction.customId.match(/^whitelist_page_(\d+)_(\d+)$/);
+        if (!match) return;
+
+        const addPage = Number.parseInt(match[1], 10);
+        const deletePage = Number.parseInt(match[2], 10);
+        const entries = await getWhitelistEntriesForUI();
+        const allOnlinePlayers = bot ? Object.values(bot.players || {}).map(p => p.username) : [];
+        const addCandidates = allOnlinePlayers.filter(u => !entries.some(n => n.toLowerCase() === u.toLowerCase()));
+
+        await interaction.editReply(
+          buildWhitelistManagementView(entries, addCandidates, '', 3447003, addPage, deletePage)
+        );
+        return;
+      }
       if (interaction.customId === 'pause_resume_button') {
         await interaction.deferUpdate(); // Defer update to avoid timeout
         lastCommandUser = interaction.user.tag;
@@ -2157,30 +2224,12 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         // Show two dropdowns: Add (online players not in whitelist) and Delete (whitelisted players)
         await interaction.deferReply();
         try {
-          //
-          let entries = [];
-          let source = 'database';
-          if (pool) {
-            try {
-              //
-              const res = await pool.query('SELECT username FROM whitelist ORDER BY username ASC');
-              entries = res.rows.map(r => r.username);
-            } catch (dbErr) {
-              console.error('[DB] Failed to fetch whitelist for UI, falling back to file:', dbErr.message);
-              source = 'file';
-              entries = loadWhitelist();
-            }
-          } else {
-            //
-            source = 'file';
-            entries = loadWhitelist();
-          }
-
+          const entries = await getWhitelistEntriesForUI();
           const allOnlinePlayers = bot ? Object.values(bot.players || {}).map(p => p.username) : [];
           const addCandidates = allOnlinePlayers.filter(u => !entries.some(n => n.toLowerCase() === u.toLowerCase()));
 
           await interaction.editReply(
-            buildWhitelistManagementView(entries, addCandidates, '', 3447003)
+            buildWhitelistManagementView(entries, addCandidates, '', 3447003, 0, 0)
           );
           //
         } catch (e) {
