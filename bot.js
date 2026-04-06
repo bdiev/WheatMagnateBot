@@ -1027,11 +1027,44 @@ function chatComponentToString(component) {
   return text;
 }
 
+function normalizeStatusReason(reason) {
+  return String(reason || '').replace(/\s+/g, ' ').trim();
+}
+
+function setDisconnectReason(reason) {
+  const cleanReason = normalizeStatusReason(reason);
+  lastDisconnectReason = cleanReason || null;
+}
+
+function buildDisconnectReason(reason, fallback = 'Connection lost') {
+  const cleanReason = normalizeStatusReason(reason);
+
+  if (!cleanReason) return fallback;
+  if (cleanReason === 'Restart command') {
+    return lastCommandUser ? `Restart requested by ${lastCommandUser}` : 'Restart requested';
+  }
+  if (cleanReason === 'Pause until resume') {
+    return lastCommandUser ? `Paused by ${lastCommandUser}` : 'Paused until resume';
+  }
+
+  const pauseMatch = cleanReason.match(/^Pause(?:d)?\s+(\d+)m$/i);
+  if (pauseMatch) {
+    return lastCommandUser ? `Paused for ${pauseMatch[1]}m by ${lastCommandUser}` : `Paused for ${pauseMatch[1]}m`;
+  }
+
+  if (cleanReason === 'socketClosed') {
+    return fallback;
+  }
+
+  return cleanReason;
+}
+
 var bot;
 let reconnectTimeout = 15000;
 let shouldReconnect = true;
 let reconnectTimeRemaining = 0;
 let reconnectTimestamp = 0;
+let lastDisconnectReason = null;
 let reconnectCountdownInterval = null;
 
 let foodMonitorInterval = null;
@@ -1286,9 +1319,11 @@ async function sendWhisperToDiscord(username, message) {
 
 // Function to get server status description
 function getStatusDescription() {
+  const reasonLine = lastDisconnectReason ? `\n📝 Reason: ${lastDisconnectReason}` : '';
+
   if (!bot || !bot.entity) {
     if (!shouldReconnect) {
-      return '⏸️ Bot paused';
+      return lastDisconnectReason ? `⏸️ ${lastDisconnectReason}` : '⏸️ Bot paused';
     }
     // Show countdown if reconnecting
     if (reconnectTimestamp > 0) {
@@ -1296,9 +1331,9 @@ function getStatusDescription() {
       const minutes = Math.floor(remaining / 60000);
       const seconds = Math.floor((remaining % 60000) / 1000);
       const timeStr = minutes > 0 ? `${minutes}:${seconds.toString().padStart(2, '0')}` : `${seconds}s`;
-      return `🔄 Reconnecting in ${timeStr}`;
+      return `🔄 Reconnecting in ${timeStr}${reasonLine}`;
     }
-    return '❌ Bot not connected';
+    return `❌ Bot not connected${reasonLine}`;
   }
 
   const playerCount = Object.keys(bot.players || {}).length;
@@ -1426,6 +1461,7 @@ function createBot() {
     }
     startTime = Date.now();
     lastCommandUser = null; // Reset after use
+    lastDisconnectReason = null;
   });
 
   bot.on('spawn', () => {
@@ -1509,13 +1545,19 @@ function createBot() {
 
     // Don't clear the global status update interval - let it continue
     // so status updates even when disconnected
+    const now = new Date();
+    const kyivTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Kyiv' }));
+    const hour = kyivTime.getHours();
+    const minute = kyivTime.getMinutes();
+    const isRestartTime = hour === 9 && minute >= 0 && minute <= 30;
+
+    if (reasonStr && reasonStr !== 'socketClosed') {
+      setDisconnectReason(buildDisconnectReason(reasonStr, isRestartTime ? 'Server restart/reload in progress' : 'Connection lost'));
+    } else if (!lastDisconnectReason) {
+      setDisconnectReason(isRestartTime ? 'Server restart/reload in progress' : 'Connection lost');
+    }
 
     if (shouldReconnect || reasonStr === 'socketClosed') {
-      const now = new Date();
-      const kyivTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Kyiv' }));
-      const hour = kyivTime.getHours();
-      const minute = kyivTime.getMinutes();
-      const isRestartTime = hour === 9 && minute >= 0 && minute <= 30;
       const timeout = isRestartTime ? 5 * 60 * 1000 : reconnectTimeout;
 
       // Set reconnect timestamp for countdown
@@ -1548,6 +1590,9 @@ function createBot() {
   bot.on('kicked', (reason) => {
     const reasonText = chatComponentToString(reason);
     console.log(`[!] Kicked: ${reasonText}`);
+    if (reasonText && reasonText.trim() !== '') {
+      setDisconnectReason(reasonText);
+    }
     
     // Check if it's restart time - don't spam notifications
     const now = new Date();
@@ -1601,6 +1646,7 @@ function createBot() {
       if (message === '!restart') {
         console.log(`[Command] restart by ${username}`);
         lastCommandUser = `${username} (in-game)`;
+        setDisconnectReason(`Restart requested by ${lastCommandUser}`);
         bot.quit('Restart command');
         return;
       }
@@ -1609,6 +1655,7 @@ function createBot() {
         console.log('[Command] pause 10m');
         lastCommandUser = `${username} (in-game)`;
         shouldReconnect = false;
+        setDisconnectReason(`Paused for 10m by ${lastCommandUser}`);
         bot.quit('Pause 10m');
         setTimeout(() => {
           console.log('[Bot] Pause ended.');
@@ -1625,6 +1672,7 @@ function createBot() {
           console.log(`[Command] pause ${minutes}m`);
           lastCommandUser = `${username} (in-game)`;
           shouldReconnect = false;
+          setDisconnectReason(`Paused for ${minutes}m by ${lastCommandUser}`);
           bot.quit(`Paused ${minutes}m`);
           setTimeout(() => {
             console.log('[Bot] Custom pause ended.');
@@ -2217,6 +2265,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           console.log(`[Button] pause by ${interaction.user.tag}`);
           const botToQuit = bot; // Save reference before setting to null
           shouldReconnect = false;
+          setDisconnectReason(`Paused by ${lastCommandUser}`);
           bot = null; // Set to null immediately for status display
           await updateStatusMessage(); // Update status before quit
           if (botToQuit) botToQuit.quit('Pause until resume');
@@ -2224,6 +2273,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           // Currently paused, resume it
           console.log(`[Button] resume by ${interaction.user.tag}`);
           shouldReconnect = true;
+          setDisconnectReason(null);
           createBot();
           // Status will be updated automatically when bot spawns
         }
@@ -3793,6 +3843,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
     if (message.content === '!restart') {
       console.log(`[Command] restart by ${message.author.tag} via Discord`);
       lastCommandUser = message.author.tag;
+      setDisconnectReason(`Restart requested by ${lastCommandUser}`);
       if (!bot) {
         shouldReconnect = true;
         createBot();
@@ -3818,6 +3869,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       lastCommandUser = message.author.tag;
       const botToQuit = bot;
       shouldReconnect = false;
+      setDisconnectReason(`Paused by ${lastCommandUser}`);
       bot = null;
       await updateStatusMessage();
       if (botToQuit) botToQuit.quit('Pause until resume');
@@ -3831,6 +3883,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         sendDiscordNotification(`Command: !pause ${minutes} by \`${message.author.tag}\` via Discord`, 16776960);
         shouldReconnect = false;
         const botToQuit = bot;
+        setDisconnectReason(`Paused for ${minutes}m by ${message.author.tag}`);
         bot = null;
         await updateStatusMessage();
         if (botToQuit) botToQuit.quit(`Paused ${minutes}m`);
@@ -3844,6 +3897,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
     }
 
     if (message.content === '!resume') {
+      setDisconnectReason(null);
       if (shouldReconnect) {
         await message.reply({
           embeds: [{
