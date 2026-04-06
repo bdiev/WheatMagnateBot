@@ -2061,26 +2061,16 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           try {
             const { changed, reconnectMode } = await whitelistAlertPlayerAndReconnect(selectedUsername, interaction.user.tag);
 
-            await interaction.message.edit({
-              embeds: [{
-                title: '✅ Security Alert Resolved',
-                description: [
-                  `**Player:** ${selectedUsername}`,
-                  `**Action:** Added to whitelist by ${interaction.user.tag}`,
-                  `**Bot:** ${reconnectMode === 'immediate' ? 'Reconnecting to the server now.' : 'Reconnect is enabled and will happen automatically.'}`,
-                  changed ? '**Result:** whitelist updated.' : '**Result:** player was already in whitelist.'
-                ].join('\n'),
-                color: 65280,
-                footer: { text: 'WheatMagnate Security System' },
-                timestamp: new Date()
-              }],
-              components: []
-            }).catch(() => {});
+            await interaction.message.delete().catch(async () => {
+              await interaction.message.edit({ components: [] }).catch(() => {});
+            });
 
             await interaction.editReply({
-              content: reconnectMode === 'immediate'
-                ? `✅ ${selectedUsername} added to whitelist. Bot is reconnecting now.`
-                : `✅ ${selectedUsername} is approved. Bot will reconnect automatically.`
+              content: changed
+                ? (reconnectMode === 'immediate'
+                    ? `✅ ${selectedUsername} added to whitelist. Alert removed, bot is reconnecting now.`
+                    : `✅ ${selectedUsername} added to whitelist. Alert removed, bot will reconnect automatically.`)
+                : `ℹ️ ${selectedUsername} is already in whitelist. Alert removed.`
             });
             setTimeout(() => interaction.deleteReply().catch(() => {}), 10_000);
           } catch (err) {
