@@ -1869,7 +1869,6 @@ function startNearbyPlayerScanner() {
         // Enemy detected!
         const roundedDistance = Math.round(distance);
         console.log(`[Bot] Enemy detected: ${entity.username} (${roundedDistance} blocks)`);
-        sendDiscordNotification(`🚨 **ENEMY DETECTED**: **${entity.username}** entered range (${roundedDistance} blocks)! Bot paused until resume command.`, 16711680);
         if (Date.now() - lastEnemyMentionAt > 15000) {
           lastEnemyMentionAt = Date.now();
           sendDiscordStatusMention({
