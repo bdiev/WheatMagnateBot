@@ -70,6 +70,7 @@
   - 🗑️ **Drop** - Inventory management interface
   - 📋 **Whitelist** - Add/remove authorized players (owner only)
   - ⚙️ **Chat Settings** - Ignore/unignore player chat (owner only)
+  - **Playtime** - Private whitelist playtime view with owner-only initialization forms
 - **Modal Forms** - Rich input interfaces for messaging and commands
 - **Select Menus** - Dropdown selections for players, items, and keywords
 
@@ -345,6 +346,14 @@ CREATE TABLE player_activity (
     last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     last_online TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     is_online BOOLEAN DEFAULT FALSE
+);
+
+-- Accumulated whitelist playtime
+CREATE TABLE player_playtime (
+    username VARCHAR(255) PRIMARY KEY,
+    total_seconds BIGINT NOT NULL DEFAULT 0,
+    tracking_since TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Mention keyword subscriptions
