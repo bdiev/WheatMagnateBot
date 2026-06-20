@@ -1028,6 +1028,20 @@ function chatComponentToString(component) {
   return text;
 }
 
+function resolveRelayedChatUsername(username, jsonMessage) {
+  if (!jsonMessage) return username;
+
+  const rawMessage = typeof jsonMessage.toString === 'function'
+    ? jsonMessage.toString()
+    : chatComponentToString(jsonMessage);
+  const cleanRawMessage = normalizeOutboundChat(rawMessage);
+  const relayMatch = cleanRawMessage.match(/^<([A-Za-z0-9_]{1,16})>\s*>\s*[A-Za-z0-9_]{1,16}\s*:/);
+
+  if (!relayMatch) return username;
+  debugLog(`[Chat] Corrected relayed sender ${username} -> ${relayMatch[1]} from: "${cleanRawMessage}"`);
+  return relayMatch[1];
+}
+
 function normalizeStatusReason(reason) {
   return String(reason || '').replace(/\s+/g, ' ').trim();
 }
@@ -1130,6 +1144,13 @@ function normalizeOutboundChat(message) {
     .trim();
 }
 
+function normalizeOutboundEchoComparable(message) {
+  return normalizeOutboundChat(message)
+    .replace(/[^\x20-\x7E]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function sendMinecraftChat(message) {
   if (!bot || typeof bot.chat !== 'function') return false;
   const normalized = normalizeOutboundChat(message);
@@ -1158,10 +1179,28 @@ function consumeOutboundSelfEcho(message) {
     else recentOutboundChat.delete(key);
   }
 
-  const timestamps = recentOutboundChat.get(normalized);
+  let matchedKey = normalized;
+  let timestamps = recentOutboundChat.get(matchedKey);
+
+  // Some servers corrupt unsupported characters (notably emoji) in the echoed
+  // chat event. Fall back to the stable ASCII portion so that echo is still
+  // consumed instead of being mirrored back to Discord as a second message.
+  if (!timestamps || timestamps.length === 0) {
+    const comparable = normalizeOutboundEchoComparable(normalized);
+    if (comparable) {
+      for (const [key, pendingTimestamps] of recentOutboundChat.entries()) {
+        if (pendingTimestamps.length > 0 && normalizeOutboundEchoComparable(key) === comparable) {
+          matchedKey = key;
+          timestamps = pendingTimestamps;
+          break;
+        }
+      }
+    }
+  }
+
   if (!timestamps || timestamps.length === 0) return false;
   timestamps.shift();
-  if (timestamps.length === 0) recentOutboundChat.delete(normalized);
+  if (timestamps.length === 0) recentOutboundChat.delete(matchedKey);
   return true;
 }
 
@@ -1734,7 +1773,9 @@ function createBot() {
   });
 
   // ------- CHAT COMMANDS -------
-  bot.on('chat', async (username, message) => {
+  bot.on('chat', async (username, message, translate, jsonMessage) => {
+    username = resolveRelayedChatUsername(username, jsonMessage);
+
     // Handle commands from bdiev_
     if (username === 'bdiev_') {
       if (message === '!restart') {
