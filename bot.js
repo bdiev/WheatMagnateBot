@@ -1611,7 +1611,10 @@ function getStatusDescription() {
 
   const playerCount = Object.keys(bot.players || {}).length;
   const onlinePlayers = Object.values(bot.players || {}).map(p => p.username);
-  const whitelistOnline = onlinePlayers.filter(username => ignoredUsernames.some(name => name.toLowerCase() === username.toLowerCase()));
+  const whitelistOnline = onlinePlayers.filter(username =>
+    username.toLowerCase() !== bot.username.toLowerCase() &&
+    ignoredUsernames.some(name => name.toLowerCase() === username.toLowerCase())
+  );
   const nearbyPlayers = getNearbyPlayers();
   const avgTps = realTps !== null ? realTps.toFixed(1) : (tpsHistory.length > 0 ? (tpsHistory.reduce((a, b) => a + b, 0) / tpsHistory.length).toFixed(1) : 'Calculating...');
 
