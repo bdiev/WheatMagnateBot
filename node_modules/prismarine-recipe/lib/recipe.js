@@ -1,10 +1,12 @@
 let recipes
+let items
 const RecipeItem = require('./recipe_item')
 
 module.exports = loader
 
 function loader (registry) {
   recipes = registry.recipes
+  items = registry.items || {}
   return Recipe
 }
 
@@ -60,7 +62,7 @@ function computeDelta (recipe) {
   if (recipe.outShape) applyShape(recipe.outShape, 1)
   if (recipe.ingredients) applyIngredients(recipe.ingredients)
   // add the result
-  add(recipe.result)
+  add(RecipeItem.clone(recipe.result))
   return delta
 
   // add to delta
@@ -92,9 +94,30 @@ function computeDelta (recipe) {
   function applyIngredients (ingredients) {
     let i
     for (i = 0; i < ingredients.length; ++i) {
-      add(ingredients[i])
+      add(RecipeItem.clone(ingredients[i]))
     }
   }
+}
+
+function normalizeMetadata (recipeItem) {
+  if (recipeItem.metadata == null || recipeItem.id === -1) return recipeItem
+  // Vanilla Minecraft uses 32767 as the wildcard damage value in recipes
+  if (recipeItem.metadata >= 32767) {
+    recipeItem.metadata = null
+    return recipeItem
+  }
+  // If the item has known variations and the metadata doesn't match any of them,
+  // treat it as a wildcard. This handles cases like minecraft-data using block
+  // metadata (e.g. 12 for all-bark log) in recipes, which doesn't correspond
+  // to any valid item variant (logs as items only have metadata 0-5).
+  const itemData = items[recipeItem.id]
+  if (itemData && itemData.variations) {
+    const validMetadata = itemData.variations.map(function (v) { return v.metadata })
+    if (validMetadata.indexOf(recipeItem.metadata) === -1) {
+      recipeItem.metadata = null
+    }
+  }
+  return recipeItem
 }
 
 function reformatShape (shape) {
@@ -103,7 +126,7 @@ function reformatShape (shape) {
   for (y = 0; y < shape.length; ++y) {
     row = shape[y]
     out[y] = outRow = new Array(row.length)
-    for (x = 0; x < outRow.length; ++x) { outRow[x] = RecipeItem.fromEnum(row[x]) }
+    for (x = 0; x < outRow.length; ++x) { outRow[x] = normalizeMetadata(RecipeItem.fromEnum(row[x])) }
   }
   return out
 }
@@ -111,7 +134,7 @@ function reformatShape (shape) {
 function reformatIngredients (ingredients) {
   const out = new Array(ingredients.length)
   for (let i = 0; i < out.length; ++i) {
-    const item = RecipeItem.fromEnum(ingredients[i])
+    const item = normalizeMetadata(RecipeItem.fromEnum(ingredients[i]))
     item.count = -1
     out[i] = item
   }

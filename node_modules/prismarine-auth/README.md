@@ -78,6 +78,13 @@ flow.getMinecraftJavaToken({ fetchProfile: true }).then(console.log)
 
 ### getMinecraftBedrockToken
 See [docs/API.md](docs/API.md) and [example](examples).
+It returns an object with `{ chain, token }` for Bedrock login.
+
+### getMinecraftBedrockChain
+See [docs/API.md](docs/API.md).
+
+### getMinecraftBedrockMultiplayerToken
+See [docs/API.md](docs/API.md).
 
 ### getMinecraftBedrockServicesToken
 ```js
