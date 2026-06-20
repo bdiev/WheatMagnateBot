@@ -1646,12 +1646,17 @@ function createStatusButtons() {
           .setLabel('🕒 Seen')
           .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
-          .setCustomId('mentions_button')
-          .setLabel('🔔 Mentions')
+          .setCustomId('playtime_button')
+          .setLabel('Playtime')
+          .setEmoji('⏱️')
           .setStyle(ButtonStyle.Secondary)
       ),
     new ActionRowBuilder()
       .addComponents(
+        new ButtonBuilder()
+          .setCustomId('mentions_button')
+          .setLabel('🔔 Mentions')
+          .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
           .setCustomId('drop_button')
           .setLabel('🗑️ Drop')
@@ -1667,11 +1672,7 @@ function createStatusButtons() {
         new ButtonBuilder()
           .setCustomId('obsidian_farm_button')
           .setLabel(farm.getStatus().enabled ? '⛏️ Obsidian 🟢' : '⛏️ Obsidian')
-          .setStyle(farm.getStatus().enabled ? ButtonStyle.Success : ButtonStyle.Secondary),
-        new ButtonBuilder()
-          .setCustomId('playtime_button')
-          .setLabel('Playtime')
-          .setStyle(ButtonStyle.Secondary)
+          .setStyle(farm.getStatus().enabled ? ButtonStyle.Success : ButtonStyle.Secondary)
       )
   ];
 }
@@ -2658,7 +2659,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           }
         }, 120000);
       } else if (interaction.customId === 'playtime_button') {
-        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        await interaction.deferReply();
         const playtimeData = await getWhitelistPlaytime();
         if (playtimeData.error) {
           await interaction.editReply({
@@ -2674,17 +2675,24 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
         const players = playtimeData.players || [];
         const visiblePlayers = players.slice(0, 50);
-        const lines = visiblePlayers.map((player, index) =>
-          `**${index + 1}. ${player.username}** - ${formatPlaytime(player.total_seconds)}`
-        );
+        const rankWidth = Math.max(1, String(visiblePlayers.length).length);
+        const lines = visiblePlayers.map((player, index) => {
+          const rank = String(index + 1).padStart(rankWidth);
+          const username = player.username.slice(0, 16).padEnd(16);
+          return `${rank}  ${username}  ${formatPlaytime(player.total_seconds)}`;
+        });
         if (players.length > visiblePlayers.length) {
           lines.push(`...and ${players.length - visiblePlayers.length} more`);
         }
+        const header = `${'#'.padStart(rankWidth)}  ${'PLAYER'.padEnd(16)}  PLAYTIME`;
+        const description = lines.length > 0
+          ? `\`\`\`text\n${header}\n${'-'.repeat(header.length)}\n${lines.join('\n')}\n\`\`\``
+          : 'No whitelist players found.';
 
         await interaction.editReply({
           embeds: [{
-            title: `Whitelist Playtime (${players.length} players)`,
-            description: lines.join('\n') || 'No whitelist players found.',
+            title: `⏱️ Whitelist Playtime · ${players.length} players`,
+            description,
             color: 3447003,
             timestamp: new Date(),
             footer: { text: 'Updated automatically while players are online' }

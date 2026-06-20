@@ -70,7 +70,7 @@
   - 🗑️ **Drop** - Inventory management interface
   - 📋 **Whitelist** - Add/remove authorized players (owner only)
   - ⚙️ **Chat Settings** - Ignore/unignore player chat (owner only)
-  - **Playtime** - Private whitelist playtime view; the owner initializes totals by DM using `PlayerName: 192 Days, 23 Hours, 32 Minutes`
+  - **Playtime** - Public compact whitelist playtime table; the owner initializes totals by DM using `PlayerName: 192 Days, 23 Hours, 32 Minutes`
 - **Modal Forms** - Rich input interfaces for messaging and commands
 - **Select Menus** - Dropdown selections for players, items, and keywords
 
