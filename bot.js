@@ -1636,6 +1636,7 @@ function getStatusDescription() {
 
   const nearbyNames = nearbyPlayers
     .map(player => getCanonicalWhitelistUsername(player.username) || player.username)
+    .map(username => `\`${username}\``)
     .join(', ') || 'None';
   const whitelistOnlineDisplay = whitelistOnline.length > 0 ? whitelistOnline.map(u => `\`${u}\``).join(', ') : 'None';
   return `✅ Bot **${bot.username}** connected to \`${config.host}\`\n` +
