@@ -549,7 +549,7 @@ async function migrateWhitelistToDB() {
   try {
     const fileWhitelist = loadWhitelist();
     for (const username of fileWhitelist) {
-      await pool.query('INSERT INTO whitelist (username, added_by) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING', [username, 'migration']);
+      await pool.query('INSERT INTO whitelist (username, added_by) VALUES ($1, $2) ON CONFLICT DO NOTHING', [username, 'migration']);
     }
     console.log('[DB] Whitelist migrated to database');
   } catch (err) {
@@ -566,7 +566,7 @@ async function addUsernameToWhitelist(targetUsername, addedBy = 'system') {
   if (pool) {
     try {
       const insertResult = await pool.query(
-        'INSERT INTO whitelist (username, added_by) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING',
+        'INSERT INTO whitelist (username, added_by) VALUES ($1, $2) ON CONFLICT DO NOTHING',
         [safeUsername, addedBy]
       );
       const newWhitelist = await loadWhitelistFromDB();
@@ -832,6 +832,31 @@ async function initDatabase() {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
+    await pool.query(`
+      DELETE FROM whitelist newer
+      USING whitelist older
+      WHERE LOWER(newer.username) = LOWER(older.username)
+        AND newer.id > older.id
+    `);
+    await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS whitelist_username_lower_idx ON whitelist (LOWER(username))');
+    await pool.query(`
+      CREATE TEMP TABLE deduplicated_player_playtime ON COMMIT DROP AS
+      SELECT LOWER(username) AS username_key,
+             SUM(total_seconds)::BIGINT AS total_seconds
+      FROM player_playtime
+      GROUP BY LOWER(username);
+      TRUNCATE player_playtime;
+      INSERT INTO player_playtime (username, total_seconds)
+      SELECT COALESCE(
+               (SELECT w.username FROM whitelist w
+                WHERE LOWER(w.username) = d.username_key
+                LIMIT 1),
+               d.username_key
+             ),
+             d.total_seconds
+      FROM deduplicated_player_playtime d;
+    `);
+    await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS player_playtime_username_lower_idx ON player_playtime (LOWER(username))');
     // A previous process may have stopped without a final flush. Never count
     // offline time after a crash as playtime.
     await pool.query('UPDATE player_playtime SET tracking_since = NULL WHERE tracking_since IS NOT NULL');
@@ -1073,7 +1098,9 @@ async function syncWhitelistPlaytime(onlineUsernames = getOnlineWhitelistUsernam
     for (const username of onlineUsernames) {
       await client.query(`
         INSERT INTO player_playtime (username, tracking_since)
-        VALUES ($1, NOW())
+        SELECT username, NOW()
+        FROM whitelist
+        WHERE LOWER(username) = LOWER($1)
         ON CONFLICT (username)
         DO UPDATE SET tracking_since = NOW(), updated_at = NOW()
       `, [username]);
@@ -1103,7 +1130,7 @@ async function getWhitelistPlaytime() {
                     ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - pt.tracking_since)))::BIGINT)
                END AS total_seconds
       FROM whitelist w
-      LEFT JOIN player_playtime pt ON LOWER(pt.username) = LOWER(w.username)
+      LEFT JOIN player_playtime pt ON pt.username = w.username
       ORDER BY total_seconds DESC, LOWER(w.username)
     `);
     return { players: result.rows };
@@ -2005,7 +2032,7 @@ function createBot() {
               sendDiscordNotification('Database not configured.', 16711680);
               return;
             }
-            await pool.query('INSERT INTO whitelist (username, added_by) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING', [targetUsername, username]);
+            await pool.query('INSERT INTO whitelist (username, added_by) VALUES ($1, $2) ON CONFLICT DO NOTHING', [targetUsername, username]);
             // Reload whitelist
             const newWhitelist = await loadWhitelistFromDB();
             ignoredUsernames.length = 0;
@@ -4301,7 +4328,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         let source = 'database';
         if (pool) {
           try {
-            await pool.query('INSERT INTO whitelist (username, added_by) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING', [targetUsername, message.author.tag]);
+            await pool.query('INSERT INTO whitelist (username, added_by) VALUES ($1, $2) ON CONFLICT DO NOTHING', [targetUsername, message.author.tag]);
             const newWhitelist = await loadWhitelistFromDB();
             ignoredUsernames.length = 0;
             ignoredUsernames.push(...newWhitelist);
@@ -4351,7 +4378,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           await message.reply('Database not configured.');
           return;
         }
-        await pool.query('INSERT INTO whitelist (username, added_by) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING', [targetUsername, message.author.tag]);
+        await pool.query('INSERT INTO whitelist (username, added_by) VALUES ($1, $2) ON CONFLICT DO NOTHING', [targetUsername, message.author.tag]);
         // Reload whitelist
         const newWhitelist = await loadWhitelistFromDB();
         ignoredUsernames.length = 0;
