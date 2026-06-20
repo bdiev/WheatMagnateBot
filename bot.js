@@ -78,7 +78,8 @@ let tpsTabInterval = null;
 const excludedMessageIds = [];
 const pendingAuthLinks = [];
 const sentAuthCodes = new Set();
-const authMessageIds = new Set();
+const authMessageIds = new Map(); // messageId -> DM channelId
+const recentOutboundChat = new Map(); // normalized message -> timestamps awaiting self-echo suppression
 const WHISPER_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const WHISPER_MARK_TTL_MS = 3000; // how long to remember whisper markers for suppression
 const PENDING_CHAT_DELAY_MS = 400; // delay chat sends to detect whispers first
@@ -1066,10 +1067,103 @@ let reconnectTimeRemaining = 0;
 let reconnectTimestamp = 0;
 let lastDisconnectReason = null;
 let reconnectCountdownInterval = null;
+let reconnectTimer = null;
+let resumeTimer = null;
 
 let foodMonitorInterval = null;
 let playerScannerInterval = null;
 let lastEnemyMentionAt = 0;
+
+function clearReconnectTimer() {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  reconnectTimestamp = 0;
+}
+
+function clearResumeTimer() {
+  if (resumeTimer) {
+    clearTimeout(resumeTimer);
+    resumeTimer = null;
+  }
+}
+
+function scheduleReconnect(delayMs, logMessage) {
+  clearReconnectTimer();
+  reconnectTimestamp = Date.now() + delayMs;
+  if (logMessage) console.log(logMessage);
+
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    reconnectTimestamp = 0;
+    if (!shouldReconnect || bot) return;
+    createBot();
+  }, delayMs);
+}
+
+function scheduleResume(delayMs, logMessage) {
+  clearReconnectTimer();
+  clearResumeTimer();
+  reconnectTimestamp = Date.now() + delayMs;
+  if (logMessage) console.log(logMessage);
+
+  resumeTimer = setTimeout(() => {
+    resumeTimer = null;
+    reconnectTimestamp = 0;
+    shouldReconnect = true;
+    if (!bot) createBot();
+  }, delayMs);
+}
+
+function resumeBot() {
+  shouldReconnect = true;
+  clearReconnectTimer();
+  clearResumeTimer();
+  if (!bot) createBot();
+}
+
+function normalizeOutboundChat(message) {
+  return String(message || '')
+    .replace(/\u00a7[0-9a-fk-or]/gi, '')
+    .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
+    .trim();
+}
+
+function sendMinecraftChat(message) {
+  if (!bot || typeof bot.chat !== 'function') return false;
+  const normalized = normalizeOutboundChat(message);
+  const cutoff = Date.now() - 10_000;
+  for (const [key, timestamps] of recentOutboundChat.entries()) {
+    const fresh = timestamps.filter(timestamp => timestamp >= cutoff);
+    if (fresh.length > 0) recentOutboundChat.set(key, fresh);
+    else recentOutboundChat.delete(key);
+  }
+  if (normalized) {
+    const timestamps = recentOutboundChat.get(normalized) || [];
+    timestamps.push(Date.now());
+    recentOutboundChat.set(normalized, timestamps);
+  }
+  bot.chat(message);
+  return true;
+}
+
+function consumeOutboundSelfEcho(message) {
+  const normalized = normalizeOutboundChat(message);
+  const cutoff = Date.now() - 10_000;
+
+  for (const [key, timestamps] of recentOutboundChat.entries()) {
+    const fresh = timestamps.filter(timestamp => timestamp >= cutoff);
+    if (fresh.length > 0) recentOutboundChat.set(key, fresh);
+    else recentOutboundChat.delete(key);
+  }
+
+  const timestamps = recentOutboundChat.get(normalized);
+  if (!timestamps || timestamps.length === 0) return false;
+  timestamps.shift();
+  if (timestamps.length === 0) recentOutboundChat.delete(normalized);
+  return true;
+}
 
 
 // Helper function to send messages to Discord
@@ -1446,13 +1540,18 @@ async function updateStatusMessage() {
 }
 
 function createBot() {
-  // Before creating a new bot, remove the old bot's listeners (if any remain)
+  clearReconnectTimer();
+
+  // Never replace a live/connecting instance. Late events from the old instance
+  // could otherwise clear the new global reference and leave an orphaned socket.
   if (bot) {
-    try { bot.removeAllListeners(); } catch {}
+    console.log('[Bot] Connection attempt skipped: a bot instance already exists.');
+    return;
   }
 
   lastTickTime = 0; // Reset TPS tracking for new bot
   bot = mineflayer.createBot(config);
+  const createdBot = bot;
   bot.loadPlugin(pathfinder);
 
   bot.on('login', async () => {
@@ -1502,7 +1601,7 @@ function createBot() {
         }
       }
       if (!found && bot && bot.chat) {
-        bot.chat('/tps');
+        sendMinecraftChat('/tps');
       }
     }, 10000); // Check every 10 seconds
 
@@ -1536,6 +1635,7 @@ function createBot() {
 
 
   bot.on('end', (reason) => {
+    if (bot !== createdBot) return;
     const reasonStr = chatComponentToString(reason);
     clearIntervals();
     farm.stop(null); // halt obsidian farm loop on disconnect
@@ -1557,27 +1657,21 @@ function createBot() {
       setDisconnectReason(isRestartTime ? 'Server restart/reload in progress' : 'Connection lost');
     }
 
-    if (shouldReconnect || reasonStr === 'socketClosed') {
+    if (shouldReconnect) {
       const timeout = isRestartTime ? 5 * 60 * 1000 : reconnectTimeout;
 
-      // Set reconnect timestamp for countdown
-      reconnectTimestamp = Date.now() + timeout;
-
       if (isRestartTime) {
-        console.log('[!] Restart window. Reconnecting in 5 minutes...');
+        scheduleReconnect(timeout, '[!] Restart window. Reconnecting in 5 minutes...');
         // No Discord notification - status message will show countdown
       } else if (reasonStr !== 'Restart command') {
-        console.log('[!] Disconnected. Reconnecting in 15 seconds...');
+        scheduleReconnect(timeout, `[!] Disconnected. Reconnecting in ${Math.round(timeout / 1000)} seconds...`);
         // No Discord notification - status message will show countdown
+      } else {
+        scheduleReconnect(timeout);
       }
-      
-      setTimeout(() => {
-        reconnectTimestamp = 0;
-        createBot();
-      }, timeout);
     } else {
       console.log('[!] Manual pause. No reconnect.');
-      reconnectTimestamp = 0;
+      if (!resumeTimer) clearReconnectTimer();
       // Status will be updated by interval
     }
   });
@@ -1655,13 +1749,10 @@ function createBot() {
         console.log('[Command] pause 10m');
         lastCommandUser = `${username} (in-game)`;
         shouldReconnect = false;
+        clearReconnectTimer();
         setDisconnectReason(`Paused for 10m by ${lastCommandUser}`);
         bot.quit('Pause 10m');
-        setTimeout(() => {
-          console.log('[Bot] Pause ended.');
-          shouldReconnect = true;
-          createBot();
-        }, 10 * 60 * 1000);
+        scheduleResume(10 * 60 * 1000, '[Bot] Paused for 10 minutes.');
         return;
       }
 
@@ -1672,13 +1763,11 @@ function createBot() {
           console.log(`[Command] pause ${minutes}m`);
           lastCommandUser = `${username} (in-game)`;
           shouldReconnect = false;
+          clearReconnectTimer();
+          clearResumeTimer();
           setDisconnectReason(`Paused for ${minutes}m by ${lastCommandUser}`);
           bot.quit(`Paused ${minutes}m`);
-          setTimeout(() => {
-            console.log('[Bot] Custom pause ended.');
-            shouldReconnect = true;
-            createBot();
-          }, minutes * 60 * 1000);
+          scheduleResume(minutes * 60 * 1000, `[Bot] Paused for ${minutes} minutes.`);
         }
         return;
       }
@@ -1767,12 +1856,14 @@ function createBot() {
       return;
     }
     
-    // Skip any messages from the bot itself to avoid echoing /msg or relayed messages back into Discord
-    if (username === bot.username) {
+    // Suppress only exact echoes of messages we sent. Plugin/server responses can
+    // also use our username and still need to reach the Discord game-chat channel.
+    const isSelfMessage = username === bot.username;
+    if (isSelfMessage && consumeOutboundSelfEcho(message)) {
       return;
     }
-    
-    if (ignoredChatUsernames.includes(username.toLowerCase())) {
+
+    if (!isSelfMessage && ignoredChatUsernames.includes(username.toLowerCase())) {
       return;
     }
 
@@ -2263,18 +2354,16 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         if (shouldReconnect && bot) {
           // Currently running, pause it
           console.log(`[Button] pause by ${interaction.user.tag}`);
-          const botToQuit = bot; // Save reference before setting to null
           shouldReconnect = false;
+          clearReconnectTimer();
+          clearResumeTimer();
           setDisconnectReason(`Paused by ${lastCommandUser}`);
-          bot = null; // Set to null immediately for status display
-          await updateStatusMessage(); // Update status before quit
-          if (botToQuit) botToQuit.quit('Pause until resume');
+          bot.quit('Pause until resume');
         } else {
           // Currently paused, resume it
           console.log(`[Button] resume by ${interaction.user.tag}`);
-          shouldReconnect = true;
           setDisconnectReason(null);
-          createBot();
+          resumeBot();
           // Status will be updated automatically when bot spawns
         }
       } else if (interaction.customId === 'say_button') {
@@ -3005,7 +3094,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const message = interaction.fields.getTextInputValue('message_input');
       if (message && bot) {
-        bot.chat(message);
+        sendMinecraftChat(message);
         console.log(`[Modal] Say "${message}" by ${interaction.user.tag}`);
         
         // Delete ephemeral reply after bot sends message
@@ -3054,7 +3143,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           command = `/msg ${username} ${replyMessage}`;
           console.log(`[Reply] Sent /msg ${username} ${replyMessage} by ${interaction.user.tag}`);
         }
-        bot.chat(command);
+        sendMinecraftChat(command);
 
         // Mark outbound whisper to suppress any unexpected public echo
         let outText = replyMessage;
@@ -3169,7 +3258,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           command = `/msg ${selectedUsername} ${messageText}`;
           console.log(`[Message] Sent /msg ${selectedUsername} ${messageText} by ${interaction.user.tag}`);
         }
-        bot.chat(command);
+        sendMinecraftChat(command);
 
         // Mark outbound whisper(s) to suppress any unexpected public echoes
         const normalized = displayMessage
@@ -3721,7 +3810,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           const command = `/msg ${mcUsername} ${truncated}`;
           
           try {
-            bot.chat(command);
+            sendMinecraftChat(command);
             console.log(`[Whisper Relay] Sent to ${mcUsername}: ${truncated} (by ${message.author.tag})`);
           } catch (e) {
             console.error('[Whisper Relay] Failed to send message:', e.message);
@@ -3768,11 +3857,11 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         username = username.replace(/@/g, '@\u200B');
         // Don't add username prefix for commands (starting with / or !)
         if (text.startsWith('/') || text.startsWith('!')) {
-          bot.chat(text);
+          sendMinecraftChat(text);
           console.log(`[Chat] Sent "${text}" by ${message.author.tag}`);
         } else {
           // Send without zero-width space so Minecraft chat is clean
-          bot.chat(`[${username}] ${text}`);
+          sendMinecraftChat(`[${username}] ${text}`);
           console.log(`[Chat] Sent "[${username}] ${text}" by ${message.author.tag}`);
         }
         
@@ -3869,9 +3958,9 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       lastCommandUser = message.author.tag;
       const botToQuit = bot;
       shouldReconnect = false;
+      clearReconnectTimer();
+      clearResumeTimer();
       setDisconnectReason(`Paused by ${lastCommandUser}`);
-      bot = null;
-      await updateStatusMessage();
       if (botToQuit) botToQuit.quit('Pause until resume');
     }
 
@@ -3882,16 +3971,11 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         console.log(`[Command] pause ${minutes}m by ${message.author.tag} via Discord`);
         sendDiscordNotification(`Command: !pause ${minutes} by \`${message.author.tag}\` via Discord`, 16776960);
         shouldReconnect = false;
+        clearReconnectTimer();
         const botToQuit = bot;
         setDisconnectReason(`Paused for ${minutes}m by ${message.author.tag}`);
-        bot = null;
-        await updateStatusMessage();
         if (botToQuit) botToQuit.quit(`Paused ${minutes}m`);
-        setTimeout(() => {
-          console.log('[Bot] Custom pause ended.');
-          shouldReconnect = true;
-          createBot();
-        }, minutes * 60 * 1000);
+        scheduleResume(minutes * 60 * 1000, `[Bot] Paused for ${minutes} minutes.`);
         await message.reply(`Bot paused for ${minutes} minutes.`);
       }
     }
@@ -3910,9 +3994,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       }
       console.log(`[Command] resume by ${message.author.tag} via Discord`);
       lastCommandUser = message.author.tag;
-      shouldReconnect = true;
       await updateStatusMessage();
-      createBot();
+      resumeBot();
     }
 
     // Whitelist management via command
@@ -4040,7 +4123,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       }
       const text = message.content.slice(5).trim();
       if (text) {
-        bot.chat(text);
+        sendMinecraftChat(text);
         console.log(`[Command] Say "${text}" by ${message.author.tag} via Discord`);
         await message.reply({
           embeds: [{
@@ -4136,17 +4219,17 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
   });
 }
 
-// Send Microsoft auth link to Discord and protect message from cleaner
+// Send Microsoft auth link only to the configured owner's Discord DM.
 async function sendAuthLinkToDiscord(url) {
-  if (!DISCORD_CHANNEL_ID || !discordClient) return;
+  if (!DISCORD_OWNER_ID || !discordClient) return;
   try {
     if (!discordClient.isReady()) {
       pendingAuthLinks.push(url);
       return;
     }
-    const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
-    if (channel && channel.isTextBased()) {
-      const sentMessage = await channel.send({
+    const owner = await discordClient.users.fetch(DISCORD_OWNER_ID);
+    if (owner) {
+      const sentMessage = await owner.send({
         embeds: [{
           title: 'Microsoft Login',
           description: url,
@@ -4154,8 +4237,7 @@ async function sendAuthLinkToDiscord(url) {
           timestamp: new Date()
         }]
       });
-      excludedMessageIds.push(sentMessage.id);
-      authMessageIds.add(sentMessage.id);
+      authMessageIds.set(sentMessage.id, sentMessage.channelId);
     }
   } catch (e) {
     console.error('Failed to send auth link to Discord:', e.message);
@@ -4164,13 +4246,13 @@ async function sendAuthLinkToDiscord(url) {
 
 // Delete or neutralize previously sent Microsoft Login messages after successful sign-in
 async function cleanupAuthMessages() {
-  if (!DISCORD_CHANNEL_ID || !discordClient || !discordClient.isReady()) return;
+  if (!discordClient || !discordClient.isReady()) return;
   if (authMessageIds.size === 0) return;
   try {
-    const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
-    if (!channel || !channel.isTextBased()) return;
-    for (const id of Array.from(authMessageIds)) {
+    for (const [id, channelId] of Array.from(authMessageIds.entries())) {
       try {
+        const channel = await discordClient.channels.fetch(channelId);
+        if (!channel || !channel.isTextBased()) continue;
         const msg = await channel.messages.fetch(id);
         // Remove buttons first to prevent further clicks
         try { await msg.edit({ components: [] }); } catch {}
@@ -4178,8 +4260,6 @@ async function cleanupAuthMessages() {
         await msg.delete();
       } catch {}
       authMessageIds.delete(id);
-      const idx = excludedMessageIds.indexOf(id);
-      if (idx !== -1) excludedMessageIds.splice(idx, 1);
     }
   } catch (e) {
     console.error('[Discord] cleanupAuthMessages failed:', e.message);
@@ -4191,7 +4271,7 @@ async function cleanupAuthMessages() {
   const AUTH_LINK_REGEX = /https?:\/\/(?:www\.)?microsoft\.com\/link\?otc=([A-Z0-9]{8})/i;
   const AUTH_CODE_REGEX = /use\s+the\s+code\s+([A-Z0-9]{8})/i;
   const MSA_SIGNED_REGEX = /\[msa\]\s+Signed in with Microsoft/i;
-  const BASE_URL = 'http://microsoft.com/link?otc=';
+  const BASE_URL = 'https://microsoft.com/link?otc=';
 
   function intercept(chunk) {
     try {
