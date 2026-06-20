@@ -1591,6 +1591,15 @@ async function sendWhisperToDiscord(username, message) {
 }
 
 // Function to get server status description
+function getCanonicalWhitelistUsername(username) {
+  const normalized = String(username || '').toLowerCase().replace(/_+$/, '');
+  if (!normalized) return null;
+
+  return ignoredUsernames
+    .filter(name => name.toLowerCase().replace(/_+$/, '') === normalized)
+    .sort((a, b) => b.length - a.length)[0] || null;
+}
+
 function getStatusDescription() {
   const reasonLine = lastDisconnectReason ? `\n📝 Reason: ${lastDisconnectReason}` : '';
 
@@ -1611,14 +1620,16 @@ function getStatusDescription() {
 
   const playerCount = Object.keys(bot.players || {}).length;
   const onlinePlayers = Object.values(bot.players || {}).map(p => p.username);
-  const whitelistOnline = onlinePlayers.filter(username =>
-    username.toLowerCase() !== bot.username.toLowerCase() &&
-    ignoredUsernames.some(name => name.toLowerCase() === username.toLowerCase())
-  );
+  const whitelistOnline = [...new Set(onlinePlayers
+    .filter(username => username.toLowerCase() !== bot.username.toLowerCase())
+    .map(getCanonicalWhitelistUsername)
+    .filter(Boolean))];
   const nearbyPlayers = getNearbyPlayers();
   const avgTps = realTps !== null ? realTps.toFixed(1) : (tpsHistory.length > 0 ? (tpsHistory.reduce((a, b) => a + b, 0) / tpsHistory.length).toFixed(1) : 'Calculating...');
 
-  const nearbyNames = nearbyPlayers.map(p => p.username).join(', ') || 'None';
+  const nearbyNames = nearbyPlayers
+    .map(player => getCanonicalWhitelistUsername(player.username) || player.username)
+    .join(', ') || 'None';
   const whitelistOnlineDisplay = whitelistOnline.length > 0 ? whitelistOnline.map(u => `\`${u}\``).join(', ') : 'None';
   return `✅ Bot **${bot.username}** connected to \`${config.host}\`\n` +
     `👥 Players online: ${playerCount}\n` +
