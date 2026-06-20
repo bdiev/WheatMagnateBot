@@ -1591,13 +1591,20 @@ async function sendWhisperToDiscord(username, message) {
 }
 
 // Function to get server status description
+const canonicalPlayerNames = new Map([
+  ['bdiev', 'bdiev_']
+]);
+
 function getCanonicalWhitelistUsername(username) {
   const normalized = String(username || '').toLowerCase().replace(/_+$/, '');
   if (!normalized) return null;
 
-  return ignoredUsernames
-    .filter(name => name.toLowerCase().replace(/_+$/, '') === normalized)
-    .sort((a, b) => b.length - a.length)[0] || null;
+  const whitelistMatches = ignoredUsernames
+    .filter(name => name.toLowerCase().replace(/_+$/, '') === normalized);
+  if (whitelistMatches.length === 0) return null;
+
+  return canonicalPlayerNames.get(normalized) ||
+    whitelistMatches.sort((a, b) => b.length - a.length)[0];
 }
 
 function getStatusDescription() {
