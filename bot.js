@@ -1,7 +1,7 @@
 require('dotenv').config();
 const mineflayer = require('mineflayer');
 const fs = require('fs');
-const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ChannelType, PermissionsBitField, MessageFlags } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ChannelType, PermissionsBitField, MessageFlags } = require('discord.js');
 const { Pool } = require('pg');
 const { pathfinder } = require('mineflayer-pathfinder');
 const farm = require('./obsidian_farm');
@@ -867,7 +867,8 @@ async function initDatabase() {
 
 // Discord bot client
 const discordClient = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.DirectMessages, GatewayIntentBits.MessageContent],
+  partials: [Partials.Channel]
 });
 
 if (DISCORD_BOT_TOKEN) {
@@ -2680,18 +2681,6 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           lines.push(`...and ${players.length - visiblePlayers.length} more`);
         }
 
-        const components = [];
-        if (interaction.user.id === DISCORD_OWNER_ID) {
-          components.push(
-            new ActionRowBuilder().addComponents(
-              new ButtonBuilder()
-                .setCustomId('set_playtime_button')
-                .setLabel('Set initial playtime')
-                .setStyle(ButtonStyle.Primary)
-            )
-          );
-        }
-
         await interaction.editReply({
           embeds: [{
             title: `Whitelist Playtime (${players.length} players)`,
@@ -2699,35 +2688,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             color: 3447003,
             timestamp: new Date(),
             footer: { text: 'Updated automatically while players are online' }
-          }],
-          components
+          }]
         });
-      } else if (interaction.customId === 'set_playtime_button') {
-        if (interaction.user.id !== DISCORD_OWNER_ID) {
-          await interaction.reply({ content: 'Only the owner can set playtime.', flags: MessageFlags.Ephemeral });
-          return;
-        }
-
-        const modal = new ModalBuilder()
-          .setCustomId('set_playtime_modal')
-          .setTitle('Set initial playtime');
-        const usernameInput = new TextInputBuilder()
-          .setCustomId('playtime_username')
-          .setLabel('Whitelist player')
-          .setPlaceholder('e.g. bdiev_')
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true);
-        const durationInput = new TextInputBuilder()
-          .setCustomId('playtime_duration')
-          .setLabel('Existing playtime')
-          .setPlaceholder('391d 18h 17m or 391 Days, 18 Hours')
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true);
-        modal.addComponents(
-          new ActionRowBuilder().addComponents(usernameInput),
-          new ActionRowBuilder().addComponents(durationInput)
-        );
-        await interaction.showModal(modal);
       } else if (interaction.customId === 'whitelist_button') {
         // Restrict Whitelist to owner/admin only
         if (interaction.user.id !== DISCORD_OWNER_ID) {
@@ -4001,32 +3963,6 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           console.error('Failed to send outer error reply:', replyErr.message);
         }
       }
-    } else if (interaction.isModalSubmit() && interaction.customId === 'set_playtime_modal') {
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-      if (interaction.user.id !== DISCORD_OWNER_ID) {
-        await interaction.editReply({ content: 'Only the owner can set playtime.' });
-        return;
-      }
-
-      const username = interaction.fields.getTextInputValue('playtime_username').trim();
-      const duration = interaction.fields.getTextInputValue('playtime_duration').trim();
-      const totalSeconds = parsePlaytime(duration);
-      if (totalSeconds === null) {
-        await interaction.editReply({
-          content: 'Invalid time. Use a format such as `391d 18h 17m` or `391 Days, 18 Hours, 17 Minutes`.'
-        });
-        return;
-      }
-
-      const result = await setPlayerPlaytime(username, totalSeconds);
-      if (result.error) {
-        await interaction.editReply({ content: `Failed to set playtime: ${result.error}` });
-        return;
-      }
-
-      await interaction.editReply({
-        content: `Set **${result.username}** playtime to **${formatPlaytime(totalSeconds)}**.`
-      });
     } else if (interaction.isModalSubmit() && interaction.customId === 'obsidian_farm_modal') {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       if (interaction.user.id !== DISCORD_OWNER_ID) {
@@ -4083,6 +4019,33 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
   discordClient.on('messageCreate', async message => {
     if (message.author.bot) return;
+
+    if (!message.guild) {
+      if (message.author.id !== DISCORD_OWNER_ID) return;
+
+      const match = message.content.trim().match(/^([A-Za-z0-9_]{1,16})\s*:\s*(.+)$/s);
+      if (!match) {
+        await message.reply('Use `PlayerName: 192 Days, 23 Hours, 32 Minutes`.');
+        return;
+      }
+
+      const [, username, duration] = match;
+      const totalSeconds = parsePlaytime(duration);
+      if (totalSeconds === null) {
+        await message.reply('Invalid time. Use `192 Days, 23 Hours, 32 Minutes` or `192d 23h 32m`.');
+        return;
+      }
+
+      const result = await setPlayerPlaytime(username, totalSeconds);
+      if (result.error) {
+        await message.reply(`Failed to update playtime: ${result.error}`);
+        return;
+      }
+
+      await message.reply(`Updated **${result.username}** playtime to **${formatPlaytime(totalSeconds)}**.`);
+      console.log(`[Playtime] ${result.username} set to ${formatPlaytime(totalSeconds)} by owner via DM`);
+      return;
+    }
 
     // Dialog channel relay: convert plain text to /msg for the mapped Minecraft player
     for (const [key, channelId] of whisperChannels.entries()) {
