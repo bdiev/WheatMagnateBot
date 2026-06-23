@@ -43,7 +43,9 @@ const OBSIDIAN_DIG_STABILITY_MS = 50;
 const OBSIDIAN_DIG_MAX_ATTEMPTS = 3;
 const CAULDRON_FILL_ATTEMPTS_PER_BLOCK = 2;
 const CAULDRON_FILL_CONFIRM_TIMEOUT_MS = 650;
-const LAVA_PLACEMENT_CONFIRM_TIMEOUT_MS = 300;
+// Wait generously for the server/chunk update. This does not resend the bucket
+// action, so a slow response cannot cause placement at a second location.
+const LAVA_PLACEMENT_CONFIRM_TIMEOUT_MS = 5_000;
 const FARM_RETRY_DELAY_MS = 2_000;
 const LOW_PICKAXE_DURABILITY_CODE = 'LOW_PICKAXE_DURABILITY';
 const RESOURCE_EXHAUSTED_CODE = 'RESOURCE_EXHAUSTED';
@@ -968,6 +970,14 @@ async function pourLava(bot, targetPos) {
   }
 
   if (!await waitForLavaPlacement(bot, x, y, z)) {
+    writeFarmDebug('safe_placement_unconfirmed', {
+      target: targetPos.toString(),
+      anchor: ref.block.position.toString(),
+      face: ref.face.toString(),
+      targetBlock: bot.blockAt(targetPos)?.name || null,
+      heldItem: bot.heldItem?.name || null,
+      waitedMs: LAVA_PLACEMENT_CONFIRM_TIMEOUT_MS
+    });
     throw createPlacementSafetyError(
       `Server did not confirm lava at exact target (${x}, ${y}, ${z}); farm stopped without retry.`
     );
