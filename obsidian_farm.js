@@ -35,6 +35,20 @@ const MAX_INTERACT_DISTANCE = 4.25;
 const TOP_FACE_AIM_Y_OFFSET = 0.98;
 const OBSIDIAN_DIG_TIMEOUT_PADDING_MS = 8_000;
 const OBSIDIAN_DIG_MIN_TIMEOUT_MS = 25_000;
+const WEAK_PLACEMENT_ANCHORS = new Set([
+  'hopper',
+  'bamboo_trapdoor',
+  'oak_trapdoor',
+  'spruce_trapdoor',
+  'birch_trapdoor',
+  'jungle_trapdoor',
+  'acacia_trapdoor',
+  'dark_oak_trapdoor',
+  'mangrove_trapdoor',
+  'cherry_trapdoor',
+  'crimson_trapdoor',
+  'warped_trapdoor'
+]);
 // ── Internal state ─────────────────────────────────────────────────────────────
 const farm = {
   enabled:         false,
@@ -166,6 +180,32 @@ function getFaceCursor(face) {
     0.5 + face.y * 0.5,
     0.5 + face.z * 0.5
   );
+}
+
+function isWeakPlacementAnchor(block) {
+  return !block ||
+    WEAK_PLACEMENT_ANCHORS.has(block.name) ||
+    block.name.endsWith('_leaves') ||
+    block.name.endsWith('_trapdoor');
+}
+
+function getPlacementAnchorScore(ref) {
+  let score = 0;
+  if (ref.block?.boundingBox === 'block') score += 20;
+  if (!isWeakPlacementAnchor(ref.block)) score += 100;
+  if (ref.label === 'east') score += 6;
+  if (ref.label === 'west' || ref.label === 'south' || ref.label === 'north') score += 4;
+  if (ref.label === 'down') score += 1;
+  return score;
+}
+
+async function waitForHeldItem(bot, itemName, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (bot.heldItem?.name === itemName) return;
+    await sleep(50);
+  }
+  throw new Error(`Expected to hold ${itemName}, but holding ${bot.heldItem?.name || 'nothing'}`);
 }
 
 async function useBucketOnFace(bot, referenceBlock, face) {
@@ -396,6 +436,7 @@ async function pourLava(bot, targetPos) {
   }
 
   await bot.equip(lavaBucket, 'hand');
+  await waitForHeldItem(bot, 'lava_bucket');
   await sleep(INTERACT_SETTLE_MS);
 
   // Try all adjacent directions and use any non-replaceable block as a click surface.
@@ -416,14 +457,12 @@ async function pourLava(bot, targetPos) {
     }))
     .filter(ref => ref.block && !isReplaceableForLava(ref.block));
 
-  const fullBlockReferences = references.filter(ref => ref.block?.boundingBox === 'block');
-  const placementReferences = fullBlockReferences.length > 0 ? fullBlockReferences : references;
+  const strongReferences = references.filter(ref => !isWeakPlacementAnchor(ref.block));
+  const placementReferences = strongReferences.length > 0 ? strongReferences : references;
 
-  // Prefer the block under the target, then other stable full blocks.
+  // Prefer ordinary solid side blocks. Hoppers/trapdoors/leaves are weak fallback anchors.
   placementReferences.sort((a, b) => {
-    const aScore = (a.label === 'down' ? 3 : 0) + (a.block?.boundingBox === 'block' ? 2 : 0);
-    const bScore = (b.label === 'down' ? 3 : 0) + (b.block?.boundingBox === 'block' ? 2 : 0);
-    return bScore - aScore;
+    return getPlacementAnchorScore(b) - getPlacementAnchorScore(a);
   });
 
   if (placementReferences.length === 0) {
@@ -434,7 +473,6 @@ async function pourLava(bot, targetPos) {
   let clicked = false;
   let clickErrors = [];
   const maxAttempts = 3;
-  bot.setControlState('sneak', true);
   try {
     for (let attempt = 1; attempt <= maxAttempts && !clicked; attempt++) {
       for (const ref of placementReferences) {
@@ -449,6 +487,8 @@ async function pourLava(bot, targetPos) {
         await bot.lookAt(hitPoint, true);
         await sleep(100);
 
+        const shouldSneak = isWeakPlacementAnchor(ref.block);
+        bot.setControlState('sneak', shouldSneak);
         try {
           await useBucketOnFace(bot, ref.block, ref.face);
         } catch (e) {
@@ -456,6 +496,18 @@ async function pourLava(bot, targetPos) {
         }
 
         await sleep(INTERACT_SETTLE_MS + 260);
+        if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
+          clicked = true;
+          break;
+        }
+
+        try {
+          await bot.activateItem();
+          await sleep(INTERACT_SETTLE_MS + 260);
+        } catch (e) {
+          clickErrors.push(`activateItem#${attempt}/${ref.label}: ${e?.message || 'failed'}`);
+        }
+
         if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
           clicked = true;
           break;
