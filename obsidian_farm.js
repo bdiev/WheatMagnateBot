@@ -37,10 +37,10 @@ const FARM_CONFIG_FILE = 'obsidian_farm_config.json';
 const FARM_DEBUG_LOG_FILE = 'obsidian_farm_debug.log';
 const MAX_INTERACT_DISTANCE = 4.25;
 const TOP_FACE_AIM_Y_OFFSET = 0.98;
-const OBSIDIAN_DIG_BASE_HOLD_MS = 9_550;
-const OBSIDIAN_DIG_RETRY_HOLD_BONUS_MS = 1_000;
-const OBSIDIAN_DIG_CONFIRM_TIMEOUT_MS = 5_000;
-const OBSIDIAN_DIG_STABILITY_MS = 250;
+const OBSIDIAN_DIG_BASE_HOLD_MS = 2_500;
+const OBSIDIAN_DIG_RETRY_HOLD_BONUS_MS = 500;
+const OBSIDIAN_DIG_CONFIRM_TIMEOUT_MS = 2_000;
+const OBSIDIAN_DIG_STABILITY_MS = 150;
 const OBSIDIAN_DIG_MAX_ATTEMPTS = 3;
 const WEAK_PLACEMENT_ANCHORS = new Set([
   'hopper',
@@ -403,8 +403,8 @@ async function digBlockWithTimeout(bot, block, attempt) {
   const startedAt = Date.now();
   writeFarmDebug('dig_start', {
     ...getMiningDebugState(bot, block, attempt, expectedDigTime, holdMs, face),
-    measuredServerDigTimeMs: 9_328,
-    timingSource: attempt === 1 ? 'measured_server_result' : 'measured_server_result_with_retry_bonus'
+    measuredManualDigTimeMs: 2_500,
+    timingSource: attempt === 1 ? 'manual_server_measurement' : 'manual_server_measurement_with_retry_bonus'
   });
 
   const eventName = `blockUpdate:${block.position}`;
