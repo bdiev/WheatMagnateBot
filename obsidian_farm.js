@@ -37,13 +37,6 @@ const MIN_PICKAXE_REMAINING_PERCENT = 5;
 const FARM_CONFIG_FILE = 'obsidian_farm_config.json';
 const MAX_INTERACT_DISTANCE = 4.25;
 const TOP_FACE_AIM_Y_OFFSET = 0.98;
-const TARGET_NEIGHBOR_OFFSETS = [
-  [0, 0, 0],
-  [0, 1, 0], [0, -1, 0],
-  [1, 0, 0], [-1, 0, 0],
-  [0, 0, 1], [0, 0, -1],
-];
-
 // ── Internal state ─────────────────────────────────────────────────────────────
 const farm = {
   enabled:         false,
@@ -148,63 +141,25 @@ function isReplaceableForLava(block) {
   return replaceable.has(block.name);
 }
 
-function getEffectiveTargetPos(bot) {
+function getConfiguredTargetPos() {
   const { x, y, z } = farm.config;
-  const configured = new Vec3(x, y, z);
-  const configuredBlock = bot.blockAt(configured);
-
-  if (isReplaceableForLava(configuredBlock)) return configured;
-
-  // If configured block is occupied (e.g. hopper), use the block above as lava target.
-  const above = configured.offset(0, 1, 0);
-  const aboveBlock = bot.blockAt(above);
-  if (isReplaceableForLava(aboveBlock)) return above;
-
-  return configured;
+  return new Vec3(x, y, z);
 }
 
-function hasLavaNearTarget(bot, x, y, z) {
-  return TARGET_NEIGHBOR_OFFSETS.some(([dx, dy, dz]) => {
-    const b = bot.blockAt(new Vec3(x + dx, y + dy, z + dz));
-    return b?.name === 'lava';
-  });
-}
-
-function posKey(pos) {
-  return `${pos.x},${pos.y},${pos.z}`;
-}
-
-function getTargetNeighborPositions(targetPos) {
-  const { x, y, z } = targetPos;
-  return TARGET_NEIGHBOR_OFFSETS.map(([dx, dy, dz]) => new Vec3(x + dx, y + dy, z + dz));
-}
-
-function snapshotObsidianNearTarget(bot, targetPos) {
-  const keys = new Set();
-  for (const pos of getTargetNeighborPositions(targetPos)) {
-    const block = bot.blockAt(pos);
-    if (block?.name === 'obsidian') keys.add(posKey(block.position));
+function getKnownBlockAt(bot, pos, label) {
+  const block = bot.blockAt(pos);
+  if (!block) {
+    throw new Error(
+      `Cannot inspect ${label} at (${pos.x}, ${pos.y}, ${pos.z}); block is not loaded. ` +
+      'Move the bot closer to the farm target.'
+    );
   }
-  return keys;
-}
-
-function findObsidianNearTarget(bot, targetPos, ignoredKeys = new Set()) {
-  for (const pos of getTargetNeighborPositions(targetPos)) {
-    const block = bot.blockAt(pos);
-    if (block?.name === 'obsidian' && !ignoredKeys.has(posKey(block.position))) {
-      return block.position;
-    }
-  }
-  return null;
+  return block;
 }
 
 function didLavaPlacementLikelySucceed(bot, x, y, z) {
   const targetBlock = bot.blockAt(new Vec3(x, y, z));
-  if (targetBlock?.name === 'lava') return true;
-
-  // Fallback: if bucket was spent and lava appeared adjacent, placement probably succeeded with flow.
-  const stillHasLavaBucket = bot.inventory.items().some(i => i.name === 'lava_bucket');
-  return !stillHasLavaBucket && hasLavaNearTarget(bot, x, y, z);
+  return targetBlock?.name === 'lava' || targetBlock?.name === 'obsidian';
 }
 
 function getAdjacentBlockDebug(bot, x, y, z) {
@@ -378,6 +333,11 @@ async function pourLava(bot, targetPos) {
   const lavaBucket = bot.inventory.items().find(i => i.name === 'lava_bucket');
   if (!lavaBucket) throw new Error('Lava bucket disappeared before pouring');
 
+  const targetBlock = getKnownBlockAt(bot, targetPos, 'lava placement target');
+  if (!isReplaceableForLava(targetBlock) && targetBlock.name !== 'lava') {
+    throw new Error(`Cannot place lava at (${x}, ${y}, ${z}); target contains ${targetBlock.name}`);
+  }
+
   await bot.equip(lavaBucket, 'hand');
   await sleep(INTERACT_SETTLE_MS);
 
@@ -433,25 +393,9 @@ async function pourLava(bot, targetPos) {
         await sleep(100);
 
         try {
-          await bot.activateBlock(ref.block);
+          await bot.placeBlock(ref.block, ref.face);
         } catch (e) {
-          clickErrors.push(`activateBlock#${attempt}/${ref.label}: ${e?.message || 'failed'}`);
-        }
-
-        if (!didLavaPlacementLikelySucceed(bot, x, y, z)) {
-          try {
-            await bot.placeBlock(ref.block, ref.face);
-          } catch (e2) {
-            clickErrors.push(`placeBlock#${attempt}/${ref.label}: ${e2?.message || 'failed'}`);
-          }
-        }
-
-        if (!didLavaPlacementLikelySucceed(bot, x, y, z)) {
-          try {
-            await bot.activateItem();
-          } catch (e3) {
-            clickErrors.push(`activateItem#${attempt}/${ref.label}: ${e3?.message || 'failed'}`);
-          }
+          clickErrors.push(`placeBlock#${attempt}/${ref.label}: ${e?.message || 'failed'}`);
         }
 
         await sleep(INTERACT_SETTLE_MS + 260);
@@ -480,16 +424,16 @@ async function pourLava(bot, targetPos) {
   await sleep(INTERACT_SETTLE_MS);
 }
 
-/** Phase 5: wait until the target block, or the block lava flowed into, becomes obsidian. */
-async function waitForObsidian(bot, targetPos, ignoredObsidianKeys = new Set()) {
+/** Phase 5: wait until the exact target block becomes obsidian. */
+async function waitForObsidian(bot, targetPos) {
   const { x, y, z } = targetPos;
   farm.phase = 'waiting';
 
   const deadline = Date.now() + OBSIDIAN_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (!farm.enabled) return null;
-    const obsidianPos = findObsidianNearTarget(bot, new Vec3(x, y, z), ignoredObsidianKeys);
-    if (obsidianPos) return obsidianPos;
+    const block = bot.blockAt(new Vec3(x, y, z));
+    if (block?.name === 'obsidian') return new Vec3(x, y, z);
     await sleep(500);
   }
   return null;
@@ -548,33 +492,23 @@ async function mineObsidian(bot, targetPos) {
 async function runCycle(bot, notify) {
   if (!farm.config) throw new Error('Farm not configured — no target coordinates');
 
-  const configuredPos = new Vec3(farm.config.x, farm.config.y, farm.config.z);
-  const configuredBlock = bot.blockAt(configuredPos);
-
-  // Always clear pre-existing obsidian at configured coordinates first.
-  if (configuredBlock?.name === 'obsidian') {
-    await mineObsidian(bot, configuredPos);
-  }
-
-  const targetPos = getEffectiveTargetPos(bot);
+  const targetPos = getConfiguredTargetPos();
   const { x, y, z } = targetPos;
-  let targetBlock = bot.blockAt(targetPos);
+  let targetBlock = getKnownBlockAt(bot, targetPos, 'obsidian farm target');
   const hasLavaBucket = bot.inventory.items().some(i => i.name === 'lava_bucket');
 
-  // Safety: if obsidian exists at effective placement target, clear it too.
+  // Always clear pre-existing obsidian at the exact configured coordinates before touching buckets.
   if (targetBlock?.name === 'obsidian') {
     await mineObsidian(bot, targetPos);
-    targetBlock = bot.blockAt(targetPos);
+    targetBlock = getKnownBlockAt(bot, targetPos, 'obsidian farm target after mining');
   }
 
-  const readyObsidianPos = findObsidianNearTarget(bot, targetPos);
-  if (readyObsidianPos && !hasLavaNearTarget(bot, x, y, z)) {
-    await mineObsidian(bot, readyObsidianPos);
-    farm.cyclesCompleted++;
-    return;
+  if (!isReplaceableForLava(targetBlock) && targetBlock.name !== 'lava') {
+    throw new Error(
+      `Target (${x}, ${y}, ${z}) is occupied by ${targetBlock.name}. ` +
+      'Clear it or set the exact lava/obsidian coordinate.'
+    );
   }
-
-  const existingObsidianNearTarget = snapshotObsidianNearTarget(bot, targetPos);
 
   // If lava is already at target, skip fill/pour and only wait for conversion.
   if (targetBlock?.name !== 'lava') {
@@ -584,11 +518,11 @@ async function runCycle(bot, notify) {
     await pourLava(bot, targetPos);
   }
 
-  const obsidianPos = await waitForObsidian(bot, targetPos, existingObsidianNearTarget);
+  const obsidianPos = await waitForObsidian(bot, targetPos);
   if (!obsidianPos) {
     notify(
       '⚠️ Lava did not convert to obsidian within 90s.\n' +
-      'Make sure flowing water meets the lava at or beside the target position.\n' +
+      'Make sure flowing water meets the lava at the exact target position.\n' +
       'Farm paused — use the button to restart.',
       16776960
     );
