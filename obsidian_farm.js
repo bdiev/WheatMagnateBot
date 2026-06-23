@@ -333,12 +333,6 @@ async function waitForHeldItem(bot, itemName, timeoutMs = 2_000) {
 }
 
 async function useBucketOnFace(bot, referenceBlock, face, expectedTarget) {
-  if (typeof bot._genericPlace !== 'function') {
-    throw createPlacementSafetyError(
-      'Safe coordinate-bound placement is unavailable; refusing to use the lava bucket.'
-    );
-  }
-
   const configuredTarget = getConfiguredTargetPos();
   const packetDestination = referenceBlock.position.plus(face);
   const currentReference = bot.blockAt(referenceBlock.position);
@@ -356,12 +350,25 @@ async function useBucketOnFace(bot, referenceBlock, face, expectedTarget) {
   }
 
   const cursor = getFaceCursor(face);
-  await bot._genericPlace(referenceBlock, face, {
-    delta: cursor,
-    forceLook: true,
-    swingArm: 'right',
-    showHand: true
-  });
+  const hitPoint = referenceBlock.position.offset(cursor.x, cursor.y, cursor.z);
+  await bot.lookAt(hitPoint, true);
+
+  const aimedBlock = typeof bot.blockAtCursor === 'function'
+    ? bot.blockAtCursor(MAX_INTERACT_DISTANCE + 0.25)
+    : null;
+  if (
+    !aimedBlock?.position?.equals(referenceBlock.position) ||
+    aimedBlock.face !== faceVectorToDirection(face)
+  ) {
+    throw createPlacementSafetyError(
+      'Aim changed before bucket use; refusing to use the lava bucket.'
+    );
+  }
+
+  // This server handles buckets through the ordinary use-item action and
+  // ray-traces the face from the included rotation. The ray has just been
+  // verified to hit the anchor face whose adjacent block is exactly target.
+  bot.activateItem();
 }
 
 function getAdjacentBlockDebug(bot, x, y, z) {
@@ -907,68 +914,49 @@ async function pourLava(bot, targetPos) {
   await waitForHeldItem(bot, 'lava_bucket');
   await sleep(INTERACT_SETTLE_MS);
 
-  // A bucket packet targets an anchor block plus one exact face. Only accept an
-  // anchor whose computed destination is the configured target.
-  const sideOffsets = [
-    { dx: 0, dy: -1, dz: 0, label: 'down' },
-    { dx: 1, dy: 0, dz: 0, label: 'east' },
-    { dx: -1, dy: 0, dz: 0, label: 'west' },
-    { dx: 0, dy: 0, dz: 1, label: 'south' },
-    { dx: 0, dy: 0, dz: -1, label: 'north' },
-    { dx: 0, dy: 1, dz: 0, label: 'up' },
-  ];
-
-  const references = sideOffsets
-    .map(off => ({
-      label: off.label,
-      face: new Vec3(-off.dx, -off.dy, -off.dz),
-      block: bot.blockAt(new Vec3(x + off.dx, y + off.dy, z + off.dz)),
-    }))
-    .filter(ref =>
-      ref.block &&
-      ref.block.boundingBox === 'block' &&
-      !isReplaceableForLava(ref.block) &&
-      ref.block.position.plus(ref.face).equals(targetPos)
-    );
-
-  if (references.length === 0) {
-    const adj = getAdjacentBlockDebug(bot, x, y, z);
+  // The farm has one allow-listed placement surface: the west face of the
+  // smooth-stone block at X + 1. That face points exactly into target.
+  const ref = {
+    label: 'east',
+    face: new Vec3(-1, 0, 0),
+    block: bot.blockAt(new Vec3(x + 1, y, z))
+  };
+  if (
+    ref.block?.name !== 'smooth_stone' ||
+    ref.block.boundingBox !== 'block' ||
+    !ref.block.position.plus(ref.face).equals(targetPos)
+  ) {
     throw createPlacementSafetyError(
-      `No safe full-block anchor points exactly to target (${x}, ${y}, ${z}). Adjacent: ${adj}`
+      `Required smooth_stone anchor is missing at (${x + 1}, ${y}, ${z}); refusing bucket use.`
     );
   }
 
-  let ref = null;
-  for (const candidate of references) {
-    const cursor = getFaceCursor(candidate.face);
-    const hitPoint = candidate.block.position.offset(cursor.x, cursor.y, cursor.z);
-    const clickDistance = bot.entity?.position?.distanceTo(hitPoint);
-    if (!Number.isFinite(clickDistance) || clickDistance > MAX_INTERACT_DISTANCE) continue;
-
-    await bot.lookAt(hitPoint, true);
-    await sleep(25);
-
-    const aimedBlock = typeof bot.blockAtCursor === 'function'
-      ? bot.blockAtCursor(MAX_INTERACT_DISTANCE + 0.25)
-      : null;
-    const expectedFace = faceVectorToDirection(candidate.face);
-    if (
-      aimedBlock?.position?.equals(candidate.block.position) &&
-      aimedBlock.face === expectedFace
-    ) {
-      ref = candidate;
-      break;
-    }
-  }
-
-  if (!ref) {
+  const cursor = getFaceCursor(ref.face);
+  const hitPoint = ref.block.position.offset(cursor.x, cursor.y, cursor.z);
+  const clickDistance = bot.entity?.position?.distanceTo(hitPoint);
+  if (!Number.isFinite(clickDistance) || clickDistance > MAX_INTERACT_DISTANCE) {
     throw createPlacementSafetyError(
-      `No visible anchor face points exactly to (${x}, ${y}, ${z}); refusing bucket use.`
+      `Required smooth_stone west face is out of reach for target (${x}, ${y}, ${z}).`
     );
   }
 
-  // Sneak prevents opening/activating the anchor. There is deliberately no
-  // activateItem fallback and no alternate-anchor retry.
+  await bot.lookAt(hitPoint, true);
+  await sleep(25);
+
+  const aimedBlock = typeof bot.blockAtCursor === 'function'
+    ? bot.blockAtCursor(MAX_INTERACT_DISTANCE + 0.25)
+    : null;
+  if (
+    !aimedBlock?.position?.equals(ref.block.position) ||
+    aimedBlock.face !== faceVectorToDirection(ref.face)
+  ) {
+    throw createPlacementSafetyError(
+      `Cannot see the required smooth_stone west face for (${x}, ${y}, ${z}); refusing bucket use.`
+    );
+  }
+
+  // Sneak prevents activation of the anchor. There is one verified use-item
+  // action and deliberately no retry or second anchor after packet send.
   let placementError = null;
   try {
     bot.setControlState('sneak', true);
