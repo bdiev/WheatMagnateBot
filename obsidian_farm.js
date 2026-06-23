@@ -34,11 +34,12 @@ const DEFAULT_TARGET_Z = 672222;
 const DEFAULT_CAULDRON_DIST = 4.5;    // default max search radius for cauldrons
 const MIN_PICKAXE_REMAINING_PERCENT = 5;
 const FARM_CONFIG_FILE = 'obsidian_farm_config.json';
+const FARM_DEBUG_LOG_FILE = 'obsidian_farm_debug.log';
 const MAX_INTERACT_DISTANCE = 4.25;
 const TOP_FACE_AIM_Y_OFFSET = 0.98;
 const OBSIDIAN_DIG_HOLD_MULTIPLIER = 1.35;
 const OBSIDIAN_DIG_HOLD_PADDING_MS = 1_500;
-const OBSIDIAN_DIG_MIN_HOLD_MS = 3_000;
+const OBSIDIAN_DIG_MIN_HOLD_MS = 12_000;
 const OBSIDIAN_DIG_CONFIRM_TIMEOUT_MS = 5_000;
 const OBSIDIAN_DIG_MAX_ATTEMPTS = 3;
 const WEAK_PLACEMENT_ANCHORS = new Set([
@@ -338,7 +339,50 @@ function ensureInteractionRange(bot, pos, actionName) {
   }
 }
 
-async function digBlockWithTimeout(bot, block) {
+function writeFarmDebug(event, details = {}) {
+  const line = JSON.stringify({
+    time: new Date().toISOString(),
+    event,
+    ...details
+  });
+  console.log(`[Farm debug] ${line}`);
+  try {
+    fs.appendFileSync(FARM_DEBUG_LOG_FILE, `${line}\n`, 'utf8');
+  } catch (err) {
+    console.error(`[Farm debug] Could not write ${FARM_DEBUG_LOG_FILE}: ${err.message}`);
+  }
+}
+
+function getMiningDebugState(bot, block, attempt, expectedDigTime, holdMs, face) {
+  const held = bot.heldItem;
+  const effects = Object.values(bot.entity?.effects || {}).map(effect => ({
+    id: effect.id,
+    amplifier: effect.amplifier,
+    duration: effect.duration
+  }));
+
+  return {
+    attempt,
+    target: block.position.toString(),
+    block: block.name,
+    expectedDigTimeMs: expectedDigTime,
+    holdMs,
+    face,
+    heldItem: held?.name || null,
+    heldItemCount: held?.count ?? null,
+    enchantments: held?.enchants || held?.enchantments || [],
+    durabilityUsed: held?.durabilityUsed ?? null,
+    effects,
+    botPosition: bot.entity?.position?.toString() || null,
+    distance: bot.entity?.position
+      ? Number(bot.entity.position.distanceTo(block.position.offset(0.5, 0.5, 0.5)).toFixed(3))
+      : null,
+    gameMode: bot.game?.gameMode || null,
+    protocolVersion: bot.version || null
+  };
+}
+
+async function digBlockWithTimeout(bot, block, attempt) {
   const expectedDigTime = typeof bot.digTime === 'function' ? bot.digTime(block) : OBSIDIAN_DIG_MIN_HOLD_MS;
   if (!Number.isFinite(expectedDigTime)) {
     throw new Error(`Cannot calculate dig time for ${block.name}`);
@@ -359,6 +403,9 @@ async function digBlockWithTimeout(bot, block) {
   }
 
   const face = Number.isInteger(aimedBlock.face) ? aimedBlock.face : 1;
+  const startedAt = Date.now();
+  writeFarmDebug('dig_start', getMiningDebugState(bot, block, attempt, expectedDigTime, holdMs, face));
+
   const eventName = `blockUpdate:${block.position}`;
   let swingInterval = null;
   let confirmTimeout = null;
@@ -367,6 +414,12 @@ async function digBlockWithTimeout(bot, block) {
 
   const serverConfirmation = new Promise((resolve, reject) => {
     onBlockUpdate = (_oldBlock, newBlock) => {
+      writeFarmDebug('server_block_update', {
+        attempt,
+        elapsedMs: Date.now() - startedAt,
+        oldBlock: _oldBlock?.name || null,
+        newBlock: newBlock?.name || null
+      });
       if (!newBlock || newBlock.name === 'obsidian') return;
       completed = true;
       cleanup();
@@ -399,19 +452,32 @@ async function digBlockWithTimeout(bot, block) {
 
     await sleep(holdMs);
     if (!farm.enabled) throw new Error('farm_stopped');
-    if (swingInterval) {
-      clearInterval(swingInterval);
-      swingInterval = null;
-    }
 
+    writeFarmDebug('dig_finish_sent', {
+      attempt,
+      elapsedMs: Date.now() - startedAt,
+      blockBeforeFinish: bot.blockAt(block.position)?.name || null
+    });
     bot._client.write('block_dig', {
       status: 2,
       location: block.position,
       face
     });
     await serverConfirmation;
+    writeFarmDebug('dig_confirmed', {
+      attempt,
+      elapsedMs: Date.now() - startedAt,
+      resultingBlock: bot.blockAt(block.position)?.name || null
+    });
   } catch (err) {
     cleanup();
+    writeFarmDebug('dig_failed', {
+      attempt,
+      elapsedMs: Date.now() - startedAt,
+      error: err.message,
+      currentBlock: bot.blockAt(block.position)?.name || null,
+      heldItem: bot.heldItem?.name || null
+    });
     if (!completed) {
       bot._client.write('block_dig', {
         status: 1,
@@ -660,7 +726,7 @@ async function mineObsidian(bot, targetPos) {
     }
 
     try {
-      await digBlockWithTimeout(bot, block);
+      await digBlockWithTimeout(bot, block, attempt);
       break;
     } catch (err) {
       if (err.message === 'farm_stopped') return;
@@ -670,7 +736,7 @@ async function mineObsidian(bot, targetPos) {
     if (attempt === OBSIDIAN_DIG_MAX_ATTEMPTS) {
       throw new Error(
         `Server kept obsidian at (${x}, ${y}, ${z}) after ${OBSIDIAN_DIG_MAX_ATTEMPTS} mining attempts. ` +
-        'Check tool enchantments, region protection, server lag, or anti-cheat.'
+        `Diagnostics were written to ${FARM_DEBUG_LOG_FILE}.`
       );
     }
 
