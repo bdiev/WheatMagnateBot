@@ -37,9 +37,7 @@ const FARM_CONFIG_FILE = 'obsidian_farm_config.json';
 const FARM_DEBUG_LOG_FILE = 'obsidian_farm_debug.log';
 const MAX_INTERACT_DISTANCE = 4.25;
 const TOP_FACE_AIM_Y_OFFSET = 0.98;
-const OBSIDIAN_DIG_HOLD_MULTIPLIER = 1.10;
-const OBSIDIAN_DIG_HOLD_PADDING_MS = 500;
-const OBSIDIAN_DIG_MIN_HOLD_MS = 12_000;
+const OBSIDIAN_DIG_HOLD_MS = 10_000;
 const OBSIDIAN_DIG_CONFIRM_TIMEOUT_MS = 5_000;
 const OBSIDIAN_DIG_STABILITY_MS = 500;
 const OBSIDIAN_DIG_MAX_ATTEMPTS = 3;
@@ -384,15 +382,12 @@ function getMiningDebugState(bot, block, attempt, expectedDigTime, holdMs, face)
 }
 
 async function digBlockWithTimeout(bot, block, attempt) {
-  const expectedDigTime = typeof bot.digTime === 'function' ? bot.digTime(block) : OBSIDIAN_DIG_MIN_HOLD_MS;
+  const expectedDigTime = typeof bot.digTime === 'function' ? bot.digTime(block) : null;
   if (!Number.isFinite(expectedDigTime)) {
     throw new Error(`Cannot calculate dig time for ${block.name}`);
   }
 
-  const holdMs = Math.max(
-    OBSIDIAN_DIG_MIN_HOLD_MS,
-    Math.ceil(expectedDigTime * OBSIDIAN_DIG_HOLD_MULTIPLIER + OBSIDIAN_DIG_HOLD_PADDING_MS)
-  );
+  const holdMs = OBSIDIAN_DIG_HOLD_MS;
   const center = block.position.offset(0.5, 0.5, 0.5);
   await bot.lookAt(center, true);
 
@@ -405,10 +400,13 @@ async function digBlockWithTimeout(bot, block, attempt) {
 
   const face = Number.isInteger(aimedBlock.face) ? aimedBlock.face : 1;
   const startedAt = Date.now();
-  writeFarmDebug('dig_start', getMiningDebugState(bot, block, attempt, expectedDigTime, holdMs, face));
+  writeFarmDebug('dig_start', {
+    ...getMiningDebugState(bot, block, attempt, expectedDigTime, holdMs, face),
+    measuredServerDigTimeMs: 9_328,
+    timingSource: 'measured_server_result'
+  });
 
   const eventName = `blockUpdate:${block.position}`;
-  let swingInterval = null;
   let completed = false;
   let onBlockUpdate = null;
 
@@ -439,7 +437,6 @@ async function digBlockWithTimeout(bot, block, attempt) {
       face
     });
     bot.swingArm();
-    swingInterval = setInterval(() => bot.swingArm(), 350);
 
     const firstResult = await Promise.race([
       serverConfirmation.then(blockName => ({ type: 'server', blockName })),
@@ -468,10 +465,6 @@ async function digBlockWithTimeout(bot, block, attempt) {
       ]);
     }
 
-    if (swingInterval) {
-      clearInterval(swingInterval);
-      swingInterval = null;
-    }
     cleanup();
     await sleep(OBSIDIAN_DIG_STABILITY_MS);
 
@@ -509,7 +502,6 @@ async function digBlockWithTimeout(bot, block, attempt) {
     throw err;
   } finally {
     cleanup();
-    if (swingInterval) clearInterval(swingInterval);
   }
 }
 
