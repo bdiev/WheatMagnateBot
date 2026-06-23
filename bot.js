@@ -896,7 +896,13 @@ const discordClient = new Client({
   partials: [Partials.Channel]
 });
 
-if (DISCORD_BOT_TOKEN) {
+let discordLoginRetryTimer = null;
+let discordLoginInProgress = false;
+
+function loginDiscord() {
+  if (!DISCORD_BOT_TOKEN || discordClient.isReady() || discordLoginInProgress) return;
+
+  discordLoginInProgress = true;
   console.log('[Discord] Attempting to login with token...');
   discordClient.login(DISCORD_BOT_TOKEN)
     .then(() => {
@@ -905,7 +911,22 @@ if (DISCORD_BOT_TOKEN) {
     .catch(err => {
       console.error('[Discord] Login failed:', err.message);
       console.error('[Discord] Full error:', err);
+
+      if (!discordLoginRetryTimer) {
+        console.log('[Discord] Retrying login in 15 seconds...');
+        discordLoginRetryTimer = setTimeout(() => {
+          discordLoginRetryTimer = null;
+          loginDiscord();
+        }, 15_000);
+      }
+    })
+    .finally(() => {
+      discordLoginInProgress = false;
     });
+}
+
+if (DISCORD_BOT_TOKEN) {
+  loginDiscord();
 
   // Debug event removed to reduce log noise
 
@@ -932,6 +953,10 @@ if (DISCORD_BOT_TOKEN) {
 
   // FIX: correct event name
   discordClient.on('ready', async () => {
+    if (discordLoginRetryTimer) {
+      clearTimeout(discordLoginRetryTimer);
+      discordLoginRetryTimer = null;
+    }
     console.log(`[Discord] ✅ Bot logged in as ${discordClient.user.tag}`);
     console.log(`[Discord] Bot ID: ${discordClient.user.id}`);
     console.log(`[Discord] Guilds: ${discordClient.guilds.cache.size}`);
