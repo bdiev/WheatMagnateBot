@@ -1,7 +1,7 @@
 require('dotenv').config();
 const mineflayer = require('mineflayer');
 const fs = require('fs');
-const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ChannelType, PermissionsBitField, MessageFlags } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ChannelType, PermissionsBitField, MessageFlags, InteractionContextType } = require('discord.js');
 const { Pool } = require('pg');
 const { pathfinder } = require('mineflayer-pathfinder');
 const farm = require('./obsidian_farm');
@@ -890,6 +890,13 @@ async function initDatabase() {
       ADD COLUMN IF NOT EXISTS session_started_at TIMESTAMPTZ
     `);
     await pool.query(`
+      CREATE TABLE IF NOT EXISTS obsidian_farm_daily (
+        farm_date DATE PRIMARY KEY,
+        mined BIGINT NOT NULL DEFAULT 0 CHECK (mined >= 0),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
       INSERT INTO obsidian_farm_state (id)
       VALUES (1)
       ON CONFLICT (id) DO NOTHING
@@ -1242,8 +1249,11 @@ async function recordObsidianMined() {
     return;
   }
 
+  let client;
   try {
-    const result = await pool.query(`
+    client = await pool.connect();
+    await client.query('BEGIN');
+    const result = await client.query(`
       UPDATE obsidian_farm_state
       SET session_mined = session_mined + 1,
           total_mined = total_mined + 1,
@@ -1251,6 +1261,14 @@ async function recordObsidianMined() {
       WHERE id = 1
       RETURNING session_mined, total_mined, desired_enabled, session_started_at
     `);
+    await client.query(`
+      INSERT INTO obsidian_farm_daily (farm_date, mined)
+      VALUES ((NOW() AT TIME ZONE 'Europe/Kyiv')::date, 1)
+      ON CONFLICT (farm_date)
+      DO UPDATE SET mined = obsidian_farm_daily.mined + 1,
+                    updated_at = NOW()
+    `);
+    await client.query('COMMIT');
     if (result.rows[0]) {
       obsidianStats = {
         sessionMined: Number(result.rows[0].session_mined) || 0,
@@ -1262,9 +1280,39 @@ async function recordObsidianMined() {
       };
     }
   } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
     obsidianStats.sessionMined++;
     obsidianStats.totalMined++;
     console.error('[DB] Failed to persist obsidian mined count:', err.message);
+  } finally {
+    if (client) client.release();
+  }
+}
+
+async function getObsidianDailyStats(days = 7) {
+  if (!pool) return [];
+  try {
+    const result = await pool.query(`
+      WITH dates AS (
+        SELECT generate_series(
+          (NOW() AT TIME ZONE 'Europe/Kyiv')::date - ($1::int - 1),
+          (NOW() AT TIME ZONE 'Europe/Kyiv')::date,
+          INTERVAL '1 day'
+        )::date AS farm_date
+      )
+      SELECT TO_CHAR(dates.farm_date, 'YYYY-MM-DD') AS farm_date,
+             COALESCE(stats.mined, 0)::BIGINT AS mined
+      FROM dates
+      LEFT JOIN obsidian_farm_daily stats USING (farm_date)
+      ORDER BY dates.farm_date DESC
+    `, [days]);
+    return result.rows.map(row => ({
+      date: row.farm_date,
+      mined: Number(row.mined) || 0
+    }));
+  } catch (err) {
+    console.error('[DB] Failed to load daily obsidian statistics:', err.message);
+    return [];
   }
 }
 
@@ -1306,7 +1354,10 @@ function formatPickaxeSupply(pickaxes = []) {
 }
 
 async function buildObsidianStatsEmbed() {
-  const farmStatus = await farm.getDetailedStatus(bot);
+  const [farmStatus, dailyStats] = await Promise.all([
+    farm.getDetailedStatus(bot),
+    getObsidianDailyStats(7)
+  ]);
   const sessionStartedAt = obsidianStats.sessionStartedAt
     ? new Date(obsidianStats.sessionStartedAt)
     : null;
@@ -1320,6 +1371,13 @@ async function buildObsidianStatsEmbed() {
   const barrelLocation = barrel
     ? `${barrel.position} (${barrel.distance?.toFixed(1) ?? '?'} blocks)`
     : (farmStatus.supplies?.barrelError || 'Not found within 5 blocks');
+  const dailyDisplay = dailyStats.length > 0
+    ? dailyStats.map(entry => {
+        const [year, month, day] = String(entry.date).split('-');
+        const label = `${day}.${month}.${year}`;
+        return `\`${label}\` — **${formatCompactCount(entry.mined)}**`;
+      }).join('\n')
+    : 'No daily data yet';
 
   return {
     title: 'Obsidian Farm Statistics',
@@ -1334,6 +1392,11 @@ async function buildObsidianStatsEmbed() {
         name: 'Session',
         value: `Duration: **${formatDurationShort(sessionMs)}**\nRate: **${perMinute.toFixed(1)}/min** (${formatCompactCount(Math.round(perHour))}/h)`,
         inline: true
+      },
+      {
+        name: 'Last 7 days',
+        value: dailyDisplay,
+        inline: false
       },
       {
         name: 'Farm state',
@@ -1364,35 +1427,27 @@ async function buildObsidianStatsEmbed() {
 
 async function registerObsidianStatsCommand() {
   if (!discordClient.application) return;
-  const commands = await discordClient.application.commands.fetch();
-  const obsoleteCommands = new Set(['play', 'stop', 'queue', 'skip']);
-  for (const command of commands.values()) {
-    if (obsoleteCommands.has(command.name)) {
-      await discordClient.application.commands.delete(command.id);
-    }
-  }
-
   const commandDefinitions = [
     {
       name: 'ofstats',
       description: 'Show detailed obsidian farm statistics',
-      dm_permission: true
+      contexts: [
+        InteractionContextType.Guild,
+        InteractionContextType.BotDM,
+        InteractionContextType.PrivateChannel
+      ]
     },
     {
       name: 'clear',
       description: 'Clear messages in the current dialog',
-      dm_permission: true
+      contexts: [
+        InteractionContextType.Guild,
+        InteractionContextType.BotDM,
+        InteractionContextType.PrivateChannel
+      ]
     }
   ];
-
-  for (const data of commandDefinitions) {
-    const existing = commands.find(command => command.name === data.name);
-    if (existing) {
-      await discordClient.application.commands.edit(existing.id, data);
-    } else {
-      await discordClient.application.commands.create(data);
-    }
-  }
+  await discordClient.application.commands.set(commandDefinitions);
 }
 
 async function clearCurrentDialog(channel, excludedIds = new Set()) {
