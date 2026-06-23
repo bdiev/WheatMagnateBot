@@ -57,6 +57,7 @@ let lastCommandUser = null;
 let statusMessage = null;
 let statusUpdateInterval = null;
 let isUpdatingStatus = false; // Prevent concurrent updates
+const obsidianStatsUpdaters = new Map(); // channelId -> { messageId, interval, updating }
 let channelCleanerInterval = null;
 let tpsHistory = [];
 let realTps = null;
@@ -1353,9 +1354,13 @@ function formatPickaxeSupply(pickaxes = []) {
   return text.length > 850 ? `${text.slice(0, 847)}...` : text;
 }
 
-async function buildObsidianStatsEmbed() {
+async function buildObsidianStatsEmbed(cachedSupplies = null) {
   const [farmStatus, dailyStats] = await Promise.all([
-    farm.getDetailedStatus(bot),
+    farm.getDetailedStatus(bot, {
+      inspectBarrel: false,
+      barrel: cachedSupplies?.barrel || null,
+      barrelError: cachedSupplies?.barrelError || null
+    }),
     getObsidianDailyStats(7)
   ]);
   const sessionStartedAt = obsidianStats.sessionStartedAt
@@ -1421,8 +1426,60 @@ async function buildObsidianStatsEmbed() {
         inline: false
       }
     ],
+    footer: {
+      text: 'Auto-updates every 30 seconds'
+    },
     timestamp: new Date()
   };
+}
+
+function createObsidianStatsComponents() {
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('ofstats_refresh')
+        .setLabel('Refresh')
+        .setStyle(ButtonStyle.Primary)
+    )
+  ];
+}
+
+function stopObsidianStatsUpdater(channelId) {
+  const updater = obsidianStatsUpdaters.get(channelId);
+  if (!updater) return;
+  clearInterval(updater.interval);
+  obsidianStatsUpdaters.delete(channelId);
+}
+
+function startObsidianStatsUpdater(message, supplies) {
+  const channelId = message.channelId;
+  stopObsidianStatsUpdater(channelId);
+
+  const updater = {
+    messageId: message.id,
+    supplies,
+    updating: false,
+    interval: null
+  };
+
+  updater.interval = setInterval(async () => {
+    if (updater.updating) return;
+    updater.updating = true;
+    try {
+      await message.edit({
+        embeds: [await buildObsidianStatsEmbed(updater.supplies)],
+        components: createObsidianStatsComponents()
+      });
+    } catch (err) {
+      if (err.code === 10008 || err.code === 50001 || err.code === 50013) {
+        stopObsidianStatsUpdater(channelId);
+      }
+    } finally {
+      updater.updating = false;
+    }
+  }, 30_000);
+
+  obsidianStatsUpdaters.set(channelId, updater);
 }
 
 async function registerObsidianStatsCommand() {
@@ -3004,7 +3061,38 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         return;
       }
       await interaction.deferReply();
-      await interaction.editReply({ embeds: [await buildObsidianStatsEmbed()] });
+      const supplies = {
+        barrel: null,
+        barrelError: 'Press Refresh to inspect'
+      };
+      await interaction.editReply({
+        embeds: [await buildObsidianStatsEmbed(supplies)],
+        components: createObsidianStatsComponents()
+      });
+      const statsMessage = await interaction.fetchReply();
+      startObsidianStatsUpdater(statsMessage, supplies);
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId === 'ofstats_refresh') {
+      if (interaction.user.id !== DISCORD_OWNER_ID) {
+        await interaction.reply({
+          content: 'Only the owner can refresh obsidian farm statistics.',
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+
+      await interaction.deferUpdate();
+      const supplies = await farm.inspectSupplies(bot);
+      const updater = obsidianStatsUpdaters.get(interaction.channelId);
+      if (updater && updater.messageId === interaction.message.id) {
+        updater.supplies = supplies;
+      }
+      await interaction.message.edit({
+        embeds: [await buildObsidianStatsEmbed(supplies)],
+        components: createObsidianStatsComponents()
+      });
       return;
     }
 
@@ -3018,6 +3106,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
       await interaction.deferReply(interaction.guildId ? { flags: MessageFlags.Ephemeral } : {});
       const deferredReply = await interaction.fetchReply();
+      stopObsidianStatsUpdater(interaction.channelId);
       const excludedIds = new Set([
         deferredReply.id,
         statusMessage?.id,

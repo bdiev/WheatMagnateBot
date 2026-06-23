@@ -261,7 +261,7 @@ async function inspectSupplyStatus(bot) {
   }
 }
 
-async function getDetailedStatus(bot) {
+async function getDetailedStatus(bot, options = {}) {
   const status = getStatus();
   if (!bot) {
     return {
@@ -274,8 +274,25 @@ async function getDetailedStatus(bot) {
   return {
     ...status,
     connected: true,
-    supplies: await inspectSupplyStatus(bot)
+    supplies: options.inspectBarrel === false
+      ? {
+          inventory: summarizeSupplyItems(bot, bot.inventory.items()),
+          barrel: options.barrel || null,
+          barrelError: options.barrelError || null
+        }
+      : await inspectSupplyStatus(bot)
   };
+}
+
+async function inspectSupplies(bot) {
+  if (!bot?.entity) {
+    return {
+      inventory: null,
+      barrel: null,
+      barrelError: 'Bot is offline'
+    };
+  }
+  return inspectSupplyStatus(bot);
 }
 
 function getKnownBlockAt(bot, pos, label) {
@@ -1220,6 +1237,7 @@ module.exports = {
   configure,
   configureRuntime,
   prepareStart,
+  inspectSupplies,
   getStatus,
   getDetailedStatus,
   loadPlugin
