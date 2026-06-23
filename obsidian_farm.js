@@ -183,45 +183,98 @@ function configureRuntime(hooks = {}) {
   if (typeof hooks.onFatalStop === 'function') runtime.onFatalStop = hooks.onFatalStop;
 }
 
-function getDetailedStatus(bot) {
+function summarizeSupplyItems(bot, items) {
+  const food = {};
+  const pickaxes = [];
+
+  for (const item of items) {
+    if (isFoodItem(item)) {
+      food[item.name] = (food[item.name] || 0) + item.count;
+    }
+    if (PICKAXE_PRIORITY.includes(item.name)) {
+      pickaxes.push({
+        name: item.name,
+        remainingPercent: getRemainingDurabilityPercent(bot, item),
+        usable: getRemainingDurabilityPercent(bot, item) >= MIN_PICKAXE_REMAINING_PERCENT
+      });
+    }
+  }
+
+  return {
+    food,
+    foodCount: Object.values(food).reduce((sum, count) => sum + count, 0),
+    pickaxes,
+    usablePickaxeCount: pickaxes.filter(pickaxe => pickaxe.usable).length
+  };
+}
+
+function findReachableSupplyBarrel(bot) {
+  if (!bot?.entity) return null;
+  const barrelId = bot.registry.blocksByName.barrel?.id;
+  if (barrelId == null) return null;
+
+  const positions = bot.findBlocks({
+    matching: barrelId,
+    maxDistance: SUPPLY_BARREL_RADIUS,
+    count: 16
+  });
+  const position = positions.find(candidate => {
+    const clickPoint = candidate.offset(0.5, 0.5, 0.5);
+    return bot.entity.position.distanceTo(clickPoint) <= MAX_INTERACT_DISTANCE;
+  });
+  return position ? bot.blockAt(position) : null;
+}
+
+async function inspectSupplyStatus(bot) {
+  const inventory = summarizeSupplyItems(bot, bot.inventory.items());
+  const barrel = findReachableSupplyBarrel(bot);
+  if (!barrel) {
+    return { inventory, barrel: null, barrelError: 'Not found within 5 blocks' };
+  }
+
+  let container = null;
+  try {
+    stopAllMovement(bot);
+    container = await bot.openContainer(barrel);
+    return {
+      inventory,
+      barrel: {
+        position: barrel.position.toString(),
+        distance: bot.entity.position.distanceTo(barrel.position.offset(0.5, 0.5, 0.5)),
+        ...summarizeSupplyItems(bot, container.containerItems())
+      },
+      barrelError: null
+    };
+  } catch (err) {
+    return {
+      inventory,
+      barrel: {
+        position: barrel.position.toString(),
+        distance: bot.entity.position.distanceTo(barrel.position.offset(0.5, 0.5, 0.5))
+      },
+      barrelError: err.message
+    };
+  } finally {
+    if (container) {
+      try { container.close(); } catch (_) {}
+    }
+  }
+}
+
+async function getDetailedStatus(bot) {
   const status = getStatus();
   if (!bot) {
     return {
       ...status,
       connected: false,
-      bestPickaxe: null,
-      foodCount: 0,
-      barrel: null
+      supplies: null
     };
   }
-
-  const bestPickaxe = findBestPickaxe(bot);
-  const foodCount = bot.inventory.items()
-    .filter(isFoodItem)
-    .reduce((sum, item) => sum + item.count, 0);
-  const barrelId = bot.registry.blocksByName.barrel?.id;
-  const barrel = barrelId == null
-    ? null
-    : bot.findBlock({ matching: barrelId, maxDistance: SUPPLY_BARREL_RADIUS });
 
   return {
     ...status,
     connected: true,
-    bestPickaxe: bestPickaxe
-      ? {
-          name: bestPickaxe.item.name,
-          remainingPercent: bestPickaxe.remainingPercent
-        }
-      : null,
-    foodCount,
-    barrel: barrel
-      ? {
-          position: barrel.position.toString(),
-          distance: bot.entity?.position
-            ? bot.entity.position.distanceTo(barrel.position.offset(0.5, 0.5, 0.5))
-            : null
-        }
-      : null
+    supplies: await inspectSupplyStatus(bot)
   };
 }
 
@@ -409,15 +462,7 @@ async function ensureFarmSupplies(bot) {
   const hasFood = bot.inventory.items().some(isFoodItem);
   if (hasUsablePickaxe && hasFood) return;
 
-  const barrelId = bot.registry.blocksByName.barrel?.id;
-  const barrelPositions = barrelId == null
-    ? []
-    : bot.findBlocks({ matching: barrelId, maxDistance: SUPPLY_BARREL_RADIUS, count: 16 });
-  const barrelPosition = barrelPositions.find(position => {
-    const clickPoint = position.offset(0.5, 0.5, 0.5);
-    return bot.entity?.position?.distanceTo(clickPoint) <= MAX_INTERACT_DISTANCE;
-  });
-  const barrel = barrelPosition ? bot.blockAt(barrelPosition) : null;
+  const barrel = findReachableSupplyBarrel(bot);
   if (!barrel) {
     const missing = [];
     if (!hasUsablePickaxe) missing.push('pickaxe');
@@ -473,6 +518,12 @@ async function ensureFarmSupplies(bot) {
   if (!findUsablePickaxe(bot, MIN_PICKAXE_REMAINING_PERCENT)) missing.push('pickaxe');
   if (!bot.inventory.items().some(isFoodItem)) missing.push('food');
   if (missing.length > 0) throw createResourceExhaustedError(missing);
+}
+
+async function prepareStart(bot) {
+  if (!bot?.entity) throw new Error('Bot is offline.');
+  await ensureFarmSupplies(bot);
+  return inspectSupplyStatus(bot);
 }
 
 /**
@@ -1168,6 +1219,7 @@ module.exports = {
   stop,
   configure,
   configureRuntime,
+  prepareStart,
   getStatus,
   getDetailedStatus,
   loadPlugin
