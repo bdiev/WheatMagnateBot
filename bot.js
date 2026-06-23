@@ -1353,17 +1353,57 @@ async function registerObsidianStatsCommand() {
     }
   }
 
-  const existing = commands.find(command => command.name === 'ofstats');
-  const data = {
-    name: 'ofstats',
-    description: 'Show detailed obsidian farm statistics',
-    dm_permission: true
-  };
-  if (existing) {
-    await discordClient.application.commands.edit(existing.id, data);
-  } else {
-    await discordClient.application.commands.create(data);
+  const commandDefinitions = [
+    {
+      name: 'ofstats',
+      description: 'Show detailed obsidian farm statistics',
+      dm_permission: true
+    },
+    {
+      name: 'clear',
+      description: 'Clear messages in the current dialog',
+      dm_permission: true
+    }
+  ];
+
+  for (const data of commandDefinitions) {
+    const existing = commands.find(command => command.name === data.name);
+    if (existing) {
+      await discordClient.application.commands.edit(existing.id, data);
+    } else {
+      await discordClient.application.commands.create(data);
+    }
   }
+}
+
+async function clearCurrentDialog(channel, excludedIds = new Set()) {
+  if (!channel?.isTextBased?.() || !channel.messages) return 0;
+
+  let deleted = 0;
+  let before;
+  for (let page = 0; page < 10; page++) {
+    const messages = await channel.messages.fetch({ limit: 100, ...(before ? { before } : {}) });
+    if (messages.size === 0) break;
+    before = messages.last().id;
+
+    const deletable = messages.filter(message => {
+      if (excludedIds.has(message.id)) return false;
+      if (!message.deletable) return false;
+      if (channel.isDMBased?.()) return message.author.id === discordClient.user.id;
+      return true;
+    });
+
+    for (const message of deletable.values()) {
+      try {
+        await message.delete();
+        deleted++;
+      } catch (_) {}
+    }
+
+    if (messages.size < 100) break;
+  }
+
+  return deleted;
 }
 
 farm.configureRuntime({
@@ -2890,6 +2930,29 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         return;
       }
       await interaction.reply({ embeds: [buildObsidianStatsEmbed()] });
+      return;
+    }
+
+    if (interaction.isChatInputCommand() && interaction.commandName === 'clear') {
+      if (interaction.user.id !== DISCORD_OWNER_ID) {
+        const reply = { content: 'Only the owner can clear dialogs.' };
+        if (interaction.guildId) reply.flags = MessageFlags.Ephemeral;
+        await interaction.reply(reply);
+        return;
+      }
+
+      await interaction.deferReply(interaction.guildId ? { flags: MessageFlags.Ephemeral } : {});
+      const deferredReply = await interaction.fetchReply();
+      const excludedIds = new Set([
+        deferredReply.id,
+        statusMessage?.id,
+        ...excludedMessageIds
+      ].filter(Boolean));
+      const deleted = await clearCurrentDialog(interaction.channel, excludedIds);
+      await interaction.editReply(`Deleted ${deleted} message${deleted === 1 ? '' : 's'}.`);
+      if (!interaction.guildId) {
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 2000);
+      }
       return;
     }
 
