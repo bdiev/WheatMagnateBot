@@ -63,6 +63,11 @@ let realTps = null;
 let lastTickTime = 0;
 let mineflayerStarted = false;
 let startTime = Date.now();
+let obsidianStats = {
+  sessionMined: 0,
+  totalMined: 0,
+  desiredEnabled: false
+};
 let whisperConversations = new Map(); // username -> messageId
 let whisperChannels = new Map(); // key: `${ownerId}:${mcUsername}` -> channelId
 let pendingWhisperClaims = new Map(); // key: mcUsernameLower -> { messageId, lastMessage }
@@ -78,6 +83,7 @@ let tpsTabInterval = null;
 let playtimeSyncInterval = null;
 const excludedMessageIds = [];
 const pendingAuthLinks = [];
+const pendingOwnerDMs = [];
 const sentAuthCodes = new Set();
 const authMessageIds = new Map(); // messageId -> DM channelId
 const recentOutboundChat = new Map(); // normalized message -> timestamps awaiting self-echo suppression
@@ -869,6 +875,32 @@ async function initDatabase() {
         UNIQUE(discord_id, keyword)
       )
     `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS obsidian_farm_state (
+        id SMALLINT PRIMARY KEY CHECK (id = 1),
+        session_mined BIGINT NOT NULL DEFAULT 0 CHECK (session_mined >= 0),
+        total_mined BIGINT NOT NULL DEFAULT 0 CHECK (total_mined >= 0),
+        desired_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
+      INSERT INTO obsidian_farm_state (id)
+      VALUES (1)
+      ON CONFLICT (id) DO NOTHING
+    `);
+    const farmStateResult = await pool.query(`
+      SELECT session_mined, total_mined, desired_enabled
+      FROM obsidian_farm_state
+      WHERE id = 1
+    `);
+    if (farmStateResult.rows[0]) {
+      obsidianStats = {
+        sessionMined: Number(farmStateResult.rows[0].session_mined) || 0,
+        totalMined: Number(farmStateResult.rows[0].total_mined) || 0,
+        desiredEnabled: Boolean(farmStateResult.rows[0].desired_enabled)
+      };
+    }
     console.log('[DB] ✅ Tables initialized successfully.');
 
     console.log('[DB] 📖 Loading ignored users from database...');
@@ -1008,6 +1040,13 @@ if (DISCORD_BOT_TOKEN) {
       }
     }
 
+    if (pendingOwnerDMs.length > 0) {
+      const messages = pendingOwnerDMs.splice(0);
+      for (const message of messages) {
+        await sendOwnerDM(message.title, message.description, message.color);
+      }
+    }
+
     // Start channel cleaner
     if (!channelCleanerInterval) {
       channelCleanerInterval = setInterval(async () => {
@@ -1138,6 +1177,100 @@ async function syncWhitelistPlaytime(onlineUsernames = getOnlineWhitelistUsernam
     if (client) client.release();
   }
 }
+
+async function beginObsidianFarmSession() {
+  obsidianStats.sessionMined = 0;
+  obsidianStats.desiredEnabled = true;
+  if (!pool) return;
+
+  try {
+    const result = await pool.query(`
+      UPDATE obsidian_farm_state
+      SET session_mined = 0,
+          desired_enabled = TRUE,
+          updated_at = NOW()
+      WHERE id = 1
+      RETURNING session_mined, total_mined, desired_enabled
+    `);
+    if (result.rows[0]) {
+      obsidianStats = {
+        sessionMined: Number(result.rows[0].session_mined) || 0,
+        totalMined: Number(result.rows[0].total_mined) || 0,
+        desiredEnabled: Boolean(result.rows[0].desired_enabled)
+      };
+    }
+  } catch (err) {
+    console.error('[DB] Failed to start obsidian farm session:', err.message);
+  }
+}
+
+async function setObsidianFarmDesiredEnabled(enabled) {
+  obsidianStats.desiredEnabled = Boolean(enabled);
+  if (!pool) return;
+  try {
+    await pool.query(`
+      UPDATE obsidian_farm_state
+      SET desired_enabled = $1,
+          updated_at = NOW()
+      WHERE id = 1
+    `, [Boolean(enabled)]);
+  } catch (err) {
+    console.error('[DB] Failed to update obsidian farm desired state:', err.message);
+  }
+}
+
+async function recordObsidianMined() {
+  if (!pool) {
+    obsidianStats.sessionMined++;
+    obsidianStats.totalMined++;
+    return;
+  }
+
+  try {
+    const result = await pool.query(`
+      UPDATE obsidian_farm_state
+      SET session_mined = session_mined + 1,
+          total_mined = total_mined + 1,
+          updated_at = NOW()
+      WHERE id = 1
+      RETURNING session_mined, total_mined, desired_enabled
+    `);
+    if (result.rows[0]) {
+      obsidianStats = {
+        sessionMined: Number(result.rows[0].session_mined) || 0,
+        totalMined: Number(result.rows[0].total_mined) || 0,
+        desiredEnabled: Boolean(result.rows[0].desired_enabled)
+      };
+    }
+  } catch (err) {
+    obsidianStats.sessionMined++;
+    obsidianStats.totalMined++;
+    console.error('[DB] Failed to persist obsidian mined count:', err.message);
+  }
+}
+
+function formatCompactCount(value) {
+  const count = Math.max(0, Number(value) || 0);
+  if (count < 1000) return String(Math.floor(count));
+  if (count < 1_000_000) {
+    const thousands = count / 1000;
+    return `${thousands >= 10 ? Math.floor(thousands) : Math.floor(thousands * 10) / 10}k`;
+  }
+  const millions = count / 1_000_000;
+  return `${millions >= 10 ? Math.floor(millions) : Math.floor(millions * 10) / 10}m`;
+}
+
+farm.configureRuntime({
+  onMined: recordObsidianMined,
+  onFatalStop: async (err) => {
+    await setObsidianFarmDesiredEnabled(false);
+    await sendOwnerDM(
+      'Obsidian farm stopped',
+      `Reason: ${err.message}\nSession: ${formatCompactCount(obsidianStats.sessionMined)}\nAll time: ${formatCompactCount(obsidianStats.totalMined)}`,
+      16711680
+    );
+  }
+});
 
 async function getWhitelistPlaytime() {
   if (!pool) return { error: 'Database not configured' };
@@ -1774,7 +1907,7 @@ function getStatusDescription() {
     .map(username => `\`${username}\``)
     .join(', ') || 'None';
   const whitelistOnlineDisplay = whitelistOnline.length > 0 ? whitelistOnline.map(u => `\`${u}\``).join(', ') : 'None';
-  const obsidianMined = farm.getStatus().cyclesCompleted;
+  const obsidianMined = `${formatCompactCount(obsidianStats.sessionMined)}/${formatCompactCount(obsidianStats.totalMined)}`;
   return `✅ Bot **${bot.username}** connected to \`${config.host}\`\n` +
     `👥 Players online: ${playerCount}\n` +
     `👀 Players nearby: ${nearbyNames}\n` +
@@ -1830,8 +1963,8 @@ function createStatusButtons() {
           .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
           .setCustomId('obsidian_farm_button')
-          .setLabel(farm.getStatus().enabled ? '⛏️ Obsidian 🟢' : '⛏️ Obsidian')
-          .setStyle(farm.getStatus().enabled ? ButtonStyle.Success : ButtonStyle.Secondary)
+          .setLabel((farm.getStatus().enabled || obsidianStats.desiredEnabled) ? '⛏️ Obsidian 🟢' : '⛏️ Obsidian')
+          .setStyle((farm.getStatus().enabled || obsidianStats.desiredEnabled) ? ButtonStyle.Success : ButtonStyle.Secondary)
       )
   ];
 }
@@ -1913,6 +2046,14 @@ function createBot() {
     startFoodMonitor();
     startNearbyPlayerScanner();
 
+    if (obsidianStats.desiredEnabled) {
+      setTimeout(() => {
+        if (!bot || !obsidianStats.desiredEnabled) return;
+        const resumed = farm.resume(bot, (msg, color) => sendDiscordNotification(msg, color));
+        if (resumed) console.log('[Farm] Resumed automatically after reconnect.');
+      }, 1000);
+    }
+
     // Update player activity for all online players
     if (bot && bot.players) {
       setTimeout(async () => {
@@ -1987,7 +2128,7 @@ function createBot() {
     const reasonStr = chatComponentToString(reason);
     clearIntervals();
     syncWhitelistPlaytime([]).catch(err => console.error('[Playtime] Disconnect flush failed:', err.message));
-    farm.stop(null); // halt obsidian farm loop on disconnect
+    farm.suspend(); // preserve desired farm state across reconnects
 
     // Mark bot reference null immediately for status display
     bot = null;
@@ -2055,10 +2196,9 @@ function createBot() {
       console.log(`[!] Throttling detected. Increasing reconnect timeout to ${reconnectTimeout / 1000} seconds.`);
     }
 
-    // If kicked with generic reason, stop reconnecting to avoid infinite loop
+    // Keep reconnecting after generic kicks so persistent jobs can resume.
     if (reasonText === 'You have been disconnected from the server.') {
-      console.log('[!] Generic kick detected. Stopping reconnection.');
-      shouldReconnect = false;
+      console.log('[!] Generic kick detected. Reconnect remains enabled.');
     }
   });
 
@@ -3396,9 +3536,10 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           return;
         }
         const farmStatus = farm.getStatus();
-        if (farmStatus.enabled) {
+        if (farmStatus.enabled || obsidianStats.desiredEnabled) {
+          await setObsidianFarmDesiredEnabled(false);
           farm.stop((msg, color) => sendDiscordNotification(msg, color));
-          await interaction.reply({ embeds: [{ description: `\ud83d\uded1 Obsidian farm stopped. Cycles completed: **${farmStatus.cyclesCompleted}**`, color: 16711680, timestamp: new Date() }], flags: MessageFlags.Ephemeral });
+          await interaction.reply({ embeds: [{ description: `\ud83d\uded1 Obsidian farm stopped. Session mined: **${formatCompactCount(obsidianStats.sessionMined)}**`, color: 16711680, timestamp: new Date() }], flags: MessageFlags.Ephemeral });
           setTimeout(() => interaction.deleteReply().catch(() => {}), 8000);
         } else {
           const savedConfig = farmStatus.config;
@@ -4157,6 +4298,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         return;
       }
       farm.configure(x, y, z, rawDist || undefined);
+      await beginObsidianFarmSession();
       farm.start(bot, (msg, color) => sendDiscordNotification(msg, color));
       const cf = farm.getStatus().config;
       await interaction.editReply({ embeds: [{ description: `✅ Obsidian farm started at \`(${cf.x}, ${cf.y}, ${cf.z})\`. Cauldron radius: ${cf.maxCauldronDist} blocks.`, color: 65280, timestamp: new Date() }] });
@@ -4666,6 +4808,28 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 }
 
 // Send Microsoft auth link only to the configured owner's Discord DM.
+async function sendOwnerDM(title, description, color = 16711680) {
+  if (!DISCORD_OWNER_ID) return;
+  if (!discordClient?.isReady()) {
+    pendingOwnerDMs.push({ title, description, color });
+    return;
+  }
+  try {
+    const owner = await discordClient.users.fetch(DISCORD_OWNER_ID);
+    if (!owner) return;
+    await owner.send({
+      embeds: [{
+        title,
+        description,
+        color,
+        timestamp: new Date()
+      }]
+    });
+  } catch (err) {
+    console.error('[Discord] Failed to DM owner:', err.message);
+  }
+}
+
 async function sendAuthLinkToDiscord(url) {
   if (!DISCORD_OWNER_ID || !discordClient) return;
   try {

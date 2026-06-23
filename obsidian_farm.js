@@ -48,6 +48,9 @@ const LAVA_PLACEMENT_CONFIRM_TIMEOUT_MS = 300;
 const FARM_RETRY_DELAY_MS = 2_000;
 const FARM_ERROR_NOTIFY_INTERVAL_MS = 60_000;
 const LOW_PICKAXE_DURABILITY_CODE = 'LOW_PICKAXE_DURABILITY';
+const RESOURCE_EXHAUSTED_CODE = 'RESOURCE_EXHAUSTED';
+const SUPPLY_BARREL_RADIUS = 5;
+const FOOD_ITEM_PARTS = ['bread', 'apple', 'beef', 'steak', 'golden_carrot'];
 const WEAK_PLACEMENT_ANCHORS = new Set([
   'hopper',
   'bamboo_trapdoor',
@@ -76,6 +79,10 @@ const farm = {
   cyclesCompleted: 0,
   lastErrorMessage: null,
   lastErrorNotifyAt: 0,
+};
+const runtime = {
+  onMined: async () => {},
+  onFatalStop: async () => {}
 };
 
 // ── Exported helpers ───────────────────────────────────────────────────────────
@@ -177,6 +184,11 @@ function isReplaceableForLava(block) {
 function getConfiguredTargetPos() {
   const { x, y, z } = farm.config;
   return new Vec3(x, y, z);
+}
+
+function configureRuntime(hooks = {}) {
+  if (typeof hooks.onMined === 'function') runtime.onMined = hooks.onMined;
+  if (typeof hooks.onFatalStop === 'function') runtime.onFatalStop = hooks.onFatalStop;
 }
 
 function getKnownBlockAt(bot, pos, label) {
@@ -331,6 +343,102 @@ function createLowDurabilityError(percent) {
   );
   err.code = LOW_PICKAXE_DURABILITY_CODE;
   return err;
+}
+
+function isFoodItem(item) {
+  return Boolean(item?.name) && FOOD_ITEM_PARTS.some(part => item.name.includes(part));
+}
+
+function createResourceExhaustedError(missing) {
+  const err = new Error(
+    `No usable ${missing.join(' or ')} left in the bot inventory or nearby barrel.`
+  );
+  err.code = RESOURCE_EXHAUSTED_CODE;
+  return err;
+}
+
+function findBestUsablePickaxeInItems(bot, items) {
+  let best = null;
+  for (const item of items) {
+    if (!PICKAXE_PRIORITY.includes(item.name)) continue;
+    const remainingPercent = getRemainingDurabilityPercent(bot, item);
+    if (remainingPercent < MIN_PICKAXE_REMAINING_PERCENT) continue;
+    if (!best || remainingPercent > best.remainingPercent) {
+      best = { item, remainingPercent };
+    }
+  }
+  return best;
+}
+
+async function ensureFarmSupplies(bot) {
+  const hasUsablePickaxe = Boolean(findUsablePickaxe(bot, MIN_PICKAXE_REMAINING_PERCENT));
+  const hasFood = bot.inventory.items().some(isFoodItem);
+  if (hasUsablePickaxe && hasFood) return;
+
+  const barrelId = bot.registry.blocksByName.barrel?.id;
+  const barrelPositions = barrelId == null
+    ? []
+    : bot.findBlocks({ matching: barrelId, maxDistance: SUPPLY_BARREL_RADIUS, count: 16 });
+  const barrelPosition = barrelPositions.find(position => {
+    const clickPoint = position.offset(0.5, 0.5, 0.5);
+    return bot.entity?.position?.distanceTo(clickPoint) <= MAX_INTERACT_DISTANCE;
+  });
+  const barrel = barrelPosition ? bot.blockAt(barrelPosition) : null;
+  if (!barrel) {
+    const missing = [];
+    if (!hasUsablePickaxe) missing.push('pickaxe');
+    if (!hasFood) missing.push('food');
+    throw createResourceExhaustedError(missing);
+  }
+
+  ensureInteractionRange(bot, barrel.position.offset(0.5, 0.5, 0.5), 'Supply barrel');
+  stopAllMovement(bot);
+
+  let container = null;
+  try {
+    container = await bot.openContainer(barrel);
+    let containerItems = container.containerItems();
+
+    if (!hasUsablePickaxe) {
+      const pickaxe = findBestUsablePickaxeInItems(bot, containerItems);
+      if (pickaxe) {
+        await container.withdraw(
+          pickaxe.item.type,
+          pickaxe.item.metadata,
+          1,
+          pickaxe.item.nbt
+        );
+        writeFarmDebug('supply_withdrawn', {
+          item: pickaxe.item.name,
+          count: 1,
+          remainingPercent: Number(pickaxe.remainingPercent.toFixed(1)),
+          barrel: barrel.position.toString()
+        });
+      }
+    }
+
+    containerItems = container.containerItems();
+    if (!hasFood) {
+      const food = containerItems.find(isFoodItem);
+      if (food) {
+        await container.withdraw(food.type, food.metadata, food.count, food.nbt);
+        writeFarmDebug('supply_withdrawn', {
+          item: food.name,
+          count: food.count,
+          barrel: barrel.position.toString()
+        });
+      }
+    }
+  } finally {
+    if (container) {
+      try { container.close(); } catch (_) {}
+    }
+  }
+
+  const missing = [];
+  if (!findUsablePickaxe(bot, MIN_PICKAXE_REMAINING_PERCENT)) missing.push('pickaxe');
+  if (!bot.inventory.items().some(isFoodItem)) missing.push('food');
+  if (missing.length > 0) throw createResourceExhaustedError(missing);
 }
 
 /**
@@ -844,6 +952,7 @@ async function mineObsidian(bot, targetPos) {
     throw createLowDurabilityError(remainingAfterEquip);
   }
 
+  let mined = false;
   for (let attempt = 1; attempt <= OBSIDIAN_DIG_MAX_ATTEMPTS; attempt++) {
     const block = bot.blockAt(new Vec3(x, y, z));
     if (!block || block.name !== 'obsidian') return;
@@ -854,6 +963,7 @@ async function mineObsidian(bot, targetPos) {
 
     try {
       await digBlockWithTimeout(bot, block, attempt);
+      mined = true;
       break;
     } catch (err) {
       if (err.message === 'farm_stopped') return;
@@ -873,13 +983,27 @@ async function mineObsidian(bot, targetPos) {
 
   const remainingAfterDig = getRemainingDurabilityPercent(bot, pick);
   if (remainingAfterDig < MIN_PICKAXE_REMAINING_PERCENT) {
-    throw createLowDurabilityError(remainingAfterDig);
+    writeFarmDebug('pickaxe_below_threshold', {
+      item: pick.name,
+      remainingPercent: Number(remainingAfterDig.toFixed(1))
+    });
+  }
+
+  if (mined) {
+    farm.cyclesCompleted++;
+    try {
+      await runtime.onMined();
+    } catch (err) {
+      writeFarmDebug('stats_update_failed', { error: err.message });
+    }
   }
 }
 
 // ── Main loop ──────────────────────────────────────────────────────────────────
 
 async function runCycle(bot, notify) {
+  await ensureFarmSupplies(bot);
+
   if (!farm.config) throw new Error('Farm not configured — no target coordinates');
 
   const targetPos = getConfiguredTargetPos();
@@ -921,7 +1045,6 @@ async function runCycle(bot, notify) {
   }
 
   await mineObsidian(bot, obsidianPos);
-  farm.cyclesCompleted++;
 }
 
 async function loop(bot, notify) {
@@ -951,8 +1074,13 @@ async function persistentLoop(bot, notify) {
   } catch (err) {
     console.error('[Farm] Cycle error:', err.message);
 
-    if (err.code === LOW_PICKAXE_DURABILITY_CODE) {
-      notify(`🛑 Obsidian farm stopped to protect the pickaxe: \`${err.message}\``, 16711680);
+    if (err.code === LOW_PICKAXE_DURABILITY_CODE || err.code === RESOURCE_EXHAUSTED_CODE) {
+      notify(`🛑 Obsidian farm stopped: \`${err.message}\``, 16711680);
+      try {
+        await runtime.onFatalStop(err);
+      } catch (hookErr) {
+        console.error('[Farm] Fatal stop hook failed:', hookErr.message);
+      }
       stop(null);
       return;
     }
@@ -1016,6 +1144,24 @@ function start(bot, notify) {
   persistentLoop(bot, notify);
 }
 
+function resume(bot, notify) {
+  if (farm.enabled || !bot || !farm.config) return false;
+  farm.enabled = true;
+  farm.lastErrorMessage = null;
+  farm.lastErrorNotifyAt = 0;
+  persistentLoop(bot, notify);
+  return true;
+}
+
+function suspend() {
+  farm.enabled = false;
+  farm.phase = 'idle';
+  if (farm.loopHandle) {
+    clearTimeout(farm.loopHandle);
+    farm.loopHandle = null;
+  }
+}
+
 /**
  * Stop the farm.
  * @param {Function|null} notify - pass null to stop silently
@@ -1032,4 +1178,13 @@ function stop(notify) {
 
 loadFarmConfig();
 
-module.exports = { start, stop, configure, getStatus, loadPlugin };
+module.exports = {
+  start,
+  resume,
+  suspend,
+  stop,
+  configure,
+  configureRuntime,
+  getStatus,
+  loadPlugin
+};
