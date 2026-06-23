@@ -26,8 +26,8 @@ const PICKAXE_PRIORITY = [
 ];
 
 const OBSIDIAN_TIMEOUT_MS   = 90_000; // max wait for lava→obsidian
-const CYCLE_PAUSE_MS        = 300;    // pause between cycles
-const INTERACT_SETTLE_MS    = 350;    // settle delay after block interaction
+const CYCLE_PAUSE_MS        = 50;     // pause between cycles
+const INTERACT_SETTLE_MS    = 50;     // settle delay after block interaction
 const DEFAULT_TARGET_X = 3402889;
 const DEFAULT_TARGET_Y = 68;
 const DEFAULT_TARGET_Z = 672222;
@@ -37,13 +37,14 @@ const FARM_CONFIG_FILE = 'obsidian_farm_config.json';
 const FARM_DEBUG_LOG_FILE = 'obsidian_farm_debug.log';
 const MAX_INTERACT_DISTANCE = 4.25;
 const TOP_FACE_AIM_Y_OFFSET = 0.98;
-const OBSIDIAN_DIG_BASE_HOLD_MS = 2_350;
-const OBSIDIAN_DIG_RETRY_HOLD_BONUS_MS = 350;
-const OBSIDIAN_DIG_CONFIRM_TIMEOUT_MS = 1_500;
-const OBSIDIAN_DIG_STABILITY_MS = 100;
+const OBSIDIAN_DIG_BASE_HOLD_MS = 2_150;
+const OBSIDIAN_DIG_RETRY_HOLD_BONUS_MS = 300;
+const OBSIDIAN_DIG_CONFIRM_TIMEOUT_MS = 1_000;
+const OBSIDIAN_DIG_STABILITY_MS = 50;
 const OBSIDIAN_DIG_MAX_ATTEMPTS = 3;
 const CAULDRON_FILL_ATTEMPTS_PER_BLOCK = 2;
-const CAULDRON_FILL_CONFIRM_TIMEOUT_MS = 1_500;
+const CAULDRON_FILL_CONFIRM_TIMEOUT_MS = 650;
+const LAVA_PLACEMENT_CONFIRM_TIMEOUT_MS = 300;
 const FARM_RETRY_DELAY_MS = 2_000;
 const FARM_ERROR_NOTIFY_INTERVAL_MS = 60_000;
 const LOW_PICKAXE_DURABILITY_CODE = 'LOW_PICKAXE_DURABILITY';
@@ -223,7 +224,7 @@ async function waitForHeldItem(bot, itemName, timeoutMs = 2_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (bot.heldItem?.name === itemName) return;
-    await sleep(50);
+    await sleep(20);
   }
   throw new Error(`Expected to hold ${itemName}, but holding ${bot.heldItem?.name || 'nothing'}`);
 }
@@ -574,9 +575,18 @@ async function waitForLavaBucket(bot, timeoutMs = CAULDRON_FILL_CONFIRM_TIMEOUT_
   while (Date.now() < deadline) {
     const lavaBucket = bot.inventory.items().find(i => i.name === 'lava_bucket');
     if (lavaBucket) return lavaBucket;
-    await sleep(50);
+    await sleep(25);
   }
   return null;
+}
+
+async function waitForLavaPlacement(bot, x, y, z, timeoutMs = LAVA_PLACEMENT_CONFIRM_TIMEOUT_MS) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (didLavaPlacementLikelySucceed(bot, x, y, z)) return true;
+    await sleep(25);
+  }
+  return didLavaPlacementLikelySucceed(bot, x, y, z);
 }
 
 // ── Phase implementations ──────────────────────────────────────────────────────
@@ -633,7 +643,7 @@ async function fillBucket(bot) {
       await bot.equip(emptyBucket, 'hand');
       await waitForHeldItem(bot, 'bucket');
       await bot.lookAt(clickPoint, true);
-      await sleep(100);
+      await sleep(50);
 
       try {
         await bot.activateBlock(cauldron);
@@ -734,7 +744,7 @@ async function pourLava(bot, targetPos) {
         }
 
         await bot.lookAt(hitPoint, true);
-        await sleep(100);
+        await sleep(50);
 
         const shouldSneak = isWeakPlacementAnchor(ref.block);
         bot.setControlState('sneak', shouldSneak);
@@ -744,20 +754,18 @@ async function pourLava(bot, targetPos) {
           clickErrors.push(`useBucket#${attempt}/${ref.label}: ${e?.message || 'failed'}`);
         }
 
-        await sleep(INTERACT_SETTLE_MS + 260);
-        if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
+        if (await waitForLavaPlacement(bot, x, y, z)) {
           clicked = true;
           break;
         }
 
         try {
           await bot.activateItem();
-          await sleep(INTERACT_SETTLE_MS + 260);
         } catch (e) {
           clickErrors.push(`activateItem#${attempt}/${ref.label}: ${e?.message || 'failed'}`);
         }
 
-        if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
+        if (await waitForLavaPlacement(bot, x, y, z)) {
           clicked = true;
           break;
         }
@@ -801,7 +809,7 @@ async function waitForObsidian(bot, targetPos) {
     if (!farm.enabled) return null;
     const block = bot.blockAt(new Vec3(x, y, z));
     if (block?.name === 'obsidian') return new Vec3(x, y, z);
-    await sleep(100);
+    await sleep(25);
   }
   return null;
 }
@@ -828,7 +836,7 @@ async function mineObsidian(bot, targetPos) {
 
   await bot.equip(pick, 'hand');
   await waitForHeldItem(bot, pick.name);
-  await sleep(200);
+  await sleep(50);
 
   // Re-check just before mining in case durability info changed after equip.
   const remainingAfterEquip = getRemainingDurabilityPercent(bot, pick);
@@ -860,7 +868,7 @@ async function mineObsidian(bot, targetPos) {
     }
 
     await waitForHeldItem(bot, pick.name);
-    await sleep(250);
+    await sleep(100);
   }
 
   const remainingAfterDig = getRemainingDurabilityPercent(bot, pick);
