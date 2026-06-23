@@ -37,11 +37,16 @@ const FARM_CONFIG_FILE = 'obsidian_farm_config.json';
 const FARM_DEBUG_LOG_FILE = 'obsidian_farm_debug.log';
 const MAX_INTERACT_DISTANCE = 4.25;
 const TOP_FACE_AIM_Y_OFFSET = 0.98;
-const OBSIDIAN_DIG_BASE_HOLD_MS = 2_500;
-const OBSIDIAN_DIG_RETRY_HOLD_BONUS_MS = 500;
-const OBSIDIAN_DIG_CONFIRM_TIMEOUT_MS = 2_000;
-const OBSIDIAN_DIG_STABILITY_MS = 150;
+const OBSIDIAN_DIG_BASE_HOLD_MS = 2_350;
+const OBSIDIAN_DIG_RETRY_HOLD_BONUS_MS = 350;
+const OBSIDIAN_DIG_CONFIRM_TIMEOUT_MS = 1_500;
+const OBSIDIAN_DIG_STABILITY_MS = 100;
 const OBSIDIAN_DIG_MAX_ATTEMPTS = 3;
+const CAULDRON_FILL_ATTEMPTS_PER_BLOCK = 2;
+const CAULDRON_FILL_CONFIRM_TIMEOUT_MS = 1_500;
+const FARM_RETRY_DELAY_MS = 2_000;
+const FARM_ERROR_NOTIFY_INTERVAL_MS = 60_000;
+const LOW_PICKAXE_DURABILITY_CODE = 'LOW_PICKAXE_DURABILITY';
 const WEAK_PLACEMENT_ANCHORS = new Set([
   'hopper',
   'bamboo_trapdoor',
@@ -68,6 +73,8 @@ const farm = {
   phase:           'idle', // idle | seeking | filling | navigating | pouring | waiting | mining
   loopHandle:      null,
   cyclesCompleted: 0,
+  lastErrorMessage: null,
+  lastErrorNotifyAt: 0,
 };
 
 // ── Exported helpers ───────────────────────────────────────────────────────────
@@ -296,12 +303,33 @@ function findUsablePickaxe(bot, minRemainingPercent) {
       }
     }
 
-    if (bestCandidate && bestPercent > minRemainingPercent) {
+    if (bestCandidate && bestPercent >= minRemainingPercent) {
       return { item: bestCandidate, remainingPercent: bestPercent };
     }
   }
 
   return null;
+}
+
+function findBestPickaxe(bot) {
+  let best = null;
+  for (const item of bot.inventory.items()) {
+    if (!PICKAXE_PRIORITY.includes(item.name)) continue;
+    const remainingPercent = getRemainingDurabilityPercent(bot, item);
+    if (!best || remainingPercent > best.remainingPercent) {
+      best = { item, remainingPercent };
+    }
+  }
+  return best;
+}
+
+function createLowDurabilityError(percent) {
+  const err = new Error(
+    `Best diamond/netherite pickaxe has ${percent.toFixed(1)}% durability ` +
+    `(minimum required: at least ${MIN_PICKAXE_REMAINING_PERCENT}%).`
+  );
+  err.code = LOW_PICKAXE_DURABILITY_CODE;
+  return err;
 }
 
 /**
@@ -510,23 +538,44 @@ async function digBlockWithTimeout(bot, block, attempt) {
  * Find the nearest lava cauldron block.
  * Handles both 1.17+ (lava_cauldron block) and old cauldron with metadata ≥ 3.
  */
-function findLavaCauldron(bot, maxDistance) {
+function findLavaCauldrons(bot, maxDistance) {
+  const positions = [];
+
   // Modern: dedicated lava_cauldron block
   const modernId = bot.registry.blocksByName['lava_cauldron']?.id;
   if (modernId != null) {
-    const found = bot.findBlock({ matching: modernId, maxDistance });
-    if (found) return found;
+    positions.push(...bot.findBlocks({
+      matching: modernId,
+      maxDistance,
+      count: 64
+    }));
   }
 
   // Legacy: cauldron block with data value 3 (full of liquid — assumed lava in context)
   const legacyId = bot.registry.blocksByName['cauldron']?.id;
   if (legacyId != null) {
-    return bot.findBlock({
+    positions.push(...bot.findBlocks({
       matching: b => b.type === legacyId && b.metadata === 3,
       maxDistance,
-    }) || null;
+      count: 64,
+      useExtraInfo: true
+    }));
   }
 
+  const unique = new Map();
+  for (const pos of positions) unique.set(pos.toString(), pos);
+
+  return [...unique.values()]
+    .sort((a, b) => bot.entity.position.distanceSquared(a) - bot.entity.position.distanceSquared(b));
+}
+
+async function waitForLavaBucket(bot, timeoutMs = CAULDRON_FILL_CONFIRM_TIMEOUT_MS) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const lavaBucket = bot.inventory.items().find(i => i.name === 'lava_bucket');
+    if (lavaBucket) return lavaBucket;
+    await sleep(50);
+  }
   return null;
 }
 
@@ -537,8 +586,8 @@ async function fillBucket(bot) {
   const { maxCauldronDist } = farm.config;
 
   farm.phase = 'seeking';
-  const cauldron = findLavaCauldron(bot, maxCauldronDist);
-  if (!cauldron) {
+  const cauldronPositions = findLavaCauldrons(bot, maxCauldronDist);
+  if (cauldronPositions.length === 0) {
     throw new Error(
       `No lava cauldron found within ${maxCauldronDist} blocks. ` +
       'Place a lava cauldron nearby and retry.'
@@ -547,21 +596,75 @@ async function fillBucket(bot) {
 
   farm.phase = 'filling';
   stopAllMovement(bot);
-  ensureInteractionRange(bot, cauldron.position.offset(0.5, 0.5, 0.5), 'Cauldron interaction');
+  const failures = [];
 
-  const emptyBucket = bot.inventory.items().find(i => i.name === 'bucket');
-  if (!emptyBucket) throw new Error('No empty bucket in inventory');
+  for (const position of cauldronPositions) {
+    for (let attempt = 1; attempt <= CAULDRON_FILL_ATTEMPTS_PER_BLOCK; attempt++) {
+      const cauldron = bot.blockAt(position);
+      const isModernLavaCauldron = cauldron?.name === 'lava_cauldron';
+      const isLegacyLavaCauldron = cauldron?.name === 'cauldron' && cauldron.metadata === 3;
+      if (!isModernLavaCauldron && !isLegacyLavaCauldron) {
+        failures.push(`${position}:became_${cauldron?.name || 'unknown'}`);
+        writeFarmDebug('cauldron_skipped', {
+          position: position.toString(),
+          reason: `became_${cauldron?.name || 'unknown'}`
+        });
+        break;
+      }
 
-  await bot.equip(emptyBucket, 'hand');
-  await sleep(INTERACT_SETTLE_MS);
-  await bot.activateBlock(cauldron);
-  await sleep(INTERACT_SETTLE_MS + 100);
+      const clickPoint = position.offset(0.5, 0.8, 0.5);
+      const distance = bot.entity?.position?.distanceTo(clickPoint);
+      if (!Number.isFinite(distance) || distance > MAX_INTERACT_DISTANCE) {
+        failures.push(`${position}:out_of_reach_${Number.isFinite(distance) ? distance.toFixed(2) : 'unknown'}`);
+        writeFarmDebug('cauldron_skipped', {
+          position: position.toString(),
+          reason: 'out_of_reach',
+          distance: Number.isFinite(distance) ? Number(distance.toFixed(2)) : null
+        });
+        break;
+      }
 
-  // Confirm bucket is now a lava bucket
-  const lavaBucket = bot.inventory.items().find(i => i.name === 'lava_bucket');
-  if (!lavaBucket) {
-    throw new Error('Filled bucket not found after activating cauldron. Is it a lava cauldron?');
+      const emptyBucket = bot.inventory.items().find(i => i.name === 'bucket');
+      if (!emptyBucket) {
+        if (bot.inventory.items().some(i => i.name === 'lava_bucket')) return;
+        throw new Error('No empty bucket in inventory');
+      }
+
+      await bot.equip(emptyBucket, 'hand');
+      await waitForHeldItem(bot, 'bucket');
+      await bot.lookAt(clickPoint, true);
+      await sleep(100);
+
+      try {
+        await bot.activateBlock(cauldron);
+      } catch (err) {
+        failures.push(`${position}:click#${attempt}_${err.message}`);
+        continue;
+      }
+
+      if (await waitForLavaBucket(bot)) {
+        writeFarmDebug('cauldron_filled', {
+          position: position.toString(),
+          attempt,
+          candidates: cauldronPositions.length
+        });
+        return;
+      }
+
+      failures.push(`${position}:no_lava_bucket#${attempt}`);
+      writeFarmDebug('cauldron_fill_failed', {
+        position: position.toString(),
+        attempt,
+        currentBlock: bot.blockAt(position)?.name || null,
+        heldItem: bot.heldItem?.name || null
+      });
+    }
   }
+
+  throw new Error(
+    `Could not fill bucket from ${cauldronPositions.length} lava cauldron(s) within ${maxCauldronDist} blocks. ` +
+    `Attempts: ${failures.slice(0, 8).join(' | ')}`
+  );
 }
 
 /** Phase 3+4: navigate to target, place lava. */
@@ -698,7 +801,7 @@ async function waitForObsidian(bot, targetPos) {
     if (!farm.enabled) return null;
     const block = bot.blockAt(new Vec3(x, y, z));
     if (block?.name === 'obsidian') return new Vec3(x, y, z);
-    await sleep(500);
+    await sleep(100);
   }
   return null;
 }
@@ -712,9 +815,13 @@ async function mineObsidian(bot, targetPos) {
 
   const selected = findUsablePickaxe(bot, MIN_PICKAXE_REMAINING_PERCENT);
   if (!selected) {
+    const bestPickaxe = findBestPickaxe(bot);
+    if (bestPickaxe && bestPickaxe.remainingPercent < MIN_PICKAXE_REMAINING_PERCENT) {
+      throw createLowDurabilityError(bestPickaxe.remainingPercent);
+    }
     throw new Error(
-      `No usable diamond/netherite pickaxe found with durability > ${MIN_PICKAXE_REMAINING_PERCENT}%. ` +
-      'Obsidian farming requires a diamond or netherite pickaxe.'
+      `No usable diamond/netherite pickaxe found with durability >= ${MIN_PICKAXE_REMAINING_PERCENT}%. ` +
+      'Waiting for a suitable pickaxe.'
     );
   }
   const { item: pick } = selected;
@@ -725,10 +832,8 @@ async function mineObsidian(bot, targetPos) {
 
   // Re-check just before mining in case durability info changed after equip.
   const remainingAfterEquip = getRemainingDurabilityPercent(bot, pick);
-  if (remainingAfterEquip <= MIN_PICKAXE_REMAINING_PERCENT) {
-    throw new Error(
-      `Equipped pickaxe is at ${remainingAfterEquip.toFixed(1)}% durability (<= ${MIN_PICKAXE_REMAINING_PERCENT}%).`
-    );
+  if (remainingAfterEquip < MIN_PICKAXE_REMAINING_PERCENT) {
+    throw createLowDurabilityError(remainingAfterEquip);
   }
 
   for (let attempt = 1; attempt <= OBSIDIAN_DIG_MAX_ATTEMPTS; attempt++) {
@@ -759,10 +864,8 @@ async function mineObsidian(bot, targetPos) {
   }
 
   const remainingAfterDig = getRemainingDurabilityPercent(bot, pick);
-  if (remainingAfterDig <= MIN_PICKAXE_REMAINING_PERCENT) {
-    throw new Error(
-      `Pickaxe durability dropped to ${remainingAfterDig.toFixed(1)}% (<= ${MIN_PICKAXE_REMAINING_PERCENT}%).`
-    );
+  if (remainingAfterDig < MIN_PICKAXE_REMAINING_PERCENT) {
+    throw createLowDurabilityError(remainingAfterDig);
   }
 }
 
@@ -805,8 +908,8 @@ async function runCycle(bot, notify) {
       'Farm paused — use the button to restart.',
       16776960
     );
-    stop(null);
-    return;
+    if (!farm.enabled) return;
+    throw new Error('Lava did not convert to obsidian within 90s. Continuing to search and retry.');
   }
 
   await mineObsidian(bot, obsidianPos);
@@ -826,6 +929,46 @@ async function loop(bot, notify) {
 
   if (farm.enabled) {
     farm.loopHandle = setTimeout(() => loop(bot, notify), CYCLE_PAUSE_MS);
+  }
+}
+
+async function persistentLoop(bot, notify) {
+  if (!farm.enabled) return;
+  let retryDelay = CYCLE_PAUSE_MS;
+
+  try {
+    // runCycle contains one legacy timeout notice; the persistent loop owns all notices now.
+    await runCycle(bot, () => {});
+    farm.lastErrorMessage = null;
+  } catch (err) {
+    console.error('[Farm] Cycle error:', err.message);
+
+    if (err.code === LOW_PICKAXE_DURABILITY_CODE) {
+      notify(`🛑 Obsidian farm stopped to protect the pickaxe: \`${err.message}\``, 16711680);
+      stop(null);
+      return;
+    }
+
+    if (!farm.enabled) return;
+
+    const now = Date.now();
+    const errorChanged = farm.lastErrorMessage !== err.message;
+    const notifyIntervalPassed = now - farm.lastErrorNotifyAt >= FARM_ERROR_NOTIFY_INTERVAL_MS;
+    if (errorChanged || notifyIntervalPassed) {
+      notify(`⚠️ Obsidian farm is still running and will retry: \`${err.message}\``, 16776960);
+      farm.lastErrorNotifyAt = now;
+    }
+
+    farm.lastErrorMessage = err.message;
+    retryDelay = FARM_RETRY_DELAY_MS;
+    writeFarmDebug('cycle_retry', {
+      error: err.message,
+      retryInMs: retryDelay
+    });
+  }
+
+  if (farm.enabled) {
+    farm.loopHandle = setTimeout(() => persistentLoop(bot, notify), retryDelay);
   }
 }
 
@@ -855,12 +998,14 @@ function start(bot, notify) {
   const { x, y, z, maxCauldronDist } = farm.config;
   farm.enabled         = true;
   farm.cyclesCompleted = 0;
+  farm.lastErrorMessage = null;
+  farm.lastErrorNotifyAt = 0;
   notify(
     `🏭 **Obsidian farm started.**\n` +
     `Target: \`(${x}, ${y}, ${z})\`  •  Cauldron search radius: ${maxCauldronDist} blocks`,
     65280
   );
-  loop(bot, notify);
+  persistentLoop(bot, notify);
 }
 
 /**
