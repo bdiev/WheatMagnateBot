@@ -1369,6 +1369,7 @@ async function registerObsidianStatsCommand() {
 farm.configureRuntime({
   onMined: recordObsidianMined,
   onFatalStop: async (err) => {
+    await setProtectionLeverState(true);
     await setObsidianFarmDesiredEnabled(false);
     await sendOwnerDM(
       'Obsidian farm stopped',
@@ -1566,7 +1567,10 @@ let resumeTimer = null;
 
 let foodMonitorInterval = null;
 let playerScannerInterval = null;
+let restartProtectionInterval = null;
 let lastEnemyMentionAt = 0;
+let restartProtectionDateKey = null;
+let leverOperation = Promise.resolve();
 
 function clearReconnectTimer() {
   if (reconnectTimer) {
@@ -1615,6 +1619,113 @@ function resumeBot() {
   clearReconnectTimer();
   clearResumeTimer();
   if (!bot) createBot();
+}
+
+function getKyivDateParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Kyiv',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23'
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return {
+    dateKey: `${values.year}-${values.month}-${values.day}`,
+    hour: Number(values.hour),
+    minute: Number(values.minute)
+  };
+}
+
+function findProtectionLever(currentBot) {
+  if (!currentBot?.entity) return null;
+  const leverId = currentBot.registry.blocksByName.lever?.id;
+  if (leverId == null) return null;
+
+  const positions = currentBot.findBlocks({
+    matching: leverId,
+    maxDistance: 5,
+    count: 32
+  });
+  const origin = currentBot.entity.position.offset(0, 0.5, 0);
+  const forward = {
+    x: -Math.sin(currentBot.entity.yaw),
+    z: -Math.cos(currentBot.entity.yaw)
+  };
+
+  const candidates = positions
+    .map(position => {
+      const center = position.offset(0.5, 0.5, 0.5);
+      const dx = center.x - origin.x;
+      const dz = center.z - origin.z;
+      const horizontalDistance = Math.hypot(dx, dz);
+      const rearScore = horizontalDistance > 0
+        ? -((dx / horizontalDistance) * forward.x + (dz / horizontalDistance) * forward.z)
+        : -1;
+      return {
+        block: currentBot.blockAt(position),
+        distance: origin.distanceTo(center),
+        rearScore
+      };
+    })
+    .filter(candidate => candidate.block && candidate.rearScore > 0 && candidate.distance <= 4.5)
+    .sort((a, b) => (b.rearScore - a.rearScore) || (a.distance - b.distance));
+
+  return candidates[0]?.block || null;
+}
+
+function isLeverPowered(block) {
+  const powered = block?.getProperties?.().powered;
+  return powered === true || powered === 'true';
+}
+
+async function setProtectionLeverState(powered) {
+  const operation = async () => {
+    const currentBot = bot;
+    if (!currentBot?.entity) return false;
+    const lever = findProtectionLever(currentBot);
+    if (!lever) return false;
+
+    const currentState = isLeverPowered(lever);
+    if (currentState === powered) return true;
+
+    await currentBot.lookAt(lever.position.offset(0.5, 0.5, 0.5), true);
+    await currentBot.activateBlock(lever);
+
+    const deadline = Date.now() + 1000;
+    while (Date.now() < deadline) {
+      const updated = currentBot.blockAt(lever.position);
+      if (isLeverPowered(updated) === powered) return true;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    return false;
+  };
+
+  leverOperation = leverOperation.then(operation, operation);
+  return leverOperation;
+}
+
+function startRestartProtectionMonitor() {
+  if (restartProtectionInterval) clearInterval(restartProtectionInterval);
+  restartProtectionInterval = setInterval(async () => {
+    if (!bot?.entity || !obsidianStats.desiredEnabled) return;
+    const { dateKey, hour, minute } = getKyivDateParts();
+    const inPreparationWindow = (hour === 8 && minute >= 59) || (hour === 9 && minute <= 30);
+    if (!inPreparationWindow || restartProtectionDateKey === dateKey) return;
+
+    restartProtectionDateKey = dateKey;
+    farm.suspend();
+    const protectedState = await setProtectionLeverState(true);
+    if (!protectedState) {
+      await sendOwnerDM(
+        'Obsidian farm protection warning',
+        'The bot could not switch the protection lever ON before the scheduled server restart.',
+        16711680
+      );
+    }
+  }, 5000);
 }
 
 function normalizeOutboundChat(message) {
@@ -2145,18 +2256,32 @@ function createBot() {
     lastDisconnectReason = null;
   });
 
-  bot.on('spawn', () => {
+  bot.on('spawn', async () => {
     console.log('[Bot] Spawned.');
     reconnectTimestamp = 0; // Reset reconnect countdown when bot spawns
     clearIntervals();
     startFoodMonitor();
     startNearbyPlayerScanner();
+    startRestartProtectionMonitor();
 
     if (obsidianStats.desiredEnabled) {
-      setTimeout(() => {
-        if (!bot || !obsidianStats.desiredEnabled) return;
-        farm.resume(bot, () => {});
-      }, 1000);
+      const { dateKey, hour, minute } = getKyivDateParts();
+      if (hour === 9 && minute <= 30) restartProtectionDateKey = dateKey;
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      const leverReady = await setProtectionLeverState(false);
+      if (!leverReady) {
+        await setObsidianFarmDesiredEnabled(false);
+        await sendOwnerDM(
+          'Obsidian farm was not resumed',
+          'The protection lever behind the bot could not be found or switched OFF after reconnect.',
+          16711680
+        );
+      } else {
+        setTimeout(() => {
+          if (!bot || !obsidianStats.desiredEnabled) return;
+          farm.resume(bot, () => {});
+        }, 100);
+      }
     }
 
     // Update player activity for all online players
@@ -2624,6 +2749,10 @@ function clearIntervals() {
   if (playtimeSyncInterval) {
     clearInterval(playtimeSyncInterval);
     playtimeSyncInterval = null;
+  }
+  if (restartProtectionInterval) {
+    clearInterval(restartProtectionInterval);
+    restartProtectionInterval = null;
   }
   // Note: statusUpdateInterval is NOT cleared here as it's a global Discord interval
   // that should persist across bot reconnections
@@ -3660,9 +3789,11 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         }
         const farmStatus = farm.getStatus();
         if (farmStatus.enabled || obsidianStats.desiredEnabled) {
+          farm.suspend();
+          const leverProtected = await setProtectionLeverState(true);
           await setObsidianFarmDesiredEnabled(false);
           farm.stop(null);
-          await interaction.reply({ embeds: [{ description: `\ud83d\uded1 Obsidian farm stopped. Session mined: **${formatCompactCount(obsidianStats.sessionMined)}**`, color: 16711680, timestamp: new Date() }], flags: MessageFlags.Ephemeral });
+          await interaction.reply({ embeds: [{ description: `\ud83d\uded1 Obsidian farm stopped. Session mined: **${formatCompactCount(obsidianStats.sessionMined)}**${leverProtected ? '' : '\nWarning: protection lever could not be switched ON.'}`, color: 16711680, timestamp: new Date() }], flags: MessageFlags.Ephemeral });
           setTimeout(() => interaction.deleteReply().catch(() => {}), 8000);
         } else {
           const savedConfig = farmStatus.config;
@@ -4421,6 +4552,17 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         return;
       }
       farm.configure(x, y, z, rawDist || undefined);
+      const leverReady = await setProtectionLeverState(false);
+      if (!leverReady) {
+        await interaction.editReply({
+          embeds: [{
+            description: '❌ Could not find or switch the protection lever behind the bot to OFF. Farm was not started.',
+            color: 16711680,
+            timestamp: new Date()
+          }]
+        });
+        return;
+      }
       await beginObsidianFarmSession();
       farm.start(bot, () => {});
       const cf = farm.getStatus().config;
