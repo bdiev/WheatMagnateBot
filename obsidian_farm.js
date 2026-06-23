@@ -37,7 +37,7 @@ const FARM_CONFIG_FILE = 'obsidian_farm_config.json';
 const FARM_DEBUG_LOG_FILE = 'obsidian_farm_debug.log';
 const MAX_INTERACT_DISTANCE = 4.25;
 const TOP_FACE_AIM_Y_OFFSET = 0.98;
-const OBSIDIAN_DIG_BASE_HOLD_MS = 2_150;
+const OBSIDIAN_DIG_BASE_HOLD_MS = 2_050;
 const OBSIDIAN_DIG_RETRY_HOLD_BONUS_MS = 300;
 const OBSIDIAN_DIG_CONFIRM_TIMEOUT_MS = 1_000;
 const OBSIDIAN_DIG_STABILITY_MS = 50;
@@ -46,7 +46,6 @@ const CAULDRON_FILL_ATTEMPTS_PER_BLOCK = 2;
 const CAULDRON_FILL_CONFIRM_TIMEOUT_MS = 650;
 const LAVA_PLACEMENT_CONFIRM_TIMEOUT_MS = 300;
 const FARM_RETRY_DELAY_MS = 2_000;
-const FARM_ERROR_NOTIFY_INTERVAL_MS = 60_000;
 const LOW_PICKAXE_DURABILITY_CODE = 'LOW_PICKAXE_DURABILITY';
 const RESOURCE_EXHAUSTED_CODE = 'RESOURCE_EXHAUSTED';
 const SUPPLY_BARREL_RADIUS = 5;
@@ -78,7 +77,6 @@ const farm = {
   loopHandle:      null,
   cyclesCompleted: 0,
   lastErrorMessage: null,
-  lastErrorNotifyAt: 0,
 };
 const runtime = {
   onMined: async () => {},
@@ -115,9 +113,7 @@ function configure(x, y, z, maxCauldronDist) {
 function loadPlugin(bot) {
   try {
     if (!bot.pathfinder) bot.loadPlugin(pathfinder);
-  } catch (e) {
-    console.error('[Farm] Failed to load pathfinder plugin:', e.message);
-  }
+  } catch (_) {}
 }
 
 function saveFarmConfig() {
@@ -131,9 +127,7 @@ function saveFarmConfig() {
         }
       : null;
     fs.writeFileSync(FARM_CONFIG_FILE, JSON.stringify(payload, null, 2), 'utf8');
-  } catch (e) {
-    console.error('[Farm] Failed to save config:', e.message);
-  }
+  } catch (_) {}
 }
 
 function loadFarmConfig() {
@@ -159,9 +153,7 @@ function loadFarmConfig() {
         ? Math.max(0.5, Math.min(128, maxCauldronDist))
         : DEFAULT_CAULDRON_DIST,
     };
-  } catch (e) {
-    console.error('[Farm] Failed to load config:', e.message);
-  }
+  } catch (_) {}
 }
 
 // ── Internal helpers ───────────────────────────────────────────────────────────
@@ -189,6 +181,48 @@ function getConfiguredTargetPos() {
 function configureRuntime(hooks = {}) {
   if (typeof hooks.onMined === 'function') runtime.onMined = hooks.onMined;
   if (typeof hooks.onFatalStop === 'function') runtime.onFatalStop = hooks.onFatalStop;
+}
+
+function getDetailedStatus(bot) {
+  const status = getStatus();
+  if (!bot) {
+    return {
+      ...status,
+      connected: false,
+      bestPickaxe: null,
+      foodCount: 0,
+      barrel: null
+    };
+  }
+
+  const bestPickaxe = findBestPickaxe(bot);
+  const foodCount = bot.inventory.items()
+    .filter(isFoodItem)
+    .reduce((sum, item) => sum + item.count, 0);
+  const barrelId = bot.registry.blocksByName.barrel?.id;
+  const barrel = barrelId == null
+    ? null
+    : bot.findBlock({ matching: barrelId, maxDistance: SUPPLY_BARREL_RADIUS });
+
+  return {
+    ...status,
+    connected: true,
+    bestPickaxe: bestPickaxe
+      ? {
+          name: bestPickaxe.item.name,
+          remainingPercent: bestPickaxe.remainingPercent
+        }
+      : null,
+    foodCount,
+    barrel: barrel
+      ? {
+          position: barrel.position.toString(),
+          distance: bot.entity?.position
+            ? bot.entity.position.distanceTo(barrel.position.offset(0.5, 0.5, 0.5))
+            : null
+        }
+      : null
+  };
 }
 
 function getKnownBlockAt(bot, pos, label) {
@@ -482,12 +516,9 @@ function writeFarmDebug(event, details = {}) {
     event,
     ...details
   });
-  console.log(`[Farm debug] ${line}`);
   try {
     fs.appendFileSync(FARM_DEBUG_LOG_FILE, `${line}\n`, 'utf8');
-  } catch (err) {
-    console.error(`[Farm debug] Could not write ${FARM_DEBUG_LOG_FILE}: ${err.message}`);
-  }
+  } catch (_) {}
 }
 
 function getMiningDebugState(bot, block, attempt, expectedDigTime, holdMs, face) {
@@ -1034,33 +1065,11 @@ async function runCycle(bot, notify) {
 
   const obsidianPos = await waitForObsidian(bot, targetPos);
   if (!obsidianPos) {
-    notify(
-      '⚠️ Lava did not convert to obsidian within 90s.\n' +
-      'Make sure flowing water meets the lava at the exact target position.\n' +
-      'Farm paused — use the button to restart.',
-      16776960
-    );
     if (!farm.enabled) return;
     throw new Error('Lava did not convert to obsidian within 90s. Continuing to search and retry.');
   }
 
   await mineObsidian(bot, obsidianPos);
-}
-
-async function loop(bot, notify) {
-  if (!farm.enabled) return;
-  try {
-    await runCycle(bot, notify);
-  } catch (err) {
-    console.error('[Farm] Cycle error:', err.message);
-    notify(`❌ Obsidian farm stopped: \`${err.message}\``, 16711680);
-    stop(null);
-    return;
-  }
-
-  if (farm.enabled) {
-    farm.loopHandle = setTimeout(() => loop(bot, notify), CYCLE_PAUSE_MS);
-  }
 }
 
 async function persistentLoop(bot, notify) {
@@ -1072,28 +1081,15 @@ async function persistentLoop(bot, notify) {
     await runCycle(bot, () => {});
     farm.lastErrorMessage = null;
   } catch (err) {
-    console.error('[Farm] Cycle error:', err.message);
-
     if (err.code === LOW_PICKAXE_DURABILITY_CODE || err.code === RESOURCE_EXHAUSTED_CODE) {
-      notify(`🛑 Obsidian farm stopped: \`${err.message}\``, 16711680);
       try {
         await runtime.onFatalStop(err);
-      } catch (hookErr) {
-        console.error('[Farm] Fatal stop hook failed:', hookErr.message);
-      }
+      } catch (_) {}
       stop(null);
       return;
     }
 
     if (!farm.enabled) return;
-
-    const now = Date.now();
-    const errorChanged = farm.lastErrorMessage !== err.message;
-    const notifyIntervalPassed = now - farm.lastErrorNotifyAt >= FARM_ERROR_NOTIFY_INTERVAL_MS;
-    if (errorChanged || notifyIntervalPassed) {
-      notify(`⚠️ Obsidian farm is still running and will retry: \`${err.message}\``, 16776960);
-      farm.lastErrorNotifyAt = now;
-    }
 
     farm.lastErrorMessage = err.message;
     retryDelay = FARM_RETRY_DELAY_MS;
@@ -1115,32 +1111,21 @@ async function persistentLoop(bot, notify) {
  */
 function start(bot, notify) {
   if (farm.enabled) {
-    notify('⚠️ Obsidian farm is already running.', 16776960);
     return;
   }
   if (!bot) {
-    notify('❌ Bot is offline.', 16711680);
     return;
   }
   if (!bot.pathfinder) {
-    notify('❌ Cannot start farm: pathfinder plugin is not loaded. Restart the bot first.', 16711680);
     return;
   }
   if (!farm.config) {
-    notify('❌ Set target coordinates first.', 16711680);
     return;
   }
 
-  const { x, y, z, maxCauldronDist } = farm.config;
   farm.enabled         = true;
   farm.cyclesCompleted = 0;
   farm.lastErrorMessage = null;
-  farm.lastErrorNotifyAt = 0;
-  notify(
-    `🏭 **Obsidian farm started.**\n` +
-    `Target: \`(${x}, ${y}, ${z})\`  •  Cauldron search radius: ${maxCauldronDist} blocks`,
-    65280
-  );
   persistentLoop(bot, notify);
 }
 
@@ -1148,7 +1133,6 @@ function resume(bot, notify) {
   if (farm.enabled || !bot || !farm.config) return false;
   farm.enabled = true;
   farm.lastErrorMessage = null;
-  farm.lastErrorNotifyAt = 0;
   persistentLoop(bot, notify);
   return true;
 }
@@ -1173,7 +1157,6 @@ function stop(notify) {
     clearTimeout(farm.loopHandle);
     farm.loopHandle = null;
   }
-  if (notify) notify(`🛑 Obsidian farm stopped. Cycles completed: **${farm.cyclesCompleted}**`, 16711680);
 }
 
 loadFarmConfig();
@@ -1186,5 +1169,6 @@ module.exports = {
   configure,
   configureRuntime,
   getStatus,
+  getDetailedStatus,
   loadPlugin
 };

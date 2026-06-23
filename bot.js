@@ -66,7 +66,8 @@ let startTime = Date.now();
 let obsidianStats = {
   sessionMined: 0,
   totalMined: 0,
-  desiredEnabled: false
+  desiredEnabled: false,
+  sessionStartedAt: null
 };
 let whisperConversations = new Map(); // username -> messageId
 let whisperChannels = new Map(); // key: `${ownerId}:${mcUsername}` -> channelId
@@ -885,12 +886,16 @@ async function initDatabase() {
       )
     `);
     await pool.query(`
+      ALTER TABLE obsidian_farm_state
+      ADD COLUMN IF NOT EXISTS session_started_at TIMESTAMPTZ
+    `);
+    await pool.query(`
       INSERT INTO obsidian_farm_state (id)
       VALUES (1)
       ON CONFLICT (id) DO NOTHING
     `);
     const farmStateResult = await pool.query(`
-      SELECT session_mined, total_mined, desired_enabled
+      SELECT session_mined, total_mined, desired_enabled, session_started_at
       FROM obsidian_farm_state
       WHERE id = 1
     `);
@@ -898,7 +903,10 @@ async function initDatabase() {
       obsidianStats = {
         sessionMined: Number(farmStateResult.rows[0].session_mined) || 0,
         totalMined: Number(farmStateResult.rows[0].total_mined) || 0,
-        desiredEnabled: Boolean(farmStateResult.rows[0].desired_enabled)
+        desiredEnabled: Boolean(farmStateResult.rows[0].desired_enabled),
+        sessionStartedAt: farmStateResult.rows[0].session_started_at
+          ? new Date(farmStateResult.rows[0].session_started_at)
+          : null
       };
     }
     console.log('[DB] ✅ Tables initialized successfully.');
@@ -1012,6 +1020,11 @@ if (DISCORD_BOT_TOKEN) {
     }
 
     await initDatabase();
+    try {
+      await registerObsidianStatsCommand();
+    } catch (err) {
+      console.error('[Discord] Failed to register /ofstats:', err.message);
+    }
     await migrateWhitelistToDB();
     // Reload whitelist after migration
     const wl = await loadWhitelistFromDB();
@@ -1181,6 +1194,7 @@ async function syncWhitelistPlaytime(onlineUsernames = getOnlineWhitelistUsernam
 async function beginObsidianFarmSession() {
   obsidianStats.sessionMined = 0;
   obsidianStats.desiredEnabled = true;
+  obsidianStats.sessionStartedAt = new Date();
   if (!pool) return;
 
   try {
@@ -1188,15 +1202,17 @@ async function beginObsidianFarmSession() {
       UPDATE obsidian_farm_state
       SET session_mined = 0,
           desired_enabled = TRUE,
+          session_started_at = NOW(),
           updated_at = NOW()
       WHERE id = 1
-      RETURNING session_mined, total_mined, desired_enabled
+      RETURNING session_mined, total_mined, desired_enabled, session_started_at
     `);
     if (result.rows[0]) {
       obsidianStats = {
         sessionMined: Number(result.rows[0].session_mined) || 0,
         totalMined: Number(result.rows[0].total_mined) || 0,
-        desiredEnabled: Boolean(result.rows[0].desired_enabled)
+        desiredEnabled: Boolean(result.rows[0].desired_enabled),
+        sessionStartedAt: new Date(result.rows[0].session_started_at)
       };
     }
   } catch (err) {
@@ -1233,13 +1249,16 @@ async function recordObsidianMined() {
           total_mined = total_mined + 1,
           updated_at = NOW()
       WHERE id = 1
-      RETURNING session_mined, total_mined, desired_enabled
+      RETURNING session_mined, total_mined, desired_enabled, session_started_at
     `);
     if (result.rows[0]) {
       obsidianStats = {
         sessionMined: Number(result.rows[0].session_mined) || 0,
         totalMined: Number(result.rows[0].total_mined) || 0,
-        desiredEnabled: Boolean(result.rows[0].desired_enabled)
+        desiredEnabled: Boolean(result.rows[0].desired_enabled),
+        sessionStartedAt: result.rows[0].session_started_at
+          ? new Date(result.rows[0].session_started_at)
+          : obsidianStats.sessionStartedAt
       };
     }
   } catch (err) {
@@ -1258,6 +1277,93 @@ function formatCompactCount(value) {
   }
   const millions = count / 1_000_000;
   return `${millions >= 10 ? Math.floor(millions) : Math.floor(millions * 10) / 10}m`;
+}
+
+function formatDurationShort(milliseconds) {
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (days > 0) return `${days}d ${hours}h ${minutes}m`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m ${seconds}s`;
+}
+
+function buildObsidianStatsEmbed() {
+  const farmStatus = farm.getDetailedStatus(bot);
+  const sessionStartedAt = obsidianStats.sessionStartedAt
+    ? new Date(obsidianStats.sessionStartedAt)
+    : null;
+  const sessionMs = sessionStartedAt ? Date.now() - sessionStartedAt.getTime() : 0;
+  const sessionHours = sessionMs / 3_600_000;
+  const perHour = sessionHours > 0 ? obsidianStats.sessionMined / sessionHours : 0;
+  const perMinute = perHour / 60;
+  const config = farmStatus.config;
+  const pickaxe = farmStatus.bestPickaxe
+    ? `${farmStatus.bestPickaxe.name} (${farmStatus.bestPickaxe.remainingPercent.toFixed(1)}%)`
+    : 'None';
+  const barrel = farmStatus.barrel
+    ? `${farmStatus.barrel.position} (${farmStatus.barrel.distance?.toFixed(1) ?? '?'} blocks)`
+    : 'Not found within 5 blocks';
+
+  return {
+    title: 'Obsidian Farm Statistics',
+    color: farmStatus.enabled ? 65280 : 16776960,
+    fields: [
+      {
+        name: 'Blocks mined',
+        value: `Session: **${formatCompactCount(obsidianStats.sessionMined)}**\nAll time: **${formatCompactCount(obsidianStats.totalMined)}**`,
+        inline: true
+      },
+      {
+        name: 'Session',
+        value: `Duration: **${formatDurationShort(sessionMs)}**\nRate: **${perMinute.toFixed(1)}/min** (${formatCompactCount(Math.round(perHour))}/h)`,
+        inline: true
+      },
+      {
+        name: 'Farm state',
+        value: `Running: **${farmStatus.enabled ? 'Yes' : 'No'}**\nAuto-resume: **${obsidianStats.desiredEnabled ? 'Yes' : 'No'}**\nPhase: **${farmStatus.phase}**`,
+        inline: false
+      },
+      {
+        name: 'Supplies',
+        value: `Pickaxe: **${pickaxe}**\nFood items: **${farmStatus.foodCount}**\nBarrel: **${barrel}**`,
+        inline: false
+      },
+      {
+        name: 'Target',
+        value: config
+          ? `(${config.x}, ${config.y}, ${config.z}) | Cauldron radius: ${config.maxCauldronDist}`
+          : 'Not configured',
+        inline: false
+      }
+    ],
+    timestamp: new Date()
+  };
+}
+
+async function registerObsidianStatsCommand() {
+  if (!discordClient.application) return;
+  const commands = await discordClient.application.commands.fetch();
+  const obsoleteCommands = new Set(['play', 'stop', 'queue', 'skip']);
+  for (const command of commands.values()) {
+    if (obsoleteCommands.has(command.name)) {
+      await discordClient.application.commands.delete(command.id);
+    }
+  }
+
+  const existing = commands.find(command => command.name === 'ofstats');
+  const data = {
+    name: 'ofstats',
+    description: 'Show detailed obsidian farm statistics',
+    dm_permission: true
+  };
+  if (existing) {
+    await discordClient.application.commands.edit(existing.id, data);
+  } else {
+    await discordClient.application.commands.create(data);
+  }
 }
 
 farm.configureRuntime({
@@ -2049,8 +2155,7 @@ function createBot() {
     if (obsidianStats.desiredEnabled) {
       setTimeout(() => {
         if (!bot || !obsidianStats.desiredEnabled) return;
-        const resumed = farm.resume(bot, (msg, color) => sendDiscordNotification(msg, color));
-        if (resumed) console.log('[Farm] Resumed automatically after reconnect.');
+        farm.resume(bot, () => {});
       }, 1000);
     }
 
@@ -2630,6 +2735,24 @@ process.on('unhandledRejection', (reason) => {
 if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
   discordClient.on('interactionCreate', async (interaction) => {
     // Interaction logs reduced to minimize noise
+
+    if (interaction.isChatInputCommand() && interaction.commandName === 'ofstats') {
+      if (interaction.user.id !== DISCORD_OWNER_ID) {
+        const reply = { content: 'Only the owner can view obsidian farm statistics.' };
+        if (interaction.guildId) reply.flags = MessageFlags.Ephemeral;
+        await interaction.reply(reply);
+        return;
+      }
+      if (interaction.guildId) {
+        await interaction.reply({
+          content: 'Use `/ofstats` in the bot DM to view private farm statistics.',
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+      await interaction.reply({ embeds: [buildObsidianStatsEmbed()] });
+      return;
+    }
 
     if (interaction.channelId !== DISCORD_CHANNEL_ID) {
       // Allow dialog buttons and select menus in their own channels
@@ -3538,7 +3661,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         const farmStatus = farm.getStatus();
         if (farmStatus.enabled || obsidianStats.desiredEnabled) {
           await setObsidianFarmDesiredEnabled(false);
-          farm.stop((msg, color) => sendDiscordNotification(msg, color));
+          farm.stop(null);
           await interaction.reply({ embeds: [{ description: `\ud83d\uded1 Obsidian farm stopped. Session mined: **${formatCompactCount(obsidianStats.sessionMined)}**`, color: 16711680, timestamp: new Date() }], flags: MessageFlags.Ephemeral });
           setTimeout(() => interaction.deleteReply().catch(() => {}), 8000);
         } else {
@@ -4299,7 +4422,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       }
       farm.configure(x, y, z, rawDist || undefined);
       await beginObsidianFarmSession();
-      farm.start(bot, (msg, color) => sendDiscordNotification(msg, color));
+      farm.start(bot, () => {});
       const cf = farm.getStatus().config;
       await interaction.editReply({ embeds: [{ description: `✅ Obsidian farm started at \`(${cf.x}, ${cf.y}, ${cf.z})\`. Cauldron radius: ${cf.maxCauldronDist} blocks.`, color: 65280, timestamp: new Date() }] });
       setTimeout(() => interaction.deleteReply().catch(() => {}), 10000);
