@@ -1774,13 +1774,15 @@ function getStatusDescription() {
     .map(username => `\`${username}\``)
     .join(', ') || 'None';
   const whitelistOnlineDisplay = whitelistOnline.length > 0 ? whitelistOnline.map(u => `\`${u}\``).join(', ') : 'None';
+  const obsidianMined = farm.getStatus().cyclesCompleted;
   return `✅ Bot **${bot.username}** connected to \`${config.host}\`\n` +
     `👥 Players online: ${playerCount}\n` +
     `👀 Players nearby: ${nearbyNames}\n` +
     `⚡ TPS: ${avgTps}\n` +
     `:hamburger: Food: ${Math.round(bot.food * 2) / 2}/20\n` +
     `❤️ Health: ${Math.round(bot.health * 2) / 2}/20\n` +
-    `📋 Whitelist online: ${whitelistOnlineDisplay}`;
+    `📋 Whitelist online: ${whitelistOnlineDisplay}\n` +
+    `⛏️ Obsidian mined: ${obsidianMined}`;
 }
 
 // Function to create status buttons
