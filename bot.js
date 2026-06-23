@@ -3378,13 +3378,13 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           const farmModal = new ModalBuilder()
             .setCustomId('obsidian_farm_modal')
             .setTitle('Obsidian Farm \u2014 Target Coordinates');
-          const xInput = new TextInputBuilder().setCustomId('farm_x').setLabel('X coordinate').setStyle(TextInputStyle.Short).setPlaceholder('e.g. 120').setRequired(true);
+          const xInput = new TextInputBuilder().setCustomId('farm_x').setLabel('X coordinate').setStyle(TextInputStyle.Short).setPlaceholder('3402889').setRequired(true);
           if (savedConfig?.x != null) xInput.setValue(String(savedConfig.x));
-          const yInput = new TextInputBuilder().setCustomId('farm_y').setLabel('Y coordinate').setStyle(TextInputStyle.Short).setPlaceholder('e.g. 64').setRequired(true);
+          const yInput = new TextInputBuilder().setCustomId('farm_y').setLabel('Y coordinate').setStyle(TextInputStyle.Short).setPlaceholder('68').setRequired(true);
           if (savedConfig?.y != null) yInput.setValue(String(savedConfig.y));
-          const zInput = new TextInputBuilder().setCustomId('farm_z').setLabel('Z coordinate').setStyle(TextInputStyle.Short).setPlaceholder('e.g. -300').setRequired(true);
+          const zInput = new TextInputBuilder().setCustomId('farm_z').setLabel('Z coordinate').setStyle(TextInputStyle.Short).setPlaceholder('672222').setRequired(true);
           if (savedConfig?.z != null) zInput.setValue(String(savedConfig.z));
-          const distInput = new TextInputBuilder().setCustomId('farm_dist').setLabel('Max cauldron search radius (blocks)').setStyle(TextInputStyle.Short).setPlaceholder('Default: 64').setRequired(false);
+          const distInput = new TextInputBuilder().setCustomId('farm_dist').setLabel('Max cauldron search radius (blocks)').setStyle(TextInputStyle.Short).setPlaceholder('Default: 4.5').setRequired(false);
           if (savedConfig?.maxCauldronDist != null) distInput.setValue(String(savedConfig.maxCauldronDist));
           farmModal.addComponents(
             new ActionRowBuilder().addComponents(xInput),

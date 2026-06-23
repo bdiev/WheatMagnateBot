@@ -28,13 +28,18 @@ const PICKAXE_PRIORITY = [
 const OBSIDIAN_TIMEOUT_MS   = 90_000; // max wait for lava→obsidian
 const CYCLE_PAUSE_MS        = 800;    // pause between cycles
 const INTERACT_SETTLE_MS    = 350;    // settle delay after block interaction
-const DEFAULT_CAULDRON_DIST = 64;     // default max search radius for cauldrons
+const DEFAULT_TARGET_X = 3402889;
+const DEFAULT_TARGET_Y = 68;
+const DEFAULT_TARGET_Z = 672222;
+const DEFAULT_CAULDRON_DIST = 4.5;    // default max search radius for cauldrons
 const MIN_PICKAXE_REMAINING_PERCENT = 5;
 const FARM_CONFIG_FILE = 'obsidian_farm_config.json';
 const MAX_INTERACT_DISTANCE = 4.25;
 const TOP_FACE_AIM_Y_OFFSET = 0.98;
 const OBSIDIAN_DIG_TIMEOUT_PADDING_MS = 8_000;
 const OBSIDIAN_DIG_MIN_TIMEOUT_MS = 25_000;
+const OBSIDIAN_DIG_VERIFY_DELAY_MS = 1_500;
+const OBSIDIAN_DIG_MAX_ATTEMPTS = 3;
 const WEAK_PLACEMENT_ANCHORS = new Set([
   'hopper',
   'bamboo_trapdoor',
@@ -52,7 +57,12 @@ const WEAK_PLACEMENT_ANCHORS = new Set([
 // ── Internal state ─────────────────────────────────────────────────────────────
 const farm = {
   enabled:         false,
-  config:          null,   // { x, y, z, maxCauldronDist }
+  config: {
+    x: DEFAULT_TARGET_X,
+    y: DEFAULT_TARGET_Y,
+    z: DEFAULT_TARGET_Z,
+    maxCauldronDist: DEFAULT_CAULDRON_DIST,
+  },
   phase:           'idle', // idle | seeking | filling | navigating | pouring | waiting | mining
   loopHandle:      null,
   cyclesCompleted: 0,
@@ -72,12 +82,13 @@ function getStatus() {
 
 /** Set target coordinates and optional cauldron search radius. */
 function configure(x, y, z, maxCauldronDist) {
+  const parsedDistance = Number(maxCauldronDist);
   farm.config = {
     x:               Math.round(Number(x)),
     y:               Math.round(Number(y)),
     z:               Math.round(Number(z)),
-    maxCauldronDist: maxCauldronDist
-      ? Math.max(8, Math.min(128, Math.round(Number(maxCauldronDist))))
+    maxCauldronDist: Number.isFinite(parsedDistance) && parsedDistance > 0
+      ? Math.max(0.5, Math.min(128, parsedDistance))
       : DEFAULT_CAULDRON_DIST,
   };
   saveFarmConfig();
@@ -128,7 +139,7 @@ function loadFarmConfig() {
       y: Math.round(y),
       z: Math.round(z),
       maxCauldronDist: Number.isFinite(maxCauldronDist)
-        ? Math.max(8, Math.min(128, Math.round(maxCauldronDist)))
+        ? Math.max(0.5, Math.min(128, maxCauldronDist))
         : DEFAULT_CAULDRON_DIST,
     };
   } catch (e) {
@@ -360,6 +371,12 @@ async function digBlockWithTimeout(bot, block) {
   }
 }
 
+async function verifyObsidianWasBroken(bot, targetPos) {
+  await sleep(OBSIDIAN_DIG_VERIFY_DELAY_MS);
+  const block = bot.blockAt(targetPos);
+  return block?.name !== 'obsidian';
+}
+
 /**
  * Find the nearest lava cauldron block.
  * Handles both 1.17+ (lava_cauldron block) and old cauldron with metadata ≥ 3.
@@ -571,9 +588,10 @@ async function mineObsidian(bot, targetPos) {
       'Obsidian farming requires a diamond or netherite pickaxe.'
     );
   }
-  const { item: pick, remainingPercent } = selected;
+  const { item: pick } = selected;
 
   await bot.equip(pick, 'hand');
+  await waitForHeldItem(bot, pick.name);
   await sleep(200);
 
   // Re-check just before mining in case durability info changed after equip.
@@ -584,17 +602,27 @@ async function mineObsidian(bot, targetPos) {
     );
   }
 
-  const block = bot.blockAt(new Vec3(x, y, z));
-  if (!block || block.name !== 'obsidian') {
-    throw new Error(`Expected obsidian at (${x}, ${y}, ${z}) but found ${block?.name || 'nothing'}`);
-  }
+  for (let attempt = 1; attempt <= OBSIDIAN_DIG_MAX_ATTEMPTS; attempt++) {
+    const block = bot.blockAt(new Vec3(x, y, z));
+    if (!block || block.name !== 'obsidian') return;
 
-  if (typeof bot.canDigBlock === 'function' && !bot.canDigBlock(block)) {
-    throw new Error(`Cannot dig obsidian at (${x}, ${y}, ${z}). Move closer or clear line of sight.`);
-  }
+    if (typeof bot.canDigBlock === 'function' && !bot.canDigBlock(block)) {
+      throw new Error(`Cannot dig obsidian at (${x}, ${y}, ${z}). Move closer or clear line of sight.`);
+    }
 
-  await digBlockWithTimeout(bot, block);
-  await sleep(300);
+    await digBlockWithTimeout(bot, block);
+    if (await verifyObsidianWasBroken(bot, targetPos)) break;
+
+    if (attempt === OBSIDIAN_DIG_MAX_ATTEMPTS) {
+      throw new Error(
+        `Server kept obsidian at (${x}, ${y}, ${z}) after ${OBSIDIAN_DIG_MAX_ATTEMPTS} mining attempts. ` +
+        'Check tool enchantments, region protection, server lag, or anti-cheat.'
+      );
+    }
+
+    await waitForHeldItem(bot, pick.name);
+    await sleep(400);
+  }
 
   const remainingAfterDig = getRemainingDurabilityPercent(bot, pick);
   if (remainingAfterDig <= MIN_PICKAXE_REMAINING_PERCENT) {
