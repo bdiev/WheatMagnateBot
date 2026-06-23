@@ -36,9 +36,10 @@ const MIN_PICKAXE_REMAINING_PERCENT = 5;
 const FARM_CONFIG_FILE = 'obsidian_farm_config.json';
 const MAX_INTERACT_DISTANCE = 4.25;
 const TOP_FACE_AIM_Y_OFFSET = 0.98;
-const OBSIDIAN_DIG_TIMEOUT_PADDING_MS = 8_000;
-const OBSIDIAN_DIG_MIN_TIMEOUT_MS = 25_000;
-const OBSIDIAN_DIG_VERIFY_DELAY_MS = 1_500;
+const OBSIDIAN_DIG_HOLD_MULTIPLIER = 1.35;
+const OBSIDIAN_DIG_HOLD_PADDING_MS = 1_500;
+const OBSIDIAN_DIG_MIN_HOLD_MS = 3_000;
+const OBSIDIAN_DIG_CONFIRM_TIMEOUT_MS = 5_000;
 const OBSIDIAN_DIG_MAX_ATTEMPTS = 3;
 const WEAK_PLACEMENT_ANCHORS = new Set([
   'hopper',
@@ -338,43 +339,91 @@ function ensureInteractionRange(bot, pos, actionName) {
 }
 
 async function digBlockWithTimeout(bot, block) {
-  const expectedDigTime = typeof bot.digTime === 'function' ? bot.digTime(block) : OBSIDIAN_DIG_MIN_TIMEOUT_MS;
+  const expectedDigTime = typeof bot.digTime === 'function' ? bot.digTime(block) : OBSIDIAN_DIG_MIN_HOLD_MS;
   if (!Number.isFinite(expectedDigTime)) {
     throw new Error(`Cannot calculate dig time for ${block.name}`);
   }
 
-  const timeoutMs = Math.max(OBSIDIAN_DIG_MIN_TIMEOUT_MS, expectedDigTime + OBSIDIAN_DIG_TIMEOUT_PADDING_MS);
-  let timedOut = false;
-  let timeout = null;
+  const holdMs = Math.max(
+    OBSIDIAN_DIG_MIN_HOLD_MS,
+    Math.ceil(expectedDigTime * OBSIDIAN_DIG_HOLD_MULTIPLIER + OBSIDIAN_DIG_HOLD_PADDING_MS)
+  );
+  const center = block.position.offset(0.5, 0.5, 0.5);
+  await bot.lookAt(center, true);
+
+  const aimedBlock = typeof bot.blockAtCursor === 'function' ? bot.blockAtCursor(MAX_INTERACT_DISTANCE + 0.75) : null;
+  if (!aimedBlock?.position?.equals(block.position)) {
+    throw new Error(
+      `Cannot keep obsidian at (${block.position.x}, ${block.position.y}, ${block.position.z}) in sight while mining.`
+    );
+  }
+
+  const face = Number.isInteger(aimedBlock.face) ? aimedBlock.face : 1;
+  const eventName = `blockUpdate:${block.position}`;
+  let swingInterval = null;
+  let confirmTimeout = null;
+  let completed = false;
+  let onBlockUpdate = null;
+
+  const serverConfirmation = new Promise((resolve, reject) => {
+    onBlockUpdate = (_oldBlock, newBlock) => {
+      if (!newBlock || newBlock.name === 'obsidian') return;
+      completed = true;
+      cleanup();
+      resolve();
+    };
+
+    bot.on(eventName, onBlockUpdate);
+    confirmTimeout = setTimeout(() => {
+      cleanup();
+      reject(new Error('server_did_not_confirm_break'));
+    }, holdMs + OBSIDIAN_DIG_CONFIRM_TIMEOUT_MS);
+  });
+
+  function cleanup() {
+    if (onBlockUpdate) bot.removeListener(eventName, onBlockUpdate);
+    if (confirmTimeout) {
+      clearTimeout(confirmTimeout);
+      confirmTimeout = null;
+    }
+  }
 
   try {
-    await Promise.race([
-      bot.dig(block, true, 'raycast'),
-      new Promise((_, reject) => {
-        timeout = setTimeout(() => {
-          timedOut = true;
-          try { bot.stopDigging(); } catch (_) {}
-          reject(new Error('dig_timeout'));
-        }, timeoutMs);
-      })
-    ]);
+    bot._client.write('block_dig', {
+      status: 0,
+      location: block.position,
+      face
+    });
+    bot.swingArm();
+    swingInterval = setInterval(() => bot.swingArm(), 350);
+
+    await sleep(holdMs);
+    if (!farm.enabled) throw new Error('farm_stopped');
+    if (swingInterval) {
+      clearInterval(swingInterval);
+      swingInterval = null;
+    }
+
+    bot._client.write('block_dig', {
+      status: 2,
+      location: block.position,
+      face
+    });
+    await serverConfirmation;
   } catch (err) {
-    if (timedOut) {
-      throw new Error(
-        `Could not break obsidian at (${block.position.x}, ${block.position.y}, ${block.position.z}) after ${Math.round(timeoutMs / 1000)}s. ` +
-        'Check that the bot is holding a diamond/netherite pickaxe, can see the block, and the server allows mining there.'
-      );
+    cleanup();
+    if (!completed) {
+      bot._client.write('block_dig', {
+        status: 1,
+        location: block.position,
+        face
+      });
     }
     throw err;
   } finally {
-    if (timeout) clearTimeout(timeout);
+    cleanup();
+    if (swingInterval) clearInterval(swingInterval);
   }
-}
-
-async function verifyObsidianWasBroken(bot, targetPos) {
-  await sleep(OBSIDIAN_DIG_VERIFY_DELAY_MS);
-  const block = bot.blockAt(targetPos);
-  return block?.name !== 'obsidian';
 }
 
 /**
@@ -610,8 +659,13 @@ async function mineObsidian(bot, targetPos) {
       throw new Error(`Cannot dig obsidian at (${x}, ${y}, ${z}). Move closer or clear line of sight.`);
     }
 
-    await digBlockWithTimeout(bot, block);
-    if (await verifyObsidianWasBroken(bot, targetPos)) break;
+    try {
+      await digBlockWithTimeout(bot, block);
+      break;
+    } catch (err) {
+      if (err.message === 'farm_stopped') return;
+      if (err.message !== 'server_did_not_confirm_break') throw err;
+    }
 
     if (attempt === OBSIDIAN_DIG_MAX_ATTEMPTS) {
       throw new Error(
