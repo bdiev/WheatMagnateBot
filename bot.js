@@ -1290,8 +1290,23 @@ function formatDurationShort(milliseconds) {
   return `${minutes}m ${seconds}s`;
 }
 
-function buildObsidianStatsEmbed() {
-  const farmStatus = farm.getDetailedStatus(bot);
+function formatFoodSupply(food = {}) {
+  const entries = Object.entries(food);
+  return entries.length > 0
+    ? entries.map(([name, count]) => `${name} x${count}`).join(', ')
+    : 'None';
+}
+
+function formatPickaxeSupply(pickaxes = []) {
+  if (pickaxes.length === 0) return 'None';
+  const text = pickaxes
+    .map(pickaxe => `${pickaxe.name} ${pickaxe.remainingPercent.toFixed(1)}%${pickaxe.usable ? '' : ' (low)'}`)
+    .join(', ');
+  return text.length > 850 ? `${text.slice(0, 847)}...` : text;
+}
+
+async function buildObsidianStatsEmbed() {
+  const farmStatus = await farm.getDetailedStatus(bot);
   const sessionStartedAt = obsidianStats.sessionStartedAt
     ? new Date(obsidianStats.sessionStartedAt)
     : null;
@@ -1300,12 +1315,11 @@ function buildObsidianStatsEmbed() {
   const perHour = sessionHours > 0 ? obsidianStats.sessionMined / sessionHours : 0;
   const perMinute = perHour / 60;
   const config = farmStatus.config;
-  const pickaxe = farmStatus.bestPickaxe
-    ? `${farmStatus.bestPickaxe.name} (${farmStatus.bestPickaxe.remainingPercent.toFixed(1)}%)`
-    : 'None';
-  const barrel = farmStatus.barrel
-    ? `${farmStatus.barrel.position} (${farmStatus.barrel.distance?.toFixed(1) ?? '?'} blocks)`
-    : 'Not found within 5 blocks';
+  const inventory = farmStatus.supplies?.inventory;
+  const barrel = farmStatus.supplies?.barrel;
+  const barrelLocation = barrel
+    ? `${barrel.position} (${barrel.distance?.toFixed(1) ?? '?'} blocks)`
+    : (farmStatus.supplies?.barrelError || 'Not found within 5 blocks');
 
   return {
     title: 'Obsidian Farm Statistics',
@@ -1327,8 +1341,13 @@ function buildObsidianStatsEmbed() {
         inline: false
       },
       {
-        name: 'Supplies',
-        value: `Pickaxe: **${pickaxe}**\nFood items: **${farmStatus.foodCount}**\nBarrel: **${barrel}**`,
+        name: 'Inventory supplies',
+        value: `Food (${inventory?.foodCount || 0}): **${formatFoodSupply(inventory?.food)}**\nPickaxes (${inventory?.usablePickaxeCount || 0} usable): **${formatPickaxeSupply(inventory?.pickaxes)}**`,
+        inline: false
+      },
+      {
+        name: 'Barrel supplies',
+        value: `Location: **${barrelLocation}**\nFood (${barrel?.foodCount || 0}): **${formatFoodSupply(barrel?.food)}**\nPickaxes (${barrel?.usablePickaxeCount || 0} usable): **${formatPickaxeSupply(barrel?.pickaxes)}**`,
         inline: false
       },
       {
@@ -2929,7 +2948,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         });
         return;
       }
-      await interaction.reply({ embeds: [buildObsidianStatsEmbed()] });
+      await interaction.deferReply();
+      await interaction.editReply({ embeds: [await buildObsidianStatsEmbed()] });
       return;
     }
 
@@ -4625,6 +4645,18 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         return;
       }
       farm.configure(x, y, z, rawDist || undefined);
+      try {
+        await farm.prepareStart(bot);
+      } catch (err) {
+        await interaction.editReply({
+          embeds: [{
+            description: `❌ Farm supplies check failed: ${err.message}`,
+            color: 16711680,
+            timestamp: new Date()
+          }]
+        });
+        return;
+      }
       const leverReady = await setProtectionLeverState(false);
       if (!leverReady) {
         await interaction.editReply({
