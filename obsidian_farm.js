@@ -307,6 +307,16 @@ function getFaceCursor(face) {
   );
 }
 
+function faceVectorToDirection(face) {
+  if (face.y < 0) return 0;
+  if (face.y > 0) return 1;
+  if (face.z < 0) return 2;
+  if (face.z > 0) return 3;
+  if (face.x < 0) return 4;
+  if (face.x > 0) return 5;
+  return null;
+}
+
 function createPlacementSafetyError(message) {
   const err = new Error(message);
   err.code = PLACEMENT_SAFETY_CODE;
@@ -928,25 +938,32 @@ async function pourLava(bot, targetPos) {
     );
   }
 
-  const ref = references[0];
-  const cursor = getFaceCursor(ref.face);
-  const hitPoint = ref.block.position.offset(cursor.x, cursor.y, cursor.z);
-  const clickDistance = bot.entity?.position?.distanceTo(hitPoint);
-  if (!Number.isFinite(clickDistance) || clickDistance > MAX_INTERACT_DISTANCE) {
-    throw createPlacementSafetyError(
-      `Safe anchor for (${x}, ${y}, ${z}) is out of reach; refusing bucket use.`
-    );
+  let ref = null;
+  for (const candidate of references) {
+    const cursor = getFaceCursor(candidate.face);
+    const hitPoint = candidate.block.position.offset(cursor.x, cursor.y, cursor.z);
+    const clickDistance = bot.entity?.position?.distanceTo(hitPoint);
+    if (!Number.isFinite(clickDistance) || clickDistance > MAX_INTERACT_DISTANCE) continue;
+
+    await bot.lookAt(hitPoint, true);
+    await sleep(25);
+
+    const aimedBlock = typeof bot.blockAtCursor === 'function'
+      ? bot.blockAtCursor(MAX_INTERACT_DISTANCE + 0.25)
+      : null;
+    const expectedFace = faceVectorToDirection(candidate.face);
+    if (
+      aimedBlock?.position?.equals(candidate.block.position) &&
+      aimedBlock.face === expectedFace
+    ) {
+      ref = candidate;
+      break;
+    }
   }
 
-  await bot.lookAt(hitPoint, true);
-  await sleep(25);
-
-  const aimedBlock = typeof bot.blockAtCursor === 'function'
-    ? bot.blockAtCursor(MAX_INTERACT_DISTANCE + 0.25)
-    : null;
-  if (!aimedBlock?.position?.equals(ref.block.position)) {
+  if (!ref) {
     throw createPlacementSafetyError(
-      `Line of sight does not hit the verified anchor for (${x}, ${y}, ${z}); refusing bucket use.`
+      `No visible anchor face points exactly to (${x}, ${y}, ${z}); refusing bucket use.`
     );
   }
 
