@@ -70,6 +70,7 @@ const runtime = {
   onMined: async () => {},
   onFatalStop: async () => {}
 };
+let worldInteractionQueue = Promise.resolve();
 
 // ── Exported helpers ───────────────────────────────────────────────────────────
 
@@ -150,6 +151,12 @@ function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
+function withWorldInteractionLock(action) {
+  const result = worldInteractionQueue.then(action, action);
+  worldInteractionQueue = result.catch(() => {});
+  return result;
+}
+
 function isReplaceableForLava(block) {
   if (!block) return true;
   const replaceable = new Set([
@@ -213,7 +220,28 @@ function findReachableSupplyBarrel(bot) {
   return position ? bot.blockAt(position) : null;
 }
 
-async function inspectSupplyStatus(bot) {
+async function prepareSafeBarrelHand(bot) {
+  if (bot.heldItem?.name === 'lava_bucket') {
+    throw createPlacementSafetyError(
+      'Barrel access blocked: lava must be placed at the configured target first.'
+    );
+  }
+
+  const safeItem = findUsablePickaxe(bot, MIN_PICKAXE_REMAINING_PERCENT)?.item ||
+    bot.inventory.items().find(item => item.name !== 'lava_bucket' && item.name !== 'bucket');
+  if (safeItem && bot.heldItem?.name !== safeItem.name) {
+    await bot.equip(safeItem, 'hand');
+    await waitForHeldItem(bot, safeItem.name);
+  }
+
+  if (bot.heldItem?.name === 'lava_bucket') {
+    throw createPlacementSafetyError(
+      'Barrel access blocked: lava bucket was re-equipped before interaction.'
+    );
+  }
+}
+
+async function inspectSupplyStatusUnlocked(bot) {
   const inventory = summarizeSupplyItems(bot, bot.inventory.items());
   const barrel = findReachableSupplyBarrel(bot);
   if (!barrel) {
@@ -222,6 +250,7 @@ async function inspectSupplyStatus(bot) {
 
   let container = null;
   try {
+    await prepareSafeBarrelHand(bot);
     stopAllMovement(bot);
     container = await bot.openContainer(barrel);
     return {
@@ -247,6 +276,10 @@ async function inspectSupplyStatus(bot) {
       try { container.close(); } catch (_) {}
     }
   }
+}
+
+function inspectSupplyStatus(bot) {
+  return withWorldInteractionLock(() => inspectSupplyStatusUnlocked(bot));
 }
 
 async function getDetailedStatus(bot, options = {}) {
@@ -501,6 +534,7 @@ async function ensureFarmSupplies(bot) {
 
   let container = null;
   try {
+    await prepareSafeBarrelHand(bot);
     container = await bot.openContainer(barrel);
     let containerItems = container.containerItems();
 
@@ -1131,8 +1165,8 @@ async function persistentLoop(bot, notify) {
   const cycleStartedAt = Date.now();
 
   try {
-    // runCycle contains one legacy timeout notice; the persistent loop owns all notices now.
-    await runCycle(bot, () => {});
+    // Refresh/barrel inspection cannot interleave with any part of a farm cycle.
+    await withWorldInteractionLock(() => runCycle(bot, () => {}));
     farm.lastErrorMessage = null;
     writeFarmDebug('cycle_completed', {
       durationMs: Date.now() - cycleStartedAt,

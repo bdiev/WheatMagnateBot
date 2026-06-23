@@ -1349,16 +1349,34 @@ function formatDurationShort(milliseconds) {
 function formatFoodSupply(food = {}) {
   const entries = Object.entries(food);
   return entries.length > 0
-    ? entries.map(([name, count]) => `${name} x${count}`).join(', ')
+    ? entries.map(([name, count]) => `${name.replaceAll('_', ' ')} x${count}`).join(', ')
     : 'None';
 }
 
 function formatPickaxeSupply(pickaxes = []) {
   if (pickaxes.length === 0) return 'None';
-  const text = pickaxes
-    .map(pickaxe => `${pickaxe.name} ${pickaxe.remainingPercent.toFixed(1)}%${pickaxe.usable ? '' : ' (low)'}`)
-    .join(', ');
-  return text.length > 850 ? `${text.slice(0, 847)}...` : text;
+  const groups = new Map();
+  for (const pickaxe of pickaxes) {
+    const key = `${pickaxe.name}:${pickaxe.usable ? 'usable' : 'low'}`;
+    const group = groups.get(key) || {
+      name: pickaxe.name,
+      usable: pickaxe.usable,
+      count: 0,
+      min: 100,
+      max: 0
+    };
+    group.count++;
+    group.min = Math.min(group.min, pickaxe.remainingPercent);
+    group.max = Math.max(group.max, pickaxe.remainingPercent);
+    groups.set(key, group);
+  }
+
+  return [...groups.values()].map(group => {
+    const durability = Math.abs(group.max - group.min) < 0.05
+      ? `${group.max.toFixed(1)}%`
+      : `${group.min.toFixed(1)}-${group.max.toFixed(1)}%`;
+    return `${group.name.replaceAll('_', ' ')} x${group.count} (${durability}${group.usable ? '' : ', low'})`;
+  }).join('\n');
 }
 
 async function buildObsidianStatsEmbed(cachedSupplies = null) {
@@ -1377,12 +1395,12 @@ async function buildObsidianStatsEmbed(cachedSupplies = null) {
   const sessionHours = sessionMs / 3_600_000;
   const perHour = sessionHours > 0 ? obsidianStats.sessionMined / sessionHours : 0;
   const perMinute = perHour / 60;
-  const config = farmStatus.config;
   const inventory = farmStatus.supplies?.inventory;
   const barrel = farmStatus.supplies?.barrel;
-  const barrelLocation = barrel
-    ? `${barrel.position} (${barrel.distance?.toFixed(1) ?? '?'} blocks)`
-    : (farmStatus.supplies?.barrelError || 'Not found within 5 blocks');
+  const barrelDisplay = barrel
+    ? `Food **${barrel.foodCount || 0}** - ${formatFoodSupply(barrel.food)}\n` +
+      `Pickaxes **${barrel.usablePickaxeCount || 0}** - ${formatPickaxeSupply(barrel.pickaxes)}`
+    : `Unavailable - ${farmStatus.supplies?.barrelError || 'not found'}`;
   const dailyDisplay = dailyStats.length > 0
     ? dailyStats.map(entry => {
         const [year, month, day] = String(entry.date).split('-');
@@ -1390,6 +1408,12 @@ async function buildObsidianStatsEmbed(cachedSupplies = null) {
         return `\`${label}\` — **${formatCompactCount(entry.mined)}**`;
       }).join('\n')
     : 'No daily data yet';
+  const compactDailyDisplay = dailyStats.length > 0
+    ? dailyStats.map(entry => {
+        const [, month, day] = String(entry.date).split('-');
+        return `\`${day}.${month}\` **${formatCompactCount(entry.mined)}**`;
+      }).join(' | ')
+    : dailyDisplay;
 
   return {
     title: 'Obsidian Farm Statistics',
@@ -1407,29 +1431,22 @@ async function buildObsidianStatsEmbed(cachedSupplies = null) {
       },
       {
         name: 'Last 7 days',
-        value: dailyDisplay,
+        value: compactDailyDisplay,
         inline: false
       },
       {
-        name: 'Farm state',
-        value: `Running: **${farmStatus.enabled ? 'Yes' : 'No'}**\nAuto-resume: **${obsidianStats.desiredEnabled ? 'Yes' : 'No'}**\nPhase: **${farmStatus.phase}**`,
+        name: 'Status',
+        value: `Running **${farmStatus.enabled ? 'Yes' : 'No'}** | Auto-resume **${obsidianStats.desiredEnabled ? 'Yes' : 'No'}** | Phase **${farmStatus.phase}**`,
         inline: false
       },
       {
-        name: 'Inventory supplies',
-        value: `Food (${inventory?.foodCount || 0}): **${formatFoodSupply(inventory?.food)}**\nPickaxes (${inventory?.usablePickaxeCount || 0} usable): **${formatPickaxeSupply(inventory?.pickaxes)}**`,
+        name: 'Inventory',
+        value: `Food **${inventory?.foodCount || 0}** - ${formatFoodSupply(inventory?.food)}\nPickaxes **${inventory?.usablePickaxeCount || 0}** - ${formatPickaxeSupply(inventory?.pickaxes)}`,
         inline: false
       },
       {
-        name: 'Barrel supplies',
-        value: `Location: **${barrelLocation}**\nFood (${barrel?.foodCount || 0}): **${formatFoodSupply(barrel?.food)}**\nPickaxes (${barrel?.usablePickaxeCount || 0} usable): **${formatPickaxeSupply(barrel?.pickaxes)}**`,
-        inline: false
-      },
-      {
-        name: 'Target',
-        value: config
-          ? `(${config.x}, ${config.y}, ${config.z}) | Cauldron radius: ${config.maxCauldronDist}`
-          : 'Not configured',
+        name: 'Barrel',
+        value: barrelDisplay,
         inline: false
       }
     ],
