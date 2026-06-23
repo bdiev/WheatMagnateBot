@@ -70,6 +70,7 @@ let obsidianStats = {
   desiredEnabled: false,
   sessionStartedAt: null
 };
+let obsidianStatsWriteQueue = Promise.resolve();
 let whisperConversations = new Map(); // username -> messageId
 let whisperChannels = new Map(); // key: `${ownerId}:${mcUsername}` -> channelId
 let pendingWhisperClaims = new Map(); // key: mcUsernameLower -> { messageId, lastMessage }
@@ -1200,6 +1201,8 @@ async function syncWhitelistPlaytime(onlineUsernames = getOnlineWhitelistUsernam
 }
 
 async function beginObsidianFarmSession() {
+  // Do not reset the session while writes from the previous run are pending.
+  await obsidianStatsWriteQueue;
   obsidianStats.sessionMined = 0;
   obsidianStats.desiredEnabled = true;
   obsidianStats.sessionStartedAt = new Date();
@@ -1243,10 +1246,8 @@ async function setObsidianFarmDesiredEnabled(enabled) {
   }
 }
 
-async function recordObsidianMined() {
+async function persistObsidianMined() {
   if (!pool) {
-    obsidianStats.sessionMined++;
-    obsidianStats.totalMined++;
     return;
   }
 
@@ -1271,23 +1272,29 @@ async function recordObsidianMined() {
     `);
     await client.query('COMMIT');
     if (result.rows[0]) {
-      obsidianStats = {
-        sessionMined: Number(result.rows[0].session_mined) || 0,
-        totalMined: Number(result.rows[0].total_mined) || 0,
-        desiredEnabled: Boolean(result.rows[0].desired_enabled),
-        sessionStartedAt: result.rows[0].session_started_at
-          ? new Date(result.rows[0].session_started_at)
-          : obsidianStats.sessionStartedAt
-      };
+      obsidianStats.desiredEnabled = Boolean(result.rows[0].desired_enabled);
+      obsidianStats.sessionStartedAt = result.rows[0].session_started_at
+        ? new Date(result.rows[0].session_started_at)
+        : obsidianStats.sessionStartedAt;
     }
   } catch (err) {
     if (client) await client.query('ROLLBACK').catch(() => {});
-    obsidianStats.sessionMined++;
-    obsidianStats.totalMined++;
     console.error('[DB] Failed to persist obsidian mined count:', err.message);
   } finally {
     if (client) client.release();
   }
+}
+
+function recordObsidianMined() {
+  // Update displayed counters immediately and serialize persistence in the
+  // background so PostgreSQL latency never delays the next farming cycle.
+  obsidianStats.sessionMined++;
+  obsidianStats.totalMined++;
+  obsidianStatsWriteQueue = obsidianStatsWriteQueue
+    .then(() => persistObsidianMined())
+    .catch(err => {
+      console.error('[DB] Obsidian stats queue failed:', err.message);
+    });
 }
 
 async function getObsidianDailyStats(days = 7) {

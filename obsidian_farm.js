@@ -26,8 +26,8 @@ const PICKAXE_PRIORITY = [
 ];
 
 const OBSIDIAN_TIMEOUT_MS   = 90_000; // max wait for lava→obsidian
-const CYCLE_PAUSE_MS        = 50;     // pause between cycles
-const INTERACT_SETTLE_MS    = 50;     // settle delay after block interaction
+const CYCLE_PAUSE_MS        = 10;     // yield briefly between cycles
+const INTERACT_SETTLE_MS    = 25;     // settle delay after block interaction
 const DEFAULT_TARGET_X = 3402889;
 const DEFAULT_TARGET_Y = 68;
 const DEFAULT_TARGET_Z = 672222;
@@ -36,8 +36,7 @@ const MIN_PICKAXE_REMAINING_PERCENT = 5;
 const FARM_CONFIG_FILE = 'obsidian_farm_config.json';
 const FARM_DEBUG_LOG_FILE = 'obsidian_farm_debug.log';
 const MAX_INTERACT_DISTANCE = 4.25;
-const TOP_FACE_AIM_Y_OFFSET = 0.98;
-const OBSIDIAN_DIG_BASE_HOLD_MS = 1_850;
+const OBSIDIAN_DIG_BASE_HOLD_MS = 1_750;
 const OBSIDIAN_DIG_RETRY_HOLD_BONUS_MS = 250;
 const OBSIDIAN_DIG_CONFIRM_TIMEOUT_MS = 700;
 const OBSIDIAN_DIG_STABILITY_MS = 50;
@@ -48,22 +47,9 @@ const LAVA_PLACEMENT_CONFIRM_TIMEOUT_MS = 300;
 const FARM_RETRY_DELAY_MS = 2_000;
 const LOW_PICKAXE_DURABILITY_CODE = 'LOW_PICKAXE_DURABILITY';
 const RESOURCE_EXHAUSTED_CODE = 'RESOURCE_EXHAUSTED';
+const PLACEMENT_SAFETY_CODE = 'PLACEMENT_SAFETY_STOP';
 const SUPPLY_BARREL_RADIUS = 5;
 const FOOD_ITEM_PARTS = ['bread', 'apple', 'beef', 'steak', 'golden_carrot'];
-const WEAK_PLACEMENT_ANCHORS = new Set([
-  'hopper',
-  'bamboo_trapdoor',
-  'oak_trapdoor',
-  'spruce_trapdoor',
-  'birch_trapdoor',
-  'jungle_trapdoor',
-  'acacia_trapdoor',
-  'dark_oak_trapdoor',
-  'mangrove_trapdoor',
-  'cherry_trapdoor',
-  'crimson_trapdoor',
-  'warped_trapdoor'
-]);
 // ── Internal state ─────────────────────────────────────────────────────────────
 const farm = {
   enabled:         false,
@@ -319,21 +305,10 @@ function getFaceCursor(face) {
   );
 }
 
-function isWeakPlacementAnchor(block) {
-  return !block ||
-    WEAK_PLACEMENT_ANCHORS.has(block.name) ||
-    block.name.endsWith('_leaves') ||
-    block.name.endsWith('_trapdoor');
-}
-
-function getPlacementAnchorScore(ref) {
-  let score = 0;
-  if (ref.block?.boundingBox === 'block') score += 20;
-  if (!isWeakPlacementAnchor(ref.block)) score += 100;
-  if (ref.label === 'east') score += 6;
-  if (ref.label === 'west' || ref.label === 'south' || ref.label === 'north') score += 4;
-  if (ref.label === 'down') score += 1;
-  return score;
+function createPlacementSafetyError(message) {
+  const err = new Error(message);
+  err.code = PLACEMENT_SAFETY_CODE;
+  return err;
 }
 
 async function waitForHeldItem(bot, itemName, timeoutMs = 2_000) {
@@ -345,21 +320,36 @@ async function waitForHeldItem(bot, itemName, timeoutMs = 2_000) {
   throw new Error(`Expected to hold ${itemName}, but holding ${bot.heldItem?.name || 'nothing'}`);
 }
 
-async function useBucketOnFace(bot, referenceBlock, face) {
-  const cursor = getFaceCursor(face);
-  if (typeof bot._genericPlace === 'function') {
-    await bot._genericPlace(referenceBlock, face, {
-      delta: cursor,
-      forceLook: true,
-      swingArm: 'right',
-      showHand: true
-    });
-    return;
+async function useBucketOnFace(bot, referenceBlock, face, expectedTarget) {
+  if (typeof bot._genericPlace !== 'function') {
+    throw createPlacementSafetyError(
+      'Safe coordinate-bound placement is unavailable; refusing to use the lava bucket.'
+    );
   }
 
-  const hitPoint = referenceBlock.position.offset(cursor.x, cursor.y, cursor.z);
-  await bot.lookAt(hitPoint, true);
-  await bot.activateBlock(referenceBlock, face, cursor);
+  const configuredTarget = getConfiguredTargetPos();
+  const packetDestination = referenceBlock.position.plus(face);
+  const currentReference = bot.blockAt(referenceBlock.position);
+  if (
+    !expectedTarget?.equals(configuredTarget) ||
+    !packetDestination.equals(expectedTarget) ||
+    bot.heldItem?.name !== 'lava_bucket' ||
+    !currentReference ||
+    currentReference.boundingBox !== 'block' ||
+    currentReference.type !== referenceBlock.type
+  ) {
+    throw createPlacementSafetyError(
+      'Placement state changed before packet send; refusing to use the lava bucket.'
+    );
+  }
+
+  const cursor = getFaceCursor(face);
+  await bot._genericPlace(referenceBlock, face, {
+    delta: cursor,
+    forceLook: true,
+    swingArm: 'right',
+    showHand: true
+  });
 }
 
 function getAdjacentBlockDebug(bot, x, y, z) {
@@ -584,9 +574,9 @@ function writeFarmDebug(event, details = {}) {
     event,
     ...details
   });
-  try {
-    fs.appendFileSync(FARM_DEBUG_LOG_FILE, `${line}\n`, 'utf8');
-  } catch (_) {}
+  // Debug logging must not block the time-sensitive farming loop, especially
+  // when the project directory is synced by OneDrive.
+  fs.appendFile(FARM_DEBUG_LOG_FILE, `${line}\n`, 'utf8', () => {});
 }
 
 function getMiningDebugState(bot, block, attempt, expectedDigTime, holdMs, face) {
@@ -850,7 +840,7 @@ async function fillBucket(bot) {
       await bot.equip(emptyBucket, 'hand');
       await waitForHeldItem(bot, 'bucket');
       await bot.lookAt(clickPoint, true);
-      await sleep(50);
+      await sleep(25);
 
       try {
         await bot.activateBlock(cauldron);
@@ -905,7 +895,8 @@ async function pourLava(bot, targetPos) {
   await waitForHeldItem(bot, 'lava_bucket');
   await sleep(INTERACT_SETTLE_MS);
 
-  // Try all adjacent directions and use any non-replaceable block as a click surface.
+  // A bucket packet targets an anchor block plus one exact face. Only accept an
+  // anchor whose computed destination is the configured target.
   const sideOffsets = [
     { dx: 0, dy: -1, dz: 0, label: 'down' },
     { dx: 1, dy: 0, dz: 0, label: 'east' },
@@ -921,85 +912,64 @@ async function pourLava(bot, targetPos) {
       face: new Vec3(-off.dx, -off.dy, -off.dz),
       block: bot.blockAt(new Vec3(x + off.dx, y + off.dy, z + off.dz)),
     }))
-    .filter(ref => ref.block && !isReplaceableForLava(ref.block));
+    .filter(ref =>
+      ref.block &&
+      ref.block.boundingBox === 'block' &&
+      !isReplaceableForLava(ref.block) &&
+      ref.block.position.plus(ref.face).equals(targetPos)
+    );
 
-  const strongReferences = references.filter(ref => !isWeakPlacementAnchor(ref.block));
-  const placementReferences = strongReferences.length > 0 ? strongReferences : references;
-
-  // Prefer ordinary solid side blocks. Hoppers/trapdoors/leaves are weak fallback anchors.
-  placementReferences.sort((a, b) => {
-    return getPlacementAnchorScore(b) - getPlacementAnchorScore(a);
-  });
-
-  if (placementReferences.length === 0) {
+  if (references.length === 0) {
     const adj = getAdjacentBlockDebug(bot, x, y, z);
-    throw new Error(`No solid adjacent block near target (${x}, ${y}, ${z}). Adjacent: ${adj}`);
+    throw createPlacementSafetyError(
+      `No safe full-block anchor points exactly to target (${x}, ${y}, ${z}). Adjacent: ${adj}`
+    );
   }
 
-  let clicked = false;
-  let clickErrors = [];
-  const maxAttempts = 3;
+  const ref = references[0];
+  const cursor = getFaceCursor(ref.face);
+  const hitPoint = ref.block.position.offset(cursor.x, cursor.y, cursor.z);
+  const clickDistance = bot.entity?.position?.distanceTo(hitPoint);
+  if (!Number.isFinite(clickDistance) || clickDistance > MAX_INTERACT_DISTANCE) {
+    throw createPlacementSafetyError(
+      `Safe anchor for (${x}, ${y}, ${z}) is out of reach; refusing bucket use.`
+    );
+  }
+
+  await bot.lookAt(hitPoint, true);
+  await sleep(25);
+
+  const aimedBlock = typeof bot.blockAtCursor === 'function'
+    ? bot.blockAtCursor(MAX_INTERACT_DISTANCE + 0.25)
+    : null;
+  if (!aimedBlock?.position?.equals(ref.block.position)) {
+    throw createPlacementSafetyError(
+      `Line of sight does not hit the verified anchor for (${x}, ${y}, ${z}); refusing bucket use.`
+    );
+  }
+
+  // Sneak prevents opening/activating the anchor. There is deliberately no
+  // activateItem fallback and no alternate-anchor retry.
+  let placementError = null;
   try {
-    for (let attempt = 1; attempt <= maxAttempts && !clicked; attempt++) {
-      for (const ref of placementReferences) {
-        const cursor = getFaceCursor(ref.face);
-        const hitPoint = ref.block.position.offset(cursor.x, cursor.y, cursor.z);
-        const clickDistance = bot.entity?.position?.distanceTo(hitPoint);
-        if (!Number.isFinite(clickDistance) || clickDistance > MAX_INTERACT_DISTANCE) {
-          clickErrors.push(`out_of_reach#${attempt}/${ref.label}:${Number.isFinite(clickDistance) ? clickDistance.toFixed(2) : 'unknown'}`);
-          continue;
-        }
-
-        await bot.lookAt(hitPoint, true);
-        await sleep(50);
-
-        const shouldSneak = isWeakPlacementAnchor(ref.block);
-        bot.setControlState('sneak', shouldSneak);
-        try {
-          await useBucketOnFace(bot, ref.block, ref.face);
-        } catch (e) {
-          clickErrors.push(`useBucket#${attempt}/${ref.label}: ${e?.message || 'failed'}`);
-        }
-
-        if (await waitForLavaPlacement(bot, x, y, z)) {
-          clicked = true;
-          break;
-        }
-
-        try {
-          await bot.activateItem();
-        } catch (e) {
-          clickErrors.push(`activateItem#${attempt}/${ref.label}: ${e?.message || 'failed'}`);
-        }
-
-        if (await waitForLavaPlacement(bot, x, y, z)) {
-          clicked = true;
-          break;
-        }
-
-        const stillHasLavaBucket = bot.inventory.items().some(i => i.name === 'lava_bucket');
-        if (!stillHasLavaBucket) {
-          const actual = bot.blockAt(new Vec3(x, y, z));
-          throw new Error(
-            `Lava bucket was used, but exact target (${x}, ${y}, ${z}) became ${actual?.name || 'nothing'}, not lava/obsidian. ` +
-            `Adjacent: ${getAdjacentBlockDebug(bot, x, y, z)}`
-          );
-        }
-
-        clickErrors.push(`no_change#${attempt}/${ref.label}`);
-      }
-    }
+    bot.setControlState('sneak', true);
+    await sleep(50);
+    await useBucketOnFace(bot, ref.block, ref.face, targetPos);
+  } catch (err) {
+    placementError = err;
   } finally {
     bot.setControlState('sneak', false);
   }
 
-  if (!clicked && !didLavaPlacementLikelySucceed(bot, x, y, z)) {
-    const adj = getAdjacentBlockDebug(bot, x, y, z);
-    const attempted = placementReferences.map(ref => `${ref.label}:${ref.block?.name || 'null'}`).join(', ');
-    throw new Error(
-      `Could not place lava at (${x}, ${y}, ${z}) using adjacent blocks (${attempted}). ` +
-      `Adjacent: ${adj}. ` +
-      `Click diagnostics: ${clickErrors.slice(0, 6).join(' | ') || 'none'}.`
+  if (placementError) {
+    throw createPlacementSafetyError(
+      `Verified placement packet failed for (${x}, ${y}, ${z}): ${placementError.message}`
+    );
+  }
+
+  if (!await waitForLavaPlacement(bot, x, y, z)) {
+    throw createPlacementSafetyError(
+      `Server did not confirm lava at exact target (${x}, ${y}, ${z}); farm stopped without retry.`
     );
   }
 
@@ -1043,7 +1013,7 @@ async function mineObsidian(bot, targetPos) {
 
   await bot.equip(pick, 'hand');
   await waitForHeldItem(bot, pick.name);
-  await sleep(50);
+  await sleep(INTERACT_SETTLE_MS);
 
   // Re-check just before mining in case durability info changed after equip.
   const remainingAfterEquip = getRemainingDurabilityPercent(bot, pick);
@@ -1143,13 +1113,22 @@ async function runCycle(bot, notify) {
 async function persistentLoop(bot, notify) {
   if (!farm.enabled) return;
   let retryDelay = CYCLE_PAUSE_MS;
+  const cycleStartedAt = Date.now();
 
   try {
     // runCycle contains one legacy timeout notice; the persistent loop owns all notices now.
     await runCycle(bot, () => {});
     farm.lastErrorMessage = null;
+    writeFarmDebug('cycle_completed', {
+      durationMs: Date.now() - cycleStartedAt,
+      cyclesCompleted: farm.cyclesCompleted
+    });
   } catch (err) {
-    if (err.code === LOW_PICKAXE_DURABILITY_CODE || err.code === RESOURCE_EXHAUSTED_CODE) {
+    if (
+      err.code === LOW_PICKAXE_DURABILITY_CODE ||
+      err.code === RESOURCE_EXHAUSTED_CODE ||
+      err.code === PLACEMENT_SAFETY_CODE
+    ) {
       try {
         await runtime.onFatalStop(err);
       } catch (_) {}
