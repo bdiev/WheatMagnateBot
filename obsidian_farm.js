@@ -26,7 +26,7 @@ const PICKAXE_PRIORITY = [
 ];
 
 const OBSIDIAN_TIMEOUT_MS   = 90_000; // max wait for lava→obsidian
-const CYCLE_PAUSE_MS        = 800;    // pause between cycles
+const CYCLE_PAUSE_MS        = 300;    // pause between cycles
 const INTERACT_SETTLE_MS    = 350;    // settle delay after block interaction
 const DEFAULT_TARGET_X = 3402889;
 const DEFAULT_TARGET_Y = 68;
@@ -37,9 +37,10 @@ const FARM_CONFIG_FILE = 'obsidian_farm_config.json';
 const FARM_DEBUG_LOG_FILE = 'obsidian_farm_debug.log';
 const MAX_INTERACT_DISTANCE = 4.25;
 const TOP_FACE_AIM_Y_OFFSET = 0.98;
-const OBSIDIAN_DIG_HOLD_MS = 10_000;
+const OBSIDIAN_DIG_BASE_HOLD_MS = 9_550;
+const OBSIDIAN_DIG_RETRY_HOLD_BONUS_MS = 1_000;
 const OBSIDIAN_DIG_CONFIRM_TIMEOUT_MS = 5_000;
-const OBSIDIAN_DIG_STABILITY_MS = 500;
+const OBSIDIAN_DIG_STABILITY_MS = 250;
 const OBSIDIAN_DIG_MAX_ATTEMPTS = 3;
 const WEAK_PLACEMENT_ANCHORS = new Set([
   'hopper',
@@ -387,7 +388,7 @@ async function digBlockWithTimeout(bot, block, attempt) {
     throw new Error(`Cannot calculate dig time for ${block.name}`);
   }
 
-  const holdMs = OBSIDIAN_DIG_HOLD_MS;
+  const holdMs = OBSIDIAN_DIG_BASE_HOLD_MS + ((attempt - 1) * OBSIDIAN_DIG_RETRY_HOLD_BONUS_MS);
   const center = block.position.offset(0.5, 0.5, 0.5);
   await bot.lookAt(center, true);
 
@@ -403,7 +404,7 @@ async function digBlockWithTimeout(bot, block, attempt) {
   writeFarmDebug('dig_start', {
     ...getMiningDebugState(bot, block, attempt, expectedDigTime, holdMs, face),
     measuredServerDigTimeMs: 9_328,
-    timingSource: 'measured_server_result'
+    timingSource: attempt === 1 ? 'measured_server_result' : 'measured_server_result_with_retry_bonus'
   });
 
   const eventName = `blockUpdate:${block.position}`;
@@ -754,7 +755,7 @@ async function mineObsidian(bot, targetPos) {
     }
 
     await waitForHeldItem(bot, pick.name);
-    await sleep(400);
+    await sleep(250);
   }
 
   const remainingAfterDig = getRemainingDurabilityPercent(bot, pick);
