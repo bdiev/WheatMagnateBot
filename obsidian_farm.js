@@ -168,6 +168,23 @@ function getFaceCursor(face) {
   );
 }
 
+async function useBucketOnFace(bot, referenceBlock, face) {
+  const cursor = getFaceCursor(face);
+  if (typeof bot._genericPlace === 'function') {
+    await bot._genericPlace(referenceBlock, face, {
+      delta: cursor,
+      forceLook: true,
+      swingArm: 'right',
+      showHand: true
+    });
+    return;
+  }
+
+  const hitPoint = referenceBlock.position.offset(cursor.x, cursor.y, cursor.z);
+  await bot.lookAt(hitPoint, true);
+  await bot.activateBlock(referenceBlock, face, cursor);
+}
+
 function getAdjacentBlockDebug(bot, x, y, z) {
   const checks = [
     ['down', 0, -1, 0],
@@ -421,11 +438,8 @@ async function pourLava(bot, targetPos) {
   try {
     for (let attempt = 1; attempt <= maxAttempts && !clicked; attempt++) {
       for (const ref of placementReferences) {
-        const hitPoint = new Vec3(
-          ref.block.position.x + 0.5,
-          ref.block.position.y + 0.5,
-          ref.block.position.z + 0.5
-        );
+        const cursor = getFaceCursor(ref.face);
+        const hitPoint = ref.block.position.offset(cursor.x, cursor.y, cursor.z);
         const clickDistance = bot.entity?.position?.distanceTo(hitPoint);
         if (!Number.isFinite(clickDistance) || clickDistance > MAX_INTERACT_DISTANCE) {
           clickErrors.push(`out_of_reach#${attempt}/${ref.label}:${Number.isFinite(clickDistance) ? clickDistance.toFixed(2) : 'unknown'}`);
@@ -436,9 +450,9 @@ async function pourLava(bot, targetPos) {
         await sleep(100);
 
         try {
-          await bot.activateBlock(ref.block, ref.face, getFaceCursor(ref.face));
+          await useBucketOnFace(bot, ref.block, ref.face);
         } catch (e) {
-          clickErrors.push(`activateBlock#${attempt}/${ref.label}: ${e?.message || 'failed'}`);
+          clickErrors.push(`useBucket#${attempt}/${ref.label}: ${e?.message || 'failed'}`);
         }
 
         await sleep(INTERACT_SETTLE_MS + 260);
