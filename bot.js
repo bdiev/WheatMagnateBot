@@ -1336,6 +1336,40 @@ function sendMinecraftChat(message) {
   return true;
 }
 
+function extractMinecraftUsernameFromDiscordMessage(message) {
+  if (!message) return null;
+
+  for (const embed of message.embeds?.values?.() || message.embeds || []) {
+    const authorName = embed.author?.name?.trim();
+    const authorUrl = embed.author?.url || '';
+    const urlMatch = authorUrl.match(/namemc\.com\/profile\/([A-Za-z0-9_]{1,16})/i);
+
+    if (urlMatch) return urlMatch[1];
+    if (/^[A-Za-z0-9_]{1,16}$/.test(authorName)) return authorName;
+  }
+
+  return null;
+}
+
+async function getReplyMinecraftUsername(message) {
+  const reference = message.reference;
+  if (!reference?.messageId) return null;
+
+  try {
+    const channel = reference.channelId && reference.channelId !== message.channel.id
+      ? await discordClient.channels.fetch(reference.channelId)
+      : message.channel;
+
+    if (!channel?.isTextBased?.()) return null;
+
+    const repliedMessage = await channel.messages.fetch(reference.messageId);
+    return extractMinecraftUsernameFromDiscordMessage(repliedMessage);
+  } catch (e) {
+    debugLog('[Chat] Failed to fetch replied message:', e.message);
+    return null;
+  }
+}
+
 function consumeOutboundSelfEcho(message) {
   const normalized = normalizeOutboundChat(message);
   const cutoff = Date.now() - 10_000;
@@ -4176,14 +4210,18 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         let username = message.author.username;
         // Escape @ symbols with zero-width space to prevent mentions
         username = username.replace(/@/g, '@\u200B');
+        const replyUsername = await getReplyMinecraftUsername(message);
+        const gameText = replyUsername && !text.startsWith('/') && !text.startsWith('!')
+          ? `${replyUsername} ${text}`
+          : text;
         // Don't add username prefix for commands (starting with / or !)
-        if (text.startsWith('/') || text.startsWith('!')) {
-          sendMinecraftChat(text);
-          console.log(`[Chat] Sent "${text}" by ${message.author.tag}`);
+        if (gameText.startsWith('/') || gameText.startsWith('!')) {
+          sendMinecraftChat(gameText);
+          console.log(`[Chat] Sent "${gameText}" by ${message.author.tag}`);
         } else {
           // Send without zero-width space so Minecraft chat is clean
-          sendMinecraftChat(`[${username}] ${text}`);
-          console.log(`[Chat] Sent "[${username}] ${text}" by ${message.author.tag}`);
+          sendMinecraftChat(`[${username}] ${gameText}`);
+          console.log(`[Chat] Sent "[${username}] ${gameText}" by ${message.author.tag}`);
         }
         
         // Delete original message and send confirmation
@@ -4195,9 +4233,9 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         
         // Send confirmation showing what was sent to game
         try {
-          let sentText = text;
-          if (!text.startsWith('/') && !text.startsWith('!')) {
-            sentText = `[${username}] ${text}`;
+          let sentText = gameText;
+          if (!gameText.startsWith('/') && !gameText.startsWith('!')) {
+            sentText = `[${username}] ${gameText}`;
           }
           await message.channel.send({
             embeds: [{
