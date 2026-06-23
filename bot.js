@@ -1571,6 +1571,7 @@ let restartProtectionInterval = null;
 let lastEnemyMentionAt = 0;
 let restartProtectionDateKey = null;
 let leverOperation = Promise.resolve();
+let protectionLeverPosition = null;
 
 function clearReconnectTimer() {
   if (reconnectTimer) {
@@ -1644,36 +1645,33 @@ function findProtectionLever(currentBot) {
   const leverId = currentBot.registry.blocksByName.lever?.id;
   if (leverId == null) return null;
 
+  if (protectionLeverPosition) {
+    const cached = currentBot.blockAt(protectionLeverPosition);
+    const cachedDistance = currentBot.entity.position.distanceTo(
+      protectionLeverPosition.offset(0.5, 0.5, 0.5)
+    );
+    if (cached?.name === 'lever' && cachedDistance <= 5.1) return cached;
+    protectionLeverPosition = null;
+  }
+
   const positions = currentBot.findBlocks({
     matching: leverId,
     maxDistance: 5,
     count: 32
   });
   const origin = currentBot.entity.position.offset(0, 0.5, 0);
-  const forward = {
-    x: -Math.sin(currentBot.entity.yaw),
-    z: -Math.cos(currentBot.entity.yaw)
-  };
+  const nearest = positions
+    .map(position => ({
+      position,
+      block: currentBot.blockAt(position),
+      distance: origin.distanceTo(position.offset(0.5, 0.5, 0.5))
+    }))
+    .filter(candidate => candidate.block?.name === 'lever' && candidate.distance <= 5.1)
+    .sort((a, b) => a.distance - b.distance)[0];
 
-  const candidates = positions
-    .map(position => {
-      const center = position.offset(0.5, 0.5, 0.5);
-      const dx = center.x - origin.x;
-      const dz = center.z - origin.z;
-      const horizontalDistance = Math.hypot(dx, dz);
-      const rearScore = horizontalDistance > 0
-        ? -((dx / horizontalDistance) * forward.x + (dz / horizontalDistance) * forward.z)
-        : -1;
-      return {
-        block: currentBot.blockAt(position),
-        distance: origin.distanceTo(center),
-        rearScore
-      };
-    })
-    .filter(candidate => candidate.block && candidate.rearScore > 0 && candidate.distance <= 4.5)
-    .sort((a, b) => (b.rearScore - a.rearScore) || (a.distance - b.distance));
-
-  return candidates[0]?.block || null;
+  if (!nearest) return null;
+  protectionLeverPosition = nearest.position.clone();
+  return nearest.block;
 }
 
 function isLeverPowered(block) {
@@ -1688,17 +1686,29 @@ async function setProtectionLeverState(powered) {
     const lever = findProtectionLever(currentBot);
     if (!lever) return false;
 
-    const currentState = isLeverPowered(lever);
-    if (currentState === powered) return true;
+    if (typeof currentBot.clearControlStates === 'function') {
+      currentBot.clearControlStates();
+    }
 
-    await currentBot.lookAt(lever.position.offset(0.5, 0.5, 0.5), true);
-    await currentBot.activateBlock(lever);
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const currentLever = currentBot.blockAt(lever.position);
+      if (currentLever?.name !== 'lever') return false;
+      if (isLeverPowered(currentLever) === powered) return true;
 
-    const deadline = Date.now() + 1000;
-    while (Date.now() < deadline) {
-      const updated = currentBot.blockAt(lever.position);
-      if (isLeverPowered(updated) === powered) return true;
-      await new Promise(resolve => setTimeout(resolve, 50));
+      await currentBot.lookAt(currentLever.position.offset(0.5, 0.5, 0.5), true);
+      try {
+        await currentBot.activateBlock(currentLever);
+      } catch (_) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        continue;
+      }
+
+      const deadline = Date.now() + 750;
+      while (Date.now() < deadline) {
+        const updated = currentBot.blockAt(currentLever.position);
+        if (updated?.name === 'lever' && isLeverPowered(updated) === powered) return true;
+        await new Promise(resolve => setTimeout(resolve, 40));
+      }
     }
     return false;
   };
