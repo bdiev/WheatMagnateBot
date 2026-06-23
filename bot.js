@@ -1175,6 +1175,55 @@ function formatPlaytime(value) {
   return parts.join(' ');
 }
 
+async function buildWhitelistPlaytimeMessage() {
+  const playtimeData = await getWhitelistPlaytime();
+  if (playtimeData.error) {
+    return {
+      embeds: [{
+        title: 'Whitelist Playtime',
+        description: `Error: ${playtimeData.error}`,
+        color: 16711680,
+        timestamp: new Date()
+      }],
+      components: []
+    };
+  }
+
+  const players = playtimeData.players || [];
+  const visiblePlayers = players.slice(0, 50);
+  const rankWidth = Math.max(1, String(visiblePlayers.length).length);
+  const lines = visiblePlayers.map((player, index) => {
+    const rank = String(index + 1).padStart(rankWidth);
+    const username = player.username.slice(0, 16).padEnd(16);
+    return `${rank}  ${username}  ${formatPlaytime(player.total_seconds)}`;
+  });
+  if (players.length > visiblePlayers.length) {
+    lines.push(`...and ${players.length - visiblePlayers.length} more`);
+  }
+  const header = `${'#'.padStart(rankWidth)}  ${'PLAYER'.padEnd(16)}  PLAYTIME`;
+  const description = lines.length > 0
+    ? `\`\`\`text\n${header}\n${'-'.repeat(header.length)}\n${lines.join('\n')}\n\`\`\``
+    : 'No whitelist players found.';
+
+  return {
+    embeds: [{
+      title: `вЏ±пёЏ Whitelist Playtime В· ${players.length} players`,
+      description,
+      color: 3447003,
+      timestamp: new Date(),
+      footer: { text: 'Press Refresh to update this table' }
+    }],
+    components: [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('playtime_refresh_button')
+          .setLabel('Refresh')
+          .setStyle(ButtonStyle.Secondary)
+      )
+    ]
+  };
+}
+
 async function setPlayerPlaytime(username, totalSeconds) {
   if (!pool) return { error: 'Database not configured' };
 
@@ -2778,9 +2827,20 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             description,
             color: 3447003,
             timestamp: new Date(),
-            footer: { text: 'Updated automatically while players are online' }
-          }]
+            footer: { text: 'Press Refresh to update this table' }
+          }],
+          components: [
+            new ActionRowBuilder().addComponents(
+              new ButtonBuilder()
+                .setCustomId('playtime_refresh_button')
+                .setLabel('Refresh')
+                .setStyle(ButtonStyle.Secondary)
+            )
+          ]
         });
+      } else if (interaction.customId === 'playtime_refresh_button') {
+        await interaction.deferUpdate();
+        await interaction.editReply(await buildWhitelistPlaytimeMessage());
       } else if (interaction.customId === 'whitelist_button') {
         // Restrict Whitelist to owner/admin only
         if (interaction.user.id !== DISCORD_OWNER_ID) {
