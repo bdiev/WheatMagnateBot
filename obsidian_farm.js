@@ -37,6 +37,12 @@ const MIN_PICKAXE_REMAINING_PERCENT = 5;
 const FARM_CONFIG_FILE = 'obsidian_farm_config.json';
 const MAX_INTERACT_DISTANCE = 4.25;
 const TOP_FACE_AIM_Y_OFFSET = 0.98;
+const TARGET_NEIGHBOR_OFFSETS = [
+  [0, 0, 0],
+  [0, 1, 0], [0, -1, 0],
+  [1, 0, 0], [-1, 0, 0],
+  [0, 0, 1], [0, 0, -1],
+];
 
 // ── Internal state ─────────────────────────────────────────────────────────────
 const farm = {
@@ -158,16 +164,38 @@ function getEffectiveTargetPos(bot) {
 }
 
 function hasLavaNearTarget(bot, x, y, z) {
-  const checks = [
-    [0, 0, 0],
-    [0, 1, 0], [0, -1, 0],
-    [1, 0, 0], [-1, 0, 0],
-    [0, 0, 1], [0, 0, -1],
-  ];
-  return checks.some(([dx, dy, dz]) => {
+  return TARGET_NEIGHBOR_OFFSETS.some(([dx, dy, dz]) => {
     const b = bot.blockAt(new Vec3(x + dx, y + dy, z + dz));
     return b?.name === 'lava';
   });
+}
+
+function posKey(pos) {
+  return `${pos.x},${pos.y},${pos.z}`;
+}
+
+function getTargetNeighborPositions(targetPos) {
+  const { x, y, z } = targetPos;
+  return TARGET_NEIGHBOR_OFFSETS.map(([dx, dy, dz]) => new Vec3(x + dx, y + dy, z + dz));
+}
+
+function snapshotObsidianNearTarget(bot, targetPos) {
+  const keys = new Set();
+  for (const pos of getTargetNeighborPositions(targetPos)) {
+    const block = bot.blockAt(pos);
+    if (block?.name === 'obsidian') keys.add(posKey(block.position));
+  }
+  return keys;
+}
+
+function findObsidianNearTarget(bot, targetPos, ignoredKeys = new Set()) {
+  for (const pos of getTargetNeighborPositions(targetPos)) {
+    const block = bot.blockAt(pos);
+    if (block?.name === 'obsidian' && !ignoredKeys.has(posKey(block.position))) {
+      return block.position;
+    }
+  }
+  return null;
 }
 
 function didLavaPlacementLikelySucceed(bot, x, y, z) {
@@ -452,19 +480,19 @@ async function pourLava(bot, targetPos) {
   await sleep(INTERACT_SETTLE_MS);
 }
 
-/** Phase 5: wait until the target block becomes obsidian. */
-async function waitForObsidian(bot, targetPos) {
+/** Phase 5: wait until the target block, or the block lava flowed into, becomes obsidian. */
+async function waitForObsidian(bot, targetPos, ignoredObsidianKeys = new Set()) {
   const { x, y, z } = targetPos;
   farm.phase = 'waiting';
 
   const deadline = Date.now() + OBSIDIAN_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    if (!farm.enabled) return false;
-    const block = bot.blockAt(new Vec3(x, y, z));
-    if (block?.name === 'obsidian') return true;
+    if (!farm.enabled) return null;
+    const obsidianPos = findObsidianNearTarget(bot, new Vec3(x, y, z), ignoredObsidianKeys);
+    if (obsidianPos) return obsidianPos;
     await sleep(500);
   }
-  return false;
+  return null;
 }
 
 /** Phase 6: equip pickaxe and mine the obsidian. */
@@ -496,7 +524,11 @@ async function mineObsidian(bot, targetPos) {
 
   const block = bot.blockAt(new Vec3(x, y, z));
   if (!block || block.name !== 'obsidian') {
-    throw new Error('Expected obsidian at target coordinates but found something else');
+    throw new Error(`Expected obsidian at (${x}, ${y}, ${z}) but found ${block?.name || 'nothing'}`);
+  }
+
+  if (typeof bot.canDigBlock === 'function' && !bot.canDigBlock(block)) {
+    throw new Error(`Cannot dig obsidian at (${x}, ${y}, ${z}). Move closer or clear line of sight.`);
   }
 
   // bot.dig() awaits until the block is broken
@@ -526,13 +558,23 @@ async function runCycle(bot, notify) {
 
   const targetPos = getEffectiveTargetPos(bot);
   const { x, y, z } = targetPos;
-  const targetBlock = bot.blockAt(targetPos);
+  let targetBlock = bot.blockAt(targetPos);
   const hasLavaBucket = bot.inventory.items().some(i => i.name === 'lava_bucket');
 
   // Safety: if obsidian exists at effective placement target, clear it too.
   if (targetBlock?.name === 'obsidian') {
     await mineObsidian(bot, targetPos);
+    targetBlock = bot.blockAt(targetPos);
   }
+
+  const readyObsidianPos = findObsidianNearTarget(bot, targetPos);
+  if (readyObsidianPos && !hasLavaNearTarget(bot, x, y, z)) {
+    await mineObsidian(bot, readyObsidianPos);
+    farm.cyclesCompleted++;
+    return;
+  }
+
+  const existingObsidianNearTarget = snapshotObsidianNearTarget(bot, targetPos);
 
   // If lava is already at target, skip fill/pour and only wait for conversion.
   if (targetBlock?.name !== 'lava') {
@@ -542,11 +584,11 @@ async function runCycle(bot, notify) {
     await pourLava(bot, targetPos);
   }
 
-  const formed = await waitForObsidian(bot, targetPos);
-  if (!formed) {
+  const obsidianPos = await waitForObsidian(bot, targetPos, existingObsidianNearTarget);
+  if (!obsidianPos) {
     notify(
       '⚠️ Lava did not convert to obsidian within 90s.\n' +
-      'Make sure flowing water meets the lava at the target position.\n' +
+      'Make sure flowing water meets the lava at or beside the target position.\n' +
       'Farm paused — use the button to restart.',
       16776960
     );
@@ -554,7 +596,7 @@ async function runCycle(bot, notify) {
     return;
   }
 
-  await mineObsidian(bot, targetPos);
+  await mineObsidian(bot, obsidianPos);
   farm.cyclesCompleted++;
 }
 
