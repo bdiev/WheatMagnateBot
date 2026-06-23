@@ -41,6 +41,7 @@ const OBSIDIAN_DIG_HOLD_MULTIPLIER = 1.35;
 const OBSIDIAN_DIG_HOLD_PADDING_MS = 1_500;
 const OBSIDIAN_DIG_MIN_HOLD_MS = 12_000;
 const OBSIDIAN_DIG_CONFIRM_TIMEOUT_MS = 5_000;
+const OBSIDIAN_DIG_STABILITY_MS = 500;
 const OBSIDIAN_DIG_MAX_ATTEMPTS = 3;
 const WEAK_PLACEMENT_ANCHORS = new Set([
   'hopper',
@@ -408,11 +409,10 @@ async function digBlockWithTimeout(bot, block, attempt) {
 
   const eventName = `blockUpdate:${block.position}`;
   let swingInterval = null;
-  let confirmTimeout = null;
   let completed = false;
   let onBlockUpdate = null;
 
-  const serverConfirmation = new Promise((resolve, reject) => {
+  const serverConfirmation = new Promise(resolve => {
     onBlockUpdate = (_oldBlock, newBlock) => {
       writeFarmDebug('server_block_update', {
         attempt,
@@ -422,23 +422,14 @@ async function digBlockWithTimeout(bot, block, attempt) {
       });
       if (!newBlock || newBlock.name === 'obsidian') return;
       completed = true;
-      cleanup();
-      resolve();
+      resolve(newBlock.name);
     };
 
     bot.on(eventName, onBlockUpdate);
-    confirmTimeout = setTimeout(() => {
-      cleanup();
-      reject(new Error('server_did_not_confirm_break'));
-    }, holdMs + OBSIDIAN_DIG_CONFIRM_TIMEOUT_MS);
   });
 
   function cleanup() {
     if (onBlockUpdate) bot.removeListener(eventName, onBlockUpdate);
-    if (confirmTimeout) {
-      clearTimeout(confirmTimeout);
-      confirmTimeout = null;
-    }
   }
 
   try {
@@ -450,12 +441,16 @@ async function digBlockWithTimeout(bot, block, attempt) {
     bot.swingArm();
     swingInterval = setInterval(() => bot.swingArm(), 350);
 
-    await sleep(holdMs);
+    const firstResult = await Promise.race([
+      serverConfirmation.then(blockName => ({ type: 'server', blockName })),
+      sleep(holdMs).then(() => ({ type: 'timer' }))
+    ]);
     if (!farm.enabled) throw new Error('farm_stopped');
 
     writeFarmDebug('dig_finish_sent', {
       attempt,
       elapsedMs: Date.now() - startedAt,
+      reason: firstResult.type === 'server' ? `server_${firstResult.blockName}` : 'hold_timer',
       blockBeforeFinish: bot.blockAt(block.position)?.name || null
     });
     bot._client.write('block_dig', {
@@ -463,11 +458,37 @@ async function digBlockWithTimeout(bot, block, attempt) {
       location: block.position,
       face
     });
-    await serverConfirmation;
+
+    if (firstResult.type === 'timer') {
+      await Promise.race([
+        serverConfirmation,
+        sleep(OBSIDIAN_DIG_CONFIRM_TIMEOUT_MS).then(() => {
+          throw new Error('server_did_not_confirm_break');
+        })
+      ]);
+    }
+
+    if (swingInterval) {
+      clearInterval(swingInterval);
+      swingInterval = null;
+    }
+    cleanup();
+    await sleep(OBSIDIAN_DIG_STABILITY_MS);
+
+    const resultingBlock = bot.blockAt(block.position)?.name || null;
+    if (resultingBlock === 'obsidian') {
+      writeFarmDebug('dig_reverted', {
+        attempt,
+        elapsedMs: Date.now() - startedAt,
+        resultingBlock
+      });
+      throw new Error('server_did_not_confirm_break');
+    }
+
     writeFarmDebug('dig_confirmed', {
       attempt,
       elapsedMs: Date.now() - startedAt,
-      resultingBlock: bot.blockAt(block.position)?.name || null
+      resultingBlock
     });
   } catch (err) {
     cleanup();
