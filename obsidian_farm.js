@@ -23,10 +23,6 @@ const fs                        = require('fs');
 const PICKAXE_PRIORITY = [
   'netherite_pickaxe',
   'diamond_pickaxe',
-  'iron_pickaxe',
-  'stone_pickaxe',
-  'wooden_pickaxe',
-  'golden_pickaxe',
 ];
 
 const OBSIDIAN_TIMEOUT_MS   = 90_000; // max wait for lava→obsidian
@@ -37,6 +33,8 @@ const MIN_PICKAXE_REMAINING_PERCENT = 5;
 const FARM_CONFIG_FILE = 'obsidian_farm_config.json';
 const MAX_INTERACT_DISTANCE = 4.25;
 const TOP_FACE_AIM_Y_OFFSET = 0.98;
+const OBSIDIAN_DIG_TIMEOUT_PADDING_MS = 8_000;
+const OBSIDIAN_DIG_MIN_TIMEOUT_MS = 25_000;
 // ── Internal state ─────────────────────────────────────────────────────────────
 const farm = {
   enabled:         false,
@@ -162,6 +160,14 @@ function didLavaPlacementLikelySucceed(bot, x, y, z) {
   return targetBlock?.name === 'lava' || targetBlock?.name === 'obsidian';
 }
 
+function getFaceCursor(face) {
+  return new Vec3(
+    0.5 + face.x * 0.5,
+    0.5 + face.y * 0.5,
+    0.5 + face.z * 0.5
+  );
+}
+
 function getAdjacentBlockDebug(bot, x, y, z) {
   const checks = [
     ['down', 0, -1, 0],
@@ -263,6 +269,40 @@ function ensureInteractionRange(bot, pos, actionName) {
   }
 }
 
+async function digBlockWithTimeout(bot, block) {
+  const expectedDigTime = typeof bot.digTime === 'function' ? bot.digTime(block) : OBSIDIAN_DIG_MIN_TIMEOUT_MS;
+  if (!Number.isFinite(expectedDigTime)) {
+    throw new Error(`Cannot calculate dig time for ${block.name}`);
+  }
+
+  const timeoutMs = Math.max(OBSIDIAN_DIG_MIN_TIMEOUT_MS, expectedDigTime + OBSIDIAN_DIG_TIMEOUT_PADDING_MS);
+  let timedOut = false;
+  let timeout = null;
+
+  try {
+    await Promise.race([
+      bot.dig(block, true, 'raycast'),
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => {
+          timedOut = true;
+          try { bot.stopDigging(); } catch (_) {}
+          reject(new Error('dig_timeout'));
+        }, timeoutMs);
+      })
+    ]);
+  } catch (err) {
+    if (timedOut) {
+      throw new Error(
+        `Could not break obsidian at (${block.position.x}, ${block.position.y}, ${block.position.z}) after ${Math.round(timeoutMs / 1000)}s. ` +
+        'Check that the bot is holding a diamond/netherite pickaxe, can see the block, and the server allows mining there.'
+      );
+    }
+    throw err;
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 /**
  * Find the nearest lava cauldron block.
  * Handles both 1.17+ (lava_cauldron block) and old cauldron with metadata ≥ 3.
@@ -359,14 +399,17 @@ async function pourLava(bot, targetPos) {
     }))
     .filter(ref => ref.block && !isReplaceableForLava(ref.block));
 
-  // Prefer stable full blocks first, but keep partial/interactable neighbors as fallback anchors.
-  references.sort((a, b) => {
+  const fullBlockReferences = references.filter(ref => ref.block?.boundingBox === 'block');
+  const placementReferences = fullBlockReferences.length > 0 ? fullBlockReferences : references;
+
+  // Prefer the block under the target, then other stable full blocks.
+  placementReferences.sort((a, b) => {
     const aScore = (a.label === 'down' ? 3 : 0) + (a.block?.boundingBox === 'block' ? 2 : 0);
     const bScore = (b.label === 'down' ? 3 : 0) + (b.block?.boundingBox === 'block' ? 2 : 0);
     return bScore - aScore;
   });
 
-  if (references.length === 0) {
+  if (placementReferences.length === 0) {
     const adj = getAdjacentBlockDebug(bot, x, y, z);
     throw new Error(`No solid adjacent block near target (${x}, ${y}, ${z}). Adjacent: ${adj}`);
   }
@@ -377,7 +420,7 @@ async function pourLava(bot, targetPos) {
   bot.setControlState('sneak', true);
   try {
     for (let attempt = 1; attempt <= maxAttempts && !clicked; attempt++) {
-      for (const ref of references) {
+      for (const ref of placementReferences) {
         const hitPoint = new Vec3(
           ref.block.position.x + 0.5,
           ref.block.position.y + 0.5,
@@ -393,15 +436,24 @@ async function pourLava(bot, targetPos) {
         await sleep(100);
 
         try {
-          await bot.placeBlock(ref.block, ref.face);
+          await bot.activateBlock(ref.block, ref.face, getFaceCursor(ref.face));
         } catch (e) {
-          clickErrors.push(`placeBlock#${attempt}/${ref.label}: ${e?.message || 'failed'}`);
+          clickErrors.push(`activateBlock#${attempt}/${ref.label}: ${e?.message || 'failed'}`);
         }
 
         await sleep(INTERACT_SETTLE_MS + 260);
         if (didLavaPlacementLikelySucceed(bot, x, y, z)) {
           clicked = true;
           break;
+        }
+
+        const stillHasLavaBucket = bot.inventory.items().some(i => i.name === 'lava_bucket');
+        if (!stillHasLavaBucket) {
+          const actual = bot.blockAt(new Vec3(x, y, z));
+          throw new Error(
+            `Lava bucket was used, but exact target (${x}, ${y}, ${z}) became ${actual?.name || 'nothing'}, not lava/obsidian. ` +
+            `Adjacent: ${getAdjacentBlockDebug(bot, x, y, z)}`
+          );
         }
 
         clickErrors.push(`no_change#${attempt}/${ref.label}`);
@@ -413,7 +465,7 @@ async function pourLava(bot, targetPos) {
 
   if (!clicked && !didLavaPlacementLikelySucceed(bot, x, y, z)) {
     const adj = getAdjacentBlockDebug(bot, x, y, z);
-    const attempted = references.map(ref => `${ref.label}:${ref.block?.name || 'null'}`).join(', ');
+    const attempted = placementReferences.map(ref => `${ref.label}:${ref.block?.name || 'null'}`).join(', ');
     throw new Error(
       `Could not place lava at (${x}, ${y}, ${z}) using adjacent blocks (${attempted}). ` +
       `Adjacent: ${adj}. ` +
@@ -449,8 +501,8 @@ async function mineObsidian(bot, targetPos) {
   const selected = findUsablePickaxe(bot, MIN_PICKAXE_REMAINING_PERCENT);
   if (!selected) {
     throw new Error(
-      `No usable pickaxe found with durability > ${MIN_PICKAXE_REMAINING_PERCENT}%. ` +
-      'Add another pickaxe to inventory.'
+      `No usable diamond/netherite pickaxe found with durability > ${MIN_PICKAXE_REMAINING_PERCENT}%. ` +
+      'Obsidian farming requires a diamond or netherite pickaxe.'
     );
   }
   const { item: pick, remainingPercent } = selected;
@@ -475,8 +527,7 @@ async function mineObsidian(bot, targetPos) {
     throw new Error(`Cannot dig obsidian at (${x}, ${y}, ${z}). Move closer or clear line of sight.`);
   }
 
-  // bot.dig() awaits until the block is broken
-  await bot.dig(block);
+  await digBlockWithTimeout(bot, block);
   await sleep(300);
 
   const remainingAfterDig = getRemainingDurabilityPercent(bot, pick);
