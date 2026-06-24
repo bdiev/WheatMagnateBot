@@ -913,11 +913,12 @@ async function fillBucket(bot) {
 
       const clickPoint = position.offset(0.5, 0.8, 0.5);
       const distance = bot.entity?.position?.distanceTo(clickPoint);
-      if (!Number.isFinite(distance) || distance > MAX_INTERACT_DISTANCE) {
-        failures.push(`${position}:out_of_reach_${Number.isFinite(distance) ? distance.toFixed(2) : 'unknown'}`);
+      if (!Number.isFinite(distance) || distance > maxCauldronDist) {
+        failures.push(`${position}:outside_configured_radius_${Number.isFinite(distance) ? distance.toFixed(2) : 'unknown'}`);
         writeFarmDebug('cauldron_skipped', {
           position: position.toString(),
-          reason: 'out_of_reach',
+          reason: 'outside_configured_radius',
+          configuredRadius: maxCauldronDist,
           distance: Number.isFinite(distance) ? Number(distance.toFixed(2)) : null
         });
         break;
