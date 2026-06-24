@@ -194,8 +194,21 @@ function configureRuntime(hooks = {}) {
 function summarizeSupplyItems(bot, items) {
   const food = {};
   const pickaxes = [];
+  const allItems = [];
 
   for (const item of items) {
+    const maxDurability = getItemMaxDurability(bot, item);
+    const remainingPercent = maxDurability
+      ? getRemainingDurabilityPercent(bot, item)
+      : null;
+    allItems.push({
+      name: item.name,
+      count: item.count,
+      remainingPercent,
+      usable: PICKAXE_PRIORITY.includes(item.name)
+        ? remainingPercent >= MIN_PICKAXE_REMAINING_PERCENT
+        : null
+    });
     if (isFoodItem(item)) {
       food[item.name] = (food[item.name] || 0) + item.count;
     }
@@ -212,7 +225,8 @@ function summarizeSupplyItems(bot, items) {
     food,
     foodCount: Object.values(food).reduce((sum, count) => sum + count, 0),
     pickaxes,
-    usablePickaxeCount: pickaxes.filter(pickaxe => pickaxe.usable).length
+    usablePickaxeCount: pickaxes.filter(pickaxe => pickaxe.usable).length,
+    allItems
   };
 }
 
