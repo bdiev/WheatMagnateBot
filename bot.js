@@ -1380,7 +1380,8 @@ function initializeGrowingChild() {
   growingChild = new GrowingChildAI({
     sendOwnerDM: sendGrowingChildOwnerDM,
     sendChannelMessage: sendGrowingChildChannelMessage,
-    sendMinecraftMessage: sendGrowingChildMinecraftMessage
+    sendMinecraftMessage: sendGrowingChildMinecraftMessage,
+    allowedDiscordChannelId: DISCORD_CHAT_CHANNEL_ID
   });
   growingChild.start();
   console.log('[GrowingChild] Learning system started.');
@@ -6347,6 +6348,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
     const trimmedContent = message.content.trim();
     if (
       message.guild &&
+      message.channel.id === DISCORD_CHAT_CHANNEL_ID &&
       trimmedContent &&
       !trimmedContent.startsWith('!') &&
       !trimmedContent.startsWith('/')

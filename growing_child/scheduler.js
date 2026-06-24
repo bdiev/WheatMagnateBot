@@ -6,6 +6,9 @@ class GrowingChildScheduler {
     this.database = database;
     this.onSpeech = onSpeech;
     this.randomTimer = null;
+    this.activityTimer = null;
+    this.messagesObserved = 0;
+    this.messageTarget = this.createMessageTarget();
     this.dailyTimer = null;
   }
 
@@ -19,19 +22,66 @@ class GrowingChildScheduler {
   }
 
   scheduleRandom() {
+    if (this.randomTimer) clearTimeout(this.randomTimer);
     const min = this.config.randomSpeechMinMinutes;
     const max = this.config.randomSpeechMaxMinutes;
     const minutes = min + Math.random() * (max - min);
     this.randomTimer = setTimeout(async () => {
-      try {
-        await this.onSpeech('random');
-      } catch (err) {
-        console.error('[GrowingChild] Random speech failed:', err.message);
-      } finally {
-        this.scheduleRandom();
-      }
+      await this.tryRandomSpeech('random');
     }, minutes * 60_000);
     this.randomTimer.unref?.();
+  }
+
+  createMessageTarget() {
+    const min = this.config.messagesPerSpeechMin;
+    const max = this.config.messagesPerSpeechMax;
+    return Math.floor(min + Math.random() * (max - min + 1));
+  }
+
+  noteActivity() {
+    if (!this.config.randomSpeechEnabled || this.activityTimer) return;
+    this.messagesObserved++;
+    if (this.messagesObserved < this.messageTarget) return;
+
+    const min = this.config.activitySpeechDelayMinSeconds;
+    const max = this.config.activitySpeechDelayMaxSeconds;
+    const delayMs = (min + Math.random() * (max - min)) * 1000;
+    this.activityTimer = setTimeout(async () => {
+      this.activityTimer = null;
+      await this.tryRandomSpeech('activity');
+    }, delayMs);
+    this.activityTimer.unref?.();
+  }
+
+  async tryRandomSpeech(reason) {
+    if (this.randomTimer) {
+      clearTimeout(this.randomTimer);
+      this.randomTimer = null;
+    }
+    try {
+      const lastSpeechAt = Number(this.database.getState('last_random_speech_at', '0'));
+      const cooldownMs = this.config.randomSpeechCooldownMinutes * 60_000;
+      const remainingCooldown = cooldownMs - (Date.now() - lastSpeechAt);
+      if (remainingCooldown > 0) {
+        this.activityTimer = setTimeout(async () => {
+          this.activityTimer = null;
+          await this.tryRandomSpeech(reason);
+        }, remainingCooldown);
+        this.activityTimer.unref?.();
+        return;
+      }
+
+      const sent = await this.onSpeech(reason);
+      if (sent) {
+        this.database.setState('last_random_speech_at', String(Date.now()));
+        this.messagesObserved = 0;
+        this.messageTarget = this.createMessageTarget();
+      }
+    } catch (err) {
+      console.error('[GrowingChild] Random speech failed:', err.message);
+    } finally {
+      this.scheduleRandom();
+    }
   }
 
   async checkDaily() {
@@ -54,8 +104,10 @@ class GrowingChildScheduler {
 
   stop() {
     if (this.randomTimer) clearTimeout(this.randomTimer);
+    if (this.activityTimer) clearTimeout(this.activityTimer);
     if (this.dailyTimer) clearInterval(this.dailyTimer);
     this.randomTimer = null;
+    this.activityTimer = null;
     this.dailyTimer = null;
   }
 }

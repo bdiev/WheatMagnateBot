@@ -15,7 +15,12 @@ const DEFAULTS = Object.freeze({
   xpPerMessage: 1,
   randomSpeechEnabled: true,
   randomSpeechMinMinutes: 480,
-  randomSpeechMaxMinutes: 960,
+  randomSpeechMaxMinutes: 480,
+  messagesPerSpeechMin: 50,
+  messagesPerSpeechMax: 100,
+  activitySpeechDelayMinSeconds: 15,
+  activitySpeechDelayMaxSeconds: 90,
+  randomSpeechCooldownMinutes: 120,
   reactiveSpeechEnabled: true,
   reactiveSpeechChance: 0,
   addressedSpeechChance: 1,
@@ -43,7 +48,24 @@ function loadConfig(configPath = path.join(__dirname, 'config.json')) {
   config.randomSpeechMinMinutes = Math.max(1, Number(config.randomSpeechMinMinutes) || 480);
   config.randomSpeechMaxMinutes = Math.max(
     config.randomSpeechMinMinutes,
-    Number(config.randomSpeechMaxMinutes) || 960
+    Number(config.randomSpeechMaxMinutes) || 480
+  );
+  config.messagesPerSpeechMin = Math.max(1, Number(config.messagesPerSpeechMin) || 50);
+  config.messagesPerSpeechMax = Math.max(
+    config.messagesPerSpeechMin,
+    Number(config.messagesPerSpeechMax) || 100
+  );
+  config.activitySpeechDelayMinSeconds = Math.max(
+    1,
+    Number(config.activitySpeechDelayMinSeconds) || 15
+  );
+  config.activitySpeechDelayMaxSeconds = Math.max(
+    config.activitySpeechDelayMinSeconds,
+    Number(config.activitySpeechDelayMaxSeconds) || 90
+  );
+  config.randomSpeechCooldownMinutes = Math.max(
+    30,
+    Number(config.randomSpeechCooldownMinutes) || 120
   );
   config.reactiveSpeechChance = Math.max(0, Math.min(1, Number(config.reactiveSpeechChance) || 0));
   config.addressedSpeechChance = Math.max(0, Math.min(1, Number(config.addressedSpeechChance) || 0));
