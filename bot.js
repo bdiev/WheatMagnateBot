@@ -1680,8 +1680,7 @@ async function buildObsidianStatsEmbed(cachedSupplies = null) {
   const inventory = farmStatus.supplies?.inventory;
   const barrel = farmStatus.supplies?.barrel;
   const barrelDisplay = barrel
-    ? `${STATUS_EMOJIS.food} Food **${barrel.foodCount || 0}** - ${formatFoodSupply(barrel.food)}\n` +
-      `Pickaxes **${barrel.usablePickaxeCount || 0}** - ${formatPickaxeSupply(barrel.pickaxes)}`
+    ? `${formatFoodSupply(barrel.food)}\n${formatPickaxeSupply(barrel.pickaxes)}`
     : `Unavailable - ${farmStatus.supplies?.barrelError || 'not found'}`;
   const dailyDisplay = dailyStats.length > 0
     ? dailyStats.map(entry => {
@@ -1723,7 +1722,7 @@ async function buildObsidianStatsEmbed(cachedSupplies = null) {
       },
       {
         name: `${FARM_EMOJIS.chest} Inventory`,
-        value: `Food **${inventory?.foodCount || 0}** - ${formatFoodSupply(inventory?.food)}\nPickaxes **${inventory?.usablePickaxeCount || 0}** - ${formatPickaxeSupply(inventory?.pickaxes)}`,
+        value: `${formatFoodSupply(inventory?.food)}\n${formatPickaxeSupply(inventory?.pickaxes)}`,
         inline: false
       },
       {
@@ -1805,8 +1804,7 @@ async function buildDetailedObsidianStatsEmbed() {
       {
         name: `${FARM_EMOJIS.chest} Bot inventory`,
         value: [
-          `Food: **${inventory?.foodCount || 0}** — ${formatFoodSupply(inventory?.food)}`,
-          `Usable pickaxes: **${inventory?.usablePickaxeCount || 0}**`,
+          formatFoodSupply(inventory?.food),
           formatPickaxeSupply(inventory?.pickaxes)
         ].join('\n'),
         inline: false
@@ -1817,8 +1815,7 @@ async function buildDetailedObsidianStatsEmbed() {
           ? [
               `Position: \`${barrel.position || 'Unknown'}\``,
               `Distance: **${Number(barrel.distance || 0).toFixed(2)} blocks**`,
-              `Food: **${barrel.foodCount || 0}** — ${formatFoodSupply(barrel.food)}`,
-              `Usable pickaxes: **${barrel.usablePickaxeCount || 0}**`,
+              formatFoodSupply(barrel.food),
               formatPickaxeSupply(barrel.pickaxes)
             ].join('\n')
           : `Unavailable — ${farmStatus.supplies?.barrelError || 'not found'}`,
