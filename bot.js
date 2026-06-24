@@ -1288,7 +1288,13 @@ async function sendGrowingChildMinecraftMessage(payload) {
     console.log('[GrowingChild] Minecraft message blocked by coordinate safety filter.');
     return false;
   }
-  return sendMinecraftChat(safePhrase);
+  const sent = sendMinecraftChat(safePhrase);
+  if (!sent) return false;
+
+  await sendGameChatMessageToDiscord(bot.username, safePhrase, {
+    allowMentions: false
+  });
+  return true;
 }
 
 async function sendGrowingChildStatusDM(note = null) {
