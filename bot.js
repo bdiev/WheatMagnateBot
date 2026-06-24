@@ -23,6 +23,7 @@ const GPT_COMMAND_COOLDOWN_MS = 20_000;
 const GPT_MAX_QUESTION_LENGTH = 300;
 const GPT_MAX_RESPONSE_LENGTH = 420;
 const MINECRAFT_PRIVATE_MESSAGE_LENGTH = 180;
+const DISCONNECT_DM_REPEAT_INTERVAL_MS = 30 * 60 * 1000;
 
 console.log(
   `[Gemini] ${GEMINI_API_KEY ? 'Configured' : 'Disabled: GEMINI_API_KEY is missing'}; ` +
@@ -2203,6 +2204,11 @@ let lastDisconnectReason = null;
 let reconnectCountdownInterval = null;
 let reconnectTimer = null;
 let resumeTimer = null;
+let disconnectDmState = {
+  key: null,
+  lastSentAt: 0,
+  suppressed: 0
+};
 
 let foodMonitorInterval = null;
 let playerScannerInterval = null;
@@ -2226,6 +2232,54 @@ function clearResumeTimer() {
     clearTimeout(resumeTimer);
     resumeTimer = null;
   }
+}
+
+function resetDisconnectDmState() {
+  disconnectDmState = {
+    key: null,
+    lastSentAt: 0,
+    suppressed: 0
+  };
+}
+
+function notifyOwnerAboutDisconnect(reason) {
+  const rawReason = normalizeStatusReason(reason);
+  const reasonText = (
+    !rawReason ||
+    rawReason === 'socketClosed' ||
+    /ECONNREFUSED|ECONNRESET|ETIMEDOUT|connection closed/i.test(rawReason)
+  )
+    ? 'Connection lost'
+    : rawReason;
+  const key = `${reasonText}:${shouldReconnect ? 'enabled' : 'disabled'}`;
+  const now = Date.now();
+  const reasonChanged = disconnectDmState.key !== key;
+  const repeatIntervalPassed =
+    now - disconnectDmState.lastSentAt >= DISCONNECT_DM_REPEAT_INTERVAL_MS;
+
+  if (!reasonChanged && !repeatIntervalPassed) {
+    disconnectDmState.suppressed++;
+    console.log(
+      `[Discord] Suppressed duplicate disconnect DM (${disconnectDmState.suppressed}): ${reasonText}`
+    );
+    return;
+  }
+
+  const suppressed = reasonChanged ? 0 : disconnectDmState.suppressed;
+  disconnectDmState = {
+    key,
+    lastSentAt: now,
+    suppressed: 0
+  };
+  const repeatSummary = suppressed > 0
+    ? `\nRepeated disconnects suppressed since last DM: ${suppressed}`
+    : '';
+
+  sendOwnerDM(
+    'Minecraft bot disconnected',
+    `Reason: ${reasonText}\nAuto-reconnect: ${shouldReconnect ? 'enabled' : 'disabled'}${repeatSummary}`,
+    16711680
+  ).catch(() => {});
 }
 
 function scheduleReconnect(delayMs, logMessage) {
@@ -3341,6 +3395,7 @@ function createBot() {
 
   bot.on('spawn', async () => {
     console.log('[Bot] Spawned.');
+    resetDisconnectDmState();
     reconnectTimestamp = 0; // Reset reconnect countdown when bot spawns
     clearIntervals();
     startFoodMonitor();
@@ -3434,11 +3489,7 @@ function createBot() {
     farm.suspend(); // preserve desired farm state across reconnects
 
     if (!fireEmergencyTriggered) {
-      sendOwnerDM(
-        'Minecraft bot disconnected',
-        `Reason: ${reasonStr || 'Connection closed'}\nAuto-reconnect: ${shouldReconnect ? 'enabled' : 'disabled'}`,
-        16711680
-      ).catch(() => {});
+      notifyOwnerAboutDisconnect(reasonStr);
     }
 
     // Mark bot reference null immediately for status display
