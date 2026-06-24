@@ -30,13 +30,14 @@ console.log(
 );
 const STATUS_EMOJIS = {
   connected: '<:Confirm:1519301205346619392>',
+  serverPing: '<:Server_Ping_5:1519367779155968080>',
   players: '<:Player_Head:1519301212367884348>',
   nearby: '<:Compass_03:1519302276651548692>',
   tps: '<:Repeater:1519301215282794526>',
   food: '<:Food_Full:1519301206457978920>',
   health: '<:Heart_Full:1519301207493968082>',
   whitelist: '<:Writable_Book:1519301216675430541>',
-  obsidian: '<:Netherite_Pickaxe:1519301211000541224>',
+  obsidian: '<:Obsidian:1519367777691898079>',
   pause: '<:Map_X:1519305980263796767>',
   resume: '<:Confirm:1519301205346619392>',
   seen: '<:Spyglass:1519309308855189626>',
@@ -55,7 +56,27 @@ const STATUS_BUTTON_EMOJIS = {
   drop: { name: 'pink_bundle', id: '1519309307596767373' },
   whitelist: { name: 'Writable_Book', id: '1519301216675430541' },
   chatSettings: { name: 'Crafting_Table', id: '1519309305558601900' },
-  obsidian: { name: 'Netherite_Pickaxe', id: '1519301211000541224' }
+  obsidian: { name: 'Obsidian', id: '1519367777691898079' }
+};
+const FARM_EMOJIS = {
+  waterBucket: '<:Water_Bucket:1519367780804071608>',
+  obsidian: '<:Obsidian:1519367777691898079>',
+  lavaBucket: '<:Lava_Bucket:1519367776488259715>',
+  diamondPickaxe: '<:Diamond_Pickaxe:1519367775024447498>',
+  netheritePickaxe: '<:Netherite_Pickaxe:1519301211000541224>',
+  cauldron: '<:Cauldron:1519367773539668038>',
+  bucket: '<:Bucket:1519367771777929326>'
+};
+const FOOD_EMOJIS = {
+  golden_carrot: '<:Golden_Carrot:1519367418953207829>',
+  golden_apple: '<:Golden_Apple:1519367417980260412>',
+  cooked_porkchop: '<:Cooked_Porkchop:1519367415283322950>',
+  cooked_beef: '<:Cooked_Beef:1519367413903261777>',
+  steak: '<:Cooked_Beef:1519367413903261777>',
+  carrot: '<:Carrot:1519367413026783263>',
+  bread: '<:Bread:1519367410904469664>',
+  baked_potato: '<:Baked_Potato:1519367409658495146>',
+  apple: '<:Apple:1519367408073314365>'
 };
 const PLAYER_HEAD_EMOJIS = new Map([
   ['wheatmagnate', '<:WheatMagnate:1519314847073046568>'],
@@ -1595,7 +1616,10 @@ function formatDurationShort(milliseconds) {
 function formatFoodSupply(food = {}) {
   const entries = Object.entries(food);
   return entries.length > 0
-    ? entries.map(([name, count]) => `${name.replaceAll('_', ' ')} x${count}`).join(', ')
+    ? entries.map(([name, count]) => {
+        const emoji = FOOD_EMOJIS[name] ? `${FOOD_EMOJIS[name]} ` : '';
+        return `${emoji}${name.replaceAll('_', ' ')} x${count}`;
+      }).join(', ')
     : 'None';
 }
 
@@ -1621,7 +1645,10 @@ function formatPickaxeSupply(pickaxes = []) {
     const durability = Math.abs(group.max - group.min) < 0.05
       ? `${group.max.toFixed(1)}%`
       : `${group.min.toFixed(1)}-${group.max.toFixed(1)}%`;
-    return `${group.name.replaceAll('_', ' ')} x${group.count} (${durability}${group.usable ? '' : ', low'})`;
+    const emoji = group.name === 'diamond_pickaxe'
+      ? FARM_EMOJIS.diamondPickaxe
+      : FARM_EMOJIS.netheritePickaxe;
+    return `${emoji} ${group.name.replaceAll('_', ' ')} x${group.count} (${durability}${group.usable ? '' : ', low'})`;
   }).join('\n');
 }
 
@@ -1647,8 +1674,8 @@ async function buildObsidianStatsEmbed(cachedSupplies = null) {
   const inventory = farmStatus.supplies?.inventory;
   const barrel = farmStatus.supplies?.barrel;
   const barrelDisplay = barrel
-    ? `Food **${barrel.foodCount || 0}** - ${formatFoodSupply(barrel.food)}\n` +
-      `Pickaxes **${barrel.usablePickaxeCount || 0}** - ${formatPickaxeSupply(barrel.pickaxes)}`
+    ? `${STATUS_EMOJIS.food} Food **${barrel.foodCount || 0}** - ${formatFoodSupply(barrel.food)}\n` +
+      `${FARM_EMOJIS.diamondPickaxe} Pickaxes **${barrel.usablePickaxeCount || 0}** - ${formatPickaxeSupply(barrel.pickaxes)}`
     : `Unavailable - ${farmStatus.supplies?.barrelError || 'not found'}`;
   const dailyDisplay = dailyStats.length > 0
     ? dailyStats.map(entry => {
@@ -1665,36 +1692,36 @@ async function buildObsidianStatsEmbed(cachedSupplies = null) {
     : dailyDisplay;
 
   return {
-    title: 'Obsidian Farm Statistics',
+    title: `${FARM_EMOJIS.obsidian} Obsidian Farm Statistics`,
     color: farmStatus.enabled ? 65280 : 16776960,
     fields: [
       {
-        name: 'Blocks mined',
+        name: `${FARM_EMOJIS.obsidian} Blocks mined`,
         value: `Session: **${formatCompactCount(obsidianStats.sessionMined)}**\nAll time: **${formatCompactCount(obsidianStats.totalMined)}**`,
         inline: true
       },
       {
-        name: 'Session',
+        name: `${STATUS_EMOJIS.playtime} Session`,
         value: `Duration: **${formatDurationShort(sessionMs)}**\nRate: **${perMinute.toFixed(1)}/min** (${formatCompactCount(Math.round(perHour))}/h)\nPickaxe avg: **${blocksPerPickaxe == null ? 'No data' : `${formatCompactCount(Math.round(blocksPerPickaxe))} blocks`}**`,
         inline: true
       },
       {
-        name: 'Last 7 days',
+        name: `${STATUS_EMOJIS.playtime} Last 7 days`,
         value: compactDailyDisplay,
         inline: false
       },
       {
-        name: 'Status',
-        value: `Running **${farmStatus.enabled ? 'Yes' : 'No'}** | Auto-resume **${obsidianStats.desiredEnabled ? 'Yes' : 'No'}** | Phase **${farmStatus.phase}**`,
+        name: `${STATUS_EMOJIS.serverPing} Status`,
+        value: `Running **${farmStatus.enabled ? 'Yes' : 'No'}** | Auto-resume **${obsidianStats.desiredEnabled ? 'Yes' : 'No'}** | ${FARM_EMOJIS.lavaBucket} Phase **${farmStatus.phase}**`,
         inline: false
       },
       {
-        name: 'Inventory',
-        value: `Food **${inventory?.foodCount || 0}** - ${formatFoodSupply(inventory?.food)}\nPickaxes **${inventory?.usablePickaxeCount || 0}** - ${formatPickaxeSupply(inventory?.pickaxes)}`,
+        name: `${STATUS_EMOJIS.food} Inventory`,
+        value: `Food **${inventory?.foodCount || 0}** - ${formatFoodSupply(inventory?.food)}\n${FARM_EMOJIS.diamondPickaxe} Pickaxes **${inventory?.usablePickaxeCount || 0}** - ${formatPickaxeSupply(inventory?.pickaxes)}`,
         inline: false
       },
       {
-        name: 'Barrel',
+        name: `${FARM_EMOJIS.bucket} Barrel`,
         value: barrelDisplay,
         inline: false
       }
@@ -1722,11 +1749,11 @@ async function buildDetailedObsidianStatsEmbed() {
     : 'Offline';
 
   return {
-    title: 'Detailed Obsidian Farm Statistics',
+    title: `${FARM_EMOJIS.obsidian} Detailed Obsidian Farm Statistics`,
     color: farmStatus.enabled ? 65280 : 16776960,
     fields: [
       {
-        name: 'Runtime',
+        name: `${STATUS_EMOJIS.serverPing} Runtime`,
         value: [
           `Connected: **${farmStatus.connected ? 'Yes' : 'No'}**`,
           `Running: **${farmStatus.enabled ? 'Yes' : 'No'}**`,
@@ -1737,18 +1764,18 @@ async function buildDetailedObsidianStatsEmbed() {
         inline: true
       },
       {
-        name: 'Configuration',
+        name: `${FARM_EMOJIS.cauldron} Configuration`,
         value: config
           ? [
-              `Target: \`${config.x}, ${config.y}, ${config.z}\``,
-              `Cauldron radius: **${config.maxCauldronDist}**`,
+              `${FARM_EMOJIS.obsidian} Target: \`${config.x}, ${config.y}, ${config.z}\``,
+              `${FARM_EMOJIS.cauldron} Cauldron radius: **${config.maxCauldronDist}**`,
               `Bot position: \`${botPosition}\``
             ].join('\n')
           : 'Not configured',
         inline: true
       },
       {
-        name: 'Session totals',
+        name: `${FARM_EMOJIS.obsidian} Session totals`,
         value: [
           `Started: ${sessionStartedAt ? `<t:${Math.floor(sessionStartedAt.getTime() / 1000)}:R>` : '**Not started**'}`,
           `Duration: **${formatDurationShort(sessionMs)}**`,
@@ -1759,7 +1786,7 @@ async function buildDetailedObsidianStatsEmbed() {
         inline: false
       },
       {
-        name: 'Pickaxe history',
+        name: `${FARM_EMOJIS.diamondPickaxe} Pickaxe history`,
         value: [
           `Retired pickaxes: **${obsidianStats.retiredPickaxes}**`,
           `Blocks on retired pickaxes: **${obsidianStats.retiredPickaxeBlocks.toLocaleString('en-US')}**`,
@@ -1770,7 +1797,7 @@ async function buildDetailedObsidianStatsEmbed() {
         inline: false
       },
       {
-        name: 'Bot inventory',
+        name: `${STATUS_EMOJIS.food} Bot inventory`,
         value: [
           `Food: **${inventory?.foodCount || 0}** — ${formatFoodSupply(inventory?.food)}`,
           `Usable pickaxes: **${inventory?.usablePickaxeCount || 0}**`,
@@ -1779,7 +1806,7 @@ async function buildDetailedObsidianStatsEmbed() {
         inline: false
       },
       {
-        name: 'Supply barrel',
+        name: `${FARM_EMOJIS.bucket} Supply barrel`,
         value: barrel
           ? [
               `Position: \`${barrel.position || 'Unknown'}\``,
@@ -3084,7 +3111,7 @@ function getStatusDescription() {
     .join(', ') || 'None';
   const whitelistOnlineDisplay = whitelistOnline.length > 0 ? whitelistOnline.map(u => `\`${u}\``).join(', ') : 'None';
   const obsidianMined = `${formatCompactCount(obsidianStats.sessionMined)}/${formatCompactCount(obsidianStats.totalMined)}`;
-  return `${STATUS_EMOJIS.connected} Bot **${bot.username}** connected to \`${config.host}\`\n` +
+  return `${STATUS_EMOJIS.serverPing} Bot **${bot.username}** connected to \`${config.host}\`\n` +
     `${STATUS_EMOJIS.players} Players online: ${playerCount}\n` +
     `${STATUS_EMOJIS.nearby} Players nearby: ${nearbyNames}\n` +
     `${STATUS_EMOJIS.tps} TPS: ${avgTps}\n` +
