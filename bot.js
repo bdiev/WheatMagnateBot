@@ -2061,6 +2061,32 @@ async function resumeObsidianFarmAfterReconnect(createdBot) {
   let warningSent = false;
 
   try {
+    // The spawn event fires before all nearby chunks, inventory slots and
+    // interactions are necessarily synchronized. The manual stats Refresh
+    // succeeds because its barrel inspection naturally completes that setup.
+    // Run the same safe preparation before touching the protection lever.
+    try {
+      await createdBot.waitForChunksToLoad();
+    } catch (err) {
+      console.log(`[Obsidian] Chunk readiness wait ended early: ${err.message}`);
+    }
+
+    if (
+      bot !== createdBot ||
+      !createdBot?.entity ||
+      !obsidianStats.desiredEnabled
+    ) {
+      return;
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 1_000));
+    const reconnectSupplies = await farm.inspectSupplies(createdBot);
+    if (reconnectSupplies?.barrelError) {
+      console.log(`[Obsidian] Reconnect barrel preparation: ${reconnectSupplies.barrelError}`);
+    } else {
+      console.log('[Obsidian] Reconnect barrel preparation completed.');
+    }
+
     while (
       bot === createdBot &&
       createdBot?.entity &&
