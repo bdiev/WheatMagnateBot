@@ -43,9 +43,14 @@ try {
 
   const known = new Set(database.getWords({ limit: 100 }).map(row => row.word));
   const phrase = generator.generate();
+  const reply = generator.generateReply(['obsidian', 'unknown-word']);
   const generatedWords = phrase.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
+  const replyWords = reply.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
   if (!generatedWords.every(word => known.has(word))) {
     throw new Error(`Generator used an unknown word: ${phrase}`);
+  }
+  if (!replyWords.every(word => known.has(word))) {
+    throw new Error(`Reply generator used an unknown word: ${reply}`);
   }
 
   database.reset();

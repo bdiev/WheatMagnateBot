@@ -16,6 +16,8 @@ class GrowingChildAI {
     this.generator = new MessageGenerator(this.database, this.emotions);
     this.sendOwnerDM = sendOwnerDM;
     this.sendChannelMessage = sendChannelMessage;
+    this.lastReactiveSpeechAt = 0;
+    this.pendingReactiveTimer = null;
     this.scheduler = new GrowingChildScheduler(
       this.config,
       this.database,
@@ -35,6 +37,7 @@ class GrowingChildAI {
           newWords: result.newWords,
           addressed: Boolean(context.addressed)
         });
+        this.maybeReact(context);
       }
       return result;
     } catch (err) {
@@ -43,8 +46,37 @@ class GrowingChildAI {
     }
   }
 
-  async speak(reason = 'manual') {
-    const phrase = this.generator.generate();
+  maybeReact(context) {
+    if (!this.config.reactiveSpeechEnabled || this.pendingReactiveTimer) return;
+    const cooldownMs = this.config.reactiveCooldownMinutes * 60_000;
+    if (Date.now() - this.lastReactiveSpeechAt < cooldownMs) return;
+
+    const chance = context.addressed
+      ? this.config.addressedSpeechChance
+      : this.config.reactiveSpeechChance;
+    if (Math.random() >= chance) return;
+
+    const min = this.config.reactiveDelayMinSeconds;
+    const max = this.config.reactiveDelayMaxSeconds;
+    const delayMs = (min + Math.random() * (max - min)) * 1000;
+    const contextWords = this.learning.tokenize(context.text);
+
+    this.pendingReactiveTimer = setTimeout(async () => {
+      this.pendingReactiveTimer = null;
+      this.lastReactiveSpeechAt = Date.now();
+      try {
+        await this.speak('reaction', contextWords);
+      } catch (err) {
+        console.error('[GrowingChild] Reactive speech failed:', err.message);
+      }
+    }, delayMs);
+    this.pendingReactiveTimer.unref?.();
+  }
+
+  async speak(reason = 'manual', contextWords = []) {
+    const phrase = reason === 'reaction'
+      ? this.generator.generateReply(contextWords)
+      : this.generator.generate();
     const stats = this.database.getStats();
     const payload = {
       phrase,
@@ -75,12 +107,16 @@ class GrowingChildAI {
   }
 
   reset() {
+    if (this.pendingReactiveTimer) clearTimeout(this.pendingReactiveTimer);
+    this.pendingReactiveTimer = null;
+    this.lastReactiveSpeechAt = 0;
     this.database.reset();
     return this.getStatus();
   }
 
   stop() {
     this.scheduler.stop();
+    if (this.pendingReactiveTimer) clearTimeout(this.pendingReactiveTimer);
     this.database.close();
   }
 }

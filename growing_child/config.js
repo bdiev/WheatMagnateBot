@@ -16,6 +16,12 @@ const DEFAULTS = Object.freeze({
   randomSpeechEnabled: true,
   randomSpeechMinMinutes: 45,
   randomSpeechMaxMinutes: 180,
+  reactiveSpeechEnabled: true,
+  reactiveSpeechChance: 0.04,
+  addressedSpeechChance: 0.7,
+  reactiveCooldownMinutes: 10,
+  reactiveDelayMinSeconds: 5,
+  reactiveDelayMaxSeconds: 25,
   dailySpeechEnabled: true,
   ownerDmOnly: true,
   maxLearnedMessages: 5000
@@ -37,6 +43,14 @@ function loadConfig(configPath = path.join(__dirname, 'config.json')) {
   config.randomSpeechMaxMinutes = Math.max(
     config.randomSpeechMinMinutes,
     Number(config.randomSpeechMaxMinutes) || 180
+  );
+  config.reactiveSpeechChance = Math.max(0, Math.min(1, Number(config.reactiveSpeechChance) || 0));
+  config.addressedSpeechChance = Math.max(0, Math.min(1, Number(config.addressedSpeechChance) || 0));
+  config.reactiveCooldownMinutes = Math.max(1, Number(config.reactiveCooldownMinutes) || 10);
+  config.reactiveDelayMinSeconds = Math.max(1, Number(config.reactiveDelayMinSeconds) || 5);
+  config.reactiveDelayMaxSeconds = Math.max(
+    config.reactiveDelayMinSeconds,
+    Number(config.reactiveDelayMaxSeconds) || 25
   );
   config.databasePath = path.resolve(path.dirname(__dirname), config.databasePath);
   return config;

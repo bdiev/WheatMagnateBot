@@ -11,6 +11,12 @@
   "randomSpeechEnabled": true,
   "randomSpeechMinMinutes": 45,
   "randomSpeechMaxMinutes": 180,
+  "reactiveSpeechEnabled": true,
+  "reactiveSpeechChance": 0.04,
+  "addressedSpeechChance": 0.7,
+  "reactiveCooldownMinutes": 10,
+  "reactiveDelayMinSeconds": 5,
+  "reactiveDelayMaxSeconds": 25,
   "dailySpeechEnabled": true,
   "ownerDmOnly": true,
   "maxLearnedMessages": 5000
