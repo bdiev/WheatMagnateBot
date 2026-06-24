@@ -38,6 +38,81 @@ const STATUS_BUTTON_EMOJIS = {
   chatSettings: { name: 'Crafting_Table', id: '1519309305558601900' },
   obsidian: { name: 'Netherite_Pickaxe', id: '1519301211000541224' }
 };
+const PLAYER_HEAD_EMOJIS = new Map([
+  ['wheatmagnate', '<:WheatMagnate:1519314847073046568>'],
+  ['wheatemperor', '<:wheatemperor:1519314845151789197>'],
+  ['vendell', '<:Vendell:1519314843545501726>'],
+  ['twistedinsane', '<:TWISTEDINSANE:1519314842467696820>'],
+  ['tckrtxa', '<:tckrtxa:1519314840982782092>'],
+  ['robo_hbr', '<:Robo_HBr:1519314839586078790>'],
+  ['recreational_pot', '<:Recreational_Pot:1519314837996568697>'],
+  ['piff_chiefington', '<:Piff_chiefington:1519314837107245156>'],
+  ['ninjaoversurge', '<:NinjaOverSurge:1519314835781849168>'],
+  ['namy_mcnameface', '<:Namy_McNameface:1519314834414633030>'],
+  ['mrautofish', '<:MrAutoFish:1519314833152147596>'],
+  ['me_is_gt', '<:ME_IS_GT:1519314831943929907>'],
+  ['lontony', '<:Lontony:1519314830899679303>'],
+  ['llednev', '<:lledneV:1519314829586862152>'],
+  ['karatecheese', '<:KarateCheese:1519314825170124830>'],
+  ['kittr', '<:kittr:1519314827019944046>'],
+  ['liketinos2341', '<:liketinos2341:1519314828001542356>'],
+  ['itzrubyy', '<:ItzRubyy:1519314823790461000>'],
+  ['hugoash', '<:HugoAsh:1519314822569656451>'],
+  ['gibsinnep', '<:GIBSINNEP:1519314821370216551>'],
+  ['funkygamer26', '<:FunkyGamer26:1519314820401205410>'],
+  ['deireide', '<:Deireide:1519314819034120292>'],
+  ['chief_piffington', '<:chief_piffington:1519314816236261516>'],
+  ['christianfemboy', '<:ChristianFemboy:1519314817771638834>'],
+  ['catsfish', '<:CatsFish:1519314815011782666>'],
+  ['bulbax', '<:bulbax:1519314813686255726>'],
+  ['bulbalt', '<:bulbalt:1519314812192952451>'],
+  ['bublax', '<:bublax:1519314811513733160>'],
+  ['blubax', '<:blubax:1519314810481676338>'],
+  ['blabux', '<:blabux:1519314809479368876>'],
+  ['beetroot_bot', '<:Beetroot_Bot:1519314808455958628>'],
+  ['bdiev_', '<:bdiev_:1519314806992142457>'],
+  ['balbux', '<:balbux:1519314805729525843>'],
+  ['9pus', '<:9pus:1519314804224036874>'],
+  ['7pus', '<:7pus:1519314802772545688>'],
+  ['1amfero1', '<:1Amfero1:1519314801287762101>'],
+  ['0x003a47d4', '<:0x003A47D4:1519314799647916162>']
+]);
+
+function getPlayerHeadEmoji(username) {
+  return PLAYER_HEAD_EMOJIS.get(String(username || '').toLowerCase()) ||
+    STATUS_EMOJIS.players;
+}
+
+function createDeleteDMRow() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('delete_dm_message')
+      .setLabel('Delete')
+      .setStyle(ButtonStyle.Danger)
+  );
+}
+
+async function ensureDMDeleteButton(message) {
+  if (
+    !message ||
+    message.author?.id !== discordClient.user?.id ||
+    !message.channel?.isDMBased?.()
+  ) {
+    return;
+  }
+
+  const hasDeleteButton = message.components?.some(row =>
+    row.components?.some(component => component.customId === 'delete_dm_message')
+  );
+  if (hasDeleteButton || (message.components?.length || 0) >= 5) return;
+
+  await message.edit({
+    components: [
+      ...(message.components || []).map(row => row.toJSON()),
+      createDeleteDMRow()
+    ]
+  });
+}
 
 // Database connection
 let pool = null;
@@ -103,6 +178,7 @@ let lastDialogMessages = new Map(); // channelId -> messageId of last message wi
 let whisperFooterUpdateIntervals = new Map(); // channelId -> interval handle for footer updates
 let whisperDeleteTimestamps = new Map(); // channelId -> timestamp when channel will be deleted
 let customDialogTTL = new Map(); // channelId -> custom TTL in ms (user-configured)
+const temporaryInteractionMessages = new Map(); // messageId -> { interval, timeout, deadline }
 let recentWhispers = new Map(); // key: `WHISPER:username:message` -> timestamp, to mark whispers and suppress chat forwarding
 let pendingChatTimers = new Map(); // key: `CHAT:username:message` -> timeout handle to delay chat forwarding
 let outboundWhispers = new Map(); // key: `OUTBOUND:targetUsername:message` -> timestamp, to suppress public echo of our own whispers
@@ -124,6 +200,73 @@ const WHISPER_CHANNELS_FILE = 'whisper_channels.json';
 const DEBUG_LOGS = String(process.env.DEBUG_LOGS || '').toLowerCase() === 'true';
 function debugLog(...args) {
   if (DEBUG_LOGS) console.log(...args);
+}
+
+function formatCountdown(ms) {
+  const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+}
+
+function getTemporaryMessageFooter(messageId) {
+  const state = temporaryInteractionMessages.get(messageId);
+  if (!state) return null;
+  return { text: `Closes in ${formatCountdown(state.deadline - Date.now())}` };
+}
+
+async function startTemporaryInteractionMessage(interaction, ttlMs = 2 * 60 * 1000) {
+  let message;
+  try {
+    message = await interaction.fetchReply();
+  } catch (_) {
+    return;
+  }
+
+  const existing = temporaryInteractionMessages.get(message.id);
+  if (existing) {
+    clearInterval(existing.interval);
+    clearTimeout(existing.timeout);
+  }
+
+  const deadline = Date.now() + ttlMs;
+  const originalFooter = message.embeds?.[0]?.footer?.text || '';
+
+  const updateCountdown = async () => {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return;
+    try {
+      const current = await interaction.fetchReply();
+      if (!current.embeds?.length) return;
+      const embeds = current.embeds.map((embed, index) => {
+        const data = embed.toJSON();
+        if (index === 0) {
+          const prefix = originalFooter && !originalFooter.startsWith('Closes in ')
+            ? `${originalFooter} • `
+            : '';
+          data.footer = { text: `${prefix}Closes in ${formatCountdown(remaining)}` };
+        }
+        return data;
+      });
+      await interaction.editReply({ embeds });
+    } catch (_) {}
+  };
+
+  await updateCountdown();
+  const interval = setInterval(updateCountdown, 10_000);
+  const timeout = setTimeout(async () => {
+    clearInterval(interval);
+    temporaryInteractionMessages.delete(message.id);
+    try {
+      await interaction.deleteReply();
+    } catch (_) {
+      try {
+        await interaction.editReply({ content: '_ _', embeds: [], components: [] });
+      } catch (_) {}
+    }
+  }, ttlMs);
+
+  temporaryInteractionMessages.set(message.id, { interval, timeout, deadline });
 }
 
 function escapeRegExp(value) {
@@ -1019,6 +1162,27 @@ if (DISCORD_BOT_TOKEN) {
     console.error('[Discord ERROR]', error);
   });
 
+  // Add a Delete button to every message the bot sends in a direct message.
+  discordClient.on('messageCreate', message => {
+    if (
+      message.author?.id !== discordClient.user?.id ||
+      !message.channel?.isDMBased?.()
+    ) {
+      return;
+    }
+
+    setTimeout(async () => {
+      try {
+        const current = await message.channel.messages.fetch(message.id);
+        await ensureDMDeleteButton(current);
+      } catch (err) {
+        if (err.code !== 10008) {
+          console.error('[Discord] Failed to add DM delete button:', err.message);
+        }
+      }
+    }, 750);
+  });
+
   // Update to shard-level events for discord.js v14
   discordClient.on('shardDisconnect', (event, shardId) => {
     console.log(`[Discord SHARD DISCONNECT] shard ${shardId}`, event);
@@ -1521,7 +1685,8 @@ function createObsidianStatsComponents() {
         .setCustomId('ofstats_refresh')
         .setLabel('Refresh')
         .setStyle(ButtonStyle.Primary)
-    )
+    ),
+    createDeleteDMRow()
   ];
 }
 
@@ -2022,9 +2187,22 @@ async function setProtectionLeverState(powered) {
       const originalLookAt = currentBot.lookAt;
 
       try {
+        // This server primarily ray-traces ordinary use-item actions. Send that
+        // first while the verified lever hit is still under the crosshair.
+        currentBot.activateItem();
+        currentBot.swingArm();
+        await new Promise(resolve => setTimeout(resolve, 500));
+        currentBot.deactivateItem();
+
+        const afterRayClick = currentBot.blockAt(leverPosition);
+        if (afterRayClick?.name === 'lever' && isLeverPowered(afterRayClick) === powered) {
+          console.log(`[Obsidian] Protection lever switched ${powered ? 'ON' : 'OFF'} by ray click.`);
+          return true;
+        }
+
         // activateBlock() normally looks at the block center again, which loses
         // the lever hitbox. Keep the verified rotation while it sends the proper
-        // use-on-block packet with the actual hit face and cursor.
+        // use-on-block fallback with the actual hit face and cursor.
         currentBot.lookAt = async () => {};
         await currentBot.activateBlock(currentLever, clickDirection, clickCursor);
       } catch (err) {
@@ -3352,6 +3530,29 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       return;
     }
 
+    if (interaction.isButton() && interaction.customId === 'delete_dm_message') {
+      if (interaction.user.id !== DISCORD_OWNER_ID) {
+        await interaction.reply({
+          content: 'Only the owner can delete this message.',
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+
+      await interaction.deferUpdate();
+      stopObsidianStatsUpdater(interaction.channelId);
+      const temporary = temporaryInteractionMessages.get(interaction.message.id);
+      if (temporary) {
+        clearInterval(temporary.interval);
+        clearTimeout(temporary.timeout);
+        temporaryInteractionMessages.delete(interaction.message.id);
+      }
+      await interaction.message.delete().catch(err => {
+        if (err.code !== 10008) throw err;
+      });
+      return;
+    }
+
     if (interaction.isButton() && interaction.customId === 'ofstats_refresh') {
       if (interaction.user.id !== DISCORD_OWNER_ID) {
         await interaction.reply({
@@ -3663,19 +3864,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             }]
           });
           
-          // Auto-hide after 2 minutes
-          setTimeout(async () => {
-            try {
-              await interaction.deleteReply();
-            } catch (err) {
-              // If deletion fails, try to edit to minimal content
-              try {
-                await interaction.editReply({ embeds: [], components: [], content: '_ _' });
-              } catch (e) {
-                // Ignore errors on cleanup
-              }
-            }
-          }, 120000);
+          await startTemporaryInteractionMessage(interaction);
           return;
         }
         const allOnlinePlayers = Object.values(bot.players || {}).map(p => p.username);
@@ -3711,19 +3900,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           components: options.length > 0 ? [row] : []
         });
         
-        // Auto-hide after 2 minutes
-        setTimeout(async () => {
-          try {
-            await interaction.deleteReply();
-          } catch (err) {
-            // If deletion fails, try to edit to minimal content
-            try {
-              await interaction.editReply({ embeds: [], components: [], content: '_ _' });
-            } catch (e) {
-              // Ignore errors on cleanup
-            }
-          }
-        }, 120000);
+        await startTemporaryInteractionMessage(interaction);
       } else if (interaction.customId === 'playtime_button') {
         await interaction.deferReply();
         const playtimeData = await getWhitelistPlaytime();
@@ -3736,6 +3913,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
               timestamp: new Date()
             }]
           });
+          await startTemporaryInteractionMessage(interaction);
           return;
         }
 
@@ -3772,6 +3950,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             )
           ]
         });
+        await startTemporaryInteractionMessage(interaction);
       } else if (interaction.customId === 'playtime_refresh_button') {
         await interaction.deferUpdate();
         await interaction.editReply(await buildWhitelistPlaytimeMessage());
@@ -3787,6 +3966,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
               }],
               flags: MessageFlags.Ephemeral
             });
+            await startTemporaryInteractionMessage(interaction);
           } catch {}
           return;
         }
@@ -3800,6 +3980,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           await interaction.editReply(
             buildWhitelistManagementView(entries, addCandidates, '', 3447003, 0, 0)
           );
+          await startTemporaryInteractionMessage(interaction);
           //
         } catch (e) {
           console.error('[Discord] Whitelist button handler failed:', e.message);
@@ -3811,6 +3992,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             }],
             components: []
           });
+          await startTemporaryInteractionMessage(interaction);
         }
       } else if (interaction.customId === 'drop_button') {
         // Restrict Drop to owner/admin only
@@ -3824,6 +4006,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
               }],
               ephemeral: true
             });
+            await startTemporaryInteractionMessage(interaction);
           } catch {}
           return;
         }
@@ -3836,6 +4019,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
               timestamp: new Date()
             }]
           });
+          await startTemporaryInteractionMessage(interaction);
           return;
         }
         const inventory = bot.inventory.items();
@@ -3847,6 +4031,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
               timestamp: new Date()
             }]
           });
+          await startTemporaryInteractionMessage(interaction);
           return;
         }
         const options = inventory.map(item => {
@@ -3871,6 +4056,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           }],
           components: [row]
         });
+        await startTemporaryInteractionMessage(interaction);
       } else if (interaction.customId === 'wn_button') {
         await interaction.deferReply();
         if (!bot || !bot.entity) {
@@ -3915,18 +4101,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
               ephemeral: true
             });
             
-            // Auto-hide after 2 minutes
-            setTimeout(async () => {
-              try {
-                await interaction.deleteReply();
-              } catch (err) {
-                try {
-                  await interaction.editReply({ embeds: [], components: [], content: '_ _' });
-                } catch (e) {
-                  // Ignore errors on cleanup
-                }
-              }
-            }, 120000);
+            await startTemporaryInteractionMessage(interaction);
           } catch (err) {
             console.error('[Discord] Error sending permission denied message:', err.message);
           }
@@ -3942,6 +4117,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
               timestamp: new Date()
             }]
           });
+          await startTemporaryInteractionMessage(interaction);
           return;
         }
         const allOnlinePlayers = Object.values(bot.players || {}).map(p => p.username);
@@ -3985,6 +4161,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           }],
           components
         });
+        await startTemporaryInteractionMessage(interaction);
       } else if (interaction.customId === 'seen_button') {
         await interaction.deferReply();
         
@@ -3999,6 +4176,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
               timestamp: new Date()
             }]
           });
+          await startTemporaryInteractionMessage(interaction);
           return;
         }
         
@@ -4011,6 +4189,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
               timestamp: new Date()
             }]
           });
+          await startTemporaryInteractionMessage(interaction);
           return;
         }
         
@@ -4036,14 +4215,14 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         
         for (const player of activityData.players) {
           const timeStr = formatTimeDiff(player.last_seen);
-          const entry = `**${player.username}** - ${timeStr}`;
-          
+          const entry = `${getPlayerHeadEmoji(player.username)} **${player.username}** - ${timeStr}`;
+
           if (player.is_online) {
-            onlinePlayers.push(`🟢 ${entry}`);
+            onlinePlayers.push(entry);
           } else if (player.last_seen) {
-            offlinePlayers.push(`⚪ ${entry}`);
+            offlinePlayers.push(entry);
           } else {
-            offlinePlayers.push(`⚪ **${player.username}** - Never seen`);
+            offlinePlayers.push(`${getPlayerHeadEmoji(player.username)} **${player.username}** - Never seen`);
           }
         }
         
@@ -4082,7 +4261,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           ]
         });
         
-        // Update the message every 5 seconds
+        // Refresh activity data every 10 seconds.
         const updateInterval = setInterval(async () => {
           try {
             const updatedData = await getWhitelistActivity();
@@ -4096,14 +4275,14 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             
             for (const player of updatedData.players) {
               const timeStr = formatTimeDiff(player.last_seen);
-              const entry = `**${player.username}** - ${timeStr}`;
-              
+              const entry = `${getPlayerHeadEmoji(player.username)} **${player.username}** - ${timeStr}`;
+
               if (player.is_online) {
-                onlinePlayersUpdated.push(`🟢 ${entry}`);
+                onlinePlayersUpdated.push(entry);
               } else if (player.last_seen) {
-                offlinePlayersUpdated.push(`⚪ ${entry}`);
+                offlinePlayersUpdated.push(entry);
               } else {
-                offlinePlayersUpdated.push(`⚪ **${player.username}** - Never seen`);
+                offlinePlayersUpdated.push(`${getPlayerHeadEmoji(player.username)} **${player.username}** - Never seen`);
               }
             }
             
@@ -4111,13 +4290,15 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
               onlinePlayersUpdated.length > 0 ? '**Online:**\n' + onlinePlayersUpdated.join('\n') : '',
               offlinePlayersUpdated.length > 0 ? '\n**Offline:**\n' + offlinePlayersUpdated.join('\n') : ''
             ].filter(s => s).join('\n') || 'No activity data available.';
-            
+            const countdownFooter = getTemporaryMessageFooter(activityMessage.id);
+
             await activityMessage.edit({
               embeds: [{
                 title: `🕒 Whitelist Activity (${updatedData.players.length} players)`,
                 description: updatedDescription,
                 color: 3447003,
-                timestamp: new Date()
+                timestamp: new Date(),
+                ...(countdownFooter ? { footer: countdownFooter } : {})
               }],
               components: [
                 new ActionRowBuilder()
@@ -4138,12 +4319,14 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
               clearInterval(updateInterval);
             }
           }
-        }, 1000);
-        
-        // Stop updating after 5 minutes to avoid infinite updates.
+        }, 10_000);
+
+        await startTemporaryInteractionMessage(interaction);
+
+        // The temporary message itself is deleted after 2 minutes.
         setTimeout(() => {
           clearInterval(updateInterval);
-        }, 5 * 60 * 1000);
+        }, 2 * 60 * 1000);
       } else if (interaction.customId === 'mentions_button') {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         
@@ -4158,6 +4341,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
               timestamp: new Date()
             }]
           });
+          await startTemporaryInteractionMessage(interaction);
           return;
         }
 
@@ -4206,23 +4390,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           }],
           components
         });
-        // Auto-hide: try deleting ephemeral reply, else collapse content
-        setTimeout(async () => {
-          try {
-            await interaction.deleteReply();
-          } catch (e) {
-            try {
-              await interaction.editReply({
-                embeds: [{
-                  description: '🔔 Mentions panel dismissed.',
-                  color: 3447003,
-                  timestamp: new Date()
-                }],
-                components: []
-              });
-            } catch {}
-          }
-        }, 2 * 60 * 1000);
+        await startTemporaryInteractionMessage(interaction);
       } else if (interaction.customId.startsWith('reply_')) {
         const parts = interaction.customId.split('_');
         const encodedUsername = parts[1];
@@ -4300,6 +4468,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       } else if (interaction.customId === 'obsidian_farm_button') {
         if (interaction.user.id !== DISCORD_OWNER_ID) {
           await interaction.reply({ embeds: [{ description: '\u274c Only the owner can control the obsidian farm.', color: 16711680, timestamp: new Date() }], flags: MessageFlags.Ephemeral });
+          await startTemporaryInteractionMessage(interaction);
           return;
         }
         const farmStatus = farm.getStatus();
@@ -4309,7 +4478,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           await setObsidianFarmDesiredEnabled(false);
           farm.stop(null);
           await interaction.reply({ embeds: [{ description: `\ud83d\uded1 Obsidian farm stopped. Session mined: **${formatCompactCount(obsidianStats.sessionMined)}**${leverProtected ? '' : '\nWarning: protection lever could not be switched ON.'}`, color: 16711680, timestamp: new Date() }], flags: MessageFlags.Ephemeral });
-          setTimeout(() => interaction.deleteReply().catch(() => {}), 8000);
+          await startTemporaryInteractionMessage(interaction);
         } else {
           const savedConfig = farmStatus.config;
           const farmModal = new ModalBuilder()
@@ -5615,7 +5784,8 @@ async function sendOwnerDM(title, description, color = 16711680) {
         description,
         color,
         timestamp: new Date()
-      }]
+      }],
+      components: [createDeleteDMRow()]
     });
   } catch (err) {
     console.error('[Discord] Failed to DM owner:', err.message);
@@ -5637,7 +5807,8 @@ async function sendAuthLinkToDiscord(url) {
           description: url,
           color: 16776960,
           timestamp: new Date()
-        }]
+        }],
+        components: [createDeleteDMRow()]
       });
       authMessageIds.set(sentMessage.id, sentMessage.channelId);
     }
