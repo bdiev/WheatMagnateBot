@@ -533,6 +533,101 @@ function findBestUsablePickaxeInItems(bot, items) {
   return best;
 }
 
+function windowHasUsablePickaxe(bot, container) {
+  for (let slot = container.inventoryStart; slot < container.inventoryEnd; slot++) {
+    const item = container.slots[slot];
+    if (
+      item &&
+      PICKAXE_PRIORITY.includes(item.name) &&
+      getRemainingDurabilityPercent(bot, item) >= MIN_PICKAXE_REMAINING_PERCENT
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function getContainerInventorySlot(bot, container, inventoryItem) {
+  const slotOffset = container.inventoryStart - bot.inventory.inventoryStart;
+  const slot = inventoryItem.slot + slotOffset;
+  if (slot < container.inventoryStart || slot >= container.inventoryEnd) {
+    throw new Error(`Inventory slot ${inventoryItem.slot} cannot be mapped into the open barrel.`);
+  }
+  return slot;
+}
+
+async function swapPickaxesInExactSlots(bot, container, replacement, wornPickaxe) {
+  const barrelSlot = replacement.item.slot;
+  const inventorySlot = getContainerInventorySlot(bot, container, wornPickaxe);
+  const barrelItem = container.slots[barrelSlot];
+  const inventoryItem = container.slots[inventorySlot];
+
+  if (!barrelItem || barrelItem.type !== replacement.item.type) {
+    throw new Error(`Replacement pickaxe slot ${barrelSlot} changed before swap.`);
+  }
+  if (!inventoryItem || inventoryItem.type !== wornPickaxe.type) {
+    throw new Error(`Worn pickaxe slot ${wornPickaxe.slot} changed before swap.`);
+  }
+
+  // Pick up the good pickaxe, exchange it with the worn inventory pickaxe,
+  // then put the worn pickaxe into the exact barrel slot that was freed.
+  await bot.clickWindow(barrelSlot, 0, 0);
+  await bot.clickWindow(inventorySlot, 0, 0);
+  await bot.clickWindow(barrelSlot, 0, 0);
+
+  const swapped = await waitForInventorySupply(
+    bot,
+    () => {
+      const newBarrelItem = container.slots[barrelSlot];
+      const newInventoryItem = container.slots[inventorySlot];
+      return Boolean(
+        newBarrelItem &&
+        newBarrelItem.type === wornPickaxe.type &&
+        getRemainingDurabilityPercent(bot, newBarrelItem) < MIN_PICKAXE_REMAINING_PERCENT &&
+        newInventoryItem &&
+        newInventoryItem.type === replacement.item.type &&
+        getRemainingDurabilityPercent(bot, newInventoryItem) >= MIN_PICKAXE_REMAINING_PERCENT &&
+        !container.selectedItem
+      );
+    },
+    2_000
+  );
+  if (!swapped) {
+    throw new Error(
+      `Server did not swap barrel slot ${barrelSlot} with inventory slot ${wornPickaxe.slot}.`
+    );
+  }
+}
+
+async function withdrawPickaxeFromExactSlot(bot, container, pickaxe) {
+  const sourceSlot = pickaxe.item.slot;
+  const sourceBefore = container.slots[sourceSlot];
+  if (!sourceBefore || sourceBefore.type !== pickaxe.item.type) {
+    throw new Error(`Pickaxe source slot ${sourceSlot} changed before withdrawal.`);
+  }
+
+  // Shift-click the exact container slot. Generic container.withdraw() searches
+  // again by type/NBT and can select the wrong unstackable item in custom
+  // server containers containing many otherwise identical pickaxes.
+  await bot.clickWindow(sourceSlot, 0, 1);
+
+  const moved = await waitForInventorySupply(
+    bot,
+    () => {
+      const sourceAfter = container.slots[sourceSlot];
+      const sourceChanged =
+        !sourceAfter ||
+        sourceAfter.type !== sourceBefore.type ||
+        sourceAfter.count < sourceBefore.count;
+      return sourceChanged && windowHasUsablePickaxe(bot, container);
+    },
+    2_000
+  );
+  if (!moved) {
+    throw new Error(`Server did not move the pickaxe from barrel slot ${sourceSlot}.`);
+  }
+}
+
 async function waitForInventorySupply(bot, predicate, timeoutMs = 2_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -570,17 +665,51 @@ async function ensureFarmSupplies(bot) {
     await prepareSafeBarrelHand(bot);
     container = await bot.openContainer(barrel);
     let containerItems = container.containerItems();
+    let swappedLowPickaxe = null;
+
+    if (!hasUsablePickaxe) {
+      const pickaxe = findBestUsablePickaxeInItems(bot, containerItems);
+      if (pickaxe) {
+        pickaxeWasAvailable = true;
+        if (lowPickaxes.length > 0) {
+          swappedLowPickaxe = lowPickaxes[0];
+          await swapPickaxesInExactSlots(bot, container, pickaxe, swappedLowPickaxe);
+          writeFarmDebug('pickaxe_swapped', {
+            receivedItem: pickaxe.item.name,
+            retiredItem: swappedLowPickaxe.name,
+            barrelSlot: pickaxe.item.slot,
+            inventorySlot: swappedLowPickaxe.slot,
+            receivedRemainingPercent: Number(pickaxe.remainingPercent.toFixed(1)),
+            retiredRemainingPercent: Number(
+              getRemainingDurabilityPercent(bot, swappedLowPickaxe).toFixed(1)
+            ),
+            barrel: barrel.position.toString()
+          });
+        } else {
+          await withdrawPickaxeFromExactSlot(bot, container, pickaxe);
+          writeFarmDebug('supply_withdrawn', {
+            item: pickaxe.item.name,
+            count: 1,
+            sourceSlot: pickaxe.item.slot,
+            remainingPercent: Number(pickaxe.remainingPercent.toFixed(1)),
+            barrel: barrel.position.toString()
+          });
+        }
+      }
+    }
 
     for (const lowPickaxe of lowPickaxes) {
       const trackingKey = getPickaxeTrackingKey(lowPickaxe);
       const tracking = pickaxeBlocksMined.get(trackingKey);
       const blocksMined = tracking?.blocks || 0;
-      await container.deposit(
-        lowPickaxe.type,
-        lowPickaxe.metadata,
-        lowPickaxe.count,
-        lowPickaxe.nbt
-      );
+      if (lowPickaxe !== swappedLowPickaxe) {
+        await container.deposit(
+          lowPickaxe.type,
+          lowPickaxe.metadata,
+          lowPickaxe.count,
+          lowPickaxe.nbt
+        );
+      }
       pickaxeBlocksMined.delete(trackingKey);
       await runtime.onPickaxeRetired({
         name: lowPickaxe.name,
@@ -594,25 +723,6 @@ async function ensureFarmSupplies(bot) {
         remainingPercent: Number(getRemainingDurabilityPercent(bot, lowPickaxe).toFixed(1)),
         barrel: barrel.position.toString()
       });
-    }
-
-    if (!hasUsablePickaxe) {
-      const pickaxe = findBestUsablePickaxeInItems(bot, containerItems);
-      if (pickaxe) {
-        pickaxeWasAvailable = true;
-        await container.withdraw(
-          pickaxe.item.type,
-          pickaxe.item.metadata,
-          1,
-          pickaxe.item.nbt
-        );
-        writeFarmDebug('supply_withdrawn', {
-          item: pickaxe.item.name,
-          count: 1,
-          remainingPercent: Number(pickaxe.remainingPercent.toFixed(1)),
-          barrel: barrel.position.toString()
-        });
-      }
     }
 
     containerItems = container.containerItems();

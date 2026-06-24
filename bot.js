@@ -1722,7 +1722,7 @@ async function buildObsidianStatsEmbed(cachedSupplies = null) {
         inline: false
       },
       {
-        name: `${STATUS_EMOJIS.food} Inventory`,
+        name: `${FARM_EMOJIS.chest} Inventory`,
         value: `Food **${inventory?.foodCount || 0}** - ${formatFoodSupply(inventory?.food)}\nPickaxes **${inventory?.usablePickaxeCount || 0}** - ${formatPickaxeSupply(inventory?.pickaxes)}`,
         inline: false
       },
@@ -1803,7 +1803,7 @@ async function buildDetailedObsidianStatsEmbed() {
         inline: false
       },
       {
-        name: `${STATUS_EMOJIS.food} Bot inventory`,
+        name: `${FARM_EMOJIS.chest} Bot inventory`,
         value: [
           `Food: **${inventory?.foodCount || 0}** — ${formatFoodSupply(inventory?.food)}`,
           `Usable pickaxes: **${inventory?.usablePickaxeCount || 0}**`,
