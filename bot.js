@@ -95,7 +95,9 @@ const ITEM_EMOJIS = {
   chest: FARM_EMOJIS.chest,
   trapped_chest: FARM_EMOJIS.chest,
   lever: FARM_EMOJIS.lever,
-  shulker_box: FARM_EMOJIS.shulkerClosed
+  shulker_box: FARM_EMOJIS.shulkerClosed,
+  totem_of_undying: '<:Totem_Of_Undying:1519380252583923932>',
+  firework_rocket: '<:Firework_Rocket:1519380253649408046>'
 };
 const PLAYER_HEAD_EMOJIS = new Map([
   ['wheatmagnate', '<:WheatMagnate:1519314847073046568>'],
