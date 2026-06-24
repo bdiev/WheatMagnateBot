@@ -68,9 +68,11 @@ const farm = {
 };
 const runtime = {
   onMined: async () => {},
+  onPickaxeRetired: async () => {},
   onFatalStop: async () => {}
 };
 let worldInteractionQueue = Promise.resolve();
+const pickaxeBlocksMined = new Map();
 
 // ── Exported helpers ───────────────────────────────────────────────────────────
 
@@ -175,6 +177,7 @@ function getConfiguredTargetPos() {
 
 function configureRuntime(hooks = {}) {
   if (typeof hooks.onMined === 'function') runtime.onMined = hooks.onMined;
+  if (typeof hooks.onPickaxeRetired === 'function') runtime.onPickaxeRetired = hooks.onPickaxeRetired;
   if (typeof hooks.onFatalStop === 'function') runtime.onFatalStop = hooks.onFatalStop;
 }
 
@@ -470,6 +473,10 @@ function findUsablePickaxe(bot, minRemainingPercent) {
   return null;
 }
 
+function getPickaxeTrackingKey(item) {
+  return item ? `${item.name}:${item.slot}` : null;
+}
+
 function findBestPickaxe(bot) {
   let best = null;
   for (const item of bot.inventory.items()) {
@@ -519,13 +526,18 @@ function findBestUsablePickaxeInItems(bot, items) {
 async function ensureFarmSupplies(bot) {
   const hasUsablePickaxe = Boolean(findUsablePickaxe(bot, MIN_PICKAXE_REMAINING_PERCENT));
   const hasFood = bot.inventory.items().some(isFoodItem);
-  if (hasUsablePickaxe && hasFood) return;
+  const lowPickaxes = bot.inventory.items().filter(item =>
+    PICKAXE_PRIORITY.includes(item.name) &&
+    getRemainingDurabilityPercent(bot, item) < MIN_PICKAXE_REMAINING_PERCENT
+  );
+  if (hasUsablePickaxe && hasFood && lowPickaxes.length === 0) return;
 
   const barrel = findReachableSupplyBarrel(bot);
   if (!barrel) {
     const missing = [];
     if (!hasUsablePickaxe) missing.push('pickaxe');
     if (!hasFood) missing.push('food');
+    if (lowPickaxes.length > 0) missing.push('barrel access for worn pickaxe deposit');
     throw createResourceExhaustedError(missing);
   }
 
@@ -537,6 +549,31 @@ async function ensureFarmSupplies(bot) {
     await prepareSafeBarrelHand(bot);
     container = await bot.openContainer(barrel);
     let containerItems = container.containerItems();
+
+    for (const lowPickaxe of lowPickaxes) {
+      const trackingKey = getPickaxeTrackingKey(lowPickaxe);
+      const tracking = pickaxeBlocksMined.get(trackingKey);
+      const blocksMined = tracking?.blocks || 0;
+      await container.deposit(
+        lowPickaxe.type,
+        lowPickaxe.metadata,
+        lowPickaxe.count,
+        lowPickaxe.nbt
+      );
+      pickaxeBlocksMined.delete(trackingKey);
+      await runtime.onPickaxeRetired({
+        name: lowPickaxe.name,
+        blocksMined,
+        countInAverage: Boolean(tracking?.trackedFromFull),
+        remainingPercent: getRemainingDurabilityPercent(bot, lowPickaxe)
+      });
+      writeFarmDebug('pickaxe_retired', {
+        item: lowPickaxe.name,
+        blocksMined,
+        remainingPercent: Number(getRemainingDurabilityPercent(bot, lowPickaxe).toFixed(1)),
+        barrel: barrel.position.toString()
+      });
+    }
 
     if (!hasUsablePickaxe) {
       const pickaxe = findBestUsablePickaxeInItems(bot, containerItems);
@@ -1108,6 +1145,13 @@ async function mineObsidian(bot, targetPos) {
   }
 
   if (mined) {
+    const trackingKey = getPickaxeTrackingKey(pick);
+    const tracking = pickaxeBlocksMined.get(trackingKey) || {
+      blocks: 0,
+      trackedFromFull: remainingAfterEquip >= 99
+    };
+    tracking.blocks++;
+    pickaxeBlocksMined.set(trackingKey, tracking);
     farm.cyclesCompleted++;
     try {
       await runtime.onMined();
