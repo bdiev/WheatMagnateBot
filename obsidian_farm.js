@@ -52,7 +52,15 @@ const LOW_PICKAXE_DURABILITY_CODE = 'LOW_PICKAXE_DURABILITY';
 const RESOURCE_EXHAUSTED_CODE = 'RESOURCE_EXHAUSTED';
 const PLACEMENT_RECHECK_CODE = 'PLACEMENT_STATE_RECHECK';
 const SUPPLY_BARREL_RADIUS = 5;
-const FOOD_ITEM_PARTS = ['bread', 'apple', 'beef', 'steak', 'golden_carrot'];
+const FOOD_ITEM_PARTS = [
+  'bread',
+  'apple',
+  'beef',
+  'steak',
+  'porkchop',
+  'carrot',
+  'baked_potato'
+];
 // ── Internal state ─────────────────────────────────────────────────────────────
 const farm = {
   enabled:         false,
@@ -525,6 +533,15 @@ function findBestUsablePickaxeInItems(bot, items) {
   return best;
 }
 
+async function waitForInventorySupply(bot, predicate, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  return predicate();
+}
+
 async function ensureFarmSupplies(bot) {
   const hasUsablePickaxe = Boolean(findUsablePickaxe(bot, MIN_PICKAXE_REMAINING_PERCENT));
   const hasFood = bot.inventory.items().some(isFoodItem);
@@ -547,6 +564,8 @@ async function ensureFarmSupplies(bot) {
   stopAllMovement(bot);
 
   let container = null;
+  let pickaxeWasAvailable = false;
+  let foodWasAvailable = false;
   try {
     await prepareSafeBarrelHand(bot);
     container = await bot.openContainer(barrel);
@@ -580,6 +599,7 @@ async function ensureFarmSupplies(bot) {
     if (!hasUsablePickaxe) {
       const pickaxe = findBestUsablePickaxeInItems(bot, containerItems);
       if (pickaxe) {
+        pickaxeWasAvailable = true;
         await container.withdraw(
           pickaxe.item.type,
           pickaxe.item.metadata,
@@ -599,6 +619,7 @@ async function ensureFarmSupplies(bot) {
     if (!hasFood) {
       const food = containerItems.find(isFoodItem);
       if (food) {
+        foodWasAvailable = true;
         await container.withdraw(food.type, food.metadata, food.count, food.nbt);
         writeFarmDebug('supply_withdrawn', {
           item: food.name,
@@ -613,10 +634,33 @@ async function ensureFarmSupplies(bot) {
     }
   }
 
+  if (!hasUsablePickaxe && pickaxeWasAvailable) {
+    await waitForInventorySupply(
+      bot,
+      () => Boolean(findUsablePickaxe(bot, MIN_PICKAXE_REMAINING_PERCENT))
+    );
+  }
+  if (!hasFood && foodWasAvailable) {
+    await waitForInventorySupply(bot, () => bot.inventory.items().some(isFoodItem));
+  }
+
   const missing = [];
   if (!findUsablePickaxe(bot, MIN_PICKAXE_REMAINING_PERCENT)) missing.push('pickaxe');
   if (!bot.inventory.items().some(isFoodItem)) missing.push('food');
-  if (missing.length > 0) throw createResourceExhaustedError(missing);
+  if (missing.length > 0) {
+    const unavailable = missing.filter(name =>
+      (name === 'pickaxe' && !pickaxeWasAvailable) ||
+      (name === 'food' && !foodWasAvailable)
+    );
+    if (unavailable.length === 0) {
+      const err = new Error(
+        `Supply withdrawal is still syncing for ${missing.join(' and ')}. Retrying without stopping the farm.`
+      );
+      err.code = 'SUPPLY_SYNC_RETRY';
+      throw err;
+    }
+    throw createResourceExhaustedError(unavailable);
+  }
 }
 
 async function prepareStart(bot) {
