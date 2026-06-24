@@ -1884,8 +1884,6 @@ function getKyivDateParts(date = new Date()) {
 
 function findProtectionLever(currentBot) {
   if (!currentBot?.entity) return null;
-  const leverId = currentBot.registry.blocksByName.lever?.id;
-  if (leverId == null) return null;
 
   if (protectionLeverPosition) {
     const cached = currentBot.blockAt(protectionLeverPosition);
@@ -1896,23 +1894,26 @@ function findProtectionLever(currentBot) {
     protectionLeverPosition = null;
   }
 
-  const positions = currentBot.findBlocks({
-    matching: leverId,
-    maxDistance: 4,
-    count: 32
-  });
+  // Do not depend on findBlocks immediately after spawn: its palette search can
+  // briefly miss an otherwise loaded nearby block. Read the local cube directly.
+  const base = currentBot.entity.position.floored();
   const origin = currentBot.entity.position.offset(0, 0.5, 0);
-  const nearest = positions
-    .map(position => ({
-      position,
-      block: currentBot.blockAt(position),
-      distance: origin.distanceTo(position.offset(0.5, 0.5, 0.5))
-    }))
-    .filter(candidate => candidate.block?.name === 'lever' && candidate.distance <= 4.5)
-    .sort((a, b) => a.distance - b.distance)[0];
+  const candidates = [];
+  for (let dx = -4; dx <= 4; dx++) {
+    for (let dy = -3; dy <= 3; dy++) {
+      for (let dz = -4; dz <= 4; dz++) {
+        const position = base.offset(dx, dy, dz);
+        const block = currentBot.blockAt(position);
+        if (block?.name !== 'lever') continue;
+        const distance = origin.distanceTo(position.offset(0.5, 0.5, 0.5));
+        if (distance <= 4.5) candidates.push({ block, distance });
+      }
+    }
+  }
+  const nearest = candidates.sort((a, b) => a.distance - b.distance)[0];
 
   if (!nearest) return null;
-  protectionLeverPosition = nearest.position.clone();
+  protectionLeverPosition = nearest.block.position.clone();
   return nearest.block;
 }
 
@@ -1966,8 +1967,18 @@ async function setProtectionLeverState(powered) {
       if (currentLever?.name !== 'lever') return false;
       if (isLeverPowered(currentLever) === powered) return true;
 
-      await currentBot.lookAt(currentLever.position.offset(0.5, 0.5, 0.5), true);
-      await new Promise(resolve => setTimeout(resolve, 100));
+      const leverShape = currentLever.shapes?.[0];
+      const aimPoint = leverShape
+        ? currentLever.position.offset(
+            (leverShape[0] + leverShape[3]) / 2,
+            (leverShape[1] + leverShape[4]) / 2,
+            (leverShape[2] + leverShape[5]) / 2
+          )
+        : currentLever.position.offset(0.5, 0.5, 0.5);
+
+      // force=false waits for Mineflayer to send the visible rotation before click.
+      await currentBot.lookAt(aimPoint, false);
+      await new Promise(resolve => setTimeout(resolve, 200));
       try {
         await currentBot.activateBlock(currentLever);
       } catch (err) {
