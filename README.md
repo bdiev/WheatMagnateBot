@@ -249,6 +249,9 @@ Owner commands:
 - `/child reset` — send a destructive reset confirmation to Discord DM.
 - `/playtime player:<name> time:<duration>` — set a player's saved playtime.
 
+The status panel includes an Enable/Disable button. Disabling the feature stops
+learning, reactions and scheduled speech while preserving the existing database.
+
 Configuration is stored in `growing_child/config.json`. Keep `ownerDmOnly`
 enabled while testing. Set `dailyMessageChannelId` and disable `ownerDmOnly`
 only when the child is ready to speak publicly.

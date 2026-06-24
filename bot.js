@@ -164,7 +164,12 @@ function createDeleteDMButton() {
 }
 
 function createGrowingChildControls() {
+  const enabled = growingChild?.getStatus().enabled ?? false;
   return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('growing_child_toggle')
+      .setLabel(enabled ? 'Disable' : 'Enable')
+      .setStyle(enabled ? ButtonStyle.Danger : ButtonStyle.Success),
     new ButtonBuilder()
       .setCustomId('growing_child_say')
       .setLabel('Say something')
@@ -1241,6 +1246,7 @@ function formatGrowingChildStatus(status) {
     ? status.topTopics.map(entry => entry.topic).join(', ')
     : 'none yet';
   return [
+    `State: **${status.enabled ? 'Enabled' : 'Disabled'}**`,
     `Level: **${status.level}**`,
     `Known words: **${status.knownWords}**`,
     `Experience: **${status.xp} XP**`,
@@ -4141,7 +4147,12 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       }
 
       const action = interaction.options.getSubcommand();
-      const replyOptions = { content: 'Done.' };
+      const childEnabled = growingChild?.getStatus().enabled;
+      const replyOptions = {
+        content: action === 'say' && !childEnabled
+          ? 'Growing Child AI is disabled. Use `/child status` and press Enable.'
+          : 'Done.'
+      };
       if (interaction.guildId) replyOptions.flags = MessageFlags.Ephemeral;
       await interaction.reply(replyOptions);
 
@@ -4201,7 +4212,22 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       if (interaction.customId === 'growing_child_say') {
         await interaction.deferUpdate();
         const payload = await growingChild?.speak('button');
-        if (!payload) await interaction.followUp({ content: 'Growing Child AI is unavailable.' });
+        if (!payload) {
+          await interaction.followUp({ content: 'Growing Child AI is disabled.' });
+        }
+        return;
+      }
+      if (interaction.customId === 'growing_child_toggle') {
+        const status = growingChild.toggleEnabled();
+        await interaction.update({
+          embeds: [{
+            title: 'Growing Child AI · Status',
+            description: formatGrowingChildStatus(status),
+            color: status.enabled ? 65280 : 8421504,
+            timestamp: new Date()
+          }],
+          components: [createGrowingChildControls()]
+        });
         return;
       }
       if (interaction.customId === 'growing_child_status') {
