@@ -18,6 +18,11 @@ class GrowingChildAI {
     this.sendChannelMessage = sendChannelMessage;
     this.lastReactiveSpeechAt = 0;
     this.pendingReactiveTimer = null;
+    const savedEnabled = this.database.getState('enabled');
+    this.enabled = savedEnabled == null
+      ? Boolean(this.config.enabled)
+      : savedEnabled === 'true';
+    this.config.enabled = this.enabled;
     this.scheduler = new GrowingChildScheduler(
       this.config,
       this.database,
@@ -26,7 +31,7 @@ class GrowingChildAI {
   }
 
   start() {
-    if (this.config.enabled) this.scheduler.start();
+    if (this.enabled) this.scheduler.start();
   }
 
   learn(context) {
@@ -74,6 +79,7 @@ class GrowingChildAI {
   }
 
   async speak(reason = 'manual', contextWords = []) {
+    if (!this.enabled) return null;
     const phrase = reason === 'reaction'
       ? this.generator.generateReply(contextWords)
       : this.generator.generate();
@@ -99,6 +105,7 @@ class GrowingChildAI {
 
   getStatus() {
     return {
+      enabled: this.enabled,
       ...this.database.getStats(),
       emotion: this.emotions.get(),
       topWords: this.database.getWords({ limit: 10 }),
@@ -106,11 +113,30 @@ class GrowingChildAI {
     };
   }
 
+  setEnabled(enabled) {
+    this.enabled = Boolean(enabled);
+    this.config.enabled = this.enabled;
+    this.database.setState('enabled', String(this.enabled));
+    if (this.enabled) {
+      this.scheduler.start();
+    } else {
+      this.scheduler.stop();
+      if (this.pendingReactiveTimer) clearTimeout(this.pendingReactiveTimer);
+      this.pendingReactiveTimer = null;
+    }
+    return this.getStatus();
+  }
+
+  toggleEnabled() {
+    return this.setEnabled(!this.enabled);
+  }
+
   reset() {
     if (this.pendingReactiveTimer) clearTimeout(this.pendingReactiveTimer);
     this.pendingReactiveTimer = null;
     this.lastReactiveSpeechAt = 0;
     this.database.reset();
+    this.database.setState('enabled', String(this.enabled));
     return this.getStatus();
   }
 

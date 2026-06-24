@@ -1,5 +1,5 @@
 {
-  "enabled": true,
+  "enabled": false,
   "databasePath": "data/growing_child.sqlite",
   "dailyMessageChannelId": null,
   "ignoredChannels": [],
