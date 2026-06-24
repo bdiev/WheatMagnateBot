@@ -65,7 +65,11 @@ const FARM_EMOJIS = {
   diamondPickaxe: '<:Diamond_Pickaxe:1519367775024447498>',
   netheritePickaxe: '<:Netherite_Pickaxe:1519301211000541224>',
   cauldron: '<:Cauldron:1519367773539668038>',
-  bucket: '<:Bucket:1519367771777929326>'
+  bucket: '<:Bucket:1519367771777929326>',
+  barrel: '<:Barrel:1519371578666913963>',
+  chest: '<:Chest:1519371577131798649>',
+  lever: '<:Lever:1519371575604940830>',
+  shulkerClosed: '<:Shulker_Closed:1519371574296318162>'
 };
 const FOOD_EMOJIS = {
   golden_carrot: '<:Golden_Carrot:1519367418953207829>',
@@ -1617,8 +1621,10 @@ function formatFoodSupply(food = {}) {
   const entries = Object.entries(food);
   return entries.length > 0
     ? entries.map(([name, count]) => {
-        const emoji = FOOD_EMOJIS[name] ? `${FOOD_EMOJIS[name]} ` : '';
-        return `${emoji}${name.replaceAll('_', ' ')} x${count}`;
+        const emoji = FOOD_EMOJIS[name];
+        return emoji
+          ? `${emoji} x${count}`
+          : `${name.replaceAll('_', ' ')} x${count}`;
       }).join(', ')
     : 'None';
 }
@@ -1648,7 +1654,7 @@ function formatPickaxeSupply(pickaxes = []) {
     const emoji = group.name === 'diamond_pickaxe'
       ? FARM_EMOJIS.diamondPickaxe
       : FARM_EMOJIS.netheritePickaxe;
-    return `${emoji} ${group.name.replaceAll('_', ' ')} x${group.count} (${durability}${group.usable ? '' : ', low'})`;
+    return `${emoji} x${group.count} (${durability}${group.usable ? '' : ', low'})`;
   }).join('\n');
 }
 
@@ -1675,7 +1681,7 @@ async function buildObsidianStatsEmbed(cachedSupplies = null) {
   const barrel = farmStatus.supplies?.barrel;
   const barrelDisplay = barrel
     ? `${STATUS_EMOJIS.food} Food **${barrel.foodCount || 0}** - ${formatFoodSupply(barrel.food)}\n` +
-      `${FARM_EMOJIS.diamondPickaxe} Pickaxes **${barrel.usablePickaxeCount || 0}** - ${formatPickaxeSupply(barrel.pickaxes)}`
+      `Pickaxes **${barrel.usablePickaxeCount || 0}** - ${formatPickaxeSupply(barrel.pickaxes)}`
     : `Unavailable - ${farmStatus.supplies?.barrelError || 'not found'}`;
   const dailyDisplay = dailyStats.length > 0
     ? dailyStats.map(entry => {
@@ -1717,11 +1723,11 @@ async function buildObsidianStatsEmbed(cachedSupplies = null) {
       },
       {
         name: `${STATUS_EMOJIS.food} Inventory`,
-        value: `Food **${inventory?.foodCount || 0}** - ${formatFoodSupply(inventory?.food)}\n${FARM_EMOJIS.diamondPickaxe} Pickaxes **${inventory?.usablePickaxeCount || 0}** - ${formatPickaxeSupply(inventory?.pickaxes)}`,
+        value: `Food **${inventory?.foodCount || 0}** - ${formatFoodSupply(inventory?.food)}\nPickaxes **${inventory?.usablePickaxeCount || 0}** - ${formatPickaxeSupply(inventory?.pickaxes)}`,
         inline: false
       },
       {
-        name: `${FARM_EMOJIS.bucket} Barrel`,
+        name: `${FARM_EMOJIS.barrel} Barrel`,
         value: barrelDisplay,
         inline: false
       }
@@ -1806,7 +1812,7 @@ async function buildDetailedObsidianStatsEmbed() {
         inline: false
       },
       {
-        name: `${FARM_EMOJIS.bucket} Supply barrel`,
+        name: `${FARM_EMOJIS.barrel} Supply barrel`,
         value: barrel
           ? [
               `Position: \`${barrel.position || 'Unknown'}\``,
@@ -2693,7 +2699,7 @@ async function handleGptCommand(username, question) {
 
   const cleanQuestion = String(question || '').trim();
   if (!cleanQuestion) {
-    await sendPrivateMinecraftMessage(username, '[AI] Usage: !gpt <question>');
+    await sendPrivateMinecraftMessage(username, '[AI] Usage: !wm <question>');
     return;
   }
   if (cleanQuestion.length > GPT_MAX_QUESTION_LENGTH) {
@@ -3482,10 +3488,10 @@ function createBot() {
   bot.on('chat', async (username, message, translate, jsonMessage) => {
     username = resolveRelayedChatUsername(username, jsonMessage);
 
-    const gptMatch = message.match(/^!gpt(?:\s+([\s\S]*))?$/i);
-    if (gptMatch) {
+    const wmMatch = message.match(/^!wm(?:\s+([\s\S]*))?$/i);
+    if (wmMatch) {
       await sendGameChatMessageToDiscord(username, message);
-      await handleGptCommand(username, gptMatch[1] || '');
+      await handleGptCommand(username, wmMatch[1] || '');
       return;
     }
 
@@ -4835,7 +4841,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           const leverProtected = await setProtectionLeverState(true);
           await setObsidianFarmDesiredEnabled(false);
           farm.stop(null);
-          await interaction.reply({ embeds: [{ description: `\ud83d\uded1 Obsidian farm stopped. Session mined: **${formatCompactCount(obsidianStats.sessionMined)}**${leverProtected ? '' : '\nWarning: protection lever could not be switched ON.'}`, color: 16711680, timestamp: new Date() }], flags: MessageFlags.Ephemeral });
+          await interaction.reply({ embeds: [{ description: `\ud83d\uded1 Obsidian farm stopped. Session mined: **${formatCompactCount(obsidianStats.sessionMined)}**${leverProtected ? '' : `\nWarning: ${FARM_EMOJIS.lever} protection lever could not be switched ON.`}`, color: 16711680, timestamp: new Date() }], flags: MessageFlags.Ephemeral });
           await startTemporaryInteractionMessage(interaction);
         } else {
           const savedConfig = farmStatus.config;
@@ -5628,7 +5634,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         embeds: [{
           description: started
             ? `${STATUS_EMOJIS.connected} Obsidian farm started at \`(${cf.x}, ${cf.y}, ${cf.z})\`. Cauldron radius: ${cf.maxCauldronDist} blocks.`
-            : `⏳ Obsidian farm start is queued for \`(${cf.x}, ${cf.y}, ${cf.z})\`. The bot will keep checking the protection lever and start automatically as soon as it is OFF.`,
+            : `⏳ Obsidian farm start is queued for \`(${cf.x}, ${cf.y}, ${cf.z})\`. The bot will keep checking the ${FARM_EMOJIS.lever} protection lever and start automatically as soon as it is OFF.`,
           color: started ? 65280 : 16776960,
           timestamp: new Date()
         }]
