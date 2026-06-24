@@ -82,6 +82,21 @@ const FOOD_EMOJIS = {
   baked_potato: '<:Baked_Potato:1519367409658495146>',
   apple: '<:Apple:1519367408073314365>'
 };
+const ITEM_EMOJIS = {
+  ...FOOD_EMOJIS,
+  water_bucket: FARM_EMOJIS.waterBucket,
+  lava_bucket: FARM_EMOJIS.lavaBucket,
+  bucket: FARM_EMOJIS.bucket,
+  obsidian: FARM_EMOJIS.obsidian,
+  diamond_pickaxe: FARM_EMOJIS.diamondPickaxe,
+  netherite_pickaxe: FARM_EMOJIS.netheritePickaxe,
+  cauldron: FARM_EMOJIS.cauldron,
+  barrel: FARM_EMOJIS.barrel,
+  chest: FARM_EMOJIS.chest,
+  trapped_chest: FARM_EMOJIS.chest,
+  lever: FARM_EMOJIS.lever,
+  shulker_box: FARM_EMOJIS.shulkerClosed
+};
 const PLAYER_HEAD_EMOJIS = new Map([
   ['wheatmagnate', '<:WheatMagnate:1519314847073046568>'],
   ['wheatemperor', '<:wheatemperor:1519314845151789197>'],
@@ -1658,6 +1673,54 @@ function formatPickaxeSupply(pickaxes = []) {
   }).join('\n');
 }
 
+function getItemEmoji(name) {
+  if (ITEM_EMOJIS[name]) return ITEM_EMOJIS[name];
+  if (String(name).endsWith('_shulker_box')) return FARM_EMOJIS.shulkerClosed;
+  return null;
+}
+
+function formatAllItems(items = [], maxLength = 1000) {
+  if (!Array.isArray(items) || items.length === 0) return 'Empty';
+
+  const groups = new Map();
+  for (const item of items) {
+    const hasDurability = Number.isFinite(item.remainingPercent);
+    const durabilityKey = hasDurability ? Number(item.remainingPercent).toFixed(1) : '';
+    const lowKey = item.usable === false ? 'low' : '';
+    const key = `${item.name}:${durabilityKey}:${lowKey}`;
+    const group = groups.get(key) || {
+      name: item.name,
+      count: 0,
+      remainingPercent: hasDurability ? Number(item.remainingPercent) : null,
+      usable: item.usable
+    };
+    group.count += Number(item.count) || 0;
+    groups.set(key, group);
+  }
+
+  const lines = [...groups.values()].map(group => {
+    const emoji = getItemEmoji(group.name);
+    const label = emoji || group.name.replaceAll('_', ' ');
+    const durability = group.remainingPercent == null
+      ? ''
+      : ` (${group.remainingPercent.toFixed(1)}%${group.usable === false ? ', low' : ''})`;
+    return `${label} x${group.count}${durability}`;
+  });
+
+  const visible = [];
+  let length = 0;
+  for (const line of lines) {
+    const addedLength = line.length + (visible.length > 0 ? 1 : 0);
+    if (length + addedLength > maxLength - 30) {
+      visible.push(`…and ${lines.length - visible.length} more`);
+      break;
+    }
+    visible.push(line);
+    length += addedLength;
+  }
+  return visible.join('\n');
+}
+
 async function buildObsidianStatsEmbed(cachedSupplies = null) {
   const [farmStatus, dailyStats] = await Promise.all([
     farm.getDetailedStatus(bot, {
@@ -1680,7 +1743,7 @@ async function buildObsidianStatsEmbed(cachedSupplies = null) {
   const inventory = farmStatus.supplies?.inventory;
   const barrel = farmStatus.supplies?.barrel;
   const barrelDisplay = barrel
-    ? `${formatFoodSupply(barrel.food)}\n${formatPickaxeSupply(barrel.pickaxes)}`
+    ? formatAllItems(barrel.allItems)
     : `Unavailable - ${farmStatus.supplies?.barrelError || 'not found'}`;
   const dailyDisplay = dailyStats.length > 0
     ? dailyStats.map(entry => {
@@ -1722,7 +1785,7 @@ async function buildObsidianStatsEmbed(cachedSupplies = null) {
       },
       {
         name: `${FARM_EMOJIS.chest} Inventory`,
-        value: `${formatFoodSupply(inventory?.food)}\n${formatPickaxeSupply(inventory?.pickaxes)}`,
+        value: formatAllItems(inventory?.allItems),
         inline: false
       },
       {
@@ -1803,10 +1866,7 @@ async function buildDetailedObsidianStatsEmbed() {
       },
       {
         name: `${FARM_EMOJIS.chest} Bot inventory`,
-        value: [
-          formatFoodSupply(inventory?.food),
-          formatPickaxeSupply(inventory?.pickaxes)
-        ].join('\n'),
+        value: formatAllItems(inventory?.allItems),
         inline: false
       },
       {
@@ -1815,8 +1875,7 @@ async function buildDetailedObsidianStatsEmbed() {
           ? [
               `Position: \`${barrel.position || 'Unknown'}\``,
               `Distance: **${Number(barrel.distance || 0).toFixed(2)} blocks**`,
-              formatFoodSupply(barrel.food),
-              formatPickaxeSupply(barrel.pickaxes)
+              formatAllItems(barrel.allItems, 900)
             ].join('\n')
           : `Unavailable — ${farmStatus.supplies?.barrelError || 'not found'}`,
         inline: false
