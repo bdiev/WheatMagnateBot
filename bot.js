@@ -16,6 +16,12 @@ const DISCORD_CHAT_CHANNEL_ID = process.env.DISCORD_CHAT_CHANNEL_ID;
 const DISCORD_DM_CATEGORY_ID = process.env.DISCORD_DM_CATEGORY_ID;
 const DISCORD_OWNER_ID = process.env.DISCORD_OWNER_ID || '623303738991443968';
 const IGNORED_CHAT_USERNAMES = process.env.IGNORED_CHAT_USERNAMES ? process.env.IGNORED_CHAT_USERNAMES.split(',').map(u => u.trim().toLowerCase()) : [];
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+const GPT_COMMAND_COOLDOWN_MS = 20_000;
+const GPT_MAX_QUESTION_LENGTH = 300;
+const GPT_MAX_RESPONSE_LENGTH = 420;
+const MINECRAFT_PRIVATE_MESSAGE_LENGTH = 180;
 const STATUS_EMOJIS = {
   connected: '<:Confirm:1519301205346619392>',
   players: '<:Player_Head:1519301212367884348>',
@@ -196,6 +202,8 @@ const pendingAuthLinks = [];
 const pendingOwnerDMs = [];
 const sentAuthCodes = new Set();
 const authMessageIds = new Map(); // messageId -> DM channelId
+const gptCommandCooldowns = new Map(); // lowercase username -> last request timestamp
+const gptRequestsInFlight = new Set(); // lowercase username
 const recentOutboundChat = new Map(); // normalized message -> timestamps awaiting self-echo suppression
 const WHISPER_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const WHISPER_MARK_TTL_MS = 3000; // how long to remember whisper markers for suppression
@@ -2322,6 +2330,160 @@ function sendMinecraftChat(message) {
   return true;
 }
 
+function splitMinecraftMessage(text, maxLength = MINECRAFT_PRIVATE_MESSAGE_LENGTH) {
+  const words = String(text || '').trim().split(/\s+/).filter(Boolean);
+  const chunks = [];
+  let current = '';
+
+  for (const word of words) {
+    if (word.length > maxLength) {
+      if (current) {
+        chunks.push(current);
+        current = '';
+      }
+      for (let i = 0; i < word.length; i += maxLength) {
+        chunks.push(word.slice(i, i + maxLength));
+      }
+      continue;
+    }
+
+    const candidate = current ? `${current} ${word}` : word;
+    if (candidate.length > maxLength) {
+      chunks.push(current);
+      current = word;
+    } else {
+      current = candidate;
+    }
+  }
+
+  if (current) chunks.push(current);
+  return chunks;
+}
+
+async function sendPrivateMinecraftMessage(username, text) {
+  const cleanText = String(text || '')
+    .replace(/\u00a7[0-9a-fk-or]/gi, '')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/[\u0000-\u001F\u007F]/g, '')
+    .trim();
+
+  for (const chunk of splitMinecraftMessage(cleanText)) {
+    if (!bot?.entity) return;
+    sendMinecraftChat(`/msg ${username} ${chunk}`);
+    await new Promise(resolve => setTimeout(resolve, 400));
+  }
+}
+
+async function askGemini(question) {
+  if (!GEMINI_API_KEY) {
+    throw new Error('Gemini API key is not configured');
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  let response;
+  try {
+    response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': GEMINI_API_KEY
+        },
+        signal: controller.signal,
+        body: JSON.stringify({
+          system_instruction: {
+            parts: [{
+              text: 'Answer in English. Be concise and direct. Use plain text only, no Markdown. Give at most 2 short sentences.'
+            }]
+          },
+          contents: [{
+            role: 'user',
+            parts: [{ text: question }]
+          }],
+          generationConfig: {
+            temperature: 0.4,
+            maxOutputTokens: 120
+          }
+        })
+      }
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data?.error?.message || `Gemini request failed with HTTP ${response.status}`);
+  }
+
+  const answer = data?.candidates?.[0]?.content?.parts
+    ?.map(part => part.text || '')
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!answer) {
+    throw new Error('Gemini returned no answer');
+  }
+  return answer.slice(0, GPT_MAX_RESPONSE_LENGTH);
+}
+
+async function handleGptCommand(username, question) {
+  const usernameKey = username.toLowerCase();
+  if (!ignoredUsernames.some(name => name.toLowerCase() === usernameKey)) {
+    await sendPrivateMinecraftMessage(username, '[AI] This command is available only to whitelisted players.');
+    return;
+  }
+
+  if (!GEMINI_API_KEY) {
+    await sendPrivateMinecraftMessage(username, '[AI] Gemini API is not configured.');
+    return;
+  }
+
+  const cleanQuestion = String(question || '').trim();
+  if (!cleanQuestion) {
+    await sendPrivateMinecraftMessage(username, '[AI] Usage: !gpt <question>');
+    return;
+  }
+  if (cleanQuestion.length > GPT_MAX_QUESTION_LENGTH) {
+    await sendPrivateMinecraftMessage(username, `[AI] Keep the question under ${GPT_MAX_QUESTION_LENGTH} characters.`);
+    return;
+  }
+  if (gptRequestsInFlight.has(usernameKey)) {
+    await sendPrivateMinecraftMessage(username, '[AI] Your previous question is still being processed.');
+    return;
+  }
+
+  const lastRequestAt = gptCommandCooldowns.get(usernameKey) || 0;
+  const cooldownRemaining = GPT_COMMAND_COOLDOWN_MS - (Date.now() - lastRequestAt);
+  if (cooldownRemaining > 0) {
+    await sendPrivateMinecraftMessage(
+      username,
+      `[AI] Please wait ${Math.ceil(cooldownRemaining / 1000)} seconds before asking again.`
+    );
+    return;
+  }
+
+  gptCommandCooldowns.set(usernameKey, Date.now());
+  gptRequestsInFlight.add(usernameKey);
+  try {
+    const answer = await askGemini(cleanQuestion);
+    for (const chunk of splitMinecraftMessage(`[AI -> ${username}] ${answer}`, 220)) {
+      if (!bot?.entity) return;
+      sendMinecraftChat(chunk);
+      await new Promise(resolve => setTimeout(resolve, 400));
+    }
+  } catch (err) {
+    console.error(`[Gemini] Request from ${username} failed:`, err.message);
+    await sendPrivateMinecraftMessage(username, '[AI] I could not answer right now. Please try again later.');
+  } finally {
+    gptRequestsInFlight.delete(usernameKey);
+  }
+}
+
 function extractMinecraftUsernameFromDiscordMessage(message) {
   if (!message) return null;
 
@@ -3057,6 +3219,12 @@ function createBot() {
   // ------- CHAT COMMANDS -------
   bot.on('chat', async (username, message, translate, jsonMessage) => {
     username = resolveRelayedChatUsername(username, jsonMessage);
+
+    const gptMatch = message.match(/^!gpt(?:\s+([\s\S]*))?$/i);
+    if (gptMatch) {
+      await handleGptCommand(username, gptMatch[1] || '');
+      return;
+    }
 
     // Handle commands from bdiev_
     if (username === 'bdiev_') {
