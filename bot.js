@@ -32,6 +32,9 @@ console.log(
 const STATUS_EMOJIS = {
   connected: '<:Confirm:1519301205346619392>',
   serverPing: '<:Server_Ping_5:1519367779155968080>',
+  serverUnreachable: '<:Server_Unreachable:1519385218824278066>',
+  update: '<:Update:1519384987139575990>',
+  map: '<:Map:1519384986330071050>',
   players: '<:Player_Head:1519301212367884348>',
   nearby: '<:Compass_03:1519302276651548692>',
   tps: '<:Repeater:1519301215282794526>',
@@ -200,7 +203,7 @@ if (process.env.DATABASE_URL) {
 console.log('=== DATABASE STATUS ===');
 if (pool) {
   console.log('[DB] Database pool created');
-  console.log('[DB] 🔄 Waiting for connection...');
+  console.log('[DB] Waiting for connection...');
 } else {
   console.log('[DB] ❌ Database disabled - no connection URL');
 }
@@ -716,11 +719,13 @@ async function ensureStatusMessage() {
       }
     }
 
-    // If still not set, scan recent messages for an embed titled 'Server Status'
+    // If still not set, scan recent messages for the dynamic Server Status title.
     if (!statusMessage) {
       try {
         const recent = await channel.messages.fetch({ limit: 50 });
-        const found = [...recent.values()].find(m => m.embeds[0]?.title === 'Server Status');
+        const found = [...recent.values()].find(m =>
+          String(m.embeds[0]?.title || '').endsWith('Server Status')
+        );
         if (found) {
           statusMessage = found;
           saveStatusMessageId(found.id);
@@ -733,7 +738,7 @@ async function ensureStatusMessage() {
     if (!statusMessage) {
       statusMessage = await channel.send({
         embeds: [{
-          title: 'Server Status',
+          title: getServerStatusTitle(),
           description: getStatusDescription(),
           color: 65280,
           timestamp: new Date()
@@ -3197,7 +3202,7 @@ function getCanonicalWhitelistUsername(username) {
 }
 
 function getStatusDescription() {
-  const reasonLine = lastDisconnectReason ? `\n📝 Reason: ${lastDisconnectReason}` : '';
+  const reasonLine = lastDisconnectReason ? `\n${STATUS_EMOJIS.map} Reason: ${lastDisconnectReason}` : '';
 
   if (!bot || !bot.entity) {
     if (!shouldReconnect) {
@@ -3209,7 +3214,7 @@ function getStatusDescription() {
       const minutes = Math.floor(remaining / 60000);
       const seconds = Math.floor((remaining % 60000) / 1000);
       const timeStr = minutes > 0 ? `${minutes}:${seconds.toString().padStart(2, '0')}` : `${seconds}s`;
-      return `🔄 Reconnecting in ${timeStr}${reasonLine}`;
+      return `${STATUS_EMOJIS.update} Reconnecting in ${timeStr}${reasonLine}`;
     }
     return `❌ Bot not connected${reasonLine}`;
   }
@@ -3237,6 +3242,12 @@ function getStatusDescription() {
     `${STATUS_EMOJIS.health} Health: ${Math.round(bot.health * 2) / 2}/20\n` +
     `${STATUS_EMOJIS.whitelist} Whitelist online: ${whitelistOnlineDisplay}\n` +
     `${STATUS_EMOJIS.obsidian} Obsidian mined: ${obsidianMined}`;
+}
+
+function getServerStatusTitle() {
+  return bot?.entity
+    ? 'Server Status'
+    : `${STATUS_EMOJIS.serverUnreachable} Server Status`;
 }
 
 // Function to create status buttons
@@ -3312,7 +3323,7 @@ async function updateStatusMessage() {
 
     await statusMessage.edit({
       embeds: [{
-        title: 'Server Status',
+        title: getServerStatusTitle(),
         description,
         color: bot ? 65280 : 16711680,
         timestamp: new Date(),
@@ -5976,8 +5987,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       if (statusMessage) {
         statusMessage.edit({
           embeds: [{
-            title: 'Server Status',
-            description: `🔄 Restarting... Requested by ${lastCommandUser}`,
+            title: getServerStatusTitle(),
+            description: `${STATUS_EMOJIS.update} Restarting... Requested by ${lastCommandUser}`,
             color: 16776960,
             timestamp: new Date()
           }],
