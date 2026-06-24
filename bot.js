@@ -2232,7 +2232,7 @@ async function setProtectionLeverState(powered) {
   return leverOperation;
 }
 
-async function resumeObsidianFarmAfterReconnect(createdBot) {
+async function ensureObsidianFarmRunning(createdBot, { freshSession = false } = {}) {
   if (obsidianFarmResumeBot === createdBot) return;
   obsidianFarmResumeBot = createdBot;
   let attempts = 0;
@@ -2288,16 +2288,20 @@ async function resumeObsidianFarmAfterReconnect(createdBot) {
       }
 
       if (leverReady) {
-        farm.resume(createdBot, () => {});
-        console.log(`[Obsidian] Farm resumed after reconnect (lever check attempt ${attempts}).`);
+        if (freshSession) {
+          farm.start(createdBot, () => {});
+        } else {
+          farm.resume(createdBot, () => {});
+        }
+        console.log(`[Obsidian] Farm started (lever check attempt ${attempts}).`);
         return;
       }
 
       if (!warningSent && attempts >= 3) {
         warningSent = true;
         await sendOwnerDM(
-          'Obsidian farm resume delayed',
-          'The protection lever could not yet be confirmed OFF after reconnect. The bot will keep checking and will resume the farm automatically.',
+          'Obsidian farm start delayed',
+          'The protection lever could not yet be confirmed OFF. The bot will keep checking and will start the farm automatically.',
           16776960
         ).catch(err => {
           console.error('[Obsidian] Could not send delayed-resume warning:', err.message);
@@ -2907,7 +2911,7 @@ function createBot() {
       const { dateKey, hour, minute } = getKyivDateParts();
       if (hour === 9 && minute <= 30) restartProtectionDateKey = dateKey;
       await new Promise(resolve => setTimeout(resolve, 1000));
-      resumeObsidianFarmAfterReconnect(createdBot).catch(err => {
+      ensureObsidianFarmRunning(createdBot).catch(err => {
         console.error('[Obsidian] Farm resume retry loop failed:', err.message);
       });
     }
@@ -5248,22 +5252,34 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         });
         return;
       }
-      const leverReady = await setProtectionLeverState(false);
-      if (!leverReady) {
-        await interaction.editReply({
-          embeds: [{
-            description: '❌ Could not find or switch the protection lever behind the bot to OFF. Farm was not started.',
-            color: 16711680,
-            timestamp: new Date()
-          }]
-        });
-        return;
-      }
       await beginObsidianFarmSession();
-      farm.start(bot, () => {});
       const cf = farm.getStatus().config;
-      await interaction.editReply({ embeds: [{ description: `✅ Obsidian farm started at \`(${cf.x}, ${cf.y}, ${cf.z})\`. Cauldron radius: ${cf.maxCauldronDist} blocks.`, color: 65280, timestamp: new Date() }] });
-      setTimeout(() => interaction.deleteReply().catch(() => {}), 10000);
+      const startingBot = bot;
+      ensureObsidianFarmRunning(startingBot, { freshSession: true }).catch(err => {
+        console.error('[Obsidian] Manual farm start retry loop failed:', err.message);
+      });
+
+      const startupDeadline = Date.now() + 15_000;
+      while (
+        Date.now() < startupDeadline &&
+        bot === startingBot &&
+        obsidianStats.desiredEnabled &&
+        !farm.getStatus().enabled
+      ) {
+        await new Promise(resolve => setTimeout(resolve, 250));
+      }
+
+      const started = farm.getStatus().enabled;
+      await interaction.editReply({
+        embeds: [{
+          description: started
+            ? `✅ Obsidian farm started at \`(${cf.x}, ${cf.y}, ${cf.z})\`. Cauldron radius: ${cf.maxCauldronDist} blocks.`
+            : `⏳ Obsidian farm start is queued for \`(${cf.x}, ${cf.y}, ${cf.z})\`. The bot will keep checking the protection lever and start automatically as soon as it is OFF.`,
+          color: started ? 65280 : 16776960,
+          timestamp: new Date()
+        }]
+      });
+      await startTemporaryInteractionMessage(interaction);
     } else if (interaction.isStringSelectMenu() && interaction.customId.startsWith('add_whitelist_select')) {
       await interaction.deferUpdate();
       const encodedUsername = interaction.values[0];
