@@ -43,6 +43,10 @@ try {
   emotions.update({ newWords: result.newWords, addressed: true });
 
   const known = new Set(database.getWords({ limit: 100 }).map(row => row.word));
+  const allWords = database.getAllWords();
+  if (allWords.length !== result.knownWords) {
+    throw new Error(`Full vocabulary export is incomplete: ${allWords.length}/${result.knownWords}`);
+  }
   const phrase = generator.generate();
   const reply = generator.generateReply(['obsidian', 'unknown-word']);
   const generatedWords = phrase.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu) || [];

@@ -258,6 +258,7 @@ Owner commands:
 
 - `/child say` — generate a plain phrase in Discord DM.
 - `/child status` — show level, vocabulary, XP, emotion and common topics.
+- `/child vocabulary` — export the complete word database as a CSV file.
 - `/child reset` — send a destructive reset confirmation to Discord DM.
 - `/playtime player:<name> time:<duration>` — set a player's saved playtime.
 
