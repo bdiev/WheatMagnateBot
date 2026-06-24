@@ -5036,7 +5036,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
                 .setStyle(ButtonStyle.Secondary)
             )
           ]
-        });
+        }); 
         await startTemporaryInteractionMessage(interaction);
       } else if (interaction.customId === 'playtime_refresh_button') {
         await interaction.deferUpdate();
