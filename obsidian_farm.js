@@ -47,9 +47,10 @@ const CAULDRON_FILL_CONFIRM_TIMEOUT_MS = 650;
 // action, so a slow response cannot cause placement at a second location.
 const LAVA_PLACEMENT_CONFIRM_TIMEOUT_MS = 5_000;
 const FARM_RETRY_DELAY_MS = 2_000;
+const PLACEMENT_RECHECK_DELAY_MS = 750;
 const LOW_PICKAXE_DURABILITY_CODE = 'LOW_PICKAXE_DURABILITY';
 const RESOURCE_EXHAUSTED_CODE = 'RESOURCE_EXHAUSTED';
-const PLACEMENT_SAFETY_CODE = 'PLACEMENT_SAFETY_STOP';
+const PLACEMENT_RECHECK_CODE = 'PLACEMENT_STATE_RECHECK';
 const SUPPLY_BARREL_RADIUS = 5;
 const FOOD_ITEM_PARTS = ['bread', 'apple', 'beef', 'steak', 'golden_carrot'];
 // ── Internal state ─────────────────────────────────────────────────────────────
@@ -355,7 +356,7 @@ function faceVectorToDirection(face) {
 
 function createPlacementSafetyError(message) {
   const err = new Error(message);
-  err.code = PLACEMENT_SAFETY_CODE;
+  err.code = PLACEMENT_RECHECK_CODE;
   return err;
 }
 
@@ -1219,8 +1220,7 @@ async function persistentLoop(bot, notify) {
   } catch (err) {
     if (
       err.code === LOW_PICKAXE_DURABILITY_CODE ||
-      err.code === RESOURCE_EXHAUSTED_CODE ||
-      err.code === PLACEMENT_SAFETY_CODE
+      err.code === RESOURCE_EXHAUSTED_CODE
     ) {
       try {
         await runtime.onFatalStop(err);
@@ -1232,11 +1232,16 @@ async function persistentLoop(bot, notify) {
     if (!farm.enabled) return;
 
     farm.lastErrorMessage = err.message;
-    retryDelay = FARM_RETRY_DELAY_MS;
-    writeFarmDebug('cycle_retry', {
-      error: err.message,
-      retryInMs: retryDelay
-    });
+    retryDelay = err.code === PLACEMENT_RECHECK_CODE
+      ? PLACEMENT_RECHECK_DELAY_MS
+      : FARM_RETRY_DELAY_MS;
+    writeFarmDebug(
+      err.code === PLACEMENT_RECHECK_CODE ? 'placement_state_recheck' : 'cycle_retry',
+      {
+        error: err.message,
+        retryInMs: retryDelay
+      }
+    );
   }
 
   if (farm.enabled) {

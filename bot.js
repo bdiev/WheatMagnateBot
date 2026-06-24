@@ -1803,6 +1803,7 @@ let lastEnemyMentionAt = 0;
 let restartProtectionDateKey = null;
 let leverOperation = Promise.resolve();
 let protectionLeverPosition = null;
+let obsidianFarmResumeBot = null;
 
 function clearReconnectTimer() {
   if (reconnectTimer) {
@@ -1946,6 +1947,61 @@ async function setProtectionLeverState(powered) {
 
   leverOperation = leverOperation.then(operation, operation);
   return leverOperation;
+}
+
+async function resumeObsidianFarmAfterReconnect(createdBot) {
+  if (obsidianFarmResumeBot === createdBot) return;
+  obsidianFarmResumeBot = createdBot;
+  let attempts = 0;
+  let warningSent = false;
+
+  try {
+    while (
+      bot === createdBot &&
+      createdBot?.entity &&
+      obsidianStats.desiredEnabled &&
+      !farm.getStatus().enabled
+    ) {
+      attempts++;
+      let leverReady = false;
+      try {
+        leverReady = await setProtectionLeverState(false);
+      } catch (err) {
+        console.error(`[Obsidian] Lever recheck attempt ${attempts} failed:`, err.message);
+      }
+
+      if (
+        bot !== createdBot ||
+        !createdBot?.entity ||
+        !obsidianStats.desiredEnabled
+      ) {
+        return;
+      }
+
+      if (leverReady) {
+        farm.resume(createdBot, () => {});
+        console.log(`[Obsidian] Farm resumed after reconnect (lever check attempt ${attempts}).`);
+        return;
+      }
+
+      if (!warningSent && attempts >= 3) {
+        warningSent = true;
+        await sendOwnerDM(
+          'Obsidian farm resume delayed',
+          'The protection lever could not yet be confirmed OFF after reconnect. The bot will keep checking and will resume the farm automatically.',
+          16776960
+        ).catch(err => {
+          console.error('[Obsidian] Could not send delayed-resume warning:', err.message);
+        });
+      }
+
+      await new Promise(resolve => setTimeout(resolve, attempts < 3 ? 2_000 : 5_000));
+    }
+  } finally {
+    if (obsidianFarmResumeBot === createdBot) {
+      obsidianFarmResumeBot = null;
+    }
+  }
 }
 
 function startRestartProtectionMonitor() {
@@ -2534,20 +2590,9 @@ function createBot() {
       const { dateKey, hour, minute } = getKyivDateParts();
       if (hour === 9 && minute <= 30) restartProtectionDateKey = dateKey;
       await new Promise(resolve => setTimeout(resolve, 1000));
-      const leverReady = await setProtectionLeverState(false);
-      if (!leverReady) {
-        await setObsidianFarmDesiredEnabled(false);
-        await sendOwnerDM(
-          'Obsidian farm was not resumed',
-          'The protection lever behind the bot could not be found or switched OFF after reconnect.',
-          16711680
-        );
-      } else {
-        setTimeout(() => {
-          if (!bot || !obsidianStats.desiredEnabled) return;
-          farm.resume(bot, () => {});
-        }, 100);
-      }
+      resumeObsidianFarmAfterReconnect(createdBot).catch(err => {
+        console.error('[Obsidian] Farm resume retry loop failed:', err.message);
+      });
     }
 
     // Update player activity for all online players
