@@ -1,7 +1,7 @@
 require('dotenv').config();
 const mineflayer = require('mineflayer');
 const fs = require('fs');
-const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ChannelType, PermissionsBitField, MessageFlags, InteractionContextType, ApplicationCommandOptionType } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ChannelType, PermissionsBitField, MessageFlags, InteractionContextType, SlashCommandBuilder } = require('discord.js');
 const { Pool } = require('pg');
 const { pathfinder } = require('mineflayer-pathfinder');
 const farm = require('./obsidian_farm');
@@ -1425,9 +1425,10 @@ if (DISCORD_BOT_TOKEN) {
 
     await initDatabase();
     try {
-      await registerObsidianStatsCommand();
+      await registerApplicationCommands();
     } catch (err) {
       console.error('[Discord] Failed to register application commands:', err.message);
+      console.error('[Discord] Command registration details:', err.rawError || err);
     }
     await migrateWhitelistToDB();
     // Reload whitelist after migration
@@ -2128,81 +2129,66 @@ function startObsidianStatsUpdater(message, supplies) {
   obsidianStatsUpdaters.set(channelId, updater);
 }
 
-async function registerObsidianStatsCommand() {
+async function registerApplicationCommands() {
   if (!discordClient.application) return;
-  const commandDefinitions = [
-    {
-      name: 'ofstats',
-      description: 'Show detailed obsidian farm statistics',
-      contexts: [
-        InteractionContextType.Guild,
-        InteractionContextType.BotDM,
-        InteractionContextType.PrivateChannel
-      ]
-    },
-    {
-      name: 'clear',
-      description: 'Clear messages in the current dialog',
-      contexts: [
-        InteractionContextType.Guild,
-        InteractionContextType.BotDM,
-        InteractionContextType.PrivateChannel
-      ]
-    },
-    {
-      name: 'child',
-      description: 'Control Growing Child AI',
-      contexts: [
-        InteractionContextType.Guild,
-        InteractionContextType.BotDM,
-        InteractionContextType.PrivateChannel
-      ],
-      options: [
-        {
-          type: ApplicationCommandOptionType.Subcommand,
-          name: 'say',
-          description: 'Ask the child to say a phrase'
-        },
-        {
-          type: ApplicationCommandOptionType.Subcommand,
-          name: 'status',
-          description: 'Show learning progress'
-        },
-        {
-          type: ApplicationCommandOptionType.Subcommand,
-          name: 'reset',
-          description: 'Reset all learning after confirmation'
-        }
-      ]
-    },
-    {
-      name: 'playtime',
-      description: 'Set a Minecraft player playtime value',
-      contexts: [
-        InteractionContextType.Guild,
-        InteractionContextType.BotDM,
-        InteractionContextType.PrivateChannel
-      ],
-      options: [
-        {
-          type: ApplicationCommandOptionType.String,
-          name: 'player',
-          description: 'Minecraft username',
-          required: true,
-          min_length: 1,
-          max_length: 16
-        },
-        {
-          type: ApplicationCommandOptionType.String,
-          name: 'time',
-          description: 'Example: 192d 23h 32m',
-          required: true,
-          max_length: 100
-        }
-      ]
-    }
+  const contexts = [InteractionContextType.Guild, InteractionContextType.BotDM];
+  const builders = [
+    new SlashCommandBuilder()
+      .setName('ofstats')
+      .setDescription('Show detailed obsidian farm statistics')
+      .setContexts(...contexts),
+    new SlashCommandBuilder()
+      .setName('clear')
+      .setDescription('Clear messages in the current dialog')
+      .setContexts(...contexts),
+    new SlashCommandBuilder()
+      .setName('child')
+      .setDescription('Control Growing Child AI')
+      .setContexts(...contexts)
+      .addSubcommand(command => command
+        .setName('say')
+        .setDescription('Ask the child to say a phrase'))
+      .addSubcommand(command => command
+        .setName('status')
+        .setDescription('Show learning progress'))
+      .addSubcommand(command => command
+        .setName('reset')
+        .setDescription('Reset all learning after confirmation')),
+    new SlashCommandBuilder()
+      .setName('playtime')
+      .setDescription('Set a Minecraft player playtime value')
+      .setContexts(...contexts)
+      .addStringOption(option => option
+        .setName('player')
+        .setDescription('Minecraft username')
+        .setRequired(true)
+        .setMinLength(1)
+        .setMaxLength(16))
+      .addStringOption(option => option
+        .setName('time')
+        .setDescription('Example: 192d 23h 32m')
+        .setRequired(true)
+        .setMaxLength(100))
   ];
-  await discordClient.application.commands.set(commandDefinitions);
+  const globalDefinitions = builders.map(builder => builder.toJSON());
+  const registeredGlobal = await discordClient.application.commands.set(globalDefinitions);
+  console.log(
+    `[Discord] Registered global commands: ${[...registeredGlobal.values()].map(command => `/${command.name}`).join(', ')}`
+  );
+
+  // Guild commands update immediately while global commands remain available in bot DMs.
+  const guildDefinitions = globalDefinitions.map(definition => {
+    const copy = { ...definition };
+    delete copy.contexts;
+    delete copy.integration_types;
+    return copy;
+  });
+  for (const guild of discordClient.guilds.cache.values()) {
+    const registeredGuild = await guild.commands.set(guildDefinitions);
+    console.log(
+      `[Discord] Registered commands in ${guild.name}: ${[...registeredGuild.values()].map(command => `/${command.name}`).join(', ')}`
+    );
+  }
 }
 
 async function clearCurrentDialog(channel, excludedIds = new Set()) {
