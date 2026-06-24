@@ -18,6 +18,7 @@ const DISCORD_OWNER_ID = process.env.DISCORD_OWNER_ID || '623303738991443968';
 const IGNORED_CHAT_USERNAMES = process.env.IGNORED_CHAT_USERNAMES ? process.env.IGNORED_CHAT_USERNAMES.split(',').map(u => u.trim().toLowerCase()) : [];
 const GEMINI_API_KEY = String(process.env.GEMINI_API_KEY || '').trim();
 const GEMINI_MODEL = String(process.env.GEMINI_MODEL || 'gemini-2.5-flash').trim();
+const GEMINI_FALLBACK_MODEL = String(process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash-lite').trim();
 const GPT_COMMAND_COOLDOWN_MS = 20_000;
 const GPT_MAX_QUESTION_LENGTH = 300;
 const GPT_MAX_RESPONSE_LENGTH = 420;
@@ -25,7 +26,7 @@ const MINECRAFT_PRIVATE_MESSAGE_LENGTH = 180;
 
 console.log(
   `[Gemini] ${GEMINI_API_KEY ? 'Configured' : 'Disabled: GEMINI_API_KEY is missing'}; ` +
-  `model=${GEMINI_MODEL}; fetch=${typeof fetch}`
+  `model=${GEMINI_MODEL}; fallback=${GEMINI_FALLBACK_MODEL}; fetch=${typeof fetch}`
 );
 const STATUS_EMOJIS = {
   connected: '<:Confirm:1519301205346619392>',
@@ -2380,17 +2381,13 @@ async function sendPrivateMinecraftMessage(username, text) {
   }
 }
 
-async function askGemini(question) {
-  if (!GEMINI_API_KEY) {
-    throw new Error('Gemini API key is not configured');
-  }
-
+async function requestGeminiModel(model, question) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
   let response;
   try {
     response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
       {
         method: 'POST',
         headers: {
@@ -2424,6 +2421,7 @@ async function askGemini(question) {
     const err = new Error(data?.error?.message || `Gemini request failed with HTTP ${response.status}`);
     err.status = response.status;
     err.geminiCode = data?.error?.status || null;
+    err.model = model;
     throw err;
   }
 
@@ -2437,6 +2435,38 @@ async function askGemini(question) {
     throw new Error('Gemini returned no answer');
   }
   return answer.slice(0, GPT_MAX_RESPONSE_LENGTH);
+}
+
+async function askGemini(question) {
+  if (!GEMINI_API_KEY) {
+    throw new Error('Gemini API key is not configured');
+  }
+
+  const models = [...new Set([GEMINI_MODEL, GEMINI_FALLBACK_MODEL].filter(Boolean))];
+  let lastError = null;
+
+  for (const model of models) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const answer = await requestGeminiModel(model, question);
+        if (model !== GEMINI_MODEL) {
+          console.log(`[Gemini] Used fallback model ${model}.`);
+        }
+        return answer;
+      } catch (err) {
+        lastError = err;
+        const retryable = err?.status === 429 || err?.status === 500 || err?.status === 503 || err?.name === 'AbortError';
+        console.log(
+          `[Gemini] ${model} attempt ${attempt}/2 failed: ` +
+          `${err?.status || err?.name || 'error'} ${err.message}`
+        );
+        if (!retryable || attempt === 2) break;
+        await new Promise(resolve => setTimeout(resolve, attempt * 1_500));
+      }
+    }
+  }
+
+  throw lastError || new Error('All Gemini models failed');
 }
 
 function classifyGeminiError(err) {
@@ -2502,7 +2532,7 @@ async function handleGptCommand(username, question) {
     const errorCode = classifyGeminiError(err);
     const diagnostic = [
       `Player: ${username}`,
-      `Model: ${GEMINI_MODEL}`,
+      `Model: ${err?.model || GEMINI_MODEL}`,
       `Code: ${errorCode}`,
       `HTTP: ${err?.status || 'none'}`,
       `Gemini status: ${err?.geminiCode || 'none'}`,
