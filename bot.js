@@ -740,7 +740,7 @@ async function ensureStatusMessage() {
         embeds: [{
           title: getServerStatusTitle(),
           description: getStatusDescription(),
-          color: 65280,
+          color: bot?.entity ? 65280 : 16711680,
           timestamp: new Date()
         }],
         components: createStatusButtons()
@@ -1316,6 +1316,11 @@ if (DISCORD_BOT_TOKEN) {
     }
 
     console.log('[Discord] Bot is ready and waiting for interactions...');
+
+    // Load or create the persistent status message even when Minecraft is
+    // offline and never reaches the spawn event.
+    await ensureStatusMessage();
+    await updateStatusMessage();
 
     // Start global status update interval (updates every 3 seconds)
     if (!statusUpdateInterval) {
@@ -3154,7 +3159,7 @@ function getStatusDescription() {
     if (!shouldReconnect) {
       return lastDisconnectReason ? `${STATUS_EMOJIS.pause} ${lastDisconnectReason}` : `${STATUS_EMOJIS.pause} Bot paused`;
     }
-    if (reconnectTimestamp > 0) {
+    if (shouldReconnect) {
       return `${STATUS_EMOJIS.update} Trying to reconnect.`;
     }
     return `❌ Bot not connected${reasonLine}`;
@@ -3252,7 +3257,10 @@ function createStatusButtons() {
 
 // Function to update server status message
 async function updateStatusMessage() {
-  if (!statusMessage) return;
+  if (!statusMessage) {
+    await ensureStatusMessage();
+    if (!statusMessage) return;
+  }
   
   // Prevent concurrent updates
   if (isUpdatingStatus) return;
@@ -3266,7 +3274,7 @@ async function updateStatusMessage() {
       embeds: [{
         title: getServerStatusTitle(),
         description,
-        color: bot ? 65280 : 16711680,
+        color: bot?.entity ? 65280 : 16711680,
         timestamp: new Date(),
         footer: {
           text: 'Last updated'
@@ -3461,6 +3469,7 @@ function createBot() {
         RECONNECT_INTERVAL_MS,
         `[!] Disconnected. Trying to reconnect in ${RECONNECT_INTERVAL_MS / 1000} seconds...`
       );
+      updateStatusMessage().catch(() => {});
     } else {
       console.log('[!] Manual pause. No reconnect.');
       if (!resumeTimer) clearReconnectTimer();
