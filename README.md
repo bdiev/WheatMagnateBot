@@ -237,6 +237,11 @@ The optional `growing_child` module learns vocabulary from public Minecraft chat
 and Discord server messages. Its speech is private to the configured Discord
 owner by default.
 
+It can also react to observed messages after a short delay. Directly addressing
+the bot makes a reaction more likely; normal chat reactions are deliberately
+rare and use a global cooldown. Reaction probability, delay and cooldown are
+configured in `growing_child/config.json`.
+
 Owner commands:
 
 - `!child` or `!child say` — generate a phrase in Discord DM.

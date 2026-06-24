@@ -51,6 +51,38 @@ class MessageGenerator {
       .replace(/^./u, char => char.toLocaleUpperCase());
     return `${sentence}${punctuation}`;
   }
+
+  generateReply(contextWords = []) {
+    const stats = this.database.getStats();
+    const knownRows = this.database.getWords({ limit: 160 });
+    if (knownRows.length === 0) return '...';
+
+    const known = new Set(knownRows.map(row => row.word));
+    const context = [...new Set(contextWords.filter(word => known.has(word)))];
+    const pool = weightedPool(knownRows);
+    const result = [];
+
+    if (context.length > 0) result.push(pick(context));
+
+    let length = 1;
+    if (stats.level === 2) length = 2 + Math.floor(Math.random() * 2);
+    if (stats.level === 3) length = 3 + Math.floor(Math.random() * 2);
+    if (stats.level >= 4) length = 4 + Math.floor(Math.random() * 4);
+
+    while (result.length < length) result.push(pick(pool));
+
+    const emotion = this.emotionSystem.get();
+    const asksQuestion =
+      stats.level >= 2 &&
+      (emotion === 'curious' || Math.random() < 0.55);
+    const punctuation = asksQuestion ? '?' : emotion === 'sleepy' ? '...' : '.';
+    const sentence = result
+      .filter(Boolean)
+      .slice(0, length)
+      .join(' ')
+      .replace(/^./u, char => char.toLocaleUpperCase());
+    return `${sentence}${punctuation}`;
+  }
 }
 
 module.exports = { MessageGenerator };

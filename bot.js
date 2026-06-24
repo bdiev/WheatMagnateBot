@@ -1253,6 +1253,12 @@ async function sendGrowingChildOwnerDM(payload) {
   if (!DISCORD_OWNER_ID || !discordClient?.isReady()) return;
   const owner = await discordClient.users.fetch(DISCORD_OWNER_ID);
   if (!owner) return;
+
+  if (payload.reason === 'random' || payload.reason === 'daily' || payload.reason === 'reaction') {
+    await owner.send(payload.phrase);
+    return;
+  }
+
   await owner.send({
     embeds: [{
       title: 'Growing Child AI',
