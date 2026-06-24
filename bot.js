@@ -67,6 +67,8 @@ let startTime = Date.now();
 let obsidianStats = {
   sessionMined: 0,
   totalMined: 0,
+  retiredPickaxes: 0,
+  retiredPickaxeBlocks: 0,
   desiredEnabled: false,
   sessionStartedAt: null
 };
@@ -892,6 +894,11 @@ async function initDatabase() {
       ADD COLUMN IF NOT EXISTS session_started_at TIMESTAMPTZ
     `);
     await pool.query(`
+      ALTER TABLE obsidian_farm_state
+      ADD COLUMN IF NOT EXISTS retired_pickaxes BIGINT NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS retired_pickaxe_blocks BIGINT NOT NULL DEFAULT 0
+    `);
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS obsidian_farm_daily (
         farm_date DATE PRIMARY KEY,
         mined BIGINT NOT NULL DEFAULT 0 CHECK (mined >= 0),
@@ -904,7 +911,8 @@ async function initDatabase() {
       ON CONFLICT (id) DO NOTHING
     `);
     const farmStateResult = await pool.query(`
-      SELECT session_mined, total_mined, desired_enabled, session_started_at
+      SELECT session_mined, total_mined, retired_pickaxes, retired_pickaxe_blocks,
+             desired_enabled, session_started_at
       FROM obsidian_farm_state
       WHERE id = 1
     `);
@@ -912,6 +920,8 @@ async function initDatabase() {
       obsidianStats = {
         sessionMined: Number(farmStateResult.rows[0].session_mined) || 0,
         totalMined: Number(farmStateResult.rows[0].total_mined) || 0,
+        retiredPickaxes: Number(farmStateResult.rows[0].retired_pickaxes) || 0,
+        retiredPickaxeBlocks: Number(farmStateResult.rows[0].retired_pickaxe_blocks) || 0,
         desiredEnabled: Boolean(farmStateResult.rows[0].desired_enabled),
         sessionStartedAt: farmStateResult.rows[0].session_started_at
           ? new Date(farmStateResult.rows[0].session_started_at)
@@ -1222,6 +1232,8 @@ async function beginObsidianFarmSession() {
       obsidianStats = {
         sessionMined: Number(result.rows[0].session_mined) || 0,
         totalMined: Number(result.rows[0].total_mined) || 0,
+        retiredPickaxes: obsidianStats.retiredPickaxes,
+        retiredPickaxeBlocks: obsidianStats.retiredPickaxeBlocks,
         desiredEnabled: Boolean(result.rows[0].desired_enabled),
         sessionStartedAt: new Date(result.rows[0].session_started_at)
       };
@@ -1294,6 +1306,26 @@ function recordObsidianMined() {
     .then(() => persistObsidianMined())
     .catch(err => {
       console.error('[DB] Obsidian stats queue failed:', err.message);
+    });
+}
+
+function recordPickaxeRetired({ blocksMined = 0, countInAverage = false }) {
+  if (!countInAverage) return;
+  const completedBlocks = Math.max(0, Number(blocksMined) || 0);
+  obsidianStats.retiredPickaxes++;
+  obsidianStats.retiredPickaxeBlocks += completedBlocks;
+  if (!pool) return;
+
+  obsidianStatsWriteQueue = obsidianStatsWriteQueue
+    .then(() => pool.query(`
+      UPDATE obsidian_farm_state
+      SET retired_pickaxes = retired_pickaxes + 1,
+          retired_pickaxe_blocks = retired_pickaxe_blocks + $1,
+          updated_at = NOW()
+      WHERE id = 1
+    `, [completedBlocks]))
+    .catch(err => {
+      console.error('[DB] Failed to persist retired pickaxe statistics:', err.message);
     });
 }
 
@@ -1395,6 +1427,9 @@ async function buildObsidianStatsEmbed(cachedSupplies = null) {
   const sessionHours = sessionMs / 3_600_000;
   const perHour = sessionHours > 0 ? obsidianStats.sessionMined / sessionHours : 0;
   const perMinute = perHour / 60;
+  const blocksPerPickaxe = obsidianStats.retiredPickaxes > 0
+    ? obsidianStats.retiredPickaxeBlocks / obsidianStats.retiredPickaxes
+    : null;
   const inventory = farmStatus.supplies?.inventory;
   const barrel = farmStatus.supplies?.barrel;
   const barrelDisplay = barrel
@@ -1426,7 +1461,7 @@ async function buildObsidianStatsEmbed(cachedSupplies = null) {
       },
       {
         name: 'Session',
-        value: `Duration: **${formatDurationShort(sessionMs)}**\nRate: **${perMinute.toFixed(1)}/min** (${formatCompactCount(Math.round(perHour))}/h)`,
+        value: `Duration: **${formatDurationShort(sessionMs)}**\nRate: **${perMinute.toFixed(1)}/min** (${formatCompactCount(Math.round(perHour))}/h)\nPickaxe avg: **${blocksPerPickaxe == null ? 'No data' : `${formatCompactCount(Math.round(blocksPerPickaxe))} blocks`}**`,
         inline: true
       },
       {
@@ -1563,6 +1598,7 @@ async function clearCurrentDialog(channel, excludedIds = new Set()) {
 
 farm.configureRuntime({
   onMined: recordObsidianMined,
+  onPickaxeRetired: recordPickaxeRetired,
   onFatalStop: async (err) => {
     await setProtectionLeverState(true);
     await setObsidianFarmDesiredEnabled(false);
@@ -2450,7 +2486,32 @@ function createBot() {
   lastTickTime = 0; // Reset TPS tracking for new bot
   bot = mineflayer.createBot(config);
   const createdBot = bot;
+  let fireEmergencyTriggered = false;
   bot.loadPlugin(pathfinder);
+
+  function emergencyExitOnFire() {
+    if (fireEmergencyTriggered || bot !== createdBot) return;
+    fireEmergencyTriggered = true;
+    shouldReconnect = false;
+    farm.suspend();
+    obsidianStats.desiredEnabled = false;
+    setDisconnectReason('Emergency exit: bot caught fire');
+    try { createdBot.quit('Emergency exit: on fire'); } catch (_) {}
+    setObsidianFarmDesiredEnabled(false).catch(() => {});
+    sendOwnerDM(
+      'Emergency fire exit',
+      'The bot detected that it was on fire and disconnected immediately. Auto-reconnect and farm auto-resume were disabled.',
+      16711680
+    ).catch(() => {});
+  }
+
+  function checkBotFireState(entity = createdBot.entity) {
+    if (!entity || entity.id !== createdBot.entity?.id) return;
+    const sharedFlags = Number(entity.metadata?.[0]) || 0;
+    if ((sharedFlags & 0x01) !== 0) emergencyExitOnFire();
+  }
+
+  bot.on('entityUpdate', checkBotFireState);
 
   bot.on('login', async () => {
     if (bot && bot.username) {
@@ -2545,6 +2606,7 @@ function createBot() {
   });
 
   bot.on('physicsTick', () => {
+    checkBotFireState();
     const now = Date.now();
     if (lastTickTime > 0) {
       const delta = now - lastTickTime;
@@ -2564,6 +2626,14 @@ function createBot() {
     clearIntervals();
     syncWhitelistPlaytime([]).catch(err => console.error('[Playtime] Disconnect flush failed:', err.message));
     farm.suspend(); // preserve desired farm state across reconnects
+
+    if (!fireEmergencyTriggered) {
+      sendOwnerDM(
+        'Minecraft bot disconnected',
+        `Reason: ${reasonStr || 'Connection closed'}\nAuto-reconnect: ${shouldReconnect ? 'enabled' : 'disabled'}`,
+        16711680
+      ).catch(() => {});
+    }
 
     // Mark bot reference null immediately for status display
     bot = null;
