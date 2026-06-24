@@ -16,12 +16,17 @@ const DISCORD_CHAT_CHANNEL_ID = process.env.DISCORD_CHAT_CHANNEL_ID;
 const DISCORD_DM_CATEGORY_ID = process.env.DISCORD_DM_CATEGORY_ID;
 const DISCORD_OWNER_ID = process.env.DISCORD_OWNER_ID || '623303738991443968';
 const IGNORED_CHAT_USERNAMES = process.env.IGNORED_CHAT_USERNAMES ? process.env.IGNORED_CHAT_USERNAMES.split(',').map(u => u.trim().toLowerCase()) : [];
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+const GEMINI_API_KEY = String(process.env.GEMINI_API_KEY || '').trim();
+const GEMINI_MODEL = String(process.env.GEMINI_MODEL || 'gemini-2.5-flash').trim();
 const GPT_COMMAND_COOLDOWN_MS = 20_000;
 const GPT_MAX_QUESTION_LENGTH = 300;
 const GPT_MAX_RESPONSE_LENGTH = 420;
 const MINECRAFT_PRIVATE_MESSAGE_LENGTH = 180;
+
+console.log(
+  `[Gemini] ${GEMINI_API_KEY ? 'Configured' : 'Disabled: GEMINI_API_KEY is missing'}; ` +
+  `model=${GEMINI_MODEL}; fetch=${typeof fetch}`
+);
 const STATUS_EMOJIS = {
   connected: '<:Confirm:1519301205346619392>',
   players: '<:Player_Head:1519301212367884348>',
@@ -2416,7 +2421,10 @@ async function askGemini(question) {
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data?.error?.message || `Gemini request failed with HTTP ${response.status}`);
+    const err = new Error(data?.error?.message || `Gemini request failed with HTTP ${response.status}`);
+    err.status = response.status;
+    err.geminiCode = data?.error?.status || null;
+    throw err;
   }
 
   const answer = data?.candidates?.[0]?.content?.parts
@@ -2429,6 +2437,20 @@ async function askGemini(question) {
     throw new Error('Gemini returned no answer');
   }
   return answer.slice(0, GPT_MAX_RESPONSE_LENGTH);
+}
+
+function classifyGeminiError(err) {
+  const message = String(err?.message || '');
+  const status = Number(err?.status) || 0;
+  if (err?.name === 'AbortError') return 'TIMEOUT';
+  if (status === 400) return 'BAD_REQUEST';
+  if (status === 401 || status === 403) return 'AUTH';
+  if (status === 404) return 'MODEL';
+  if (status === 429) return 'QUOTA';
+  if (status >= 500) return 'GEMINI_DOWN';
+  if (/fetch is not defined/i.test(message)) return 'NODE_VERSION';
+  if (/ENOTFOUND|ECONNRESET|ETIMEDOUT|network|fetch failed/i.test(message)) return 'NETWORK';
+  return 'UNKNOWN';
 }
 
 async function handleGptCommand(username, question) {
@@ -2477,8 +2499,21 @@ async function handleGptCommand(username, question) {
       await new Promise(resolve => setTimeout(resolve, 400));
     }
   } catch (err) {
-    console.error(`[Gemini] Request from ${username} failed:`, err.message);
-    await sendPrivateMinecraftMessage(username, '[AI] I could not answer right now. Please try again later.');
+    const errorCode = classifyGeminiError(err);
+    const diagnostic = [
+      `Player: ${username}`,
+      `Model: ${GEMINI_MODEL}`,
+      `Code: ${errorCode}`,
+      `HTTP: ${err?.status || 'none'}`,
+      `Gemini status: ${err?.geminiCode || 'none'}`,
+      `Reason: ${String(err?.message || err).slice(0, 1000)}`
+    ].join('\n');
+    console.error(`[Gemini] Request failed\n${diagnostic}`);
+    sendOwnerDM('Gemini command failed', diagnostic, 16711680).catch(() => {});
+    await sendPrivateMinecraftMessage(
+      username,
+      `[AI] Request failed (${errorCode}). Please try again later.`
+    );
   } finally {
     gptRequestsInFlight.delete(usernameKey);
   }
