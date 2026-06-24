@@ -27,6 +27,11 @@ const GPT_MAX_RESPONSE_LENGTH = 420;
 const MINECRAFT_PRIVATE_MESSAGE_LENGTH = 180;
 const RECONNECT_INTERVAL_MS = 15_000;
 const MINECRAFT_CONNECT_TIMEOUT_MS = 20_000;
+const LEGACY_OBSIDIAN_TARGET = Object.freeze({
+  x: 3402889,
+  y: 68,
+  z: 672222
+});
 
 console.log(
   `[Gemini] ${GEMINI_API_KEY ? 'Configured' : 'Disabled: GEMINI_API_KEY is missing'}; ` +
@@ -1180,6 +1185,12 @@ async function initDatabase() {
       ADD COLUMN IF NOT EXISTS retired_pickaxe_blocks BIGINT NOT NULL DEFAULT 0
     `);
     await pool.query(`
+      ALTER TABLE obsidian_farm_state
+      ADD COLUMN IF NOT EXISTS target_x INTEGER,
+      ADD COLUMN IF NOT EXISTS target_y INTEGER,
+      ADD COLUMN IF NOT EXISTS target_z INTEGER
+    `);
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS obsidian_farm_daily (
         farm_date DATE PRIMARY KEY,
         mined BIGINT NOT NULL DEFAULT 0 CHECK (mined >= 0),
@@ -1191,9 +1202,28 @@ async function initDatabase() {
       VALUES (1)
       ON CONFLICT (id) DO NOTHING
     `);
+    // Compatibility migration: previous deployments used these coordinates
+    // from code and did not persist them. Preserve an already enabled farm
+    // once, while a user reset still leaves all target columns NULL.
+    await pool.query(`
+      UPDATE obsidian_farm_state
+      SET target_x = $1,
+          target_y = $2,
+          target_z = $3,
+          updated_at = NOW()
+      WHERE id = 1
+        AND desired_enabled = TRUE
+        AND target_x IS NULL
+        AND target_y IS NULL
+        AND target_z IS NULL
+    `, [
+      LEGACY_OBSIDIAN_TARGET.x,
+      LEGACY_OBSIDIAN_TARGET.y,
+      LEGACY_OBSIDIAN_TARGET.z
+    ]);
     const farmStateResult = await pool.query(`
       SELECT session_mined, total_mined, retired_pickaxes, retired_pickaxe_blocks,
-             desired_enabled, session_started_at
+             desired_enabled, session_started_at, target_x, target_y, target_z
       FROM obsidian_farm_state
       WHERE id = 1
     `);
@@ -1208,6 +1238,23 @@ async function initDatabase() {
           ? new Date(farmStateResult.rows[0].session_started_at)
           : null
       };
+      const rawTargetX = farmStateResult.rows[0].target_x;
+      const rawTargetY = farmStateResult.rows[0].target_y;
+      const rawTargetZ = farmStateResult.rows[0].target_z;
+      const targetX = Number(rawTargetX);
+      const targetY = Number(rawTargetY);
+      const targetZ = Number(rawTargetZ);
+      if (
+        rawTargetX != null &&
+        rawTargetY != null &&
+        rawTargetZ != null &&
+        Number.isFinite(targetX) &&
+        Number.isFinite(targetY) &&
+        Number.isFinite(targetZ)
+      ) {
+        farm.configure(targetX, targetY, targetZ);
+        console.log(`[DB] Loaded obsidian target: (${targetX}, ${targetY}, ${targetZ}).`);
+      }
     }
     console.log('[DB] Tables initialized successfully.');
 
@@ -1669,6 +1716,30 @@ async function setObsidianFarmDesiredEnabled(enabled) {
   } catch (err) {
     console.error('[DB] Failed to update obsidian farm desired state:', err.message);
   }
+}
+
+async function persistObsidianFarmCoordinates(config = farm.getStatus().config) {
+  if (!pool || !config) return;
+  await pool.query(`
+    UPDATE obsidian_farm_state
+    SET target_x = $1,
+        target_y = $2,
+        target_z = $3,
+        updated_at = NOW()
+    WHERE id = 1
+  `, [config.x, config.y, config.z]);
+}
+
+async function clearObsidianFarmCoordinates() {
+  if (!pool) return;
+  await pool.query(`
+    UPDATE obsidian_farm_state
+    SET target_x = NULL,
+        target_y = NULL,
+        target_z = NULL,
+        updated_at = NOW()
+    WHERE id = 1
+  `);
 }
 
 async function startConfiguredObsidianFarm() {
@@ -2680,6 +2751,10 @@ async function setProtectionLeverState(powered) {
 
 async function ensureObsidianFarmRunning(createdBot, { freshSession = false } = {}) {
   if (obsidianFarmResumeBot === createdBot) return;
+  if (!farm.getStatus().config) {
+    console.log('[Obsidian] Auto-resume skipped: farm coordinates are not configured.');
+    return;
+  }
   obsidianFarmResumeBot = createdBot;
   let attempts = 0;
   let warningSent = false;
@@ -4541,6 +4616,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       farm.suspend();
       await setProtectionLeverState(true).catch(() => false);
       await setObsidianFarmDesiredEnabled(false);
+      await clearObsidianFarmCoordinates();
       farm.resetConfig();
       await interaction.update({
         embeds: [{
@@ -6215,6 +6291,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       }
       farm.configure(x, y, z);
       try {
+        await persistObsidianFarmCoordinates();
         const result = await startConfiguredObsidianFarm();
         await interaction.editReply({
           embeds: [buildObsidianStartEmbed(result.started, result.config)]
