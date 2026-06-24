@@ -1892,13 +1892,13 @@ function findProtectionLever(currentBot) {
     const cachedDistance = currentBot.entity.position.distanceTo(
       protectionLeverPosition.offset(0.5, 0.5, 0.5)
     );
-    if (cached?.name === 'lever' && cachedDistance <= 5.1) return cached;
+    if (cached?.name === 'lever' && cachedDistance <= 4.5) return cached;
     protectionLeverPosition = null;
   }
 
   const positions = currentBot.findBlocks({
     matching: leverId,
-    maxDistance: 5,
+    maxDistance: 4,
     count: 32
   });
   const origin = currentBot.entity.position.offset(0, 0.5, 0);
@@ -1908,7 +1908,7 @@ function findProtectionLever(currentBot) {
       block: currentBot.blockAt(position),
       distance: origin.distanceTo(position.offset(0.5, 0.5, 0.5))
     }))
-    .filter(candidate => candidate.block?.name === 'lever' && candidate.distance <= 5.1)
+    .filter(candidate => candidate.block?.name === 'lever' && candidate.distance <= 4.5)
     .sort((a, b) => a.distance - b.distance)[0];
 
   if (!nearest) return null;
@@ -1926,31 +1926,67 @@ async function setProtectionLeverState(powered) {
     const currentBot = bot;
     if (!currentBot?.entity) return false;
     const lever = findProtectionLever(currentBot);
-    if (!lever) return false;
+    if (!lever) {
+      console.log('[Obsidian] Protection lever is not loaded or is out of interaction range.');
+      return false;
+    }
 
     if (typeof currentBot.clearControlStates === 'function') {
       currentBot.clearControlStates();
     }
+    currentBot.pathfinder?.stop();
+
+    const leverPosition = lever.position.clone();
+    const initialState = isLeverPowered(lever);
+    console.log(
+      `[Obsidian] Protection lever at ${leverPosition} is ${initialState ? 'ON' : 'OFF'}; ` +
+      `required state is ${powered ? 'ON' : 'OFF'}.`
+    );
+    if (initialState === powered) return true;
+
+    // Never right-click the lever while a lava/water bucket is selected.
+    if (currentBot.heldItem?.name?.includes('bucket')) {
+      try {
+        const safeHandItem = currentBot.inventory.items().find(
+          item => !item.name.includes('bucket')
+        );
+        if (safeHandItem) {
+          await currentBot.equip(safeHandItem, 'hand');
+        } else {
+          await currentBot.unequip('hand');
+        }
+      } catch (err) {
+        console.log(`[Obsidian] Could not select a safe item before lever use: ${err.message}`);
+        return false;
+      }
+    }
 
     for (let attempt = 1; attempt <= 3; attempt++) {
-      const currentLever = currentBot.blockAt(lever.position);
+      const currentLever = currentBot.blockAt(leverPosition);
       if (currentLever?.name !== 'lever') return false;
       if (isLeverPowered(currentLever) === powered) return true;
 
       await currentBot.lookAt(currentLever.position.offset(0.5, 0.5, 0.5), true);
+      await new Promise(resolve => setTimeout(resolve, 100));
       try {
         await currentBot.activateBlock(currentLever);
-      } catch (_) {
+      } catch (err) {
+        console.log(`[Obsidian] Lever click ${attempt}/3 failed: ${err.message}`);
         await new Promise(resolve => setTimeout(resolve, 100));
         continue;
       }
 
-      const deadline = Date.now() + 750;
+      const deadline = Date.now() + 1_500;
       while (Date.now() < deadline) {
-        const updated = currentBot.blockAt(currentLever.position);
-        if (updated?.name === 'lever' && isLeverPowered(updated) === powered) return true;
+        const updated = currentBot.blockAt(leverPosition);
+        if (updated?.name === 'lever' && isLeverPowered(updated) === powered) {
+          console.log(`[Obsidian] Protection lever switched ${powered ? 'ON' : 'OFF'}.`);
+          return true;
+        }
         await new Promise(resolve => setTimeout(resolve, 40));
       }
+
+      console.log(`[Obsidian] Lever click ${attempt}/3 was not confirmed by the server.`);
     }
     return false;
   };
