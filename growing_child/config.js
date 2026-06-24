@@ -14,16 +14,17 @@ const DEFAULTS = Object.freeze({
   xpPerLearnedWord: 5,
   xpPerMessage: 1,
   randomSpeechEnabled: true,
-  randomSpeechMinMinutes: 45,
-  randomSpeechMaxMinutes: 180,
+  randomSpeechMinMinutes: 480,
+  randomSpeechMaxMinutes: 960,
   reactiveSpeechEnabled: true,
-  reactiveSpeechChance: 0.04,
-  addressedSpeechChance: 0.7,
+  reactiveSpeechChance: 0,
+  addressedSpeechChance: 1,
   reactiveCooldownMinutes: 10,
   reactiveDelayMinSeconds: 5,
   reactiveDelayMaxSeconds: 25,
-  dailySpeechEnabled: true,
+  dailySpeechEnabled: false,
   ownerDmOnly: true,
+  minecraftPublicSpeechEnabled: true,
   maxLearnedMessages: 5000
 });
 
@@ -39,10 +40,10 @@ function loadConfig(configPath = path.join(__dirname, 'config.json')) {
   config.ignoredChannels = new Set((config.ignoredChannels || []).map(String));
   config.ignoredUsers = new Set((config.ignoredUsers || []).map(value => String(value).toLowerCase()));
   config.minimumWordLength = Math.max(1, Number(config.minimumWordLength) || 3);
-  config.randomSpeechMinMinutes = Math.max(1, Number(config.randomSpeechMinMinutes) || 45);
+  config.randomSpeechMinMinutes = Math.max(1, Number(config.randomSpeechMinMinutes) || 480);
   config.randomSpeechMaxMinutes = Math.max(
     config.randomSpeechMinMinutes,
-    Number(config.randomSpeechMaxMinutes) || 180
+    Number(config.randomSpeechMaxMinutes) || 960
   );
   config.reactiveSpeechChance = Math.max(0, Math.min(1, Number(config.reactiveSpeechChance) || 0));
   config.addressedSpeechChance = Math.max(0, Math.min(1, Number(config.addressedSpeechChance) || 0));

@@ -242,6 +242,12 @@ the bot makes a reaction more likely; normal chat reactions are deliberately
 rare and use a global cooldown. Reaction probability, delay and cooldown are
 configured in `growing_child/config.json`.
 
+When enabled, public Minecraft speech is limited to roughly once every 8–16
+hours, `/child say`, and direct mentions in Minecraft chat. Public phrases pass
+through a strict safety filter: words containing digits are never learned, and
+any generated message containing a digit or command prefix is blocked. This
+prevents coordinates from ever being sent by the child.
+
 Owner commands:
 
 - `/child say` — generate a plain phrase in Discord DM.
