@@ -2487,6 +2487,69 @@ async function sendPrivateMinecraftMessage(username, text) {
   }
 }
 
+async function sendGameChatMessageToDiscord(username, message, { allowMentions = true } = {}) {
+  if (!DISCORD_CHAT_CHANNEL_ID || !discordClient || !discordClient.isReady()) {
+    return false;
+  }
+
+  const cleanMessage = String(message || '')
+    .replace(/\u00a7[0-9a-fk-or]/gi, '')
+    .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
+    .trim();
+
+  if (!cleanMessage || cleanMessage.startsWith('/msg ')) {
+    return false;
+  }
+
+  try {
+    const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
+    if (!channel?.isTextBased?.()) return false;
+
+    const safeUsername = String(username || bot?.username || 'Minecraft');
+    const avatarUrl = `https://minotar.net/avatar/${safeUsername.toLowerCase()}/28`;
+    let displayMessage = cleanMessage.replace(/([*_`~|\\])/g, '\\$1');
+    displayMessage = displayMessage.replace(/\[/g, '\\[').replace(/\]/g, '\\]');
+
+    const sendOptions = {
+      embeds: [{
+        author: {
+          name: safeUsername,
+          url: `https://namemc.com/profile/${encodeURIComponent(safeUsername)}`
+        },
+        description: displayMessage,
+        color: 3447003,
+        thumbnail: { url: avatarUrl },
+        timestamp: new Date()
+      }]
+    };
+
+    const isBridgeMessage = /^\[[^\]]+\]\s/.test(cleanMessage);
+    if (allowMentions && !isBridgeMessage) {
+      const lowerMessage = cleanMessage.toLowerCase();
+      const usersToMention = new Set();
+      const mentionKeywords = await getMentionKeywords();
+      for (const { discord_id, keyword } of mentionKeywords) {
+        const normalizedKeyword = keyword.toLowerCase().trim();
+        if (!normalizedKeyword) continue;
+
+        const regex = new RegExp(`\\b${escapeRegExp(normalizedKeyword)}\\b`);
+        if (regex.test(lowerMessage)) {
+          usersToMention.add(discord_id);
+        }
+      }
+      if (usersToMention.size > 0) {
+        sendOptions.content = Array.from(usersToMention).map(id => `<@${id}>`).join(' ');
+      }
+    }
+
+    await channel.send(sendOptions);
+    return true;
+  } catch (e) {
+    console.error('[Discord Chat] Failed to send game chat message:', e.message);
+    return false;
+  }
+}
+
 async function requestGeminiModel(model, question) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
@@ -2629,9 +2692,10 @@ async function handleGptCommand(username, question) {
   gptRequestsInFlight.add(usernameKey);
   try {
     const answer = await askGemini(cleanQuestion);
-    for (const chunk of splitMinecraftMessage(`[AI -> ${username}] ${answer}`, 220)) {
+    for (const chunk of splitMinecraftMessage(answer, 220)) {
       if (!bot?.entity) return;
       sendMinecraftChat(chunk);
+      await sendGameChatMessageToDiscord(bot.username, chunk, { allowMentions: false });
       await new Promise(resolve => setTimeout(resolve, 400));
     }
   } catch (err) {
@@ -3393,6 +3457,7 @@ function createBot() {
 
     const gptMatch = message.match(/^!gpt(?:\s+([\s\S]*))?$/i);
     if (gptMatch) {
+      await sendGameChatMessageToDiscord(username, message);
       await handleGptCommand(username, gptMatch[1] || '');
       return;
     }
@@ -3578,40 +3643,7 @@ function createBot() {
           debugLog(`[Chat] Suppressed outbound echo (late) to ${username}: "${cleanMessage}"`);
           return;
         }
-        const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
-        if (channel && channel.isTextBased()) {
-          let avatarUrl = `https://minotar.net/avatar/${username.toLowerCase()}/28`;
-          let displayMessage = cleanMessage.replace(/([*_`~|\\])/g, '\\$1');
-          displayMessage = displayMessage.replace(/\[/g, '\\[').replace(/\]/g, '\\]');
-          const isBridgeMessage = /^\[[^\]]+\]\s/.test(cleanMessage);
-          const lowerMessage = cleanMessage.toLowerCase();
-          const usersToMention = new Set();
-          if (!isBridgeMessage) {
-            const mentionKeywords = await getMentionKeywords();
-            for (const { discord_id, keyword } of mentionKeywords) {
-              const normalizedKeyword = keyword.toLowerCase().trim();
-              if (!normalizedKeyword) continue;
-
-              const regex = new RegExp(`\\b${escapeRegExp(normalizedKeyword)}\\b`);
-              if (regex.test(lowerMessage)) {
-                usersToMention.add(discord_id);
-              }
-            }
-          }
-          const sendOptions = {
-            embeds: [{
-              author: { name: username, url: `https://namemc.com/profile/${username}` },
-              description: displayMessage,
-              color: 3447003,
-              thumbnail: { url: avatarUrl },
-              timestamp: new Date()
-            }]
-          };
-          if (usersToMention.size > 0) {
-            sendOptions.content = Array.from(usersToMention).map(id => `<@${id}>`).join(' ');
-          }
-          await channel.send(sendOptions);
-        }
+        await sendGameChatMessageToDiscord(username, cleanMessage);
       } catch (e) {
         // Silent
       } finally {
