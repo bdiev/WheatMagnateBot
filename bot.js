@@ -2144,76 +2144,18 @@ async function setProtectionLeverState(powered) {
       if (currentLever?.name !== 'lever') return false;
       if (isLeverPowered(currentLever) === powered) return true;
 
-      const aimPoints = (currentLever.shapes || []).flatMap(shape => {
-        const centerX = (shape[0] + shape[3]) / 2;
-        const centerY = (shape[1] + shape[4]) / 2;
-        const centerZ = (shape[2] + shape[5]) / 2;
-        return [
-          currentLever.position.offset(centerX, centerY, centerZ),
-          currentLever.position.offset(centerX, shape[4] - 0.01, centerZ)
-        ];
-      });
-      aimPoints.push(currentLever.position.offset(0.5, 0.5, 0.5));
-
-      let aimedLeverHit = null;
-      for (const aimPoint of aimPoints) {
-        // force=false waits until the visible rotation packet is sent.
-        await currentBot.lookAt(aimPoint, false);
-        await new Promise(resolve => setTimeout(resolve, 150));
-        const aimedBlock = currentBot.blockAtCursor(4.5);
-        if (aimedBlock?.position?.equals(leverPosition)) {
-          aimedLeverHit = aimedBlock;
-          break;
-        }
-      }
-
-      if (!aimedLeverHit) {
-        console.log(`[Obsidian] Could not aim directly at protection lever (attempt ${attempt}/3).`);
-        continue;
-      }
-
-      const clickDirection = aimedLeverHit.face === 0
-        ? leverPosition.offset(0, -1, 0).minus(leverPosition)
-        : aimedLeverHit.face === 1
-          ? leverPosition.offset(0, 1, 0).minus(leverPosition)
-          : aimedLeverHit.face === 2
-            ? leverPosition.offset(0, 0, -1).minus(leverPosition)
-            : aimedLeverHit.face === 3
-              ? leverPosition.offset(0, 0, 1).minus(leverPosition)
-              : aimedLeverHit.face === 4
-                ? leverPosition.offset(-1, 0, 0).minus(leverPosition)
-                : leverPosition.offset(1, 0, 0).minus(leverPosition);
-      const clickCursor = aimedLeverHit.intersect.minus(leverPosition);
-      const originalLookAt = currentBot.lookAt;
-
       try {
-        // This server primarily ray-traces ordinary use-item actions. Send that
-        // first while the verified lever hit is still under the crosshair.
-        currentBot.activateItem();
-        currentBot.swingArm();
-        await new Promise(resolve => setTimeout(resolve, 500));
-        currentBot.deactivateItem();
-
-        const afterRayClick = currentBot.blockAt(leverPosition);
-        if (afterRayClick?.name === 'lever' && isLeverPowered(afterRayClick) === powered) {
-          console.log(`[Obsidian] Protection lever switched ${powered ? 'ON' : 'OFF'} by ray click.`);
-          return true;
-        }
-
-        // activateBlock() normally looks at the block center again, which loses
-        // the lever hitbox. Keep the verified rotation while it sends the proper
-        // use-on-block fallback with the actual hit face and cursor.
-        currentBot.lookAt = async () => {};
-        await currentBot.activateBlock(currentLever, clickDirection, clickCursor);
+        // Use Mineflayer's ordinary block interaction, exactly like the
+        // successful barrel interaction used during farm preparation.
+        await currentBot.activateBlock(currentLever);
+        console.log(`[Obsidian] Activated protection lever (attempt ${attempt}/3).`);
       } catch (err) {
         console.log(`[Obsidian] Lever click ${attempt}/3 failed: ${err.message}`);
         await new Promise(resolve => setTimeout(resolve, 100));
         continue;
-      } finally {
-        currentBot.lookAt = originalLookAt;
       }
 
-      const deadline = Date.now() + 1_500;
+      const deadline = Date.now() + 2_000;
       while (Date.now() < deadline) {
         const updated = currentBot.blockAt(leverPosition);
         if (updated?.name === 'lever' && isLeverPowered(updated) === powered) {
