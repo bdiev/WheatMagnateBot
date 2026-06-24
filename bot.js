@@ -26,6 +26,18 @@ const STATUS_EMOJIS = {
   whitelist: '<:Writable_Book:1519301216675430541>',
   obsidian: '<:Netherite_Pickaxe:1519301211000541224>'
 };
+const STATUS_BUTTON_EMOJIS = {
+  pause: { name: 'Map_X', id: '1519305980263796767' },
+  resume: { name: 'Confirm', id: '1519301205346619392' },
+  players: { name: 'Player_Head', id: '1519301212367884348' },
+  seen: { name: 'Spyglass', id: '1519309308855189626' },
+  playtime: { name: 'Clock', id: '1519301203966824491' },
+  mentions: { name: 'Bell', id: '1519301202754535424' },
+  drop: { name: 'pink_bundle', id: '1519309307596767373' },
+  whitelist: { name: 'Writable_Book', id: '1519301216675430541' },
+  chatSettings: { name: 'Crafting_Table', id: '1519309305558601900' },
+  obsidian: { name: 'Netherite_Pickaxe', id: '1519301211000541224' }
+};
 
 // Database connection
 let pool = null;
@@ -1967,24 +1979,60 @@ async function setProtectionLeverState(powered) {
       if (currentLever?.name !== 'lever') return false;
       if (isLeverPowered(currentLever) === powered) return true;
 
-      const leverShape = currentLever.shapes?.[0];
-      const aimPoint = leverShape
-        ? currentLever.position.offset(
-            (leverShape[0] + leverShape[3]) / 2,
-            (leverShape[1] + leverShape[4]) / 2,
-            (leverShape[2] + leverShape[5]) / 2
-          )
-        : currentLever.position.offset(0.5, 0.5, 0.5);
+      const aimPoints = (currentLever.shapes || []).flatMap(shape => {
+        const centerX = (shape[0] + shape[3]) / 2;
+        const centerY = (shape[1] + shape[4]) / 2;
+        const centerZ = (shape[2] + shape[5]) / 2;
+        return [
+          currentLever.position.offset(centerX, centerY, centerZ),
+          currentLever.position.offset(centerX, shape[4] - 0.01, centerZ)
+        ];
+      });
+      aimPoints.push(currentLever.position.offset(0.5, 0.5, 0.5));
 
-      // force=false waits for Mineflayer to send the visible rotation before click.
-      await currentBot.lookAt(aimPoint, false);
-      await new Promise(resolve => setTimeout(resolve, 200));
+      let aimedLeverHit = null;
+      for (const aimPoint of aimPoints) {
+        // force=false waits until the visible rotation packet is sent.
+        await currentBot.lookAt(aimPoint, false);
+        await new Promise(resolve => setTimeout(resolve, 150));
+        const aimedBlock = currentBot.blockAtCursor(4.5);
+        if (aimedBlock?.position?.equals(leverPosition)) {
+          aimedLeverHit = aimedBlock;
+          break;
+        }
+      }
+
+      if (!aimedLeverHit) {
+        console.log(`[Obsidian] Could not aim directly at protection lever (attempt ${attempt}/3).`);
+        continue;
+      }
+
+      const clickDirection = aimedLeverHit.face === 0
+        ? leverPosition.offset(0, -1, 0).minus(leverPosition)
+        : aimedLeverHit.face === 1
+          ? leverPosition.offset(0, 1, 0).minus(leverPosition)
+          : aimedLeverHit.face === 2
+            ? leverPosition.offset(0, 0, -1).minus(leverPosition)
+            : aimedLeverHit.face === 3
+              ? leverPosition.offset(0, 0, 1).minus(leverPosition)
+              : aimedLeverHit.face === 4
+                ? leverPosition.offset(-1, 0, 0).minus(leverPosition)
+                : leverPosition.offset(1, 0, 0).minus(leverPosition);
+      const clickCursor = aimedLeverHit.intersect.minus(leverPosition);
+      const originalLookAt = currentBot.lookAt;
+
       try {
-        await currentBot.activateBlock(currentLever);
+        // activateBlock() normally looks at the block center again, which loses
+        // the lever hitbox. Keep the verified rotation while it sends the proper
+        // use-on-block packet with the actual hit face and cursor.
+        currentBot.lookAt = async () => {};
+        await currentBot.activateBlock(currentLever, clickDirection, clickCursor);
       } catch (err) {
         console.log(`[Obsidian] Lever click ${attempt}/3 failed: ${err.message}`);
         await new Promise(resolve => setTimeout(resolve, 100));
         continue;
+      } finally {
+        currentBot.lookAt = originalLookAt;
       }
 
       const deadline = Date.now() + 1_500;
@@ -2498,43 +2546,51 @@ function createStatusButtons() {
       .addComponents(
         new ButtonBuilder()
           .setCustomId('pause_resume_button')
-          .setLabel(isPaused ? '▶️ Resume' : '⏸️ Pause')
+          .setLabel(isPaused ? 'Resume' : 'Pause')
+          .setEmoji(isPaused ? STATUS_BUTTON_EMOJIS.resume : STATUS_BUTTON_EMOJIS.pause)
           .setStyle(isPaused ? ButtonStyle.Success : ButtonStyle.Danger),
         new ButtonBuilder()
           .setCustomId('playerlist_button')
-          .setLabel('👥 Players')
+          .setLabel('Players')
+          .setEmoji(STATUS_BUTTON_EMOJIS.players)
           .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
           .setCustomId('seen_button')
-          .setLabel('🕒 Seen')
+          .setLabel('Seen')
+          .setEmoji(STATUS_BUTTON_EMOJIS.seen)
           .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
           .setCustomId('playtime_button')
           .setLabel('Playtime')
-          .setEmoji('⏱️')
+          .setEmoji(STATUS_BUTTON_EMOJIS.playtime)
           .setStyle(ButtonStyle.Secondary)
       ),
     new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
           .setCustomId('mentions_button')
-          .setLabel('🔔 Mentions')
+          .setLabel('Mentions')
+          .setEmoji(STATUS_BUTTON_EMOJIS.mentions)
           .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
           .setCustomId('drop_button')
-          .setLabel('🗑️ Drop')
+          .setLabel('Drop')
+          .setEmoji(STATUS_BUTTON_EMOJIS.drop)
           .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
           .setCustomId('whitelist_button')
-          .setLabel('📋 Whitelist')
+          .setLabel('Whitelist')
+          .setEmoji(STATUS_BUTTON_EMOJIS.whitelist)
           .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
           .setCustomId('chat_setting_button')
-          .setLabel('⚙️ Chat Settings')
+          .setLabel('Chat Settings')
+          .setEmoji(STATUS_BUTTON_EMOJIS.chatSettings)
           .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
           .setCustomId('obsidian_farm_button')
-          .setLabel((farm.getStatus().enabled || obsidianStats.desiredEnabled) ? '⛏️ Obsidian 🟢' : '⛏️ Obsidian')
+          .setLabel('Obsidian')
+          .setEmoji(STATUS_BUTTON_EMOJIS.obsidian)
           .setStyle((farm.getStatus().enabled || obsidianStats.desiredEnabled) ? ButtonStyle.Success : ButtonStyle.Secondary)
       )
   ];
