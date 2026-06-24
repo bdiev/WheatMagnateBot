@@ -23,7 +23,7 @@ const GPT_COMMAND_COOLDOWN_MS = 20_000;
 const GPT_MAX_QUESTION_LENGTH = 300;
 const GPT_MAX_RESPONSE_LENGTH = 420;
 const MINECRAFT_PRIVATE_MESSAGE_LENGTH = 180;
-const DISCONNECT_DM_REPEAT_INTERVAL_MS = 30 * 60 * 1000;
+const RECONNECT_INTERVAL_MS = 15_000;
 
 console.log(
   `[Gemini] ${GEMINI_API_KEY ? 'Configured' : 'Disabled: GEMINI_API_KEY is missing'}; ` +
@@ -2201,7 +2201,6 @@ function buildDisconnectReason(reason, fallback = 'Connection lost') {
 }
 
 var bot;
-let reconnectTimeout = 15000;
 let shouldReconnect = true;
 let reconnectTimeRemaining = 0;
 let reconnectTimestamp = 0;
@@ -2209,11 +2208,6 @@ let lastDisconnectReason = null;
 let reconnectCountdownInterval = null;
 let reconnectTimer = null;
 let resumeTimer = null;
-let disconnectDmState = {
-  key: null,
-  lastSentAt: 0,
-  suppressed: 0
-};
 
 let foodMonitorInterval = null;
 let playerScannerInterval = null;
@@ -2237,54 +2231,6 @@ function clearResumeTimer() {
     clearTimeout(resumeTimer);
     resumeTimer = null;
   }
-}
-
-function resetDisconnectDmState() {
-  disconnectDmState = {
-    key: null,
-    lastSentAt: 0,
-    suppressed: 0
-  };
-}
-
-function notifyOwnerAboutDisconnect(reason) {
-  const rawReason = normalizeStatusReason(reason);
-  const reasonText = (
-    !rawReason ||
-    rawReason === 'socketClosed' ||
-    /ECONNREFUSED|ECONNRESET|ETIMEDOUT|connection closed/i.test(rawReason)
-  )
-    ? 'Connection lost'
-    : rawReason;
-  const key = `${reasonText}:${shouldReconnect ? 'enabled' : 'disabled'}`;
-  const now = Date.now();
-  const reasonChanged = disconnectDmState.key !== key;
-  const repeatIntervalPassed =
-    now - disconnectDmState.lastSentAt >= DISCONNECT_DM_REPEAT_INTERVAL_MS;
-
-  if (!reasonChanged && !repeatIntervalPassed) {
-    disconnectDmState.suppressed++;
-    console.log(
-      `[Discord] Suppressed duplicate disconnect DM (${disconnectDmState.suppressed}): ${reasonText}`
-    );
-    return;
-  }
-
-  const suppressed = reasonChanged ? 0 : disconnectDmState.suppressed;
-  disconnectDmState = {
-    key,
-    lastSentAt: now,
-    suppressed: 0
-  };
-  const repeatSummary = suppressed > 0
-    ? `\nRepeated disconnects suppressed since last DM: ${suppressed}`
-    : '';
-
-  sendOwnerDM(
-    'Minecraft bot disconnected',
-    `Reason: ${reasonText}\nAuto-reconnect: ${shouldReconnect ? 'enabled' : 'disabled'}${repeatSummary}`,
-    16711680
-  ).catch(() => {});
 }
 
 function scheduleReconnect(delayMs, logMessage) {
@@ -3208,13 +3154,8 @@ function getStatusDescription() {
     if (!shouldReconnect) {
       return lastDisconnectReason ? `${STATUS_EMOJIS.pause} ${lastDisconnectReason}` : `${STATUS_EMOJIS.pause} Bot paused`;
     }
-    // Show countdown if reconnecting
     if (reconnectTimestamp > 0) {
-      const remaining = Math.max(0, reconnectTimestamp - Date.now());
-      const minutes = Math.floor(remaining / 60000);
-      const seconds = Math.floor((remaining % 60000) / 1000);
-      const timeStr = minutes > 0 ? `${minutes}:${seconds.toString().padStart(2, '0')}` : `${seconds}s`;
-      return `${STATUS_EMOJIS.update} Reconnecting in ${timeStr}${reasonLine}`;
+      return `${STATUS_EMOJIS.update} Trying to reconnect.`;
     }
     return `❌ Bot not connected${reasonLine}`;
   }
@@ -3406,7 +3347,6 @@ function createBot() {
 
   bot.on('spawn', async () => {
     console.log('[Bot] Spawned.');
-    resetDisconnectDmState();
     reconnectTimestamp = 0; // Reset reconnect countdown when bot spawns
     clearIntervals();
     startFoodMonitor();
@@ -3499,10 +3439,6 @@ function createBot() {
     syncWhitelistPlaytime([]).catch(err => console.error('[Playtime] Disconnect flush failed:', err.message));
     farm.suspend(); // preserve desired farm state across reconnects
 
-    if (!fireEmergencyTriggered) {
-      notifyOwnerAboutDisconnect(reasonStr);
-    }
-
     // Mark bot reference null immediately for status display
     bot = null;
 
@@ -3521,17 +3457,10 @@ function createBot() {
     }
 
     if (shouldReconnect) {
-      const timeout = isRestartTime ? 5 * 60 * 1000 : reconnectTimeout;
-
-      if (isRestartTime) {
-        scheduleReconnect(timeout, '[!] Restart window. Reconnecting in 5 minutes...');
-        // No Discord notification - status message will show countdown
-      } else if (reasonStr !== 'Restart command') {
-        scheduleReconnect(timeout, `[!] Disconnected. Reconnecting in ${Math.round(timeout / 1000)} seconds...`);
-        // No Discord notification - status message will show countdown
-      } else {
-        scheduleReconnect(timeout);
-      }
+      scheduleReconnect(
+        RECONNECT_INTERVAL_MS,
+        `[!] Disconnected. Trying to reconnect in ${RECONNECT_INTERVAL_MS / 1000} seconds...`
+      );
     } else {
       console.log('[!] Manual pause. No reconnect.');
       if (!resumeTimer) clearReconnectTimer();
@@ -3541,7 +3470,6 @@ function createBot() {
 
   bot.on('error', (err) => {
     console.log(`[x] Error: ${err.message}`);
-    sendDiscordNotification(`Error: \`${err.message}\``, 16711680);
   });
 
   bot.on('kicked', (reason) => {
@@ -3551,24 +3479,6 @@ function createBot() {
       setDisconnectReason(reasonText);
     }
     
-    // Check if it's restart time - don't spam notifications
-    const now = new Date();
-    const kyivTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Kyiv' }));
-    const hour = kyivTime.getHours();
-    const minute = kyivTime.getMinutes();
-    const isRestartTime = hour === 9 && minute >= 0 && minute <= 30;
-    
-    // Only send notification if not during restart window or if there's a meaningful reason
-    if (!isRestartTime && reasonText && reasonText.trim() !== '') {
-      sendDiscordNotification(`Kicked. Reason: \`${reasonText}\``, 16711680);
-    }
-
-    // If kicked due to throttling, increase reconnect timeout
-    if (reasonText.includes('throttled') || reasonText.includes('too fast') || reasonText.includes('delay')) {
-      reconnectTimeout = Math.min(reconnectTimeout * 2, 5 * 60 * 1000); // Max 5 minutes
-      console.log(`[!] Throttling detected. Increasing reconnect timeout to ${reconnectTimeout / 1000} seconds.`);
-    }
-
     // Keep reconnecting after generic kicks so persistent jobs can resume.
     if (reasonText === 'You have been disconnected from the server.') {
       console.log('[!] Generic kick detected. Reconnect remains enabled.');
