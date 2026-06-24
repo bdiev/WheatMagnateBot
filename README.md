@@ -252,6 +252,10 @@ Owner commands:
 The status panel includes an Enable/Disable button. Disabling the feature stops
 learning, reactions and scheduled speech while preserving the existing database.
 
+The Obsidian farm asks for target coordinates only on its first start and then
+reuses the saved values. `/ofstats` includes a Reset coordinates button. The
+cauldron search radius is fixed at 5 blocks.
+
 Configuration is stored in `growing_child/config.json`. Keep `ownerDmOnly`
 enabled while testing. Set `dailyMessageChannelId` and disable `ownerDmOnly`
 only when the child is ready to speak publicly.

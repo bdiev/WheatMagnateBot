@@ -1652,6 +1652,44 @@ async function setObsidianFarmDesiredEnabled(enabled) {
   }
 }
 
+async function startConfiguredObsidianFarm() {
+  const config = farm.getStatus().config;
+  if (!config) throw new Error('Farm coordinates are not configured.');
+  if (!bot?.entity) throw new Error('Minecraft bot is offline.');
+
+  await farm.prepareStart(bot);
+  await beginObsidianFarmSession();
+  const startingBot = bot;
+  ensureObsidianFarmRunning(startingBot, { freshSession: true }).catch(err => {
+    console.error('[Obsidian] Manual farm start retry loop failed:', err.message);
+  });
+
+  const startupDeadline = Date.now() + 15_000;
+  while (
+    Date.now() < startupDeadline &&
+    bot === startingBot &&
+    obsidianStats.desiredEnabled &&
+    !farm.getStatus().enabled
+  ) {
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+
+  return {
+    started: farm.getStatus().enabled,
+    config: farm.getStatus().config
+  };
+}
+
+function buildObsidianStartEmbed(started, config) {
+  return {
+    description: started
+      ? `${STATUS_EMOJIS.connected} Obsidian farm started at \`(${config.x}, ${config.y}, ${config.z})\`.`
+      : `⏳ Obsidian farm start is queued for \`(${config.x}, ${config.y}, ${config.z})\`. The bot will keep checking the ${FARM_EMOJIS.lever} protection lever and start automatically as soon as it is OFF.`,
+    color: started ? 65280 : 16776960,
+    timestamp: new Date()
+  };
+}
+
 async function persistObsidianMined() {
   if (!pool) {
     return;
@@ -1976,7 +2014,6 @@ async function buildDetailedObsidianStatsEmbed() {
         value: config
           ? [
               `${FARM_EMOJIS.obsidian} Target: \`${config.x}, ${config.y}, ${config.z}\``,
-              `${FARM_EMOJIS.cauldron} Cauldron radius: **${config.maxCauldronDist}**`,
               `Bot position: \`${botPosition}\``
             ].join('\n')
           : 'Not configured',
@@ -2044,6 +2081,10 @@ function createObsidianStatsComponents() {
         .setCustomId('ofstats_detailed')
         .setLabel('Detailed')
         .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId('ofstats_reset_coordinates')
+        .setLabel('Reset coordinates')
+        .setStyle(ButtonStyle.Danger),
       createDeleteDMButton()
     )
   ];
@@ -4364,6 +4405,66 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       return;
     }
 
+    if (interaction.isButton() && interaction.customId === 'ofstats_reset_coordinates') {
+      if (interaction.user.id !== DISCORD_OWNER_ID) {
+        await interaction.reply({
+          content: 'Only the owner can reset farm coordinates.',
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+      const resetReply = {
+        embeds: [{
+          title: 'Reset Obsidian Farm coordinates?',
+          description: 'The farm will stop and the Obsidian button will ask for new coordinates next time.',
+          color: 16711680,
+          timestamp: new Date()
+        }],
+        components: [new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId('ofstats_reset_coordinates_confirm')
+            .setLabel('Reset coordinates')
+            .setStyle(ButtonStyle.Danger),
+          new ButtonBuilder()
+            .setCustomId('ofstats_reset_coordinates_cancel')
+            .setLabel('Cancel')
+            .setStyle(ButtonStyle.Secondary)
+        )]
+      };
+      if (interaction.guildId) resetReply.flags = MessageFlags.Ephemeral;
+      await interaction.reply(resetReply);
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId === 'ofstats_reset_coordinates_cancel') {
+      await interaction.update({
+        embeds: [{
+          description: 'Coordinate reset cancelled.',
+          color: 8421504,
+          timestamp: new Date()
+        }],
+        components: []
+      });
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId === 'ofstats_reset_coordinates_confirm') {
+      if (interaction.user.id !== DISCORD_OWNER_ID) return;
+      farm.suspend();
+      await setProtectionLeverState(true).catch(() => false);
+      await setObsidianFarmDesiredEnabled(false);
+      farm.resetConfig();
+      await interaction.update({
+        embeds: [{
+          description: `${STATUS_EMOJIS.connected} Farm coordinates were reset. The next Obsidian start will ask for X, Y and Z.`,
+          color: 65280,
+          timestamp: new Date()
+        }],
+        components: []
+      });
+      return;
+    }
+
     if (interaction.isChatInputCommand() && interaction.commandName === 'clear') {
       if (interaction.user.id !== DISCORD_OWNER_ID) {
         const reply = { content: 'Only the owner can clear dialogs.' };
@@ -5257,22 +5358,36 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           await startTemporaryInteractionMessage(interaction);
         } else {
           const savedConfig = farmStatus.config;
+          if (savedConfig) {
+            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+            try {
+              const result = await startConfiguredObsidianFarm();
+              await interaction.editReply({
+                embeds: [buildObsidianStartEmbed(result.started, result.config)]
+              });
+            } catch (err) {
+              await interaction.editReply({
+                embeds: [{
+                  description: `❌ Obsidian farm could not start: ${err.message}`,
+                  color: 16711680,
+                  timestamp: new Date()
+                }]
+              });
+            }
+            await startTemporaryInteractionMessage(interaction);
+            return;
+          }
+
           const farmModal = new ModalBuilder()
             .setCustomId('obsidian_farm_modal')
             .setTitle('Obsidian Farm \u2014 Target Coordinates');
           const xInput = new TextInputBuilder().setCustomId('farm_x').setLabel('X coordinate').setStyle(TextInputStyle.Short).setPlaceholder('3402889').setRequired(true);
-          if (savedConfig?.x != null) xInput.setValue(String(savedConfig.x));
           const yInput = new TextInputBuilder().setCustomId('farm_y').setLabel('Y coordinate').setStyle(TextInputStyle.Short).setPlaceholder('68').setRequired(true);
-          if (savedConfig?.y != null) yInput.setValue(String(savedConfig.y));
           const zInput = new TextInputBuilder().setCustomId('farm_z').setLabel('Z coordinate').setStyle(TextInputStyle.Short).setPlaceholder('672222').setRequired(true);
-          if (savedConfig?.z != null) zInput.setValue(String(savedConfig.z));
-          const distInput = new TextInputBuilder().setCustomId('farm_dist').setLabel('Max cauldron search radius (blocks)').setStyle(TextInputStyle.Short).setPlaceholder('Default: 4.5').setRequired(false);
-          if (savedConfig?.maxCauldronDist != null) distInput.setValue(String(savedConfig.maxCauldronDist));
           farmModal.addComponents(
             new ActionRowBuilder().addComponents(xInput),
             new ActionRowBuilder().addComponents(yInput),
-            new ActionRowBuilder().addComponents(zInput),
-            new ActionRowBuilder().addComponents(distInput)
+            new ActionRowBuilder().addComponents(zInput)
           );
           await interaction.showModal(farmModal);
         }
@@ -6005,52 +6120,27 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       const rawX = interaction.fields.getTextInputValue('farm_x').trim();
       const rawY = interaction.fields.getTextInputValue('farm_y').trim();
       const rawZ = interaction.fields.getTextInputValue('farm_z').trim();
-      const rawDist = interaction.fields.getTextInputValue('farm_dist').trim();
       const x = Number(rawX), y = Number(rawY), z = Number(rawZ);
       if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
         await interaction.editReply({ embeds: [{ description: '❌ Invalid coordinates — X, Y and Z must be numbers.', color: 16711680, timestamp: new Date() }] });
         return;
       }
-      farm.configure(x, y, z, rawDist || undefined);
+      farm.configure(x, y, z);
       try {
-        await farm.prepareStart(bot);
+        const result = await startConfiguredObsidianFarm();
+        await interaction.editReply({
+          embeds: [buildObsidianStartEmbed(result.started, result.config)]
+        });
       } catch (err) {
         await interaction.editReply({
           embeds: [{
-            description: `❌ Farm supplies check failed: ${err.message}`,
+            description: `❌ Obsidian farm could not start: ${err.message}`,
             color: 16711680,
             timestamp: new Date()
           }]
         });
         return;
       }
-      await beginObsidianFarmSession();
-      const cf = farm.getStatus().config;
-      const startingBot = bot;
-      ensureObsidianFarmRunning(startingBot, { freshSession: true }).catch(err => {
-        console.error('[Obsidian] Manual farm start retry loop failed:', err.message);
-      });
-
-      const startupDeadline = Date.now() + 15_000;
-      while (
-        Date.now() < startupDeadline &&
-        bot === startingBot &&
-        obsidianStats.desiredEnabled &&
-        !farm.getStatus().enabled
-      ) {
-        await new Promise(resolve => setTimeout(resolve, 250));
-      }
-
-      const started = farm.getStatus().enabled;
-      await interaction.editReply({
-        embeds: [{
-          description: started
-            ? `${STATUS_EMOJIS.connected} Obsidian farm started at \`(${cf.x}, ${cf.y}, ${cf.z})\`. Cauldron radius: ${cf.maxCauldronDist} blocks.`
-            : `⏳ Obsidian farm start is queued for \`(${cf.x}, ${cf.y}, ${cf.z})\`. The bot will keep checking the ${FARM_EMOJIS.lever} protection lever and start automatically as soon as it is OFF.`,
-          color: started ? 65280 : 16776960,
-          timestamp: new Date()
-        }]
-      });
       await startTemporaryInteractionMessage(interaction);
     } else if (interaction.isStringSelectMenu() && interaction.customId.startsWith('add_whitelist_select')) {
       await interaction.deferUpdate();

@@ -28,10 +28,7 @@ const PICKAXE_PRIORITY = [
 const OBSIDIAN_TIMEOUT_MS   = 90_000; // max wait for lava→obsidian
 const CYCLE_PAUSE_MS        = 10;     // yield briefly between cycles
 const INTERACT_SETTLE_MS    = 25;     // settle delay after block interaction
-const DEFAULT_TARGET_X = 3402889;
-const DEFAULT_TARGET_Y = 68;
-const DEFAULT_TARGET_Z = 672222;
-const DEFAULT_CAULDRON_DIST = 4.5;    // default max search radius for cauldrons
+const DEFAULT_CAULDRON_DIST = 5;
 const MIN_PICKAXE_REMAINING_PERCENT = 5;
 const FARM_CONFIG_FILE = 'obsidian_farm_config.json';
 const FARM_DEBUG_LOG_FILE = 'obsidian_farm_debug.log';
@@ -64,12 +61,7 @@ const FOOD_ITEM_PARTS = [
 // ── Internal state ─────────────────────────────────────────────────────────────
 const farm = {
   enabled:         false,
-  config: {
-    x: DEFAULT_TARGET_X,
-    y: DEFAULT_TARGET_Y,
-    z: DEFAULT_TARGET_Z,
-    maxCauldronDist: DEFAULT_CAULDRON_DIST,
-  },
+  config:          null,
   phase:           'idle', // idle | seeking | filling | navigating | pouring | waiting | mining
   loopHandle:      null,
   cyclesCompleted: 0,
@@ -96,18 +88,23 @@ function getStatus() {
   };
 }
 
-/** Set target coordinates and optional cauldron search radius. */
-function configure(x, y, z, maxCauldronDist) {
-  const parsedDistance = Number(maxCauldronDist);
+/** Set and persist target coordinates. The cauldron radius is always 5 blocks. */
+function configure(x, y, z) {
   farm.config = {
     x:               Math.round(Number(x)),
     y:               Math.round(Number(y)),
     z:               Math.round(Number(z)),
-    maxCauldronDist: Number.isFinite(parsedDistance) && parsedDistance > 0
-      ? Math.max(0.5, Math.min(128, parsedDistance))
-      : DEFAULT_CAULDRON_DIST,
+    maxCauldronDist: DEFAULT_CAULDRON_DIST,
   };
   saveFarmConfig();
+}
+
+function resetConfig() {
+  stop(null);
+  farm.config = null;
+  try {
+    if (fs.existsSync(FARM_CONFIG_FILE)) fs.unlinkSync(FARM_CONFIG_FILE);
+  } catch (_) {}
 }
 
 /** Load pathfinder plugin into a freshly created bot. Call once from createBot(). */
@@ -124,7 +121,7 @@ function saveFarmConfig() {
           x: farm.config.x,
           y: farm.config.y,
           z: farm.config.z,
-          maxCauldronDist: farm.config.maxCauldronDist,
+          maxCauldronDist: DEFAULT_CAULDRON_DIST,
         }
       : null;
     fs.writeFileSync(FARM_CONFIG_FILE, JSON.stringify(payload, null, 2), 'utf8');
@@ -143,16 +140,13 @@ function loadFarmConfig() {
     const x = Number(parsed.x);
     const y = Number(parsed.y);
     const z = Number(parsed.z);
-    const maxCauldronDist = Number(parsed.maxCauldronDist);
     if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return;
 
     farm.config = {
       x: Math.round(x),
       y: Math.round(y),
       z: Math.round(z),
-      maxCauldronDist: Number.isFinite(maxCauldronDist)
-        ? Math.max(0.5, Math.min(128, maxCauldronDist))
-        : DEFAULT_CAULDRON_DIST,
+      maxCauldronDist: DEFAULT_CAULDRON_DIST,
     };
   } catch (_) {}
 }
@@ -1486,6 +1480,7 @@ module.exports = {
   suspend,
   stop,
   configure,
+  resetConfig,
   configureRuntime,
   prepareStart,
   inspectSupplies,
