@@ -70,7 +70,7 @@
   - 🗑️ **Drop** - Inventory management interface
   - 📋 **Whitelist** - Add/remove authorized players (owner only)
   - ⚙️ **Chat Settings** - Ignore/unignore player chat (owner only)
-  - **Playtime** - Public compact whitelist playtime table; the owner initializes totals by DM using `PlayerName: 192 Days, 23 Hours, 32 Minutes`
+  - **Playtime** - Public compact whitelist playtime table; the owner initializes totals with `/playtime`
 - **Modal Forms** - Rich input interfaces for messaging and commands
 - **Select Menus** - Dropdown selections for players, items, and keywords
 
@@ -244,9 +244,10 @@ configured in `growing_child/config.json`.
 
 Owner commands:
 
-- `!child` or `!child say` — generate a phrase in Discord DM.
-- `!child status` — show level, vocabulary, XP, emotion and common topics.
-- `!child reset` — send a destructive reset confirmation to Discord DM.
+- `/child say` — generate a plain phrase in Discord DM.
+- `/child status` — show level, vocabulary, XP, emotion and common topics.
+- `/child reset` — send a destructive reset confirmation to Discord DM.
+- `/playtime player:<name> time:<duration>` — set a player's saved playtime.
 
 Configuration is stored in `growing_child/config.json`. Keep `ownerDmOnly`
 enabled while testing. Set `dailyMessageChannelId` and disable `ownerDmOnly`

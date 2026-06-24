@@ -1,7 +1,7 @@
 require('dotenv').config();
 const mineflayer = require('mineflayer');
 const fs = require('fs');
-const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ChannelType, PermissionsBitField, MessageFlags, InteractionContextType } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ChannelType, PermissionsBitField, MessageFlags, InteractionContextType, ApplicationCommandOptionType } = require('discord.js');
 const { Pool } = require('pg');
 const { pathfinder } = require('mineflayer-pathfinder');
 const farm = require('./obsidian_farm');
@@ -202,6 +202,7 @@ async function ensureDMDeleteButton(message) {
   ) {
     return;
   }
+  if (growingChildPlainMessageIds.has(message.id)) return;
 
   const hasDeleteButton = message.components?.some(row =>
     row.components?.some(component => component.customId === 'delete_dm_message')
@@ -282,6 +283,7 @@ let whisperFooterUpdateIntervals = new Map(); // channelId -> interval handle fo
 let whisperDeleteTimestamps = new Map(); // channelId -> timestamp when channel will be deleted
 let customDialogTTL = new Map(); // channelId -> custom TTL in ms (user-configured)
 const temporaryInteractionMessages = new Map(); // messageId -> { interval, timeout, deadline }
+const growingChildPlainMessageIds = new Set();
 let recentWhispers = new Map(); // key: `WHISPER:username:message` -> timestamp, to mark whispers and suppress chat forwarding
 let pendingChatTimers = new Map(); // key: `CHAT:username:message` -> timeout handle to delay chat forwarding
 let outboundWhispers = new Map(); // key: `OUTBOUND:targetUsername:message` -> timestamp, to suppress public echo of our own whispers
@@ -1253,7 +1255,9 @@ async function sendGrowingChildOwnerDM(payload) {
   if (!DISCORD_OWNER_ID || !discordClient?.isReady()) return;
   const owner = await discordClient.users.fetch(DISCORD_OWNER_ID);
   if (!owner) return;
-  await owner.send(payload.phrase);
+  const sent = await owner.send(payload.phrase);
+  growingChildPlainMessageIds.add(sent.id);
+  setTimeout(() => growingChildPlainMessageIds.delete(sent.id), 60_000).unref?.();
 }
 
 async function sendGrowingChildChannelMessage(channelId, payload) {
@@ -1417,7 +1421,7 @@ if (DISCORD_BOT_TOKEN) {
     try {
       await registerObsidianStatsCommand();
     } catch (err) {
-      console.error('[Discord] Failed to register /ofstats:', err.message);
+      console.error('[Discord] Failed to register application commands:', err.message);
     }
     await migrateWhitelistToDB();
     // Reload whitelist after migration
@@ -2096,6 +2100,58 @@ async function registerObsidianStatsCommand() {
         InteractionContextType.Guild,
         InteractionContextType.BotDM,
         InteractionContextType.PrivateChannel
+      ]
+    },
+    {
+      name: 'child',
+      description: 'Control Growing Child AI',
+      contexts: [
+        InteractionContextType.Guild,
+        InteractionContextType.BotDM,
+        InteractionContextType.PrivateChannel
+      ],
+      options: [
+        {
+          type: ApplicationCommandOptionType.Subcommand,
+          name: 'say',
+          description: 'Ask the child to say a phrase'
+        },
+        {
+          type: ApplicationCommandOptionType.Subcommand,
+          name: 'status',
+          description: 'Show learning progress'
+        },
+        {
+          type: ApplicationCommandOptionType.Subcommand,
+          name: 'reset',
+          description: 'Reset all learning after confirmation'
+        }
+      ]
+    },
+    {
+      name: 'playtime',
+      description: 'Set a Minecraft player playtime value',
+      contexts: [
+        InteractionContextType.Guild,
+        InteractionContextType.BotDM,
+        InteractionContextType.PrivateChannel
+      ],
+      options: [
+        {
+          type: ApplicationCommandOptionType.String,
+          name: 'player',
+          description: 'Minecraft username',
+          required: true,
+          min_length: 1,
+          max_length: 16
+        },
+        {
+          type: ApplicationCommandOptionType.String,
+          name: 'time',
+          description: 'Example: 192d 23h 32m',
+          required: true,
+          max_length: 100
+        }
       ]
     }
   ];
@@ -3689,22 +3745,6 @@ function createBot() {
   bot.on('chat', async (username, message, translate, jsonMessage) => {
     username = resolveRelayedChatUsername(username, jsonMessage);
 
-    const childMatch = message.match(/^!child(?:\s+(say|status|reset))?$/i);
-    if (childMatch && username.toLowerCase() === 'bdiev_') {
-      const action = String(childMatch[1] || 'say').toLowerCase();
-      if (action === 'status') {
-        await sendGrowingChildStatusDM();
-        await sendPrivateMinecraftMessage(username, '[Child] Status sent to your Discord DM.');
-      } else if (action === 'reset') {
-        await sendGrowingChildResetPrompt();
-        await sendPrivateMinecraftMessage(username, '[Child] Reset confirmation sent to your Discord DM.');
-      } else {
-        await growingChild?.speak('minecraft command');
-        await sendPrivateMinecraftMessage(username, '[Child] Phrase sent to your Discord DM.');
-      }
-      return;
-    }
-
     const wmMatch = message.match(/^!wm(?:\s+([\s\S]*))?$/i);
     if (wmMatch) {
       await sendGameChatMessageToDiscord(username, message);
@@ -4090,6 +4130,64 @@ process.on('unhandledRejection', (reason) => {
 if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
   discordClient.on('interactionCreate', async (interaction) => {
     // Interaction logs reduced to minimize noise
+
+    if (interaction.isChatInputCommand() && interaction.commandName === 'child') {
+      if (interaction.user.id !== DISCORD_OWNER_ID) {
+        await interaction.reply({
+          content: 'Only the owner can control Growing Child AI.',
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+
+      const action = interaction.options.getSubcommand();
+      const replyOptions = { content: 'Done.' };
+      if (interaction.guildId) replyOptions.flags = MessageFlags.Ephemeral;
+      await interaction.reply(replyOptions);
+
+      if (action === 'status') {
+        await sendGrowingChildStatusDM();
+      } else if (action === 'reset') {
+        await sendGrowingChildResetPrompt();
+      } else {
+        await growingChild?.speak('slash command');
+      }
+
+      if (!interaction.guildId) {
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 1000);
+      }
+      return;
+    }
+
+    if (interaction.isChatInputCommand() && interaction.commandName === 'playtime') {
+      if (interaction.user.id !== DISCORD_OWNER_ID) {
+        await interaction.reply({
+          content: 'Only the owner can update playtime.',
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+
+      const username = interaction.options.getString('player', true).trim();
+      const duration = interaction.options.getString('time', true).trim();
+      const totalSeconds = parsePlaytime(duration);
+      if (totalSeconds === null) {
+        const reply = { content: 'Invalid time. Use `192d 23h 32m` or `192 Days, 23 Hours, 32 Minutes`.' };
+        if (interaction.guildId) reply.flags = MessageFlags.Ephemeral;
+        await interaction.reply(reply);
+        return;
+      }
+
+      const result = await setPlayerPlaytime(username, totalSeconds);
+      const reply = {
+        content: result.error
+          ? `Failed to update playtime: ${result.error}`
+          : `Updated **${result.username}** playtime to **${formatPlaytime(totalSeconds)}**.`
+      };
+      if (interaction.guildId) reply.flags = MessageFlags.Ephemeral;
+      await interaction.reply(reply);
+      return;
+    }
 
     if (interaction.isButton() && interaction.customId.startsWith('growing_child_')) {
       if (interaction.user.id !== DISCORD_OWNER_ID) {
@@ -5985,44 +6083,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       });
     }
 
-    const childMatch = trimmedContent.match(/^!child(?:\s+(say|status|reset))?$/i);
-    if (childMatch && message.author.id === DISCORD_OWNER_ID) {
-      const action = String(childMatch[1] || 'say').toLowerCase();
-      if (action === 'status') {
-        await sendGrowingChildStatusDM();
-      } else if (action === 'reset') {
-        await sendGrowingChildResetPrompt();
-      } else {
-        await growingChild?.speak('discord command');
-      }
-      if (message.guild) await message.delete().catch(() => {});
-      return;
-    }
-
     if (!message.guild) {
       if (message.author.id !== DISCORD_OWNER_ID) return;
-
-      const match = message.content.trim().match(/^([A-Za-z0-9_]{1,16})\s*:\s*(.+)$/s);
-      if (!match) {
-        await message.reply('Use `PlayerName: 192 Days, 23 Hours, 32 Minutes`.');
-        return;
-      }
-
-      const [, username, duration] = match;
-      const totalSeconds = parsePlaytime(duration);
-      if (totalSeconds === null) {
-        await message.reply('Invalid time. Use `192 Days, 23 Hours, 32 Minutes` or `192d 23h 32m`.');
-        return;
-      }
-
-      const result = await setPlayerPlaytime(username, totalSeconds);
-      if (result.error) {
-        await message.reply(`Failed to update playtime: ${result.error}`);
-        return;
-      }
-
-      await message.reply(`Updated **${result.username}** playtime to **${formatPlaytime(totalSeconds)}**.`);
-      console.log(`[Playtime] ${result.username} set to ${formatPlaytime(totalSeconds)} by owner via DM`);
       return;
     }
 
