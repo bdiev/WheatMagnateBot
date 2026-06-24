@@ -9,7 +9,7 @@ const { GrowingChildScheduler } = require('./scheduler');
 const { sanitizePublicPhrase } = require('./safety');
 
 class GrowingChildAI {
-  constructor({ sendOwnerDM, sendChannelMessage, sendMinecraftMessage }) {
+  constructor({ sendOwnerDM, sendChannelMessage, sendMinecraftMessage, allowedDiscordChannelId }) {
     this.config = loadConfig();
     this.database = new GrowingChildDatabase(this.config.databasePath);
     this.learning = new LearningSystem(this.database, this.config);
@@ -18,6 +18,9 @@ class GrowingChildAI {
     this.sendOwnerDM = sendOwnerDM;
     this.sendChannelMessage = sendChannelMessage;
     this.sendMinecraftMessage = sendMinecraftMessage;
+    this.allowedDiscordChannelId = allowedDiscordChannelId
+      ? String(allowedDiscordChannelId)
+      : null;
     this.lastReactiveSpeechAt = 0;
     this.pendingReactiveTimer = null;
     const savedEnabled = this.database.getState('enabled');
@@ -38,12 +41,22 @@ class GrowingChildAI {
 
   learn(context) {
     try {
+      const allowedSource =
+        context.source === 'minecraft' ||
+        (
+          context.source === 'discord' &&
+          this.allowedDiscordChannelId &&
+          String(context.channelId) === this.allowedDiscordChannelId
+        );
+      if (!allowedSource) return null;
+
       const result = this.learning.learnMessage(context);
       if (result) {
         this.emotions.update({
           newWords: result.newWords,
           addressed: Boolean(context.addressed)
         });
+        this.scheduler.noteActivity();
         this.maybeReact(context);
       }
       return result;
@@ -89,6 +102,7 @@ class GrowingChildAI {
     const publicTarget =
       target === 'minecraft' ||
       reason === 'random' ||
+      reason === 'activity' ||
       reason === 'slash command' ||
       reason === 'button';
     const phrase = publicTarget ? sanitizePublicPhrase(generatedPhrase) : generatedPhrase;

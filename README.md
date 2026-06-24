@@ -248,6 +248,12 @@ through a strict safety filter: words containing digits are never learned, and
 any generated message containing a digit or command prefix is blocked. This
 prevents coordinates from ever being sent by the child.
 
+Learning is restricted to Minecraft public chat and the configured Discord
+game-chat channel. Other Discord channels and DMs are ignored. A phrase may be
+triggered after a newly randomized quota of 50–100 observed messages, or by the
+eight-hour fallback timer—whichever happens first. A hard two-hour cooldown
+prevents bursts.
+
 Owner commands:
 
 - `/child say` — generate a plain phrase in Discord DM.
