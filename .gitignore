@@ -1,6 +1,4 @@
 node_modules/
-.env
-minecraft_session.json
-status_message_id.txt
-auth-cache/
-*.log
+data/*.sqlite
+data/*.sqlite-shm
+data/*.sqlite-wal
