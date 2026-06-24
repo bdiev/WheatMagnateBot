@@ -16,6 +16,16 @@ const DISCORD_CHAT_CHANNEL_ID = process.env.DISCORD_CHAT_CHANNEL_ID;
 const DISCORD_DM_CATEGORY_ID = process.env.DISCORD_DM_CATEGORY_ID;
 const DISCORD_OWNER_ID = process.env.DISCORD_OWNER_ID || '623303738991443968';
 const IGNORED_CHAT_USERNAMES = process.env.IGNORED_CHAT_USERNAMES ? process.env.IGNORED_CHAT_USERNAMES.split(',').map(u => u.trim().toLowerCase()) : [];
+const STATUS_EMOJIS = {
+  connected: '<:Confirm:1519301205346619392>',
+  players: '<:Player_Head:1519301212367884348>',
+  nearby: '<:Compass_03:1519302276651548692>',
+  tps: '<:Repeater:1519301215282794526>',
+  food: '<:Food_Full:1519301206457978920>',
+  health: '<:Heart_Full:1519301207493968082>',
+  whitelist: '<:Writable_Book:1519301216675430541>',
+  obsidian: '<:Netherite_Pickaxe:1519301211000541224>'
+};
 
 // Database connection
 let pool = null;
@@ -2422,14 +2432,14 @@ function getStatusDescription() {
     .join(', ') || 'None';
   const whitelistOnlineDisplay = whitelistOnline.length > 0 ? whitelistOnline.map(u => `\`${u}\``).join(', ') : 'None';
   const obsidianMined = `${formatCompactCount(obsidianStats.sessionMined)}/${formatCompactCount(obsidianStats.totalMined)}`;
-  return `✅ Bot **${bot.username}** connected to \`${config.host}\`\n` +
-    `👥 Players online: ${playerCount}\n` +
-    `👀 Players nearby: ${nearbyNames}\n` +
-    `⚡ TPS: ${avgTps}\n` +
-    `:hamburger: Food: ${Math.round(bot.food * 2) / 2}/20\n` +
-    `❤️ Health: ${Math.round(bot.health * 2) / 2}/20\n` +
-    `📋 Whitelist online: ${whitelistOnlineDisplay}\n` +
-    `⛏️ Obsidian mined: ${obsidianMined}`;
+  return `${STATUS_EMOJIS.connected} Bot **${bot.username}** connected to \`${config.host}\`\n` +
+    `${STATUS_EMOJIS.players} Players online: ${playerCount}\n` +
+    `${STATUS_EMOJIS.nearby} Players nearby: ${nearbyNames}\n` +
+    `${STATUS_EMOJIS.tps} TPS: ${avgTps}\n` +
+    `${STATUS_EMOJIS.food} Food: ${Math.round(bot.food * 2) / 2}/20\n` +
+    `${STATUS_EMOJIS.health} Health: ${Math.round(bot.health * 2) / 2}/20\n` +
+    `${STATUS_EMOJIS.whitelist} Whitelist online: ${whitelistOnlineDisplay}\n` +
+    `${STATUS_EMOJIS.obsidian} Obsidian mined: ${obsidianMined}`;
 }
 
 // Function to create status buttons
