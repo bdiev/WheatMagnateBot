@@ -83,6 +83,7 @@ function getStatus() {
     enabled:         farm.enabled,
     phase:           farm.phase,
     cyclesCompleted: farm.cyclesCompleted,
+    lastErrorMessage: farm.lastErrorMessage,
     config:          farm.config ? { ...farm.config } : null,
   };
 }
