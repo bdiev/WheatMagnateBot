@@ -104,11 +104,15 @@ function getPlayerHeadEmoji(username) {
 
 function createDeleteDMRow() {
   return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId('delete_dm_message')
-      .setLabel('Delete')
-      .setStyle(ButtonStyle.Danger)
+    createDeleteDMButton()
   );
+}
+
+function createDeleteDMButton() {
+  return new ButtonBuilder()
+    .setCustomId('delete_dm_message')
+    .setLabel('Delete')
+    .setStyle(ButtonStyle.Danger);
 }
 
 async function ensureDMDeleteButton(message) {
@@ -1702,15 +1706,117 @@ async function buildObsidianStatsEmbed(cachedSupplies = null) {
   };
 }
 
+async function buildDetailedObsidianStatsEmbed() {
+  const farmStatus = await farm.getDetailedStatus(bot);
+  const config = farmStatus.config;
+  const sessionStartedAt = obsidianStats.sessionStartedAt
+    ? new Date(obsidianStats.sessionStartedAt)
+    : null;
+  const sessionMs = sessionStartedAt ? Date.now() - sessionStartedAt.getTime() : 0;
+  const sessionHours = sessionMs / 3_600_000;
+  const perHour = sessionHours > 0 ? obsidianStats.sessionMined / sessionHours : 0;
+  const inventory = farmStatus.supplies?.inventory;
+  const barrel = farmStatus.supplies?.barrel;
+  const botPosition = bot?.entity?.position
+    ? `${bot.entity.position.x.toFixed(1)}, ${bot.entity.position.y.toFixed(1)}, ${bot.entity.position.z.toFixed(1)}`
+    : 'Offline';
+
+  return {
+    title: 'Detailed Obsidian Farm Statistics',
+    color: farmStatus.enabled ? 65280 : 16776960,
+    fields: [
+      {
+        name: 'Runtime',
+        value: [
+          `Connected: **${farmStatus.connected ? 'Yes' : 'No'}**`,
+          `Running: **${farmStatus.enabled ? 'Yes' : 'No'}**`,
+          `Auto-resume: **${obsidianStats.desiredEnabled ? 'Yes' : 'No'}**`,
+          `Phase: **${farmStatus.phase}**`,
+          `Completed cycles: **${farmStatus.cyclesCompleted}**`
+        ].join('\n'),
+        inline: true
+      },
+      {
+        name: 'Configuration',
+        value: config
+          ? [
+              `Target: \`${config.x}, ${config.y}, ${config.z}\``,
+              `Cauldron radius: **${config.maxCauldronDist}**`,
+              `Bot position: \`${botPosition}\``
+            ].join('\n')
+          : 'Not configured',
+        inline: true
+      },
+      {
+        name: 'Session totals',
+        value: [
+          `Started: ${sessionStartedAt ? `<t:${Math.floor(sessionStartedAt.getTime() / 1000)}:R>` : '**Not started**'}`,
+          `Duration: **${formatDurationShort(sessionMs)}**`,
+          `Mined: **${obsidianStats.sessionMined.toLocaleString('en-US')}**`,
+          `Rate: **${Math.round(perHour).toLocaleString('en-US')}/h**`,
+          `All time: **${obsidianStats.totalMined.toLocaleString('en-US')}**`
+        ].join('\n'),
+        inline: false
+      },
+      {
+        name: 'Pickaxe history',
+        value: [
+          `Retired pickaxes: **${obsidianStats.retiredPickaxes}**`,
+          `Blocks on retired pickaxes: **${obsidianStats.retiredPickaxeBlocks.toLocaleString('en-US')}**`,
+          `Average: **${obsidianStats.retiredPickaxes > 0
+            ? Math.round(obsidianStats.retiredPickaxeBlocks / obsidianStats.retiredPickaxes).toLocaleString('en-US')
+            : 'No data'}**`
+        ].join('\n'),
+        inline: false
+      },
+      {
+        name: 'Bot inventory',
+        value: [
+          `Food: **${inventory?.foodCount || 0}** — ${formatFoodSupply(inventory?.food)}`,
+          `Usable pickaxes: **${inventory?.usablePickaxeCount || 0}**`,
+          formatPickaxeSupply(inventory?.pickaxes)
+        ].join('\n'),
+        inline: false
+      },
+      {
+        name: 'Supply barrel',
+        value: barrel
+          ? [
+              `Position: \`${barrel.position || 'Unknown'}\``,
+              `Distance: **${Number(barrel.distance || 0).toFixed(2)} blocks**`,
+              `Food: **${barrel.foodCount || 0}** — ${formatFoodSupply(barrel.food)}`,
+              `Usable pickaxes: **${barrel.usablePickaxeCount || 0}**`,
+              formatPickaxeSupply(barrel.pickaxes)
+            ].join('\n')
+          : `Unavailable — ${farmStatus.supplies?.barrelError || 'not found'}`,
+        inline: false
+      },
+      {
+        name: 'Last retry/error',
+        value: farmStatus.lastErrorMessage
+          ? `\`${String(farmStatus.lastErrorMessage).slice(0, 950)}\``
+          : 'None',
+        inline: false
+      }
+    ],
+    footer: { text: 'Fresh barrel and inventory inspection' },
+    timestamp: new Date()
+  };
+}
+
 function createObsidianStatsComponents() {
   return [
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId('ofstats_refresh')
         .setLabel('Refresh')
-        .setStyle(ButtonStyle.Primary)
-    ),
-    createDeleteDMRow()
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId('ofstats_detailed')
+        .setLabel('Detailed')
+        .setStyle(ButtonStyle.Secondary),
+      createDeleteDMButton()
+    )
   ];
 }
 
@@ -3761,6 +3867,23 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         embeds: [await buildObsidianStatsEmbed(supplies)],
         components: createObsidianStatsComponents()
       });
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId === 'ofstats_detailed') {
+      if (interaction.user.id !== DISCORD_OWNER_ID) {
+        await interaction.reply({
+          content: 'Only the owner can view detailed obsidian farm statistics.',
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+
+      await interaction.deferReply(interaction.guildId ? { flags: MessageFlags.Ephemeral } : {});
+      await interaction.editReply({
+        embeds: [await buildDetailedObsidianStatsEmbed()]
+      });
+      await startTemporaryInteractionMessage(interaction);
       return;
     }
 
