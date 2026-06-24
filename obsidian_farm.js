@@ -42,7 +42,7 @@ const OBSIDIAN_DIG_CONFIRM_TIMEOUT_MS = 700;
 const OBSIDIAN_DIG_STABILITY_MS = 50;
 const OBSIDIAN_DIG_MAX_ATTEMPTS = 3;
 const CAULDRON_FILL_ATTEMPTS_PER_BLOCK = 2;
-const CAULDRON_FILL_CONFIRM_TIMEOUT_MS = 650;
+const CAULDRON_FILL_CONFIRM_TIMEOUT_MS = 200;
 // Wait generously for the server/chunk update. This does not resend the bucket
 // action, so a slow response cannot cause placement at a second location.
 const LAVA_PLACEMENT_CONFIRM_TIMEOUT_MS = 5_000;
