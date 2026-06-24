@@ -2116,6 +2116,27 @@ function stopObsidianStatsUpdater(channelId) {
   obsidianStatsUpdaters.delete(channelId);
 }
 
+async function refreshObsidianStatsUpdaters() {
+  await Promise.all([...obsidianStatsUpdaters.entries()].map(async ([channelId, updater]) => {
+    if (updater.updating) return;
+    updater.updating = true;
+    try {
+      const channel = await discordClient.channels.fetch(channelId);
+      const message = await channel.messages.fetch(updater.messageId);
+      await message.edit({
+        embeds: [await buildObsidianStatsEmbed(updater.supplies)],
+        components: createObsidianStatsComponents()
+      });
+    } catch (err) {
+      if (err.code === 10008 || err.code === 50001 || err.code === 50013) {
+        stopObsidianStatsUpdater(channelId);
+      }
+    } finally {
+      updater.updating = false;
+    }
+  }));
+}
+
 function startObsidianStatsUpdater(message, supplies) {
   const channelId = message.channelId;
   stopObsidianStatsUpdater(channelId);
@@ -2441,6 +2462,7 @@ let resumeTimer = null;
 let foodMonitorInterval = null;
 let playerScannerInterval = null;
 let restartProtectionInterval = null;
+let obsidianFarmWatchdogInterval = null;
 let lastEnemyMentionAt = 0;
 let restartProtectionDateKey = null;
 let leverOperation = Promise.resolve();
@@ -2717,8 +2739,20 @@ async function ensureObsidianFarmRunning(createdBot, { freshSession = false } = 
         } else {
           farm.resume(createdBot, () => {});
         }
-        console.log(`[Obsidian] Farm started (lever check attempt ${attempts}).`);
-        return;
+        await new Promise(resolve => setTimeout(resolve, 250));
+        const startedStatus = farm.getStatus();
+        if (startedStatus.enabled) {
+          console.log(
+            `[Obsidian] Farm started (lever check attempt ${attempts}); phase=${startedStatus.phase}.`
+          );
+          updateStatusMessage().catch(() => {});
+          refreshObsidianStatsUpdaters().catch(() => {});
+          return;
+        }
+        console.log(
+          `[Obsidian] Farm start did not remain active after attempt ${attempts}; ` +
+          `phase=${startedStatus.phase}, lastError=${startedStatus.lastErrorMessage || 'none'}.`
+        );
       }
 
       if (!warningSent && attempts >= 3) {
@@ -2760,6 +2794,43 @@ function startRestartProtectionMonitor() {
       );
     }
   }, 5000);
+}
+
+function startObsidianFarmWatchdog() {
+  if (obsidianFarmWatchdogInterval) clearInterval(obsidianFarmWatchdogInterval);
+  let recovering = false;
+
+  obsidianFarmWatchdogInterval = setInterval(async () => {
+    if (
+      recovering ||
+      !bot?.entity ||
+      !obsidianStats.desiredEnabled ||
+      farm.getStatus().enabled ||
+      !farm.getStatus().config
+    ) {
+      return;
+    }
+
+    const { hour, minute } = getKyivDateParts();
+    const inRestartWindow = (hour === 8 && minute >= 59) || (hour === 9 && minute <= 30);
+    if (inRestartWindow) return;
+
+    recovering = true;
+    console.log('[Obsidian] Watchdog detected desired farm is idle; attempting recovery.');
+    try {
+      await ensureObsidianFarmRunning(bot);
+      const status = farm.getStatus();
+      console.log(
+        `[Obsidian] Watchdog recovery result: enabled=${status.enabled}, phase=${status.phase}.`
+      );
+      await updateStatusMessage();
+      await refreshObsidianStatsUpdaters();
+    } catch (err) {
+      console.error('[Obsidian] Watchdog recovery failed:', err.message);
+    } finally {
+      recovering = false;
+    }
+  }, 10_000);
 }
 
 function normalizeOutboundChat(message) {
@@ -3650,6 +3721,7 @@ function createBot() {
     startFoodMonitor();
     startNearbyPlayerScanner();
     startRestartProtectionMonitor();
+    startObsidianFarmWatchdog();
 
     if (obsidianStats.desiredEnabled) {
       const { dateKey, hour, minute } = getKyivDateParts();
@@ -4075,6 +4147,10 @@ function clearIntervals() {
   if (restartProtectionInterval) {
     clearInterval(restartProtectionInterval);
     restartProtectionInterval = null;
+  }
+  if (obsidianFarmWatchdogInterval) {
+    clearInterval(obsidianFarmWatchdogInterval);
+    obsidianFarmWatchdogInterval = null;
   }
   // Note: statusUpdateInterval is NOT cleared here as it's a global Discord interval
   // that should persist across bot reconnections
