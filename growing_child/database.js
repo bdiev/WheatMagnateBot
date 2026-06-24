@@ -168,6 +168,14 @@ class GrowingChildDatabase {
     `).all(limit);
   }
 
+  getAllWords() {
+    return this.db.prepare(`
+      SELECT word, times_seen, first_seen, last_seen, learned_at_level
+      FROM words
+      ORDER BY times_seen DESC, word ASC
+    `).all();
+  }
+
   getMembers(limit = 25) {
     return this.db.prepare(
       'SELECT name, times_seen FROM members ORDER BY times_seen DESC, last_seen DESC LIMIT ?'

@@ -147,6 +147,10 @@ class GrowingChildAI {
     };
   }
 
+  getAllWords() {
+    return this.database.getAllWords();
+  }
+
   setEnabled(enabled) {
     this.enabled = Boolean(enabled);
     this.config.enabled = this.enabled;

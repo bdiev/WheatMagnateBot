@@ -1305,6 +1305,46 @@ function formatGrowingChildStatus(status) {
   ].join('\n');
 }
 
+function escapeCsvValue(value) {
+  const text = String(value ?? '');
+  return `"${text.replaceAll('"', '""')}"`;
+}
+
+function buildGrowingChildVocabularyCsv() {
+  const rows = growingChild?.getAllWords() || [];
+  const header = ['word', 'times_seen', 'first_seen', 'last_seen', 'learned_at_level'];
+  const lines = [
+    header.map(escapeCsvValue).join(','),
+    ...rows.map(row => [
+      row.word,
+      row.times_seen,
+      row.first_seen,
+      row.last_seen,
+      row.learned_at_level
+    ].map(escapeCsvValue).join(','))
+  ];
+  return {
+    count: rows.length,
+    buffer: Buffer.from(`\uFEFF${lines.join('\r\n')}`, 'utf8')
+  };
+}
+
+async function sendGrowingChildVocabularyDM() {
+  if (!DISCORD_OWNER_ID || !discordClient?.isReady()) return false;
+  const owner = await discordClient.users.fetch(DISCORD_OWNER_ID);
+  if (!owner) return false;
+  const vocabulary = buildGrowingChildVocabularyCsv();
+  const date = new Date().toISOString().slice(0, 10);
+  await owner.send({
+    content: `Growing Child vocabulary: **${vocabulary.count}** words.`,
+    files: [{
+      attachment: vocabulary.buffer,
+      name: `growing-child-vocabulary-${date}.csv`
+    }]
+  });
+  return true;
+}
+
 async function sendGrowingChildOwnerDM(payload) {
   if (!DISCORD_OWNER_ID || !discordClient?.isReady()) return;
   const owner = await discordClient.users.fetch(DISCORD_OWNER_ID);
@@ -2262,6 +2302,9 @@ async function registerApplicationCommands() {
       .addSubcommand(command => command
         .setName('status')
         .setDescription('Show learning progress'))
+      .addSubcommand(command => command
+        .setName('vocabulary')
+        .setDescription('Export the complete learned vocabulary as CSV'))
       .addSubcommand(command => command
         .setName('reset')
         .setDescription('Reset all learning after confirmation')),
@@ -3963,7 +4006,7 @@ function createBot() {
         channelId: 'minecraft_public_chat',
         channelName: 'Minecraft public chat',
         text: message,
-        addressed: /\b(?:wheatmagnate|child|ребенок|ребёнок)\b/iu.test(message) ||
+        addressed: /\b(?:wheatmagnate|magnate|child|ребенок|ребёнок)\b/iu.test(message) ||
           /(?:^|\s)бот(?:\s|$|[?!.,])/iu.test(message)
       });
     }
@@ -4363,6 +4406,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
       if (action === 'status') {
         await sendGrowingChildStatusDM();
+      } else if (action === 'vocabulary') {
+        await sendGrowingChildVocabularyDM();
       } else if (action === 'reset') {
         await sendGrowingChildResetPrompt();
       } else if (minecraftAvailable) {
@@ -6362,7 +6407,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         text: trimmedContent,
         addressed:
           Boolean(discordClient.user && message.mentions.users.has(discordClient.user.id)) ||
-          /\b(?:wheatmagnate|child|бот|ребенок|ребёнок)\b/iu.test(trimmedContent)
+          /\b(?:wheatmagnate|magnate|child|бот|ребенок|ребёнок)\b/iu.test(trimmedContent)
       });
     }
 
