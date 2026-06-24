@@ -1,0 +1,17 @@
+{
+  "enabled": true,
+  "databasePath": "data/growing_child.sqlite",
+  "dailyMessageChannelId": null,
+  "ignoredChannels": [],
+  "ignoredUsers": [],
+  "minimumWordLength": 3,
+  "dailyMessageTime": "18:00",
+  "xpPerLearnedWord": 5,
+  "xpPerMessage": 1,
+  "randomSpeechEnabled": true,
+  "randomSpeechMinMinutes": 45,
+  "randomSpeechMaxMinutes": 180,
+  "dailySpeechEnabled": true,
+  "ownerDmOnly": true,
+  "maxLearnedMessages": 5000
+}

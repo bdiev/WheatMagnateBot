@@ -230,6 +230,22 @@ pm2 logs wheatbot --lines 100
 
 ```
 Server Status
+
+## Growing Child AI
+
+The optional `growing_child` module learns vocabulary from public Minecraft chat
+and Discord server messages. Its speech is private to the configured Discord
+owner by default.
+
+Owner commands:
+
+- `!child` or `!child say` — generate a phrase in Discord DM.
+- `!child status` — show level, vocabulary, XP, emotion and common topics.
+- `!child reset` — send a destructive reset confirmation to Discord DM.
+
+Configuration is stored in `growing_child/config.json`. Keep `ownerDmOnly`
+enabled while testing. Set `dailyMessageChannelId` and disable `ownerDmOnly`
+only when the child is ready to speak publicly.
 ✅ Bot WheatMagnate connected to oldfag.org
 👥 Players online: 12
 👀 Players nearby: Player1, Player2

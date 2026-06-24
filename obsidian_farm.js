@@ -311,11 +311,15 @@ function inspectSupplyStatus(bot) {
 
 async function getDetailedStatus(bot, options = {}) {
   const status = getStatus();
-  if (!bot) {
+  if (!bot?.entity || typeof bot.inventory?.items !== 'function') {
     return {
       ...status,
       connected: false,
-      supplies: null
+      supplies: {
+        inventory: null,
+        barrel: null,
+        barrelError: 'Bot is offline or still connecting'
+      }
     };
   }
 

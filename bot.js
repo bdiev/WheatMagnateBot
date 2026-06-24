@@ -5,6 +5,7 @@ const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, Bu
 const { Pool } = require('pg');
 const { pathfinder } = require('mineflayer-pathfinder');
 const farm = require('./obsidian_farm');
+const { GrowingChildAI } = require('./growing_child');
 
 // Base64 utils for Node.js (btoa/atob polyfill)
 const b64encode = (str) => Buffer.from(String(str), 'utf8').toString('base64');
@@ -24,6 +25,7 @@ const GPT_MAX_QUESTION_LENGTH = 300;
 const GPT_MAX_RESPONSE_LENGTH = 420;
 const MINECRAFT_PRIVATE_MESSAGE_LENGTH = 180;
 const RECONNECT_INTERVAL_MS = 15_000;
+const MINECRAFT_CONNECT_TIMEOUT_MS = 20_000;
 
 console.log(
   `[Gemini] ${GEMINI_API_KEY ? 'Configured' : 'Disabled: GEMINI_API_KEY is missing'}; ` +
@@ -161,6 +163,37 @@ function createDeleteDMButton() {
     .setStyle(ButtonStyle.Danger);
 }
 
+function createGrowingChildControls() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('growing_child_say')
+      .setLabel('Say something')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId('growing_child_status')
+      .setLabel('Status')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId('growing_child_reset')
+      .setLabel('Reset to level 0')
+      .setStyle(ButtonStyle.Danger),
+    createDeleteDMButton()
+  );
+}
+
+function createGrowingChildResetConfirmation() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('growing_child_reset_confirm')
+      .setLabel('Delete all learning')
+      .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId('growing_child_reset_cancel')
+      .setLabel('Cancel')
+      .setStyle(ButtonStyle.Secondary)
+  );
+}
+
 async function ensureDMDeleteButton(message) {
   if (
     !message ||
@@ -238,6 +271,7 @@ let obsidianStats = {
   desiredEnabled: false,
   sessionStartedAt: null
 };
+let growingChild = null;
 let obsidianStatsWriteQueue = Promise.resolve();
 let whisperConversations = new Map(); // username -> messageId
 let whisperChannels = new Map(); // key: `${ownerId}:${mcUsername}` -> channelId
@@ -760,6 +794,7 @@ const config = {
   username: process.env.MINECRAFT_USERNAME || 'WheatMagnate',
   auth: process.env.MINECRAFT_AUTH || 'microsoft',
   version: false, // Auto-detect version
+  closeTimeout: MINECRAFT_CONNECT_TIMEOUT_MS,
   session: loadedSession
 };
 
@@ -1196,6 +1231,100 @@ const discordClient = new Client({
 let discordLoginRetryTimer = null;
 let discordLoginInProgress = false;
 
+function formatGrowingChildStatus(status) {
+  const topWords = status.topWords.length > 0
+    ? status.topWords.map(entry => `${entry.word} (${entry.times_seen})`).join(', ')
+    : 'none yet';
+  const topics = status.topTopics.length > 0
+    ? status.topTopics.map(entry => entry.topic).join(', ')
+    : 'none yet';
+  return [
+    `Level: **${status.level}**`,
+    `Known words: **${status.knownWords}**`,
+    `Experience: **${status.xp} XP**`,
+    `Messages studied: **${status.messages}**`,
+    `Emotion: **${status.emotion}**`,
+    `Frequent words: ${topWords}`,
+    `Topics: ${topics}`
+  ].join('\n');
+}
+
+async function sendGrowingChildOwnerDM(payload) {
+  if (!DISCORD_OWNER_ID || !discordClient?.isReady()) return;
+  const owner = await discordClient.users.fetch(DISCORD_OWNER_ID);
+  if (!owner) return;
+  await owner.send({
+    embeds: [{
+      title: 'Growing Child AI',
+      description: payload.phrase,
+      color: 10181046,
+      fields: [{
+        name: 'Development',
+        value: `Level **${payload.level}** · ${payload.knownWords} words · ${payload.emotion}`
+      }],
+      footer: { text: `Reason: ${payload.reason}` },
+      timestamp: new Date()
+    }],
+    components: [createGrowingChildControls()]
+  });
+}
+
+async function sendGrowingChildChannelMessage(channelId, payload) {
+  const channel = await discordClient.channels.fetch(channelId);
+  if (!channel?.isTextBased()) return;
+  await channel.send({
+    embeds: [{
+      title: 'Growing Child AI',
+      description: payload.phrase,
+      color: 10181046,
+      footer: { text: `Level ${payload.level} · ${payload.emotion}` },
+      timestamp: new Date()
+    }]
+  });
+}
+
+async function sendGrowingChildStatusDM(note = null) {
+  if (!growingChild || !DISCORD_OWNER_ID || !discordClient?.isReady()) return;
+  const owner = await discordClient.users.fetch(DISCORD_OWNER_ID);
+  if (!owner) return;
+  const status = growingChild.getStatus();
+  await owner.send({
+    embeds: [{
+      title: 'Growing Child AI · Status',
+      description: `${note ? `${note}\n\n` : ''}${formatGrowingChildStatus(status)}`,
+      color: 10181046,
+      timestamp: new Date()
+    }],
+    components: [createGrowingChildControls()]
+  });
+}
+
+async function sendGrowingChildResetPrompt() {
+  if (!DISCORD_OWNER_ID || !discordClient?.isReady()) return;
+  const owner = await discordClient.users.fetch(DISCORD_OWNER_ID);
+  if (!owner) return;
+  await owner.send({
+    embeds: [{
+      title: 'Reset Growing Child AI?',
+      description: 'This permanently deletes its vocabulary, experience, topics, members, channels and emotional state.',
+      color: 16711680,
+      timestamp: new Date()
+    }],
+    components: [createGrowingChildResetConfirmation()]
+  });
+}
+
+function initializeGrowingChild() {
+  if (growingChild) return growingChild;
+  growingChild = new GrowingChildAI({
+    sendOwnerDM: sendGrowingChildOwnerDM,
+    sendChannelMessage: sendGrowingChildChannelMessage
+  });
+  growingChild.start();
+  console.log('[GrowingChild] Learning system started.');
+  return growingChild;
+}
+
 function loginDiscord() {
   if (!DISCORD_BOT_TOKEN || discordClient.isReady() || discordLoginInProgress) return;
 
@@ -1310,6 +1439,7 @@ if (DISCORD_BOT_TOKEN) {
       ignoredUsernames.length = 0;
       ignoredUsernames.push(...wl);
     }
+    initializeGrowingChild();
     if (!mineflayerStarted) {
       mineflayerStarted = true;
       createBot();
@@ -2270,6 +2400,33 @@ function resumeBot() {
   clearReconnectTimer();
   clearResumeTimer();
   if (!bot) createBot();
+}
+
+function safelyCloseMinecraftBot(targetBot, reason = 'Connection closed') {
+  if (!targetBot) return;
+  try {
+    if (typeof targetBot.quit === 'function' && targetBot.entity) {
+      targetBot.quit(reason);
+      return;
+    }
+    if (typeof targetBot.end === 'function') {
+      targetBot.end(reason);
+      return;
+    }
+    targetBot._client?.end?.(reason);
+  } catch (err) {
+    console.log(`[Bot] Failed to close connection cleanly: ${err.message}`);
+    try { targetBot._client?.socket?.destroy?.(); } catch (_) {}
+  }
+}
+
+function pauseMinecraftConnection(reason) {
+  const currentBot = bot;
+  bot = null;
+  clearIntervals();
+  farm.suspend();
+  safelyCloseMinecraftBot(currentBot, reason);
+  updateStatusMessage().catch(() => {});
 }
 
 function getKyivDateParts(date = new Date()) {
@@ -3315,10 +3472,47 @@ function createBot() {
   }
 
   lastTickTime = 0; // Reset TPS tracking for new bot
-  bot = mineflayer.createBot(config);
+  try {
+    bot = mineflayer.createBot(config);
+  } catch (err) {
+    bot = null;
+    console.log(`[x] Failed to create Minecraft connection: ${err.message}`);
+    if (shouldReconnect) scheduleReconnect(RECONNECT_INTERVAL_MS);
+    return;
+  }
   const createdBot = bot;
   let fireEmergencyTriggered = false;
+  let connectionFinalized = false;
+  let reachedLogin = false;
+  const connectionWatchdog = setTimeout(() => {
+    if (connectionFinalized || createdBot.entity) return;
+    console.log('[x] Minecraft connection attempt timed out before spawn.');
+    finalizeConnectionLoss('Connection attempt timed out');
+  }, MINECRAFT_CONNECT_TIMEOUT_MS + 5_000);
   bot.loadPlugin(pathfinder);
+
+  function finalizeConnectionLoss(reason) {
+    if (connectionFinalized) return;
+    connectionFinalized = true;
+    clearTimeout(connectionWatchdog);
+    if (bot !== createdBot) return;
+
+    clearIntervals();
+    farm.suspend();
+    bot = null;
+    safelyCloseMinecraftBot(createdBot, reason);
+    setDisconnectReason(buildDisconnectReason(reason, 'Connection lost'));
+
+    if (shouldReconnect) {
+      scheduleReconnect(
+        RECONNECT_INTERVAL_MS,
+        `[!] Connection failed. Trying again in ${RECONNECT_INTERVAL_MS / 1000} seconds...`
+      );
+    } else if (!resumeTimer) {
+      clearReconnectTimer();
+    }
+    updateStatusMessage().catch(() => {});
+  }
 
   function emergencyExitOnFire() {
     if (fireEmergencyTriggered || bot !== createdBot) return;
@@ -3345,6 +3539,7 @@ function createBot() {
   bot.on('entityUpdate', checkBotFireState);
 
   bot.on('login', async () => {
+    reachedLogin = true;
     if (bot && bot.username) {
       console.log(`[+] Logged in as ${bot.username}`);
     }
@@ -3354,6 +3549,7 @@ function createBot() {
   });
 
   bot.on('spawn', async () => {
+    clearTimeout(connectionWatchdog);
     console.log('[Bot] Spawned.');
     reconnectTimestamp = 0; // Reset reconnect countdown when bot spawns
     clearIntervals();
@@ -3441,44 +3637,23 @@ function createBot() {
 
 
   bot.on('end', (reason) => {
-    if (bot !== createdBot) return;
     const reasonStr = chatComponentToString(reason);
-    clearIntervals();
     syncWhitelistPlaytime([]).catch(err => console.error('[Playtime] Disconnect flush failed:', err.message));
-    farm.suspend(); // preserve desired farm state across reconnects
-
-    // Mark bot reference null immediately for status display
-    bot = null;
-
-    // Don't clear the global status update interval - let it continue
-    // so status updates even when disconnected
     const now = new Date();
     const kyivTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Kyiv' }));
     const hour = kyivTime.getHours();
     const minute = kyivTime.getMinutes();
     const isRestartTime = hour === 9 && minute >= 0 && minute <= 30;
 
-    if (reasonStr && reasonStr !== 'socketClosed') {
-      setDisconnectReason(buildDisconnectReason(reasonStr, isRestartTime ? 'Server restart/reload in progress' : 'Connection lost'));
-    } else if (!lastDisconnectReason) {
-      setDisconnectReason(isRestartTime ? 'Server restart/reload in progress' : 'Connection lost');
-    }
-
-    if (shouldReconnect) {
-      scheduleReconnect(
-        RECONNECT_INTERVAL_MS,
-        `[!] Disconnected. Trying to reconnect in ${RECONNECT_INTERVAL_MS / 1000} seconds...`
-      );
-      updateStatusMessage().catch(() => {});
-    } else {
-      console.log('[!] Manual pause. No reconnect.');
-      if (!resumeTimer) clearReconnectTimer();
-      // Status will be updated by interval
-    }
+    const fallback = isRestartTime ? 'Server restart/reload in progress' : 'Connection lost';
+    finalizeConnectionLoss(reasonStr && reasonStr !== 'socketClosed' ? reasonStr : fallback);
   });
 
   bot.on('error', (err) => {
     console.log(`[x] Error: ${err.message}`);
+    if (!reachedLogin || !createdBot.entity) {
+      finalizeConnectionLoss(err.message || 'Connection error');
+    }
   });
 
   bot.on('kicked', (reason) => {
@@ -3527,11 +3702,39 @@ function createBot() {
   bot.on('chat', async (username, message, translate, jsonMessage) => {
     username = resolveRelayedChatUsername(username, jsonMessage);
 
+    const childMatch = message.match(/^!child(?:\s+(say|status|reset))?$/i);
+    if (childMatch && username.toLowerCase() === 'bdiev_') {
+      const action = String(childMatch[1] || 'say').toLowerCase();
+      if (action === 'status') {
+        await sendGrowingChildStatusDM();
+        await sendPrivateMinecraftMessage(username, '[Child] Status sent to your Discord DM.');
+      } else if (action === 'reset') {
+        await sendGrowingChildResetPrompt();
+        await sendPrivateMinecraftMessage(username, '[Child] Reset confirmation sent to your Discord DM.');
+      } else {
+        await growingChild?.speak('minecraft command');
+        await sendPrivateMinecraftMessage(username, '[Child] Phrase sent to your Discord DM.');
+      }
+      return;
+    }
+
     const wmMatch = message.match(/^!wm(?:\s+([\s\S]*))?$/i);
     if (wmMatch) {
       await sendGameChatMessageToDiscord(username, message);
       await handleGptCommand(username, wmMatch[1] || '');
       return;
+    }
+
+    if (!message.startsWith('!') && !message.startsWith('/')) {
+      growingChild?.learn({
+        source: 'minecraft',
+        authorId: username.toLowerCase(),
+        authorName: username,
+        channelId: 'minecraft_public_chat',
+        channelName: 'Minecraft public chat',
+        text: message,
+        addressed: /\b(?:wheatmagnate|child|бот|ребенок|ребёнок)\b/iu.test(message)
+      });
     }
 
     // Handle commands from bdiev_
@@ -3901,6 +4104,65 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
   discordClient.on('interactionCreate', async (interaction) => {
     // Interaction logs reduced to minimize noise
 
+    if (interaction.isButton() && interaction.customId.startsWith('growing_child_')) {
+      if (interaction.user.id !== DISCORD_OWNER_ID) {
+        await interaction.reply({
+          content: 'Only the owner can control Growing Child AI.',
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+
+      if (interaction.customId === 'growing_child_say') {
+        await interaction.deferUpdate();
+        const payload = await growingChild?.speak('button');
+        if (!payload) await interaction.followUp({ content: 'Growing Child AI is unavailable.' });
+        return;
+      }
+      if (interaction.customId === 'growing_child_status') {
+        await interaction.deferUpdate();
+        await sendGrowingChildStatusDM();
+        return;
+      }
+      if (interaction.customId === 'growing_child_reset') {
+        await interaction.update({
+          embeds: [{
+            title: 'Reset Growing Child AI?',
+            description: 'This permanently deletes its vocabulary, experience, topics, members, channels and emotional state.',
+            color: 16711680,
+            timestamp: new Date()
+          }],
+          components: [createGrowingChildResetConfirmation()]
+        });
+        return;
+      }
+      if (interaction.customId === 'growing_child_reset_cancel') {
+        await interaction.update({
+          embeds: [{
+            title: 'Growing Child AI',
+            description: 'Reset cancelled.',
+            color: 10181046,
+            timestamp: new Date()
+          }],
+          components: [createGrowingChildControls()]
+        });
+        return;
+      }
+      if (interaction.customId === 'growing_child_reset_confirm') {
+        const status = growingChild.reset();
+        await interaction.update({
+          embeds: [{
+            title: 'Growing Child AI · Reset complete',
+            description: `Level **0** · Known words **${status.knownWords}** · Experience **${status.xp} XP**`,
+            color: 65280,
+            timestamp: new Date()
+          }],
+          components: [createGrowingChildControls()]
+        });
+        return;
+      }
+    }
+
     if (interaction.isChatInputCommand() && interaction.commandName === 'ofstats') {
       if (interaction.user.id !== DISCORD_OWNER_ID) {
         const reply = { content: 'Only the owner can view obsidian farm statistics.' };
@@ -4239,14 +4501,14 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       if (interaction.customId === 'pause_resume_button') {
         await interaction.deferUpdate(); // Defer update to avoid timeout
         lastCommandUser = interaction.user.tag;
-        if (shouldReconnect && bot) {
-          // Currently running, pause it
+        if (shouldReconnect) {
+          // Pause an active connection or an in-progress reconnect attempt.
           console.log(`[Button] pause by ${interaction.user.tag}`);
           shouldReconnect = false;
           clearReconnectTimer();
           clearResumeTimer();
           setDisconnectReason(`Paused by ${lastCommandUser}`);
-          bot.quit('Pause until resume');
+          pauseMinecraftConnection('Pause until resume');
         } else {
           // Currently paused, resume it
           console.log(`[Button] resume by ${interaction.user.tag}`);
@@ -5716,6 +5978,40 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
   discordClient.on('messageCreate', async message => {
     if (message.author.bot) return;
 
+    const trimmedContent = message.content.trim();
+    if (
+      message.guild &&
+      trimmedContent &&
+      !trimmedContent.startsWith('!') &&
+      !trimmedContent.startsWith('/')
+    ) {
+      growingChild?.learn({
+        source: 'discord',
+        authorId: message.author.id,
+        authorName: message.member?.displayName || message.author.username,
+        channelId: message.channel.id,
+        channelName: message.channel.name || 'Discord channel',
+        text: trimmedContent,
+        addressed:
+          Boolean(discordClient.user && message.mentions.users.has(discordClient.user.id)) ||
+          /\b(?:wheatmagnate|child|бот|ребенок|ребёнок)\b/iu.test(trimmedContent)
+      });
+    }
+
+    const childMatch = trimmedContent.match(/^!child(?:\s+(say|status|reset))?$/i);
+    if (childMatch && message.author.id === DISCORD_OWNER_ID) {
+      const action = String(childMatch[1] || 'say').toLowerCase();
+      if (action === 'status') {
+        await sendGrowingChildStatusDM();
+      } else if (action === 'reset') {
+        await sendGrowingChildResetPrompt();
+      } else {
+        await growingChild?.speak('discord command');
+      }
+      if (message.guild) await message.delete().catch(() => {});
+      return;
+    }
+
     if (!message.guild) {
       if (message.author.id !== DISCORD_OWNER_ID) return;
 
@@ -5914,18 +6210,19 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           components: createStatusButtons()
         }).catch(console.error);
       }
-      bot.quit('Restart command');
+      pauseMinecraftConnection('Restart command');
+      shouldReconnect = true;
+      createBot();
     }
 
     if (message.content === '!pause') {
       console.log(`[Command] pause until resume by ${message.author.tag} via Discord`);
       lastCommandUser = message.author.tag;
-      const botToQuit = bot;
       shouldReconnect = false;
       clearReconnectTimer();
       clearResumeTimer();
       setDisconnectReason(`Paused by ${lastCommandUser}`);
-      if (botToQuit) botToQuit.quit('Pause until resume');
+      pauseMinecraftConnection('Pause until resume');
     }
 
     const pauseMatch = message.content.match(/^!pause\s+(\d+)$/);
@@ -5936,9 +6233,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         sendDiscordNotification(`Command: !pause ${minutes} by \`${message.author.tag}\` via Discord`, 16776960);
         shouldReconnect = false;
         clearReconnectTimer();
-        const botToQuit = bot;
         setDisconnectReason(`Paused for ${minutes}m by ${message.author.tag}`);
-        if (botToQuit) botToQuit.quit(`Paused ${minutes}m`);
+        pauseMinecraftConnection(`Paused ${minutes}m`);
         scheduleResume(minutes * 60 * 1000, `[Bot] Paused for ${minutes} minutes.`);
         await message.reply(`Bot paused for ${minutes} minutes.`);
       }
