@@ -6,9 +6,10 @@ const { LearningSystem } = require('./learning');
 const { EmotionSystem } = require('./emotion');
 const { MessageGenerator } = require('./generator');
 const { GrowingChildScheduler } = require('./scheduler');
+const { sanitizePublicPhrase } = require('./safety');
 
 class GrowingChildAI {
-  constructor({ sendOwnerDM, sendChannelMessage }) {
+  constructor({ sendOwnerDM, sendChannelMessage, sendMinecraftMessage }) {
     this.config = loadConfig();
     this.database = new GrowingChildDatabase(this.config.databasePath);
     this.learning = new LearningSystem(this.database, this.config);
@@ -16,6 +17,7 @@ class GrowingChildAI {
     this.generator = new MessageGenerator(this.database, this.emotions);
     this.sendOwnerDM = sendOwnerDM;
     this.sendChannelMessage = sendChannelMessage;
+    this.sendMinecraftMessage = sendMinecraftMessage;
     this.lastReactiveSpeechAt = 0;
     this.pendingReactiveTimer = null;
     const savedEnabled = this.database.getState('enabled');
@@ -53,6 +55,7 @@ class GrowingChildAI {
 
   maybeReact(context) {
     if (!this.config.reactiveSpeechEnabled || this.pendingReactiveTimer) return;
+    if (context.source !== 'minecraft' || !context.addressed) return;
     const cooldownMs = this.config.reactiveCooldownMinutes * 60_000;
     if (Date.now() - this.lastReactiveSpeechAt < cooldownMs) return;
 
@@ -70,7 +73,7 @@ class GrowingChildAI {
       this.pendingReactiveTimer = null;
       this.lastReactiveSpeechAt = Date.now();
       try {
-        await this.speak('reaction', contextWords);
+        await this.speak('reaction', contextWords, 'minecraft');
       } catch (err) {
         console.error('[GrowingChild] Reactive speech failed:', err.message);
       }
@@ -78,11 +81,21 @@ class GrowingChildAI {
     this.pendingReactiveTimer.unref?.();
   }
 
-  async speak(reason = 'manual', contextWords = []) {
+  async speak(reason = 'manual', contextWords = [], target = null) {
     if (!this.enabled) return null;
-    const phrase = reason === 'reaction'
+    const generatedPhrase = reason === 'reaction'
       ? this.generator.generateReply(contextWords)
       : this.generator.generate();
+    const publicTarget =
+      target === 'minecraft' ||
+      reason === 'random' ||
+      reason === 'slash command' ||
+      reason === 'button';
+    const phrase = publicTarget ? sanitizePublicPhrase(generatedPhrase) : generatedPhrase;
+    if (!phrase) {
+      console.log('[GrowingChild] Blocked unsafe public phrase.');
+      return null;
+    }
     const stats = this.database.getStats();
     const payload = {
       phrase,
@@ -92,6 +105,13 @@ class GrowingChildAI {
     };
 
     if (
+      publicTarget &&
+      this.config.minecraftPublicSpeechEnabled &&
+      typeof this.sendMinecraftMessage === 'function'
+    ) {
+      const sent = await this.sendMinecraftMessage(payload);
+      if (!sent) return null;
+    } else if (
       !this.config.ownerDmOnly &&
       this.config.dailyMessageChannelId &&
       typeof this.sendChannelMessage === 'function'

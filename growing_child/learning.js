@@ -26,7 +26,7 @@ class LearningSystem {
       .toLocaleLowerCase();
     return (cleaned.match(WORD_RE) || []).filter(word =>
       word.length >= this.config.minimumWordLength &&
-      !/^\d+$/.test(word)
+      !/\d/u.test(word)
     );
   }
 

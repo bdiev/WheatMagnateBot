@@ -7,6 +7,7 @@ const { GrowingChildDatabase } = require('./database');
 const { LearningSystem } = require('./learning');
 const { EmotionSystem } = require('./emotion');
 const { MessageGenerator } = require('./generator');
+const { sanitizePublicPhrase } = require('./safety');
 
 const filename = path.join(os.tmpdir(), `growing-child-${process.pid}.sqlite`);
 const cleanup = () => {
@@ -36,7 +37,7 @@ try {
     authorName: 'Tester',
     channelId: 'test',
     channelName: 'Test',
-    text: 'hello obsidian farm doors important rockets',
+    text: 'hello obsidian farm doors important rockets x3402889 68 -672222',
     addressed: true
   });
   emotions.update({ newWords: result.newWords, addressed: true });
@@ -51,6 +52,21 @@ try {
   }
   if (!replyWords.every(word => known.has(word))) {
     throw new Error(`Reply generator used an unknown word: ${reply}`);
+  }
+  if (known.has('x3402889') || known.has('68') || known.has('672222')) {
+    throw new Error('Coordinate-like tokens entered the vocabulary.');
+  }
+  if (sanitizePublicPhrase('hello 3402889 farm') !== null) {
+    throw new Error('Coordinate safety filter accepted digits.');
+  }
+  if (sanitizePublicPhrase('/msg hello') !== null) {
+    throw new Error('Coordinate safety filter accepted a command.');
+  }
+  if (sanitizePublicPhrase('minus three hundred') !== null) {
+    throw new Error('Coordinate safety filter accepted spelled-out numbers.');
+  }
+  if (sanitizePublicPhrase('hello farm?') !== 'hello farm?') {
+    throw new Error('Coordinate safety filter rejected a safe phrase.');
   }
 
   database.reset();

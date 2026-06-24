@@ -1,5 +1,7 @@
 'use strict';
 
+const { isSafePublicWord } = require('./safety');
+
 function pick(items) {
   return items[Math.floor(Math.random() * items.length)];
 }
@@ -21,11 +23,13 @@ class MessageGenerator {
 
   generate() {
     const stats = this.database.getStats();
-    const words = this.database.getWords({ limit: 120 });
+    const words = this.database.getWords({ limit: 200 }).filter(row => isSafePublicWord(row.word));
     if (words.length === 0) return '...';
 
-    const recent = this.database.getWords({ limit: 20, recent: true });
-    const topics = this.database.getTopics(20);
+    const recent = this.database.getWords({ limit: 40, recent: true })
+      .filter(row => isSafePublicWord(row.word));
+    const topics = this.database.getTopics(40)
+      .filter(row => isSafePublicWord(row.topic));
     const emotion = this.emotionSystem.get();
     const pool = weightedPool(words);
     const recentPool = weightedPool(recent);
@@ -54,7 +58,8 @@ class MessageGenerator {
 
   generateReply(contextWords = []) {
     const stats = this.database.getStats();
-    const knownRows = this.database.getWords({ limit: 160 });
+    const knownRows = this.database.getWords({ limit: 250 })
+      .filter(row => isSafePublicWord(row.word));
     if (knownRows.length === 0) return '...';
 
     const known = new Set(knownRows.map(row => row.word));

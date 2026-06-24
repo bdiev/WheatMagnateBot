@@ -6,6 +6,7 @@ const { Pool } = require('pg');
 const { pathfinder } = require('mineflayer-pathfinder');
 const farm = require('./obsidian_farm');
 const { GrowingChildAI } = require('./growing_child');
+const { sanitizePublicPhrase } = require('./growing_child/safety');
 
 // Base64 utils for Node.js (btoa/atob polyfill)
 const b64encode = (str) => Buffer.from(String(str), 'utf8').toString('base64');
@@ -1280,6 +1281,16 @@ async function sendGrowingChildChannelMessage(channelId, payload) {
   });
 }
 
+async function sendGrowingChildMinecraftMessage(payload) {
+  if (!bot?.entity || typeof bot.chat !== 'function') return false;
+  const safePhrase = sanitizePublicPhrase(payload.phrase);
+  if (!safePhrase) {
+    console.log('[GrowingChild] Minecraft message blocked by coordinate safety filter.');
+    return false;
+  }
+  return sendMinecraftChat(safePhrase);
+}
+
 async function sendGrowingChildStatusDM(note = null) {
   if (!growingChild || !DISCORD_OWNER_ID || !discordClient?.isReady()) return;
   const owner = await discordClient.users.fetch(DISCORD_OWNER_ID);
@@ -1315,7 +1326,8 @@ function initializeGrowingChild() {
   if (growingChild) return growingChild;
   growingChild = new GrowingChildAI({
     sendOwnerDM: sendGrowingChildOwnerDM,
-    sendChannelMessage: sendGrowingChildChannelMessage
+    sendChannelMessage: sendGrowingChildChannelMessage,
+    sendMinecraftMessage: sendGrowingChildMinecraftMessage
   });
   growingChild.start();
   console.log('[GrowingChild] Learning system started.');
@@ -3785,7 +3797,11 @@ function createBot() {
       return;
     }
 
-    if (!message.startsWith('!') && !message.startsWith('/')) {
+    if (
+      username.toLowerCase() !== String(bot?.username || '').toLowerCase() &&
+      !message.startsWith('!') &&
+      !message.startsWith('/')
+    ) {
       growingChild?.learn({
         source: 'minecraft',
         authorId: username.toLowerCase(),
@@ -3793,7 +3809,8 @@ function createBot() {
         channelId: 'minecraft_public_chat',
         channelName: 'Minecraft public chat',
         text: message,
-        addressed: /\b(?:wheatmagnate|child|бот|ребенок|ребёнок)\b/iu.test(message)
+        addressed: /\b(?:wheatmagnate|child|ребенок|ребёнок)\b/iu.test(message) ||
+          /(?:^|\s)бот(?:\s|$|[?!.,])/iu.test(message)
       });
     }
 
@@ -4175,9 +4192,12 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
       const action = interaction.options.getSubcommand();
       const childEnabled = growingChild?.getStatus().enabled;
+      const minecraftAvailable = Boolean(bot?.entity && typeof bot.chat === 'function');
       const replyOptions = {
         content: action === 'say' && !childEnabled
           ? 'Growing Child AI is disabled. Use `/child status` and press Enable.'
+          : action === 'say' && !minecraftAvailable
+            ? 'Minecraft bot is offline, so the phrase was not sent.'
           : 'Done.'
       };
       if (interaction.guildId) replyOptions.flags = MessageFlags.Ephemeral;
@@ -4187,7 +4207,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         await sendGrowingChildStatusDM();
       } else if (action === 'reset') {
         await sendGrowingChildResetPrompt();
-      } else {
+      } else if (minecraftAvailable) {
         await growingChild?.speak('slash command');
       }
 
