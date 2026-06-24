@@ -24,7 +24,14 @@ const STATUS_EMOJIS = {
   food: '<:Food_Full:1519301206457978920>',
   health: '<:Heart_Full:1519301207493968082>',
   whitelist: '<:Writable_Book:1519301216675430541>',
-  obsidian: '<:Netherite_Pickaxe:1519301211000541224>'
+  obsidian: '<:Netherite_Pickaxe:1519301211000541224>',
+  pause: '<:Map_X:1519305980263796767>',
+  resume: '<:Confirm:1519301205346619392>',
+  seen: '<:Spyglass:1519309308855189626>',
+  playtime: '<:Clock:1519301203966824491>',
+  mentions: '<:Bell:1519301202754535424>',
+  drop: '<:pink_bundle:1519309307596767373>',
+  chatSettings: '<:Crafting_Table:1519309305558601900>'
 };
 const STATUS_BUTTON_EMOJIS = {
   pause: { name: 'Map_X', id: '1519305980263796767' },
@@ -133,7 +140,7 @@ if (process.env.DATABASE_URL) {
 // Add a startup summary
 console.log('=== DATABASE STATUS ===');
 if (pool) {
-  console.log('[DB] ✅ Database pool created');
+  console.log('[DB] Database pool created');
   console.log('[DB] 🔄 Waiting for connection...');
 } else {
   console.log('[DB] ❌ Database disabled - no connection URL');
@@ -1093,7 +1100,7 @@ async function initDatabase() {
           : null
       };
     }
-    console.log('[DB] ✅ Tables initialized successfully.');
+    console.log('[DB] Tables initialized successfully.');
 
     console.log('[DB] 📖 Loading ignored users from database...');
     ignoredChatUsernames = await loadIgnoredChatUsernames();
@@ -1202,7 +1209,7 @@ if (DISCORD_BOT_TOKEN) {
       clearTimeout(discordLoginRetryTimer);
       discordLoginRetryTimer = null;
     }
-    console.log(`[Discord] ✅ Bot logged in as ${discordClient.user.tag}`);
+    console.log(`[Discord] Bot logged in as ${discordClient.user.tag}`);
     console.log(`[Discord] Bot ID: ${discordClient.user.id}`);
     console.log(`[Discord] Guilds: ${discordClient.guilds.cache.size}`);
 
@@ -1216,7 +1223,7 @@ if (DISCORD_BOT_TOKEN) {
     // Check if we can see the configured channel
     try {
       const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
-      console.log(`[Discord] ✅ Channel found: ${channel.name} (${channel.id})`);
+      console.log(`[Discord] Channel found: ${channel.name} (${channel.id})`);
       console.log(`[Discord] Channel type: ${channel.type}`);
       console.log(`[Discord] Bot permissions in channel: ${channel.permissionsFor(discordClient.user).toArray().join(', ')}`);
     } catch (channelErr) {
@@ -1276,6 +1283,9 @@ if (DISCORD_BOT_TOKEN) {
             const messagesToDelete = messages.filter(msg => {
               if (msg.id === statusMessage?.id) return false;
               if (excludedMessageIds.includes(msg.id)) return false;
+              // Interactive panels have their own exact two-minute lifetime.
+              // The periodic channel cleaner must not delete them early.
+              if (temporaryInteractionMessages.has(msg.id)) return false;
               if (msg.createdTimestamp < twoWeeksAgo) return false; // cannot bulk delete older than 14 days
               const desc = msg.embeds[0]?.description || '';
               const lowerDesc = desc.toLowerCase();
@@ -1858,6 +1868,19 @@ function formatPlaytime(value) {
   return parts.join(' ');
 }
 
+function formatPlaytimeLeaderboard(players) {
+  const visiblePlayers = players.slice(0, 50);
+  const rankWidth = Math.max(1, String(visiblePlayers.length).length);
+  const lines = visiblePlayers.map((player, index) => {
+    const rank = String(index + 1).padStart(rankWidth, '0');
+    return `\`${rank}.\` ${getPlayerHeadEmoji(player.username)} **${player.username}** — \`${formatPlaytime(player.total_seconds)}\``;
+  });
+  if (players.length > visiblePlayers.length) {
+    lines.push(`…and ${players.length - visiblePlayers.length} more`);
+  }
+  return lines.length > 0 ? lines.join('\n') : 'No whitelist players found.';
+}
+
 async function buildWhitelistPlaytimeMessage() {
   const playtimeData = await getWhitelistPlaytime();
   if (playtimeData.error) {
@@ -1873,24 +1896,11 @@ async function buildWhitelistPlaytimeMessage() {
   }
 
   const players = playtimeData.players || [];
-  const visiblePlayers = players.slice(0, 50);
-  const rankWidth = Math.max(1, String(visiblePlayers.length).length);
-  const lines = visiblePlayers.map((player, index) => {
-    const rank = String(index + 1).padStart(rankWidth);
-    const username = player.username.slice(0, 16).padEnd(16);
-    return `${rank}  ${username}  ${formatPlaytime(player.total_seconds)}`;
-  });
-  if (players.length > visiblePlayers.length) {
-    lines.push(`...and ${players.length - visiblePlayers.length} more`);
-  }
-  const header = `${'#'.padStart(rankWidth)}  ${'PLAYER'.padEnd(16)}  PLAYTIME`;
-  const description = lines.length > 0
-    ? `\`\`\`text\n${header}\n${'-'.repeat(header.length)}\n${lines.join('\n')}\n\`\`\``
-    : 'No whitelist players found.';
+  const description = formatPlaytimeLeaderboard(players);
 
   return {
     embeds: [{
-      title: `вЏ±пёЏ Whitelist Playtime В· ${players.length} players`,
+      title: `${STATUS_EMOJIS.playtime} Whitelist Playtime · ${players.length} players`,
       description,
       color: 3447003,
       timestamp: new Date(),
@@ -2649,7 +2659,7 @@ function getStatusDescription() {
 
   if (!bot || !bot.entity) {
     if (!shouldReconnect) {
-      return lastDisconnectReason ? `⏸️ ${lastDisconnectReason}` : '⏸️ Bot paused';
+      return lastDisconnectReason ? `${STATUS_EMOJIS.pause} ${lastDisconnectReason}` : `${STATUS_EMOJIS.pause} Bot paused`;
     }
     // Show countdown if reconnecting
     if (reconnectTimestamp > 0) {
@@ -3101,7 +3111,7 @@ function createBot() {
             ignoredUsernames.length = 0;
             ignoredUsernames.push(...newWhitelist);
             console.log(`[Command] Added ${targetUsername} to whitelist by ${username}`);
-            sendDiscordNotification(`✅ Added ${targetUsername} to whitelist. Requested by ${username} (in-game)`, 65280);
+            sendDiscordNotification(`${STATUS_EMOJIS.connected} Added ${targetUsername} to whitelist. Requested by ${username} (in-game)`, 65280);
           } catch (err) {
             console.error('[Command] Allow error:', err.message);
             sendDiscordNotification(`Failed to add ${targetUsername} to whitelist: \`${err.message}\``, 16711680);
@@ -3124,7 +3134,7 @@ function createBot() {
             // Reload ignored
             ignoredChatUsernames = await loadIgnoredChatUsernames();
             console.log(`[Command] Added ${targetUsername} to ignore list by ${username}`);
-            sendDiscordNotification(`✅ Added ${targetUsername} to ignore list. Requested by ${username} (in-game)`, 65280);
+            sendDiscordNotification(`${STATUS_EMOJIS.connected} Added ${targetUsername} to ignore list. Requested by ${username} (in-game)`, 65280);
           } catch (err) {
             console.error('[Command] Ignore error:', err.message);
             sendDiscordNotification(`Failed to add ${targetUsername} to ignore list: \`${err.message}\``, 16711680);
@@ -3148,7 +3158,7 @@ function createBot() {
               // Reload ignored
               ignoredChatUsernames = await loadIgnoredChatUsernames();
               console.log(`[Command] Removed ${targetUsername} from ignore list by ${username}`);
-              sendDiscordNotification(`✅ Removed ${targetUsername} from ignore list. Requested by ${username} (in-game)`, 65280);
+              sendDiscordNotification(`${STATUS_EMOJIS.connected} Removed ${targetUsername} from ignore list. Requested by ${username} (in-game)`, 65280);
             } else {
               sendDiscordNotification(`${targetUsername} is not in ignore list.`, 16776960);
             }
@@ -3285,7 +3295,7 @@ function createBot() {
 
     const whisperKey = `WHISPER:${username}:${cleanedWhisper}`;
     recentWhispers.set(whisperKey, Date.now());
-    debugLog(`[Whisper] ✅ MARKED whisper key: ${whisperKey}`);
+    debugLog(`[Whisper] MARKED whisper key: ${whisperKey}`);
 
     // Cancel any pending public chat send for this message
     const pendingKey = `CHAT:${username}:${cleanedWhisper}`;
@@ -3625,8 +3635,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             await interaction.editReply({
               content: changed
                 ? (reconnectMode === 'immediate'
-                    ? `✅ ${selectedUsername} added to whitelist. Alert removed, bot is reconnecting now.`
-                    : `✅ ${selectedUsername} added to whitelist. Alert removed, bot will reconnect automatically.`)
+                    ? `${STATUS_EMOJIS.connected} ${selectedUsername} added to whitelist. Alert removed, bot is reconnecting now.`
+                    : `${STATUS_EMOJIS.connected} ${selectedUsername} added to whitelist. Alert removed, bot will reconnect automatically.`)
                 : `ℹ️ ${selectedUsername} is already in whitelist. Alert removed.`
             });
             setTimeout(() => interaction.deleteReply().catch(() => {}), 10_000);
@@ -3734,7 +3744,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             new StringSelectMenuOptionBuilder()
               .setLabel('15 minutes')
               .setValue('15')
-              .setEmoji('⏱️'),
+              .setEmoji(STATUS_BUTTON_EMOJIS.playtime),
             new StringSelectMenuOptionBuilder()
               .setLabel('30 minutes')
               .setValue('30')
@@ -3822,7 +3832,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           playerList.push(`🛡️ **Whitelist:** ${whitelistOnline.join(', ')}`);
         }
         if (otherPlayers.length > 0) {
-          playerList.push(`👥 **Others:** ${otherPlayers.join(', ')}`);
+          playerList.push(`${STATUS_EMOJIS.players} **Others:** ${otherPlayers.join(', ')}`);
         }
         const description = playerList.length > 0 ? playerList.join('\n\n') : 'No players online.';
 
@@ -3864,24 +3874,11 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         }
 
         const players = playtimeData.players || [];
-        const visiblePlayers = players.slice(0, 50);
-        const rankWidth = Math.max(1, String(visiblePlayers.length).length);
-        const lines = visiblePlayers.map((player, index) => {
-          const rank = String(index + 1).padStart(rankWidth);
-          const username = player.username.slice(0, 16).padEnd(16);
-          return `${rank}  ${username}  ${formatPlaytime(player.total_seconds)}`;
-        });
-        if (players.length > visiblePlayers.length) {
-          lines.push(`...and ${players.length - visiblePlayers.length} more`);
-        }
-        const header = `${'#'.padStart(rankWidth)}  ${'PLAYER'.padEnd(16)}  PLAYTIME`;
-        const description = lines.length > 0
-          ? `\`\`\`text\n${header}\n${'-'.repeat(header.length)}\n${lines.join('\n')}\n\`\`\``
-          : 'No whitelist players found.';
+        const description = formatPlaytimeLeaderboard(players);
 
         await interaction.editReply({
           embeds: [{
-            title: `⏱️ Whitelist Playtime · ${players.length} players`,
+            title: `${STATUS_EMOJIS.playtime} Whitelist Playtime · ${players.length} players`,
             description,
             color: 3447003,
             timestamp: new Date(),
@@ -4116,7 +4113,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         if (activityData.error) {
           await interaction.editReply({
             embeds: [{
-              title: '🕒 Player Activity',
+              title: `${STATUS_EMOJIS.seen} Player Activity`,
               description: `❌ Error: ${activityData.error}`,
               color: 16711680,
               timestamp: new Date()
@@ -4129,7 +4126,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         if (!activityData.players || activityData.players.length === 0) {
           await interaction.editReply({
             embeds: [{
-              title: '🕒 Player Activity',
+              title: `${STATUS_EMOJIS.seen} Player Activity`,
               description: 'No whitelist players found.',
               color: 3447003,
               timestamp: new Date()
@@ -4180,7 +4177,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         // First send the reply without the Remove button to obtain the message ID
         await interaction.editReply({
           embeds: [{
-            title: `🕒 Whitelist Activity (${activityData.players.length} players)`,
+            title: `${STATUS_EMOJIS.seen} Whitelist Activity (${activityData.players.length} players)`,
             description,
             color: 3447003,
             timestamp: new Date()
@@ -4191,7 +4188,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         const activityMessage = await interaction.fetchReply();
         await activityMessage.edit({
           embeds: [{
-            title: `🕒 Whitelist Activity (${activityData.players.length} players)`,
+            title: `${STATUS_EMOJIS.seen} Whitelist Activity (${activityData.players.length} players)`,
             description,
             color: 3447003,
             timestamp: new Date()
@@ -4240,7 +4237,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
             await activityMessage.edit({
               embeds: [{
-                title: `🕒 Whitelist Activity (${updatedData.players.length} players)`,
+                title: `${STATUS_EMOJIS.seen} Whitelist Activity (${updatedData.players.length} players)`,
                 description: updatedDescription,
                 color: 3447003,
                 timestamp: new Date(),
@@ -4329,7 +4326,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
         await interaction.editReply({
           embeds: [{
-            title: '🔔 Mention Keywords',
+            title: `${STATUS_EMOJIS.mentions} Mention Keywords`,
             description,
             color: 3447003,
             timestamp: new Date()
@@ -4462,7 +4459,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       if (result.success) {
         await interaction.editReply({
           embeds: [{
-            title: '✅ Keyword Added',
+            title: `${STATUS_EMOJIS.connected} Keyword Added`,
             description: `You will now be mentioned when someone says "\`${keyword}\`" in game chat.`,
             color: 65280,
             timestamp: new Date()
@@ -4475,7 +4472,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             try {
               await interaction.editReply({
                 embeds: [{
-                  description: '✅ Keyword added (hidden).',
+                  description: `${STATUS_EMOJIS.connected} Keyword added (hidden).`,
                   color: 65280,
                   timestamp: new Date()
                 }]
@@ -4502,7 +4499,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         if (result.removed) {
           await interaction.editReply({
             embeds: [{
-              title: '✅ Keyword Removed',
+              title: `${STATUS_EMOJIS.connected} Keyword Removed`,
               description: `You will no longer be mentioned for "\`${keyword}\`".`,
               color: 65280,
               timestamp: new Date()
@@ -4515,7 +4512,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
               try {
                 await interaction.editReply({
                   embeds: [{
-                    description: '✅ Keyword removed (hidden).',
+                    description: `${STATUS_EMOJIS.connected} Keyword removed (hidden).`,
                     color: 65280,
                     timestamp: new Date()
                   }]
@@ -4552,7 +4549,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           if (statusChannel && statusChannel.isTextBased()) {
             await statusChannel.send({
               embeds: [{
-                description: `✅ **${interaction.user.username}** sent:\n\`${message}\``,
+                description: `${STATUS_EMOJIS.connected} **${interaction.user.username}** sent:\n\`${message}\``,
                 color: 65280,
                 timestamp: new Date(),
                 footer: {
@@ -4749,7 +4746,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       scheduleWhisperCleanup(channelId, ttlMs);
 
       await interaction.editReply({ 
-        content: `✅ Auto-delete time set to ${minutes} minute${minutes !== 1 ? 's' : ''}. This will apply to new messages in this dialog.`,
+        content: `${STATUS_EMOJIS.connected} Auto-delete time set to ${minutes} minute${minutes !== 1 ? 's' : ''}. This will apply to new messages in this dialog.`,
         components: []
       });
       setTimeout(() => interaction.deleteReply().catch(() => {}), 5000);
@@ -4865,8 +4862,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
         await interaction.editReply({
           embeds: [{
-            title: '🔔 Mention Keywords',
-            description: `✅ Removed keyword "\`${keyword}\`"\n\n${description}`,
+            title: `${STATUS_EMOJIS.mentions} Mention Keywords`,
+            description: `${STATUS_EMOJIS.connected} Removed keyword "\`${keyword}\`"\n\n${description}`,
             color: 65280,
             timestamp: new Date()
           }],
@@ -4938,7 +4935,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         await interaction.editReply({
           embeds: [{
             title: 'Chat Settings',
-            description: `✅ Added ${selectedUsername} to ignore list.\n\nManage ignored players for chat messages.`,
+            description: `${STATUS_EMOJIS.connected} Added ${selectedUsername} to ignore list.\n\nManage ignored players for chat messages.`,
             color: 65280,
             timestamp: new Date()
           }],
@@ -5013,7 +5010,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           await interaction.editReply({
             embeds: [{
               title: 'Chat Settings',
-              description: `✅ Removed ${selectedUsername} from ignore list.\n\nManage ignored players for chat messages.`,
+              description: `${STATUS_EMOJIS.connected} Removed ${selectedUsername} from ignore list.\n\nManage ignored players for chat messages.`,
               color: 65280,
               timestamp: new Date()
             }],
@@ -5122,7 +5119,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           const addCandidates = allOnlinePlayers.filter(u => !whitelist.some(n => n.toLowerCase() === u.toLowerCase()));
 
           await interaction.editReply(
-            buildWhitelistManagementView(whitelist, addCandidates, `✅ Removed ${selectedUsername} from whitelist.`, 65280)
+            buildWhitelistManagementView(whitelist, addCandidates, `${STATUS_EMOJIS.connected} Removed ${selectedUsername} from whitelist.`, 65280)
           );
 
           // Close the Whitelist Management message shortly after the action
@@ -5215,7 +5212,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       await interaction.editReply({
         embeds: [{
           description: started
-            ? `✅ Obsidian farm started at \`(${cf.x}, ${cf.y}, ${cf.z})\`. Cauldron radius: ${cf.maxCauldronDist} blocks.`
+            ? `${STATUS_EMOJIS.connected} Obsidian farm started at \`(${cf.x}, ${cf.y}, ${cf.z})\`. Cauldron radius: ${cf.maxCauldronDist} blocks.`
             : `⏳ Obsidian farm start is queued for \`(${cf.x}, ${cf.y}, ${cf.z})\`. The bot will keep checking the protection lever and start automatically as soon as it is OFF.`,
           color: started ? 65280 : 16776960,
           timestamp: new Date()
@@ -5236,7 +5233,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           buildWhitelistManagementView(
             whitelist,
             addCandidates,
-            changed ? `✅ Added ${selectedUsername} to whitelist.` : `${selectedUsername} is already in whitelist.`,
+            changed ? `${STATUS_EMOJIS.connected} Added ${selectedUsername} to whitelist.` : `${selectedUsername} is already in whitelist.`,
             changed ? 65280 : 16776960
           )
         );
@@ -5387,7 +5384,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           }
           await message.channel.send({
             embeds: [{
-              description: `✅ **${message.author.username}** sent:\n\`${sentText}\``,
+              description: `${STATUS_EMOJIS.connected} **${message.author.username}** sent:\n\`${sentText}\``,
               color: 65280,
               timestamp: new Date(),
               footer: {
@@ -5538,7 +5535,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         await message.reply({
           embeds: [{
             title: 'Whitelist',
-            description: success ? `✅ Added ${targetUsername} to whitelist (${source}).` : `No changes for ${targetUsername}.`,
+            description: success ? `${STATUS_EMOJIS.connected} Added ${targetUsername} to whitelist (${source}).` : `No changes for ${targetUsername}.`,
             color: success ? 65280 : 16776960,
             timestamp: new Date()
           }]
@@ -5592,7 +5589,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         // Reload ignored
         ignoredChatUsernames = await loadIgnoredChatUsernames();
         console.log(`[Command] Added ${targetUsername} to ignore list by ${message.author.tag}`);
-        await message.reply(`✅ Added ${targetUsername} to ignore list.`);
+        await message.reply(`${STATUS_EMOJIS.connected} Added ${targetUsername} to ignore list.`);
       } catch (err) {
         console.error('[Command] Ignore error:', err.message);
         await message.reply(`Failed to add ${targetUsername} to ignore list: ${err.message}`);
@@ -5613,7 +5610,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           // Reload ignored
           ignoredChatUsernames = await loadIgnoredChatUsernames();
           console.log(`[Command] Removed ${targetUsername} from ignore list by ${message.author.tag}`);
-          await message.reply(`✅ Removed ${targetUsername} from ignore list.`);
+          await message.reply(`${STATUS_EMOJIS.connected} Removed ${targetUsername} from ignore list.`);
         } else {
           await message.reply(`${targetUsername} is not in ignore list.`);
         }
@@ -5661,7 +5658,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       if (result.success) {
         await message.reply({
           embeds: [{
-            title: '✅ Keyword Added',
+            title: `${STATUS_EMOJIS.connected} Keyword Added`,
             description: `You will now be mentioned when someone says "${keyword}" in game chat.`,
             color: 65280,
             timestamp: new Date()
@@ -5683,7 +5680,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         if (result.removed) {
           await message.reply({
             embeds: [{
-              title: '✅ Keyword Removed',
+              title: `${STATUS_EMOJIS.connected} Keyword Removed`,
               description: `You will no longer be mentioned for "${keyword}".`,
               color: 65280,
               timestamp: new Date()
@@ -5703,7 +5700,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         if (result.keywords.length > 0) {
           await message.reply({
             embeds: [{
-              title: '📋 Your Mention Keywords',
+              title: `${STATUS_EMOJIS.whitelist} Your Mention Keywords`,
               description: `You will be mentioned when these words appear in game chat:\n\n${result.keywords.map(k => `• ${k}`).join('\n')}\n\nUse \`!addkeyword <word>\` to add more\nUse \`!removekeyword <word>\` to remove`,
               color: 3447003,
               timestamp: new Date()
@@ -5712,7 +5709,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         } else {
           await message.reply({
             embeds: [{
-              title: '📋 Your Mention Keywords',
+              title: `${STATUS_EMOJIS.whitelist} Your Mention Keywords`,
               description: 'You have no keywords set.\n\nUse `!addkeyword <word>` to add keywords that will trigger a mention when said in game chat.\n\nExample: `!addkeyword ninja`',
               color: 16776960,
               timestamp: new Date()
