@@ -38,6 +38,7 @@ console.log(
   `model=${GEMINI_MODEL}; fallback=${GEMINI_FALLBACK_MODEL}; fetch=${typeof fetch}`
 );
 const STATUS_EMOJIS = {
+  axolotlBucket: '<:Axolotl_Bucket:1519794666860449812>',
   connected: '<:Confirm:1519301205346619392>',
   serverPing: '<:Server_Ping_5:1519367779155968080>',
   serverUnreachable: '<:Server_Unreachable:1519385218824278066>',
@@ -3865,7 +3866,7 @@ async function updateStatusMessage() {
   
   try {
     // Allow status updates even if bot is not connected to show offline state
-    const description = getStatusDescription();
+    const description = `${getStatusDescription()}\n\n${STATUS_EMOJIS.axolotlBucket}`;
 
     await statusMessage.edit({
       embeds: [{
