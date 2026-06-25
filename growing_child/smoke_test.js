@@ -80,6 +80,7 @@ try {
   const aiPhrase = validateAIGeneratedPhrase({
     phrase: 'Do you have more rockets?',
     learnedWords: [...known],
+    requiredWords: ['more', 'rockets'],
     isTooSimilar: () => false
   });
   if (aiPhrase !== 'Do you have more rockets?') {
@@ -88,6 +89,7 @@ try {
   if (validateAIGeneratedPhrase({
     phrase: 'Please bring diamonds now.',
     learnedWords: [...known],
+    requiredWords: ['rockets'],
     isTooSimilar: () => false
   }) !== null) {
     throw new Error('AI phrase validation accepted unknown words.');
@@ -95,9 +97,30 @@ try {
   if (validateAIGeneratedPhrase({
     phrase: 'Hello obsidian farm needs more rockets.',
     learnedWords: [...known],
+    requiredWords: ['obsidian', 'farm', 'rockets'],
     isTooSimilar: () => true
   }) !== null) {
     throw new Error('AI phrase validation accepted copied chat.');
+  }
+  if (validateAIGeneratedPhrase({
+    phrase: 'What is this?',
+    learnedWords: [...known, 'what', 'is', 'this'],
+    requiredWords: [],
+    isTooSimilar: () => false
+  }) !== null) {
+    throw new Error('AI phrase validation accepted a grammar-only phrase.');
+  }
+  if (validateAIGeneratedPhrase({
+    phrase: 'Do you have more rockets?',
+    learnedWords: [...known],
+    requiredWords: ['more', 'rockets', 'obsidian'],
+    isTooSimilar: () => false
+  }) !== null) {
+    throw new Error('AI phrase validation accepted a phrase missing a selected word.');
+  }
+  database.rememberGeneratedPhrase('Do you have more rockets?');
+  if (!database.hasRecentlyGeneratedPhrase('do YOU have more rockets?')) {
+    throw new Error('Recent generated phrase tracking failed.');
   }
 
   database.reset();

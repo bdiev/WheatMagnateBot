@@ -7,6 +7,12 @@ const { DatabaseSync } = require('node:sqlite');
 const START_TOKEN = '__start__';
 const END_TOKEN = '__end__';
 
+function normalizeGeneratedPhrase(phrase) {
+  return (
+    String(phrase || '').toLocaleLowerCase().match(/\p{L}+(?:['’]\p{L}+)*/gu) || []
+  ).join(' ');
+}
+
 function getLevel(knownWords) {
   if (knownWords === 0) return 0;
   if (knownWords < 50) return 1;
@@ -84,6 +90,10 @@ class GrowingChildDatabase {
         times_seen INTEGER NOT NULL DEFAULT 1,
         last_seen TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS generated_phrases (
+        phrase TEXT PRIMARY KEY,
+        created_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS state (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -97,6 +107,8 @@ class GrowingChildDatabase {
         ON word_transitions(current_word, times_seen DESC);
       CREATE INDEX IF NOT EXISTS idx_sequences_last_seen
         ON learned_sequences(last_seen DESC);
+      CREATE INDEX IF NOT EXISTS idx_generated_phrases_created
+        ON generated_phrases(created_at DESC);
     `);
 
     // Transition rows created by older versions cannot be matched back to
@@ -272,6 +284,34 @@ class GrowingChildDatabase {
     `).all(limit);
   }
 
+  hasRecentlyGeneratedPhrase(phrase, limit = 50) {
+    const normalized = normalizeGeneratedPhrase(phrase);
+    if (!normalized) return false;
+    return Boolean(this.db.prepare(`
+      SELECT 1
+      FROM (
+        SELECT phrase FROM generated_phrases ORDER BY created_at DESC LIMIT ?
+      )
+      WHERE phrase = ?
+    `).get(limit, normalized));
+  }
+
+  rememberGeneratedPhrase(phrase) {
+    const normalized = normalizeGeneratedPhrase(phrase);
+    if (!normalized) return;
+    this.db.prepare(`
+      INSERT INTO generated_phrases(phrase, created_at)
+      VALUES (?, ?)
+      ON CONFLICT(phrase) DO UPDATE SET created_at = excluded.created_at
+    `).run(normalized, new Date().toISOString());
+    this.db.exec(`
+      DELETE FROM generated_phrases
+      WHERE phrase NOT IN (
+        SELECT phrase FROM generated_phrases ORDER BY created_at DESC LIMIT 100
+      )
+    `);
+  }
+
   getRecentActivity(minutes = 10) {
     const since = new Date(Date.now() - minutes * 60_000).toISOString();
     return Number(this.db.prepare(
@@ -296,6 +336,7 @@ class GrowingChildDatabase {
       DELETE FROM topics;
       DELETE FROM word_transitions;
       DELETE FROM learned_sequences;
+      DELETE FROM generated_phrases;
       DELETE FROM learned_messages;
       DELETE FROM state;
       DELETE FROM sqlite_sequence WHERE name = 'learned_messages';

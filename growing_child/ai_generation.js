@@ -15,7 +15,7 @@ function tokenizePhrase(value) {
   return String(value || '').toLocaleLowerCase().match(/\p{L}+(?:['’]\p{L}+)*/gu) || [];
 }
 
-function validateAIGeneratedPhrase({ phrase, learnedWords, isTooSimilar }) {
+function validateAIGeneratedPhrase({ phrase, learnedWords, requiredWords = [], isTooSimilar }) {
   const safePhrase = sanitizePublicPhrase(
     String(phrase || '')
       .replace(/^["'`]+|["'`]+$/g, '')
@@ -25,12 +25,18 @@ function validateAIGeneratedPhrase({ phrase, learnedWords, isTooSimilar }) {
   if (!safePhrase) return null;
 
   const learned = new Set(learnedWords.map(word => String(word).toLocaleLowerCase()));
-  const allowed = new Set([...learned, ...GRAMMAR_WORDS]);
+  const grammar = new Set(GRAMMAR_WORDS);
+  const required = new Set(requiredWords.map(word => String(word).toLocaleLowerCase()));
+  const allowedContent = required.size > 0 ? required : learned;
+  const contentWords = new Set([...allowedContent].filter(word => !grammar.has(word)));
+  const allowed = new Set([...allowedContent, ...grammar]);
   const words = tokenizePhrase(safePhrase);
+  const usedWords = new Set(words);
 
   if (words.length < 3 || words.length > 12) return null;
   if (words.some(word => !isSafePublicWord(word) || !allowed.has(word))) return null;
-  if (!words.some(word => learned.has(word))) return null;
+  if (!words.some(word => contentWords.has(word))) return null;
+  if ([...required].some(word => !usedWords.has(word))) return null;
   if (isTooSimilar(words)) return null;
   return safePhrase;
 }

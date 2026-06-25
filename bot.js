@@ -1433,25 +1433,29 @@ async function generateGrowingChildPhrase({
   reason,
   emotion,
   contextWords,
+  selectedWords,
   learnedWords,
   grammarWords
 }) {
   if (!GEMINI_API_KEY) return null;
 
   const replyInstruction = reason === 'reaction' && contextWords.length > 0
-    ? `Reply naturally to a message about: ${contextWords.join(', ')}.`
+    ? `Reply naturally to a Minecraft message whose known context is: ${contextWords.join(', ')}.`
     : 'Write a casual standalone Minecraft chat message.';
   const prompt = [
     replyInstruction,
     `Mood: ${emotion}.`,
     'Write one coherent English sentence of 3 to 12 words.',
-    'Use ONLY words from the allowed vocabulary below.',
+    `You MUST use every selected learned word exactly as written: ${selectedWords.join(', ')}.`,
+    'You may change their order and connect them with basic grammar words.',
+    'Do not return empty generic phrases such as "what is this", "what is that", or "I do not know".',
+    'Use ONLY the selected learned words and basic grammar words.',
     'Do not copy or closely paraphrase a message you have seen.',
     'Do not add names, numbers, coordinates, commands, quotes, labels, or explanations.',
     'Basic grammar words:',
     grammarWords.join(', '),
-    'Learned vocabulary:',
-    learnedWords.join(', ')
+    'Selected learned words:',
+    selectedWords.join(', ')
   ].join('\n');
 
   return askGemini(prompt, {
