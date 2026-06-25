@@ -44,6 +44,7 @@ const CAULDRON_FILL_CONFIRM_TIMEOUT_MS = 200;
 // action, so a slow response cannot cause placement at a second location.
 const LAVA_PLACEMENT_CONFIRM_TIMEOUT_MS = 5_000;
 const FARM_RETRY_DELAY_MS = 2_000;
+const SUPPLY_RETRY_DELAY_MS = 10_000;
 const PLACEMENT_RECHECK_DELAY_MS = 750;
 const LOW_PICKAXE_DURABILITY_CODE = 'LOW_PICKAXE_DURABILITY';
 const RESOURCE_EXHAUSTED_CODE = 'RESOURCE_EXHAUSTED';
@@ -202,7 +203,7 @@ function summarizeSupplyItems(bot, items) {
       count: item.count,
       remainingPercent,
       usable: PICKAXE_PRIORITY.includes(item.name)
-        ? remainingPercent >= MIN_PICKAXE_REMAINING_PERCENT
+        ? isPickaxeUsable(bot, item)
         : null
     });
     if (isFoodItem(item)) {
@@ -212,7 +213,7 @@ function summarizeSupplyItems(bot, items) {
       pickaxes.push({
         name: item.name,
         remainingPercent: getRemainingDurabilityPercent(bot, item),
-        usable: getRemainingDurabilityPercent(bot, item) >= MIN_PICKAXE_REMAINING_PERCENT
+        usable: isPickaxeUsable(bot, item)
       });
     }
   }
@@ -473,6 +474,13 @@ function getRemainingDurabilityPercent(bot, item) {
   return (remaining / maxDurability) * 100;
 }
 
+// Statistics display durability to one decimal place. Use the same precision
+// for eligibility so a pickaxe shown as 5.0% is not simultaneously marked low.
+function isPickaxeUsable(bot, item) {
+  const remainingPercent = getRemainingDurabilityPercent(bot, item);
+  return Number(remainingPercent.toFixed(1)) >= MIN_PICKAXE_REMAINING_PERCENT;
+}
+
 function findUsablePickaxe(bot, minRemainingPercent) {
   const items = bot.inventory.items();
   for (const name of PICKAXE_PRIORITY) {
@@ -489,7 +497,10 @@ function findUsablePickaxe(bot, minRemainingPercent) {
       }
     }
 
-    if (bestCandidate && bestPercent >= minRemainingPercent) {
+    if (
+      bestCandidate &&
+      Number(bestPercent.toFixed(1)) >= minRemainingPercent
+    ) {
       return { item: bestCandidate, remainingPercent: bestPercent };
     }
   }
@@ -539,7 +550,7 @@ function findBestUsablePickaxeInItems(bot, items) {
   for (const item of items) {
     if (!PICKAXE_PRIORITY.includes(item.name)) continue;
     const remainingPercent = getRemainingDurabilityPercent(bot, item);
-    if (remainingPercent < MIN_PICKAXE_REMAINING_PERCENT) continue;
+    if (!isPickaxeUsable(bot, item)) continue;
     if (!best || remainingPercent > best.remainingPercent) {
       best = { item, remainingPercent };
     }
@@ -553,7 +564,7 @@ function windowHasUsablePickaxe(bot, container) {
     if (
       item &&
       PICKAXE_PRIORITY.includes(item.name) &&
-      getRemainingDurabilityPercent(bot, item) >= MIN_PICKAXE_REMAINING_PERCENT
+      isPickaxeUsable(bot, item)
     ) {
       return true;
     }
@@ -609,10 +620,10 @@ async function swapPickaxesInExactSlots(bot, container, replacement, wornPickaxe
       return Boolean(
         newBarrelItem &&
         newBarrelItem.type === wornPickaxe.type &&
-        getRemainingDurabilityPercent(bot, newBarrelItem) < MIN_PICKAXE_REMAINING_PERCENT &&
+        !isPickaxeUsable(bot, newBarrelItem) &&
         newInventoryItem &&
         newInventoryItem.type === replacement.item.type &&
-        getRemainingDurabilityPercent(bot, newInventoryItem) >= MIN_PICKAXE_REMAINING_PERCENT &&
+        isPickaxeUsable(bot, newInventoryItem) &&
         !container.selectedItem
       );
     },
@@ -668,7 +679,7 @@ async function ensureFarmSupplies(bot) {
   const hasFood = bot.inventory.items().some(isFoodItem);
   const lowPickaxes = bot.inventory.items().filter(item =>
     PICKAXE_PRIORITY.includes(item.name) &&
-    getRemainingDurabilityPercent(bot, item) < MIN_PICKAXE_REMAINING_PERCENT
+    !isPickaxeUsable(bot, item)
   );
   // Window swaps mutate Item.slot in place. Preserve each inventory tracking
   // key before a worn pickaxe is moved into the barrel.
@@ -1296,7 +1307,7 @@ async function mineObsidian(bot, targetPos) {
   const selected = findUsablePickaxe(bot, MIN_PICKAXE_REMAINING_PERCENT);
   if (!selected) {
     const bestPickaxe = findBestPickaxe(bot);
-    if (bestPickaxe && bestPickaxe.remainingPercent < MIN_PICKAXE_REMAINING_PERCENT) {
+    if (bestPickaxe && !isPickaxeUsable(bot, bestPickaxe.item)) {
       throw createLowDurabilityError(bestPickaxe.remainingPercent);
     }
     throw new Error(
@@ -1312,7 +1323,7 @@ async function mineObsidian(bot, targetPos) {
 
   // Re-check just before mining in case durability info changed after equip.
   const remainingAfterEquip = getRemainingDurabilityPercent(bot, pick);
-  if (remainingAfterEquip < MIN_PICKAXE_REMAINING_PERCENT) {
+  if (!isPickaxeUsable(bot, pick)) {
     throw createLowDurabilityError(remainingAfterEquip);
   }
 
@@ -1346,7 +1357,7 @@ async function mineObsidian(bot, targetPos) {
   }
 
   const remainingAfterDig = getRemainingDurabilityPercent(bot, pick);
-  if (remainingAfterDig < MIN_PICKAXE_REMAINING_PERCENT) {
+  if (!isPickaxeUsable(bot, pick)) {
     writeFarmDebug('pickaxe_below_threshold', {
       item: pick.name,
       remainingPercent: Number(remainingAfterDig.toFixed(1))
@@ -1426,23 +1437,17 @@ async function persistentLoop(bot, notify) {
       cyclesCompleted: farm.cyclesCompleted
     });
   } catch (err) {
-    if (
-      err.code === LOW_PICKAXE_DURABILITY_CODE ||
-      err.code === RESOURCE_EXHAUSTED_CODE
-    ) {
-      try {
-        await runtime.onFatalStop(err);
-      } catch (_) {}
-      stop(null);
-      return;
-    }
-
     if (!farm.enabled) return;
 
     farm.lastErrorMessage = err.message;
     retryDelay = err.code === PLACEMENT_RECHECK_CODE
       ? PLACEMENT_RECHECK_DELAY_MS
-      : FARM_RETRY_DELAY_MS;
+      : (
+          err.code === RESOURCE_EXHAUSTED_CODE ||
+          err.code === LOW_PICKAXE_DURABILITY_CODE
+        )
+        ? SUPPLY_RETRY_DELAY_MS
+        : FARM_RETRY_DELAY_MS;
     writeFarmDebug(
       err.code === PLACEMENT_RECHECK_CODE ? 'placement_state_recheck' : 'cycle_retry',
       {
