@@ -4,6 +4,9 @@ const fs = require('fs');
 const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
 
+const START_TOKEN = '__start__';
+const END_TOKEN = '__end__';
+
 function getLevel(knownWords) {
   if (knownWords === 0) return 0;
   if (knownWords < 50) return 1;
@@ -63,6 +66,14 @@ class GrowingChildDatabase {
         learned_words INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS word_transitions (
+        previous_word TEXT NOT NULL,
+        current_word TEXT NOT NULL,
+        next_word TEXT NOT NULL,
+        times_seen INTEGER NOT NULL DEFAULT 1,
+        last_seen TEXT NOT NULL,
+        PRIMARY KEY (previous_word, current_word, next_word)
+      );
       CREATE TABLE IF NOT EXISTS state (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -70,6 +81,10 @@ class GrowingChildDatabase {
       CREATE INDEX IF NOT EXISTS idx_words_last_seen ON words(last_seen DESC);
       CREATE INDEX IF NOT EXISTS idx_words_times_seen ON words(times_seen DESC);
       CREATE INDEX IF NOT EXISTS idx_topics_times_seen ON topics(times_seen DESC);
+      CREATE INDEX IF NOT EXISTS idx_transitions_pair
+        ON word_transitions(previous_word, current_word, times_seen DESC);
+      CREATE INDEX IF NOT EXISTS idx_transitions_current
+        ON word_transitions(current_word, times_seen DESC);
     `);
   }
 
@@ -109,6 +124,13 @@ class GrowingChildDatabase {
         INSERT INTO learned_messages(source, author_name, channel_name, learned_words, created_at)
         VALUES (?, ?, ?, ?, ?)
       `),
+      transition: this.db.prepare(`
+        INSERT INTO word_transitions(previous_word, current_word, next_word, times_seen, last_seen)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(previous_word, current_word, next_word) DO UPDATE SET
+          times_seen = times_seen + excluded.times_seen,
+          last_seen = excluded.last_seen
+      `),
       state: this.db.prepare(`
         INSERT INTO state(key, value) VALUES (?, ?)
         ON CONFLICT(key) DO UPDATE SET value = excluded.value
@@ -123,7 +145,7 @@ class GrowingChildDatabase {
     return { knownWords, messages, xp, level: getLevel(knownWords) };
   }
 
-  learn({ frequencies, topics, source, authorId, authorName, channelId, channelName, xp, maxMessages }) {
+  learn({ frequencies, topics, sequence = [], source, authorId, authorName, channelId, channelName, xp, maxMessages }) {
     const now = new Date().toISOString();
     const before = this.getStats();
     let newWords = 0;
@@ -137,6 +159,12 @@ class GrowingChildDatabase {
       }
       for (const [topic, count] of topics) {
         this.statements.topic.run(topic, count, now, now);
+      }
+      if (sequence.length > 0) {
+        const chain = [START_TOKEN, START_TOKEN, ...sequence, END_TOKEN];
+        for (let i = 0; i < chain.length - 2; i++) {
+          this.statements.transition.run(chain[i], chain[i + 1], chain[i + 2], 1, now);
+        }
       }
       if (authorId && authorName) {
         this.statements.member.run(source, String(authorId), String(authorName), now, now);
@@ -188,6 +216,26 @@ class GrowingChildDatabase {
     ).all(limit);
   }
 
+  getNextWords(previousWord, currentWord, limit = 50) {
+    return this.db.prepare(`
+      SELECT next_word, times_seen
+      FROM word_transitions
+      WHERE previous_word = ? AND current_word = ?
+      ORDER BY times_seen DESC, last_seen DESC
+      LIMIT ?
+    `).all(previousWord, currentWord, limit);
+  }
+
+  getContextsForWord(word, limit = 50) {
+    return this.db.prepare(`
+      SELECT previous_word, current_word, times_seen
+      FROM word_transitions
+      WHERE current_word = ? AND next_word != ?
+      ORDER BY times_seen DESC, last_seen DESC
+      LIMIT ?
+    `).all(word, END_TOKEN, limit);
+  }
+
   getRecentActivity(minutes = 10) {
     const since = new Date(Date.now() - minutes * 60_000).toISOString();
     return Number(this.db.prepare(
@@ -210,6 +258,7 @@ class GrowingChildDatabase {
       DELETE FROM members;
       DELETE FROM channels;
       DELETE FROM topics;
+      DELETE FROM word_transitions;
       DELETE FROM learned_messages;
       DELETE FROM state;
       DELETE FROM sqlite_sequence WHERE name = 'learned_messages';
@@ -222,4 +271,4 @@ class GrowingChildDatabase {
   }
 }
 
-module.exports = { GrowingChildDatabase, getLevel };
+module.exports = { GrowingChildDatabase, getLevel, START_TOKEN, END_TOKEN };

@@ -54,6 +54,7 @@ class LearningSystem {
     return this.database.learn({
       frequencies,
       topics,
+      sequence: words,
       source: context.source,
       authorId: context.authorId,
       authorName: context.authorName,

@@ -37,7 +37,7 @@ try {
     authorName: 'Tester',
     channelId: 'test',
     channelName: 'Test',
-    text: 'hello obsidian farm doors important rockets x3402889 68 -672222',
+    text: 'hello obsidian farm needs more rockets x3402889 68 -672222',
     addressed: true
   });
   emotions.update({ newWords: result.newWords, addressed: true });
@@ -56,6 +56,14 @@ try {
   }
   if (!replyWords.every(word => known.has(word))) {
     throw new Error(`Reply generator used an unknown word: ${reply}`);
+  }
+  const phraseText = generatedWords.join(' ');
+  const learnedOrder = 'hello obsidian farm needs more rockets';
+  if (!learnedOrder.includes(phraseText)) {
+    throw new Error(`Generator did not preserve learned word order: ${phrase}`);
+  }
+  if (replyWords[0] !== 'obsidian') {
+    throw new Error(`Reply did not start from its known context: ${reply}`);
   }
   if (known.has('x3402889') || known.has('68') || known.has('672222')) {
     throw new Error('Coordinate-like tokens entered the vocabulary.');

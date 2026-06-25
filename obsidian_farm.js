@@ -668,6 +668,11 @@ async function ensureFarmSupplies(bot) {
     PICKAXE_PRIORITY.includes(item.name) &&
     getRemainingDurabilityPercent(bot, item) < MIN_PICKAXE_REMAINING_PERCENT
   );
+  // Window swaps mutate Item.slot in place. Preserve each inventory tracking
+  // key before a worn pickaxe is moved into the barrel.
+  const lowPickaxeTrackingKeys = new Map(
+    lowPickaxes.map(item => [item, getPickaxeTrackingKey(item)])
+  );
   if (hasUsablePickaxe && hasFood && lowPickaxes.length === 0) return;
 
   const barrel = findReachableSupplyBarrel(bot);
@@ -723,7 +728,9 @@ async function ensureFarmSupplies(bot) {
     }
 
     for (const lowPickaxe of lowPickaxes) {
-      const trackingKey = getPickaxeTrackingKey(lowPickaxe);
+      const trackingKey =
+        lowPickaxeTrackingKeys.get(lowPickaxe) ||
+        getPickaxeTrackingKey(lowPickaxe);
       const tracking = pickaxeBlocksMined.get(trackingKey);
       const blocksMined = tracking?.blocks || 0;
       if (lowPickaxe !== swappedLowPickaxe) {
