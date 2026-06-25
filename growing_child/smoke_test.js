@@ -78,12 +78,20 @@ try {
     throw new Error('AI phrase validation rejected a valid constrained phrase.');
   }
   if (validateAIGeneratedPhrase({
+    phrase: 'Do you have more rockets?',
+    learnedWords: [...known],
+    requiredWords: ['rockets'],
+    isTooSimilar: () => false
+  }) !== 'Do you have more rockets?') {
+    throw new Error('AI phrase validation rejected learned words outside the selected topic.');
+  }
+  if (validateAIGeneratedPhrase({
     phrase: 'Please bring diamonds now.',
     learnedWords: [...known],
     requiredWords: ['rockets'],
     isTooSimilar: () => false
   }) !== null) {
-    throw new Error('AI phrase validation accepted unknown words.');
+    throw new Error('AI phrase validation accepted an unknown word.');
   }
   if (validateAIGeneratedPhrase({
     phrase: 'Hello obsidian farm needs more rockets.',

@@ -27,9 +27,8 @@ function validateAIGeneratedPhrase({ phrase, learnedWords, requiredWords = [], i
   const learned = new Set(learnedWords.map(word => String(word).toLocaleLowerCase()));
   const grammar = new Set(GRAMMAR_WORDS);
   const required = new Set(requiredWords.map(word => String(word).toLocaleLowerCase()));
-  const allowedContent = required.size > 0 ? required : learned;
-  const contentWords = new Set([...allowedContent].filter(word => !grammar.has(word)));
-  const allowed = new Set([...allowedContent, ...grammar]);
+  const contentWords = new Set([...learned].filter(word => !grammar.has(word)));
+  const allowed = new Set([...learned, ...grammar]);
   const words = tokenizePhrase(safePhrase);
   const usedWords = new Set(words);
 
