@@ -268,7 +268,7 @@ let lastCommandUser = null;
 let statusMessage = null;
 let statusUpdateInterval = null;
 let isUpdatingStatus = false; // Prevent concurrent updates
-const obsidianStatsUpdaters = new Map(); // channelId -> { messageId, interval, updating }
+const obsidianStatsUpdaters = new Map(); // channelId -> { messageId, timer, supplies, updating }
 let channelCleanerInterval = null;
 let tpsHistory = [];
 let realTps = null;
@@ -2263,28 +2263,99 @@ function createObsidianStatsComponents() {
 function stopObsidianStatsUpdater(channelId) {
   const updater = obsidianStatsUpdaters.get(channelId);
   if (!updater) return;
-  clearInterval(updater.interval);
+  if (updater.timer) clearTimeout(updater.timer);
   obsidianStatsUpdaters.delete(channelId);
 }
 
-async function refreshObsidianStatsUpdaters() {
-  await Promise.all([...obsidianStatsUpdaters.entries()].map(async ([channelId, updater]) => {
-    if (updater.updating) return;
-    updater.updating = true;
-    try {
+function mergeObsidianSupplies(previous, next) {
+  if (!next) return previous;
+  const nextHasBarrelItems = Array.isArray(next.barrel?.allItems);
+  return {
+    inventory: next.inventory || previous?.inventory || null,
+    barrel: nextHasBarrelItems ? next.barrel : previous?.barrel || next.barrel || null,
+    barrelError: nextHasBarrelItems
+      ? null
+      : next.barrelError || previous?.barrelError || null
+  };
+}
+
+function withObsidianStatsTimeout(promise, timeoutMs = 20_000) {
+  let timeout;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timeout = setTimeout(
+        () => reject(new Error(`Obsidian statistics update timed out after ${timeoutMs}ms`)),
+        timeoutMs
+      );
+    })
+  ]).finally(() => clearTimeout(timeout));
+}
+
+async function updateObsidianStatsUpdater(channelId, updater) {
+  if (updater.updating || obsidianStatsUpdaters.get(channelId) !== updater) return;
+  updater.updating = true;
+  try {
+    await withObsidianStatsTimeout((async () => {
       const channel = await discordClient.channels.fetch(channelId);
+      if (!channel?.messages) throw new Error('Statistics channel is unavailable');
       const message = await channel.messages.fetch(updater.messageId);
       await message.edit({
         embeds: [await buildObsidianStatsEmbed(updater.supplies)],
         components: createObsidianStatsComponents()
       });
-    } catch (err) {
-      if (err.code === 10008 || err.code === 50001 || err.code === 50013) {
-        stopObsidianStatsUpdater(channelId);
-      }
-    } finally {
-      updater.updating = false;
+    })());
+    updater.consecutiveFailures = 0;
+  } catch (err) {
+    updater.consecutiveFailures = (updater.consecutiveFailures || 0) + 1;
+    if (err.code === 10008 || err.code === 50001 || err.code === 50013) {
+      stopObsidianStatsUpdater(channelId);
+      return;
     }
+    console.error(
+      `[Obsidian Stats] Update failed (${updater.consecutiveFailures}), retrying later:`,
+      err.message
+    );
+  } finally {
+    updater.updating = false;
+    if (updater.pendingRefresh && obsidianStatsUpdaters.get(channelId) === updater) {
+      updater.pendingRefresh = false;
+      updater.immediateRefresh = true;
+      if (!updater.inScheduledTick) {
+        updater.immediateRefresh = false;
+        scheduleObsidianStatsUpdater(channelId, updater, 0);
+      }
+    }
+  }
+}
+
+function scheduleObsidianStatsUpdater(channelId, updater, delayMs = 30_000) {
+  if (obsidianStatsUpdaters.get(channelId) !== updater) return;
+  if (updater.timer) clearTimeout(updater.timer);
+  updater.timer = setTimeout(async () => {
+    updater.inScheduledTick = true;
+    await updateObsidianStatsUpdater(channelId, updater);
+    updater.inScheduledTick = false;
+    const nextDelay = updater.immediateRefresh ? 0 : 30_000;
+    updater.immediateRefresh = false;
+    scheduleObsidianStatsUpdater(channelId, updater, nextDelay);
+  }, delayMs);
+}
+
+async function refreshObsidianStatsUpdaters() {
+  await Promise.all([...obsidianStatsUpdaters.entries()].map(
+    ([channelId, updater]) => updateObsidianStatsUpdater(channelId, updater)
+  ));
+}
+
+async function updateObsidianStatsSupplies(supplies) {
+  await Promise.all([...obsidianStatsUpdaters.entries()].map(async ([channelId, updater]) => {
+    updater.supplies = mergeObsidianSupplies(updater.supplies, supplies);
+    if (updater.updating) {
+      updater.pendingRefresh = true;
+      return;
+    }
+    await updateObsidianStatsUpdater(channelId, updater);
   }));
 }
 
@@ -2296,27 +2367,15 @@ function startObsidianStatsUpdater(message, supplies) {
     messageId: message.id,
     supplies,
     updating: false,
-    interval: null
+    timer: null,
+    consecutiveFailures: 0,
+    pendingRefresh: false,
+    immediateRefresh: false,
+    inScheduledTick: false
   };
 
-  updater.interval = setInterval(async () => {
-    if (updater.updating) return;
-    updater.updating = true;
-    try {
-      await message.edit({
-        embeds: [await buildObsidianStatsEmbed(updater.supplies)],
-        components: createObsidianStatsComponents()
-      });
-    } catch (err) {
-      if (err.code === 10008 || err.code === 50001 || err.code === 50013) {
-        stopObsidianStatsUpdater(channelId);
-      }
-    } finally {
-      updater.updating = false;
-    }
-  }, 30_000);
-
   obsidianStatsUpdaters.set(channelId, updater);
+  scheduleObsidianStatsUpdater(channelId, updater);
 }
 
 async function registerApplicationCommands() {
@@ -2417,6 +2476,7 @@ async function clearCurrentDialog(channel, excludedIds = new Set()) {
 farm.configureRuntime({
   onMined: recordObsidianMined,
   onPickaxeRetired: recordPickaxeRetired,
+  onSuppliesChanged: updateObsidianStatsSupplies,
   onFatalStop: async (err) => {
     await setProtectionLeverState(true);
     await setObsidianFarmDesiredEnabled(false);
@@ -4628,10 +4688,10 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       const supplies = await farm.inspectSupplies(bot);
       const updater = obsidianStatsUpdaters.get(interaction.channelId);
       if (updater && updater.messageId === interaction.message.id) {
-        updater.supplies = supplies;
+        updater.supplies = mergeObsidianSupplies(updater.supplies, supplies);
       }
       await interaction.message.edit({
-        embeds: [await buildObsidianStatsEmbed(supplies)],
+        embeds: [await buildObsidianStatsEmbed(updater?.supplies || supplies)],
         components: createObsidianStatsComponents()
       });
       return;
