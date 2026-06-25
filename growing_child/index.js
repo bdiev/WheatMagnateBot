@@ -9,6 +9,15 @@ const { GrowingChildScheduler } = require('./scheduler');
 const { sanitizePublicPhrase } = require('./safety');
 const { GRAMMAR_WORDS, validateAIGeneratedPhrase } = require('./ai_generation');
 
+function randomSample(items, count) {
+  const copy = [...items];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy.slice(0, count);
+}
+
 class GrowingChildAI {
   constructor({
     sendOwnerDM,
@@ -110,6 +119,17 @@ class GrowingChildAI {
         ? this.generator.generateReply(contextWords)
         : this.generator.generate();
     }
+    if (this.database.hasRecentlyGeneratedPhrase(generatedPhrase)) {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const replacement = reason === 'reaction'
+          ? this.generator.generateReply(contextWords)
+          : this.generator.generate();
+        if (!this.database.hasRecentlyGeneratedPhrase(replacement)) {
+          generatedPhrase = replacement;
+          break;
+        }
+      }
+    }
     const publicTarget =
       target === 'minecraft' ||
       reason === 'random' ||
@@ -145,6 +165,7 @@ class GrowingChildAI {
     } else {
       await this.sendOwnerDM(payload);
     }
+    this.database.rememberGeneratedPhrase(phrase);
     return payload;
   }
 
@@ -163,24 +184,47 @@ class GrowingChildAI {
     if (learnedWords.length < 5) return null;
 
     const known = new Set(learnedWords);
-    const knownContext = [...new Set(contextWords.filter(word => known.has(word)))];
+    const grammar = new Set(GRAMMAR_WORDS);
+    const contentVocabulary = learnedWords.filter(word => !grammar.has(word));
+    if (contentVocabulary.length < this.config.aiWordsPerPhraseMin) return null;
+
+    const selectedCount = Math.min(
+      contentVocabulary.length,
+      this.config.aiWordsPerPhraseMin +
+        Math.floor(Math.random() * (
+          this.config.aiWordsPerPhraseMax - this.config.aiWordsPerPhraseMin + 1
+        ))
+    );
+    const knownContext = [...new Set(
+      contextWords.filter(word => known.has(word) && !grammar.has(word))
+    )];
+    const selectedContext = randomSample(knownContext, Math.min(2, selectedCount));
+    const remainingVocabulary = contentVocabulary.filter(word => !selectedContext.includes(word));
+    const selectedWords = [
+      ...selectedContext,
+      ...randomSample(remainingVocabulary, selectedCount - selectedContext.length)
+    ];
 
     try {
-      for (let attempt = 1; attempt <= 2; attempt++) {
+      for (let attempt = 1; attempt <= 3; attempt++) {
         const phrase = await this.generateWithAI({
           reason,
           emotion: this.emotions.get(),
           contextWords: knownContext,
+          selectedWords,
           learnedWords,
           grammarWords: GRAMMAR_WORDS
         });
         const validated = validateAIGeneratedPhrase({
           phrase,
           learnedWords,
-          isTooSimilar: words => this.generator.isTooSimilarToChat(words)
+          requiredWords: selectedWords,
+          isTooSimilar: words =>
+            this.generator.isTooSimilarToChat(words) ||
+            this.database.hasRecentlyGeneratedPhrase(words.join(' '))
         });
         if (validated) return validated;
-        console.log(`[GrowingChild] AI phrase rejected (${attempt}/2).`);
+        console.log(`[GrowingChild] AI phrase rejected (${attempt}/3).`);
       }
       return null;
     } catch (err) {
