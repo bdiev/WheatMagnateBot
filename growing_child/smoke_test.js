@@ -50,17 +50,8 @@ try {
   }
   const phrase = generator.generate();
   const reply = generator.generateReply(['obsidian', 'unknown-word']);
-  const normalizedLearned = 'hello obsidian farm needs more rockets';
-  const normalizedPhrase = phrase.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu)?.join(' ') || '';
-  const normalizedReply = reply.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu)?.join(' ') || '';
-  if (normalizedPhrase === normalizedLearned || normalizedReply === normalizedLearned) {
-    throw new Error(`Generator copied a learned message: ${phrase} / ${reply}`);
-  }
-  if (
-    !['hello', 'obsidian', 'farm', 'needs', 'more', 'rockets'].some(word => normalizedPhrase.includes(word)) ||
-    !normalizedReply.includes('obsidian')
-  ) {
-    throw new Error(`Original fallback lost its selected topic: ${phrase} / ${reply}`);
+  if (phrase !== null || reply !== null) {
+    throw new Error(`Generator should stay silent instead of copying or templating: ${phrase} / ${reply}`);
   }
   if (known.has('x3402889') || known.has('68') || known.has('672222')) {
     throw new Error('Coordinate-like tokens entered the vocabulary.');

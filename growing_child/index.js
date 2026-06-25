@@ -119,15 +119,23 @@ class GrowingChildAI {
         ? this.generator.generateReply(contextWords)
         : this.generator.generate();
     }
+    if (!generatedPhrase) {
+      console.log('[GrowingChild] Not enough learned language to form a new phrase.');
+      return null;
+    }
     if (this.database.hasRecentlyGeneratedPhrase(generatedPhrase)) {
       for (let attempt = 0; attempt < 4; attempt++) {
         const replacement = reason === 'reaction'
           ? this.generator.generateReply(contextWords)
           : this.generator.generate();
-        if (!this.database.hasRecentlyGeneratedPhrase(replacement)) {
+        if (replacement && !this.database.hasRecentlyGeneratedPhrase(replacement)) {
           generatedPhrase = replacement;
           break;
         }
+      }
+      if (this.database.hasRecentlyGeneratedPhrase(generatedPhrase)) {
+        console.log('[GrowingChild] No new phrase available without repetition.');
+        return null;
       }
     }
     const publicTarget =
@@ -228,7 +236,7 @@ class GrowingChildAI {
       }
       return null;
     } catch (err) {
-      console.error('[GrowingChild] AI generation failed, using local fallback:', err.message);
+      console.error('[GrowingChild] AI generation failed, trying learned word chains:', err.message);
       return null;
     }
   }

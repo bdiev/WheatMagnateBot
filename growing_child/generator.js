@@ -30,30 +30,6 @@ function finish(words, punctuation) {
   return `${sentence}${punctuation}`;
 }
 
-function fallbackPhrase(topic, reply = false) {
-  if (!topic) return 'I am still learning.';
-  if (reply) {
-    const templates = [
-      `Are you talking about ${topic}?`,
-      `What happened with ${topic}?`,
-      `I heard you mention ${topic}.`
-    ];
-    return templates[Math.floor(Math.random() * templates.length)];
-  }
-  const templates = [
-    `I keep hearing about ${topic}.`,
-    `${topic.replace(/^./u, char => char.toLocaleUpperCase())} seems important today.`,
-    `Does anyone know more about ${topic}?`
-  ];
-  return templates[Math.floor(Math.random() * templates.length)];
-}
-
-function pickTopic(words) {
-  const contentWords = words.filter(word => !FUNCTION_WORDS.has(word));
-  const source = contentWords.length > 0 ? contentWords : words;
-  return source[Math.floor(Math.random() * source.length)] || null;
-}
-
 function similarity(firstWords, secondWords) {
   if (firstWords.length === 0 || secondWords.length === 0) return 0;
   const first = new Set(firstWords);
@@ -118,20 +94,17 @@ class MessageGenerator {
   generate() {
     const starts = this.database.getNextWords(START_TOKEN, START_TOKEN)
       .filter(row => isSafePublicWord(row.next_word));
-    if (starts.length === 0) {
-      const topics = this.database.getTopics(40).filter(row => isSafePublicWord(row.topic));
-      const words = this.database.getWords({ limit: 100 }).filter(row => isSafePublicWord(row.word));
-      return fallbackPhrase(
-        weightedPick(topics, 'topic') || weightedPick(words, 'word'),
-        false
-      );
-    }
+    if (starts.length === 0) return null;
 
-    const first = weightedPick(starts, 'next_word');
-    const maxLength = 4 + Math.floor(Math.random() * 7);
-    const words = this.walk(START_TOKEN, first, [first], maxLength);
-    if (this.isTooSimilarToChat(words)) return fallbackPhrase(pickTopic(words), false);
-    return finish(words, this.getPunctuation(false));
+    for (let attempt = 0; attempt < 24; attempt++) {
+      const first = weightedPick(starts, 'next_word');
+      const maxLength = 4 + Math.floor(Math.random() * 7);
+      const words = this.walk(START_TOKEN, first, [first], maxLength);
+      if (!this.isTooSimilarToChat(words)) {
+        return finish(words, this.getPunctuation(false));
+      }
+    }
+    return null;
   }
 
   generateReply(contextWords = []) {
@@ -145,18 +118,19 @@ class MessageGenerator {
       }
     }
 
-    if (candidates.length === 0) {
-      const topic = pickTopic(safeContext);
-      return fallbackPhrase(topic, Boolean(topic));
-    }
+    if (candidates.length === 0) return null;
 
-    const selectedWord = weightedPick(candidates, 'context_word');
-    const matching = candidates.filter(row => row.context_word === selectedWord);
-    const selectedPrevious = weightedPick(matching, 'previous_word');
-    const maxLength = 4 + Math.floor(Math.random() * 6);
-    const words = this.walk(selectedPrevious, selectedWord, [selectedWord], maxLength);
-    if (this.isTooSimilarToChat(words)) return fallbackPhrase(selectedWord, true);
-    return finish(words, this.getPunctuation(true));
+    for (let attempt = 0; attempt < 24; attempt++) {
+      const selectedWord = weightedPick(candidates, 'context_word');
+      const matching = candidates.filter(row => row.context_word === selectedWord);
+      const selectedPrevious = weightedPick(matching, 'previous_word');
+      const maxLength = 4 + Math.floor(Math.random() * 6);
+      const words = this.walk(selectedPrevious, selectedWord, [selectedWord], maxLength);
+      if (!this.isTooSimilarToChat(words)) {
+        return finish(words, this.getPunctuation(true));
+      }
+    }
+    return null;
   }
 }
 
