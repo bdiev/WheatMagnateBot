@@ -140,6 +140,7 @@ const PLAYER_HEAD_EMOJIS = new Map([
   ['liketinos2341', '<:liketinos2341:1519314828001542356>'],
   ['itzrubyy', '<:ItzRubyy:1519314823790461000>'],
   ['hugoash', '<:HugoAsh:1519314822569656451>'],
+  ['h4ywire', '<:H4YWiRE:1519571949947195565>'],
   ['gibsinnep', '<:GIBSINNEP:1519314821370216551>'],
   ['funkygamer26', '<:FunkyGamer26:1519314820401205410>'],
   ['deireide', '<:Deireide:1519314819034120292>'],
@@ -4579,7 +4580,17 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         await interaction.deferUpdate();
         const payload = await growingChild?.speak('button');
         if (!payload) {
-          await interaction.followUp({ content: 'Growing Child AI is disabled.' });
+          const status = growingChild?.getStatus();
+          const minecraftAvailable = Boolean(bot?.entity && typeof bot.chat === 'function');
+          const content = !status?.enabled
+            ? 'Growing Child AI is disabled.'
+            : !minecraftAvailable
+              ? 'Minecraft bot is offline, so the phrase was not sent.'
+              : 'Growing Child AI could not form a new non-repeating phrase from what it has learned yet.';
+          await interaction.followUp({
+            content,
+            flags: MessageFlags.Ephemeral
+          });
         }
         return;
       }
