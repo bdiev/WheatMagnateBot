@@ -1,18 +1,43 @@
 'use strict';
 
+const { START_TOKEN, END_TOKEN } = require('./database');
 const { isSafePublicWord } = require('./safety');
 
-function pick(items) {
-  return items[Math.floor(Math.random() * items.length)];
+function weightedPick(rows, valueKey) {
+  if (rows.length === 0) return null;
+  const total = rows.reduce((sum, row) => sum + Math.max(1, Number(row.times_seen) || 1), 0);
+  let cursor = Math.random() * total;
+  for (const row of rows) {
+    cursor -= Math.max(1, Number(row.times_seen) || 1);
+    if (cursor <= 0) return row[valueKey];
+  }
+  return rows[rows.length - 1][valueKey];
 }
 
-function weightedPool(rows) {
-  const pool = [];
-  for (const row of rows) {
-    const weight = Math.max(1, Math.min(8, Number(row.times_seen) || 1));
-    for (let i = 0; i < weight; i++) pool.push(row.word || row.topic || row.name);
+function finish(words, punctuation) {
+  if (words.length === 0) return '...';
+  const sentence = words
+    .join(' ')
+    .replace(/^./u, char => char.toLocaleUpperCase());
+  return `${sentence}${punctuation}`;
+}
+
+function fallbackPhrase(topic, reply = false) {
+  if (!topic) return 'I am still learning.';
+  if (reply) {
+    const templates = [
+      `Are you talking about ${topic}?`,
+      `What happened with ${topic}?`,
+      `I heard you mention ${topic}.`
+    ];
+    return templates[Math.floor(Math.random() * templates.length)];
   }
-  return pool;
+  const templates = [
+    `I keep hearing about ${topic}.`,
+    `${topic.replace(/^./u, char => char.toLocaleUpperCase())} seems important today.`,
+    `Does anyone know more about ${topic}?`
+  ];
+  return templates[Math.floor(Math.random() * templates.length)];
 }
 
 class MessageGenerator {
@@ -21,72 +46,78 @@ class MessageGenerator {
     this.emotionSystem = emotionSystem;
   }
 
-  generate() {
-    const stats = this.database.getStats();
-    const words = this.database.getWords({ limit: 200 }).filter(row => isSafePublicWord(row.word));
-    if (words.length === 0) return '...';
-
-    const recent = this.database.getWords({ limit: 40, recent: true })
-      .filter(row => isSafePublicWord(row.word));
-    const topics = this.database.getTopics(40)
-      .filter(row => isSafePublicWord(row.topic));
+  getPunctuation(reply = false) {
     const emotion = this.emotionSystem.get();
-    const pool = weightedPool(words);
-    const recentPool = weightedPool(recent);
-    const topicPool = weightedPool(topics);
+    if (emotion === 'sleepy') return '...';
+    const questionChance = emotion === 'curious' ? 0.55 : reply ? 0.3 : 0.12;
+    return Math.random() < questionChance ? '?' : '.';
+  }
 
-    const take = source => pick(source.length > 0 ? source : pool);
-    let length = 1;
-    if (stats.level === 2) length = 2 + Math.floor(Math.random() * 2);
-    if (stats.level === 3) length = 3 + Math.floor(Math.random() * 3);
-    if (stats.level >= 4) length = 5 + Math.floor(Math.random() * 5);
+  walk(previousWord, currentWord, initialWords, maxLength) {
+    const result = [...initialWords];
+    let previous = previousWord;
+    let current = currentWord;
 
-    const result = [];
-    if (recentPool.length && Math.random() < 0.35) result.push(take(recentPool));
-    if (topicPool.length && Math.random() < 0.45) result.push(take(topicPool));
-    while (result.length < length) result.push(take(pool));
+    while (result.length < maxLength) {
+      const options = this.database.getNextWords(previous, current)
+        .filter(row => row.next_word === END_TOKEN || isSafePublicWord(row.next_word));
+      if (options.length === 0) break;
 
-    const questionChance = emotion === 'curious' ? 0.65 : 0.25;
-    const punctuation = Math.random() < questionChance ? '?' : emotion === 'sleepy' ? '...' : '.';
-    const sentence = result
-      .filter(Boolean)
-      .slice(0, length)
-      .join(' ')
-      .replace(/^./u, char => char.toLocaleUpperCase());
-    return `${sentence}${punctuation}`;
+      const next = weightedPick(options, 'next_word');
+      if (!next || next === END_TOKEN) break;
+
+      // Avoid loops such as "help help help" when chat contains spam.
+      const lastThree = result.slice(-3);
+      if (lastThree.filter(word => word === next).length >= 2) break;
+
+      result.push(next);
+      previous = current;
+      current = next;
+    }
+
+    return result;
+  }
+
+  generate() {
+    const starts = this.database.getNextWords(START_TOKEN, START_TOKEN)
+      .filter(row => isSafePublicWord(row.next_word));
+    if (starts.length === 0) {
+      const topics = this.database.getTopics(40).filter(row => isSafePublicWord(row.topic));
+      const words = this.database.getWords({ limit: 100 }).filter(row => isSafePublicWord(row.word));
+      return fallbackPhrase(
+        weightedPick(topics, 'topic') || weightedPick(words, 'word'),
+        false
+      );
+    }
+
+    const first = weightedPick(starts, 'next_word');
+    const maxLength = 4 + Math.floor(Math.random() * 7);
+    const words = this.walk(START_TOKEN, first, [first], maxLength);
+    if (words.length < 3) return fallbackPhrase(first, false);
+    return finish(words, this.getPunctuation(false));
   }
 
   generateReply(contextWords = []) {
-    const stats = this.database.getStats();
-    const knownRows = this.database.getWords({ limit: 250 })
-      .filter(row => isSafePublicWord(row.word));
-    if (knownRows.length === 0) return '...';
+    const safeContext = [...new Set(contextWords.filter(isSafePublicWord))];
+    const candidates = [];
 
-    const known = new Set(knownRows.map(row => row.word));
-    const context = [...new Set(contextWords.filter(word => known.has(word)))];
-    const pool = weightedPool(knownRows);
-    const result = [];
+    for (const word of safeContext) {
+      for (const row of this.database.getContextsForWord(word, 20)) {
+        candidates.push({ ...row, context_word: word });
+      }
+    }
 
-    if (context.length > 0) result.push(pick(context));
+    if (candidates.length === 0) {
+      return fallbackPhrase(safeContext[0], safeContext.length > 0);
+    }
 
-    let length = 1;
-    if (stats.level === 2) length = 2 + Math.floor(Math.random() * 2);
-    if (stats.level === 3) length = 3 + Math.floor(Math.random() * 2);
-    if (stats.level >= 4) length = 4 + Math.floor(Math.random() * 4);
-
-    while (result.length < length) result.push(pick(pool));
-
-    const emotion = this.emotionSystem.get();
-    const asksQuestion =
-      stats.level >= 2 &&
-      (emotion === 'curious' || Math.random() < 0.55);
-    const punctuation = asksQuestion ? '?' : emotion === 'sleepy' ? '...' : '.';
-    const sentence = result
-      .filter(Boolean)
-      .slice(0, length)
-      .join(' ')
-      .replace(/^./u, char => char.toLocaleUpperCase());
-    return `${sentence}${punctuation}`;
+    const selectedWord = weightedPick(candidates, 'context_word');
+    const matching = candidates.filter(row => row.context_word === selectedWord);
+    const selectedPrevious = weightedPick(matching, 'previous_word');
+    const maxLength = 4 + Math.floor(Math.random() * 6);
+    const words = this.walk(selectedPrevious, selectedWord, [selectedWord], maxLength);
+    if (words.length < 3) return fallbackPhrase(selectedWord, true);
+    return finish(words, this.getPunctuation(true));
   }
 }
 
