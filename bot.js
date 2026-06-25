@@ -1462,15 +1462,18 @@ async function generateGrowingChildPhrase({
     `Mood: ${emotion}.`,
     'Write one coherent English sentence of 3 to 12 words.',
     `You MUST use every selected learned word exactly as written: ${selectedWords.join(', ')}.`,
-    'You may change their order and connect them with basic grammar words.',
+    'Use the selected words as the topic of a natural, meaningful sentence.',
+    'You may use any words from the learned vocabulary plus basic grammar words.',
     'Do not return empty generic phrases such as "what is this", "what is that", or "I do not know".',
-    'Use ONLY the selected learned words and basic grammar words.',
+    'Do not force unrelated words together or produce nonsense.',
     'Do not copy or closely paraphrase a message you have seen.',
     'Do not add names, numbers, coordinates, commands, quotes, labels, or explanations.',
     'Basic grammar words:',
     grammarWords.join(', '),
     'Selected learned words:',
-    selectedWords.join(', ')
+    selectedWords.join(', '),
+    'Learned vocabulary:',
+    learnedWords.join(', ')
   ].join('\n');
 
   return askGemini(prompt, {

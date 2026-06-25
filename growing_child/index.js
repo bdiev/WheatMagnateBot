@@ -196,12 +196,14 @@ class GrowingChildAI {
     const contentVocabulary = learnedWords.filter(word => !grammar.has(word));
     if (contentVocabulary.length < this.config.aiWordsPerPhraseMin) return null;
 
+    const isRequestedSpeech = reason === 'button' || reason === 'slash command';
+    const minimumSelected = isRequestedSpeech ? 1 : this.config.aiWordsPerPhraseMin;
+    const maximumSelected = isRequestedSpeech
+      ? Math.min(2, this.config.aiWordsPerPhraseMax)
+      : this.config.aiWordsPerPhraseMax;
     const selectedCount = Math.min(
       contentVocabulary.length,
-      this.config.aiWordsPerPhraseMin +
-        Math.floor(Math.random() * (
-          this.config.aiWordsPerPhraseMax - this.config.aiWordsPerPhraseMin + 1
-        ))
+      minimumSelected + Math.floor(Math.random() * (maximumSelected - minimumSelected + 1))
     );
     const knownContext = [...new Set(
       contextWords.filter(word => known.has(word) && !grammar.has(word))
@@ -214,25 +216,29 @@ class GrowingChildAI {
     ];
 
     try {
-      for (let attempt = 1; attempt <= 3; attempt++) {
+      const attempts = isRequestedSpeech ? 6 : 3;
+      for (let attempt = 1; attempt <= attempts; attempt++) {
+        const attemptSelectedWords = attempt === 1
+          ? selectedWords
+          : randomSample(contentVocabulary, selectedCount);
         const phrase = await this.generateWithAI({
           reason,
           emotion: this.emotions.get(),
           contextWords: knownContext,
-          selectedWords,
+          selectedWords: attemptSelectedWords,
           learnedWords,
           grammarWords: GRAMMAR_WORDS
         });
         const validated = validateAIGeneratedPhrase({
           phrase,
           learnedWords,
-          requiredWords: selectedWords,
+          requiredWords: attemptSelectedWords,
           isTooSimilar: words =>
             this.generator.isTooSimilarToChat(words) ||
             this.database.hasRecentlyGeneratedPhrase(words.join(' '))
         });
         if (validated) return validated;
-        console.log(`[GrowingChild] AI phrase rejected (${attempt}/3).`);
+        console.log(`[GrowingChild] AI phrase rejected (${attempt}/${attempts}).`);
       }
       return null;
     } catch (err) {
