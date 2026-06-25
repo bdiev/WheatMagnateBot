@@ -8,6 +8,7 @@ const { LearningSystem } = require('./learning');
 const { EmotionSystem } = require('./emotion');
 const { MessageGenerator } = require('./generator');
 const { sanitizePublicPhrase } = require('./safety');
+const { validateAIGeneratedPhrase } = require('./ai_generation');
 
 const filename = path.join(os.tmpdir(), `growing-child-${process.pid}.sqlite`);
 const cleanup = () => {
@@ -49,21 +50,17 @@ try {
   }
   const phrase = generator.generate();
   const reply = generator.generateReply(['obsidian', 'unknown-word']);
-  const generatedWords = phrase.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
-  const replyWords = reply.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
-  if (!generatedWords.every(word => known.has(word))) {
-    throw new Error(`Generator used an unknown word: ${phrase}`);
+  const normalizedLearned = 'hello obsidian farm needs more rockets';
+  const normalizedPhrase = phrase.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu)?.join(' ') || '';
+  const normalizedReply = reply.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu)?.join(' ') || '';
+  if (normalizedPhrase === normalizedLearned || normalizedReply === normalizedLearned) {
+    throw new Error(`Generator copied a learned message: ${phrase} / ${reply}`);
   }
-  if (!replyWords.every(word => known.has(word))) {
-    throw new Error(`Reply generator used an unknown word: ${reply}`);
-  }
-  const phraseText = generatedWords.join(' ');
-  const learnedOrder = 'hello obsidian farm needs more rockets';
-  if (!learnedOrder.includes(phraseText)) {
-    throw new Error(`Generator did not preserve learned word order: ${phrase}`);
-  }
-  if (replyWords[0] !== 'obsidian') {
-    throw new Error(`Reply did not start from its known context: ${reply}`);
+  if (
+    !['hello', 'obsidian', 'farm', 'needs', 'more', 'rockets'].some(word => normalizedPhrase.includes(word)) ||
+    !normalizedReply.includes('obsidian')
+  ) {
+    throw new Error(`Original fallback lost its selected topic: ${phrase} / ${reply}`);
   }
   if (known.has('x3402889') || known.has('68') || known.has('672222')) {
     throw new Error('Coordinate-like tokens entered the vocabulary.');
@@ -79,6 +76,28 @@ try {
   }
   if (sanitizePublicPhrase('hello farm?') !== 'hello farm?') {
     throw new Error('Coordinate safety filter rejected a safe phrase.');
+  }
+  const aiPhrase = validateAIGeneratedPhrase({
+    phrase: 'Do you have more rockets?',
+    learnedWords: [...known],
+    isTooSimilar: () => false
+  });
+  if (aiPhrase !== 'Do you have more rockets?') {
+    throw new Error('AI phrase validation rejected a valid constrained phrase.');
+  }
+  if (validateAIGeneratedPhrase({
+    phrase: 'Please bring diamonds now.',
+    learnedWords: [...known],
+    isTooSimilar: () => false
+  }) !== null) {
+    throw new Error('AI phrase validation accepted unknown words.');
+  }
+  if (validateAIGeneratedPhrase({
+    phrase: 'Hello obsidian farm needs more rockets.',
+    learnedWords: [...known],
+    isTooSimilar: () => true
+  }) !== null) {
+    throw new Error('AI phrase validation accepted copied chat.');
   }
 
   database.reset();

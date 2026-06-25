@@ -25,5 +25,7 @@
   "dailySpeechEnabled": false,
   "ownerDmOnly": true,
   "minecraftPublicSpeechEnabled": true,
+  "aiGenerationEnabled": true,
+  "aiVocabularyLimit": 800,
   "maxLearnedMessages": 5000
 }
