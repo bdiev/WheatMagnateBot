@@ -581,11 +581,23 @@ async function swapPickaxesInExactSlots(bot, container, replacement, wornPickaxe
     throw new Error(`Worn pickaxe slot ${wornPickaxe.slot} changed before swap.`);
   }
 
-  // Pick up the good pickaxe, exchange it with the worn inventory pickaxe,
-  // then put the worn pickaxe into the exact barrel slot that was freed.
-  await bot.clickWindow(barrelSlot, 0, 0);
-  await bot.clickWindow(inventorySlot, 0, 0);
-  await bot.clickWindow(barrelSlot, 0, 0);
+  const hotbarIndex = wornPickaxe.slot - bot.inventory.hotbarStart;
+  if (hotbarIndex >= 0 && hotbarIndex < 9) {
+    // A mode-2 hotbar swap is one atomic server action. This is substantially
+    // safer than three cursor clicks on servers that resynchronise container
+    // state between clicks.
+    await bot.clickWindow(barrelSlot, hotbarIndex, 2);
+  } else {
+    // Pick up the good pickaxe, exchange it with the worn inventory pickaxe,
+    // then put the worn pickaxe into the exact barrel slot that was freed.
+    await bot.clickWindow(barrelSlot, 0, 0);
+    await bot.clickWindow(inventorySlot, 0, 0);
+    await bot.clickWindow(barrelSlot, 0, 0);
+  }
+
+  // Give a server correction packet a chance to arrive before accepting
+  // Mineflayer's optimistic local window update as the final state.
+  await new Promise(resolve => setTimeout(resolve, 250));
 
   const swapped = await waitForInventorySupply(
     bot,
