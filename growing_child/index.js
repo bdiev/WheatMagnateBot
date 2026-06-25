@@ -7,9 +7,16 @@ const { EmotionSystem } = require('./emotion');
 const { MessageGenerator } = require('./generator');
 const { GrowingChildScheduler } = require('./scheduler');
 const { sanitizePublicPhrase } = require('./safety');
+const { GRAMMAR_WORDS, validateAIGeneratedPhrase } = require('./ai_generation');
 
 class GrowingChildAI {
-  constructor({ sendOwnerDM, sendChannelMessage, sendMinecraftMessage, allowedDiscordChannelId }) {
+  constructor({
+    sendOwnerDM,
+    sendChannelMessage,
+    sendMinecraftMessage,
+    generateWithAI,
+    allowedDiscordChannelId
+  }) {
     this.config = loadConfig();
     this.database = new GrowingChildDatabase(this.config.databasePath);
     this.learning = new LearningSystem(this.database, this.config);
@@ -18,6 +25,7 @@ class GrowingChildAI {
     this.sendOwnerDM = sendOwnerDM;
     this.sendChannelMessage = sendChannelMessage;
     this.sendMinecraftMessage = sendMinecraftMessage;
+    this.generateWithAI = generateWithAI;
     this.allowedDiscordChannelId = allowedDiscordChannelId
       ? String(allowedDiscordChannelId)
       : null;
@@ -96,9 +104,12 @@ class GrowingChildAI {
 
   async speak(reason = 'manual', contextWords = [], target = null) {
     if (!this.enabled) return null;
-    const generatedPhrase = reason === 'reaction'
-      ? this.generator.generateReply(contextWords)
-      : this.generator.generate();
+    let generatedPhrase = await this.generateAIPhrase(reason, contextWords);
+    if (!generatedPhrase) {
+      generatedPhrase = reason === 'reaction'
+        ? this.generator.generateReply(contextWords)
+        : this.generator.generate();
+    }
     const publicTarget =
       target === 'minecraft' ||
       reason === 'random' ||
@@ -135,6 +146,47 @@ class GrowingChildAI {
       await this.sendOwnerDM(payload);
     }
     return payload;
+  }
+
+  async generateAIPhrase(reason, contextWords) {
+    if (
+      !this.config.aiGenerationEnabled ||
+      typeof this.generateWithAI !== 'function'
+    ) {
+      return null;
+    }
+
+    const learnedWords = this.database
+      .getWords({ limit: this.config.aiVocabularyLimit })
+      .map(row => row.word)
+      .filter(Boolean);
+    if (learnedWords.length < 5) return null;
+
+    const known = new Set(learnedWords);
+    const knownContext = [...new Set(contextWords.filter(word => known.has(word)))];
+
+    try {
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        const phrase = await this.generateWithAI({
+          reason,
+          emotion: this.emotions.get(),
+          contextWords: knownContext,
+          learnedWords,
+          grammarWords: GRAMMAR_WORDS
+        });
+        const validated = validateAIGeneratedPhrase({
+          phrase,
+          learnedWords,
+          isTooSimilar: words => this.generator.isTooSimilarToChat(words)
+        });
+        if (validated) return validated;
+        console.log(`[GrowingChild] AI phrase rejected (${attempt}/2).`);
+      }
+      return null;
+    } catch (err) {
+      console.error('[GrowingChild] AI generation failed, using local fallback:', err.message);
+      return null;
+    }
   }
 
   getStatus() {

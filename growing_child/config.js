@@ -30,6 +30,8 @@ const DEFAULTS = Object.freeze({
   dailySpeechEnabled: false,
   ownerDmOnly: true,
   minecraftPublicSpeechEnabled: true,
+  aiGenerationEnabled: true,
+  aiVocabularyLimit: 800,
   maxLearnedMessages: 5000
 });
 
@@ -75,6 +77,7 @@ function loadConfig(configPath = path.join(__dirname, 'config.json')) {
     config.reactiveDelayMinSeconds,
     Number(config.reactiveDelayMaxSeconds) || 25
   );
+  config.aiVocabularyLimit = Math.max(50, Number(config.aiVocabularyLimit) || 800);
   config.databasePath = path.resolve(path.dirname(__dirname), config.databasePath);
   return config;
 }

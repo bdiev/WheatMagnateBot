@@ -3,6 +3,14 @@
 const { START_TOKEN, END_TOKEN } = require('./database');
 const { isSafePublicWord } = require('./safety');
 
+const FUNCTION_WORDS = new Set([
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'but', 'can', 'do', 'does', 'for',
+  'from', 'have', 'he', 'her', 'here', 'him', 'his', 'i', 'if', 'in', 'is', 'it',
+  'me', 'my', 'no', 'not', 'of', 'on', 'or', 'our', 'she', 'some', 'that', 'the',
+  'their', 'them', 'there', 'they', 'this', 'to', 'was', 'we', 'what', 'when',
+  'where', 'who', 'why', 'with', 'you', 'your'
+]);
+
 function weightedPick(rows, valueKey) {
   if (rows.length === 0) return null;
   const total = rows.reduce((sum, row) => sum + Math.max(1, Number(row.times_seen) || 1), 0);
@@ -40,6 +48,25 @@ function fallbackPhrase(topic, reply = false) {
   return templates[Math.floor(Math.random() * templates.length)];
 }
 
+function pickTopic(words) {
+  const contentWords = words.filter(word => !FUNCTION_WORDS.has(word));
+  const source = contentWords.length > 0 ? contentWords : words;
+  return source[Math.floor(Math.random() * source.length)] || null;
+}
+
+function similarity(firstWords, secondWords) {
+  if (firstWords.length === 0 || secondWords.length === 0) return 0;
+  const first = new Set(firstWords);
+  const second = new Set(secondWords);
+  let shared = 0;
+  for (const word of first) {
+    if (second.has(word)) shared++;
+  }
+  // Recall against the shorter phrase catches shortened copies such as
+  // "you have some emeralds bookselfs" from a slightly longer chat message.
+  return shared / Math.min(first.size, second.size);
+}
+
 class MessageGenerator {
   constructor(database, emotionSystem) {
     this.database = database;
@@ -51,6 +78,16 @@ class MessageGenerator {
     if (emotion === 'sleepy') return '...';
     const questionChance = emotion === 'curious' ? 0.55 : reply ? 0.3 : 0.12;
     return Math.random() < questionChance ? '?' : '.';
+  }
+
+  isTooSimilarToChat(words) {
+    if (words.length < 3) return true;
+    return this.database.getLearnedSequences(1000).some(row => {
+      const learned = row.sequence.split(' ').filter(Boolean);
+      if (learned.join(' ') === words.join(' ')) return true;
+      const lengthRatio = Math.min(words.length, learned.length) / Math.max(words.length, learned.length);
+      return lengthRatio >= 0.55 && similarity(words, learned) >= 0.8;
+    });
   }
 
   walk(previousWord, currentWord, initialWords, maxLength) {
@@ -93,22 +130,24 @@ class MessageGenerator {
     const first = weightedPick(starts, 'next_word');
     const maxLength = 4 + Math.floor(Math.random() * 7);
     const words = this.walk(START_TOKEN, first, [first], maxLength);
-    if (words.length < 3) return fallbackPhrase(first, false);
+    if (this.isTooSimilarToChat(words)) return fallbackPhrase(pickTopic(words), false);
     return finish(words, this.getPunctuation(false));
   }
 
   generateReply(contextWords = []) {
     const safeContext = [...new Set(contextWords.filter(isSafePublicWord))];
+    const meaningfulContext = safeContext.filter(word => !FUNCTION_WORDS.has(word));
     const candidates = [];
 
-    for (const word of safeContext) {
+    for (const word of meaningfulContext.length > 0 ? meaningfulContext : safeContext) {
       for (const row of this.database.getContextsForWord(word, 20)) {
         candidates.push({ ...row, context_word: word });
       }
     }
 
     if (candidates.length === 0) {
-      return fallbackPhrase(safeContext[0], safeContext.length > 0);
+      const topic = pickTopic(safeContext);
+      return fallbackPhrase(topic, Boolean(topic));
     }
 
     const selectedWord = weightedPick(candidates, 'context_word');
@@ -116,7 +155,7 @@ class MessageGenerator {
     const selectedPrevious = weightedPick(matching, 'previous_word');
     const maxLength = 4 + Math.floor(Math.random() * 6);
     const words = this.walk(selectedPrevious, selectedWord, [selectedWord], maxLength);
-    if (words.length < 3) return fallbackPhrase(selectedWord, true);
+    if (this.isTooSimilarToChat(words)) return fallbackPhrase(selectedWord, true);
     return finish(words, this.getPunctuation(true));
   }
 }

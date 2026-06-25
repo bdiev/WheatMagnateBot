@@ -1421,11 +1421,46 @@ function initializeGrowingChild() {
     sendOwnerDM: sendGrowingChildOwnerDM,
     sendChannelMessage: sendGrowingChildChannelMessage,
     sendMinecraftMessage: sendGrowingChildMinecraftMessage,
+    generateWithAI: GEMINI_API_KEY ? generateGrowingChildPhrase : null,
     allowedDiscordChannelId: DISCORD_CHAT_CHANNEL_ID
   });
   growingChild.start();
   console.log('[GrowingChild] Learning system started.');
   return growingChild;
+}
+
+async function generateGrowingChildPhrase({
+  reason,
+  emotion,
+  contextWords,
+  learnedWords,
+  grammarWords
+}) {
+  if (!GEMINI_API_KEY) return null;
+
+  const replyInstruction = reason === 'reaction' && contextWords.length > 0
+    ? `Reply naturally to a message about: ${contextWords.join(', ')}.`
+    : 'Write a casual standalone Minecraft chat message.';
+  const prompt = [
+    replyInstruction,
+    `Mood: ${emotion}.`,
+    'Write one coherent English sentence of 3 to 12 words.',
+    'Use ONLY words from the allowed vocabulary below.',
+    'Do not copy or closely paraphrase a message you have seen.',
+    'Do not add names, numbers, coordinates, commands, quotes, labels, or explanations.',
+    'Basic grammar words:',
+    grammarWords.join(', '),
+    'Learned vocabulary:',
+    learnedWords.join(', ')
+  ].join('\n');
+
+  return askGemini(prompt, {
+    systemInstruction:
+      'You write one short, natural Minecraft chat sentence under strict vocabulary constraints. Return only the sentence in plain text.',
+    temperature: 0.75,
+    maxOutputTokens: 40,
+    maxResponseLength: 220
+  });
 }
 
 function loginDiscord() {
@@ -3092,7 +3127,7 @@ async function sendGameChatMessageToDiscord(username, message, { allowMentions =
   }
 }
 
-async function requestGeminiModel(model, question) {
+async function requestGeminiModel(model, question, options = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
   let response;
@@ -3109,7 +3144,8 @@ async function requestGeminiModel(model, question) {
         body: JSON.stringify({
           system_instruction: {
             parts: [{
-              text: 'Answer in English. Be concise and direct. Use plain text only, no Markdown. Give at most 2 short sentences.'
+              text: options.systemInstruction ||
+                'Answer in English. Be concise and direct. Use plain text only, no Markdown. Give at most 2 short sentences.'
             }]
           },
           contents: [{
@@ -3117,8 +3153,8 @@ async function requestGeminiModel(model, question) {
             parts: [{ text: question }]
           }],
           generationConfig: {
-            temperature: 0.4,
-            maxOutputTokens: 120
+            temperature: options.temperature ?? 0.4,
+            maxOutputTokens: options.maxOutputTokens ?? 120
           }
         })
       }
@@ -3145,10 +3181,10 @@ async function requestGeminiModel(model, question) {
   if (!answer) {
     throw new Error('Gemini returned no answer');
   }
-  return answer.slice(0, GPT_MAX_RESPONSE_LENGTH);
+  return answer.slice(0, options.maxResponseLength ?? GPT_MAX_RESPONSE_LENGTH);
 }
 
-async function askGemini(question) {
+async function askGemini(question, options = {}) {
   if (!GEMINI_API_KEY) {
     throw new Error('Gemini API key is not configured');
   }
@@ -3159,7 +3195,7 @@ async function askGemini(question) {
   for (const model of models) {
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
-        const answer = await requestGeminiModel(model, question);
+        const answer = await requestGeminiModel(model, question, options);
         if (model !== GEMINI_MODEL) {
           console.log(`[Gemini] Used fallback model ${model}.`);
         }

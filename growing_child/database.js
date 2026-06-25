@@ -26,6 +26,11 @@ class GrowingChildDatabase {
   }
 
   migrate() {
+    const hadLearnedSequences = Boolean(this.db.prepare(`
+      SELECT 1 FROM sqlite_master
+      WHERE type = 'table' AND name = 'learned_sequences'
+    `).get());
+
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS words (
         word TEXT PRIMARY KEY,
@@ -74,6 +79,11 @@ class GrowingChildDatabase {
         last_seen TEXT NOT NULL,
         PRIMARY KEY (previous_word, current_word, next_word)
       );
+      CREATE TABLE IF NOT EXISTS learned_sequences (
+        sequence TEXT PRIMARY KEY,
+        times_seen INTEGER NOT NULL DEFAULT 1,
+        last_seen TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS state (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -85,7 +95,16 @@ class GrowingChildDatabase {
         ON word_transitions(previous_word, current_word, times_seen DESC);
       CREATE INDEX IF NOT EXISTS idx_transitions_current
         ON word_transitions(current_word, times_seen DESC);
+      CREATE INDEX IF NOT EXISTS idx_sequences_last_seen
+        ON learned_sequences(last_seen DESC);
     `);
+
+    // Transition rows created by older versions cannot be matched back to
+    // their source messages. Drop only those links once so they cannot be
+    // replayed as near-verbatim chat; vocabulary and progression stay intact.
+    if (!hadLearnedSequences) {
+      this.db.exec('DELETE FROM word_transitions;');
+    }
   }
 
   prepare() {
@@ -131,6 +150,13 @@ class GrowingChildDatabase {
           times_seen = times_seen + excluded.times_seen,
           last_seen = excluded.last_seen
       `),
+      sequence: this.db.prepare(`
+        INSERT INTO learned_sequences(sequence, times_seen, last_seen)
+        VALUES (?, ?, ?)
+        ON CONFLICT(sequence) DO UPDATE SET
+          times_seen = times_seen + excluded.times_seen,
+          last_seen = excluded.last_seen
+      `),
       state: this.db.prepare(`
         INSERT INTO state(key, value) VALUES (?, ?)
         ON CONFLICT(key) DO UPDATE SET value = excluded.value
@@ -165,6 +191,7 @@ class GrowingChildDatabase {
         for (let i = 0; i < chain.length - 2; i++) {
           this.statements.transition.run(chain[i], chain[i + 1], chain[i + 2], 1, now);
         }
+        this.statements.sequence.run(sequence.join(' '), 1, now);
       }
       if (authorId && authorName) {
         this.statements.member.run(source, String(authorId), String(authorName), now, now);
@@ -236,6 +263,15 @@ class GrowingChildDatabase {
     `).all(word, END_TOKEN, limit);
   }
 
+  getLearnedSequences(limit = 1000) {
+    return this.db.prepare(`
+      SELECT sequence, times_seen
+      FROM learned_sequences
+      ORDER BY last_seen DESC
+      LIMIT ?
+    `).all(limit);
+  }
+
   getRecentActivity(minutes = 10) {
     const since = new Date(Date.now() - minutes * 60_000).toISOString();
     return Number(this.db.prepare(
@@ -259,6 +295,7 @@ class GrowingChildDatabase {
       DELETE FROM channels;
       DELETE FROM topics;
       DELETE FROM word_transitions;
+      DELETE FROM learned_sequences;
       DELETE FROM learned_messages;
       DELETE FROM state;
       DELETE FROM sqlite_sequence WHERE name = 'learned_messages';
