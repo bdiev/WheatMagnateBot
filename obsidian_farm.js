@@ -70,6 +70,7 @@ const farm = {
 const runtime = {
   onMined: async () => {},
   onPickaxeRetired: async () => {},
+  onSuppliesChanged: async () => {},
   onFatalStop: async () => {}
 };
 let worldInteractionQueue = Promise.resolve();
@@ -182,6 +183,7 @@ function getConfiguredTargetPos() {
 function configureRuntime(hooks = {}) {
   if (typeof hooks.onMined === 'function') runtime.onMined = hooks.onMined;
   if (typeof hooks.onPickaxeRetired === 'function') runtime.onPickaxeRetired = hooks.onPickaxeRetired;
+  if (typeof hooks.onSuppliesChanged === 'function') runtime.onSuppliesChanged = hooks.onSuppliesChanged;
   if (typeof hooks.onFatalStop === 'function') runtime.onFatalStop = hooks.onFatalStop;
 }
 
@@ -690,6 +692,7 @@ async function ensureFarmSupplies(bot) {
   let container = null;
   let pickaxeWasAvailable = false;
   let foodWasAvailable = false;
+  let pickaxeChanged = false;
   try {
     await prepareSafeBarrelHand(bot);
     container = await bot.openContainer(barrel);
@@ -703,6 +706,7 @@ async function ensureFarmSupplies(bot) {
         if (lowPickaxes.length > 0) {
           swappedLowPickaxe = lowPickaxes[0];
           await swapPickaxesInExactSlots(bot, container, pickaxe, swappedLowPickaxe);
+          pickaxeChanged = true;
           writeFarmDebug('pickaxe_swapped', {
             receivedItem: pickaxe.item.name,
             retiredItem: swappedLowPickaxe.name,
@@ -716,6 +720,7 @@ async function ensureFarmSupplies(bot) {
           });
         } else {
           await withdrawPickaxeFromExactSlot(bot, container, pickaxe);
+          pickaxeChanged = true;
           writeFarmDebug('supply_withdrawn', {
             item: pickaxe.item.name,
             count: 1,
@@ -768,6 +773,22 @@ async function ensureFarmSupplies(bot) {
           barrel: barrel.position.toString()
         });
       }
+    }
+
+    if (pickaxeChanged) {
+      const suppliesSnapshot = {
+        reason: 'pickaxe_changed',
+        inventory: summarizeSupplyItems(bot, bot.inventory.items()),
+        barrel: {
+          position: barrel.position.toString(),
+          distance: bot.entity.position.distanceTo(barrel.position.offset(0.5, 0.5, 0.5)),
+          ...summarizeSupplyItems(bot, container.containerItems())
+        },
+        barrelError: null
+      };
+      runtime.onSuppliesChanged(suppliesSnapshot).catch(err => {
+        writeFarmDebug('supply_stats_refresh_failed', { error: err.message });
+      });
     }
   } finally {
     if (container) {
