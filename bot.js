@@ -70,6 +70,15 @@ const STATUS_BUTTON_EMOJIS = {
   chatSettings: { name: 'Crafting_Table', id: '1519309305558601900' },
   obsidian: { name: 'Obsidian', id: '1519367777691898079' }
 };
+const UI_BUTTON_EMOJIS = {
+  arrowRightCurved: { name: 'Arrow_Right_Curved', id: '1519567352432300154' },
+  arrowLeftCurved: { name: 'Arrow_Left_Curved', id: '1519567351442440343' },
+  jellieCatBaby: { name: 'Jellie_Cat_Baby', id: '1519567349035040939' },
+  commandBlock: { name: 'Command_Block', id: '1519567348259094560' },
+  redstone: { name: 'Redstone', id: '1519569071442493561' },
+  blindness: { name: 'Blindness', id: '1519569073862738000' }
+};
+const NETHER_STAR_EMOJI = '<:Nether_Star:1519569072809836584>';
 const FARM_EMOJIS = {
   waterBucket: '<:Water_Bucket:1519367780804071608>',
   obsidian: '<:Obsidian:1519367777691898079>',
@@ -175,18 +184,22 @@ function createGrowingChildControls() {
     new ButtonBuilder()
       .setCustomId('growing_child_toggle')
       .setLabel(enabled ? 'Disable' : 'Enable')
+      .setEmoji(UI_BUTTON_EMOJIS.redstone)
       .setStyle(enabled ? ButtonStyle.Danger : ButtonStyle.Success),
     new ButtonBuilder()
       .setCustomId('growing_child_say')
       .setLabel('Say something')
+      .setEmoji(UI_BUTTON_EMOJIS.jellieCatBaby)
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
       .setCustomId('growing_child_status')
       .setLabel('Status')
+      .setEmoji(UI_BUTTON_EMOJIS.commandBlock)
       .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId('growing_child_reset')
       .setLabel('Reset to level 0')
+      .setEmoji(UI_BUTTON_EMOJIS.blindness)
       .setStyle(ButtonStyle.Danger),
     createDeleteDMButton()
   );
@@ -197,6 +210,7 @@ function createGrowingChildResetConfirmation() {
     new ButtonBuilder()
       .setCustomId('growing_child_reset_confirm')
       .setLabel('Delete all learning')
+      .setEmoji(UI_BUTTON_EMOJIS.blindness)
       .setStyle(ButtonStyle.Danger),
     new ButtonBuilder()
       .setCustomId('growing_child_reset_cancel')
@@ -1359,7 +1373,7 @@ async function sendGrowingChildChannelMessage(channelId, payload) {
   if (!channel?.isTextBased()) return;
   await channel.send({
     embeds: [{
-      title: 'Growing Child AI',
+      title: `${NETHER_STAR_EMOJI} Growing Child AI`,
       description: payload.phrase,
       color: 10181046,
       footer: { text: `Level ${payload.level} · ${payload.emotion}` },
@@ -1391,7 +1405,7 @@ async function sendGrowingChildStatusDM(note = null) {
   const status = growingChild.getStatus();
   await owner.send({
     embeds: [{
-      title: 'Growing Child AI · Status',
+      title: `${NETHER_STAR_EMOJI} Growing Child AI · Status`,
       description: `${note ? `${note}\n\n` : ''}${formatGrowingChildStatus(status)}`,
       color: 10181046,
       timestamp: new Date()
@@ -3532,7 +3546,8 @@ function buildWhitelistPagerRow(target, currentPage, totalPages, addPage, delete
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`whitelist_page_${prevAddPage}_${prevDeletePage}`)
-      .setLabel('◀ Previous')
+      .setLabel('Previous')
+      .setEmoji(UI_BUTTON_EMOJIS.arrowLeftCurved)
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(currentPage <= 0),
     new ButtonBuilder()
@@ -3542,7 +3557,8 @@ function buildWhitelistPagerRow(target, currentPage, totalPages, addPage, delete
       .setDisabled(true),
     new ButtonBuilder()
       .setCustomId(`whitelist_page_${nextAddPage}_${nextDeletePage}`)
-      .setLabel('Next ▶')
+      .setLabel('Next')
+      .setEmoji(UI_BUTTON_EMOJIS.arrowRightCurved)
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(currentPage >= totalPages - 1)
   );
