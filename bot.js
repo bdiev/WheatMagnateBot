@@ -76,7 +76,17 @@ const UI_BUTTON_EMOJIS = {
   jellieCatBaby: { name: 'Jellie_Cat_Baby', id: '1519567349035040939' },
   commandBlock: { name: 'Command_Block', id: '1519567348259094560' },
   redstone: { name: 'Redstone', id: '1519569071442493561' },
-  blindness: { name: 'Blindness', id: '1519569073862738000' }
+  blindness: { name: 'Blindness', id: '1519569073862738000' },
+  shears: { name: 'Shears', id: '1519760020659634309' },
+  cat: { name: 'Cat', id: '1519760017614573809' },
+  beacon: { name: 'Beacon', id: '1519760012715491460' },
+  enchantingTable: { name: 'Enchanting_Table', id: '1519760011495084192' },
+  witherSkeletonSkull: { name: 'Wither_Skeleton_Skull', id: '1519760008382910606' },
+  haste: { name: 'Haste', id: '1519760002267742380' },
+  slowFalling: { name: 'Slow_Falling', id: '1519760003316060160' },
+  bookBlack: { name: 'Book_Black', id: '1519760004943577239' },
+  bookOrange: { name: 'Book_Orange', id: '1519760006029902044' },
+  bookYellow: { name: 'Book_Yellow', id: '1519760007107969114' }
 };
 const NETHER_STAR_EMOJI = '<:Nether_Star:1519569072809836584>';
 const FARM_EMOJIS = {
@@ -105,6 +115,24 @@ const FOOD_EMOJIS = {
 };
 const ITEM_EMOJIS = {
   ...FOOD_EMOJIS,
+  red_mushroom: '<:Red_Mushroom:1519760022471577742>',
+  shears: '<:Shears:1519760020659634309>',
+  red_tulip: '<:Red_Tulip:1519760019430572202>',
+  cat_spawn_egg: '<:Cat:1519760017614573809>',
+  rabbit: '<:Rabbit_Salt_Pepper:1519760016175923251>',
+  cooked_rabbit: '<:Rabbit_Salt_Pepper:1519760016175923251>',
+  rabbit_stew: '<:Rabbit_Salt_Pepper:1519760016175923251>',
+  creeper_head: '<:Creeper_Head:1519760015097987102>',
+  carved_pumpkin: '<:Carved_Pumpkin:1519760013902614752>',
+  pumpkin: '<:Carved_Pumpkin:1519760013902614752>',
+  beacon: '<:Beacon:1519760012715491460>',
+  enchanting_table: '<:Enchanting_Table:1519760011495084192>',
+  wither_skeleton_skull: '<:Wither_Skeleton_Skull:1519760008382910606>',
+  book: '<:Book_Yellow:1519760007107969114>',
+  writable_book: '<:Book_Orange:1519760006029902044>',
+  written_book: '<:Book_Orange:1519760006029902044>',
+  enchanted_book: '<:Book_Black:1519760004943577239>',
+  knowledge_book: '<:Book_Black:1519760004943577239>',
   water_bucket: FARM_EMOJIS.waterBucket,
   lava_bucket: FARM_EMOJIS.lavaBucket,
   bucket: FARM_EMOJIS.bucket,
@@ -176,6 +204,7 @@ function createDeleteDMButton() {
   return new ButtonBuilder()
     .setCustomId('delete_dm_message')
     .setLabel('Delete')
+    .setEmoji(UI_BUTTON_EMOJIS.shears)
     .setStyle(ButtonStyle.Danger);
 }
 
@@ -190,17 +219,17 @@ function createGrowingChildControls() {
     new ButtonBuilder()
       .setCustomId('growing_child_say')
       .setLabel('Say something')
-      .setEmoji(UI_BUTTON_EMOJIS.jellieCatBaby)
+      .setEmoji(UI_BUTTON_EMOJIS.cat)
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
       .setCustomId('growing_child_status')
       .setLabel('Status')
-      .setEmoji(UI_BUTTON_EMOJIS.commandBlock)
+      .setEmoji(UI_BUTTON_EMOJIS.bookYellow)
       .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId('growing_child_reset')
       .setLabel('Reset to level 0')
-      .setEmoji(UI_BUTTON_EMOJIS.blindness)
+      .setEmoji(UI_BUTTON_EMOJIS.witherSkeletonSkull)
       .setStyle(ButtonStyle.Danger),
     createDeleteDMButton()
   );
@@ -211,7 +240,7 @@ function createGrowingChildResetConfirmation() {
     new ButtonBuilder()
       .setCustomId('growing_child_reset_confirm')
       .setLabel('Delete all learning')
-      .setEmoji(UI_BUTTON_EMOJIS.blindness)
+      .setEmoji(UI_BUTTON_EMOJIS.witherSkeletonSkull)
       .setStyle(ButtonStyle.Danger),
     new ButtonBuilder()
       .setCustomId('growing_child_reset_cancel')
@@ -620,6 +649,7 @@ async function sendWhisperClaimPrompt(mcUsername, body) {
       new ButtonBuilder()
         .setCustomId(`claim_whisper_${mcKey}`)
         .setLabel('Claim dialog')
+        .setEmoji(UI_BUTTON_EMOJIS.bookOrange)
         .setStyle(ButtonStyle.Success)
     )
   ];
@@ -666,10 +696,12 @@ function buildDeleteDialogComponents(channelId) {
       new ButtonBuilder()
         .setCustomId(`delete_dialog_${channelId}`)
         .setLabel('Delete dialog')
+        .setEmoji(UI_BUTTON_EMOJIS.shears)
         .setStyle(ButtonStyle.Danger),
       new ButtonBuilder()
         .setCustomId(`set_ttl_${channelId}`)
         .setLabel('Set auto-delete time')
+        .setEmoji(UI_BUTTON_EMOJIS.slowFalling)
         .setStyle(ButtonStyle.Secondary)
     )
   ];
@@ -919,6 +951,7 @@ function buildSecurityAlertComponents(playerName) {
       new ButtonBuilder()
         .setCustomId(`security_add_whitelist_${b64encode(safePlayerName)}`)
         .setLabel('Add to whitelist')
+        .setEmoji(UI_BUTTON_EMOJIS.bookYellow)
         .setStyle(ButtonStyle.Success)
     )
   ];
@@ -2264,10 +2297,12 @@ function createObsidianStatsComponents() {
       new ButtonBuilder()
         .setCustomId('ofstats_refresh')
         .setLabel('Refresh')
+        .setEmoji(UI_BUTTON_EMOJIS.haste)
         .setStyle(ButtonStyle.Primary),
       new ButtonBuilder()
         .setCustomId('ofstats_detailed')
         .setLabel('Detailed')
+        .setEmoji(UI_BUTTON_EMOJIS.beacon)
         .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId('ofstats_reset_coordinates')
@@ -2610,6 +2645,7 @@ async function buildWhitelistPlaytimeMessage() {
         new ButtonBuilder()
           .setCustomId('playtime_refresh_button')
           .setLabel('Refresh')
+          .setEmoji(UI_BUTTON_EMOJIS.haste)
           .setStyle(ButtonStyle.Secondary)
       )
     ]
@@ -5163,6 +5199,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
               new ButtonBuilder()
                 .setCustomId('playtime_refresh_button')
                 .setLabel('Refresh')
+                .setEmoji(UI_BUTTON_EMOJIS.haste)
                 .setStyle(ButtonStyle.Secondary)
             )
           ]
@@ -5255,9 +5292,12 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           const name = item.displayName || item.name;
           const count = item.count;
           const value = `${item.slot}_${item.type}_${item.metadata || 0}`;
-          return new StringSelectMenuOptionBuilder()
+          const option = new StringSelectMenuOptionBuilder()
             .setLabel(`${name} x${count}`)
             .setValue(b64encode(value));
+          const emoji = getItemEmoji(item.name);
+          if (emoji) option.setEmoji(emoji);
+          return option;
         });
         const selectMenu = new StringSelectMenuBuilder()
           .setCustomId('drop_select')
