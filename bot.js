@@ -3427,7 +3427,7 @@ async function sendGameChatMessageToDiscord(username, message, { allowMentions =
 
     const safeUsername = String(username || bot?.username || 'Minecraft');
     const avatarUrl = `https://minotar.net/avatar/${safeUsername.toLowerCase()}/28`;
-    let displayMessage = neutralizeDiscordInviteLinks(cleanMessage)
+    let displayMessage = neutralizeDiscordInviteLinks(flattenMarkdownLinks(cleanMessage))
       .replace(/([*_`~|>\\])/g, '\\$1');
     displayMessage = displayMessage.replace(/\[/g, '\\[').replace(/\]/g, '\\]');
 
@@ -3476,6 +3476,16 @@ function neutralizeDiscordInviteLinks(message) {
     .replace(/\b(discord\.gg|discord(?:app)?\.com\/invite)\//gi, match =>
       match.replace(/\./g, '[.]')
     );
+}
+
+function flattenMarkdownLinks(message) {
+  return String(message || '').replace(/\[([^\]\r\n]{1,300})\]\((https?:\/\/[^\s)<>]{1,500})\)/gi, (match, label, url) => {
+    const cleanLabel = String(label || '').trim();
+    const cleanUrl = String(url || '').trim();
+    if (!cleanLabel || !cleanUrl) return match;
+    if (cleanLabel === cleanUrl) return cleanUrl;
+    return `${cleanLabel} (${cleanUrl})`;
+  });
 }
 
 function cleanMinecraftChatMessage(message) {
@@ -3552,11 +3562,11 @@ function scheduleGameChatForward(username, message) {
 }
 
 function parseRawPublicChatLine(text) {
-  const match = cleanMinecraftChatMessage(text).match(/^<([A-Za-z0-9_]{1,16})>\s+([\s\S]+)$/);
+  const match = cleanMinecraftChatMessage(text).match(/^(?:<([A-Za-z0-9_]{1,16})>|([A-Za-z0-9_]{1,16}))\s*>\s+([\s\S]+)$/);
   if (!match) return null;
   return {
-    username: match[1],
-    message: match[2].trim()
+    username: match[1] || match[2],
+    message: match[3].trim()
   };
 }
 
