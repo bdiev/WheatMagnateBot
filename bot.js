@@ -2,7 +2,7 @@ require('dotenv').config();
 const mineflayer = require('mineflayer');
 const fs = require('fs');
 const path = require('path');
-const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ChannelType, PermissionsBitField, MessageFlags, InteractionContextType, SlashCommandBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ChannelType, PermissionsBitField, MessageFlags, InteractionContextType, SlashCommandBuilder, ActivityType } = require('discord.js');
 const { Pool } = require('pg');
 const { pathfinder } = require('mineflayer-pathfinder');
 const farm = require('./obsidian_farm');
@@ -1668,8 +1668,14 @@ if (DISCORD_BOT_TOKEN) {
     console.log(`[Discord] Guilds: ${discordClient.guilds.cache.size}`);
 
     try {
-      discordClient.user.setPresence({ status: 'online' });
-      console.log('[Discord] Presence set to online');
+      discordClient.user.setPresence({
+        status: 'online',
+        activities: [{
+          name: 'on oldfag.org',
+          type: ActivityType.Playing
+        }]
+      });
+      console.log('[Discord] Presence set to Playing on oldfag.org');
     } catch (presenceErr) {
       console.error('[Discord] Failed to set presence:', presenceErr.message);
     }
