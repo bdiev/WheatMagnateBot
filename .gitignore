@@ -1,5 +1,6 @@
 node_modules/
 data/auth-cache/
+data/bot_public_chat_status.json
 data/*.sqlite
 data/*.sqlite-shm
 data/*.sqlite-wal

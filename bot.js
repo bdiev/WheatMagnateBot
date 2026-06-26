@@ -45,6 +45,7 @@ const MINECRAFT_PRIVATE_MESSAGE_LENGTH = 180;
 const RECONNECT_INTERVAL_MS = 15_000;
 const MINECRAFT_CONNECT_TIMEOUT_MS = 20_000;
 const MINECRAFT_PROFILES_FOLDER = path.resolve(process.env.MINECRAFT_PROFILES_FOLDER || path.join('data', 'auth-cache'));
+const BOT_PUBLIC_CHAT_STATUS_FILE = path.resolve('data', 'bot_public_chat_status.json');
 const LEGACY_OBSIDIAN_TARGET = Object.freeze({
   x: 3402889,
   y: 68,
@@ -374,6 +375,7 @@ let playtimeSyncInterval = null;
 const geminiModelBackoffUntil = new Map(); // model -> unix ms
 let lastBotPublicChatPhrase = null;
 let lastBotPublicChatEmoji = null;
+loadLastBotPublicChatStatus();
 const excludedMessageIds = [];
 const pendingAuthLinks = [];
 const pendingOwnerDMs = [];
@@ -3173,11 +3175,44 @@ function pickRandomBotStatusEmoji() {
   return choices[Math.floor(Math.random() * choices.length)] || STATUS_EMOJIS.axolotlBucket;
 }
 
+function loadLastBotPublicChatStatus() {
+  try {
+    const raw = fs.readFileSync(BOT_PUBLIC_CHAT_STATUS_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      lastBotPublicChatPhrase = typeof parsed.phrase === 'string' && parsed.phrase.trim()
+        ? parsed.phrase.slice(0, 180)
+        : null;
+      lastBotPublicChatEmoji = typeof parsed.emoji === 'string' && parsed.emoji.trim()
+        ? parsed.emoji
+        : null;
+    }
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      console.error('[Bot] Failed to load last public chat status:', err.message);
+    }
+  }
+}
+
+function saveLastBotPublicChatStatus() {
+  try {
+    fs.mkdirSync(path.dirname(BOT_PUBLIC_CHAT_STATUS_FILE), { recursive: true });
+    fs.writeFileSync(BOT_PUBLIC_CHAT_STATUS_FILE, JSON.stringify({
+      phrase: lastBotPublicChatPhrase,
+      emoji: lastBotPublicChatEmoji,
+      updatedAt: new Date().toISOString()
+    }, null, 2));
+  } catch (err) {
+    console.error('[Bot] Failed to save last public chat status:', err.message);
+  }
+}
+
 function rememberBotPublicChatPhrase(message) {
   const phrase = normalizeOutboundChat(message);
   if (!phrase || phrase.startsWith('/') || phrase.startsWith('!')) return;
   lastBotPublicChatPhrase = phrase.slice(0, 180);
   lastBotPublicChatEmoji = pickRandomBotStatusEmoji();
+  saveLastBotPublicChatStatus();
   updateStatusMessage().catch(() => {});
 }
 
