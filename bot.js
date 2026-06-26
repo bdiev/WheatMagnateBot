@@ -386,6 +386,7 @@ const growingChildPlainMessageIds = new Set();
 let recentWhispers = new Map(); // key: `WHISPER:username:message` -> timestamp, to mark whispers and suppress chat forwarding
 let pendingChatTimers = new Map(); // key: `CHAT:username:message` -> timeout handle to delay chat forwarding
 let outboundWhispers = new Map(); // key: `OUTBOUND:targetUsername:message` -> timestamp, to suppress public echo of our own whispers
+let recentlyForwardedGameChat = new Map(); // key: `CHAT:username:message` -> timestamp, to dedupe chat/raw message events
 let tpsTabInterval = null;
 let playtimeSyncInterval = null;
 const geminiModelBackoffUntil = new Map(); // model -> unix ms
@@ -3467,6 +3468,88 @@ async function sendGameChatMessageToDiscord(username, message, { allowMentions =
   }
 }
 
+function cleanMinecraftChatMessage(message) {
+  return String(message || '')
+    .replace(/(?:\u00a7|\u00c2\u00a7)[0-9a-fk-or]/gi, '')
+    .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
+    .trim();
+}
+
+function scheduleGameChatForward(username, message) {
+  if (!DISCORD_CHAT_CHANNEL_ID || !discordClient || !discordClient.isReady()) return false;
+
+  const cleanMessage = cleanMinecraftChatMessage(message);
+  if (!cleanMessage || cleanMessage.startsWith('/msg ')) return false;
+
+  const safeUsername = String(username || '').trim();
+  if (!safeUsername) return false;
+
+  const nowTs = Date.now();
+  const isSelfMessage = bot?.username && safeUsername.toLowerCase() === bot.username.toLowerCase();
+  const pendingKey = `CHAT:${safeUsername}:${cleanMessage}`;
+  for (const [key, timestamp] of recentlyForwardedGameChat.entries()) {
+    if (nowTs - timestamp > 10_000) recentlyForwardedGameChat.delete(key);
+  }
+  if (recentlyForwardedGameChat.has(pendingKey)) return false;
+  if (isSelfMessage && consumeOutboundSelfEcho(cleanMessage)) {
+    recentlyForwardedGameChat.set(pendingKey, Date.now());
+    return false;
+  }
+
+  if (!isSelfMessage && ignoredChatUsernames.includes(safeUsername.toLowerCase())) return false;
+
+  const whisperKey = `WHISPER:${safeUsername}:${cleanMessage}`;
+  if (recentWhispers.has(whisperKey)) {
+    debugLog(`[Chat] Suppressed whisper from ${safeUsername}: "${cleanMessage}"`);
+    return false;
+  }
+
+  const outboundKey = `OUTBOUND:${safeUsername.toLowerCase()}:${cleanMessage}`;
+  for (const [ok, ts] of outboundWhispers.entries()) {
+    if (nowTs - ts > OUTBOUND_WHISPER_TTL_MS) outboundWhispers.delete(ok);
+  }
+  if (outboundWhispers.has(outboundKey)) {
+    debugLog(`[Chat] Suppressed outbound echo to ${safeUsername}: "${cleanMessage}"`);
+    return false;
+  }
+
+  if (pendingChatTimers.has(pendingKey)) {
+    clearTimeout(pendingChatTimers.get(pendingKey));
+    pendingChatTimers.delete(pendingKey);
+  }
+
+  const timer = setTimeout(async () => {
+    try {
+      if (recentWhispers.has(whisperKey)) {
+        debugLog(`[Chat] Suppressed whisper (late mark) from ${safeUsername}: "${cleanMessage}"`);
+        return;
+      }
+      if (outboundWhispers.has(outboundKey)) {
+        debugLog(`[Chat] Suppressed outbound echo (late) to ${safeUsername}: "${cleanMessage}"`);
+        return;
+      }
+      recentlyForwardedGameChat.set(pendingKey, Date.now());
+      await sendGameChatMessageToDiscord(safeUsername, cleanMessage);
+    } catch (e) {
+      // Silent
+    } finally {
+      pendingChatTimers.delete(pendingKey);
+    }
+  }, PENDING_CHAT_DELAY_MS);
+
+  pendingChatTimers.set(pendingKey, timer);
+  return true;
+}
+
+function parseRawPublicChatLine(text) {
+  const match = cleanMinecraftChatMessage(text).match(/^<([A-Za-z0-9_]{1,16})>\s+([\s\S]+)$/);
+  if (!match) return null;
+  return {
+    username: match[1],
+    message: match[2].trim()
+  };
+}
+
 async function requestGeminiModel(model, question, options = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
@@ -4576,6 +4659,9 @@ function createBot() {
     // Do NOT infer deaths from chat messages. We only notify on the bot's own death
     // via the dedicated bot death event handler.
 
+    scheduleGameChatForward(username, message);
+    return;
+
     // Send all chat messages to Discord chat channel
     if (!DISCORD_CHAT_CHANNEL_ID || !discordClient || !discordClient.isReady()) {
       return;
@@ -4690,6 +4776,11 @@ function createBot() {
     const tpsMatch = text.match(/(\d+\.?\d*)\s*tps/i);
     if (tpsMatch) {
       realTps = parseFloat(tpsMatch[1]);
+    }
+
+    const rawChat = parseRawPublicChatLine(text);
+    if (rawChat) {
+      scheduleGameChatForward(rawChat.username, rawChat.message);
     }
   });
 }
