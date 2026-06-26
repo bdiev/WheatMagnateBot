@@ -47,6 +47,7 @@ const MINECRAFT_CONNECT_TIMEOUT_MS = 20_000;
 const MINECRAFT_PROFILES_FOLDER = path.resolve(process.env.MINECRAFT_PROFILES_FOLDER || path.join('data', 'auth-cache'));
 const BOT_PUBLIC_CHAT_STATUS_FILE = path.resolve('data', 'bot_public_chat_status.json');
 const BOT_CHAT_STATUS_EMOJIS_FILE = path.resolve('data', 'bot_chat_status_emojis.json');
+const OBSIDIAN_STATS_MESSAGES_FILE = path.resolve('data', 'obsidian_stats_messages.json');
 const LEGACY_OBSIDIAN_TARGET = Object.freeze({
   x: 3402889,
   y: 68,
@@ -1477,6 +1478,15 @@ async function sendGrowingChildMinecraftMessage(payload) {
   return true;
 }
 
+function buildGrowingChildStatusEmbed(status, note = null) {
+  return {
+    title: `${NETHER_STAR_EMOJI} Growing Child AI · Status`,
+    description: `${note ? `${note}\n\n` : ''}${formatGrowingChildStatus(status)}`,
+    color: status.enabled ? 65280 : 8421504,
+    timestamp: new Date()
+  };
+}
+
 async function sendGrowingChildStatusDM(note = null) {
   if (!growingChild || !DISCORD_OWNER_ID || !discordClient?.isReady()) return;
   const owner = await discordClient.users.fetch(DISCORD_OWNER_ID);
@@ -1695,6 +1705,7 @@ if (DISCORD_BOT_TOKEN) {
     // offline and never reaches the spawn event.
     await ensureStatusMessage();
     await updateStatusMessage();
+    await restoreObsidianStatsUpdaters();
 
     // Start global status update interval (updates every 3 seconds)
     if (!statusUpdateInterval) {
@@ -2363,11 +2374,41 @@ function createObsidianStatsComponents() {
   ];
 }
 
+function saveObsidianStatsUpdaters() {
+  try {
+    fs.mkdirSync(path.dirname(OBSIDIAN_STATS_MESSAGES_FILE), { recursive: true });
+    const entries = [...obsidianStatsUpdaters.entries()].map(([channelId, updater]) => ({
+      channelId,
+      messageId: updater.messageId,
+      supplies: updater.supplies || null,
+      updatedAt: new Date().toISOString()
+    }));
+    fs.writeFileSync(OBSIDIAN_STATS_MESSAGES_FILE, JSON.stringify(entries, null, 2));
+  } catch (err) {
+    console.error('[Obsidian Stats] Failed to save updater state:', err.message);
+  }
+}
+
+function loadObsidianStatsUpdaterRecords() {
+  try {
+    const raw = fs.readFileSync(OBSIDIAN_STATS_MESSAGES_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    return (Array.isArray(parsed) ? parsed : parsed?.messages || [])
+      .filter(record => record?.channelId && record?.messageId);
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      console.error('[Obsidian Stats] Failed to load updater state:', err.message);
+    }
+    return [];
+  }
+}
+
 function stopObsidianStatsUpdater(channelId) {
   const updater = obsidianStatsUpdaters.get(channelId);
   if (!updater) return;
   if (updater.timer) clearTimeout(updater.timer);
   obsidianStatsUpdaters.delete(channelId);
+  saveObsidianStatsUpdaters();
 }
 
 function mergeObsidianSupplies(previous, next) {
@@ -2460,6 +2501,7 @@ async function updateObsidianStatsSupplies(supplies) {
     }
     await updateObsidianStatsUpdater(channelId, updater);
   }));
+  saveObsidianStatsUpdaters();
 }
 
 function startObsidianStatsUpdater(message, supplies) {
@@ -2478,7 +2520,33 @@ function startObsidianStatsUpdater(message, supplies) {
   };
 
   obsidianStatsUpdaters.set(channelId, updater);
+  saveObsidianStatsUpdaters();
   scheduleObsidianStatsUpdater(channelId, updater);
+}
+
+async function restoreObsidianStatsUpdaters() {
+  const records = loadObsidianStatsUpdaterRecords();
+  if (records.length === 0) return;
+
+  for (const record of records) {
+    try {
+      const channel = await discordClient.channels.fetch(record.channelId);
+      if (!channel?.messages) throw new Error('Statistics channel is unavailable');
+      const message = await channel.messages.fetch(record.messageId);
+      startObsidianStatsUpdater(message, record.supplies || {
+        barrel: null,
+        barrelError: 'Press Refresh to inspect'
+      });
+      const updater = obsidianStatsUpdaters.get(record.channelId);
+      if (updater) {
+        await updateObsidianStatsUpdater(record.channelId, updater);
+      }
+    } catch (err) {
+      console.error('[Obsidian Stats] Could not restore updater:', err.message);
+      stopObsidianStatsUpdater(record.channelId);
+    }
+  }
+  saveObsidianStatsUpdaters();
 }
 
 async function registerApplicationCommands() {
@@ -4835,8 +4903,11 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         return;
       }
       if (interaction.customId === 'growing_child_status') {
-        await interaction.deferUpdate();
-        await sendGrowingChildStatusDM();
+        const status = growingChild.getStatus();
+        await interaction.update({
+          embeds: [buildGrowingChildStatusEmbed(status)],
+          components: [createGrowingChildControls()]
+        });
         return;
       }
       if (interaction.customId === 'growing_child_reset') {
@@ -4916,7 +4987,10 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       }
 
       await interaction.deferUpdate();
-      stopObsidianStatsUpdater(interaction.channelId);
+      const updater = obsidianStatsUpdaters.get(interaction.channelId);
+      if (updater?.messageId === interaction.message.id) {
+        stopObsidianStatsUpdater(interaction.channelId);
+      }
       const temporary = temporaryInteractionMessages.get(interaction.message.id);
       if (temporary) {
         clearInterval(temporary.interval);
@@ -4943,9 +5017,13 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       const updater = obsidianStatsUpdaters.get(interaction.channelId);
       if (updater && updater.messageId === interaction.message.id) {
         updater.supplies = mergeObsidianSupplies(updater.supplies, supplies);
+        saveObsidianStatsUpdaters();
+      } else {
+        startObsidianStatsUpdater(interaction.message, supplies);
       }
+      const activeUpdater = obsidianStatsUpdaters.get(interaction.channelId);
       await interaction.message.edit({
-        embeds: [await buildObsidianStatsEmbed(updater?.supplies || supplies)],
+        embeds: [await buildObsidianStatsEmbed(activeUpdater?.supplies || supplies)],
         components: createObsidianStatsComponents()
       });
       return;
