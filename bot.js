@@ -3745,7 +3745,7 @@ async function handleWmCommand(username, question) {
     const answer = await askGemini(cleanQuestion);
     for (const chunk of splitMinecraftMessage(answer, 220)) {
       if (!bot?.entity) return;
-      sendMinecraftChat(chunk, { trackStatus: true });
+      sendMinecraftChat(chunk);
       await sendGameChatMessageToDiscord(bot.username, chunk, { allowMentions: false });
       await new Promise(resolve => setTimeout(resolve, 400));
     }
@@ -7368,7 +7368,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       }
       const text = message.content.slice(5).trim();
       if (text) {
-        sendMinecraftChat(text, { trackStatus: true });
+        sendMinecraftChat(text);
         console.log(`[Command] Say "${text}" by ${message.author.tag} via Discord`);
         await message.reply({
           embeds: [{
