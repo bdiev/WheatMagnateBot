@@ -3871,7 +3871,11 @@ function getLastBotPublicChatStatusLine() {
   const phrase = lastBotPublicChatPhrase
     ? escapeStatusDescriptionText(lastBotPublicChatPhrase)
     : 'No bot chat yet';
-  return `${lastBotPublicChatEmoji || STATUS_EMOJIS.axolotlBucket} ${phrase}`;
+  const quote = phrase
+    .split('\n')
+    .map(line => `> ${line}`)
+    .join('\n');
+  return `${lastBotPublicChatEmoji || STATUS_EMOJIS.axolotlBucket} ${quote}`;
 }
 
 function getStatusDescription() {
