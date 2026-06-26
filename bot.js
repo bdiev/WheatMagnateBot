@@ -1671,7 +1671,7 @@ if (DISCORD_BOT_TOKEN) {
       discordClient.user.setPresence({
         status: 'online',
         activities: [{
-          name: 'on oldfag.org',
+          name: 'Playing on oldfag.org',
           type: ActivityType.Playing
         }]
       });
