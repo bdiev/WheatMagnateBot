@@ -32,6 +32,7 @@ const DEFAULTS = Object.freeze({
   minecraftPublicSpeechEnabled: true,
   aiGenerationEnabled: true,
   aiVocabularyLimit: 800,
+  aiCandidateCount: 5,
   aiWordsPerPhraseMin: 3,
   aiWordsPerPhraseMax: 6,
   maxLearnedMessages: 5000
@@ -80,6 +81,7 @@ function loadConfig(configPath = path.join(__dirname, 'config.json')) {
     Number(config.reactiveDelayMaxSeconds) || 25
   );
   config.aiVocabularyLimit = Math.max(50, Number(config.aiVocabularyLimit) || 800);
+  config.aiCandidateCount = Math.max(1, Math.min(8, Number(config.aiCandidateCount) || 5));
   config.aiWordsPerPhraseMin = Math.max(3, Number(config.aiWordsPerPhraseMin) || 3);
   config.aiWordsPerPhraseMax = Math.max(
     config.aiWordsPerPhraseMin,

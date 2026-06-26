@@ -43,6 +43,19 @@ function similarity(firstWords, secondWords) {
   return shared / Math.min(first.size, second.size);
 }
 
+function scoreWords(words, reply = false) {
+  if (words.length < 3) return -100;
+  const unique = new Set(words);
+  let score = 0;
+  const idealLength = reply ? 6 : 7;
+  score += 12 - Math.abs(words.length - idealLength);
+  score += unique.size * 1.5;
+  score += words.filter(word => !FUNCTION_WORDS.has(word)).length * 2;
+  if (words.some((word, index) => index > 0 && word === words[index - 1])) score -= 25;
+  if (words.length > 1 && words[0] === words[words.length - 1]) score -= 10;
+  return score + Math.random() * 3;
+}
+
 class MessageGenerator {
   constructor(database, emotionSystem) {
     this.database = database;
@@ -91,46 +104,60 @@ class MessageGenerator {
     return result;
   }
 
-  generate() {
+  makeCandidate(reply = false, contextWords = []) {
+    const safeContext = [...new Set(contextWords.filter(isSafePublicWord))];
+    const meaningfulContext = safeContext.filter(word => !FUNCTION_WORDS.has(word));
+
+    if (reply) {
+      const candidates = [];
+      for (const word of meaningfulContext.length > 0 ? meaningfulContext : safeContext) {
+        for (const row of this.database.getContextsForWord(word, 20)) {
+          candidates.push({ ...row, context_word: word });
+        }
+      }
+      if (candidates.length === 0) return null;
+
+      const selectedWord = weightedPick(candidates, 'context_word');
+      const matching = candidates.filter(row => row.context_word === selectedWord);
+      const selectedPrevious = weightedPick(matching, 'previous_word');
+      const maxLength = 4 + Math.floor(Math.random() * 7);
+      const words = this.walk(selectedPrevious, selectedWord, [selectedWord], maxLength);
+      return { words, phrase: finish(words, this.getPunctuation(true)), score: scoreWords(words, true) };
+    }
+
     const starts = this.database.getNextWords(START_TOKEN, START_TOKEN)
       .filter(row => isSafePublicWord(row.next_word));
     if (starts.length === 0) return null;
 
-    for (let attempt = 0; attempt < 24; attempt++) {
-      const first = weightedPick(starts, 'next_word');
-      const maxLength = 4 + Math.floor(Math.random() * 7);
-      const words = this.walk(START_TOKEN, first, [first], maxLength);
-      if (!this.isTooSimilarToChat(words)) {
-        return finish(words, this.getPunctuation(false));
-      }
+    const first = weightedPick(starts, 'next_word');
+    const maxLength = 4 + Math.floor(Math.random() * 8);
+    const words = this.walk(START_TOKEN, first, [first], maxLength);
+    return { words, phrase: finish(words, this.getPunctuation(false)), score: scoreWords(words, false) };
+  }
+
+  generateCandidates({ reply = false, contextWords = [], attempts = 80, limit = 8 } = {}) {
+    const candidates = [];
+    const seen = new Set();
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      const candidate = this.makeCandidate(reply, contextWords);
+      if (!candidate || this.isTooSimilarToChat(candidate.words)) continue;
+      const normalized = candidate.words.join(' ');
+      if (seen.has(normalized)) continue;
+      seen.add(normalized);
+      candidates.push(candidate);
     }
-    return null;
+    return candidates
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit)
+      .map(candidate => candidate.phrase);
+  }
+
+  generate() {
+    return this.generateCandidates({ reply: false, attempts: 80, limit: 1 })[0] || null;
   }
 
   generateReply(contextWords = []) {
-    const safeContext = [...new Set(contextWords.filter(isSafePublicWord))];
-    const meaningfulContext = safeContext.filter(word => !FUNCTION_WORDS.has(word));
-    const candidates = [];
-
-    for (const word of meaningfulContext.length > 0 ? meaningfulContext : safeContext) {
-      for (const row of this.database.getContextsForWord(word, 20)) {
-        candidates.push({ ...row, context_word: word });
-      }
-    }
-
-    if (candidates.length === 0) return null;
-
-    for (let attempt = 0; attempt < 24; attempt++) {
-      const selectedWord = weightedPick(candidates, 'context_word');
-      const matching = candidates.filter(row => row.context_word === selectedWord);
-      const selectedPrevious = weightedPick(matching, 'previous_word');
-      const maxLength = 4 + Math.floor(Math.random() * 6);
-      const words = this.walk(selectedPrevious, selectedWord, [selectedWord], maxLength);
-      if (!this.isTooSimilarToChat(words)) {
-        return finish(words, this.getPunctuation(true));
-      }
-    }
-    return null;
+    return this.generateCandidates({ reply: true, contextWords, attempts: 80, limit: 1 })[0] || null;
   }
 }
 
