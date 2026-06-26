@@ -244,7 +244,7 @@ function createDeleteDMButton() {
   return new ButtonBuilder()
     .setCustomId('delete_dm_message')
     .setLabel('Delete')
-    .setEmoji(UI_BUTTON_EMOJIS.shears)
+    .setEmoji(FARM_EMOJIS.lavaBucket)
     .setStyle(ButtonStyle.Danger);
 }
 
@@ -280,7 +280,7 @@ function createGrowingChildResetConfirmation() {
     new ButtonBuilder()
       .setCustomId('growing_child_reset_confirm')
       .setLabel('Delete all learning')
-      .setEmoji(UI_BUTTON_EMOJIS.witherSkeletonSkull)
+      .setEmoji(FARM_EMOJIS.lavaBucket)
       .setStyle(ButtonStyle.Danger),
     new ButtonBuilder()
       .setCustomId('growing_child_reset_cancel')
@@ -740,7 +740,7 @@ function buildDeleteDialogComponents(channelId) {
       new ButtonBuilder()
         .setCustomId(`delete_dialog_${channelId}`)
         .setLabel('Delete dialog')
-        .setEmoji(UI_BUTTON_EMOJIS.shears)
+        .setEmoji(FARM_EMOJIS.lavaBucket)
         .setStyle(ButtonStyle.Danger),
       new ButtonBuilder()
         .setCustomId(`set_ttl_${channelId}`)
@@ -2347,7 +2347,7 @@ function createObsidianStatsComponents() {
       new ButtonBuilder()
         .setCustomId('ofstats_refresh')
         .setLabel('Refresh')
-        .setEmoji(UI_BUTTON_EMOJIS.haste)
+        .setEmoji(UI_BUTTON_EMOJIS.slowFalling)
         .setStyle(ButtonStyle.Primary),
       new ButtonBuilder()
         .setCustomId('ofstats_detailed')
@@ -2695,7 +2695,7 @@ async function buildWhitelistPlaytimeMessage() {
         new ButtonBuilder()
           .setCustomId('playtime_refresh_button')
           .setLabel('Refresh')
-          .setEmoji(UI_BUTTON_EMOJIS.haste)
+          .setEmoji(UI_BUTTON_EMOJIS.slowFalling)
           .setStyle(ButtonStyle.Secondary)
       )
     ]
@@ -5387,7 +5387,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
               new ButtonBuilder()
                 .setCustomId('playtime_refresh_button')
                 .setLabel('Refresh')
-                .setEmoji(UI_BUTTON_EMOJIS.haste)
+                .setEmoji(UI_BUTTON_EMOJIS.slowFalling)
                 .setStyle(ButtonStyle.Secondary)
             )
           ]
