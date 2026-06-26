@@ -46,6 +46,7 @@ const RECONNECT_INTERVAL_MS = 15_000;
 const MINECRAFT_CONNECT_TIMEOUT_MS = 20_000;
 const MINECRAFT_PROFILES_FOLDER = path.resolve(process.env.MINECRAFT_PROFILES_FOLDER || path.join('data', 'auth-cache'));
 const BOT_PUBLIC_CHAT_STATUS_FILE = path.resolve('data', 'bot_public_chat_status.json');
+const BOT_CHAT_STATUS_EMOJIS_FILE = path.resolve('data', 'bot_chat_status_emojis.json');
 const LEGACY_OBSIDIAN_TARGET = Object.freeze({
   x: 3402889,
   y: 68,
@@ -109,14 +110,25 @@ const UI_BUTTON_EMOJIS = {
   bookYellow: { name: 'Book_Yellow', id: '1519760007107969114' }
 };
 const NETHER_STAR_EMOJI = '<:Nether_Star:1519569072809836584>';
-const BOT_CHAT_STATUS_EMOJIS = [
+const BOT_CHAT_STATUS_EMOJI_FALLBACK = [
   '<:End_Crystal:1519954272282873877>',
   '<:Bee_Angry:1519954270865326132>',
   '<:Allay:1519954269665624064>',
   '<:Calico_Cat_Baby:1519954268172456057>',
   '<:Parrot_Gray:1519954266620559481>',
-  '<:Turtle:1519954265706070147>'
+  '<:Turtle:1519954265706070147>',
+  '<:Axolotl_Bucket:1519794666860449812>',
+  '<:Red_Mushroom:1519760022471577742>',
+  '<:Red_Tulip:1519760019430572202>',
+  '<:Rabbit_Salt_Pepper:1519760016175923251>',
+  '<:Creeper_Head:1519760015097987102>',
+  '<:Cat:1519760017614573809>',
+  '<:Carved_Pumpkin:1519760013902614752>',
+  '<:Wither_Skeleton_Skull:1519760008382910606>',
+  '<:Jellie_Cat_Baby:1519567349035040939>',
+  '<:Elytra:1519963167302746162>'
 ];
+const BOT_CHAT_STATUS_EMOJIS = loadBotChatStatusEmojis();
 const FARM_EMOJIS = {
   waterBucket: '<:Water_Bucket:1519367780804071608>',
   obsidian: '<:Obsidian:1519367777691898079>',
@@ -3157,18 +3169,28 @@ function normalizeOutboundEchoComparable(message) {
     .trim();
 }
 
+function loadBotChatStatusEmojis() {
+  try {
+    const raw = fs.readFileSync(BOT_CHAT_STATUS_EMOJIS_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    const emojis = Array.isArray(parsed) ? parsed : parsed?.emojis;
+    if (Array.isArray(emojis)) {
+      const cleaned = emojis
+        .map(emoji => String(emoji || '').trim())
+        .filter(Boolean);
+      if (cleaned.length > 0) return [...new Set(cleaned)];
+    }
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      console.error('[Bot] Failed to load bot chat status emojis:', err.message);
+    }
+  }
+
+  return BOT_CHAT_STATUS_EMOJI_FALLBACK;
+}
+
 function pickRandomBotStatusEmoji() {
-  const botEmojis = [...new Set([
-    ...BOT_CHAT_STATUS_EMOJIS,
-    ...Object.values(STATUS_EMOJIS),
-    ...Object.values(FARM_EMOJIS),
-    ...Object.values(FOOD_EMOJIS),
-    ...Object.values(ITEM_EMOJIS),
-    ...Object.values(UI_BUTTON_EMOJIS).map(emoji => `<:${emoji.name}:${emoji.id}>`),
-    ...PLAYER_HEAD_EMOJIS.values(),
-    NETHER_STAR_EMOJI
-  ].filter(Boolean))];
-  return botEmojis[Math.floor(Math.random() * botEmojis.length)] ||
+  return BOT_CHAT_STATUS_EMOJIS[Math.floor(Math.random() * BOT_CHAT_STATUS_EMOJIS.length)] ||
     STATUS_EMOJIS.axolotlBucket;
 }
 
@@ -3899,15 +3921,20 @@ function escapeStatusDescriptionText(value) {
     .replace(/@/g, '@\u200b');
 }
 
+function escapeStatusInlineCodeText(value) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\\/g, '\\\\')
+    .replace(/`/g, '\\`')
+    .replace(/@/g, '@\u200b');
+}
+
 function getLastBotPublicChatStatusLine() {
   const phrase = lastBotPublicChatPhrase
-    ? escapeStatusDescriptionText(lastBotPublicChatPhrase)
+    ? escapeStatusInlineCodeText(lastBotPublicChatPhrase)
     : 'No bot chat yet';
-  const quote = phrase
-    .split('\n')
-    .map(line => `> ${line}`)
-    .join('\n');
-  return `${lastBotPublicChatEmoji || STATUS_EMOJIS.axolotlBucket} ${quote}`;
+  return `${lastBotPublicChatEmoji || STATUS_EMOJIS.axolotlBucket} > \`${phrase}\``;
 }
 
 function getStatusDescription() {
