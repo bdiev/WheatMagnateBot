@@ -7,7 +7,11 @@ const { EmotionSystem } = require('./emotion');
 const { MessageGenerator } = require('./generator');
 const { GrowingChildScheduler } = require('./scheduler');
 const { sanitizePublicPhrase } = require('./safety');
-const { GRAMMAR_WORDS, validateAIGeneratedPhrase } = require('./ai_generation');
+const {
+  GRAMMAR_WORDS,
+  extractCandidatePhrases,
+  validateAIGeneratedPhrase
+} = require('./ai_generation');
 
 function randomSample(items, count) {
   const copy = [...items];
@@ -113,30 +117,10 @@ class GrowingChildAI {
 
   async speak(reason = 'manual', contextWords = [], target = null) {
     if (!this.enabled) return null;
-    let generatedPhrase = await this.generateAIPhrase(reason, contextWords);
-    if (!generatedPhrase) {
-      generatedPhrase = reason === 'reaction'
-        ? this.generator.generateReply(contextWords)
-        : this.generator.generate();
-    }
+    const generatedPhrase = await this.choosePhrase(reason, contextWords);
     if (!generatedPhrase) {
       console.log('[GrowingChild] Not enough learned language to form a new phrase.');
       return null;
-    }
-    if (this.database.hasRecentlyGeneratedPhrase(generatedPhrase)) {
-      for (let attempt = 0; attempt < 4; attempt++) {
-        const replacement = reason === 'reaction'
-          ? this.generator.generateReply(contextWords)
-          : this.generator.generate();
-        if (replacement && !this.database.hasRecentlyGeneratedPhrase(replacement)) {
-          generatedPhrase = replacement;
-          break;
-        }
-      }
-      if (this.database.hasRecentlyGeneratedPhrase(generatedPhrase)) {
-        console.log('[GrowingChild] No new phrase available without repetition.');
-        return null;
-      }
     }
     const publicTarget =
       target === 'minecraft' ||
@@ -177,24 +161,60 @@ class GrowingChildAI {
     return payload;
   }
 
-  async generateAIPhrase(reason, contextWords) {
+  async choosePhrase(reason, contextWords) {
+    const aiCandidates = await this.generateAIPhrases(reason, contextWords);
+    const localCandidates = this.generateLocalPhrases(reason, contextWords);
+    const candidates = [
+      ...aiCandidates,
+      ...localCandidates
+    ];
+
+    for (const phrase of candidates) {
+      if (phrase && !this.database.hasRecentlyGeneratedPhrase(phrase)) {
+        return phrase;
+      }
+    }
+
+    if (candidates.length > 0) {
+      console.log('[GrowingChild] No new phrase available without repetition.');
+    }
+    return null;
+  }
+
+  generateLocalPhrases(reason, contextWords) {
+    const reply = reason === 'reaction';
+    if (typeof this.generator.generateCandidates === 'function') {
+      return this.generator.generateCandidates({
+        reply,
+        contextWords,
+        attempts: 100,
+        limit: 10
+      });
+    }
+    const phrase = reply
+      ? this.generator.generateReply(contextWords)
+      : this.generator.generate();
+    return phrase ? [phrase] : [];
+  }
+
+  async generateAIPhrases(reason, contextWords) {
     if (
       !this.config.aiGenerationEnabled ||
       typeof this.generateWithAI !== 'function'
     ) {
-      return null;
+      return [];
     }
 
     const learnedWords = this.database
       .getWords({ limit: this.config.aiVocabularyLimit })
       .map(row => row.word)
       .filter(Boolean);
-    if (learnedWords.length < 5) return null;
+    if (learnedWords.length < 5) return [];
 
     const known = new Set(learnedWords);
     const grammar = new Set(GRAMMAR_WORDS);
     const contentVocabulary = learnedWords.filter(word => !grammar.has(word));
-    if (contentVocabulary.length < this.config.aiWordsPerPhraseMin) return null;
+    if (contentVocabulary.length < this.config.aiWordsPerPhraseMin) return [];
 
     const isRequestedSpeech = reason === 'button' || reason === 'slash command';
     const minimumSelected = isRequestedSpeech ? 1 : this.config.aiWordsPerPhraseMin;
@@ -216,34 +236,43 @@ class GrowingChildAI {
     ];
 
     try {
-      const attempts = isRequestedSpeech ? 6 : 3;
+      const results = [];
+      const seen = new Set();
+      const attempts = isRequestedSpeech ? 4 : 2;
       for (let attempt = 1; attempt <= attempts; attempt++) {
         const attemptSelectedWords = attempt === 1
           ? selectedWords
           : randomSample(contentVocabulary, selectedCount);
-        const phrase = await this.generateWithAI({
+        const response = await this.generateWithAI({
           reason,
           emotion: this.emotions.get(),
           contextWords: knownContext,
           selectedWords: attemptSelectedWords,
           learnedWords,
-          grammarWords: GRAMMAR_WORDS
+          grammarWords: GRAMMAR_WORDS,
+          candidateCount: this.config.aiCandidateCount
         });
-        const validated = validateAIGeneratedPhrase({
-          phrase,
-          learnedWords,
-          requiredWords: attemptSelectedWords,
-          isTooSimilar: words =>
-            this.generator.isTooSimilarToChat(words) ||
-            this.database.hasRecentlyGeneratedPhrase(words.join(' '))
-        });
-        if (validated) return validated;
-        console.log(`[GrowingChild] AI phrase rejected (${attempt}/${attempts}).`);
+        for (const phrase of extractCandidatePhrases(response)) {
+          const validated = validateAIGeneratedPhrase({
+            phrase,
+            learnedWords,
+            requiredWords: attemptSelectedWords,
+            minRequiredWords: Math.min(2, attemptSelectedWords.length),
+            isTooSimilar: words =>
+              this.generator.isTooSimilarToChat(words) ||
+              this.database.hasRecentlyGeneratedPhrase(words.join(' '))
+          });
+          if (!validated || seen.has(validated.toLocaleLowerCase())) continue;
+          seen.add(validated.toLocaleLowerCase());
+          results.push(validated);
+        }
+        if (results.length >= 3) return results;
+        console.log(`[GrowingChild] AI candidates accepted ${results.length}/${this.config.aiCandidateCount} (${attempt}/${attempts}).`);
       }
-      return null;
+      return results;
     } catch (err) {
       console.error('[GrowingChild] AI generation failed, trying learned word chains:', err.message);
-      return null;
+      return [];
     }
   }
 

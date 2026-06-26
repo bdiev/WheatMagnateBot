@@ -27,6 +27,7 @@
   "minecraftPublicSpeechEnabled": true,
   "aiGenerationEnabled": true,
   "aiVocabularyLimit": 800,
+  "aiCandidateCount": 5,
   "aiWordsPerPhraseMin": 3,
   "aiWordsPerPhraseMax": 6,
   "maxLearnedMessages": 5000

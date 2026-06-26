@@ -22,9 +22,20 @@ const IGNORED_CHAT_USERNAMES = process.env.IGNORED_CHAT_USERNAMES ? process.env.
 const GEMINI_API_KEY = String(process.env.GEMINI_API_KEY || '').trim();
 const GEMINI_MODEL = String(process.env.GEMINI_MODEL || 'gemini-2.5-flash').trim();
 const GEMINI_FALLBACK_MODEL = String(process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash-lite').trim();
-const GPT_COMMAND_COOLDOWN_MS = 20_000;
-const GPT_MAX_QUESTION_LENGTH = 300;
-const GPT_MAX_RESPONSE_LENGTH = 420;
+const GEMINI_MODELS = [
+  ...String(process.env.GEMINI_MODELS || '')
+    .split(',')
+    .map(model => model.trim())
+    .filter(Boolean),
+  GEMINI_MODEL,
+  GEMINI_FALLBACK_MODEL,
+  'gemini-3.5-flash',
+  'gemini-3-flash',
+  'gemini-3.1-flash-lite'
+].filter((model, index, models) => model && models.indexOf(model) === index);
+const WM_COMMAND_COOLDOWN_MS = 20_000;
+const WM_MAX_QUESTION_LENGTH = 300;
+const WM_MAX_RESPONSE_LENGTH = 420;
 const MINECRAFT_PRIVATE_MESSAGE_LENGTH = 180;
 const RECONNECT_INTERVAL_MS = 15_000;
 const MINECRAFT_CONNECT_TIMEOUT_MS = 20_000;
@@ -37,7 +48,7 @@ const LEGACY_OBSIDIAN_TARGET = Object.freeze({
 
 console.log(
   `[Gemini] ${GEMINI_API_KEY ? 'Configured' : 'Disabled: GEMINI_API_KEY is missing'}; ` +
-  `model=${GEMINI_MODEL}; fallback=${GEMINI_FALLBACK_MODEL}; fetch=${typeof fetch}`
+  `models=${GEMINI_MODELS.join(', ')}; fetch=${typeof fetch}`
 );
 const STATUS_EMOJIS = {
   axolotlBucket: '<:Axolotl_Bucket:1519794666860449812>',
@@ -352,8 +363,8 @@ const pendingAuthLinks = [];
 const pendingOwnerDMs = [];
 const sentAuthCodes = new Set();
 const authMessageIds = new Map(); // messageId -> DM channelId
-const gptCommandCooldowns = new Map(); // lowercase username -> last request timestamp
-const gptRequestsInFlight = new Set(); // lowercase username
+const wmCommandCooldowns = new Map(); // lowercase username -> last request timestamp
+const wmRequestsInFlight = new Set(); // lowercase username
 const recentOutboundChat = new Map(); // normalized message -> timestamps awaiting self-echo suppression
 const WHISPER_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const WHISPER_MARK_TTL_MS = 3000; // how long to remember whisper markers for suppression
@@ -1487,27 +1498,32 @@ async function generateGrowingChildPhrase({
   contextWords,
   selectedWords,
   learnedWords,
-  grammarWords
+  grammarWords,
+  candidateCount = 5
 }) {
   if (!GEMINI_API_KEY) return null;
 
   const replyInstruction = reason === 'reaction' && contextWords.length > 0
     ? `Reply naturally to a Minecraft message whose known context is: ${contextWords.join(', ')}.`
     : 'Write a casual standalone Minecraft chat message.';
+  const selectedWordLine = selectedWords.length > 0
+    ? `Try to include at least ${Math.min(2, selectedWords.length)} of these learned topic words: ${selectedWords.join(', ')}.`
+    : 'Use at least one specific learned topic word.';
   const prompt = [
     replyInstruction,
     `Mood: ${emotion}.`,
-    'Write one coherent English sentence of 3 to 12 words.',
-    `You MUST use every selected learned word exactly as written: ${selectedWords.join(', ')}.`,
-    'Use the selected words as the topic of a natural, meaningful sentence.',
+    `Write ${candidateCount} different coherent English sentences of 3 to 12 words.`,
+    'Put each sentence on its own line. No numbering, bullets, quotes, labels, or explanations.',
+    selectedWordLine,
+    'Prefer natural Minecraft chat over perfect grammar if needed.',
     'You may use any words from the learned vocabulary plus basic grammar words.',
     'Do not return empty generic phrases such as "what is this", "what is that", or "I do not know".',
     'Do not force unrelated words together or produce nonsense.',
     'Do not copy or closely paraphrase a message you have seen.',
-    'Do not add names, numbers, coordinates, commands, quotes, labels, or explanations.',
+    'Do not add names, numbers, coordinates, commands, quotes, labels, emojis, or explanations.',
     'Basic grammar words:',
     grammarWords.join(', '),
-    'Selected learned words:',
+    'Topic words:',
     selectedWords.join(', '),
     'Learned vocabulary:',
     learnedWords.join(', ')
@@ -1515,10 +1531,10 @@ async function generateGrowingChildPhrase({
 
   return askGemini(prompt, {
     systemInstruction:
-      'You write one short, natural Minecraft chat sentence under strict vocabulary constraints. Return only the sentence in plain text.',
-    temperature: 0.75,
-    maxOutputTokens: 40,
-    maxResponseLength: 220
+      'You write short, natural Minecraft chat sentences under strict vocabulary constraints. Return only plain text candidate sentences, one per line.',
+    temperature: 0.95,
+    maxOutputTokens: 120,
+    maxResponseLength: 500
   });
 }
 
@@ -3303,7 +3319,7 @@ async function requestGeminiModel(model, question, options = {}) {
   if (!answer) {
     throw new Error('Gemini returned no answer');
   }
-  return answer.slice(0, options.maxResponseLength ?? GPT_MAX_RESPONSE_LENGTH);
+  return answer.slice(0, options.maxResponseLength ?? WM_MAX_RESPONSE_LENGTH);
 }
 
 async function askGemini(question, options = {}) {
@@ -3311,25 +3327,39 @@ async function askGemini(question, options = {}) {
     throw new Error('Gemini API key is not configured');
   }
 
-  const models = [...new Set([GEMINI_MODEL, GEMINI_FALLBACK_MODEL].filter(Boolean))];
+  const models = options.models?.length
+    ? [...new Set(options.models.filter(Boolean))]
+    : GEMINI_MODELS;
   let lastError = null;
 
   for (const model of models) {
-    for (let attempt = 1; attempt <= 2; attempt++) {
+    const attempts = options.attemptsPerModel ?? 2;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
       try {
         const answer = await requestGeminiModel(model, question, options);
-        if (model !== GEMINI_MODEL) {
-          console.log(`[Gemini] Used fallback model ${model}.`);
+        if (model !== models[0]) {
+          console.log(`[Gemini] Used alternate model ${model}.`);
         }
         return answer;
       } catch (err) {
         lastError = err;
-        const retryable = err?.status === 429 || err?.status === 500 || err?.status === 503 || err?.name === 'AbortError';
+        const quotaOrAccess =
+          err?.status === 400 ||
+          err?.status === 403 ||
+          err?.status === 404 ||
+          err?.status === 429 ||
+          /quota|rate|limit|not found|not supported|permission/i.test(String(err?.message || ''));
+        const retryable =
+          err?.status === 500 ||
+          err?.status === 503 ||
+          err?.name === 'AbortError' ||
+          /network|fetch failed|ECONNRESET|ETIMEDOUT/i.test(String(err?.message || ''));
         console.log(
-          `[Gemini] ${model} attempt ${attempt}/2 failed: ` +
+          `[Gemini] ${model} attempt ${attempt}/${attempts} failed: ` +
           `${err?.status || err?.name || 'error'} ${err.message}`
         );
-        if (!retryable || attempt === 2) break;
+        if (quotaOrAccess) break;
+        if (!retryable || attempt === attempts) break;
         await new Promise(resolve => setTimeout(resolve, attempt * 1_500));
       }
     }
@@ -3352,7 +3382,7 @@ function classifyGeminiError(err) {
   return 'UNKNOWN';
 }
 
-async function handleGptCommand(username, question) {
+async function handleWmCommand(username, question) {
   const usernameKey = username.toLowerCase();
   if (!ignoredUsernames.some(name => name.toLowerCase() === usernameKey)) {
     await sendPrivateMinecraftMessage(username, '[AI] This command is available only to whitelisted players.');
@@ -3369,17 +3399,17 @@ async function handleGptCommand(username, question) {
     await sendPrivateMinecraftMessage(username, '[AI] Usage: !wm <question>');
     return;
   }
-  if (cleanQuestion.length > GPT_MAX_QUESTION_LENGTH) {
-    await sendPrivateMinecraftMessage(username, `[AI] Keep the question under ${GPT_MAX_QUESTION_LENGTH} characters.`);
+  if (cleanQuestion.length > WM_MAX_QUESTION_LENGTH) {
+    await sendPrivateMinecraftMessage(username, `[AI] Keep the question under ${WM_MAX_QUESTION_LENGTH} characters.`);
     return;
   }
-  if (gptRequestsInFlight.has(usernameKey)) {
+  if (wmRequestsInFlight.has(usernameKey)) {
     await sendPrivateMinecraftMessage(username, '[AI] Your previous question is still being processed.');
     return;
   }
 
-  const lastRequestAt = gptCommandCooldowns.get(usernameKey) || 0;
-  const cooldownRemaining = GPT_COMMAND_COOLDOWN_MS - (Date.now() - lastRequestAt);
+  const lastRequestAt = wmCommandCooldowns.get(usernameKey) || 0;
+  const cooldownRemaining = WM_COMMAND_COOLDOWN_MS - (Date.now() - lastRequestAt);
   if (cooldownRemaining > 0) {
     await sendPrivateMinecraftMessage(
       username,
@@ -3388,8 +3418,8 @@ async function handleGptCommand(username, question) {
     return;
   }
 
-  gptCommandCooldowns.set(usernameKey, Date.now());
-  gptRequestsInFlight.add(usernameKey);
+  wmCommandCooldowns.set(usernameKey, Date.now());
+  wmRequestsInFlight.add(usernameKey);
   try {
     const answer = await askGemini(cleanQuestion);
     for (const chunk of splitMinecraftMessage(answer, 220)) {
@@ -3415,7 +3445,7 @@ async function handleGptCommand(username, question) {
       `[AI] Request failed (${errorCode}). Please try again later.`
     );
   } finally {
-    gptRequestsInFlight.delete(usernameKey);
+    wmRequestsInFlight.delete(usernameKey);
   }
 }
 
@@ -4150,7 +4180,7 @@ function createBot() {
     const wmMatch = message.match(/^!wm(?:\s+([\s\S]*))?$/i);
     if (wmMatch) {
       await sendGameChatMessageToDiscord(username, message);
-      await handleGptCommand(username, wmMatch[1] || '');
+      await handleWmCommand(username, wmMatch[1] || '');
       return;
     }
 
