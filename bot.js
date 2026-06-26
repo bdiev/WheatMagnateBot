@@ -108,6 +108,14 @@ const UI_BUTTON_EMOJIS = {
   bookYellow: { name: 'Book_Yellow', id: '1519760007107969114' }
 };
 const NETHER_STAR_EMOJI = '<:Nether_Star:1519569072809836584>';
+const BOT_CHAT_STATUS_EMOJIS = [
+  '<:End_Crystal:1519954272282873877>',
+  '<:Bee_Angry:1519954270865326132>',
+  '<:Allay:1519954269665624064>',
+  '<:Calico_Cat_Baby:1519954268172456057>',
+  '<:Parrot_Gray:1519954266620559481>',
+  '<:Turtle:1519954265706070147>'
+];
 const FARM_EMOJIS = {
   waterBucket: '<:Water_Bucket:1519367780804071608>',
   obsidian: '<:Obsidian:1519367777691898079>',
@@ -364,6 +372,8 @@ let outboundWhispers = new Map(); // key: `OUTBOUND:targetUsername:message` -> t
 let tpsTabInterval = null;
 let playtimeSyncInterval = null;
 const geminiModelBackoffUntil = new Map(); // model -> unix ms
+let lastBotPublicChatPhrase = null;
+let lastBotPublicChatEmoji = null;
 const excludedMessageIds = [];
 const pendingAuthLinks = [];
 const pendingOwnerDMs = [];
@@ -853,7 +863,7 @@ async function ensureStatusMessage() {
       statusMessage = await channel.send({
         embeds: [{
           title: getServerStatusTitle(),
-          description: getStatusDescription(),
+          description: `${getStatusDescription()}\n\n${getLastBotPublicChatStatusLine()}`,
           color: bot?.entity ? 65280 : 16711680,
           timestamp: new Date()
         }],
@@ -1444,7 +1454,7 @@ async function sendGrowingChildMinecraftMessage(payload) {
     console.log('[GrowingChild] Minecraft message blocked by coordinate safety filter.');
     return false;
   }
-  const sent = sendMinecraftChat(safePhrase);
+  const sent = sendMinecraftChat(safePhrase, { trackStatus: true });
   if (!sent) return false;
 
   await sendGameChatMessageToDiscord(bot.username, safePhrase, {
@@ -3145,7 +3155,33 @@ function normalizeOutboundEchoComparable(message) {
     .trim();
 }
 
-function sendMinecraftChat(message) {
+function pickRandomBotStatusEmoji() {
+  const discordEmojis = discordClient?.emojis?.cache
+    ? [...discordClient.emojis.cache.values()]
+        .filter(emoji => emoji?.available !== false)
+        .map(emoji => emoji.toString())
+    : [];
+  const fallbackEmojis = [
+    ...BOT_CHAT_STATUS_EMOJIS,
+    ...Object.values(STATUS_EMOJIS),
+    ...Object.values(FARM_EMOJIS),
+    ...Object.values(FOOD_EMOJIS),
+    ...Object.values(UI_BUTTON_EMOJIS).map(emoji => `<:${emoji.name}:${emoji.id}>`),
+    NETHER_STAR_EMOJI
+  ].filter(Boolean);
+  const choices = discordEmojis.length > 0 ? discordEmojis : fallbackEmojis;
+  return choices[Math.floor(Math.random() * choices.length)] || STATUS_EMOJIS.axolotlBucket;
+}
+
+function rememberBotPublicChatPhrase(message) {
+  const phrase = normalizeOutboundChat(message);
+  if (!phrase || phrase.startsWith('/') || phrase.startsWith('!')) return;
+  lastBotPublicChatPhrase = phrase.slice(0, 180);
+  lastBotPublicChatEmoji = pickRandomBotStatusEmoji();
+  updateStatusMessage().catch(() => {});
+}
+
+function sendMinecraftChat(message, options = {}) {
   if (!bot || typeof bot.chat !== 'function') return false;
   const normalized = normalizeOutboundChat(message);
   const cutoff = Date.now() - 10_000;
@@ -3160,6 +3196,7 @@ function sendMinecraftChat(message) {
     recentOutboundChat.set(normalized, timestamps);
   }
   bot.chat(message);
+  if (options.trackStatus) rememberBotPublicChatPhrase(message);
   return true;
 }
 
@@ -3464,7 +3501,7 @@ async function handleWmCommand(username, question) {
     const answer = await askGemini(cleanQuestion);
     for (const chunk of splitMinecraftMessage(answer, 220)) {
       if (!bot?.entity) return;
-      sendMinecraftChat(chunk);
+      sendMinecraftChat(chunk, { trackStatus: true });
       await sendGameChatMessageToDiscord(bot.username, chunk, { allowMentions: false });
       await new Promise(resolve => setTimeout(resolve, 400));
     }
@@ -3823,6 +3860,20 @@ function getCanonicalWhitelistUsername(username) {
     whitelistMatches.sort((a, b) => b.length - a.length)[0];
 }
 
+function escapeStatusDescriptionText(value) {
+  return String(value || '')
+    .replace(/\\/g, '\\\\')
+    .replace(/([`*_~|>])/g, '\\$1')
+    .replace(/@/g, '@\u200b');
+}
+
+function getLastBotPublicChatStatusLine() {
+  const phrase = lastBotPublicChatPhrase
+    ? escapeStatusDescriptionText(lastBotPublicChatPhrase)
+    : 'No bot chat yet';
+  return `${lastBotPublicChatEmoji || STATUS_EMOJIS.axolotlBucket} ${phrase}`;
+}
+
 function getStatusDescription() {
   const reasonLine = lastDisconnectReason ? `\n${STATUS_EMOJIS.map} Reason: ${lastDisconnectReason}` : '';
 
@@ -3939,7 +3990,7 @@ async function updateStatusMessage() {
   
   try {
     // Allow status updates even if bot is not connected to show offline state
-    const description = `${getStatusDescription()}\n\n${STATUS_EMOJIS.axolotlBucket}`;
+    const description = `${getStatusDescription()}\n\n${getLastBotPublicChatStatusLine()}`;
 
     await statusMessage.edit({
       embeds: [{
@@ -7004,7 +7055,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       }
       const text = message.content.slice(5).trim();
       if (text) {
-        sendMinecraftChat(text);
+        sendMinecraftChat(text, { trackStatus: true });
         console.log(`[Command] Say "${text}" by ${message.author.tag} via Discord`);
         await message.reply({
           embeds: [{
