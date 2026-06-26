@@ -176,6 +176,7 @@ DISCORD_DM_CATEGORY_ID=1234567890123456789       # Category for /msg dialogs (re
 # Minecraft Configuration (Required)
 MINECRAFT_USERNAME=YourBotUsername
 MINECRAFT_AUTH=microsoft                          # or 'offline' for cracked servers
+MINECRAFT_PROFILES_FOLDER=data/auth-cache         # Persistent Microsoft auth cache
 
 # Database (Optional but recommended)
 DATABASE_URL=postgresql://user:password@localhost:5432/wheatbot
@@ -220,7 +221,12 @@ pm2 logs wheatbot --lines 100
 2. Auth link will be posted to Discord status channel
 3. Visit link and enter the 8-character code
 4. Bot will connect to Minecraft server automatically
-5. Status embed will appear with control buttons
+5. Microsoft tokens will be cached in `data/auth-cache`
+6. Status embed will appear with control buttons
+
+On hosted deployments, mount `data/` or `data/auth-cache` as persistent storage.
+If this folder is recreated on every redeploy, Microsoft will keep asking for a
+new code.
 
 ---
 
@@ -592,16 +598,16 @@ psql $DATABASE_URL
 ### Microsoft Auth Loop
 
 ```bash
-# Clear session
+# Clear legacy session env if it was set manually
 unset MINECRAFT_SESSION
 
-# Delete cached session
-rm -f mineflayer-session.json
+# Delete cached Microsoft auth tokens
+rm -rf data/auth-cache
 
 # Check auth link in Discord status channel
 # Visit and enter 8-digit code
 
-# After successful auth, bot auto-saves session
+# After successful auth, bot auto-saves tokens to data/auth-cache
 ```
 
 ---

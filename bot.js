@@ -1,6 +1,7 @@
 require('dotenv').config();
 const mineflayer = require('mineflayer');
 const fs = require('fs');
+const path = require('path');
 const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ChannelType, PermissionsBitField, MessageFlags, InteractionContextType, SlashCommandBuilder } = require('discord.js');
 const { Pool } = require('pg');
 const { pathfinder } = require('mineflayer-pathfinder');
@@ -27,6 +28,7 @@ const GPT_MAX_RESPONSE_LENGTH = 420;
 const MINECRAFT_PRIVATE_MESSAGE_LENGTH = 180;
 const RECONNECT_INTERVAL_MS = 15_000;
 const MINECRAFT_CONNECT_TIMEOUT_MS = 20_000;
+const MINECRAFT_PROFILES_FOLDER = path.resolve(process.env.MINECRAFT_PROFILES_FOLDER || path.join('data', 'auth-cache'));
 const LEGACY_OBSIDIAN_TARGET = Object.freeze({
   x: 3402889,
   y: 68,
@@ -856,6 +858,7 @@ const config = {
   auth: process.env.MINECRAFT_AUTH || 'microsoft',
   version: false, // Auto-detect version
   closeTimeout: MINECRAFT_CONNECT_TIMEOUT_MS,
+  profilesFolder: MINECRAFT_PROFILES_FOLDER,
   session: loadedSession
 };
 
