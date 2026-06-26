@@ -3427,7 +3427,8 @@ async function sendGameChatMessageToDiscord(username, message, { allowMentions =
 
     const safeUsername = String(username || bot?.username || 'Minecraft');
     const avatarUrl = `https://minotar.net/avatar/${safeUsername.toLowerCase()}/28`;
-    let displayMessage = cleanMessage.replace(/([*_`~|\\])/g, '\\$1');
+    let displayMessage = neutralizeDiscordInviteLinks(cleanMessage)
+      .replace(/([*_`~|>\\])/g, '\\$1');
     displayMessage = displayMessage.replace(/\[/g, '\\[').replace(/\]/g, '\\]');
 
     const sendOptions = {
@@ -3468,6 +3469,13 @@ async function sendGameChatMessageToDiscord(username, message, { allowMentions =
     console.error('[Discord Chat] Failed to send game chat message:', e.message);
     return false;
   }
+}
+
+function neutralizeDiscordInviteLinks(message) {
+  return String(message || '')
+    .replace(/\b(discord\.gg|discord(?:app)?\.com\/invite)\//gi, match =>
+      match.replace(/\./g, '[.]')
+    );
 }
 
 function cleanMinecraftChatMessage(message) {
