@@ -3318,8 +3318,12 @@ async function requestGeminiModel(model, question, options = {}) {
 
   const answer = data?.candidates?.[0]?.content?.parts
     ?.map(part => part.text || '')
-    .join(' ')
-    .replace(/\s+/g, ' ')
+    .join('\n')
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map(line => line.replace(/[ \t]+/g, ' ').trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
 
   if (!answer) {
