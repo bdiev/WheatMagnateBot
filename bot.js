@@ -1404,18 +1404,20 @@ function escapeCsvValue(value) {
   return `"${text.replaceAll('"', '""')}"`;
 }
 
+const EXCEL_CSV_DELIMITER = ';';
+
 function buildGrowingChildVocabularyCsv() {
   const rows = growingChild?.getAllWords() || [];
   const header = ['word', 'times_seen', 'first_seen', 'last_seen', 'learned_at_level'];
   const lines = [
-    header.map(escapeCsvValue).join(','),
+    header.map(escapeCsvValue).join(EXCEL_CSV_DELIMITER),
     ...rows.map(row => [
       row.word,
       row.times_seen,
       row.first_seen,
       row.last_seen,
       row.learned_at_level
-    ].map(escapeCsvValue).join(','))
+    ].map(escapeCsvValue).join(EXCEL_CSV_DELIMITER))
   ];
   return {
     count: rows.length,
