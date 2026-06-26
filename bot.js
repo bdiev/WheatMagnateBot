@@ -355,6 +355,8 @@ let lastCommandUser = null;
 let statusMessage = null;
 let statusUpdateInterval = null;
 let isUpdatingStatus = false; // Prevent concurrent updates
+let lastPresenceText = null;
+let lastPresenceUpdateAt = 0;
 const obsidianStatsUpdaters = new Map(); // channelId -> { messageId, timer, supplies, updating }
 let obsidianStatsWatchdogInterval = null;
 let channelCleanerInterval = null;
@@ -1668,14 +1670,8 @@ if (DISCORD_BOT_TOKEN) {
     console.log(`[Discord] Guilds: ${discordClient.guilds.cache.size}`);
 
     try {
-      discordClient.user.setPresence({
-        status: 'online',
-        activities: [{
-          name: 'Playing on oldfag.org',
-          type: ActivityType.Playing
-        }]
-      });
-      console.log('[Discord] Presence set to Playing on oldfag.org');
+      updateDiscordPresence({ force: true });
+      console.log('[Discord] Presence update started');
     } catch (presenceErr) {
       console.error('[Discord] Failed to set presence:', presenceErr.message);
     }
@@ -4108,6 +4104,42 @@ function getCanonicalWhitelistUsername(username) {
     whitelistMatches.sort((a, b) => b.length - a.length)[0];
 }
 
+function getCurrentTpsDisplay() {
+  return realTps !== null
+    ? realTps.toFixed(1)
+    : tpsHistory.length > 0
+      ? (tpsHistory.reduce((a, b) => a + b, 0) / tpsHistory.length).toFixed(1)
+      : 'Calculating...';
+}
+
+function getDiscordPresenceText() {
+  if (!bot?.entity) {
+    return shouldReconnect ? 'Reconnecting to oldfag.org' : 'Paused on oldfag.org';
+  }
+
+  const playerCount = Object.keys(bot.players || {}).length;
+  return `${playerCount} players · ${getCurrentTpsDisplay()} TPS · oldfag.org`;
+}
+
+function updateDiscordPresence({ force = false } = {}) {
+  if (!discordClient?.user) return;
+
+  const presenceText = getDiscordPresenceText();
+  const now = Date.now();
+  if (!force && presenceText === lastPresenceText) return;
+  if (!force && now - lastPresenceUpdateAt < 15_000) return;
+
+  discordClient.user.setPresence({
+    status: 'online',
+    activities: [{
+      name: presenceText,
+      type: ActivityType.Playing
+    }]
+  });
+  lastPresenceText = presenceText;
+  lastPresenceUpdateAt = now;
+}
+
 function escapeStatusDescriptionText(value) {
   return String(value || '')
     .replace(/\\/g, '\\\\')
@@ -4151,7 +4183,7 @@ function getStatusDescription() {
     .map(getCanonicalWhitelistUsername)
     .filter(Boolean))];
   const nearbyPlayers = getNearbyPlayers();
-  const avgTps = realTps !== null ? realTps.toFixed(1) : (tpsHistory.length > 0 ? (tpsHistory.reduce((a, b) => a + b, 0) / tpsHistory.length).toFixed(1) : 'Calculating...');
+  const avgTps = getCurrentTpsDisplay();
 
   const nearbyNames = nearbyPlayers
     .map(player => getCanonicalWhitelistUsername(player.username) || player.username)
@@ -4246,6 +4278,12 @@ async function updateStatusMessage() {
   isUpdatingStatus = true;
   
   try {
+    try {
+      updateDiscordPresence();
+    } catch (presenceErr) {
+      console.error('[Discord] Failed to update presence:', presenceErr.message);
+    }
+
     // Allow status updates even if bot is not connected to show offline state
     const description = `${getStatusDescription()}\n\n${getLastBotPublicChatStatusLine()}`;
 
