@@ -48,6 +48,8 @@ const MINECRAFT_PROFILES_FOLDER = path.resolve(process.env.MINECRAFT_PROFILES_FO
 const BOT_PUBLIC_CHAT_STATUS_FILE = path.resolve('data', 'bot_public_chat_status.json');
 const BOT_CHAT_STATUS_EMOJIS_FILE = path.resolve('data', 'bot_chat_status_emojis.json');
 const OBSIDIAN_STATS_MESSAGES_FILE = path.resolve('data', 'obsidian_stats_messages.json');
+const OBSIDIAN_STATS_UPDATE_INTERVAL_MS = 30_000;
+const OBSIDIAN_STATS_WATCHDOG_INTERVAL_MS = 5 * 60_000;
 const LEGACY_OBSIDIAN_TARGET = Object.freeze({
   x: 3402889,
   y: 68,
@@ -354,6 +356,7 @@ let statusMessage = null;
 let statusUpdateInterval = null;
 let isUpdatingStatus = false; // Prevent concurrent updates
 const obsidianStatsUpdaters = new Map(); // channelId -> { messageId, timer, supplies, updating }
+let obsidianStatsWatchdogInterval = null;
 let channelCleanerInterval = null;
 let tpsHistory = [];
 let realTps = null;
@@ -1708,6 +1711,7 @@ if (DISCORD_BOT_TOKEN) {
     await ensureStatusMessage();
     await updateStatusMessage();
     await restoreObsidianStatsUpdaters();
+    ensureObsidianStatsWatchdog();
 
     // Start global status update interval (updates every 3 seconds)
     if (!statusUpdateInterval) {
@@ -2454,7 +2458,11 @@ async function updateObsidianStatsUpdater(channelId, updater) {
     updater.consecutiveFailures = 0;
   } catch (err) {
     updater.consecutiveFailures = (updater.consecutiveFailures || 0) + 1;
-    if (err.code === 10008 || err.code === 50001 || err.code === 50013) {
+    if (err.code === 10008) {
+      stopObsidianStatsUpdater(channelId);
+      return;
+    }
+    if ((err.code === 50001 || err.code === 50013) && updater.consecutiveFailures >= 20) {
       stopObsidianStatsUpdater(channelId);
       return;
     }
@@ -2475,17 +2483,26 @@ async function updateObsidianStatsUpdater(channelId, updater) {
   }
 }
 
-function scheduleObsidianStatsUpdater(channelId, updater, delayMs = 30_000) {
+function scheduleObsidianStatsUpdater(channelId, updater, delayMs = OBSIDIAN_STATS_UPDATE_INTERVAL_MS) {
   if (obsidianStatsUpdaters.get(channelId) !== updater) return;
   if (updater.timer) clearTimeout(updater.timer);
   updater.timer = setTimeout(async () => {
+    if (obsidianStatsUpdaters.get(channelId) !== updater) return;
     updater.inScheduledTick = true;
-    await updateObsidianStatsUpdater(channelId, updater);
-    updater.inScheduledTick = false;
-    const nextDelay = updater.immediateRefresh ? 0 : 30_000;
-    updater.immediateRefresh = false;
-    scheduleObsidianStatsUpdater(channelId, updater, nextDelay);
+    try {
+      await updateObsidianStatsUpdater(channelId, updater);
+    } catch (err) {
+      console.error('[Obsidian Stats] Scheduled update crashed:', err.message);
+    } finally {
+      updater.inScheduledTick = false;
+      if (obsidianStatsUpdaters.get(channelId) === updater) {
+        const nextDelay = updater.immediateRefresh ? 0 : OBSIDIAN_STATS_UPDATE_INTERVAL_MS;
+        updater.immediateRefresh = false;
+        scheduleObsidianStatsUpdater(channelId, updater, nextDelay);
+      }
+    }
   }, delayMs);
+  updater.timer.unref?.();
 }
 
 async function refreshObsidianStatsUpdaters() {
@@ -2549,6 +2566,24 @@ async function restoreObsidianStatsUpdaters() {
     }
   }
   saveObsidianStatsUpdaters();
+}
+
+function ensureObsidianStatsWatchdog() {
+  if (obsidianStatsWatchdogInterval) return;
+
+  obsidianStatsWatchdogInterval = setInterval(async () => {
+    try {
+      for (const [channelId, updater] of obsidianStatsUpdaters.entries()) {
+        if (!updater.timer || updater.timer._destroyed) {
+          scheduleObsidianStatsUpdater(channelId, updater, 0);
+        }
+      }
+      await restoreObsidianStatsUpdaters();
+    } catch (err) {
+      console.error('[Obsidian Stats] Watchdog failed:', err.message);
+    }
+  }, OBSIDIAN_STATS_WATCHDOG_INTERVAL_MS);
+  obsidianStatsWatchdogInterval.unref?.();
 }
 
 async function registerApplicationCommands() {
