@@ -3158,21 +3158,18 @@ function normalizeOutboundEchoComparable(message) {
 }
 
 function pickRandomBotStatusEmoji() {
-  const discordEmojis = discordClient?.emojis?.cache
-    ? [...discordClient.emojis.cache.values()]
-        .filter(emoji => emoji?.available !== false)
-        .map(emoji => emoji.toString())
-    : [];
-  const fallbackEmojis = [
+  const botEmojis = [...new Set([
     ...BOT_CHAT_STATUS_EMOJIS,
     ...Object.values(STATUS_EMOJIS),
     ...Object.values(FARM_EMOJIS),
     ...Object.values(FOOD_EMOJIS),
+    ...Object.values(ITEM_EMOJIS),
     ...Object.values(UI_BUTTON_EMOJIS).map(emoji => `<:${emoji.name}:${emoji.id}>`),
+    ...PLAYER_HEAD_EMOJIS.values(),
     NETHER_STAR_EMOJI
-  ].filter(Boolean);
-  const choices = discordEmojis.length > 0 ? discordEmojis : fallbackEmojis;
-  return choices[Math.floor(Math.random() * choices.length)] || STATUS_EMOJIS.axolotlBucket;
+  ].filter(Boolean))];
+  return botEmojis[Math.floor(Math.random() * botEmojis.length)] ||
+    STATUS_EMOJIS.axolotlBucket;
 }
 
 function loadLastBotPublicChatStatus() {
