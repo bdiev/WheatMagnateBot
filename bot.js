@@ -20,19 +20,24 @@ const DISCORD_DM_CATEGORY_ID = process.env.DISCORD_DM_CATEGORY_ID;
 const DISCORD_OWNER_ID = process.env.DISCORD_OWNER_ID || '623303738991443968';
 const IGNORED_CHAT_USERNAMES = process.env.IGNORED_CHAT_USERNAMES ? process.env.IGNORED_CHAT_USERNAMES.split(',').map(u => u.trim().toLowerCase()) : [];
 const GEMINI_API_KEY = String(process.env.GEMINI_API_KEY || '').trim();
-const GEMINI_MODEL = String(process.env.GEMINI_MODEL || 'gemini-2.5-flash').trim();
-const GEMINI_FALLBACK_MODEL = String(process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash-lite').trim();
-const GEMINI_MODELS = [
-  ...String(process.env.GEMINI_MODELS || '')
-    .split(',')
+function parseGeminiModelList(...values) {
+  return values
+    .flatMap(value => String(value || '').split(','))
     .map(model => model.trim())
-    .filter(Boolean),
-  GEMINI_MODEL,
-  GEMINI_FALLBACK_MODEL,
-  'gemini-3.5-flash',
-  'gemini-3-flash',
-  'gemini-3.1-flash-lite'
-].filter((model, index, models) => model && models.indexOf(model) === index);
+    .filter(Boolean)
+    .filter((model, index, models) => models.indexOf(model) === index);
+}
+
+const GEMINI_MODELS = parseGeminiModelList(
+  process.env.GEMINI_MODELS,
+  process.env.GEMINI_MODEL,
+  process.env.GEMINI_FALLBACK_MODEL,
+  'gemini-2.5-flash-lite',
+  'gemini-2.5-flash',
+  'gemini-3.1-flash-lite',
+  'gemini-3.5-flash'
+);
+const GEMINI_MODEL = GEMINI_MODELS[0] || 'gemini-2.5-flash-lite';
 const WM_COMMAND_COOLDOWN_MS = 20_000;
 const WM_MAX_QUESTION_LENGTH = 300;
 const WM_MAX_RESPONSE_LENGTH = 420;
@@ -358,6 +363,7 @@ let pendingChatTimers = new Map(); // key: `CHAT:username:message` -> timeout ha
 let outboundWhispers = new Map(); // key: `OUTBOUND:targetUsername:message` -> timestamp, to suppress public echo of our own whispers
 let tpsTabInterval = null;
 let playtimeSyncInterval = null;
+const geminiModelBackoffUntil = new Map(); // model -> unix ms
 const excludedMessageIds = [];
 const pendingAuthLinks = [];
 const pendingOwnerDMs = [];
@@ -3322,14 +3328,41 @@ async function requestGeminiModel(model, question, options = {}) {
   return answer.slice(0, options.maxResponseLength ?? WM_MAX_RESPONSE_LENGTH);
 }
 
+function getGeminiRetryDelayMs(err) {
+  const message = String(err?.message || '');
+  const match = message.match(/retry in\s+([\d.]+)\s*(ms|s|sec|seconds?)/i);
+  if (!match) return null;
+  const value = Number(match[1]);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return match[2].toLowerCase() === 'ms' ? value : value * 1000;
+}
+
+function markGeminiModelBackoff(model, err) {
+  let delayMs = null;
+  if (err?.status === 429) {
+    delayMs = getGeminiRetryDelayMs(err) ?? 60_000;
+  } else if (err?.status === 404 || err?.status === 400 || err?.status === 403) {
+    delayMs = 30 * 60_000;
+  }
+  if (!delayMs) return;
+  const until = Date.now() + Math.min(delayMs + 1_000, 30 * 60_000);
+  geminiModelBackoffUntil.set(model, until);
+  console.log(`[Gemini] Backing off ${model} for ${Math.ceil((until - Date.now()) / 1000)}s.`);
+}
+
 async function askGemini(question, options = {}) {
   if (!GEMINI_API_KEY) {
     throw new Error('Gemini API key is not configured');
   }
 
-  const models = options.models?.length
+  const configuredModels = options.models?.length
     ? [...new Set(options.models.filter(Boolean))]
     : GEMINI_MODELS;
+  const now = Date.now();
+  const models = configuredModels.filter(model => (geminiModelBackoffUntil.get(model) || 0) <= now);
+  if (models.length === 0) {
+    throw new Error('All Gemini models are temporarily rate-limited or unavailable');
+  }
   let lastError = null;
 
   for (const model of models) {
@@ -3358,7 +3391,10 @@ async function askGemini(question, options = {}) {
           `[Gemini] ${model} attempt ${attempt}/${attempts} failed: ` +
           `${err?.status || err?.name || 'error'} ${err.message}`
         );
-        if (quotaOrAccess) break;
+        if (quotaOrAccess) {
+          markGeminiModelBackoff(model, err);
+          break;
+        }
         if (!retryable || attempt === attempts) break;
         await new Promise(resolve => setTimeout(resolve, attempt * 1_500));
       }

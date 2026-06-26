@@ -238,7 +238,7 @@ class GrowingChildAI {
     try {
       const results = [];
       const seen = new Set();
-      const attempts = isRequestedSpeech ? 4 : 2;
+      const attempts = isRequestedSpeech ? 2 : 1;
       for (let attempt = 1; attempt <= attempts; attempt++) {
         const attemptSelectedWords = attempt === 1
           ? selectedWords

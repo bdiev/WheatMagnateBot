@@ -190,7 +190,7 @@ DISABLE_BOT=false                                 # Set to 'true' to disable bot
 
 # Gemini (Optional)
 GEMINI_API_KEY=your_gemini_api_key_here
-GEMINI_MODELS=gemini-2.5-flash-lite,gemini-2.5-flash,gemini-3.1-flash-lite,gemini-3-flash,gemini-3.5-flash
+GEMINI_MODELS=gemini-2.5-flash-lite,gemini-2.5-flash,gemini-3.1-flash-lite,gemini-3.5-flash
 ```
 
 ### Discord Setup
