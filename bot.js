@@ -207,7 +207,7 @@ const PLAYER_HEAD_EMOJIS = new Map([
   ['lontony', '<:Lontony:1519314830899679303>'],
   ['llednev', '<:lledneV:1519314829586862152>'],
   ['karatecheese', '<:KarateCheese:1519314825170124830>'],
-  ['john200410', '<:John200410:1520293804001857716>'],
+  ['john200410', '<:John200410:1520294986137075833>'],
   ['kittr', '<:kittr:1519314827019944046>'],
   ['liketinos2341', '<:liketinos2341:1519314828001542356>'],
   ['itzrubyy', '<:ItzRubyy:1519314823790461000>'],
