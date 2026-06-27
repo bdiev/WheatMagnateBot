@@ -398,6 +398,7 @@ loadLastBotPublicChatStatus();
 const excludedMessageIds = [];
 const pendingAuthLinks = [];
 const pendingOwnerDMs = [];
+const growingChildFeedDmUsers = new Set();
 const sentAuthCodes = new Set();
 const authMessageIds = new Map(); // messageId -> DM channelId
 const wmCommandCooldowns = new Map(); // lowercase username -> last request timestamp
@@ -1524,6 +1525,134 @@ async function sendGrowingChildResetPrompt() {
     }],
     components: [createGrowingChildResetConfirmation()]
   });
+}
+
+function splitGrowingChildFeedText(text, { maxLines = 500, maxLineLength = 500 } = {}) {
+  return String(text || '')
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line && !/^```/.test(line))
+    .slice(0, maxLines)
+    .map(line => line.slice(0, maxLineLength));
+}
+
+async function readGrowingChildFeedAttachments(message) {
+  const texts = [];
+  const warnings = [];
+  for (const attachment of message.attachments?.values?.() || []) {
+    const name = String(attachment.name || 'attachment');
+    const contentType = String(attachment.contentType || '');
+    const isText =
+      contentType.startsWith('text/') ||
+      /\.(txt|md|text|log)$/i.test(name);
+    if (!isText) continue;
+    if (attachment.size && attachment.size > 256 * 1024) {
+      warnings.push(`Skipped ${name}: file is larger than 256 KB.`);
+      continue;
+    }
+    try {
+      const response = await fetch(attachment.url);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      texts.push(await response.text());
+    } catch (err) {
+      warnings.push(`Skipped ${name}: ${err.message}.`);
+    }
+  }
+  return { text: texts.join('\n'), warnings };
+}
+
+function formatGrowingChildFeedSummary(summary) {
+  return [
+    `Fed lines: **${summary.learned}/${summary.total}**`,
+    `New words: **${summary.newWords}**`,
+    `Known words: **${summary.knownWords}**`,
+    `Messages studied: **${summary.messages}**`,
+    summary.truncated ? 'Note: only the first 500 non-empty lines were processed.' : null
+  ].filter(Boolean).join('\n');
+}
+
+async function feedGrowingChildTextFromDM(message, text) {
+  if (!growingChild) initializeGrowingChild();
+  const allLines = String(text || '')
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line && !/^```/.test(line));
+  const lines = splitGrowingChildFeedText(text);
+  if (lines.length === 0) {
+    await message.reply('Send text after `!feed`, paste lines while feed mode is active, or attach a `.txt` file.');
+    return null;
+  }
+
+  let learned = 0;
+  let newWords = 0;
+  let latestStatus = growingChild.getStatus();
+  for (const line of lines) {
+    const result = growingChild.learn({
+      source: 'owner_dm',
+      authorId: message.author.id,
+      authorName: message.author.username,
+      channelId: 'owner_dm_feed',
+      channelName: 'Owner DM feed',
+      text: line,
+      addressed: false,
+      trainingOnly: true
+    });
+    if (!result) continue;
+    learned++;
+    newWords += Number(result.newWords || 0);
+    latestStatus = result;
+  }
+
+  const summary = {
+    total: lines.length,
+    learned,
+    newWords,
+    knownWords: latestStatus.knownWords,
+    messages: latestStatus.messages,
+    truncated: allLines.length > lines.length
+  };
+  await message.reply(formatGrowingChildFeedSummary(summary));
+  console.log(`[GrowingChild Feed] ${message.author.tag} fed ${learned}/${lines.length} lines, ${newWords} new words.`);
+  return summary;
+}
+
+async function handleGrowingChildFeedDM(message) {
+  const content = message.content.trim();
+  const lower = content.toLowerCase();
+  const isFeedCommand = lower === '!feed' || lower.startsWith('!feed ');
+  const isInFeedMode = growingChildFeedDmUsers.has(message.author.id);
+  if (!isFeedCommand && !isInFeedMode) return false;
+
+  if (isFeedCommand) {
+    const arg = content.slice('!feed'.length).trim();
+    const argLower = arg.toLowerCase();
+    if (!arg || argLower === 'start' || argLower === 'on') {
+      growingChildFeedDmUsers.add(message.author.id);
+      await message.reply('Feed mode enabled. Paste text or attach `.txt` files here. Use `!feed stop` to finish.');
+      return true;
+    }
+    if (['stop', 'off', 'end', 'done'].includes(argLower)) {
+      growingChildFeedDmUsers.delete(message.author.id);
+      await message.reply('Feed mode disabled.');
+      return true;
+    }
+    if (argLower === 'help') {
+      await message.reply('Use `!feed` to enable feed mode, `!feed stop` to disable it, or `!feed <text>` to feed one pasted block immediately.');
+      return true;
+    }
+
+    const attachments = await readGrowingChildFeedAttachments(message);
+    await feedGrowingChildTextFromDM(message, `${arg}\n${attachments.text}`.trim());
+    if (attachments.warnings.length > 0) await message.reply(attachments.warnings.join('\n'));
+    return true;
+  }
+
+  const attachments = await readGrowingChildFeedAttachments(message);
+  await feedGrowingChildTextFromDM(message, `${content}\n${attachments.text}`.trim());
+  if (attachments.warnings.length > 0) await message.reply(attachments.warnings.join('\n'));
+  return true;
 }
 
 function initializeGrowingChild() {
@@ -7039,6 +7168,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
     if (!message.guild) {
       if (message.author.id !== DISCORD_OWNER_ID) return;
+      if (await handleGrowingChildFeedDM(message)) return;
       return;
     }
 

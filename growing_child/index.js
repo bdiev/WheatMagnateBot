@@ -64,6 +64,7 @@ class GrowingChildAI {
     try {
       const allowedSource =
         context.source === 'minecraft' ||
+        context.source === 'owner_dm' ||
         (
           context.source === 'discord' &&
           this.allowedDiscordChannelId &&
@@ -77,8 +78,10 @@ class GrowingChildAI {
           newWords: result.newWords,
           addressed: Boolean(context.addressed)
         });
-        this.scheduler.noteActivity();
-        this.maybeReact(context);
+        if (!context.trainingOnly) {
+          this.scheduler.noteActivity();
+          this.maybeReact(context);
+        }
       }
       return result;
     } catch (err) {
