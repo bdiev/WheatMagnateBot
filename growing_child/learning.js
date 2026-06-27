@@ -31,7 +31,7 @@ class LearningSystem {
   }
 
   learnMessage(context) {
-    if (!this.config.enabled) return null;
+    if (!this.config.enabled && !context.trainingOnly) return null;
     const authorId = String(context.authorId || '').toLowerCase();
     const authorName = String(context.authorName || '').toLowerCase();
     if (this.config.ignoredUsers.has(authorId) || this.config.ignoredUsers.has(authorName)) return null;
