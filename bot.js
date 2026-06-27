@@ -396,6 +396,7 @@ let playtimeSyncInterval = null;
 const geminiModelBackoffUntil = new Map(); // model -> unix ms
 let lastBotPublicChatPhrase = null;
 let lastBotPublicChatEmoji = null;
+let botChatStatusEmojiQueue = [];
 loadLastBotPublicChatStatus();
 const excludedMessageIds = [];
 const pendingAuthLinks = [];
@@ -3430,9 +3431,35 @@ function loadBotChatStatusEmojis() {
   return BOT_CHAT_STATUS_EMOJI_FALLBACK;
 }
 
-function pickRandomBotStatusEmoji() {
-  return BOT_CHAT_STATUS_EMOJIS[Math.floor(Math.random() * BOT_CHAT_STATUS_EMOJIS.length)] ||
-    STATUS_EMOJIS.axolotlBucket;
+function shuffleBotStatusEmojis(emojis) {
+  const shuffled = [...emojis];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+}
+
+function refillBotStatusEmojiQueue() {
+  botChatStatusEmojiQueue = shuffleBotStatusEmojis(BOT_CHAT_STATUS_EMOJIS);
+  if (
+    lastBotPublicChatEmoji &&
+    botChatStatusEmojiQueue.length > 1 &&
+    botChatStatusEmojiQueue[0] === lastBotPublicChatEmoji
+  ) {
+    const swapIndex = botChatStatusEmojiQueue.findIndex(emoji => emoji !== lastBotPublicChatEmoji);
+    [botChatStatusEmojiQueue[0], botChatStatusEmojiQueue[swapIndex]] =
+      [botChatStatusEmojiQueue[swapIndex], botChatStatusEmojiQueue[0]];
+  }
+}
+
+function pickNextBotStatusEmoji() {
+  botChatStatusEmojiQueue = botChatStatusEmojiQueue
+    .filter(emoji => BOT_CHAT_STATUS_EMOJIS.includes(emoji));
+
+  if (botChatStatusEmojiQueue.length === 0) refillBotStatusEmojiQueue();
+
+  return botChatStatusEmojiQueue.shift() || STATUS_EMOJIS.axolotlBucket;
 }
 
 function loadLastBotPublicChatStatus() {
@@ -3446,6 +3473,11 @@ function loadLastBotPublicChatStatus() {
       lastBotPublicChatEmoji = typeof parsed.emoji === 'string' && parsed.emoji.trim()
         ? parsed.emoji
         : null;
+      if (Array.isArray(parsed.emojiQueue)) {
+        botChatStatusEmojiQueue = [...new Set(parsed.emojiQueue
+          .map(emoji => String(emoji || '').trim())
+          .filter(emoji => BOT_CHAT_STATUS_EMOJIS.includes(emoji)))];
+      }
     }
   } catch (err) {
     if (err.code !== 'ENOENT') {
@@ -3460,6 +3492,7 @@ function saveLastBotPublicChatStatus() {
     fs.writeFileSync(BOT_PUBLIC_CHAT_STATUS_FILE, JSON.stringify({
       phrase: lastBotPublicChatPhrase,
       emoji: lastBotPublicChatEmoji,
+      emojiQueue: botChatStatusEmojiQueue,
       updatedAt: new Date().toISOString()
     }, null, 2));
   } catch (err) {
@@ -3471,7 +3504,7 @@ function rememberBotPublicChatPhrase(message) {
   const phrase = normalizeOutboundChat(message);
   if (!phrase || phrase.startsWith('/') || phrase.startsWith('!')) return;
   lastBotPublicChatPhrase = phrase.slice(0, 180);
-  lastBotPublicChatEmoji = pickRandomBotStatusEmoji();
+  lastBotPublicChatEmoji = pickNextBotStatusEmoji();
   saveLastBotPublicChatStatus();
   updateStatusMessage().catch(() => {});
 }
