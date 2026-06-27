@@ -10,6 +10,7 @@ const { sanitizePublicPhrase } = require('./safety');
 const {
   GRAMMAR_WORDS,
   extractCandidatePhrases,
+  sharesLongContiguousRun,
   validateAIGeneratedPhrase
 } = require('./ai_generation');
 
@@ -200,6 +201,14 @@ class GrowingChildAI {
     return phrase ? [phrase] : [];
   }
 
+  isTooSimilarToLearnedText(words) {
+    if (this.generator.isTooSimilarToChat(words)) return true;
+    return this.database.getLearnedSequences(1000).some(row => {
+      const learned = row.sequence.split(' ').filter(Boolean);
+      return sharesLongContiguousRun(words, learned, 3);
+    });
+  }
+
   async generateAIPhrases(reason, contextWords) {
     if (
       !this.config.aiGenerationEnabled ||
@@ -241,7 +250,7 @@ class GrowingChildAI {
     try {
       const results = [];
       const seen = new Set();
-      const attempts = isRequestedSpeech ? 2 : 1;
+      const attempts = isRequestedSpeech ? 3 : 2;
       for (let attempt = 1; attempt <= attempts; attempt++) {
         const attemptSelectedWords = attempt === 1
           ? selectedWords
@@ -262,7 +271,7 @@ class GrowingChildAI {
             requiredWords: attemptSelectedWords,
             minRequiredWords: Math.min(2, attemptSelectedWords.length),
             isTooSimilar: words =>
-              this.generator.isTooSimilarToChat(words) ||
+              this.isTooSimilarToLearnedText(words) ||
               this.database.hasRecentlyGeneratedPhrase(words.join(' '))
           });
           if (!validated || seen.has(validated.toLocaleLowerCase())) continue;

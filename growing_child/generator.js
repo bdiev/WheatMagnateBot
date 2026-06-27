@@ -1,6 +1,5 @@
 'use strict';
 
-const { START_TOKEN, END_TOKEN } = require('./database');
 const { isSafePublicWord } = require('./safety');
 
 const FUNCTION_WORDS = new Set([
@@ -11,15 +10,17 @@ const FUNCTION_WORDS = new Set([
   'where', 'who', 'why', 'with', 'you', 'your'
 ]);
 
-function weightedPick(rows, valueKey) {
-  if (rows.length === 0) return null;
-  const total = rows.reduce((sum, row) => sum + Math.max(1, Number(row.times_seen) || 1), 0);
-  let cursor = Math.random() * total;
-  for (const row of rows) {
-    cursor -= Math.max(1, Number(row.times_seen) || 1);
-    if (cursor <= 0) return row[valueKey];
+function shuffle(items) {
+  const copy = [...items];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
   }
-  return rows[rows.length - 1][valueKey];
+  return copy;
+}
+
+function randomSample(items, count) {
+  return shuffle(items).slice(0, count);
 }
 
 function finish(words, punctuation) {
@@ -74,65 +75,47 @@ class MessageGenerator {
     return this.database.getLearnedSequences(1000).some(row => {
       const learned = row.sequence.split(' ').filter(Boolean);
       if (learned.join(' ') === words.join(' ')) return true;
+      for (let i = 0; i <= learned.length - 3; i++) {
+        const trigram = learned.slice(i, i + 3).join(' ');
+        if (words.join(' ').includes(trigram)) return true;
+      }
       const lengthRatio = Math.min(words.length, learned.length) / Math.max(words.length, learned.length);
-      return lengthRatio >= 0.55 && similarity(words, learned) >= 0.8;
+      return lengthRatio >= 0.45 && similarity(words, learned) >= 0.65;
     });
   }
 
-  walk(previousWord, currentWord, initialWords, maxLength) {
-    const result = [...initialWords];
-    let previous = previousWord;
-    let current = currentWord;
-
-    while (result.length < maxLength) {
-      const options = this.database.getNextWords(previous, current)
-        .filter(row => row.next_word === END_TOKEN || isSafePublicWord(row.next_word));
-      if (options.length === 0) break;
-
-      const next = weightedPick(options, 'next_word');
-      if (!next || next === END_TOKEN) break;
-
-      // Avoid loops such as "help help help" when chat contains spam.
-      const lastThree = result.slice(-3);
-      if (lastThree.filter(word => word === next).length >= 2) break;
-
-      result.push(next);
-      previous = current;
-      current = next;
-    }
-
-    return result;
+  getRandomWordPool(contextWords = []) {
+    const learnedWords = this.database
+      .getAllWords()
+      .map(row => String(row.word || '').toLocaleLowerCase())
+      .filter(word => word && isSafePublicWord(word));
+    const context = contextWords
+      .map(word => String(word || '').toLocaleLowerCase())
+      .filter(word => word && isSafePublicWord(word) && learnedWords.includes(word));
+    return [...new Set([...context, ...learnedWords])];
   }
 
   makeCandidate(reply = false, contextWords = []) {
-    const safeContext = [...new Set(contextWords.filter(isSafePublicWord))];
-    const meaningfulContext = safeContext.filter(word => !FUNCTION_WORDS.has(word));
+    const pool = this.getRandomWordPool(contextWords);
+    const contentWords = pool.filter(word => !FUNCTION_WORDS.has(word));
+    if (contentWords.length < 5) return null;
 
-    if (reply) {
-      const candidates = [];
-      for (const word of meaningfulContext.length > 0 ? meaningfulContext : safeContext) {
-        for (const row of this.database.getContextsForWord(word, 20)) {
-          candidates.push({ ...row, context_word: word });
-        }
-      }
-      if (candidates.length === 0) return null;
+    const targetLength = Math.min(
+      pool.length,
+      4 + Math.floor(Math.random() * (reply ? 6 : 8))
+    );
+    const context = randomSample(
+      [...new Set(contextWords.filter(word => pool.includes(word) && !FUNCTION_WORDS.has(word)))],
+      reply ? 2 : 1
+    );
+    const remaining = pool.filter(word => !context.includes(word));
+    const words = shuffle([
+      ...context,
+      ...randomSample(remaining, Math.max(0, targetLength - context.length))
+    ]);
 
-      const selectedWord = weightedPick(candidates, 'context_word');
-      const matching = candidates.filter(row => row.context_word === selectedWord);
-      const selectedPrevious = weightedPick(matching, 'previous_word');
-      const maxLength = 4 + Math.floor(Math.random() * 7);
-      const words = this.walk(selectedPrevious, selectedWord, [selectedWord], maxLength);
-      return { words, phrase: finish(words, this.getPunctuation(true)), score: scoreWords(words, true) };
-    }
-
-    const starts = this.database.getNextWords(START_TOKEN, START_TOKEN)
-      .filter(row => isSafePublicWord(row.next_word));
-    if (starts.length === 0) return null;
-
-    const first = weightedPick(starts, 'next_word');
-    const maxLength = 4 + Math.floor(Math.random() * 8);
-    const words = this.walk(START_TOKEN, first, [first], maxLength);
-    return { words, phrase: finish(words, this.getPunctuation(false)), score: scoreWords(words, false) };
+    if (words.length < 3) return null;
+    return { words, phrase: finish(words, this.getPunctuation(reply)), score: scoreWords(words, reply) };
   }
 
   generateCandidates({ reply = false, contextWords = [], attempts = 80, limit = 8 } = {}) {

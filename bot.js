@@ -1697,6 +1697,8 @@ async function generateGrowingChildPhrase({
     'Do not return empty generic phrases such as "what is this", "what is that", or "I do not know".',
     'Do not force unrelated words together or produce nonsense.',
     'Do not copy or closely paraphrase a message you have seen.',
+    'Do not preserve the order of the topic words. Use them as ingredients, not as a quote.',
+    'Every sentence must feel complete, with a clear small thought.',
     'Do not add names, numbers, coordinates, commands, quotes, labels, emojis, or explanations.',
     'Basic grammar words:',
     grammarWords.join(', '),

@@ -41,6 +41,18 @@ function isGenericPhrase(words) {
   ].includes(words.join(' '));
 }
 
+function sharesLongContiguousRun(firstWords, secondWords, minLength = 3) {
+  if (firstWords.length < minLength || secondWords.length < minLength) return false;
+  const secondRuns = new Set();
+  for (let i = 0; i <= secondWords.length - minLength; i++) {
+    secondRuns.add(secondWords.slice(i, i + minLength).join(' '));
+  }
+  for (let i = 0; i <= firstWords.length - minLength; i++) {
+    if (secondRuns.has(firstWords.slice(i, i + minLength).join(' '))) return true;
+  }
+  return false;
+}
+
 function validateAIGeneratedPhrase({
   phrase,
   learnedWords,
@@ -78,6 +90,7 @@ function validateAIGeneratedPhrase({
 module.exports = {
   GRAMMAR_WORDS,
   extractCandidatePhrases,
+  sharesLongContiguousRun,
   tokenizePhrase,
   validateAIGeneratedPhrase
 };
