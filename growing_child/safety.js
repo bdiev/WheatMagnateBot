@@ -22,6 +22,22 @@ function isSafePublicWord(word) {
   return SAFE_WORD_RE.test(normalized) && !NUMBER_WORDS.has(normalized);
 }
 
+function getWordScript(word) {
+  const value = String(word || '');
+  if (/\p{Script=Latin}/u.test(value)) return 'latin';
+  if (/\p{Script=Cyrillic}/u.test(value)) return 'cyrillic';
+  return 'other';
+}
+
+function hasMixedLatinCyrillicWords(words) {
+  const scripts = new Set();
+  for (const word of words) {
+    const script = getWordScript(word);
+    if (script === 'latin' || script === 'cyrillic') scripts.add(script);
+  }
+  return scripts.size > 1;
+}
+
 function sanitizePublicPhrase(phrase) {
   const value = String(phrase || '').replace(/\s+/g, ' ').trim();
   if (!value || value.startsWith('/') || value.startsWith('!')) return null;
@@ -29,7 +45,12 @@ function sanitizePublicPhrase(phrase) {
   if (!SAFE_PUBLIC_PHRASE_RE.test(value)) return null;
   const words = value.toLocaleLowerCase().match(/\p{L}+(?:['’]\p{L}+)*/gu) || [];
   if (words.some(word => NUMBER_WORDS.has(word))) return null;
+  if (hasMixedLatinCyrillicWords(words)) return null;
   return value.slice(0, 220).trim() || null;
 }
 
-module.exports = { isSafePublicWord, sanitizePublicPhrase };
+module.exports = {
+  hasMixedLatinCyrillicWords,
+  isSafePublicWord,
+  sanitizePublicPhrase
+};

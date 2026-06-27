@@ -1,6 +1,10 @@
 'use strict';
 
-const { sanitizePublicPhrase, isSafePublicWord } = require('./safety');
+const {
+  hasMixedLatinCyrillicWords,
+  sanitizePublicPhrase,
+  isSafePublicWord
+} = require('./safety');
 
 const APOSTROPHE_CHARS = "'\u2019";
 const WORD_RE = new RegExp(`[\\p{L}]+(?:[${APOSTROPHE_CHARS}][\\p{L}]+)*`, 'gu');
@@ -79,6 +83,7 @@ function validateAIGeneratedPhrase({
 
   if (words.length < 3 || words.length > 12) return null;
   if (words.some(word => !isSafePublicWord(word) || !allowed.has(word))) return null;
+  if (hasMixedLatinCyrillicWords(words)) return null;
   if (!words.some(word => contentWords.has(word))) return null;
   if (required.size > 0 && requiredUsed < Math.min(required.size, minRequiredWords)) return null;
   if (isGenericPhrase(words)) return null;

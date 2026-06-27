@@ -68,6 +68,9 @@ try {
   if (sanitizePublicPhrase('hello farm?') !== 'hello farm?') {
     throw new Error('Coordinate safety filter rejected a safe phrase.');
   }
+  if (sanitizePublicPhrase('is олеся still at the guaira farm') !== null) {
+    throw new Error('Public phrase safety accepted mixed English/Russian text.');
+  }
   const aiPhrase = validateAIGeneratedPhrase({
     phrase: 'Do you have more rockets?',
     learnedWords: [...known],
@@ -116,6 +119,14 @@ try {
     isTooSimilar: () => false
   }) !== null) {
     throw new Error('AI phrase validation accepted a phrase missing a selected word.');
+  }
+  if (validateAIGeneratedPhrase({
+    phrase: 'Is олеся still at the guaira farm?',
+    learnedWords: [...known, 'олеся', 'still', 'at', 'the', 'guaira'],
+    requiredWords: ['олеся', 'guaira'],
+    isTooSimilar: () => false
+  }) !== null) {
+    throw new Error('AI phrase validation accepted mixed English/Russian text.');
   }
   database.rememberGeneratedPhrase('Do you have more rockets?');
   if (!database.hasRecentlyGeneratedPhrase('do YOU have more rockets?')) {

@@ -1,6 +1,6 @@
 'use strict';
 
-const { isSafePublicWord } = require('./safety');
+const { hasMixedLatinCyrillicWords, isSafePublicWord } = require('./safety');
 
 const FUNCTION_WORDS = new Set([
   'a', 'an', 'and', 'are', 'as', 'at', 'be', 'but', 'can', 'do', 'does', 'for',
@@ -114,7 +114,7 @@ class MessageGenerator {
       ...randomSample(remaining, Math.max(0, targetLength - context.length))
     ]);
 
-    if (words.length < 3) return null;
+    if (words.length < 3 || hasMixedLatinCyrillicWords(words)) return null;
     return { words, phrase: finish(words, this.getPunctuation(reply)), score: scoreWords(words, reply) };
   }
 
