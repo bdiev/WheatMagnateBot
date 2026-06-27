@@ -40,7 +40,9 @@ const GEMINI_MODELS = parseGeminiModelList(
 const GEMINI_MODEL = GEMINI_MODELS[0] || 'gemini-2.5-flash-lite';
 const WM_COMMAND_COOLDOWN_MS = 20_000;
 const WM_MAX_QUESTION_LENGTH = 300;
-const WM_MAX_RESPONSE_LENGTH = 420;
+const WM_MAX_RESPONSE_LENGTH = 900;
+const WM_MAX_OUTPUT_TOKENS = 300;
+const WM_CHAT_CHUNK_LENGTH = 190;
 const MINECRAFT_PRIVATE_MESSAGE_LENGTH = 180;
 const RECONNECT_INTERVAL_MS = 15_000;
 const MINECRAFT_CONNECT_TIMEOUT_MS = 20_000;
@@ -3558,6 +3560,18 @@ function splitMinecraftMessage(text, maxLength = MINECRAFT_PRIVATE_MESSAGE_LENGT
   return chunks;
 }
 
+function truncateTextForChat(text, maxLength) {
+  const cleanText = String(text || '').trim();
+  if (!Number.isFinite(maxLength) || maxLength <= 0 || cleanText.length <= maxLength) {
+    return cleanText;
+  }
+
+  const suffix = '... [truncated]';
+  const limit = Math.max(0, maxLength - suffix.length);
+  const clipped = cleanText.slice(0, limit).replace(/\s+\S*$/, '').trim();
+  return `${clipped || cleanText.slice(0, limit).trim()}${suffix}`;
+}
+
 async function sendPrivateMinecraftMessage(username, text) {
   const cleanText = String(text || '')
     .replace(/\u00a7[0-9a-fk-or]/gi, '')
@@ -3794,7 +3808,7 @@ async function requestGeminiModel(model, question, options = {}) {
   if (!answer) {
     throw new Error('Gemini returned no answer');
   }
-  return answer.slice(0, options.maxResponseLength ?? WM_MAX_RESPONSE_LENGTH);
+  return truncateTextForChat(answer, options.maxResponseLength ?? WM_MAX_RESPONSE_LENGTH);
 }
 
 function getGeminiRetryDelayMs(err) {
@@ -3926,11 +3940,17 @@ async function handleWmCommand(username, question) {
   wmCommandCooldowns.set(usernameKey, Date.now());
   wmRequestsInFlight.add(usernameKey);
   try {
-    const answer = await askGemini(cleanQuestion);
-    for (const chunk of splitMinecraftMessage(answer, 220)) {
+    const answer = await askGemini(cleanQuestion, {
+      maxOutputTokens: WM_MAX_OUTPUT_TOKENS,
+      maxResponseLength: WM_MAX_RESPONSE_LENGTH
+    });
+    const chunks = splitMinecraftMessage(answer.replace(/[\r\n]+/g, ' '), WM_CHAT_CHUNK_LENGTH);
+    for (let index = 0; index < chunks.length; index++) {
       if (!bot?.entity) return;
-      sendMinecraftChat(chunk);
-      await sendGameChatMessageToDiscord(bot.username, chunk, { allowMentions: false });
+      const prefix = chunks.length > 1 ? `[${index + 1}/${chunks.length}] ` : '';
+      const message = `${prefix}${chunks[index]}`;
+      sendMinecraftChat(message);
+      await sendGameChatMessageToDiscord(bot.username, message, { allowMentions: false });
       await new Promise(resolve => setTimeout(resolve, 400));
     }
   } catch (err) {
