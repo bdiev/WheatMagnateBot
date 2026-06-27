@@ -581,54 +581,101 @@ function getContainerInventorySlot(bot, container, inventoryItem) {
   return slot;
 }
 
+function getOpenInventoryItems(bot, container, containerSlot, inventorySlot) {
+  return [container.slots[containerSlot], bot.inventory.slots[inventorySlot]]
+    .filter(Boolean);
+}
+
+function isSlotPickaxe(bot, item, expectedType, usable) {
+  if (!item || item.type !== expectedType) return false;
+  return usable ? isPickaxeUsable(bot, item) : !isPickaxeUsable(bot, item);
+}
+
+function hasOpenInventoryPickaxe(bot, container, containerSlot, inventorySlot, expectedType, usable) {
+  return getOpenInventoryItems(bot, container, containerSlot, inventorySlot)
+    .some(item => isSlotPickaxe(bot, item, expectedType, usable));
+}
+
 async function swapPickaxesInExactSlots(bot, container, replacement, wornPickaxe) {
   const barrelSlot = replacement.item.slot;
   const inventorySlot = getContainerInventorySlot(bot, container, wornPickaxe);
   const barrelItem = container.slots[barrelSlot];
-  const inventoryItem = container.slots[inventorySlot];
 
   if (!barrelItem || barrelItem.type !== replacement.item.type) {
     throw new Error(`Replacement pickaxe slot ${barrelSlot} changed before swap.`);
   }
-  if (!inventoryItem || inventoryItem.type !== wornPickaxe.type) {
+  if (!hasOpenInventoryPickaxe(bot, container, inventorySlot, wornPickaxe.slot, wornPickaxe.type, false)) {
     throw new Error(`Worn pickaxe slot ${wornPickaxe.slot} changed before swap.`);
   }
 
+  const isSwapped = () => {
+    const newBarrelItem = container.slots[barrelSlot];
+    return Boolean(
+      isSlotPickaxe(bot, newBarrelItem, wornPickaxe.type, false) &&
+      hasOpenInventoryPickaxe(
+        bot,
+        container,
+        inventorySlot,
+        wornPickaxe.slot,
+        replacement.item.type,
+        true
+      ) &&
+      !container.selectedItem
+    );
+  };
+
+  const isStillOriginal = () => {
+    const currentBarrelItem = container.slots[barrelSlot];
+    return Boolean(
+      currentBarrelItem &&
+      currentBarrelItem.type === replacement.item.type &&
+      hasOpenInventoryPickaxe(
+        bot,
+        container,
+        inventorySlot,
+        wornPickaxe.slot,
+        wornPickaxe.type,
+        false
+      ) &&
+      !container.selectedItem
+    );
+  };
+
+  const waitForSwap = () => waitForInventorySupply(bot, isSwapped, 2_000);
+
   const hotbarIndex = wornPickaxe.slot - bot.inventory.hotbarStart;
   if (hotbarIndex >= 0 && hotbarIndex < 9) {
-    // A mode-2 hotbar swap is one atomic server action. This is substantially
-    // safer than three cursor clicks on servers that resynchronise container
-    // state between clicks.
+    // A mode-2 hotbar swap is one atomic server action. Some servers/protocols
+    // report the changed hotbar slot only through bot.inventory, so isSwapped()
+    // checks both views before deciding the swap failed.
     await bot.clickWindow(barrelSlot, hotbarIndex, 2);
-  } else {
-    // Pick up the good pickaxe, exchange it with the worn inventory pickaxe,
-    // then put the worn pickaxe into the exact barrel slot that was freed.
-    await bot.clickWindow(barrelSlot, 0, 0);
-    await bot.clickWindow(inventorySlot, 0, 0);
-    await bot.clickWindow(barrelSlot, 0, 0);
+    await new Promise(resolve => setTimeout(resolve, 250));
+    if (await waitForSwap()) return;
+
+    if (!isStillOriginal()) {
+      throw new Error(
+        `Server left pickaxe swap partially synced for barrel slot ${barrelSlot} and inventory slot ${wornPickaxe.slot}.`
+      );
+    }
+
+    writeFarmDebug('pickaxe_hotbar_swap_fallback', {
+      barrelSlot,
+      inventorySlot: wornPickaxe.slot,
+      openWindowInventorySlot: inventorySlot
+    });
   }
+
+  // Pick up the good pickaxe, exchange it with the worn inventory pickaxe,
+  // then put the worn pickaxe into the exact barrel slot that was freed.
+  await bot.clickWindow(barrelSlot, 0, 0);
+  await bot.clickWindow(inventorySlot, 0, 0);
+  await bot.clickWindow(barrelSlot, 0, 0);
 
   // Give a server correction packet a chance to arrive before accepting
   // Mineflayer's optimistic local window update as the final state.
   await new Promise(resolve => setTimeout(resolve, 250));
 
-  const swapped = await waitForInventorySupply(
-    bot,
-    () => {
-      const newBarrelItem = container.slots[barrelSlot];
-      const newInventoryItem = container.slots[inventorySlot];
-      return Boolean(
-        newBarrelItem &&
-        newBarrelItem.type === wornPickaxe.type &&
-        !isPickaxeUsable(bot, newBarrelItem) &&
-        newInventoryItem &&
-        newInventoryItem.type === replacement.item.type &&
-        isPickaxeUsable(bot, newInventoryItem) &&
-        !container.selectedItem
-      );
-    },
-    2_000
-  );
+  const swapped = await waitForSwap();
   if (!swapped) {
     throw new Error(
       `Server did not swap barrel slot ${barrelSlot} with inventory slot ${wornPickaxe.slot}.`
