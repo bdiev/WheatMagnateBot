@@ -581,6 +581,32 @@ function getContainerInventorySlot(bot, container, inventoryItem) {
   return slot;
 }
 
+function getBotInventorySlotFromContainerSlot(bot, container, containerSlot) {
+  const slotOffset = container.inventoryStart - bot.inventory.inventoryStart;
+  return containerSlot - slotOffset;
+}
+
+function findContainerMainInventoryRelocationSlot(bot, container) {
+  let occupiedSlot = null;
+  for (let slot = container.inventoryStart; slot < container.hotbarStart; slot++) {
+    const inventorySlot = getBotInventorySlotFromContainerSlot(bot, container, slot);
+    if (!container.slots[slot] && !bot.inventory.slots[inventorySlot]) return slot;
+    if (
+      occupiedSlot == null &&
+      container.slots[slot] &&
+      !PICKAXE_PRIORITY.includes(container.slots[slot].name)
+    ) {
+      occupiedSlot = slot;
+    }
+  }
+  if (occupiedSlot != null) return occupiedSlot;
+
+  for (let slot = container.inventoryStart; slot < container.hotbarStart; slot++) {
+    if (container.slots[slot]) return slot;
+  }
+  return null;
+}
+
 function getOpenInventoryItems(bot, container, containerSlot, inventorySlot) {
   return [container.slots[containerSlot], bot.inventory.slots[inventorySlot]]
     .filter(Boolean);
@@ -598,14 +624,57 @@ function hasOpenInventoryPickaxe(bot, container, containerSlot, inventorySlot, e
 
 async function swapPickaxesInExactSlots(bot, container, replacement, wornPickaxe) {
   const barrelSlot = replacement.item.slot;
-  const inventorySlot = getContainerInventorySlot(bot, container, wornPickaxe);
+  const originalWornSlot = wornPickaxe.slot;
+  let wornInventorySlot = originalWornSlot;
+  let inventorySlot = getContainerInventorySlot(bot, container, wornPickaxe);
   const barrelItem = container.slots[barrelSlot];
 
   if (!barrelItem || barrelItem.type !== replacement.item.type) {
     throw new Error(`Replacement pickaxe slot ${barrelSlot} changed before swap.`);
   }
-  if (!hasOpenInventoryPickaxe(bot, container, inventorySlot, wornPickaxe.slot, wornPickaxe.type, false)) {
-    throw new Error(`Worn pickaxe slot ${wornPickaxe.slot} changed before swap.`);
+  if (!hasOpenInventoryPickaxe(bot, container, inventorySlot, originalWornSlot, wornPickaxe.type, false)) {
+    throw new Error(`Worn pickaxe slot ${originalWornSlot} changed before swap.`);
+  }
+
+  const originalHotbarIndex = originalWornSlot - bot.inventory.hotbarStart;
+  if (originalHotbarIndex >= 0 && originalHotbarIndex < 9) {
+    const mainInventorySlot = findContainerMainInventoryRelocationSlot(bot, container);
+    if (mainInventorySlot != null) {
+      const targetWasOccupied = Boolean(container.slots[mainInventorySlot]);
+      await bot.clickWindow(inventorySlot, 0, 0);
+      await bot.clickWindow(mainInventorySlot, 0, 0);
+      if (targetWasOccupied) {
+        await bot.clickWindow(inventorySlot, 0, 0);
+      }
+      await new Promise(resolve => setTimeout(resolve, 250));
+
+      const relocatedInventorySlot = getBotInventorySlotFromContainerSlot(bot, container, mainInventorySlot);
+      const relocated = await waitForInventorySupply(
+        bot,
+        () => hasOpenInventoryPickaxe(
+          bot,
+          container,
+          mainInventorySlot,
+          relocatedInventorySlot,
+          wornPickaxe.type,
+          false
+        ) && !container.selectedItem,
+        2_000
+      );
+      if (relocated) {
+        writeFarmDebug('pickaxe_hotbar_relocated_for_swap', {
+          barrelSlot,
+          fromInventorySlot: originalWornSlot,
+          toInventorySlot: relocatedInventorySlot,
+          displacedInventoryItem: targetWasOccupied ? container.slots[inventorySlot]?.name || null : null,
+          openWindowInventorySlot: mainInventorySlot
+        });
+        inventorySlot = mainInventorySlot;
+        wornInventorySlot = relocatedInventorySlot;
+      } else if (container.selectedItem) {
+        await bot.clickWindow(inventorySlot, 0, 0);
+      }
+    }
   }
 
   const isSwapped = () => {
@@ -616,7 +685,7 @@ async function swapPickaxesInExactSlots(bot, container, replacement, wornPickaxe
         bot,
         container,
         inventorySlot,
-        wornPickaxe.slot,
+        wornInventorySlot,
         replacement.item.type,
         true
       ) &&
@@ -633,7 +702,7 @@ async function swapPickaxesInExactSlots(bot, container, replacement, wornPickaxe
         bot,
         container,
         inventorySlot,
-        wornPickaxe.slot,
+        wornInventorySlot,
         wornPickaxe.type,
         false
       ) &&
@@ -643,7 +712,7 @@ async function swapPickaxesInExactSlots(bot, container, replacement, wornPickaxe
 
   const waitForSwap = () => waitForInventorySupply(bot, isSwapped, 2_000);
 
-  const hotbarIndex = wornPickaxe.slot - bot.inventory.hotbarStart;
+  const hotbarIndex = wornInventorySlot - bot.inventory.hotbarStart;
   if (hotbarIndex >= 0 && hotbarIndex < 9) {
     // A mode-2 hotbar swap is one atomic server action. Some servers/protocols
     // report the changed hotbar slot only through bot.inventory, so isSwapped()
@@ -654,13 +723,13 @@ async function swapPickaxesInExactSlots(bot, container, replacement, wornPickaxe
 
     if (!isStillOriginal()) {
       throw new Error(
-        `Server left pickaxe swap partially synced for barrel slot ${barrelSlot} and inventory slot ${wornPickaxe.slot}.`
+        `Server left pickaxe swap partially synced for barrel slot ${barrelSlot} and inventory slot ${originalWornSlot}.`
       );
     }
 
     writeFarmDebug('pickaxe_hotbar_swap_fallback', {
       barrelSlot,
-      inventorySlot: wornPickaxe.slot,
+      inventorySlot: wornInventorySlot,
       openWindowInventorySlot: inventorySlot
     });
   }
@@ -678,7 +747,7 @@ async function swapPickaxesInExactSlots(bot, container, replacement, wornPickaxe
   const swapped = await waitForSwap();
   if (!swapped) {
     throw new Error(
-      `Server did not swap barrel slot ${barrelSlot} with inventory slot ${wornPickaxe.slot}.`
+      `Server did not swap barrel slot ${barrelSlot} with inventory slot ${originalWornSlot}.`
     );
   }
 }
