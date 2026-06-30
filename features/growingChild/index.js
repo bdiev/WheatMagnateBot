@@ -320,6 +320,11 @@ class GrowingChildAI {
     return this.setEnabled(!this.enabled);
   }
 
+  setMinecraftPublicSpeechEnabled(enabled) {
+    this.config.minecraftPublicSpeechEnabled = Boolean(enabled);
+    return this.getStatus();
+  }
+
   reset() {
     if (this.pendingReactiveTimer) clearTimeout(this.pendingReactiveTimer);
     this.pendingReactiveTimer = null;
