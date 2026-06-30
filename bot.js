@@ -415,6 +415,8 @@ let outboundWhispers = new Map(); // key: `OUTBOUND:targetUsername:message` -> t
 let recentlyForwardedGameChat = new Map(); // key: `CHAT:username:message` -> timestamp, to dedupe chat/raw message events
 let tpsTabInterval = null;
 let playtimeSyncInterval = null;
+let wheatMagnatePlaytimeDisplay = 'N/A';
+let wheatMagnatePlaytimeCacheAt = 0;
 const DANGER_RADIUS_OPTIONS = [100, 200, 300, 500, 1000];
 const MESSAGE_COOLDOWN_OPTIONS = [0, 5000, 10_000, 20_000, 60_000];
 const runtimeSettings = {
@@ -633,6 +635,7 @@ async function ensureStatusMessage() {
 
     // If still not found, create a new one
     if (!statusMessage) {
+      await refreshWheatMagnatePlaytimeDisplay();
       statusMessage = await channel.send({
         embeds: [{
           title: getServerStatusTitle(),
@@ -1550,6 +1553,31 @@ const {
   statusEmojis: STATUS_EMOJIS,
   uiButtonEmojis: UI_BUTTON_EMOJIS
 });
+
+async function refreshWheatMagnatePlaytimeDisplay({ force = false } = {}) {
+  const now = Date.now();
+  if (!force && now - wheatMagnatePlaytimeCacheAt < 30_000) {
+    return wheatMagnatePlaytimeDisplay;
+  }
+
+  wheatMagnatePlaytimeCacheAt = now;
+  try {
+    const playtimeData = await getWhitelistPlaytime();
+    if (playtimeData.error) return wheatMagnatePlaytimeDisplay;
+    const player = (playtimeData.players || []).find(row =>
+      String(row.username || '').toLowerCase() === ADMIN_PANEL_BOT_NAME.toLowerCase()
+    );
+    if (player) {
+      wheatMagnatePlaytimeDisplay = formatPlaytime(player.total_seconds);
+    }
+  } catch (_) {}
+
+  return wheatMagnatePlaytimeDisplay;
+}
+
+function getWheatMagnateStatusLine() {
+  return `${getPlayerHeadEmoji(ADMIN_PANEL_BOT_NAME)} **${ADMIN_PANEL_BOT_NAME}** Playtime: **${wheatMagnatePlaytimeDisplay}**`;
+}
 
 async function beginObsidianFarmSession() {
   // Do not reset the session while writes from the previous run are pending.
@@ -4044,10 +4072,10 @@ function getStatusDescription() {
 
   if (!bot || !bot.entity) {
     if (!shouldReconnect) {
-      return lastDisconnectReason ? `${STATUS_EMOJIS.pause} ${lastDisconnectReason}` : `${STATUS_EMOJIS.pause} Bot paused`;
+      return `${lastDisconnectReason ? `${STATUS_EMOJIS.pause} ${lastDisconnectReason}` : `${STATUS_EMOJIS.pause} Bot paused`}\n${getWheatMagnateStatusLine()}`;
     }
     if (shouldReconnect) {
-      return `${STATUS_EMOJIS.update} Trying to reconnect.`;
+      return `${STATUS_EMOJIS.update} Trying to reconnect.\n${getWheatMagnateStatusLine()}`;
     }
     return `❌ Bot not connected${reasonLine}`;
   }
@@ -4068,6 +4096,7 @@ function getStatusDescription() {
   const whitelistOnlineDisplay = whitelistOnline.length > 0 ? whitelistOnline.map(u => `\`${u}\``).join(', ') : 'None';
   const obsidianMined = `${formatCompactCount(obsidianStats.sessionMined)}/${formatCompactCount(obsidianStats.totalMined)}`;
   return `${STATUS_EMOJIS.serverPing} Bot **${bot.username}** connected to \`${config.host}\`\n` +
+    `${getWheatMagnateStatusLine()}\n` +
     `${STATUS_EMOJIS.players} Players online: ${playerCount}\n` +
     `${STATUS_EMOJIS.nearby} Players nearby: ${nearbyNames}\n` +
     `${STATUS_EMOJIS.tps} TPS: ${avgTps}\n` +
@@ -4114,6 +4143,7 @@ function buildAdminServerStatusValue() {
   const obsidianMined = `${formatCompactCount(obsidianStats.sessionMined)}/${formatCompactCount(obsidianStats.totalMined)}`;
 
   return [
+    getWheatMagnateStatusLine(),
     `${STATUS_EMOJIS.players} Players online: ${playerCount}`,
     `${STATUS_EMOJIS.nearby} Players nearby: ${nearbyNames}`,
     `${STATUS_EMOJIS.tps} TPS: ${getCurrentTpsDisplay()}`,
@@ -4295,19 +4325,26 @@ function formatSeenTimestamp(timestamp) {
 }
 
 function createSeenActivityComponents(messageId) {
+  const buttons = [
+    new ButtonBuilder()
+      .setCustomId('seen_non_whitelist_search')
+      .setLabel('Search non-whitelist')
+      .setEmoji(STATUS_BUTTON_EMOJIS.seen)
+      .setStyle(ButtonStyle.Secondary)
+  ];
+
+  if (messageId) {
+    buttons.push(
+      new ButtonBuilder()
+        .setCustomId(`remove_${messageId}`)
+        .setLabel('Remove')
+        .setStyle(ButtonStyle.Danger)
+    );
+  }
+
   return [
     new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId('seen_non_whitelist_search')
-          .setLabel('Search non-whitelist')
-          .setEmoji(STATUS_BUTTON_EMOJIS.seen)
-          .setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder()
-          .setCustomId(`remove_${messageId}`)
-          .setLabel('Remove')
-          .setStyle(ButtonStyle.Danger)
-      )
+      .addComponents(...buttons)
   ];
 }
 
@@ -4351,6 +4388,7 @@ function formatNearbySightings(rows) {
 }
 
 async function buildAdminPanelEmbed() {
+  await refreshWheatMagnatePlaytimeDisplay();
   const [dailyTps, nearbySightings] = await Promise.all([
     getDailyTpsAverages(7),
     getRecentNearbyPlayerSightings(5)
@@ -4505,6 +4543,7 @@ async function updateStatusMessage() {
     } catch (presenceErr) {
       console.error('[Discord] Failed to update presence:', presenceErr.message);
     }
+    await refreshWheatMagnatePlaytimeDisplay();
 
     // Allow status updates even if bot is not connected to show offline state
     const description = `${getStatusDescription()}\n\n${getLastBotPublicChatStatusLine()}`;
@@ -6362,7 +6401,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             description,
             color: 3447003,
             timestamp: new Date()
-          }]
+          }],
+          components: createSeenActivityComponents()
         });
 
         // Fetch the sent reply to get its ID, then add the Remove button bound to that ID
