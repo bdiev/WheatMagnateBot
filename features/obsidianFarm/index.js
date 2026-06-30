@@ -28,6 +28,7 @@ const PICKAXE_PRIORITY = [
 const OBSIDIAN_TIMEOUT_MS   = 90_000; // max wait for lava→obsidian
 const CYCLE_PAUSE_MS        = 10;     // yield briefly between cycles
 const INTERACT_SETTLE_MS    = 25;     // settle delay after block interaction
+const CAULDRON_RADIUS_OPTIONS = [4, 5, 6];
 const DEFAULT_CAULDRON_DIST = 5;
 const MIN_PICKAXE_REMAINING_PERCENT = 5;
 const FARM_CONFIG_FILE = 'obsidian_farm_config.json';
@@ -90,15 +91,39 @@ function getStatus() {
   };
 }
 
-/** Set and persist target coordinates. The cauldron radius is always 5 blocks. */
-function configure(x, y, z) {
+function normalizeCauldronRadius(value) {
+  const radius = Number(value);
+  return CAULDRON_RADIUS_OPTIONS.includes(radius) ? radius : DEFAULT_CAULDRON_DIST;
+}
+
+/** Set and persist target coordinates. */
+function configure(x, y, z, options = {}) {
   farm.config = {
     x:               Math.round(Number(x)),
     y:               Math.round(Number(y)),
     z:               Math.round(Number(z)),
-    maxCauldronDist: DEFAULT_CAULDRON_DIST,
+    maxCauldronDist: normalizeCauldronRadius(
+      options.maxCauldronDist ?? farm.config?.maxCauldronDist
+    ),
   };
   saveFarmConfig();
+}
+
+function setCauldronRadius(radius) {
+  if (!farm.config) return null;
+  farm.config.maxCauldronDist = normalizeCauldronRadius(radius);
+  saveFarmConfig();
+  return farm.config.maxCauldronDist;
+}
+
+function cycleCauldronRadius() {
+  if (!farm.config) return null;
+  const current = normalizeCauldronRadius(farm.config.maxCauldronDist);
+  const currentIndex = CAULDRON_RADIUS_OPTIONS.indexOf(current);
+  const next = CAULDRON_RADIUS_OPTIONS[
+    (currentIndex + 1) % CAULDRON_RADIUS_OPTIONS.length
+  ];
+  return setCauldronRadius(next);
 }
 
 function resetConfig() {
@@ -123,7 +148,7 @@ function saveFarmConfig() {
           x: farm.config.x,
           y: farm.config.y,
           z: farm.config.z,
-          maxCauldronDist: DEFAULT_CAULDRON_DIST,
+          maxCauldronDist: normalizeCauldronRadius(farm.config.maxCauldronDist),
         }
       : null;
     fs.writeFileSync(FARM_CONFIG_FILE, JSON.stringify(payload, null, 2), 'utf8');
@@ -148,7 +173,7 @@ function loadFarmConfig() {
       x: Math.round(x),
       y: Math.round(y),
       z: Math.round(z),
-      maxCauldronDist: DEFAULT_CAULDRON_DIST,
+      maxCauldronDist: normalizeCauldronRadius(parsed.maxCauldronDist),
     };
   } catch (_) {}
 }
@@ -1641,6 +1666,8 @@ module.exports = {
   suspend,
   stop,
   configure,
+  setCauldronRadius,
+  cycleCauldronRadius,
   resetConfig,
   configureRuntime,
   prepareStart,
