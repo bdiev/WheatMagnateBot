@@ -1382,7 +1382,7 @@ if (DISCORD_BOT_TOKEN) {
       console.log('[Discord] Status update interval started');
     }
     if (!adminPanelUpdateInterval) {
-      adminPanelUpdateInterval = setInterval(updateAdminPanel, 30_000);
+      adminPanelUpdateInterval = setInterval(updateAdminPanel, 10_000);
       console.log('[Discord] Admin panel update interval started');
     }
 
@@ -3868,25 +3868,6 @@ function createServerStatusButtons() {
 
 function createAdminPanelButtons() {
   const isPaused = !shouldReconnect;
-  const dangerSelect = new StringSelectMenuBuilder()
-    .setCustomId('admin_danger_radius_select')
-    .setPlaceholder(`Danger radius: ${runtimeSettings.dangerRadius} blocks`)
-    .addOptions(DANGER_RADIUS_OPTIONS.map(value =>
-      new StringSelectMenuOptionBuilder()
-        .setLabel(`${value} blocks`)
-        .setValue(String(value))
-        .setDefault(value === runtimeSettings.dangerRadius)
-    ));
-  const cooldownSelect = new StringSelectMenuBuilder()
-    .setCustomId('admin_message_cooldown_select')
-    .setPlaceholder(`Message cooldown: ${Math.round(runtimeSettings.messageCooldownMs / 1000)}s`)
-    .addOptions(MESSAGE_COOLDOWN_OPTIONS.map(value =>
-      new StringSelectMenuOptionBuilder()
-        .setLabel(value === 0 ? 'No cooldown' : `${Math.round(value / 1000)} seconds`)
-        .setValue(String(value))
-        .setDefault(value === runtimeSettings.messageCooldownMs)
-    ));
-
   return [
     new ActionRowBuilder()
       .addComponents(
@@ -3894,12 +3875,7 @@ function createAdminPanelButtons() {
           .setCustomId('pause_resume_button')
           .setLabel(isPaused ? 'Resume' : 'Pause')
           .setEmoji(isPaused ? STATUS_BUTTON_EMOJIS.resume : STATUS_BUTTON_EMOJIS.pause)
-          .setStyle(isPaused ? ButtonStyle.Success : ButtonStyle.Danger),
-        new ButtonBuilder()
-          .setCustomId('admin_panel_refresh')
-          .setLabel('Refresh')
-          .setEmoji(STATUS_EMOJIS.update)
-          .setStyle(ButtonStyle.Secondary)
+          .setStyle(isPaused ? ButtonStyle.Success : ButtonStyle.Danger)
       ),
     new ActionRowBuilder()
       .addComponents(
@@ -3922,16 +3898,34 @@ function createAdminPanelButtons() {
     new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
-          .setCustomId('admin_gemini_toggle')
-          .setLabel('Gemini')
-          .setEmoji(UI_BUTTON_EMOJIS.enchantingTable)
-          .setStyle(runtimeSettings.geminiEnabled ? ButtonStyle.Success : ButtonStyle.Secondary),
-        new ButtonBuilder()
           .setCustomId('admin_child_status')
           .setLabel('Child')
           .setEmoji(UI_BUTTON_EMOJIS.bookYellow)
           .setStyle(ButtonStyle.Secondary)
-      ),
+      )
+  ];
+}
+
+function createAdminSettingsSelects() {
+  const dangerSelect = new StringSelectMenuBuilder()
+    .setCustomId('admin_danger_radius_select')
+    .setPlaceholder(`Danger radius: ${runtimeSettings.dangerRadius} blocks`)
+    .addOptions(DANGER_RADIUS_OPTIONS.map(value =>
+      new StringSelectMenuOptionBuilder()
+        .setLabel(`${value} blocks`)
+        .setValue(String(value))
+        .setDefault(value === runtimeSettings.dangerRadius)
+    ));
+  const cooldownSelect = new StringSelectMenuBuilder()
+    .setCustomId('admin_message_cooldown_select')
+    .setPlaceholder(`Message cooldown: ${Math.round(runtimeSettings.messageCooldownMs / 1000)}s`)
+    .addOptions(MESSAGE_COOLDOWN_OPTIONS.map(value =>
+      new StringSelectMenuOptionBuilder()
+        .setLabel(value === 0 ? 'No cooldown' : `${Math.round(value / 1000)} seconds`)
+        .setValue(String(value))
+        .setDefault(value === runtimeSettings.messageCooldownMs)
+    ));
+  return [
     new ActionRowBuilder().addComponents(dangerSelect),
     new ActionRowBuilder().addComponents(cooldownSelect)
   ];
@@ -3941,7 +3935,6 @@ function buildAdminPanelEmbed() {
   const farmStatus = farm.getStatus();
   const childStatus = growingChild?.getStatus();
   const minecraftStatus = bot?.entity ? 'Online' : shouldReconnect ? 'Reconnecting' : 'Paused';
-  const enabled = value => value ? 'On' : 'Off';
   return {
     title: 'Admin Panel',
     fields: [
@@ -3953,21 +3946,6 @@ function buildAdminPanelEmbed() {
           `Growing Child: **${childStatus?.enabled ? 'On' : 'Off'}**`
         ].join('\n'),
         inline: false
-      },
-      {
-        name: 'Safety',
-        value: `Danger radius: **${runtimeSettings.dangerRadius} blocks**`,
-        inline: true
-      },
-      {
-        name: 'Automation',
-        value: `Gemini: **${enabled(runtimeSettings.geminiEnabled)}**`,
-        inline: true
-      },
-      {
-        name: 'Chat',
-        value: `Message cooldown: **${Math.round(runtimeSettings.messageCooldownMs / 1000)}s**`,
-        inline: true
       }
     ],
     color: bot?.entity ? 3447003 : shouldReconnect ? 16776960 : 8421504,
@@ -3995,6 +3973,11 @@ function createChatSettingsHeaderComponents() {
 function createChildAdminComponents() {
   return [
     new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('admin_gemini_toggle')
+        .setLabel('Gemini')
+        .setEmoji(UI_BUTTON_EMOJIS.enchantingTable)
+        .setStyle(runtimeSettings.geminiEnabled ? ButtonStyle.Success : ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId('admin_child_public_toggle')
         .setLabel('Public speech')
@@ -4029,7 +4012,6 @@ function isAdminPanelCustomId(customId = '') {
     customId === 'whitelist_button' ||
     customId === 'chat_setting_button' ||
     customId === 'obsidian_farm_button' ||
-    customId === 'admin_panel_refresh' ||
     customId === 'admin_whitelist_mode' ||
     customId === 'admin_gemini_toggle' ||
     customId === 'admin_child_public_toggle' ||
@@ -5127,11 +5109,6 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           });
           return;
         }
-        if (interaction.customId === 'admin_panel_refresh') {
-          await interaction.deferUpdate();
-          await updateAdminPanel();
-          return;
-        }
         if (interaction.customId === 'admin_whitelist_mode') {
           await interaction.deferUpdate();
           runtimeSettings.whitelistMode = !runtimeSettings.whitelistMode;
@@ -5157,7 +5134,10 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         if (interaction.customId === 'admin_child_status') {
           await interaction.deferReply(interaction.guildId ? { flags: MessageFlags.Ephemeral } : {});
           await interaction.editReply({
-            embeds: [buildGrowingChildStatusEmbed(growingChild.getStatus(), `Public speech: ${runtimeSettings.childPublicSpeech ? 'On' : 'Off'}`)],
+            embeds: [buildGrowingChildStatusEmbed(
+              growingChild.getStatus(),
+              `Gemini: ${runtimeSettings.geminiEnabled ? 'On' : 'Off'} · Public speech: ${runtimeSettings.childPublicSpeech ? 'On' : 'Off'}`
+            )],
             components: createChildAdminComponents()
           });
           await startTemporaryInteractionMessage(interaction);
@@ -5679,7 +5659,10 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           .setPlaceholder('Select player to unignore')
           .addOptions(unignoreOptions.slice(0, 25));
 
-        const components = createChatSettingsHeaderComponents();
+        const components = [
+          ...createChatSettingsHeaderComponents(),
+          ...createAdminSettingsSelects()
+        ];
         if (ignoreOptions.length > 0) {
           components.push(new ActionRowBuilder().addComponents(ignoreMenu));
         }
@@ -5692,6 +5675,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             title: 'Chat Settings',
             description: [
               `Whitelist mode: **${runtimeSettings.whitelistMode ? 'On' : 'Off'}**`,
+              `Danger radius: **${runtimeSettings.dangerRadius} blocks**`,
+              `Message cooldown: **${Math.round(runtimeSettings.messageCooldownMs / 1000)}s**`,
               `Ignored chat users: **${ignoredChatUsernames.length}**`,
               bot ? 'Manage ignored online players below.' : 'Minecraft bot is offline. Online ignore menus are unavailable.'
             ].join('\n'),
