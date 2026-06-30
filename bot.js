@@ -1,13 +1,22 @@
 require('dotenv').config();
-const mineflayer = require('mineflayer');
 const fs = require('fs');
 const path = require('path');
-const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ChannelType, PermissionsBitField, MessageFlags, InteractionContextType, SlashCommandBuilder, ActivityType } = require('discord.js');
-const { Pool } = require('pg');
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ChannelType, PermissionsBitField, MessageFlags, InteractionContextType, SlashCommandBuilder, ActivityType } = require('discord.js');
 const { pathfinder } = require('mineflayer-pathfinder');
-const farm = require('./obsidian_farm');
-const { GrowingChildAI } = require('./growing_child');
-const { sanitizePublicPhrase } = require('./growing_child/safety');
+const { createDiscordClient, saveStatusMessageId, loadStatusMessageId } = require('./discord');
+const { createMinecraftBot } = require('./minecraft');
+const {
+  createDatabasePool,
+  logDatabaseStatus,
+  createMentionKeywordRepository,
+  createPlayerActivityRepository,
+  createWhitelistRepository
+} = require('./database');
+const { createPlaytimeFeature } = require('./features/playtime');
+const { createWhisperFeature } = require('./features/whisper');
+const farm = require('./features/obsidianFarm');
+const { GrowingChildAI } = require('./features/growingChild');
+const { sanitizePublicPhrase } = require('./features/growingChild/safety');
 
 // Base64 utils for Node.js (btoa/atob polyfill)
 const b64encode = (str) => Buffer.from(String(str), 'utf8').toString('base64');
@@ -320,30 +329,23 @@ async function ensureDMDeleteButton(message) {
 }
 
 // Database connection
-let pool = null;
-if (process.env.DATABASE_URL) {
-  console.log('[DB] Database URL found, attempting to connect...');
-  pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-  });
-  pool.on('error', (err) => {
-    console.error('[DB] Unexpected error on idle client', err);
-  });
-  // Silenced DB successful connection log to reduce noise
-  pool.on('connect', () => {});
-} else {
-  console.log('[DB] ❌ No DATABASE_URL environment variable found. Database features disabled.');
-}
-
-// Add a startup summary
-console.log('=== DATABASE STATUS ===');
-if (pool) {
-  console.log('[DB] Database pool created');
-  console.log('[DB] Waiting for connection...');
-} else {
-  console.log('[DB] ❌ Database disabled - no connection URL');
-}
-console.log('======================');
+let pool = createDatabasePool();
+logDatabaseStatus(pool);
+const {
+  getMentionKeywords,
+  addMentionKeyword,
+  removeMentionKeyword,
+  getUserMentionKeywords
+} = createMentionKeywordRepository(pool);
+const {
+  loadIgnoredChatUsernames,
+  updatePlayerActivity,
+  getWhitelistActivity
+} = createPlayerActivityRepository({
+  pool,
+  ignoredFallback: IGNORED_CHAT_USERNAMES,
+  getBot: () => bot
+});
 
 let loadedSession = null;
 if (process.env.MINECRAFT_SESSION) {
@@ -492,363 +494,39 @@ function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function saveWhisperChannels() {
-  try {
-    const payload = Object.fromEntries(whisperChannels.entries());
-    fs.writeFileSync(WHISPER_CHANNELS_FILE, JSON.stringify(payload, null, 2));
-  } catch (e) {
-    console.error('[Whisper] Failed to save channel mappings:', e.message);
-  }
-}
-
-function loadWhisperChannels() {
-  try {
-    const raw = fs.readFileSync(WHISPER_CHANNELS_FILE, 'utf8').trim();
-    if (!raw) return;
-
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      console.error('[Whisper] Ignoring invalid channel mapping file format.');
-      return;
-    }
-
-    whisperChannels = new Map(Object.entries(parsed));
-  } catch (e) {
-    if (e.code !== 'ENOENT') {
-      console.error('[Whisper] Failed to load channel mappings:', e.message);
-    }
-  }
-}
-
-function setWhisperChannelMapping(ownerId, mcUsername, channelId) {
-  whisperChannels.set(`${ownerId}:${mcUsername.toLowerCase()}`, channelId);
-  saveWhisperChannels();
-}
+const {
+  loadWhisperChannels,
+  setWhisperChannelMapping,
+  getDialogOwnerId,
+  sendWhisperEmbed,
+  removeWhisperChannelMappings,
+  cancelWhisperCleanup,
+  scheduleWhisperCleanup,
+  sendWhisperClaimPrompt,
+  getOrCreateWhisperChannel
+} = createWhisperFeature({
+  discordClient,
+  discordChannelId: DISCORD_CHANNEL_ID,
+  discordDmCategoryId: DISCORD_DM_CATEGORY_ID,
+  whisperChannelsFile: WHISPER_CHANNELS_FILE,
+  defaultTtlMs: WHISPER_TTL_MS,
+  state: {
+    whisperChannels,
+    pendingWhisperClaims,
+    whisperCleanupTimers,
+    lastDialogMessages,
+    whisperFooterUpdateIntervals,
+    whisperDeleteTimestamps,
+    customDialogTTL
+  },
+  emojis: {
+    farm: FARM_EMOJIS,
+    ui: UI_BUTTON_EMOJIS
+  },
+  debugLog
+});
 
 loadWhisperChannels();
-
-// Get the owner Discord user ID for a dialog channel
-function getDialogOwnerId(channelId) {
-  for (const [key, value] of whisperChannels.entries()) {
-    if (value === channelId) {
-      return key.split(':')[0];
-    }
-  }
-  return null;
-}
-
-function saveStatusMessageId(id) {
-  try {
-    fs.writeFileSync('status_message_id.txt', id);
-  } catch (e) {
-    console.error('[Bot] Failed to save status message ID:', e.message);
-  }
-}
-
-function loadStatusMessageId() {
-  try {
-    return fs.readFileSync('status_message_id.txt', 'utf8').trim();
-  } catch (e) {
-    return null;
-  }
-}
-
-// Format remaining time for footer
-function formatRemainingTime(ms) {
-  const totalSeconds = Math.floor(ms / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  
-  if (minutes > 0) {
-    return `${minutes}m ${seconds}s`;
-  }
-  return `${seconds}s`;
-}
-
-// Stop footer update interval for a channel
-function stopFooterUpdates(channelId) {
-  const existing = whisperFooterUpdateIntervals.get(channelId);
-  if (existing) {
-    clearInterval(existing);
-    whisperFooterUpdateIntervals.delete(channelId);
-  }
-}
-
-// Start footer update interval for a channel (updates plain message footer line)
-function startFooterUpdates(channelId) {
-  stopFooterUpdates(channelId);
-  
-  const interval = setInterval(async () => {
-    try {
-      const deleteTimestamp = whisperDeleteTimestamps.get(channelId);
-      const lastMsgId = lastDialogMessages.get(channelId);
-      
-      if (!deleteTimestamp || !lastMsgId) {
-        stopFooterUpdates(channelId);
-        return;
-      }
-      
-      const remaining = deleteTimestamp - Date.now();
-      if (remaining <= 0) {
-        stopFooterUpdates(channelId);
-        return;
-      }
-      
-      const ch = await discordClient.channels.fetch(channelId);
-      if (!ch || !ch.isTextBased()) {
-        stopFooterUpdates(channelId);
-        return;
-      }
-      
-      const msg = await ch.messages.fetch(lastMsgId);
-      const parts = (msg.content || '').split('\n\n');
-      const headerBody = parts[0] || '';
-      const footerLine = `Auto-deletes in ${formatRemainingTime(remaining)}`;
-      await msg.edit({ content: `${headerBody}\n\n${footerLine}` });
-    } catch (e) {
-      // Silent error - message might be deleted
-      debugLog(`[Whisper] Footer update error:`, e.message);
-      stopFooterUpdates(channelId);
-    }
-  }, 3000);
-  
-  whisperFooterUpdateIntervals.set(channelId, interval);
-}
-
-// Send a plain-text whisper message with auto-delete and live footer countdown
-async function sendWhisperEmbed(channel, { senderLabel = 'Message', body, ttlMs = WHISPER_TTL_MS, addDeleteButton = true }) {
-  // Use custom TTL if set for this channel
-  const effectiveTTL = customDialogTTL.get(channel.id) || ttlMs;
-  const deleteTimestamp = Date.now() + effectiveTTL;
-  const firstLine = `[${senderLabel}] ${body}`;
-  const footerLine = addDeleteButton ? `Auto-deletes in ${formatRemainingTime(effectiveTTL)}` : '';
-  const content = addDeleteButton ? `${firstLine}\n\n${footerLine}` : firstLine;
-  
-  // Stop footer updates for previous message and remove its footer/button
-  if (addDeleteButton && lastDialogMessages.has(channel.id)) {
-    stopFooterUpdates(channel.id); // Stop the interval FIRST
-    try {
-      const prevMsgId = lastDialogMessages.get(channel.id);
-      const prevMsg = await channel.messages.fetch(prevMsgId);
-      const parts = (prevMsg.content || '').split('\n\n');
-      const headerOnly = parts[0];
-      await prevMsg.edit({ content: headerOnly, components: [] });
-    } catch (e) {
-      debugLog(`[Whisper] Failed to remove footer from previous message:`, e.message);
-    }
-  }
-
-  const components = addDeleteButton ? buildDeleteDialogComponents(channel.id) : [];
-  const message = await channel.send({ content, components });
-  
-  // Track this message as the last one with delete button
-  if (addDeleteButton) {
-    lastDialogMessages.set(channel.id, message.id);
-    whisperDeleteTimestamps.set(channel.id, deleteTimestamp);
-    startFooterUpdates(channel.id);
-  }
-
-  return message;
-}
-
-function removeWhisperChannelMappings(channelId) {
-  let changed = false;
-  for (const [key, value] of whisperChannels.entries()) {
-    if (value === channelId) {
-      whisperChannels.delete(key);
-      changed = true;
-    }
-  }
-  if (changed) saveWhisperChannels();
-  lastDialogMessages.delete(channelId);
-  stopFooterUpdates(channelId);
-  whisperDeleteTimestamps.delete(channelId);
-  customDialogTTL.delete(channelId);
-}
-
-function cancelWhisperCleanup(channelId) {
-  const existing = whisperCleanupTimers.get(channelId);
-  if (existing) {
-    clearTimeout(existing);
-    whisperCleanupTimers.delete(channelId);
-  }
-}
-
-function scheduleWhisperCleanup(channelId, ttlMs = WHISPER_TTL_MS) {
-  cancelWhisperCleanup(channelId);
-  const timer = setTimeout(async () => {
-    try {
-      const channel = await discordClient.channels.fetch(channelId);
-      if (channel && channel.deletable) {
-        removeWhisperChannelMappings(channelId);
-        await channel.delete('Dialog auto-deleted after inactivity');
-      }
-    } catch (e) {
-      console.error('[Whisper] Failed to auto-delete dialog channel:', e.message);
-    } finally {
-      cancelWhisperCleanup(channelId);
-    }
-  }, ttlMs);
-
-  whisperCleanupTimers.set(channelId, timer);
-}
-
-// Post or update a claim prompt in the status channel for unassigned whispers
-async function sendWhisperClaimPrompt(mcUsername, body) {
-  if (!DISCORD_CHANNEL_ID || !discordClient || !discordClient.isReady()) return;
-  const mcKey = mcUsername.toLowerCase();
-  const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
-  if (!channel || !channel.isTextBased()) return;
-
-  const description = `New /msg from **${mcUsername}**\n> ${body}`;
-  const components = [
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`claim_whisper_${mcKey}`)
-        .setLabel('Claim dialog')
-        .setEmoji(UI_BUTTON_EMOJIS.bookOrange)
-        .setStyle(ButtonStyle.Success)
-    )
-  ];
-
-  const existing = pendingWhisperClaims.get(mcKey);
-  if (existing) {
-    try {
-      const msg = await channel.messages.fetch(existing.messageId);
-      await msg.edit({
-        embeds: [{
-          title: 'New whisper from Minecraft',
-          description,
-          color: 16753920,
-          timestamp: new Date()
-        }],
-        components
-      });
-      pendingWhisperClaims.set(mcKey, { messageId: msg.id, lastMessage: body });
-      return;
-    } catch (_) {
-      pendingWhisperClaims.delete(mcKey);
-    }
-  }
-
-  try {
-    const msg = await channel.send({
-      embeds: [{
-        title: 'New whisper from Minecraft',
-        description,
-        color: 16753920,
-        timestamp: new Date()
-      }],
-      components
-    });
-    pendingWhisperClaims.set(mcKey, { messageId: msg.id, lastMessage: body });
-  } catch (e) {
-    console.error('[Whisper] Failed to post claim prompt:', e.message);
-  }
-}
-
-function buildDeleteDialogComponents(channelId) {
-  return [
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`delete_dialog_${channelId}`)
-        .setLabel('Delete dialog')
-        .setEmoji(FARM_EMOJIS.lavaBucket)
-        .setStyle(ButtonStyle.Danger),
-      new ButtonBuilder()
-        .setCustomId(`set_ttl_${channelId}`)
-        .setLabel('Set auto-delete time')
-        .setEmoji(UI_BUTTON_EMOJIS.slowFalling)
-        .setStyle(ButtonStyle.Secondary)
-    )
-  ];
-}
-
-// Ensure or create a dedicated whisper channel for the requesting Discord user and target MC username
-async function getOrCreateWhisperChannel(ownerId, ownerTag, mcUsername) {
-  if (!discordClient || !discordClient.isReady()) return null;
-  if (!DISCORD_DM_CATEGORY_ID) {
-    console.error('[Whisper] DISCORD_DM_CATEGORY_ID not set. Cannot create private channel.');
-    return null;
-  }
-
-  // Use status channel guild as reference
-  const statusChannel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
-  if (!statusChannel || !statusChannel.guild) {
-    console.error('[Whisper] Cannot resolve guild from status channel.');
-    return null;
-  }
-
-  const guild = statusChannel.guild;
-  const key = `${ownerId}:${mcUsername.toLowerCase()}`;
-
-  if (whisperChannels.has(key)) {
-    try {
-      const existing = await guild.channels.fetch(whisperChannels.get(key));
-      if (existing) return existing;
-    } catch (_) {
-      whisperChannels.delete(key);
-      saveWhisperChannels();
-    }
-  }
-
-  let parent;
-  try {
-    parent = await guild.channels.fetch(DISCORD_DM_CATEGORY_ID);
-  } catch (err) {
-    console.error('[Whisper] Failed to fetch category:', err.message);
-    return null;
-  }
-
-  if (!parent || parent.type !== ChannelType.GuildCategory) {
-    console.error('[Whisper] Provided DISCORD_DM_CATEGORY_ID is not a category.');
-    return null;
-  }
-
-  const suffix = ownerId.slice(-4);
-  const baseName = `dialog-${mcUsername}-${suffix}`
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, '-')
-    .replace(/--+/g, '-')
-    .slice(0, 90) || 'dialog';
-
-  try {
-    const channel = await guild.channels.create({
-      name: baseName,
-      type: ChannelType.GuildText,
-      parent: parent.id,
-      permissionOverwrites: [
-        {
-          id: guild.roles.everyone,
-          deny: [PermissionsBitField.Flags.ViewChannel]
-        },
-        {
-          id: ownerId,
-          allow: [
-            PermissionsBitField.Flags.ViewChannel,
-            PermissionsBitField.Flags.SendMessages,
-            PermissionsBitField.Flags.ReadMessageHistory
-          ]
-        },
-        {
-          id: discordClient.user.id,
-          allow: [
-            PermissionsBitField.Flags.ViewChannel,
-            PermissionsBitField.Flags.SendMessages,
-            PermissionsBitField.Flags.ReadMessageHistory
-          ]
-        }
-      ]
-    });
-
-    setWhisperChannelMapping(ownerId, mcUsername, channel.id);
-    console.log(`[Whisper] Created channel ${channel.name} for ${ownerTag} -> ${mcUsername}`);
-    return channel;
-  } catch (err) {
-    console.error('[Whisper] Failed to create channel:', err.message);
-    return null;
-  }
-}
 
 // Ensure we reuse a single persistent Server Status message.
 async function ensureStatusMessage() {
@@ -931,75 +609,6 @@ function loadWhitelist() {
   }
 }
 
-async function loadWhitelistFromDB() {
-  if (!pool) {
-    console.log('[DB] ❌ Cannot load whitelist: database pool not available');
-    return [];
-  }
-  try {
-    const res = await pool.query('SELECT username FROM whitelist');
-    const dbWhitelist = res.rows.map(row => row.username);
-    return dbWhitelist;
-  } catch (err) {
-    console.error('[DB] ❌ Failed to load whitelist:', err.message);
-    return [];
-  }
-}
-
-async function migrateWhitelistToDB() {
-  if (!pool) return;
-  try {
-    const fileWhitelist = loadWhitelist();
-    for (const username of fileWhitelist) {
-      await pool.query('INSERT INTO whitelist (username, added_by) VALUES ($1, $2) ON CONFLICT DO NOTHING', [username, 'migration']);
-    }
-    console.log('[DB] Whitelist migrated to database');
-  } catch (err) {
-    console.error('[DB] Failed to migrate whitelist:', err.message);
-  }
-}
-
-async function addUsernameToWhitelist(targetUsername, addedBy = 'system') {
-  const safeUsername = String(targetUsername || '').trim();
-  if (!safeUsername) {
-    throw new Error('Username is required.');
-  }
-
-  if (pool) {
-    try {
-      const insertResult = await pool.query(
-        'INSERT INTO whitelist (username, added_by) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-        [safeUsername, addedBy]
-      );
-      const newWhitelist = await loadWhitelistFromDB();
-      ignoredUsernames.length = 0;
-      ignoredUsernames.push(...newWhitelist);
-      return {
-        whitelist: newWhitelist,
-        source: 'database',
-        changed: insertResult.rowCount > 0
-      };
-    } catch (dbErr) {
-      console.error('[Whitelist Add] DB error:', dbErr.message);
-    }
-  }
-
-  const fileWhitelist = loadWhitelist();
-  const alreadyListed = fileWhitelist.some(name => name.toLowerCase() === safeUsername.toLowerCase());
-  if (!alreadyListed) {
-    fs.appendFileSync('whitelist.txt', `${safeUsername}\n`);
-  }
-
-  const newWhitelist = loadWhitelist();
-  ignoredUsernames.length = 0;
-  ignoredUsernames.push(...newWhitelist);
-  return {
-    whitelist: newWhitelist,
-    source: 'file',
-    changed: !alreadyListed
-  };
-}
-
 function buildSecurityAlertComponents(playerName) {
   const safePlayerName = String(playerName || '').trim();
   if (!safePlayerName) return [];
@@ -1033,165 +642,21 @@ async function whitelistAlertPlayerAndReconnect(playerName, requestedBy) {
 }
 
 const ignoredUsernames = loadWhitelist();
-
-// Load ignored chat usernames from DB
-async function loadIgnoredChatUsernames() {
-  if (!pool) {
-    console.log('[DB] ❌ Cannot load ignored users: database pool not available');
-    return IGNORED_CHAT_USERNAMES;
+const {
+  loadWhitelistFromDB,
+  migrateWhitelistToDB,
+  addUsernameToWhitelist
+} = createWhitelistRepository({
+  pool,
+  loadWhitelistFile: loadWhitelist,
+  appendWhitelistFile: username => fs.appendFileSync('whitelist.txt', `${username}\n`),
+  updateWhitelistMemory: whitelist => {
+    ignoredUsernames.length = 0;
+    ignoredUsernames.push(...whitelist);
   }
-  try {
-    const res = await pool.query('SELECT username FROM ignored_users');
-    const ignoredUsers = res.rows.map(row => row.username.toLowerCase());
-    return ignoredUsers;
-  } catch (err) {
-    console.error('[DB] ❌ Failed to load ignored users:', err.message);
-    return IGNORED_CHAT_USERNAMES;
-  }
-}
+});
 
 let ignoredChatUsernames = IGNORED_CHAT_USERNAMES; // Fallback
-
-// Track player online status
-async function updatePlayerActivity(username, isOnline) {
-  if (!pool) return;
-  
-  try {
-    const timestamp = new Date();
-    if (isOnline) {
-      // Player joined - set as online
-      await pool.query(`
-        INSERT INTO player_activity (username, last_seen, last_online, is_online)
-        VALUES ($1, $2, $2, TRUE)
-        ON CONFLICT (username)
-        DO UPDATE SET last_seen = $2, last_online = $2, is_online = TRUE
-      `, [username, timestamp]);
-    } else {
-      // Player left - set as offline with last_seen timestamp
-      await pool.query(`
-        INSERT INTO player_activity (username, last_seen, is_online)
-        VALUES ($1, $2, FALSE)
-        ON CONFLICT (username)
-        DO UPDATE SET last_seen = $2, is_online = FALSE
-      `, [username, timestamp]);
-    }
-  } catch (err) {
-    // Silent error
-  }
-}
-
-// Get last seen information for whitelist players
-async function getWhitelistActivity() {
-  if (!pool) {
-    return { error: 'Database not configured' };
-  }
-  
-  try {
-    const result = await pool.query(`
-      SELECT w.username, pa.last_seen, pa.last_online, pa.is_online
-      FROM whitelist w
-      LEFT JOIN player_activity pa ON LOWER(w.username) = LOWER(pa.username)
-      ORDER BY 
-        CASE WHEN pa.is_online = TRUE THEN 0 ELSE 1 END,
-        CASE WHEN pa.is_online = TRUE THEN LOWER(w.username) END ASC,
-        CASE WHEN pa.is_online = FALSE OR pa.is_online IS NULL THEN pa.last_seen END DESC NULLS LAST
-    `);
-    
-    // Cross-check with actual online players from bot
-    const actualOnlinePlayers = new Set();
-    if (bot && bot.players) {
-      for (const player of Object.values(bot.players)) {
-        if (player.username) {
-          actualOnlinePlayers.add(player.username.toLowerCase());
-        }
-      }
-    }
-    
-    // Update is_online status based on actual bot data
-    const players = result.rows.map(row => {
-      const isActuallyOnline = actualOnlinePlayers.has(row.username.toLowerCase());
-      return {
-        ...row,
-        is_online: isActuallyOnline
-      };
-    });
-    
-    // Sort again after updating online status
-    players.sort((a, b) => {
-      if (a.is_online && !b.is_online) return -1;
-      if (!a.is_online && b.is_online) return 1;
-      if (a.is_online && b.is_online) {
-        return a.username.toLowerCase().localeCompare(b.username.toLowerCase());
-      }
-      // Both offline - sort by last_seen
-      if (!a.last_seen && !b.last_seen) return 0;
-      if (!a.last_seen) return 1;
-      if (!b.last_seen) return -1;
-      return new Date(b.last_seen) - new Date(a.last_seen);
-    });
-    
-    return { players };
-  } catch (err) {
-    return { error: err.message };
-  }
-}
-
-// Get mention keywords for checking mentions
-async function getMentionKeywords() {
-  if (!pool) return [];
-  try {
-    const res = await pool.query('SELECT discord_id, keyword FROM mention_keywords');
-    return res.rows;
-  } catch (err) {
-    console.error('[DB] ❌ Failed to load mention keywords:', err.message);
-    return [];
-  }
-}
-
-// Add mention keyword for user
-async function addMentionKeyword(discordId, keyword) {
-  if (!pool) return { success: false, error: 'Database not configured' };
-  try {
-    await pool.query(
-      'INSERT INTO mention_keywords (discord_id, keyword) VALUES ($1, $2) ON CONFLICT (discord_id, keyword) DO NOTHING',
-      [discordId, keyword.toLowerCase()]
-    );
-    return { success: true };
-  } catch (err) {
-    console.error('[DB] ❌ Failed to add mention keyword:', err.message);
-    return { success: false, error: err.message };
-  }
-}
-
-// Remove mention keyword for user
-async function removeMentionKeyword(discordId, keyword) {
-  if (!pool) return { success: false, error: 'Database not configured' };
-  try {
-    const result = await pool.query(
-      'DELETE FROM mention_keywords WHERE discord_id = $1 AND keyword = $2',
-      [discordId, keyword.toLowerCase()]
-    );
-    return { success: true, removed: result.rowCount > 0 };
-  } catch (err) {
-    console.error('[DB] ❌ Failed to remove mention keyword:', err.message);
-    return { success: false, error: err.message };
-  }
-}
-
-// Get user's mention keywords
-async function getUserMentionKeywords(discordId) {
-  if (!pool) return { success: false, error: 'Database not configured' };
-  try {
-    const res = await pool.query(
-      'SELECT keyword FROM mention_keywords WHERE discord_id = $1 ORDER BY keyword',
-      [discordId]
-    );
-    return { success: true, keywords: res.rows.map(r => r.keyword) };
-  } catch (err) {
-    console.error('[DB] ❌ Failed to get user mention keywords:', err.message);
-    return { success: false, error: err.message };
-  }
-}
 
 // Initialize DB table and load ignored users
 async function initDatabase() {
@@ -1384,10 +849,7 @@ async function initDatabase() {
 }
 
 // Discord bot client
-const discordClient = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.DirectMessages, GatewayIntentBits.MessageContent],
-  partials: [Partials.Channel]
-});
+const discordClient = createDiscordClient();
 
 let discordLoginRetryTimer = null;
 let discordLoginInProgress = false;
@@ -1968,44 +1430,21 @@ function getOnlineWhitelistUsernames() {
     ));
 }
 
-async function syncWhitelistPlaytime(onlineUsernames = getOnlineWhitelistUsernames()) {
-  if (!pool) return;
-
-  let client = null;
-  try {
-    client = await pool.connect();
-    await client.query('BEGIN');
-    await client.query(`
-      INSERT INTO player_playtime (username)
-      SELECT username FROM whitelist
-      ON CONFLICT (username) DO NOTHING
-    `);
-    await client.query(`
-      UPDATE player_playtime
-      SET total_seconds = total_seconds + GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - tracking_since)))::BIGINT),
-          tracking_since = NULL,
-          updated_at = NOW()
-      WHERE tracking_since IS NOT NULL
-    `);
-
-    for (const username of onlineUsernames) {
-      await client.query(`
-        INSERT INTO player_playtime (username, tracking_since)
-        SELECT username, NOW()
-        FROM whitelist
-        WHERE LOWER(username) = LOWER($1)
-        ON CONFLICT (username)
-        DO UPDATE SET tracking_since = NOW(), updated_at = NOW()
-      `, [username]);
-    }
-    await client.query('COMMIT');
-  } catch (err) {
-    if (client) await client.query('ROLLBACK').catch(() => {});
-    console.error('[Playtime] Failed to synchronize:', err.message);
-  } finally {
-    if (client) client.release();
-  }
-}
+const {
+  syncWhitelistPlaytime,
+  getWhitelistPlaytime,
+  parsePlaytime,
+  formatPlaytime,
+  formatPlaytimeLeaderboard,
+  buildWhitelistPlaytimeMessage,
+  setPlayerPlaytime
+} = createPlaytimeFeature({
+  pool,
+  getOnlineWhitelistUsernames,
+  getPlayerHeadEmoji,
+  statusEmojis: STATUS_EMOJIS,
+  uiButtonEmojis: UI_BUTTON_EMOJIS
+});
 
 async function beginObsidianFarmSession() {
   // Do not reset the session while writes from the previous run are pending.
@@ -2834,137 +2273,6 @@ farm.configureRuntime({
     );
   }
 });
-
-async function getWhitelistPlaytime() {
-  if (!pool) return { error: 'Database not configured' };
-
-  try {
-    await pool.query(`
-      INSERT INTO player_playtime (username)
-      SELECT username FROM whitelist
-      ON CONFLICT (username) DO NOTHING
-    `);
-    const result = await pool.query(`
-      SELECT w.username,
-             COALESCE(pt.total_seconds, 0) +
-               CASE WHEN pt.tracking_since IS NULL THEN 0
-                    ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - pt.tracking_since)))::BIGINT)
-               END AS total_seconds
-      FROM whitelist w
-      LEFT JOIN player_playtime pt ON pt.username = w.username
-      ORDER BY total_seconds DESC, LOWER(w.username)
-    `);
-    return { players: result.rows };
-  } catch (err) {
-    return { error: err.message };
-  }
-}
-
-function parsePlaytime(value) {
-  const input = String(value || '').trim();
-  if (!input) return null;
-
-  const units = {
-    d: 86400, day: 86400, days: 86400,
-    h: 3600, hour: 3600, hours: 3600,
-    m: 60, min: 60, mins: 60, minute: 60, minutes: 60,
-    s: 1, sec: 1, secs: 1, second: 1, seconds: 1
-  };
-  let total = 0;
-  let matches = 0;
-  const tokenPattern = /(\d+)\s*(days?|d|hours?|h|minutes?|mins?|m|seconds?|secs?|s)\b/gi;
-  const remainder = input.replace(tokenPattern, (_, amount, unit) => {
-    total += Number(amount) * units[unit.toLowerCase()];
-    matches += 1;
-    return '';
-  }).replace(/[\s,]+/g, '');
-
-  return matches > 0 && !remainder && Number.isSafeInteger(total) ? total : null;
-}
-
-function formatPlaytime(value) {
-  let seconds = Math.max(0, Math.floor(Number(value) || 0));
-  const days = Math.floor(seconds / 86400);
-  seconds %= 86400;
-  const hours = Math.floor(seconds / 3600);
-  seconds %= 3600;
-  const minutes = Math.floor(seconds / 60);
-  const parts = [];
-  if (days) parts.push(`${days}d`);
-  if (hours || days) parts.push(`${hours}h`);
-  parts.push(`${minutes}m`);
-  return parts.join(' ');
-}
-
-function formatPlaytimeLeaderboard(players) {
-  const visiblePlayers = players.slice(0, 50);
-  const rankWidth = Math.max(1, String(visiblePlayers.length).length);
-  const lines = visiblePlayers.map((player, index) => {
-    const rank = String(index + 1).padStart(rankWidth, '0');
-    return `\`${rank}.\` ${getPlayerHeadEmoji(player.username)} **${player.username}** — \`${formatPlaytime(player.total_seconds)}\``;
-  });
-  if (players.length > visiblePlayers.length) {
-    lines.push(`…and ${players.length - visiblePlayers.length} more`);
-  }
-  return lines.length > 0 ? lines.join('\n') : 'No whitelist players found.';
-}
-
-async function buildWhitelistPlaytimeMessage() {
-  const playtimeData = await getWhitelistPlaytime();
-  if (playtimeData.error) {
-    return {
-      embeds: [{
-        title: 'Whitelist Playtime',
-        description: `Error: ${playtimeData.error}`,
-        color: 16711680,
-        timestamp: new Date()
-      }],
-      components: []
-    };
-  }
-
-  const players = playtimeData.players || [];
-  const description = formatPlaytimeLeaderboard(players);
-
-  return {
-    embeds: [{
-      title: `${STATUS_EMOJIS.playtime} Whitelist Playtime · ${players.length} players`,
-      description,
-      color: 3447003,
-      timestamp: new Date(),
-      footer: { text: 'Press Refresh to update this table' }
-    }],
-    components: [
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId('playtime_refresh_button')
-          .setLabel('Refresh')
-          .setEmoji(UI_BUTTON_EMOJIS.slowFalling)
-          .setStyle(ButtonStyle.Secondary)
-      )
-    ]
-  };
-}
-
-async function setPlayerPlaytime(username, totalSeconds) {
-  if (!pool) return { error: 'Database not configured' };
-
-  try {
-    const result = await pool.query(`
-      INSERT INTO player_playtime (username, total_seconds)
-      SELECT username, $2 FROM whitelist WHERE LOWER(username) = LOWER($1)
-      ON CONFLICT (username)
-      DO UPDATE SET total_seconds = EXCLUDED.total_seconds,
-                    tracking_since = CASE WHEN player_playtime.tracking_since IS NULL THEN NULL ELSE NOW() END,
-                    updated_at = NOW()
-      RETURNING username
-    `, [username, totalSeconds]);
-    if (result.rowCount === 0) return { error: 'Player is not in the whitelist' };
-    return { username: result.rows[0].username };
-  } catch (err) {
-    return { error: err.message };
-  }
-}
 
 function resolveRelayedChatUsername(username, jsonMessage) {
   if (!jsonMessage) return username;
@@ -4537,7 +3845,7 @@ function createBot() {
 
   lastTickTime = 0; // Reset TPS tracking for new bot
   try {
-    bot = mineflayer.createBot(config);
+    bot = createMinecraftBot(config);
   } catch (err) {
     bot = null;
     console.log(`[x] Failed to create Minecraft connection: ${err.message}`);

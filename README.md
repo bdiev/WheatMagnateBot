@@ -243,14 +243,14 @@ Server Status
 
 ## Growing Child AI
 
-The optional `growing_child` module learns vocabulary from public Minecraft chat
+The optional `features/growingChild` module learns vocabulary from public Minecraft chat
 and Discord server messages. Its speech is private to the configured Discord
 owner by default.
 
 It can also react to observed messages after a short delay. Directly addressing
 the bot makes a reaction more likely; normal chat reactions are deliberately
 rare and use a global cooldown. Reaction probability, delay and cooldown are
-configured in `growing_child/config.json`.
+configured in `features/growingChild/config.json`.
 
 When enabled, public Minecraft speech is limited to roughly once every 8–16
 hours, `/child say`, and direct mentions in Minecraft chat. Public phrases pass
@@ -279,7 +279,7 @@ The Obsidian farm asks for target coordinates only on its first start and then
 reuses the saved values. `/ofstats` includes a Reset coordinates button. The
 cauldron search radius is fixed at 5 blocks.
 
-Configuration is stored in `growing_child/config.json`. Keep `ownerDmOnly`
+Configuration is stored in `features/growingChild/config.json`. Keep `ownerDmOnly`
 enabled while testing. Set `dailyMessageChannelId` and disable `ownerDmOnly`
 only when the child is ready to speak publicly.
 ✅ Bot WheatMagnate connected to oldfag.org

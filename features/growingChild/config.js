@@ -87,7 +87,7 @@ function loadConfig(configPath = path.join(__dirname, 'config.json')) {
     config.aiWordsPerPhraseMin,
     Number(config.aiWordsPerPhraseMax) || 6
   );
-  config.databasePath = path.resolve(path.dirname(__dirname), config.databasePath);
+  config.databasePath = path.resolve(__dirname, '..', '..', config.databasePath);
   return config;
 }
 
