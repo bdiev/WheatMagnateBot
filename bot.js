@@ -343,7 +343,8 @@ const {
 const {
   loadIgnoredChatUsernames,
   updatePlayerActivity,
-  getWhitelistActivity
+  getWhitelistActivity,
+  searchNonWhitelistActivity
 } = createPlayerActivityRepository({
   pool,
   ignoredFallback: IGNORED_CHAT_USERNAMES,
@@ -406,6 +407,7 @@ let whisperFooterUpdateIntervals = new Map(); // channelId -> interval handle fo
 let whisperDeleteTimestamps = new Map(); // channelId -> timestamp when channel will be deleted
 let customDialogTTL = new Map(); // channelId -> custom TTL in ms (user-configured)
 const temporaryInteractionMessages = new Map(); // messageId -> { interval, timeout, deadline }
+const seenActivityUpdateIntervals = new Map();
 const growingChildPlainMessageIds = new Set();
 let recentWhispers = new Map(); // key: `WHISPER:username:message` -> timestamp, to mark whispers and suppress chat forwarding
 let pendingChatTimers = new Map(); // key: `CHAT:username:message` -> timeout handle to delay chat forwarding
@@ -492,6 +494,14 @@ function getTemporaryMessageFooter(messageId) {
   const state = temporaryInteractionMessages.get(messageId);
   if (!state) return null;
   return { text: `Closes in ${formatCountdown(state.deadline - Date.now())}` };
+}
+
+function stopSeenActivityUpdates(messageId) {
+  const interval = seenActivityUpdateIntervals.get(messageId);
+  if (interval) {
+    clearInterval(interval);
+    seenActivityUpdateIntervals.delete(messageId);
+  }
 }
 
 async function startTemporaryInteractionMessage(interaction, ttlMs = 2 * 60 * 1000) {
@@ -4064,7 +4074,7 @@ function getStatusDescription() {
     `${STATUS_EMOJIS.food} Food: ${Math.round(bot.food * 2) / 2}/20\n` +
     `${STATUS_EMOJIS.health} Health: ${Math.round(bot.health * 2) / 2}/20\n` +
     `${STATUS_EMOJIS.whitelist} Whitelist online: ${whitelistOnlineDisplay}\n` +
-    `${STATUS_EMOJIS.obsidian} Obsidian mined: ${obsidianMined}`;
+    `${FARM_EMOJIS.netheritePickaxe} Obsidian mined: ${obsidianMined}`;
 }
 
 function getServerStatusTitle() {
@@ -4110,7 +4120,7 @@ function buildAdminServerStatusValue() {
     `${STATUS_EMOJIS.food} Food: ${Math.round(bot.food * 2) / 2}/20`,
     `${STATUS_EMOJIS.health} Health: ${Math.round(bot.health * 2) / 2}/20`,
     `${STATUS_EMOJIS.whitelist} Whitelist online: ${whitelistOnlineDisplay}`,
-    `${STATUS_EMOJIS.obsidian} Obsidian mined: ${obsidianMined}`
+    `${FARM_EMOJIS.netheritePickaxe} Obsidian mined: ${obsidianMined}`
   ].join('\n');
 }
 
@@ -4272,6 +4282,57 @@ function formatRelativeShort(secondsAgo) {
   return `${days}d ${hours % 24}h ago`;
 }
 
+function formatSeenTimestamp(timestamp) {
+  if (!timestamp) return 'Never seen';
+  const diffSecs = Math.max(0, Math.floor((Date.now() - new Date(timestamp).getTime()) / 1000));
+  if (diffSecs < 60) return `${diffSecs}s ago`;
+  const diffMins = Math.floor(diffSecs / 60);
+  if (diffMins < 60) return `${diffMins}m ${diffSecs % 60}s ago`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours}h ${diffMins % 60}m ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays}d ${diffHours % 24}h ago`;
+}
+
+function createSeenActivityComponents(messageId) {
+  return [
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('seen_non_whitelist_search')
+          .setLabel('Search non-whitelist')
+          .setEmoji(STATUS_BUTTON_EMOJIS.seen)
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId(`remove_${messageId}`)
+          .setLabel('Remove')
+          .setStyle(ButtonStyle.Danger)
+      )
+  ];
+}
+
+function buildNonWhitelistSeenSearchEmbed(query, result) {
+  const players = result.players || [];
+  const description = result.error
+    ? result.error
+    : players.length === 0
+      ? `No non-whitelist players found for \`${query}\`.`
+      : players
+          .map(player => {
+            const status = player.is_online ? 'Online' : formatSeenTimestamp(player.last_seen);
+            return `${getPlayerHeadEmoji(player.username)} **${player.username}** - ${status}`;
+          })
+          .join('\n');
+
+  return {
+    title: `${STATUS_EMOJIS.seen} Non-whitelist Search: ${query}`,
+    description,
+    color: result.error ? 16711680 : 3447003,
+    timestamp: new Date(),
+    footer: players.length >= 25 ? { text: 'Showing first 25 matches. Type more letters to narrow it down.' } : undefined
+  };
+}
+
 function formatDailyTpsAverages(rows) {
   if (!rows || rows.length === 0) return 'No TPS samples yet.';
   return rows
@@ -4371,7 +4432,7 @@ function createChildAdminComponents() {
         .setStyle(runtimeSettings.geminiEnabled ? ButtonStyle.Success : ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId('admin_child_public_toggle')
-        .setLabel('Public speech')
+        .setLabel('Public chat')
         .setEmoji(UI_BUTTON_EMOJIS.cat)
         .setStyle(runtimeSettings.childPublicSpeech ? ButtonStyle.Success : ButtonStyle.Secondary),
       new ButtonBuilder()
@@ -4398,7 +4459,7 @@ function buildAdminChildPayload() {
   return {
     embeds: [buildGrowingChildStatusEmbed(
       growingChild.getStatus(),
-      `Gemini: ${runtimeSettings.geminiEnabled ? 'On' : 'Off'} В· Public speech: ${runtimeSettings.childPublicSpeech ? 'On' : 'Off'}`
+      `Gemini: ${runtimeSettings.geminiEnabled ? 'On' : 'Off'} В· Public chat: ${runtimeSettings.childPublicSpeech ? 'On' : 'Off'}`
     )],
     components: createChildAdminComponents()
   };
@@ -4592,7 +4653,7 @@ function createBot() {
     if (bot && bot.players) {
       setTimeout(async () => {
         for (const player of Object.values(bot.players)) {
-          if (player.username && ignoredUsernames.some(name => name.toLowerCase() === player.username.toLowerCase())) {
+          if (player.username && player.username.toLowerCase() !== bot.username.toLowerCase()) {
             await updatePlayerActivity(player.username, true);
           }
         }
@@ -4699,8 +4760,10 @@ function createBot() {
 
   // Track player joins and leaves
   bot.on('playerJoined', async (player) => {
-    if (player.username && ignoredUsernames.some(name => name.toLowerCase() === player.username.toLowerCase())) {
+    if (player.username && player.username.toLowerCase() !== bot.username.toLowerCase()) {
       await updatePlayerActivity(player.username, true);
+    }
+    if (player.username && ignoredUsernames.some(name => name.toLowerCase() === player.username.toLowerCase())) {
       const onlineUsernames = getOnlineWhitelistUsernames();
       if (!onlineUsernames.some(username => username.toLowerCase() === player.username.toLowerCase())) {
         onlineUsernames.push(player.username);
@@ -4711,8 +4774,10 @@ function createBot() {
   });
 
   bot.on('playerLeft', async (player) => {
-    if (player.username && ignoredUsernames.some(name => name.toLowerCase() === player.username.toLowerCase())) {
+    if (player.username && player.username.toLowerCase() !== bot.username.toLowerCase()) {
       await updatePlayerActivity(player.username, false);
+    }
+    if (player.username && ignoredUsernames.some(name => name.toLowerCase() === player.username.toLowerCase())) {
       const onlineUsernames = getOnlineWhitelistUsernames().filter(
         username => username.toLowerCase() !== player.username.toLowerCase()
       );
@@ -5725,7 +5790,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           await interaction.update({
             embeds: [buildGrowingChildStatusEmbed(
               growingChild.getStatus(),
-              `Gemini: ${runtimeSettings.geminiEnabled ? 'On' : 'Off'} · Public speech: ${runtimeSettings.childPublicSpeech ? 'On' : 'Off'}`
+              `Gemini: ${runtimeSettings.geminiEnabled ? 'On' : 'Off'} · Public chat: ${runtimeSettings.childPublicSpeech ? 'On' : 'Off'}`
             )],
             components: createChildAdminComponents()
           });
@@ -6309,15 +6374,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             color: 3447003,
             timestamp: new Date()
           }],
-          components: [
-            new ActionRowBuilder()
-              .addComponents(
-                new ButtonBuilder()
-                  .setCustomId(`remove_${activityMessage.id}`)
-                  .setLabel('Remove')
-                  .setStyle(ButtonStyle.Danger)
-              )
-          ]
+          components: createSeenActivityComponents(activityMessage.id)
         });
         
         // Refresh activity data every 10 seconds.
@@ -6359,32 +6416,28 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
                 timestamp: new Date(),
                 ...(countdownFooter ? { footer: countdownFooter } : {})
               }],
-              components: [
-                new ActionRowBuilder()
-                  .addComponents(
-                    new ButtonBuilder()
-                      .setCustomId(`remove_${activityMessage.id}`)
-                      .setLabel('Remove')
-                      .setStyle(ButtonStyle.Danger)
-                  )
-              ]
+              components: createSeenActivityComponents(activityMessage.id)
             });
           } catch (err) {
             // If the message was deleted or is unknown, stop the interval quietly
             const msg = (err && err.message) ? err.message : '';
             if (err.code === 10008 || msg.includes('Unknown Message')) {
               clearInterval(updateInterval);
+              seenActivityUpdateIntervals.delete(activityMessage.id);
             } else {
               clearInterval(updateInterval);
+              seenActivityUpdateIntervals.delete(activityMessage.id);
             }
           }
         }, 10_000);
+        seenActivityUpdateIntervals.set(activityMessage.id, updateInterval);
 
         await startTemporaryInteractionMessage(interaction);
 
         // The temporary message itself is deleted after 2 minutes.
         setTimeout(() => {
           clearInterval(updateInterval);
+          seenActivityUpdateIntervals.delete(activityMessage.id);
         }, 2 * 60 * 1000);
       } else if (interaction.customId === 'mentions_button') {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -6485,9 +6538,25 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         modal.addComponents(actionRow);
 
         await interaction.showModal(modal);
+      } else if (interaction.customId === 'seen_non_whitelist_search') {
+        stopSeenActivityUpdates(interaction.message?.id);
+        const modal = new ModalBuilder()
+          .setCustomId('seen_non_whitelist_search_modal')
+          .setTitle('Search non-whitelist seen');
+
+        const usernameInput = new TextInputBuilder()
+          .setCustomId('seen_search_query')
+          .setLabel('Nickname contains')
+          .setPlaceholder('Type at least 2 characters')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
+
+        modal.addComponents(new ActionRowBuilder().addComponents(usernameInput));
+        await interaction.showModal(modal);
       } else if (interaction.customId.startsWith('remove_')) {
         const messageId = interaction.customId.split('_')[1];
         try {
+          stopSeenActivityUpdates(messageId);
           const message = await interaction.channel.messages.fetch(messageId);
           await message.delete();
           // If it was an auth message, untrack and drop exclusion
@@ -6535,6 +6604,38 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         await interaction.deferUpdate();
         await openObsidianStatsPanel(interaction, { updateMessage: true, deferredUpdate: true });
         return;
+      }
+    } else if (interaction.isModalSubmit() && interaction.customId === 'seen_non_whitelist_search_modal') {
+      const query = interaction.fields.getTextInputValue('seen_search_query').trim();
+      stopSeenActivityUpdates(interaction.message?.id);
+      try {
+        await interaction.deferUpdate();
+        const result = await searchNonWhitelistActivity(query, 25);
+        const payload = {
+          embeds: [buildNonWhitelistSeenSearchEmbed(query, result)],
+          components: interaction.message?.id ? createSeenActivityComponents(interaction.message.id) : []
+        };
+        if (interaction.message) {
+          await interaction.message.edit(payload);
+        }
+      } catch (err) {
+        const errorPayload = {
+          embeds: [{
+            title: `${STATUS_EMOJIS.seen} Non-whitelist Search`,
+            description: `Search failed: ${err.message}`,
+            color: 16711680,
+            timestamp: new Date()
+          }],
+          components: interaction.message?.id ? createSeenActivityComponents(interaction.message.id) : []
+        };
+        if (interaction.message && interaction.deferred) {
+          await interaction.message.edit(errorPayload).catch(() => {});
+        } else if (!interaction.replied && !interaction.deferred) {
+          await interaction.reply({
+            ...errorPayload,
+            flags: MessageFlags.Ephemeral
+          }).catch(() => {});
+        }
       }
     } else if (interaction.isModalSubmit() && interaction.customId === 'add_keyword_modal') {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
