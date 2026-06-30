@@ -4096,14 +4096,14 @@ function getStatusDescription() {
   const whitelistOnlineDisplay = whitelistOnline.length > 0 ? whitelistOnline.map(u => `\`${u}\``).join(', ') : 'None';
   const obsidianMined = `${formatCompactCount(obsidianStats.sessionMined)}/${formatCompactCount(obsidianStats.totalMined)}`;
   return `${STATUS_EMOJIS.serverPing} Bot **${bot.username}** connected to \`${config.host}\`\n` +
-    `${getWheatMagnateStatusLine()}\n` +
     `${STATUS_EMOJIS.players} Players online: ${playerCount}\n` +
     `${STATUS_EMOJIS.nearby} Players nearby: ${nearbyNames}\n` +
     `${STATUS_EMOJIS.tps} TPS: ${avgTps}\n` +
     `${STATUS_EMOJIS.food} Food: ${Math.round(bot.food * 2) / 2}/20\n` +
     `${STATUS_EMOJIS.health} Health: ${Math.round(bot.health * 2) / 2}/20\n` +
     `${STATUS_EMOJIS.whitelist} Whitelist online: ${whitelistOnlineDisplay}\n` +
-    `${FARM_EMOJIS.netheritePickaxe} Obsidian mined: ${obsidianMined}`;
+    `${FARM_EMOJIS.netheritePickaxe} Obsidian mined: ${obsidianMined}\n` +
+    `${getWheatMagnateStatusLine()}`;
 }
 
 function getServerStatusTitle() {
