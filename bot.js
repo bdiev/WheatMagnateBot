@@ -3868,6 +3868,25 @@ function createServerStatusButtons() {
 
 function createAdminPanelButtons() {
   const isPaused = !shouldReconnect;
+  const dangerSelect = new StringSelectMenuBuilder()
+    .setCustomId('admin_danger_radius_select')
+    .setPlaceholder(`Danger radius: ${runtimeSettings.dangerRadius} blocks`)
+    .addOptions(DANGER_RADIUS_OPTIONS.map(value =>
+      new StringSelectMenuOptionBuilder()
+        .setLabel(`${value} blocks`)
+        .setValue(String(value))
+        .setDefault(value === runtimeSettings.dangerRadius)
+    ));
+  const cooldownSelect = new StringSelectMenuBuilder()
+    .setCustomId('admin_message_cooldown_select')
+    .setPlaceholder(`Message cooldown: ${Math.round(runtimeSettings.messageCooldownMs / 1000)}s`)
+    .addOptions(MESSAGE_COOLDOWN_OPTIONS.map(value =>
+      new StringSelectMenuOptionBuilder()
+        .setLabel(value === 0 ? 'No cooldown' : `${Math.round(value / 1000)} seconds`)
+        .setValue(String(value))
+        .setDefault(value === runtimeSettings.messageCooldownMs)
+    ));
+
   return [
     new ActionRowBuilder()
       .addComponents(
@@ -3876,6 +3895,14 @@ function createAdminPanelButtons() {
           .setLabel(isPaused ? 'Resume' : 'Pause')
           .setEmoji(isPaused ? STATUS_BUTTON_EMOJIS.resume : STATUS_BUTTON_EMOJIS.pause)
           .setStyle(isPaused ? ButtonStyle.Success : ButtonStyle.Danger),
+        new ButtonBuilder()
+          .setCustomId('admin_panel_refresh')
+          .setLabel('Refresh')
+          .setEmoji(STATUS_EMOJIS.update)
+          .setStyle(ButtonStyle.Secondary)
+      ),
+    new ActionRowBuilder()
+      .addComponents(
         new ButtonBuilder()
           .setCustomId('drop_button')
           .setLabel('Drop')
@@ -3900,68 +3927,76 @@ function createAdminPanelButtons() {
     new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
-          .setCustomId('admin_danger_radius')
-          .setLabel(`Danger ${runtimeSettings.dangerRadius}`)
-          .setEmoji(STATUS_BUTTON_EMOJIS.players)
-          .setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder()
           .setCustomId('admin_whitelist_mode')
-          .setLabel(`Whitelist ${runtimeSettings.whitelistMode ? 'On' : 'Off'}`)
+          .setLabel('Whitelist')
           .setEmoji(STATUS_BUTTON_EMOJIS.whitelist)
           .setStyle(runtimeSettings.whitelistMode ? ButtonStyle.Success : ButtonStyle.Secondary),
         new ButtonBuilder()
-          .setCustomId('admin_message_cooldown')
-          .setLabel(`Cooldown ${Math.round(runtimeSettings.messageCooldownMs / 1000)}s`)
-          .setEmoji(STATUS_BUTTON_EMOJIS.playtime)
-          .setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder()
           .setCustomId('admin_auto_eat_toggle')
-          .setLabel(`Auto-eat ${runtimeSettings.autoEat ? 'On' : 'Off'}`)
+          .setLabel('Auto-eat')
           .setEmoji(STATUS_EMOJIS.food)
-          .setStyle(runtimeSettings.autoEat ? ButtonStyle.Success : ButtonStyle.Secondary)
-      ),
-    new ActionRowBuilder()
-      .addComponents(
+          .setStyle(runtimeSettings.autoEat ? ButtonStyle.Success : ButtonStyle.Secondary),
         new ButtonBuilder()
           .setCustomId('admin_gemini_toggle')
-          .setLabel(`Gemini ${runtimeSettings.geminiEnabled ? 'On' : 'Off'}`)
+          .setLabel('Gemini')
           .setEmoji(UI_BUTTON_EMOJIS.enchantingTable)
           .setStyle(runtimeSettings.geminiEnabled ? ButtonStyle.Success : ButtonStyle.Secondary),
         new ButtonBuilder()
           .setCustomId('admin_child_public_toggle')
-          .setLabel(`Child public ${runtimeSettings.childPublicSpeech ? 'On' : 'Off'}`)
+          .setLabel('Child public')
           .setEmoji(UI_BUTTON_EMOJIS.cat)
           .setStyle(runtimeSettings.childPublicSpeech ? ButtonStyle.Success : ButtonStyle.Secondary),
         new ButtonBuilder()
           .setCustomId('admin_child_status')
           .setLabel('Child status')
           .setEmoji(UI_BUTTON_EMOJIS.bookYellow)
-          .setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder()
-          .setCustomId('admin_panel_refresh')
-          .setLabel('Refresh')
-          .setEmoji(STATUS_EMOJIS.update)
           .setStyle(ButtonStyle.Secondary)
-      )
+      ),
+    new ActionRowBuilder().addComponents(dangerSelect),
+    new ActionRowBuilder().addComponents(cooldownSelect)
   ];
 }
 
 function buildAdminPanelEmbed() {
   const farmStatus = farm.getStatus();
   const childStatus = growingChild?.getStatus();
+  const minecraftStatus = bot?.entity ? 'Online' : shouldReconnect ? 'Reconnecting' : 'Paused';
+  const enabled = value => value ? 'On' : 'Off';
   return {
     title: 'Admin Panel',
-    description: [
-      `Minecraft: **${bot?.entity ? 'Online' : shouldReconnect ? 'Reconnecting' : 'Paused'}**`,
-      `Danger radius: **${runtimeSettings.dangerRadius} blocks**`,
-      `Whitelist danger mode: **${runtimeSettings.whitelistMode ? 'On' : 'Off'}**`,
-      `Message cooldown: **${Math.round(runtimeSettings.messageCooldownMs / 1000)}s**`,
-      `Auto-eat: **${runtimeSettings.autoEat ? 'On' : 'Off'}**`,
-      `Gemini: **${runtimeSettings.geminiEnabled ? 'On' : 'Off'}**`,
-      `Child public speech: **${runtimeSettings.childPublicSpeech ? 'On' : 'Off'}**`,
-      `Growing Child: **${childStatus?.enabled ? 'Enabled' : 'Disabled'}**`,
-      `Obsidian: **${farmStatus.enabled || obsidianStats.desiredEnabled ? 'Enabled' : 'Disabled'}**`
-    ].join('\n'),
+    fields: [
+      {
+        name: 'Connection',
+        value: [
+          `Minecraft: **${minecraftStatus}**`,
+          `Obsidian: **${farmStatus.enabled || obsidianStats.desiredEnabled ? 'On' : 'Off'}**`,
+          `Growing Child: **${childStatus?.enabled ? 'On' : 'Off'}**`
+        ].join('\n'),
+        inline: false
+      },
+      {
+        name: 'Safety',
+        value: [
+          `Whitelist mode: **${enabled(runtimeSettings.whitelistMode)}**`,
+          `Danger radius: **${runtimeSettings.dangerRadius} blocks**`
+        ].join('\n'),
+        inline: true
+      },
+      {
+        name: 'Automation',
+        value: [
+          `Auto-eat: **${enabled(runtimeSettings.autoEat)}**`,
+          `Gemini: **${enabled(runtimeSettings.geminiEnabled)}**`,
+          `Child public: **${enabled(runtimeSettings.childPublicSpeech)}**`
+        ].join('\n'),
+        inline: true
+      },
+      {
+        name: 'Chat',
+        value: `Message cooldown: **${Math.round(runtimeSettings.messageCooldownMs / 1000)}s**`,
+        inline: true
+      }
+    ],
     color: bot?.entity ? 3447003 : shouldReconnect ? 16776960 : 8421504,
     timestamp: new Date()
   };
@@ -3978,13 +4013,16 @@ function isAdminPanelCustomId(customId = '') {
     customId === 'chat_setting_button' ||
     customId === 'obsidian_farm_button' ||
     customId === 'admin_panel_refresh' ||
-    customId === 'admin_danger_radius' ||
     customId === 'admin_whitelist_mode' ||
-    customId === 'admin_message_cooldown' ||
     customId === 'admin_auto_eat_toggle' ||
     customId === 'admin_gemini_toggle' ||
     customId === 'admin_child_public_toggle' ||
     customId === 'admin_child_status';
+}
+
+function isAdminPanelSelectCustomId(customId = '') {
+  return customId === 'admin_danger_radius_select' ||
+    customId === 'admin_message_cooldown_select';
 }
 
 // Function to update server status message
@@ -5030,9 +5068,38 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       // Allow dialog buttons and select menus in their own channels
       if (!(interaction.isButton() && (interaction.customId?.startsWith('delete_dialog_') || interaction.customId?.startsWith('set_ttl_') || interaction.customId?.startsWith('claim_whisper_'))) && 
           !(interaction.isButton() && isAdminPanelCustomId(interaction.customId) && interaction.user.id === DISCORD_OWNER_ID) &&
+          !(interaction.isStringSelectMenu() && isAdminPanelSelectCustomId(interaction.customId) && interaction.user.id === DISCORD_OWNER_ID) &&
           !(interaction.isStringSelectMenu() && interaction.customId?.startsWith('set_ttl_select_'))) {
         return;
       }
+    }
+
+    if (interaction.isStringSelectMenu() && isAdminPanelSelectCustomId(interaction.customId)) {
+      if (interaction.user.id !== DISCORD_OWNER_ID) {
+        await interaction.reply({
+          content: 'Only the owner can use admin controls.',
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+
+      await interaction.deferUpdate();
+      if (interaction.customId === 'admin_danger_radius_select') {
+        const value = Number(interaction.values[0]);
+        if (DANGER_RADIUS_OPTIONS.includes(value)) {
+          runtimeSettings.dangerRadius = value;
+          await persistRuntimeSetting('dangerRadius');
+        }
+      }
+      if (interaction.customId === 'admin_message_cooldown_select') {
+        const value = Number(interaction.values[0]);
+        if (MESSAGE_COOLDOWN_OPTIONS.includes(value)) {
+          runtimeSettings.messageCooldownMs = value;
+          await persistRuntimeSetting('messageCooldownMs');
+        }
+      }
+      await updateAdminPanel();
+      return;
     }
 
 
@@ -5049,26 +5116,10 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           await updateAdminPanel();
           return;
         }
-        if (interaction.customId === 'admin_danger_radius') {
-          await interaction.deferUpdate();
-          const currentIndex = DANGER_RADIUS_OPTIONS.indexOf(runtimeSettings.dangerRadius);
-          runtimeSettings.dangerRadius = DANGER_RADIUS_OPTIONS[(currentIndex + 1) % DANGER_RADIUS_OPTIONS.length];
-          await persistRuntimeSetting('dangerRadius');
-          await updateAdminPanel();
-          return;
-        }
         if (interaction.customId === 'admin_whitelist_mode') {
           await interaction.deferUpdate();
           runtimeSettings.whitelistMode = !runtimeSettings.whitelistMode;
           await persistRuntimeSetting('whitelistMode');
-          await updateAdminPanel();
-          return;
-        }
-        if (interaction.customId === 'admin_message_cooldown') {
-          await interaction.deferUpdate();
-          const currentIndex = MESSAGE_COOLDOWN_OPTIONS.indexOf(runtimeSettings.messageCooldownMs);
-          runtimeSettings.messageCooldownMs = MESSAGE_COOLDOWN_OPTIONS[(currentIndex + 1) % MESSAGE_COOLDOWN_OPTIONS.length];
-          await persistRuntimeSetting('messageCooldownMs');
           await updateAdminPanel();
           return;
         }
