@@ -380,6 +380,8 @@ let channelCleanerInterval = null;
 let tpsHistory = [];
 let realTps = null;
 let lastTickTime = 0;
+let lastTpsSampleAt = 0;
+const nearbyPlayerSightingWriteAt = new Map();
 let mineflayerStarted = false;
 let startTime = Date.now();
 let obsidianStats = {
@@ -812,7 +814,8 @@ async function initDatabase() {
       ALTER TABLE obsidian_farm_state
       ADD COLUMN IF NOT EXISTS target_x INTEGER,
       ADD COLUMN IF NOT EXISTS target_y INTEGER,
-      ADD COLUMN IF NOT EXISTS target_z INTEGER
+      ADD COLUMN IF NOT EXISTS target_z INTEGER,
+      ADD COLUMN IF NOT EXISTS target_radius INTEGER
     `);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS obsidian_farm_daily (
@@ -827,6 +830,28 @@ async function initDatabase() {
         value JSONB NOT NULL,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS bot_tps_samples (
+        id BIGSERIAL PRIMARY KEY,
+        sampled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        tps NUMERIC(5,2) NOT NULL CHECK (tps >= 0)
+      )
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS bot_tps_samples_sampled_at_idx
+      ON bot_tps_samples (sampled_at DESC)
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS nearby_player_sightings (
+        username VARCHAR(255) PRIMARY KEY,
+        last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        distance INTEGER NOT NULL CHECK (distance >= 0)
+      )
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS nearby_player_sightings_last_seen_idx
+      ON nearby_player_sightings (last_seen DESC)
     `);
     await pool.query(`
       INSERT INTO obsidian_farm_state (id)
@@ -854,7 +879,7 @@ async function initDatabase() {
     ]);
     const farmStateResult = await pool.query(`
       SELECT session_mined, total_mined, retired_pickaxes, retired_pickaxe_blocks,
-             desired_enabled, session_started_at, target_x, target_y, target_z
+             desired_enabled, session_started_at, target_x, target_y, target_z, target_radius
       FROM obsidian_farm_state
       WHERE id = 1
     `);
@@ -875,6 +900,7 @@ async function initDatabase() {
       const targetX = Number(rawTargetX);
       const targetY = Number(rawTargetY);
       const targetZ = Number(rawTargetZ);
+      const targetRadius = Number(farmStateResult.rows[0].target_radius);
       if (
         rawTargetX != null &&
         rawTargetY != null &&
@@ -883,8 +909,8 @@ async function initDatabase() {
         Number.isFinite(targetY) &&
         Number.isFinite(targetZ)
       ) {
-        farm.configure(targetX, targetY, targetZ);
-        console.log(`[DB] Loaded obsidian target: (${targetX}, ${targetY}, ${targetZ}).`);
+        farm.configure(targetX, targetY, targetZ, { maxCauldronDist: targetRadius });
+        console.log(`[DB] Loaded obsidian target: (${targetX}, ${targetY}, ${targetZ}), radius ${farm.getStatus().config?.maxCauldronDist || 5}.`);
       }
     }
     console.log('[DB] Tables initialized successfully.');
@@ -1567,9 +1593,10 @@ async function persistObsidianFarmCoordinates(config = farm.getStatus().config) 
     SET target_x = $1,
         target_y = $2,
         target_z = $3,
+        target_radius = $4,
         updated_at = NOW()
     WHERE id = 1
-  `, [config.x, config.y, config.z]);
+  `, [config.x, config.y, config.z, config.maxCauldronDist]);
 }
 
 async function clearObsidianFarmCoordinates() {
@@ -1579,6 +1606,7 @@ async function clearObsidianFarmCoordinates() {
     SET target_x = NULL,
         target_y = NULL,
         target_z = NULL,
+        target_radius = NULL,
         updated_at = NOW()
     WHERE id = 1
   `);
@@ -1890,7 +1918,7 @@ async function buildObsidianStatsEmbed(cachedSupplies = null) {
       },
       {
         name: `${STATUS_EMOJIS.serverPing} Status`,
-        value: `Running **${farmStatus.enabled ? 'Yes' : 'No'}** | Auto-resume **${obsidianStats.desiredEnabled ? 'Yes' : 'No'}** | ${FARM_EMOJIS.lavaBucket} Phase **${farmStatus.phase}**`,
+        value: `Running **${farmStatus.enabled ? 'Yes' : 'No'}** | Auto-resume **${obsidianStats.desiredEnabled ? 'Yes' : 'No'}** | ${FARM_EMOJIS.lavaBucket} Phase **${farmStatus.phase}** | Radius **${farmStatus.config?.maxCauldronDist || 5} blocks**`,
         inline: false
       },
       {
@@ -1946,6 +1974,7 @@ async function buildDetailedObsidianStatsEmbed() {
         value: config
           ? [
               `${FARM_EMOJIS.obsidian} Target: \`${config.x}, ${config.y}, ${config.z}\``,
+              `${FARM_EMOJIS.cauldron} Cauldron radius: **${config.maxCauldronDist || 5} blocks**`,
               `Bot position: \`${botPosition}\``
             ].join('\n')
           : 'Not configured',
@@ -2003,8 +2032,22 @@ async function buildDetailedObsidianStatsEmbed() {
 }
 
 function createObsidianStatsComponents() {
+  const farmRunning = farm.getStatus().enabled || obsidianStats.desiredEnabled;
+  const farmConfig = farm.getStatus().config;
+  const cauldronRadius = farmConfig?.maxCauldronDist || 5;
   return [
     new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('ofstats_toggle_farm')
+        .setLabel(farmRunning ? 'Stop farm' : 'Start farm')
+        .setEmoji(farmRunning ? STATUS_BUTTON_EMOJIS.pause : STATUS_BUTTON_EMOJIS.resume)
+        .setStyle(farmRunning ? ButtonStyle.Danger : ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId('ofstats_radius_toggle')
+        .setLabel(`Radius: ${cauldronRadius}`)
+        .setEmoji(FARM_EMOJIS.cauldron)
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(!farmConfig),
       new ButtonBuilder()
         .setCustomId('ofstats_refresh')
         .setLabel('Refresh')
@@ -2014,12 +2057,18 @@ function createObsidianStatsComponents() {
         .setCustomId('ofstats_detailed')
         .setLabel('Detailed')
         .setEmoji(UI_BUTTON_EMOJIS.beacon)
-        .setStyle(ButtonStyle.Secondary),
+        .setStyle(ButtonStyle.Secondary)
+    ),
+    new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId('ofstats_reset_coordinates')
         .setLabel('Reset coordinates')
         .setStyle(ButtonStyle.Danger),
-      createDeleteDMButton()
+      new ButtonBuilder()
+        .setCustomId('admin_panel_back')
+        .setLabel('Back')
+        .setEmoji(UI_BUTTON_EMOJIS.arrowLeftCurved)
+        .setStyle(ButtonStyle.Secondary)
     )
   ];
 }
@@ -2187,6 +2236,28 @@ function startObsidianStatsUpdater(message, supplies) {
   scheduleObsidianStatsUpdater(channelId, updater);
 }
 
+async function openObsidianStatsPanel(interaction, { updateMessage = false } = {}) {
+  const supplies = {
+    barrel: null,
+    barrelError: 'Press Refresh to inspect'
+  };
+  const payload = {
+    embeds: [await buildObsidianStatsEmbed(supplies)],
+    components: createObsidianStatsComponents()
+  };
+
+  if (updateMessage) {
+    await interaction.update(payload);
+  } else {
+    await interaction.editReply(payload);
+  }
+
+  const statsMessage = updateMessage
+    ? interaction.message
+    : await interaction.fetchReply();
+  startObsidianStatsUpdater(statsMessage, supplies);
+}
+
 async function restoreObsidianStatsUpdaters() {
   const records = loadObsidianStatsUpdaterRecords();
   if (records.length === 0) return;
@@ -2241,6 +2312,10 @@ async function registerApplicationCommands() {
     new SlashCommandBuilder()
       .setName('clear')
       .setDescription('Clear messages in the current dialog')
+      .setContexts(...contexts),
+    new SlashCommandBuilder()
+      .setName('panel')
+      .setDescription('Open or refresh the owner admin panel in DM')
       .setContexts(...contexts),
     new SlashCommandBuilder()
       .setName('child')
@@ -2846,7 +2921,7 @@ async function ensureAdminPanelDM() {
 
     if (!adminPanelMessage) {
       adminPanelMessage = await dm.send({
-        embeds: [buildAdminPanelEmbed()],
+        embeds: [await buildAdminPanelEmbed()],
         components: createAdminPanelButtons()
       });
       saveStatusMessageId(adminPanelMessage.id, 'admin_panel_message_id.txt');
@@ -2865,9 +2940,10 @@ async function updateAdminPanel() {
 
   try {
     await adminPanelMessage.edit({
-      embeds: [buildAdminPanelEmbed()],
+      embeds: [await buildAdminPanelEmbed()],
       components: createAdminPanelButtons()
     });
+    recordTpsSample().catch(() => {});
   } catch (e) {
     if (e.code === 10008 || e.message.includes('Unknown Message')) {
       adminPanelMessage = null;
@@ -3743,6 +3819,107 @@ function getCurrentTpsDisplay() {
       : 'Calculating...';
 }
 
+function getCurrentTpsNumber() {
+  if (realTps !== null && Number.isFinite(realTps)) return realTps;
+  if (tpsHistory.length === 0) return null;
+  return tpsHistory.reduce((a, b) => a + b, 0) / tpsHistory.length;
+}
+
+function getBotPingDisplay() {
+  const ping = bot?.player?.ping ?? bot?.players?.[bot.username]?.ping;
+  return Number.isFinite(ping) ? `${Math.round(ping)} ms` : 'N/A';
+}
+
+async function recordTpsSample(force = false) {
+  if (!pool) return;
+  const tps = getCurrentTpsNumber();
+  if (!Number.isFinite(tps)) return;
+  const now = Date.now();
+  if (!force && now - lastTpsSampleAt < 60_000) return;
+  lastTpsSampleAt = now;
+
+  try {
+    await pool.query(
+      'INSERT INTO bot_tps_samples (tps) VALUES ($1)',
+      [Math.max(0, Math.min(20, Number(tps.toFixed(2))))]
+    );
+    await pool.query("DELETE FROM bot_tps_samples WHERE sampled_at < NOW() - INTERVAL '14 days'");
+  } catch (err) {
+    console.error('[DB] Failed to record TPS sample:', err.message);
+  }
+}
+
+async function getDailyTpsAverages(days = 7) {
+  if (!pool) return [];
+  try {
+    const result = await pool.query(`
+      WITH dates AS (
+        SELECT generate_series(
+          (NOW() AT TIME ZONE 'Europe/Kyiv')::date - ($1::int - 1),
+          (NOW() AT TIME ZONE 'Europe/Kyiv')::date,
+          INTERVAL '1 day'
+        )::date AS sample_date
+      )
+      SELECT TO_CHAR(dates.sample_date, 'DD.MM') AS label,
+             ROUND(AVG(samples.tps)::numeric, 1) AS avg_tps
+      FROM dates
+      LEFT JOIN bot_tps_samples samples
+        ON (samples.sampled_at AT TIME ZONE 'Europe/Kyiv')::date = dates.sample_date
+      GROUP BY dates.sample_date
+      ORDER BY dates.sample_date DESC
+    `, [days]);
+    return result.rows.map(row => ({
+      label: row.label,
+      avgTps: row.avg_tps == null ? null : Number(row.avg_tps)
+    }));
+  } catch (err) {
+    console.error('[DB] Failed to load TPS averages:', err.message);
+    return [];
+  }
+}
+
+async function recordNearbyPlayerSighting(username, distance) {
+  if (!pool || !username) return;
+  const key = String(username).toLowerCase();
+  const now = Date.now();
+  if (now - (nearbyPlayerSightingWriteAt.get(key) || 0) < 60_000) return;
+  nearbyPlayerSightingWriteAt.set(key, now);
+
+  try {
+    await pool.query(`
+      INSERT INTO nearby_player_sightings (username, last_seen, distance)
+      VALUES ($1, NOW(), $2)
+      ON CONFLICT (username)
+      DO UPDATE SET last_seen = NOW(),
+                    distance = EXCLUDED.distance
+    `, [username, Math.max(0, Math.round(Number(distance) || 0))]);
+  } catch (err) {
+    console.error('[DB] Failed to record nearby player sighting:', err.message);
+  }
+}
+
+async function getRecentNearbyPlayerSightings(limit = 5) {
+  if (!pool) return [];
+  try {
+    const result = await pool.query(`
+      SELECT username,
+             distance,
+             EXTRACT(EPOCH FROM (NOW() - last_seen))::BIGINT AS seconds_ago
+      FROM nearby_player_sightings
+      ORDER BY last_seen DESC
+      LIMIT $1
+    `, [limit]);
+    return result.rows.map(row => ({
+      username: row.username,
+      distance: Number(row.distance) || 0,
+      secondsAgo: Number(row.seconds_ago) || 0
+    }));
+  } catch (err) {
+    console.error('[DB] Failed to load nearby player sightings:', err.message);
+    return [];
+  }
+}
+
 function getDiscordPresenceText() {
   if (!bot?.entity) {
     return shouldReconnect ? 'Reconnecting to oldfag.org' : 'Paused on oldfag.org';
@@ -3931,20 +4108,62 @@ function createAdminSettingsSelects() {
   ];
 }
 
-function buildAdminPanelEmbed() {
+function formatRelativeShort(secondsAgo) {
+  const seconds = Math.max(0, Number(secondsAgo) || 0);
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ${minutes % 60}m ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ${hours % 24}h ago`;
+}
+
+function formatDailyTpsAverages(rows) {
+  if (!rows || rows.length === 0) return 'No TPS samples yet.';
+  return rows
+    .map(row => `\`${row.label}\` ${row.avgTps == null ? 'N/A' : row.avgTps.toFixed(1)}`)
+    .join(' | ');
+}
+
+function formatNearbySightings(rows) {
+  if (!rows || rows.length === 0) return 'No recent nearby players.';
+  return rows
+    .map(row => `**${row.username}** ${row.distance} blocks · ${formatRelativeShort(row.secondsAgo)}`)
+    .join('\n');
+}
+
+async function buildAdminPanelEmbed() {
   const farmStatus = farm.getStatus();
   const childStatus = growingChild?.getStatus();
   const minecraftStatus = bot?.entity ? 'Online' : shouldReconnect ? 'Reconnecting' : 'Paused';
+  const [dailyTps, nearbySightings] = await Promise.all([
+    getDailyTpsAverages(7),
+    getRecentNearbyPlayerSightings(5)
+  ]);
   return {
     title: 'Admin Panel',
     fields: [
       {
         name: 'Connection',
         value: [
+          `${STATUS_EMOJIS.serverPing} Bot **${config.username}** connected to **play.oldfag.org**`,
           `Minecraft: **${minecraftStatus}**`,
+          `Ping: **${getBotPingDisplay()}**`,
+          `Uptime: **${formatDurationShort(Date.now() - startTime)}**`,
           `Obsidian: **${farmStatus.enabled || obsidianStats.desiredEnabled ? 'On' : 'Off'}**`,
           `Growing Child: **${childStatus?.enabled ? 'On' : 'Off'}**`
         ].join('\n'),
+        inline: false
+      },
+      {
+        name: 'AVG TPS · Last 7 Days',
+        value: formatDailyTpsAverages(dailyTps),
+        inline: false
+      },
+      {
+        name: 'Recent Nearby Players',
+        value: formatNearbySightings(nearbySightings),
         inline: false
       }
     ],
@@ -4012,6 +4231,7 @@ function isAdminPanelCustomId(customId = '') {
     customId === 'whitelist_button' ||
     customId === 'chat_setting_button' ||
     customId === 'obsidian_farm_button' ||
+    customId === 'admin_panel_back' ||
     customId === 'admin_whitelist_mode' ||
     customId === 'admin_gemini_toggle' ||
     customId === 'admin_child_public_toggle' ||
@@ -4214,6 +4434,7 @@ function createBot() {
         const tpsMatch = text.match(/(\d+\.?\d*)\s*tps/i);
         if (tpsMatch) {
           realTps = parseFloat(tpsMatch[1]);
+          recordTpsSample().catch(() => {});
           found = true;
           // Update status immediately when TPS changes
           if (statusMessage) updateStatusMessage();
@@ -4577,6 +4798,7 @@ function createBot() {
     const tpsMatch = text.match(/(\d+\.?\d*)\s*tps/i);
     if (tpsMatch) {
       realTps = parseFloat(tpsMatch[1]);
+      recordTpsSample().catch(() => {});
     }
 
     const rawChat = parseRawPublicChatLine(text);
@@ -4666,15 +4888,18 @@ async function eatFood() {
 function startNearbyPlayerScanner() {
   playerScannerInterval = setInterval(() => {
     if (!bot || !bot.entity) return;
-    if (!runtimeSettings.whitelistMode) return;
 
     for (const entity of Object.values(bot.entities)) {
       if (!entity || entity.type !== 'player') continue;
       if (!entity.username || entity.username === bot.username) continue;
-      if (ignoredUsernames.some(name => name.toLowerCase() === entity.username.toLowerCase())) continue; // Ignore whitelisted players (case-insensitive)
-      // Non-whitelisted player
       if (!entity.position || !bot.entity.position) continue;
       const distance = bot.entity.position.distanceTo(entity.position);
+      if (distance <= runtimeSettings.dangerRadius) {
+        recordNearbyPlayerSighting(entity.username, distance).catch(() => {});
+      }
+      if (!runtimeSettings.whitelistMode) continue;
+      if (ignoredUsernames.some(name => name.toLowerCase() === entity.username.toLowerCase())) continue; // Ignore whitelisted players (case-insensitive)
+      // Non-whitelisted player
       if (distance <= runtimeSettings.dangerRadius) {
         // Enemy detected!
         const roundedDistance = Math.round(distance);
@@ -4724,6 +4949,26 @@ process.on('unhandledRejection', (reason) => {
 if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
   discordClient.on('interactionCreate', async (interaction) => {
     // Interaction logs reduced to minimize noise
+
+    if (interaction.isChatInputCommand() && interaction.commandName === 'panel') {
+      if (interaction.user.id !== DISCORD_OWNER_ID) {
+        await interaction.reply({
+          content: 'Only the owner can open the admin panel.',
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+
+      await ensureAdminPanelDM();
+      await updateAdminPanel();
+      const reply = { content: 'Admin panel sent to DM.' };
+      if (interaction.guildId) reply.flags = MessageFlags.Ephemeral;
+      await interaction.reply(reply);
+      if (!interaction.guildId) {
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 2000);
+      }
+      return;
+    }
 
     if (interaction.isChatInputCommand() && interaction.commandName === 'child') {
       if (interaction.user.id !== DISCORD_OWNER_ID) {
@@ -4895,16 +5140,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         return;
       }
       await interaction.deferReply();
-      const supplies = {
-        barrel: null,
-        barrelError: 'Press Refresh to inspect'
-      };
-      await interaction.editReply({
-        embeds: [await buildObsidianStatsEmbed(supplies)],
-        components: createObsidianStatsComponents()
-      });
-      const statsMessage = await interaction.fetchReply();
-      startObsidianStatsUpdater(statsMessage, supplies);
+      await openObsidianStatsPanel(interaction);
       return;
     }
 
@@ -4957,6 +5193,123 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         embeds: [await buildObsidianStatsEmbed(activeUpdater?.supplies || supplies)],
         components: createObsidianStatsComponents()
       });
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId === 'ofstats_radius_toggle') {
+      if (interaction.user.id !== DISCORD_OWNER_ID) {
+        await interaction.reply({
+          content: 'Only the owner can change the obsidian farm radius.',
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+
+      await interaction.deferUpdate();
+      const nextRadius = farm.cycleCauldronRadius();
+      if (!nextRadius) {
+        await interaction.followUp({
+          content: 'Configure obsidian farm coordinates before changing the radius.',
+          flags: MessageFlags.Ephemeral
+        }).catch(() => {});
+        return;
+      }
+
+      await persistObsidianFarmCoordinates().catch(err => {
+        console.error('[DB] Failed to persist obsidian farm radius:', err.message);
+      });
+      const updater = obsidianStatsUpdaters.get(interaction.channelId);
+      await interaction.message.edit({
+        embeds: [await buildObsidianStatsEmbed(updater?.supplies || null)],
+        components: createObsidianStatsComponents()
+      }).catch(() => {});
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId === 'ofstats_toggle_farm') {
+      if (interaction.user.id !== DISCORD_OWNER_ID) {
+        await interaction.reply({
+          content: 'Only the owner can control the obsidian farm.',
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+
+      const farmStatus = farm.getStatus();
+      if (farmStatus.enabled || obsidianStats.desiredEnabled) {
+        await interaction.deferUpdate();
+        farm.suspend();
+        const leverProtected = await setProtectionLeverState(true).catch(() => false);
+        await setObsidianFarmDesiredEnabled(false);
+        await interaction.followUp({
+          embeds: [{
+            description: `Obsidian farm stopped. Session mined: **${formatCompactCount(obsidianStats.sessionMined)}**${leverProtected ? '' : `\nWarning: ${FARM_EMOJIS.lever} protection lever could not be switched ON.`}`,
+            color: 16711680,
+            timestamp: new Date()
+          }],
+          flags: MessageFlags.Ephemeral
+        }).catch(() => {});
+      } else if (farmStatus.config) {
+        await interaction.deferUpdate();
+        try {
+          const result = await startConfiguredObsidianFarm();
+          await interaction.followUp({
+            embeds: [buildObsidianStartEmbed(result.started, result.config)],
+            flags: MessageFlags.Ephemeral
+          }).catch(() => {});
+        } catch (err) {
+          await setObsidianFarmDesiredEnabled(false);
+          await interaction.followUp({
+            embeds: [{
+              description: `Failed to start obsidian farm: ${err.message}`,
+              color: 16711680,
+              timestamp: new Date()
+            }],
+            flags: MessageFlags.Ephemeral
+          }).catch(() => {});
+        }
+      } else {
+        const modal = new ModalBuilder()
+          .setCustomId('obsidian_farm_modal')
+          .setTitle('Obsidian Farm Target');
+
+        const xInput = new TextInputBuilder()
+          .setCustomId('farm_x')
+          .setLabel('Target X')
+          .setPlaceholder('3402889')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
+        const yInput = new TextInputBuilder()
+          .setCustomId('farm_y')
+          .setLabel('Target Y')
+          .setPlaceholder('68')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
+        const zInput = new TextInputBuilder()
+          .setCustomId('farm_z')
+          .setLabel('Target Z')
+          .setPlaceholder('672222')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
+
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(xInput),
+          new ActionRowBuilder().addComponents(yInput),
+          new ActionRowBuilder().addComponents(zInput)
+        );
+        await interaction.showModal(modal);
+        return;
+      }
+
+      const updater = obsidianStatsUpdaters.get(interaction.channelId);
+      if (updater && updater.messageId === interaction.message.id) {
+        updater.supplies = updater.supplies || { barrel: null, barrelError: 'Press Refresh to inspect' };
+      }
+      await interaction.message.edit({
+        embeds: [await buildObsidianStatsEmbed(updater?.supplies || null)],
+        components: createObsidianStatsComponents()
+      }).catch(() => {});
+      updateAdminPanel().catch(() => {});
       return;
     }
 
@@ -5107,6 +5460,14 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             content: 'Only the owner can use admin controls.',
             flags: MessageFlags.Ephemeral
           });
+          return;
+        }
+        if (interaction.customId === 'admin_panel_back') {
+          await interaction.update({
+            embeds: [await buildAdminPanelEmbed()],
+            components: createAdminPanelButtons()
+          });
+          updateAdminPanel().catch(() => {});
           return;
         }
         if (interaction.customId === 'admin_whitelist_mode') {
@@ -5991,53 +6352,15 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         await interaction.showModal(modal);
       } else if (interaction.customId === 'obsidian_farm_button') {
         if (interaction.user.id !== DISCORD_OWNER_ID) {
-          await interaction.reply({ embeds: [{ description: '\u274c Only the owner can control the obsidian farm.', color: 16711680, timestamp: new Date() }], flags: MessageFlags.Ephemeral });
-          await startTemporaryInteractionMessage(interaction);
+          await interaction.reply({
+            content: 'Only the owner can view obsidian farm controls.',
+            flags: MessageFlags.Ephemeral
+          });
           return;
         }
-        const farmStatus = farm.getStatus();
-        if (farmStatus.enabled || obsidianStats.desiredEnabled) {
-          farm.suspend();
-          const leverProtected = await setProtectionLeverState(true);
-          await setObsidianFarmDesiredEnabled(false);
-          farm.stop(null);
-          await interaction.reply({ embeds: [{ description: `\ud83d\uded1 Obsidian farm stopped. Session mined: **${formatCompactCount(obsidianStats.sessionMined)}**${leverProtected ? '' : `\nWarning: ${FARM_EMOJIS.lever} protection lever could not be switched ON.`}`, color: 16711680, timestamp: new Date() }], flags: MessageFlags.Ephemeral });
-          await startTemporaryInteractionMessage(interaction);
-        } else {
-          const savedConfig = farmStatus.config;
-          if (savedConfig) {
-            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-            try {
-              const result = await startConfiguredObsidianFarm();
-              await interaction.editReply({
-                embeds: [buildObsidianStartEmbed(result.started, result.config)]
-              });
-            } catch (err) {
-              await interaction.editReply({
-                embeds: [{
-                  description: `❌ Obsidian farm could not start: ${err.message}`,
-                  color: 16711680,
-                  timestamp: new Date()
-                }]
-              });
-            }
-            await startTemporaryInteractionMessage(interaction);
-            return;
-          }
-
-          const farmModal = new ModalBuilder()
-            .setCustomId('obsidian_farm_modal')
-            .setTitle('Obsidian Farm \u2014 Target Coordinates');
-          const xInput = new TextInputBuilder().setCustomId('farm_x').setLabel('X coordinate').setStyle(TextInputStyle.Short).setPlaceholder('3402889').setRequired(true);
-          const yInput = new TextInputBuilder().setCustomId('farm_y').setLabel('Y coordinate').setStyle(TextInputStyle.Short).setPlaceholder('68').setRequired(true);
-          const zInput = new TextInputBuilder().setCustomId('farm_z').setLabel('Z coordinate').setStyle(TextInputStyle.Short).setPlaceholder('672222').setRequired(true);
-          farmModal.addComponents(
-            new ActionRowBuilder().addComponents(xInput),
-            new ActionRowBuilder().addComponents(yInput),
-            new ActionRowBuilder().addComponents(zInput)
-          );
-          await interaction.showModal(farmModal);
-        }
+        await openObsidianStatsPanel(interaction, { updateMessage: true });
+        updateAdminPanel().catch(() => {});
+        return;
       }
     } else if (interaction.isModalSubmit() && interaction.customId === 'add_keyword_modal') {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
