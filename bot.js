@@ -347,6 +347,9 @@ const {
   getBot: () => bot
 });
 
+// Discord bot client
+const discordClient = createDiscordClient();
+
 let loadedSession = null;
 if (process.env.MINECRAFT_SESSION) {
   try {
@@ -847,9 +850,6 @@ async function initDatabase() {
     console.error('[DB] ❌ Failed to initialize database:', err.message);
   }
 }
-
-// Discord bot client
-const discordClient = createDiscordClient();
 
 let discordLoginRetryTimer = null;
 let discordLoginInProgress = false;
