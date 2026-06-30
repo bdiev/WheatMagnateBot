@@ -1531,11 +1531,20 @@ function chatComponentToString(component) {
 
 function getOnlineWhitelistUsernames() {
   if (!bot || !bot.players) return [];
-  return Object.values(bot.players)
+  const usernames = Object.values(bot.players)
     .map(player => player.username)
-    .filter(username => username && username.toLowerCase() !== bot.username.toLowerCase() && ignoredUsernames.some(
+    .filter(username => username && ignoredUsernames.some(
       whitelisted => whitelisted.toLowerCase() === username.toLowerCase()
     ));
+  if (
+    bot.username &&
+    bot.entity &&
+    ignoredUsernames.some(username => username.toLowerCase() === bot.username.toLowerCase()) &&
+    !usernames.some(username => username.toLowerCase() === bot.username.toLowerCase())
+  ) {
+    usernames.push(bot.username);
+  }
+  return usernames;
 }
 
 const {
@@ -4102,7 +4111,7 @@ function getStatusDescription() {
     `${STATUS_EMOJIS.food} Food: ${Math.round(bot.food * 2) / 2}/20\n` +
     `${STATUS_EMOJIS.health} Health: ${Math.round(bot.health * 2) / 2}/20\n` +
     `${STATUS_EMOJIS.whitelist} Whitelist online: ${whitelistOnlineDisplay}\n` +
-    `${FARM_EMOJIS.netheritePickaxe} Obsidian mined: ${obsidianMined}\n` +
+    `${FARM_EMOJIS.netheritePickaxe} Obsidian mined: ${obsidianMined}\n\n` +
     `${getWheatMagnateStatusLine()}`;
 }
 
