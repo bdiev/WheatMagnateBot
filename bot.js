@@ -76,6 +76,7 @@ const STATUS_EMOJIS = {
   axolotlBucket: '<:Axolotl_Bucket:1519794666860449812>',
   connected: '<:Confirm:1519301205346619392>',
   serverPing: '<:Server_Ping_5:1519367779155968080>',
+  serverPinging: '<:Server_Pinging_3:1521526226055987300>',
   serverUnreachable: '<:Server_Unreachable:1519385218824278066>',
   update: '<:Update:1519384987139575990>',
   map: '<:Map:1519384986330071050>',
@@ -125,6 +126,7 @@ const UI_BUTTON_EMOJIS = {
   bookYellow: { name: 'Book_Yellow', id: '1519760007107969114' }
 };
 const NETHER_STAR_EMOJI = '<:Nether_Star:1519569072809836584>';
+const ADMIN_PANEL_BOT_NAME = 'WheatMagnate';
 const BOT_CHAT_STATUS_EMOJI_FALLBACK = [
   '<:End_Crystal:1519954272282873877>',
   '<:Bee_Angry:1519954270865326132>',
@@ -2050,11 +2052,6 @@ function createObsidianStatsComponents() {
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(!farmConfig),
       new ButtonBuilder()
-        .setCustomId('ofstats_refresh')
-        .setLabel('Refresh')
-        .setEmoji(UI_BUTTON_EMOJIS.slowFalling)
-        .setStyle(ButtonStyle.Primary),
-      new ButtonBuilder()
         .setCustomId('ofstats_detailed')
         .setLabel('Detailed')
         .setEmoji(UI_BUTTON_EMOJIS.beacon)
@@ -2926,6 +2923,31 @@ function refillBotStatusEmojiQueue() {
   }
 }
 
+function messageHasAnyComponentCustomId(message, customIds) {
+  const wanted = new Set(customIds);
+  return message.components?.some(row =>
+    row.components?.some(component => wanted.has(component.customId))
+  );
+}
+
+function isExistingAdminPanelMessage(message) {
+  if (message.author?.id !== discordClient.user?.id) return false;
+  const title = String(message.embeds?.[0]?.title || '');
+  if (title === 'Admin Panel') return true;
+
+  return messageHasAnyComponentCustomId(message, [
+    'pause_resume_button',
+    'drop_button',
+    'chat_setting_button',
+    'obsidian_farm_button',
+    'admin_child_status',
+    'admin_panel_back',
+    'ofstats_toggle_farm',
+    'ofstats_detailed',
+    'ofstats_reset_coordinates'
+  ]);
+}
+
 async function ensureAdminPanelDM() {
   if (!DISCORD_OWNER_ID || !discordClient || !discordClient.isReady()) return;
   try {
@@ -2938,6 +2960,18 @@ async function ensureAdminPanelDM() {
       try {
         adminPanelMessage = await dm.messages.fetch(savedId);
         return;
+      } catch (_) {}
+    }
+
+    if (!adminPanelMessage) {
+      try {
+        const recent = await dm.messages.fetch({ limit: 50 });
+        const found = [...recent.values()].find(isExistingAdminPanelMessage);
+        if (found) {
+          adminPanelMessage = found;
+          saveStatusMessageId(found.id, 'admin_panel_message_id.txt');
+          return;
+        }
       } catch (_) {}
     }
 
@@ -3723,6 +3757,7 @@ function buildWhitelistManagementView(entries, addCandidates, notice = '', color
   const deletePagerRow = buildWhitelistPagerRow('delete', safeDeletePage, deleteTotalPages, safeAddPage, safeDeletePage);
   if (addPagerRow) components.push(addPagerRow);
   if (deletePagerRow) components.push(deletePagerRow);
+  components.push(...createAdminBackComponents());
 
   const description = [
     notice || null,
@@ -4131,6 +4166,60 @@ function createAdminSettingsSelects() {
   ];
 }
 
+function buildChatSettingsPayload() {
+  const allOnlinePlayers = bot ? Object.values(bot.players || {}).map(p => p.username) : [];
+  const playersToIgnore = allOnlinePlayers.filter(username => !ignoredChatUsernames.includes(username.toLowerCase()));
+  const playersToUnignore = ignoredChatUsernames.filter(username => allOnlinePlayers.some(p => p.toLowerCase() === username));
+
+  const ignoreOptions = playersToIgnore.map(username => {
+    return new StringSelectMenuOptionBuilder()
+      .setLabel(username)
+      .setValue(b64encode(username));
+  });
+  const unignoreOptions = playersToUnignore.map(username => {
+    return new StringSelectMenuOptionBuilder()
+      .setLabel(username)
+      .setValue(b64encode(username));
+  });
+
+  const components = [
+    ...createChatSettingsHeaderComponents(),
+    ...createAdminSettingsSelects()
+  ];
+  if (ignoreOptions.length > 0) {
+    components.push(new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId('ignore_select')
+        .setPlaceholder('Select player to ignore')
+        .addOptions(ignoreOptions.slice(0, 25))
+    ));
+  }
+  if (unignoreOptions.length > 0) {
+    components.push(new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId('unignore_select')
+        .setPlaceholder('Select player to unignore')
+        .addOptions(unignoreOptions.slice(0, 25))
+    ));
+  }
+
+  return {
+    embeds: [{
+      title: 'Chat Settings',
+      description: [
+        `Whitelist mode: **${runtimeSettings.whitelistMode ? 'On' : 'Off'}**`,
+        `Danger radius: **${runtimeSettings.dangerRadius} blocks**`,
+        `Message cooldown: **${Math.round(runtimeSettings.messageCooldownMs / 1000)}s**`,
+        `Ignored chat users: **${ignoredChatUsernames.length}**`,
+        bot ? 'Manage ignored online players below.' : 'Minecraft bot is offline. Online ignore menus are unavailable.'
+      ].join('\n'),
+      color: 3447003,
+      timestamp: new Date()
+    }],
+    components
+  };
+}
+
 function formatRelativeShort(secondsAgo) {
   const seconds = Math.max(0, Number(secondsAgo) || 0);
   if (seconds < 60) return `${seconds}s ago`;
@@ -4157,9 +4246,6 @@ function formatNearbySightings(rows) {
 }
 
 async function buildAdminPanelEmbed() {
-  const farmStatus = farm.getStatus();
-  const childStatus = growingChild?.getStatus();
-  const minecraftStatus = bot?.entity ? 'Online' : shouldReconnect ? 'Reconnecting' : 'Paused';
   const [dailyTps, nearbySightings] = await Promise.all([
     getDailyTpsAverages(7),
     getRecentNearbyPlayerSightings(5)
@@ -4170,12 +4256,9 @@ async function buildAdminPanelEmbed() {
       {
         name: 'Connection',
         value: [
-          `${STATUS_EMOJIS.serverPing} Bot **${config.username}** connected to **play.oldfag.org**`,
-          `Minecraft: **${minecraftStatus}**`,
-          `Ping: **${getBotPingDisplay()}**`,
-          `Uptime: **${formatDurationShort(Date.now() - startTime)}**`,
-          `Obsidian: **${farmStatus.enabled || obsidianStats.desiredEnabled ? 'On' : 'Off'}**`,
-          `Growing Child: **${childStatus?.enabled ? 'On' : 'Off'}**`
+          `${STATUS_EMOJIS.serverPing} Bot **${ADMIN_PANEL_BOT_NAME}** connected to **play.oldfag.org**`,
+          `${STATUS_EMOJIS.serverPinging} Ping: **${getBotPingDisplay()}**`,
+          `${STATUS_EMOJIS.playtime} Uptime: **${formatDurationShort(Date.now() - startTime)}**`
         ].join('\n'),
         inline: false
       },
@@ -4207,7 +4290,24 @@ function createChatSettingsHeaderComponents() {
         .setCustomId('admin_whitelist_mode')
         .setLabel('Whitelist mode')
         .setEmoji(STATUS_BUTTON_EMOJIS.whitelist)
-        .setStyle(runtimeSettings.whitelistMode ? ButtonStyle.Success : ButtonStyle.Secondary)
+        .setStyle(runtimeSettings.whitelistMode ? ButtonStyle.Success : ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId('admin_panel_back')
+        .setLabel('Back')
+        .setEmoji(UI_BUTTON_EMOJIS.arrowLeftCurved)
+        .setStyle(ButtonStyle.Secondary)
+    )
+  ];
+}
+
+function createAdminBackComponents() {
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('admin_panel_back')
+        .setLabel('Back')
+        .setEmoji(UI_BUTTON_EMOJIS.arrowLeftCurved)
+        .setStyle(ButtonStyle.Secondary)
     )
   ];
 }
@@ -4240,8 +4340,19 @@ function createChildAdminComponents() {
         .setLabel('Reset')
         .setEmoji(UI_BUTTON_EMOJIS.witherSkeletonSkull)
         .setStyle(ButtonStyle.Danger)
-    )
+    ),
+    ...createAdminBackComponents()
   ];
+}
+
+function buildAdminChildPayload() {
+  return {
+    embeds: [buildGrowingChildStatusEmbed(
+      growingChild.getStatus(),
+      `Gemini: ${runtimeSettings.geminiEnabled ? 'On' : 'Off'} В· Public speech: ${runtimeSettings.childPublicSpeech ? 'On' : 'Off'}`
+    )],
+    components: createChildAdminComponents()
+  };
 }
 
 function createStatusButtons() {
@@ -4258,7 +4369,8 @@ function isAdminPanelCustomId(customId = '') {
     customId === 'admin_whitelist_mode' ||
     customId === 'admin_gemini_toggle' ||
     customId === 'admin_child_public_toggle' ||
-    customId === 'admin_child_status';
+    customId === 'admin_child_status' ||
+    customId.startsWith('whitelist_page_');
 }
 
 function isAdminPanelSelectCustomId(customId = '') {
@@ -5083,6 +5195,10 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             : !minecraftAvailable
               ? 'Minecraft bot is offline, so the phrase was not sent.'
               : 'Growing Child AI could not form a new non-repeating phrase from what it has learned yet.';
+          if (adminPanelView === 'child') {
+            await interaction.editReply(buildAdminChildPayload());
+            return;
+          }
           await interaction.followUp({
             content,
             flags: MessageFlags.Ephemeral
@@ -5092,6 +5208,10 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       }
       if (interaction.customId === 'growing_child_toggle') {
         const status = growingChild.toggleEnabled();
+        if (adminPanelView === 'child') {
+          await interaction.update(buildAdminChildPayload());
+          return;
+        }
         await interaction.update({
           embeds: [{
             title: 'Growing Child AI · Status',
@@ -5105,6 +5225,10 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       }
       if (interaction.customId === 'growing_child_status') {
         const status = growingChild.getStatus();
+        if (adminPanelView === 'child') {
+          await interaction.update(buildAdminChildPayload());
+          return;
+        }
         await interaction.update({
           embeds: [buildGrowingChildStatusEmbed(status)],
           components: [createGrowingChildControls()]
@@ -5124,6 +5248,10 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         return;
       }
       if (interaction.customId === 'growing_child_reset_cancel') {
+        if (adminPanelView === 'child') {
+          await interaction.update(buildAdminChildPayload());
+          return;
+        }
         await interaction.update({
           embeds: [{
             title: 'Growing Child AI',
@@ -5137,6 +5265,10 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       }
       if (interaction.customId === 'growing_child_reset_confirm') {
         const status = growingChild.reset();
+        if (adminPanelView === 'child') {
+          await interaction.update(buildAdminChildPayload());
+          return;
+        }
         await interaction.update({
           embeds: [{
             title: 'Growing Child AI · Reset complete',
@@ -5347,11 +5479,11 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         return;
       }
 
-      await interaction.deferReply(interaction.guildId ? { flags: MessageFlags.Ephemeral } : {});
-      await interaction.editReply({
-        embeds: [await buildDetailedObsidianStatsEmbed()]
+      await interaction.deferUpdate();
+      await interaction.message.edit({
+        embeds: [await buildDetailedObsidianStatsEmbed()],
+        components: createObsidianStatsComponents()
       });
-      await startTemporaryInteractionMessage(interaction);
       return;
     }
 
@@ -5445,6 +5577,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       if (!(interaction.isButton() && (interaction.customId?.startsWith('delete_dialog_') || interaction.customId?.startsWith('set_ttl_') || interaction.customId?.startsWith('claim_whisper_'))) && 
           !(interaction.isButton() && isAdminPanelCustomId(interaction.customId) && interaction.user.id === DISCORD_OWNER_ID) &&
           !(interaction.isStringSelectMenu() && isAdminPanelSelectCustomId(interaction.customId) && interaction.user.id === DISCORD_OWNER_ID) &&
+          !(interaction.isStringSelectMenu() && (interaction.customId?.startsWith('add_whitelist_select') || interaction.customId?.startsWith('delete_whitelist_select')) && interaction.user.id === DISCORD_OWNER_ID) &&
+          !(interaction.isStringSelectMenu() && ['drop_select', 'ignore_select', 'unignore_select'].includes(interaction.customId) && interaction.user.id === DISCORD_OWNER_ID) &&
           !(interaction.isStringSelectMenu() && interaction.customId?.startsWith('set_ttl_select_'))) {
         return;
       }
@@ -5474,7 +5608,11 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           await persistRuntimeSetting('messageCooldownMs');
         }
       }
-      await updateAdminPanel();
+      if (adminPanelView === 'chat') {
+        await interaction.editReply(buildChatSettingsPayload());
+      } else {
+        await updateAdminPanel();
+      }
       return;
     }
 
@@ -5501,14 +5639,22 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           await interaction.deferUpdate();
           runtimeSettings.whitelistMode = !runtimeSettings.whitelistMode;
           await persistRuntimeSetting('whitelistMode');
-          await updateAdminPanel();
+          if (adminPanelView === 'chat') {
+            await interaction.editReply(buildChatSettingsPayload());
+          } else {
+            await updateAdminPanel();
+          }
           return;
         }
         if (interaction.customId === 'admin_gemini_toggle') {
           await interaction.deferUpdate();
           runtimeSettings.geminiEnabled = !runtimeSettings.geminiEnabled;
           await persistRuntimeSetting('geminiEnabled');
-          await updateAdminPanel();
+          if (adminPanelView === 'child') {
+            await interaction.editReply(buildAdminChildPayload());
+          } else {
+            await updateAdminPanel();
+          }
           return;
         }
         if (interaction.customId === 'admin_child_public_toggle') {
@@ -5516,19 +5662,24 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           runtimeSettings.childPublicSpeech = !runtimeSettings.childPublicSpeech;
           growingChild?.setMinecraftPublicSpeechEnabled(runtimeSettings.childPublicSpeech);
           await persistRuntimeSetting('childPublicSpeech');
-          await updateAdminPanel();
+          if (adminPanelView === 'child') {
+            await interaction.editReply(buildAdminChildPayload());
+          } else {
+            await updateAdminPanel();
+          }
           return;
         }
         if (interaction.customId === 'admin_child_status') {
-          await interaction.deferReply(interaction.guildId ? { flags: MessageFlags.Ephemeral } : {});
-          await interaction.editReply({
+          adminPanelView = 'child';
+          await interaction.update(buildAdminChildPayload());
+          return;
+          await interaction.update({
             embeds: [buildGrowingChildStatusEmbed(
               growingChild.getStatus(),
               `Gemini: ${runtimeSettings.geminiEnabled ? 'On' : 'Off'} · Public speech: ${runtimeSettings.childPublicSpeech ? 'On' : 'Off'}`
             )],
             components: createChildAdminComponents()
           });
-          await startTemporaryInteractionMessage(interaction);
           return;
         }
         if (interaction.customId.startsWith('claim_whisper_')) {
@@ -5882,28 +6033,26 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           return;
         }
         // Show two dropdowns: Add (online players not in whitelist) and Delete (whitelisted players)
-        await interaction.deferReply();
+        adminPanelView = 'whitelist';
         try {
           const entries = await getWhitelistEntriesForUI();
           const allOnlinePlayers = bot ? Object.values(bot.players || {}).map(p => p.username) : [];
           const addCandidates = allOnlinePlayers.filter(u => !entries.some(n => n.toLowerCase() === u.toLowerCase()));
 
-          await interaction.editReply(
+          await interaction.update(
             buildWhitelistManagementView(entries, addCandidates, '', 3447003, 0, 0)
           );
-          await startTemporaryInteractionMessage(interaction);
           //
         } catch (e) {
           console.error('[Discord] Whitelist button handler failed:', e.message);
-          await interaction.editReply({
+          await interaction.update({
             embeds: [{
               description: `Failed to load whitelist: ${e.message}`,
               color: 16711680,
               timestamp: new Date()
             }],
-            components: []
+            components: createAdminBackComponents()
           });
-          await startTemporaryInteractionMessage(interaction);
         }
       } else if (interaction.customId === 'drop_button') {
         // Restrict Drop to owner/admin only
@@ -5921,28 +6070,28 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           } catch {}
           return;
         }
-        await interaction.deferReply();
+        adminPanelView = 'drop';
         if (!bot) {
-          await interaction.editReply({
+          await interaction.update({
             embeds: [{
               description: 'Bot is offline.',
               color: 16711680,
               timestamp: new Date()
-            }]
+            }],
+            components: createAdminBackComponents()
           });
-          await startTemporaryInteractionMessage(interaction);
           return;
         }
         const inventory = bot.inventory.items();
         if (inventory.length === 0) {
-          await interaction.editReply({
+          await interaction.update({
             embeds: [{
               description: 'Inventory is empty.',
               color: 3447003,
               timestamp: new Date()
-            }]
+            }],
+            components: createAdminBackComponents()
           });
-          await startTemporaryInteractionMessage(interaction);
           return;
         }
         const options = inventory.map(item => {
@@ -5961,16 +6110,15 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           .setPlaceholder('Select item to drop')
           .addOptions(options.slice(0, 25)); // Discord limit 25 options
         const row = new ActionRowBuilder().addComponents(selectMenu);
-        await interaction.editReply({
+        await interaction.update({
           embeds: [{
             title: 'Drop Item',
             description: 'Select an item from inventory to drop.',
             color: 3447003,
             timestamp: new Date()
           }],
-          components: [row]
+          components: [row, ...createAdminBackComponents()]
         });
-        await startTemporaryInteractionMessage(interaction);
       } else if (interaction.customId === 'wn_button') {
         await interaction.deferReply();
         if (!bot || !bot.entity) {
@@ -6022,58 +6170,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           return;
         }
         
-        await interaction.deferReply();
-        const allOnlinePlayers = bot ? Object.values(bot.players || {}).map(p => p.username) : [];
-        const playersToIgnore = allOnlinePlayers.filter(username => !ignoredChatUsernames.includes(username.toLowerCase()));
-        const playersToUnignore = ignoredChatUsernames.filter(username => allOnlinePlayers.some(p => p.toLowerCase() === username));
-
-        const ignoreOptions = playersToIgnore.map(username => {
-          return new StringSelectMenuOptionBuilder()
-            .setLabel(username)
-            .setValue(b64encode(username));
-        });
-        const unignoreOptions = playersToUnignore.map(username => {
-          return new StringSelectMenuOptionBuilder()
-            .setLabel(username)
-            .setValue(b64encode(username));
-        });
-
-        const ignoreMenu = new StringSelectMenuBuilder()
-          .setCustomId('ignore_select')
-          .setPlaceholder('Select player to ignore')
-          .addOptions(ignoreOptions.slice(0, 25));
-        const unignoreMenu = new StringSelectMenuBuilder()
-          .setCustomId('unignore_select')
-          .setPlaceholder('Select player to unignore')
-          .addOptions(unignoreOptions.slice(0, 25));
-
-        const components = [
-          ...createChatSettingsHeaderComponents(),
-          ...createAdminSettingsSelects()
-        ];
-        if (ignoreOptions.length > 0) {
-          components.push(new ActionRowBuilder().addComponents(ignoreMenu));
-        }
-        if (unignoreOptions.length > 0) {
-          components.push(new ActionRowBuilder().addComponents(unignoreMenu));
-        }
-
-        await interaction.editReply({
-          embeds: [{
-            title: 'Chat Settings',
-            description: [
-              `Whitelist mode: **${runtimeSettings.whitelistMode ? 'On' : 'Off'}**`,
-              `Danger radius: **${runtimeSettings.dangerRadius} blocks**`,
-              `Message cooldown: **${Math.round(runtimeSettings.messageCooldownMs / 1000)}s**`,
-              `Ignored chat users: **${ignoredChatUsernames.length}**`,
-              bot ? 'Manage ignored online players below.' : 'Minecraft bot is offline. Online ignore menus are unavailable.'
-            ].join('\n'),
-            color: 3447003,
-            timestamp: new Date()
-          }],
-          components
-        });
-        await startTemporaryInteractionMessage(interaction);
+        adminPanelView = 'chat';
+        await interaction.update(buildChatSettingsPayload());
       } else if (interaction.customId === 'seen_button') {
         await interaction.deferReply();
         
@@ -6727,7 +6825,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             color: 16711680,
             timestamp: new Date()
           }],
-          components: []
+          components: createAdminBackComponents()
         });
         return;
       }
@@ -6752,7 +6850,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             color: 65280,
             timestamp: new Date()
           }],
-          components: []
+          components: createAdminBackComponents()
         });
       } catch (err) {
         console.error('[Drop] Error:', err.message);
@@ -6762,7 +6860,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             color: 16711680,
             timestamp: new Date()
           }],
-          components: []
+          components: createAdminBackComponents()
         });
       }
     } else if (interaction.isStringSelectMenu() && interaction.customId === 'remove_mention_keyword_select') {
@@ -6835,7 +6933,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             color: 16711680,
             timestamp: new Date()
           }],
-          components: []
+          components: createAdminBackComponents()
         });
         return;
       }
@@ -6843,6 +6941,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         await pool.query('INSERT INTO ignored_users (username, added_by) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING', [selectedUsername.toLowerCase(), interaction.user.tag]);
         ignoredChatUsernames = await loadIgnoredChatUsernames();
         console.log(`[Ignore] Added ${selectedUsername} to ignore list by ${interaction.user.tag}`);
+        await interaction.editReply(buildChatSettingsPayload());
+        return;
 
         // Update the message with new lists
         const allOnlinePlayers = Object.values(bot.players || {}).map(p => p.username);
@@ -6886,7 +6986,6 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           }],
           components
         });
-        setTimeout(() => interaction.message.delete().catch(() => {}), 1000);
       } catch (err) {
         console.error('[Ignore] Error:', err.message);
         await interaction.editReply({
@@ -6895,7 +6994,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             color: 16711680,
             timestamp: new Date()
           }],
-          components: []
+          components: createAdminBackComponents()
         });
       }
     } else if (interaction.isStringSelectMenu() && interaction.customId === 'unignore_select') {
@@ -6909,7 +7008,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             color: 16711680,
             timestamp: new Date()
           }],
-          components: []
+          components: createAdminBackComponents()
         });
         return;
       }
@@ -6918,6 +7017,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         if (result.rowCount > 0) {
           ignoredChatUsernames = await loadIgnoredChatUsernames();
           console.log(`[Unignore] Removed ${selectedUsername} from ignore list by ${interaction.user.tag}`);
+          await interaction.editReply(buildChatSettingsPayload());
+          return;
 
           // Update the message with new lists
           const allOnlinePlayers = Object.values(bot.players || {}).map(p => p.username);
@@ -6961,7 +7062,6 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             }],
             components
           });
-          setTimeout(() => interaction.message.delete().catch(() => {}), 1000);
         } else {
           await interaction.editReply({
             embeds: [{
@@ -6969,7 +7069,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
               color: 16776960,
               timestamp: new Date()
             }],
-            components: []
+            components: createAdminBackComponents()
           });
         }
       } catch (err) {
@@ -6980,7 +7080,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             color: 16711680,
             timestamp: new Date()
           }],
-          components: []
+          components: createAdminBackComponents()
         });
       }
     } else if (interaction.isStringSelectMenu() && interaction.customId.startsWith('delete_whitelist_select')) {
@@ -7027,12 +7127,12 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             if (newWhitelist.length === fileWhitelist.length) {
               
               await interaction.editReply({
-                embeds: [{
-                  description: `${selectedUsername} is not in whitelist.`,
-                  color: 16776960,
-                  timestamp: new Date()
-                }],
-                components: []
+              embeds: [{
+                description: `${selectedUsername} is not in whitelist.`,
+                color: 16776960,
+                timestamp: new Date()
+              }],
+                components: createAdminBackComponents()
               });
               return;
             }
@@ -7054,7 +7154,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
                 color: 16776960,
                 timestamp: new Date()
               }],
-              components: []
+              components: createAdminBackComponents()
             });
             return;
           }
@@ -7067,10 +7167,6 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             buildWhitelistManagementView(whitelist, addCandidates, `${STATUS_EMOJIS.connected} Removed ${selectedUsername} from whitelist.`, 65280)
           );
 
-          // Close the Whitelist Management message shortly after the action
-          setTimeout(() => interaction.message?.delete().catch(() => {}), 1000);
-
-          
         } catch (err) {
           console.error('[Whitelist Delete] Error:', err.message);
 
@@ -7081,7 +7177,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
                 color: 16711680,
                 timestamp: new Date()
               }],
-              components: []
+              components: createAdminBackComponents()
             });
             
           } catch (finalErr) {
@@ -7159,8 +7255,6 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           )
         );
 
-        // Close the Whitelist Management message shortly after the action
-        setTimeout(() => interaction.message?.delete().catch(() => {}), 1000);
       } catch (err) {
         console.error('[Whitelist Add] Error:', err.message);
         await interaction.editReply({
@@ -7168,7 +7262,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             description: `Failed to add ${selectedUsername}: ${err.message}`,
             color: 16711680,
             timestamp: new Date()
-          }]
+          }],
+          components: createAdminBackComponents()
         });
       }
     }
