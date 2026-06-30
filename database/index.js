@@ -183,10 +183,59 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
     }
   }
 
+  async function searchNonWhitelistActivity(query, limit = 25) {
+    if (!pool) {
+      return { error: 'Database not configured' };
+    }
+
+    const search = String(query || '').trim();
+    if (search.length < 2) {
+      return { error: 'Type at least 2 characters.' };
+    }
+
+    try {
+      const result = await pool.query(`
+        SELECT pa.username, pa.last_seen, pa.last_online, pa.is_online
+        FROM player_activity pa
+        WHERE LOWER(pa.username) LIKE LOWER($1)
+          AND NOT EXISTS (
+            SELECT 1
+            FROM whitelist w
+            WHERE LOWER(w.username) = LOWER(pa.username)
+          )
+        ORDER BY
+          CASE WHEN pa.is_online = TRUE THEN 0 ELSE 1 END,
+          pa.last_seen DESC NULLS LAST,
+          LOWER(pa.username) ASC
+        LIMIT $2
+      `, [`%${search}%`, limit]);
+
+      const bot = getBot();
+      const actualOnlinePlayers = new Set();
+      if (bot && bot.players) {
+        for (const player of Object.values(bot.players)) {
+          if (player.username) {
+            actualOnlinePlayers.add(player.username.toLowerCase());
+          }
+        }
+      }
+
+      return {
+        players: result.rows.map(row => ({
+          ...row,
+          is_online: actualOnlinePlayers.has(row.username.toLowerCase())
+        }))
+      };
+    } catch (err) {
+      return { error: err.message };
+    }
+  }
+
   return {
     loadIgnoredChatUsernames,
     updatePlayerActivity,
-    getWhitelistActivity
+    getWhitelistActivity,
+    searchNonWhitelistActivity
   };
 }
 
