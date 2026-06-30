@@ -369,6 +369,7 @@ if (process.env.MINECRAFT_SESSION) {
 let lastCommandUser = null;
 let statusMessage = null;
 let adminPanelMessage = null;
+let adminPanelView = 'main';
 let statusUpdateInterval = null;
 let adminPanelUpdateInterval = null;
 let isUpdatingStatus = false; // Prevent concurrent updates
@@ -2110,6 +2111,14 @@ function stopObsidianStatsUpdater(channelId) {
   saveObsidianStatsUpdaters();
 }
 
+function stopAdminPanelObsidianStatsUpdater() {
+  if (!adminPanelMessage?.channelId || !adminPanelMessage?.id) return;
+  const updater = obsidianStatsUpdaters.get(adminPanelMessage.channelId);
+  if (updater?.messageId === adminPanelMessage.id) {
+    stopObsidianStatsUpdater(adminPanelMessage.channelId);
+  }
+}
+
 function mergeObsidianSupplies(previous, next) {
   if (!next) return previous;
   const nextHasBarrelItems = Array.isArray(next.barrel?.allItems);
@@ -2236,7 +2245,7 @@ function startObsidianStatsUpdater(message, supplies) {
   scheduleObsidianStatsUpdater(channelId, updater);
 }
 
-async function openObsidianStatsPanel(interaction, { updateMessage = false } = {}) {
+async function openObsidianStatsPanel(interaction, { updateMessage = false, deferredUpdate = false } = {}) {
   const supplies = {
     barrel: null,
     barrelError: 'Press Refresh to inspect'
@@ -2247,7 +2256,11 @@ async function openObsidianStatsPanel(interaction, { updateMessage = false } = {
   };
 
   if (updateMessage) {
-    await interaction.update(payload);
+    if (deferredUpdate) {
+      await interaction.message.edit(payload);
+    } else {
+      await interaction.update(payload);
+    }
   } else {
     await interaction.editReply(payload);
   }
@@ -2255,6 +2268,9 @@ async function openObsidianStatsPanel(interaction, { updateMessage = false } = {
   const statsMessage = updateMessage
     ? interaction.message
     : await interaction.fetchReply();
+  if (adminPanelMessage?.id === statsMessage.id) {
+    adminPanelView = 'obsidian';
+  }
   startObsidianStatsUpdater(statsMessage, supplies);
 }
 
@@ -2264,6 +2280,12 @@ async function restoreObsidianStatsUpdaters() {
 
   for (const record of records) {
     try {
+      if (
+        adminPanelMessage?.id === record.messageId &&
+        adminPanelMessage?.channelId === record.channelId
+      ) {
+        continue;
+      }
       const channel = await discordClient.channels.fetch(record.channelId);
       if (!channel?.messages) throw new Error('Statistics channel is unavailable');
       const message = await channel.messages.fetch(record.messageId);
@@ -2933,6 +2955,7 @@ async function ensureAdminPanelDM() {
 
 async function updateAdminPanel() {
   if (!DISCORD_OWNER_ID || !discordClient || !discordClient.isReady()) return;
+  if (adminPanelView !== 'main') return;
   if (!adminPanelMessage) {
     await ensureAdminPanelDM();
     if (!adminPanelMessage) return;
@@ -4960,6 +4983,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       }
 
       await ensureAdminPanelDM();
+      adminPanelView = 'main';
+      stopAdminPanelObsidianStatsUpdater();
       await updateAdminPanel();
       const reply = { content: 'Admin panel sent to DM.' };
       if (interaction.guildId) reply.flags = MessageFlags.Ephemeral;
@@ -5463,6 +5488,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           return;
         }
         if (interaction.customId === 'admin_panel_back') {
+          adminPanelView = 'main';
+          stopAdminPanelObsidianStatsUpdater();
           await interaction.update({
             embeds: [await buildAdminPanelEmbed()],
             components: createAdminPanelButtons()
@@ -6358,8 +6385,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           });
           return;
         }
-        await openObsidianStatsPanel(interaction, { updateMessage: true });
-        updateAdminPanel().catch(() => {});
+        await interaction.deferUpdate();
+        await openObsidianStatsPanel(interaction, { updateMessage: true, deferredUpdate: true });
         return;
       }
     } else if (interaction.isModalSubmit() && interaction.customId === 'add_keyword_modal') {
