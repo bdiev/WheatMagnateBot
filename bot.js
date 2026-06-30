@@ -3909,13 +3909,8 @@ function createAdminPanelButtons() {
           .setEmoji(STATUS_BUTTON_EMOJIS.drop)
           .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
-          .setCustomId('whitelist_button')
-          .setLabel('Whitelist')
-          .setEmoji(STATUS_BUTTON_EMOJIS.whitelist)
-          .setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder()
           .setCustomId('chat_setting_button')
-          .setLabel('Chat Settings')
+          .setLabel('Chat')
           .setEmoji(STATUS_BUTTON_EMOJIS.chatSettings)
           .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
@@ -3927,28 +3922,13 @@ function createAdminPanelButtons() {
     new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
-          .setCustomId('admin_whitelist_mode')
-          .setLabel('Whitelist')
-          .setEmoji(STATUS_BUTTON_EMOJIS.whitelist)
-          .setStyle(runtimeSettings.whitelistMode ? ButtonStyle.Success : ButtonStyle.Secondary),
-        new ButtonBuilder()
-          .setCustomId('admin_auto_eat_toggle')
-          .setLabel('Auto-eat')
-          .setEmoji(STATUS_EMOJIS.food)
-          .setStyle(runtimeSettings.autoEat ? ButtonStyle.Success : ButtonStyle.Secondary),
-        new ButtonBuilder()
           .setCustomId('admin_gemini_toggle')
           .setLabel('Gemini')
           .setEmoji(UI_BUTTON_EMOJIS.enchantingTable)
           .setStyle(runtimeSettings.geminiEnabled ? ButtonStyle.Success : ButtonStyle.Secondary),
         new ButtonBuilder()
-          .setCustomId('admin_child_public_toggle')
-          .setLabel('Child public')
-          .setEmoji(UI_BUTTON_EMOJIS.cat)
-          .setStyle(runtimeSettings.childPublicSpeech ? ButtonStyle.Success : ButtonStyle.Secondary),
-        new ButtonBuilder()
           .setCustomId('admin_child_status')
-          .setLabel('Child status')
+          .setLabel('Child')
           .setEmoji(UI_BUTTON_EMOJIS.bookYellow)
           .setStyle(ButtonStyle.Secondary)
       ),
@@ -3976,19 +3956,12 @@ function buildAdminPanelEmbed() {
       },
       {
         name: 'Safety',
-        value: [
-          `Whitelist mode: **${enabled(runtimeSettings.whitelistMode)}**`,
-          `Danger radius: **${runtimeSettings.dangerRadius} blocks**`
-        ].join('\n'),
+        value: `Danger radius: **${runtimeSettings.dangerRadius} blocks**`,
         inline: true
       },
       {
         name: 'Automation',
-        value: [
-          `Auto-eat: **${enabled(runtimeSettings.autoEat)}**`,
-          `Gemini: **${enabled(runtimeSettings.geminiEnabled)}**`,
-          `Child public: **${enabled(runtimeSettings.childPublicSpeech)}**`
-        ].join('\n'),
+        value: `Gemini: **${enabled(runtimeSettings.geminiEnabled)}**`,
         inline: true
       },
       {
@@ -4000,6 +3973,50 @@ function buildAdminPanelEmbed() {
     color: bot?.entity ? 3447003 : shouldReconnect ? 16776960 : 8421504,
     timestamp: new Date()
   };
+}
+
+function createChatSettingsHeaderComponents() {
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('whitelist_button')
+        .setLabel('Manage whitelist')
+        .setEmoji(STATUS_BUTTON_EMOJIS.whitelist)
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId('admin_whitelist_mode')
+        .setLabel('Whitelist mode')
+        .setEmoji(STATUS_BUTTON_EMOJIS.whitelist)
+        .setStyle(runtimeSettings.whitelistMode ? ButtonStyle.Success : ButtonStyle.Secondary)
+    )
+  ];
+}
+
+function createChildAdminComponents() {
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('admin_child_public_toggle')
+        .setLabel('Public speech')
+        .setEmoji(UI_BUTTON_EMOJIS.cat)
+        .setStyle(runtimeSettings.childPublicSpeech ? ButtonStyle.Success : ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId('growing_child_toggle')
+        .setLabel(growingChild?.getStatus().enabled ? 'Disable child' : 'Enable child')
+        .setEmoji(UI_BUTTON_EMOJIS.redstone)
+        .setStyle(growingChild?.getStatus().enabled ? ButtonStyle.Danger : ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId('growing_child_say')
+        .setLabel('Say')
+        .setEmoji(UI_BUTTON_EMOJIS.cat)
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId('growing_child_reset')
+        .setLabel('Reset')
+        .setEmoji(UI_BUTTON_EMOJIS.witherSkeletonSkull)
+        .setStyle(ButtonStyle.Danger)
+    )
+  ];
 }
 
 function createStatusButtons() {
@@ -4014,7 +4031,6 @@ function isAdminPanelCustomId(customId = '') {
     customId === 'obsidian_farm_button' ||
     customId === 'admin_panel_refresh' ||
     customId === 'admin_whitelist_mode' ||
-    customId === 'admin_auto_eat_toggle' ||
     customId === 'admin_gemini_toggle' ||
     customId === 'admin_child_public_toggle' ||
     customId === 'admin_child_status';
@@ -5123,13 +5139,6 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           await updateAdminPanel();
           return;
         }
-        if (interaction.customId === 'admin_auto_eat_toggle') {
-          await interaction.deferUpdate();
-          runtimeSettings.autoEat = !runtimeSettings.autoEat;
-          await persistRuntimeSetting('autoEat');
-          await updateAdminPanel();
-          return;
-        }
         if (interaction.customId === 'admin_gemini_toggle') {
           await interaction.deferUpdate();
           runtimeSettings.geminiEnabled = !runtimeSettings.geminiEnabled;
@@ -5147,8 +5156,11 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         }
         if (interaction.customId === 'admin_child_status') {
           await interaction.deferReply(interaction.guildId ? { flags: MessageFlags.Ephemeral } : {});
-          await sendGrowingChildStatusDM();
-          await interaction.editReply({ content: 'Growing Child status sent.' });
+          await interaction.editReply({
+            embeds: [buildGrowingChildStatusEmbed(growingChild.getStatus(), `Public speech: ${runtimeSettings.childPublicSpeech ? 'On' : 'Off'}`)],
+            components: createChildAdminComponents()
+          });
+          await startTemporaryInteractionMessage(interaction);
           return;
         }
         if (interaction.customId.startsWith('claim_whisper_')) {
@@ -5643,18 +5655,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         }
         
         await interaction.deferReply();
-        if (!bot) {
-          await interaction.editReply({
-            embeds: [{
-              description: 'Bot is offline.',
-              color: 16711680,
-              timestamp: new Date()
-            }]
-          });
-          await startTemporaryInteractionMessage(interaction);
-          return;
-        }
-        const allOnlinePlayers = Object.values(bot.players || {}).map(p => p.username);
+        const allOnlinePlayers = bot ? Object.values(bot.players || {}).map(p => p.username) : [];
         const playersToIgnore = allOnlinePlayers.filter(username => !ignoredChatUsernames.includes(username.toLowerCase()));
         const playersToUnignore = ignoredChatUsernames.filter(username => allOnlinePlayers.some(p => p.toLowerCase() === username));
 
@@ -5678,7 +5679,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           .setPlaceholder('Select player to unignore')
           .addOptions(unignoreOptions.slice(0, 25));
 
-        const components = [];
+        const components = createChatSettingsHeaderComponents();
         if (ignoreOptions.length > 0) {
           components.push(new ActionRowBuilder().addComponents(ignoreMenu));
         }
@@ -5689,7 +5690,11 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         await interaction.editReply({
           embeds: [{
             title: 'Chat Settings',
-            description: 'Manage ignored players for chat messages.',
+            description: [
+              `Whitelist mode: **${runtimeSettings.whitelistMode ? 'On' : 'Off'}**`,
+              `Ignored chat users: **${ignoredChatUsernames.length}**`,
+              bot ? 'Manage ignored online players below.' : 'Minecraft bot is offline. Online ignore menus are unavailable.'
+            ].join('\n'),
             color: 3447003,
             timestamp: new Date()
           }],
