@@ -4073,6 +4073,47 @@ function getServerStatusTitle() {
     : `${STATUS_EMOJIS.serverUnreachable} Server Status`;
 }
 
+function formatCompactInlineList(entries, maxVisible = 8) {
+  if (!entries || entries.length === 0) return 'None';
+  const visible = entries.slice(0, maxVisible);
+  const remaining = entries.length - visible.length;
+  return remaining > 0
+    ? `${visible.join(', ')} +${remaining} more`
+    : visible.join(', ');
+}
+
+function buildAdminServerStatusValue() {
+  if (!bot || !bot.entity) {
+    return getStatusDescription();
+  }
+
+  const playerCount = Object.keys(bot.players || {}).length;
+  const onlinePlayers = Object.values(bot.players || {}).map(p => p.username);
+  const whitelistOnline = [...new Set(onlinePlayers
+    .filter(username => username.toLowerCase() !== bot.username.toLowerCase())
+    .map(getCanonicalWhitelistUsername)
+    .filter(Boolean))];
+  const nearbyPlayers = getNearbyPlayers();
+  const nearbyNameEntries = nearbyPlayers
+    .map(player => getCanonicalWhitelistUsername(player.username) || player.username)
+    .map(username => `${getPlayerHeadEmoji(username)} \`${username}\``);
+  const nearbyNames = formatCompactInlineList(nearbyNameEntries);
+  const whitelistOnlineDisplay = formatCompactInlineList(
+    whitelistOnline.map(u => `${getPlayerHeadEmoji(u)} \`${u}\``)
+  );
+  const obsidianMined = `${formatCompactCount(obsidianStats.sessionMined)}/${formatCompactCount(obsidianStats.totalMined)}`;
+
+  return [
+    `${STATUS_EMOJIS.players} Players online: ${playerCount}`,
+    `${STATUS_EMOJIS.nearby} Players nearby: ${nearbyNames}`,
+    `${STATUS_EMOJIS.tps} TPS: ${getCurrentTpsDisplay()}`,
+    `${STATUS_EMOJIS.food} Food: ${Math.round(bot.food * 2) / 2}/20`,
+    `${STATUS_EMOJIS.health} Health: ${Math.round(bot.health * 2) / 2}/20`,
+    `${STATUS_EMOJIS.whitelist} Whitelist online: ${whitelistOnlineDisplay}`,
+    `${STATUS_EMOJIS.obsidian} Obsidian mined: ${obsidianMined}`
+  ].join('\n');
+}
+
 function createServerStatusButtons() {
   return [
     new ActionRowBuilder()
@@ -4241,6 +4282,9 @@ function formatDailyTpsAverages(rows) {
 function formatNearbySightings(rows) {
   if (!rows || rows.length === 0) return 'No recent nearby players.';
   return rows
+    .map(row => `${getPlayerHeadEmoji(row.username)} **${row.username}** ${row.distance} blocks · ${formatRelativeShort(row.secondsAgo)}`)
+    .join('\n');
+  return rows
     .map(row => `**${row.username}** ${row.distance} blocks · ${formatRelativeShort(row.secondsAgo)}`)
     .join('\n');
 }
@@ -4253,6 +4297,11 @@ async function buildAdminPanelEmbed() {
   return {
     title: 'Admin Panel',
     fields: [
+      {
+        name: 'Server Status',
+        value: buildAdminServerStatusValue(),
+        inline: false
+      },
       {
         name: 'Connection',
         value: [
