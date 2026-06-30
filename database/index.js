@@ -272,10 +272,82 @@ function createWhitelistRepository({
   };
 }
 
+function createAdminSettingsRepository(pool) {
+  async function loadAdminSettings(defaults = {}) {
+    if (!pool) return { ...defaults };
+    try {
+      const result = await pool.query('SELECT key, value FROM admin_settings');
+      const settings = { ...defaults };
+      for (const row of result.rows) {
+        settings[row.key] = row.value;
+      }
+      return settings;
+    } catch (err) {
+      console.error('[DB] Failed to load admin settings:', err.message);
+      return { ...defaults };
+    }
+  }
+
+  async function saveAdminSetting(key, value) {
+    if (!pool) return false;
+    try {
+      await pool.query(`
+        INSERT INTO admin_settings (key, value, updated_at)
+        VALUES ($1, $2::jsonb, NOW())
+        ON CONFLICT (key)
+        DO UPDATE SET value = EXCLUDED.value,
+                      updated_at = NOW()
+      `, [key, JSON.stringify(value)]);
+      return true;
+    } catch (err) {
+      console.error(`[DB] Failed to save admin setting ${key}:`, err.message);
+      return false;
+    }
+  }
+
+  async function saveAdminSettings(settings = {}) {
+    if (!pool) return false;
+    try {
+      const entries = Object.entries(settings);
+      if (entries.length === 0) return true;
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        for (const [key, value] of entries) {
+          await client.query(`
+            INSERT INTO admin_settings (key, value, updated_at)
+            VALUES ($1, $2::jsonb, NOW())
+            ON CONFLICT (key)
+            DO UPDATE SET value = EXCLUDED.value,
+                          updated_at = NOW()
+          `, [key, JSON.stringify(value)]);
+        }
+        await client.query('COMMIT');
+        return true;
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        client.release();
+      }
+    } catch (err) {
+      console.error('[DB] Failed to save admin settings:', err.message);
+      return false;
+    }
+  }
+
+  return {
+    loadAdminSettings,
+    saveAdminSetting,
+    saveAdminSettings
+  };
+}
+
 module.exports = {
   createDatabasePool,
   logDatabaseStatus,
   createMentionKeywordRepository,
   createPlayerActivityRepository,
-  createWhitelistRepository
+  createWhitelistRepository,
+  createAdminSettingsRepository
 };

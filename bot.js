@@ -10,7 +10,8 @@ const {
   logDatabaseStatus,
   createMentionKeywordRepository,
   createPlayerActivityRepository,
-  createWhitelistRepository
+  createWhitelistRepository,
+  createAdminSettingsRepository
 } = require('./database');
 const { createPlaytimeFeature } = require('./features/playtime');
 const { createWhisperFeature } = require('./features/whisper');
@@ -346,6 +347,11 @@ const {
   ignoredFallback: IGNORED_CHAT_USERNAMES,
   getBot: () => bot
 });
+const {
+  loadAdminSettings,
+  saveAdminSetting,
+  saveAdminSettings
+} = createAdminSettingsRepository(pool);
 
 // Discord bot client
 const discordClient = createDiscordClient();
@@ -362,7 +368,9 @@ if (process.env.MINECRAFT_SESSION) {
 
 let lastCommandUser = null;
 let statusMessage = null;
+let adminPanelMessage = null;
 let statusUpdateInterval = null;
+let adminPanelUpdateInterval = null;
 let isUpdatingStatus = false; // Prevent concurrent updates
 let lastPresenceText = null;
 let lastPresenceUpdateAt = 0;
@@ -400,6 +408,48 @@ let outboundWhispers = new Map(); // key: `OUTBOUND:targetUsername:message` -> t
 let recentlyForwardedGameChat = new Map(); // key: `CHAT:username:message` -> timestamp, to dedupe chat/raw message events
 let tpsTabInterval = null;
 let playtimeSyncInterval = null;
+const DANGER_RADIUS_OPTIONS = [100, 200, 300, 500, 1000];
+const MESSAGE_COOLDOWN_OPTIONS = [0, 5000, 10_000, 20_000, 60_000];
+const runtimeSettings = {
+  dangerRadius: Number(process.env.DANGER_RADIUS_BLOCKS) || 300,
+  whitelistMode: String(process.env.WHITELIST_MODE || 'true').toLowerCase() !== 'false',
+  autoEat: String(process.env.AUTO_EAT || 'true').toLowerCase() !== 'false',
+  geminiEnabled: String(process.env.GEMINI_ENABLED || 'true').toLowerCase() !== 'false',
+  childPublicSpeech: String(process.env.CHILD_PUBLIC_SPEECH || 'true').toLowerCase() !== 'false',
+  messageCooldownMs: Number(process.env.WM_COMMAND_COOLDOWN_MS) || WM_COMMAND_COOLDOWN_MS
+};
+
+function normalizeRuntimeSettings(settings = runtimeSettings) {
+  const dangerRadius = Number(settings.dangerRadius);
+  settings.dangerRadius = DANGER_RADIUS_OPTIONS.includes(dangerRadius)
+    ? dangerRadius
+    : DANGER_RADIUS_OPTIONS.includes(Number(process.env.DANGER_RADIUS_BLOCKS))
+      ? Number(process.env.DANGER_RADIUS_BLOCKS)
+      : 300;
+
+  const messageCooldownMs = Number(settings.messageCooldownMs);
+  settings.messageCooldownMs = MESSAGE_COOLDOWN_OPTIONS.includes(messageCooldownMs)
+    ? messageCooldownMs
+    : MESSAGE_COOLDOWN_OPTIONS.includes(Number(process.env.WM_COMMAND_COOLDOWN_MS))
+      ? Number(process.env.WM_COMMAND_COOLDOWN_MS)
+      : WM_COMMAND_COOLDOWN_MS;
+
+  settings.whitelistMode = Boolean(settings.whitelistMode);
+  settings.autoEat = Boolean(settings.autoEat);
+  settings.geminiEnabled = Boolean(settings.geminiEnabled);
+  settings.childPublicSpeech = Boolean(settings.childPublicSpeech);
+  return settings;
+}
+
+async function loadRuntimeSettingsFromDB() {
+  const loaded = await loadAdminSettings(runtimeSettings);
+  Object.assign(runtimeSettings, normalizeRuntimeSettings(loaded));
+}
+
+async function persistRuntimeSetting(key) {
+  if (!Object.prototype.hasOwnProperty.call(runtimeSettings, key)) return false;
+  return saveAdminSetting(key, runtimeSettings[key]);
+}
 const geminiModelBackoffUntil = new Map(); // model -> unix ms
 let lastBotPublicChatPhrase = null;
 let lastBotPublicChatEmoji = null;
@@ -772,6 +822,13 @@ async function initDatabase() {
       )
     `);
     await pool.query(`
+      CREATE TABLE IF NOT EXISTS admin_settings (
+        key TEXT PRIMARY KEY,
+        value JSONB NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
       INSERT INTO obsidian_farm_state (id)
       VALUES (1)
       ON CONFLICT (id) DO NOTHING
@@ -1131,6 +1188,7 @@ function initializeGrowingChild() {
     generateWithAI: GEMINI_API_KEY ? generateGrowingChildPhrase : null,
     allowedDiscordChannelId: DISCORD_CHAT_CHANNEL_ID
   });
+  growingChild.setMinecraftPublicSpeechEnabled(runtimeSettings.childPublicSpeech);
   growingChild.start();
   console.log('[GrowingChild] Learning system started.');
   return growingChild;
@@ -1145,7 +1203,7 @@ async function generateGrowingChildPhrase({
   grammarWords,
   candidateCount = 5
 }) {
-  if (!GEMINI_API_KEY) return null;
+  if (!GEMINI_API_KEY || !runtimeSettings.geminiEnabled) return null;
 
   const replyInstruction = reason === 'reaction' && contextWords.length > 0
     ? `Reply naturally to a Minecraft message whose known context is: ${contextWords.join(', ')}.`
@@ -1286,6 +1344,8 @@ if (DISCORD_BOT_TOKEN) {
     }
 
     await initDatabase();
+    await loadRuntimeSettingsFromDB();
+    await saveAdminSettings(runtimeSettings);
     try {
       await registerApplicationCommands();
     } catch (err) {
@@ -1311,6 +1371,8 @@ if (DISCORD_BOT_TOKEN) {
     // offline and never reaches the spawn event.
     await ensureStatusMessage();
     await updateStatusMessage();
+    await ensureAdminPanelDM();
+    await updateAdminPanel();
     await restoreObsidianStatsUpdaters();
     ensureObsidianStatsWatchdog();
 
@@ -1318,6 +1380,10 @@ if (DISCORD_BOT_TOKEN) {
     if (!statusUpdateInterval) {
       statusUpdateInterval = setInterval(updateStatusMessage, 3000);
       console.log('[Discord] Status update interval started');
+    }
+    if (!adminPanelUpdateInterval) {
+      adminPanelUpdateInterval = setInterval(updateAdminPanel, 30_000);
+      console.log('[Discord] Admin panel update interval started');
     }
 
     // Flush any pending auth links captured before client was ready
@@ -2763,6 +2829,55 @@ function refillBotStatusEmojiQueue() {
   }
 }
 
+async function ensureAdminPanelDM() {
+  if (!DISCORD_OWNER_ID || !discordClient || !discordClient.isReady()) return;
+  try {
+    const owner = await discordClient.users.fetch(DISCORD_OWNER_ID);
+    if (!owner) return;
+    const dm = await owner.createDM();
+    const savedId = loadStatusMessageId('admin_panel_message_id.txt');
+
+    if (savedId && !adminPanelMessage) {
+      try {
+        adminPanelMessage = await dm.messages.fetch(savedId);
+        return;
+      } catch (_) {}
+    }
+
+    if (!adminPanelMessage) {
+      adminPanelMessage = await dm.send({
+        embeds: [buildAdminPanelEmbed()],
+        components: createAdminPanelButtons()
+      });
+      saveStatusMessageId(adminPanelMessage.id, 'admin_panel_message_id.txt');
+    }
+  } catch (e) {
+    console.error('[Discord] ensureAdminPanelDM failed:', e.message);
+  }
+}
+
+async function updateAdminPanel() {
+  if (!DISCORD_OWNER_ID || !discordClient || !discordClient.isReady()) return;
+  if (!adminPanelMessage) {
+    await ensureAdminPanelDM();
+    if (!adminPanelMessage) return;
+  }
+
+  try {
+    await adminPanelMessage.edit({
+      embeds: [buildAdminPanelEmbed()],
+      components: createAdminPanelButtons()
+    });
+  } catch (e) {
+    if (e.code === 10008 || e.message.includes('Unknown Message')) {
+      adminPanelMessage = null;
+      await ensureAdminPanelDM();
+    } else {
+      console.error('[Discord] Failed to update admin panel:', e.message);
+    }
+  }
+}
+
 function pickNextBotStatusEmoji() {
   botChatStatusEmojiQueue = botChatStatusEmojiQueue
     .filter(emoji => BOT_CHAT_STATUS_EMOJIS.includes(emoji));
@@ -3220,6 +3335,10 @@ async function handleWmCommand(username, question) {
     await sendPrivateMinecraftMessage(username, '[AI] Gemini API is not configured.');
     return;
   }
+  if (!runtimeSettings.geminiEnabled) {
+    await sendPrivateMinecraftMessage(username, '[AI] Gemini is disabled in the admin panel.');
+    return;
+  }
 
   const cleanQuestion = String(question || '').trim();
   if (!cleanQuestion) {
@@ -3236,7 +3355,7 @@ async function handleWmCommand(username, question) {
   }
 
   const lastRequestAt = wmCommandCooldowns.get(usernameKey) || 0;
-  const cooldownRemaining = WM_COMMAND_COOLDOWN_MS - (Date.now() - lastRequestAt);
+  const cooldownRemaining = runtimeSettings.messageCooldownMs - (Date.now() - lastRequestAt);
   if (cooldownRemaining > 0) {
     await sendPrivateMinecraftMessage(
       username,
@@ -3719,23 +3838,10 @@ function getServerStatusTitle() {
     : `${STATUS_EMOJIS.serverUnreachable} Server Status`;
 }
 
-// Function to create status buttons
-function createStatusButtons() {
-  // Determine if bot is paused: shouldReconnect=false means paused
-  const isPaused = !shouldReconnect;
+function createServerStatusButtons() {
   return [
     new ActionRowBuilder()
       .addComponents(
-        new ButtonBuilder()
-          .setCustomId('pause_resume_button')
-          .setLabel(isPaused ? 'Resume' : 'Pause')
-          .setEmoji(isPaused ? STATUS_BUTTON_EMOJIS.resume : STATUS_BUTTON_EMOJIS.pause)
-          .setStyle(isPaused ? ButtonStyle.Success : ButtonStyle.Danger),
-        new ButtonBuilder()
-          .setCustomId('playerlist_button')
-          .setLabel('Players')
-          .setEmoji(STATUS_BUTTON_EMOJIS.players)
-          .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
           .setCustomId('seen_button')
           .setLabel('Seen')
@@ -3745,15 +3851,31 @@ function createStatusButtons() {
           .setCustomId('playtime_button')
           .setLabel('Playtime')
           .setEmoji(STATUS_BUTTON_EMOJIS.playtime)
-          .setStyle(ButtonStyle.Secondary)
-      ),
-    new ActionRowBuilder()
-      .addComponents(
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('playerlist_button')
+          .setLabel('Players')
+          .setEmoji(STATUS_BUTTON_EMOJIS.players)
+          .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
           .setCustomId('mentions_button')
           .setLabel('Mentions')
           .setEmoji(STATUS_BUTTON_EMOJIS.mentions)
-          .setStyle(ButtonStyle.Secondary),
+          .setStyle(ButtonStyle.Secondary)
+      )
+  ];
+}
+
+function createAdminPanelButtons() {
+  const isPaused = !shouldReconnect;
+  return [
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('pause_resume_button')
+          .setLabel(isPaused ? 'Resume' : 'Pause')
+          .setEmoji(isPaused ? STATUS_BUTTON_EMOJIS.resume : STATUS_BUTTON_EMOJIS.pause)
+          .setStyle(isPaused ? ButtonStyle.Success : ButtonStyle.Danger),
         new ButtonBuilder()
           .setCustomId('drop_button')
           .setLabel('Drop')
@@ -3774,8 +3896,95 @@ function createStatusButtons() {
           .setLabel('Obsidian')
           .setEmoji(STATUS_BUTTON_EMOJIS.obsidian)
           .setStyle((farm.getStatus().enabled || obsidianStats.desiredEnabled) ? ButtonStyle.Success : ButtonStyle.Secondary)
+      ),
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('admin_danger_radius')
+          .setLabel(`Danger ${runtimeSettings.dangerRadius}`)
+          .setEmoji(STATUS_BUTTON_EMOJIS.players)
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('admin_whitelist_mode')
+          .setLabel(`Whitelist ${runtimeSettings.whitelistMode ? 'On' : 'Off'}`)
+          .setEmoji(STATUS_BUTTON_EMOJIS.whitelist)
+          .setStyle(runtimeSettings.whitelistMode ? ButtonStyle.Success : ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('admin_message_cooldown')
+          .setLabel(`Cooldown ${Math.round(runtimeSettings.messageCooldownMs / 1000)}s`)
+          .setEmoji(STATUS_BUTTON_EMOJIS.playtime)
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('admin_auto_eat_toggle')
+          .setLabel(`Auto-eat ${runtimeSettings.autoEat ? 'On' : 'Off'}`)
+          .setEmoji(STATUS_EMOJIS.food)
+          .setStyle(runtimeSettings.autoEat ? ButtonStyle.Success : ButtonStyle.Secondary)
+      ),
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('admin_gemini_toggle')
+          .setLabel(`Gemini ${runtimeSettings.geminiEnabled ? 'On' : 'Off'}`)
+          .setEmoji(UI_BUTTON_EMOJIS.enchantingTable)
+          .setStyle(runtimeSettings.geminiEnabled ? ButtonStyle.Success : ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('admin_child_public_toggle')
+          .setLabel(`Child public ${runtimeSettings.childPublicSpeech ? 'On' : 'Off'}`)
+          .setEmoji(UI_BUTTON_EMOJIS.cat)
+          .setStyle(runtimeSettings.childPublicSpeech ? ButtonStyle.Success : ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('admin_child_status')
+          .setLabel('Child status')
+          .setEmoji(UI_BUTTON_EMOJIS.bookYellow)
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('admin_panel_refresh')
+          .setLabel('Refresh')
+          .setEmoji(STATUS_EMOJIS.update)
+          .setStyle(ButtonStyle.Secondary)
       )
   ];
+}
+
+function buildAdminPanelEmbed() {
+  const farmStatus = farm.getStatus();
+  const childStatus = growingChild?.getStatus();
+  return {
+    title: 'Admin Panel',
+    description: [
+      `Minecraft: **${bot?.entity ? 'Online' : shouldReconnect ? 'Reconnecting' : 'Paused'}**`,
+      `Danger radius: **${runtimeSettings.dangerRadius} blocks**`,
+      `Whitelist danger mode: **${runtimeSettings.whitelistMode ? 'On' : 'Off'}**`,
+      `Message cooldown: **${Math.round(runtimeSettings.messageCooldownMs / 1000)}s**`,
+      `Auto-eat: **${runtimeSettings.autoEat ? 'On' : 'Off'}**`,
+      `Gemini: **${runtimeSettings.geminiEnabled ? 'On' : 'Off'}**`,
+      `Child public speech: **${runtimeSettings.childPublicSpeech ? 'On' : 'Off'}**`,
+      `Growing Child: **${childStatus?.enabled ? 'Enabled' : 'Disabled'}**`,
+      `Obsidian: **${farmStatus.enabled || obsidianStats.desiredEnabled ? 'Enabled' : 'Disabled'}**`
+    ].join('\n'),
+    color: bot?.entity ? 3447003 : shouldReconnect ? 16776960 : 8421504,
+    timestamp: new Date()
+  };
+}
+
+function createStatusButtons() {
+  return createServerStatusButtons();
+}
+
+function isAdminPanelCustomId(customId = '') {
+  return customId === 'pause_resume_button' ||
+    customId === 'drop_button' ||
+    customId === 'whitelist_button' ||
+    customId === 'chat_setting_button' ||
+    customId === 'obsidian_farm_button' ||
+    customId === 'admin_panel_refresh' ||
+    customId === 'admin_danger_radius' ||
+    customId === 'admin_whitelist_mode' ||
+    customId === 'admin_message_cooldown' ||
+    customId === 'admin_auto_eat_toggle' ||
+    customId === 'admin_gemini_toggle' ||
+    customId === 'admin_child_public_toggle' ||
+    customId === 'admin_child_status';
 }
 
 // Function to update server status message
@@ -4376,6 +4585,7 @@ function startFoodMonitor() {
   let warningSent = false;
   foodMonitorInterval = setInterval(async () => {
     if (!bot || bot.food === undefined) return;
+    if (!runtimeSettings.autoEat) return;
 
     const hasFood = bot.inventory.items().some(item =>
       ['bread', 'apple', 'beef', 'golden_carrot'].some(n => item.name.includes(n))
@@ -4420,6 +4630,7 @@ async function eatFood() {
 function startNearbyPlayerScanner() {
   playerScannerInterval = setInterval(() => {
     if (!bot || !bot.entity) return;
+    if (!runtimeSettings.whitelistMode) return;
 
     for (const entity of Object.values(bot.entities)) {
       if (!entity || entity.type !== 'player') continue;
@@ -4428,7 +4639,7 @@ function startNearbyPlayerScanner() {
       // Non-whitelisted player
       if (!entity.position || !bot.entity.position) continue;
       const distance = bot.entity.position.distanceTo(entity.position);
-      if (distance <= 300) {
+      if (distance <= runtimeSettings.dangerRadius) {
         // Enemy detected!
         const roundedDistance = Math.round(distance);
         console.log(`[Bot] Enemy detected: ${entity.username} (${roundedDistance} blocks)`);
@@ -4818,6 +5029,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
     if (interaction.channelId !== DISCORD_CHANNEL_ID) {
       // Allow dialog buttons and select menus in their own channels
       if (!(interaction.isButton() && (interaction.customId?.startsWith('delete_dialog_') || interaction.customId?.startsWith('set_ttl_') || interaction.customId?.startsWith('claim_whisper_'))) && 
+          !(interaction.isButton() && isAdminPanelCustomId(interaction.customId) && interaction.user.id === DISCORD_OWNER_ID) &&
           !(interaction.isStringSelectMenu() && interaction.customId?.startsWith('set_ttl_select_'))) {
         return;
       }
@@ -4825,6 +5037,69 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
 
     if (interaction.isButton()) {
+        if (isAdminPanelCustomId(interaction.customId) && interaction.user.id !== DISCORD_OWNER_ID) {
+          await interaction.reply({
+            content: 'Only the owner can use admin controls.',
+            flags: MessageFlags.Ephemeral
+          });
+          return;
+        }
+        if (interaction.customId === 'admin_panel_refresh') {
+          await interaction.deferUpdate();
+          await updateAdminPanel();
+          return;
+        }
+        if (interaction.customId === 'admin_danger_radius') {
+          await interaction.deferUpdate();
+          const currentIndex = DANGER_RADIUS_OPTIONS.indexOf(runtimeSettings.dangerRadius);
+          runtimeSettings.dangerRadius = DANGER_RADIUS_OPTIONS[(currentIndex + 1) % DANGER_RADIUS_OPTIONS.length];
+          await persistRuntimeSetting('dangerRadius');
+          await updateAdminPanel();
+          return;
+        }
+        if (interaction.customId === 'admin_whitelist_mode') {
+          await interaction.deferUpdate();
+          runtimeSettings.whitelistMode = !runtimeSettings.whitelistMode;
+          await persistRuntimeSetting('whitelistMode');
+          await updateAdminPanel();
+          return;
+        }
+        if (interaction.customId === 'admin_message_cooldown') {
+          await interaction.deferUpdate();
+          const currentIndex = MESSAGE_COOLDOWN_OPTIONS.indexOf(runtimeSettings.messageCooldownMs);
+          runtimeSettings.messageCooldownMs = MESSAGE_COOLDOWN_OPTIONS[(currentIndex + 1) % MESSAGE_COOLDOWN_OPTIONS.length];
+          await persistRuntimeSetting('messageCooldownMs');
+          await updateAdminPanel();
+          return;
+        }
+        if (interaction.customId === 'admin_auto_eat_toggle') {
+          await interaction.deferUpdate();
+          runtimeSettings.autoEat = !runtimeSettings.autoEat;
+          await persistRuntimeSetting('autoEat');
+          await updateAdminPanel();
+          return;
+        }
+        if (interaction.customId === 'admin_gemini_toggle') {
+          await interaction.deferUpdate();
+          runtimeSettings.geminiEnabled = !runtimeSettings.geminiEnabled;
+          await persistRuntimeSetting('geminiEnabled');
+          await updateAdminPanel();
+          return;
+        }
+        if (interaction.customId === 'admin_child_public_toggle') {
+          await interaction.deferUpdate();
+          runtimeSettings.childPublicSpeech = !runtimeSettings.childPublicSpeech;
+          growingChild?.setMinecraftPublicSpeechEnabled(runtimeSettings.childPublicSpeech);
+          await persistRuntimeSetting('childPublicSpeech');
+          await updateAdminPanel();
+          return;
+        }
+        if (interaction.customId === 'admin_child_status') {
+          await interaction.deferReply(interaction.guildId ? { flags: MessageFlags.Ephemeral } : {});
+          await sendGrowingChildStatusDM();
+          await interaction.editReply({ content: 'Growing Child status sent.' });
+          return;
+        }
         if (interaction.customId.startsWith('claim_whisper_')) {
           await interaction.deferReply({ flags: MessageFlags.Ephemeral });
           const mcUsername = interaction.customId.replace('claim_whisper_', '');
@@ -5054,6 +5329,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           resumeBot();
           // Status will be updated automatically when bot spawns
         }
+        updateAdminPanel().catch(() => {});
       } else if (interaction.customId === 'say_button') {
         const modal = new ModalBuilder()
           .setCustomId('say_modal')
