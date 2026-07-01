@@ -28,7 +28,7 @@ const PICKAXE_PRIORITY = [
 const OBSIDIAN_TIMEOUT_MS   = 90_000; // max wait for lava→obsidian
 const CYCLE_PAUSE_MS        = 10;     // yield briefly between cycles
 const INTERACT_SETTLE_MS    = 25;     // settle delay after block interaction
-const CAULDRON_RADIUS_OPTIONS = [4, 5, 6];
+const CAULDRON_RADIUS_OPTIONS = [4, 5, 6, 7, 8];
 const DEFAULT_CAULDRON_DIST = 5;
 const MIN_PICKAXE_REMAINING_PERCENT = 5;
 const FARM_CONFIG_FILE = 'obsidian_farm_config.json';
@@ -78,6 +78,11 @@ const runtime = {
 let worldInteractionQueue = Promise.resolve();
 const pickaxeBlocksMined = new Map();
 let farmCycleSequence = 0;
+const cauldronReachStats = {
+  successMaxDistance: null,
+  failureMinDistance: null,
+  samples: 0
+};
 
 // ── Exported helpers ───────────────────────────────────────────────────────────
 
@@ -1165,6 +1170,35 @@ function getInventoryDebugSummary(bot) {
   return summary;
 }
 
+function recordCauldronReachSample(context, sample) {
+  const distance = Number(sample.distance);
+  if (!Number.isFinite(distance)) return;
+
+  cauldronReachStats.samples++;
+  if (sample.success) {
+    cauldronReachStats.successMaxDistance = cauldronReachStats.successMaxDistance == null
+      ? distance
+      : Math.max(cauldronReachStats.successMaxDistance, distance);
+  } else {
+    cauldronReachStats.failureMinDistance = cauldronReachStats.failureMinDistance == null
+      ? distance
+      : Math.min(cauldronReachStats.failureMinDistance, distance);
+  }
+
+  writeFarmDebug('cauldron_reach_sample', {
+    ...context,
+    ...sample,
+    distance: Number(distance.toFixed(3)),
+    successMaxDistance: cauldronReachStats.successMaxDistance == null
+      ? null
+      : Number(cauldronReachStats.successMaxDistance.toFixed(3)),
+    failureMinDistance: cauldronReachStats.failureMinDistance == null
+      ? null
+      : Number(cauldronReachStats.failureMinDistance.toFixed(3)),
+    samples: cauldronReachStats.samples
+  });
+}
+
 function getMiningDebugState(bot, block, attempt, expectedDigTime, holdMs, face, context = {}) {
   const held = bot.heldItem;
   const effects = Object.values(bot.entity?.effects || {}).map(effect => ({
@@ -1437,18 +1471,6 @@ async function fillBucket(bot, context = {}) {
         });
         break;
       }
-      if (distance > MAX_INTERACT_DISTANCE) {
-        failures.push(`${position}:outside_interact_range_${distance.toFixed(2)}`);
-        writeFarmDebug('cauldron_skipped', {
-          ...context,
-          position: position.toString(),
-          reason: 'outside_interact_range',
-          maxInteractDistance: MAX_INTERACT_DISTANCE,
-          distance: Number(distance.toFixed(2))
-        });
-        break;
-      }
-
       const emptyBucket = bot.inventory.items().find(i => i.name === 'bucket');
       if (!emptyBucket) {
         if (bot.inventory.items().some(i => i.name === 'lava_bucket')) {
@@ -1480,10 +1502,28 @@ async function fillBucket(bot, context = {}) {
         await bot.activateBlock(cauldron);
       } catch (err) {
         failures.push(`${position}:click#${attempt}_${err.message}`);
+        recordCauldronReachSample(context, {
+          success: false,
+          position: position.toString(),
+          attempt,
+          distance,
+          durationMs: Date.now() - attemptStartedAt,
+          error: err.message,
+          currentBlock: bot.blockAt(position)?.name || null,
+          heldItem: bot.heldItem?.name || null
+        });
         continue;
       }
 
       if (await waitForLavaBucket(bot)) {
+        recordCauldronReachSample(context, {
+          success: true,
+          position: position.toString(),
+          attempt,
+          distance,
+          durationMs: Date.now() - attemptStartedAt,
+          currentBlock: bot.blockAt(position)?.name || null
+        });
         writeFarmDebug('cauldron_filled', {
           ...context,
           position: position.toString(),
@@ -1497,6 +1537,15 @@ async function fillBucket(bot, context = {}) {
       }
 
       failures.push(`${position}:no_lava_bucket#${attempt}`);
+      recordCauldronReachSample(context, {
+        success: false,
+        position: position.toString(),
+        attempt,
+        distance,
+        durationMs: Date.now() - attemptStartedAt,
+        currentBlock: bot.blockAt(position)?.name || null,
+        heldItem: bot.heldItem?.name || null
+      });
       writeFarmDebug('cauldron_fill_failed', {
         ...context,
         position: position.toString(),
