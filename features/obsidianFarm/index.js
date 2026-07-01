@@ -77,6 +77,7 @@ const runtime = {
 };
 let worldInteractionQueue = Promise.resolve();
 const pickaxeBlocksMined = new Map();
+let farmCycleSequence = 0;
 
 // ── Exported helpers ───────────────────────────────────────────────────────────
 
@@ -107,12 +108,16 @@ function configure(x, y, z, options = {}) {
     ),
   };
   saveFarmConfig();
+  writeFarmDebug('farm_configured', { config: { ...farm.config } });
 }
 
 function setCauldronRadius(radius) {
   if (!farm.config) return null;
   farm.config.maxCauldronDist = normalizeCauldronRadius(radius);
   saveFarmConfig();
+  writeFarmDebug('cauldron_radius_changed', {
+    maxCauldronDist: farm.config.maxCauldronDist
+  });
   return farm.config.maxCauldronDist;
 }
 
@@ -132,6 +137,7 @@ function resetConfig() {
   try {
     if (fs.existsSync(FARM_CONFIG_FILE)) fs.unlinkSync(FARM_CONFIG_FILE);
   } catch (_) {}
+  writeFarmDebug('farm_config_reset');
 }
 
 /** Load pathfinder plugin into a freshly created bot. Call once from createBot(). */
@@ -815,19 +821,38 @@ async function waitForInventorySupply(bot, predicate, timeoutMs = 2_000) {
   return predicate();
 }
 
-async function ensureFarmSupplies(bot) {
+async function ensureFarmSupplies(bot, context = {}) {
+  const startedAt = Date.now();
   const hasUsablePickaxe = Boolean(findUsablePickaxe(bot, MIN_PICKAXE_REMAINING_PERCENT));
   const hasFood = bot.inventory.items().some(isFoodItem);
   const lowPickaxes = bot.inventory.items().filter(item =>
     PICKAXE_PRIORITY.includes(item.name) &&
     !isPickaxeUsable(bot, item)
   );
+  writeFarmDebug('supply_check_start', {
+    ...context,
+    inventory: getInventoryDebugSummary(bot),
+    hasUsablePickaxe,
+    hasFood,
+    lowPickaxes: lowPickaxes.map(item => ({
+      name: item.name,
+      slot: item.slot,
+      remainingPercent: Number(getRemainingDurabilityPercent(bot, item).toFixed(1))
+    }))
+  });
   // Window swaps mutate Item.slot in place. Preserve each inventory tracking
   // key before a worn pickaxe is moved into the barrel.
   const lowPickaxeTrackingKeys = new Map(
     lowPickaxes.map(item => [item, getPickaxeTrackingKey(item)])
   );
-  if (hasUsablePickaxe && hasFood && lowPickaxes.length === 0) return;
+  if (hasUsablePickaxe && hasFood && lowPickaxes.length === 0) {
+    writeFarmDebug('supply_check_ok', {
+      ...context,
+      durationMs: Date.now() - startedAt,
+      inventory: getInventoryDebugSummary(bot)
+    });
+    return;
+  }
 
   const barrel = findReachableSupplyBarrel(bot);
   if (!barrel) {
@@ -835,11 +860,23 @@ async function ensureFarmSupplies(bot) {
     if (!hasUsablePickaxe) missing.push('pickaxe');
     if (!hasFood) missing.push('food');
     if (lowPickaxes.length > 0) missing.push('barrel access for worn pickaxe deposit');
+    writeFarmDebug('supply_barrel_missing', {
+      ...context,
+      durationMs: Date.now() - startedAt,
+      missing
+    });
     throw createResourceExhaustedError(missing);
   }
 
   ensureInteractionRange(bot, barrel.position.offset(0.5, 0.5, 0.5), 'Supply barrel');
   stopAllMovement(bot);
+  writeFarmDebug('supply_barrel_open_start', {
+    ...context,
+    barrel: barrel.position.toString(),
+    distance: Number(
+      bot.entity.position.distanceTo(barrel.position.offset(0.5, 0.5, 0.5)).toFixed(3)
+    )
+  });
 
   let container = null;
   let pickaxeWasAvailable = false;
@@ -848,6 +885,12 @@ async function ensureFarmSupplies(bot) {
   try {
     await prepareSafeBarrelHand(bot);
     container = await bot.openContainer(barrel);
+    writeFarmDebug('supply_barrel_opened', {
+      ...context,
+      durationMs: Date.now() - startedAt,
+      barrel: barrel.position.toString(),
+      barrelSupplies: summarizeSupplyItems(bot, container.containerItems())
+    });
     let containerItems = container.containerItems();
     let swappedLowPickaxe = null;
 
@@ -860,6 +903,7 @@ async function ensureFarmSupplies(bot) {
           await swapPickaxesInExactSlots(bot, container, pickaxe, swappedLowPickaxe);
           pickaxeChanged = true;
           writeFarmDebug('pickaxe_swapped', {
+            ...context,
             receivedItem: pickaxe.item.name,
             retiredItem: swappedLowPickaxe.name,
             barrelSlot: pickaxe.item.slot,
@@ -874,6 +918,7 @@ async function ensureFarmSupplies(bot) {
           await withdrawPickaxeFromExactSlot(bot, container, pickaxe);
           pickaxeChanged = true;
           writeFarmDebug('supply_withdrawn', {
+            ...context,
             item: pickaxe.item.name,
             count: 1,
             sourceSlot: pickaxe.item.slot,
@@ -906,6 +951,7 @@ async function ensureFarmSupplies(bot) {
         remainingPercent: getRemainingDurabilityPercent(bot, lowPickaxe)
       });
       writeFarmDebug('pickaxe_retired', {
+        ...context,
         item: lowPickaxe.name,
         blocksMined,
         remainingPercent: Number(getRemainingDurabilityPercent(bot, lowPickaxe).toFixed(1)),
@@ -920,6 +966,7 @@ async function ensureFarmSupplies(bot) {
         foodWasAvailable = true;
         await container.withdraw(food.type, food.metadata, food.count, food.nbt);
         writeFarmDebug('supply_withdrawn', {
+          ...context,
           item: food.name,
           count: food.count,
           barrel: barrel.position.toString()
@@ -939,9 +986,18 @@ async function ensureFarmSupplies(bot) {
         barrelError: null
       };
       runtime.onSuppliesChanged(suppliesSnapshot).catch(err => {
-        writeFarmDebug('supply_stats_refresh_failed', { error: err.message });
+        writeFarmDebug('supply_stats_refresh_failed', { ...context, error: err.message });
       });
     }
+  } catch (err) {
+    writeFarmDebug('supply_check_failed', {
+      ...context,
+      durationMs: Date.now() - startedAt,
+      error: err.message,
+      barrel: barrel.position.toString(),
+      inventory: getInventoryDebugSummary(bot)
+    });
+    throw err;
   } finally {
     if (container) {
       try { container.close(); } catch (_) {}
@@ -975,11 +1031,17 @@ async function ensureFarmSupplies(bot) {
     }
     throw createResourceExhaustedError(unavailable);
   }
+
+  writeFarmDebug('supply_check_completed', {
+    ...context,
+    durationMs: Date.now() - startedAt,
+    inventory: getInventoryDebugSummary(bot)
+  });
 }
 
 async function prepareStart(bot) {
   if (!bot?.entity) throw new Error('Bot is offline.');
-  await ensureFarmSupplies(bot);
+  await ensureFarmSupplies(bot, { trigger: 'prepare_start' });
   return inspectSupplyStatus(bot);
 }
 
@@ -1029,7 +1091,61 @@ function writeFarmDebug(event, details = {}) {
   fs.appendFile(FARM_DEBUG_LOG_FILE, `${line}\n`, 'utf8', () => {});
 }
 
-function getMiningDebugState(bot, block, attempt, expectedDigTime, holdMs, face) {
+function setFarmPhase(phase, details = {}) {
+  const previousPhase = farm.phase;
+  farm.phase = phase;
+  writeFarmDebug('phase_changed', {
+    from: previousPhase,
+    to: phase,
+    ...details
+  });
+}
+
+function getBotDebugPosition(bot) {
+  const position = bot.entity?.position;
+  return position
+    ? {
+        x: Number(position.x.toFixed(3)),
+        y: Number(position.y.toFixed(3)),
+        z: Number(position.z.toFixed(3))
+      }
+    : null;
+}
+
+function getInventoryDebugSummary(bot) {
+  const items = typeof bot.inventory?.items === 'function' ? bot.inventory.items() : [];
+  const summary = {
+    buckets: 0,
+    lavaBuckets: 0,
+    food: 0,
+    usablePickaxes: 0,
+    wornPickaxes: 0,
+    bestPickaxe: null,
+    heldItem: bot.heldItem?.name || null
+  };
+
+  for (const item of items) {
+    if (item.name === 'bucket') summary.buckets += item.count;
+    if (item.name === 'lava_bucket') summary.lavaBuckets += item.count;
+    if (isFoodItem(item)) summary.food += item.count;
+    if (PICKAXE_PRIORITY.includes(item.name)) {
+      const remainingPercent = getRemainingDurabilityPercent(bot, item);
+      if (isPickaxeUsable(bot, item)) summary.usablePickaxes++;
+      else summary.wornPickaxes++;
+      if (!summary.bestPickaxe || remainingPercent > summary.bestPickaxe.remainingPercent) {
+        summary.bestPickaxe = {
+          name: item.name,
+          slot: item.slot,
+          remainingPercent: Number(remainingPercent.toFixed(1))
+        };
+      }
+    }
+  }
+
+  return summary;
+}
+
+function getMiningDebugState(bot, block, attempt, expectedDigTime, holdMs, face, context = {}) {
   const held = bot.heldItem;
   const effects = Object.values(bot.entity?.effects || {}).map(effect => ({
     id: effect.id,
@@ -1038,6 +1154,7 @@ function getMiningDebugState(bot, block, attempt, expectedDigTime, holdMs, face)
   }));
 
   return {
+    ...context,
     attempt,
     target: block.position.toString(),
     block: block.name,
@@ -1058,7 +1175,7 @@ function getMiningDebugState(bot, block, attempt, expectedDigTime, holdMs, face)
   };
 }
 
-async function digBlockWithTimeout(bot, block, attempt) {
+async function digBlockWithTimeout(bot, block, attempt, context = {}) {
   const expectedDigTime = typeof bot.digTime === 'function' ? bot.digTime(block) : null;
   if (!Number.isFinite(expectedDigTime)) {
     throw new Error(`Cannot calculate dig time for ${block.name}`);
@@ -1078,7 +1195,7 @@ async function digBlockWithTimeout(bot, block, attempt) {
   const face = Number.isInteger(aimedBlock.face) ? aimedBlock.face : 1;
   const startedAt = Date.now();
   writeFarmDebug('dig_start', {
-    ...getMiningDebugState(bot, block, attempt, expectedDigTime, holdMs, face),
+    ...getMiningDebugState(bot, block, attempt, expectedDigTime, holdMs, face, context),
     measuredManualDigTimeMs: 2_500,
     timingSource: attempt === 1 ? 'manual_server_measurement' : 'manual_server_measurement_with_retry_bonus'
   });
@@ -1090,6 +1207,7 @@ async function digBlockWithTimeout(bot, block, attempt) {
   const serverConfirmation = new Promise(resolve => {
     onBlockUpdate = (_oldBlock, newBlock) => {
       writeFarmDebug('server_block_update', {
+        ...context,
         attempt,
         elapsedMs: Date.now() - startedAt,
         oldBlock: _oldBlock?.name || null,
@@ -1122,6 +1240,7 @@ async function digBlockWithTimeout(bot, block, attempt) {
     if (!farm.enabled) throw new Error('farm_stopped');
 
     writeFarmDebug('dig_finish_sent', {
+      ...context,
       attempt,
       elapsedMs: Date.now() - startedAt,
       reason: firstResult.type === 'server' ? `server_${firstResult.blockName}` : 'hold_timer',
@@ -1148,6 +1267,7 @@ async function digBlockWithTimeout(bot, block, attempt) {
     const resultingBlock = bot.blockAt(block.position)?.name || null;
     if (resultingBlock === 'obsidian') {
       writeFarmDebug('dig_reverted', {
+        ...context,
         attempt,
         elapsedMs: Date.now() - startedAt,
         resultingBlock
@@ -1156,6 +1276,7 @@ async function digBlockWithTimeout(bot, block, attempt) {
     }
 
     writeFarmDebug('dig_confirmed', {
+      ...context,
       attempt,
       elapsedMs: Date.now() - startedAt,
       resultingBlock
@@ -1163,6 +1284,7 @@ async function digBlockWithTimeout(bot, block, attempt) {
   } catch (err) {
     cleanup();
     writeFarmDebug('dig_failed', {
+      ...context,
       attempt,
       elapsedMs: Date.now() - startedAt,
       error: err.message,
@@ -1239,11 +1361,23 @@ async function waitForLavaPlacement(bot, x, y, z, timeoutMs = LAVA_PLACEMENT_CON
 // ── Phase implementations ──────────────────────────────────────────────────────
 
 /** Phase 1+2: find cauldron and fill empty bucket with lava. */
-async function fillBucket(bot) {
+async function fillBucket(bot, context = {}) {
+  const startedAt = Date.now();
   const { maxCauldronDist } = farm.config;
 
-  farm.phase = 'seeking';
+  setFarmPhase('seeking', context);
+  writeFarmDebug('cauldron_search_start', {
+    ...context,
+    maxCauldronDist,
+    botPosition: getBotDebugPosition(bot),
+    inventory: getInventoryDebugSummary(bot)
+  });
   const cauldronPositions = findLavaCauldrons(bot, maxCauldronDist);
+  writeFarmDebug('cauldron_search_completed', {
+    ...context,
+    durationMs: Date.now() - startedAt,
+    candidates: cauldronPositions.map(position => position.toString())
+  });
   if (cauldronPositions.length === 0) {
     throw new Error(
       `No lava cauldron found within ${maxCauldronDist} blocks. ` +
@@ -1251,7 +1385,7 @@ async function fillBucket(bot) {
     );
   }
 
-  farm.phase = 'filling';
+  setFarmPhase('filling', context);
   stopAllMovement(bot);
   const failures = [];
 
@@ -1263,6 +1397,7 @@ async function fillBucket(bot) {
       if (!isModernLavaCauldron && !isLegacyLavaCauldron) {
         failures.push(`${position}:became_${cauldron?.name || 'unknown'}`);
         writeFarmDebug('cauldron_skipped', {
+          ...context,
           position: position.toString(),
           reason: `became_${cauldron?.name || 'unknown'}`
         });
@@ -1274,6 +1409,7 @@ async function fillBucket(bot) {
       if (!Number.isFinite(distance) || distance > maxCauldronDist) {
         failures.push(`${position}:outside_configured_radius_${Number.isFinite(distance) ? distance.toFixed(2) : 'unknown'}`);
         writeFarmDebug('cauldron_skipped', {
+          ...context,
           position: position.toString(),
           reason: 'outside_configured_radius',
           configuredRadius: maxCauldronDist,
@@ -1284,10 +1420,26 @@ async function fillBucket(bot) {
 
       const emptyBucket = bot.inventory.items().find(i => i.name === 'bucket');
       if (!emptyBucket) {
-        if (bot.inventory.items().some(i => i.name === 'lava_bucket')) return;
+        if (bot.inventory.items().some(i => i.name === 'lava_bucket')) {
+          writeFarmDebug('bucket_fill_skipped', {
+            ...context,
+            reason: 'already_has_lava_bucket',
+            durationMs: Date.now() - startedAt,
+            inventory: getInventoryDebugSummary(bot)
+          });
+          return;
+        }
         throw new Error('No empty bucket in inventory');
       }
 
+      const attemptStartedAt = Date.now();
+      writeFarmDebug('cauldron_fill_attempt_start', {
+        ...context,
+        position: position.toString(),
+        attempt,
+        distance: Number(distance.toFixed(3)),
+        heldItem: bot.heldItem?.name || null
+      });
       await bot.equip(emptyBucket, 'hand');
       await waitForHeldItem(bot, 'bucket');
       await bot.lookAt(clickPoint, true);
@@ -1302,17 +1454,23 @@ async function fillBucket(bot) {
 
       if (await waitForLavaBucket(bot)) {
         writeFarmDebug('cauldron_filled', {
+          ...context,
           position: position.toString(),
           attempt,
-          candidates: cauldronPositions.length
+          candidates: cauldronPositions.length,
+          attemptDurationMs: Date.now() - attemptStartedAt,
+          durationMs: Date.now() - startedAt,
+          inventory: getInventoryDebugSummary(bot)
         });
         return;
       }
 
       failures.push(`${position}:no_lava_bucket#${attempt}`);
       writeFarmDebug('cauldron_fill_failed', {
+        ...context,
         position: position.toString(),
         attempt,
+        attemptDurationMs: Date.now() - attemptStartedAt,
         currentBlock: bot.blockAt(position)?.name || null,
         heldItem: bot.heldItem?.name || null
       });
@@ -1326,18 +1484,30 @@ async function fillBucket(bot) {
 }
 
 /** Phase 3+4: navigate to target, place lava. */
-async function pourLava(bot, targetPos) {
+async function pourLava(bot, targetPos, context = {}) {
+  const startedAt = Date.now();
   const { x, y, z } = targetPos;
 
-  farm.phase = 'navigating';
+  setFarmPhase('navigating', context);
   stopAllMovement(bot);
   ensureInteractionRange(bot, new Vec3(x + 0.5, y + 0.5, z + 0.5), 'Lava placement');
 
-  farm.phase = 'pouring';
+  setFarmPhase('pouring', context);
+  writeFarmDebug('lava_place_start', {
+    ...context,
+    target: targetPos.toString(),
+    botPosition: getBotDebugPosition(bot),
+    inventory: getInventoryDebugSummary(bot)
+  });
   const lavaBucket = bot.inventory.items().find(i => i.name === 'lava_bucket');
   if (!lavaBucket) throw new Error('Lava bucket disappeared before pouring');
 
   const targetBlock = getKnownBlockAt(bot, targetPos, 'lava placement target');
+  writeFarmDebug('lava_place_target_checked', {
+    ...context,
+    target: targetPos.toString(),
+    targetBlock: targetBlock?.name || null
+  });
   if (!isReplaceableForLava(targetBlock) && targetBlock.name !== 'lava') {
     throw new Error(`Cannot place lava at (${x}, ${y}, ${z}); target contains ${targetBlock.name}`);
   }
@@ -1358,6 +1528,13 @@ async function pourLava(bot, targetPos) {
     ref.block.boundingBox !== 'block' ||
     !ref.block.position.plus(ref.face).equals(targetPos)
   ) {
+    writeFarmDebug('lava_place_anchor_failed', {
+      ...context,
+      target: targetPos.toString(),
+      anchor: new Vec3(x + 1, y, z).toString(),
+      anchorBlock: ref.block?.name || null,
+      boundingBox: ref.block?.boundingBox || null
+    });
     throw createPlacementSafetyError(
       `Required smooth_stone anchor is missing at (${x + 1}, ${y}, ${z}); refusing bucket use.`
     );
@@ -1366,6 +1543,13 @@ async function pourLava(bot, targetPos) {
   const cursor = getFaceCursor(ref.face);
   const hitPoint = ref.block.position.offset(cursor.x, cursor.y, cursor.z);
   const clickDistance = bot.entity?.position?.distanceTo(hitPoint);
+  writeFarmDebug('lava_place_anchor_checked', {
+    ...context,
+    target: targetPos.toString(),
+    anchor: ref.block.position.toString(),
+    face: ref.face.toString(),
+    clickDistance: Number.isFinite(clickDistance) ? Number(clickDistance.toFixed(3)) : null
+  });
   if (!Number.isFinite(clickDistance) || clickDistance > MAX_INTERACT_DISTANCE) {
     throw createPlacementSafetyError(
       `Required smooth_stone west face is out of reach for target (${x}, ${y}, ${z}).`
@@ -1391,6 +1575,11 @@ async function pourLava(bot, targetPos) {
   // action and deliberately no retry or second anchor after packet send.
   let placementError = null;
   try {
+    writeFarmDebug('lava_place_packet_start', {
+      ...context,
+      target: targetPos.toString(),
+      anchor: ref.block.position.toString()
+    });
     bot.setControlState('sneak', true);
     await sleep(50);
     await useBucketOnFace(bot, ref.block, ref.face, targetPos);
@@ -1401,6 +1590,12 @@ async function pourLava(bot, targetPos) {
   }
 
   if (placementError) {
+    writeFarmDebug('lava_place_packet_failed', {
+      ...context,
+      target: targetPos.toString(),
+      durationMs: Date.now() - startedAt,
+      error: placementError.message
+    });
     throw createPlacementSafetyError(
       `Verified placement packet failed for (${x}, ${y}, ${z}): ${placementError.message}`
     );
@@ -1408,6 +1603,7 @@ async function pourLava(bot, targetPos) {
 
   if (!await waitForLavaPlacement(bot, x, y, z)) {
     writeFarmDebug('safe_placement_unconfirmed', {
+      ...context,
       target: targetPos.toString(),
       anchor: ref.block.position.toString(),
       face: ref.face.toString(),
@@ -1421,36 +1617,98 @@ async function pourLava(bot, targetPos) {
   }
 
   await sleep(INTERACT_SETTLE_MS);
+  writeFarmDebug('lava_place_confirmed', {
+    ...context,
+    target: targetPos.toString(),
+    targetBlock: bot.blockAt(targetPos)?.name || null,
+    durationMs: Date.now() - startedAt,
+    inventory: getInventoryDebugSummary(bot)
+  });
 }
 
 /** Phase 5: wait until the exact target block becomes obsidian. */
-async function waitForObsidian(bot, targetPos) {
+async function waitForObsidian(bot, targetPos, context = {}) {
+  const startedAt = Date.now();
   const { x, y, z } = targetPos;
-  farm.phase = 'waiting';
+  setFarmPhase('waiting', context);
+  writeFarmDebug('obsidian_wait_start', {
+    ...context,
+    target: targetPos.toString(),
+    initialBlock: bot.blockAt(new Vec3(x, y, z))?.name || null,
+    timeoutMs: OBSIDIAN_TIMEOUT_MS
+  });
 
   const deadline = Date.now() + OBSIDIAN_TIMEOUT_MS;
+  let nextProgressAt = Date.now() + 5_000;
   while (Date.now() < deadline) {
-    if (!farm.enabled) return null;
+    if (!farm.enabled) {
+      writeFarmDebug('obsidian_wait_stopped', {
+        ...context,
+        target: targetPos.toString(),
+        durationMs: Date.now() - startedAt
+      });
+      return null;
+    }
     const block = bot.blockAt(new Vec3(x, y, z));
-    if (block?.name === 'obsidian') return new Vec3(x, y, z);
+    if (block?.name === 'obsidian') {
+      writeFarmDebug('obsidian_wait_completed', {
+        ...context,
+        target: targetPos.toString(),
+        durationMs: Date.now() - startedAt
+      });
+      return new Vec3(x, y, z);
+    }
+    if (Date.now() >= nextProgressAt) {
+      writeFarmDebug('obsidian_wait_progress', {
+        ...context,
+        target: targetPos.toString(),
+        elapsedMs: Date.now() - startedAt,
+        currentBlock: block?.name || null
+      });
+      nextProgressAt += 5_000;
+    }
     await sleep(25);
   }
+  writeFarmDebug('obsidian_wait_timeout', {
+    ...context,
+    target: targetPos.toString(),
+    durationMs: Date.now() - startedAt,
+    currentBlock: bot.blockAt(new Vec3(x, y, z))?.name || null
+  });
   return null;
 }
 
 /** Phase 6: equip pickaxe and mine the obsidian. */
-async function mineObsidian(bot, targetPos) {
+async function mineObsidian(bot, targetPos, context = {}) {
+  const startedAt = Date.now();
   const { x, y, z } = targetPos;
-  farm.phase = 'mining';
+  setFarmPhase('mining', context);
   stopAllMovement(bot);
   ensureInteractionRange(bot, new Vec3(x + 0.5, y + 0.5, z + 0.5), 'Obsidian mining');
+  writeFarmDebug('mine_start', {
+    ...context,
+    target: targetPos.toString(),
+    botPosition: getBotDebugPosition(bot),
+    inventory: getInventoryDebugSummary(bot)
+  });
 
   const selected = findUsablePickaxe(bot, MIN_PICKAXE_REMAINING_PERCENT);
   if (!selected) {
     const bestPickaxe = findBestPickaxe(bot);
     if (bestPickaxe && !isPickaxeUsable(bot, bestPickaxe.item)) {
+      writeFarmDebug('mine_no_usable_pickaxe', {
+        ...context,
+        target: targetPos.toString(),
+        bestRemainingPercent: Number(bestPickaxe.remainingPercent.toFixed(1)),
+        durationMs: Date.now() - startedAt
+      });
       throw createLowDurabilityError(bestPickaxe.remainingPercent);
     }
+    writeFarmDebug('mine_no_pickaxe', {
+      ...context,
+      target: targetPos.toString(),
+      durationMs: Date.now() - startedAt
+    });
     throw new Error(
       `No usable diamond/netherite pickaxe found with durability >= ${MIN_PICKAXE_REMAINING_PERCENT}%. ` +
       'Waiting for a suitable pickaxe.'
@@ -1464,6 +1722,13 @@ async function mineObsidian(bot, targetPos) {
 
   // Re-check just before mining in case durability info changed after equip.
   const remainingAfterEquip = getRemainingDurabilityPercent(bot, pick);
+  writeFarmDebug('pickaxe_equipped_for_mining', {
+    ...context,
+    item: pick.name,
+    slot: pick.slot,
+    remainingPercent: Number(remainingAfterEquip.toFixed(1)),
+    equipDurationMs: Date.now() - startedAt
+  });
   if (!isPickaxeUsable(bot, pick)) {
     throw createLowDurabilityError(remainingAfterEquip);
   }
@@ -1471,19 +1736,40 @@ async function mineObsidian(bot, targetPos) {
   let mined = false;
   for (let attempt = 1; attempt <= OBSIDIAN_DIG_MAX_ATTEMPTS; attempt++) {
     const block = bot.blockAt(new Vec3(x, y, z));
-    if (!block || block.name !== 'obsidian') return;
+    if (!block || block.name !== 'obsidian') {
+      writeFarmDebug('mine_skipped_target_changed', {
+        ...context,
+        target: targetPos.toString(),
+        currentBlock: block?.name || null,
+        durationMs: Date.now() - startedAt
+      });
+      return;
+    }
 
     if (typeof bot.canDigBlock === 'function' && !bot.canDigBlock(block)) {
+      writeFarmDebug('mine_cannot_dig', {
+        ...context,
+        target: targetPos.toString(),
+        currentBlock: block.name,
+        durationMs: Date.now() - startedAt
+      });
       throw new Error(`Cannot dig obsidian at (${x}, ${y}, ${z}). Move closer or clear line of sight.`);
     }
 
     try {
-      await digBlockWithTimeout(bot, block, attempt);
+      await digBlockWithTimeout(bot, block, attempt, context);
       mined = true;
       break;
     } catch (err) {
       if (err.message === 'farm_stopped') return;
       if (err.message !== 'server_did_not_confirm_break') throw err;
+      writeFarmDebug('mine_retry_needed', {
+        ...context,
+        target: targetPos.toString(),
+        attempt,
+        durationMs: Date.now() - startedAt,
+        currentBlock: bot.blockAt(new Vec3(x, y, z))?.name || null
+      });
     }
 
     if (attempt === OBSIDIAN_DIG_MAX_ATTEMPTS) {
@@ -1500,6 +1786,7 @@ async function mineObsidian(bot, targetPos) {
   const remainingAfterDig = getRemainingDurabilityPercent(bot, pick);
   if (!isPickaxeUsable(bot, pick)) {
     writeFarmDebug('pickaxe_below_threshold', {
+      ...context,
       item: pick.name,
       remainingPercent: Number(remainingAfterDig.toFixed(1))
     });
@@ -1517,15 +1804,27 @@ async function mineObsidian(bot, targetPos) {
     try {
       await runtime.onMined();
     } catch (err) {
-      writeFarmDebug('stats_update_failed', { error: err.message });
+      writeFarmDebug('stats_update_failed', { ...context, error: err.message });
     }
+    writeFarmDebug('mine_completed', {
+      ...context,
+      target: targetPos.toString(),
+      durationMs: Date.now() - startedAt,
+      cyclesCompleted: farm.cyclesCompleted,
+      pickaxe: pick.name,
+      remainingPercent: Number(remainingAfterDig.toFixed(1))
+    });
   }
 }
 
 // ── Main loop ──────────────────────────────────────────────────────────────────
 
-async function runCycle(bot, notify) {
-  await ensureFarmSupplies(bot);
+async function runCycle(bot, notify, context = {}) {
+  writeFarmDebug('cycle_action_start', {
+    ...context,
+    action: 'ensure_supplies'
+  });
+  await ensureFarmSupplies(bot, context);
 
   if (!farm.config) throw new Error('Farm not configured — no target coordinates');
 
@@ -1533,11 +1832,28 @@ async function runCycle(bot, notify) {
   const { x, y, z } = targetPos;
   let targetBlock = getKnownBlockAt(bot, targetPos, 'obsidian farm target');
   const hasLavaBucket = bot.inventory.items().some(i => i.name === 'lava_bucket');
+  writeFarmDebug('cycle_target_checked', {
+    ...context,
+    target: targetPos.toString(),
+    targetBlock: targetBlock?.name || null,
+    hasLavaBucket,
+    inventory: getInventoryDebugSummary(bot)
+  });
 
   // Always clear pre-existing obsidian at the exact configured coordinates before touching buckets.
   if (targetBlock?.name === 'obsidian') {
-    await mineObsidian(bot, targetPos);
+    writeFarmDebug('cycle_action_start', {
+      ...context,
+      action: 'clear_existing_obsidian',
+      target: targetPos.toString()
+    });
+    await mineObsidian(bot, targetPos, { ...context, reason: 'clear_existing_obsidian' });
     targetBlock = getKnownBlockAt(bot, targetPos, 'obsidian farm target after mining');
+    writeFarmDebug('cycle_target_rechecked', {
+      ...context,
+      target: targetPos.toString(),
+      targetBlock: targetBlock?.name || null
+    });
   }
 
   if (!isReplaceableForLava(targetBlock) && targetBlock.name !== 'lava') {
@@ -1550,30 +1866,73 @@ async function runCycle(bot, notify) {
   // If lava is already at target, skip fill/pour and only wait for conversion.
   if (targetBlock?.name !== 'lava') {
     if (!hasLavaBucket) {
-      await fillBucket(bot);
+      writeFarmDebug('cycle_action_start', {
+        ...context,
+        action: 'fill_bucket'
+      });
+      await fillBucket(bot, context);
+    } else {
+      writeFarmDebug('bucket_fill_skipped', {
+        ...context,
+        reason: 'already_has_lava_bucket',
+        inventory: getInventoryDebugSummary(bot)
+      });
     }
-    await pourLava(bot, targetPos);
+    writeFarmDebug('cycle_action_start', {
+      ...context,
+      action: 'pour_lava',
+      target: targetPos.toString()
+    });
+    await pourLava(bot, targetPos, context);
+  } else {
+    writeFarmDebug('lava_place_skipped', {
+      ...context,
+      reason: 'target_already_lava',
+      target: targetPos.toString()
+    });
   }
 
-  const obsidianPos = await waitForObsidian(bot, targetPos);
+  writeFarmDebug('cycle_action_start', {
+    ...context,
+    action: 'wait_for_obsidian',
+    target: targetPos.toString()
+  });
+  const obsidianPos = await waitForObsidian(bot, targetPos, context);
   if (!obsidianPos) {
     if (!farm.enabled) return;
     throw new Error('Lava did not convert to obsidian within 90s. Continuing to search and retry.');
   }
 
-  await mineObsidian(bot, obsidianPos);
+  writeFarmDebug('cycle_action_start', {
+    ...context,
+    action: 'mine_obsidian',
+    target: obsidianPos.toString()
+  });
+  await mineObsidian(bot, obsidianPos, context);
 }
 
 async function persistentLoop(bot, notify) {
   if (!farm.enabled) return;
   let retryDelay = CYCLE_PAUSE_MS;
   const cycleStartedAt = Date.now();
+  const cycleId = ++farmCycleSequence;
+  const context = {
+    cycleId,
+    startedCyclesCompleted: farm.cyclesCompleted
+  };
+  writeFarmDebug('cycle_started', {
+    ...context,
+    config: farm.config ? { ...farm.config } : null,
+    botPosition: getBotDebugPosition(bot),
+    inventory: getInventoryDebugSummary(bot)
+  });
 
   try {
     // Refresh/barrel inspection cannot interleave with any part of a farm cycle.
-    await withWorldInteractionLock(() => runCycle(bot, () => {}));
+    await withWorldInteractionLock(() => runCycle(bot, () => {}, context));
     farm.lastErrorMessage = null;
     writeFarmDebug('cycle_completed', {
+      ...context,
       durationMs: Date.now() - cycleStartedAt,
       cyclesCompleted: farm.cyclesCompleted
     });
@@ -1592,7 +1951,10 @@ async function persistentLoop(bot, notify) {
     writeFarmDebug(
       err.code === PLACEMENT_RECHECK_CODE ? 'placement_state_recheck' : 'cycle_retry',
       {
+        ...context,
         error: err.message,
+        errorCode: err.code || null,
+        phase: farm.phase,
         retryInMs: retryDelay
       }
     );
@@ -1610,35 +1972,58 @@ async function persistentLoop(bot, notify) {
  */
 function start(bot, notify) {
   if (farm.enabled) {
+    writeFarmDebug('farm_start_skipped', { reason: 'already_enabled' });
     return;
   }
   if (!bot) {
+    writeFarmDebug('farm_start_skipped', { reason: 'missing_bot' });
     return;
   }
   if (!bot.pathfinder) {
+    writeFarmDebug('farm_start_skipped', { reason: 'missing_pathfinder' });
     return;
   }
   if (!farm.config) {
+    writeFarmDebug('farm_start_skipped', { reason: 'missing_config' });
     return;
   }
 
   farm.enabled         = true;
   farm.cyclesCompleted = 0;
   farm.lastErrorMessage = null;
+  writeFarmDebug('farm_started', {
+    config: { ...farm.config },
+    botPosition: getBotDebugPosition(bot),
+    inventory: getInventoryDebugSummary(bot)
+  });
   persistentLoop(bot, notify);
 }
 
 function resume(bot, notify) {
-  if (farm.enabled || !bot || !farm.config) return false;
+  if (farm.enabled || !bot || !farm.config) {
+    writeFarmDebug('farm_resume_skipped', {
+      reason: farm.enabled ? 'already_enabled' : (!bot ? 'missing_bot' : 'missing_config')
+    });
+    return false;
+  }
   farm.enabled = true;
   farm.lastErrorMessage = null;
+  writeFarmDebug('farm_resumed', {
+    config: { ...farm.config },
+    botPosition: getBotDebugPosition(bot),
+    inventory: getInventoryDebugSummary(bot)
+  });
   persistentLoop(bot, notify);
   return true;
 }
 
 function suspend() {
+  writeFarmDebug('farm_suspended', {
+    phase: farm.phase,
+    cyclesCompleted: farm.cyclesCompleted
+  });
   farm.enabled = false;
-  farm.phase = 'idle';
+  setFarmPhase('idle');
   if (farm.loopHandle) {
     clearTimeout(farm.loopHandle);
     farm.loopHandle = null;
@@ -1650,8 +2035,12 @@ function suspend() {
  * @param {Function|null} notify - pass null to stop silently
  */
 function stop(notify) {
+  writeFarmDebug('farm_stopped', {
+    phase: farm.phase,
+    cyclesCompleted: farm.cyclesCompleted
+  });
   farm.enabled = false;
-  farm.phase   = 'idle';
+  setFarmPhase('idle');
   if (farm.loopHandle) {
     clearTimeout(farm.loopHandle);
     farm.loopHandle = null;
