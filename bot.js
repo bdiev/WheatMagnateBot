@@ -255,6 +255,14 @@ function getPlayerHeadEmoji(username) {
     STATUS_EMOJIS.players;
 }
 
+function formatPlayerHeadName(username, style = 'code') {
+  const safeUsername = String(username || 'Unknown');
+  const label = style === 'bold'
+    ? `**${safeUsername}**`
+    : `\`${safeUsername}\``;
+  return `${getPlayerHeadEmoji(safeUsername)}\u00A0${label}`;
+}
+
 function createDeleteDMRow() {
   return new ActionRowBuilder().addComponents(
     createDeleteDMButton()
@@ -2120,8 +2128,8 @@ function createObsidianStatsComponents() {
         .setLabel('Reset coordinates')
         .setStyle(ButtonStyle.Danger),
       new ButtonBuilder()
-        .setCustomId('ofstats_download_debug_log')
-        .setLabel('Download log')
+        .setCustomId('ofstats_logs_menu')
+        .setLabel('Logs')
         .setEmoji(UI_BUTTON_EMOJIS.commandBlock)
         .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
@@ -2131,6 +2139,43 @@ function createObsidianStatsComponents() {
         .setStyle(ButtonStyle.Secondary)
     )
   ];
+}
+
+function createObsidianLogsComponents() {
+  const loggingEnabled = farm.getDebugLoggingEnabled?.() !== false;
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('ofstats_toggle_debug_logging')
+        .setLabel(loggingEnabled ? 'Disable logging' : 'Enable logging')
+        .setEmoji(loggingEnabled ? STATUS_BUTTON_EMOJIS.pause : STATUS_BUTTON_EMOJIS.resume)
+        .setStyle(loggingEnabled ? ButtonStyle.Danger : ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId('ofstats_download_debug_log')
+        .setLabel('Download logs')
+        .setEmoji(UI_BUTTON_EMOJIS.commandBlock)
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId('ofstats_logs_back')
+        .setLabel('Back')
+        .setEmoji(UI_BUTTON_EMOJIS.arrowLeftCurved)
+        .setStyle(ButtonStyle.Secondary)
+    )
+  ];
+}
+
+function buildObsidianLogsEmbed() {
+  const loggingEnabled = farm.getDebugLoggingEnabled?.() !== false;
+  return {
+    title: `${FARM_EMOJIS.obsidian} Obsidian Farm Logs`,
+    color: loggingEnabled ? 65280 : 16776960,
+    description: [
+      `Debug logging: **${loggingEnabled ? 'Enabled' : 'Disabled'}**`,
+      `File: \`${OBSIDIAN_FARM_DEBUG_LOG_FILE}\``
+    ].join('\n'),
+    footer: { text: 'Download sends the current log file or its latest tail if it is too large' },
+    timestamp: new Date()
+  };
 }
 
 async function readFileTail(filePath, maxBytes) {
@@ -3094,6 +3139,9 @@ function isExistingAdminPanelMessage(message) {
     'ofstats_toggle_farm',
     'ofstats_detailed',
     'ofstats_reset_coordinates',
+    'ofstats_logs_menu',
+    'ofstats_logs_back',
+    'ofstats_toggle_debug_logging',
     'ofstats_download_debug_log'
   ]);
 }
@@ -3214,7 +3262,13 @@ function rememberBotPublicChatPhrase(message) {
   lastBotPublicChatPhrase = phrase.slice(0, 180);
   lastBotPublicChatEmoji = pickNextBotStatusEmoji();
   saveLastBotPublicChatStatus();
-  updateStatusMessage().catch(() => {});
+  updateStatusMessage({ rotateBotChatEmoji: false }).catch(() => {});
+}
+
+function rotateBotPublicChatStatusEmoji() {
+  if (!lastBotPublicChatPhrase) return;
+  lastBotPublicChatEmoji = pickNextBotStatusEmoji();
+  saveLastBotPublicChatStatus();
 }
 
 function sendMinecraftChat(message, options = {}) {
@@ -4247,10 +4301,10 @@ function buildAdminServerStatusValue() {
   const nearbyPlayers = getNearbyPlayers();
   const nearbyNameEntries = nearbyPlayers
     .map(player => getCanonicalWhitelistUsername(player.username) || player.username)
-    .map(username => `${getPlayerHeadEmoji(username)} \`${username}\``);
+    .map(username => formatPlayerHeadName(username));
   const nearbyNames = formatCompactInlineList(nearbyNameEntries);
   const whitelistOnlineDisplay = formatCompactInlineList(
-    whitelistOnline.map(u => `${getPlayerHeadEmoji(u)} \`${u}\``)
+    whitelistOnline.map(u => formatPlayerHeadName(u))
   );
   const obsidianMined = `${formatCompactCount(obsidianStats.sessionMined)}/${formatCompactCount(obsidianStats.totalMined)}`;
 
@@ -4469,7 +4523,7 @@ function buildNonWhitelistSeenSearchEmbed(query, result) {
       : players
           .map(player => {
             const status = player.is_online ? 'Online' : formatSeenTimestamp(player.last_seen);
-            return `${getPlayerHeadEmoji(player.username)} **${player.username}** - ${status}`;
+            return `${formatPlayerHeadName(player.username, 'bold')} - ${status}`;
           })
           .join('\n');
 
@@ -4492,7 +4546,7 @@ function formatDailyTpsAverages(rows) {
 function formatNearbySightings(rows) {
   if (!rows || rows.length === 0) return 'No recent nearby players.';
   return rows
-    .map(row => `${getPlayerHeadEmoji(row.username)} **${row.username}** - ${row.distance} blocks - ${formatRelativeShort(row.secondsAgo)}`)
+    .map(row => `${formatPlayerHeadName(row.username, 'bold')} - ${row.distance} blocks - ${formatRelativeShort(row.secondsAgo)}`)
     .join('\n');
 }
 
@@ -4510,8 +4564,8 @@ function getAdminPanelStatusSnapshot() {
   const nearbyPlayers = getNearbyPlayers();
   const nearbyNameEntries = nearbyPlayers
     .map(player => getCanonicalWhitelistUsername(player.username) || player.username)
-    .map(username => `${getPlayerHeadEmoji(username)} \`${username}\``);
-  const whitelistOnlineEntries = whitelistOnline.map(username => `${getPlayerHeadEmoji(username)} \`${username}\``);
+    .map(username => formatPlayerHeadName(username));
+  const whitelistOnlineEntries = whitelistOnline.map(username => formatPlayerHeadName(username));
 
   return {
     playerCount,
@@ -4708,7 +4762,7 @@ function isAdminPanelSelectCustomId(customId = '') {
 }
 
 // Function to update server status message
-async function updateStatusMessage() {
+async function updateStatusMessage({ rotateBotChatEmoji = true } = {}) {
   if (!statusMessage) {
     await ensureStatusMessage();
     if (!statusMessage) return;
@@ -4725,6 +4779,7 @@ async function updateStatusMessage() {
       console.error('[Discord] Failed to update presence:', presenceErr.message);
     }
     await refreshWheatMagnatePlaytimeDisplay();
+    if (rotateBotChatEmoji) rotateBotPublicChatStatusEmoji();
 
     // Allow status updates even if bot is not connected to show offline state
     const description = `${getStatusDescription()}\n\n${getLastBotPublicChatStatusLine()}`;
@@ -5687,6 +5742,57 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       return;
     }
 
+    if (interaction.isButton() && interaction.customId === 'ofstats_logs_menu') {
+      if (interaction.user.id !== DISCORD_OWNER_ID) {
+        await interaction.reply({
+          content: 'Only the owner can view obsidian farm logs.',
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+
+      await interaction.update({
+        embeds: [buildObsidianLogsEmbed()],
+        components: createObsidianLogsComponents()
+      });
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId === 'ofstats_logs_back') {
+      if (interaction.user.id !== DISCORD_OWNER_ID) {
+        await interaction.reply({
+          content: 'Only the owner can view obsidian farm statistics.',
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+
+      const updater = obsidianStatsUpdaters.get(interaction.channelId);
+      await interaction.update({
+        embeds: [await buildObsidianStatsEmbed(updater?.supplies || null)],
+        components: createObsidianStatsComponents()
+      });
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId === 'ofstats_toggle_debug_logging') {
+      if (interaction.user.id !== DISCORD_OWNER_ID) {
+        await interaction.reply({
+          content: 'Only the owner can change obsidian farm logging.',
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+
+      const nextEnabled = !(farm.getDebugLoggingEnabled?.() !== false);
+      farm.setDebugLoggingEnabled?.(nextEnabled);
+      await interaction.update({
+        embeds: [buildObsidianLogsEmbed()],
+        components: createObsidianLogsComponents()
+      });
+      return;
+    }
+
     if (interaction.isButton() && interaction.customId === 'ofstats_download_debug_log') {
       if (interaction.user.id !== DISCORD_OWNER_ID) {
         await interaction.reply({
@@ -6580,14 +6686,14 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         
         for (const player of activityData.players) {
           const timeStr = formatTimeDiff(player.last_seen);
-          const entry = `${getPlayerHeadEmoji(player.username)} **${player.username}** - ${timeStr}`;
+          const entry = `${formatPlayerHeadName(player.username, 'bold')} - ${timeStr}`;
 
           if (player.is_online) {
             onlinePlayers.push(entry);
           } else if (player.last_seen) {
             offlinePlayers.push(entry);
           } else {
-            offlinePlayers.push(`${getPlayerHeadEmoji(player.username)} **${player.username}** - Never seen`);
+            offlinePlayers.push(`${formatPlayerHeadName(player.username, 'bold')} - Never seen`);
           }
         }
         
@@ -6633,14 +6739,14 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             
             for (const player of updatedData.players) {
               const timeStr = formatTimeDiff(player.last_seen);
-              const entry = `${getPlayerHeadEmoji(player.username)} **${player.username}** - ${timeStr}`;
+              const entry = `${formatPlayerHeadName(player.username, 'bold')} - ${timeStr}`;
 
               if (player.is_online) {
                 onlinePlayersUpdated.push(entry);
               } else if (player.last_seen) {
                 offlinePlayersUpdated.push(entry);
               } else {
-                offlinePlayersUpdated.push(`${getPlayerHeadEmoji(player.username)} **${player.username}** - Never seen`);
+                offlinePlayersUpdated.push(`${formatPlayerHeadName(player.username, 'bold')} - Never seen`);
               }
             }
             
