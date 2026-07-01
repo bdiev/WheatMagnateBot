@@ -1437,6 +1437,17 @@ async function fillBucket(bot, context = {}) {
         });
         break;
       }
+      if (distance > MAX_INTERACT_DISTANCE) {
+        failures.push(`${position}:outside_interact_range_${distance.toFixed(2)}`);
+        writeFarmDebug('cauldron_skipped', {
+          ...context,
+          position: position.toString(),
+          reason: 'outside_interact_range',
+          maxInteractDistance: MAX_INTERACT_DISTANCE,
+          distance: Number(distance.toFixed(2))
+        });
+        break;
+      }
 
       const emptyBucket = bot.inventory.items().find(i => i.name === 'bucket');
       if (!emptyBucket) {
