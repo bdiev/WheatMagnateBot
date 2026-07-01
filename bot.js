@@ -4389,11 +4389,36 @@ function formatDailyTpsAverages(rows) {
 function formatNearbySightings(rows) {
   if (!rows || rows.length === 0) return 'No recent nearby players.';
   return rows
-    .map(row => `${getPlayerHeadEmoji(row.username)} **${row.username}** ${row.distance} blocks · ${formatRelativeShort(row.secondsAgo)}`)
+    .map(row => `${getPlayerHeadEmoji(row.username)} **${row.username}** - ${row.distance} blocks - ${formatRelativeShort(row.secondsAgo)}`)
     .join('\n');
-  return rows
-    .map(row => `**${row.username}** ${row.distance} blocks · ${formatRelativeShort(row.secondsAgo)}`)
-    .join('\n');
+}
+
+function getAdminPanelStatusSnapshot() {
+  if (!bot || !bot.entity) {
+    return null;
+  }
+
+  const playerCount = Object.keys(bot.players || {}).length;
+  const onlinePlayers = Object.values(bot.players || {}).map(p => p.username);
+  const whitelistOnline = [...new Set(onlinePlayers
+    .filter(username => username.toLowerCase() !== bot.username.toLowerCase())
+    .map(getCanonicalWhitelistUsername)
+    .filter(Boolean))];
+  const nearbyPlayers = getNearbyPlayers();
+  const nearbyNameEntries = nearbyPlayers
+    .map(player => getCanonicalWhitelistUsername(player.username) || player.username)
+    .map(username => `${getPlayerHeadEmoji(username)} \`${username}\``);
+  const whitelistOnlineEntries = whitelistOnline.map(username => `${getPlayerHeadEmoji(username)} \`${username}\``);
+
+  return {
+    playerCount,
+    nearbyNames: formatCompactInlineList(nearbyNameEntries, 5),
+    whitelistOnline: formatCompactInlineList(whitelistOnlineEntries, 5),
+    tps: getCurrentTpsDisplay(),
+    food: `${Math.round(bot.food * 2) / 2}/20`,
+    health: `${Math.round(bot.health * 2) / 2}/20`,
+    obsidianMined: `${formatCompactCount(obsidianStats.sessionMined)}/${formatCompactCount(obsidianStats.totalMined)}`
+  };
 }
 
 async function buildAdminPanelEmbed() {
@@ -4402,34 +4427,78 @@ async function buildAdminPanelEmbed() {
     getDailyTpsAverages(7),
     getRecentNearbyPlayerSightings(5)
   ]);
+  const status = getAdminPanelStatusSnapshot();
+  const fields = status
+    ? [
+        {
+          name: 'Overview',
+          value: [
+            getWheatMagnateStatusLine(),
+            `${STATUS_EMOJIS.players} Online: **${status.playerCount}**`,
+            `${STATUS_EMOJIS.tps} TPS: **${status.tps}**`,
+            `${STATUS_EMOJIS.serverPinging} Ping: **${getBotPingDisplay()}**`,
+            `${STATUS_EMOJIS.playtime} Uptime: **${formatDurationShort(Date.now() - startTime)}**`
+          ].join('\n'),
+          inline: false
+        },
+        {
+          name: 'Bot',
+          value: [
+            `${STATUS_EMOJIS.health} Health: **${status.health}**`,
+            `${STATUS_EMOJIS.food} Food: **${status.food}**`,
+            `${FARM_EMOJIS.netheritePickaxe} Obsidian: **${status.obsidianMined}**`
+          ].join('\n'),
+          inline: true
+        },
+        {
+          name: 'Players',
+          value: [
+            `${STATUS_EMOJIS.nearby} Nearby: ${status.nearbyNames}`,
+            `${STATUS_EMOJIS.whitelist} Whitelist: ${status.whitelistOnline}`
+          ].join('\n'),
+          inline: true
+        },
+        {
+          name: '7-Day TPS',
+          value: formatDailyTpsAverages(dailyTps),
+          inline: false
+        },
+        {
+          name: 'Recent Nearby',
+          value: formatNearbySightings(nearbySightings),
+          inline: false
+        }
+      ]
+    : [
+        {
+          name: 'Overview',
+          value: buildAdminServerStatusValue(),
+          inline: false
+        },
+        {
+          name: 'Connection',
+          value: [
+            `${STATUS_EMOJIS.serverPing} Bot **${ADMIN_PANEL_BOT_NAME}** connected to **play.oldfag.org**`,
+            `${STATUS_EMOJIS.serverPinging} Ping: **${getBotPingDisplay()}**`,
+            `${STATUS_EMOJIS.playtime} Uptime: **${formatDurationShort(Date.now() - startTime)}**`
+          ].join('\n'),
+          inline: false
+        },
+        {
+          name: '7-Day TPS',
+          value: formatDailyTpsAverages(dailyTps),
+          inline: false
+        },
+        {
+          name: 'Recent Nearby',
+          value: formatNearbySightings(nearbySightings),
+          inline: false
+        }
+      ];
+
   return {
     title: 'Admin Panel',
-    fields: [
-      {
-        name: 'Server Status',
-        value: buildAdminServerStatusValue(),
-        inline: false
-      },
-      {
-        name: 'Connection',
-        value: [
-          `${STATUS_EMOJIS.serverPing} Bot **${ADMIN_PANEL_BOT_NAME}** connected to **play.oldfag.org**`,
-          `${STATUS_EMOJIS.serverPinging} Ping: **${getBotPingDisplay()}**`,
-          `${STATUS_EMOJIS.playtime} Uptime: **${formatDurationShort(Date.now() - startTime)}**`
-        ].join('\n'),
-        inline: false
-      },
-      {
-        name: 'AVG TPS · Last 7 Days',
-        value: formatDailyTpsAverages(dailyTps),
-        inline: false
-      },
-      {
-        name: 'Recent Nearby Players',
-        value: formatNearbySightings(nearbySightings),
-        inline: false
-      }
-    ],
+    fields,
     color: bot?.entity ? 3447003 : shouldReconnect ? 16776960 : 8421504,
     timestamp: new Date()
   };
