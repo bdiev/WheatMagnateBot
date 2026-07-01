@@ -882,6 +882,7 @@ async function ensureFarmSupplies(bot, context = {}) {
   let pickaxeWasAvailable = false;
   let foodWasAvailable = false;
   let pickaxeChanged = false;
+  let latestSuppliesSnapshot = null;
   try {
     await prepareSafeBarrelHand(bot);
     container = await bot.openContainer(barrel);
@@ -975,7 +976,7 @@ async function ensureFarmSupplies(bot, context = {}) {
     }
 
     if (pickaxeChanged) {
-      const suppliesSnapshot = {
+      latestSuppliesSnapshot = {
         reason: 'pickaxe_changed',
         inventory: summarizeSupplyItems(bot, bot.inventory.items()),
         barrel: {
@@ -985,10 +986,18 @@ async function ensureFarmSupplies(bot, context = {}) {
         },
         barrelError: null
       };
-      runtime.onSuppliesChanged(suppliesSnapshot).catch(err => {
-        writeFarmDebug('supply_stats_refresh_failed', { ...context, error: err.message });
-      });
     }
+
+    latestSuppliesSnapshot = latestSuppliesSnapshot || {
+      reason: 'barrel_opened',
+      inventory: summarizeSupplyItems(bot, bot.inventory.items()),
+      barrel: {
+        position: barrel.position.toString(),
+        distance: bot.entity.position.distanceTo(barrel.position.offset(0.5, 0.5, 0.5)),
+        ...summarizeSupplyItems(bot, container.containerItems())
+      },
+      barrelError: null
+    };
   } catch (err) {
     writeFarmDebug('supply_check_failed', {
       ...context,
@@ -1012,6 +1021,17 @@ async function ensureFarmSupplies(bot, context = {}) {
   }
   if (!hasFood && foodWasAvailable) {
     await waitForInventorySupply(bot, () => bot.inventory.items().some(isFoodItem));
+  }
+
+  if (latestSuppliesSnapshot) {
+    latestSuppliesSnapshot = {
+      ...latestSuppliesSnapshot,
+      inventory: summarizeSupplyItems(bot, bot.inventory.items()),
+      observedAt: new Date().toISOString()
+    };
+    runtime.onSuppliesChanged(latestSuppliesSnapshot).catch(err => {
+      writeFarmDebug('supply_stats_refresh_failed', { ...context, error: err.message });
+    });
   }
 
   const missing = [];

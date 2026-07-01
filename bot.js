@@ -60,8 +60,10 @@ const MINECRAFT_PROFILES_FOLDER = path.resolve(process.env.MINECRAFT_PROFILES_FO
 const BOT_PUBLIC_CHAT_STATUS_FILE = path.resolve('data', 'bot_public_chat_status.json');
 const BOT_CHAT_STATUS_EMOJIS_FILE = path.resolve('data', 'bot_chat_status_emojis.json');
 const OBSIDIAN_STATS_MESSAGES_FILE = path.resolve('data', 'obsidian_stats_messages.json');
+const OBSIDIAN_FARM_DEBUG_LOG_FILE = path.resolve('obsidian_farm_debug.log');
 const OBSIDIAN_STATS_UPDATE_INTERVAL_MS = 30_000;
 const OBSIDIAN_STATS_WATCHDOG_INTERVAL_MS = 5 * 60_000;
+const DISCORD_ATTACHMENT_SAFE_LIMIT_BYTES = 24 * 1024 * 1024;
 const LEGACY_OBSIDIAN_TARGET = Object.freeze({
   x: 3402889,
   y: 68,
@@ -1930,8 +1932,14 @@ async function buildObsidianStatsEmbed(cachedSupplies = null) {
     : null;
   const inventory = farmStatus.supplies?.inventory;
   const barrel = farmStatus.supplies?.barrel;
+  const barrelObservedAt = cachedSupplies?.observedAt
+    ? new Date(cachedSupplies.observedAt)
+    : null;
+  const barrelObservedText = barrelObservedAt && !Number.isNaN(barrelObservedAt.getTime())
+    ? `Last opened: <t:${Math.floor(barrelObservedAt.getTime() / 1000)}:R>\n`
+    : '';
   const barrelDisplay = barrel
-    ? formatAllItems(barrel.allItems)
+    ? `${barrelObservedText}${formatAllItems(barrel.allItems)}`
     : `Unavailable - ${farmStatus.supplies?.barrelError || 'not found'}`;
   const dailyDisplay = dailyStats.length > 0
     ? dailyStats.map(entry => {
@@ -1983,7 +1991,7 @@ async function buildObsidianStatsEmbed(cachedSupplies = null) {
       }
     ],
     footer: {
-      text: 'Auto-updates every 30 seconds'
+      text: 'Stats auto-update; barrel snapshot updates when the bot opens it'
     },
     timestamp: new Date()
   };
@@ -2110,12 +2118,97 @@ function createObsidianStatsComponents() {
         .setLabel('Reset coordinates')
         .setStyle(ButtonStyle.Danger),
       new ButtonBuilder()
+        .setCustomId('ofstats_download_debug_log')
+        .setLabel('Download log')
+        .setEmoji(UI_BUTTON_EMOJIS.commandBlock)
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
         .setCustomId('admin_panel_back')
         .setLabel('Back')
         .setEmoji(UI_BUTTON_EMOJIS.arrowLeftCurved)
         .setStyle(ButtonStyle.Secondary)
     )
   ];
+}
+
+async function readFileTail(filePath, maxBytes) {
+  const handle = await fs.promises.open(filePath, 'r');
+  try {
+    const stat = await handle.stat();
+    const length = Math.min(stat.size, maxBytes);
+    const buffer = Buffer.alloc(length);
+    await handle.read(buffer, 0, length, stat.size - length);
+    return {
+      buffer,
+      originalSize: stat.size,
+      truncated: stat.size > length
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes) || 0;
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  if (value < 1024 * 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
+  return `${(value / 1024 / 1024 / 1024).toFixed(1)} GB`;
+}
+
+async function sendObsidianDebugLog(interaction) {
+  let stat;
+  try {
+    stat = await fs.promises.stat(OBSIDIAN_FARM_DEBUG_LOG_FILE);
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      await interaction.editReply({
+        content:
+          'Obsidian farm debug log has not been created yet.\n' +
+          `Expected path inside the bot container: \`${OBSIDIAN_FARM_DEBUG_LOG_FILE}\``
+      });
+      return;
+    }
+    throw err;
+  }
+
+  if (!stat.isFile()) {
+    await interaction.editReply({
+      content: `Debug log path exists but is not a file: \`${OBSIDIAN_FARM_DEBUG_LOG_FILE}\``
+    });
+    return;
+  }
+
+  const date = new Date().toISOString().replace(/[:.]/g, '-');
+  if (stat.size <= DISCORD_ATTACHMENT_SAFE_LIMIT_BYTES) {
+    await interaction.editReply({
+      content: `Obsidian farm debug log (${formatBytes(stat.size)}).`,
+      files: [{
+        attachment: OBSIDIAN_FARM_DEBUG_LOG_FILE,
+        name: `obsidian_farm_debug_${date}.log`
+      }]
+    });
+    return;
+  }
+
+  const tail = await readFileTail(
+    OBSIDIAN_FARM_DEBUG_LOG_FILE,
+    DISCORD_ATTACHMENT_SAFE_LIMIT_BYTES - 1024
+  );
+  const notice = Buffer.from(
+    `Log was too large for Discord (${formatBytes(tail.originalSize)}). ` +
+    `This file contains the latest ${formatBytes(tail.buffer.length)}.\n\n`,
+    'utf8'
+  );
+  await interaction.editReply({
+    content:
+      `Obsidian farm debug log is too large for one Discord attachment ` +
+      `(${formatBytes(tail.originalSize)}). Sending the latest entries instead.`,
+    files: [{
+      attachment: Buffer.concat([notice, tail.buffer]),
+      name: `obsidian_farm_debug_tail_${date}.log`
+    }]
+  });
 }
 
 function saveObsidianStatsUpdaters() {
@@ -2171,7 +2264,8 @@ function mergeObsidianSupplies(previous, next) {
     barrel: nextHasBarrelItems ? next.barrel : previous?.barrel || next.barrel || null,
     barrelError: nextHasBarrelItems
       ? null
-      : next.barrelError || previous?.barrelError || null
+      : next.barrelError || previous?.barrelError || null,
+    observedAt: next.observedAt || previous?.observedAt || null
   };
 }
 
@@ -2290,9 +2384,10 @@ function startObsidianStatsUpdater(message, supplies) {
 }
 
 async function openObsidianStatsPanel(interaction, { updateMessage = false, deferredUpdate = false } = {}) {
-  const supplies = {
+  const existingUpdater = obsidianStatsUpdaters.get(interaction.channelId);
+  const supplies = existingUpdater?.supplies || {
     barrel: null,
-    barrelError: 'Press Refresh to inspect'
+    barrelError: 'Waiting for bot to open the supply barrel'
   };
   const payload = {
     embeds: [await buildObsidianStatsEmbed(supplies)],
@@ -2335,7 +2430,7 @@ async function restoreObsidianStatsUpdaters() {
       const message = await channel.messages.fetch(record.messageId);
       startObsidianStatsUpdater(message, record.supplies || {
         barrel: null,
-        barrelError: 'Press Refresh to inspect'
+        barrelError: 'Waiting for bot to open the supply barrel'
       });
       const updater = obsidianStatsUpdaters.get(record.channelId);
       if (updater) {
@@ -2991,7 +3086,8 @@ function isExistingAdminPanelMessage(message) {
     'admin_panel_back',
     'ofstats_toggle_farm',
     'ofstats_detailed',
-    'ofstats_reset_coordinates'
+    'ofstats_reset_coordinates',
+    'ofstats_download_debug_log'
   ]);
 }
 
@@ -5561,7 +5657,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
     if (interaction.isButton() && interaction.customId === 'ofstats_refresh') {
       if (interaction.user.id !== DISCORD_OWNER_ID) {
         await interaction.reply({
-          content: 'Only the owner can refresh obsidian farm statistics.',
+          content: 'Only the owner can inspect obsidian farm statistics.',
           flags: MessageFlags.Ephemeral
         });
         return;
@@ -5581,6 +5677,24 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         embeds: [await buildObsidianStatsEmbed(activeUpdater?.supplies || supplies)],
         components: createObsidianStatsComponents()
       });
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId === 'ofstats_download_debug_log') {
+      if (interaction.user.id !== DISCORD_OWNER_ID) {
+        await interaction.reply({
+          content: 'Only the owner can download the obsidian farm debug log.',
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+
+      if (interaction.guildId) {
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      } else {
+        await interaction.deferReply();
+      }
+      await sendObsidianDebugLog(interaction);
       return;
     }
 
@@ -5691,7 +5805,10 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
       const updater = obsidianStatsUpdaters.get(interaction.channelId);
       if (updater && updater.messageId === interaction.message.id) {
-        updater.supplies = updater.supplies || { barrel: null, barrelError: 'Press Refresh to inspect' };
+        updater.supplies = updater.supplies || {
+          barrel: null,
+          barrelError: 'Waiting for bot to open the supply barrel'
+        };
       }
       await interaction.message.edit({
         embeds: [await buildObsidianStatsEmbed(updater?.supplies || null)],
