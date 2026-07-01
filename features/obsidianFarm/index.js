@@ -39,8 +39,9 @@ const OBSIDIAN_DIG_RETRY_HOLD_BONUS_MS = 250;
 const OBSIDIAN_DIG_CONFIRM_TIMEOUT_MS = 700;
 const OBSIDIAN_DIG_STABILITY_MS = 50;
 const OBSIDIAN_DIG_MAX_ATTEMPTS = 3;
-const CAULDRON_FILL_ATTEMPTS_PER_BLOCK = 2;
+const CAULDRON_FILL_ATTEMPTS_PER_BLOCK = 1;
 const CAULDRON_FILL_CONFIRM_TIMEOUT_MS = 200;
+const CAULDRON_FAILURE_COOLDOWN_MS = 15_000;
 // Wait generously for the server/chunk update. This does not resend the bucket
 // action, so a slow response cannot cause placement at a second location.
 const LAVA_PLACEMENT_CONFIRM_TIMEOUT_MS = 5_000;
@@ -83,6 +84,8 @@ const cauldronReachStats = {
   failureMinDistance: null,
   samples: 0
 };
+const cauldronFailures = new Map();
+const cauldronSuccesses = new Map();
 
 // ── Exported helpers ───────────────────────────────────────────────────────────
 
@@ -1199,6 +1202,35 @@ function recordCauldronReachSample(context, sample) {
   });
 }
 
+function getCauldronKey(position) {
+  return position?.toString?.() || String(position);
+}
+
+function getCauldronFailure(position) {
+  const key = getCauldronKey(position);
+  const failure = cauldronFailures.get(key);
+  if (!failure) return null;
+  if (failure.until <= Date.now()) {
+    cauldronFailures.delete(key);
+    return null;
+  }
+  return failure;
+}
+
+function rememberCauldronFailure(position, reason, details = {}) {
+  cauldronFailures.set(getCauldronKey(position), {
+    reason,
+    until: Date.now() + CAULDRON_FAILURE_COOLDOWN_MS,
+    ...details
+  });
+}
+
+function rememberCauldronSuccess(position) {
+  const key = getCauldronKey(position);
+  cauldronFailures.delete(key);
+  cauldronSuccesses.set(key, (cauldronSuccesses.get(key) || 0) + 1);
+}
+
 function getMiningDebugState(bot, block, attempt, expectedDigTime, holdMs, face, context = {}) {
   const held = bot.heldItem;
   const effects = Object.values(bot.entity?.effects || {}).map(effect => ({
@@ -1390,7 +1422,13 @@ function findLavaCauldrons(bot, maxDistance) {
   for (const pos of positions) unique.set(pos.toString(), pos);
 
   return [...unique.values()]
-    .sort((a, b) => bot.entity.position.distanceSquared(a) - bot.entity.position.distanceSquared(b));
+    .filter(pos => !getCauldronFailure(pos))
+    .sort((a, b) => {
+      const aSuccesses = cauldronSuccesses.get(getCauldronKey(a)) || 0;
+      const bSuccesses = cauldronSuccesses.get(getCauldronKey(b)) || 0;
+      if (aSuccesses !== bSuccesses) return bSuccesses - aSuccesses;
+      return bot.entity.position.distanceSquared(a) - bot.entity.position.distanceSquared(b);
+    });
 }
 
 async function waitForLavaBucket(bot, timeoutMs = CAULDRON_FILL_CONFIRM_TIMEOUT_MS) {
@@ -1450,6 +1488,7 @@ async function fillBucket(bot, context = {}) {
       const isLegacyLavaCauldron = cauldron?.name === 'cauldron' && cauldron.metadata === 3;
       if (!isModernLavaCauldron && !isLegacyLavaCauldron) {
         failures.push(`${position}:became_${cauldron?.name || 'unknown'}`);
+        rememberCauldronFailure(position, `became_${cauldron?.name || 'unknown'}`);
         writeFarmDebug('cauldron_skipped', {
           ...context,
           position: position.toString(),
@@ -1502,6 +1541,7 @@ async function fillBucket(bot, context = {}) {
         await bot.activateBlock(cauldron);
       } catch (err) {
         failures.push(`${position}:click#${attempt}_${err.message}`);
+        rememberCauldronFailure(position, 'click_failed', { error: err.message });
         recordCauldronReachSample(context, {
           success: false,
           position: position.toString(),
@@ -1516,6 +1556,7 @@ async function fillBucket(bot, context = {}) {
       }
 
       if (await waitForLavaBucket(bot)) {
+        rememberCauldronSuccess(position);
         recordCauldronReachSample(context, {
           success: true,
           position: position.toString(),
@@ -1537,6 +1578,9 @@ async function fillBucket(bot, context = {}) {
       }
 
       failures.push(`${position}:no_lava_bucket#${attempt}`);
+      rememberCauldronFailure(position, 'no_lava_bucket', {
+        currentBlock: bot.blockAt(position)?.name || null
+      });
       recordCauldronReachSample(context, {
         success: false,
         position: position.toString(),
