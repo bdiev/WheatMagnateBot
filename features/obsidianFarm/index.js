@@ -79,6 +79,7 @@ const runtime = {
 let worldInteractionQueue = Promise.resolve();
 const pickaxeBlocksMined = new Map();
 let farmCycleSequence = 0;
+let farmDebugLoggingEnabled = true;
 const cauldronReachStats = {
   successMaxDistance: null,
   failureMinDistance: null,
@@ -1117,6 +1118,7 @@ function ensureInteractionRange(bot, pos, actionName) {
 }
 
 function writeFarmDebug(event, details = {}) {
+  if (!farmDebugLoggingEnabled) return;
   const line = JSON.stringify({
     time: new Date().toISOString(),
     event,
@@ -1125,6 +1127,23 @@ function writeFarmDebug(event, details = {}) {
   // Debug logging must not block the time-sensitive farming loop, especially
   // when the project directory is synced by OneDrive.
   fs.appendFile(FARM_DEBUG_LOG_FILE, `${line}\n`, 'utf8', () => {});
+}
+
+function getDebugLoggingEnabled() {
+  return farmDebugLoggingEnabled;
+}
+
+function setDebugLoggingEnabled(enabled) {
+  const nextEnabled = Boolean(enabled);
+  if (farmDebugLoggingEnabled === nextEnabled) return farmDebugLoggingEnabled;
+  if (!nextEnabled) {
+    writeFarmDebug('debug_logging_disabled');
+    farmDebugLoggingEnabled = false;
+    return farmDebugLoggingEnabled;
+  }
+  farmDebugLoggingEnabled = true;
+  writeFarmDebug('debug_logging_enabled');
+  return farmDebugLoggingEnabled;
 }
 
 function setFarmPhase(phase, details = {}) {
@@ -2195,5 +2214,7 @@ module.exports = {
   inspectSupplies,
   getStatus,
   getDetailedStatus,
+  getDebugLoggingEnabled,
+  setDebugLoggingEnabled,
   loadPlugin
 };
