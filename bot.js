@@ -381,6 +381,7 @@ let isUpdatingStatus = false; // Prevent concurrent updates
 let lastPresenceText = null;
 let lastPresenceUpdateAt = 0;
 const obsidianStatsUpdaters = new Map(); // channelId -> { messageId, timer, supplies, updating }
+let latestObsidianStatsSupplies = null;
 let obsidianStatsWatchdogInterval = null;
 let channelCleanerInterval = null;
 let tpsHistory = [];
@@ -1912,11 +1913,12 @@ function formatAllItems(items = [], maxLength = 1000) {
 }
 
 async function buildObsidianStatsEmbed(cachedSupplies = null) {
+  const effectiveSupplies = cachedSupplies || latestObsidianStatsSupplies;
   const [farmStatus, dailyStats] = await Promise.all([
     farm.getDetailedStatus(bot, {
       inspectBarrel: false,
-      barrel: cachedSupplies?.barrel || null,
-      barrelError: cachedSupplies?.barrelError || null
+      barrel: effectiveSupplies?.barrel || null,
+      barrelError: effectiveSupplies?.barrelError || null
     }),
     getObsidianDailyStats(7)
   ]);
@@ -1932,8 +1934,8 @@ async function buildObsidianStatsEmbed(cachedSupplies = null) {
     : null;
   const inventory = farmStatus.supplies?.inventory;
   const barrel = farmStatus.supplies?.barrel;
-  const barrelObservedAt = cachedSupplies?.observedAt
-    ? new Date(cachedSupplies.observedAt)
+  const barrelObservedAt = effectiveSupplies?.observedAt
+    ? new Date(effectiveSupplies.observedAt)
     : null;
   const barrelObservedText = barrelObservedAt && !Number.isNaN(barrelObservedAt.getTime())
     ? `Last opened: <t:${Math.floor(barrelObservedAt.getTime() / 1000)}:R>\n`
@@ -2220,7 +2222,10 @@ function saveObsidianStatsUpdaters() {
       supplies: updater.supplies || null,
       updatedAt: new Date().toISOString()
     }));
-    fs.writeFileSync(OBSIDIAN_STATS_MESSAGES_FILE, JSON.stringify(entries, null, 2));
+    fs.writeFileSync(OBSIDIAN_STATS_MESSAGES_FILE, JSON.stringify({
+      latestSupplies: latestObsidianStatsSupplies || null,
+      messages: entries
+    }, null, 2));
   } catch (err) {
     console.error('[Obsidian Stats] Failed to save updater state:', err.message);
   }
@@ -2230,6 +2235,7 @@ function loadObsidianStatsUpdaterRecords() {
   try {
     const raw = fs.readFileSync(OBSIDIAN_STATS_MESSAGES_FILE, 'utf8');
     const parsed = JSON.parse(raw);
+    latestObsidianStatsSupplies = parsed?.latestSupplies || latestObsidianStatsSupplies;
     return (Array.isArray(parsed) ? parsed : parsed?.messages || [])
       .filter(record => record?.channelId && record?.messageId);
   } catch (err) {
@@ -2352,8 +2358,9 @@ async function refreshObsidianStatsUpdaters() {
 }
 
 async function updateObsidianStatsSupplies(supplies) {
+  latestObsidianStatsSupplies = mergeObsidianSupplies(latestObsidianStatsSupplies, supplies);
   await Promise.all([...obsidianStatsUpdaters.entries()].map(async ([channelId, updater]) => {
-    updater.supplies = mergeObsidianSupplies(updater.supplies, supplies);
+    updater.supplies = mergeObsidianSupplies(updater.supplies, latestObsidianStatsSupplies);
     if (updater.updating) {
       updater.pendingRefresh = true;
       return;
@@ -2385,7 +2392,7 @@ function startObsidianStatsUpdater(message, supplies) {
 
 async function openObsidianStatsPanel(interaction, { updateMessage = false, deferredUpdate = false } = {}) {
   const existingUpdater = obsidianStatsUpdaters.get(interaction.channelId);
-  const supplies = existingUpdater?.supplies || {
+  const supplies = existingUpdater?.supplies || latestObsidianStatsSupplies || {
     barrel: null,
     barrelError: 'Waiting for bot to open the supply barrel'
   };
