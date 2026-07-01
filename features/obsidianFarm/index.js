@@ -4,7 +4,7 @@
  * Obsidian Farm Module
  *
  * Cycle:
- *   1. Find the farthest lava cauldron first (within maxCauldronDist blocks)
+ *   1. Find nearest lava cauldron (within maxCauldronDist blocks)
  *   2. Navigate to it, fill an empty bucket with lava
  *   3. Navigate to target (x, y, z), pour lava there
  *   4. Wait for the lava to become obsidian (water must already be present)
@@ -1183,7 +1183,7 @@ async function digBlockWithTimeout(bot, block, attempt) {
 }
 
 /**
- * Find lava cauldron blocks, trying the farthest valid candidate first.
+ * Find the nearest lava cauldron block.
  * Handles both 1.17+ (lava_cauldron block) and old cauldron with metadata ≥ 3.
  */
 function findLavaCauldrons(bot, maxDistance) {
@@ -1214,12 +1214,7 @@ function findLavaCauldrons(bot, maxDistance) {
   for (const pos of positions) unique.set(pos.toString(), pos);
 
   return [...unique.values()]
-    .sort((a, b) => {
-      const botPos = bot.entity.position;
-      const distanceB = botPos.distanceSquared(b.offset(0.5, 0.8, 0.5));
-      const distanceA = botPos.distanceSquared(a.offset(0.5, 0.8, 0.5));
-      return distanceB - distanceA;
-    });
+    .sort((a, b) => bot.entity.position.distanceSquared(a) - bot.entity.position.distanceSquared(b));
 }
 
 async function waitForLavaBucket(bot, timeoutMs = CAULDRON_FILL_CONFIRM_TIMEOUT_MS) {
