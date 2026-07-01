@@ -2007,8 +2007,14 @@ async function buildObsidianStatsEmbed(cachedSupplies = null) {
   };
 }
 
-async function buildDetailedObsidianStatsEmbed() {
-  const farmStatus = await farm.getDetailedStatus(bot);
+async function buildDetailedObsidianStatsEmbed(cachedSupplies = null) {
+  const farmStatus = await farm.getDetailedStatus(bot, cachedSupplies
+    ? {
+        inspectBarrel: false,
+        barrel: cachedSupplies.barrel || null,
+        barrelError: cachedSupplies.barrelError || null
+      }
+    : {});
   const config = farmStatus.config;
   const sessionStartedAt = obsidianStats.sessionStartedAt
     ? new Date(obsidianStats.sessionStartedAt)
@@ -2094,12 +2100,16 @@ async function buildDetailedObsidianStatsEmbed() {
         inline: false
       }
     ],
-    footer: { text: 'Fresh barrel and inventory inspection' },
+    footer: {
+      text: cachedSupplies
+        ? 'Stats auto-update; barrel snapshot updates when the bot opens it'
+        : 'Fresh barrel and inventory inspection'
+    },
     timestamp: new Date()
   };
 }
 
-function createObsidianStatsComponents() {
+function createObsidianStatsComponents(view = 'summary') {
   const farmRunning = farm.getStatus().enabled || obsidianStats.desiredEnabled;
   const farmConfig = farm.getStatus().config;
   const cauldronRadius = farmConfig?.maxCauldronDist || 5;
@@ -2117,8 +2127,8 @@ function createObsidianStatsComponents() {
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(!farmConfig),
       new ButtonBuilder()
-        .setCustomId('ofstats_detailed')
-        .setLabel('Detailed')
+        .setCustomId(view === 'detailed' ? 'ofstats_summary' : 'ofstats_detailed')
+        .setLabel(view === 'detailed' ? 'Summary' : 'Detailed')
         .setEmoji(UI_BUTTON_EMOJIS.beacon)
         .setStyle(ButtonStyle.Secondary)
     ),
@@ -2265,6 +2275,7 @@ function saveObsidianStatsUpdaters() {
       channelId,
       messageId: updater.messageId,
       supplies: updater.supplies || null,
+      view: updater.view || 'summary',
       updatedAt: new Date().toISOString()
     }));
     fs.writeFileSync(OBSIDIAN_STATS_MESSAGES_FILE, JSON.stringify({
@@ -2333,6 +2344,12 @@ function withObsidianStatsTimeout(promise, timeoutMs = 20_000) {
   ]).finally(() => clearTimeout(timeout));
 }
 
+async function buildObsidianStatsUpdaterEmbed(updater) {
+  return updater.view === 'detailed'
+    ? buildDetailedObsidianStatsEmbed(updater.supplies || latestObsidianStatsSupplies)
+    : buildObsidianStatsEmbed(updater.supplies);
+}
+
 async function updateObsidianStatsUpdater(channelId, updater) {
   if (updater.updating || obsidianStatsUpdaters.get(channelId) !== updater) return;
   updater.updating = true;
@@ -2342,8 +2359,8 @@ async function updateObsidianStatsUpdater(channelId, updater) {
       if (!channel?.messages) throw new Error('Statistics channel is unavailable');
       const message = await channel.messages.fetch(updater.messageId);
       await message.edit({
-        embeds: [await buildObsidianStatsEmbed(updater.supplies)],
-        components: createObsidianStatsComponents()
+        embeds: [await buildObsidianStatsUpdaterEmbed(updater)],
+        components: createObsidianStatsComponents(updater.view)
       });
     })());
     updater.consecutiveFailures = 0;
@@ -2415,13 +2432,14 @@ async function updateObsidianStatsSupplies(supplies) {
   saveObsidianStatsUpdaters();
 }
 
-function startObsidianStatsUpdater(message, supplies) {
+function startObsidianStatsUpdater(message, supplies, { view = 'summary' } = {}) {
   const channelId = message.channelId;
   stopObsidianStatsUpdater(channelId);
 
   const updater = {
     messageId: message.id,
     supplies,
+    view,
     updating: false,
     timer: null,
     consecutiveFailures: 0,
@@ -2483,7 +2501,7 @@ async function restoreObsidianStatsUpdaters() {
       startObsidianStatsUpdater(message, record.supplies || {
         barrel: null,
         barrelError: 'Waiting for bot to open the supply barrel'
-      });
+      }, { view: record.view || 'summary' });
       const updater = obsidianStatsUpdaters.get(record.channelId);
       if (updater) {
         await updateObsidianStatsUpdater(record.channelId, updater);
@@ -5730,6 +5748,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       const updater = obsidianStatsUpdaters.get(interaction.channelId);
       if (updater && updater.messageId === interaction.message.id) {
         updater.supplies = mergeObsidianSupplies(updater.supplies, supplies);
+        updater.view = 'summary';
         saveObsidianStatsUpdaters();
       } else {
         startObsidianStatsUpdater(interaction.message, supplies);
@@ -5768,6 +5787,10 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       }
 
       const updater = obsidianStatsUpdaters.get(interaction.channelId);
+      if (updater && updater.messageId === interaction.message.id) {
+        updater.view = 'summary';
+        saveObsidianStatsUpdaters();
+      }
       await interaction.update({
         embeds: [await buildObsidianStatsEmbed(updater?.supplies || null)],
         components: createObsidianStatsComponents()
@@ -5834,6 +5857,10 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         console.error('[DB] Failed to persist obsidian farm radius:', err.message);
       });
       const updater = obsidianStatsUpdaters.get(interaction.channelId);
+      if (updater && updater.messageId === interaction.message.id) {
+        updater.view = 'summary';
+        saveObsidianStatsUpdaters();
+      }
       await interaction.message.edit({
         embeds: [await buildObsidianStatsEmbed(updater?.supplies || null)],
         components: createObsidianStatsComponents()
@@ -5922,12 +5949,36 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           barrel: null,
           barrelError: 'Waiting for bot to open the supply barrel'
         };
+        updater.view = 'summary';
+        saveObsidianStatsUpdaters();
       }
       await interaction.message.edit({
         embeds: [await buildObsidianStatsEmbed(updater?.supplies || null)],
         components: createObsidianStatsComponents()
       }).catch(() => {});
       updateAdminPanel().catch(() => {});
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId === 'ofstats_summary') {
+      if (interaction.user.id !== DISCORD_OWNER_ID) {
+        await interaction.reply({
+          content: 'Only the owner can view obsidian farm statistics.',
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+
+      await interaction.deferUpdate();
+      const updater = obsidianStatsUpdaters.get(interaction.channelId);
+      if (updater && updater.messageId === interaction.message.id) {
+        updater.view = 'summary';
+        saveObsidianStatsUpdaters();
+      }
+      await interaction.message.edit({
+        embeds: [await buildObsidianStatsEmbed(updater?.supplies || null)],
+        components: createObsidianStatsComponents('summary')
+      });
       return;
     }
 
@@ -5941,9 +5992,14 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       }
 
       await interaction.deferUpdate();
+      const updater = obsidianStatsUpdaters.get(interaction.channelId);
+      if (updater && updater.messageId === interaction.message.id) {
+        updater.view = 'detailed';
+        saveObsidianStatsUpdaters();
+      }
       await interaction.message.edit({
         embeds: [await buildDetailedObsidianStatsEmbed()],
-        components: createObsidianStatsComponents()
+        components: createObsidianStatsComponents('detailed')
       });
       return;
     }
