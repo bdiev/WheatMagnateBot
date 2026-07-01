@@ -28,7 +28,7 @@ const PICKAXE_PRIORITY = [
 const OBSIDIAN_TIMEOUT_MS   = 90_000; // max wait for lava→obsidian
 const CYCLE_PAUSE_MS        = 10;     // yield briefly between cycles
 const INTERACT_SETTLE_MS    = 25;     // settle delay after block interaction
-const CAULDRON_RADIUS_OPTIONS = [4, 5, 6, 7, 8];
+const CAULDRON_RADIUS_OPTIONS = [4, 5, 6];
 const DEFAULT_CAULDRON_DIST = 5;
 const MIN_PICKAXE_REMAINING_PERCENT = 5;
 const FARM_CONFIG_FILE = 'obsidian_farm_config.json';
@@ -316,15 +316,23 @@ async function inspectSupplyStatusUnlocked(bot) {
     await prepareSafeBarrelHand(bot);
     stopAllMovement(bot);
     container = await bot.openContainer(barrel);
-    return {
+    const supplies = {
       inventory,
       barrel: {
         position: barrel.position.toString(),
         distance: bot.entity.position.distanceTo(barrel.position.offset(0.5, 0.5, 0.5)),
         ...summarizeSupplyItems(bot, container.containerItems())
       },
+      observedAt: new Date().toISOString(),
       barrelError: null
     };
+    runtime.onSuppliesChanged(supplies).catch(err => {
+      writeFarmDebug('supply_stats_refresh_failed', {
+        trigger: 'inspect_supply_status',
+        error: err.message
+      });
+    });
+    return supplies;
   } catch (err) {
     return {
       inventory,
