@@ -4300,18 +4300,18 @@ function formatCompactInlineList(entries, maxVisible = 8) {
     : visible.join(', ');
 }
 
-function formatQuotedUsernameList(usernames) {
+function formatInlineCodeUsernameList(usernames) {
   return usernames
-    .map(username => `'${String(username || 'Unknown').replace(/'/g, "\\'")}'`)
+    .map(username => `\`${String(username || 'Unknown').replace(/`/g, '\\`')}\``)
     .join(', ');
 }
 
-function chunkQuotedUsernameList(usernames, maxLength = 1000) {
+function chunkInlineCodeUsernameList(usernames, maxLength = 1000) {
   const chunks = [];
   let chunk = '';
 
   for (const username of usernames) {
-    const entry = `'${String(username || 'Unknown').replace(/'/g, "\\'")}'`;
+    const entry = `\`${String(username || 'Unknown').replace(/`/g, '\\`')}\``;
     const nextChunk = chunk ? `${chunk}, ${entry}` : entry;
     if (nextChunk.length > maxLength && chunk) {
       chunks.push(chunk);
@@ -4322,13 +4322,13 @@ function chunkQuotedUsernameList(usernames, maxLength = 1000) {
   }
 
   if (chunk) chunks.push(chunk);
-  return chunks.length > 0 ? chunks : [formatQuotedUsernameList(usernames)];
+  return chunks.length > 0 ? chunks : [formatInlineCodeUsernameList(usernames)];
 }
 
-function buildRosterFields(title, usernames, { empty = 'None online', withHeads = false, quotedInline = false } = {}) {
+function buildRosterFields(title, usernames, { empty = 'None online', withHeads = false, inlineCodeList = false } = {}) {
   const lines = usernames && usernames.length > 0
-    ? (quotedInline
-        ? chunkQuotedUsernameList(usernames)
+    ? (inlineCodeList
+        ? chunkInlineCodeUsernameList(usernames)
         : usernames.map(username => withHeads
             ? formatPlayerHeadName(username, 'bold')
             : `\`${String(username || 'Unknown')}\``))
@@ -4374,7 +4374,7 @@ function buildOnlinePlayersMessage() {
     }),
     ...buildRosterFields(`${STATUS_EMOJIS.players} Others (${otherCount})`, otherPlayers, {
       empty: 'No other players online.',
-      quotedInline: true
+      inlineCodeList: true
     })
   ];
 
