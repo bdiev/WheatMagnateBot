@@ -211,7 +211,7 @@ const PLAYER_HEAD_EMOJIS = new Map([
   ['wheatmagnate', '<:WheatMagnate:1519314847073046568>'],
   ['wheatemperor', '<:wheatemperor:1519314845151789197>'],
   ['vendell', '<:Vendell:1519314843545501726>'],
-  ['twistedinsane', '<:TWISTEDINSANE:1519314842467696820>'],
+  ['twistedinsane', '<:TWISTEDINSANE:1519314842467696820><:ender_dragon_spawn_egg:1522245100351127723>'],
   ['tckrtxa', '<:tckrtxa:1519314840982782092>'],
   ['robo_hbr', '<:Robo_HBr:1519314839586078790>'],
   ['recreational_pot', '<:Recreational_Pot:1519314837996568697>'],
