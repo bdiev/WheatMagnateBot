@@ -1868,7 +1868,7 @@ function formatPickaxeSupply(pickaxes = []) {
     const emoji = group.name === 'diamond_pickaxe'
       ? FARM_EMOJIS.diamondPickaxe
       : FARM_EMOJIS.netheritePickaxe;
-    return `${emoji} x${group.count} (${durability}${group.usable ? '' : ', low'})`;
+    return `${emoji} x${group.count} (${durability})`;
   }).join('\n');
 }
 
@@ -1902,7 +1902,7 @@ function formatAllItems(items = [], maxLength = 1000) {
     const label = emoji || group.name.replaceAll('_', ' ');
     const durability = group.remainingPercent == null
       ? ''
-      : ` (${group.remainingPercent.toFixed(1)}%${group.usable === false ? ', low' : ''})`;
+      : ` (${group.remainingPercent.toFixed(1)}%)`;
     return `${label} x${group.count}${durability}`;
   });
 
@@ -4396,7 +4396,7 @@ function createAdminPanelButtons() {
           .setCustomId('admin_child_status')
           .setLabel('Child')
           .setEmoji(UI_BUTTON_EMOJIS.bookYellow)
-          .setStyle(ButtonStyle.Secondary)
+          .setStyle(growingChild?.getStatus().enabled ? ButtonStyle.Success : ButtonStyle.Danger)
       )
   ];
 }
@@ -4712,16 +4712,6 @@ function createChildAdminComponents() {
   return [
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId('admin_gemini_toggle')
-        .setLabel('Gemini')
-        .setEmoji(UI_BUTTON_EMOJIS.enchantingTable)
-        .setStyle(runtimeSettings.geminiEnabled ? ButtonStyle.Success : ButtonStyle.Secondary),
-      new ButtonBuilder()
-        .setCustomId('admin_child_public_toggle')
-        .setLabel('Public chat')
-        .setEmoji(UI_BUTTON_EMOJIS.cat)
-        .setStyle(runtimeSettings.childPublicSpeech ? ButtonStyle.Success : ButtonStyle.Secondary),
-      new ButtonBuilder()
         .setCustomId('growing_child_toggle')
         .setLabel(growingChild?.getStatus().enabled ? 'Disable child' : 'Enable child')
         .setEmoji(UI_BUTTON_EMOJIS.redstone)
@@ -4731,6 +4721,16 @@ function createChildAdminComponents() {
         .setLabel('Say')
         .setEmoji(UI_BUTTON_EMOJIS.cat)
         .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId('admin_gemini_toggle')
+        .setLabel('Gemini')
+        .setEmoji(UI_BUTTON_EMOJIS.enchantingTable)
+        .setStyle(runtimeSettings.geminiEnabled ? ButtonStyle.Success : ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId('admin_child_public_toggle')
+        .setLabel('Public chat')
+        .setEmoji(UI_BUTTON_EMOJIS.cat)
+        .setStyle(runtimeSettings.childPublicSpeech ? ButtonStyle.Success : ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId('growing_child_reset')
         .setLabel('Reset')
