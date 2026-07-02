@@ -77,7 +77,7 @@ console.log(
 const STATUS_EMOJIS = {
   axolotlBucket: '<:Axolotl_Bucket:1519794666860449812>',
   connected: '<:Confirm:1519301205346619392>',
-  serverPing: '<:Server_Ping_5:1519367779155968080>',
+  serverPing: '<:oldfag:1520753617303371979>',
   serverPinging: '<:Server_Pinging_3:1521526226055987300>',
   serverUnreachable: '<:Server_Unreachable:1519385218824278066>',
   update: '<:Update:1519384987139575990>',
@@ -3280,13 +3280,7 @@ function rememberBotPublicChatPhrase(message) {
   lastBotPublicChatPhrase = phrase.slice(0, 180);
   lastBotPublicChatEmoji = pickNextBotStatusEmoji();
   saveLastBotPublicChatStatus();
-  updateStatusMessage({ rotateBotChatEmoji: false }).catch(() => {});
-}
-
-function rotateBotPublicChatStatusEmoji() {
-  if (!lastBotPublicChatPhrase) return;
-  lastBotPublicChatEmoji = pickNextBotStatusEmoji();
-  saveLastBotPublicChatStatus();
+  updateStatusMessage().catch(() => {});
 }
 
 function sendMinecraftChat(message, options = {}) {
@@ -4780,7 +4774,7 @@ function isAdminPanelSelectCustomId(customId = '') {
 }
 
 // Function to update server status message
-async function updateStatusMessage({ rotateBotChatEmoji = true } = {}) {
+async function updateStatusMessage() {
   if (!statusMessage) {
     await ensureStatusMessage();
     if (!statusMessage) return;
@@ -4797,7 +4791,6 @@ async function updateStatusMessage({ rotateBotChatEmoji = true } = {}) {
       console.error('[Discord] Failed to update presence:', presenceErr.message);
     }
     await refreshWheatMagnatePlaytimeDisplay();
-    if (rotateBotChatEmoji) rotateBotPublicChatStatusEmoji();
 
     // Allow status updates even if bot is not connected to show offline state
     const description = `${getStatusDescription()}\n\n${getLastBotPublicChatStatusLine()}`;
