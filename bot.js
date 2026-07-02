@@ -4300,6 +4300,85 @@ function formatCompactInlineList(entries, maxVisible = 8) {
     : visible.join(', ');
 }
 
+function formatPlayerRosterList(usernames, { empty = 'None online', maxVisible = 16 } = {}) {
+  if (!usernames || usernames.length === 0) return empty;
+  const visible = usernames
+    .slice(0, maxVisible)
+    .map(username => formatPlayerHeadName(username, 'bold'));
+  const remaining = usernames.length - visible.length;
+  if (remaining > 0) {
+    visible.push(`...and **${remaining}** more`);
+  }
+  return visible.join('\n');
+}
+
+function buildOnlinePlayersMessage() {
+  const allOnlinePlayers = [...new Set(Object.values(bot?.players || {})
+    .map(player => player.username)
+    .filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  const whitelistOnline = allOnlinePlayers.filter(username =>
+    ignoredUsernames.some(name => name.toLowerCase() === username.toLowerCase())
+  );
+  const otherPlayers = allOnlinePlayers.filter(username =>
+    !ignoredUsernames.some(name => name.toLowerCase() === username.toLowerCase())
+  );
+  const whitelistCount = whitelistOnline.length;
+  const otherCount = otherPlayers.length;
+  const totalCount = allOnlinePlayers.length;
+  const summary = totalCount > 0
+    ? [
+        `${STATUS_EMOJIS.players} **${totalCount}** online now`,
+        `${STATUS_EMOJIS.whitelist} **${whitelistCount}** whitelist`,
+        `${STATUS_EMOJIS.nearby} **${otherCount}** others`
+      ].join('\n')
+    : `${STATUS_EMOJIS.players} No players online right now.`;
+
+  const fields = [
+    {
+      name: `${STATUS_EMOJIS.whitelist} Whitelist (${whitelistCount})`,
+      value: formatPlayerRosterList(whitelistOnline, { empty: 'No whitelist players online.' }),
+      inline: true
+    },
+    {
+      name: `${STATUS_EMOJIS.players} Others (${otherCount})`,
+      value: formatPlayerRosterList(otherPlayers, { empty: 'No other players online.' }),
+      inline: true
+    }
+  ];
+
+  const options = whitelistOnline.slice(0, 25).map(username =>
+    new StringSelectMenuOptionBuilder()
+      .setLabel(username)
+      .setValue(b64encode(username))
+  );
+  const components = [];
+  if (options.length > 0) {
+    components.push(
+      new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId('message_select')
+          .setPlaceholder('Message a whitelist player')
+          .addOptions(options)
+      )
+    );
+  }
+
+  return {
+    embeds: [{
+      title: `${STATUS_EMOJIS.players} Online Players`,
+      description: summary,
+      fields,
+      color: totalCount > 0 ? 3447003 : 10066329,
+      timestamp: new Date(),
+      footer: options.length > 0
+        ? { text: 'Use the menu below to send a private Minecraft message.' }
+        : { text: 'Whitelist players will appear in the message menu when online.' }
+    }],
+    components
+  };
+}
+
 function buildAdminServerStatusValue() {
   if (!bot || !bot.entity) {
     return getStatusDescription();
@@ -6443,7 +6522,8 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         if (!bot) {
           await interaction.editReply({
             embeds: [{
-              description: 'Bot is offline.',
+              title: `${STATUS_EMOJIS.serverUnreachable} Online Players`,
+              description: 'Bot is offline. Player roster is unavailable until the Minecraft connection returns.',
               color: 16711680,
               timestamp: new Date()
             }]
@@ -6452,40 +6532,9 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           await startTemporaryInteractionMessage(interaction);
           return;
         }
-        const allOnlinePlayers = Object.values(bot.players || {}).map(p => p.username);
-        const whitelistOnline = allOnlinePlayers.filter(username => ignoredUsernames.some(name => name.toLowerCase() === username.toLowerCase()));
-        const otherPlayers = allOnlinePlayers.filter(username => !ignoredUsernames.some(name => name.toLowerCase() === username.toLowerCase()));
-
-        const playerList = [];
-        if (whitelistOnline.length > 0) {
-          playerList.push(`🛡️ **Whitelist:** ${whitelistOnline.join(', ')}`);
-        }
-        if (otherPlayers.length > 0) {
-          playerList.push(`${STATUS_EMOJIS.players} **Others:** ${otherPlayers.join(', ')}`);
-        }
-        const description = playerList.length > 0 ? playerList.join('\n\n') : 'No players online.';
-
-        const options = whitelistOnline.slice(0, 25).map(username =>
-          new StringSelectMenuOptionBuilder()
-            .setLabel(username)
-            .setValue(b64encode(username))
-        );
-        const selectMenu = new StringSelectMenuBuilder()
-          .setCustomId('message_select')
-          .setPlaceholder('Select player to message')
-          .addOptions(options);
-        const row = new ActionRowBuilder().addComponents(selectMenu);
-        await interaction.editReply({
-          embeds: [{
-            title: `Online Players (${allOnlinePlayers.length})`,
-            description,
-            color: 3447003,
-            timestamp: new Date()
-          }],
-          components: options.length > 0 ? [row] : []
-        });
-        
+        await interaction.editReply(buildOnlinePlayersMessage());
         await startTemporaryInteractionMessage(interaction);
+        return;
       } else if (interaction.customId === 'playtime_button') {
         await interaction.deferReply();
         const playtimeData = await getWhitelistPlaytime();
