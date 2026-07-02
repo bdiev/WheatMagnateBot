@@ -4300,16 +4300,27 @@ function formatCompactInlineList(entries, maxVisible = 8) {
     : visible.join(', ');
 }
 
-function formatPlayerRosterList(usernames, { empty = 'None online', maxVisible = 16 } = {}) {
-  if (!usernames || usernames.length === 0) return empty;
-  const visible = usernames
-    .slice(0, maxVisible)
-    .map(username => formatPlayerHeadName(username, 'bold'));
-  const remaining = usernames.length - visible.length;
-  if (remaining > 0) {
-    visible.push(`...and **${remaining}** more`);
+function buildRosterFields(title, usernames, { empty = 'None online', withHeads = false } = {}) {
+  const lines = usernames && usernames.length > 0
+    ? usernames.map(username => withHeads
+        ? formatPlayerHeadName(username, 'bold')
+        : `\`${String(username || 'Unknown')}\``)
+    : [empty];
+  const fields = [];
+  let value = '';
+
+  for (const line of lines) {
+    const nextValue = value ? `${value}\n${line}` : line;
+    if (nextValue.length > 1000 && value) {
+      fields.push({ name: fields.length === 0 ? title : `${title} continued`, value, inline: false });
+      value = line;
+    } else {
+      value = nextValue;
+    }
   }
-  return visible.join('\n');
+
+  fields.push({ name: fields.length === 0 ? title : `${title} continued`, value, inline: false });
+  return fields;
 }
 
 function buildOnlinePlayersMessage() {
@@ -4327,24 +4338,17 @@ function buildOnlinePlayersMessage() {
   const otherCount = otherPlayers.length;
   const totalCount = allOnlinePlayers.length;
   const summary = totalCount > 0
-    ? [
-        `${STATUS_EMOJIS.players} **${totalCount}** online now`,
-        `${STATUS_EMOJIS.whitelist} **${whitelistCount}** whitelist`,
-        `${STATUS_EMOJIS.nearby} **${otherCount}** others`
-      ].join('\n')
+    ? `${STATUS_EMOJIS.players} **${totalCount} online**  |  ${STATUS_EMOJIS.whitelist} **${whitelistCount} whitelist**  |  ${STATUS_EMOJIS.nearby} **${otherCount} others**`
     : `${STATUS_EMOJIS.players} No players online right now.`;
-
   const fields = [
-    {
-      name: `${STATUS_EMOJIS.whitelist} Whitelist (${whitelistCount})`,
-      value: formatPlayerRosterList(whitelistOnline, { empty: 'No whitelist players online.' }),
-      inline: true
-    },
-    {
-      name: `${STATUS_EMOJIS.players} Others (${otherCount})`,
-      value: formatPlayerRosterList(otherPlayers, { empty: 'No other players online.' }),
-      inline: true
-    }
+    ...buildRosterFields(`${STATUS_EMOJIS.whitelist} Whitelist (${whitelistCount})`, whitelistOnline, {
+      empty: 'No whitelist players online.',
+      withHeads: true
+    }),
+    ...buildRosterFields(`${STATUS_EMOJIS.players} Others (${otherCount})`, otherPlayers, {
+      empty: 'No other players online.',
+      withHeads: false
+    })
   ];
 
   const options = whitelistOnline.slice(0, 25).map(username =>
