@@ -77,7 +77,7 @@ console.log(
 const STATUS_EMOJIS = {
   axolotlBucket: '<:Axolotl_Bucket:1519794666860449812>',
   connected: '<:Confirm:1519301205346619392>',
-  serverPing: '<:oldfag:1520753617303371979>',
+  serverPing: '<:Server_Ping_5:1519367779155968080>',
   serverPinging: '<:Server_Pinging_3:1521526226055987300>',
   serverUnreachable: '<:Server_Unreachable:1519385218824278066>',
   update: '<:Update:1519384987139575990>',
