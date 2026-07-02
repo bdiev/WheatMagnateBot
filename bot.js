@@ -4300,11 +4300,38 @@ function formatCompactInlineList(entries, maxVisible = 8) {
     : visible.join(', ');
 }
 
-function buildRosterFields(title, usernames, { empty = 'None online', withHeads = false } = {}) {
+function formatQuotedUsernameList(usernames) {
+  return usernames
+    .map(username => `'${String(username || 'Unknown').replace(/'/g, "\\'")}'`)
+    .join(', ');
+}
+
+function chunkQuotedUsernameList(usernames, maxLength = 1000) {
+  const chunks = [];
+  let chunk = '';
+
+  for (const username of usernames) {
+    const entry = `'${String(username || 'Unknown').replace(/'/g, "\\'")}'`;
+    const nextChunk = chunk ? `${chunk}, ${entry}` : entry;
+    if (nextChunk.length > maxLength && chunk) {
+      chunks.push(chunk);
+      chunk = entry;
+    } else {
+      chunk = nextChunk;
+    }
+  }
+
+  if (chunk) chunks.push(chunk);
+  return chunks.length > 0 ? chunks : [formatQuotedUsernameList(usernames)];
+}
+
+function buildRosterFields(title, usernames, { empty = 'None online', withHeads = false, quotedInline = false } = {}) {
   const lines = usernames && usernames.length > 0
-    ? usernames.map(username => withHeads
-        ? formatPlayerHeadName(username, 'bold')
-        : `\`${String(username || 'Unknown')}\``)
+    ? (quotedInline
+        ? chunkQuotedUsernameList(usernames)
+        : usernames.map(username => withHeads
+            ? formatPlayerHeadName(username, 'bold')
+            : `\`${String(username || 'Unknown')}\``))
     : [empty];
   const fields = [];
   let value = '';
@@ -4347,7 +4374,7 @@ function buildOnlinePlayersMessage() {
     }),
     ...buildRosterFields(`${STATUS_EMOJIS.players} Others (${otherCount})`, otherPlayers, {
       empty: 'No other players online.',
-      withHeads: false
+      quotedInline: true
     })
   ];
 
