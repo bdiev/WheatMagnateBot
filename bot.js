@@ -60,6 +60,7 @@ const MINECRAFT_CONNECT_TIMEOUT_MS = 20_000;
 const MINECRAFT_PROFILES_FOLDER = path.resolve(process.env.MINECRAFT_PROFILES_FOLDER || path.join('data', 'auth-cache'));
 const BOT_PUBLIC_CHAT_STATUS_FILE = path.resolve('data', 'bot_public_chat_status.json');
 const BOT_CHAT_STATUS_EMOJIS_FILE = path.resolve('data', 'bot_chat_status_emojis.json');
+const PLAYER_HEAD_EMOJIS_FILE = path.resolve('data', 'player_head_emojis.json');
 const OBSIDIAN_STATS_MESSAGES_FILE = path.resolve('data', 'obsidian_stats_messages.json');
 const OBSIDIAN_FARM_DEBUG_LOG_FILE = path.resolve('obsidian_farm_debug.log');
 const OBSIDIAN_STATS_UPDATE_INTERVAL_MS = 30_000;
@@ -250,10 +251,127 @@ const PLAYER_HEAD_EMOJIS = new Map([
   ['1amfero1', '<:1Amfero1:1519314801287762101>'],
   ['0x003a47d4', '<:0x003A47D4:1519314799647916162>']
 ]);
+const pendingPlayerHeadEmojiImports = new Set();
+
+loadPlayerHeadEmojiCache();
 
 function getPlayerHeadEmoji(username) {
-  return PLAYER_HEAD_EMOJIS.get(String(username || '').toLowerCase()) ||
-    STATUS_EMOJIS.players;
+  const key = normalizePlayerHeadUsername(username);
+  const emoji = PLAYER_HEAD_EMOJIS.get(key);
+  if (emoji) return emoji;
+
+  queuePlayerHeadEmojiImport(username);
+  return STATUS_EMOJIS.players;
+}
+
+function normalizePlayerHeadUsername(username) {
+  return String(username || '').trim().toLowerCase();
+}
+
+function getDiscordEmojiNameForPlayer(username) {
+  const cleaned = String(username || 'player')
+    .trim()
+    .replace(/[^A-Za-z0-9_]/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 32);
+  if (cleaned.length >= 2) return cleaned;
+  return `p_${cleaned || 'head'}`.slice(0, 32);
+}
+
+function loadPlayerHeadEmojiCache() {
+  try {
+    if (!fs.existsSync(PLAYER_HEAD_EMOJIS_FILE)) return;
+    const parsed = JSON.parse(fs.readFileSync(PLAYER_HEAD_EMOJIS_FILE, 'utf8'));
+    const entries = Array.isArray(parsed) ? parsed : Object.entries(parsed || {});
+    for (const [username, emoji] of entries) {
+      const key = normalizePlayerHeadUsername(username);
+      const value = String(emoji || '').trim();
+      if (key && /^<a?:[A-Za-z0-9_]+:\d+>$/.test(value)) {
+        PLAYER_HEAD_EMOJIS.set(key, value);
+      }
+    }
+  } catch (err) {
+    console.error('[PlayerHeads] Failed to load emoji cache:', err.message);
+  }
+}
+
+function savePlayerHeadEmojiCache() {
+  try {
+    fs.mkdirSync(path.dirname(PLAYER_HEAD_EMOJIS_FILE), { recursive: true });
+    const sorted = [...PLAYER_HEAD_EMOJIS.entries()]
+      .sort(([a], [b]) => a.localeCompare(b));
+    fs.writeFileSync(PLAYER_HEAD_EMOJIS_FILE, JSON.stringify(Object.fromEntries(sorted), null, 2));
+  } catch (err) {
+    console.error('[PlayerHeads] Failed to save emoji cache:', err.message);
+  }
+}
+
+function queuePlayerHeadEmojiImport(username) {
+  const safeUsername = String(username || '').trim();
+  if (!/^[A-Za-z0-9_]{1,16}$/.test(safeUsername)) return;
+
+  const key = normalizePlayerHeadUsername(safeUsername);
+  if (!key || pendingPlayerHeadEmojiImports.has(key) || PLAYER_HEAD_EMOJIS.has(key)) return;
+
+  pendingPlayerHeadEmojiImports.add(key);
+  importPlayerHeadEmoji(safeUsername)
+    .catch(err => console.error(`[PlayerHeads] Failed to import ${safeUsername}:`, err.message))
+    .finally(() => pendingPlayerHeadEmojiImports.delete(key));
+}
+
+async function getPlayerHeadEmojiGuild() {
+  if (!DISCORD_CHANNEL_ID || !discordClient?.isReady?.()) return null;
+  const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID).catch(() => null);
+  return channel?.guild || null;
+}
+
+async function importPlayerHeadEmoji(username) {
+  const guild = await getPlayerHeadEmojiGuild();
+  if (!guild) return null;
+
+  const emojiName = getDiscordEmojiNameForPlayer(username);
+  await guild.emojis.fetch().catch(() => null);
+
+  const existing = guild.emojis.cache.find(emoji =>
+    emoji.name?.toLowerCase() === emojiName.toLowerCase()
+  );
+  if (existing) {
+    const emojiText = `<:${existing.name}:${existing.id}>`;
+    PLAYER_HEAD_EMOJIS.set(normalizePlayerHeadUsername(username), emojiText);
+    savePlayerHeadEmojiCache();
+    return emojiText;
+  }
+
+  const imageUrl = `https://render.namemc.com/skin/2d/face.png?skin=${encodeURIComponent(username)}&scale=8`;
+  const response = await fetch(imageUrl, {
+    headers: {
+      'User-Agent': 'WheatMagnateBot/1.0 (+https://namemc.com/)'
+    }
+  });
+  if (!response.ok) {
+    throw new Error(`NameMC returned HTTP ${response.status}`);
+  }
+
+  const contentType = response.headers.get('content-type') || '';
+  if (!contentType.includes('image/')) {
+    throw new Error(`NameMC returned ${contentType || 'non-image content'}`);
+  }
+
+  const imageBuffer = Buffer.from(await response.arrayBuffer());
+  if (imageBuffer.length === 0) throw new Error('NameMC returned an empty image');
+  if (imageBuffer.length > 256 * 1024) throw new Error('NameMC image is too large for an emoji');
+
+  const created = await guild.emojis.create({
+    attachment: imageBuffer,
+    name: emojiName,
+    reason: `Imported Minecraft head for ${username}`
+  });
+
+  const emojiText = `<:${created.name}:${created.id}>`;
+  PLAYER_HEAD_EMOJIS.set(normalizePlayerHeadUsername(username), emojiText);
+  savePlayerHeadEmojiCache();
+  console.log(`[PlayerHeads] Imported ${username} as ${emojiText}`);
+  return emojiText;
 }
 
 function formatPlayerHeadName(username, style = 'code') {

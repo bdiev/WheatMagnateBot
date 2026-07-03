@@ -66,6 +66,41 @@ function formatSeconds(seconds) {
   return parts.join(' ');
 }
 
+function toNumber(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function compactFarmState(row = {}) {
+  const sessionStartedAt = row.session_started_at || null;
+  const sessionSeconds = sessionStartedAt
+    ? Math.max(0, Math.floor((Date.now() - new Date(sessionStartedAt).getTime()) / 1000))
+    : 0;
+  const sessionMined = toInt(row.session_mined);
+  const retiredPickaxes = toInt(row.retired_pickaxes);
+  const retiredPickaxeBlocks = toInt(row.retired_pickaxe_blocks);
+
+  return {
+    sessionMined,
+    totalMined: toInt(row.total_mined),
+    desiredEnabled: Boolean(row.desired_enabled),
+    sessionStartedAt,
+    sessionSeconds,
+    sessionDuration: formatSeconds(sessionSeconds),
+    sessionPerHour: sessionSeconds > 0 ? Math.round((sessionMined / sessionSeconds) * 3600) : 0,
+    retiredPickaxes,
+    retiredPickaxeBlocks,
+    blocksPerPickaxe: retiredPickaxes > 0 ? Math.round(retiredPickaxeBlocks / retiredPickaxes) : null,
+    target: {
+      x: row.target_x == null ? null : toInt(row.target_x),
+      y: row.target_y == null ? null : toInt(row.target_y),
+      z: row.target_z == null ? null : toInt(row.target_z),
+      radius: row.target_radius == null ? null : toInt(row.target_radius)
+    },
+    updatedAt: row.updated_at || null
+  };
+}
+
 async function ensureOptionalTables() {
   if (!pool) return;
   await pool.query(`
@@ -212,19 +247,257 @@ async function getChat(url) {
   assertDatabase();
 
   const limit = Math.min(200, Math.max(1, toInt(url.searchParams.get('limit'), 100)));
-  const result = await pool.query(`
-    SELECT id, username, message, created_at
-    FROM game_chat_messages
-    ORDER BY created_at DESC
-    LIMIT $1
-  `, [limit]);
+  const [messagesResult, hourlyResult, topChattersResult, totalsResult] = await Promise.all([
+    pool.query(`
+      SELECT id, username, message, created_at
+      FROM game_chat_messages
+      ORDER BY created_at DESC
+      LIMIT $1
+    `, [limit]),
+    pool.query(`
+      WITH buckets AS (
+        SELECT generate_series(
+          date_trunc('hour', NOW() - INTERVAL '23 hours'),
+          date_trunc('hour', NOW()),
+          INTERVAL '1 hour'
+        ) AS bucket
+      )
+      SELECT TO_CHAR(buckets.bucket, 'HH24:00') AS label,
+             COALESCE(COUNT(messages.id), 0)::int AS count
+      FROM buckets
+      LEFT JOIN game_chat_messages messages
+        ON date_trunc('hour', messages.created_at) = buckets.bucket
+      GROUP BY buckets.bucket
+      ORDER BY buckets.bucket
+    `),
+    pool.query(`
+      SELECT username, COUNT(*)::int AS count
+      FROM game_chat_messages
+      WHERE created_at >= NOW() - INTERVAL '24 hours'
+      GROUP BY username
+      ORDER BY count DESC, LOWER(username)
+      LIMIT 10
+    `),
+    pool.query(`
+      SELECT
+        COUNT(*)::int AS total,
+        COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')::int AS last_24h,
+        COUNT(DISTINCT LOWER(username)) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')::int AS active_chatters_24h
+      FROM game_chat_messages
+    `)
+  ]);
 
   return {
-    messages: result.rows.reverse().map(row => ({
+    messages: messagesResult.rows.reverse().map(row => ({
       id: row.id,
       username: row.username,
       message: row.message,
       createdAt: row.created_at
+    })),
+    hourly: hourlyResult.rows.map(row => ({
+      label: row.label,
+      value: toInt(row.count)
+    })),
+    topChatters: topChattersResult.rows.map(row => ({
+      username: row.username,
+      count: toInt(row.count)
+    })),
+    totals: {
+      allTime: toInt(totalsResult.rows[0]?.total),
+      last24h: toInt(totalsResult.rows[0]?.last_24h),
+      activeChatters24h: toInt(totalsResult.rows[0]?.active_chatters_24h)
+    }
+  };
+}
+
+async function getBotStats() {
+  assertDatabase();
+
+  const [playersResult, leaderboardResult, recentActivityResult, activityTotalsResult] = await Promise.all([
+    pool.query(`
+      SELECT
+        COUNT(*)::int AS total,
+        COUNT(*) FILTER (WHERE COALESCE(pa.is_online, FALSE))::int AS online,
+        COUNT(*) FILTER (WHERE NOT COALESCE(pa.is_online, FALSE))::int AS offline
+      FROM whitelist w
+      LEFT JOIN player_activity pa ON LOWER(pa.username) = LOWER(w.username)
+    `),
+    pool.query(`
+      SELECT
+        w.username,
+        COALESCE(pa.is_online, FALSE) AS is_online,
+        pa.last_seen,
+        COALESCE(pt.total_seconds, 0) +
+          CASE WHEN pt.tracking_since IS NULL THEN 0
+               ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - pt.tracking_since)))::BIGINT)
+          END AS total_seconds
+      FROM whitelist w
+      LEFT JOIN player_activity pa ON LOWER(pa.username) = LOWER(w.username)
+      LEFT JOIN player_playtime pt ON LOWER(pt.username) = LOWER(w.username)
+      ORDER BY total_seconds DESC, LOWER(w.username)
+      LIMIT 20
+    `),
+    pool.query(`
+      SELECT username, last_seen, last_online, is_online
+      FROM player_activity
+      ORDER BY last_seen DESC NULLS LAST
+      LIMIT 20
+    `),
+    pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE last_seen >= NOW() - INTERVAL '24 hours')::int AS seen_24h,
+        COUNT(*) FILTER (WHERE last_seen >= NOW() - INTERVAL '7 days')::int AS seen_7d
+      FROM player_activity
+    `)
+  ]);
+
+  const totals = playersResult.rows[0] || {};
+  const activityTotals = activityTotalsResult.rows[0] || {};
+
+  return {
+    players: {
+      total: toInt(totals.total),
+      online: toInt(totals.online),
+      offline: toInt(totals.offline),
+      seen24h: toInt(activityTotals.seen_24h),
+      seen7d: toInt(activityTotals.seen_7d)
+    },
+    playtimeLeaderboard: leaderboardResult.rows.map(row => {
+      const seconds = toInt(row.total_seconds);
+      return {
+        username: row.username,
+        isOnline: Boolean(row.is_online),
+        lastSeen: row.last_seen,
+        totalSeconds: seconds,
+        playtime: formatSeconds(seconds)
+      };
+    }),
+    recentActivity: recentActivityResult.rows.map(row => ({
+      username: row.username,
+      isOnline: Boolean(row.is_online),
+      lastSeen: row.last_seen,
+      lastOnline: row.last_online
+    }))
+  };
+}
+
+async function getObsidianStats() {
+  assertDatabase();
+
+  const [farmResult, todayResult, dailyResult] = await Promise.all([
+    pool.query(`
+      SELECT session_mined, total_mined, desired_enabled, session_started_at,
+             retired_pickaxes, retired_pickaxe_blocks, target_x, target_y,
+             target_z, target_radius, updated_at
+      FROM obsidian_farm_state
+      WHERE id = 1
+    `),
+    pool.query(`
+      SELECT COALESCE(mined, 0)::bigint AS mined
+      FROM obsidian_farm_daily
+      WHERE farm_date = (NOW() AT TIME ZONE 'Europe/Kyiv')::date
+    `),
+    pool.query(`
+      WITH dates AS (
+        SELECT generate_series(
+          (NOW() AT TIME ZONE 'Europe/Kyiv')::date - 13,
+          (NOW() AT TIME ZONE 'Europe/Kyiv')::date,
+          INTERVAL '1 day'
+        )::date AS farm_date
+      )
+      SELECT TO_CHAR(dates.farm_date, 'MM-DD') AS label,
+             COALESCE(stats.mined, 0)::bigint AS mined
+      FROM dates
+      LEFT JOIN obsidian_farm_daily stats USING (farm_date)
+      ORDER BY dates.farm_date
+    `)
+  ]);
+
+  const farm = compactFarmState(farmResult.rows[0] || {});
+  const daily = dailyResult.rows.map(row => ({
+    label: row.label,
+    value: toInt(row.mined)
+  }));
+  const last7Days = daily.slice(-7).reduce((sum, item) => sum + item.value, 0);
+
+  return {
+    farm: {
+      ...farm,
+      todayMined: toInt(todayResult.rows[0]?.mined),
+      last7Days
+    },
+    daily
+  };
+}
+
+async function getServerStats() {
+  assertDatabase();
+
+  const [tpsSummaryResult, hourlyTpsResult, nearbyResult, recentPlayersResult] = await Promise.all([
+    pool.query(`
+      SELECT
+        (SELECT tps FROM bot_tps_samples ORDER BY sampled_at DESC LIMIT 1) AS latest,
+        (SELECT sampled_at FROM bot_tps_samples ORDER BY sampled_at DESC LIMIT 1) AS latest_at,
+        ROUND(AVG(tps)::numeric, 1) AS average_24h,
+        ROUND(MIN(tps)::numeric, 1) AS min_24h,
+        ROUND(MAX(tps)::numeric, 1) AS max_24h,
+        COUNT(*)::int AS samples_24h
+      FROM bot_tps_samples
+      WHERE sampled_at >= NOW() - INTERVAL '24 hours'
+    `),
+    pool.query(`
+      WITH buckets AS (
+        SELECT generate_series(
+          date_trunc('hour', NOW() - INTERVAL '23 hours'),
+          date_trunc('hour', NOW()),
+          INTERVAL '1 hour'
+        ) AS bucket
+      )
+      SELECT TO_CHAR(buckets.bucket, 'HH24:00') AS label,
+             ROUND(AVG(samples.tps)::numeric, 1) AS avg_tps
+      FROM buckets
+      LEFT JOIN bot_tps_samples samples
+        ON date_trunc('hour', samples.sampled_at) = buckets.bucket
+      GROUP BY buckets.bucket
+      ORDER BY buckets.bucket
+    `),
+    pool.query(`
+      SELECT username, distance, last_seen
+      FROM nearby_player_sightings
+      ORDER BY last_seen DESC
+      LIMIT 20
+    `),
+    pool.query(`
+      SELECT username, last_seen, is_online
+      FROM player_activity
+      ORDER BY last_seen DESC NULLS LAST
+      LIMIT 20
+    `)
+  ]);
+
+  const tpsRow = tpsSummaryResult.rows[0] || {};
+  return {
+    tps: {
+      latest: tpsRow.latest == null ? null : toNumber(tpsRow.latest),
+      latestAt: tpsRow.latest_at || null,
+      average24h: tpsRow.average_24h == null ? null : toNumber(tpsRow.average_24h),
+      min24h: tpsRow.min_24h == null ? null : toNumber(tpsRow.min_24h),
+      max24h: tpsRow.max_24h == null ? null : toNumber(tpsRow.max_24h),
+      samples24h: toInt(tpsRow.samples_24h)
+    },
+    hourlyTps: hourlyTpsResult.rows.map(row => ({
+      label: row.label,
+      value: row.avg_tps == null ? null : toNumber(row.avg_tps)
+    })),
+    nearby: nearbyResult.rows.map(row => ({
+      username: row.username,
+      distance: toInt(row.distance),
+      lastSeen: row.last_seen
+    })),
+    recentPlayers: recentPlayersResult.rows.map(row => ({
+      username: row.username,
+      isOnline: Boolean(row.is_online),
+      lastSeen: row.last_seen
     }))
   };
 }
@@ -245,6 +518,18 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/chat') {
       sendJson(res, 200, await getChat(url));
+      return;
+    }
+    if (url.pathname === '/api/bot-stats') {
+      sendJson(res, 200, await getBotStats());
+      return;
+    }
+    if (url.pathname === '/api/obsidian') {
+      sendJson(res, 200, await getObsidianStats());
+      return;
+    }
+    if (url.pathname === '/api/server-stats') {
+      sendJson(res, 200, await getServerStats());
       return;
     }
     sendError(res, 404, 'API route not found.');

@@ -15,84 +15,239 @@
         </div>
         <div class="topbar-actions">
           <span id="lastUpdated" class="muted">Loading...</span>
-          <button id="themeToggle" class="secondary-button" type="button" aria-pressed="false">Dark theme</button>
+          <button id="themeToggle" class="theme-switch" type="button" aria-label="Switch to dark theme" aria-pressed="false">
+            <span class="theme-icon sun" aria-hidden="true">☀</span>
+            <span class="theme-icon moon" aria-hidden="true">☾</span>
+            <span class="theme-thumb" aria-hidden="true"></span>
+          </button>
           <button id="refreshButton" type="button">Refresh</button>
         </div>
       </header>
 
+      <nav class="tab-nav" aria-label="Dashboard sections">
+        <button class="tab-button active" type="button" data-tab="chat">Chat</button>
+        <button class="tab-button" type="button" data-tab="bot">Bot Stats</button>
+        <button class="tab-button" type="button" data-tab="obsidian">Obsidian Farm</button>
+        <button class="tab-button" type="button" data-tab="server">Server Stats</button>
+      </nav>
+
       <section id="statusBanner" class="status-banner" hidden></section>
 
-      <section class="stats-grid" aria-label="Overview statistics">
-        <article class="stat">
-          <span class="stat-label">Players Online</span>
-          <strong id="onlinePlayers">-</strong>
-          <small id="totalPlayers">of - whitelisted</small>
-        </article>
-        <article class="stat">
-          <span class="stat-label">TPS</span>
-          <strong id="latestTps">-</strong>
-          <small id="avgTps">24h average: -</small>
-        </article>
-        <article class="stat">
-          <span class="stat-label">Obsidian Total</span>
-          <strong id="obsidianTotal">-</strong>
-          <small id="obsidianSession">session: -</small>
-        </article>
-        <article class="stat">
-          <span class="stat-label">Obsidian Today</span>
-          <strong id="obsidianToday">-</strong>
-          <small id="farmState">farm: -</small>
-        </article>
-        <article class="stat">
-          <span class="stat-label">Chat Messages</span>
-          <strong id="chat24h">-</strong>
-          <small>last 24 hours</small>
-        </article>
-      </section>
-
-      <section class="content-grid">
-        <section class="panel chat-panel">
-          <div class="panel-head">
-            <div>
-              <h2>Game Chat</h2>
-              <p>Recent Minecraft messages recorded by the bot.</p>
-            </div>
-          </div>
-          <div id="chatList" class="chat-list" aria-live="polite"></div>
+      <section id="tab-chat" class="tab-panel active" data-panel="chat">
+        <section class="stats-grid three">
+          <article class="stat">
+            <span class="stat-label">Messages</span>
+            <strong id="chat24h">-</strong>
+            <small>last 24 hours</small>
+          </article>
+          <article class="stat">
+            <span class="stat-label">Active Chatters</span>
+            <strong id="activeChatters">-</strong>
+            <small>unique senders in 24 hours</small>
+          </article>
+          <article class="stat">
+            <span class="stat-label">All-Time Messages</span>
+            <strong id="chatAllTime">-</strong>
+            <small>stored in the dashboard table</small>
+          </article>
         </section>
 
-        <aside class="side-stack">
+        <section class="content-grid">
+          <section class="panel chat-panel">
+            <div class="panel-head">
+              <div>
+                <h2>Game Chat</h2>
+                <p>Recent Minecraft messages recorded by the bot.</p>
+              </div>
+            </div>
+            <div id="chatList" class="chat-list" aria-live="polite"></div>
+          </section>
+
+          <aside class="side-stack">
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <h2>Messages by Hour</h2>
+                  <p>Chat volume over the last 24 hours.</p>
+                </div>
+              </div>
+              <canvas id="chatHourlyChart" class="chart" height="220"></canvas>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <h2>Top Chatters</h2>
+                  <p>Most active players in the last 24 hours.</p>
+                </div>
+              </div>
+              <div id="topChatters" class="rank-list"></div>
+            </section>
+          </aside>
+        </section>
+      </section>
+
+      <section id="tab-bot" class="tab-panel" data-panel="bot">
+        <section class="stats-grid four">
+          <article class="stat">
+            <span class="stat-label">Online Players</span>
+            <strong id="onlinePlayers">-</strong>
+            <small id="totalPlayers">of - whitelisted</small>
+          </article>
+          <article class="stat">
+            <span class="stat-label">Offline Players</span>
+            <strong id="offlinePlayers">-</strong>
+            <small>whitelist members not online</small>
+          </article>
+          <article class="stat">
+            <span class="stat-label">Seen Today</span>
+            <strong id="seen24h">-</strong>
+            <small>players active in 24 hours</small>
+          </article>
+          <article class="stat">
+            <span class="stat-label">Seen This Week</span>
+            <strong id="seen7d">-</strong>
+            <small>players active in 7 days</small>
+          </article>
+        </section>
+
+        <section class="split-grid">
           <section class="panel">
             <div class="panel-head">
               <div>
-                <h2>Whitelist</h2>
-                <p>Player status and individual playtime.</p>
+                <h2>Playtime Leaderboard</h2>
+                <p>Individual whitelist playtime, sorted by total time.</p>
               </div>
             </div>
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Player</th>
-                    <th>Status</th>
-                    <th>Playtime</th>
-                  </tr>
-                </thead>
-                <tbody id="playersTable"></tbody>
-              </table>
-            </div>
+            <div id="playtimeLeaderboard" class="rank-list large"></div>
           </section>
 
           <section class="panel">
             <div class="panel-head">
               <div>
-                <h2>Nearby Sightings</h2>
-                <p>Players recently detected near the bot.</p>
+                <h2>Recent Player Activity</h2>
+                <p>Latest known player status changes.</p>
               </div>
             </div>
-            <div id="nearbyList" class="nearby-list"></div>
+            <div id="recentActivity" class="rank-list large"></div>
           </section>
-        </aside>
+        </section>
+      </section>
+
+      <section id="tab-obsidian" class="tab-panel" data-panel="obsidian">
+        <section class="stats-grid five">
+          <article class="stat">
+            <span class="stat-label">Farm State</span>
+            <strong id="farmState">-</strong>
+            <small id="farmUpdated">last update: -</small>
+          </article>
+          <article class="stat">
+            <span class="stat-label">Total Mined</span>
+            <strong id="obsidianTotal">-</strong>
+            <small>all-time obsidian</small>
+          </article>
+          <article class="stat">
+            <span class="stat-label">Today</span>
+            <strong id="obsidianToday">-</strong>
+            <small>Kyiv calendar day</small>
+          </article>
+          <article class="stat">
+            <span class="stat-label">Current Session</span>
+            <strong id="obsidianSession">-</strong>
+            <small id="sessionRate">rate: -/h</small>
+          </article>
+          <article class="stat">
+            <span class="stat-label">Pickaxe Average</span>
+            <strong id="pickaxeAverage">-</strong>
+            <small id="retiredPickaxes">retired pickaxes: -</small>
+          </article>
+        </section>
+
+        <section class="split-grid">
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Daily Obsidian</h2>
+                <p>Blocks mined per day over the last 14 days.</p>
+              </div>
+            </div>
+            <canvas id="obsidianDailyChart" class="chart tall" height="300"></canvas>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Farm Details</h2>
+                <p>Current target, runtime, and recent totals.</p>
+              </div>
+            </div>
+            <div id="farmDetails" class="detail-list"></div>
+          </section>
+        </section>
+      </section>
+
+      <section id="tab-server" class="tab-panel" data-panel="server">
+        <section class="stats-grid five">
+          <article class="stat">
+            <span class="stat-label">Latest TPS</span>
+            <strong id="latestTps">-</strong>
+            <small id="latestTpsAt">sampled: -</small>
+          </article>
+          <article class="stat">
+            <span class="stat-label">Average TPS</span>
+            <strong id="avgTps">-</strong>
+            <small>last 24 hours</small>
+          </article>
+          <article class="stat">
+            <span class="stat-label">Minimum TPS</span>
+            <strong id="minTps">-</strong>
+            <small>last 24 hours</small>
+          </article>
+          <article class="stat">
+            <span class="stat-label">Maximum TPS</span>
+            <strong id="maxTps">-</strong>
+            <small>last 24 hours</small>
+          </article>
+          <article class="stat">
+            <span class="stat-label">TPS Samples</span>
+            <strong id="tpsSamples">-</strong>
+            <small>last 24 hours</small>
+          </article>
+        </section>
+
+        <section class="content-grid">
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>TPS by Hour</h2>
+                <p>Average server TPS over the last 24 hours.</p>
+              </div>
+            </div>
+            <canvas id="tpsHourlyChart" class="chart tall" height="300"></canvas>
+          </section>
+
+          <aside class="side-stack">
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <h2>Nearby Sightings</h2>
+                  <p>Players recently detected near the bot.</p>
+                </div>
+              </div>
+              <div id="nearbyList" class="rank-list"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <h2>Recent Server Activity</h2>
+                  <p>Latest player activity records.</p>
+                </div>
+              </div>
+              <div id="serverRecentPlayers" class="rank-list"></div>
+            </section>
+          </aside>
+        </section>
       </section>
     </main>
 

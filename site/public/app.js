@@ -1,14 +1,21 @@
 'use strict';
 
 const state = {
-  timer: null
+  timer: null,
+  activeTab: 'chat',
+  charts: {}
 };
 
 const $ = selector => document.querySelector(selector);
+const $$ = selector => Array.from(document.querySelectorAll(selector));
 
 function formatNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) ? new Intl.NumberFormat('en-US').format(number) : '-';
+}
+
+function formatTps(value) {
+  return value == null || !Number.isFinite(Number(value)) ? '-' : Number(value).toFixed(1);
 }
 
 function formatDate(value) {
@@ -16,9 +23,31 @@ function formatDate(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '-';
   return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(date);
+}
+
+function formatTime(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return new Intl.DateTimeFormat('en-US', {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit'
+  }).format(date);
+}
+
+function formatChatTime(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return new Intl.DateTimeFormat('en-US', {
+    hour: '2-digit',
+    minute: '2-digit'
   }).format(date);
 }
 
@@ -75,9 +104,10 @@ function applyTheme(theme) {
   localStorage.setItem('wm-theme', nextTheme);
   const toggle = $('#themeToggle');
   if (toggle) {
-    toggle.textContent = nextTheme === 'dark' ? 'Light theme' : 'Dark theme';
     toggle.setAttribute('aria-pressed', String(nextTheme === 'dark'));
+    toggle.setAttribute('aria-label', nextTheme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme');
   }
+  redrawCharts();
 }
 
 function toggleTheme() {
@@ -85,54 +115,301 @@ function toggleTheme() {
   applyTheme(current === 'dark' ? 'light' : 'dark');
 }
 
-function renderSummary(summary) {
-  $('#onlinePlayers').textContent = formatNumber(summary.players?.online);
-  $('#totalPlayers').textContent = `of ${formatNumber(summary.players?.total)} whitelisted`;
-  $('#latestTps').textContent = summary.tps?.latest == null ? '-' : Number(summary.tps.latest).toFixed(1);
-  $('#avgTps').textContent = `24h average: ${summary.tps?.average24h == null ? '-' : Number(summary.tps.average24h).toFixed(1)}`;
-  $('#obsidianTotal').textContent = formatNumber(summary.obsidian?.totalMined);
-  $('#obsidianSession').textContent = `session: ${formatNumber(summary.obsidian?.sessionMined)}`;
-  $('#obsidianToday').textContent = formatNumber(summary.obsidian?.todayMined);
-  $('#farmState').textContent = `farm: ${summary.obsidian?.desiredEnabled ? 'enabled' : 'disabled'}`;
-  $('#chat24h').textContent = formatNumber(summary.chat?.messages24h);
-
-  const nearby = summary.nearby || [];
-  $('#nearbyList').innerHTML = nearby.length
-    ? nearby.map(player => `
-      <div class="nearby-item">
-        ${playerIdentity(player.username, 28)}
-        <span class="muted">${formatNumber(player.distance)} blocks · ${formatAgo(player.lastSeen)}</span>
-      </div>
-    `).join('')
-    : '<div class="empty">No nearby sightings yet.</div>';
+function setActiveTab(tab) {
+  state.activeTab = tab;
+  $$('.tab-button').forEach(button => {
+    const active = button.dataset.tab === tab;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+  });
+  $$('.tab-panel').forEach(panel => {
+    panel.classList.toggle('active', panel.dataset.panel === tab);
+  });
+  redrawCharts();
 }
 
-function renderPlayers(payload) {
-  const players = payload.players || [];
-  $('#playersTable').innerHTML = players.length
-    ? players.map(player => `
-      <tr>
-        <td class="player-name">${playerIdentity(player.username, 28)}</td>
-        <td><span class="pill ${player.isOnline ? 'online' : ''}">${player.isOnline ? 'online' : 'offline'}</span></td>
-        <td>${escapeHtml(player.playtime || '-')}</td>
-      </tr>
-    `).join('')
-    : '<tr><td colspan="3" class="empty">No whitelist players found.</td></tr>';
+function getCssColor(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+function drawBarChart(canvas, data, options = {}) {
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const ratio = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  const width = Math.max(1, Math.floor(rect.width));
+  const height = Math.max(1, Math.floor(rect.height || canvas.height));
+  canvas.width = width * ratio;
+  canvas.height = height * ratio;
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+
+  const text = getCssColor('--text');
+  const muted = getCssColor('--muted');
+  const line = getCssColor('--line');
+  const accent = getCssColor('--accent');
+  const panelSoft = getCssColor('--panel-soft');
+  const chartData = Array.isArray(data) ? data : [];
+  const values = chartData.map(item => Number(item.value)).filter(Number.isFinite);
+  const maxValue = Math.max(options.max || 0, ...values, 1);
+  const padding = { top: 22, right: 14, bottom: 34, left: 42 };
+  const chartWidth = width - padding.left - padding.right;
+  const chartHeight = height - padding.top - padding.bottom;
+
+  ctx.fillStyle = panelSoft;
+  ctx.fillRect(0, 0, width, height);
+  ctx.strokeStyle = line;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(padding.left, padding.top);
+  ctx.lineTo(padding.left, padding.top + chartHeight);
+  ctx.lineTo(padding.left + chartWidth, padding.top + chartHeight);
+  ctx.stroke();
+
+  for (let i = 0; i <= 4; i++) {
+    const y = padding.top + chartHeight - (chartHeight * i) / 4;
+    ctx.strokeStyle = line;
+    ctx.beginPath();
+    ctx.moveTo(padding.left, y);
+    ctx.lineTo(padding.left + chartWidth, y);
+    ctx.stroke();
+    ctx.fillStyle = muted;
+    ctx.font = '11px system-ui, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(Math.round((maxValue * i) / 4), padding.left - 8, y + 4);
+  }
+
+  const gap = 4;
+  const barWidth = chartData.length > 0
+    ? Math.max(3, (chartWidth - gap * (chartData.length - 1)) / chartData.length)
+    : 0;
+
+  chartData.forEach((item, index) => {
+    const value = Number(item.value);
+    if (!Number.isFinite(value)) return;
+    const x = padding.left + index * (barWidth + gap);
+    const barHeight = Math.max(1, (value / maxValue) * chartHeight);
+    const y = padding.top + chartHeight - barHeight;
+    ctx.fillStyle = accent;
+    ctx.fillRect(x, y, barWidth, barHeight);
+  });
+
+  ctx.fillStyle = text;
+  ctx.font = '12px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  const labelStep = Math.max(1, Math.ceil(chartData.length / 8));
+  chartData.forEach((item, index) => {
+    if (index % labelStep !== 0 && index !== chartData.length - 1) return;
+    const x = padding.left + index * (barWidth + gap) + barWidth / 2;
+    ctx.fillText(String(item.label || ''), x, height - 12);
+  });
+}
+
+function drawLineChart(canvas, data) {
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const ratio = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  const width = Math.max(1, Math.floor(rect.width));
+  const height = Math.max(1, Math.floor(rect.height || canvas.height));
+  canvas.width = width * ratio;
+  canvas.height = height * ratio;
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+
+  const text = getCssColor('--text');
+  const muted = getCssColor('--muted');
+  const line = getCssColor('--line');
+  const accent = getCssColor('--accent');
+  const panelSoft = getCssColor('--panel-soft');
+  const chartData = Array.isArray(data) ? data : [];
+  const maxValue = 20;
+  const padding = { top: 22, right: 14, bottom: 34, left: 42 };
+  const chartWidth = width - padding.left - padding.right;
+  const chartHeight = height - padding.top - padding.bottom;
+
+  ctx.fillStyle = panelSoft;
+  ctx.fillRect(0, 0, width, height);
+  for (let i = 0; i <= 4; i++) {
+    const y = padding.top + chartHeight - (chartHeight * i) / 4;
+    ctx.strokeStyle = line;
+    ctx.beginPath();
+    ctx.moveTo(padding.left, y);
+    ctx.lineTo(padding.left + chartWidth, y);
+    ctx.stroke();
+    ctx.fillStyle = muted;
+    ctx.font = '11px system-ui, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(String((maxValue * i) / 4), padding.left - 8, y + 4);
+  }
+
+  const points = chartData
+    .map((item, index) => {
+      const value = Number(item.value);
+      if (!Number.isFinite(value)) return null;
+      const x = padding.left + (chartWidth * index) / Math.max(1, chartData.length - 1);
+      const y = padding.top + chartHeight - (Math.min(maxValue, Math.max(0, value)) / maxValue) * chartHeight;
+      return { x, y, value, label: item.label };
+    })
+    .filter(Boolean);
+
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  points.forEach((point, index) => {
+    if (index === 0) ctx.moveTo(point.x, point.y);
+    else ctx.lineTo(point.x, point.y);
+  });
+  ctx.stroke();
+
+  points.forEach(point => {
+    ctx.fillStyle = accent;
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  ctx.fillStyle = text;
+  ctx.font = '12px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  const labelStep = Math.max(1, Math.ceil(chartData.length / 8));
+  chartData.forEach((item, index) => {
+    if (index % labelStep !== 0 && index !== chartData.length - 1) return;
+    const x = padding.left + (chartWidth * index) / Math.max(1, chartData.length - 1);
+    ctx.fillText(String(item.label || ''), x, height - 12);
+  });
+}
+
+function redrawCharts() {
+  requestAnimationFrame(() => {
+    drawBarChart($('#chatHourlyChart'), state.charts.chatHourly);
+    drawBarChart($('#obsidianDailyChart'), state.charts.obsidianDaily);
+    drawLineChart($('#tpsHourlyChart'), state.charts.tpsHourly);
+  });
 }
 
 function renderChat(payload) {
+  $('#chat24h').textContent = formatNumber(payload.totals?.last24h);
+  $('#activeChatters').textContent = formatNumber(payload.totals?.activeChatters24h);
+  $('#chatAllTime').textContent = formatNumber(payload.totals?.allTime);
+
   const messages = payload.messages || [];
-  const list = $('#chatList');
-  list.innerHTML = messages.length
+  $('#chatList').innerHTML = messages.length
     ? messages.map(message => `
       <article class="chat-message">
         <div class="chat-user">${playerIdentity(message.username, 28)}</div>
         <div class="chat-text">${escapeHtml(message.message)}</div>
-        <time class="chat-time">${formatDate(message.createdAt)}</time>
+        <time class="chat-time">${formatChatTime(message.createdAt)}</time>
       </article>
     `).join('')
     : '<div class="empty">No chat messages yet. New messages will appear after the bot records them.</div>';
-  list.scrollTop = list.scrollHeight;
+
+  const topChatters = payload.topChatters || [];
+  $('#topChatters').innerHTML = topChatters.length
+    ? topChatters.map((player, index) => `
+      <div class="rank-item">
+        <span class="rank-index">${index + 1}</span>
+        ${playerIdentity(player.username, 28)}
+        <strong>${formatNumber(player.count)}</strong>
+      </div>
+    `).join('')
+    : '<div class="empty">No chat activity in the last 24 hours.</div>';
+
+  state.charts.chatHourly = payload.hourly || [];
+  redrawCharts();
+}
+
+function renderBotStats(payload) {
+  $('#onlinePlayers').textContent = formatNumber(payload.players?.online);
+  $('#totalPlayers').textContent = `of ${formatNumber(payload.players?.total)} whitelisted`;
+  $('#offlinePlayers').textContent = formatNumber(payload.players?.offline);
+  $('#seen24h').textContent = formatNumber(payload.players?.seen24h);
+  $('#seen7d').textContent = formatNumber(payload.players?.seen7d);
+
+  const leaderboard = payload.playtimeLeaderboard || [];
+  $('#playtimeLeaderboard').innerHTML = leaderboard.length
+    ? leaderboard.map((player, index) => `
+      <div class="rank-item">
+        <span class="rank-index">${index + 1}</span>
+        ${playerIdentity(player.username, 28)}
+        <span class="pill ${player.isOnline ? 'online' : ''}">${player.isOnline ? 'online' : 'offline'}</span>
+        <strong>${escapeHtml(player.playtime)}</strong>
+      </div>
+    `).join('')
+    : '<div class="empty">No whitelist playtime data found.</div>';
+
+  const activity = payload.recentActivity || [];
+  $('#recentActivity').innerHTML = activity.length
+    ? activity.map(player => `
+      <div class="rank-item">
+        ${playerIdentity(player.username, 28)}
+        <span class="pill ${player.isOnline ? 'online' : ''}">${player.isOnline ? 'online' : 'offline'}</span>
+        <span class="muted">${formatAgo(player.lastSeen)}</span>
+      </div>
+    `).join('')
+    : '<div class="empty">No recent activity records found.</div>';
+}
+
+function renderObsidian(payload) {
+  const farm = payload.farm || {};
+  $('#farmState').textContent = farm.desiredEnabled ? 'Enabled' : 'Disabled';
+  $('#farmUpdated').textContent = `last update: ${formatDate(farm.updatedAt)}`;
+  $('#obsidianTotal').textContent = formatNumber(farm.totalMined);
+  $('#obsidianToday').textContent = formatNumber(farm.todayMined);
+  $('#obsidianSession').textContent = formatNumber(farm.sessionMined);
+  $('#sessionRate').textContent = `rate: ${formatNumber(farm.sessionPerHour)}/h`;
+  $('#pickaxeAverage').textContent = farm.blocksPerPickaxe == null ? '-' : formatNumber(farm.blocksPerPickaxe);
+  $('#retiredPickaxes').textContent = `retired pickaxes: ${formatNumber(farm.retiredPickaxes)}`;
+
+  const target = farm.target || {};
+  const targetText = target.x == null || target.y == null || target.z == null
+    ? 'Not configured'
+    : `${target.x}, ${target.y}, ${target.z}`;
+  $('#farmDetails').innerHTML = `
+    <div><span>Session duration</span><strong>${escapeHtml(farm.sessionDuration || '-')}</strong></div>
+    <div><span>Last 7 days</span><strong>${formatNumber(farm.last7Days)} blocks</strong></div>
+    <div><span>Target coordinates</span><strong>${escapeHtml(targetText)}</strong></div>
+    <div><span>Target radius</span><strong>${target.radius == null ? '-' : `${formatNumber(target.radius)} blocks`}</strong></div>
+    <div><span>Retired pickaxe blocks</span><strong>${formatNumber(farm.retiredPickaxeBlocks)}</strong></div>
+  `;
+
+  state.charts.obsidianDaily = payload.daily || [];
+  redrawCharts();
+}
+
+function renderServerStats(payload) {
+  const tps = payload.tps || {};
+  $('#latestTps').textContent = formatTps(tps.latest);
+  $('#latestTpsAt').textContent = `sampled: ${formatDate(tps.latestAt)}`;
+  $('#avgTps').textContent = formatTps(tps.average24h);
+  $('#minTps').textContent = formatTps(tps.min24h);
+  $('#maxTps').textContent = formatTps(tps.max24h);
+  $('#tpsSamples').textContent = formatNumber(tps.samples24h);
+
+  const nearby = payload.nearby || [];
+  $('#nearbyList').innerHTML = nearby.length
+    ? nearby.map(player => `
+      <div class="rank-item">
+        ${playerIdentity(player.username, 28)}
+        <strong>${formatNumber(player.distance)} blocks</strong>
+        <span class="muted">${formatAgo(player.lastSeen)}</span>
+      </div>
+    `).join('')
+    : '<div class="empty">No nearby sightings yet.</div>';
+
+  const players = payload.recentPlayers || [];
+  $('#serverRecentPlayers').innerHTML = players.length
+    ? players.map(player => `
+      <div class="rank-item">
+        ${playerIdentity(player.username, 28)}
+        <span class="pill ${player.isOnline ? 'online' : ''}">${player.isOnline ? 'online' : 'offline'}</span>
+        <span class="muted">${formatAgo(player.lastSeen)}</span>
+      </div>
+    `).join('')
+    : '<div class="empty">No server activity records found.</div>';
+
+  state.charts.tpsHourly = payload.hourlyTps || [];
+  redrawCharts();
 }
 
 function escapeHtml(value) {
@@ -147,15 +424,17 @@ function escapeHtml(value) {
 async function loadAll() {
   $('#refreshButton').disabled = true;
   try {
-    const [summary, players, chat] = await Promise.all([
-      fetchJson('/api/summary'),
-      fetchJson('/api/players'),
-      fetchJson('/api/chat?limit=120')
+    const [chat, botStats, obsidian, serverStats] = await Promise.all([
+      fetchJson('/api/chat?limit=160'),
+      fetchJson('/api/bot-stats'),
+      fetchJson('/api/obsidian'),
+      fetchJson('/api/server-stats')
     ]);
-    renderSummary(summary);
-    renderPlayers(players);
     renderChat(chat);
-    $('#lastUpdated').textContent = `Updated ${formatDate(new Date())}`;
+    renderBotStats(botStats);
+    renderObsidian(obsidian);
+    renderServerStats(serverStats);
+    $('#lastUpdated').textContent = `Updated ${formatTime(new Date())}`;
     setBanner('');
   } catch (err) {
     setBanner(`Could not load dashboard data: ${err.message}`);
@@ -165,8 +444,13 @@ async function loadAll() {
 }
 
 applyTheme(localStorage.getItem('wm-theme') || 'light');
+$$('.tab-button').forEach(button => {
+  button.addEventListener('click', () => setActiveTab(button.dataset.tab));
+});
 $('#themeToggle').addEventListener('click', toggleTheme);
 $('#refreshButton').addEventListener('click', loadAll);
+window.addEventListener('resize', redrawCharts);
 
+setActiveTab('chat');
 loadAll();
-state.timer = setInterval(loadAll, 15000);
+state.timer = setInterval(loadAll, 5000);
