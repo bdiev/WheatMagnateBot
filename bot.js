@@ -15,6 +15,7 @@ const {
 } = require('./database');
 const { createPlaytimeFeature } = require('./features/playtime');
 const { createWhisperFeature } = require('./features/whisper');
+const { createFollowFeature } = require('./features/follow');
 const farm = require('./features/obsidianFarm');
 const { GrowingChildAI } = require('./features/growingChild');
 const { sanitizePublicPhrase } = require('./features/growingChild/safety');
@@ -408,6 +409,7 @@ let obsidianStats = {
   sessionStartedAt: null
 };
 let growingChild = null;
+const followFeature = createFollowFeature();
 let obsidianStatsWriteQueue = Promise.resolve();
 let whisperConversations = new Map(); // username -> messageId
 let whisperChannels = new Map(); // key: `${ownerId}:${mcUsername}` -> channelId
@@ -2782,6 +2784,7 @@ function pauseMinecraftConnection(reason) {
   const currentBot = bot;
   bot = null;
   clearIntervals();
+  followFeature.stop();
   farm.suspend();
   safelyCloseMinecraftBot(currentBot, reason);
   updateStatusMessage().catch(() => {});
@@ -4438,6 +4441,7 @@ function buildAdminServerStatusValue() {
     `${STATUS_EMOJIS.tps} TPS: ${getCurrentTpsDisplay()}`,
     `${STATUS_EMOJIS.food} Food: ${Math.round(bot.food * 2) / 2}/20`,
     `${STATUS_EMOJIS.health} Health: ${Math.round(bot.health * 2) / 2}/20`,
+    `${STATUS_EMOJIS.nearby} Following: ${followFeature.getStatus().targetUsername || 'None'}`,
     `${STATUS_EMOJIS.whitelist} Whitelist online: ${whitelistOnlineDisplay}`,
     `${FARM_EMOJIS.netheritePickaxe} Obsidian mined: ${obsidianMined}`
   ].join('\n');
@@ -4498,7 +4502,12 @@ function createAdminPanelButtons() {
           .setCustomId('obsidian_farm_button')
           .setLabel('Obsidian')
           .setEmoji(STATUS_BUTTON_EMOJIS.obsidian)
-          .setStyle((farm.getStatus().enabled || obsidianStats.desiredEnabled) ? ButtonStyle.Success : ButtonStyle.Secondary)
+          .setStyle((farm.getStatus().enabled || obsidianStats.desiredEnabled) ? ButtonStyle.Success : ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('follow_button')
+          .setLabel('Follow')
+          .setEmoji(STATUS_BUTTON_EMOJIS.players)
+          .setStyle(followFeature.getStatus().enabled ? ButtonStyle.Success : ButtonStyle.Secondary)
       ),
     new ActionRowBuilder()
       .addComponents(
@@ -4584,6 +4593,60 @@ function buildChatSettingsPayload() {
         bot ? 'Manage ignored online players below.' : 'Minecraft bot is offline. Online ignore menus are unavailable.'
       ].join('\n'),
       color: 3447003,
+      timestamp: new Date()
+    }],
+    components
+  };
+}
+
+function buildFollowManagementPayload(message = '', color = 3447003) {
+  const status = followFeature.getStatus();
+  const nearby = getNearbyPlayers();
+  const options = nearby
+    .filter(player => player.username)
+    .slice(0, 25)
+    .map(player =>
+      new StringSelectMenuOptionBuilder()
+        .setLabel(player.username)
+        .setDescription(`${player.distance} blocks away`)
+        .setValue(b64encode(player.username))
+    );
+
+  const components = [];
+  if (options.length > 0) {
+    components.push(
+      new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId('follow_select')
+          .setPlaceholder('Choose a nearby player to follow')
+          .addOptions(options)
+      )
+    );
+  }
+
+  if (status.enabled) {
+    components.push(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('follow_stop')
+          .setLabel('Stop following')
+          .setEmoji(STATUS_BUTTON_EMOJIS.pause)
+          .setStyle(ButtonStyle.Danger)
+      )
+    );
+  }
+
+  components.push(...createAdminBackComponents());
+
+  return {
+    embeds: [{
+      title: 'Follow',
+      description: [
+        message || (bot?.entity ? 'Select a nearby player. The bot will only walk; block breaking is disabled.' : 'Bot is offline.'),
+        `Current target: **${status.targetUsername || 'None'}**`,
+        options.length > 0 ? `Nearby players: **${nearby.length}**` : 'No nearby players visible.'
+      ].join('\n'),
+      color,
       timestamp: new Date()
     }],
     components
@@ -4697,6 +4760,7 @@ function getAdminPanelStatusSnapshot() {
     tps: getCurrentTpsDisplay(),
     food: `${Math.round(bot.food * 2) / 2}/20`,
     health: `${Math.round(bot.health * 2) / 2}/20`,
+    followTarget: followFeature.getStatus().targetUsername || 'None',
     obsidianMined: `${formatCompactCount(obsidianStats.sessionMined)}/${formatCompactCount(obsidianStats.totalMined)}`
   };
 }
@@ -4726,6 +4790,7 @@ async function buildAdminPanelEmbed() {
           value: [
             `${STATUS_EMOJIS.health} Health: **${status.health}**`,
             `${STATUS_EMOJIS.food} Food: **${status.food}**`,
+            `${STATUS_EMOJIS.nearby} Following: **${status.followTarget}**`,
             `${FARM_EMOJIS.netheritePickaxe} Obsidian: **${status.obsidianMined}**`
           ].join('\n'),
           inline: true
@@ -4871,6 +4936,8 @@ function isAdminPanelCustomId(customId = '') {
     customId === 'whitelist_button' ||
     customId === 'chat_setting_button' ||
     customId === 'obsidian_farm_button' ||
+    customId === 'follow_button' ||
+    customId === 'follow_stop' ||
     customId === 'admin_panel_back' ||
     customId === 'admin_whitelist_mode' ||
     customId === 'admin_gemini_toggle' ||
@@ -4881,7 +4948,8 @@ function isAdminPanelCustomId(customId = '') {
 
 function isAdminPanelSelectCustomId(customId = '') {
   return customId === 'admin_danger_radius_select' ||
-    customId === 'admin_message_cooldown_select';
+    customId === 'admin_message_cooldown_select' ||
+    customId === 'follow_select';
 }
 
 // Function to update server status message
@@ -4977,6 +5045,7 @@ function createBot() {
     if (bot !== createdBot) return;
 
     clearIntervals();
+    followFeature.stop();
     farm.suspend();
     bot = null;
     safelyCloseMinecraftBot(createdBot, reason);
@@ -4997,6 +5066,7 @@ function createBot() {
     if (fireEmergencyTriggered || bot !== createdBot) return;
     fireEmergencyTriggered = true;
     shouldReconnect = false;
+    followFeature.stop();
     farm.suspend();
     obsidianStats.desiredEnabled = false;
     setDisconnectReason('Emergency exit: bot caught fire');
@@ -6215,6 +6285,20 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       }
 
       await interaction.deferUpdate();
+      if (interaction.customId === 'follow_select') {
+        const selectedUsername = b64decode(interaction.values[0]);
+        try {
+          farm.suspend();
+          await setObsidianFarmDesiredEnabled(false);
+          followFeature.start(bot, selectedUsername);
+          adminPanelView = 'follow';
+          await interaction.editReply(buildFollowManagementPayload(`Following **${selectedUsername}**.`, 65280));
+          updateAdminPanel().catch(() => {});
+        } catch (err) {
+          await interaction.editReply(buildFollowManagementPayload(`Failed to follow **${selectedUsername}**: ${err.message}`, 16711680));
+        }
+        return;
+      }
       if (interaction.customId === 'admin_danger_radius_select') {
         const value = Number(interaction.values[0]);
         if (DANGER_RADIUS_OPTIONS.includes(value)) {
@@ -6301,6 +6385,21 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             )],
             components: createChildAdminComponents()
           });
+          return;
+        }
+        if (interaction.customId === 'follow_button') {
+          adminPanelView = 'follow';
+          await interaction.update(buildFollowManagementPayload());
+          return;
+        }
+        if (interaction.customId === 'follow_stop') {
+          await interaction.deferUpdate();
+          followFeature.stop();
+          if (adminPanelView === 'follow') {
+            await interaction.editReply(buildFollowManagementPayload('Follow stopped.', 3447003));
+          } else {
+            await updateAdminPanel();
+          }
           return;
         }
         if (interaction.customId.startsWith('claim_whisper_')) {
