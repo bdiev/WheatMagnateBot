@@ -412,10 +412,11 @@ function setSeenSearchOpen(open) {
   const toggle = $('#seenSearchToggle');
   if (!search || !toggle) return;
   search.classList.toggle('open', open);
+  document.body.classList.toggle('search-focus-active', open);
   toggle.setAttribute('aria-expanded', String(open));
   toggle.setAttribute('aria-label', open ? 'Close seen search' : 'Open seen search');
   if (open) {
-    setTimeout(() => $('#seenSearchInput')?.focus(), 180);
+    setTimeout(() => $('#seenSearchInput')?.focus(), 80);
   }
 }
 
@@ -719,6 +720,9 @@ $('#seenSuggestions').addEventListener('click', handleSeenSuggestionClick);
 document.addEventListener('click', event => {
   if (!event.target.closest('.seen-search')) {
     $('#seenSuggestions').hidden = true;
+    if ($('#seenSearch')?.classList.contains('open')) {
+      clearSeenSearch({ collapse: true });
+    }
   }
 });
 document.addEventListener('keydown', event => {

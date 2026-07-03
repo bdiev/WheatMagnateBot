@@ -30,6 +30,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   min-width: 320px;
@@ -92,6 +96,16 @@ h2 {
 
 .topbar-actions {
   justify-content: flex-end;
+}
+
+body.search-focus-active .topbar > :first-child,
+body.search-focus-active .tab-nav,
+body.search-focus-active .status-banner,
+body.search-focus-active .tab-panel {
+  filter: blur(3px);
+  opacity: 0.48;
+  pointer-events: none;
+  transition: filter 220ms ease, opacity 220ms ease;
 }
 
 .tab-nav {
@@ -306,6 +320,18 @@ button:disabled {
   grid-template-columns: 46px minmax(320px, 0.8fr) minmax(0, 1.2fr);
 }
 
+.topbar-actions .seen-search {
+  position: relative;
+  grid-template-columns: 46px minmax(0, 0fr);
+  align-items: center;
+  margin-bottom: 0;
+  z-index: 60;
+}
+
+.topbar-actions .seen-search.open {
+  grid-template-columns: 46px minmax(320px, 420px);
+}
+
 .seen-search-toggle {
   position: relative;
   width: 46px;
@@ -381,6 +407,14 @@ button:disabled {
   overflow: visible;
   transform: translateX(0) scaleX(1);
   pointer-events: auto;
+}
+
+.topbar-actions .seen-result {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(760px, calc(100vw - 32px));
+  z-index: 40;
 }
 
 .seen-search-box label {
