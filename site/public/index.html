@@ -29,15 +29,19 @@
         <button class="tab-button" type="button" data-tab="server">Server Stats</button>
       </nav>
 
-      <section class="seen-search" aria-label="Seen player search">
+      <section id="seenSearch" class="seen-search" aria-label="Seen player search">
+        <button id="seenSearchToggle" class="seen-search-toggle" type="button" aria-label="Open seen search" aria-expanded="false">
+          <span class="search-icon" aria-hidden="true"></span>
+        </button>
         <div class="seen-search-box">
           <label for="seenSearchInput">Seen</label>
           <input
             id="seenSearchInput"
-            type="search"
+            type="text"
             autocomplete="off"
             placeholder="Start typing a player name..."
           >
+          <button id="seenSearchClose" class="seen-search-close" type="button" aria-label="Close seen search">×</button>
           <div id="seenSuggestions" class="seen-suggestions" hidden></div>
         </div>
         <div id="seenResult" class="seen-result" hidden></div>

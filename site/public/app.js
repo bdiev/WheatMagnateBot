@@ -6,7 +6,9 @@ const state = {
   charts: {},
   chartMeta: {},
   seenSearchTimer: null,
-  seenPlayers: []
+  seenPlayers: [],
+  chatMessageIds: new Set(),
+  chatInitialized: false
 };
 
 const $ = selector => document.querySelector(selector);
@@ -77,6 +79,75 @@ function playerIdentity(username, size = 28) {
     <span class="player-identity">
       <img class="player-head" src="${playerHeadUrl(username, size)}" alt="" loading="lazy">
       <span>${safeName}</span>
+    </span>
+  `;
+}
+
+const CCVAULTS_BASE_URL = 'https://ccvaults.com';
+const CCVAULTS_EXACT_ITEMS = {
+  obsidian: { category: '20. Blocks', subcategory: '37. Nether' },
+  crying_obsidian: { category: '20. Blocks', subcategory: '37. Nether' },
+  barrel: { category: '20. Blocks', subcategory: '33. Workplaces' },
+  chest: { category: '20. Blocks', subcategory: '33. Workplaces' },
+  ender_chest: { category: '20. Blocks', subcategory: '33. Workplaces' },
+  cobblestone: { category: '20. Blocks', subcategory: '18. Decoration' },
+  stone: { category: '20. Blocks', subcategory: '18. Decoration' },
+  smooth_stone: { category: '20. Blocks', subcategory: '18. Decoration' },
+  blackstone: { category: '20. Blocks', subcategory: '37. Nether' },
+  netherrack: { category: '20. Blocks', subcategory: '37. Nether' },
+  glowstone: { category: '20. Blocks', subcategory: '37. Nether' },
+  end_stone: { category: '20. Blocks', subcategory: '36. End' }
+};
+const CCVAULTS_ITEM_CATEGORIES = [
+  { pattern: /_pickaxe$/, category: '10. Items', subcategory: '2. Pickaxes' },
+  { pattern: /_axe$/, category: '10. Items', subcategory: '3. Axes' },
+  { pattern: /_shovel$/, category: '10. Items', subcategory: '4. Shovels' },
+  { pattern: /_hoe$/, category: '10. Items', subcategory: '5. Hoes' },
+  { pattern: /_sword$|^trident$|^mace$/, category: '10. Items', subcategory: '1. Swords' },
+  { pattern: /bucket$/, category: '10. Items', subcategory: '19. Buckets' },
+  {
+    pattern: /apple|bread|carrot|potato|beef|chicken|cod|mutton|porkchop|rabbit|salmon|stew|soup|cake|cookie|kelp|berries|flesh|pie|honey_bottle|spider_eye/,
+    category: '10. Items',
+    subcategory: '10. Food'
+  },
+  { pattern: /golden_apple|totem_of_undying|potion|splash_potion|lingering_potion/, category: '10. Items', subcategory: '18. Consumables' },
+  { pattern: /obsidian|cobblestone|stone|dirt|sand|gravel|netherrack|basalt|blackstone|deepslate|ore|log|wood|planks|leaves|glass|wool|terracotta|concrete|brick|block$/, category: '20. Blocks', subcategory: null }
+];
+
+function toCcvaultsFileName(item) {
+  const raw = String(item?.name || item?.label || '').trim();
+  if (!raw) return '';
+  return raw
+    .replace(/[^a-zA-Z0-9_ -]/g, '')
+    .replace(/[-\s]+/g, '_')
+    .split('_')
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join('_') + '.png';
+}
+
+function ccvaultsIconUrl(item) {
+  const name = String(item?.name || item?.label || '').toLowerCase().replace(/[\s-]+/g, '_');
+  const file = toCcvaultsFileName(item);
+  if (!name || !file) return '';
+  const match = CCVAULTS_EXACT_ITEMS[name] || CCVAULTS_ITEM_CATEGORIES.find(entry => entry.pattern.test(name));
+  if (!match) return `${CCVAULTS_BASE_URL}/thumbnails/${encodeURIComponent('10. Items')}/${encodeURIComponent(file)}`;
+
+  const parts = [CCVAULTS_BASE_URL, 'thumbnails', match.category];
+  if (match.subcategory) parts.push(match.subcategory);
+  parts.push(file);
+  return parts.map((part, index) => index < 2 ? part : encodeURIComponent(part)).join('/');
+}
+
+function itemIcon(item) {
+  const label = item?.label || item?.name || 'Item';
+  const fallback = escapeHtml(label.slice(0, 2).toUpperCase());
+  const url = ccvaultsIconUrl(item);
+  if (!url) return `<span class="item-icon fallback">${fallback}</span>`;
+  return `
+    <span class="item-icon">
+      <img src="${url}" alt="" loading="lazy" onerror="this.closest('.item-icon').classList.add('fallback'); this.remove();">
+      <span>${fallback}</span>
     </span>
   `;
 }
@@ -336,6 +407,34 @@ function hideChartTooltip() {
   if (tooltip) tooltip.hidden = true;
 }
 
+function setSeenSearchOpen(open) {
+  const search = $('#seenSearch');
+  const toggle = $('#seenSearchToggle');
+  if (!search || !toggle) return;
+  search.classList.toggle('open', open);
+  toggle.setAttribute('aria-expanded', String(open));
+  toggle.setAttribute('aria-label', open ? 'Close seen search' : 'Open seen search');
+  if (open) {
+    setTimeout(() => $('#seenSearchInput')?.focus(), 180);
+  }
+}
+
+function clearSeenSearch({ collapse = false } = {}) {
+  const input = $('#seenSearchInput');
+  const suggestions = $('#seenSuggestions');
+  if (input) input.value = '';
+  if (suggestions) suggestions.hidden = true;
+  state.seenPlayers = [];
+  renderSeenResult(null);
+  if (collapse) setSeenSearchOpen(false);
+}
+
+function toggleSeenSearch() {
+  const isOpen = $('#seenSearch')?.classList.contains('open');
+  if (isOpen) clearSeenSearch({ collapse: true });
+  else setSeenSearchOpen(true);
+}
+
 function renderSeenSuggestions(players) {
   const suggestions = $('#seenSuggestions');
   state.seenPlayers = players || [];
@@ -386,6 +485,7 @@ async function runSeenSearch(query) {
   if (cleanQuery.length < 1) {
     if (suggestions) suggestions.hidden = true;
     state.seenPlayers = [];
+    renderSeenResult(null);
     return;
   }
 
@@ -421,16 +521,18 @@ function renderChat(payload) {
   $('#activeChatters').textContent = formatNumber(payload.totals?.activeChatters24h);
   $('#chatAllTime').textContent = formatNumber(payload.totals?.allTime);
 
-  const messages = payload.messages || [];
+  const messages = [...(payload.messages || [])].reverse();
   $('#chatList').innerHTML = messages.length
     ? messages.map(message => `
-      <article class="chat-message">
+      <article class="chat-message ${state.chatInitialized && !state.chatMessageIds.has(String(message.id)) ? 'new-message' : ''}">
         <div class="chat-user">${playerIdentity(message.username, 28)}</div>
         <div class="chat-text">${escapeHtml(message.message)}</div>
         <time class="chat-time">${formatChatTime(message.createdAt)}</time>
       </article>
     `).join('')
     : '<div class="empty">No chat messages yet. New messages will appear after the bot records them.</div>';
+  state.chatMessageIds = new Set(messages.map(message => String(message.id)));
+  state.chatInitialized = true;
 
   const topChatters = payload.topChatters || [];
   $('#topChatters').innerHTML = topChatters.length
@@ -528,7 +630,7 @@ function renderSupplies(selector, supplies, error = null) {
         const low = item.usable === false ? '<span class="pill low">low</span>' : '';
         return `
           <div class="supply-item">
-            <span>${escapeHtml(item.label)}</span>
+            <span class="supply-name">${itemIcon(item)}<span>${escapeHtml(item.label)}</span></span>
             <strong>x${formatNumber(item.count)}</strong>
             ${durability}
             ${low}
@@ -610,11 +712,18 @@ $('#themeToggle').addEventListener('click', toggleTheme);
 window.addEventListener('resize', redrawCharts);
 $('#obsidianDailyChart').addEventListener('mousemove', event => showChartTooltip(event.currentTarget, event));
 $('#obsidianDailyChart').addEventListener('mouseleave', hideChartTooltip);
+$('#seenSearchToggle').addEventListener('click', toggleSeenSearch);
+$('#seenSearchClose').addEventListener('click', () => clearSeenSearch({ collapse: true }));
 $('#seenSearchInput').addEventListener('input', handleSeenInput);
 $('#seenSuggestions').addEventListener('click', handleSeenSuggestionClick);
 document.addEventListener('click', event => {
   if (!event.target.closest('.seen-search')) {
     $('#seenSuggestions').hidden = true;
+  }
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && $('#seenSearch')?.classList.contains('open')) {
+    clearSeenSearch({ collapse: true });
   }
 });
 

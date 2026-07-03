@@ -2581,6 +2581,20 @@ async function rememberObsidianSuppliesForSite(supplies) {
   await saveObsidianSupplySnapshot(latestObsidianStatsSupplies);
 }
 
+async function refreshObsidianSupplySnapshotForSite() {
+  if (!bot?.entity) return;
+  try {
+    const farmStatus = await farm.getDetailedStatus(bot, {
+      inspectBarrel: false,
+      barrel: latestObsidianStatsSupplies?.barrel || null,
+      barrelError: latestObsidianStatsSupplies?.barrelError || null
+    });
+    await rememberObsidianSuppliesForSite(farmStatus.supplies);
+  } catch (err) {
+    console.error('[Obsidian Stats] Failed to refresh site supply snapshot:', err.message);
+  }
+}
+
 async function saveObsidianSupplySnapshot(supplies) {
   if (!pool || !supplies) return;
   try {
@@ -2598,6 +2612,18 @@ async function saveObsidianSupplySnapshot(supplies) {
   } catch (err) {
     console.error('[DB] Failed to save obsidian supply snapshot:', err.message);
   }
+}
+
+function startObsidianSupplySnapshotWriter() {
+  if (obsidianSupplySnapshotInterval) {
+    clearInterval(obsidianSupplySnapshotInterval);
+  }
+
+  refreshObsidianSupplySnapshotForSite().catch(() => {});
+  obsidianSupplySnapshotInterval = setInterval(() => {
+    refreshObsidianSupplySnapshotForSite().catch(() => {});
+  }, 10_000);
+  obsidianSupplySnapshotInterval.unref?.();
 }
 
 function startObsidianStatsUpdater(message, supplies, { view = 'summary' } = {}) {
@@ -2873,6 +2899,7 @@ let foodMonitorInterval = null;
 let playerScannerInterval = null;
 let restartProtectionInterval = null;
 let obsidianFarmWatchdogInterval = null;
+let obsidianSupplySnapshotInterval = null;
 let lastEnemyMentionAt = 0;
 let restartProtectionDateKey = null;
 let leverOperation = Promise.resolve();
@@ -5294,6 +5321,7 @@ function createBot() {
     startNearbyPlayerScanner();
     startRestartProtectionMonitor();
     startObsidianFarmWatchdog();
+    startObsidianSupplySnapshotWriter();
 
     if (obsidianStats.desiredEnabled) {
       const { dateKey, hour, minute } = getKyivDateParts();
@@ -5737,6 +5765,10 @@ function clearIntervals() {
   if (obsidianFarmWatchdogInterval) {
     clearInterval(obsidianFarmWatchdogInterval);
     obsidianFarmWatchdogInterval = null;
+  }
+  if (obsidianSupplySnapshotInterval) {
+    clearInterval(obsidianSupplySnapshotInterval);
+    obsidianSupplySnapshotInterval = null;
   }
   // Note: statusUpdateInterval is NOT cleared here as it's a global Discord interval
   // that should persist across bot reconnections

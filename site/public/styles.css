@@ -295,16 +295,66 @@ button:disabled {
 
 .seen-search {
   display: grid;
-  grid-template-columns: minmax(320px, 0.8fr) minmax(0, 1.2fr);
+  grid-template-columns: 46px minmax(0, 0fr) minmax(0, 1fr);
   gap: 12px;
   align-items: start;
   margin-bottom: 16px;
+  transition: grid-template-columns 260ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.seen-search.open {
+  grid-template-columns: 46px minmax(320px, 0.8fr) minmax(0, 1.2fr);
+}
+
+.seen-search-toggle {
+  position: relative;
+  width: 46px;
+  height: 46px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0;
+  color: var(--text);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  transition: background-color 220ms ease, border-color 220ms ease, transform 180ms ease, box-shadow 220ms ease;
+}
+
+.seen-search-toggle:hover {
+  color: var(--text);
+  background: var(--panel-soft);
+  transform: translateY(-1px);
+}
+
+.seen-search-toggle:active {
+  transform: translateY(0) scale(0.98);
+}
+
+.search-icon {
+  position: absolute;
+  left: 14px;
+  top: 13px;
+  width: 15px;
+  height: 15px;
+  border: 2px solid currentColor;
+  border-radius: 999px;
+}
+
+.search-icon::after {
+  content: "";
+  position: absolute;
+  right: -7px;
+  bottom: -5px;
+  width: 9px;
+  height: 2px;
+  border-radius: 999px;
+  background: currentColor;
+  transform: rotate(45deg);
 }
 
 .seen-search-box {
   position: relative;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   border: 1px solid var(--line);
@@ -312,6 +362,25 @@ button:disabled {
   padding: 10px 12px;
   background: var(--panel);
   box-shadow: var(--shadow);
+  min-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  transform: translateX(-12px) scaleX(0.96);
+  transform-origin: left center;
+  pointer-events: none;
+  transition:
+    opacity 200ms ease,
+    transform 260ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    background-color 260ms ease,
+    border-color 260ms ease,
+    box-shadow 260ms ease;
+}
+
+.seen-search.open .seen-search-box {
+  opacity: 1;
+  overflow: visible;
+  transform: translateX(0) scaleX(1);
+  pointer-events: auto;
 }
 
 .seen-search-box label {
@@ -330,6 +399,27 @@ button:disabled {
   color: var(--text);
   background: transparent;
   font: inherit;
+}
+
+.seen-search-close {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0;
+  color: var(--muted);
+  background: var(--panel-soft);
+  font-size: 19px;
+  line-height: 1;
+  transition: color 180ms ease, background-color 180ms ease, border-color 180ms ease, transform 160ms ease;
+}
+
+.seen-search-close:hover {
+  color: var(--text);
+  background: var(--panel);
+  transform: rotate(90deg);
 }
 
 .seen-suggestions {
@@ -375,6 +465,14 @@ button:disabled {
   border-radius: 8px;
   background: var(--panel);
   box-shadow: var(--shadow);
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 200ms ease, transform 220ms ease, background-color 260ms ease, border-color 260ms ease;
+}
+
+.seen-search:not(.open) .seen-result {
+  opacity: 0;
+  transform: translateY(-6px);
 }
 
 .seen-card {
@@ -516,6 +614,30 @@ button:disabled {
   padding: 10px 12px;
   background: var(--panel-soft);
   transition: background-color 260ms ease, border-color 260ms ease;
+}
+
+.chat-message.new-message {
+  animation: chatMessageIn 520ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes chatMessageIn {
+  0% {
+    opacity: 0;
+    transform: translateY(-12px) scale(0.985);
+    background: color-mix(in srgb, var(--accent) 18%, var(--panel-soft));
+    border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  }
+  55% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    background: color-mix(in srgb, var(--accent) 12%, var(--panel-soft));
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    background: var(--panel-soft);
+    border-color: var(--line);
+  }
 }
 
 .chat-user {
@@ -763,10 +885,55 @@ button:disabled {
   gap: 10px;
 }
 
-.supply-item > span:first-child {
+.supply-name {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 10px;
+}
+
+.supply-name > span:last-child {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.item-icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--panel) 82%, transparent), var(--panel-soft));
+  overflow: hidden;
+  transition: background-color 260ms ease, border-color 260ms ease;
+}
+
+.item-icon img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.item-icon span {
+  display: none;
+  font-size: 10px;
+  font-weight: 900;
+  color: var(--muted);
+}
+
+.item-icon.fallback img {
+  display: none;
+}
+
+.item-icon.fallback span {
+  display: block;
 }
 
 .empty {
@@ -811,6 +978,15 @@ button:disabled {
   .seen-card,
   .seen-option {
     grid-template-columns: 1fr;
+  }
+
+  .seen-search.open,
+  .seen-search {
+    grid-template-columns: 46px minmax(0, 1fr);
+  }
+
+  .seen-result {
+    grid-column: 1 / -1;
   }
 
   .tab-button {
