@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>WheatMagnateBot</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Локальная панель</p>
+          <h1>WheatMagnateBot</h1>
+        </div>
+        <div class="topbar-actions">
+          <span id="lastUpdated" class="muted">Загрузка...</span>
+          <button id="refreshButton" type="button">Обновить</button>
+        </div>
+      </header>
+
+      <section id="statusBanner" class="status-banner" hidden></section>
+
+      <section class="config-panel" aria-label="Database connection">
+        <form id="databaseForm" class="database-form">
+          <label for="databaseUrl">Database URL</label>
+          <input
+            id="databaseUrl"
+            name="databaseUrl"
+            type="password"
+            autocomplete="off"
+            placeholder="***REMOVED_CONNECTION_STRING***"
+          >
+          <button id="saveDatabaseButton" type="submit">Connect</button>
+          <span id="databaseStatus" class="muted">Database is not connected</span>
+        </form>
+      </section>
+
+      <section class="stats-grid" aria-label="Общая статистика">
+        <article class="stat">
+          <span class="stat-label">Игроки онлайн</span>
+          <strong id="onlinePlayers">-</strong>
+          <small id="totalPlayers">из - в whitelist</small>
+        </article>
+        <article class="stat">
+          <span class="stat-label">Общий playtime</span>
+          <strong id="totalPlaytime">-</strong>
+          <small>сумма по базе</small>
+        </article>
+        <article class="stat">
+          <span class="stat-label">TPS</span>
+          <strong id="latestTps">-</strong>
+          <small id="avgTps">24ч avg: -</small>
+        </article>
+        <article class="stat">
+          <span class="stat-label">Obsidian total</span>
+          <strong id="obsidianTotal">-</strong>
+          <small id="obsidianSession">session: -</small>
+        </article>
+        <article class="stat">
+          <span class="stat-label">Obsidian today</span>
+          <strong id="obsidianToday">-</strong>
+          <small id="farmState">farm: -</small>
+        </article>
+        <article class="stat">
+          <span class="stat-label">Чат за 24ч</span>
+          <strong id="chat24h">-</strong>
+          <small>сохраненные сообщения</small>
+        </article>
+      </section>
+
+      <section class="content-grid">
+        <section class="panel chat-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Игровой чат</h2>
+              <p>Последние сообщения Minecraft, которые прошли через бота.</p>
+            </div>
+          </div>
+          <div id="chatList" class="chat-list" aria-live="polite"></div>
+        </section>
+
+        <aside class="side-stack">
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Whitelist</h2>
+                <p>Статус и playtime игроков.</p>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Игрок</th>
+                    <th>Статус</th>
+                    <th>Playtime</th>
+                  </tr>
+                </thead>
+                <tbody id="playersTable"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Рядом замечены</h2>
+                <p>Последние nearby sightings.</p>
+              </div>
+            </div>
+            <div id="nearbyList" class="nearby-list"></div>
+          </section>
+        </aside>
+      </section>
+    </main>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>

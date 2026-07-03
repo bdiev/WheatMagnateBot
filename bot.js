@@ -872,6 +872,18 @@ async function initDatabase() {
       ON bot_tps_samples (sampled_at DESC)
     `);
     await pool.query(`
+      CREATE TABLE IF NOT EXISTS game_chat_messages (
+        id BIGSERIAL PRIMARY KEY,
+        username VARCHAR(255) NOT NULL,
+        message TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS game_chat_messages_created_at_idx
+      ON game_chat_messages (created_at DESC)
+    `);
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS nearby_player_sightings (
         username VARCHAR(255) PRIMARY KEY,
         last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -3363,10 +3375,6 @@ async function sendPrivateMinecraftMessage(username, text) {
 }
 
 async function sendGameChatMessageToDiscord(username, message, { allowMentions = true } = {}) {
-  if (!DISCORD_CHAT_CHANNEL_ID || !discordClient || !discordClient.isReady()) {
-    return false;
-  }
-
   const cleanMessage = String(message || '')
     .replace(/\u00a7[0-9a-fk-or]/gi, '')
     .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
@@ -3376,11 +3384,17 @@ async function sendGameChatMessageToDiscord(username, message, { allowMentions =
     return false;
   }
 
+  const safeUsername = String(username || bot?.username || 'Minecraft');
+  recordGameChatMessage(safeUsername, cleanMessage).catch(() => {});
+
+  if (!DISCORD_CHAT_CHANNEL_ID || !discordClient || !discordClient.isReady()) {
+    return false;
+  }
+
   try {
     const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
     if (!channel?.isTextBased?.()) return false;
 
-    const safeUsername = String(username || bot?.username || 'Minecraft');
     const avatarUrl = `https://minotar.net/avatar/${safeUsername.toLowerCase()}/28`;
     let displayMessage = neutralizeDiscordInviteLinks(flattenMarkdownLinks(cleanMessage))
       .replace(/([*_`~|>\\])/g, '\\$1');
@@ -3426,6 +3440,28 @@ async function sendGameChatMessageToDiscord(username, message, { allowMentions =
   }
 }
 
+async function recordGameChatMessage(username, message) {
+  if (!pool) return;
+
+  const safeUsername = String(username || 'Minecraft').trim().slice(0, 255);
+  const cleanMessage = String(message || '')
+    .replace(/\u00a7[0-9a-fk-or]/gi, '')
+    .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
+    .trim();
+
+  if (!safeUsername || !cleanMessage || cleanMessage.startsWith('/msg ')) return;
+
+  try {
+    await pool.query(
+      'INSERT INTO game_chat_messages (username, message) VALUES ($1, $2)',
+      [safeUsername, cleanMessage]
+    );
+    await pool.query("DELETE FROM game_chat_messages WHERE created_at < NOW() - INTERVAL '30 days'");
+  } catch (err) {
+    console.error('[DB] Failed to record game chat message:', err.message);
+  }
+}
+
 function neutralizeDiscordInviteLinks(message) {
   return String(message || '')
     .replace(/\b(discord\.gg|discord(?:app)?\.com\/invite)\//gi, match =>
@@ -3451,8 +3487,6 @@ function cleanMinecraftChatMessage(message) {
 }
 
 function scheduleGameChatForward(username, message) {
-  if (!DISCORD_CHAT_CHANNEL_ID || !discordClient || !discordClient.isReady()) return false;
-
   const cleanMessage = cleanMinecraftChatMessage(message);
   if (!cleanMessage || cleanMessage.startsWith('/msg ')) return false;
 
