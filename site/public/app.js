@@ -4,7 +4,9 @@ const state = {
   timer: null,
   activeTab: 'chat',
   charts: {},
-  chartMeta: {}
+  chartMeta: {},
+  seenSearchTimer: null,
+  seenPlayers: []
 };
 
 const $ = selector => document.querySelector(selector);
@@ -109,6 +111,7 @@ function applyTheme(theme) {
     toggle.setAttribute('aria-label', nextTheme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme');
   }
   redrawCharts();
+  setTimeout(redrawCharts, 280);
 }
 
 function toggleTheme() {
@@ -333,6 +336,86 @@ function hideChartTooltip() {
   if (tooltip) tooltip.hidden = true;
 }
 
+function renderSeenSuggestions(players) {
+  const suggestions = $('#seenSuggestions');
+  state.seenPlayers = players || [];
+
+  if (!suggestions) return;
+  if (state.seenPlayers.length === 0) {
+    suggestions.innerHTML = '<div class="seen-empty">No players found.</div>';
+    suggestions.hidden = false;
+    return;
+  }
+
+  suggestions.innerHTML = state.seenPlayers.map((player, index) => `
+    <button class="seen-option" type="button" data-index="${index}">
+      ${playerIdentity(player.username, 24)}
+      <span class="pill ${player.isOnline ? 'online' : ''}">${player.isOnline ? 'online' : 'offline'}</span>
+      <span class="muted">${player.lastSeen ? formatAgo(player.lastSeen) : 'never seen'}</span>
+    </button>
+  `).join('');
+  suggestions.hidden = false;
+}
+
+function renderSeenResult(player) {
+  const result = $('#seenResult');
+  if (!result) return;
+
+  if (!player) {
+    result.hidden = true;
+    result.innerHTML = '';
+    return;
+  }
+
+  result.hidden = false;
+  result.innerHTML = `
+    <div class="seen-card">
+      ${playerIdentity(player.username, 32)}
+      <span class="pill ${player.isOnline ? 'online' : ''}">${player.isOnline ? 'online' : 'offline'}</span>
+      <div><span>Last seen</span><strong>${player.lastSeen ? formatDate(player.lastSeen) : 'Never'}</strong></div>
+      <div><span>Last online</span><strong>${player.lastOnline ? formatDate(player.lastOnline) : 'Unknown'}</strong></div>
+      <div><span>Playtime</span><strong>${escapeHtml(player.playtime || '-')}</strong></div>
+      <div><span>Whitelist</span><strong>${player.isWhitelisted ? 'Yes' : 'No'}</strong></div>
+    </div>
+  `;
+}
+
+async function runSeenSearch(query) {
+  const cleanQuery = query.trim();
+  const suggestions = $('#seenSuggestions');
+  if (cleanQuery.length < 1) {
+    if (suggestions) suggestions.hidden = true;
+    state.seenPlayers = [];
+    return;
+  }
+
+  try {
+    const payload = await fetchJson(`/api/seen-search?query=${encodeURIComponent(cleanQuery)}`);
+    renderSeenSuggestions(payload.players || []);
+  } catch (err) {
+    if (suggestions) {
+      suggestions.innerHTML = `<div class="seen-empty">Search failed: ${escapeHtml(err.message)}</div>`;
+      suggestions.hidden = false;
+    }
+  }
+}
+
+function handleSeenInput(event) {
+  clearTimeout(state.seenSearchTimer);
+  const query = event.currentTarget.value;
+  state.seenSearchTimer = setTimeout(() => runSeenSearch(query), 180);
+}
+
+function handleSeenSuggestionClick(event) {
+  const option = event.target.closest('.seen-option');
+  if (!option) return;
+  const player = state.seenPlayers[Number(option.dataset.index)];
+  if (!player) return;
+  $('#seenSearchInput').value = player.username;
+  $('#seenSuggestions').hidden = true;
+  renderSeenResult(player);
+}
+
 function renderChat(payload) {
   $('#chat24h').textContent = formatNumber(payload.totals?.last24h);
   $('#activeChatters').textContent = formatNumber(payload.totals?.activeChatters24h);
@@ -502,7 +585,6 @@ function escapeHtml(value) {
 }
 
 async function loadAll() {
-  $('#refreshButton').disabled = true;
   try {
     const [chat, botStats, obsidian, serverStats] = await Promise.all([
       fetchJson('/api/chat?limit=160'),
@@ -514,12 +596,9 @@ async function loadAll() {
     renderBotStats(botStats);
     renderObsidian(obsidian);
     renderServerStats(serverStats);
-    $('#lastUpdated').textContent = `Updated ${formatTime(new Date())}`;
     setBanner('');
   } catch (err) {
     setBanner(`Could not load dashboard data: ${err.message}`);
-  } finally {
-    $('#refreshButton').disabled = false;
   }
 }
 
@@ -528,10 +607,16 @@ $$('.tab-button').forEach(button => {
   button.addEventListener('click', () => setActiveTab(button.dataset.tab));
 });
 $('#themeToggle').addEventListener('click', toggleTheme);
-$('#refreshButton').addEventListener('click', loadAll);
 window.addEventListener('resize', redrawCharts);
 $('#obsidianDailyChart').addEventListener('mousemove', event => showChartTooltip(event.currentTarget, event));
 $('#obsidianDailyChart').addEventListener('mouseleave', hideChartTooltip);
+$('#seenSearchInput').addEventListener('input', handleSeenInput);
+$('#seenSuggestions').addEventListener('click', handleSeenSuggestionClick);
+document.addEventListener('click', event => {
+  if (!event.target.closest('.seen-search')) {
+    $('#seenSuggestions').hidden = true;
+  }
+});
 
 setActiveTab('chat');
 loadAll();

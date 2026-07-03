@@ -135,15 +135,17 @@ function normalizeSupplySnapshot(row) {
   const supplies = row?.supplies || null;
   if (!supplies) {
     return {
+      hasSnapshot: false,
       observedAt: null,
       updatedAt: null,
-      inventory: summarizeSupplyLocation(null),
+      inventory: null,
       barrel: null,
       barrelError: 'No supply snapshot has been recorded yet.'
     };
   }
 
   return {
+    hasSnapshot: true,
     observedAt: supplies.observedAt || row.observed_at || null,
     updatedAt: row.updated_at || null,
     inventory: summarizeSupplyLocation(supplies.inventory),
@@ -576,6 +578,62 @@ async function getServerStats() {
   };
 }
 
+async function searchSeenPlayers(url) {
+  assertDatabase();
+
+  const query = String(url.searchParams.get('query') || '').trim();
+  if (query.length < 1) {
+    return { players: [] };
+  }
+
+  const result = await pool.query(`
+    WITH names AS (
+      SELECT username FROM whitelist
+      UNION
+      SELECT username FROM player_activity
+      UNION
+      SELECT username FROM player_playtime
+    )
+    SELECT
+      names.username,
+      EXISTS (
+        SELECT 1 FROM whitelist w WHERE LOWER(w.username) = LOWER(names.username)
+      ) AS is_whitelisted,
+      pa.last_seen,
+      pa.last_online,
+      pt.tracking_since IS NOT NULL AS is_online,
+      COALESCE(pt.total_seconds, 0) +
+        CASE WHEN pt.tracking_since IS NULL THEN 0
+             ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - pt.tracking_since)))::BIGINT)
+        END AS total_seconds
+    FROM names
+    LEFT JOIN player_activity pa ON LOWER(pa.username) = LOWER(names.username)
+    LEFT JOIN player_playtime pt ON LOWER(pt.username) = LOWER(names.username)
+    WHERE LOWER(names.username) LIKE LOWER($1)
+    ORDER BY
+      CASE WHEN LOWER(names.username) = LOWER($2) THEN 0 ELSE 1 END,
+      pt.tracking_since IS NOT NULL DESC,
+      pa.last_seen DESC NULLS LAST,
+      LOWER(names.username)
+    LIMIT 8
+  `, [`%${query}%`, query]);
+
+  return {
+    players: result.rows.map(row => {
+      const seconds = toInt(row.total_seconds);
+      return {
+        username: row.username,
+        isWhitelisted: Boolean(row.is_whitelisted),
+        isOnline: Boolean(row.is_online),
+        lastSeen: row.last_seen,
+        lastOnline: row.last_online,
+        totalSeconds: seconds,
+        playtime: formatSeconds(seconds)
+      };
+    })
+  };
+}
+
 async function handleApi(req, res, url) {
   try {
     if (url.pathname === '/api/health') {
@@ -604,6 +662,10 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/server-stats') {
       sendJson(res, 200, await getServerStats());
+      return;
+    }
+    if (url.pathname === '/api/seen-search') {
+      sendJson(res, 200, await searchSeenPlayers(url));
       return;
     }
     sendError(res, 404, 'API route not found.');

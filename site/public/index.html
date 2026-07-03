@@ -14,13 +14,11 @@
           <h1>WheatMagnateBot</h1>
         </div>
         <div class="topbar-actions">
-          <span id="lastUpdated" class="muted">Loading...</span>
           <button id="themeToggle" class="theme-switch" type="button" aria-label="Switch to dark theme" aria-pressed="false">
             <span class="theme-icon sun" aria-hidden="true">☀</span>
             <span class="theme-icon moon" aria-hidden="true">☾</span>
             <span class="theme-thumb" aria-hidden="true"></span>
           </button>
-          <button id="refreshButton" type="button">Refresh</button>
         </div>
       </header>
 
@@ -30,6 +28,20 @@
         <button class="tab-button" type="button" data-tab="obsidian">Obsidian Farm</button>
         <button class="tab-button" type="button" data-tab="server">Server Stats</button>
       </nav>
+
+      <section class="seen-search" aria-label="Seen player search">
+        <div class="seen-search-box">
+          <label for="seenSearchInput">Seen</label>
+          <input
+            id="seenSearchInput"
+            type="search"
+            autocomplete="off"
+            placeholder="Start typing a player name..."
+          >
+          <div id="seenSuggestions" class="seen-suggestions" hidden></div>
+        </div>
+        <div id="seenResult" class="seen-result" hidden></div>
+      </section>
 
       <section id="statusBanner" class="status-banner" hidden></section>
       <div id="chartTooltip" class="chart-tooltip" hidden></div>

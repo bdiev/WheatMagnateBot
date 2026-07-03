@@ -2070,6 +2070,7 @@ async function buildObsidianStatsEmbed(cachedSupplies = null) {
     }),
     getObsidianDailyStats(7)
   ]);
+  await rememberObsidianSuppliesForSite(farmStatus.supplies);
   const sessionStartedAt = obsidianStats.sessionStartedAt
     ? new Date(obsidianStats.sessionStartedAt)
     : null;
@@ -2155,6 +2156,7 @@ async function buildDetailedObsidianStatsEmbed(cachedSupplies = null) {
         barrelError: cachedSupplies.barrelError || null
       }
     : {});
+  await rememberObsidianSuppliesForSite(farmStatus.supplies);
   const config = farmStatus.config;
   const sessionStartedAt = obsidianStats.sessionStartedAt
     ? new Date(obsidianStats.sessionStartedAt)
@@ -2571,6 +2573,12 @@ async function updateObsidianStatsSupplies(supplies) {
     await updateObsidianStatsUpdater(channelId, updater);
   }));
   saveObsidianStatsUpdaters();
+}
+
+async function rememberObsidianSuppliesForSite(supplies) {
+  if (!supplies) return;
+  latestObsidianStatsSupplies = mergeObsidianSupplies(latestObsidianStatsSupplies, supplies);
+  await saveObsidianSupplySnapshot(latestObsidianStatsSupplies);
 }
 
 async function saveObsidianSupplySnapshot(supplies) {
