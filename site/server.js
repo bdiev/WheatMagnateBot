@@ -634,6 +634,101 @@ async function searchSeenPlayers(url) {
   };
 }
 
+async function getPlayerProfile(url) {
+  assertDatabase();
+
+  const username = String(url.searchParams.get('username') || '').trim();
+  if (!username) {
+    const err = new Error('username is required.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const [profileResult, chatResult, recentChatResult, nearbyResult] = await Promise.all([
+    pool.query(`
+      WITH names AS (
+        SELECT username FROM whitelist WHERE LOWER(username) = LOWER($1)
+        UNION
+        SELECT username FROM player_activity WHERE LOWER(username) = LOWER($1)
+        UNION
+        SELECT username FROM player_playtime WHERE LOWER(username) = LOWER($1)
+      ),
+      selected AS (
+        SELECT COALESCE((SELECT username FROM names LIMIT 1), $1) AS username
+      )
+      SELECT
+        selected.username,
+        EXISTS (
+          SELECT 1 FROM whitelist w WHERE LOWER(w.username) = LOWER(selected.username)
+        ) AS is_whitelisted,
+        pa.last_seen,
+        pa.last_online,
+        pt.tracking_since,
+        pt.tracking_since IS NOT NULL AS is_online,
+        COALESCE(pt.total_seconds, 0) +
+          CASE WHEN pt.tracking_since IS NULL THEN 0
+               ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - pt.tracking_since)))::BIGINT)
+          END AS total_seconds
+      FROM selected
+      LEFT JOIN player_activity pa ON LOWER(pa.username) = LOWER(selected.username)
+      LEFT JOIN player_playtime pt ON LOWER(pt.username) = LOWER(selected.username)
+    `, [username]),
+    pool.query(`
+      SELECT
+        COUNT(*)::int AS total,
+        COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')::int AS last_24h,
+        MAX(created_at) AS last_message_at
+      FROM game_chat_messages
+      WHERE LOWER(username) = LOWER($1)
+    `, [username]),
+    pool.query(`
+      SELECT message, created_at
+      FROM game_chat_messages
+      WHERE LOWER(username) = LOWER($1)
+      ORDER BY created_at DESC
+      LIMIT 5
+    `, [username]),
+    pool.query(`
+      SELECT distance, last_seen
+      FROM nearby_player_sightings
+      WHERE LOWER(username) = LOWER($1)
+      ORDER BY last_seen DESC
+      LIMIT 1
+    `, [username])
+  ]);
+
+  const profile = profileResult.rows[0] || { username };
+  const chat = chatResult.rows[0] || {};
+  const nearby = nearbyResult.rows[0] || null;
+  const seconds = toInt(profile.total_seconds);
+
+  return {
+    username: profile.username || username,
+    isWhitelisted: Boolean(profile.is_whitelisted),
+    isOnline: Boolean(profile.is_online),
+    trackingSince: profile.tracking_since || null,
+    lastSeen: profile.last_seen || null,
+    lastOnline: profile.last_online || null,
+    totalSeconds: seconds,
+    playtime: formatSeconds(seconds),
+    chat: {
+      totalMessages: toInt(chat.total),
+      last24h: toInt(chat.last_24h),
+      lastMessageAt: chat.last_message_at || null,
+      recentMessages: recentChatResult.rows.map(row => ({
+        message: row.message,
+        createdAt: row.created_at
+      }))
+    },
+    nearby: nearby
+      ? {
+          distance: toInt(nearby.distance),
+          lastSeen: nearby.last_seen
+        }
+      : null
+  };
+}
+
 async function handleApi(req, res, url) {
   try {
     if (url.pathname === '/api/health') {
@@ -666,6 +761,10 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/seen-search') {
       sendJson(res, 200, await searchSeenPlayers(url));
+      return;
+    }
+    if (url.pathname === '/api/player') {
+      sendJson(res, 200, await getPlayerProfile(url));
       return;
     }
     sendError(res, 404, 'API route not found.');

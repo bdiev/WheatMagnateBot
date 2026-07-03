@@ -75,8 +75,9 @@ function playerHeadUrl(username, size = 32) {
 
 function playerIdentity(username, size = 28) {
   const safeName = escapeHtml(username || 'Unknown');
+  const safeUsername = escapeHtml(username || '');
   return `
-    <span class="player-identity">
+    <span class="player-identity" role="button" tabindex="0" data-player="${safeUsername}" title="Open player profile">
       <img class="player-head" src="${playerHeadUrl(username, size)}" alt="" loading="lazy">
       <span>${safeName}</span>
     </span>
@@ -407,6 +408,73 @@ function hideChartTooltip() {
   if (tooltip) tooltip.hidden = true;
 }
 
+function renderPlayerProfile(profile) {
+  const recentMessages = profile.chat?.recentMessages || [];
+  const nearby = profile.nearby;
+  return `
+    <header class="player-profile-head">
+      <img class="player-profile-avatar" src="${playerHeadUrl(profile.username, 96)}" alt="" loading="lazy">
+      <div>
+        <h2 id="playerProfileName">${escapeHtml(profile.username)}</h2>
+        <div class="player-profile-badges">
+          <span class="pill ${profile.isOnline ? 'online' : ''}">${profile.isOnline ? 'online' : 'offline'}</span>
+          <span class="pill">${profile.isWhitelisted ? 'whitelisted' : 'not whitelisted'}</span>
+        </div>
+      </div>
+    </header>
+    <section class="player-profile-grid">
+      <div><span>Playtime</span><strong>${escapeHtml(profile.playtime || '-')}</strong></div>
+      <div><span>Last Seen</span><strong>${profile.lastSeen ? formatDate(profile.lastSeen) : 'Never'}</strong></div>
+      <div><span>Last Online</span><strong>${profile.lastOnline ? formatDate(profile.lastOnline) : 'Unknown'}</strong></div>
+      <div><span>Chat Messages</span><strong>${formatNumber(profile.chat?.totalMessages)}</strong></div>
+      <div><span>Messages 24h</span><strong>${formatNumber(profile.chat?.last24h)}</strong></div>
+      <div><span>Last Message</span><strong>${profile.chat?.lastMessageAt ? formatDate(profile.chat.lastMessageAt) : 'None'}</strong></div>
+      <div><span>Nearby</span><strong>${nearby ? `${formatNumber(nearby.distance)} blocks` : 'No sighting'}</strong></div>
+      <div><span>Nearby Seen</span><strong>${nearby?.lastSeen ? formatDate(nearby.lastSeen) : '-'}</strong></div>
+    </section>
+    <section class="player-profile-chat">
+      <h3>Recent Chat</h3>
+      ${recentMessages.length
+        ? recentMessages.map(message => `
+          <div class="player-profile-message">
+            <p>${escapeHtml(message.message)}</p>
+            <time>${formatDate(message.createdAt)}</time>
+          </div>
+        `).join('')
+        : '<div class="empty">No recorded chat messages for this player.</div>'}
+    </section>
+  `;
+}
+
+async function openPlayerProfile(username) {
+  const overlay = $('#playerProfileOverlay');
+  const content = $('#playerProfileContent');
+  if (!overlay || !content || !username) return;
+
+  overlay.hidden = false;
+  document.body.classList.add('profile-open');
+  content.innerHTML = `
+    <div class="player-profile-loading">
+      ${playerIdentity(username, 40)}
+      <span>Loading player profile...</span>
+    </div>
+  `;
+
+  try {
+    const profile = await fetchJson(`/api/player?username=${encodeURIComponent(username)}`);
+    content.innerHTML = renderPlayerProfile(profile);
+  } catch (err) {
+    content.innerHTML = `<div class="empty">Could not load player profile: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function closePlayerProfile() {
+  const overlay = $('#playerProfileOverlay');
+  if (!overlay) return;
+  overlay.hidden = true;
+  document.body.classList.remove('profile-open');
+}
+
 function setSeenSearchOpen(open) {
   const search = $('#seenSearch');
   const toggle = $('#seenSearchToggle');
@@ -718,6 +786,14 @@ $('#seenSearchClose').addEventListener('click', () => clearSeenSearch({ collapse
 $('#seenSearchInput').addEventListener('input', handleSeenInput);
 $('#seenSuggestions').addEventListener('click', handleSeenSuggestionClick);
 document.addEventListener('click', event => {
+  const player = event.target.closest('[data-player]');
+  if (player) {
+    event.preventDefault();
+    event.stopPropagation();
+    openPlayerProfile(player.dataset.player);
+    return;
+  }
+
   if (!event.target.closest('.seen-search')) {
     $('#seenSuggestions').hidden = true;
     if ($('#seenSearch')?.classList.contains('open')) {
@@ -726,9 +802,25 @@ document.addEventListener('click', event => {
   }
 });
 document.addEventListener('keydown', event => {
+  const player = event.target.closest?.('[data-player]');
+  if (player && (event.key === 'Enter' || event.key === ' ')) {
+    event.preventDefault();
+    openPlayerProfile(player.dataset.player);
+    return;
+  }
+
+  if (event.key === 'Escape' && !$('#playerProfileOverlay')?.hidden) {
+    closePlayerProfile();
+    return;
+  }
+
   if (event.key === 'Escape' && $('#seenSearch')?.classList.contains('open')) {
     clearSeenSearch({ collapse: true });
   }
+});
+$('#playerProfileClose').addEventListener('click', closePlayerProfile);
+$('#playerProfileOverlay').addEventListener('click', event => {
+  if (event.target.id === 'playerProfileOverlay') closePlayerProfile();
 });
 
 setActiveTab('chat');

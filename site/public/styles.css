@@ -108,6 +108,10 @@ body.search-focus-active .tab-panel {
   transition: filter 220ms ease, opacity 220ms ease;
 }
 
+body.profile-open {
+  overflow: hidden;
+}
+
 .tab-nav {
   position: sticky;
   top: 0;
@@ -810,6 +814,20 @@ button:disabled {
   font-weight: 800;
 }
 
+.player-identity[role="button"] {
+  cursor: pointer;
+  border-radius: 7px;
+  transition: color 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
+}
+
+.player-identity[role="button"]:hover,
+.player-identity[role="button"]:focus-visible {
+  color: var(--accent-strong);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 10%, transparent);
+  outline: 0;
+}
+
 .player-identity span {
   min-width: 0;
   overflow: hidden;
@@ -832,6 +850,166 @@ button:disabled {
   flex: 0 0 auto;
   background: var(--panel);
   transition: background-color 260ms ease, border-color 260ms ease;
+}
+
+.player-profile-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--bg) 58%, transparent);
+  backdrop-filter: blur(8px);
+  animation: overlayIn 180ms ease;
+}
+
+.player-profile-card {
+  position: relative;
+  width: min(840px, 100%);
+  max-height: min(760px, calc(100vh - 48px));
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.22);
+  animation: profileCardIn 240ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.player-profile-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0;
+  color: var(--muted);
+  background: var(--panel-soft);
+  font-size: 22px;
+  line-height: 1;
+}
+
+.player-profile-close:hover {
+  color: var(--text);
+  background: var(--panel);
+}
+
+.player-profile-head {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 18px;
+  align-items: center;
+  padding: 22px 58px 18px 22px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-soft);
+}
+
+.player-profile-avatar {
+  width: 96px;
+  height: 96px;
+  image-rendering: pixelated;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.player-profile-head h2 {
+  margin-bottom: 10px;
+  font-size: 28px;
+}
+
+.player-profile-badges {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.player-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  padding: 14px;
+}
+
+.player-profile-grid div,
+.player-profile-message {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--panel-soft);
+}
+
+.player-profile-grid span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.player-profile-grid strong {
+  display: block;
+  margin-top: 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.player-profile-chat {
+  display: grid;
+  gap: 8px;
+  padding: 0 14px 16px;
+}
+
+.player-profile-chat h3 {
+  margin: 4px 0 0;
+  font-size: 15px;
+}
+
+.player-profile-message {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 12px;
+  align-items: start;
+}
+
+.player-profile-message p {
+  overflow-wrap: anywhere;
+}
+
+.player-profile-message time {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.player-profile-loading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 22px;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+@keyframes overlayIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes profileCardIn {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .pill {
@@ -1021,6 +1199,28 @@ button:disabled {
 
   .seen-result {
     grid-column: 1 / -1;
+  }
+
+  .player-profile-overlay {
+    padding: 10px;
+  }
+
+  .player-profile-head {
+    grid-template-columns: 64px minmax(0, 1fr);
+    padding: 18px 54px 16px 16px;
+  }
+
+  .player-profile-avatar {
+    width: 64px;
+    height: 64px;
+  }
+
+  .player-profile-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .player-profile-message {
+    grid-template-columns: 1fr;
   }
 
   .tab-button {

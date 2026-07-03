@@ -66,6 +66,12 @@
 
       <section id="statusBanner" class="status-banner" hidden></section>
       <div id="chartTooltip" class="chart-tooltip" hidden></div>
+      <div id="playerProfileOverlay" class="player-profile-overlay" hidden>
+        <article class="player-profile-card" role="dialog" aria-modal="true" aria-labelledby="playerProfileName">
+          <button id="playerProfileClose" class="player-profile-close" type="button" aria-label="Close player profile">&times;</button>
+          <div id="playerProfileContent"></div>
+        </article>
+      </div>
 
       <section id="tab-chat" class="tab-panel active" data-panel="chat">
         <section class="stats-grid three">
