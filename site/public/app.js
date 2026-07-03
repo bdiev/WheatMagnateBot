@@ -3,7 +3,8 @@
 const state = {
   timer: null,
   activeTab: 'chat',
-  charts: {}
+  charts: {},
+  chartMeta: {}
 };
 
 const $ = selector => document.querySelector(selector);
@@ -183,6 +184,7 @@ function drawBarChart(canvas, data, options = {}) {
   const barWidth = chartData.length > 0
     ? Math.max(3, (chartWidth - gap * (chartData.length - 1)) / chartData.length)
     : 0;
+  const hitboxes = [];
 
   chartData.forEach((item, index) => {
     const value = Number(item.value);
@@ -192,7 +194,17 @@ function drawBarChart(canvas, data, options = {}) {
     const y = padding.top + chartHeight - barHeight;
     ctx.fillStyle = accent;
     ctx.fillRect(x, y, barWidth, barHeight);
+    hitboxes.push({
+      x,
+      y: padding.top,
+      width: barWidth,
+      height: chartHeight,
+      label: item.label,
+      value,
+      tooltip: options.tooltip ? options.tooltip(item) : `${item.label}: ${formatNumber(value)}`
+    });
   });
+  state.chartMeta[canvas.id] = { hitboxes };
 
   ctx.fillStyle = text;
   ctx.font = '12px system-ui, sans-serif';
@@ -283,9 +295,42 @@ function drawLineChart(canvas, data) {
 function redrawCharts() {
   requestAnimationFrame(() => {
     drawBarChart($('#chatHourlyChart'), state.charts.chatHourly);
-    drawBarChart($('#obsidianDailyChart'), state.charts.obsidianDaily);
+    drawBarChart($('#obsidianDailyChart'), state.charts.obsidianDaily, {
+      tooltip: item => `${item.label}: ${formatNumber(item.value)} blocks`
+    });
     drawLineChart($('#tpsHourlyChart'), state.charts.tpsHourly);
   });
+}
+
+function showChartTooltip(canvas, event) {
+  const tooltip = $('#chartTooltip');
+  const meta = state.chartMeta[canvas.id];
+  if (!tooltip || !meta) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+  const hit = meta.hitboxes.find(box =>
+    x >= box.x &&
+    x <= box.x + box.width &&
+    y >= box.y &&
+    y <= box.y + box.height
+  );
+
+  if (!hit) {
+    tooltip.hidden = true;
+    return;
+  }
+
+  tooltip.textContent = hit.tooltip;
+  tooltip.hidden = false;
+  tooltip.style.left = `${event.clientX + 12}px`;
+  tooltip.style.top = `${event.clientY + 12}px`;
+}
+
+function hideChartTooltip() {
+  const tooltip = $('#chartTooltip');
+  if (tooltip) tooltip.hidden = true;
 }
 
 function renderChat(payload) {
@@ -329,7 +374,7 @@ function renderBotStats(payload) {
   const leaderboard = payload.playtimeLeaderboard || [];
   $('#playtimeLeaderboard').innerHTML = leaderboard.length
     ? leaderboard.map((player, index) => `
-      <div class="rank-item">
+      <div class="rank-item leaderboard-item">
         <span class="rank-index">${index + 1}</span>
         ${playerIdentity(player.username, 28)}
         <span class="pill ${player.isOnline ? 'online' : ''}">${player.isOnline ? 'online' : 'offline'}</span>
@@ -341,7 +386,7 @@ function renderBotStats(payload) {
   const activity = payload.recentActivity || [];
   $('#recentActivity').innerHTML = activity.length
     ? activity.map(player => `
-      <div class="rank-item">
+      <div class="rank-item activity-item">
         ${playerIdentity(player.username, 28)}
         <span class="pill ${player.isOnline ? 'online' : ''}">${player.isOnline ? 'online' : 'offline'}</span>
         <span class="muted">${formatAgo(player.lastSeen)}</span>
@@ -361,20 +406,55 @@ function renderObsidian(payload) {
   $('#pickaxeAverage').textContent = farm.blocksPerPickaxe == null ? '-' : formatNumber(farm.blocksPerPickaxe);
   $('#retiredPickaxes').textContent = `retired pickaxes: ${formatNumber(farm.retiredPickaxes)}`;
 
-  const target = farm.target || {};
-  const targetText = target.x == null || target.y == null || target.z == null
-    ? 'Not configured'
-    : `${target.x}, ${target.y}, ${target.z}`;
   $('#farmDetails').innerHTML = `
     <div><span>Session duration</span><strong>${escapeHtml(farm.sessionDuration || '-')}</strong></div>
     <div><span>Last 7 days</span><strong>${formatNumber(farm.last7Days)} blocks</strong></div>
-    <div><span>Target coordinates</span><strong>${escapeHtml(targetText)}</strong></div>
-    <div><span>Target radius</span><strong>${target.radius == null ? '-' : `${formatNumber(target.radius)} blocks`}</strong></div>
     <div><span>Retired pickaxe blocks</span><strong>${formatNumber(farm.retiredPickaxeBlocks)}</strong></div>
+    <div><span>Supplies snapshot</span><strong>${formatDate(payload.supplies?.updatedAt)}</strong></div>
   `;
 
+  renderSupplies('#inventorySupplies', payload.supplies?.inventory);
+  renderSupplies('#barrelSupplies', payload.supplies?.barrel, payload.supplies?.barrelError);
   state.charts.obsidianDaily = payload.daily || [];
   redrawCharts();
+}
+
+function renderSupplies(selector, supplies, error = null) {
+  const target = $(selector);
+  if (!target) return;
+  if (!supplies) {
+    target.innerHTML = `<div class="empty">${escapeHtml(error || 'No supply snapshot available.')}</div>`;
+    return;
+  }
+
+  const items = supplies.items || [];
+  const summary = `
+    <div class="supply-summary">
+      <div><span>Food</span><strong>${formatNumber(supplies.foodCount)}</strong></div>
+      <div><span>Pickaxes</span><strong>${formatNumber(supplies.pickaxeCount)}</strong></div>
+      <div><span>Usable Pickaxes</span><strong>${formatNumber(supplies.usablePickaxeCount)}</strong></div>
+      <div><span>Total Items</span><strong>${formatNumber(supplies.totalItems)}</strong></div>
+    </div>
+  `;
+
+  const itemList = items.length
+    ? items.map(item => {
+        const durability = item.remainingPercent == null
+          ? ''
+          : `<span class="muted">${Number(item.remainingPercent).toFixed(1)}%</span>`;
+        const low = item.usable === false ? '<span class="pill low">low</span>' : '';
+        return `
+          <div class="supply-item">
+            <span>${escapeHtml(item.label)}</span>
+            <strong>x${formatNumber(item.count)}</strong>
+            ${durability}
+            ${low}
+          </div>
+        `;
+      }).join('')
+    : '<div class="empty">No items recorded.</div>';
+
+  target.innerHTML = `${summary}<div class="supply-items">${itemList}</div>`;
 }
 
 function renderServerStats(payload) {
@@ -389,7 +469,7 @@ function renderServerStats(payload) {
   const nearby = payload.nearby || [];
   $('#nearbyList').innerHTML = nearby.length
     ? nearby.map(player => `
-      <div class="rank-item">
+      <div class="rank-item activity-item">
         ${playerIdentity(player.username, 28)}
         <strong>${formatNumber(player.distance)} blocks</strong>
         <span class="muted">${formatAgo(player.lastSeen)}</span>
@@ -400,7 +480,7 @@ function renderServerStats(payload) {
   const players = payload.recentPlayers || [];
   $('#serverRecentPlayers').innerHTML = players.length
     ? players.map(player => `
-      <div class="rank-item">
+      <div class="rank-item activity-item">
         ${playerIdentity(player.username, 28)}
         <span class="pill ${player.isOnline ? 'online' : ''}">${player.isOnline ? 'online' : 'offline'}</span>
         <span class="muted">${formatAgo(player.lastSeen)}</span>
@@ -450,6 +530,8 @@ $$('.tab-button').forEach(button => {
 $('#themeToggle').addEventListener('click', toggleTheme);
 $('#refreshButton').addEventListener('click', loadAll);
 window.addEventListener('resize', redrawCharts);
+$('#obsidianDailyChart').addEventListener('mousemove', event => showChartTooltip(event.currentTarget, event));
+$('#obsidianDailyChart').addEventListener('mouseleave', hideChartTooltip);
 
 setActiveTab('chat');
 loadAll();

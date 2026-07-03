@@ -972,6 +972,14 @@ async function initDatabase() {
       )
     `);
     await pool.query(`
+      CREATE TABLE IF NOT EXISTS obsidian_farm_supply_snapshot (
+        id SMALLINT PRIMARY KEY CHECK (id = 1),
+        supplies JSONB NOT NULL,
+        observed_at TIMESTAMPTZ,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS admin_settings (
         key TEXT PRIMARY KEY,
         value JSONB NOT NULL,
@@ -2553,6 +2561,7 @@ async function refreshObsidianStatsUpdaters() {
 
 async function updateObsidianStatsSupplies(supplies) {
   latestObsidianStatsSupplies = mergeObsidianSupplies(latestObsidianStatsSupplies, supplies);
+  await saveObsidianSupplySnapshot(latestObsidianStatsSupplies);
   await Promise.all([...obsidianStatsUpdaters.entries()].map(async ([channelId, updater]) => {
     updater.supplies = mergeObsidianSupplies(updater.supplies, latestObsidianStatsSupplies);
     if (updater.updating) {
@@ -2562,6 +2571,25 @@ async function updateObsidianStatsSupplies(supplies) {
     await updateObsidianStatsUpdater(channelId, updater);
   }));
   saveObsidianStatsUpdaters();
+}
+
+async function saveObsidianSupplySnapshot(supplies) {
+  if (!pool || !supplies) return;
+  try {
+    await pool.query(`
+      INSERT INTO obsidian_farm_supply_snapshot (id, supplies, observed_at, updated_at)
+      VALUES (1, $1::jsonb, $2, NOW())
+      ON CONFLICT (id)
+      DO UPDATE SET supplies = EXCLUDED.supplies,
+                    observed_at = EXCLUDED.observed_at,
+                    updated_at = NOW()
+    `, [
+      JSON.stringify(supplies),
+      supplies.observedAt ? new Date(supplies.observedAt) : null
+    ]);
+  } catch (err) {
+    console.error('[DB] Failed to save obsidian supply snapshot:', err.message);
+  }
 }
 
 function startObsidianStatsUpdater(message, supplies, { view = 'summary' } = {}) {

@@ -101,6 +101,57 @@ function compactFarmState(row = {}) {
   };
 }
 
+function normalizeItemName(name) {
+  return String(name || '')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, char => char.toUpperCase());
+}
+
+function summarizeSupplyLocation(location) {
+  const items = Array.isArray(location?.allItems) ? location.allItems : [];
+  const foodCount = toInt(location?.foodCount);
+  const pickaxes = Array.isArray(location?.pickaxes) ? location.pickaxes : [];
+  const usablePickaxeCount = toInt(location?.usablePickaxeCount);
+  const totalItems = items.reduce((sum, item) => sum + toInt(item.count), 0);
+
+  return {
+    foodCount,
+    pickaxeCount: pickaxes.length,
+    usablePickaxeCount,
+    totalItems,
+    items: items
+      .map(item => ({
+        name: item.name,
+        label: normalizeItemName(item.name),
+        count: toInt(item.count),
+        remainingPercent: item.remainingPercent == null ? null : toNumber(item.remainingPercent),
+        usable: item.usable
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label))
+  };
+}
+
+function normalizeSupplySnapshot(row) {
+  const supplies = row?.supplies || null;
+  if (!supplies) {
+    return {
+      observedAt: null,
+      updatedAt: null,
+      inventory: summarizeSupplyLocation(null),
+      barrel: null,
+      barrelError: 'No supply snapshot has been recorded yet.'
+    };
+  }
+
+  return {
+    observedAt: supplies.observedAt || row.observed_at || null,
+    updatedAt: row.updated_at || null,
+    inventory: summarizeSupplyLocation(supplies.inventory),
+    barrel: supplies.barrel ? summarizeSupplyLocation(supplies.barrel) : null,
+    barrelError: supplies.barrelError || null
+  };
+}
+
 async function ensureOptionalTables() {
   if (!pool) return;
   await pool.query(`
@@ -114,6 +165,14 @@ async function ensureOptionalTables() {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS game_chat_messages_created_at_idx
     ON game_chat_messages (created_at DESC)
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS obsidian_farm_supply_snapshot (
+      id SMALLINT PRIMARY KEY CHECK (id = 1),
+      supplies JSONB NOT NULL,
+      observed_at TIMESTAMPTZ,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
   `);
 }
 
@@ -132,9 +191,10 @@ async function getSummary() {
     pool.query(`
       SELECT
         COUNT(*)::int AS total,
-        COUNT(*) FILTER (WHERE COALESCE(pa.is_online, FALSE))::int AS online
+        COUNT(*) FILTER (WHERE pt.tracking_since IS NOT NULL)::int AS online
       FROM whitelist w
       LEFT JOIN player_activity pa ON LOWER(pa.username) = LOWER(w.username)
+      LEFT JOIN player_playtime pt ON LOWER(pt.username) = LOWER(w.username)
     `),
     pool.query(`
       SELECT session_mined, total_mined, desired_enabled, session_started_at,
@@ -214,7 +274,7 @@ async function getPlayers() {
       w.username,
       pa.last_seen,
       pa.last_online,
-      COALESCE(pa.is_online, FALSE) AS is_online,
+      pt.tracking_since IS NOT NULL AS is_online,
       COALESCE(pt.total_seconds, 0) +
         CASE WHEN pt.tracking_since IS NULL THEN 0
              ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - pt.tracking_since)))::BIGINT)
@@ -223,7 +283,7 @@ async function getPlayers() {
     LEFT JOIN player_activity pa ON LOWER(pa.username) = LOWER(w.username)
     LEFT JOIN player_playtime pt ON LOWER(pt.username) = LOWER(w.username)
     ORDER BY
-      COALESCE(pa.is_online, FALSE) DESC,
+      (pt.tracking_since IS NOT NULL) DESC,
       total_seconds DESC,
       LOWER(w.username)
   `);
@@ -317,15 +377,16 @@ async function getBotStats() {
     pool.query(`
       SELECT
         COUNT(*)::int AS total,
-        COUNT(*) FILTER (WHERE COALESCE(pa.is_online, FALSE))::int AS online,
-        COUNT(*) FILTER (WHERE NOT COALESCE(pa.is_online, FALSE))::int AS offline
+        COUNT(*) FILTER (WHERE pt.tracking_since IS NOT NULL)::int AS online,
+        COUNT(*) FILTER (WHERE pt.tracking_since IS NULL)::int AS offline
       FROM whitelist w
       LEFT JOIN player_activity pa ON LOWER(pa.username) = LOWER(w.username)
+      LEFT JOIN player_playtime pt ON LOWER(pt.username) = LOWER(w.username)
     `),
     pool.query(`
       SELECT
         w.username,
-        COALESCE(pa.is_online, FALSE) AS is_online,
+        pt.tracking_since IS NOT NULL AS is_online,
         pa.last_seen,
         COALESCE(pt.total_seconds, 0) +
           CASE WHEN pt.tracking_since IS NULL THEN 0
@@ -338,9 +399,13 @@ async function getBotStats() {
       LIMIT 20
     `),
     pool.query(`
-      SELECT username, last_seen, last_online, is_online
-      FROM player_activity
-      ORDER BY last_seen DESC NULLS LAST
+      SELECT pa.username,
+             pa.last_seen,
+             pa.last_online,
+             pt.tracking_since IS NOT NULL AS is_online
+      FROM player_activity pa
+      LEFT JOIN player_playtime pt ON LOWER(pt.username) = LOWER(pa.username)
+      ORDER BY pa.last_seen DESC NULLS LAST
       LIMIT 20
     `),
     pool.query(`
@@ -384,7 +449,7 @@ async function getBotStats() {
 async function getObsidianStats() {
   assertDatabase();
 
-  const [farmResult, todayResult, dailyResult] = await Promise.all([
+  const [farmResult, todayResult, dailyResult, supplyResult] = await Promise.all([
     pool.query(`
       SELECT session_mined, total_mined, desired_enabled, session_started_at,
              retired_pickaxes, retired_pickaxe_blocks, target_x, target_y,
@@ -410,6 +475,11 @@ async function getObsidianStats() {
       FROM dates
       LEFT JOIN obsidian_farm_daily stats USING (farm_date)
       ORDER BY dates.farm_date
+    `),
+    pool.query(`
+      SELECT supplies, observed_at, updated_at
+      FROM obsidian_farm_supply_snapshot
+      WHERE id = 1
     `)
   ]);
 
@@ -426,7 +496,8 @@ async function getObsidianStats() {
       todayMined: toInt(todayResult.rows[0]?.mined),
       last7Days
     },
-    daily
+    daily,
+    supplies: normalizeSupplySnapshot(supplyResult.rows[0])
   };
 }
 
@@ -468,9 +539,12 @@ async function getServerStats() {
       LIMIT 20
     `),
     pool.query(`
-      SELECT username, last_seen, is_online
-      FROM player_activity
-      ORDER BY last_seen DESC NULLS LAST
+      SELECT pa.username,
+             pa.last_seen,
+             pt.tracking_since IS NOT NULL AS is_online
+      FROM player_activity pa
+      LEFT JOIN player_playtime pt ON LOWER(pt.username) = LOWER(pa.username)
+      ORDER BY pa.last_seen DESC NULLS LAST
       LIMIT 20
     `)
   ]);

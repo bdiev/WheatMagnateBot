@@ -32,6 +32,7 @@
       </nav>
 
       <section id="statusBanner" class="status-banner" hidden></section>
+      <div id="chartTooltip" class="chart-tooltip" hidden></div>
 
       <section id="tab-chat" class="tab-panel active" data-panel="chat">
         <section class="stats-grid three">
@@ -182,6 +183,28 @@
               </div>
             </div>
             <div id="farmDetails" class="detail-list"></div>
+          </section>
+        </section>
+
+        <section class="split-grid supplies-grid">
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Bot Inventory Supplies</h2>
+                <p>Latest inventory snapshot recorded by the farm.</p>
+              </div>
+            </div>
+            <div id="inventorySupplies" class="supply-list"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Supply Barrel</h2>
+                <p>Latest barrel snapshot recorded when the bot opened it.</p>
+              </div>
+            </div>
+            <div id="barrelSupplies" class="supply-list"></div>
           </section>
         </section>
       </section>
