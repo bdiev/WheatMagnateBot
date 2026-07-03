@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -10,62 +10,43 @@
     <main class="shell">
       <header class="topbar">
         <div>
-          <p class="eyebrow">Локальная панель</p>
+          <p class="eyebrow">Local Dashboard</p>
           <h1>WheatMagnateBot</h1>
         </div>
         <div class="topbar-actions">
-          <span id="lastUpdated" class="muted">Загрузка...</span>
-          <button id="refreshButton" type="button">Обновить</button>
+          <span id="lastUpdated" class="muted">Loading...</span>
+          <button id="themeToggle" class="secondary-button" type="button" aria-pressed="false">Dark theme</button>
+          <button id="refreshButton" type="button">Refresh</button>
         </div>
       </header>
 
       <section id="statusBanner" class="status-banner" hidden></section>
 
-      <section class="config-panel" aria-label="Database connection">
-        <form id="databaseForm" class="database-form">
-          <label for="databaseUrl">Database URL</label>
-          <input
-            id="databaseUrl"
-            name="databaseUrl"
-            type="password"
-            autocomplete="off"
-            placeholder="***REMOVED_CONNECTION_STRING***"
-          >
-          <button id="saveDatabaseButton" type="submit">Connect</button>
-          <span id="databaseStatus" class="muted">Database is not connected</span>
-        </form>
-      </section>
-
-      <section class="stats-grid" aria-label="Общая статистика">
+      <section class="stats-grid" aria-label="Overview statistics">
         <article class="stat">
-          <span class="stat-label">Игроки онлайн</span>
+          <span class="stat-label">Players Online</span>
           <strong id="onlinePlayers">-</strong>
-          <small id="totalPlayers">из - в whitelist</small>
-        </article>
-        <article class="stat">
-          <span class="stat-label">Общий playtime</span>
-          <strong id="totalPlaytime">-</strong>
-          <small>сумма по базе</small>
+          <small id="totalPlayers">of - whitelisted</small>
         </article>
         <article class="stat">
           <span class="stat-label">TPS</span>
           <strong id="latestTps">-</strong>
-          <small id="avgTps">24ч avg: -</small>
+          <small id="avgTps">24h average: -</small>
         </article>
         <article class="stat">
-          <span class="stat-label">Obsidian total</span>
+          <span class="stat-label">Obsidian Total</span>
           <strong id="obsidianTotal">-</strong>
           <small id="obsidianSession">session: -</small>
         </article>
         <article class="stat">
-          <span class="stat-label">Obsidian today</span>
+          <span class="stat-label">Obsidian Today</span>
           <strong id="obsidianToday">-</strong>
           <small id="farmState">farm: -</small>
         </article>
         <article class="stat">
-          <span class="stat-label">Чат за 24ч</span>
+          <span class="stat-label">Chat Messages</span>
           <strong id="chat24h">-</strong>
-          <small>сохраненные сообщения</small>
+          <small>last 24 hours</small>
         </article>
       </section>
 
@@ -73,8 +54,8 @@
         <section class="panel chat-panel">
           <div class="panel-head">
             <div>
-              <h2>Игровой чат</h2>
-              <p>Последние сообщения Minecraft, которые прошли через бота.</p>
+              <h2>Game Chat</h2>
+              <p>Recent Minecraft messages recorded by the bot.</p>
             </div>
           </div>
           <div id="chatList" class="chat-list" aria-live="polite"></div>
@@ -85,15 +66,15 @@
             <div class="panel-head">
               <div>
                 <h2>Whitelist</h2>
-                <p>Статус и playtime игроков.</p>
+                <p>Player status and individual playtime.</p>
               </div>
             </div>
             <div class="table-wrap">
               <table>
                 <thead>
                   <tr>
-                    <th>Игрок</th>
-                    <th>Статус</th>
+                    <th>Player</th>
+                    <th>Status</th>
                     <th>Playtime</th>
                   </tr>
                 </thead>
@@ -105,8 +86,8 @@
           <section class="panel">
             <div class="panel-head">
               <div>
-                <h2>Рядом замечены</h2>
-                <p>Последние nearby sightings.</p>
+                <h2>Nearby Sightings</h2>
+                <p>Players recently detected near the bot.</p>
               </div>
             </div>
             <div id="nearbyList" class="nearby-list"></div>

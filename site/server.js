@@ -9,46 +9,10 @@ require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 
 const PORT = Number(process.env.SITE_PORT || process.env.PORT) || 3080;
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const CONFIG_DIR = path.join(__dirname, 'data');
-const CONFIG_FILE = path.join(CONFIG_DIR, 'config.local.json');
-
-let pool = null;
-let databaseSource = null;
-
-function loadLocalConfig() {
-  try {
-    const raw = fs.readFileSync(CONFIG_FILE, 'utf8');
-    return JSON.parse(raw);
-  } catch (_) {
-    return {};
-  }
-}
-
-function saveLocalConfig(config) {
-  fs.mkdirSync(CONFIG_DIR, { recursive: true });
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
-}
-
-function getInitialDatabaseUrl() {
-  const localConfig = loadLocalConfig();
-  if (localConfig.databaseUrl) {
-    databaseSource = 'site config';
-    return localConfig.databaseUrl;
-  }
-  if (process.env.DATABASE_URL) {
-    databaseSource = 'environment';
-    return process.env.DATABASE_URL;
-  }
-  return null;
-}
-
-function createPool(databaseUrl) {
-  return databaseUrl
-    ? new Pool({ connectionString: databaseUrl })
-    : null;
-}
-
-pool = createPool(getInitialDatabaseUrl());
+const DATABASE_URL = process.env.DATABASE_URL;
+const pool = DATABASE_URL
+  ? new Pool({ connectionString: DATABASE_URL })
+  : null;
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -75,34 +39,9 @@ function sendError(res, statusCode, message) {
   sendJson(res, statusCode, { error: message });
 }
 
-function readJsonBody(req, maxBytes = 100_000) {
-  return new Promise((resolve, reject) => {
-    let body = '';
-    req.on('data', chunk => {
-      body += chunk;
-      if (Buffer.byteLength(body) > maxBytes) {
-        reject(new Error('Request body is too large.'));
-        req.destroy();
-      }
-    });
-    req.on('end', () => {
-      if (!body.trim()) {
-        resolve({});
-        return;
-      }
-      try {
-        resolve(JSON.parse(body));
-      } catch (_) {
-        reject(new Error('Invalid JSON body.'));
-      }
-    });
-    req.on('error', reject);
-  });
-}
-
 function assertDatabase() {
   if (!pool) {
-    const err = new Error('Database URL is not configured. Paste it in the site settings.');
+    const err = new Error('DATABASE_URL is not configured on the server.');
     err.statusCode = 503;
     throw err;
   }
@@ -143,70 +82,11 @@ async function ensureOptionalTables() {
   `);
 }
 
-async function configureDatabaseUrl(databaseUrl) {
-  const safeUrl = String(databaseUrl || '').trim();
-  if (!safeUrl) {
-    const err = new Error('Database URL is required.');
-    err.statusCode = 400;
-    throw err;
-  }
-
-  let parsed;
-  try {
-    parsed = new URL(safeUrl);
-  } catch (_) {
-    const err = new Error('Database URL is not a valid URL.');
-    err.statusCode = 400;
-    throw err;
-  }
-
-  if (!['postgres:', 'postgresql:'].includes(parsed.protocol)) {
-    const err = new Error('Only PostgreSQL URLs are supported.');
-    err.statusCode = 400;
-    throw err;
-  }
-
-  const nextPool = createPool(safeUrl);
-  try {
-    await nextPool.query('SELECT 1');
-  } catch (err) {
-    await nextPool.end().catch(() => {});
-    const wrapped = new Error(`Could not connect to database: ${err.message}`);
-    wrapped.statusCode = 400;
-    throw wrapped;
-  }
-
-  const previousPool = pool;
-  const previousSource = databaseSource;
-  pool = nextPool;
-  databaseSource = 'site config';
-
-  try {
-    await ensureOptionalTables();
-    saveLocalConfig({ databaseUrl: safeUrl });
-  } catch (err) {
-    pool = previousPool;
-    databaseSource = previousSource;
-    await nextPool.end().catch(() => {});
-    throw err;
-  }
-
-  if (previousPool && previousPool !== nextPool) {
-    await previousPool.end().catch(() => {});
-  }
-
-  return {
-    configured: true,
-    source: databaseSource
-  };
-}
-
 async function getSummary() {
   assertDatabase();
 
   const [
     players,
-    playtime,
     farm,
     todayObsidian,
     latestTps,
@@ -220,16 +100,6 @@ async function getSummary() {
         COUNT(*) FILTER (WHERE COALESCE(pa.is_online, FALSE))::int AS online
       FROM whitelist w
       LEFT JOIN player_activity pa ON LOWER(pa.username) = LOWER(w.username)
-    `),
-    pool.query(`
-      SELECT
-        COALESCE(SUM(
-          COALESCE(total_seconds, 0) +
-          CASE WHEN tracking_since IS NULL THEN 0
-               ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - tracking_since)))::BIGINT)
-          END
-        ), 0)::bigint AS total_seconds
-      FROM player_playtime
     `),
     pool.query(`
       SELECT session_mined, total_mined, desired_enabled, session_started_at,
@@ -268,17 +138,12 @@ async function getSummary() {
 
   const farmRow = farm.rows[0] || {};
   const playerRow = players.rows[0] || {};
-  const playtimeSeconds = toInt(playtime.rows[0]?.total_seconds);
 
   return {
     generatedAt: new Date().toISOString(),
     players: {
       total: toInt(playerRow.total),
       online: toInt(playerRow.online)
-    },
-    playtime: {
-      totalSeconds: playtimeSeconds,
-      formatted: formatSeconds(playtimeSeconds)
     },
     obsidian: {
       sessionMined: toInt(farmRow.session_mined),
@@ -367,19 +232,7 @@ async function getChat(url) {
 async function handleApi(req, res, url) {
   try {
     if (url.pathname === '/api/health') {
-      sendJson(res, 200, { ok: true, database: Boolean(pool), databaseSource });
-      return;
-    }
-    if (url.pathname === '/api/config') {
-      sendJson(res, 200, {
-        databaseConfigured: Boolean(pool),
-        databaseSource
-      });
-      return;
-    }
-    if (url.pathname === '/api/config/database-url' && req.method === 'POST') {
-      const body = await readJsonBody(req);
-      sendJson(res, 200, await configureDatabaseUrl(body.databaseUrl));
+      sendJson(res, 200, { ok: true, database: Boolean(pool) });
       return;
     }
     if (url.pathname === '/api/summary') {

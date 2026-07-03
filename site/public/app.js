@@ -8,14 +8,14 @@ const $ = selector => document.querySelector(selector);
 
 function formatNumber(value) {
   const number = Number(value);
-  return Number.isFinite(number) ? new Intl.NumberFormat('ru-RU').format(number) : '-';
+  return Number.isFinite(number) ? new Intl.NumberFormat('en-US').format(number) : '-';
 }
 
 function formatDate(value) {
   if (!value) return '-';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '-';
-  return new Intl.DateTimeFormat('ru-RU', {
+  return new Intl.DateTimeFormat('en-US', {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit'
@@ -26,12 +26,27 @@ function formatAgo(value) {
   if (!value) return '-';
   const date = new Date(value);
   const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
-  if (seconds < 60) return `${seconds}s назад`;
+  if (seconds < 60) return `${seconds}s ago`;
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m назад`;
+  if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h назад`;
-  return `${Math.floor(hours / 24)}d назад`;
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+function playerHeadUrl(username, size = 32) {
+  const safeUsername = encodeURIComponent(String(username || 'Steve').trim() || 'Steve');
+  return `https://minotar.net/avatar/${safeUsername}/${size}`;
+}
+
+function playerIdentity(username, size = 28) {
+  const safeName = escapeHtml(username || 'Unknown');
+  return `
+    <span class="player-identity">
+      <img class="player-head" src="${playerHeadUrl(username, size)}" alt="" loading="lazy">
+      <span>${safeName}</span>
+    </span>
+  `;
 }
 
 function setBanner(message) {
@@ -54,64 +69,27 @@ async function fetchJson(path) {
   return payload;
 }
 
-async function postJson(path, body) {
-  const response = await fetch(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload.error || `HTTP ${response.status}`);
-  }
-  return payload;
-}
-
-async function loadConfig() {
-  try {
-    const config = await fetchJson('/api/config');
-    const status = $('#databaseStatus');
-    status.textContent = config.databaseConfigured
-      ? `Database connected (${config.databaseSource || 'configured'})`
-      : 'Database is not connected';
-  } catch (err) {
-    $('#databaseStatus').textContent = `Config unavailable: ${err.message}`;
+function applyTheme(theme) {
+  const nextTheme = theme === 'dark' ? 'dark' : 'light';
+  document.documentElement.dataset.theme = nextTheme;
+  localStorage.setItem('wm-theme', nextTheme);
+  const toggle = $('#themeToggle');
+  if (toggle) {
+    toggle.textContent = nextTheme === 'dark' ? 'Light theme' : 'Dark theme';
+    toggle.setAttribute('aria-pressed', String(nextTheme === 'dark'));
   }
 }
 
-async function saveDatabaseUrl(event) {
-  event.preventDefault();
-  const input = $('#databaseUrl');
-  const button = $('#saveDatabaseButton');
-  const databaseUrl = input.value.trim();
-
-  if (!databaseUrl) {
-    setBanner('Paste a PostgreSQL Database URL first.');
-    return;
-  }
-
-  button.disabled = true;
-  $('#databaseStatus').textContent = 'Connecting...';
-  try {
-    await postJson('/api/config/database-url', { databaseUrl });
-    input.value = '';
-    $('#databaseStatus').textContent = 'Database connected (site config)';
-    setBanner('');
-    await loadAll();
-  } catch (err) {
-    $('#databaseStatus').textContent = 'Database is not connected';
-    setBanner(`Could not connect database: ${err.message}`);
-  } finally {
-    button.disabled = false;
-  }
+function toggleTheme() {
+  const current = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+  applyTheme(current === 'dark' ? 'light' : 'dark');
 }
 
 function renderSummary(summary) {
   $('#onlinePlayers').textContent = formatNumber(summary.players?.online);
-  $('#totalPlayers').textContent = `из ${formatNumber(summary.players?.total)} в whitelist`;
-  $('#totalPlaytime').textContent = summary.playtime?.formatted || '-';
+  $('#totalPlayers').textContent = `of ${formatNumber(summary.players?.total)} whitelisted`;
   $('#latestTps').textContent = summary.tps?.latest == null ? '-' : Number(summary.tps.latest).toFixed(1);
-  $('#avgTps').textContent = `24ч avg: ${summary.tps?.average24h == null ? '-' : Number(summary.tps.average24h).toFixed(1)}`;
+  $('#avgTps').textContent = `24h average: ${summary.tps?.average24h == null ? '-' : Number(summary.tps.average24h).toFixed(1)}`;
   $('#obsidianTotal').textContent = formatNumber(summary.obsidian?.totalMined);
   $('#obsidianSession').textContent = `session: ${formatNumber(summary.obsidian?.sessionMined)}`;
   $('#obsidianToday').textContent = formatNumber(summary.obsidian?.todayMined);
@@ -122,11 +100,11 @@ function renderSummary(summary) {
   $('#nearbyList').innerHTML = nearby.length
     ? nearby.map(player => `
       <div class="nearby-item">
-        <strong>${escapeHtml(player.username)}</strong>
+        ${playerIdentity(player.username, 28)}
         <span class="muted">${formatNumber(player.distance)} blocks · ${formatAgo(player.lastSeen)}</span>
       </div>
     `).join('')
-    : '<div class="empty">Пока нет записей.</div>';
+    : '<div class="empty">No nearby sightings yet.</div>';
 }
 
 function renderPlayers(payload) {
@@ -134,12 +112,12 @@ function renderPlayers(payload) {
   $('#playersTable').innerHTML = players.length
     ? players.map(player => `
       <tr>
-        <td class="player-name">${escapeHtml(player.username)}</td>
+        <td class="player-name">${playerIdentity(player.username, 28)}</td>
         <td><span class="pill ${player.isOnline ? 'online' : ''}">${player.isOnline ? 'online' : 'offline'}</span></td>
         <td>${escapeHtml(player.playtime || '-')}</td>
       </tr>
     `).join('')
-    : '<tr><td colspan="3" class="empty">Whitelist пуст или база недоступна.</td></tr>';
+    : '<tr><td colspan="3" class="empty">No whitelist players found.</td></tr>';
 }
 
 function renderChat(payload) {
@@ -148,12 +126,12 @@ function renderChat(payload) {
   list.innerHTML = messages.length
     ? messages.map(message => `
       <article class="chat-message">
-        <div class="chat-user">${escapeHtml(message.username)}</div>
+        <div class="chat-user">${playerIdentity(message.username, 28)}</div>
         <div class="chat-text">${escapeHtml(message.message)}</div>
         <time class="chat-time">${formatDate(message.createdAt)}</time>
       </article>
     `).join('')
-    : '<div class="empty">Сообщений пока нет. Новые появятся после запуска бота с обновленной таблицей чата.</div>';
+    : '<div class="empty">No chat messages yet. New messages will appear after the bot records them.</div>';
   list.scrollTop = list.scrollHeight;
 }
 
@@ -177,18 +155,18 @@ async function loadAll() {
     renderSummary(summary);
     renderPlayers(players);
     renderChat(chat);
-    $('#lastUpdated').textContent = `Обновлено ${formatDate(new Date())}`;
+    $('#lastUpdated').textContent = `Updated ${formatDate(new Date())}`;
     setBanner('');
   } catch (err) {
-    setBanner(`Не удалось загрузить данные: ${err.message}`);
+    setBanner(`Could not load dashboard data: ${err.message}`);
   } finally {
     $('#refreshButton').disabled = false;
   }
 }
 
+applyTheme(localStorage.getItem('wm-theme') || 'light');
+$('#themeToggle').addEventListener('click', toggleTheme);
 $('#refreshButton').addEventListener('click', loadAll);
-$('#databaseForm').addEventListener('submit', saveDatabaseUrl);
 
-loadConfig();
 loadAll();
 state.timer = setInterval(loadAll, 15000);
