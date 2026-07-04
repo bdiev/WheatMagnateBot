@@ -311,6 +311,25 @@ async function ensureOptionalTables() {
     ON site_game_chat_outbox (status, created_at)
   `);
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS bot_commands (
+      id BIGSERIAL PRIMARY KEY,
+      source VARCHAR(32) NOT NULL,
+      requested_by VARCHAR(255),
+      command_type VARCHAR(64) NOT NULL,
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      status VARCHAR(20) NOT NULL DEFAULT 'pending',
+      result JSONB,
+      error TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      started_at TIMESTAMPTZ,
+      finished_at TIMESTAMPTZ
+    )
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS bot_commands_status_created_idx
+    ON bot_commands (status, created_at)
+  `);
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS bot_status_snapshots (
       id SMALLINT PRIMARY KEY CHECK (id = 1),
       status JSONB NOT NULL,
@@ -530,6 +549,36 @@ async function getChat(url) {
   };
 }
 
+async function queueBotCommand(currentUser, commandType, payload = {}, { source = 'site' } = {}) {
+  assertDatabase();
+  const safeCommandType = String(commandType || '').trim().toLowerCase();
+  if (!safeCommandType) {
+    const err = new Error('Command type is required.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const result = await pool.query(`
+    INSERT INTO bot_commands (source, requested_by, command_type, payload)
+    VALUES ($1, $2, $3, $4)
+    RETURNING id, source, requested_by, command_type, payload, status, created_at
+  `, [source, currentUser?.username || null, safeCommandType, payload || {}]);
+
+  const row = result.rows[0];
+  return {
+    queued: true,
+    command: {
+      id: String(row.id),
+      source: row.source,
+      requestedBy: row.requested_by,
+      commandType: row.command_type,
+      payload: row.payload,
+      status: row.status,
+      createdAt: row.created_at
+    }
+  };
+}
+
 async function queueSiteChatMessage(currentUser, body) {
   assertDatabase();
   const message = String(body.message || '')
@@ -552,22 +601,7 @@ async function queueSiteChatMessage(currentUser, body) {
     throw err;
   }
 
-  const result = await pool.query(`
-    INSERT INTO site_game_chat_outbox (sender_username, message)
-    VALUES ($1, $2)
-    RETURNING id, sender_username, message, status, created_at
-  `, [currentUser.username, message]);
-
-  return {
-    queued: true,
-    item: {
-      id: String(result.rows[0].id),
-      senderUsername: result.rows[0].sender_username,
-      message: result.rows[0].message,
-      status: result.rows[0].status,
-      createdAt: result.rows[0].created_at
-    }
-  };
+  return queueBotCommand(currentUser, 'chat', { message });
 }
 
 async function getBotStats() {
@@ -1126,12 +1160,16 @@ async function getAdminUsers(currentUser) {
   return { users: result.rows.map(publicUser) };
 }
 
-async function updateAdminUser(currentUser, body) {
+function assertAdminUser(currentUser) {
   if (currentUser.role !== 'admin') {
     const err = new Error('Admin access required.');
     err.statusCode = 403;
     throw err;
   }
+}
+
+async function updateAdminUser(currentUser, body) {
+  assertAdminUser(currentUser);
   const username = normalizeUsername(body.username);
   const action = String(body.action || '');
   if (!username) {
@@ -1178,6 +1216,28 @@ async function updateAdminUser(currentUser, body) {
   return getAdminUsers(currentUser);
 }
 
+async function queueAdminBotCommand(currentUser, body) {
+  assertAdminUser(currentUser);
+
+  const commandType = String(body.commandType || body.command_type || '').trim().toLowerCase();
+  const allowed = new Set(['pause', 'resume', 'restart']);
+  if (!allowed.has(commandType)) {
+    const err = new Error('Unsupported bot command.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const payload = {};
+  if (commandType === 'pause') {
+    const minutes = Number(body.minutes);
+    if (Number.isFinite(minutes) && minutes > 0) {
+      payload.minutes = Math.min(1440, Math.floor(minutes));
+    }
+  }
+
+  return queueBotCommand(currentUser, commandType, payload);
+}
+
 async function handleApi(req, res, url) {
   try {
     if (url.pathname === '/api/health') {
@@ -1205,6 +1265,10 @@ async function handleApi(req, res, url) {
         sendJson(res, 200, await updateAdminUser(currentUser, await readJsonBody(req)));
         return;
       }
+    }
+    if (url.pathname === '/api/admin/bot-command' && req.method === 'POST') {
+      sendJson(res, 202, await queueAdminBotCommand(currentUser, await readJsonBody(req)));
+      return;
     }
 
     if (url.pathname === '/api/summary') {

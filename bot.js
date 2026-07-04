@@ -1034,6 +1034,25 @@ async function initDatabase() {
       ON site_game_chat_outbox (status, created_at)
     `);
     await pool.query(`
+      CREATE TABLE IF NOT EXISTS bot_commands (
+        id BIGSERIAL PRIMARY KEY,
+        source VARCHAR(32) NOT NULL,
+        requested_by VARCHAR(255),
+        command_type VARCHAR(64) NOT NULL,
+        payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+        status VARCHAR(20) NOT NULL DEFAULT 'pending',
+        result JSONB,
+        error TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        started_at TIMESTAMPTZ,
+        finished_at TIMESTAMPTZ
+      )
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS bot_commands_status_created_idx
+      ON bot_commands (status, created_at)
+    `);
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS nearby_player_sightings (
         username VARCHAR(255) PRIMARY KEY,
         last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1612,11 +1631,14 @@ if (DISCORD_BOT_TOKEN) {
     }
     if (!siteGameChatOutboxInterval) {
       siteGameChatOutboxInterval = setInterval(() => {
+        processBotCommands().catch(err => {
+          console.error('[Command Bus] Worker failed:', err.message);
+        });
         processSiteGameChatOutbox().catch(err => {
           console.error('[Site Chat] Outbox worker failed:', err.message);
         });
       }, 1000);
-      console.log('[Site Chat] Outbox worker started');
+      console.log('[Command Bus] Worker started');
     }
 
     // Flush any pending auth links captured before client was ready
@@ -3750,6 +3772,137 @@ async function processSiteGameChatOutbox() {
         WHERE id = $1
       `, [item.id, err.message]);
       console.error('[Site Chat] Failed to send queued message:', err.message);
+    }
+  }
+}
+
+function sanitizeBridgeSender(value) {
+  return String(value || 'site')
+    .replace(/[\[\]\r\n]/g, '')
+    .trim()
+    .slice(0, 32) || 'site';
+}
+
+function sanitizeSiteChatMessage(value) {
+  return String(value || '')
+    .replace(/\u00a7[0-9a-fk-or]/gi, '')
+    .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
+    .trim()
+    .slice(0, 240);
+}
+
+async function executeBotCommand(command) {
+  const type = String(command.command_type || '').toLowerCase();
+  const payload = command.payload || {};
+  const requestedBy = sanitizeBridgeSender(command.requested_by || command.source);
+
+  if (type === 'chat') {
+    if (!bot || typeof bot.chat !== 'function') throw new Error('Minecraft bot is not ready.');
+    const cleanMessage = sanitizeSiteChatMessage(payload.message);
+    if (!cleanMessage) throw new Error('Queued message is empty.');
+    const outgoing = `[${requestedBy}] ${cleanMessage}`;
+    const sent = sendMinecraftChat(outgoing);
+    if (!sent) throw new Error('Minecraft bot is not ready.');
+    await sendGameChatMessageToDiscord(bot.username || 'WheatMagnate', outgoing, { allowMentions: false });
+    return { message: outgoing };
+  }
+
+  if (type === 'pause') {
+    shouldReconnect = false;
+    const minutes = Number(payload.minutes);
+    lastCommandUser = `${requestedBy} via ${command.source || 'command bus'}`;
+    if (Number.isFinite(minutes) && minutes > 0) {
+      const safeMinutes = Math.min(1440, Math.floor(minutes));
+      setDisconnectReason(`Paused for ${safeMinutes}m by ${requestedBy}`);
+      if (bot) bot.quit(`Paused ${safeMinutes}m`);
+      scheduleResume(safeMinutes * 60_000, `[Command Bus] Resume scheduled in ${safeMinutes}m`);
+      return { message: `Paused for ${safeMinutes} minutes.` };
+    }
+
+    clearReconnectTimer();
+    clearResumeTimer();
+    setDisconnectReason(`Paused by ${requestedBy}`);
+    if (bot) bot.quit('Pause until resume');
+    return { message: 'Paused until resume.' };
+  }
+
+  if (type === 'resume') {
+    shouldReconnect = true;
+    clearResumeTimer();
+    clearReconnectTimer();
+    setDisconnectReason(null);
+    if (!bot) createBot();
+    return { message: 'Resume requested.' };
+  }
+
+  if (type === 'restart') {
+    shouldReconnect = true;
+    clearResumeTimer();
+    clearReconnectTimer();
+    lastCommandUser = `${requestedBy} via ${command.source || 'command bus'}`;
+    setDisconnectReason(`Restart requested by ${requestedBy}`);
+    if (bot) {
+      bot.quit('Restart command');
+    } else {
+      createBot();
+    }
+    return { message: 'Restart requested.' };
+  }
+
+  throw new Error(`Unsupported command type: ${type}`);
+}
+
+async function processBotCommands() {
+  if (!pool) return;
+
+  let commands = [];
+  try {
+    const includeChat = Boolean(bot && typeof bot.chat === 'function');
+    const result = await pool.query(`
+      WITH next_commands AS (
+        SELECT id
+        FROM bot_commands
+        WHERE status = 'pending'
+          AND ($1::boolean OR command_type <> 'chat')
+        ORDER BY created_at ASC
+        LIMIT 5
+        FOR UPDATE SKIP LOCKED
+      )
+      UPDATE bot_commands commands
+      SET status = 'processing',
+          started_at = NOW(),
+          error = NULL
+      FROM next_commands
+      WHERE commands.id = next_commands.id
+      RETURNING commands.id, commands.source, commands.requested_by, commands.command_type, commands.payload
+    `, [includeChat]);
+    commands = result.rows;
+  } catch (err) {
+    console.error('[Command Bus] Failed to load commands:', err.message);
+    return;
+  }
+
+  for (const command of commands) {
+    try {
+      const result = await executeBotCommand(command);
+      await pool.query(`
+        UPDATE bot_commands
+        SET status = 'done',
+            result = $2,
+            error = NULL,
+            finished_at = NOW()
+        WHERE id = $1
+      `, [command.id, result || {}]);
+      console.log(`[Command Bus] Completed ${command.command_type} #${command.id}`);
+    } catch (err) {
+      await pool.query(`
+        UPDATE bot_commands
+        SET status = 'failed',
+            error = $2,
+            finished_at = NOW()
+        WHERE id = $1
+      `, [command.id, err.message]);
+      console.error(`[Command Bus] Failed ${command.command_type} #${command.id}:`, err.message);
     }
   }
 }

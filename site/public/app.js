@@ -1222,6 +1222,29 @@ async function handleAdminUserAction(event) {
   }
 }
 
+async function handleAdminBotCommand(event) {
+  const button = event.target.closest('[data-bot-command]');
+  if (!button) return;
+
+  const commandType = button.dataset.botCommand;
+  const body = { commandType };
+  if (commandType === 'pause') {
+    const minutes = Number($('#adminPauseMinutes')?.value);
+    if (Number.isFinite(minutes) && minutes > 0) body.minutes = minutes;
+  }
+
+  button.disabled = true;
+  try {
+    const payload = await postJson('/api/admin/bot-command', body);
+    setBanner(`Bot command queued: ${payload.command?.commandType || commandType} #${payload.command?.id || '-'}.`);
+    await loadAll();
+  } catch (err) {
+    setBanner(`Could not queue bot command: ${err.message}`);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function handleGameChatSubmit(event) {
   event.preventDefault();
   const input = $('#gameChatInput');
@@ -1273,6 +1296,7 @@ $('#navMenuToggle')?.addEventListener('click', toggleNavMenu);
 $('#logoutButton')?.addEventListener('click', handleLogout);
 $('#adminUsersRefresh')?.addEventListener('click', loadAdminUsers);
 $('#adminUsersList')?.addEventListener('click', handleAdminUserAction);
+$('.admin-command-panel')?.addEventListener('click', handleAdminBotCommand);
 $('#gameChatForm')?.addEventListener('submit', handleGameChatSubmit);
 $$('.chart-controls').forEach(controls => controls.addEventListener('click', handleChartRangeClick));
 $('#themeToggle').addEventListener('click', toggleTheme);

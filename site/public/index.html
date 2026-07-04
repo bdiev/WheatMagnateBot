@@ -395,6 +395,26 @@
       </section>
 
       <section id="tab-admin" class="tab-panel" data-panel="admin">
+        <section class="panel admin-command-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Bot Control</h2>
+              <p>Queue bot commands through the shared database command bus.</p>
+            </div>
+          </div>
+          <div class="admin-command-grid">
+            <label class="auth-field">
+              <span>Pause Minutes</span>
+              <input id="adminPauseMinutes" type="number" min="1" max="1440" step="1" placeholder="Until resume">
+            </label>
+            <div class="admin-command-actions">
+              <button type="button" data-bot-command="pause">Pause</button>
+              <button class="ghost-button" type="button" data-bot-command="resume">Resume</button>
+              <button class="danger-button" type="button" data-bot-command="restart">Restart</button>
+            </div>
+          </div>
+        </section>
+
         <section class="panel">
           <div class="panel-head">
             <div>

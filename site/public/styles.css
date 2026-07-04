@@ -1487,6 +1487,24 @@ body.search-focus-active #logoutButton {
   padding: var(--button-padding);
 }
 
+.admin-command-panel {
+  margin-bottom: 16px;
+}
+
+.admin-command-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) minmax(0, 1fr);
+  gap: 14px;
+  align-items: end;
+  padding: 14px;
+}
+
+.admin-command-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .supplies-grid {
   margin-top: 16px;
 }
