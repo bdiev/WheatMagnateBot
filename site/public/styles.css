@@ -1557,6 +1557,14 @@ button:disabled {
     justify-content: flex-start;
   }
 
+  body.search-focus-active .topbar > :first-child,
+  body.search-focus-active .nav-menu,
+  body.search-focus-active .status-banner,
+  body.search-focus-active .tab-panel {
+    filter: none;
+    opacity: 1;
+  }
+
   .panel-head {
     flex-direction: column;
   }
@@ -1585,6 +1593,16 @@ button:disabled {
   .seen-search.open,
   .seen-search {
     grid-template-columns: var(--button-height) minmax(0, 1fr);
+    transition: none;
+  }
+
+  .seen-search-box {
+    transform: none;
+    transition: opacity 160ms ease, background-color 260ms ease, border-color 260ms ease, box-shadow 260ms ease;
+  }
+
+  .seen-search.open .seen-search-box {
+    transform: none;
   }
 
   .seen-result {

@@ -11,6 +11,7 @@ const state = {
   chartMeta: {},
   seenSearchTimer: null,
   chartTooltipTimer: null,
+  chartTooltipPinned: false,
   seenPlayers: [],
   chatMessageIds: new Set(),
   chatInitialized: false,
@@ -665,7 +666,7 @@ function redrawCharts() {
   });
 }
 
-function showChartTooltip(canvas, event) {
+function showChartTooltip(canvas, event, { pin = false } = {}) {
   const tooltip = $('#chartTooltip');
   const meta = state.chartMeta[canvas.id];
   if (!tooltip || !meta) return;
@@ -681,19 +682,20 @@ function showChartTooltip(canvas, event) {
   );
 
   if (!hit) {
-    tooltip.hidden = true;
+    if (!state.chartTooltipPinned) tooltip.hidden = true;
     return;
   }
 
   tooltip.textContent = hit.tooltip;
   tooltip.hidden = false;
   clearTimeout(state.chartTooltipTimer);
+  state.chartTooltipPinned = Boolean(pin || event.pointerType === 'touch');
   const tooltipWidth = Math.max(160, tooltip.offsetWidth || 0);
   const left = Math.min(window.innerWidth - tooltipWidth - 10, event.clientX + 12);
   const top = Math.min(window.innerHeight - 46, event.clientY + 12);
   tooltip.style.left = `${Math.max(10, left)}px`;
   tooltip.style.top = `${Math.max(10, top)}px`;
-  if (event.pointerType === 'touch') {
+  if (state.chartTooltipPinned) {
     state.chartTooltipTimer = setTimeout(hideChartTooltip, 3200);
   }
 }
@@ -701,7 +703,12 @@ function showChartTooltip(canvas, event) {
 function hideChartTooltip() {
   const tooltip = $('#chartTooltip');
   clearTimeout(state.chartTooltipTimer);
+  state.chartTooltipPinned = false;
   if (tooltip) tooltip.hidden = true;
+}
+
+function hideChartTooltipIfNotPinned() {
+  if (!state.chartTooltipPinned) hideChartTooltip();
 }
 
 function handleChartRangeClick(event) {
@@ -790,7 +797,8 @@ function setSeenSearchOpen(open) {
   const toggle = $('#seenSearchToggle');
   if (!search || !toggle) return;
   search.classList.toggle('open', open);
-  document.body.classList.toggle('search-focus-active', open);
+  const desktopSearchFocus = window.matchMedia('(min-width: 701px)').matches;
+  document.body.classList.toggle('search-focus-active', open && desktopSearchFocus);
   toggle.setAttribute('aria-expanded', String(open));
   toggle.setAttribute('aria-label', open ? 'Close seen search' : 'Open seen search');
   if (open) {
@@ -1213,9 +1221,9 @@ $$('.chart-controls').forEach(controls => controls.addEventListener('click', han
 $('#themeToggle').addEventListener('click', toggleTheme);
 window.addEventListener('resize', redrawCharts);
 $$('.chart').forEach(chart => {
-  chart.addEventListener('pointerdown', event => showChartTooltip(event.currentTarget, event));
+  chart.addEventListener('pointerdown', event => showChartTooltip(event.currentTarget, event, { pin: true }));
   chart.addEventListener('pointermove', event => showChartTooltip(event.currentTarget, event));
-  chart.addEventListener('pointerleave', hideChartTooltip);
+  chart.addEventListener('pointerleave', hideChartTooltipIfNotPinned);
 });
 $('#seenSearchToggle').addEventListener('click', toggleSeenSearch);
 $('#seenSearchClose').addEventListener('click', () => clearSeenSearch({ collapse: true }));
