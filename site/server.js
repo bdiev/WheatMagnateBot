@@ -12,6 +12,7 @@ const PORT = Number(process.env.SITE_PORT || process.env.PORT) || 3080;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const DATABASE_URL = process.env.DATABASE_URL;
 const SITE_ADMIN_USERNAME = 'bdiev_';
+const SITE_ADMIN_PASSWORD = process.env.SITE_ADMIN_PASSWORD || '';
 const SESSION_COOKIE = 'wm_session';
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 const pool = DATABASE_URL
@@ -261,6 +262,26 @@ async function ensureOptionalTables() {
      WHERE LOWER(username) = LOWER($1)`,
     [SITE_ADMIN_USERNAME]
   );
+  if (SITE_ADMIN_PASSWORD) {
+    const adminPasswordHash = hashPassword(SITE_ADMIN_PASSWORD);
+    const updatedAdmin = await pool.query(
+      `UPDATE site_users
+       SET username = $1,
+           password_hash = $2,
+           role = 'admin',
+           status = 'approved',
+           approved_at = COALESCE(approved_at, NOW())
+       WHERE LOWER(username) = LOWER($1)`,
+      [SITE_ADMIN_USERNAME, adminPasswordHash]
+    );
+    if (!updatedAdmin.rowCount) {
+      await pool.query(
+        `INSERT INTO site_users (username, password_hash, role, status, approved_at)
+         VALUES ($1, $2, 'admin', 'approved', NOW())`,
+        [SITE_ADMIN_USERNAME, adminPasswordHash]
+      );
+    }
+  }
   await pool.query(`
     CREATE TABLE IF NOT EXISTS game_chat_messages (
       id BIGSERIAL PRIMARY KEY,
@@ -953,6 +974,10 @@ async function handleAuth(req, res, url) {
     `, [username]);
     const user = result.rows[0];
     if (!user || !verifyPassword(password, user.password_hash)) {
+      if (!user && username.toLowerCase() === SITE_ADMIN_USERNAME.toLowerCase()) {
+        sendError(res, 401, 'Admin account is not created yet. Create account bdiev_ first, or set SITE_ADMIN_PASSWORD on the host and restart the site.');
+        return true;
+      }
       sendError(res, 401, 'Invalid username or password.');
       return true;
     }
