@@ -400,6 +400,42 @@ button:disabled {
   white-space: nowrap;
 }
 
+#themeToggle,
+#logoutButton {
+  overflow: hidden;
+  transform-origin: right center;
+  transition:
+    opacity 180ms ease,
+    max-width 240ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    margin 240ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    padding 240ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    transform 220ms ease,
+    border-color 220ms ease,
+    background-color 220ms ease;
+}
+
+#themeToggle {
+  max-width: 74px;
+}
+
+#logoutButton {
+  max-width: 120px;
+}
+
+body.search-focus-active #themeToggle,
+body.search-focus-active #logoutButton {
+  max-width: 0;
+  min-width: 0 !important;
+  width: 0;
+  margin-left: -10px;
+  padding-left: 0;
+  padding-right: 0;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(8px) scale(0.96);
+  border-color: transparent;
+}
+
 .theme-switch {
   position: relative;
   display: inline-grid;
