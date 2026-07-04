@@ -988,6 +988,8 @@ button:disabled {
   display: block;
   height: 220px;
   background: var(--panel-soft);
+  cursor: crosshair;
+  touch-action: pan-x;
   transition: background-color 260ms ease;
 }
 

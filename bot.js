@@ -7535,7 +7535,10 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const message = interaction.fields.getTextInputValue('message_input');
       if (message && bot) {
-        sendMinecraftChat(message);
+        const sentToGame = sendMinecraftChat(message);
+        if (sentToGame && !message.trim().startsWith('/') && !message.trim().startsWith('!')) {
+          recordGameChatMessage(bot.username || 'WheatMagnate', message).catch(() => {});
+        }
         console.log(`[Modal] Say "${message}" by ${interaction.user.tag}`);
         
         // Delete ephemeral reply after bot sends message
@@ -8342,7 +8345,10 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           console.log(`[Chat] Sent "${gameText}" by ${message.author.tag}`);
         } else {
           // Send without zero-width space so Minecraft chat is clean
-          sendMinecraftChat(`[${username}] ${gameText}`);
+          const sentToGame = sendMinecraftChat(`[${username}] ${gameText}`);
+          if (sentToGame) {
+            recordGameChatMessage(bot.username || 'WheatMagnate', `[${username}] ${gameText}`).catch(() => {});
+          }
           console.log(`[Chat] Sent "[${username}] ${gameText}" by ${message.author.tag}`);
         }
         
@@ -8604,7 +8610,10 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       }
       const text = message.content.slice(5).trim();
       if (text) {
-        sendMinecraftChat(text);
+        const sentToGame = sendMinecraftChat(text);
+        if (sentToGame && !text.startsWith('/') && !text.startsWith('!')) {
+          recordGameChatMessage(bot.username || 'WheatMagnate', text).catch(() => {});
+        }
         console.log(`[Command] Say "${text}" by ${message.author.tag} via Discord`);
         await message.reply({
           embeds: [{

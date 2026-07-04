@@ -10,6 +10,7 @@ const state = {
   charts: {},
   chartMeta: {},
   seenSearchTimer: null,
+  chartTooltipTimer: null,
   seenPlayers: [],
   chatMessageIds: new Set(),
   chatInitialized: false,
@@ -686,12 +687,20 @@ function showChartTooltip(canvas, event) {
 
   tooltip.textContent = hit.tooltip;
   tooltip.hidden = false;
-  tooltip.style.left = `${event.clientX + 12}px`;
-  tooltip.style.top = `${event.clientY + 12}px`;
+  clearTimeout(state.chartTooltipTimer);
+  const tooltipWidth = Math.max(160, tooltip.offsetWidth || 0);
+  const left = Math.min(window.innerWidth - tooltipWidth - 10, event.clientX + 12);
+  const top = Math.min(window.innerHeight - 46, event.clientY + 12);
+  tooltip.style.left = `${Math.max(10, left)}px`;
+  tooltip.style.top = `${Math.max(10, top)}px`;
+  if (event.pointerType === 'touch') {
+    state.chartTooltipTimer = setTimeout(hideChartTooltip, 3200);
+  }
 }
 
 function hideChartTooltip() {
   const tooltip = $('#chartTooltip');
+  clearTimeout(state.chartTooltipTimer);
   if (tooltip) tooltip.hidden = true;
 }
 
@@ -1204,6 +1213,7 @@ $$('.chart-controls').forEach(controls => controls.addEventListener('click', han
 $('#themeToggle').addEventListener('click', toggleTheme);
 window.addEventListener('resize', redrawCharts);
 $$('.chart').forEach(chart => {
+  chart.addEventListener('pointerdown', event => showChartTooltip(event.currentTarget, event));
   chart.addEventListener('pointermove', event => showChartTooltip(event.currentTarget, event));
   chart.addEventListener('pointerleave', hideChartTooltip);
 });
