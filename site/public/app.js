@@ -209,6 +209,19 @@ function renderStable(selector, html, signatureParts) {
   return true;
 }
 
+function scrollToBottom(selector) {
+  const scroll = () => {
+    const target = $(selector);
+    if (target) target.scrollTop = target.scrollHeight;
+  };
+
+  requestAnimationFrame(() => {
+    scroll();
+    requestAnimationFrame(scroll);
+  });
+  setTimeout(scroll, 80);
+}
+
 function setBanner(message) {
   const banner = $('#statusBanner');
   if (!message) {
@@ -917,10 +930,7 @@ function renderChat(payload) {
     messages.map(message => [message.id, message.username, message.message, message.createdAt])
   );
   if (firstChatRender) {
-    requestAnimationFrame(() => {
-      const chatList = $('#chatList');
-      if (chatList) chatList.scrollTop = chatList.scrollHeight;
-    });
+    scrollToBottom('#chatList');
   }
   state.chatMessageIds = new Set(messages.map(message => String(message.id)));
   state.chatInitialized = true;

@@ -3733,7 +3733,7 @@ async function processSiteGameChatOutbox() {
       if (!cleanMessage) throw new Error('Queued message is empty.');
       const sent = sendMinecraftChat(outgoing);
       if (!sent) throw new Error('Minecraft bot is not ready.');
-      await recordGameChatMessage(bot.username || 'WheatMagnate', outgoing);
+      await sendGameChatMessageToDiscord(bot.username || 'WheatMagnate', outgoing, { allowMentions: false });
       await pool.query(`
         UPDATE site_game_chat_outbox
         SET status = 'sent',
