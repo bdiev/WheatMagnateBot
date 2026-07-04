@@ -866,6 +866,11 @@ body.search-focus-active #logoutButton {
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
+.stats-grid.compact {
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
 .stat,
 .panel {
   border: 1px solid var(--line);
@@ -879,6 +884,11 @@ body.search-focus-active #logoutButton {
   min-height: 118px;
   padding: 16px;
   min-width: 0;
+}
+
+.stats-grid.compact .stat {
+  min-height: 96px;
+  padding: 13px 14px;
 }
 
 .stat-label {
@@ -917,6 +927,10 @@ body.search-focus-active #logoutButton {
 .side-stack {
   display: grid;
   gap: 16px;
+}
+
+.section-panel {
+  margin-top: 16px;
 }
 
 .panel {
@@ -1110,6 +1124,10 @@ body.search-focus-active #logoutButton {
 .rank-list.large {
   max-height: 660px;
   overflow: auto;
+}
+
+.leaderboard-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .rank-item,
@@ -1591,6 +1609,10 @@ body.search-focus-active #logoutButton {
 
   .content-grid,
   .split-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .leaderboard-list {
     grid-template-columns: 1fr;
   }
 }

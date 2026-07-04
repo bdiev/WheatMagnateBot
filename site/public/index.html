@@ -303,7 +303,7 @@
       </section>
 
       <section id="tab-server" class="tab-panel" data-panel="server">
-        <section class="stats-grid five">
+        <section class="stats-grid five compact">
           <article class="stat">
             <span class="stat-label">Latest TPS</span>
             <strong id="latestTps">-</strong>
@@ -331,7 +331,7 @@
           </article>
         </section>
 
-        <section class="stats-grid four">
+        <section class="stats-grid four compact">
           <article class="stat">
             <span class="stat-label">Online Players</span>
             <strong id="onlinePlayers">-</strong>
@@ -384,35 +384,23 @@
             <section class="panel">
               <div class="panel-head">
                 <div>
-                  <h2>Recent Server Activity</h2>
-                  <p>Latest player activity records.</p>
+                  <h2>Recent Player Activity</h2>
+                  <p>Latest joins and leaves recorded by the bot.</p>
                 </div>
               </div>
-              <div id="serverRecentPlayers" class="rank-list"></div>
+              <div id="recentActivity" class="rank-list"></div>
             </section>
           </aside>
         </section>
 
-        <section class="split-grid">
-          <section class="panel">
-            <div class="panel-head">
-              <div>
-                <h2>Playtime Leaderboard</h2>
-                <p>Individual whitelist playtime, sorted by total time.</p>
-              </div>
+        <section class="panel section-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Playtime Leaderboard</h2>
+              <p>Top whitelist playtime totals.</p>
             </div>
-            <div id="playtimeLeaderboard" class="rank-list large"></div>
-          </section>
-
-          <section class="panel">
-            <div class="panel-head">
-              <div>
-                <h2>Recent Player Activity</h2>
-                <p>Latest known player status changes.</p>
-              </div>
-            </div>
-            <div id="recentActivity" class="rank-list large"></div>
-          </section>
+          </div>
+          <div id="playtimeLeaderboard" class="rank-list leaderboard-list"></div>
         </section>
       </section>
 

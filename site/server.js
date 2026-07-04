@@ -611,7 +611,7 @@ async function getPlayerStats() {
       LEFT JOIN player_activity pa ON LOWER(pa.username) = LOWER(w.username)
       LEFT JOIN player_playtime pt ON LOWER(pt.username) = LOWER(w.username)
       ORDER BY total_seconds DESC, LOWER(w.username)
-      LIMIT 20
+      LIMIT 10
     `),
     pool.query(`
       SELECT pa.username,
@@ -620,7 +620,7 @@ async function getPlayerStats() {
              pa.is_online AS is_online
       FROM player_activity pa
       ORDER BY pa.last_seen DESC NULLS LAST
-      LIMIT 20
+      LIMIT 8
     `),
     pool.query(`
       SELECT
@@ -741,7 +741,7 @@ async function getObsidianStats() {
 async function getServerStats() {
   assertDatabase();
 
-  const [tpsSummaryResult, hourlyTpsResult, nearbyResult, recentPlayersResult, playerStats] = await Promise.all([
+  const [tpsSummaryResult, hourlyTpsResult, nearbyResult, playerStats] = await Promise.all([
     pool.query(`
       SELECT
         (SELECT tps FROM bot_tps_samples ORDER BY sampled_at DESC LIMIT 1) AS latest,
@@ -774,15 +774,7 @@ async function getServerStats() {
       SELECT username, distance, last_seen
       FROM nearby_player_sightings
       ORDER BY last_seen DESC
-      LIMIT 20
-    `),
-    pool.query(`
-      SELECT pa.username,
-             pa.last_seen,
-             pa.is_online AS is_online
-      FROM player_activity pa
-      ORDER BY pa.last_seen DESC NULLS LAST
-      LIMIT 20
+      LIMIT 5
     `),
     getPlayerStats()
   ]);
@@ -805,11 +797,6 @@ async function getServerStats() {
     nearby: nearbyResult.rows.map(row => ({
       username: row.username,
       distance: toInt(row.distance),
-      lastSeen: row.last_seen
-    })),
-    recentPlayers: recentPlayersResult.rows.map(row => ({
-      username: row.username,
-      isOnline: Boolean(row.is_online),
       lastSeen: row.last_seen
     })),
     playerStats

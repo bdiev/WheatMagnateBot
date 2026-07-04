@@ -1132,22 +1132,6 @@ function renderServerStats(payload) {
     nearby.map(player => [player.username, player.distance, player.lastSeen])
   );
 
-  const players = payload.recentPlayers || [];
-  renderStable('#serverRecentPlayers', players.length
-    ? players.map(player => {
-      const eventLabel = player.isOnline ? 'Joined the game' : 'Left the game';
-      return `
-        <div class="rank-item activity-item">
-          ${playerIdentity(player.username, 28)}
-          <span class="pill ${player.isOnline ? 'online' : ''}">${eventLabel}</span>
-          <span class="muted">${formatAgo(player.lastSeen)}</span>
-        </div>
-      `;
-    }).join('')
-    : '<div class="empty">No server activity records found.</div>',
-    players.map(player => [player.username, player.isOnline, player.lastSeen])
-  );
-
   state.charts.tpsHourly = payload.hourlyTps || [];
   redrawCharts();
 }
