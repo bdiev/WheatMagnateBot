@@ -302,6 +302,13 @@ async function ensureOptionalTables() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS obsidian_farm_hourly (
+      bucket TIMESTAMPTZ PRIMARY KEY,
+      mined BIGINT NOT NULL DEFAULT 0 CHECK (mined >= 0),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
 }
 
 async function getSummary() {
@@ -579,7 +586,7 @@ async function getBotStats() {
 async function getObsidianStats() {
   assertDatabase();
 
-  const [farmResult, todayResult, dailyResult, supplyResult] = await Promise.all([
+  const [farmResult, todayResult, dailyResult, hourlyResult, supplyResult] = await Promise.all([
     pool.query(`
       SELECT session_mined, total_mined, desired_enabled, session_started_at,
              retired_pickaxes, retired_pickaxe_blocks, target_x, target_y,
@@ -608,6 +615,21 @@ async function getObsidianStats() {
       ORDER BY dates.farm_date
     `),
     pool.query(`
+      WITH buckets AS (
+        SELECT generate_series(
+          date_trunc('hour', NOW() - INTERVAL '167 hours'),
+          date_trunc('hour', NOW()),
+          INTERVAL '1 hour'
+        ) AS bucket
+      )
+      SELECT TO_CHAR(buckets.bucket, 'MM-DD HH24:00') AS label,
+             buckets.bucket AS bucket,
+             COALESCE(stats.mined, 0)::bigint AS mined
+      FROM buckets
+      LEFT JOIN obsidian_farm_hourly stats USING (bucket)
+      ORDER BY buckets.bucket
+    `),
+    pool.query(`
       SELECT supplies, observed_at, updated_at
       FROM obsidian_farm_supply_snapshot
       WHERE id = 1
@@ -615,6 +637,11 @@ async function getObsidianStats() {
   ]);
 
   const farm = compactFarmState(farmResult.rows[0] || {});
+  const hourly = hourlyResult.rows.map(row => ({
+    label: row.label,
+    bucket: row.bucket,
+    value: toInt(row.mined)
+  }));
   const daily = dailyResult.rows.map(row => ({
     label: row.label,
     bucket: row.bucket,
@@ -628,6 +655,7 @@ async function getObsidianStats() {
       todayMined: toInt(todayResult.rows[0]?.mined),
       last7Days
     },
+    hourly,
     daily,
     supplies: normalizeSupplySnapshot(supplyResult.rows[0])
   };
@@ -725,28 +753,47 @@ async function searchSeenPlayers(url) {
       SELECT username FROM player_activity
       UNION
       SELECT username FROM player_playtime
+    ),
+    matched AS (
+      SELECT
+        names.username,
+        EXISTS (
+          SELECT 1 FROM whitelist w WHERE LOWER(w.username) = LOWER(names.username)
+        ) AS is_whitelisted,
+        pa.last_seen,
+        pa.last_online,
+        pt.tracking_since IS NOT NULL AS is_online,
+        COALESCE(pt.total_seconds, 0) +
+          CASE WHEN pt.tracking_since IS NULL THEN 0
+               ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - pt.tracking_since)))::BIGINT)
+          END AS total_seconds
+      FROM names
+      LEFT JOIN player_activity pa ON LOWER(pa.username) = LOWER(names.username)
+      LEFT JOIN player_playtime pt ON LOWER(pt.username) = LOWER(names.username)
+      WHERE LOWER(names.username) LIKE LOWER($1)
     )
-    SELECT
-      names.username,
-      EXISTS (
-        SELECT 1 FROM whitelist w WHERE LOWER(w.username) = LOWER(names.username)
-      ) AS is_whitelisted,
-      pa.last_seen,
-      pa.last_online,
-      pt.tracking_since IS NOT NULL AS is_online,
-      COALESCE(pt.total_seconds, 0) +
-        CASE WHEN pt.tracking_since IS NULL THEN 0
-             ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - pt.tracking_since)))::BIGINT)
-        END AS total_seconds
-    FROM names
-    LEFT JOIN player_activity pa ON LOWER(pa.username) = LOWER(names.username)
-    LEFT JOIN player_playtime pt ON LOWER(pt.username) = LOWER(names.username)
-    WHERE LOWER(names.username) LIKE LOWER($1)
+    SELECT *
+    FROM (
+      SELECT DISTINCT ON (LOWER(username))
+        username,
+        is_whitelisted,
+        last_seen,
+        last_online,
+        is_online,
+        total_seconds
+      FROM matched
+      ORDER BY
+        LOWER(username),
+        is_whitelisted DESC,
+        is_online DESC,
+        last_seen DESC NULLS LAST,
+        username
+    ) deduped
     ORDER BY
-      CASE WHEN LOWER(names.username) = LOWER($2) THEN 0 ELSE 1 END,
-      pt.tracking_since IS NOT NULL DESC,
-      pa.last_seen DESC NULLS LAST,
-      LOWER(names.username)
+      CASE WHEN LOWER(username) = LOWER($2) THEN 0 ELSE 1 END,
+      is_online DESC,
+      last_seen DESC NULLS LAST,
+      LOWER(username)
     LIMIT 8
   `, [`%${query}%`, query]);
 

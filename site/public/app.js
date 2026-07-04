@@ -416,7 +416,7 @@ function prepareChartCanvas(canvas, data, options = {}) {
   ctx.clearRect(0, 0, cssWidth, cssHeight);
   if (viewport && viewport.clientWidth > 0 && !state.chartScrollInitialized[canvas.id]) {
     requestAnimationFrame(() => {
-      viewport.scrollLeft = viewport.scrollWidth;
+      viewport.scrollLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
     });
     state.chartScrollInitialized[canvas.id] = true;
   }
@@ -481,24 +481,23 @@ function drawBarChart(canvas, data, options = {}) {
     ctx.fillText(formatNumber(Math.round((maxValue * i) / 4)), padding.left - 10, y + 4);
   }
 
-  const gap = chartData.length > 80 ? 3 : 6;
-  const barWidth = chartData.length > 0
-    ? Math.max(8, Math.min(28, (chartWidth - gap * (chartData.length - 1)) / chartData.length))
-    : 0;
+  const slotWidth = chartData.length > 0 ? chartWidth / chartData.length : 0;
+  const barWidth = chartData.length > 0 ? Math.max(6, Math.min(28, slotWidth * 0.72)) : 0;
   const hitboxes = [];
 
   chartData.forEach((item, index) => {
     const value = Number(item.value);
     if (!Number.isFinite(value)) return;
-    const x = padding.left + index * (barWidth + gap);
+    const slotX = padding.left + index * slotWidth;
+    const x = slotX + (slotWidth - barWidth) / 2;
     const barHeight = Math.max(1, (value / maxValue) * chartHeight);
     const y = padding.top + chartHeight - barHeight;
     ctx.fillStyle = accent;
     ctx.fillRect(x, y, barWidth, barHeight);
     hitboxes.push({
-      x,
+      x: slotX,
       y: padding.top,
-      width: barWidth,
+      width: slotWidth,
       height: chartHeight,
       label: item.label,
       value,
@@ -513,7 +512,7 @@ function drawBarChart(canvas, data, options = {}) {
   chartData.forEach((item, index) => {
     const label = shortChartLabel(item.label, index, chartData.length);
     if (!label) return;
-    const x = padding.left + index * (barWidth + gap) + barWidth / 2;
+    const x = padding.left + index * slotWidth + slotWidth / 2;
     ctx.fillText(label, x, height - 16);
   });
 }
@@ -651,7 +650,10 @@ function redrawCharts() {
     drawBarChart($('#chatHourlyChart'), aggregateSeries(state.charts.chatHourly, chatRange), {
       tooltip: item => `${item.label}: ${formatNumber(item.value)} messages`
     });
-    drawBarChart($('#obsidianDailyChart'), aggregateSeries(state.charts.obsidianDaily, obsidianRange === 'hours' ? 'days' : obsidianRange), {
+    const obsidianData = obsidianRange === 'hours'
+      ? state.charts.obsidianHourly
+      : aggregateSeries(state.charts.obsidianDaily, obsidianRange);
+    drawBarChart($('#obsidianDailyChart'), obsidianData, {
       tooltip: item => `${item.label}: ${formatNumber(item.value)} blocks`
     });
     drawLineChart($('#tpsHourlyChart'), aggregateSeries(state.charts.tpsHourly, tpsRange, 'avg'), {
@@ -982,6 +984,7 @@ function renderObsidian(payload) {
 
   renderSupplies('#inventorySupplies', payload.supplies?.inventory);
   renderSupplies('#barrelSupplies', payload.supplies?.barrel, payload.supplies?.barrelError);
+  state.charts.obsidianHourly = payload.hourly || [];
   state.charts.obsidianDaily = payload.daily || [];
   redrawCharts();
 }

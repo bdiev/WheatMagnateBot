@@ -972,6 +972,13 @@ async function initDatabase() {
       )
     `);
     await pool.query(`
+      CREATE TABLE IF NOT EXISTS obsidian_farm_hourly (
+        bucket TIMESTAMPTZ PRIMARY KEY,
+        mined BIGINT NOT NULL DEFAULT 0 CHECK (mined >= 0),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS obsidian_farm_supply_snapshot (
         id SMALLINT PRIMARY KEY CHECK (id = 1),
         supplies JSONB NOT NULL,
@@ -1873,6 +1880,13 @@ async function persistObsidianMined() {
       VALUES ((NOW() AT TIME ZONE 'Europe/Kyiv')::date, 1)
       ON CONFLICT (farm_date)
       DO UPDATE SET mined = obsidian_farm_daily.mined + 1,
+                    updated_at = NOW()
+    `);
+    await client.query(`
+      INSERT INTO obsidian_farm_hourly (bucket, mined)
+      VALUES (date_trunc('hour', NOW()), 1)
+      ON CONFLICT (bucket)
+      DO UPDATE SET mined = obsidian_farm_hourly.mined + 1,
                     updated_at = NOW()
     `);
     await client.query('COMMIT');
