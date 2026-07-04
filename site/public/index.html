@@ -179,24 +179,24 @@
       <section id="tab-bot" class="tab-panel" data-panel="bot">
         <section class="stats-grid four">
           <article class="stat">
-            <span class="stat-label">Online Players</span>
-            <strong id="onlinePlayers">-</strong>
-            <small id="totalPlayers">of - whitelisted</small>
+            <span class="stat-label">Bot Status</span>
+            <strong id="botConnectionState">-</strong>
+            <small id="botStatusUpdated">updated: -</small>
           </article>
           <article class="stat">
-            <span class="stat-label">Offline Players</span>
-            <strong id="offlinePlayers">-</strong>
-            <small>whitelist members not online</small>
+            <span class="stat-label">Health</span>
+            <strong id="botHealth">-</strong>
+            <small>out of 20</small>
           </article>
           <article class="stat">
-            <span class="stat-label">Seen Today</span>
-            <strong id="seen24h">-</strong>
-            <small>players active in 24 hours</small>
+            <span class="stat-label">Food</span>
+            <strong id="botFood">-</strong>
+            <small>out of 20</small>
           </article>
           <article class="stat">
-            <span class="stat-label">Seen This Week</span>
-            <strong id="seen7d">-</strong>
-            <small>players active in 7 days</small>
+            <span class="stat-label">Online Time</span>
+            <strong id="botUptime">-</strong>
+            <small id="botReconnect">current session</small>
           </article>
         </section>
 
@@ -204,21 +204,21 @@
           <section class="panel">
             <div class="panel-head">
               <div>
-                <h2>Playtime Leaderboard</h2>
-                <p>Individual whitelist playtime, sorted by total time.</p>
+                <h2>Bot Inventory</h2>
+                <p>Latest item snapshot reported by the Minecraft bot.</p>
               </div>
             </div>
-            <div id="playtimeLeaderboard" class="rank-list large"></div>
+            <div id="botInventory" class="supply-list"></div>
           </section>
 
           <section class="panel">
             <div class="panel-head">
               <div>
-                <h2>Recent Player Activity</h2>
-                <p>Latest known player status changes.</p>
+                <h2>Bot Details</h2>
+                <p>Position, equipment, ping, and current task context.</p>
               </div>
             </div>
-            <div id="recentActivity" class="rank-list large"></div>
+            <div id="botDetails" class="detail-list"></div>
           </section>
         </section>
       </section>
@@ -331,6 +331,29 @@
           </article>
         </section>
 
+        <section class="stats-grid four">
+          <article class="stat">
+            <span class="stat-label">Online Players</span>
+            <strong id="onlinePlayers">-</strong>
+            <small id="totalPlayers">of - whitelisted</small>
+          </article>
+          <article class="stat">
+            <span class="stat-label">Offline Players</span>
+            <strong id="offlinePlayers">-</strong>
+            <small>whitelist members not online</small>
+          </article>
+          <article class="stat">
+            <span class="stat-label">Seen Today</span>
+            <strong id="seen24h">-</strong>
+            <small>players active in 24 hours</small>
+          </article>
+          <article class="stat">
+            <span class="stat-label">Seen This Week</span>
+            <strong id="seen7d">-</strong>
+            <small>players active in 7 days</small>
+          </article>
+        </section>
+
         <section class="content-grid">
           <section class="panel">
             <div class="panel-head">
@@ -368,6 +391,28 @@
               <div id="serverRecentPlayers" class="rank-list"></div>
             </section>
           </aside>
+        </section>
+
+        <section class="split-grid">
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Playtime Leaderboard</h2>
+                <p>Individual whitelist playtime, sorted by total time.</p>
+              </div>
+            </div>
+            <div id="playtimeLeaderboard" class="rank-list large"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Recent Player Activity</h2>
+                <p>Latest known player status changes.</p>
+              </div>
+            </div>
+            <div id="recentActivity" class="rank-list large"></div>
+          </section>
         </section>
       </section>
 

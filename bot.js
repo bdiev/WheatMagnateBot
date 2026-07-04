@@ -547,6 +547,7 @@ let outboundWhispers = new Map(); // key: `OUTBOUND:targetUsername:message` -> t
 let recentlyForwardedGameChat = new Map(); // key: `CHAT:username:message` -> timestamp, to dedupe chat/raw message events
 let tpsTabInterval = null;
 let playtimeSyncInterval = null;
+let botStatusSnapshotInterval = null;
 let wheatMagnatePlaytimeDisplay = 'N/A';
 let wheatMagnatePlaytimeCacheAt = 0;
 const DANGER_RADIUS_OPTIONS = [100, 200, 300, 500, 1000];
@@ -1042,6 +1043,13 @@ async function initDatabase() {
     await pool.query(`
       CREATE INDEX IF NOT EXISTS nearby_player_sightings_last_seen_idx
       ON nearby_player_sightings (last_seen DESC)
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS bot_status_snapshots (
+        id SMALLINT PRIMARY KEY CHECK (id = 1),
+        status JSONB NOT NULL,
+        observed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
     `);
     await pool.query(`
       INSERT INTO obsidian_farm_state (id)
@@ -1562,6 +1570,7 @@ if (DISCORD_BOT_TOKEN) {
     await initDatabase();
     await loadRuntimeSettingsFromDB();
     await saveAdminSettings(runtimeSettings);
+    startBotStatusSnapshotWriter();
     try {
       await registerApplicationCommands();
     } catch (err) {
@@ -5080,6 +5089,93 @@ function getAdminPanelStatusSnapshot() {
     followTarget: followFeature.getStatus().targetUsername || 'None',
     obsidianMined: `${formatCompactCount(obsidianStats.sessionMined)}/${formatCompactCount(obsidianStats.totalMined)}`
   };
+}
+
+function compactInventoryItems(items = []) {
+  return items
+    .map(item => ({
+      name: item.name,
+      displayName: item.displayName || item.name,
+      count: item.count,
+      slot: item.slot
+    }))
+    .sort((a, b) => String(a.displayName || a.name).localeCompare(String(b.displayName || b.name)));
+}
+
+function getBotStatusSnapshot() {
+  const connected = Boolean(bot?.entity);
+  const position = connected && bot.entity.position
+    ? {
+        x: Math.round(bot.entity.position.x * 10) / 10,
+        y: Math.round(bot.entity.position.y * 10) / 10,
+        z: Math.round(bot.entity.position.z * 10) / 10
+      }
+    : null;
+  const armorItems = connected
+    ? (bot.inventory?.slots || [])
+        .slice(5, 9)
+        .filter(Boolean)
+        .map(item => ({
+          name: item.name,
+          displayName: item.displayName || item.name,
+          count: item.count,
+          slot: item.slot
+        }))
+    : [];
+
+  return {
+    connected,
+    status: connected ? 'online' : shouldReconnect ? 'reconnecting' : 'paused',
+    username: bot?.username || ADMIN_PANEL_BOT_NAME,
+    server: 'play.oldfag.org',
+    uptimeMs: connected ? Math.max(0, Date.now() - startTime) : 0,
+    reconnectInMs: !connected && reconnectTimestamp ? Math.max(0, reconnectTimestamp - Date.now()) : null,
+    lastDisconnectReason,
+    health: connected && bot.health != null ? Math.round(bot.health * 2) / 2 : null,
+    food: connected && bot.food != null ? Math.round(bot.food * 2) / 2 : null,
+    armor: armorItems,
+    armorCount: armorItems.length,
+    ping: connected ? (bot.player?.ping ?? null) : null,
+    gameMode: connected ? (bot.game?.gameMode || null) : null,
+    dimension: connected ? (bot.game?.dimension || null) : null,
+    position,
+    heldItem: connected && bot.heldItem
+      ? {
+          name: bot.heldItem.name,
+          displayName: bot.heldItem.displayName || bot.heldItem.name,
+          count: bot.heldItem.count,
+          slot: bot.heldItem.slot
+        }
+      : null,
+    inventory: connected ? compactInventoryItems(bot.inventory?.items() || []) : [],
+    inventorySlotsUsed: connected ? (bot.inventory?.items() || []).length : 0,
+    xpLevel: connected ? (bot.experience?.level ?? null) : null,
+    followTarget: followFeature.getStatus().targetUsername || null,
+    observedAt: new Date().toISOString()
+  };
+}
+
+async function writeBotStatusSnapshot() {
+  if (!pool) return;
+  const snapshot = getBotStatusSnapshot();
+  try {
+    await pool.query(`
+      INSERT INTO bot_status_snapshots (id, status, observed_at)
+      VALUES (1, $1, NOW())
+      ON CONFLICT (id)
+      DO UPDATE SET status = EXCLUDED.status, observed_at = EXCLUDED.observed_at
+    `, [snapshot]);
+  } catch (err) {
+    console.error('[Bot Status] Failed to write snapshot:', err.message);
+  }
+}
+
+function startBotStatusSnapshotWriter() {
+  if (botStatusSnapshotInterval) clearInterval(botStatusSnapshotInterval);
+  writeBotStatusSnapshot().catch(() => {});
+  botStatusSnapshotInterval = setInterval(() => {
+    writeBotStatusSnapshot().catch(() => {});
+  }, 10_000);
 }
 
 async function buildAdminPanelEmbed() {

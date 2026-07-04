@@ -1521,6 +1521,10 @@ body.search-focus-active #logoutButton {
   gap: 10px;
 }
 
+.supply-item.bot-item {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
 .supply-name {
   display: inline-flex;
   align-items: center;

@@ -311,6 +311,13 @@ async function ensureOptionalTables() {
     ON site_game_chat_outbox (status, created_at)
   `);
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS bot_status_snapshots (
+      id SMALLINT PRIMARY KEY CHECK (id = 1),
+      status JSONB NOT NULL,
+      observed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS obsidian_farm_supply_snapshot (
       id SMALLINT PRIMARY KEY CHECK (id = 1),
       supplies JSONB NOT NULL,
@@ -566,6 +573,21 @@ async function queueSiteChatMessage(currentUser, body) {
 async function getBotStats() {
   assertDatabase();
 
+  const result = await pool.query(`
+    SELECT status, observed_at
+    FROM bot_status_snapshots
+    WHERE id = 1
+  `);
+  const row = result.rows[0] || {};
+  return {
+    bot: row.status || null,
+    observedAt: row.observed_at || null
+  };
+}
+
+async function getPlayerStats() {
+  assertDatabase();
+
   const [playersResult, leaderboardResult, recentActivityResult, activityTotalsResult] = await Promise.all([
     pool.query(`
       SELECT
@@ -595,9 +617,8 @@ async function getBotStats() {
       SELECT pa.username,
              pa.last_seen,
              pa.last_online,
-             pt.tracking_since IS NOT NULL AS is_online
+             pa.is_online AS is_online
       FROM player_activity pa
-      LEFT JOIN player_playtime pt ON LOWER(pt.username) = LOWER(pa.username)
       ORDER BY pa.last_seen DESC NULLS LAST
       LIMIT 20
     `),
@@ -720,7 +741,7 @@ async function getObsidianStats() {
 async function getServerStats() {
   assertDatabase();
 
-  const [tpsSummaryResult, hourlyTpsResult, nearbyResult, recentPlayersResult] = await Promise.all([
+  const [tpsSummaryResult, hourlyTpsResult, nearbyResult, recentPlayersResult, playerStats] = await Promise.all([
     pool.query(`
       SELECT
         (SELECT tps FROM bot_tps_samples ORDER BY sampled_at DESC LIMIT 1) AS latest,
@@ -758,12 +779,12 @@ async function getServerStats() {
     pool.query(`
       SELECT pa.username,
              pa.last_seen,
-             pt.tracking_since IS NOT NULL AS is_online
+             pa.is_online AS is_online
       FROM player_activity pa
-      LEFT JOIN player_playtime pt ON LOWER(pt.username) = LOWER(pa.username)
       ORDER BY pa.last_seen DESC NULLS LAST
       LIMIT 20
-    `)
+    `),
+    getPlayerStats()
   ]);
 
   const tpsRow = tpsSummaryResult.rows[0] || {};
@@ -790,7 +811,8 @@ async function getServerStats() {
       username: row.username,
       isOnline: Boolean(row.is_online),
       lastSeen: row.last_seen
-    }))
+    })),
+    playerStats
   };
 }
 

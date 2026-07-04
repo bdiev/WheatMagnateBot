@@ -83,6 +83,18 @@ function formatAgo(value) {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
+function formatDurationMs(value) {
+  const totalSeconds = Math.max(0, Math.floor(Number(value) / 1000));
+  if (!Number.isFinite(totalSeconds)) return '-';
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  if (days) return `${days}d ${hours}h ${minutes}m`;
+  if (hours) return `${hours}h ${minutes}m`;
+  if (minutes) return `${minutes}m`;
+  return `${totalSeconds}s`;
+}
+
 function playerHeadUrl(username, size = 32) {
   const safeUsername = encodeURIComponent(String(username || 'Steve').trim() || 'Steve');
   return `https://minotar.net/avatar/${safeUsername}/${size}`;
@@ -930,7 +942,62 @@ function renderChat(payload) {
   redrawCharts();
 }
 
+function renderBotItemList(selector, items = [], emptyText = 'No items recorded.') {
+  renderStable(selector, items.length
+    ? `<div class="supply-items">${items.map(item => {
+      const label = item.displayName || item.label || item.name || 'Item';
+      return `
+        <div class="supply-item bot-item">
+          <span class="supply-name">${itemIcon({ name: item.name, label })}<span>${escapeHtml(label)}</span></span>
+          <strong>${formatNumber(item.count || 1)}</strong>
+        </div>
+      `;
+    }).join('')}</div>`
+    : `<div class="empty">${emptyText}</div>`,
+    items.map(item => [item.name, item.displayName, item.count, item.slot])
+  );
+}
+
 function renderBotStats(payload) {
+  const bot = payload.bot || null;
+  const connected = Boolean(bot?.connected);
+  $('#botConnectionState').textContent = bot?.status ? bot.status : 'unknown';
+  $('#botStatusUpdated').textContent = `updated: ${formatDate(payload.observedAt || bot?.observedAt)}`;
+  $('#botHealth').textContent = bot?.health == null ? '-' : bot.health;
+  $('#botFood').textContent = bot?.food == null ? '-' : bot.food;
+  $('#botUptime').textContent = connected ? formatDurationMs(bot.uptimeMs) : '-';
+  $('#botReconnect').textContent = !bot
+    ? 'waiting for bot snapshot'
+    : bot.reconnectInMs
+      ? `reconnect in ${formatDurationMs(bot.reconnectInMs)}`
+      : 'current session';
+
+  renderBotItemList('#botInventory', bot?.inventory || [], connected ? 'Inventory is empty.' : 'No live bot inventory snapshot yet.');
+
+  const heldItem = bot?.heldItem?.displayName || bot?.heldItem?.name || 'None';
+  const armor = bot?.armor?.length
+    ? bot.armor.map(item => escapeHtml(item.displayName || item.name)).join(', ')
+    : 'None';
+  const position = bot?.position
+    ? `${bot.position.x}, ${bot.position.y}, ${bot.position.z}`
+    : '-';
+
+  $('#botDetails').innerHTML = `
+    <div><span>Username</span><strong>${escapeHtml(bot?.username || '-')}</strong></div>
+    <div><span>Server</span><strong>${escapeHtml(bot?.server || '-')}</strong></div>
+    <div><span>Ping</span><strong>${bot?.ping == null ? '-' : `${formatNumber(bot.ping)} ms`}</strong></div>
+    <div><span>Position</span><strong>${escapeHtml(position)}</strong></div>
+    <div><span>Dimension</span><strong>${escapeHtml(bot?.dimension || '-')}</strong></div>
+    <div><span>Game mode</span><strong>${escapeHtml(bot?.gameMode || '-')}</strong></div>
+    <div><span>Held item</span><strong>${escapeHtml(heldItem)}</strong></div>
+    <div><span>Armor</span><strong>${armor}</strong></div>
+    <div><span>XP level</span><strong>${bot?.xpLevel == null ? '-' : formatNumber(bot.xpLevel)}</strong></div>
+    <div><span>Following</span><strong>${escapeHtml(bot?.followTarget || 'None')}</strong></div>
+    <div><span>Last offline reason</span><strong>${escapeHtml(bot?.lastDisconnectReason || '-')}</strong></div>
+  `;
+}
+
+function renderPlayerStats(payload = {}) {
   $('#onlinePlayers').textContent = formatNumber(payload.players?.online);
   $('#totalPlayers').textContent = `of ${formatNumber(payload.players?.total)} whitelisted`;
   $('#offlinePlayers').textContent = formatNumber(payload.players?.offline);
@@ -1042,6 +1109,8 @@ function renderSupplies(selector, supplies, error = null) {
 }
 
 function renderServerStats(payload) {
+  renderPlayerStats(payload.playerStats || {});
+
   const tps = payload.tps || {};
   $('#latestTps').textContent = formatTps(tps.latest);
   $('#latestTpsAt').textContent = `sampled: ${formatDate(tps.latestAt)}`;
@@ -1065,13 +1134,16 @@ function renderServerStats(payload) {
 
   const players = payload.recentPlayers || [];
   renderStable('#serverRecentPlayers', players.length
-    ? players.map(player => `
-      <div class="rank-item activity-item">
-        ${playerIdentity(player.username, 28)}
-        <span class="pill ${player.isOnline ? 'online' : ''}">${player.isOnline ? 'online' : 'offline'}</span>
-        <span class="muted">${formatAgo(player.lastSeen)}</span>
-      </div>
-    `).join('')
+    ? players.map(player => {
+      const eventLabel = player.isOnline ? 'Joined the game' : 'Left the game';
+      return `
+        <div class="rank-item activity-item">
+          ${playerIdentity(player.username, 28)}
+          <span class="pill ${player.isOnline ? 'online' : ''}">${eventLabel}</span>
+          <span class="muted">${formatAgo(player.lastSeen)}</span>
+        </div>
+      `;
+    }).join('')
     : '<div class="empty">No server activity records found.</div>',
     players.map(player => [player.username, player.isOnline, player.lastSeen])
   );
