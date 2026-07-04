@@ -4,9 +4,33 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>WheatMagnateBot</title>
+    <script>
+      document.documentElement.dataset.theme = localStorage.getItem('wm-theme') || 'light';
+    </script>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
+    <section id="authScreen" class="auth-screen" aria-label="Site access">
+      <form id="authForm" class="auth-card">
+        <p class="eyebrow">Private Dashboard</p>
+        <h1 id="authTitle">Sign in</h1>
+        <p id="authIntro" class="auth-intro">Enter your approved account credentials to open the dashboard.</p>
+
+        <label class="auth-field">
+          <span>Login</span>
+          <input id="authUsername" name="username" type="text" autocomplete="username" required minlength="2" maxlength="64">
+        </label>
+        <label class="auth-field">
+          <span>Password</span>
+          <input id="authPassword" name="password" type="password" autocomplete="current-password" required minlength="6">
+        </label>
+
+        <div id="authError" class="auth-error" hidden></div>
+        <button id="authSubmit" type="submit">Sign in</button>
+        <button id="authModeToggle" class="ghost-button" type="button">Create a new account</button>
+      </form>
+    </section>
+
     <main class="shell">
       <header class="topbar">
         <div>
@@ -44,6 +68,7 @@
         <button class="tab-button" type="button" data-tab="bot">Bot Stats</button>
         <button class="tab-button" type="button" data-tab="obsidian">Obsidian Farm</button>
         <button class="tab-button" type="button" data-tab="server">Server Stats</button>
+        <button class="tab-button admin-only" type="button" data-tab="admin" hidden>Admin</button>
       </nav>
 
       <section id="legacySeenSearch" class="seen-search" aria-label="Seen player search" hidden>
@@ -309,6 +334,19 @@
               <div id="serverRecentPlayers" class="rank-list"></div>
             </section>
           </aside>
+        </section>
+      </section>
+
+      <section id="tab-admin" class="tab-panel" data-panel="admin">
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>User Access</h2>
+              <p>Approve new site registrations and manage admin access.</p>
+            </div>
+            <button id="adminUsersRefresh" type="button">Refresh</button>
+          </div>
+          <div id="adminUsersList" class="admin-users-list"></div>
         </section>
       </section>
     </main>

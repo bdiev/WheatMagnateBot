@@ -153,6 +153,98 @@ button:disabled {
   opacity: 0.65;
 }
 
+.ghost-button {
+  border: 1px solid var(--line);
+  color: var(--text);
+  background: var(--panel);
+}
+
+.ghost-button:hover {
+  color: var(--text);
+  background: var(--panel-soft);
+}
+
+.danger-button {
+  background: #9b2f2f;
+}
+
+.danger-button:hover {
+  color: #fff;
+  background: #7d2424;
+}
+
+.auth-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background:
+    radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 16%, transparent), transparent 36rem),
+    var(--bg);
+}
+
+.auth-card {
+  display: grid;
+  gap: 14px;
+  width: min(100%, 420px);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 24px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.auth-card h1 {
+  font-size: 30px;
+}
+
+.auth-intro {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.auth-field {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.auth-field input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 13px;
+  color: var(--text);
+  background: var(--panel-soft);
+  font: inherit;
+  outline: none;
+}
+
+.auth-field input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.auth-error {
+  border: 1px solid color-mix(in srgb, #d04a4a 38%, var(--line));
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #f3d0d0;
+  background: color-mix(in srgb, #8b1f1f 34%, var(--panel));
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.app-locked {
+  pointer-events: none;
+  user-select: none;
+  filter: blur(2px);
+}
+
 .tab-button {
   border: 1px solid var(--line);
   color: var(--text);
@@ -1038,10 +1130,59 @@ button:disabled {
   background: #23441c;
 }
 
+.pill.pending {
+  color: #2f2105;
+  background: #f0bd6a;
+}
+
+.pill.rejected {
+  color: #fff;
+  background: #9b2f2f;
+}
+
 .pill.low {
   min-width: 40px;
   color: var(--warn);
   background: color-mix(in srgb, var(--warn) 16%, var(--panel));
+}
+
+.admin-users-list {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-user {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto auto minmax(220px, auto);
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--panel-soft);
+}
+
+.admin-user > div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.admin-user strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-user-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.admin-user-actions button {
+  padding: 8px 10px;
 }
 
 .supplies-grid {
@@ -1243,9 +1384,18 @@ button:disabled {
 
   .chat-message,
   .rank-item,
+  .admin-user,
   .detail-list div {
     grid-template-columns: 1fr;
     gap: 7px;
+  }
+
+  .auth-card {
+    padding: 20px;
+  }
+
+  .admin-user-actions {
+    justify-content: flex-start;
   }
 
   .rank-item.leaderboard-item,

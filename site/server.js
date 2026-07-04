@@ -1,6 +1,7 @@
 'use strict';
 
 const http = require('node:http');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -10,6 +11,9 @@ require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 const PORT = Number(process.env.SITE_PORT || process.env.PORT) || 3080;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const DATABASE_URL = process.env.DATABASE_URL;
+const SITE_ADMIN_USERNAME = 'bdiev_';
+const SESSION_COOKIE = 'wm_session';
+const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 const pool = DATABASE_URL
   ? new Pool({ connectionString: DATABASE_URL })
   : null;
@@ -37,6 +41,69 @@ function sendJson(res, statusCode, payload) {
 
 function sendError(res, statusCode, message) {
   sendJson(res, statusCode, { error: message });
+}
+
+function parseCookies(req) {
+  return String(req.headers.cookie || '')
+    .split(';')
+    .map(part => part.trim())
+    .filter(Boolean)
+    .reduce((cookies, part) => {
+      const index = part.indexOf('=');
+      if (index === -1) return cookies;
+      cookies[decodeURIComponent(part.slice(0, index))] = decodeURIComponent(part.slice(index + 1));
+      return cookies;
+    }, {});
+}
+
+function setSessionCookie(res, token) {
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_MAX_AGE_SECONDS}`);
+}
+
+function clearSessionCookie(res) {
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
+}
+
+function hashToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `scrypt:${salt}:${hash}`;
+}
+
+function verifyPassword(password, storedHash) {
+  const [method, salt, hash] = String(storedHash || '').split(':');
+  if (method !== 'scrypt' || !salt || !hash) return false;
+  const actual = crypto.scryptSync(password, salt, 64);
+  const expected = Buffer.from(hash, 'hex');
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
+
+function readJsonBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', chunk => {
+      body += chunk;
+      if (body.length > 1024 * 1024) {
+        reject(Object.assign(new Error('Request body is too large.'), { statusCode: 413 }));
+        req.destroy();
+      }
+    });
+    req.on('end', () => {
+      if (!body) {
+        resolve({});
+        return;
+      }
+      try {
+        resolve(JSON.parse(body));
+      } catch {
+        reject(Object.assign(new Error('Invalid JSON body.'), { statusCode: 400 }));
+      }
+    });
+    req.on('error', reject);
+  });
 }
 
 function assertDatabase() {
@@ -156,6 +223,44 @@ function normalizeSupplySnapshot(row) {
 
 async function ensureOptionalTables() {
   if (!pool) return;
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS site_users (
+      id BIGSERIAL PRIMARY KEY,
+      username VARCHAR(64) UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      role VARCHAR(20) NOT NULL DEFAULT 'user',
+      status VARCHAR(20) NOT NULL DEFAULT 'approved',
+      approved_by BIGINT REFERENCES site_users(id) ON DELETE SET NULL,
+      approved_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`ALTER TABLE site_users ADD COLUMN IF NOT EXISTS role VARCHAR(20) NOT NULL DEFAULT 'user'`);
+  await pool.query(`ALTER TABLE site_users ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'approved'`);
+  await pool.query(`ALTER TABLE site_users ADD COLUMN IF NOT EXISTS approved_by BIGINT REFERENCES site_users(id) ON DELETE SET NULL`);
+  await pool.query(`ALTER TABLE site_users ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ`);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS site_users_username_lower_idx
+    ON site_users (LOWER(username))
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS site_sessions (
+      token_hash TEXT PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES site_users(id) ON DELETE CASCADE,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS site_sessions_user_id_idx ON site_sessions (user_id)`);
+  await pool.query(`DELETE FROM site_sessions WHERE expires_at <= NOW()`);
+  await pool.query(
+    `UPDATE site_users
+     SET role = 'admin',
+         status = 'approved',
+         approved_at = COALESCE(approved_at, NOW())
+     WHERE LOWER(username) = LOWER($1)`,
+    [SITE_ADMIN_USERNAME]
+  );
   await pool.query(`
     CREATE TABLE IF NOT EXISTS game_chat_messages (
       id BIGSERIAL PRIMARY KEY,
@@ -729,12 +834,237 @@ async function getPlayerProfile(url) {
   };
 }
 
+function publicUser(row) {
+  if (!row) return null;
+  return {
+    id: String(row.id),
+    username: row.username,
+    role: row.role,
+    status: row.status,
+    createdAt: row.created_at || null,
+    approvedAt: row.approved_at || null
+  };
+}
+
+async function getCurrentUser(req) {
+  assertDatabase();
+  const token = parseCookies(req)[SESSION_COOKIE];
+  if (!token) return null;
+  const result = await pool.query(`
+    SELECT u.id, u.username, u.role, u.status, u.created_at, u.approved_at
+    FROM site_sessions s
+    JOIN site_users u ON u.id = s.user_id
+    WHERE s.token_hash = $1
+      AND s.expires_at > NOW()
+      AND u.status = 'approved'
+  `, [hashToken(token)]);
+  return publicUser(result.rows[0]);
+}
+
+async function createSession(res, userId) {
+  const token = crypto.randomBytes(32).toString('hex');
+  const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_SECONDS * 1000);
+  await pool.query(
+    `INSERT INTO site_sessions (token_hash, user_id, expires_at) VALUES ($1, $2, $3)`,
+    [hashToken(token), userId, expiresAt]
+  );
+  setSessionCookie(res, token);
+}
+
+function normalizeUsername(value) {
+  return String(value || '').trim();
+}
+
+function validateCredentials(username, password) {
+  if (!/^[A-Za-z0-9_.-]{2,64}$/.test(username)) {
+    const err = new Error('Username must be 2-64 characters and use letters, numbers, dot, dash or underscore.');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (String(password || '').length < 6 || String(password || '').length > 256) {
+    const err = new Error('Password must be between 6 and 256 characters.');
+    err.statusCode = 400;
+    throw err;
+  }
+}
+
+async function handleAuth(req, res, url) {
+  assertDatabase();
+
+  if (url.pathname === '/api/auth/me' && req.method === 'GET') {
+    const user = await getCurrentUser(req);
+    sendJson(res, 200, { authenticated: Boolean(user), user });
+    return true;
+  }
+
+  if (url.pathname === '/api/auth/logout' && req.method === 'POST') {
+    const token = parseCookies(req)[SESSION_COOKIE];
+    if (token) {
+      await pool.query(`DELETE FROM site_sessions WHERE token_hash = $1`, [hashToken(token)]);
+    }
+    clearSessionCookie(res);
+    sendJson(res, 200, { ok: true });
+    return true;
+  }
+
+  if (url.pathname === '/api/auth/register' && req.method === 'POST') {
+    const body = await readJsonBody(req);
+    const username = normalizeUsername(body.username);
+    const password = String(body.password || '');
+    validateCredentials(username, password);
+
+    const isAdmin = username.toLowerCase() === SITE_ADMIN_USERNAME.toLowerCase();
+    const role = isAdmin ? 'admin' : 'user';
+    const status = isAdmin ? 'approved' : 'pending';
+    const existing = await pool.query(`SELECT id FROM site_users WHERE LOWER(username) = LOWER($1)`, [username]);
+    if (existing.rowCount) {
+      sendError(res, 409, 'This username is already registered.');
+      return true;
+    }
+
+    const inserted = await pool.query(`
+      INSERT INTO site_users (username, password_hash, role, status, approved_at)
+      VALUES ($1, $2, $3, $4, CASE WHEN $4 = 'approved' THEN NOW() ELSE NULL END)
+      RETURNING id, username, role, status, created_at, approved_at
+    `, [username, hashPassword(password), role, status]);
+
+    if (isAdmin) {
+      await createSession(res, inserted.rows[0].id);
+      sendJson(res, 201, { authenticated: true, user: publicUser(inserted.rows[0]) });
+      return true;
+    }
+
+    sendJson(res, 201, {
+      authenticated: false,
+      pendingApproval: true,
+      message: 'Registration received. Wait until an admin approves your account.'
+    });
+    return true;
+  }
+
+  if (url.pathname === '/api/auth/login' && req.method === 'POST') {
+    const body = await readJsonBody(req);
+    const username = normalizeUsername(body.username);
+    const password = String(body.password || '');
+    const result = await pool.query(`
+      SELECT id, username, password_hash, role, status, created_at, approved_at
+      FROM site_users
+      WHERE LOWER(username) = LOWER($1)
+    `, [username]);
+    const user = result.rows[0];
+    if (!user || !verifyPassword(password, user.password_hash)) {
+      sendError(res, 401, 'Invalid username or password.');
+      return true;
+    }
+    if (user.status !== 'approved') {
+      sendError(res, 403, user.status === 'pending' ? 'Your account is waiting for admin approval.' : 'Your account is not approved.');
+      return true;
+    }
+    await createSession(res, user.id);
+    sendJson(res, 200, { authenticated: true, user: publicUser(user) });
+    return true;
+  }
+
+  return false;
+}
+
+async function getAdminUsers(currentUser) {
+  if (currentUser.role !== 'admin') {
+    const err = new Error('Admin access required.');
+    err.statusCode = 403;
+    throw err;
+  }
+  const result = await pool.query(`
+    SELECT id, username, role, status, created_at, approved_at
+    FROM site_users
+    ORDER BY
+      CASE status WHEN 'pending' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END,
+      created_at DESC
+  `);
+  return { users: result.rows.map(publicUser) };
+}
+
+async function updateAdminUser(currentUser, body) {
+  if (currentUser.role !== 'admin') {
+    const err = new Error('Admin access required.');
+    err.statusCode = 403;
+    throw err;
+  }
+  const username = normalizeUsername(body.username);
+  const action = String(body.action || '');
+  if (!username) {
+    const err = new Error('Username is required.');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (username.toLowerCase() === SITE_ADMIN_USERNAME.toLowerCase() && ['reject', 'remove_admin'].includes(action)) {
+    const err = new Error('The primary admin cannot be rejected or demoted.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  if (action === 'approve') {
+    await pool.query(`
+      UPDATE site_users
+      SET status = 'approved', approved_by = $1, approved_at = NOW()
+      WHERE LOWER(username) = LOWER($2)
+    `, [currentUser.id, username]);
+  } else if (action === 'reject') {
+    const removed = await pool.query(
+      `DELETE FROM site_users WHERE LOWER(username) = LOWER($1) RETURNING id`,
+      [username]
+    );
+    if (!removed.rowCount) {
+      const err = new Error('User not found.');
+      err.statusCode = 404;
+      throw err;
+    }
+  } else if (action === 'make_admin') {
+    await pool.query(`
+      UPDATE site_users
+      SET role = 'admin', status = 'approved', approved_by = $1, approved_at = COALESCE(approved_at, NOW())
+      WHERE LOWER(username) = LOWER($2)
+    `, [currentUser.id, username]);
+  } else if (action === 'remove_admin') {
+    await pool.query(`UPDATE site_users SET role = 'user' WHERE LOWER(username) = LOWER($1)`, [username]);
+  } else {
+    const err = new Error('Unknown admin action.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  return getAdminUsers(currentUser);
+}
+
 async function handleApi(req, res, url) {
   try {
     if (url.pathname === '/api/health') {
       sendJson(res, 200, { ok: true, database: Boolean(pool) });
       return;
     }
+    if (url.pathname.startsWith('/api/auth/')) {
+      if (await handleAuth(req, res, url)) return;
+      sendError(res, 404, 'Auth route not found.');
+      return;
+    }
+
+    const currentUser = await getCurrentUser(req);
+    if (!currentUser) {
+      sendError(res, 401, 'Login required.');
+      return;
+    }
+
+    if (url.pathname === '/api/admin/users') {
+      if (req.method === 'GET') {
+        sendJson(res, 200, await getAdminUsers(currentUser));
+        return;
+      }
+      if (req.method === 'POST') {
+        sendJson(res, 200, await updateAdminUser(currentUser, await readJsonBody(req)));
+        return;
+      }
+    }
+
     if (url.pathname === '/api/summary') {
       sendJson(res, 200, await getSummary());
       return;

@@ -8,7 +8,9 @@ const state = {
   seenSearchTimer: null,
   seenPlayers: [],
   chatMessageIds: new Set(),
-  chatInitialized: false
+  chatInitialized: false,
+  authMode: 'login',
+  currentUser: null
 };
 
 const $ = selector => document.querySelector(selector);
@@ -165,12 +167,114 @@ function setBanner(message) {
 }
 
 async function fetchJson(path) {
-  const response = await fetch(path, { cache: 'no-store' });
+  const response = await fetch(path, { cache: 'no-store', credentials: 'same-origin' });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    if (response.status === 401 && !path.startsWith('/api/auth/')) {
+      showAuthScreen('Please sign in to continue.');
+    }
+    throw new Error(payload.error || `HTTP ${response.status}`);
+  }
+  return payload;
+}
+
+async function postJson(path, body = {}) {
+  const response = await fetch(path, {
+    method: 'POST',
+    cache: 'no-store',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(payload.error || `HTTP ${response.status}`);
   }
   return payload;
+}
+
+function showAuthScreen(message = '') {
+  const authScreen = $('#authScreen');
+  const shell = $('.shell');
+  if (authScreen) authScreen.hidden = false;
+  if (shell) shell.classList.add('app-locked');
+  if (message) {
+    const error = $('#authError');
+    error.textContent = message;
+    error.hidden = false;
+  }
+}
+
+function hideAuthScreen() {
+  $('#authScreen').hidden = true;
+  $('.shell')?.classList.remove('app-locked');
+  $('#authError').hidden = true;
+}
+
+function setAuthMode(mode) {
+  state.authMode = mode === 'register' ? 'register' : 'login';
+  const isRegister = state.authMode === 'register';
+  $('#authTitle').textContent = isRegister ? 'Create account' : 'Sign in';
+  $('#authIntro').textContent = isRegister
+    ? 'New accounts wait for admin approval before they can open the dashboard.'
+    : 'Enter your approved account credentials to open the dashboard.';
+  $('#authSubmit').textContent = isRegister ? 'Create account' : 'Sign in';
+  $('#authModeToggle').textContent = isRegister ? 'Already have an account?' : 'Create a new account';
+  $('#authPassword').setAttribute('autocomplete', isRegister ? 'new-password' : 'current-password');
+  $('#authError').hidden = true;
+}
+
+function applyCurrentUser(user) {
+  state.currentUser = user || null;
+  const isAdmin = state.currentUser?.role === 'admin';
+  $$('.admin-only').forEach(element => {
+    element.hidden = !isAdmin;
+  });
+  if (!isAdmin && state.activeTab === 'admin') setActiveTab('chat');
+}
+
+async function handleAuthSubmit(event) {
+  event.preventDefault();
+  const username = $('#authUsername').value.trim();
+  const password = $('#authPassword').value;
+  const button = $('#authSubmit');
+  const error = $('#authError');
+  button.disabled = true;
+  error.hidden = true;
+
+  try {
+    const payload = await postJson(`/api/auth/${state.authMode === 'register' ? 'register' : 'login'}`, { username, password });
+    if (payload.pendingApproval) {
+      setAuthMode('login');
+      showAuthScreen(payload.message || 'Registration received. Wait for admin approval.');
+      return;
+    }
+    applyCurrentUser(payload.user);
+    hideAuthScreen();
+    await loadAll();
+  } catch (err) {
+    error.textContent = err.message;
+    error.hidden = false;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function initAuth() {
+  try {
+    const payload = await fetchJson('/api/auth/me');
+    if (payload.authenticated) {
+      applyCurrentUser(payload.user);
+      hideAuthScreen();
+      await loadAll();
+      return;
+    }
+  } catch (err) {
+    $('#authError').textContent = err.message;
+    $('#authError').hidden = false;
+  }
+  applyCurrentUser(null);
+  showAuthScreen();
 }
 
 function applyTheme(theme) {
@@ -192,6 +296,7 @@ function toggleTheme() {
 }
 
 function setActiveTab(tab) {
+  if (tab === 'admin' && state.currentUser?.role !== 'admin') return;
   state.activeTab = tab;
   $$('.tab-button').forEach(button => {
     const active = button.dataset.tab === tab;
@@ -201,6 +306,7 @@ function setActiveTab(tab) {
   $$('.tab-panel').forEach(panel => {
     panel.classList.toggle('active', panel.dataset.panel === tab);
   });
+  if (tab === 'admin') loadAdminUsers();
   redrawCharts();
 }
 
@@ -755,7 +861,82 @@ function escapeHtml(value) {
     .replace(/'/g, '&#039;');
 }
 
+function renderAdminUsers(users = []) {
+  const list = $('#adminUsersList');
+  if (!list) return;
+  if (!users.length) {
+    list.innerHTML = '<div class="empty">No registered users yet.</div>';
+    return;
+  }
+
+  const currentUsername = state.currentUser?.username?.toLowerCase();
+  list.innerHTML = users.map(user => {
+    const username = escapeHtml(user.username);
+    const status = escapeHtml(user.status);
+    const role = escapeHtml(user.role);
+    const lower = String(user.username || '').toLowerCase();
+    const isSelf = lower === currentUsername;
+    const isPrimaryAdmin = lower === 'bdiev_';
+    const actions = [];
+
+    if (user.status !== 'approved') {
+      actions.push(`<button type="button" data-admin-action="approve" data-username="${username}">Approve</button>`);
+    }
+    if (!isPrimaryAdmin && !isSelf) {
+      actions.push(`<button class="danger-button" type="button" data-admin-action="reject" data-username="${username}">Reject</button>`);
+    }
+    if (user.role !== 'admin' && user.status === 'approved') {
+      actions.push(`<button class="ghost-button" type="button" data-admin-action="make_admin" data-username="${username}">Make admin</button>`);
+    }
+    if (user.role === 'admin' && !isPrimaryAdmin && !isSelf) {
+      actions.push(`<button class="ghost-button" type="button" data-admin-action="remove_admin" data-username="${username}">Remove admin</button>`);
+    }
+
+    return `
+      <article class="admin-user">
+        <div>
+          <strong>${username}</strong>
+          <span class="muted">Registered ${formatDate(user.createdAt)}</span>
+        </div>
+        <span class="pill ${status}">${status}</span>
+        <span class="pill">${role}</span>
+        <div class="admin-user-actions">${actions.join('')}</div>
+      </article>
+    `;
+  }).join('');
+}
+
+async function loadAdminUsers() {
+  if (state.currentUser?.role !== 'admin') return;
+  const list = $('#adminUsersList');
+  try {
+    if (list) list.innerHTML = '<div class="empty">Loading users...</div>';
+    const payload = await fetchJson('/api/admin/users');
+    renderAdminUsers(payload.users || []);
+  } catch (err) {
+    if (list) list.innerHTML = `<div class="empty">Could not load users: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function handleAdminUserAction(event) {
+  const button = event.target.closest('[data-admin-action]');
+  if (!button) return;
+  button.disabled = true;
+  try {
+    const payload = await postJson('/api/admin/users', {
+      action: button.dataset.adminAction,
+      username: button.dataset.username
+    });
+    renderAdminUsers(payload.users || []);
+  } catch (err) {
+    setBanner(`Could not update user: ${err.message}`);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function loadAll() {
+  if (!state.currentUser) return;
   try {
     const [chat, botStats, obsidian, serverStats] = await Promise.all([
       fetchJson('/api/chat?limit=160'),
@@ -774,9 +955,14 @@ async function loadAll() {
 }
 
 applyTheme(localStorage.getItem('wm-theme') || 'light');
+setAuthMode('login');
 $$('.tab-button').forEach(button => {
   button.addEventListener('click', () => setActiveTab(button.dataset.tab));
 });
+$('#authForm').addEventListener('submit', handleAuthSubmit);
+$('#authModeToggle').addEventListener('click', () => setAuthMode(state.authMode === 'login' ? 'register' : 'login'));
+$('#adminUsersRefresh')?.addEventListener('click', loadAdminUsers);
+$('#adminUsersList')?.addEventListener('click', handleAdminUserAction);
 $('#themeToggle').addEventListener('click', toggleTheme);
 window.addEventListener('resize', redrawCharts);
 $('#obsidianDailyChart').addEventListener('mousemove', event => showChartTooltip(event.currentTarget, event));
@@ -824,5 +1010,5 @@ $('#playerProfileOverlay').addEventListener('click', event => {
 });
 
 setActiveTab('chat');
-loadAll();
+initAuth();
 state.timer = setInterval(loadAll, 5000);
