@@ -797,8 +797,7 @@ function setSeenSearchOpen(open) {
   const toggle = $('#seenSearchToggle');
   if (!search || !toggle) return;
   search.classList.toggle('open', open);
-  const desktopSearchFocus = window.matchMedia('(min-width: 701px)').matches;
-  document.body.classList.toggle('search-focus-active', open && desktopSearchFocus);
+  document.body.classList.toggle('search-focus-active', open);
   toggle.setAttribute('aria-expanded', String(open));
   toggle.setAttribute('aria-label', open ? 'Close seen search' : 'Open seen search');
   if (open) {

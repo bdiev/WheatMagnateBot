@@ -550,27 +550,27 @@ button:disabled {
 
 .seen-search {
   display: grid;
-  grid-template-columns: var(--button-height) minmax(0, 0fr) minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: var(--button-height);
+  gap: 0;
   align-items: start;
   margin-bottom: 16px;
   transition: grid-template-columns 260ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 .seen-search.open {
-  grid-template-columns: var(--button-height) minmax(320px, 0.8fr) minmax(0, 1.2fr);
+  grid-template-columns: minmax(320px, 0.8fr);
 }
 
 .topbar-actions .seen-search {
   position: relative;
-  grid-template-columns: var(--button-height) minmax(0, 0fr);
+  grid-template-columns: var(--button-height);
   align-items: center;
   margin-bottom: 0;
   z-index: 60;
 }
 
 .topbar-actions .seen-search.open {
-  grid-template-columns: var(--button-height) minmax(320px, 420px);
+  grid-template-columns: minmax(320px, 420px);
 }
 
 .seen-search-toggle {
@@ -596,6 +596,10 @@ button:disabled {
 
 .seen-search-toggle:active {
   transform: translateY(0) scale(0.98);
+}
+
+.seen-search.open .seen-search-toggle {
+  display: none;
 }
 
 .search-icon {
@@ -636,7 +640,7 @@ button:disabled {
   min-width: 0;
   opacity: 0;
   overflow: hidden;
-  transform: translateX(-12px) scaleX(0.96);
+  transform: scaleX(0.96);
   transform-origin: left center;
   pointer-events: none;
   transition:
@@ -727,7 +731,8 @@ button:disabled {
 .chart-scroll,
 .rank-list,
 .player-profile-card,
-.supply-list {
+.supply-list,
+.supply-items {
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
@@ -737,7 +742,8 @@ button:disabled {
 .chart-scroll::-webkit-scrollbar,
 .rank-list::-webkit-scrollbar,
 .player-profile-card::-webkit-scrollbar,
-.supply-list::-webkit-scrollbar {
+.supply-list::-webkit-scrollbar,
+.supply-items::-webkit-scrollbar {
   width: 0;
   height: 0;
 }
@@ -1557,14 +1563,6 @@ button:disabled {
     justify-content: flex-start;
   }
 
-  body.search-focus-active .topbar > :first-child,
-  body.search-focus-active .nav-menu,
-  body.search-focus-active .status-banner,
-  body.search-focus-active .tab-panel {
-    filter: none;
-    opacity: 1;
-  }
-
   .panel-head {
     flex-direction: column;
   }
@@ -1581,7 +1579,6 @@ button:disabled {
     width: 100%;
   }
 
-  .seen-search,
   .seen-card {
     grid-template-columns: 1fr;
   }
@@ -1590,19 +1587,12 @@ button:disabled {
     grid-template-columns: minmax(0, 1fr) auto auto;
   }
 
-  .seen-search.open,
   .seen-search {
-    grid-template-columns: var(--button-height) minmax(0, 1fr);
-    transition: none;
+    grid-template-columns: var(--button-height);
   }
 
-  .seen-search-box {
-    transform: none;
-    transition: opacity 160ms ease, background-color 260ms ease, border-color 260ms ease, box-shadow 260ms ease;
-  }
-
-  .seen-search.open .seen-search-box {
-    transform: none;
+  .seen-search.open {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .seen-result {
