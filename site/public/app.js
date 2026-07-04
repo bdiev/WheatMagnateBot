@@ -891,7 +891,7 @@ function renderChat(payload) {
   $('#activeChatters').textContent = formatNumber(payload.totals?.activeChatters24h);
   $('#chatAllTime').textContent = formatNumber(payload.totals?.allTime);
 
-  const messages = [...(payload.messages || [])].reverse();
+  const messages = payload.messages || [];
   const firstChatRender = !state.chatInitialized;
   renderStable('#chatList', messages.length
     ? messages.map(message => `
@@ -907,7 +907,7 @@ function renderChat(payload) {
   if (firstChatRender) {
     requestAnimationFrame(() => {
       const chatList = $('#chatList');
-      if (chatList) chatList.scrollTop = 0;
+      if (chatList) chatList.scrollTop = chatList.scrollHeight;
     });
   }
   state.chatMessageIds = new Set(messages.map(message => String(message.id)));

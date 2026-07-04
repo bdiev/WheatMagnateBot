@@ -1019,11 +1019,14 @@ body.search-focus-active #logoutButton {
 
 .chat-text {
   min-width: 0;
+  padding-top: 4px;
+  line-height: 1.35;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
 .chat-time {
+  padding-top: 5px;
   color: var(--muted);
   font-size: 12px;
   text-align: right;
