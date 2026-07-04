@@ -230,7 +230,39 @@ function applyCurrentUser(user) {
   $$('.admin-only').forEach(element => {
     element.hidden = !isAdmin;
   });
+  const logoutButton = $('#logoutButton');
+  if (logoutButton) logoutButton.hidden = !state.currentUser;
   if (!isAdmin && state.activeTab === 'admin') setActiveTab('chat');
+}
+
+function setNavMenuOpen(open) {
+  const menu = $('#navMenu');
+  const toggle = $('#navMenuToggle');
+  if (!menu || !toggle) return;
+  menu.classList.toggle('open', Boolean(open));
+  toggle.setAttribute('aria-expanded', String(Boolean(open)));
+}
+
+function toggleNavMenu() {
+  setNavMenuOpen(!$('#navMenu')?.classList.contains('open'));
+}
+
+function updateNavLabel(tab) {
+  const activeButton = $(`.tab-button[data-tab="${tab}"]`);
+  const label = $('.nav-menu-label');
+  if (activeButton && label) label.textContent = activeButton.textContent.trim();
+}
+
+async function handleLogout() {
+  try {
+    await postJson('/api/auth/logout');
+  } catch {
+    // The local session state should still be cleared if the network request fails.
+  }
+  applyCurrentUser(null);
+  setNavMenuOpen(false);
+  setActiveTab('chat');
+  showAuthScreen('You have been logged out.');
 }
 
 async function handleAuthSubmit(event) {
@@ -306,6 +338,8 @@ function setActiveTab(tab) {
   $$('.tab-panel').forEach(panel => {
     panel.classList.toggle('active', panel.dataset.panel === tab);
   });
+  updateNavLabel(tab);
+  setNavMenuOpen(false);
   if (tab === 'admin') loadAdminUsers();
   redrawCharts();
 }
@@ -961,6 +995,8 @@ $$('.tab-button').forEach(button => {
 });
 $('#authForm').addEventListener('submit', handleAuthSubmit);
 $('#authModeToggle').addEventListener('click', () => setAuthMode(state.authMode === 'login' ? 'register' : 'login'));
+$('#navMenuToggle')?.addEventListener('click', toggleNavMenu);
+$('#logoutButton')?.addEventListener('click', handleLogout);
 $('#adminUsersRefresh')?.addEventListener('click', loadAdminUsers);
 $('#adminUsersList')?.addEventListener('click', handleAdminUserAction);
 $('#themeToggle').addEventListener('click', toggleTheme);
@@ -986,6 +1022,10 @@ document.addEventListener('click', event => {
       clearSeenSearch({ collapse: true });
     }
   }
+
+  if (!event.target.closest('.nav-menu')) {
+    setNavMenuOpen(false);
+  }
 });
 document.addEventListener('keydown', event => {
   const player = event.target.closest?.('[data-player]');
@@ -1002,6 +1042,11 @@ document.addEventListener('keydown', event => {
 
   if (event.key === 'Escape' && $('#seenSearch')?.classList.contains('open')) {
     clearSeenSearch({ collapse: true });
+    return;
+  }
+
+  if (event.key === 'Escape' && $('#navMenu')?.classList.contains('open')) {
+    setNavMenuOpen(false);
   }
 });
 $('#playerProfileClose').addEventListener('click', closePlayerProfile);

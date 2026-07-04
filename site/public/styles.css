@@ -86,8 +86,7 @@ h2 {
   line-height: 1.2;
 }
 
-.topbar-actions,
-.tab-nav {
+.topbar-actions {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -99,7 +98,7 @@ h2 {
 }
 
 body.search-focus-active .topbar > :first-child,
-body.search-focus-active .tab-nav,
+body.search-focus-active .nav-menu,
 body.search-focus-active .status-banner,
 body.search-focus-active .tab-panel {
   filter: blur(3px);
@@ -112,18 +111,82 @@ body.profile-open {
   overflow: hidden;
 }
 
-.tab-nav {
+.nav-menu {
   position: sticky;
   top: 0;
   z-index: 10;
+  width: min(320px, 100%);
   margin-bottom: 16px;
+}
+
+.nav-menu-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 14px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(10px);
+}
+
+.nav-menu-toggle:hover {
+  color: var(--text);
+  background: var(--panel-soft);
+}
+
+.nav-menu-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-menu-icon {
+  width: 9px;
+  height: 9px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 220ms ease;
+}
+
+.nav-menu.open .nav-menu-icon {
+  transform: translateY(2px) rotate(225deg);
+}
+
+.tab-nav {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 8px);
+  display: grid;
+  gap: 6px;
+  width: 100%;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 6px;
   background: color-mix(in srgb, var(--panel) 92%, transparent);
   box-shadow: var(--shadow);
   backdrop-filter: blur(10px);
-  transition: background-color 260ms ease, border-color 260ms ease, box-shadow 260ms ease;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-8px) scale(0.98);
+  transform-origin: top;
+  transition:
+    opacity 180ms ease,
+    transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    background-color 260ms ease,
+    border-color 260ms ease,
+    box-shadow 260ms ease;
+}
+
+.nav-menu.open .tab-nav {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
 }
 
 .muted,
@@ -246,6 +309,8 @@ button:disabled {
 }
 
 .tab-button {
+  width: 100%;
+  text-align: left;
   border: 1px solid var(--line);
   color: var(--text);
   background: var(--panel);
@@ -255,6 +320,16 @@ button:disabled {
 .tab-button:hover {
   color: var(--text);
   background: var(--panel-soft);
+}
+
+.tab-button.active {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.logout-button {
+  white-space: nowrap;
 }
 
 .theme-switch {
@@ -1323,8 +1398,8 @@ button:disabled {
     justify-content: flex-start;
   }
 
-  .tab-nav {
-    position: static;
+  .nav-menu {
+    width: 100%;
   }
 
   .seen-search,
@@ -1362,10 +1437,6 @@ button:disabled {
 
   .player-profile-message {
     grid-template-columns: 1fr;
-  }
-
-  .tab-button {
-    flex: 1 1 150px;
   }
 
   h1 {

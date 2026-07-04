@@ -60,15 +60,22 @@
             <span class="theme-icon moon" aria-hidden="true">☾</span>
             <span class="theme-thumb" aria-hidden="true"></span>
           </button>
+          <button id="logoutButton" class="ghost-button logout-button" type="button" hidden>Log out</button>
         </div>
       </header>
 
-      <nav class="tab-nav" aria-label="Dashboard sections">
-        <button class="tab-button active" type="button" data-tab="chat">Chat</button>
-        <button class="tab-button" type="button" data-tab="bot">Bot Stats</button>
-        <button class="tab-button" type="button" data-tab="obsidian">Obsidian Farm</button>
-        <button class="tab-button" type="button" data-tab="server">Server Stats</button>
-        <button class="tab-button admin-only" type="button" data-tab="admin" hidden>Admin</button>
+      <nav id="navMenu" class="nav-menu" aria-label="Dashboard sections">
+        <button id="navMenuToggle" class="nav-menu-toggle" type="button" aria-expanded="false" aria-controls="navMenuPanel">
+          <span class="nav-menu-label">Chat</span>
+          <span class="nav-menu-icon" aria-hidden="true"></span>
+        </button>
+        <div id="navMenuPanel" class="tab-nav" role="menu">
+          <button class="tab-button active" type="button" data-tab="chat" role="menuitem">Chat</button>
+          <button class="tab-button" type="button" data-tab="bot" role="menuitem">Bot Stats</button>
+          <button class="tab-button" type="button" data-tab="obsidian" role="menuitem">Obsidian Farm</button>
+          <button class="tab-button" type="button" data-tab="server" role="menuitem">Server Stats</button>
+          <button class="tab-button admin-only" type="button" data-tab="admin" role="menuitem" hidden>Admin</button>
+        </div>
       </nav>
 
       <section id="legacySeenSearch" class="seen-search" aria-label="Seen player search" hidden>
