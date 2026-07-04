@@ -623,9 +623,11 @@ button:disabled {
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
+  height: var(--button-height);
+  min-height: var(--button-height);
   border: 1px solid var(--line);
   border-radius: var(--button-radius);
-  padding: 10px 12px;
+  padding: 0 6px 0 12px;
   background: var(--panel);
   box-shadow: var(--shadow);
   min-width: 0;
@@ -677,10 +679,10 @@ button:disabled {
 }
 
 .seen-search-close {
-  width: var(--button-height);
-  min-width: var(--button-height);
-  height: var(--button-height);
-  min-height: var(--button-height);
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
   border: 1px solid var(--line);
   border-radius: var(--button-radius);
   padding: 0;
