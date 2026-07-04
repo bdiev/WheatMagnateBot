@@ -1114,10 +1114,8 @@ function renderServerStats(payload) {
   const tps = payload.tps || {};
   $('#latestTps').textContent = formatTps(tps.latest);
   $('#latestTpsAt').textContent = `sampled: ${formatDate(tps.latestAt)}`;
-  $('#avgTps').textContent = formatTps(tps.average24h);
   $('#minTps').textContent = formatTps(tps.min24h);
   $('#maxTps').textContent = formatTps(tps.max24h);
-  $('#tpsSamples').textContent = formatNumber(tps.samples24h);
 
   const nearby = payload.nearby || [];
   renderStable('#nearbyList', nearby.length

@@ -929,7 +929,7 @@ body.search-focus-active #logoutButton {
   gap: 16px;
 }
 
-.section-panel {
+.section-grid {
   margin-top: 16px;
 }
 
@@ -1127,7 +1127,8 @@ body.search-focus-active #logoutButton {
 }
 
 .leaderboard-list {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-height: 640px;
+  overflow: auto;
 }
 
 .rank-item,

@@ -611,7 +611,6 @@ async function getPlayerStats() {
       LEFT JOIN player_activity pa ON LOWER(pa.username) = LOWER(w.username)
       LEFT JOIN player_playtime pt ON LOWER(pt.username) = LOWER(w.username)
       ORDER BY total_seconds DESC, LOWER(w.username)
-      LIMIT 10
     `),
     pool.query(`
       SELECT pa.username,

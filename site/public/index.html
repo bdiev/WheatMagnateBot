@@ -303,16 +303,11 @@
       </section>
 
       <section id="tab-server" class="tab-panel" data-panel="server">
-        <section class="stats-grid five compact">
+        <section class="stats-grid three compact">
           <article class="stat">
             <span class="stat-label">Latest TPS</span>
             <strong id="latestTps">-</strong>
             <small id="latestTpsAt">sampled: -</small>
-          </article>
-          <article class="stat">
-            <span class="stat-label">Average TPS</span>
-            <strong id="avgTps">-</strong>
-            <small>last 24 hours</small>
           </article>
           <article class="stat">
             <span class="stat-label">Minimum TPS</span>
@@ -322,11 +317,6 @@
           <article class="stat">
             <span class="stat-label">Maximum TPS</span>
             <strong id="maxTps">-</strong>
-            <small>last 24 hours</small>
-          </article>
-          <article class="stat">
-            <span class="stat-label">TPS Samples</span>
-            <strong id="tpsSamples">-</strong>
             <small>last 24 hours</small>
           </article>
         </section>
@@ -354,7 +344,7 @@
           </article>
         </section>
 
-        <section class="content-grid">
+        <section class="split-grid">
           <section class="panel">
             <div class="panel-head">
               <div>
@@ -370,37 +360,37 @@
             <div class="chart-scroll"><canvas id="tpsHourlyChart" class="chart tall" height="300"></canvas></div>
           </section>
 
-          <aside class="side-stack">
-            <section class="panel">
-              <div class="panel-head">
-                <div>
-                  <h2>Nearby Sightings</h2>
-                  <p>Players recently detected near the bot.</p>
-                </div>
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Nearby Sightings</h2>
+                <p>Players recently detected near the bot.</p>
               </div>
-              <div id="nearbyList" class="rank-list"></div>
-            </section>
-
-            <section class="panel">
-              <div class="panel-head">
-                <div>
-                  <h2>Recent Player Activity</h2>
-                  <p>Latest joins and leaves recorded by the bot.</p>
-                </div>
-              </div>
-              <div id="recentActivity" class="rank-list"></div>
-            </section>
-          </aside>
+            </div>
+            <div id="nearbyList" class="rank-list"></div>
+          </section>
         </section>
 
-        <section class="panel section-panel">
-          <div class="panel-head">
-            <div>
-              <h2>Playtime Leaderboard</h2>
-              <p>Top whitelist playtime totals.</p>
+        <section class="split-grid section-grid">
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Recent Player Activity</h2>
+                <p>Latest joins and leaves recorded by the bot.</p>
+              </div>
             </div>
-          </div>
-          <div id="playtimeLeaderboard" class="rank-list leaderboard-list"></div>
+            <div id="recentActivity" class="rank-list"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Playtime Leaderboard</h2>
+                <p>Top whitelist playtime totals.</p>
+              </div>
+            </div>
+            <div id="playtimeLeaderboard" class="rank-list leaderboard-list"></div>
+          </section>
         </section>
       </section>
 
