@@ -414,7 +414,8 @@ function prepareChartCanvas(canvas, data, options = {}) {
   const ctx = canvas.getContext('2d');
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
   ctx.clearRect(0, 0, cssWidth, cssHeight);
-  if (viewport && viewport.clientWidth > 0 && !state.chartScrollInitialized[canvas.id]) {
+  const hasData = Array.isArray(data) && data.length > 0;
+  if (hasData && viewport && viewport.clientWidth > 0 && !state.chartScrollInitialized[canvas.id]) {
     requestAnimationFrame(() => {
       viewport.scrollLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
     });
