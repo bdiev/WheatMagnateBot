@@ -988,15 +988,10 @@ function renderBotStats(payload) {
   const armor = bot?.armor?.length
     ? bot.armor.map(item => escapeHtml(item.displayName || item.name)).join(', ')
     : 'None';
-  const position = bot?.position
-    ? `${bot.position.x}, ${bot.position.y}, ${bot.position.z}`
-    : '-';
-
   $('#botDetails').innerHTML = `
     <div><span>Username</span><strong>${escapeHtml(bot?.username || '-')}</strong></div>
     <div><span>Server</span><strong>${escapeHtml(bot?.server || '-')}</strong></div>
     <div><span>Ping</span><strong>${bot?.ping == null ? '-' : `${formatNumber(bot.ping)} ms`}</strong></div>
-    <div><span>Position</span><strong>${escapeHtml(position)}</strong></div>
     <div><span>Dimension</span><strong>${escapeHtml(bot?.dimension || '-')}</strong></div>
     <div><span>Game mode</span><strong>${escapeHtml(bot?.gameMode || '-')}</strong></div>
     <div><span>Held item</span><strong>${escapeHtml(heldItem)}</strong></div>
