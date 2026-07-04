@@ -814,7 +814,6 @@ function clearSeenSearch({ collapse = false } = {}) {
   }
   if (suggestions) suggestions.hidden = true;
   state.seenPlayers = [];
-  renderSeenResult(null);
   if (collapse) setSeenSearchOpen(false);
   if (collapse) {
     setTimeout(() => window.scrollTo(window.scrollX, window.scrollY), 80);
@@ -848,36 +847,12 @@ function renderSeenSuggestions(players) {
   suggestions.hidden = false;
 }
 
-function renderSeenResult(player) {
-  const result = $('#seenResult');
-  if (!result) return;
-
-  if (!player) {
-    result.hidden = true;
-    result.innerHTML = '';
-    return;
-  }
-
-  result.hidden = false;
-  result.innerHTML = `
-    <div class="seen-card">
-      ${playerIdentity(player.username, 32)}
-      <span class="pill ${player.isOnline ? 'online' : ''}">${player.isOnline ? 'online' : 'offline'}</span>
-      <div><span>Last seen</span><strong>${player.lastSeen ? formatDate(player.lastSeen) : 'Never'}</strong></div>
-      <div><span>Last online</span><strong>${player.lastOnline ? formatDate(player.lastOnline) : 'Unknown'}</strong></div>
-      <div><span>Playtime</span><strong>${escapeHtml(player.playtime || '-')}</strong></div>
-      <div><span>Whitelist</span><strong>${player.isWhitelisted ? 'Yes' : 'No'}</strong></div>
-    </div>
-  `;
-}
-
 async function runSeenSearch(query) {
   const cleanQuery = query.trim();
   const suggestions = $('#seenSuggestions');
   if (cleanQuery.length < 1) {
     if (suggestions) suggestions.hidden = true;
     state.seenPlayers = [];
-    renderSeenResult(null);
     return;
   }
 
@@ -906,7 +881,8 @@ function handleSeenSuggestionClick(event) {
   $('#seenSearchInput').value = player.username;
   $('#seenSearchInput').blur();
   $('#seenSuggestions').hidden = true;
-  renderSeenResult(player);
+  clearSeenSearch({ collapse: true });
+  openPlayerProfile(player.username);
   setTimeout(() => window.scrollTo(window.scrollX, window.scrollY), 80);
 }
 
@@ -1002,6 +978,7 @@ function renderObsidian(payload) {
 
   $('#farmDetails').innerHTML = `
     <div><span>Session duration</span><strong>${escapeHtml(farm.sessionDuration || '-')}</strong></div>
+    <div><span>Blocks/min</span><strong>${farm.sessionPerMinute == null ? '-' : Number(farm.sessionPerMinute).toFixed(1)}</strong></div>
     <div><span>Last 7 days</span><strong>${formatNumber(farm.last7Days)} blocks</strong></div>
     <div><span>Retired pickaxe blocks</span><strong>${formatNumber(farm.retiredPickaxeBlocks)}</strong></div>
     <div><span>Supplies snapshot</span><strong>${formatDate(payload.supplies?.updatedAt)}</strong></div>

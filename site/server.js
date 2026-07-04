@@ -155,6 +155,7 @@ function compactFarmState(row = {}) {
     sessionStartedAt,
     sessionSeconds,
     sessionDuration: formatSeconds(sessionSeconds),
+    sessionPerMinute: sessionSeconds > 0 ? Number(((sessionMined / sessionSeconds) * 60).toFixed(1)) : 0,
     sessionPerHour: sessionSeconds > 0 ? Math.round((sessionMined / sessionSeconds) * 3600) : 0,
     retiredPickaxes,
     retiredPickaxeBlocks,

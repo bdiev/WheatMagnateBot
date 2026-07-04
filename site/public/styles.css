@@ -696,14 +696,6 @@ body.search-focus-active #logoutButton {
   pointer-events: auto;
 }
 
-.topbar-actions .seen-result {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  width: min(760px, calc(100vw - 32px));
-  z-index: 40;
-}
-
 .seen-search-box label {
   color: var(--accent-strong);
   font-weight: 900;
@@ -821,21 +813,6 @@ body.search-focus-active #logoutButton {
 .seen-empty {
   padding: 10px;
   color: var(--muted);
-}
-
-.seen-result {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
-  box-shadow: var(--shadow);
-  opacity: 1;
-  transform: translateY(0);
-  transition: opacity 200ms ease, transform 220ms ease, background-color 260ms ease, border-color 260ms ease;
-}
-
-.seen-search:not(.open) .seen-result {
-  opacity: 0;
-  transform: translateY(-6px);
 }
 
 .seen-card {
@@ -1631,10 +1608,6 @@ body.search-focus-active #logoutButton {
 
   .seen-search.open {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .seen-result {
-    grid-column: 1 / -1;
   }
 
   .player-profile-overlay {
