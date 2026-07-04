@@ -722,6 +722,26 @@ button:disabled {
   box-shadow: var(--shadow);
 }
 
+.seen-suggestions,
+.chat-list,
+.chart-scroll,
+.rank-list,
+.player-profile-card,
+.supply-list {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.seen-suggestions::-webkit-scrollbar,
+.chat-list::-webkit-scrollbar,
+.chart-scroll::-webkit-scrollbar,
+.rank-list::-webkit-scrollbar,
+.player-profile-card::-webkit-scrollbar,
+.supply-list::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
 .seen-option {
   display: grid;
   grid-template-columns: minmax(0, 1fr) max-content max-content;
