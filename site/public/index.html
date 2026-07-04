@@ -371,7 +371,7 @@
           </section>
         </section>
 
-        <section class="split-grid section-grid">
+        <section class="panel-flow-grid section-grid">
           <section class="panel">
             <div class="panel-head">
               <div>
@@ -408,7 +408,7 @@
           </div>
         </section>
 
-        <section class="split-grid section-grid">
+        <section class="panel-flow-grid section-grid">
           <section class="panel">
             <div class="panel-head">
               <div>
@@ -418,6 +418,7 @@
             </div>
             <div class="admin-command-actions">
               <button id="childToggleButton" type="button" data-bot-command="child_toggle">Toggle Child</button>
+              <button class="ghost-button" type="button" data-bot-command="child_say">Say</button>
               <button id="geminiToggleButton" class="ghost-button" type="button" data-bot-command="gemini_toggle">Toggle Gemini</button>
               <button id="childPublicToggleButton" class="ghost-button" type="button" data-bot-command="child_public_toggle">Toggle Public Chat</button>
             </div>
@@ -441,9 +442,7 @@
               </div>
             </div>
           </section>
-        </section>
 
-        <section class="split-grid section-grid">
           <section class="panel">
             <div class="panel-head">
               <div>
@@ -472,7 +471,19 @@
             <div class="admin-control-grid">
               <label class="auth-field">
                 <span>Add Player</span>
-                <input id="adminWhitelistAddText" type="text" list="adminWhitelistAddCandidates" placeholder="Username">
+                <input
+                  id="adminWhitelistAddText"
+                  name="minecraft_player_to_allow"
+                  type="text"
+                  list="adminWhitelistAddCandidates"
+                  autocomplete="off"
+                  autocapitalize="none"
+                  spellcheck="false"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
+                  data-form-type="other"
+                  placeholder="Minecraft player name"
+                >
                 <datalist id="adminWhitelistAddCandidates"></datalist>
               </label>
               <button type="button" data-admin-control-action="whitelist_add">Add to Whitelist</button>

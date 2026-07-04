@@ -935,6 +935,14 @@ body.search-focus-active #logoutButton {
   margin-top: 16px;
 }
 
+.panel-flow-grid {
+  display: grid;
+  grid-auto-flow: dense;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
 .panel {
   overflow: hidden;
 }
@@ -1636,6 +1644,10 @@ body.search-focus-active #logoutButton {
 
   .content-grid,
   .split-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .panel-flow-grid {
     grid-template-columns: 1fr;
   }
 

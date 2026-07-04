@@ -14,6 +14,7 @@ const state = {
   chartTooltipPinned: false,
   seenPlayers: [],
   adminControlState: null,
+  adminControlLoading: false,
   chatMessageIds: new Set(),
   chatInitialized: false,
   authMode: 'login',
@@ -1280,13 +1281,41 @@ function renderAdminControlState(payload = {}) {
   }
 }
 
+function setButtonBusyState(commandType) {
+  if (commandType === 'obsidian_toggle') {
+    const button = $('#obsidianToggleButton');
+    if (button) {
+      const stopping = button.textContent.toLowerCase().includes('stop');
+      button.textContent = stopping ? 'Stopping Obsidian Farm...' : 'Starting Obsidian Farm...';
+    }
+  } else if (commandType === 'pause' || commandType === 'resume') {
+    const button = $('#botPauseResumeButton');
+    if (button) button.textContent = commandType === 'pause' ? 'Pausing...' : 'Resuming...';
+  } else if (commandType === 'child_toggle') {
+    const button = $('#childToggleButton');
+    if (button) button.textContent = button.textContent.toLowerCase().includes('disable') ? 'Disabling Child...' : 'Enabling Child...';
+  }
+}
+
+function scheduleAdminControlRefresh(delayMs = 1800) {
+  setTimeout(() => {
+    if (state.activeTab === 'admin') {
+      Promise.all([loadAll(), loadAdminControlState()]).catch(() => {});
+    }
+  }, delayMs);
+}
+
 async function loadAdminControlState() {
   if (state.currentUser?.role !== 'admin') return;
+  if (state.adminControlLoading) return;
+  state.adminControlLoading = true;
   try {
     const payload = await fetchJson('/api/admin/control-state');
     renderAdminControlState(payload);
   } catch (err) {
     setBanner(`Could not load bot controls: ${err.message}`);
+  } finally {
+    state.adminControlLoading = false;
   }
 }
 
@@ -1316,9 +1345,11 @@ async function handleAdminBotCommand(event) {
 
   button.disabled = true;
   try {
+    setButtonBusyState(commandType);
     const payload = await postJson('/api/admin/bot-command', body);
     setBanner(`Bot command queued: ${payload.command?.commandType || commandType} #${payload.command?.id || '-'}.`);
     await Promise.all([loadAll(), loadAdminControlState()]);
+    scheduleAdminControlRefresh();
   } catch (err) {
     setBanner(`Could not queue bot command: ${err.message}`);
   } finally {
@@ -1363,6 +1394,7 @@ async function handleAdminControlAction(event) {
 
     button.disabled = true;
     await queueAdminCommand(action, payload);
+    scheduleAdminControlRefresh();
     if (action === 'whitelist_add') $('#adminWhitelistAddText').value = '';
   } catch (err) {
     setBanner(`Could not queue bot command: ${err.message}`);
@@ -1405,6 +1437,9 @@ async function loadAll() {
     renderBotStats(botStats);
     renderObsidian(obsidian);
     renderServerStats(serverStats);
+    if (state.activeTab === 'admin' && state.currentUser?.role === 'admin') {
+      await loadAdminControlState();
+    }
     setBanner('');
   } catch (err) {
     setBanner(`Could not load dashboard data: ${err.message}`);

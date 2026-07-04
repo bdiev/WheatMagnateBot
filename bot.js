@@ -1903,6 +1903,27 @@ async function startConfiguredObsidianFarm() {
   };
 }
 
+async function toggleObsidianFarmFromControl() {
+  const farmStatus = farm.getStatus();
+  if (farmStatus.enabled || obsidianStats.desiredEnabled) {
+    farm.suspend();
+    const leverProtected = await setProtectionLeverState(true).catch(() => false);
+    await setObsidianFarmDesiredEnabled(false);
+    return {
+      enabled: false,
+      leverProtected,
+      sessionMined: obsidianStats.sessionMined
+    };
+  }
+
+  const result = await startConfiguredObsidianFarm();
+  return {
+    enabled: true,
+    started: result.started,
+    config: result.config
+  };
+}
+
 function buildObsidianStartEmbed(started, config) {
   return {
     description: started
@@ -3940,23 +3961,21 @@ async function executeBotCommand(command) {
   }
 
   if (type === 'obsidian_toggle') {
-    const farmStatus = farm.getStatus();
-    if (farmStatus.enabled || obsidianStats.desiredEnabled) {
-      farm.suspend();
-      await setObsidianFarmDesiredEnabled(false);
-      return { enabled: false };
-    }
-    await beginObsidianFarmSession();
-    ensureObsidianFarmRunning(bot, { freshSession: true }).catch(err => {
-      console.error('[Command Bus] Obsidian farm start failed:', err.message);
-    });
-    return { enabled: true };
+    return toggleObsidianFarmFromControl();
   }
 
   if (type === 'child_toggle') {
     if (!growingChild) initializeGrowingChild();
     const status = growingChild.toggleEnabled();
     return { enabled: status.enabled };
+  }
+
+  if (type === 'child_say') {
+    if (!bot?.entity || typeof bot.chat !== 'function') throw new Error('Minecraft bot is offline.');
+    if (!growingChild) initializeGrowingChild();
+    const payload = await growingChild?.speak('site button');
+    if (!payload) throw new Error('Growing Child AI is disabled or has nothing to say.');
+    return { phrase: payload.phrase || null };
   }
 
   if (type === 'gemini_toggle') {
@@ -4008,6 +4027,7 @@ async function processBotCommands() {
   for (const command of commands) {
     try {
       const result = await executeBotCommand(command);
+      await writeBotStatusSnapshot().catch(() => {});
       await pool.query(`
         UPDATE bot_commands
         SET status = 'done',

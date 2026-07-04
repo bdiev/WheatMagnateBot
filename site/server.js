@@ -1264,6 +1264,7 @@ async function queueAdminBotCommand(currentUser, body) {
     'unignore_chat',
     'obsidian_toggle',
     'child_toggle',
+    'child_say',
     'gemini_toggle',
     'child_public_toggle'
   ]);
