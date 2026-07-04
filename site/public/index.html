@@ -142,13 +142,18 @@
           <aside class="side-stack">
             <section class="panel">
               <div class="panel-head">
-                <div>
-                  <h2>Messages by Hour</h2>
-                  <p>Chat volume over the last 24 hours.</p>
-                </div>
+              <div>
+                <h2>Messages by Hour</h2>
+                <p>Chat volume over the last 24 hours.</p>
               </div>
-              <canvas id="chatHourlyChart" class="chart" height="220"></canvas>
-            </section>
+              <div class="chart-controls" data-chart-controls="chatHourlyChart">
+                <button class="chart-range-button active" type="button" data-chart-range="hours">Hours</button>
+                <button class="chart-range-button" type="button" data-chart-range="days">Days</button>
+                <button class="chart-range-button" type="button" data-chart-range="months">Months</button>
+              </div>
+            </div>
+            <div class="chart-scroll"><canvas id="chatHourlyChart" class="chart" height="220"></canvas></div>
+          </section>
 
             <section class="panel">
               <div class="panel-head">
@@ -246,8 +251,13 @@
                 <h2>Daily Obsidian</h2>
                 <p>Blocks mined per day over the last 14 days.</p>
               </div>
+              <div class="chart-controls" data-chart-controls="obsidianDailyChart">
+                <button class="chart-range-button" type="button" data-chart-range="hours">Hours</button>
+                <button class="chart-range-button active" type="button" data-chart-range="days">Days</button>
+                <button class="chart-range-button" type="button" data-chart-range="months">Months</button>
+              </div>
             </div>
-            <canvas id="obsidianDailyChart" class="chart tall" height="300"></canvas>
+            <div class="chart-scroll"><canvas id="obsidianDailyChart" class="chart tall" height="300"></canvas></div>
           </section>
 
           <section class="panel">
@@ -320,8 +330,13 @@
                 <h2>TPS by Hour</h2>
                 <p>Average server TPS over the last 24 hours.</p>
               </div>
+              <div class="chart-controls" data-chart-controls="tpsHourlyChart">
+                <button class="chart-range-button active" type="button" data-chart-range="hours">Hours</button>
+                <button class="chart-range-button" type="button" data-chart-range="days">Days</button>
+                <button class="chart-range-button" type="button" data-chart-range="months">Months</button>
+              </div>
             </div>
-            <canvas id="tpsHourlyChart" class="chart tall" height="300"></canvas>
+            <div class="chart-scroll"><canvas id="tpsHourlyChart" class="chart tall" height="300"></canvas></div>
           </section>
 
           <aside class="side-stack">

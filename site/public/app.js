@@ -10,7 +10,13 @@ const state = {
   chatMessageIds: new Set(),
   chatInitialized: false,
   authMode: 'login',
-  currentUser: null
+  currentUser: null,
+  chartRanges: {
+    chatHourlyChart: 'hours',
+    obsidianDailyChart: 'days',
+    tpsHourlyChart: 'hours'
+  },
+  renderSignatures: {}
 };
 
 const $ = selector => document.querySelector(selector);
@@ -155,6 +161,35 @@ function itemIcon(item) {
   `;
 }
 
+function stableSignature(value) {
+  return JSON.stringify(value ?? null);
+}
+
+function renderStable(selector, html, signatureParts) {
+  const target = $(selector);
+  if (!target) return false;
+  const signature = stableSignature(signatureParts);
+  if (state.renderSignatures[selector] === signature) return false;
+
+  const scrollTop = target.scrollTop;
+  const scrollLeft = target.scrollLeft;
+  const distanceFromBottom = target.scrollHeight - target.clientHeight - target.scrollTop;
+  const keepBottom = distanceFromBottom >= 0 && distanceFromBottom < 12;
+
+  target.innerHTML = html;
+  state.renderSignatures[selector] = signature;
+
+  requestAnimationFrame(() => {
+    if (keepBottom) {
+      target.scrollTop = Math.max(0, target.scrollHeight - target.clientHeight - distanceFromBottom);
+    } else {
+      target.scrollTop = scrollTop;
+    }
+    target.scrollLeft = scrollLeft;
+  });
+  return true;
+}
+
 function setBanner(message) {
   const banner = $('#statusBanner');
   if (!message) {
@@ -253,6 +288,16 @@ function updateNavLabel(tab) {
   if (activeButton && label) label.textContent = activeButton.textContent.trim();
 }
 
+function getStoredTab() {
+  const storedTab = localStorage.getItem('wm-active-tab');
+  return $(`.tab-button[data-tab="${storedTab}"]`) ? storedTab : 'chat';
+}
+
+function restoreActiveTab() {
+  const tab = getStoredTab();
+  setActiveTab(tab === 'admin' && state.currentUser?.role !== 'admin' ? 'chat' : tab);
+}
+
 async function handleLogout() {
   try {
     await postJson('/api/auth/logout');
@@ -283,6 +328,7 @@ async function handleAuthSubmit(event) {
     }
     applyCurrentUser(payload.user);
     hideAuthScreen();
+    restoreActiveTab();
     await loadAll();
   } catch (err) {
     error.textContent = err.message;
@@ -298,6 +344,7 @@ async function initAuth() {
     if (payload.authenticated) {
       applyCurrentUser(payload.user);
       hideAuthScreen();
+      restoreActiveTab();
       await loadAll();
       return;
     }
@@ -330,6 +377,7 @@ function toggleTheme() {
 function setActiveTab(tab) {
   if (tab === 'admin' && state.currentUser?.role !== 'admin') return;
   state.activeTab = tab;
+  localStorage.setItem('wm-active-tab', tab);
   $$('.tab-button').forEach(button => {
     const active = button.dataset.tab === tab;
     button.classList.toggle('active', active);
@@ -348,32 +396,59 @@ function getCssColor(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
+function prepareChartCanvas(canvas, data, options = {}) {
+  const viewport = canvas.closest('.chart-scroll');
+  const ratio = window.devicePixelRatio || 1;
+  const pointWidth = options.pointWidth || 44;
+  const minWidth = viewport ? viewport.clientWidth : canvas.getBoundingClientRect().width;
+  const cssWidth = Math.max(minWidth || 320, (Array.isArray(data) ? data.length : 0) * pointWidth + 92);
+  const cssHeight = Math.max(1, Math.floor(canvas.getBoundingClientRect().height || canvas.height || 260));
+  canvas.style.width = `${cssWidth}px`;
+  canvas.width = Math.floor(cssWidth * ratio);
+  canvas.height = Math.floor(cssHeight * ratio);
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  ctx.clearRect(0, 0, cssWidth, cssHeight);
+  return { ctx, width: cssWidth, height: cssHeight };
+}
+
+function shortChartLabel(label, index, total) {
+  const value = String(label || '').replace(/^\d{4}-/, '');
+  if (total > 48 && index % 6 !== 0 && index !== total - 1) return '';
+  if (total > 24 && index % 3 !== 0 && index !== total - 1) return '';
+  return value;
+}
+
+function drawNoData(ctx, width, height, muted) {
+  ctx.fillStyle = muted;
+  ctx.font = '13px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('No chart data', width / 2, height / 2);
+}
+
 function drawBarChart(canvas, data, options = {}) {
   if (!canvas) return;
-  const ctx = canvas.getContext('2d');
-  const ratio = window.devicePixelRatio || 1;
-  const rect = canvas.getBoundingClientRect();
-  const width = Math.max(1, Math.floor(rect.width));
-  const height = Math.max(1, Math.floor(rect.height || canvas.height));
-  canvas.width = width * ratio;
-  canvas.height = height * ratio;
-  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-  ctx.clearRect(0, 0, width, height);
+  const chartData = Array.isArray(data) ? data : [];
+  const { ctx, width, height } = prepareChartCanvas(canvas, chartData, options);
 
   const text = getCssColor('--text');
   const muted = getCssColor('--muted');
   const line = getCssColor('--line');
   const accent = getCssColor('--accent');
   const panelSoft = getCssColor('--panel-soft');
-  const chartData = Array.isArray(data) ? data : [];
   const values = chartData.map(item => Number(item.value)).filter(Number.isFinite);
   const maxValue = Math.max(options.max || 0, ...values, 1);
-  const padding = { top: 22, right: 14, bottom: 34, left: 42 };
+  const padding = { top: 24, right: 18, bottom: 44, left: 58 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
 
   ctx.fillStyle = panelSoft;
   ctx.fillRect(0, 0, width, height);
+  if (!chartData.length) {
+    drawNoData(ctx, width, height, muted);
+    state.chartMeta[canvas.id] = { hitboxes: [] };
+    return;
+  }
   ctx.strokeStyle = line;
   ctx.lineWidth = 1;
   ctx.beginPath();
@@ -392,12 +467,12 @@ function drawBarChart(canvas, data, options = {}) {
     ctx.fillStyle = muted;
     ctx.font = '11px system-ui, sans-serif';
     ctx.textAlign = 'right';
-    ctx.fillText(Math.round((maxValue * i) / 4), padding.left - 8, y + 4);
+    ctx.fillText(formatNumber(Math.round((maxValue * i) / 4)), padding.left - 10, y + 4);
   }
 
-  const gap = 4;
+  const gap = chartData.length > 80 ? 3 : 6;
   const barWidth = chartData.length > 0
-    ? Math.max(3, (chartWidth - gap * (chartData.length - 1)) / chartData.length)
+    ? Math.max(8, Math.min(28, (chartWidth - gap * (chartData.length - 1)) / chartData.length))
     : 0;
   const hitboxes = [];
 
@@ -422,41 +497,39 @@ function drawBarChart(canvas, data, options = {}) {
   state.chartMeta[canvas.id] = { hitboxes };
 
   ctx.fillStyle = text;
-  ctx.font = '12px system-ui, sans-serif';
+  ctx.font = '11px system-ui, sans-serif';
   ctx.textAlign = 'center';
-  const labelStep = Math.max(1, Math.ceil(chartData.length / 8));
   chartData.forEach((item, index) => {
-    if (index % labelStep !== 0 && index !== chartData.length - 1) return;
+    const label = shortChartLabel(item.label, index, chartData.length);
+    if (!label) return;
     const x = padding.left + index * (barWidth + gap) + barWidth / 2;
-    ctx.fillText(String(item.label || ''), x, height - 12);
+    ctx.fillText(label, x, height - 16);
   });
 }
 
-function drawLineChart(canvas, data) {
+function drawLineChart(canvas, data, options = {}) {
   if (!canvas) return;
-  const ctx = canvas.getContext('2d');
-  const ratio = window.devicePixelRatio || 1;
-  const rect = canvas.getBoundingClientRect();
-  const width = Math.max(1, Math.floor(rect.width));
-  const height = Math.max(1, Math.floor(rect.height || canvas.height));
-  canvas.width = width * ratio;
-  canvas.height = height * ratio;
-  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-  ctx.clearRect(0, 0, width, height);
+  const chartData = Array.isArray(data) ? data : [];
+  const { ctx, width, height } = prepareChartCanvas(canvas, chartData, { pointWidth: options.pointWidth || 42 });
 
   const text = getCssColor('--text');
   const muted = getCssColor('--muted');
   const line = getCssColor('--line');
   const accent = getCssColor('--accent');
   const panelSoft = getCssColor('--panel-soft');
-  const chartData = Array.isArray(data) ? data : [];
-  const maxValue = 20;
-  const padding = { top: 22, right: 14, bottom: 34, left: 42 };
+  const numericValues = chartData.map(item => Number(item.value)).filter(Number.isFinite);
+  const maxValue = Math.max(options.max || 0, ...numericValues, 1);
+  const padding = { top: 24, right: 18, bottom: 44, left: 58 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
 
   ctx.fillStyle = panelSoft;
   ctx.fillRect(0, 0, width, height);
+  if (!chartData.length || !numericValues.length) {
+    drawNoData(ctx, width, height, muted);
+    state.chartMeta[canvas.id] = { hitboxes: [] };
+    return;
+  }
   for (let i = 0; i <= 4; i++) {
     const y = padding.top + chartHeight - (chartHeight * i) / 4;
     ctx.strokeStyle = line;
@@ -467,7 +540,7 @@ function drawLineChart(canvas, data) {
     ctx.fillStyle = muted;
     ctx.font = '11px system-ui, sans-serif';
     ctx.textAlign = 'right';
-    ctx.fillText(String((maxValue * i) / 4), padding.left - 8, y + 4);
+    ctx.fillText(formatTps((maxValue * i) / 4), padding.left - 10, y + 4);
   }
 
   const points = chartData
@@ -476,7 +549,13 @@ function drawLineChart(canvas, data) {
       if (!Number.isFinite(value)) return null;
       const x = padding.left + (chartWidth * index) / Math.max(1, chartData.length - 1);
       const y = padding.top + chartHeight - (Math.min(maxValue, Math.max(0, value)) / maxValue) * chartHeight;
-      return { x, y, value, label: item.label };
+      return {
+        x,
+        y,
+        value,
+        label: item.label,
+        tooltip: options.tooltip ? options.tooltip(item) : `${item.label}: ${formatTps(value)}`
+      };
     })
     .filter(Boolean);
 
@@ -492,28 +571,82 @@ function drawLineChart(canvas, data) {
   points.forEach(point => {
     ctx.fillStyle = accent;
     ctx.beginPath();
-    ctx.arc(point.x, point.y, 3, 0, Math.PI * 2);
+    ctx.arc(point.x, point.y, 3.5, 0, Math.PI * 2);
     ctx.fill();
   });
+  state.chartMeta[canvas.id] = {
+    hitboxes: points.map(point => ({
+      x: point.x - 12,
+      y: point.y - 18,
+      width: 24,
+      height: 36,
+      tooltip: point.tooltip
+    }))
+  };
 
   ctx.fillStyle = text;
-  ctx.font = '12px system-ui, sans-serif';
+  ctx.font = '11px system-ui, sans-serif';
   ctx.textAlign = 'center';
-  const labelStep = Math.max(1, Math.ceil(chartData.length / 8));
   chartData.forEach((item, index) => {
-    if (index % labelStep !== 0 && index !== chartData.length - 1) return;
+    const label = shortChartLabel(item.label, index, chartData.length);
+    if (!label) return;
     const x = padding.left + (chartWidth * index) / Math.max(1, chartData.length - 1);
-    ctx.fillText(String(item.label || ''), x, height - 12);
+    ctx.fillText(label, x, height - 16);
   });
+}
+
+function aggregateSeries(data, range, reducer = 'sum') {
+  const items = Array.isArray(data) ? data : [];
+  if (range === 'hours') return items;
+  const groups = new Map();
+  items.forEach(item => {
+    const bucketSource = item.bucket || item.label;
+    const date = new Date(bucketSource);
+    let key = String(item.label || bucketSource || '');
+    let label = key;
+    if (!Number.isNaN(date.getTime())) {
+      if (range === 'months') {
+        key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+        label = key;
+      } else {
+        key = date.toISOString().slice(0, 10);
+        label = key.slice(5);
+      }
+    } else if (range === 'months') {
+      key = String(key).slice(0, 7);
+      label = key;
+    }
+    if (!groups.has(key)) groups.set(key, { label, values: [] });
+    const value = Number(item.value);
+    if (Number.isFinite(value)) groups.get(key).values.push(value);
+  });
+  return Array.from(groups.values()).map(group => ({
+    label: group.label,
+    value: reducer === 'avg'
+      ? group.values.reduce((sum, value) => sum + value, 0) / Math.max(1, group.values.length)
+      : group.values.reduce((sum, value) => sum + value, 0)
+  }));
+}
+
+function getChartRange(id) {
+  return state.chartRanges[id] || 'hours';
 }
 
 function redrawCharts() {
   requestAnimationFrame(() => {
-    drawBarChart($('#chatHourlyChart'), state.charts.chatHourly);
-    drawBarChart($('#obsidianDailyChart'), state.charts.obsidianDaily, {
+    const chatRange = getChartRange('chatHourlyChart');
+    const obsidianRange = getChartRange('obsidianDailyChart');
+    const tpsRange = getChartRange('tpsHourlyChart');
+    drawBarChart($('#chatHourlyChart'), aggregateSeries(state.charts.chatHourly, chatRange), {
+      tooltip: item => `${item.label}: ${formatNumber(item.value)} messages`
+    });
+    drawBarChart($('#obsidianDailyChart'), aggregateSeries(state.charts.obsidianDaily, obsidianRange === 'hours' ? 'days' : obsidianRange), {
       tooltip: item => `${item.label}: ${formatNumber(item.value)} blocks`
     });
-    drawLineChart($('#tpsHourlyChart'), state.charts.tpsHourly);
+    drawLineChart($('#tpsHourlyChart'), aggregateSeries(state.charts.tpsHourly, tpsRange, 'avg'), {
+      max: 20,
+      tooltip: item => `${item.label}: ${formatTps(item.value)} TPS`
+    });
   });
 }
 
@@ -546,6 +679,19 @@ function showChartTooltip(canvas, event) {
 function hideChartTooltip() {
   const tooltip = $('#chartTooltip');
   if (tooltip) tooltip.hidden = true;
+}
+
+function handleChartRangeClick(event) {
+  const button = event.target.closest('[data-chart-range]');
+  if (!button) return;
+  const controls = button.closest('[data-chart-controls]');
+  const chartId = controls?.dataset.chartControls;
+  if (!chartId) return;
+  state.chartRanges[chartId] = button.dataset.chartRange;
+  controls.querySelectorAll('[data-chart-range]').forEach(item => {
+    item.classList.toggle('active', item === button);
+  });
+  redrawCharts();
 }
 
 function renderPlayerProfile(profile) {
@@ -731,7 +877,7 @@ function renderChat(payload) {
   $('#chatAllTime').textContent = formatNumber(payload.totals?.allTime);
 
   const messages = [...(payload.messages || [])].reverse();
-  $('#chatList').innerHTML = messages.length
+  renderStable('#chatList', messages.length
     ? messages.map(message => `
       <article class="chat-message ${state.chatInitialized && !state.chatMessageIds.has(String(message.id)) ? 'new-message' : ''}">
         <div class="chat-user">${playerIdentity(message.username, 28)}</div>
@@ -739,12 +885,14 @@ function renderChat(payload) {
         <time class="chat-time">${formatChatTime(message.createdAt)}</time>
       </article>
     `).join('')
-    : '<div class="empty">No chat messages yet. New messages will appear after the bot records them.</div>';
+    : '<div class="empty">No chat messages yet. New messages will appear after the bot records them.</div>',
+    messages.map(message => [message.id, message.username, message.message, message.createdAt])
+  );
   state.chatMessageIds = new Set(messages.map(message => String(message.id)));
   state.chatInitialized = true;
 
   const topChatters = payload.topChatters || [];
-  $('#topChatters').innerHTML = topChatters.length
+  renderStable('#topChatters', topChatters.length
     ? topChatters.map((player, index) => `
       <div class="rank-item">
         <span class="rank-index">${index + 1}</span>
@@ -752,7 +900,9 @@ function renderChat(payload) {
         <strong>${formatNumber(player.count)}</strong>
       </div>
     `).join('')
-    : '<div class="empty">No chat activity in the last 24 hours.</div>';
+    : '<div class="empty">No chat activity in the last 24 hours.</div>',
+    topChatters.map(player => [player.username, player.count])
+  );
 
   state.charts.chatHourly = payload.hourly || [];
   redrawCharts();
@@ -766,7 +916,7 @@ function renderBotStats(payload) {
   $('#seen7d').textContent = formatNumber(payload.players?.seen7d);
 
   const leaderboard = payload.playtimeLeaderboard || [];
-  $('#playtimeLeaderboard').innerHTML = leaderboard.length
+  renderStable('#playtimeLeaderboard', leaderboard.length
     ? leaderboard.map((player, index) => `
       <div class="rank-item leaderboard-item">
         <span class="rank-index">${index + 1}</span>
@@ -775,10 +925,12 @@ function renderBotStats(payload) {
         <strong>${escapeHtml(player.playtime)}</strong>
       </div>
     `).join('')
-    : '<div class="empty">No whitelist playtime data found.</div>';
+    : '<div class="empty">No whitelist playtime data found.</div>',
+    leaderboard.map(player => [player.username, player.isOnline, player.playtime])
+  );
 
   const activity = payload.recentActivity || [];
-  $('#recentActivity').innerHTML = activity.length
+  renderStable('#recentActivity', activity.length
     ? activity.map(player => `
       <div class="rank-item activity-item">
         ${playerIdentity(player.username, 28)}
@@ -786,7 +938,9 @@ function renderBotStats(payload) {
         <span class="muted">${formatAgo(player.lastSeen)}</span>
       </div>
     `).join('')
-    : '<div class="empty">No recent activity records found.</div>';
+    : '<div class="empty">No recent activity records found.</div>',
+    activity.map(player => [player.username, player.isOnline, player.lastSeen])
+  );
 }
 
 function renderObsidian(payload) {
@@ -817,7 +971,7 @@ function renderSupplies(selector, supplies, error = null) {
   const target = $(selector);
   if (!target) return;
   if (!supplies) {
-    target.innerHTML = `<div class="empty">${escapeHtml(error || 'No supply snapshot available.')}</div>`;
+    renderStable(selector, `<div class="empty">${escapeHtml(error || 'No supply snapshot available.')}</div>`, ['empty', error]);
     return;
   }
 
@@ -848,7 +1002,19 @@ function renderSupplies(selector, supplies, error = null) {
       }).join('')
     : '<div class="empty">No items recorded.</div>';
 
-  target.innerHTML = `${summary}<div class="supply-items">${itemList}</div>`;
+  renderStable(selector, `${summary}<div class="supply-items">${itemList}</div>`, {
+    foodCount: supplies.foodCount,
+    pickaxeCount: supplies.pickaxeCount,
+    usablePickaxeCount: supplies.usablePickaxeCount,
+    totalItems: supplies.totalItems,
+    items: items.map(item => [
+      item.name,
+      item.label,
+      item.count,
+      item.remainingPercent,
+      item.usable
+    ])
+  });
 }
 
 function renderServerStats(payload) {
@@ -861,7 +1027,7 @@ function renderServerStats(payload) {
   $('#tpsSamples').textContent = formatNumber(tps.samples24h);
 
   const nearby = payload.nearby || [];
-  $('#nearbyList').innerHTML = nearby.length
+  renderStable('#nearbyList', nearby.length
     ? nearby.map(player => `
       <div class="rank-item activity-item">
         ${playerIdentity(player.username, 28)}
@@ -869,10 +1035,12 @@ function renderServerStats(payload) {
         <span class="muted">${formatAgo(player.lastSeen)}</span>
       </div>
     `).join('')
-    : '<div class="empty">No nearby sightings yet.</div>';
+    : '<div class="empty">No nearby sightings yet.</div>',
+    nearby.map(player => [player.username, player.distance, player.lastSeen])
+  );
 
   const players = payload.recentPlayers || [];
-  $('#serverRecentPlayers').innerHTML = players.length
+  renderStable('#serverRecentPlayers', players.length
     ? players.map(player => `
       <div class="rank-item activity-item">
         ${playerIdentity(player.username, 28)}
@@ -880,7 +1048,9 @@ function renderServerStats(payload) {
         <span class="muted">${formatAgo(player.lastSeen)}</span>
       </div>
     `).join('')
-    : '<div class="empty">No server activity records found.</div>';
+    : '<div class="empty">No server activity records found.</div>',
+    players.map(player => [player.username, player.isOnline, player.lastSeen])
+  );
 
   state.charts.tpsHourly = payload.hourlyTps || [];
   redrawCharts();
@@ -999,10 +1169,13 @@ $('#navMenuToggle')?.addEventListener('click', toggleNavMenu);
 $('#logoutButton')?.addEventListener('click', handleLogout);
 $('#adminUsersRefresh')?.addEventListener('click', loadAdminUsers);
 $('#adminUsersList')?.addEventListener('click', handleAdminUserAction);
+$$('.chart-controls').forEach(controls => controls.addEventListener('click', handleChartRangeClick));
 $('#themeToggle').addEventListener('click', toggleTheme);
 window.addEventListener('resize', redrawCharts);
-$('#obsidianDailyChart').addEventListener('mousemove', event => showChartTooltip(event.currentTarget, event));
-$('#obsidianDailyChart').addEventListener('mouseleave', hideChartTooltip);
+$$('.chart').forEach(chart => {
+  chart.addEventListener('pointermove', event => showChartTooltip(event.currentTarget, event));
+  chart.addEventListener('pointerleave', hideChartTooltip);
+});
 $('#seenSearchToggle').addEventListener('click', toggleSeenSearch);
 $('#seenSearchClose').addEventListener('click', () => clearSeenSearch({ collapse: true }));
 $('#seenSearchInput').addEventListener('input', handleSeenInput);
@@ -1054,6 +1227,6 @@ $('#playerProfileOverlay').addEventListener('click', event => {
   if (event.target.id === 'playerProfileOverlay') closePlayerProfile();
 });
 
-setActiveTab('chat');
+updateNavLabel('chat');
 initAuth();
 state.timer = setInterval(loadAll, 5000);

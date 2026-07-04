@@ -155,10 +155,10 @@ body.profile-open {
 .nav-menu-hamburger {
   display: inline-grid;
   place-items: center;
-  gap: 4px;
-  flex: 0 0 34px;
-  width: 34px;
-  height: 28px;
+  gap: 3px;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 24px;
   border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
   border-radius: var(--button-radius);
   background: color-mix(in srgb, var(--panel-soft) 78%, transparent);
@@ -167,8 +167,8 @@ body.profile-open {
 
 .nav-menu-hamburger span {
   display: block;
-  width: 16px;
-  height: 2px;
+  width: 13px;
+  height: 1.5px;
   border-radius: 999px;
   background: currentColor;
   transition:
@@ -189,7 +189,7 @@ body.profile-open {
 }
 
 .nav-menu.open .nav-menu-hamburger span:nth-child(1) {
-  transform: translateY(6px) rotate(45deg);
+  transform: translateY(4.5px) rotate(45deg);
 }
 
 .nav-menu.open .nav-menu-hamburger span:nth-child(2) {
@@ -198,7 +198,7 @@ body.profile-open {
 }
 
 .nav-menu.open .nav-menu-hamburger span:nth-child(3) {
-  transform: translateY(-6px) rotate(-45deg);
+  transform: translateY(-4.5px) rotate(-45deg);
 }
 
 .tab-nav {
@@ -697,6 +697,11 @@ button:disabled {
   z-index: 30;
   display: grid;
   gap: 6px;
+  max-height: calc(var(--button-height) * 3 + 28px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  -webkit-overflow-scrolling: touch;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 8px;
@@ -707,6 +712,7 @@ button:disabled {
 .seen-option {
   display: grid;
   grid-template-columns: minmax(0, 1fr) max-content max-content;
+  height: var(--button-height);
   min-height: var(--button-height);
   min-width: 0;
   gap: 10px;
@@ -715,7 +721,18 @@ button:disabled {
   padding: 0 12px;
   color: var(--text);
   background: transparent;
+  overflow: hidden;
   text-align: left;
+}
+
+.seen-option > * {
+  min-width: 0;
+}
+
+.seen-option .player-identity span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .seen-option:hover {
@@ -807,6 +824,7 @@ button:disabled {
 .stat {
   min-height: 118px;
   padding: 16px;
+  min-width: 0;
 }
 
 .stat-label {
@@ -820,7 +838,10 @@ button:disabled {
 .stat strong {
   display: block;
   margin: 10px 0 6px;
-  font-size: 28px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font-size: clamp(22px, 2.2vw, 28px);
   line-height: 1.1;
 }
 
@@ -932,14 +953,52 @@ button:disabled {
 
 .chart {
   display: block;
-  width: 100%;
   height: 220px;
   background: var(--panel-soft);
   transition: background-color 260ms ease;
 }
 
+.chart-scroll {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-gutter: stable;
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+
 .chart.tall {
   height: 320px;
+}
+
+.chart-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--button-radius);
+  padding: 3px;
+  background: var(--panel-soft);
+}
+
+.chart-range-button {
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 10px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 12px;
+}
+
+.chart-range-button:hover {
+  color: var(--text);
+  background: var(--panel);
+}
+
+.chart-range-button.active {
+  color: #fff;
+  background: var(--accent);
 }
 
 .chart-tooltip {
@@ -1463,14 +1522,29 @@ button:disabled {
     justify-content: flex-start;
   }
 
+  .panel-head {
+    flex-direction: column;
+  }
+
+  .chart-controls {
+    width: 100%;
+  }
+
+  .chart-range-button {
+    flex: 1;
+  }
+
   .nav-menu {
     width: 100%;
   }
 
   .seen-search,
-  .seen-card,
-  .seen-option {
+  .seen-card {
     grid-template-columns: 1fr;
+  }
+
+  .seen-option {
+    grid-template-columns: minmax(0, 1fr) auto auto;
   }
 
   .seen-search.open,

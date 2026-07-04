@@ -445,12 +445,13 @@ async function getChat(url) {
     pool.query(`
       WITH buckets AS (
         SELECT generate_series(
-          date_trunc('hour', NOW() - INTERVAL '23 hours'),
+          date_trunc('hour', NOW() - INTERVAL '167 hours'),
           date_trunc('hour', NOW()),
           INTERVAL '1 hour'
         ) AS bucket
       )
-      SELECT TO_CHAR(buckets.bucket, 'HH24:00') AS label,
+      SELECT TO_CHAR(buckets.bucket, 'MM-DD HH24:00') AS label,
+             buckets.bucket AS bucket,
              COALESCE(COUNT(messages.id), 0)::int AS count
       FROM buckets
       LEFT JOIN game_chat_messages messages
@@ -484,6 +485,7 @@ async function getChat(url) {
     })),
     hourly: hourlyResult.rows.map(row => ({
       label: row.label,
+      bucket: row.bucket,
       value: toInt(row.count)
     })),
     topChatters: topChattersResult.rows.map(row => ({
@@ -593,12 +595,13 @@ async function getObsidianStats() {
     pool.query(`
       WITH dates AS (
         SELECT generate_series(
-          (NOW() AT TIME ZONE 'Europe/Kyiv')::date - 13,
+          (NOW() AT TIME ZONE 'Europe/Kyiv')::date - 89,
           (NOW() AT TIME ZONE 'Europe/Kyiv')::date,
           INTERVAL '1 day'
         )::date AS farm_date
       )
       SELECT TO_CHAR(dates.farm_date, 'MM-DD') AS label,
+             dates.farm_date::text AS bucket,
              COALESCE(stats.mined, 0)::bigint AS mined
       FROM dates
       LEFT JOIN obsidian_farm_daily stats USING (farm_date)
@@ -614,6 +617,7 @@ async function getObsidianStats() {
   const farm = compactFarmState(farmResult.rows[0] || {});
   const daily = dailyResult.rows.map(row => ({
     label: row.label,
+    bucket: row.bucket,
     value: toInt(row.mined)
   }));
   const last7Days = daily.slice(-7).reduce((sum, item) => sum + item.value, 0);
@@ -647,12 +651,13 @@ async function getServerStats() {
     pool.query(`
       WITH buckets AS (
         SELECT generate_series(
-          date_trunc('hour', NOW() - INTERVAL '23 hours'),
+          date_trunc('hour', NOW() - INTERVAL '167 hours'),
           date_trunc('hour', NOW()),
           INTERVAL '1 hour'
         ) AS bucket
       )
-      SELECT TO_CHAR(buckets.bucket, 'HH24:00') AS label,
+      SELECT TO_CHAR(buckets.bucket, 'MM-DD HH24:00') AS label,
+             buckets.bucket AS bucket,
              ROUND(AVG(samples.tps)::numeric, 1) AS avg_tps
       FROM buckets
       LEFT JOIN bot_tps_samples samples
@@ -689,6 +694,7 @@ async function getServerStats() {
     },
     hourlyTps: hourlyTpsResult.rows.map(row => ({
       label: row.label,
+      bucket: row.bucket,
       value: row.avg_tps == null ? null : toNumber(row.avg_tps)
     })),
     nearby: nearbyResult.rows.map(row => ({
