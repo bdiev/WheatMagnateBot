@@ -159,22 +159,20 @@ body.profile-open {
 }
 
 .nav-menu-hamburger {
-  display: inline-grid;
-  place-items: center;
-  gap: 3px;
-  flex: 0 0 28px;
-  width: 28px;
-  height: 24px;
-  border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
-  border-radius: var(--button-radius);
-  background: color-mix(in srgb, var(--panel-soft) 78%, transparent);
-  transition: background-color 220ms ease, border-color 220ms ease, transform 220ms ease;
+  position: relative;
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  overflow: hidden;
+  transition: transform 220ms ease;
 }
 
 .nav-menu-hamburger span {
+  position: absolute;
+  left: 4px;
   display: block;
-  width: 13px;
-  height: 1.5px;
+  width: 14px;
+  height: 2px;
   border-radius: 999px;
   background: currentColor;
   transition:
@@ -183,19 +181,24 @@ body.profile-open {
     width 220ms ease;
 }
 
+.nav-menu-hamburger span:nth-child(1) {
+  top: 7px;
+}
+
+.nav-menu-hamburger span:nth-child(2) {
+  top: 10px;
+}
+
+.nav-menu-hamburger span:nth-child(3) {
+  top: 13px;
+}
+
 .nav-menu-toggle:hover .nav-menu-hamburger {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
-  background: color-mix(in srgb, var(--accent) 12%, var(--panel-soft));
   transform: translateY(-1px);
 }
 
-.nav-menu.open .nav-menu-hamburger {
-  border-color: color-mix(in srgb, var(--accent) 58%, var(--line));
-  background: color-mix(in srgb, var(--accent) 16%, var(--panel-soft));
-}
-
 .nav-menu.open .nav-menu-hamburger span:nth-child(1) {
-  transform: translateY(4.5px) rotate(45deg);
+  transform: translateY(3px) rotate(45deg);
 }
 
 .nav-menu.open .nav-menu-hamburger span:nth-child(2) {
@@ -204,7 +207,7 @@ body.profile-open {
 }
 
 .nav-menu.open .nav-menu-hamburger span:nth-child(3) {
-  transform: translateY(-4.5px) rotate(-45deg);
+  transform: translateY(-3px) rotate(-45deg);
 }
 
 .tab-nav {
