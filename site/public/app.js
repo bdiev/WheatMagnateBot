@@ -791,11 +791,17 @@ function setSeenSearchOpen(open) {
 function clearSeenSearch({ collapse = false } = {}) {
   const input = $('#seenSearchInput');
   const suggestions = $('#seenSuggestions');
-  if (input) input.value = '';
+  if (input) {
+    input.value = '';
+    if (collapse) input.blur();
+  }
   if (suggestions) suggestions.hidden = true;
   state.seenPlayers = [];
   renderSeenResult(null);
   if (collapse) setSeenSearchOpen(false);
+  if (collapse) {
+    setTimeout(() => window.scrollTo(window.scrollX, window.scrollY), 80);
+  }
 }
 
 function toggleSeenSearch() {
@@ -881,8 +887,10 @@ function handleSeenSuggestionClick(event) {
   const player = state.seenPlayers[Number(option.dataset.index)];
   if (!player) return;
   $('#seenSearchInput').value = player.username;
+  $('#seenSearchInput').blur();
   $('#seenSuggestions').hidden = true;
   renderSeenResult(player);
+  setTimeout(() => window.scrollTo(window.scrollX, window.scrollY), 80);
 }
 
 function renderChat(payload) {

@@ -12,7 +12,7 @@
   --shadow: 0 14px 40px rgba(36, 59, 26, 0.09);
   --button-height: 42px;
   --button-min-width: 108px;
-  --button-radius: 8px;
+  --button-radius: 14px;
   --button-padding: 0 14px;
 }
 
@@ -49,6 +49,12 @@ body {
 
 button {
   font: inherit;
+}
+
+input,
+textarea,
+select {
+  font-size: 16px;
 }
 
 .shell {
@@ -209,7 +215,7 @@ body.profile-open {
   gap: 6px;
   width: 100%;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--button-radius);
   padding: 6px;
   background: color-mix(in srgb, var(--panel) 92%, transparent);
   box-shadow: var(--shadow);
@@ -305,7 +311,7 @@ button:disabled {
   gap: 14px;
   width: min(100%, 420px);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--button-radius);
   padding: 24px;
   background: var(--panel);
   box-shadow: var(--shadow);
@@ -335,11 +341,12 @@ button:disabled {
 .auth-field input {
   width: 100%;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--button-radius);
   padding: 12px 13px;
   color: var(--text);
   background: var(--panel-soft);
   font: inherit;
+  font-size: 16px;
   outline: none;
 }
 
@@ -350,7 +357,7 @@ button:disabled {
 
 .auth-error {
   border: 1px solid color-mix(in srgb, #d04a4a 38%, var(--line));
-  border-radius: 8px;
+  border-radius: var(--button-radius);
   padding: 10px 12px;
   color: #f3d0d0;
   background: color-mix(in srgb, #8b1f1f 34%, var(--panel));
@@ -617,7 +624,7 @@ button:disabled {
   align-items: center;
   gap: 10px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--button-radius);
   padding: 10px 12px;
   background: var(--panel);
   box-shadow: var(--shadow);
@@ -666,6 +673,7 @@ button:disabled {
   color: var(--text);
   background: transparent;
   font: inherit;
+  font-size: 16px;
 }
 
 .seen-search-close {
@@ -703,7 +711,7 @@ button:disabled {
   scrollbar-gutter: stable;
   -webkit-overflow-scrolling: touch;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--button-radius);
   padding: 8px;
   background: var(--panel);
   box-shadow: var(--shadow);
@@ -964,7 +972,7 @@ button:disabled {
   overflow-y: hidden;
   overscroll-behavior-x: contain;
   scrollbar-gutter: stable;
-  border-radius: 8px;
+  border-radius: var(--button-radius);
   background: var(--panel-soft);
 }
 
@@ -1355,7 +1363,7 @@ button:disabled {
   align-items: center;
   gap: 10px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--button-radius);
   padding: 12px;
   background: var(--panel-soft);
 }

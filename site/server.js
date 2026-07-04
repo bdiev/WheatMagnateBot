@@ -998,7 +998,7 @@ async function handleAuth(req, res, url) {
 
     const inserted = await pool.query(`
       INSERT INTO site_users (username, password_hash, role, status, approved_at)
-      VALUES ($1, $2, $3, $4, CASE WHEN $4 = 'approved' THEN NOW() ELSE NULL END)
+      VALUES ($1, $2, $3::text, $4::text, CASE WHEN $4::text = 'approved' THEN NOW() ELSE NULL END)
       RETURNING id, username, role, status, created_at, approved_at
     `, [username, hashPassword(password), role, status]);
 
