@@ -488,7 +488,7 @@ async function getChat(url) {
       WHERE created_at >= NOW() - INTERVAL '24 hours'
       GROUP BY username
       ORDER BY count DESC, LOWER(username)
-      LIMIT 10
+      LIMIT 5
     `),
     pool.query(`
       SELECT

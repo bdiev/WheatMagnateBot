@@ -953,13 +953,16 @@ function renderBotStats(payload) {
 
   const activity = payload.recentActivity || [];
   renderStable('#recentActivity', activity.length
-    ? activity.map(player => `
-      <div class="rank-item activity-item">
-        ${playerIdentity(player.username, 28)}
-        <span class="pill ${player.isOnline ? 'online' : ''}">${player.isOnline ? 'online' : 'offline'}</span>
-        <span class="muted">${formatAgo(player.lastSeen)}</span>
-      </div>
-    `).join('')
+    ? activity.map(player => {
+      const eventLabel = player.isOnline ? 'Joined the game' : 'Left the game';
+      return `
+        <div class="rank-item activity-item">
+          ${playerIdentity(player.username, 28)}
+          <span class="pill ${player.isOnline ? 'online' : ''}">${eventLabel}</span>
+          <span class="muted">${formatAgo(player.lastSeen)}</span>
+        </div>
+      `;
+    }).join('')
     : '<div class="empty">No recent activity records found.</div>',
     activity.map(player => [player.username, player.isOnline, player.lastSeen])
   );
@@ -971,14 +974,11 @@ function renderObsidian(payload) {
   $('#farmUpdated').textContent = `last update: ${formatDate(farm.updatedAt)}`;
   $('#obsidianTotal').textContent = formatNumber(farm.totalMined);
   $('#obsidianToday').textContent = formatNumber(farm.todayMined);
-  $('#obsidianSession').textContent = formatNumber(farm.sessionMined);
-  $('#sessionRate').textContent = `rate: ${formatNumber(farm.sessionPerHour)}/h`;
+  $('#sessionRate').textContent = `${formatNumber(farm.sessionPerHour)}/h`;
   $('#pickaxeAverage').textContent = farm.blocksPerPickaxe == null ? '-' : formatNumber(farm.blocksPerPickaxe);
   $('#retiredPickaxes').textContent = `retired pickaxes: ${formatNumber(farm.retiredPickaxes)}`;
 
   $('#farmDetails').innerHTML = `
-    <div><span>Session duration</span><strong>${escapeHtml(farm.sessionDuration || '-')}</strong></div>
-    <div><span>Blocks/min</span><strong>${farm.sessionPerMinute == null ? '-' : Number(farm.sessionPerMinute).toFixed(1)}</strong></div>
     <div><span>Last 7 days</span><strong>${formatNumber(farm.last7Days)} blocks</strong></div>
     <div><span>Retired pickaxe blocks</span><strong>${formatNumber(farm.retiredPickaxeBlocks)}</strong></div>
     <div><span>Supplies snapshot</span><strong>${formatDate(payload.supplies?.updatedAt)}</strong></div>
