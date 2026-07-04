@@ -504,6 +504,7 @@ let adminPanelMessage = null;
 let adminPanelView = 'main';
 let statusUpdateInterval = null;
 let adminPanelUpdateInterval = null;
+let siteGameChatOutboxInterval = null;
 let isUpdatingStatus = false; // Prevent concurrent updates
 let lastPresenceText = null;
 let lastPresenceUpdateAt = 0;
@@ -1015,6 +1016,21 @@ async function initDatabase() {
     await pool.query(`
       CREATE INDEX IF NOT EXISTS game_chat_messages_created_at_idx
       ON game_chat_messages (created_at DESC)
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS site_game_chat_outbox (
+        id BIGSERIAL PRIMARY KEY,
+        sender_username VARCHAR(64) NOT NULL,
+        message TEXT NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'pending',
+        error TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        sent_at TIMESTAMPTZ
+      )
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS site_game_chat_outbox_status_created_idx
+      ON site_game_chat_outbox (status, created_at)
     `);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS nearby_player_sightings (
@@ -1584,6 +1600,14 @@ if (DISCORD_BOT_TOKEN) {
     if (!adminPanelUpdateInterval) {
       adminPanelUpdateInterval = setInterval(updateAdminPanel, 10_000);
       console.log('[Discord] Admin panel update interval started');
+    }
+    if (!siteGameChatOutboxInterval) {
+      siteGameChatOutboxInterval = setInterval(() => {
+        processSiteGameChatOutbox().catch(err => {
+          console.error('[Site Chat] Outbox worker failed:', err.message);
+        });
+      }, 1000);
+      console.log('[Site Chat] Outbox worker started');
     }
 
     // Flush any pending auth links captured before client was ready
@@ -3654,6 +3678,70 @@ async function recordGameChatMessage(username, message) {
     await pool.query("DELETE FROM game_chat_messages WHERE created_at < NOW() - INTERVAL '30 days'");
   } catch (err) {
     console.error('[DB] Failed to record game chat message:', err.message);
+  }
+}
+
+async function processSiteGameChatOutbox() {
+  if (!pool || !bot || typeof bot.chat !== 'function') return;
+
+  let items = [];
+  try {
+    const result = await pool.query(`
+      WITH next_items AS (
+        SELECT id
+        FROM site_game_chat_outbox
+        WHERE status = 'pending'
+        ORDER BY created_at ASC
+        LIMIT 5
+        FOR UPDATE SKIP LOCKED
+      )
+      UPDATE site_game_chat_outbox outbox
+      SET status = 'processing',
+          error = NULL
+      FROM next_items
+      WHERE outbox.id = next_items.id
+      RETURNING outbox.id, outbox.sender_username, outbox.message
+    `);
+    items = result.rows;
+  } catch (err) {
+    console.error('[Site Chat] Failed to load queued messages:', err.message);
+    return;
+  }
+
+  for (const item of items) {
+    const sender = String(item.sender_username || 'site')
+      .replace(/[\[\]\r\n]/g, '')
+      .trim()
+      .slice(0, 32) || 'site';
+    const cleanMessage = String(item.message || '')
+      .replace(/\u00a7[0-9a-fk-or]/gi, '')
+      .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
+      .trim()
+      .slice(0, 240);
+    const outgoing = `[${sender}] ${cleanMessage}`;
+
+    try {
+      if (!cleanMessage) throw new Error('Queued message is empty.');
+      const sent = sendMinecraftChat(outgoing);
+      if (!sent) throw new Error('Minecraft bot is not ready.');
+      await recordGameChatMessage(bot.username || 'WheatMagnate', outgoing);
+      await pool.query(`
+        UPDATE site_game_chat_outbox
+        SET status = 'sent',
+            sent_at = NOW(),
+            error = NULL
+        WHERE id = $1
+      `, [item.id]);
+      console.log(`[Site Chat] Sent "${outgoing}" from site user ${sender}`);
+    } catch (err) {
+      await pool.query(`
+        UPDATE site_game_chat_outbox
+        SET status = 'failed',
+            error = $2
+        WHERE id = $1
+      `, [item.id, err.message]);
+      console.error('[Site Chat] Failed to send queued message:', err.message);
+    }
   }
 }
 

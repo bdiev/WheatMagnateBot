@@ -296,6 +296,21 @@ async function ensureOptionalTables() {
     ON game_chat_messages (created_at DESC)
   `);
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS site_game_chat_outbox (
+      id BIGSERIAL PRIMARY KEY,
+      sender_username VARCHAR(64) NOT NULL,
+      message TEXT NOT NULL,
+      status VARCHAR(20) NOT NULL DEFAULT 'pending',
+      error TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      sent_at TIMESTAMPTZ
+    )
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS site_game_chat_outbox_status_created_idx
+    ON site_game_chat_outbox (status, created_at)
+  `);
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS obsidian_farm_supply_snapshot (
       id SMALLINT PRIMARY KEY CHECK (id = 1),
       supplies JSONB NOT NULL,
@@ -504,6 +519,46 @@ async function getChat(url) {
       allTime: toInt(totalsResult.rows[0]?.total),
       last24h: toInt(totalsResult.rows[0]?.last_24h),
       activeChatters24h: toInt(totalsResult.rows[0]?.active_chatters_24h)
+    }
+  };
+}
+
+async function queueSiteChatMessage(currentUser, body) {
+  assertDatabase();
+  const message = String(body.message || '')
+    .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
+    .trim();
+
+  if (!message) {
+    const err = new Error('Message is required.');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (message.length > 240) {
+    const err = new Error('Message must be 240 characters or less.');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (message.startsWith('/') || message.startsWith('!')) {
+    const err = new Error('Commands cannot be sent from the site chat.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const result = await pool.query(`
+    INSERT INTO site_game_chat_outbox (sender_username, message)
+    VALUES ($1, $2)
+    RETURNING id, sender_username, message, status, created_at
+  `, [currentUser.username, message]);
+
+  return {
+    queued: true,
+    item: {
+      id: String(result.rows[0].id),
+      senderUsername: result.rows[0].sender_username,
+      message: result.rows[0].message,
+      status: result.rows[0].status,
+      createdAt: result.rows[0].created_at
     }
   };
 }
@@ -1154,6 +1209,10 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/chat') {
       sendJson(res, 200, await getChat(url));
+      return;
+    }
+    if (url.pathname === '/api/chat/send' && req.method === 'POST') {
+      sendJson(res, 202, await queueSiteChatMessage(currentUser, await readJsonBody(req)));
       return;
     }
     if (url.pathname === '/api/bot-stats') {

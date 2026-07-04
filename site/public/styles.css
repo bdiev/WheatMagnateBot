@@ -948,6 +948,31 @@ body.search-focus-active #logoutButton {
   padding: 14px;
 }
 
+.chat-send-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding: 12px 14px;
+  background: var(--panel-soft);
+}
+
+.chat-send-form input {
+  min-width: 0;
+  height: var(--button-height);
+  border: 1px solid var(--line);
+  border-radius: var(--button-radius);
+  padding: 0 14px;
+  color: var(--text);
+  background: var(--panel);
+  outline: none;
+}
+
+.chat-send-form input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
 .chat-message {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr) 64px;
@@ -1644,6 +1669,10 @@ body.search-focus-active #logoutButton {
 
   .chat-list {
     height: 520px;
+  }
+
+  .chat-send-form {
+    grid-template-columns: 1fr;
   }
 
   .chat-message,

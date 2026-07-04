@@ -1163,6 +1163,27 @@ async function handleAdminUserAction(event) {
   }
 }
 
+async function handleGameChatSubmit(event) {
+  event.preventDefault();
+  const input = $('#gameChatInput');
+  const button = $('#gameChatSend');
+  const message = input?.value.trim();
+  if (!message) return;
+
+  button.disabled = true;
+  try {
+    await postJson('/api/chat/send', { message });
+    input.value = '';
+    setBanner('Message queued for game chat.');
+    await loadAll();
+  } catch (err) {
+    setBanner(`Could not send game chat message: ${err.message}`);
+  } finally {
+    button.disabled = false;
+    input?.focus();
+  }
+}
+
 async function loadAll() {
   if (!state.currentUser) return;
   try {
@@ -1193,6 +1214,7 @@ $('#navMenuToggle')?.addEventListener('click', toggleNavMenu);
 $('#logoutButton')?.addEventListener('click', handleLogout);
 $('#adminUsersRefresh')?.addEventListener('click', loadAdminUsers);
 $('#adminUsersList')?.addEventListener('click', handleAdminUserAction);
+$('#gameChatForm')?.addEventListener('submit', handleGameChatSubmit);
 $$('.chart-controls').forEach(controls => controls.addEventListener('click', handleChartRangeClick));
 $('#themeToggle').addEventListener('click', toggleTheme);
 window.addEventListener('resize', redrawCharts);
