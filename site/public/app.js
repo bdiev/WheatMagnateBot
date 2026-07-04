@@ -13,6 +13,7 @@ const state = {
   chartTooltipTimer: null,
   chartTooltipPinned: false,
   seenPlayers: [],
+  adminControlState: null,
   chatMessageIds: new Set(),
   chatInitialized: false,
   authMode: 'login',
@@ -420,7 +421,10 @@ function setActiveTab(tab) {
   });
   updateNavLabel(tab);
   setNavMenuOpen(false);
-  if (tab === 'admin') loadAdminUsers();
+  if (tab === 'admin') {
+    loadAdminUsers();
+    loadAdminControlState();
+  }
   redrawCharts();
 }
 
@@ -981,6 +985,13 @@ function renderBotStats(payload) {
     : bot.reconnectInMs
       ? `reconnect in ${formatDurationMs(bot.reconnectInMs)}`
       : 'current session';
+  const pauseResumeButton = $('#botPauseResumeButton');
+  if (pauseResumeButton) {
+    const isPaused = bot?.status === 'paused';
+    pauseResumeButton.dataset.botCommand = isPaused ? 'resume' : 'pause';
+    pauseResumeButton.textContent = isPaused ? 'Resume' : 'Pause';
+    pauseResumeButton.classList.toggle('ghost-button', isPaused);
+  }
 
   renderBotItemList('#botInventory', bot?.inventory || [], connected ? 'Inventory is empty.' : 'No live bot inventory snapshot yet.');
 
@@ -1205,6 +1216,69 @@ async function loadAdminUsers() {
   }
 }
 
+function setSelectOptions(selector, values = [], { placeholder = 'Select...', valueFor = value => value, labelFor = value => value } = {}) {
+  const select = $(selector);
+  if (!select) return;
+  const current = select.value;
+  select.innerHTML = [
+    `<option value="">${escapeHtml(placeholder)}</option>`,
+    ...values.map(value => `<option value="${escapeHtml(valueFor(value))}">${escapeHtml(labelFor(value))}</option>`)
+  ].join('');
+  if ([...select.options].some(option => option.value === current)) select.value = current;
+}
+
+function renderAdminControlState(payload = {}) {
+  state.adminControlState = payload;
+  const settings = payload.settings || {};
+  const bot = payload.bot || {};
+
+  const whitelistMode = $('#adminWhitelistMode');
+  if (whitelistMode) whitelistMode.value = String(Boolean(settings.whitelistMode));
+  const dangerRadius = $('#adminDangerRadius');
+  if (dangerRadius) dangerRadius.value = String(settings.dangerRadius ?? 300);
+  const cooldown = $('#adminMessageCooldown');
+  if (cooldown) cooldown.value = String(settings.messageCooldownMs ?? 5000);
+
+  const obsidianButton = $('#obsidianToggleButton');
+  if (obsidianButton) {
+    const enabled = Boolean(bot?.obsidian?.desiredEnabled || bot?.obsidian?.enabled);
+    obsidianButton.textContent = enabled ? 'Stop Obsidian Farm' : 'Start Obsidian Farm';
+    obsidianButton.classList.toggle('danger-button', enabled);
+    obsidianButton.classList.toggle('ghost-button', !enabled);
+  }
+
+  setSelectOptions('#adminFollowTarget', payload.nearbyPlayers || [], {
+    placeholder: 'Choose nearby player',
+    valueFor: player => player.username,
+    labelFor: player => `${player.username} (${player.distance} blocks)`
+  });
+  setSelectOptions('#adminDropItem', payload.inventory || [], {
+    placeholder: 'Choose item',
+    valueFor: item => JSON.stringify({ slot: item.slot, name: item.name }),
+    labelFor: item => `${item.displayName || item.name} x${item.count || 1}`
+  });
+  setSelectOptions('#adminWhitelistRemove', payload.whitelist || [], { placeholder: 'Choose whitelist player' });
+  setSelectOptions('#adminIgnoreChat', payload.ignoreCandidates || [], { placeholder: 'Choose online player' });
+  setSelectOptions('#adminUnignoreChat', payload.ignoredChatUsers || [], { placeholder: 'Choose ignored player' });
+
+  const datalist = $('#adminWhitelistAddCandidates');
+  if (datalist) {
+    datalist.innerHTML = (payload.whitelistAddCandidates || [])
+      .map(username => `<option value="${escapeHtml(username)}"></option>`)
+      .join('');
+  }
+}
+
+async function loadAdminControlState() {
+  if (state.currentUser?.role !== 'admin') return;
+  try {
+    const payload = await fetchJson('/api/admin/control-state');
+    renderAdminControlState(payload);
+  } catch (err) {
+    setBanner(`Could not load bot controls: ${err.message}`);
+  }
+}
+
 async function handleAdminUserAction(event) {
   const button = event.target.closest('[data-admin-action]');
   if (!button) return;
@@ -1228,20 +1302,78 @@ async function handleAdminBotCommand(event) {
 
   const commandType = button.dataset.botCommand;
   const body = { commandType };
-  if (commandType === 'pause') {
-    const minutes = Number($('#adminPauseMinutes')?.value);
-    if (Number.isFinite(minutes) && minutes > 0) body.minutes = minutes;
-  }
 
   button.disabled = true;
   try {
     const payload = await postJson('/api/admin/bot-command', body);
     setBanner(`Bot command queued: ${payload.command?.commandType || commandType} #${payload.command?.id || '-'}.`);
-    await loadAll();
+    await Promise.all([loadAll(), loadAdminControlState()]);
   } catch (err) {
     setBanner(`Could not queue bot command: ${err.message}`);
   } finally {
     button.disabled = false;
+  }
+}
+
+async function queueAdminCommand(commandType, payload = {}) {
+  const response = await postJson('/api/admin/bot-command', { commandType, payload });
+  setBanner(`Bot command queued: ${response.command?.commandType || commandType} #${response.command?.id || '-'}.`);
+  await Promise.all([loadAll(), loadAdminControlState()]);
+}
+
+async function handleAdminControlAction(event) {
+  const button = event.target.closest('[data-admin-control-action]');
+  if (!button) return;
+
+  const action = button.dataset.adminControlAction;
+  const payload = {};
+
+  try {
+    if (action === 'follow') {
+      payload.username = $('#adminFollowTarget')?.value;
+    } else if (action === 'drop_item') {
+      Object.assign(payload, JSON.parse($('#adminDropItem')?.value || '{}'));
+    } else if (action === 'whitelist_add') {
+      payload.username = $('#adminWhitelistAddText')?.value.trim();
+    } else if (action === 'whitelist_remove') {
+      payload.username = $('#adminWhitelistRemove')?.value;
+    } else if (action === 'ignore_chat') {
+      payload.username = $('#adminIgnoreChat')?.value;
+    } else if (action === 'unignore_chat') {
+      payload.username = $('#adminUnignoreChat')?.value;
+    }
+
+    if (['follow', 'whitelist_add', 'whitelist_remove', 'ignore_chat', 'unignore_chat'].includes(action) && !payload.username) {
+      throw new Error('Choose or enter a username first.');
+    }
+    if (action === 'drop_item' && payload.slot == null && !payload.name) {
+      throw new Error('Choose an inventory item first.');
+    }
+
+    button.disabled = true;
+    await queueAdminCommand(action, payload);
+    if (action === 'whitelist_add') $('#adminWhitelistAddText').value = '';
+  } catch (err) {
+    setBanner(`Could not queue bot command: ${err.message}`);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function handleAdminSettingChange(event) {
+  const target = event.target;
+  if (!target) return;
+
+  try {
+    if (target.id === 'adminWhitelistMode') {
+      await queueAdminCommand('set_whitelist_mode', { enabled: target.value === 'true' });
+    } else if (target.id === 'adminDangerRadius') {
+      await queueAdminCommand('set_danger_radius', { value: Number(target.value) });
+    } else if (target.id === 'adminMessageCooldown') {
+      await queueAdminCommand('set_message_cooldown', { value: Number(target.value) });
+    }
+  } catch (err) {
+    setBanner(`Could not update setting: ${err.message}`);
   }
 }
 
@@ -1296,7 +1428,9 @@ $('#navMenuToggle')?.addEventListener('click', toggleNavMenu);
 $('#logoutButton')?.addEventListener('click', handleLogout);
 $('#adminUsersRefresh')?.addEventListener('click', loadAdminUsers);
 $('#adminUsersList')?.addEventListener('click', handleAdminUserAction);
-$('.admin-command-panel')?.addEventListener('click', handleAdminBotCommand);
+document.querySelector('[data-panel="admin"]')?.addEventListener('click', handleAdminBotCommand);
+document.querySelector('[data-panel="admin"]')?.addEventListener('click', handleAdminControlAction);
+document.querySelector('[data-panel="admin"]')?.addEventListener('change', handleAdminSettingChange);
 $('#gameChatForm')?.addEventListener('submit', handleGameChatSubmit);
 $$('.chart-controls').forEach(controls => controls.addEventListener('click', handleChartRangeClick));
 $('#themeToggle').addEventListener('click', toggleTheme);

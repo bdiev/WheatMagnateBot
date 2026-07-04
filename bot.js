@@ -3849,6 +3849,110 @@ async function executeBotCommand(command) {
     return { message: 'Restart requested.' };
   }
 
+  if (type === 'set_whitelist_mode') {
+    runtimeSettings.whitelistMode = Boolean(payload.enabled);
+    await persistRuntimeSetting('whitelistMode');
+    return { whitelistMode: runtimeSettings.whitelistMode };
+  }
+
+  if (type === 'set_danger_radius') {
+    const value = Number(payload.value);
+    if (!DANGER_RADIUS_OPTIONS.includes(value)) throw new Error('Invalid danger radius.');
+    runtimeSettings.dangerRadius = value;
+    await persistRuntimeSetting('dangerRadius');
+    return { dangerRadius: value };
+  }
+
+  if (type === 'set_message_cooldown') {
+    const value = Number(payload.value);
+    if (!MESSAGE_COOLDOWN_OPTIONS.includes(value)) throw new Error('Invalid message cooldown.');
+    runtimeSettings.messageCooldownMs = value;
+    await persistRuntimeSetting('messageCooldownMs');
+    return { messageCooldownMs: value };
+  }
+
+  if (type === 'follow') {
+    if (!bot?.entity) throw new Error('Minecraft bot is offline.');
+    const username = String(payload.username || '').trim();
+    if (!username) throw new Error('Username is required.');
+    farm.suspend();
+    followFeature.start(bot, username);
+    return { targetUsername: followFeature.getStatus().targetUsername };
+  }
+
+  if (type === 'follow_stop') {
+    followFeature.stop();
+    return { message: 'Follow stopped.' };
+  }
+
+  if (type === 'drop_item') {
+    if (!bot?.entity) throw new Error('Minecraft bot is offline.');
+    const slot = Number(payload.slot);
+    const name = String(payload.name || '').trim();
+    const item = bot.inventory.items().find(entry =>
+      (Number.isFinite(slot) && entry.slot === slot) ||
+      (name && entry.name === name)
+    );
+    if (!item) throw new Error('Item not found in inventory.');
+    await bot.toss(item.type, item.metadata || null, item.count);
+    return { item: item.name, count: item.count };
+  }
+
+  if (type === 'whitelist_add') {
+    const username = String(payload.username || '').trim();
+    if (!username) throw new Error('Username is required.');
+    const { whitelist, changed } = await addUsernameToWhitelist(username, requestedBy);
+    ignoredUsernames.length = 0;
+    ignoredUsernames.push(...whitelist);
+    return { username, changed };
+  }
+
+  if (type === 'whitelist_remove') {
+    const username = String(payload.username || '').trim();
+    if (!username) throw new Error('Username is required.');
+    if (pool) await pool.query('DELETE FROM whitelist WHERE LOWER(username) = LOWER($1)', [username]);
+    const newWhitelist = ignoredUsernames.filter(entry => entry.toLowerCase() !== username.toLowerCase());
+    fs.writeFileSync('whitelist.txt', newWhitelist.join('\n') + (newWhitelist.length ? '\n' : ''));
+    ignoredUsernames.length = 0;
+    ignoredUsernames.push(...newWhitelist);
+    return { username };
+  }
+
+  if (type === 'ignore_chat') {
+    const username = String(payload.username || '').trim();
+    if (!username) throw new Error('Username is required.');
+    if (!pool) throw new Error('Database not configured.');
+    await pool.query(
+      'INSERT INTO ignored_users (username, added_by) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING',
+      [username.toLowerCase(), requestedBy]
+    );
+    ignoredChatUsernames = await loadIgnoredChatUsernames();
+    return { username };
+  }
+
+  if (type === 'unignore_chat') {
+    const username = String(payload.username || '').trim();
+    if (!username) throw new Error('Username is required.');
+    if (!pool) throw new Error('Database not configured.');
+    await pool.query('DELETE FROM ignored_users WHERE username = $1', [username.toLowerCase()]);
+    ignoredChatUsernames = await loadIgnoredChatUsernames();
+    return { username };
+  }
+
+  if (type === 'obsidian_toggle') {
+    const farmStatus = farm.getStatus();
+    if (farmStatus.enabled || obsidianStats.desiredEnabled) {
+      farm.suspend();
+      await setObsidianFarmDesiredEnabled(false);
+      return { enabled: false };
+    }
+    await beginObsidianFarmSession();
+    ensureObsidianFarmRunning(bot, { freshSession: true }).catch(err => {
+      console.error('[Command Bus] Obsidian farm start failed:', err.message);
+    });
+    return { enabled: true };
+  }
+
   throw new Error(`Unsupported command type: ${type}`);
 }
 
@@ -5304,6 +5408,10 @@ function getBotStatusSnapshot() {
     inventorySlotsUsed: connected ? (bot.inventory?.items() || []).length : 0,
     xpLevel: connected ? (bot.experience?.level ?? null) : null,
     followTarget: followFeature.getStatus().targetUsername || null,
+    obsidian: {
+      enabled: farm.getStatus().enabled,
+      desiredEnabled: obsidianStats.desiredEnabled
+    },
     observedAt: new Date().toISOString()
   };
 }

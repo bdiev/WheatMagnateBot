@@ -284,6 +284,31 @@ async function ensureOptionalTables() {
     }
   }
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS ignored_users (
+      id SERIAL PRIMARY KEY,
+      username VARCHAR(255) UNIQUE NOT NULL,
+      added_by VARCHAR(255),
+      added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS whitelist (
+      id SERIAL PRIMARY KEY,
+      username VARCHAR(255) UNIQUE NOT NULL,
+      added_by VARCHAR(255),
+      added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS player_activity (
+      id SERIAL PRIMARY KEY,
+      username VARCHAR(255) UNIQUE NOT NULL,
+      last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      last_online TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      is_online BOOLEAN DEFAULT FALSE
+    )
+  `);
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS game_chat_messages (
       id BIGSERIAL PRIMARY KEY,
       username VARCHAR(255) NOT NULL,
@@ -328,6 +353,13 @@ async function ensureOptionalTables() {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS bot_commands_status_created_idx
     ON bot_commands (status, created_at)
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS admin_settings (
+      key TEXT PRIMARY KEY,
+      value JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
   `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS bot_status_snapshots (
@@ -1220,14 +1252,28 @@ async function queueAdminBotCommand(currentUser, body) {
   assertAdminUser(currentUser);
 
   const commandType = String(body.commandType || body.command_type || '').trim().toLowerCase();
-  const allowed = new Set(['pause', 'resume', 'restart']);
+  const allowed = new Set([
+    'pause',
+    'resume',
+    'set_whitelist_mode',
+    'set_danger_radius',
+    'set_message_cooldown',
+    'follow',
+    'follow_stop',
+    'drop_item',
+    'whitelist_add',
+    'whitelist_remove',
+    'ignore_chat',
+    'unignore_chat',
+    'obsidian_toggle'
+  ]);
   if (!allowed.has(commandType)) {
     const err = new Error('Unsupported bot command.');
     err.statusCode = 400;
     throw err;
   }
 
-  const payload = {};
+  const payload = body.payload && typeof body.payload === 'object' ? { ...body.payload } : {};
   if (commandType === 'pause') {
     const minutes = Number(body.minutes);
     if (Number.isFinite(minutes) && minutes > 0) {
@@ -1236,6 +1282,67 @@ async function queueAdminBotCommand(currentUser, body) {
   }
 
   return queueBotCommand(currentUser, commandType, payload);
+}
+
+async function getAdminControlState(currentUser) {
+  assertAdminUser(currentUser);
+
+  const [
+    settingsResult,
+    botStatusResult,
+    whitelistResult,
+    ignoredResult,
+    onlineResult,
+    nearbyResult
+  ] = await Promise.all([
+    pool.query('SELECT key, value FROM admin_settings'),
+    pool.query('SELECT status, observed_at FROM bot_status_snapshots WHERE id = 1'),
+    pool.query('SELECT username FROM whitelist ORDER BY LOWER(username) ASC'),
+    pool.query('SELECT username FROM ignored_users ORDER BY LOWER(username) ASC'),
+    pool.query(`
+      SELECT username
+      FROM player_activity
+      WHERE is_online = TRUE
+      ORDER BY LOWER(username) ASC
+    `),
+    pool.query(`
+      SELECT username, distance, last_seen
+      FROM nearby_player_sightings
+      ORDER BY last_seen DESC
+      LIMIT 25
+    `)
+  ]);
+
+  const settings = {};
+  for (const row of settingsResult.rows) settings[row.key] = row.value;
+  const botStatus = botStatusResult.rows[0]?.status || {};
+  const whitelist = whitelistResult.rows.map(row => row.username);
+  const ignoredChatUsers = ignoredResult.rows.map(row => row.username);
+  const onlinePlayers = onlineResult.rows.map(row => row.username);
+
+  return {
+    settings: {
+      whitelistMode: settings.whitelistMode ?? true,
+      dangerRadius: settings.dangerRadius ?? 300,
+      messageCooldownMs: settings.messageCooldownMs ?? 5000
+    },
+    bot: botStatus,
+    inventory: Array.isArray(botStatus.inventory) ? botStatus.inventory : [],
+    whitelist,
+    ignoredChatUsers,
+    onlinePlayers,
+    whitelistAddCandidates: onlinePlayers.filter(username =>
+      !whitelist.some(entry => entry.toLowerCase() === username.toLowerCase())
+    ),
+    ignoreCandidates: onlinePlayers.filter(username =>
+      !ignoredChatUsers.some(entry => entry.toLowerCase() === username.toLowerCase())
+    ),
+    nearbyPlayers: nearbyResult.rows.map(row => ({
+      username: row.username,
+      distance: toInt(row.distance),
+      lastSeen: row.last_seen
+    }))
+  };
 }
 
 async function handleApi(req, res, url) {
@@ -1265,6 +1372,10 @@ async function handleApi(req, res, url) {
         sendJson(res, 200, await updateAdminUser(currentUser, await readJsonBody(req)));
         return;
       }
+    }
+    if (url.pathname === '/api/admin/control-state' && req.method === 'GET') {
+      sendJson(res, 200, await getAdminControlState(currentUser));
+      return;
     }
     if (url.pathname === '/api/admin/bot-command' && req.method === 'POST') {
       sendJson(res, 202, await queueAdminBotCommand(currentUser, await readJsonBody(req)));

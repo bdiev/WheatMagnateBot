@@ -399,20 +399,124 @@
           <div class="panel-head">
             <div>
               <h2>Bot Control</h2>
-              <p>Queue bot commands through the shared database command bus.</p>
+              <p>Pause or resume the Minecraft bot through the shared database command bus.</p>
             </div>
           </div>
-          <div class="admin-command-grid">
-            <label class="auth-field">
-              <span>Pause Minutes</span>
-              <input id="adminPauseMinutes" type="number" min="1" max="1440" step="1" placeholder="Until resume">
-            </label>
-            <div class="admin-command-actions">
-              <button type="button" data-bot-command="pause">Pause</button>
-              <button class="ghost-button" type="button" data-bot-command="resume">Resume</button>
-              <button class="danger-button" type="button" data-bot-command="restart">Restart</button>
-            </div>
+          <div class="admin-command-actions">
+            <button id="botPauseResumeButton" type="button" data-bot-command="pause">Pause</button>
+            <button id="obsidianToggleButton" class="ghost-button" type="button" data-bot-command="obsidian_toggle">Toggle Obsidian Farm</button>
           </div>
+        </section>
+
+        <section class="split-grid section-grid">
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Admin Settings</h2>
+                <p>Security and command behavior.</p>
+              </div>
+            </div>
+            <div class="admin-control-grid">
+              <label class="auth-field">
+                <span>Whitelist Mode</span>
+                <select id="adminWhitelistMode">
+                  <option value="true">On</option>
+                  <option value="false">Off</option>
+                </select>
+              </label>
+              <label class="auth-field">
+                <span>Danger Radius</span>
+                <select id="adminDangerRadius">
+                  <option value="100">100 blocks</option>
+                  <option value="200">200 blocks</option>
+                  <option value="300">300 blocks</option>
+                  <option value="500">500 blocks</option>
+                  <option value="1000">1000 blocks</option>
+                </select>
+              </label>
+              <label class="auth-field">
+                <span>Message Cooldown</span>
+                <select id="adminMessageCooldown">
+                  <option value="0">No cooldown</option>
+                  <option value="5000">5 seconds</option>
+                  <option value="10000">10 seconds</option>
+                  <option value="20000">20 seconds</option>
+                  <option value="60000">60 seconds</option>
+                </select>
+              </label>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Follow & Drop</h2>
+                <p>Follow a nearby player or drop an inventory item.</p>
+              </div>
+            </div>
+            <div class="admin-control-grid">
+              <label class="auth-field">
+                <span>Follow Target</span>
+                <select id="adminFollowTarget"></select>
+              </label>
+              <div class="admin-command-actions compact">
+                <button type="button" data-admin-control-action="follow">Follow</button>
+                <button class="ghost-button" type="button" data-bot-command="follow_stop">Stop Follow</button>
+              </div>
+              <label class="auth-field">
+                <span>Inventory Item</span>
+                <select id="adminDropItem"></select>
+              </label>
+              <div class="admin-command-actions compact">
+                <button class="danger-button" type="button" data-admin-control-action="drop_item">Drop Selected</button>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <section class="split-grid section-grid">
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Whitelist</h2>
+                <p>Add online players or remove existing whitelist entries.</p>
+              </div>
+            </div>
+            <div class="admin-control-grid">
+              <label class="auth-field">
+                <span>Add Player</span>
+                <input id="adminWhitelistAddText" type="text" list="adminWhitelistAddCandidates" placeholder="Username">
+                <datalist id="adminWhitelistAddCandidates"></datalist>
+              </label>
+              <button type="button" data-admin-control-action="whitelist_add">Add to Whitelist</button>
+              <label class="auth-field">
+                <span>Remove Player</span>
+                <select id="adminWhitelistRemove"></select>
+              </label>
+              <button class="danger-button" type="button" data-admin-control-action="whitelist_remove">Remove</button>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Chat Ignore</h2>
+                <p>Suppress or restore player chat forwarding.</p>
+              </div>
+            </div>
+            <div class="admin-control-grid">
+              <label class="auth-field">
+                <span>Ignore Player</span>
+                <select id="adminIgnoreChat"></select>
+              </label>
+              <button type="button" data-admin-control-action="ignore_chat">Ignore</button>
+              <label class="auth-field">
+                <span>Unignore Player</span>
+                <select id="adminUnignoreChat"></select>
+              </label>
+              <button class="ghost-button" type="button" data-admin-control-action="unignore_chat">Unignore</button>
+            </div>
+          </section>
         </section>
 
         <section class="panel">

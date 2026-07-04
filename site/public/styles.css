@@ -341,7 +341,8 @@ button:disabled {
   font-weight: 800;
 }
 
-.auth-field input {
+.auth-field input,
+.auth-field select {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: var(--button-radius);
@@ -353,7 +354,8 @@ button:disabled {
   outline: none;
 }
 
-.auth-field input:focus {
+.auth-field input:focus,
+.auth-field select:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
 }
@@ -1491,18 +1493,24 @@ body.search-focus-active #logoutButton {
   margin-bottom: 16px;
 }
 
-.admin-command-grid {
-  display: grid;
-  grid-template-columns: minmax(220px, 320px) minmax(0, 1fr);
-  gap: 14px;
-  align-items: end;
-  padding: 14px;
-}
-
 .admin-command-actions {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+  padding: 14px;
+}
+
+.admin-command-actions.compact {
+  align-items: end;
+  padding: 0;
+}
+
+.admin-control-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+  padding: 14px;
 }
 
 .supplies-grid {
