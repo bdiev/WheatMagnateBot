@@ -1,5 +1,9 @@
 'use strict';
 
+if ('scrollRestoration' in history) {
+  history.scrollRestoration = 'manual';
+}
+
 const state = {
   timer: null,
   activeTab: 'chat',
@@ -16,6 +20,7 @@ const state = {
     obsidianDailyChart: 'days',
     tpsHourlyChart: 'hours'
   },
+  chartScrollInitialized: {},
   renderSignatures: {}
 };
 
@@ -409,6 +414,12 @@ function prepareChartCanvas(canvas, data, options = {}) {
   const ctx = canvas.getContext('2d');
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
   ctx.clearRect(0, 0, cssWidth, cssHeight);
+  if (viewport && viewport.clientWidth > 0 && !state.chartScrollInitialized[canvas.id]) {
+    requestAnimationFrame(() => {
+      viewport.scrollLeft = viewport.scrollWidth;
+    });
+    state.chartScrollInitialized[canvas.id] = true;
+  }
   return { ctx, width: cssWidth, height: cssHeight };
 }
 
@@ -688,6 +699,7 @@ function handleChartRangeClick(event) {
   const chartId = controls?.dataset.chartControls;
   if (!chartId) return;
   state.chartRanges[chartId] = button.dataset.chartRange;
+  delete state.chartScrollInitialized[chartId];
   controls.querySelectorAll('[data-chart-range]').forEach(item => {
     item.classList.toggle('active', item === button);
   });
@@ -877,6 +889,7 @@ function renderChat(payload) {
   $('#chatAllTime').textContent = formatNumber(payload.totals?.allTime);
 
   const messages = [...(payload.messages || [])].reverse();
+  const firstChatRender = !state.chatInitialized;
   renderStable('#chatList', messages.length
     ? messages.map(message => `
       <article class="chat-message ${state.chatInitialized && !state.chatMessageIds.has(String(message.id)) ? 'new-message' : ''}">
@@ -888,6 +901,12 @@ function renderChat(payload) {
     : '<div class="empty">No chat messages yet. New messages will appear after the bot records them.</div>',
     messages.map(message => [message.id, message.username, message.message, message.createdAt])
   );
+  if (firstChatRender) {
+    requestAnimationFrame(() => {
+      const chatList = $('#chatList');
+      if (chatList) chatList.scrollTop = 0;
+    });
+  }
   state.chatMessageIds = new Set(messages.map(message => String(message.id)));
   state.chatInitialized = true;
 
