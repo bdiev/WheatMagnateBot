@@ -1232,19 +1232,30 @@ function renderAdminControlState(payload = {}) {
   const settings = payload.settings || {};
   const bot = payload.bot || {};
 
-  const whitelistMode = $('#adminWhitelistMode');
-  if (whitelistMode) whitelistMode.value = String(Boolean(settings.whitelistMode));
-  const dangerRadius = $('#adminDangerRadius');
-  if (dangerRadius) dangerRadius.value = String(settings.dangerRadius ?? 300);
-  const cooldown = $('#adminMessageCooldown');
-  if (cooldown) cooldown.value = String(settings.messageCooldownMs ?? 5000);
-
   const obsidianButton = $('#obsidianToggleButton');
   if (obsidianButton) {
     const enabled = Boolean(bot?.obsidian?.desiredEnabled || bot?.obsidian?.enabled);
     obsidianButton.textContent = enabled ? 'Stop Obsidian Farm' : 'Start Obsidian Farm';
     obsidianButton.classList.toggle('danger-button', enabled);
     obsidianButton.classList.toggle('ghost-button', !enabled);
+  }
+  const child = bot.child || {};
+  const childButton = $('#childToggleButton');
+  if (childButton) {
+    childButton.textContent = child.enabled ? 'Disable Child' : 'Enable Child';
+    childButton.classList.toggle('danger-button', Boolean(child.enabled));
+  }
+  const geminiButton = $('#geminiToggleButton');
+  if (geminiButton) {
+    const enabled = child.geminiEnabled ?? settings.geminiEnabled;
+    geminiButton.textContent = `Gemini: ${enabled ? 'On' : 'Off'}`;
+    geminiButton.classList.toggle('ghost-button', !enabled);
+  }
+  const publicButton = $('#childPublicToggleButton');
+  if (publicButton) {
+    const enabled = child.publicSpeech ?? settings.childPublicSpeech;
+    publicButton.textContent = `Public Chat: ${enabled ? 'On' : 'Off'}`;
+    publicButton.classList.toggle('ghost-button', !enabled);
   }
 
   setSelectOptions('#adminFollowTarget', payload.nearbyPlayers || [], {
@@ -1360,23 +1371,6 @@ async function handleAdminControlAction(event) {
   }
 }
 
-async function handleAdminSettingChange(event) {
-  const target = event.target;
-  if (!target) return;
-
-  try {
-    if (target.id === 'adminWhitelistMode') {
-      await queueAdminCommand('set_whitelist_mode', { enabled: target.value === 'true' });
-    } else if (target.id === 'adminDangerRadius') {
-      await queueAdminCommand('set_danger_radius', { value: Number(target.value) });
-    } else if (target.id === 'adminMessageCooldown') {
-      await queueAdminCommand('set_message_cooldown', { value: Number(target.value) });
-    }
-  } catch (err) {
-    setBanner(`Could not update setting: ${err.message}`);
-  }
-}
-
 async function handleGameChatSubmit(event) {
   event.preventDefault();
   const input = $('#gameChatInput');
@@ -1430,7 +1424,6 @@ $('#adminUsersRefresh')?.addEventListener('click', loadAdminUsers);
 $('#adminUsersList')?.addEventListener('click', handleAdminUserAction);
 document.querySelector('[data-panel="admin"]')?.addEventListener('click', handleAdminBotCommand);
 document.querySelector('[data-panel="admin"]')?.addEventListener('click', handleAdminControlAction);
-document.querySelector('[data-panel="admin"]')?.addEventListener('change', handleAdminSettingChange);
 $('#gameChatForm')?.addEventListener('submit', handleGameChatSubmit);
 $$('.chart-controls').forEach(controls => controls.addEventListener('click', handleChartRangeClick));
 $('#themeToggle').addEventListener('click', toggleTheme);

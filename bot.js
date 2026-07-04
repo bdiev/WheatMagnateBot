@@ -3953,6 +3953,25 @@ async function executeBotCommand(command) {
     return { enabled: true };
   }
 
+  if (type === 'child_toggle') {
+    if (!growingChild) initializeGrowingChild();
+    const status = growingChild.toggleEnabled();
+    return { enabled: status.enabled };
+  }
+
+  if (type === 'gemini_toggle') {
+    runtimeSettings.geminiEnabled = !runtimeSettings.geminiEnabled;
+    await persistRuntimeSetting('geminiEnabled');
+    return { geminiEnabled: runtimeSettings.geminiEnabled };
+  }
+
+  if (type === 'child_public_toggle') {
+    runtimeSettings.childPublicSpeech = !runtimeSettings.childPublicSpeech;
+    growingChild?.setMinecraftPublicSpeechEnabled(runtimeSettings.childPublicSpeech);
+    await persistRuntimeSetting('childPublicSpeech');
+    return { childPublicSpeech: runtimeSettings.childPublicSpeech };
+  }
+
   throw new Error(`Unsupported command type: ${type}`);
 }
 
@@ -5406,11 +5425,17 @@ function getBotStatusSnapshot() {
       : null,
     inventory: connected ? compactInventoryItems(bot.inventory?.items() || []) : [],
     inventorySlotsUsed: connected ? (bot.inventory?.items() || []).length : 0,
+    nearbyPlayers: connected ? getNearbyPlayers() : [],
     xpLevel: connected ? (bot.experience?.level ?? null) : null,
     followTarget: followFeature.getStatus().targetUsername || null,
     obsidian: {
       enabled: farm.getStatus().enabled,
       desiredEnabled: obsidianStats.desiredEnabled
+    },
+    child: {
+      enabled: growingChild?.getStatus().enabled ?? false,
+      geminiEnabled: runtimeSettings.geminiEnabled,
+      publicSpeech: runtimeSettings.childPublicSpeech
     },
     observedAt: new Date().toISOString()
   };

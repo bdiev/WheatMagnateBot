@@ -1255,9 +1255,6 @@ async function queueAdminBotCommand(currentUser, body) {
   const allowed = new Set([
     'pause',
     'resume',
-    'set_whitelist_mode',
-    'set_danger_radius',
-    'set_message_cooldown',
     'follow',
     'follow_stop',
     'drop_item',
@@ -1265,7 +1262,10 @@ async function queueAdminBotCommand(currentUser, body) {
     'whitelist_remove',
     'ignore_chat',
     'unignore_chat',
-    'obsidian_toggle'
+    'obsidian_toggle',
+    'child_toggle',
+    'gemini_toggle',
+    'child_public_toggle'
   ]);
   if (!allowed.has(commandType)) {
     const err = new Error('Unsupported bot command.');
@@ -1292,8 +1292,7 @@ async function getAdminControlState(currentUser) {
     botStatusResult,
     whitelistResult,
     ignoredResult,
-    onlineResult,
-    nearbyResult
+    onlineResult
   ] = await Promise.all([
     pool.query('SELECT key, value FROM admin_settings'),
     pool.query('SELECT status, observed_at FROM bot_status_snapshots WHERE id = 1'),
@@ -1304,12 +1303,6 @@ async function getAdminControlState(currentUser) {
       FROM player_activity
       WHERE is_online = TRUE
       ORDER BY LOWER(username) ASC
-    `),
-    pool.query(`
-      SELECT username, distance, last_seen
-      FROM nearby_player_sightings
-      ORDER BY last_seen DESC
-      LIMIT 25
     `)
   ]);
 
@@ -1324,7 +1317,9 @@ async function getAdminControlState(currentUser) {
     settings: {
       whitelistMode: settings.whitelistMode ?? true,
       dangerRadius: settings.dangerRadius ?? 300,
-      messageCooldownMs: settings.messageCooldownMs ?? 5000
+      messageCooldownMs: settings.messageCooldownMs ?? 5000,
+      geminiEnabled: settings.geminiEnabled ?? true,
+      childPublicSpeech: settings.childPublicSpeech ?? true
     },
     bot: botStatus,
     inventory: Array.isArray(botStatus.inventory) ? botStatus.inventory : [],
@@ -1337,11 +1332,7 @@ async function getAdminControlState(currentUser) {
     ignoreCandidates: onlinePlayers.filter(username =>
       !ignoredChatUsers.some(entry => entry.toLowerCase() === username.toLowerCase())
     ),
-    nearbyPlayers: nearbyResult.rows.map(row => ({
-      username: row.username,
-      distance: toInt(row.distance),
-      lastSeen: row.last_seen
-    }))
+    nearbyPlayers: Array.isArray(botStatus.nearbyPlayers) ? botStatus.nearbyPlayers : []
   };
 }
 

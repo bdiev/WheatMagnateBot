@@ -412,46 +412,22 @@
           <section class="panel">
             <div class="panel-head">
               <div>
-                <h2>Admin Settings</h2>
-                <p>Security and command behavior.</p>
+                <h2>Child</h2>
+                <p>Growing child controls.</p>
               </div>
             </div>
-            <div class="admin-control-grid">
-              <label class="auth-field">
-                <span>Whitelist Mode</span>
-                <select id="adminWhitelistMode">
-                  <option value="true">On</option>
-                  <option value="false">Off</option>
-                </select>
-              </label>
-              <label class="auth-field">
-                <span>Danger Radius</span>
-                <select id="adminDangerRadius">
-                  <option value="100">100 blocks</option>
-                  <option value="200">200 blocks</option>
-                  <option value="300">300 blocks</option>
-                  <option value="500">500 blocks</option>
-                  <option value="1000">1000 blocks</option>
-                </select>
-              </label>
-              <label class="auth-field">
-                <span>Message Cooldown</span>
-                <select id="adminMessageCooldown">
-                  <option value="0">No cooldown</option>
-                  <option value="5000">5 seconds</option>
-                  <option value="10000">10 seconds</option>
-                  <option value="20000">20 seconds</option>
-                  <option value="60000">60 seconds</option>
-                </select>
-              </label>
+            <div class="admin-command-actions">
+              <button id="childToggleButton" type="button" data-bot-command="child_toggle">Toggle Child</button>
+              <button id="geminiToggleButton" class="ghost-button" type="button" data-bot-command="gemini_toggle">Toggle Gemini</button>
+              <button id="childPublicToggleButton" class="ghost-button" type="button" data-bot-command="child_public_toggle">Toggle Public Chat</button>
             </div>
           </section>
 
           <section class="panel">
             <div class="panel-head">
               <div>
-                <h2>Follow & Drop</h2>
-                <p>Follow a nearby player or drop an inventory item.</p>
+                <h2>Follow</h2>
+                <p>Follow a player currently near the bot.</p>
               </div>
             </div>
             <div class="admin-control-grid">
@@ -463,6 +439,19 @@
                 <button type="button" data-admin-control-action="follow">Follow</button>
                 <button class="ghost-button" type="button" data-bot-command="follow_stop">Stop Follow</button>
               </div>
+            </div>
+          </section>
+        </section>
+
+        <section class="split-grid section-grid">
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Drop</h2>
+                <p>Drop an item from the bot inventory.</p>
+              </div>
+            </div>
+            <div class="admin-control-grid">
               <label class="auth-field">
                 <span>Inventory Item</span>
                 <select id="adminDropItem"></select>
@@ -472,9 +461,7 @@
               </div>
             </div>
           </section>
-        </section>
 
-        <section class="split-grid section-grid">
           <section class="panel">
             <div class="panel-head">
               <div>
