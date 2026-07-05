@@ -1263,36 +1263,43 @@ function closeWhisperDialog() {
 function clearWhisperSearch() {
   clearTimeout(state.whisperSearchTimer);
   const input = $('#whisperSearchInput');
-  const suggestions = $('#whisperSearchSuggestions');
   if (input) input.value = '';
-  if (suggestions) suggestions.hidden = true;
   state.whisperSearchPlayers = [];
+  state.whisperPlayersSignature = '';
+  renderWhisperPlayers();
 }
 
-function renderWhisperSearchSuggestions(players) {
-  const suggestions = $('#whisperSearchSuggestions');
+function renderWhisperSearchResults(players) {
+  const list = $('#whisperPlayers');
   state.whisperSearchPlayers = players || [];
+  state.whisperPlayersSignature = `search:${JSON.stringify(state.whisperSearchPlayers.map(player => [
+    player.username || '',
+    Boolean(player.isOnline),
+    player.lastSeen || ''
+  ]))}`;
 
-  if (!suggestions) return;
+  if (!list) return;
   if (state.whisperSearchPlayers.length === 0) {
-    suggestions.innerHTML = '<div class="seen-empty">No players found.</div>';
-    suggestions.hidden = false;
+    list.innerHTML = '<div class="seen-empty">No players found.</div>';
     return;
   }
 
-  suggestions.innerHTML = state.whisperSearchPlayers.map((player, index) => `
-    <button class="seen-option" type="button" data-index="${index}">
-      ${playerIdentity(player.username, 24)}
-      <span class="pill ${player.isOnline ? 'online' : ''}">${player.isOnline ? 'online' : 'offline'}</span>
-      <span class="muted">${player.lastSeen ? formatAgo(player.lastSeen) : 'never seen'}</span>
+  const active = String(state.whisperTarget || '').toLowerCase();
+  list.innerHTML = state.whisperSearchPlayers.map((player, index) => {
+    const username = player.username || '';
+    const isActive = username.toLowerCase() === active;
+    const isOnline = Boolean(player.isOnline);
+    return `
+    <button class="whisper-player ${isActive ? 'active' : ''}" type="button" data-search-index="${index}" style="--item-index: ${index}">
+      <span class="whisper-player-identity">${playerIdentity(username, 24)}</span>
+      <span class="pill ${isOnline ? 'online' : ''}">${isOnline ? 'online' : 'offline'}</span>
     </button>
-  `).join('');
-  suggestions.hidden = false;
+  `;
+  }).join('');
 }
 
 async function runWhisperSearch(query) {
   const cleanQuery = query.trim();
-  const suggestions = $('#whisperSearchSuggestions');
   if (cleanQuery.length < 1) {
     clearWhisperSearch();
     return;
@@ -1300,11 +1307,11 @@ async function runWhisperSearch(query) {
 
   try {
     const payload = await fetchJson(`/api/seen-search?query=${encodeURIComponent(cleanQuery)}`);
-    renderWhisperSearchSuggestions(payload.players || []);
+    renderWhisperSearchResults(payload.players || []);
   } catch (err) {
-    if (suggestions) {
-      suggestions.innerHTML = `<div class="seen-empty">Search failed: ${escapeHtml(err.message)}</div>`;
-      suggestions.hidden = false;
+    const list = $('#whisperPlayers');
+    if (list) {
+      list.innerHTML = `<div class="seen-empty">Search failed: ${escapeHtml(err.message)}</div>`;
     }
   }
 }
@@ -1315,18 +1322,14 @@ function handleWhisperSearchInput(event) {
   state.whisperSearchTimer = setTimeout(() => runWhisperSearch(query), 180);
 }
 
-function handleWhisperSearchSuggestionClick(event) {
-  const option = event.target.closest('.seen-option');
-  if (!option) return;
-  const player = state.whisperSearchPlayers[Number(option.dataset.index)];
-  if (!player) return;
-  clearWhisperSearch();
-  openWhisperDialog(player.username).catch(err => setBanner(`Could not open dialog: ${err.message}`));
-}
-
 function renderWhisperPlayers() {
   const list = $('#whisperPlayers');
   if (!list) return;
+  const searchInput = $('#whisperSearchInput');
+  if (searchInput?.value.trim()) {
+    renderWhisperSearchResults(state.whisperSearchPlayers);
+    return;
+  }
   const signature = JSON.stringify([
     state.whisperTarget || '',
     ...state.whisperPlayers.map(player => [
@@ -1445,7 +1448,9 @@ function handleWhisperPlayerClick(event) {
   event.stopPropagation();
   const button = event.target.closest('.whisper-player');
   if (!button) return;
-  const player = state.whisperPlayers[Number(button.dataset.index)];
+  const player = button.dataset.searchIndex !== undefined
+    ? state.whisperSearchPlayers[Number(button.dataset.searchIndex)]
+    : state.whisperPlayers[Number(button.dataset.index)];
   if (!player?.username) return;
   clearWhisperSearch();
   openWhisperDialog(player.username).catch(err => setBanner(`Could not open dialog: ${err.message}`));
@@ -2654,7 +2659,6 @@ $('#seenSearchInput').addEventListener('input', handleSeenInput);
 $('#seenSuggestions').addEventListener('click', handleSeenSuggestionClick);
 $('#whisperToggle')?.addEventListener('click', toggleWhisperPanel);
 $('#whisperSearchInput')?.addEventListener('input', handleWhisperSearchInput);
-$('#whisperSearchSuggestions')?.addEventListener('click', handleWhisperSearchSuggestionClick);
 $('#whisperPlayers')?.addEventListener('click', handleWhisperPlayerClick);
 $('#whisperForm')?.addEventListener('submit', handleWhisperSubmit);
 $('#whisperDeleteDialog')?.addEventListener('click', handleWhisperDeleteDialog);
