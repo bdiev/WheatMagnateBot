@@ -320,41 +320,6 @@ function summarizeSupplyItems(bot, items) {
       const entries = source instanceof Map ? Array.from(source.entries()) : Object.entries(source);
       for (const [name, level] of entries) addEnchant(name, level);
     };
-    const readComponent = component => {
-      const value = readScalar(component);
-      if (!value || typeof value !== 'object') return;
-      const type = String(readScalar(value.type ?? value.id ?? value.name ?? '')).toLowerCase();
-      if (!type.includes('enchant')) return;
-      readLevels(value.levels ?? value.Levels ?? value.data?.levels ?? value.data?.Levels);
-      readEnchantList(value.enchantments ?? value.Enchantments ?? value.data?.enchantments ?? value.data?.Enchantments);
-    };
-    const readComponents = components => {
-      const source = readScalar(components);
-      if (!source || typeof source !== 'object') return;
-      if (Array.isArray(source)) {
-        for (const component of source) readComponent(component);
-        return;
-      }
-      if (source instanceof Map) {
-        for (const [key, component] of source.entries()) {
-          if (String(key).toLowerCase().includes('enchant')) {
-            readLevels(component?.levels ?? component?.Levels ?? component?.data?.levels ?? component?.data?.Levels ?? component);
-            readEnchantList(component?.enchantments ?? component?.Enchantments ?? component?.data?.enchantments ?? component?.data?.Enchantments);
-          } else {
-            readComponent(component);
-          }
-        }
-        return;
-      }
-      for (const [key, component] of Object.entries(source)) {
-        if (String(key).toLowerCase().includes('enchant')) {
-          readLevels(component?.levels ?? component?.Levels ?? component?.data?.levels ?? component?.data?.Levels ?? component);
-          readEnchantList(component?.enchantments ?? component?.Enchantments ?? component?.data?.enchantments ?? component?.data?.Enchantments);
-        } else {
-          readComponent(component);
-        }
-      }
-    };
     const readNbt = nbt => {
       const root = readScalar(nbt) || {};
       readEnchantList(root.Enchantments ?? root.enchantments);
@@ -363,8 +328,6 @@ function summarizeSupplyItems(bot, items) {
 
     readEnchantList(item.enchants);
     readEnchantList(item.enchantments);
-    readComponents(item.component);
-    readComponents(item.components);
     readNbt(item.nbt);
     return Array.from(found, ([name, level]) => ({ name, level }));
   };

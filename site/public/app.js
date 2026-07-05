@@ -1771,14 +1771,21 @@ function showSupplyTooltip(key, anchor) {
     document.body.appendChild(tooltip);
   }
   const enchantments = Array.isArray(item.enchantments) ? item.enchantments : [];
+  const isPickaxe = /pickaxe$/i.test(String(item.name || ''));
+  const visibleEnchantments = isPickaxe
+    ? enchantments.filter(enchant => {
+        const name = String(ENCHANTMENT_ID_NAMES[String(enchant.name)] || enchant.name || '').replace(/^minecraft:/, '');
+        return ['efficiency', 'fortune', 'mending', 'silk_touch', 'unbreaking', 'vanishing_curse'].includes(name);
+      })
+    : enchantments;
   tooltip.innerHTML = `
     <strong>${escapeHtml(item.displayName || item.label || item.name || 'Item')}</strong>
     <span>Count: ${formatNumber(item.count)}</span>
     ${item.slot == null ? '' : `<span>Slot: ${formatNumber(item.slot)}</span>`}
     ${item.remainingPercent == null ? '' : `<span>Durability: ${Number(item.remainingPercent).toFixed(1)}%</span>`}
     <div class="supply-tooltip-enchants">
-      ${enchantments.length
-        ? enchantments.map(enchant => `<span>${escapeHtml(formatEnchantmentName(enchant.name))} ${formatEnchantmentLevel(enchant.level)}</span>`).join('')
+      ${visibleEnchantments.length
+        ? visibleEnchantments.map(enchant => `<span>${escapeHtml(formatEnchantmentName(enchant.name))} ${formatEnchantmentLevel(enchant.level)}</span>`).join('')
         : '<span class="muted">No enchantments</span>'}
     </div>
   `;
