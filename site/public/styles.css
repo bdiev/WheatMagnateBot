@@ -1213,16 +1213,40 @@ body.search-focus-active #logoutButton {
   color: var(--muted);
   background: transparent;
   font-size: 12px;
+  transform: translateY(0) scale(1);
+  transition:
+    color 180ms ease,
+    background-color 180ms ease,
+    transform 150ms ease,
+    box-shadow 180ms ease;
 }
 
 .chart-range-button:hover {
   color: var(--text);
   background: var(--panel);
+  transform: translateY(-1px);
 }
 
 .chart-range-button.active {
   color: #fff;
   background: var(--accent);
+  box-shadow: 0 5px 14px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.chart-range-button.pressed {
+  animation: chartRangePress 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes chartRangePress {
+  0% {
+    transform: translateY(0) scale(1);
+  }
+  45% {
+    transform: translateY(1px) scale(0.94);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+  }
 }
 
 .chart-tooltip {
@@ -1258,7 +1282,7 @@ body.search-focus-active #logoutButton {
 }
 
 #topChatters {
-  height: 376px;
+  height: 386px;
   overflow: auto;
 }
 

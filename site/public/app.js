@@ -14,6 +14,9 @@ const state = {
   ignoreChatSearchTimer: null,
   chartTooltipTimer: null,
   chartTooltipPinned: false,
+  chartAnimations: {},
+  chartAnimationFrames: {},
+  chartAnimationDurations: {},
   seenPlayers: [],
   whitelistSearchPlayers: [],
   ignoreChatSearchPlayers: [],
@@ -476,6 +479,35 @@ function prepareChartCanvas(canvas, data, options = {}) {
   return { ctx, width: cssWidth, height: cssHeight };
 }
 
+function getChartAnimationProgress(canvas, options = {}) {
+  if (!canvas) return 1;
+  const duration = options.animate ? options.duration || 360 : 0;
+  if (!duration) return 1;
+  const startedAt = state.chartAnimations[canvas.id] || performance.now();
+  const progress = Math.min(1, Math.max(0, (performance.now() - startedAt) / duration));
+  return 1 - Math.pow(1 - progress, 3);
+}
+
+function animateChart(chartId, duration = 360) {
+  state.chartAnimations[chartId] = performance.now();
+  state.chartAnimationDurations[chartId] = duration;
+  if (state.chartAnimationFrames[chartId]) cancelAnimationFrame(state.chartAnimationFrames[chartId]);
+
+  const tick = () => {
+    redrawCharts({ animate: true });
+    if (performance.now() - state.chartAnimations[chartId] < duration) {
+      state.chartAnimationFrames[chartId] = requestAnimationFrame(tick);
+    } else {
+      delete state.chartAnimations[chartId];
+      delete state.chartAnimationDurations[chartId];
+      delete state.chartAnimationFrames[chartId];
+      redrawCharts();
+    }
+  };
+
+  state.chartAnimationFrames[chartId] = requestAnimationFrame(tick);
+}
+
 function shortChartLabel(label, index, total) {
   const value = String(label || '').replace(/^\d{4}-/, '');
   if (total > 48 && index % 6 !== 0 && index !== total - 1) return '';
@@ -523,6 +555,7 @@ function drawBarChart(canvas, data, options = {}) {
   const padding = { top: 24, right: 18, bottom: 44, left: 58 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
+  const animationProgress = getChartAnimationProgress(canvas, options.animation);
   renderStickyChartAxis(
     canvas,
     Array.from({ length: 5 }, (_, index) => formatNumber(Math.round((maxValue * index) / 4))),
@@ -567,7 +600,7 @@ function drawBarChart(canvas, data, options = {}) {
     if (!Number.isFinite(value)) return;
     const slotX = padding.left + index * slotWidth;
     const x = slotX + (slotWidth - barWidth) / 2;
-    const barHeight = Math.max(1, (value / maxValue) * chartHeight);
+    const barHeight = Math.max(1, (value / maxValue) * chartHeight * animationProgress);
     const y = padding.top + chartHeight - barHeight;
     ctx.fillStyle = accent;
     ctx.fillRect(x, y, barWidth, barHeight);
@@ -609,6 +642,7 @@ function drawLineChart(canvas, data, options = {}) {
   const padding = { top: 24, right: 18, bottom: 44, left: 58 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
+  const animationProgress = getChartAnimationProgress(canvas, options.animation);
   renderStickyChartAxis(
     canvas,
     Array.from({ length: 5 }, (_, index) => formatTps((maxValue * index) / 4)),
@@ -641,7 +675,7 @@ function drawLineChart(canvas, data, options = {}) {
       const value = Number(item.value);
       if (!Number.isFinite(value)) return null;
       const x = padding.left + (chartWidth * index) / Math.max(1, chartData.length - 1);
-      const y = padding.top + chartHeight - (Math.min(maxValue, Math.max(0, value)) / maxValue) * chartHeight;
+      const y = padding.top + chartHeight - (Math.min(maxValue, Math.max(0, value)) / maxValue) * chartHeight * animationProgress;
       return {
         x,
         y,
@@ -725,21 +759,33 @@ function getChartRange(id) {
   return state.chartRanges[id] || 'hours';
 }
 
-function redrawCharts() {
+function redrawCharts({ animate = false } = {}) {
   requestAnimationFrame(() => {
     const chatRange = getChartRange('chatHourlyChart');
     const obsidianRange = getChartRange('obsidianDailyChart');
     const tpsRange = getChartRange('tpsHourlyChart');
     drawBarChart($('#chatHourlyChart'), aggregateSeries(state.charts.chatHourly, chatRange), {
+      animation: {
+        animate: animate && Boolean(state.chartAnimations.chatHourlyChart),
+        duration: state.chartAnimationDurations.chatHourlyChart
+      },
       tooltip: item => `${item.label}: ${formatNumber(item.value)} messages`
     });
     const obsidianData = obsidianRange === 'hours'
       ? state.charts.obsidianHourly
       : aggregateSeries(state.charts.obsidianDaily, obsidianRange);
     drawBarChart($('#obsidianDailyChart'), obsidianData, {
+      animation: {
+        animate: animate && Boolean(state.chartAnimations.obsidianDailyChart),
+        duration: state.chartAnimationDurations.obsidianDailyChart
+      },
       tooltip: item => `${item.label}: ${formatNumber(item.value)} blocks`
     });
     drawLineChart($('#tpsHourlyChart'), aggregateSeries(state.charts.tpsHourly, tpsRange, 'avg'), {
+      animation: {
+        animate: animate && Boolean(state.chartAnimations.tpsHourlyChart),
+        duration: state.chartAnimationDurations.tpsHourlyChart
+      },
       max: 20,
       tooltip: item => `${item.label}: ${formatTps(item.value)} TPS`
     });
@@ -797,12 +843,16 @@ function handleChartRangeClick(event) {
   const controls = button.closest('[data-chart-controls]');
   const chartId = controls?.dataset.chartControls;
   if (!chartId) return;
+  if (state.chartRanges[chartId] === button.dataset.chartRange) return;
   state.chartRanges[chartId] = button.dataset.chartRange;
   delete state.chartScrollInitialized[chartId];
   controls.querySelectorAll('[data-chart-range]').forEach(item => {
     item.classList.toggle('active', item === button);
   });
-  redrawCharts();
+  button.classList.remove('pressed');
+  void button.offsetWidth;
+  button.classList.add('pressed');
+  animateChart(chartId);
 }
 
 function renderPlayerProfile(profile) {
