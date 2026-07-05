@@ -1544,39 +1544,48 @@ function renderSupplies(selector, supplies, error = null) {
 
 function inventoryGridSlots(items) {
   const bySlot = new Map();
+  const unplacedItems = [];
   for (const item of items || []) {
     const slot = Number(item.slot);
-    if (!Number.isFinite(slot)) continue;
-    bySlot.set(slot, item);
+    if (Number.isFinite(slot) && slot >= 9 && slot <= 44) {
+      bySlot.set(slot, item);
+    } else {
+      unplacedItems.push(item);
+    }
   }
-  return [
+  const slots = [
     ...Array.from({ length: 27 }, (_, index) => 9 + index),
     ...Array.from({ length: 9 }, (_, index) => 36 + index)
   ].map(slot => ({ slot, item: bySlot.get(slot) || null }));
+
+  let nextUnplaced = 0;
+  for (const entry of slots) {
+    if (entry.item || nextUnplaced >= unplacedItems.length) continue;
+    entry.item = unplacedItems[nextUnplaced];
+    entry.fallback = true;
+    nextUnplaced += 1;
+  }
+
+  return slots;
 }
 
 function renderInventorySupplies(selector, items) {
   const slots = inventoryGridSlots(items);
-  const hasSlotData = items.some(item => Number.isFinite(Number(item.slot)));
   if (!items.length) {
     renderStable(selector, '<div class="empty">No items recorded.</div>', ['inventory-empty']);
-    return;
-  }
-  if (!hasSlotData) {
-    renderStable(selector, '<div class="empty">Inventory positions will appear after the next supply inspection.</div>', ['inventory-no-slots']);
     return;
   }
 
   const html = `
     <div class="inventory-grid" aria-label="Bot inventory slots">
-      ${slots.map(({ slot, item }) => {
+      ${slots.map(({ slot, item, fallback }) => {
         if (!item) return `<div class="inventory-slot" data-slot="${slot}" aria-label="Empty slot"></div>`;
         const durability = item.remainingPercent == null
           ? ''
           : `<span class="inventory-durability">${Number(item.remainingPercent).toFixed(0)}%</span>`;
         const low = item.usable === false ? ' low' : '';
         return `
-          <div class="inventory-slot filled${low}" data-slot="${slot}" title="${escapeHtml(item.label)} x${formatNumber(item.count)}">
+          <div class="inventory-slot filled${low}${fallback ? ' fallback-position' : ''}" data-slot="${slot}" title="${escapeHtml(item.label)} x${formatNumber(item.count)}">
             ${itemIcon(item)}
             <span class="inventory-count">${formatNumber(item.count)}</span>
             ${durability}
