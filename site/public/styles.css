@@ -1429,10 +1429,11 @@ body.search-focus-active #logoutButton {
 
 .server-layout {
   display: grid;
-  grid-column: 1 / -1;
+  grid-column: span 4;
   grid-template-columns: minmax(0, 1fr) minmax(320px, 0.9fr);
   gap: 16px;
   align-items: stretch;
+  align-self: start;
 }
 
 .server-layout .panel {
@@ -2474,6 +2475,7 @@ body.search-focus-active #logoutButton {
   }
 
   .server-layout {
+    grid-column: 1 / -1;
     grid-template-columns: 1fr;
   }
 
