@@ -156,6 +156,25 @@ function parsePlaytimeSeconds(value) {
   return matches > 0 && !remainder && Number.isSafeInteger(total) ? total : null;
 }
 
+function parseRegistrationDate(value) {
+  const match = String(value || '').trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})$/);
+  if (!match) return null;
+  const [, month, day, year, hour, minute, second] = match.map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  if (!Number.isFinite(date.getTime())) return null;
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day ||
+    date.getUTCHours() !== hour ||
+    date.getUTCMinutes() !== minute ||
+    date.getUTCSeconds() !== second
+  ) {
+    return null;
+  }
+  return date;
+}
+
 function toNumber(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -335,8 +354,15 @@ async function ensureOptionalTables() {
       username VARCHAR(255) UNIQUE NOT NULL,
       last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       last_online TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      registration_at TIMESTAMPTZ,
       is_online BOOLEAN DEFAULT FALSE
     )
+  `);
+  await pool.query(`ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS registration_at TIMESTAMPTZ`);
+  await pool.query(`
+    UPDATE player_activity
+    SET registration_at = COALESCE(last_online, last_seen, NOW())
+    WHERE registration_at IS NULL
   `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS game_chat_messages (
@@ -1388,6 +1414,8 @@ async function getPlayerProfile(url) {
         ) AS is_whitelisted,
         pa.last_seen,
         pa.last_online,
+        pa.registration_at,
+        TO_CHAR(pa.registration_at AT TIME ZONE 'UTC', 'MM/DD/YYYY HH24:MI:SS') AS registration_display,
         pt.tracking_since,
         pt.tracking_since IS NOT NULL AS is_online,
         COALESCE(pt.total_seconds, 0) +
@@ -1434,6 +1462,8 @@ async function getPlayerProfile(url) {
     trackingSince: profile.tracking_since || null,
     lastSeen: profile.last_seen || null,
     lastOnline: profile.last_online || null,
+    registrationAt: profile.registration_at || null,
+    registrationDisplay: profile.registration_display || null,
     totalSeconds: seconds,
     playtime: formatSeconds(seconds),
     chat: {
@@ -1740,6 +1770,43 @@ async function setAdminPlaytime(currentUser, body) {
   };
 }
 
+async function setAdminRegistrationDate(currentUser, body) {
+  assertAdminUser(currentUser);
+  assertDatabase();
+
+  const rawLine = String(body.line || '').trim();
+  const match = rawLine.match(/^([A-Za-z0-9_]{1,32})\s*:\s*([\s\S]+)$/);
+  if (!match) {
+    const err = new Error('Use format: WheatMagnate: 01/31/2025 15:40:15');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const username = match[1];
+  const registrationDate = parseRegistrationDate(match[2]);
+  if (!registrationDate) {
+    const err = new Error('Could not parse registration date.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const result = await pool.query(`
+    INSERT INTO player_activity (username, registration_at)
+    VALUES ($1, $2)
+    ON CONFLICT (username)
+    DO UPDATE SET username = EXCLUDED.username,
+                  registration_at = EXCLUDED.registration_at
+    RETURNING username,
+              TO_CHAR(registration_at AT TIME ZONE 'UTC', 'MM/DD/YYYY HH24:MI:SS') AS registration_display
+  `, [username, registrationDate]);
+
+  return {
+    username: result.rows[0]?.username || username,
+    registrationAt: registrationDate,
+    registrationDisplay: result.rows[0]?.registration_display || match[2]
+  };
+}
+
 async function getAdminControlState(currentUser) {
   assertAdminUser(currentUser);
 
@@ -1849,6 +1916,10 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/admin/playtime' && req.method === 'POST') {
       sendJson(res, 200, await setAdminPlaytime(currentUser, await readJsonBody(req)));
+      return;
+    }
+    if (url.pathname === '/api/admin/registration-date' && req.method === 'POST') {
+      sendJson(res, 200, await setAdminRegistrationDate(currentUser, await readJsonBody(req)));
       return;
     }
 

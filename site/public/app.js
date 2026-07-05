@@ -1008,6 +1008,7 @@ function renderPlayerProfile(profile) {
     </header>
     <section class="player-profile-grid">
       <div><span>Playtime</span><strong>${escapeHtml(profile.playtime || '-')}</strong></div>
+      <div><span>Registered</span><strong>${escapeHtml(profile.registrationDisplay || (profile.registrationAt ? formatDate(profile.registrationAt) : 'Unknown'))}</strong></div>
       <div><span>Last Seen</span><strong>${profile.lastSeen ? formatDate(profile.lastSeen) : 'Never'}</strong></div>
       <div><span>Last Online</span><strong>${profile.lastOnline ? formatDate(profile.lastOnline) : 'Unknown'}</strong></div>
       <div><span>Chat Messages</span><strong>${formatNumber(profile.chat?.totalMessages)}</strong></div>
@@ -1036,6 +1037,8 @@ function playerProfileSignature(profile) {
     profile.isOnline,
     profile.isWhitelisted,
     profile.playtime,
+    profile.registrationAt,
+    profile.registrationDisplay,
     profile.lastSeen,
     profile.lastOnline,
     profile.chat?.totalMessages,
@@ -2642,6 +2645,8 @@ async function handleAdminControlAction(event) {
       payload.username = normalizePlayerInput($('#adminIgnoreChatPlayer')?.value);
     } else if (action === 'playtime_set') {
       payload.line = $('#adminPlaytimeInput')?.value.trim();
+    } else if (action === 'registration_date_set') {
+      payload.line = $('#adminRegistrationDateInput')?.value.trim();
     }
 
     if (['follow', 'whitelist_add', 'whitelist_remove', 'ignore_chat', 'unignore_chat'].includes(action) && !payload.username) {
@@ -2653,12 +2658,22 @@ async function handleAdminControlAction(event) {
     if (action === 'playtime_set' && !payload.line) {
       throw new Error('Enter a playtime line first.');
     }
+    if (action === 'registration_date_set' && !payload.line) {
+      throw new Error('Enter a registration date line first.');
+    }
 
     button.disabled = true;
     if (action === 'playtime_set') {
       const result = await postJson('/api/admin/playtime', payload);
       setBanner(`Updated ${result.username} playtime to ${result.playtime}.`);
       $('#adminPlaytimeInput').value = '';
+      await loadAll();
+      return;
+    }
+    if (action === 'registration_date_set') {
+      const result = await postJson('/api/admin/registration-date', payload);
+      setBanner(`Updated ${result.username} registration date to ${result.registrationDisplay}.`);
+      $('#adminRegistrationDateInput').value = '';
       await loadAll();
       return;
     }
