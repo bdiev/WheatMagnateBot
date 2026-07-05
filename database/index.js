@@ -117,20 +117,20 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
       if (isOnline) {
         await pool.query(`
           INSERT INTO player_activity (username, last_seen, last_online, registration_at, is_online)
-          VALUES ($1, $2, $2, $2, TRUE)
+          VALUES ($1, $2::timestamp, $2::timestamp, NOW(), TRUE)
           ON CONFLICT (username)
-          DO UPDATE SET last_seen = $2,
-                        last_online = $2,
-                        registration_at = COALESCE(player_activity.registration_at, $2),
+          DO UPDATE SET last_seen = $2::timestamp,
+                        last_online = $2::timestamp,
+                        registration_at = COALESCE(player_activity.registration_at, NOW()),
                         is_online = TRUE
         `, [username, timestamp]);
       } else {
         await pool.query(`
           INSERT INTO player_activity (username, last_seen, registration_at, is_online)
-          VALUES ($1, $2, $2, FALSE)
+          VALUES ($1, $2::timestamp, NOW(), FALSE)
           ON CONFLICT (username)
-          DO UPDATE SET last_seen = $2,
-                        registration_at = COALESCE(player_activity.registration_at, $2),
+          DO UPDATE SET last_seen = $2::timestamp,
+                        registration_at = COALESCE(player_activity.registration_at, NOW()),
                         is_online = FALSE
         `, [username, timestamp]);
       }
