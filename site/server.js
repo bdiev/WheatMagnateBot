@@ -770,6 +770,8 @@ async function getWhisperOnlinePlayers(currentUser, url) {
     names AS (
       SELECT username FROM player_activity WHERE is_online = TRUE
       UNION
+      SELECT username FROM whitelist
+      UNION
       SELECT player_username AS username FROM dialog_players
     )
     SELECT DISTINCT ON (LOWER(names.username))
@@ -777,6 +779,9 @@ async function getWhisperOnlinePlayers(currentUser, url) {
       pa.last_seen,
       pa.last_online,
       COALESCE(pa.is_online, FALSE) AS is_online,
+      EXISTS (
+        SELECT 1 FROM whitelist w WHERE LOWER(w.username) = LOWER(names.username)
+      ) AS is_whitelisted,
       dialogs.last_message_at,
       COALESCE(dialogs.message_count, 0)::int AS message_count,
       COALESCE(dialogs.unread_count, 0)::int AS unread_count
@@ -794,6 +799,7 @@ async function getWhisperOnlinePlayers(currentUser, url) {
       .map(row => ({
         username: row.username,
         isOnline: Boolean(row.is_online),
+        isWhitelisted: Boolean(row.is_whitelisted),
         lastSeen: row.last_seen,
         lastOnline: row.last_online,
         lastMessageAt: row.last_message_at,
@@ -804,10 +810,7 @@ async function getWhisperOnlinePlayers(currentUser, url) {
         const aHasDialog = a.messageCount > 0 ? 1 : 0;
         const bHasDialog = b.messageCount > 0 ? 1 : 0;
         if (aHasDialog !== bHasDialog) return bHasDialog - aHasDialog;
-        const aMessageTime = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
-        const bMessageTime = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
-        if (aMessageTime !== bMessageTime) return bMessageTime - aMessageTime;
-        if (a.isOnline !== b.isOnline) return a.isOnline ? -1 : 1;
+        if (a.isWhitelisted !== b.isWhitelisted) return a.isWhitelisted ? -1 : 1;
         return a.username.localeCompare(b.username, undefined, { sensitivity: 'base' });
       })
   };

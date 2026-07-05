@@ -1255,6 +1255,7 @@ function renderWhisperPlayers() {
     ...state.whisperPlayers.map(player => [
       player.username || '',
       Boolean(player.isOnline),
+      Boolean(player.isWhitelisted),
       player.lastMessageAt || '',
       player.messageCount || 0,
       player.unreadCount || 0
