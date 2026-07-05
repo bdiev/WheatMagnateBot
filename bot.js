@@ -1034,6 +1034,20 @@ async function initDatabase() {
       ON site_game_chat_outbox (status, created_at)
     `);
     await pool.query(`
+      CREATE TABLE IF NOT EXISTS site_whisper_messages (
+        id BIGSERIAL PRIMARY KEY,
+        player_username VARCHAR(255) NOT NULL,
+        direction VARCHAR(16) NOT NULL CHECK (direction IN ('incoming', 'outgoing')),
+        site_username VARCHAR(64),
+        message TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS site_whisper_messages_player_created_idx
+      ON site_whisper_messages (LOWER(player_username), created_at DESC)
+    `);
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS bot_commands (
         id BIGSERIAL PRIMARY KEY,
         source VARCHAR(32) NOT NULL,
@@ -3733,6 +3747,36 @@ async function recordGameChatMessage(username, message) {
   }
 }
 
+async function recordSiteWhisperMessage(username, direction, message, siteUsername = null) {
+  if (!pool) return;
+
+  const safeUsername = String(username || '').replace(/[^A-Za-z0-9_]/g, '').trim().slice(0, 32);
+  const safeDirection = direction === 'outgoing' ? 'outgoing' : 'incoming';
+  const safeSiteUsername = siteUsername
+    ? String(siteUsername).replace(/[\u0000-\u001F\u007F]/g, '').trim().slice(0, 64)
+    : null;
+  const cleanMessage = String(message || '')
+    .replace(/\u00a7[0-9a-fk-or]/gi, '')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 240);
+
+  if (!safeUsername || !cleanMessage) return;
+
+  try {
+    await pool.query(
+      `INSERT INTO site_whisper_messages (player_username, direction, site_username, message)
+       VALUES ($1, $2, $3, $4)`,
+      [safeUsername, safeDirection, safeSiteUsername, cleanMessage]
+    );
+    await pool.query("DELETE FROM site_whisper_messages WHERE created_at < NOW() - INTERVAL '30 days'");
+  } catch (err) {
+    console.error('[DB] Failed to record site whisper message:', err.message);
+  }
+}
+
 async function processSiteGameChatOutbox() {
   if (!pool || !bot || typeof bot.chat !== 'function') return;
 
@@ -3826,6 +3870,28 @@ async function executeBotCommand(command) {
     if (!sent) throw new Error('Minecraft bot is not ready.');
     await sendGameChatMessageToDiscord(bot.username || 'WheatMagnate', outgoing, { allowMentions: false });
     return { message: outgoing };
+  }
+
+  if (type === 'site_whisper') {
+    if (!bot || typeof bot.chat !== 'function') throw new Error('Minecraft bot is not ready.');
+    const username = String(payload.username || '')
+      .replace(/[^A-Za-z0-9_]/g, '')
+      .trim()
+      .slice(0, 32);
+    const cleanMessage = sanitizeSiteChatMessage(payload.message);
+    if (!username) throw new Error('Whisper target is required.');
+    if (!cleanMessage) throw new Error('Queued whisper is empty.');
+
+    let sentChunks = 0;
+    for (const chunk of splitMinecraftMessage(cleanMessage)) {
+      if (!bot?.entity) throw new Error('Minecraft bot is not ready.');
+      const sent = sendMinecraftChat(`/msg ${username} ${chunk}`);
+      if (!sent) throw new Error('Minecraft bot is not ready.');
+      sentChunks += 1;
+      await new Promise(resolve => setTimeout(resolve, 400));
+    }
+
+    return { username, chunks: sentChunks };
   }
 
   if (type === 'pause') {
@@ -6235,6 +6301,7 @@ function createBot() {
     }
 
     debugLog(`[Whisper] Calling sendWhisperToDiscord...`);
+    recordSiteWhisperMessage(username, 'incoming', cleanedWhisper).catch(() => {});
     sendWhisperToDiscord(username, message);
   });
 

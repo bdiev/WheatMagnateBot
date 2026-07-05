@@ -55,6 +55,28 @@
               <button class="tab-button admin-only" type="button" data-tab="admin" role="menuitem" hidden>Admin</button>
             </div>
           </nav>
+          <section id="whisperPanel" class="whisper-panel" aria-label="Private Minecraft messages">
+            <button id="whisperToggle" class="whisper-toggle" type="button" aria-label="Open private messages" aria-expanded="false">
+              <span class="mail-icon" aria-hidden="true"></span>
+            </button>
+            <div id="whisperPopover" class="whisper-popover" hidden>
+              <div class="whisper-sidebar">
+                <div class="whisper-title">Online players</div>
+                <div id="whisperPlayers" class="whisper-players"></div>
+              </div>
+              <article id="whisperDialog" class="whisper-dialog" hidden>
+                <header class="whisper-dialog-header">
+                  <div id="whisperTargetTitle">Choose player</div>
+                  <button id="whisperCloseDialog" class="seen-search-close" type="button" aria-label="Close dialog">&times;</button>
+                </header>
+                <div id="whisperMessages" class="whisper-messages"></div>
+                <form id="whisperForm" class="whisper-form">
+                  <input id="whisperInput" type="text" autocomplete="off" maxlength="240" placeholder="Message...">
+                  <button id="whisperSend" type="submit">Send</button>
+                </form>
+              </article>
+            </div>
+          </section>
           <section id="seenSearch" class="seen-search" aria-label="Seen player search">
             <button id="seenSearchToggle" class="seen-search-toggle" type="button" aria-label="Open seen search" aria-expanded="false">
               <span class="search-icon" aria-hidden="true"></span>

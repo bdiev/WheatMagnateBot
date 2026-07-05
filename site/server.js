@@ -336,6 +336,20 @@ async function ensureOptionalTables() {
     ON site_game_chat_outbox (status, created_at)
   `);
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS site_whisper_messages (
+      id BIGSERIAL PRIMARY KEY,
+      player_username VARCHAR(255) NOT NULL,
+      direction VARCHAR(16) NOT NULL CHECK (direction IN ('incoming', 'outgoing')),
+      site_username VARCHAR(64),
+      message TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS site_whisper_messages_player_created_idx
+    ON site_whisper_messages (LOWER(player_username), created_at DESC)
+  `);
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS bot_commands (
       id BIGSERIAL PRIMARY KEY,
       source VARCHAR(32) NOT NULL,
@@ -634,6 +648,106 @@ async function queueSiteChatMessage(currentUser, body) {
   }
 
   return queueBotCommand(currentUser, 'chat', { message });
+}
+
+function cleanMinecraftUsername(value) {
+  return String(value || '')
+    .replace(/[^A-Za-z0-9_]/g, '')
+    .trim()
+    .slice(0, 32);
+}
+
+function cleanWhisperMessage(value) {
+  return String(value || '')
+    .replace(/\u00a7[0-9a-fk-or]/gi, '')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 240);
+}
+
+async function getWhisperOnlinePlayers() {
+  assertDatabase();
+  const result = await pool.query(`
+    SELECT username, last_seen, last_online, is_online
+    FROM player_activity
+    WHERE is_online = TRUE
+    ORDER BY LOWER(username) ASC
+  `);
+
+  return {
+    players: result.rows.map(row => ({
+      username: row.username,
+      isOnline: Boolean(row.is_online),
+      lastSeen: row.last_seen,
+      lastOnline: row.last_online
+    }))
+  };
+}
+
+async function getWhisperDialog(url) {
+  assertDatabase();
+  const username = cleanMinecraftUsername(url.searchParams.get('username'));
+  if (!username) {
+    const err = new Error('Player username is required.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const limit = Math.min(120, Math.max(1, toInt(url.searchParams.get('limit'), 80)));
+  const result = await pool.query(`
+    SELECT id, player_username, direction, site_username, message, created_at
+    FROM site_whisper_messages
+    WHERE LOWER(player_username) = LOWER($1)
+    ORDER BY created_at DESC
+    LIMIT $2
+  `, [username, limit]);
+
+  return {
+    username,
+    messages: result.rows.reverse().map(row => ({
+      id: String(row.id),
+      playerUsername: row.player_username,
+      direction: row.direction,
+      siteUsername: row.site_username,
+      message: row.message,
+      createdAt: row.created_at
+    }))
+  };
+}
+
+async function queueSiteWhisperMessage(currentUser, body) {
+  assertDatabase();
+  const username = cleanMinecraftUsername(body.username);
+  const message = cleanWhisperMessage(body.message);
+  if (!username) {
+    const err = new Error('Player username is required.');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (!message) {
+    const err = new Error('Message is required.');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (message.startsWith('/') || message.startsWith('!')) {
+    const err = new Error('Commands cannot be sent as private messages.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  await pool.query(`
+    INSERT INTO site_whisper_messages (player_username, direction, site_username, message)
+    VALUES ($1, 'outgoing', $2, $3)
+  `, [username, currentUser?.username || null, message]);
+
+  const queued = await queueBotCommand(currentUser, 'site_whisper', { username, message });
+  return {
+    ...queued,
+    username,
+    message
+  };
 }
 
 async function getBotStats() {
@@ -1408,6 +1522,18 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/chat/send' && req.method === 'POST') {
       sendJson(res, 202, await queueSiteChatMessage(currentUser, await readJsonBody(req)));
+      return;
+    }
+    if (url.pathname === '/api/whisper/online' && req.method === 'GET') {
+      sendJson(res, 200, await getWhisperOnlinePlayers());
+      return;
+    }
+    if (url.pathname === '/api/whisper/dialog' && req.method === 'GET') {
+      sendJson(res, 200, await getWhisperDialog(url));
+      return;
+    }
+    if (url.pathname === '/api/whisper/send' && req.method === 'POST') {
+      sendJson(res, 202, await queueSiteWhisperMessage(currentUser, await readJsonBody(req)));
       return;
     }
     if (url.pathname === '/api/bot-stats') {

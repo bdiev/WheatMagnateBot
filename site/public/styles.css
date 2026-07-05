@@ -698,6 +698,226 @@ body.search-focus-active #logoutButton {
   transform: rotate(45deg);
 }
 
+.whisper-panel {
+  position: relative;
+  z-index: 70;
+  width: var(--button-height);
+  height: var(--button-height);
+  align-self: center;
+}
+
+.whisper-toggle {
+  position: relative;
+  width: var(--button-height);
+  min-width: var(--button-height);
+  height: var(--button-height);
+  min-height: var(--button-height);
+  border: 1px solid var(--line);
+  border-radius: var(--button-radius);
+  padding: 0;
+  color: var(--text);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  transition: background-color 220ms ease, border-color 220ms ease, transform 180ms ease, box-shadow 220ms ease;
+}
+
+.whisper-toggle:hover,
+.whisper-panel.open .whisper-toggle {
+  color: var(--text);
+  background: var(--panel-soft);
+  transform: translateY(-1px);
+}
+
+.whisper-toggle:active {
+  transform: translateY(0) scale(0.98);
+}
+
+.mail-icon {
+  position: absolute;
+  inset: 11px 9px;
+  border: 2px solid currentColor;
+  border-radius: 4px;
+}
+
+.mail-icon::before,
+.mail-icon::after {
+  content: "";
+  position: absolute;
+  top: 5px;
+  width: 15px;
+  height: 2px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.mail-icon::before {
+  left: -1px;
+  transform: rotate(32deg);
+  transform-origin: left center;
+}
+
+.mail-icon::after {
+  right: -1px;
+  transform: rotate(-32deg);
+  transform-origin: right center;
+}
+
+.whisper-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 90;
+  display: grid;
+  grid-template-columns: 210px minmax(300px, 1fr);
+  gap: 10px;
+  width: min(620px, calc(100vw - 32px));
+  min-height: 360px;
+  max-height: min(540px, calc(100vh - 140px));
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.whisper-popover[hidden],
+.whisper-dialog[hidden] {
+  display: none;
+}
+
+.whisper-panel:not(.has-dialog) .whisper-popover {
+  grid-template-columns: minmax(220px, 280px);
+  width: min(280px, calc(100vw - 32px));
+  min-height: 240px;
+}
+
+.whisper-sidebar,
+.whisper-dialog {
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+
+.whisper-sidebar {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.whisper-title {
+  padding: 10px 12px;
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.whisper-players {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 8px 8px;
+}
+
+.whisper-player {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: var(--button-height);
+  border: 1px solid transparent;
+  border-radius: var(--button-radius);
+  padding: 0 10px;
+  color: var(--text);
+  background: transparent;
+  text-align: left;
+}
+
+.whisper-player:hover,
+.whisper-player.active {
+  border-color: var(--line);
+  background: var(--panel);
+}
+
+.whisper-player .player-identity span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.whisper-dialog {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+}
+
+.whisper-dialog-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--button-height);
+  padding: 6px 8px 6px 12px;
+  border-bottom: 1px solid var(--line);
+  font-weight: 900;
+}
+
+.whisper-messages {
+  display: grid;
+  align-content: end;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.whisper-message {
+  max-width: 84%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--panel);
+}
+
+.whisper-message.outgoing {
+  justify-self: end;
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: color-mix(in srgb, var(--accent) 13%, var(--panel));
+}
+
+.whisper-message.incoming {
+  justify-self: start;
+}
+
+.whisper-message p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.whisper-message time {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.whisper-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.whisper-form input {
+  min-width: 0;
+}
+
 .seen-search-box {
   position: relative;
   display: grid;
@@ -797,6 +1017,8 @@ body.search-focus-active #logoutButton {
 .chart-scroll,
 .rank-list,
 .player-profile-card,
+.whisper-players,
+.whisper-messages,
 .supply-list,
 .supply-items {
   scrollbar-width: none;
@@ -808,6 +1030,8 @@ body.search-focus-active #logoutButton {
 .chart-scroll::-webkit-scrollbar,
 .rank-list::-webkit-scrollbar,
 .player-profile-card::-webkit-scrollbar,
+.whisper-players::-webkit-scrollbar,
+.whisper-messages::-webkit-scrollbar,
 .supply-list::-webkit-scrollbar,
 .supply-items::-webkit-scrollbar {
   width: 0;
@@ -1839,6 +2063,27 @@ body.search-focus-active #logoutButton {
 
   .seen-search.open {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .whisper-popover {
+    left: calc(-1 * (var(--button-height) + 8px));
+    grid-template-columns: 1fr;
+    width: min(360px, calc(100vw - 20px));
+    min-height: 420px;
+    max-height: calc(100vh - 120px);
+  }
+
+  .whisper-panel:not(.has-dialog) .whisper-popover {
+    width: min(280px, calc(100vw - 20px));
+  }
+
+  .whisper-sidebar {
+    min-height: 132px;
+    max-height: 180px;
+  }
+
+  .whisper-dialog {
+    min-height: 260px;
   }
 
   .player-profile-overlay {

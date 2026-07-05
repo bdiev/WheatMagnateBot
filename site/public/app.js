@@ -18,6 +18,9 @@ const state = {
   chartAnimationFrames: {},
   chartAnimationDurations: {},
   seenPlayers: [],
+  whisperPlayers: [],
+  whisperTarget: null,
+  whisperMessagesSignature: '',
   whitelistSearchPlayers: [],
   ignoreChatSearchPlayers: [],
   adminPlayerSearchRequests: {},
@@ -1016,6 +1019,142 @@ function handleSeenSuggestionClick(event) {
   setTimeout(() => window.scrollTo(window.scrollX, window.scrollY), 80);
 }
 
+function setWhisperOpen(open) {
+  const panel = $('#whisperPanel');
+  const toggle = $('#whisperToggle');
+  const popover = $('#whisperPopover');
+  if (!panel || !toggle || !popover) return;
+  panel.classList.toggle('open', open);
+  panel.classList.toggle('has-dialog', Boolean(state.whisperTarget));
+  popover.hidden = !open;
+  toggle.setAttribute('aria-expanded', String(open));
+  toggle.setAttribute('aria-label', open ? 'Close private messages' : 'Open private messages');
+  if (open) {
+    loadWhisperOnlinePlayers().catch(err => setBanner(`Could not load online players: ${err.message}`));
+    if (state.whisperTarget) {
+      loadWhisperDialog().catch(() => {});
+    }
+  }
+}
+
+function toggleWhisperPanel() {
+  setWhisperOpen(!$('#whisperPanel')?.classList.contains('open'));
+}
+
+function closeWhisperDialog() {
+  state.whisperTarget = null;
+  state.whisperMessagesSignature = '';
+  $('#whisperPanel')?.classList.remove('has-dialog');
+  const dialog = $('#whisperDialog');
+  const messages = $('#whisperMessages');
+  const input = $('#whisperInput');
+  if (dialog) dialog.hidden = true;
+  if (messages) messages.innerHTML = '';
+  if (input) input.value = '';
+  renderWhisperPlayers();
+}
+
+function renderWhisperPlayers() {
+  const list = $('#whisperPlayers');
+  if (!list) return;
+  if (!state.whisperPlayers.length) {
+    list.innerHTML = '<div class="seen-empty">No online players.</div>';
+    return;
+  }
+
+  const active = String(state.whisperTarget || '').toLowerCase();
+  list.innerHTML = state.whisperPlayers.map((player, index) => {
+    const username = player.username || '';
+    const isActive = username.toLowerCase() === active;
+    return `
+      <button class="whisper-player ${isActive ? 'active' : ''}" type="button" data-index="${index}">
+        ${playerIdentity(username, 24)}
+        <span class="pill online">online</span>
+      </button>
+    `;
+  }).join('');
+}
+
+async function loadWhisperOnlinePlayers() {
+  if (!$('#whisperPanel')?.classList.contains('open')) return;
+  const payload = await fetchJson('/api/whisper/online');
+  state.whisperPlayers = payload.players || [];
+  renderWhisperPlayers();
+}
+
+function renderWhisperMessages(messages) {
+  const list = $('#whisperMessages');
+  if (!list) return;
+  const signature = JSON.stringify((messages || []).map(message => [
+    message.id,
+    message.direction,
+    message.message,
+    message.createdAt
+  ]));
+  if (signature === state.whisperMessagesSignature) return;
+  state.whisperMessagesSignature = signature;
+
+  list.innerHTML = messages.length
+    ? messages.map(message => `
+      <div class="whisper-message ${message.direction === 'outgoing' ? 'outgoing' : 'incoming'}">
+        <p>${escapeHtml(message.message)}</p>
+        <time>${message.direction === 'outgoing' ? 'You' : escapeHtml(message.playerUsername || state.whisperTarget)} &middot; ${formatChatTime(message.createdAt)}</time>
+      </div>
+    `).join('')
+    : '<div class="empty">No private messages yet.</div>';
+  list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' });
+}
+
+async function loadWhisperDialog() {
+  if (!state.whisperTarget || !$('#whisperPanel')?.classList.contains('open')) return;
+  const payload = await fetchJson(`/api/whisper/dialog?username=${encodeURIComponent(state.whisperTarget)}&limit=80`);
+  renderWhisperMessages(payload.messages || []);
+}
+
+async function openWhisperDialog(username) {
+  state.whisperTarget = username;
+  state.whisperMessagesSignature = '';
+  $('#whisperPanel')?.classList.add('has-dialog');
+  const dialog = $('#whisperDialog');
+  const title = $('#whisperTargetTitle');
+  if (dialog) dialog.hidden = false;
+  if (title) title.innerHTML = playerIdentity(username, 26);
+  renderWhisperPlayers();
+  await loadWhisperDialog();
+  setTimeout(() => $('#whisperInput')?.focus(), 60);
+}
+
+function handleWhisperPlayerClick(event) {
+  const button = event.target.closest('.whisper-player');
+  if (!button) return;
+  const player = state.whisperPlayers[Number(button.dataset.index)];
+  if (!player?.username) return;
+  openWhisperDialog(player.username).catch(err => setBanner(`Could not open dialog: ${err.message}`));
+}
+
+async function handleWhisperSubmit(event) {
+  event.preventDefault();
+  const input = $('#whisperInput');
+  const button = $('#whisperSend');
+  const message = input?.value.trim();
+  if (!state.whisperTarget || !message) return;
+
+  button.disabled = true;
+  try {
+    await postJson('/api/whisper/send', {
+      username: state.whisperTarget,
+      message
+    });
+    input.value = '';
+    await loadWhisperDialog();
+  } catch (err) {
+    setBanner(`Could not send private message: ${err.message}`);
+  } finally {
+    button.disabled = false;
+    input?.focus();
+  }
+}
+
 function renderChat(payload) {
   $('#chat24h').textContent = formatNumber(payload.totals?.last24h);
   $('#activeChatters').textContent = formatNumber(payload.totals?.activeChatters24h);
@@ -1795,6 +1934,10 @@ async function loadAll() {
     if (state.activeTab === 'admin' && state.currentUser?.role === 'admin') {
       await loadAdminControlState();
     }
+    if ($('#whisperPanel')?.classList.contains('open')) {
+      await loadWhisperOnlinePlayers();
+      await loadWhisperDialog();
+    }
     setBanner('');
   } catch (err) {
     setBanner(`Could not load dashboard data: ${err.message}`);
@@ -1836,6 +1979,10 @@ $('#seenSearchToggle').addEventListener('click', toggleSeenSearch);
 $('#seenSearchClose').addEventListener('click', () => clearSeenSearch({ collapse: true }));
 $('#seenSearchInput').addEventListener('input', handleSeenInput);
 $('#seenSuggestions').addEventListener('click', handleSeenSuggestionClick);
+$('#whisperToggle')?.addEventListener('click', toggleWhisperPanel);
+$('#whisperPlayers')?.addEventListener('click', handleWhisperPlayerClick);
+$('#whisperForm')?.addEventListener('submit', handleWhisperSubmit);
+$('#whisperCloseDialog')?.addEventListener('click', closeWhisperDialog);
 document.addEventListener('click', event => {
   const player = event.target.closest('[data-player]');
   if (player) {
@@ -1850,6 +1997,10 @@ document.addEventListener('click', event => {
     if ($('#seenSearch')?.classList.contains('open')) {
       clearSeenSearch({ collapse: true });
     }
+  }
+
+  if (!event.target.closest('.whisper-panel')) {
+    setWhisperOpen(false);
   }
 
   if (!event.target.closest('.admin-player-picker')) {
@@ -1876,6 +2027,11 @@ document.addEventListener('keydown', event => {
 
   if (event.key === 'Escape' && $('#seenSearch')?.classList.contains('open')) {
     clearSeenSearch({ collapse: true });
+    return;
+  }
+
+  if (event.key === 'Escape' && $('#whisperPanel')?.classList.contains('open')) {
+    setWhisperOpen(false);
     return;
   }
 
