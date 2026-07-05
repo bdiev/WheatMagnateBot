@@ -1431,7 +1431,7 @@ body.search-focus-active #logoutButton {
   display: grid;
   grid-column: 1 / -1;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  grid-template-rows: auto auto;
+  grid-template-rows: minmax(0, auto) minmax(0, auto);
   gap: 16px;
   align-items: stretch;
 }
@@ -1445,6 +1445,7 @@ body.search-focus-active #logoutButton {
   grid-row: 1 / span 2;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
+  height: 696px;
   min-height: 0;
   overflow: hidden;
 }
@@ -1452,14 +1453,17 @@ body.search-focus-active #logoutButton {
 .server-tps-panel {
   grid-column: 1;
   grid-row: 1;
+  min-height: 420px;
 }
 
 .server-nearby-panel {
   grid-column: 1;
   grid-row: 2;
+  min-height: 260px;
 }
 
 .server-leaderboard-panel .leaderboard-list {
+  height: 100%;
   max-height: none;
   min-height: 0;
   overflow: auto;
@@ -2489,7 +2493,14 @@ body.search-focus-active #logoutButton {
   }
 
   .server-leaderboard-panel {
+    height: auto;
+    max-height: 640px;
     order: 2;
+  }
+
+  .server-tps-panel,
+  .server-nearby-panel {
+    min-height: 0;
   }
 
   .server-nearby-panel {
