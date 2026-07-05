@@ -903,6 +903,25 @@ async function getWhisperDialog(currentUser, url) {
   }
 
   const limit = Math.min(120, Math.max(1, toInt(url.searchParams.get('limit'), 80)));
+  const playerResult = await pool.query(`
+    SELECT username, last_seen, last_online, COALESCE(is_online, FALSE) AS is_online
+    FROM player_activity
+    WHERE LOWER(username) = LOWER($1)
+    LIMIT 1
+  `, [username]);
+  const player = playerResult.rows[0]
+    ? {
+        username: playerResult.rows[0].username,
+        isOnline: Boolean(playerResult.rows[0].is_online),
+        lastSeen: playerResult.rows[0].last_seen,
+        lastOnline: playerResult.rows[0].last_online
+      }
+    : {
+        username,
+        isOnline: false,
+        lastSeen: null,
+        lastOnline: null
+      };
   const owned = await pool.query(`
     SELECT 1
     FROM site_whisper_messages
@@ -913,7 +932,7 @@ async function getWhisperDialog(currentUser, url) {
   `, [username, currentUser.username]);
 
   if (!owned.rowCount) {
-    return { username, messages: [] };
+    return { username, player, messages: [] };
   }
 
   const result = await pool.query(`
@@ -936,6 +955,7 @@ async function getWhisperDialog(currentUser, url) {
 
   return {
     username,
+    player,
     messages: result.rows.reverse().map(row => ({
       id: String(row.id),
       playerUsername: row.player_username,
@@ -1335,7 +1355,7 @@ async function searchSeenPlayers(url) {
         ) AS is_whitelisted,
         pa.last_seen,
         pa.last_online,
-        pt.tracking_since IS NOT NULL AS is_online,
+        COALESCE(pa.is_online, FALSE) AS is_online,
         COALESCE(pt.total_seconds, 0) +
           CASE WHEN pt.tracking_since IS NULL THEN 0
                ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - pt.tracking_since)))::BIGINT)
@@ -1418,7 +1438,7 @@ async function getPlayerProfile(url) {
         pa.registration_at,
         TO_CHAR(pa.registration_at AT TIME ZONE 'UTC', 'MM/DD/YYYY HH24:MI:SS') AS registration_display,
         pt.tracking_since,
-        pt.tracking_since IS NOT NULL AS is_online,
+        COALESCE(pa.is_online, FALSE) AS is_online,
         COALESCE(pt.total_seconds, 0) +
           CASE WHEN pt.tracking_since IS NULL THEN 0
                ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - pt.tracking_since)))::BIGINT)

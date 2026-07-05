@@ -1361,6 +1361,13 @@ async function runWhisperSearch(query) {
   }
 }
 
+async function refreshActiveWhisperSearch() {
+  const query = $('#whisperSearchInput')?.value.trim();
+  if (!query) return false;
+  await runWhisperSearch(query);
+  return true;
+}
+
 function handleWhisperSearchInput(event) {
   clearTimeout(state.whisperSearchTimer);
   const query = event.currentTarget.value;
@@ -1439,6 +1446,42 @@ function renderWhisperPlayerList(players, { search = false, emptyText = 'No play
   }
 }
 
+function mergeWhisperPlayerStatus(player) {
+  if (!player?.username) return;
+  const key = String(player.username).toLowerCase();
+  const targetKey = String(state.whisperTarget || '').toLowerCase();
+  const patchPlayer = entry =>
+    String(entry.username || '').toLowerCase() === key
+      ? {
+          ...entry,
+          username: player.username || entry.username,
+          isOnline: Boolean(player.isOnline),
+          lastSeen: player.lastSeen ?? entry.lastSeen,
+          lastOnline: player.lastOnline ?? entry.lastOnline
+        }
+      : entry;
+
+  let foundInList = false;
+  state.whisperPlayers = state.whisperPlayers.map(entry => {
+    if (String(entry.username || '').toLowerCase() === key) foundInList = true;
+    return patchPlayer(entry);
+  });
+  state.whisperSearchPlayers = state.whisperSearchPlayers.map(patchPlayer);
+
+  if (!foundInList && key && key === targetKey) {
+    state.whisperPlayers = [{
+      username: player.username,
+      isOnline: Boolean(player.isOnline),
+      isWhitelisted: false,
+      lastSeen: player.lastSeen || null,
+      lastOnline: player.lastOnline || null,
+      lastMessageAt: null,
+      messageCount: 0,
+      unreadCount: 0
+    }, ...state.whisperPlayers];
+  }
+}
+
 function renderWhisperPlayers() {
   const list = $('#whisperPlayers');
   if (!list) return;
@@ -1492,7 +1535,9 @@ async function loadWhisperOnlinePlayers({ force = false } = {}) {
   state.whisperPlayers = payload.players || [];
   state.whisperUnreadCount = state.whisperPlayers.reduce((sum, player) => sum + (Number(player.unreadCount) || 0), 0);
   renderWhisperBadge();
-  renderWhisperPlayers();
+  if (!(await refreshActiveWhisperSearch())) {
+    renderWhisperPlayers();
+  }
   updateWhisperDialogTitle();
 }
 
@@ -1534,6 +1579,9 @@ function renderWhisperMessages(messages) {
 async function loadWhisperDialog() {
   if (!state.whisperTarget || !$('#whisperPanel')?.classList.contains('open')) return;
   const payload = await fetchJson(`/api/whisper/dialog?username=${encodeURIComponent(state.whisperTarget)}&limit=80`);
+  mergeWhisperPlayerStatus(payload.player);
+  renderWhisperPlayers();
+  updateWhisperDialogTitle();
   renderWhisperMessages(payload.messages || []);
 }
 
