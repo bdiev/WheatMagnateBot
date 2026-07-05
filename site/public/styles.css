@@ -545,6 +545,16 @@ body.search-focus-active #logoutButton {
   image-rendering: pixelated;
 }
 
+.theme-icon.sun img {
+  width: 28px;
+  height: 28px;
+}
+
+.theme-icon.moon img {
+  width: 18px;
+  height: 18px;
+}
+
 .theme-icon.sun {
   color: #d97706;
   opacity: 1;
