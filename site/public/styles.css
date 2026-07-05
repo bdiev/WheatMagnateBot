@@ -16,6 +16,18 @@
   --button-padding: 0 14px;
 }
 
+@font-face {
+  font-family: "Minecraft Craftron";
+  src: url("/fonts/Minecraft.ttf") format("truetype");
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "MineCrafter Madpixel";
+  src: url("/fonts/Minecrafter.Reg.ttf") format("truetype");
+  font-display: swap;
+}
+
 :root[data-theme="dark"] {
   color-scheme: dark;
   --bg: #0d0f14;
@@ -89,6 +101,17 @@ p {
 h1 {
   font-size: 34px;
   line-height: 1.1;
+}
+
+.topbar .eyebrow {
+  font-family: "Minecraft Craftron", Inter, ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: 0;
+}
+
+.topbar h1 {
+  font-family: "MineCrafter Madpixel", Inter, ui-sans-serif, system-ui, sans-serif;
+  font-weight: 400;
+  letter-spacing: 0;
 }
 
 h2 {
@@ -369,12 +392,6 @@ button:disabled {
   top: calc(100% + 6px);
   z-index: 80;
   max-height: 246px;
-}
-
-.admin-picker-panel {
-  overflow: visible;
-  position: relative;
-  z-index: 20;
 }
 
 .auth-error {
@@ -955,6 +972,18 @@ body.search-focus-active #logoutButton {
 .panel {
   grid-column: span 2;
   overflow: hidden;
+}
+
+#tab-admin.tab-panel.active,
+#tab-admin .panel-flow-grid,
+#tab-admin .section-grid,
+#tab-admin .admin-picker-panel {
+  overflow: visible;
+}
+
+#tab-admin .admin-picker-panel {
+  position: relative;
+  z-index: 20;
 }
 
 .chat-panel {
