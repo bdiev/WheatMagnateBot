@@ -2127,6 +2127,16 @@ body.search-focus-active #logoutButton {
   margin-top: 0;
 }
 
+.supplies-grid .panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  align-self: stretch;
+}
+
+.supplies-grid .supply-list {
+  align-content: start;
+}
+
 .supply-list {
   display: grid;
   gap: 12px;
@@ -2135,18 +2145,15 @@ body.search-focus-active #logoutButton {
 
 .inventory-layout {
   display: grid;
-  grid-template-columns: 54px minmax(0, 560px);
+  grid-template-columns: clamp(42px, 9%, 58px) minmax(0, 1fr);
   align-items: end;
   gap: 10px;
-  padding: 14px;
-  width: min(100%, 624px);
-  max-width: 624px;
+  width: 100%;
 }
 
 .inventory-layout.barrel-layout {
   display: block;
-  width: min(100%, 560px);
-  max-width: 560px;
+  width: 100%;
 }
 
 .inventory-offhand {
@@ -2288,7 +2295,6 @@ body.search-focus-active #logoutButton {
   .inventory-layout {
     grid-template-columns: 42px minmax(0, 1fr);
     gap: 6px;
-    padding: 10px;
   }
 
   .inventory-slot-label {
