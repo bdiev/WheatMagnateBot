@@ -191,9 +191,16 @@ function summarizeSupplyLocation(location) {
     items: items
       .map(item => ({
         name: item.name,
+        displayName: item.displayName || null,
         label: normalizeItemName(item.name),
         count: toInt(item.count),
         slot: item.slot == null ? null : toInt(item.slot),
+        enchantments: Array.isArray(item.enchantments)
+          ? item.enchantments.map(enchant => ({
+              name: String(enchant.name || '').replace(/^minecraft:/, ''),
+              level: toInt(enchant.level ?? enchant.lvl, 1)
+            })).filter(enchant => enchant.name)
+          : [],
         remainingPercent: item.remainingPercent == null ? null : toNumber(item.remainingPercent),
         usable: item.usable
       }))

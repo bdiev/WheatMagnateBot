@@ -2133,13 +2133,41 @@ body.search-focus-active #logoutButton {
   padding: 14px;
 }
 
+.inventory-layout {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 560px);
+  align-items: end;
+  gap: 10px;
+  padding: 14px;
+  width: min(100%, 624px);
+  max-width: 624px;
+}
+
+.inventory-layout.barrel-layout {
+  display: block;
+  width: min(100%, 560px);
+  max-width: 560px;
+}
+
+.inventory-offhand {
+  display: grid;
+  gap: 5px;
+}
+
+.inventory-slot-label {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1;
+  text-align: center;
+  text-transform: uppercase;
+}
+
 .inventory-grid {
   display: grid;
   grid-template-columns: repeat(9, minmax(0, 1fr));
   gap: 4px;
-  padding: 14px;
-  width: min(100%, 560px);
-  max-width: 560px;
+  min-width: 0;
 }
 
 .inventory-slot {
@@ -2160,10 +2188,21 @@ body.search-focus-active #logoutButton {
 .inventory-slot.filled {
   background:
     linear-gradient(135deg, color-mix(in srgb, var(--panel) 82%, #aab09f), var(--panel-soft));
+  cursor: pointer;
 }
 
 .inventory-slot.low {
   border-color: color-mix(in srgb, var(--warn) 72%, var(--line));
+}
+
+.inventory-slot[role="button"]:hover,
+.inventory-slot[role="button"]:focus-visible {
+  border-color: var(--accent);
+  outline: 0;
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent),
+    inset 2px 2px 0 color-mix(in srgb, #000 14%, transparent),
+    inset -2px -2px 0 color-mix(in srgb, #fff 28%, transparent);
 }
 
 .inventory-slot .item-icon {
@@ -2201,6 +2240,78 @@ body.search-focus-active #logoutButton {
 .inventory-durability {
   top: 3px;
   color: #e9f7d7;
+}
+
+.supply-tooltip {
+  position: fixed;
+  z-index: 260;
+  display: grid;
+  gap: 5px;
+  min-width: 180px;
+  max-width: min(280px, calc(100vw - 20px));
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, #111);
+  border-radius: 6px;
+  padding: 10px 11px;
+  color: #f4f7ef;
+  background: color-mix(in srgb, #090b10 92%, var(--panel));
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.38);
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.supply-tooltip[hidden] {
+  display: none;
+}
+
+.supply-tooltip strong {
+  color: #fff;
+  font-size: 13px;
+}
+
+.supply-tooltip span {
+  color: #dbe6d2;
+}
+
+.supply-tooltip .muted {
+  color: #95a08f;
+}
+
+.supply-tooltip-enchants {
+  display: grid;
+  gap: 3px;
+  margin-top: 3px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+@media (max-width: 700px) {
+  .inventory-layout {
+    grid-template-columns: 42px minmax(0, 1fr);
+    gap: 6px;
+    padding: 10px;
+  }
+
+  .inventory-slot-label {
+    font-size: 8px;
+  }
+
+  .inventory-layout.barrel-layout {
+    width: 100%;
+  }
+
+  .inventory-durability {
+    top: auto;
+    right: 2px;
+    bottom: 2px;
+    padding: 1px 2px;
+    max-width: calc(100% - 4px);
+    font-size: 8px;
+    opacity: 0.82;
+  }
+
+  .inventory-slot:has(.inventory-durability) .inventory-count {
+    display: none;
+  }
 }
 
 .supply-summary {

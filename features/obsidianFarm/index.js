@@ -233,6 +233,28 @@ function summarizeSupplyItems(bot, items) {
   const pickaxes = [];
   const allItems = [];
 
+  const normalizeEnchantments = item => {
+    const direct = item.enchants || item.enchantments;
+    if (Array.isArray(direct) && direct.length) {
+      return direct.map(enchant => ({
+        name: String(enchant.name || enchant.id || enchant.type || 'enchantment'),
+        level: Number(enchant.lvl ?? enchant.level ?? enchant.value ?? 1) || 1
+      }));
+    }
+    const nbtRoot = item.nbt?.value || {};
+    const lists = [
+      nbtRoot.Enchantments?.value?.value,
+      nbtRoot.StoredEnchantments?.value?.value
+    ].filter(Array.isArray);
+    return lists.flatMap(list => list.map(entry => {
+      const value = entry?.value || {};
+      return {
+        name: String(value.id?.value || 'enchantment').replace(/^minecraft:/, ''),
+        level: Number(value.lvl?.value || 1) || 1
+      };
+    }));
+  };
+
   for (const item of items) {
     const maxDurability = getItemMaxDurability(bot, item);
     const remainingPercent = maxDurability
@@ -240,8 +262,10 @@ function summarizeSupplyItems(bot, items) {
       : null;
     allItems.push({
       name: item.name,
+      displayName: item.displayName || item.name,
       count: item.count,
       slot: item.slot,
+      enchantments: normalizeEnchantments(item),
       remainingPercent,
       usable: PICKAXE_PRIORITY.includes(item.name)
         ? isPickaxeUsable(bot, item)

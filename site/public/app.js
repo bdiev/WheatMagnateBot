@@ -30,6 +30,7 @@ const state = {
   adminPlayerSearchRequests: {},
   adminControlState: null,
   adminControlLoading: false,
+  supplyTooltipItems: {},
   chatMessageIds: new Set(),
   chatInitialized: false,
   authMode: 'login',
@@ -1500,15 +1501,10 @@ function renderSupplies(selector, supplies, error = null) {
     renderInventorySupplies(selector, items);
     return;
   }
-
-  const summary = `
-    <div class="supply-summary">
-      <div><span>Food</span><strong>${formatNumber(supplies.foodCount)}</strong></div>
-      <div><span>Pickaxes</span><strong>${formatNumber(supplies.pickaxeCount)}</strong></div>
-      <div><span>Usable Pickaxes</span><strong>${formatNumber(supplies.usablePickaxeCount)}</strong></div>
-      <div><span>Total Items</span><strong>${formatNumber(supplies.totalItems)}</strong></div>
-    </div>
-  `;
+  if (selector === '#barrelSupplies') {
+    renderContainerSupplies(selector, items);
+    return;
+  }
 
   const itemList = items.length
     ? items.map(item => {
@@ -1527,19 +1523,25 @@ function renderSupplies(selector, supplies, error = null) {
       }).join('')
     : '<div class="empty">No items recorded.</div>';
 
-  renderStable(selector, `${summary}<div class="supply-items">${itemList}</div>`, {
-    foodCount: supplies.foodCount,
-    pickaxeCount: supplies.pickaxeCount,
-    usablePickaxeCount: supplies.usablePickaxeCount,
-    totalItems: supplies.totalItems,
+  renderStable(selector, `<div class="supply-items">${itemList}</div>`, {
     items: items.map(item => [
       item.name,
       item.label,
       item.count,
       item.remainingPercent,
-      item.usable
+      item.usable,
+      item.enchantments
     ])
   });
+}
+
+function registerSupplyTooltipItem(key, item) {
+  state.supplyTooltipItems[key] = item;
+  return key;
+}
+
+function supplyTooltipKey(prefix, slot, item) {
+  return registerSupplyTooltipItem(`${prefix}:${slot}`, item);
 }
 
 function inventoryGridSlots(items) {
@@ -1549,6 +1551,9 @@ function inventoryGridSlots(items) {
     const slot = Number(item.slot);
     if (Number.isFinite(slot) && slot >= 9 && slot <= 44) {
       bySlot.set(slot, item);
+    } else if (slot === 45) {
+      // Offhand is rendered separately from the 9x4 inventory grid.
+      continue;
     } else {
       unplacedItems.push(item);
     }
@@ -1569,29 +1574,46 @@ function inventoryGridSlots(items) {
   return slots;
 }
 
+function containerGridSlots(items, size = 27) {
+  const bySlot = new Map();
+  const unplacedItems = [];
+  for (const item of items || []) {
+    const slot = Number(item.slot);
+    if (Number.isFinite(slot) && slot >= 0 && slot < size) {
+      bySlot.set(slot, item);
+    } else {
+      unplacedItems.push(item);
+    }
+  }
+  const slots = Array.from({ length: size }, (_, slot) => ({ slot, item: bySlot.get(slot) || null }));
+  let nextUnplaced = 0;
+  for (const entry of slots) {
+    if (entry.item || nextUnplaced >= unplacedItems.length) continue;
+    entry.item = unplacedItems[nextUnplaced];
+    entry.fallback = true;
+    nextUnplaced += 1;
+  }
+  return slots;
+}
+
 function renderInventorySupplies(selector, items) {
+  state.supplyTooltipItems = Object.fromEntries(Object.entries(state.supplyTooltipItems).filter(([key]) => !key.startsWith('inventory:')));
   const slots = inventoryGridSlots(items);
+  const offhandItem = items.find(item => Number(item.slot) === 45);
   if (!items.length) {
     renderStable(selector, '<div class="empty">No items recorded.</div>', ['inventory-empty']);
     return;
   }
 
   const html = `
-    <div class="inventory-grid" aria-label="Bot inventory slots">
-      ${slots.map(({ slot, item, fallback }) => {
-        if (!item) return `<div class="inventory-slot" data-slot="${slot}" aria-label="Empty slot"></div>`;
-        const durability = item.remainingPercent == null
-          ? ''
-          : `<span class="inventory-durability">${Number(item.remainingPercent).toFixed(0)}%</span>`;
-        const low = item.usable === false ? ' low' : '';
-        return `
-          <div class="inventory-slot filled${low}${fallback ? ' fallback-position' : ''}" data-slot="${slot}" title="${escapeHtml(item.label)} x${formatNumber(item.count)}">
-            ${itemIcon(item)}
-            <span class="inventory-count">${formatNumber(item.count)}</span>
-            ${durability}
-          </div>
-        `;
-      }).join('')}
+    <div class="inventory-layout">
+      <div class="inventory-offhand">
+        <span class="inventory-slot-label">Offhand</span>
+        ${renderInventorySlot(45, offhandItem, { tooltipPrefix: 'inventory', label: 'Offhand slot' })}
+      </div>
+      <div class="inventory-grid" aria-label="Bot inventory slots">
+        ${slots.map(({ slot, item, fallback }) => renderInventorySlot(slot, item, { fallback, tooltipPrefix: 'inventory' })).join('')}
+      </div>
     </div>
   `;
 
@@ -1602,9 +1624,98 @@ function renderInventorySupplies(selector, items) {
       item.count,
       item.slot,
       item.remainingPercent,
-      item.usable
+      item.usable,
+      item.enchantments
     ])
   });
+}
+
+function renderContainerSupplies(selector, items) {
+  state.supplyTooltipItems = Object.fromEntries(Object.entries(state.supplyTooltipItems).filter(([key]) => !key.startsWith('barrel:')));
+  if (!items.length) {
+    renderStable(selector, '<div class="empty">No items recorded.</div>', ['barrel-empty']);
+    return;
+  }
+  const slots = containerGridSlots(items, 27);
+  const html = `
+    <div class="inventory-layout barrel-layout">
+      <div class="inventory-grid barrel-grid" aria-label="Supply barrel slots">
+        ${slots.map(({ slot, item, fallback }) => renderInventorySlot(slot, item, { fallback, tooltipPrefix: 'barrel' })).join('')}
+      </div>
+    </div>
+  `;
+  renderStable(selector, html, {
+    items: items.map(item => [
+      item.name,
+      item.label,
+      item.count,
+      item.slot,
+      item.remainingPercent,
+      item.usable,
+      item.enchantments
+    ])
+  });
+}
+
+function renderInventorySlot(slot, item, { fallback = false, label = 'Empty slot', tooltipPrefix = 'inventory' } = {}) {
+  if (!item) return `<div class="inventory-slot" data-slot="${slot}" aria-label="${escapeHtml(label)}"></div>`;
+  const durability = item.remainingPercent == null
+    ? ''
+    : `<span class="inventory-durability">${Number(item.remainingPercent).toFixed(0)}%</span>`;
+  const low = item.usable === false ? ' low' : '';
+  const tooltipKey = supplyTooltipKey(tooltipPrefix, slot, item);
+  return `
+    <div class="inventory-slot filled${low}${fallback ? ' fallback-position' : ''}" role="button" tabindex="0" data-slot="${slot}" data-supply-tooltip="${escapeHtml(tooltipKey)}" title="${escapeHtml(item.label)} x${formatNumber(item.count)}">
+      ${itemIcon(item)}
+      <span class="inventory-count">${formatNumber(item.count)}</span>
+      ${durability}
+    </div>
+  `;
+}
+
+function formatEnchantmentName(name) {
+  return String(name || '')
+    .replace(/^minecraft:/, '')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, char => char.toUpperCase());
+}
+
+function hideSupplyTooltip() {
+  const tooltip = $('#supplyTooltip');
+  if (tooltip) tooltip.hidden = true;
+}
+
+function showSupplyTooltip(key, anchor) {
+  const item = state.supplyTooltipItems[key];
+  if (!item || !anchor) return;
+  let tooltip = $('#supplyTooltip');
+  if (!tooltip) {
+    tooltip = document.createElement('div');
+    tooltip.id = 'supplyTooltip';
+    tooltip.className = 'supply-tooltip';
+    document.body.appendChild(tooltip);
+  }
+  const enchantments = Array.isArray(item.enchantments) ? item.enchantments : [];
+  tooltip.innerHTML = `
+    <strong>${escapeHtml(item.displayName || item.label || item.name || 'Item')}</strong>
+    <span>Count: ${formatNumber(item.count)}</span>
+    ${item.slot == null ? '' : `<span>Slot: ${formatNumber(item.slot)}</span>`}
+    ${item.remainingPercent == null ? '' : `<span>Durability: ${Number(item.remainingPercent).toFixed(1)}%</span>`}
+    <div class="supply-tooltip-enchants">
+      ${enchantments.length
+        ? enchantments.map(enchant => `<span>${escapeHtml(formatEnchantmentName(enchant.name))} ${formatNumber(enchant.level)}</span>`).join('')
+        : '<span class="muted">No enchantments</span>'}
+    </div>
+  `;
+  tooltip.hidden = false;
+  const rect = anchor.getBoundingClientRect();
+  const tooltipRect = tooltip.getBoundingClientRect();
+  const left = Math.min(window.innerWidth - tooltipRect.width - 10, Math.max(10, rect.left + rect.width / 2 - tooltipRect.width / 2));
+  const top = rect.top > tooltipRect.height + 14
+    ? rect.top - tooltipRect.height - 8
+    : rect.bottom + 8;
+  tooltip.style.left = `${left}px`;
+  tooltip.style.top = `${Math.min(window.innerHeight - tooltipRect.height - 10, Math.max(10, top))}px`;
 }
 
 function renderServerStats(payload) {
@@ -2229,6 +2340,18 @@ $('#whisperForm')?.addEventListener('submit', handleWhisperSubmit);
 $('#whisperDeleteDialog')?.addEventListener('click', handleWhisperDeleteDialog);
 $('#whisperCloseDialog')?.addEventListener('click', closeWhisperDialog);
 document.addEventListener('click', event => {
+  const supplySlot = event.target.closest('[data-supply-tooltip]');
+  if (supplySlot) {
+    event.preventDefault();
+    event.stopPropagation();
+    showSupplyTooltip(supplySlot.dataset.supplyTooltip, supplySlot);
+    return;
+  }
+
+  if (!event.target.closest('.supply-tooltip')) {
+    hideSupplyTooltip();
+  }
+
   const player = event.target.closest('[data-player]');
   if (player) {
     event.preventDefault();
@@ -2258,6 +2381,18 @@ document.addEventListener('click', event => {
   }
 });
 document.addEventListener('keydown', event => {
+  const supplySlot = event.target.closest?.('[data-supply-tooltip]');
+  if (supplySlot && (event.key === 'Enter' || event.key === ' ')) {
+    event.preventDefault();
+    showSupplyTooltip(supplySlot.dataset.supplyTooltip, supplySlot);
+    return;
+  }
+
+  if (event.key === 'Escape' && !$('#supplyTooltip')?.hidden) {
+    hideSupplyTooltip();
+    return;
+  }
+
   const player = event.target.closest?.('[data-player]');
   if (player && (event.key === 'Enter' || event.key === ' ')) {
     event.preventDefault();
