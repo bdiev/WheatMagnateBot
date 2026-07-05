@@ -546,8 +546,9 @@ body.search-focus-active #logoutButton {
 }
 
 .theme-icon.sun img {
-  width: 28px;
-  height: 28px;
+  width: 34px;
+  height: 34px;
+  transform: translateX(1px);
 }
 
 .theme-icon.moon img {
