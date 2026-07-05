@@ -325,10 +325,42 @@ function summarizeSupplyItems(bot, items) {
       readEnchantList(root.Enchantments ?? root.enchantments);
       readEnchantList(root.StoredEnchantments ?? root.stored_enchantments);
     };
+    const readComponentPayload = component => {
+      const value = readScalar(component);
+      if (!value || typeof value !== 'object') return;
+      readLevels(value.levels ?? value.Levels ?? value.data?.levels ?? value.data?.Levels);
+      readEnchantList(value.enchantments ?? value.Enchantments ?? value.data?.enchantments ?? value.data?.Enchantments);
+    };
+    const readComponents = components => {
+      const source = readScalar(components);
+      if (!source || typeof source !== 'object') return;
+      const wanted = new Set([
+        'enchantments',
+        'minecraft:enchantments',
+        'stored_enchantments',
+        'minecraft:stored_enchantments'
+      ]);
+      if (Array.isArray(source)) {
+        for (const component of source) {
+          const value = readScalar(component);
+          const type = String(readScalar(value?.type ?? value?.id ?? value?.name ?? '')).toLowerCase();
+          if (wanted.has(type)) readComponentPayload(value);
+        }
+        return;
+      }
+      const entries = source instanceof Map ? Array.from(source.entries()) : Object.entries(source);
+      for (const [key, component] of entries) {
+        if (wanted.has(String(key).toLowerCase())) readComponentPayload(component);
+      }
+    };
 
     readEnchantList(item.enchants);
     readEnchantList(item.enchantments);
     readNbt(item.nbt);
+    if (!found.size) {
+      readComponents(item.component);
+      readComponents(item.components);
+    }
     return Array.from(found, ([name, level]) => ({ name, level }));
   };
 
