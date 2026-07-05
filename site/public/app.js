@@ -1719,8 +1719,10 @@ function renderPlayerStats(payload = {}) {
     ? leaderboard.map((player, index) => `
       <div class="rank-item leaderboard-item">
         <span class="rank-index">${index + 1}</span>
-        ${playerIdentity(player.username, 28)}
-        <span class="pill ${player.isOnline ? 'online' : ''}">${player.isOnline ? 'online' : 'offline'}</span>
+        <span class="leaderboard-player">
+          ${playerIdentity(player.username, 28)}
+          <span class="pill ${player.isOnline ? 'online' : ''}">${player.isOnline ? 'online' : 'offline'}</span>
+        </span>
         <strong>${escapeHtml(player.playtime)}</strong>
       </div>
     `).join('')
