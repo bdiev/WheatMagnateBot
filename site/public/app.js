@@ -1524,7 +1524,7 @@ function estimateSupplyRefill(payload = {}) {
   const pickaxes = usablePickaxeCount(inventory, barrel);
   const food = foodItemCount(inventory, barrel);
   const blocksPerPickaxe = Number(farm.blocksPerPickaxe) > 0 ? Number(farm.blocksPerPickaxe) : 1500;
-  const blocksPerFood = 45;
+  const foodPerDay = 7;
   const ratePerDay = recentObsidianRatePerDay(payload);
 
   if (!supplies.hasSnapshot) {
@@ -1535,9 +1535,9 @@ function estimateSupplyRefill(payload = {}) {
   }
 
   const pickaxeDays = pickaxes > 0 ? (pickaxes * blocksPerPickaxe) / ratePerDay : 0;
-  const foodDays = food > 0 ? (food * blocksPerFood) / ratePerDay : 0;
+  const foodDays = food > 0 ? food / foodPerDay : 0;
   const limitingDays = Math.min(pickaxeDays, foodDays);
-  const limitingSupply = pickaxeDays <= foodDays ? 'pickaxes' : 'food';
+  const limitingSupply = pickaxeDays <= foodDays ? 'pickaxes' : 'food est.';
   const approxDate = formatSupplyNeededDate(limitingDays);
 
   return `${approxDate} (${Math.max(0, Math.round(limitingDays))}d, ${limitingSupply})`;
