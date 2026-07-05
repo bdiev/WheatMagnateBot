@@ -11,6 +11,7 @@ const state = {
   chartMeta: {},
   rollingNumbers: {},
   seenSearchTimer: null,
+  whisperSearchTimer: null,
   whitelistSearchTimer: null,
   ignoreChatSearchTimer: null,
   chartTooltipTimer: null,
@@ -27,6 +28,7 @@ const state = {
   whisperLastSeenId: null,
   whisperDialogReadIds: {},
   whisperUnreadCount: 0,
+  whisperSearchPlayers: [],
   whitelistSearchPlayers: [],
   ignoreChatSearchPlayers: [],
   adminPlayerSearchRequests: {},
@@ -993,6 +995,10 @@ function renderPlayerProfile(profile) {
           <span class="pill ${profile.isOnline ? 'online' : ''}">${profile.isOnline ? 'online' : 'offline'}</span>
           <span class="pill">${profile.isWhitelisted ? 'whitelisted' : 'not whitelisted'}</span>
         </div>
+        <button class="player-profile-message-action" type="button" data-whisper-player="${escapeHtml(profile.username)}">
+          <img src="/Writable_Book.png" alt="" aria-hidden="true">
+          <span>Message</span>
+        </button>
       </div>
     </header>
     <section class="player-profile-grid">
@@ -1046,6 +1052,12 @@ function closePlayerProfile() {
   if (!overlay) return;
   overlay.hidden = true;
   document.body.classList.remove('profile-open');
+}
+
+function openWhisperFromProfile(username) {
+  closePlayerProfile();
+  setWhisperOpen(true);
+  openWhisperDialog(username).catch(err => setBanner(`Could not open dialog: ${err.message}`));
 }
 
 function setSeenSearchOpen(open) {
@@ -1152,6 +1164,7 @@ function setWhisperOpen(open) {
   popover.hidden = !open;
   toggle.setAttribute('aria-expanded', String(open));
   toggle.setAttribute('aria-label', open ? 'Close private messages' : 'Open private messages');
+  if (!open) clearWhisperSearch();
   if (open) {
     loadWhisperOnlinePlayers().catch(err => setBanner(`Could not load private message list: ${err.message}`));
     if (state.whisperTarget) {
@@ -1247,6 +1260,70 @@ function closeWhisperDialog() {
   renderWhisperPlayers();
 }
 
+function clearWhisperSearch() {
+  clearTimeout(state.whisperSearchTimer);
+  const input = $('#whisperSearchInput');
+  const suggestions = $('#whisperSearchSuggestions');
+  if (input) input.value = '';
+  if (suggestions) suggestions.hidden = true;
+  state.whisperSearchPlayers = [];
+}
+
+function renderWhisperSearchSuggestions(players) {
+  const suggestions = $('#whisperSearchSuggestions');
+  state.whisperSearchPlayers = players || [];
+
+  if (!suggestions) return;
+  if (state.whisperSearchPlayers.length === 0) {
+    suggestions.innerHTML = '<div class="seen-empty">No players found.</div>';
+    suggestions.hidden = false;
+    return;
+  }
+
+  suggestions.innerHTML = state.whisperSearchPlayers.map((player, index) => `
+    <button class="seen-option" type="button" data-index="${index}">
+      ${playerIdentity(player.username, 24)}
+      <span class="pill ${player.isOnline ? 'online' : ''}">${player.isOnline ? 'online' : 'offline'}</span>
+      <span class="muted">${player.lastSeen ? formatAgo(player.lastSeen) : 'never seen'}</span>
+    </button>
+  `).join('');
+  suggestions.hidden = false;
+}
+
+async function runWhisperSearch(query) {
+  const cleanQuery = query.trim();
+  const suggestions = $('#whisperSearchSuggestions');
+  if (cleanQuery.length < 1) {
+    clearWhisperSearch();
+    return;
+  }
+
+  try {
+    const payload = await fetchJson(`/api/seen-search?query=${encodeURIComponent(cleanQuery)}`);
+    renderWhisperSearchSuggestions(payload.players || []);
+  } catch (err) {
+    if (suggestions) {
+      suggestions.innerHTML = `<div class="seen-empty">Search failed: ${escapeHtml(err.message)}</div>`;
+      suggestions.hidden = false;
+    }
+  }
+}
+
+function handleWhisperSearchInput(event) {
+  clearTimeout(state.whisperSearchTimer);
+  const query = event.currentTarget.value;
+  state.whisperSearchTimer = setTimeout(() => runWhisperSearch(query), 180);
+}
+
+function handleWhisperSearchSuggestionClick(event) {
+  const option = event.target.closest('.seen-option');
+  if (!option) return;
+  const player = state.whisperSearchPlayers[Number(option.dataset.index)];
+  if (!player) return;
+  clearWhisperSearch();
+  openWhisperDialog(player.username).catch(err => setBanner(`Could not open dialog: ${err.message}`));
+}
+
 function renderWhisperPlayers() {
   const list = $('#whisperPlayers');
   if (!list) return;
@@ -1315,6 +1392,7 @@ function renderWhisperMessages(messages) {
     message.id,
     message.direction,
     message.message,
+    message.deliveryStatus || '',
     message.createdAt
   ]));
   if (signature === state.whisperMessagesSignature) return;
@@ -1324,7 +1402,11 @@ function renderWhisperMessages(messages) {
     ? messages.map(message => `
       <div class="whisper-message ${message.direction === 'outgoing' ? 'outgoing' : 'incoming'}">
         <p>${escapeHtml(message.message)}</p>
-        <time>${message.direction === 'outgoing' ? 'You' : escapeHtml(message.playerUsername || state.whisperTarget)} &middot; ${formatChatTime(message.createdAt)}</time>
+        <time>
+          ${message.direction === 'outgoing' ? 'You' : escapeHtml(message.playerUsername || state.whisperTarget)}
+          &middot; ${formatChatTime(message.createdAt)}
+          ${message.direction === 'outgoing' ? `&middot; ${escapeHtml(message.deliveryStatus || 'sent')}` : ''}
+        </time>
       </div>
     `).join('')
     : '<div class="empty">No private messages yet.</div>';
@@ -1338,6 +1420,7 @@ async function loadWhisperDialog() {
 }
 
 async function openWhisperDialog(username) {
+  clearWhisperSearch();
   state.whisperTarget = username;
   state.whisperMessagesSignature = '';
   $('#whisperPanel')?.classList.add('has-dialog');
@@ -1364,6 +1447,7 @@ function handleWhisperPlayerClick(event) {
   if (!button) return;
   const player = state.whisperPlayers[Number(button.dataset.index)];
   if (!player?.username) return;
+  clearWhisperSearch();
   openWhisperDialog(player.username).catch(err => setBanner(`Could not open dialog: ${err.message}`));
 }
 
@@ -2569,6 +2653,8 @@ $('#seenSearchClose').addEventListener('click', () => clearSeenSearch({ collapse
 $('#seenSearchInput').addEventListener('input', handleSeenInput);
 $('#seenSuggestions').addEventListener('click', handleSeenSuggestionClick);
 $('#whisperToggle')?.addEventListener('click', toggleWhisperPanel);
+$('#whisperSearchInput')?.addEventListener('input', handleWhisperSearchInput);
+$('#whisperSearchSuggestions')?.addEventListener('click', handleWhisperSearchSuggestionClick);
 $('#whisperPlayers')?.addEventListener('click', handleWhisperPlayerClick);
 $('#whisperForm')?.addEventListener('submit', handleWhisperSubmit);
 $('#whisperDeleteDialog')?.addEventListener('click', handleWhisperDeleteDialog);
@@ -2584,6 +2670,14 @@ document.addEventListener('click', event => {
 
   if (!event.target.closest('.supply-tooltip')) {
     hideSupplyTooltip();
+  }
+
+  const whisperPlayer = event.target.closest('[data-whisper-player]');
+  if (whisperPlayer) {
+    event.preventDefault();
+    event.stopPropagation();
+    openWhisperFromProfile(whisperPlayer.dataset.whisperPlayer);
+    return;
   }
 
   const player = event.target.closest('[data-player]');

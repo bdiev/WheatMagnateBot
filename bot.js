@@ -1049,8 +1049,28 @@ async function initDatabase() {
         direction VARCHAR(16) NOT NULL CHECK (direction IN ('incoming', 'outgoing')),
         site_username VARCHAR(64),
         message TEXT NOT NULL,
+        delivery_status VARCHAR(16) NOT NULL DEFAULT 'delivered'
+          CHECK (delivery_status IN ('sent', 'delivered')),
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
+    `);
+    await pool.query(`
+      ALTER TABLE site_whisper_messages
+      ADD COLUMN IF NOT EXISTS delivery_status VARCHAR(16) NOT NULL DEFAULT 'delivered'
+    `);
+    await pool.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conname = 'site_whisper_messages_delivery_status_check'
+        ) THEN
+          ALTER TABLE site_whisper_messages
+          ADD CONSTRAINT site_whisper_messages_delivery_status_check
+          CHECK (delivery_status IN ('sent', 'delivered'));
+        END IF;
+      END $$;
     `);
     await pool.query(`
       CREATE INDEX IF NOT EXISTS site_whisper_messages_player_created_idx
@@ -3781,8 +3801,8 @@ async function recordSiteWhisperMessage(username, direction, message, siteUserna
 
   try {
     await pool.query(
-      `INSERT INTO site_whisper_messages (player_username, direction, site_username, message)
-       VALUES ($1, $2, $3, $4)`,
+      `INSERT INTO site_whisper_messages (player_username, direction, site_username, message, delivery_status)
+       VALUES ($1, $2, $3, $4, 'delivered')`,
       [safeUsername, safeDirection, safeSiteUsername, cleanMessage]
     );
     await pool.query("DELETE FROM site_whisper_messages WHERE created_at < NOW() - INTERVAL '30 days'");
@@ -3959,6 +3979,16 @@ async function executeBotCommand(command) {
       outboundWhispers.set(`OUTBOUND:${username.toLowerCase()}:${cleanMinecraftChatMessage(chunk)}`, Date.now());
       sentChunks += 1;
       await new Promise(resolve => setTimeout(resolve, 400));
+    }
+
+    const messageId = String(payload.messageId || '').replace(/[^\d]/g, '');
+    if (messageId && pool) {
+      await pool.query(`
+        UPDATE site_whisper_messages
+        SET delivery_status = 'delivered'
+        WHERE id = $1
+          AND direction = 'outgoing'
+      `, [messageId]);
     }
 
     return { username, chunks: sentChunks };

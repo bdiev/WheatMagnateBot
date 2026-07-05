@@ -350,8 +350,28 @@ async function ensureOptionalTables() {
       direction VARCHAR(16) NOT NULL CHECK (direction IN ('incoming', 'outgoing')),
       site_username VARCHAR(64),
       message TEXT NOT NULL,
+      delivery_status VARCHAR(16) NOT NULL DEFAULT 'delivered'
+        CHECK (delivery_status IN ('sent', 'delivered')),
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+  `);
+  await pool.query(`
+    ALTER TABLE site_whisper_messages
+    ADD COLUMN IF NOT EXISTS delivery_status VARCHAR(16) NOT NULL DEFAULT 'delivered'
+  `);
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'site_whisper_messages_delivery_status_check'
+      ) THEN
+        ALTER TABLE site_whisper_messages
+        ADD CONSTRAINT site_whisper_messages_delivery_status_check
+        CHECK (delivery_status IN ('sent', 'delivered'));
+      END IF;
+    END $$;
   `);
   await pool.query(`
     CREATE INDEX IF NOT EXISTS site_whisper_messages_player_created_idx
@@ -768,7 +788,7 @@ async function getWhisperOnlinePlayers(currentUser, url) {
       GROUP BY LOWER(messages.player_username), messages.player_username, read_state.read_id
     ),
     names AS (
-      SELECT username FROM player_activity
+      SELECT username FROM player_activity WHERE is_online = TRUE
       UNION
       SELECT player_username AS username FROM dialog_players
     )
@@ -841,7 +861,7 @@ async function getWhisperDialog(currentUser, url) {
   }
 
   const result = await pool.query(`
-    SELECT id, player_username, direction, site_username, message, created_at
+    SELECT id, player_username, direction, site_username, message, delivery_status, created_at
     FROM site_whisper_messages
     WHERE LOWER(player_username) = LOWER($1)
       AND (
@@ -866,6 +886,7 @@ async function getWhisperDialog(currentUser, url) {
       direction: row.direction,
       siteUsername: row.site_username,
       message: row.message,
+      deliveryStatus: row.delivery_status || 'delivered',
       createdAt: row.created_at
     }))
   };
@@ -952,12 +973,17 @@ async function queueSiteWhisperMessage(currentUser, body) {
     throw err;
   }
 
-  await pool.query(`
-    INSERT INTO site_whisper_messages (player_username, direction, site_username, message)
-    VALUES ($1, 'outgoing', $2, $3)
+  const inserted = await pool.query(`
+    INSERT INTO site_whisper_messages (player_username, direction, site_username, message, delivery_status)
+    VALUES ($1, 'outgoing', $2, $3, 'sent')
+    RETURNING id
   `, [username, currentUser?.username || null, message]);
 
-  const queued = await queueBotCommand(currentUser, 'site_whisper', { username, message });
+  const queued = await queueBotCommand(currentUser, 'site_whisper', {
+    username,
+    message,
+    messageId: String(inserted.rows[0]?.id || '')
+  });
   return {
     ...queued,
     username,

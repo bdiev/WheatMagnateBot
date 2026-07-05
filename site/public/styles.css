@@ -926,6 +926,46 @@ body.search-focus-active #logoutButton {
   text-transform: uppercase;
 }
 
+.whisper-search {
+  position: relative;
+  min-width: 0;
+  padding: 0 8px 8px;
+}
+
+.whisper-search input {
+  width: 100%;
+  height: 38px;
+  border: 1px solid var(--line);
+  border-radius: var(--button-radius);
+  padding: 0 10px;
+  color: var(--text);
+  background: var(--panel);
+  font: inherit;
+  outline: none;
+}
+
+.whisper-search input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.whisper-search-suggestions {
+  position: absolute;
+  top: calc(100% - 4px);
+  left: 8px;
+  right: 8px;
+  z-index: 5;
+  display: grid;
+  gap: 4px;
+  max-height: 230px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--button-radius);
+  padding: 6px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
 .whisper-players {
   display: grid;
   align-content: start;
@@ -2044,6 +2084,35 @@ body.search-focus-active #logoutButton {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.player-profile-message-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: var(--button-radius);
+  padding: 0 14px;
+  color: var(--text);
+  background: var(--panel);
+  font: inherit;
+  font-weight: 900;
+  cursor: pointer;
+  transition: background-color 180ms ease, border-color 180ms ease, transform 160ms ease;
+}
+
+.player-profile-message-action img {
+  width: 20px;
+  height: 20px;
+  image-rendering: pixelated;
+}
+
+.player-profile-message-action:hover {
+  border-color: var(--accent);
+  background: var(--panel-soft);
+  transform: translateY(-1px);
 }
 
 .player-profile-grid {
