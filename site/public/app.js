@@ -1281,11 +1281,18 @@ function clearWhisperSearch() {
 
 function renderWhisperSearchResults(players) {
   state.whisperSearchPlayers = players || [];
-  state.whisperPlayersSignature = `search:${JSON.stringify(state.whisperSearchPlayers.map(player => [
-    player.username || '',
-    Boolean(player.isOnline),
-    player.lastSeen || ''
-  ]))}`;
+  const signature = `search:${JSON.stringify([
+    state.whisperTarget || '',
+    ...state.whisperSearchPlayers.map(player => [
+      player.username || '',
+      Boolean(player.isOnline),
+      player.lastSeen || ''
+    ])
+  ])}`;
+  if (state.whisperPlayersSignature === signature && $('#whisperPlayers .whisper-player[data-mode="search"]')) {
+    return;
+  }
+  state.whisperPlayersSignature = signature;
 
   renderWhisperPlayerList(state.whisperSearchPlayers, { search: true, emptyText: 'No players found.' });
 }
@@ -1361,8 +1368,12 @@ function renderWhisperPlayerList(players, { search = false, emptyText = 'No play
       button.dataset.renderSignature = contentSignature;
     }
 
-    button.classList.toggle('active', isActive);
-    button.style.setProperty('--item-index', index);
+    if (button.classList.contains('active') !== isActive) {
+      button.classList.toggle('active', isActive);
+    }
+    if (button.style.getPropertyValue('--item-index') !== String(index)) {
+      button.style.setProperty('--item-index', index);
+    }
     if (search) {
       delete button.dataset.index;
       button.dataset.searchIndex = String(index);
@@ -1370,7 +1381,10 @@ function renderWhisperPlayerList(players, { search = false, emptyText = 'No play
       delete button.dataset.searchIndex;
       button.dataset.index = String(index);
     }
-    list.appendChild(button);
+    const currentNode = list.children[index];
+    if (currentNode !== button) {
+      list.insertBefore(button, currentNode || null);
+    }
     used.add(mapKey);
   });
 
