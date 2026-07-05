@@ -1200,9 +1200,13 @@ function renderWhisperPlayers() {
     const username = player.username || '';
     const isActive = username.toLowerCase() === active;
     const isOnline = Boolean(player.isOnline);
+    const messageCount = Number(player.messageCount) || 0;
+    const messageBadge = messageCount > 0
+      ? `<span class="whisper-message-count" aria-label="${formatNumber(messageCount)} messages">${formatNumber(messageCount)}</span>`
+      : '';
     return `
       <button class="whisper-player ${isActive ? 'active' : ''}" type="button" data-index="${index}" style="--item-index: ${index}">
-        ${playerIdentity(username, 24)}
+        <span class="whisper-player-identity">${playerIdentity(username, 24)}${messageBadge}</span>
         <span class="pill ${isOnline ? 'online' : ''}">${isOnline ? 'online' : 'offline'}</span>
       </button>
     `;
@@ -1460,6 +1464,85 @@ function renderPlayerStats(payload = {}) {
   );
 }
 
+function countSupplyItems(supplies, predicate) {
+  return (supplies?.items || []).reduce((sum, item) => {
+    if (!predicate(item)) return sum;
+    return sum + Math.max(1, Number(item.count) || 1);
+  }, 0);
+}
+
+function usablePickaxeCount(...locations) {
+  return locations.reduce((sum, supplies) => sum + countSupplyItems(
+    supplies,
+    item => /_pickaxe$/i.test(String(item.name || '')) && item.usable !== false
+  ), 0);
+}
+
+function foodItemCount(...locations) {
+  return locations.reduce((sum, supplies) => {
+    const foodCount = Number(supplies?.foodCount);
+    if (Number.isFinite(foodCount)) return sum + foodCount;
+    return sum + countSupplyItems(
+      supplies,
+      item => item.remainingPercent == null && !/_pickaxe$/i.test(String(item.name || ''))
+        && /apple|beef|porkchop|chicken|mutton|rabbit|cod|salmon|bread|carrot|potato|beetroot|melon|berries|cookie|stew|soup|pie|kelp/i.test(String(item.name || ''))
+    );
+  }, 0);
+}
+
+function recentObsidianRatePerDay(payload = {}) {
+  const hourly = Array.isArray(payload.hourly) ? payload.hourly : [];
+  const recentHours = hourly.slice(-48);
+  const recentHourlyTotal = recentHours.reduce((sum, item) => sum + (Number(item.value) || 0), 0);
+  if (recentHourlyTotal > 0) return recentHourlyTotal / Math.max(1, recentHours.length / 24);
+
+  const daily = Array.isArray(payload.daily) ? payload.daily : [];
+  const recentDays = daily.slice(-7).filter(item => (Number(item.value) || 0) > 0);
+  if (recentDays.length > 0) {
+    return recentDays.reduce((sum, item) => sum + (Number(item.value) || 0), 0) / recentDays.length;
+  }
+
+  const sessionRate = Number(payload.farm?.sessionPerHour) || 0;
+  return sessionRate > 0 ? sessionRate * 24 : 0;
+}
+
+function formatSupplyNeededDate(daysUntilNeeded) {
+  if (!Number.isFinite(daysUntilNeeded)) return '-';
+  if (daysUntilNeeded <= 0.25) return 'today';
+  const date = new Date(Date.now() + daysUntilNeeded * 86400000);
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: '2-digit'
+  }).format(date);
+}
+
+function estimateSupplyRefill(payload = {}) {
+  const farm = payload.farm || {};
+  const supplies = payload.supplies || {};
+  const inventory = supplies.inventory;
+  const barrel = supplies.barrel;
+  const pickaxes = usablePickaxeCount(inventory, barrel);
+  const food = foodItemCount(inventory, barrel);
+  const blocksPerPickaxe = Number(farm.blocksPerPickaxe) > 0 ? Number(farm.blocksPerPickaxe) : 1500;
+  const blocksPerFood = 45;
+  const ratePerDay = recentObsidianRatePerDay(payload);
+
+  if (!supplies.hasSnapshot) {
+    return 'No supply snapshot';
+  }
+  if (ratePerDay <= 0) {
+    return `Need rate data (${formatNumber(pickaxes)} picks, ${formatNumber(food)} food)`;
+  }
+
+  const pickaxeDays = pickaxes > 0 ? (pickaxes * blocksPerPickaxe) / ratePerDay : 0;
+  const foodDays = food > 0 ? (food * blocksPerFood) / ratePerDay : 0;
+  const limitingDays = Math.min(pickaxeDays, foodDays);
+  const limitingSupply = pickaxeDays <= foodDays ? 'pickaxes' : 'food';
+  const approxDate = formatSupplyNeededDate(limitingDays);
+
+  return `${approxDate} (${Math.max(0, Math.round(limitingDays))}d, ${limitingSupply})`;
+}
+
 function renderObsidian(payload) {
   const farm = payload.farm || {};
   $('#farmState').textContent = farm.desiredEnabled ? 'Enabled' : 'Disabled';
@@ -1474,6 +1557,7 @@ function renderObsidian(payload) {
     <div><span>Last 7 days</span><strong id="farmLast7Days">- blocks</strong></div>
     <div><span>Retired pickaxe blocks</span><strong id="farmRetiredPickaxeBlocks">-</strong></div>
     <div><span>Supplies snapshot</span><strong>${formatDate(payload.supplies?.updatedAt)}</strong></div>
+    <div><span>Refill around</span><strong>${escapeHtml(estimateSupplyRefill(payload))}</strong></div>
   `;
   setRollingNumber('#farmLast7Days', farm.last7Days, { suffix: ' blocks' });
   setRollingNumber('#farmRetiredPickaxeBlocks', farm.retiredPickaxeBlocks);
@@ -1767,24 +1851,11 @@ function showSupplyTooltip(key, anchor) {
     tooltip.className = 'supply-tooltip';
     document.body.appendChild(tooltip);
   }
-  const enchantments = Array.isArray(item.enchantments) ? item.enchantments : [];
-  const isPickaxe = /pickaxe$/i.test(String(item.name || ''));
-  const visibleEnchantments = isPickaxe
-    ? enchantments.filter(enchant => {
-        const name = String(ENCHANTMENT_ID_NAMES[String(enchant.name)] || enchant.name || '').replace(/^minecraft:/, '');
-        return ['efficiency', 'fortune', 'mending', 'silk_touch', 'unbreaking', 'vanishing_curse'].includes(name);
-      })
-    : enchantments;
   tooltip.innerHTML = `
     <strong>${escapeHtml(item.displayName || item.label || item.name || 'Item')}</strong>
     <span>Count: ${formatNumber(item.count)}</span>
     ${item.slot == null ? '' : `<span>Slot: ${formatNumber(item.slot)}</span>`}
     ${item.remainingPercent == null ? '' : `<span>Durability: ${Number(item.remainingPercent).toFixed(1)}%</span>`}
-    <div class="supply-tooltip-enchants">
-      ${visibleEnchantments.length
-        ? visibleEnchantments.map(enchant => `<span>${escapeHtml(formatEnchantmentName(enchant.name))} ${formatEnchantmentLevel(enchant.level)}</span>`).join('')
-        : '<span class="muted">No enchantments</span>'}
-    </div>
   `;
   tooltip.hidden = false;
   const rect = anchor.getBoundingClientRect();
