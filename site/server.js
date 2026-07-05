@@ -711,10 +711,34 @@ function cleanWhisperMessage(value) {
     .slice(0, 240);
 }
 
-async function getWhisperOnlinePlayers(currentUser) {
+function parseWhisperReadState(url) {
+  try {
+    const raw = String(url.searchParams.get('readState') || '{}');
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed)
+      .map(([username, id]) => [
+        cleanMinecraftUsername(username).toLowerCase(),
+        String(id || '0').replace(/[^\d]/g, '') || '0'
+      ])
+      .filter(([username]) => username));
+  } catch (_) {
+    return {};
+  }
+}
+
+async function getWhisperOnlinePlayers(currentUser, url) {
   assertDatabase();
+  const readState = parseWhisperReadState(url);
+  const rawDefaultReadId = String(url.searchParams.get('defaultReadId') || '0').replace(/[^\d]/g, '');
+  const defaultReadId = rawDefaultReadId || '0';
   const result = await pool.query(`
-    WITH owned_dialogs AS (
+    WITH read_state AS (
+      SELECT LOWER(key) AS player_key, value::bigint AS read_id
+      FROM jsonb_each_text($2::jsonb)
+      WHERE value ~ '^\\d+$'
+    ),
+    owned_dialogs AS (
       SELECT player_username
       FROM site_whisper_messages
       WHERE direction = 'outgoing'
@@ -725,9 +749,14 @@ async function getWhisperOnlinePlayers(currentUser) {
       SELECT
         messages.player_username,
         MAX(messages.created_at) AS last_message_at,
-        COUNT(*)::int AS message_count
+        COUNT(*)::int AS message_count,
+        COUNT(*) FILTER (
+          WHERE messages.direction = 'incoming'
+            AND messages.id > COALESCE(read_state.read_id, $3::bigint, 0)
+        )::int AS unread_count
       FROM site_whisper_messages messages
       JOIN owned_dialogs dialogs ON LOWER(dialogs.player_username) = LOWER(messages.player_username)
+      LEFT JOIN read_state ON read_state.player_key = LOWER(messages.player_username)
       WHERE (
           messages.direction = 'outgoing'
           AND LOWER(messages.site_username) = LOWER($1)
@@ -736,7 +765,7 @@ async function getWhisperOnlinePlayers(currentUser) {
           messages.direction = 'incoming'
           AND (messages.site_username IS NULL OR LOWER(messages.site_username) = LOWER($1))
         )
-      GROUP BY LOWER(messages.player_username), messages.player_username
+      GROUP BY LOWER(messages.player_username), messages.player_username, read_state.read_id
     ),
     names AS (
       SELECT username FROM player_activity WHERE is_online = TRUE
@@ -749,7 +778,8 @@ async function getWhisperOnlinePlayers(currentUser) {
       pa.last_online,
       COALESCE(pa.is_online, FALSE) AS is_online,
       dialogs.last_message_at,
-      COALESCE(dialogs.message_count, 0)::int AS message_count
+      COALESCE(dialogs.message_count, 0)::int AS message_count,
+      COALESCE(dialogs.unread_count, 0)::int AS unread_count
     FROM names
     LEFT JOIN player_activity pa ON LOWER(pa.username) = LOWER(names.username)
     LEFT JOIN dialog_players dialogs ON LOWER(dialogs.player_username) = LOWER(names.username)
@@ -757,7 +787,7 @@ async function getWhisperOnlinePlayers(currentUser) {
       LOWER(names.username),
       dialogs.last_message_at DESC NULLS LAST,
       COALESCE(pa.is_online, FALSE) DESC
-  `, [currentUser.username]);
+  `, [currentUser.username, JSON.stringify(readState), defaultReadId]);
 
   return {
     players: result.rows
@@ -767,7 +797,8 @@ async function getWhisperOnlinePlayers(currentUser) {
         lastSeen: row.last_seen,
         lastOnline: row.last_online,
         lastMessageAt: row.last_message_at,
-        messageCount: toInt(row.message_count)
+        messageCount: toInt(row.message_count),
+        unreadCount: toInt(row.unread_count)
       }))
       .sort((a, b) => {
         const aHasDialog = a.messageCount > 0 ? 1 : 0;
@@ -1690,7 +1721,7 @@ async function handleApi(req, res, url) {
       return;
     }
     if (url.pathname === '/api/whisper/online' && req.method === 'GET') {
-      sendJson(res, 200, await getWhisperOnlinePlayers(currentUser));
+      sendJson(res, 200, await getWhisperOnlinePlayers(currentUser, url));
       return;
     }
     if (url.pathname === '/api/whisper/dialog' && req.method === 'GET') {

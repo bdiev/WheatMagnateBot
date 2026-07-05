@@ -15,6 +15,7 @@ const state = {
   ignoreChatSearchTimer: null,
   chartTooltipTimer: null,
   chartTooltipPinned: false,
+  chartScrollRedrawFrame: null,
   chartAnimations: {},
   chartAnimationFrames: {},
   chartAnimationDurations: {},
@@ -24,6 +25,7 @@ const state = {
   whisperPlayersSignature: '',
   whisperMessagesSignature: '',
   whisperLastSeenId: null,
+  whisperDialogReadIds: {},
   whisperUnreadCount: 0,
   whitelistSearchPlayers: [],
   ignoreChatSearchPlayers: [],
@@ -554,6 +556,7 @@ function prepareChartCanvas(canvas, data, options = {}) {
   if (hasData && viewport && viewport.clientWidth > 0 && !state.chartScrollInitialized[canvas.id]) {
     requestAnimationFrame(() => {
       viewport.scrollLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+      scheduleChartViewportRedraw();
     });
     state.chartScrollInitialized[canvas.id] = true;
   }
@@ -621,6 +624,40 @@ function renderStickyChartAxis(canvas, labels, padding, height) {
   }).join('');
 }
 
+function visibleChartValues(canvas, chartData, padding, chartWidth, mode = 'bar') {
+  const viewport = canvas?.closest('.chart-scroll');
+  const values = [];
+  if (!viewport || viewport.clientWidth <= 0) {
+    return chartData.map(item => Number(item.value)).filter(Number.isFinite);
+  }
+
+  const canvasLeft = canvas.offsetLeft || 0;
+  const visibleLeft = viewport.scrollLeft - canvasLeft;
+  const visibleRight = visibleLeft + viewport.clientWidth;
+  if (mode === 'line') {
+    const lastIndex = Math.max(1, chartData.length - 1);
+    chartData.forEach((item, index) => {
+      const x = padding.left + (chartWidth * index) / lastIndex;
+      if (x < visibleLeft || x > visibleRight) return;
+      const value = Number(item.value);
+      if (Number.isFinite(value)) values.push(value);
+    });
+  } else {
+    const slotWidth = chartData.length > 0 ? chartWidth / chartData.length : 0;
+    chartData.forEach((item, index) => {
+      const slotLeft = padding.left + index * slotWidth;
+      const slotRight = slotLeft + slotWidth;
+      if (slotRight < visibleLeft || slotLeft > visibleRight) return;
+      const value = Number(item.value);
+      if (Number.isFinite(value)) values.push(value);
+    });
+  }
+
+  return values.length
+    ? values
+    : chartData.map(item => Number(item.value)).filter(Number.isFinite);
+}
+
 function drawBarChart(canvas, data, options = {}) {
   if (!canvas) return;
   const chartData = Array.isArray(data) ? data : [];
@@ -631,11 +668,11 @@ function drawBarChart(canvas, data, options = {}) {
   const line = getCssColor('--line');
   const accent = getCssColor('--accent');
   const panelSoft = getCssColor('--panel-soft');
-  const values = chartData.map(item => Number(item.value)).filter(Number.isFinite);
-  const maxValue = Math.max(options.max || 0, ...values, 1);
   const padding = { top: 24, right: 18, bottom: 44, left: 58 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
+  const values = visibleChartValues(canvas, chartData, padding, chartWidth, 'bar');
+  const maxValue = Math.max(options.max || 0, ...values, 1);
   const animationProgress = getChartAnimationProgress(canvas, options.animation);
   renderStickyChartAxis(
     canvas,
@@ -718,11 +755,11 @@ function drawLineChart(canvas, data, options = {}) {
   const line = getCssColor('--line');
   const accent = getCssColor('--accent');
   const panelSoft = getCssColor('--panel-soft');
-  const numericValues = chartData.map(item => Number(item.value)).filter(Number.isFinite);
-  const maxValue = Math.max(options.max || 0, ...numericValues, 1);
   const padding = { top: 24, right: 18, bottom: 44, left: 58 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
+  const numericValues = visibleChartValues(canvas, chartData, padding, chartWidth, 'line');
+  const maxValue = Math.max(options.max || 0, ...numericValues, 1);
   const animationProgress = getChartAnimationProgress(canvas, options.animation);
   renderStickyChartAxis(
     canvas,
@@ -870,6 +907,14 @@ function redrawCharts({ animate = false } = {}) {
       max: 20,
       tooltip: item => `${item.label}: ${formatTps(item.value)} TPS`
     });
+  });
+}
+
+function scheduleChartViewportRedraw() {
+  if (state.chartScrollRedrawFrame) cancelAnimationFrame(state.chartScrollRedrawFrame);
+  state.chartScrollRedrawFrame = requestAnimationFrame(() => {
+    state.chartScrollRedrawFrame = null;
+    redrawCharts();
   });
 }
 
@@ -1108,7 +1153,6 @@ function setWhisperOpen(open) {
   toggle.setAttribute('aria-expanded', String(open));
   toggle.setAttribute('aria-label', open ? 'Close private messages' : 'Open private messages');
   if (open) {
-    loadWhisperNotifications({ markRead: true }).catch(() => {});
     loadWhisperOnlinePlayers().catch(err => setBanner(`Could not load private message list: ${err.message}`));
     if (state.whisperTarget) {
       loadWhisperDialog().catch(() => {});
@@ -1133,8 +1177,18 @@ function whisperLastSeenStorageKey() {
   return `wm-whisper-last-seen-id:${username}`;
 }
 
+function whisperDialogReadStorageKey() {
+  const username = String(state.currentUser?.username || 'anonymous').toLowerCase();
+  return `wm-whisper-dialog-read-ids:${username}`;
+}
+
 function loadWhisperLastSeenId() {
   state.whisperLastSeenId = localStorage.getItem(whisperLastSeenStorageKey()) || null;
+  try {
+    state.whisperDialogReadIds = JSON.parse(localStorage.getItem(whisperDialogReadStorageKey()) || '{}') || {};
+  } catch (_) {
+    state.whisperDialogReadIds = {};
+  }
   state.whisperUnreadCount = 0;
   renderWhisperBadge();
 }
@@ -1145,6 +1199,24 @@ function markWhisperNotificationsRead(maxId) {
   state.whisperUnreadCount = 0;
   localStorage.setItem(whisperLastSeenStorageKey(), nextId);
   renderWhisperBadge();
+}
+
+function markWhisperDialogRead(username, maxId) {
+  const key = String(username || '').toLowerCase();
+  const nextId = Number(maxId);
+  if (!key || !Number.isFinite(nextId)) return;
+  const currentId = Number(state.whisperDialogReadIds[key] || 0);
+  if (nextId <= currentId) return;
+  state.whisperDialogReadIds[key] = String(nextId);
+  localStorage.setItem(whisperDialogReadStorageKey(), JSON.stringify(state.whisperDialogReadIds));
+  state.whisperPlayers = state.whisperPlayers.map(player =>
+    String(player.username || '').toLowerCase() === key
+      ? { ...player, unreadCount: 0 }
+      : player
+  );
+  state.whisperUnreadCount = state.whisperPlayers.reduce((sum, player) => sum + (Number(player.unreadCount) || 0), 0);
+  renderWhisperBadge();
+  renderWhisperPlayers();
 }
 
 async function loadWhisperNotifications({ markRead = false } = {}) {
@@ -1184,7 +1256,8 @@ function renderWhisperPlayers() {
       player.username || '',
       Boolean(player.isOnline),
       player.lastMessageAt || '',
-      player.messageCount || 0
+      player.messageCount || 0,
+      player.unreadCount || 0
     ])
   ]);
   if (signature === state.whisperPlayersSignature) return;
@@ -1200,9 +1273,9 @@ function renderWhisperPlayers() {
     const username = player.username || '';
     const isActive = username.toLowerCase() === active;
     const isOnline = Boolean(player.isOnline);
-    const messageCount = Number(player.messageCount) || 0;
-    const messageBadge = messageCount > 0
-      ? `<span class="whisper-message-count" aria-label="${formatNumber(messageCount)} messages">${formatNumber(messageCount)}</span>`
+    const unreadCount = Number(player.unreadCount) || 0;
+    const messageBadge = unreadCount > 0
+      ? `<span class="whisper-message-count" aria-label="${formatNumber(unreadCount)} unread messages">${formatNumber(unreadCount)}</span>`
       : '';
     return `
       <button class="whisper-player ${isActive ? 'active' : ''}" type="button" data-index="${index}" style="--item-index: ${index}">
@@ -1213,10 +1286,17 @@ function renderWhisperPlayers() {
   }).join('');
 }
 
-async function loadWhisperOnlinePlayers() {
-  if (!$('#whisperPanel')?.classList.contains('open')) return;
-  const payload = await fetchJson('/api/whisper/online');
+async function loadWhisperOnlinePlayers({ force = false } = {}) {
+  if (!force && !$('#whisperPanel')?.classList.contains('open')) return;
+  if (!state.whisperLastSeenId && Object.keys(state.whisperDialogReadIds || {}).length === 0) {
+    await loadWhisperNotifications();
+  }
+  const readState = encodeURIComponent(JSON.stringify(state.whisperDialogReadIds || {}));
+  const defaultReadId = encodeURIComponent(state.whisperLastSeenId || '0');
+  const payload = await fetchJson(`/api/whisper/online?readState=${readState}&defaultReadId=${defaultReadId}`);
   state.whisperPlayers = payload.players || [];
+  state.whisperUnreadCount = state.whisperPlayers.reduce((sum, player) => sum + (Number(player.unreadCount) || 0), 0);
+  renderWhisperBadge();
   renderWhisperPlayers();
 }
 
@@ -1227,8 +1307,8 @@ function renderWhisperMessages(messages) {
     const latestId = (messages || []).reduce((max, message) => {
       const id = Number(message.id);
       return Number.isFinite(id) && id > max ? id : max;
-    }, Number(state.whisperLastSeenId || 0));
-    markWhisperNotificationsRead(String(latestId));
+    }, 0);
+    markWhisperDialogRead(state.whisperTarget, latestId);
   }
   const signature = JSON.stringify((messages || []).map(message => [
     message.id,
@@ -2441,7 +2521,7 @@ async function loadAll() {
       await loadWhisperOnlinePlayers();
       await loadWhisperDialog();
     } else {
-      await loadWhisperNotifications();
+      await loadWhisperOnlinePlayers({ force: true });
     }
     setBanner('');
   } catch (err) {
@@ -2473,6 +2553,9 @@ $('#gameChatForm')?.addEventListener('submit', handleGameChatSubmit);
 $('#chatScrollBottom')?.addEventListener('click', () => scrollToBottom('#chatList', { smooth: true }));
 $('#chatList')?.addEventListener('scroll', updateChatScrollButton);
 $$('.chart-controls').forEach(controls => controls.addEventListener('click', handleChartRangeClick));
+$$('.chart-scroll').forEach(scroll => {
+  scroll.addEventListener('scroll', scheduleChartViewportRedraw, { passive: true });
+});
 $('#themeToggle').addEventListener('click', toggleTheme);
 window.addEventListener('resize', redrawCharts);
 $$('.chart').forEach(chart => {
