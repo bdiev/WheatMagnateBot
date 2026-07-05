@@ -1717,6 +1717,7 @@ $('#adminIgnoreChatPlayer')?.addEventListener('input', handleIgnoreChatPlayerInp
 $('#adminIgnoreChatPlayer')?.addEventListener('focus', event => runIgnoreChatSearch(event.currentTarget.value));
 $('#adminIgnoreChatSuggestions')?.addEventListener('click', handleIgnoreChatSuggestionClick);
 $('#gameChatForm')?.addEventListener('submit', handleGameChatSubmit);
+$('#chatScrollBottom')?.addEventListener('click', () => scrollToBottom('#chatList'));
 $$('.chart-controls').forEach(controls => controls.addEventListener('click', handleChartRangeClick));
 $('#themeToggle').addEventListener('click', toggleTheme);
 window.addEventListener('resize', redrawCharts);

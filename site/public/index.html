@@ -134,7 +134,10 @@
                 <p>Recent Minecraft messages recorded by the bot.</p>
               </div>
             </div>
-            <div id="chatList" class="chat-list" aria-live="polite"></div>
+            <div class="chat-list-wrap">
+              <div id="chatList" class="chat-list" aria-live="polite"></div>
+              <button id="chatScrollBottom" class="chat-scroll-bottom" type="button" aria-label="Scroll to latest chat messages">↓</button>
+            </div>
             <form id="gameChatForm" class="chat-send-form">
               <input
                 id="gameChatInput"
