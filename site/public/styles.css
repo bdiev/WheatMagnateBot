@@ -1058,7 +1058,8 @@ body.search-focus-active #logoutButton {
 
   .whisper-toggle,
   .whisper-player,
-  .whisper-form {
+  .whisper-form,
+  .rolling-number-active {
     transition: none;
   }
 }
@@ -1313,6 +1314,31 @@ body.search-focus-active #logoutButton {
   overflow-wrap: anywhere;
   font-size: clamp(22px, 2.2vw, 28px);
   line-height: 1.1;
+}
+
+.rolling-number {
+  display: inline-block;
+  font-variant-numeric: tabular-nums;
+  will-change: contents, transform;
+}
+
+.stat strong.rolling-number {
+  display: block;
+}
+
+.rolling-number-active {
+  color: var(--accent-strong);
+  text-shadow: 0 8px 22px color-mix(in srgb, var(--accent) 28%, transparent);
+  transform: translateY(-1px);
+  transition: color 180ms ease, text-shadow 180ms ease, transform 180ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rolling-number-active {
+    transform: none;
+    text-shadow: none;
+    transition: none;
+  }
 }
 
 .content-grid,
@@ -1720,6 +1746,10 @@ body.search-focus-active #logoutButton {
 
 .detail-list strong {
   text-align: right;
+}
+
+.detail-list strong.rolling-number {
+  justify-self: end;
 }
 
 .player-identity {
@@ -2211,24 +2241,100 @@ body.search-focus-active #logoutButton {
   }
 
   .whisper-popover {
-    left: calc(-1 * (var(--button-height) + 8px));
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 92px);
+    left: 10px;
+    right: 10px;
     grid-template-columns: 1fr;
-    width: min(360px, calc(100vw - 20px));
-    min-height: 420px;
-    max-height: calc(100vh - 120px);
+    grid-template-rows: auto minmax(0, 1fr);
+    width: auto;
+    min-height: min(520px, calc(100vh - 112px));
+    min-height: min(520px, calc(100dvh - 112px));
+    max-height: calc(100vh - 112px);
+    max-height: calc(100dvh - 112px);
+    padding: 8px;
+    transform-origin: top center;
   }
 
   .whisper-panel:not(.has-dialog) .whisper-popover {
-    width: min(280px, calc(100vw - 20px));
+    grid-template-rows: minmax(0, 1fr);
+    width: auto;
+    min-height: 220px;
+    max-height: min(420px, calc(100vh - 112px));
+    max-height: min(420px, calc(100dvh - 112px));
   }
 
   .whisper-sidebar {
-    min-height: 132px;
-    max-height: 180px;
+    min-height: 0;
+    max-height: none;
+  }
+
+  .whisper-panel.has-dialog .whisper-sidebar {
+    max-height: 170px;
   }
 
   .whisper-dialog {
-    min-height: 260px;
+    min-height: 0;
+    height: min(350px, calc(100vh - 326px));
+    height: min(350px, calc(100dvh - 326px));
+  }
+
+  .whisper-title {
+    padding: 9px 10px;
+  }
+
+  .whisper-players {
+    gap: 5px;
+    padding: 0 6px 6px;
+  }
+
+  .whisper-player {
+    min-height: 46px;
+    padding: 0 9px;
+  }
+
+  .whisper-messages {
+    padding: 10px;
+  }
+
+  .whisper-message {
+    max-width: 92%;
+  }
+
+  .whisper-form {
+    padding: 8px;
+  }
+
+  @media (max-width: 420px) {
+    .whisper-popover {
+      top: calc(env(safe-area-inset-top, 0px) + 84px);
+      left: 8px;
+      right: 8px;
+      gap: 8px;
+      max-height: calc(100vh - 96px);
+      max-height: calc(100dvh - 96px);
+    }
+
+    .whisper-panel.has-dialog .whisper-sidebar {
+      max-height: 150px;
+    }
+
+    .whisper-dialog {
+      height: min(330px, calc(100vh - 292px));
+      height: min(330px, calc(100dvh - 292px));
+    }
+
+    .whisper-form {
+      grid-template-columns: 1fr;
+    }
+
+    .whisper-form button {
+      width: 100%;
+    }
+
+    .whisper-message {
+      max-width: 96%;
+    }
   }
 
   .player-profile-overlay {

@@ -9,6 +9,7 @@ const state = {
   activeTab: 'chat',
   charts: {},
   chartMeta: {},
+  rollingNumbers: {},
   seenSearchTimer: null,
   whitelistSearchTimer: null,
   ignoreChatSearchTimer: null,
@@ -20,6 +21,7 @@ const state = {
   seenPlayers: [],
   whisperPlayers: [],
   whisperTarget: null,
+  whisperPlayersSignature: '',
   whisperMessagesSignature: '',
   whisperLastSeenId: localStorage.getItem('wm-whisper-last-seen-id') || null,
   whisperUnreadCount: 0,
@@ -47,6 +49,74 @@ const $$ = selector => Array.from(document.querySelectorAll(selector));
 function formatNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) ? new Intl.NumberFormat('en-US').format(number) : '-';
+}
+
+function setRollingNumber(selector, value, {
+  prefix = '',
+  suffix = '',
+  duration = 680,
+  decimals = 0
+} = {}) {
+  const element = $(selector);
+  if (!element) return;
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) {
+    element.textContent = `${prefix}-${suffix}`;
+    element.classList.remove('rolling-number');
+    delete state.rollingNumbers[selector];
+    return;
+  }
+
+  const previous = state.rollingNumbers[selector];
+  const startValue = previous?.value;
+  if (startValue === numericValue) {
+    element.textContent = `${prefix}${formatNumber(numericValue.toFixed(decimals))}${suffix}`;
+    return;
+  }
+
+  if (previous?.frame) cancelAnimationFrame(previous.frame);
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+    element.textContent = `${prefix}${formatNumber(numericValue.toFixed(decimals))}${suffix}`;
+    state.rollingNumbers[selector] = { value: numericValue, frame: null };
+    return;
+  }
+  const from = Number.isFinite(startValue) ? startValue : numericValue;
+  const to = numericValue;
+  const startedAt = performance.now();
+  element.classList.add('rolling-number', 'rolling-number-active');
+
+  const renderValue = current => {
+    const rounded = decimals > 0 ? Number(current).toFixed(decimals) : Math.round(current);
+    element.textContent = `${prefix}${formatNumber(rounded)}${suffix}`;
+  };
+
+  if (from === to) {
+    renderValue(to);
+    state.rollingNumbers[selector] = { value: to, frame: null };
+    setTimeout(() => element.classList.remove('rolling-number-active'), 180);
+    return;
+  }
+
+  const tick = now => {
+    const progress = Math.min(1, (now - startedAt) / duration);
+    const eased = 1 - Math.pow(1 - progress, 3);
+    renderValue(from + (to - from) * eased);
+    if (progress < 1) {
+      state.rollingNumbers[selector] = {
+        value: to,
+        frame: requestAnimationFrame(tick)
+      };
+      return;
+    }
+    renderValue(to);
+    state.rollingNumbers[selector] = { value: to, frame: null };
+    setTimeout(() => element.classList.remove('rolling-number-active'), 180);
+  };
+
+  state.rollingNumbers[selector] = {
+    value: to,
+    frame: requestAnimationFrame(tick)
+  };
 }
 
 function formatTps(value) {
@@ -1091,6 +1161,13 @@ function closeWhisperDialog() {
 function renderWhisperPlayers() {
   const list = $('#whisperPlayers');
   if (!list) return;
+  const signature = JSON.stringify([
+    state.whisperTarget || '',
+    ...state.whisperPlayers.map(player => player.username || '')
+  ]);
+  if (signature === state.whisperPlayersSignature) return;
+  state.whisperPlayersSignature = signature;
+
   if (!state.whisperPlayers.length) {
     list.innerHTML = '<div class="seen-empty">No online players.</div>';
     return;
@@ -1201,9 +1278,9 @@ async function handleWhisperSubmit(event) {
 }
 
 function renderChat(payload) {
-  $('#chat24h').textContent = formatNumber(payload.totals?.last24h);
-  $('#activeChatters').textContent = formatNumber(payload.totals?.activeChatters24h);
-  $('#chatAllTime').textContent = formatNumber(payload.totals?.allTime);
+  setRollingNumber('#chat24h', payload.totals?.last24h);
+  setRollingNumber('#activeChatters', payload.totals?.activeChatters24h);
+  setRollingNumber('#chatAllTime', payload.totals?.allTime);
 
   const messages = payload.messages || [];
   const firstChatRender = !state.chatInitialized;
@@ -1341,17 +1418,19 @@ function renderObsidian(payload) {
   const farm = payload.farm || {};
   $('#farmState').textContent = farm.desiredEnabled ? 'Enabled' : 'Disabled';
   $('#farmUpdated').textContent = `last update: ${formatDate(farm.updatedAt)}`;
-  $('#obsidianTotal').textContent = formatNumber(farm.totalMined);
-  $('#obsidianToday').textContent = formatNumber(farm.todayMined);
-  $('#sessionRate').textContent = `${formatNumber(farm.sessionPerHour)}/h`;
-  $('#pickaxeAverage').textContent = farm.blocksPerPickaxe == null ? '-' : formatNumber(farm.blocksPerPickaxe);
-  $('#retiredPickaxes').textContent = `retired pickaxes: ${formatNumber(farm.retiredPickaxes)}`;
+  setRollingNumber('#obsidianTotal', farm.totalMined);
+  setRollingNumber('#obsidianToday', farm.todayMined);
+  setRollingNumber('#sessionRate', farm.sessionPerHour, { suffix: '/h' });
+  setRollingNumber('#pickaxeAverage', farm.blocksPerPickaxe);
+  setRollingNumber('#retiredPickaxes', farm.retiredPickaxes, { prefix: 'retired pickaxes: ' });
 
   $('#farmDetails').innerHTML = `
-    <div><span>Last 7 days</span><strong>${formatNumber(farm.last7Days)} blocks</strong></div>
-    <div><span>Retired pickaxe blocks</span><strong>${formatNumber(farm.retiredPickaxeBlocks)}</strong></div>
+    <div><span>Last 7 days</span><strong id="farmLast7Days">- blocks</strong></div>
+    <div><span>Retired pickaxe blocks</span><strong id="farmRetiredPickaxeBlocks">-</strong></div>
     <div><span>Supplies snapshot</span><strong>${formatDate(payload.supplies?.updatedAt)}</strong></div>
   `;
+  setRollingNumber('#farmLast7Days', farm.last7Days, { suffix: ' blocks' });
+  setRollingNumber('#farmRetiredPickaxeBlocks', farm.retiredPickaxeBlocks);
 
   renderSupplies('#inventorySupplies', payload.supplies?.inventory);
   renderSupplies('#barrelSupplies', payload.supplies?.barrel, payload.supplies?.barrelError);

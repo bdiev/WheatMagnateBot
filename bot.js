@@ -544,6 +544,7 @@ const growingChildPlainMessageIds = new Set();
 let recentWhispers = new Map(); // key: `WHISPER:username:message` -> timestamp, to mark whispers and suppress chat forwarding
 let pendingChatTimers = new Map(); // key: `CHAT:username:message` -> timeout handle to delay chat forwarding
 let outboundWhispers = new Map(); // key: `OUTBOUND:targetUsername:message` -> timestamp, to suppress public echo of our own whispers
+let siteWhisperTargets = new Map(); // lowercase username -> timestamp, suppress Discord whisper fallback for site dialogs
 let recentlyForwardedGameChat = new Map(); // key: `CHAT:username:message` -> timestamp, to dedupe chat/raw message events
 let tpsTabInterval = null;
 let playtimeSyncInterval = null;
@@ -608,8 +609,9 @@ const wmRequestsInFlight = new Set(); // lowercase username
 const recentOutboundChat = new Map(); // normalized message -> timestamps awaiting self-echo suppression
 const WHISPER_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const WHISPER_MARK_TTL_MS = 3000; // how long to remember whisper markers for suppression
-const PENDING_CHAT_DELAY_MS = 400; // delay chat sends to detect whispers first
+const PENDING_CHAT_DELAY_MS = 1500; // delay chat sends to detect whispers first
 const OUTBOUND_WHISPER_TTL_MS = 5000; // suppression window for our own /msg echoes
+const SITE_WHISPER_TTL_MS = 10 * 60 * 1000; // site dialogs stay site-only while active
 const WHISPER_CHANNELS_FILE = 'whisper_channels.json';
 
 // Debug logging (disabled by default). Enable by setting DEBUG_LOGS=true
@@ -3655,6 +3657,7 @@ async function sendPrivateMinecraftMessage(username, text) {
   for (const chunk of splitMinecraftMessage(cleanText)) {
     if (!bot?.entity) return;
     sendMinecraftChat(`/msg ${username} ${chunk}`);
+    outboundWhispers.set(`OUTBOUND:${String(username).toLowerCase()}:${cleanMinecraftChatMessage(chunk)}`, Date.now());
     await new Promise(resolve => setTimeout(resolve, 400));
   }
 }
@@ -3882,11 +3885,13 @@ async function executeBotCommand(command) {
     if (!username) throw new Error('Whisper target is required.');
     if (!cleanMessage) throw new Error('Queued whisper is empty.');
 
+    siteWhisperTargets.set(username.toLowerCase(), Date.now());
     let sentChunks = 0;
     for (const chunk of splitMinecraftMessage(cleanMessage)) {
       if (!bot?.entity) throw new Error('Minecraft bot is not ready.');
       const sent = sendMinecraftChat(`/msg ${username} ${chunk}`);
       if (!sent) throw new Error('Minecraft bot is not ready.');
+      outboundWhispers.set(`OUTBOUND:${username.toLowerCase()}:${cleanMinecraftChatMessage(chunk)}`, Date.now());
       sentChunks += 1;
       await new Promise(resolve => setTimeout(resolve, 400));
     }
@@ -4148,6 +4153,20 @@ function cleanMinecraftChatMessage(message) {
     .trim();
 }
 
+function isPrivateMinecraftChatLine(text) {
+  const clean = cleanMinecraftChatMessage(text).replace(/\s+/g, ' ').trim();
+  if (!clean) return false;
+  const botName = bot?.username ? escapeRegExp(bot.username) : '[A-Za-z0-9_]{1,16}';
+  const privatePatterns = [
+    /^(?:from|to)\s+[A-Za-z0-9_]{1,16}\s*[:>»]/i,
+    /^[A-Za-z0-9_]{1,16}\s+(?:whispers?|whispered|tells?|messages?|msgs?)\s+(?:to\s+)?(?:you|me)\s*[:>»]/i,
+    /^(?:you|me)\s+(?:whisper|tell|message|msg)\s+(?:to\s+)?[A-Za-z0-9_]{1,16}\s*[:>»]/i,
+    new RegExp(`^\\[?[A-Za-z0-9_]{1,16}\\s*(?:->|→)\\s*(?:you|me|${botName})\\]?\\s*:?`, 'i'),
+    new RegExp(`^\\[?(?:you|me|${botName})\\s*(?:->|→)\\s*[A-Za-z0-9_]{1,16}\\]?\\s*:?`, 'i')
+  ];
+  return privatePatterns.some(pattern => pattern.test(clean));
+}
+
 function scheduleGameChatForward(username, message) {
   const cleanMessage = cleanMinecraftChatMessage(message);
   if (!cleanMessage || cleanMessage.startsWith('/msg ')) return false;
@@ -4170,7 +4189,8 @@ function scheduleGameChatForward(username, message) {
   if (!isSelfMessage && ignoredChatUsernames.includes(safeUsername.toLowerCase())) return false;
 
   const whisperKey = `WHISPER:${safeUsername}:${cleanMessage}`;
-  if (recentWhispers.has(whisperKey)) {
+  const whisperLowerKey = `WHISPER:${safeUsername.toLowerCase()}:${cleanMessage}`;
+  if (recentWhispers.has(whisperKey) || recentWhispers.has(whisperLowerKey)) {
     debugLog(`[Chat] Suppressed whisper from ${safeUsername}: "${cleanMessage}"`);
     return false;
   }
@@ -4191,7 +4211,7 @@ function scheduleGameChatForward(username, message) {
 
   const timer = setTimeout(async () => {
     try {
-      if (recentWhispers.has(whisperKey)) {
+      if (recentWhispers.has(whisperKey) || recentWhispers.has(whisperLowerKey)) {
         debugLog(`[Chat] Suppressed whisper (late mark) from ${safeUsername}: "${cleanMessage}"`);
         return;
       }
@@ -4213,6 +4233,7 @@ function scheduleGameChatForward(username, message) {
 }
 
 function parseRawPublicChatLine(text) {
+  if (isPrivateMinecraftChatLine(text)) return null;
   const match = cleanMinecraftChatMessage(text).match(/^(?:<([A-Za-z0-9_]{1,16})>|([A-Za-z0-9_]{1,16}))\s*>\s+([\s\S]+)$/);
   if (!match) return null;
   return {
@@ -6278,11 +6299,13 @@ function createBot() {
       .replace(/§[0-9a-fk-or]/gi, '')
       .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
       .trim();
+    cleanedWhisper = cleanMinecraftChatMessage(cleanedWhisper);
 
     debugLog(`[Whisper] Cleaned: "${cleanedWhisper}"`);
 
     const whisperKey = `WHISPER:${username}:${cleanedWhisper}`;
     recentWhispers.set(whisperKey, Date.now());
+    recentWhispers.set(`WHISPER:${String(username).toLowerCase()}:${cleanedWhisper}`, Date.now());
     debugLog(`[Whisper] MARKED whisper key: ${whisperKey}`);
 
     // Cancel any pending public chat send for this message
@@ -6302,6 +6325,15 @@ function createBot() {
 
     debugLog(`[Whisper] Calling sendWhisperToDiscord...`);
     recordSiteWhisperMessage(username, 'incoming', cleanedWhisper).catch(() => {});
+    const siteWhisperKey = String(username || '').toLowerCase();
+    for (const [target, ts] of siteWhisperTargets.entries()) {
+      if (Date.now() - ts > SITE_WHISPER_TTL_MS) siteWhisperTargets.delete(target);
+    }
+    if (siteWhisperTargets.has(siteWhisperKey)) {
+      siteWhisperTargets.set(siteWhisperKey, Date.now());
+      debugLog(`[Whisper] Routed ${username} reply to site dialog only.`);
+      return;
+    }
     sendWhisperToDiscord(username, message);
   });
 
