@@ -235,6 +235,42 @@ function summarizeSupplyItems(bot, items) {
 
   const normalizeEnchantments = item => {
     const found = new Map();
+    const LEGACY_ENCHANTMENT_IDS = {
+      0: 'protection',
+      1: 'fire_protection',
+      2: 'feather_falling',
+      3: 'blast_protection',
+      4: 'projectile_protection',
+      5: 'respiration',
+      6: 'aqua_affinity',
+      7: 'thorns',
+      8: 'depth_strider',
+      9: 'frost_walker',
+      10: 'binding_curse',
+      16: 'sharpness',
+      17: 'smite',
+      18: 'bane_of_arthropods',
+      19: 'knockback',
+      20: 'fire_aspect',
+      21: 'looting',
+      22: 'sweeping_edge',
+      32: 'efficiency',
+      33: 'silk_touch',
+      34: 'unbreaking',
+      35: 'fortune',
+      48: 'power',
+      49: 'punch',
+      50: 'flame',
+      51: 'infinity',
+      61: 'luck_of_the_sea',
+      62: 'lure',
+      65: 'loyalty',
+      66: 'impaling',
+      67: 'riptide',
+      68: 'channeling',
+      70: 'mending',
+      71: 'vanishing_curse'
+    };
     const readScalar = value => {
       let current = value;
       for (let depth = 0; depth < 8; depth += 1) {
@@ -256,6 +292,7 @@ function summarizeSupplyItems(bot, items) {
         const enchantment = bot.registry?.enchantments?.[numericId] ||
           bot.registry?.enchantmentsArray?.find(entry => entry.id === numericId);
         if (enchantment?.name) return enchantment.name;
+        if (LEGACY_ENCHANTMENT_IDS[numericId]) return LEGACY_ENCHANTMENT_IDS[numericId];
       }
       return String(raw);
     };
@@ -267,60 +304,68 @@ function summarizeSupplyItems(bot, items) {
       const cleanLevel = Number(readScalar(level)) || 1;
       found.set(cleanName, Math.max(found.get(cleanName) || 0, cleanLevel));
     };
-    const visit = (value, keyHint = '', depth = 0) => {
-      if (value == null || depth > 10) return;
-      if (value instanceof Map) {
-        for (const [key, child] of value.entries()) visit(child, String(key), depth + 1);
+    const readEnchantList = list => {
+      const source = readScalar(list);
+      if (!Array.isArray(source)) return;
+      for (const entry of source) {
+        const value = readScalar(entry) || {};
+        const id = value.id ?? value.name ?? value.type;
+        const level = value.lvl ?? value.level ?? value.amplifier ?? 1;
+        if (id != null) addEnchant(id, level);
+      }
+    };
+    const readLevels = levels => {
+      const source = readScalar(levels);
+      if (!source || typeof source !== 'object') return;
+      const entries = source instanceof Map ? Array.from(source.entries()) : Object.entries(source);
+      for (const [name, level] of entries) addEnchant(name, level);
+    };
+    const readComponent = component => {
+      const value = readScalar(component);
+      if (!value || typeof value !== 'object') return;
+      const type = String(readScalar(value.type ?? value.id ?? value.name ?? '')).toLowerCase();
+      if (!type.includes('enchant')) return;
+      readLevels(value.levels ?? value.Levels ?? value.data?.levels ?? value.data?.Levels);
+      readEnchantList(value.enchantments ?? value.Enchantments ?? value.data?.enchantments ?? value.data?.Enchantments);
+    };
+    const readComponents = components => {
+      const source = readScalar(components);
+      if (!source || typeof source !== 'object') return;
+      if (Array.isArray(source)) {
+        for (const component of source) readComponent(component);
         return;
       }
-      if (Array.isArray(value)) {
-        for (const child of value) visit(child, keyHint, depth + 1);
-        return;
-      }
-      if (typeof value !== 'object') return;
-
-      const unwrapped = readScalar(value);
-      if (unwrapped !== value) {
-        visit(unwrapped, keyHint, depth + 1);
-        return;
-      }
-
-      const rawId = value.id ?? value.name ?? value.type;
-      const rawLevel = value.lvl ?? value.level ?? value.amplifier;
-      if (rawId != null && rawLevel != null) addEnchant(rawId, rawLevel);
-
-      const marker = String(readScalar(rawId) || keyHint || '').toLowerCase();
-      const isEnchantContainer = marker.includes('enchant');
-      const levels = value.levels ?? value.Levels;
-      if (levels && typeof levels === 'object') {
-        const levelSource = readScalar(levels) || {};
-        const levelEntries = levelSource instanceof Map
-          ? Array.from(levelSource.entries())
-          : Object.entries(levelSource);
-        for (const [name, level] of levelEntries) {
-          addEnchant(name, level);
+      if (source instanceof Map) {
+        for (const [key, component] of source.entries()) {
+          if (String(key).toLowerCase().includes('enchant')) {
+            readLevels(component?.levels ?? component?.Levels ?? component?.data?.levels ?? component?.data?.Levels ?? component);
+            readEnchantList(component?.enchantments ?? component?.Enchantments ?? component?.data?.enchantments ?? component?.data?.Enchantments);
+          } else {
+            readComponent(component);
+          }
         }
+        return;
       }
-
-      for (const [key, child] of Object.entries(value)) {
-        const lowerKey = key.toLowerCase();
-        if (
-          isEnchantContainer ||
-          lowerKey.includes('enchant') ||
-          lowerKey === 'data' ||
-          lowerKey === 'levels' ||
-          keyHint.toLowerCase().includes('enchant')
-        ) {
-          visit(child, isEnchantContainer ? 'enchantments' : key, depth + 1);
+      for (const [key, component] of Object.entries(source)) {
+        if (String(key).toLowerCase().includes('enchant')) {
+          readLevels(component?.levels ?? component?.Levels ?? component?.data?.levels ?? component?.data?.Levels ?? component);
+          readEnchantList(component?.enchantments ?? component?.Enchantments ?? component?.data?.enchantments ?? component?.data?.Enchantments);
+        } else {
+          readComponent(component);
         }
       }
     };
+    const readNbt = nbt => {
+      const root = readScalar(nbt) || {};
+      readEnchantList(root.Enchantments ?? root.enchantments);
+      readEnchantList(root.StoredEnchantments ?? root.stored_enchantments);
+    };
 
-    visit(item.enchants, 'enchants');
-    visit(item.enchantments, 'enchantments');
-    visit(item.component, 'component');
-    visit(item.components, 'components');
-    visit(item.nbt, 'nbt');
+    readEnchantList(item.enchants);
+    readEnchantList(item.enchantments);
+    readComponents(item.component);
+    readComponents(item.components);
+    readNbt(item.nbt);
     return Array.from(found, ([name, level]) => ({ name, level }));
   };
 

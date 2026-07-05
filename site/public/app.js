@@ -1719,7 +1719,19 @@ const ENCHANTMENT_ID_NAMES = {
   38: 'thorns',
   39: 'unbreaking',
   40: 'vanishing_curse',
-  41: 'wind_burst'
+  41: 'wind_burst',
+  48: 'power',
+  49: 'punch',
+  50: 'flame',
+  51: 'infinity',
+  61: 'luck_of_the_sea',
+  62: 'lure',
+  65: 'loyalty',
+  66: 'impaling',
+  67: 'riptide',
+  68: 'channeling',
+  70: 'mending',
+  71: 'vanishing_curse'
 };
 
 function formatEnchantmentName(name) {
