@@ -21,6 +21,8 @@ const state = {
   whisperPlayers: [],
   whisperTarget: null,
   whisperMessagesSignature: '',
+  whisperLastSeenId: localStorage.getItem('wm-whisper-last-seen-id') || null,
+  whisperUnreadCount: 0,
   whitelistSearchPlayers: [],
   ignoreChatSearchPlayers: [],
   adminPlayerSearchRequests: {},
@@ -1030,6 +1032,7 @@ function setWhisperOpen(open) {
   toggle.setAttribute('aria-expanded', String(open));
   toggle.setAttribute('aria-label', open ? 'Close private messages' : 'Open private messages');
   if (open) {
+    loadWhisperNotifications({ markRead: true }).catch(() => {});
     loadWhisperOnlinePlayers().catch(err => setBanner(`Could not load online players: ${err.message}`));
     if (state.whisperTarget) {
       loadWhisperDialog().catch(() => {});
@@ -1039,6 +1042,37 @@ function setWhisperOpen(open) {
 
 function toggleWhisperPanel() {
   setWhisperOpen(!$('#whisperPanel')?.classList.contains('open'));
+}
+
+function renderWhisperBadge() {
+  const badge = $('#whisperBadge');
+  if (!badge) return;
+  const count = Number(state.whisperUnreadCount) || 0;
+  badge.hidden = count <= 0;
+  badge.textContent = count > 99 ? '99+' : String(count);
+}
+
+function markWhisperNotificationsRead(maxId) {
+  const nextId = String(maxId || state.whisperLastSeenId || '0');
+  state.whisperLastSeenId = nextId;
+  state.whisperUnreadCount = 0;
+  localStorage.setItem('wm-whisper-last-seen-id', nextId);
+  renderWhisperBadge();
+}
+
+async function loadWhisperNotifications({ markRead = false } = {}) {
+  const afterId = state.whisperLastSeenId || '0';
+  const payload = await fetchJson(`/api/whisper/notifications?afterId=${encodeURIComponent(afterId)}`);
+  if (!state.whisperLastSeenId) {
+    markWhisperNotificationsRead(payload.maxId);
+    return;
+  }
+  if (markRead || $('#whisperPanel')?.classList.contains('open')) {
+    markWhisperNotificationsRead(payload.maxId);
+    return;
+  }
+  state.whisperUnreadCount = payload.unreadCount || 0;
+  renderWhisperBadge();
 }
 
 function closeWhisperDialog() {
@@ -1067,7 +1101,7 @@ function renderWhisperPlayers() {
     const username = player.username || '';
     const isActive = username.toLowerCase() === active;
     return `
-      <button class="whisper-player ${isActive ? 'active' : ''}" type="button" data-index="${index}">
+      <button class="whisper-player ${isActive ? 'active' : ''}" type="button" data-index="${index}" style="--item-index: ${index}">
         ${playerIdentity(username, 24)}
         <span class="pill online">online</span>
       </button>
@@ -1085,6 +1119,13 @@ async function loadWhisperOnlinePlayers() {
 function renderWhisperMessages(messages) {
   const list = $('#whisperMessages');
   if (!list) return;
+  if ($('#whisperPanel')?.classList.contains('open')) {
+    const latestId = (messages || []).reduce((max, message) => {
+      const id = Number(message.id);
+      return Number.isFinite(id) && id > max ? id : max;
+    }, Number(state.whisperLastSeenId || 0));
+    markWhisperNotificationsRead(String(latestId));
+  }
   const signature = JSON.stringify((messages || []).map(message => [
     message.id,
     message.direction,
@@ -1125,6 +1166,8 @@ async function openWhisperDialog(username) {
 }
 
 function handleWhisperPlayerClick(event) {
+  event.preventDefault();
+  event.stopPropagation();
   const button = event.target.closest('.whisper-player');
   if (!button) return;
   const player = state.whisperPlayers[Number(button.dataset.index)];
@@ -1140,6 +1183,7 @@ async function handleWhisperSubmit(event) {
   if (!state.whisperTarget || !message) return;
 
   button.disabled = true;
+  $('#whisperForm')?.classList.add('sending');
   try {
     await postJson('/api/whisper/send', {
       username: state.whisperTarget,
@@ -1151,6 +1195,7 @@ async function handleWhisperSubmit(event) {
     setBanner(`Could not send private message: ${err.message}`);
   } finally {
     button.disabled = false;
+    $('#whisperForm')?.classList.remove('sending');
     input?.focus();
   }
 }
@@ -1937,6 +1982,8 @@ async function loadAll() {
     if ($('#whisperPanel')?.classList.contains('open')) {
       await loadWhisperOnlinePlayers();
       await loadWhisperDialog();
+    } else {
+      await loadWhisperNotifications();
     }
     setBanner('');
   } catch (err) {

@@ -717,6 +717,24 @@ async function getWhisperDialog(url) {
   };
 }
 
+async function getWhisperNotifications(url) {
+  assertDatabase();
+  const rawAfterId = String(url.searchParams.get('afterId') || '0').replace(/[^\d]/g, '');
+  const afterId = rawAfterId || '0';
+  const result = await pool.query(`
+    SELECT
+      COALESCE(MAX(id), 0)::text AS max_id,
+      COUNT(*) FILTER (WHERE direction = 'incoming' AND id > $1::bigint)::int AS unread_count
+    FROM site_whisper_messages
+  `, [afterId]);
+  const row = result.rows[0] || {};
+
+  return {
+    maxId: row.max_id || '0',
+    unreadCount: toInt(row.unread_count)
+  };
+}
+
 async function queueSiteWhisperMessage(currentUser, body) {
   assertDatabase();
   const username = cleanMinecraftUsername(body.username);
@@ -1530,6 +1548,10 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/whisper/dialog' && req.method === 'GET') {
       sendJson(res, 200, await getWhisperDialog(url));
+      return;
+    }
+    if (url.pathname === '/api/whisper/notifications' && req.method === 'GET') {
+      sendJson(res, 200, await getWhisperNotifications(url));
       return;
     }
     if (url.pathname === '/api/whisper/send' && req.method === 'POST') {
