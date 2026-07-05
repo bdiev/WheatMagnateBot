@@ -474,6 +474,7 @@ button:disabled {
   max-width: 120px;
 }
 
+body.search-focus-active #whisperPanel,
 body.search-focus-active #themeToggle,
 body.search-focus-active #logoutButton {
   max-width: 0;
