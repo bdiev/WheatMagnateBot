@@ -2927,15 +2927,23 @@ body.search-focus-active #logoutButton {
   }
 
   .rank-item.leaderboard-item {
-    grid-template-columns: 28px minmax(0, 1fr) max-content;
+    grid-template-columns: 28px minmax(0, 1fr);
+    grid-template-areas:
+      "rank player"
+      "time time";
     align-items: center;
-    gap: 8px;
+    gap: 8px 10px;
+  }
+
+  .rank-item.leaderboard-item .rank-index {
+    grid-area: rank;
   }
 
   .rank-item.leaderboard-item .leaderboard-player {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 3px;
+    grid-area: player;
+    display: flex;
+    align-items: center;
+    gap: 8px;
     min-width: 0;
   }
 
@@ -2949,11 +2957,11 @@ body.search-focus-active #logoutButton {
   }
 
   .rank-item.leaderboard-item > strong {
-    justify-self: end;
+    grid-area: time;
+    justify-self: start;
     min-width: 0;
-    max-width: 92px;
-    overflow-wrap: anywhere;
-    text-align: right;
+    max-width: none;
+    text-align: left;
     white-space: normal;
   }
 
