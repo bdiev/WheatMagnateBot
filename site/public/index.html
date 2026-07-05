@@ -35,7 +35,7 @@
       <header class="topbar">
         <div>
           <p class="eyebrow">Local Dashboard</p>
-          <h1>WheatMagnateBot</h1>
+          <h1>WheatMagnateBot <span class="minedings-mark" aria-hidden="true">W</span></h1>
         </div>
         <div class="topbar-actions">
           <nav id="navMenu" class="nav-menu" aria-label="Dashboard sections">
@@ -57,17 +57,18 @@
           </nav>
           <section id="whisperPanel" class="whisper-panel" aria-label="Private Minecraft messages">
             <button id="whisperToggle" class="whisper-toggle" type="button" aria-label="Open private messages" aria-expanded="false">
-              <span class="mail-icon" aria-hidden="true"></span>
+              <img class="mail-icon" src="/Writable_Book.png" alt="" aria-hidden="true">
               <span id="whisperBadge" class="whisper-badge" hidden>0</span>
             </button>
             <div id="whisperPopover" class="whisper-popover" hidden>
               <div class="whisper-sidebar">
-                <div class="whisper-title">Online players</div>
+                <div class="whisper-title">Dialogs & players</div>
                 <div id="whisperPlayers" class="whisper-players"></div>
               </div>
               <article id="whisperDialog" class="whisper-dialog" hidden>
                 <header class="whisper-dialog-header">
                   <div id="whisperTargetTitle">Choose player</div>
+                  <button id="whisperDeleteDialog" class="whisper-delete-dialog" type="button" aria-label="Delete dialog">Delete</button>
                   <button id="whisperCloseDialog" class="seen-search-close" type="button" aria-label="Close dialog">&times;</button>
                 </header>
                 <div id="whisperMessages" class="whisper-messages"></div>

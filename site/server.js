@@ -670,19 +670,55 @@ function cleanWhisperMessage(value) {
 async function getWhisperOnlinePlayers() {
   assertDatabase();
   const result = await pool.query(`
-    SELECT username, last_seen, last_online, is_online
-    FROM player_activity
-    WHERE is_online = TRUE
-    ORDER BY LOWER(username) ASC
+    WITH dialog_players AS (
+      SELECT
+        player_username,
+        MAX(created_at) AS last_message_at,
+        COUNT(*)::int AS message_count
+      FROM site_whisper_messages
+      GROUP BY LOWER(player_username), player_username
+    ),
+    names AS (
+      SELECT username FROM player_activity WHERE is_online = TRUE
+      UNION
+      SELECT player_username AS username FROM dialog_players
+    )
+    SELECT DISTINCT ON (LOWER(names.username))
+      COALESCE(pa.username, dialogs.player_username, names.username) AS username,
+      pa.last_seen,
+      pa.last_online,
+      COALESCE(pa.is_online, FALSE) AS is_online,
+      dialogs.last_message_at,
+      COALESCE(dialogs.message_count, 0)::int AS message_count
+    FROM names
+    LEFT JOIN player_activity pa ON LOWER(pa.username) = LOWER(names.username)
+    LEFT JOIN dialog_players dialogs ON LOWER(dialogs.player_username) = LOWER(names.username)
+    ORDER BY
+      LOWER(names.username),
+      dialogs.last_message_at DESC NULLS LAST,
+      COALESCE(pa.is_online, FALSE) DESC
   `);
 
   return {
-    players: result.rows.map(row => ({
-      username: row.username,
-      isOnline: Boolean(row.is_online),
-      lastSeen: row.last_seen,
-      lastOnline: row.last_online
-    }))
+    players: result.rows
+      .map(row => ({
+        username: row.username,
+        isOnline: Boolean(row.is_online),
+        lastSeen: row.last_seen,
+        lastOnline: row.last_online,
+        lastMessageAt: row.last_message_at,
+        messageCount: toInt(row.message_count)
+      }))
+      .sort((a, b) => {
+        const aHasDialog = a.messageCount > 0 ? 1 : 0;
+        const bHasDialog = b.messageCount > 0 ? 1 : 0;
+        if (aHasDialog !== bHasDialog) return bHasDialog - aHasDialog;
+        const aMessageTime = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+        const bMessageTime = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+        if (aMessageTime !== bMessageTime) return bMessageTime - aMessageTime;
+        if (a.isOnline !== b.isOnline) return a.isOnline ? -1 : 1;
+        return a.username.localeCompare(b.username, undefined, { sensitivity: 'base' });
+      })
   };
 }
 
@@ -714,6 +750,28 @@ async function getWhisperDialog(url) {
       message: row.message,
       createdAt: row.created_at
     }))
+  };
+}
+
+async function deleteWhisperDialog(body) {
+  assertDatabase();
+  const username = cleanMinecraftUsername(body.username);
+  if (!username) {
+    const err = new Error('Player username is required.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const result = await pool.query(
+    `DELETE FROM site_whisper_messages
+     WHERE LOWER(player_username) = LOWER($1)`,
+    [username]
+  );
+
+  return {
+    ok: true,
+    username,
+    deleted: result.rowCount
   };
 }
 
@@ -1548,6 +1606,10 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/whisper/dialog' && req.method === 'GET') {
       sendJson(res, 200, await getWhisperDialog(url));
+      return;
+    }
+    if (url.pathname === '/api/whisper/dialog/delete' && req.method === 'POST') {
+      sendJson(res, 200, await deleteWhisperDialog(await readJsonBody(req)));
       return;
     }
     if (url.pathname === '/api/whisper/notifications' && req.method === 'GET') {

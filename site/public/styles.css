@@ -28,6 +28,12 @@
   font-display: swap;
 }
 
+@font-face {
+  font-family: "MineDings";
+  src: url("/fonts/MineDings.ttf") format("truetype");
+  font-display: swap;
+}
+
 :root[data-theme="dark"] {
   color-scheme: dark;
   --bg: #0d0f14;
@@ -110,6 +116,14 @@ h1 {
   font-family: "MineCrafter Madpixel", Inter, ui-sans-serif, system-ui, sans-serif;
   font-weight: 400;
   letter-spacing: 0;
+}
+
+.minedings-mark {
+  display: inline-block;
+  margin-left: 6px;
+  font-family: "MineDings", "MineCrafter Madpixel", Inter, ui-sans-serif, system-ui, sans-serif;
+  line-height: 1;
+  vertical-align: -0.04em;
 }
 
 h2 {
@@ -835,32 +849,12 @@ body.search-focus-active #logoutButton {
 
 .mail-icon {
   position: absolute;
-  inset: 11px 9px;
-  border: 2px solid currentColor;
-  border-radius: 4px;
-}
-
-.mail-icon::before,
-.mail-icon::after {
-  content: "";
-  position: absolute;
-  top: 5px;
-  width: 15px;
-  height: 2px;
-  border-radius: 999px;
-  background: currentColor;
-}
-
-.mail-icon::before {
-  left: -1px;
-  transform: rotate(32deg);
-  transform-origin: left center;
-}
-
-.mail-icon::after {
-  right: -1px;
-  transform: rotate(-32deg);
-  transform-origin: right center;
+  inset: 8px;
+  width: calc(100% - 16px);
+  height: calc(100% - 16px);
+  object-fit: contain;
+  image-rendering: pixelated;
+  pointer-events: none;
 }
 
 .whisper-popover {
@@ -897,6 +891,7 @@ body.search-focus-active #logoutButton {
 .whisper-sidebar,
 .whisper-dialog {
   min-height: 0;
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel-soft);
@@ -921,6 +916,7 @@ body.search-focus-active #logoutButton {
   display: grid;
   align-content: start;
   gap: 6px;
+  min-width: 0;
   min-height: 0;
   overflow-y: auto;
   padding: 0 8px 8px;
@@ -931,6 +927,8 @@ body.search-focus-active #logoutButton {
   grid-template-columns: minmax(0, 1fr) max-content;
   align-items: center;
   gap: 8px;
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
   min-height: var(--button-height);
   border: 1px solid transparent;
@@ -971,13 +969,33 @@ body.search-focus-active #logoutButton {
 
 .whisper-dialog-header {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 8px;
   min-height: var(--button-height);
   padding: 6px 8px 6px 12px;
   border-bottom: 1px solid var(--line);
   font-weight: 900;
+}
+
+.whisper-dialog-header #whisperTargetTitle {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
+.whisper-delete-dialog {
+  min-width: 0;
+  min-height: 34px;
+  padding: 0 10px;
+  background: #9b2f2f;
+  font-size: 12px;
+}
+
+.whisper-delete-dialog:hover {
+  color: #fff;
+  background: #7d2424;
 }
 
 .whisper-messages {
@@ -2200,12 +2218,57 @@ body.search-focus-active #logoutButton {
   }
 
   .topbar {
-    align-items: flex-start;
-    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
   }
 
   .topbar-actions {
-    justify-content: flex-start;
+    position: relative;
+    display: grid;
+    grid-template-columns: var(--button-height) var(--button-height) 74px minmax(0, 1fr);
+    gap: 10px;
+    width: 100%;
+    align-items: center;
+    justify-content: stretch;
+  }
+
+  .topbar h1 {
+    display: none;
+  }
+
+  .topbar-actions .nav-menu {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    width: 100%;
+    max-width: none;
+    flex: none;
+    z-index: 20;
+  }
+
+  .topbar-actions .whisper-panel,
+  .topbar-actions .seen-search,
+  .topbar-actions #themeToggle,
+  .topbar-actions #logoutButton {
+    position: relative;
+    grid-row: 2;
+    z-index: 80;
+  }
+
+  .topbar-actions .whisper-panel {
+    grid-column: 1;
+  }
+
+  .topbar-actions .seen-search {
+    grid-column: 2;
+  }
+
+  .topbar-actions #themeToggle {
+    grid-column: 3;
+  }
+
+  .topbar-actions #logoutButton {
+    grid-column: 4;
+    justify-self: end;
   }
 
   .panel-head {
@@ -2240,6 +2303,13 @@ body.search-focus-active #logoutButton {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .topbar-actions .seen-search.open {
+    grid-column: 2 / -1;
+    width: 100%;
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .whisper-popover {
     position: fixed;
     top: calc(env(safe-area-inset-top, 0px) + 92px);
@@ -2264,19 +2334,23 @@ body.search-focus-active #logoutButton {
     max-height: min(420px, calc(100dvh - 112px));
   }
 
+  .whisper-panel.has-dialog .whisper-popover {
+    grid-template-rows: minmax(0, 1fr);
+  }
+
   .whisper-sidebar {
     min-height: 0;
     max-height: none;
   }
 
   .whisper-panel.has-dialog .whisper-sidebar {
-    max-height: 170px;
+    display: none;
   }
 
   .whisper-dialog {
     min-height: 0;
-    height: min(350px, calc(100vh - 326px));
-    height: min(350px, calc(100dvh - 326px));
+    height: min(520px, calc(100vh - 132px));
+    height: min(520px, calc(100dvh - 132px));
   }
 
   .whisper-title {
@@ -2316,12 +2390,12 @@ body.search-focus-active #logoutButton {
     }
 
     .whisper-panel.has-dialog .whisper-sidebar {
-      max-height: 150px;
+      display: none;
     }
 
     .whisper-dialog {
-      height: min(330px, calc(100vh - 292px));
-      height: min(330px, calc(100dvh - 292px));
+      height: min(520px, calc(100vh - 116px));
+      height: min(520px, calc(100dvh - 116px));
     }
 
     .whisper-form {

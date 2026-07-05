@@ -1103,7 +1103,7 @@ function setWhisperOpen(open) {
   toggle.setAttribute('aria-label', open ? 'Close private messages' : 'Open private messages');
   if (open) {
     loadWhisperNotifications({ markRead: true }).catch(() => {});
-    loadWhisperOnlinePlayers().catch(err => setBanner(`Could not load online players: ${err.message}`));
+    loadWhisperOnlinePlayers().catch(err => setBanner(`Could not load private message list: ${err.message}`));
     if (state.whisperTarget) {
       loadWhisperDialog().catch(() => {});
     }
@@ -1163,13 +1163,18 @@ function renderWhisperPlayers() {
   if (!list) return;
   const signature = JSON.stringify([
     state.whisperTarget || '',
-    ...state.whisperPlayers.map(player => player.username || '')
+    ...state.whisperPlayers.map(player => [
+      player.username || '',
+      Boolean(player.isOnline),
+      player.lastMessageAt || '',
+      player.messageCount || 0
+    ])
   ]);
   if (signature === state.whisperPlayersSignature) return;
   state.whisperPlayersSignature = signature;
 
   if (!state.whisperPlayers.length) {
-    list.innerHTML = '<div class="seen-empty">No online players.</div>';
+    list.innerHTML = '<div class="seen-empty">No players or dialogs.</div>';
     return;
   }
 
@@ -1177,10 +1182,11 @@ function renderWhisperPlayers() {
   list.innerHTML = state.whisperPlayers.map((player, index) => {
     const username = player.username || '';
     const isActive = username.toLowerCase() === active;
+    const isOnline = Boolean(player.isOnline);
     return `
       <button class="whisper-player ${isActive ? 'active' : ''}" type="button" data-index="${index}" style="--item-index: ${index}">
         ${playerIdentity(username, 24)}
-        <span class="pill online">online</span>
+        <span class="pill ${isOnline ? 'online' : ''}">${isOnline ? 'online' : 'offline'}</span>
       </button>
     `;
   }).join('');
@@ -1235,8 +1241,15 @@ async function openWhisperDialog(username) {
   $('#whisperPanel')?.classList.add('has-dialog');
   const dialog = $('#whisperDialog');
   const title = $('#whisperTargetTitle');
+  const player = state.whisperPlayers.find(entry => String(entry.username || '').toLowerCase() === String(username || '').toLowerCase());
+  const isOnline = Boolean(player?.isOnline);
   if (dialog) dialog.hidden = false;
-  if (title) title.innerHTML = playerIdentity(username, 26);
+  if (title) {
+    title.innerHTML = `
+      ${playerIdentity(username, 26)}
+      <span class="pill ${isOnline ? 'online' : ''}">${isOnline ? 'online' : 'offline'}</span>
+    `;
+  }
   renderWhisperPlayers();
   await loadWhisperDialog();
   setTimeout(() => $('#whisperInput')?.focus(), 60);
@@ -1274,6 +1287,25 @@ async function handleWhisperSubmit(event) {
     button.disabled = false;
     $('#whisperForm')?.classList.remove('sending');
     input?.focus();
+  }
+}
+
+async function handleWhisperDeleteDialog() {
+  const username = state.whisperTarget;
+  if (!username) return;
+  if (!window.confirm(`Delete private chat with ${username}?`)) return;
+
+  const button = $('#whisperDeleteDialog');
+  if (button) button.disabled = true;
+  try {
+    await postJson('/api/whisper/dialog/delete', { username });
+    closeWhisperDialog();
+    await loadWhisperOnlinePlayers();
+    setBanner('Private chat deleted.');
+  } catch (err) {
+    setBanner(`Could not delete private chat: ${err.message}`);
+  } finally {
+    if (button) button.disabled = false;
   }
 }
 
@@ -2108,6 +2140,7 @@ $('#seenSuggestions').addEventListener('click', handleSeenSuggestionClick);
 $('#whisperToggle')?.addEventListener('click', toggleWhisperPanel);
 $('#whisperPlayers')?.addEventListener('click', handleWhisperPlayerClick);
 $('#whisperForm')?.addEventListener('submit', handleWhisperSubmit);
+$('#whisperDeleteDialog')?.addEventListener('click', handleWhisperDeleteDialog);
 $('#whisperCloseDialog')?.addEventListener('click', closeWhisperDialog);
 document.addEventListener('click', event => {
   const player = event.target.closest('[data-player]');
