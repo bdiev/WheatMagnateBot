@@ -211,6 +211,9 @@ const CCVAULTS_EXACT_ITEMS = {
   glowstone: { category: '20. Blocks', subcategory: '37. Nether' },
   end_stone: { category: '20. Blocks', subcategory: '36. End' }
 };
+const LOCAL_ITEM_ICONS = {
+  firework_rocket: '/Firework_Rocket.png'
+};
 const CCVAULTS_ITEM_CATEGORIES = [
   { pattern: /_pickaxe$/, category: '10. Items', subcategory: '2. Pickaxes' },
   { pattern: /_axe$/, category: '10. Items', subcategory: '3. Axes' },
@@ -255,7 +258,8 @@ function ccvaultsIconUrl(item) {
 function itemIcon(item) {
   const label = item?.label || item?.name || 'Item';
   const fallback = escapeHtml(label.slice(0, 2).toUpperCase());
-  const url = ccvaultsIconUrl(item);
+  const iconKey = String(item?.name || item?.label || '').toLowerCase().replace(/[\s-]+/g, '_');
+  const url = LOCAL_ITEM_ICONS[iconKey] || ccvaultsIconUrl(item);
   if (!url) return `<span class="item-icon fallback">${fallback}</span>`;
   return `
     <span class="item-icon">
