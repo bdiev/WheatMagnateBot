@@ -1263,6 +1263,7 @@ async function queueAdminBotCommand(currentUser, body) {
     'ignore_chat',
     'unignore_chat',
     'obsidian_toggle',
+    'obsidian_radius_toggle',
     'child_toggle',
     'child_say',
     'gemini_toggle',
@@ -1293,7 +1294,8 @@ async function getAdminControlState(currentUser) {
     botStatusResult,
     whitelistResult,
     ignoredResult,
-    onlineResult
+    onlineResult,
+    farmStateResult
   ] = await Promise.all([
     pool.query('SELECT key, value FROM admin_settings'),
     pool.query('SELECT status, observed_at FROM bot_status_snapshots WHERE id = 1'),
@@ -1304,12 +1306,30 @@ async function getAdminControlState(currentUser) {
       FROM player_activity
       WHERE is_online = TRUE
       ORDER BY LOWER(username) ASC
+    `),
+    pool.query(`
+      SELECT target_x, target_y, target_z, target_radius
+      FROM obsidian_farm_state
+      WHERE id = 1
     `)
   ]);
 
   const settings = {};
   for (const row of settingsResult.rows) settings[row.key] = row.value;
   const botStatus = botStatusResult.rows[0]?.status || {};
+  const farmState = farmStateResult.rows[0] || {};
+  if (farmState.target_x != null && farmState.target_y != null && farmState.target_z != null) {
+    botStatus.obsidian = {
+      ...(botStatus.obsidian || {}),
+      config: {
+        ...(botStatus.obsidian?.config || {}),
+        x: toInt(farmState.target_x),
+        y: toInt(farmState.target_y),
+        z: toInt(farmState.target_z),
+        maxCauldronDist: farmState.target_radius == null ? 5 : toInt(farmState.target_radius)
+      }
+    };
+  }
   const whitelist = whitelistResult.rows.map(row => row.username);
   const ignoredChatUsers = ignoredResult.rows.map(row => row.username);
   const onlinePlayers = onlineResult.rows.map(row => row.username);

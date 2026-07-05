@@ -1473,9 +1473,15 @@ function renderAdminControlState(payload = {}) {
   const obsidianButton = $('#obsidianToggleButton');
   if (obsidianButton) {
     const enabled = Boolean(bot?.obsidian?.desiredEnabled || bot?.obsidian?.enabled);
-    obsidianButton.textContent = enabled ? 'Stop Obsidian Farm' : 'Start Obsidian Farm';
+    obsidianButton.textContent = enabled ? 'Stop Farm' : 'Start Farm';
     obsidianButton.classList.toggle('danger-button', enabled);
     obsidianButton.classList.toggle('ghost-button', !enabled);
+  }
+  const obsidianRadiusButton = $('#obsidianRadiusButton');
+  if (obsidianRadiusButton) {
+    const radius = bot?.obsidian?.config?.maxCauldronDist;
+    obsidianRadiusButton.textContent = radius ? `Radius: ${radius}` : 'Radius: -';
+    obsidianRadiusButton.disabled = !radius;
   }
   const child = bot.child || {};
   const childButton = $('#childToggleButton');
@@ -1527,8 +1533,11 @@ function setButtonBusyState(commandType) {
     const button = $('#obsidianToggleButton');
     if (button) {
       const stopping = button.textContent.toLowerCase().includes('stop');
-      button.textContent = stopping ? 'Stopping Obsidian Farm...' : 'Starting Obsidian Farm...';
+      button.textContent = stopping ? 'Stopping Farm...' : 'Starting Farm...';
     }
+  } else if (commandType === 'obsidian_radius_toggle') {
+    const button = $('#obsidianRadiusButton');
+    if (button) button.textContent = 'Changing radius...';
   } else if (commandType === 'pause' || commandType === 'resume') {
     const button = $('#botPauseResumeButton');
     if (button) button.textContent = commandType === 'pause' ? 'Pausing...' : 'Resuming...';

@@ -3964,6 +3964,14 @@ async function executeBotCommand(command) {
     return toggleObsidianFarmFromControl();
   }
 
+  if (type === 'obsidian_radius_toggle') {
+    const nextRadius = farm.cycleCauldronRadius();
+    if (!nextRadius) throw new Error('Configure obsidian farm coordinates before changing the radius.');
+    await persistObsidianFarmCoordinates();
+    await writeBotStatusSnapshot().catch(() => {});
+    return { radius: nextRadius };
+  }
+
   if (type === 'child_toggle') {
     if (!growingChild) initializeGrowingChild();
     const status = growingChild.toggleEnabled();
@@ -5450,7 +5458,8 @@ function getBotStatusSnapshot() {
     followTarget: followFeature.getStatus().targetUsername || null,
     obsidian: {
       enabled: farm.getStatus().enabled,
-      desiredEnabled: obsidianStats.desiredEnabled
+      desiredEnabled: obsidianStats.desiredEnabled,
+      config: farm.getStatus().config
     },
     child: {
       enabled: growingChild?.getStatus().enabled ?? false,

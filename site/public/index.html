@@ -38,6 +38,23 @@
           <h1>WheatMagnateBot</h1>
         </div>
         <div class="topbar-actions">
+          <nav id="navMenu" class="nav-menu" aria-label="Dashboard sections">
+            <button id="navMenuToggle" class="nav-menu-toggle" type="button" aria-expanded="false" aria-controls="navMenuPanel">
+              <span class="nav-menu-hamburger" aria-hidden="true">
+                <span></span>
+                <span></span>
+                <span></span>
+              </span>
+              <span class="nav-menu-label">Chat</span>
+            </button>
+            <div id="navMenuPanel" class="tab-nav" role="menu">
+              <button class="tab-button active" type="button" data-tab="chat" role="menuitem">Chat</button>
+              <button class="tab-button" type="button" data-tab="bot" role="menuitem">Bot Stats</button>
+              <button class="tab-button" type="button" data-tab="obsidian" role="menuitem">Obsidian Farm</button>
+              <button class="tab-button" type="button" data-tab="server" role="menuitem">Server Stats</button>
+              <button class="tab-button admin-only" type="button" data-tab="admin" role="menuitem" hidden>Admin</button>
+            </div>
+          </nav>
           <section id="seenSearch" class="seen-search" aria-label="Seen player search">
             <button id="seenSearchToggle" class="seen-search-toggle" type="button" aria-label="Open seen search" aria-expanded="false">
               <span class="search-icon" aria-hidden="true"></span>
@@ -62,24 +79,6 @@
           <button id="logoutButton" class="ghost-button logout-button" type="button" hidden>Log out</button>
         </div>
       </header>
-
-      <nav id="navMenu" class="nav-menu" aria-label="Dashboard sections">
-        <button id="navMenuToggle" class="nav-menu-toggle" type="button" aria-expanded="false" aria-controls="navMenuPanel">
-          <span class="nav-menu-hamburger" aria-hidden="true">
-            <span></span>
-            <span></span>
-            <span></span>
-          </span>
-          <span class="nav-menu-label">Chat</span>
-        </button>
-        <div id="navMenuPanel" class="tab-nav" role="menu">
-          <button class="tab-button active" type="button" data-tab="chat" role="menuitem">Chat</button>
-          <button class="tab-button" type="button" data-tab="bot" role="menuitem">Bot Stats</button>
-          <button class="tab-button" type="button" data-tab="obsidian" role="menuitem">Obsidian Farm</button>
-          <button class="tab-button" type="button" data-tab="server" role="menuitem">Server Stats</button>
-          <button class="tab-button admin-only" type="button" data-tab="admin" role="menuitem" hidden>Admin</button>
-        </div>
-      </nav>
 
       <section id="legacySeenSearch" class="seen-search" aria-label="Seen player search" hidden>
         <button id="legacySeenSearchToggle" class="seen-search-toggle" type="button" aria-label="Open seen search" aria-expanded="false">
@@ -407,11 +406,23 @@
           </div>
           <div class="admin-command-actions">
             <button id="botPauseResumeButton" type="button" data-bot-command="pause">Pause</button>
-            <button id="obsidianToggleButton" class="ghost-button" type="button" data-bot-command="obsidian_toggle">Toggle Obsidian Farm</button>
           </div>
         </section>
 
         <section class="panel-flow-grid section-grid">
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Obsidian Farm</h2>
+                <p>Start or stop the farm and cycle the cauldron search radius.</p>
+              </div>
+            </div>
+            <div class="admin-command-actions">
+              <button id="obsidianToggleButton" class="ghost-button" type="button" data-bot-command="obsidian_toggle">Toggle Farm</button>
+              <button id="obsidianRadiusButton" class="ghost-button" type="button" data-bot-command="obsidian_radius_toggle">Radius: -</button>
+            </div>
+          </section>
+
           <section class="panel">
             <div class="panel-head">
               <div>
