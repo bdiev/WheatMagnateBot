@@ -437,8 +437,7 @@
                 <select id="adminFollowTarget"></select>
               </label>
               <div class="admin-command-actions compact">
-                <button type="button" data-admin-control-action="follow">Follow</button>
-                <button class="ghost-button" type="button" data-bot-command="follow_stop">Stop Follow</button>
+                <button id="adminFollowButton" type="button" data-admin-control-action="follow">Follow</button>
               </div>
             </div>
           </section>
@@ -470,12 +469,12 @@
             </div>
             <div class="admin-control-grid">
               <label class="auth-field">
-                <span>Add Player</span>
+                <span>Choose player or enter the name</span>
                 <input
-                  id="adminWhitelistAddText"
+                  id="adminWhitelistPlayer"
                   name="minecraft_player_to_allow"
                   type="text"
-                  list="adminWhitelistAddCandidates"
+                  list="adminWhitelistCandidates"
                   autocomplete="off"
                   autocapitalize="none"
                   spellcheck="false"
@@ -484,14 +483,9 @@
                   data-form-type="other"
                   placeholder="Minecraft player name"
                 >
-                <datalist id="adminWhitelistAddCandidates"></datalist>
+                <datalist id="adminWhitelistCandidates"></datalist>
               </label>
-              <button type="button" data-admin-control-action="whitelist_add">Add to Whitelist</button>
-              <label class="auth-field">
-                <span>Remove Player</span>
-                <select id="adminWhitelistRemove"></select>
-              </label>
-              <button class="danger-button" type="button" data-admin-control-action="whitelist_remove">Remove</button>
+              <button id="adminWhitelistButton" type="button" data-admin-control-action="whitelist_add">Add to Whitelist</button>
             </div>
           </section>
 
@@ -504,15 +498,23 @@
             </div>
             <div class="admin-control-grid">
               <label class="auth-field">
-                <span>Ignore Player</span>
-                <select id="adminIgnoreChat"></select>
+                <span>Choose player or enter the name</span>
+                <input
+                  id="adminIgnoreChatPlayer"
+                  name="minecraft_player_to_ignore"
+                  type="text"
+                  list="adminIgnoreChatCandidates"
+                  autocomplete="off"
+                  autocapitalize="none"
+                  spellcheck="false"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
+                  data-form-type="other"
+                  placeholder="Minecraft player name"
+                >
+                <datalist id="adminIgnoreChatCandidates"></datalist>
               </label>
-              <button type="button" data-admin-control-action="ignore_chat">Ignore</button>
-              <label class="auth-field">
-                <span>Unignore Player</span>
-                <select id="adminUnignoreChat"></select>
-              </label>
-              <button class="ghost-button" type="button" data-admin-control-action="unignore_chat">Unignore</button>
+              <button id="adminIgnoreChatButton" type="button" data-admin-control-action="ignore_chat">Ignore</button>
             </div>
           </section>
         </section>

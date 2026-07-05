@@ -1228,6 +1228,94 @@ function setSelectOptions(selector, values = [], { placeholder = 'Select...', va
   if ([...select.options].some(option => option.value === current)) select.value = current;
 }
 
+function normalizePlayerInput(value) {
+  return String(value || '').trim();
+}
+
+function hasPlayer(list = [], username = '') {
+  const normalized = normalizePlayerInput(username).toLowerCase();
+  return Boolean(normalized) && list.some(entry => String(entry || '').toLowerCase() === normalized);
+}
+
+function uniquePlayers(...lists) {
+  const seen = new Set();
+  const players = [];
+  for (const list of lists) {
+    for (const value of list || []) {
+      const username = typeof value === 'string' ? value : value?.username;
+      const normalized = normalizePlayerInput(username);
+      const key = normalized.toLowerCase();
+      if (!normalized || seen.has(key)) continue;
+      seen.add(key);
+      players.push(normalized);
+    }
+  }
+  return players.sort((a, b) => a.localeCompare(b));
+}
+
+function setDatalistOptions(selector, values = []) {
+  const datalist = $(selector);
+  if (!datalist) return;
+  datalist.innerHTML = values
+    .map(username => `<option value="${escapeHtml(username)}"></option>`)
+    .join('');
+}
+
+function setToggleActionButton(button, enabled, onConfig, offConfig) {
+  if (!button) return;
+  const config = enabled ? onConfig : offConfig;
+  button.textContent = config.label;
+  button.dataset.adminControlAction = config.action;
+  button.classList.toggle('danger-button', Boolean(config.danger));
+  button.classList.toggle('ghost-button', Boolean(config.ghost));
+}
+
+function updateFollowControl() {
+  const button = $('#adminFollowButton');
+  const selected = normalizePlayerInput($('#adminFollowTarget')?.value);
+  const current = normalizePlayerInput(state.adminControlState?.bot?.followTarget);
+  const stoppingCurrent = selected && current && selected.toLowerCase() === current.toLowerCase();
+  setToggleActionButton(button, stoppingCurrent, {
+    label: 'Stop Follow',
+    action: 'follow_stop',
+    danger: true
+  }, {
+    label: selected && current ? 'Switch Follow' : 'Follow',
+    action: 'follow',
+    ghost: !selected
+  });
+}
+
+function updateWhitelistControl() {
+  const button = $('#adminWhitelistButton');
+  const username = normalizePlayerInput($('#adminWhitelistPlayer')?.value);
+  const whitelisted = hasPlayer(state.adminControlState?.whitelist, username);
+  setToggleActionButton(button, whitelisted, {
+    label: 'Remove from Whitelist',
+    action: 'whitelist_remove',
+    danger: true
+  }, {
+    label: 'Add to Whitelist',
+    action: 'whitelist_add',
+    ghost: !username
+  });
+}
+
+function updateIgnoreChatControl() {
+  const button = $('#adminIgnoreChatButton');
+  const username = normalizePlayerInput($('#adminIgnoreChatPlayer')?.value);
+  const ignored = hasPlayer(state.adminControlState?.ignoredChatUsers, username);
+  setToggleActionButton(button, ignored, {
+    label: 'Unignore',
+    action: 'unignore_chat',
+    ghost: true
+  }, {
+    label: 'Ignore',
+    action: 'ignore_chat',
+    danger: Boolean(username)
+  });
+}
+
 function renderAdminControlState(payload = {}) {
   state.adminControlState = payload;
   const settings = payload.settings || {};
@@ -1259,26 +1347,38 @@ function renderAdminControlState(payload = {}) {
     publicButton.classList.toggle('ghost-button', !enabled);
   }
 
-  setSelectOptions('#adminFollowTarget', payload.nearbyPlayers || [], {
+  const nearbyPlayers = Array.isArray(payload.nearbyPlayers) ? [...payload.nearbyPlayers] : [];
+  const currentFollowTarget = normalizePlayerInput(bot.followTarget);
+  if (currentFollowTarget && !hasPlayer(nearbyPlayers.map(player => player.username), currentFollowTarget)) {
+    nearbyPlayers.unshift({ username: currentFollowTarget, distance: 'current target' });
+  }
+  setSelectOptions('#adminFollowTarget', nearbyPlayers, {
     placeholder: 'Choose nearby player',
     valueFor: player => player.username,
-    labelFor: player => `${player.username} (${player.distance} blocks)`
+    labelFor: player => Number.isFinite(Number(player.distance))
+      ? `${player.username} (${player.distance} blocks)`
+      : `${player.username} (${player.distance})`
   });
+  const followSelect = $('#adminFollowTarget');
+  if (followSelect && currentFollowTarget && !followSelect.value && [...followSelect.options].some(option => option.value.toLowerCase() === currentFollowTarget.toLowerCase())) {
+    followSelect.value = [...followSelect.options].find(option => option.value.toLowerCase() === currentFollowTarget.toLowerCase()).value;
+  }
   setSelectOptions('#adminDropItem', payload.inventory || [], {
     placeholder: 'Choose item',
     valueFor: item => JSON.stringify({ slot: item.slot, name: item.name }),
     labelFor: item => `${item.displayName || item.name} x${item.count || 1}`
   });
-  setSelectOptions('#adminWhitelistRemove', payload.whitelist || [], { placeholder: 'Choose whitelist player' });
-  setSelectOptions('#adminIgnoreChat', payload.ignoreCandidates || [], { placeholder: 'Choose online player' });
-  setSelectOptions('#adminUnignoreChat', payload.ignoredChatUsers || [], { placeholder: 'Choose ignored player' });
-
-  const datalist = $('#adminWhitelistAddCandidates');
-  if (datalist) {
-    datalist.innerHTML = (payload.whitelistAddCandidates || [])
-      .map(username => `<option value="${escapeHtml(username)}"></option>`)
-      .join('');
-  }
+  setDatalistOptions(
+    '#adminWhitelistCandidates',
+    uniquePlayers(payload.onlinePlayers, payload.whitelist, payload.whitelistAddCandidates)
+  );
+  setDatalistOptions(
+    '#adminIgnoreChatCandidates',
+    uniquePlayers(payload.onlinePlayers, payload.ignoredChatUsers, payload.ignoreCandidates)
+  );
+  updateFollowControl();
+  updateWhitelistControl();
+  updateIgnoreChatControl();
 }
 
 function setButtonBusyState(commandType) {
@@ -1373,16 +1473,18 @@ async function handleAdminControlAction(event) {
   try {
     if (action === 'follow') {
       payload.username = $('#adminFollowTarget')?.value;
+    } else if (action === 'follow_stop') {
+      payload.username = $('#adminFollowTarget')?.value;
     } else if (action === 'drop_item') {
       Object.assign(payload, JSON.parse($('#adminDropItem')?.value || '{}'));
     } else if (action === 'whitelist_add') {
-      payload.username = $('#adminWhitelistAddText')?.value.trim();
+      payload.username = normalizePlayerInput($('#adminWhitelistPlayer')?.value);
     } else if (action === 'whitelist_remove') {
-      payload.username = $('#adminWhitelistRemove')?.value;
+      payload.username = normalizePlayerInput($('#adminWhitelistPlayer')?.value);
     } else if (action === 'ignore_chat') {
-      payload.username = $('#adminIgnoreChat')?.value;
+      payload.username = normalizePlayerInput($('#adminIgnoreChatPlayer')?.value);
     } else if (action === 'unignore_chat') {
-      payload.username = $('#adminUnignoreChat')?.value;
+      payload.username = normalizePlayerInput($('#adminIgnoreChatPlayer')?.value);
     }
 
     if (['follow', 'whitelist_add', 'whitelist_remove', 'ignore_chat', 'unignore_chat'].includes(action) && !payload.username) {
@@ -1395,7 +1497,14 @@ async function handleAdminControlAction(event) {
     button.disabled = true;
     await queueAdminCommand(action, payload);
     scheduleAdminControlRefresh();
-    if (action === 'whitelist_add') $('#adminWhitelistAddText').value = '';
+    if (['whitelist_add', 'whitelist_remove'].includes(action)) {
+      $('#adminWhitelistPlayer').value = '';
+      updateWhitelistControl();
+    }
+    if (['ignore_chat', 'unignore_chat'].includes(action)) {
+      $('#adminIgnoreChatPlayer').value = '';
+      updateIgnoreChatControl();
+    }
   } catch (err) {
     setBanner(`Could not queue bot command: ${err.message}`);
   } finally {
@@ -1459,6 +1568,9 @@ $('#adminUsersRefresh')?.addEventListener('click', loadAdminUsers);
 $('#adminUsersList')?.addEventListener('click', handleAdminUserAction);
 document.querySelector('[data-panel="admin"]')?.addEventListener('click', handleAdminBotCommand);
 document.querySelector('[data-panel="admin"]')?.addEventListener('click', handleAdminControlAction);
+$('#adminFollowTarget')?.addEventListener('change', updateFollowControl);
+$('#adminWhitelistPlayer')?.addEventListener('input', updateWhitelistControl);
+$('#adminIgnoreChatPlayer')?.addEventListener('input', updateIgnoreChatControl);
 $('#gameChatForm')?.addEventListener('submit', handleGameChatSubmit);
 $$('.chart-controls').forEach(controls => controls.addEventListener('click', handleChartRangeClick));
 $('#themeToggle').addEventListener('click', toggleTheme);
