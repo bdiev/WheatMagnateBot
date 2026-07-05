@@ -1554,6 +1554,9 @@ function inventoryGridSlots(items) {
     } else if (slot === 45) {
       // Offhand is rendered separately from the 9x4 inventory grid.
       continue;
+    } else if (String(item.name || '').toLowerCase() === 'totem_of_undying') {
+      // Older snapshots missed the offhand slot; don't place the totem in the first inventory cell.
+      continue;
     } else {
       unplacedItems.push(item);
     }
@@ -1599,7 +1602,8 @@ function containerGridSlots(items, size = 27) {
 function renderInventorySupplies(selector, items) {
   state.supplyTooltipItems = Object.fromEntries(Object.entries(state.supplyTooltipItems).filter(([key]) => !key.startsWith('inventory:')));
   const slots = inventoryGridSlots(items);
-  const offhandItem = items.find(item => Number(item.slot) === 45);
+  const offhandItem = items.find(item => Number(item.slot) === 45) ||
+    items.find(item => item.slot == null && String(item.name || '').toLowerCase() === 'totem_of_undying');
   if (!items.length) {
     renderStable(selector, '<div class="empty">No items recorded.</div>', ['inventory-empty']);
     return;

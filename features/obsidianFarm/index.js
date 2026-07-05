@@ -234,25 +234,74 @@ function summarizeSupplyItems(bot, items) {
   const allItems = [];
 
   const normalizeEnchantments = item => {
-    const direct = item.enchants || item.enchantments;
-    if (Array.isArray(direct) && direct.length) {
-      return direct.map(enchant => ({
-        name: String(enchant.name || enchant.id || enchant.type || 'enchantment'),
-        level: Number(enchant.lvl ?? enchant.level ?? enchant.value ?? 1) || 1
-      }));
-    }
-    const nbtRoot = item.nbt?.value || {};
-    const lists = [
-      nbtRoot.Enchantments?.value?.value,
-      nbtRoot.StoredEnchantments?.value?.value
-    ].filter(Array.isArray);
-    return lists.flatMap(list => list.map(entry => {
-      const value = entry?.value || {};
-      return {
-        name: String(value.id?.value || 'enchantment').replace(/^minecraft:/, ''),
-        level: Number(value.lvl?.value || 1) || 1
-      };
-    }));
+    const found = new Map();
+    const readScalar = value => {
+      let current = value;
+      for (let depth = 0; depth < 8; depth += 1) {
+        if (current == null) return current;
+        if (typeof current !== 'object') return current;
+        if ('value' in current && Object.keys(current).length <= 2) {
+          current = current.value;
+          continue;
+        }
+        return current;
+      }
+      return current;
+    };
+    const addEnchant = (name, level = 1) => {
+      const cleanName = String(readScalar(name) || '')
+        .replace(/^minecraft:/, '')
+        .trim();
+      if (!cleanName) return;
+      const cleanLevel = Number(readScalar(level)) || 1;
+      found.set(cleanName, Math.max(found.get(cleanName) || 0, cleanLevel));
+    };
+    const visit = (value, keyHint = '', depth = 0) => {
+      if (value == null || depth > 10) return;
+      if (value instanceof Map) {
+        for (const [key, child] of value.entries()) visit(child, String(key), depth + 1);
+        return;
+      }
+      if (Array.isArray(value)) {
+        for (const child of value) visit(child, keyHint, depth + 1);
+        return;
+      }
+      if (typeof value !== 'object') return;
+
+      const unwrapped = readScalar(value);
+      if (unwrapped !== value) {
+        visit(unwrapped, keyHint, depth + 1);
+        return;
+      }
+
+      const rawId = value.id ?? value.name ?? value.type;
+      const rawLevel = value.lvl ?? value.level ?? value.amplifier;
+      if (rawId != null && rawLevel != null) addEnchant(rawId, rawLevel);
+
+      const levels = value.levels ?? value.Levels;
+      if (levels && typeof levels === 'object') {
+        for (const [name, level] of Object.entries(readScalar(levels) || {})) {
+          addEnchant(name, level);
+        }
+      }
+
+      for (const [key, child] of Object.entries(value)) {
+        const lowerKey = key.toLowerCase();
+        if (
+          lowerKey.includes('enchant') ||
+          lowerKey === 'levels' ||
+          keyHint.toLowerCase().includes('enchant')
+        ) {
+          visit(child, key, depth + 1);
+        }
+      }
+    };
+
+    visit(item.enchants, 'enchants');
+    visit(item.enchantments, 'enchantments');
+    visit(item.components, 'components');
+    visit(item.nbt, 'nbt');
+    return Array.from(found, ([name, level]) => ({ name, level }));
   };
 
   for (const item of items) {
@@ -290,6 +339,15 @@ function summarizeSupplyItems(bot, items) {
     usablePickaxeCount: pickaxes.filter(pickaxe => pickaxe.usable).length,
     allItems
   };
+}
+
+function getInventorySupplyItems(bot) {
+  const items = [...(bot.inventory?.items() || [])];
+  const offhand = bot.inventory?.slots?.[45] || null;
+  if (offhand && !items.some(item => item.slot === 45)) {
+    items.push(offhand);
+  }
+  return items;
 }
 
 function findReachableSupplyBarrel(bot) {
@@ -331,7 +389,7 @@ async function prepareSafeBarrelHand(bot) {
 }
 
 async function inspectSupplyStatusUnlocked(bot) {
-  const inventory = summarizeSupplyItems(bot, bot.inventory.items());
+  const inventory = summarizeSupplyItems(bot, getInventorySupplyItems(bot));
   const barrel = findReachableSupplyBarrel(bot);
   if (!barrel) {
     return { inventory, barrel: null, barrelError: 'Not found within 5 blocks' };
@@ -398,7 +456,7 @@ async function getDetailedStatus(bot, options = {}) {
     connected: true,
     supplies: options.inspectBarrel === false
       ? {
-          inventory: summarizeSupplyItems(bot, bot.inventory.items()),
+          inventory: summarizeSupplyItems(bot, getInventorySupplyItems(bot)),
           barrel: options.barrel || null,
           barrelError: options.barrelError || null
         }
@@ -1020,7 +1078,7 @@ async function ensureFarmSupplies(bot, context = {}) {
     if (pickaxeChanged) {
       latestSuppliesSnapshot = {
         reason: 'pickaxe_changed',
-        inventory: summarizeSupplyItems(bot, bot.inventory.items()),
+        inventory: summarizeSupplyItems(bot, getInventorySupplyItems(bot)),
         barrel: {
           position: barrel.position.toString(),
           distance: bot.entity.position.distanceTo(barrel.position.offset(0.5, 0.5, 0.5)),
@@ -1032,7 +1090,7 @@ async function ensureFarmSupplies(bot, context = {}) {
 
     latestSuppliesSnapshot = latestSuppliesSnapshot || {
       reason: 'barrel_opened',
-      inventory: summarizeSupplyItems(bot, bot.inventory.items()),
+      inventory: summarizeSupplyItems(bot, getInventorySupplyItems(bot)),
       barrel: {
         position: barrel.position.toString(),
         distance: bot.entity.position.distanceTo(barrel.position.offset(0.5, 0.5, 0.5)),
@@ -1068,7 +1126,7 @@ async function ensureFarmSupplies(bot, context = {}) {
   if (latestSuppliesSnapshot) {
     latestSuppliesSnapshot = {
       ...latestSuppliesSnapshot,
-      inventory: summarizeSupplyItems(bot, bot.inventory.items()),
+      inventory: summarizeSupplyItems(bot, getInventorySupplyItems(bot)),
       observedAt: new Date().toISOString()
     };
     runtime.onSuppliesChanged(latestSuppliesSnapshot).catch(err => {
