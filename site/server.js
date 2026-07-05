@@ -353,12 +353,14 @@ async function ensureOptionalTables() {
     CREATE TABLE IF NOT EXISTS player_activity (
       id SERIAL PRIMARY KEY,
       username VARCHAR(255) UNIQUE NOT NULL,
-      last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      last_online TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      last_seen TIMESTAMP,
+      last_online TIMESTAMP,
       registration_at TIMESTAMPTZ,
       is_online BOOLEAN DEFAULT FALSE
     )
   `);
+  await pool.query(`ALTER TABLE player_activity ALTER COLUMN last_seen DROP DEFAULT`);
+  await pool.query(`ALTER TABLE player_activity ALTER COLUMN last_online DROP DEFAULT`);
   await pool.query(`ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS registration_at TIMESTAMPTZ`);
   await pool.query(`
     UPDATE player_activity
@@ -633,12 +635,12 @@ async function getChat(url) {
         username,
         is_online,
         CASE
-          WHEN is_online THEN COALESCE(last_online, last_seen)
+          WHEN is_online THEN last_online
           ELSE last_seen
         END AS event_at
       FROM player_activity
       WHERE CASE
-          WHEN is_online THEN COALESCE(last_online, last_seen)
+          WHEN is_online THEN last_online
           ELSE last_seen
         END >= NOW() - INTERVAL '24 hours'
       ORDER BY event_at DESC NULLS LAST

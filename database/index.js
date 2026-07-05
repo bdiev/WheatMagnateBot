@@ -109,7 +109,7 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
     }
   }
 
-  async function updatePlayerActivity(username, isOnline) {
+  async function updatePlayerActivity(username, isOnline, { recordEvent = true } = {}) {
     if (!pool) return;
 
     const timestamp = new Date();
@@ -117,31 +117,37 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
       if (isOnline) {
         await pool.query(`
           INSERT INTO player_activity (username, last_seen, last_online, registration_at, is_online)
-          VALUES ($1, $2::timestamp, $2::timestamp, NOW(), TRUE)
+          VALUES (
+            $1,
+            CASE WHEN $3::boolean THEN $2::timestamp ELSE NULL END,
+            CASE WHEN $3::boolean THEN $2::timestamp ELSE NULL END,
+            NOW(),
+            TRUE
+          )
           ON CONFLICT (username)
           DO UPDATE SET last_seen = CASE
-                          WHEN player_activity.is_online IS DISTINCT FROM TRUE THEN $2::timestamp
+                          WHEN $3::boolean AND player_activity.is_online IS DISTINCT FROM TRUE THEN $2::timestamp
                           ELSE player_activity.last_seen
                         END,
                         last_online = CASE
-                          WHEN player_activity.is_online IS DISTINCT FROM TRUE THEN $2::timestamp
+                          WHEN $3::boolean AND player_activity.is_online IS DISTINCT FROM TRUE THEN $2::timestamp
                           ELSE player_activity.last_online
                         END,
                         registration_at = COALESCE(player_activity.registration_at, NOW()),
                         is_online = TRUE
-        `, [username, timestamp]);
+        `, [username, timestamp, recordEvent]);
       } else {
         await pool.query(`
           INSERT INTO player_activity (username, last_seen, registration_at, is_online)
-          VALUES ($1, $2::timestamp, NOW(), FALSE)
+          VALUES ($1, CASE WHEN $3::boolean THEN $2::timestamp ELSE NULL END, NOW(), FALSE)
           ON CONFLICT (username)
           DO UPDATE SET last_seen = CASE
-                          WHEN player_activity.is_online IS DISTINCT FROM FALSE THEN $2::timestamp
+                          WHEN $3::boolean AND player_activity.is_online IS DISTINCT FROM FALSE THEN $2::timestamp
                           ELSE player_activity.last_seen
                         END,
                         registration_at = COALESCE(player_activity.registration_at, NOW()),
                         is_online = FALSE
-        `, [username, timestamp]);
+        `, [username, timestamp, recordEvent]);
       }
     };
 

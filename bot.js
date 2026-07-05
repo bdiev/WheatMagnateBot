@@ -558,6 +558,7 @@ let playtimeSyncInterval = null;
 let playerActivitySyncInterval = null;
 let playerActivitySyncRunning = false;
 let lastObservedOnlinePlayerKeys = null;
+let playerActivityJoinEventsReady = false;
 const pendingPlaytimeLookups = new Map(); // lookup key -> { targetUsername, timestamp }
 const pendingJoinDateLookups = new Map(); // lookup key -> { targetUsername, timestamp }
 let botStatusSnapshotInterval = null;
@@ -905,12 +906,14 @@ async function initDatabase() {
       CREATE TABLE IF NOT EXISTS player_activity (
         id SERIAL PRIMARY KEY,
         username VARCHAR(255) UNIQUE NOT NULL,
-        last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        last_online TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_seen TIMESTAMP,
+        last_online TIMESTAMP,
         registration_at TIMESTAMPTZ,
         is_online BOOLEAN DEFAULT FALSE
       )
     `);
+    await pool.query('ALTER TABLE player_activity ALTER COLUMN last_seen DROP DEFAULT');
+    await pool.query('ALTER TABLE player_activity ALTER COLUMN last_online DROP DEFAULT');
     await pool.query('ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS registration_at TIMESTAMPTZ');
     await pool.query(`
       UPDATE player_activity
@@ -1865,14 +1868,14 @@ async function syncPlayerActivityOnlineState() {
     const onlineByKey = new Map(onlineUsernames.map(username => [username.toLowerCase(), username]));
     const onlineKeys = new Set(onlineByKey.keys());
 
-    await Promise.all(onlineUsernames.map(username => updatePlayerActivity(username, true)));
+    await Promise.all(onlineUsernames.map(username => updatePlayerActivity(username, true, { recordEvent: false })));
 
     if (lastObservedOnlinePlayerKeys) {
       const leftUsernames = [...lastObservedOnlinePlayerKeys]
         .filter(key => !onlineKeys.has(key))
         .map(key => lastObservedOnlinePlayerKeys.get(key))
         .filter(Boolean);
-      await Promise.all(leftUsernames.map(username => updatePlayerActivity(username, false)));
+      await Promise.all(leftUsernames.map(username => updatePlayerActivity(username, false, { recordEvent: true })));
     }
 
     if (onlineUsernames.length > 0 || hasObservedSelf || lastObservedOnlinePlayerKeys) {
@@ -6290,6 +6293,7 @@ function createBot() {
   bot.on('spawn', async () => {
     clearTimeout(connectionWatchdog);
     console.log('[Bot] Spawned.');
+    playerActivityJoinEventsReady = false;
     reconnectTimestamp = 0; // Reset reconnect countdown when bot spawns
     clearIntervals();
     startFoodMonitor();
@@ -6317,6 +6321,8 @@ function createBot() {
         await syncWhitelistPlaytime();
       } catch (err) {
         console.error('[PlayerActivity] Initial sync after spawn failed:', err.message);
+      } finally {
+        playerActivityJoinEventsReady = true;
       }
     }, 3000);
 
@@ -6389,8 +6395,11 @@ function createBot() {
     const reasonStr = chatComponentToString(reason);
     const observedOnlineAtDisconnect = lastObservedOnlinePlayerKeys;
     lastObservedOnlinePlayerKeys = null;
+    playerActivityJoinEventsReady = false;
     if (observedOnlineAtDisconnect?.size) {
-      Promise.all([...observedOnlineAtDisconnect.values()].map(username => updatePlayerActivity(username, false)))
+      Promise.all([...observedOnlineAtDisconnect.values()].map(username =>
+        updatePlayerActivity(username, false, { recordEvent: false })
+      ))
         .catch(err => console.error('[PlayerActivity] Disconnect offline flush failed:', err.message));
     }
     syncWhitelistPlaytime([]).catch(err => console.error('[Playtime] Disconnect flush failed:', err.message));
@@ -6434,7 +6443,7 @@ function createBot() {
     if (player.username && player.username.toLowerCase() !== bot.username.toLowerCase()) {
       if (!lastObservedOnlinePlayerKeys) lastObservedOnlinePlayerKeys = new Map();
       lastObservedOnlinePlayerKeys.set(player.username.toLowerCase(), player.username);
-      await updatePlayerActivity(player.username, true);
+      await updatePlayerActivity(player.username, true, { recordEvent: playerActivityJoinEventsReady });
       await scheduleQueuedSiteWhispersForPlayer(player.username);
     }
     if (player.username) {
