@@ -17,6 +17,7 @@ const state = {
   seenPlayers: [],
   whitelistSearchPlayers: [],
   ignoreChatSearchPlayers: [],
+  adminPlayerSearchRequests: {},
   adminControlState: null,
   adminControlLoading: false,
   chatMessageIds: new Set(),
@@ -1309,6 +1310,7 @@ function hideAdminPlayerSuggestions(suggestionsSelector, stateKey) {
   const suggestions = $(suggestionsSelector);
   if (suggestions) suggestions.hidden = true;
   state[stateKey] = [];
+  state.adminPlayerSearchRequests[stateKey] = (state.adminPlayerSearchRequests[stateKey] || 0) + 1;
 }
 
 function renderAdminPlayerSuggestions({ suggestionsSelector, stateKey, players, statusFor }) {
@@ -1337,6 +1339,9 @@ function renderAdminPlayerSuggestions({ suggestionsSelector, stateKey, players, 
 
 async function runAdminPlayerSearch({ query, suggestionsSelector, stateKey, render }) {
   const cleanQuery = normalizePlayerInput(query);
+  const requestId = (state.adminPlayerSearchRequests[stateKey] || 0) + 1;
+  state.adminPlayerSearchRequests[stateKey] = requestId;
+
   if (cleanQuery.length < 1) {
     hideAdminPlayerSuggestions(suggestionsSelector, stateKey);
     return;
@@ -1344,8 +1349,10 @@ async function runAdminPlayerSearch({ query, suggestionsSelector, stateKey, rend
 
   try {
     const payload = await fetchJson(`/api/seen-search?query=${encodeURIComponent(cleanQuery)}`);
+    if (state.adminPlayerSearchRequests[stateKey] !== requestId) return;
     render(payload.players || []);
   } catch (err) {
+    if (state.adminPlayerSearchRequests[stateKey] !== requestId) return;
     const suggestions = $(suggestionsSelector);
     if (suggestions) {
       suggestions.innerHTML = `<div class="seen-empty">Search failed: ${escapeHtml(err.message)}</div>`;
@@ -1381,7 +1388,7 @@ function runWhitelistSearch(query) {
 function handleWhitelistPlayerInput(event) {
   updateWhitelistControl();
   clearTimeout(state.whitelistSearchTimer);
-  state.whitelistSearchTimer = setTimeout(() => runWhitelistSearch(event.currentTarget.value), 180);
+  runWhitelistSearch(event.currentTarget.value);
 }
 
 function handleWhitelistSuggestionClick(event) {
@@ -1441,7 +1448,7 @@ function runIgnoreChatSearch(query) {
 function handleIgnoreChatPlayerInput(event) {
   updateIgnoreChatControl();
   clearTimeout(state.ignoreChatSearchTimer);
-  state.ignoreChatSearchTimer = setTimeout(() => runIgnoreChatSearch(event.currentTarget.value), 180);
+  runIgnoreChatSearch(event.currentTarget.value);
 }
 
 function handleIgnoreChatSuggestionClick(event) {

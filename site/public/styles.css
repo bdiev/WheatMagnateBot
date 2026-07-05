@@ -362,15 +362,19 @@ button:disabled {
 
 .admin-player-picker {
   position: relative;
+  z-index: 40;
 }
 
 .admin-player-picker .admin-player-suggestions {
   top: calc(100% + 6px);
+  z-index: 80;
   max-height: 246px;
 }
 
-.panel:has(.admin-player-picker) {
+.admin-picker-panel {
   overflow: visible;
+  position: relative;
+  z-index: 20;
 }
 
 .auth-error {
@@ -864,6 +868,10 @@ body.search-focus-active #logoutButton {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 16px;
   align-items: start;
+}
+
+#tab-admin.tab-panel.active {
+  align-items: stretch;
 }
 
 .stats-grid {
