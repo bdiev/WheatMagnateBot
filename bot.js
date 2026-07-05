@@ -555,6 +555,7 @@ class DeferredBotCommandError extends Error {
 let recentlyForwardedGameChat = new Map(); // key: `CHAT:username:message` -> timestamp, to dedupe chat/raw message events
 let tpsTabInterval = null;
 let playtimeSyncInterval = null;
+const pendingPlaytimeLookups = new Map(); // lower chat username -> { targetUsername, timestamp }
 let botStatusSnapshotInterval = null;
 let wheatMagnatePlaytimeDisplay = 'N/A';
 let wheatMagnatePlaytimeCacheAt = 0;
@@ -1853,6 +1854,69 @@ async function refreshWheatMagnatePlaytimeDisplay({ force = false } = {}) {
 
 function getWheatMagnateStatusLine() {
   return `${getPlayerHeadEmoji(ADMIN_PANEL_BOT_NAME)} **${ADMIN_PANEL_BOT_NAME}** Playtime: **${wheatMagnatePlaytimeDisplay}**`;
+}
+
+async function reconcileObservedPlaytime(targetUsername, observedSeconds) {
+  if (!pool || !targetUsername || !Number.isFinite(observedSeconds)) return;
+
+  const safeUsername = String(targetUsername || '').replace(/[^A-Za-z0-9_]/g, '').trim().slice(0, 32);
+  const safeSeconds = Math.max(0, Math.floor(observedSeconds));
+  if (!safeUsername) return;
+
+  try {
+    const result = await pool.query(`
+      SELECT username,
+             COALESCE(total_seconds, 0) +
+               CASE WHEN tracking_since IS NULL THEN 0
+                    ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - tracking_since)))::BIGINT)
+               END AS effective_seconds
+      FROM player_playtime
+      WHERE LOWER(username) = LOWER($1)
+      LIMIT 1
+    `, [safeUsername]);
+    const currentSeconds = Number(result.rows[0]?.effective_seconds || 0);
+    const diffSeconds = Math.abs(currentSeconds - safeSeconds);
+    if (diffSeconds < 60) return;
+
+    const updateResult = await setPlayerPlaytime(safeUsername, safeSeconds);
+    if (updateResult.error) {
+      console.error(`[Playtime] Failed to update observed !pt for ${safeUsername}: ${updateResult.error}`);
+      return;
+    }
+    console.log(
+      `[Playtime] Updated ${updateResult.username} from observed !pt: ${formatPlaytime(currentSeconds)} -> ${formatPlaytime(safeSeconds)}`
+    );
+  } catch (err) {
+    console.error('[Playtime] Failed to reconcile observed !pt:', err.message);
+  }
+}
+
+function handleObservedPlaytimeChat(username, message) {
+  const safeSpeaker = String(username || '').replace(/[^A-Za-z0-9_]/g, '').trim().slice(0, 32);
+  const cleanMessage = String(message || '').replace(/\u00a7[0-9a-fk-or]/gi, '').trim();
+  if (!safeSpeaker || !cleanMessage) return;
+
+  const speakerKey = safeSpeaker.toLowerCase();
+  const commandMatch = cleanMessage.match(/^!pt(?:\s+([A-Za-z0-9_]{1,32}))?$/i);
+  if (commandMatch) {
+    pendingPlaytimeLookups.set(speakerKey, {
+      targetUsername: commandMatch[1] || safeSpeaker,
+      timestamp: Date.now()
+    });
+    return;
+  }
+
+  const observedSeconds = parsePlaytime(cleanMessage);
+  if (observedSeconds == null) return;
+
+  const pending = pendingPlaytimeLookups.get(speakerKey);
+  if (!pending || Date.now() - pending.timestamp > 20_000) {
+    pendingPlaytimeLookups.delete(speakerKey);
+    return;
+  }
+
+  pendingPlaytimeLookups.delete(speakerKey);
+  reconcileObservedPlaytime(pending.targetUsername, observedSeconds).catch(() => {});
 }
 
 async function beginObsidianFarmSession() {
@@ -6201,6 +6265,7 @@ function createBot() {
   // ------- CHAT COMMANDS -------
   bot.on('chat', async (username, message, translate, jsonMessage) => {
     username = resolveRelayedChatUsername(username, jsonMessage);
+    handleObservedPlaytimeChat(username, message);
 
     const wmMatch = message.match(/^!wm(?:\s+([\s\S]*))?$/i);
     if (wmMatch) {
