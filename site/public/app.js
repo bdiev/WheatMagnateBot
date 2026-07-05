@@ -1654,6 +1654,39 @@ async function handleWhisperDeleteDialog() {
   }
 }
 
+function typeChatMessageText(element, text) {
+  if (!element) return;
+  const fullText = String(text || '');
+  element.textContent = '';
+
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || !fullText) {
+    element.textContent = fullText;
+    return;
+  }
+
+  element.classList.add('typing');
+  const startDelay = 360;
+  const stepMs = 22;
+  const chunkSize = fullText.length > 90 ? 2 : 1;
+  let index = 0;
+
+  const finish = () => {
+    element.textContent = fullText;
+    element.classList.remove('typing');
+  };
+
+  window.setTimeout(() => {
+    const timer = window.setInterval(() => {
+      index = Math.min(fullText.length, index + chunkSize);
+      element.textContent = fullText.slice(0, index);
+      if (index >= fullText.length) {
+        window.clearInterval(timer);
+        finish();
+      }
+    }, stepMs);
+  }, startDelay);
+}
+
 function renderChatMessages(messages) {
   const list = $('#chatList');
   if (!list) return;
@@ -1718,19 +1751,27 @@ function renderChatMessages(messages) {
     }
 
     if (article.dataset.renderSignature !== signature) {
+      const text = isActivity
+        ? (message.event === 'join' ? 'joined the game' : 'left the game')
+        : String(message.message || '');
       if (isActivity) {
-        const eventLabel = message.event === 'join' ? 'joined the game' : 'left the game';
         article.innerHTML = `
           <div class="chat-user">${playerIdentity(message.username, 24)}</div>
-          <div class="chat-text">${escapeHtml(eventLabel)}</div>
+          <div class="chat-text"></div>
           <time class="chat-time">${formatChatTime(message.createdAt)}</time>
         `;
       } else {
         article.innerHTML = `
           <div class="chat-user">${playerIdentity(message.username, 28)}</div>
-          <div class="chat-text">${escapeHtml(message.message)}</div>
+          <div class="chat-text"></div>
           <time class="chat-time">${formatChatTime(message.createdAt)}</time>
         `;
+      }
+      const textNode = article.querySelector('.chat-text');
+      if (isNew) {
+        typeChatMessageText(textNode, text);
+      } else if (textNode) {
+        textNode.textContent = text;
       }
       article.dataset.renderSignature = signature;
       article.dataset.messageType = message.type;
