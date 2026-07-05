@@ -350,6 +350,10 @@ async function ensureOptionalTables() {
     ON site_whisper_messages (LOWER(player_username), created_at DESC)
   `);
   await pool.query(`
+    CREATE INDEX IF NOT EXISTS site_whisper_messages_site_player_created_idx
+    ON site_whisper_messages (LOWER(site_username), LOWER(player_username), created_at DESC)
+  `);
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS bot_commands (
       id BIGSERIAL PRIMARY KEY,
       source VARCHAR(32) NOT NULL,
@@ -667,16 +671,32 @@ function cleanWhisperMessage(value) {
     .slice(0, 240);
 }
 
-async function getWhisperOnlinePlayers() {
+async function getWhisperOnlinePlayers(currentUser) {
   assertDatabase();
   const result = await pool.query(`
-    WITH dialog_players AS (
-      SELECT
-        player_username,
-        MAX(created_at) AS last_message_at,
-        COUNT(*)::int AS message_count
+    WITH owned_dialogs AS (
+      SELECT player_username
       FROM site_whisper_messages
+      WHERE direction = 'outgoing'
+        AND LOWER(site_username) = LOWER($1)
       GROUP BY LOWER(player_username), player_username
+    ),
+    dialog_players AS (
+      SELECT
+        messages.player_username,
+        MAX(messages.created_at) AS last_message_at,
+        COUNT(*)::int AS message_count
+      FROM site_whisper_messages messages
+      JOIN owned_dialogs dialogs ON LOWER(dialogs.player_username) = LOWER(messages.player_username)
+      WHERE (
+          messages.direction = 'outgoing'
+          AND LOWER(messages.site_username) = LOWER($1)
+        )
+        OR (
+          messages.direction = 'incoming'
+          AND (messages.site_username IS NULL OR LOWER(messages.site_username) = LOWER($1))
+        )
+      GROUP BY LOWER(messages.player_username), messages.player_username
     ),
     names AS (
       SELECT username FROM player_activity WHERE is_online = TRUE
@@ -697,7 +717,7 @@ async function getWhisperOnlinePlayers() {
       LOWER(names.username),
       dialogs.last_message_at DESC NULLS LAST,
       COALESCE(pa.is_online, FALSE) DESC
-  `);
+  `, [currentUser.username]);
 
   return {
     players: result.rows
@@ -722,7 +742,7 @@ async function getWhisperOnlinePlayers() {
   };
 }
 
-async function getWhisperDialog(url) {
+async function getWhisperDialog(currentUser, url) {
   assertDatabase();
   const username = cleanMinecraftUsername(url.searchParams.get('username'));
   if (!username) {
@@ -732,13 +752,36 @@ async function getWhisperDialog(url) {
   }
 
   const limit = Math.min(120, Math.max(1, toInt(url.searchParams.get('limit'), 80)));
+  const owned = await pool.query(`
+    SELECT 1
+    FROM site_whisper_messages
+    WHERE LOWER(player_username) = LOWER($1)
+      AND direction = 'outgoing'
+      AND LOWER(site_username) = LOWER($2)
+    LIMIT 1
+  `, [username, currentUser.username]);
+
+  if (!owned.rowCount) {
+    return { username, messages: [] };
+  }
+
   const result = await pool.query(`
     SELECT id, player_username, direction, site_username, message, created_at
     FROM site_whisper_messages
     WHERE LOWER(player_username) = LOWER($1)
+      AND (
+        (
+          direction = 'outgoing'
+          AND LOWER(site_username) = LOWER($2)
+        )
+        OR (
+          direction = 'incoming'
+          AND (site_username IS NULL OR LOWER(site_username) = LOWER($2))
+        )
+      )
     ORDER BY created_at DESC
-    LIMIT $2
-  `, [username, limit]);
+    LIMIT $3
+  `, [username, currentUser.username, limit]);
 
   return {
     username,
@@ -753,7 +796,7 @@ async function getWhisperDialog(url) {
   };
 }
 
-async function deleteWhisperDialog(body) {
+async function deleteWhisperDialog(currentUser, body) {
   assertDatabase();
   const username = cleanMinecraftUsername(body.username);
   if (!username) {
@@ -764,8 +807,9 @@ async function deleteWhisperDialog(body) {
 
   const result = await pool.query(
     `DELETE FROM site_whisper_messages
-     WHERE LOWER(player_username) = LOWER($1)`,
-    [username]
+     WHERE LOWER(player_username) = LOWER($1)
+       AND LOWER(site_username) = LOWER($2)`,
+    [username, currentUser.username]
   );
 
   return {
@@ -775,16 +819,36 @@ async function deleteWhisperDialog(body) {
   };
 }
 
-async function getWhisperNotifications(url) {
+async function getWhisperNotifications(currentUser, url) {
   assertDatabase();
   const rawAfterId = String(url.searchParams.get('afterId') || '0').replace(/[^\d]/g, '');
   const afterId = rawAfterId || '0';
   const result = await pool.query(`
+    WITH owned_dialogs AS (
+      SELECT player_username
+      FROM site_whisper_messages
+      WHERE direction = 'outgoing'
+        AND LOWER(site_username) = LOWER($2)
+      GROUP BY LOWER(player_username), player_username
+    ),
+    visible_messages AS (
+      SELECT messages.id, messages.direction
+      FROM site_whisper_messages messages
+      JOIN owned_dialogs dialogs ON LOWER(dialogs.player_username) = LOWER(messages.player_username)
+      WHERE (
+          messages.direction = 'outgoing'
+          AND LOWER(messages.site_username) = LOWER($2)
+        )
+        OR (
+          messages.direction = 'incoming'
+          AND (messages.site_username IS NULL OR LOWER(messages.site_username) = LOWER($2))
+        )
+    )
     SELECT
       COALESCE(MAX(id), 0)::text AS max_id,
       COUNT(*) FILTER (WHERE direction = 'incoming' AND id > $1::bigint)::int AS unread_count
-    FROM site_whisper_messages
-  `, [afterId]);
+    FROM visible_messages
+  `, [afterId, currentUser.username]);
   const row = result.rows[0] || {};
 
   return {
@@ -1601,19 +1665,19 @@ async function handleApi(req, res, url) {
       return;
     }
     if (url.pathname === '/api/whisper/online' && req.method === 'GET') {
-      sendJson(res, 200, await getWhisperOnlinePlayers());
+      sendJson(res, 200, await getWhisperOnlinePlayers(currentUser));
       return;
     }
     if (url.pathname === '/api/whisper/dialog' && req.method === 'GET') {
-      sendJson(res, 200, await getWhisperDialog(url));
+      sendJson(res, 200, await getWhisperDialog(currentUser, url));
       return;
     }
     if (url.pathname === '/api/whisper/dialog/delete' && req.method === 'POST') {
-      sendJson(res, 200, await deleteWhisperDialog(await readJsonBody(req)));
+      sendJson(res, 200, await deleteWhisperDialog(currentUser, await readJsonBody(req)));
       return;
     }
     if (url.pathname === '/api/whisper/notifications' && req.method === 'GET') {
-      sendJson(res, 200, await getWhisperNotifications(url));
+      sendJson(res, 200, await getWhisperNotifications(currentUser, url));
       return;
     }
     if (url.pathname === '/api/whisper/send' && req.method === 'POST') {

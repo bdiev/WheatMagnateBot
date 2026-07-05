@@ -544,7 +544,7 @@ const growingChildPlainMessageIds = new Set();
 let recentWhispers = new Map(); // key: `WHISPER:username:message` -> timestamp, to mark whispers and suppress chat forwarding
 let pendingChatTimers = new Map(); // key: `CHAT:username:message` -> timeout handle to delay chat forwarding
 let outboundWhispers = new Map(); // key: `OUTBOUND:targetUsername:message` -> timestamp, to suppress public echo of our own whispers
-let siteWhisperTargets = new Map(); // lowercase username -> timestamp, suppress Discord whisper fallback for site dialogs
+let siteWhisperTargets = new Map(); // lowercase username -> { timestamp, siteUsername }, suppress Discord whisper fallback for site dialogs
 let recentlyForwardedGameChat = new Map(); // key: `CHAT:username:message` -> timestamp, to dedupe chat/raw message events
 let tpsTabInterval = null;
 let playtimeSyncInterval = null;
@@ -1048,6 +1048,10 @@ async function initDatabase() {
     await pool.query(`
       CREATE INDEX IF NOT EXISTS site_whisper_messages_player_created_idx
       ON site_whisper_messages (LOWER(player_username), created_at DESC)
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS site_whisper_messages_site_player_created_idx
+      ON site_whisper_messages (LOWER(site_username), LOWER(player_username), created_at DESC)
     `);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS bot_commands (
@@ -3885,7 +3889,10 @@ async function executeBotCommand(command) {
     if (!username) throw new Error('Whisper target is required.');
     if (!cleanMessage) throw new Error('Queued whisper is empty.');
 
-    siteWhisperTargets.set(username.toLowerCase(), Date.now());
+    siteWhisperTargets.set(username.toLowerCase(), {
+      timestamp: Date.now(),
+      siteUsername: requestedBy || null
+    });
     let sentChunks = 0;
     for (const chunk of splitMinecraftMessage(cleanMessage)) {
       if (!bot?.entity) throw new Error('Minecraft bot is not ready.');
@@ -6323,14 +6330,21 @@ function createBot() {
       }
     }
 
-    debugLog(`[Whisper] Calling sendWhisperToDiscord...`);
-    recordSiteWhisperMessage(username, 'incoming', cleanedWhisper).catch(() => {});
     const siteWhisperKey = String(username || '').toLowerCase();
-    for (const [target, ts] of siteWhisperTargets.entries()) {
-      if (Date.now() - ts > SITE_WHISPER_TTL_MS) siteWhisperTargets.delete(target);
+    for (const [target, state] of siteWhisperTargets.entries()) {
+      const timestamp = typeof state === 'object' ? state.timestamp : state;
+      if (Date.now() - timestamp > SITE_WHISPER_TTL_MS) siteWhisperTargets.delete(target);
     }
+    const siteWhisperState = siteWhisperTargets.get(siteWhisperKey);
+    const siteUsername = typeof siteWhisperState === 'object' ? siteWhisperState.siteUsername : null;
+    recordSiteWhisperMessage(username, 'incoming', cleanedWhisper, siteUsername).catch(() => {});
+
+    debugLog(`[Whisper] Calling sendWhisperToDiscord...`);
     if (siteWhisperTargets.has(siteWhisperKey)) {
-      siteWhisperTargets.set(siteWhisperKey, Date.now());
+      siteWhisperTargets.set(siteWhisperKey, {
+        timestamp: Date.now(),
+        siteUsername
+      });
       debugLog(`[Whisper] Routed ${username} reply to site dialog only.`);
       return;
     }

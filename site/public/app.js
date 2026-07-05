@@ -23,7 +23,7 @@ const state = {
   whisperTarget: null,
   whisperPlayersSignature: '',
   whisperMessagesSignature: '',
-  whisperLastSeenId: localStorage.getItem('wm-whisper-last-seen-id') || null,
+  whisperLastSeenId: null,
   whisperUnreadCount: 0,
   whitelistSearchPlayers: [],
   ignoreChatSearchPlayers: [],
@@ -393,6 +393,7 @@ function setAuthMode(mode) {
 
 function applyCurrentUser(user) {
   state.currentUser = user || null;
+  loadWhisperLastSeenId();
   const isAdmin = state.currentUser?.role === 'admin';
   $$('.admin-only').forEach(element => {
     element.hidden = !isAdmin;
@@ -1122,11 +1123,22 @@ function renderWhisperBadge() {
   badge.textContent = count > 99 ? '99+' : String(count);
 }
 
+function whisperLastSeenStorageKey() {
+  const username = String(state.currentUser?.username || 'anonymous').toLowerCase();
+  return `wm-whisper-last-seen-id:${username}`;
+}
+
+function loadWhisperLastSeenId() {
+  state.whisperLastSeenId = localStorage.getItem(whisperLastSeenStorageKey()) || null;
+  state.whisperUnreadCount = 0;
+  renderWhisperBadge();
+}
+
 function markWhisperNotificationsRead(maxId) {
   const nextId = String(maxId || state.whisperLastSeenId || '0');
   state.whisperLastSeenId = nextId;
   state.whisperUnreadCount = 0;
-  localStorage.setItem('wm-whisper-last-seen-id', nextId);
+  localStorage.setItem(whisperLastSeenStorageKey(), nextId);
   renderWhisperBadge();
 }
 
