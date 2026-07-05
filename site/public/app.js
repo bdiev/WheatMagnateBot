@@ -206,7 +206,7 @@ function playerIdentity(username, size = 28) {
   const safeUsername = escapeHtml(username || '');
   return `
     <span class="player-identity" role="button" tabindex="0" data-player="${safeUsername}" title="Open player profile">
-      <img class="player-head" src="${playerHeadUrl(username, size)}" alt="" loading="lazy">
+      <img class="player-head" src="${playerHeadUrl(username, size)}" alt="" loading="eager" decoding="async" width="${size}" height="${size}">
       <span>${safeName}</span>
     </span>
   `;
@@ -1657,14 +1657,27 @@ async function handleWhisperDeleteDialog() {
 function renderChatMessages(messages) {
   const list = $('#chatList');
   if (!list) return;
+  const listSignature = stableSignature(messages.map(message => [
+    message.id,
+    message.type,
+    message.username,
+    message.message,
+    message.event,
+    message.createdAt
+  ]));
 
   if (!messages.length) {
+    if (state.renderSignatures['#chatList'] === listSignature) return;
     if (list.dataset.empty !== 'true') {
       list.innerHTML = '<div class="empty">No chat messages yet. New messages will appear after the bot records them.</div>';
       list.dataset.empty = 'true';
     }
+    state.renderSignatures['#chatList'] = listSignature;
     return;
   }
+
+  if (state.renderSignatures['#chatList'] === listSignature) return;
+  state.renderSignatures['#chatList'] = listSignature;
 
   delete list.dataset.empty;
   list.querySelectorAll('.empty').forEach(node => node.remove());
@@ -1696,9 +1709,14 @@ function renderChatMessages(messages) {
     if (!article) {
       article = document.createElement('article');
       article.dataset.messageId = id;
+      article.className = `chat-message${isActivity ? ' chat-activity' : ''}${isNew ? ' new-message' : ''}`;
+      if (isNew) {
+        setTimeout(() => article.classList.remove('new-message'), 650);
+      }
+    } else if (article.dataset.messageType !== message.type) {
+      article.className = `chat-message${isActivity ? ' chat-activity' : ''}`;
     }
 
-    article.className = `chat-message${isActivity ? ' chat-activity' : ''}${isNew ? ' new-message' : ''}`;
     if (article.dataset.renderSignature !== signature) {
       if (isActivity) {
         const eventLabel = message.event === 'join' ? 'joined the game' : 'left the game';
@@ -1715,6 +1733,7 @@ function renderChatMessages(messages) {
         `;
       }
       article.dataset.renderSignature = signature;
+      article.dataset.messageType = message.type;
     }
 
     const currentNode = list.children[index];

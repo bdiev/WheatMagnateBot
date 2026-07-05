@@ -2057,7 +2057,9 @@ body.search-focus-active #logoutButton {
   border-radius: 5px;
   flex: 0 0 auto;
   background: var(--panel);
-  transition: background-color 260ms ease, border-color 260ms ease;
+  contain: paint;
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 .player-profile-overlay {
