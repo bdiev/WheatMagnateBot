@@ -278,9 +278,15 @@ function summarizeSupplyItems(bot, items) {
       const rawLevel = value.lvl ?? value.level ?? value.amplifier;
       if (rawId != null && rawLevel != null) addEnchant(rawId, rawLevel);
 
+      const marker = String(readScalar(rawId) || keyHint || '').toLowerCase();
+      const isEnchantContainer = marker.includes('enchant');
       const levels = value.levels ?? value.Levels;
       if (levels && typeof levels === 'object') {
-        for (const [name, level] of Object.entries(readScalar(levels) || {})) {
+        const levelSource = readScalar(levels) || {};
+        const levelEntries = levelSource instanceof Map
+          ? Array.from(levelSource.entries())
+          : Object.entries(levelSource);
+        for (const [name, level] of levelEntries) {
           addEnchant(name, level);
         }
       }
@@ -288,17 +294,20 @@ function summarizeSupplyItems(bot, items) {
       for (const [key, child] of Object.entries(value)) {
         const lowerKey = key.toLowerCase();
         if (
+          isEnchantContainer ||
           lowerKey.includes('enchant') ||
+          lowerKey === 'data' ||
           lowerKey === 'levels' ||
           keyHint.toLowerCase().includes('enchant')
         ) {
-          visit(child, key, depth + 1);
+          visit(child, isEnchantContainer ? 'enchantments' : key, depth + 1);
         }
       }
     };
 
     visit(item.enchants, 'enchants');
     visit(item.enchantments, 'enchantments');
+    visit(item.component, 'component');
     visit(item.components, 'components');
     visit(item.nbt, 'nbt');
     return Array.from(found, ([name, level]) => ({ name, level }));
