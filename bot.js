@@ -557,6 +557,7 @@ let tpsTabInterval = null;
 let playtimeSyncInterval = null;
 let playerActivitySyncInterval = null;
 let playerActivitySyncRunning = false;
+let lastObservedOnlinePlayerKeys = null;
 const pendingPlaytimeLookups = new Map(); // lookup key -> { targetUsername, timestamp }
 const pendingJoinDateLookups = new Map(); // lookup key -> { targetUsername, timestamp }
 let botStatusSnapshotInterval = null;
@@ -1818,31 +1819,65 @@ function getOnlineWhitelistUsernames() {
   return usernames;
 }
 
+function addObservedOnlineUsername(usernames, rawUsername) {
+  const username = String(rawUsername || '').trim();
+  if (!/^[A-Za-z0-9_]{1,32}$/.test(username)) return;
+  const key = username.toLowerCase();
+  if (!usernames.has(key)) {
+    usernames.set(key, username);
+  }
+}
+
 function getOnlinePlayerUsernames() {
-  if (!bot || !bot.players) return [];
-  return [...new Set(Object.values(bot.players)
-    .map(player => String(player?.username || '').trim())
-    .filter(Boolean))];
+  if (!bot) return [];
+  const usernames = new Map();
+
+  for (const player of Object.values(bot.players || {})) {
+    addObservedOnlineUsername(usernames, player?.username);
+  }
+
+  for (const player of Object.values(bot.tablist?.players || {})) {
+    addObservedOnlineUsername(usernames, player?.username);
+    addObservedOnlineUsername(usernames, player?.profile?.name);
+    const displayName = player?.displayName ? chatComponentToString(player.displayName) : '';
+    addObservedOnlineUsername(usernames, displayName);
+  }
+
+  return [...usernames.values()];
 }
 
 async function syncPlayerActivityOnlineState() {
-  if (!pool || !bot || !bot.players || playerActivitySyncRunning) return;
+  if (!pool || !bot || playerActivitySyncRunning) return;
 
   playerActivitySyncRunning = true;
   try {
     const botUsername = String(bot.username || '').toLowerCase();
-    const onlineUsernames = getOnlinePlayerUsernames()
+    const observedUsernames = getOnlinePlayerUsernames();
+    const hasAnyObservedPlayers = observedUsernames.length > 0;
+    const hasObservedSelf = botUsername && observedUsernames.some(username => username.toLowerCase() === botUsername);
+    if (!hasAnyObservedPlayers && lastObservedOnlinePlayerKeys) {
+      console.warn('[PlayerActivity] Skipping offline sync because Mineflayer returned an empty player snapshot.');
+      return;
+    }
+
+    const onlineUsernames = observedUsernames
       .filter(username => username.toLowerCase() !== botUsername);
-    const onlineLower = [...new Set(onlineUsernames.map(username => username.toLowerCase()))];
+    const onlineByKey = new Map(onlineUsernames.map(username => [username.toLowerCase(), username]));
+    const onlineKeys = new Set(onlineByKey.keys());
 
     await Promise.all(onlineUsernames.map(username => updatePlayerActivity(username, true)));
-    await pool.query(`
-      UPDATE player_activity
-      SET last_seen = NOW(),
-          is_online = FALSE
-      WHERE is_online = TRUE
-        AND NOT (LOWER(username) = ANY($1::text[]))
-    `, [onlineLower]);
+
+    if (lastObservedOnlinePlayerKeys) {
+      const leftUsernames = [...lastObservedOnlinePlayerKeys]
+        .filter(key => !onlineKeys.has(key))
+        .map(key => lastObservedOnlinePlayerKeys.get(key))
+        .filter(Boolean);
+      await Promise.all(leftUsernames.map(username => updatePlayerActivity(username, false)));
+    }
+
+    if (onlineUsernames.length > 0 || hasObservedSelf || lastObservedOnlinePlayerKeys) {
+      lastObservedOnlinePlayerKeys = onlineByKey;
+    }
   } catch (err) {
     console.error('[PlayerActivity] Failed to synchronize online state:', err.message);
   } finally {
@@ -6352,6 +6387,12 @@ function createBot() {
 
   bot.on('end', (reason) => {
     const reasonStr = chatComponentToString(reason);
+    const observedOnlineAtDisconnect = lastObservedOnlinePlayerKeys;
+    lastObservedOnlinePlayerKeys = null;
+    if (observedOnlineAtDisconnect?.size) {
+      Promise.all([...observedOnlineAtDisconnect.values()].map(username => updatePlayerActivity(username, false)))
+        .catch(err => console.error('[PlayerActivity] Disconnect offline flush failed:', err.message));
+    }
     syncWhitelistPlaytime([]).catch(err => console.error('[Playtime] Disconnect flush failed:', err.message));
     const now = new Date();
     const kyivTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Kyiv' }));
@@ -6391,6 +6432,8 @@ function createBot() {
   // Track player joins and leaves
   bot.on('playerJoined', async (player) => {
     if (player.username && player.username.toLowerCase() !== bot.username.toLowerCase()) {
+      if (!lastObservedOnlinePlayerKeys) lastObservedOnlinePlayerKeys = new Map();
+      lastObservedOnlinePlayerKeys.set(player.username.toLowerCase(), player.username);
       await updatePlayerActivity(player.username, true);
       await scheduleQueuedSiteWhispersForPlayer(player.username);
     }
@@ -6406,6 +6449,7 @@ function createBot() {
 
   bot.on('playerLeft', async (player) => {
     if (player.username && player.username.toLowerCase() !== bot.username.toLowerCase()) {
+      lastObservedOnlinePlayerKeys?.delete(player.username.toLowerCase());
       await updatePlayerActivity(player.username, false);
     }
     if (player.username) {

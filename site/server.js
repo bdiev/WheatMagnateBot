@@ -505,7 +505,7 @@ async function getSummary() {
     pool.query(`
       SELECT
         COUNT(*)::int AS total,
-        COUNT(*) FILTER (WHERE pt.tracking_since IS NOT NULL)::int AS online
+        COUNT(*) FILTER (WHERE pa.is_online = TRUE)::int AS online
       FROM whitelist w
       LEFT JOIN player_activity pa ON LOWER(pa.username) = LOWER(w.username)
       LEFT JOIN player_playtime pt ON LOWER(pt.username) = LOWER(w.username)
@@ -588,7 +588,7 @@ async function getPlayers() {
       w.username,
       pa.last_seen,
       pa.last_online,
-      pt.tracking_since IS NOT NULL AS is_online,
+      COALESCE(pa.is_online, FALSE) AS is_online,
       COALESCE(pt.total_seconds, 0) +
         CASE WHEN pt.tracking_since IS NULL THEN 0
              ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - pt.tracking_since)))::BIGINT)
@@ -597,7 +597,7 @@ async function getPlayers() {
     LEFT JOIN player_activity pa ON LOWER(pa.username) = LOWER(w.username)
     LEFT JOIN player_playtime pt ON LOWER(pt.username) = LOWER(w.username)
     ORDER BY
-      (pt.tracking_since IS NOT NULL) DESC,
+      COALESCE(pa.is_online, FALSE) DESC,
       total_seconds DESC,
       LOWER(w.username)
   `);
@@ -1136,8 +1136,8 @@ async function getPlayerStats() {
     pool.query(`
       SELECT
         COUNT(*)::int AS total,
-        COUNT(*) FILTER (WHERE pt.tracking_since IS NOT NULL)::int AS online,
-        COUNT(*) FILTER (WHERE pt.tracking_since IS NULL)::int AS offline
+        COUNT(*) FILTER (WHERE pa.is_online = TRUE)::int AS online,
+        COUNT(*) FILTER (WHERE COALESCE(pa.is_online, FALSE) = FALSE)::int AS offline
       FROM whitelist w
       LEFT JOIN player_activity pa ON LOWER(pa.username) = LOWER(w.username)
       LEFT JOIN player_playtime pt ON LOWER(pt.username) = LOWER(w.username)
@@ -1145,7 +1145,7 @@ async function getPlayerStats() {
     pool.query(`
       SELECT
         w.username,
-        pt.tracking_since IS NOT NULL AS is_online,
+        COALESCE(pa.is_online, FALSE) AS is_online,
         pa.last_seen,
         COALESCE(pt.total_seconds, 0) +
           CASE WHEN pt.tracking_since IS NULL THEN 0
