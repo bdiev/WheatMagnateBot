@@ -1856,6 +1856,33 @@ function getWheatMagnateStatusLine() {
   return `${getPlayerHeadEmoji(ADMIN_PANEL_BOT_NAME)} **${ADMIN_PANEL_BOT_NAME}** Playtime: **${wheatMagnatePlaytimeDisplay}**`;
 }
 
+async function getEffectivePlayerPlaytime(username) {
+  if (!pool) return { error: 'Database not configured' };
+
+  const safeUsername = String(username || '').replace(/[^A-Za-z0-9_]/g, '').trim().slice(0, 32);
+  if (!safeUsername) return { error: 'Username is required' };
+
+  try {
+    const result = await pool.query(`
+      SELECT username,
+             COALESCE(total_seconds, 0) +
+               CASE WHEN tracking_since IS NULL THEN 0
+                    ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - tracking_since)))::BIGINT)
+               END AS effective_seconds
+      FROM player_playtime
+      WHERE LOWER(username) = LOWER($1)
+      LIMIT 1
+    `, [safeUsername]);
+    const row = result.rows[0];
+    return {
+      username: row?.username || safeUsername,
+      totalSeconds: Number(row?.effective_seconds || 0)
+    };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
 async function reconcileObservedPlaytime(targetUsername, observedSeconds) {
   if (!pool || !targetUsername || !Number.isFinite(observedSeconds)) return;
 
@@ -6280,6 +6307,16 @@ function createBot() {
     if (wmMatch) {
       await sendGameChatMessageToDiscord(username, message);
       await handleWmCommand(username, wmMatch[1] || '');
+      return;
+    }
+
+    if (username.toLowerCase() === 'theonlyslash' && /^!pt$/i.test(message.trim())) {
+      const playtime = await getEffectivePlayerPlaytime(username);
+      if (playtime.error) {
+        sendMinecraftChat(`Playtime unavailable for ${username}: ${playtime.error}`);
+      } else {
+        sendMinecraftChat(`${username}: ${formatPlaytime(playtime.totalSeconds)}`);
+      }
       return;
     }
 
