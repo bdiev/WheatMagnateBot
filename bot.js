@@ -555,7 +555,7 @@ class DeferredBotCommandError extends Error {
 let recentlyForwardedGameChat = new Map(); // key: `CHAT:username:message` -> timestamp, to dedupe chat/raw message events
 let tpsTabInterval = null;
 let playtimeSyncInterval = null;
-const pendingPlaytimeLookups = new Map(); // lower chat username -> { targetUsername, timestamp }
+const pendingPlaytimeLookups = new Map(); // lookup key -> { targetUsername, timestamp }
 let botStatusSnapshotInterval = null;
 let wheatMagnatePlaytimeDisplay = 'N/A';
 let wheatMagnatePlaytimeCacheAt = 0;
@@ -1899,23 +1899,32 @@ function handleObservedPlaytimeChat(username, message) {
   const speakerKey = safeSpeaker.toLowerCase();
   const commandMatch = cleanMessage.match(/^!pt(?:\s+([A-Za-z0-9_]{1,32}))?$/i);
   if (commandMatch) {
-    pendingPlaytimeLookups.set(speakerKey, {
-      targetUsername: commandMatch[1] || safeSpeaker,
+    const targetUsername = commandMatch[1] || safeSpeaker;
+    const pending = {
+      targetUsername,
       timestamp: Date.now()
-    });
+    };
+    pendingPlaytimeLookups.set(`speaker:${speakerKey}`, pending);
+    pendingPlaytimeLookups.set(`target:${targetUsername.toLowerCase()}`, pending);
     return;
   }
 
   const observedSeconds = parsePlaytime(cleanMessage);
   if (observedSeconds == null) return;
 
-  const pending = pendingPlaytimeLookups.get(speakerKey);
+  const pendingKeys = [
+    `speaker:${speakerKey}`,
+    `target:${speakerKey}`
+  ];
+  const pending = pendingKeys.map(key => pendingPlaytimeLookups.get(key)).find(Boolean);
   if (!pending || Date.now() - pending.timestamp > 20_000) {
-    pendingPlaytimeLookups.delete(speakerKey);
+    for (const key of pendingKeys) pendingPlaytimeLookups.delete(key);
     return;
   }
 
-  pendingPlaytimeLookups.delete(speakerKey);
+  for (const [key, value] of pendingPlaytimeLookups.entries()) {
+    if (value === pending) pendingPlaytimeLookups.delete(key);
+  }
   reconcileObservedPlaytime(pending.targetUsername, observedSeconds).catch(() => {});
 }
 

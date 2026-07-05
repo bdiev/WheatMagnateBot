@@ -9,9 +9,18 @@ function createPlaytimeFeature({
   statusEmojis,
   uiButtonEmojis
 }) {
+  let playtimeWriteQueue = Promise.resolve();
+
+  function enqueuePlaytimeWrite(task) {
+    const run = playtimeWriteQueue.then(task, task);
+    playtimeWriteQueue = run.catch(() => {});
+    return run;
+  }
+
   async function syncWhitelistPlaytime(onlineUsernames = getOnlinePlayerUsernames()) {
     if (!pool) return;
 
+    return enqueuePlaytimeWrite(async () => {
     let client = null;
     try {
       client = await pool.connect();
@@ -41,6 +50,7 @@ function createPlaytimeFeature({
     } finally {
       if (client) client.release();
     }
+    });
   }
 
   async function getWhitelistPlaytime() {
@@ -157,6 +167,7 @@ function createPlaytimeFeature({
   async function setPlayerPlaytime(username, totalSeconds) {
     if (!pool) return { error: 'Database not configured' };
 
+    return enqueuePlaytimeWrite(async () => {
     try {
       const result = await pool.query(`
         INSERT INTO player_playtime (username, total_seconds)
@@ -172,6 +183,7 @@ function createPlaytimeFeature({
     } catch (err) {
       return { error: err.message };
     }
+    });
   }
 
   return {
