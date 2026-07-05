@@ -545,6 +545,13 @@ let recentWhispers = new Map(); // key: `WHISPER:username:message` -> timestamp,
 let pendingChatTimers = new Map(); // key: `CHAT:username:message` -> timeout handle to delay chat forwarding
 let outboundWhispers = new Map(); // key: `OUTBOUND:targetUsername:message` -> timestamp, to suppress public echo of our own whispers
 let siteWhisperTargets = new Map(); // lowercase username -> { timestamp, siteUsername }, suppress Discord whisper fallback for site dialogs
+class DeferredBotCommandError extends Error {
+  constructor(message, payloadPatch = {}) {
+    super(message);
+    this.name = 'DeferredBotCommandError';
+    this.payloadPatch = payloadPatch;
+  }
+}
 let recentlyForwardedGameChat = new Map(); // key: `CHAT:username:message` -> timestamp, to dedupe chat/raw message events
 let tpsTabInterval = null;
 let playtimeSyncInterval = null;
@@ -3863,6 +3870,51 @@ function sanitizeSiteChatMessage(value) {
     .slice(0, 240);
 }
 
+function isMinecraftPlayerOnline(username) {
+  const target = String(username || '').toLowerCase();
+  if (!target || !bot?.players) return false;
+  return Object.values(bot.players).some(player =>
+    String(player?.username || '').toLowerCase() === target
+  );
+}
+
+async function scheduleQueuedSiteWhispersForPlayer(username) {
+  if (!pool) return;
+  const safeUsername = String(username || '').replace(/[^A-Za-z0-9_]/g, '').trim().slice(0, 32);
+  if (!safeUsername) return;
+
+  try {
+    const result = await pool.query(`
+      UPDATE bot_commands
+      SET payload = payload
+          || jsonb_build_object(
+            'offlineUntilJoin', false,
+            'deferredUntil', to_jsonb(NOW() + INTERVAL '5 seconds')
+          )
+      WHERE status = 'pending'
+        AND command_type = 'site_whisper'
+        AND LOWER(payload->>'username') = LOWER($1)
+        AND payload->>'offlineUntilJoin' = 'true'
+    `, [safeUsername]);
+    if (result.rowCount > 0) {
+      console.log(`[Site Whisper] Scheduled ${result.rowCount} queued message(s) for ${safeUsername} in 5 seconds.`);
+    }
+  } catch (err) {
+    console.error('[Site Whisper] Failed to schedule queued whispers:', err.message);
+  }
+}
+
+async function scheduleQueuedSiteWhispersForOnlinePlayers() {
+  if (!bot?.players) return;
+  const usernames = [...new Set(Object.values(bot.players)
+    .map(player => String(player?.username || '').trim())
+    .filter(username => username && username.toLowerCase() !== String(bot.username || '').toLowerCase()))];
+
+  for (const username of usernames) {
+    await scheduleQueuedSiteWhispersForPlayer(username);
+  }
+}
+
 async function executeBotCommand(command) {
   const type = String(command.command_type || '').toLowerCase();
   const payload = command.payload || {};
@@ -3888,6 +3940,12 @@ async function executeBotCommand(command) {
     const cleanMessage = sanitizeSiteChatMessage(payload.message);
     if (!username) throw new Error('Whisper target is required.');
     if (!cleanMessage) throw new Error('Queued whisper is empty.');
+    if (!isMinecraftPlayerOnline(username)) {
+      throw new DeferredBotCommandError(`Whisper target ${username} is offline; waiting for join.`, {
+        offlineUntilJoin: true,
+        deferredUntil: null
+      });
+    }
 
     siteWhisperTargets.set(username.toLowerCase(), {
       timestamp: Date.now(),
@@ -4092,6 +4150,16 @@ async function processBotCommands() {
         FROM bot_commands
         WHERE status = 'pending'
           AND ($1::boolean OR command_type <> 'chat')
+          AND ($1::boolean OR command_type <> 'site_whisper')
+          AND (
+            command_type <> 'site_whisper'
+            OR COALESCE(payload->>'offlineUntilJoin', 'false') <> 'true'
+          )
+          AND (
+            command_type <> 'site_whisper'
+            OR payload->>'deferredUntil' IS NULL
+            OR (payload->>'deferredUntil')::timestamptz <= NOW()
+          )
         ORDER BY created_at ASC
         LIMIT 5
         FOR UPDATE SKIP LOCKED
@@ -4124,6 +4192,19 @@ async function processBotCommands() {
       `, [command.id, result || {}]);
       console.log(`[Command Bus] Completed ${command.command_type} #${command.id}`);
     } catch (err) {
+      if (err instanceof DeferredBotCommandError) {
+        await pool.query(`
+          UPDATE bot_commands
+          SET status = 'pending',
+              payload = payload || $2::jsonb,
+              result = jsonb_build_object('deferred', true, 'reason', $3::text),
+              error = NULL,
+              started_at = NULL
+          WHERE id = $1
+        `, [command.id, JSON.stringify(err.payloadPatch || {}), err.message]);
+        console.log(`[Command Bus] Deferred ${command.command_type} #${command.id}: ${err.message}`);
+        continue;
+      }
       await pool.query(`
         UPDATE bot_commands
         SET status = 'failed',
@@ -5929,6 +6010,9 @@ function createBot() {
     startRestartProtectionMonitor();
     startObsidianFarmWatchdog();
     startObsidianSupplySnapshotWriter();
+    scheduleQueuedSiteWhispersForOnlinePlayers().catch(err => {
+      console.error('[Site Whisper] Failed to schedule queued whispers after spawn:', err.message);
+    });
 
     if (obsidianStats.desiredEnabled) {
       const { dateKey, hour, minute } = getKyivDateParts();
@@ -6052,6 +6136,7 @@ function createBot() {
   bot.on('playerJoined', async (player) => {
     if (player.username && player.username.toLowerCase() !== bot.username.toLowerCase()) {
       await updatePlayerActivity(player.username, true);
+      await scheduleQueuedSiteWhispersForPlayer(player.username);
     }
     if (player.username && ignoredUsernames.some(name => name.toLowerCase() === player.username.toLowerCase())) {
       const onlineUsernames = getOnlineWhitelistUsernames();

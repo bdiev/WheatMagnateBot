@@ -768,9 +768,7 @@ async function getWhisperOnlinePlayers(currentUser, url) {
       GROUP BY LOWER(messages.player_username), messages.player_username, read_state.read_id
     ),
     names AS (
-      SELECT username FROM player_activity WHERE is_online = TRUE
-      UNION
-      SELECT username FROM whitelist
+      SELECT username FROM player_activity
       UNION
       SELECT player_username AS username FROM dialog_players
     )
@@ -807,10 +805,13 @@ async function getWhisperOnlinePlayers(currentUser, url) {
         unreadCount: toInt(row.unread_count)
       }))
       .sort((a, b) => {
-        const aHasDialog = a.messageCount > 0 ? 1 : 0;
-        const bHasDialog = b.messageCount > 0 ? 1 : 0;
-        if (aHasDialog !== bHasDialog) return bHasDialog - aHasDialog;
-        if (a.isWhitelisted !== b.isWhitelisted) return a.isWhitelisted ? -1 : 1;
+        const priority = player => {
+          if (player.messageCount > 0) return 0;
+          if (player.isOnline && player.isWhitelisted) return 1;
+          return 2;
+        };
+        const priorityDiff = priority(a) - priority(b);
+        if (priorityDiff !== 0) return priorityDiff;
         return a.username.localeCompare(b.username, undefined, { sensitivity: 'base' });
       })
   };

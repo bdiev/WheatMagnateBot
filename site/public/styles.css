@@ -871,10 +871,15 @@ body.search-focus-active #logoutButton {
   z-index: 90;
   display: grid;
   grid-template-columns: 210px minmax(300px, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   gap: 10px;
   width: min(620px, calc(100vw - 32px));
+  height: min(540px, calc(100vh - 140px));
+  height: min(540px, calc(100dvh - 140px));
   min-height: 360px;
   max-height: min(540px, calc(100vh - 140px));
+  max-height: min(540px, calc(100dvh - 140px));
+  overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 10px;
@@ -892,6 +897,8 @@ body.search-focus-active #logoutButton {
 .whisper-panel:not(.has-dialog) .whisper-popover {
   grid-template-columns: minmax(220px, 280px);
   width: min(280px, calc(100vw - 32px));
+  height: min(420px, calc(100vh - 140px));
+  height: min(420px, calc(100dvh - 140px));
   min-height: 240px;
 }
 
