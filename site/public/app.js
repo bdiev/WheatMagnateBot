@@ -10,9 +10,13 @@ const state = {
   charts: {},
   chartMeta: {},
   seenSearchTimer: null,
+  whitelistSearchTimer: null,
+  ignoreChatSearchTimer: null,
   chartTooltipTimer: null,
   chartTooltipPinned: false,
   seenPlayers: [],
+  whitelistSearchPlayers: [],
+  ignoreChatSearchPlayers: [],
   adminControlState: null,
   adminControlLoading: false,
   chatMessageIds: new Set(),
@@ -1301,6 +1305,99 @@ function updateWhitelistControl() {
   });
 }
 
+function hideAdminPlayerSuggestions(suggestionsSelector, stateKey) {
+  const suggestions = $(suggestionsSelector);
+  if (suggestions) suggestions.hidden = true;
+  state[stateKey] = [];
+}
+
+function renderAdminPlayerSuggestions({ suggestionsSelector, stateKey, players, statusFor }) {
+  const suggestions = $(suggestionsSelector);
+  state[stateKey] = players || [];
+
+  if (!suggestions) return;
+  if (state[stateKey].length === 0) {
+    suggestions.innerHTML = '<div class="seen-empty">No players found.</div>';
+    suggestions.hidden = false;
+    return;
+  }
+
+  suggestions.innerHTML = state[stateKey].map((player, index) => {
+    const status = statusFor(player);
+    return `
+      <button class="seen-option" type="button" data-index="${index}">
+        ${playerIdentity(player.username, 24)}
+        <span class="pill ${player.isOnline ? 'online' : ''}">${player.isOnline ? 'online' : 'offline'}</span>
+        <span class="pill ${status.className || ''}">${status.label}</span>
+      </button>
+    `;
+  }).join('');
+  suggestions.hidden = false;
+}
+
+async function runAdminPlayerSearch({ query, suggestionsSelector, stateKey, render }) {
+  const cleanQuery = normalizePlayerInput(query);
+  if (cleanQuery.length < 1) {
+    hideAdminPlayerSuggestions(suggestionsSelector, stateKey);
+    return;
+  }
+
+  try {
+    const payload = await fetchJson(`/api/seen-search?query=${encodeURIComponent(cleanQuery)}`);
+    render(payload.players || []);
+  } catch (err) {
+    const suggestions = $(suggestionsSelector);
+    if (suggestions) {
+      suggestions.innerHTML = `<div class="seen-empty">Search failed: ${escapeHtml(err.message)}</div>`;
+      suggestions.hidden = false;
+    }
+  }
+}
+
+function hideWhitelistSuggestions() {
+  hideAdminPlayerSuggestions('#adminWhitelistSuggestions', 'whitelistSearchPlayers');
+}
+
+function renderWhitelistSuggestions(players) {
+  renderAdminPlayerSuggestions({
+    suggestionsSelector: '#adminWhitelistSuggestions',
+    stateKey: 'whitelistSearchPlayers',
+    players,
+    statusFor: player => ({
+      label: player.isWhitelisted ? 'whitelisted' : 'not whitelisted'
+    })
+  });
+}
+
+function runWhitelistSearch(query) {
+  return runAdminPlayerSearch({
+    query,
+    suggestionsSelector: '#adminWhitelistSuggestions',
+    stateKey: 'whitelistSearchPlayers',
+    render: renderWhitelistSuggestions
+  });
+}
+
+function handleWhitelistPlayerInput(event) {
+  updateWhitelistControl();
+  clearTimeout(state.whitelistSearchTimer);
+  state.whitelistSearchTimer = setTimeout(() => runWhitelistSearch(event.currentTarget.value), 180);
+}
+
+function handleWhitelistSuggestionClick(event) {
+  const option = event.target.closest('.seen-option');
+  if (!option) return;
+  const player = state.whitelistSearchPlayers[Number(option.dataset.index)];
+  if (!player) return;
+  const input = $('#adminWhitelistPlayer');
+  if (input) {
+    input.value = player.username;
+    input.focus();
+  }
+  hideWhitelistSuggestions();
+  updateWhitelistControl();
+}
+
 function updateIgnoreChatControl() {
   const button = $('#adminIgnoreChatButton');
   const username = normalizePlayerInput($('#adminIgnoreChatPlayer')?.value);
@@ -1314,6 +1411,51 @@ function updateIgnoreChatControl() {
     action: 'ignore_chat',
     danger: Boolean(username)
   });
+}
+
+function hideIgnoreChatSuggestions() {
+  hideAdminPlayerSuggestions('#adminIgnoreChatSuggestions', 'ignoreChatSearchPlayers');
+}
+
+function renderIgnoreChatSuggestions(players) {
+  renderAdminPlayerSuggestions({
+    suggestionsSelector: '#adminIgnoreChatSuggestions',
+    stateKey: 'ignoreChatSearchPlayers',
+    players,
+    statusFor: player => {
+      const ignored = hasPlayer(state.adminControlState?.ignoredChatUsers, player.username);
+      return { label: ignored ? 'ignored' : 'not ignored' };
+    }
+  });
+}
+
+function runIgnoreChatSearch(query) {
+  return runAdminPlayerSearch({
+    query,
+    suggestionsSelector: '#adminIgnoreChatSuggestions',
+    stateKey: 'ignoreChatSearchPlayers',
+    render: renderIgnoreChatSuggestions
+  });
+}
+
+function handleIgnoreChatPlayerInput(event) {
+  updateIgnoreChatControl();
+  clearTimeout(state.ignoreChatSearchTimer);
+  state.ignoreChatSearchTimer = setTimeout(() => runIgnoreChatSearch(event.currentTarget.value), 180);
+}
+
+function handleIgnoreChatSuggestionClick(event) {
+  const option = event.target.closest('.seen-option');
+  if (!option) return;
+  const player = state.ignoreChatSearchPlayers[Number(option.dataset.index)];
+  if (!player) return;
+  const input = $('#adminIgnoreChatPlayer');
+  if (input) {
+    input.value = player.username;
+    input.focus();
+  }
+  hideIgnoreChatSuggestions();
+  updateIgnoreChatControl();
 }
 
 function renderAdminControlState(payload = {}) {
@@ -1368,14 +1510,6 @@ function renderAdminControlState(payload = {}) {
     valueFor: item => JSON.stringify({ slot: item.slot, name: item.name }),
     labelFor: item => `${item.displayName || item.name} x${item.count || 1}`
   });
-  setDatalistOptions(
-    '#adminWhitelistCandidates',
-    uniquePlayers(payload.onlinePlayers, payload.whitelist, payload.whitelistAddCandidates)
-  );
-  setDatalistOptions(
-    '#adminIgnoreChatCandidates',
-    uniquePlayers(payload.onlinePlayers, payload.ignoredChatUsers, payload.ignoreCandidates)
-  );
   updateFollowControl();
   updateWhitelistControl();
   updateIgnoreChatControl();
@@ -1569,8 +1703,12 @@ $('#adminUsersList')?.addEventListener('click', handleAdminUserAction);
 document.querySelector('[data-panel="admin"]')?.addEventListener('click', handleAdminBotCommand);
 document.querySelector('[data-panel="admin"]')?.addEventListener('click', handleAdminControlAction);
 $('#adminFollowTarget')?.addEventListener('change', updateFollowControl);
-$('#adminWhitelistPlayer')?.addEventListener('input', updateWhitelistControl);
-$('#adminIgnoreChatPlayer')?.addEventListener('input', updateIgnoreChatControl);
+$('#adminWhitelistPlayer')?.addEventListener('input', handleWhitelistPlayerInput);
+$('#adminWhitelistPlayer')?.addEventListener('focus', event => runWhitelistSearch(event.currentTarget.value));
+$('#adminWhitelistSuggestions')?.addEventListener('click', handleWhitelistSuggestionClick);
+$('#adminIgnoreChatPlayer')?.addEventListener('input', handleIgnoreChatPlayerInput);
+$('#adminIgnoreChatPlayer')?.addEventListener('focus', event => runIgnoreChatSearch(event.currentTarget.value));
+$('#adminIgnoreChatSuggestions')?.addEventListener('click', handleIgnoreChatSuggestionClick);
 $('#gameChatForm')?.addEventListener('submit', handleGameChatSubmit);
 $$('.chart-controls').forEach(controls => controls.addEventListener('click', handleChartRangeClick));
 $('#themeToggle').addEventListener('click', toggleTheme);
@@ -1600,6 +1738,11 @@ document.addEventListener('click', event => {
     }
   }
 
+  if (!event.target.closest('.admin-player-picker')) {
+    hideWhitelistSuggestions();
+    hideIgnoreChatSuggestions();
+  }
+
   if (!event.target.closest('.nav-menu')) {
     setNavMenuOpen(false);
   }
@@ -1619,6 +1762,16 @@ document.addEventListener('keydown', event => {
 
   if (event.key === 'Escape' && $('#seenSearch')?.classList.contains('open')) {
     clearSeenSearch({ collapse: true });
+    return;
+  }
+
+  if (event.key === 'Escape' && !$('#adminWhitelistSuggestions')?.hidden) {
+    hideWhitelistSuggestions();
+    return;
+  }
+
+  if (event.key === 'Escape' && !$('#adminIgnoreChatSuggestions')?.hidden) {
+    hideIgnoreChatSuggestions();
     return;
   }
 

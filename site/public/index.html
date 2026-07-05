@@ -468,13 +468,12 @@
               </div>
             </div>
             <div class="admin-control-grid">
-              <label class="auth-field">
-                <span>Choose player or enter the name</span>
+              <div class="auth-field admin-player-picker">
+                <label for="adminWhitelistPlayer">Choose player or enter the name</label>
                 <input
                   id="adminWhitelistPlayer"
                   name="minecraft_player_to_allow"
                   type="text"
-                  list="adminWhitelistCandidates"
                   autocomplete="off"
                   autocapitalize="none"
                   spellcheck="false"
@@ -483,8 +482,8 @@
                   data-form-type="other"
                   placeholder="Minecraft player name"
                 >
-                <datalist id="adminWhitelistCandidates"></datalist>
-              </label>
+                <div id="adminWhitelistSuggestions" class="seen-suggestions admin-player-suggestions" hidden></div>
+              </div>
               <button id="adminWhitelistButton" type="button" data-admin-control-action="whitelist_add">Add to Whitelist</button>
             </div>
           </section>
@@ -497,13 +496,12 @@
               </div>
             </div>
             <div class="admin-control-grid">
-              <label class="auth-field">
-                <span>Choose player or enter the name</span>
+              <div class="auth-field admin-player-picker">
+                <label for="adminIgnoreChatPlayer">Choose player or enter the name</label>
                 <input
                   id="adminIgnoreChatPlayer"
                   name="minecraft_player_to_ignore"
                   type="text"
-                  list="adminIgnoreChatCandidates"
                   autocomplete="off"
                   autocapitalize="none"
                   spellcheck="false"
@@ -512,8 +510,8 @@
                   data-form-type="other"
                   placeholder="Minecraft player name"
                 >
-                <datalist id="adminIgnoreChatCandidates"></datalist>
-              </label>
+                <div id="adminIgnoreChatSuggestions" class="seen-suggestions admin-player-suggestions" hidden></div>
+              </div>
               <button id="adminIgnoreChatButton" type="button" data-admin-control-action="ignore_chat">Ignore</button>
             </div>
           </section>

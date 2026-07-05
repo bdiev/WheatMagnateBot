@@ -3973,7 +3973,7 @@ async function executeBotCommand(command) {
   if (type === 'child_say') {
     if (!bot?.entity || typeof bot.chat !== 'function') throw new Error('Minecraft bot is offline.');
     if (!growingChild) initializeGrowingChild();
-    const payload = await growingChild?.speak('site button');
+    const payload = await growingChild?.speak('button', [], 'minecraft');
     if (!payload) throw new Error('Growing Child AI is disabled or has nothing to say.');
     return { phrase: payload.phrase || null };
   }

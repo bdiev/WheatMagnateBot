@@ -360,6 +360,19 @@ button:disabled {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
+.admin-player-picker {
+  position: relative;
+}
+
+.admin-player-picker .admin-player-suggestions {
+  top: calc(100% + 6px);
+  max-height: 246px;
+}
+
+.panel:has(.admin-player-picker) {
+  overflow: visible;
+}
+
 .auth-error {
   border: 1px solid color-mix(in srgb, #d04a4a 38%, var(--line));
   border-radius: var(--button-radius);
