@@ -32,6 +32,8 @@ const state = {
   whisperReadStateSynced: false,
   whisperUnreadCount: 0,
   whisperSearchPlayers: [],
+  playerProfileUsername: null,
+  playerProfileSignature: '',
   whitelistSearchPlayers: [],
   ignoreChatSearchPlayers: [],
   adminPlayerSearchRequests: {},
@@ -1028,26 +1030,56 @@ function renderPlayerProfile(profile) {
   `;
 }
 
-async function openPlayerProfile(username) {
+function playerProfileSignature(profile) {
+  return JSON.stringify([
+    profile.username,
+    profile.isOnline,
+    profile.isWhitelisted,
+    profile.playtime,
+    profile.lastSeen,
+    profile.lastOnline,
+    profile.chat?.totalMessages,
+    profile.chat?.last24h,
+    profile.chat?.lastMessageAt,
+    profile.nearby?.distance,
+    profile.nearby?.lastSeen,
+    ...(profile.chat?.recentMessages || []).map(message => [message.message, message.createdAt])
+  ]);
+}
+
+async function loadPlayerProfile(username, { showLoading = false } = {}) {
   const overlay = $('#playerProfileOverlay');
   const content = $('#playerProfileContent');
   if (!overlay || !content || !username) return;
 
   overlay.hidden = false;
   document.body.classList.add('profile-open');
-  content.innerHTML = `
+  state.playerProfileUsername = username;
+  if (showLoading) {
+    content.innerHTML = `
     <div class="player-profile-loading">
       ${playerIdentity(username, 40)}
       <span>Loading player profile...</span>
     </div>
   `;
+  }
 
   try {
     const profile = await fetchJson(`/api/player?username=${encodeURIComponent(username)}`);
-    content.innerHTML = renderPlayerProfile(profile);
+    const signature = playerProfileSignature(profile);
+    if (state.playerProfileSignature !== signature) {
+      content.innerHTML = renderPlayerProfile(profile);
+      state.playerProfileSignature = signature;
+      state.playerProfileUsername = profile.username || username;
+    }
   } catch (err) {
     content.innerHTML = `<div class="empty">Could not load player profile: ${escapeHtml(err.message)}</div>`;
   }
+}
+
+async function openPlayerProfile(username) {
+  state.playerProfileSignature = '';
+  await loadPlayerProfile(username, { showLoading: true });
 }
 
 function closePlayerProfile() {
@@ -1055,6 +1087,8 @@ function closePlayerProfile() {
   if (!overlay) return;
   overlay.hidden = true;
   document.body.classList.remove('profile-open');
+  state.playerProfileUsername = null;
+  state.playerProfileSignature = '';
 }
 
 function openWhisperFromProfile(username) {
@@ -2604,6 +2638,8 @@ async function handleAdminControlAction(event) {
       payload.username = normalizePlayerInput($('#adminIgnoreChatPlayer')?.value);
     } else if (action === 'unignore_chat') {
       payload.username = normalizePlayerInput($('#adminIgnoreChatPlayer')?.value);
+    } else if (action === 'playtime_set') {
+      payload.line = $('#adminPlaytimeInput')?.value.trim();
     }
 
     if (['follow', 'whitelist_add', 'whitelist_remove', 'ignore_chat', 'unignore_chat'].includes(action) && !payload.username) {
@@ -2612,8 +2648,18 @@ async function handleAdminControlAction(event) {
     if (action === 'drop_item' && payload.slot == null && !payload.name) {
       throw new Error('Choose an inventory item first.');
     }
+    if (action === 'playtime_set' && !payload.line) {
+      throw new Error('Enter a playtime line first.');
+    }
 
     button.disabled = true;
+    if (action === 'playtime_set') {
+      const result = await postJson('/api/admin/playtime', payload);
+      setBanner(`Updated ${result.username} playtime to ${result.playtime}.`);
+      $('#adminPlaytimeInput').value = '';
+      await loadAll();
+      return;
+    }
     await queueAdminCommand(action, payload);
     scheduleAdminControlRefresh();
     if (['whitelist_add', 'whitelist_remove'].includes(action)) {
@@ -2691,6 +2737,9 @@ async function loadLiveChats() {
       await loadWhisperDialog();
     } else {
       await loadWhisperOnlinePlayers({ force: true });
+    }
+    if (state.playerProfileUsername && !$('#playerProfileOverlay')?.hidden) {
+      await loadPlayerProfile(state.playerProfileUsername);
     }
   } catch {
     // The full dashboard refresh still owns user-visible load errors.

@@ -134,6 +134,28 @@ function formatSeconds(seconds) {
   return parts.join(' ');
 }
 
+function parsePlaytimeSeconds(value) {
+  const input = String(value || '').trim();
+  if (!input) return null;
+
+  const units = {
+    d: 86400, day: 86400, days: 86400,
+    h: 3600, hour: 3600, hours: 3600,
+    m: 60, min: 60, mins: 60, minute: 60, minutes: 60,
+    s: 1, sec: 1, secs: 1, second: 1, seconds: 1
+  };
+  let total = 0;
+  let matches = 0;
+  const tokenPattern = /(\d+)\s*(days?|d|hours?|h|minutes?|mins?|m|seconds?|secs?|s)\b/gi;
+  const remainder = input.replace(tokenPattern, (_, amount, unit) => {
+    total += Number(amount) * units[unit.toLowerCase()];
+    matches += 1;
+    return '';
+  }).replace(/[\s,]+/g, '');
+
+  return matches > 0 && !remainder && Number.isSafeInteger(total) ? total : null;
+}
+
 function toNumber(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -1680,6 +1702,44 @@ async function queueAdminBotCommand(currentUser, body) {
   return queueBotCommand(currentUser, commandType, payload);
 }
 
+async function setAdminPlaytime(currentUser, body) {
+  assertAdminUser(currentUser);
+  assertDatabase();
+
+  const rawLine = String(body.line || '').trim();
+  const match = rawLine.match(/^([A-Za-z0-9_]{1,32})\s*:\s*([\s\S]+)$/);
+  if (!match) {
+    const err = new Error('Use format: WheatMagnate: 402 Days, 3 Hours, 19 Minutes');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const username = match[1];
+  const totalSeconds = parsePlaytimeSeconds(match[2]);
+  if (totalSeconds == null) {
+    const err = new Error('Could not parse playtime duration.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const result = await pool.query(`
+    INSERT INTO player_playtime (username, total_seconds)
+    VALUES ($1, $2)
+    ON CONFLICT (LOWER(username))
+    DO UPDATE SET username = EXCLUDED.username,
+                  total_seconds = EXCLUDED.total_seconds,
+                  tracking_since = CASE WHEN player_playtime.tracking_since IS NULL THEN NULL ELSE NOW() END,
+                  updated_at = NOW()
+    RETURNING username
+  `, [username, totalSeconds]);
+
+  return {
+    username: result.rows[0]?.username || username,
+    totalSeconds,
+    playtime: formatSeconds(totalSeconds)
+  };
+}
+
 async function getAdminControlState(currentUser) {
   assertAdminUser(currentUser);
 
@@ -1785,6 +1845,10 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/admin/bot-command' && req.method === 'POST') {
       sendJson(res, 202, await queueAdminBotCommand(currentUser, await readJsonBody(req)));
+      return;
+    }
+    if (url.pathname === '/api/admin/playtime' && req.method === 'POST') {
+      sendJson(res, 200, await setAdminPlaytime(currentUser, await readJsonBody(req)));
       return;
     }
 

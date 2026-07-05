@@ -2915,6 +2915,50 @@ body.search-focus-active #logoutButton {
     grid-template-columns: 1fr;
   }
 
+  .rank-item.leaderboard-item {
+    grid-template-columns: 28px minmax(0, 1fr);
+    grid-template-areas:
+      "rank player"
+      "rank status"
+      "rank time";
+    align-items: start;
+    gap: 4px 10px;
+  }
+
+  .rank-item.leaderboard-item .rank-index {
+    grid-area: rank;
+  }
+
+  .rank-item.leaderboard-item .player-identity {
+    grid-area: player;
+    min-width: 0;
+  }
+
+  .rank-item.leaderboard-item .pill {
+    grid-area: status;
+    justify-self: start;
+    width: fit-content;
+  }
+
+  .rank-item.leaderboard-item > strong {
+    grid-area: time;
+    justify-self: start;
+    min-width: 0;
+    text-align: left;
+  }
+
+  .detail-list div {
+    align-items: start;
+    min-height: 0;
+  }
+
+  .detail-list span,
+  .detail-list strong {
+    justify-self: start;
+    width: 100%;
+    min-width: 0;
+  }
+
   .supply-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
