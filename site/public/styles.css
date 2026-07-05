@@ -120,10 +120,11 @@ h1 {
 
 .minedings-mark {
   display: inline-block;
-  margin-left: 2px;
+  margin-left: 0;
   font-family: "MineDings", "MineCrafter Madpixel", Inter, ui-sans-serif, system-ui, sans-serif;
   font-size: 0.82em;
   line-height: 1;
+  transform: translateX(-2px);
   vertical-align: 0;
 }
 
@@ -2234,7 +2235,8 @@ body.search-focus-active #logoutButton {
   }
 
   .topbar h1 {
-    display: none;
+    display: block;
+    font-size: 26px;
   }
 
   .topbar-actions .nav-menu {
@@ -2338,7 +2340,8 @@ body.search-focus-active #logoutButton {
 
   .whisper-panel:not(.has-dialog) .whisper-popover {
     grid-template-rows: minmax(0, 1fr);
-    width: auto;
+    right: auto;
+    width: min(280px, calc(100vw - 20px));
     min-height: 220px;
     max-height: min(420px, calc(100vh - 112px));
     max-height: min(420px, calc(100dvh - 112px));
@@ -2397,6 +2400,11 @@ body.search-focus-active #logoutButton {
       gap: 8px;
       max-height: calc(100vh - 96px);
       max-height: calc(100dvh - 96px);
+    }
+
+    .whisper-panel:not(.has-dialog) .whisper-popover {
+      right: auto;
+      width: min(280px, calc(100vw - 16px));
     }
 
     .whisper-panel.has-dialog .whisper-sidebar {
