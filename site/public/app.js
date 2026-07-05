@@ -1677,11 +1677,70 @@ function renderInventorySlot(slot, item, { fallback = false, label = 'Empty slot
   `;
 }
 
+const ENCHANTMENT_ID_NAMES = {
+  0: 'aqua_affinity',
+  1: 'bane_of_arthropods',
+  2: 'binding_curse',
+  3: 'blast_protection',
+  4: 'breach',
+  5: 'channeling',
+  6: 'density',
+  7: 'depth_strider',
+  8: 'efficiency',
+  9: 'feather_falling',
+  10: 'fire_aspect',
+  11: 'fire_protection',
+  12: 'flame',
+  13: 'fortune',
+  14: 'frost_walker',
+  15: 'impaling',
+  16: 'infinity',
+  17: 'knockback',
+  18: 'looting',
+  19: 'loyalty',
+  20: 'luck_of_the_sea',
+  21: 'lure',
+  22: 'mending',
+  23: 'multishot',
+  24: 'piercing',
+  25: 'power',
+  26: 'projectile_protection',
+  27: 'protection',
+  28: 'punch',
+  29: 'quick_charge',
+  30: 'respiration',
+  31: 'riptide',
+  32: 'sharpness',
+  33: 'silk_touch',
+  34: 'smite',
+  35: 'soul_speed',
+  36: 'sweeping_edge',
+  37: 'swift_sneak',
+  38: 'thorns',
+  39: 'unbreaking',
+  40: 'vanishing_curse',
+  41: 'wind_burst'
+};
+
 function formatEnchantmentName(name) {
-  return String(name || '')
+  const normalized = ENCHANTMENT_ID_NAMES[String(name)] || name;
+  return String(normalized || '')
     .replace(/^minecraft:/, '')
+    .replace(/^block_/, '')
     .replace(/_/g, ' ')
     .replace(/\b\w/g, char => char.toUpperCase());
+}
+
+function formatEnchantmentLevel(level) {
+  const roman = {
+    1: 'I',
+    2: 'II',
+    3: 'III',
+    4: 'IV',
+    5: 'V'
+  };
+  const numeric = Number(level);
+  return roman[numeric] || formatNumber(level);
 }
 
 function hideSupplyTooltip() {
@@ -1707,7 +1766,7 @@ function showSupplyTooltip(key, anchor) {
     ${item.remainingPercent == null ? '' : `<span>Durability: ${Number(item.remainingPercent).toFixed(1)}%</span>`}
     <div class="supply-tooltip-enchants">
       ${enchantments.length
-        ? enchantments.map(enchant => `<span>${escapeHtml(formatEnchantmentName(enchant.name))} ${formatNumber(enchant.level)}</span>`).join('')
+        ? enchantments.map(enchant => `<span>${escapeHtml(formatEnchantmentName(enchant.name))} ${formatEnchantmentLevel(enchant.level)}</span>`).join('')
         : '<span class="muted">No enchantments</span>'}
     </div>
   `;

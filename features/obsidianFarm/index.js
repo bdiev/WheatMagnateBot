@@ -248,8 +248,19 @@ function summarizeSupplyItems(bot, items) {
       }
       return current;
     };
+    const resolveEnchantmentName = name => {
+      const raw = readScalar(name);
+      if (raw == null) return '';
+      const numericId = Number(raw);
+      if (Number.isInteger(numericId)) {
+        const enchantment = bot.registry?.enchantments?.[numericId] ||
+          bot.registry?.enchantmentsArray?.find(entry => entry.id === numericId);
+        if (enchantment?.name) return enchantment.name;
+      }
+      return String(raw);
+    };
     const addEnchant = (name, level = 1) => {
-      const cleanName = String(readScalar(name) || '')
+      const cleanName = resolveEnchantmentName(name)
         .replace(/^minecraft:/, '')
         .trim();
       if (!cleanName) return;
