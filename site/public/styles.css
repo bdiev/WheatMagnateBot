@@ -1428,32 +1428,27 @@ body.search-focus-active #logoutButton {
 }
 
 .server-layout {
-  display: grid;
-  grid-column: span 4;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.9fr);
-  gap: 16px;
-  align-items: stretch;
-  align-self: start;
+  display: contents;
 }
 
 .server-layout .panel {
-  grid-column: auto;
+  grid-column: span 2;
 }
 
 .server-leaderboard-panel {
-  grid-column: 2;
+  grid-column: 3 / span 2;
   grid-row: 1 / span 2;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
 }
 
 .server-tps-panel {
-  grid-column: 1;
+  grid-column: 1 / span 2;
   grid-row: 1;
 }
 
 .server-nearby-panel {
-  grid-column: 1;
+  grid-column: 1 / span 2;
   grid-row: 2;
 }
 
@@ -2474,15 +2469,10 @@ body.search-focus-active #logoutButton {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .server-layout {
-    grid-column: 1 / -1;
-    grid-template-columns: 1fr;
-  }
-
   .server-tps-panel,
   .server-leaderboard-panel,
   .server-nearby-panel {
-    grid-column: 1;
+    grid-column: 1 / -1;
     grid-row: auto;
   }
 
