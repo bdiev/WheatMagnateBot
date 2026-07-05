@@ -1021,7 +1021,7 @@ body.search-focus-active #logoutButton {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  height: 560px;
+  height: 690px;
   overflow: auto;
   padding: 14px;
 }
@@ -1043,11 +1043,24 @@ body.search-focus-active #logoutButton {
   backdrop-filter: blur(8px);
   font-size: 20px;
   line-height: 1;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease,
+    color 180ms ease,
+    background-color 180ms ease;
 }
 
 .chat-scroll-bottom:hover {
   color: #fff;
   background: var(--accent);
+}
+
+.chat-scroll-bottom.hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px) scale(0.94);
 }
 
 .chat-send-form {
@@ -1145,6 +1158,7 @@ body.search-focus-active #logoutButton {
 }
 
 .chart-scroll {
+  position: relative;
   width: 100%;
   overflow-x: auto;
   overflow-y: hidden;
@@ -1152,6 +1166,30 @@ body.search-focus-active #logoutButton {
   scrollbar-gutter: stable;
   border-radius: var(--button-radius);
   background: var(--panel-soft);
+}
+
+.chart-y-axis {
+  position: sticky;
+  left: 0;
+  top: 0;
+  z-index: 3;
+  float: left;
+  width: 58px;
+  height: 100%;
+  margin-right: -58px;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, var(--panel-soft) 74%, color-mix(in srgb, var(--panel-soft) 0%, transparent));
+}
+
+.chart-y-axis span {
+  position: absolute;
+  right: 10px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+  transform: translateY(-50%);
+  white-space: nowrap;
 }
 
 .chart.tall {
@@ -1216,6 +1254,11 @@ body.search-focus-active #logoutButton {
 
 .leaderboard-list {
   max-height: 640px;
+  overflow: auto;
+}
+
+#topChatters {
+  height: 376px;
   overflow: auto;
 }
 
@@ -1816,6 +1859,11 @@ body.search-focus-active #logoutButton {
   .chat-list {
     height: 520px;
     min-height: 520px;
+  }
+
+  #topChatters {
+    height: auto;
+    max-height: 360px;
   }
 
   .chat-send-form {

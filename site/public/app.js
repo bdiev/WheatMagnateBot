@@ -216,17 +216,32 @@ function renderStable(selector, html, signatureParts) {
   return true;
 }
 
-function scrollToBottom(selector) {
+function updateChatScrollButton() {
+  const list = $('#chatList');
+  const button = $('#chatScrollBottom');
+  if (!list || !button) return;
+  const distanceFromBottom = list.scrollHeight - list.clientHeight - list.scrollTop;
+  button.classList.toggle('hidden', distanceFromBottom < 16);
+}
+
+function scrollToBottom(selector, { smooth = false } = {}) {
   const scroll = () => {
     const target = $(selector);
-    if (target) target.scrollTop = target.scrollHeight;
+    if (!target) return;
+    if (smooth && typeof target.scrollTo === 'function') {
+      target.scrollTo({ top: target.scrollHeight, behavior: 'smooth' });
+      setTimeout(updateChatScrollButton, 380);
+    } else {
+      target.scrollTop = target.scrollHeight;
+    }
+    if (selector === '#chatList') updateChatScrollButton();
   };
 
   requestAnimationFrame(() => {
     scroll();
-    requestAnimationFrame(scroll);
+    if (!smooth) requestAnimationFrame(scroll);
   });
-  setTimeout(scroll, 80);
+  if (!smooth) setTimeout(scroll, 80);
 }
 
 function setBanner(message) {
@@ -475,6 +490,24 @@ function drawNoData(ctx, width, height, muted) {
   ctx.fillText('No chart data', width / 2, height / 2);
 }
 
+function renderStickyChartAxis(canvas, labels, padding, height) {
+  const viewport = canvas?.closest('.chart-scroll');
+  if (!viewport) return;
+  let axis = viewport.querySelector('.chart-y-axis');
+  if (!axis) {
+    axis = document.createElement('div');
+    axis.className = 'chart-y-axis';
+    viewport.prepend(axis);
+  }
+
+  axis.style.height = `${height}px`;
+  const chartHeight = height - padding.top - padding.bottom;
+  axis.innerHTML = labels.map((label, index) => {
+    const y = padding.top + chartHeight - (chartHeight * index) / Math.max(1, labels.length - 1);
+    return `<span style="top:${y}px">${escapeHtml(label)}</span>`;
+  }).join('');
+}
+
 function drawBarChart(canvas, data, options = {}) {
   if (!canvas) return;
   const chartData = Array.isArray(data) ? data : [];
@@ -490,6 +523,12 @@ function drawBarChart(canvas, data, options = {}) {
   const padding = { top: 24, right: 18, bottom: 44, left: 58 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
+  renderStickyChartAxis(
+    canvas,
+    Array.from({ length: 5 }, (_, index) => formatNumber(Math.round((maxValue * index) / 4))),
+    padding,
+    height
+  );
 
   ctx.fillStyle = panelSoft;
   ctx.fillRect(0, 0, width, height);
@@ -570,6 +609,12 @@ function drawLineChart(canvas, data, options = {}) {
   const padding = { top: 24, right: 18, bottom: 44, left: 58 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
+  renderStickyChartAxis(
+    canvas,
+    Array.from({ length: 5 }, (_, index) => formatTps((maxValue * index) / 4)),
+    padding,
+    height
+  );
 
   ctx.fillStyle = panelSoft;
   ctx.fillRect(0, 0, width, height);
@@ -942,6 +987,7 @@ function renderChat(payload) {
   if (firstChatRender) {
     scrollToBottom('#chatList');
   }
+  updateChatScrollButton();
   state.chatMessageIds = new Set(messages.map(message => String(message.id)));
   state.chatInitialized = true;
 
@@ -1726,7 +1772,8 @@ $('#adminIgnoreChatPlayer')?.addEventListener('input', handleIgnoreChatPlayerInp
 $('#adminIgnoreChatPlayer')?.addEventListener('focus', event => runIgnoreChatSearch(event.currentTarget.value));
 $('#adminIgnoreChatSuggestions')?.addEventListener('click', handleIgnoreChatSuggestionClick);
 $('#gameChatForm')?.addEventListener('submit', handleGameChatSubmit);
-$('#chatScrollBottom')?.addEventListener('click', () => scrollToBottom('#chatList'));
+$('#chatScrollBottom')?.addEventListener('click', () => scrollToBottom('#chatList', { smooth: true }));
+$('#chatList')?.addEventListener('scroll', updateChatScrollButton);
 $$('.chart-controls').forEach(controls => controls.addEventListener('click', handleChartRangeClick));
 $('#themeToggle').addEventListener('click', toggleTheme);
 window.addEventListener('resize', redrawCharts);
