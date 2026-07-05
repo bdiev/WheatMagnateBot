@@ -382,6 +382,16 @@ async function ensureOptionalTables() {
     ON site_whisper_messages (LOWER(site_username), LOWER(player_username), created_at DESC)
   `);
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS site_whisper_read_state (
+      site_user_id BIGINT NOT NULL REFERENCES site_users(id) ON DELETE CASCADE,
+      player_key VARCHAR(32) NOT NULL,
+      player_username VARCHAR(255) NOT NULL,
+      last_read_message_id BIGINT NOT NULL DEFAULT 0,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (site_user_id, player_key)
+    )
+  `);
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS bot_commands (
       id BIGSERIAL PRIMARY KEY,
       source VARCHAR(32) NOT NULL,
@@ -749,14 +759,11 @@ function parseWhisperReadState(url) {
 
 async function getWhisperOnlinePlayers(currentUser, url) {
   assertDatabase();
-  const readState = parseWhisperReadState(url);
-  const rawDefaultReadId = String(url.searchParams.get('defaultReadId') || '0').replace(/[^\d]/g, '');
-  const defaultReadId = rawDefaultReadId || '0';
   const result = await pool.query(`
     WITH read_state AS (
-      SELECT LOWER(key) AS player_key, value::bigint AS read_id
-      FROM jsonb_each_text($2::jsonb)
-      WHERE value ~ '^\\d+$'
+      SELECT player_key, last_read_message_id AS read_id
+      FROM site_whisper_read_state
+      WHERE site_user_id = $2
     ),
     owned_dialogs AS (
       SELECT player_username
@@ -772,7 +779,7 @@ async function getWhisperOnlinePlayers(currentUser, url) {
         COUNT(*)::int AS message_count,
         COUNT(*) FILTER (
           WHERE messages.direction = 'incoming'
-            AND messages.id > COALESCE(read_state.read_id, $3::bigint, 0)
+            AND messages.id > COALESCE(read_state.read_id, 0)
         )::int AS unread_count
       FROM site_whisper_messages messages
       JOIN owned_dialogs dialogs ON LOWER(dialogs.player_username) = LOWER(messages.player_username)
@@ -810,7 +817,7 @@ async function getWhisperOnlinePlayers(currentUser, url) {
       LOWER(names.username),
       dialogs.last_message_at DESC NULLS LAST,
       COALESCE(pa.is_online, FALSE) DESC
-  `, [currentUser.username, JSON.stringify(readState), defaultReadId]);
+  `, [currentUser.username, currentUser.id]);
 
   return {
     players: result.rows
@@ -917,8 +924,6 @@ async function deleteWhisperDialog(currentUser, body) {
 
 async function getWhisperNotifications(currentUser, url) {
   assertDatabase();
-  const rawAfterId = String(url.searchParams.get('afterId') || '0').replace(/[^\d]/g, '');
-  const afterId = rawAfterId || '0';
   const result = await pool.query(`
     WITH owned_dialogs AS (
       SELECT player_username
@@ -928,7 +933,7 @@ async function getWhisperNotifications(currentUser, url) {
       GROUP BY LOWER(player_username), player_username
     ),
     visible_messages AS (
-      SELECT messages.id, messages.direction
+      SELECT messages.id, messages.direction, LOWER(messages.player_username) AS player_key
       FROM site_whisper_messages messages
       JOIN owned_dialogs dialogs ON LOWER(dialogs.player_username) = LOWER(messages.player_username)
       WHERE (
@@ -942,15 +947,64 @@ async function getWhisperNotifications(currentUser, url) {
     )
     SELECT
       COALESCE(MAX(id), 0)::text AS max_id,
-      COUNT(*) FILTER (WHERE direction = 'incoming' AND id > $1::bigint)::int AS unread_count
+      COUNT(*) FILTER (
+        WHERE visible_messages.direction = 'incoming'
+          AND visible_messages.id > COALESCE(read_state.last_read_message_id, 0)
+      )::int AS unread_count
     FROM visible_messages
-  `, [afterId, currentUser.username]);
+    LEFT JOIN site_whisper_read_state read_state
+      ON read_state.site_user_id = $2
+      AND read_state.player_key = visible_messages.player_key
+  `, [currentUser.username, currentUser.id]);
   const row = result.rows[0] || {};
 
   return {
     maxId: row.max_id || '0',
     unreadCount: toInt(row.unread_count)
   };
+}
+
+async function markWhisperRead(currentUser, body) {
+  assertDatabase();
+  const username = cleanMinecraftUsername(body.username);
+  const rawMessageId = String(body.messageId || '0').replace(/[^\d]/g, '');
+  const messageId = rawMessageId || '0';
+  const legacyReadState = body.readState && typeof body.readState === 'object' && !Array.isArray(body.readState)
+    ? body.readState
+    : null;
+
+  if (legacyReadState) {
+    const entries = Object.entries(legacyReadState)
+      .map(([rawUsername, rawId]) => ({
+        username: cleanMinecraftUsername(rawUsername),
+        id: String(rawId || '0').replace(/[^\d]/g, '') || '0'
+      }))
+      .filter(entry => entry.username && Number(entry.id) > 0);
+
+    for (const entry of entries) {
+      await pool.query(`
+        INSERT INTO site_whisper_read_state (site_user_id, player_key, player_username, last_read_message_id, updated_at)
+        VALUES ($1, LOWER($2), $2, $3::bigint, NOW())
+        ON CONFLICT (site_user_id, player_key) DO UPDATE
+        SET player_username = EXCLUDED.player_username,
+            last_read_message_id = GREATEST(site_whisper_read_state.last_read_message_id, EXCLUDED.last_read_message_id),
+            updated_at = NOW()
+      `, [currentUser.id, entry.username, entry.id]);
+    }
+  }
+
+  if (username && Number(messageId) > 0) {
+    await pool.query(`
+      INSERT INTO site_whisper_read_state (site_user_id, player_key, player_username, last_read_message_id, updated_at)
+      VALUES ($1, LOWER($2), $2, $3::bigint, NOW())
+      ON CONFLICT (site_user_id, player_key) DO UPDATE
+      SET player_username = EXCLUDED.player_username,
+          last_read_message_id = GREATEST(site_whisper_read_state.last_read_message_id, EXCLUDED.last_read_message_id),
+          updated_at = NOW()
+    `, [currentUser.id, username, messageId]);
+  }
+
+  return getWhisperNotifications(currentUser, new URL('http://localhost/api/whisper/notifications'));
 }
 
 async function queueSiteWhisperMessage(currentUser, body) {
@@ -1764,6 +1818,10 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/whisper/notifications' && req.method === 'GET') {
       sendJson(res, 200, await getWhisperNotifications(currentUser, url));
+      return;
+    }
+    if (url.pathname === '/api/whisper/read' && req.method === 'POST') {
+      sendJson(res, 200, await markWhisperRead(currentUser, await readJsonBody(req)));
       return;
     }
     if (url.pathname === '/api/whisper/send' && req.method === 'POST') {

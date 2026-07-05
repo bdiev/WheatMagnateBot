@@ -6,6 +6,8 @@ if ('scrollRestoration' in history) {
 
 const state = {
   timer: null,
+  liveChatTimer: null,
+  liveChatLoading: false,
   activeTab: 'chat',
   charts: {},
   chartMeta: {},
@@ -27,6 +29,7 @@ const state = {
   whisperMessagesSignature: '',
   whisperLastSeenId: null,
   whisperDialogReadIds: {},
+  whisperReadStateSynced: false,
   whisperUnreadCount: 0,
   whisperSearchPlayers: [],
   whitelistSearchPlayers: [],
@@ -1202,16 +1205,24 @@ function loadWhisperLastSeenId() {
   } catch (_) {
     state.whisperDialogReadIds = {};
   }
+  state.whisperReadStateSynced = false;
   state.whisperUnreadCount = 0;
   renderWhisperBadge();
 }
 
-function markWhisperNotificationsRead(maxId) {
-  const nextId = String(maxId || state.whisperLastSeenId || '0');
-  state.whisperLastSeenId = nextId;
-  state.whisperUnreadCount = 0;
-  localStorage.setItem(whisperLastSeenStorageKey(), nextId);
-  renderWhisperBadge();
+async function syncLegacyWhisperReadState() {
+  if (state.whisperReadStateSynced || !state.currentUser) return;
+  state.whisperReadStateSynced = true;
+  if (Object.keys(state.whisperDialogReadIds || {}).length === 0) return;
+  try {
+    const payload = await postJson('/api/whisper/read', {
+      readState: state.whisperDialogReadIds
+    });
+    state.whisperUnreadCount = payload.unreadCount || 0;
+    renderWhisperBadge();
+  } catch (_) {
+    state.whisperReadStateSynced = false;
+  }
 }
 
 function markWhisperDialogRead(username, maxId) {
@@ -1222,6 +1233,13 @@ function markWhisperDialogRead(username, maxId) {
   if (nextId <= currentId) return;
   state.whisperDialogReadIds[key] = String(nextId);
   localStorage.setItem(whisperDialogReadStorageKey(), JSON.stringify(state.whisperDialogReadIds));
+  postJson('/api/whisper/read', {
+    username,
+    messageId: String(nextId)
+  }).then(payload => {
+    state.whisperUnreadCount = payload.unreadCount || 0;
+    renderWhisperBadge();
+  }).catch(() => {});
   state.whisperPlayers = state.whisperPlayers.map(player =>
     String(player.username || '').toLowerCase() === key
       ? { ...player, unreadCount: 0 }
@@ -1233,16 +1251,8 @@ function markWhisperDialogRead(username, maxId) {
 }
 
 async function loadWhisperNotifications({ markRead = false } = {}) {
-  const afterId = state.whisperLastSeenId || '0';
-  const payload = await fetchJson(`/api/whisper/notifications?afterId=${encodeURIComponent(afterId)}`);
-  if (!state.whisperLastSeenId) {
-    markWhisperNotificationsRead(payload.maxId);
-    return;
-  }
-  if (markRead || $('#whisperPanel')?.classList.contains('open')) {
-    markWhisperNotificationsRead(payload.maxId);
-    return;
-  }
+  await syncLegacyWhisperReadState();
+  const payload = await fetchJson('/api/whisper/notifications');
   state.whisperUnreadCount = payload.unreadCount || 0;
   renderWhisperBadge();
 }
@@ -1270,7 +1280,6 @@ function clearWhisperSearch() {
 }
 
 function renderWhisperSearchResults(players) {
-  const list = $('#whisperPlayers');
   state.whisperSearchPlayers = players || [];
   state.whisperPlayersSignature = `search:${JSON.stringify(state.whisperSearchPlayers.map(player => [
     player.username || '',
@@ -1278,24 +1287,7 @@ function renderWhisperSearchResults(players) {
     player.lastSeen || ''
   ]))}`;
 
-  if (!list) return;
-  if (state.whisperSearchPlayers.length === 0) {
-    list.innerHTML = '<div class="seen-empty">No players found.</div>';
-    return;
-  }
-
-  const active = String(state.whisperTarget || '').toLowerCase();
-  list.innerHTML = state.whisperSearchPlayers.map((player, index) => {
-    const username = player.username || '';
-    const isActive = username.toLowerCase() === active;
-    const isOnline = Boolean(player.isOnline);
-    return `
-    <button class="whisper-player ${isActive ? 'active' : ''}" type="button" data-search-index="${index}" style="--item-index: ${index}">
-      <span class="whisper-player-identity">${playerIdentity(username, 24)}</span>
-      <span class="pill ${isOnline ? 'online' : ''}">${isOnline ? 'online' : 'offline'}</span>
-    </button>
-  `;
-  }).join('');
+  renderWhisperPlayerList(state.whisperSearchPlayers, { search: true, emptyText: 'No players found.' });
 }
 
 async function runWhisperSearch(query) {
@@ -1322,6 +1314,71 @@ function handleWhisperSearchInput(event) {
   state.whisperSearchTimer = setTimeout(() => runWhisperSearch(query), 180);
 }
 
+function renderWhisperPlayerList(players, { search = false, emptyText = 'No players or dialogs.' } = {}) {
+  const list = $('#whisperPlayers');
+  if (!list) return;
+
+  if (!players.length) {
+    list.innerHTML = `<div class="seen-empty">${emptyText}</div>`;
+    return;
+  }
+
+  list.querySelectorAll('.seen-empty').forEach(node => node.remove());
+  const existing = new Map(Array.from(list.querySelectorAll('.whisper-player')).map(button => [
+    `${button.dataset.mode || 'list'}:${button.dataset.key || ''}`,
+    button
+  ]));
+  const used = new Set();
+  const active = String(state.whisperTarget || '').toLowerCase();
+
+  players.forEach((player, index) => {
+    const username = player.username || '';
+    const key = username.toLowerCase();
+    const mode = search ? 'search' : 'list';
+    const mapKey = `${mode}:${key}`;
+    let button = existing.get(mapKey);
+
+    if (!button) {
+      button = document.createElement('button');
+      button.className = 'whisper-player';
+      button.type = 'button';
+      button.dataset.key = key;
+      button.dataset.mode = mode;
+    }
+
+    const isActive = key === active;
+    const isOnline = Boolean(player.isOnline);
+    const unreadCount = Number(player.unreadCount) || 0;
+    const messageBadge = !search && unreadCount > 0
+      ? `<span class="whisper-message-count" aria-label="${formatNumber(unreadCount)} unread messages">${formatNumber(unreadCount)}</span>`
+      : '';
+    const contentSignature = JSON.stringify([username, isOnline, unreadCount, isActive, search]);
+    if (button.dataset.renderSignature !== contentSignature) {
+      button.innerHTML = `
+        <span class="whisper-player-identity">${playerIdentity(username, 24)}${messageBadge}</span>
+        <span class="pill ${isOnline ? 'online' : ''}">${isOnline ? 'online' : 'offline'}</span>
+      `;
+      button.dataset.renderSignature = contentSignature;
+    }
+
+    button.classList.toggle('active', isActive);
+    button.style.setProperty('--item-index', index);
+    if (search) {
+      delete button.dataset.index;
+      button.dataset.searchIndex = String(index);
+    } else {
+      delete button.dataset.searchIndex;
+      button.dataset.index = String(index);
+    }
+    list.appendChild(button);
+    used.add(mapKey);
+  });
+
+  for (const [key, button] of existing.entries()) {
+    if (!used.has(key)) button.remove();
+  }
+}
+
 function renderWhisperPlayers() {
   const list = $('#whisperPlayers');
   if (!list) return;
@@ -1345,40 +1402,38 @@ function renderWhisperPlayers() {
   state.whisperPlayersSignature = signature;
 
   if (!state.whisperPlayers.length) {
-    list.innerHTML = '<div class="seen-empty">No players or dialogs.</div>';
+    renderWhisperPlayerList([], { emptyText: 'No players or dialogs.' });
     return;
   }
 
-  const active = String(state.whisperTarget || '').toLowerCase();
-  list.innerHTML = state.whisperPlayers.map((player, index) => {
-    const username = player.username || '';
-    const isActive = username.toLowerCase() === active;
-    const isOnline = Boolean(player.isOnline);
-    const unreadCount = Number(player.unreadCount) || 0;
-    const messageBadge = unreadCount > 0
-      ? `<span class="whisper-message-count" aria-label="${formatNumber(unreadCount)} unread messages">${formatNumber(unreadCount)}</span>`
-      : '';
-    return `
-      <button class="whisper-player ${isActive ? 'active' : ''}" type="button" data-index="${index}" style="--item-index: ${index}">
-        <span class="whisper-player-identity">${playerIdentity(username, 24)}${messageBadge}</span>
-        <span class="pill ${isOnline ? 'online' : ''}">${isOnline ? 'online' : 'offline'}</span>
-      </button>
-    `;
-  }).join('');
+  renderWhisperPlayerList(state.whisperPlayers);
+}
+
+function updateWhisperDialogTitle() {
+  const title = $('#whisperTargetTitle');
+  if (!title || !state.whisperTarget) return;
+  const player = state.whisperPlayers.find(entry =>
+    String(entry.username || '').toLowerCase() === String(state.whisperTarget || '').toLowerCase()
+  );
+  const isOnline = Boolean(player?.isOnline);
+  const signature = JSON.stringify([state.whisperTarget, isOnline]);
+  if (title.dataset.renderSignature === signature) return;
+  title.innerHTML = `
+    ${playerIdentity(state.whisperTarget, 26)}
+    <span class="pill ${isOnline ? 'online' : ''}">${isOnline ? 'online' : 'offline'}</span>
+  `;
+  title.dataset.renderSignature = signature;
 }
 
 async function loadWhisperOnlinePlayers({ force = false } = {}) {
   if (!force && !$('#whisperPanel')?.classList.contains('open')) return;
-  if (!state.whisperLastSeenId && Object.keys(state.whisperDialogReadIds || {}).length === 0) {
-    await loadWhisperNotifications();
-  }
-  const readState = encodeURIComponent(JSON.stringify(state.whisperDialogReadIds || {}));
-  const defaultReadId = encodeURIComponent(state.whisperLastSeenId || '0');
-  const payload = await fetchJson(`/api/whisper/online?readState=${readState}&defaultReadId=${defaultReadId}`);
+  await syncLegacyWhisperReadState();
+  const payload = await fetchJson('/api/whisper/online');
   state.whisperPlayers = payload.players || [];
   state.whisperUnreadCount = state.whisperPlayers.reduce((sum, player) => sum + (Number(player.unreadCount) || 0), 0);
   renderWhisperBadge();
   renderWhisperPlayers();
+  updateWhisperDialogTitle();
 }
 
 function renderWhisperMessages(messages) {
@@ -1428,16 +1483,8 @@ async function openWhisperDialog(username) {
   state.whisperMessagesSignature = '';
   $('#whisperPanel')?.classList.add('has-dialog');
   const dialog = $('#whisperDialog');
-  const title = $('#whisperTargetTitle');
-  const player = state.whisperPlayers.find(entry => String(entry.username || '').toLowerCase() === String(username || '').toLowerCase());
-  const isOnline = Boolean(player?.isOnline);
   if (dialog) dialog.hidden = false;
-  if (title) {
-    title.innerHTML = `
-      ${playerIdentity(username, 26)}
-      <span class="pill ${isOnline ? 'online' : ''}">${isOnline ? 'online' : 'offline'}</span>
-    `;
-  }
+  updateWhisperDialogTitle();
   renderWhisperPlayers();
   await loadWhisperDialog();
   setTimeout(() => $('#whisperInput')?.focus(), 60);
@@ -2619,6 +2666,30 @@ async function loadAll() {
   }
 }
 
+async function loadLiveChats() {
+  if (!state.currentUser || state.liveChatLoading) return;
+  state.liveChatLoading = true;
+  try {
+    const chat = await fetchJson('/api/chat?limit=160');
+    renderChat(chat);
+    if ($('#whisperPanel')?.classList.contains('open')) {
+      await loadWhisperOnlinePlayers();
+      await loadWhisperDialog();
+    } else {
+      await loadWhisperOnlinePlayers({ force: true });
+    }
+  } catch {
+    // The full dashboard refresh still owns user-visible load errors.
+  } finally {
+    state.liveChatLoading = false;
+  }
+}
+
+function startLiveChatRefresh() {
+  clearInterval(state.liveChatTimer);
+  state.liveChatTimer = setInterval(loadLiveChats, 1000);
+}
+
 applyTheme(localStorage.getItem('wm-theme') || 'light');
 setAuthMode('login');
 $$('.tab-button').forEach(button => {
@@ -2769,3 +2840,4 @@ $('#playerProfileOverlay').addEventListener('click', event => {
 updateNavLabel('chat');
 initAuth();
 state.timer = setInterval(loadAll, 5000);
+startLiveChatRefresh();
