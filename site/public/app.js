@@ -1496,6 +1496,11 @@ function renderSupplies(selector, supplies, error = null) {
   }
 
   const items = supplies.items || [];
+  if (selector === '#inventorySupplies') {
+    renderInventorySupplies(selector, items);
+    return;
+  }
+
   const summary = `
     <div class="supply-summary">
       <div><span>Food</span><strong>${formatNumber(supplies.foodCount)}</strong></div>
@@ -1531,6 +1536,62 @@ function renderSupplies(selector, supplies, error = null) {
       item.name,
       item.label,
       item.count,
+      item.remainingPercent,
+      item.usable
+    ])
+  });
+}
+
+function inventoryGridSlots(items) {
+  const bySlot = new Map();
+  for (const item of items || []) {
+    const slot = Number(item.slot);
+    if (!Number.isFinite(slot)) continue;
+    bySlot.set(slot, item);
+  }
+  return [
+    ...Array.from({ length: 27 }, (_, index) => 9 + index),
+    ...Array.from({ length: 9 }, (_, index) => 36 + index)
+  ].map(slot => ({ slot, item: bySlot.get(slot) || null }));
+}
+
+function renderInventorySupplies(selector, items) {
+  const slots = inventoryGridSlots(items);
+  const hasSlotData = items.some(item => Number.isFinite(Number(item.slot)));
+  if (!items.length) {
+    renderStable(selector, '<div class="empty">No items recorded.</div>', ['inventory-empty']);
+    return;
+  }
+  if (!hasSlotData) {
+    renderStable(selector, '<div class="empty">Inventory positions will appear after the next supply inspection.</div>', ['inventory-no-slots']);
+    return;
+  }
+
+  const html = `
+    <div class="inventory-grid" aria-label="Bot inventory slots">
+      ${slots.map(({ slot, item }) => {
+        if (!item) return `<div class="inventory-slot" data-slot="${slot}" aria-label="Empty slot"></div>`;
+        const durability = item.remainingPercent == null
+          ? ''
+          : `<span class="inventory-durability">${Number(item.remainingPercent).toFixed(0)}%</span>`;
+        const low = item.usable === false ? ' low' : '';
+        return `
+          <div class="inventory-slot filled${low}" data-slot="${slot}" title="${escapeHtml(item.label)} x${formatNumber(item.count)}">
+            ${itemIcon(item)}
+            <span class="inventory-count">${formatNumber(item.count)}</span>
+            ${durability}
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+
+  renderStable(selector, html, {
+    items: items.map(item => [
+      item.name,
+      item.label,
+      item.count,
+      item.slot,
       item.remainingPercent,
       item.usable
     ])

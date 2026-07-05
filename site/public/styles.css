@@ -2133,6 +2133,76 @@ body.search-focus-active #logoutButton {
   padding: 14px;
 }
 
+.inventory-grid {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(0, 1fr));
+  gap: 4px;
+  padding: 14px;
+  width: min(100%, 560px);
+  max-width: 560px;
+}
+
+.inventory-slot {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  min-width: 0;
+  border: 2px solid color-mix(in srgb, var(--line) 88%, #7f8a78);
+  border-radius: 4px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--panel-soft) 64%, #8c9384), var(--panel));
+  box-shadow:
+    inset 2px 2px 0 color-mix(in srgb, #000 14%, transparent),
+    inset -2px -2px 0 color-mix(in srgb, #fff 28%, transparent);
+}
+
+.inventory-slot.filled {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--panel) 82%, #aab09f), var(--panel-soft));
+}
+
+.inventory-slot.low {
+  border-color: color-mix(in srgb, var(--warn) 72%, var(--line));
+}
+
+.inventory-slot .item-icon {
+  width: min(34px, 78%);
+  height: min(34px, 78%);
+  flex-basis: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.inventory-slot .item-icon img {
+  width: 100%;
+  height: 100%;
+}
+
+.inventory-count,
+.inventory-durability {
+  position: absolute;
+  right: 3px;
+  padding: 1px 3px;
+  border-radius: 4px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.58);
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1;
+  text-shadow: 0 1px 0 #000;
+}
+
+.inventory-count {
+  bottom: 3px;
+}
+
+.inventory-durability {
+  top: 3px;
+  color: #e9f7d7;
+}
+
 .supply-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

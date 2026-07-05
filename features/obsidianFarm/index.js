@@ -241,6 +241,7 @@ function summarizeSupplyItems(bot, items) {
     allItems.push({
       name: item.name,
       count: item.count,
+      slot: item.slot,
       remainingPercent,
       usable: PICKAXE_PRIORITY.includes(item.name)
         ? isPickaxeUsable(bot, item)

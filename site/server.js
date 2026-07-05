@@ -193,6 +193,7 @@ function summarizeSupplyLocation(location) {
         name: item.name,
         label: normalizeItemName(item.name),
         count: toInt(item.count),
+        slot: item.slot == null ? null : toInt(item.slot),
         remainingPercent: item.remainingPercent == null ? null : toNumber(item.remainingPercent),
         usable: item.usable
       }))
