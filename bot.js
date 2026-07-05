@@ -555,6 +555,8 @@ class DeferredBotCommandError extends Error {
 let recentlyForwardedGameChat = new Map(); // key: `CHAT:username:message` -> timestamp, to dedupe chat/raw message events
 let tpsTabInterval = null;
 let playtimeSyncInterval = null;
+let playerActivitySyncInterval = null;
+let playerActivitySyncRunning = false;
 const pendingPlaytimeLookups = new Map(); // lookup key -> { targetUsername, timestamp }
 const pendingJoinDateLookups = new Map(); // lookup key -> { targetUsername, timestamp }
 let botStatusSnapshotInterval = null;
@@ -1821,6 +1823,31 @@ function getOnlinePlayerUsernames() {
   return [...new Set(Object.values(bot.players)
     .map(player => String(player?.username || '').trim())
     .filter(Boolean))];
+}
+
+async function syncPlayerActivityOnlineState() {
+  if (!pool || !bot || !bot.players || playerActivitySyncRunning) return;
+
+  playerActivitySyncRunning = true;
+  try {
+    const botUsername = String(bot.username || '').toLowerCase();
+    const onlineUsernames = getOnlinePlayerUsernames()
+      .filter(username => username.toLowerCase() !== botUsername);
+    const onlineLower = [...new Set(onlineUsernames.map(username => username.toLowerCase()))];
+
+    await Promise.all(onlineUsernames.map(username => updatePlayerActivity(username, true)));
+    await pool.query(`
+      UPDATE player_activity
+      SET last_seen = NOW(),
+          is_online = FALSE
+      WHERE is_online = TRUE
+        AND NOT (LOWER(username) = ANY($1::text[]))
+    `, [onlineLower]);
+  } catch (err) {
+    console.error('[PlayerActivity] Failed to synchronize online state:', err.message);
+  } finally {
+    playerActivitySyncRunning = false;
+  }
 }
 
 const {
@@ -6248,17 +6275,21 @@ function createBot() {
       });
     }
 
-    // Update player activity for all online players
-    if (bot && bot.players) {
-      setTimeout(async () => {
-        for (const player of Object.values(bot.players)) {
-          if (player.username && player.username.toLowerCase() !== bot.username.toLowerCase()) {
-            await updatePlayerActivity(player.username, true);
-          }
-        }
+    // Keep website online/offline state aligned with Mineflayer's current player list.
+    setTimeout(async () => {
+      try {
+        await syncPlayerActivityOnlineState();
         await syncWhitelistPlaytime();
-      }, 3000);
-    }
+      } catch (err) {
+        console.error('[PlayerActivity] Initial sync after spawn failed:', err.message);
+      }
+    }, 3000);
+
+    playerActivitySyncInterval = setInterval(() => {
+      syncPlayerActivityOnlineState().catch(err => {
+        console.error('[PlayerActivity] Sync interval failed:', err.message);
+      });
+    }, 1000);
 
     playtimeSyncInterval = setInterval(() => {
       syncWhitelistPlaytime().catch(err => console.error('[Playtime] Sync interval failed:', err.message));
@@ -6705,6 +6736,10 @@ function clearIntervals() {
   if (playtimeSyncInterval) {
     clearInterval(playtimeSyncInterval);
     playtimeSyncInterval = null;
+  }
+  if (playerActivitySyncInterval) {
+    clearInterval(playerActivitySyncInterval);
+    playerActivitySyncInterval = null;
   }
   if (restartProtectionInterval) {
     clearInterval(restartProtectionInterval);

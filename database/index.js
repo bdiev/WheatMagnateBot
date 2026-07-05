@@ -112,8 +112,8 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
   async function updatePlayerActivity(username, isOnline) {
     if (!pool) return;
 
-    try {
-      const timestamp = new Date();
+    const timestamp = new Date();
+    const runUpdate = async () => {
       if (isOnline) {
         await pool.query(`
           INSERT INTO player_activity (username, last_seen, last_online, registration_at, is_online)
@@ -134,8 +134,22 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
                         is_online = FALSE
         `, [username, timestamp]);
       }
-    } catch (_) {
-      // Keep activity tracking best-effort; chat and reconnect flows should not fail on this.
+    };
+
+    try {
+      await runUpdate();
+    } catch (err) {
+      if (err?.code === '42703') {
+        try {
+          await pool.query('ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS registration_at TIMESTAMPTZ');
+          await runUpdate();
+          return;
+        } catch (retryErr) {
+          console.error(`[DB] Failed to update player activity for ${username} after migration retry:`, retryErr.message);
+          return;
+        }
+      }
+      console.error(`[DB] Failed to update player activity for ${username}:`, err.message);
     }
   }
 
