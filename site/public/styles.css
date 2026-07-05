@@ -1553,6 +1553,16 @@ body.search-focus-active #logoutButton {
   transition: background-color 260ms ease, border-color 260ms ease;
 }
 
+.chat-message.chat-activity {
+  border-style: dashed;
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel-soft));
+}
+
+.chat-message.chat-activity .chat-text {
+  color: var(--muted);
+  font-weight: 800;
+}
+
 .chat-message.new-message {
   animation: chatMessageIn 520ms cubic-bezier(0.16, 1, 0.3, 1);
 }

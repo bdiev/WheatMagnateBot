@@ -1334,15 +1334,28 @@ function renderChat(payload) {
   const messages = payload.messages || [];
   const firstChatRender = !state.chatInitialized;
   renderStable('#chatList', messages.length
-    ? messages.map(message => `
-      <article class="chat-message ${state.chatInitialized && !state.chatMessageIds.has(String(message.id)) ? 'new-message' : ''}">
-        <div class="chat-user">${playerIdentity(message.username, 28)}</div>
-        <div class="chat-text">${escapeHtml(message.message)}</div>
-        <time class="chat-time">${formatChatTime(message.createdAt)}</time>
-      </article>
-    `).join('')
+    ? messages.map(message => {
+      const isNew = state.chatInitialized && !state.chatMessageIds.has(String(message.id));
+      if (message.type === 'activity') {
+        const eventLabel = message.event === 'join' ? 'joined the game' : 'left the game';
+        return `
+          <article class="chat-message chat-activity ${isNew ? 'new-message' : ''}">
+            <div class="chat-user">${playerIdentity(message.username, 24)}</div>
+            <div class="chat-text">${escapeHtml(eventLabel)}</div>
+            <time class="chat-time">${formatChatTime(message.createdAt)}</time>
+          </article>
+        `;
+      }
+      return `
+        <article class="chat-message ${isNew ? 'new-message' : ''}">
+          <div class="chat-user">${playerIdentity(message.username, 28)}</div>
+          <div class="chat-text">${escapeHtml(message.message)}</div>
+          <time class="chat-time">${formatChatTime(message.createdAt)}</time>
+        </article>
+      `;
+    }).join('')
     : '<div class="empty">No chat messages yet. New messages will appear after the bot records them.</div>',
-    messages.map(message => [message.id, message.username, message.message, message.createdAt])
+    messages.map(message => [message.id, message.type, message.username, message.message, message.event, message.createdAt])
   );
   if (firstChatRender) {
     scrollToBottom('#chatList');
@@ -1444,22 +1457,6 @@ function renderPlayerStats(payload = {}) {
     `).join('')
     : '<div class="empty">No whitelist playtime data found.</div>',
     leaderboard.map(player => [player.username, player.isOnline, player.playtime])
-  );
-
-  const activity = payload.recentActivity || [];
-  renderStable('#recentActivity', activity.length
-    ? activity.map(player => {
-      const eventLabel = player.isOnline ? 'Joined the game' : 'Left the game';
-      return `
-        <div class="rank-item activity-item">
-          ${playerIdentity(player.username, 28)}
-          <span class="pill ${player.isOnline ? 'online' : ''}">${eventLabel}</span>
-          <span class="muted">${formatAgo(player.lastSeen)}</span>
-        </div>
-      `;
-    }).join('')
-    : '<div class="empty">No recent activity records found.</div>',
-    activity.map(player => [player.username, player.isOnline, player.lastSeen])
   );
 }
 

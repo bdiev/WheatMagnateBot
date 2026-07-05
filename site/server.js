@@ -542,13 +542,29 @@ async function getChat(url) {
   assertDatabase();
 
   const limit = Math.min(200, Math.max(1, toInt(url.searchParams.get('limit'), 100)));
-  const [messagesResult, hourlyResult, topChattersResult, totalsResult] = await Promise.all([
+  const [messagesResult, activityResult, hourlyResult, topChattersResult, totalsResult] = await Promise.all([
     pool.query(`
       SELECT id, username, message, created_at
       FROM game_chat_messages
       ORDER BY created_at DESC
       LIMIT $1
     `, [limit]),
+    pool.query(`
+      SELECT
+        username,
+        is_online,
+        CASE
+          WHEN is_online THEN COALESCE(last_online, last_seen)
+          ELSE last_seen
+        END AS event_at
+      FROM player_activity
+      WHERE CASE
+          WHEN is_online THEN COALESCE(last_online, last_seen)
+          ELSE last_seen
+        END >= NOW() - INTERVAL '24 hours'
+      ORDER BY event_at DESC NULLS LAST
+      LIMIT 40
+    `),
     pool.query(`
       WITH buckets AS (
         SELECT generate_series(
@@ -583,13 +599,29 @@ async function getChat(url) {
     `)
   ]);
 
-  return {
-    messages: messagesResult.rows.reverse().map(row => ({
+  const chatMessages = messagesResult.rows.map(row => ({
       id: row.id,
+      type: 'chat',
       username: row.username,
       message: row.message,
       createdAt: row.created_at
-    })),
+    }));
+  const activityMessages = activityResult.rows
+    .filter(row => row.event_at)
+    .map(row => ({
+      id: `activity:${String(row.username).toLowerCase()}:${row.is_online ? 'join' : 'leave'}:${new Date(row.event_at).getTime()}`,
+      type: 'activity',
+      username: row.username,
+      event: row.is_online ? 'join' : 'leave',
+      message: row.is_online ? 'joined the game' : 'left the game',
+      createdAt: row.event_at
+    }));
+
+  return {
+    messages: [...chatMessages, ...activityMessages]
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, limit)
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
     hourly: hourlyResult.rows.map(row => ({
       label: row.label,
       bucket: row.bucket,
@@ -916,7 +948,7 @@ async function getBotStats() {
 async function getPlayerStats() {
   assertDatabase();
 
-  const [playersResult, leaderboardResult, recentActivityResult, activityTotalsResult] = await Promise.all([
+  const [playersResult, leaderboardResult, activityTotalsResult] = await Promise.all([
     pool.query(`
       SELECT
         COUNT(*)::int AS total,
@@ -939,15 +971,6 @@ async function getPlayerStats() {
       LEFT JOIN player_activity pa ON LOWER(pa.username) = LOWER(w.username)
       LEFT JOIN player_playtime pt ON LOWER(pt.username) = LOWER(w.username)
       ORDER BY total_seconds DESC, LOWER(w.username)
-    `),
-    pool.query(`
-      SELECT pa.username,
-             pa.last_seen,
-             pa.last_online,
-             pa.is_online AS is_online
-      FROM player_activity pa
-      ORDER BY pa.last_seen DESC NULLS LAST
-      LIMIT 8
     `),
     pool.query(`
       SELECT
@@ -977,13 +1000,7 @@ async function getPlayerStats() {
         totalSeconds: seconds,
         playtime: formatSeconds(seconds)
       };
-    }),
-    recentActivity: recentActivityResult.rows.map(row => ({
-      username: row.username,
-      isOnline: Boolean(row.is_online),
-      lastSeen: row.last_seen,
-      lastOnline: row.last_online
-    }))
+    })
   };
 }
 
