@@ -56,6 +56,12 @@ const state = {
 const $ = selector => document.querySelector(selector);
 const $$ = selector => Array.from(document.querySelectorAll(selector));
 
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}
+
 function formatNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) ? new Intl.NumberFormat('en-US').format(number) : '-';
@@ -1590,7 +1596,6 @@ async function handleWhisperDeleteDialog() {
     await postJson('/api/whisper/dialog/delete', { username });
     closeWhisperDialog();
     await loadWhisperOnlinePlayers();
-    setBanner('Private chat deleted.');
   } catch (err) {
     setBanner(`Could not delete private chat: ${err.message}`);
   } finally {

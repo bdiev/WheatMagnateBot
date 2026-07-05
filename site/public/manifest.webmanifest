@@ -1,0 +1,31 @@
+{
+  "name": "WheatMagnateBot Dashboard",
+  "short_name": "WheatBot",
+  "description": "Private dashboard for WheatMagnateBot.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f5f1e8",
+  "theme_color": "#f1c232",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/Writable_Book.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/Writable_Book.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/Writable_Book.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
