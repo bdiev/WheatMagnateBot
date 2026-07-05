@@ -427,8 +427,10 @@ function setNavMenuOpen(open) {
   const menu = $('#navMenu');
   const toggle = $('#navMenuToggle');
   if (!menu || !toggle) return;
-  menu.classList.toggle('open', Boolean(open));
-  toggle.setAttribute('aria-expanded', String(Boolean(open)));
+  const isOpen = Boolean(open);
+  menu.classList.toggle('open', isOpen);
+  document.body.classList.toggle('nav-focus-active', isOpen);
+  toggle.setAttribute('aria-expanded', String(isOpen));
 }
 
 function toggleNavMenu() {
@@ -1206,6 +1208,7 @@ function setWhisperOpen(open) {
   const popover = $('#whisperPopover');
   if (!panel || !toggle || !popover) return;
   panel.classList.toggle('open', open);
+  document.body.classList.toggle('whisper-focus-active', Boolean(open));
   panel.classList.toggle('has-dialog', Boolean(state.whisperTarget));
   popover.hidden = !open;
   toggle.setAttribute('aria-expanded', String(open));
