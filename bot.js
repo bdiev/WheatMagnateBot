@@ -1807,6 +1807,13 @@ function getOnlineWhitelistUsernames() {
   return usernames;
 }
 
+function getOnlinePlayerUsernames() {
+  if (!bot || !bot.players) return [];
+  return [...new Set(Object.values(bot.players)
+    .map(player => String(player?.username || '').trim())
+    .filter(Boolean))];
+}
+
 const {
   syncWhitelistPlaytime,
   getWhitelistPlaytime,
@@ -1817,7 +1824,7 @@ const {
   setPlayerPlaytime
 } = createPlaytimeFeature({
   pool,
-  getOnlineWhitelistUsernames,
+  getOnlinePlayerUsernames,
   getPlayerHeadEmoji,
   statusEmojis: STATUS_EMOJIS,
   uiButtonEmojis: UI_BUTTON_EMOJIS
@@ -6168,8 +6175,8 @@ function createBot() {
       await updatePlayerActivity(player.username, true);
       await scheduleQueuedSiteWhispersForPlayer(player.username);
     }
-    if (player.username && ignoredUsernames.some(name => name.toLowerCase() === player.username.toLowerCase())) {
-      const onlineUsernames = getOnlineWhitelistUsernames();
+    if (player.username) {
+      const onlineUsernames = getOnlinePlayerUsernames();
       if (!onlineUsernames.some(username => username.toLowerCase() === player.username.toLowerCase())) {
         onlineUsernames.push(player.username);
       }
@@ -6182,8 +6189,8 @@ function createBot() {
     if (player.username && player.username.toLowerCase() !== bot.username.toLowerCase()) {
       await updatePlayerActivity(player.username, false);
     }
-    if (player.username && ignoredUsernames.some(name => name.toLowerCase() === player.username.toLowerCase())) {
-      const onlineUsernames = getOnlineWhitelistUsernames().filter(
+    if (player.username) {
+      const onlineUsernames = getOnlinePlayerUsernames().filter(
         username => username.toLowerCase() !== player.username.toLowerCase()
       );
       await syncWhitelistPlaytime(onlineUsernames);

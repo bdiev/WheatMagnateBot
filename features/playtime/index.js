@@ -4,23 +4,18 @@ const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
 function createPlaytimeFeature({
   pool,
-  getOnlineWhitelistUsernames,
+  getOnlinePlayerUsernames,
   getPlayerHeadEmoji,
   statusEmojis,
   uiButtonEmojis
 }) {
-  async function syncWhitelistPlaytime(onlineUsernames = getOnlineWhitelistUsernames()) {
+  async function syncWhitelistPlaytime(onlineUsernames = getOnlinePlayerUsernames()) {
     if (!pool) return;
 
     let client = null;
     try {
       client = await pool.connect();
       await client.query('BEGIN');
-      await client.query(`
-        INSERT INTO player_playtime (username)
-        SELECT username FROM whitelist
-        ON CONFLICT (username) DO NOTHING
-      `);
       await client.query(`
         UPDATE player_playtime
         SET total_seconds = total_seconds + GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - tracking_since)))::BIGINT),
@@ -32,11 +27,11 @@ function createPlaytimeFeature({
       for (const username of onlineUsernames) {
         await client.query(`
           INSERT INTO player_playtime (username, tracking_since)
-          SELECT username, NOW()
-          FROM whitelist
-          WHERE LOWER(username) = LOWER($1)
-          ON CONFLICT (username)
-          DO UPDATE SET tracking_since = NOW(), updated_at = NOW()
+          VALUES ($1, NOW())
+          ON CONFLICT (LOWER(username))
+          DO UPDATE SET username = EXCLUDED.username,
+                        tracking_since = NOW(),
+                        updated_at = NOW()
         `, [username]);
       }
       await client.query('COMMIT');
@@ -165,14 +160,14 @@ function createPlaytimeFeature({
     try {
       const result = await pool.query(`
         INSERT INTO player_playtime (username, total_seconds)
-        SELECT username, $2 FROM whitelist WHERE LOWER(username) = LOWER($1)
-        ON CONFLICT (username)
-        DO UPDATE SET total_seconds = EXCLUDED.total_seconds,
+        VALUES ($1, $2)
+        ON CONFLICT (LOWER(username))
+        DO UPDATE SET username = EXCLUDED.username,
+                      total_seconds = EXCLUDED.total_seconds,
                       tracking_since = CASE WHEN player_playtime.tracking_since IS NULL THEN NULL ELSE NOW() END,
                       updated_at = NOW()
         RETURNING username
       `, [username, totalSeconds]);
-      if (result.rowCount === 0) return { error: 'Player is not in the whitelist' };
       return { username: result.rows[0].username };
     } catch (err) {
       return { error: err.message };
