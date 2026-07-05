@@ -1654,6 +1654,90 @@ async function handleWhisperDeleteDialog() {
   }
 }
 
+function renderChatMessages(messages) {
+  const list = $('#chatList');
+  if (!list) return;
+
+  if (!messages.length) {
+    if (list.dataset.empty !== 'true') {
+      list.innerHTML = '<div class="empty">No chat messages yet. New messages will appear after the bot records them.</div>';
+      list.dataset.empty = 'true';
+    }
+    return;
+  }
+
+  delete list.dataset.empty;
+  list.querySelectorAll('.empty').forEach(node => node.remove());
+
+  const scrollTop = list.scrollTop;
+  const scrollLeft = list.scrollLeft;
+  const distanceFromBottom = list.scrollHeight - list.clientHeight - list.scrollTop;
+  const keepBottom = distanceFromBottom >= 0 && distanceFromBottom < 12;
+  const existing = new Map(Array.from(list.querySelectorAll('.chat-message')).map(node => [
+    node.dataset.messageId,
+    node
+  ]));
+  const used = new Set();
+
+  messages.forEach((message, index) => {
+    const id = String(message.id);
+    const isActivity = message.type === 'activity';
+    const isNew = state.chatInitialized && !state.chatMessageIds.has(id);
+    const signature = stableSignature([
+      message.id,
+      message.type,
+      message.username,
+      message.message,
+      message.event,
+      message.createdAt
+    ]);
+    let article = existing.get(id);
+
+    if (!article) {
+      article = document.createElement('article');
+      article.dataset.messageId = id;
+    }
+
+    article.className = `chat-message${isActivity ? ' chat-activity' : ''}${isNew ? ' new-message' : ''}`;
+    if (article.dataset.renderSignature !== signature) {
+      if (isActivity) {
+        const eventLabel = message.event === 'join' ? 'joined the game' : 'left the game';
+        article.innerHTML = `
+          <div class="chat-user">${playerIdentity(message.username, 24)}</div>
+          <div class="chat-text">${escapeHtml(eventLabel)}</div>
+          <time class="chat-time">${formatChatTime(message.createdAt)}</time>
+        `;
+      } else {
+        article.innerHTML = `
+          <div class="chat-user">${playerIdentity(message.username, 28)}</div>
+          <div class="chat-text">${escapeHtml(message.message)}</div>
+          <time class="chat-time">${formatChatTime(message.createdAt)}</time>
+        `;
+      }
+      article.dataset.renderSignature = signature;
+    }
+
+    const currentNode = list.children[index];
+    if (currentNode !== article) {
+      list.insertBefore(article, currentNode || null);
+    }
+    used.add(id);
+  });
+
+  for (const [id, article] of existing.entries()) {
+    if (!used.has(id)) article.remove();
+  }
+
+  requestAnimationFrame(() => {
+    if (keepBottom) {
+      list.scrollTop = Math.max(0, list.scrollHeight - list.clientHeight - distanceFromBottom);
+    } else {
+      list.scrollTop = scrollTop;
+    }
+    list.scrollLeft = scrollLeft;
+  });
+}
+
 function renderChat(payload) {
   setRollingNumber('#chat24h', payload.totals?.last24h);
   setRollingNumber('#activeChatters', payload.totals?.activeChatters24h);
@@ -1661,30 +1745,7 @@ function renderChat(payload) {
 
   const messages = payload.messages || [];
   const firstChatRender = !state.chatInitialized;
-  renderStable('#chatList', messages.length
-    ? messages.map(message => {
-      const isNew = state.chatInitialized && !state.chatMessageIds.has(String(message.id));
-      if (message.type === 'activity') {
-        const eventLabel = message.event === 'join' ? 'joined the game' : 'left the game';
-        return `
-          <article class="chat-message chat-activity ${isNew ? 'new-message' : ''}">
-            <div class="chat-user">${playerIdentity(message.username, 24)}</div>
-            <div class="chat-text">${escapeHtml(eventLabel)}</div>
-            <time class="chat-time">${formatChatTime(message.createdAt)}</time>
-          </article>
-        `;
-      }
-      return `
-        <article class="chat-message ${isNew ? 'new-message' : ''}">
-          <div class="chat-user">${playerIdentity(message.username, 28)}</div>
-          <div class="chat-text">${escapeHtml(message.message)}</div>
-          <time class="chat-time">${formatChatTime(message.createdAt)}</time>
-        </article>
-      `;
-    }).join('')
-    : '<div class="empty">No chat messages yet. New messages will appear after the bot records them.</div>',
-    messages.map(message => [message.id, message.type, message.username, message.message, message.event, message.createdAt])
-  );
+  renderChatMessages(messages);
   if (firstChatRender) {
     scrollToBottom('#chatList');
   }
