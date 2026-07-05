@@ -370,8 +370,8 @@
           </article>
         </section>
 
-        <section class="split-grid">
-          <section class="panel">
+        <section class="server-layout">
+          <section class="panel server-tps-panel">
             <div class="panel-head">
               <div>
                 <h2>TPS by Hour</h2>
@@ -386,19 +386,7 @@
             <div class="chart-scroll"><canvas id="tpsHourlyChart" class="chart tall" height="300"></canvas></div>
           </section>
 
-          <section class="panel">
-            <div class="panel-head">
-              <div>
-                <h2>Nearby Sightings</h2>
-                <p>Players recently detected near the bot.</p>
-              </div>
-            </div>
-            <div id="nearbyList" class="rank-list"></div>
-          </section>
-        </section>
-
-        <section class="panel-flow-grid section-grid">
-          <section class="panel">
+          <section class="panel server-leaderboard-panel">
             <div class="panel-head">
               <div>
                 <h2>Playtime Leaderboard</h2>
@@ -406,6 +394,16 @@
               </div>
             </div>
             <div id="playtimeLeaderboard" class="rank-list leaderboard-list"></div>
+          </section>
+
+          <section class="panel server-nearby-panel">
+            <div class="panel-head">
+              <div>
+                <h2>Nearby Sightings</h2>
+                <p>Players recently detected near the bot.</p>
+              </div>
+            </div>
+            <div id="nearbyList" class="rank-list"></div>
           </section>
         </section>
       </section>

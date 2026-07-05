@@ -1427,6 +1427,40 @@ body.search-focus-active #logoutButton {
   overflow: hidden;
 }
 
+.server-layout {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.9fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.server-layout .panel {
+  grid-column: auto;
+}
+
+.server-leaderboard-panel {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.server-tps-panel {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.server-nearby-panel {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.server-leaderboard-panel .leaderboard-list {
+  max-height: none;
+  min-height: 0;
+}
+
 #tab-admin.tab-panel.active,
 #tab-admin .panel-flow-grid,
 #tab-admin .section-grid,
@@ -2437,6 +2471,25 @@ body.search-focus-active #logoutButton {
 @media (max-width: 1180px) {
   .tab-panel.active {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .server-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .server-tps-panel,
+  .server-leaderboard-panel,
+  .server-nearby-panel {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .server-leaderboard-panel {
+    order: 2;
+  }
+
+  .server-nearby-panel {
+    order: 3;
   }
 
   .chat-panel {
