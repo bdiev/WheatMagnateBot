@@ -2575,13 +2575,14 @@ body.search-focus-active #logoutButton {
 }
 
 .bot-inventory-layout {
+  --bot-inventory-slot: 52px;
   display: grid;
-  grid-template-columns: 44px 44px minmax(0, 1fr);
+  grid-template-columns: var(--bot-inventory-slot) var(--bot-inventory-slot) minmax(0, max-content);
   align-items: end;
   justify-content: center;
   justify-items: stretch;
   gap: 8px;
-  width: min(100%, 620px);
+  width: min(100%, 628px);
   margin: 0 auto;
 }
 
@@ -2589,7 +2590,7 @@ body.search-focus-active #logoutButton {
   display: grid;
   grid-template-columns: 1fr;
   gap: 5px;
-  width: 44px;
+  width: var(--bot-inventory-slot);
 }
 
 .equipment-slot {
@@ -2597,7 +2598,7 @@ body.search-focus-active #logoutButton {
 }
 
 .equipment-slot .inventory-slot {
-  width: 38px;
+  width: var(--bot-inventory-slot);
   justify-self: center;
 }
 
@@ -2605,7 +2606,7 @@ body.search-focus-active #logoutButton {
   display: grid;
   align-content: end;
   gap: 5px;
-  width: 44px;
+  width: var(--bot-inventory-slot);
 }
 
 .bot-main-inventory {
@@ -2636,7 +2637,7 @@ body.search-focus-active #logoutButton {
 
 .inventory-grid {
   display: grid;
-  grid-template-columns: repeat(9, minmax(0, 1fr));
+  grid-template-columns: repeat(9, var(--bot-inventory-slot));
   gap: 5px;
   min-width: 0;
 }
@@ -2756,22 +2757,27 @@ body.search-focus-active #logoutButton {
 
 @media (max-width: 700px) {
   .bot-inventory-layout {
-    grid-template-columns: 38px 38px minmax(0, 1fr);
+    --bot-inventory-slot: clamp(24px, calc((100vw - 86px) / 11), 42px);
+    grid-template-columns: var(--bot-inventory-slot) var(--bot-inventory-slot) minmax(0, max-content);
     align-items: end;
-    gap: 6px;
+    gap: 5px;
     width: 100%;
   }
 
   .bot-equipment-panel {
-    width: 38px;
+    width: var(--bot-inventory-slot);
   }
 
   .equipment-slot .inventory-slot {
-    width: min(34px, 100%);
+    width: var(--bot-inventory-slot);
   }
 
   .bot-hand-panel {
-    width: 38px;
+    width: var(--bot-inventory-slot);
+  }
+
+  .inventory-grid {
+    gap: 3px;
   }
 
   .farm-admin-grid {

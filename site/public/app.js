@@ -178,6 +178,7 @@ function formatChatTime(value) {
 function formatAgo(value) {
   if (!value) return '-';
   const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
   const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
   if (seconds < 60) return `${seconds}s ago`;
   const minutes = Math.floor(seconds / 60);
@@ -185,6 +186,15 @@ function formatAgo(value) {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
+}
+
+function formatRecentDate(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  const weekMs = 7 * 24 * 60 * 60 * 1000;
+  const ageMs = Date.now() - date.getTime();
+  return ageMs >= 0 && ageMs < weekMs ? formatAgo(value) : formatDate(value);
 }
 
 function formatDurationMs(value) {
@@ -1088,11 +1098,11 @@ function renderPlayerProfile(profile) {
     <section class="player-profile-grid">
       <div><span>Playtime</span><strong>${escapeHtml(profile.playtime || '-')}</strong></div>
       <div><span>Registered</span><strong>${escapeHtml(profile.registrationDisplay || (profile.registrationAt ? formatDate(profile.registrationAt) : 'Unknown'))}</strong></div>
-      <div><span>Last Seen</span><strong>${profile.lastSeen ? formatDate(profile.lastSeen) : 'Never'}</strong></div>
-      <div><span>Last Online</span><strong>${profile.lastOnline ? formatDate(profile.lastOnline) : 'Unknown'}</strong></div>
+      <div><span>Last Seen</span><strong>${profile.lastSeen ? formatRecentDate(profile.lastSeen) : 'Never'}</strong></div>
+      <div><span>Last Online</span><strong>${profile.lastOnline ? formatRecentDate(profile.lastOnline) : 'Unknown'}</strong></div>
       <div><span>Chat Messages</span><strong>${formatNumber(profile.chat?.totalMessages)}</strong></div>
       <div><span>Messages 24h</span><strong>${formatNumber(profile.chat?.last24h)}</strong></div>
-      <div><span>Last Message</span><strong>${profile.chat?.lastMessageAt ? formatDate(profile.chat.lastMessageAt) : 'None'}</strong></div>
+      <div><span>Last Message</span><strong>${profile.chat?.lastMessageAt ? formatRecentDate(profile.chat.lastMessageAt) : 'None'}</strong></div>
       <div><span>Nearby</span><strong>${nearby ? `${formatNumber(nearby.distance)} blocks` : 'No sighting'}</strong></div>
       <div><span>Nearby Seen</span><strong>${nearby?.lastSeen ? formatDate(nearby.lastSeen) : '-'}</strong></div>
     </section>
