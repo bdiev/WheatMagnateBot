@@ -530,12 +530,25 @@ async function getSummary() {
     chat
   ] = await Promise.all([
     pool.query(`
+      WITH whitelist_players AS (
+        SELECT DISTINCT ON (LOWER(username))
+          LOWER(username) AS username_key,
+          username
+        FROM whitelist
+        ORDER BY LOWER(username), id
+      ),
+      activity AS (
+        SELECT DISTINCT ON (LOWER(username))
+          LOWER(username) AS username_key,
+          is_online
+        FROM player_activity
+        ORDER BY LOWER(username), is_online DESC, last_seen DESC NULLS LAST, id DESC
+      )
       SELECT
         COUNT(*)::int AS total,
         COUNT(*) FILTER (WHERE pa.is_online = TRUE)::int AS online
-      FROM whitelist w
-      LEFT JOIN player_activity pa ON LOWER(pa.username) = LOWER(w.username)
-      LEFT JOIN player_playtime pt ON LOWER(pt.username) = LOWER(w.username)
+      FROM whitelist_players w
+      LEFT JOIN activity pa ON pa.username_key = w.username_key
     `),
     pool.query(`
       SELECT session_mined, total_mined, desired_enabled, session_started_at,
@@ -611,6 +624,30 @@ async function getPlayers() {
   assertDatabase();
 
   const result = await pool.query(`
+    WITH whitelist_players AS (
+      SELECT DISTINCT ON (LOWER(username))
+        LOWER(username) AS username_key,
+        username
+      FROM whitelist
+      ORDER BY LOWER(username), id
+    ),
+    activity AS (
+      SELECT DISTINCT ON (LOWER(username))
+        LOWER(username) AS username_key,
+        last_seen,
+        last_online,
+        is_online
+      FROM player_activity
+      ORDER BY LOWER(username), is_online DESC, last_seen DESC NULLS LAST, id DESC
+    ),
+    playtime AS (
+      SELECT
+        LOWER(username) AS username_key,
+        SUM(total_seconds)::BIGINT AS total_seconds,
+        MIN(tracking_since) FILTER (WHERE tracking_since IS NOT NULL) AS tracking_since
+      FROM player_playtime
+      GROUP BY LOWER(username)
+    )
     SELECT
       w.username,
       pa.last_seen,
@@ -620,13 +657,13 @@ async function getPlayers() {
         CASE WHEN pt.tracking_since IS NULL THEN 0
              ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - pt.tracking_since)))::BIGINT)
         END AS total_seconds
-    FROM whitelist w
-    LEFT JOIN player_activity pa ON LOWER(pa.username) = LOWER(w.username)
-    LEFT JOIN player_playtime pt ON LOWER(pt.username) = LOWER(w.username)
+    FROM whitelist_players w
+    LEFT JOIN activity pa ON pa.username_key = w.username_key
+    LEFT JOIN playtime pt ON pt.username_key = w.username_key
     ORDER BY
       COALESCE(pa.is_online, FALSE) DESC,
       total_seconds DESC,
-      LOWER(w.username)
+      w.username_key
   `);
 
   return {
@@ -1161,15 +1198,51 @@ async function getPlayerStats() {
 
   const [playersResult, leaderboardResult, activityTotalsResult] = await Promise.all([
     pool.query(`
+      WITH whitelist_players AS (
+        SELECT DISTINCT ON (LOWER(username))
+          LOWER(username) AS username_key,
+          username
+        FROM whitelist
+        ORDER BY LOWER(username), id
+      ),
+      activity AS (
+        SELECT DISTINCT ON (LOWER(username))
+          LOWER(username) AS username_key,
+          is_online
+        FROM player_activity
+        ORDER BY LOWER(username), is_online DESC, last_seen DESC NULLS LAST, id DESC
+      )
       SELECT
         COUNT(*)::int AS total,
         COUNT(*) FILTER (WHERE pa.is_online = TRUE)::int AS online,
         COUNT(*) FILTER (WHERE COALESCE(pa.is_online, FALSE) = FALSE)::int AS offline
-      FROM whitelist w
-      LEFT JOIN player_activity pa ON LOWER(pa.username) = LOWER(w.username)
-      LEFT JOIN player_playtime pt ON LOWER(pt.username) = LOWER(w.username)
+      FROM whitelist_players w
+      LEFT JOIN activity pa ON pa.username_key = w.username_key
     `),
     pool.query(`
+      WITH whitelist_players AS (
+        SELECT DISTINCT ON (LOWER(username))
+          LOWER(username) AS username_key,
+          username
+        FROM whitelist
+        ORDER BY LOWER(username), id
+      ),
+      activity AS (
+        SELECT DISTINCT ON (LOWER(username))
+          LOWER(username) AS username_key,
+          last_seen,
+          is_online
+        FROM player_activity
+        ORDER BY LOWER(username), is_online DESC, last_seen DESC NULLS LAST, id DESC
+      ),
+      playtime AS (
+        SELECT
+          LOWER(username) AS username_key,
+          SUM(total_seconds)::BIGINT AS total_seconds,
+          MIN(tracking_since) FILTER (WHERE tracking_since IS NOT NULL) AS tracking_since
+        FROM player_playtime
+        GROUP BY LOWER(username)
+      )
       SELECT
         w.username,
         COALESCE(pa.is_online, FALSE) AS is_online,
@@ -1178,10 +1251,10 @@ async function getPlayerStats() {
           CASE WHEN pt.tracking_since IS NULL THEN 0
                ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - pt.tracking_since)))::BIGINT)
           END AS total_seconds
-      FROM whitelist w
-      LEFT JOIN player_activity pa ON LOWER(pa.username) = LOWER(w.username)
-      LEFT JOIN player_playtime pt ON LOWER(pt.username) = LOWER(w.username)
-      ORDER BY total_seconds DESC, LOWER(w.username)
+      FROM whitelist_players w
+      LEFT JOIN activity pa ON pa.username_key = w.username_key
+      LEFT JOIN playtime pt ON pt.username_key = w.username_key
+      ORDER BY total_seconds DESC, w.username_key
     `),
     pool.query(`
       SELECT
