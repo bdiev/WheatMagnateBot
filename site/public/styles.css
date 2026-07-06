@@ -3246,6 +3246,12 @@ body.search-focus-active #logoutButton {
       var(--shadow);
   }
 
+  .server-stats-grid.carousel-jumping .stat,
+  .obsidian-stats-grid.carousel-jumping .stat,
+  .farm-admin-grid[data-loop-carousel].carousel-jumping .panel {
+    transition: none;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .server-stats-grid .stat,
     .obsidian-stats-grid .stat,

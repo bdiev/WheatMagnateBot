@@ -627,21 +627,31 @@ function initLoopingCarousels() {
       const nearStart = carousel.scrollLeft <= 1;
       const nearEnd = carousel.scrollLeft >= maxScroll - 1;
 
+      if (!nearStart && !nearEnd) {
+        carousel.dataset.loopPrimed = 'true';
+        return;
+      }
+
       if (nearStart && carousel.dataset.loopPrimed === 'true') {
         jumping = true;
+        carousel.dataset.loopPrimed = 'false';
+        carousel.classList.add('carousel-jumping');
         carousel.style.scrollBehavior = 'auto';
         carousel.scrollLeft = maxScroll;
       } else if (nearEnd && carousel.dataset.loopPrimed === 'true') {
         jumping = true;
+        carousel.dataset.loopPrimed = 'false';
+        carousel.classList.add('carousel-jumping');
         carousel.style.scrollBehavior = 'auto';
         carousel.scrollLeft = 0;
       } else {
-        carousel.dataset.loopPrimed = 'true';
         return;
       }
 
       requestAnimationFrame(() => {
         carousel.style.scrollBehavior = '';
+        carousel.classList.remove('carousel-jumping');
+        updateCarouselActiveItem(carousel);
         jumping = false;
       });
     }, { passive: true });
