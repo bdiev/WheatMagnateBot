@@ -2462,9 +2462,9 @@ body.search-focus-active #logoutButton {
 
 .bot-inventory-layout {
   display: grid;
-  grid-template-columns: minmax(74px, 92px) minmax(0, 1fr);
+  grid-template-columns: 58px minmax(0, 1fr);
   align-items: end;
-  gap: 14px;
+  gap: 12px;
   width: 100%;
 }
 
@@ -2476,7 +2476,12 @@ body.search-focus-active #logoutButton {
 
 .equipment-slot {
   display: grid;
-  gap: 5px;
+  gap: 4px;
+}
+
+.equipment-slot .inventory-slot {
+  width: 44px;
+  justify-self: center;
 }
 
 .bot-main-inventory {
@@ -2610,6 +2615,13 @@ body.search-focus-active #logoutButton {
   color: #95a08f;
 }
 
+.tooltip-drop-button {
+  min-height: 30px;
+  margin-top: 4px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
 @media (max-width: 700px) {
   .bot-inventory-layout {
     grid-template-columns: 1fr;
@@ -2619,6 +2631,10 @@ body.search-focus-active #logoutButton {
 
   .bot-equipment-panel {
     grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .equipment-slot .inventory-slot {
+    width: min(44px, 100%);
   }
 
   .inventory-layout {

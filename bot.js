@@ -4336,12 +4336,16 @@ async function executeBotCommand(command) {
     if (!bot?.entity) throw new Error('Minecraft bot is offline.');
     const slot = Number(payload.slot);
     const name = String(payload.name || '').trim();
-    const item = bot.inventory.items().find(entry =>
-      (Number.isFinite(slot) && entry.slot === slot) ||
-      (name && entry.name === name)
-    );
+    const allSlots = (bot.inventory?.slots || []).filter(Boolean);
+    const item = Number.isFinite(slot)
+      ? allSlots.find(entry => entry.slot === slot)
+      : allSlots.find(entry => name && entry.name === name);
     if (!item) throw new Error('Item not found in inventory.');
-    await bot.toss(item.type, item.metadata || null, item.count);
+    if (typeof bot.tossStack === 'function') {
+      await bot.tossStack(item);
+    } else {
+      await bot.toss(item.type, item.metadata || null, item.count);
+    }
     return { item: item.name, count: item.count };
   }
 
@@ -5860,14 +5864,27 @@ function getAdminPanelStatusSnapshot() {
   };
 }
 
+function compactInventoryItem(item) {
+  const maxDurability = Number(item.maxDurability);
+  const durabilityUsed = Number(item.durabilityUsed);
+  const remainingPercent = maxDurability > 0 && Number.isFinite(durabilityUsed)
+    ? Math.max(0, Math.min(100, ((maxDurability - durabilityUsed) / maxDurability) * 100))
+    : null;
+
+  return {
+    name: item.name,
+    displayName: item.displayName || item.name,
+    count: item.count,
+    slot: item.slot,
+    remainingPercent,
+    maxDurability: maxDurability > 0 ? maxDurability : null,
+    durabilityUsed: Number.isFinite(durabilityUsed) ? durabilityUsed : null
+  };
+}
+
 function compactInventoryItems(items = []) {
   return items
-    .map(item => ({
-      name: item.name,
-      displayName: item.displayName || item.name,
-      count: item.count,
-      slot: item.slot
-    }));
+    .map(compactInventoryItem);
 }
 
 function getBotStatusSnapshot() {
@@ -5883,12 +5900,7 @@ function getBotStatusSnapshot() {
     ? (bot.inventory?.slots || [])
         .slice(5, 9)
         .filter(Boolean)
-        .map(item => ({
-          name: item.name,
-          displayName: item.displayName || item.name,
-          count: item.count,
-          slot: item.slot
-        }))
+        .map(compactInventoryItem)
     : [];
 
   return {
@@ -5908,12 +5920,7 @@ function getBotStatusSnapshot() {
     dimension: connected ? (bot.game?.dimension || null) : null,
     position,
     heldItem: connected && bot.heldItem
-      ? {
-          name: bot.heldItem.name,
-          displayName: bot.heldItem.displayName || bot.heldItem.name,
-          count: bot.heldItem.count,
-          slot: bot.heldItem.slot
-        }
+      ? compactInventoryItem(bot.heldItem)
       : null,
     inventory: connected ? compactInventoryItems(bot.inventory?.items() || []) : [],
     inventorySlotsUsed: connected ? (bot.inventory?.items() || []).length : 0,

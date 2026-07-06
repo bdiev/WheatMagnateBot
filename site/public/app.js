@@ -1911,9 +1911,9 @@ function renderBotInventory(selector, bot, connected) {
   `;
 
   renderStable(selector, html, {
-    inventory: inventory.map(item => [item.name, item.displayName, item.label, item.count, item.slot]),
-    armor: (bot?.armor || []).map(item => [item.name, item.displayName, item.count, item.slot]),
-    heldItem: heldItem ? [heldItem.name, heldItem.displayName, heldItem.count, heldItem.slot] : null
+    inventory: inventory.map(item => [item.name, item.displayName, item.label, item.count, item.slot, item.remainingPercent]),
+    armor: (bot?.armor || []).map(item => [item.name, item.displayName, item.count, item.slot, item.remainingPercent]),
+    heldItem: heldItem ? [heldItem.name, heldItem.displayName, heldItem.count, heldItem.slot, heldItem.remainingPercent] : null
   });
 }
 
@@ -2370,11 +2370,20 @@ function showSupplyTooltip(key, anchor) {
     tooltip.className = 'supply-tooltip';
     document.body.appendChild(tooltip);
   }
+  const canDrop = state.currentUser?.role === 'admin' && (
+    key.startsWith('bot-inventory:') ||
+    key.startsWith('bot-equipment:') ||
+    key.startsWith('bot-held:')
+  );
+  const dropPayload = canDrop
+    ? escapeHtml(JSON.stringify({ slot: item.slot, name: item.name }))
+    : '';
   tooltip.innerHTML = `
     <strong>${escapeHtml(item.displayName || item.label || item.name || 'Item')}</strong>
     <span>Count: ${formatNumber(item.count)}</span>
     ${item.slot == null ? '' : `<span>Slot: ${formatNumber(item.slot)}</span>`}
     ${item.remainingPercent == null ? '' : `<span>Durability: ${Number(item.remainingPercent).toFixed(1)}%</span>`}
+    ${canDrop ? `<button class="tooltip-drop-button danger-button" type="button" data-tooltip-drop="${dropPayload}">Drop</button>` : ''}
   `;
   tooltip.hidden = false;
   const rect = anchor.getBoundingClientRect();
@@ -2385,6 +2394,18 @@ function showSupplyTooltip(key, anchor) {
     : rect.bottom + 8;
   tooltip.style.left = `${left}px`;
   tooltip.style.top = `${Math.min(window.innerHeight - tooltipRect.height - 10, Math.max(10, top))}px`;
+}
+
+async function handleTooltipDrop(button) {
+  const payload = JSON.parse(button.dataset.tooltipDrop || '{}');
+  if (payload.slot == null && !payload.name) {
+    throw new Error('Item cannot be dropped from this snapshot.');
+  }
+  button.disabled = true;
+  button.textContent = 'Dropping...';
+  await queueAdminCommand('drop_item', payload);
+  scheduleAdminControlRefresh();
+  hideSupplyTooltip();
 }
 
 function renderServerStats(payload) {
@@ -3080,6 +3101,18 @@ $('#whisperForm')?.addEventListener('submit', handleWhisperSubmit);
 $('#whisperDeleteDialog')?.addEventListener('click', handleWhisperDeleteDialog);
 $('#whisperCloseDialog')?.addEventListener('click', closeWhisperDialog);
 document.addEventListener('click', event => {
+  const tooltipDrop = event.target.closest('[data-tooltip-drop]');
+  if (tooltipDrop) {
+    event.preventDefault();
+    event.stopPropagation();
+    handleTooltipDrop(tooltipDrop).catch(err => {
+      setBanner(`Could not drop item: ${err.message}`);
+      tooltipDrop.disabled = false;
+      tooltipDrop.textContent = 'Drop';
+    });
+    return;
+  }
+
   const supplySlot = event.target.closest('[data-supply-tooltip]');
   if (supplySlot) {
     event.preventDefault();
