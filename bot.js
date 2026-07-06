@@ -5952,6 +5952,12 @@ function compactInventoryItems(items = []) {
     .map(compactInventoryItem);
 }
 
+function getCompactBotInventorySlots() {
+  return (bot.inventory?.slots || [])
+    .filter(item => item && Number(item.slot) >= 9 && Number(item.slot) <= 45)
+    .map(compactInventoryItem);
+}
+
 function getBotStatusSnapshot() {
   const connected = Boolean(bot?.entity);
   const position = connected && bot.entity.position
@@ -5967,6 +5973,7 @@ function getBotStatusSnapshot() {
         .filter(Boolean)
         .map(compactInventoryItem)
     : [];
+  const inventoryItems = connected ? getCompactBotInventorySlots() : [];
 
   return {
     connected,
@@ -5987,8 +5994,8 @@ function getBotStatusSnapshot() {
     heldItem: connected && bot.heldItem
       ? compactInventoryItem(bot.heldItem)
       : null,
-    inventory: connected ? compactInventoryItems(bot.inventory?.items() || []) : [],
-    inventorySlotsUsed: connected ? (bot.inventory?.items() || []).length : 0,
+    inventory: inventoryItems,
+    inventorySlotsUsed: inventoryItems.length,
     nearbyPlayers: connected ? getNearbyPlayers() : [],
     xpLevel: connected ? (bot.experience?.level ?? null) : null,
     followTarget: followFeature.getStatus().targetUsername || null,
