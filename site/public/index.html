@@ -241,20 +241,6 @@
           </article>
         </section>
 
-        <section class="bot-admin-grid admin-only" hidden>
-          <section class="panel admin-command-panel">
-            <div class="panel-head">
-              <div>
-                <h2>Bot Power</h2>
-                <p>Pause or resume the whole Minecraft bot.</p>
-              </div>
-            </div>
-            <div class="admin-command-actions">
-              <button id="botPauseResumeButton" type="button" data-bot-command="pause">Pause</button>
-            </div>
-          </section>
-        </section>
-
         <section class="split-grid">
           <section class="panel bot-inventory-panel">
             <div class="panel-head">
@@ -274,6 +260,20 @@
               </div>
             </div>
             <div id="botDetails" class="detail-list"></div>
+          </section>
+        </section>
+
+        <section class="bot-admin-grid admin-only" hidden>
+          <section class="panel admin-command-panel">
+            <div class="panel-head">
+              <div>
+                <h2>Bot Power</h2>
+                <p>Pause or resume the whole Minecraft bot.</p>
+              </div>
+            </div>
+            <div class="admin-command-actions">
+              <button id="botPauseResumeButton" class="ghost-button" type="button" data-bot-command="pause">Pause</button>
+            </div>
           </section>
         </section>
       </section>

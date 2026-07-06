@@ -2454,7 +2454,12 @@ body.search-focus-active #logoutButton {
 }
 
 .bot-admin-grid .panel {
-  grid-column: span 1;
+  grid-column: span 2;
+}
+
+.bot-admin-grid .admin-command-actions button {
+  width: 100%;
+  min-width: 0;
 }
 
 @keyframes adminActionIn {
@@ -2510,7 +2515,7 @@ body.search-focus-active #logoutButton {
 }
 
 .bot-inventory-panel {
-  grid-column: 1 / -1;
+  grid-column: span 2;
 }
 
 .inventory-layout {
