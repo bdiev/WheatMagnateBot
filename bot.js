@@ -1776,6 +1776,73 @@ function getNearbyPlayers() {
   return nearby.sort((a, b) => a.distance - b.distance);
 }
 
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function getNearestPlayerEntity(maxDistance = 300) {
+  if (!bot?.entity) return null;
+  return Object.values(bot.entities || {})
+    .filter(entity =>
+      entity &&
+      entity.type === 'player' &&
+      entity.username &&
+      entity.username !== bot.username &&
+      entity.position
+    )
+    .map(entity => ({
+      entity,
+      distance: bot.entity.position.distanceTo(entity.position)
+    }))
+    .filter(entry => entry.distance <= maxDistance)
+    .sort((a, b) => a.distance - b.distance)[0]?.entity || null;
+}
+
+async function lookAtNearestPlayerForDrop() {
+  const nearest = getNearestPlayerEntity();
+  if (!nearest) throw new Error('No nearby player visible to drop the item to.');
+  const lookPosition = typeof nearest.position.offset === 'function'
+    ? nearest.position.offset(0, 1.4, 0)
+    : nearest.position;
+  await bot.lookAt(lookPosition, true);
+  return nearest.username;
+}
+
+async function dropItemToNearestPlayer(item) {
+  const farmWasEnabled = farm.getStatus().enabled;
+  const farmWasDesired = obsidianStats.desiredEnabled;
+  const followStatus = followFeature.getStatus();
+  const followTarget = followStatus.enabled ? followStatus.targetUsername : null;
+  let targetUsername = null;
+
+  try {
+    farm.suspend();
+    if (followStatus.enabled) followFeature.stop();
+    await sleep(350);
+
+    targetUsername = await lookAtNearestPlayerForDrop();
+    await sleep(250);
+
+    if (typeof bot.tossStack === 'function') {
+      await bot.tossStack(item);
+    } else {
+      await bot.toss(item.type, item.metadata || null, item.count);
+    }
+
+    await sleep(1_250);
+  } finally {
+    if (bot?.entity) {
+      if (followTarget) {
+        followFeature.start(bot, followTarget);
+      } else if (farmWasEnabled || farmWasDesired) {
+        farm.resume(bot, () => {});
+      }
+    }
+  }
+
+  return targetUsername;
+}
+
 
 
 // Function to convert Minecraft chat component to plain text
@@ -4341,12 +4408,10 @@ async function executeBotCommand(command) {
       ? allSlots.find(entry => entry.slot === slot)
       : allSlots.find(entry => name && entry.name === name);
     if (!item) throw new Error('Item not found in inventory.');
-    if (typeof bot.tossStack === 'function') {
-      await bot.tossStack(item);
-    } else {
-      await bot.toss(item.type, item.metadata || null, item.count);
-    }
-    return { item: item.name, count: item.count };
+
+    const targetUsername = await dropItemToNearestPlayer(item);
+    await writeBotStatusSnapshot().catch(() => {});
+    return { item: item.name, count: item.count, targetUsername };
   }
 
   if (type === 'whitelist_add') {
@@ -8822,23 +8887,12 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         return;
       }
       try {
-        // Find nearest player and look at them before dropping
-        const nearby = getNearbyPlayers();
-        if (nearby.length > 0) {
-          const nearest = nearby.sort((a, b) => a.distance - b.distance)[0];
-          for (const entity of Object.values(bot.entities)) {
-            if (entity.username === nearest.username) {
-              await bot.lookAt(entity.position);
-              break;
-            }
-          }
-        }
-        await bot.toss(item.type, item.metadata || null, item.count);
-        console.log(`[Drop] Dropped ${item.count} x ${item.displayName || item.name} by ${interaction.user.tag}`);
+        const targetUsername = await dropItemToNearestPlayer(item);
+        console.log(`[Drop] Dropped ${item.count} x ${item.displayName || item.name} toward ${targetUsername || 'nearest player'} by ${interaction.user.tag}`);
         await interaction.editReply({
           embeds: [{
             title: 'Item Dropped',
-            description: `Dropped ${item.count} x ${item.displayName || item.name}`,
+            description: `Dropped ${item.count} x ${item.displayName || item.name}${targetUsername ? ` to ${targetUsername}` : ''}`,
             color: 65280,
             timestamp: new Date()
           }],
