@@ -305,34 +305,7 @@
           </article>
         </section>
 
-        <section class="split-grid">
-          <section class="panel">
-            <div class="panel-head">
-              <div>
-                <h2>Daily Obsidian</h2>
-                <p>Blocks mined per day over the last 14 days.</p>
-              </div>
-              <div class="chart-controls" data-chart-controls="obsidianDailyChart">
-                <button class="chart-range-button" type="button" data-chart-range="hours">Hours</button>
-                <button class="chart-range-button active" type="button" data-chart-range="days">Days</button>
-                <button class="chart-range-button" type="button" data-chart-range="months">Months</button>
-              </div>
-            </div>
-            <div class="chart-scroll"><canvas id="obsidianDailyChart" class="chart tall" height="300"></canvas></div>
-          </section>
-
-          <section class="panel farm-details-panel">
-            <div class="panel-head">
-              <div>
-                <h2>Farm Details</h2>
-                <p>Current target, recent totals, and supply state.</p>
-              </div>
-            </div>
-            <div id="farmDetails" class="detail-list"></div>
-          </section>
-        </section>
-
-        <section class="section-grid farm-admin-grid admin-only" hidden>
+        <section class="farm-admin-grid admin-only" hidden>
           <section class="panel admin-command-panel">
             <div class="panel-head">
               <div>
@@ -368,37 +341,64 @@
               <button id="obsidianResetButton" class="danger-button" type="button" data-bot-command="obsidian_reset_coordinates">Reset Coordinates</button>
             </div>
           </section>
+        </section>
 
-          <section id="obsidianCoordinateEditor" class="panel coordinate-editor-panel" hidden>
+        <section id="obsidianCoordinateEditor" class="panel coordinate-editor-panel" hidden>
+          <div class="panel-head">
+            <div>
+              <h2>New Farm Target</h2>
+              <p>Enter X, Y, Z and save before starting the farm.</p>
+            </div>
+          </div>
+          <div class="coordinate-control-grid">
+            <label class="auth-field">
+              <span>X</span>
+              <input id="obsidianCoordX" type="number" step="1" inputmode="numeric" placeholder="X">
+            </label>
+            <label class="auth-field">
+              <span>Y</span>
+              <input id="obsidianCoordY" type="number" step="1" inputmode="numeric" placeholder="Y">
+            </label>
+            <label class="auth-field">
+              <span>Z</span>
+              <input id="obsidianCoordZ" type="number" step="1" inputmode="numeric" placeholder="Z">
+            </label>
+            <label class="auth-field">
+              <span>Radius</span>
+              <select id="obsidianCoordRadius">
+                <option value="4">4</option>
+                <option value="5">5</option>
+                <option value="6">6</option>
+              </select>
+            </label>
+            <button id="obsidianSaveCoordinatesButton" type="button" data-admin-control-action="obsidian_set_coordinates">Save Coordinates</button>
+          </div>
+        </section>
+
+        <section class="split-grid">
+          <section class="panel">
             <div class="panel-head">
               <div>
-                <h2>New Farm Target</h2>
-                <p>Enter X, Y, Z and save before starting the farm.</p>
+                <h2>Daily Obsidian</h2>
+                <p>Blocks mined per day over the last 14 days.</p>
+              </div>
+              <div class="chart-controls" data-chart-controls="obsidianDailyChart">
+                <button class="chart-range-button" type="button" data-chart-range="hours">Hours</button>
+                <button class="chart-range-button active" type="button" data-chart-range="days">Days</button>
+                <button class="chart-range-button" type="button" data-chart-range="months">Months</button>
               </div>
             </div>
-            <div class="coordinate-control-grid">
-              <label class="auth-field">
-                <span>X</span>
-                <input id="obsidianCoordX" type="number" step="1" inputmode="numeric" placeholder="X">
-              </label>
-              <label class="auth-field">
-                <span>Y</span>
-                <input id="obsidianCoordY" type="number" step="1" inputmode="numeric" placeholder="Y">
-              </label>
-              <label class="auth-field">
-                <span>Z</span>
-                <input id="obsidianCoordZ" type="number" step="1" inputmode="numeric" placeholder="Z">
-              </label>
-              <label class="auth-field">
-                <span>Radius</span>
-                <select id="obsidianCoordRadius">
-                  <option value="4">4</option>
-                  <option value="5">5</option>
-                  <option value="6">6</option>
-                </select>
-              </label>
-              <button id="obsidianSaveCoordinatesButton" type="button" data-admin-control-action="obsidian_set_coordinates">Save Coordinates</button>
+            <div class="chart-scroll"><canvas id="obsidianDailyChart" class="chart tall" height="300"></canvas></div>
+          </section>
+
+          <section class="panel farm-details-panel">
+            <div class="panel-head">
+              <div>
+                <h2>Farm Details</h2>
+                <p>Current target, recent totals, and supply state.</p>
+              </div>
             </div>
+            <div id="farmDetails" class="detail-list"></div>
           </section>
         </section>
 

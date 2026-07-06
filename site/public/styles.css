@@ -2430,6 +2430,16 @@ body.search-focus-active #logoutButton {
   box-shadow: 0 10px 22px color-mix(in srgb, var(--accent) 9%, transparent);
 }
 
+.farm-admin-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.farm-admin-grid .panel {
+  grid-column: auto;
+}
+
 @keyframes adminActionIn {
   from {
     opacity: 0;
@@ -2669,6 +2679,10 @@ body.search-focus-active #logoutButton {
 
   .equipment-slot .inventory-slot {
     width: min(44px, 100%);
+  }
+
+  .farm-admin-grid {
+    grid-template-columns: 1fr;
   }
 
   .inventory-layout {
