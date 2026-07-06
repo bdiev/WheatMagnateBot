@@ -562,14 +562,16 @@ function setActiveTab(tab) {
     loadAdminUsers();
     loadAdminControlState();
   }
-  if (tab === 'server') {
-    requestAnimationFrame(positionLoopingCarousels);
-  }
+  requestAnimationFrame(positionLoopingCarousels);
   redrawCharts();
 }
 
+function carouselItems(carousel) {
+  return Array.from(carousel.children).filter(item => item.matches('.stat, .panel'));
+}
+
 function carouselStep(carousel) {
-  const item = carousel.querySelector('.stat');
+  const item = carouselItems(carousel)[0];
   if (!item) return 0;
   const styles = getComputedStyle(carousel);
   const gap = Number.parseFloat(styles.columnGap || styles.gap || '0') || 0;
@@ -584,7 +586,7 @@ function positionLoopingCarousels() {
 }
 
 function updateCarouselActiveItem(carousel) {
-  const items = Array.from(carousel.querySelectorAll('.stat'));
+  const items = carouselItems(carousel);
   if (!items.length) return;
   const center = carousel.scrollLeft + carousel.clientWidth / 2;
   let activeItem = items[0];
@@ -605,7 +607,7 @@ function updateCarouselActiveItem(carousel) {
 function initLoopingCarousels() {
   const mobileMedia = window.matchMedia?.('(max-width: 700px)');
   $$('[data-loop-carousel]').forEach(carousel => {
-    const originals = Array.from(carousel.children);
+    const originals = carouselItems(carousel);
     if (originals.length < 2 || carousel.dataset.loopReady === 'true') return;
 
     carousel.dataset.loopReady = 'true';

@@ -1448,7 +1448,8 @@ body.search-focus-active #logoutButton {
   display: contents;
 }
 
-.server-stats-grid .stat:first-child {
+.server-stats-grid .stat:first-child,
+.obsidian-stats-grid .stat:nth-child(-n + 3) {
   grid-column: span 2;
 }
 
@@ -3182,11 +3183,14 @@ body.search-focus-active #logoutButton {
   .side-stack,
   .stats-grid.three .stat:first-child,
   .server-stats-grid .stat:first-child,
+  .obsidian-stats-grid .stat:nth-child(-n + 3),
   .stats-grid.five .stat:nth-child(-n + 3) {
     grid-column: 1 / -1;
   }
 
-  .server-stats-grid {
+  .server-stats-grid,
+  .obsidian-stats-grid,
+  .farm-admin-grid[data-loop-carousel] {
     display: flex;
     flex-wrap: nowrap;
     grid-column: 1 / -1;
@@ -3203,15 +3207,21 @@ body.search-focus-active #logoutButton {
     scrollbar-width: none;
   }
 
-  #tab-server .server-stats-grid {
+  #tab-server .server-stats-grid,
+  #tab-obsidian .obsidian-stats-grid,
+  #tab-obsidian .farm-admin-grid[data-loop-carousel] {
     display: flex;
   }
 
-  .server-stats-grid::-webkit-scrollbar {
+  .server-stats-grid::-webkit-scrollbar,
+  .obsidian-stats-grid::-webkit-scrollbar,
+  .farm-admin-grid[data-loop-carousel]::-webkit-scrollbar {
     display: none;
   }
 
-  .server-stats-grid .stat {
+  .server-stats-grid .stat,
+  .obsidian-stats-grid .stat,
+  .farm-admin-grid[data-loop-carousel] .panel {
     display: block;
     flex: 0 0 calc(100% - 20px);
     grid-column: auto;
@@ -3225,7 +3235,9 @@ body.search-focus-active #logoutButton {
       box-shadow 240ms ease;
   }
 
-  .server-stats-grid .stat.carousel-active {
+  .server-stats-grid .stat.carousel-active,
+  .obsidian-stats-grid .stat.carousel-active,
+  .farm-admin-grid[data-loop-carousel] .panel.carousel-active {
     border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
     opacity: 1;
     transform: scale(1) translateY(0);
@@ -3235,7 +3247,9 @@ body.search-focus-active #logoutButton {
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .server-stats-grid .stat {
+    .server-stats-grid .stat,
+    .obsidian-stats-grid .stat,
+    .farm-admin-grid[data-loop-carousel] .panel {
       opacity: 1;
       transform: none;
       transition: none;
