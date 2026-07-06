@@ -2432,12 +2432,18 @@ body.search-focus-active #logoutButton {
 
 .farm-admin-grid {
   display: grid;
+  grid-column: 1 / -1;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
 }
 
 .farm-admin-grid .panel {
   grid-column: auto;
+}
+
+.farm-admin-grid .admin-command-actions button {
+  width: 100%;
+  min-width: 0;
 }
 
 @keyframes adminActionIn {
@@ -2468,6 +2474,7 @@ body.search-focus-active #logoutButton {
 }
 
 .coordinate-editor-panel {
+  grid-column: 1 / -1;
   animation: adminActionIn 220ms ease both;
 }
 
