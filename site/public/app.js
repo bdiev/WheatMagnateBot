@@ -562,7 +562,7 @@ function setActiveTab(tab) {
     loadAdminUsers();
     loadAdminControlState();
   }
-  requestAnimationFrame(positionLoopingCarousels);
+  requestAnimationFrame(updateCarousels);
   redrawCharts();
 }
 
@@ -578,7 +578,7 @@ function carouselStep(carousel) {
   return item.getBoundingClientRect().width + gap;
 }
 
-function positionLoopingCarousels() {
+function updateCarousels() {
   if (!window.matchMedia?.('(max-width: 700px)').matches) return;
   $$('[data-loop-carousel]').forEach(carousel => {
     updateCarouselActiveItem(carousel);
@@ -605,59 +605,20 @@ function updateCarouselActiveItem(carousel) {
 }
 
 function initLoopingCarousels() {
-  const mobileMedia = window.matchMedia?.('(max-width: 700px)');
   $$('[data-loop-carousel]').forEach(carousel => {
     const originals = carouselItems(carousel);
     if (originals.length < 2 || carousel.dataset.loopReady === 'true') return;
 
     carousel.dataset.loopReady = 'true';
-    carousel.dataset.loopCount = String(originals.length);
 
-    let jumping = false;
     let animationFrame = null;
     carousel.addEventListener('scroll', () => {
       if (animationFrame) cancelAnimationFrame(animationFrame);
       animationFrame = requestAnimationFrame(() => updateCarouselActiveItem(carousel));
-      if (jumping || !mobileMedia?.matches) return;
-      const step = carouselStep(carousel);
-      const count = Number(carousel.dataset.loopCount || 0);
-      if (!step || !count) return;
-
-      const maxScroll = carousel.scrollWidth - carousel.clientWidth;
-      const nearStart = carousel.scrollLeft <= 1;
-      const nearEnd = carousel.scrollLeft >= maxScroll - 1;
-
-      if (!nearStart && !nearEnd) {
-        carousel.dataset.loopPrimed = 'true';
-        return;
-      }
-
-      if (nearStart && carousel.dataset.loopPrimed === 'true') {
-        jumping = true;
-        carousel.dataset.loopPrimed = 'false';
-        carousel.classList.add('carousel-jumping');
-        carousel.style.scrollBehavior = 'auto';
-        carousel.scrollLeft = maxScroll;
-      } else if (nearEnd && carousel.dataset.loopPrimed === 'true') {
-        jumping = true;
-        carousel.dataset.loopPrimed = 'false';
-        carousel.classList.add('carousel-jumping');
-        carousel.style.scrollBehavior = 'auto';
-        carousel.scrollLeft = 0;
-      } else {
-        return;
-      }
-
-      requestAnimationFrame(() => {
-        carousel.style.scrollBehavior = '';
-        carousel.classList.remove('carousel-jumping');
-        updateCarouselActiveItem(carousel);
-        jumping = false;
-      });
     }, { passive: true });
   });
 
-  positionLoopingCarousels();
+  updateCarousels();
 }
 
 function getCssColor(name) {
@@ -1992,15 +1953,19 @@ function renderBotInventory(selector, bot, connected) {
         ${renderEquipmentSlot('Chest / Elytra', 6, armor.get(6), 'bot-equipment')}
         ${renderEquipmentSlot('Leggings', 7, armor.get(7), 'bot-equipment')}
         ${renderEquipmentSlot('Boots', 8, armor.get(8), 'bot-equipment')}
-        ${renderEquipmentSlot('Held', 'held', heldItem, 'bot-held')}
       </div>
-      <div class="inventory-layout bot-main-inventory">
-        <div class="inventory-offhand">
-          <span class="inventory-slot-label">Offhand</span>
-          ${renderInventorySlot(45, offhandItem, { tooltipPrefix: 'bot-inventory', label: 'Offhand slot' })}
+      <div class="bot-inventory-board">
+        <div class="bot-held-slot">
+          ${renderEquipmentSlot('Held', 'held', heldItem, 'bot-held')}
         </div>
-        <div class="inventory-grid" aria-label="Bot inventory slots">
-          ${slots.map(({ slot, item, fallback }) => renderInventorySlot(slot, item, { fallback, tooltipPrefix: 'bot-inventory' })).join('')}
+        <div class="inventory-layout bot-main-inventory">
+          <div class="inventory-offhand">
+            <span class="inventory-slot-label">Offhand</span>
+            ${renderInventorySlot(45, offhandItem, { tooltipPrefix: 'bot-inventory', label: 'Offhand slot' })}
+          </div>
+          <div class="inventory-grid" aria-label="Bot inventory slots">
+            ${slots.map(({ slot, item, fallback }) => renderInventorySlot(slot, item, { fallback, tooltipPrefix: 'bot-inventory' })).join('')}
+          </div>
         </div>
       </div>
     </div>
@@ -3231,7 +3196,7 @@ $$('.chart-scroll').forEach(scroll => {
 $('#themeToggle').addEventListener('click', toggleTheme);
 window.addEventListener('resize', () => {
   redrawCharts();
-  positionLoopingCarousels();
+  updateCarousels();
 });
 $$('.chart').forEach(chart => {
   chart.addEventListener('pointerdown', event => showChartTooltip(event.currentTarget, event, { pin: true }));

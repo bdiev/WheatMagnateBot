@@ -2559,7 +2559,7 @@ body.search-focus-active #logoutButton {
 
 .bot-inventory-panel {
   grid-column: span 2;
-  align-self: stretch;
+  align-self: start;
 }
 
 .inventory-layout {
@@ -2577,27 +2577,45 @@ body.search-focus-active #logoutButton {
 
 .bot-inventory-layout {
   display: grid;
+  grid-template-columns: 54px minmax(0, 1fr);
+  align-items: end;
+  justify-content: center;
   justify-items: stretch;
-  gap: 14px;
-  width: 100%;
+  gap: 12px;
+  width: min(100%, 640px);
+  margin: 0 auto;
 }
 
 .bot-equipment-panel {
   display: grid;
-  grid-template-columns: repeat(5, 52px);
-  justify-content: center;
-  gap: 8px;
-  width: 100%;
+  grid-template-columns: 1fr;
+  gap: 6px;
+  width: 54px;
 }
 
 .equipment-slot {
   display: grid;
-  gap: 4px;
+  gap: 3px;
 }
 
 .equipment-slot .inventory-slot {
-  width: 44px;
+  width: 42px;
   justify-self: center;
+}
+
+.bot-inventory-board {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.bot-held-slot {
+  justify-self: end;
+  width: 54px;
+}
+
+.bot-held-slot .equipment-slot {
+  justify-items: center;
 }
 
 .bot-main-inventory {
@@ -2622,7 +2640,7 @@ body.search-focus-active #logoutButton {
 .inventory-grid {
   display: grid;
   grid-template-columns: repeat(9, minmax(0, 1fr));
-  gap: 4px;
+  gap: 5px;
   min-width: 0;
 }
 
@@ -2741,17 +2759,22 @@ body.search-focus-active #logoutButton {
 
 @media (max-width: 700px) {
   .bot-inventory-layout {
-    grid-template-columns: 1fr;
-    align-items: stretch;
-    gap: 12px;
+    grid-template-columns: 46px minmax(0, 1fr);
+    align-items: end;
+    gap: 8px;
+    width: 100%;
   }
 
   .bot-equipment-panel {
-    grid-template-columns: repeat(5, minmax(42px, 1fr));
+    width: 46px;
   }
 
   .equipment-slot .inventory-slot {
-    width: min(44px, 100%);
+    width: min(38px, 100%);
+  }
+
+  .bot-held-slot {
+    width: 46px;
   }
 
   .farm-admin-grid {
@@ -3244,12 +3267,6 @@ body.search-focus-active #logoutButton {
     box-shadow:
       0 14px 28px color-mix(in srgb, var(--accent) 12%, transparent),
       var(--shadow);
-  }
-
-  .server-stats-grid.carousel-jumping .stat,
-  .obsidian-stats-grid.carousel-jumping .stat,
-  .farm-admin-grid[data-loop-carousel].carousel-jumping .panel {
-    transition: none;
   }
 
   @media (prefers-reduced-motion: reduce) {
