@@ -219,6 +219,30 @@ function normalizeItemName(name) {
     .replace(/\b\w/g, char => char.toUpperCase());
 }
 
+function normalizeItemIconName(fileName) {
+  return path.basename(fileName, path.extname(fileName))
+    .replace(/\s+\(\d+\)$/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toLowerCase();
+}
+
+async function getItemIcons() {
+  const entries = await fs.promises.readdir(ITEMS_DIR, { withFileTypes: true }).catch(() => []);
+  const icons = {};
+
+  entries
+    .filter(entry => entry.isFile() && /\.(png|jpe?g|webp)$/i.test(entry.name))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .forEach(entry => {
+      const key = normalizeItemIconName(entry.name);
+      if (!key || icons[key]) return;
+      icons[key] = `/items/${encodeURIComponent(entry.name)}`;
+    });
+
+  return { icons };
+}
+
 function summarizeSupplyLocation(location) {
   const items = Array.isArray(location?.allItems) ? location.allItems : [];
   const foodCount = toInt(location?.foodCount);
@@ -1961,6 +1985,10 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/chat/send' && req.method === 'POST') {
       sendJson(res, 202, await queueSiteChatMessage(currentUser, await readJsonBody(req)));
+      return;
+    }
+    if (url.pathname === '/api/item-icons') {
+      sendJson(res, 200, await getItemIcons());
       return;
     }
     if (url.pathname === '/api/whisper/online' && req.method === 'GET') {

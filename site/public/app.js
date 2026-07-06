@@ -40,6 +40,8 @@ const state = {
   adminControlState: null,
   adminControlLoading: false,
   supplyTooltipItems: {},
+  itemIcons: {},
+  itemIconsLoading: null,
   chatMessageIds: new Set(),
   chatInitialized: false,
   authMode: 'login',
@@ -260,7 +262,7 @@ function toCcvaultsFileName(item) {
 }
 
 function ccvaultsIconUrl(item) {
-  const name = String(item?.name || item?.label || '').toLowerCase().replace(/[\s-]+/g, '_');
+  const name = normalizeItemIconKey(item?.name || item?.label);
   const file = toCcvaultsFileName(item);
   if (!name || !file) return '';
   const match = CCVAULTS_EXACT_ITEMS[name] || CCVAULTS_ITEM_CATEGORIES.find(entry => entry.pattern.test(name));
@@ -272,11 +274,22 @@ function ccvaultsIconUrl(item) {
   return parts.map((part, index) => index < 2 ? part : encodeURIComponent(part)).join('/');
 }
 
+function normalizeItemIconKey(value) {
+  return String(value || '')
+    .replace(/^minecraft:/i, '')
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+}
+
+function localItemIconUrl(item) {
+  const iconKey = normalizeItemIconKey(item?.name || item?.label);
+  return state.itemIcons[iconKey] || LOCAL_ITEM_ICONS[iconKey] || '';
+}
+
 function itemIcon(item) {
   const label = item?.label || item?.name || 'Item';
   const fallback = escapeHtml(label.slice(0, 2).toUpperCase());
-  const iconKey = String(item?.name || item?.label || '').toLowerCase().replace(/[\s-]+/g, '_');
-  const url = LOCAL_ITEM_ICONS[iconKey] || ccvaultsIconUrl(item);
+  const url = localItemIconUrl(item) || ccvaultsIconUrl(item);
   if (!url) return `<span class="item-icon fallback">${fallback}</span>`;
   return `
     <span class="item-icon">
@@ -2897,11 +2910,12 @@ async function loadAll() {
   if (!state.currentUser) return;
   try {
     const [chat, botStats, obsidian, serverStats] = await Promise.all([
+      ensureItemIcons(),
       fetchJson('/api/chat?limit=160'),
       fetchJson('/api/bot-stats'),
       fetchJson('/api/obsidian'),
       fetchJson('/api/server-stats')
-    ]);
+    ]).then(([_, chat, botStats, obsidian, serverStats]) => [chat, botStats, obsidian, serverStats]);
     renderChat(chat);
     renderBotStats(botStats);
     renderObsidian(obsidian);
@@ -2919,6 +2933,21 @@ async function loadAll() {
   } catch (err) {
     setBanner(`Could not load dashboard data: ${err.message}`);
   }
+}
+
+async function ensureItemIcons() {
+  if (Object.keys(state.itemIcons).length) return state.itemIcons;
+  if (!state.itemIconsLoading) {
+    state.itemIconsLoading = fetchJson('/api/item-icons')
+      .then(payload => {
+        state.itemIcons = payload?.icons && typeof payload.icons === 'object' ? payload.icons : {};
+        return state.itemIcons;
+      })
+      .finally(() => {
+        state.itemIconsLoading = null;
+      });
+  }
+  return state.itemIconsLoading;
 }
 
 async function loadLiveChats() {
