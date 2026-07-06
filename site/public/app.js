@@ -1099,7 +1099,6 @@ function renderPlayerProfile(profile) {
       <div><span>Playtime</span><strong>${escapeHtml(profile.playtime || '-')}</strong></div>
       <div><span>Registered</span><strong>${escapeHtml(profile.registrationDisplay || (profile.registrationAt ? formatDate(profile.registrationAt) : 'Unknown'))}</strong></div>
       <div><span>Last Seen</span><strong>${profile.lastSeen ? formatRecentDate(profile.lastSeen) : 'Never'}</strong></div>
-      <div><span>Last Online</span><strong>${profile.lastOnline ? formatRecentDate(profile.lastOnline) : 'Unknown'}</strong></div>
       <div><span>Chat Messages</span><strong>${formatNumber(profile.chat?.totalMessages)}</strong></div>
       <div><span>Messages 24h</span><strong>${formatNumber(profile.chat?.last24h)}</strong></div>
       <div><span>Last Message</span><strong>${profile.chat?.lastMessageAt ? formatRecentDate(profile.chat.lastMessageAt) : 'None'}</strong></div>

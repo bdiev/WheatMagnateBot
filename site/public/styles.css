@@ -2498,11 +2498,20 @@ body.search-focus-active #logoutButton {
 }
 
 .bot-power-stat .admin-command-actions button {
+  border: 1px solid var(--line);
+  color: var(--text);
+  background: var(--panel);
   width: 100%;
   min-width: 0;
   min-height: 34px;
   height: 34px;
   font-size: 12px;
+  box-shadow: none;
+}
+
+.bot-power-stat .admin-command-actions button:hover {
+  color: var(--text);
+  background: var(--panel-soft);
 }
 
 @keyframes adminActionIn {
