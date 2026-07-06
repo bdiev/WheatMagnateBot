@@ -1027,24 +1027,32 @@ body.search-focus-active #logoutButton {
   min-height: var(--button-height);
   border: 1px solid transparent;
   border-radius: var(--button-radius);
-  padding: 0 10px;
+  padding: 0 8px;
   color: var(--text);
   background: transparent;
   text-align: left;
   opacity: 0;
   animation: whisper-player-in 220ms ease forwards;
   animation-delay: calc(min(var(--item-index, 0), 8) * 28ms);
-  transition: background-color 180ms ease, border-color 180ms ease, transform 160ms ease;
+  transition: background-color 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
 }
 
 .whisper-player:hover,
-.whisper-player.active {
+.whisper-player.active,
+.whisper-player:focus-visible,
+.whisper-player:focus-within {
   border-color: var(--line);
   background: var(--panel);
+  outline: 0;
 }
 
-.whisper-player:hover {
-  transform: translateX(2px);
+.whisper-player:hover .player-identity[role="button"],
+.whisper-player .player-identity[role="button"]:hover,
+.whisper-player .player-identity[role="button"]:focus-visible {
+  color: var(--accent-strong);
+  background: transparent;
+  box-shadow: none;
+  outline: 0;
 }
 
 .whisper-player .player-identity span {
@@ -1057,6 +1065,7 @@ body.search-focus-active #logoutButton {
   position: relative;
   display: inline-flex;
   min-width: 0;
+  max-width: 100%;
 }
 
 .whisper-message-count {
