@@ -2755,6 +2755,19 @@ function renderAdminControlState(payload = {}) {
     obsidianRadiusButton.textContent = radius ? `Radius: ${radius}` : 'Radius: -';
     obsidianRadiusButton.disabled = !radius;
   }
+  const obsidianResetButton = $('#obsidianResetButton');
+  if (obsidianResetButton) {
+    obsidianResetButton.disabled = !bot?.obsidian?.config;
+  }
+  const obsidianConfig = bot?.obsidian?.config || null;
+  const coordX = $('#obsidianCoordX');
+  const coordY = $('#obsidianCoordY');
+  const coordZ = $('#obsidianCoordZ');
+  const coordRadius = $('#obsidianCoordRadius');
+  if (coordX && document.activeElement !== coordX) coordX.value = obsidianConfig?.x ?? '';
+  if (coordY && document.activeElement !== coordY) coordY.value = obsidianConfig?.y ?? '';
+  if (coordZ && document.activeElement !== coordZ) coordZ.value = obsidianConfig?.z ?? '';
+  if (coordRadius && document.activeElement !== coordRadius) coordRadius.value = String(obsidianConfig?.maxCauldronDist || 5);
   const child = bot.child || {};
   const childButton = $('#childToggleButton');
   if (childButton) {
@@ -2810,6 +2823,9 @@ function setButtonBusyState(commandType) {
   } else if (commandType === 'obsidian_radius_toggle') {
     const button = $('#obsidianRadiusButton');
     if (button) button.textContent = 'Changing radius...';
+  } else if (commandType === 'obsidian_reset_coordinates') {
+    const button = $('#obsidianResetButton');
+    if (button) button.textContent = 'Resetting...';
   } else if (commandType === 'pause' || commandType === 'resume') {
     const button = $('#botPauseResumeButton');
     if (button) button.textContent = commandType === 'pause' ? 'Pausing...' : 'Resuming...';
@@ -2821,7 +2837,7 @@ function setButtonBusyState(commandType) {
 
 function scheduleAdminControlRefresh(delayMs = 1800) {
   setTimeout(() => {
-    if (state.activeTab === 'admin') {
+    if (state.currentUser?.role === 'admin') {
       Promise.all([loadAll(), loadAdminControlState()]).catch(() => {});
     }
   }, delayMs);
@@ -2861,9 +2877,13 @@ async function handleAdminUserAction(event) {
 async function handleAdminBotCommand(event) {
   const button = event.target.closest('[data-bot-command]');
   if (!button) return;
+  if (state.currentUser?.role !== 'admin') return;
 
   const commandType = button.dataset.botCommand;
   const body = { commandType };
+  if (commandType === 'obsidian_reset_coordinates' && !confirm('Reset Obsidian Farm coordinates? The farm will stop and ask for new coordinates next time.')) {
+    return;
+  }
 
   button.disabled = true;
   try {
@@ -2911,6 +2931,11 @@ async function handleAdminControlAction(event) {
       payload.line = $('#adminPlaytimeInput')?.value.trim();
     } else if (action === 'registration_date_set') {
       payload.line = $('#adminRegistrationDateInput')?.value.trim();
+    } else if (action === 'obsidian_set_coordinates') {
+      payload.x = Number($('#obsidianCoordX')?.value);
+      payload.y = Number($('#obsidianCoordY')?.value);
+      payload.z = Number($('#obsidianCoordZ')?.value);
+      payload.radius = Number($('#obsidianCoordRadius')?.value);
     }
 
     if (['follow', 'whitelist_add', 'whitelist_remove', 'ignore_chat', 'unignore_chat'].includes(action) && !payload.username) {
@@ -2924,6 +2949,9 @@ async function handleAdminControlAction(event) {
     }
     if (action === 'registration_date_set' && !payload.line) {
       throw new Error('Enter a registration date line first.');
+    }
+    if (action === 'obsidian_set_coordinates' && ![payload.x, payload.y, payload.z].every(Number.isFinite)) {
+      throw new Error('Enter valid X, Y and Z coordinates first.');
     }
 
     button.disabled = true;
@@ -2993,7 +3021,7 @@ async function loadAll() {
     renderBotStats(botStats);
     renderObsidian(obsidian);
     renderServerStats(serverStats);
-    if (state.activeTab === 'admin' && state.currentUser?.role === 'admin') {
+    if (state.currentUser?.role === 'admin') {
       await loadAdminControlState();
     }
     if ($('#whisperPanel')?.classList.contains('open')) {
@@ -3061,7 +3089,7 @@ $('#navMenuToggle')?.addEventListener('click', toggleNavMenu);
 $('#logoutButton')?.addEventListener('click', handleLogout);
 $('#adminUsersRefresh')?.addEventListener('click', loadAdminUsers);
 $('#adminUsersList')?.addEventListener('click', handleAdminUserAction);
-document.querySelector('[data-panel="admin"]')?.addEventListener('click', handleAdminBotCommand);
+document.addEventListener('click', handleAdminBotCommand);
 document.querySelector('[data-panel="admin"]')?.addEventListener('click', handleAdminControlAction);
 $('#adminFollowTarget')?.addEventListener('change', updateFollowControl);
 $('#adminWhitelistPlayer')?.addEventListener('input', handleWhitelistPlayerInput);

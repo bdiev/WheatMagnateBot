@@ -258,6 +258,9 @@
                 <p>Equipment, ping, and current task context.</p>
               </div>
             </div>
+            <div class="admin-command-actions admin-only" hidden>
+              <button id="botPauseResumeButton" type="button" data-bot-command="pause">Pause</button>
+            </div>
             <div id="botDetails" class="detail-list"></div>
           </section>
         </section>
@@ -314,6 +317,34 @@
                 <h2>Farm Details</h2>
                 <p>Current target, recent totals, and supply state.</p>
               </div>
+            </div>
+            <div class="admin-command-actions admin-only" hidden>
+              <button id="obsidianToggleButton" class="ghost-button" type="button" data-bot-command="obsidian_toggle">Toggle Farm</button>
+              <button id="obsidianRadiusButton" class="ghost-button" type="button" data-bot-command="obsidian_radius_toggle">Radius: -</button>
+              <button id="obsidianResetButton" class="danger-button" type="button" data-bot-command="obsidian_reset_coordinates">Reset Coordinates</button>
+            </div>
+            <div class="coordinate-control-grid admin-only" hidden>
+              <label class="auth-field">
+                <span>X</span>
+                <input id="obsidianCoordX" type="number" step="1" inputmode="numeric" placeholder="X">
+              </label>
+              <label class="auth-field">
+                <span>Y</span>
+                <input id="obsidianCoordY" type="number" step="1" inputmode="numeric" placeholder="Y">
+              </label>
+              <label class="auth-field">
+                <span>Z</span>
+                <input id="obsidianCoordZ" type="number" step="1" inputmode="numeric" placeholder="Z">
+              </label>
+              <label class="auth-field">
+                <span>Radius</span>
+                <select id="obsidianCoordRadius">
+                  <option value="4">4</option>
+                  <option value="5">5</option>
+                  <option value="6">6</option>
+                </select>
+              </label>
+              <button id="obsidianSaveCoordinatesButton" type="button" data-admin-control-action="obsidian_set_coordinates">Save Coordinates</button>
             </div>
             <div id="farmDetails" class="detail-list"></div>
           </section>
@@ -423,32 +454,7 @@
       </section>
 
       <section id="tab-admin" class="tab-panel" data-panel="admin">
-        <section class="panel admin-command-panel">
-          <div class="panel-head">
-            <div>
-              <h2>Bot Control</h2>
-              <p>Pause or resume the Minecraft bot through the shared database command bus.</p>
-            </div>
-          </div>
-          <div class="admin-command-actions">
-            <button id="botPauseResumeButton" type="button" data-bot-command="pause">Pause</button>
-          </div>
-        </section>
-
         <section class="panel-flow-grid section-grid">
-          <section class="panel">
-            <div class="panel-head">
-              <div>
-                <h2>Obsidian Farm</h2>
-                <p>Start or stop the farm and cycle the cauldron search radius.</p>
-              </div>
-            </div>
-            <div class="admin-command-actions">
-              <button id="obsidianToggleButton" class="ghost-button" type="button" data-bot-command="obsidian_toggle">Toggle Farm</button>
-              <button id="obsidianRadiusButton" class="ghost-button" type="button" data-bot-command="obsidian_radius_toggle">Radius: -</button>
-            </div>
-          </section>
-
           <section class="panel">
             <div class="panel-head">
               <div>

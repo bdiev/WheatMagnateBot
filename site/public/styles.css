@@ -2427,6 +2427,14 @@ body.search-focus-active #logoutButton {
   padding: 14px;
 }
 
+.coordinate-control-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(72px, 1fr)) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 0 14px 14px;
+}
+
 .supplies-grid {
   margin-top: 0;
 }
@@ -2640,6 +2648,14 @@ body.search-focus-active #logoutButton {
   .inventory-layout {
     grid-template-columns: 42px minmax(0, 1fr);
     gap: 6px;
+  }
+
+  .coordinate-control-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .coordinate-control-grid button {
+    grid-column: 1 / -1;
   }
 
   .inventory-slot-label {

@@ -1758,6 +1758,8 @@ async function queueAdminBotCommand(currentUser, body) {
     'unignore_chat',
     'obsidian_toggle',
     'obsidian_radius_toggle',
+    'obsidian_reset_coordinates',
+    'obsidian_set_coordinates',
     'child_toggle',
     'child_say',
     'gemini_toggle',

@@ -3358,6 +3358,7 @@ let lastDisconnectReason = null;
 let reconnectCountdownInterval = null;
 let reconnectTimer = null;
 let resumeTimer = null;
+let securityDisconnectTriggered = false;
 
 let foodMonitorInterval = null;
 let playerScannerInterval = null;
@@ -3444,6 +3445,42 @@ function pauseMinecraftConnection(reason) {
   followFeature.stop();
   farm.suspend();
   safelyCloseMinecraftBot(currentBot, reason);
+  updateStatusMessage().catch(() => {});
+}
+
+function disconnectForNonWhitelistedPlayer(entity, distance) {
+  if (securityDisconnectTriggered) return;
+  securityDisconnectTriggered = true;
+
+  const playerName = entity?.username || 'Unknown';
+  const roundedDistance = Math.round(Number(distance) || 0);
+  const reason = `Enemy detected: ${playerName}`;
+  const currentBot = bot;
+
+  console.log(`[Bot] ${reason} (${roundedDistance} blocks). Disconnecting with auto-reconnect disabled.`);
+  shouldReconnect = false;
+  clearReconnectTimer();
+  clearResumeTimer();
+  followFeature.stop();
+  farm.suspend();
+  setDisconnectReason(`${reason} (${roundedDistance} blocks)`);
+
+  if (Date.now() - lastEnemyMentionAt > 15000) {
+    lastEnemyMentionAt = Date.now();
+    sendDiscordStatusMention({
+      playerName,
+      distance: roundedDistance,
+      serverAction: 'Bot left the server and auto-reconnect was disabled.'
+    });
+  }
+
+  if (currentBot) {
+    bot = null;
+    clearIntervals();
+    safelyCloseMinecraftBot(currentBot, reason);
+  }
+
+  writeBotStatusSnapshot().catch(() => {});
   updateStatusMessage().catch(() => {});
 }
 
@@ -4465,6 +4502,31 @@ async function executeBotCommand(command) {
     await persistObsidianFarmCoordinates();
     await writeBotStatusSnapshot().catch(() => {});
     return { radius: nextRadius };
+  }
+
+  if (type === 'obsidian_reset_coordinates') {
+    farm.suspend();
+    await setProtectionLeverState(true).catch(() => false);
+    await setObsidianFarmDesiredEnabled(false);
+    await clearObsidianFarmCoordinates();
+    farm.resetConfig();
+    await writeBotStatusSnapshot().catch(() => {});
+    return { message: 'Farm coordinates were reset.' };
+  }
+
+  if (type === 'obsidian_set_coordinates') {
+    const x = Number(payload.x);
+    const y = Number(payload.y);
+    const z = Number(payload.z);
+    const radius = Number(payload.radius);
+    if (![x, y, z].every(Number.isFinite)) {
+      throw new Error('X, Y and Z coordinates must be numbers.');
+    }
+    const options = Number.isFinite(radius) ? { maxCauldronDist: radius } : {};
+    farm.configure(x, y, z, options);
+    await persistObsidianFarmCoordinates();
+    await writeBotStatusSnapshot().catch(() => {});
+    return { config: farm.getStatus().config };
   }
 
   if (type === 'child_toggle') {
@@ -6363,6 +6425,7 @@ function createBot() {
     if (bot && bot.username) {
       console.log(`[+] Logged in as ${bot.username}`);
     }
+    securityDisconnectTriggered = false;
     startTime = Date.now();
     lastCommandUser = null; // Reset after use
     lastDisconnectReason = null;
@@ -6951,19 +7014,7 @@ function startNearbyPlayerScanner() {
       if (ignoredUsernames.some(name => name.toLowerCase() === entity.username.toLowerCase())) continue; // Ignore whitelisted players (case-insensitive)
       // Non-whitelisted player
       if (distance <= runtimeSettings.dangerRadius) {
-        // Enemy detected!
-        const roundedDistance = Math.round(distance);
-        console.log(`[Bot] Enemy detected: ${entity.username} (${roundedDistance} blocks)`);
-        if (Date.now() - lastEnemyMentionAt > 15000) {
-          lastEnemyMentionAt = Date.now();
-          sendDiscordStatusMention({
-            playerName: entity.username,
-            distance: roundedDistance,
-            serverAction: 'Bot is leaving the server.'
-          });
-        }
-        shouldReconnect = false;
-        bot.quit(`Enemy detected: ${entity.username}`);
+        disconnectForNonWhitelistedPlayer(entity, distance);
         return; // Stop scanning after disconnect
       }
     }
