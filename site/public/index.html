@@ -218,22 +218,38 @@
       </section>
 
       <section id="tab-bot" class="tab-panel" data-panel="bot">
-        <section class="stats-grid four">
+        <section class="stats-grid four bot-stats-top">
+          <article class="panel admin-command-panel bot-power-stat admin-only" hidden>
+            <div class="panel-head">
+              <div>
+                <h2>Bot Power</h2>
+                <p>Pause or resume the whole Minecraft bot.</p>
+              </div>
+            </div>
+            <div class="admin-command-actions">
+              <button id="botPauseResumeButton" type="button" data-bot-command="pause">Pause</button>
+            </div>
+          </article>
+
           <article class="stat">
             <span class="stat-label">Bot Status</span>
             <strong id="botConnectionState">-</strong>
             <small id="botStatusUpdated">updated: -</small>
           </article>
-          <article class="stat">
-            <span class="stat-label">Health</span>
-            <strong id="botHealth">-</strong>
-            <small>out of 20</small>
+
+          <article class="stat bot-vitals-stat">
+            <div>
+              <span class="stat-label">Health</span>
+              <strong id="botHealth">-</strong>
+              <small>out of 20</small>
+            </div>
+            <div>
+              <span class="stat-label">Food</span>
+              <strong id="botFood">-</strong>
+              <small>out of 20</small>
+            </div>
           </article>
-          <article class="stat">
-            <span class="stat-label">Food</span>
-            <strong id="botFood">-</strong>
-            <small>out of 20</small>
-          </article>
+
           <article class="stat">
             <span class="stat-label">Online Time</span>
             <strong id="botUptime">-</strong>
@@ -260,20 +276,6 @@
               </div>
             </div>
             <div id="botDetails" class="detail-list"></div>
-          </section>
-        </section>
-
-        <section class="bot-admin-grid admin-only" hidden>
-          <section class="panel admin-command-panel">
-            <div class="panel-head">
-              <div>
-                <h2>Bot Power</h2>
-                <p>Pause or resume the whole Minecraft bot.</p>
-              </div>
-            </div>
-            <div class="admin-command-actions">
-              <button id="botPauseResumeButton" class="ghost-button" type="button" data-bot-command="pause">Pause</button>
-            </div>
           </section>
         </section>
       </section>

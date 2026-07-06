@@ -2446,20 +2446,38 @@ body.search-focus-active #logoutButton {
   min-width: 0;
 }
 
-.bot-admin-grid {
+.bot-vitals-stat {
   display: grid;
-  grid-column: 1 / -1;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
 }
 
-.bot-admin-grid .panel {
-  grid-column: span 2;
+.bot-power-stat {
+  grid-column: span 1;
+  min-height: 118px;
 }
 
-.bot-admin-grid .admin-command-actions button {
+.bot-power-stat .panel-head {
+  padding: 13px 14px;
+}
+
+.bot-power-stat .panel-head h2 {
+  font-size: 13px;
+}
+
+.bot-power-stat .panel-head p {
+  font-size: 11px;
+}
+
+.bot-power-stat .admin-command-actions {
+  padding: 12px 14px 14px;
+}
+
+.bot-power-stat .admin-command-actions button {
   width: 100%;
   min-width: 0;
+  min-height: 34px;
+  font-size: 12px;
 }
 
 @keyframes adminActionIn {
@@ -2533,7 +2551,7 @@ body.search-focus-active #logoutButton {
 
 .bot-inventory-layout {
   display: grid;
-  justify-items: center;
+  justify-items: stretch;
   gap: 14px;
   width: 100%;
 }
@@ -2557,7 +2575,7 @@ body.search-focus-active #logoutButton {
 }
 
 .bot-main-inventory {
-  width: min(100%, 720px);
+  width: 100%;
   min-width: 0;
 }
 
