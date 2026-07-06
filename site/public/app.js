@@ -1954,18 +1954,16 @@ function renderBotInventory(selector, bot, connected) {
         ${renderEquipmentSlot('Leggings', 7, armor.get(7), 'bot-equipment')}
         ${renderEquipmentSlot('Boots', 8, armor.get(8), 'bot-equipment')}
       </div>
-      <div class="bot-inventory-board">
-        <div class="bot-held-slot">
-          ${renderEquipmentSlot('Held', 'held', heldItem, 'bot-held')}
+      <div class="bot-hand-panel" aria-label="Bot hands">
+        <div class="inventory-offhand">
+          <span class="inventory-slot-label">Offhand</span>
+          ${renderInventorySlot(45, offhandItem, { tooltipPrefix: 'bot-inventory', label: 'Offhand slot' })}
         </div>
-        <div class="inventory-layout bot-main-inventory">
-          <div class="inventory-offhand">
-            <span class="inventory-slot-label">Offhand</span>
-            ${renderInventorySlot(45, offhandItem, { tooltipPrefix: 'bot-inventory', label: 'Offhand slot' })}
-          </div>
-          <div class="inventory-grid" aria-label="Bot inventory slots">
-            ${slots.map(({ slot, item, fallback }) => renderInventorySlot(slot, item, { fallback, tooltipPrefix: 'bot-inventory' })).join('')}
-          </div>
+        ${renderEquipmentSlot('Held', 'held', heldItem, 'bot-held')}
+      </div>
+      <div class="inventory-layout bot-main-inventory">
+        <div class="inventory-grid" aria-label="Bot inventory slots">
+          ${slots.map(({ slot, item, fallback }) => renderInventorySlot(slot, item, { fallback, tooltipPrefix: 'bot-inventory' })).join('')}
         </div>
       </div>
     </div>

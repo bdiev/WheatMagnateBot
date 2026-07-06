@@ -2564,9 +2564,8 @@ body.search-focus-active #logoutButton {
 
 .inventory-layout {
   display: grid;
-  grid-template-columns: clamp(42px, 9%, 58px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   align-items: end;
-  gap: 10px;
   width: 100%;
 }
 
@@ -2577,45 +2576,36 @@ body.search-focus-active #logoutButton {
 
 .bot-inventory-layout {
   display: grid;
-  grid-template-columns: 54px minmax(0, 1fr);
+  grid-template-columns: 44px 44px minmax(0, 1fr);
   align-items: end;
   justify-content: center;
   justify-items: stretch;
-  gap: 12px;
-  width: min(100%, 640px);
+  gap: 8px;
+  width: min(100%, 620px);
   margin: 0 auto;
 }
 
 .bot-equipment-panel {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 6px;
-  width: 54px;
+  gap: 5px;
+  width: 44px;
 }
 
 .equipment-slot {
   display: grid;
-  gap: 3px;
 }
 
 .equipment-slot .inventory-slot {
-  width: 42px;
+  width: 38px;
   justify-self: center;
 }
 
-.bot-inventory-board {
+.bot-hand-panel {
   display: grid;
-  gap: 8px;
-  min-width: 0;
-}
-
-.bot-held-slot {
-  justify-self: end;
-  width: 54px;
-}
-
-.bot-held-slot .equipment-slot {
-  justify-items: center;
+  align-content: end;
+  gap: 5px;
+  width: 44px;
 }
 
 .bot-main-inventory {
@@ -2629,6 +2619,13 @@ body.search-focus-active #logoutButton {
 }
 
 .inventory-slot-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
   color: var(--muted);
   font-size: 10px;
   font-weight: 900;
@@ -2759,22 +2756,22 @@ body.search-focus-active #logoutButton {
 
 @media (max-width: 700px) {
   .bot-inventory-layout {
-    grid-template-columns: 46px minmax(0, 1fr);
+    grid-template-columns: 38px 38px minmax(0, 1fr);
     align-items: end;
-    gap: 8px;
+    gap: 6px;
     width: 100%;
   }
 
   .bot-equipment-panel {
-    width: 46px;
+    width: 38px;
   }
 
   .equipment-slot .inventory-slot {
-    width: min(38px, 100%);
+    width: min(34px, 100%);
   }
 
-  .bot-held-slot {
-    width: 46px;
+  .bot-hand-panel {
+    width: 38px;
   }
 
   .farm-admin-grid {
@@ -2782,8 +2779,7 @@ body.search-focus-active #logoutButton {
   }
 
   .inventory-layout {
-    grid-template-columns: 42px minmax(0, 1fr);
-    gap: 6px;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .coordinate-control-grid {
@@ -2792,10 +2788,6 @@ body.search-focus-active #logoutButton {
 
   .coordinate-control-grid button {
     grid-column: 1 / -1;
-  }
-
-  .inventory-slot-label {
-    font-size: 8px;
   }
 
   .inventory-layout.barrel-layout {
