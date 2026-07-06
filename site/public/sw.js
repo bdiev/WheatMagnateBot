@@ -1,11 +1,12 @@
 'use strict';
 
-const CACHE_NAME = 'wheatmagnatebot-v14';
+const CACHE_NAME = 'wheatmagnatebot-v15';
 const APP_SHELL = [
   '/',
   '/index.html',
   '/styles.css',
   '/app.js',
+  '/items/Wheat.png',
   '/items/Writable_Book.png',
   '/items/Icon_Search.png',
   '/items/Sunflower.png',
