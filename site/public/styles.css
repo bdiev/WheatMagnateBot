@@ -2573,8 +2573,9 @@ body.search-focus-active #logoutButton {
 
 .inventory-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: clamp(42px, 9%, 58px) minmax(0, 1fr);
   align-items: end;
+  gap: 10px;
   width: 100%;
 }
 
@@ -2619,6 +2620,8 @@ body.search-focus-active #logoutButton {
 }
 
 .bot-main-inventory {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
   width: 100%;
   min-width: 0;
 }
@@ -2646,9 +2649,13 @@ body.search-focus-active #logoutButton {
 
 .inventory-grid {
   display: grid;
-  grid-template-columns: repeat(9, var(--bot-inventory-slot));
+  grid-template-columns: repeat(9, minmax(0, 1fr));
   gap: 5px;
   min-width: 0;
+}
+
+.bot-inventory-layout .inventory-grid {
+  grid-template-columns: repeat(9, var(--bot-inventory-slot));
 }
 
 .inventory-slot {
@@ -2794,7 +2801,13 @@ body.search-focus-active #logoutButton {
   }
 
   .inventory-layout {
+    grid-template-columns: 42px minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .bot-main-inventory {
     grid-template-columns: minmax(0, 1fr);
+    gap: 0;
   }
 
   .coordinate-control-grid {
