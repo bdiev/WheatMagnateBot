@@ -228,7 +228,8 @@ const CCVAULTS_EXACT_ITEMS = {
   end_stone: { category: '20. Blocks', subcategory: '36. End' }
 };
 const LOCAL_ITEM_ICONS = {
-  firework_rocket: '/Firework_Rocket.png'
+  firework_rocket: '/Firework_Rocket.png',
+  lead: '/Lead.png'
 };
 const CCVAULTS_ITEM_CATEGORIES = [
   { pattern: /_pickaxe$/, category: '10. Items', subcategory: '2. Pickaxes' },
