@@ -1452,10 +1452,6 @@ body.search-focus-active #logoutButton {
   grid-column: span 2;
 }
 
-.carousel-clone {
-  display: none;
-}
-
 .stat,
 .panel {
   border: 1px solid var(--line);
@@ -3192,7 +3188,10 @@ body.search-focus-active #logoutButton {
 
   .server-stats-grid {
     display: flex;
+    flex-wrap: nowrap;
     grid-column: 1 / -1;
+    width: 100%;
+    max-width: 100%;
     gap: 12px;
     margin: -8px -10px;
     padding: 8px 10px;
@@ -3203,12 +3202,17 @@ body.search-focus-active #logoutButton {
     scrollbar-width: none;
   }
 
+  #tab-server .server-stats-grid {
+    display: flex;
+  }
+
   .server-stats-grid::-webkit-scrollbar {
     display: none;
   }
 
   .server-stats-grid .stat {
-    flex: 0 0 100%;
+    display: block;
+    flex: 0 0 calc(100% - 20px);
     grid-column: auto;
     scroll-snap-align: start;
     opacity: 0.72;
@@ -3227,10 +3231,6 @@ body.search-focus-active #logoutButton {
     box-shadow:
       0 14px 28px color-mix(in srgb, var(--accent) 12%, transparent),
       var(--shadow);
-  }
-
-  .server-stats-grid .carousel-clone {
-    display: block;
   }
 
   @media (prefers-reduced-motion: reduce) {

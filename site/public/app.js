@@ -579,10 +579,6 @@ function carouselStep(carousel) {
 function positionLoopingCarousels() {
   if (!window.matchMedia?.('(max-width: 700px)').matches) return;
   $$('[data-loop-carousel]').forEach(carousel => {
-    const step = carouselStep(carousel);
-    if (step > 0 && carousel.scrollLeft < 1) {
-      carousel.scrollLeft = step;
-    }
     updateCarouselActiveItem(carousel);
   });
 }
@@ -609,19 +605,9 @@ function updateCarouselActiveItem(carousel) {
 function initLoopingCarousels() {
   const mobileMedia = window.matchMedia?.('(max-width: 700px)');
   $$('[data-loop-carousel]').forEach(carousel => {
-    const originals = Array.from(carousel.children).filter(item => !item.classList.contains('carousel-clone'));
+    const originals = Array.from(carousel.children);
     if (originals.length < 2 || carousel.dataset.loopReady === 'true') return;
 
-    const firstClone = originals[0].cloneNode(true);
-    const lastClone = originals[originals.length - 1].cloneNode(true);
-    [firstClone, lastClone].forEach(clone => {
-      clone.classList.add('carousel-clone');
-      clone.setAttribute('aria-hidden', 'true');
-      clone.querySelectorAll('[id]').forEach(element => element.removeAttribute('id'));
-    });
-
-    carousel.prepend(lastClone);
-    carousel.append(firstClone);
     carousel.dataset.loopReady = 'true';
     carousel.dataset.loopCount = String(originals.length);
 
@@ -635,19 +621,20 @@ function initLoopingCarousels() {
       const count = Number(carousel.dataset.loopCount || 0);
       if (!step || !count) return;
 
-      const firstOriginal = step;
-      const lastOriginal = step * count;
-      const afterLastClone = step * (count + 0.5);
+      const maxScroll = carousel.scrollWidth - carousel.clientWidth;
+      const nearStart = carousel.scrollLeft <= 1;
+      const nearEnd = carousel.scrollLeft >= maxScroll - 1;
 
-      if (carousel.scrollLeft <= step * 0.35) {
+      if (nearStart && carousel.dataset.loopPrimed === 'true') {
         jumping = true;
         carousel.style.scrollBehavior = 'auto';
-        carousel.scrollLeft = lastOriginal;
-      } else if (carousel.scrollLeft >= afterLastClone) {
+        carousel.scrollLeft = maxScroll;
+      } else if (nearEnd && carousel.dataset.loopPrimed === 'true') {
         jumping = true;
         carousel.style.scrollBehavior = 'auto';
-        carousel.scrollLeft = firstOriginal;
+        carousel.scrollLeft = 0;
       } else {
+        carousel.dataset.loopPrimed = 'true';
         return;
       }
 
