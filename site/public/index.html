@@ -258,8 +258,12 @@
                 <p>Equipment, ping, and current task context.</p>
               </div>
             </div>
-            <div class="admin-command-actions admin-only" hidden>
-              <button id="botPauseResumeButton" type="button" data-bot-command="pause">Pause</button>
+            <div class="admin-action-cards admin-only" hidden>
+              <article class="admin-action-card">
+                <span>Bot Power</span>
+                <strong>Pause or resume the whole Minecraft bot.</strong>
+                <button id="botPauseResumeButton" type="button" data-bot-command="pause">Pause</button>
+              </article>
             </div>
             <div id="botDetails" class="detail-list"></div>
           </section>
@@ -318,33 +322,51 @@
                 <p>Current target, recent totals, and supply state.</p>
               </div>
             </div>
-            <div class="admin-command-actions admin-only" hidden>
-              <button id="obsidianToggleButton" class="ghost-button" type="button" data-bot-command="obsidian_toggle">Toggle Farm</button>
-              <button id="obsidianRadiusButton" class="ghost-button" type="button" data-bot-command="obsidian_radius_toggle">Radius: -</button>
-              <button id="obsidianResetButton" class="danger-button" type="button" data-bot-command="obsidian_reset_coordinates">Reset Coordinates</button>
+            <div class="admin-action-cards farm-action-cards admin-only" hidden>
+              <article class="admin-action-card">
+                <span>Farm Power</span>
+                <strong>Start or stop the obsidian loop.</strong>
+                <button id="obsidianToggleButton" class="ghost-button" type="button" data-bot-command="obsidian_toggle">Toggle Farm</button>
+              </article>
+              <article class="admin-action-card">
+                <span>Search Radius</span>
+                <strong>Cycle cauldron lookup distance.</strong>
+                <button id="obsidianRadiusButton" class="ghost-button" type="button" data-bot-command="obsidian_radius_toggle">Radius: -</button>
+              </article>
+              <article class="admin-action-card">
+                <span>Coordinates</span>
+                <strong>Reset target and enter a new one.</strong>
+                <button id="obsidianResetButton" class="danger-button" type="button" data-bot-command="obsidian_reset_coordinates">Reset Coordinates</button>
+              </article>
             </div>
-            <div class="coordinate-control-grid admin-only" hidden>
-              <label class="auth-field">
-                <span>X</span>
-                <input id="obsidianCoordX" type="number" step="1" inputmode="numeric" placeholder="X">
-              </label>
-              <label class="auth-field">
-                <span>Y</span>
-                <input id="obsidianCoordY" type="number" step="1" inputmode="numeric" placeholder="Y">
-              </label>
-              <label class="auth-field">
-                <span>Z</span>
-                <input id="obsidianCoordZ" type="number" step="1" inputmode="numeric" placeholder="Z">
-              </label>
-              <label class="auth-field">
-                <span>Radius</span>
-                <select id="obsidianCoordRadius">
-                  <option value="4">4</option>
-                  <option value="5">5</option>
-                  <option value="6">6</option>
-                </select>
-              </label>
-              <button id="obsidianSaveCoordinatesButton" type="button" data-admin-control-action="obsidian_set_coordinates">Save Coordinates</button>
+            <div id="obsidianCoordinateEditor" class="coordinate-editor-card" hidden>
+              <div>
+                <span>New Farm Target</span>
+                <strong>Enter X, Y, Z and save before starting the farm.</strong>
+              </div>
+              <div class="coordinate-control-grid">
+                <label class="auth-field">
+                  <span>X</span>
+                  <input id="obsidianCoordX" type="number" step="1" inputmode="numeric" placeholder="X">
+                </label>
+                <label class="auth-field">
+                  <span>Y</span>
+                  <input id="obsidianCoordY" type="number" step="1" inputmode="numeric" placeholder="Y">
+                </label>
+                <label class="auth-field">
+                  <span>Z</span>
+                  <input id="obsidianCoordZ" type="number" step="1" inputmode="numeric" placeholder="Z">
+                </label>
+                <label class="auth-field">
+                  <span>Radius</span>
+                  <select id="obsidianCoordRadius">
+                    <option value="4">4</option>
+                    <option value="5">5</option>
+                    <option value="6">6</option>
+                  </select>
+                </label>
+                <button id="obsidianSaveCoordinatesButton" type="button" data-admin-control-action="obsidian_set_coordinates">Save Coordinates</button>
+              </div>
             </div>
             <div id="farmDetails" class="detail-list"></div>
           </section>

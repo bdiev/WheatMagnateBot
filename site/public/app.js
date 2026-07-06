@@ -39,6 +39,7 @@ const state = {
   adminPlayerSearchRequests: {},
   adminControlState: null,
   adminControlLoading: false,
+  obsidianCoordinateEditorOpen: false,
   supplyTooltipItems: {},
   itemIcons: {},
   itemIconsLoading: null,
@@ -2764,10 +2765,16 @@ function renderAdminControlState(payload = {}) {
   const coordY = $('#obsidianCoordY');
   const coordZ = $('#obsidianCoordZ');
   const coordRadius = $('#obsidianCoordRadius');
-  if (coordX && document.activeElement !== coordX) coordX.value = obsidianConfig?.x ?? '';
-  if (coordY && document.activeElement !== coordY) coordY.value = obsidianConfig?.y ?? '';
-  if (coordZ && document.activeElement !== coordZ) coordZ.value = obsidianConfig?.z ?? '';
-  if (coordRadius && document.activeElement !== coordRadius) coordRadius.value = String(obsidianConfig?.maxCauldronDist || 5);
+  if (!state.obsidianCoordinateEditorOpen) {
+    if (coordX && document.activeElement !== coordX) coordX.value = obsidianConfig?.x ?? '';
+    if (coordY && document.activeElement !== coordY) coordY.value = obsidianConfig?.y ?? '';
+    if (coordZ && document.activeElement !== coordZ) coordZ.value = obsidianConfig?.z ?? '';
+    if (coordRadius && document.activeElement !== coordRadius) coordRadius.value = String(obsidianConfig?.maxCauldronDist || 5);
+  }
+  const coordinateEditor = $('#obsidianCoordinateEditor');
+  if (coordinateEditor) {
+    coordinateEditor.hidden = state.currentUser?.role !== 'admin' || !state.obsidianCoordinateEditorOpen;
+  }
   const child = bot.child || {};
   const childButton = $('#childToggleButton');
   if (childButton) {
@@ -2811,6 +2818,17 @@ function renderAdminControlState(payload = {}) {
   updateFollowControl();
   updateWhitelistControl();
   updateIgnoreChatControl();
+}
+
+function clearObsidianCoordinateEditor() {
+  const coordX = $('#obsidianCoordX');
+  const coordY = $('#obsidianCoordY');
+  const coordZ = $('#obsidianCoordZ');
+  const coordRadius = $('#obsidianCoordRadius');
+  if (coordX) coordX.value = '';
+  if (coordY) coordY.value = '';
+  if (coordZ) coordZ.value = '';
+  if (coordRadius) coordRadius.value = '5';
 }
 
 function setButtonBusyState(commandType) {
@@ -2889,6 +2907,10 @@ async function handleAdminBotCommand(event) {
   try {
     setButtonBusyState(commandType);
     const payload = await postJson('/api/admin/bot-command', body);
+    if (commandType === 'obsidian_reset_coordinates') {
+      state.obsidianCoordinateEditorOpen = true;
+      clearObsidianCoordinateEditor();
+    }
     setBanner(`Bot command queued: ${payload.command?.commandType || commandType} #${payload.command?.id || '-'}.`);
     await Promise.all([loadAll(), loadAdminControlState()]);
     scheduleAdminControlRefresh();
@@ -2908,6 +2930,7 @@ async function queueAdminCommand(commandType, payload = {}) {
 async function handleAdminControlAction(event) {
   const button = event.target.closest('[data-admin-control-action]');
   if (!button) return;
+  if (state.currentUser?.role !== 'admin') return;
 
   const action = button.dataset.adminControlAction;
   const payload = {};
@@ -2970,6 +2993,11 @@ async function handleAdminControlAction(event) {
       return;
     }
     await queueAdminCommand(action, payload);
+    if (action === 'obsidian_set_coordinates') {
+      state.obsidianCoordinateEditorOpen = false;
+      const coordinateEditor = $('#obsidianCoordinateEditor');
+      if (coordinateEditor) coordinateEditor.hidden = true;
+    }
     scheduleAdminControlRefresh();
     if (['whitelist_add', 'whitelist_remove'].includes(action)) {
       $('#adminWhitelistPlayer').value = '';
@@ -3090,7 +3118,7 @@ $('#logoutButton')?.addEventListener('click', handleLogout);
 $('#adminUsersRefresh')?.addEventListener('click', loadAdminUsers);
 $('#adminUsersList')?.addEventListener('click', handleAdminUserAction);
 document.addEventListener('click', handleAdminBotCommand);
-document.querySelector('[data-panel="admin"]')?.addEventListener('click', handleAdminControlAction);
+document.addEventListener('click', handleAdminControlAction);
 $('#adminFollowTarget')?.addEventListener('change', updateFollowControl);
 $('#adminWhitelistPlayer')?.addEventListener('input', handleWhitelistPlayerInput);
 $('#adminWhitelistPlayer')?.addEventListener('focus', event => runWhitelistSearch(event.currentTarget.value));

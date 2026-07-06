@@ -2419,6 +2419,62 @@ body.search-focus-active #logoutButton {
   padding: 0;
 }
 
+.admin-action-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  padding: 14px;
+}
+
+.admin-action-card,
+.coordinate-editor-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--panel-soft);
+  transition: background-color 220ms ease, border-color 220ms ease, transform 160ms ease, box-shadow 220ms ease;
+  animation: adminActionIn 220ms ease both;
+}
+
+.admin-action-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 44%, var(--line));
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.admin-action-card span,
+.coordinate-editor-card span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.admin-action-card strong,
+.coordinate-editor-card strong {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.admin-action-card button {
+  width: 100%;
+  justify-self: stretch;
+}
+
+@keyframes adminActionIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .admin-control-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -2432,7 +2488,14 @@ body.search-focus-active #logoutButton {
   grid-template-columns: repeat(4, minmax(72px, 1fr)) auto;
   gap: 10px;
   align-items: end;
-  padding: 0 14px 14px;
+}
+
+.coordinate-editor-card {
+  margin: 0 14px 14px;
+}
+
+.coordinate-editor-card[hidden] {
+  display: none;
 }
 
 .supplies-grid {
