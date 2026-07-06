@@ -3198,6 +3198,7 @@ body.search-focus-active #logoutButton {
     overflow-x: auto;
     overscroll-behavior-x: contain;
     scroll-behavior: smooth;
+    scroll-padding-inline: 10px;
     scroll-snap-type: x mandatory;
     scrollbar-width: none;
   }
@@ -3214,7 +3215,7 @@ body.search-focus-active #logoutButton {
     display: block;
     flex: 0 0 calc(100% - 20px);
     grid-column: auto;
-    scroll-snap-align: start;
+    scroll-snap-align: center;
     opacity: 0.72;
     transform: scale(0.94) translateY(4px);
     transition:
