@@ -1656,7 +1656,7 @@ body.search-focus-active #logoutButton {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  height: 690px;
+  height: 674px;
   overflow: auto;
   padding: 14px;
 }
@@ -2446,6 +2446,17 @@ body.search-focus-active #logoutButton {
   min-width: 0;
 }
 
+.bot-admin-grid {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.bot-admin-grid .panel {
+  grid-column: span 1;
+}
+
 @keyframes adminActionIn {
   from {
     opacity: 0;
@@ -2498,6 +2509,10 @@ body.search-focus-active #logoutButton {
   padding: 14px;
 }
 
+.bot-inventory-panel {
+  grid-column: 1 / -1;
+}
+
 .inventory-layout {
   display: grid;
   grid-template-columns: clamp(42px, 9%, 58px) minmax(0, 1fr);
@@ -2513,16 +2528,17 @@ body.search-focus-active #logoutButton {
 
 .bot-inventory-layout {
   display: grid;
-  grid-template-columns: 58px minmax(0, 1fr);
-  align-items: end;
-  gap: 12px;
+  justify-items: center;
+  gap: 14px;
   width: 100%;
 }
 
 .bot-equipment-panel {
   display: grid;
-  grid-template-columns: 1fr;
-  gap: 7px;
+  grid-template-columns: repeat(5, 52px);
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
 }
 
 .equipment-slot {
@@ -2536,6 +2552,7 @@ body.search-focus-active #logoutButton {
 }
 
 .bot-main-inventory {
+  width: min(100%, 720px);
   min-width: 0;
 }
 
@@ -2681,7 +2698,7 @@ body.search-focus-active #logoutButton {
   }
 
   .bot-equipment-panel {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(42px, 1fr));
   }
 
   .equipment-slot .inventory-slot {

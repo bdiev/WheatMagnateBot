@@ -2747,8 +2747,8 @@ function renderAdminControlState(payload = {}) {
   if (obsidianButton) {
     const enabled = Boolean(bot?.obsidian?.desiredEnabled || bot?.obsidian?.enabled);
     obsidianButton.textContent = enabled ? 'Stop Farm' : 'Start Farm';
-    obsidianButton.classList.toggle('danger-button', enabled);
-    obsidianButton.classList.toggle('ghost-button', !enabled);
+    obsidianButton.classList.add('ghost-button');
+    obsidianButton.classList.remove('danger-button');
   }
   const obsidianRadiusButton = $('#obsidianRadiusButton');
   if (obsidianRadiusButton) {
