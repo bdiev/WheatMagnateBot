@@ -1444,6 +1444,18 @@ body.search-focus-active #logoutButton {
   display: contents;
 }
 
+.server-stats-grid {
+  display: contents;
+}
+
+.server-stats-grid .stat:first-child {
+  grid-column: span 2;
+}
+
+.carousel-clone {
+  display: none;
+}
+
 .stat,
 .panel {
   border: 1px solid var(--line);
@@ -1587,7 +1599,14 @@ body.search-focus-active #logoutButton {
 .server-nearby-panel {
   grid-column: 1;
   grid-row: 2;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   min-height: 260px;
+}
+
+.server-nearby-panel .rank-list {
+  min-height: 0;
+  overflow: auto;
 }
 
 .server-leaderboard-panel .leaderboard-list {
@@ -3166,8 +3185,60 @@ body.search-focus-active #logoutButton {
   .chat-panel,
   .side-stack,
   .stats-grid.three .stat:first-child,
+  .server-stats-grid .stat:first-child,
   .stats-grid.five .stat:nth-child(-n + 3) {
     grid-column: 1 / -1;
+  }
+
+  .server-stats-grid {
+    display: flex;
+    grid-column: 1 / -1;
+    gap: 12px;
+    margin: -8px -10px;
+    padding: 8px 10px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-behavior: smooth;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+  }
+
+  .server-stats-grid::-webkit-scrollbar {
+    display: none;
+  }
+
+  .server-stats-grid .stat {
+    flex: 0 0 100%;
+    grid-column: auto;
+    scroll-snap-align: start;
+    opacity: 0.72;
+    transform: scale(0.94) translateY(4px);
+    transition:
+      opacity 240ms ease,
+      transform 260ms cubic-bezier(0.16, 1, 0.3, 1),
+      border-color 240ms ease,
+      box-shadow 240ms ease;
+  }
+
+  .server-stats-grid .stat.carousel-active {
+    border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+    opacity: 1;
+    transform: scale(1) translateY(0);
+    box-shadow:
+      0 14px 28px color-mix(in srgb, var(--accent) 12%, transparent),
+      var(--shadow);
+  }
+
+  .server-stats-grid .carousel-clone {
+    display: block;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .server-stats-grid .stat {
+      opacity: 1;
+      transform: none;
+      transition: none;
+    }
   }
 
   .chat-list {

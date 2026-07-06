@@ -562,7 +562,103 @@ function setActiveTab(tab) {
     loadAdminUsers();
     loadAdminControlState();
   }
+  if (tab === 'server') {
+    requestAnimationFrame(positionLoopingCarousels);
+  }
   redrawCharts();
+}
+
+function carouselStep(carousel) {
+  const item = carousel.querySelector('.stat');
+  if (!item) return 0;
+  const styles = getComputedStyle(carousel);
+  const gap = Number.parseFloat(styles.columnGap || styles.gap || '0') || 0;
+  return item.getBoundingClientRect().width + gap;
+}
+
+function positionLoopingCarousels() {
+  if (!window.matchMedia?.('(max-width: 700px)').matches) return;
+  $$('[data-loop-carousel]').forEach(carousel => {
+    const step = carouselStep(carousel);
+    if (step > 0 && carousel.scrollLeft < 1) {
+      carousel.scrollLeft = step;
+    }
+    updateCarouselActiveItem(carousel);
+  });
+}
+
+function updateCarouselActiveItem(carousel) {
+  const items = Array.from(carousel.querySelectorAll('.stat'));
+  if (!items.length) return;
+  const center = carousel.scrollLeft + carousel.clientWidth / 2;
+  let activeItem = items[0];
+  let activeDistance = Infinity;
+
+  items.forEach(item => {
+    const itemCenter = item.offsetLeft + item.offsetWidth / 2;
+    const distance = Math.abs(center - itemCenter);
+    if (distance < activeDistance) {
+      activeDistance = distance;
+      activeItem = item;
+    }
+  });
+
+  items.forEach(item => item.classList.toggle('carousel-active', item === activeItem));
+}
+
+function initLoopingCarousels() {
+  const mobileMedia = window.matchMedia?.('(max-width: 700px)');
+  $$('[data-loop-carousel]').forEach(carousel => {
+    const originals = Array.from(carousel.children).filter(item => !item.classList.contains('carousel-clone'));
+    if (originals.length < 2 || carousel.dataset.loopReady === 'true') return;
+
+    const firstClone = originals[0].cloneNode(true);
+    const lastClone = originals[originals.length - 1].cloneNode(true);
+    [firstClone, lastClone].forEach(clone => {
+      clone.classList.add('carousel-clone');
+      clone.setAttribute('aria-hidden', 'true');
+      clone.querySelectorAll('[id]').forEach(element => element.removeAttribute('id'));
+    });
+
+    carousel.prepend(lastClone);
+    carousel.append(firstClone);
+    carousel.dataset.loopReady = 'true';
+    carousel.dataset.loopCount = String(originals.length);
+
+    let jumping = false;
+    let animationFrame = null;
+    carousel.addEventListener('scroll', () => {
+      if (animationFrame) cancelAnimationFrame(animationFrame);
+      animationFrame = requestAnimationFrame(() => updateCarouselActiveItem(carousel));
+      if (jumping || !mobileMedia?.matches) return;
+      const step = carouselStep(carousel);
+      const count = Number(carousel.dataset.loopCount || 0);
+      if (!step || !count) return;
+
+      const firstOriginal = step;
+      const lastOriginal = step * count;
+      const afterLastClone = step * (count + 0.5);
+
+      if (carousel.scrollLeft <= step * 0.35) {
+        jumping = true;
+        carousel.style.scrollBehavior = 'auto';
+        carousel.scrollLeft = lastOriginal;
+      } else if (carousel.scrollLeft >= afterLastClone) {
+        jumping = true;
+        carousel.style.scrollBehavior = 'auto';
+        carousel.scrollLeft = firstOriginal;
+      } else {
+        return;
+      }
+
+      requestAnimationFrame(() => {
+        carousel.style.scrollBehavior = '';
+        jumping = false;
+      });
+    }, { passive: true });
+  });
+
+  positionLoopingCarousels();
 }
 
 function getCssColor(name) {
@@ -3134,7 +3230,10 @@ $$('.chart-scroll').forEach(scroll => {
   scroll.addEventListener('scroll', scheduleChartViewportRedraw, { passive: true });
 });
 $('#themeToggle').addEventListener('click', toggleTheme);
-window.addEventListener('resize', redrawCharts);
+window.addEventListener('resize', () => {
+  redrawCharts();
+  positionLoopingCarousels();
+});
 $$('.chart').forEach(chart => {
   chart.addEventListener('pointerdown', event => showChartTooltip(event.currentTarget, event, { pin: true }));
   chart.addEventListener('pointermove', event => showChartTooltip(event.currentTarget, event));
@@ -3266,6 +3365,7 @@ $('#playerProfileOverlay').addEventListener('click', event => {
 });
 
 updateNavLabel('chat');
+initLoopingCarousels();
 initAuth();
 state.timer = setInterval(loadAll, 5000);
 startLiveChatRefresh();

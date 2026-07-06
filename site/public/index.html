@@ -430,7 +430,7 @@
       </section>
 
       <section id="tab-server" class="tab-panel" data-panel="server">
-        <section class="stats-grid three compact">
+        <section id="serverStatsCarousel" class="stats-grid server-stats-grid compact" data-loop-carousel>
           <article class="stat">
             <span class="stat-label">Latest TPS</span>
             <strong id="latestTps">-</strong>
@@ -446,9 +446,6 @@
             <strong id="maxTps">-</strong>
             <small>last 24 hours</small>
           </article>
-        </section>
-
-        <section class="stats-grid four compact">
           <article class="stat">
             <span class="stat-label">Online Players</span>
             <strong id="onlinePlayers">-</strong>
