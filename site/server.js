@@ -10,6 +10,7 @@ require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 
 const PORT = Number(process.env.SITE_PORT || process.env.PORT) || 3080;
 const PUBLIC_DIR = path.join(__dirname, 'public');
+const ITEMS_DIR = path.join(__dirname, 'items');
 const DATABASE_URL = process.env.DATABASE_URL;
 const SITE_ADMIN_USERNAME = 'bdiev_';
 const SITE_ADMIN_PASSWORD = process.env.SITE_ADMIN_PASSWORD || '';
@@ -2014,9 +2015,12 @@ async function handleApi(req, res, url) {
 
 function serveStatic(req, res, url) {
   const requestPath = url.pathname === '/' ? '/index.html' : decodeURIComponent(url.pathname);
-  const filePath = path.normalize(path.join(PUBLIC_DIR, requestPath));
+  const isItemPath = requestPath.startsWith('/items/');
+  const staticRoot = isItemPath ? ITEMS_DIR : PUBLIC_DIR;
+  const staticPath = isItemPath ? requestPath.slice('/items/'.length) : requestPath;
+  const filePath = path.normalize(path.join(staticRoot, staticPath));
 
-  if (!filePath.startsWith(PUBLIC_DIR)) {
+  if (!filePath.startsWith(staticRoot)) {
     res.writeHead(403);
     res.end('Forbidden');
     return;

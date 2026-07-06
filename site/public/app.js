@@ -228,8 +228,8 @@ const CCVAULTS_EXACT_ITEMS = {
   end_stone: { category: '20. Blocks', subcategory: '36. End' }
 };
 const LOCAL_ITEM_ICONS = {
-  firework_rocket: '/Firework_Rocket.png',
-  lead: '/Lead.png'
+  firework_rocket: '/items/Firework_Rocket.png',
+  lead: '/items/Lead.png'
 };
 const CCVAULTS_ITEM_CATEGORIES = [
   { pattern: /_pickaxe$/, category: '10. Items', subcategory: '2. Pickaxes' },
@@ -1010,7 +1010,7 @@ function renderPlayerProfile(profile) {
           <span class="pill">${profile.isWhitelisted ? 'whitelisted' : 'not whitelisted'}</span>
         </div>
         <button class="player-profile-message-action" type="button" data-whisper-player="${escapeHtml(profile.username)}">
-          <img src="/Writable_Book.png" alt="" aria-hidden="true">
+          <img src="/items/Writable_Book.png" alt="" aria-hidden="true">
           <span>Message</span>
         </button>
       </div>
