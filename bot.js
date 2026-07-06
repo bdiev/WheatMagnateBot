@@ -5867,8 +5867,7 @@ function compactInventoryItems(items = []) {
       displayName: item.displayName || item.name,
       count: item.count,
       slot: item.slot
-    }))
-    .sort((a, b) => String(a.displayName || a.name).localeCompare(String(b.displayName || b.name)));
+    }));
 }
 
 function getBotStatusSnapshot() {

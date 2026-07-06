@@ -2460,6 +2460,29 @@ body.search-focus-active #logoutButton {
   width: 100%;
 }
 
+.bot-inventory-layout {
+  display: grid;
+  grid-template-columns: minmax(74px, 92px) minmax(0, 1fr);
+  align-items: end;
+  gap: 14px;
+  width: 100%;
+}
+
+.bot-equipment-panel {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 7px;
+}
+
+.equipment-slot {
+  display: grid;
+  gap: 5px;
+}
+
+.bot-main-inventory {
+  min-width: 0;
+}
+
 .inventory-offhand {
   display: grid;
   gap: 5px;
@@ -2588,6 +2611,16 @@ body.search-focus-active #logoutButton {
 }
 
 @media (max-width: 700px) {
+  .bot-inventory-layout {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .bot-equipment-panel {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
   .inventory-layout {
     grid-template-columns: 42px minmax(0, 1fr);
     gap: 6px;

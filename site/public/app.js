@@ -1844,20 +1844,77 @@ function renderChat(payload) {
   redrawCharts();
 }
 
-function renderBotItemList(selector, items = [], emptyText = 'No items recorded.') {
-  renderStable(selector, items.length
-    ? `<div class="supply-items">${items.map(item => {
-      const label = item.displayName || item.label || item.name || 'Item';
-      return `
-        <div class="supply-item bot-item">
-          <span class="supply-name">${itemIcon({ name: item.name, label })}<span>${escapeHtml(label)}</span></span>
-          <strong>${formatNumber(item.count || 1)}</strong>
+function normalizeInventoryItem(item) {
+  if (!item) return null;
+  return {
+    ...item,
+    label: item.label || item.displayName || item.name || 'Item',
+    count: item.count || 1
+  };
+}
+
+function equipmentBySlot(armor = []) {
+  const bySlot = new Map();
+  armor.map(normalizeInventoryItem).filter(Boolean).forEach(item => {
+    const slot = Number(item.slot);
+    if (Number.isFinite(slot)) bySlot.set(slot, item);
+  });
+  return bySlot;
+}
+
+function renderEquipmentSlot(label, slot, item, tooltipPrefix) {
+  return `
+    <div class="equipment-slot">
+      <span class="inventory-slot-label">${escapeHtml(label)}</span>
+      ${renderInventorySlot(slot, item, { label: `${label} slot`, tooltipPrefix })}
+    </div>
+  `;
+}
+
+function renderBotInventory(selector, bot, connected) {
+  const inventory = (bot?.inventory || []).map(normalizeInventoryItem).filter(Boolean);
+  const armor = equipmentBySlot(bot?.armor || []);
+  const heldItem = normalizeInventoryItem(bot?.heldItem);
+  const offhandItem = inventory.find(item => Number(item.slot) === 45);
+  const slots = inventoryGridSlots(inventory);
+
+  state.supplyTooltipItems = Object.fromEntries(Object.entries(state.supplyTooltipItems).filter(([key]) => (
+    !key.startsWith('bot-inventory:') &&
+    !key.startsWith('bot-equipment:') &&
+    !key.startsWith('bot-held:')
+  )));
+
+  if (!connected && !inventory.length && !armor.size && !heldItem) {
+    renderStable(selector, '<div class="empty">No live bot inventory snapshot yet.</div>', ['bot-inventory-empty']);
+    return;
+  }
+
+  const html = `
+    <div class="bot-inventory-layout">
+      <div class="bot-equipment-panel" aria-label="Bot equipment">
+        ${renderEquipmentSlot('Helmet', 5, armor.get(5), 'bot-equipment')}
+        ${renderEquipmentSlot('Chest / Elytra', 6, armor.get(6), 'bot-equipment')}
+        ${renderEquipmentSlot('Leggings', 7, armor.get(7), 'bot-equipment')}
+        ${renderEquipmentSlot('Boots', 8, armor.get(8), 'bot-equipment')}
+        ${renderEquipmentSlot('Held', 'held', heldItem, 'bot-held')}
+      </div>
+      <div class="inventory-layout bot-main-inventory">
+        <div class="inventory-offhand">
+          <span class="inventory-slot-label">Offhand</span>
+          ${renderInventorySlot(45, offhandItem, { tooltipPrefix: 'bot-inventory', label: 'Offhand slot' })}
         </div>
-      `;
-    }).join('')}</div>`
-    : `<div class="empty">${emptyText}</div>`,
-    items.map(item => [item.name, item.displayName, item.count, item.slot])
-  );
+        <div class="inventory-grid" aria-label="Bot inventory slots">
+          ${slots.map(({ slot, item, fallback }) => renderInventorySlot(slot, item, { fallback, tooltipPrefix: 'bot-inventory' })).join('')}
+        </div>
+      </div>
+    </div>
+  `;
+
+  renderStable(selector, html, {
+    inventory: inventory.map(item => [item.name, item.displayName, item.label, item.count, item.slot]),
+    armor: (bot?.armor || []).map(item => [item.name, item.displayName, item.count, item.slot]),
+    heldItem: heldItem ? [heldItem.name, heldItem.displayName, heldItem.count, heldItem.slot] : null
+  });
 }
 
 function renderBotStats(payload) {
@@ -1881,7 +1938,7 @@ function renderBotStats(payload) {
     pauseResumeButton.classList.toggle('ghost-button', isPaused);
   }
 
-  renderBotItemList('#botInventory', bot?.inventory || [], connected ? 'Inventory is empty.' : 'No live bot inventory snapshot yet.');
+  renderBotInventory('#botInventory', bot, connected);
 
   const heldItem = bot?.heldItem?.displayName || bot?.heldItem?.name || 'None';
   const armor = bot?.armor?.length
@@ -2205,13 +2262,14 @@ function renderContainerSupplies(selector, items) {
 
 function renderInventorySlot(slot, item, { fallback = false, label = 'Empty slot', tooltipPrefix = 'inventory' } = {}) {
   if (!item) return `<div class="inventory-slot" data-slot="${slot}" aria-label="${escapeHtml(label)}"></div>`;
+  const itemLabel = item.displayName || item.label || item.name || 'Item';
   const durability = item.remainingPercent == null
     ? ''
     : `<span class="inventory-durability">${Number(item.remainingPercent).toFixed(0)}%</span>`;
   const low = item.usable === false ? ' low' : '';
   const tooltipKey = supplyTooltipKey(tooltipPrefix, slot, item);
   return `
-    <div class="inventory-slot filled${low}${fallback ? ' fallback-position' : ''}" role="button" tabindex="0" data-slot="${slot}" data-supply-tooltip="${escapeHtml(tooltipKey)}" title="${escapeHtml(item.label)} x${formatNumber(item.count)}">
+    <div class="inventory-slot filled${low}${fallback ? ' fallback-position' : ''}" role="button" tabindex="0" data-slot="${slot}" data-supply-tooltip="${escapeHtml(tooltipKey)}" title="${escapeHtml(itemLabel)} x${formatNumber(item.count)}">
       ${itemIcon(item)}
       <span class="inventory-count">${formatNumber(item.count)}</span>
       ${durability}
