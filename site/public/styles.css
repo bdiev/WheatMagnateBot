@@ -1432,6 +1432,10 @@ body.search-focus-active #logoutButton {
   align-items: stretch;
 }
 
+#tab-bot.tab-panel.active {
+  align-items: stretch;
+}
+
 .stats-grid {
   display: contents;
 }
@@ -1555,7 +1559,7 @@ body.search-focus-active #logoutButton {
   display: grid;
   grid-column: 1 / -1;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  grid-template-rows: minmax(0, auto) minmax(0, auto);
+  grid-template-rows: 420px 260px;
   gap: 16px;
   align-items: stretch;
 }
@@ -1569,7 +1573,7 @@ body.search-focus-active #logoutButton {
   grid-row: 1 / span 2;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  height: 696px;
+  height: 100%;
   min-height: 0;
   overflow: hidden;
 }
@@ -2453,12 +2457,15 @@ body.search-focus-active #logoutButton {
 }
 
 .bot-power-stat {
+  display: grid;
+  grid-template-rows: auto 1fr;
   grid-column: span 1;
+  height: 118px;
   min-height: 118px;
 }
 
 .bot-power-stat .panel-head {
-  padding: 13px 14px;
+  padding: 12px 14px 8px;
 }
 
 .bot-power-stat .panel-head h2 {
@@ -2470,13 +2477,15 @@ body.search-focus-active #logoutButton {
 }
 
 .bot-power-stat .admin-command-actions {
-  padding: 12px 14px 14px;
+  align-items: end;
+  padding: 8px 14px 14px;
 }
 
 .bot-power-stat .admin-command-actions button {
   width: 100%;
   min-width: 0;
   min-height: 34px;
+  height: 34px;
   font-size: 12px;
 }
 
@@ -2534,6 +2543,7 @@ body.search-focus-active #logoutButton {
 
 .bot-inventory-panel {
   grid-column: span 2;
+  align-self: stretch;
 }
 
 .inventory-layout {
@@ -2879,6 +2889,7 @@ body.search-focus-active #logoutButton {
 
   .server-layout {
     grid-template-columns: 1fr;
+    grid-template-rows: auto;
   }
 
   .server-tps-panel,
