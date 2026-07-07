@@ -1040,7 +1040,9 @@ body.search-focus-active #logoutButton {
 .whisper-player:hover,
 .whisper-player.active,
 .whisper-player:focus-visible,
-.whisper-player:focus-within {
+.whisper-player:focus-within,
+.whisper-player:has(.player-identity:hover),
+.whisper-player:has(.player-identity:focus-visible) {
   border-color: var(--line);
   background: var(--panel);
   outline: 0;
@@ -1053,6 +1055,10 @@ body.search-focus-active #logoutButton {
   background: transparent;
   box-shadow: none;
   outline: 0;
+}
+
+.whisper-player .player-identity[role="button"] {
+  border-radius: 0;
 }
 
 .whisper-player .player-identity span {
