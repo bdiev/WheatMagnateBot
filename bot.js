@@ -11,7 +11,8 @@ const {
   createMentionKeywordRepository,
   createPlayerActivityRepository,
   createWhitelistRepository,
-  createAdminSettingsRepository
+  createAdminSettingsRepository,
+  createSystemLogRepository
 } = require('./database');
 const { createPlaytimeFeature } = require('./features/playtime');
 const { createWhisperFeature } = require('./features/whisper');
@@ -484,6 +485,44 @@ const {
   saveAdminSetting,
   saveAdminSettings
 } = createAdminSettingsRepository(pool);
+const {
+  ensureSystemLogTable,
+  recordSystemLog
+} = createSystemLogRepository(pool);
+const originalConsoleLog = console.log.bind(console);
+const originalConsoleError = console.error.bind(console);
+let persistBotConsoleLogs = false;
+
+function stringifyConsoleArg(value) {
+  if (value instanceof Error) return value.stack || value.message;
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function captureBotConsoleLog(level, args) {
+  if (!persistBotConsoleLogs) return;
+  const message = args.map(stringifyConsoleArg).join(' ').trim();
+  if (!message || message.startsWith('[SystemLog]')) return;
+  recordSystemLog({
+    level,
+    category: 'bot_console',
+    message
+  }).catch(() => {});
+}
+
+console.log = (...args) => {
+  originalConsoleLog(...args);
+  captureBotConsoleLog('info', args);
+};
+
+console.error = (...args) => {
+  originalConsoleError(...args);
+  captureBotConsoleLog('error', args);
+};
 
 // Discord bot client
 const discordClient = createDiscordClient();
@@ -1114,6 +1153,13 @@ async function initDatabase() {
       CREATE INDEX IF NOT EXISTS bot_commands_status_created_idx
       ON bot_commands (status, created_at)
     `);
+    await ensureSystemLogTable();
+    persistBotConsoleLogs = true;
+    await recordSystemLog({
+      level: 'info',
+      category: 'bot',
+      message: 'Bot database initialized.'
+    });
     await pool.query(`
       CREATE TABLE IF NOT EXISTS nearby_player_sightings (
         username VARCHAR(255) PRIMARY KEY,
@@ -1629,6 +1675,12 @@ if (DISCORD_BOT_TOKEN) {
     console.log(`[Discord] Bot logged in as ${discordClient.user.tag}`);
     console.log(`[Discord] Bot ID: ${discordClient.user.id}`);
     console.log(`[Discord] Guilds: ${discordClient.guilds.cache.size}`);
+    await recordSystemLog({
+      level: 'info',
+      category: 'discord',
+      message: `Discord bot ready as ${discordClient.user.tag}.`,
+      details: { guilds: discordClient.guilds.cache.size }
+    });
 
     try {
       updateDiscordPresence({ force: true });
@@ -1695,12 +1747,23 @@ if (DISCORD_BOT_TOKEN) {
       siteGameChatOutboxInterval = setInterval(() => {
         processBotCommands().catch(err => {
           console.error('[Command Bus] Worker failed:', err.message);
+          recordSystemLog({
+            level: 'error',
+            category: 'command_bus',
+            message: 'Command bus worker failed.',
+            details: { error: err.message }
+          }).catch(() => {});
         });
         processSiteGameChatOutbox().catch(err => {
           console.error('[Site Chat] Outbox worker failed:', err.message);
         });
       }, 1000);
       console.log('[Command Bus] Worker started');
+      await recordSystemLog({
+        level: 'info',
+        category: 'command_bus',
+        message: 'Command bus worker started.'
+      });
     }
 
     // Flush any pending auth links captured before client was ready
@@ -4612,6 +4675,13 @@ async function processBotCommands() {
         WHERE id = $1
       `, [command.id, result || {}]);
       console.log(`[Command Bus] Completed ${command.command_type} #${command.id}`);
+      await recordSystemLog({
+        level: 'audit',
+        category: 'command_bus',
+        actor: command.requested_by,
+        message: `Completed bot command ${command.command_type} #${command.id}.`,
+        details: { commandId: String(command.id), source: command.source, result: result || {} }
+      });
     } catch (err) {
       if (err instanceof DeferredBotCommandError) {
         await pool.query(`
@@ -4624,6 +4694,13 @@ async function processBotCommands() {
           WHERE id = $1
         `, [command.id, JSON.stringify(err.payloadPatch || {}), err.message]);
         console.log(`[Command Bus] Deferred ${command.command_type} #${command.id}: ${err.message}`);
+        await recordSystemLog({
+          level: 'info',
+          category: 'command_bus',
+          actor: command.requested_by,
+          message: `Deferred bot command ${command.command_type} #${command.id}.`,
+          details: { commandId: String(command.id), reason: err.message, payloadPatch: err.payloadPatch || {} }
+        });
         continue;
       }
       await pool.query(`
@@ -4634,6 +4711,13 @@ async function processBotCommands() {
         WHERE id = $1
       `, [command.id, err.message]);
       console.error(`[Command Bus] Failed ${command.command_type} #${command.id}:`, err.message);
+      await recordSystemLog({
+        level: 'error',
+        category: 'command_bus',
+        actor: command.requested_by,
+        message: `Failed bot command ${command.command_type} #${command.id}.`,
+        details: { commandId: String(command.id), error: err.message }
+      });
     }
   }
 }
@@ -6352,11 +6436,22 @@ function createBot() {
   }
 
   lastTickTime = 0; // Reset TPS tracking for new bot
+  recordSystemLog({
+    level: 'info',
+    category: 'minecraft',
+    message: 'Starting Minecraft connection.'
+  }).catch(() => {});
   try {
     bot = createMinecraftBot(config);
   } catch (err) {
     bot = null;
     console.log(`[x] Failed to create Minecraft connection: ${err.message}`);
+    recordSystemLog({
+      level: 'error',
+      category: 'minecraft',
+      message: 'Failed to create Minecraft connection.',
+      details: { error: err.message }
+    }).catch(() => {});
     if (shouldReconnect) scheduleReconnect(RECONNECT_INTERVAL_MS);
     return;
   }
@@ -6367,6 +6462,11 @@ function createBot() {
   const connectionWatchdog = setTimeout(() => {
     if (connectionFinalized || createdBot.entity) return;
     console.log('[x] Minecraft connection attempt timed out before spawn.');
+    recordSystemLog({
+      level: 'warn',
+      category: 'minecraft',
+      message: 'Minecraft connection attempt timed out before spawn.'
+    }).catch(() => {});
     finalizeConnectionLoss('Connection attempt timed out');
   }, MINECRAFT_CONNECT_TIMEOUT_MS + 5_000);
   bot.loadPlugin(pathfinder);
@@ -6425,6 +6525,11 @@ function createBot() {
     if (bot && bot.username) {
       console.log(`[+] Logged in as ${bot.username}`);
     }
+    await recordSystemLog({
+      level: 'info',
+      category: 'minecraft',
+      message: `Minecraft login as ${bot?.username || 'unknown'}.`
+    });
     securityDisconnectTriggered = false;
     startTime = Date.now();
     lastCommandUser = null; // Reset after use
@@ -6434,6 +6539,11 @@ function createBot() {
   bot.on('spawn', async () => {
     clearTimeout(connectionWatchdog);
     console.log('[Bot] Spawned.');
+    await recordSystemLog({
+      level: 'info',
+      category: 'minecraft',
+      message: 'Minecraft bot spawned.'
+    });
     playerActivityJoinEventsReady = false;
     reconnectTimestamp = 0; // Reset reconnect countdown when bot spawns
     clearIntervals();
@@ -6534,6 +6644,12 @@ function createBot() {
 
   bot.on('end', (reason) => {
     const reasonStr = chatComponentToString(reason);
+    recordSystemLog({
+      level: 'warn',
+      category: 'minecraft',
+      message: 'Minecraft bot disconnected.',
+      details: { reason: reasonStr || null }
+    }).catch(() => {});
     const observedOnlineAtDisconnect = lastObservedOnlinePlayerKeys;
     lastObservedOnlinePlayerKeys = null;
     playerActivityJoinEventsReady = false;
@@ -6556,6 +6672,12 @@ function createBot() {
 
   bot.on('error', (err) => {
     console.log(`[x] Error: ${err.message}`);
+    recordSystemLog({
+      level: 'error',
+      category: 'minecraft',
+      message: 'Minecraft bot error.',
+      details: { error: err.message }
+    }).catch(() => {});
     if (!reachedLogin || !createdBot.entity) {
       finalizeConnectionLoss(err.message || 'Connection error');
     }
@@ -6564,6 +6686,12 @@ function createBot() {
   bot.on('kicked', (reason) => {
     const reasonText = chatComponentToString(reason);
     console.log(`[!] Kicked: ${reasonText}`);
+    recordSystemLog({
+      level: 'warn',
+      category: 'minecraft',
+      message: 'Minecraft bot was kicked.',
+      details: { reason: reasonText || null }
+    }).catch(() => {});
     if (reasonText && reasonText.trim() !== '') {
       setDisconnectReason(reasonText);
     }
@@ -6576,6 +6704,11 @@ function createBot() {
 
   bot.on('death', () => {
     console.log('[Bot] Died.');
+    recordSystemLog({
+      level: 'warn',
+      category: 'minecraft',
+      message: 'Minecraft bot died.'
+    }).catch(() => {});
     sendDiscordNotification('Bot died. :skull:', 16711680);
   });
 
@@ -7024,12 +7157,23 @@ function startNearbyPlayerScanner() {
 
 if (String(process.env.DISABLE_BOT).toLowerCase() === 'true') {
   console.log(`Bot disabled by env. DISABLE_BOT=${process.env.DISABLE_BOT}`);
+  recordSystemLog({
+    level: 'warn',
+    category: 'bot',
+    message: `Bot disabled by env. DISABLE_BOT=${process.env.DISABLE_BOT}`
+  }).catch(() => {});
   process.exit(0);
 }
 
 // Handle uncaught exceptions to prevent crashes
 process.on('uncaughtException', (err) => {
   console.log('Uncaught Exception:', err);
+  recordSystemLog({
+    level: 'error',
+    category: 'bot',
+    message: 'Uncaught exception.',
+    details: { error: err.message, stack: err.stack }
+  }).catch(() => {});
   sendDiscordNotification(`Uncaught exception: \`${err.message}\``, 16711680);
   if (bot) {
     try { bot.quit(); } catch {}
@@ -7043,6 +7187,12 @@ process.on('uncaughtException', (err) => {
 
 process.on('unhandledRejection', (reason) => {
   console.log('Unhandled Rejection:', reason);
+  recordSystemLog({
+    level: 'error',
+    category: 'bot',
+    message: 'Unhandled rejection.',
+    details: { reason: reason?.message || String(reason), stack: reason?.stack || null }
+  }).catch(() => {});
   sendDiscordNotification(`Unhandled rejection: \`${reason}\``, 16711680);
 });
 

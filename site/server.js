@@ -1120,9 +1120,9 @@ async function getWhisperNotifications(currentUser, url) {
       )::int AS unread_count
     FROM visible_messages
     LEFT JOIN site_whisper_read_state read_state
-      ON read_state.site_user_id = $2
+      ON read_state.site_user_id = $1
       AND read_state.player_key = visible_messages.player_key
-  `, [currentUser.username, currentUser.id]);
+  `, [currentUser.id, currentUser.username]);
   const row = result.rows[0] || {};
 
   return {
@@ -1154,7 +1154,7 @@ async function markWhisperRead(currentUser, body) {
         VALUES ($1, LOWER($2), $2, $3::bigint, NOW())
         ON CONFLICT (site_user_id, player_key) DO UPDATE
         SET player_username = EXCLUDED.player_username,
-            last_read_message_id = GREATEST(site_whisper_read_state.last_read_message_id, EXCLUDED.last_read_message_id),
+            last_read_message_id = GREATEST(site_whisper_read_state.last_read_message_id, EXCLUDED.last_read_message_id::bigint),
             updated_at = NOW()
       `, [currentUser.id, entry.username, entry.id]);
     }
@@ -1166,7 +1166,7 @@ async function markWhisperRead(currentUser, body) {
       VALUES ($1, LOWER($2), $2, $3::bigint, NOW())
       ON CONFLICT (site_user_id, player_key) DO UPDATE
       SET player_username = EXCLUDED.player_username,
-          last_read_message_id = GREATEST(site_whisper_read_state.last_read_message_id, EXCLUDED.last_read_message_id),
+          last_read_message_id = GREATEST(site_whisper_read_state.last_read_message_id, EXCLUDED.last_read_message_id::bigint),
           updated_at = NOW()
     `, [currentUser.id, username, messageId]);
   }

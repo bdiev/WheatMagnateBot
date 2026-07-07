@@ -426,11 +426,60 @@ function createAdminSettingsRepository(pool) {
   };
 }
 
+function createSystemLogRepository(pool) {
+  async function ensureSystemLogTable() {
+    if (!pool) return false;
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS site_system_logs (
+        id BIGSERIAL PRIMARY KEY,
+        level VARCHAR(16) NOT NULL DEFAULT 'info',
+        category VARCHAR(64) NOT NULL DEFAULT 'site',
+        actor_username VARCHAR(64),
+        message TEXT NOT NULL,
+        details JSONB,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS site_system_logs_created_at_idx
+      ON site_system_logs (created_at DESC)
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS site_system_logs_level_created_idx
+      ON site_system_logs (level, created_at DESC)
+    `);
+    return true;
+  }
+
+  async function recordSystemLog({ level = 'info', category = 'bot', actor = null, message = '', details = null } = {}) {
+    if (!pool || !message) return false;
+    const safeLevel = ['debug', 'info', 'warn', 'error', 'audit'].includes(level) ? level : 'info';
+    const safeCategory = String(category || 'bot').trim().slice(0, 64) || 'bot';
+    const safeActor = actor ? String(actor).trim().slice(0, 64) : null;
+    try {
+      await pool.query(`
+        INSERT INTO site_system_logs (level, category, actor_username, message, details)
+        VALUES ($1, $2, $3, $4, $5)
+      `, [safeLevel, safeCategory, safeActor, String(message).slice(0, 2000), details || null]);
+      return true;
+    } catch (err) {
+      console.error('[SystemLog] Failed to write system log:', err.message);
+      return false;
+    }
+  }
+
+  return {
+    ensureSystemLogTable,
+    recordSystemLog
+  };
+}
+
 module.exports = {
   createDatabasePool,
   logDatabaseStatus,
   createMentionKeywordRepository,
   createPlayerActivityRepository,
   createWhitelistRepository,
-  createAdminSettingsRepository
+  createAdminSettingsRepository,
+  createSystemLogRepository
 };
