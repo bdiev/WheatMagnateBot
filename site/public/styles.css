@@ -1045,7 +1045,7 @@ body.search-focus-active #logoutButton {
 
 .whisper-player {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   width: 100%;
@@ -1402,7 +1402,7 @@ body.search-focus-active #logoutButton {
 
 .seen-option {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content max-content;
+  grid-template-columns: minmax(0, 1fr) max-content;
   height: var(--button-height);
   min-height: var(--button-height);
   min-width: 0;
@@ -3365,7 +3365,7 @@ body.search-focus-active #logoutButton {
   }
 
   .seen-option {
-    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
   .seen-search {

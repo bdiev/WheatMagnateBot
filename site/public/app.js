@@ -1354,8 +1354,7 @@ function renderSeenSuggestions(players) {
 
   suggestions.innerHTML = state.seenPlayers.map((player, index) => `
     <button class="seen-option" type="button" data-index="${index}">
-      ${playerIdentity(player.username, 24)}
-      <span class="pill ${player.isOnline ? 'online' : ''}">${player.isOnline ? 'online' : 'offline'}</span>
+      ${playerIdentity(player.username, 24, { status: player.isOnline ? 'online' : 'offline' })}
       <span class="muted">${player.lastSeen ? formatAgo(player.lastSeen) : 'never seen'}</span>
     </button>
   `).join('');
@@ -1614,8 +1613,7 @@ function renderWhisperPlayerList(players, { search = false, emptyText = 'No play
     const contentSignature = JSON.stringify([username, isOnline, unreadCount, isActive, search]);
     if (button.dataset.renderSignature !== contentSignature) {
       button.innerHTML = `
-        <span class="whisper-player-identity">${playerIdentity(username, 24)}${messageBadge}</span>
-        <span class="pill ${isOnline ? 'online' : ''}">${isOnline ? 'online' : 'offline'}</span>
+        <span class="whisper-player-identity">${playerIdentity(username, 24, { status: isOnline ? 'online' : 'offline' })}${messageBadge}</span>
       `;
       button.dataset.renderSignature = contentSignature;
     }
@@ -1721,8 +1719,7 @@ function updateWhisperDialogTitle() {
   const signature = JSON.stringify([state.whisperTarget, isOnline]);
   if (title.dataset.renderSignature === signature) return;
   title.innerHTML = `
-    ${playerIdentity(state.whisperTarget, 26)}
-    <span class="pill ${isOnline ? 'online' : ''}">${isOnline ? 'online' : 'offline'}</span>
+    ${playerIdentity(state.whisperTarget, 26, { status: isOnline ? 'online' : 'offline' })}
   `;
   title.dataset.renderSignature = signature;
 }
@@ -2839,8 +2836,7 @@ function renderAdminPlayerSuggestions({ suggestionsSelector, stateKey, players, 
     const status = statusFor(player);
     return `
       <button class="seen-option" type="button" data-index="${index}">
-        ${playerIdentity(player.username, 24)}
-        <span class="pill ${player.isOnline ? 'online' : ''}">${player.isOnline ? 'online' : 'offline'}</span>
+        ${playerIdentity(player.username, 24, { status: player.isOnline ? 'online' : 'offline' })}
         <span class="pill ${status.className || ''}">${status.label}</span>
       </button>
     `;
