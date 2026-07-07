@@ -2254,6 +2254,29 @@ body.search-focus-active #logoutButton {
   background: var(--panel-soft);
 }
 
+.player-profile-avatar-wrap {
+  position: relative;
+  display: block;
+  width: 96px;
+  height: 96px;
+}
+
+.player-profile-avatar-wrap::after {
+  content: "";
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 18px;
+  height: 18px;
+  border: 3px solid var(--panel-soft);
+  border-radius: 999px;
+  background: #d84343;
+}
+
+.player-profile-avatar-wrap[data-status="online"]::after {
+  background: #55c85a;
+}
+
 .player-profile-avatar {
   width: 96px;
   height: 96px;
@@ -2299,8 +2322,15 @@ body.search-focus-active #logoutButton {
 
 .player-profile-message-action:hover {
   border-color: var(--accent);
+  color: var(--text);
   background: var(--panel-soft);
   transform: translateY(-1px);
+}
+
+:root[data-theme="dark"] .player-profile-message-action:hover,
+:root[data-theme="dark"] .player-profile-message-action:focus-visible {
+  color: #f6f8fb;
+  background: color-mix(in srgb, var(--accent) 16%, var(--panel-soft));
 }
 
 .player-profile-grid {
@@ -2332,6 +2362,27 @@ body.search-focus-active #logoutButton {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.player-profile-value-button {
+  display: block;
+  width: 100%;
+  margin-top: 5px;
+  border: 0;
+  padding: 0;
+  color: var(--text);
+  background: transparent;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: inherit;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.player-profile-value-button:hover {
+  color: var(--accent-strong);
 }
 
 .player-profile-chat {

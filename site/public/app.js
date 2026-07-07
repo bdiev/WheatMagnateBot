@@ -32,6 +32,8 @@ const state = {
   whisperDialogReadIds: {},
   whisperReadStateSynced: false,
   whisperUnreadCount: 0,
+  playerProfileRegistrationAgeMode: false,
+  playerProfileLastPayload: null,
   whisperSearchPlayers: [],
   playerProfileUsername: null,
   playerProfileSignature: '',
@@ -1115,16 +1117,58 @@ function handleChartRangeClick(event) {
   animateChart(chartId);
 }
 
+function daysInMonth(year, monthIndex) {
+  return new Date(year, monthIndex + 1, 0).getDate();
+}
+
+function formatRegistrationAge(value) {
+  if (!value) return 'Unknown';
+  const start = new Date(value);
+  const end = new Date();
+  if (Number.isNaN(start.getTime())) return 'Unknown';
+  if (start > end) return '0 days';
+
+  let years = end.getFullYear() - start.getFullYear();
+  let months = end.getMonth() - start.getMonth();
+  let days = end.getDate() - start.getDate();
+
+  if (days < 0) {
+    months -= 1;
+    const previousMonth = (end.getMonth() + 11) % 12;
+    const previousMonthYear = previousMonth === 11 ? end.getFullYear() - 1 : end.getFullYear();
+    days += daysInMonth(previousMonthYear, previousMonth);
+  }
+  if (months < 0) {
+    years -= 1;
+    months += 12;
+  }
+
+  const parts = [];
+  if (years) parts.push(`${years}y`);
+  if (months || years) parts.push(`${months}m`);
+  parts.push(`${days}d`);
+  return parts.join(' ');
+}
+
+function registrationProfileValue(profile) {
+  const dateText = profile.registrationDisplay || (profile.registrationAt ? formatDate(profile.registrationAt) : 'Unknown');
+  return state.playerProfileRegistrationAgeMode ? formatRegistrationAge(profile.registrationAt) : dateText;
+}
+
 function renderPlayerProfile(profile) {
   const recentMessages = profile.chat?.recentMessages || [];
   const nearby = profile.nearby;
+  const registrationTitle = state.playerProfileRegistrationAgeMode
+    ? 'Show registration date'
+    : 'Show time since registration';
   return `
     <header class="player-profile-head">
-      <img class="player-profile-avatar" src="${playerHeadUrl(profile.username, 96)}" alt="" loading="lazy">
+      <span class="player-profile-avatar-wrap" data-status="${profile.isOnline ? 'online' : 'offline'}" aria-label="${profile.isOnline ? 'Online' : 'Offline'}">
+        <img class="player-profile-avatar" src="${playerHeadUrl(profile.username, 96)}" alt="" loading="lazy">
+      </span>
       <div>
         <h2 id="playerProfileName">${escapeHtml(profile.username)}</h2>
         <div class="player-profile-badges">
-          <span class="pill ${profile.isOnline ? 'online' : ''}">${profile.isOnline ? 'online' : 'offline'}</span>
           <span class="pill">${profile.isWhitelisted ? 'whitelisted' : 'not whitelisted'}</span>
         </div>
         <button class="player-profile-message-action" type="button" data-whisper-player="${escapeHtml(profile.username)}">
@@ -1135,7 +1179,12 @@ function renderPlayerProfile(profile) {
     </header>
     <section class="player-profile-grid">
       <div><span>Playtime</span><strong>${escapeHtml(profile.playtime || '-')}</strong></div>
-      <div><span>Registered</span><strong>${escapeHtml(profile.registrationDisplay || (profile.registrationAt ? formatDate(profile.registrationAt) : 'Unknown'))}</strong></div>
+      <div>
+        <span>Registered</span>
+        <button class="player-profile-value-button" type="button" data-profile-toggle="registration-age" title="${registrationTitle}">
+          ${escapeHtml(registrationProfileValue(profile))}
+        </button>
+      </div>
       <div><span>Last Seen</span><strong>${profile.lastSeen ? formatRecentDate(profile.lastSeen) : 'Never'}</strong></div>
       <div><span>Chat Messages</span><strong>${formatNumber(profile.chat?.totalMessages)}</strong></div>
       <div><span>Messages 24h</span><strong>${formatNumber(profile.chat?.last24h)}</strong></div>
@@ -1165,6 +1214,7 @@ function playerProfileSignature(profile) {
     profile.playtime,
     profile.registrationAt,
     profile.registrationDisplay,
+    state.playerProfileRegistrationAgeMode,
     profile.lastSeen,
     profile.lastOnline,
     profile.chat?.totalMessages,
@@ -1195,6 +1245,7 @@ async function loadPlayerProfile(username, { showLoading = false } = {}) {
 
   try {
     const profile = await fetchJson(`/api/player?username=${encodeURIComponent(username)}`);
+    state.playerProfileLastPayload = profile;
     const signature = playerProfileSignature(profile);
     if (state.playerProfileSignature !== signature) {
       content.innerHTML = renderPlayerProfile(profile);
@@ -1208,6 +1259,8 @@ async function loadPlayerProfile(username, { showLoading = false } = {}) {
 
 async function openPlayerProfile(username) {
   state.playerProfileSignature = '';
+  state.playerProfileRegistrationAgeMode = false;
+  state.playerProfileLastPayload = null;
   await loadPlayerProfile(username, { showLoading: true });
 }
 
@@ -1218,6 +1271,20 @@ function closePlayerProfile() {
   document.body.classList.remove('profile-open');
   state.playerProfileUsername = null;
   state.playerProfileSignature = '';
+  state.playerProfileRegistrationAgeMode = false;
+  state.playerProfileLastPayload = null;
+}
+
+function handlePlayerProfileClick(event) {
+  const toggle = event.target.closest('[data-profile-toggle="registration-age"]');
+  if (!toggle) return;
+  event.preventDefault();
+  state.playerProfileRegistrationAgeMode = !state.playerProfileRegistrationAgeMode;
+  state.playerProfileSignature = '';
+  if (state.playerProfileLastPayload) {
+    const content = $('#playerProfileContent');
+    if (content) content.innerHTML = renderPlayerProfile(state.playerProfileLastPayload);
+  }
 }
 
 function openWhisperFromProfile(username) {
@@ -3328,6 +3395,7 @@ $('#whisperPlayers')?.addEventListener('click', handleWhisperPlayerClick);
 $('#whisperForm')?.addEventListener('submit', handleWhisperSubmit);
 $('#whisperDeleteDialog')?.addEventListener('click', handleWhisperDeleteDialog);
 $('#whisperCloseDialog')?.addEventListener('click', closeWhisperDialog);
+$('#playerProfileContent')?.addEventListener('click', handlePlayerProfileClick);
 document.addEventListener('click', event => {
   const tooltipDrop = event.target.closest('[data-tooltip-drop]');
   if (tooltipDrop) {
