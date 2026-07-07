@@ -1192,6 +1192,18 @@ function setSeenSearchOpen(open) {
   const search = $('#seenSearch');
   const toggle = $('#seenSearchToggle');
   if (!search || !toggle) return;
+  if (open) {
+    const rect = toggle.getBoundingClientRect();
+    const isMobile = window.matchMedia('(max-width: 700px)').matches;
+    const targetTop = isMobile ? 82 : 88;
+    const targetCenterX = window.innerWidth / 2;
+    const targetCenterY = targetTop + rect.height / 2;
+    search.style.setProperty('--seen-search-origin-x', `${rect.left + rect.width / 2 - targetCenterX}px`);
+    search.style.setProperty('--seen-search-origin-y', `${rect.top + rect.height / 2 - targetCenterY}px`);
+  } else {
+    search.style.removeProperty('--seen-search-origin-x');
+    search.style.removeProperty('--seen-search-origin-y');
+  }
   search.classList.toggle('open', open);
   document.body.classList.toggle('search-focus-active', open);
   toggle.setAttribute('aria-expanded', String(open));

@@ -196,6 +196,14 @@ body.whisper-focus-active .whisper-panel {
   transform: none;
 }
 
+body.search-focus-active .topbar-actions .seen-search.open {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 88px);
+  left: 50%;
+  z-index: 130;
+  transform: translateX(-50%);
+}
+
 body.profile-open {
   overflow: hidden;
 }
@@ -723,7 +731,26 @@ body.search-focus-active #logoutButton {
 }
 
 .topbar-actions .seen-search.open {
-  grid-template-columns: minmax(320px, 420px);
+  width: min(560px, calc(100vw - 32px));
+  grid-template-columns: minmax(0, 1fr);
+  animation: seen-search-center-in 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes seen-search-center-in {
+  from {
+    opacity: 0.72;
+    transform:
+      translate(
+        calc(-50% + var(--seen-search-origin-x, 0px)),
+        var(--seen-search-origin-y, -18px)
+      )
+      scale(0.82);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
 }
 
 .seen-search-toggle {
@@ -1238,6 +1265,7 @@ body.search-focus-active #logoutButton {
   .whisper-dialog,
   .whisper-message,
   .whisper-badge,
+  .seen-search.open,
   .whisper-form.sending button {
     animation: none;
   }
@@ -1245,6 +1273,8 @@ body.search-focus-active #logoutButton {
   .whisper-toggle,
   .whisper-player,
   .whisper-form,
+  .seen-search,
+  .seen-search-box,
   .rolling-number-active {
     transition: none;
   }
@@ -3100,10 +3130,38 @@ body.search-focus-active #logoutButton {
   }
 
   .topbar-actions .seen-search.open {
-    grid-column: 2 / -1;
-    width: 100%;
+    grid-column: 1 / -1;
+    width: calc(100vw - 20px);
     min-width: 0;
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  body.search-focus-active .topbar-actions .seen-search.open {
+    top: calc(env(safe-area-inset-top, 0px) + 82px);
+    left: 10px;
+    right: 10px;
+    transform: none;
+  }
+
+  body.search-focus-active .topbar-actions .seen-search.open {
+    animation-name: seen-search-mobile-center-in;
+  }
+
+  @keyframes seen-search-mobile-center-in {
+    from {
+      opacity: 0.72;
+      transform:
+        translate(
+          var(--seen-search-origin-x, 0px),
+          var(--seen-search-origin-y, -16px)
+        )
+        scale(0.86);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
   }
 
   .whisper-popover {
