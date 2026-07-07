@@ -3131,15 +3131,15 @@ body.search-focus-active #logoutButton {
 
   .topbar-actions .seen-search.open {
     grid-column: 1 / -1;
-    width: calc(100vw - 20px);
+    width: auto;
     min-width: 0;
     grid-template-columns: minmax(0, 1fr);
   }
 
   body.search-focus-active .topbar-actions .seen-search.open {
     top: calc(env(safe-area-inset-top, 0px) + 82px);
-    left: 10px;
-    right: 10px;
+    left: 8px;
+    right: 8px;
     transform: none;
   }
 
