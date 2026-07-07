@@ -3750,6 +3750,19 @@ body.search-focus-active #logoutButton {
     grid-template-columns: 1fr;
   }
 
+  .rank-item.activity-item {
+    grid-template-columns: minmax(0, 1fr) max-content max-content;
+    gap: 10px;
+    padding: 8px 10px;
+  }
+
+  .rank-item.activity-item > strong,
+  .rank-item.activity-item > .muted {
+    justify-self: end;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+
   .rank-item.leaderboard-item {
     grid-template-columns: 28px minmax(0, 1fr) max-content;
     grid-template-areas: "rank player time";
