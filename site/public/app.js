@@ -22,6 +22,7 @@ const state = {
   chartAnimations: {},
   chartAnimationFrames: {},
   chartAnimationDurations: {},
+  chartHover: {},
   seenPlayers: [],
   whisperPlayers: [],
   whisperTarget: null,
@@ -766,6 +767,9 @@ function drawBarChart(canvas, data, options = {}) {
   const line = getCssColor('--line');
   const accent = getCssColor('--accent');
   const panelSoft = getCssColor('--panel-soft');
+  const isDarkTheme = document.documentElement.dataset.theme === 'dark';
+  const hoverFill = isDarkTheme ? 'rgba(255, 255, 255, 0.18)' : 'rgba(255, 255, 255, 0.34)';
+  const hoverStroke = isDarkTheme ? 'rgba(255, 255, 255, 0.46)' : 'rgba(255, 255, 255, 0.72)';
   const padding = { top: 24, right: 18, bottom: 44, left: 58 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
@@ -810,6 +814,7 @@ function drawBarChart(canvas, data, options = {}) {
   const slotWidth = chartData.length > 0 ? chartWidth / chartData.length : 0;
   const barWidth = chartData.length > 0 ? Math.max(6, Math.min(28, slotWidth * 0.72)) : 0;
   const hitboxes = [];
+  const hoveredIndex = Number.isInteger(state.chartHover[canvas.id]) ? state.chartHover[canvas.id] : -1;
 
   chartData.forEach((item, index) => {
     const value = Number(item.value);
@@ -818,13 +823,29 @@ function drawBarChart(canvas, data, options = {}) {
     const x = slotX + (slotWidth - barWidth) / 2;
     const barHeight = Math.max(1, (value / maxValue) * chartHeight * animationProgress);
     const y = padding.top + chartHeight - barHeight;
-    ctx.fillStyle = accent;
-    ctx.fillRect(x, y, barWidth, barHeight);
+    const isHovered = index === hoveredIndex;
+    if (isHovered) {
+      ctx.save();
+      ctx.shadowColor = accent;
+      ctx.shadowBlur = 18;
+      ctx.fillStyle = accent;
+      ctx.fillRect(x, y, barWidth, barHeight);
+      ctx.restore();
+      ctx.fillStyle = hoverFill;
+      ctx.fillRect(x, y, barWidth, barHeight);
+      ctx.strokeStyle = hoverStroke;
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(x - 0.5, y - 0.5, barWidth + 1, barHeight + 1);
+    } else {
+      ctx.fillStyle = accent;
+      ctx.fillRect(x, y, barWidth, barHeight);
+    }
     hitboxes.push({
       x: slotX,
       y: padding.top,
       width: slotWidth,
       height: chartHeight,
+      index,
       label: item.label,
       value,
       tooltip: options.tooltip ? options.tooltip(item) : `${item.label}: ${formatNumber(value)}`
@@ -1030,12 +1051,19 @@ function showChartTooltip(canvas, event, { pin = false } = {}) {
     y >= box.y &&
     y <= box.y + box.height
   );
+  const nextHoverIndex = hit && Number.isInteger(hit.index) ? hit.index : null;
+  if (state.chartHover[canvas.id] !== nextHoverIndex) {
+    state.chartHover[canvas.id] = nextHoverIndex;
+    redrawCharts();
+  }
 
   if (!hit) {
+    canvas.style.cursor = '';
     if (!state.chartTooltipPinned) tooltip.hidden = true;
     return;
   }
 
+  canvas.style.cursor = Number.isInteger(hit.index) ? 'pointer' : '';
   tooltip.textContent = hit.tooltip;
   tooltip.hidden = false;
   clearTimeout(state.chartTooltipTimer);
@@ -1057,7 +1085,13 @@ function hideChartTooltip() {
   if (tooltip) tooltip.hidden = true;
 }
 
-function hideChartTooltipIfNotPinned() {
+function hideChartTooltipIfNotPinned(event) {
+  const canvas = event?.currentTarget;
+  if (canvas?.id && state.chartHover[canvas.id] != null) {
+    state.chartHover[canvas.id] = null;
+    canvas.style.cursor = '';
+    redrawCharts();
+  }
   if (!state.chartTooltipPinned) hideChartTooltip();
 }
 

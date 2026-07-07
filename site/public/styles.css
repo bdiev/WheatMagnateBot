@@ -1500,7 +1500,7 @@ body.search-focus-active #logoutButton {
 
 .stat,
 .panel {
-  border: 1px solid var(--line);
+  border: 1px solid transparent;
   border-radius: 8px;
   background: var(--panel);
   box-shadow: var(--shadow);
@@ -2642,7 +2642,7 @@ body.search-focus-active #logoutButton {
 }
 
 .admin-command-panel:hover {
-  border-color: color-mix(in srgb, var(--accent) 38%, var(--line));
+  border-color: transparent;
   transform: translateY(-1px);
   box-shadow: 0 10px 22px color-mix(in srgb, var(--accent) 9%, transparent);
 }
@@ -3506,7 +3506,7 @@ body.search-focus-active #logoutButton {
   .server-stats-grid .stat.carousel-active,
   .obsidian-stats-grid .stat.carousel-active,
   .farm-admin-grid[data-loop-carousel] .panel.carousel-active {
-    border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+    border-color: transparent;
     opacity: 1;
     transform: scale(1) translateY(0);
     box-shadow:
