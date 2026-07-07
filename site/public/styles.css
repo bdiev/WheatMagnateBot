@@ -2117,6 +2117,33 @@ body.search-focus-active #logoutButton {
   min-width: 0;
 }
 
+.player-identity.online,
+.player-identity.offline {
+  position: relative;
+}
+
+.player-identity.online .player-head,
+.player-identity.offline .player-head {
+  position: relative;
+}
+
+.player-identity.online::after,
+.player-identity.offline::after {
+  content: "";
+  position: absolute;
+  left: 20px;
+  bottom: -1px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--panel-soft);
+  border-radius: 999px;
+  background: #d84343;
+}
+
+.player-identity.online::after {
+  background: #55c85a;
+}
+
 .rank-index {
   display: inline-flex;
   align-items: center;
@@ -2371,7 +2398,7 @@ body.search-focus-active #logoutButton {
   border: 0;
   padding: 0;
   color: var(--text);
-  background: transparent;
+  background: transparent !important;
   overflow: hidden;
   text-align: left;
   text-overflow: ellipsis;
@@ -2379,10 +2406,14 @@ body.search-focus-active #logoutButton {
   font: inherit;
   font-weight: 900;
   cursor: pointer;
+  box-shadow: none;
+  appearance: none;
+  min-height: 0;
 }
 
 .player-profile-value-button:hover {
   color: var(--accent-strong);
+  background: transparent !important;
 }
 
 .player-profile-chat {
@@ -3660,9 +3691,10 @@ body.search-focus-active #logoutButton {
     grid-template-columns: 28px minmax(0, 1fr);
     grid-template-areas:
       "rank player"
-      "time time";
+      ". time";
     align-items: center;
-    gap: 8px 10px;
+    gap: 4px 10px;
+    padding: 8px 10px;
   }
 
   .rank-item.leaderboard-item .rank-index {
@@ -3681,16 +3713,12 @@ body.search-focus-active #logoutButton {
     min-width: 0;
   }
 
-  .rank-item.leaderboard-item .leaderboard-player .pill {
-    justify-self: start;
-    width: fit-content;
-  }
-
   .rank-item.leaderboard-item > strong {
     grid-area: time;
     justify-self: start;
     min-width: 0;
     max-width: none;
+    font-size: 13px;
     text-align: left;
     white-space: normal;
   }

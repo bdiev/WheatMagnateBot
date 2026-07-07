@@ -220,11 +220,13 @@ function playerHeadUrl(username, size = 32) {
   return `https://minotar.net/avatar/${safeUsername}/${size}`;
 }
 
-function playerIdentity(username, size = 28) {
+function playerIdentity(username, size = 28, { status = null } = {}) {
   const safeName = escapeHtml(username || 'Unknown');
   const safeUsername = escapeHtml(username || '');
+  const statusClass = status === 'online' ? ' online' : status === 'offline' ? ' offline' : '';
+  const statusLabel = status === 'online' ? 'Online' : status === 'offline' ? 'Offline' : '';
   return `
-    <span class="player-identity" role="button" tabindex="0" data-player="${safeUsername}" title="Open player profile">
+    <span class="player-identity${statusClass}" role="button" tabindex="0" data-player="${safeUsername}" title="Open player profile"${statusLabel ? ` aria-label="${safeName}: ${statusLabel}"` : ''}>
       <img class="player-head" src="${playerHeadUrl(username, size)}" alt="" loading="eager" decoding="async" width="${size}" height="${size}">
       <span>${safeName}</span>
     </span>
@@ -2150,8 +2152,7 @@ function renderPlayerStats(payload = {}) {
       <div class="rank-item leaderboard-item">
         <span class="rank-index">${index + 1}</span>
         <span class="leaderboard-player">
-          ${playerIdentity(player.username, 28)}
-          <span class="pill ${player.isOnline ? 'online' : ''}">${player.isOnline ? 'online' : 'offline'}</span>
+          ${playerIdentity(player.username, 28, { status: player.isOnline ? 'online' : 'offline' })}
         </span>
         <strong>${escapeHtml(player.playtime)}</strong>
       </div>
