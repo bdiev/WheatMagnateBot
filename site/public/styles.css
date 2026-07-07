@@ -3472,12 +3472,14 @@ body.search-focus-active #logoutButton {
   .server-stats-grid,
   .obsidian-stats-grid,
   .farm-admin-grid[data-loop-carousel] {
+    --carousel-gap: 16px;
+    --carousel-peek: 20px;
     display: flex;
     flex-wrap: nowrap;
     grid-column: 1 / -1;
     width: 100%;
     max-width: 100%;
-    gap: 12px;
+    gap: var(--carousel-gap);
     margin: -8px -10px;
     padding: 8px 10px;
     overflow-x: auto;
@@ -3504,7 +3506,7 @@ body.search-focus-active #logoutButton {
   .obsidian-stats-grid .stat,
   .farm-admin-grid[data-loop-carousel] .panel {
     display: block;
-    flex: 0 0 calc(100% - 20px);
+    flex: 0 0 calc(100% - var(--carousel-peek));
     min-height: 118px;
     grid-column: auto;
     scroll-snap-align: center;
