@@ -1628,9 +1628,10 @@ body.search-focus-active #logoutButton {
   display: grid;
   grid-column: 1 / -1;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  grid-template-rows: 420px 260px;
+  grid-template-rows: repeat(2, minmax(0, 342px));
   gap: 16px;
   align-items: stretch;
+  height: 700px;
 }
 
 .server-layout .panel {
@@ -1650,7 +1651,9 @@ body.search-focus-active #logoutButton {
 .server-tps-panel {
   grid-column: 1;
   grid-row: 1;
-  min-height: 420px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
 }
 
 .server-nearby-panel {
@@ -1658,7 +1661,15 @@ body.search-focus-active #logoutButton {
   grid-row: 2;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  min-height: 260px;
+  min-height: 0;
+}
+
+.server-tps-panel .chart-scroll {
+  min-height: 0;
+}
+
+.server-tps-panel .chart {
+  height: 100%;
 }
 
 .server-nearby-panel .rank-list {
@@ -3256,6 +3267,7 @@ body.search-focus-active #logoutButton {
   .server-layout {
     grid-template-columns: 1fr;
     grid-template-rows: auto;
+    height: auto;
   }
 
   .server-tps-panel,
