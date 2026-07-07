@@ -3510,8 +3510,8 @@ body.search-focus-active #logoutButton {
     min-height: 118px;
     grid-column: auto;
     scroll-snap-align: center;
-    opacity: 0.72;
-    transform: scale(0.94) translateY(4px);
+    opacity: 1;
+    transform: none;
     transition:
       opacity 240ms ease,
       transform 260ms cubic-bezier(0.16, 1, 0.3, 1),
@@ -3554,7 +3554,7 @@ body.search-focus-active #logoutButton {
   .farm-admin-grid[data-loop-carousel] .panel.carousel-active {
     border-color: transparent;
     opacity: 1;
-    transform: scale(1) translateY(0);
+    transform: none;
     box-shadow: none;
   }
 
