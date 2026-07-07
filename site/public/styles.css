@@ -1503,7 +1503,7 @@ body.search-focus-active #logoutButton {
   border: 1px solid transparent;
   border-radius: 8px;
   background: var(--panel);
-  box-shadow: var(--shadow);
+  box-shadow: none;
   transition: background-color 260ms ease, border-color 260ms ease, box-shadow 260ms ease;
 }
 
@@ -2644,7 +2644,7 @@ body.search-focus-active #logoutButton {
 .admin-command-panel:hover {
   border-color: transparent;
   transform: translateY(-1px);
-  box-shadow: 0 10px 22px color-mix(in srgb, var(--accent) 9%, transparent);
+  box-shadow: none;
 }
 
 .farm-admin-grid {
@@ -3509,9 +3509,7 @@ body.search-focus-active #logoutButton {
     border-color: transparent;
     opacity: 1;
     transform: scale(1) translateY(0);
-    box-shadow:
-      0 14px 28px color-mix(in srgb, var(--accent) 12%, transparent),
-      var(--shadow);
+    box-shadow: none;
   }
 
   @media (prefers-reduced-motion: reduce) {

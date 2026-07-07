@@ -3388,6 +3388,7 @@ function normalizeStatusReason(reason) {
 function setDisconnectReason(reason) {
   const cleanReason = normalizeStatusReason(reason);
   lastDisconnectReason = cleanReason || null;
+  if (cleanReason) lastOfflineReason = cleanReason;
 }
 
 function buildDisconnectReason(reason, fallback = 'Connection lost') {
@@ -3418,6 +3419,7 @@ let shouldReconnect = true;
 let reconnectTimeRemaining = 0;
 let reconnectTimestamp = 0;
 let lastDisconnectReason = null;
+let lastOfflineReason = null;
 let reconnectCountdownInterval = null;
 let reconnectTimer = null;
 let resumeTimer = null;
@@ -6129,6 +6131,7 @@ function getBotStatusSnapshot() {
     uptimeMs: connected ? Math.max(0, Date.now() - startTime) : 0,
     reconnectInMs: !connected && reconnectTimestamp ? Math.max(0, reconnectTimestamp - Date.now()) : null,
     lastDisconnectReason,
+    lastOfflineReason,
     health: connected && bot.health != null ? Math.round(bot.health * 2) / 2 : null,
     food: connected && bot.food != null ? Math.round(bot.food * 2) / 2 : null,
     armor: armorItems,

@@ -2064,7 +2064,7 @@ function renderBotStats(payload) {
     <div><span>Game mode</span><strong>${escapeHtml(bot?.gameMode || '-')}</strong></div>
     <div><span>XP level</span><strong>${bot?.xpLevel == null ? '-' : formatNumber(bot.xpLevel)}</strong></div>
     <div><span>Following</span><strong>${escapeHtml(bot?.followTarget || 'None')}</strong></div>
-    <div><span>Last offline reason</span><strong>${escapeHtml(bot?.lastDisconnectReason || '-')}</strong></div>
+    <div><span>Last offline reason</span><strong>${escapeHtml(bot?.lastOfflineReason || bot?.lastDisconnectReason || '-')}</strong></div>
   `;
 }
 
