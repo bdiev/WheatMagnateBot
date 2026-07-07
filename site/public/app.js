@@ -2012,7 +2012,7 @@ function renderChat(payload) {
   const topChatters = payload.topChatters || [];
   renderStable('#topChatters', topChatters.length
     ? topChatters.map((player, index) => `
-      <div class="rank-item">
+      <div class="rank-item top-chatter-item">
         <span class="rank-index">${index + 1}</span>
         ${playerIdentity(player.username, 28)}
         <strong>${formatNumber(player.count)}</strong>

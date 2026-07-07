@@ -3756,6 +3756,18 @@ body.search-focus-active #logoutButton {
     padding: 8px 10px;
   }
 
+  .rank-item.top-chatter-item {
+    grid-template-columns: 28px minmax(0, 1fr) max-content;
+    gap: 10px;
+    padding: 8px 10px;
+  }
+
+  .rank-item.top-chatter-item > strong {
+    justify-self: end;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+
   .rank-item.activity-item > strong,
   .rank-item.activity-item > .muted {
     justify-self: end;
