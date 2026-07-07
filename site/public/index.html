@@ -655,6 +655,27 @@
           </section>
         </section>
 
+        <section class="panel admin-log-panel">
+          <div class="panel-head">
+            <div>
+              <h2>System Log</h2>
+              <p>Recent site events, admin actions and queued bot commands.</p>
+            </div>
+            <div class="admin-log-tools">
+              <select id="adminLogLevel" aria-label="Filter system log level">
+                <option value="all">All</option>
+                <option value="audit">Audit</option>
+                <option value="info">Info</option>
+                <option value="warn">Warn</option>
+                <option value="error">Error</option>
+                <option value="debug">Debug</option>
+              </select>
+              <button id="adminLogsRefresh" type="button">Refresh</button>
+            </div>
+          </div>
+          <div id="adminSystemLogs" class="admin-log-list"></div>
+        </section>
+
         <section class="panel">
           <div class="panel-head">
             <div>

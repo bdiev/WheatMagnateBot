@@ -117,6 +117,21 @@ function assertDatabase() {
   }
 }
 
+async function recordSystemLog({ level = 'info', category = 'site', actor = null, message = '', details = null } = {}) {
+  if (!pool || !message) return;
+  const safeLevel = ['debug', 'info', 'warn', 'error', 'audit'].includes(level) ? level : 'info';
+  const safeCategory = String(category || 'site').trim().slice(0, 64) || 'site';
+  const safeActor = actor ? String(actor).trim().slice(0, 64) : null;
+  try {
+    await pool.query(`
+      INSERT INTO site_system_logs (level, category, actor_username, message, details)
+      VALUES ($1, $2, $3, $4, $5)
+    `, [safeLevel, safeCategory, safeActor, String(message).slice(0, 2000), details || null]);
+  } catch (err) {
+    console.error('[SiteLog] Failed to write system log:', err.message);
+  }
+}
+
 function toInt(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -485,6 +500,25 @@ async function ensureOptionalTables() {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS bot_commands_status_created_idx
     ON bot_commands (status, created_at)
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS site_system_logs (
+      id BIGSERIAL PRIMARY KEY,
+      level VARCHAR(16) NOT NULL DEFAULT 'info',
+      category VARCHAR(64) NOT NULL DEFAULT 'site',
+      actor_username VARCHAR(64),
+      message TEXT NOT NULL,
+      details JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS site_system_logs_created_at_idx
+    ON site_system_logs (created_at DESC)
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS site_system_logs_level_created_idx
+    ON site_system_logs (level, created_at DESC)
   `);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS admin_settings (
@@ -1673,6 +1707,7 @@ async function handleAuth(req, res, url) {
     if (token) {
       await pool.query(`DELETE FROM site_sessions WHERE token_hash = $1`, [hashToken(token)]);
     }
+    await recordSystemLog({ level: 'info', category: 'auth', message: 'User logged out.' });
     clearSessionCookie(res);
     sendJson(res, 200, { ok: true });
     return true;
@@ -1698,6 +1733,13 @@ async function handleAuth(req, res, url) {
       VALUES ($1, $2, $3::text, $4::text, CASE WHEN $4::text = 'approved' THEN NOW() ELSE NULL END)
       RETURNING id, username, role, status, created_at, approved_at
     `, [username, hashPassword(password), role, status]);
+    await recordSystemLog({
+      level: isAdmin ? 'audit' : 'info',
+      category: 'auth',
+      actor: username,
+      message: isAdmin ? 'Primary admin account registered.' : 'New site registration is waiting for approval.',
+      details: { username, role, status }
+    });
 
     if (isAdmin) {
       await createSession(res, inserted.rows[0].id);
@@ -1736,6 +1778,13 @@ async function handleAuth(req, res, url) {
       return true;
     }
     await createSession(res, user.id);
+    await recordSystemLog({
+      level: 'info',
+      category: 'auth',
+      actor: user.username,
+      message: 'User logged in.',
+      details: { role: user.role }
+    });
     sendJson(res, 200, { authenticated: true, user: publicUser(user) });
     return true;
   }
@@ -1812,6 +1861,14 @@ async function updateAdminUser(currentUser, body) {
     throw err;
   }
 
+  await recordSystemLog({
+    level: 'audit',
+    category: 'admin_users',
+    actor: currentUser.username,
+    message: `Admin user action: ${action}`,
+    details: { targetUsername: username, action }
+  });
+
   return getAdminUsers(currentUser);
 }
 
@@ -1885,6 +1942,13 @@ async function setAdminPlaytime(currentUser, body) {
                   updated_at = NOW()
     RETURNING username
   `, [username, totalSeconds]);
+  await recordSystemLog({
+    level: 'audit',
+    category: 'admin_data',
+    actor: currentUser.username,
+    message: `Updated playtime for ${username}.`,
+    details: { username, totalSeconds }
+  });
 
   return {
     username: result.rows[0]?.username || username,
@@ -1922,11 +1986,91 @@ async function setAdminRegistrationDate(currentUser, body) {
     RETURNING username,
               TO_CHAR(registration_at AT TIME ZONE 'UTC', 'MM/DD/YYYY HH24:MI:SS') AS registration_display
   `, [username, registrationDate]);
+  await recordSystemLog({
+    level: 'audit',
+    category: 'admin_data',
+    actor: currentUser.username,
+    message: `Updated registration date for ${username}.`,
+    details: { username, registrationAt: registrationDate.toISOString() }
+  });
 
   return {
     username: result.rows[0]?.username || username,
     registrationAt: registrationDate,
     registrationDisplay: result.rows[0]?.registration_display || match[2]
+  };
+}
+
+function commandLogLevel(status, error) {
+  if (error || status === 'failed') return 'error';
+  if (status === 'pending' || status === 'running') return 'info';
+  return 'audit';
+}
+
+async function getAdminSystemLogs(currentUser, url) {
+  assertAdminUser(currentUser);
+  const limit = Math.min(300, Math.max(20, toInt(url.searchParams.get('limit'), 120)));
+  const level = String(url.searchParams.get('level') || 'all').toLowerCase();
+  const allowedLevels = new Set(['debug', 'info', 'warn', 'error', 'audit']);
+  const useLevelFilter = allowedLevels.has(level);
+
+  const logsQuery = useLevelFilter
+    ? pool.query(`
+        SELECT id::text, level, category, actor_username, message, details, created_at
+        FROM site_system_logs
+        WHERE level = $1
+        ORDER BY created_at DESC
+        LIMIT $2
+      `, [level, limit])
+    : pool.query(`
+        SELECT id::text, level, category, actor_username, message, details, created_at
+        FROM site_system_logs
+        ORDER BY created_at DESC
+        LIMIT $1
+      `, [limit]);
+
+  const commandsQuery = pool.query(`
+    SELECT id::text, source, requested_by, command_type, payload, status, error, created_at, finished_at
+    FROM bot_commands
+    ORDER BY created_at DESC
+    LIMIT $1
+  `, [limit]);
+
+  const [logsResult, commandsResult] = await Promise.all([logsQuery, commandsQuery]);
+  const logs = logsResult.rows.map(row => ({
+    id: `log-${row.id}`,
+    kind: 'system',
+    level: row.level,
+    category: row.category,
+    actor: row.actor_username,
+    message: row.message,
+    details: row.details,
+    createdAt: row.created_at
+  }));
+  const commands = commandsResult.rows
+    .map(row => ({
+      id: `command-${row.id}`,
+      kind: 'command',
+      level: commandLogLevel(row.status, row.error),
+      category: 'bot_command',
+      actor: row.requested_by,
+      message: `Bot command ${row.command_type} is ${row.status}.`,
+      details: {
+        commandId: row.id,
+        source: row.source,
+        commandType: row.command_type,
+        payload: row.payload,
+        error: row.error,
+        finishedAt: row.finished_at
+      },
+      createdAt: row.created_at
+    }))
+    .filter(row => !useLevelFilter || row.level === level);
+
+  return {
+    logs: [...logs, ...commands]
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, limit)
   };
 }
 
@@ -2002,6 +2146,7 @@ async function getAdminControlState(currentUser) {
 }
 
 async function handleApi(req, res, url) {
+  let currentUser = null;
   try {
     if (url.pathname === '/api/health') {
       sendJson(res, 200, { ok: true, database: Boolean(pool) });
@@ -2013,7 +2158,7 @@ async function handleApi(req, res, url) {
       return;
     }
 
-    const currentUser = await getCurrentUser(req);
+    currentUser = await getCurrentUser(req);
     if (!currentUser) {
       sendError(res, 401, 'Login required.');
       return;
@@ -2031,6 +2176,10 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/admin/control-state' && req.method === 'GET') {
       sendJson(res, 200, await getAdminControlState(currentUser));
+      return;
+    }
+    if (url.pathname === '/api/admin/system-logs' && req.method === 'GET') {
+      sendJson(res, 200, await getAdminSystemLogs(currentUser, url));
       return;
     }
     if (url.pathname === '/api/admin/bot-command' && req.method === 'POST') {
@@ -2112,6 +2261,13 @@ async function handleApi(req, res, url) {
     }
     sendError(res, 404, 'API route not found.');
   } catch (err) {
+    await recordSystemLog({
+      level: 'error',
+      category: 'api',
+      actor: currentUser?.username,
+      message: `${req.method} ${url.pathname}: ${err.message || 'Internal server error.'}`,
+      details: { statusCode: err.statusCode || 500 }
+    });
     sendError(res, err.statusCode || 500, err.message || 'Internal server error.');
   }
 }
@@ -2171,6 +2327,11 @@ ensureOptionalTables()
     server.listen(PORT, () => {
       console.log(`[Site] WheatMagnateBot site: http://localhost:${PORT}`);
       console.log(`[Site] Static files: ${pathToFileURL(PUBLIC_DIR).href}`);
+      recordSystemLog({
+        level: 'info',
+        category: 'site',
+        message: `Site server started on port ${PORT}.`
+      });
     });
   });
 

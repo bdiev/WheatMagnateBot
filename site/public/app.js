@@ -39,6 +39,7 @@ const state = {
   adminPlayerSearchRequests: {},
   adminControlState: null,
   adminControlLoading: false,
+  adminLogsLoading: false,
   obsidianCoordinateEditorOpen: false,
   supplyTooltipItems: {},
   itemIcons: {},
@@ -571,6 +572,7 @@ function setActiveTab(tab) {
   if (tab === 'admin') {
     loadAdminUsers();
     loadAdminControlState();
+    loadAdminSystemLogs();
   }
   requestAnimationFrame(updateCarousels);
   redrawCharts();
@@ -2562,6 +2564,59 @@ function renderAdminUsers(users = []) {
   }).join('');
 }
 
+function renderLogDetails(details) {
+  if (!details || typeof details !== 'object') return '';
+  const text = JSON.stringify(details, null, 2);
+  if (!text || text === '{}') return '';
+  return `<pre>${escapeHtml(text)}</pre>`;
+}
+
+function renderAdminSystemLogs(logs = []) {
+  const list = $('#adminSystemLogs');
+  if (!list) return;
+  if (!logs.length) {
+    list.innerHTML = '<div class="empty">No system log entries yet.</div>';
+    return;
+  }
+
+  list.innerHTML = logs.map(entry => {
+    const level = escapeHtml(entry.level || 'info');
+    const category = escapeHtml(entry.category || entry.kind || 'system');
+    const actor = entry.actor ? `<span class="admin-log-actor">${escapeHtml(entry.actor)}</span>` : '';
+    const kind = escapeHtml(entry.kind || 'system');
+    const details = renderLogDetails(entry.details);
+    return `
+      <article class="admin-log-entry ${level}" data-kind="${kind}">
+        <div class="admin-log-main">
+          <span class="admin-log-time">${formatDate(entry.createdAt)}</span>
+          <span class="pill ${level}">${level}</span>
+          <span class="admin-log-category">${category}</span>
+          ${actor}
+        </div>
+        <p>${escapeHtml(entry.message || '')}</p>
+        ${details ? `<details class="admin-log-details"><summary>Details</summary>${details}</details>` : ''}
+      </article>
+    `;
+  }).join('');
+}
+
+async function loadAdminSystemLogs() {
+  if (state.currentUser?.role !== 'admin') return;
+  if (state.adminLogsLoading) return;
+  const list = $('#adminSystemLogs');
+  const level = $('#adminLogLevel')?.value || 'all';
+  state.adminLogsLoading = true;
+  try {
+    if (list && !list.children.length) list.innerHTML = '<div class="empty">Loading system log...</div>';
+    const payload = await fetchJson(`/api/admin/system-logs?limit=160&level=${encodeURIComponent(level)}`);
+    renderAdminSystemLogs(payload.logs || []);
+  } catch (err) {
+    if (list) list.innerHTML = `<div class="empty">Could not load system log: ${escapeHtml(err.message)}</div>`;
+  } finally {
+    state.adminLogsLoading = false;
+  }
+}
+
 async function loadAdminUsers() {
   if (state.currentUser?.role !== 'admin') return;
   const list = $('#adminUsersList');
@@ -2964,6 +3019,7 @@ async function handleAdminUserAction(event) {
       username: button.dataset.username
     });
     renderAdminUsers(payload.users || []);
+    await loadAdminSystemLogs();
   } catch (err) {
     setBanner(`Could not update user: ${err.message}`);
   } finally {
@@ -2992,6 +3048,7 @@ async function handleAdminBotCommand(event) {
     }
     setBanner(`Bot command queued: ${payload.command?.commandType || commandType} #${payload.command?.id || '-'}.`);
     await Promise.all([loadAll(), loadAdminControlState()]);
+    await loadAdminSystemLogs();
     scheduleAdminControlRefresh();
   } catch (err) {
     setBanner(`Could not queue bot command: ${err.message}`);
@@ -3003,7 +3060,7 @@ async function handleAdminBotCommand(event) {
 async function queueAdminCommand(commandType, payload = {}) {
   const response = await postJson('/api/admin/bot-command', { commandType, payload });
   setBanner(`Bot command queued: ${response.command?.commandType || commandType} #${response.command?.id || '-'}.`);
-  await Promise.all([loadAll(), loadAdminControlState()]);
+  await Promise.all([loadAll(), loadAdminControlState(), loadAdminSystemLogs()]);
 }
 
 async function handleAdminControlAction(event) {
@@ -3061,14 +3118,14 @@ async function handleAdminControlAction(event) {
       const result = await postJson('/api/admin/playtime', payload);
       setBanner(`Updated ${result.username} playtime to ${result.playtime}.`);
       $('#adminPlaytimeInput').value = '';
-      await loadAll();
+      await Promise.all([loadAll(), loadAdminSystemLogs()]);
       return;
     }
     if (action === 'registration_date_set') {
       const result = await postJson('/api/admin/registration-date', payload);
       setBanner(`Updated ${result.username} registration date to ${result.registrationDisplay}.`);
       $('#adminRegistrationDateInput').value = '';
-      await loadAll();
+      await Promise.all([loadAll(), loadAdminSystemLogs()]);
       return;
     }
     await queueAdminCommand(action, payload);
@@ -3130,6 +3187,7 @@ async function loadAll() {
     renderServerStats(serverStats);
     if (state.currentUser?.role === 'admin') {
       await loadAdminControlState();
+      if (state.activeTab === 'admin') await loadAdminSystemLogs();
     }
     if ($('#whisperPanel')?.classList.contains('open')) {
       await loadWhisperOnlinePlayers();
@@ -3195,6 +3253,8 @@ $('#authModeToggle').addEventListener('click', () => setAuthMode(state.authMode 
 $('#navMenuToggle')?.addEventListener('click', toggleNavMenu);
 $('#logoutButton')?.addEventListener('click', handleLogout);
 $('#adminUsersRefresh')?.addEventListener('click', loadAdminUsers);
+$('#adminLogsRefresh')?.addEventListener('click', loadAdminSystemLogs);
+$('#adminLogLevel')?.addEventListener('change', loadAdminSystemLogs);
 $('#adminUsersList')?.addEventListener('click', handleAdminUserAction);
 document.addEventListener('click', handleAdminBotCommand);
 document.addEventListener('click', handleAdminControlAction);

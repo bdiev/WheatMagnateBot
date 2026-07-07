@@ -2422,6 +2422,51 @@ body.search-focus-active #logoutButton {
   background: #9b2f2f;
 }
 
+.pill.audit {
+  color: #173f24;
+  background: #c9efcf;
+}
+
+.pill.info {
+  color: #14324f;
+  background: #d6e8fb;
+}
+
+.pill.warn {
+  color: #4d3200;
+  background: #ffe0a3;
+}
+
+.pill.error {
+  color: #fff;
+  background: #a93636;
+}
+
+.pill.debug {
+  color: #31343b;
+  background: #e2e5eb;
+}
+
+:root[data-theme="dark"] .pill.audit {
+  color: #d4f7da;
+  background: #234b2b;
+}
+
+:root[data-theme="dark"] .pill.info {
+  color: #d8ecff;
+  background: #213d5a;
+}
+
+:root[data-theme="dark"] .pill.warn {
+  color: #ffe4ad;
+  background: #554019;
+}
+
+:root[data-theme="dark"] .pill.debug {
+  color: #e6e8ee;
+  background: #3d414a;
+}
+
 .pill.low {
   min-width: 40px;
   color: var(--warn);
@@ -2466,6 +2511,113 @@ body.search-focus-active #logoutButton {
 .admin-user-actions button {
   min-height: var(--button-height);
   padding: var(--button-padding);
+}
+
+.admin-log-panel {
+  grid-column: 1 / -1;
+}
+
+.admin-log-tools {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.admin-log-tools select {
+  min-height: var(--button-height);
+  border: 1px solid var(--line);
+  border-radius: var(--button-radius);
+  color: var(--text);
+  background: var(--panel-soft);
+  padding: 0 12px;
+}
+
+.admin-log-list {
+  display: grid;
+  gap: 8px;
+  max-height: 520px;
+  overflow: auto;
+  padding: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.admin-log-entry {
+  display: grid;
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--button-radius);
+  padding: 10px 12px;
+  background: var(--panel-soft);
+}
+
+.admin-log-entry.audit {
+  border-left-color: #3c9f52;
+}
+
+.admin-log-entry.info {
+  border-left-color: #4c8fce;
+}
+
+.admin-log-entry.warn {
+  border-left-color: #d49a24;
+}
+
+.admin-log-entry.error {
+  border-left-color: #b73a3a;
+}
+
+.admin-log-entry.debug {
+  border-left-color: #7a808c;
+}
+
+.admin-log-main {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.admin-log-time,
+.admin-log-category,
+.admin-log-actor {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.admin-log-category {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.admin-log-actor::before {
+  content: "@";
+}
+
+.admin-log-entry p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.admin-log-details summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.admin-log-details pre {
+  max-height: 220px;
+  overflow: auto;
+  margin: 8px 0 0;
+  border: 1px solid var(--line);
+  border-radius: var(--button-radius);
+  padding: 10px;
+  color: var(--text);
+  background: var(--panel);
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
 }
 
 .admin-command-panel {
