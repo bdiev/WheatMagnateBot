@@ -1151,16 +1151,20 @@ body.search-focus-active #logoutButton {
   min-width: 64px;
   min-height: 32px;
   height: 32px;
+  border: 1px solid color-mix(in srgb, #d65757 42%, var(--line));
   border-radius: 8px;
   padding: 0 11px;
-  background: #9b2f2f;
+  color: #f0b8b8;
+  background: color-mix(in srgb, #9b2f2f 12%, transparent);
   font-size: 12px;
   line-height: 1;
+  box-shadow: none;
 }
 
 .whisper-delete-dialog:hover {
-  color: #fff;
-  background: #7d2424;
+  color: #ffd6d6;
+  border-color: color-mix(in srgb, #d65757 62%, var(--line));
+  background: color-mix(in srgb, #9b2f2f 20%, var(--panel));
 }
 
 .whisper-messages {
@@ -1242,9 +1246,20 @@ body.search-focus-active #logoutButton {
   min-width: 0;
   min-height: 38px;
   height: 38px;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--line));
   border-radius: 8px;
   padding: 0 10px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  box-shadow: none;
   font-size: 13px;
+}
+
+.whisper-form button:hover,
+.whisper-form button:focus-visible {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--line));
+  background: color-mix(in srgb, var(--accent) 16%, var(--panel));
 }
 
 .whisper-form.sending {
