@@ -1982,13 +1982,18 @@ function renderChatMessages(messages) {
         article.innerHTML = `
           <div class="chat-user">${playerIdentity(message.username, 24)}</div>
           <div class="chat-text"></div>
-          <time class="chat-time">${formatChatTime(message.createdAt)}</time>
+          <div class="chat-meta">
+            <time class="chat-time">${formatChatTime(message.createdAt)}</time>
+          </div>
         `;
       } else {
         article.innerHTML = `
           <div class="chat-user">${playerIdentity(message.username, 28)}</div>
           <div class="chat-text"></div>
-          <time class="chat-time">${formatChatTime(message.createdAt)}</time>
+          <div class="chat-meta">
+            <time class="chat-time">${formatChatTime(message.createdAt)}</time>
+            <button class="chat-reply-button" type="button" data-chat-reply="${escapeHtml(message.username)}">Reply</button>
+          </div>
         `;
       }
       const textNode = article.querySelector('.chat-text');
@@ -2052,6 +2057,21 @@ function renderChat(payload) {
 
   state.charts.chatHourly = payload.hourly || [];
   redrawCharts();
+}
+
+function handleChatReplyClick(event) {
+  const button = event.target.closest('[data-chat-reply]');
+  if (!button) return;
+
+  const username = String(button.dataset.chatReply || '').trim();
+  const input = $('#gameChatInput');
+  if (!username || !input) return;
+
+  const current = input.value;
+  const separator = current && !/\s$/.test(current) ? ' ' : '';
+  input.value = `${current}${separator}${username}`;
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
 }
 
 function normalizeInventoryItem(item) {
@@ -2167,7 +2187,6 @@ function renderBotStats(payload) {
 function renderPlayerStats(payload = {}, nearbyPlayers = []) {
   $('#onlinePlayers').textContent = formatNumber(payload.players?.online);
   $('#totalPlayers').textContent = `of ${formatNumber(payload.players?.total)} whitelisted`;
-  $('#offlinePlayers').textContent = formatNumber(payload.players?.offline);
   $('#onlineUnwhitelistedPlayers').textContent = formatNumber(payload.players?.onlineUnwhitelisted);
   $('#seen24h').textContent = formatNumber(payload.players?.seen24h);
   $('#seen7d').textContent = formatNumber(payload.players?.seen7d);
@@ -3423,6 +3442,7 @@ $('#adminIgnoreChatSuggestions')?.addEventListener('click', handleIgnoreChatSugg
 $('#gameChatForm')?.addEventListener('submit', handleGameChatSubmit);
 $('#chatScrollBottom')?.addEventListener('click', () => scrollToBottom('#chatList', { smooth: true }));
 $('#chatList')?.addEventListener('scroll', updateChatScrollButton);
+$('#chatList')?.addEventListener('click', handleChatReplyClick);
 $$('.chart-controls').forEach(controls => controls.addEventListener('click', handleChartRangeClick));
 $$('.chart-scroll').forEach(scroll => {
   scroll.addEventListener('scroll', scheduleChartViewportRedraw, { passive: true });

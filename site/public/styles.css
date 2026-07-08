@@ -1511,7 +1511,7 @@ body.search-focus-active #logoutButton {
 .stats-grid.player-stats-grid {
   display: grid;
   grid-column: 1 / -1;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 16px;
 }
 
@@ -1719,14 +1719,15 @@ body.search-focus-active #logoutButton {
 }
 
 .player-milestones-panel .milestone-list {
+  --milestone-peek: 28px;
   display: flex;
   gap: 10px;
-  padding: 12px 14px 14px;
+  padding: 12px var(--milestone-peek) 14px;
   min-height: 0;
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-x: contain;
-  scroll-padding-inline: 14px;
+  scroll-padding-inline: var(--milestone-peek);
   scroll-snap-type: x mandatory;
   scrollbar-width: none;
 }
@@ -1740,13 +1741,13 @@ body.search-focus-active #logoutButton {
   flex-direction: column;
   justify-content: space-between;
   gap: 14px;
-  flex: 0 0 min(300px, calc(100% - 30px));
+  flex: 0 0 calc(100% - (var(--milestone-peek) * 2));
   min-height: 118px;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 14px;
   background: var(--panel-soft);
-  scroll-snap-align: start;
+  scroll-snap-align: center;
   transition: background-color 260ms ease, border-color 260ms ease;
 }
 
@@ -1944,7 +1945,7 @@ body.search-focus-active #logoutButton {
 
 .chat-message {
   display: grid;
-  grid-template-columns: max-content minmax(0, 1fr) 64px;
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
   gap: 12px;
   align-items: start;
   border: 1px solid var(--line);
@@ -2005,11 +2006,37 @@ body.search-focus-active #logoutButton {
 }
 
 .chat-time {
-  padding-top: 5px;
   color: var(--muted);
   font-size: 12px;
   text-align: right;
   transition: color 260ms ease;
+}
+
+.chat-meta {
+  display: grid;
+  justify-items: end;
+  gap: 6px;
+  padding-top: 5px;
+}
+
+.chat-reply-button {
+  min-height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 10px;
+  color: var(--muted);
+  background: var(--panel);
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+  transition: color 180ms ease, border-color 180ms ease, background-color 180ms ease;
+}
+
+.chat-reply-button:hover,
+.chat-reply-button:focus-visible {
+  border-color: var(--accent);
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
 }
 
 .chart {
@@ -3440,8 +3467,8 @@ body.search-focus-active #logoutButton {
     order: 1;
   }
 
-  .milestone-card {
-    flex-basis: min(340px, calc(100% - 38px));
+  .player-milestones-panel .milestone-list {
+    --milestone-peek: 26px;
   }
 
   .player-nearby-panel {
@@ -3501,13 +3528,13 @@ body.search-focus-active #logoutButton {
   }
 
   .player-milestones-panel .milestone-list {
+    --milestone-peek: 22px;
     gap: 10px;
-    padding: 10px 12px 12px;
-    scroll-padding-inline: 12px;
+    padding-top: 10px;
+    padding-bottom: 12px;
   }
 
   .milestone-card {
-    flex-basis: min(300px, calc(100vw - 64px));
     min-height: 92px;
     padding: 12px;
   }
@@ -3967,6 +3994,14 @@ body.search-focus-active #logoutButton {
   .detail-list div {
     grid-template-columns: 1fr;
     gap: 7px;
+  }
+
+  .chat-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    padding-top: 0;
   }
 
   .auth-card {
