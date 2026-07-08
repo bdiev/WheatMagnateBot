@@ -2204,10 +2204,13 @@ function renderPlayerStats(payload = {}, nearbyPlayers = []) {
   const milestones = payload.milestones || [];
   renderStable('#playerMilestones', milestones.length
     ? milestones.map(milestone => `
-      <div class="rank-item milestone-item${milestone.isRound ? ' round' : ''}">
-        ${playerIdentity(milestone.username, 28)}
-        <strong>${escapeHtml(formatMilestoneWhen(milestone.daysUntil))}</strong>
-        <span class="muted">turns ${escapeHtml(formatMilestoneYears(milestone.years))}</span>
+      <div class="milestone-card${milestone.isRound ? ' round' : ''}">
+        <div class="milestone-card-top">
+          ${playerIdentity(milestone.username, 30)}
+          <strong>${escapeHtml(formatMilestoneWhen(milestone.daysUntil))}</strong>
+        </div>
+        <div class="milestone-years">turns ${escapeHtml(formatMilestoneYears(milestone.years))}</div>
+        <time>${formatDate(milestone.milestoneAt)}</time>
       </div>
     `).join('')
     : '<div class="empty">No player milestones in the next 60 days.</div>',

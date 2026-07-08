@@ -1508,6 +1508,17 @@ body.search-focus-active #logoutButton {
   display: contents;
 }
 
+.player-stats-grid {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.player-stats-grid .stat {
+  grid-column: auto;
+}
+
 .server-stats-grid .stat:first-child,
 .obsidian-stats-grid .stat:nth-child(-n + 3) {
   grid-column: span 2;
@@ -1635,8 +1646,8 @@ body.search-focus-active #logoutButton {
 .player-layout {
   display: grid;
   grid-column: 1 / -1;
-  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
-  grid-template-rows: minmax(300px, 360px) minmax(220px, 260px) minmax(0, 420px);
+  grid-template-columns: minmax(0, 1.45fr) minmax(330px, 0.55fr);
+  grid-template-rows: minmax(280px, 320px) minmax(0, 520px);
   gap: 16px;
   align-items: stretch;
 }
@@ -1650,7 +1661,7 @@ body.search-focus-active #logoutButton {
 }
 
 .player-unwhitelisted-chart-panel {
-  grid-column: 1 / -1;
+  grid-column: 1;
   grid-row: 1;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
@@ -1659,7 +1670,7 @@ body.search-focus-active #logoutButton {
 
 .player-leaderboard-panel {
   grid-column: 1;
-  grid-row: 2 / span 2;
+  grid-row: 2;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
@@ -1669,7 +1680,7 @@ body.search-focus-active #logoutButton {
 
 .player-milestones-panel {
   grid-column: 2;
-  grid-row: 2;
+  grid-row: 1;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
@@ -1684,7 +1695,7 @@ body.search-focus-active #logoutButton {
 
 .player-nearby-panel {
   grid-column: 2;
-  grid-row: 3;
+  grid-row: 2;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
@@ -1706,8 +1717,71 @@ body.search-focus-active #logoutButton {
 }
 
 .player-milestones-panel .milestone-list {
+  display: flex;
+  gap: 12px;
+  padding: 14px;
   min-height: 0;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scroll-padding-inline: 14px;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+}
+
+.player-milestones-panel .milestone-list::-webkit-scrollbar {
+  display: none;
+}
+
+.milestone-card {
+  display: grid;
+  align-content: space-between;
+  flex: 0 0 min(320px, calc(100% - 34px));
+  min-height: 150px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  background: var(--panel-soft);
+  scroll-snap-align: start;
+  transition: background-color 260ms ease, border-color 260ms ease;
+}
+
+.milestone-card.round {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+  background: color-mix(in srgb, var(--accent) 9%, var(--panel-soft));
+}
+
+.milestone-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.milestone-card-top .player-identity {
+  min-width: 0;
+}
+
+.milestone-card-top > strong {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.milestone-years {
+  margin-top: 18px;
+  font-size: 24px;
+  font-weight: 900;
+  line-height: 1.1;
+}
+
+.milestone-card time {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .player-leaderboard-panel .leaderboard-list {
@@ -2151,21 +2225,6 @@ body.search-focus-active #logoutButton {
 
 .rank-item.activity-item {
   grid-template-columns: minmax(0, 1fr) max-content max-content;
-}
-
-.rank-item.milestone-item {
-  grid-template-columns: minmax(0, 1fr) max-content;
-  gap: 8px 12px;
-}
-
-.rank-item.milestone-item > .muted {
-  grid-column: 1 / -1;
-  justify-self: start;
-}
-
-.rank-item.milestone-item.round {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
-  background: color-mix(in srgb, var(--accent) 9%, var(--panel-soft));
 }
 
 .rank-item > strong,
@@ -3349,11 +3408,15 @@ body.search-focus-active #logoutButton {
   .player-leaderboard-panel {
     height: auto;
     max-height: 640px;
-    order: 2;
+    order: 3;
   }
 
   .player-milestones-panel {
-    order: 3;
+    order: 2;
+  }
+
+  .milestone-card {
+    flex-basis: min(360px, calc(100% - 38px));
   }
 
   .player-nearby-panel {
