@@ -2020,16 +2020,26 @@ body.search-focus-active #logoutButton {
 }
 
 .chat-reply-button {
-  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
   border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 0 10px;
+  border-radius: 8px;
+  padding: 0;
   color: var(--muted);
   background: var(--panel);
-  font-size: 12px;
-  font-weight: 900;
   cursor: pointer;
   transition: color 180ms ease, border-color 180ms ease, background-color 180ms ease;
+}
+
+.chat-reply-button img {
+  width: 18px;
+  height: 18px;
+  image-rendering: pixelated;
 }
 
 .chat-reply-button:hover,
