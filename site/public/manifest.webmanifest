@@ -4,9 +4,10 @@
   "description": "Private dashboard for WheatMagnateBot.",
   "start_url": "/",
   "scope": "/",
+  "display_override": ["standalone", "minimal-ui", "browser"],
   "display": "standalone",
-  "background_color": "#f5f1e8",
-  "theme_color": "#f1c232",
+  "background_color": "#0d0f14",
+  "theme_color": "#0d0f14",
   "orientation": "any",
   "icons": [
     {

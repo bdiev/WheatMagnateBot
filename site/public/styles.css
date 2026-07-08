@@ -1736,12 +1736,12 @@ body.search-focus-active #logoutButton {
 }
 
 .milestone-card {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content;
-  align-items: center;
-  gap: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 14px;
   flex: 0 0 min(300px, calc(100% - 30px));
-  min-height: 96px;
+  min-height: 118px;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 14px;
@@ -1758,6 +1758,7 @@ body.search-focus-active #logoutButton {
 .milestone-card-top {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 10px;
   min-width: 0;
 }
@@ -1767,32 +1768,40 @@ body.search-focus-active #logoutButton {
 }
 
 .milestone-when {
-  grid-column: 2;
-  grid-row: 1;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: var(--accent-strong);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
   flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 900;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  justify-self: end;
 }
 
-.milestone-years {
-  grid-column: 1;
-  grid-row: 2;
-  margin-top: 0;
-  font-size: 18px;
+.milestone-main {
+  display: grid;
+  gap: 3px;
+}
+
+.milestone-main strong {
+  font-size: 24px;
   font-weight: 900;
   line-height: 1.1;
 }
 
-.milestone-card time {
-  display: block;
-  grid-column: 2;
-  grid-row: 2;
-  margin-top: 0;
+.milestone-main span {
   color: var(--muted);
   font-size: 13px;
   font-weight: 800;
-  text-align: right;
+}
+
+.milestone-card time {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
   white-space: nowrap;
 }
 
@@ -3451,12 +3460,70 @@ body.search-focus-active #logoutButton {
 
 @media (max-width: 700px) {
   .shell {
-    width: min(100% - 20px, 1480px);
-    padding-top: 14px;
+    width: min(100% - 16px, 1480px);
+    padding-top: calc(env(safe-area-inset-top, 0px) + 12px);
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 24px);
   }
 
   .stats-grid.player-stats-grid {
-    grid-template-columns: 1fr;
+    display: flex;
+    grid-column: 1 / -1;
+    gap: 10px;
+    margin: -2px -8px 0;
+    padding: 2px 8px 4px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-padding-inline: 8px;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+  }
+
+  .stats-grid.player-stats-grid::-webkit-scrollbar {
+    display: none;
+  }
+
+  .stats-grid.player-stats-grid .stat {
+    flex: 0 0 min(230px, 78vw);
+    min-height: 104px;
+    scroll-snap-align: start;
+  }
+
+  .player-layout {
+    gap: 12px;
+  }
+
+  .player-unwhitelisted-chart-panel {
+    min-height: 280px;
+  }
+
+  .player-unwhitelisted-chart-panel .chart {
+    height: 210px;
+  }
+
+  .player-milestones-panel .milestone-list {
+    gap: 10px;
+    padding: 10px 12px 12px;
+    scroll-padding-inline: 12px;
+  }
+
+  .milestone-card {
+    flex-basis: min(300px, calc(100vw - 64px));
+    min-height: 92px;
+    padding: 12px;
+  }
+
+  .milestone-main strong {
+    font-size: 22px;
+  }
+
+  .player-nearby-panel,
+  .player-leaderboard-panel {
+    max-height: 460px;
+  }
+
+  .player-nearby-panel .rank-list,
+  .player-leaderboard-panel .leaderboard-list {
+    max-height: 360px;
   }
 
   .topbar {

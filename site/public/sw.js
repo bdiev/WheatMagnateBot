@@ -1,18 +1,20 @@
 'use strict';
 
-const CACHE_NAME = 'wheatmagnatebot-v54';
+const CACHE_NAME = 'wheatmagnatebot-v55';
 const APP_SHELL = [
   '/',
   '/index.html',
   '/styles.css',
   '/app.js',
+  '/manifest.webmanifest',
   '/items/Wheat.png',
   '/items/Writable_Book.png',
   '/items/Icon_Search.png',
   '/items/Sunflower.png',
   '/items/Moon.png',
   '/items/Firework_Rocket.png',
-  '/items/Lead.png'
+  '/items/Lead.png',
+  '/logos/namemc_dark.png'
 ];
 
 self.addEventListener('install', event => {
