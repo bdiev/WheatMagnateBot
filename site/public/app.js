@@ -54,7 +54,8 @@ const state = {
   chartRanges: {
     chatHourlyChart: 'hours',
     obsidianDailyChart: 'days',
-    tpsHourlyChart: 'hours'
+    tpsHourlyChart: 'hours',
+    unwhitelistedHourlyChart: 'hours'
   },
   chartScrollInitialized: {},
   renderSignatures: {}
@@ -1007,6 +1008,7 @@ function redrawCharts({ animate = false } = {}) {
     const chatRange = getChartRange('chatHourlyChart');
     const obsidianRange = getChartRange('obsidianDailyChart');
     const tpsRange = getChartRange('tpsHourlyChart');
+    const unwhitelistedRange = getChartRange('unwhitelistedHourlyChart');
     drawBarChart($('#chatHourlyChart'), aggregateSeries(state.charts.chatHourly, chatRange), {
       animation: {
         animate: animate && Boolean(state.chartAnimations.chatHourlyChart),
@@ -1031,6 +1033,13 @@ function redrawCharts({ animate = false } = {}) {
       },
       max: 20,
       tooltip: item => `${item.label}: ${formatTps(item.value)} TPS`
+    });
+    drawBarChart($('#unwhitelistedHourlyChart'), aggregateSeries(state.charts.unwhitelistedHourly, unwhitelistedRange), {
+      animation: {
+        animate: animate && Boolean(state.chartAnimations.unwhitelistedHourlyChart),
+        duration: state.chartAnimationDurations.unwhitelistedHourlyChart
+      },
+      tooltip: item => `${item.label}: ${formatNumber(item.value)} players`
     });
   });
 }
@@ -2147,8 +2156,10 @@ function renderPlayerStats(payload = {}, nearbyPlayers = []) {
   $('#onlinePlayers').textContent = formatNumber(payload.players?.online);
   $('#totalPlayers').textContent = `of ${formatNumber(payload.players?.total)} whitelisted`;
   $('#offlinePlayers').textContent = formatNumber(payload.players?.offline);
+  $('#onlineUnwhitelistedPlayers').textContent = formatNumber(payload.players?.onlineUnwhitelisted);
   $('#seen24h').textContent = formatNumber(payload.players?.seen24h);
   $('#seen7d').textContent = formatNumber(payload.players?.seen7d);
+  state.charts.unwhitelistedHourly = payload.hourlyUnwhitelisted || [];
 
   const leaderboard = payload.playtimeLeaderboard || [];
   renderStable('#playtimeLeaderboard', leaderboard.length

@@ -480,6 +480,11 @@
             <small>whitelist members not online</small>
           </article>
           <article class="stat">
+            <span class="stat-label">Online Players Not Whitelisted</span>
+            <strong id="onlineUnwhitelistedPlayers">-</strong>
+            <small>online visitors outside whitelist</small>
+          </article>
+          <article class="stat">
             <span class="stat-label">Seen Today</span>
             <strong id="seen24h">-</strong>
             <small>players active in 24 hours</small>
@@ -492,6 +497,21 @@
         </section>
 
         <section class="player-layout">
+          <section class="panel player-unwhitelisted-chart-panel">
+            <div class="panel-head">
+              <div>
+                <h2>Not Whitelisted by Hour</h2>
+                <p>Players outside the whitelist seen in each hour.</p>
+              </div>
+              <div class="chart-controls" data-chart-controls="unwhitelistedHourlyChart">
+                <button class="chart-range-button active" type="button" data-chart-range="hours">Hours</button>
+                <button class="chart-range-button" type="button" data-chart-range="days">Days</button>
+                <button class="chart-range-button" type="button" data-chart-range="months">Months</button>
+              </div>
+            </div>
+            <div class="chart-scroll"><canvas id="unwhitelistedHourlyChart" class="chart" height="260"></canvas></div>
+          </section>
+
           <section class="panel player-leaderboard-panel">
             <div class="panel-head">
               <div>

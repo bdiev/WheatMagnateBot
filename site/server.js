@@ -1231,7 +1231,7 @@ async function getBotStats() {
 async function getPlayerStats() {
   assertDatabase();
 
-  const [playersResult, leaderboardResult, activityTotalsResult] = await Promise.all([
+  const [playersResult, leaderboardResult, activityTotalsResult, onlineUnwhitelistedResult, hourlyUnwhitelistedResult] = await Promise.all([
     pool.query(`
       WITH whitelist_players AS (
         SELECT DISTINCT ON (LOWER(username))
@@ -1296,17 +1296,65 @@ async function getPlayerStats() {
         COUNT(*) FILTER (WHERE last_seen >= NOW() - INTERVAL '24 hours')::int AS seen_24h,
         COUNT(*) FILTER (WHERE last_seen >= NOW() - INTERVAL '7 days')::int AS seen_7d
       FROM player_activity
+    `),
+    pool.query(`
+      WITH activity AS (
+        SELECT DISTINCT ON (LOWER(username))
+          LOWER(username) AS username_key,
+          username,
+          is_online
+        FROM player_activity
+        ORDER BY LOWER(username), is_online DESC, last_seen DESC NULLS LAST, id DESC
+      )
+      SELECT COUNT(*)::int AS total
+      FROM activity pa
+      WHERE pa.is_online = TRUE
+        AND NOT EXISTS (
+          SELECT 1 FROM whitelist w WHERE LOWER(w.username) = pa.username_key
+        )
+    `),
+    pool.query(`
+      WITH buckets AS (
+        SELECT generate_series(
+          date_trunc('hour', NOW() - INTERVAL '167 hours'),
+          date_trunc('hour', NOW()),
+          INTERVAL '1 hour'
+        ) AS bucket
+      ),
+      activity AS (
+        SELECT DISTINCT ON (LOWER(username))
+          LOWER(username) AS username_key,
+          username,
+          last_seen
+        FROM player_activity
+        WHERE last_seen IS NOT NULL
+        ORDER BY LOWER(username), last_seen DESC NULLS LAST, id DESC
+      )
+      SELECT TO_CHAR(buckets.bucket, 'MM-DD HH24:00') AS label,
+             buckets.bucket AS bucket,
+             COUNT(activity.username)::int AS total
+      FROM buckets
+      LEFT JOIN activity
+        ON activity.last_seen >= buckets.bucket
+       AND activity.last_seen < buckets.bucket + INTERVAL '1 hour'
+       AND NOT EXISTS (
+         SELECT 1 FROM whitelist w WHERE LOWER(w.username) = activity.username_key
+       )
+      GROUP BY buckets.bucket
+      ORDER BY buckets.bucket
     `)
   ]);
 
   const totals = playersResult.rows[0] || {};
   const activityTotals = activityTotalsResult.rows[0] || {};
+  const onlineUnwhitelisted = onlineUnwhitelistedResult.rows[0] || {};
 
   return {
     players: {
       total: toInt(totals.total),
       online: toInt(totals.online),
       offline: toInt(totals.offline),
+      onlineUnwhitelisted: toInt(onlineUnwhitelisted.total),
       seen24h: toInt(activityTotals.seen_24h),
       seen7d: toInt(activityTotals.seen_7d)
     },
@@ -1319,7 +1367,12 @@ async function getPlayerStats() {
         totalSeconds: seconds,
         playtime: formatSeconds(seconds)
       };
-    })
+    }),
+    hourlyUnwhitelisted: hourlyUnwhitelistedResult.rows.map(row => ({
+      label: row.label,
+      bucket: row.bucket,
+      value: toInt(row.total)
+    }))
   };
 }
 

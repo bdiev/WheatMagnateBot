@@ -1636,7 +1636,7 @@ body.search-focus-active #logoutButton {
   display: grid;
   grid-column: 1 / -1;
   grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
-  grid-template-rows: minmax(0, 620px);
+  grid-template-rows: minmax(300px, 360px) minmax(0, 620px);
   gap: 16px;
   align-items: stretch;
 }
@@ -1649,9 +1649,17 @@ body.search-focus-active #logoutButton {
   min-width: 0;
 }
 
+.player-unwhitelisted-chart-panel {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+}
+
 .player-leaderboard-panel {
   grid-column: 1;
-  grid-row: 1;
+  grid-row: 2;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
@@ -1668,17 +1676,19 @@ body.search-focus-active #logoutButton {
 
 .player-nearby-panel {
   grid-column: 2;
-  grid-row: 1;
+  grid-row: 2;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
 }
 
-.server-tps-panel .chart-scroll {
+.server-tps-panel .chart-scroll,
+.player-unwhitelisted-chart-panel .chart-scroll {
   min-height: 0;
 }
 
-.server-tps-panel .chart {
+.server-tps-panel .chart,
+.player-unwhitelisted-chart-panel .chart {
   height: 100%;
 }
 
@@ -3295,10 +3305,16 @@ body.search-focus-active #logoutButton {
     height: auto;
   }
 
+  .player-unwhitelisted-chart-panel,
   .player-leaderboard-panel,
   .player-nearby-panel {
     grid-column: 1 / -1;
     grid-row: auto;
+  }
+
+  .player-unwhitelisted-chart-panel {
+    min-height: 320px;
+    order: 1;
   }
 
   .player-leaderboard-panel {
