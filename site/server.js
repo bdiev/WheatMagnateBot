@@ -211,7 +211,7 @@ function anniversaryUtcDate(startDate, year) {
   return new Date(Date.UTC(year, month, Math.min(day, lastDay)));
 }
 
-function buildPlayerMilestones(rows, { daysAhead = 60, limit = 6 } = {}) {
+function buildPlayerMilestones(rows, { daysAhead = 365, limit = 12 } = {}) {
   const today = utcDateOnly(new Date());
   if (!today) return [];
   const dayMs = 24 * 60 * 60 * 1000;
