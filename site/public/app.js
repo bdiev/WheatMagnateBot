@@ -2143,7 +2143,7 @@ function renderBotStats(payload) {
   `;
 }
 
-function renderPlayerStats(payload = {}) {
+function renderPlayerStats(payload = {}, nearbyPlayers = []) {
   $('#onlinePlayers').textContent = formatNumber(payload.players?.online);
   $('#totalPlayers').textContent = `of ${formatNumber(payload.players?.total)} whitelisted`;
   $('#offlinePlayers').textContent = formatNumber(payload.players?.offline);
@@ -2163,6 +2163,19 @@ function renderPlayerStats(payload = {}) {
     `).join('')
     : '<div class="empty">No whitelist playtime data found.</div>',
     leaderboard.map(player => [player.username, player.isOnline, player.playtime])
+  );
+
+  const nearby = nearbyPlayers || [];
+  renderStable('#nearbyList', nearby.length
+    ? nearby.map(player => `
+      <div class="rank-item activity-item">
+        ${playerIdentity(player.username, 28)}
+        <strong>${formatNumber(player.distance)} blocks</strong>
+        <span class="muted">${formatAgo(player.lastSeen)}</span>
+      </div>
+    `).join('')
+    : '<div class="empty">No nearby sightings yet.</div>',
+    nearby.map(player => [player.username, player.distance, player.lastSeen])
   );
 }
 
@@ -2593,26 +2606,13 @@ async function handleTooltipDrop(button) {
 }
 
 function renderServerStats(payload) {
-  renderPlayerStats(payload.playerStats || {});
+  renderPlayerStats(payload.playerStats || {}, payload.nearby || []);
 
   const tps = payload.tps || {};
   $('#latestTps').textContent = formatTps(tps.latest);
   $('#latestTpsAt').textContent = `sampled: ${formatDate(tps.latestAt)}`;
   $('#minTps').textContent = formatTps(tps.min24h);
   $('#maxTps').textContent = formatTps(tps.max24h);
-
-  const nearby = payload.nearby || [];
-  renderStable('#nearbyList', nearby.length
-    ? nearby.map(player => `
-      <div class="rank-item activity-item">
-        ${playerIdentity(player.username, 28)}
-        <strong>${formatNumber(player.distance)} blocks</strong>
-        <span class="muted">${formatAgo(player.lastSeen)}</span>
-      </div>
-    `).join('')
-    : '<div class="empty">No nearby sightings yet.</div>',
-    nearby.map(player => [player.username, player.distance, player.lastSeen])
-  );
 
   state.charts.tpsHourly = payload.hourlyTps || [];
   redrawCharts();

@@ -1627,20 +1627,31 @@ body.search-focus-active #logoutButton {
 .server-layout {
   display: grid;
   grid-column: 1 / -1;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  grid-template-rows: repeat(2, minmax(0, 342px));
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   align-items: stretch;
-  height: 700px;
+}
+
+.player-layout {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
+  grid-template-rows: minmax(0, 620px);
+  gap: 16px;
+  align-items: stretch;
 }
 
 .server-layout .panel {
   min-width: 0;
 }
 
-.server-leaderboard-panel {
-  grid-column: 2;
-  grid-row: 1 / span 2;
+.player-layout .panel {
+  min-width: 0;
+}
+
+.player-leaderboard-panel {
+  grid-column: 1;
+  grid-row: 1;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
@@ -1649,16 +1660,15 @@ body.search-focus-active #logoutButton {
 }
 
 .server-tps-panel {
-  grid-column: 1;
-  grid-row: 1;
+  grid-column: 1 / -1;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
 }
 
-.server-nearby-panel {
-  grid-column: 1;
-  grid-row: 2;
+.player-nearby-panel {
+  grid-column: 2;
+  grid-row: 1;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
@@ -1672,12 +1682,12 @@ body.search-focus-active #logoutButton {
   height: 100%;
 }
 
-.server-nearby-panel .rank-list {
+.player-nearby-panel .rank-list {
   min-height: 0;
   overflow: auto;
 }
 
-.server-leaderboard-panel .leaderboard-list {
+.player-leaderboard-panel .leaderboard-list {
   height: 100%;
   max-height: none;
   min-height: 0;
@@ -3279,32 +3289,27 @@ body.search-focus-active #logoutButton {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .server-layout {
+  .player-layout {
     grid-template-columns: 1fr;
     grid-template-rows: auto;
     height: auto;
   }
 
-  .server-tps-panel,
-  .server-leaderboard-panel,
-  .server-nearby-panel {
+  .player-leaderboard-panel,
+  .player-nearby-panel {
     grid-column: 1 / -1;
     grid-row: auto;
   }
 
-  .server-leaderboard-panel {
+  .player-leaderboard-panel {
     height: auto;
     max-height: 640px;
     order: 2;
   }
 
-  .server-tps-panel,
-  .server-nearby-panel {
-    min-height: 0;
-  }
-
-  .server-nearby-panel {
+  .player-nearby-panel {
     order: 3;
+    min-height: 0;
   }
 
   .chat-panel {

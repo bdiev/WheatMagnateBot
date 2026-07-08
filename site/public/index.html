@@ -58,6 +58,7 @@
               <button class="tab-button" type="button" data-tab="bot" role="menuitem">Bot Stats</button>
               <button class="tab-button" type="button" data-tab="obsidian" role="menuitem">Obsidian Farm</button>
               <button class="tab-button" type="button" data-tab="server" role="menuitem">Server Stats</button>
+              <button class="tab-button" type="button" data-tab="players" role="menuitem">Player Stats</button>
               <button class="tab-button admin-only" type="button" data-tab="admin" role="menuitem" hidden>Admin</button>
             </div>
           </nav>
@@ -446,6 +447,28 @@
             <strong id="maxTps">-</strong>
             <small>last 24 hours</small>
           </article>
+        </section>
+
+        <section class="server-layout">
+          <section class="panel server-tps-panel">
+            <div class="panel-head">
+              <div>
+                <h2>TPS by Hour</h2>
+                <p>Average server TPS over the last 24 hours.</p>
+              </div>
+              <div class="chart-controls" data-chart-controls="tpsHourlyChart">
+                <button class="chart-range-button active" type="button" data-chart-range="hours">Hours</button>
+                <button class="chart-range-button" type="button" data-chart-range="days">Days</button>
+                <button class="chart-range-button" type="button" data-chart-range="months">Months</button>
+              </div>
+            </div>
+            <div class="chart-scroll"><canvas id="tpsHourlyChart" class="chart tall" height="300"></canvas></div>
+          </section>
+        </section>
+      </section>
+
+      <section id="tab-players" class="tab-panel" data-panel="players">
+        <section class="stats-grid player-stats-grid compact">
           <article class="stat">
             <span class="stat-label">Online Players</span>
             <strong id="onlinePlayers">-</strong>
@@ -468,23 +491,8 @@
           </article>
         </section>
 
-        <section class="server-layout">
-          <section class="panel server-tps-panel">
-            <div class="panel-head">
-              <div>
-                <h2>TPS by Hour</h2>
-                <p>Average server TPS over the last 24 hours.</p>
-              </div>
-              <div class="chart-controls" data-chart-controls="tpsHourlyChart">
-                <button class="chart-range-button active" type="button" data-chart-range="hours">Hours</button>
-                <button class="chart-range-button" type="button" data-chart-range="days">Days</button>
-                <button class="chart-range-button" type="button" data-chart-range="months">Months</button>
-              </div>
-            </div>
-            <div class="chart-scroll"><canvas id="tpsHourlyChart" class="chart tall" height="300"></canvas></div>
-          </section>
-
-          <section class="panel server-leaderboard-panel">
+        <section class="player-layout">
+          <section class="panel player-leaderboard-panel">
             <div class="panel-head">
               <div>
                 <h2>Playtime Leaderboard</h2>
@@ -494,7 +502,7 @@
             <div id="playtimeLeaderboard" class="rank-list leaderboard-list"></div>
           </section>
 
-          <section class="panel server-nearby-panel">
+          <section class="panel player-nearby-panel">
             <div class="panel-head">
               <div>
                 <h2>Nearby Sightings</h2>
