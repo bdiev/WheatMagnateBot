@@ -1160,6 +1160,7 @@ function registrationProfileValue(profile) {
 function renderPlayerProfile(profile) {
   const recentMessages = profile.chat?.recentMessages || [];
   const nearby = profile.nearby;
+  const profileUsername = String(profile.username || '');
   const registrationTitle = state.playerProfileRegistrationAgeMode
     ? 'Show registration date'
     : 'Show time since registration';
@@ -1173,10 +1174,16 @@ function renderPlayerProfile(profile) {
         <div class="player-profile-badges">
           <span class="pill">${profile.isWhitelisted ? 'whitelisted' : 'not whitelisted'}</span>
         </div>
-        <button class="player-profile-message-action" type="button" data-whisper-player="${escapeHtml(profile.username)}">
-          <img src="/items/Writable_Book.png" alt="" aria-hidden="true">
-          <span>Message</span>
-        </button>
+        <div class="player-profile-actions">
+          <button class="player-profile-message-action" type="button" data-whisper-player="${escapeHtml(profileUsername)}">
+            <img src="/items/Writable_Book.png" alt="" aria-hidden="true">
+            <span>Message</span>
+          </button>
+          <a class="player-profile-message-action player-profile-namemc-action" href="https://namemc.com/profile/${encodeURIComponent(profileUsername)}" target="_blank" rel="noopener noreferrer">
+            <img src="/logos/namemc_dark.png" alt="" aria-hidden="true">
+            <span>NameMC</span>
+          </a>
+        </div>
       </div>
     </header>
     <section class="player-profile-grid">

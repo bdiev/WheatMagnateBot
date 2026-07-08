@@ -2350,11 +2350,18 @@ body.search-focus-active #logoutButton {
   flex-wrap: wrap;
 }
 
+.player-profile-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
 .player-profile-message-action {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  margin-top: 12px;
   min-height: 38px;
   border: 1px solid var(--line);
   border-radius: var(--button-radius);
@@ -2371,6 +2378,14 @@ body.search-focus-active #logoutButton {
   width: 20px;
   height: 20px;
   image-rendering: pixelated;
+}
+
+.player-profile-namemc-action {
+  text-decoration: none;
+}
+
+.player-profile-namemc-action img {
+  image-rendering: auto;
 }
 
 .player-profile-message-action:hover {
@@ -3576,8 +3591,11 @@ body.search-focus-active #logoutButton {
     gap: 6px;
   }
 
-  .player-profile-message-action {
+  .player-profile-actions {
     margin-top: 8px;
+  }
+
+  .player-profile-message-action {
     min-height: 34px;
     padding: 0 12px;
   }

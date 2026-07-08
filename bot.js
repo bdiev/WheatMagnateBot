@@ -2127,7 +2127,7 @@ function handleObservedPlaytimeChat(username, message) {
   if (!safeSpeaker || !cleanMessage) return;
 
   const speakerKey = safeSpeaker.toLowerCase();
-  const commandMatch = cleanMessage.match(/^!pt(?:\s+([A-Za-z0-9_]{1,32}))?$/i);
+  const commandMatch = cleanMessage.match(/^!(?:pt|playtime)(?:\s+([A-Za-z0-9_]{1,32}))?$/i);
   if (commandMatch) {
     const targetUsername = commandMatch[1] || safeSpeaker;
     const pending = {
@@ -2207,7 +2207,7 @@ function handleObservedJoinDateChat(username, message) {
   if (!safeSpeaker || !cleanMessage) return;
 
   const speakerKey = safeSpeaker.toLowerCase();
-  const commandMatch = cleanMessage.match(/^!jd(?:\s+([A-Za-z0-9_]{1,32}))?$/i);
+  const commandMatch = cleanMessage.match(/^!(?:jd|joindate)(?:\s+([A-Za-z0-9_]{1,32}))?$/i);
   if (commandMatch) {
     const targetUsername = commandMatch[1] || safeSpeaker;
     const pending = {
@@ -6760,7 +6760,7 @@ function createBot() {
       return;
     }
 
-    if (username.toLowerCase() === 'theonlyslash' && /^!pt$/i.test(message.trim())) {
+    if (username.toLowerCase() === 'theonlyslash' && /^!(?:pt|playtime)$/i.test(message.trim())) {
       const playtime = await getEffectivePlayerPlaytime(username);
       if (playtime.error) {
         sendMinecraftChat(`Playtime unavailable for ${username}: ${playtime.error}`);
