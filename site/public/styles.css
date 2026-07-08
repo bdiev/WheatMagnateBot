@@ -1530,7 +1530,7 @@ body.search-focus-active #logoutButton {
   border-radius: 8px;
   background: var(--panel);
   box-shadow: none;
-  transition: background-color 260ms ease, border-color 260ms ease, box-shadow 260ms ease;
+  transition: background-color 260ms ease, border-color 260ms ease, box-shadow 260ms ease, transform 180ms ease;
 }
 
 .stat {
@@ -1538,6 +1538,11 @@ body.search-focus-active #logoutButton {
   min-height: 118px;
   padding: 16px;
   min-width: 0;
+}
+
+.stat:hover {
+  border-color: color-mix(in srgb, var(--accent) 20%, transparent);
+  transform: translateY(-1px);
 }
 
 .stats-grid.three .stat:first-child {
@@ -1748,7 +1753,18 @@ body.search-focus-active #logoutButton {
   padding: 14px;
   background: var(--panel-soft);
   scroll-snap-align: center;
-  transition: background-color 260ms ease, border-color 260ms ease;
+  transition:
+    background-color 260ms ease,
+    border-color 260ms ease,
+    box-shadow 220ms ease,
+    transform 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.milestone-card:hover,
+.milestone-card:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--line));
+  box-shadow: 0 12px 28px color-mix(in srgb, var(--accent) 12%, transparent);
+  transform: translateY(-2px);
 }
 
 .milestone-card.round {
@@ -1927,6 +1943,75 @@ body.search-focus-active #logoutButton {
   background: var(--panel-soft);
 }
 
+.chat-reply-preview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding: 10px 14px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel-soft));
+  opacity: 0;
+  transform: translateY(8px);
+  transition:
+    opacity 180ms ease,
+    transform 220ms cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 260ms ease,
+    border-color 260ms ease;
+}
+
+.chat-reply-preview.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.chat-reply-preview > div {
+  min-width: 0;
+  border-left: 3px solid var(--accent);
+  padding-left: 10px;
+  transform-origin: left center;
+  animation: replyPreviewAccent 240ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.chat-reply-preview span {
+  display: block;
+  color: var(--accent-strong);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.chat-reply-preview p {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-reply-preview button {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  min-height: 34px;
+  border: 0;
+  border-radius: 8px;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 160ms ease, background-color 160ms ease, transform 160ms ease;
+}
+
+.chat-reply-preview button:hover,
+.chat-reply-preview button:focus-visible {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  transform: scale(1.06);
+}
+
 .chat-send-form input {
   min-width: 0;
   height: var(--button-height);
@@ -2027,26 +2112,66 @@ body.search-focus-active #logoutButton {
   min-width: 30px;
   height: 30px;
   min-height: 30px;
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: 8px;
   padding: 0;
   color: var(--muted);
-  background: var(--panel);
+  background: transparent;
   cursor: pointer;
-  transition: color 180ms ease, border-color 180ms ease, background-color 180ms ease;
+  opacity: 0;
+  transform: translateX(4px) scale(0.86);
+  transition:
+    opacity 170ms ease,
+    transform 190ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    color 180ms ease,
+    background-color 180ms ease;
 }
 
 .chat-reply-button img {
   width: 18px;
   height: 18px;
   image-rendering: pixelated;
+  transition: transform 180ms ease;
 }
 
 .chat-reply-button:hover,
 .chat-reply-button:focus-visible {
-  border-color: var(--accent);
+  opacity: 1;
+  transform: translateX(0) scale(1);
   color: var(--text);
   background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+}
+
+.chat-reply-button:hover img,
+.chat-reply-button:focus-visible img {
+  transform: translateX(-1px) rotate(-8deg);
+}
+
+.chat-message:hover .chat-reply-button,
+.chat-message:focus-within .chat-reply-button {
+  opacity: 0.78;
+  transform: translateX(0) scale(1);
+}
+
+.chat-message:hover .chat-reply-button:hover,
+.chat-message:focus-within .chat-reply-button:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .chat-reply-button {
+    opacity: 0.72;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes replyPreviewAccent {
+  from {
+    transform: scaleX(0.96);
+  }
+  to {
+    transform: scaleX(1);
+  }
 }
 
 .chart {
@@ -2215,8 +2340,18 @@ body.search-focus-active #logoutButton {
   .chat-message.new-message .chat-user .player-identity > span,
   .chat-message.new-message .chat-text,
   .chat-message.new-message .chat-time,
-  .chat-text.typing::after {
+  .chat-text.typing::after,
+  .chat-reply-preview > div {
     animation: none;
+  }
+
+  .chat-reply-preview,
+  .chat-reply-button,
+  .chat-reply-button img,
+  .milestone-card,
+  .stat {
+    transition: none;
+    transform: none;
   }
 }
 

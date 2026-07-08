@@ -47,6 +47,8 @@ const state = {
   supplyTooltipItems: {},
   itemIcons: {},
   itemIconsLoading: null,
+  chatReply: null,
+  chatReplyHideTimer: null,
   chatMessageIds: new Set(),
   chatInitialized: false,
   authMode: 'login',
@@ -1992,7 +1994,7 @@ function renderChatMessages(messages) {
           <div class="chat-text"></div>
           <div class="chat-meta">
             <time class="chat-time">${formatChatTime(message.createdAt)}</time>
-            <button class="chat-reply-button" type="button" data-chat-reply="${escapeHtml(message.username)}" aria-label="Reply to ${escapeHtml(message.username)}" title="Reply">
+            <button class="chat-reply-button" type="button" data-chat-reply="${escapeHtml(message.username)}" data-chat-reply-text="${escapeHtml(text)}" aria-label="Reply to ${escapeHtml(message.username)}" title="Reply">
               <img src="/logos/reply.png" alt="" aria-hidden="true">
             </button>
           </div>
@@ -2066,14 +2068,51 @@ function handleChatReplyClick(event) {
   if (!button) return;
 
   const username = String(button.dataset.chatReply || '').trim();
-  const input = $('#gameChatInput');
-  if (!username || !input) return;
+  if (!username) return;
+  state.chatReply = {
+    username,
+    message: String(button.dataset.chatReplyText || '').trim()
+  };
+  renderGameChatReplyPreview();
+  $('#gameChatInput')?.focus();
+}
 
-  const current = input.value;
-  const separator = current && !/\s$/.test(current) ? ' ' : '';
-  input.value = `${current}${separator}${username}`;
-  input.focus();
-  input.setSelectionRange(input.value.length, input.value.length);
+function clearGameChatReply() {
+  state.chatReply = null;
+  renderGameChatReplyPreview();
+  $('#gameChatInput')?.focus();
+}
+
+function renderGameChatReplyPreview() {
+  const preview = $('#gameChatReplyPreview');
+  if (!preview) return;
+  const reply = state.chatReply;
+
+  if (state.chatReplyHideTimer) {
+    clearTimeout(state.chatReplyHideTimer);
+    state.chatReplyHideTimer = null;
+  }
+
+  if (!reply) {
+    preview.classList.remove('visible');
+    state.chatReplyHideTimer = setTimeout(() => {
+      if (!state.chatReply) preview.hidden = true;
+      state.chatReplyHideTimer = null;
+    }, 180);
+    return;
+  }
+
+  preview.hidden = false;
+  $('#gameChatReplyPlayer').textContent = reply.username;
+  $('#gameChatReplyText').textContent = reply.message || 'Replying to this player';
+  requestAnimationFrame(() => preview.classList.add('visible'));
+}
+
+function appendReplyTarget(message, username) {
+  const cleanMessage = String(message || '').trim();
+  const cleanUsername = String(username || '').trim();
+  if (!cleanMessage || !cleanUsername) return cleanMessage;
+  return `${cleanMessage}${/\s$/.test(cleanMessage) ? '' : ' '}${cleanUsername}`;
 }
 
 function normalizeInventoryItem(item) {
@@ -3332,11 +3371,16 @@ async function handleGameChatSubmit(event) {
   const button = $('#gameChatSend');
   const message = input?.value.trim();
   if (!message) return;
+  const outgoingMessage = state.chatReply
+    ? appendReplyTarget(message, state.chatReply.username)
+    : message;
 
   button.disabled = true;
   try {
-    await postJson('/api/chat/send', { message });
+    await postJson('/api/chat/send', { message: outgoingMessage });
     input.value = '';
+    state.chatReply = null;
+    renderGameChatReplyPreview();
     setBanner('Message queued for game chat.');
     await loadAll();
   } catch (err) {
@@ -3445,6 +3489,7 @@ $('#gameChatForm')?.addEventListener('submit', handleGameChatSubmit);
 $('#chatScrollBottom')?.addEventListener('click', () => scrollToBottom('#chatList', { smooth: true }));
 $('#chatList')?.addEventListener('scroll', updateChatScrollButton);
 $('#chatList')?.addEventListener('click', handleChatReplyClick);
+$('#gameChatReplyCancel')?.addEventListener('click', clearGameChatReply);
 $$('.chart-controls').forEach(controls => controls.addEventListener('click', handleChartRangeClick));
 $$('.chart-scroll').forEach(scroll => {
   scroll.addEventListener('scroll', scheduleChartViewportRedraw, { passive: true });

@@ -178,6 +178,13 @@
               <div id="chatList" class="chat-list" aria-live="polite"></div>
               <button id="chatScrollBottom" class="chat-scroll-bottom" type="button" aria-label="Scroll to latest chat messages">↓</button>
             </div>
+            <div id="gameChatReplyPreview" class="chat-reply-preview" hidden>
+              <div>
+                <span id="gameChatReplyPlayer"></span>
+                <p id="gameChatReplyText"></p>
+              </div>
+              <button id="gameChatReplyCancel" type="button" aria-label="Cancel reply">&times;</button>
+            </div>
             <form id="gameChatForm" class="chat-send-form">
               <input
                 id="gameChatInput"
