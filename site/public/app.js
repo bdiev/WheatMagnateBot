@@ -2207,8 +2207,8 @@ function renderPlayerStats(payload = {}, nearbyPlayers = []) {
       <div class="milestone-card${milestone.isRound ? ' round' : ''}">
         <div class="milestone-card-top">
           ${playerIdentity(milestone.username, 30)}
-          <strong>${escapeHtml(formatMilestoneWhen(milestone.daysUntil))}</strong>
         </div>
+        <strong class="milestone-when">${escapeHtml(formatMilestoneWhen(milestone.daysUntil))}</strong>
         <div class="milestone-years">turns ${escapeHtml(formatMilestoneYears(milestone.years))}</div>
         <time>${formatDate(milestone.milestoneAt)}</time>
       </div>

@@ -1508,14 +1508,14 @@ body.search-focus-active #logoutButton {
   display: contents;
 }
 
-.player-stats-grid {
+.stats-grid.player-stats-grid {
   display: grid;
   grid-column: 1 / -1;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 16px;
 }
 
-.player-stats-grid .stat {
+.stats-grid.player-stats-grid .stat {
   grid-column: auto;
 }
 
@@ -1647,7 +1647,7 @@ body.search-focus-active #logoutButton {
   display: grid;
   grid-column: 1 / -1;
   grid-template-columns: minmax(0, 1.45fr) minmax(330px, 0.55fr);
-  grid-template-rows: minmax(280px, 320px) minmax(0, 520px);
+  grid-template-rows: auto minmax(280px, 320px) minmax(0, 520px);
   gap: 16px;
   align-items: stretch;
 }
@@ -1662,7 +1662,7 @@ body.search-focus-active #logoutButton {
 
 .player-unwhitelisted-chart-panel {
   grid-column: 1;
-  grid-row: 1;
+  grid-row: 2;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
@@ -1670,7 +1670,7 @@ body.search-focus-active #logoutButton {
 
 .player-leaderboard-panel {
   grid-column: 1;
-  grid-row: 2;
+  grid-row: 3;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
@@ -1679,10 +1679,10 @@ body.search-focus-active #logoutButton {
 }
 
 .player-milestones-panel {
-  grid-column: 2;
+  grid-column: 1 / -1;
   grid-row: 1;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
   min-height: 0;
 }
 
@@ -1695,7 +1695,7 @@ body.search-focus-active #logoutButton {
 
 .player-nearby-panel {
   grid-column: 2;
-  grid-row: 2;
+  grid-row: 2 / span 2;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
@@ -1718,8 +1718,8 @@ body.search-focus-active #logoutButton {
 
 .player-milestones-panel .milestone-list {
   display: flex;
-  gap: 12px;
-  padding: 14px;
+  gap: 10px;
+  padding: 12px 14px 14px;
   min-height: 0;
   overflow-x: auto;
   overflow-y: hidden;
@@ -1735,9 +1735,11 @@ body.search-focus-active #logoutButton {
 
 .milestone-card {
   display: grid;
-  align-content: space-between;
-  flex: 0 0 min(320px, calc(100% - 34px));
-  min-height: 150px;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: 8px 14px;
+  flex: 0 0 280px;
+  min-height: 96px;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 14px;
@@ -1754,8 +1756,7 @@ body.search-focus-active #logoutButton {
 .milestone-card-top {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
 }
 
@@ -1763,25 +1764,34 @@ body.search-focus-active #logoutButton {
   min-width: 0;
 }
 
-.milestone-card-top > strong {
+.milestone-when {
+  grid-column: 2;
+  grid-row: 1;
   flex: 0 0 auto;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  justify-self: end;
 }
 
 .milestone-years {
-  margin-top: 18px;
-  font-size: 24px;
+  grid-column: 1;
+  grid-row: 2;
+  margin-top: 0;
+  font-size: 18px;
   font-weight: 900;
   line-height: 1.1;
 }
 
 .milestone-card time {
   display: block;
-  margin-top: 8px;
+  grid-column: 2;
+  grid-row: 2;
+  margin-top: 0;
   color: var(--muted);
   font-size: 13px;
   font-weight: 800;
+  text-align: right;
+  white-space: nowrap;
 }
 
 .player-leaderboard-panel .leaderboard-list {
@@ -3386,6 +3396,10 @@ body.search-focus-active #logoutButton {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .stats-grid.player-stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .player-layout {
     grid-template-columns: 1fr;
     grid-template-rows: auto;
@@ -3402,7 +3416,7 @@ body.search-focus-active #logoutButton {
 
   .player-unwhitelisted-chart-panel {
     min-height: 320px;
-    order: 1;
+    order: 2;
   }
 
   .player-leaderboard-panel {
@@ -3412,11 +3426,11 @@ body.search-focus-active #logoutButton {
   }
 
   .player-milestones-panel {
-    order: 2;
+    order: 1;
   }
 
   .milestone-card {
-    flex-basis: min(360px, calc(100% - 38px));
+    flex-basis: min(340px, calc(100% - 38px));
   }
 
   .player-nearby-panel {
@@ -3437,6 +3451,10 @@ body.search-focus-active #logoutButton {
   .shell {
     width: min(100% - 20px, 1480px);
     padding-top: 14px;
+  }
+
+  .stats-grid.player-stats-grid {
+    grid-template-columns: 1fr;
   }
 
   .topbar {
