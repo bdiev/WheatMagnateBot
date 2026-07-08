@@ -500,8 +500,8 @@
           <section class="panel player-unwhitelisted-chart-panel">
             <div class="panel-head">
               <div>
-                <h2>Not Whitelisted by Hour</h2>
-                <p>Players outside the whitelist seen in each hour.</p>
+                <h2>Not Whitelisted Activity</h2>
+                <p>Current hour shows online now; past hours use last seen.</p>
               </div>
               <div class="chart-controls" data-chart-controls="unwhitelistedHourlyChart">
                 <button class="chart-range-button active" type="button" data-chart-range="hours">Hours</button>
@@ -510,6 +510,16 @@
               </div>
             </div>
             <div class="chart-scroll"><canvas id="unwhitelistedHourlyChart" class="chart" height="260"></canvas></div>
+          </section>
+
+          <section class="panel player-milestones-panel">
+            <div class="panel-head">
+              <div>
+                <h2>Player Milestones</h2>
+                <p>Upcoming registration anniversaries for whitelist players.</p>
+              </div>
+            </div>
+            <div id="playerMilestones" class="rank-list milestone-list"></div>
           </section>
 
           <section class="panel player-leaderboard-panel">

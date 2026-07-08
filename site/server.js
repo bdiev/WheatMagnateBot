@@ -198,6 +198,54 @@ function toNumber(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function utcDateOnly(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+}
+
+function anniversaryUtcDate(startDate, year) {
+  const month = startDate.getUTCMonth();
+  const day = startDate.getUTCDate();
+  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(year, month, Math.min(day, lastDay)));
+}
+
+function buildPlayerMilestones(rows, { daysAhead = 60, limit = 6 } = {}) {
+  const today = utcDateOnly(new Date());
+  if (!today) return [];
+  const dayMs = 24 * 60 * 60 * 1000;
+
+  return rows
+    .map(row => {
+      const registeredAt = utcDateOnly(row.registration_at);
+      if (!registeredAt || registeredAt > today) return null;
+
+      let targetYear = today.getUTCFullYear();
+      let milestoneAt = anniversaryUtcDate(registeredAt, targetYear);
+      if (milestoneAt < today) {
+        targetYear += 1;
+        milestoneAt = anniversaryUtcDate(registeredAt, targetYear);
+      }
+
+      const years = targetYear - registeredAt.getUTCFullYear();
+      const daysUntil = Math.round((milestoneAt - today) / dayMs);
+      if (years < 1 || daysUntil < 0 || daysUntil > daysAhead) return null;
+
+      return {
+        username: row.username,
+        years,
+        daysUntil,
+        milestoneAt: milestoneAt.toISOString(),
+        registeredAt: row.registration_at,
+        isRound: years % 5 === 0
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => (a.daysUntil - b.daysUntil) || (b.years - a.years) || a.username.localeCompare(b.username))
+    .slice(0, limit);
+}
+
 function compactFarmState(row = {}) {
   const sessionStartedAt = row.session_started_at || null;
   const sessionSeconds = sessionStartedAt
@@ -1231,7 +1279,14 @@ async function getBotStats() {
 async function getPlayerStats() {
   assertDatabase();
 
-  const [playersResult, leaderboardResult, activityTotalsResult, onlineUnwhitelistedResult, hourlyUnwhitelistedResult] = await Promise.all([
+  const [
+    playersResult,
+    leaderboardResult,
+    activityTotalsResult,
+    onlineUnwhitelistedResult,
+    hourlyUnwhitelistedResult,
+    milestoneResult
+  ] = await Promise.all([
     pool.query(`
       WITH whitelist_players AS (
         SELECT DISTINCT ON (LOWER(username))
@@ -1325,23 +1380,51 @@ async function getPlayerStats() {
         SELECT DISTINCT ON (LOWER(username))
           LOWER(username) AS username_key,
           username,
-          last_seen
+          last_seen,
+          is_online
         FROM player_activity
         WHERE last_seen IS NOT NULL
-        ORDER BY LOWER(username), last_seen DESC NULLS LAST, id DESC
+        ORDER BY LOWER(username), is_online DESC, last_seen DESC NULLS LAST, id DESC
       )
       SELECT TO_CHAR(buckets.bucket, 'MM-DD HH24:00') AS label,
              buckets.bucket AS bucket,
              COUNT(activity.username)::int AS total
       FROM buckets
       LEFT JOIN activity
-        ON activity.last_seen >= buckets.bucket
-       AND activity.last_seen < buckets.bucket + INTERVAL '1 hour'
+        ON (
+          (buckets.bucket = date_trunc('hour', NOW()) AND activity.is_online = TRUE)
+          OR (
+            buckets.bucket < date_trunc('hour', NOW())
+            AND activity.last_seen >= buckets.bucket
+            AND activity.last_seen < buckets.bucket + INTERVAL '1 hour'
+          )
+        )
        AND NOT EXISTS (
          SELECT 1 FROM whitelist w WHERE LOWER(w.username) = activity.username_key
        )
       GROUP BY buckets.bucket
       ORDER BY buckets.bucket
+    `),
+    pool.query(`
+      WITH whitelist_players AS (
+        SELECT DISTINCT ON (LOWER(username))
+          LOWER(username) AS username_key,
+          username
+        FROM whitelist
+        ORDER BY LOWER(username), id
+      ),
+      activity AS (
+        SELECT DISTINCT ON (LOWER(username))
+          LOWER(username) AS username_key,
+          registration_at
+        FROM player_activity
+        WHERE registration_at IS NOT NULL
+        ORDER BY LOWER(username), registration_at ASC NULLS LAST, id
+      )
+      SELECT w.username, activity.registration_at
+      FROM whitelist_players w
+      JOIN activity ON activity.username_key = w.username_key
+      WHERE activity.registration_at IS NOT NULL
     `)
   ]);
 
@@ -1372,7 +1455,8 @@ async function getPlayerStats() {
       label: row.label,
       bucket: row.bucket,
       value: toInt(row.total)
-    }))
+    })),
+    milestones: buildPlayerMilestones(milestoneResult.rows)
   };
 }
 

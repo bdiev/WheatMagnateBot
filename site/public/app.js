@@ -1161,6 +1161,18 @@ function formatRegistrationAge(value) {
   return parts.join(' ');
 }
 
+function formatMilestoneWhen(daysUntil) {
+  const days = Number(daysUntil);
+  if (days === 0) return 'Today';
+  if (days === 1) return 'Tomorrow';
+  return Number.isFinite(days) ? `in ${formatNumber(days)} days` : 'Soon';
+}
+
+function formatMilestoneYears(years) {
+  const value = Number(years);
+  return Number.isFinite(value) ? `${formatNumber(value)} ${value === 1 ? 'year' : 'years'}` : '-';
+}
+
 function registrationProfileValue(profile) {
   const dateText = profile.registrationDisplay || (profile.registrationAt ? formatDate(profile.registrationAt) : 'Unknown');
   return state.playerProfileRegistrationAgeMode ? formatRegistrationAge(profile.registrationAt) : dateText;
@@ -2187,6 +2199,25 @@ function renderPlayerStats(payload = {}, nearbyPlayers = []) {
     `).join('')
     : '<div class="empty">No nearby sightings yet.</div>',
     nearby.map(player => [player.username, player.distance, player.lastSeen])
+  );
+
+  const milestones = payload.milestones || [];
+  renderStable('#playerMilestones', milestones.length
+    ? milestones.map(milestone => `
+      <div class="rank-item milestone-item${milestone.isRound ? ' round' : ''}">
+        ${playerIdentity(milestone.username, 28)}
+        <strong>${escapeHtml(formatMilestoneWhen(milestone.daysUntil))}</strong>
+        <span class="muted">turns ${escapeHtml(formatMilestoneYears(milestone.years))}</span>
+      </div>
+    `).join('')
+    : '<div class="empty">No player milestones in the next 60 days.</div>',
+    milestones.map(milestone => [
+      milestone.username,
+      milestone.years,
+      milestone.daysUntil,
+      milestone.milestoneAt,
+      milestone.isRound
+    ])
   );
 }
 

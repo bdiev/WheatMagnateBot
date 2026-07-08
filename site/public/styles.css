@@ -1636,7 +1636,7 @@ body.search-focus-active #logoutButton {
   display: grid;
   grid-column: 1 / -1;
   grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
-  grid-template-rows: minmax(300px, 360px) minmax(0, 620px);
+  grid-template-rows: minmax(300px, 360px) minmax(220px, 260px) minmax(0, 420px);
   gap: 16px;
   align-items: stretch;
 }
@@ -1659,12 +1659,20 @@ body.search-focus-active #logoutButton {
 
 .player-leaderboard-panel {
   grid-column: 1;
-  grid-row: 2;
+  grid-row: 2 / span 2;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
   min-height: 0;
   overflow: hidden;
+}
+
+.player-milestones-panel {
+  grid-column: 2;
+  grid-row: 2;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
 }
 
 .server-tps-panel {
@@ -1676,7 +1684,7 @@ body.search-focus-active #logoutButton {
 
 .player-nearby-panel {
   grid-column: 2;
-  grid-row: 2;
+  grid-row: 3;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
@@ -1693,6 +1701,11 @@ body.search-focus-active #logoutButton {
 }
 
 .player-nearby-panel .rank-list {
+  min-height: 0;
+  overflow: auto;
+}
+
+.player-milestones-panel .milestone-list {
   min-height: 0;
   overflow: auto;
 }
@@ -2138,6 +2151,21 @@ body.search-focus-active #logoutButton {
 
 .rank-item.activity-item {
   grid-template-columns: minmax(0, 1fr) max-content max-content;
+}
+
+.rank-item.milestone-item {
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 8px 12px;
+}
+
+.rank-item.milestone-item > .muted {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
+.rank-item.milestone-item.round {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+  background: color-mix(in srgb, var(--accent) 9%, var(--panel-soft));
 }
 
 .rank-item > strong,
@@ -3306,6 +3334,7 @@ body.search-focus-active #logoutButton {
   }
 
   .player-unwhitelisted-chart-panel,
+  .player-milestones-panel,
   .player-leaderboard-panel,
   .player-nearby-panel {
     grid-column: 1 / -1;
@@ -3323,8 +3352,12 @@ body.search-focus-active #logoutButton {
     order: 2;
   }
 
-  .player-nearby-panel {
+  .player-milestones-panel {
     order: 3;
+  }
+
+  .player-nearby-panel {
+    order: 4;
     min-height: 0;
   }
 
