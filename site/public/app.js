@@ -1993,7 +1993,7 @@ function renderChatMessages(messages) {
           <div class="chat-meta">
             <time class="chat-time">${formatChatTime(message.createdAt)}</time>
             <button class="chat-reply-button" type="button" data-chat-reply="${escapeHtml(message.username)}" aria-label="Reply to ${escapeHtml(message.username)}" title="Reply">
-              <img src="/items/Arrow.png" alt="" aria-hidden="true">
+              <img src="/logos/reply.png" alt="" aria-hidden="true">
             </button>
           </div>
         `;
