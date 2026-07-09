@@ -2247,6 +2247,7 @@ body.search-focus-active #logoutButton {
 .chart-range-button {
   min-width: 0;
   min-height: 30px;
+  border-radius: 10px;
   padding: 0 10px;
   color: var(--muted);
   background: transparent;
@@ -2257,6 +2258,16 @@ body.search-focus-active #logoutButton {
     background-color 180ms ease,
     transform 150ms ease,
     box-shadow 180ms ease;
+}
+
+.chart-range-button:first-child {
+  border-top-left-radius: var(--button-radius);
+  border-bottom-left-radius: var(--button-radius);
+}
+
+.chart-range-button:last-child {
+  border-top-right-radius: var(--button-radius);
+  border-bottom-right-radius: var(--button-radius);
 }
 
 .chart-range-button:hover {
