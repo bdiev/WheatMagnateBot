@@ -253,6 +253,7 @@ const PLAYER_HEAD_EMOJIS = new Map([
   ['0x003a47d4', '<:0x003A47D4:1519314799647916162>']
 ]);
 const pendingPlayerHeadEmojiImports = new Set();
+const failedPlayerHeadEmojiImports = new Set();
 
 loadPlayerHeadEmojiCache();
 
@@ -312,11 +313,19 @@ function queuePlayerHeadEmojiImport(username) {
   if (!/^[A-Za-z0-9_]{1,16}$/.test(safeUsername)) return;
 
   const key = normalizePlayerHeadUsername(safeUsername);
-  if (!key || pendingPlayerHeadEmojiImports.has(key) || PLAYER_HEAD_EMOJIS.has(key)) return;
+  if (
+    !key ||
+    pendingPlayerHeadEmojiImports.has(key) ||
+    failedPlayerHeadEmojiImports.has(key) ||
+    PLAYER_HEAD_EMOJIS.has(key)
+  ) return;
 
   pendingPlayerHeadEmojiImports.add(key);
   importPlayerHeadEmoji(safeUsername)
-    .catch(err => console.error(`[PlayerHeads] Failed to import ${safeUsername}:`, err.message))
+    .catch(err => {
+      failedPlayerHeadEmojiImports.add(key);
+      console.warn(`[PlayerHeads] Skipping ${safeUsername} after failed import:`, err.message);
+    })
     .finally(() => pendingPlayerHeadEmojiImports.delete(key));
 }
 
@@ -324,6 +333,65 @@ async function getPlayerHeadEmojiGuild() {
   if (!DISCORD_CHANNEL_ID || !discordClient?.isReady?.()) return null;
   const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID).catch(() => null);
   return channel?.guild || null;
+}
+
+async function fetchPlayerHeadImageBuffer(imageUrl, source) {
+  const response = await fetch(imageUrl, {
+    headers: {
+      'User-Agent': 'WheatMagnateBot/1.0 (+https://namemc.com/)'
+    }
+  });
+  if (!response.ok) {
+    return { error: new Error(`${source} returned HTTP ${response.status}`), status: response.status };
+  }
+
+  const contentType = response.headers.get('content-type') || '';
+  if (!contentType.includes('image/')) {
+    throw new Error(`${source} returned ${contentType || 'non-image content'}`);
+  }
+
+  const imageBuffer = Buffer.from(await response.arrayBuffer());
+  if (imageBuffer.length === 0) throw new Error(`${source} returned an empty image`);
+  if (imageBuffer.length > 256 * 1024) throw new Error(`${source} image is too large for an emoji`);
+
+  return { imageBuffer };
+}
+
+async function resolveMinecraftProfile(username) {
+  const response = await fetch(`https://api.mojang.com/users/profiles/minecraft/${encodeURIComponent(username)}`);
+  if (response.status === 204 || response.status === 404) return null;
+  if (!response.ok) throw new Error(`Mojang API returned HTTP ${response.status}`);
+
+  const profile = await response.json();
+  const id = String(profile?.id || '').trim();
+  const name = String(profile?.name || username).trim();
+  if (!/^[0-9a-f]{32}$/i.test(id)) return null;
+
+  return { id, name };
+}
+
+async function fetchPlayerHeadImage(username) {
+  const namemcUrl = `https://render.namemc.com/skin/2d/face.png?skin=${encodeURIComponent(username)}&scale=8`;
+  const namemcResult = await fetchPlayerHeadImageBuffer(namemcUrl, 'NameMC');
+  if (namemcResult.imageBuffer || namemcResult.status !== 404) return namemcResult;
+
+  const profile = await resolveMinecraftProfile(username);
+  if (!profile) return namemcResult;
+
+  const fallbackUrls = [
+    `https://mc-heads.net/avatar/${profile.id}/64`,
+    `https://minotar.net/avatar/${profile.id}/64`
+  ];
+  let lastError = namemcResult.error;
+
+  for (const fallbackUrl of fallbackUrls) {
+    const source = new URL(fallbackUrl).hostname;
+    const result = await fetchPlayerHeadImageBuffer(fallbackUrl, source);
+    if (result.imageBuffer) return result;
+    lastError = result.error;
+  }
+
+  return { error: lastError };
 }
 
 async function importPlayerHeadEmoji(username) {
@@ -343,24 +411,8 @@ async function importPlayerHeadEmoji(username) {
     return emojiText;
   }
 
-  const imageUrl = `https://render.namemc.com/skin/2d/face.png?skin=${encodeURIComponent(username)}&scale=8`;
-  const response = await fetch(imageUrl, {
-    headers: {
-      'User-Agent': 'WheatMagnateBot/1.0 (+https://namemc.com/)'
-    }
-  });
-  if (!response.ok) {
-    throw new Error(`NameMC returned HTTP ${response.status}`);
-  }
-
-  const contentType = response.headers.get('content-type') || '';
-  if (!contentType.includes('image/')) {
-    throw new Error(`NameMC returned ${contentType || 'non-image content'}`);
-  }
-
-  const imageBuffer = Buffer.from(await response.arrayBuffer());
-  if (imageBuffer.length === 0) throw new Error('NameMC returned an empty image');
-  if (imageBuffer.length > 256 * 1024) throw new Error('NameMC image is too large for an emoji');
+  const { imageBuffer, error } = await fetchPlayerHeadImage(username);
+  if (!imageBuffer) throw error || new Error('No player head image was returned');
 
   const created = await guild.emojis.create({
     attachment: imageBuffer,

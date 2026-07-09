@@ -2036,10 +2036,10 @@ body.search-focus-active #logoutButton {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr) max-content;
   gap: 12px;
-  align-items: start;
+  align-items: center;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 10px 12px;
+  padding: 7px 12px;
   background: var(--panel-soft);
   transition: background-color 260ms ease, border-color 260ms ease;
 }
@@ -2088,7 +2088,6 @@ body.search-focus-active #logoutButton {
 
 .chat-text {
   min-width: 0;
-  padding-top: 4px;
   line-height: 1.35;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -2102,10 +2101,10 @@ body.search-focus-active #logoutButton {
 }
 
 .chat-meta {
-  display: grid;
-  justify-items: end;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
   gap: 6px;
-  padding-top: 5px;
 }
 
 .chat-reply-button {
