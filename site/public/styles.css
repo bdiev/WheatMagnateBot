@@ -2202,7 +2202,7 @@ body.search-focus-active #logoutButton {
   overflow-y: hidden;
   overscroll-behavior-x: contain;
   scrollbar-gutter: stable;
-  border-radius: var(--button-radius);
+  border-radius: 0;
   background: var(--panel-soft);
 }
 
@@ -2933,6 +2933,11 @@ body.search-focus-active #logoutButton {
   border-radius: var(--button-radius);
   padding: 12px;
   background: var(--panel-soft);
+}
+
+.admin-users-list .admin-user:first-child {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
 }
 
 .admin-user > div:first-child {
