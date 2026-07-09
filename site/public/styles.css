@@ -1558,6 +1558,10 @@ body.search-focus-active #logoutButton {
   padding: 13px 14px;
 }
 
+.admin-database-stat {
+  grid-column: span 2;
+}
+
 .stat-label {
   display: block;
   color: var(--muted);

@@ -3106,11 +3106,7 @@ function renderAdminControlState(payload = {}) {
   state.adminControlState = payload;
   const settings = payload.settings || {};
   const bot = payload.bot || {};
-  const databasePlayersText = $('#adminDatabasePlayersText');
-  if (databasePlayersText) {
-    const allTimePlayers = formatNumber(payload.playerTotals?.allTime);
-    databasePlayersText.textContent = `В базе данных ${allTimePlayers} игроков за всё время.`;
-  }
+  setRollingNumber('#adminDatabasePlayers', payload.playerTotals?.allTime);
 
   const obsidianButton = $('#obsidianToggleButton');
   if (obsidianButton) {
