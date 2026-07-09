@@ -2148,19 +2148,28 @@ body.search-focus-active #logoutButton {
 }
 
 .chat-message:hover .chat-reply-button,
-.chat-message:focus-within .chat-reply-button {
+.chat-message:focus-within .chat-reply-button,
+.chat-message.reply-active .chat-reply-button {
   opacity: 0.78;
   transform: translateX(0) scale(1);
 }
 
 .chat-message:hover .chat-reply-button:hover,
-.chat-message:focus-within .chat-reply-button:focus-visible {
+.chat-message:focus-within .chat-reply-button:focus-visible,
+.chat-message.reply-active .chat-reply-button:focus-visible {
   opacity: 1;
 }
 
 @media (hover: none) {
-  .chat-reply-button {
-    opacity: 0.72;
+  .chat-message:hover .chat-reply-button {
+    opacity: 0;
+    transform: translateX(4px) scale(0.86);
+  }
+
+  .chat-message:active .chat-reply-button,
+  .chat-message:focus-within .chat-reply-button,
+  .chat-message.reply-active .chat-reply-button {
+    opacity: 0.78;
     transform: translateX(0) scale(1);
   }
 }
@@ -3968,12 +3977,20 @@ body.search-focus-active #logoutButton {
   }
 
   .player-profile-actions {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
     margin-top: 8px;
   }
 
   .player-profile-message-action {
+    justify-content: center;
+    width: 100%;
+    min-width: 0;
     min-height: 34px;
-    padding: 0 12px;
+    padding: 0 10px;
+    font-size: 15px;
   }
 
   .player-profile-grid {

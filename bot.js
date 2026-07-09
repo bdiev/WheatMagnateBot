@@ -960,6 +960,41 @@ async function initDatabase() {
       WHERE registration_at IS NULL
     `);
     await pool.query(`
+      WITH ranked AS (
+        SELECT
+          id,
+          LOWER(username) AS username_key,
+          ROW_NUMBER() OVER (
+            PARTITION BY LOWER(username)
+            ORDER BY is_online DESC, COALESCE(last_seen, last_online, registration_at) DESC NULLS LAST, id DESC
+          ) AS rn,
+          MAX(last_seen) OVER (PARTITION BY LOWER(username)) AS merged_last_seen,
+          MAX(last_online) OVER (PARTITION BY LOWER(username)) AS merged_last_online,
+          MIN(registration_at) OVER (PARTITION BY LOWER(username)) AS merged_registration_at,
+          BOOL_OR(is_online) OVER (PARTITION BY LOWER(username)) AS merged_is_online
+        FROM player_activity
+      ),
+      updated AS (
+        UPDATE player_activity pa
+        SET last_seen = ranked.merged_last_seen,
+            last_online = ranked.merged_last_online,
+            registration_at = ranked.merged_registration_at,
+            is_online = ranked.merged_is_online
+        FROM ranked
+        WHERE pa.id = ranked.id
+          AND ranked.rn = 1
+        RETURNING pa.id
+      )
+      DELETE FROM player_activity pa
+      USING ranked
+      WHERE pa.id = ranked.id
+        AND ranked.rn > 1
+    `);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS player_activity_username_lower_unique_idx
+      ON player_activity (LOWER(username))
+    `);
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS player_playtime (
         username VARCHAR(255) PRIMARY KEY,
         total_seconds BIGINT NOT NULL DEFAULT 0 CHECK (total_seconds >= 0),

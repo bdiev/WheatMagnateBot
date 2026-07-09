@@ -116,37 +116,57 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
     const runUpdate = async () => {
       if (isOnline) {
         await pool.query(`
-          INSERT INTO player_activity (username, last_seen, last_online, registration_at, is_online)
-          VALUES (
-            $1,
-            CASE WHEN $3::boolean THEN $2::timestamp ELSE NULL END,
-            CASE WHEN $3::boolean THEN $2::timestamp ELSE NULL END,
-            NOW(),
-            TRUE
+          WITH updated AS (
+            UPDATE player_activity
+            SET last_seen = CASE
+                  WHEN $3::boolean AND player_activity.is_online IS DISTINCT FROM TRUE THEN $2::timestamp
+                  ELSE player_activity.last_seen
+                END,
+                last_online = CASE
+                  WHEN $3::boolean AND player_activity.is_online IS DISTINCT FROM TRUE THEN $2::timestamp
+                  ELSE player_activity.last_online
+                END,
+                registration_at = COALESCE(player_activity.registration_at, NOW()),
+                is_online = TRUE
+            WHERE id = (
+              SELECT id
+              FROM player_activity
+              WHERE LOWER(username) = LOWER($1)
+              ORDER BY is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
+              LIMIT 1
+            )
+            RETURNING id
           )
-          ON CONFLICT (username)
-          DO UPDATE SET last_seen = CASE
-                          WHEN $3::boolean AND player_activity.is_online IS DISTINCT FROM TRUE THEN $2::timestamp
-                          ELSE player_activity.last_seen
-                        END,
-                        last_online = CASE
-                          WHEN $3::boolean AND player_activity.is_online IS DISTINCT FROM TRUE THEN $2::timestamp
-                          ELSE player_activity.last_online
-                        END,
-                        registration_at = COALESCE(player_activity.registration_at, NOW()),
-                        is_online = TRUE
+          INSERT INTO player_activity (username, last_seen, last_online, registration_at, is_online)
+          SELECT $1,
+                 CASE WHEN $3::boolean THEN $2::timestamp ELSE NULL END,
+                 CASE WHEN $3::boolean THEN $2::timestamp ELSE NULL END,
+                 NOW(),
+                 TRUE
+          WHERE NOT EXISTS (SELECT 1 FROM updated)
         `, [username, timestamp, recordEvent]);
       } else {
         await pool.query(`
+          WITH updated AS (
+            UPDATE player_activity
+            SET last_seen = CASE
+                  WHEN $3::boolean AND player_activity.is_online IS DISTINCT FROM FALSE THEN $2::timestamp
+                  ELSE player_activity.last_seen
+                END,
+                registration_at = COALESCE(player_activity.registration_at, NOW()),
+                is_online = FALSE
+            WHERE id = (
+              SELECT id
+              FROM player_activity
+              WHERE LOWER(username) = LOWER($1)
+              ORDER BY is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
+              LIMIT 1
+            )
+            RETURNING id
+          )
           INSERT INTO player_activity (username, last_seen, registration_at, is_online)
-          VALUES ($1, CASE WHEN $3::boolean THEN $2::timestamp ELSE NULL END, NOW(), FALSE)
-          ON CONFLICT (username)
-          DO UPDATE SET last_seen = CASE
-                          WHEN $3::boolean AND player_activity.is_online IS DISTINCT FROM FALSE THEN $2::timestamp
-                          ELSE player_activity.last_seen
-                        END,
-                        registration_at = COALESCE(player_activity.registration_at, NOW()),
-                        is_online = FALSE
+          SELECT $1, CASE WHEN $3::boolean THEN $2::timestamp ELSE NULL END, NOW(), FALSE
+          WHERE NOT EXISTS (SELECT 1 FROM updated)
         `, [username, timestamp, recordEvent]);
       }
     };
@@ -175,9 +195,18 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
 
     try {
       const result = await pool.query(`
+        WITH activity AS (
+          SELECT DISTINCT ON (LOWER(username))
+            LOWER(username) AS username_key,
+            last_seen,
+            last_online,
+            is_online
+          FROM player_activity
+          ORDER BY LOWER(username), is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
+        )
         SELECT w.username, pa.last_seen, pa.last_online, pa.is_online
         FROM whitelist w
-        LEFT JOIN player_activity pa ON LOWER(w.username) = LOWER(pa.username)
+        LEFT JOIN activity pa ON LOWER(w.username) = pa.username_key
         ORDER BY
           CASE WHEN pa.is_online = TRUE THEN 0 ELSE 1 END,
           CASE WHEN pa.is_online = TRUE THEN LOWER(w.username) END ASC,
@@ -229,8 +258,18 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
 
     try {
       const result = await pool.query(`
+        WITH activity AS (
+          SELECT DISTINCT ON (LOWER(username))
+            LOWER(username) AS username_key,
+            username,
+            last_seen,
+            last_online,
+            is_online
+          FROM player_activity
+          ORDER BY LOWER(username), is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
+        )
         SELECT pa.username, pa.last_seen, pa.last_online, pa.is_online
-        FROM player_activity pa
+        FROM activity pa
         WHERE LOWER(pa.username) LIKE LOWER($1)
           AND NOT EXISTS (
             SELECT 1

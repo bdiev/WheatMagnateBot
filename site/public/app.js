@@ -48,6 +48,7 @@ const state = {
   itemIcons: {},
   itemIconsLoading: null,
   chatReply: null,
+  chatReplyActiveMessageId: null,
   chatReplyHideTimer: null,
   chatMessageIds: new Set(),
   chatInitialized: false,
@@ -1975,6 +1976,7 @@ function renderChatMessages(messages) {
     } else if (article.dataset.messageType !== message.type) {
       article.className = `chat-message${isActivity ? ' chat-activity' : ''}`;
     }
+    article.classList.toggle('reply-active', !isActivity && state.chatReplyActiveMessageId === id);
 
     if (article.dataset.renderSignature !== signature) {
       const text = isActivity
@@ -2075,6 +2077,19 @@ function handleChatReplyClick(event) {
   };
   renderGameChatReplyPreview();
   $('#gameChatInput')?.focus();
+}
+
+function handleChatMessagePointerDown(event) {
+  if (event.pointerType === 'mouse') return;
+  const message = event.target.closest('.chat-message:not(.chat-activity)');
+  const list = event.currentTarget;
+  if (!message || !list.contains(message)) return;
+
+  state.chatReplyActiveMessageId = message.dataset.messageId || null;
+  list.querySelectorAll('.chat-message.reply-active').forEach(node => {
+    if (node !== message) node.classList.remove('reply-active');
+  });
+  message.classList.add('reply-active');
 }
 
 function clearGameChatReply() {
@@ -3091,6 +3106,11 @@ function renderAdminControlState(payload = {}) {
   state.adminControlState = payload;
   const settings = payload.settings || {};
   const bot = payload.bot || {};
+  const databasePlayersText = $('#adminDatabasePlayersText');
+  if (databasePlayersText) {
+    const allTimePlayers = formatNumber(payload.playerTotals?.allTime);
+    databasePlayersText.textContent = `В базе данных ${allTimePlayers} игроков за всё время.`;
+  }
 
   const obsidianButton = $('#obsidianToggleButton');
   if (obsidianButton) {
@@ -3488,6 +3508,7 @@ $('#adminIgnoreChatSuggestions')?.addEventListener('click', handleIgnoreChatSugg
 $('#gameChatForm')?.addEventListener('submit', handleGameChatSubmit);
 $('#chatScrollBottom')?.addEventListener('click', () => scrollToBottom('#chatList', { smooth: true }));
 $('#chatList')?.addEventListener('scroll', updateChatScrollButton);
+$('#chatList')?.addEventListener('pointerdown', handleChatMessagePointerDown);
 $('#chatList')?.addEventListener('click', handleChatReplyClick);
 $('#gameChatReplyCancel')?.addEventListener('click', clearGameChatReply);
 $$('.chart-controls').forEach(controls => controls.addEventListener('click', handleChartRangeClick));

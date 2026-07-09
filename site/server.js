@@ -457,6 +457,41 @@ async function ensureOptionalTables() {
     WHERE registration_at IS NULL
   `);
   await pool.query(`
+    WITH ranked AS (
+      SELECT
+        id,
+        LOWER(username) AS username_key,
+        ROW_NUMBER() OVER (
+          PARTITION BY LOWER(username)
+          ORDER BY is_online DESC, COALESCE(last_seen, last_online, registration_at) DESC NULLS LAST, id DESC
+        ) AS rn,
+        MAX(last_seen) OVER (PARTITION BY LOWER(username)) AS merged_last_seen,
+        MAX(last_online) OVER (PARTITION BY LOWER(username)) AS merged_last_online,
+        MIN(registration_at) OVER (PARTITION BY LOWER(username)) AS merged_registration_at,
+        BOOL_OR(is_online) OVER (PARTITION BY LOWER(username)) AS merged_is_online
+      FROM player_activity
+    ),
+    updated AS (
+      UPDATE player_activity pa
+      SET last_seen = ranked.merged_last_seen,
+          last_online = ranked.merged_last_online,
+          registration_at = ranked.merged_registration_at,
+          is_online = ranked.merged_is_online
+      FROM ranked
+      WHERE pa.id = ranked.id
+        AND ranked.rn = 1
+      RETURNING pa.id
+    )
+    DELETE FROM player_activity pa
+    USING ranked
+    WHERE pa.id = ranked.id
+      AND ranked.rn > 1
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS player_activity_username_lower_unique_idx
+    ON player_activity (LOWER(username))
+  `);
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS game_chat_messages (
       id BIGSERIAL PRIMARY KEY,
       username VARCHAR(255) NOT NULL,
@@ -621,11 +656,11 @@ async function getSummary() {
         ORDER BY LOWER(username), id
       ),
       activity AS (
-        SELECT DISTINCT ON (LOWER(username))
-          LOWER(username) AS username_key,
-          is_online
-        FROM player_activity
-        ORDER BY LOWER(username), is_online DESC, last_seen DESC NULLS LAST, id DESC
+      SELECT DISTINCT ON (LOWER(username))
+        LOWER(username) AS username_key,
+        is_online
+      FROM player_activity
+        ORDER BY LOWER(username), is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
       )
       SELECT
         COUNT(*)::int AS total,
@@ -721,7 +756,7 @@ async function getPlayers() {
         last_online,
         is_online
       FROM player_activity
-      ORDER BY LOWER(username), is_online DESC, last_seen DESC NULLS LAST, id DESC
+      ORDER BY LOWER(username), is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
     ),
     playtime AS (
       SELECT
@@ -994,9 +1029,19 @@ async function getWhisperOnlinePlayers(currentUser, url) {
       SELECT username FROM player_activity WHERE is_online = TRUE
       UNION
       SELECT player_username AS username FROM dialog_players
+    ),
+    activity AS (
+      SELECT DISTINCT ON (LOWER(username))
+        LOWER(username) AS username_key,
+        username,
+        last_seen,
+        last_online,
+        is_online
+      FROM player_activity
+      ORDER BY LOWER(username), is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
     )
     SELECT DISTINCT ON (LOWER(names.username))
-      COALESCE(pa.username, dialogs.player_username, names.username) AS username,
+      COALESCE(dialogs.player_username, pa.username, names.username) AS username,
       pa.last_seen,
       pa.last_online,
       COALESCE(pa.is_online, FALSE) AS is_online,
@@ -1007,7 +1052,7 @@ async function getWhisperOnlinePlayers(currentUser, url) {
       COALESCE(dialogs.message_count, 0)::int AS message_count,
       COALESCE(dialogs.unread_count, 0)::int AS unread_count
     FROM names
-    LEFT JOIN player_activity pa ON LOWER(pa.username) = LOWER(names.username)
+    LEFT JOIN activity pa ON pa.username_key = LOWER(names.username)
     LEFT JOIN dialog_players dialogs ON LOWER(dialogs.player_username) = LOWER(names.username)
     ORDER BY
       LOWER(names.username),
@@ -1052,8 +1097,16 @@ async function getWhisperDialog(currentUser, url) {
   const limit = Math.min(120, Math.max(1, toInt(url.searchParams.get('limit'), 80)));
   const playerResult = await pool.query(`
     SELECT username, last_seen, last_online, COALESCE(is_online, FALSE) AS is_online
-    FROM player_activity
-    WHERE LOWER(username) = LOWER($1)
+    FROM (
+      SELECT DISTINCT ON (LOWER(username))
+        username,
+        last_seen,
+        last_online,
+        is_online
+      FROM player_activity
+      WHERE LOWER(username) = LOWER($1)
+      ORDER BY LOWER(username), is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
+    ) activity
     LIMIT 1
   `, [username]);
   const player = playerResult.rows[0]
@@ -1300,7 +1353,7 @@ async function getPlayerStats() {
           LOWER(username) AS username_key,
           is_online
         FROM player_activity
-        ORDER BY LOWER(username), is_online DESC, last_seen DESC NULLS LAST, id DESC
+        ORDER BY LOWER(username), is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
       )
       SELECT
         COUNT(*)::int AS total,
@@ -1323,7 +1376,7 @@ async function getPlayerStats() {
           last_seen,
           is_online
         FROM player_activity
-        ORDER BY LOWER(username), is_online DESC, last_seen DESC NULLS LAST, id DESC
+        ORDER BY LOWER(username), is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
       ),
       playtime AS (
         SELECT
@@ -1348,8 +1401,8 @@ async function getPlayerStats() {
     `),
     pool.query(`
       SELECT
-        COUNT(*) FILTER (WHERE last_seen >= NOW() - INTERVAL '24 hours')::int AS seen_24h,
-        COUNT(*) FILTER (WHERE last_seen >= NOW() - INTERVAL '7 days')::int AS seen_7d
+        COUNT(DISTINCT LOWER(username)) FILTER (WHERE last_seen >= NOW() - INTERVAL '24 hours')::int AS seen_24h,
+        COUNT(DISTINCT LOWER(username)) FILTER (WHERE last_seen >= NOW() - INTERVAL '7 days')::int AS seen_7d
       FROM player_activity
     `),
     pool.query(`
@@ -1359,7 +1412,7 @@ async function getPlayerStats() {
           username,
           is_online
         FROM player_activity
-        ORDER BY LOWER(username), is_online DESC, last_seen DESC NULLS LAST, id DESC
+        ORDER BY LOWER(username), is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
       )
       SELECT COUNT(*)::int AS total
       FROM activity pa
@@ -1384,7 +1437,7 @@ async function getPlayerStats() {
           is_online
         FROM player_activity
         WHERE last_seen IS NOT NULL
-        ORDER BY LOWER(username), is_online DESC, last_seen DESC NULLS LAST, id DESC
+        ORDER BY LOWER(username), is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
       )
       SELECT TO_CHAR(buckets.bucket, 'MM-DD HH24:00') AS label,
              buckets.bucket AS bucket,
@@ -1619,6 +1672,16 @@ async function searchSeenPlayers(url) {
       UNION
       SELECT username FROM player_playtime
     ),
+    activity AS (
+      SELECT DISTINCT ON (LOWER(username))
+        LOWER(username) AS username_key,
+        username,
+        last_seen,
+        last_online,
+        is_online
+      FROM player_activity
+      ORDER BY LOWER(username), is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
+    ),
     matched AS (
       SELECT
         names.username,
@@ -1633,7 +1696,7 @@ async function searchSeenPlayers(url) {
                ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - pt.tracking_since)))::BIGINT)
           END AS total_seconds
       FROM names
-      LEFT JOIN player_activity pa ON LOWER(pa.username) = LOWER(names.username)
+      LEFT JOIN activity pa ON pa.username_key = LOWER(names.username)
       LEFT JOIN player_playtime pt ON LOWER(pt.username) = LOWER(names.username)
       WHERE LOWER(names.username) LIKE LOWER($1)
     )
@@ -1691,14 +1754,31 @@ async function getPlayerProfile(url) {
   const [profileResult, chatResult, recentChatResult, nearbyResult] = await Promise.all([
     pool.query(`
       WITH names AS (
-        SELECT username FROM whitelist WHERE LOWER(username) = LOWER($1)
+        SELECT username, 0 AS priority FROM whitelist WHERE LOWER(username) = LOWER($1)
         UNION
-        SELECT username FROM player_activity WHERE LOWER(username) = LOWER($1)
+        SELECT username, 1 AS priority FROM player_playtime WHERE LOWER(username) = LOWER($1)
         UNION
-        SELECT username FROM player_playtime WHERE LOWER(username) = LOWER($1)
+        SELECT username, 2 AS priority FROM player_activity WHERE LOWER(username) = LOWER($1)
       ),
       selected AS (
-        SELECT COALESCE((SELECT username FROM names LIMIT 1), $1) AS username
+        SELECT COALESCE((
+          SELECT username
+          FROM names
+          ORDER BY priority, CASE WHEN username = $1 THEN 0 ELSE 1 END, username
+          LIMIT 1
+        ), $1) AS username
+      ),
+      activity AS (
+        SELECT DISTINCT ON (LOWER(username))
+          LOWER(username) AS username_key,
+          username,
+          last_seen,
+          last_online,
+          registration_at,
+          is_online
+        FROM player_activity
+        WHERE LOWER(username) = LOWER($1)
+        ORDER BY LOWER(username), is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
       )
       SELECT
         selected.username,
@@ -1716,7 +1796,7 @@ async function getPlayerProfile(url) {
                ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - pt.tracking_since)))::BIGINT)
           END AS total_seconds
       FROM selected
-      LEFT JOIN player_activity pa ON LOWER(pa.username) = LOWER(selected.username)
+      LEFT JOIN activity pa ON pa.username_key = LOWER(selected.username)
       LEFT JOIN player_playtime pt ON LOWER(pt.username) = LOWER(selected.username)
     `, [username]),
     pool.query(`
@@ -2116,13 +2196,31 @@ async function setAdminRegistrationDate(currentUser, body) {
   }
 
   const result = await pool.query(`
-    INSERT INTO player_activity (username, registration_at)
-    VALUES ($1, $2)
-    ON CONFLICT (username)
-    DO UPDATE SET username = EXCLUDED.username,
-                  registration_at = EXCLUDED.registration_at
-    RETURNING username,
-              TO_CHAR(registration_at AT TIME ZONE 'UTC', 'MM/DD/YYYY HH24:MI:SS') AS registration_display
+    WITH updated AS (
+      UPDATE player_activity
+      SET registration_at = $2
+      WHERE id = (
+        SELECT id
+        FROM player_activity
+        WHERE LOWER(username) = LOWER($1)
+        ORDER BY is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
+        LIMIT 1
+      )
+      RETURNING username, registration_at
+    ),
+    inserted AS (
+      INSERT INTO player_activity (username, registration_at)
+      SELECT $1, $2
+      WHERE NOT EXISTS (SELECT 1 FROM updated)
+      RETURNING username, registration_at
+    )
+    SELECT username,
+           TO_CHAR(registration_at AT TIME ZONE 'UTC', 'MM/DD/YYYY HH24:MI:SS') AS registration_display
+    FROM updated
+    UNION ALL
+    SELECT username,
+           TO_CHAR(registration_at AT TIME ZONE 'UTC', 'MM/DD/YYYY HH24:MI:SS') AS registration_display
+    FROM inserted
   `, [username, registrationDate]);
   await recordSystemLog({
     level: 'audit',
@@ -2221,6 +2319,7 @@ async function getAdminControlState(currentUser) {
     whitelistResult,
     ignoredResult,
     onlineResult,
+    playerTotalsResult,
     farmStateResult
   ] = await Promise.all([
     pool.query('SELECT key, value FROM admin_settings'),
@@ -2233,6 +2332,7 @@ async function getAdminControlState(currentUser) {
       WHERE is_online = TRUE
       ORDER BY LOWER(username) ASC
     `),
+    pool.query('SELECT COUNT(DISTINCT LOWER(username))::int AS total FROM player_activity'),
     pool.query(`
       SELECT target_x, target_y, target_z, target_radius
       FROM obsidian_farm_state
@@ -2273,6 +2373,9 @@ async function getAdminControlState(currentUser) {
     whitelist,
     ignoredChatUsers,
     onlinePlayers,
+    playerTotals: {
+      allTime: toInt(playerTotalsResult.rows[0]?.total)
+    },
     whitelistAddCandidates: onlinePlayers.filter(username =>
       !whitelist.some(entry => entry.toLowerCase() === username.toLowerCase())
     ),
