@@ -4154,6 +4154,12 @@ function sendMinecraftChat(message, options = {}) {
   return true;
 }
 
+function armSeenCommandResponseCapture(message) {
+  if (/^!(?:seen|seenplayer)(?:\s|$)/i.test(String(message || '').trim())) {
+    rawChatTraceUntil = Date.now() + 8_000;
+  }
+}
+
 function splitMinecraftMessage(text, maxLength = MINECRAFT_PRIVATE_MESSAGE_LENGTH) {
   const words = String(text || '').trim().split(/\s+/).filter(Boolean);
   const chunks = [];
@@ -4465,7 +4471,7 @@ async function executeBotCommand(command) {
     if (!cleanMessage) throw new Error('Queued message is empty.');
     const isCommand = cleanMessage.startsWith('/') || cleanMessage.startsWith('!');
     const outgoing = isCommand ? cleanMessage : `[${requestedBy}] ${cleanMessage}`;
-    if (isCommand) rawChatTraceUntil = Date.now() + 8_000;
+    armSeenCommandResponseCapture(cleanMessage);
     const sent = sendMinecraftChat(outgoing);
     if (!sent) throw new Error('Minecraft bot is not ready.');
     const sentToDiscord = await sendGameChatMessageToDiscord(isCommand ? requestedBy : (bot.username || 'WheatMagnate'), isCommand ? cleanMessage : outgoing, { allowMentions: false });
@@ -7052,6 +7058,7 @@ function createBot() {
     // Do NOT infer deaths from chat messages. We only notify on the bot's own death
     // via the dedicated bot death event handler.
 
+    armSeenCommandResponseCapture(message);
     scheduleGameChatForward(username, message);
     return;
 
@@ -9784,6 +9791,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           : text;
         // Don't add username prefix for commands (starting with / or !)
         if (gameText.startsWith('/') || gameText.startsWith('!')) {
+          armSeenCommandResponseCapture(gameText);
           const sentToGame = sendMinecraftChat(gameText);
           if (sentToGame) {
             await sendGameChatMessageToDiscord(username, gameText, { allowMentions: false });
