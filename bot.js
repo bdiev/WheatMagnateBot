@@ -645,6 +645,7 @@ class DeferredBotCommandError extends Error {
 }
 let recentlyForwardedGameChat = new Map(); // key: `CHAT:username:message` -> timestamp, to dedupe chat/raw message events
 const COMMAND_RESPONSE_BOT_USERNAMES = new Set(['lolritterbot']);
+let rawChatTraceUntil = 0;
 let tpsTabInterval = null;
 let playtimeSyncInterval = null;
 let playerActivitySyncInterval = null;
@@ -4463,6 +4464,7 @@ async function executeBotCommand(command) {
     if (!cleanMessage) throw new Error('Queued message is empty.');
     const isCommand = cleanMessage.startsWith('/') || cleanMessage.startsWith('!');
     const outgoing = isCommand ? cleanMessage : `[${requestedBy}] ${cleanMessage}`;
+    if (isCommand) rawChatTraceUntil = Date.now() + 8_000;
     const sent = sendMinecraftChat(outgoing);
     if (!sent) throw new Error('Minecraft bot is not ready.');
     const sentToDiscord = await sendGameChatMessageToDiscord(isCommand ? requestedBy : (bot.username || 'WheatMagnate'), isCommand ? cleanMessage : outgoing, { allowMentions: false });
@@ -4954,7 +4956,14 @@ function parseRawPublicChatLine(text) {
   };
 }
 
-function forwardRawPublicChatText(text) {
+function forwardRawPublicChatText(text, source = 'raw', position = '') {
+  if (Date.now() < rawChatTraceUntil) {
+    const cleanTraceText = cleanMinecraftChatMessage(text).replace(/\s+/g, ' ').trim();
+    if (cleanTraceText) {
+      console.log(`[Chat Raw Trace] ${source}${position ? `/${position}` : ''}: ${cleanTraceText.slice(0, 300)}`);
+    }
+  }
+
   const rawChat = parseRawPublicChatLine(text);
   if (!rawChat) {
     if (String(text || '').toLowerCase().includes('lolritter')) {
@@ -7166,7 +7175,7 @@ function createBot() {
     sendWhisperToDiscord(username, message);
   });
 
-  bot.on('message', (message) => {
+  bot.on('message', (message, position) => {
     const text = chatComponentToString(message);
     const tpsMatch = text.match(/(\d+\.?\d*)\s*tps/i);
     if (tpsMatch) {
@@ -7174,11 +7183,11 @@ function createBot() {
       recordTpsSample().catch(() => {});
     }
 
-    forwardRawPublicChatText(text);
+    forwardRawPublicChatText(text, 'message', position);
   });
 
-  bot.on('messagestr', (message) => {
-    forwardRawPublicChatText(message);
+  bot.on('messagestr', (message, position) => {
+    forwardRawPublicChatText(message, 'messagestr', position);
   });
 }
 
