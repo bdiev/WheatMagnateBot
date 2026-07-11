@@ -4962,11 +4962,19 @@ function parseRawPublicChatLine(text) {
     }
   }
 
-  const match = clean.match(/^(?:<([A-Za-z0-9_]{1,32})>|\[([A-Za-z0-9_]{1,32})\]|([A-Za-z0-9_]{1,32}))\s*(?:>|:)\s+([\s\S]+)$/);
+  const angleMatch = clean.match(/^<([A-Za-z0-9_]{1,32})>\s+([\s\S]+)$/);
+  if (angleMatch) {
+    return {
+      username: angleMatch[1],
+      message: angleMatch[2].trim()
+    };
+  }
+
+  const match = clean.match(/^(?:\[([A-Za-z0-9_]{1,32})\]|([A-Za-z0-9_]{1,32}))\s*(?:>|:)\s+([\s\S]+)$/);
   if (!match) return null;
   return {
-    username: match[1] || match[2] || match[3],
-    message: match[4].trim()
+    username: match[1] || match[2],
+    message: match[3].trim()
   };
 }
 
