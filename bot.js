@@ -644,6 +644,7 @@ class DeferredBotCommandError extends Error {
   }
 }
 let recentlyForwardedGameChat = new Map(); // key: `CHAT:username:message` -> timestamp, to dedupe chat/raw message events
+const COMMAND_RESPONSE_BOT_USERNAMES = new Set(['lolritterbot']);
 let tpsTabInterval = null;
 let playtimeSyncInterval = null;
 let playerActivitySyncInterval = null;
@@ -2274,7 +2275,7 @@ async function reconcileObservedJoinDate(targetUsername, observedDate) {
     const result = await pool.query(`
       INSERT INTO player_activity (username, registration_at)
       VALUES ($1, $2)
-      ON CONFLICT (username)
+      ON CONFLICT (LOWER(username))
       DO UPDATE SET username = EXCLUDED.username,
                     registration_at = EXCLUDED.registration_at
       WHERE player_activity.registration_at IS DISTINCT FROM EXCLUDED.registration_at
@@ -4460,10 +4461,11 @@ async function executeBotCommand(command) {
     if (!bot || typeof bot.chat !== 'function') throw new Error('Minecraft bot is not ready.');
     const cleanMessage = sanitizeSiteChatMessage(payload.message);
     if (!cleanMessage) throw new Error('Queued message is empty.');
-    const outgoing = `[${requestedBy}] ${cleanMessage}`;
+    const isCommand = cleanMessage.startsWith('/') || cleanMessage.startsWith('!');
+    const outgoing = isCommand ? cleanMessage : `[${requestedBy}] ${cleanMessage}`;
     const sent = sendMinecraftChat(outgoing);
     if (!sent) throw new Error('Minecraft bot is not ready.');
-    await sendGameChatMessageToDiscord(bot.username || 'WheatMagnate', outgoing, { allowMentions: false });
+    await sendGameChatMessageToDiscord(isCommand ? requestedBy : (bot.username || 'WheatMagnate'), isCommand ? cleanMessage : outgoing, { allowMentions: false });
     return { message: outgoing };
   }
 
@@ -4855,6 +4857,7 @@ function scheduleGameChatForward(username, message) {
 
   const safeUsername = String(username || '').trim();
   if (!safeUsername) return false;
+  const isCommandResponseBot = COMMAND_RESPONSE_BOT_USERNAMES.has(safeUsername.toLowerCase()) && cleanMessage.startsWith('>');
 
   const nowTs = Date.now();
   const isSelfMessage = bot?.username && safeUsername.toLowerCase() === bot.username.toLowerCase();
@@ -4868,7 +4871,7 @@ function scheduleGameChatForward(username, message) {
     return false;
   }
 
-  if (!isSelfMessage && ignoredChatUsernames.includes(safeUsername.toLowerCase())) return false;
+  if (!isSelfMessage && !isCommandResponseBot && ignoredChatUsernames.includes(safeUsername.toLowerCase())) return false;
 
   const whisperKey = `WHISPER:${safeUsername}:${cleanMessage}`;
   const whisperLowerKey = `WHISPER:${safeUsername.toLowerCase()}:${cleanMessage}`;
@@ -4916,11 +4919,11 @@ function scheduleGameChatForward(username, message) {
 
 function parseRawPublicChatLine(text) {
   if (isPrivateMinecraftChatLine(text)) return null;
-  const match = cleanMinecraftChatMessage(text).match(/^(?:<([A-Za-z0-9_]{1,16})>|([A-Za-z0-9_]{1,16}))\s*>\s+([\s\S]+)$/);
+  const match = cleanMinecraftChatMessage(text).match(/^(?:<([A-Za-z0-9_]{1,32})>|\[([A-Za-z0-9_]{1,32})\]|([A-Za-z0-9_]{1,32}))\s*(?:>|:)\s+([\s\S]+)$/);
   if (!match) return null;
   return {
-    username: match[1] || match[2],
-    message: match[3].trim()
+    username: match[1] || match[2] || match[3],
+    message: match[4].trim()
   };
 }
 

@@ -952,12 +952,6 @@ async function queueSiteChatMessage(currentUser, body) {
     err.statusCode = 400;
     throw err;
   }
-  if (message.startsWith('/') || message.startsWith('!')) {
-    const err = new Error('Commands cannot be sent from the site chat.');
-    err.statusCode = 400;
-    throw err;
-  }
-
   return queueBotCommand(currentUser, 'chat', { message });
 }
 
