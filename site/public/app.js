@@ -43,6 +43,7 @@ const state = {
   adminControlState: null,
   adminControlLoading: false,
   adminLogsLoading: false,
+  adminOpenLogDetails: new Set(),
   obsidianCoordinateEditorOpen: false,
   supplyTooltipItems: {},
   itemIcons: {},
@@ -2805,17 +2806,30 @@ function renderLogDetails(details) {
 function renderAdminSystemLogs(logs = []) {
   const list = $('#adminSystemLogs');
   if (!list) return;
+  list.querySelectorAll('.admin-log-details[data-log-id]').forEach(details => {
+    if (details.open) state.adminOpenLogDetails.add(details.dataset.logId);
+    else state.adminOpenLogDetails.delete(details.dataset.logId);
+  });
   if (!logs.length) {
     list.innerHTML = '<div class="empty">No system log entries yet.</div>';
+    state.adminOpenLogDetails.clear();
     return;
   }
 
+  const visibleIds = new Set(logs.map(entry => String(entry.id || '')).filter(Boolean));
+  state.adminOpenLogDetails.forEach(id => {
+    if (!visibleIds.has(id)) state.adminOpenLogDetails.delete(id);
+  });
+
   list.innerHTML = logs.map(entry => {
+    const logId = String(entry.id || '');
     const level = escapeHtml(entry.level || 'info');
     const category = escapeHtml(entry.category || entry.kind || 'system');
     const actor = entry.actor ? `<span class="admin-log-actor">${escapeHtml(entry.actor)}</span>` : '';
     const kind = escapeHtml(entry.kind || 'system');
     const details = renderLogDetails(entry.details);
+    const detailsOpen = logId && state.adminOpenLogDetails.has(logId) ? ' open' : '';
+    const detailsId = logId ? ` data-log-id="${escapeHtml(logId)}"` : '';
     return `
       <article class="admin-log-entry ${level}" data-kind="${kind}">
         <div class="admin-log-main">
@@ -2825,10 +2839,17 @@ function renderAdminSystemLogs(logs = []) {
           ${actor}
         </div>
         <p>${escapeHtml(entry.message || '')}</p>
-        ${details ? `<details class="admin-log-details"><summary>Details</summary>${details}</details>` : ''}
+        ${details ? `<details class="admin-log-details"${detailsId}${detailsOpen}><summary>Details</summary>${details}</details>` : ''}
       </article>
     `;
   }).join('');
+
+  list.querySelectorAll('.admin-log-details[data-log-id]').forEach(details => {
+    details.addEventListener('toggle', () => {
+      if (details.open) state.adminOpenLogDetails.add(details.dataset.logId);
+      else state.adminOpenLogDetails.delete(details.dataset.logId);
+    });
+  });
 }
 
 async function loadAdminSystemLogs() {
