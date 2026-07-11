@@ -4857,7 +4857,7 @@ function scheduleGameChatForward(username, message) {
 
   const safeUsername = String(username || '').trim();
   if (!safeUsername) return false;
-  const isCommandResponseBot = COMMAND_RESPONSE_BOT_USERNAMES.has(safeUsername.toLowerCase()) && cleanMessage.startsWith('>');
+  const isCommandResponseBot = COMMAND_RESPONSE_BOT_USERNAMES.has(safeUsername.toLowerCase());
 
   const nowTs = Date.now();
   const isSelfMessage = bot?.username && safeUsername.toLowerCase() === bot.username.toLowerCase();
@@ -4919,7 +4919,17 @@ function scheduleGameChatForward(username, message) {
 
 function parseRawPublicChatLine(text) {
   if (isPrivateMinecraftChatLine(text)) return null;
-  const match = cleanMinecraftChatMessage(text).match(/^(?:<([A-Za-z0-9_]{1,32})>|\[([A-Za-z0-9_]{1,32})\]|([A-Za-z0-9_]{1,32}))\s*(?:>|:)\s+([\s\S]+)$/);
+  const clean = cleanMinecraftChatMessage(text);
+  const commandResponseMatch = clean.match(/^(?:<([A-Za-z0-9_]{1,32})>|\[([A-Za-z0-9_]{1,32})\]|([A-Za-z0-9_]{1,32}))\s*[>›»]\s+([\s\S]+)$/);
+  if (commandResponseMatch) {
+    const username = commandResponseMatch[1] || commandResponseMatch[2] || commandResponseMatch[3];
+    const message = commandResponseMatch[4].trim();
+    if (COMMAND_RESPONSE_BOT_USERNAMES.has(String(username || '').toLowerCase())) {
+      return { username, message: `> ${message}` };
+    }
+  }
+
+  const match = clean.match(/^(?:<([A-Za-z0-9_]{1,32})>|\[([A-Za-z0-9_]{1,32})\]|([A-Za-z0-9_]{1,32}))\s*(?:>|:)\s+([\s\S]+)$/);
   if (!match) return null;
   return {
     username: match[1] || match[2] || match[3],
