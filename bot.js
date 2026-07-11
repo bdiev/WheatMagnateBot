@@ -644,6 +644,7 @@ class DeferredBotCommandError extends Error {
   }
 }
 let recentlyForwardedGameChat = new Map(); // normalized message key -> { source, timestamp }
+let recentCommandBotResponses = []; // raw command-bot replies used to reject truncated chat-event copies
 const COMMAND_RESPONSE_BOT_USERNAMES = new Set(['lolritterbot']);
 const COMMAND_RESPONSE_DISPLAY_USERNAME = 'LoLRiTTeRBot';
 let rawChatTraceUntil = 0;
@@ -3476,6 +3477,25 @@ function resolvePublicChatEnvelope(username, message, jsonMessage) {
     username: resolveRelayedChatUsername(username, jsonMessage),
     message: cleanMinecraftChatMessage(message)
   };
+
+  const targetKey = `target:${String(username || '').toLowerCase()}`;
+  const playtimeLookup = pendingPlaytimeLookups.get(targetKey);
+  const joinDateLookup = pendingJoinDateLookups.get(targetKey);
+  const now = Date.now();
+  const expectedLookup = [playtimeLookup, joinDateLookup].find(lookup =>
+    lookup && now - lookup.timestamp <= 20_000
+  );
+  const isExpectedResult = Boolean(
+    (playtimeLookup && now - playtimeLookup.timestamp <= 20_000 && parsePlaytime(fallback.message) != null) ||
+    (joinDateLookup && now - joinDateLookup.timestamp <= 20_000 && parseObservedJoinDate(fallback.message))
+  );
+  if (expectedLookup && isExpectedResult) {
+    return {
+      username: COMMAND_RESPONSE_DISPLAY_USERNAME,
+      message: `> ${expectedLookup.targetUsername}: ${fallback.message}`
+    };
+  }
+
   if (!jsonMessage) return fallback;
 
   const candidates = [
@@ -4892,6 +4912,29 @@ function cancelPendingGameChat(username, message) {
   return true;
 }
 
+function rememberCommandBotResponse(message) {
+  const match = cleanMinecraftChatMessage(message).match(/^>\s*([A-Za-z0-9_]{1,32})\s*:\s*([\s\S]+)$/);
+  if (!match) return;
+  const now = Date.now();
+  recentCommandBotResponses = recentCommandBotResponses
+    .filter(entry => now - entry.timestamp < 5_000)
+    .concat({
+      target: match[1].toLowerCase(),
+      message: cleanMinecraftChatMessage(match[2]),
+      timestamp: now
+    });
+}
+
+function isTruncatedCommandBotResponse(username, message) {
+  const now = Date.now();
+  const target = String(username || '').toLowerCase();
+  const cleanMessage = cleanMinecraftChatMessage(message);
+  recentCommandBotResponses = recentCommandBotResponses.filter(entry => now - entry.timestamp < 5_000);
+  return recentCommandBotResponses.some(entry =>
+    entry.target === target && entry.message === cleanMessage
+  );
+}
+
 function scheduleGameChatForward(username, message, source = 'chat') {
   const cleanMessage = cleanMinecraftChatMessage(message);
   if (!cleanMessage || cleanMessage.startsWith('/msg ')) return false;
@@ -4939,6 +4982,10 @@ function scheduleGameChatForward(username, message, source = 'chat') {
   recentlyForwardedGameChat.set(pendingKey, { source, timestamp: nowTs });
   const timer = setTimeout(async () => {
     try {
+      if (source === 'chat' && !isCommandResponseBot && isTruncatedCommandBotResponse(safeUsername, cleanMessage)) {
+        debugLog(`[Chat] Suppressed truncated command-bot copy attributed to ${safeUsername}: "${cleanMessage}"`);
+        return;
+      }
       if (recentWhispers.has(whisperKey) || recentWhispers.has(whisperLowerKey)) {
         debugLog(`[Chat] Suppressed whisper (late mark) from ${safeUsername}: "${cleanMessage}"`);
         if (/^[>›»]/.test(cleanMessage)) console.warn(`[Chat] Suppressed leading-greater message as late whisper from ${safeUsername}: ${cleanMessage}`);
@@ -5053,6 +5100,9 @@ function forwardRawPublicChatText(text, source = 'raw', position = '') {
       console.warn(`[Chat Raw] Saw LoLRiTTeRBot text but could not parse it: ${String(text).slice(0, 300)}`);
     }
     return false;
+  }
+  if (COMMAND_RESPONSE_BOT_USERNAMES.has(String(rawChat.username || '').toLowerCase())) {
+    rememberCommandBotResponse(rawChat.message);
   }
   const forwarded = scheduleGameChatForward(rawChat.username, rawChat.message, source);
   if (String(rawChat.username || '').toLowerCase() === 'lolritterbot') {
@@ -6973,9 +7023,11 @@ function createBot() {
 
   // ------- CHAT COMMANDS -------
   bot.on('chat', async (username, message, translate, jsonMessage) => {
+    const observedUsername = username;
+    const observedMessage = message;
     ({ username, message } = resolvePublicChatEnvelope(username, message, jsonMessage));
-    handleObservedPlaytimeChat(username, message);
-    handleObservedJoinDateChat(username, message);
+    handleObservedPlaytimeChat(observedUsername, observedMessage);
+    handleObservedJoinDateChat(observedUsername, observedMessage);
 
     const wmMatch = message.match(/^!wm(?:\s+([\s\S]*))?$/i);
     if (wmMatch) {
