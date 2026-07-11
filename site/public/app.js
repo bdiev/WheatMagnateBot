@@ -1882,43 +1882,11 @@ async function handleWhisperDeleteDialog() {
   }
 }
 
-function typeChatMessageText(element, text) {
-  if (!element) return;
-  const fullText = String(text || '');
-  element.textContent = '';
-
-  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || !fullText) {
-    element.textContent = fullText;
-    return;
-  }
-
-  element.classList.add('typing');
-  const startDelay = 360;
-  const stepMs = 22;
-  const chunkSize = fullText.length > 90 ? 2 : 1;
-  let index = 0;
-
-  const finish = () => {
-    element.textContent = fullText;
-    element.classList.remove('typing');
-  };
-
-  window.setTimeout(() => {
-    const timer = window.setInterval(() => {
-      index = Math.min(fullText.length, index + chunkSize);
-      element.textContent = fullText.slice(0, index);
-      if (index >= fullText.length) {
-        window.clearInterval(timer);
-        finish();
-      }
-    }, stepMs);
-  }, startDelay);
-}
-
 function renderChatMessages(messages) {
   const list = $('#chatList');
   if (!list) return;
-  const listSignature = stableSignature(messages.map(message => [
+  const safeMessages = Array.isArray(messages) ? messages.filter(message => message?.id != null) : [];
+  const listSignature = stableSignature(safeMessages.map(message => [
     message.id,
     message.type,
     message.username,
@@ -1927,7 +1895,7 @@ function renderChatMessages(messages) {
     message.createdAt
   ]));
 
-  if (!messages.length) {
+  if (!safeMessages.length) {
     if (state.renderSignatures['#chatList'] === listSignature) return;
     if (list.dataset.empty !== 'true') {
       list.innerHTML = '<div class="empty">No chat messages yet. New messages will appear after the bot records them.</div>';
@@ -1940,97 +1908,49 @@ function renderChatMessages(messages) {
   if (state.renderSignatures['#chatList'] === listSignature) return;
   state.renderSignatures['#chatList'] = listSignature;
 
-  delete list.dataset.empty;
-  list.querySelectorAll('.empty').forEach(node => node.remove());
-
-  const scrollTop = list.scrollTop;
-  const scrollLeft = list.scrollLeft;
   const distanceFromBottom = list.scrollHeight - list.clientHeight - list.scrollTop;
-  const keepBottom = distanceFromBottom >= 0 && distanceFromBottom < 12;
-  const existing = new Map(Array.from(list.querySelectorAll('.chat-message')).map(node => [
-    node.dataset.messageId,
-    node
-  ]));
-  const used = new Set();
+  const keepBottom = distanceFromBottom < 48;
+  const previousScrollTop = list.scrollTop;
+  const previousIds = state.chatMessageIds;
+  const fragment = document.createDocumentFragment();
 
-  messages.forEach((message, index) => {
+  safeMessages.forEach(message => {
     const id = String(message.id);
     const isActivity = message.type === 'activity';
-    const isNew = state.chatInitialized && !state.chatMessageIds.has(id);
-    const signature = stableSignature([
-      message.id,
-      message.type,
-      message.username,
-      message.message,
-      message.event,
-      message.createdAt
-    ]);
-    let article = existing.get(id);
-
-    if (!article) {
-      article = document.createElement('article');
-      article.dataset.messageId = id;
-      article.className = `chat-message${isActivity ? ' chat-activity' : ''}${isNew ? ' new-message' : ''}`;
-      if (isNew) {
-        setTimeout(() => article.classList.remove('new-message'), 650);
-      }
-    } else if (article.dataset.messageType !== message.type) {
-      article.className = `chat-message${isActivity ? ' chat-activity' : ''}`;
-    }
+    const isNew = state.chatInitialized && !previousIds.has(id);
+    const article = document.createElement('article');
+    article.dataset.messageId = id;
+    article.className = `chat-message${isActivity ? ' chat-activity' : ''}${isNew ? ' new-message' : ''}`;
     article.classList.toggle('reply-active', !isActivity && state.chatReplyActiveMessageId === id);
-
-    if (article.dataset.renderSignature !== signature) {
-      const text = isActivity
-        ? (message.event === 'join' ? 'joined the game' : 'left the game')
-        : String(message.message || '');
-      if (isActivity) {
-        article.innerHTML = `
-          <div class="chat-user">${playerIdentity(message.username, 24)}</div>
-          <div class="chat-text"></div>
-          <div class="chat-meta">
-            <time class="chat-time">${formatChatTime(message.createdAt)}</time>
-          </div>
-        `;
-      } else {
-        article.innerHTML = `
-          <div class="chat-user">${playerIdentity(message.username, 28)}</div>
-          <div class="chat-text"></div>
-          <div class="chat-meta">
-            <time class="chat-time">${formatChatTime(message.createdAt)}</time>
-            <button class="chat-reply-button" type="button" data-chat-reply="${escapeHtml(message.username)}" data-chat-reply-text="${escapeHtml(text)}" aria-label="Reply to ${escapeHtml(message.username)}" title="Reply">
-              <img src="/logos/reply.png" alt="" aria-hidden="true">
-            </button>
-          </div>
-        `;
-      }
-      const textNode = article.querySelector('.chat-text');
-      if (isNew) {
-        typeChatMessageText(textNode, text);
-      } else if (textNode) {
-        textNode.textContent = text;
-      }
-      article.dataset.renderSignature = signature;
-      article.dataset.messageType = message.type;
+    const username = String(message.username || 'Minecraft');
+    const text = isActivity
+      ? (message.event === 'join' ? 'joined the game' : 'left the game')
+      : String(message.message || '');
+    article.innerHTML = `
+      <div class="chat-user">${playerIdentity(username, isActivity ? 24 : 28)}</div>
+      <div class="chat-text"></div>
+      <div class="chat-meta">
+        <time class="chat-time">${formatChatTime(message.createdAt)}</time>
+        ${isActivity ? '' : `<button class="chat-reply-button" type="button" aria-label="Reply to ${escapeHtml(username)}" title="Reply"><img src="/logos/reply.png" alt="" aria-hidden="true"></button>`}
+      </div>`;
+    article.querySelector('.chat-text').textContent = text;
+    const replyButton = article.querySelector('.chat-reply-button');
+    if (replyButton) {
+      replyButton.dataset.chatReply = username;
+      replyButton.dataset.chatReplyText = text;
     }
-
-    const currentNode = list.children[index];
-    if (currentNode !== article) {
-      list.insertBefore(article, currentNode || null);
-    }
-    used.add(id);
+    fragment.append(article);
   });
 
-  for (const [id, article] of existing.entries()) {
-    if (!used.has(id)) article.remove();
-  }
+  delete list.dataset.empty;
+  list.replaceChildren(fragment);
 
   requestAnimationFrame(() => {
     if (keepBottom) {
-      list.scrollTop = Math.max(0, list.scrollHeight - list.clientHeight - distanceFromBottom);
+      list.scrollTop = list.scrollHeight;
     } else {
-      list.scrollTop = scrollTop;
+      list.scrollTop = previousScrollTop;
     }
-    list.scrollLeft = scrollLeft;
   });
 }
 

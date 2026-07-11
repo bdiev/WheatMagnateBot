@@ -633,7 +633,7 @@ const temporaryInteractionMessages = new Map(); // messageId -> { interval, time
 const seenActivityUpdateIntervals = new Map();
 const growingChildPlainMessageIds = new Set();
 let recentWhispers = new Map(); // key: `WHISPER:username:message` -> timestamp, to mark whispers and suppress chat forwarding
-let pendingChatTimers = new Map(); // key: `CHAT:username:message` -> timeout handle to delay chat forwarding
+let pendingChatTimers = new Map(); // normalized message key -> Set<timeout handle>
 let outboundWhispers = new Map(); // key: `OUTBOUND:targetUsername:message` -> timestamp, to suppress public echo of our own whispers
 let siteWhisperTargets = new Map(); // lowercase username -> { timestamp, siteUsername }, suppress Discord whisper fallback for site dialogs
 class DeferredBotCommandError extends Error {
@@ -643,7 +643,7 @@ class DeferredBotCommandError extends Error {
     this.payloadPatch = payloadPatch;
   }
 }
-let recentlyForwardedGameChat = new Map(); // key: `CHAT:username:message` -> timestamp, to dedupe chat/raw message events
+let recentlyForwardedGameChat = new Map(); // normalized message key -> { source, timestamp }
 const COMMAND_RESPONSE_BOT_USERNAMES = new Set(['lolritterbot']);
 const COMMAND_RESPONSE_DISPLAY_USERNAME = 'LoLRiTTeRBot';
 let rawChatTraceUntil = 0;
@@ -4863,7 +4863,16 @@ function isPrivateMinecraftChatLine(text) {
   return privatePatterns.some(pattern => pattern.test(clean));
 }
 
-function scheduleGameChatForward(username, message) {
+function cancelPendingGameChat(username, message) {
+  const key = `CHAT:${String(username || '').toLowerCase()}:${cleanMinecraftChatMessage(message)}`;
+  const timers = pendingChatTimers.get(key);
+  if (!timers) return false;
+  for (const timer of timers) clearTimeout(timer);
+  pendingChatTimers.delete(key);
+  return true;
+}
+
+function scheduleGameChatForward(username, message, source = 'chat') {
   const cleanMessage = cleanMinecraftChatMessage(message);
   if (!cleanMessage || cleanMessage.startsWith('/msg ')) return false;
 
@@ -4873,13 +4882,14 @@ function scheduleGameChatForward(username, message) {
 
   const nowTs = Date.now();
   const isSelfMessage = bot?.username && safeUsername.toLowerCase() === bot.username.toLowerCase();
-  const pendingKey = `CHAT:${safeUsername}:${cleanMessage}`;
-  for (const [key, timestamp] of recentlyForwardedGameChat.entries()) {
-    if (nowTs - timestamp > 10_000) recentlyForwardedGameChat.delete(key);
+  const pendingKey = `CHAT:${safeUsername.toLowerCase()}:${cleanMessage}`;
+  for (const [key, state] of recentlyForwardedGameChat.entries()) {
+    if (nowTs - state.timestamp > 2_000) recentlyForwardedGameChat.delete(key);
   }
-  if (recentlyForwardedGameChat.has(pendingKey)) return false;
+  const duplicate = recentlyForwardedGameChat.get(pendingKey);
+  if (duplicate && duplicate.source !== source && nowTs - duplicate.timestamp < 1_500) return false;
   if (isSelfMessage && consumeOutboundSelfEcho(cleanMessage)) {
-    recentlyForwardedGameChat.set(pendingKey, Date.now());
+    recentlyForwardedGameChat.set(pendingKey, { source, timestamp: nowTs });
     return false;
   }
 
@@ -4906,11 +4916,7 @@ function scheduleGameChatForward(username, message) {
     return false;
   }
 
-  if (pendingChatTimers.has(pendingKey)) {
-    clearTimeout(pendingChatTimers.get(pendingKey));
-    pendingChatTimers.delete(pendingKey);
-  }
-
+  recentlyForwardedGameChat.set(pendingKey, { source, timestamp: nowTs });
   const timer = setTimeout(async () => {
     try {
       if (recentWhispers.has(whisperKey) || recentWhispers.has(whisperLowerKey)) {
@@ -4923,7 +4929,7 @@ function scheduleGameChatForward(username, message) {
         if (/^[>›»]/.test(cleanMessage)) console.warn(`[Chat] Suppressed leading-greater message as late outbound echo from ${safeUsername}: ${cleanMessage}`);
         return;
       }
-      recentlyForwardedGameChat.set(pendingKey, Date.now());
+      recentlyForwardedGameChat.set(pendingKey, { source, timestamp: Date.now() });
       const sent = await sendGameChatMessageToDiscord(safeUsername, cleanMessage);
       if (!sent && DISCORD_CHAT_CHANNEL_ID && discordClient?.isReady?.()) {
         console.warn(`[Chat] Forwarded ${safeUsername} to site DB but failed to mirror to Discord.`);
@@ -4931,11 +4937,15 @@ function scheduleGameChatForward(username, message) {
     } catch (e) {
       console.error(`[Chat] Failed to forward ${safeUsername}:`, e.message);
     } finally {
-      pendingChatTimers.delete(pendingKey);
+      const timers = pendingChatTimers.get(pendingKey);
+      timers?.delete(timer);
+      if (timers?.size === 0) pendingChatTimers.delete(pendingKey);
     }
   }, PENDING_CHAT_DELAY_MS);
 
-  pendingChatTimers.set(pendingKey, timer);
+  const timers = pendingChatTimers.get(pendingKey) || new Set();
+  timers.add(timer);
+  pendingChatTimers.set(pendingKey, timers);
   return true;
 }
 
@@ -5024,7 +5034,7 @@ function forwardRawPublicChatText(text, source = 'raw', position = '') {
     }
     return false;
   }
-  const forwarded = scheduleGameChatForward(rawChat.username, rawChat.message);
+  const forwarded = scheduleGameChatForward(rawChat.username, rawChat.message, source);
   if (String(rawChat.username || '').toLowerCase() === 'lolritterbot') {
     console.log(`[Chat Raw] Forwarded LoLRiTTeRBot message: ${rawChat.message}`);
   }
@@ -7098,7 +7108,7 @@ function createBot() {
     // via the dedicated bot death event handler.
 
     armSeenCommandResponseCapture(message);
-    scheduleGameChatForward(username, message);
+    scheduleGameChatForward(username, message, 'chat');
     return;
 
     // Send all chat messages to Discord chat channel
@@ -7194,10 +7204,8 @@ function createBot() {
     debugLog(`[Whisper] MARKED whisper key: ${whisperKey}`);
 
     // Cancel any pending public chat send for this message
-    const pendingKey = `CHAT:${username}:${cleanedWhisper}`;
-    if (pendingChatTimers.has(pendingKey)) {
-      clearTimeout(pendingChatTimers.get(pendingKey));
-      pendingChatTimers.delete(pendingKey);
+    const pendingKey = `CHAT:${String(username).toLowerCase()}:${cleanedWhisper}`;
+    if (cancelPendingGameChat(username, cleanedWhisper)) {
       debugLog(`[Whisper] 🛑 Canceled pending chat forward for: ${pendingKey}`);
     }
 
