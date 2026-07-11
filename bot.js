@@ -4465,7 +4465,10 @@ async function executeBotCommand(command) {
     const outgoing = isCommand ? cleanMessage : `[${requestedBy}] ${cleanMessage}`;
     const sent = sendMinecraftChat(outgoing);
     if (!sent) throw new Error('Minecraft bot is not ready.');
-    await sendGameChatMessageToDiscord(isCommand ? requestedBy : (bot.username || 'WheatMagnate'), isCommand ? cleanMessage : outgoing, { allowMentions: false });
+    const sentToDiscord = await sendGameChatMessageToDiscord(isCommand ? requestedBy : (bot.username || 'WheatMagnate'), isCommand ? cleanMessage : outgoing, { allowMentions: false });
+    if (!sentToDiscord && DISCORD_CHAT_CHANNEL_ID && discordClient?.isReady?.()) {
+      console.warn(`[Site Chat] Sent "${outgoing}" to Minecraft but failed to mirror it to Discord.`);
+    }
     return { message: outgoing };
   }
 
@@ -4935,6 +4938,12 @@ function parseRawPublicChatLine(text) {
     username: match[1] || match[2] || match[3],
     message: match[4].trim()
   };
+}
+
+function forwardRawPublicChatText(text) {
+  const rawChat = parseRawPublicChatLine(text);
+  if (!rawChat) return false;
+  return scheduleGameChatForward(rawChat.username, rawChat.message);
 }
 
 async function requestGeminiModel(model, question, options = {}) {
@@ -7142,10 +7151,11 @@ function createBot() {
       recordTpsSample().catch(() => {});
     }
 
-    const rawChat = parseRawPublicChatLine(text);
-    if (rawChat) {
-      scheduleGameChatForward(rawChat.username, rawChat.message);
-    }
+    forwardRawPublicChatText(text);
+  });
+
+  bot.on('messagestr', (message) => {
+    forwardRawPublicChatText(message);
   });
 }
 
@@ -9734,7 +9744,10 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           : text;
         // Don't add username prefix for commands (starting with / or !)
         if (gameText.startsWith('/') || gameText.startsWith('!')) {
-          sendMinecraftChat(gameText);
+          const sentToGame = sendMinecraftChat(gameText);
+          if (sentToGame) {
+            await sendGameChatMessageToDiscord(username, gameText, { allowMentions: false });
+          }
           console.log(`[Chat] Sent "${gameText}" by ${message.author.tag}`);
         } else {
           // Send without zero-width space so Minecraft chat is clean
