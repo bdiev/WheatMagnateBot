@@ -4883,12 +4883,16 @@ function scheduleGameChatForward(username, message) {
     return false;
   }
 
-  if (!isSelfMessage && !isCommandResponseBot && ignoredChatUsernames.includes(safeUsername.toLowerCase())) return false;
+  if (!isSelfMessage && !isCommandResponseBot && ignoredChatUsernames.includes(safeUsername.toLowerCase())) {
+    if (/^[>›»]/.test(cleanMessage)) console.warn(`[Chat] Suppressed leading-greater message from ignored user ${safeUsername}: ${cleanMessage}`);
+    return false;
+  }
 
   const whisperKey = `WHISPER:${safeUsername}:${cleanMessage}`;
   const whisperLowerKey = `WHISPER:${safeUsername.toLowerCase()}:${cleanMessage}`;
   if (recentWhispers.has(whisperKey) || recentWhispers.has(whisperLowerKey)) {
     debugLog(`[Chat] Suppressed whisper from ${safeUsername}: "${cleanMessage}"`);
+    if (/^[>›»]/.test(cleanMessage)) console.warn(`[Chat] Suppressed leading-greater message as whisper from ${safeUsername}: ${cleanMessage}`);
     return false;
   }
 
@@ -4898,6 +4902,7 @@ function scheduleGameChatForward(username, message) {
   }
   if (outboundWhispers.has(outboundKey)) {
     debugLog(`[Chat] Suppressed outbound echo to ${safeUsername}: "${cleanMessage}"`);
+    if (/^[>›»]/.test(cleanMessage)) console.warn(`[Chat] Suppressed leading-greater message as outbound echo from ${safeUsername}: ${cleanMessage}`);
     return false;
   }
 
@@ -4910,10 +4915,12 @@ function scheduleGameChatForward(username, message) {
     try {
       if (recentWhispers.has(whisperKey) || recentWhispers.has(whisperLowerKey)) {
         debugLog(`[Chat] Suppressed whisper (late mark) from ${safeUsername}: "${cleanMessage}"`);
+        if (/^[>›»]/.test(cleanMessage)) console.warn(`[Chat] Suppressed leading-greater message as late whisper from ${safeUsername}: ${cleanMessage}`);
         return;
       }
       if (outboundWhispers.has(outboundKey)) {
         debugLog(`[Chat] Suppressed outbound echo (late) to ${safeUsername}: "${cleanMessage}"`);
+        if (/^[>›»]/.test(cleanMessage)) console.warn(`[Chat] Suppressed leading-greater message as late outbound echo from ${safeUsername}: ${cleanMessage}`);
         return;
       }
       recentlyForwardedGameChat.set(pendingKey, Date.now());
@@ -4970,11 +4977,27 @@ function parseRawPublicChatLine(text) {
     };
   }
 
+  const prefixedAngleMatch = clean.match(/(?:^|[\s.])<([A-Za-z0-9_]{1,32})>\s*([>›»][\s\S]*)$/);
+  if (prefixedAngleMatch) {
+    return {
+      username: prefixedAngleMatch[1],
+      message: prefixedAngleMatch[2].trim()
+    };
+  }
+
   const plainLeadingGreaterMatch = clean.match(/^([A-Za-z0-9_]{1,32})\s+([>›»][\s\S]*)$/);
   if (plainLeadingGreaterMatch) {
     return {
       username: plainLeadingGreaterMatch[1],
       message: plainLeadingGreaterMatch[2].trim()
+    };
+  }
+
+  const prefixedPlainLeadingGreaterMatch = clean.match(/(?:^|[\s.])([A-Za-z0-9_]{1,32})\s+([>›»][\s\S]*)$/);
+  if (prefixedPlainLeadingGreaterMatch) {
+    return {
+      username: prefixedPlainLeadingGreaterMatch[1],
+      message: prefixedPlainLeadingGreaterMatch[2].trim()
     };
   }
 
