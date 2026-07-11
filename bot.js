@@ -4908,9 +4908,12 @@ function scheduleGameChatForward(username, message) {
         return;
       }
       recentlyForwardedGameChat.set(pendingKey, Date.now());
-      await sendGameChatMessageToDiscord(safeUsername, cleanMessage);
+      const sent = await sendGameChatMessageToDiscord(safeUsername, cleanMessage);
+      if (!sent && DISCORD_CHAT_CHANNEL_ID && discordClient?.isReady?.()) {
+        console.warn(`[Chat] Forwarded ${safeUsername} to site DB but failed to mirror to Discord.`);
+      }
     } catch (e) {
-      // Silent
+      console.error(`[Chat] Failed to forward ${safeUsername}:`, e.message);
     } finally {
       pendingChatTimers.delete(pendingKey);
     }
@@ -4923,6 +4926,17 @@ function scheduleGameChatForward(username, message) {
 function parseRawPublicChatLine(text) {
   if (isPrivateMinecraftChatLine(text)) return null;
   const clean = cleanMinecraftChatMessage(text);
+  const commandBotMatch = clean.match(/(?:<|\[)?(LoLRiTTeRBot)(?:>|\])?\s*([>›»:]?)\s*([\s\S]+)$/i);
+  if (commandBotMatch) {
+    const message = commandBotMatch[3].trim();
+    if (message) {
+      return {
+        username: commandBotMatch[1],
+        message: message.startsWith('>') ? message : `> ${message}`
+      };
+    }
+  }
+
   const commandResponseMatch = clean.match(/^(?:<([A-Za-z0-9_]{1,32})>|\[([A-Za-z0-9_]{1,32})\]|([A-Za-z0-9_]{1,32}))\s*[>›»]\s+([\s\S]+)$/);
   if (commandResponseMatch) {
     const username = commandResponseMatch[1] || commandResponseMatch[2] || commandResponseMatch[3];
@@ -4942,8 +4956,17 @@ function parseRawPublicChatLine(text) {
 
 function forwardRawPublicChatText(text) {
   const rawChat = parseRawPublicChatLine(text);
-  if (!rawChat) return false;
-  return scheduleGameChatForward(rawChat.username, rawChat.message);
+  if (!rawChat) {
+    if (String(text || '').toLowerCase().includes('lolritter')) {
+      console.warn(`[Chat Raw] Saw LoLRiTTeRBot text but could not parse it: ${String(text).slice(0, 300)}`);
+    }
+    return false;
+  }
+  const forwarded = scheduleGameChatForward(rawChat.username, rawChat.message);
+  if (String(rawChat.username || '').toLowerCase() === 'lolritterbot') {
+    console.log(`[Chat Raw] Forwarded LoLRiTTeRBot message: ${rawChat.message}`);
+  }
+  return forwarded;
 }
 
 async function requestGeminiModel(model, question, options = {}) {
