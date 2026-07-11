@@ -2255,12 +2255,20 @@ async function getAdminSystemLogs(currentUser, url) {
         SELECT id::text, level, category, actor_username, message, details, created_at
         FROM site_system_logs
         WHERE level = $1
+          AND NOT (
+            category = 'bot_console'
+            AND (message LIKE '[PlayerJoined]%' OR message LIKE '[PlayerLeft]%')
+          )
         ORDER BY created_at DESC
         LIMIT $2
       `, [level, limit])
     : pool.query(`
         SELECT id::text, level, category, actor_username, message, details, created_at
         FROM site_system_logs
+        WHERE NOT (
+          category = 'bot_console'
+          AND (message LIKE '[PlayerJoined]%' OR message LIKE '[PlayerLeft]%')
+        )
         ORDER BY created_at DESC
         LIMIT $1
       `, [limit]);

@@ -7003,7 +7003,6 @@ function createBot() {
         onlineUsernames.push(player.username);
       }
       await syncWhitelistPlaytime(onlineUsernames);
-      console.log(`[PlayerJoined] ${player.username} joined the server`);
     }
   });
 
@@ -7017,7 +7016,6 @@ function createBot() {
         username => username.toLowerCase() !== player.username.toLowerCase()
       );
       await syncWhitelistPlaytime(onlineUsernames);
-      console.log(`[PlayerLeft] ${player.username} left the server`);
     }
   });
 
