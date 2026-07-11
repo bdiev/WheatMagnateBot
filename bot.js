@@ -3471,6 +3471,26 @@ function resolveRelayedChatUsername(username, jsonMessage) {
   return relayMatch[1];
 }
 
+function resolvePublicChatEnvelope(username, message, jsonMessage) {
+  const fallback = {
+    username: resolveRelayedChatUsername(username, jsonMessage),
+    message: cleanMinecraftChatMessage(message)
+  };
+  if (!jsonMessage) return fallback;
+
+  const candidates = [
+    typeof jsonMessage.toString === 'function' ? jsonMessage.toString() : '',
+    chatComponentToString(jsonMessage)
+  ];
+  for (const candidate of candidates) {
+    const parsed = parseRawPublicChatLine(candidate);
+    if (parsed && COMMAND_RESPONSE_BOT_USERNAMES.has(parsed.username.toLowerCase())) {
+      return parsed;
+    }
+  }
+  return fallback;
+}
+
 function normalizeStatusReason(reason) {
   return String(reason || '').replace(/\s+/g, ' ').trim();
 }
@@ -6953,7 +6973,7 @@ function createBot() {
 
   // ------- CHAT COMMANDS -------
   bot.on('chat', async (username, message, translate, jsonMessage) => {
-    username = resolveRelayedChatUsername(username, jsonMessage);
+    ({ username, message } = resolvePublicChatEnvelope(username, message, jsonMessage));
     handleObservedPlaytimeChat(username, message);
     handleObservedJoinDateChat(username, message);
 
