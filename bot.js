@@ -645,6 +645,7 @@ class DeferredBotCommandError extends Error {
 }
 let recentlyForwardedGameChat = new Map(); // key: `CHAT:username:message` -> timestamp, to dedupe chat/raw message events
 const COMMAND_RESPONSE_BOT_USERNAMES = new Set(['lolritterbot']);
+const COMMAND_RESPONSE_DISPLAY_USERNAME = 'LoLRiTTeRBot';
 let rawChatTraceUntil = 0;
 let tpsTabInterval = null;
 let playtimeSyncInterval = null;
@@ -4928,6 +4929,13 @@ function scheduleGameChatForward(username, message) {
 function parseRawPublicChatLine(text) {
   if (isPrivateMinecraftChatLine(text)) return null;
   const clean = cleanMinecraftChatMessage(text);
+  if (Date.now() < rawChatTraceUntil && /^>\s+I\s+saw\s+[A-Za-z0-9_]{1,32}\b/i.test(clean)) {
+    return {
+      username: COMMAND_RESPONSE_DISPLAY_USERNAME,
+      message: clean
+    };
+  }
+
   const commandBotMatch = clean.match(/(?:<|\[)?(LoLRiTTeRBot)(?:>|\])?\s*([>›»:]?)\s*([\s\S]+)$/i);
   if (commandBotMatch) {
     const message = commandBotMatch[3].trim();
