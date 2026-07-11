@@ -4970,6 +4970,14 @@ function parseRawPublicChatLine(text) {
     };
   }
 
+  const plainLeadingGreaterMatch = clean.match(/^([A-Za-z0-9_]{1,32})\s+([>›»][\s\S]*)$/);
+  if (plainLeadingGreaterMatch) {
+    return {
+      username: plainLeadingGreaterMatch[1],
+      message: plainLeadingGreaterMatch[2].trim()
+    };
+  }
+
   const match = clean.match(/^(?:\[([A-Za-z0-9_]{1,32})\]|([A-Za-z0-9_]{1,32}))\s*(?:>|:)\s+([\s\S]+)$/);
   if (!match) return null;
   return {
