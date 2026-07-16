@@ -2715,8 +2715,16 @@ body.search-focus-active #logoutButton {
 }
 
 .player-profile-ignore-action {
+  justify-content: center;
+  width: 38px;
+  padding: 0;
   border-color: rgba(220, 75, 75, 0.38);
   color: #b73535;
+}
+
+.player-profile-ignore-action img {
+  width: 26px;
+  height: 26px;
 }
 
 .player-profile-ignore-action:hover,
