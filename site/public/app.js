@@ -1332,7 +1332,7 @@ async function handlePlayerProfileClick(event) {
     const username = state.playerProfileLastPayload.username;
     ignoreButton.disabled = true;
     try {
-      const response = await postJson('/api/admin/bot-command', {
+      await postJson('/api/admin/bot-command', {
         commandType: action,
         payload: { username }
       });
@@ -1340,11 +1340,10 @@ async function handlePlayerProfileClick(event) {
       state.playerProfileSignature = '';
       const content = $('#playerProfileContent');
       if (content) content.innerHTML = renderPlayerProfile(state.playerProfileLastPayload);
-      setBanner(`${action === 'ignore_chat' ? 'Ignore' : 'Unignore'} queued for ${username} (#${response.command?.id || '-'}).`);
       scheduleAdminControlRefresh();
     } catch (err) {
       ignoreButton.disabled = false;
-      setBanner(`Could not ${action === 'ignore_chat' ? 'ignore' : 'unignore'} ${username}: ${err.message}`);
+      console.error(`Could not ${action === 'ignore_chat' ? 'ignore' : 'unignore'} ${username}:`, err);
     }
     return;
   }
@@ -3252,25 +3251,23 @@ async function handleAdminBotCommand(event) {
   button.disabled = true;
   try {
     setButtonBusyState(commandType);
-    const payload = await postJson('/api/admin/bot-command', body);
+    await postJson('/api/admin/bot-command', body);
     if (commandType === 'obsidian_reset_coordinates') {
       state.obsidianCoordinateEditorOpen = true;
       clearObsidianCoordinateEditor();
     }
-    setBanner(`Bot command queued: ${payload.command?.commandType || commandType} #${payload.command?.id || '-'}.`);
     await Promise.all([loadAll(), loadAdminControlState()]);
     await loadAdminSystemLogs();
     scheduleAdminControlRefresh();
   } catch (err) {
-    setBanner(`Could not queue bot command: ${err.message}`);
+    console.error(`Could not queue bot command ${commandType}:`, err);
   } finally {
     button.disabled = false;
   }
 }
 
 async function queueAdminCommand(commandType, payload = {}) {
-  const response = await postJson('/api/admin/bot-command', { commandType, payload });
-  setBanner(`Bot command queued: ${response.command?.commandType || commandType} #${response.command?.id || '-'}.`);
+  await postJson('/api/admin/bot-command', { commandType, payload });
   await Promise.all([loadAll(), loadAdminControlState(), loadAdminSystemLogs()]);
 }
 
@@ -3355,7 +3352,11 @@ async function handleAdminControlAction(event) {
       updateIgnoreChatControl();
     }
   } catch (err) {
-    setBanner(`Could not queue bot command: ${err.message}`);
+    if (['playtime_set', 'registration_date_set'].includes(action)) {
+      setBanner(`Could not update player data: ${err.message}`);
+    } else {
+      console.error(`Could not queue bot command ${action}:`, err);
+    }
   } finally {
     button.disabled = false;
   }
@@ -3518,7 +3519,7 @@ document.addEventListener('click', event => {
     event.preventDefault();
     event.stopPropagation();
     handleTooltipDrop(tooltipDrop).catch(err => {
-      setBanner(`Could not drop item: ${err.message}`);
+      console.error('Could not queue drop item command:', err);
       tooltipDrop.disabled = false;
       tooltipDrop.textContent = 'Drop';
     });
