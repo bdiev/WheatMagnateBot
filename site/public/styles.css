@@ -2714,6 +2714,35 @@ body.search-focus-active #logoutButton {
   background: color-mix(in srgb, var(--accent) 16%, var(--panel-soft));
 }
 
+.player-profile-ignore-action {
+  border-color: rgba(220, 75, 75, 0.38);
+  color: #b73535;
+}
+
+.player-profile-ignore-action:hover,
+.player-profile-ignore-action:focus-visible,
+.player-profile-ignore-action.active {
+  border-color: rgba(220, 75, 75, 0.68);
+  background: rgba(220, 75, 75, 0.12);
+  color: #922929;
+}
+
+.player-profile-ignore-action:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+:root[data-theme="dark"] .player-profile-ignore-action {
+  color: #ff9b9b;
+}
+
+:root[data-theme="dark"] .player-profile-ignore-action:hover,
+:root[data-theme="dark"] .player-profile-ignore-action:focus-visible,
+:root[data-theme="dark"] .player-profile-ignore-action.active {
+  background: rgba(255, 110, 110, 0.14);
+  color: #ffc0c0;
+}
+
 .player-profile-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

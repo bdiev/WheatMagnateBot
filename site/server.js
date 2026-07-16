@@ -1751,7 +1751,7 @@ async function getPlayerProfile(url) {
     throw err;
   }
 
-  const [profileResult, chatResult, recentChatResult, nearbyResult] = await Promise.all([
+  const [profileResult, chatResult, recentChatResult, nearbyResult, ignoredResult] = await Promise.all([
     pool.query(`
       WITH names AS (
         SELECT username, 0 AS priority FROM whitelist WHERE LOWER(username) = LOWER($1)
@@ -1820,6 +1820,13 @@ async function getPlayerProfile(url) {
       WHERE LOWER(username) = LOWER($1)
       ORDER BY last_seen DESC
       LIMIT 1
+    `, [username]),
+    pool.query(`
+      SELECT EXISTS (
+        SELECT 1
+        FROM ignored_users
+        WHERE LOWER(username) = LOWER($1)
+      ) AS is_ignored
     `, [username])
   ]);
 
@@ -1831,6 +1838,7 @@ async function getPlayerProfile(url) {
   return {
     username: profile.username || username,
     isWhitelisted: Boolean(profile.is_whitelisted),
+    isIgnored: Boolean(ignoredResult.rows[0]?.is_ignored),
     isOnline: Boolean(profile.is_online),
     trackingSince: profile.tracking_since || null,
     lastSeen: profile.last_seen || null,

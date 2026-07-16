@@ -1189,6 +1189,14 @@ function renderPlayerProfile(profile) {
   const registrationTitle = state.playerProfileRegistrationAgeMode
     ? 'Show registration date'
     : 'Show time since registration';
+  const ignoreAction = profile.isIgnored ? 'unignore_chat' : 'ignore_chat';
+  const ignoreLabel = profile.isIgnored ? 'Unignore' : 'Ignore';
+  const ignoreButton = state.currentUser?.role === 'admin'
+    ? `
+          <button class="player-profile-message-action player-profile-ignore-action${profile.isIgnored ? ' active' : ''}" type="button" data-player-ignore-action="${ignoreAction}" aria-pressed="${profile.isIgnored}">
+            <span>${ignoreLabel}</span>
+          </button>`
+    : '';
   return `
     <header class="player-profile-head">
       <span class="player-profile-avatar-wrap" data-status="${profile.isOnline ? 'online' : 'offline'}" aria-label="${profile.isOnline ? 'Online' : 'Offline'}">
@@ -1208,6 +1216,7 @@ function renderPlayerProfile(profile) {
             <img src="/logos/namemc_dark.png" alt="" aria-hidden="true">
             <span>NameMC</span>
           </a>
+          ${ignoreButton}
         </div>
       </div>
     </header>
@@ -1245,6 +1254,7 @@ function playerProfileSignature(profile) {
     profile.username,
     profile.isOnline,
     profile.isWhitelisted,
+    profile.isIgnored,
     profile.playtime,
     profile.registrationAt,
     profile.registrationDisplay,
@@ -1309,7 +1319,33 @@ function closePlayerProfile() {
   state.playerProfileLastPayload = null;
 }
 
-function handlePlayerProfileClick(event) {
+async function handlePlayerProfileClick(event) {
+  const ignoreButton = event.target.closest('[data-player-ignore-action]');
+  if (ignoreButton) {
+    event.preventDefault();
+    if (state.currentUser?.role !== 'admin' || !state.playerProfileLastPayload) return;
+
+    const action = ignoreButton.dataset.playerIgnoreAction;
+    const username = state.playerProfileLastPayload.username;
+    ignoreButton.disabled = true;
+    try {
+      const response = await postJson('/api/admin/bot-command', {
+        commandType: action,
+        payload: { username }
+      });
+      state.playerProfileLastPayload.isIgnored = action === 'ignore_chat';
+      state.playerProfileSignature = '';
+      const content = $('#playerProfileContent');
+      if (content) content.innerHTML = renderPlayerProfile(state.playerProfileLastPayload);
+      setBanner(`${action === 'ignore_chat' ? 'Ignore' : 'Unignore'} queued for ${username} (#${response.command?.id || '-'}).`);
+      scheduleAdminControlRefresh();
+    } catch (err) {
+      ignoreButton.disabled = false;
+      setBanner(`Could not ${action === 'ignore_chat' ? 'ignore' : 'unignore'} ${username}: ${err.message}`);
+    }
+    return;
+  }
+
   const toggle = event.target.closest('[data-profile-toggle="registration-age"]');
   if (!toggle) return;
   event.preventDefault();
