@@ -720,6 +720,7 @@ const WHISPER_MARK_TTL_MS = 3000; // how long to remember whisper markers for su
 const PENDING_CHAT_DELAY_MS = 1500; // delay chat sends to detect whispers first
 const OUTBOUND_WHISPER_TTL_MS = 5000; // suppression window for our own /msg echoes
 const SITE_WHISPER_TTL_MS = 10 * 60 * 1000; // site dialogs stay site-only while active
+const DEFAULT_SITE_WHISPER_USERNAME = process.env.DEFAULT_SITE_WHISPER_USERNAME || 'bdiev_';
 const WHISPER_CHANNELS_FILE = 'whisper_channels.json';
 
 // Debug logging (disabled by default). Enable by setting DEBUG_LOGS=true
@@ -7292,11 +7293,14 @@ function createBot() {
       if (Date.now() - timestamp > SITE_WHISPER_TTL_MS) siteWhisperTargets.delete(target);
     }
     const siteWhisperState = siteWhisperTargets.get(siteWhisperKey);
-    const siteUsername = typeof siteWhisperState === 'object' ? siteWhisperState.siteUsername : null;
+    const hasActiveSiteDialog = siteWhisperTargets.has(siteWhisperKey);
+    const siteUsername = typeof siteWhisperState === 'object' && siteWhisperState.siteUsername
+      ? siteWhisperState.siteUsername
+      : DEFAULT_SITE_WHISPER_USERNAME;
     recordSiteWhisperMessage(username, 'incoming', cleanedWhisper, siteUsername).catch(() => {});
 
     debugLog(`[Whisper] Calling sendWhisperToDiscord...`);
-    if (siteWhisperTargets.has(siteWhisperKey)) {
+    if (hasActiveSiteDialog) {
       siteWhisperTargets.set(siteWhisperKey, {
         timestamp: Date.now(),
         siteUsername

@@ -999,8 +999,7 @@ async function getWhisperOnlinePlayers(currentUser, url) {
     owned_dialogs AS (
       SELECT player_username
       FROM site_whisper_messages
-      WHERE direction = 'outgoing'
-        AND LOWER(site_username) = LOWER($1)
+      WHERE LOWER(site_username) = LOWER($1)
       GROUP BY LOWER(player_username), player_username
     ),
     dialog_players AS (
@@ -1126,7 +1125,6 @@ async function getWhisperDialog(currentUser, url) {
     SELECT 1
     FROM site_whisper_messages
     WHERE LOWER(player_username) = LOWER($1)
-      AND direction = 'outgoing'
       AND LOWER(site_username) = LOWER($2)
     LIMIT 1
   `, [username, currentUser.username]);
@@ -1197,8 +1195,7 @@ async function getWhisperNotifications(currentUser, url) {
     WITH owned_dialogs AS (
       SELECT player_username
       FROM site_whisper_messages
-      WHERE direction = 'outgoing'
-        AND LOWER(site_username) = LOWER($2)
+      WHERE LOWER(site_username) = LOWER($2)
       GROUP BY LOWER(player_username), player_username
     ),
     visible_messages AS (
