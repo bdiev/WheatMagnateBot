@@ -2715,24 +2715,20 @@ body.search-focus-active #logoutButton {
 }
 
 .player-profile-ignore-action {
-  justify-content: center;
-  width: 38px;
-  padding: 0;
-  border-color: rgba(220, 75, 75, 0.38);
-  color: #b73535;
+  border-color: var(--line);
+  color: var(--text);
 }
 
 .player-profile-ignore-action img {
-  width: 26px;
-  height: 26px;
+  width: 20px;
+  height: 20px;
 }
 
 .player-profile-ignore-action:hover,
-.player-profile-ignore-action:focus-visible,
-.player-profile-ignore-action.active {
-  border-color: rgba(220, 75, 75, 0.68);
-  background: rgba(220, 75, 75, 0.12);
-  color: #922929;
+.player-profile-ignore-action:focus-visible {
+  border-color: var(--accent);
+  background: var(--panel-soft);
+  color: var(--text);
 }
 
 .player-profile-ignore-action:disabled {
@@ -2740,15 +2736,10 @@ body.search-focus-active #logoutButton {
   opacity: 0.58;
 }
 
-:root[data-theme="dark"] .player-profile-ignore-action {
-  color: #ff9b9b;
-}
-
 :root[data-theme="dark"] .player-profile-ignore-action:hover,
-:root[data-theme="dark"] .player-profile-ignore-action:focus-visible,
-:root[data-theme="dark"] .player-profile-ignore-action.active {
-  background: rgba(255, 110, 110, 0.14);
-  color: #ffc0c0;
+:root[data-theme="dark"] .player-profile-ignore-action:focus-visible {
+  color: #f6f8fb;
+  background: color-mix(in srgb, var(--accent) 16%, var(--panel-soft));
 }
 
 .player-profile-grid {
@@ -2960,6 +2951,16 @@ body.search-focus-active #logoutButton {
   border-radius: var(--button-radius);
   padding: 12px;
   background: var(--panel-soft);
+}
+
+.pill.ignored {
+  color: #8f3030;
+  background: #f4dada;
+}
+
+:root[data-theme="dark"] .pill.ignored {
+  color: #ffc4c4;
+  background: #552929;
 }
 
 .admin-users-list .admin-user:first-child {
@@ -4037,6 +4038,10 @@ body.search-focus-active #logoutButton {
     min-height: 34px;
     padding: 0 10px;
     font-size: 15px;
+  }
+
+  .player-profile-ignore-action {
+    grid-column: 1 / -1;
   }
 
   .player-profile-grid {

@@ -1194,8 +1194,9 @@ function renderPlayerProfile(profile) {
   const ignoreIcon = profile.isIgnored ? 'Muted.png' : 'Unmuted.png';
   const ignoreButton = state.currentUser?.role === 'admin'
     ? `
-          <button class="player-profile-message-action player-profile-ignore-action${profile.isIgnored ? ' active' : ''}" type="button" data-player-ignore-action="${ignoreAction}" aria-label="${ignoreLabel} ${escapeHtml(profileUsername)}" title="${ignoreLabel}" aria-pressed="${profile.isIgnored}">
+          <button class="player-profile-message-action player-profile-ignore-action" type="button" data-player-ignore-action="${ignoreAction}" aria-label="${ignoreLabel} ${escapeHtml(profileUsername)}" title="${ignoreLabel}" aria-pressed="${profile.isIgnored}">
             <img src="/items/${ignoreIcon}" alt="" aria-hidden="true">
+            <span>${ignoreLabel}</span>
           </button>`
     : '';
   return `
@@ -1207,6 +1208,7 @@ function renderPlayerProfile(profile) {
         <h2 id="playerProfileName">${escapeHtml(profile.username)}</h2>
         <div class="player-profile-badges">
           <span class="pill">${profile.isWhitelisted ? 'whitelisted' : 'not whitelisted'}</span>
+          ${profile.isIgnored ? '<span class="pill ignored">ignored</span>' : ''}
         </div>
         <div class="player-profile-actions">
           <button class="player-profile-message-action" type="button" data-whisper-player="${escapeHtml(profileUsername)}">
