@@ -7269,6 +7269,15 @@ function createBot() {
 
     debugLog(`[Whisper] Cleaned: "${cleanedWhisper}"`);
 
+    const whisperUsernameKey = String(username || '').toLowerCase();
+    if (ignoredChatUsernames.some(ignoredUsername =>
+      String(ignoredUsername || '').toLowerCase() === whisperUsernameKey
+    )) {
+      siteWhisperTargets.delete(whisperUsernameKey);
+      debugLog(`[Whisper] Suppressed private message from ignored player ${username}.`);
+      return;
+    }
+
     const whisperKey = `WHISPER:${username}:${cleanedWhisper}`;
     recentWhispers.set(whisperKey, Date.now());
     recentWhispers.set(`WHISPER:${String(username).toLowerCase()}:${cleanedWhisper}`, Date.now());
@@ -7287,7 +7296,7 @@ function createBot() {
       }
     }
 
-    const siteWhisperKey = String(username || '').toLowerCase();
+    const siteWhisperKey = whisperUsernameKey;
     for (const [target, state] of siteWhisperTargets.entries()) {
       const timestamp = typeof state === 'object' ? state.timestamp : state;
       if (Date.now() - timestamp > SITE_WHISPER_TTL_MS) siteWhisperTargets.delete(target);
