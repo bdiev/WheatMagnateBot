@@ -1191,7 +1191,7 @@ function renderPlayerProfile(profile) {
     : 'Show time since registration';
   const ignoreAction = profile.isIgnored ? 'unignore_chat' : 'ignore_chat';
   const ignoreLabel = profile.isIgnored ? 'Unignore' : 'Ignore';
-  const ignoreIcon = profile.isIgnored ? 'Muted.png' : 'Unmuted.png';
+  const ignoreIcon = profile.isIgnored ? 'Unmuted.png' : 'Muted.png';
   const ignoreButton = state.currentUser?.role === 'admin'
     ? `
           <button class="player-profile-message-action player-profile-ignore-action" type="button" data-player-ignore-action="${ignoreAction}" aria-label="${ignoreLabel} ${escapeHtml(profileUsername)}" title="${ignoreLabel}" aria-pressed="${profile.isIgnored}">
