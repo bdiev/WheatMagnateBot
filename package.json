@@ -4,7 +4,13 @@
   "main": "bot.js",
   "scripts": {
     "start": "node scripts/bot-entrypoint.js",
-    "test": "node features/growingChild/smoke_test.js && node --test config/config.test.js runtime/lifecycle.test.js site/auth.test.js site/security.test.js"
+    "check": "node --check bot.js && node --check config/index.js && node --check database/index.js && node --check scripts/bot-entrypoint.js && node --check scripts/healthcheck.js && node --check runtime/lifecycle.js && node --check site/server.js && node --check site/auth.js && node --check site/security.js",
+    "test": "node features/growingChild/smoke_test.js && node --test config/config.test.js runtime/lifecycle.test.js site/auth.test.js site/security.test.js",
+    "test:site": "npm test --prefix site",
+    "test:integration": "node scripts/verify-migrations.js",
+    "ci:tracked-files": "node scripts/check-tracked-files.js",
+    "ci:secrets": "node scripts/scan-secrets.js",
+    "audit:ci": "npm audit --audit-level=high && npm audit --prefix site --audit-level=high"
   },
   "engines": {
     "node": ">=22.13.0"

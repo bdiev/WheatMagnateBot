@@ -165,3 +165,9 @@ docker compose -f docker-compose.yml -f docker-compose.test.yml down
 ```
 
 In production keep `BOT_TEST_MODE=false`. Container healthchecks cover PostgreSQL readiness, `/api/health` for the dashboard, and the bot liveness endpoint on `BOT_HEALTH_PORT`.
+
+## Continuous integration
+
+GitHub Actions runs on Node.js 22 with a PostgreSQL 16 service container. The workflow installs the root and site lockfiles independently, checks JavaScript syntax, runs root and site tests separately, applies the PostgreSQL migration twice in an isolated schema, checks tracked-file policy, and scans tracked text files for common secret formats. Bot test mode is enabled, so CI does not connect to Discord or Minecraft and no external credentials are configured.
+
+Dependency audits fail for `high` and `critical` findings. Known `moderate` findings in the Mineflayer/Prismarine dependency tree remain visible in the audit output without blocking CI. Dependabot checks both the root package and `site/` weekly.

@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Node.js 22 / PostgreSQL 16
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16-bookworm
+        env:
+          POSTGRES_DB: wheatmagnate_test
+          POSTGRES_USER: wheatmagnate_test
+          POSTGRES_PASSWORD: integration-test-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "PGPASSWORD=integration-test-only psql -U wheatmagnate_test -d wheatmagnate_test -c 'SELECT 1'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      CI: 'true'
+      NODE_ENV: test
+      BOT_TEST_MODE: 'true'
+      DATABASE_URL: postgresql://wheatmagnate_test:integration-test-only@127.0.0.1:5432/wheatmagnate_test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            site/package-lock.json
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install site dependencies
+        run: npm ci
+        working-directory: site
+
+      - name: Check tracked files policy
+        run: npm run ci:tracked-files
+
+      - name: Scan tracked files for secrets
+        run: npm run ci:secrets
+
+      - name: Check JavaScript syntax
+        run: npm run check
+
+      - name: Run root tests
+        run: npm test
+
+      - name: Run site tests separately
+        run: npm test
+        working-directory: site
+
+      - name: Verify PostgreSQL migrations
+        run: npm run test:integration
+
+      - name: Audit root and site dependencies (high and critical block)
+        run: npm run audit:ci
