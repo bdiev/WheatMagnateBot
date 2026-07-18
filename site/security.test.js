@@ -57,13 +57,13 @@ test('mutating requests require the configured same Origin', () => {
     headers: { host: 'panel.example', origin: 'https://panel.example' },
     socket: {}
   };
-  assert.doesNotThrow(() => assertSameOrigin(request, { SITE_PUBLIC_ORIGIN: 'https://panel.example/' }));
+  assert.doesNotThrow(() => assertSameOrigin(request, { publicOrigin: 'https://panel.example/' }));
   assert.throws(
-    () => assertSameOrigin({ ...request, headers: { ...request.headers, origin: 'https://evil.example' } }, { SITE_PUBLIC_ORIGIN: 'https://panel.example' }),
+    () => assertSameOrigin({ ...request, headers: { ...request.headers, origin: 'https://evil.example' } }, { publicOrigin: 'https://panel.example' }),
     err => err.statusCode === 403 && err.code === 'INVALID_ORIGIN'
   );
   assert.throws(
-    () => assertSameOrigin({ ...request, headers: { host: 'panel.example' } }, { SITE_PUBLIC_ORIGIN: 'https://panel.example' }),
+    () => assertSameOrigin({ ...request, headers: { host: 'panel.example' } }, { publicOrigin: 'https://panel.example' }),
     err => err.statusCode === 403
   );
 });

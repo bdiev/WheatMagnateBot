@@ -15,25 +15,10 @@ const DEFAULT_CSP = [
   "worker-src 'self'"
 ].join('; ');
 
-function positiveInteger(value, fallback) {
-  const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function authSecurityConfig(env = process.env) {
+function authSecurityConfig(siteConfig = {}) {
   return {
-    login: {
-      maxAttempts: positiveInteger(env.SITE_LOGIN_MAX_ATTEMPTS, 20),
-      maxFailures: positiveInteger(env.SITE_LOGIN_MAX_FAILURES, 5),
-      windowMs: positiveInteger(env.SITE_LOGIN_WINDOW_SECONDS, 15 * 60) * 1000,
-      blockMs: positiveInteger(env.SITE_LOGIN_BLOCK_SECONDS, 15 * 60) * 1000
-    },
-    register: {
-      maxAttempts: positiveInteger(env.SITE_REGISTER_MAX_ATTEMPTS, 10),
-      maxFailures: positiveInteger(env.SITE_REGISTER_MAX_FAILURES, 5),
-      windowMs: positiveInteger(env.SITE_REGISTER_WINDOW_SECONDS, 60 * 60) * 1000,
-      blockMs: positiveInteger(env.SITE_REGISTER_BLOCK_SECONDS, 30 * 60) * 1000
-    }
+    login: siteConfig.loginRateLimit || { maxAttempts: 20, maxFailures: 5, windowMs: 900_000, blockMs: 900_000 },
+    register: siteConfig.registerRateLimit || { maxAttempts: 10, maxFailures: 5, windowMs: 3_600_000, blockMs: 1_800_000 }
   };
 }
 
@@ -108,26 +93,26 @@ class AuthRateLimiter {
   }
 }
 
-function getRequestIp(req, env = process.env) {
+function getRequestIp(req, { trustProxy = false } = {}) {
   // Forwarded headers are ignored unless explicitly trusted so clients cannot
   // choose their own rate-limit key.
-  if (env.SITE_TRUST_PROXY === 'true') {
+  if (trustProxy) {
     const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
     if (forwarded) return forwarded.slice(0, 128);
   }
   return String(req.socket?.remoteAddress || 'unknown').slice(0, 128);
 }
 
-function expectedOrigin(req, env = process.env) {
-  if (env.SITE_PUBLIC_ORIGIN) return String(env.SITE_PUBLIC_ORIGIN).replace(/\/$/, '');
+function expectedOrigin(req, { publicOrigin = null } = {}) {
+  if (publicOrigin) return String(publicOrigin).replace(/\/$/, '');
   const protocol = req.socket?.encrypted ? 'https' : 'http';
   return `${protocol}://${req.headers.host || 'localhost'}`;
 }
 
-function assertSameOrigin(req, env = process.env) {
+function assertSameOrigin(req, options = {}) {
   if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return;
   const origin = String(req.headers.origin || '').replace(/\/$/, '');
-  if (!origin || origin !== expectedOrigin(req, env)) {
+  if (!origin || origin !== expectedOrigin(req, options)) {
     const err = new Error('Request origin is not allowed.');
     err.statusCode = 403;
     err.code = 'INVALID_ORIGIN';
@@ -149,6 +134,5 @@ module.exports = {
   assertSameOrigin,
   authSecurityConfig,
   expectedOrigin,
-  getRequestIp,
-  positiveInteger
+  getRequestIp
 };

@@ -2,7 +2,7 @@
 
 const { Pool } = require('pg');
 
-function createDatabasePool(databaseUrl = process.env.DATABASE_URL) {
+function createDatabasePool(databaseUrl) {
   if (!databaseUrl) {
     console.log('[DB] No DATABASE_URL environment variable found. Database features disabled.');
     return null;

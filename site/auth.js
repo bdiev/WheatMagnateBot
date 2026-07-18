@@ -54,7 +54,7 @@ async function registerPendingUser(db, { username, password }) {
   return inserted.rows[0];
 }
 
-function getAdminCredentials(env = process.env, passwordVariable = 'SITE_ADMIN_PASSWORD') {
+function getAdminCredentials(env = {}, passwordVariable = 'SITE_ADMIN_PASSWORD') {
   const username = normalizeUsername(env.SITE_ADMIN_USERNAME);
   const password = String(env[passwordVariable] || '');
   if (!username && !password) return null;
@@ -94,7 +94,7 @@ async function upsertAdminUser(db, { username, password }) {
   return { created: true, user: inserted.rows[0] };
 }
 
-async function bootstrapAdminFromEnvironment(db, env = process.env) {
+async function bootstrapAdminFromEnvironment(db, env = {}) {
   const credentials = getAdminCredentials(env);
   if (!credentials) return null;
   return upsertAdminUser(db, credentials);

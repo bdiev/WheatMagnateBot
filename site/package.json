@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test auth.test.js security.test.js"
+    "test": "node --test ../config/config.test.js auth.test.js security.test.js"
   },
   "engines": {
     "node": ">=22.13.0"

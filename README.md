@@ -33,19 +33,47 @@ Default site URL: `http://localhost:3080`.
 
 ## Config
 
-Create `.env` in the project root.
+Copy `.env.example` to `.env` in the project root and replace every blank required value. Configuration is parsed and validated by `config/index.js` before a Discord or Minecraft connection is created. Invalid configuration terminates the process with a list of variable names and validation errors; secret values are never included.
 
-Main variables:
+Required for the main bot:
 
 ```env
 DISCORD_BOT_TOKEN=
 DISCORD_CHANNEL_ID=
 DISCORD_CHAT_CHANNEL_ID=
+DISCORD_DM_CATEGORY_ID=
+DISCORD_OWNER_ID=
 DATABASE_URL=
-MINECRAFT_USERNAME=
+MINECRAFT_HOST=
+MINECRAFT_PORT=25565
+MINECRAFT_USERNAME=WheatMagnate
+MINECRAFT_ADMIN_USERNAME=ServerAdmin
+MINECRAFT_COMMAND_BOT_USERNAME=CommandBot
 MINECRAFT_AUTH=microsoft
-SITE_PORT=3080
+DEFAULT_SITE_WHISPER_USERNAME=WheatMagnate
+FARM_TARGET_X=0
+FARM_TARGET_Y=64
+FARM_TARGET_Z=0
+FARM_CAULDRON_RADIUS=5
 ```
+
+Required for the dashboard process:
+
+```env
+DATABASE_URL=
+SITE_PORT=3080
+SITE_PUBLIC_ORIGIN=https://panel.example.org
+```
+
+`SITE_ADMIN_USERNAME` and `SITE_ADMIN_PASSWORD` are an optional bootstrap pair: set both to create or refresh the administrator, or omit both after bootstrap. The local admin CLI instead requires `SITE_ADMIN_USERNAME` and the temporary `SITE_ADMIN_CLI_PASSWORD`.
+
+`MINECRAFT_PORT` and `SITE_PORT` must be in `1..65535`. Minecraft coordinates must be integers (`X/Z`: `-30000000..30000000`, `Y`: `-2048..2048`), and the cauldron radius must be `4`, `5`, or `6`. Discord IDs must contain 17–20 digits. Boolean values accept only `true` or `false`.
+
+Operational timeouts, message limits, web rate limits, cookie lifetime, Gemini models, runtime switches, and farm update intervals are also listed in [.env.example](.env.example). Durations whose names end in `_MS` are milliseconds; web security durations ending in `_SECONDS` are seconds.
+
+When HTTPS is terminated by a reverse proxy, set `SITE_PUBLIC_ORIGIN` to the exact browser-visible origin. Enable `SITE_TRUST_PROXY=true` only when the Node process is reachable exclusively through that trusted proxy.
+
+`MINECRAFT_SESSION`, `DISCORD_BOT_TOKEN`, `DATABASE_URL`, `GEMINI_API_KEY`, and administrator passwords are secrets. Do not commit `.env`; known secret values are redacted from bot console/database log capture.
 
 ## Notes
 

@@ -6,6 +6,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { Pool } = require('pg');
+require('dotenv').config({ path: path.resolve(__dirname, '..', '.env'), quiet: true });
+const { loadSiteConfig } = require('../config');
 const {
   bootstrapAdminFromEnvironment,
   hashPassword,
@@ -19,22 +21,31 @@ const {
   applySecurityHeaders,
   assertSameOrigin,
   authSecurityConfig,
-  getRequestIp,
-  positiveInteger
+  getRequestIp
 } = require('./security');
-require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 
-const PORT = Number(process.env.SITE_PORT || process.env.PORT) || 3080;
+let siteConfig;
+try {
+  siteConfig = loadSiteConfig(process.env, { strict: false });
+} catch (err) {
+  if (require.main === module) {
+    console.error(`[Config] ${err.message}`);
+    process.exit(1);
+  }
+  throw err;
+}
+
+const PORT = siteConfig.site.port;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const ITEMS_DIR = path.join(__dirname, 'items');
 const FOOD_DIR = path.join(__dirname, 'food');
 const LOGOS_DIR = path.join(__dirname, 'logos');
-const DATABASE_URL = process.env.DATABASE_URL;
+const DATABASE_URL = siteConfig.database.url;
 const SESSION_COOKIE = 'wm_session';
-const SESSION_MAX_AGE_SECONDS = positiveInteger(process.env.SITE_SESSION_MAX_AGE_SECONDS, 60 * 60 * 24 * 30);
-const SESSION_COOKIE_SECURE = process.env.NODE_ENV === 'production' || process.env.SITE_COOKIE_SECURE === 'true';
+const SESSION_MAX_AGE_SECONDS = siteConfig.site.sessionMaxAgeSeconds;
+const SESSION_COOKIE_SECURE = siteConfig.site.cookieSecure;
 const DUMMY_PASSWORD_HASH = 'scrypt:0123456789abcdef0123456789abcdef:9564d5a180593f4f60ac8b2db7e8966b37a1d6fc22b396d69f4f71972c1820f80cec190209c19b5603fae554eee5a6318a4cadcbc5b3892fd40e2d8df24c3997';
-const authRateLimiter = new AuthRateLimiter(authSecurityConfig());
+const authRateLimiter = new AuthRateLimiter(authSecurityConfig(siteConfig.site));
 const pool = DATABASE_URL
   ? new Pool({ connectionString: DATABASE_URL })
   : null;
@@ -418,7 +429,10 @@ async function ensureOptionalTables() {
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS site_sessions_user_id_idx ON site_sessions (user_id)`);
   await pool.query(`DELETE FROM site_sessions WHERE expires_at <= NOW()`);
-  await bootstrapAdminFromEnvironment(pool);
+  await bootstrapAdminFromEnvironment(pool, {
+    SITE_ADMIN_USERNAME: siteConfig.site.adminUsername,
+    SITE_ADMIN_PASSWORD: siteConfig.site.adminPassword
+  });
   await pool.query(`
     CREATE TABLE IF NOT EXISTS ignored_users (
       id SERIAL PRIMARY KEY,
@@ -1977,7 +1991,7 @@ async function handleAuth(req, res, url, limiter = authRateLimiter) {
   if (url.pathname === '/api/auth/register' && req.method === 'POST') {
     const body = await readJsonBody(req);
     const username = normalizeUsername(body.username);
-    const ip = getRequestIp(req);
+    const ip = getRequestIp(req, siteConfig.site);
     if (!enforceAuthRateLimit(res, 'register', ip, username, limiter)) return true;
     limiter.recordAttempt('register', ip, username);
     try {
@@ -2004,7 +2018,7 @@ async function handleAuth(req, res, url, limiter = authRateLimiter) {
     const body = await readJsonBody(req);
     const username = normalizeUsername(body.username);
     const password = String(body.password || '');
-    const ip = getRequestIp(req);
+    const ip = getRequestIp(req, siteConfig.site);
     if (!enforceAuthRateLimit(res, 'login', ip, username, limiter)) {
       await auditLogin({ username, ip, successful: false, reason: 'rate_limited' });
       return true;
@@ -2210,7 +2224,7 @@ async function setAdminPlaytime(currentUser, body) {
   const rawLine = String(body.line || '').trim();
   const match = rawLine.match(/^([A-Za-z0-9_]{1,32})\s*:\s*([\s\S]+)$/);
   if (!match) {
-    const err = new Error('Use format: WheatMagnate: 402 Days, 3 Hours, 19 Minutes');
+    const err = new Error('Use format: PlayerName: 402 Days, 3 Hours, 19 Minutes');
     err.statusCode = 400;
     throw err;
   }
@@ -2255,7 +2269,7 @@ async function setAdminRegistrationDate(currentUser, body) {
   const rawLine = String(body.line || '').trim();
   const match = rawLine.match(/^([A-Za-z0-9_]{1,32})\s*:\s*([\s\S]+)$/);
   if (!match) {
-    const err = new Error('Use format: WheatMagnate: 01/31/2025 15:40:15');
+    const err = new Error('Use format: PlayerName: 01/31/2025 15:40:15');
     err.statusCode = 400;
     throw err;
   }
@@ -2470,7 +2484,7 @@ async function getAdminControlState(currentUser) {
 async function handleApi(req, res, url) {
   let currentUser = null;
   try {
-    assertSameOrigin(req);
+    assertSameOrigin(req, siteConfig.site);
     if (url.pathname === '/api/health') {
       sendJson(res, 200, { ok: true, database: Boolean(pool) });
       return;
@@ -2652,6 +2666,8 @@ const server = http.createServer((req, res) => {
 });
 
 async function startServer() {
+  // Validate all mandatory site settings before the pool issues its first query.
+  loadSiteConfig(process.env);
   await ensureOptionalTables().catch(err => {
     console.error('[Site] Failed to ensure optional tables:', err.message);
   });
@@ -2667,7 +2683,10 @@ async function startServer() {
 }
 
 if (require.main === module) {
-  startServer();
+  startServer().catch(err => {
+    console.error(`[Config] ${err.message}`);
+    process.exit(1);
+  });
   process.on('SIGINT', async () => {
     server.close();
     if (pool) await pool.end().catch(() => {});
