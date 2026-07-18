@@ -3,8 +3,14 @@
   "version": "1.0.0",
   "main": "bot.js",
   "scripts": {
-    "start": "node bot.js",
-    "test": "node features/growingChild/smoke_test.js"
+    "start": "node scripts/bot-entrypoint.js",
+    "check": "node --check bot.js && node --check config/index.js && node --check database/index.js && node --check database/commandBus.js && node --check minecraft/messages.js && node --check minecraft/seen.js && node --check minecraft/usernames.js && node --check features/playtime/duration.js && node --check features/obsidianFarm/state.js && node --check scripts/bot-entrypoint.js && node --check scripts/healthcheck.js && node --check runtime/lifecycle.js && node --check site/server.js && node --check site/auth.js && node --check site/security.js",
+    "test": "node features/growingChild/smoke_test.js && node --test config/config.test.js runtime/lifecycle.test.js minecraft/messages.test.js minecraft/usernames.test.js minecraft/seen.test.js features/playtime/duration.test.js features/growingChild/safety.test.js features/obsidianFarm/state.test.js database/commandBus.test.js site/auth.test.js site/security.test.js",
+    "test:site": "npm test --prefix site",
+    "test:integration": "node scripts/verify-migrations.js && node --test test/integration/command-bus.test.js test/integration/site-auth.test.js",
+    "ci:tracked-files": "node scripts/check-tracked-files.js",
+    "ci:secrets": "node scripts/scan-secrets.js",
+    "audit:ci": "npm audit --audit-level=high && npm audit --prefix site --audit-level=high"
   },
   "engines": {
     "node": ">=22.13.0"
@@ -14,7 +20,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "discord.js": "^14.26.4",
+    "discord.js": "^14.27.0",
     "dotenv": "^17.4.2",
     "mineflayer": "^4.37.1",
     "mineflayer-pathfinder": "^2.4.5",

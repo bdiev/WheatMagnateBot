@@ -18,6 +18,7 @@ const { Movements, pathfinder } = require('mineflayer-pathfinder');
 const { GoalNear }              = require('mineflayer-pathfinder').goals;
 const Vec3                      = require('vec3');
 const fs                        = require('fs');
+const { transitionFarmPhase }   = require('./state');
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 const PICKAXE_PRIORITY = [
@@ -1291,7 +1292,7 @@ function setDebugLoggingEnabled(enabled) {
 
 function setFarmPhase(phase, details = {}) {
   const previousPhase = farm.phase;
-  farm.phase = phase;
+  farm.phase = transitionFarmPhase(previousPhase, phase);
   writeFarmDebug('phase_changed', {
     from: previousPhase,
     to: phase,

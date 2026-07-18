@@ -1,8 +1,9 @@
 'use strict';
 
 const { Pool } = require('pg');
+const { usernamesEqual } = require('../minecraft/usernames');
 
-function createDatabasePool(databaseUrl = process.env.DATABASE_URL) {
+function createDatabasePool(databaseUrl) {
   if (!databaseUrl) {
     console.log('[DB] No DATABASE_URL environment variable found. Database features disabled.');
     return null;
@@ -373,7 +374,7 @@ function createWhitelistRepository({
     }
 
     const fileWhitelist = loadWhitelistFile();
-    const alreadyListed = fileWhitelist.some(name => name.toLowerCase() === safeUsername.toLowerCase());
+    const alreadyListed = fileWhitelist.some(name => usernamesEqual(name, safeUsername));
     if (!alreadyListed) {
       appendWhitelistFile(safeUsername);
     }

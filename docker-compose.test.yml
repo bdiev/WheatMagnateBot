@@ -1,0 +1,29 @@
+services:
+  bot:
+    environment:
+      BOT_TEST_MODE: "true"
+      BOT_HEALTH_PORT: "3090"
+      DISCORD_BOT_TOKEN: safe-test-token-not-used
+      DISCORD_CHANNEL_ID: "123456789012345678"
+      DISCORD_CHAT_CHANNEL_ID: "223456789012345678"
+      DISCORD_DM_CATEGORY_ID: "323456789012345678"
+      DISCORD_OWNER_ID: "423456789012345678"
+      MINECRAFT_HOST: minecraft.invalid
+      MINECRAFT_PORT: "25565"
+      MINECRAFT_USERNAME: WheatTestBot
+      MINECRAFT_ADMIN_USERNAME: TestAdmin
+      MINECRAFT_COMMAND_BOT_USERNAME: CommandBot
+      MINECRAFT_AUTH: offline
+      MINECRAFT_SERVER_NAME: Safe test server
+      DEFAULT_SITE_WHISPER_USERNAME: TestAdmin
+      FARM_TARGET_X: "0"
+      FARM_TARGET_Y: "64"
+      FARM_TARGET_Z: "0"
+      FARM_CAULDRON_RADIUS: "5"
+
+  site:
+    environment:
+      SITE_PORT: "3080"
+      SITE_PUBLIC_ORIGIN: http://localhost:3080
+      SITE_ADMIN_USERNAME: ""
+      SITE_ADMIN_PASSWORD: ""

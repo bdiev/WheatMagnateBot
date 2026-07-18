@@ -1,10 +1,25 @@
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
+const { loadBotConfig } = require('./config');
+const { closeServer, installGracefulShutdown, startHealthServer } = require('./runtime/lifecycle');
+let appConfig;
+try {
+  appConfig = loadBotConfig(process.env);
+} catch (err) {
+  console.error(`[Config] ${err.message}`);
+  process.exit(1);
+}
 const fs = require('fs');
 const path = require('path');
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ChannelType, PermissionsBitField, MessageFlags, InteractionContextType, SlashCommandBuilder, ActivityType } = require('discord.js');
 const { pathfinder } = require('mineflayer-pathfinder');
 const { createDiscordClient, saveStatusMessageId, loadStatusMessageId } = require('./discord');
 const { createMinecraftBot } = require('./minecraft');
+const {
+  cleanMinecraftChatMessage: cleanMinecraftMessage,
+  isPrivateMinecraftChatLine: detectPrivateMinecraftChatLine,
+  splitMinecraftMessage: splitMinecraftText
+} = require('./minecraft/messages');
+const { formatSeenTimestamp: formatSeenTime, parseObservedJoinDate: parseJoinDate } = require('./minecraft/seen');
 const {
   createDatabasePool,
   logDatabaseStatus,
@@ -14,6 +29,7 @@ const {
   createAdminSettingsRepository,
   createSystemLogRepository
 } = require('./database');
+const { DeferredCommandError, processPendingCommands } = require('./database/commandBus');
 const { createPlaytimeFeature } = require('./features/playtime');
 const { createWhisperFeature } = require('./features/whisper');
 const { createFollowFeature } = require('./features/follow');
@@ -25,52 +41,36 @@ const { sanitizePublicPhrase } = require('./features/growingChild/safety');
 const b64encode = (str) => Buffer.from(String(str), 'utf8').toString('base64');
 const b64decode = (str) => Buffer.from(String(str), 'base64').toString('utf8');
 
-const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
-const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
-const DISCORD_CHAT_CHANNEL_ID = process.env.DISCORD_CHAT_CHANNEL_ID;
-const DISCORD_DM_CATEGORY_ID = process.env.DISCORD_DM_CATEGORY_ID;
-const DISCORD_OWNER_ID = process.env.DISCORD_OWNER_ID || '623303738991443968';
-const IGNORED_CHAT_USERNAMES = process.env.IGNORED_CHAT_USERNAMES ? process.env.IGNORED_CHAT_USERNAMES.split(',').map(u => u.trim().toLowerCase()) : [];
-const GEMINI_API_KEY = String(process.env.GEMINI_API_KEY || '').trim();
-function parseGeminiModelList(...values) {
-  return values
-    .flatMap(value => String(value || '').split(','))
-    .map(model => model.trim())
-    .filter(Boolean)
-    .filter((model, index, models) => models.indexOf(model) === index);
-}
-
-const GEMINI_MODELS = parseGeminiModelList(
-  process.env.GEMINI_MODELS,
-  process.env.GEMINI_MODEL,
-  process.env.GEMINI_FALLBACK_MODEL,
-  'gemini-2.5-flash-lite',
-  'gemini-2.5-flash',
-  'gemini-3.1-flash-lite',
-  'gemini-3.5-flash'
-);
+const DATABASE_URL = appConfig.database.url;
+const DISCORD_BOT_TOKEN = appConfig.discord.token;
+const DISCORD_CHANNEL_ID = appConfig.discord.channelId;
+const DISCORD_CHAT_CHANNEL_ID = appConfig.discord.chatChannelId;
+const DISCORD_DM_CATEGORY_ID = appConfig.discord.dmCategoryId;
+const DISCORD_OWNER_ID = appConfig.discord.ownerId;
+const IGNORED_CHAT_USERNAMES = appConfig.runtime.ignoredChatUsernames;
+const GEMINI_API_KEY = appConfig.gemini.apiKey;
+const GEMINI_MODELS = appConfig.gemini.models;
 const GEMINI_MODEL = GEMINI_MODELS[0] || 'gemini-2.5-flash-lite';
-const WM_COMMAND_COOLDOWN_MS = 20_000;
-const WM_MAX_QUESTION_LENGTH = 300;
-const WM_MAX_RESPONSE_LENGTH = 900;
-const WM_MAX_OUTPUT_TOKENS = 300;
-const WM_CHAT_CHUNK_LENGTH = 190;
-const MINECRAFT_PRIVATE_MESSAGE_LENGTH = 180;
-const RECONNECT_INTERVAL_MS = 15_000;
-const MINECRAFT_CONNECT_TIMEOUT_MS = 20_000;
-const MINECRAFT_PROFILES_FOLDER = path.resolve(process.env.MINECRAFT_PROFILES_FOLDER || path.join('data', 'auth-cache'));
+const WM_COMMAND_COOLDOWN_MS = appConfig.runtime.commandCooldownMs;
+const WM_MAX_QUESTION_LENGTH = appConfig.limits.questionLength;
+const WM_MAX_RESPONSE_LENGTH = appConfig.limits.responseLength;
+const WM_MAX_OUTPUT_TOKENS = appConfig.limits.outputTokens;
+const WM_CHAT_CHUNK_LENGTH = appConfig.limits.chatChunkLength;
+const MINECRAFT_PRIVATE_MESSAGE_LENGTH = appConfig.minecraft.privateMessageLength;
+const RECONNECT_INTERVAL_MS = appConfig.minecraft.reconnectTimeoutMs;
+const MINECRAFT_CONNECT_TIMEOUT_MS = appConfig.minecraft.connectTimeoutMs;
+const MINECRAFT_PROFILES_FOLDER = appConfig.minecraft.profilesFolder;
 const BOT_PUBLIC_CHAT_STATUS_FILE = path.resolve('data', 'bot_public_chat_status.json');
 const BOT_CHAT_STATUS_EMOJIS_FILE = path.resolve('data', 'bot_chat_status_emojis.json');
 const PLAYER_HEAD_EMOJIS_FILE = path.resolve('data', 'player_head_emojis.json');
 const OBSIDIAN_STATS_MESSAGES_FILE = path.resolve('data', 'obsidian_stats_messages.json');
 const OBSIDIAN_FARM_DEBUG_LOG_FILE = path.resolve('obsidian_farm_debug.log');
-const OBSIDIAN_STATS_UPDATE_INTERVAL_MS = 30_000;
-const OBSIDIAN_STATS_WATCHDOG_INTERVAL_MS = 5 * 60_000;
-const DISCORD_ATTACHMENT_SAFE_LIMIT_BYTES = 24 * 1024 * 1024;
+const OBSIDIAN_STATS_UPDATE_INTERVAL_MS = appConfig.farm.statsUpdateIntervalMs;
+const OBSIDIAN_STATS_WATCHDOG_INTERVAL_MS = appConfig.farm.statsWatchdogIntervalMs;
+const DISCORD_ATTACHMENT_SAFE_LIMIT_BYTES = appConfig.discord.attachmentLimitBytes;
 const LEGACY_OBSIDIAN_TARGET = Object.freeze({
-  x: 3402889,
-  y: 68,
-  z: 672222
+  ...appConfig.farm.target,
+  radius: appConfig.farm.radius
 });
 
 console.log(
@@ -131,7 +131,7 @@ const UI_BUTTON_EMOJIS = {
   bookYellow: { name: 'Book_Yellow', id: '1519760007107969114' }
 };
 const NETHER_STAR_EMOJI = '<:Nether_Star:1519569072809836584>';
-const ADMIN_PANEL_BOT_NAME = 'WheatMagnate';
+const ADMIN_PANEL_BOT_NAME = appConfig.minecraft.username;
 const BOT_CHAT_STATUS_EMOJI_FALLBACK = [
   '<:End_Crystal:1519954272282873877>',
   '<:Bee_Angry:1519954270865326132>',
@@ -514,7 +514,7 @@ async function ensureDMDeleteButton(message) {
 }
 
 // Database connection
-let pool = createDatabasePool();
+let pool = createDatabasePool(DATABASE_URL);
 logDatabaseStatus(pool);
 const {
   getMentionKeywords,
@@ -546,12 +546,12 @@ const originalConsoleError = console.error.bind(console);
 let persistBotConsoleLogs = false;
 
 function stringifyConsoleArg(value) {
-  if (value instanceof Error) return value.stack || value.message;
-  if (typeof value === 'string') return value;
+  if (value instanceof Error) return appConfig.redact(value.stack || value.message);
+  if (typeof value === 'string') return appConfig.redact(value);
   try {
-    return JSON.stringify(value);
+    return appConfig.redact(JSON.stringify(value));
   } catch {
-    return String(value);
+    return appConfig.redact(String(value));
   }
 }
 
@@ -567,27 +567,22 @@ function captureBotConsoleLog(level, args) {
 }
 
 console.log = (...args) => {
-  originalConsoleLog(...args);
-  captureBotConsoleLog('info', args);
+  const safeArgs = args.map(stringifyConsoleArg);
+  originalConsoleLog(...safeArgs);
+  captureBotConsoleLog('info', safeArgs);
 };
 
 console.error = (...args) => {
-  originalConsoleError(...args);
-  captureBotConsoleLog('error', args);
+  const safeArgs = args.map(stringifyConsoleArg);
+  originalConsoleError(...safeArgs);
+  captureBotConsoleLog('error', safeArgs);
 };
 
 // Discord bot client
 const discordClient = createDiscordClient();
 
-let loadedSession = null;
-if (process.env.MINECRAFT_SESSION) {
-  try {
-    loadedSession = JSON.parse(process.env.MINECRAFT_SESSION);
-    console.log('[Bot] Loaded session from env.');
-  } catch (err) {
-    console.error('[Bot] Failed to parse session from env:', err.message);
-  }
-}
+const loadedSession = appConfig.minecraft.session;
+if (loadedSession) console.log('[Bot] Loaded session from configuration.');
 
 let lastCommandUser = null;
 let statusMessage = null;
@@ -636,17 +631,11 @@ let recentWhispers = new Map(); // key: `WHISPER:username:message` -> timestamp,
 let pendingChatTimers = new Map(); // normalized message key -> Set<timeout handle>
 let outboundWhispers = new Map(); // key: `OUTBOUND:targetUsername:message` -> timestamp, to suppress public echo of our own whispers
 let siteWhisperTargets = new Map(); // lowercase username -> { timestamp, siteUsername }, suppress Discord whisper fallback for site dialogs
-class DeferredBotCommandError extends Error {
-  constructor(message, payloadPatch = {}) {
-    super(message);
-    this.name = 'DeferredBotCommandError';
-    this.payloadPatch = payloadPatch;
-  }
-}
+const DeferredBotCommandError = DeferredCommandError;
 let recentlyForwardedGameChat = new Map(); // normalized message key -> { source, timestamp }
 let recentCommandBotResponses = []; // raw command-bot replies used to reject truncated chat-event copies
-const COMMAND_RESPONSE_BOT_USERNAMES = new Set(['lolritterbot']);
-const COMMAND_RESPONSE_DISPLAY_USERNAME = 'LoLRiTTeRBot';
+const COMMAND_RESPONSE_DISPLAY_USERNAME = appConfig.minecraft.commandBotUsername;
+const COMMAND_RESPONSE_BOT_USERNAMES = new Set([COMMAND_RESPONSE_DISPLAY_USERNAME.toLowerCase()]);
 let rawChatTraceUntil = 0;
 let tpsTabInterval = null;
 let playtimeSyncInterval = null;
@@ -662,28 +651,24 @@ let wheatMagnatePlaytimeCacheAt = 0;
 const DANGER_RADIUS_OPTIONS = [100, 200, 300, 500, 1000];
 const MESSAGE_COOLDOWN_OPTIONS = [0, 5000, 10_000, 20_000, 60_000];
 const runtimeSettings = {
-  dangerRadius: Number(process.env.DANGER_RADIUS_BLOCKS) || 300,
-  whitelistMode: String(process.env.WHITELIST_MODE || 'true').toLowerCase() !== 'false',
-  autoEat: String(process.env.AUTO_EAT || 'true').toLowerCase() !== 'false',
-  geminiEnabled: String(process.env.GEMINI_ENABLED || 'true').toLowerCase() !== 'false',
-  childPublicSpeech: String(process.env.CHILD_PUBLIC_SPEECH || 'true').toLowerCase() !== 'false',
-  messageCooldownMs: Number(process.env.WM_COMMAND_COOLDOWN_MS) || WM_COMMAND_COOLDOWN_MS
+  dangerRadius: appConfig.runtime.dangerRadius,
+  whitelistMode: appConfig.runtime.whitelistMode,
+  autoEat: appConfig.runtime.autoEat,
+  geminiEnabled: appConfig.gemini.enabled,
+  childPublicSpeech: appConfig.runtime.childPublicSpeech,
+  messageCooldownMs: appConfig.runtime.commandCooldownMs
 };
 
 function normalizeRuntimeSettings(settings = runtimeSettings) {
   const dangerRadius = Number(settings.dangerRadius);
   settings.dangerRadius = DANGER_RADIUS_OPTIONS.includes(dangerRadius)
     ? dangerRadius
-    : DANGER_RADIUS_OPTIONS.includes(Number(process.env.DANGER_RADIUS_BLOCKS))
-      ? Number(process.env.DANGER_RADIUS_BLOCKS)
-      : 300;
+    : appConfig.runtime.dangerRadius;
 
   const messageCooldownMs = Number(settings.messageCooldownMs);
   settings.messageCooldownMs = MESSAGE_COOLDOWN_OPTIONS.includes(messageCooldownMs)
     ? messageCooldownMs
-    : MESSAGE_COOLDOWN_OPTIONS.includes(Number(process.env.WM_COMMAND_COOLDOWN_MS))
-      ? Number(process.env.WM_COMMAND_COOLDOWN_MS)
-      : WM_COMMAND_COOLDOWN_MS;
+    : appConfig.runtime.commandCooldownMs;
 
   settings.whitelistMode = Boolean(settings.whitelistMode);
   settings.autoEat = Boolean(settings.autoEat);
@@ -715,16 +700,16 @@ const authMessageIds = new Map(); // messageId -> DM channelId
 const wmCommandCooldowns = new Map(); // lowercase username -> last request timestamp
 const wmRequestsInFlight = new Set(); // lowercase username
 const recentOutboundChat = new Map(); // normalized message -> timestamps awaiting self-echo suppression
-const WHISPER_TTL_MS = 10 * 60 * 1000; // 10 minutes
-const WHISPER_MARK_TTL_MS = 3000; // how long to remember whisper markers for suppression
-const PENDING_CHAT_DELAY_MS = 1500; // delay chat sends to detect whispers first
-const OUTBOUND_WHISPER_TTL_MS = 5000; // suppression window for our own /msg echoes
-const SITE_WHISPER_TTL_MS = 10 * 60 * 1000; // site dialogs stay site-only while active
-const DEFAULT_SITE_WHISPER_USERNAME = process.env.DEFAULT_SITE_WHISPER_USERNAME || 'bdiev_';
+const WHISPER_TTL_MS = appConfig.limits.whisperTtlMs;
+const WHISPER_MARK_TTL_MS = appConfig.limits.whisperMarkTtlMs;
+const PENDING_CHAT_DELAY_MS = appConfig.limits.pendingChatDelayMs;
+const OUTBOUND_WHISPER_TTL_MS = appConfig.limits.outboundWhisperTtlMs;
+const SITE_WHISPER_TTL_MS = appConfig.limits.siteWhisperTtlMs;
+const DEFAULT_SITE_WHISPER_USERNAME = appConfig.runtime.defaultSiteWhisperUsername;
 const WHISPER_CHANNELS_FILE = 'whisper_channels.json';
 
 // Debug logging (disabled by default). Enable by setting DEBUG_LOGS=true
-const DEBUG_LOGS = String(process.env.DEBUG_LOGS || '').toLowerCase() === 'true';
+const DEBUG_LOGS = appConfig.runtime.debugLogs;
 function debugLog(...args) {
   if (DEBUG_LOGS) console.log(...args);
 }
@@ -899,10 +884,11 @@ async function ensureStatusMessage() {
   }
 }
 
-const config = {
-  host: 'oldfag.org',
-  username: process.env.MINECRAFT_USERNAME || 'WheatMagnate',
-  auth: process.env.MINECRAFT_AUTH || 'microsoft',
+const minecraftConnectionConfig = {
+  host: appConfig.minecraft.host,
+  port: appConfig.minecraft.port,
+  username: appConfig.minecraft.username,
+  auth: appConfig.minecraft.auth,
   version: false, // Auto-detect version
   closeTimeout: MINECRAFT_CONNECT_TIMEOUT_MS,
   profilesFolder: MINECRAFT_PROFILES_FOLDER,
@@ -1283,6 +1269,7 @@ async function initDatabase() {
       SET target_x = $1,
           target_y = $2,
           target_z = $3,
+          target_radius = COALESCE(target_radius, $4),
           updated_at = NOW()
       WHERE id = 1
         AND desired_enabled = TRUE
@@ -1292,7 +1279,8 @@ async function initDatabase() {
     `, [
       LEGACY_OBSIDIAN_TARGET.x,
       LEGACY_OBSIDIAN_TARGET.y,
-      LEGACY_OBSIDIAN_TARGET.z
+      LEGACY_OBSIDIAN_TARGET.z,
+      LEGACY_OBSIDIAN_TARGET.radius
     ]);
     const farmStateResult = await pool.query(`
       SELECT session_mined, total_mined, retired_pickaxes, retired_pickaxe_blocks,
@@ -1317,7 +1305,9 @@ async function initDatabase() {
       const targetX = Number(rawTargetX);
       const targetY = Number(rawTargetY);
       const targetZ = Number(rawTargetZ);
-      const targetRadius = Number(farmStateResult.rows[0].target_radius);
+      const targetRadius = farmStateResult.rows[0].target_radius == null
+        ? appConfig.farm.radius
+        : Number(farmStateResult.rows[0].target_radius);
       if (
         rawTargetX != null &&
         rawTargetY != null &&
@@ -1629,7 +1619,8 @@ function initializeGrowingChild() {
     sendChannelMessage: sendGrowingChildChannelMessage,
     sendMinecraftMessage: sendGrowingChildMinecraftMessage,
     generateWithAI: GEMINI_API_KEY ? generateGrowingChildPhrase : null,
-    allowedDiscordChannelId: DISCORD_CHAT_CHANNEL_ID
+    allowedDiscordChannelId: DISCORD_CHAT_CHANNEL_ID,
+    configOverrides: { databasePath: appConfig.runtime.growingChildDatabasePath }
   });
   growingChild.setMinecraftPublicSpeechEnabled(runtimeSettings.childPublicSpeech);
   growingChild.start();
@@ -1696,14 +1687,13 @@ function loginDiscord() {
     })
     .catch(err => {
       console.error('[Discord] Login failed:', err.message);
-      console.error('[Discord] Full error:', err);
 
       if (!discordLoginRetryTimer) {
-        console.log('[Discord] Retrying login in 15 seconds...');
+        console.log(`[Discord] Retrying login in ${appConfig.discord.loginRetryMs / 1000} seconds...`);
         discordLoginRetryTimer = setTimeout(() => {
           discordLoginRetryTimer = null;
           loginDiscord();
-        }, 15_000);
+        }, appConfig.discord.loginRetryMs);
       }
     })
     .finally(() => {
@@ -2251,22 +2241,7 @@ function handleObservedPlaytimeChat(username, message) {
 }
 
 function parseObservedJoinDate(message) {
-  const match = String(message || '').trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})\b/);
-  if (!match) return null;
-  const [, month, day, year, hour, minute, second] = match.map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
-  if (!Number.isFinite(date.getTime())) return null;
-  if (
-    date.getUTCFullYear() !== year ||
-    date.getUTCMonth() !== month - 1 ||
-    date.getUTCDate() !== day ||
-    date.getUTCHours() !== hour ||
-    date.getUTCMinutes() !== minute ||
-    date.getUTCSeconds() !== second
-  ) {
-    return null;
-  }
-  return date;
+  return parseJoinDate(message);
 }
 
 async function reconcileObservedJoinDate(targetUsername, observedDate) {
@@ -4202,33 +4177,7 @@ function armSeenCommandResponseCapture(message) {
 }
 
 function splitMinecraftMessage(text, maxLength = MINECRAFT_PRIVATE_MESSAGE_LENGTH) {
-  const words = String(text || '').trim().split(/\s+/).filter(Boolean);
-  const chunks = [];
-  let current = '';
-
-  for (const word of words) {
-    if (word.length > maxLength) {
-      if (current) {
-        chunks.push(current);
-        current = '';
-      }
-      for (let i = 0; i < word.length; i += maxLength) {
-        chunks.push(word.slice(i, i + maxLength));
-      }
-      continue;
-    }
-
-    const candidate = current ? `${current} ${word}` : word;
-    if (candidate.length > maxLength) {
-      chunks.push(current);
-      current = word;
-    } else {
-      current = candidate;
-    }
-  }
-
-  if (current) chunks.push(current);
-  return chunks;
+  return splitMinecraftText(text, maxLength);
 }
 
 function truncateTextForChat(text, maxLength) {
@@ -4420,7 +4369,7 @@ async function processSiteGameChatOutbox() {
       if (!cleanMessage) throw new Error('Queued message is empty.');
       const sent = sendMinecraftChat(outgoing);
       if (!sent) throw new Error('Minecraft bot is not ready.');
-      await sendGameChatMessageToDiscord(bot.username || 'WheatMagnate', outgoing, { allowMentions: false });
+      await sendGameChatMessageToDiscord(bot.username || ADMIN_PANEL_BOT_NAME, outgoing, { allowMentions: false });
       await pool.query(`
         UPDATE site_game_chat_outbox
         SET status = 'sent',
@@ -4515,7 +4464,7 @@ async function executeBotCommand(command) {
     armSeenCommandResponseCapture(cleanMessage);
     const sent = sendMinecraftChat(outgoing);
     if (!sent) throw new Error('Minecraft bot is not ready.');
-    const sentToDiscord = await sendGameChatMessageToDiscord(isCommand ? requestedBy : (bot.username || 'WheatMagnate'), isCommand ? cleanMessage : outgoing, { allowMentions: false });
+    const sentToDiscord = await sendGameChatMessageToDiscord(isCommand ? requestedBy : (bot.username || ADMIN_PANEL_BOT_NAME), isCommand ? cleanMessage : outgoing, { allowMentions: false });
     if (!sentToDiscord && DISCORD_CHAT_CHANNEL_ID && discordClient?.isReady?.()) {
       console.warn(`[Site Chat] Sent "${outgoing}" to Minecraft but failed to mirror it to Discord.`);
     }
@@ -4768,99 +4717,39 @@ async function executeBotCommand(command) {
 
 async function processBotCommands() {
   if (!pool) return;
-
-  let commands = [];
+  let transitions;
   try {
     const includeChat = Boolean(bot && typeof bot.chat === 'function');
-    const result = await pool.query(`
-      WITH next_commands AS (
-        SELECT id
-        FROM bot_commands
-        WHERE status = 'pending'
-          AND ($1::boolean OR command_type <> 'chat')
-          AND ($1::boolean OR command_type <> 'site_whisper')
-          AND (
-            command_type <> 'site_whisper'
-            OR COALESCE(payload->>'offlineUntilJoin', 'false') <> 'true'
-          )
-          AND (
-            command_type <> 'site_whisper'
-            OR payload->>'deferredUntil' IS NULL
-            OR (payload->>'deferredUntil')::timestamptz <= NOW()
-          )
-        ORDER BY created_at ASC
-        LIMIT 5
-        FOR UPDATE SKIP LOCKED
-      )
-      UPDATE bot_commands commands
-      SET status = 'processing',
-          started_at = NOW(),
-          error = NULL
-      FROM next_commands
-      WHERE commands.id = next_commands.id
-      RETURNING commands.id, commands.source, commands.requested_by, commands.command_type, commands.payload
-    `, [includeChat]);
-    commands = result.rows;
+    transitions = await processPendingCommands(pool, async command => {
+      const result = await executeBotCommand(command);
+      await writeBotStatusSnapshot().catch(() => {});
+      return result;
+    }, { includeChat });
   } catch (err) {
     console.error('[Command Bus] Failed to load commands:', err.message);
     return;
   }
-
-  for (const command of commands) {
-    try {
-      const result = await executeBotCommand(command);
-      await writeBotStatusSnapshot().catch(() => {});
-      await pool.query(`
-        UPDATE bot_commands
-        SET status = 'done',
-            result = $2,
-            error = NULL,
-            finished_at = NOW()
-        WHERE id = $1
-      `, [command.id, result || {}]);
-      console.log(`[Command Bus] Completed ${command.command_type} #${command.id}`);
+  for (const transition of transitions) {
+    if (transition.status === 'done') {
+      console.log(`[Command Bus] Completed ${transition.command_type} #${transition.id}`);
       await recordSystemLog({
-        level: 'audit',
-        category: 'command_bus',
-        actor: command.requested_by,
-        message: `Completed bot command ${command.command_type} #${command.id}.`,
-        details: { commandId: String(command.id), source: command.source, result: result || {} }
+        level: 'audit', category: 'command_bus', actor: transition.requested_by,
+        message: `Completed bot command ${transition.command_type} #${transition.id}.`,
+        details: { commandId: transition.id, source: transition.source, result: transition.result }
       });
-    } catch (err) {
-      if (err instanceof DeferredBotCommandError) {
-        await pool.query(`
-          UPDATE bot_commands
-          SET status = 'pending',
-              payload = payload || $2::jsonb,
-              result = jsonb_build_object('deferred', true, 'reason', $3::text),
-              error = NULL,
-              started_at = NULL
-          WHERE id = $1
-        `, [command.id, JSON.stringify(err.payloadPatch || {}), err.message]);
-        console.log(`[Command Bus] Deferred ${command.command_type} #${command.id}: ${err.message}`);
-        await recordSystemLog({
-          level: 'info',
-          category: 'command_bus',
-          actor: command.requested_by,
-          message: `Deferred bot command ${command.command_type} #${command.id}.`,
-          details: { commandId: String(command.id), reason: err.message, payloadPatch: err.payloadPatch || {} }
-        });
-        continue;
-      }
-      await pool.query(`
-        UPDATE bot_commands
-        SET status = 'failed',
-            error = $2,
-            finished_at = NOW()
-        WHERE id = $1
-      `, [command.id, err.message]);
-      console.error(`[Command Bus] Failed ${command.command_type} #${command.id}:`, err.message);
+    } else if (transition.deferred) {
+      console.log(`[Command Bus] Deferred ${transition.command_type} #${transition.id}: ${transition.error}`);
       await recordSystemLog({
-        level: 'error',
-        category: 'command_bus',
-        actor: command.requested_by,
-        message: `Failed bot command ${command.command_type} #${command.id}.`,
-        details: { commandId: String(command.id), error: err.message }
+        level: 'info', category: 'command_bus', actor: transition.requested_by,
+        message: `Deferred bot command ${transition.command_type} #${transition.id}.`,
+        details: { commandId: transition.id, reason: transition.error, payloadPatch: transition.payloadPatch }
+      });
+    } else {
+      console.error(`[Command Bus] Failed ${transition.command_type} #${transition.id}:`, transition.error);
+      await recordSystemLog({
+        level: 'error', category: 'command_bus', actor: transition.requested_by,
+        message: `Failed bot command ${transition.command_type} #${transition.id}.`,
+        details: { commandId: transition.id, error: transition.error }
       });
     }
   }
@@ -4884,24 +4773,11 @@ function flattenMarkdownLinks(message) {
 }
 
 function cleanMinecraftChatMessage(message) {
-  return String(message || '')
-    .replace(/(?:\u00a7|\u00c2\u00a7)[0-9a-fk-or]/gi, '')
-    .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
-    .trim();
+  return cleanMinecraftMessage(message);
 }
 
 function isPrivateMinecraftChatLine(text) {
-  const clean = cleanMinecraftChatMessage(text).replace(/\s+/g, ' ').trim();
-  if (!clean) return false;
-  const botName = bot?.username ? escapeRegExp(bot.username) : '[A-Za-z0-9_]{1,16}';
-  const privatePatterns = [
-    /^(?:from|to)\s+[A-Za-z0-9_]{1,16}\s*[:>»]/i,
-    /^[A-Za-z0-9_]{1,16}\s+(?:whispers?|whispered|tells?|messages?|msgs?)\s+(?:to\s+)?(?:you|me)\s*[:>»]/i,
-    /^(?:you|me)\s+(?:whisper|tell|message|msg)\s+(?:to\s+)?[A-Za-z0-9_]{1,16}\s*[:>»]/i,
-    new RegExp(`^\\[?[A-Za-z0-9_]{1,16}\\s*(?:->|→)\\s*(?:you|me|${botName})\\]?\\s*:?`, 'i'),
-    new RegExp(`^\\[?(?:you|me|${botName})\\s*(?:->|→)\\s*[A-Za-z0-9_]{1,16}\\]?\\s*:?`, 'i')
-  ];
-  return privatePatterns.some(pattern => pattern.test(clean));
+  return detectPrivateMinecraftChatLine(text, bot?.username || null);
 }
 
 function cancelPendingGameChat(username, message) {
@@ -5027,7 +4903,10 @@ function parseRawPublicChatLine(text) {
     };
   }
 
-  const commandBotMatch = clean.match(/(?:<|\[)?(LoLRiTTeRBot)(?:>|\])?\s*([>›»:]?)\s*([\s\S]+)$/i);
+  const commandBotMatch = clean.match(new RegExp(
+    `(?:<|\\[)?(${escapeRegExp(COMMAND_RESPONSE_DISPLAY_USERNAME)})(?:>|\\])?\\s*([>›»:]?)\\s*([\\s\\S]+)$`,
+    'i'
+  ));
   if (commandBotMatch) {
     const message = commandBotMatch[3].trim();
     if (message) {
@@ -5098,7 +4977,7 @@ function forwardRawPublicChatText(text, source = 'raw', position = '') {
   const rawChat = parseRawPublicChatLine(text);
   if (!rawChat) {
     if (String(text || '').toLowerCase().includes('lolritter')) {
-      console.warn(`[Chat Raw] Saw LoLRiTTeRBot text but could not parse it: ${String(text).slice(0, 300)}`);
+      console.warn(`[Chat Raw] Saw ${COMMAND_RESPONSE_DISPLAY_USERNAME} text but could not parse it: ${String(text).slice(0, 300)}`);
     }
     return false;
   }
@@ -5106,8 +4985,8 @@ function forwardRawPublicChatText(text, source = 'raw', position = '') {
     rememberCommandBotResponse(rawChat.message);
   }
   const forwarded = scheduleGameChatForward(rawChat.username, rawChat.message, source);
-  if (String(rawChat.username || '').toLowerCase() === 'lolritterbot') {
-    console.log(`[Chat Raw] Forwarded LoLRiTTeRBot message: ${rawChat.message}`);
+  if (String(rawChat.username || '').toLowerCase() === COMMAND_RESPONSE_DISPLAY_USERNAME.toLowerCase()) {
+    console.log(`[Chat Raw] Forwarded ${COMMAND_RESPONSE_DISPLAY_USERNAME} message: ${rawChat.message}`);
   }
   return forwarded;
 }
@@ -5440,7 +5319,7 @@ async function sendDiscordStatusMention({ playerName, distance, serverAction = '
   try {
     const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
     if (channel && channel.isTextBased()) {
-      const mentionPrefix = DISCORD_OWNER_ID ? `<@${DISCORD_OWNER_ID}>` : '@bdiev';
+      const mentionPrefix = `<@${DISCORD_OWNER_ID}>`;
       const sentMessage = await channel.send({
         content: mentionPrefix,
         embeds: [{
@@ -5453,7 +5332,7 @@ async function sendDiscordStatusMention({ playerName, distance, serverAction = '
             `**Action:** ${serverAction}`
           ].join('\n'),
           color: 16711680,
-          footer: { text: 'WheatMagnate Security System' },
+          footer: { text: `${ADMIN_PANEL_BOT_NAME} Security System` },
           timestamp: new Date()
         }],
         components: buildSecurityAlertComponents(playerName)
@@ -5660,7 +5539,7 @@ async function sendWhisperToDiscord(username, message) {
 
 // Function to get server status description
 const canonicalPlayerNames = new Map([
-  ['bdiev', 'bdiev_']
+  [appConfig.minecraft.adminUsername.toLowerCase().replace(/_+$/, ''), appConfig.minecraft.adminUsername]
 ]);
 
 function getCanonicalWhitelistUsername(username) {
@@ -5786,11 +5665,13 @@ async function getRecentNearbyPlayerSightings(limit = 5) {
 
 function getDiscordPresenceText() {
   if (!bot?.entity) {
-    return shouldReconnect ? 'Reconnecting to oldfag.org' : 'Paused on oldfag.org';
+    return shouldReconnect
+      ? `Reconnecting to ${appConfig.minecraft.serverName}`
+      : `Paused on ${appConfig.minecraft.serverName}`;
   }
 
   const playerCount = Object.keys(bot.players || {}).length;
-  return `${playerCount} players · ${getCurrentTpsDisplay()} TPS · oldfag.org`;
+  return `${playerCount} players · ${getCurrentTpsDisplay()} TPS · ${appConfig.minecraft.serverName}`;
 }
 
 function updateDiscordPresence({ force = false } = {}) {
@@ -6252,15 +6133,7 @@ function formatRelativeShort(secondsAgo) {
 }
 
 function formatSeenTimestamp(timestamp) {
-  if (!timestamp) return 'Never seen';
-  const diffSecs = Math.max(0, Math.floor((Date.now() - new Date(timestamp).getTime()) / 1000));
-  if (diffSecs < 60) return `${diffSecs}s ago`;
-  const diffMins = Math.floor(diffSecs / 60);
-  if (diffMins < 60) return `${diffMins}m ${diffSecs % 60}s ago`;
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${diffHours}h ${diffMins % 60}m ago`;
-  const diffDays = Math.floor(diffHours / 24);
-  return `${diffDays}d ${diffHours % 24}h ago`;
+  return formatSeenTime(timestamp);
 }
 
 function createSeenActivityComponents(messageId) {
@@ -6402,7 +6275,7 @@ function getBotStatusSnapshot() {
     connected,
     status: connected ? 'online' : shouldReconnect ? 'reconnecting' : 'paused',
     username: bot?.username || ADMIN_PANEL_BOT_NAME,
-    server: 'play.oldfag.org',
+    server: appConfig.minecraft.serverName,
     uptimeMs: connected ? Math.max(0, Date.now() - startTime) : 0,
     reconnectInMs: !connected && reconnectTimestamp ? Math.max(0, reconnectTimestamp - Date.now()) : null,
     lastDisconnectReason,
@@ -6518,7 +6391,7 @@ async function buildAdminPanelEmbed() {
         {
           name: 'Connection',
           value: [
-            `${STATUS_EMOJIS.serverPing} Bot **${ADMIN_PANEL_BOT_NAME}** connected to **play.oldfag.org**`,
+            `${STATUS_EMOJIS.serverPing} Bot **${ADMIN_PANEL_BOT_NAME}** connected to **${appConfig.minecraft.serverName}**`,
             `${STATUS_EMOJIS.serverPinging} Ping: **${getBotPingDisplay()}**`,
             `${STATUS_EMOJIS.playtime} Uptime: **${formatDurationShort(Date.now() - startTime)}**`
           ].join('\n'),
@@ -6720,7 +6593,7 @@ function createBot() {
     message: 'Starting Minecraft connection.'
   }).catch(() => {});
   try {
-    bot = createMinecraftBot(config);
+    bot = createMinecraftBot(minecraftConnectionConfig);
   } catch (err) {
     bot = null;
     console.log(`[x] Failed to create Minecraft connection: ${err.message}`);
@@ -7057,13 +6930,13 @@ function createBot() {
         channelId: 'minecraft_public_chat',
         channelName: 'Minecraft public chat',
         text: message,
-        addressed: /\b(?:wheatmagnate|magnate|child|ребенок|ребёнок)\b/iu.test(message) ||
+        addressed: new RegExp(`\\b(?:${escapeRegExp(appConfig.minecraft.username)}|child|ребенок|ребёнок)\\b`, 'iu').test(message) ||
           /(?:^|\s)бот(?:\s|$|[?!.,])/iu.test(message)
       });
     }
 
-    // Handle commands from bdiev_
-    if (username === 'bdiev_') {
+    // Only the configured in-game administrator may use emergency commands.
+    if (username.toLowerCase() === appConfig.minecraft.adminUsername.toLowerCase()) {
       if (message === '!restart') {
         console.log(`[Command] restart by ${username}`);
         lastCommandUser = `${username} (in-game)`;
@@ -7445,15 +7318,60 @@ function startNearbyPlayerScanner() {
 }
 
 
-if (String(process.env.DISABLE_BOT).toLowerCase() === 'true') {
-  console.log(`Bot disabled by env. DISABLE_BOT=${process.env.DISABLE_BOT}`);
+const botHealthServer = startHealthServer({
+  port: appConfig.runtime.healthPort,
+  getStatus: () => ({
+    mode: 'production',
+    discordReady: discordClient.isReady(),
+    minecraftConnected: Boolean(bot?.entity),
+    reconnectScheduled: Boolean(shouldReconnect && !bot)
+  })
+});
+
+if (appConfig.runtime.disabled) {
+  console.log('Bot disabled by configuration.');
   recordSystemLog({
     level: 'warn',
     category: 'bot',
-    message: `Bot disabled by env. DISABLE_BOT=${process.env.DISABLE_BOT}`
+    message: 'Bot disabled by configuration.'
   }).catch(() => {});
   process.exit(0);
 }
+
+async function shutdownBot(signal) {
+  console.log(`[Lifecycle] ${signal} received; shutting down bot.`);
+  shouldReconnect = false;
+  clearReconnectTimer();
+  clearResumeTimer();
+  clearIntervals();
+  for (const timer of [
+    statusUpdateInterval,
+    adminPanelUpdateInterval,
+    siteGameChatOutboxInterval,
+    obsidianStatsWatchdogInterval,
+    channelCleanerInterval,
+    botStatusSnapshotInterval,
+    discordLoginRetryTimer
+  ]) {
+    if (timer) clearInterval(timer);
+  }
+  farm.stop(null);
+  try { growingChild?.stop(); } catch {}
+  const currentBot = bot;
+  bot = null;
+  if (currentBot) {
+    try { currentBot.quit('Container shutdown'); } catch {}
+    try { currentBot.end('Container shutdown'); } catch {}
+  }
+  try { discordClient.destroy(); } catch {}
+  await Promise.all([
+    closeServer(botHealthServer),
+    pool ? pool.end().catch(() => {}) : Promise.resolve()
+  ]);
+  console.log('[Lifecycle] Bot shutdown complete.');
+}
+
+installGracefulShutdown(shutdownBot);
 
 // Handle uncaught exceptions to prevent crashes
 process.on('uncaughtException', (err) => {
@@ -7917,19 +7835,19 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         const xInput = new TextInputBuilder()
           .setCustomId('farm_x')
           .setLabel('Target X')
-          .setPlaceholder('3402889')
+          .setPlaceholder(String(appConfig.farm.target.x))
           .setStyle(TextInputStyle.Short)
           .setRequired(true);
         const yInput = new TextInputBuilder()
           .setCustomId('farm_y')
           .setLabel('Target Y')
-          .setPlaceholder('68')
+          .setPlaceholder(String(appConfig.farm.target.y))
           .setStyle(TextInputStyle.Short)
           .setRequired(true);
         const zInput = new TextInputBuilder()
           .setCustomId('farm_z')
           .setLabel('Target Z')
-          .setPlaceholder('672222')
+          .setPlaceholder(String(appConfig.farm.target.z))
           .setStyle(TextInputStyle.Short)
           .setRequired(true);
 
@@ -8987,7 +8905,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         const keywordInput = new TextInputBuilder()
           .setCustomId('keyword_input')
           .setLabel('Keyword')
-          .setPlaceholder('e.g., bdiev, bdiev_ or whatever you want')
+          .setPlaceholder(`e.g., ${appConfig.minecraft.adminUsername}`)
           .setStyle(TextInputStyle.Short)
           .setRequired(true);
 
@@ -9128,7 +9046,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       if (message && bot) {
         const sentToGame = sendMinecraftChat(message);
         if (sentToGame && !message.trim().startsWith('/') && !message.trim().startsWith('!')) {
-          recordGameChatMessage(bot.username || 'WheatMagnate', message).catch(() => {});
+          recordGameChatMessage(bot.username || ADMIN_PANEL_BOT_NAME, message).catch(() => {});
         }
         console.log(`[Modal] Say "${message}" by ${interaction.user.tag}`);
         
@@ -9931,7 +9849,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           // Send without zero-width space so Minecraft chat is clean
           const sentToGame = sendMinecraftChat(`[${username}] ${gameText}`);
           if (sentToGame) {
-            recordGameChatMessage(bot.username || 'WheatMagnate', `[${username}] ${gameText}`).catch(() => {});
+            recordGameChatMessage(bot.username || ADMIN_PANEL_BOT_NAME, `[${username}] ${gameText}`).catch(() => {});
           }
           console.log(`[Chat] Sent "[${username}] ${gameText}" by ${message.author.tag}`);
         }
@@ -10196,7 +10114,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       if (text) {
         const sentToGame = sendMinecraftChat(text);
         if (sentToGame && !text.startsWith('/') && !text.startsWith('!')) {
-          recordGameChatMessage(bot.username || 'WheatMagnate', text).catch(() => {});
+          recordGameChatMessage(bot.username || ADMIN_PANEL_BOT_NAME, text).catch(() => {});
         }
         console.log(`[Command] Say "${text}" by ${message.author.tag} via Discord`);
         await message.reply({

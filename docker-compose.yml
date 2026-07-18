@@ -1,0 +1,74 @@
+name: wheatmagnatebot
+
+services:
+  postgres:
+    image: postgres:16-bookworm@sha256:92620daddcd947f8d5ab5ba66e848702fe443d87fed30c4cea8e389fd78dfc55
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-wheatmagnate}
+      POSTGRES_USER: ${POSTGRES_USER:-wheatmagnate}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-development-only}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql://${POSTGRES_USER:-wheatmagnate}:${POSTGRES_PASSWORD:-local-development-only}@postgres:5432/${POSTGRES_DB:-wheatmagnate}}
+      MINECRAFT_PROFILES_FOLDER: /app/data/auth-cache
+      GROWING_CHILD_DATABASE_PATH: /app/runtime-data/growing_child.sqlite
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - minecraft_auth_cache:/app/data/auth-cache
+      - bot_runtime:/app/runtime-data
+    healthcheck:
+      test: ["CMD-SHELL", "node scripts/healthcheck.js http://127.0.0.1:$${BOT_HEALTH_PORT:-3090}/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  site:
+    build:
+      context: .
+      dockerfile: Dockerfile.site
+    restart: unless-stopped
+    init: true
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql://${POSTGRES_USER:-wheatmagnate}:${POSTGRES_PASSWORD:-local-development-only}@postgres:5432/${POSTGRES_DB:-wheatmagnate}}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${SITE_PORT:-3080}:${SITE_PORT:-3080}"
+    healthcheck:
+      test: ["CMD-SHELL", "node scripts/healthcheck.js http://127.0.0.1:$${SITE_PORT:-3080}/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  postgres_data:
+  minecraft_auth_cache:
+  bot_runtime:
