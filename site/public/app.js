@@ -2724,22 +2724,17 @@ function renderAdminUsers(users = []) {
     const role = escapeHtml(user.role);
     const lower = String(user.username || '').toLowerCase();
     const isSelf = lower === currentUsername;
-    const isPrimaryAdmin = lower === 'bdiev_';
     const actions = [];
 
     if (user.status !== 'approved') {
       actions.push(`<button type="button" data-admin-action="approve" data-username="${username}">Approve</button>`);
     }
-    if (!isPrimaryAdmin && !isSelf) {
+    if (user.role !== 'admin' && !isSelf) {
       actions.push(`<button class="danger-button" type="button" data-admin-action="reject" data-username="${username}">Reject</button>`);
     }
     if (user.role !== 'admin' && user.status === 'approved') {
       actions.push(`<button class="ghost-button" type="button" data-admin-action="make_admin" data-username="${username}">Make admin</button>`);
     }
-    if (user.role === 'admin' && !isPrimaryAdmin && !isSelf) {
-      actions.push(`<button class="ghost-button" type="button" data-admin-action="remove_admin" data-username="${username}">Remove admin</button>`);
-    }
-
     return `
       <article class="admin-user">
         <div>

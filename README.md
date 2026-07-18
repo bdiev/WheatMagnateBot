@@ -53,3 +53,4 @@ SITE_PORT=3080
 - Keep `data/` persistent for Minecraft auth/cache.
 - The web dashboard reads the same root `.env`.
 - Admin-only dashboard controls are hidden from non-admin users.
+- Public registration always creates a pending user. Follow [site/ADMIN_SETUP.md](site/ADMIN_SETUP.md) to create the first administrator securely.

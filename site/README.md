@@ -2,6 +2,8 @@
 
 Локальная панель статистики для бота.
 
+Public registration never creates an administrator. See [ADMIN_SETUP.md](ADMIN_SETUP.md) for the environment bootstrap, local CLI, and migration instructions.
+
 ## Запуск
 
 ```powershell

@@ -6,6 +6,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { Pool } = require('pg');
+const {
+  bootstrapAdminFromEnvironment,
+  normalizeUsername,
+  registerPendingUser,
+  verifyPassword
+} = require('./auth');
 require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 
 const PORT = Number(process.env.SITE_PORT || process.env.PORT) || 3080;
@@ -14,8 +20,6 @@ const ITEMS_DIR = path.join(__dirname, 'items');
 const FOOD_DIR = path.join(__dirname, 'food');
 const LOGOS_DIR = path.join(__dirname, 'logos');
 const DATABASE_URL = process.env.DATABASE_URL;
-const SITE_ADMIN_USERNAME = 'bdiev_';
-const SITE_ADMIN_PASSWORD = process.env.SITE_ADMIN_PASSWORD || '';
 const SESSION_COOKIE = 'wm_session';
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 const pool = DATABASE_URL
@@ -71,19 +75,6 @@ function clearSessionCookie(res) {
 
 function hashToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
-}
-
-function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
-  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
-  return `scrypt:${salt}:${hash}`;
-}
-
-function verifyPassword(password, storedHash) {
-  const [method, salt, hash] = String(storedHash || '').split(':');
-  if (method !== 'scrypt' || !salt || !hash) return false;
-  const actual = crypto.scryptSync(password, salt, 64);
-  const expected = Buffer.from(hash, 'hex');
-  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
 }
 
 function readJsonBody(req) {
@@ -376,7 +367,7 @@ async function ensureOptionalTables() {
       username VARCHAR(64) UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
       role VARCHAR(20) NOT NULL DEFAULT 'user',
-      status VARCHAR(20) NOT NULL DEFAULT 'approved',
+      status VARCHAR(20) NOT NULL DEFAULT 'pending',
       approved_by BIGINT REFERENCES site_users(id) ON DELETE SET NULL,
       approved_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -384,6 +375,8 @@ async function ensureOptionalTables() {
   `);
   await pool.query(`ALTER TABLE site_users ADD COLUMN IF NOT EXISTS role VARCHAR(20) NOT NULL DEFAULT 'user'`);
   await pool.query(`ALTER TABLE site_users ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'approved'`);
+  await pool.query(`ALTER TABLE site_users ALTER COLUMN role SET DEFAULT 'user'`);
+  await pool.query(`ALTER TABLE site_users ALTER COLUMN status SET DEFAULT 'pending'`);
   await pool.query(`ALTER TABLE site_users ADD COLUMN IF NOT EXISTS approved_by BIGINT REFERENCES site_users(id) ON DELETE SET NULL`);
   await pool.query(`ALTER TABLE site_users ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ`);
   await pool.query(`
@@ -400,34 +393,7 @@ async function ensureOptionalTables() {
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS site_sessions_user_id_idx ON site_sessions (user_id)`);
   await pool.query(`DELETE FROM site_sessions WHERE expires_at <= NOW()`);
-  await pool.query(
-    `UPDATE site_users
-     SET role = 'admin',
-         status = 'approved',
-         approved_at = COALESCE(approved_at, NOW())
-     WHERE LOWER(username) = LOWER($1)`,
-    [SITE_ADMIN_USERNAME]
-  );
-  if (SITE_ADMIN_PASSWORD) {
-    const adminPasswordHash = hashPassword(SITE_ADMIN_PASSWORD);
-    const updatedAdmin = await pool.query(
-      `UPDATE site_users
-       SET username = $1,
-           password_hash = $2,
-           role = 'admin',
-           status = 'approved',
-           approved_at = COALESCE(approved_at, NOW())
-       WHERE LOWER(username) = LOWER($1)`,
-      [SITE_ADMIN_USERNAME, adminPasswordHash]
-    );
-    if (!updatedAdmin.rowCount) {
-      await pool.query(
-        `INSERT INTO site_users (username, password_hash, role, status, approved_at)
-         VALUES ($1, $2, 'admin', 'approved', NOW())`,
-        [SITE_ADMIN_USERNAME, adminPasswordHash]
-      );
-    }
-  }
+  await bootstrapAdminFromEnvironment(pool);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS ignored_users (
       id SERIAL PRIMARY KEY,
@@ -1899,21 +1865,26 @@ async function createSession(res, userId) {
   setSessionCookie(res, token);
 }
 
-function normalizeUsername(value) {
-  return String(value || '').trim();
-}
-
-function validateCredentials(username, password) {
-  if (!/^[A-Za-z0-9_.-]{2,64}$/.test(username)) {
-    const err = new Error('Username must be 2-64 characters and use letters, numbers, dot, dash or underscore.');
-    err.statusCode = 400;
-    throw err;
-  }
-  if (String(password || '').length < 6 || String(password || '').length > 256) {
-    const err = new Error('Password must be between 6 and 256 characters.');
-    err.statusCode = 400;
-    throw err;
-  }
+async function handleRegistration(req, res, db = pool, log = recordSystemLog) {
+  const body = await readJsonBody(req);
+  const username = normalizeUsername(body.username);
+  const user = await registerPendingUser(db, {
+    username,
+    password: String(body.password || '')
+  });
+  await log({
+    level: 'info',
+    category: 'auth',
+    actor: username,
+    message: 'New site registration is waiting for approval.',
+    details: { username, role: 'user', status: 'pending' }
+  });
+  sendJson(res, 201, {
+    authenticated: false,
+    pendingApproval: true,
+    message: 'Registration received. Wait until an admin approves your account.'
+  });
+  return user;
 }
 
 async function handleAuth(req, res, url) {
@@ -1937,44 +1908,7 @@ async function handleAuth(req, res, url) {
   }
 
   if (url.pathname === '/api/auth/register' && req.method === 'POST') {
-    const body = await readJsonBody(req);
-    const username = normalizeUsername(body.username);
-    const password = String(body.password || '');
-    validateCredentials(username, password);
-
-    const isAdmin = username.toLowerCase() === SITE_ADMIN_USERNAME.toLowerCase();
-    const role = isAdmin ? 'admin' : 'user';
-    const status = isAdmin ? 'approved' : 'pending';
-    const existing = await pool.query(`SELECT id FROM site_users WHERE LOWER(username) = LOWER($1)`, [username]);
-    if (existing.rowCount) {
-      sendError(res, 409, 'This username is already registered.');
-      return true;
-    }
-
-    const inserted = await pool.query(`
-      INSERT INTO site_users (username, password_hash, role, status, approved_at)
-      VALUES ($1, $2, $3::text, $4::text, CASE WHEN $4::text = 'approved' THEN NOW() ELSE NULL END)
-      RETURNING id, username, role, status, created_at, approved_at
-    `, [username, hashPassword(password), role, status]);
-    await recordSystemLog({
-      level: isAdmin ? 'audit' : 'info',
-      category: 'auth',
-      actor: username,
-      message: isAdmin ? 'Primary admin account registered.' : 'New site registration is waiting for approval.',
-      details: { username, role, status }
-    });
-
-    if (isAdmin) {
-      await createSession(res, inserted.rows[0].id);
-      sendJson(res, 201, { authenticated: true, user: publicUser(inserted.rows[0]) });
-      return true;
-    }
-
-    sendJson(res, 201, {
-      authenticated: false,
-      pendingApproval: true,
-      message: 'Registration received. Wait until an admin approves your account.'
-    });
+    await handleRegistration(req, res);
     return true;
   }
 
@@ -1989,10 +1923,6 @@ async function handleAuth(req, res, url) {
     `, [username]);
     const user = result.rows[0];
     if (!user || !verifyPassword(password, user.password_hash)) {
-      if (!user && username.toLowerCase() === SITE_ADMIN_USERNAME.toLowerCase()) {
-        sendError(res, 401, 'Admin account is not created yet. Create account bdiev_ first, or set SITE_ADMIN_PASSWORD on the host and restart the site.');
-        return true;
-      }
       sendError(res, 401, 'Invalid username or password.');
       return true;
     }
@@ -2015,13 +1945,13 @@ async function handleAuth(req, res, url) {
   return false;
 }
 
-async function getAdminUsers(currentUser) {
+async function getAdminUsers(currentUser, db = pool) {
   if (currentUser.role !== 'admin') {
     const err = new Error('Admin access required.');
     err.statusCode = 403;
     throw err;
   }
-  const result = await pool.query(`
+  const result = await db.query(`
     SELECT id, username, role, status, created_at, approved_at
     FROM site_users
     ORDER BY
@@ -2039,7 +1969,7 @@ function assertAdminUser(currentUser) {
   }
 }
 
-async function updateAdminUser(currentUser, body) {
+async function updateAdminUser(currentUser, body, db = pool) {
   assertAdminUser(currentUser);
   const username = normalizeUsername(body.username);
   const action = String(body.action || '');
@@ -2048,20 +1978,31 @@ async function updateAdminUser(currentUser, body) {
     err.statusCode = 400;
     throw err;
   }
-  if (username.toLowerCase() === SITE_ADMIN_USERNAME.toLowerCase() && ['reject', 'remove_admin'].includes(action)) {
-    const err = new Error('The primary admin cannot be rejected or demoted.');
+  const targetResult = await db.query(`
+    SELECT id, username, role, status
+    FROM site_users
+    WHERE LOWER(username) = LOWER($1)
+  `, [username]);
+  const target = targetResult.rows[0];
+  if (!target) {
+    const err = new Error('User not found.');
+    err.statusCode = 404;
+    throw err;
+  }
+  if (target.role === 'admin' && ['reject', 'remove_admin'].includes(action)) {
+    const err = new Error('Existing administrators cannot be deleted or demoted through the API.');
     err.statusCode = 400;
     throw err;
   }
 
   if (action === 'approve') {
-    await pool.query(`
+    await db.query(`
       UPDATE site_users
       SET status = 'approved', approved_by = $1, approved_at = NOW()
       WHERE LOWER(username) = LOWER($2)
     `, [currentUser.id, username]);
   } else if (action === 'reject') {
-    const removed = await pool.query(
+    const removed = await db.query(
       `DELETE FROM site_users WHERE LOWER(username) = LOWER($1) RETURNING id`,
       [username]
     );
@@ -2071,13 +2012,13 @@ async function updateAdminUser(currentUser, body) {
       throw err;
     }
   } else if (action === 'make_admin') {
-    await pool.query(`
+    await db.query(`
       UPDATE site_users
       SET role = 'admin', status = 'approved', approved_by = $1, approved_at = COALESCE(approved_at, NOW())
       WHERE LOWER(username) = LOWER($2)
     `, [currentUser.id, username]);
   } else if (action === 'remove_admin') {
-    await pool.query(`UPDATE site_users SET role = 'user' WHERE LOWER(username) = LOWER($1)`, [username]);
+    await db.query(`UPDATE site_users SET role = 'user' WHERE LOWER(username) = LOWER($1)`, [username]);
   } else {
     const err = new Error('Unknown admin action.');
     err.statusCode = 400;
@@ -2092,7 +2033,7 @@ async function updateAdminUser(currentUser, body) {
     details: { targetUsername: username, action }
   });
 
-  return getAdminUsers(currentUser);
+  return getAdminUsers(currentUser, db);
 }
 
 async function queueAdminBotCommand(currentUser, body) {
@@ -2581,24 +2522,32 @@ const server = http.createServer((req, res) => {
   serveStatic(req, res, url);
 });
 
-ensureOptionalTables()
-  .catch(err => {
+async function startServer() {
+  await ensureOptionalTables().catch(err => {
     console.error('[Site] Failed to ensure optional tables:', err.message);
-  })
-  .finally(() => {
-    server.listen(PORT, () => {
-      console.log(`[Site] WheatMagnateBot site: http://localhost:${PORT}`);
-      console.log(`[Site] Static files: ${pathToFileURL(PUBLIC_DIR).href}`);
-      recordSystemLog({
-        level: 'info',
-        category: 'site',
-        message: `Site server started on port ${PORT}.`
-      });
+  });
+  server.listen(PORT, () => {
+    console.log(`[Site] WheatMagnateBot site: http://localhost:${PORT}`);
+    console.log(`[Site] Static files: ${pathToFileURL(PUBLIC_DIR).href}`);
+    recordSystemLog({
+      level: 'info',
+      category: 'site',
+      message: `Site server started on port ${PORT}.`
     });
   });
+}
 
-process.on('SIGINT', async () => {
-  server.close();
-  if (pool) await pool.end().catch(() => {});
-  process.exit(0);
-});
+if (require.main === module) {
+  startServer();
+  process.on('SIGINT', async () => {
+    server.close();
+    if (pool) await pool.end().catch(() => {});
+    process.exit(0);
+  });
+}
+
+module.exports = {
+  handleRegistration,
+  startServer,
+  updateAdminUser
+};
