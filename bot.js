@@ -15,6 +15,12 @@ const { pathfinder } = require('mineflayer-pathfinder');
 const { createDiscordClient, saveStatusMessageId, loadStatusMessageId } = require('./discord');
 const { createMinecraftBot } = require('./minecraft');
 const {
+  cleanMinecraftChatMessage: cleanMinecraftMessage,
+  isPrivateMinecraftChatLine: detectPrivateMinecraftChatLine,
+  splitMinecraftMessage: splitMinecraftText
+} = require('./minecraft/messages');
+const { formatSeenTimestamp: formatSeenTime, parseObservedJoinDate: parseJoinDate } = require('./minecraft/seen');
+const {
   createDatabasePool,
   logDatabaseStatus,
   createMentionKeywordRepository,
@@ -23,6 +29,7 @@ const {
   createAdminSettingsRepository,
   createSystemLogRepository
 } = require('./database');
+const { DeferredCommandError, processPendingCommands } = require('./database/commandBus');
 const { createPlaytimeFeature } = require('./features/playtime');
 const { createWhisperFeature } = require('./features/whisper');
 const { createFollowFeature } = require('./features/follow');
@@ -624,13 +631,7 @@ let recentWhispers = new Map(); // key: `WHISPER:username:message` -> timestamp,
 let pendingChatTimers = new Map(); // normalized message key -> Set<timeout handle>
 let outboundWhispers = new Map(); // key: `OUTBOUND:targetUsername:message` -> timestamp, to suppress public echo of our own whispers
 let siteWhisperTargets = new Map(); // lowercase username -> { timestamp, siteUsername }, suppress Discord whisper fallback for site dialogs
-class DeferredBotCommandError extends Error {
-  constructor(message, payloadPatch = {}) {
-    super(message);
-    this.name = 'DeferredBotCommandError';
-    this.payloadPatch = payloadPatch;
-  }
-}
+const DeferredBotCommandError = DeferredCommandError;
 let recentlyForwardedGameChat = new Map(); // normalized message key -> { source, timestamp }
 let recentCommandBotResponses = []; // raw command-bot replies used to reject truncated chat-event copies
 const COMMAND_RESPONSE_DISPLAY_USERNAME = appConfig.minecraft.commandBotUsername;
@@ -2240,22 +2241,7 @@ function handleObservedPlaytimeChat(username, message) {
 }
 
 function parseObservedJoinDate(message) {
-  const match = String(message || '').trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})\b/);
-  if (!match) return null;
-  const [, month, day, year, hour, minute, second] = match.map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
-  if (!Number.isFinite(date.getTime())) return null;
-  if (
-    date.getUTCFullYear() !== year ||
-    date.getUTCMonth() !== month - 1 ||
-    date.getUTCDate() !== day ||
-    date.getUTCHours() !== hour ||
-    date.getUTCMinutes() !== minute ||
-    date.getUTCSeconds() !== second
-  ) {
-    return null;
-  }
-  return date;
+  return parseJoinDate(message);
 }
 
 async function reconcileObservedJoinDate(targetUsername, observedDate) {
@@ -4191,33 +4177,7 @@ function armSeenCommandResponseCapture(message) {
 }
 
 function splitMinecraftMessage(text, maxLength = MINECRAFT_PRIVATE_MESSAGE_LENGTH) {
-  const words = String(text || '').trim().split(/\s+/).filter(Boolean);
-  const chunks = [];
-  let current = '';
-
-  for (const word of words) {
-    if (word.length > maxLength) {
-      if (current) {
-        chunks.push(current);
-        current = '';
-      }
-      for (let i = 0; i < word.length; i += maxLength) {
-        chunks.push(word.slice(i, i + maxLength));
-      }
-      continue;
-    }
-
-    const candidate = current ? `${current} ${word}` : word;
-    if (candidate.length > maxLength) {
-      chunks.push(current);
-      current = word;
-    } else {
-      current = candidate;
-    }
-  }
-
-  if (current) chunks.push(current);
-  return chunks;
+  return splitMinecraftText(text, maxLength);
 }
 
 function truncateTextForChat(text, maxLength) {
@@ -4757,99 +4717,39 @@ async function executeBotCommand(command) {
 
 async function processBotCommands() {
   if (!pool) return;
-
-  let commands = [];
+  let transitions;
   try {
     const includeChat = Boolean(bot && typeof bot.chat === 'function');
-    const result = await pool.query(`
-      WITH next_commands AS (
-        SELECT id
-        FROM bot_commands
-        WHERE status = 'pending'
-          AND ($1::boolean OR command_type <> 'chat')
-          AND ($1::boolean OR command_type <> 'site_whisper')
-          AND (
-            command_type <> 'site_whisper'
-            OR COALESCE(payload->>'offlineUntilJoin', 'false') <> 'true'
-          )
-          AND (
-            command_type <> 'site_whisper'
-            OR payload->>'deferredUntil' IS NULL
-            OR (payload->>'deferredUntil')::timestamptz <= NOW()
-          )
-        ORDER BY created_at ASC
-        LIMIT 5
-        FOR UPDATE SKIP LOCKED
-      )
-      UPDATE bot_commands commands
-      SET status = 'processing',
-          started_at = NOW(),
-          error = NULL
-      FROM next_commands
-      WHERE commands.id = next_commands.id
-      RETURNING commands.id, commands.source, commands.requested_by, commands.command_type, commands.payload
-    `, [includeChat]);
-    commands = result.rows;
+    transitions = await processPendingCommands(pool, async command => {
+      const result = await executeBotCommand(command);
+      await writeBotStatusSnapshot().catch(() => {});
+      return result;
+    }, { includeChat });
   } catch (err) {
     console.error('[Command Bus] Failed to load commands:', err.message);
     return;
   }
-
-  for (const command of commands) {
-    try {
-      const result = await executeBotCommand(command);
-      await writeBotStatusSnapshot().catch(() => {});
-      await pool.query(`
-        UPDATE bot_commands
-        SET status = 'done',
-            result = $2,
-            error = NULL,
-            finished_at = NOW()
-        WHERE id = $1
-      `, [command.id, result || {}]);
-      console.log(`[Command Bus] Completed ${command.command_type} #${command.id}`);
+  for (const transition of transitions) {
+    if (transition.status === 'done') {
+      console.log(`[Command Bus] Completed ${transition.command_type} #${transition.id}`);
       await recordSystemLog({
-        level: 'audit',
-        category: 'command_bus',
-        actor: command.requested_by,
-        message: `Completed bot command ${command.command_type} #${command.id}.`,
-        details: { commandId: String(command.id), source: command.source, result: result || {} }
+        level: 'audit', category: 'command_bus', actor: transition.requested_by,
+        message: `Completed bot command ${transition.command_type} #${transition.id}.`,
+        details: { commandId: transition.id, source: transition.source, result: transition.result }
       });
-    } catch (err) {
-      if (err instanceof DeferredBotCommandError) {
-        await pool.query(`
-          UPDATE bot_commands
-          SET status = 'pending',
-              payload = payload || $2::jsonb,
-              result = jsonb_build_object('deferred', true, 'reason', $3::text),
-              error = NULL,
-              started_at = NULL
-          WHERE id = $1
-        `, [command.id, JSON.stringify(err.payloadPatch || {}), err.message]);
-        console.log(`[Command Bus] Deferred ${command.command_type} #${command.id}: ${err.message}`);
-        await recordSystemLog({
-          level: 'info',
-          category: 'command_bus',
-          actor: command.requested_by,
-          message: `Deferred bot command ${command.command_type} #${command.id}.`,
-          details: { commandId: String(command.id), reason: err.message, payloadPatch: err.payloadPatch || {} }
-        });
-        continue;
-      }
-      await pool.query(`
-        UPDATE bot_commands
-        SET status = 'failed',
-            error = $2,
-            finished_at = NOW()
-        WHERE id = $1
-      `, [command.id, err.message]);
-      console.error(`[Command Bus] Failed ${command.command_type} #${command.id}:`, err.message);
+    } else if (transition.deferred) {
+      console.log(`[Command Bus] Deferred ${transition.command_type} #${transition.id}: ${transition.error}`);
       await recordSystemLog({
-        level: 'error',
-        category: 'command_bus',
-        actor: command.requested_by,
-        message: `Failed bot command ${command.command_type} #${command.id}.`,
-        details: { commandId: String(command.id), error: err.message }
+        level: 'info', category: 'command_bus', actor: transition.requested_by,
+        message: `Deferred bot command ${transition.command_type} #${transition.id}.`,
+        details: { commandId: transition.id, reason: transition.error, payloadPatch: transition.payloadPatch }
+      });
+    } else {
+      console.error(`[Command Bus] Failed ${transition.command_type} #${transition.id}:`, transition.error);
+      await recordSystemLog({
+        level: 'error', category: 'command_bus', actor: transition.requested_by,
+        message: `Failed bot command ${transition.command_type} #${transition.id}.`,
+        details: { commandId: transition.id, error: transition.error }
       });
     }
   }
@@ -4873,24 +4773,11 @@ function flattenMarkdownLinks(message) {
 }
 
 function cleanMinecraftChatMessage(message) {
-  return String(message || '')
-    .replace(/(?:\u00a7|\u00c2\u00a7)[0-9a-fk-or]/gi, '')
-    .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
-    .trim();
+  return cleanMinecraftMessage(message);
 }
 
 function isPrivateMinecraftChatLine(text) {
-  const clean = cleanMinecraftChatMessage(text).replace(/\s+/g, ' ').trim();
-  if (!clean) return false;
-  const botName = bot?.username ? escapeRegExp(bot.username) : '[A-Za-z0-9_]{1,16}';
-  const privatePatterns = [
-    /^(?:from|to)\s+[A-Za-z0-9_]{1,16}\s*[:>»]/i,
-    /^[A-Za-z0-9_]{1,16}\s+(?:whispers?|whispered|tells?|messages?|msgs?)\s+(?:to\s+)?(?:you|me)\s*[:>»]/i,
-    /^(?:you|me)\s+(?:whisper|tell|message|msg)\s+(?:to\s+)?[A-Za-z0-9_]{1,16}\s*[:>»]/i,
-    new RegExp(`^\\[?[A-Za-z0-9_]{1,16}\\s*(?:->|→)\\s*(?:you|me|${botName})\\]?\\s*:?`, 'i'),
-    new RegExp(`^\\[?(?:you|me|${botName})\\s*(?:->|→)\\s*[A-Za-z0-9_]{1,16}\\]?\\s*:?`, 'i')
-  ];
-  return privatePatterns.some(pattern => pattern.test(clean));
+  return detectPrivateMinecraftChatLine(text, bot?.username || null);
 }
 
 function cancelPendingGameChat(username, message) {
@@ -6246,15 +6133,7 @@ function formatRelativeShort(secondsAgo) {
 }
 
 function formatSeenTimestamp(timestamp) {
-  if (!timestamp) return 'Never seen';
-  const diffSecs = Math.max(0, Math.floor((Date.now() - new Date(timestamp).getTime()) / 1000));
-  if (diffSecs < 60) return `${diffSecs}s ago`;
-  const diffMins = Math.floor(diffSecs / 60);
-  if (diffMins < 60) return `${diffMins}m ${diffSecs % 60}s ago`;
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${diffHours}h ${diffMins % 60}m ago`;
-  const diffDays = Math.floor(diffHours / 24);
-  return `${diffDays}d ${diffHours % 24}h ago`;
+  return formatSeenTime(timestamp);
 }
 
 function createSeenActivityComponents(messageId) {

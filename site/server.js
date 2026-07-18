@@ -6,9 +6,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { Pool } = require('pg');
-require('dotenv').config({ path: path.resolve(__dirname, '..', '.env'), quiet: true });
+if (process.env.NODE_ENV !== 'test') {
+  require('dotenv').config({ path: path.resolve(__dirname, '..', '.env'), quiet: true });
+}
 const { loadSiteConfig } = require('../config');
 const { closeServer, installGracefulShutdown } = require('../runtime/lifecycle');
+const { enqueueCommand } = require('../database/commandBus');
 const {
   bootstrapAdminFromEnvironment,
   hashPassword,
@@ -914,32 +917,7 @@ async function getChat(url) {
 
 async function queueBotCommand(currentUser, commandType, payload = {}, { source = 'site' } = {}) {
   assertDatabase();
-  const safeCommandType = String(commandType || '').trim().toLowerCase();
-  if (!safeCommandType) {
-    const err = new Error('Command type is required.');
-    err.statusCode = 400;
-    throw err;
-  }
-
-  const result = await pool.query(`
-    INSERT INTO bot_commands (source, requested_by, command_type, payload)
-    VALUES ($1, $2, $3, $4)
-    RETURNING id, source, requested_by, command_type, payload, status, created_at
-  `, [source, currentUser?.username || null, safeCommandType, payload || {}]);
-
-  const row = result.rows[0];
-  return {
-    queued: true,
-    command: {
-      id: String(row.id),
-      source: row.source,
-      requestedBy: row.requested_by,
-      commandType: row.command_type,
-      payload: row.payload,
-      status: row.status,
-      createdAt: row.created_at
-    }
-  };
+  return enqueueCommand(pool, { source, requestedBy: currentUser?.username || null, commandType, payload });
 }
 
 async function queueSiteChatMessage(currentUser, body) {

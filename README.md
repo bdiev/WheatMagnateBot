@@ -171,3 +171,18 @@ In production keep `BOT_TEST_MODE=false`. Container healthchecks cover PostgreSQ
 GitHub Actions runs on Node.js 22 with a PostgreSQL 16 service container. The workflow installs the root and site lockfiles independently, checks JavaScript syntax, runs root and site tests separately, applies the PostgreSQL migration twice in an isolated schema, checks tracked-file policy, and scans tracked text files for common secret formats. Bot test mode is enabled, so CI does not connect to Discord or Minecraft and no external credentials are configured.
 
 Dependency audits fail for `high` and `critical` findings. Known `moderate` findings in the Mineflayer/Prismarine dependency tree remain visible in the audit output without blocking CI. Dependabot checks both the root package and `site/` weekly.
+
+## Tests
+
+Unit tests use the built-in `node:test` runner and mock the database or external adapters where appropriate:
+
+```sh
+npm test
+npm run test:site
+```
+
+PostgreSQL integration tests require only a disposable test database. They verify migrations, HTTP registration/login and roles, the health endpoint, and command bus `done`, deferred, and failed transitions. They never connect to Discord or Minecraft:
+
+```sh
+DATABASE_URL=postgresql://user:password@localhost:5432/wheatmagnate_test npm run test:integration
+```

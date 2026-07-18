@@ -1,6 +1,7 @@
 'use strict';
 
 const { Pool } = require('pg');
+const { usernamesEqual } = require('../minecraft/usernames');
 
 function createDatabasePool(databaseUrl) {
   if (!databaseUrl) {
@@ -373,7 +374,7 @@ function createWhitelistRepository({
     }
 
     const fileWhitelist = loadWhitelistFile();
-    const alreadyListed = fileWhitelist.some(name => name.toLowerCase() === safeUsername.toLowerCase());
+    const alreadyListed = fileWhitelist.some(name => usernamesEqual(name, safeUsername));
     if (!alreadyListed) {
       appendWhitelistFile(safeUsername);
     }
