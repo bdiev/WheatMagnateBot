@@ -8,6 +8,7 @@ const { pathToFileURL } = require('node:url');
 const { Pool } = require('pg');
 require('dotenv').config({ path: path.resolve(__dirname, '..', '.env'), quiet: true });
 const { loadSiteConfig } = require('../config');
+const { closeServer, installGracefulShutdown } = require('../runtime/lifecycle');
 const {
   bootstrapAdminFromEnvironment,
   hashPassword,
@@ -2687,10 +2688,11 @@ if (require.main === module) {
     console.error(`[Config] ${err.message}`);
     process.exit(1);
   });
-  process.on('SIGINT', async () => {
-    server.close();
+  installGracefulShutdown(async signal => {
+    console.log(`[Lifecycle] ${signal} received; shutting down site.`);
+    await closeServer(server);
     if (pool) await pool.end().catch(() => {});
-    process.exit(0);
+    console.log('[Lifecycle] Site shutdown complete.');
   });
 }
 

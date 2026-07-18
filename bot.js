@@ -1,5 +1,6 @@
 require('dotenv').config({ quiet: true });
 const { loadBotConfig } = require('./config');
+const { closeServer, installGracefulShutdown, startHealthServer } = require('./runtime/lifecycle');
 let appConfig;
 try {
   appConfig = loadBotConfig(process.env);
@@ -1617,7 +1618,8 @@ function initializeGrowingChild() {
     sendChannelMessage: sendGrowingChildChannelMessage,
     sendMinecraftMessage: sendGrowingChildMinecraftMessage,
     generateWithAI: GEMINI_API_KEY ? generateGrowingChildPhrase : null,
-    allowedDiscordChannelId: DISCORD_CHAT_CHANNEL_ID
+    allowedDiscordChannelId: DISCORD_CHAT_CHANNEL_ID,
+    configOverrides: { databasePath: appConfig.runtime.growingChildDatabasePath }
   });
   growingChild.setMinecraftPublicSpeechEnabled(runtimeSettings.childPublicSpeech);
   growingChild.start();
@@ -7437,6 +7439,16 @@ function startNearbyPlayerScanner() {
 }
 
 
+const botHealthServer = startHealthServer({
+  port: appConfig.runtime.healthPort,
+  getStatus: () => ({
+    mode: 'production',
+    discordReady: discordClient.isReady(),
+    minecraftConnected: Boolean(bot?.entity),
+    reconnectScheduled: Boolean(shouldReconnect && !bot)
+  })
+});
+
 if (appConfig.runtime.disabled) {
   console.log('Bot disabled by configuration.');
   recordSystemLog({
@@ -7446,6 +7458,41 @@ if (appConfig.runtime.disabled) {
   }).catch(() => {});
   process.exit(0);
 }
+
+async function shutdownBot(signal) {
+  console.log(`[Lifecycle] ${signal} received; shutting down bot.`);
+  shouldReconnect = false;
+  clearReconnectTimer();
+  clearResumeTimer();
+  clearIntervals();
+  for (const timer of [
+    statusUpdateInterval,
+    adminPanelUpdateInterval,
+    siteGameChatOutboxInterval,
+    obsidianStatsWatchdogInterval,
+    channelCleanerInterval,
+    botStatusSnapshotInterval,
+    discordLoginRetryTimer
+  ]) {
+    if (timer) clearInterval(timer);
+  }
+  farm.stop(null);
+  try { growingChild?.stop(); } catch {}
+  const currentBot = bot;
+  bot = null;
+  if (currentBot) {
+    try { currentBot.quit('Container shutdown'); } catch {}
+    try { currentBot.end('Container shutdown'); } catch {}
+  }
+  try { discordClient.destroy(); } catch {}
+  await Promise.all([
+    closeServer(botHealthServer),
+    pool ? pool.end().catch(() => {}) : Promise.resolve()
+  ]);
+  console.log('[Lifecycle] Bot shutdown complete.');
+}
+
+installGracefulShutdown(shutdownBot);
 
 // Handle uncaught exceptions to prevent crashes
 process.on('uncaughtException', (err) => {

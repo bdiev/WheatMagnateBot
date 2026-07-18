@@ -197,7 +197,10 @@ function loadConfig(env = process.env, { profile = 'bot', strict = true } = {}) 
       childPublicSpeech: read.boolean('CHILD_PUBLIC_SPEECH', { fallback: true }),
       commandCooldownMs: read.integer('WM_COMMAND_COOLDOWN_MS', { fallback: 20_000, allowed: [0, 5000, 10_000, 20_000, 60_000] }),
       debugLogs: read.boolean('DEBUG_LOGS', { fallback: false }),
-      disabled: read.boolean('DISABLE_BOT', { fallback: false })
+      disabled: read.boolean('DISABLE_BOT', { fallback: false }),
+      testMode: read.boolean('BOT_TEST_MODE', { fallback: false }),
+      healthPort: read.integer('BOT_HEALTH_PORT', { fallback: 3090, min: 1, max: 65535 }),
+      growingChildDatabasePath: read.text('GROWING_CHILD_DATABASE_PATH', { fallback: 'data/growing_child.sqlite' })
     },
     limits: {
       questionLength: read.integer('WM_MAX_QUESTION_LENGTH', { fallback: 300, min: 32, max: 2000 }),

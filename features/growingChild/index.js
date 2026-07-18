@@ -29,9 +29,10 @@ class GrowingChildAI {
     sendChannelMessage,
     sendMinecraftMessage,
     generateWithAI,
-    allowedDiscordChannelId
+    allowedDiscordChannelId,
+    configOverrides
   }) {
-    this.config = loadConfig();
+    this.config = loadConfig(undefined, configOverrides);
     this.database = new GrowingChildDatabase(this.config.databasePath);
     this.learning = new LearningSystem(this.database, this.config);
     this.emotions = new EmotionSystem(this.database);

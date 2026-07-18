@@ -38,7 +38,7 @@ const DEFAULTS = Object.freeze({
   maxLearnedMessages: 5000
 });
 
-function loadConfig(configPath = path.join(__dirname, 'config.json')) {
+function loadConfig(configPath = path.join(__dirname, 'config.json'), overrides = {}) {
   let fileConfig = {};
   try {
     fileConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
@@ -46,7 +46,7 @@ function loadConfig(configPath = path.join(__dirname, 'config.json')) {
     if (err.code !== 'ENOENT') throw err;
   }
 
-  const config = { ...DEFAULTS, ...fileConfig };
+  const config = { ...DEFAULTS, ...fileConfig, ...overrides };
   config.ignoredChannels = new Set((config.ignoredChannels || []).map(String));
   config.ignoredUsers = new Set((config.ignoredUsers || []).map(value => String(value).toLowerCase()));
   config.minimumWordLength = Math.max(1, Number(config.minimumWordLength) || 3);

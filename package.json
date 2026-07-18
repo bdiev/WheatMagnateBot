@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "main": "bot.js",
   "scripts": {
-    "start": "node bot.js",
-    "test": "node features/growingChild/smoke_test.js && node --test config/config.test.js site/auth.test.js site/security.test.js"
+    "start": "node scripts/bot-entrypoint.js",
+    "test": "node features/growingChild/smoke_test.js && node --test config/config.test.js runtime/lifecycle.test.js site/auth.test.js site/security.test.js"
   },
   "engines": {
     "node": ">=22.13.0"
