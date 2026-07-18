@@ -8,10 +8,20 @@ const { pathToFileURL } = require('node:url');
 const { Pool } = require('pg');
 const {
   bootstrapAdminFromEnvironment,
+  hashPassword,
   normalizeUsername,
   registerPendingUser,
+  validateCredentials,
   verifyPassword
 } = require('./auth');
+const {
+  AuthRateLimiter,
+  applySecurityHeaders,
+  assertSameOrigin,
+  authSecurityConfig,
+  getRequestIp,
+  positiveInteger
+} = require('./security');
 require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 
 const PORT = Number(process.env.SITE_PORT || process.env.PORT) || 3080;
@@ -21,7 +31,10 @@ const FOOD_DIR = path.join(__dirname, 'food');
 const LOGOS_DIR = path.join(__dirname, 'logos');
 const DATABASE_URL = process.env.DATABASE_URL;
 const SESSION_COOKIE = 'wm_session';
-const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
+const SESSION_MAX_AGE_SECONDS = positiveInteger(process.env.SITE_SESSION_MAX_AGE_SECONDS, 60 * 60 * 24 * 30);
+const SESSION_COOKIE_SECURE = process.env.NODE_ENV === 'production' || process.env.SITE_COOKIE_SECURE === 'true';
+const DUMMY_PASSWORD_HASH = 'scrypt:0123456789abcdef0123456789abcdef:9564d5a180593f4f60ac8b2db7e8966b37a1d6fc22b396d69f4f71972c1820f80cec190209c19b5603fae554eee5a6318a4cadcbc5b3892fd40e2d8df24c3997';
+const authRateLimiter = new AuthRateLimiter(authSecurityConfig());
 const pool = DATABASE_URL
   ? new Pool({ connectionString: DATABASE_URL })
   : null;
@@ -52,6 +65,13 @@ function sendError(res, statusCode, message) {
   sendJson(res, statusCode, { error: message });
 }
 
+function publicErrorMessage(err) {
+  const statusCode = Number(err?.statusCode) || 500;
+  if (statusCode >= 400 && statusCode < 500) return err.message || 'Request could not be processed.';
+  if (statusCode === 503) return 'Service temporarily unavailable.';
+  return 'Internal server error.';
+}
+
 function parseCookies(req) {
   return String(req.headers.cookie || '')
     .split(';')
@@ -65,12 +85,17 @@ function parseCookies(req) {
     }, {});
 }
 
+function sessionCookieValue(token, { maxAge = SESSION_MAX_AGE_SECONDS, secure = SESSION_COOKIE_SECURE } = {}) {
+  const secureAttribute = secure ? '; Secure' : '';
+  return `${SESSION_COOKIE}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${secureAttribute}`;
+}
+
 function setSessionCookie(res, token) {
-  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_MAX_AGE_SECONDS}`);
+  res.setHeader('Set-Cookie', sessionCookieValue(token));
 }
 
 function clearSessionCookie(res) {
-  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
+  res.setHeader('Set-Cookie', sessionCookieValue('', { maxAge: 0 }));
 }
 
 function hashToken(token) {
@@ -1855,14 +1880,56 @@ async function getCurrentUser(req) {
   return publicUser(result.rows[0]);
 }
 
-async function createSession(res, userId) {
+async function createSession(res, userId, db = pool, previousToken = null) {
   const token = crypto.randomBytes(32).toString('hex');
   const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_SECONDS * 1000);
-  await pool.query(
+  if (previousToken) {
+    await db.query(`DELETE FROM site_sessions WHERE token_hash = $1`, [hashToken(previousToken)]);
+  }
+  await db.query(
     `INSERT INTO site_sessions (token_hash, user_id, expires_at) VALUES ($1, $2, $3)`,
     [hashToken(token), userId, expiresAt]
   );
   setSessionCookie(res, token);
+  return token;
+}
+
+async function invalidateUserSessions(db, userId) {
+  await db.query(`DELETE FROM site_sessions WHERE user_id = $1`, [userId]);
+}
+
+async function changePasswordAndInvalidateSessions(db, userId, passwordHash) {
+  const client = typeof db.connect === 'function' ? await db.connect() : db;
+  const transactional = client !== db || typeof client.release === 'function';
+  try {
+    if (transactional) await client.query('BEGIN');
+    await client.query(`UPDATE site_users SET password_hash = $1 WHERE id = $2`, [passwordHash, userId]);
+    await invalidateUserSessions(client, userId);
+    if (transactional) await client.query('COMMIT');
+  } catch (err) {
+    if (transactional) await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    if (client !== db && typeof client.release === 'function') client.release();
+  }
+}
+
+async function auditLogin({ username, ip, successful, reason = null, role = null }, log = recordSystemLog) {
+  await log({
+    level: successful ? 'audit' : 'warn',
+    category: 'auth_login',
+    actor: username || null,
+    message: successful ? 'Site login succeeded.' : 'Site login failed.',
+    details: { ip, successful, reason, ...(role ? { role } : {}) }
+  });
+}
+
+function enforceAuthRateLimit(res, action, ip, username, limiter = authRateLimiter) {
+  const state = limiter.check(action, ip, username);
+  if (state.allowed) return true;
+  res.setHeader('Retry-After', String(state.retryAfterSeconds));
+  sendError(res, 429, 'Too many attempts. Try again later.');
+  return false;
 }
 
 async function handleRegistration(req, res, db = pool, log = recordSystemLog) {
@@ -1887,7 +1954,7 @@ async function handleRegistration(req, res, db = pool, log = recordSystemLog) {
   return user;
 }
 
-async function handleAuth(req, res, url) {
+async function handleAuth(req, res, url, limiter = authRateLimiter) {
   assertDatabase();
 
   if (url.pathname === '/api/auth/me' && req.method === 'GET') {
@@ -1908,37 +1975,93 @@ async function handleAuth(req, res, url) {
   }
 
   if (url.pathname === '/api/auth/register' && req.method === 'POST') {
-    await handleRegistration(req, res);
-    return true;
+    const body = await readJsonBody(req);
+    const username = normalizeUsername(body.username);
+    const ip = getRequestIp(req);
+    if (!enforceAuthRateLimit(res, 'register', ip, username, limiter)) return true;
+    limiter.recordAttempt('register', ip, username);
+    try {
+      const user = await registerPendingUser(pool, { username, password: String(body.password || '') });
+      limiter.recordSuccess('register', ip, username, { preserveAttempts: true });
+      await recordSystemLog({
+        level: 'audit', category: 'auth', actor: username,
+        message: 'New site registration is waiting for approval.',
+        details: { ip, username, role: 'user', status: 'pending' }
+      });
+      sendJson(res, 201, {
+        authenticated: false,
+        pendingApproval: true,
+        message: 'Registration received. Wait until an admin approves your account.'
+      });
+      return Boolean(user);
+    } catch (err) {
+      limiter.recordFailure('register', ip, username);
+      throw err;
+    }
   }
 
   if (url.pathname === '/api/auth/login' && req.method === 'POST') {
     const body = await readJsonBody(req);
     const username = normalizeUsername(body.username);
     const password = String(body.password || '');
+    const ip = getRequestIp(req);
+    if (!enforceAuthRateLimit(res, 'login', ip, username, limiter)) {
+      await auditLogin({ username, ip, successful: false, reason: 'rate_limited' });
+      return true;
+    }
+    limiter.recordAttempt('login', ip, username);
     const result = await pool.query(`
       SELECT id, username, password_hash, role, status, created_at, approved_at
       FROM site_users
       WHERE LOWER(username) = LOWER($1)
     `, [username]);
     const user = result.rows[0];
-    if (!user || !verifyPassword(password, user.password_hash)) {
+    const passwordIsValidLength = password.length >= 6 && password.length <= 256;
+    const passwordMatches = verifyPassword(
+      passwordIsValidLength ? password : '',
+      user?.password_hash || DUMMY_PASSWORD_HASH
+    );
+    if (!user || !passwordIsValidLength || !passwordMatches) {
+      limiter.recordFailure('login', ip, username);
+      await auditLogin({ username, ip, successful: false, reason: 'invalid_credentials' });
       sendError(res, 401, 'Invalid username or password.');
       return true;
     }
     if (user.status !== 'approved') {
+      limiter.recordFailure('login', ip, username);
+      await auditLogin({ username: user.username, ip, successful: false, reason: 'account_not_approved' });
       sendError(res, 403, user.status === 'pending' ? 'Your account is waiting for admin approval.' : 'Your account is not approved.');
       return true;
     }
-    await createSession(res, user.id);
-    await recordSystemLog({
-      level: 'info',
-      category: 'auth',
-      actor: user.username,
-      message: 'User logged in.',
-      details: { role: user.role }
-    });
+    limiter.recordSuccess('login', ip, username);
+    await createSession(res, user.id, pool, parseCookies(req)[SESSION_COOKIE]);
+    await auditLogin({ username: user.username, ip, successful: true, role: user.role });
     sendJson(res, 200, { authenticated: true, user: publicUser(user) });
+    return true;
+  }
+
+  if (url.pathname === '/api/auth/change-password' && req.method === 'POST') {
+    const currentUser = await getCurrentUser(req);
+    if (!currentUser) {
+      sendError(res, 401, 'Login required.');
+      return true;
+    }
+    const body = await readJsonBody(req);
+    const currentPassword = String(body.currentPassword || '');
+    const newPassword = String(body.newPassword || '');
+    validateCredentials(currentUser.username, newPassword);
+    const result = await pool.query(`SELECT password_hash FROM site_users WHERE id = $1`, [currentUser.id]);
+    if (!result.rows[0] || !verifyPassword(currentPassword, result.rows[0].password_hash)) {
+      sendError(res, 401, 'Current password is incorrect.');
+      return true;
+    }
+    await changePasswordAndInvalidateSessions(pool, currentUser.id, hashPassword(newPassword));
+    await recordSystemLog({
+      level: 'audit', category: 'auth', actor: currentUser.username,
+      message: 'Password changed; all user sessions were revoked.'
+    });
+    clearSessionCookie(res);
+    sendJson(res, 200, { ok: true, authenticated: false });
     return true;
   }
 
@@ -1989,7 +2112,7 @@ async function updateAdminUser(currentUser, body, db = pool) {
     err.statusCode = 404;
     throw err;
   }
-  if (target.role === 'admin' && ['reject', 'remove_admin'].includes(action)) {
+  if (target.role === 'admin' && ['reject', 'delete', 'block', 'remove_admin'].includes(action)) {
     const err = new Error('Existing administrators cannot be deleted or demoted through the API.');
     err.statusCode = 400;
     throw err;
@@ -2001,7 +2124,8 @@ async function updateAdminUser(currentUser, body, db = pool) {
       SET status = 'approved', approved_by = $1, approved_at = NOW()
       WHERE LOWER(username) = LOWER($2)
     `, [currentUser.id, username]);
-  } else if (action === 'reject') {
+  } else if (action === 'reject' || action === 'delete') {
+    await invalidateUserSessions(db, target.id);
     const removed = await db.query(
       `DELETE FROM site_users WHERE LOWER(username) = LOWER($1) RETURNING id`,
       [username]
@@ -2011,6 +2135,9 @@ async function updateAdminUser(currentUser, body, db = pool) {
       err.statusCode = 404;
       throw err;
     }
+  } else if (action === 'block') {
+    await db.query(`UPDATE site_users SET status = 'blocked' WHERE id = $1`, [target.id]);
+    await invalidateUserSessions(db, target.id);
   } else if (action === 'make_admin') {
     await db.query(`
       UPDATE site_users
@@ -2343,6 +2470,7 @@ async function getAdminControlState(currentUser) {
 async function handleApi(req, res, url) {
   let currentUser = null;
   try {
+    assertSameOrigin(req);
     if (url.pathname === '/api/health') {
       sendJson(res, 200, { ok: true, database: Boolean(pool) });
       return;
@@ -2463,7 +2591,7 @@ async function handleApi(req, res, url) {
       message: `${req.method} ${url.pathname}: ${err.message || 'Internal server error.'}`,
       details: { statusCode: err.statusCode || 500 }
     });
-    sendError(res, err.statusCode || 500, err.message || 'Internal server error.');
+    sendError(res, err.statusCode || 500, publicErrorMessage(err));
   }
 }
 
@@ -2514,6 +2642,7 @@ function serveStatic(req, res, url) {
 }
 
 const server = http.createServer((req, res) => {
+  applySecurityHeaders(res);
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   if (url.pathname.startsWith('/api/')) {
     handleApi(req, res, url);
@@ -2547,7 +2676,16 @@ if (require.main === module) {
 }
 
 module.exports = {
+  auditLogin,
+  changePasswordAndInvalidateSessions,
+  createSession,
+  handleApi,
+  handleAuth,
   handleRegistration,
+  invalidateUserSessions,
+  publicErrorMessage,
+  sessionCookieValue,
+  server,
   startServer,
   updateAdminUser
 };

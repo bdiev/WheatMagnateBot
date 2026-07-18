@@ -81,7 +81,10 @@ async function upsertAdminUser(db, { username, password }) {
     WHERE LOWER(username) = LOWER($1)
     RETURNING id, username, role, status, created_at, approved_at
   `, [normalizedUsername, passwordHash]);
-  if (updated.rowCount) return { created: false, user: updated.rows[0] };
+  if (updated.rowCount) {
+    await db.query(`DELETE FROM site_sessions WHERE user_id = $1`, [updated.rows[0].id]);
+    return { created: false, user: updated.rows[0] };
+  }
 
   const inserted = await db.query(`
     INSERT INTO site_users (username, password_hash, role, status, approved_at)
