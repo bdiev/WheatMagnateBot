@@ -9,6 +9,16 @@
   --accent: #4d7d28;
   --accent-strong: #2f5f16;
   --warn: #9a5b09;
+  --annotation-connected: #45a83f;
+  --annotation-disconnected: #d94b4b;
+  --annotation-resumed: #2a9d8f;
+  --annotation-paused: #d58b25;
+  --annotation-stalled: #dd6b32;
+  --annotation-pickaxe: #8b67c8;
+  --annotation-player: #d64f78;
+  --annotation-settings: #4587c7;
+  --annotation-goal: #b99218;
+  --annotation-default: #7b8797;
   --shadow: 0 14px 40px rgba(36, 59, 26, 0.09);
   --button-height: 42px;
   --button-min-width: 108px;
@@ -45,6 +55,16 @@
   --accent: #7dbd45;
   --accent-strong: #a7d96a;
   --warn: #f0bd6a;
+  --annotation-connected: #7dcc67;
+  --annotation-disconnected: #ff7474;
+  --annotation-resumed: #55c9ba;
+  --annotation-paused: #f0ad4e;
+  --annotation-stalled: #f28a52;
+  --annotation-pickaxe: #b894eb;
+  --annotation-player: #f2769c;
+  --annotation-settings: #67a8e8;
+  --annotation-goal: #dbc151;
+  --annotation-default: #9aa4b2;
   --shadow: 0 14px 40px rgba(0, 0, 0, 0.24);
 }
 
@@ -3520,7 +3540,17 @@ body.search-focus-active #logoutButton {
 .analytics-alert.critical { border-color: color-mix(in srgb, #ef5350 55%, var(--line)); }
 .chart-annotations { display: flex; gap: 8px; overflow-x: auto; padding: 8px 4px 2px; color: var(--muted); font-size: 12px; scrollbar-width: none; -ms-overflow-style: none; }
 .chart-annotations::-webkit-scrollbar { display: none; }
-.chart-annotations span { white-space: nowrap; padding: 4px 8px; border: 1px solid var(--line); border-radius: 999px; }
+.chart-annotations span { --annotation-color: var(--annotation-default); display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; padding: 4px 8px; border: 1px solid color-mix(in srgb, var(--annotation-color) 58%, var(--line)); border-radius: 999px; color: color-mix(in srgb, var(--annotation-color) 82%, var(--text)); background: color-mix(in srgb, var(--annotation-color) 11%, var(--panel)); }
+.chart-annotations span::before { content: ""; width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--annotation-color); box-shadow: 0 0 8px color-mix(in srgb, var(--annotation-color) 46%, transparent); }
+.chart-annotations .annotation-connected { --annotation-color: var(--annotation-connected); }
+.chart-annotations .annotation-disconnected { --annotation-color: var(--annotation-disconnected); }
+.chart-annotations .annotation-resumed { --annotation-color: var(--annotation-resumed); }
+.chart-annotations .annotation-paused { --annotation-color: var(--annotation-paused); }
+.chart-annotations .annotation-stalled { --annotation-color: var(--annotation-stalled); }
+.chart-annotations .annotation-pickaxe { --annotation-color: var(--annotation-pickaxe); }
+.chart-annotations .annotation-player { --annotation-color: var(--annotation-player); }
+.chart-annotations .annotation-settings { --annotation-color: var(--annotation-settings); }
+.chart-annotations .annotation-goal { --annotation-color: var(--annotation-goal); }
 .inline-form, .settings-form { display: grid; gap: 10px; margin: 0; padding: 14px; }
 .inline-form { grid-template-columns: minmax(0, 1fr) minmax(160px, .7fr) auto; align-items: end; }
 .settings-form label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }

@@ -37,10 +37,13 @@ async function run() {
   const whisper = { id: 'whisper-42', event_type: 'whisper_message', severity: 'info', metadata: { sender: 'SecretPlayer', message: 'secret whisper text' } };
   assert.equal(shouldDeliverSubscription(whisperSubscription, whisper), true, 'whisper event selection must be supported');
   assert.equal(shouldDeliverSubscription({ ...whisperSubscription, minimum_severity: 'critical' }, whisper), true, 'whispers must not be hidden by operational severity filters');
-  const whisperPayload = JSON.stringify(safePushPayload(whisper));
+  const compactWhisper = safePushPayload(whisper);
+  const whisperPayload = JSON.stringify(compactWhisper);
   assert.match(whisperPayload, /New private message/);
-  assert.match(whisperPayload, /\?push=whispers/);
-  assert.doesNotMatch(whisperPayload, /SecretPlayer|secret whisper text/, 'whisper lock screen must omit sender and text');
+  const whisperUrl = new URL(compactWhisper.data.url, 'https://dashboard.example');
+  assert.equal(whisperUrl.searchParams.get('push'), 'whispers');
+  assert.equal(whisperUrl.searchParams.get('player'), 'SecretPlayer', 'whisper push must deep-link to its dialog');
+  assert.doesNotMatch(compactWhisper.body, /SecretPlayer|secret whisper text/, 'compact whisper lock screen must omit sender and text');
   const detailedWhisperPayload = JSON.stringify(safePushPayload(whisper, { detailed: true }));
   assert.match(detailedWhisperPayload, /SecretPlayer: secret whisper text/, 'explicit whisper detailed mode must include sender and text');
 

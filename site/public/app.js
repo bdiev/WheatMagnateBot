@@ -81,6 +81,7 @@ const state = {
   csrfToken: null,
   bootstrapAvailable: false,
   currentUser: null,
+  pendingPushDestination: null,
   chartRanges: {
     chatHourlyChart: 'hours',
     obsidianDailyChart: 'days',
@@ -1019,6 +1020,24 @@ function getCssColor(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
+function annotationKind(annotation = {}) {
+  const eventType = String(annotation.eventType || '').toLowerCase();
+  if (eventType === 'bot_reconnected') return 'connected';
+  if (eventType === 'bot_disconnected') return 'disconnected';
+  if (eventType === 'farm_resumed' || eventType === 'resume') return 'resumed';
+  if (eventType === 'farm_stalled') return 'stalled';
+  if (eventType === 'pause') return 'paused';
+  if (eventType === 'pickaxe_changed') return 'pickaxe';
+  if (eventType === 'player_detected') return 'player';
+  if (eventType === 'settings_changed') return 'settings';
+  if (eventType === 'goal_reached') return 'goal';
+  return 'default';
+}
+
+function annotationColor(annotation) {
+  return getCssColor(`--annotation-${annotationKind(annotation)}`) || getCssColor('--annotation-default');
+}
+
 function prepareChartCanvas(canvas, data, options = {}) {
   const viewport = canvas.closest('.chart-scroll');
   const ratio = window.devicePixelRatio || 1;
@@ -1245,8 +1264,19 @@ function drawBarChart(canvas, data, options = {}) {
         distance = Math.abs(itemAt - at); closest = index;
       }
     });
-    const x = padding.left + closest * slotWidth + slotWidth / 2;
-    ctx.save(); ctx.strokeStyle = '#f0ad4e'; ctx.setLineDash([3, 4]);
+    const times = chartData.map(item => new Date(item.bucket || item.label).getTime());
+    let baseIndex = -1;
+    for (let index = 0; index < times.length; index += 1) {
+      if (Number.isFinite(times[index]) && times[index] <= at) baseIndex = index;
+      else if (baseIndex >= 0) break;
+    }
+    let x = padding.left + closest * slotWidth + slotWidth / 2;
+    if (baseIndex >= 0 && Number.isFinite(times[baseIndex + 1]) && times[baseIndex + 1] > times[baseIndex]) {
+      const progress = Math.max(0, Math.min(1, (at - times[baseIndex]) / (times[baseIndex + 1] - times[baseIndex])));
+      x = padding.left + (baseIndex + 0.5 + progress) * slotWidth;
+    }
+    x = Math.max(padding.left + 3, Math.min(padding.left + chartWidth - 3, x));
+    ctx.save(); ctx.strokeStyle = annotationColor(annotation); ctx.lineWidth = 2; ctx.setLineDash([3, 4]);
     ctx.beginPath(); ctx.moveTo(x, padding.top); ctx.lineTo(x, padding.top + chartHeight); ctx.stroke(); ctx.restore();
   });
   state.chartMeta[canvas.id] = { hitboxes };
@@ -2819,7 +2849,7 @@ function renderObsidian(payload) {
     if (newestAnnotations.length >= 12) break;
   }
   const annotationsElement = $('#obsidianAnnotations');
-  annotationsElement.innerHTML = newestAnnotations.map(item => `<span title="${formatDate(item.occurredAt)}">${escapeHtml(item.title)}</span>`).join('') || '<span>No annotations yet</span>';
+  annotationsElement.innerHTML = newestAnnotations.map(item => `<span class="annotation-${annotationKind(item)}" title="${formatDate(item.occurredAt)}">${escapeHtml(item.title)}</span>`).join('') || '<span>No annotations yet</span>';
   annotationsElement.scrollLeft = 0;
 
   $('#farmDetails').innerHTML = `
@@ -3994,18 +4024,30 @@ async function handlePushDeviceClick(event) {
   } catch (err) { setBanner(`Push action failed: ${err.message}`); }
 }
 
-function openPushDestination(destination = null) {
-  const target = destination || new URL(location.href).searchParams.get('push');
-  if (!target || !state.currentUser) return;
+function openPushDestination(destination = null, player = null) {
+  const pageUrl = new URL(location.href);
+  const pending = state.pendingPushDestination;
+  const target = destination || pending?.destination || pageUrl.searchParams.get('push');
+  const targetPlayer = player || pending?.player || pageUrl.searchParams.get('player');
+  if (!target) return;
+  if (!state.currentUser) {
+    state.pendingPushDestination = { destination: target, player: targetPlayer };
+    return;
+  }
+  state.pendingPushDestination = null;
   if (target === 'whispers') {
     setActiveTab('chat');
-    setTimeout(() => setWhisperOpen(true), 0);
+    setTimeout(() => {
+      setWhisperOpen(true);
+      const safePlayer = String(targetPlayer || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 32);
+      if (safePlayer) openWhisperDialog(safePlayer).catch(err => setBanner(`Could not open dialog: ${err.message}`));
+    }, 0);
   } else {
     setActiveTab(target === 'notifications' && state.currentUser.role === 'admin' ? 'notifications' : 'settings');
   }
-  if (!destination) {
-    const url = new URL(location.href); url.searchParams.delete('push'); history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
-  }
+  pageUrl.searchParams.delete('push');
+  pageUrl.searchParams.delete('player');
+  history.replaceState({}, '', `${pageUrl.pathname}${pageUrl.search}${pageUrl.hash}`);
 }
 
 function timelineFilterQuery() {
@@ -4746,7 +4788,7 @@ $('#accountSettingsForm')?.addEventListener('submit', saveAccountSettings);
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.addEventListener('message', event => {
-    if (event.data?.type === 'open_push_destination') openPushDestination(event.data.destination);
+    if (event.data?.type === 'open_push_destination') openPushDestination(event.data.destination, event.data.player);
   });
 }
 $('#adminUsersList')?.addEventListener('click', handleAdminUserAction);

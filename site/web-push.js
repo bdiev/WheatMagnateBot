@@ -119,6 +119,11 @@ function safePushPayload(notification, { resolved = false, test = false, detaile
   const label = test ? 'Browser push test' : (SAFE_EVENT_LABELS[notification.event_type] || 'Bot status changed');
   const critical = !resolved && notification.severity === 'critical';
   const destination = test ? 'settings' : notification.event_type === 'whisper_message' ? 'whispers' : 'notifications';
+  const destinationParams = new URLSearchParams({ push: destination });
+  if (destination === 'whispers') {
+    const player = String(notification.metadata?.sender || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 32);
+    if (player) destinationParams.set('player', player);
+  }
   return {
     title: test ? 'WheatMagnateBot test' : critical ? 'Critical bot alert' : resolved ? 'Issue resolved' : detailed ? label : 'WheatMagnateBot alert',
     body: test ? `${label}. Open the dashboard for details.` : detailed
@@ -127,7 +132,7 @@ function safePushPayload(notification, { resolved = false, test = false, detaile
     icon: '/items/Wheat.png',
     badge: '/items/Wheat.png',
     tag: test ? 'wheatmagnate-test' : `wheatmagnate-${notification.id || notification.event_type}`,
-    data: { url: `/?push=${destination}` },
+    data: { url: `/?${destinationParams.toString()}` },
     requireInteraction: critical
   };
 }

@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_NAME = 'wheatmagnatebot-v91';
+const CACHE_NAME = 'wheatmagnatebot-v93';
 const APP_SHELL = [
   '/',
   '/index.html',
@@ -108,11 +108,14 @@ self.addEventListener('notificationclick', event => {
   event.notification.close();
   const url = new URL(event.notification.data?.url || '/', self.location.origin);
   const destination = url.searchParams.get('push') || 'settings';
+  const player = url.searchParams.get('player') || null;
   event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async clients => {
-    const client = clients.find(item => new URL(item.url).origin === self.location.origin);
+    const sameOriginClients = clients.filter(item => new URL(item.url).origin === self.location.origin);
+    const client = sameOriginClients.find(item => item.visibilityState === 'visible') || sameOriginClients[0];
     if (client) {
-      client.postMessage({ type: 'open_push_destination', destination });
-      return client.focus();
+      await client.focus();
+      client.postMessage({ type: 'open_push_destination', destination, player });
+      return;
     }
     return self.clients.openWindow(url.href);
   }));
