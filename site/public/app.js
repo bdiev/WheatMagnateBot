@@ -88,6 +88,17 @@ const state = {
 const $ = selector => document.querySelector(selector);
 const $$ = selector => Array.from(document.querySelectorAll(selector));
 const CHAT_HISTORY_LIMIT = 500;
+const NAV_SECTION_INFO = Object.freeze({
+  chat: ['Chat', 'Minecraft and site chat'],
+  bot: ['Bot Stats', 'Connection, health and inventory'],
+  obsidian: ['Obsidian Farm', 'Farm controls and analytics'],
+  server: ['Server Stats', 'TPS and server activity'],
+  players: ['Player Stats', 'Profiles and activity'],
+  notifications: ['Notifications', 'Alerts and notification rules'],
+  timeline: ['Incident Timeline', 'Operational event investigation'],
+  'child-ai': ['Child AI', 'Learning and memory administration'],
+  admin: ['Admin', 'Administrative controls']
+});
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -516,6 +527,7 @@ function applyCurrentUser(user) {
   $$('.admin-only').forEach(element => {
     element.hidden = !isAdmin;
   });
+  applyNavigationVisibility();
   const logoutButton = $('#logoutButton');
   if (logoutButton) logoutButton.hidden = !state.currentUser;
   if (!isAdmin && ['admin', 'notifications', 'timeline', 'child-ai'].includes(state.activeTab)) setActiveTab('chat');
@@ -543,9 +555,86 @@ function updateNavLabel(tab) {
   if (activeButton && label) label.textContent = activeButton.textContent.trim();
 }
 
+function navigationVisibilityStorageKey() {
+  return `wm-nav-sections:${String(state.currentUser?.id || 'anonymous')}`;
+}
+
+function loadNavigationVisibility() {
+  try {
+    const value = JSON.parse(localStorage.getItem(navigationVisibilityStorageKey()) || '{}');
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+function applyNavigationVisibility() {
+  const preferences = loadNavigationVisibility();
+  const isAdmin = state.currentUser?.role === 'admin';
+  $$('.tab-button[data-tab]').forEach(button => {
+    const tab = button.dataset.tab;
+    if (tab === 'settings') {
+      button.hidden = false;
+      return;
+    }
+    const roleAllowsTab = !button.classList.contains('admin-only') || isAdmin;
+    button.hidden = !roleAllowsTab || preferences[tab] === false;
+  });
+}
+
+function renderNavigationSettings() {
+  const container = $('#navSectionsList');
+  if (!container) return;
+  const preferences = loadNavigationVisibility();
+  const isAdmin = state.currentUser?.role === 'admin';
+  const availableTabs = $$('.tab-button[data-tab]').filter(button => {
+    return button.dataset.tab !== 'settings' && (!button.classList.contains('admin-only') || isAdmin);
+  });
+  container.innerHTML = availableTabs.map(button => {
+    const tab = button.dataset.tab;
+    const [title, description] = NAV_SECTION_INFO[tab] || [button.textContent.trim(), 'Dashboard section'];
+    return `<label class="nav-section-toggle">
+      <span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(description)}</small></span>
+      <input type="checkbox" data-nav-section="${escapeHtml(tab)}" ${preferences[tab] === false ? '' : 'checked'}>
+    </label>`;
+  }).join('');
+}
+
+function saveNavigationVisibility(event) {
+  const input = event.target.closest('[data-nav-section]');
+  if (!input) return;
+  const preferences = loadNavigationVisibility();
+  preferences[input.dataset.navSection] = input.checked;
+  localStorage.setItem(navigationVisibilityStorageKey(), JSON.stringify(preferences));
+  applyNavigationVisibility();
+}
+
+function resetNavigationVisibility() {
+  localStorage.removeItem(navigationVisibilityStorageKey());
+  applyNavigationVisibility();
+  renderNavigationSettings();
+  setBanner('Navigation sections restored.');
+}
+
+function setSettingsView(view) {
+  const nextView = view === 'navigation' ? 'navigation' : 'push';
+  $$('.settings-tab[data-settings-view]').forEach(button => {
+    const active = button.dataset.settingsView === nextView;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+  });
+  $$('[data-settings-panel]').forEach(panel => {
+    panel.hidden = panel.dataset.settingsPanel !== nextView;
+  });
+  if (nextView === 'navigation') renderNavigationSettings();
+  else loadPushSettings();
+}
+
 function getStoredTab() {
   const storedTab = localStorage.getItem('wm-active-tab');
-  return $(`.tab-button[data-tab="${storedTab}"]`) ? storedTab : 'chat';
+  const storedButton = $$('.tab-button[data-tab]').find(button => button.dataset.tab === storedTab);
+  if (storedButton && !storedButton.hidden) return storedTab;
+  return $('.tab-button[data-tab]:not([hidden])')?.dataset.tab || 'settings';
 }
 
 function restoreActiveTab() {
@@ -659,7 +748,10 @@ function setActiveTab(tab) {
   }
   if (tab === 'timeline') loadTimeline();
   if (tab === 'notifications') loadNotifications();
-  if (tab === 'settings') loadPushSettings();
+  if (tab === 'settings') {
+    renderNavigationSettings();
+    if ($('.settings-tab.active')?.dataset.settingsView !== 'navigation') loadPushSettings();
+  }
   if (tab === 'child-ai') loadChildAiAdmin();
   if (tab === 'chat') ensureInitialChatScroll();
   requestAnimationFrame(updateCarousels);
@@ -3639,7 +3731,7 @@ async function handlePushDeviceSubmit(event) {
   event.preventDefault();
   try {
     await putJson(`/api/push/subscriptions/${encodeURIComponent(form.dataset.pushDeviceId)}`, pushPreferencesFromForm(form));
-    setBanner('Push settings saved.'); await loadPushSettings();
+    await loadPushSettings();
   } catch (err) { setBanner(`Could not save push settings: ${err.message}`); }
 }
 
@@ -3649,7 +3741,7 @@ async function handlePushDeviceClick(event) {
   try {
     if (test) {
       await postJson('/api/push/test', { subscriptionId: test.dataset.pushTest });
-      setBanner('Test push sent.'); await loadPushSettings();
+      await loadPushSettings();
     }
     if (remove) {
       const id = remove.dataset.pushRemove;
@@ -4398,6 +4490,12 @@ $('#notificationsMarkAllRead')?.addEventListener('click', async () => {
 $('#pushEnableDevice')?.addEventListener('click', enablePushOnCurrentDevice);
 $('#pushDeviceList')?.addEventListener('submit', handlePushDeviceSubmit);
 $('#pushDeviceList')?.addEventListener('click', handlePushDeviceClick);
+$('.settings-tabs')?.addEventListener('click', event => {
+  const button = event.target.closest('[data-settings-view]');
+  if (button) setSettingsView(button.dataset.settingsView);
+});
+$('#navSectionsList')?.addEventListener('change', saveNavigationVisibility);
+$('#navSectionsReset')?.addEventListener('click', resetNavigationVisibility);
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.addEventListener('message', event => {
@@ -4442,6 +4540,11 @@ $('#whisperForm')?.addEventListener('submit', handleWhisperSubmit);
 $('#whisperDeleteDialog')?.addEventListener('click', handleWhisperDeleteDialog);
 $('#whisperCloseDialog')?.addEventListener('click', closeWhisperDialog);
 $('#playerProfileContent')?.addEventListener('click', handlePlayerProfileClick);
+document.addEventListener('pointerdown', event => {
+  if ($('#navMenu')?.classList.contains('open') && !event.target.closest('.nav-menu')) {
+    setNavMenuOpen(false);
+  }
+}, true);
 document.addEventListener('click', event => {
   const tooltipDrop = event.target.closest('[data-tooltip-drop]');
   if (tooltipDrop) {
@@ -4499,9 +4602,6 @@ document.addEventListener('click', event => {
     hideIgnoreChatSuggestions();
   }
 
-  if (!event.target.closest('.nav-menu')) {
-    setNavMenuOpen(false);
-  }
 });
 document.addEventListener('error', event => {
   const image = event.target.closest?.('[data-item-icon-image]');

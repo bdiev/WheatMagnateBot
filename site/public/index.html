@@ -636,7 +636,11 @@
       </section>
 
       <section id="tab-settings" class="tab-panel" data-panel="settings">
-        <section class="panel push-settings-panel">
+        <div class="settings-tabs" role="tablist" aria-label="Settings sections">
+          <button class="settings-tab active" type="button" role="tab" aria-selected="true" data-settings-view="push">Browser Notifications</button>
+          <button class="settings-tab" type="button" role="tab" aria-selected="false" data-settings-view="navigation">Navigation</button>
+        </div>
+        <section class="panel push-settings-panel" data-settings-panel="push">
           <div class="panel-head">
             <div><h2>Browser Notifications</h2><p>Personal push delivery for this account and its registered devices.</p></div>
             <button id="pushEnableDevice" type="button">Enable on this device</button>
@@ -644,6 +648,14 @@
           <div id="pushSupportStatus" class="push-support-status muted">Checking browser support...</div>
           <div class="push-privacy-note">Permission is requested only when you press Enable. Lock-screen notifications contain no player names, messages, coordinates, errors, or other sensitive details.</div>
           <div id="pushDeviceList" class="push-device-list"></div>
+        </section>
+        <section class="panel navigation-settings-panel" data-settings-panel="navigation" hidden>
+          <div class="panel-head">
+            <div><h2>Navigation</h2><p>Choose which dashboard sections appear in this device's navigation menu.</p></div>
+            <button id="navSectionsReset" class="ghost-button" type="button">Reset</button>
+          </div>
+          <div class="push-privacy-note">This changes menu visibility only. Permissions and access control are not affected, and Settings always remains available.</div>
+          <div id="navSectionsList" class="nav-sections-list"></div>
         </section>
       </section>
 
