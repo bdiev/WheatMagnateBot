@@ -37,7 +37,7 @@ Payloads are deliberately small. The browser obtains authorized state through th
 
 ## Reconnection and consistency
 
-The browser uses native `EventSource` reconnection with a three-second server retry hint. While disconnected it displays a small reconnecting indicator and enables fallback polling every 15 seconds, with chat polling every 2 seconds. After reconnection it performs exactly one full synchronization, then keeps a 60-second consistency poll for graphs and missed events.
+The browser uses native `EventSource` reconnection with a three-second server retry hint. While disconnected it displays a small reconnecting indicator and enables fallback polling every 15 seconds, with chat polling every 2 seconds. After reconnection it performs exactly one full synchronization, then keeps a 60-second consistency poll for graphs and missed events. While SSE is connected, a lightweight `/api/chat/version` marker is checked every 750 ms; the full chat endpoint is requested only when its latest message ID changes. This prevents a silent SSE stream from freezing chat without restoring the old heavy polling loop.
 
 `EventSource` has no replay buffer in this implementation. The post-reconnect full synchronization is the recovery mechanism for events missed while offline.
 

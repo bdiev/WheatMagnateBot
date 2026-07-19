@@ -61,6 +61,7 @@ const state = {
   chatReplyHideTimer: null,
   chatMessageIds: new Set(),
   chatInitialized: false,
+  chatLatestId: null,
   authMode: 'login',
   currentUser: null,
   chartRanges: {
@@ -2026,6 +2027,7 @@ function renderChat(payload) {
   }
   updateChatScrollButton();
   state.chatMessageIds = new Set(messages.map(message => String(message.id)));
+  state.chatLatestId = String(payload.latestId ?? state.chatLatestId ?? '0');
   state.chatInitialized = true;
 
   const topChatters = payload.topChatters || [];
@@ -3545,6 +3547,7 @@ function startSlowPolling() {
   clearDashboardPolling();
   state.pollingMode = 'slow';
   state.timer = setInterval(loadAll, 60_000);
+  state.liveChatTimer = setInterval(checkChatVersion, 750);
 }
 
 function startFallbackPolling() {
@@ -3574,6 +3577,21 @@ async function refreshChatFromEvent() {
     }
   } finally {
     state.liveChatLoading = false;
+  }
+}
+
+async function checkChatVersion() {
+  if (!state.currentUser || state.liveChatLoading) return;
+  try {
+    const payload = await fetchJson('/api/chat/version');
+    const latestId = String(payload.latestId ?? '0');
+    if (state.chatLatestId == null) {
+      state.chatLatestId = latestId;
+      return;
+    }
+    if (latestId !== state.chatLatestId) await refreshChatFromEvent();
+  } catch {
+    // EventSource and the periodic full synchronization remain available.
   }
 }
 
@@ -3610,7 +3628,10 @@ function handleRealtimeEvent(event) {
     scheduleRealtimeChartRefresh();
   }
   else if (type === 'farm_status_updated') queueRealtimeRefresh('farm', refreshFarmFromEvent);
-  else if (type === 'player_joined' || type === 'player_left') queueRealtimeRefresh('players', refreshPlayersFromEvent);
+  else if (type === 'player_joined' || type === 'player_left') {
+    queueRealtimeRefresh('players', refreshPlayersFromEvent);
+    queueRealtimeRefresh('chat-activity', refreshChatFromEvent, 30);
+  }
   else if (type === 'notification_created' && state.currentUser?.role === 'admin') {
     queueRealtimeRefresh('notifications', async () => {
       await loadNotificationCount();

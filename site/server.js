@@ -896,6 +896,7 @@ async function getChat(url) {
     }));
 
   return {
+    latestId: messagesResult.rows[0]?.id == null ? '0' : String(messagesResult.rows[0].id),
     messages: [...chatMessages, ...activityMessages]
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
       .slice(0, limit)
@@ -2568,6 +2569,11 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/chat') {
       sendJson(res, 200, await getChat(url));
+      return;
+    }
+    if (url.pathname === '/api/chat/version' && req.method === 'GET') {
+      const result = await pool.query('SELECT COALESCE(MAX(id),0)::text AS latest_id FROM game_chat_messages');
+      sendJson(res, 200, { latestId: result.rows[0]?.latest_id || '0' });
       return;
     }
     if (url.pathname === '/api/chat/send' && req.method === 'POST') {
