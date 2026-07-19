@@ -79,6 +79,8 @@ const runtime = {
 let worldInteractionQueue = Promise.resolve();
 const pickaxeBlocksMined = new Map();
 let farmCycleSequence = 0;
+let farmFailureStartedAt = null;
+const activeFarmNotificationTypes = new Set();
 let farmDebugLoggingEnabled = true;
 const cauldronReachStats = {
   successMaxDistance: null,
@@ -2225,15 +2227,28 @@ async function persistentLoop(bot, notify) {
     // Refresh/barrel inspection cannot interleave with any part of a farm cycle.
     await withWorldInteractionLock(() => runCycle(bot, () => {}, context));
     farm.lastErrorMessage = null;
+    farmFailureStartedAt = null;
     writeFarmDebug('cycle_completed', {
       ...context,
       durationMs: Date.now() - cycleStartedAt,
       cyclesCompleted: farm.cyclesCompleted
     });
+    const recoveryMessages = {
+      farm_stalled: ['Obsidian farm recovered', 'The obsidian farm completed a cycle successfully.'],
+      low_pickaxe_durability: ['Pickaxe durability restored', 'A usable pickaxe is available.'],
+      no_pickaxes: ['Pickaxe supply restored', 'A usable pickaxe is available.']
+    };
+    for (const eventType of activeFarmNotificationTypes) {
+      const [title, message] = recoveryMessages[eventType];
+      notify?.({ eventType, key: 'obsidian-farm', resolved: true, title, message });
+    }
+    activeFarmNotificationTypes.clear();
   } catch (err) {
     if (!farm.enabled) return;
 
     farm.lastErrorMessage = err.message;
+    farmFailureStartedAt ||= Date.now();
+    const stalledSeconds = Math.max(0, Math.round((Date.now() - farmFailureStartedAt) / 1000));
     retryDelay = err.code === PLACEMENT_RECHECK_CODE
       ? PLACEMENT_RECHECK_DELAY_MS
       : (
@@ -2252,6 +2267,17 @@ async function persistentLoop(bot, notify) {
         retryInMs: retryDelay
       }
     );
+    if (err.code === LOW_PICKAXE_DURABILITY_CODE) {
+      activeFarmNotificationTypes.add('low_pickaxe_durability');
+      const percent = Number(err.message.match(/has\s+([\d.]+)%/i)?.[1]);
+      notify?.({ eventType: 'low_pickaxe_durability', key: 'obsidian-farm', title: 'Low pickaxe durability', message: err.message, metadata: { errorCode: err.code, percent } });
+    } else if (err.code === RESOURCE_EXHAUSTED_CODE && /pickaxe/i.test(err.message)) {
+      activeFarmNotificationTypes.add('no_pickaxes');
+      notify?.({ eventType: 'no_pickaxes', key: 'obsidian-farm', title: 'No usable pickaxes', message: err.message, metadata: { errorCode: err.code, count: 0 } });
+    } else {
+      activeFarmNotificationTypes.add('farm_stalled');
+      notify?.({ eventType: 'farm_stalled', key: 'obsidian-farm', title: 'Obsidian farm stalled', message: err.message, metadata: { errorCode: err.code || null, phase: farm.phase, seconds: stalledSeconds } });
+    }
   }
 
   if (farm.enabled) {

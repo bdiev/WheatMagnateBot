@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { Pool } = require('pg');
+const { runMigrations } = require('../database/migrations');
 require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 
 const PORT = Number(process.env.SITE_PORT || process.env.PORT) || 3080;
@@ -370,6 +371,7 @@ function normalizeSupplySnapshot(row) {
 
 async function ensureOptionalTables() {
   if (!pool) return;
+  await runMigrations(pool);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS site_users (
       id BIGSERIAL PRIMARY KEY,
@@ -2399,6 +2401,90 @@ async function getAdminControlState(currentUser) {
   };
 }
 
+async function getNotifications(currentUser, url) {
+  const status = String(url.searchParams.get('status') || 'all');
+  const severity = String(url.searchParams.get('severity') || 'all');
+  const eventType = String(url.searchParams.get('eventType') || 'all');
+  const unread = url.searchParams.get('unread') === 'true';
+  const limit = Math.min(250, Math.max(1, toInt(url.searchParams.get('limit'), 250)));
+  const values = [];
+  const where = [];
+  if (['active', 'resolved'].includes(status)) { values.push(status); where.push(`status=$${values.length}`); }
+  if (['info', 'warning', 'critical'].includes(severity)) { values.push(severity); where.push(`severity=$${values.length}`); }
+  if (eventType !== 'all') { values.push(eventType.slice(0, 64)); where.push(`event_type=$${values.length}`); }
+  if (unread) where.push('read_at IS NULL');
+  values.push(limit);
+  const result = await pool.query(`
+    SELECT id::text, event_type, dedup_key, severity, status, title, message, metadata,
+           occurrence_count, first_triggered_at, last_triggered_at, resolved_at, read_at, created_at
+    FROM notifications ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+    ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END, created_at DESC LIMIT $${values.length}
+  `, values);
+  const unreadResult = await pool.query('SELECT COUNT(*)::int AS count FROM notifications WHERE read_at IS NULL');
+  return {
+    notifications: result.rows.map(row => ({
+      id: row.id, eventType: row.event_type, dedupKey: row.dedup_key, severity: row.severity,
+      status: row.status, title: row.title, message: row.message, metadata: row.metadata,
+      occurrenceCount: row.occurrence_count, firstTriggeredAt: row.first_triggered_at,
+      lastTriggeredAt: row.last_triggered_at, resolvedAt: row.resolved_at,
+      readAt: row.read_at, createdAt: row.created_at
+    })),
+    unreadCount: unreadResult.rows[0]?.count || 0,
+    viewer: currentUser.username
+  };
+}
+
+async function markNotificationsRead(currentUser, body) {
+  const ids = Array.isArray(body.ids) ? body.ids.map(value => Number(value)).filter(Number.isSafeInteger) : [];
+  if (body.all === true) {
+    await pool.query('UPDATE notifications SET read_at=COALESCE(read_at,NOW()), read_by=COALESCE(read_by,$1) WHERE read_at IS NULL', [currentUser.id]);
+  } else if (ids.length) {
+    await pool.query('UPDATE notifications SET read_at=COALESCE(read_at,NOW()), read_by=COALESCE(read_by,$1) WHERE id=ANY($2::bigint[])', [currentUser.id, ids]);
+  }
+  const count = await pool.query('SELECT COUNT(*)::int AS count FROM notifications WHERE read_at IS NULL');
+  return { ok: true, unreadCount: count.rows[0]?.count || 0 };
+}
+
+async function getNotificationRules(currentUser) {
+  assertAdminUser(currentUser);
+  const result = await pool.query(`
+    SELECT event_type, enabled, severity, threshold, cooldown_seconds, delivery_channels,
+           last_triggered_at, updated_at FROM notification_rules ORDER BY event_type
+  `);
+  return { rules: result.rows.map(row => ({
+    eventType: row.event_type, enabled: row.enabled, severity: row.severity,
+    threshold: row.threshold, cooldownSeconds: row.cooldown_seconds,
+    deliveryChannels: row.delivery_channels, lastTriggeredAt: row.last_triggered_at,
+    updatedAt: row.updated_at
+  })) };
+}
+
+async function updateNotificationRule(currentUser, body) {
+  assertAdminUser(currentUser);
+  const eventType = String(body.eventType || '').trim();
+  const severity = String(body.severity || '').trim();
+  const cooldownSeconds = Number(body.cooldownSeconds);
+  const channels = Array.isArray(body.deliveryChannels) ? [...new Set(body.deliveryChannels.map(String))] : [];
+  if (!eventType || !['info', 'warning', 'critical'].includes(severity) ||
+      !Number.isInteger(cooldownSeconds) || cooldownSeconds < 0 ||
+      channels.length === 0 || channels.some(channel => !['discord', 'site', 'system_log'].includes(channel))) {
+    const err = new Error('Invalid notification rule.'); err.statusCode = 400; throw err;
+  }
+  const threshold = body.threshold && typeof body.threshold === 'object' ? body.threshold : null;
+  const updated = await pool.query(`
+    UPDATE notification_rules SET enabled=$2, severity=$3, threshold=$4,
+      cooldown_seconds=$5, delivery_channels=$6, updated_at=NOW()
+    WHERE event_type=$1 RETURNING event_type
+  `, [eventType, Boolean(body.enabled), severity, threshold, cooldownSeconds, channels]);
+  if (!updated.rowCount) { const err = new Error('Notification rule not found.'); err.statusCode = 404; throw err; }
+  await recordSystemLog({
+    level: 'audit', category: 'notification_rules', actor: currentUser.username,
+    message: `Updated notification rule ${eventType}.`,
+    details: { eventType, enabled: Boolean(body.enabled), severity, threshold, cooldownSeconds, deliveryChannels: channels }
+  });
+  return getNotificationRules(currentUser);
+}
+
 async function handleApi(req, res, url) {
   let currentUser = null;
   try {
@@ -2436,6 +2522,12 @@ async function handleApi(req, res, url) {
       sendJson(res, 200, await getAdminSystemLogs(currentUser, url));
       return;
     }
+    if (url.pathname === '/api/admin/notification-rules' && req.method === 'GET') {
+      sendJson(res, 200, await getNotificationRules(currentUser)); return;
+    }
+    if (url.pathname === '/api/admin/notification-rules' && req.method === 'PUT') {
+      sendJson(res, 200, await updateNotificationRule(currentUser, await readJsonBody(req))); return;
+    }
     if (url.pathname === '/api/admin/bot-command' && req.method === 'POST') {
       sendJson(res, 202, await queueAdminBotCommand(currentUser, await readJsonBody(req)));
       return;
@@ -2452,6 +2544,12 @@ async function handleApi(req, res, url) {
     if (url.pathname === '/api/summary') {
       sendJson(res, 200, await getSummary());
       return;
+    }
+    if (url.pathname === '/api/notifications' && req.method === 'GET') {
+      sendJson(res, 200, await getNotifications(currentUser, url)); return;
+    }
+    if (url.pathname === '/api/notifications/read' && req.method === 'POST') {
+      sendJson(res, 200, await markNotificationsRead(currentUser, await readJsonBody(req))); return;
     }
     if (url.pathname === '/api/players') {
       sendJson(res, 200, await getPlayers());

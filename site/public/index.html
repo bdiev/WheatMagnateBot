@@ -60,6 +60,7 @@
               <button class="tab-button" type="button" data-tab="obsidian" role="menuitem">Obsidian Farm</button>
               <button class="tab-button" type="button" data-tab="server" role="menuitem">Server Stats</button>
               <button class="tab-button" type="button" data-tab="players" role="menuitem">Player Stats</button>
+              <button class="tab-button notification-nav-button" type="button" data-tab="notifications" role="menuitem">Notifications <span id="notificationBadge" class="notification-badge" hidden>0</span></button>
               <button class="tab-button admin-only" type="button" data-tab="admin" role="menuitem" hidden>Admin</button>
             </div>
           </nav>
@@ -544,6 +545,30 @@
             </div>
             <div id="nearbyList" class="rank-list"></div>
           </section>
+        </section>
+      </section>
+
+      <section id="tab-notifications" class="tab-panel" data-panel="notifications">
+        <section class="panel">
+          <div class="panel-head notification-head">
+            <div><h2>Notifications</h2><p>Active problems and event history.</p></div>
+            <button id="notificationsMarkAllRead" class="ghost-button" type="button">Mark all read</button>
+          </div>
+          <div class="notification-filters">
+            <select id="notificationStatusFilter" aria-label="Status"><option value="all">All statuses</option><option value="active">Active</option><option value="resolved">Resolved</option></select>
+            <select id="notificationSeverityFilter" aria-label="Severity"><option value="all">All severities</option><option value="critical">Critical</option><option value="warning">Warning</option><option value="info">Info</option></select>
+            <select id="notificationEventFilter" aria-label="Event type"><option value="all">All events</option><option>bot_disconnected</option><option>bot_reconnected</option><option>bot_kicked</option><option>unauthorized_player_nearby</option><option>low_pickaxe_durability</option><option>no_pickaxes</option><option>low_food</option><option>farm_stalled</option><option>low_tps</option><option>database_unavailable</option><option>repeated_reconnects</option><option>command_failed</option></select>
+            <label><input id="notificationUnreadFilter" type="checkbox"> Unread only</label>
+            <button id="notificationsRefresh" type="button">Refresh</button>
+          </div>
+          <h3>Active problems</h3>
+          <div id="activeNotifications" class="notification-list"></div>
+          <h3>History</h3>
+          <div id="notificationHistory" class="notification-list"></div>
+        </section>
+        <section class="panel admin-only" hidden>
+          <div class="panel-head"><div><h2>Notification rules</h2><p>Thresholds, cooldowns, severity and delivery channels.</p></div></div>
+          <div id="notificationRules" class="notification-rules"></div>
         </section>
       </section>
 

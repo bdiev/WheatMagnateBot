@@ -20,6 +20,8 @@ const { createFollowFeature } = require('./features/follow');
 const farm = require('./features/obsidianFarm');
 const { GrowingChildAI } = require('./features/growingChild');
 const { sanitizePublicPhrase } = require('./features/growingChild/safety');
+const { runMigrations } = require('./database/migrations');
+const { NotificationService } = require('./notifications');
 
 // Base64 utils for Node.js (btoa/atob polyfill)
 const b64encode = (str) => Buffer.from(String(str), 'utf8').toString('base64');
@@ -27,6 +29,7 @@ const b64decode = (str) => Buffer.from(String(str), 'base64').toString('utf8');
 
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
+const NOTIFICATION_DISCORD_CHANNEL_ID = process.env.NOTIFICATION_DISCORD_CHANNEL_ID || DISCORD_CHANNEL_ID;
 const DISCORD_CHAT_CHANNEL_ID = process.env.DISCORD_CHAT_CHANNEL_ID;
 const DISCORD_DM_CATEGORY_ID = process.env.DISCORD_DM_CATEGORY_ID;
 const DISCORD_OWNER_ID = process.env.DISCORD_OWNER_ID || '623303738991443968';
@@ -541,6 +544,32 @@ const {
   ensureSystemLogTable,
   recordSystemLog
 } = createSystemLogRepository(pool);
+const notificationService = new NotificationService({
+  pool,
+  systemLogger: entry => recordSystemLog(entry),
+  discordSender: async notification => {
+    if (notification.event_type === 'unauthorized_player_nearby' && notification.status === 'active') {
+      const sent = await sendDiscordStatusMention({
+        playerName: notification.metadata?.playerName || 'Unknown',
+        distance: notification.metadata?.distance ?? 0,
+        serverAction: 'Bot left the server and auto-reconnect was disabled.'
+      });
+      if (!sent) throw new Error('Discord safety notification was not delivered.');
+      return;
+    }
+    const colors = { info: 3447003, warning: 16776960, critical: 16711680 };
+    const sent = await sendDiscordNotification(`**${notification.title}**\n${notification.message}`, colors[notification.severity] || 3447003, NOTIFICATION_DISCORD_CHANNEL_ID);
+    if (!sent) throw new Error('Discord notification was not delivered.');
+  }
+});
+if (pool) {
+  pool.on('error', err => {
+    notificationService.report('database_unavailable', {
+      key: 'postgresql', title: 'Database unavailable', message: err.message,
+      metadata: { error: err.message }
+    }).catch(() => sendDiscordNotification(`**Database unavailable**\n${err.message}`, 16711680, NOTIFICATION_DISCORD_CHANNEL_ID));
+  });
+}
 const originalConsoleLog = console.log.bind(console);
 const originalConsoleError = console.error.bind(console);
 let persistBotConsoleLogs = false;
@@ -977,10 +1006,15 @@ let ignoredChatUsernames = IGNORED_CHAT_USERNAMES; // Fallback
 async function initDatabase() {
   if (!pool) {
     console.log('[DB] ❌ Database pool not available, skipping initialization.');
+    await reportNotification('database_unavailable', {
+      key: 'postgresql', title: 'Database unavailable',
+      message: 'DATABASE_URL is not configured.'
+    });
     return;
   }
 
   try {
+    await runMigrations(pool);
     console.log('[DB] 🔧 Initializing database tables...');
     await pool.query(`
       CREATE TABLE IF NOT EXISTS ignored_users (
@@ -1339,6 +1373,10 @@ async function initDatabase() {
     // Load whitelist from DB into memory (if available)
     console.log('[DB] 📖 Loading whitelist from database...');
     const wl = await loadWhitelistFromDB();
+    await reportNotification('database_unavailable', {
+      key: 'postgresql', resolved: true, title: 'Database connection restored',
+      message: 'PostgreSQL is available again.'
+    });
     if (Array.isArray(wl) && wl.length > 0) {
       ignoredUsernames.length = 0;
       ignoredUsernames.push(...wl);
@@ -1348,6 +1386,10 @@ async function initDatabase() {
     }
   } catch (err) {
     console.error('[DB] ❌ Failed to initialize database:', err.message);
+    notificationService.report('database_unavailable', {
+      key: 'postgresql', title: 'Database unavailable', message: err.message,
+      metadata: { error: err.message }
+    }).catch(() => sendDiscordNotification(`**Database unavailable**\n${err.message}`, 16711680, NOTIFICATION_DISCORD_CHANNEL_ID));
   }
 }
 
@@ -1911,7 +1953,10 @@ if (DISCORD_BOT_TOKEN) {
 } else {
   // No Discord, start Mineflayer directly
   mineflayerStarted = true;
-  createBot();
+  initDatabase()
+    .then(() => loadRuntimeSettingsFromDB())
+    .catch(err => console.error('[DB] Initialization without Discord failed:', err.message))
+    .finally(() => createBot());
 }
 
 
@@ -1990,7 +2035,7 @@ async function dropItemToNearestPlayer(item) {
       if (followTarget) {
         followFeature.start(bot, followTarget);
       } else if (farmWasEnabled || farmWasDesired) {
-        farm.resume(bot, () => {});
+        farm.resume(bot, farmNotification);
       }
     }
   }
@@ -3561,11 +3606,25 @@ let playerScannerInterval = null;
 let restartProtectionInterval = null;
 let obsidianFarmWatchdogInterval = null;
 let obsidianSupplySnapshotInterval = null;
-let lastEnemyMentionAt = 0;
 let restartProtectionDateKey = null;
 let leverOperation = Promise.resolve();
 let protectionLeverPosition = null;
 let obsidianFarmResumeBot = null;
+const reconnectAttemptTimes = [];
+
+function reportNotification(eventType, details = {}) {
+  return notificationService.report(eventType, details).catch(err => {
+    console.error(`[Notification] ${eventType} failed:`, err.message);
+  });
+}
+
+function farmNotification(event) {
+  if (!event || typeof event !== 'object' || !event.eventType) return;
+  reportNotification(event.eventType, {
+    key: event.key || 'obsidian-farm', title: event.title, message: event.message,
+    metadata: event.metadata, resolved: Boolean(event.resolved), transient: Boolean(event.transient)
+  });
+}
 
 function clearReconnectTimer() {
   if (reconnectTimer) {
@@ -3586,6 +3645,14 @@ function scheduleReconnect(delayMs, logMessage) {
   clearReconnectTimer();
   reconnectTimestamp = Date.now() + delayMs;
   if (logMessage) console.log(logMessage);
+  const now = Date.now();
+  reconnectAttemptTimes.push(now);
+  while (reconnectAttemptTimes.length && reconnectAttemptTimes[0] < now - 300_000) reconnectAttemptTimes.shift();
+  reportNotification('repeated_reconnects', {
+    key: 'minecraft', title: 'Repeated reconnect attempts',
+    message: `${reconnectAttemptTimes.length} reconnect attempts were scheduled within 5 minutes.`,
+    metadata: { attempts: reconnectAttemptTimes.length, windowSeconds: 300 }
+  });
 
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
@@ -3654,21 +3721,18 @@ function disconnectForNonWhitelistedPlayer(entity, distance) {
   const currentBot = bot;
 
   console.log(`[Bot] ${reason} (${roundedDistance} blocks). Disconnecting with auto-reconnect disabled.`);
+  reportNotification('unauthorized_player_nearby', {
+    key: 'minecraft',
+    title: 'Unauthorized player nearby',
+    message: `${playerName} was detected ${roundedDistance} blocks from the bot.`,
+    metadata: { playerName, distance: roundedDistance }
+  });
   shouldReconnect = false;
   clearReconnectTimer();
   clearResumeTimer();
   followFeature.stop();
   farm.suspend();
   setDisconnectReason(`${reason} (${roundedDistance} blocks)`);
-
-  if (Date.now() - lastEnemyMentionAt > 15000) {
-    lastEnemyMentionAt = Date.now();
-    sendDiscordStatusMention({
-      playerName,
-      distance: roundedDistance,
-      serverAction: 'Bot left the server and auto-reconnect was disabled.'
-    });
-  }
 
   if (currentBot) {
     bot = null;
@@ -3874,9 +3938,9 @@ async function ensureObsidianFarmRunning(createdBot, { freshSession = false } = 
 
       if (leverReady) {
         if (freshSession) {
-          farm.start(createdBot, () => {});
+          farm.start(createdBot, farmNotification);
         } else {
-          farm.resume(createdBot, () => {});
+          farm.resume(createdBot, farmNotification);
         }
         await new Promise(resolve => setTimeout(resolve, 250));
         const startedStatus = farm.getStatus();
@@ -4862,6 +4926,13 @@ async function processBotCommands() {
         message: `Failed bot command ${command.command_type} #${command.id}.`,
         details: { commandId: String(command.id), error: err.message }
       });
+      await reportNotification('command_failed', {
+        key: `${command.command_type}:${command.id}`,
+        transient: true,
+        title: 'Bot command failed',
+        message: `${command.command_type} #${command.id}: ${err.message}`,
+        metadata: { commandId: String(command.id), commandType: command.command_type, source: command.source }
+      });
     }
   }
 }
@@ -5411,13 +5482,13 @@ function consumeOutboundSelfEcho(message) {
 
 
 // Helper function to send messages to Discord
-async function sendDiscordNotification(message, color = 3447003) {
-  if (!DISCORD_CHANNEL_ID || !discordClient || !discordClient.isReady()) {
+async function sendDiscordNotification(message, color = 3447003, channelId = DISCORD_CHANNEL_ID) {
+  if (!channelId || !discordClient || !discordClient.isReady()) {
     console.log('[Discord] Bot not ready or no channel configured. Skipped.');
-    return;
+    return false;
   }
   try {
-    const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
+    const channel = await discordClient.channels.fetch(channelId);
     if (channel && channel.isTextBased()) {
       await channel.send({
         embeds: [{
@@ -5426,16 +5497,18 @@ async function sendDiscordNotification(message, color = 3447003) {
           timestamp: new Date()
         }]
       });
+      return true;
     }
   } catch (e) {
     console.error('[Discord Bot] Failed to send:', e.message);
   }
+  return false;
 }
 
 async function sendDiscordStatusMention({ playerName, distance, serverAction = 'Bot is leaving the server.' }) {
   if (!DISCORD_CHANNEL_ID || !discordClient || !discordClient.isReady()) {
     console.log('[Discord] Bot not ready or no channel configured. Skipped mention.');
-    return;
+    return false;
   }
   try {
     const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
@@ -5461,10 +5534,12 @@ async function sendDiscordStatusMention({ playerName, distance, serverAction = '
       if (sentMessage && !excludedMessageIds.includes(sentMessage.id)) {
         excludedMessageIds.push(sentMessage.id);
       }
+      return true;
     }
   } catch (e) {
     console.error('[Discord Bot] Failed to send mention:', e.message);
   }
+  return false;
 }
 
 function clampSelectPage(page, items) {
@@ -6761,6 +6836,11 @@ function createBot() {
     bot = null;
     safelyCloseMinecraftBot(createdBot, reason);
     setDisconnectReason(buildDisconnectReason(reason, 'Connection lost'));
+    reportNotification('bot_disconnected', {
+      key: 'minecraft', title: 'Bot disconnected',
+      message: buildDisconnectReason(reason, 'Connection lost'),
+      metadata: { reason: normalizeStatusReason(reason) || null }
+    });
 
     if (shouldReconnect) {
       scheduleReconnect(
@@ -6817,6 +6897,29 @@ function createBot() {
   bot.on('spawn', async () => {
     clearTimeout(connectionWatchdog);
     console.log('[Bot] Spawned.');
+    reconnectAttemptTimes.length = 0;
+    reportNotification('bot_disconnected', {
+      key: 'minecraft', resolved: true, title: 'Bot connection restored',
+      message: 'The Minecraft bot connected and spawned successfully.'
+    }).then(result => {
+      if (!result?.resolved) return;
+      reportNotification('bot_reconnected', {
+        key: 'minecraft', transient: true, title: 'Bot reconnected',
+        message: 'The Minecraft bot connected and spawned successfully.'
+      });
+    });
+    reportNotification('bot_kicked', {
+      key: 'minecraft', resolved: true, title: 'Kick recovered',
+      message: 'The bot reconnected after being kicked.'
+    });
+    reportNotification('unauthorized_player_nearby', {
+      key: 'minecraft', resolved: true, title: 'Safety alert cleared',
+      message: 'The bot reconnected after the nearby-player alert was handled.'
+    });
+    reportNotification('repeated_reconnects', {
+      key: 'minecraft', resolved: true, title: 'Reconnect loop resolved',
+      message: 'The bot connected successfully.'
+    });
     await recordSystemLog({
       level: 'info',
       category: 'minecraft',
@@ -6880,6 +6983,10 @@ function createBot() {
         if (tpsMatch) {
           realTps = parseFloat(tpsMatch[1]);
           recordTpsSample().catch(() => {});
+          reportNotification('low_tps', {
+            key: 'minecraft', title: 'Low server TPS',
+            message: `Server TPS is ${realTps.toFixed(1)}.`, metadata: { tps: realTps }
+          });
           found = true;
           // Update status immediately when TPS changes
           if (statusMessage) updateStatusMessage();
@@ -6964,6 +7071,11 @@ function createBot() {
   bot.on('kicked', (reason) => {
     const reasonText = chatComponentToString(reason);
     console.log(`[!] Kicked: ${reasonText}`);
+    reportNotification('bot_kicked', {
+      key: 'minecraft', title: 'Bot was kicked',
+      message: reasonText || 'The Minecraft server kicked the bot.',
+      metadata: { reason: reasonText || null }
+    });
     recordSystemLog({
       level: 'warn',
       category: 'minecraft',
@@ -7326,6 +7438,10 @@ function createBot() {
     if (tpsMatch) {
       realTps = parseFloat(tpsMatch[1]);
       recordTpsSample().catch(() => {});
+      reportNotification('low_tps', {
+        key: 'minecraft', title: 'Low server TPS',
+        message: `Server TPS is ${realTps.toFixed(1)}.`, metadata: { tps: realTps }
+      });
     }
 
     forwardRawPublicChatText(text, 'message', position);
@@ -7376,7 +7492,8 @@ function clearIntervals() {
 
 // -------------- FOOD MONITOR --------------
 function startFoodMonitor() {
-  let warningSent = false;
+  let lastFoodNotificationAt = 0;
+  let lastFoodSignature = null;
   foodMonitorInterval = setInterval(async () => {
     if (!bot || bot.food === undefined) return;
     if (!runtimeSettings.autoEat) return;
@@ -7384,17 +7501,25 @@ function startFoodMonitor() {
     const hasFood = bot.inventory.items().some(item =>
       ['bread', 'apple', 'beef', 'golden_carrot'].some(n => item.name.includes(n))
     );
+    const foodSignature = `${bot.food}:${hasFood}`;
+    const shouldEvaluateNotification = foodSignature !== lastFoodSignature || Date.now() - lastFoodNotificationAt >= 30_000;
+    if (shouldEvaluateNotification) {
+      lastFoodSignature = foodSignature;
+      lastFoodNotificationAt = Date.now();
+    }
 
     if (!hasFood) {
-      if (!warningSent) {
-        console.log('[Bot] No food.');
-        sendDiscordNotification('No food in inventory!', 16711680);
-        warningSent = true;
-      }
+      if (shouldEvaluateNotification) reportNotification('low_food', {
+        key: 'inventory', title: 'Low food', message: 'No food is available in the bot inventory.',
+        metadata: { food: bot.food, inventoryFood: false }
+      });
       return;
-    } else {
-      warningSent = false;
     }
+
+    if (shouldEvaluateNotification) reportNotification('low_food', {
+      key: 'inventory', title: 'Low food', message: `Current food level is ${bot.food}.`,
+      metadata: { food: bot.food, inventoryFood: true }
+    });
 
     if (bot.food < 18 && !bot._isEating) {
       bot._isEating = true;

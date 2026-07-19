@@ -13,6 +13,8 @@ Minecraft bot with Discord integration, PostgreSQL-backed stats, and a local web
 - Obsidian farm dashboard with mined totals, daily charts, rate, pickaxe stats, radius controls, and target coordinates.
 - PostgreSQL storage for stats, whitelist data, chat logs, playtime, and farm history.
 - Optional Discord controls for pausing, farming, following players, whitelist/admin actions, and child AI controls.
+- Unified notification center for disconnects, kicks, safety alerts, farm supplies/stalls, food, TPS, database health, reconnect loops and failed commands.
+- Notification delivery to Discord, the dashboard and the system log, with rule-based severity, thresholds, cooldowns, deduplication and recovery events.
 
 ## Run
 
@@ -45,7 +47,10 @@ DATABASE_URL=
 MINECRAFT_USERNAME=
 MINECRAFT_AUTH=microsoft
 SITE_PORT=3080
+NOTIFICATION_DISCORD_CHANNEL_ID=
 ```
+
+`NOTIFICATION_DISCORD_CHANNEL_ID` is optional; when omitted, notification delivery uses `DISCORD_CHANNEL_ID` for backward compatibility. Notification rules are managed by an administrator on the **Notifications** dashboard page. Database schema changes in `database/migrations/` are applied automatically by the bot and site at startup.
 
 ## Notes
 
@@ -53,3 +58,4 @@ SITE_PORT=3080
 - Keep `data/` persistent for Minecraft auth/cache.
 - The web dashboard reads the same root `.env`.
 - Admin-only dashboard controls are hidden from non-admin users.
+- Active notification problems remain deduplicated by event and resource key. Repeated observations increment the occurrence count, while channel delivery follows the configured cooldown. Recovery creates a separate resolved notification.

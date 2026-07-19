@@ -3460,6 +3460,30 @@ body.search-focus-active #logoutButton {
   font-size: 12px;
 }
 
+.notification-badge {
+  display: inline-grid; place-items: center; min-width: 20px; height: 20px;
+  padding: 0 5px; border-radius: 999px; background: #d94a4a; color: #fff; font-size: 11px;
+}
+.notification-filters, .notification-head, .notification-card-head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.notification-head, .notification-card-head { justify-content: space-between; }
+.notification-list { display: grid; gap: 10px; margin: 12px 0 24px; }
+.notification-card { border: 1px solid var(--border-color, #d7d7d7); border-left: 5px solid #5c91c9; border-radius: 10px; padding: 12px; }
+.notification-card.warning { border-left-color: #d59b27; }
+.notification-card.critical { border-left-color: #d94a4a; }
+.notification-card.unread { box-shadow: 0 0 0 2px color-mix(in srgb, #5c91c9 25%, transparent); }
+.notification-card p { margin: 8px 0; }
+.notification-card button { margin-top: 8px; }
+.notification-rules { display: grid; gap: 10px; }
+.notification-rule { display: grid; grid-template-columns: minmax(190px, 1fr) repeat(8, auto); gap: 8px; align-items: center; padding: 10px; border: 1px solid var(--border-color, #d7d7d7); border-radius: 10px; }
+.notification-rule input[name="threshold"] { min-width: 150px; }
+
+@media (max-width: 900px) {
+  .notification-rule { grid-template-columns: 1fr 1fr; }
+  .notification-rule strong, .notification-rule small { grid-column: 1 / -1; }
+}
+
 @media (max-width: 700px) {
   .bot-inventory-layout {
     --bot-inventory-slot: clamp(24px, calc((100vw - 86px) / 11), 42px);

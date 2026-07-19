@@ -44,6 +44,7 @@ const state = {
   adminControlLoading: false,
   adminLogsLoading: false,
   adminOpenLogDetails: new Set(),
+  notificationRules: [],
   obsidianCoordinateEditorOpen: false,
   supplyTooltipItems: {},
   itemIcons: {},
@@ -418,6 +419,16 @@ async function postJson(path, body = {}) {
   return payload;
 }
 
+async function putJson(path, body = {}) {
+  const response = await fetch(path, {
+    method: 'PUT', cache: 'no-store', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+  return payload;
+}
+
 function showAuthScreen(message = '') {
   const authScreen = $('#authScreen');
   const shell = $('.shell');
@@ -586,6 +597,7 @@ function setActiveTab(tab) {
     loadAdminControlState();
     loadAdminSystemLogs();
   }
+  if (tab === 'notifications') loadNotifications();
   requestAnimationFrame(updateCarousels);
   redrawCharts();
 }
@@ -3388,6 +3400,94 @@ async function handleGameChatSubmit(event) {
   }
 }
 
+function updateNotificationBadge(count) {
+  const badge = $('#notificationBadge');
+  if (!badge) return;
+  const value = Math.max(0, Number(count) || 0);
+  badge.textContent = value > 99 ? '99+' : String(value);
+  badge.hidden = value === 0;
+}
+
+function notificationCard(item) {
+  const unread = !item.readAt;
+  return `<article class="notification-card ${escapeHtml(item.severity)} ${unread ? 'unread' : ''}">
+    <div class="notification-card-head"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.severity)}</span></div>
+    <p>${escapeHtml(item.message)}</p>
+    <small>${escapeHtml(item.eventType)} · ${formatDate(item.createdAt)}${item.occurrenceCount > 1 ? ` · repeated ${item.occurrenceCount}x` : ''}</small>
+    ${unread ? `<button class="ghost-button" type="button" data-notification-read="${item.id}">Mark read</button>` : ''}
+  </article>`;
+}
+
+function renderNotifications(payload) {
+  updateNotificationBadge(payload.unreadCount);
+  const active = payload.notifications.filter(item => item.status === 'active');
+  const history = payload.notifications.filter(item => item.status === 'resolved');
+  $('#activeNotifications').innerHTML = active.length ? active.map(notificationCard).join('') : '<p class="muted">No active problems.</p>';
+  $('#notificationHistory').innerHTML = history.length ? history.map(notificationCard).join('') : '<p class="muted">No history for this filter.</p>';
+}
+
+function renderNotificationRules(rules) {
+  const target = $('#notificationRules');
+  if (!target) return;
+  target.innerHTML = rules.map(rule => `<form class="notification-rule" data-rule="${escapeHtml(rule.eventType)}">
+    <strong>${escapeHtml(rule.eventType)}</strong>
+    <label><input name="enabled" type="checkbox" ${rule.enabled ? 'checked' : ''}> enabled</label>
+    <select name="severity"><option ${rule.severity === 'info' ? 'selected' : ''}>info</option><option ${rule.severity === 'warning' ? 'selected' : ''}>warning</option><option ${rule.severity === 'critical' ? 'selected' : ''}>critical</option></select>
+    <input name="threshold" value="${escapeHtml(JSON.stringify(rule.threshold || {}))}" aria-label="Threshold JSON">
+    <input name="cooldown" type="number" min="0" value="${rule.cooldownSeconds}" aria-label="Cooldown seconds">
+    <label><input name="discord" type="checkbox" ${rule.deliveryChannels.includes('discord') ? 'checked' : ''}> Discord</label>
+    <label><input name="site" type="checkbox" ${rule.deliveryChannels.includes('site') ? 'checked' : ''}> Site</label>
+    <label><input name="system_log" type="checkbox" ${rule.deliveryChannels.includes('system_log') ? 'checked' : ''}> Log</label>
+    <button type="submit">Save</button>
+    <small>Last triggered: ${rule.lastTriggeredAt ? formatDate(rule.lastTriggeredAt) : 'never'}</small>
+  </form>`).join('');
+}
+
+async function loadNotificationCount() {
+  const payload = await fetchJson('/api/notifications?unread=true&limit=1');
+  updateNotificationBadge(payload.unreadCount);
+}
+
+async function loadNotifications() {
+  if (!state.currentUser) return;
+  const params = new URLSearchParams({
+    status: $('#notificationStatusFilter')?.value || 'all',
+    severity: $('#notificationSeverityFilter')?.value || 'all',
+    eventType: $('#notificationEventFilter')?.value || 'all'
+  });
+  if ($('#notificationUnreadFilter')?.checked) params.set('unread', 'true');
+  const payload = await fetchJson(`/api/notifications?${params}`);
+  renderNotifications(payload);
+  if (state.currentUser.role === 'admin') {
+    const rules = await fetchJson('/api/admin/notification-rules');
+    state.notificationRules = rules.rules;
+    renderNotificationRules(rules.rules);
+  }
+}
+
+async function markNotificationRead(event) {
+  const button = event.target.closest('[data-notification-read]');
+  if (!button) return;
+  await postJson('/api/notifications/read', { ids: [button.dataset.notificationRead] });
+  await loadNotifications();
+}
+
+async function saveNotificationRule(event) {
+  const form = event.target.closest('.notification-rule');
+  if (!form) return;
+  event.preventDefault();
+  const channels = ['discord', 'site', 'system_log'].filter(name => form.elements[name].checked);
+  let threshold;
+  try { threshold = JSON.parse(form.elements.threshold.value || '{}'); } catch { setBanner('Threshold must be valid JSON.'); return; }
+  await putJson('/api/admin/notification-rules', {
+    eventType: form.dataset.rule, enabled: form.elements.enabled.checked,
+    severity: form.elements.severity.value, threshold,
+    cooldownSeconds: Number(form.elements.cooldown.value), deliveryChannels: channels
+  });
+  setBanner(`Notification rule ${form.dataset.rule} saved.`);
+  await loadNotifications();
+}
+
 async function loadAll() {
   if (!state.currentUser) return;
   try {
@@ -3402,6 +3502,7 @@ async function loadAll() {
     renderBotStats(botStats);
     renderObsidian(obsidian);
     renderServerStats(serverStats);
+    await loadNotificationCount();
     if (state.currentUser?.role === 'admin') {
       await loadAdminControlState();
       if (state.activeTab === 'admin') await loadAdminSystemLogs();
@@ -3472,6 +3573,18 @@ $('#logoutButton')?.addEventListener('click', handleLogout);
 $('#adminUsersRefresh')?.addEventListener('click', loadAdminUsers);
 $('#adminLogsRefresh')?.addEventListener('click', loadAdminSystemLogs);
 $('#adminLogLevel')?.addEventListener('change', loadAdminSystemLogs);
+$('#notificationsRefresh')?.addEventListener('click', loadNotifications);
+$('#notificationStatusFilter')?.addEventListener('change', loadNotifications);
+$('#notificationSeverityFilter')?.addEventListener('change', loadNotifications);
+$('#notificationEventFilter')?.addEventListener('change', loadNotifications);
+$('#notificationUnreadFilter')?.addEventListener('change', loadNotifications);
+$('#activeNotifications')?.addEventListener('click', markNotificationRead);
+$('#notificationHistory')?.addEventListener('click', markNotificationRead);
+$('#notificationRules')?.addEventListener('submit', saveNotificationRule);
+$('#notificationsMarkAllRead')?.addEventListener('click', async () => {
+  await postJson('/api/notifications/read', { all: true });
+  await loadNotifications();
+});
 $('#adminUsersList')?.addEventListener('click', handleAdminUserAction);
 document.addEventListener('click', handleAdminBotCommand);
 document.addEventListener('click', handleAdminControlAction);
