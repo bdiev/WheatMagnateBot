@@ -13,9 +13,14 @@ function trustProxyEnabled(value = process.env.SITE_TRUST_PROXY) {
   return /^(1|true)$/i.test(String(value || '').trim());
 }
 
-function requestIsHttps(req, trustProxy = trustProxyEnabled()) {
+function requestIsHttps(req, trustProxy = trustProxyEnabled(), publicOrigins = configuredOrigins()) {
   if (req.socket?.encrypted === true) return true;
-  return trustProxy && firstForwarded(req.headers['x-forwarded-proto']).toLowerCase() === 'https';
+  if (trustProxy && firstForwarded(req.headers['x-forwarded-proto']).toLowerCase() === 'https') return true;
+  const rawHost = trustProxy ? firstForwarded(req.headers['x-forwarded-host']) || req.headers.host : req.headers.host;
+  const host = validHost(rawHost);
+  return Boolean(host && publicOrigins.some(origin => {
+    try { const url = new URL(origin); return url.protocol === 'https:' && url.host === host; } catch { return false; }
+  }));
 }
 
 function clientIp(req, trustProxy = trustProxyEnabled()) {
@@ -34,14 +39,17 @@ function validHost(value) {
   }
 }
 
-function configuredOrigins(value = process.env.SITE_ALLOWED_ORIGINS) {
-  return String(value || '').split(',').map(item => item.trim()).filter(Boolean).map(item => {
+function configuredOrigins(value) {
+  const configured = value === undefined
+    ? [process.env.SITE_ALLOWED_ORIGINS, process.env.COOLIFY_URL].filter(Boolean).join(',')
+    : value;
+  return [...new Set(String(configured || '').split(',').map(item => item.trim()).filter(Boolean).map(item => {
     try {
       const url = new URL(item);
       if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.pathname !== '/' || url.search || url.hash) return null;
       return url.origin;
     } catch { return null; }
-  }).filter(Boolean);
+  }).filter(Boolean))];
 }
 
 function validateOrigin(req, { trustProxy = trustProxyEnabled(), allowedOrigins = configuredOrigins() } = {}) {
@@ -59,7 +67,7 @@ function validateOrigin(req, { trustProxy = trustProxyEnabled(), allowedOrigins 
   } catch { return { ok: false, reason: 'invalid_origin' }; }
   const expected = allowedOrigins.length
     ? allowedOrigins
-    : [`${requestIsHttps(req, trustProxy) ? 'https' : 'http'}://${host}`];
+    : [`${requestIsHttps(req, trustProxy, allowedOrigins) ? 'https' : 'http'}://${host}`];
   if (allowedOrigins.length && !allowedOrigins.some(item => new URL(item).host === host)) return { ok: false, reason: 'host_not_allowed' };
   return expected.includes(normalized) ? { ok: true, origin: normalized } : { ok: false, reason: 'origin_mismatch' };
 }

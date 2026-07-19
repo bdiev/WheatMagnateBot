@@ -24,6 +24,7 @@ const { runMigrations } = require('./database/migrations');
 const { NotificationService } = require('./notifications');
 const { newCorrelationId, recordOperationalEvent } = require('./operational-events');
 const { claimDailyReportDate, getDailyReportSlot } = require('./obsidian-daily-report');
+const { WebPushService } = require('./site/web-push');
 
 // Base64 utils for Node.js (btoa/atob polyfill)
 const b64encode = (str) => Buffer.from(String(str), 'utf8').toString('base64');
@@ -546,9 +547,11 @@ const {
   ensureSystemLogTable,
   recordSystemLog
 } = createSystemLogRepository(pool);
+const webPushService = new WebPushService({ pool });
 const notificationService = new NotificationService({
   pool,
   systemLogger: entry => recordSystemLog(entry),
+  pushSender: (notification, context) => webPushService.deliver(notification, context),
   discordSender: async notification => {
     if (notification.event_type === 'unauthorized_player_nearby' && notification.status === 'active') {
       const sent = await sendDiscordStatusMention({

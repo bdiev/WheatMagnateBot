@@ -11,6 +11,7 @@ const { SseHub, handleSseRequest } = require('./sse');
 const { calculateAnalytics } = require('./obsidian-analytics');
 const { eventTypeFromLog, newCorrelationId, recordOperationalEvent, severityFromLevel } = require('./operational-events');
 const { assertTimelineAccess, normalizeTimelineFilters, queryTimeline } = require('./incident-timeline');
+const { EVENT_TYPES: PUSH_EVENT_TYPES, WebPushService } = require('./web-push');
 const {
   MUTATING_METHODS, RateLimiter, clientIp, configuredOrigins, requestIsHttps,
   resolveStaticPath, securityHeaders, trustProxyEnabled, validateOrigin, validHost, verifyCsrfToken
@@ -34,6 +35,7 @@ const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 const pool = DATABASE_URL
   ? new Pool({ connectionString: DATABASE_URL })
   : null;
+const webPushService = new WebPushService({ pool });
 const sseHub = new SseHub({
   maxConnectionsPerUser: Number(process.env.SSE_MAX_CONNECTIONS_PER_USER) || 3,
   heartbeatMs: Number(process.env.SSE_HEARTBEAT_MS) || 25_000
@@ -457,6 +459,14 @@ async function ensureOptionalTables() {
     CREATE UNIQUE INDEX IF NOT EXISTS site_users_username_lower_idx
     ON site_users (LOWER(username))
   `);
+  await pool.query(`DO $$ BEGIN
+    IF to_regclass('public.push_subscriptions') IS NOT NULL AND NOT EXISTS (
+      SELECT 1 FROM pg_constraint WHERE conname='push_subscriptions_user_fk'
+    ) THEN
+      ALTER TABLE push_subscriptions ADD CONSTRAINT push_subscriptions_user_fk
+        FOREIGN KEY(user_id) REFERENCES site_users(id) ON DELETE CASCADE;
+    END IF;
+  END $$`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS site_sessions (
       token_hash TEXT PRIMARY KEY,
@@ -2712,6 +2722,52 @@ async function markNotificationsRead(currentUser, body) {
   return { ok: true, unreadCount: count.rows[0]?.count || 0 };
 }
 
+async function getPushSettings(currentUser) {
+  return {
+    configured: webPushService.configured,
+    publicKey: webPushService.configured ? webPushService.publicKey : null,
+    eventTypes: PUSH_EVENT_TYPES,
+    devices: await webPushService.listForUser(currentUser.id)
+  };
+}
+
+async function createPushSubscription(currentUser, body) {
+  const id = await webPushService.subscribe(currentUser.id, body);
+  await recordSystemLog({
+    level: 'audit', category: 'push_settings', actor: currentUser.username,
+    message: 'Enabled browser push notifications.', details: { subscriptionId: id, deviceName: String(body.deviceName || 'Browser').slice(0, 80) }
+  });
+  return { ...await getPushSettings(currentUser), currentSubscriptionId: id };
+}
+
+async function updatePushSubscription(currentUser, id, body) {
+  await webPushService.update(currentUser.id, id, body);
+  await recordSystemLog({
+    level: 'audit', category: 'push_settings', actor: currentUser.username,
+    message: 'Updated browser push notification settings.', details: { subscriptionId: String(id), enabled: body.enabled !== false }
+  });
+  return getPushSettings(currentUser);
+}
+
+async function deletePushSubscription(currentUser, id) {
+  await webPushService.remove(currentUser.id, id);
+  await recordSystemLog({
+    level: 'audit', category: 'push_settings', actor: currentUser.username,
+    message: 'Removed a browser push device.', details: { subscriptionId: String(id) }
+  });
+  return getPushSettings(currentUser);
+}
+
+async function sendTestPush(currentUser, id) {
+  const result = await webPushService.sendTest(currentUser.id, id);
+  await recordSystemLog({
+    level: 'audit', category: 'push_settings', actor: currentUser.username,
+    message: result.removed ? 'Test push removed an invalid device.' : 'Sent a test browser push.',
+    details: { subscriptionId: String(id), sent: Boolean(result.sent), removed: Boolean(result.removed) }
+  });
+  return result;
+}
+
 async function getNotificationRules(currentUser) {
   assertAdminUser(currentUser);
   const result = await pool.query(`
@@ -2920,6 +2976,10 @@ async function handleApi(req, res, url) {
     if (url.pathname.startsWith('/api/admin/') && !MUTATING_METHODS.has(req.method) && !enforceRateLimit(req, res, 'admin_read', currentUser.username, { limit: 180, windowMs: 60_000 })) return;
     if (url.pathname === '/api/chat/send' && !enforceRateLimit(req, res, 'chat_send', currentUser.username, { limit: 15, windowMs: 60_000 })) return;
     if (url.pathname === '/api/whisper/send' && !enforceRateLimit(req, res, 'whisper_send', currentUser.username, { limit: 20, windowMs: 60_000 })) return;
+    if (MUTATING_METHODS.has(req.method) && url.pathname.startsWith('/api/push/') &&
+        !enforceRateLimit(req, res, 'push_settings', currentUser.username, { limit: 20, windowMs: 60_000 })) return;
+    if (url.pathname === '/api/push/test' && req.method === 'POST' &&
+        !enforceRateLimit(req, res, 'push_test', currentUser.username, { limit: 3, windowMs: 10 * 60_000 })) return;
 
     if (url.pathname === '/api/admin/users') {
       if (req.method === 'GET') {
@@ -3006,6 +3066,23 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/notifications/read' && req.method === 'POST') {
       sendJson(res, 200, await markNotificationsRead(currentUser, await readJsonBody(req))); return;
+    }
+    if (url.pathname === '/api/push/settings' && req.method === 'GET') {
+      sendJson(res, 200, await getPushSettings(currentUser)); return;
+    }
+    if (url.pathname === '/api/push/subscriptions' && req.method === 'POST') {
+      sendJson(res, 201, await createPushSubscription(currentUser, await readJsonBody(req, 64 * 1024))); return;
+    }
+    const pushSubscriptionMatch = url.pathname.match(/^\/api\/push\/subscriptions\/(\d+)$/);
+    if (pushSubscriptionMatch && req.method === 'PUT') {
+      sendJson(res, 200, await updatePushSubscription(currentUser, pushSubscriptionMatch[1], await readJsonBody(req))); return;
+    }
+    if (pushSubscriptionMatch && req.method === 'DELETE') {
+      sendJson(res, 200, await deletePushSubscription(currentUser, pushSubscriptionMatch[1])); return;
+    }
+    if (url.pathname === '/api/push/test' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      sendJson(res, 200, await sendTestPush(currentUser, String(body.subscriptionId || ''))); return;
     }
     if (url.pathname === '/api/players') {
       sendJson(res, 200, await getPlayers());
@@ -3152,7 +3229,14 @@ async function requestHandler(req, res) {
   if (MUTATING_METHODS.has(req.method)) {
     const origin = validateOrigin(req, { trustProxy: SITE_TRUST_PROXY, allowedOrigins: SITE_ALLOWED_ORIGINS });
     if (!origin.ok) {
-      await recordSecurityEvent(req, 'Cross-origin state-changing request rejected.', { reason: origin.reason });
+      await recordSecurityEvent(req, 'Cross-origin state-changing request rejected.', {
+        reason: origin.reason,
+        details: {
+          requestOrigin: String(req.headers.origin || '').slice(0, 255),
+          effectiveHost: String(effectiveHost || '').slice(0, 255),
+          forwardedProto: SITE_TRUST_PROXY ? String(req.headers['x-forwarded-proto'] || '').slice(0, 32) : 'ignored'
+        }
+      });
       sendError(res, 403, 'Request origin is not allowed.');
       return;
     }

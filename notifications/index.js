@@ -88,9 +88,10 @@ class MemoryNotificationRepository {
 }
 
 class NotificationService {
-  constructor({ pool = null, repository = null, discordSender = null, systemLogger = null, now = () => new Date() } = {}) {
+  constructor({ pool = null, repository = null, discordSender = null, pushSender = null, systemLogger = null, now = () => new Date() } = {}) {
     this.repository = repository || (pool ? new PostgresNotificationRepository(pool) : null);
     this.discordSender = discordSender;
+    this.pushSender = pushSender;
     this.systemLogger = systemLogger;
     this.now = now;
     this.pending = new Map();
@@ -188,6 +189,16 @@ class NotificationService {
         await this.repository.addDelivery(notification.id, channel, 'sent');
       } catch (err) {
         await this.repository.addDelivery(notification.id, channel, 'failed', err.message).catch(() => {});
+      }
+    }
+    if (this.pushSender) {
+      try {
+        const result = await this.pushSender(notification, { resolved });
+        const status = result?.sent > 0 ? 'sent' : 'skipped';
+        const error = result?.failed > 0 ? `${result.failed} push delivery attempt(s) failed.` : null;
+        await this.repository.addDelivery(notification.id, 'push', status, error);
+      } catch (err) {
+        await this.repository.addDelivery(notification.id, 'push', 'failed', err.message).catch(() => {});
       }
     }
     await this.repository.markRuleTriggered(notification.event_type);

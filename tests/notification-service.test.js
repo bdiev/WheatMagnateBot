@@ -70,6 +70,16 @@ async function run() {
   });
   assert.equal(farmRecovered.resolved, true, 'a real active stall must create one recovery transition');
 
+  let pushCalls = 0;
+  const pushRepository = new MemoryNotificationRepository([rule()]);
+  const pushService = new NotificationService({
+    repository: pushRepository,
+    pushSender: async () => { pushCalls += 1; return { sent: 1, failed: 0 }; }
+  });
+  await pushService.report('low_tps', { key: 'push', metadata: { tps: 10 } });
+  await pushService.report('low_tps', { key: 'push', metadata: { tps: 9 } });
+  assert.equal(pushCalls, 1, 'deduplication within cooldown must suppress repeated push delivery');
+
   console.log('NotificationService tests passed.');
 }
 

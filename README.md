@@ -54,6 +54,9 @@ ADMIN_BOOTSTRAP_TOKEN=
 SITE_TRUST_PROXY=false
 SITE_ALLOWED_ORIGINS=http://localhost:3080
 NOTIFICATION_DISCORD_CHANNEL_ID=
+VAPID_PUBLIC_KEY=
+VAPID_PRIVATE_KEY=
+VAPID_SUBJECT=mailto:admin@example.com
 SSE_MAX_CONNECTIONS_PER_USER=3
 OPERATIONAL_EVENT_RETENTION_DAYS=90
 OBSIDIAN_ANALYTICS_TIMEZONE=Europe/Vilnius
@@ -65,6 +68,8 @@ GEMINI_API_KEY=
 
 `NOTIFICATION_DISCORD_CHANNEL_ID` is optional; when omitted, notification delivery uses `DISCORD_CHANNEL_ID` for backward compatibility. Notification rules are managed by an administrator on the **Notifications** dashboard page. Database schema changes in `database/migrations/` are applied automatically by the bot and site at startup.
 
+Browser push is optional and disabled by default. Generate a persistent VAPID pair with `npx web-push generate-vapid-keys`, store both keys in the deployment environment, and never commit the private key. Users enable permission explicitly from **Settings**, then configure each device's severity, event types, resolved events, and quiet hours. Operational delivery remains admin-only to match the notification center's access policy. The complete behavior and privacy model are documented in [`site/PUSH_NOTIFICATIONS.md`](site/PUSH_NOTIFICATIONS.md).
+
 ### Dashboard security and initial administrator
 
 There is no username-based administrator account. For the first deployment, use exactly one bootstrap method:
@@ -74,7 +79,7 @@ There is no username-based administrator account. For the first deployment, use 
 
 Remove bootstrap secrets from the deployment environment after the administrator exists. Existing administrators are preserved during migration, and the dashboard prevents removing the final approved administrator.
 
-Set `SITE_ALLOWED_ORIGINS` to the comma-separated public origins that may submit state-changing requests, for example `https://dashboard.example.com` (origins only, without paths). The default shown above is for local HTTP development. Set `SITE_TRUST_PROXY=true` only when the application is directly behind a trusted reverse proxy that overwrites `X-Forwarded-For`, `X-Forwarded-Host`, and `X-Forwarded-Proto`; this enables correct client-IP accounting and `Secure` session cookies for proxy-terminated HTTPS. Never expose the Node port directly while this option is enabled.
+Set `SITE_ALLOWED_ORIGINS` to the comma-separated public origins that may submit state-changing requests, for example `https://dashboard.example.com` (origins only, without paths). The default shown above is for local HTTP development. Coolify's exact `COOLIFY_URL` is included automatically, preventing its external HTTPS origin from being confused with the internal HTTP connection. For Coolify, also set `SITE_TRUST_PROXY=true`; more generally, enable it only when the application is directly behind a trusted reverse proxy that overwrites `X-Forwarded-For`, `X-Forwarded-Host`, and `X-Forwarded-Proto`. This enables correct client-IP accounting and `Secure` session cookies for proxy-terminated HTTPS. Never expose the Node port directly while this option is enabled.
 
 The dashboard uses `HttpOnly`, `SameSite=Lax` session cookies, per-session CSRF tokens, strict Origin/Host checks, bounded in-memory rate limits, authenticated SSE, restrictive response headers, and traversal-safe static file resolution. Rate-limit state is process-local, so multi-instance deployments should add a shared limiter at the reverse proxy.
 

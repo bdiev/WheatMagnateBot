@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const path = require('node:path');
-const { RateLimiter, requestIsHttps, resolveStaticPath, securityHeaders, validateOrigin, verifyCsrfToken } = require('../security');
+const { RateLimiter, configuredOrigins, requestIsHttps, resolveStaticPath, securityHeaders, validateOrigin, verifyCsrfToken } = require('../security');
 const { assertAdminUser, hashPassword, registrationDefaults, server, verifyPassword } = require('../server');
 
 function request(method, headers = {}, encrypted = false) {
@@ -30,6 +30,23 @@ function testOriginValidation() {
   const wrong = request('DELETE', { host: 'dashboard.example', origin: 'https://evil.example' });
   assert.deepEqual(validateOrigin(wrong, { trustProxy: false, allowedOrigins: [] }), { ok: false, reason: 'origin_mismatch' });
   assert.equal(validateOrigin(request('PATCH', { host: 'dashboard.example' }), { allowedOrigins: [] }).ok, false);
+
+  const previousSiteOrigins = process.env.SITE_ALLOWED_ORIGINS;
+  const previousCoolifyUrl = process.env.COOLIFY_URL;
+  try {
+    delete process.env.SITE_ALLOWED_ORIGINS;
+    process.env.COOLIFY_URL = 'https://dashboard.example/';
+    const coolifyOrigins = configuredOrigins();
+    assert.deepEqual(coolifyOrigins, ['https://dashboard.example']);
+    assert.equal(validateOrigin(request('POST', { host: 'dashboard.example', origin: 'https://dashboard.example' }), {
+      trustProxy: false, allowedOrigins: coolifyOrigins
+    }).ok, true, 'Coolify public HTTPS URL must be accepted even though the internal socket is HTTP');
+    assert.equal(requestIsHttps(request('POST', { host: 'dashboard.example', origin: 'https://dashboard.example' }), false, coolifyOrigins), true,
+      'an exact configured HTTPS public origin must produce Secure cookies without trusting forwarded headers');
+  } finally {
+    if (previousSiteOrigins === undefined) delete process.env.SITE_ALLOWED_ORIGINS; else process.env.SITE_ALLOWED_ORIGINS = previousSiteOrigins;
+    if (previousCoolifyUrl === undefined) delete process.env.COOLIFY_URL; else process.env.COOLIFY_URL = previousCoolifyUrl;
+  }
 }
 
 function testStaticTraversal() {

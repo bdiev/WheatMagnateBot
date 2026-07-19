@@ -55,6 +55,8 @@ const state = {
   timelineIncident: null,
   adminOpenLogDetails: new Set(),
   notificationRules: [],
+  pushSettings: null,
+  currentPushSubscriptionId: null,
   obsidianCoordinateEditorOpen: false,
   supplyTooltipItems: {},
   itemIcons: {},
@@ -455,6 +457,16 @@ async function putJson(path, body = {}) {
   return payload;
 }
 
+async function deleteJson(path) {
+  const response = await fetch(path, {
+    method: 'DELETE', cache: 'no-store', credentials: 'same-origin',
+    headers: state.csrfToken ? { 'X-CSRF-Token': state.csrfToken } : {}
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+  return payload;
+}
+
 function showAuthScreen(message = '') {
   const authScreen = $('#authScreen');
   const shell = $('.shell');
@@ -571,6 +583,7 @@ async function handleAuthSubmit(event) {
     applyCurrentUser(payload.user);
     hideAuthScreen();
     restoreActiveTab();
+    openPushDestination();
     await loadAll();
   } catch (err) {
     error.textContent = err.message;
@@ -590,6 +603,7 @@ async function initAuth() {
       applyCurrentUser(payload.user);
       hideAuthScreen();
       restoreActiveTab();
+      openPushDestination();
       await loadAll();
       return;
     }
@@ -640,6 +654,7 @@ function setActiveTab(tab) {
   }
   if (tab === 'timeline') loadTimeline();
   if (tab === 'notifications') loadNotifications();
+  if (tab === 'settings') loadPushSettings();
   if (tab === 'child-ai') loadChildAiAdmin();
   if (tab === 'chat') ensureInitialChatScroll();
   requestAnimationFrame(updateCarousels);
@@ -3498,6 +3513,154 @@ function updateNotificationBadge(count) {
   badge.hidden = value === 0;
 }
 
+function browserPushSupported() {
+  return window.isSecureContext && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+}
+
+function applicationServerKey(value) {
+  const padding = '='.repeat((4 - value.length % 4) % 4);
+  const raw = atob((value + padding).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(raw, char => char.charCodeAt(0));
+}
+
+function defaultPushDeviceName() {
+  const platform = navigator.userAgentData?.platform || navigator.platform || 'Device';
+  const browser = navigator.userAgentData?.brands?.find(item => !/not.a.brand/i.test(item.brand))?.brand || 'Browser';
+  return `${platform} · ${browser}`.slice(0, 80);
+}
+
+function pushDeviceHtml(device, eventTypes) {
+  const eventOptions = eventTypes.map(type => `<label><input type="checkbox" name="eventType" value="${escapeHtml(type)}"${device.eventTypes.length === 0 || device.eventTypes.includes(type) ? ' checked' : ''}> ${escapeHtml(type)}</label>`).join('');
+  return `<form class="push-device-card" data-push-device-id="${escapeHtml(device.id)}">
+    <div class="push-device-head"><div><strong>${escapeHtml(device.deviceName)}</strong><small>Endpoint …${escapeHtml(device.endpointSuffix || '')}</small></div><span class="pill">${device.enabled ? 'enabled' : 'disabled'}</span></div>
+    <div class="push-device-fields">
+      <label><span>Device name</span><input name="deviceName" maxlength="80" value="${escapeHtml(device.deviceName)}"></label>
+      <label><span>Minimum severity</span><select name="minimumSeverity"><option value="info"${device.minimumSeverity === 'info' ? ' selected' : ''}>Info</option><option value="warning"${device.minimumSeverity === 'warning' ? ' selected' : ''}>Warning</option><option value="critical"${device.minimumSeverity === 'critical' ? ' selected' : ''}>Critical</option></select></label>
+      <label><span>Timezone</span><input name="timezone" maxlength="64" value="${escapeHtml(device.timezone || 'Europe/Vilnius')}"></label>
+    </div>
+    <div class="push-toggle-grid">
+      <label><input type="checkbox" name="enabled"${device.enabled ? ' checked' : ''}> Push enabled</label>
+      <label><input type="checkbox" name="includeResolved"${device.includeResolved ? ' checked' : ''}> Send resolved events</label>
+      <label><input type="checkbox" name="quietHoursEnabled"${device.quietHoursEnabled ? ' checked' : ''}> Quiet hours</label>
+    </div>
+    <div class="push-quiet-hours"><label><span>From</span><input type="time" name="quietStart" value="${escapeHtml(device.quietStart || '22:00')}"></label><label><span>To</span><input type="time" name="quietEnd" value="${escapeHtml(device.quietEnd || '07:00')}"></label></div>
+    <details class="push-event-types"><summary>Event types <small>${device.eventTypes.length ? `${device.eventTypes.length} selected` : 'all selected'}</small></summary><div>${eventOptions}</div><p class="muted">Uncheck every event to allow all event types.</p></details>
+    <div class="push-device-actions"><button type="submit">Save</button><button class="ghost-button" type="button" data-push-test="${escapeHtml(device.id)}">Send test</button><button class="danger-button" type="button" data-push-remove="${escapeHtml(device.id)}">Remove device</button></div>
+    <small class="muted">${device.lastSuccessAt ? `Last delivered ${escapeHtml(formatDate(device.lastSuccessAt))}` : 'No successful delivery yet'}${device.failureCount ? ` · ${escapeHtml(device.failureCount)} failures` : ''}</small>
+  </form>`;
+}
+
+async function identifyCurrentPushDevice(devices) {
+  state.currentPushSubscriptionId = null;
+  if (!browserPushSupported()) return;
+  const registration = await navigator.serviceWorker.ready;
+  const subscription = await registration.pushManager.getSubscription();
+  if (!subscription) return;
+  const suffix = subscription.endpoint.slice(-18);
+  state.currentPushSubscriptionId = devices.find(device => device.endpointSuffix === suffix)?.id || null;
+}
+
+async function loadPushSettings() {
+  if (!state.currentUser) return;
+  const status = $('#pushSupportStatus');
+  const button = $('#pushEnableDevice');
+  try {
+    const payload = await fetchJson('/api/push/settings');
+    state.pushSettings = payload;
+    await identifyCurrentPushDevice(payload.devices || []);
+    const supported = browserPushSupported();
+    if (button) button.disabled = !supported || !payload.configured || Notification.permission === 'denied';
+    if (status) status.textContent = !supported ? 'Push API is not supported in this browser or the page is not using HTTPS.'
+      : !payload.configured ? 'Push is not configured on the server.'
+        : Notification.permission === 'denied' ? 'Browser permission is blocked. Change it in the browser site settings.'
+          : state.currentPushSubscriptionId ? 'This browser is registered. Manage it below.' : 'Push is off on this browser.';
+    $('#pushDeviceList').innerHTML = payload.devices?.length
+      ? payload.devices.map(device => pushDeviceHtml(device, payload.eventTypes || [])).join('')
+      : '<div class="empty">No push devices registered. Push is off by default.</div>';
+  } catch (err) {
+    if (status) status.textContent = `Could not load push settings: ${err.message}`;
+  }
+}
+
+async function enablePushOnCurrentDevice() {
+  if (!browserPushSupported() || !state.pushSettings?.configured) return;
+  const button = $('#pushEnableDevice');
+  button.disabled = true;
+  try {
+    let permission = Notification.permission;
+    if (permission === 'default') permission = await Notification.requestPermission();
+    if (permission !== 'granted') throw new Error('Browser notification permission was not granted.');
+    const registration = await navigator.serviceWorker.ready;
+    let subscription = await registration.pushManager.getSubscription();
+    if (!subscription) subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: applicationServerKey(state.pushSettings.publicKey)
+    });
+    const payload = await postJson('/api/push/subscriptions', {
+      subscription: subscription.toJSON(), deviceName: defaultPushDeviceName(), enabled: true,
+      minimumSeverity: 'critical', eventTypes: [], includeResolved: false,
+      quietHoursEnabled: false, quietStart: '22:00', quietEnd: '07:00',
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Vilnius'
+    });
+    state.pushSettings = payload;
+    state.currentPushSubscriptionId = payload.currentSubscriptionId;
+    setBanner('Browser push enabled for this device.');
+    await loadPushSettings();
+  } catch (err) { setBanner(`Could not enable push: ${err.message}`); }
+  finally { button.disabled = false; }
+}
+
+function pushPreferencesFromForm(form) {
+  return {
+    deviceName: form.elements.deviceName.value.trim(), enabled: form.elements.enabled.checked,
+    minimumSeverity: form.elements.minimumSeverity.value,
+    eventTypes: [...form.querySelectorAll('[name="eventType"]:checked')].map(input => input.value),
+    includeResolved: form.elements.includeResolved.checked,
+    quietHoursEnabled: form.elements.quietHoursEnabled.checked,
+    quietStart: form.elements.quietStart.value, quietEnd: form.elements.quietEnd.value,
+    timezone: form.elements.timezone.value.trim()
+  };
+}
+
+async function handlePushDeviceSubmit(event) {
+  const form = event.target.closest('[data-push-device-id]');
+  if (!form) return;
+  event.preventDefault();
+  try {
+    await putJson(`/api/push/subscriptions/${encodeURIComponent(form.dataset.pushDeviceId)}`, pushPreferencesFromForm(form));
+    setBanner('Push settings saved.'); await loadPushSettings();
+  } catch (err) { setBanner(`Could not save push settings: ${err.message}`); }
+}
+
+async function handlePushDeviceClick(event) {
+  const test = event.target.closest('[data-push-test]');
+  const remove = event.target.closest('[data-push-remove]');
+  try {
+    if (test) {
+      await postJson('/api/push/test', { subscriptionId: test.dataset.pushTest });
+      setBanner('Test push sent.'); await loadPushSettings();
+    }
+    if (remove) {
+      const id = remove.dataset.pushRemove;
+      await deleteJson(`/api/push/subscriptions/${encodeURIComponent(id)}`);
+      if (String(id) === String(state.currentPushSubscriptionId) && browserPushSupported()) {
+        const registration = await navigator.serviceWorker.ready;
+        await (await registration.pushManager.getSubscription())?.unsubscribe();
+      }
+      setBanner('Push device removed.'); await loadPushSettings();
+    }
+  } catch (err) { setBanner(`Push action failed: ${err.message}`); }
+}
+
+function openPushDestination(destination = null) {
+  const target = destination || new URL(location.href).searchParams.get('push');
+  if (!target || !state.currentUser) return;
+  setActiveTab(target === 'notifications' && state.currentUser.role === 'admin' ? 'notifications' : 'settings');
+  if (!destination) {
+    const url = new URL(location.href); url.searchParams.delete('push'); history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+  }
+}
+
 function timelineFilterQuery() {
   const params = new URLSearchParams({ period: $('#timelinePeriod')?.value || '24h', limit: '150' });
   const values = {
@@ -4199,6 +4362,15 @@ $('#notificationsMarkAllRead')?.addEventListener('click', async () => {
   await postJson('/api/notifications/read', { all: true });
   await loadNotifications();
 });
+$('#pushEnableDevice')?.addEventListener('click', enablePushOnCurrentDevice);
+$('#pushDeviceList')?.addEventListener('submit', handlePushDeviceSubmit);
+$('#pushDeviceList')?.addEventListener('click', handlePushDeviceClick);
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', event => {
+    if (event.data?.type === 'open_push_destination') openPushDestination(event.data.destination);
+  });
+}
 $('#adminUsersList')?.addEventListener('click', handleAdminUserAction);
 document.addEventListener('click', handleAdminBotCommand);
 document.addEventListener('click', handleAdminControlAction);

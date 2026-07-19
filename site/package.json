@@ -5,13 +5,14 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node tests/security.test.js && node tests/incident-timeline.test.js && node tests/sse.test.js && node tests/obsidian-analytics.test.js"
+    "test": "node tests/security.test.js && node tests/web-push.test.js && node tests/incident-timeline.test.js && node tests/sse.test.js && node tests/obsidian-analytics.test.js"
   },
   "engines": {
     "node": ">=22.13.0"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
-    "pg": "^8.22.0"
+    "pg": "^8.22.0",
+    "web-push": "^3.6.7"
   }
 }

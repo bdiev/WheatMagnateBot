@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_NAME = 'wheatmagnatebot-v74';
+const CACHE_NAME = 'wheatmagnatebot-v75';
 const APP_SHELL = [
   '/',
   '/index.html',
@@ -87,4 +87,33 @@ self.addEventListener('fetch', event => {
       });
     })
   );
+});
+
+self.addEventListener('push', event => {
+  let payload = {};
+  try { payload = event.data?.json() || {}; } catch { payload = {}; }
+  const title = String(payload.title || 'WheatMagnateBot alert').slice(0, 80);
+  const options = {
+    body: String(payload.body || 'Open the dashboard for details.').slice(0, 160),
+    icon: payload.icon || '/items/Wheat.png',
+    badge: payload.badge || '/items/Wheat.png',
+    tag: String(payload.tag || 'wheatmagnate-alert').slice(0, 128),
+    data: { url: String(payload.data?.url || '/').startsWith('/') ? payload.data.url : '/' },
+    requireInteraction: Boolean(payload.requireInteraction)
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  const url = new URL(event.notification.data?.url || '/', self.location.origin);
+  const destination = url.searchParams.get('push') || 'settings';
+  event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async clients => {
+    const client = clients.find(item => new URL(item.url).origin === self.location.origin);
+    if (client) {
+      client.postMessage({ type: 'open_push_destination', destination });
+      return client.focus();
+    }
+    return self.clients.openWindow(url.href);
+  }));
 });
