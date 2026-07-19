@@ -22,7 +22,6 @@ const state = {
   seenSearchTimer: null,
   whisperSearchTimer: null,
   whitelistSearchTimer: null,
-  ignoreChatSearchTimer: null,
   chartTooltipTimer: null,
   chartTooltipPinned: false,
   chartScrollRedrawFrame: null,
@@ -45,7 +44,6 @@ const state = {
   playerProfileUsername: null,
   playerProfileSignature: '',
   whitelistSearchPlayers: [],
-  ignoreChatSearchPlayers: [],
   adminPlayerSearchRequests: {},
   adminControlState: null,
   adminControlLoading: false,
@@ -3177,66 +3175,6 @@ function handleWhitelistSuggestionClick(event) {
   updateWhitelistControl();
 }
 
-function updateIgnoreChatControl() {
-  const button = $('#adminIgnoreChatButton');
-  const username = normalizePlayerInput($('#adminIgnoreChatPlayer')?.value);
-  const ignored = hasPlayer(state.adminControlState?.ignoredChatUsers, username);
-  setToggleActionButton(button, ignored, {
-    label: 'Unignore',
-    action: 'unignore_chat',
-    ghost: true
-  }, {
-    label: 'Ignore',
-    action: 'ignore_chat',
-    danger: Boolean(username)
-  });
-}
-
-function hideIgnoreChatSuggestions() {
-  hideAdminPlayerSuggestions('#adminIgnoreChatSuggestions', 'ignoreChatSearchPlayers');
-}
-
-function renderIgnoreChatSuggestions(players) {
-  renderAdminPlayerSuggestions({
-    suggestionsSelector: '#adminIgnoreChatSuggestions',
-    stateKey: 'ignoreChatSearchPlayers',
-    players,
-    statusFor: player => {
-      const ignored = hasPlayer(state.adminControlState?.ignoredChatUsers, player.username);
-      return { label: ignored ? 'ignored' : 'not ignored' };
-    }
-  });
-}
-
-function runIgnoreChatSearch(query) {
-  return runAdminPlayerSearch({
-    query,
-    suggestionsSelector: '#adminIgnoreChatSuggestions',
-    stateKey: 'ignoreChatSearchPlayers',
-    render: renderIgnoreChatSuggestions
-  });
-}
-
-function handleIgnoreChatPlayerInput(event) {
-  updateIgnoreChatControl();
-  clearTimeout(state.ignoreChatSearchTimer);
-  runIgnoreChatSearch(event.currentTarget.value);
-}
-
-function handleIgnoreChatSuggestionClick(event) {
-  const option = event.target.closest('.seen-option');
-  if (!option) return;
-  const player = state.ignoreChatSearchPlayers[Number(option.dataset.index)];
-  if (!player) return;
-  const input = $('#adminIgnoreChatPlayer');
-  if (input) {
-    input.value = player.username;
-    input.focus();
-  }
-  hideIgnoreChatSuggestions();
-  updateIgnoreChatControl();
-}
-
 function renderAdminControlState(payload = {}) {
   state.adminControlState = payload;
   const settings = payload.settings || {};
@@ -3317,7 +3255,6 @@ function renderAdminControlState(payload = {}) {
   });
   updateFollowControl();
   updateWhitelistControl();
-  updateIgnoreChatControl();
 }
 
 function clearObsidianCoordinateEditor() {
@@ -3446,10 +3383,6 @@ async function handleAdminControlAction(event) {
       payload.username = normalizePlayerInput($('#adminWhitelistPlayer')?.value);
     } else if (action === 'whitelist_remove') {
       payload.username = normalizePlayerInput($('#adminWhitelistPlayer')?.value);
-    } else if (action === 'ignore_chat') {
-      payload.username = normalizePlayerInput($('#adminIgnoreChatPlayer')?.value);
-    } else if (action === 'unignore_chat') {
-      payload.username = normalizePlayerInput($('#adminIgnoreChatPlayer')?.value);
     } else if (action === 'playtime_set') {
       payload.line = $('#adminPlaytimeInput')?.value.trim();
     } else if (action === 'registration_date_set') {
@@ -3461,7 +3394,7 @@ async function handleAdminControlAction(event) {
       payload.radius = Number($('#obsidianCoordRadius')?.value);
     }
 
-    if (['follow', 'whitelist_add', 'whitelist_remove', 'ignore_chat', 'unignore_chat'].includes(action) && !payload.username) {
+    if (['follow', 'whitelist_add', 'whitelist_remove'].includes(action) && !payload.username) {
       throw new Error('Choose or enter a username first.');
     }
     if (action === 'drop_item' && payload.slot == null && !payload.name) {
@@ -3502,10 +3435,6 @@ async function handleAdminControlAction(event) {
     if (['whitelist_add', 'whitelist_remove'].includes(action)) {
       $('#adminWhitelistPlayer').value = '';
       updateWhitelistControl();
-    }
-    if (['ignore_chat', 'unignore_chat'].includes(action)) {
-      $('#adminIgnoreChatPlayer').value = '';
-      updateIgnoreChatControl();
     }
   } catch (err) {
     if (['playtime_set', 'registration_date_set'].includes(action)) {
@@ -4128,9 +4057,6 @@ $('#adminFollowTarget')?.addEventListener('change', updateFollowControl);
 $('#adminWhitelistPlayer')?.addEventListener('input', handleWhitelistPlayerInput);
 $('#adminWhitelistPlayer')?.addEventListener('focus', event => runWhitelistSearch(event.currentTarget.value));
 $('#adminWhitelistSuggestions')?.addEventListener('click', handleWhitelistSuggestionClick);
-$('#adminIgnoreChatPlayer')?.addEventListener('input', handleIgnoreChatPlayerInput);
-$('#adminIgnoreChatPlayer')?.addEventListener('focus', event => runIgnoreChatSearch(event.currentTarget.value));
-$('#adminIgnoreChatSuggestions')?.addEventListener('click', handleIgnoreChatSuggestionClick);
 $('#gameChatForm')?.addEventListener('submit', handleGameChatSubmit);
 $('#chatScrollBottom')?.addEventListener('click', () => scrollToBottom('#chatList', { smooth: true }));
 $('#chatList')?.addEventListener('scroll', updateChatScrollButton);
@@ -4260,11 +4186,6 @@ document.addEventListener('keydown', event => {
 
   if (event.key === 'Escape' && !$('#adminWhitelistSuggestions')?.hidden) {
     hideWhitelistSuggestions();
-    return;
-  }
-
-  if (event.key === 'Escape' && !$('#adminIgnoreChatSuggestions')?.hidden) {
-    hideIgnoreChatSuggestions();
     return;
   }
 

@@ -643,7 +643,7 @@
         <section class="panel child-ai-memory-panel">
           <div class="panel-head"><div><h2>Long-term Memory</h2><p>Safe facts, preferences, relationships and important events.</p></div></div>
           <div id="childAiMemories" class="child-ai-list"></div>
-          <details class="child-ai-privacy">
+          <details class="child-ai-privacy" data-collapse-key="child-ai-privacy">
             <summary><span>Privacy and deletion</span><i class="collapse-indicator" aria-hidden="true"></i></summary>
             <div class="child-ai-tools">
               <label class="auth-field"><span>Forget user ID</span><input id="childAiForgetUserId" placeholder="Minecraft username or Discord user ID"></label>
@@ -653,25 +653,25 @@
           </details>
         </section>
         <section class="child-ai-section-grid">
-          <details class="panel child-ai-disclosure">
+          <details class="panel child-ai-disclosure" data-collapse-key="child-ai-vocabulary">
             <summary><span><strong>Vocabulary</strong><small>Most frequently learned words.</small></span><i class="collapse-indicator" aria-hidden="true"></i></summary>
             <div class="child-ai-disclosure-body"><div id="childAiWords" class="child-ai-chip-list"></div></div>
           </details>
-          <details class="panel child-ai-disclosure">
+          <details class="panel child-ai-disclosure" data-collapse-key="child-ai-topics">
             <summary><span><strong>Topics</strong><small>Topics inferred from learned vocabulary.</small></span><i class="collapse-indicator" aria-hidden="true"></i></summary>
             <div class="child-ai-disclosure-body"><div id="childAiTopics" class="child-ai-chip-list"></div></div>
           </details>
         </section>
         <section class="child-ai-section-grid child-ai-diagnostics">
-          <details class="panel child-ai-disclosure">
+          <details class="panel child-ai-disclosure" data-collapse-key="child-ai-emotions">
             <summary><span><strong>Emotions</strong><small>Recent state changes.</small></span><i class="collapse-indicator" aria-hidden="true"></i></summary>
             <div class="child-ai-disclosure-body"><div id="childAiEmotions" class="child-ai-list compact"></div></div>
           </details>
-          <details class="panel child-ai-disclosure">
+          <details class="panel child-ai-disclosure" data-collapse-key="child-ai-responses">
             <summary><span><strong>Recent Responses</strong><small>Accepted phrases and scores.</small></span><i class="collapse-indicator" aria-hidden="true"></i></summary>
             <div class="child-ai-disclosure-body"><div id="childAiResponses" class="child-ai-list compact"></div></div>
           </details>
-          <details class="panel child-ai-disclosure">
+          <details class="panel child-ai-disclosure" data-collapse-key="child-ai-rejections">
             <summary><span><strong>Rejected Generations</strong><small>Quality gate decisions.</small></span><i class="collapse-indicator" aria-hidden="true"></i></summary>
             <div class="child-ai-disclosure-body"><div id="childAiRejections" class="child-ai-list compact"></div></div>
           </details>
@@ -808,33 +808,6 @@
             </div>
           </section>
 
-          <section class="panel admin-picker-panel">
-            <div class="panel-head">
-              <div>
-                <h2>Chat Ignore</h2>
-                <p>Suppress or restore player chat forwarding.</p>
-              </div>
-            </div>
-            <div class="admin-control-grid">
-              <div class="auth-field admin-player-picker">
-                <label for="adminIgnoreChatPlayer">Choose player or enter the name</label>
-                <input
-                  id="adminIgnoreChatPlayer"
-                  name="minecraft_player_to_ignore"
-                  type="text"
-                  autocomplete="off"
-                  autocapitalize="none"
-                  spellcheck="false"
-                  data-lpignore="true"
-                  data-1p-ignore="true"
-                  data-form-type="other"
-                  placeholder="Minecraft player name"
-                >
-                <div id="adminIgnoreChatSuggestions" class="seen-suggestions admin-player-suggestions" hidden></div>
-              </div>
-              <button id="adminIgnoreChatButton" type="button" data-admin-control-action="ignore_chat">Ignore</button>
-            </div>
-          </section>
         </section>
 
         <section class="panel admin-log-panel">

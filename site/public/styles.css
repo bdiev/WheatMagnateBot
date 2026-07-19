@@ -4658,14 +4658,17 @@ body.search-focus-active #logoutButton {
 
 /* Growing Child admin follows the same restrained panel language as the rest of the dashboard. */
 #tab-child-ai.active {
-  grid-template-columns: minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   gap: 14px;
   align-items: start;
+  width: 100%;
 }
 
-#tab-child-ai .child-ai-overview,
-#tab-child-ai .child-ai-memory-panel {
-  grid-column: 1 / -1;
+#tab-child-ai > * {
+  flex: 0 0 auto;
+  width: 100%;
+  min-width: 0;
 }
 
 .child-ai-overview-grid {
@@ -4744,6 +4747,7 @@ body.search-focus-active #logoutButton {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
+  align-items: start;
 }
 
 .child-ai-section-grid.child-ai-diagnostics {
@@ -4752,6 +4756,9 @@ body.search-focus-active #logoutButton {
 
 .child-ai-disclosure {
   grid-column: auto;
+  width: 100%;
+  min-width: 0;
+  overflow-anchor: none;
 }
 
 .child-ai-disclosure > summary {
