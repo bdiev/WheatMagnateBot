@@ -25,6 +25,7 @@ const { NotificationService } = require('./notifications');
 const { newCorrelationId, recordOperationalEvent } = require('./operational-events');
 const { buildDailyObsidianReport, claimDailyReportDate, getDailyReportSlot } = require('./obsidian-daily-report');
 const { WebPushService } = require('./site/web-push');
+const { chatComponentToString } = require('./minecraft-chat-component');
 
 // Base64 utils for Node.js (btoa/atob polyfill)
 const b64encode = (str) => Buffer.from(String(str), 'utf8').toString('base64');
@@ -2087,32 +2088,6 @@ async function dropItemToNearestPlayer(item) {
 }
 
 
-
-// Function to convert Minecraft chat component to plain text
-function chatComponentToString(component) {
-  if (typeof component === 'string') return component;
-  if (!component || typeof component !== 'object') return '';
-
-  let text = component.text || '';
-
-  if (component.extra) {
-    for (const extra of component.extra) {
-      text += chatComponentToString(extra);
-    }
-  }
-  
-  // Handle translate components
-  if (component.translate) {
-    text += component.translate;
-    if (component.with) {
-      for (const w of component.with) {
-        text += ' ' + chatComponentToString(w);
-      }
-    }
-  }
-
-  return text;
-}
 
 function getOnlineWhitelistUsernames() {
   if (!bot || !bot.players) return [];
