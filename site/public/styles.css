@@ -3629,6 +3629,12 @@ body.search-focus-active #logoutButton {
   .push-quiet-hours { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
+@media (max-width: 480px) {
+  .push-quiet-hours { grid-template-columns: minmax(0, 1fr); }
+  .push-quiet-hours label,
+  .push-quiet-hours input { width: 100%; max-width: 100%; }
+}
+
 #tab-notifications button,
 #tab-notifications .ghost-button {
   border: 1px solid var(--line);
