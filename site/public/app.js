@@ -2889,7 +2889,7 @@ function renderObsidian(payload) {
   $('#farmDetails').innerHTML = `
     <div><span>Last 7 days</span><strong id="farmLast7Days">- blocks</strong></div>
     <div><span>Retired pickaxe blocks</span><strong id="farmRetiredPickaxeBlocks">-</strong></div>
-    <div><span>Supplies snapshot</span><strong>${formatDate(payload.supplies?.updatedAt)}</strong></div>
+    <div><span>Barrel last opened</span><strong>${formatDate(payload.supplies?.observedAt)}</strong></div>
     <div><span>Refill around</span><strong>${escapeHtml(estimateSupplyRefill(payload))}</strong></div>
   `;
   setRollingNumber('#farmLast7Days', farm.last7Days, { suffix: ' blocks' });

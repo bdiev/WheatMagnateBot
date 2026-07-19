@@ -3308,7 +3308,7 @@ async function saveObsidianSupplySnapshot(supplies) {
       VALUES (1, $1::jsonb, $2, NOW())
       ON CONFLICT (id)
       DO UPDATE SET supplies = EXCLUDED.supplies,
-                    observed_at = EXCLUDED.observed_at,
+                    observed_at = COALESCE(EXCLUDED.observed_at, obsidian_farm_supply_snapshot.observed_at),
                     updated_at = NOW()
     `, [
       JSON.stringify(supplies),
@@ -3316,10 +3316,11 @@ async function saveObsidianSupplySnapshot(supplies) {
     ]);
     await pool.query(`
       INSERT INTO obsidian_farm_supply_history (supplies, observed_at)
-      SELECT $1::jsonb, COALESCE($2::timestamptz, NOW())
-      WHERE NOT EXISTS (
+      SELECT $1::jsonb, $2::timestamptz
+      WHERE $2::timestamptz IS NOT NULL
+        AND NOT EXISTS (
         SELECT 1 FROM obsidian_farm_supply_history
-        WHERE observed_at > NOW() - INTERVAL '5 minutes'
+        WHERE observed_at = $2::timestamptz
       )
     `, [JSON.stringify(supplies), supplies.observedAt ? new Date(supplies.observedAt) : null]);
   } catch (err) {
