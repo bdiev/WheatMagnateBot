@@ -26,10 +26,9 @@ const state = {
   whitelistSearchTimer: null,
   chartTooltipTimer: null,
   chartTooltipPinned: false,
-  chartScrollRedrawFrame: null,
+  chartRedrawFrame: null,
+  chartScrollRedrawFrames: {},
   chartAnimations: {},
-  chartAnimationFrames: {},
-  chartAnimationDurations: {},
   chartHover: {},
   seenPlayers: [],
   whisperPlayers: [],
@@ -1056,8 +1055,15 @@ function clusteredChartAnnotations(annotations, chartData, paddingLeft, chartWid
     .sort((first, second) => first.at - second.at);
 
   const clusters = new Map();
+  const individualMarkers = [];
+  const showEveryOccurrence = new Set(['pickaxe', 'paused', 'resumed']);
   for (const marker of markers) {
-    const key = `${annotationKind(marker.annotation)}:${String(marker.annotation.title || '').trim().toLowerCase()}`;
+    const kind = annotationKind(marker.annotation);
+    if (showEveryOccurrence.has(kind)) {
+      individualMarkers.push({ x: marker.x, at: marker.at, annotation: marker.annotation, items: [marker] });
+      continue;
+    }
+    const key = `${kind}:${String(marker.annotation.title || '').trim().toLowerCase()}`;
     const existing = clusters.get(key);
     if (existing) {
       existing.items.push(marker);
@@ -1069,7 +1075,7 @@ function clusteredChartAnnotations(annotations, chartData, paddingLeft, chartWid
       clusters.set(key, { x: marker.x, at: marker.at, annotation: marker.annotation, items: [marker] });
     }
   }
-  return [...clusters.values()].sort((first, second) => first.at - second.at);
+  return [...clusters.values(), ...individualMarkers].sort((first, second) => first.at - second.at);
 }
 
 function compactRecentAnnotations(annotations, { limit = 10, groupWindowMs = 6 * 60 * 60_000 } = {}) {
@@ -1099,50 +1105,45 @@ function prepareChartCanvas(canvas, data, options = {}) {
   const minWidth = viewport ? viewport.clientWidth : canvas.getBoundingClientRect().width;
   const cssWidth = Math.max(minWidth || 320, (Array.isArray(data) ? data.length : 0) * pointWidth + 92);
   const cssHeight = Math.max(1, Math.floor(canvas.getBoundingClientRect().height || canvas.height || 260));
-  canvas.style.width = `${cssWidth}px`;
-  canvas.width = Math.floor(cssWidth * ratio);
-  canvas.height = Math.floor(cssHeight * ratio);
+  const pixelWidth = Math.floor(cssWidth * ratio);
+  const pixelHeight = Math.floor(cssHeight * ratio);
+  if (canvas.style.width !== `${cssWidth}px`) canvas.style.width = `${cssWidth}px`;
+  if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
+  if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
   const ctx = canvas.getContext('2d');
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
   ctx.clearRect(0, 0, cssWidth, cssHeight);
   const hasData = Array.isArray(data) && data.length > 0;
   if (hasData && viewport && viewport.clientWidth > 0 && !state.chartScrollInitialized[canvas.id]) {
-    requestAnimationFrame(() => {
-      viewport.scrollLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
-      scheduleChartViewportRedraw();
-    });
+    viewport.scrollLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
     state.chartScrollInitialized[canvas.id] = true;
   }
   return { ctx, width: cssWidth, height: cssHeight };
 }
 
-function getChartAnimationProgress(canvas, options = {}) {
-  if (!canvas) return 1;
-  const duration = options.animate ? options.duration || 360 : 0;
-  if (!duration) return 1;
-  const startedAt = state.chartAnimations[canvas.id] || performance.now();
-  const progress = Math.min(1, Math.max(0, (performance.now() - startedAt) / duration));
-  return 1 - Math.pow(1 - progress, 3);
-}
+function animateChart(chartId, duration = 220) {
+  const canvas = document.getElementById(chartId);
+  if (!canvas) return;
+  state.chartAnimations[chartId]?.cancel?.();
+  drawChartById(chartId);
+  const surface = canvas.closest('.chart-scroll') || canvas;
 
-function animateChart(chartId, duration = 360) {
-  state.chartAnimations[chartId] = performance.now();
-  state.chartAnimationDurations[chartId] = duration;
-  if (state.chartAnimationFrames[chartId]) cancelAnimationFrame(state.chartAnimationFrames[chartId]);
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || typeof surface.animate !== 'function') {
+    delete state.chartAnimations[chartId];
+    return;
+  }
 
-  const tick = () => {
-    redrawCharts({ animate: true });
-    if (performance.now() - state.chartAnimations[chartId] < duration) {
-      state.chartAnimationFrames[chartId] = requestAnimationFrame(tick);
-    } else {
-      delete state.chartAnimations[chartId];
-      delete state.chartAnimationDurations[chartId];
-      delete state.chartAnimationFrames[chartId];
-      redrawCharts();
-    }
-  };
-
-  state.chartAnimationFrames[chartId] = requestAnimationFrame(tick);
+  const animation = surface.animate(
+    [
+      { opacity: 0.48, transform: 'translateY(3px)' },
+      { opacity: 1, transform: 'translateY(0)' }
+    ],
+    { duration, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' }
+  );
+  state.chartAnimations[chartId] = animation;
+  animation.finished.catch(() => {}).finally(() => {
+    if (state.chartAnimations[chartId] === animation) delete state.chartAnimations[chartId];
+  });
 }
 
 function shortChartLabel(label, index, total) {
@@ -1169,12 +1170,16 @@ function renderStickyChartAxis(canvas, labels, padding, height) {
     viewport.prepend(axis);
   }
 
-  axis.style.height = `${height}px`;
+  if (axis.style.height !== `${height}px`) axis.style.height = `${height}px`;
   const chartHeight = height - padding.top - padding.bottom;
-  axis.innerHTML = labels.map((label, index) => {
+  const markup = labels.map((label, index) => {
     const y = padding.top + chartHeight - (chartHeight * index) / Math.max(1, labels.length - 1);
     return `<span style="top:${y}px">${escapeHtml(label)}</span>`;
   }).join('');
+  if (axis.dataset.markup !== markup) {
+    axis.innerHTML = markup;
+    axis.dataset.markup = markup;
+  }
 }
 
 function visibleChartValues(canvas, chartData, padding, chartWidth, mode = 'bar') {
@@ -1226,7 +1231,6 @@ function drawBarChart(canvas, data, options = {}) {
   const chartHeight = height - padding.top - padding.bottom;
   const values = visibleChartValues(canvas, chartData, padding, chartWidth, 'bar');
   const maxValue = Math.max(options.max || 0, ...values, 1);
-  const animationProgress = getChartAnimationProgress(canvas, options.animation);
   renderStickyChartAxis(
     canvas,
     Array.from({ length: 5 }, (_, index) => formatNumber(Math.round((maxValue * index) / 4))),
@@ -1271,7 +1275,7 @@ function drawBarChart(canvas, data, options = {}) {
     if (!Number.isFinite(value)) return;
     const slotX = padding.left + index * slotWidth;
     const x = slotX + (slotWidth - barWidth) / 2;
-    const barHeight = Math.max(1, (value / maxValue) * chartHeight * animationProgress);
+    const barHeight = Math.max(1, (value / maxValue) * chartHeight);
     const y = padding.top + chartHeight - barHeight;
     ctx.fillStyle = accent;
     ctx.fillRect(x, y, barWidth, barHeight);
@@ -1326,7 +1330,6 @@ function drawLineChart(canvas, data, options = {}) {
   const chartHeight = height - padding.top - padding.bottom;
   const numericValues = visibleChartValues(canvas, chartData, padding, chartWidth, 'line');
   const maxValue = Math.max(options.max || 0, ...numericValues, 1);
-  const animationProgress = getChartAnimationProgress(canvas, options.animation);
   renderStickyChartAxis(
     canvas,
     Array.from({ length: 5 }, (_, index) => formatTps((maxValue * index) / 4)),
@@ -1359,7 +1362,7 @@ function drawLineChart(canvas, data, options = {}) {
       const value = Number(item.value);
       if (!Number.isFinite(value)) return null;
       const x = padding.left + (chartWidth * index) / Math.max(1, chartData.length - 1);
-      const y = padding.top + chartHeight - (Math.min(maxValue, Math.max(0, value)) / maxValue) * chartHeight * animationProgress;
+      const y = padding.top + chartHeight - (Math.min(maxValue, Math.max(0, value)) / maxValue) * chartHeight;
       return {
         x,
         y,
@@ -1463,53 +1466,56 @@ function getChartRange(id) {
   return state.chartRanges[id] || 'hours';
 }
 
-function redrawCharts({ animate = false } = {}) {
-  requestAnimationFrame(() => {
-    const chatRange = getChartRange('chatHourlyChart');
-    const obsidianRange = getChartRange('obsidianDailyChart');
-    const tpsRange = getChartRange('tpsHourlyChart');
-    const unwhitelistedRange = getChartRange('unwhitelistedHourlyChart');
-    drawBarChart($('#chatHourlyChart'), aggregateSeries(state.charts.chatHourly, chatRange), {
-      animation: {
-        animate: animate && Boolean(state.chartAnimations.chatHourlyChart),
-        duration: state.chartAnimationDurations.chatHourlyChart
-      },
-      tooltip: item => `${item.label}: ${formatNumber(item.value)} messages`
-    });
-    const obsidianData = obsidianRange === 'hours'
-      ? state.charts.obsidianHourly.map(localizedChartItem)
-      : aggregateSeries(state.charts.obsidianDaily, obsidianRange);
-    drawBarChart($('#obsidianDailyChart'), obsidianData, {
-      animation: {
-        animate: animate && Boolean(state.chartAnimations.obsidianDailyChart),
-        duration: state.chartAnimationDurations.obsidianDailyChart
-      },
-      tooltip: item => `${item.label}: ${formatNumber(item.value)} blocks`,
-      annotations: obsidianRange === 'hours' ? state.charts.obsidianAnnotations || [] : []
-    });
-    drawLineChart($('#tpsHourlyChart'), aggregateSeries(state.charts.tpsHourly, tpsRange, 'avg'), {
-      animation: {
-        animate: animate && Boolean(state.chartAnimations.tpsHourlyChart),
-        duration: state.chartAnimationDurations.tpsHourlyChart
-      },
-      max: 20,
-      tooltip: item => `${item.label}: ${formatTps(item.value)} TPS`
-    });
-    drawBarChart($('#unwhitelistedHourlyChart'), aggregateSeries(state.charts.unwhitelistedHourly, unwhitelistedRange), {
-      animation: {
-        animate: animate && Boolean(state.chartAnimations.unwhitelistedHourlyChart),
-        duration: state.chartAnimationDurations.unwhitelistedHourlyChart
-      },
-      tooltip: item => `${item.label}: ${formatNumber(item.value)} players`
-    });
+function drawChartById(chartId) {
+  const range = getChartRange(chartId);
+  switch (chartId) {
+    case 'chatHourlyChart':
+      drawBarChart($('#chatHourlyChart'), aggregateSeries(state.charts.chatHourly, range), {
+        tooltip: item => `${item.label}: ${formatNumber(item.value)} messages`
+      });
+      break;
+    case 'obsidianDailyChart': {
+      const obsidianData = range === 'hours'
+        ? state.charts.obsidianHourly.map(localizedChartItem)
+        : aggregateSeries(state.charts.obsidianDaily, range);
+      drawBarChart($('#obsidianDailyChart'), obsidianData, {
+        tooltip: item => `${item.label}: ${formatNumber(item.value)} blocks`,
+        annotations: range === 'hours' ? state.charts.obsidianAnnotations || [] : []
+      });
+      break;
+    }
+    case 'tpsHourlyChart':
+      drawLineChart($('#tpsHourlyChart'), aggregateSeries(state.charts.tpsHourly, range, 'avg'), {
+        max: 20,
+        tooltip: item => `${item.label}: ${formatTps(item.value)} TPS`
+      });
+      break;
+    case 'unwhitelistedHourlyChart':
+      drawBarChart($('#unwhitelistedHourlyChart'), aggregateSeries(state.charts.unwhitelistedHourly, range), {
+        tooltip: item => `${item.label}: ${formatNumber(item.value)} players`
+      });
+      break;
+    default:
+      break;
+  }
+}
+
+function redrawCharts() {
+  if (state.chartRedrawFrame) cancelAnimationFrame(state.chartRedrawFrame);
+  state.chartRedrawFrame = requestAnimationFrame(() => {
+    state.chartRedrawFrame = null;
+    ['chatHourlyChart', 'obsidianDailyChart', 'tpsHourlyChart', 'unwhitelistedHourlyChart'].forEach(drawChartById);
   });
 }
 
-function scheduleChartViewportRedraw() {
-  if (state.chartScrollRedrawFrame) cancelAnimationFrame(state.chartScrollRedrawFrame);
-  state.chartScrollRedrawFrame = requestAnimationFrame(() => {
-    state.chartScrollRedrawFrame = null;
-    redrawCharts();
+function scheduleChartViewportRedraw(target) {
+  const viewport = target?.currentTarget || target;
+  const chartId = viewport?.querySelector?.('canvas.chart')?.id;
+  if (!chartId) return;
+  if (state.chartScrollRedrawFrames[chartId]) cancelAnimationFrame(state.chartScrollRedrawFrames[chartId]);
+  state.chartScrollRedrawFrames[chartId] = requestAnimationFrame(() => {
+    delete state.chartScrollRedrawFrames[chartId];
+    drawChartById(chartId);
   });
 }
 
