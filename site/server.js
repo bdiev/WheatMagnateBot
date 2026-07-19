@@ -7,6 +7,7 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { Pool } = require('pg');
 const { runMigrations } = require('./migrations');
+const { SseHub, handleSseRequest } = require('./sse');
 require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 
 const PORT = Number(process.env.SITE_PORT || process.env.PORT) || 3080;
@@ -22,6 +23,14 @@ const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 const pool = DATABASE_URL
   ? new Pool({ connectionString: DATABASE_URL })
   : null;
+const sseHub = new SseHub({
+  maxConnectionsPerUser: Number(process.env.SSE_MAX_CONNECTIONS_PER_USER) || 3,
+  heartbeatMs: Number(process.env.SSE_HEARTBEAT_MS) || 25_000
+});
+let databaseEventTimer = null;
+let databaseEventPollRunning = false;
+let databaseEventState = null;
+let lastDatabaseEventErrorAt = 0;
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -2674,12 +2683,112 @@ function serveStatic(req, res, url) {
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  if (url.pathname === '/api/events' && req.method === 'GET') {
+    handleSseRequest({ req, res, getCurrentUser, hub: sseHub }).catch(err => {
+      if (!res.headersSent) sendError(res, err.statusCode || 500, err.message || 'SSE connection failed.');
+      else if (!res.writableEnded) res.end();
+    });
+    return;
+  }
   if (url.pathname.startsWith('/api/')) {
     handleApi(req, res, url);
     return;
   }
   serveStatic(req, res, url);
 });
+
+function signature(value) {
+  if (value == null) return '';
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : String(value);
+}
+
+async function pollDatabaseEvents() {
+  if (!pool || databaseEventPollRunning) return;
+  databaseEventPollRunning = true;
+  try {
+    const [markersResult, playersResult] = await Promise.all([
+      pool.query(`
+        SELECT
+          (SELECT observed_at FROM bot_status_snapshots WHERE id=1) AS bot_status_at,
+          (SELECT COALESCE(MAX(id),0) FROM game_chat_messages) AS chat_id,
+          (SELECT COALESCE(MAX(id),0) FROM site_whisper_messages) AS whisper_id,
+          GREATEST(
+            COALESCE((SELECT updated_at FROM obsidian_farm_state WHERE id=1), '-infinity'::timestamptz),
+            COALESCE((SELECT updated_at FROM obsidian_farm_supply_snapshot WHERE id=1), '-infinity'::timestamptz)
+          ) AS farm_status_at,
+          (SELECT COALESCE(MAX(id),0) FROM notifications) AS notification_id,
+          GREATEST(
+            COALESCE((SELECT MAX(updated_at) FROM admin_settings), '-infinity'::timestamptz),
+            COALESCE((SELECT MAX(COALESCE(finished_at,started_at,created_at)) FROM bot_commands), '-infinity'::timestamptz),
+            COALESCE((SELECT MAX(updated_at) FROM notification_rules), '-infinity'::timestamptz)
+          ) AS admin_control_at
+      `),
+      pool.query(`SELECT username FROM player_activity WHERE is_online=TRUE ORDER BY LOWER(username)`)
+    ]);
+    lastDatabaseEventErrorAt = 0;
+    const row = markersResult.rows[0] || {};
+    const next = {
+      botStatusAt: signature(row.bot_status_at), chatId: String(row.chat_id || 0),
+      whisperId: String(row.whisper_id || 0), farmStatusAt: signature(row.farm_status_at),
+      notificationId: String(row.notification_id || 0), adminControlAt: signature(row.admin_control_at),
+      players: new Map(playersResult.rows.map(player => [player.username.toLowerCase(), player.username]))
+    };
+    if (!databaseEventState) {
+      databaseEventState = next;
+      return;
+    }
+    const previous = databaseEventState;
+    databaseEventState = next;
+
+    if (next.botStatusAt !== previous.botStatusAt) {
+      sseHub.publish('bot_status_updated', { observedAt: next.botStatusAt });
+      sseHub.publish('admin_control_updated', { source: 'bot_status', updatedAt: next.botStatusAt }, { roles: ['admin'] });
+    }
+    for (const [key, username] of next.players) {
+      if (!previous.players.has(key)) sseHub.publish('player_joined', { username });
+    }
+    for (const [key, username] of previous.players) {
+      if (!next.players.has(key)) sseHub.publish('player_left', { username });
+    }
+    if (next.chatId !== previous.chatId) {
+      const messages = await pool.query(`SELECT id::text, created_at FROM game_chat_messages WHERE id>$1 ORDER BY id ASC LIMIT 100`, [previous.chatId]);
+      for (const message of messages.rows) sseHub.publish('chat_message', { id: message.id, createdAt: message.created_at });
+    }
+    if (next.whisperId !== previous.whisperId) {
+      const messages = await pool.query(`SELECT id::text, site_username, player_username, direction, created_at FROM site_whisper_messages WHERE id>$1 ORDER BY id ASC LIMIT 100`, [previous.whisperId]);
+      for (const message of messages.rows) {
+        sseHub.publish('whisper_message', {
+          id: message.id, playerUsername: message.player_username,
+          direction: message.direction, createdAt: message.created_at
+        }, { usernames: [message.site_username] });
+      }
+    }
+    if (next.farmStatusAt !== previous.farmStatusAt) {
+      sseHub.publish('farm_status_updated', { updatedAt: next.farmStatusAt });
+    }
+    if (next.notificationId !== previous.notificationId) {
+      sseHub.publish('notification_created', { id: next.notificationId }, { roles: ['admin'] });
+    }
+    if (next.adminControlAt !== previous.adminControlAt) {
+      sseHub.publish('admin_control_updated', { source: 'admin', updatedAt: next.adminControlAt }, { roles: ['admin'] });
+    }
+  } catch (err) {
+    if (!lastDatabaseEventErrorAt || Date.now() - lastDatabaseEventErrorAt >= 30_000) {
+      lastDatabaseEventErrorAt = Date.now();
+      console.error('[SSE] Database event poll failed:', err.message);
+    }
+  } finally {
+    databaseEventPollRunning = false;
+  }
+}
+
+function startDatabaseEventPoller() {
+  if (!pool || databaseEventTimer) return;
+  pollDatabaseEvents();
+  databaseEventTimer = setInterval(pollDatabaseEvents, Number(process.env.SSE_DATABASE_POLL_MS) || 1_000);
+  databaseEventTimer.unref?.();
+}
 
 ensureOptionalTables()
   .catch(err => {
@@ -2694,11 +2803,22 @@ ensureOptionalTables()
         category: 'site',
         message: `Site server started on port ${PORT}.`
       });
+      sseHub.start();
+      startDatabaseEventPoller();
     });
   });
 
-process.on('SIGINT', async () => {
-  server.close();
+let shuttingDown = false;
+async function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  if (databaseEventTimer) clearInterval(databaseEventTimer);
+  databaseEventTimer = null;
+  sseHub.stop();
+  await new Promise(resolve => server.close(resolve));
   if (pool) await pool.end().catch(() => {});
   process.exit(0);
-});
+}
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);

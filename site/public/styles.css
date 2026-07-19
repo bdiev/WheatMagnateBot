@@ -3473,6 +3473,32 @@ body.search-focus-active #logoutButton {
   font-weight: 900;
 }
 
+.realtime-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--button-radius);
+  color: var(--muted);
+  background: var(--panel-soft);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.realtime-status > span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warn);
+  animation: realtime-status-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes realtime-status-pulse {
+  50% { opacity: 0.35; }
+}
+
 #tab-notifications.tab-panel.active {
   grid-template-columns: 1fr;
 }

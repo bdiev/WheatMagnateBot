@@ -8,6 +8,13 @@ const state = {
   timer: null,
   liveChatTimer: null,
   liveChatLoading: false,
+  fullSyncLoading: false,
+  eventSource: null,
+  sseWasConnected: false,
+  sseNeedsFullSync: false,
+  realtimeRefreshTimers: {},
+  pollingMode: null,
+  lastRealtimeChartRefreshAt: 0,
   activeTab: 'chat',
   charts: {},
   chartMeta: {},
@@ -470,6 +477,8 @@ function applyCurrentUser(user) {
   const logoutButton = $('#logoutButton');
   if (logoutButton) logoutButton.hidden = !state.currentUser;
   if (!isAdmin && ['admin', 'notifications'].includes(state.activeTab)) setActiveTab('chat');
+  if (state.currentUser) startRealtimeUpdates();
+  else stopRealtimeUpdates();
 }
 
 function setNavMenuOpen(open) {
@@ -3511,8 +3520,159 @@ async function saveNotificationRule(event) {
   }
 }
 
-async function loadAll() {
+function setRealtimeStatus(mode) {
+  const indicator = $('#realtimeStatus');
+  if (!indicator) return;
+  if (mode === 'connected') {
+    indicator.hidden = true;
+    return;
+  }
+  indicator.hidden = false;
+  const label = mode === 'unsupported' ? 'Live updates unavailable · polling' : 'Reconnecting live updates…';
+  indicator.innerHTML = `<span aria-hidden="true"></span>${label}`;
+}
+
+function clearDashboardPolling() {
+  clearInterval(state.timer);
+  clearInterval(state.liveChatTimer);
+  state.timer = null;
+  state.liveChatTimer = null;
+  state.pollingMode = null;
+}
+
+function startSlowPolling() {
+  if (state.pollingMode === 'slow') return;
+  clearDashboardPolling();
+  state.pollingMode = 'slow';
+  state.timer = setInterval(loadAll, 60_000);
+}
+
+function startFallbackPolling() {
+  if (state.pollingMode === 'fallback') return;
+  clearDashboardPolling();
+  state.pollingMode = 'fallback';
+  state.timer = setInterval(loadAll, 15_000);
+  state.liveChatTimer = setInterval(loadLiveChats, 5_000);
+}
+
+function queueRealtimeRefresh(key, callback, delay = 180) {
+  clearTimeout(state.realtimeRefreshTimers[key]);
+  state.realtimeRefreshTimers[key] = setTimeout(async () => {
+    delete state.realtimeRefreshTimers[key];
+    if (!state.currentUser) return;
+    try { await callback(); } catch { /* slow polling remains the consistency fallback */ }
+  }, delay);
+}
+
+async function refreshChatFromEvent() {
+  if (state.liveChatLoading) return;
+  state.liveChatLoading = true;
+  try {
+    renderChat(await fetchJson('/api/chat?limit=160'));
+    if (state.playerProfileUsername && !$('#playerProfileOverlay')?.hidden) {
+      await loadPlayerProfile(state.playerProfileUsername);
+    }
+  } finally {
+    state.liveChatLoading = false;
+  }
+}
+
+async function refreshBotFromEvent() {
+  renderBotStats(await fetchJson('/api/bot-stats'));
+}
+
+async function refreshFarmFromEvent() {
+  renderObsidian(await fetchJson('/api/obsidian'));
+}
+
+async function refreshPlayersFromEvent() {
+  renderServerStats(await fetchJson('/api/server-stats'));
+}
+
+function scheduleRealtimeChartRefresh() {
+  const now = Date.now();
+  if (now - state.lastRealtimeChartRefreshAt < 15_000) return;
+  state.lastRealtimeChartRefreshAt = now;
+  queueRealtimeRefresh('charts', refreshPlayersFromEvent, 500);
+}
+
+async function refreshWhispersFromEvent() {
+  await loadWhisperOnlinePlayers({ force: true });
+  if ($('#whisperPanel')?.classList.contains('open')) await loadWhisperDialog();
+}
+
+function handleRealtimeEvent(event) {
+  const type = event.type;
+  if (type === 'chat_message') queueRealtimeRefresh('chat', refreshChatFromEvent);
+  else if (type === 'whisper_message') queueRealtimeRefresh('whisper', refreshWhispersFromEvent);
+  else if (type === 'bot_status_updated') {
+    queueRealtimeRefresh('bot', refreshBotFromEvent);
+    scheduleRealtimeChartRefresh();
+  }
+  else if (type === 'farm_status_updated') queueRealtimeRefresh('farm', refreshFarmFromEvent);
+  else if (type === 'player_joined' || type === 'player_left') queueRealtimeRefresh('players', refreshPlayersFromEvent);
+  else if (type === 'notification_created' && state.currentUser?.role === 'admin') {
+    queueRealtimeRefresh('notifications', async () => {
+      await loadNotificationCount();
+      if (state.activeTab === 'notifications') await loadNotifications();
+    });
+  } else if (type === 'admin_control_updated' && state.currentUser?.role === 'admin') {
+    queueRealtimeRefresh('admin-control', async () => {
+      await loadAdminControlState();
+      if (state.activeTab === 'admin') await loadAdminSystemLogs();
+    }, 300);
+  }
+}
+
+function stopRealtimeUpdates() {
+  if (state.eventSource) state.eventSource.close();
+  state.eventSource = null;
+  clearDashboardPolling();
+  for (const timer of Object.values(state.realtimeRefreshTimers)) clearTimeout(timer);
+  state.realtimeRefreshTimers = {};
+  state.sseWasConnected = false;
+  state.sseNeedsFullSync = false;
+  setRealtimeStatus('connected');
+}
+
+function startRealtimeUpdates() {
   if (!state.currentUser) return;
+  if (state.eventSource) state.eventSource.close();
+  if (typeof EventSource !== 'function') {
+    state.eventSource = null;
+    setRealtimeStatus('unsupported');
+    startFallbackPolling();
+    return;
+  }
+
+  setRealtimeStatus('connecting');
+  const source = new EventSource('/api/events');
+  state.eventSource = source;
+  const eventTypes = [
+    'bot_status_updated', 'player_joined', 'player_left', 'chat_message',
+    'whisper_message', 'farm_status_updated', 'notification_created', 'admin_control_updated'
+  ];
+  eventTypes.forEach(type => source.addEventListener(type, handleRealtimeEvent));
+  source.onopen = () => {
+    if (state.eventSource !== source) return;
+    const needsFullSync = state.sseNeedsFullSync;
+    state.sseWasConnected = true;
+    state.sseNeedsFullSync = false;
+    setRealtimeStatus('connected');
+    startSlowPolling();
+    if (needsFullSync) loadAll();
+  };
+  source.onerror = () => {
+    if (state.eventSource !== source) return;
+    state.sseNeedsFullSync = true;
+    setRealtimeStatus('reconnecting');
+    startFallbackPolling();
+  };
+}
+
+async function loadAll() {
+  if (!state.currentUser || state.fullSyncLoading) return;
+  state.fullSyncLoading = true;
   try {
     const [chat, botStats, obsidian, serverStats] = await Promise.all([
       ensureItemIcons(),
@@ -3539,6 +3699,8 @@ async function loadAll() {
     setBanner('');
   } catch (err) {
     setBanner(`Could not load dashboard data: ${err.message}`);
+  } finally {
+    state.fullSyncLoading = false;
   }
 }
 
@@ -3577,11 +3739,6 @@ async function loadLiveChats() {
   } finally {
     state.liveChatLoading = false;
   }
-}
-
-function startLiveChatRefresh() {
-  clearInterval(state.liveChatTimer);
-  state.liveChatTimer = setInterval(loadLiveChats, 1000);
 }
 
 applyTheme(localStorage.getItem('wm-theme') || 'light');
@@ -3767,5 +3924,3 @@ $('#playerProfileOverlay').addEventListener('click', event => {
 updateNavLabel('chat');
 initLoopingCarousels();
 initAuth();
-state.timer = setInterval(loadAll, 5000);
-startLiveChatRefresh();

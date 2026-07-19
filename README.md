@@ -48,6 +48,7 @@ MINECRAFT_USERNAME=
 MINECRAFT_AUTH=microsoft
 SITE_PORT=3080
 NOTIFICATION_DISCORD_CHANNEL_ID=
+SSE_MAX_CONNECTIONS_PER_USER=3
 ```
 
 `NOTIFICATION_DISCORD_CHANNEL_ID` is optional; when omitted, notification delivery uses `DISCORD_CHANNEL_ID` for backward compatibility. Notification rules are managed by an administrator on the **Notifications** dashboard page. Database schema changes in `database/migrations/` are applied automatically by the bot and site at startup.
@@ -59,3 +60,4 @@ NOTIFICATION_DISCORD_CHANNEL_ID=
 - The web dashboard reads the same root `.env`.
 - Admin-only dashboard controls are hidden from non-admin users.
 - Active notification problems remain deduplicated by event and resource key. Repeated observations increment the occurrence count, while channel delivery follows the configured cooldown. Recovery creates a separate resolved notification.
+- Dashboard updates use authenticated Server-Sent Events with a slow polling fallback. The event protocol is documented in [`site/SSE_PROTOCOL.md`](site/SSE_PROTOCOL.md).
