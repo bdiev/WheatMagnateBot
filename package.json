@@ -4,7 +4,7 @@
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js",
-    "test": "node features/growingChild/smoke_test.js && node features/growingChild/deterministic_test.js && node tests/notification-service.test.js && node tests/obsidian-daily-report.test.js && node site/tests/security.test.js && node site/tests/web-push.test.js && node site/tests/incident-timeline.test.js && node site/tests/sse.test.js && node site/tests/obsidian-analytics.test.js"
+    "test": "node features/growingChild/smoke_test.js && node features/growingChild/deterministic_test.js && node tests/notification-service.test.js && node tests/obsidian-daily-report.test.js && node tests/whisper-claim.test.js && node site/tests/security.test.js && node site/tests/web-push.test.js && node site/tests/incident-timeline.test.js && node site/tests/sse.test.js && node site/tests/obsidian-analytics.test.js"
   },
   "engines": {
     "node": ">=22.13.0"

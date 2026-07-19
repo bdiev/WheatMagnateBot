@@ -3551,6 +3551,11 @@ body.search-focus-active #logoutButton {
   animation: realtime-status-pulse 1.4s ease-in-out infinite;
 }
 
+.realtime-status.polling > span {
+  background: var(--muted);
+  animation: none;
+}
+
 @keyframes realtime-status-pulse {
   50% { opacity: 0.35; }
 }

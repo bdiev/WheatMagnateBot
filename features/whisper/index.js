@@ -254,6 +254,43 @@ function createWhisperFeature({
     }
   }
 
+  async function removeWhisperClaimPrompt(mcUsername) {
+    const mcKey = String(mcUsername || '').toLowerCase();
+    const pending = state.pendingWhisperClaims.get(mcKey);
+    let shouldClear = false;
+    try {
+      const channel = await discordClient.channels.fetch(discordChannelId);
+      if (!channel?.isTextBased()) return false;
+      if (pending) {
+        const message = await channel.messages.fetch(pending.messageId);
+        await message.delete();
+        shouldClear = true;
+        return true;
+      }
+
+      const recent = await channel.messages.fetch({ limit: 100 });
+      const matches = [...recent.values()].filter(message => {
+        if (discordClient.user?.id && message.author?.id !== discordClient.user.id) return false;
+        const embed = message.embeds?.[0];
+        if (embed?.title !== 'New whisper from Minecraft') return false;
+        const description = String(embed.description || '');
+        const usernameMatch = description.match(/New \/msg from \*\*([^*]+)\*\*/i);
+        return String(usernameMatch?.[1] || '').toLowerCase() === mcKey;
+      });
+      await Promise.all(matches.map(message => message.delete()));
+      return matches.length > 0;
+    } catch (err) {
+      if (err?.code === 10008 || err?.status === 404 || String(err?.message || '').includes('Unknown Message')) {
+        shouldClear = true;
+        return true;
+      }
+      console.error('[Whisper] Failed to remove claim prompt:', err.message);
+      return false;
+    } finally {
+      if (shouldClear) state.pendingWhisperClaims.delete(mcKey);
+    }
+  }
+
   function buildDeleteDialogComponents(channelId) {
     return [
       new ActionRowBuilder().addComponents(
@@ -365,6 +402,7 @@ function createWhisperFeature({
     cancelWhisperCleanup,
     scheduleWhisperCleanup,
     sendWhisperClaimPrompt,
+    removeWhisperClaimPrompt,
     buildDeleteDialogComponents,
     getOrCreateWhisperChannel
   };

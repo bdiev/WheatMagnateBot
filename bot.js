@@ -852,6 +852,7 @@ const {
   cancelWhisperCleanup,
   scheduleWhisperCleanup,
   sendWhisperClaimPrompt,
+  removeWhisperClaimPrompt,
   getOrCreateWhisperChannel
 } = createWhisperFeature({
   discordClient,
@@ -4691,6 +4692,14 @@ async function executeBotCommand(command) {
     return { message: outgoing };
   }
 
+  if (type === 'site_whisper_claim') {
+    const username = String(payload.username || '').replace(/[^A-Za-z0-9_]/g, '').trim().slice(0, 32);
+    if (!username) throw new Error('Whisper target is required.');
+    siteWhisperTargets.set(username.toLowerCase(), { timestamp: Date.now(), siteUsername: requestedBy || null });
+    await removeWhisperClaimPrompt(username);
+    return { username, claimed: true };
+  }
+
   if (type === 'site_whisper') {
     if (!bot || typeof bot.chat !== 'function') throw new Error('Minecraft bot is not ready.');
     const username = String(payload.username || '')
@@ -4711,6 +4720,7 @@ async function executeBotCommand(command) {
       timestamp: Date.now(),
       siteUsername: requestedBy || null
     });
+    await removeWhisperClaimPrompt(username);
     let sentChunks = 0;
     for (const chunk of splitMinecraftMessage(cleanMessage)) {
       if (!bot?.entity) throw new Error('Minecraft bot is not ready.');
@@ -7613,6 +7623,7 @@ function createBot() {
 
     debugLog(`[Whisper] Calling sendWhisperToDiscord...`);
     if (hasActiveSiteDialog) {
+      removeWhisperClaimPrompt(username).catch(() => {});
       siteWhisperTargets.set(siteWhisperKey, {
         timestamp: Date.now(),
         siteUsername

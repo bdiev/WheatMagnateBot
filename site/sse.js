@@ -32,6 +32,18 @@ class SseHub extends EventEmitter {
     return this.clientsByUser.get(String(userId))?.size || 0;
   }
 
+  pruneClosedForUser(userId) {
+    const clients = this.clientsByUser.get(String(userId));
+    if (!clients) return 0;
+    let removed = 0;
+    for (const client of [...clients]) {
+      if (client.closed || client.req.destroyed || client.res.destroyed || client.res.writableEnded) {
+        if (this.remove(client)) removed += 1;
+      }
+    }
+    return removed;
+  }
+
   get connectionCount() {
     let count = 0;
     for (const clients of this.clientsByUser.values()) count += clients.size;
@@ -40,6 +52,7 @@ class SseHub extends EventEmitter {
 
   connect(user, req, res) {
     const userId = String(user.id);
+    this.pruneClosedForUser(userId);
     if (this.countForUser(userId) >= this.maxConnectionsPerUser) return null;
     req.setTimeout?.(0);
     res.socket?.setKeepAlive?.(true);
@@ -48,6 +61,8 @@ class SseHub extends EventEmitter {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache, no-transform',
       Connection: 'keep-alive',
+      'Content-Encoding': 'identity',
+      'Keep-Alive': `timeout=${Math.max(30, Math.ceil(this.heartbeatMs / 1000) * 3)}`,
       'X-Accel-Buffering': 'no'
     });
     res.flushHeaders?.();
@@ -68,7 +83,8 @@ class SseHub extends EventEmitter {
       emitter.on(event, cleanup);
       client.listeners.push([emitter, event, cleanup]);
     }
-    res.write('retry: 3000\nevent: connected\ndata: {"ok":true}\n\n');
+    res.write(`: ${' '.repeat(2048)}\n\nretry: 3000\nevent: connected\ndata: {"ok":true}\n\n`);
+    res.flush?.();
     this.emit('connected', client);
     return client;
   }
@@ -99,8 +115,10 @@ class SseHub extends EventEmitter {
     for (const clients of this.clientsByUser.values()) {
       for (const client of [...clients]) {
         if (!this.canReceive(client, eventType, audience)) continue;
+        if (client.req.destroyed || client.res.destroyed || client.res.writableEnded) { this.remove(client); continue; }
         try {
           client.res.write(frame);
+          client.res.flush?.();
           delivered++;
         } catch {
           this.remove(client);
@@ -114,7 +132,8 @@ class SseHub extends EventEmitter {
     const frame = `: heartbeat ${Date.now()}\n\n`;
     for (const clients of this.clientsByUser.values()) {
       for (const client of [...clients]) {
-        try { client.res.write(frame); } catch { this.remove(client); }
+        if (client.req.destroyed || client.res.destroyed || client.res.writableEnded) { this.remove(client); continue; }
+        try { client.res.write(frame); client.res.flush?.(); } catch { this.remove(client); }
       }
     }
   }

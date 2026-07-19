@@ -1696,6 +1696,18 @@ async function getObsidianStats() {
   };
 }
 
+async function queueSiteWhisperClaim(currentUser, body) {
+  assertDatabase();
+  const username = cleanMinecraftUsername(body.username);
+  if (!username) {
+    const err = new Error('Player username is required.');
+    err.statusCode = 400;
+    throw err;
+  }
+  const queued = await queueBotCommand(currentUser, 'site_whisper_claim', { username });
+  return { ...queued, username, claimed: true };
+}
+
 async function recordSecurityEvent(req, message, { actor = null, reason = null, details = null } = {}) {
   await recordSystemLog({
     level: 'audit', category: 'security', actor, message,
@@ -2976,6 +2988,7 @@ async function handleApi(req, res, url) {
     if (url.pathname.startsWith('/api/admin/') && !MUTATING_METHODS.has(req.method) && !enforceRateLimit(req, res, 'admin_read', currentUser.username, { limit: 180, windowMs: 60_000 })) return;
     if (url.pathname === '/api/chat/send' && !enforceRateLimit(req, res, 'chat_send', currentUser.username, { limit: 15, windowMs: 60_000 })) return;
     if (url.pathname === '/api/whisper/send' && !enforceRateLimit(req, res, 'whisper_send', currentUser.username, { limit: 20, windowMs: 60_000 })) return;
+    if (url.pathname === '/api/whisper/claim' && !enforceRateLimit(req, res, 'whisper_claim', currentUser.username, { limit: 30, windowMs: 60_000 })) return;
     if (MUTATING_METHODS.has(req.method) && url.pathname.startsWith('/api/push/') &&
         !enforceRateLimit(req, res, 'push_settings', currentUser.username, { limit: 20, windowMs: 60_000 })) return;
     if (url.pathname === '/api/push/test' && req.method === 'POST' &&
@@ -3123,6 +3136,10 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/whisper/read' && req.method === 'POST') {
       sendJson(res, 200, await markWhisperRead(currentUser, await readJsonBody(req)));
+      return;
+    }
+    if (url.pathname === '/api/whisper/claim' && req.method === 'POST') {
+      sendJson(res, 202, await queueSiteWhisperClaim(currentUser, await readJsonBody(req)));
       return;
     }
     if (url.pathname === '/api/whisper/send' && req.method === 'POST') {

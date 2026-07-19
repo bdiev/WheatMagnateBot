@@ -14,6 +14,8 @@ const state = {
   sseNeedsFullSync: false,
   realtimeRefreshTimers: {},
   pollingMode: null,
+  realtimeStatusTimer: null,
+  realtimeHideTimer: null,
   lastRealtimeChartRefreshAt: 0,
   activeTab: 'chat',
   charts: {},
@@ -37,6 +39,7 @@ const state = {
   whisperLastSeenId: null,
   whisperDialogReadIds: {},
   whisperReadStateSynced: false,
+  whisperClaimedPlayers: new Set(),
   whisperUnreadCount: 0,
   playerProfileRegistrationAgeMode: false,
   playerProfileLastPayload: null,
@@ -504,7 +507,9 @@ function setAuthMode(mode) {
 }
 
 function applyCurrentUser(user) {
+  const previousUserId = state.currentUser?.id;
   state.currentUser = user || null;
+  if (String(previousUserId || '') !== String(state.currentUser?.id || '')) state.whisperClaimedPlayers = new Set();
   if (!state.currentUser) state.chatInitialScrollDone = false;
   loadWhisperLastSeenId();
   const isAdmin = state.currentUser?.role === 'admin';
@@ -1949,6 +1954,12 @@ async function openWhisperDialog(username) {
   if (dialog) dialog.hidden = false;
   updateWhisperDialogTitle();
   renderWhisperPlayers();
+  const claimKey = String(username || '').toLowerCase();
+  if (claimKey && !state.whisperClaimedPlayers.has(claimKey)) {
+    postJson('/api/whisper/claim', { username }).then(() => {
+      state.whisperClaimedPlayers.add(claimKey);
+    }).catch(err => setBanner(`Could not claim private dialog: ${err.message}`));
+  }
   await loadWhisperDialog();
   setTimeout(() => $('#whisperInput')?.focus(), 60);
 }
@@ -4084,13 +4095,29 @@ async function importChildAiState() {
 function setRealtimeStatus(mode) {
   const indicator = $('#realtimeStatus');
   if (!indicator) return;
+  if (mode !== 'reconnecting') clearTimeout(state.realtimeStatusTimer);
+  clearTimeout(state.realtimeHideTimer);
+  if (mode !== 'reconnecting') state.realtimeStatusTimer = null;
+  state.realtimeHideTimer = null;
   if (mode === 'connected') {
     indicator.hidden = true;
     return;
   }
   indicator.hidden = false;
-  const label = mode === 'unsupported' ? 'Live updates unavailable · polling' : 'Reconnecting live updates…';
+  const label = mode === 'unsupported' ? 'Live updates unavailable · polling'
+    : mode === 'polling' ? 'Live updates using polling' : 'Reconnecting live updates…';
   indicator.innerHTML = `<span aria-hidden="true"></span>${label}`;
+  indicator.classList.toggle('polling', mode === 'polling' || mode === 'unsupported');
+  if (mode === 'polling') state.realtimeHideTimer = setTimeout(() => { indicator.hidden = true; }, 4_000);
+}
+
+function schedulePollingStatus(source) {
+  if (state.realtimeStatusTimer) return;
+  state.realtimeStatusTimer = setTimeout(() => {
+    if (state.eventSource === source && source.readyState !== EventSource.OPEN && state.pollingMode === 'fallback') {
+      setRealtimeStatus('polling');
+    }
+  }, 5_000);
 }
 
 function clearDashboardPolling() {
@@ -4252,6 +4279,7 @@ function startRealtimeUpdates() {
     state.sseNeedsFullSync = true;
     setRealtimeStatus('reconnecting');
     startFallbackPolling();
+    schedulePollingStatus(source);
   };
 }
 

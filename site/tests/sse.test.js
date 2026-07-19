@@ -36,6 +36,9 @@ async function run() {
 
   const cleanupHub = new SseHub({ maxConnectionsPerUser: 2 });
   const first = await open(cleanupHub, { id: '1', username: 'alice', role: 'user' });
+  assert.equal(first.res.headers['Content-Encoding'], 'identity');
+  assert.equal(first.res.headers['X-Accel-Buffering'], 'no');
+  assert.ok(first.res.body.length > 2048, 'initial SSE frame must be large enough to pass mobile proxy buffering');
   const second = await open(cleanupHub, { id: '1', username: 'alice', role: 'user' });
   const rejected = await open(cleanupHub, { id: '1', username: 'alice', role: 'user' });
   assert.equal(first.result.accepted, true);
@@ -47,6 +50,14 @@ async function run() {
   assert.equal(first.res.listenerCount('close'), 0, 'response cleanup listener must be removed');
   second.res.emit('close');
   assert.equal(cleanupHub.connectionCount, 0);
+
+  const staleHub = new SseHub({ maxConnectionsPerUser: 1 });
+  const stale = await open(staleHub, { id: '2', username: 'mobile', role: 'user' });
+  stale.res.destroyed = true;
+  const replacement = await open(staleHub, { id: '2', username: 'mobile', role: 'user' });
+  assert.equal(replacement.result.accepted, true, 'a destroyed mobile connection must not consume the user limit');
+  assert.equal(staleHub.countForUser('2'), 1);
+  replacement.req.emit('close');
 
   const routeHub = new SseHub({ maxConnectionsPerUser: 10 });
   const admin = await open(routeHub, { id: '10', username: 'admin', role: 'admin' });
@@ -79,6 +90,7 @@ async function run() {
   routeHub.stop();
   cleanupHub.stop();
   leakHub.stop();
+  staleHub.stop();
   console.log('SSE tests passed.');
 }
 
