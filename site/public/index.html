@@ -320,6 +320,12 @@
           </article>
         </section>
 
+        <details class="collapsible-section" data-collapse-key="obsidian-analytics">
+          <summary>
+            <span><strong>Analytics &amp; Forecasts</strong><small id="obsidianAnalyticsCollapseMeta">Rate and forecast summary</small></span>
+            <span class="collapse-indicator" aria-hidden="true"></span>
+          </summary>
+          <div class="collapsible-content">
         <section class="analytics-grid obsidian-analytics-grid">
           <section class="panel">
             <div class="panel-head"><div><h2>Efficiency</h2><p>Production, tool use, and downtime over recent observations.</p></div></div>
@@ -338,8 +344,15 @@
             <div id="obsidianAnomalies" class="analytics-alerts"></div>
           </section>
         </section>
+          </div>
+        </details>
 
-        <section class="split-grid">
+        <details class="collapsible-section" data-collapse-key="obsidian-planning">
+          <summary>
+            <span><strong>Goals &amp; Reports</strong><small id="obsidianPlanningCollapseMeta">Goals, exports, and report settings</small></span>
+            <span class="collapse-indicator" aria-hidden="true"></span>
+          </summary>
+          <div class="collapsible-content collapsible-two-column">
           <section class="panel">
             <div class="panel-head"><div><h2>Production Goals</h2><p>Target totals and estimated completion dates.</p></div></div>
             <div id="obsidianGoals" class="detail-list"></div>
@@ -359,7 +372,8 @@
             </form>
             <div id="obsidianSettingsSummary" class="detail-list"></div>
           </section>
-        </section>
+          </div>
+        </details>
 
         <section id="obsidianAdminCarousel" class="farm-admin-grid admin-only" data-loop-carousel hidden>
           <section class="panel admin-command-panel">
@@ -459,7 +473,12 @@
           </section>
         </section>
 
-        <section class="split-grid supplies-grid">
+        <details class="collapsible-section" data-collapse-key="obsidian-supplies">
+          <summary>
+            <span><strong>Supplies</strong><small id="obsidianSuppliesCollapseMeta">Inventory and supply barrel snapshots</small></span>
+            <span class="collapse-indicator" aria-hidden="true"></span>
+          </summary>
+          <div class="collapsible-content collapsible-two-column supplies-grid">
           <section class="panel">
             <div class="panel-head">
               <div>
@@ -479,7 +498,8 @@
             </div>
             <div id="barrelSupplies" class="supply-list"></div>
           </section>
-        </section>
+          </div>
+        </details>
       </section>
 
       <section id="tab-server" class="tab-panel" data-panel="server">

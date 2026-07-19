@@ -2401,6 +2401,15 @@ function renderObsidian(payload) {
     : `${confidence.level.charAt(0).toUpperCase()}${confidence.level.slice(1)}`;
   const metric = (number, suffix = '') => number == null ? 'Not enough data' : `${formatNumber(number)}${suffix}`;
   const eta = estimate => estimate?.at ? formatDate(estimate.at) : 'Not enough data';
+  const anomalyCount = Array.isArray(analytics.anomalies) ? analytics.anomalies.length : 0;
+  $('#obsidianAnalyticsCollapseMeta').textContent = `${metric(efficiency.obsidianPerHour, '/h')} · ${metric(forecast.expected24h)} expected in 24h · ${anomalyCount} ${anomalyCount === 1 ? 'anomaly' : 'anomalies'}`;
+  const activeGoalCount = (payload.goals || []).filter(goal => goal.active).length;
+  $('#obsidianPlanningCollapseMeta').textContent = `${activeGoalCount} active ${activeGoalCount === 1 ? 'goal' : 'goals'} · Discord report ${payload.settings?.dailyReportEnabled ? `at ${payload.settings.dailyReportHour}:00` : 'disabled'}`;
+  const availablePickaxes = usablePickaxeCount(payload.supplies?.inventory, payload.supplies?.barrel);
+  const availableFood = foodItemCount(payload.supplies?.inventory, payload.supplies?.barrel);
+  $('#obsidianSuppliesCollapseMeta').textContent = payload.supplies?.hasSnapshot
+    ? `${formatNumber(availablePickaxes)} usable pickaxes · ${formatNumber(availableFood)} food items · updated ${formatDate(payload.supplies.updatedAt)}`
+    : 'No supply snapshot available';
   $('#obsidianEfficiency').innerHTML = `
     <div><span>Obsidian per hour</span><strong>${metric(efficiency.obsidianPerHour, '/h')}</strong></div>
     <div><span>Per pickaxe</span><strong>${metric(efficiency.obsidianPerPickaxe)}</strong></div>
@@ -2462,6 +2471,16 @@ async function saveObsidianAnalyticsSettings(event) {
     const payload = await postJson('/api/obsidian', { action: 'settings', timezone: $('#obsidianTimezone').value, dailyReportHour: Number($('#obsidianReportHour').value), dailyReportEnabled: $('#obsidianReportEnabled').checked });
     renderObsidian(payload); setBanner('Obsidian analytics settings saved.');
   } catch (err) { setBanner(`Could not save settings: ${err.message}`); }
+}
+
+function initializeCollapsibleSections() {
+  $$('[data-collapse-key]').forEach(section => {
+    const storageKey = `wm-collapse-${section.dataset.collapseKey}`;
+    section.open = localStorage.getItem(storageKey) === 'open';
+    section.addEventListener('toggle', () => {
+      localStorage.setItem(storageKey, section.open ? 'open' : 'closed');
+    });
+  });
 }
 
 async function changeObsidianGoalState(event) {
@@ -3847,6 +3866,7 @@ async function loadLiveChats() {
 }
 
 applyTheme(localStorage.getItem('wm-theme') || 'light');
+initializeCollapsibleSections();
 setAuthMode('login');
 $$('.tab-button').forEach(button => {
   button.addEventListener('click', () => setActiveTab(button.dataset.tab));
