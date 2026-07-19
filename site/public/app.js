@@ -1021,6 +1021,7 @@ function getCssColor(name) {
 
 function annotationKind(annotation = {}) {
   const eventType = String(annotation.eventType || '').toLowerCase();
+  const title = String(annotation.title || '').trim().toLowerCase();
   if (eventType === 'bot_reconnected') return 'connected';
   if (eventType === 'bot_disconnected') return 'disconnected';
   if (eventType === 'farm_resumed' || eventType === 'resume') return 'resumed';
@@ -1028,6 +1029,10 @@ function annotationKind(annotation = {}) {
   if (eventType === 'pause') return 'paused';
   if (eventType === 'pickaxe_changed') return 'pickaxe';
   if (eventType === 'player_detected') return 'player';
+  if (eventType === 'settings_changed' && title === 'analytics settings changed') return 'analytics-settings';
+  if (eventType === 'settings_changed' && title === 'production goal deleted') return 'goal-deleted';
+  if (eventType === 'settings_changed' && title === 'production goal changed') return 'goal-changed';
+  if (eventType === 'settings_changed' && title === 'production goal state changed') return 'goal-state';
   if (eventType === 'settings_changed') return 'settings';
   if (eventType === 'goal_reached') return 'goal';
   return 'default';

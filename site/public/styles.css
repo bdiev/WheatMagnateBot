@@ -17,6 +17,10 @@
   --annotation-pickaxe: #8b67c8;
   --annotation-player: #d64f78;
   --annotation-settings: #4587c7;
+  --annotation-analytics-settings: #087f9e;
+  --annotation-goal-deleted: #b33cac;
+  --annotation-goal-changed: #5265c7;
+  --annotation-goal-state: #718c24;
   --annotation-goal: #b99218;
   --annotation-default: #7b8797;
   --shadow: 0 14px 40px rgba(36, 59, 26, 0.09);
@@ -63,6 +67,10 @@
   --annotation-pickaxe: #b894eb;
   --annotation-player: #f2769c;
   --annotation-settings: #67a8e8;
+  --annotation-analytics-settings: #48c6e8;
+  --annotation-goal-deleted: #ea72df;
+  --annotation-goal-changed: #91a0ff;
+  --annotation-goal-state: #acd957;
   --annotation-goal: #dbc151;
   --annotation-default: #9aa4b2;
   --shadow: 0 14px 40px rgba(0, 0, 0, 0.24);
@@ -3567,6 +3575,10 @@ body.search-focus-active #logoutButton {
 .chart-annotations .annotation-pickaxe { --annotation-color: var(--annotation-pickaxe); }
 .chart-annotations .annotation-player { --annotation-color: var(--annotation-player); }
 .chart-annotations .annotation-settings { --annotation-color: var(--annotation-settings); }
+.chart-annotations .annotation-analytics-settings { --annotation-color: var(--annotation-analytics-settings); }
+.chart-annotations .annotation-goal-deleted { --annotation-color: var(--annotation-goal-deleted); }
+.chart-annotations .annotation-goal-changed { --annotation-color: var(--annotation-goal-changed); }
+.chart-annotations .annotation-goal-state { --annotation-color: var(--annotation-goal-state); }
 .chart-annotations .annotation-goal { --annotation-color: var(--annotation-goal); }
 .inline-form, .settings-form { display: grid; gap: 10px; margin: 0; padding: 14px; }
 .inline-form { grid-template-columns: minmax(0, 1fr) minmax(160px, .7fr) auto; align-items: end; }
