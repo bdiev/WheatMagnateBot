@@ -2402,6 +2402,7 @@ async function getAdminControlState(currentUser) {
 }
 
 async function getNotifications(currentUser, url) {
+  assertAdminUser(currentUser);
   const status = String(url.searchParams.get('status') || 'all');
   const severity = String(url.searchParams.get('severity') || 'all');
   const eventType = String(url.searchParams.get('eventType') || 'all');
@@ -2435,6 +2436,7 @@ async function getNotifications(currentUser, url) {
 }
 
 async function markNotificationsRead(currentUser, body) {
+  assertAdminUser(currentUser);
   const ids = Array.isArray(body.ids) ? body.ids.map(value => Number(value)).filter(Number.isSafeInteger) : [];
   if (body.all === true) {
     await pool.query('UPDATE notifications SET read_at=COALESCE(read_at,NOW()), read_by=COALESCE(read_by,$1) WHERE read_at IS NULL', [currentUser.id]);

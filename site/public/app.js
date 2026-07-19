@@ -469,7 +469,7 @@ function applyCurrentUser(user) {
   });
   const logoutButton = $('#logoutButton');
   if (logoutButton) logoutButton.hidden = !state.currentUser;
-  if (!isAdmin && state.activeTab === 'admin') setActiveTab('chat');
+  if (!isAdmin && ['admin', 'notifications'].includes(state.activeTab)) setActiveTab('chat');
 }
 
 function setNavMenuOpen(open) {
@@ -499,7 +499,7 @@ function getStoredTab() {
 
 function restoreActiveTab() {
   const tab = getStoredTab();
-  setActiveTab(tab === 'admin' && state.currentUser?.role !== 'admin' ? 'chat' : tab);
+  setActiveTab(['admin', 'notifications'].includes(tab) && state.currentUser?.role !== 'admin' ? 'chat' : tab);
 }
 
 async function handleLogout() {
@@ -579,7 +579,7 @@ function toggleTheme() {
 }
 
 function setActiveTab(tab) {
-  if (tab === 'admin' && state.currentUser?.role !== 'admin') return;
+  if (['admin', 'notifications'].includes(tab) && state.currentUser?.role !== 'admin') return;
   state.activeTab = tab;
   localStorage.setItem('wm-active-tab', tab);
   $$('.tab-button').forEach(button => {
@@ -3411,7 +3411,7 @@ function updateNotificationBadge(count) {
 function notificationCard(item) {
   const unread = !item.readAt;
   return `<article class="notification-card ${escapeHtml(item.severity)} ${unread ? 'unread' : ''}">
-    <div class="notification-card-head"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.severity)}</span></div>
+    <div class="notification-card-head"><strong>${escapeHtml(item.title)}</strong><span class="notification-severity">${escapeHtml(item.severity)}</span></div>
     <p>${escapeHtml(item.message)}</p>
     <small>${escapeHtml(item.eventType)} · ${formatDate(item.createdAt)}${item.occurrenceCount > 1 ? ` · repeated ${item.occurrenceCount}x` : ''}</small>
     ${unread ? `<button class="ghost-button" type="button" data-notification-read="${item.id}">Mark read</button>` : ''}
@@ -3429,27 +3429,43 @@ function renderNotifications(payload) {
 function renderNotificationRules(rules) {
   const target = $('#notificationRules');
   if (!target) return;
-  target.innerHTML = rules.map(rule => `<form class="notification-rule" data-rule="${escapeHtml(rule.eventType)}">
-    <strong>${escapeHtml(rule.eventType)}</strong>
-    <label><input name="enabled" type="checkbox" ${rule.enabled ? 'checked' : ''}> enabled</label>
-    <select name="severity"><option ${rule.severity === 'info' ? 'selected' : ''}>info</option><option ${rule.severity === 'warning' ? 'selected' : ''}>warning</option><option ${rule.severity === 'critical' ? 'selected' : ''}>critical</option></select>
-    <input name="threshold" value="${escapeHtml(JSON.stringify(rule.threshold || {}))}" aria-label="Threshold JSON">
-    <input name="cooldown" type="number" min="0" value="${rule.cooldownSeconds}" aria-label="Cooldown seconds">
-    <label><input name="discord" type="checkbox" ${rule.deliveryChannels.includes('discord') ? 'checked' : ''}> Discord</label>
-    <label><input name="site" type="checkbox" ${rule.deliveryChannels.includes('site') ? 'checked' : ''}> Site</label>
-    <label><input name="system_log" type="checkbox" ${rule.deliveryChannels.includes('system_log') ? 'checked' : ''}> Log</label>
-    <button type="submit">Save</button>
-    <small>Last triggered: ${rule.lastTriggeredAt ? formatDate(rule.lastTriggeredAt) : 'never'}</small>
-  </form>`).join('');
+  const labels = {
+    bot_disconnected: 'Bot disconnected', bot_reconnected: 'Bot reconnected', bot_kicked: 'Bot kicked',
+    unauthorized_player_nearby: 'Unauthorized player nearby', low_pickaxe_durability: 'Low pickaxe durability',
+    no_pickaxes: 'No pickaxes', low_food: 'Low food', farm_stalled: 'Farm stalled', low_tps: 'Low TPS',
+    database_unavailable: 'Database unavailable', repeated_reconnects: 'Repeated reconnects', command_failed: 'Command failed'
+  };
+  target.innerHTML = rules.map(rule => {
+    const thresholdEntries = Object.entries(rule.threshold || {});
+    const [thresholdKey, thresholdValue] = thresholdEntries[0] || [];
+    const thresholdLabel = thresholdKey ? thresholdKey.replaceAll('_', ' ') : 'Not used';
+    return `<form class="notification-rule" data-rule="${escapeHtml(rule.eventType)}" data-threshold="${escapeHtml(JSON.stringify(rule.threshold))}">
+      <div class="notification-rule-head">
+        <div><strong>${escapeHtml(labels[rule.eventType] || rule.eventType)}</strong><small>${escapeHtml(rule.eventType)}</small></div>
+        <label class="notification-enabled"><input name="enabled" type="checkbox" ${rule.enabled ? 'checked' : ''}> Enabled</label>
+      </div>
+      <div class="notification-rule-fields">
+        <label class="auth-field"><span>Severity</span><select name="severity"><option value="info" ${rule.severity === 'info' ? 'selected' : ''}>Info</option><option value="warning" ${rule.severity === 'warning' ? 'selected' : ''}>Warning</option><option value="critical" ${rule.severity === 'critical' ? 'selected' : ''}>Critical</option></select></label>
+        <label class="auth-field"><span>Threshold · ${escapeHtml(thresholdLabel)}</span><input name="thresholdValue" type="number" step="any" value="${thresholdValue ?? ''}" ${thresholdKey ? '' : 'disabled'}></label>
+        <label class="auth-field"><span>Cooldown · seconds</span><input name="cooldown" type="number" min="0" value="${rule.cooldownSeconds}"></label>
+        <fieldset class="notification-channels"><legend>Delivery</legend><label><input name="discord" type="checkbox" ${rule.deliveryChannels.includes('discord') ? 'checked' : ''}> Discord</label><label><input name="site" type="checkbox" ${rule.deliveryChannels.includes('site') ? 'checked' : ''}> Site</label><label><input name="system_log" type="checkbox" ${rule.deliveryChannels.includes('system_log') ? 'checked' : ''}> System log</label></fieldset>
+      </div>
+      <div class="notification-rule-footer"><small>Last triggered: ${rule.lastTriggeredAt ? formatDate(rule.lastTriggeredAt) : 'never'}</small><button type="submit">Save rule</button></div>
+    </form>`;
+  }).join('');
 }
 
 async function loadNotificationCount() {
+  if (state.currentUser?.role !== 'admin') {
+    updateNotificationBadge(0);
+    return;
+  }
   const payload = await fetchJson('/api/notifications?unread=true&limit=1');
   updateNotificationBadge(payload.unreadCount);
 }
 
 async function loadNotifications() {
-  if (!state.currentUser) return;
+  if (state.currentUser?.role !== 'admin') return;
   const params = new URLSearchParams({
     status: $('#notificationStatusFilter')?.value || 'all',
     severity: $('#notificationSeverityFilter')?.value || 'all',
@@ -3477,15 +3493,22 @@ async function saveNotificationRule(event) {
   if (!form) return;
   event.preventDefault();
   const channels = ['discord', 'site', 'system_log'].filter(name => form.elements[name].checked);
-  let threshold;
-  try { threshold = JSON.parse(form.elements.threshold.value || '{}'); } catch { setBanner('Threshold must be valid JSON.'); return; }
-  await putJson('/api/admin/notification-rules', {
-    eventType: form.dataset.rule, enabled: form.elements.enabled.checked,
-    severity: form.elements.severity.value, threshold,
-    cooldownSeconds: Number(form.elements.cooldown.value), deliveryChannels: channels
-  });
-  setBanner(`Notification rule ${form.dataset.rule} saved.`);
-  await loadNotifications();
+  const threshold = JSON.parse(form.dataset.threshold || 'null');
+  if (threshold && form.elements.thresholdValue) {
+    const key = Object.keys(threshold)[0];
+    threshold[key] = Number(form.elements.thresholdValue.value);
+  }
+  try {
+    await putJson('/api/admin/notification-rules', {
+      eventType: form.dataset.rule, enabled: form.elements.enabled.checked,
+      severity: form.elements.severity.value, threshold,
+      cooldownSeconds: Number(form.elements.cooldown.value), deliveryChannels: channels
+    });
+    setBanner(`Notification rule ${form.dataset.rule} saved.`);
+    await loadNotifications();
+  } catch (err) {
+    setBanner(`Could not save notification rule: ${err.message}`);
+  }
 }
 
 async function loadAll() {
@@ -3502,7 +3525,7 @@ async function loadAll() {
     renderBotStats(botStats);
     renderObsidian(obsidian);
     renderServerStats(serverStats);
-    await loadNotificationCount();
+    if (state.currentUser?.role === 'admin') await loadNotificationCount();
     if (state.currentUser?.role === 'admin') {
       await loadAdminControlState();
       if (state.activeTab === 'admin') await loadAdminSystemLogs();
