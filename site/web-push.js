@@ -5,7 +5,8 @@ const webPush = require('web-push');
 const EVENT_TYPES = Object.freeze([
   'bot_disconnected', 'bot_reconnected', 'bot_kicked', 'unauthorized_player_nearby',
   'low_pickaxe_durability', 'no_pickaxes', 'low_food', 'farm_stalled', 'low_tps',
-  'database_unavailable', 'repeated_reconnects', 'command_failed', 'whisper_message'
+  'database_unavailable', 'repeated_reconnects', 'command_failed', 'whisper_message',
+  'daily_obsidian_report'
 ]);
 const EVENT_TYPE_SET = new Set(EVENT_TYPES);
 const SEVERITY_RANK = Object.freeze({ info: 0, warning: 1, critical: 2 });
@@ -15,7 +16,7 @@ const SAFE_EVENT_LABELS = Object.freeze({
   no_pickaxes: 'No usable pickaxes', low_food: 'Food supply is low', farm_stalled: 'Obsidian farm stalled',
   low_tps: 'Server TPS is low', database_unavailable: 'Database unavailable',
   repeated_reconnects: 'Repeated reconnects', command_failed: 'A bot command failed',
-  whisper_message: 'New private message'
+  whisper_message: 'New private message', daily_obsidian_report: 'Daily Obsidian Farm Report'
 });
 
 function normalizeTime(value, fallback) {
@@ -54,7 +55,7 @@ function shouldDeliverSubscription(subscription, notification, { resolved = fals
   if (resolved && !subscription.include_resolved) return false;
   const selected = Array.isArray(subscription.event_types) ? subscription.event_types : [];
   if (selected.length && !selected.includes(notification.event_type)) return false;
-  if (notification.event_type === 'whisper_message') return true;
+  if (notification.event_type === 'whisper_message' || notification.event_type === 'daily_obsidian_report') return true;
   if (resolved) return true;
   return (SEVERITY_RANK[notification.severity] ?? -1) >= (SEVERITY_RANK[subscription.minimum_severity] ?? 2);
 }
@@ -110,6 +111,16 @@ function safeDetailedBody(notification, { resolved = false } = {}) {
       const message = String(metadata.message || '').replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 240);
       return sender && message ? `${sender}: ${message}` : 'A new whisper is waiting in private messages.';
     }
+    case 'daily_obsidian_report': {
+      const mined = number('mined24h');
+      const rate = number('averageRate');
+      const pickaxes = number('pickaxes');
+      const food = number('food');
+      const changePercent = number('changePercent');
+      const change = changePercent === null ? '' : ` (${changePercent > 0 ? '+' : ''}${Math.round(changePercent)}%)`;
+      const formattedRate = Math.max(0, rate || 0).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+      return `Last 24 hours: ${Math.max(0, Math.round(mined || 0)).toLocaleString('en-US')} obsidian${change}. Average: ${formattedRate}/h. Supplies: ${Math.max(0, Math.round(pickaxes || 0))} pickaxes, ${Math.max(0, Math.round(food || 0))} food.`;
+    }
     default:
       return `${label}. Open the dashboard for details.`;
   }
@@ -118,14 +129,17 @@ function safeDetailedBody(notification, { resolved = false } = {}) {
 function safePushPayload(notification, { resolved = false, test = false, detailed = false } = {}) {
   const label = test ? 'Browser push test' : (SAFE_EVENT_LABELS[notification.event_type] || 'Bot status changed');
   const critical = !resolved && notification.severity === 'critical';
-  const destination = test ? 'settings' : notification.event_type === 'whisper_message' ? 'whispers' : 'notifications';
+  const destination = test ? 'settings'
+    : notification.event_type === 'whisper_message' ? 'whispers'
+      : notification.event_type === 'daily_obsidian_report' ? 'obsidian' : 'notifications';
+  const dailyReport = notification.event_type === 'daily_obsidian_report';
   const destinationParams = new URLSearchParams({ push: destination });
   if (destination === 'whispers') {
     const player = String(notification.metadata?.sender || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 32);
     if (player) destinationParams.set('player', player);
   }
   return {
-    title: test ? 'WheatMagnateBot test' : critical ? 'Critical bot alert' : resolved ? 'Issue resolved' : detailed ? label : 'WheatMagnateBot alert',
+    title: test ? 'WheatMagnateBot test' : dailyReport ? label : critical ? 'Critical bot alert' : resolved ? 'Issue resolved' : detailed ? label : 'WheatMagnateBot alert',
     body: test ? `${label}. Open the dashboard for details.` : detailed
       ? safeDetailedBody(notification, { resolved })
       : `${label}. Open the dashboard for details.`,

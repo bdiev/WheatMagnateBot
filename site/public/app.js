@@ -4076,6 +4076,8 @@ function openPushDestination(destination = null, player = null) {
       const safePlayer = String(targetPlayer || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 32);
       if (safePlayer) openWhisperDialog(safePlayer).catch(err => setBanner(`Could not open dialog: ${err.message}`));
     }, 0);
+  } else if (target === 'obsidian') {
+    setActiveTab('obsidian');
   } else {
     setActiveTab(target === 'notifications' && state.currentUser.role === 'admin' ? 'notifications' : 'settings');
   }

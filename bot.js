@@ -23,7 +23,7 @@ const { sanitizePublicPhrase } = require('./features/growingChild/safety');
 const { runMigrations } = require('./database/migrations');
 const { NotificationService } = require('./notifications');
 const { newCorrelationId, recordOperationalEvent } = require('./operational-events');
-const { claimDailyReportDate, getDailyReportSlot } = require('./obsidian-daily-report');
+const { buildDailyObsidianReport, claimDailyReportDate, getDailyReportSlot } = require('./obsidian-daily-report');
 const { WebPushService } = require('./site/web-push');
 
 // Base64 utils for Node.js (btoa/atob polyfill)
@@ -5681,16 +5681,16 @@ async function sendScheduledObsidianReport() {
     COALESCE((SELECT AVG(mined) FROM obsidian_farm_hourly WHERE bucket>=NOW()-INTERVAL '24 hours'),0)::numeric AS rate,
     (SELECT supplies FROM obsidian_farm_supply_snapshot WHERE id=1) AS supplies`);
   const row = result.rows[0];
-  const current = Number(row.mined_24h) || 0;
-  const previous = Number(row.previous_24h) || 0;
-  const change = previous > 0 ? `${Math.round((current - previous) / previous * 100)}%` : 'no comparison data';
-  const supplies = row.supplies || {};
-  const food = Number(supplies.inventory?.foodCount || 0) + Number(supplies.barrel?.foodCount || 0);
-  const picks = Number(supplies.inventory?.usablePickaxeCount || 0) + Number(supplies.barrel?.usablePickaxeCount || 0);
+  const report = buildDailyObsidianReport(row, slot);
   // Claim the local calendar date atomically before delivery. This prevents
-  // duplicate DMs from overlapping timers, reconnects, or multiple bot replicas.
+  // duplicate Discord or push reports from overlapping timers, reconnects, or replicas.
   if (!await claimDailyReportDate(pool, slot.dateKey)) return;
-  await sendDiscordOwnerNotification(`**Daily Obsidian Farm Report**\nMined in 24 hours: **${current.toLocaleString()}** (${change})\nAverage rate: **${Number(row.rate).toFixed(1)}/h**\nSupplies: **${picks}** pickaxes, **${food}** food items\nTimezone: \`${slot.timezone}\``, 3447003);
+  const [discordDelivery, pushDelivery] = await Promise.allSettled([
+    sendDiscordOwnerNotification(report.discordMessage, 3447003),
+    webPushService.deliver(report.notification)
+  ]);
+  if (discordDelivery.status === 'rejected') console.error('[Obsidian Report] Discord delivery failed:', discordDelivery.reason?.message || discordDelivery.reason);
+  if (pushDelivery.status === 'rejected') console.error('[Obsidian Report] Push delivery failed:', pushDelivery.reason?.message || pushDelivery.reason);
 }
 
 function startObsidianDailyReportScheduler() {

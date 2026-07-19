@@ -47,6 +47,20 @@ async function run() {
   const detailedWhisperPayload = JSON.stringify(safePushPayload(whisper, { detailed: true }));
   assert.match(detailedWhisperPayload, /SecretPlayer: secret whisper text/, 'explicit whisper detailed mode must include sender and text');
 
+  const dailyReport = {
+    id: 'daily-obsidian-2026-07-19', event_type: 'daily_obsidian_report', severity: 'info',
+    metadata: { mined24h: 29419, changePercent: 5, averageRate: 1225.8, pickaxes: 8, food: 100 }
+  };
+  const dailySubscription = { ...base, minimum_severity: 'critical', event_types: ['daily_obsidian_report'] };
+  assert.equal(shouldDeliverSubscription(dailySubscription, dailyReport), true, 'selected scheduled reports must not be suppressed by alert severity');
+  const compactDailyPayload = safePushPayload(dailyReport);
+  assert.equal(compactDailyPayload.title, 'Daily Obsidian Farm Report');
+  assert.equal(new URL(compactDailyPayload.data.url, 'https://dashboard.example').searchParams.get('push'), 'obsidian');
+  assert.doesNotMatch(compactDailyPayload.body, /29.?419|1.?225|8 pickaxes/, 'compact report must not expose report details');
+  const detailedDailyPayload = safePushPayload(dailyReport, { detailed: true });
+  assert.match(detailedDailyPayload.body, /29,419 obsidian \(\+5%\)/);
+  assert.match(detailedDailyPayload.body, /1,225\.8\/h/);
+
   const deliveredPayloads = [];
   const detailedResult = await deliverPushSubscriptions({
     subscriptions: [{ ...base, id: 2, detailed_event_types: ['low_tps'] }],
