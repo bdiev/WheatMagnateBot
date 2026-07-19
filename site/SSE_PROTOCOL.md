@@ -37,7 +37,7 @@ Payloads are deliberately small. The browser obtains authorized state through th
 
 ## Reconnection and consistency
 
-The browser uses native `EventSource` reconnection with a three-second server retry hint. While disconnected it displays a small reconnecting indicator and enables fallback polling every 15 seconds, with chat polling every 5 seconds. After reconnection it performs exactly one full synchronization, then keeps a 60-second consistency poll for graphs and missed events.
+The browser uses native `EventSource` reconnection with a three-second server retry hint. While disconnected it displays a small reconnecting indicator and enables fallback polling every 15 seconds, with chat polling every 2 seconds. After reconnection it performs exactly one full synchronization, then keeps a 60-second consistency poll for graphs and missed events.
 
 `EventSource` has no replay buffer in this implementation. The post-reconnect full synchronization is the recovery mechanism for events missed while offline.
 
@@ -46,7 +46,7 @@ The browser uses native `EventSource` reconnection with a three-second server re
 ```env
 SSE_MAX_CONNECTIONS_PER_USER=3
 SSE_HEARTBEAT_MS=25000
-SSE_DATABASE_POLL_MS=1000
+SSE_DATABASE_POLL_MS=250
 ```
 
-Limits apply per site process and authenticated user ID. Database changes are detected once per second by default and broadcast through the single shared hub.
+Limits apply per site process and authenticated user ID. Database changes are detected every 250 ms by default using one shared marker query and broadcast through the single shared hub.

@@ -2707,8 +2707,7 @@ async function pollDatabaseEvents() {
   if (!pool || databaseEventPollRunning) return;
   databaseEventPollRunning = true;
   try {
-    const [markersResult, playersResult] = await Promise.all([
-      pool.query(`
+    const markersResult = await pool.query(`
         SELECT
           (SELECT observed_at FROM bot_status_snapshots WHERE id=1) AS bot_status_at,
           (SELECT COALESCE(MAX(id),0) FROM game_chat_messages) AS chat_id,
@@ -2722,17 +2721,19 @@ async function pollDatabaseEvents() {
             COALESCE((SELECT MAX(updated_at) FROM admin_settings), '-infinity'::timestamptz),
             COALESCE((SELECT MAX(COALESCE(finished_at,started_at,created_at)) FROM bot_commands), '-infinity'::timestamptz),
             COALESCE((SELECT MAX(updated_at) FROM notification_rules), '-infinity'::timestamptz)
-          ) AS admin_control_at
-      `),
-      pool.query(`SELECT username FROM player_activity WHERE is_online=TRUE ORDER BY LOWER(username)`)
-    ]);
+          ) AS admin_control_at,
+          COALESCE(
+            (SELECT JSONB_AGG(username ORDER BY LOWER(username)) FROM player_activity WHERE is_online=TRUE),
+            '[]'::jsonb
+          ) AS online_players
+      `);
     lastDatabaseEventErrorAt = 0;
     const row = markersResult.rows[0] || {};
     const next = {
       botStatusAt: signature(row.bot_status_at), chatId: String(row.chat_id || 0),
       whisperId: String(row.whisper_id || 0), farmStatusAt: signature(row.farm_status_at),
       notificationId: String(row.notification_id || 0), adminControlAt: signature(row.admin_control_at),
-      players: new Map(playersResult.rows.map(player => [player.username.toLowerCase(), player.username]))
+      players: new Map((Array.isArray(row.online_players) ? row.online_players : []).map(username => [username.toLowerCase(), username]))
     };
     if (!databaseEventState) {
       databaseEventState = next;
@@ -2786,7 +2787,8 @@ async function pollDatabaseEvents() {
 function startDatabaseEventPoller() {
   if (!pool || databaseEventTimer) return;
   pollDatabaseEvents();
-  databaseEventTimer = setInterval(pollDatabaseEvents, Number(process.env.SSE_DATABASE_POLL_MS) || 1_000);
+  const intervalMs = Math.min(10_000, Math.max(100, Number(process.env.SSE_DATABASE_POLL_MS) || 250));
+  databaseEventTimer = setInterval(pollDatabaseEvents, intervalMs);
   databaseEventTimer.unref?.();
 }
 

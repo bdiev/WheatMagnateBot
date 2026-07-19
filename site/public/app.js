@@ -3552,7 +3552,7 @@ function startFallbackPolling() {
   clearDashboardPolling();
   state.pollingMode = 'fallback';
   state.timer = setInterval(loadAll, 15_000);
-  state.liveChatTimer = setInterval(loadLiveChats, 5_000);
+  state.liveChatTimer = setInterval(loadLiveChats, 2_000);
 }
 
 function queueRealtimeRefresh(key, callback, delay = 180) {
@@ -3603,7 +3603,7 @@ async function refreshWhispersFromEvent() {
 
 function handleRealtimeEvent(event) {
   const type = event.type;
-  if (type === 'chat_message') queueRealtimeRefresh('chat', refreshChatFromEvent);
+  if (type === 'chat_message') queueRealtimeRefresh('chat', refreshChatFromEvent, 30);
   else if (type === 'whisper_message') queueRealtimeRefresh('whisper', refreshWhispersFromEvent);
   else if (type === 'bot_status_updated') {
     queueRealtimeRefresh('bot', refreshBotFromEvent);
