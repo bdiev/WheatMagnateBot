@@ -55,6 +55,7 @@ SITE_TRUST_PROXY=false
 SITE_ALLOWED_ORIGINS=http://localhost:3080
 NOTIFICATION_DISCORD_CHANNEL_ID=
 SSE_MAX_CONNECTIONS_PER_USER=3
+OPERATIONAL_EVENT_RETENTION_DAYS=90
 OBSIDIAN_ANALYTICS_TIMEZONE=Europe/Vilnius
 OBSIDIAN_DAILY_REPORT_ENABLED=true
 OBSIDIAN_DAILY_REPORT_HOUR=9
@@ -85,6 +86,8 @@ The dashboard uses `HttpOnly`, `SameSite=Lax` session cookies, per-session CSRF 
 - Admin-only dashboard controls are hidden from non-admin users.
 - Active notification problems remain deduplicated by event and resource key. Repeated observations increment the occurrence count, while channel delivery follows the configured cooldown. Recovery creates a separate resolved notification.
 - Dashboard updates use authenticated Server-Sent Events with a slow polling fallback. The event protocol is documented in [`site/SSE_PROTOCOL.md`](site/SSE_PROTOCOL.md).
+- The admin-only **Incident Timeline** aggregates operational events from system logs, notifications, bot commands, player transitions, nearby sightings, farm annotations, bot status and TPS. Events sharing one operation use a correlation ID; an event can be promoted to an incident with a ±10 minute context, ownership, cause, notes, resolution, and JSON/Markdown export. The model and API are documented in [`site/INCIDENT_TIMELINE.md`](site/INCIDENT_TIMELINE.md).
+- Normalized operational events older than `OPERATIONAL_EVENT_RETENTION_DAYS` (90 by default) are moved to `operational_events_archive` in bounded daily batches. Events linked to incidents are retained in the active table. Existing source logs are not removed, and legacy records remain visible through compatibility adapters.
 - Growing Child stores its learning database locally, preserves it across schema upgrades, and exposes memory/state controls only to administrators. Its learning and privacy model is documented in [`features/growingChild/README.md`](features/growingChild/README.md).
 
 ## Obsidian farm analytics

@@ -15,10 +15,13 @@ async function run() {
   const service = new NotificationService({ repository });
 
   const first = await service.report('low_tps', {
-    key: 'minecraft', title: 'Low TPS', message: 'TPS 10', metadata: { tps: 10 }
+    key: 'minecraft', title: 'Low TPS', message: 'TPS 10', metadata: { tps: 10, correlationId: 'operation-1' }
   });
   assert.equal(first.notification.severity, 'warning', 'severity must come from the rule');
   assert.equal(repository.notifications.length, 1);
+  assert.ok(first.notification.correlation_id, 'new notifications must receive a correlation ID');
+  assert.equal(first.notification.correlation_id, 'operation-1');
+  assert.equal(first.notification.metadata.correlationId, first.notification.correlation_id);
   assert.equal(repository.deliveries.length, 1);
 
   const duplicate = await service.report('low_tps', {
@@ -43,6 +46,7 @@ async function run() {
   assert.equal(repository.notifications[0].status, 'resolved');
   assert.equal(repository.notifications[1].status, 'resolved', 'recovery must create a separate resolved notification');
   assert.equal(repository.notifications[1].severity, 'info');
+  assert.equal(repository.notifications[1].correlation_id, repository.notifications[0].correlation_id, 'recovery must keep the active incident correlation');
 
   const farmRepository = new MemoryNotificationRepository([rule({
     event_type: 'farm_stalled', severity: 'critical', threshold: { seconds: 120 }, cooldown_seconds: 600

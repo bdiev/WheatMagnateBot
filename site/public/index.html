@@ -64,6 +64,7 @@
               <button class="tab-button" type="button" data-tab="server" role="menuitem">Server Stats</button>
               <button class="tab-button" type="button" data-tab="players" role="menuitem">Player Stats</button>
               <button class="tab-button notification-nav-button admin-only" type="button" data-tab="notifications" role="menuitem" hidden>Notifications <span id="notificationBadge" class="notification-badge" hidden>0</span></button>
+              <button class="tab-button admin-only" type="button" data-tab="timeline" role="menuitem" hidden>Incident Timeline</button>
               <button class="tab-button admin-only" type="button" data-tab="child-ai" role="menuitem" hidden>Child AI</button>
               <button class="tab-button admin-only" type="button" data-tab="admin" role="menuitem" hidden>Admin</button>
             </div>
@@ -630,6 +631,37 @@
         <section class="panel notification-rules-panel">
           <div class="panel-head"><div><h2>Notification rules</h2><p>Thresholds, cooldowns, severity and delivery channels.</p></div></div>
           <div id="notificationRules" class="notification-rules"></div>
+        </section>
+      </section>
+
+      <section id="tab-timeline" class="tab-panel admin-only" data-panel="timeline" hidden>
+        <section class="panel timeline-panel">
+          <div class="panel-head">
+            <div><h2>Incident Timeline</h2><p>Operational events, correlations and incident investigation.</p></div>
+            <button id="timelineRefresh" class="ghost-button" type="button">Refresh</button>
+          </div>
+          <form id="timelineFilters" class="timeline-filters">
+            <label><span>Period</span><select id="timelinePeriod"><option value="1h">Last hour</option><option value="6h">Last 6 hours</option><option value="24h" selected>Last 24 hours</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option></select></label>
+            <label><span>Severity</span><select id="timelineSeverity"><option value="">All</option><option value="critical">Critical</option><option value="warning">Warning</option><option value="info">Info</option></select></label>
+            <label><span>Source</span><select id="timelineSource"><option value="">All</option><option value="system_log">System log</option><option value="notifications">Notifications</option><option value="bot_commands">Bot commands</option><option value="player_activity">Players</option><option value="nearby_sightings">Nearby sightings</option><option value="farm_annotations">Farm</option><option value="bot_status">Bot status</option><option value="tps">TPS</option></select></label>
+            <label><span>Event type</span><input id="timelineEventType" placeholder="farm_stalled"></label>
+            <label><span>Player</span><input id="timelinePlayer" placeholder="Username"></label>
+            <label><span>Correlation ID</span><input id="timelineCorrelation" placeholder="UUID or legacy ID"></label>
+            <button type="submit">Apply filters</button>
+          </form>
+          <div class="timeline-layout">
+            <div>
+              <div id="timelineSummary" class="muted timeline-summary"></div>
+              <div id="timelineEvents" class="timeline-events"></div>
+            </div>
+            <aside id="timelineContext" class="timeline-context panel-soft">
+              <div class="empty">Select an event to inspect the 20-minute incident window.</div>
+            </aside>
+          </div>
+        </section>
+        <section class="panel">
+          <div class="panel-head"><div><h2>Incidents</h2><p>Open investigations and resolved operational incidents.</p></div></div>
+          <div id="incidentList" class="incident-list"></div>
         </section>
       </section>
 

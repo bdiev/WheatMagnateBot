@@ -50,6 +50,9 @@ const state = {
   adminLogsLoading: false,
   childAiLoading: false,
   childAiImportState: null,
+  timelineLoading: false,
+  timelineSelectedEventId: null,
+  timelineIncident: null,
   adminOpenLogDetails: new Set(),
   notificationRules: [],
   obsidianCoordinateEditorOpen: false,
@@ -498,7 +501,7 @@ function applyCurrentUser(user) {
   });
   const logoutButton = $('#logoutButton');
   if (logoutButton) logoutButton.hidden = !state.currentUser;
-  if (!isAdmin && ['admin', 'notifications', 'child-ai'].includes(state.activeTab)) setActiveTab('chat');
+  if (!isAdmin && ['admin', 'notifications', 'timeline', 'child-ai'].includes(state.activeTab)) setActiveTab('chat');
   if (state.currentUser) startRealtimeUpdates();
   else stopRealtimeUpdates();
 }
@@ -530,7 +533,7 @@ function getStoredTab() {
 
 function restoreActiveTab() {
   const tab = getStoredTab();
-  setActiveTab(['admin', 'notifications', 'child-ai'].includes(tab) && state.currentUser?.role !== 'admin' ? 'chat' : tab);
+  setActiveTab(['admin', 'notifications', 'timeline', 'child-ai'].includes(tab) && state.currentUser?.role !== 'admin' ? 'chat' : tab);
 }
 
 async function handleLogout() {
@@ -617,7 +620,7 @@ function toggleTheme() {
 }
 
 function setActiveTab(tab) {
-  if (['admin', 'notifications', 'child-ai'].includes(tab) && state.currentUser?.role !== 'admin') return;
+  if (['admin', 'notifications', 'timeline', 'child-ai'].includes(tab) && state.currentUser?.role !== 'admin') return;
   state.activeTab = tab;
   localStorage.setItem('wm-active-tab', tab);
   $$('.tab-button').forEach(button => {
@@ -635,6 +638,7 @@ function setActiveTab(tab) {
     loadAdminControlState();
     loadAdminSystemLogs();
   }
+  if (tab === 'timeline') loadTimeline();
   if (tab === 'notifications') loadNotifications();
   if (tab === 'child-ai') loadChildAiAdmin();
   if (tab === 'chat') ensureInitialChatScroll();
@@ -3494,6 +3498,127 @@ function updateNotificationBadge(count) {
   badge.hidden = value === 0;
 }
 
+function timelineFilterQuery() {
+  const params = new URLSearchParams({ period: $('#timelinePeriod')?.value || '24h', limit: '150' });
+  const values = {
+    severity: $('#timelineSeverity')?.value, source: $('#timelineSource')?.value,
+    eventType: $('#timelineEventType')?.value.trim(), player: $('#timelinePlayer')?.value.trim(),
+    correlationId: $('#timelineCorrelation')?.value.trim()
+  };
+  for (const [key, value] of Object.entries(values)) if (value) params.set(key, value);
+  return params;
+}
+
+function timelineEventHtml(event, { compact = false, rootId = null } = {}) {
+  const details = event.details && Object.keys(event.details).length
+    ? `<details><summary>Details</summary><pre>${escapeHtml(JSON.stringify(event.details, null, 2))}</pre></details>` : '';
+  return `<article class="timeline-event severity-${escapeHtml(event.severity)}${event.id === rootId ? ' root-event' : ''}">
+    <div class="timeline-event-marker" aria-hidden="true"></div>
+    <div class="timeline-event-body">
+      <div class="timeline-event-head"><time>${escapeHtml(formatDate(event.occurredAt))}</time><span class="pill">${escapeHtml(event.severity)}</span><span class="pill">${escapeHtml(event.source)}</span></div>
+      <strong>${escapeHtml(event.title)}</strong>
+      <small>${escapeHtml(event.eventType)}${event.actor ? ` · ${escapeHtml(event.actor)}` : ''}</small>
+      <button class="timeline-correlation" type="button" data-timeline-correlation="${escapeHtml(event.correlationId)}">${escapeHtml(event.correlationId)}</button>
+      ${compact ? '' : details}
+      ${compact ? '' : `<button class="ghost-button timeline-open" type="button" data-timeline-event="${escapeHtml(event.id)}">Inspect event</button>`}
+    </div>
+  </article>`;
+}
+
+function renderTimeline(events = [], filters = {}) {
+  const list = $('#timelineEvents');
+  if (!list) return;
+  $('#timelineSummary').textContent = `${events.length} events · ${formatDate(filters.from)} – ${formatDate(filters.to)}`;
+  list.innerHTML = events.length ? events.map(event => timelineEventHtml(event)).join('') : '<div class="empty">No operational events match these filters.</div>';
+}
+
+async function loadIncidents() {
+  if (state.currentUser?.role !== 'admin') return;
+  const payload = await fetchJson('/api/admin/incidents');
+  const list = $('#incidentList');
+  if (!list) return;
+  list.innerHTML = payload.incidents?.length ? payload.incidents.map(incident => `<button type="button" class="incident-row" data-incident-id="${escapeHtml(incident.id)}">
+    <span><strong>#${escapeHtml(incident.id)} ${escapeHtml(incident.title)}</strong><small>${escapeHtml(incident.correlationId)}</small></span>
+    <span class="pill">${escapeHtml(incident.status)}</span><span>${escapeHtml(incident.assignedAdmin || 'Unassigned')}</span><time>${escapeHtml(formatDate(incident.updatedAt))}</time>
+  </button>`).join('') : '<div class="empty">No incidents created yet.</div>';
+}
+
+async function loadTimeline() {
+  if (state.timelineLoading || state.currentUser?.role !== 'admin') return;
+  state.timelineLoading = true;
+  try {
+    const payload = await fetchJson(`/api/admin/operational-events?${timelineFilterQuery()}`);
+    renderTimeline(payload.events, payload.filters);
+    await loadIncidents();
+  } catch (err) { setBanner(`Incident timeline: ${err.message}`); }
+  finally { state.timelineLoading = false; }
+}
+
+function incidentFormHtml(payload) {
+  const incident = payload.incident;
+  const options = (payload.admins || []).map(admin => `<option value="${escapeHtml(admin.id)}"${String(admin.id) === String(incident.assignedAdminId) ? ' selected' : ''}>${escapeHtml(admin.username)}</option>`).join('');
+  return `<form id="incidentEditor" data-incident-id="${escapeHtml(incident.id)}" class="incident-editor">
+    <div class="incident-title-row"><h3>Incident #${escapeHtml(incident.id)}</h3><span class="pill">${escapeHtml(incident.status)}</span></div>
+    <label><span>Status</span><select name="status"><option value="open">Open</option><option value="investigating">Investigating</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select></label>
+    <label><span>Assigned administrator</span><select name="assignedAdminId"><option value="">Unassigned</option>${options}</select></label>
+    <label><span>Cause</span><textarea name="cause" rows="3">${escapeHtml(incident.cause)}</textarea></label>
+    <label><span>Notes</span><textarea name="notes" rows="5">${escapeHtml(incident.notes)}</textarea></label>
+    <label><span>Resolution</span><textarea name="resolution" rows="3">${escapeHtml(incident.resolution)}</textarea></label>
+    <button type="submit">Save incident</button>
+    <div class="incident-export"><a class="ghost-button link-button" href="/api/admin/incidents/${escapeHtml(incident.id)}/export?format=json">Export JSON</a><a class="ghost-button link-button" href="/api/admin/incidents/${escapeHtml(incident.id)}/export?format=markdown">Export Markdown</a></div>
+  </form>`;
+}
+
+function renderTimelineContext(payload, { selectedId = null } = {}) {
+  const context = $('#timelineContext');
+  if (!context) return;
+  const root = payload.event || payload.events?.find(event => event.operationalId === payload.incident?.rootEventId) || payload.events?.[0];
+  const events = payload.window || payload.events || [];
+  const related = payload.related || [];
+  context.innerHTML = `<div class="timeline-context-head"><div><h3>${escapeHtml(root?.title || payload.incident?.title || 'Incident context')}</h3><p>10 minutes before and after the selected event.</p></div>
+    ${payload.incident ? '' : `<button type="button" data-create-incident="${escapeHtml(root?.id || selectedId)}">Create incident</button>`}</div>
+    ${payload.incident ? incidentFormHtml(payload) : ''}
+    ${related.length ? `<details class="timeline-related"><summary>Related commands and notifications (${related.length})</summary>${related.map(event => timelineEventHtml(event, { compact: true })).join('')}</details>` : ''}
+    <div class="timeline-window">${events.map(event => timelineEventHtml(event, { compact: true, rootId: root?.id })).join('')}</div>`;
+  const status = context.querySelector('[name="status"]');
+  if (status && payload.incident) status.value = payload.incident.status;
+}
+
+async function openTimelineEvent(eventId) {
+  state.timelineSelectedEventId = eventId;
+  const payload = await fetchJson(`/api/admin/operational-events/context?id=${encodeURIComponent(eventId)}`);
+  renderTimelineContext(payload, { selectedId: eventId });
+}
+
+async function openIncident(id) {
+  const payload = await fetchJson(`/api/admin/incidents/${encodeURIComponent(id)}`);
+  state.timelineIncident = payload.incident;
+  renderTimelineContext(payload);
+}
+
+async function handleTimelineClick(event) {
+  const correlation = event.target.closest('[data-timeline-correlation]');
+  if (correlation) {
+    $('#timelineCorrelation').value = correlation.dataset.timelineCorrelation;
+    await loadTimeline(); return;
+  }
+  const selected = event.target.closest('[data-timeline-event]');
+  if (selected) { await openTimelineEvent(selected.dataset.timelineEvent); return; }
+  const create = event.target.closest('[data-create-incident]');
+  if (create) {
+    const payload = await postJson('/api/admin/incidents', { eventId: create.dataset.createIncident });
+    state.timelineIncident = payload.incident; renderTimelineContext(payload); await loadIncidents();
+  }
+}
+
+async function saveIncident(event) {
+  event.preventDefault();
+  const form = event.target;
+  const data = new FormData(form);
+  const payload = await putJson(`/api/admin/incidents/${form.dataset.incidentId}`, Object.fromEntries(data.entries()));
+  state.timelineIncident = payload.incident; renderTimelineContext(payload); await loadIncidents();
+}
+
 function notificationCard(item) {
   const unread = !item.readAt;
   return `<article class="notification-card ${escapeHtml(item.severity)} ${unread ? 'unread' : ''}">
@@ -3892,6 +4017,7 @@ function handleRealtimeEvent(event) {
   else if (type === 'bot_status_updated') {
     queueRealtimeRefresh('bot', refreshBotFromEvent);
     scheduleRealtimeChartRefresh();
+    if (state.currentUser?.role === 'admin' && state.activeTab === 'timeline') queueRealtimeRefresh('timeline-snapshots', loadTimeline, 500);
   }
   else if (type === 'farm_status_updated') queueRealtimeRefresh('farm', refreshFarmFromEvent);
   else if (type === 'player_joined' || type === 'player_left') {
@@ -3907,8 +4033,11 @@ function handleRealtimeEvent(event) {
     queueRealtimeRefresh('admin-control', async () => {
       await loadAdminControlState();
       if (state.activeTab === 'admin') await loadAdminSystemLogs();
+      if (state.activeTab === 'timeline') await loadTimeline();
       if (state.activeTab === 'child-ai') await loadChildAiAdmin();
     }, 300);
+  } else if (type === 'operational_event_created' && state.currentUser?.role === 'admin' && state.activeTab === 'timeline') {
+    queueRealtimeRefresh('incident-timeline', loadTimeline, 250);
   }
 }
 
@@ -3938,7 +4067,7 @@ function startRealtimeUpdates() {
   state.eventSource = source;
   const eventTypes = [
     'bot_status_updated', 'player_joined', 'player_left', 'chat_message',
-    'whisper_message', 'farm_status_updated', 'notification_created', 'admin_control_updated'
+    'whisper_message', 'farm_status_updated', 'notification_created', 'admin_control_updated', 'operational_event_created'
   ];
   eventTypes.forEach(type => source.addEventListener(type, handleRealtimeEvent));
   source.onopen = () => {
@@ -4050,6 +4179,12 @@ $('#childAiExport')?.addEventListener('click', exportChildAiState);
 $('#childAiImportFile')?.addEventListener('change', selectChildAiImport);
 $('#childAiImport')?.addEventListener('click', importChildAiState);
 $('#notificationsRefresh')?.addEventListener('click', loadNotifications);
+$('#timelineRefresh')?.addEventListener('click', loadTimeline);
+$('#timelineFilters')?.addEventListener('submit', event => { event.preventDefault(); loadTimeline(); });
+$('#timelineEvents')?.addEventListener('click', event => handleTimelineClick(event).catch(err => setBanner(err.message)));
+$('#timelineContext')?.addEventListener('click', event => handleTimelineClick(event).catch(err => setBanner(err.message)));
+$('#timelineContext')?.addEventListener('submit', event => { if (event.target.id === 'incidentEditor') saveIncident(event).catch(err => setBanner(err.message)); });
+$('#incidentList')?.addEventListener('click', event => { const row = event.target.closest('[data-incident-id]'); if (row) openIncident(row.dataset.incidentId).catch(err => setBanner(err.message)); });
 $('#notificationStatusFilter')?.addEventListener('change', loadNotifications);
 $('#notificationSeverityFilter')?.addEventListener('change', loadNotifications);
 $('#notificationEventFilter')?.addEventListener('change', loadNotifications);

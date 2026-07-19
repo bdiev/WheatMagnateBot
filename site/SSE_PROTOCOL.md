@@ -32,6 +32,7 @@ Heartbeat comments do not trigger frontend events. Closed and aborted HTTP reque
 | `farm_status_updated` | `{ "updatedAt": ISODate }` | Approved users | Refresh obsidian farm statistics |
 | `notification_created` | `{ "id": string }` | Administrators only | Refresh unread count and notification page |
 | `admin_control_updated` | `{ "source", "updatedAt" }` | Administrators only | Refresh admin controls/logs |
+| `operational_event_created` | `{ "id", "correlationId"? }` | Administrators only | Refresh Incident Timeline when open |
 
 Payloads are deliberately small. The browser obtains authorized state through the existing JSON endpoints after receiving an event. Administrative events are denied by the SSE hub even if a publisher omits an explicit role filter. Whisper events are routed by the session username.
 

@@ -57,6 +57,11 @@ async function run() {
   routeHub.publish('notification_created', { id: '5' });
   assert(admin.res.body.length > beforeAdmin, 'admin events must reach admins');
   assert.equal(alice.res.body.length, beforeAlice, 'admin events must not reach ordinary users');
+  const beforeTimelineAdmin = admin.res.body.length;
+  const beforeTimelineUser = alice.res.body.length;
+  routeHub.publish('operational_event_created', { id: '7' });
+  assert(admin.res.body.length > beforeTimelineAdmin, 'timeline events must reach admins');
+  assert.equal(alice.res.body.length, beforeTimelineUser, 'timeline events must not leak to ordinary users');
   const beforeWhisperAlice = alice.res.body.length;
   const beforeWhisperBob = bob.res.body.length;
   routeHub.publish('whisper_message', { id: '6' }, { usernames: ['alice'] });
