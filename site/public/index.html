@@ -631,29 +631,54 @@
       </section>
 
       <section id="tab-child-ai" class="tab-panel admin-only" data-panel="child-ai" hidden>
-        <section class="stats-grid four">
-          <article class="stat"><span class="stat-label">Vocabulary</span><strong id="childAiWordCount">-</strong><small>known words</small></article>
-          <article class="stat"><span class="stat-label">Memories</span><strong id="childAiMemoryCount">-</strong><small>active facts</small></article>
-          <article class="stat"><span class="stat-label">Emotion</span><strong id="childAiEmotion">-</strong><small>current state</small></article>
-          <article class="stat"><span class="stat-label">Database</span><strong id="childAiDatabaseSize">-</strong><small>automatic cleanup enabled</small></article>
+        <section class="panel child-ai-overview">
+          <div class="panel-head"><div><h2>Child AI</h2><p>Learning, memory and generation health.</p></div><button id="childAiRefresh" class="ghost-button" type="button">Refresh</button></div>
+          <div class="child-ai-overview-grid">
+            <div><span>Vocabulary</span><strong id="childAiWordCount">-</strong><small>known words</small></div>
+            <div><span>Memories</span><strong id="childAiMemoryCount">-</strong><small>active facts</small></div>
+            <div><span>Emotion</span><strong id="childAiEmotion">-</strong><small>current state</small></div>
+            <div><span>Database</span><strong id="childAiDatabaseSize">-</strong><small>cleanup enabled</small></div>
+          </div>
         </section>
         <section class="panel child-ai-memory-panel">
-          <div class="panel-head"><div><h2>Long-term Memory</h2><p>Facts, preferences, relationships and important events. Secrets and personal data are rejected.</p></div><button id="childAiRefresh" class="ghost-button" type="button">Refresh</button></div>
-          <div class="child-ai-tools">
-            <label class="auth-field"><span>Forget user ID</span><input id="childAiForgetUserId" placeholder="Minecraft username or Discord user ID"></label>
-            <label class="auth-field"><span>Source</span><select id="childAiForgetSource"><option value="minecraft">Minecraft</option><option value="discord">Discord</option><option value="owner_dm">Owner DM</option></select></label>
-            <button id="childAiForgetUser" class="danger-button" type="button">Forget user</button>
-          </div>
+          <div class="panel-head"><div><h2>Long-term Memory</h2><p>Safe facts, preferences, relationships and important events.</p></div></div>
           <div id="childAiMemories" class="child-ai-list"></div>
+          <details class="child-ai-privacy">
+            <summary><span>Privacy and deletion</span><i class="collapse-indicator" aria-hidden="true"></i></summary>
+            <div class="child-ai-tools">
+              <label class="auth-field"><span>Forget user ID</span><input id="childAiForgetUserId" placeholder="Minecraft username or Discord user ID"></label>
+              <label class="auth-field"><span>Source</span><select id="childAiForgetSource"><option value="minecraft">Minecraft</option><option value="discord">Discord</option><option value="owner_dm">Owner DM</option></select></label>
+              <button id="childAiForgetUser" class="danger-button" type="button">Forget user</button>
+            </div>
+          </details>
         </section>
-        <section class="panel"><div class="panel-head"><div><h2>Vocabulary</h2><p>Most frequently learned words.</p></div></div><div id="childAiWords" class="child-ai-chip-list"></div></section>
-        <section class="panel"><div class="panel-head"><div><h2>Topics</h2><p>Topics inferred from learned vocabulary.</p></div></div><div id="childAiTopics" class="child-ai-chip-list"></div></section>
-        <section class="panel"><div class="panel-head"><div><h2>Emotions</h2><p>Recent emotion changes and their causes.</p></div></div><div id="childAiEmotions" class="child-ai-list compact"></div></section>
-        <section class="panel"><div class="panel-head"><div><h2>Recent Responses</h2><p>Accepted generated phrases and quality scores.</p></div></div><div id="childAiResponses" class="child-ai-list compact"></div></section>
-        <section class="panel"><div class="panel-head"><div><h2>Rejected Generations</h2><p>Why candidate phrases were not used.</p></div></div><div id="childAiRejections" class="child-ai-list compact"></div></section>
-        <section class="panel">
-          <div class="panel-head"><div><h2>State Export / Import</h2><p>JSON backup preserves the existing vocabulary and accumulated experience.</p></div></div>
-          <div class="child-ai-tools"><button id="childAiExport" type="button">Export state</button><label class="ghost-button link-button" for="childAiImportFile">Choose JSON</label><input id="childAiImportFile" type="file" accept="application/json,.json" hidden><button id="childAiImport" class="ghost-button" type="button" disabled>Import state</button></div>
+        <section class="child-ai-section-grid">
+          <details class="panel child-ai-disclosure">
+            <summary><span><strong>Vocabulary</strong><small>Most frequently learned words.</small></span><i class="collapse-indicator" aria-hidden="true"></i></summary>
+            <div class="child-ai-disclosure-body"><div id="childAiWords" class="child-ai-chip-list"></div></div>
+          </details>
+          <details class="panel child-ai-disclosure">
+            <summary><span><strong>Topics</strong><small>Topics inferred from learned vocabulary.</small></span><i class="collapse-indicator" aria-hidden="true"></i></summary>
+            <div class="child-ai-disclosure-body"><div id="childAiTopics" class="child-ai-chip-list"></div></div>
+          </details>
+        </section>
+        <section class="child-ai-section-grid child-ai-diagnostics">
+          <details class="panel child-ai-disclosure">
+            <summary><span><strong>Emotions</strong><small>Recent state changes.</small></span><i class="collapse-indicator" aria-hidden="true"></i></summary>
+            <div class="child-ai-disclosure-body"><div id="childAiEmotions" class="child-ai-list compact"></div></div>
+          </details>
+          <details class="panel child-ai-disclosure">
+            <summary><span><strong>Recent Responses</strong><small>Accepted phrases and scores.</small></span><i class="collapse-indicator" aria-hidden="true"></i></summary>
+            <div class="child-ai-disclosure-body"><div id="childAiResponses" class="child-ai-list compact"></div></div>
+          </details>
+          <details class="panel child-ai-disclosure">
+            <summary><span><strong>Rejected Generations</strong><small>Quality gate decisions.</small></span><i class="collapse-indicator" aria-hidden="true"></i></summary>
+            <div class="child-ai-disclosure-body"><div id="childAiRejections" class="child-ai-list compact"></div></div>
+          </details>
+        </section>
+        <section class="panel child-ai-backup">
+          <div><h2>State backup</h2><p>Export or safely merge the vocabulary, memory and accumulated experience.</p></div>
+          <div class="child-ai-tools"><button id="childAiExport" type="button">Export JSON</button><label class="ghost-button link-button" for="childAiImportFile">Choose file</label><input id="childAiImportFile" type="file" accept="application/json,.json" hidden><button id="childAiImport" class="ghost-button" type="button" disabled>Import</button></div>
         </section>
       </section>
 
