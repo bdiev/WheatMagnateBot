@@ -5573,11 +5573,11 @@ async function sendScheduledObsidianReport() {
   const row = result.rows[0];
   const current = Number(row.mined_24h) || 0;
   const previous = Number(row.previous_24h) || 0;
-  const change = previous > 0 ? `${Math.round((current - previous) / previous * 100)}%` : 'нет базы сравнения';
+  const change = previous > 0 ? `${Math.round((current - previous) / previous * 100)}%` : 'no comparison data';
   const supplies = row.supplies || {};
   const food = Number(supplies.inventory?.foodCount || 0) + Number(supplies.barrel?.foodCount || 0);
   const picks = Number(supplies.inventory?.usablePickaxeCount || 0) + Number(supplies.barrel?.usablePickaxeCount || 0);
-  const sent = await sendDiscordNotification(`**Ежедневный отчёт Obsidian Farm**\nДобыто за 24 ч: **${current.toLocaleString()}** (${change})\nСредняя скорость: **${Number(row.rate).toFixed(1)}/ч**\nЗапасы: **${picks}** кирок, **${food}** еды\nЧасовой пояс: \`${settings.timezone}\``, 3447003, NOTIFICATION_DISCORD_CHANNEL_ID || DISCORD_CHANNEL_ID);
+  const sent = await sendDiscordNotification(`**Daily Obsidian Farm Report**\nMined in 24 hours: **${current.toLocaleString()}** (${change})\nAverage rate: **${Number(row.rate).toFixed(1)}/h**\nSupplies: **${picks}** pickaxes, **${food}** food items\nTimezone: \`${settings.timezone}\``, 3447003, NOTIFICATION_DISCORD_CHANNEL_ID || DISCORD_CHANNEL_ID);
   if (sent) await pool.query(`INSERT INTO obsidian_farm_analytics_settings(id,timezone,daily_report_enabled,daily_report_hour,last_daily_report_date,updated_at)
     VALUES(1,$1,$2,$3,$4,NOW()) ON CONFLICT(id) DO UPDATE SET last_daily_report_date=EXCLUDED.last_daily_report_date,updated_at=NOW()`,
   [settings.timezone, settings.daily_report_enabled, settings.daily_report_hour, dateKey]);

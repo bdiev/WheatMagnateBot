@@ -2396,6 +2396,9 @@ function renderObsidian(payload) {
   const efficiency = analytics.efficiency || {};
   const forecast = analytics.forecast || {};
   const confidence = forecast.confidence || { level: 'insufficient', explanation: 'Not enough data.' };
+  const confidenceLabel = confidence.level === 'insufficient'
+    ? 'Insufficient'
+    : `${confidence.level.charAt(0).toUpperCase()}${confidence.level.slice(1)}`;
   const metric = (number, suffix = '') => number == null ? 'Not enough data' : `${formatNumber(number)}${suffix}`;
   const eta = estimate => estimate?.at ? formatDate(estimate.at) : 'Not enough data';
   $('#obsidianEfficiency').innerHTML = `
@@ -2405,7 +2408,7 @@ function renderObsidian(payload) {
     <div><span>Downtime</span><strong>${metric(efficiency.downtimePercent, '%')}</strong></div>
     <div><span>Mean time between stops</span><strong>${metric(efficiency.meanHoursBetweenStops, 'h')}</strong></div>`;
   $('#obsidianForecast').innerHTML = `
-    <div><span>Confidence <em class="confidence-badge">${escapeHtml(confidence.level)}</em></span><strong>${escapeHtml(confidence.explanation || '')}</strong></div>
+    <div><span>Confidence</span><strong>${escapeHtml(confidenceLabel)} · ${escapeHtml(confidence.explanation || '')}</strong></div>
     <div title="${escapeHtml(forecast.pickaxes?.explanation || '')}"><span>Pickaxes exhausted</span><strong>${eta(forecast.pickaxes)}</strong></div>
     <div title="${escapeHtml(forecast.food?.explanation || '')}"><span>Food exhausted</span><strong>${eta(forecast.food)}</strong></div>
     <div><span>Expected in 24 hours</span><strong>${metric(forecast.expected24h)}</strong></div>

@@ -21,8 +21,8 @@ function confidence(sampleHours, extra = '') {
   else if (hours >= 24) { level = 'medium'; score = 70; }
   else if (hours >= 6) { level = 'low'; score = 40; }
   const explanation = level === 'insufficient'
-    ? 'Недостаточно данных: нужно не менее 6 часов наблюдений.'
-    : `Расчёт основан на ${round(hours, 1)} ч наблюдений${extra ? `; ${extra}` : ''}.`;
+    ? 'Not enough data. At least 6 hours of observations are required.'
+    : `Based on ${round(hours, 1)} hours of observations${extra ? `; ${extra}` : ''}.`;
   return { level, score, sampleHours: round(hours, 1), explanation };
 }
 
@@ -108,7 +108,7 @@ function calculateAnalytics(input = {}) {
   const downtime = calculateDowntime(input.annotations, nowMs - 7 * 24 * HOUR, nowMs);
   const uptime = Math.max(0, 1 - downtime.percent / 100);
   const adjustedRate = rawRate * uptime;
-  const forecastConfidence = confidence(activeHours, 'учтён зафиксированный простой');
+  const forecastConfidence = confidence(activeHours, 'recorded downtime is included');
   const state = input.farm || {};
   const blocksPerPickaxe = number(state.blocksPerPickaxe) || (number(state.retiredPickaxes) > 0
     ? number(state.retiredPickaxeBlocks) / number(state.retiredPickaxes) : 0);
@@ -139,11 +139,11 @@ function calculateAnalytics(input = {}) {
   const recentPickaxeBlocks = recentPickaxeChanges.map(item => number(item.details?.blocksMined)).filter(value => value > 0);
   const recentBlocksPerPickaxe = recentPickaxeBlocks.length ? recentPickaxeBlocks.reduce((a, b) => a + b, 0) / recentPickaxeBlocks.length : 0;
   const anomalies = [];
-  if (recent.length >= 3 && baseline.length >= 6 && baselineRate > 0 && recentRate < baselineRate * 0.5) anomalies.push({ type: 'rate_drop', severity: 'warning', message: `Скорость упала на ${round((1 - recentRate / baselineRate) * 100)}%.` });
+  if (recent.length >= 3 && baseline.length >= 6 && baselineRate > 0 && recentRate < baselineRate * 0.5) anomalies.push({ type: 'rate_drop', severity: 'warning', message: `Production rate dropped by ${round((1 - recentRate / baselineRate) * 100)}%.` });
   const enabledWithoutDataHours = state.sessionStartedAt ? (nowMs - new Date(state.sessionStartedAt).getTime()) / HOUR : 0;
-  if (state.desiredEnabled && ((recent.length && recent.every(row => row.value === 0)) || (!completed.length && enabledWithoutDataHours >= 1))) anomalies.push({ type: 'zero_production', severity: 'critical', message: 'Ферма включена, но добыча за последние завершённые часы равна нулю.' });
-  if (tps.length >= 6 && (tpsDeviation > 2 || tps.filter(value => value < 15).length / tps.length > 0.2)) anomalies.push({ type: 'unstable_tps', severity: 'warning', message: `TPS нестабилен (σ ${round(tpsDeviation, 1)}).` });
-  if (recentPickaxeBlocks.length >= 2 && blocksPerPickaxe > 0 && recentBlocksPerPickaxe < blocksPerPickaxe * 0.5) anomalies.push({ type: 'pickaxe_consumption', severity: 'warning', message: 'Расход кирок выше исторического: добыча на смену упала более чем вдвое.' });
+  if (state.desiredEnabled && ((recent.length && recent.every(row => row.value === 0)) || (!completed.length && enabledWithoutDataHours >= 1))) anomalies.push({ type: 'zero_production', severity: 'critical', message: 'The farm is enabled, but production was zero during the latest completed hours.' });
+  if (tps.length >= 6 && (tpsDeviation > 2 || tps.filter(value => value < 15).length / tps.length > 0.2)) anomalies.push({ type: 'unstable_tps', severity: 'warning', message: `TPS is unstable (σ ${round(tpsDeviation, 1)}).` });
+  if (recentPickaxeBlocks.length >= 2 && blocksPerPickaxe > 0 && recentBlocksPerPickaxe < blocksPerPickaxe * 0.5) anomalies.push({ type: 'pickaxe_consumption', severity: 'warning', message: 'Pickaxe consumption is above the historical rate: production per replacement fell by more than half.' });
 
   const today = number(input.comparison?.today);
   const yesterdayComparable = number(input.comparison?.yesterdayComparable ?? input.comparison?.yesterday);
@@ -160,8 +160,8 @@ function calculateAnalytics(input = {}) {
     },
     forecast: {
       confidence: forecastConfidence,
-      pickaxes: { hours: pickHours == null ? null : round(pickHours, 1), at: pickHours == null ? null : new Date(nowMs + pickHours * HOUR).toISOString(), explanation: blocksPerDurability ? 'Оставшиеся единицы durability × фактическая добыча на потраченную единицу.' : 'Нет статистики фактически потраченной прочности.' },
-      food: { hours: foodHours == null ? null : round(foodHours, 1), at: foodHours == null ? null : new Date(nowMs + foodHours * HOUR).toISOString(), confidence: confidence(foodConsumption.sampleHours), explanation: foodHours == null ? 'Нужно минимум 6 часов истории snapshots с наблюдаемым расходом еды.' : 'По фактическому снижению количества еды между snapshots; пополнения исключены.' },
+      pickaxes: { hours: pickHours == null ? null : round(pickHours, 1), at: pickHours == null ? null : new Date(nowMs + pickHours * HOUR).toISOString(), explanation: blocksPerDurability ? 'Remaining durability units multiplied by observed production per durability unit.' : 'No observed durability-consumption history is available yet.' },
+      food: { hours: foodHours == null ? null : round(foodHours, 1), at: foodHours == null ? null : new Date(nowMs + foodHours * HOUR).toISOString(), confidence: confidence(foodConsumption.sampleHours), explanation: foodHours == null ? 'At least 6 hours of supply snapshots with observed food consumption are required.' : 'Based on decreases between supply snapshots; restocks are excluded.' },
       expected24h: forecastConfidence.level === 'insufficient' ? null : Math.round(adjustedRate * 24),
       expected7d: forecastConfidence.level === 'insufficient' ? null : Math.round(adjustedRate * 168),
       goal: goal ? { id: goal.id, name: goal.name, targetTotal: number(goal.targetTotal ?? goal.target_total), remaining: remainingGoal, at: adjustedRate > 0 && forecastConfidence.level !== 'insufficient' ? new Date(nowMs + remainingGoal / adjustedRate * HOUR).toISOString() : null } : null

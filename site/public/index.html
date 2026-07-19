@@ -344,16 +344,16 @@
             <div class="panel-head"><div><h2>Production Goals</h2><p>Target totals and estimated completion dates.</p></div></div>
             <div id="obsidianGoals" class="detail-list"></div>
             <form id="obsidianGoalForm" class="inline-form admin-only" hidden>
-              <input id="obsidianGoalName" maxlength="120" placeholder="Goal name" required>
-              <input id="obsidianGoalTarget" type="number" min="1" step="1" placeholder="Target total" required>
+              <label class="auth-field"><span>Goal name</span><input id="obsidianGoalName" maxlength="120" placeholder="e.g. One million" required></label>
+              <label class="auth-field"><span>Target total</span><input id="obsidianGoalTarget" type="number" min="1" step="1" placeholder="1000000" required></label>
               <button type="submit">Add goal</button>
             </form>
           </section>
           <section class="panel">
             <div class="panel-head"><div><h2>Analytics Settings</h2><p>Timezone and daily Discord report schedule.</p></div><a class="ghost-button link-button" href="/api/obsidian/export.csv">Export CSV</a></div>
             <form id="obsidianAnalyticsSettings" class="settings-form admin-only" hidden>
-              <label><span>Timezone</span><input id="obsidianTimezone" value="Europe/Vilnius"></label>
-              <label><span>Daily report hour</span><input id="obsidianReportHour" type="number" min="0" max="23"></label>
+              <label class="auth-field"><span>Timezone</span><input id="obsidianTimezone" value="Europe/Vilnius"></label>
+              <label class="auth-field"><span>Daily report hour</span><input id="obsidianReportHour" type="number" min="0" max="23"></label>
               <label class="checkbox-row"><input id="obsidianReportEnabled" type="checkbox"><span>Daily Discord report</span></label>
               <button type="submit">Save settings</button>
             </form>

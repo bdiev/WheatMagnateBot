@@ -3480,21 +3480,21 @@ body.search-focus-active #logoutButton {
   gap: 16px;
 }
 .analytics-grid > .panel { grid-column: auto; min-width: 0; }
-.analytics-grid .detail-list strong { min-width: 0; max-width: 70%; overflow-wrap: anywhere; }
+.analytics-grid .detail-list div { grid-template-columns: minmax(0, 1fr) minmax(140px, 52%); }
+.analytics-grid .detail-list strong { min-width: 0; overflow-wrap: normal; word-break: normal; }
 .analytics-grid .detail-list span { min-width: 0; }
 .analytics-alerts { display: grid; gap: 8px; }
 .analytics-alert { padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-soft); }
 .analytics-alert.warning { border-color: color-mix(in srgb, #f0ad4e 45%, var(--line)); }
 .analytics-alert.critical { border-color: color-mix(in srgb, #ef5350 55%, var(--line)); }
-.confidence-badge { display: inline-flex; margin-left: 6px; padding: 2px 7px; border-radius: 999px; background: var(--panel-soft); color: var(--muted); font-size: 11px; text-transform: uppercase; }
 .chart-annotations { display: flex; gap: 8px; overflow-x: auto; padding: 8px 4px 2px; color: var(--muted); font-size: 12px; }
 .chart-annotations span { white-space: nowrap; padding: 4px 8px; border: 1px solid var(--line); border-radius: 999px; }
-.inline-form, .settings-form { display: grid; gap: 10px; margin-top: 14px; }
-.inline-form { grid-template-columns: minmax(0, 1fr) minmax(120px, .7fr) auto; }
+.inline-form, .settings-form { display: grid; gap: 10px; margin: 0; padding: 14px; }
+.inline-form { grid-template-columns: minmax(0, 1fr) minmax(160px, .7fr) auto; align-items: end; }
 .settings-form label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
 .settings-form .checkbox-row { display: flex; align-items: center; }
-.link-button { text-decoration: none; }
-@media (max-width: 760px) { .analytics-grid { grid-template-columns: 1fr; } .inline-form { grid-template-columns: 1fr; } .analytics-grid .detail-list strong { max-width: 62%; } }
+.link-button { display: inline-flex; align-items: center; min-height: var(--button-height); border-radius: var(--button-radius); padding: var(--button-padding); text-decoration: none; }
+@media (max-width: 760px) { .analytics-grid { grid-template-columns: 1fr; } .inline-form { grid-template-columns: 1fr; } .analytics-grid .detail-list div { grid-template-columns: minmax(0, 1fr) minmax(120px, 48%); } }
 
 .realtime-status {
   display: inline-flex;
