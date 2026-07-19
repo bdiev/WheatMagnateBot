@@ -244,10 +244,12 @@ body.profile-open {
 
 .nav-menu-label {
   flex: 1;
+  padding: 2px 0 3px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: left;
+  line-height: 1.25;
 }
 
 .nav-menu-hamburger {
