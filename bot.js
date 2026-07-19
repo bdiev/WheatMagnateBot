@@ -648,6 +648,7 @@ let obsidianStats = {
   sessionStartedAt: null
 };
 let growingChild = null;
+let growingChildSnapshotTimer = null;
 const followFeature = createFollowFeature();
 let obsidianStatsWriteQueue = Promise.resolve();
 let whisperConversations = new Map(); // username -> messageId
@@ -1670,6 +1671,22 @@ async function handleGrowingChildFeedDM(message) {
   return true;
 }
 
+function scheduleGrowingChildSnapshot(snapshot = null) {
+  if (!pool) return;
+  if (growingChildSnapshotTimer) clearTimeout(growingChildSnapshotTimer);
+  growingChildSnapshotTimer = setTimeout(async () => {
+    growingChildSnapshotTimer = null;
+    try {
+      const payload = snapshot || growingChild?.getAdminSnapshot() || {};
+      await pool.query(`INSERT INTO growing_child_admin_snapshot(id,snapshot,updated_at)
+        VALUES(1,$1::jsonb,NOW()) ON CONFLICT(id) DO UPDATE SET snapshot=EXCLUDED.snapshot,updated_at=NOW()`, [JSON.stringify(payload)]);
+    } catch (err) {
+      console.error('[GrowingChild] Failed to publish admin snapshot:', err.message);
+    }
+  }, 500);
+  growingChildSnapshotTimer.unref?.();
+}
+
 function initializeGrowingChild() {
   if (growingChild) return growingChild;
   growingChild = new GrowingChildAI({
@@ -1677,7 +1694,9 @@ function initializeGrowingChild() {
     sendChannelMessage: sendGrowingChildChannelMessage,
     sendMinecraftMessage: sendGrowingChildMinecraftMessage,
     generateWithAI: GEMINI_API_KEY ? generateGrowingChildPhrase : null,
-    allowedDiscordChannelId: DISCORD_CHAT_CHANNEL_ID
+    allowedDiscordChannelId: DISCORD_CHAT_CHANNEL_ID,
+    isExternalAIEnabled: () => Boolean(GEMINI_API_KEY && runtimeSettings.geminiEnabled),
+    onStateChanged: scheduleGrowingChildSnapshot
   });
   growingChild.setMinecraftPublicSpeechEnabled(runtimeSettings.childPublicSpeech);
   growingChild.start();
@@ -1692,7 +1711,9 @@ async function generateGrowingChildPhrase({
   selectedWords,
   learnedWords,
   grammarWords,
-  candidateCount = 5
+  candidateCount = 5,
+  contextMessages = [],
+  memories = []
 }) {
   if (!GEMINI_API_KEY || !runtimeSettings.geminiEnabled) return null;
 
@@ -1716,6 +1737,12 @@ async function generateGrowingChildPhrase({
     'Do not preserve the order of the topic words. Use them as ingredients, not as a quote.',
     'Every sentence must feel complete, with a clear small thought.',
     'Do not add names, numbers, coordinates, commands, quotes, labels, emojis, or explanations.',
+    contextMessages.length
+      ? `Recent conversation (oldest to newest):\n${contextMessages.map(item => `${item.role}: ${item.content}`).join('\n')}`
+      : '',
+    memories.length
+      ? `Relevant memory:\n${memories.map(item => `${item.kind}/${item.fact_key}: ${item.fact_value} (confidence ${item.confidence})`).join('\n')}`
+      : '',
     'Basic grammar words:',
     grammarWords.join(', '),
     'Topic words:',
@@ -3660,12 +3687,21 @@ async function recordFarmAnnotation(eventType, title, details = {}) {
 
 function farmNotification(event) {
   if (!event || typeof event !== 'object' || !event.eventType) return;
-  if (event.eventType === 'farm_stalled') {
-    recordFarmAnnotation(event.resolved ? 'farm_resumed' : 'farm_stalled', event.resolved ? 'Farm resumed' : 'Farm stalled', event.metadata || {}).catch(() => {});
-  }
   reportNotification(event.eventType, {
     key: event.key || 'obsidian-farm', title: event.title, message: event.message,
     metadata: event.metadata, resolved: Boolean(event.resolved), transient: Boolean(event.transient)
+  }).then(result => {
+    if (event.eventType !== 'farm_stalled' || !result?.notification) return;
+    // Annotations describe real alert transitions, not every failed/recovered
+    // cycle. NotificationService applies the configured threshold and dedupe.
+    const becameStalled = !event.resolved && !result.deduplicated && !result.skipped;
+    const becameResolved = Boolean(event.resolved && result.resolved);
+    if (!becameStalled && !becameResolved) return;
+    recordFarmAnnotation(
+      becameResolved ? 'farm_resumed' : 'farm_stalled',
+      becameResolved ? 'Farm resumed' : 'Farm stalled',
+      event.metadata || {}
+    ).catch(() => {});
   });
 }
 
@@ -4873,6 +4909,24 @@ async function executeBotCommand(command) {
     return { childPublicSpeech: runtimeSettings.childPublicSpeech };
   }
 
+  if (['child_memory_delete','child_memory_correct','child_forget_user','child_export_state','child_import_state'].includes(type)) {
+    if (!growingChild) initializeGrowingChild();
+    if (type === 'child_memory_delete') return { deleted: growingChild.deleteMemory(Number(payload.memoryId ?? payload.id)) };
+    if (type === 'child_memory_correct') {
+      const ttlDays = Math.max(1, Math.min(3650, Number(payload.ttlDays) || growingChild.config.memoryDefaultTtlDays));
+      const requestedConfidence = Number(payload.confidence);
+      return { memoryId: growingChild.correctMemory(Number(payload.memoryId ?? payload.id), {
+        factValue: String(payload.factValue || ''),
+        confidence: Number.isFinite(requestedConfidence) ? Math.max(0, Math.min(1, requestedConfidence)) : 0.8,
+        expiresAt: new Date(Date.now() + ttlDays * 86_400_000).toISOString(),
+        sourceRef: command.requested_by || null
+      }) };
+    }
+    if (type === 'child_forget_user') return { deleted: growingChild.forgetUser(String(payload.source || 'minecraft'), String(payload.subjectId || '')) };
+    if (type === 'child_export_state') return { state: growingChild.exportState() };
+    if (type === 'child_import_state') return { stats: growingChild.importState(payload.state) };
+  }
+
   throw new Error(`Unsupported command type: ${type}`);
 }
 
@@ -4934,7 +4988,7 @@ async function processBotCommands() {
         category: 'command_bus',
         actor: command.requested_by,
         message: `Completed bot command ${command.command_type} #${command.id}.`,
-        details: { commandId: String(command.id), source: command.source, result: result || {} }
+        details: { commandId: String(command.id), source: command.source, result: command.command_type === 'child_export_state' ? { exported: true, version: result?.state?.version } : (result || {}) }
       });
     } catch (err) {
       if (err instanceof DeferredBotCommandError) {

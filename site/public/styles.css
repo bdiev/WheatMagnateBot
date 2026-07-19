@@ -3516,7 +3516,8 @@ body.search-focus-active #logoutButton {
 .analytics-alert { padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-soft); }
 .analytics-alert.warning { border-color: color-mix(in srgb, #f0ad4e 45%, var(--line)); }
 .analytics-alert.critical { border-color: color-mix(in srgb, #ef5350 55%, var(--line)); }
-.chart-annotations { display: flex; gap: 8px; overflow-x: auto; padding: 8px 4px 2px; color: var(--muted); font-size: 12px; }
+.chart-annotations { display: flex; gap: 8px; overflow-x: auto; padding: 8px 4px 2px; color: var(--muted); font-size: 12px; scrollbar-width: none; -ms-overflow-style: none; }
+.chart-annotations::-webkit-scrollbar { display: none; }
 .chart-annotations span { white-space: nowrap; padding: 4px 8px; border: 1px solid var(--line); border-radius: 999px; }
 .inline-form, .settings-form { display: grid; gap: 10px; margin: 0; padding: 14px; }
 .inline-form { grid-template-columns: minmax(0, 1fr) minmax(160px, .7fr) auto; align-items: end; }
@@ -4653,4 +4654,129 @@ body.search-focus-active #logoutButton {
   }
 
   .goal-actions button { width: 100%; }
+}
+
+/* Growing Child admin follows the same restrained panel language as the rest of the dashboard. */
+#tab-child-ai.active {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+#tab-child-ai .stats-grid,
+#tab-child-ai .child-ai-memory-panel {
+  grid-column: 1 / -1;
+}
+
+.child-ai-tools,
+.child-ai-row-actions {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.child-ai-tools .auth-field {
+  flex: 1 1 220px;
+}
+
+.child-ai-list {
+  display: grid;
+  gap: 8px;
+}
+
+.child-ai-list.compact {
+  max-height: 420px;
+  overflow: auto;
+}
+
+.child-ai-row {
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--button-radius);
+  padding: 12px;
+  background: var(--panel-soft);
+}
+
+.child-ai-row > div:first-child {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.child-ai-row p,
+.child-ai-row em {
+  margin: 0;
+}
+
+.child-ai-row small,
+.child-ai-row span,
+.child-ai-row em {
+  color: var(--muted);
+}
+
+.child-ai-row-actions {
+  justify-content: flex-end;
+}
+
+.child-ai-row-actions button {
+  min-height: 34px;
+}
+
+.child-ai-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.child-ai-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 7px 10px;
+  background: var(--panel-soft);
+}
+
+.child-ai-chip small {
+  color: var(--muted);
+}
+
+.link-button {
+  min-height: var(--button-height);
+  padding: var(--button-padding);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+@media (max-width: 700px) {
+  #tab-child-ai.active {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  #tab-child-ai .stats-grid.four {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .child-ai-tools,
+  .child-ai-row-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .child-ai-tools .auth-field,
+  .child-ai-tools button,
+  .child-ai-tools .link-button,
+  .child-ai-row-actions button {
+    flex: none;
+    width: 100%;
+  }
+
+  .child-ai-row > div:first-child {
+    display: grid;
+  }
 }

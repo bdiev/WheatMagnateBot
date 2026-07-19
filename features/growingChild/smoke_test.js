@@ -132,11 +132,27 @@ try {
   if (!database.hasRecentlyGeneratedPhrase('do YOU have more rockets?')) {
     throw new Error('Recent generated phrase tracking failed.');
   }
+  database.addConversationMessage({
+    conversationKey: 'test:room', source: 'test', authorId: 'tester', role: 'user', content: 'safe context'
+  });
+  database.rememberGenerationAttempt({
+    phrase: 'hello farm', generator: 'local', accepted: false, rejectionReason: 'low_coherence'
+  });
+  database.recordEmotion('curious', 'smoke_test');
+  if (database.getConversationContext('test:room', 5).length < 1 ||
+      database.getGenerationAttempts(5).length < 1 ||
+      database.getEmotionHistory(5).length < 1) {
+    throw new Error('Growing Child extension tables were not migrated correctly.');
+  }
 
   database.reset();
   const reset = database.getStats();
   if (reset.level !== 0 || reset.knownWords !== 0 || reset.xp !== 0) {
     throw new Error(`Reset failed: ${JSON.stringify(reset)}`);
+  }
+  if (database.getConversationContext('test:room', 5).length ||
+      database.getGenerationAttempts(5).length || database.getEmotionHistory(5).length) {
+    throw new Error('Reset left extended Growing Child state behind.');
   }
   console.log('Growing Child AI smoke test passed.');
 } finally {

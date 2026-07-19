@@ -13,6 +13,7 @@ Minecraft bot with Discord integration, PostgreSQL-backed stats, and a local web
 - Obsidian farm analytics with efficiency, downtime, supply forecasts, confidence explanations, anomalies, goals, period comparisons, graph annotations, CSV export, and scheduled Discord reports.
 - PostgreSQL storage for stats, whitelist data, chat logs, playtime, and farm history.
 - Optional Discord controls for pausing, farming, following players, whitelist/admin actions, and child AI controls.
+- Local Growing Child learning with bounded conversation context, expiring sourced memories, repetition protection and generation-quality scoring.
 - Unified notification center for disconnects, kicks, safety alerts, farm supplies/stalls, food, TPS, database health, reconnect loops and failed commands.
 - Notification delivery to Discord, the dashboard and the system log, with rule-based severity, thresholds, cooldowns, deduplication and recovery events.
 
@@ -52,6 +53,8 @@ SSE_MAX_CONNECTIONS_PER_USER=3
 OBSIDIAN_ANALYTICS_TIMEZONE=Europe/Vilnius
 OBSIDIAN_DAILY_REPORT_ENABLED=true
 OBSIDIAN_DAILY_REPORT_HOUR=9
+GEMINI_ENABLED=false
+GEMINI_API_KEY=
 ```
 
 `NOTIFICATION_DISCORD_CHANNEL_ID` is optional; when omitted, notification delivery uses `DISCORD_CHANNEL_ID` for backward compatibility. Notification rules are managed by an administrator on the **Notifications** dashboard page. Database schema changes in `database/migrations/` are applied automatically by the bot and site at startup.
@@ -64,6 +67,7 @@ OBSIDIAN_DAILY_REPORT_HOUR=9
 - Admin-only dashboard controls are hidden from non-admin users.
 - Active notification problems remain deduplicated by event and resource key. Repeated observations increment the occurrence count, while channel delivery follows the configured cooldown. Recovery creates a separate resolved notification.
 - Dashboard updates use authenticated Server-Sent Events with a slow polling fallback. The event protocol is documented in [`site/SSE_PROTOCOL.md`](site/SSE_PROTOCOL.md).
+- Growing Child stores its learning database locally, preserves it across schema upgrades, and exposes memory/state controls only to administrators. Its learning and privacy model is documented in [`features/growingChild/README.md`](features/growingChild/README.md).
 
 ## Obsidian farm analytics
 

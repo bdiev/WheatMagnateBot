@@ -30,5 +30,17 @@
   "aiCandidateCount": 5,
   "aiWordsPerPhraseMin": 3,
   "aiWordsPerPhraseMax": 6,
-  "maxLearnedMessages": 5000
+  "maxLearnedMessages": 5000,
+  "conversationContextMessages": 8,
+  "maxConversationMessages": 1500,
+  "memoryDefaultTtlDays": 180,
+  "maxMemories": 2000,
+  "maxGenerationAttempts": 1000,
+  "maxGeneratedPhrases": 200,
+  "maxDatabaseBytes": 26214400,
+  "cleanupIntervalHours": 6,
+  "qualityMinimumCoherence": 0.35,
+  "qualityMaximumToxicity": 0.15,
+  "qualityMaximumRepetition": 0.72,
+  "qualityMaximumUnknownRatio": 0.2
 }

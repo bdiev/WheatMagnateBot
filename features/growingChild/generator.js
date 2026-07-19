@@ -10,17 +10,17 @@ const FUNCTION_WORDS = new Set([
   'where', 'who', 'why', 'with', 'you', 'your'
 ]);
 
-function shuffle(items) {
+function shuffle(items, random = Math.random) {
   const copy = [...items];
   for (let i = copy.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(random() * (i + 1));
     [copy[i], copy[j]] = [copy[j], copy[i]];
   }
   return copy;
 }
 
-function randomSample(items, count) {
-  return shuffle(items).slice(0, count);
+function randomSample(items, count, random = Math.random) {
+  return shuffle(items, random).slice(0, count);
 }
 
 function finish(words, punctuation) {
@@ -44,7 +44,7 @@ function similarity(firstWords, secondWords) {
   return shared / Math.min(first.size, second.size);
 }
 
-function scoreWords(words, reply = false) {
+function scoreWords(words, reply = false, random = Math.random) {
   if (words.length < 3) return -100;
   const unique = new Set(words);
   let score = 0;
@@ -54,20 +54,21 @@ function scoreWords(words, reply = false) {
   score += words.filter(word => !FUNCTION_WORDS.has(word)).length * 2;
   if (words.some((word, index) => index > 0 && word === words[index - 1])) score -= 25;
   if (words.length > 1 && words[0] === words[words.length - 1]) score -= 10;
-  return score + Math.random() * 3;
+  return score + random() * 3;
 }
 
 class MessageGenerator {
-  constructor(database, emotionSystem) {
+  constructor(database, emotionSystem, { random = Math.random } = {}) {
     this.database = database;
     this.emotionSystem = emotionSystem;
+    this.random = random;
   }
 
   getPunctuation(reply = false) {
     const emotion = this.emotionSystem.get();
     if (emotion === 'sleepy') return '...';
     const questionChance = emotion === 'curious' ? 0.55 : reply ? 0.3 : 0.12;
-    return Math.random() < questionChance ? '?' : '.';
+    return this.random() < questionChance ? '?' : '.';
   }
 
   isTooSimilarToChat(words) {
@@ -102,20 +103,21 @@ class MessageGenerator {
 
     const targetLength = Math.min(
       pool.length,
-      4 + Math.floor(Math.random() * (reply ? 6 : 8))
+      4 + Math.floor(this.random() * (reply ? 6 : 8))
     );
     const context = randomSample(
       [...new Set(contextWords.filter(word => pool.includes(word) && !FUNCTION_WORDS.has(word)))],
-      reply ? 2 : 1
+      reply ? 2 : 1,
+      this.random
     );
     const remaining = pool.filter(word => !context.includes(word));
     const words = shuffle([
       ...context,
-      ...randomSample(remaining, Math.max(0, targetLength - context.length))
-    ]);
+      ...randomSample(remaining, Math.max(0, targetLength - context.length), this.random)
+    ], this.random);
 
     if (words.length < 3 || hasMixedLatinCyrillicWords(words)) return null;
-    return { words, phrase: finish(words, this.getPunctuation(reply)), score: scoreWords(words, reply) };
+    return { words, phrase: finish(words, this.getPunctuation(reply)), score: scoreWords(words, reply, this.random) };
   }
 
   generateCandidates({ reply = false, contextWords = [], attempts = 80, limit = 8 } = {}) {

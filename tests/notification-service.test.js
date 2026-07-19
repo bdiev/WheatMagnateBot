@@ -44,6 +44,28 @@ async function run() {
   assert.equal(repository.notifications[1].status, 'resolved', 'recovery must create a separate resolved notification');
   assert.equal(repository.notifications[1].severity, 'info');
 
+  const farmRepository = new MemoryNotificationRepository([rule({
+    event_type: 'farm_stalled', severity: 'critical', threshold: { seconds: 120 }, cooldown_seconds: 600
+  })]);
+  const farmService = new NotificationService({ repository: farmRepository });
+  const shortFailure = await farmService.report('farm_stalled', {
+    key: 'obsidian-farm', title: 'Farm stalled', message: 'Retrying', metadata: { seconds: 10 }
+  });
+  assert.equal(shortFailure.skipped, true, 'short farm failures must not become alerts or annotations');
+  assert.equal(farmRepository.notifications.length, 0);
+  const stalled = await farmService.report('farm_stalled', {
+    key: 'obsidian-farm', title: 'Farm stalled', message: 'Still retrying', metadata: { seconds: 120 }
+  });
+  assert.equal(stalled.deduplicated, false, 'threshold crossing must create one stall transition');
+  const stalledAgain = await farmService.report('farm_stalled', {
+    key: 'obsidian-farm', title: 'Farm stalled', message: 'Still retrying', metadata: { seconds: 180 }
+  });
+  assert.equal(stalledAgain.deduplicated, true, 'continued stalls must not create new transitions');
+  const farmRecovered = await farmService.report('farm_stalled', {
+    key: 'obsidian-farm', resolved: true, title: 'Farm resumed', message: 'Cycle completed'
+  });
+  assert.equal(farmRecovered.resolved, true, 'a real active stall must create one recovery transition');
+
   console.log('NotificationService tests passed.');
 }
 

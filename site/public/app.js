@@ -50,6 +50,8 @@ const state = {
   adminControlState: null,
   adminControlLoading: false,
   adminLogsLoading: false,
+  childAiLoading: false,
+  childAiImportState: null,
   adminOpenLogDetails: new Set(),
   notificationRules: [],
   obsidianCoordinateEditorOpen: false,
@@ -491,7 +493,7 @@ function applyCurrentUser(user) {
   });
   const logoutButton = $('#logoutButton');
   if (logoutButton) logoutButton.hidden = !state.currentUser;
-  if (!isAdmin && ['admin', 'notifications'].includes(state.activeTab)) setActiveTab('chat');
+  if (!isAdmin && ['admin', 'notifications', 'child-ai'].includes(state.activeTab)) setActiveTab('chat');
   if (state.currentUser) startRealtimeUpdates();
   else stopRealtimeUpdates();
 }
@@ -523,7 +525,7 @@ function getStoredTab() {
 
 function restoreActiveTab() {
   const tab = getStoredTab();
-  setActiveTab(['admin', 'notifications'].includes(tab) && state.currentUser?.role !== 'admin' ? 'chat' : tab);
+  setActiveTab(['admin', 'notifications', 'child-ai'].includes(tab) && state.currentUser?.role !== 'admin' ? 'chat' : tab);
 }
 
 async function handleLogout() {
@@ -603,7 +605,7 @@ function toggleTheme() {
 }
 
 function setActiveTab(tab) {
-  if (['admin', 'notifications'].includes(tab) && state.currentUser?.role !== 'admin') return;
+  if (['admin', 'notifications', 'child-ai'].includes(tab) && state.currentUser?.role !== 'admin') return;
   state.activeTab = tab;
   localStorage.setItem('wm-active-tab', tab);
   $$('.tab-button').forEach(button => {
@@ -622,6 +624,7 @@ function setActiveTab(tab) {
     loadAdminSystemLogs();
   }
   if (tab === 'notifications') loadNotifications();
+  if (tab === 'child-ai') loadChildAiAdmin();
   if (tab === 'chat') ensureInitialChatScroll();
   requestAnimationFrame(updateCarousels);
   redrawCharts();
@@ -2445,7 +2448,23 @@ function renderObsidian(payload) {
     $('#obsidianReportHour').value = payload.settings?.dailyReportHour ?? 9;
     $('#obsidianReportEnabled').checked = Boolean(payload.settings?.dailyReportEnabled);
   }
-  $('#obsidianAnnotations').innerHTML = (payload.annotations || []).slice(-12).reverse().map(item => `<span title="${formatDate(item.occurredAt)}">${escapeHtml(item.title)}</span>`).join('') || '<span>No annotations yet</span>';
+  const sortedAnnotations = [...(payload.annotations || [])]
+    .sort((first, second) => new Date(second.occurredAt).getTime() - new Date(first.occurredAt).getTime());
+  const newestAnnotations = [];
+  let latestFarmTransitionAt = null;
+  for (const annotation of sortedAnnotations) {
+    const occurredAt = new Date(annotation.occurredAt).getTime();
+    const isFarmTransition = annotation.eventType === 'farm_stalled' || annotation.eventType === 'farm_resumed';
+    // Collapse historical retry chatter in this compact list. The complete
+    // annotation data remains available to the chart and CSV export.
+    if (isFarmTransition && latestFarmTransitionAt != null && latestFarmTransitionAt - occurredAt < 15 * 60_000) continue;
+    if (isFarmTransition) latestFarmTransitionAt = occurredAt;
+    newestAnnotations.push(annotation);
+    if (newestAnnotations.length >= 12) break;
+  }
+  const annotationsElement = $('#obsidianAnnotations');
+  annotationsElement.innerHTML = newestAnnotations.map(item => `<span title="${formatDate(item.occurredAt)}">${escapeHtml(item.title)}</span>`).join('') || '<span>No annotations yet</span>';
+  annotationsElement.scrollLeft = 0;
 
   $('#farmDetails').innerHTML = `
     <div><span>Last 7 days</span><strong id="farmLast7Days">- blocks</strong></div>
@@ -3636,6 +3655,197 @@ async function saveNotificationRule(event) {
   }
 }
 
+function formatFileSize(value) {
+  const bytes = Math.max(0, Number(value) || 0);
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+}
+
+function qualitySummary(item) {
+  const percent = value => `${Math.round((Number(value) || 0) * 100)}%`;
+  return `coherence ${percent(item.coherence)} · toxicity ${percent(item.toxicity)} · repetition ${percent(item.repetition)} · unknown ${percent(item.unknown_ratio)}`;
+}
+
+function renderChildAiAdmin(payload) {
+  const snapshot = payload?.snapshot;
+  if (!snapshot) {
+    ['#childAiMemories', '#childAiWords', '#childAiTopics', '#childAiEmotions', '#childAiResponses', '#childAiRejections']
+      .forEach(selector => { if ($(selector)) $(selector).innerHTML = '<div class="empty">Waiting for the bot to publish its first snapshot.</div>'; });
+    return;
+  }
+
+  const memories = Array.isArray(snapshot.memories) ? snapshot.memories : [];
+  const generations = Array.isArray(snapshot.generations) ? snapshot.generations : [];
+  $('#childAiWordCount').textContent = formatNumber(snapshot.stats?.knownWords || 0);
+  $('#childAiMemoryCount').textContent = formatNumber(memories.length);
+  $('#childAiEmotion').textContent = String(snapshot.emotion || 'neutral');
+  $('#childAiDatabaseSize').textContent = formatFileSize(snapshot.databaseSizeBytes);
+
+  $('#childAiWords').innerHTML = (snapshot.words || []).length
+    ? snapshot.words.map(item => `<span class="child-ai-chip"><strong>${escapeHtml(item.word)}</strong><small>${formatNumber(item.times_seen)} uses</small></span>`).join('')
+    : '<div class="empty">No learned words yet.</div>';
+  $('#childAiTopics').innerHTML = (snapshot.topics || []).length
+    ? snapshot.topics.map(item => `<span class="child-ai-chip"><strong>${escapeHtml(item.topic)}</strong><small>${formatNumber(item.times_seen)} mentions</small></span>`).join('')
+    : '<div class="empty">No topics yet.</div>';
+  $('#childAiMemories').innerHTML = memories.length ? memories.map(item => `
+    <article class="child-ai-row child-ai-memory">
+      <div><strong>${escapeHtml(item.subject_name || item.subject_id || 'Unknown user')}</strong><span class="muted">${escapeHtml(item.subject_source)} · ${escapeHtml(item.kind)} · ${escapeHtml(item.fact_key)}</span></div>
+      <p>${escapeHtml(item.fact_value)}</p>
+      <small>Confidence ${Math.round((Number(item.confidence) || 0) * 100)}% · ${escapeHtml(item.source_type)} · expires ${formatDate(item.expires_at)}</small>
+      <div class="child-ai-row-actions"><button class="ghost-button" type="button" data-child-memory-correct="${item.id}" data-current-value="${escapeHtml(item.fact_value)}" data-current-confidence="${Number(item.confidence) || 0.8}" data-current-expiry="${escapeHtml(item.expires_at)}">Correct</button><button class="danger-button" type="button" data-child-memory-delete="${item.id}">Delete</button></div>
+    </article>`).join('') : '<div class="empty">No active long-term memories.</div>';
+
+  $('#childAiEmotions').innerHTML = (snapshot.emotions || []).length
+    ? snapshot.emotions.map(item => `<article class="child-ai-row"><strong>${escapeHtml(item.emotion)}</strong><span>${escapeHtml(item.reason || 'State update')}</span><small>${formatDate(item.created_at)}</small></article>`).join('')
+    : '<div class="empty">No emotion history yet.</div>';
+  const renderGeneration = item => `<article class="child-ai-row"><strong>${escapeHtml(item.phrase || 'Empty candidate')}</strong><span>${escapeHtml(item.generator)}</span><small>${escapeHtml(qualitySummary(item))} · ${formatDate(item.created_at)}</small>${item.rejection_reason ? `<em>${escapeHtml(item.rejection_reason)}</em>` : ''}</article>`;
+  $('#childAiResponses').innerHTML = generations.some(item => item.accepted)
+    ? generations.filter(item => item.accepted).slice(0, 30).map(renderGeneration).join('')
+    : '<div class="empty">No accepted responses recorded yet.</div>';
+  $('#childAiRejections').innerHTML = generations.some(item => !item.accepted)
+    ? generations.filter(item => !item.accepted).slice(0, 30).map(renderGeneration).join('')
+    : '<div class="empty">No rejected generations recorded yet.</div>';
+}
+
+async function loadChildAiAdmin() {
+  if (state.currentUser?.role !== 'admin' || state.childAiLoading) return;
+  state.childAiLoading = true;
+  try {
+    renderChildAiAdmin(await fetchJson('/api/admin/growing-child'));
+  } catch (err) {
+    setBanner(`Could not load Child AI state: ${err.message}`);
+  } finally {
+    state.childAiLoading = false;
+  }
+}
+
+async function waitForAdminBotCommand(id, timeoutMs = 20_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const command = await fetchJson(`/api/admin/bot-command/${encodeURIComponent(id)}`);
+    if (command.status === 'completed') return command.result;
+    if (command.status === 'failed') throw new Error(command.error || 'Bot command failed.');
+    await new Promise(resolve => setTimeout(resolve, 400));
+  }
+  throw new Error('The bot did not process the command in time.');
+}
+
+async function runChildAiCommand(commandType, payload = {}) {
+  const queued = await postJson('/api/admin/growing-child', { commandType, payload });
+  return waitForAdminBotCommand(queued.command.id);
+}
+
+async function handleChildAiMemoryAction(event) {
+  const deleteButton = event.target.closest('[data-child-memory-delete]');
+  const correctButton = event.target.closest('[data-child-memory-correct]');
+  if (!deleteButton && !correctButton) return;
+  const button = deleteButton || correctButton;
+  const memoryId = Number(deleteButton?.dataset.childMemoryDelete || correctButton?.dataset.childMemoryCorrect);
+  if (deleteButton && !confirm('Delete this fact from long-term memory?')) return;
+  let commandType = 'child_memory_delete';
+  let payload = { memoryId };
+  if (correctButton) {
+    const factValue = prompt('Correct fact value:', correctButton.dataset.currentValue || '');
+    if (factValue == null || !factValue.trim()) return;
+    const currentConfidence = Math.round((Number(correctButton.dataset.currentConfidence) || 0.8) * 100);
+    const confidenceInput = prompt('Confidence (0-100%):', String(currentConfidence));
+    if (confidenceInput == null) return;
+    const currentExpiry = new Date(correctButton.dataset.currentExpiry).getTime();
+    const currentTtl = Number.isFinite(currentExpiry) ? Math.max(1, Math.ceil((currentExpiry - Date.now()) / 86_400_000)) : 180;
+    const ttlInput = prompt('Keep the corrected fact for how many days?', String(currentTtl));
+    if (ttlInput == null) return;
+    commandType = 'child_memory_correct';
+    payload = {
+      memoryId, factValue: factValue.trim(),
+      confidence: Math.max(0, Math.min(1, Number(confidenceInput) / 100)),
+      ttlDays: Math.max(1, Math.min(3650, Number(ttlInput) || currentTtl))
+    };
+  }
+  button.disabled = true;
+  try {
+    await runChildAiCommand(commandType, payload);
+    await new Promise(resolve => setTimeout(resolve, 650));
+    await loadChildAiAdmin();
+    setBanner(commandType === 'child_memory_delete' ? 'Memory deleted.' : 'Memory corrected.');
+  } catch (err) {
+    setBanner(`Could not update memory: ${err.message}`);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function forgetChildAiUser() {
+  const subjectId = $('#childAiForgetUserId')?.value.trim();
+  const source = $('#childAiForgetSource')?.value;
+  if (!subjectId) return setBanner('Enter a user ID to forget.');
+  if (!confirm(`Forget all stored memory and conversation context for ${subjectId}?`)) return;
+  const button = $('#childAiForgetUser');
+  button.disabled = true;
+  try {
+    const result = await runChildAiCommand('child_forget_user', { source, subjectId });
+    $('#childAiForgetUserId').value = '';
+    await new Promise(resolve => setTimeout(resolve, 650));
+    await loadChildAiAdmin();
+    setBanner(`User forgotten. Removed ${Number(result?.deleted || 0)} facts.`);
+  } catch (err) {
+    setBanner(`Could not forget user: ${err.message}`);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function exportChildAiState() {
+  const button = $('#childAiExport');
+  button.disabled = true;
+  try {
+    const result = await runChildAiCommand('child_export_state');
+    const exported = result?.state || result;
+    const blob = new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `growing-child-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 0);
+  } catch (err) {
+    setBanner(`Could not export state: ${err.message}`);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function selectChildAiImport(event) {
+  const file = event.target.files?.[0];
+  state.childAiImportState = null;
+  $('#childAiImport').disabled = true;
+  if (!file) return;
+  try {
+    const parsed = JSON.parse(await file.text());
+    if (Number(parsed.version) !== 2 || !parsed.tables) throw new Error('This is not a supported Growing Child export.');
+    state.childAiImportState = parsed;
+    $('#childAiImport').disabled = false;
+    setBanner(`${file.name} is ready to import.`);
+  } catch (err) {
+    setBanner(`Could not read import file: ${err.message}`);
+  }
+}
+
+async function importChildAiState() {
+  if (!state.childAiImportState || !confirm('Merge this backup into the current Child AI state? Existing learned data will be preserved.')) return;
+  const button = $('#childAiImport');
+  button.disabled = true;
+  try {
+    await runChildAiCommand('child_import_state', { state: state.childAiImportState });
+    state.childAiImportState = null;
+    $('#childAiImportFile').value = '';
+    await new Promise(resolve => setTimeout(resolve, 650));
+    await loadChildAiAdmin();
+    setBanner('Child AI state imported. Existing vocabulary was preserved.');
+  } catch (err) {
+    setBanner(`Could not import state: ${err.message}`);
+  }
+}
+
 function setRealtimeStatus(mode) {
   const indicator = $('#realtimeStatus');
   if (!indicator) return;
@@ -3755,6 +3965,7 @@ function handleRealtimeEvent(event) {
     queueRealtimeRefresh('admin-control', async () => {
       await loadAdminControlState();
       if (state.activeTab === 'admin') await loadAdminSystemLogs();
+      if (state.activeTab === 'child-ai') await loadChildAiAdmin();
     }, 300);
   }
 }
@@ -3889,6 +4100,12 @@ $('#logoutButton')?.addEventListener('click', handleLogout);
 $('#adminUsersRefresh')?.addEventListener('click', loadAdminUsers);
 $('#adminLogsRefresh')?.addEventListener('click', loadAdminSystemLogs);
 $('#adminLogLevel')?.addEventListener('change', loadAdminSystemLogs);
+$('#childAiRefresh')?.addEventListener('click', loadChildAiAdmin);
+$('#childAiMemories')?.addEventListener('click', handleChildAiMemoryAction);
+$('#childAiForgetUser')?.addEventListener('click', forgetChildAiUser);
+$('#childAiExport')?.addEventListener('click', exportChildAiState);
+$('#childAiImportFile')?.addEventListener('change', selectChildAiImport);
+$('#childAiImport')?.addEventListener('click', importChildAiState);
 $('#notificationsRefresh')?.addEventListener('click', loadNotifications);
 $('#notificationStatusFilter')?.addEventListener('change', loadNotifications);
 $('#notificationSeverityFilter')?.addEventListener('change', loadNotifications);

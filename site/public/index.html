@@ -61,6 +61,7 @@
               <button class="tab-button" type="button" data-tab="server" role="menuitem">Server Stats</button>
               <button class="tab-button" type="button" data-tab="players" role="menuitem">Player Stats</button>
               <button class="tab-button notification-nav-button admin-only" type="button" data-tab="notifications" role="menuitem" hidden>Notifications <span id="notificationBadge" class="notification-badge" hidden>0</span></button>
+              <button class="tab-button admin-only" type="button" data-tab="child-ai" role="menuitem" hidden>Child AI</button>
               <button class="tab-button admin-only" type="button" data-tab="admin" role="menuitem" hidden>Admin</button>
             </div>
           </nav>
@@ -626,6 +627,33 @@
         <section class="panel notification-rules-panel">
           <div class="panel-head"><div><h2>Notification rules</h2><p>Thresholds, cooldowns, severity and delivery channels.</p></div></div>
           <div id="notificationRules" class="notification-rules"></div>
+        </section>
+      </section>
+
+      <section id="tab-child-ai" class="tab-panel admin-only" data-panel="child-ai" hidden>
+        <section class="stats-grid four">
+          <article class="stat"><span class="stat-label">Vocabulary</span><strong id="childAiWordCount">-</strong><small>known words</small></article>
+          <article class="stat"><span class="stat-label">Memories</span><strong id="childAiMemoryCount">-</strong><small>active facts</small></article>
+          <article class="stat"><span class="stat-label">Emotion</span><strong id="childAiEmotion">-</strong><small>current state</small></article>
+          <article class="stat"><span class="stat-label">Database</span><strong id="childAiDatabaseSize">-</strong><small>automatic cleanup enabled</small></article>
+        </section>
+        <section class="panel child-ai-memory-panel">
+          <div class="panel-head"><div><h2>Long-term Memory</h2><p>Facts, preferences, relationships and important events. Secrets and personal data are rejected.</p></div><button id="childAiRefresh" class="ghost-button" type="button">Refresh</button></div>
+          <div class="child-ai-tools">
+            <label class="auth-field"><span>Forget user ID</span><input id="childAiForgetUserId" placeholder="Minecraft username or Discord user ID"></label>
+            <label class="auth-field"><span>Source</span><select id="childAiForgetSource"><option value="minecraft">Minecraft</option><option value="discord">Discord</option><option value="owner_dm">Owner DM</option></select></label>
+            <button id="childAiForgetUser" class="danger-button" type="button">Forget user</button>
+          </div>
+          <div id="childAiMemories" class="child-ai-list"></div>
+        </section>
+        <section class="panel"><div class="panel-head"><div><h2>Vocabulary</h2><p>Most frequently learned words.</p></div></div><div id="childAiWords" class="child-ai-chip-list"></div></section>
+        <section class="panel"><div class="panel-head"><div><h2>Topics</h2><p>Topics inferred from learned vocabulary.</p></div></div><div id="childAiTopics" class="child-ai-chip-list"></div></section>
+        <section class="panel"><div class="panel-head"><div><h2>Emotions</h2><p>Recent emotion changes and their causes.</p></div></div><div id="childAiEmotions" class="child-ai-list compact"></div></section>
+        <section class="panel"><div class="panel-head"><div><h2>Recent Responses</h2><p>Accepted generated phrases and quality scores.</p></div></div><div id="childAiResponses" class="child-ai-list compact"></div></section>
+        <section class="panel"><div class="panel-head"><div><h2>Rejected Generations</h2><p>Why candidate phrases were not used.</p></div></div><div id="childAiRejections" class="child-ai-list compact"></div></section>
+        <section class="panel">
+          <div class="panel-head"><div><h2>State Export / Import</h2><p>JSON backup preserves the existing vocabulary and accumulated experience.</p></div></div>
+          <div class="child-ai-tools"><button id="childAiExport" type="button">Export state</button><label class="ghost-button link-button" for="childAiImportFile">Choose JSON</label><input id="childAiImportFile" type="file" accept="application/json,.json" hidden><button id="childAiImport" class="ghost-button" type="button" disabled>Import state</button></div>
         </section>
       </section>
 

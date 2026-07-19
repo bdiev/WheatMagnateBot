@@ -108,12 +108,12 @@ function verifyPassword(password, storedHash) {
   return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
 }
 
-function readJsonBody(req) {
+function readJsonBody(req, maxBytes = 1024 * 1024) {
   return new Promise((resolve, reject) => {
     let body = '';
     req.on('data', chunk => {
       body += chunk;
-      if (body.length > 1024 * 1024) {
+      if (body.length > maxBytes) {
         reject(Object.assign(new Error('Request body is too large.'), { statusCode: 413 }));
         req.destroy();
       }
@@ -2230,7 +2230,12 @@ async function queueAdminBotCommand(currentUser, body) {
     'child_toggle',
     'child_say',
     'gemini_toggle',
-    'child_public_toggle'
+    'child_public_toggle',
+    'child_memory_delete',
+    'child_memory_correct',
+    'child_forget_user',
+    'child_export_state',
+    'child_import_state'
   ]);
   if (!allowed.has(commandType)) {
     const err = new Error('Unsupported bot command.');
@@ -2513,6 +2518,20 @@ async function getAdminControlState(currentUser) {
   };
 }
 
+async function getGrowingChildAdmin(currentUser) {
+  assertAdminUser(currentUser);
+  const result = await pool.query('SELECT snapshot,updated_at FROM growing_child_admin_snapshot WHERE id=1');
+  return { snapshot: result.rows[0]?.snapshot || null, updatedAt: result.rows[0]?.updated_at || null };
+}
+
+async function getAdminBotCommandResult(currentUser, id) {
+  assertAdminUser(currentUser);
+  const result = await pool.query(`SELECT id,status,result,error,created_at,finished_at FROM bot_commands WHERE id=$1`, [id]);
+  if (!result.rowCount) throw Object.assign(new Error('Bot command not found.'), { statusCode: 404 });
+  const row = result.rows[0];
+  return { id: String(row.id), status: row.status, result: row.result, error: row.error, createdAt: row.created_at, finishedAt: row.finished_at };
+}
+
 async function getNotifications(currentUser, url) {
   assertAdminUser(currentUser);
   const status = String(url.searchParams.get('status') || 'all');
@@ -2647,6 +2666,16 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/admin/notification-rules' && req.method === 'PUT') {
       sendJson(res, 200, await updateNotificationRule(currentUser, await readJsonBody(req))); return;
+    }
+    if (url.pathname === '/api/admin/growing-child' && req.method === 'GET') {
+      sendJson(res, 200, await getGrowingChildAdmin(currentUser)); return;
+    }
+    if (url.pathname === '/api/admin/growing-child' && req.method === 'POST') {
+      const body = await readJsonBody(req, 32 * 1024 * 1024);
+      sendJson(res, 202, await queueAdminBotCommand(currentUser, { commandType: body.commandType, payload: body.payload || {} })); return;
+    }
+    if (url.pathname.startsWith('/api/admin/bot-command/') && req.method === 'GET') {
+      sendJson(res, 200, await getAdminBotCommandResult(currentUser, url.pathname.split('/').pop())); return;
     }
     if (url.pathname === '/api/admin/bot-command' && req.method === 'POST') {
       sendJson(res, 202, await queueAdminBotCommand(currentUser, await readJsonBody(req)));

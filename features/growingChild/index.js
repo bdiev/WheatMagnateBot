@@ -7,6 +7,8 @@ const { EmotionSystem } = require('./emotion');
 const { MessageGenerator } = require('./generator');
 const { GrowingChildScheduler } = require('./scheduler');
 const { sanitizePublicPhrase } = require('./safety');
+const { containsSensitiveData, extractMemories, parseForgetRequest } = require('./memory');
+const { evaluateGeneration } = require('./quality');
 const {
   GRAMMAR_WORDS,
   extractCandidatePhrases,
@@ -29,9 +31,12 @@ class GrowingChildAI {
     sendChannelMessage,
     sendMinecraftMessage,
     generateWithAI,
-    allowedDiscordChannelId
+    allowedDiscordChannelId,
+    isExternalAIEnabled = () => true,
+    onStateChanged = null,
+    config = null
   }) {
-    this.config = loadConfig();
+    this.config = config || loadConfig();
     this.database = new GrowingChildDatabase(this.config.databasePath);
     this.learning = new LearningSystem(this.database, this.config);
     this.emotions = new EmotionSystem(this.database);
@@ -40,11 +45,14 @@ class GrowingChildAI {
     this.sendChannelMessage = sendChannelMessage;
     this.sendMinecraftMessage = sendMinecraftMessage;
     this.generateWithAI = generateWithAI;
+    this.isExternalAIEnabled = isExternalAIEnabled;
+    this.onStateChanged = onStateChanged;
     this.allowedDiscordChannelId = allowedDiscordChannelId
       ? String(allowedDiscordChannelId)
       : null;
     this.lastReactiveSpeechAt = 0;
     this.pendingReactiveTimer = null;
+    this.cleanupTimer = null;
     const savedEnabled = this.database.getState('enabled');
     this.enabled = savedEnabled == null
       ? Boolean(this.config.enabled)
@@ -59,6 +67,30 @@ class GrowingChildAI {
 
   start() {
     if (this.enabled) this.scheduler.start();
+    this.runCleanup();
+    if (this.cleanupTimer) clearInterval(this.cleanupTimer);
+    this.cleanupTimer = setInterval(() => {
+      this.runCleanup();
+    }, this.config.cleanupIntervalHours * 3_600_000);
+    this.cleanupTimer.unref?.();
+    this.notifyStateChanged();
+  }
+
+  notifyStateChanged() {
+    try { this.onStateChanged?.(this.getAdminSnapshot()); } catch (err) { console.error('[GrowingChild] State callback failed:', err.message); }
+  }
+
+  runCleanup() {
+    try {
+      this.database.cleanup(this.config);
+      this.notifyStateChanged();
+    } catch (err) {
+      console.error('[GrowingChild] Automatic cleanup failed:', err.message);
+    }
+  }
+
+  conversationKey(context) {
+    return `${context.source}:${context.channelId || context.authorId || 'global'}`;
   }
 
   learn(context) {
@@ -73,8 +105,29 @@ class GrowingChildAI {
         );
       if (!allowedSource) return null;
 
+      const forget = parseForgetRequest(context.text);
+      if (forget?.type === 'user') {
+        const deleted = this.database.forgetUser(context.source, context.authorId);
+        this.notifyStateChanged();
+        return { forgotten: true, deleted };
+      }
+      if (forget?.type === 'fact') {
+        const deleted = this.database.deleteMemory(forget.id, { source: context.source, id: context.authorId });
+        this.notifyStateChanged();
+        return { forgotten: deleted, factId: forget.id };
+      }
+      if (containsSensitiveData(context.text)) return { blocked: 'sensitive_data' };
+
+      const conversationKey = this.conversationKey(context);
+      this.database.addConversationMessage({
+        conversationKey, source: context.source, authorId: context.authorId,
+        authorName: context.authorName, role: 'user', content: context.text,
+        maxMessages: this.config.maxConversationMessages
+      });
+
       const result = this.learning.learnMessage(context);
       if (result) {
+        for (const memory of extractMemories(context, this.config)) this.database.upsertMemory(memory);
         this.emotions.update({
           newWords: result.newWords,
           addressed: Boolean(context.addressed)
@@ -83,6 +136,7 @@ class GrowingChildAI {
           this.scheduler.noteActivity();
           this.maybeReact(context);
         }
+        this.notifyStateChanged();
       }
       return result;
     } catch (err) {
@@ -105,13 +159,16 @@ class GrowingChildAI {
     const min = this.config.reactiveDelayMinSeconds;
     const max = this.config.reactiveDelayMaxSeconds;
     const delayMs = (min + Math.random() * (max - min)) * 1000;
-    const contextWords = this.learning.tokenize(context.text);
+    const conversationKey = this.conversationKey(context);
+    const contextMessages = this.database.getConversationContext(conversationKey, this.config.conversationContextMessages);
+    const memories = this.database.getMemories({ subjectSource: context.source, subjectId: context.authorId, limit: 12 });
+    const contextWords = this.learning.tokenize(contextMessages.map(message => message.content).join(' '));
 
     this.pendingReactiveTimer = setTimeout(async () => {
       this.pendingReactiveTimer = null;
       this.lastReactiveSpeechAt = Date.now();
       try {
-        await this.speak('reaction', contextWords, 'minecraft');
+        await this.speak('reaction', contextWords, 'minecraft', { conversationKey, contextMessages, memories });
       } catch (err) {
         console.error('[GrowingChild] Reactive speech failed:', err.message);
       }
@@ -119,9 +176,9 @@ class GrowingChildAI {
     this.pendingReactiveTimer.unref?.();
   }
 
-  async speak(reason = 'manual', contextWords = [], target = null) {
+  async speak(reason = 'manual', contextWords = [], target = null, context = {}) {
     if (!this.enabled) return null;
-    const generatedPhrase = await this.choosePhrase(reason, contextWords);
+    const generatedPhrase = await this.choosePhrase(reason, contextWords, context);
     if (!generatedPhrase) {
       console.log('[GrowingChild] Not enough learned language to form a new phrase.');
       return null;
@@ -162,26 +219,38 @@ class GrowingChildAI {
       await this.sendOwnerDM(payload);
     }
     this.database.rememberGeneratedPhrase(phrase);
+    if (context.conversationKey) this.database.addConversationMessage({
+      conversationKey: context.conversationKey, source: 'growing_child', role: 'assistant', content: phrase,
+      maxMessages: this.config.maxConversationMessages
+    });
+    this.notifyStateChanged();
     return payload;
   }
 
-  async choosePhrase(reason, contextWords) {
-    const aiCandidates = await this.generateAIPhrases(reason, contextWords);
+  async choosePhrase(reason, contextWords, context = {}) {
+    const aiCandidates = await this.generateAIPhrases(reason, contextWords, context);
     const localCandidates = this.generateLocalPhrases(reason, contextWords);
     const candidates = [
-      ...aiCandidates,
-      ...localCandidates
+      ...aiCandidates.map(phrase => ({ phrase, generator: 'external_ai' })),
+      ...localCandidates.map(phrase => ({ phrase, generator: 'local' }))
     ];
 
-    for (const phrase of candidates) {
-      if (phrase && !this.database.hasRecentlyGeneratedPhrase(phrase)) {
-        return phrase;
+    for (const candidate of candidates) {
+      if (!candidate.phrase) continue;
+      const quality = evaluateGeneration({ phrase: candidate.phrase, database: this.database, config: this.config });
+      if (this.database.hasRecentlyGeneratedPhrase(candidate.phrase)) {
+        quality.accepted = false;
+        if (!quality.reasons.includes('repetition')) quality.reasons.push('repetition');
       }
+      this.database.rememberGenerationAttempt({ phrase: candidate.phrase, generator: candidate.generator,
+        accepted: quality.accepted, rejectionReason: quality.reasons.join(',') || null, ...quality });
+      if (quality.accepted) return candidate.phrase;
     }
 
     if (candidates.length > 0) {
       console.log('[GrowingChild] No new phrase available without repetition.');
     }
+    this.notifyStateChanged();
     return null;
   }
 
@@ -209,10 +278,11 @@ class GrowingChildAI {
     });
   }
 
-  async generateAIPhrases(reason, contextWords) {
+  async generateAIPhrases(reason, contextWords, context = {}) {
     if (
       !this.config.aiGenerationEnabled ||
-      typeof this.generateWithAI !== 'function'
+      typeof this.generateWithAI !== 'function' ||
+      !this.isExternalAIEnabled()
     ) {
       return [];
     }
@@ -262,7 +332,9 @@ class GrowingChildAI {
           selectedWords: attemptSelectedWords,
           learnedWords,
           grammarWords: GRAMMAR_WORDS,
-          candidateCount: this.config.aiCandidateCount
+          candidateCount: this.config.aiCandidateCount,
+          contextMessages: context.contextMessages || [],
+          memories: context.memories || []
         });
         for (const phrase of extractCandidatePhrases(response)) {
           const validated = validateAIGeneratedPhrase({
@@ -274,7 +346,11 @@ class GrowingChildAI {
               this.isTooSimilarToLearnedText(words) ||
               this.database.hasRecentlyGeneratedPhrase(words.join(' '))
           });
-          if (!validated || seen.has(validated.toLocaleLowerCase())) continue;
+          if (!validated) {
+            this.database.rememberGenerationAttempt({ phrase, generator: 'external_ai', accepted: false, rejectionReason: 'validation_failed' });
+            continue;
+          }
+          if (seen.has(validated.toLocaleLowerCase())) continue;
           seen.add(validated.toLocaleLowerCase());
           results.push(validated);
         }
@@ -302,6 +378,21 @@ class GrowingChildAI {
     return this.database.getAllWords();
   }
 
+  getAdminSnapshot() {
+    return { ...this.database.getAdminSnapshot(), enabled: this.enabled, emotion: this.emotions.get() };
+  }
+
+  correctMemory(id, patch) {
+    if (containsSensitiveData(patch?.factValue) || !String(patch?.factValue || '').trim()) throw new Error('Memory cannot contain secrets or personal data.');
+    const result = this.database.correctMemory(id, { ...patch, factValue: String(patch.factValue).replace(/\s+/g, ' ').trim().slice(0, 120) });
+    if (!result) throw new Error('Memory fact was not found or was already deleted.');
+    this.notifyStateChanged(); return result;
+  }
+  deleteMemory(id) { const result = this.database.deleteMemory(id); if (!result) throw new Error('Memory fact was not found or was already deleted.'); this.notifyStateChanged(); return result; }
+  forgetUser(source, id) { const result = this.database.forgetUser(source, id); this.notifyStateChanged(); return result; }
+  exportState() { return this.database.exportState(); }
+  importState(payload) { const result = this.database.importState(payload); this.database.cleanup(this.config); this.notifyStateChanged(); return result; }
+
   setEnabled(enabled) {
     this.enabled = Boolean(enabled);
     this.config.enabled = this.enabled;
@@ -313,6 +404,7 @@ class GrowingChildAI {
       if (this.pendingReactiveTimer) clearTimeout(this.pendingReactiveTimer);
       this.pendingReactiveTimer = null;
     }
+    this.notifyStateChanged();
     return this.getStatus();
   }
 
@@ -322,6 +414,7 @@ class GrowingChildAI {
 
   setMinecraftPublicSpeechEnabled(enabled) {
     this.config.minecraftPublicSpeechEnabled = Boolean(enabled);
+    this.notifyStateChanged();
     return this.getStatus();
   }
 
@@ -331,12 +424,14 @@ class GrowingChildAI {
     this.lastReactiveSpeechAt = 0;
     this.database.reset();
     this.database.setState('enabled', String(this.enabled));
+    this.notifyStateChanged();
     return this.getStatus();
   }
 
   stop() {
     this.scheduler.stop();
     if (this.pendingReactiveTimer) clearTimeout(this.pendingReactiveTimer);
+    if (this.cleanupTimer) clearInterval(this.cleanupTimer);
     this.database.close();
   }
 }
