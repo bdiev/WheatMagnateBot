@@ -3523,8 +3523,11 @@ body.search-focus-active #logoutButton {
 .settings-form label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
 .settings-form .checkbox-row { display: flex; align-items: center; }
 .link-button { display: inline-flex; align-items: center; min-height: var(--button-height); border-radius: var(--button-radius); padding: var(--button-padding); text-decoration: none; }
-@media (max-width: 760px) { .analytics-grid, .collapsible-two-column { grid-template-columns: 1fr; } .inline-form { grid-template-columns: 1fr; } .analytics-grid .detail-list div { grid-template-columns: minmax(0, 1fr) minmax(120px, 48%); } }
-
+.goal-item > strong { display: flex; align-items: center; justify-content: flex-end; gap: 10px; min-width: 0; }
+.goal-target { color: var(--text) !important; white-space: nowrap; }
+.goal-actions { display: inline-flex; gap: 6px; }
+.goal-actions button { min-height: 30px; height: 30px; padding: 0 10px; font-size: 12px; }
+.goal-actions .danger-button { color: #fff; background: #9b2f2f; }
 .realtime-status {
   display: inline-flex;
   align-items: center;
@@ -4594,4 +4597,60 @@ body.search-focus-active #logoutButton {
   .detail-list strong {
     text-align: left;
   }
+}
+
+@media (max-width: 760px) {
+  .collapsible-section > summary {
+    min-height: 58px;
+    gap: 10px;
+    padding: 10px 12px;
+  }
+
+  .collapsible-section > summary strong { font-size: 14px; }
+  .collapsible-section > summary small { overflow-wrap: anywhere; font-size: 11px; line-height: 1.35; }
+  .collapsible-content { padding-top: 10px; }
+
+  .analytics-grid,
+  .collapsible-two-column {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .analytics-grid .detail-list div {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .analytics-grid .detail-list strong { text-align: left; }
+
+  .inline-form,
+  .settings-form {
+    grid-template-columns: 1fr;
+    padding: 10px;
+  }
+
+  .inline-form button,
+  .settings-form button,
+  .link-button {
+    justify-content: center;
+    width: 100%;
+  }
+
+  .panel-head:has(.link-button) {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .goal-item > strong {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .goal-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .goal-actions button { width: 100%; }
 }

@@ -2405,11 +2405,6 @@ function renderObsidian(payload) {
   $('#obsidianAnalyticsCollapseMeta').textContent = `${metric(efficiency.obsidianPerHour, '/h')} · ${metric(forecast.expected24h)} expected in 24h · ${anomalyCount} ${anomalyCount === 1 ? 'anomaly' : 'anomalies'}`;
   const activeGoalCount = (payload.goals || []).filter(goal => goal.active).length;
   $('#obsidianPlanningCollapseMeta').textContent = `${activeGoalCount} active ${activeGoalCount === 1 ? 'goal' : 'goals'} · Discord report ${payload.settings?.dailyReportEnabled ? `at ${payload.settings.dailyReportHour}:00` : 'disabled'}`;
-  const availablePickaxes = usablePickaxeCount(payload.supplies?.inventory, payload.supplies?.barrel);
-  const availableFood = foodItemCount(payload.supplies?.inventory, payload.supplies?.barrel);
-  $('#obsidianSuppliesCollapseMeta').textContent = payload.supplies?.hasSnapshot
-    ? `${formatNumber(availablePickaxes)} usable pickaxes · ${formatNumber(availableFood)} food items · updated ${formatDate(payload.supplies.updatedAt)}`
-    : 'No supply snapshot available';
   $('#obsidianEfficiency').innerHTML = `
     <div><span>Obsidian per hour</span><strong>${metric(efficiency.obsidianPerHour, '/h')}</strong></div>
     <div><span>Per pickaxe</span><strong>${metric(efficiency.obsidianPerPickaxe)}</strong></div>
@@ -2430,7 +2425,7 @@ function renderObsidian(payload) {
     ? analytics.anomalies.map(item => `<div class="analytics-alert ${escapeHtml(item.severity)}">${escapeHtml(item.message)}</div>`).join('')
     : '<div class="empty">No anomalies detected.</div>';
   $('#obsidianGoals').innerHTML = payload.goals?.length
-    ? payload.goals.map(goal => `<div><span>${escapeHtml(goal.name)}</span><strong>${formatNumber(goal.targetTotal)}${goal.active ? '' : ' · inactive'}${state.currentUser?.role === 'admin' ? ` <button class="mini-button" type="button" data-obsidian-goal-id="${goal.id}" data-obsidian-goal-active="${goal.active ? 'false' : 'true'}">${goal.active ? 'Pause' : 'Activate'}</button>` : ''}</strong></div>`).join('')
+    ? payload.goals.map(goal => `<div class="goal-item"><span>${escapeHtml(goal.name)}</span><strong><span class="goal-target">${formatNumber(goal.targetTotal)}${goal.active ? '' : ' · inactive'}</span>${state.currentUser?.role === 'admin' ? `<span class="goal-actions"><button class="mini-button" type="button" data-obsidian-goal-id="${goal.id}" data-obsidian-goal-action="state" data-obsidian-goal-active="${goal.active ? 'false' : 'true'}">${goal.active ? 'Pause' : 'Activate'}</button><button class="mini-button danger-button" type="button" data-obsidian-goal-id="${goal.id}" data-obsidian-goal-action="delete" data-obsidian-goal-name="${escapeHtml(goal.name)}">Delete</button></span>` : ''}</strong></div>`).join('')
     : '<div class="empty">No production goals.</div>';
   $('#obsidianSettingsSummary').innerHTML = `<div><span>Timezone</span><strong>${escapeHtml(payload.settings?.timezone || 'Europe/Vilnius')}</strong></div><div><span>Discord report</span><strong>${payload.settings?.dailyReportEnabled ? `${payload.settings.dailyReportHour}:00` : 'Disabled'}</strong></div>`;
   if (state.currentUser?.role === 'admin') {
@@ -2486,9 +2481,13 @@ function initializeCollapsibleSections() {
 async function changeObsidianGoalState(event) {
   const button = event.target.closest('[data-obsidian-goal-id]');
   if (!button || state.currentUser?.role !== 'admin') return;
+  const action = button.dataset.obsidianGoalAction || 'state';
+  if (action === 'delete' && !confirm(`Delete production goal "${button.dataset.obsidianGoalName || ''}"?`)) return;
   button.disabled = true;
   try {
-    renderObsidian(await postJson('/api/obsidian', { action: 'goal_state', id: button.dataset.obsidianGoalId, active: button.dataset.obsidianGoalActive === 'true' }));
+    renderObsidian(await postJson('/api/obsidian', action === 'delete'
+      ? { action: 'goal_delete', id: button.dataset.obsidianGoalId }
+      : { action: 'goal_state', id: button.dataset.obsidianGoalId, active: button.dataset.obsidianGoalActive === 'true' }));
   } catch (err) { setBanner(`Could not update goal: ${err.message}`); button.disabled = false; }
 }
 

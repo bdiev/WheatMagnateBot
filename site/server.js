@@ -1662,6 +1662,14 @@ async function updateObsidianAnalytics(currentUser, body) {
     await pool.query(`UPDATE obsidian_farm_goals SET active=$1,updated_at=NOW() WHERE id=$2`, [Boolean(body.active), body.id]);
     await pool.query(`INSERT INTO obsidian_farm_annotations(event_type,title,details) VALUES('settings_changed','Production goal state changed',$1::jsonb)`, [JSON.stringify({ id: body.id, active: Boolean(body.active), actor: currentUser.username })]);
     await recordSystemLog({ level: 'audit', category: 'obsidian_analytics', actor: currentUser.username, message: 'Changed obsidian goal state.', details: { id: body.id, active: Boolean(body.active) } });
+  } else if (body.action === 'goal_delete') {
+    const id = Number(body.id);
+    if (!Number.isSafeInteger(id)) throw Object.assign(new Error('Invalid goal id.'), { statusCode: 400 });
+    const deleted = await pool.query(`DELETE FROM obsidian_farm_goals WHERE id=$1 RETURNING id,name,target_total,active`, [id]);
+    if (!deleted.rowCount) throw Object.assign(new Error('Production goal not found.'), { statusCode: 404 });
+    const goal = deleted.rows[0];
+    await pool.query(`INSERT INTO obsidian_farm_annotations(event_type,title,details) VALUES('settings_changed','Production goal deleted',$1::jsonb)`, [JSON.stringify({ id, name: goal.name, targetTotal: String(goal.target_total), actor: currentUser.username })]);
+    await recordSystemLog({ level: 'audit', category: 'obsidian_analytics', actor: currentUser.username, message: `Deleted obsidian goal ${goal.name}.`, details: { id, targetTotal: String(goal.target_total), wasActive: goal.active } });
   } else if (body.action === 'settings') {
     const timezone = String(body.timezone || 'Europe/Vilnius');
     try { new Intl.DateTimeFormat('en', { timeZone: timezone }).format(); } catch (_) { throw Object.assign(new Error('Invalid timezone.'), { statusCode: 400 }); }
