@@ -168,6 +168,47 @@
           </article>
         </section>
 
+        <section class="analytics-grid">
+          <section class="panel">
+            <div class="panel-head"><div><h2>Efficiency</h2><p>Production, tool use, and downtime over recent observations.</p></div></div>
+            <div id="obsidianEfficiency" class="detail-list"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><div><h2>Forecast</h2><p>Estimates include confidence and the data used.</p></div></div>
+            <div id="obsidianForecast" class="detail-list"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><div><h2>Period Comparison</h2><p>Today and this week against previous periods.</p></div></div>
+            <div id="obsidianComparisons" class="detail-list"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><div><h2>Anomalies</h2><p>Rate, supply use, zero output, and TPS signals.</p></div></div>
+            <div id="obsidianAnomalies" class="analytics-alerts"></div>
+          </section>
+        </section>
+
+        <section class="split-grid">
+          <section class="panel">
+            <div class="panel-head"><div><h2>Production Goals</h2><p>Target totals and estimated completion dates.</p></div></div>
+            <div id="obsidianGoals" class="detail-list"></div>
+            <form id="obsidianGoalForm" class="inline-form admin-only" hidden>
+              <input id="obsidianGoalName" maxlength="120" placeholder="Goal name" required>
+              <input id="obsidianGoalTarget" type="number" min="1" step="1" placeholder="Target total" required>
+              <button type="submit">Add goal</button>
+            </form>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><div><h2>Analytics Settings</h2><p>Timezone and daily Discord report schedule.</p></div><a class="ghost-button link-button" href="/api/obsidian/export.csv">Export CSV</a></div>
+            <form id="obsidianAnalyticsSettings" class="settings-form admin-only" hidden>
+              <label><span>Timezone</span><input id="obsidianTimezone" value="Europe/Vilnius"></label>
+              <label><span>Daily report hour</span><input id="obsidianReportHour" type="number" min="0" max="23"></label>
+              <label class="checkbox-row"><input id="obsidianReportEnabled" type="checkbox"><span>Daily Discord report</span></label>
+              <button type="submit">Save settings</button>
+            </form>
+            <div id="obsidianSettingsSummary" class="detail-list"></div>
+          </section>
+        </section>
+
         <section class="content-grid">
           <section class="panel chat-panel">
             <div class="panel-head">
@@ -306,7 +347,7 @@
           <article class="stat">
             <span class="stat-label">Today</span>
             <strong id="obsidianToday">-</strong>
-            <small>Kyiv calendar day</small>
+            <small id="obsidianTodayTimezone">Europe/Vilnius calendar day</small>
           </article>
           <article class="stat">
             <span class="stat-label">Rate</span>
@@ -404,6 +445,7 @@
               </div>
             </div>
             <div class="chart-scroll"><canvas id="obsidianDailyChart" class="chart tall" height="300"></canvas></div>
+            <div id="obsidianAnnotations" class="chart-annotations"></div>
           </section>
 
           <section class="panel farm-details-panel">

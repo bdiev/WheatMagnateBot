@@ -884,6 +884,23 @@ function drawBarChart(canvas, data, options = {}) {
       tooltip: options.tooltip ? options.tooltip(item) : `${item.label}: ${formatNumber(value)}`
     });
   });
+  (options.annotations || []).forEach(annotation => {
+    const at = new Date(annotation.occurredAt).getTime();
+    if (!Number.isFinite(at) || !chartData.length) return;
+    const chartTimes = chartData.map(item => new Date(item.bucket || item.label).getTime()).filter(Number.isFinite);
+    if (chartTimes.length && (at < Math.min(...chartTimes) - 86400000 || at > Math.max(...chartTimes) + 86400000)) return;
+    let closest = 0;
+    let distance = Infinity;
+    chartData.forEach((item, index) => {
+      const itemAt = new Date(item.bucket || item.label).getTime();
+      if (Number.isFinite(itemAt) && Math.abs(itemAt - at) < distance) {
+        distance = Math.abs(itemAt - at); closest = index;
+      }
+    });
+    const x = padding.left + closest * slotWidth + slotWidth / 2;
+    ctx.save(); ctx.strokeStyle = '#f0ad4e'; ctx.setLineDash([3, 4]);
+    ctx.beginPath(); ctx.moveTo(x, padding.top); ctx.lineTo(x, padding.top + chartHeight); ctx.stroke(); ctx.restore();
+  });
   state.chartMeta[canvas.id] = { hitboxes };
 
   ctx.fillStyle = text;
@@ -1050,7 +1067,8 @@ function redrawCharts({ animate = false } = {}) {
         animate: animate && Boolean(state.chartAnimations.obsidianDailyChart),
         duration: state.chartAnimationDurations.obsidianDailyChart
       },
-      tooltip: item => `${item.label}: ${formatNumber(item.value)} blocks`
+      tooltip: item => `${item.label}: ${formatNumber(item.value)} blocks`,
+      annotations: state.charts.obsidianAnnotations || []
     });
     drawLineChart($('#tpsHourlyChart'), aggregateSeries(state.charts.tpsHourly, tpsRange, 'avg'), {
       animation: {
@@ -2369,9 +2387,46 @@ function renderObsidian(payload) {
   $('#farmUpdated').textContent = `last update: ${formatDate(farm.updatedAt)}`;
   setRollingNumber('#obsidianTotal', farm.totalMined);
   setRollingNumber('#obsidianToday', farm.todayMined);
+  $('#obsidianTodayTimezone').textContent = `${payload.settings?.timezone || 'Europe/Vilnius'} calendar day`;
   setRollingNumber('#sessionRate', farm.sessionPerHour, { suffix: '/h' });
   setRollingNumber('#pickaxeAverage', farm.blocksPerPickaxe);
   setRollingNumber('#retiredPickaxes', farm.retiredPickaxes, { prefix: 'retired pickaxes: ' });
+
+  const analytics = payload.analytics || {};
+  const efficiency = analytics.efficiency || {};
+  const forecast = analytics.forecast || {};
+  const confidence = forecast.confidence || { level: 'insufficient', explanation: 'Not enough data.' };
+  const metric = (number, suffix = '') => number == null ? 'Not enough data' : `${formatNumber(number)}${suffix}`;
+  const eta = estimate => estimate?.at ? formatDate(estimate.at) : 'Not enough data';
+  $('#obsidianEfficiency').innerHTML = `
+    <div><span>Obsidian per hour</span><strong>${metric(efficiency.obsidianPerHour, '/h')}</strong></div>
+    <div><span>Per pickaxe</span><strong>${metric(efficiency.obsidianPerPickaxe)}</strong></div>
+    <div><span>Per durability unit</span><strong>${metric(efficiency.obsidianPerDurabilityUnit)}</strong></div>
+    <div><span>Downtime</span><strong>${metric(efficiency.downtimePercent, '%')}</strong></div>
+    <div><span>Mean time between stops</span><strong>${metric(efficiency.meanHoursBetweenStops, 'h')}</strong></div>`;
+  $('#obsidianForecast').innerHTML = `
+    <div><span>Confidence <em class="confidence-badge">${escapeHtml(confidence.level)}</em></span><strong>${escapeHtml(confidence.explanation || '')}</strong></div>
+    <div title="${escapeHtml(forecast.pickaxes?.explanation || '')}"><span>Pickaxes exhausted</span><strong>${eta(forecast.pickaxes)}</strong></div>
+    <div title="${escapeHtml(forecast.food?.explanation || '')}"><span>Food exhausted</span><strong>${eta(forecast.food)}</strong></div>
+    <div><span>Expected in 24 hours</span><strong>${metric(forecast.expected24h)}</strong></div>
+    <div><span>Expected in 7 days</span><strong>${metric(forecast.expected7d)}</strong></div>
+    <div><span>Active goal ETA</span><strong>${forecast.goal ? `${escapeHtml(forecast.goal.name)} · ${forecast.goal.at ? formatDate(forecast.goal.at) : 'not enough data'}` : 'No active goal'}</strong></div>`;
+  const comparison = analytics.comparisons || {};
+  const delta = item => item?.percent == null ? 'no comparison' : `${item.percent > 0 ? '+' : ''}${item.percent}%`;
+  $('#obsidianComparisons').innerHTML = `<div><span>Today / yesterday</span><strong>${metric(comparison.today?.current)} / ${metric(comparison.today?.previous)} · ${delta(comparison.today)}</strong></div><div><span>Week / previous week</span><strong>${metric(comparison.week?.current)} / ${metric(comparison.week?.previous)} · ${delta(comparison.week)}</strong></div>`;
+  $('#obsidianAnomalies').innerHTML = analytics.anomalies?.length
+    ? analytics.anomalies.map(item => `<div class="analytics-alert ${escapeHtml(item.severity)}">${escapeHtml(item.message)}</div>`).join('')
+    : '<div class="empty">No anomalies detected.</div>';
+  $('#obsidianGoals').innerHTML = payload.goals?.length
+    ? payload.goals.map(goal => `<div><span>${escapeHtml(goal.name)}</span><strong>${formatNumber(goal.targetTotal)}${goal.active ? '' : ' · inactive'}${state.currentUser?.role === 'admin' ? ` <button class="mini-button" type="button" data-obsidian-goal-id="${goal.id}" data-obsidian-goal-active="${goal.active ? 'false' : 'true'}">${goal.active ? 'Pause' : 'Activate'}</button>` : ''}</strong></div>`).join('')
+    : '<div class="empty">No production goals.</div>';
+  $('#obsidianSettingsSummary').innerHTML = `<div><span>Timezone</span><strong>${escapeHtml(payload.settings?.timezone || 'Europe/Vilnius')}</strong></div><div><span>Discord report</span><strong>${payload.settings?.dailyReportEnabled ? `${payload.settings.dailyReportHour}:00` : 'Disabled'}</strong></div>`;
+  if (state.currentUser?.role === 'admin') {
+    $('#obsidianTimezone').value = payload.settings?.timezone || 'Europe/Vilnius';
+    $('#obsidianReportHour').value = payload.settings?.dailyReportHour ?? 9;
+    $('#obsidianReportEnabled').checked = Boolean(payload.settings?.dailyReportEnabled);
+  }
+  $('#obsidianAnnotations').innerHTML = (payload.annotations || []).slice(-12).reverse().map(item => `<span title="${formatDate(item.occurredAt)}">${escapeHtml(item.title)}</span>`).join('') || '<span>No annotations yet</span>';
 
   $('#farmDetails').innerHTML = `
     <div><span>Last 7 days</span><strong id="farmLast7Days">- blocks</strong></div>
@@ -2386,7 +2441,33 @@ function renderObsidian(payload) {
   renderSupplies('#barrelSupplies', payload.supplies?.barrel, payload.supplies?.barrelError);
   state.charts.obsidianHourly = payload.hourly || [];
   state.charts.obsidianDaily = payload.daily || [];
+  state.charts.obsidianAnnotations = payload.annotations || [];
   redrawCharts();
+}
+
+async function saveObsidianGoal(event) {
+  event.preventDefault();
+  try {
+    const payload = await postJson('/api/obsidian', { action: 'goal', name: $('#obsidianGoalName').value, targetTotal: Number($('#obsidianGoalTarget').value) });
+    event.currentTarget.reset(); renderObsidian(payload); setBanner('Obsidian goal saved.');
+  } catch (err) { setBanner(`Could not save goal: ${err.message}`); }
+}
+
+async function saveObsidianAnalyticsSettings(event) {
+  event.preventDefault();
+  try {
+    const payload = await postJson('/api/obsidian', { action: 'settings', timezone: $('#obsidianTimezone').value, dailyReportHour: Number($('#obsidianReportHour').value), dailyReportEnabled: $('#obsidianReportEnabled').checked });
+    renderObsidian(payload); setBanner('Obsidian analytics settings saved.');
+  } catch (err) { setBanner(`Could not save settings: ${err.message}`); }
+}
+
+async function changeObsidianGoalState(event) {
+  const button = event.target.closest('[data-obsidian-goal-id]');
+  if (!button || state.currentUser?.role !== 'admin') return;
+  button.disabled = true;
+  try {
+    renderObsidian(await postJson('/api/obsidian', { action: 'goal_state', id: button.dataset.obsidianGoalId, active: button.dataset.obsidianGoalActive === 'true' }));
+  } catch (err) { setBanner(`Could not update goal: ${err.message}`); button.disabled = false; }
 }
 
 function renderSupplies(selector, supplies, error = null) {
@@ -3782,6 +3863,9 @@ $('#notificationUnreadFilter')?.addEventListener('change', loadNotifications);
 $('#activeNotifications')?.addEventListener('click', markNotificationRead);
 $('#notificationHistory')?.addEventListener('click', markNotificationRead);
 $('#notificationRules')?.addEventListener('submit', saveNotificationRule);
+$('#obsidianGoalForm')?.addEventListener('submit', saveObsidianGoal);
+$('#obsidianAnalyticsSettings')?.addEventListener('submit', saveObsidianAnalyticsSettings);
+$('#obsidianGoals')?.addEventListener('click', changeObsidianGoalState);
 $('#notificationsMarkAllRead')?.addEventListener('click', async () => {
   await postJson('/api/notifications/read', { all: true });
   await loadNotifications();

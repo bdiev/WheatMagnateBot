@@ -8,6 +8,7 @@ const { pathToFileURL } = require('node:url');
 const { Pool } = require('pg');
 const { runMigrations } = require('./migrations');
 const { SseHub, handleSseRequest } = require('./sse');
+const { calculateAnalytics } = require('./obsidian-analytics');
 require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 
 const PORT = Number(process.env.SITE_PORT || process.env.PORT) || 3080;
@@ -52,6 +53,17 @@ function sendJson(res, statusCode, payload) {
     'Cache-Control': 'no-store'
   });
   res.end(body);
+}
+
+function sendCsv(res, filename, rows) {
+  const escape = value => `"${String(value ?? '').replace(/"/g, '""')}"`;
+  const body = rows.map(row => row.map(escape).join(',')).join('\n');
+  res.writeHead(200, {
+    'Content-Type': 'text/csv; charset=utf-8',
+    'Content-Disposition': `attachment; filename="${filename}"`,
+    'Cache-Control': 'no-store'
+  });
+  res.end(`\uFEFF${body}`);
 }
 
 function sendError(res, statusCode, message) {
@@ -381,6 +393,12 @@ function normalizeSupplySnapshot(row) {
 async function ensureOptionalTables() {
   if (!pool) return;
   await runMigrations(pool);
+  await pool.query(`INSERT INTO obsidian_farm_analytics_settings(id,timezone,daily_report_enabled,daily_report_hour)
+    VALUES(1,$1,$2,$3) ON CONFLICT(id) DO NOTHING`, [
+    process.env.OBSIDIAN_ANALYTICS_TIMEZONE || 'Europe/Vilnius',
+    process.env.OBSIDIAN_DAILY_REPORT_ENABLED !== 'false',
+    Math.max(0, Math.min(23, Number(process.env.OBSIDIAN_DAILY_REPORT_HOUR ?? 9)))
+  ]);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS site_users (
       id BIGSERIAL PRIMARY KEY,
@@ -1524,8 +1542,14 @@ async function getPlayerStats() {
 
 async function getObsidianStats() {
   assertDatabase();
-
-  const [farmResult, todayResult, dailyResult, hourlyResult, supplyResult] = await Promise.all([
+  const settingsResult = await pool.query(`SELECT timezone, daily_report_enabled, daily_report_hour FROM obsidian_farm_analytics_settings WHERE id=1`);
+  const settings = settingsResult.rows[0] || {
+    timezone: process.env.OBSIDIAN_ANALYTICS_TIMEZONE || 'Europe/Vilnius',
+    daily_report_enabled: process.env.OBSIDIAN_DAILY_REPORT_ENABLED !== 'false',
+    daily_report_hour: process.env.OBSIDIAN_DAILY_REPORT_HOUR == null ? 9 : Number(process.env.OBSIDIAN_DAILY_REPORT_HOUR)
+  };
+  const timezone = settings.timezone || 'Europe/Vilnius';
+  const [farmResult, todayResult, dailyResult, hourlyResult, supplyResult, supplyHistoryResult, annotationsResult, goalsResult, tpsResult, comparisonResult, toolUsageResult] = await Promise.all([
     pool.query(`
       SELECT session_mined, total_mined, desired_enabled, session_started_at,
              retired_pickaxes, retired_pickaxe_blocks, target_x, target_y,
@@ -1536,13 +1560,13 @@ async function getObsidianStats() {
     pool.query(`
       SELECT COALESCE(mined, 0)::bigint AS mined
       FROM obsidian_farm_daily
-      WHERE farm_date = (NOW() AT TIME ZONE 'Europe/Kyiv')::date
-    `),
+      WHERE farm_date = (NOW() AT TIME ZONE $1)::date
+    `, [timezone]),
     pool.query(`
       WITH dates AS (
         SELECT generate_series(
-          (NOW() AT TIME ZONE 'Europe/Kyiv')::date - 89,
-          (NOW() AT TIME ZONE 'Europe/Kyiv')::date,
+          (NOW() AT TIME ZONE $1)::date - 89,
+          (NOW() AT TIME ZONE $1)::date,
           INTERVAL '1 day'
         )::date AS farm_date
       )
@@ -1552,7 +1576,7 @@ async function getObsidianStats() {
       FROM dates
       LEFT JOIN obsidian_farm_daily stats USING (farm_date)
       ORDER BY dates.farm_date
-    `),
+    `, [timezone]),
     pool.query(`
       WITH buckets AS (
         SELECT generate_series(
@@ -1563,7 +1587,8 @@ async function getObsidianStats() {
       )
       SELECT TO_CHAR(buckets.bucket, 'MM-DD HH24:00') AS label,
              buckets.bucket AS bucket,
-             COALESCE(stats.mined, 0)::bigint AS mined
+             COALESCE(stats.mined, 0)::bigint AS mined,
+             (stats.bucket IS NOT NULL) AS observed
       FROM buckets
       LEFT JOIN obsidian_farm_hourly stats USING (bucket)
       ORDER BY buckets.bucket
@@ -1572,14 +1597,29 @@ async function getObsidianStats() {
       SELECT supplies, observed_at, updated_at
       FROM obsidian_farm_supply_snapshot
       WHERE id = 1
-    `)
+    `),
+    pool.query(`SELECT supplies, observed_at FROM obsidian_farm_supply_history WHERE observed_at >= NOW() - INTERVAL '7 days' ORDER BY observed_at`),
+    pool.query(`SELECT id,event_type,title,details,occurred_at FROM obsidian_farm_annotations WHERE occurred_at >= NOW() - INTERVAL '90 days' ORDER BY occurred_at`),
+    pool.query(`SELECT id,name,target_total,active,created_at,reached_at FROM obsidian_farm_goals ORDER BY active DESC,created_at DESC`),
+    pool.query(`SELECT sampled_at,tps FROM bot_tps_samples WHERE sampled_at >= NOW() - INTERVAL '7 days' ORDER BY sampled_at`),
+    pool.query(`SELECT
+      COALESCE(SUM(mined) FILTER (WHERE farm_date=(NOW() AT TIME ZONE $1)::date),0)::bigint AS today,
+      COALESCE(SUM(mined) FILTER (WHERE farm_date=(NOW() AT TIME ZONE $1)::date-1),0)::bigint AS yesterday,
+      COALESCE((SELECT SUM(h.mined) FROM obsidian_farm_hourly h
+        WHERE h.bucket >= (((NOW() AT TIME ZONE $1)::date - 1)::timestamp AT TIME ZONE $1)
+          AND h.bucket < NOW() - INTERVAL '1 day'),0)::bigint AS yesterday_comparable,
+      COALESCE(SUM(mined) FILTER (WHERE farm_date BETWEEN (NOW() AT TIME ZONE $1)::date-6 AND (NOW() AT TIME ZONE $1)::date),0)::bigint AS week,
+      COALESCE(SUM(mined) FILTER (WHERE farm_date BETWEEN (NOW() AT TIME ZONE $1)::date-13 AND (NOW() AT TIME ZONE $1)::date-7),0)::bigint AS previous_week
+      FROM obsidian_farm_daily`, [timezone]),
+    pool.query(`SELECT tool_name,blocks_mined,durability_used,remaining_percent,changed_at FROM obsidian_farm_tool_usage WHERE changed_at >= NOW()-INTERVAL '90 days' ORDER BY changed_at`)
   ]);
 
   const farm = compactFarmState(farmResult.rows[0] || {});
   const hourly = hourlyResult.rows.map(row => ({
     label: row.label,
     bucket: row.bucket,
-    value: toInt(row.mined)
+    value: toInt(row.mined),
+    observed: Boolean(row.observed)
   }));
   const daily = dailyResult.rows.map(row => ({
     label: row.label,
@@ -1588,16 +1628,60 @@ async function getObsidianStats() {
   }));
   const last7Days = daily.slice(-7).reduce((sum, item) => sum + item.value, 0);
 
+  const supplies = normalizeSupplySnapshot(supplyResult.rows[0]);
+  const goals = goalsResult.rows.map(row => ({ id: row.id, name: row.name, targetTotal: toInt(row.target_total), active: row.active, createdAt: row.created_at, reachedAt: row.reached_at }));
+  const annotations = annotationsResult.rows.map(row => ({ id: row.id, eventType: row.event_type, title: row.title, details: row.details, occurredAt: row.occurred_at }));
+  const comparison = comparisonResult.rows[0] || {};
+  const farmPayload = { ...farm, todayMined: toInt(todayResult.rows[0]?.mined), last7Days };
   return {
     farm: {
-      ...farm,
-      todayMined: toInt(todayResult.rows[0]?.mined),
-      last7Days
+      ...farmPayload
     },
     hourly,
     daily,
-    supplies: normalizeSupplySnapshot(supplyResult.rows[0])
+    supplies,
+    settings: { timezone, dailyReportEnabled: settings.daily_report_enabled, dailyReportHour: settings.daily_report_hour },
+    goals,
+    annotations,
+    analytics: calculateAnalytics({ farm: farmPayload, hourly, supplies, goals, annotations,
+      supplyHistory: supplyHistoryResult.rows, toolUsage: toolUsageResult.rows, tps: tpsResult.rows,
+      comparison: { today: comparison.today, yesterdayComparable: comparison.yesterday_comparable, yesterday: comparison.yesterday, week: comparison.week, previousWeek: comparison.previous_week } })
   };
+}
+
+async function updateObsidianAnalytics(currentUser, body) {
+  assertAdminUser(currentUser);
+  if (body.action === 'goal') {
+    const name = String(body.name || '').trim().slice(0, 120);
+    const target = Math.trunc(Number(body.targetTotal));
+    if (!name || !Number.isSafeInteger(target) || target <= 0) throw Object.assign(new Error('Goal name and positive target are required.'), { statusCode: 400 });
+    await pool.query(`INSERT INTO obsidian_farm_goals(name,target_total,created_by) VALUES($1,$2,$3)`, [name, target, currentUser.id]);
+    await pool.query(`INSERT INTO obsidian_farm_annotations(event_type,title,details) VALUES('settings_changed','Production goal changed',$1::jsonb)`, [JSON.stringify({ name, targetTotal: target, actor: currentUser.username })]);
+    await recordSystemLog({ level: 'audit', category: 'obsidian_analytics', actor: currentUser.username, message: `Created obsidian goal ${name}.`, details: { targetTotal: target } });
+  } else if (body.action === 'goal_state') {
+    await pool.query(`UPDATE obsidian_farm_goals SET active=$1,updated_at=NOW() WHERE id=$2`, [Boolean(body.active), body.id]);
+    await pool.query(`INSERT INTO obsidian_farm_annotations(event_type,title,details) VALUES('settings_changed','Production goal state changed',$1::jsonb)`, [JSON.stringify({ id: body.id, active: Boolean(body.active), actor: currentUser.username })]);
+    await recordSystemLog({ level: 'audit', category: 'obsidian_analytics', actor: currentUser.username, message: 'Changed obsidian goal state.', details: { id: body.id, active: Boolean(body.active) } });
+  } else if (body.action === 'settings') {
+    const timezone = String(body.timezone || 'Europe/Vilnius');
+    try { new Intl.DateTimeFormat('en', { timeZone: timezone }).format(); } catch (_) { throw Object.assign(new Error('Invalid timezone.'), { statusCode: 400 }); }
+    const hour = Math.max(0, Math.min(23, Math.trunc(Number(body.dailyReportHour))));
+    await pool.query(`INSERT INTO obsidian_farm_analytics_settings(id,timezone,daily_report_enabled,daily_report_hour,updated_at)
+      VALUES(1,$1,$2,$3,NOW()) ON CONFLICT(id) DO UPDATE SET timezone=EXCLUDED.timezone,daily_report_enabled=EXCLUDED.daily_report_enabled,daily_report_hour=EXCLUDED.daily_report_hour,updated_at=NOW()`, [timezone, Boolean(body.dailyReportEnabled), hour]);
+    await pool.query(`INSERT INTO obsidian_farm_annotations(event_type,title,details) VALUES('settings_changed','Analytics settings changed',$1::jsonb)`, [JSON.stringify({ timezone, dailyReportHour: hour, actor: currentUser.username })]);
+    await recordSystemLog({ level: 'audit', category: 'obsidian_analytics', actor: currentUser.username, message: 'Updated obsidian analytics settings.', details: { timezone, dailyReportEnabled: Boolean(body.dailyReportEnabled), dailyReportHour: hour } });
+  } else throw Object.assign(new Error('Unknown analytics action.'), { statusCode: 400 });
+  return getObsidianStats();
+}
+
+async function exportObsidianCsv(res, url) {
+  const from = url.searchParams.get('from') || '1970-01-01';
+  const to = url.searchParams.get('to') || '2999-12-31';
+  const result = await pool.query(`SELECT h.bucket,h.mined,
+    (SELECT ROUND(AVG(t.tps)::numeric,2) FROM bot_tps_samples t WHERE t.sampled_at>=h.bucket AND t.sampled_at<h.bucket+INTERVAL '1 hour') AS avg_tps,
+    (SELECT string_agg(a.event_type,'|') FROM obsidian_farm_annotations a WHERE a.occurred_at>=h.bucket AND a.occurred_at<h.bucket+INTERVAL '1 hour') AS annotations
+    FROM obsidian_farm_hourly h WHERE h.bucket >= $1::timestamptz AND h.bucket < $2::timestamptz + INTERVAL '1 day' ORDER BY h.bucket`, [from, to]);
+  sendCsv(res, 'obsidian-farm.csv', [['timestamp','mined','average_tps','annotations'], ...result.rows.map(row => [row.bucket.toISOString(),row.mined,row.avg_tps,row.annotations])]);
 }
 
 async function getServerStats() {
@@ -2494,6 +2578,12 @@ async function updateNotificationRule(currentUser, body) {
     message: `Updated notification rule ${eventType}.`,
     details: { eventType, enabled: Boolean(body.enabled), severity, threshold, cooldownSeconds, deliveryChannels: channels }
   });
+  if (['low_pickaxe_durability', 'no_pickaxes', 'low_food', 'farm_stalled', 'low_tps'].includes(eventType)) {
+    await pool.query(`INSERT INTO obsidian_farm_annotations(event_type,title,details) VALUES('settings_changed',$1,$2::jsonb)`, [
+      `Notification rule changed: ${eventType}`,
+      JSON.stringify({ actor: currentUser.username, enabled: Boolean(body.enabled), severity, threshold, cooldownSeconds })
+    ]);
+  }
   return getNotificationRules(currentUser);
 }
 
@@ -2613,7 +2703,13 @@ async function handleApi(req, res, url) {
       return;
     }
     if (url.pathname === '/api/obsidian') {
-      sendJson(res, 200, await getObsidianStats());
+      if (req.method === 'GET') sendJson(res, 200, await getObsidianStats());
+      else if (req.method === 'POST') sendJson(res, 200, await updateObsidianAnalytics(currentUser, await readJsonBody(req)));
+      else sendError(res, 405, 'Method not allowed.');
+      return;
+    }
+    if (url.pathname === '/api/obsidian/export.csv' && req.method === 'GET') {
+      await exportObsidianCsv(res, url);
       return;
     }
     if (url.pathname === '/api/server-stats') {
@@ -2720,7 +2816,10 @@ async function pollDatabaseEvents() {
           (SELECT COALESCE(MAX(id),0) FROM site_whisper_messages) AS whisper_id,
           GREATEST(
             COALESCE((SELECT updated_at FROM obsidian_farm_state WHERE id=1), '-infinity'::timestamptz),
-            COALESCE((SELECT updated_at FROM obsidian_farm_supply_snapshot WHERE id=1), '-infinity'::timestamptz)
+            COALESCE((SELECT updated_at FROM obsidian_farm_supply_snapshot WHERE id=1), '-infinity'::timestamptz),
+            COALESCE((SELECT MAX(occurred_at) FROM obsidian_farm_annotations), '-infinity'::timestamptz),
+            COALESCE((SELECT MAX(updated_at) FROM obsidian_farm_goals), '-infinity'::timestamptz),
+            COALESCE((SELECT updated_at FROM obsidian_farm_analytics_settings WHERE id=1), '-infinity'::timestamptz)
           ) AS farm_status_at,
           (SELECT COALESCE(MAX(id),0) FROM notifications) AS notification_id,
           GREATEST(

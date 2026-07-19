@@ -1111,7 +1111,8 @@ async function ensureFarmSupplies(bot, context = {}) {
         name: lowPickaxe.name,
         blocksMined,
         countInAverage: Boolean(tracking?.trackedFromFull),
-        remainingPercent: getRemainingDurabilityPercent(bot, lowPickaxe)
+        remainingPercent: getRemainingDurabilityPercent(bot, lowPickaxe),
+        maxDurability: getItemMaxDurability(bot, lowPickaxe)
       });
       writeFarmDebug('pickaxe_retired', {
         ...context,

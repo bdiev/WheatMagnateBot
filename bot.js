@@ -1015,6 +1015,12 @@ async function initDatabase() {
 
   try {
     await runMigrations(pool);
+    await pool.query(`INSERT INTO obsidian_farm_analytics_settings(id,timezone,daily_report_enabled,daily_report_hour)
+      VALUES(1,$1,$2,$3) ON CONFLICT(id) DO NOTHING`, [
+      process.env.OBSIDIAN_ANALYTICS_TIMEZONE || 'Europe/Vilnius',
+      process.env.OBSIDIAN_DAILY_REPORT_ENABLED !== 'false',
+      Math.max(0, Math.min(23, Number(process.env.OBSIDIAN_DAILY_REPORT_HOUR ?? 9)))
+    ]);
     console.log('[DB] 🔧 Initializing database tables...');
     await pool.query(`
       CREATE TABLE IF NOT EXISTS ignored_users (
@@ -1835,6 +1841,7 @@ if (DISCORD_BOT_TOKEN) {
     }
 
     await initDatabase();
+    startObsidianDailyReportScheduler();
     await loadRuntimeSettingsFromDB();
     await saveAdminSettings(runtimeSettings);
     startBotStatusSnapshotWriter();
@@ -2434,6 +2441,9 @@ async function persistObsidianFarmCoordinates(config = farm.getStatus().config) 
         updated_at = NOW()
     WHERE id = 1
   `, [config.x, config.y, config.z, config.maxCauldronDist]);
+  await recordFarmAnnotation('settings_changed', 'Farm settings changed', {
+    x: config.x, y: config.y, z: config.z, radius: config.maxCauldronDist
+  }).catch(() => {});
 }
 
 async function clearObsidianFarmCoordinates() {
@@ -2483,6 +2493,7 @@ async function toggleObsidianFarmFromControl() {
     farm.suspend();
     const leverProtected = await setProtectionLeverState(true).catch(() => false);
     await setObsidianFarmDesiredEnabled(false);
+    await recordFarmAnnotation('pause', 'Farm paused', { source: 'admin_control' }).catch(() => {});
     return {
       enabled: false,
       leverProtected,
@@ -2491,6 +2502,7 @@ async function toggleObsidianFarmFromControl() {
   }
 
   const result = await startConfiguredObsidianFarm();
+  await recordFarmAnnotation('resume', 'Farm resumed', { source: 'admin_control' }).catch(() => {});
   return {
     enabled: true,
     started: result.started,
@@ -2527,7 +2539,7 @@ async function persistObsidianMined() {
     `);
     await client.query(`
       INSERT INTO obsidian_farm_daily (farm_date, mined)
-      VALUES ((NOW() AT TIME ZONE 'Europe/Kyiv')::date, 1)
+      VALUES ((NOW() AT TIME ZONE COALESCE((SELECT timezone FROM obsidian_farm_analytics_settings WHERE id=1), 'Europe/Vilnius'))::date, 1)
       ON CONFLICT (farm_date)
       DO UPDATE SET mined = obsidian_farm_daily.mined + 1,
                     updated_at = NOW()
@@ -2539,6 +2551,14 @@ async function persistObsidianMined() {
       DO UPDATE SET mined = obsidian_farm_hourly.mined + 1,
                     updated_at = NOW()
     `);
+    if (result.rows[0]) {
+      const reached = await client.query(`UPDATE obsidian_farm_goals SET active=FALSE,reached_at=NOW(),updated_at=NOW()
+        WHERE active=TRUE AND reached_at IS NULL AND target_total <= $1 RETURNING id,name,target_total`, [result.rows[0].total_mined]);
+      for (const goal of reached.rows) {
+        await client.query(`INSERT INTO obsidian_farm_annotations(event_type,title,details) VALUES('goal_reached',$1,$2::jsonb)`,
+          [`Goal reached: ${goal.name}`, JSON.stringify({ goalId: goal.id, targetTotal: String(goal.target_total) })]);
+      }
+    }
     await client.query('COMMIT');
     if (result.rows[0]) {
       obsidianStats.desiredEnabled = Boolean(result.rows[0].desired_enabled);
@@ -2566,9 +2586,14 @@ function recordObsidianMined() {
     });
 }
 
-function recordPickaxeRetired({ blocksMined = 0, countInAverage = false }) {
-  if (!countInAverage) return;
+function recordPickaxeRetired({ name = 'pickaxe', blocksMined = 0, countInAverage = false, remainingPercent = null, maxDurability = null }) {
   const completedBlocks = Math.max(0, Number(blocksMined) || 0);
+  const durabilityUsed = Number(maxDurability) > 0 && Number.isFinite(Number(remainingPercent))
+    ? Number(maxDurability) * Math.max(0, 100 - Number(remainingPercent)) / 100 : null;
+  recordFarmAnnotation('pickaxe_changed', 'Pickaxe changed', { name, blocksMined: completedBlocks, remainingPercent, durabilityUsed }).catch(() => {});
+  if (pool) pool.query(`INSERT INTO obsidian_farm_tool_usage(tool_name,blocks_mined,durability_used,remaining_percent) VALUES($1,$2,$3,$4)`,
+    [name, completedBlocks, durabilityUsed, remainingPercent]).catch(err => console.error('[DB] Failed to persist pickaxe usage:', err.message));
+  if (!countInAverage) return;
   obsidianStats.retiredPickaxes++;
   obsidianStats.retiredPickaxeBlocks += completedBlocks;
   if (!pool) return;
@@ -3273,6 +3298,14 @@ async function saveObsidianSupplySnapshot(supplies) {
       JSON.stringify(supplies),
       supplies.observedAt ? new Date(supplies.observedAt) : null
     ]);
+    await pool.query(`
+      INSERT INTO obsidian_farm_supply_history (supplies, observed_at)
+      SELECT $1::jsonb, COALESCE($2::timestamptz, NOW())
+      WHERE NOT EXISTS (
+        SELECT 1 FROM obsidian_farm_supply_history
+        WHERE observed_at > NOW() - INTERVAL '5 minutes'
+      )
+    `, [JSON.stringify(supplies), supplies.observedAt ? new Date(supplies.observedAt) : null]);
   } catch (err) {
     console.error('[DB] Failed to save obsidian supply snapshot:', err.message);
   }
@@ -3606,6 +3639,7 @@ let playerScannerInterval = null;
 let restartProtectionInterval = null;
 let obsidianFarmWatchdogInterval = null;
 let obsidianSupplySnapshotInterval = null;
+let obsidianDailyReportInterval = null;
 let restartProtectionDateKey = null;
 let leverOperation = Promise.resolve();
 let protectionLeverPosition = null;
@@ -3618,8 +3652,16 @@ function reportNotification(eventType, details = {}) {
   });
 }
 
+async function recordFarmAnnotation(eventType, title, details = {}) {
+  if (!pool) return;
+  await pool.query(`INSERT INTO obsidian_farm_annotations(event_type,title,details) VALUES($1,$2,$3::jsonb)`, [eventType, title, JSON.stringify(details)]);
+}
+
 function farmNotification(event) {
   if (!event || typeof event !== 'object' || !event.eventType) return;
+  if (event.eventType === 'farm_stalled') {
+    recordFarmAnnotation(event.resolved ? 'farm_resumed' : 'farm_stalled', event.resolved ? 'Farm resumed' : 'Farm stalled', event.metadata || {}).catch(() => {});
+  }
   reportNotification(event.eventType, {
     key: event.key || 'obsidian-farm', title: event.title, message: event.message,
     metadata: event.metadata, resolved: Boolean(event.resolved), transient: Boolean(event.transient)
@@ -3681,6 +3723,7 @@ function resumeBot() {
   clearReconnectTimer();
   clearResumeTimer();
   if (!bot) createBot();
+  recordFarmAnnotation('resume', 'Bot resumed', { source: lastCommandUser || 'system' }).catch(() => {});
 }
 
 function safelyCloseMinecraftBot(targetBot, reason = 'Connection closed') {
@@ -3709,6 +3752,7 @@ function pauseMinecraftConnection(reason) {
   farm.suspend();
   safelyCloseMinecraftBot(currentBot, reason);
   updateStatusMessage().catch(() => {});
+  recordFarmAnnotation('pause', 'Bot paused', { reason }).catch(() => {});
 }
 
 function disconnectForNonWhitelistedPlayer(entity, distance) {
@@ -3719,6 +3763,7 @@ function disconnectForNonWhitelistedPlayer(entity, distance) {
   const roundedDistance = Math.round(Number(distance) || 0);
   const reason = `Enemy detected: ${playerName}`;
   const currentBot = bot;
+  recordFarmAnnotation('player_detected', 'Unauthorized player detected', { playerName, distance: roundedDistance }).catch(() => {});
 
   console.log(`[Bot] ${reason} (${roundedDistance} blocks). Disconnecting with auto-reconnect disabled.`);
   reportNotification('unauthorized_player_nearby', {
@@ -5505,6 +5550,46 @@ async function sendDiscordNotification(message, color = 3447003, channelId = DIS
   return false;
 }
 
+async function sendScheduledObsidianReport() {
+  if (!pool || !discordClient?.isReady?.()) return;
+  const settingsResult = await pool.query(`SELECT timezone,daily_report_enabled,daily_report_hour,last_daily_report_date FROM obsidian_farm_analytics_settings WHERE id=1`);
+  const settings = settingsResult.rows[0] || {
+    timezone: process.env.OBSIDIAN_ANALYTICS_TIMEZONE || 'Europe/Vilnius',
+    daily_report_enabled: process.env.OBSIDIAN_DAILY_REPORT_ENABLED !== 'false',
+    daily_report_hour: process.env.OBSIDIAN_DAILY_REPORT_HOUR == null ? 9 : Number(process.env.OBSIDIAN_DAILY_REPORT_HOUR),
+    last_daily_report_date: null
+  };
+  if (!settings.daily_report_enabled) return;
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: settings.timezone || 'Europe/Vilnius', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23'
+  }).formatToParts(new Date()).filter(part => part.type !== 'literal').map(part => [part.type, part.value]));
+  const dateKey = `${parts.year}-${parts.month}-${parts.day}`;
+  if (Number(parts.hour) !== Number(settings.daily_report_hour) || String(settings.last_daily_report_date || '').slice(0, 10) === dateKey) return;
+  const result = await pool.query(`SELECT
+    COALESCE((SELECT SUM(mined) FROM obsidian_farm_hourly WHERE bucket>=NOW()-INTERVAL '24 hours'),0)::bigint AS mined_24h,
+    COALESCE((SELECT SUM(mined) FROM obsidian_farm_hourly WHERE bucket>=NOW()-INTERVAL '48 hours' AND bucket<NOW()-INTERVAL '24 hours'),0)::bigint AS previous_24h,
+    COALESCE((SELECT AVG(mined) FROM obsidian_farm_hourly WHERE bucket>=NOW()-INTERVAL '24 hours'),0)::numeric AS rate,
+    (SELECT supplies FROM obsidian_farm_supply_snapshot WHERE id=1) AS supplies`);
+  const row = result.rows[0];
+  const current = Number(row.mined_24h) || 0;
+  const previous = Number(row.previous_24h) || 0;
+  const change = previous > 0 ? `${Math.round((current - previous) / previous * 100)}%` : 'нет базы сравнения';
+  const supplies = row.supplies || {};
+  const food = Number(supplies.inventory?.foodCount || 0) + Number(supplies.barrel?.foodCount || 0);
+  const picks = Number(supplies.inventory?.usablePickaxeCount || 0) + Number(supplies.barrel?.usablePickaxeCount || 0);
+  const sent = await sendDiscordNotification(`**Ежедневный отчёт Obsidian Farm**\nДобыто за 24 ч: **${current.toLocaleString()}** (${change})\nСредняя скорость: **${Number(row.rate).toFixed(1)}/ч**\nЗапасы: **${picks}** кирок, **${food}** еды\nЧасовой пояс: \`${settings.timezone}\``, 3447003, NOTIFICATION_DISCORD_CHANNEL_ID || DISCORD_CHANNEL_ID);
+  if (sent) await pool.query(`INSERT INTO obsidian_farm_analytics_settings(id,timezone,daily_report_enabled,daily_report_hour,last_daily_report_date,updated_at)
+    VALUES(1,$1,$2,$3,$4,NOW()) ON CONFLICT(id) DO UPDATE SET last_daily_report_date=EXCLUDED.last_daily_report_date,updated_at=NOW()`,
+  [settings.timezone, settings.daily_report_enabled, settings.daily_report_hour, dateKey]);
+}
+
+function startObsidianDailyReportScheduler() {
+  if (obsidianDailyReportInterval) clearInterval(obsidianDailyReportInterval);
+  sendScheduledObsidianReport().catch(err => console.error('[Obsidian Report]', err.message));
+  obsidianDailyReportInterval = setInterval(() => sendScheduledObsidianReport().catch(err => console.error('[Obsidian Report]', err.message)), 60_000);
+  obsidianDailyReportInterval.unref?.();
+}
+
 async function sendDiscordStatusMention({ playerName, distance, serverAction = 'Bot is leaving the server.' }) {
   if (!DISCORD_CHANNEL_ID || !discordClient || !discordClient.isReady()) {
     console.log('[Discord] Bot not ready or no channel configured. Skipped mention.');
@@ -6898,6 +6983,7 @@ function createBot() {
     clearTimeout(connectionWatchdog);
     console.log('[Bot] Spawned.');
     reconnectAttemptTimes.length = 0;
+    recordFarmAnnotation('bot_reconnected', 'Bot reconnected', {}).catch(() => {});
     reportNotification('bot_disconnected', {
       key: 'minecraft', resolved: true, title: 'Bot connection restored',
       message: 'The Minecraft bot connected and spawned successfully.'
@@ -7028,6 +7114,7 @@ function createBot() {
 
 
   bot.on('end', (reason) => {
+    recordFarmAnnotation('bot_disconnected', 'Bot disconnected', { reason: normalizeStatusReason(reason) }).catch(() => {});
     const reasonStr = chatComponentToString(reason);
     recordSystemLog({
       level: 'warn',
@@ -7069,6 +7156,7 @@ function createBot() {
   });
 
   bot.on('kicked', (reason) => {
+    recordFarmAnnotation('bot_disconnected', 'Bot kicked', { reason: normalizeStatusReason(reason), kicked: true }).catch(() => {});
     const reasonText = chatComponentToString(reason);
     console.log(`[!] Kicked: ${reasonText}`);
     reportNotification('bot_kicked', {
