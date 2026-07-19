@@ -4919,7 +4919,6 @@ document.addEventListener('click', event => {
 
   if (!event.target.closest('.admin-player-picker')) {
     hideWhitelistSuggestions();
-    hideIgnoreChatSuggestions();
   }
 
 });
