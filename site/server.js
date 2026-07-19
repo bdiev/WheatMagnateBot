@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { Pool } = require('pg');
-const { runMigrations } = require('../database/migrations');
+const { runMigrations } = require('./migrations');
 require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 
 const PORT = Number(process.env.SITE_PORT || process.env.PORT) || 3080;
