@@ -63,6 +63,7 @@ const state = {
   navigationPreferences: null,
   navigationSettingsLoading: null,
   navigationSavePromise: Promise.resolve(),
+  timezones: [],
   obsidianCoordinateEditorOpen: false,
   supplyTooltipItems: {},
   itemIcons: {},
@@ -104,6 +105,35 @@ const NAV_SECTION_INFO = Object.freeze({
   admin: ['Admin', 'Administrative controls']
 });
 const NAV_DEFAULT_ORDER = Object.freeze(['chat', 'bot', 'obsidian', 'server', 'players', 'settings', 'notifications', 'timeline', 'child-ai', 'admin']);
+
+function fallbackTimezones() {
+  const supported = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : [];
+  return [...new Set([...supported, 'UTC', 'Europe/Vilnius', Intl.DateTimeFormat().resolvedOptions().timeZone].filter(Boolean))]
+    .sort((first, second) => first.localeCompare(second));
+}
+
+function timezoneOptions(selected = 'Europe/Vilnius') {
+  const zones = [...new Set([...(state.timezones.length ? state.timezones : fallbackTimezones()), selected].filter(Boolean))]
+    .sort((first, second) => first.localeCompare(second));
+  return zones.map(zone => `<option value="${escapeHtml(zone)}"${zone === selected ? ' selected' : ''}>${escapeHtml(zone)}</option>`).join('');
+}
+
+function populateTimezoneSelect(select, selected = 'Europe/Vilnius') {
+  if (!select) return;
+  select.innerHTML = timezoneOptions(selected);
+  select.value = selected;
+}
+
+async function loadTimezones() {
+  if (state.timezones.length || !state.currentUser) return;
+  try {
+    const payload = await fetchJson('/api/timezones');
+    state.timezones = Array.isArray(payload.timezones) ? payload.timezones.map(String).filter(Boolean) : fallbackTimezones();
+  } catch {
+    state.timezones = fallbackTimezones();
+  }
+  populateTimezoneSelect($('#obsidianTimezone'), $('#obsidianTimezone')?.value || 'Europe/Vilnius');
+}
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -792,6 +822,7 @@ async function handleAuthSubmit(event) {
     applyCurrentUser(payload.user);
     hideAuthScreen();
     await loadNavigationSettings({ migrateLocal: true });
+    await loadTimezones();
     restoreActiveTab();
     openPushDestination();
     await loadAll();
@@ -813,6 +844,7 @@ async function initAuth() {
       applyCurrentUser(payload.user);
       hideAuthScreen();
       await loadNavigationSettings({ migrateLocal: true });
+      await loadTimezones();
       restoreActiveTab();
       openPushDestination();
       await loadAll();
@@ -2695,7 +2727,7 @@ function renderObsidian(payload) {
     : '<div class="empty">No production goals.</div>';
   $('#obsidianSettingsSummary').innerHTML = `<div><span>Timezone</span><strong>${escapeHtml(payload.settings?.timezone || 'Europe/Vilnius')}</strong></div><div><span>Discord report</span><strong>${payload.settings?.dailyReportEnabled ? `${payload.settings.dailyReportHour}:00` : 'Disabled'}</strong></div>`;
   if (state.currentUser?.role === 'admin') {
-    $('#obsidianTimezone').value = payload.settings?.timezone || 'Europe/Vilnius';
+    populateTimezoneSelect($('#obsidianTimezone'), payload.settings?.timezone || 'Europe/Vilnius');
     $('#obsidianReportHour').value = payload.settings?.dailyReportHour ?? 9;
     $('#obsidianReportEnabled').checked = Boolean(payload.settings?.dailyReportEnabled);
   }
@@ -3764,7 +3796,7 @@ function pushDeviceHtml(device, eventTypes) {
     <div class="push-device-fields">
       <label><span>Device name</span><input name="deviceName" maxlength="80" value="${escapeHtml(device.deviceName)}"></label>
       <label><span>Minimum severity</span><select name="minimumSeverity"><option value="info"${device.minimumSeverity === 'info' ? ' selected' : ''}>Info</option><option value="warning"${device.minimumSeverity === 'warning' ? ' selected' : ''}>Warning</option><option value="critical"${device.minimumSeverity === 'critical' ? ' selected' : ''}>Critical</option></select></label>
-      <label><span>Timezone</span><input name="timezone" maxlength="64" value="${escapeHtml(device.timezone || 'Europe/Vilnius')}"></label>
+      <label><span>Timezone</span><select name="timezone">${timezoneOptions(device.timezone || 'Europe/Vilnius')}</select></label>
     </div>
     <div class="push-toggle-grid">
       <label><input type="checkbox" name="enabled"${device.enabled ? ' checked' : ''}> Push enabled</label>

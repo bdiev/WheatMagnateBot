@@ -32,6 +32,10 @@ const SITE_TRUST_PROXY = trustProxyEnabled();
 const SITE_ALLOWED_ORIGINS = configuredOrigins();
 const SESSION_COOKIE = 'wm_session';
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
+const SUPPORTED_TIMEZONES = Object.freeze([...new Set([
+  ...(typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : []),
+  'UTC', 'Europe/Vilnius'
+])].sort((first, second) => first.localeCompare(second)));
 const pool = DATABASE_URL
   ? new Pool({ connectionString: DATABASE_URL })
   : null;
@@ -3117,6 +3121,10 @@ async function handleApi(req, res, url) {
 
     if (url.pathname === '/api/summary') {
       sendJson(res, 200, await getSummary());
+      return;
+    }
+    if (url.pathname === '/api/timezones' && req.method === 'GET') {
+      sendJson(res, 200, { timezones: SUPPORTED_TIMEZONES });
       return;
     }
     if (url.pathname === '/api/notifications' && req.method === 'GET') {

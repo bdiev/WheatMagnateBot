@@ -491,7 +491,7 @@
             <section class="panel">
               <div class="panel-head"><div><h2>Analytics Settings</h2><p>Timezone and daily Discord report schedule.</p></div><a class="ghost-button link-button" href="/api/obsidian/export.csv">Export CSV</a></div>
               <form id="obsidianAnalyticsSettings" class="settings-form admin-only" hidden>
-                <label class="auth-field"><span>Timezone</span><input id="obsidianTimezone" value="Europe/Vilnius"></label>
+                <label class="auth-field"><span>Timezone</span><select id="obsidianTimezone"><option value="Europe/Vilnius">Europe/Vilnius</option></select></label>
                 <label class="auth-field"><span>Daily report hour</span><input id="obsidianReportHour" type="number" min="0" max="23"></label>
                 <label class="checkbox-row"><input id="obsidianReportEnabled" type="checkbox"><span>Daily Discord report</span></label>
                 <button type="submit">Save settings</button>
