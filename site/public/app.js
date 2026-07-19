@@ -1038,10 +1038,6 @@ function annotationColor(annotation) {
   return getCssColor(`--annotation-${annotationKind(annotation)}`) || getCssColor('--annotation-default');
 }
 
-function annotationPriority(annotation) {
-  return ({ disconnected: 8, stalled: 7, player: 6, paused: 5, settings: 4, pickaxe: 3, resumed: 2, connected: 1 })[annotationKind(annotation)] || 0;
-}
-
 function clusteredChartAnnotations(annotations, chartData, paddingLeft, chartWidth) {
   const times = chartData.map(item => new Date(item.bucket || item.label).getTime());
   if (!times.length || times.some(time => !Number.isFinite(time))) return [];
@@ -1057,24 +1053,23 @@ function clusteredChartAnnotations(annotations, chartData, paddingLeft, chartWid
       ...marker,
       x: paddingLeft + ((marker.at - rangeStart) / (rangeEnd - rangeStart)) * chartWidth
     }))
-    .sort((first, second) => first.x - second.x);
+    .sort((first, second) => first.at - second.at);
 
-  const clusters = [];
+  const clusters = new Map();
   for (const marker of markers) {
-    const latest = clusters[clusters.length - 1];
-    if (latest && marker.x - latest.right <= 18) {
-      latest.items.push(marker);
-      latest.right = marker.x;
-      latest.x = latest.items.reduce((sum, item) => sum + item.x, 0) / latest.items.length;
+    const key = `${annotationKind(marker.annotation)}:${String(marker.annotation.title || '').trim().toLowerCase()}`;
+    const existing = clusters.get(key);
+    if (existing) {
+      existing.items.push(marker);
+      // Markers are chronological: always move the grouped line to the latest occurrence.
+      existing.x = marker.x;
+      existing.at = marker.at;
+      existing.annotation = marker.annotation;
     } else {
-      clusters.push({ x: marker.x, right: marker.x, items: [marker] });
+      clusters.set(key, { x: marker.x, at: marker.at, annotation: marker.annotation, items: [marker] });
     }
   }
-  return clusters.map(cluster => ({
-    ...cluster,
-    annotation: [...cluster.items].sort((first, second) =>
-      annotationPriority(second.annotation) - annotationPriority(first.annotation) || second.at - first.at)[0].annotation
-  }));
+  return [...clusters.values()].sort((first, second) => first.at - second.at);
 }
 
 function compactRecentAnnotations(annotations, { limit = 10, groupWindowMs = 6 * 60 * 60_000 } = {}) {
