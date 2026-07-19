@@ -9,7 +9,7 @@ const { Pool } = require('pg');
 const { runMigrations } = require('./migrations');
 const { SseHub, handleSseRequest } = require('./sse');
 const { calculateAnalytics } = require('./obsidian-analytics');
-const { eventTypeFromLog, newCorrelationId, recordOperationalEvent, severityFromLevel } = require('../operational-events');
+const { eventTypeFromLog, newCorrelationId, recordOperationalEvent, severityFromLevel } = require('./operational-events');
 const { assertTimelineAccess, normalizeTimelineFilters, queryTimeline } = require('./incident-timeline');
 const {
   MUTATING_METHODS, RateLimiter, clientIp, configuredOrigins, requestIsHttps,

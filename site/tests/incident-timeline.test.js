@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const { newCorrelationId } = require('../../operational-events');
+const { newCorrelationId } = require('../operational-events');
 const { assertTimelineAccess, normalizeTimelineFilters, queryTimeline } = require('../incident-timeline');
 
 async function run() {

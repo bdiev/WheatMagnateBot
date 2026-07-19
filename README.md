@@ -92,6 +92,6 @@ The dashboard uses `HttpOnly`, `SameSite=Lax` session cookies, per-session CSRF 
 
 ## Obsidian farm analytics
 
-Analytics combines `obsidian_farm_daily`, `obsidian_farm_hourly`, TPS samples, mined totals, retired-pickaxe statistics, supply snapshots, and recorded farm annotations. The default reporting timezone is `Europe/Vilnius`; administrators can change it and the daily Discord report schedule on the Obsidian Farm page. Settings changes and production goals are written to the audit/system log.
+Analytics combines `obsidian_farm_daily`, `obsidian_farm_hourly`, TPS samples, mined totals, retired-pickaxe statistics, supply snapshots, and recorded farm annotations. The default reporting timezone is `Europe/Vilnius`; administrators can change it and the daily Discord report schedule on the Obsidian Farm page. The report is sent once per local calendar day in a direct message to `DISCORD_OWNER_ID`; it is never posted to a server channel. Settings changes and production goals are written to the audit/system log.
 
 Forecasts deliberately remain unavailable while confidence is `insufficient` (fewer than six completed hourly observations). Pickaxe exhaustion uses remaining durability and historical blocks per retired pickaxe. Food exhaustion needs at least six hours of supply-history coverage and ignores increases caused by refills. These are operational estimates, not guarantees. CSV data is available from `/api/obsidian/export.csv` to every authenticated dashboard user.

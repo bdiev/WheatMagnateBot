@@ -1,6 +1,6 @@
 'use strict';
 
-const { compactDetails } = require('../operational-events');
+const { compactDetails } = require('./operational-events');
 
 const PERIOD_MS = { '1h': 3600000, '6h': 21600000, '24h': 86400000, '7d': 604800000, '30d': 2592000000 };
 const SEVERITIES = new Set(['info', 'warning', 'critical']);

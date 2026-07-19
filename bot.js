@@ -23,6 +23,7 @@ const { sanitizePublicPhrase } = require('./features/growingChild/safety');
 const { runMigrations } = require('./database/migrations');
 const { NotificationService } = require('./notifications');
 const { newCorrelationId, recordOperationalEvent } = require('./operational-events');
+const { claimDailyReportDate, getDailyReportSlot } = require('./obsidian-daily-report');
 
 // Base64 utils for Node.js (btoa/atob polyfill)
 const b64encode = (str) => Buffer.from(String(str), 'utf8').toString('base64');
@@ -5620,8 +5621,30 @@ async function sendDiscordNotification(message, color = 3447003, channelId = DIS
   return false;
 }
 
+async function sendDiscordOwnerNotification(message, color = 3447003) {
+  if (!DISCORD_OWNER_ID || !discordClient?.isReady?.()) {
+    console.log('[Discord] Bot not ready or no owner configured. Daily report skipped.');
+    return false;
+  }
+  try {
+    const owner = await discordClient.users.fetch(DISCORD_OWNER_ID);
+    if (!owner) return false;
+    await owner.send({
+      embeds: [{
+        description: message,
+        color,
+        timestamp: new Date()
+      }]
+    });
+    return true;
+  } catch (err) {
+    console.error('[Discord Bot] Failed to DM daily report:', err.message);
+    return false;
+  }
+}
+
 async function sendScheduledObsidianReport() {
-  if (!pool || !discordClient?.isReady?.()) return;
+  if (!pool || !DISCORD_OWNER_ID || !discordClient?.isReady?.()) return;
   const settingsResult = await pool.query(`SELECT timezone,daily_report_enabled,daily_report_hour,last_daily_report_date FROM obsidian_farm_analytics_settings WHERE id=1`);
   const settings = settingsResult.rows[0] || {
     timezone: process.env.OBSIDIAN_ANALYTICS_TIMEZONE || 'Europe/Vilnius',
@@ -5630,11 +5653,8 @@ async function sendScheduledObsidianReport() {
     last_daily_report_date: null
   };
   if (!settings.daily_report_enabled) return;
-  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
-    timeZone: settings.timezone || 'Europe/Vilnius', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23'
-  }).formatToParts(new Date()).filter(part => part.type !== 'literal').map(part => [part.type, part.value]));
-  const dateKey = `${parts.year}-${parts.month}-${parts.day}`;
-  if (Number(parts.hour) !== Number(settings.daily_report_hour) || String(settings.last_daily_report_date || '').slice(0, 10) === dateKey) return;
+  const slot = getDailyReportSlot(settings);
+  if (!slot.due) return;
   const result = await pool.query(`SELECT
     COALESCE((SELECT SUM(mined) FROM obsidian_farm_hourly WHERE bucket>=NOW()-INTERVAL '24 hours'),0)::bigint AS mined_24h,
     COALESCE((SELECT SUM(mined) FROM obsidian_farm_hourly WHERE bucket>=NOW()-INTERVAL '48 hours' AND bucket<NOW()-INTERVAL '24 hours'),0)::bigint AS previous_24h,
@@ -5647,10 +5667,10 @@ async function sendScheduledObsidianReport() {
   const supplies = row.supplies || {};
   const food = Number(supplies.inventory?.foodCount || 0) + Number(supplies.barrel?.foodCount || 0);
   const picks = Number(supplies.inventory?.usablePickaxeCount || 0) + Number(supplies.barrel?.usablePickaxeCount || 0);
-  const sent = await sendDiscordNotification(`**Daily Obsidian Farm Report**\nMined in 24 hours: **${current.toLocaleString()}** (${change})\nAverage rate: **${Number(row.rate).toFixed(1)}/h**\nSupplies: **${picks}** pickaxes, **${food}** food items\nTimezone: \`${settings.timezone}\``, 3447003, NOTIFICATION_DISCORD_CHANNEL_ID || DISCORD_CHANNEL_ID);
-  if (sent) await pool.query(`INSERT INTO obsidian_farm_analytics_settings(id,timezone,daily_report_enabled,daily_report_hour,last_daily_report_date,updated_at)
-    VALUES(1,$1,$2,$3,$4,NOW()) ON CONFLICT(id) DO UPDATE SET last_daily_report_date=EXCLUDED.last_daily_report_date,updated_at=NOW()`,
-  [settings.timezone, settings.daily_report_enabled, settings.daily_report_hour, dateKey]);
+  // Claim the local calendar date atomically before delivery. This prevents
+  // duplicate DMs from overlapping timers, reconnects, or multiple bot replicas.
+  if (!await claimDailyReportDate(pool, slot.dateKey)) return;
+  await sendDiscordOwnerNotification(`**Daily Obsidian Farm Report**\nMined in 24 hours: **${current.toLocaleString()}** (${change})\nAverage rate: **${Number(row.rate).toFixed(1)}/h**\nSupplies: **${picks}** pickaxes, **${food}** food items\nTimezone: \`${slot.timezone}\``, 3447003);
 }
 
 function startObsidianDailyReportScheduler() {
