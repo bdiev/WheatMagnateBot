@@ -48,6 +48,11 @@ DATABASE_URL=
 MINECRAFT_USERNAME=
 MINECRAFT_AUTH=microsoft
 SITE_PORT=3080
+SITE_ADMIN_USERNAME=
+SITE_ADMIN_PASSWORD=
+ADMIN_BOOTSTRAP_TOKEN=
+SITE_TRUST_PROXY=false
+SITE_ALLOWED_ORIGINS=http://localhost:3080
 NOTIFICATION_DISCORD_CHANNEL_ID=
 SSE_MAX_CONNECTIONS_PER_USER=3
 OBSIDIAN_ANALYTICS_TIMEZONE=Europe/Vilnius
@@ -58,6 +63,19 @@ GEMINI_API_KEY=
 ```
 
 `NOTIFICATION_DISCORD_CHANNEL_ID` is optional; when omitted, notification delivery uses `DISCORD_CHANNEL_ID` for backward compatibility. Notification rules are managed by an administrator on the **Notifications** dashboard page. Database schema changes in `database/migrations/` are applied automatically by the bot and site at startup.
+
+### Dashboard security and initial administrator
+
+There is no username-based administrator account. For the first deployment, use exactly one bootstrap method:
+
+- Set both `SITE_ADMIN_USERNAME` and `SITE_ADMIN_PASSWORD` (minimum 12 characters). The account is created once at startup only when no approved administrator exists.
+- Or set a strong random `ADMIN_BOOTSTRAP_TOKEN`, open the dashboard, choose **Bootstrap administrator**, and enter the desired username, password, and token. A successful bootstrap is recorded in PostgreSQL and the token cannot be reused.
+
+Remove bootstrap secrets from the deployment environment after the administrator exists. Existing administrators are preserved during migration, and the dashboard prevents removing the final approved administrator.
+
+Set `SITE_ALLOWED_ORIGINS` to the comma-separated public origins that may submit state-changing requests, for example `https://dashboard.example.com` (origins only, without paths). The default shown above is for local HTTP development. Set `SITE_TRUST_PROXY=true` only when the application is directly behind a trusted reverse proxy that overwrites `X-Forwarded-For`, `X-Forwarded-Host`, and `X-Forwarded-Proto`; this enables correct client-IP accounting and `Secure` session cookies for proxy-terminated HTTPS. Never expose the Node port directly while this option is enabled.
+
+The dashboard uses `HttpOnly`, `SameSite=Lax` session cookies, per-session CSRF tokens, strict Origin/Host checks, bounded in-memory rate limits, authenticated SSE, restrictive response headers, and traversal-safe static file resolution. Rate-limit state is process-local, so multi-instance deployments should add a shared limiter at the reverse proxy.
 
 ## Notes
 

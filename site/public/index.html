@@ -11,9 +11,7 @@
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="icon" type="image/png" href="/items/Wheat.png">
     <link rel="apple-touch-icon" href="/items/Wheat.png">
-    <script>
-      document.documentElement.dataset.theme = localStorage.getItem('wm-theme') || 'light';
-    </script>
+    <script src="/theme-init.js"></script>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
@@ -27,6 +25,10 @@
           <span>Login</span>
           <input id="authUsername" name="username" type="text" autocomplete="username" required minlength="2" maxlength="64">
         </label>
+        <label id="authBootstrapTokenField" class="auth-field" hidden>
+          <span>One-time bootstrap token</span>
+          <input id="authBootstrapToken" name="bootstrapToken" type="password" autocomplete="off" maxlength="512">
+        </label>
         <label class="auth-field">
           <span>Password</span>
           <input id="authPassword" name="password" type="password" autocomplete="current-password" required minlength="6">
@@ -35,6 +37,7 @@
         <div id="authError" class="auth-error" hidden></div>
         <button id="authSubmit" type="submit">Sign in</button>
         <button id="authModeToggle" class="ghost-button" type="button">Create a new account</button>
+        <button id="authBootstrapToggle" class="ghost-button" type="button" hidden>Bootstrap administrator</button>
       </form>
     </section>
 

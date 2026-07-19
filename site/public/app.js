@@ -64,6 +64,8 @@ const state = {
   chatLatestId: null,
   chatInitialScrollDone: false,
   authMode: 'login',
+  csrfToken: null,
+  bootstrapAvailable: false,
   currentUser: null,
   chartRanges: {
     chatHourlyChart: 'hours',
@@ -328,7 +330,7 @@ function itemIcon(item) {
   if (!url) return `<span class="item-icon fallback">${fallback}</span>`;
   return `
     <span class="item-icon">
-      <img src="${url}" alt="" loading="lazy" onerror="this.closest('.item-icon').classList.add('fallback'); this.remove();">
+      <img src="${url}" alt="" loading="lazy" data-item-icon-image>
       <span>${fallback}</span>
     </span>
   `;
@@ -419,7 +421,7 @@ async function postJson(path, body = {}) {
     method: 'POST',
     cache: 'no-store',
     credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(state.csrfToken ? { 'X-CSRF-Token': state.csrfToken } : {}) },
     body: JSON.stringify(body)
   });
   const payload = await response.json().catch(() => ({}));
@@ -443,7 +445,7 @@ function ensureInitialChatScroll(attempt = 0) {
 async function putJson(path, body = {}) {
   const response = await fetch(path, {
     method: 'PUT', cache: 'no-store', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    headers: { 'Content-Type': 'application/json', ...(state.csrfToken ? { 'X-CSRF-Token': state.csrfToken } : {}) }, body: JSON.stringify(body)
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
@@ -469,15 +471,20 @@ function hideAuthScreen() {
 }
 
 function setAuthMode(mode) {
-  state.authMode = mode === 'register' ? 'register' : 'login';
+  state.authMode = ['register', 'bootstrap'].includes(mode) ? mode : 'login';
   const isRegister = state.authMode === 'register';
-  $('#authTitle').textContent = isRegister ? 'Create account' : 'Sign in';
-  $('#authIntro').textContent = isRegister
+  const isBootstrap = state.authMode === 'bootstrap';
+  $('#authTitle').textContent = isBootstrap ? 'Bootstrap administrator' : isRegister ? 'Create account' : 'Sign in';
+  $('#authIntro').textContent = isBootstrap ? 'Use the one-time token configured by the site operator.' : isRegister
     ? 'New accounts wait for admin approval before they can open the dashboard.'
     : 'Enter your approved account credentials to open the dashboard.';
-  $('#authSubmit').textContent = isRegister ? 'Create account' : 'Sign in';
-  $('#authModeToggle').textContent = isRegister ? 'Already have an account?' : 'Create a new account';
-  $('#authPassword').setAttribute('autocomplete', isRegister ? 'new-password' : 'current-password');
+  $('#authSubmit').textContent = isBootstrap ? 'Create administrator' : isRegister ? 'Create account' : 'Sign in';
+  $('#authModeToggle').textContent = state.authMode === 'login' ? 'Create a new account' : 'Back to sign in';
+  $('#authPassword').setAttribute('autocomplete', isRegister || isBootstrap ? 'new-password' : 'current-password');
+  $('#authPassword').minLength = isBootstrap ? 12 : 6;
+  $('#authBootstrapTokenField').hidden = !isBootstrap;
+  $('#authBootstrapToken').required = isBootstrap;
+  $('#authBootstrapToggle').hidden = !state.bootstrapAvailable || isBootstrap;
   $('#authError').hidden = true;
 }
 
@@ -533,6 +540,7 @@ async function handleLogout() {
     // The local session state should still be cleared if the network request fails.
   }
   applyCurrentUser(null);
+  state.csrfToken = null;
   setNavMenuOpen(false);
   setActiveTab('chat');
   showAuthScreen('You have been logged out.');
@@ -548,12 +556,15 @@ async function handleAuthSubmit(event) {
   error.hidden = true;
 
   try {
-    const payload = await postJson(`/api/auth/${state.authMode === 'register' ? 'register' : 'login'}`, { username, password });
+    const body = { username, password };
+    if (state.authMode === 'bootstrap') body.token = $('#authBootstrapToken').value;
+    const payload = await postJson(`/api/auth/${state.authMode}`, body);
     if (payload.pendingApproval) {
       setAuthMode('login');
       showAuthScreen(payload.message || 'Registration received. Wait for admin approval.');
       return;
     }
+    state.csrfToken = payload.csrfToken || null;
     applyCurrentUser(payload.user);
     hideAuthScreen();
     restoreActiveTab();
@@ -569,6 +580,9 @@ async function handleAuthSubmit(event) {
 async function initAuth() {
   try {
     const payload = await fetchJson('/api/auth/me');
+    state.bootstrapAvailable = Boolean(payload.bootstrapAvailable);
+    state.csrfToken = payload.csrfToken || null;
+    $('#authBootstrapToggle').hidden = !state.bootstrapAvailable;
     if (payload.authenticated) {
       applyCurrentUser(payload.user);
       hideAuthScreen();
@@ -2878,19 +2892,18 @@ function renderAdminUsers(users = []) {
     const role = escapeHtml(user.role);
     const lower = String(user.username || '').toLowerCase();
     const isSelf = lower === currentUsername;
-    const isPrimaryAdmin = lower === 'bdiev_';
     const actions = [];
 
     if (user.status !== 'approved') {
       actions.push(`<button type="button" data-admin-action="approve" data-username="${username}">Approve</button>`);
     }
-    if (!isPrimaryAdmin && !isSelf) {
+    if (!isSelf) {
       actions.push(`<button class="danger-button" type="button" data-admin-action="reject" data-username="${username}">Reject</button>`);
     }
     if (user.role !== 'admin' && user.status === 'approved') {
       actions.push(`<button class="ghost-button" type="button" data-admin-action="make_admin" data-username="${username}">Make admin</button>`);
     }
-    if (user.role === 'admin' && !isPrimaryAdmin && !isSelf) {
+    if (user.role === 'admin' && !isSelf) {
       actions.push(`<button class="ghost-button" type="button" data-admin-action="remove_admin" data-username="${username}">Remove admin</button>`);
     }
 
@@ -4024,6 +4037,7 @@ $$('.tab-button').forEach(button => {
 });
 $('#authForm').addEventListener('submit', handleAuthSubmit);
 $('#authModeToggle').addEventListener('click', () => setAuthMode(state.authMode === 'login' ? 'register' : 'login'));
+$('#authBootstrapToggle').addEventListener('click', () => setAuthMode('bootstrap'));
 $('#navMenuToggle')?.addEventListener('click', toggleNavMenu);
 $('#logoutButton')?.addEventListener('click', handleLogout);
 $('#adminUsersRefresh')?.addEventListener('click', loadAdminUsers);
@@ -4149,6 +4163,12 @@ document.addEventListener('click', event => {
     setNavMenuOpen(false);
   }
 });
+document.addEventListener('error', event => {
+  const image = event.target.closest?.('[data-item-icon-image]');
+  if (!image) return;
+  image.closest('.item-icon')?.classList.add('fallback');
+  image.remove();
+}, true);
 document.addEventListener('keydown', event => {
   const supplySlot = event.target.closest?.('[data-supply-tooltip]');
   if (supplySlot && (event.key === 'Enter' || event.key === ' ')) {

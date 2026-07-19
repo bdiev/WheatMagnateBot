@@ -127,7 +127,7 @@ async function handleSseRequest({ req, res, getCurrentUser, hub }) {
   } catch (err) {
     const status = err.statusCode || 503;
     res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify({ error: err.message }));
+    res.end(JSON.stringify({ error: status >= 500 ? 'Real-time service is temporarily unavailable.' : (err.message || 'Request failed.') }));
     return { accepted: false, status };
   }
   if (!user) {

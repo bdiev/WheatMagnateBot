@@ -9,6 +9,10 @@ const { Pool } = require('pg');
 const { runMigrations } = require('./migrations');
 const { SseHub, handleSseRequest } = require('./sse');
 const { calculateAnalytics } = require('./obsidian-analytics');
+const {
+  MUTATING_METHODS, RateLimiter, clientIp, configuredOrigins, requestIsHttps,
+  resolveStaticPath, securityHeaders, trustProxyEnabled, validateOrigin, validHost, verifyCsrfToken
+} = require('./security');
 require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 
 const PORT = Number(process.env.SITE_PORT || process.env.PORT) || 3080;
@@ -17,8 +21,12 @@ const ITEMS_DIR = path.join(__dirname, 'items');
 const FOOD_DIR = path.join(__dirname, 'food');
 const LOGOS_DIR = path.join(__dirname, 'logos');
 const DATABASE_URL = process.env.DATABASE_URL;
-const SITE_ADMIN_USERNAME = 'bdiev_';
+const SITE_ADMIN_USERNAME = String(process.env.SITE_ADMIN_USERNAME || '').trim();
 const SITE_ADMIN_PASSWORD = process.env.SITE_ADMIN_PASSWORD || '';
+const ADMIN_BOOTSTRAP_TOKEN = process.env.ADMIN_BOOTSTRAP_TOKEN || '';
+const BOOTSTRAP_TOKEN_CONFIGURED = ADMIN_BOOTSTRAP_TOKEN.length >= 32;
+const SITE_TRUST_PROXY = trustProxyEnabled();
+const SITE_ALLOWED_ORIGINS = configuredOrigins();
 const SESSION_COOKIE = 'wm_session';
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 const pool = DATABASE_URL
@@ -32,6 +40,9 @@ let databaseEventTimer = null;
 let databaseEventPollRunning = false;
 let databaseEventState = null;
 let lastDatabaseEventErrorAt = 0;
+const rateLimiter = new RateLimiter();
+const rateLimiterTimer = setInterval(() => rateLimiter.prune(), 60_000);
+rateLimiterTimer.unref?.();
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -43,7 +54,10 @@ const MIME_TYPES = {
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
-  '.ico': 'image/x-icon'
+  '.ico': 'image/x-icon',
+  '.ttf': 'font/ttf',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2'
 };
 
 function sendJson(res, statusCode, payload) {
@@ -70,6 +84,11 @@ function sendError(res, statusCode, message) {
   sendJson(res, statusCode, { error: message });
 }
 
+function publicError(err) {
+  const statusCode = Number(err?.statusCode) || 500;
+  return { statusCode, message: statusCode >= 500 ? 'Internal server error.' : (err?.message || 'Request failed.') };
+}
+
 function parseCookies(req) {
   return String(req.headers.cookie || '')
     .split(';')
@@ -78,17 +97,19 @@ function parseCookies(req) {
     .reduce((cookies, part) => {
       const index = part.indexOf('=');
       if (index === -1) return cookies;
-      cookies[decodeURIComponent(part.slice(0, index))] = decodeURIComponent(part.slice(index + 1));
+      try { cookies[decodeURIComponent(part.slice(0, index))] = decodeURIComponent(part.slice(index + 1)); } catch { /* Ignore malformed cookies. */ }
       return cookies;
     }, {});
 }
 
-function setSessionCookie(res, token) {
-  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_MAX_AGE_SECONDS}`);
+function setSessionCookie(req, res, token) {
+  const secure = requestIsHttps(req, SITE_TRUST_PROXY) ? '; Secure' : '';
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_MAX_AGE_SECONDS}${secure}`);
 }
 
-function clearSessionCookie(res) {
-  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
+function clearSessionCookie(req, res) {
+  const secure = requestIsHttps(req, SITE_TRUST_PROXY) ? '; Secure' : '';
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure}`);
 }
 
 function hashToken(token) {
@@ -423,40 +444,21 @@ async function ensureOptionalTables() {
     CREATE TABLE IF NOT EXISTS site_sessions (
       token_hash TEXT PRIMARY KEY,
       user_id BIGINT NOT NULL REFERENCES site_users(id) ON DELETE CASCADE,
+      csrf_token_hash TEXT,
       expires_at TIMESTAMPTZ NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await pool.query(`ALTER TABLE site_sessions ADD COLUMN IF NOT EXISTS csrf_token_hash TEXT`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS site_security_state (
+      key TEXT PRIMARY KEY,
+      value JSONB NOT NULL DEFAULT '{}'::jsonb,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
   await pool.query(`CREATE INDEX IF NOT EXISTS site_sessions_user_id_idx ON site_sessions (user_id)`);
   await pool.query(`DELETE FROM site_sessions WHERE expires_at <= NOW()`);
-  await pool.query(
-    `UPDATE site_users
-     SET role = 'admin',
-         status = 'approved',
-         approved_at = COALESCE(approved_at, NOW())
-     WHERE LOWER(username) = LOWER($1)`,
-    [SITE_ADMIN_USERNAME]
-  );
-  if (SITE_ADMIN_PASSWORD) {
-    const adminPasswordHash = hashPassword(SITE_ADMIN_PASSWORD);
-    const updatedAdmin = await pool.query(
-      `UPDATE site_users
-       SET username = $1,
-           password_hash = $2,
-           role = 'admin',
-           status = 'approved',
-           approved_at = COALESCE(approved_at, NOW())
-       WHERE LOWER(username) = LOWER($1)`,
-      [SITE_ADMIN_USERNAME, adminPasswordHash]
-    );
-    if (!updatedAdmin.rowCount) {
-      await pool.query(
-        `INSERT INTO site_users (username, password_hash, role, status, approved_at)
-         VALUES ($1, $2, 'admin', 'approved', NOW())`,
-        [SITE_ADMIN_USERNAME, adminPasswordHash]
-      );
-    }
-  }
   await pool.query(`
     CREATE TABLE IF NOT EXISTS ignored_users (
       id SERIAL PRIMARY KEY,
@@ -1657,6 +1659,30 @@ async function getObsidianStats() {
   };
 }
 
+async function recordSecurityEvent(req, message, { actor = null, reason = null, details = null } = {}) {
+  await recordSystemLog({
+    level: 'audit', category: 'security', actor, message,
+    details: { ip: clientIp(req, SITE_TRUST_PROXY), method: req.method, path: String(req.url || '').split('?')[0], reason, ...(details || {}) }
+  });
+}
+
+function enforceRateLimit(req, res, scope, subject, policy) {
+  const ip = clientIp(req, SITE_TRUST_PROXY);
+  const normalized = String(subject || '').trim().toLowerCase().slice(0, 128);
+  const result = rateLimiter.consume(`${scope}:${ip}:${normalized}`, policy);
+  if (result.allowed) return true;
+  res.setHeader('Retry-After', String(result.retryAfter));
+  sendError(res, 429, 'Too many requests. Try again later.');
+  recordSecurityEvent(req, `Rate limit exceeded for ${scope}.`, { actor: normalized || null, reason: 'rate_limit' });
+  return false;
+}
+
+function safeTokenEqual(actual, expected) {
+  const left = crypto.createHash('sha256').update(String(actual || '')).digest();
+  const right = crypto.createHash('sha256').update(String(expected || '')).digest();
+  return crypto.timingSafeEqual(left, right);
+}
+
 async function updateObsidianAnalytics(currentUser, body) {
   assertAdminUser(currentUser);
   if (body.action === 'goal') {
@@ -1988,43 +2014,91 @@ function publicUser(row) {
   };
 }
 
-async function getCurrentUser(req) {
+async function bootstrapCompleted(client = pool) {
+  const result = await client.query(`SELECT 1 FROM site_security_state WHERE key='admin_bootstrap_completed'`);
+  return result.rowCount > 0;
+}
+
+async function hasAdmin(client = pool) {
+  const result = await client.query(`SELECT 1 FROM site_users WHERE role='admin' AND status='approved' LIMIT 1`);
+  return result.rowCount > 0;
+}
+
+async function createBootstrapAdmin(username, password, source) {
+  validateCredentials(username, password, 12);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`SELECT pg_advisory_xact_lock(91324681)`);
+    if (await bootstrapCompleted(client) || await hasAdmin(client)) {
+      const err = new Error('Administrator bootstrap is no longer available.'); err.statusCode = 409; throw err;
+    }
+    const result = await client.query(`
+      INSERT INTO site_users(username,password_hash,role,status,approved_at)
+      VALUES($1,$2,'admin','approved',NOW())
+      ON CONFLICT ((LOWER(username))) DO UPDATE SET password_hash=EXCLUDED.password_hash, role='admin', status='approved', approved_at=NOW()
+      RETURNING id,username,role,status,created_at,approved_at
+    `, [username, hashPassword(password)]);
+    await client.query(`INSERT INTO site_security_state(key,value) VALUES('admin_bootstrap_completed',$1::jsonb)`, [JSON.stringify({ source, userId: String(result.rows[0].id), completedAt: new Date().toISOString() })]);
+    await client.query('COMMIT');
+    return result.rows[0];
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally { client.release(); }
+}
+
+async function bootstrapAdminFromEnvironment() {
+  if (!SITE_ADMIN_USERNAME || !SITE_ADMIN_PASSWORD || await hasAdmin() || await bootstrapCompleted()) return;
+  const row = await createBootstrapAdmin(SITE_ADMIN_USERNAME, SITE_ADMIN_PASSWORD, 'environment');
+  await recordSystemLog({ level: 'audit', category: 'security', actor: row.username, message: 'Initial administrator bootstrapped from environment.' });
+}
+
+async function getCurrentSession(req) {
   assertDatabase();
   const token = parseCookies(req)[SESSION_COOKIE];
   if (!token) return null;
   const result = await pool.query(`
-    SELECT u.id, u.username, u.role, u.status, u.created_at, u.approved_at
-    FROM site_sessions s
-    JOIN site_users u ON u.id = s.user_id
-    WHERE s.token_hash = $1
-      AND s.expires_at > NOW()
-      AND u.status = 'approved'
+    SELECT u.id, u.username, u.role, u.status, u.created_at, u.approved_at, s.csrf_token_hash, s.token_hash
+    FROM site_sessions s JOIN site_users u ON u.id=s.user_id
+    WHERE s.token_hash=$1 AND s.expires_at>NOW() AND u.status='approved'
   `, [hashToken(token)]);
-  return publicUser(result.rows[0]);
+  const row = result.rows[0];
+  return row ? { user: publicUser(row), csrfTokenHash: row.csrf_token_hash, sessionHash: row.token_hash } : null;
 }
 
-async function createSession(res, userId) {
+async function getCurrentUser(req) {
+  return (await getCurrentSession(req))?.user || null;
+}
+
+async function createSession(req, res, userId) {
   const token = crypto.randomBytes(32).toString('hex');
+  const csrfToken = crypto.randomBytes(32).toString('base64url');
   const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_SECONDS * 1000);
   await pool.query(
-    `INSERT INTO site_sessions (token_hash, user_id, expires_at) VALUES ($1, $2, $3)`,
-    [hashToken(token), userId, expiresAt]
+    `INSERT INTO site_sessions (token_hash, user_id, csrf_token_hash, expires_at) VALUES ($1, $2, $3, $4)`,
+    [hashToken(token), userId, hashToken(csrfToken), expiresAt]
   );
-  setSessionCookie(res, token);
+  setSessionCookie(req, res, token);
+  return csrfToken;
 }
 
 function normalizeUsername(value) {
   return String(value || '').trim();
 }
 
-function validateCredentials(username, password) {
+function registrationDefaults() {
+  return { role: 'user', status: 'pending' };
+}
+
+function validateCredentials(username, password, minimumLength = 6) {
   if (!/^[A-Za-z0-9_.-]{2,64}$/.test(username)) {
     const err = new Error('Username must be 2-64 characters and use letters, numbers, dot, dash or underscore.');
     err.statusCode = 400;
     throw err;
   }
-  if (String(password || '').length < 6 || String(password || '').length > 256) {
-    const err = new Error('Password must be between 6 and 256 characters.');
+  if (String(password || '').length < minimumLength || String(password || '').length > 256) {
+    const err = new Error(`Password must be between ${minimumLength} and 256 characters.`);
     err.statusCode = 400;
     throw err;
   }
@@ -2034,8 +2108,14 @@ async function handleAuth(req, res, url) {
   assertDatabase();
 
   if (url.pathname === '/api/auth/me' && req.method === 'GET') {
-    const user = await getCurrentUser(req);
-    sendJson(res, 200, { authenticated: Boolean(user), user });
+    const session = await getCurrentSession(req);
+    let csrfToken = null;
+    if (session) {
+      csrfToken = crypto.randomBytes(32).toString('base64url');
+      await pool.query(`UPDATE site_sessions SET csrf_token_hash=$1 WHERE token_hash=$2`, [hashToken(csrfToken), session.sessionHash]);
+    }
+    const bootstrapAvailable = BOOTSTRAP_TOKEN_CONFIGURED && !await hasAdmin() && !await bootstrapCompleted();
+    sendJson(res, 200, { authenticated: Boolean(session), user: session?.user || null, csrfToken, bootstrapAvailable });
     return true;
   }
 
@@ -2045,7 +2125,7 @@ async function handleAuth(req, res, url) {
       await pool.query(`DELETE FROM site_sessions WHERE token_hash = $1`, [hashToken(token)]);
     }
     await recordSystemLog({ level: 'info', category: 'auth', message: 'User logged out.' });
-    clearSessionCookie(res);
+    clearSessionCookie(req, res);
     sendJson(res, 200, { ok: true });
     return true;
   }
@@ -2054,11 +2134,11 @@ async function handleAuth(req, res, url) {
     const body = await readJsonBody(req);
     const username = normalizeUsername(body.username);
     const password = String(body.password || '');
+    if (!enforceRateLimit(req, res, 'register_ip', '', { limit: 10, windowMs: 60 * 60_000 }) ||
+        !enforceRateLimit(req, res, 'register', username, { limit: 5, windowMs: 60 * 60_000 })) return true;
     validateCredentials(username, password);
 
-    const isAdmin = username.toLowerCase() === SITE_ADMIN_USERNAME.toLowerCase();
-    const role = isAdmin ? 'admin' : 'user';
-    const status = isAdmin ? 'approved' : 'pending';
+    const { role, status } = registrationDefaults();
     const existing = await pool.query(`SELECT id FROM site_users WHERE LOWER(username) = LOWER($1)`, [username]);
     if (existing.rowCount) {
       sendError(res, 409, 'This username is already registered.');
@@ -2071,18 +2151,12 @@ async function handleAuth(req, res, url) {
       RETURNING id, username, role, status, created_at, approved_at
     `, [username, hashPassword(password), role, status]);
     await recordSystemLog({
-      level: isAdmin ? 'audit' : 'info',
+      level: 'info',
       category: 'auth',
       actor: username,
-      message: isAdmin ? 'Primary admin account registered.' : 'New site registration is waiting for approval.',
+      message: 'New site registration is waiting for approval.',
       details: { username, role, status }
     });
-
-    if (isAdmin) {
-      await createSession(res, inserted.rows[0].id);
-      sendJson(res, 201, { authenticated: true, user: publicUser(inserted.rows[0]) });
-      return true;
-    }
 
     sendJson(res, 201, {
       authenticated: false,
@@ -2092,10 +2166,35 @@ async function handleAuth(req, res, url) {
     return true;
   }
 
+  if (url.pathname === '/api/auth/bootstrap' && req.method === 'POST') {
+    const body = await readJsonBody(req, 16 * 1024);
+    const username = normalizeUsername(body.username || SITE_ADMIN_USERNAME);
+    if (!enforceRateLimit(req, res, 'bootstrap_ip', '', { limit: 8, windowMs: 15 * 60_000 }) ||
+        !enforceRateLimit(req, res, 'bootstrap', username, { limit: 5, windowMs: 15 * 60_000 })) return true;
+    if (!BOOTSTRAP_TOKEN_CONFIGURED || !safeTokenEqual(body.token, ADMIN_BOOTSTRAP_TOKEN)) {
+      await recordSecurityEvent(req, 'Administrator bootstrap rejected.', { actor: username, reason: 'invalid_token' });
+      sendError(res, 403, 'Administrator bootstrap failed.');
+      return true;
+    }
+    let user;
+    try {
+      user = await createBootstrapAdmin(username, String(body.password || ''), 'one_time_token');
+    } catch (err) {
+      await recordSecurityEvent(req, 'Administrator bootstrap rejected.', { actor: username, reason: err.statusCode === 409 ? 'bootstrap_consumed' : 'invalid_bootstrap_request' });
+      throw err;
+    }
+    const csrfToken = await createSession(req, res, user.id);
+    await recordSecurityEvent(req, 'Initial administrator bootstrapped with one-time token.', { actor: user.username });
+    sendJson(res, 201, { authenticated: true, user: publicUser(user), csrfToken });
+    return true;
+  }
+
   if (url.pathname === '/api/auth/login' && req.method === 'POST') {
     const body = await readJsonBody(req);
     const username = normalizeUsername(body.username);
     const password = String(body.password || '');
+    if (!enforceRateLimit(req, res, 'login_ip', '', { limit: 40, windowMs: 15 * 60_000 }) ||
+        !enforceRateLimit(req, res, 'login', username, { limit: 8, windowMs: 15 * 60_000 })) return true;
     const result = await pool.query(`
       SELECT id, username, password_hash, role, status, created_at, approved_at
       FROM site_users
@@ -2103,18 +2202,16 @@ async function handleAuth(req, res, url) {
     `, [username]);
     const user = result.rows[0];
     if (!user || !verifyPassword(password, user.password_hash)) {
-      if (!user && username.toLowerCase() === SITE_ADMIN_USERNAME.toLowerCase()) {
-        sendError(res, 401, 'Admin account is not created yet. Create account bdiev_ first, or set SITE_ADMIN_PASSWORD on the host and restart the site.');
-        return true;
-      }
+      await recordSecurityEvent(req, 'Failed login.', { actor: username, reason: 'invalid_credentials' });
       sendError(res, 401, 'Invalid username or password.');
       return true;
     }
     if (user.status !== 'approved') {
+      await recordSecurityEvent(req, 'Login rejected for an unapproved account.', { actor: user.username, reason: user.status });
       sendError(res, 403, user.status === 'pending' ? 'Your account is waiting for admin approval.' : 'Your account is not approved.');
       return true;
     }
-    await createSession(res, user.id);
+    const csrfToken = await createSession(req, res, user.id);
     await recordSystemLog({
       level: 'info',
       category: 'auth',
@@ -2122,7 +2219,7 @@ async function handleAuth(req, res, url) {
       message: 'User logged in.',
       details: { role: user.role }
     });
-    sendJson(res, 200, { authenticated: true, user: publicUser(user) });
+    sendJson(res, 200, { authenticated: true, user: publicUser(user), csrfToken });
     return true;
   }
 
@@ -2162,10 +2259,19 @@ async function updateAdminUser(currentUser, body) {
     err.statusCode = 400;
     throw err;
   }
-  if (username.toLowerCase() === SITE_ADMIN_USERNAME.toLowerCase() && ['reject', 'remove_admin'].includes(action)) {
-    const err = new Error('The primary admin cannot be rejected or demoted.');
+  if (username.toLowerCase() === currentUser.username.toLowerCase() && ['reject', 'remove_admin'].includes(action)) {
+    const err = new Error('You cannot reject or demote your own account.');
     err.statusCode = 400;
     throw err;
+  }
+  if (['reject', 'remove_admin'].includes(action)) {
+    const target = await pool.query(`SELECT role,status FROM site_users WHERE LOWER(username)=LOWER($1)`, [username]);
+    if (target.rows[0]?.role === 'admin' && target.rows[0]?.status === 'approved') {
+      const admins = await pool.query(`SELECT COUNT(*)::int AS count FROM site_users WHERE role='admin' AND status='approved'`);
+      if ((admins.rows[0]?.count || 0) <= 1) {
+        const err = new Error('The last approved administrator cannot be removed.'); err.statusCode = 400; throw err;
+      }
+    }
   }
 
   if (action === 'approve') {
@@ -2643,6 +2749,12 @@ async function handleApi(req, res, url) {
       return;
     }
 
+    const isAdminMutation = MUTATING_METHODS.has(req.method) && (url.pathname.startsWith('/api/admin/') || url.pathname === '/api/obsidian' || url.pathname === '/api/notifications/read');
+    if (isAdminMutation && !enforceRateLimit(req, res, 'admin', currentUser.username, { limit: 60, windowMs: 60_000 })) return;
+    if (url.pathname.startsWith('/api/admin/') && !MUTATING_METHODS.has(req.method) && !enforceRateLimit(req, res, 'admin_read', currentUser.username, { limit: 180, windowMs: 60_000 })) return;
+    if (url.pathname === '/api/chat/send' && !enforceRateLimit(req, res, 'chat_send', currentUser.username, { limit: 15, windowMs: 60_000 })) return;
+    if (url.pathname === '/api/whisper/send' && !enforceRateLimit(req, res, 'whisper_send', currentUser.username, { limit: 20, windowMs: 60_000 })) return;
+
     if (url.pathname === '/api/admin/users') {
       if (req.method === 'GET') {
         sendJson(res, 200, await getAdminUsers(currentUser));
@@ -2775,39 +2887,40 @@ async function handleApi(req, res, url) {
   } catch (err) {
     await recordSystemLog({
       level: 'error',
-      category: 'api',
+      category: [401, 403].includes(Number(err.statusCode)) ? 'security' : 'api',
       actor: currentUser?.username,
       message: `${req.method} ${url.pathname}: ${err.message || 'Internal server error.'}`,
       details: { statusCode: err.statusCode || 500 }
     });
-    sendError(res, err.statusCode || 500, err.message || 'Internal server error.');
+    const safe = publicError(err);
+    sendError(res, safe.statusCode, safe.message);
   }
 }
 
-function serveStatic(req, res, url) {
-  const requestPath = url.pathname === '/' ? '/index.html' : decodeURIComponent(url.pathname);
-  const isItemPath = requestPath.startsWith('/items/');
-  const isFoodPath = requestPath.startsWith('/food/');
-  const isLogoPath = requestPath.startsWith('/logos/');
-  const staticRoot = isItemPath ? ITEMS_DIR : isFoodPath ? FOOD_DIR : isLogoPath ? LOGOS_DIR : PUBLIC_DIR;
-  const staticPath = isItemPath
-    ? requestPath.slice('/items/'.length)
-    : isFoodPath
-      ? requestPath.slice('/food/'.length)
-    : isLogoPath
-      ? requestPath.slice('/logos/'.length)
-      : requestPath;
-  const filePath = path.normalize(path.join(staticRoot, staticPath));
-
-  if (!filePath.startsWith(staticRoot)) {
-    res.writeHead(403);
-    res.end('Forbidden');
+function serveStatic(req, res) {
+  if (!['GET', 'HEAD'].includes(req.method)) { sendError(res, 405, 'Method not allowed.'); return; }
+  const resolved = resolveStaticPath(req.url, [
+    { mount: '/items', root: ITEMS_DIR }, { mount: '/food', root: FOOD_DIR },
+    { mount: '/logos', root: LOGOS_DIR }, { mount: '/', root: PUBLIC_DIR, index: 'index.html' }
+  ]);
+  if (!resolved) {
+    recordSecurityEvent(req, 'Blocked unsafe static file request.', { reason: 'invalid_static_path' });
+    sendError(res, 403, 'Forbidden.');
     return;
   }
-
-  fs.readFile(filePath, (err, data) => {
+  const filePath = resolved.candidate;
+  fs.realpath(filePath, (realPathErr, realFilePath) => {
+    if (!realPathErr) {
+      const realRoot = fs.realpathSync(resolved.root);
+      if (realFilePath !== realRoot && !realFilePath.startsWith(`${realRoot}${path.sep}`)) {
+        recordSecurityEvent(req, 'Blocked static symlink outside allowed directory.', { reason: 'static_symlink_escape' });
+        sendError(res, 403, 'Forbidden.');
+        return;
+      }
+    }
+    fs.readFile(realPathErr ? filePath : realFilePath, (err, data) => {
     if (err) {
-      if (path.extname(filePath)) {
+      if (resolved.mount !== '/' || path.extname(filePath)) {
         res.writeHead(404);
         res.end('Not found');
         return;
@@ -2819,31 +2932,68 @@ function serveStatic(req, res, url) {
           return;
         }
         res.writeHead(200, { 'Content-Type': MIME_TYPES['.html'] });
-        res.end(fallback);
+        res.end(req.method === 'HEAD' ? undefined : fallback);
       });
       return;
     }
 
     const type = MIME_TYPES[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
     res.writeHead(200, { 'Content-Type': type });
-    res.end(data);
+    res.end(req.method === 'HEAD' ? undefined : data);
+    });
   });
 }
 
-const server = http.createServer((req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+async function requestHandler(req, res) {
+  for (const [name, value] of Object.entries(securityHeaders({ https: requestIsHttps(req, SITE_TRUST_PROXY) }))) res.setHeader(name, value);
+  const effectiveHost = SITE_TRUST_PROXY ? String(req.headers['x-forwarded-host'] || '').split(',')[0].trim() || req.headers.host : req.headers.host;
+  if (!validHost(effectiveHost)) {
+    await recordSecurityEvent(req, 'Request rejected because Host is invalid.', { reason: 'invalid_host' });
+    sendError(res, 400, 'Invalid Host header.');
+    return;
+  }
+  let url;
+  try { url = new URL(req.url, 'http://localhost'); } catch { sendError(res, 400, 'Invalid request URL.'); return; }
+  if (MUTATING_METHODS.has(req.method)) {
+    const origin = validateOrigin(req, { trustProxy: SITE_TRUST_PROXY, allowedOrigins: SITE_ALLOWED_ORIGINS });
+    if (!origin.ok) {
+      await recordSecurityEvent(req, 'Cross-origin state-changing request rejected.', { reason: origin.reason });
+      sendError(res, 403, 'Request origin is not allowed.');
+      return;
+    }
+    const csrfExempt = ['/api/auth/login', '/api/auth/register', '/api/auth/bootstrap'].includes(url.pathname);
+    if (url.pathname.startsWith('/api/') && !csrfExempt) {
+      const session = await getCurrentSession(req);
+      if (!session) { sendError(res, 401, 'Login required.'); return; }
+      const supplied = String(req.headers['x-csrf-token'] || '');
+      if (!verifyCsrfToken(supplied, session.csrfTokenHash)) {
+        await recordSecurityEvent(req, 'Request rejected because CSRF token is missing or invalid.', { actor: session.user.username, reason: 'csrf' });
+        sendError(res, 403, 'Invalid CSRF token.');
+        return;
+      }
+    }
+  }
   if (url.pathname === '/api/events' && req.method === 'GET') {
     handleSseRequest({ req, res, getCurrentUser, hub: sseHub }).catch(err => {
-      if (!res.headersSent) sendError(res, err.statusCode || 500, err.message || 'SSE connection failed.');
+      const safe = publicError(err);
+      if (!res.headersSent) sendError(res, safe.statusCode, safe.message);
       else if (!res.writableEnded) res.end();
     });
     return;
   }
   if (url.pathname.startsWith('/api/')) {
-    handleApi(req, res, url);
+    await handleApi(req, res, url);
     return;
   }
-  serveStatic(req, res, url);
+  serveStatic(req, res);
+}
+
+const server = http.createServer((req, res) => {
+  requestHandler(req, res).catch(err => {
+    console.error('[Site] Unhandled request error:', err.message);
+    if (!res.headersSent) sendError(res, 500, 'Internal server error.');
+    else if (!res.writableEnded) res.end();
+  });
 });
 
 function signature(value) {
@@ -2944,11 +3094,14 @@ function startDatabaseEventPoller() {
   databaseEventTimer.unref?.();
 }
 
-ensureOptionalTables()
-  .catch(err => {
-    console.error('[Site] Failed to ensure optional tables:', err.message);
-  })
-  .finally(() => {
+async function startSiteServer() {
+  try {
+    if (ADMIN_BOOTSTRAP_TOKEN && !BOOTSTRAP_TOKEN_CONFIGURED) console.warn('[Site] ADMIN_BOOTSTRAP_TOKEN is ignored because it is shorter than 32 characters.');
+    await ensureOptionalTables();
+    await bootstrapAdminFromEnvironment();
+  } catch (err) {
+    console.error('[Site] Failed to initialize database tables:', err.message);
+  } finally {
     server.listen(PORT, () => {
       console.log(`[Site] WheatMagnateBot site: http://localhost:${PORT}`);
       console.log(`[Site] Static files: ${pathToFileURL(PUBLIC_DIR).href}`);
@@ -2960,7 +3113,8 @@ ensureOptionalTables()
       sseHub.start();
       startDatabaseEventPoller();
     });
-  });
+  }
+}
 
 let shuttingDown = false;
 async function shutdown() {
@@ -2968,11 +3122,17 @@ async function shutdown() {
   shuttingDown = true;
   if (databaseEventTimer) clearInterval(databaseEventTimer);
   databaseEventTimer = null;
+  clearInterval(rateLimiterTimer);
   sseHub.stop();
   await new Promise(resolve => server.close(resolve));
   if (pool) await pool.end().catch(() => {});
   process.exit(0);
 }
 
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+if (require.main === module) {
+  startSiteServer();
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+}
+
+module.exports = { assertAdminUser, hashPassword, registrationDefaults, requestHandler, server, startSiteServer, validateCredentials, verifyPassword };
