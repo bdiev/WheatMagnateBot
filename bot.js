@@ -2552,8 +2552,9 @@ async function persistObsidianMined() {
                     updated_at = NOW()
     `);
     if (result.rows[0]) {
+      await client.query(`UPDATE obsidian_farm_goals SET baseline_mined=$1,updated_at=NOW() WHERE baseline_mined IS NULL`, [result.rows[0].total_mined]);
       const reached = await client.query(`UPDATE obsidian_farm_goals SET active=FALSE,reached_at=NOW(),updated_at=NOW()
-        WHERE active=TRUE AND reached_at IS NULL AND target_total <= $1 RETURNING id,name,target_total`, [result.rows[0].total_mined]);
+        WHERE active=TRUE AND reached_at IS NULL AND ($1 - baseline_mined) >= target_total RETURNING id,name,target_total,baseline_mined`, [result.rows[0].total_mined]);
       for (const goal of reached.rows) {
         await client.query(`INSERT INTO obsidian_farm_annotations(event_type,title,details) VALUES('goal_reached',$1,$2::jsonb)`,
           [`Goal reached: ${goal.name}`, JSON.stringify({ goalId: goal.id, targetTotal: String(goal.target_total) })]);

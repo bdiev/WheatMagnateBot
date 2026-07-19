@@ -62,6 +62,7 @@ const state = {
   chatMessageIds: new Set(),
   chatInitialized: false,
   chatLatestId: null,
+  chatInitialScrollDone: false,
   authMode: 'login',
   currentUser: null,
   chartRanges: {
@@ -76,6 +77,7 @@ const state = {
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => Array.from(document.querySelectorAll(selector));
+const CHAT_HISTORY_LIMIT = 500;
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -427,6 +429,17 @@ async function postJson(path, body = {}) {
   return payload;
 }
 
+function ensureInitialChatScroll(attempt = 0) {
+  if (state.chatInitialScrollDone || state.activeTab !== 'chat') return;
+  const list = $('#chatList');
+  if (list && list.clientHeight > 0 && list.childElementCount > 0) {
+    scrollToBottom('#chatList');
+    state.chatInitialScrollDone = true;
+    return;
+  }
+  if (attempt < 12) setTimeout(() => ensureInitialChatScroll(attempt + 1), 80);
+}
+
 async function putJson(path, body = {}) {
   const response = await fetch(path, {
     method: 'PUT', cache: 'no-store', credentials: 'same-origin',
@@ -470,6 +483,7 @@ function setAuthMode(mode) {
 
 function applyCurrentUser(user) {
   state.currentUser = user || null;
+  if (!state.currentUser) state.chatInitialScrollDone = false;
   loadWhisperLastSeenId();
   const isAdmin = state.currentUser?.role === 'admin';
   $$('.admin-only').forEach(element => {
@@ -608,6 +622,7 @@ function setActiveTab(tab) {
     loadAdminSystemLogs();
   }
   if (tab === 'notifications') loadNotifications();
+  if (tab === 'chat') ensureInitialChatScroll();
   requestAnimationFrame(updateCarousels);
   redrawCharts();
 }
@@ -2038,11 +2053,8 @@ function renderChat(payload) {
   setRollingNumber('#chatAllTime', payload.totals?.allTime);
 
   const messages = payload.messages || [];
-  const firstChatRender = !state.chatInitialized;
   renderChatMessages(messages);
-  if (firstChatRender) {
-    scrollToBottom('#chatList');
-  }
+  ensureInitialChatScroll();
   updateChatScrollButton();
   state.chatMessageIds = new Set(messages.map(message => String(message.id)));
   state.chatLatestId = String(payload.latestId ?? state.chatLatestId ?? '0');
@@ -2425,7 +2437,7 @@ function renderObsidian(payload) {
     ? analytics.anomalies.map(item => `<div class="analytics-alert ${escapeHtml(item.severity)}">${escapeHtml(item.message)}</div>`).join('')
     : '<div class="empty">No anomalies detected.</div>';
   $('#obsidianGoals').innerHTML = payload.goals?.length
-    ? payload.goals.map(goal => `<div class="goal-item"><span>${escapeHtml(goal.name)}</span><strong><span class="goal-target">${formatNumber(goal.targetTotal)}${goal.active ? '' : ' · inactive'}</span>${state.currentUser?.role === 'admin' ? `<span class="goal-actions"><button class="mini-button" type="button" data-obsidian-goal-id="${goal.id}" data-obsidian-goal-action="state" data-obsidian-goal-active="${goal.active ? 'false' : 'true'}">${goal.active ? 'Pause' : 'Activate'}</button><button class="mini-button danger-button" type="button" data-obsidian-goal-id="${goal.id}" data-obsidian-goal-action="delete" data-obsidian-goal-name="${escapeHtml(goal.name)}">Delete</button></span>` : ''}</strong></div>`).join('')
+    ? payload.goals.map(goal => `<div class="goal-item"><span>${escapeHtml(goal.name)}</span><strong><span class="goal-target">${formatNumber(goal.progress || 0)} / ${formatNumber(goal.targetTotal)}${goal.active ? '' : ' · inactive'}</span>${state.currentUser?.role === 'admin' ? `<span class="goal-actions"><button class="mini-button" type="button" data-obsidian-goal-id="${goal.id}" data-obsidian-goal-action="state" data-obsidian-goal-active="${goal.active ? 'false' : 'true'}">${goal.active ? 'Pause' : 'Activate'}</button><button class="mini-button danger-button" type="button" data-obsidian-goal-id="${goal.id}" data-obsidian-goal-action="delete" data-obsidian-goal-name="${escapeHtml(goal.name)}">Delete</button></span>` : ''}</strong></div>`).join('')
     : '<div class="empty">No production goals.</div>';
   $('#obsidianSettingsSummary').innerHTML = `<div><span>Timezone</span><strong>${escapeHtml(payload.settings?.timezone || 'Europe/Vilnius')}</strong></div><div><span>Discord report</span><strong>${payload.settings?.dailyReportEnabled ? `${payload.settings.dailyReportHour}:00` : 'Disabled'}</strong></div>`;
   if (state.currentUser?.role === 'admin') {
@@ -3673,7 +3685,7 @@ async function refreshChatFromEvent() {
   if (state.liveChatLoading) return;
   state.liveChatLoading = true;
   try {
-    renderChat(await fetchJson('/api/chat?limit=160'));
+    renderChat(await fetchJson(`/api/chat?limit=${CHAT_HISTORY_LIMIT}`));
     if (state.playerProfileUsername && !$('#playerProfileOverlay')?.hidden) {
       await loadPlayerProfile(state.playerProfileUsername);
     }
@@ -3799,7 +3811,7 @@ async function loadAll() {
   try {
     const [chat, botStats, obsidian, serverStats] = await Promise.all([
       ensureItemIcons(),
-      fetchJson('/api/chat?limit=160'),
+      fetchJson(`/api/chat?limit=${CHAT_HISTORY_LIMIT}`),
       fetchJson('/api/bot-stats'),
       fetchJson('/api/obsidian'),
       fetchJson('/api/server-stats')
@@ -3846,7 +3858,7 @@ async function loadLiveChats() {
   if (!state.currentUser || state.liveChatLoading) return;
   state.liveChatLoading = true;
   try {
-    const chat = await fetchJson('/api/chat?limit=160');
+    const chat = await fetchJson(`/api/chat?limit=${CHAT_HISTORY_LIMIT}`);
     renderChat(chat);
     if ($('#whisperPanel')?.classList.contains('open')) {
       await loadWhisperOnlinePlayers();

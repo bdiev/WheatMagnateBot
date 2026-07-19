@@ -837,7 +837,7 @@ async function getPlayers() {
 async function getChat(url) {
   assertDatabase();
 
-  const limit = Math.min(200, Math.max(1, toInt(url.searchParams.get('limit'), 100)));
+  const limit = Math.min(1000, Math.max(1, toInt(url.searchParams.get('limit'), 500)));
   const [messagesResult, activityResult, hourlyResult, topChattersResult, totalsResult] = await Promise.all([
     pool.query(`
       SELECT id, username, message, created_at
@@ -1542,6 +1542,9 @@ async function getPlayerStats() {
 
 async function getObsidianStats() {
   assertDatabase();
+  await pool.query(`UPDATE obsidian_farm_goals
+    SET baseline_mined=COALESCE((SELECT total_mined FROM obsidian_farm_state WHERE id=1),0),updated_at=NOW()
+    WHERE baseline_mined IS NULL`);
   const settingsResult = await pool.query(`SELECT timezone, daily_report_enabled, daily_report_hour FROM obsidian_farm_analytics_settings WHERE id=1`);
   const settings = settingsResult.rows[0] || {
     timezone: process.env.OBSIDIAN_ANALYTICS_TIMEZONE || 'Europe/Vilnius',
@@ -1600,7 +1603,7 @@ async function getObsidianStats() {
     `),
     pool.query(`SELECT supplies, observed_at FROM obsidian_farm_supply_history WHERE observed_at >= NOW() - INTERVAL '7 days' ORDER BY observed_at`),
     pool.query(`SELECT id,event_type,title,details,occurred_at FROM obsidian_farm_annotations WHERE occurred_at >= NOW() - INTERVAL '90 days' ORDER BY occurred_at`),
-    pool.query(`SELECT id,name,target_total,active,created_at,reached_at FROM obsidian_farm_goals ORDER BY active DESC,created_at DESC`),
+    pool.query(`SELECT id,name,target_total,baseline_mined,active,created_at,reached_at FROM obsidian_farm_goals ORDER BY active DESC,created_at DESC`),
     pool.query(`SELECT sampled_at,tps FROM bot_tps_samples WHERE sampled_at >= NOW() - INTERVAL '7 days' ORDER BY sampled_at`),
     pool.query(`SELECT
       COALESCE(SUM(mined) FILTER (WHERE farm_date=(NOW() AT TIME ZONE $1)::date),0)::bigint AS today,
@@ -1629,7 +1632,12 @@ async function getObsidianStats() {
   const last7Days = daily.slice(-7).reduce((sum, item) => sum + item.value, 0);
 
   const supplies = normalizeSupplySnapshot(supplyResult.rows[0]);
-  const goals = goalsResult.rows.map(row => ({ id: row.id, name: row.name, targetTotal: toInt(row.target_total), active: row.active, createdAt: row.created_at, reachedAt: row.reached_at }));
+  const goals = goalsResult.rows.map(row => {
+    const targetTotal = toInt(row.target_total);
+    const baselineMined = toInt(row.baseline_mined);
+    const progress = Math.max(0, farm.totalMined - baselineMined);
+    return { id: row.id, name: row.name, targetTotal, baselineMined, progress: Math.min(targetTotal, progress), remaining: Math.max(0, targetTotal - progress), active: row.active, createdAt: row.created_at, reachedAt: row.reached_at };
+  });
   const annotations = annotationsResult.rows.map(row => ({ id: row.id, eventType: row.event_type, title: row.title, details: row.details, occurredAt: row.occurred_at }));
   const comparison = comparisonResult.rows[0] || {};
   const farmPayload = { ...farm, todayMined: toInt(todayResult.rows[0]?.mined), last7Days };
@@ -1655,9 +1663,11 @@ async function updateObsidianAnalytics(currentUser, body) {
     const name = String(body.name || '').trim().slice(0, 120);
     const target = Math.trunc(Number(body.targetTotal));
     if (!name || !Number.isSafeInteger(target) || target <= 0) throw Object.assign(new Error('Goal name and positive target are required.'), { statusCode: 400 });
-    await pool.query(`INSERT INTO obsidian_farm_goals(name,target_total,created_by) VALUES($1,$2,$3)`, [name, target, currentUser.id]);
-    await pool.query(`INSERT INTO obsidian_farm_annotations(event_type,title,details) VALUES('settings_changed','Production goal changed',$1::jsonb)`, [JSON.stringify({ name, targetTotal: target, actor: currentUser.username })]);
-    await recordSystemLog({ level: 'audit', category: 'obsidian_analytics', actor: currentUser.username, message: `Created obsidian goal ${name}.`, details: { targetTotal: target } });
+    const baselineResult = await pool.query(`SELECT COALESCE(total_mined,0)::bigint AS total_mined FROM obsidian_farm_state WHERE id=1`);
+    const baselineMined = toInt(baselineResult.rows[0]?.total_mined);
+    await pool.query(`INSERT INTO obsidian_farm_goals(name,target_total,baseline_mined,created_by) VALUES($1,$2,$3,$4)`, [name, target, baselineMined, currentUser.id]);
+    await pool.query(`INSERT INTO obsidian_farm_annotations(event_type,title,details) VALUES('settings_changed','Production goal changed',$1::jsonb)`, [JSON.stringify({ name, targetTotal: target, baselineMined, actor: currentUser.username })]);
+    await recordSystemLog({ level: 'audit', category: 'obsidian_analytics', actor: currentUser.username, message: `Created obsidian goal ${name}.`, details: { targetTotal: target, baselineMined } });
   } else if (body.action === 'goal_state') {
     await pool.query(`UPDATE obsidian_farm_goals SET active=$1,updated_at=NOW() WHERE id=$2`, [Boolean(body.active), body.id]);
     await pool.query(`INSERT INTO obsidian_farm_annotations(event_type,title,details) VALUES('settings_changed','Production goal state changed',$1::jsonb)`, [JSON.stringify({ id: body.id, active: Boolean(body.active), actor: currentUser.username })]);

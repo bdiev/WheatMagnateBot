@@ -121,8 +121,11 @@ function calculateAnalytics(input = {}) {
     ? supplies.durabilityUnits * blocksPerDurability / adjustedRate : null;
   const foodConsumption = supplyConsumptionPerHour(input.supplyHistory, 'food', nowMs);
   const foodHours = foodConsumption.rate > 0 ? supplies.food / foodConsumption.rate : null;
-  const goal = (input.goals || []).find(item => item.active !== false && number(item.targetTotal ?? item.target_total) > number(state.totalMined));
-  const remainingGoal = goal ? number(goal.targetTotal ?? goal.target_total) - number(state.totalMined) : null;
+  const goalProgress = item => item.progress == null
+    ? Math.max(0, number(state.totalMined) - number(item.baselineMined ?? item.baseline_mined))
+    : Math.max(0, number(item.progress));
+  const goal = (input.goals || []).find(item => item.active !== false && number(item.targetTotal ?? item.target_total) > goalProgress(item));
+  const remainingGoal = goal ? Math.max(0, number(goal.targetTotal ?? goal.target_total) - goalProgress(goal)) : null;
 
   const recent = completed.slice(-3);
   const baseline = completed.slice(-15, -3);
@@ -164,7 +167,7 @@ function calculateAnalytics(input = {}) {
       food: { hours: foodHours == null ? null : round(foodHours, 1), at: foodHours == null ? null : new Date(nowMs + foodHours * HOUR).toISOString(), confidence: confidence(foodConsumption.sampleHours), explanation: foodHours == null ? 'At least 6 hours of supply snapshots with observed food consumption are required.' : 'Based on decreases between supply snapshots; restocks are excluded.' },
       expected24h: forecastConfidence.level === 'insufficient' ? null : Math.round(adjustedRate * 24),
       expected7d: forecastConfidence.level === 'insufficient' ? null : Math.round(adjustedRate * 168),
-      goal: goal ? { id: goal.id, name: goal.name, targetTotal: number(goal.targetTotal ?? goal.target_total), remaining: remainingGoal, at: adjustedRate > 0 && forecastConfidence.level !== 'insufficient' ? new Date(nowMs + remainingGoal / adjustedRate * HOUR).toISOString() : null } : null
+      goal: goal ? { id: goal.id, name: goal.name, targetTotal: number(goal.targetTotal ?? goal.target_total), progress: goalProgress(goal), remaining: remainingGoal, at: adjustedRate > 0 && forecastConfidence.level !== 'insufficient' ? new Date(nowMs + remainingGoal / adjustedRate * HOUR).toISOString() : null } : null
     },
     comparisons: { today: compare(today, yesterdayComparable), week: compare(week, previousWeek) },
     anomalies

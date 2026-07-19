@@ -51,7 +51,7 @@ const bucket = hoursAgo => new Date(now.getTime() - hoursAgo * HOUR).toISOString
     farm: { retiredPickaxes: 2, retiredPickaxeBlocks: 4000, totalMined: 1000 },
     supplies: { inventory: { items: [{ name: 'diamond_pickaxe', remainingPercent: 50, usable: true }] } },
     toolUsage: [{ blocks_mined: 4000, durability_used: 2000 }],
-    goals: [{ id: 1, name: '10k', targetTotal: 10000, active: true }],
+    goals: [{ id: 1, name: '10k', targetTotal: 10000, baselineMined: 1000, progress: 0, active: true }],
     comparison: { today: 100, yesterday: 80, week: 700, previousWeek: 1000 }
   });
   assert.equal(result.efficiency.obsidianPerPickaxe, 2000);
@@ -59,6 +59,8 @@ const bucket = hoursAgo => new Date(now.getTime() - hoursAgo * HOUR).toISOString
   assert.equal(result.comparisons.today.percent, 25);
   assert.ok(result.forecast.pickaxes.at);
   assert.ok(result.forecast.goal.at);
+  assert.equal(result.forecast.goal.progress, 0);
+  assert.equal(result.forecast.goal.remaining, 10000);
 }
 
 {
