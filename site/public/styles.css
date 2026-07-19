@@ -4608,6 +4608,15 @@ body.search-focus-active #logoutButton {
   border-bottom: 1px solid var(--line);
 }
 
+#tab-timeline.tab-panel.active {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+#tab-timeline > .panel {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
 .timeline-filters label,
 .incident-editor label {
   display: grid;
@@ -4679,7 +4688,7 @@ body.search-focus-active #logoutButton {
 .incident-row small,
 .incident-row time { color: var(--muted); font-size: 12px; }
 
-@media (max-width: 1100px) {
+@media (max-width: 1280px) {
   .timeline-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .timeline-layout { grid-template-columns: minmax(0, 1fr); }
   .timeline-context { border-top: 1px solid var(--line); border-left: 0; }
