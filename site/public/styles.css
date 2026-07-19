@@ -3542,6 +3542,7 @@ body.search-focus-active #logoutButton {
 .chart-annotations::-webkit-scrollbar { display: none; }
 .chart-annotations span { --annotation-color: var(--annotation-default); display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; padding: 4px 8px; border: 1px solid color-mix(in srgb, var(--annotation-color) 58%, var(--line)); border-radius: 999px; color: color-mix(in srgb, var(--annotation-color) 82%, var(--text)); background: color-mix(in srgb, var(--annotation-color) 11%, var(--panel)); }
 .chart-annotations span::before { content: ""; width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--annotation-color); box-shadow: 0 0 8px color-mix(in srgb, var(--annotation-color) 46%, transparent); }
+.chart-annotations .annotation-count { color: inherit; font-size: 11px; font-weight: 900; opacity: .72; }
 .chart-annotations .annotation-connected { --annotation-color: var(--annotation-connected); }
 .chart-annotations .annotation-disconnected { --annotation-color: var(--annotation-disconnected); }
 .chart-annotations .annotation-resumed { --annotation-color: var(--annotation-resumed); }

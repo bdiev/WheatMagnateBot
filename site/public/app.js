@@ -1038,6 +1038,65 @@ function annotationColor(annotation) {
   return getCssColor(`--annotation-${annotationKind(annotation)}`) || getCssColor('--annotation-default');
 }
 
+function annotationPriority(annotation) {
+  return ({ disconnected: 8, stalled: 7, player: 6, paused: 5, settings: 4, pickaxe: 3, resumed: 2, connected: 1 })[annotationKind(annotation)] || 0;
+}
+
+function clusteredChartAnnotations(annotations, chartData, paddingLeft, chartWidth) {
+  const times = chartData.map(item => new Date(item.bucket || item.label).getTime());
+  if (!times.length || times.some(time => !Number.isFinite(time))) return [];
+  const intervals = times.slice(1).map((time, index) => time - times[index]).filter(interval => interval > 0).sort((a, b) => a - b);
+  const interval = intervals.length ? intervals[Math.floor(intervals.length / 2)] : 60 * 60_000;
+  const rangeStart = times[0];
+  const rangeEnd = times[times.length - 1] + interval;
+  if (!(rangeEnd > rangeStart)) return [];
+
+  const markers = (annotations || []).map(annotation => ({ annotation, at: new Date(annotation.occurredAt).getTime() }))
+    .filter(marker => Number.isFinite(marker.at) && marker.at >= rangeStart && marker.at < rangeEnd)
+    .map(marker => ({
+      ...marker,
+      x: paddingLeft + ((marker.at - rangeStart) / (rangeEnd - rangeStart)) * chartWidth
+    }))
+    .sort((first, second) => first.x - second.x);
+
+  const clusters = [];
+  for (const marker of markers) {
+    const latest = clusters[clusters.length - 1];
+    if (latest && marker.x - latest.right <= 18) {
+      latest.items.push(marker);
+      latest.right = marker.x;
+      latest.x = latest.items.reduce((sum, item) => sum + item.x, 0) / latest.items.length;
+    } else {
+      clusters.push({ x: marker.x, right: marker.x, items: [marker] });
+    }
+  }
+  return clusters.map(cluster => ({
+    ...cluster,
+    annotation: [...cluster.items].sort((first, second) =>
+      annotationPriority(second.annotation) - annotationPriority(first.annotation) || second.at - first.at)[0].annotation
+  }));
+}
+
+function compactRecentAnnotations(annotations, { limit = 10, groupWindowMs = 6 * 60 * 60_000 } = {}) {
+  const sorted = [...(annotations || [])]
+    .filter(annotation => Number.isFinite(new Date(annotation.occurredAt).getTime()))
+    .sort((first, second) => new Date(second.occurredAt).getTime() - new Date(first.occurredAt).getTime());
+  const clusters = [];
+  for (const annotation of sorted) {
+    const occurredAt = new Date(annotation.occurredAt).getTime();
+    const key = `${annotationKind(annotation)}:${String(annotation.title || '').trim().toLowerCase()}`;
+    const existing = clusters.find(cluster => cluster.key === key && cluster.oldestAt - occurredAt < groupWindowMs);
+    if (existing) {
+      existing.count += 1;
+      existing.oldestAt = occurredAt;
+      continue;
+    }
+    clusters.push({ key, annotation, newestAt: occurredAt, oldestAt: occurredAt, count: 1 });
+    if (clusters.length >= limit && sorted.length > 100) break;
+  }
+  return clusters.sort((first, second) => second.newestAt - first.newestAt).slice(0, limit);
+}
+
 function prepareChartCanvas(canvas, data, options = {}) {
   const viewport = canvas.closest('.chart-scroll');
   const ratio = window.devicePixelRatio || 1;
@@ -1251,33 +1310,16 @@ function drawBarChart(canvas, data, options = {}) {
       tooltip: options.tooltip ? options.tooltip(item) : `${item.label}: ${formatNumber(value)}`
     });
   });
-  (options.annotations || []).forEach(annotation => {
-    const at = new Date(annotation.occurredAt).getTime();
-    if (!Number.isFinite(at) || !chartData.length) return;
-    const chartTimes = chartData.map(item => new Date(item.bucket || item.label).getTime()).filter(Number.isFinite);
-    if (chartTimes.length && (at < Math.min(...chartTimes) - 86400000 || at > Math.max(...chartTimes) + 86400000)) return;
-    let closest = 0;
-    let distance = Infinity;
-    chartData.forEach((item, index) => {
-      const itemAt = new Date(item.bucket || item.label).getTime();
-      if (Number.isFinite(itemAt) && Math.abs(itemAt - at) < distance) {
-        distance = Math.abs(itemAt - at); closest = index;
-      }
-    });
-    const times = chartData.map(item => new Date(item.bucket || item.label).getTime());
-    let baseIndex = -1;
-    for (let index = 0; index < times.length; index += 1) {
-      if (Number.isFinite(times[index]) && times[index] <= at) baseIndex = index;
-      else if (baseIndex >= 0) break;
-    }
-    let x = padding.left + closest * slotWidth + slotWidth / 2;
-    if (baseIndex >= 0 && Number.isFinite(times[baseIndex + 1]) && times[baseIndex + 1] > times[baseIndex]) {
-      const progress = Math.max(0, Math.min(1, (at - times[baseIndex]) / (times[baseIndex + 1] - times[baseIndex])));
-      x = padding.left + (baseIndex + 0.5 + progress) * slotWidth;
-    }
-    x = Math.max(padding.left + 3, Math.min(padding.left + chartWidth - 3, x));
-    ctx.save(); ctx.strokeStyle = annotationColor(annotation); ctx.lineWidth = 2; ctx.setLineDash([3, 4]);
+  clusteredChartAnnotations(options.annotations, chartData, padding.left, chartWidth).forEach(cluster => {
+    const x = Math.max(padding.left + 3, Math.min(padding.left + chartWidth - 3, cluster.x));
+    ctx.save(); ctx.strokeStyle = annotationColor(cluster.annotation); ctx.globalAlpha = 0.82; ctx.lineWidth = cluster.items.length > 1 ? 2.5 : 2; ctx.setLineDash([3, 5]);
     ctx.beginPath(); ctx.moveTo(x, padding.top); ctx.lineTo(x, padding.top + chartHeight); ctx.stroke(); ctx.restore();
+    ctx.save();
+    ctx.fillStyle = annotationColor(cluster.annotation);
+    ctx.beginPath();
+    ctx.arc(x, padding.top + 5, cluster.items.length > 1 ? 4.5 : 3.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   });
   state.chartMeta[canvas.id] = { hitboxes };
 
@@ -1466,7 +1508,7 @@ function redrawCharts({ animate = false } = {}) {
         duration: state.chartAnimationDurations.obsidianDailyChart
       },
       tooltip: item => `${item.label}: ${formatNumber(item.value)} blocks`,
-      annotations: state.charts.obsidianAnnotations || []
+      annotations: obsidianRange === 'hours' ? state.charts.obsidianAnnotations || [] : []
     });
     drawLineChart($('#tpsHourlyChart'), aggregateSeries(state.charts.tpsHourly, tpsRange, 'avg'), {
       animation: {
@@ -2834,22 +2876,14 @@ function renderObsidian(payload) {
     $('#obsidianReportHour').value = payload.settings?.dailyReportHour ?? 9;
     $('#obsidianReportEnabled').checked = Boolean(payload.settings?.dailyReportEnabled);
   }
-  const sortedAnnotations = [...(payload.annotations || [])]
-    .sort((first, second) => new Date(second.occurredAt).getTime() - new Date(first.occurredAt).getTime());
-  const newestAnnotations = [];
-  let latestFarmTransitionAt = null;
-  for (const annotation of sortedAnnotations) {
-    const occurredAt = new Date(annotation.occurredAt).getTime();
-    const isFarmTransition = annotation.eventType === 'farm_stalled' || annotation.eventType === 'farm_resumed';
-    // Collapse historical retry chatter in this compact list. The complete
-    // annotation data remains available to the chart and CSV export.
-    if (isFarmTransition && latestFarmTransitionAt != null && latestFarmTransitionAt - occurredAt < 15 * 60_000) continue;
-    if (isFarmTransition) latestFarmTransitionAt = occurredAt;
-    newestAnnotations.push(annotation);
-    if (newestAnnotations.length >= 12) break;
-  }
+  const newestAnnotations = compactRecentAnnotations(payload.annotations);
   const annotationsElement = $('#obsidianAnnotations');
-  annotationsElement.innerHTML = newestAnnotations.map(item => `<span class="annotation-${annotationKind(item)}" title="${formatDate(item.occurredAt)}">${escapeHtml(item.title)}</span>`).join('') || '<span>No annotations yet</span>';
+  annotationsElement.innerHTML = newestAnnotations.map(item => {
+    const annotation = item.annotation;
+    const count = item.count > 1 ? `<small class="annotation-count">×${item.count}</small>` : '';
+    const title = item.count > 1 ? `${formatDate(annotation.occurredAt)} · ${item.count} similar events` : formatDate(annotation.occurredAt);
+    return `<span class="annotation-${annotationKind(annotation)}" title="${escapeHtml(title)}">${escapeHtml(annotation.title)}${count}</span>`;
+  }).join('') || '<span>No annotations yet</span>';
   annotationsElement.scrollLeft = 0;
 
   $('#farmDetails').innerHTML = `
