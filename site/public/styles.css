@@ -3655,6 +3655,14 @@ body.search-focus-active #logoutButton {
 #tab-settings input[type="checkbox"]:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 30%, transparent); outline-offset: 2px; }
 #tab-settings input[type="checkbox"]:disabled { opacity: .58; cursor: not-allowed; filter: saturate(.55); }
 
+#tab-settings .nav-section-toggle input[type="checkbox"] {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background-size: 17px 17px;
+}
+
 @media (max-width: 1050px) {
   .push-device-list { grid-template-columns: minmax(0, 1fr); }
 }
