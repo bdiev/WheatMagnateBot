@@ -64,6 +64,8 @@ const state = {
   navigationSettingsLoading: null,
   navigationSavePromise: Promise.resolve(),
   timezones: [],
+  accountTimezone: 'Europe/Vilnius',
+  accountSettingsLoading: null,
   obsidianCoordinateEditorOpen: false,
   supplyTooltipItems: {},
   itemIcons: {},
@@ -132,7 +134,35 @@ async function loadTimezones() {
   } catch {
     state.timezones = fallbackTimezones();
   }
-  populateTimezoneSelect($('#obsidianTimezone'), $('#obsidianTimezone')?.value || 'Europe/Vilnius');
+  populateTimezoneSelect($('#accountTimezone'), state.accountTimezone);
+}
+
+async function loadAccountSettings({ refreshDashboard = false } = {}) {
+  if (!state.currentUser) return;
+  if (state.accountSettingsLoading) return state.accountSettingsLoading;
+  state.accountSettingsLoading = (async () => {
+    const payload = await fetchJson('/api/settings/account');
+    state.accountTimezone = String(payload.timezone || 'Europe/Vilnius');
+    populateTimezoneSelect($('#accountTimezone'), state.accountTimezone);
+    redrawCharts();
+    if (refreshDashboard) await loadAll();
+  })().catch(err => setBanner(`Could not load account settings: ${err.message}`)).finally(() => {
+    state.accountSettingsLoading = null;
+  });
+  return state.accountSettingsLoading;
+}
+
+async function saveAccountSettings(event) {
+  event.preventDefault();
+  const timezone = $('#accountTimezone')?.value || 'Europe/Vilnius';
+  try {
+    const payload = await putJson('/api/settings/account', { timezone });
+    state.accountTimezone = String(payload.timezone || timezone);
+    populateTimezoneSelect($('#accountTimezone'), state.accountTimezone);
+    await loadAll();
+  } catch (err) {
+    setBanner(`Could not save account timezone: ${err.message}`);
+  }
 }
 
 if ('serviceWorker' in navigator) {
@@ -228,7 +258,8 @@ function formatDate(value) {
     month: 'short',
     day: '2-digit',
     hour: '2-digit',
-    minute: '2-digit'
+    minute: '2-digit',
+    timeZone: state.accountTimezone
   }).format(date);
 }
 
@@ -239,7 +270,8 @@ function formatTime(value) {
   return new Intl.DateTimeFormat('en-US', {
     hour: '2-digit',
     minute: '2-digit',
-    second: '2-digit'
+    second: '2-digit',
+    timeZone: state.accountTimezone
   }).format(date);
 }
 
@@ -249,7 +281,8 @@ function formatChatTime(value) {
   if (Number.isNaN(date.getTime())) return '-';
   return new Intl.DateTimeFormat('en-US', {
     hour: '2-digit',
-    minute: '2-digit'
+    minute: '2-digit',
+    timeZone: state.accountTimezone
   }).format(date);
 }
 
@@ -555,7 +588,10 @@ function setAuthMode(mode) {
 function applyCurrentUser(user) {
   const previousUserId = state.currentUser?.id;
   state.currentUser = user || null;
-  if (String(previousUserId || '') !== String(state.currentUser?.id || '')) state.navigationPreferences = null;
+  if (String(previousUserId || '') !== String(state.currentUser?.id || '')) {
+    state.navigationPreferences = null;
+    state.accountTimezone = 'Europe/Vilnius';
+  }
   if (String(previousUserId || '') !== String(state.currentUser?.id || '')) state.whisperClaimedPlayers = new Set();
   if (!state.currentUser) state.chatInitialScrollDone = false;
   loadWhisperLastSeenId();
@@ -759,7 +795,7 @@ function resetNavigationVisibility() {
 }
 
 function setSettingsView(view) {
-  const nextView = view === 'navigation' ? 'navigation' : 'push';
+  const nextView = ['navigation', 'account'].includes(view) ? view : 'push';
   $$('.settings-tab[data-settings-view]').forEach(button => {
     const active = button.dataset.settingsView === nextView;
     button.classList.toggle('active', active);
@@ -771,6 +807,10 @@ function setSettingsView(view) {
   if (nextView === 'navigation') {
     renderNavigationSettings();
     loadNavigationSettings();
+  }
+  else if (nextView === 'account') {
+    populateTimezoneSelect($('#accountTimezone'), state.accountTimezone);
+    loadAccountSettings();
   }
   else loadPushSettings();
 }
@@ -823,6 +863,7 @@ async function handleAuthSubmit(event) {
     hideAuthScreen();
     await loadNavigationSettings({ migrateLocal: true });
     await loadTimezones();
+    await loadAccountSettings();
     restoreActiveTab();
     openPushDestination();
     await loadAll();
@@ -845,6 +886,7 @@ async function initAuth() {
       hideAuthScreen();
       await loadNavigationSettings({ migrateLocal: true });
       await loadTimezones();
+      await loadAccountSettings();
       restoreActiveTab();
       openPushDestination();
       await loadAll();
@@ -1304,9 +1346,25 @@ function drawLineChart(canvas, data, options = {}) {
   });
 }
 
+function chartDateParts(date) {
+  return Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: state.accountTimezone, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', hourCycle: 'h23'
+  }).formatToParts(date).filter(part => part.type !== 'literal').map(part => [part.type, part.value]));
+}
+
+function localizedChartItem(item) {
+  const bucket = item?.bucket;
+  if (!bucket) return item;
+  const date = new Date(bucket);
+  if (Number.isNaN(date.getTime())) return item;
+  const parts = chartDateParts(date);
+  return { ...item, label: `${parts.month}-${parts.day} ${parts.hour}:00` };
+}
+
 function aggregateSeries(data, range, reducer = 'sum') {
   const items = Array.isArray(data) ? data : [];
-  if (range === 'hours') return items;
+  if (range === 'hours') return items.map(localizedChartItem);
   const groups = new Map();
   items.forEach(item => {
     const bucketSource = item.bucket || item.label;
@@ -1314,12 +1372,16 @@ function aggregateSeries(data, range, reducer = 'sum') {
     let key = String(item.label || bucketSource || '');
     let label = key;
     if (!Number.isNaN(date.getTime())) {
+      const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(String(bucketSource));
+      const parts = dateOnly
+        ? { year: String(bucketSource).slice(0, 4), month: String(bucketSource).slice(5, 7), day: String(bucketSource).slice(8, 10) }
+        : chartDateParts(date);
       if (range === 'months') {
-        key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+        key = `${parts.year}-${parts.month}`;
         label = key;
       } else {
-        key = date.toISOString().slice(0, 10);
-        label = key.slice(5);
+        key = `${parts.year}-${parts.month}-${parts.day}`;
+        label = `${parts.month}-${parts.day}`;
       }
     } else if (range === 'months') {
       key = String(key).slice(0, 7);
@@ -1355,7 +1417,7 @@ function redrawCharts({ animate = false } = {}) {
       tooltip: item => `${item.label}: ${formatNumber(item.value)} messages`
     });
     const obsidianData = obsidianRange === 'hours'
-      ? state.charts.obsidianHourly
+      ? state.charts.obsidianHourly.map(localizedChartItem)
       : aggregateSeries(state.charts.obsidianDaily, obsidianRange);
     drawBarChart($('#obsidianDailyChart'), obsidianData, {
       animation: {
@@ -2648,7 +2710,8 @@ function formatSupplyNeededDate(daysUntilNeeded) {
   const date = new Date(Date.now() + daysUntilNeeded * 86400000);
   return new Intl.DateTimeFormat('en-US', {
     month: 'short',
-    day: '2-digit'
+    day: '2-digit',
+    timeZone: state.accountTimezone
   }).format(date);
 }
 
@@ -2727,7 +2790,6 @@ function renderObsidian(payload) {
     : '<div class="empty">No production goals.</div>';
   $('#obsidianSettingsSummary').innerHTML = `<div><span>Timezone</span><strong>${escapeHtml(payload.settings?.timezone || 'Europe/Vilnius')}</strong></div><div><span>Discord report</span><strong>${payload.settings?.dailyReportEnabled ? `${payload.settings.dailyReportHour}:00` : 'Disabled'}</strong></div>`;
   if (state.currentUser?.role === 'admin') {
-    populateTimezoneSelect($('#obsidianTimezone'), payload.settings?.timezone || 'Europe/Vilnius');
     $('#obsidianReportHour').value = payload.settings?.dailyReportHour ?? 9;
     $('#obsidianReportEnabled').checked = Boolean(payload.settings?.dailyReportEnabled);
   }
@@ -2777,7 +2839,7 @@ async function saveObsidianGoal(event) {
 async function saveObsidianAnalyticsSettings(event) {
   event.preventDefault();
   try {
-    const payload = await postJson('/api/obsidian', { action: 'settings', timezone: $('#obsidianTimezone').value, dailyReportHour: Number($('#obsidianReportHour').value), dailyReportEnabled: $('#obsidianReportEnabled').checked });
+    const payload = await postJson('/api/obsidian', { action: 'settings', dailyReportHour: Number($('#obsidianReportHour').value), dailyReportEnabled: $('#obsidianReportEnabled').checked });
     renderObsidian(payload); setBanner('Obsidian analytics settings saved.');
   } catch (err) { setBanner(`Could not save settings: ${err.message}`); }
 }
@@ -3796,7 +3858,6 @@ function pushDeviceHtml(device, eventTypes) {
     <div class="push-device-fields">
       <label><span>Device name</span><input name="deviceName" maxlength="80" value="${escapeHtml(device.deviceName)}"></label>
       <label><span>Minimum severity</span><select name="minimumSeverity"><option value="info"${device.minimumSeverity === 'info' ? ' selected' : ''}>Info</option><option value="warning"${device.minimumSeverity === 'warning' ? ' selected' : ''}>Warning</option><option value="critical"${device.minimumSeverity === 'critical' ? ' selected' : ''}>Critical</option></select></label>
-      <label><span>Timezone</span><select name="timezone">${timezoneOptions(device.timezone || 'Europe/Vilnius')}</select></label>
     </div>
     <div class="push-toggle-grid">
       <label><input type="checkbox" name="enabled"${device.enabled ? ' checked' : ''}> Push enabled</label>
@@ -3860,7 +3921,7 @@ async function enablePushOnCurrentDevice() {
       subscription: subscription.toJSON(), deviceName: defaultPushDeviceName(), enabled: true,
       minimumSeverity: 'critical', eventTypes: [], includeResolved: false,
       quietHoursEnabled: false, quietStart: '22:00', quietEnd: '07:00',
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Vilnius'
+      timezone: state.accountTimezone
     });
     state.pushSettings = payload;
     state.currentPushSubscriptionId = payload.currentSubscriptionId;
@@ -3879,7 +3940,7 @@ function pushPreferencesFromForm(form) {
     includeResolved: form.elements.includeResolved.checked,
     quietHoursEnabled: form.elements.quietHoursEnabled.checked,
     quietStart: form.elements.quietStart.value, quietEnd: form.elements.quietEnd.value,
-    timezone: form.elements.timezone.value.trim()
+    timezone: state.accountTimezone
   };
 }
 
@@ -4494,6 +4555,8 @@ function handleRealtimeEvent(event) {
     queueRealtimeRefresh('incident-timeline', loadTimeline, 250);
   } else if (type === 'navigation_settings_updated') {
     queueRealtimeRefresh('navigation-settings', () => loadNavigationSettings(), 100);
+  } else if (type === 'account_settings_updated') {
+    queueRealtimeRefresh('account-settings', () => loadAccountSettings({ refreshDashboard: true }), 100);
   }
 }
 
@@ -4524,7 +4587,7 @@ function startRealtimeUpdates() {
   const eventTypes = [
     'bot_status_updated', 'player_joined', 'player_left', 'chat_message',
     'whisper_message', 'farm_status_updated', 'notification_created', 'admin_control_updated', 'operational_event_created',
-    'navigation_settings_updated'
+    'navigation_settings_updated', 'account_settings_updated'
   ];
   eventTypes.forEach(type => source.addEventListener(type, handleRealtimeEvent));
   source.onopen = () => {
@@ -4668,6 +4731,7 @@ $('.settings-tabs')?.addEventListener('click', event => {
 $('#navSectionsList')?.addEventListener('change', saveNavigationVisibility);
 $('#navSectionsList')?.addEventListener('click', moveNavigationSection);
 $('#navSectionsReset')?.addEventListener('click', resetNavigationVisibility);
+$('#accountSettingsForm')?.addEventListener('submit', saveAccountSettings);
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.addEventListener('message', event => {

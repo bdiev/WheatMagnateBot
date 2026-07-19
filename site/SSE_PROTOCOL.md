@@ -34,8 +34,9 @@ Heartbeat comments do not trigger frontend events. Closed and aborted HTTP reque
 | `admin_control_updated` | `{ "source", "updatedAt" }` | Administrators only | Refresh admin controls/logs |
 | `operational_event_created` | `{ "id", "correlationId"? }` | Administrators only | Refresh Incident Timeline when open |
 | `navigation_settings_updated` | `{ "updatedAt": ISODate }` | Only the matching site user | Synchronize navigation visibility and order |
+| `account_settings_updated` | `{ "timezone": string }` | Only the matching site user | Apply the account timezone and refresh displayed dates/charts |
 
-Payloads are deliberately small. The browser obtains authorized state through the existing JSON endpoints after receiving an event. Administrative events are denied by the SSE hub even if a publisher omits an explicit role filter. Whisper and navigation-settings events are routed by the session username.
+Payloads are deliberately small. The browser obtains authorized state through the existing JSON endpoints after receiving an event. Administrative events are denied by the SSE hub even if a publisher omits an explicit role filter. Whisper, navigation-settings, and account-settings events are routed by the session username.
 
 ## Reconnection and consistency
 

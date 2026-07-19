@@ -20,7 +20,7 @@ Each subscription belongs to one `site_users` row and stores per-device preferen
 - minimum active-event severity;
 - selected event types (an empty list means all supported types);
 - separate resolved-event opt-in;
-- timezone and optional quiet hours.
+- optional quiet hours using the account-wide timezone from **Settings → Account**.
 
 Operational notifications are delivered only to approved administrators because the existing notification center is admin-only. A test notification can be sent to an owned device from **Settings**. `NotificationService` invokes push only when its existing deduplication and cooldown permit channel delivery, so suppressed repetitions do not generate push messages.
 
@@ -28,6 +28,6 @@ Incoming Minecraft whispers can be enabled with the `whisper_message` event type
 
 Each selected event type also has an optional `Detailed` preference. It is disabled by default and stored per device. Detailed pushes may include allowlisted operational measurements such as TPS, food level, durability, distance, stall duration, or reconnect count. Arbitrary operational errors and coordinates are not copied to the lock screen. `whisper_message` is the explicit exception: its Detailed mode shows the sender and message text and should be enabled only on a trusted device.
 
-Push payloads contain only a fixed generic event label and a dashboard link. Notification messages, metadata, player names, coordinates, commands, database errors, and other sensitive details are never placed on the lock screen. Expired endpoints returning HTTP 404 or 410 are removed automatically.
+Standard push payloads contain only a fixed generic event label and a dashboard link. Detailed mode adds the explicitly documented fields for that event; Detailed whispers include their sender and text. Expired endpoints returning HTTP 404 or 410 are removed automatically.
 
 Browsers without Service Workers, Push API support, notification support, or a secure context continue to use the PWA normally without push.

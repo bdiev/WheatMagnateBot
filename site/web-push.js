@@ -258,7 +258,8 @@ class WebPushService {
 
   async deliver(notification, { resolved = false, now = new Date() } = {}) {
     if (!this.configured || !this.pool) return { sent: 0, skipped: 0, failed: 0, removed: 0, unavailable: true };
-    const rows = await this.pool.query(`SELECT ps.* FROM push_subscriptions ps JOIN site_users u ON u.id=ps.user_id
+    const rows = await this.pool.query(`SELECT ps.*,COALESCE(np.account_timezone,ps.timezone) AS timezone FROM push_subscriptions ps JOIN site_users u ON u.id=ps.user_id
+      LEFT JOIN site_navigation_preferences np ON np.user_id=ps.user_id
       WHERE ps.enabled=TRUE AND u.status='approved' AND u.role='admin'`);
     const result = await deliverPushSubscriptions({
       subscriptions: rows.rows, notification, resolved, now,
@@ -272,7 +273,8 @@ class WebPushService {
 
   async deliverWhisper({ id, recipientUsername, sender, message, now = new Date() } = {}) {
     if (!this.configured || !this.pool || !recipientUsername) return { sent: 0, skipped: 0, failed: 0, removed: 0, unavailable: true };
-    const rows = await this.pool.query(`SELECT ps.* FROM push_subscriptions ps JOIN site_users u ON u.id=ps.user_id
+    const rows = await this.pool.query(`SELECT ps.*,COALESCE(np.account_timezone,ps.timezone) AS timezone FROM push_subscriptions ps JOIN site_users u ON u.id=ps.user_id
+      LEFT JOIN site_navigation_preferences np ON np.user_id=ps.user_id
       WHERE ps.enabled=TRUE AND u.status='approved' AND LOWER(u.username)=LOWER($1)`, [String(recipientUsername).slice(0, 64)]);
     const notification = {
       id: `whisper-${String(id || 'new').replace(/[^\d]/g, '').slice(0, 20) || 'new'}`,

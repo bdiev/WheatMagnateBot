@@ -83,6 +83,11 @@ async function run() {
   routeHub.publish('navigation_settings_updated', { updatedAt: new Date().toISOString() }, { usernames: ['alice'] });
   assert(alice.res.body.length > beforeNavigationAlice, 'navigation synchronization must reach the owning user');
   assert.equal(bob.res.body.length, beforeNavigationBob, 'navigation synchronization must not reach another user');
+  const beforeAccountAlice = alice.res.body.length;
+  const beforeAccountBob = bob.res.body.length;
+  routeHub.publish('account_settings_updated', { timezone: 'Europe/Vilnius' }, { usernames: ['alice'] });
+  assert(alice.res.body.length > beforeAccountAlice, 'account settings must reach the owning user');
+  assert.equal(bob.res.body.length, beforeAccountBob, 'account settings must not leak to another user');
 
   const leakHub = new SseHub({ maxConnectionsPerUser: 1 });
   for (let index = 0; index < 100; index++) {

@@ -489,9 +489,8 @@
               </form>
             </section>
             <section class="panel">
-              <div class="panel-head"><div><h2>Analytics Settings</h2><p>Timezone and daily Discord report schedule.</p></div><a class="ghost-button link-button" href="/api/obsidian/export.csv">Export CSV</a></div>
+              <div class="panel-head"><div><h2>Analytics Settings</h2><p>Daily Discord report schedule. Timezone follows your account setting.</p></div><a class="ghost-button link-button" href="/api/obsidian/export.csv">Export CSV</a></div>
               <form id="obsidianAnalyticsSettings" class="settings-form admin-only" hidden>
-                <label class="auth-field"><span>Timezone</span><select id="obsidianTimezone"><option value="Europe/Vilnius">Europe/Vilnius</option></select></label>
                 <label class="auth-field"><span>Daily report hour</span><input id="obsidianReportHour" type="number" min="0" max="23"></label>
                 <label class="checkbox-row"><input id="obsidianReportEnabled" type="checkbox"><span>Daily Discord report</span></label>
                 <button type="submit">Save settings</button>
@@ -637,8 +636,9 @@
 
       <section id="tab-settings" class="tab-panel" data-panel="settings">
         <div class="settings-tabs" role="tablist" aria-label="Settings sections">
-          <button class="settings-tab active" type="button" role="tab" aria-selected="true" data-settings-view="push">Browser Notifications</button>
+          <button class="settings-tab active" type="button" role="tab" aria-selected="true" data-settings-view="push">Notifications</button>
           <button class="settings-tab" type="button" role="tab" aria-selected="false" data-settings-view="navigation">Navigation</button>
+          <button class="settings-tab" type="button" role="tab" aria-selected="false" data-settings-view="account">Account</button>
         </div>
         <section class="panel push-settings-panel" data-settings-panel="push">
           <div class="panel-head">
@@ -656,6 +656,14 @@
           </div>
           <div class="push-privacy-note">Visibility and order are synchronized across your signed-in devices. Permissions and access control are not affected, and Settings always remains available.</div>
           <div id="navSectionsList" class="nav-sections-list"></div>
+        </section>
+        <section class="panel account-settings-panel" data-settings-panel="account" hidden>
+          <div class="panel-head"><div><h2>Account</h2><p>One timezone for dates, charts, reports and notification quiet hours.</p></div></div>
+          <form id="accountSettingsForm" class="account-settings-form">
+            <label class="auth-field"><span>Timezone</span><select id="accountTimezone"><option value="Europe/Vilnius">Europe/Vilnius</option></select></label>
+            <button type="submit">Save timezone</button>
+          </form>
+          <div class="push-privacy-note">This setting is synchronized across all devices signed in to your account.</div>
         </section>
       </section>
 

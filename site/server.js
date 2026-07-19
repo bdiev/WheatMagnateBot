@@ -1591,7 +1591,7 @@ async function getPlayerStats() {
   };
 }
 
-async function getObsidianStats() {
+async function getObsidianStats(currentUser = null) {
   assertDatabase();
   await pool.query(`UPDATE obsidian_farm_goals
     SET baseline_mined=COALESCE((SELECT total_mined FROM obsidian_farm_state WHERE id=1),0),updated_at=NOW()
@@ -1602,7 +1602,7 @@ async function getObsidianStats() {
     daily_report_enabled: process.env.OBSIDIAN_DAILY_REPORT_ENABLED !== 'false',
     daily_report_hour: process.env.OBSIDIAN_DAILY_REPORT_HOUR == null ? 9 : Number(process.env.OBSIDIAN_DAILY_REPORT_HOUR)
   };
-  const timezone = settings.timezone || 'Europe/Vilnius';
+  const timezone = currentUser ? await getAccountTimezone(currentUser.id) : (settings.timezone || 'Europe/Vilnius');
   const [farmResult, todayResult, dailyResult, hourlyResult, supplyResult, supplyHistoryResult, annotationsResult, goalsResult, tpsResult, comparisonResult, toolUsageResult] = await Promise.all([
     pool.query(`
       SELECT session_mined, total_mined, desired_enabled, session_started_at,
@@ -1769,15 +1769,14 @@ async function updateObsidianAnalytics(currentUser, body) {
     await pool.query(`INSERT INTO obsidian_farm_annotations(event_type,title,details,correlation_id) VALUES('settings_changed','Production goal deleted',$1::jsonb,$2)`, [JSON.stringify({ id, name: goal.name, targetTotal: String(goal.target_total), actor: currentUser.username, correlationId }), correlationId]);
     await recordSystemLog({ level: 'audit', category: 'obsidian_analytics', actor: currentUser.username, message: `Deleted obsidian goal ${goal.name}.`, details: { id, targetTotal: String(goal.target_total), wasActive: goal.active, correlationId } });
   } else if (body.action === 'settings') {
-    const timezone = String(body.timezone || 'Europe/Vilnius');
-    try { new Intl.DateTimeFormat('en', { timeZone: timezone }).format(); } catch (_) { throw Object.assign(new Error('Invalid timezone.'), { statusCode: 400 }); }
+    const timezone = await getAccountTimezone(currentUser.id);
     const hour = Math.max(0, Math.min(23, Math.trunc(Number(body.dailyReportHour))));
     await pool.query(`INSERT INTO obsidian_farm_analytics_settings(id,timezone,daily_report_enabled,daily_report_hour,updated_at)
       VALUES(1,$1,$2,$3,NOW()) ON CONFLICT(id) DO UPDATE SET timezone=EXCLUDED.timezone,daily_report_enabled=EXCLUDED.daily_report_enabled,daily_report_hour=EXCLUDED.daily_report_hour,updated_at=NOW()`, [timezone, Boolean(body.dailyReportEnabled), hour]);
     await pool.query(`INSERT INTO obsidian_farm_annotations(event_type,title,details,correlation_id) VALUES('settings_changed','Analytics settings changed',$1::jsonb,$2)`, [JSON.stringify({ timezone, dailyReportHour: hour, actor: currentUser.username, correlationId }), correlationId]);
     await recordSystemLog({ level: 'audit', category: 'obsidian_analytics', actor: currentUser.username, message: 'Updated obsidian analytics settings.', details: { timezone, dailyReportEnabled: Boolean(body.dailyReportEnabled), dailyReportHour: hour, correlationId } });
   } else throw Object.assign(new Error('Unknown analytics action.'), { statusCode: 400 });
-  return getObsidianStats();
+  return getObsidianStats(currentUser);
 }
 
 async function exportObsidianCsv(res, url) {
@@ -2776,6 +2775,32 @@ async function getNavigationPreferences(currentUser) {
   return { ...preferences, exists: Boolean(row), updatedAt: row?.updated_at || null };
 }
 
+async function getAccountTimezone(userId) {
+  const result = await pool.query('SELECT account_timezone FROM site_navigation_preferences WHERE user_id=$1', [userId]);
+  return result.rows[0]?.account_timezone || 'Europe/Vilnius';
+}
+
+async function getAccountSettings(currentUser) {
+  return { timezone: await getAccountTimezone(currentUser.id) };
+}
+
+async function updateAccountSettings(currentUser, body) {
+  const timezone = String(body.timezone || '').trim().slice(0, 64);
+  try { new Intl.DateTimeFormat('en', { timeZone: timezone }).format(); }
+  catch { throw Object.assign(new Error('Invalid timezone.'), { statusCode: 400 }); }
+  await pool.query(`INSERT INTO site_navigation_preferences(user_id,account_timezone,updated_at)
+    VALUES($1,$2,NOW()) ON CONFLICT(user_id) DO UPDATE SET account_timezone=EXCLUDED.account_timezone,updated_at=NOW()`,
+  [currentUser.id, timezone]);
+  if (currentUser.role === 'admin') {
+    await pool.query(`INSERT INTO obsidian_farm_analytics_settings(id,timezone,updated_at) VALUES(1,$1,NOW())
+      ON CONFLICT(id) DO UPDATE SET timezone=EXCLUDED.timezone,updated_at=NOW()`, [timezone]);
+  }
+  await recordSystemLog({ level: 'audit', category: 'user_settings', actor: currentUser.username,
+    message: 'Updated account timezone.', details: { timezone } });
+  sseHub.publish('account_settings_updated', { timezone }, { usernames: [currentUser.username] });
+  return { timezone };
+}
+
 async function updateNavigationPreferences(currentUser, body) {
   const preferences = normalizeNavigationPreferences(body);
   const result = await pool.query(`INSERT INTO site_navigation_preferences(user_id,visibility,section_order,updated_at)
@@ -3127,6 +3152,15 @@ async function handleApi(req, res, url) {
       sendJson(res, 200, { timezones: SUPPORTED_TIMEZONES });
       return;
     }
+    if (url.pathname === '/api/settings/account' && req.method === 'GET') {
+      sendJson(res, 200, await getAccountSettings(currentUser));
+      return;
+    }
+    if (url.pathname === '/api/settings/account' && req.method === 'PUT') {
+      if (!enforceRateLimit(req, res, 'account_settings', currentUser.username, { limit: 30, windowMs: 60_000 })) return;
+      sendJson(res, 200, await updateAccountSettings(currentUser, await readJsonBody(req, 16 * 1024)));
+      return;
+    }
     if (url.pathname === '/api/notifications' && req.method === 'GET') {
       sendJson(res, 200, await getNotifications(currentUser, url)); return;
     }
@@ -3210,7 +3244,7 @@ async function handleApi(req, res, url) {
       return;
     }
     if (url.pathname === '/api/obsidian') {
-      if (req.method === 'GET') sendJson(res, 200, await getObsidianStats());
+      if (req.method === 'GET') sendJson(res, 200, await getObsidianStats(currentUser));
       else if (req.method === 'POST') sendJson(res, 200, await updateObsidianAnalytics(currentUser, await readJsonBody(req)));
       else sendError(res, 405, 'Method not allowed.');
       return;
