@@ -114,16 +114,27 @@ function fallbackTimezones() {
     .sort((first, second) => first.localeCompare(second));
 }
 
-function timezoneOptions(selected = 'Europe/Vilnius') {
+function timezoneValues(selected = 'Europe/Vilnius') {
   const zones = [...new Set([...(state.timezones.length ? state.timezones : fallbackTimezones()), selected].filter(Boolean))]
     .sort((first, second) => first.localeCompare(second));
-  return zones.map(zone => `<option value="${escapeHtml(zone)}"${zone === selected ? ' selected' : ''}>${escapeHtml(zone)}</option>`).join('');
+  return zones;
 }
 
-function populateTimezoneSelect(select, selected = 'Europe/Vilnius') {
-  if (!select) return;
-  select.innerHTML = timezoneOptions(selected);
-  select.value = selected;
+function populateTimezoneInput(input, selected = 'Europe/Vilnius') {
+  if (!input) return;
+  const datalist = $('#accountTimezoneOptions');
+  if (datalist) datalist.innerHTML = timezoneValues(selected).map(zone => `<option value="${escapeHtml(zone)}"></option>`).join('');
+  input.value = selected;
+}
+
+function resolveTimezoneInput(value) {
+  const entered = String(value || '').trim();
+  const normalized = entered.replace(/\s+/g, '_').toLowerCase();
+  const zones = timezoneValues(state.accountTimezone);
+  const exact = zones.find(zone => zone.toLowerCase() === normalized);
+  if (exact) return exact;
+  const cityMatches = zones.filter(zone => zone.split('/').pop().toLowerCase() === normalized);
+  return cityMatches.length === 1 ? cityMatches[0] : entered;
 }
 
 async function loadTimezones() {
@@ -134,7 +145,7 @@ async function loadTimezones() {
   } catch {
     state.timezones = fallbackTimezones();
   }
-  populateTimezoneSelect($('#accountTimezone'), state.accountTimezone);
+  populateTimezoneInput($('#accountTimezone'), state.accountTimezone);
 }
 
 async function loadAccountSettings({ refreshDashboard = false } = {}) {
@@ -143,7 +154,7 @@ async function loadAccountSettings({ refreshDashboard = false } = {}) {
   state.accountSettingsLoading = (async () => {
     const payload = await fetchJson('/api/settings/account');
     state.accountTimezone = String(payload.timezone || 'Europe/Vilnius');
-    populateTimezoneSelect($('#accountTimezone'), state.accountTimezone);
+    populateTimezoneInput($('#accountTimezone'), state.accountTimezone);
     redrawCharts();
     if (refreshDashboard) await loadAll();
   })().catch(err => setBanner(`Could not load account settings: ${err.message}`)).finally(() => {
@@ -154,11 +165,11 @@ async function loadAccountSettings({ refreshDashboard = false } = {}) {
 
 async function saveAccountSettings(event) {
   event.preventDefault();
-  const timezone = $('#accountTimezone')?.value || 'Europe/Vilnius';
+  const timezone = resolveTimezoneInput($('#accountTimezone')?.value || 'Europe/Vilnius');
   try {
     const payload = await putJson('/api/settings/account', { timezone });
     state.accountTimezone = String(payload.timezone || timezone);
-    populateTimezoneSelect($('#accountTimezone'), state.accountTimezone);
+    populateTimezoneInput($('#accountTimezone'), state.accountTimezone);
     await loadAll();
   } catch (err) {
     setBanner(`Could not save account timezone: ${err.message}`);
@@ -809,7 +820,7 @@ function setSettingsView(view) {
     loadNavigationSettings();
   }
   else if (nextView === 'account') {
-    populateTimezoneSelect($('#accountTimezone'), state.accountTimezone);
+    populateTimezoneInput($('#accountTimezone'), state.accountTimezone);
     loadAccountSettings();
   }
   else loadPushSettings();
