@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const path = require('node:path');
 const { RateLimiter, configuredOrigins, requestIsHttps, resolveStaticPath, securityHeaders, validateOrigin, verifyCsrfToken } = require('../security');
-const { assertAdminUser, hashPassword, registrationDefaults, server, verifyPassword } = require('../server');
+const { assertAdminUser, hashPassword, normalizeNavigationPreferences, registrationDefaults, server, verifyPassword } = require('../server');
 
 function request(method, headers = {}, encrypted = false) {
   return { method, headers, socket: { encrypted, remoteAddress: '127.0.0.1' } };
@@ -12,6 +12,18 @@ function request(method, headers = {}, encrypted = false) {
 
 function testAdminNameCannotEscalate() {
   assert.deepEqual(registrationDefaults('bdiev_'), { role: 'user', status: 'pending' });
+}
+
+function testNavigationPreferencesAreNormalized() {
+  const value = normalizeNavigationPreferences({
+    visibility: { chat: false, settings: false, unknown: true, bot: 'false' },
+    order: ['settings', 'chat', 'settings', 'unknown']
+  });
+  assert.deepEqual(value.visibility, { chat: false }, 'only valid boolean visibility settings may be stored');
+  assert.equal(value.order[0], 'settings');
+  assert.equal(value.order[1], 'chat');
+  assert.equal(new Set(value.order).size, value.order.length, 'navigation order must not contain duplicates');
+  assert.equal(value.order.includes('unknown'), false);
 }
 
 function testRateLimit() {
@@ -112,6 +124,7 @@ async function testHttpBoundary() {
 
 (async () => {
   testAdminNameCannotEscalate();
+  testNavigationPreferencesAreNormalized();
   testRateLimit();
   testOriginValidation();
   testStaticTraversal();

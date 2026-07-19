@@ -60,6 +60,9 @@ const state = {
   notificationRules: [],
   pushSettings: null,
   currentPushSubscriptionId: null,
+  navigationPreferences: null,
+  navigationSettingsLoading: null,
+  navigationSavePromise: Promise.resolve(),
   obsidianCoordinateEditorOpen: false,
   supplyTooltipItems: {},
   itemIcons: {},
@@ -94,11 +97,13 @@ const NAV_SECTION_INFO = Object.freeze({
   obsidian: ['Obsidian Farm', 'Farm controls and analytics'],
   server: ['Server Stats', 'TPS and server activity'],
   players: ['Player Stats', 'Profiles and activity'],
+  settings: ['Settings', 'Always available'],
   notifications: ['Notifications', 'Alerts and notification rules'],
   timeline: ['Incident Timeline', 'Operational event investigation'],
   'child-ai': ['Child AI', 'Learning and memory administration'],
   admin: ['Admin', 'Administrative controls']
 });
+const NAV_DEFAULT_ORDER = Object.freeze(['chat', 'bot', 'obsidian', 'server', 'players', 'settings', 'notifications', 'timeline', 'child-ai', 'admin']);
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -520,6 +525,7 @@ function setAuthMode(mode) {
 function applyCurrentUser(user) {
   const previousUserId = state.currentUser?.id;
   state.currentUser = user || null;
+  if (String(previousUserId || '') !== String(state.currentUser?.id || '')) state.navigationPreferences = null;
   if (String(previousUserId || '') !== String(state.currentUser?.id || '')) state.whisperClaimedPlayers = new Set();
   if (!state.currentUser) state.chatInitialScrollDone = false;
   loadWhisperLastSeenId();
@@ -527,6 +533,7 @@ function applyCurrentUser(user) {
   $$('.admin-only').forEach(element => {
     element.hidden = !isAdmin;
   });
+  applyNavigationOrder();
   applyNavigationVisibility();
   const logoutButton = $('#logoutButton');
   if (logoutButton) logoutButton.hidden = !state.currentUser;
@@ -559,13 +566,89 @@ function navigationVisibilityStorageKey() {
   return `wm-nav-sections:${String(state.currentUser?.id || 'anonymous')}`;
 }
 
+function navigationOrderStorageKey() {
+  return `wm-nav-order:${String(state.currentUser?.id || 'anonymous')}`;
+}
+
 function loadNavigationVisibility() {
+  if (state.navigationPreferences) return { ...state.navigationPreferences.visibility };
   try {
     const value = JSON.parse(localStorage.getItem(navigationVisibilityStorageKey()) || '{}');
     return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   } catch {
     return {};
   }
+}
+
+function loadNavigationOrder() {
+  if (state.navigationPreferences) return [...state.navigationPreferences.order];
+  try {
+    const saved = JSON.parse(localStorage.getItem(navigationOrderStorageKey()) || '[]');
+    const valid = Array.isArray(saved) ? saved.filter((tab, index) => NAV_DEFAULT_ORDER.includes(tab) && saved.indexOf(tab) === index) : [];
+    return [...valid, ...NAV_DEFAULT_ORDER.filter(tab => !valid.includes(tab))];
+  } catch {
+    return [...NAV_DEFAULT_ORDER];
+  }
+}
+
+function cacheNavigationPreferences(visibility, order) {
+  const safeVisibility = visibility && typeof visibility === 'object' && !Array.isArray(visibility) ? { ...visibility } : {};
+  const requestedOrder = Array.isArray(order) ? order : [];
+  const safeOrder = requestedOrder.filter((tab, index) => NAV_DEFAULT_ORDER.includes(tab) && requestedOrder.indexOf(tab) === index);
+  for (const tab of NAV_DEFAULT_ORDER) if (!safeOrder.includes(tab)) safeOrder.push(tab);
+  state.navigationPreferences = { visibility: safeVisibility, order: safeOrder };
+  localStorage.setItem(navigationVisibilityStorageKey(), JSON.stringify(safeVisibility));
+  localStorage.setItem(navigationOrderStorageKey(), JSON.stringify(safeOrder));
+}
+
+async function loadNavigationSettings({ migrateLocal = false } = {}) {
+  if (!state.currentUser) return;
+  if (state.navigationSettingsLoading) return state.navigationSettingsLoading;
+  state.navigationSettingsLoading = (async () => {
+    const localVisibility = loadNavigationVisibility();
+    const localOrder = loadNavigationOrder();
+    let payload = await fetchJson('/api/settings/navigation');
+    const hasLocalSettings = localStorage.getItem(navigationVisibilityStorageKey()) !== null || localStorage.getItem(navigationOrderStorageKey()) !== null;
+    if (migrateLocal && !payload.exists && hasLocalSettings) {
+      payload = await putJson('/api/settings/navigation', { visibility: localVisibility, order: localOrder });
+    }
+    cacheNavigationPreferences(payload.visibility, payload.order);
+    applyNavigationOrder();
+    applyNavigationVisibility();
+    if (state.activeTab === 'settings') renderNavigationSettings();
+  })().catch(err => {
+    setBanner(`Could not synchronize navigation settings: ${err.message}`);
+  }).finally(() => {
+    state.navigationSettingsLoading = null;
+  });
+  return state.navigationSettingsLoading;
+}
+
+function queueNavigationSettingsSave() {
+  if (!state.currentUser || !state.navigationPreferences) return;
+  const snapshot = {
+    visibility: { ...state.navigationPreferences.visibility },
+    order: [...state.navigationPreferences.order]
+  };
+  state.navigationSavePromise = state.navigationSavePromise.catch(() => {}).then(async () => {
+    await putJson('/api/settings/navigation', snapshot);
+  }).catch(err => {
+    setBanner(`Could not save navigation settings: ${err.message}`);
+  });
+}
+
+function applyNavigationOrder() {
+  const panel = $('#navMenuPanel');
+  if (!panel) return;
+  const buttons = new Map($$('.tab-button[data-tab]').map(button => [button.dataset.tab, button]));
+  loadNavigationOrder().forEach(tab => {
+    const button = buttons.get(tab);
+    if (button) panel.append(button);
+  });
+}
+
+function navigationTabAllowed(button) {
+  return Boolean(button) && (!button.classList.contains('admin-only') || state.currentUser?.role === 'admin');
 }
 
 function applyNavigationVisibility() {
@@ -586,17 +669,22 @@ function renderNavigationSettings() {
   const container = $('#navSectionsList');
   if (!container) return;
   const preferences = loadNavigationVisibility();
-  const isAdmin = state.currentUser?.role === 'admin';
-  const availableTabs = $$('.tab-button[data-tab]').filter(button => {
-    return button.dataset.tab !== 'settings' && (!button.classList.contains('admin-only') || isAdmin);
-  });
-  container.innerHTML = availableTabs.map(button => {
+  const buttons = new Map($$('.tab-button[data-tab]').map(button => [button.dataset.tab, button]));
+  const availableTabs = loadNavigationOrder().map(tab => buttons.get(tab)).filter(navigationTabAllowed);
+  container.innerHTML = availableTabs.map((button, index) => {
     const tab = button.dataset.tab;
     const [title, description] = NAV_SECTION_INFO[tab] || [button.textContent.trim(), 'Dashboard section'];
-    return `<label class="nav-section-toggle">
-      <span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(description)}</small></span>
-      <input type="checkbox" data-nav-section="${escapeHtml(tab)}" ${preferences[tab] === false ? '' : 'checked'}>
-    </label>`;
+    const isSettings = tab === 'settings';
+    return `<div class="nav-section-toggle" data-nav-section-row="${escapeHtml(tab)}">
+      <label class="nav-section-identity">
+        <span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(description)}</small></span>
+        <input type="checkbox" data-nav-section="${escapeHtml(tab)}" ${isSettings || preferences[tab] !== false ? 'checked' : ''} ${isSettings ? 'disabled' : ''}>
+      </label>
+      <div class="nav-order-actions" aria-label="Change ${escapeHtml(title)} position">
+        <button class="ghost-button" type="button" data-nav-move="up" data-nav-tab="${escapeHtml(tab)}" aria-label="Move ${escapeHtml(title)} up" ${index === 0 ? 'disabled' : ''}>↑</button>
+        <button class="ghost-button" type="button" data-nav-move="down" data-nav-tab="${escapeHtml(tab)}" aria-label="Move ${escapeHtml(title)} down" ${index === availableTabs.length - 1 ? 'disabled' : ''}>↓</button>
+      </div>
+    </div>`;
   }).join('');
 }
 
@@ -605,14 +693,38 @@ function saveNavigationVisibility(event) {
   if (!input) return;
   const preferences = loadNavigationVisibility();
   preferences[input.dataset.navSection] = input.checked;
-  localStorage.setItem(navigationVisibilityStorageKey(), JSON.stringify(preferences));
+  cacheNavigationPreferences(preferences, loadNavigationOrder());
   applyNavigationVisibility();
+  queueNavigationSettingsSave();
+}
+
+function moveNavigationSection(event) {
+  const button = event.target.closest('[data-nav-move][data-nav-tab]');
+  if (!button) return;
+  const order = loadNavigationOrder();
+  const navButtons = new Map($$('.tab-button[data-tab]').map(item => [item.dataset.tab, item]));
+  const available = order.filter(tab => navigationTabAllowed(navButtons.get(tab)));
+  const index = available.indexOf(button.dataset.navTab);
+  const targetIndex = button.dataset.navMove === 'up' ? index - 1 : index + 1;
+  if (index < 0 || targetIndex < 0 || targetIndex >= available.length) return;
+  [available[index], available[targetIndex]] = [available[targetIndex], available[index]];
+  let availableIndex = 0;
+  const nextOrder = order.map(tab => navigationTabAllowed(navButtons.get(tab)) ? available[availableIndex++] : tab);
+  cacheNavigationPreferences(loadNavigationVisibility(), nextOrder);
+  applyNavigationOrder();
+  applyNavigationVisibility();
+  renderNavigationSettings();
+  queueNavigationSettingsSave();
 }
 
 function resetNavigationVisibility() {
   localStorage.removeItem(navigationVisibilityStorageKey());
+  localStorage.removeItem(navigationOrderStorageKey());
+  cacheNavigationPreferences({}, NAV_DEFAULT_ORDER);
+  applyNavigationOrder();
   applyNavigationVisibility();
   renderNavigationSettings();
+  queueNavigationSettingsSave();
   setBanner('Navigation sections restored.');
 }
 
@@ -626,7 +738,10 @@ function setSettingsView(view) {
   $$('[data-settings-panel]').forEach(panel => {
     panel.hidden = panel.dataset.settingsPanel !== nextView;
   });
-  if (nextView === 'navigation') renderNavigationSettings();
+  if (nextView === 'navigation') {
+    renderNavigationSettings();
+    loadNavigationSettings();
+  }
   else loadPushSettings();
 }
 
@@ -676,6 +791,7 @@ async function handleAuthSubmit(event) {
     state.csrfToken = payload.csrfToken || null;
     applyCurrentUser(payload.user);
     hideAuthScreen();
+    await loadNavigationSettings({ migrateLocal: true });
     restoreActiveTab();
     openPushDestination();
     await loadAll();
@@ -696,6 +812,7 @@ async function initAuth() {
     if (payload.authenticated) {
       applyCurrentUser(payload.user);
       hideAuthScreen();
+      await loadNavigationSettings({ migrateLocal: true });
       restoreActiveTab();
       openPushDestination();
       await loadAll();
@@ -3633,7 +3750,15 @@ function defaultPushDeviceName() {
 }
 
 function pushDeviceHtml(device, eventTypes) {
-  const eventOptions = eventTypes.map(type => `<label><input type="checkbox" name="eventType" value="${escapeHtml(type)}"${device.eventTypes.length === 0 || device.eventTypes.includes(type) ? ' checked' : ''}> ${escapeHtml(type)}</label>`).join('');
+  const detailedEventTypes = Array.isArray(device.detailedEventTypes) ? device.detailedEventTypes : [];
+  const eventOptions = eventTypes.map(type => {
+    const selected = device.eventTypes.length === 0 || device.eventTypes.includes(type);
+    const detailed = selected && detailedEventTypes.includes(type);
+    return `<div class="push-event-type-row">
+      <label class="push-event-enabled"><input type="checkbox" name="eventType" value="${escapeHtml(type)}"${selected ? ' checked' : ''}> <span>${escapeHtml(type)}</span></label>
+      <label class="push-event-detailed"><input type="checkbox" name="detailedEventType" value="${escapeHtml(type)}"${detailed ? ' checked' : ''}${selected ? '' : ' disabled'}> Detailed</label>
+    </div>`;
+  }).join('');
   return `<form class="push-device-card" data-push-device-id="${escapeHtml(device.id)}">
     <div class="push-device-head"><div><strong>${escapeHtml(device.deviceName)}</strong><small>Endpoint …${escapeHtml(device.endpointSuffix || '')}</small></div><span class="pill">${device.enabled ? 'enabled' : 'disabled'}</span></div>
     <div class="push-device-fields">
@@ -3718,11 +3843,21 @@ function pushPreferencesFromForm(form) {
     deviceName: form.elements.deviceName.value.trim(), enabled: form.elements.enabled.checked,
     minimumSeverity: form.elements.minimumSeverity.value,
     eventTypes: [...form.querySelectorAll('[name="eventType"]:checked')].map(input => input.value),
+    detailedEventTypes: [...form.querySelectorAll('[name="detailedEventType"]:checked:not(:disabled)')].map(input => input.value),
     includeResolved: form.elements.includeResolved.checked,
     quietHoursEnabled: form.elements.quietHoursEnabled.checked,
     quietStart: form.elements.quietStart.value, quietEnd: form.elements.quietEnd.value,
     timezone: form.elements.timezone.value.trim()
   };
+}
+
+function handlePushEventTypeChange(event) {
+  const eventType = event.target.closest('input[name="eventType"]');
+  if (!eventType) return;
+  const detailed = eventType.closest('.push-event-type-row')?.querySelector('input[name="detailedEventType"]');
+  if (!detailed) return;
+  detailed.disabled = !eventType.checked;
+  if (!eventType.checked) detailed.checked = false;
 }
 
 async function handlePushDeviceSubmit(event) {
@@ -4325,6 +4460,8 @@ function handleRealtimeEvent(event) {
     }, 300);
   } else if (type === 'operational_event_created' && state.currentUser?.role === 'admin' && state.activeTab === 'timeline') {
     queueRealtimeRefresh('incident-timeline', loadTimeline, 250);
+  } else if (type === 'navigation_settings_updated') {
+    queueRealtimeRefresh('navigation-settings', () => loadNavigationSettings(), 100);
   }
 }
 
@@ -4354,7 +4491,8 @@ function startRealtimeUpdates() {
   state.eventSource = source;
   const eventTypes = [
     'bot_status_updated', 'player_joined', 'player_left', 'chat_message',
-    'whisper_message', 'farm_status_updated', 'notification_created', 'admin_control_updated', 'operational_event_created'
+    'whisper_message', 'farm_status_updated', 'notification_created', 'admin_control_updated', 'operational_event_created',
+    'navigation_settings_updated'
   ];
   eventTypes.forEach(type => source.addEventListener(type, handleRealtimeEvent));
   source.onopen = () => {
@@ -4490,11 +4628,13 @@ $('#notificationsMarkAllRead')?.addEventListener('click', async () => {
 $('#pushEnableDevice')?.addEventListener('click', enablePushOnCurrentDevice);
 $('#pushDeviceList')?.addEventListener('submit', handlePushDeviceSubmit);
 $('#pushDeviceList')?.addEventListener('click', handlePushDeviceClick);
+$('#pushDeviceList')?.addEventListener('change', handlePushEventTypeChange);
 $('.settings-tabs')?.addEventListener('click', event => {
   const button = event.target.closest('[data-settings-view]');
   if (button) setSettingsView(button.dataset.settingsView);
 });
 $('#navSectionsList')?.addEventListener('change', saveNavigationVisibility);
+$('#navSectionsList')?.addEventListener('click', moveNavigationSection);
 $('#navSectionsReset')?.addEventListener('click', resetNavigationVisibility);
 
 if ('serviceWorker' in navigator) {

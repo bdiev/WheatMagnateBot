@@ -467,6 +467,14 @@ async function ensureOptionalTables() {
         FOREIGN KEY(user_id) REFERENCES site_users(id) ON DELETE CASCADE;
     END IF;
   END $$`);
+  await pool.query(`DO $$ BEGIN
+    IF to_regclass('public.site_navigation_preferences') IS NOT NULL AND NOT EXISTS (
+      SELECT 1 FROM pg_constraint WHERE conname='site_navigation_preferences_user_fk'
+    ) THEN
+      ALTER TABLE site_navigation_preferences ADD CONSTRAINT site_navigation_preferences_user_fk
+        FOREIGN KEY(user_id) REFERENCES site_users(id) ON DELETE CASCADE;
+    END IF;
+  END $$`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS site_sessions (
       token_hash TEXT PRIMARY KEY,
@@ -2743,6 +2751,41 @@ async function getPushSettings(currentUser) {
   };
 }
 
+const NAVIGATION_SECTION_ORDER = Object.freeze(['chat', 'bot', 'obsidian', 'server', 'players', 'settings', 'notifications', 'timeline', 'child-ai', 'admin']);
+
+function normalizeNavigationPreferences(input = {}) {
+  const rawVisibility = input.visibility && typeof input.visibility === 'object' && !Array.isArray(input.visibility) ? input.visibility : {};
+  const visibility = {};
+  for (const section of NAVIGATION_SECTION_ORDER) {
+    if (section !== 'settings' && typeof rawVisibility[section] === 'boolean') visibility[section] = rawVisibility[section];
+  }
+  const requestedOrder = Array.isArray(input.order) ? input.order.map(String) : [];
+  const order = requestedOrder.filter((section, index) => NAVIGATION_SECTION_ORDER.includes(section) && requestedOrder.indexOf(section) === index);
+  for (const section of NAVIGATION_SECTION_ORDER) if (!order.includes(section)) order.push(section);
+  return { visibility, order };
+}
+
+async function getNavigationPreferences(currentUser) {
+  const result = await pool.query('SELECT visibility,section_order,updated_at FROM site_navigation_preferences WHERE user_id=$1', [currentUser.id]);
+  const row = result.rows[0];
+  const preferences = normalizeNavigationPreferences({ visibility: row?.visibility, order: row?.section_order });
+  return { ...preferences, exists: Boolean(row), updatedAt: row?.updated_at || null };
+}
+
+async function updateNavigationPreferences(currentUser, body) {
+  const preferences = normalizeNavigationPreferences(body);
+  const result = await pool.query(`INSERT INTO site_navigation_preferences(user_id,visibility,section_order,updated_at)
+    VALUES($1,$2::jsonb,$3::text[],NOW()) ON CONFLICT(user_id) DO UPDATE SET
+    visibility=EXCLUDED.visibility,section_order=EXCLUDED.section_order,updated_at=NOW() RETURNING updated_at`,
+  [currentUser.id, JSON.stringify(preferences.visibility), preferences.order]);
+  await recordSystemLog({
+    level: 'audit', category: 'user_settings', actor: currentUser.username,
+    message: 'Updated navigation preferences.', details: { visibleSections: preferences.visibility, sectionOrder: preferences.order }
+  });
+  sseHub.publish('navigation_settings_updated', { updatedAt: result.rows[0]?.updated_at || null }, { usernames: [currentUser.username] });
+  return { ...preferences, exists: true, updatedAt: result.rows[0]?.updated_at || null };
+}
+
 async function createPushSubscription(currentUser, body) {
   const id = await webPushService.subscribe(currentUser.id, body);
   await recordSystemLog({
@@ -2993,6 +3036,8 @@ async function handleApi(req, res, url) {
         !enforceRateLimit(req, res, 'push_settings', currentUser.username, { limit: 20, windowMs: 60_000 })) return;
     if (url.pathname === '/api/push/test' && req.method === 'POST' &&
         !enforceRateLimit(req, res, 'push_test', currentUser.username, { limit: 3, windowMs: 10 * 60_000 })) return;
+    if (url.pathname === '/api/settings/navigation' && req.method === 'PUT' &&
+        !enforceRateLimit(req, res, 'navigation_settings', currentUser.username, { limit: 60, windowMs: 60_000 })) return;
 
     if (url.pathname === '/api/admin/users') {
       if (req.method === 'GET') {
@@ -3082,6 +3127,12 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/push/settings' && req.method === 'GET') {
       sendJson(res, 200, await getPushSettings(currentUser)); return;
+    }
+    if (url.pathname === '/api/settings/navigation' && req.method === 'GET') {
+      sendJson(res, 200, await getNavigationPreferences(currentUser)); return;
+    }
+    if (url.pathname === '/api/settings/navigation' && req.method === 'PUT') {
+      sendJson(res, 200, await updateNavigationPreferences(currentUser, await readJsonBody(req, 16 * 1024))); return;
     }
     if (url.pathname === '/api/push/subscriptions' && req.method === 'POST') {
       sendJson(res, 201, await createPushSubscription(currentUser, await readJsonBody(req, 64 * 1024))); return;
@@ -3449,4 +3500,4 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown);
 }
 
-module.exports = { assertAdminUser, hashPassword, registrationDefaults, requestHandler, server, startSiteServer, validateCredentials, verifyPassword };
+module.exports = { assertAdminUser, hashPassword, normalizeNavigationPreferences, registrationDefaults, requestHandler, server, startSiteServer, validateCredentials, verifyPassword };

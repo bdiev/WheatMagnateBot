@@ -4538,7 +4538,10 @@ async function recordSiteWhisperMessage(username, direction, message, siteUserna
       [safeUsername, safeDirection, safeSiteUsername, cleanMessage]
     );
     if (safeDirection === 'incoming' && safeSiteUsername && inserted.rows[0]?.id) {
-      await webPushService.deliverWhisper({ id: inserted.rows[0].id, recipientUsername: safeSiteUsername })
+      await webPushService.deliverWhisper({
+        id: inserted.rows[0].id, recipientUsername: safeSiteUsername,
+        sender: safeUsername, message: cleanMessage
+      })
         .catch(err => console.error('[Push] Failed to deliver whisper notification:', err.message));
     }
     await pool.query("DELETE FROM site_whisper_messages WHERE created_at < NOW() - INTERVAL '30 days'");

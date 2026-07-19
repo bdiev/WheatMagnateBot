@@ -59,13 +59,71 @@ function shouldDeliverSubscription(subscription, notification, { resolved = fals
   return (SEVERITY_RANK[notification.severity] ?? -1) >= (SEVERITY_RANK[subscription.minimum_severity] ?? 2);
 }
 
-function safePushPayload(notification, { resolved = false, test = false } = {}) {
+function safeDetailedBody(notification, { resolved = false } = {}) {
+  const label = SAFE_EVENT_LABELS[notification.event_type] || 'Bot status';
+  if (resolved) return `${label} has been resolved.`;
+  const metadata = notification.metadata && typeof notification.metadata === 'object' ? notification.metadata : {};
+  const number = key => metadata[key] !== null && metadata[key] !== undefined && metadata[key] !== '' && Number.isFinite(Number(metadata[key]))
+    ? Number(metadata[key]) : null;
+  switch (notification.event_type) {
+    case 'bot_disconnected':
+      return 'The Minecraft connection is offline. Automatic recovery may be in progress.';
+    case 'bot_reconnected':
+      return 'The Minecraft connection is online again.';
+    case 'bot_kicked':
+      return 'The server ended the bot connection.';
+    case 'unauthorized_player_nearby': {
+      const distance = number('distance');
+      return distance === null ? `${label}.` : `A nearby player was detected ${Math.max(0, Math.round(distance))} blocks away.`;
+    }
+    case 'low_pickaxe_durability': {
+      const percent = number('percent');
+      return percent === null ? `${label}.` : `Pickaxe durability: ${Math.max(0, Math.min(100, Math.round(percent)))}%.`;
+    }
+    case 'no_pickaxes': {
+      const count = number('count');
+      return count === null ? `${label}.` : `Usable pickaxes: ${Math.max(0, Math.round(count))}.`;
+    }
+    case 'low_food': {
+      const food = number('food');
+      if (metadata.inventoryFood === false) return 'No food is available in the bot inventory.';
+      return food === null ? `${label}.` : `Current food level: ${Math.max(0, Math.round(food))}.`;
+    }
+    case 'farm_stalled': {
+      const seconds = number('seconds');
+      return seconds === null ? `${label}.` : `The farm has been stalled for ${Math.max(0, Math.round(seconds))} seconds.`;
+    }
+    case 'low_tps': {
+      const tps = number('tps');
+      return tps === null ? `${label}.` : `Current server TPS: ${Math.max(0, tps).toFixed(1)}.`;
+    }
+    case 'repeated_reconnects': {
+      const attempts = number('attempts');
+      return attempts === null ? `${label}.` : `${Math.max(0, Math.round(attempts))} reconnect attempts were scheduled recently.`;
+    }
+    case 'database_unavailable':
+      return 'The dashboard database connection is unavailable.';
+    case 'command_failed':
+      return 'A queued bot command did not complete.';
+    case 'whisper_message': {
+      const sender = String(metadata.sender || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 32);
+      const message = String(metadata.message || '').replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 240);
+      return sender && message ? `${sender}: ${message}` : 'A new whisper is waiting in private messages.';
+    }
+    default:
+      return `${label}. Open the dashboard for details.`;
+  }
+}
+
+function safePushPayload(notification, { resolved = false, test = false, detailed = false } = {}) {
   const label = test ? 'Browser push test' : (SAFE_EVENT_LABELS[notification.event_type] || 'Bot status changed');
   const critical = !resolved && notification.severity === 'critical';
   const destination = test ? 'settings' : notification.event_type === 'whisper_message' ? 'whispers' : 'notifications';
   return {
-    title: test ? 'WheatMagnateBot test' : critical ? 'Critical bot alert' : resolved ? 'Issue resolved' : 'WheatMagnateBot alert',
-    body: `${label}. Open the dashboard for details.`,
+    title: test ? 'WheatMagnateBot test' : critical ? 'Critical bot alert' : resolved ? 'Issue resolved' : detailed ? label : 'WheatMagnateBot alert',
+    body: test ? `${label}. Open the dashboard for details.` : detailed
+      ? safeDetailedBody(notification, { resolved })
+      : `${label}. Open the dashboard for details.`,
     icon: '/items/Wheat.png',
     badge: '/items/Wheat.png',
     tag: test ? 'wheatmagnate-test' : `wheatmagnate-${notification.id || notification.event_type}`,
@@ -77,12 +135,15 @@ function safePushPayload(notification, { resolved = false, test = false } = {}) 
 function normalizePreferences(input = {}) {
   const severity = Object.hasOwn(SEVERITY_RANK, input.minimumSeverity) ? input.minimumSeverity : 'critical';
   const eventTypes = [...new Set((Array.isArray(input.eventTypes) ? input.eventTypes : []).map(String).filter(type => EVENT_TYPE_SET.has(type)))];
+  const detailedEventTypes = [...new Set((Array.isArray(input.detailedEventTypes) ? input.detailedEventTypes : []).map(String)
+    .filter(type => EVENT_TYPE_SET.has(type) && (!eventTypes.length || eventTypes.includes(type))))];
   let timezone = String(input.timezone || 'Europe/Vilnius').trim().slice(0, 64);
   try { new Intl.DateTimeFormat('en', { timeZone: timezone }).format(); } catch { timezone = 'Europe/Vilnius'; }
   return {
     enabled: input.enabled === true,
     minimumSeverity: severity,
     eventTypes,
+    detailedEventTypes,
     includeResolved: Boolean(input.includeResolved),
     quietHoursEnabled: Boolean(input.quietHoursEnabled),
     quietStart: normalizeTime(input.quietStart, '22:00'),
@@ -111,9 +172,10 @@ function normalizeSubscriptionId(value) {
 
 async function deliverPushSubscriptions({ subscriptions, notification, resolved = false, now = new Date(), sendNotification, removeInvalid }) {
   const result = { sent: 0, skipped: 0, failed: 0, removed: 0, sentIds: [], failedIds: [], removedIds: [] };
-  const payload = JSON.stringify(safePushPayload(notification, { resolved }));
   for (const subscription of subscriptions) {
     if (!shouldDeliverSubscription(subscription, notification, { resolved, now })) { result.skipped += 1; continue; }
+    const detailed = Array.isArray(subscription.detailed_event_types) && subscription.detailed_event_types.includes(notification.event_type);
+    const payload = JSON.stringify(safePushPayload(notification, { resolved, detailed }));
     try {
       await sendNotification({ endpoint: subscription.endpoint, keys: { p256dh: subscription.p256dh, auth: subscription.auth } }, payload, {
         TTL: 300, urgency: notification.severity === 'critical' ? 'high' : 'normal'
@@ -149,12 +211,12 @@ class WebPushService {
   }
 
   async listForUser(userId) {
-    const result = await this.pool.query(`SELECT id,device_name,enabled,minimum_severity,event_types,include_resolved,
+    const result = await this.pool.query(`SELECT id,device_name,enabled,minimum_severity,event_types,detailed_event_types,include_resolved,
       quiet_hours_enabled,quiet_start::text,quiet_end::text,timezone,last_success_at,failure_count,created_at,updated_at,
       RIGHT(endpoint,18) endpoint_suffix FROM push_subscriptions WHERE user_id=$1 ORDER BY updated_at DESC`, [userId]);
     return result.rows.map(row => ({
       id: String(row.id), deviceName: row.device_name, enabled: row.enabled, minimumSeverity: row.minimum_severity,
-      eventTypes: row.event_types || [], includeResolved: row.include_resolved, quietHoursEnabled: row.quiet_hours_enabled,
+      eventTypes: row.event_types || [], detailedEventTypes: row.detailed_event_types || [], includeResolved: row.include_resolved, quietHoursEnabled: row.quiet_hours_enabled,
       quietStart: normalizeTime(row.quiet_start, '22:00'), quietEnd: normalizeTime(row.quiet_end, '07:00'), timezone: row.timezone,
       endpointSuffix: row.endpoint_suffix, lastSuccessAt: row.last_success_at, failureCount: row.failure_count,
       createdAt: row.created_at, updatedAt: row.updated_at
@@ -166,13 +228,13 @@ class WebPushService {
     const subscription = validateBrowserSubscription(input.subscription);
     const preferences = normalizePreferences(input);
     const deviceName = String(input.deviceName || 'Browser').trim().slice(0, 80) || 'Browser';
-    const result = await this.pool.query(`INSERT INTO push_subscriptions(user_id,endpoint,p256dh,auth,device_name,enabled,minimum_severity,event_types,include_resolved,quiet_hours_enabled,quiet_start,quiet_end,timezone)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::time,$12::time,$13)
+    const result = await this.pool.query(`INSERT INTO push_subscriptions(user_id,endpoint,p256dh,auth,device_name,enabled,minimum_severity,event_types,detailed_event_types,include_resolved,quiet_hours_enabled,quiet_start,quiet_end,timezone)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::time,$13::time,$14)
       ON CONFLICT(endpoint) DO UPDATE SET user_id=EXCLUDED.user_id,p256dh=EXCLUDED.p256dh,auth=EXCLUDED.auth,device_name=EXCLUDED.device_name,
-        enabled=EXCLUDED.enabled,minimum_severity=EXCLUDED.minimum_severity,event_types=EXCLUDED.event_types,include_resolved=EXCLUDED.include_resolved,
+        enabled=EXCLUDED.enabled,minimum_severity=EXCLUDED.minimum_severity,event_types=EXCLUDED.event_types,detailed_event_types=EXCLUDED.detailed_event_types,include_resolved=EXCLUDED.include_resolved,
         quiet_hours_enabled=EXCLUDED.quiet_hours_enabled,quiet_start=EXCLUDED.quiet_start,quiet_end=EXCLUDED.quiet_end,timezone=EXCLUDED.timezone,updated_at=NOW()
       RETURNING id`, [userId, subscription.endpoint, subscription.keys.p256dh, subscription.keys.auth, deviceName, preferences.enabled,
-      preferences.minimumSeverity, preferences.eventTypes, preferences.includeResolved, preferences.quietHoursEnabled,
+      preferences.minimumSeverity, preferences.eventTypes, preferences.detailedEventTypes, preferences.includeResolved, preferences.quietHoursEnabled,
       preferences.quietStart, preferences.quietEnd, preferences.timezone]);
     return String(result.rows[0].id);
   }
@@ -182,8 +244,8 @@ class WebPushService {
     const p = normalizePreferences(input);
     const name = String(input.deviceName || 'Browser').trim().slice(0, 80) || 'Browser';
     const result = await this.pool.query(`UPDATE push_subscriptions SET device_name=$3,enabled=$4,minimum_severity=$5,event_types=$6,
-      include_resolved=$7,quiet_hours_enabled=$8,quiet_start=$9::time,quiet_end=$10::time,timezone=$11,updated_at=NOW()
-      WHERE id=$1 AND user_id=$2 RETURNING id`, [id, userId, name, p.enabled, p.minimumSeverity, p.eventTypes, p.includeResolved,
+      detailed_event_types=$7,include_resolved=$8,quiet_hours_enabled=$9,quiet_start=$10::time,quiet_end=$11::time,timezone=$12,updated_at=NOW()
+      WHERE id=$1 AND user_id=$2 RETURNING id`, [id, userId, name, p.enabled, p.minimumSeverity, p.eventTypes, p.detailedEventTypes, p.includeResolved,
       p.quietHoursEnabled, p.quietStart, p.quietEnd, p.timezone]);
     if (!result.rowCount) throw Object.assign(new Error('Push device not found.'), { statusCode: 404 });
   }
@@ -208,11 +270,14 @@ class WebPushService {
     return result;
   }
 
-  async deliverWhisper({ id, recipientUsername, now = new Date() } = {}) {
+  async deliverWhisper({ id, recipientUsername, sender, message, now = new Date() } = {}) {
     if (!this.configured || !this.pool || !recipientUsername) return { sent: 0, skipped: 0, failed: 0, removed: 0, unavailable: true };
     const rows = await this.pool.query(`SELECT ps.* FROM push_subscriptions ps JOIN site_users u ON u.id=ps.user_id
       WHERE ps.enabled=TRUE AND u.status='approved' AND LOWER(u.username)=LOWER($1)`, [String(recipientUsername).slice(0, 64)]);
-    const notification = { id: `whisper-${String(id || 'new').replace(/[^\d]/g, '').slice(0, 20) || 'new'}`, event_type: 'whisper_message', severity: 'info' };
+    const notification = {
+      id: `whisper-${String(id || 'new').replace(/[^\d]/g, '').slice(0, 20) || 'new'}`,
+      event_type: 'whisper_message', severity: 'info', metadata: { sender, message }
+    };
     const result = await deliverPushSubscriptions({
       subscriptions: rows.rows, notification, now,
       sendNotification: (...args) => this.sender.sendNotification(...args),

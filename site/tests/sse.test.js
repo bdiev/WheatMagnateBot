@@ -78,6 +78,11 @@ async function run() {
   routeHub.publish('whisper_message', { id: '6' }, { usernames: ['alice'] });
   assert(alice.res.body.length > beforeWhisperAlice, 'private events must reach their owner');
   assert.equal(bob.res.body.length, beforeWhisperBob, 'private events must not leak to another user');
+  const beforeNavigationAlice = alice.res.body.length;
+  const beforeNavigationBob = bob.res.body.length;
+  routeHub.publish('navigation_settings_updated', { updatedAt: new Date().toISOString() }, { usernames: ['alice'] });
+  assert(alice.res.body.length > beforeNavigationAlice, 'navigation synchronization must reach the owning user');
+  assert.equal(bob.res.body.length, beforeNavigationBob, 'navigation synchronization must not reach another user');
 
   const leakHub = new SseHub({ maxConnectionsPerUser: 1 });
   for (let index = 0; index < 100; index++) {
