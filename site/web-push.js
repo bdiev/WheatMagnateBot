@@ -5,7 +5,7 @@ const webPush = require('web-push');
 const EVENT_TYPES = Object.freeze([
   'bot_disconnected', 'bot_reconnected', 'bot_kicked', 'unauthorized_player_nearby',
   'low_pickaxe_durability', 'no_pickaxes', 'low_food', 'farm_stalled', 'low_tps',
-  'database_unavailable', 'repeated_reconnects', 'command_failed'
+  'database_unavailable', 'repeated_reconnects', 'command_failed', 'whisper_message'
 ]);
 const EVENT_TYPE_SET = new Set(EVENT_TYPES);
 const SEVERITY_RANK = Object.freeze({ info: 0, warning: 1, critical: 2 });
@@ -14,7 +14,8 @@ const SAFE_EVENT_LABELS = Object.freeze({
   unauthorized_player_nearby: 'Nearby player alert', low_pickaxe_durability: 'Pickaxe durability is low',
   no_pickaxes: 'No usable pickaxes', low_food: 'Food supply is low', farm_stalled: 'Obsidian farm stalled',
   low_tps: 'Server TPS is low', database_unavailable: 'Database unavailable',
-  repeated_reconnects: 'Repeated reconnects', command_failed: 'A bot command failed'
+  repeated_reconnects: 'Repeated reconnects', command_failed: 'A bot command failed',
+  whisper_message: 'New private message'
 });
 
 function normalizeTime(value, fallback) {
@@ -53,6 +54,7 @@ function shouldDeliverSubscription(subscription, notification, { resolved = fals
   if (resolved && !subscription.include_resolved) return false;
   const selected = Array.isArray(subscription.event_types) ? subscription.event_types : [];
   if (selected.length && !selected.includes(notification.event_type)) return false;
+  if (notification.event_type === 'whisper_message') return true;
   if (resolved) return true;
   return (SEVERITY_RANK[notification.severity] ?? -1) >= (SEVERITY_RANK[subscription.minimum_severity] ?? 2);
 }
@@ -60,13 +62,14 @@ function shouldDeliverSubscription(subscription, notification, { resolved = fals
 function safePushPayload(notification, { resolved = false, test = false } = {}) {
   const label = test ? 'Browser push test' : (SAFE_EVENT_LABELS[notification.event_type] || 'Bot status changed');
   const critical = !resolved && notification.severity === 'critical';
+  const destination = test ? 'settings' : notification.event_type === 'whisper_message' ? 'whispers' : 'notifications';
   return {
     title: test ? 'WheatMagnateBot test' : critical ? 'Critical bot alert' : resolved ? 'Issue resolved' : 'WheatMagnateBot alert',
     body: `${label}. Open the dashboard for details.`,
     icon: '/items/Wheat.png',
     badge: '/items/Wheat.png',
     tag: test ? 'wheatmagnate-test' : `wheatmagnate-${notification.id || notification.event_type}`,
-    data: { url: test ? '/?push=settings' : '/?push=notifications' },
+    data: { url: `/?push=${destination}` },
     requireInteraction: critical
   };
 }
@@ -199,6 +202,21 @@ class WebPushService {
       subscriptions: rows.rows, notification, resolved, now,
       sendNotification: (...args) => this.sender.sendNotification(...args),
       removeInvalid: id => this.pool.query('DELETE FROM push_subscriptions WHERE id=$1', [id])
+    });
+    if (result.sentIds.length) await this.pool.query(`UPDATE push_subscriptions SET last_success_at=NOW(),failure_count=0 WHERE id=ANY($1::bigint[])`, [result.sentIds]).catch(() => {});
+    if (result.failedIds.length) await this.pool.query(`UPDATE push_subscriptions SET failure_count=failure_count+1 WHERE id=ANY($1::bigint[])`, [result.failedIds]).catch(() => {});
+    return result;
+  }
+
+  async deliverWhisper({ id, recipientUsername, now = new Date() } = {}) {
+    if (!this.configured || !this.pool || !recipientUsername) return { sent: 0, skipped: 0, failed: 0, removed: 0, unavailable: true };
+    const rows = await this.pool.query(`SELECT ps.* FROM push_subscriptions ps JOIN site_users u ON u.id=ps.user_id
+      WHERE ps.enabled=TRUE AND u.status='approved' AND LOWER(u.username)=LOWER($1)`, [String(recipientUsername).slice(0, 64)]);
+    const notification = { id: `whisper-${String(id || 'new').replace(/[^\d]/g, '').slice(0, 20) || 'new'}`, event_type: 'whisper_message', severity: 'info' };
+    const result = await deliverPushSubscriptions({
+      subscriptions: rows.rows, notification, now,
+      sendNotification: (...args) => this.sender.sendNotification(...args),
+      removeInvalid: subscriptionId => this.pool.query('DELETE FROM push_subscriptions WHERE id=$1', [subscriptionId])
     });
     if (result.sentIds.length) await this.pool.query(`UPDATE push_subscriptions SET last_success_at=NOW(),failure_count=0 WHERE id=ANY($1::bigint[])`, [result.sentIds]).catch(() => {});
     if (result.failedIds.length) await this.pool.query(`UPDATE push_subscriptions SET failure_count=failure_count+1 WHERE id=ANY($1::bigint[])`, [result.failedIds]).catch(() => {});

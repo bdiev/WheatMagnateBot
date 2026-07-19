@@ -4531,11 +4531,15 @@ async function recordSiteWhisperMessage(username, direction, message, siteUserna
   if (!safeUsername || !cleanMessage) return;
 
   try {
-    await pool.query(
+    const inserted = await pool.query(
       `INSERT INTO site_whisper_messages (player_username, direction, site_username, message, delivery_status)
-       VALUES ($1, $2, $3, $4, 'delivered')`,
+       VALUES ($1, $2, $3, $4, 'delivered') RETURNING id`,
       [safeUsername, safeDirection, safeSiteUsername, cleanMessage]
     );
+    if (safeDirection === 'incoming' && safeSiteUsername && inserted.rows[0]?.id) {
+      await webPushService.deliverWhisper({ id: inserted.rows[0].id, recipientUsername: safeSiteUsername })
+        .catch(err => console.error('[Push] Failed to deliver whisper notification:', err.message));
+    }
     await pool.query("DELETE FROM site_whisper_messages WHERE created_at < NOW() - INTERVAL '30 days'");
   } catch (err) {
     console.error('[DB] Failed to record site whisper message:', err.message);

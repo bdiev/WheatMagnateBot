@@ -24,6 +24,8 @@ Each subscription belongs to one `site_users` row and stores per-device preferen
 
 Operational notifications are delivered only to approved administrators because the existing notification center is admin-only. A test notification can be sent to an owned device from **Settings**. `NotificationService` invokes push only when its existing deduplication and cooldown permit channel delivery, so suppressed repetitions do not generate push messages.
 
+Incoming Minecraft whispers can be enabled with the `whisper_message` event type. They are routed only to subscriptions owned by the site username assigned to that whisper dialog, follow the device's quiet hours, and open the private-message panel. Because a private message is not an operational alert, the minimum-severity filter does not suppress it; the event-type checkbox controls it directly. Its lock-screen payload never includes the Minecraft sender or message text.
+
 Push payloads contain only a fixed generic event label and a dashboard link. Notification messages, metadata, player names, coordinates, commands, database errors, and other sensitive details are never placed on the lock screen. Expired endpoints returning HTTP 404 or 410 are removed automatically.
 
 Browsers without Service Workers, Push API support, notification support, or a secure context continue to use the PWA normally without push.

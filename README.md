@@ -68,7 +68,7 @@ GEMINI_API_KEY=
 
 `NOTIFICATION_DISCORD_CHANNEL_ID` is optional; when omitted, notification delivery uses `DISCORD_CHANNEL_ID` for backward compatibility. Notification rules are managed by an administrator on the **Notifications** dashboard page. Database schema changes in `database/migrations/` are applied automatically by the bot and site at startup.
 
-Browser push is optional and disabled by default. Generate a persistent VAPID pair with `npx web-push generate-vapid-keys`, store both keys in the deployment environment, and never commit the private key. Users enable permission explicitly from **Settings**, then configure each device's severity, event types, resolved events, and quiet hours. Operational delivery remains admin-only to match the notification center's access policy. The complete behavior and privacy model are documented in [`site/PUSH_NOTIFICATIONS.md`](site/PUSH_NOTIFICATIONS.md).
+Browser push is optional and disabled by default. Generate a persistent VAPID pair with `npx web-push generate-vapid-keys`, store both keys in the deployment environment, and never commit the private key. Users enable permission explicitly from **Settings**, then configure each device's severity, event types, resolved events, and quiet hours. Operational delivery remains admin-only to match the notification center's access policy; `whisper_message` push is routed personally to the site user assigned to the dialog and never exposes its sender or text on the lock screen. The complete behavior and privacy model are documented in [`site/PUSH_NOTIFICATIONS.md`](site/PUSH_NOTIFICATIONS.md).
 
 ### Dashboard security and initial administrator
 

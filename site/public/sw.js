@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_NAME = 'wheatmagnatebot-v75';
+const CACHE_NAME = 'wheatmagnatebot-v76';
 const APP_SHELL = [
   '/',
   '/index.html',

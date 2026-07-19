@@ -3655,7 +3655,12 @@ async function handlePushDeviceClick(event) {
 function openPushDestination(destination = null) {
   const target = destination || new URL(location.href).searchParams.get('push');
   if (!target || !state.currentUser) return;
-  setActiveTab(target === 'notifications' && state.currentUser.role === 'admin' ? 'notifications' : 'settings');
+  if (target === 'whispers') {
+    setActiveTab('chat');
+    setTimeout(() => setWhisperOpen(true), 0);
+  } else {
+    setActiveTab(target === 'notifications' && state.currentUser.role === 'admin' ? 'notifications' : 'settings');
+  }
   if (!destination) {
     const url = new URL(location.href); url.searchParams.delete('push'); history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
   }
