@@ -166,13 +166,51 @@ async function loadAccountSettings({ refreshDashboard = false } = {}) {
 async function saveAccountSettings(event) {
   event.preventDefault();
   const timezone = resolveTimezoneInput($('#accountTimezone')?.value || 'Europe/Vilnius');
+  const button = $('#accountTimezoneSave');
+  const label = button?.querySelector('.button-label');
+  const originalLabel = 'Save timezone';
+  if (button) {
+    button.disabled = true;
+    button.classList.remove('save-success', 'save-error');
+    button.classList.add('is-saving');
+  }
+  if (label) label.textContent = 'Saving…';
   try {
     const payload = await putJson('/api/settings/account', { timezone });
     state.accountTimezone = String(payload.timezone || timezone);
     populateTimezoneInput($('#accountTimezone'), state.accountTimezone);
+
+    // Render signatures describe server data, which does not change when only
+    // its display timezone changes. Invalidate them so every cached timestamp
+    // (chat, whispers, admin lists and charts) is formatted again.
+    state.renderSignatures = {};
+    state.whisperMessagesSignature = '';
+    state.playerProfileSignature = '';
+    state.chartScrollInitialized = {};
+    if (state.playerProfileLastPayload && !$('#playerProfileOverlay')?.hidden) {
+      $('#playerProfileContent').innerHTML = renderPlayerProfile(state.playerProfileLastPayload);
+      state.playerProfileSignature = playerProfileSignature(state.playerProfileLastPayload);
+    }
     await loadAll();
+    if (button) {
+      button.classList.remove('is-saving');
+      button.classList.add('save-success');
+    }
+    if (label) label.textContent = 'Saved ✓';
   } catch (err) {
+    if (button) {
+      button.classList.remove('is-saving');
+      button.classList.add('save-error');
+    }
+    if (label) label.textContent = 'Not saved';
     setBanner(`Could not save account timezone: ${err.message}`);
+  } finally {
+    window.setTimeout(() => {
+      if (!button) return;
+      button.disabled = false;
+      button.classList.remove('is-saving', 'save-success', 'save-error');
+      if (label) label.textContent = originalLabel;
+    }, 1600);
   }
 }
 
@@ -1680,7 +1718,7 @@ function formatMilestoneYears(years) {
 }
 
 function registrationProfileValue(profile) {
-  const dateText = profile.registrationDisplay || (profile.registrationAt ? formatDate(profile.registrationAt) : 'Unknown');
+  const dateText = profile.registrationAt ? formatDate(profile.registrationAt) : (profile.registrationDisplay || 'Unknown');
   return state.playerProfileRegistrationAgeMode ? formatRegistrationAge(profile.registrationAt) : dateText;
 }
 
