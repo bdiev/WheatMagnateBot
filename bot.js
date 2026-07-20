@@ -5187,10 +5187,25 @@ async function executeManagedAccountCommand(command) {
   if (type === 'account_pause') return multiBotManager.pause(command.account_id);
   if (type === 'account_resume') return multiBotManager.resume(command.account_id);
   if (!runtime) throw new Error('Account runtime is not active.');
+  if (type === 'pause') return runtime.pause();
+  if (type === 'resume') return runtime.resume();
   if (type === 'chat') {
     if (!runtime.bot?.chat) throw new Error('Account is not connected.');
     runtime.bot.chat(sanitizeSiteChatMessage(payload.message));
     return { sent: true };
+  }
+  if (type === 'site_whisper_claim') {
+    const username = String(payload.username || '').replace(/[^A-Za-z0-9_]/g,'').slice(0,32);
+    if (!username) throw new Error('Whisper target is required.');
+    return { username,claimed:true };
+  }
+  if (type === 'site_whisper') {
+    if (!runtime.bot?.chat) throw new Error('Account is not connected.');
+    const username = String(payload.username || '').replace(/[^A-Za-z0-9_]/g,'').slice(0,32);
+    const message = sanitizeSiteChatMessage(payload.message);
+    if (!username || !message) throw new Error('Whisper target and message are required.');
+    runtime.bot.chat(`/msg ${username} ${message}`);
+    return { username,sent:true };
   }
   if (['follow','follow_stop','obsidian_toggle'].includes(type)) return runtime.assignTask(type === 'follow' ? 'follow' : type === 'obsidian_toggle' ? 'obsidian' : 'idle');
   throw new Error(`Command ${type} is not supported by managed runtimes yet.`);

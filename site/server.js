@@ -1062,6 +1062,14 @@ async function queueBotCommand(currentUser, commandType, payload = {}, { source 
   };
 }
 
+async function commandAccountId(body) {
+  const accountId = body?.accountId == null ? null : String(body.accountId);
+  if (accountId && (!validAccountId(accountId) || !(await getAccountRegistry()).get(accountId))) {
+    throw Object.assign(new Error('Minecraft account not found.'), { statusCode:404 });
+  }
+  return accountId;
+}
+
 async function queueSiteChatMessage(currentUser, body) {
   assertDatabase();
   const message = String(body.message || '')
@@ -1078,7 +1086,7 @@ async function queueSiteChatMessage(currentUser, body) {
     err.statusCode = 400;
     throw err;
   }
-  return queueBotCommand(currentUser, 'chat', { message });
+  return queueBotCommand(currentUser, 'chat', { message }, { accountId:await commandAccountId(body) });
 }
 
 function cleanMinecraftUsername(value) {
@@ -1429,7 +1437,7 @@ async function queueSiteWhisperMessage(currentUser, body) {
     username,
     message,
     messageId: String(inserted.rows[0]?.id || '')
-  });
+  }, { accountId:await commandAccountId(body) });
   return {
     ...queued,
     username,
@@ -1926,7 +1934,7 @@ async function queueSiteWhisperClaim(currentUser, body) {
     err.statusCode = 400;
     throw err;
   }
-  const queued = await queueBotCommand(currentUser, 'site_whisper_claim', { username });
+  const queued = await queueBotCommand(currentUser, 'site_whisper_claim', { username }, { accountId:await commandAccountId(body) });
   return { ...queued, username, claimed: true };
 }
 
@@ -2648,8 +2656,7 @@ async function queueAdminBotCommand(currentUser, body) {
     }
   }
 
-  const accountId = body.accountId == null ? null : String(body.accountId);
-  if (accountId && (!validAccountId(accountId) || !(await getAccountRegistry()).get(accountId))) throw Object.assign(new Error('Minecraft account not found.'), { statusCode:404 });
+  const accountId = await commandAccountId(body);
   return queueBotCommand(currentUser, commandType, payload, { accountId });
 }
 
@@ -3366,7 +3373,7 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/admin/growing-child' && req.method === 'POST') {
       const body = await readJsonBody(req, 32 * 1024 * 1024);
-      sendJson(res, 202, await queueAdminBotCommand(currentUser, { commandType: body.commandType, payload: body.payload || {} })); return;
+      sendJson(res, 202, await queueAdminBotCommand(currentUser, { commandType: body.commandType, payload: body.payload || {}, accountId:body.accountId })); return;
     }
     if (url.pathname.startsWith('/api/admin/bot-command/') && req.method === 'GET') {
       sendJson(res, 200, await getAdminBotCommandResult(currentUser, url.pathname.split('/').pop())); return;

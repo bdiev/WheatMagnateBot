@@ -2074,7 +2074,8 @@ async function handlePlayerProfileClick(event) {
     try {
       await postJson('/api/admin/bot-command', {
         commandType: action,
-        payload: { username }
+        payload: { username },
+        accountId: state.activeAccountId
       });
       state.playerProfileLastPayload.isIgnored = action === 'ignore_chat';
       state.playerProfileSignature = '';
@@ -2602,7 +2603,7 @@ async function openWhisperDialog(username) {
   renderWhisperPlayers();
   const claimKey = String(username || '').toLowerCase();
   if (claimKey && !state.whisperClaimedPlayers.has(claimKey)) {
-    postJson('/api/whisper/claim', { username }).then(() => {
+    postJson('/api/whisper/claim', { username,accountId:state.activeAccountId }).then(() => {
       state.whisperClaimedPlayers.add(claimKey);
     }).catch(err => setBanner(`Could not claim private dialog: ${err.message}`));
   }
@@ -2635,7 +2636,8 @@ async function handleWhisperSubmit(event) {
   try {
     await postJson('/api/whisper/send', {
       username: state.whisperTarget,
-      message
+      message,
+      accountId:state.activeAccountId
     });
     input.value = '';
     await loadWhisperDialog();
@@ -4030,7 +4032,7 @@ async function handleAdminBotCommand(event) {
   button.disabled = true;
   try {
     setButtonBusyState(commandType);
-    await postJson('/api/admin/bot-command', body);
+    await postJson('/api/admin/bot-command', { ...body,accountId:state.activeAccountId });
     if (commandType === 'obsidian_reset_coordinates') {
       state.obsidianCoordinateEditorOpen = true;
       clearObsidianCoordinateEditor();
@@ -4145,7 +4147,7 @@ async function handleGameChatSubmit(event) {
 
   button.disabled = true;
   try {
-    await postJson('/api/chat/send', { message: outgoingMessage });
+    await postJson('/api/chat/send', { message: outgoingMessage,accountId:state.activeAccountId });
     input.value = '';
     state.chatReply = null;
     renderGameChatReplyPreview();
@@ -4652,7 +4654,7 @@ async function waitForAdminBotCommand(id, timeoutMs = 20_000) {
 }
 
 async function runChildAiCommand(commandType, payload = {}) {
-  const queued = await postJson('/api/admin/growing-child', { commandType, payload });
+  const queued = await postJson('/api/admin/growing-child', { commandType, payload,accountId:state.activeAccountId });
   return waitForAdminBotCommand(queued.command.id);
 }
 
