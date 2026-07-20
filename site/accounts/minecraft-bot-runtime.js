@@ -48,12 +48,12 @@ class MinecraftBotRuntime extends EventEmitter {
       bot.once?.('spawn', () => {
         const actualUsername = String(bot.username || '');
         if (actualUsername && actualUsername.toLowerCase() !== String(this.account.username).toLowerCase()) {
-          this.lastError = `Authenticated Minecraft profile ${actualUsername} does not match configured account ${this.account.username}. Reauthorize this account.`;
-          this.status = 'error';
-          this.emit('status', this.getStatus());
-          try { bot.quit?.('Authenticated Minecraft profile mismatch'); } catch { bot.end?.('Authenticated Minecraft profile mismatch'); }
-          return;
+          const previousUsername = this.account.username;
+          this.account.username = actualUsername;
+          this.emit('profile-resolved', { accountId:this.account.id,previousUsername,username:actualUsername });
+          if (this.status === 'error') return;
         }
+        this.lastError = null;
         this.status = this.task === 'paused' ? 'paused' : 'connected';
         this.emit('status', this.getStatus());
       });

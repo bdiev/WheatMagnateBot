@@ -5130,6 +5130,22 @@ async function initializeMultiAccountManager() {
         }
       });
       runtime.on('status', status => persistManagedRuntimeStatus(status).catch(error => console.error(`[Accounts] Status persistence failed for ${account.id}:`, error.message)));
+      runtime.on('profile-resolved', async profile => {
+        try {
+          const duplicate = multiAccountRegistry.list().find(item => item.id !== profile.accountId && item.username.toLowerCase() === profile.username.toLowerCase());
+          if (duplicate) {
+            runtime.lastError = `Minecraft profile ${profile.username} is already assigned to ${duplicate.displayName}.`;
+            runtime.status = 'error';
+            await runtime.stop('Duplicate Minecraft profile');
+            await persistManagedRuntimeStatus({...runtime.getStatus(),status:'error',lastError:runtime.lastError});
+            return;
+          }
+          await multiAccountRegistry.update(profile.accountId,{username:profile.username});
+          console.log(`[Accounts] ${account.displayName}: Minecraft username updated from ${profile.previousUsername} to ${profile.username}.`);
+        } catch (error) {
+          console.error(`[Accounts] Failed to persist resolved profile for ${profile.accountId}:`,error.message);
+        }
+      });
       runtime.on('device-code', code => {
         const verificationUri = code.verification_uri || code.verificationUri || 'https://microsoft.com/link';
         const userCode = code.user_code || code.userCode || null;
@@ -7345,12 +7361,20 @@ function createBot() {
 
   bot.on('spawn', async () => {
     if (bot === createdBot && bot.username && bot.username.toLowerCase() !== String(config.username).toLowerCase()) {
-      shouldReconnect = false;
-      const mismatch = `Authenticated Minecraft profile ${bot.username} does not match configured account ${config.username}. Reauthorize the selected account.`;
-      setDisconnectReason(mismatch);
-      await recordSystemLog({level:'error',category:'minecraft',message:mismatch,details:{accountId:DEFAULT_ACCOUNT_ID,configuredUsername:config.username,actualUsername:bot.username}}).catch(()=>{});
-      finalizeConnectionLoss('Authenticated Minecraft profile mismatch');
-      return;
+      const previousUsername = config.username;
+      const duplicate = pool
+        ? await pool.query(`SELECT id,display_name FROM bot_accounts WHERE id<>$1::uuid AND deleted_at IS NULL AND LOWER(username)=LOWER($2) LIMIT 1`,[DEFAULT_ACCOUNT_ID,bot.username]).catch(()=>({rows:[]}))
+        : { rows:[] };
+      if (duplicate?.rows[0]) {
+        shouldReconnect = false;
+        const reason = `Minecraft profile ${bot.username} is already assigned to ${duplicate.rows[0].display_name}.`;
+        setDisconnectReason(reason);
+        finalizeConnectionLoss(reason);
+        return;
+      }
+      config.username = bot.username;
+      if(pool) await pool.query(`UPDATE bot_accounts SET username=$2,updated_at=NOW() WHERE id=$1::uuid`,[DEFAULT_ACCOUNT_ID,bot.username]).catch(()=>{});
+      await recordSystemLog({level:'audit',category:'accounts',message:`Minecraft username updated from ${previousUsername} to ${bot.username}.`,details:{accountId:DEFAULT_ACCOUNT_ID,previousUsername,username:bot.username}}).catch(()=>{});
     }
     clearTimeout(connectionWatchdog);
     console.log('[Bot] Spawned.');
