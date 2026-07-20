@@ -4414,7 +4414,7 @@ body.search-focus-active #logoutButton {
   .topbar-actions {
     position: relative;
     display: grid;
-    grid-template-columns: var(--button-height) var(--button-height) 74px minmax(0, 1fr);
+    grid-template-columns: var(--button-height) var(--button-height) var(--button-height) 74px minmax(0, 1fr);
     gap: 10px;
     width: 100%;
     align-items: center;
@@ -4461,12 +4461,19 @@ body.search-focus-active #logoutButton {
     grid-column: 2;
   }
 
-  .topbar-actions #themeToggle {
+  .topbar-actions .account-switcher {
+    position: relative;
     grid-column: 3;
+    grid-row: 2;
+    z-index: 110;
+  }
+
+  .topbar-actions #themeToggle {
+    grid-column: 4;
   }
 
   .topbar-actions #logoutButton {
-    grid-column: 4;
+    grid-column: 5;
     justify-self: end;
   }
 
@@ -5674,6 +5681,7 @@ body.search-focus-active #logoutButton {
 .account-status-dot { position:absolute; z-index:4; right:-4px; bottom:-4px; width:13px; height:13px; border:2px solid var(--bg); border-radius:50%; background:#8b949e; box-shadow:0 0 0 1px var(--line),0 2px 5px rgb(0 0 0 / .35); pointer-events:none; }
 .account-status-dot.connected { background:#2fbf71; }.account-status-dot.connecting { background:#e5b94b; }.account-status-dot.error { background:#e45656; }.account-status-dot.active-task { background:#4b91e5; }
 .account-add { flex:0 0 42px; width:42px; min-width:42px; max-width:42px; font-size:22px; font-weight:500; line-height:1; }
+.account-mobile-manage { display:none; }
 .account-modal-overlay { position:fixed; inset:0; z-index:1200; display:grid; place-items:center; padding:18px; background:color-mix(in srgb,var(--bg) 72%,transparent); backdrop-filter:blur(8px); animation:overlayIn 180ms ease; }
 .account-modal-overlay[hidden] { display:none; }
 .account-modal { position:relative; width:min(500px,100%); max-height:calc(100vh - 36px); overflow:auto; display:grid; gap:14px; padding:24px; border:1px solid var(--line); border-radius:var(--button-radius); background:var(--panel); box-shadow:var(--shadow); }
@@ -5688,4 +5696,16 @@ body.search-focus-active #logoutButton {
 .account-context-menu { position:fixed; z-index:1300; width:180px; display:grid; gap:4px; padding:8px; border:1px solid var(--line); border-radius:var(--button-radius); background:var(--panel); box-shadow:var(--shadow); }.account-context-menu button { width:100%; min-height:36px; padding:8px 11px; border:1px solid transparent; border-radius:calc(var(--button-radius) - 3px); text-align:left; background:transparent; color:var(--text); }.account-context-menu button:hover { border-color:var(--line); background:var(--panel-soft); }
 .account-form-row { display:grid; grid-template-columns:minmax(0,1fr) 120px; gap:12px; }.account-checkbox { display:flex!important; align-items:center; gap:9px; min-height:32px; color:var(--text); font-size:13px; font-weight:700; cursor:pointer; }.account-checkbox input { width:16px; height:16px; margin:0; accent-color:var(--accent); }
 .account-auth-note { padding:11px 12px; border-left:3px solid var(--accent); border-radius:0 10px 10px 0; color:var(--muted); background:var(--panel-soft); font-size:12px; line-height:1.5; }.account-modal-actions { display:flex; justify-content:flex-end; gap:10px; padding-top:2px; }.account-modal-actions button { min-width:112px; }.account-modal-close { position:absolute; top:14px; right:14px; width:34px; min-width:34px; max-width:34px; height:34px; min-height:34px; max-height:34px; padding:0; border:1px solid var(--line); border-radius:50%; color:var(--muted); background:var(--panel-soft); font-size:22px; font-weight:500; }.account-modal-close:hover { color:var(--text); background:color-mix(in srgb,var(--accent) 14%,var(--panel-soft)); border-color:var(--accent); }
-@media (max-width:700px) { .account-switcher { grid-column:1 / -1; grid-row:3; max-width:100%; order:initial; }.account-form-row { grid-template-columns:1fr; }.account-modal { padding:22px 16px; } }
+@media (max-width:700px) {
+  .account-switcher { width:var(--button-height); max-width:var(--button-height); height:var(--button-height); order:initial; overflow:visible; }
+  .account-switcher-list { width:var(--button-height); height:var(--button-height); padding:3px; overflow:visible; }
+  .account-switcher:not(.expanded) .account-avatar:not(.active),
+  .account-switcher:not(.expanded) .account-add,
+  .account-switcher:not(.expanded) .account-mobile-manage { display:none; }
+  .account-switcher.expanded { z-index:180; }
+  .account-switcher.expanded .account-switcher-list { position:absolute; top:-8px; left:-8px; width:max-content; min-width:58px; max-width:calc(100vw - 32px); height:auto; display:flex; flex-wrap:wrap; gap:8px; padding:8px; border:1px solid var(--line); border-radius:var(--button-radius); overflow:visible; background:var(--panel); box-shadow:var(--shadow); }
+  .account-switcher.expanded .account-mobile-manage { display:grid; place-items:center; flex:0 0 42px; width:42px; min-width:42px; height:42px; min-height:42px; padding:0; border:1px solid var(--line); border-radius:var(--button-radius); color:var(--text); background:var(--panel-soft); font-size:25px; line-height:1; }
+  .account-switcher.expanded .account-mobile-manage:hover { border-color:var(--accent); background:color-mix(in srgb,var(--accent) 12%,var(--panel-soft)); }
+  .account-form-row { grid-template-columns:1fr; }
+  .account-modal { padding:22px 16px; }
+}

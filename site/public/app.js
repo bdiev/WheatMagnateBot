@@ -591,13 +591,20 @@ function accountStatusClass(account) {
 function renderAccountSwitcher() {
   const list = $('#accountSwitcherList');
   if (!list) return;
-  list.innerHTML = state.accounts.map(account => {
+  const accountButtons = state.accounts.map(account => {
     const active = account.id === state.activeAccountId;
     const uptime = account.startedAt ? formatDurationMs(Math.max(0, Date.now() - new Date(account.startedAt).getTime())) : 'not running';
     const tooltip = `${account.username} · ${account.status} · ${account.host}:${account.port} · ${account.task || 'idle'} · ${uptime}`;
     const avatarUsername = account.statusPayload?.username || account.username;
     return `<button class="account-avatar${active ? ' active' : ''}" type="button" role="listitem" data-account-id="${escapeHtml(account.id)}" data-initial="${escapeHtml(String(account.displayName || avatarUsername || '?').charAt(0))}" style="--account-color:${escapeHtml(account.color || '#f1c232')}" aria-label="Switch to ${escapeHtml(account.displayName)}" aria-pressed="${active}" title="${escapeHtml(tooltip)}"><img src="${accountHeadUrl(avatarUsername)}" data-account-avatar-username="${escapeHtml(avatarUsername)}" alt=""><span class="account-status-dot ${accountStatusClass(account)}" aria-hidden="true"></span></button>`;
   }).join('');
+  const addButton = state.currentUser?.role === 'admin'
+    ? '<button id="accountAddButton" class="account-avatar account-add admin-only" type="button" aria-label="Add Minecraft account">+</button>'
+    : '';
+  const manageButton = state.currentUser?.role === 'admin' && state.activeAccountId
+    ? '<button id="accountManageButton" class="account-mobile-manage admin-only" type="button" aria-label="Manage active Minecraft account" title="Manage active account">&#8942;</button>'
+    : '';
+  list.innerHTML = accountButtons + addButton + manageButton;
   const current = state.accounts.find(account => account.id === state.activeAccountId);
   const heading = $('.topbar h1');
   if (heading) heading.title = current ? `Active Minecraft account: ${current.displayName}` : '';
@@ -693,6 +700,13 @@ function openAccountMenu(accountId, anchor) {
   for (const action of ['edit','start','stop','restart','pause','resume','reauthorize','delete']) { const button=document.createElement('button'); button.type='button'; button.dataset.action=action; button.textContent=action[0].toUpperCase()+action.slice(1); menu.append(button); }
   const rect=anchor.getBoundingClientRect(); menu.style.left=`${Math.min(innerWidth-180,rect.left)}px`; menu.style.top=`${rect.bottom+6}px`; document.body.append(menu);
   menu.addEventListener('click', event => { const action=event.target.dataset.action; if (!action) return; if (action === 'edit') setAccountModalOpen(true,state.accounts.find(item => item.id === accountId)); else runAccountAction(accountId,action).catch(err=>setBanner(err.message)); menu.remove(); });
+}
+
+function setMobileAccountSwitcherOpen(open) {
+  const switcher = $('#accountSwitcher');
+  if (!switcher) return;
+  switcher.classList.toggle('expanded',Boolean(open));
+  switcher.setAttribute('aria-expanded',String(Boolean(open)));
 }
 
 async function postJson(path, body = {}) {
@@ -5069,15 +5083,25 @@ $('#authModeToggle').addEventListener('click', () => setAuthMode(state.authMode 
 $('#authBootstrapToggle').addEventListener('click', () => setAuthMode('bootstrap'));
 $('#navMenuToggle')?.addEventListener('click', toggleNavMenu);
 $('#logoutButton')?.addEventListener('click', handleLogout);
-$('#accountAddButton')?.addEventListener('click', () => setAccountModalOpen(true));
 $('#accountModalClose')?.addEventListener('click', () => setAccountModalOpen(false));
 $('#accountModalCancel')?.addEventListener('click', () => setAccountModalOpen(false));
 $('#accountModal')?.addEventListener('click', event => { if (event.target.id === 'accountModal') setAccountModalOpen(false); });
 $('#accountForm')?.addEventListener('submit', submitAccount);
-$('#accountSwitcherList')?.addEventListener('click', event => { const avatar=event.target.closest('[data-account-id]'); if(avatar) selectAccount(avatar.dataset.accountId); });
+$('#accountSwitcherList')?.addEventListener('click', event => {
+  if (event.target.closest('#accountAddButton')) { setMobileAccountSwitcherOpen(false); setAccountModalOpen(true); return; }
+  const manageButton=event.target.closest('#accountManageButton');
+  if (manageButton) { setMobileAccountSwitcherOpen(false); if (state.activeAccountId) openAccountMenu(state.activeAccountId,manageButton); return; }
+  const avatar=event.target.closest('[data-account-id]');
+  if (!avatar) return;
+  const mobile=matchMedia('(max-width: 700px)').matches;
+  const switcher=$('#accountSwitcher');
+  if (mobile && avatar.dataset.accountId === state.activeAccountId && !switcher?.classList.contains('expanded')) { setMobileAccountSwitcherOpen(true); return; }
+  setMobileAccountSwitcherOpen(false);
+  selectAccount(avatar.dataset.accountId);
+});
 $('#accountSwitcherList')?.addEventListener('contextmenu', event => { const avatar=event.target.closest('[data-account-id]'); if(!avatar)return; event.preventDefault(); openAccountMenu(avatar.dataset.accountId,avatar); });
 $('#accountSwitcherList')?.addEventListener('keydown', event => { const avatar=event.target.closest('[data-account-id]'); if(avatar && (event.key==='ContextMenu' || (event.shiftKey&&event.key==='F10'))) { event.preventDefault(); openAccountMenu(avatar.dataset.accountId,avatar); } });
-document.addEventListener('pointerdown', event => { const menu=document.querySelector('.account-context-menu'); if(menu && !menu.contains(event.target)) menu.remove(); });
+document.addEventListener('pointerdown', event => { const menu=document.querySelector('.account-context-menu'); if(menu && !menu.contains(event.target)) menu.remove(); if (!event.target.closest('#accountSwitcher')) setMobileAccountSwitcherOpen(false); });
 $('#adminUsersRefresh')?.addEventListener('click', loadAdminUsers);
 $('#adminLogsRefresh')?.addEventListener('click', loadAdminSystemLogs);
 $('#adminLogLevel')?.addEventListener('change', loadAdminSystemLogs);
@@ -5254,6 +5278,10 @@ document.addEventListener('error', event => {
   image.remove();
 }, true);
 document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && $('#accountSwitcher')?.classList.contains('expanded')) {
+    setMobileAccountSwitcherOpen(false);
+    return;
+  }
   const supplySlot = event.target.closest?.('[data-supply-tooltip]');
   if (supplySlot && (event.key === 'Enter' || event.key === ' ')) {
     event.preventDefault();
