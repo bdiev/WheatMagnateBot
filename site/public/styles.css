@@ -2660,9 +2660,9 @@ body.search-focus-active #logoutButton {
 .player-profile-head {
   display: grid;
   grid-template-columns: 96px minmax(0, 1fr);
-  gap: 18px;
+  gap: 20px;
   align-items: center;
-  padding: 22px 58px 18px 22px;
+  padding: 24px 64px 22px 24px;
   border-bottom: 1px solid var(--line);
   background: var(--panel-soft);
 }
@@ -2695,13 +2695,14 @@ body.search-focus-active #logoutButton {
   height: 96px;
   image-rendering: pixelated;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--panel);
 }
 
 .player-profile-head h2 {
-  margin-bottom: 10px;
+  margin: 0;
   font-size: 28px;
+  line-height: 1.1;
 }
 
 .player-profile-badges {
@@ -2715,7 +2716,7 @@ body.search-focus-active #logoutButton {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-  margin-top: 12px;
+  margin-top: 14px;
 }
 
 .player-profile-message-action {
@@ -3527,9 +3528,18 @@ body.search-focus-active #logoutButton {
   flex-wrap: wrap;
 }
 
+.player-profile-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 22px;
+  margin-top: 7px;
+  flex-wrap: wrap;
+}
+
 .player-profile-uuid {
-  display: block;
-  margin-top: 4px;
+  display: inline-block;
+  margin: 0;
   color: var(--muted);
   font-size: 11px;
   overflow-wrap: anywhere;
@@ -3544,6 +3554,7 @@ body.search-focus-active #logoutButton {
   color: var(--accent-strong);
   cursor: pointer;
   font-weight: 700;
+  list-style-position: inside;
 }
 
 .player-name-history-list {
@@ -3604,7 +3615,7 @@ body.search-focus-active #logoutButton {
   gap: 16px;
   min-height: 64px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 16px;
   padding: 12px 16px;
   color: var(--text);
   background: var(--panel);

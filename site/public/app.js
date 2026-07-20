@@ -1740,7 +1740,7 @@ function renderPlayerProfile(profile) {
   const nameHistory = Array.isArray(profile.nameHistory) ? profile.nameHistory : [];
   const nameHistoryControl = nameHistory.length > 1
     ? `<details class="player-name-history">
-        <summary>${formatNumber(nameHistory.length)} names</summary>
+        <summary>Name history &middot; ${formatNumber(nameHistory.length)}</summary>
         <div class="player-name-history-list">
           ${nameHistory.map((entry, index) => `
             <div>
@@ -1772,12 +1772,14 @@ function renderPlayerProfile(profile) {
       <div>
         <div class="player-profile-identity">
           <h2 id="playerProfileName">${escapeHtml(profile.username)}</h2>
-          ${nameHistoryControl}
+          <div class="player-profile-badges">
+            <span class="pill">${profile.isWhitelisted ? 'whitelisted' : 'not whitelisted'}</span>
+            ${profile.isIgnored ? '<span class="pill ignored">ignored</span>' : ''}
+          </div>
         </div>
-        ${profile.uuid ? `<code class="player-profile-uuid" title="Minecraft UUID">${escapeHtml(profile.uuid)}</code>` : ''}
-        <div class="player-profile-badges">
-          <span class="pill">${profile.isWhitelisted ? 'whitelisted' : 'not whitelisted'}</span>
-          ${profile.isIgnored ? '<span class="pill ignored">ignored</span>' : ''}
+        <div class="player-profile-meta">
+          ${profile.uuid ? `<code class="player-profile-uuid" title="Minecraft UUID">${escapeHtml(profile.uuid)}</code>` : ''}
+          ${nameHistoryControl}
         </div>
         <div class="player-profile-actions">
           <button class="player-profile-message-action" type="button" data-whisper-player="${escapeHtml(profileUsername)}">

@@ -377,6 +377,67 @@ async function resolveMinecraftProfile(username) {
   return { id, name };
 }
 
+function dashedMinecraftUuid(value) {
+  const compact = String(value || '').replace(/-/g, '').toLowerCase();
+  if (!/^[0-9a-f]{32}$/.test(compact)) return null;
+  return `${compact.slice(0, 8)}-${compact.slice(8, 12)}-${compact.slice(12, 16)}-${compact.slice(16, 20)}-${compact.slice(20)}`;
+}
+
+async function backfillExistingPlayerProfiles() {
+  if (!pool) return;
+  const result = await pool.query(`
+    SELECT DISTINCT ON (LOWER(username)) username
+    FROM (
+      SELECT username FROM player_activity WHERE player_uuid IS NULL
+      UNION ALL
+      SELECT w.username FROM whitelist w
+      WHERE NOT EXISTS (SELECT 1 FROM player_activity pa WHERE LOWER(pa.username)=LOWER(w.username) AND pa.player_uuid IS NOT NULL)
+      UNION ALL
+      SELECT pt.username FROM player_playtime pt
+      WHERE NOT EXISTS (SELECT 1 FROM player_activity pa WHERE LOWER(pa.username)=LOWER(pt.username) AND pa.player_uuid IS NOT NULL)
+    ) candidates
+    WHERE username ~ '^[A-Za-z0-9_]{1,16}$'
+    ORDER BY LOWER(username), username
+  `);
+  if (!result.rowCount) return;
+
+  let updated = 0;
+  for (const row of result.rows) {
+    try {
+      const profile = await resolveMinecraftProfile(row.username);
+      const uuid = dashedMinecraftUuid(profile?.id);
+      if (uuid) {
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          await client.query(`INSERT INTO player_name_history(player_uuid,username,first_seen,last_seen)
+            VALUES($1::uuid,$2,NOW(),NOW()) ON CONFLICT(player_uuid,(LOWER(username)))
+            DO UPDATE SET username=EXCLUDED.username,last_seen=NOW()`, [uuid, profile.name]);
+          const attached = await client.query(`UPDATE player_activity SET player_uuid=$1::uuid,username=$2
+            WHERE LOWER(username)=LOWER($3) AND player_uuid IS NULL`, [uuid, profile.name, row.username]);
+          if (!attached.rowCount) {
+            await client.query(`INSERT INTO player_activity(username,player_uuid,registration_at,is_online)
+              VALUES($1,$2::uuid,NOW(),FALSE) ON CONFLICT(LOWER(username))
+              DO UPDATE SET player_uuid=COALESCE(player_activity.player_uuid,EXCLUDED.player_uuid)`, [profile.name, uuid]);
+          }
+          await client.query('COMMIT');
+          updated += 1;
+        } catch (err) {
+          await client.query('ROLLBACK').catch(() => {});
+          throw err;
+        } finally {
+          client.release();
+        }
+      }
+    } catch (err) {
+      console.warn(`[PlayerProfiles] Could not resolve ${row.username}: ${err.message}`);
+      if (/HTTP 429/.test(err.message)) break;
+    }
+    await new Promise(resolve => setTimeout(resolve, 750));
+  }
+  console.log(`[PlayerProfiles] Added UUIDs for ${updated}/${result.rowCount} existing players.`);
+}
+
 async function fetchPlayerHeadImage(username) {
   const namemcUrl = `https://render.namemc.com/skin/2d/face.png?skin=${encodeURIComponent(username)}&scale=8`;
   const namemcResult = await fetchPlayerHeadImageBuffer(namemcUrl, 'NameMC');
@@ -1382,6 +1443,10 @@ async function initDatabase() {
       }
     }
     console.log('[DB] Tables initialized successfully.');
+
+    backfillExistingPlayerProfiles().catch(err => {
+      console.warn('[PlayerProfiles] Background profile update failed:', err.message);
+    });
 
     console.log('[DB] 📖 Loading ignored users from database...');
     ignoredChatUsernames = await loadIgnoredChatUsernames();
