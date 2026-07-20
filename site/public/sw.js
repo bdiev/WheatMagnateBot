@@ -1,6 +1,7 @@
 'use strict';
 
-const CACHE_NAME = 'wheatmagnatebot-v111';
+const CACHE_VERSION = '112';
+const CACHE_NAME = `wheatmagnatebot-v${CACHE_VERSION}`;
 const APP_SHELL = [
   '/',
   '/index.html',
@@ -24,7 +25,15 @@ const APP_SHELL = [
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then(cache => cache.addAll(APP_SHELL))
+      .then(cache => Promise.all(APP_SHELL.map(async url => {
+        // A versioned URL cannot be satisfied by an older service worker's
+        // canonical cache entry. Store the fresh response under its canonical
+        // key so normal page requests still resolve instantly.
+        const separator = url.includes('?') ? '&' : '?';
+        const response = await fetch(`${url}${separator}app-shell=${CACHE_VERSION}`, { cache: 'reload' });
+        if (!response.ok) throw new Error(`Could not refresh ${url}: HTTP ${response.status}`);
+        await cache.put(url, response);
+      })))
       .then(() => self.skipWaiting())
   );
 });
@@ -38,6 +47,15 @@ self.addEventListener('activate', event => {
           .map(key => caches.delete(key))
       ))
       .then(() => self.clients.claim())
+      .then(() => self.clients.matchAll({ type: 'window', includeUncontrolled: true }))
+      .then(clients => Promise.all(clients.map(client => {
+        // Installed PWAs can remain alive in the background for days. Reload
+        // each same-origin window once when the new worker takes control.
+        const url = new URL(client.url);
+        return url.origin === self.location.origin && typeof client.navigate === 'function'
+          ? client.navigate(client.url)
+          : null;
+      })))
   );
 });
 
