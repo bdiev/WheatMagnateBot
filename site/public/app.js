@@ -29,6 +29,7 @@ const state = {
   chartTooltipTimer: null,
   chartTooltipPinned: false,
   chartRedrawFrame: null,
+  chartRedrawGeneration: 0,
   chartScrollRedrawFrames: {},
   chartAnimations: {},
   chartHover: {},
@@ -1568,10 +1569,23 @@ function drawChartById(chartId) {
 
 function redrawCharts() {
   if (state.chartRedrawFrame) cancelAnimationFrame(state.chartRedrawFrame);
-  state.chartRedrawFrame = requestAnimationFrame(() => {
-    state.chartRedrawFrame = null;
-    ['chatHourlyChart', 'obsidianDailyChart', 'tpsHourlyChart', 'unwhitelistedHourlyChart'].forEach(drawChartById);
-  });
+  const generation = ++state.chartRedrawGeneration;
+  const chartIds = ['chatHourlyChart', 'obsidianDailyChart', 'tpsHourlyChart', 'unwhitelistedHourlyChart'];
+  let index = 0;
+
+  // Canvas resizing and drawing is synchronous. Spread the four charts across
+  // separate frames so one callback does not block the main thread for 50+ ms.
+  const drawNext = () => {
+    if (generation !== state.chartRedrawGeneration) return;
+    drawChartById(chartIds[index]);
+    index += 1;
+    if (index < chartIds.length) {
+      state.chartRedrawFrame = requestAnimationFrame(drawNext);
+    } else {
+      state.chartRedrawFrame = null;
+    }
+  };
+  state.chartRedrawFrame = requestAnimationFrame(drawNext);
 }
 
 function scheduleChartViewportRedraw(target) {
@@ -4655,7 +4669,7 @@ function startSlowPolling() {
   state.pollingMode = 'slow';
   state.timer = setInterval(loadAll, 60_000);
   state.liveChatTimer = setInterval(checkChatVersion, 750);
-  state.liveDashboardTimer = setInterval(refreshLiveDashboard, 1_000);
+  state.liveDashboardTimer = setInterval(refreshLiveDashboard, 5_000);
   refreshLiveDashboard();
 }
 
@@ -4665,7 +4679,7 @@ function startFallbackPolling() {
   state.pollingMode = 'fallback';
   state.timer = setInterval(loadAll, 15_000);
   state.liveChatTimer = setInterval(loadLiveChats, 2_000);
-  state.liveDashboardTimer = setInterval(refreshLiveDashboard, 1_000);
+  state.liveDashboardTimer = setInterval(refreshLiveDashboard, 3_000);
   refreshLiveDashboard();
 }
 

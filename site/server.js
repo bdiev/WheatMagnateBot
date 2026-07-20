@@ -45,11 +45,15 @@ const sseHub = new SseHub({
   maxConnectionsPerUser: Number(process.env.SSE_MAX_CONNECTIONS_PER_USER) || 3,
   heartbeatMs: Number(process.env.SSE_HEARTBEAT_MS) || 25_000
 });
+const LIVE_DASHBOARD_CACHE_MS = Math.max(250, Number(process.env.LIVE_DASHBOARD_CACHE_MS) || 1_000);
 let databaseEventTimer = null;
 let databaseEventPollRunning = false;
 let databaseEventState = null;
 let lastDatabaseEventErrorAt = 0;
 let operationalRetentionTimer = null;
+let liveDashboardCache = null;
+let liveDashboardCacheAt = 0;
+let liveDashboardRequest = null;
 const rateLimiter = new RateLimiter();
 const rateLimiterTimer = setInterval(() => rateLimiter.prune(), 60_000);
 rateLimiterTimer.unref?.();
@@ -1709,13 +1713,21 @@ async function getObsidianStats(currentUser = null) {
   };
 }
 
-async function getLiveDashboardStats() {
+async function loadLiveDashboardStats() {
   assertDatabase();
-  const [botResult, supplyResult, nearbyResult] = await Promise.all([
-    pool.query(`SELECT status, observed_at FROM bot_status_snapshots WHERE id = 1`),
-    pool.query(`SELECT supplies, observed_at, updated_at FROM obsidian_farm_supply_snapshot WHERE id = 1`),
-    pool.query(`SELECT username, distance, last_seen FROM nearby_player_sightings ORDER BY last_seen DESC LIMIT 5`)
-  ]);
+  // Keep this high-frequency endpoint to one database connection. Running these
+  // queries through Promise.all can consume three pool slots per browser.
+  const client = await pool.connect();
+  let botResult;
+  let supplyResult;
+  let nearbyResult;
+  try {
+    botResult = await client.query(`SELECT status, observed_at FROM bot_status_snapshots WHERE id = 1`);
+    supplyResult = await client.query(`SELECT supplies, observed_at, updated_at FROM obsidian_farm_supply_snapshot WHERE id = 1`);
+    nearbyResult = await client.query(`SELECT username, distance, last_seen FROM nearby_player_sightings ORDER BY last_seen DESC LIMIT 5`);
+  } finally {
+    client.release();
+  }
   const botRow = botResult.rows[0] || {};
   const bot = botRow.status || null;
   const observedAt = botRow.observed_at || null;
@@ -1737,6 +1749,24 @@ async function getLiveDashboardStats() {
     supplies: normalizeSupplySnapshot(supplyResult.rows[0]),
     nearby
   };
+}
+
+async function getLiveDashboardStats() {
+  const now = Date.now();
+  if (liveDashboardCache && now - liveDashboardCacheAt < LIVE_DASHBOARD_CACHE_MS) return liveDashboardCache;
+
+  // Coalesce simultaneous polls from all connected browsers into one database
+  // read. The promise is cleared after completion so failures remain retryable.
+  if (!liveDashboardRequest) {
+    liveDashboardRequest = loadLiveDashboardStats()
+      .then(payload => {
+        liveDashboardCache = payload;
+        liveDashboardCacheAt = Date.now();
+        return payload;
+      })
+      .finally(() => { liveDashboardRequest = null; });
+  }
+  return liveDashboardRequest;
 }
 
 async function queueSiteWhisperClaim(currentUser, body) {
