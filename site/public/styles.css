@@ -5698,6 +5698,7 @@ body.search-focus-active #logoutButton {
 .account-form-row { display:grid; grid-template-columns:minmax(0,1fr) 120px; gap:12px; }.account-checkbox { display:flex!important; align-items:center; gap:9px; min-height:32px; color:var(--text); font-size:13px; font-weight:700; cursor:pointer; }.account-checkbox input { width:16px; height:16px; margin:0; accent-color:var(--accent); }
 .account-auth-note { padding:11px 12px; border-left:3px solid var(--accent); border-radius:0 10px 10px 0; color:var(--muted); background:var(--panel-soft); font-size:12px; line-height:1.5; }.account-modal-actions { display:flex; justify-content:flex-end; gap:10px; padding-top:2px; }.account-modal-actions button { min-width:112px; }.account-modal-close { position:absolute; top:14px; right:14px; width:34px; min-width:34px; max-width:34px; height:34px; min-height:34px; max-height:34px; padding:0; border:1px solid var(--line); border-radius:50%; color:var(--muted); background:var(--panel-soft); font-size:22px; font-weight:500; }.account-modal-close:hover { color:var(--text); background:color-mix(in srgb,var(--accent) 14%,var(--panel-soft)); border-color:var(--accent); }
 @media (max-width:700px) {
+  .realtime-status { display:none!important; }
   body.account-switching-disabled .topbar-actions { grid-template-columns:var(--button-height) var(--button-height) 74px minmax(0,1fr); }
   body.account-switching-disabled .topbar-actions #themeToggle { grid-column:3; }
   body.account-switching-disabled .topbar-actions #logoutButton { grid-column:4; }
