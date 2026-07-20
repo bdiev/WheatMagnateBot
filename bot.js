@@ -401,10 +401,20 @@ async function backfillExistingPlayerProfiles() {
   `);
   if (!result.rowCount) return;
 
-  let updated = 0;
+  const stats = { updated: 0, notFound: 0, errors: 0, rateLimited: 0 };
   for (const row of result.rows) {
     try {
-      const profile = await resolveMinecraftProfile(row.username);
+      let profile = null;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          profile = await resolveMinecraftProfile(row.username);
+          break;
+        } catch (err) {
+          if (!/HTTP 429/.test(err.message) || attempt === 2) throw err;
+          stats.rateLimited += 1;
+          await new Promise(resolve => setTimeout(resolve, 30_000 * (attempt + 1)));
+        }
+      }
       const uuid = dashedMinecraftUuid(profile?.id);
       if (uuid) {
         const client = await pool.connect();
@@ -421,21 +431,24 @@ async function backfillExistingPlayerProfiles() {
               DO UPDATE SET player_uuid=COALESCE(player_activity.player_uuid,EXCLUDED.player_uuid)`, [profile.name, uuid]);
           }
           await client.query('COMMIT');
-          updated += 1;
+          stats.updated += 1;
         } catch (err) {
           await client.query('ROLLBACK').catch(() => {});
           throw err;
         } finally {
           client.release();
         }
-      }
+      } else stats.notFound += 1;
     } catch (err) {
+      stats.errors += 1;
       console.warn(`[PlayerProfiles] Could not resolve ${row.username}: ${err.message}`);
-      if (/HTTP 429/.test(err.message)) break;
     }
     await new Promise(resolve => setTimeout(resolve, 750));
   }
-  console.log(`[PlayerProfiles] Added UUIDs for ${updated}/${result.rowCount} existing players.`);
+  console.log(
+    `[PlayerProfiles] Backfill complete: ${stats.updated} updated, ${stats.notFound} not found, ` +
+    `${stats.errors} errors, ${stats.rateLimited} rate-limit retries (${result.rowCount} candidates).`
+  );
 }
 
 async function fetchPlayerHeadImage(username) {

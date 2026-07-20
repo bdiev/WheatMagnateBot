@@ -1773,12 +1773,15 @@ function renderPlayerProfile(profile) {
         <div class="player-profile-identity">
           <h2 id="playerProfileName">${escapeHtml(profile.username)}</h2>
           <div class="player-profile-badges">
+            <span class="pill player-status-pill ${profile.isOnline ? 'online' : 'offline'}">
+              <i aria-hidden="true"></i>${profile.isOnline ? 'online' : 'offline'}
+            </span>
             <span class="pill">${profile.isWhitelisted ? 'whitelisted' : 'not whitelisted'}</span>
             ${profile.isIgnored ? '<span class="pill ignored">ignored</span>' : ''}
           </div>
         </div>
         <div class="player-profile-meta">
-          ${profile.uuid ? `<code class="player-profile-uuid" title="Minecraft UUID">${escapeHtml(profile.uuid)}</code>` : ''}
+          ${profile.uuid ? `<span class="player-profile-uuid" title="Minecraft UUID"><small>UUID</small><code>${escapeHtml(profile.uuid)}</code></span>` : ''}
           ${nameHistoryControl}
         </div>
         <div class="player-profile-actions">

@@ -2658,6 +2658,7 @@ body.search-focus-active #logoutButton {
 }
 
 .player-profile-head {
+  position: relative;
   display: grid;
   grid-template-columns: 96px minmax(0, 1fr);
   gap: 20px;
@@ -2697,6 +2698,7 @@ body.search-focus-active #logoutButton {
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--panel);
+  box-shadow: 0 12px 30px color-mix(in srgb, #000 18%, transparent);
 }
 
 .player-profile-head h2 {
@@ -3524,7 +3526,7 @@ body.search-focus-active #logoutButton {
 .player-profile-identity {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 12px;
   flex-wrap: wrap;
 }
 
@@ -3533,16 +3535,51 @@ body.search-focus-active #logoutButton {
   align-items: center;
   gap: 12px;
   min-height: 22px;
-  margin-top: 7px;
+  margin-top: 9px;
   flex-wrap: wrap;
 }
 
 .player-profile-uuid {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   margin: 0;
+  border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  border-radius: 7px;
+  padding: 4px 7px;
+  background: color-mix(in srgb, var(--panel) 72%, transparent);
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10px;
   overflow-wrap: anywhere;
+}
+
+.player-profile-uuid small {
+  color: var(--accent-strong);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.player-profile-uuid code {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.player-status-pill {
+  gap: 6px;
+}
+
+.player-status-pill i {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #d84343;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #d84343 16%, transparent);
+}
+
+.player-status-pill.online i {
+  background: #55c85a;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #55c85a 16%, transparent);
 }
 
 .player-name-history {
@@ -3551,6 +3588,10 @@ body.search-focus-active #logoutButton {
 }
 
 .player-name-history summary {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 4px 8px;
+  background: color-mix(in srgb, var(--panel) 72%, transparent);
   color: var(--accent-strong);
   cursor: pointer;
   font-weight: 700;
@@ -3871,7 +3912,20 @@ body.search-focus-active #logoutButton {
 #tab-notifications button:hover,
 #tab-notifications .ghost-button:hover {
   color: var(--text);
-  background: var(--panel-soft);
+  background:
+    radial-gradient(circle at 12% 0%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 44%),
+    var(--panel-soft);
+}
+
+.player-profile-head::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 24px;
+  right: 64px;
+  height: 2px;
+  border-radius: 0 0 999px 999px;
+  background: linear-gradient(90deg, var(--accent), transparent 70%);
 }
 
 .notification-overview-panel,
