@@ -542,16 +542,28 @@ function setBanner(message) {
   banner.textContent = message;
 }
 
-async function fetchJson(path) {
-  const response = await fetch(path, { cache: 'no-store', credentials: 'same-origin' });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    if (response.status === 401 && !path.startsWith('/api/auth/')) {
-      showAuthScreen('Please sign in to continue.');
+async function fetchJson(path, { transientRetries = 0 } = {}) {
+  let attempt = 0;
+  while (true) {
+    try {
+      const response = await fetch(path, { cache: 'no-store', credentials: 'same-origin' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (response.status === 401 && !path.startsWith('/api/auth/')) {
+          showAuthScreen('Please sign in to continue.');
+        }
+        const error = new Error(payload.error || `HTTP ${response.status}`);
+        error.status = response.status;
+        throw error;
+      }
+      return payload;
+    } catch (error) {
+      const isTransient = error?.status == null || [502, 503, 504].includes(error.status);
+      if (!isTransient || attempt >= transientRetries) throw error;
+      await new Promise(resolve => setTimeout(resolve, 350 * (2 ** attempt)));
+      attempt += 1;
     }
-    throw new Error(payload.error || `HTTP ${response.status}`);
   }
-  return payload;
 }
 
 async function postJson(path, body = {}) {
@@ -3822,7 +3834,7 @@ async function loadAdminControlState() {
   if (state.adminControlLoading) return;
   state.adminControlLoading = true;
   try {
-    const payload = await fetchJson('/api/admin/control-state');
+    const payload = await fetchJson('/api/admin/control-state', { transientRetries: 2 });
     renderAdminControlState(payload);
   } catch (err) {
     setBanner(`Could not load bot controls: ${err.message}`);
