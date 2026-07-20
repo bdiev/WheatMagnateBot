@@ -26,6 +26,11 @@ const { newCorrelationId, recordOperationalEvent } = require('./operational-even
 const { buildDailyObsidianReport, claimDailyReportDate, getDailyReportSlot } = require('./obsidian-daily-report');
 const { WebPushService } = require('./site/web-push');
 const { chatComponentToString } = require('./minecraft-chat-component');
+const { AccountRepository } = require('./accounts/account-repository');
+const { AccountRegistry } = require('./accounts/account-registry');
+const { MinecraftBotRuntime } = require('./accounts/minecraft-bot-runtime');
+const { BotManager } = require('./accounts/bot-manager');
+const { ensureAccountColumns } = require('./accounts/account-schema');
 
 // Base64 utils for Node.js (btoa/atob polyfill)
 const b64encode = (str) => Buffer.from(String(str), 'utf8').toString('base64');
@@ -66,6 +71,14 @@ const MINECRAFT_PRIVATE_MESSAGE_LENGTH = 180;
 const RECONNECT_INTERVAL_MS = 15_000;
 const MINECRAFT_CONNECT_TIMEOUT_MS = 20_000;
 const MINECRAFT_PROFILES_FOLDER = path.resolve(process.env.MINECRAFT_PROFILES_FOLDER || path.join('data', 'auth-cache'));
+const DEFAULT_ACCOUNT_ID = '00000000-0000-4000-8000-000000000001';
+const COMMAND_WORKER_ID = `legacy:${process.pid}:${require('node:crypto').randomUUID()}`;
+const MAX_BOT_ACCOUNTS = Math.max(1, Number(process.env.MAX_BOT_ACCOUNTS) || 8);
+const MAX_CONCURRENT_BOTS = Math.max(1, Number(process.env.MAX_CONCURRENT_BOTS) || 3);
+const BOT_START_DELAY_MS = Math.max(0, Number(process.env.BOT_START_DELAY_MS) || 1500);
+let multiAccountRegistry = null;
+let multiBotManager = null;
+let discordActiveAccountId = DEFAULT_ACCOUNT_ID;
 const BOT_PUBLIC_CHAT_STATUS_FILE = path.resolve('data', 'bot_public_chat_status.json');
 const BOT_CHAT_STATUS_EMOJIS_FILE = path.resolve('data', 'bot_chat_status_emojis.json');
 const PLAYER_HEAD_EMOJIS_FILE = path.resolve('data', 'player_head_emojis.json');
@@ -1097,6 +1110,10 @@ async function initDatabase() {
 
   try {
     await runMigrations(pool);
+    await pool.query(`UPDATE bot_accounts SET username=$2,display_name=CASE WHEN username='legacy' THEN $2 ELSE display_name END,
+      host=$3,port=$4,auth_type=$5,minecraft_version=$6,updated_at=NOW() WHERE id=$1::uuid`, [
+      DEFAULT_ACCOUNT_ID, config.username, config.host, Number(config.port || 25565), config.auth, config.version || null
+    ]);
     await pool.query(`INSERT INTO obsidian_farm_analytics_settings(id,timezone,daily_report_enabled,daily_report_hour)
       VALUES(1,$1,$2,$3) ON CONFLICT(id) DO NOTHING`, [
       process.env.OBSIDIAN_ANALYTICS_TIMEZONE || 'Europe/Vilnius',
@@ -1359,12 +1376,19 @@ async function initDatabase() {
         result JSONB,
         error TEXT,
         correlation_id VARCHAR(64),
+        account_id UUID NOT NULL DEFAULT '00000000-0000-4000-8000-000000000001' REFERENCES bot_accounts(id),
+        locked_by VARCHAR(128),
+        lease_expires_at TIMESTAMPTZ,
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        idempotency_key VARCHAR(128),
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         started_at TIMESTAMPTZ,
         finished_at TIMESTAMPTZ
       )
     `);
     await pool.query(`ALTER TABLE bot_commands ADD COLUMN IF NOT EXISTS correlation_id VARCHAR(64)`);
+    await pool.query(`ALTER TABLE bot_commands ADD COLUMN IF NOT EXISTS account_id UUID NOT NULL DEFAULT '00000000-0000-4000-8000-000000000001' REFERENCES bot_accounts(id)`);
+    await pool.query(`ALTER TABLE bot_commands ADD COLUMN IF NOT EXISTS locked_by VARCHAR(128), ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ, ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(128)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS bot_commands_correlation_idx ON bot_commands(correlation_id) WHERE correlation_id IS NOT NULL`);
     await pool.query(`
       CREATE INDEX IF NOT EXISTS bot_commands_status_created_idx
@@ -1456,6 +1480,7 @@ async function initDatabase() {
       }
     }
     console.log('[DB] Tables initialized successfully.');
+    await ensureAccountColumns(pool);
 
     backfillExistingPlayerProfiles().catch(err => {
       console.warn('[PlayerProfiles] Background profile update failed:', err.message);
@@ -1956,6 +1981,7 @@ if (DISCORD_BOT_TOKEN) {
     }
 
     await initDatabase();
+    await initializeMultiAccountManager();
     startObsidianDailyReportScheduler();
     await loadRuntimeSettingsFromDB();
     await saveAdminSettings(runtimeSettings);
@@ -2009,6 +2035,9 @@ if (DISCORD_BOT_TOKEN) {
             message: 'Command bus worker failed.',
             details: { error: err.message }
           }).catch(() => {});
+        });
+        processManagedAccountCommands().catch(err => {
+          console.error('[Command Bus] Managed account worker failed:', err.message);
         });
         processSiteGameChatOutbox().catch(err => {
           console.error('[Site Chat] Outbox worker failed:', err.message);
@@ -4733,6 +4762,24 @@ async function executeBotCommand(command) {
   const payload = command.payload || {};
   const requestedBy = sanitizeBridgeSender(command.requested_by || command.source);
 
+  // The existing process is the compatibility runtime for the migrated default
+  // account. Dedicated runtimes consume commands for additional account IDs.
+  if (command.account_id && command.account_id !== DEFAULT_ACCOUNT_ID) {
+    throw new Error('The requested account runtime is not active in this worker.');
+  }
+  if (type === 'account_start' || type === 'account_resume') {
+    shouldReconnect = true; clearResumeTimer(); clearReconnectTimer(); setDisconnectReason(null); if (!bot) createBot();
+    return { message: 'Account start requested.', accountId: DEFAULT_ACCOUNT_ID };
+  }
+  if (type === 'account_stop' || type === 'account_pause') {
+    shouldReconnect = false; clearReconnectTimer(); clearResumeTimer(); if (bot) bot.quit(type === 'account_pause' ? 'Account paused' : 'Account stopped');
+    return { message: type === 'account_pause' ? 'Account paused.' : 'Account stopped.', accountId: DEFAULT_ACCOUNT_ID };
+  }
+  if (type === 'account_restart' || type === 'account_reauthorize') {
+    shouldReconnect = true; clearReconnectTimer(); if (bot) bot.quit(type === 'account_reauthorize' ? 'Account reauthorization requested' : 'Account restart requested'); else createBot();
+    return { message: type === 'account_reauthorize' ? 'Account reauthorization requested.' : 'Account restart requested.', accountId: DEFAULT_ACCOUNT_ID };
+  }
+
   if (type === 'chat') {
     if (!bot || typeof bot.chat !== 'function') throw new Error('Minecraft bot is not ready.');
     const cleanMessage = sanitizeSiteChatMessage(payload.message);
@@ -5020,17 +5067,103 @@ async function executeBotCommand(command) {
   throw new Error(`Unsupported command type: ${type}`);
 }
 
+async function persistManagedRuntimeStatus(status) {
+  if (!pool || !status?.accountId) return;
+  await pool.query(`INSERT INTO bot_account_runtime_state(account_id,status,current_task,last_error,started_at,updated_at,status_payload)
+    VALUES($1::uuid,$2,$3,$4,$5,NOW(),$6) ON CONFLICT(account_id) DO UPDATE SET
+    status=EXCLUDED.status,current_task=EXCLUDED.current_task,last_error=EXCLUDED.last_error,
+    started_at=EXCLUDED.started_at,updated_at=NOW(),status_payload=EXCLUDED.status_payload`,
+  [status.accountId,status.status,status.task,status.lastError,status.startedAt,status]);
+}
+
+async function initializeMultiAccountManager() {
+  if (!pool || multiBotManager) return;
+  multiAccountRegistry = new AccountRegistry(new AccountRepository(pool));
+  const accounts = await multiAccountRegistry.load();
+  if (accounts.length > MAX_BOT_ACCOUNTS) console.warn(`[Accounts] ${accounts.length} accounts exceed MAX_BOT_ACCOUNTS=${MAX_BOT_ACCOUNTS}.`);
+  multiBotManager = new BotManager({
+    registry: multiAccountRegistry,
+    maxConcurrentBots: MAX_CONCURRENT_BOTS,
+    startDelayMs: BOT_START_DELAY_MS,
+    runtimeFactory: account => {
+      const runtime = new MinecraftBotRuntime({
+        account,
+        authCacheRoot: MINECRAFT_PROFILES_FOLDER,
+        botFactory: options => {
+          const managedBot = createMinecraftBot({ ...options, closeTimeout: MINECRAFT_CONNECT_TIMEOUT_MS });
+          managedBot.loadPlugin(pathfinder);
+          return managedBot;
+        }
+      });
+      runtime.on('status', status => persistManagedRuntimeStatus(status).catch(error => console.error(`[Accounts] Status persistence failed for ${account.id}:`, error.message)));
+      runtime.on('device-code', code => {
+        const verificationUri = code.verification_uri || code.verificationUri || 'https://microsoft.com/link';
+        const userCode = code.user_code || code.userCode || null;
+        pool.query(`INSERT INTO bot_account_runtime_state(account_id,status,current_task,updated_at,status_payload) VALUES($1::uuid,'authorizing','idle',NOW(),$2::jsonb)
+          ON CONFLICT(account_id) DO UPDATE SET status='authorizing',updated_at=NOW(),status_payload=bot_account_runtime_state.status_payload||EXCLUDED.status_payload`, [account.id,JSON.stringify({authState:'waiting',deviceCode:userCode,verificationUri})]).catch(()=>{});
+        sendOwnerDM('Microsoft Login', `Account: **${account.username}**\nAccount ID: \`${account.id}\`\n\nOpen ${verificationUri} and enter code **${userCode || 'shown in the server log'}**.`, 16776960);
+      });
+      runtime.on('end', () => persistManagedRuntimeStatus(runtime.getStatus()).catch(() => {}));
+      return runtime;
+    }
+  });
+  for (const account of accounts.filter(item => item.enabled && !item.isDefault)) {
+    await multiBotManager.start(account.id).catch(error => console.error(`[Accounts] Could not start ${account.displayName}:`, error.message));
+  }
+}
+
+async function executeManagedAccountCommand(command) {
+  if (!multiAccountRegistry?.get(command.account_id)) await multiAccountRegistry?.load();
+  const runtime = multiBotManager?.get(command.account_id);
+  const type = String(command.command_type || '');
+  const payload = command.payload || {};
+  if (type === 'account_start') return multiBotManager.start(command.account_id);
+  if (type === 'account_stop') return multiBotManager.stop(command.account_id);
+  if (type === 'account_restart' || type === 'account_reauthorize') return multiBotManager.restart(command.account_id);
+  if (type === 'account_pause') return multiBotManager.pause(command.account_id);
+  if (type === 'account_resume') return multiBotManager.resume(command.account_id);
+  if (!runtime) throw new Error('Account runtime is not active.');
+  if (type === 'chat') {
+    if (!runtime.bot?.chat) throw new Error('Account is not connected.');
+    runtime.bot.chat(sanitizeSiteChatMessage(payload.message));
+    return { sent: true };
+  }
+  if (['follow','follow_stop','obsidian_toggle'].includes(type)) return runtime.assignTask(type === 'follow' ? 'follow' : type === 'obsidian_toggle' ? 'obsidian' : 'idle');
+  throw new Error(`Command ${type} is not supported by managed runtimes yet.`);
+}
+
+async function processManagedAccountCommands() {
+  if (!pool || !multiBotManager) return;
+  await pool.query(`UPDATE bot_commands SET status='pending',locked_by=NULL,lease_expires_at=NULL,started_at=NULL
+    WHERE account_id<>$1::uuid AND status='processing' AND lease_expires_at<NOW()`, [DEFAULT_ACCOUNT_ID]);
+  const claimed = await pool.query(`WITH next AS (
+      SELECT id FROM bot_commands WHERE account_id<>$1::uuid AND status='pending' ORDER BY created_at LIMIT 10 FOR UPDATE SKIP LOCKED
+    ) UPDATE bot_commands c SET status='processing',started_at=NOW(),locked_by=$2,lease_expires_at=NOW()+INTERVAL '45 seconds',attempt_count=c.attempt_count+1
+    FROM next WHERE c.id=next.id RETURNING c.*`, [DEFAULT_ACCOUNT_ID, COMMAND_WORKER_ID]);
+  for (const command of claimed.rows) {
+    try {
+      const result = await executeManagedAccountCommand(command);
+      await pool.query(`UPDATE bot_commands SET status='done',result=$2,error=NULL,finished_at=NOW(),locked_by=NULL,lease_expires_at=NULL WHERE id=$1`, [command.id, result || {}]);
+    } catch (error) {
+      await pool.query(`UPDATE bot_commands SET status='failed',error=$2,finished_at=NOW(),locked_by=NULL,lease_expires_at=NULL WHERE id=$1`, [command.id, error.message]);
+    }
+  }
+}
+
 async function processBotCommands() {
   if (!pool) return;
 
   let commands = [];
   try {
     const includeChat = Boolean(bot && typeof bot.chat === 'function');
+    await pool.query(`UPDATE bot_commands SET status='pending',locked_by=NULL,lease_expires_at=NULL,started_at=NULL
+      WHERE account_id=$1::uuid AND status='processing' AND lease_expires_at<NOW()`, [DEFAULT_ACCOUNT_ID]);
     const result = await pool.query(`
       WITH next_commands AS (
         SELECT id
         FROM bot_commands
         WHERE status = 'pending'
+          AND account_id = $2::uuid
           AND ($1::boolean OR command_type <> 'chat')
           AND ($1::boolean OR command_type <> 'site_whisper')
           AND (
@@ -5049,11 +5182,14 @@ async function processBotCommands() {
       UPDATE bot_commands commands
       SET status = 'processing',
           started_at = NOW(),
+          locked_by = $3,
+          lease_expires_at = NOW()+INTERVAL '45 seconds',
+          attempt_count = commands.attempt_count+1,
           error = NULL
       FROM next_commands
       WHERE commands.id = next_commands.id
-      RETURNING commands.id, commands.source, commands.requested_by, commands.command_type, commands.payload, commands.correlation_id
-    `, [includeChat]);
+      RETURNING commands.id, commands.source, commands.requested_by, commands.command_type, commands.payload, commands.correlation_id,commands.account_id
+    `, [includeChat,DEFAULT_ACCOUNT_ID,COMMAND_WORKER_ID]);
     commands = result.rows;
   } catch (err) {
     console.error('[Command Bus] Failed to load commands:', err.message);
@@ -6394,7 +6530,16 @@ function createServerStatusButtons() {
 
 function createAdminPanelButtons() {
   const isPaused = !shouldReconnect;
-  return [
+  const components = [];
+  const accounts = multiAccountRegistry?.list() || [];
+  if (accounts.length > 1) {
+    components.push(new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder().setCustomId('admin_account_select').setPlaceholder('Select Minecraft account').addOptions(
+        accounts.slice(0,25).map(account => new StringSelectMenuOptionBuilder().setLabel(account.displayName).setDescription(`${account.username} · ${account.host}`).setValue(account.id).setDefault(account.id === discordActiveAccountId))
+      )
+    ));
+  }
+  components.push(
     new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
@@ -6434,7 +6579,8 @@ function createAdminPanelButtons() {
           .setEmoji(UI_BUTTON_EMOJIS.bookYellow)
           .setStyle(growingChild?.getStatus().enabled ? ButtonStyle.Success : ButtonStyle.Danger)
       )
-  ];
+  );
+  return components.slice(0,5);
 }
 
 function createAdminSettingsSelects() {
@@ -6777,6 +6923,17 @@ async function writeBotStatusSnapshot() {
       ON CONFLICT (id)
       DO UPDATE SET status = EXCLUDED.status, observed_at = EXCLUDED.observed_at
     `, [snapshot]);
+    await pool.query(`INSERT INTO bot_account_runtime_state(account_id,status,current_task,desired_enabled,last_error,started_at,updated_at,status_payload)
+      VALUES($1::uuid,$2,$3,$4,NULL,$5,NOW(),$6) ON CONFLICT(account_id) DO UPDATE SET
+      status=EXCLUDED.status,current_task=EXCLUDED.current_task,desired_enabled=EXCLUDED.desired_enabled,
+      started_at=EXCLUDED.started_at,updated_at=NOW(),status_payload=EXCLUDED.status_payload`, [
+      DEFAULT_ACCOUNT_ID,
+      bot?.entity ? 'connected' : (shouldReconnect ? 'connecting' : 'stopped'),
+      farm.getStatus()?.enabled ? 'obsidian' : (followFeature.getStatus()?.active ? 'follow' : 'idle'),
+      shouldReconnect,
+      bot?.entity ? new Date(startTime) : null,
+      snapshot
+    ]);
   } catch (err) {
     console.error('[Bot Status] Failed to write snapshot:', err.message);
   }
@@ -6867,7 +7024,7 @@ async function buildAdminPanelEmbed() {
       ];
 
   return {
-    title: 'Admin Panel',
+    title: `Admin Panel · ${multiAccountRegistry?.get(discordActiveAccountId)?.displayName || ADMIN_PANEL_BOT_NAME}`,
     fields,
     color: bot?.entity ? 3447003 : shouldReconnect ? 16776960 : 8421504,
     timestamp: new Date()
@@ -6972,7 +7129,8 @@ function isAdminPanelCustomId(customId = '') {
 }
 
 function isAdminPanelSelectCustomId(customId = '') {
-  return customId === 'admin_danger_radius_select' ||
+  return customId === 'admin_account_select' ||
+    customId === 'admin_danger_radius_select' ||
     customId === 'admin_message_cooldown_select' ||
     customId === 'follow_select';
 }
@@ -8498,9 +8656,26 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       }
 
       await interaction.deferUpdate();
+      if (interaction.customId === 'admin_account_select') {
+        const accountId = interaction.values[0];
+        if (!multiAccountRegistry?.get(accountId)) {
+          await interaction.editReply({ content:'Minecraft account no longer exists.',components:[] });
+          return;
+        }
+        discordActiveAccountId = accountId;
+        await updateAdminPanel();
+        return;
+      }
       if (interaction.customId === 'follow_select') {
         const selectedUsername = b64decode(interaction.values[0]);
         try {
+          if (discordActiveAccountId !== DEFAULT_ACCOUNT_ID) {
+            const runtime = multiBotManager?.get(discordActiveAccountId);
+            if (!runtime) throw new Error('Selected account is not running.');
+            runtime.assignTask('follow');
+            await interaction.editReply({content:`Selected **${multiAccountRegistry.get(discordActiveAccountId).displayName}** for follow task (${selectedUsername}).`,components:createAdminPanelButtons()});
+            return;
+          }
           farm.suspend();
           await setObsidianFarmDesiredEnabled(false);
           followFeature.start(bot, selectedUsername);
@@ -8536,6 +8711,19 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
 
     if (interaction.isButton()) {
+      if (discordActiveAccountId !== DEFAULT_ACCOUNT_ID && ['pause_resume_button','obsidian_farm_button'].includes(interaction.customId)) {
+        await interaction.deferUpdate();
+        const runtime = multiBotManager?.get(discordActiveAccountId);
+        if (!runtime) {
+          await interaction.editReply({content:'Selected account runtime is not running.',components:createAdminPanelButtons()});
+          return;
+        }
+        if (interaction.customId === 'pause_resume_button') runtime.status === 'paused' ? runtime.resume() : runtime.pause();
+        else runtime.assignTask(runtime.task === 'obsidian' ? 'idle' : 'obsidian');
+        await persistManagedRuntimeStatus(runtime.getStatus());
+        await updateAdminPanel();
+        return;
+      }
         if (isAdminPanelCustomId(interaction.customId) && interaction.user.id !== DISCORD_OWNER_ID) {
           await interaction.reply({
             content: 'Only the owner can use admin controls.',
@@ -10799,3 +10987,20 @@ async function cleanupAuthMessages() {
     return origStderrWrite(chunk, encoding, cb);
   };
 })();
+
+let multiAccountShuttingDown = false;
+async function shutdownAllAccounts(signal) {
+  if (multiAccountShuttingDown) return;
+  multiAccountShuttingDown = true;
+  console.log(`[Shutdown] ${signal}: stopping Minecraft account runtimes.`);
+  await multiBotManager?.shutdown().catch(error => console.error('[Shutdown] Managed runtimes:', error.message));
+  shouldReconnect = false;
+  clearReconnectTimer();
+  clearResumeTimer();
+  if (bot) safelyCloseMinecraftBot(bot, 'Process shutdown');
+  discordClient?.destroy?.();
+  await (pool?.end?.() || Promise.resolve()).catch(() => {});
+  process.exit(0);
+}
+process.once('SIGINT', () => shutdownAllAccounts('SIGINT'));
+process.once('SIGTERM', () => shutdownAllAccounts('SIGTERM'));

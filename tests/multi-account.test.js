@@ -1,0 +1,39 @@
+'use strict';
+
+const assert = require('node:assert/strict');
+const { EventEmitter } = require('node:events');
+const path = require('node:path');
+const { AccountRegistry } = require('../accounts/account-registry');
+const { ActiveAccountContext } = require('../accounts/active-account-context');
+const { MinecraftBotRuntime } = require('../accounts/minecraft-bot-runtime');
+const { BotManager } = require('../accounts/bot-manager');
+
+class MemoryRepository {
+  constructor(accounts=[]) { this.accounts=accounts.map(item=>({...item})); }
+  async list(){return this.accounts.map(item=>({...item}));}
+  async create(input){const account={id:input.id,sortOrder:this.accounts.length,isDefault:!this.accounts.length,...input};this.accounts.push(account);return {...account};}
+  async update(id,changes){const account=this.accounts.find(item=>item.id===id);Object.assign(account,changes);return {...account};}
+  async remove(id){const index=this.accounts.findIndex(item=>item.id===id);return index<0?null:this.accounts.splice(index,1)[0];}
+}
+
+const first={id:'00000000-0000-4000-8000-000000000001',username:'FirstBot',displayName:'First',host:'one.test',port:25565,authType:'microsoft',enabled:true,sortOrder:0,isDefault:true,reconnectBackoffMs:5000};
+const second={id:'00000000-0000-4000-8000-000000000002',username:'SecondBot',displayName:'Second',host:'two.test',port:25566,authType:'microsoft',enabled:true,sortOrder:1,isDefault:false,reconnectBackoffMs:6000};
+
+async function main(){
+  const repository=new MemoryRepository([first]); const registry=new AccountRegistry(repository); await registry.load();
+  await registry.add(second); assert.equal(registry.list().length,2,'second account is added');
+  const context=new ActiveAccountContext(registry); assert.equal(context.current().id,first.id); context.select(second.id); assert.equal(context.current().id,second.id); await registry.remove(second.id); assert.equal(context.current().id,first.id,'deleted selection falls back to first account');
+
+  await registry.add(second); const bots=[]; const factoryOptions=[];
+  const manager=new BotManager({registry,startDelayMs:0,maxConcurrentBots:2,runtimeFactory:account=>new MinecraftBotRuntime({account,authCacheRoot:path.join('data','auth-cache'),botFactory:options=>{factoryOptions.push(options);const bot=new EventEmitter();bot.quit=()=>{};bots.push(bot);return bot;}})});
+  const [a,b]=await Promise.all([manager.start(first.id),manager.start(second.id)]); assert.equal(a.accountId,first.id);assert.equal(b.accountId,second.id);assert.equal(bots.length,2,'runtimes do not share Mineflayer instances');
+  assert.notEqual(factoryOptions[0].profilesFolder,factoryOptions[1].profilesFolder,'auth-cache directories are isolated');
+  const firstRuntime=manager.get(first.id); const secondRuntime=manager.get(second.id); assert.notEqual(firstRuntime.intervals,secondRuntime.intervals,'timer collections are isolated');
+  const duplicate=await Promise.all([manager.start(first.id),manager.start(first.id)]); assert.equal(bots.length,2,'concurrent starts do not create duplicate runtimes'); assert.equal(duplicate[0].accountId,first.id);
+  firstRuntime.assignTask('obsidian'); secondRuntime.assignTask('follow'); assert.equal(firstRuntime.task,'obsidian');assert.equal(secondRuntime.task,'follow');
+  await manager.shutdown(); assert.equal(firstRuntime.status,'stopped');assert.equal(secondRuntime.status,'stopped');
+  const publicStatus=firstRuntime.getStatus(); assert.equal(Object.hasOwn(publicStatus,'authCachePath'),true); assert.equal(publicStatus.authCachePath,undefined,'status never exposes auth-cache path');
+  console.log('Multi-account tests passed.');
+}
+
+main().catch(error=>{console.error(error);process.exitCode=1;});

@@ -83,6 +83,10 @@ const state = {
   csrfToken: null,
   bootstrapAvailable: false,
   currentUser: null,
+  accounts: [],
+  activeAccountId: null,
+  accountAbortController: null,
+  accountsRefreshedAt: 0,
   pendingPushDestination: null,
   chartRanges: {
     chatHourlyChart: 'hours',
@@ -543,11 +547,17 @@ function setBanner(message) {
   banner.textContent = message;
 }
 
-async function fetchJson(path, { transientRetries = 0 } = {}) {
+async function fetchJson(path, { transientRetries = 0, signal = null } = {}) {
   let attempt = 0;
   while (true) {
     try {
-      const response = await fetch(path, { cache: 'no-store', credentials: 'same-origin' });
+      let requestPath = path;
+      if (state.activeAccountId && path.startsWith('/api/') && !path.startsWith('/api/auth/') && !path.startsWith('/api/accounts')) {
+        const requestUrl = new URL(path, window.location.origin);
+        requestUrl.searchParams.set('accountId', state.activeAccountId);
+        requestPath = `${requestUrl.pathname}${requestUrl.search}`;
+      }
+      const response = await fetch(requestPath, { cache: 'no-store', credentials: 'same-origin', signal: signal || state.accountAbortController?.signal });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         if (response.status === 401 && !path.startsWith('/api/auth/')) {
@@ -565,6 +575,92 @@ async function fetchJson(path, { transientRetries = 0 } = {}) {
       attempt += 1;
     }
   }
+}
+
+function accountStatusClass(account) {
+  if (account.task && !['idle','paused'].includes(account.task) && account.status === 'connected') return 'active-task';
+  if (['connected','connecting','error'].includes(account.status)) return account.status;
+  return 'stopped';
+}
+
+function renderAccountSwitcher() {
+  const list = $('#accountSwitcherList');
+  if (!list) return;
+  list.innerHTML = state.accounts.map(account => {
+    const active = account.id === state.activeAccountId;
+    const uptime = account.startedAt ? formatDurationMs(Math.max(0, Date.now() - new Date(account.startedAt).getTime())) : 'not running';
+    const tooltip = `${account.username} · ${account.status} · ${account.host}:${account.port} · ${account.task || 'idle'} · ${uptime}`;
+    return `<button class="account-avatar${active ? ' active' : ''}" type="button" role="listitem" data-account-id="${escapeHtml(account.id)}" style="--account-color:${escapeHtml(account.color || '#f1c232')}" aria-label="Switch to ${escapeHtml(account.displayName)}" aria-pressed="${active}" title="${escapeHtml(tooltip)}"><img src="https://minotar.net/avatar/${encodeURIComponent(account.username)}/64" alt=""><span class="account-status-dot ${accountStatusClass(account)}" aria-hidden="true"></span></button>`;
+  }).join('');
+  const current = state.accounts.find(account => account.id === state.activeAccountId);
+  const heading = $('.topbar h1');
+  if (heading) heading.title = current ? `Active Minecraft account: ${current.displayName}` : '';
+}
+
+async function loadAccounts() {
+  const payload = await fetchJson('/api/accounts', { signal: null });
+  state.accounts = Array.isArray(payload.accounts) ? payload.accounts : [];
+  const saved = localStorage.getItem('wm-active-account');
+  state.activeAccountId = state.accounts.some(account => account.id === saved) ? saved : state.accounts[0]?.id || null;
+  if (state.activeAccountId) localStorage.setItem('wm-active-account', state.activeAccountId);
+  renderAccountSwitcher();
+  state.accountsRefreshedAt = Date.now();
+  const active = state.accounts.find(account => account.id === state.activeAccountId);
+  if (active?.statusPayload?.authState === 'waiting' && active.statusPayload.deviceCode) {
+    setBanner(`Authorize ${active.displayName}: open ${active.statusPayload.verificationUri || 'https://microsoft.com/link'} and enter code ${active.statusPayload.deviceCode}.`);
+  }
+}
+
+async function selectAccount(accountId) {
+  if (accountId === state.activeAccountId || !state.accounts.some(account => account.id === accountId)) return;
+  state.accountAbortController?.abort();
+  state.accountAbortController = new AbortController();
+  state.activeAccountId = accountId;
+  localStorage.setItem('wm-active-account', accountId);
+  state.renderSignatures = {};
+  renderAccountSwitcher();
+  setBanner(`Loading ${state.accounts.find(account => account.id === accountId)?.displayName || 'account'}…`);
+  try { await loadAll(); setBanner(''); } catch (error) { if (error.name !== 'AbortError') setBanner(error.message); }
+}
+
+function setAccountModalOpen(open) {
+  const overlay = $('#accountModal');
+  if (!overlay) return;
+  overlay.hidden = !open;
+  if (open) $('#accountForm')?.elements.displayName?.focus();
+}
+
+async function submitAccount(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const error = $('#accountFormError');
+  error.hidden = true;
+  const data = new FormData(form);
+  try {
+    const payload = await postJson('/api/accounts', { displayName:data.get('displayName'),username:data.get('username'),authType:data.get('authType'),host:data.get('host'),port:Number(data.get('port')),minecraftVersion:data.get('minecraftVersion') || null,color:data.get('color') || null,enabled:data.get('enabled') === 'on' });
+    form.reset(); setAccountModalOpen(false); await loadAccounts(); await selectAccount(payload.account.id);
+  } catch (err) { error.textContent=err.message; error.hidden=false; }
+}
+
+async function runAccountAction(accountId, action) {
+  const account = state.accounts.find(item => item.id === accountId);
+  if (!account) return;
+  if (action === 'delete') {
+    if (!confirm(`Delete ${account.displayName}? Its runtime will stop; statistics and auth-cache will be preserved.`)) return;
+    const response = await fetch(`/api/accounts/${accountId}`, {method:'DELETE',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':state.csrfToken},body:JSON.stringify({confirm:account.displayName})});
+    const payload = await response.json().catch(() => ({})); if(!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+  } else {
+    await postJson(`/api/accounts/${accountId}/${action}`, {});
+  }
+  await loadAccounts();
+}
+
+function openAccountMenu(accountId, anchor) {
+  document.querySelector('.account-context-menu')?.remove();
+  const menu=document.createElement('div'); menu.className='account-context-menu';
+  for (const action of ['start','stop','restart','pause','resume','reauthorize','delete']) { const button=document.createElement('button'); button.type='button'; button.dataset.action=action; button.textContent=action[0].toUpperCase()+action.slice(1); menu.append(button); }
+  const rect=anchor.getBoundingClientRect(); menu.style.left=`${Math.min(innerWidth-180,rect.left)}px`; menu.style.top=`${rect.bottom+6}px`; document.body.append(menu);
+  menu.addEventListener('click', event => { const action=event.target.dataset.action; if(action) runAccountAction(accountId,action).catch(err=>setBanner(err.message)); menu.remove(); });
 }
 
 async function postJson(path, body = {}) {
@@ -928,7 +1024,8 @@ async function handleAuthSubmit(event) {
     await Promise.all([
       loadNavigationSettings({ migrateLocal: true }),
       loadTimezones(),
-      loadAccountSettings()
+      loadAccountSettings(),
+      loadAccounts()
     ]);
     restoreActiveTab();
     openPushDestination();
@@ -953,7 +1050,8 @@ async function initAuth() {
       await Promise.all([
         loadNavigationSettings({ migrateLocal: true }),
         loadTimezones(),
-        loadAccountSettings()
+        loadAccountSettings(),
+        loadAccounts()
       ]);
       restoreActiveTab();
       openPushDestination();
@@ -3905,7 +4003,7 @@ async function handleAdminBotCommand(event) {
 }
 
 async function queueAdminCommand(commandType, payload = {}) {
-  await postJson('/api/admin/bot-command', { commandType, payload });
+  await postJson('/api/admin/bot-command', { commandType, payload, accountId:state.activeAccountId });
   await Promise.all([loadAll(), loadAdminControlState(), loadAdminSystemLogs()]);
 }
 
@@ -4728,6 +4826,7 @@ async function refreshLiveDashboard() {
   if (!state.currentUser || state.liveDashboardLoading || document.visibilityState === 'hidden') return;
   state.liveDashboardLoading = true;
   try {
+    if (Date.now() - state.accountsRefreshedAt >= 5_000) loadAccounts().catch(() => {});
     const payload = await fetchJson('/api/live-dashboard');
     renderBotStats({ bot: payload.bot, observedAt: payload.observedAt });
     renderNearbySightings(payload.nearby || []);
@@ -4925,6 +5024,14 @@ $('#authModeToggle').addEventListener('click', () => setAuthMode(state.authMode 
 $('#authBootstrapToggle').addEventListener('click', () => setAuthMode('bootstrap'));
 $('#navMenuToggle')?.addEventListener('click', toggleNavMenu);
 $('#logoutButton')?.addEventListener('click', handleLogout);
+$('#accountAddButton')?.addEventListener('click', () => setAccountModalOpen(true));
+$('#accountModalClose')?.addEventListener('click', () => setAccountModalOpen(false));
+$('#accountModalCancel')?.addEventListener('click', () => setAccountModalOpen(false));
+$('#accountModal')?.addEventListener('click', event => { if (event.target.id === 'accountModal') setAccountModalOpen(false); });
+$('#accountForm')?.addEventListener('submit', submitAccount);
+$('#accountSwitcherList')?.addEventListener('click', event => { const avatar=event.target.closest('[data-account-id]'); if(avatar) selectAccount(avatar.dataset.accountId); });
+$('#accountSwitcherList')?.addEventListener('contextmenu', event => { const avatar=event.target.closest('[data-account-id]'); if(!avatar)return; event.preventDefault(); openAccountMenu(avatar.dataset.accountId,avatar); });
+$('#accountSwitcherList')?.addEventListener('keydown', event => { const avatar=event.target.closest('[data-account-id]'); if(avatar && (event.key==='ContextMenu' || (event.shiftKey&&event.key==='F10'))) { event.preventDefault(); openAccountMenu(avatar.dataset.accountId,avatar); } });
 $('#adminUsersRefresh')?.addEventListener('click', loadAdminUsers);
 $('#adminLogsRefresh')?.addEventListener('click', loadAdminSystemLogs);
 $('#adminLogLevel')?.addEventListener('change', loadAdminSystemLogs);

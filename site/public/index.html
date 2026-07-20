@@ -12,8 +12,8 @@
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="icon" type="image/png" href="/items/Wheat.png">
     <link rel="apple-touch-icon" href="/items/Wheat.png">
-    <script src="/theme-init.js?v=113"></script>
-    <link rel="stylesheet" href="/styles.css?v=113">
+    <script src="/theme-init.js?v=114"></script>
+    <link rel="stylesheet" href="/styles.css?v=114">
   </head>
   <body>
     <section id="authScreen" class="auth-screen" aria-label="Site access">
@@ -49,6 +49,10 @@
           <h1>WheatMagnateBot <span class="minedings-mark" aria-hidden="true">W</span></h1>
         </div>
         <div class="topbar-actions">
+          <section id="accountSwitcher" class="account-switcher" aria-label="Minecraft accounts">
+            <div id="accountSwitcherList" class="account-switcher-list" role="list"></div>
+            <button id="accountAddButton" class="account-avatar account-add admin-only" type="button" aria-label="Add Minecraft account" hidden>+</button>
+          </section>
           <nav id="navMenu" class="nav-menu" aria-label="Dashboard sections">
             <button id="navMenuToggle" class="nav-menu-toggle" type="button" aria-expanded="false" aria-controls="navMenuPanel">
               <span class="nav-menu-hamburger" aria-hidden="true">
@@ -154,6 +158,23 @@
           <button id="playerProfileClose" class="player-profile-close" type="button" aria-label="Close player profile">&times;</button>
           <div id="playerProfileContent"></div>
         </article>
+      </div>
+      <div id="accountModal" class="account-modal-overlay" hidden>
+        <form id="accountForm" class="account-modal" role="dialog" aria-modal="true" aria-labelledby="accountModalTitle">
+          <button id="accountModalClose" class="account-modal-close" type="button" aria-label="Close account dialog">&times;</button>
+          <p class="eyebrow">Minecraft runtime</p>
+          <h2 id="accountModalTitle">Add account</h2>
+          <div id="accountFormError" class="auth-error" hidden></div>
+          <label>Display name<input name="displayName" required maxlength="96"></label>
+          <label>Minecraft username<input name="username" required maxlength="16" pattern="[A-Za-z0-9_]{1,16}"></label>
+          <label>Authentication<select name="authType"><option value="microsoft">Microsoft device code</option><option value="offline">Offline</option></select></label>
+          <div class="account-form-row"><label>Server<input name="host" required maxlength="255" placeholder="oldfag.org"></label><label>Port<input name="port" type="number" min="1" max="65535" value="25565" required></label></div>
+          <label>Minecraft version<input name="minecraftVersion" maxlength="32" placeholder="Auto-detect"></label>
+          <label>Account color<input name="color" type="color" value="#f1c232"></label>
+          <label class="account-checkbox"><input name="enabled" type="checkbox" checked> Enable after adding</label>
+          <p class="account-auth-note">Microsoft passwords are never requested. Authorization uses Mineflayer's device-code flow and a separate local auth-cache directory.</p>
+          <div class="account-modal-actions"><button type="button" id="accountModalCancel" class="ghost-button">Cancel</button><button type="submit">Add account</button></div>
+        </form>
       </div>
 
       <section id="tab-chat" class="tab-panel active" data-panel="chat">
@@ -913,6 +934,6 @@
       </section>
     </main>
 
-    <script src="/app.js?v=113" defer></script>
+    <script src="/app.js?v=114" defer></script>
   </body>
 </html>

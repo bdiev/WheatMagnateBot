@@ -7,6 +7,9 @@ const path = require('node:path');
 const zlib = require('node:zlib');
 const { pathToFileURL } = require('node:url');
 const { Pool } = require('pg');
+const { AccountRepository } = require('../accounts/account-repository');
+const { AccountRegistry } = require('../accounts/account-registry');
+const { ensureAccountColumns } = require('../accounts/account-schema');
 const { runMigrations } = require('./migrations');
 const { SseHub, handleSseRequest } = require('./sse');
 const { calculateAnalytics } = require('./obsidian-analytics');
@@ -54,6 +57,7 @@ let operationalRetentionTimer = null;
 let liveDashboardCache = null;
 let liveDashboardCacheAt = 0;
 let liveDashboardRequest = null;
+let accountRegistry = null;
 const rateLimiter = new RateLimiter();
 const rateLimiterTimer = setInterval(() => rateLimiter.prune(), 60_000);
 rateLimiterTimer.unref?.();
@@ -658,6 +662,11 @@ async function ensureOptionalTables() {
       result JSONB,
       error TEXT,
       correlation_id VARCHAR(64),
+      account_id UUID NOT NULL DEFAULT '00000000-0000-4000-8000-000000000001' REFERENCES bot_accounts(id),
+      locked_by VARCHAR(128),
+      lease_expires_at TIMESTAMPTZ,
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      idempotency_key VARCHAR(128),
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       started_at TIMESTAMPTZ,
       finished_at TIMESTAMPTZ
@@ -667,6 +676,8 @@ async function ensureOptionalTables() {
     CREATE INDEX IF NOT EXISTS bot_commands_status_created_idx
     ON bot_commands (status, created_at)
   `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS bot_commands_account_idempotency_idx
+    ON bot_commands(account_id,idempotency_key) WHERE idempotency_key IS NOT NULL`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS site_system_logs (
       id BIGSERIAL PRIMARY KEY,
@@ -715,6 +726,7 @@ async function ensureOptionalTables() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await ensureAccountColumns(pool);
 }
 
 async function getSummary() {
@@ -983,7 +995,7 @@ async function getChat(url) {
   };
 }
 
-async function queueBotCommand(currentUser, commandType, payload = {}, { source = 'site' } = {}) {
+async function queueBotCommand(currentUser, commandType, payload = {}, { source = 'site', accountId = null, idempotencyKey = null } = {}) {
   assertDatabase();
   const safeCommandType = String(commandType || '').trim().toLowerCase();
   if (!safeCommandType) {
@@ -994,10 +1006,13 @@ async function queueBotCommand(currentUser, commandType, payload = {}, { source 
 
   const correlationId = newCorrelationId();
   const result = await pool.query(`
-    INSERT INTO bot_commands (source, requested_by, command_type, payload, correlation_id)
-    VALUES ($1, $2, $3, $4, $5)
-    RETURNING id, source, requested_by, command_type, payload, status, created_at, correlation_id
-  `, [source, currentUser?.username || null, safeCommandType, payload || {}, correlationId]);
+    INSERT INTO bot_commands (source, requested_by, command_type, payload, correlation_id, account_id, idempotency_key)
+    VALUES ($1, $2, $3, $4, $5,
+      COALESCE($6::uuid,(SELECT id FROM bot_accounts ORDER BY is_default DESC,sort_order LIMIT 1)),$7)
+    ON CONFLICT (account_id,idempotency_key) WHERE idempotency_key IS NOT NULL
+    DO UPDATE SET idempotency_key=EXCLUDED.idempotency_key
+    RETURNING id, source, requested_by, command_type, payload, status, created_at, correlation_id, account_id
+  `, [source, currentUser?.username || null, safeCommandType, payload || {}, correlationId, accountId, idempotencyKey]);
 
   const row = result.rows[0];
   const event = await recordOperationalEvent(pool, {
@@ -1017,7 +1032,8 @@ async function queueBotCommand(currentUser, commandType, payload = {}, { source 
       payload: row.payload,
       status: row.status,
       correlationId: row.correlation_id,
-      createdAt: row.created_at
+      createdAt: row.created_at,
+      accountId: row.account_id
     }
   };
 }
@@ -1711,6 +1727,112 @@ async function getObsidianStats(currentUser = null) {
       supplyHistory: supplyHistoryResult.rows, toolUsage: toolUsageResult.rows, tps: tpsResult.rows,
       comparison: { today: comparison.today, yesterdayComparable: comparison.yesterday_comparable, yesterday: comparison.yesterday, week: comparison.week, previousWeek: comparison.previous_week } })
   };
+}
+
+function validAccountId(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
+}
+
+async function getAccountRegistry() {
+  assertDatabase();
+  if (!accountRegistry) {
+    accountRegistry = new AccountRegistry(new AccountRepository(pool));
+    await accountRegistry.load();
+  }
+  return accountRegistry;
+}
+
+function cleanAccountInput(body, { partial = false } = {}) {
+  const input = {};
+  const assign = (key, value) => { if (!partial || Object.hasOwn(body, key)) input[key] = value; };
+  assign('username', String(body.username || '').trim());
+  assign('displayName', String(body.displayName || body.username || '').trim());
+  assign('host', String(body.host || '').trim());
+  assign('port', Number(body.port || 25565));
+  assign('minecraftVersion', body.minecraftVersion ? String(body.minecraftVersion).trim() : null);
+  assign('authType', String(body.authType || 'microsoft').toLowerCase());
+  assign('enabled', body.enabled !== false);
+  assign('color', body.color ? String(body.color).slice(0, 16) : null);
+  if ((!partial || Object.hasOwn(body, 'reconnectBackoffMs'))) assign('reconnectBackoffMs', Number(body.reconnectBackoffMs) || 5000);
+  if (Object.hasOwn(input, 'username') && !/^[A-Za-z0-9_]{1,16}$/.test(input.username)) throw Object.assign(new Error('Invalid Minecraft username.'), { statusCode: 400 });
+  if (Object.hasOwn(input, 'displayName') && (!input.displayName || input.displayName.length > 96)) throw Object.assign(new Error('Display name is required and must be at most 96 characters.'), { statusCode: 400 });
+  if (Object.hasOwn(input, 'host') && (!input.host || input.host.length > 255 || /[\s/]/.test(input.host))) throw Object.assign(new Error('Invalid Minecraft server address.'), { statusCode: 400 });
+  if (Object.hasOwn(input, 'port') && (!Number.isInteger(input.port) || input.port < 1 || input.port > 65535)) throw Object.assign(new Error('Port must be between 1 and 65535.'), { statusCode: 400 });
+  if (Object.hasOwn(input, 'authType') && !['microsoft','offline'].includes(input.authType)) throw Object.assign(new Error('Unsupported authentication type.'), { statusCode: 400 });
+  return input;
+}
+
+async function accountPayloads() {
+  const registry = await getAccountRegistry();
+  const states = await pool.query('SELECT account_id,status,current_task,last_error,started_at,updated_at,status_payload FROM bot_account_runtime_state');
+  const byId = new Map(states.rows.map(row => [row.account_id, row]));
+  return registry.list().map(account => {
+    const runtime = byId.get(account.id) || {};
+    return { ...account, status: runtime.status || (account.enabled ? 'stopped' : 'disabled'), task: runtime.current_task || 'idle', lastError: runtime.last_error || null, startedAt: runtime.started_at || null, statusUpdatedAt: runtime.updated_at || null, statusPayload: runtime.status_payload || null };
+  });
+}
+
+async function scopedAccountRuntime(url) {
+  const accountId = String(url.searchParams.get('accountId') || '');
+  if (!accountId) return null;
+  if (!validAccountId(accountId)) throw Object.assign(new Error('Invalid account ID.'), { statusCode:400 });
+  const registry = await getAccountRegistry();
+  const account = registry.get(accountId);
+  if (!account) throw Object.assign(new Error('Minecraft account not found.'), { statusCode:404 });
+  if (account.isDefault) return null;
+  const stateResult = await pool.query('SELECT status_payload,updated_at FROM bot_account_runtime_state WHERE account_id=$1::uuid',[accountId]);
+  return { account, bot:stateResult.rows[0]?.status_payload || {accountId,username:account.username,server:`${account.host}:${account.port}`,connected:false,status:account.enabled?'stopped':'disabled',task:'idle'}, observedAt:stateResult.rows[0]?.updated_at || account.updatedAt };
+}
+
+async function handleAccountsApi(req, currentUser, url) {
+  const collection = url.pathname === '/api/accounts';
+  const match = url.pathname.match(/^\/api\/accounts\/([0-9a-f-]{36})(?:\/(start|stop|restart|pause|resume|reauthorize|status|inventory|obsidian|server-stats))?$/i);
+  if (!collection && !match) return null;
+  const registry = await getAccountRegistry();
+  if (collection && req.method === 'GET') return { statusCode: 200, payload: { accounts: await accountPayloads() } };
+  if (collection && req.method === 'POST') {
+    assertAdminUser(currentUser);
+    const max = Math.max(1, Number(process.env.MAX_BOT_ACCOUNTS) || 8);
+    if (registry.list().length >= max) throw Object.assign(new Error('Minecraft account limit reached.'), { statusCode: 409 });
+    const account = await registry.add(cleanAccountInput(await readJsonBody(req, 32 * 1024)));
+    await recordSystemLog({ level:'audit',category:'accounts',actor:currentUser.username,message:`Created Minecraft account ${account.displayName}.`,details:{accountId:account.id} });
+    const startCommand = account.enabled ? await queueBotCommand(currentUser,'account_start',{accountId:account.id},{source:'site',accountId:account.id}) : null;
+    return { statusCode: 201, payload: { account, startCommand:startCommand?.command || null } };
+  }
+  if (!match || !validAccountId(match[1])) throw Object.assign(new Error('Invalid account ID.'), { statusCode: 400 });
+  const accountId = match[1].toLowerCase();
+  const account = registry.get(accountId);
+  if (!account) throw Object.assign(new Error('Minecraft account not found.'), { statusCode: 404 });
+  const action = match[2];
+  if (!action && req.method === 'GET') return { statusCode: 200, payload: { account:(await accountPayloads()).find(item => item.id === accountId) } };
+  if (!action && req.method === 'PATCH') {
+    assertAdminUser(currentUser);
+    const updated = await registry.update(accountId, cleanAccountInput(await readJsonBody(req, 32 * 1024), { partial:true }));
+    await recordSystemLog({level:'audit',category:'accounts',actor:currentUser.username,message:`Updated Minecraft account ${updated.displayName}.`,details:{accountId}});
+    return { statusCode:200,payload:{account:updated} };
+  }
+  if (!action && req.method === 'DELETE') {
+    assertAdminUser(currentUser);
+    if (account.isDefault) throw Object.assign(new Error('The default account cannot be deleted.'), { statusCode:409 });
+    const body = await readJsonBody(req, 8 * 1024).catch(() => ({}));
+    if (body.confirm !== account.displayName) throw Object.assign(new Error('Account deletion confirmation does not match.'), { statusCode:409 });
+    await queueBotCommand(currentUser, 'account_stop', { accountId }, { source:'site',accountId });
+    const removed = await registry.remove(accountId);
+    await recordSystemLog({level:'audit',category:'accounts',actor:currentUser.username,message:`Deleted Minecraft account ${removed.displayName}.`,details:{accountId,authCachePreserved:true}});
+    return { statusCode:200,payload:{removed:true,accountId,authCachePreserved:true} };
+  }
+  if (['status','inventory','obsidian','server-stats'].includes(action) && req.method === 'GET') {
+    const states = await accountPayloads();
+    const selected = states.find(item => item.id === accountId);
+    return {statusCode:200,payload:{account:selected,data:selected?.statusPayload || null}};
+  }
+  if (['start','stop','restart','pause','resume','reauthorize'].includes(action) && req.method === 'POST') {
+    assertAdminUser(currentUser);
+    const queued = await queueBotCommand(currentUser, `account_${action}`, { accountId }, { source:'site',accountId,idempotencyKey:String(req.headers['idempotency-key'] || '').slice(0,128) || null });
+    await recordSystemLog({level:'audit',category:'accounts',actor:currentUser.username,message:`Queued ${action} for Minecraft account ${account.displayName}.`,details:{accountId,commandId:queued.command.id}});
+    return {statusCode:202,payload:queued};
+  }
+  throw Object.assign(new Error('Method not allowed.'), { statusCode:405 });
 }
 
 async function loadLiveDashboardStats() {
@@ -2499,7 +2621,9 @@ async function queueAdminBotCommand(currentUser, body) {
     }
   }
 
-  return queueBotCommand(currentUser, commandType, payload);
+  const accountId = body.accountId == null ? null : String(body.accountId);
+  if (accountId && (!validAccountId(accountId) || !(await getAccountRegistry()).get(accountId))) throw Object.assign(new Error('Minecraft account not found.'), { statusCode:404 });
+  return queueBotCommand(currentUser, commandType, payload, { accountId });
 }
 
 async function setAdminPlaytime(currentUser, body) {
@@ -3162,6 +3286,11 @@ async function handleApi(req, res, url) {
     if (url.pathname === '/api/admin/operational-events' && req.method === 'GET') {
       sendJson(res, 200, await getOperationalTimeline(currentUser, url)); return;
     }
+    if (url.pathname === '/api/accounts' || url.pathname.startsWith('/api/accounts/')) {
+      const response = await handleAccountsApi(req, currentUser, url);
+      sendJson(res, response.statusCode, response.payload);
+      return;
+    }
     if (url.pathname === '/api/admin/operational-events/context' && req.method === 'GET') {
       sendJson(res, 200, await findTimelineEvent(currentUser, String(url.searchParams.get('id') || ''))); return;
     }
@@ -3321,15 +3450,21 @@ async function handleApi(req, res, url) {
       return;
     }
     if (url.pathname === '/api/bot-stats') {
+      const scoped = await scopedAccountRuntime(url);
+      if (scoped) { sendJson(res,200,{bot:scoped.bot,observedAt:scoped.observedAt}); return; }
       sendJson(res, 200, await getBotStats());
       return;
     }
     if (url.pathname === '/api/live-dashboard') {
+      const scoped = await scopedAccountRuntime(url);
+      if (scoped) { sendJson(res,200,{bot:scoped.bot,observedAt:scoped.observedAt,supplies:{hasSnapshot:false,inventory:null,barrel:null,barrelError:'No account supply snapshot yet.'},nearby:scoped.bot.nearbyPlayers || []}); return; }
       sendJson(res, 200, await getLiveDashboardStats());
       return;
     }
     if (url.pathname === '/api/obsidian') {
-      if (req.method === 'GET') sendJson(res, 200, await getObsidianStats(currentUser));
+      const scoped = req.method === 'GET' ? await scopedAccountRuntime(url) : null;
+      if (req.method === 'GET' && scoped) sendJson(res,200,{farm:{desiredEnabled:false,totalMined:0,todayMined:0,sessionPerHour:0,updatedAt:scoped.observedAt},hourly:[],daily:[],supplies:{hasSnapshot:false,inventory:null,barrel:null},settings:{timezone:'Europe/Vilnius'},goals:[],annotations:[],analytics:{}});
+      else if (req.method === 'GET') sendJson(res, 200, await getObsidianStats(currentUser));
       else if (req.method === 'POST') sendJson(res, 200, await updateObsidianAnalytics(currentUser, await readJsonBody(req)));
       else sendError(res, 405, 'Method not allowed.');
       return;
@@ -3339,6 +3474,8 @@ async function handleApi(req, res, url) {
       return;
     }
     if (url.pathname === '/api/server-stats') {
+      const scoped = await scopedAccountRuntime(url);
+      if (scoped) { sendJson(res,200,{playerStats:{players:{online:0,total:0,onlineUnwhitelisted:0,seen24h:0,seen7d:0},playtimeLeaderboard:[],milestones:[]},nearby:scoped.bot.nearbyPlayers || [],tps:{latest:null,latestAt:scoped.observedAt,min24h:null,max24h:null},hourlyTps:[]}); return; }
       sendJson(res, 200, await getServerStats());
       return;
     }

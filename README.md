@@ -1,5 +1,32 @@
 # WheatMagnateBot
 
+## Multiple Minecraft accounts
+
+Minecraft accounts are stored as safe metadata in PostgreSQL (`bot_accounts`) and are identified by an immutable UUID. The original environment-based account is migrated automatically to the default account, so existing installations continue to start without manual changes.
+
+Each additional account has an independent `MinecraftBotRuntime`, Mineflayer instance, reconnect state, task state, timers, and local authentication directory at `data/auth-cache/<account-id>/`. Microsoft passwords and tokens are never stored in PostgreSQL or returned by the API. The dashboard account switcher stores only the selected UUID in local storage.
+
+The runtime layout is:
+
+```text
+AccountRepository -> AccountRegistry -> BotManager
+                                          |
+                 +------------------------+------------------------+
+                 |                        |                        |
+        MinecraftBotRuntime A    MinecraftBotRuntime B    legacy default runtime
+                 |                        |                        |
+           auth-cache/A             auth-cache/B         existing bot/farm features
+```
+
+Resource controls:
+
+- `MAX_BOT_ACCOUNTS` (default `8`) limits stored account metadata.
+- `MAX_CONCURRENT_BOTS` (default `3`) limits simultaneous runtimes.
+- `BOT_START_DELAY_MS` (default `1500`) staggers authentication and server connections.
+- `LIVE_DASHBOARD_CACHE_MS` (default `1000`) coalesces dashboard reads.
+
+Account management endpoints are under `/api/accounts`. Reads require an authenticated site user; account creation, editing, deletion and runtime actions require an administrator. Deleting an account preserves statistics and its auth cache unless an operator removes that directory separately.
+
 Minecraft bot with Discord integration, PostgreSQL-backed stats, and a local web dashboard.
 
 ## Features
