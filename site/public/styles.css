@@ -2685,10 +2685,21 @@ body.search-focus-active #logoutButton {
   border: 3px solid var(--panel-soft);
   border-radius: 999px;
   background: #d84343;
+  animation: player-offline-pulse 2.4s ease-in-out infinite;
 }
 
 .player-profile-avatar-wrap[data-status="online"]::after {
   background: #55c85a;
+  animation: player-online-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes player-online-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, #55c85a 48%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 6px color-mix(in srgb, #55c85a 0%, transparent);
+  }
 }
 
 .player-profile-avatar {
@@ -2699,6 +2710,15 @@ body.search-focus-active #logoutButton {
   border-radius: 10px;
   background: var(--panel);
   box-shadow: 0 12px 30px color-mix(in srgb, #000 18%, transparent);
+}
+
+@keyframes player-offline-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, #d84343 38%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 5px color-mix(in srgb, #d84343 0%, transparent);
+  }
 }
 
 .player-profile-head h2 {
@@ -3563,23 +3583,6 @@ body.search-focus-active #logoutButton {
 .player-profile-uuid code {
   color: var(--muted);
   font-size: 10px;
-}
-
-.player-status-pill {
-  gap: 6px;
-}
-
-.player-status-pill i {
-  width: 7px;
-  height: 7px;
-  border-radius: 999px;
-  background: #d84343;
-  box-shadow: 0 0 0 3px color-mix(in srgb, #d84343 16%, transparent);
-}
-
-.player-status-pill.online i {
-  background: #55c85a;
-  box-shadow: 0 0 0 3px color-mix(in srgb, #55c85a 16%, transparent);
 }
 
 .player-name-history {

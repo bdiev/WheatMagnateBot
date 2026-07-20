@@ -1773,9 +1773,6 @@ function renderPlayerProfile(profile) {
         <div class="player-profile-identity">
           <h2 id="playerProfileName">${escapeHtml(profile.username)}</h2>
           <div class="player-profile-badges">
-            <span class="pill player-status-pill ${profile.isOnline ? 'online' : 'offline'}">
-              <i aria-hidden="true"></i>${profile.isOnline ? 'online' : 'offline'}
-            </span>
             <span class="pill">${profile.isWhitelisted ? 'whitelisted' : 'not whitelisted'}</span>
             ${profile.isIgnored ? '<span class="pill ignored">ignored</span>' : ''}
           </div>
