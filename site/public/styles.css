@@ -100,16 +100,20 @@ body::before {
   z-index: 50;
   pointer-events: none;
   opacity: 0;
-  background: color-mix(in srgb, var(--bg) 72%, transparent);
-  backdrop-filter: blur(0);
-  transition: opacity 240ms ease, backdrop-filter 240ms ease;
+  /*
+   * Keep this overlay as a regular translucent layer. A viewport-sized
+   * backdrop-filter forces browsers to retain a texture for the whole page;
+   * Safari and Chromium can drop that texture after a fast scroll or app
+   * restore and leave part (or all) of the viewport painted black.
+   */
+  background: color-mix(in srgb, var(--bg) 84%, transparent);
+  transition: opacity 240ms ease;
 }
 
 body.search-focus-active::before,
 body.nav-focus-active::before,
 body.whisper-focus-active::before {
   opacity: 1;
-  backdrop-filter: blur(2px);
 }
 
 button {
@@ -206,11 +210,9 @@ body.whisper-focus-active #themeToggle,
 body.whisper-focus-active #logoutButton,
 body.whisper-focus-active .status-banner,
 body.whisper-focus-active .tab-panel {
-  filter: blur(3px) saturate(0.85);
   opacity: 0.48;
   pointer-events: none;
-  transform: scale(0.992);
-  transition: filter 240ms ease, opacity 240ms ease, transform 240ms ease;
+  transition: opacity 240ms ease;
 }
 
 body.search-focus-active .seen-search,

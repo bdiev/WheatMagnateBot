@@ -4867,9 +4867,24 @@ $$('.chart-scroll').forEach(scroll => {
   scroll.addEventListener('scroll', scheduleChartViewportRedraw, { passive: true });
 });
 $('#themeToggle').addEventListener('click', toggleTheme);
-window.addEventListener('resize', () => {
-  redrawCharts();
-  updateCarousels();
+
+// Browsers can emit dozens of resize events while a window is restored or the
+// mobile viewport chrome changes. Reallocating every chart canvas for each one
+// can exhaust the compositor and temporarily leave a black viewport.
+let viewportRedrawFrame = null;
+function scheduleViewportRedraw() {
+  if (viewportRedrawFrame != null) cancelAnimationFrame(viewportRedrawFrame);
+  viewportRedrawFrame = requestAnimationFrame(() => {
+    viewportRedrawFrame = null;
+    redrawCharts();
+    updateCarousels();
+  });
+}
+
+window.addEventListener('resize', scheduleViewportRedraw, { passive: true });
+window.addEventListener('pageshow', scheduleViewportRedraw);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') scheduleViewportRedraw();
 });
 $$('.chart').forEach(chart => {
   chart.addEventListener('pointerdown', event => showChartTooltip(event.currentTarget, event, { pin: true }));
