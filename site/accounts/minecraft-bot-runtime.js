@@ -34,6 +34,8 @@ class MinecraftBotRuntime extends EventEmitter {
     this.lastThreat = null;
     this.securityDisconnectPending = false;
     this.lastMonitorStatusAt = 0;
+    this.nearbySnapshot = [];
+    this.reconnectAttempts = 0;
   }
 
   clearRuntimeIntervals() { for (const timer of this.intervals) clearInterval(timer); this.intervals.clear(); }
@@ -41,6 +43,9 @@ class MinecraftBotRuntime extends EventEmitter {
     if (this.destroyed || this.intentionalStop || this.reconnectTimer) return;
     this.status = 'connecting';
     this.emit('status',this.getStatus());
+    const requestedDelay = Math.max(1000,Number(delay) || this.reconnectBackoffMs);
+    const reconnectDelay = requestedDelay >= 30000 ? requestedDelay : Math.min(60000,requestedDelay*(2**Math.min(this.reconnectAttempts,4)));
+    this.reconnectAttempts += 1;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (!this.destroyed && !this.intentionalStop && !this.bot) this.start().catch(error => {
@@ -49,30 +54,32 @@ class MinecraftBotRuntime extends EventEmitter {
         this.emit('status',this.getStatus());
         this.scheduleReconnect();
       });
-    },Math.max(1000,Number(delay) || this.reconnectBackoffMs));
+    },reconnectDelay+Math.floor(Math.random()*750));
   }
 
   nearbyPlayers() {
-    if (!this.bot?.entity?.position) return [];
-    return Object.values(this.bot.entities || {}).filter(entity => entity?.type === 'player' && entity.username && entity.username !== this.bot.username && entity.position)
+    const bot = this.bot;
+    if (!bot?.entity?.position) return [];
+    return Object.values(bot.entities || {}).filter(entity => entity?.type === 'player' && entity.username && entity.username !== bot.username && entity.position)
       .map(entity => ({username:entity.username,distance:Number(this.bot.entity.position.distanceTo(entity.position).toFixed(1))}))
       .sort((a,b) => a.distance-b.distance);
   }
 
   startAfkMonitors() {
     this.clearRuntimeIntervals();
-    const timer = setInterval(() => this.runAfkChecks().catch(error => this.emit('monitor-error',error)),1000);
+    const timer = setInterval(() => this.runAfkChecks().catch(error => this.emit('monitor-error',error)),1500);
     this.intervals.add(timer);
   }
 
   async runAfkChecks() {
     const bot = this.bot;
     if (!bot?.entity) return;
-    if (Date.now()-this.lastMonitorStatusAt >= 5000) {
+    this.nearbySnapshot = this.nearbyPlayers();
+    if (Date.now()-this.lastMonitorStatusAt >= 10000) {
       this.lastMonitorStatusAt = Date.now();
       this.emit('status',this.getStatus());
     }
-    const threat = this.nearbyPlayers().find(player => player.distance <= this.dangerRadius && !this.isWhitelisted(player.username));
+    const threat = this.nearbySnapshot.find(player => player.distance <= this.dangerRadius && !this.isWhitelisted(player.username));
     if (threat) {
       this.lastThreat = {...threat,detectedAt:new Date().toISOString()};
       this.lastError = `Non-whitelisted player nearby: ${threat.username} (${threat.distance} blocks)`;
@@ -95,6 +102,7 @@ class MinecraftBotRuntime extends EventEmitter {
     if (this.startPromise) return this.startPromise;
     if (this.bot) return this.getStatus();
     this.intentionalStop = false;
+    this.nearbySnapshot = [];
     this.status = 'connecting';
     this.emit('status', this.getStatus());
     this.startPromise = Promise.resolve().then(async () => {
@@ -121,6 +129,7 @@ class MinecraftBotRuntime extends EventEmitter {
           if (this.status === 'error') return;
         }
         this.lastError = null;
+        this.reconnectAttempts = 0;
         this.status = this.task === 'paused' ? 'paused' : 'connected';
         this.emit('status', this.getStatus());
         this.startAfkMonitors();
@@ -131,6 +140,7 @@ class MinecraftBotRuntime extends EventEmitter {
         const securityDisconnect = this.securityDisconnectPending;
         this.securityDisconnectPending = false;
         if (this.bot === bot) this.bot = null;
+        this.nearbySnapshot = [];
         this.clearRuntimeIntervals();
         if (!this.destroyed && !this.intentionalStop) {
           this.status = 'connecting';
@@ -151,6 +161,7 @@ class MinecraftBotRuntime extends EventEmitter {
     const bot = this.bot;
     if (this.authCacheStore) await this.authCacheStore.persist(this.account.id,this.authCachePath).catch(error => this.emit('auth-cache-error',error));
     this.bot = null;
+    this.nearbySnapshot = [];
     this.status = 'stopped';
     if (bot) {
       bot.removeAllListeners?.();
@@ -185,7 +196,7 @@ class MinecraftBotRuntime extends EventEmitter {
       uptimeMs:this.startedAt ? Date.now()-this.startedAt.getTime() : 0,health:this.bot?.health ?? null,food:this.bot?.food ?? null,
       ping:this.bot?.player?.ping ?? null,dimension:this.bot?.game?.dimension || null,gameMode:this.bot?.game?.gameMode || null,
       xpLevel:this.bot?.experience?.level ?? null,inventory:items.map(item=>({name:item.name,displayName:item.displayName,count:item.count,slot:item.slot})),
-      nearbyPlayers:this.nearbyPlayers(),lastThreat:this.lastThreat,authCachePath:undefined
+      nearbyPlayers:this.nearbySnapshot,lastThreat:this.lastThreat,authCachePath:undefined
     };
   }
   async destroy() { this.destroyed = true; await this.stop('Account removed'); this.removeAllListeners(); }

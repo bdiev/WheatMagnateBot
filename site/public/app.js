@@ -686,7 +686,6 @@ async function submitAccount(event) {
       : await postJson('/api/accounts', body);
     form.reset(); setAccountModalOpen(false); await loadAccounts();
     if (!editingId) await selectAccount(payload.account.id);
-    else setBanner(`${payload.account.displayName} updated. Runtime restart queued.`);
   } catch (err) { error.textContent=err.message; error.hidden=false; }
 }
 
@@ -700,7 +699,6 @@ async function runAccountAction(accountId, action) {
   } else {
     if (action === 'reauthorize' && !confirm(`Reauthorize ${account.displayName}? Its local auth cache will be cleared and a new Microsoft device code will be requested.`)) return;
     await postJson(`/api/accounts/${accountId}/${action}`, {});
-    setBanner(`${action[0].toUpperCase()}${action.slice(1)} queued for ${account.displayName} (${account.username}).`);
   }
   await loadAccounts();
 }

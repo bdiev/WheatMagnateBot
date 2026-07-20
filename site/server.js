@@ -1846,12 +1846,16 @@ async function handleAccountsApi(req, currentUser, url) {
   if (!action && req.method === 'GET') return { statusCode: 200, payload: { account:(await accountPayloads()).find(item => item.id === accountId) } };
   if (!action && req.method === 'PATCH') {
     assertAdminUser(currentUser);
-    const updated = await registry.update(accountId, cleanAccountInput(await readJsonBody(req, 32 * 1024), { partial:true }));
-    await recordSystemLog({level:'audit',category:'accounts',actor:currentUser.username,message:`Updated Minecraft account ${updated.displayName}.`,details:{accountId}});
-    const restartCommand = updated.enabled
-      ? await queueBotCommand(currentUser,'account_restart',{accountId},{source:'site',accountId})
-      : await queueBotCommand(currentUser,'account_stop',{accountId},{source:'site',accountId});
-    return { statusCode:200,payload:{account:updated,restartCommand:restartCommand?.command || null} };
+    const changes = cleanAccountInput(await readJsonBody(req, 32 * 1024), { partial:true });
+    const connectionKeys = ['username','host','port','minecraftVersion','authType'];
+    const connectionChanged = connectionKeys.some(key => Object.hasOwn(changes,key) && changes[key] !== account[key]);
+    const enabledChanged = Object.hasOwn(changes,'enabled') && changes.enabled !== account.enabled;
+    const updated = await registry.update(accountId,changes);
+    let runtimeCommand = null;
+    if (enabledChanged) runtimeCommand = await queueBotCommand(currentUser,updated.enabled?'account_start':'account_stop',{accountId},{source:'site',accountId});
+    else if (connectionChanged && updated.enabled) runtimeCommand = await queueBotCommand(currentUser,'account_restart',{accountId},{source:'site',accountId});
+    await recordSystemLog({level:'audit',category:'accounts',actor:currentUser.username,message:`Updated Minecraft account ${updated.displayName}.`,details:{accountId,connectionChanged,enabledChanged,runtimeCommandId:runtimeCommand?.command?.id || null}});
+    return { statusCode:200,payload:{account:updated,runtimeCommand:runtimeCommand?.command || null} };
   }
   if (!action && req.method === 'DELETE') {
     assertAdminUser(currentUser);

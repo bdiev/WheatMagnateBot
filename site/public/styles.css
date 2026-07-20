@@ -5713,5 +5713,13 @@ body.search-focus-active #logoutButton {
   .account-switcher.expanded .account-switcher-list { position:absolute; top:-8px; left:-8px; width:max-content; min-width:58px; max-width:calc(100vw - 32px); height:auto; display:flex; flex-wrap:wrap; gap:8px; padding:8px; border:1px solid var(--line); border-radius:var(--button-radius); overflow:visible; background:var(--panel); box-shadow:var(--shadow); }
   .account-switcher .account-avatar[data-account-id] { touch-action:manipulation; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; }
   .account-form-row { grid-template-columns:1fr; }
-  .account-modal { padding:22px 16px; }
+  .account-modal-overlay { place-items:end center; padding:0; }
+  .account-modal { width:100%; max-height:min(92dvh,760px); gap:12px; padding:22px 16px calc(16px + env(safe-area-inset-bottom,0px)); border-width:1px 0 0; border-radius:22px 22px 0 0; overscroll-behavior:contain; }
+  .account-modal h2 { padding-right:42px; font-size:22px; }
+  .account-modal-close { top:12px; right:14px; }
+  .account-field { gap:6px; }
+  .account-field input,.account-field select { height:46px; min-height:46px; }
+  .account-auth-note { font-size:11px; }
+  .account-modal-actions { position:sticky; bottom:calc(-16px - env(safe-area-inset-bottom,0px)); z-index:2; margin:0 -16px calc(-16px - env(safe-area-inset-bottom,0px)); padding:12px 16px calc(16px + env(safe-area-inset-bottom,0px)); background:linear-gradient(to bottom,color-mix(in srgb,var(--panel) 82%,transparent),var(--panel) 22%); }
+  .account-modal-actions button { flex:1 1 0; min-width:0; }
 }
