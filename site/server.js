@@ -1971,7 +1971,7 @@ async function getPlayerProfile(url) {
     throw err;
   }
 
-  const [profileResult, chatResult, recentChatResult, nearbyResult, ignoredResult] = await Promise.all([
+  const [profileResult, chatResult, recentChatResult, nearbyResult, ignoredResult, namesResult] = await Promise.all([
     pool.query(`
       WITH names AS (
         SELECT username, 0 AS priority FROM whitelist WHERE LOWER(username) = LOWER($1)
@@ -1979,6 +1979,11 @@ async function getPlayerProfile(url) {
         SELECT username, 1 AS priority FROM player_playtime WHERE LOWER(username) = LOWER($1)
         UNION
         SELECT username, 2 AS priority FROM player_activity WHERE LOWER(username) = LOWER($1)
+        UNION
+        SELECT pa.username, 2 AS priority
+        FROM player_name_history pnh
+        JOIN player_activity pa ON pa.player_uuid = pnh.player_uuid
+        WHERE LOWER(pnh.username) = LOWER($1)
       ),
       selected AS (
         SELECT COALESCE((
@@ -2002,6 +2007,7 @@ async function getPlayerProfile(url) {
       )
       SELECT
         selected.username,
+        pa.player_uuid,
         EXISTS (
           SELECT 1 FROM whitelist w WHERE LOWER(w.username) = LOWER(selected.username)
         ) AS is_whitelisted,
@@ -2047,6 +2053,22 @@ async function getPlayerProfile(url) {
         FROM ignored_users
         WHERE LOWER(username) = LOWER($1)
       ) AS is_ignored
+    `, [username]),
+    pool.query(`
+      WITH target AS (
+        SELECT player_uuid
+        FROM player_activity
+        WHERE LOWER(username) = LOWER($1) AND player_uuid IS NOT NULL
+        UNION
+        SELECT player_uuid
+        FROM player_name_history
+        WHERE LOWER(username) = LOWER($1)
+        LIMIT 1
+      )
+      SELECT username, first_seen, last_seen
+      FROM player_name_history
+      WHERE player_uuid = (SELECT player_uuid FROM target)
+      ORDER BY last_seen DESC, first_seen DESC
     `, [username])
   ]);
 
@@ -2057,6 +2079,12 @@ async function getPlayerProfile(url) {
 
   return {
     username: profile.username || username,
+    uuid: profile.player_uuid || null,
+    nameHistory: namesResult.rows.map(row => ({
+      username: row.username,
+      firstSeen: row.first_seen,
+      lastSeen: row.last_seen
+    })),
     isWhitelisted: Boolean(profile.is_whitelisted),
     isIgnored: Boolean(ignoredResult.rows[0]?.is_ignored),
     isOnline: Boolean(profile.is_online),

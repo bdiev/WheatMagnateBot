@@ -7288,7 +7288,10 @@ function createBot() {
     if (player.username && player.username.toLowerCase() !== bot.username.toLowerCase()) {
       if (!lastObservedOnlinePlayerKeys) lastObservedOnlinePlayerKeys = new Map();
       lastObservedOnlinePlayerKeys.set(player.username.toLowerCase(), player.username);
-      await updatePlayerActivity(player.username, true, { recordEvent: playerActivityJoinEventsReady });
+      await updatePlayerActivity(player.username, true, {
+        recordEvent: playerActivityJoinEventsReady,
+        uuid: player.uuid
+      });
       await scheduleQueuedSiteWhispersForPlayer(player.username);
     }
     if (player.username) {
@@ -7303,7 +7306,7 @@ function createBot() {
   bot.on('playerLeft', async (player) => {
     if (player.username && player.username.toLowerCase() !== bot.username.toLowerCase()) {
       lastObservedOnlinePlayerKeys?.delete(player.username.toLowerCase());
-      await updatePlayerActivity(player.username, false);
+      await updatePlayerActivity(player.username, false, { uuid: player.uuid });
     }
     if (player.username) {
       const onlineUsernames = getOnlinePlayerUsernames().filter(

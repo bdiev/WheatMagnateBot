@@ -110,21 +110,34 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
     }
   }
 
-  async function updatePlayerActivity(username, isOnline, { recordEvent = true } = {}) {
+  async function updatePlayerActivity(username, isOnline, { recordEvent = true, uuid = null } = {}) {
     if (!pool) return;
 
     const timestamp = new Date();
+    const normalizedUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(uuid || ''))
+      ? String(uuid).toLowerCase()
+      : null;
     let previousOnline = null;
     if (recordEvent) {
       const previous = await pool.query(`SELECT is_online FROM player_activity WHERE LOWER(username)=LOWER($1) ORDER BY id DESC LIMIT 1`, [username]).catch(() => ({ rows: [] }));
       previousOnline = previous.rows[0]?.is_online;
     }
     const runUpdate = async () => {
+      if (normalizedUuid) {
+        await pool.query(`
+          INSERT INTO player_name_history (player_uuid, username, first_seen, last_seen)
+          VALUES ($1::uuid, $2, $3, $3)
+          ON CONFLICT (player_uuid, (LOWER(username)))
+          DO UPDATE SET username = EXCLUDED.username, last_seen = EXCLUDED.last_seen
+        `, [normalizedUuid, username, timestamp]);
+      }
       if (isOnline) {
         await pool.query(`
           WITH updated AS (
             UPDATE player_activity
-            SET last_seen = CASE
+            SET username = CASE WHEN $4::uuid IS NULL THEN player_activity.username ELSE $1 END,
+                player_uuid = COALESCE($4::uuid, player_activity.player_uuid),
+                last_seen = CASE
                   WHEN $3::boolean AND player_activity.is_online IS DISTINCT FROM TRUE THEN $2::timestamp
                   ELSE player_activity.last_seen
                 END,
@@ -137,25 +150,28 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
             WHERE id = (
               SELECT id
               FROM player_activity
-              WHERE LOWER(username) = LOWER($1)
+              WHERE ($4::uuid IS NOT NULL AND player_uuid = $4::uuid)
+                 OR LOWER(username) = LOWER($1)
               ORDER BY is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
               LIMIT 1
             )
             RETURNING id
           )
-          INSERT INTO player_activity (username, last_seen, last_online, registration_at, is_online)
-          SELECT $1,
+          INSERT INTO player_activity (username, player_uuid, last_seen, last_online, registration_at, is_online)
+          SELECT $1, $4::uuid,
                  CASE WHEN $3::boolean THEN $2::timestamp ELSE NULL END,
                  CASE WHEN $3::boolean THEN $2::timestamp ELSE NULL END,
                  NOW(),
                  TRUE
           WHERE NOT EXISTS (SELECT 1 FROM updated)
-        `, [username, timestamp, recordEvent]);
+        `, [username, timestamp, recordEvent, normalizedUuid]);
       } else {
         await pool.query(`
           WITH updated AS (
             UPDATE player_activity
-            SET last_seen = CASE
+            SET username = CASE WHEN $4::uuid IS NULL THEN player_activity.username ELSE $1 END,
+                player_uuid = COALESCE($4::uuid, player_activity.player_uuid),
+                last_seen = CASE
                   WHEN $3::boolean AND player_activity.is_online IS DISTINCT FROM FALSE THEN $2::timestamp
                   ELSE player_activity.last_seen
                 END,
@@ -164,16 +180,17 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
             WHERE id = (
               SELECT id
               FROM player_activity
-              WHERE LOWER(username) = LOWER($1)
+              WHERE ($4::uuid IS NOT NULL AND player_uuid = $4::uuid)
+                 OR LOWER(username) = LOWER($1)
               ORDER BY is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
               LIMIT 1
             )
             RETURNING id
           )
-          INSERT INTO player_activity (username, last_seen, registration_at, is_online)
-          SELECT $1, CASE WHEN $3::boolean THEN $2::timestamp ELSE NULL END, NOW(), FALSE
+          INSERT INTO player_activity (username, player_uuid, last_seen, registration_at, is_online)
+          SELECT $1, $4::uuid, CASE WHEN $3::boolean THEN $2::timestamp ELSE NULL END, NOW(), FALSE
           WHERE NOT EXISTS (SELECT 1 FROM updated)
-        `, [username, timestamp, recordEvent]);
+        `, [username, timestamp, recordEvent, normalizedUuid]);
       }
     };
 

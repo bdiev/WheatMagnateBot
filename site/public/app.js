@@ -1737,6 +1737,20 @@ function renderPlayerProfile(profile) {
   const recentMessages = profile.chat?.recentMessages || [];
   const nearby = profile.nearby;
   const profileUsername = String(profile.username || '');
+  const nameHistory = Array.isArray(profile.nameHistory) ? profile.nameHistory : [];
+  const nameHistoryControl = nameHistory.length > 1
+    ? `<details class="player-name-history">
+        <summary>${formatNumber(nameHistory.length)} names</summary>
+        <div class="player-name-history-list">
+          ${nameHistory.map((entry, index) => `
+            <div>
+              <strong>${escapeHtml(entry.username)}</strong>
+              ${index === 0 ? '<span class="pill">current</span>' : ''}
+              <small>${entry.firstSeen ? `First seen ${formatDate(entry.firstSeen)}` : ''}</small>
+            </div>`).join('')}
+        </div>
+      </details>`
+    : '';
   const registrationTitle = state.playerProfileRegistrationAgeMode
     ? 'Show registration date'
     : 'Show time since registration';
@@ -1756,7 +1770,11 @@ function renderPlayerProfile(profile) {
         <img class="player-profile-avatar" src="${playerHeadUrl(profile.username, 96)}" alt="" loading="lazy">
       </span>
       <div>
-        <h2 id="playerProfileName">${escapeHtml(profile.username)}</h2>
+        <div class="player-profile-identity">
+          <h2 id="playerProfileName">${escapeHtml(profile.username)}</h2>
+          ${nameHistoryControl}
+        </div>
+        ${profile.uuid ? `<code class="player-profile-uuid" title="Minecraft UUID">${escapeHtml(profile.uuid)}</code>` : ''}
         <div class="player-profile-badges">
           <span class="pill">${profile.isWhitelisted ? 'whitelisted' : 'not whitelisted'}</span>
           ${profile.isIgnored ? '<span class="pill ignored">ignored</span>' : ''}
@@ -1806,6 +1824,8 @@ function renderPlayerProfile(profile) {
 function playerProfileSignature(profile) {
   return JSON.stringify([
     profile.username,
+    profile.uuid,
+    profile.nameHistory,
     profile.isOnline,
     profile.isWhitelisted,
     profile.isIgnored,

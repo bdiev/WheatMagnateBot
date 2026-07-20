@@ -3520,6 +3520,59 @@ body.search-focus-active #logoutButton {
   font-weight: 900;
 }
 
+.player-profile-identity {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.player-profile-uuid {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.player-name-history {
+  position: relative;
+  font-size: 12px;
+}
+
+.player-name-history summary {
+  color: var(--accent-strong);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.player-name-history-list {
+  position: absolute;
+  left: 0;
+  z-index: 12;
+  display: grid;
+  gap: 7px;
+  min-width: 230px;
+  margin-top: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--button-radius);
+  padding: 10px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.player-name-history-list > div {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 2px 8px;
+}
+
+.player-name-history-list small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+}
+
 .chart-hover-highlight {
   position: absolute;
   left: 0;
