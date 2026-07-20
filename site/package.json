@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node tests/security.test.js && node tests/web-push.test.js && node tests/incident-timeline.test.js && node tests/sse.test.js && node tests/obsidian-analytics.test.js"
+    "test": "node tests/module-layout.test.js && node tests/security.test.js && node tests/web-push.test.js && node tests/incident-timeline.test.js && node tests/sse.test.js && node tests/obsidian-analytics.test.js"
   },
   "engines": {
     "node": ">=22.13.0"

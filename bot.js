@@ -26,11 +26,11 @@ const { newCorrelationId, recordOperationalEvent } = require('./operational-even
 const { buildDailyObsidianReport, claimDailyReportDate, getDailyReportSlot } = require('./obsidian-daily-report');
 const { WebPushService } = require('./site/web-push');
 const { chatComponentToString } = require('./minecraft-chat-component');
-const { AccountRepository } = require('./accounts/account-repository');
-const { AccountRegistry } = require('./accounts/account-registry');
-const { MinecraftBotRuntime } = require('./accounts/minecraft-bot-runtime');
-const { BotManager } = require('./accounts/bot-manager');
-const { ensureAccountColumns } = require('./accounts/account-schema');
+const { AccountRepository } = require('./site/accounts/account-repository');
+const { AccountRegistry } = require('./site/accounts/account-registry');
+const { MinecraftBotRuntime } = require('./site/accounts/minecraft-bot-runtime');
+const { BotManager } = require('./site/accounts/bot-manager');
+const { ensureAccountColumns } = require('./site/accounts/account-schema');
 
 // Base64 utils for Node.js (btoa/atob polyfill)
 const b64encode = (str) => Buffer.from(String(str), 'utf8').toString('base64');

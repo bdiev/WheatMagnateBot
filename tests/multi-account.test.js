@@ -3,10 +3,10 @@
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const path = require('node:path');
-const { AccountRegistry } = require('../accounts/account-registry');
-const { ActiveAccountContext } = require('../accounts/active-account-context');
-const { MinecraftBotRuntime } = require('../accounts/minecraft-bot-runtime');
-const { BotManager } = require('../accounts/bot-manager');
+const { AccountRegistry } = require('../site/accounts/account-registry');
+const { ActiveAccountContext } = require('../site/accounts/active-account-context');
+const { MinecraftBotRuntime } = require('../site/accounts/minecraft-bot-runtime');
+const { BotManager } = require('../site/accounts/bot-manager');
 
 class MemoryRepository {
   constructor(accounts=[]) { this.accounts=accounts.map(item=>({...item})); }
