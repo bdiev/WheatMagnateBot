@@ -31,6 +31,7 @@ const { AccountRegistry } = require('./site/accounts/account-registry');
 const { MinecraftBotRuntime } = require('./site/accounts/minecraft-bot-runtime');
 const { BotManager } = require('./site/accounts/bot-manager');
 const { ensureAccountColumns } = require('./site/accounts/account-schema');
+const { AuthCacheStore } = require('./site/accounts/auth-cache-store');
 
 // Base64 utils for Node.js (btoa/atob polyfill)
 const b64encode = (str) => Buffer.from(String(str), 'utf8').toString('base64');
@@ -609,6 +610,8 @@ async function ensureDMDeleteButton(message) {
 
 // Database connection
 let pool = createDatabasePool();
+let authCacheStore = new AuthCacheStore({ pool });
+let suppressDefaultAuthCachePersist = false;
 logDatabaseStatus(pool);
 const {
   getMentionKeywords,
@@ -1029,21 +1032,34 @@ const config = {
   auth: process.env.MINECRAFT_AUTH || 'microsoft',
   version: false, // Auto-detect version
   closeTimeout: MINECRAFT_CONNECT_TIMEOUT_MS,
-  profilesFolder: MINECRAFT_PROFILES_FOLDER,
+  profilesFolder: path.join(MINECRAFT_PROFILES_FOLDER,DEFAULT_ACCOUNT_ID),
   session: loadedSession
 };
 
 async function clearLegacyAuthCacheForReauthorization() {
   const root = path.resolve(MINECRAFT_PROFILES_FOLDER);
-  const entries = await fs.promises.readdir(root, { withFileTypes:true }).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error));
-  for (const entry of entries) {
-    // UUID directories belong to managed accounts and must never be touched by
-    // reauthorization of the compatibility runtime.
-    if (entry.isDirectory() && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(entry.name)) continue;
-    const target = path.resolve(root, entry.name);
-    if (!target.startsWith(`${root}${path.sep}`)) throw new Error('Unsafe legacy auth-cache path.');
-    await fs.promises.rm(target, { recursive:true, force:true });
+  const target = path.resolve(config.profilesFolder);
+  if (!target.startsWith(`${root}${path.sep}`) || path.basename(target) !== DEFAULT_ACCOUNT_ID) throw new Error('Unsafe default auth-cache path.');
+  await fs.promises.rm(target,{recursive:true,force:true});
+  await authCacheStore.remove(DEFAULT_ACCOUNT_ID);
+}
+
+async function prepareDefaultAccountAuthCache() {
+  const root = path.resolve(MINECRAFT_PROFILES_FOLDER);
+  const target = path.resolve(config.profilesFolder);
+  const migrationMarker = path.join(root,'.default-cache-migrated');
+  const targetEntries = await fs.promises.readdir(target).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error));
+  const migrationDone = await fs.promises.access(migrationMarker).then(() => true).catch(() => false);
+  if (!targetEntries.length && !migrationDone) {
+    const legacyEntries = await fs.promises.readdir(root,{withFileTypes:true}).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error));
+    await fs.promises.mkdir(target,{recursive:true});
+    for (const entry of legacyEntries) {
+      if (entry.name === DEFAULT_ACCOUNT_ID || entry.name === path.basename(migrationMarker) || (entry.isDirectory() && /^[0-9a-f-]{36}$/i.test(entry.name))) continue;
+      await fs.promises.cp(path.join(root,entry.name),path.join(target,entry.name),{recursive:true,errorOnExist:false});
+    }
+    await fs.promises.writeFile(migrationMarker,new Date().toISOString(),{mode:0o600});
   }
+  await authCacheStore.hydrate(DEFAULT_ACCOUNT_ID,target);
 }
 
 
@@ -1123,6 +1139,7 @@ async function initDatabase() {
 
   try {
     await runMigrations(pool);
+    await prepareDefaultAccountAuthCache();
     const legacyAccountResult = await pool.query(`SELECT username,display_name,host,port,minecraft_version,auth_type
       FROM bot_accounts WHERE id=$1::uuid AND deleted_at IS NULL`, [DEFAULT_ACCOUNT_ID]);
     const legacyAccount = legacyAccountResult.rows[0];
@@ -4814,8 +4831,14 @@ async function executeBotCommand(command) {
     clearReconnectTimer();
     if (type === 'account_reauthorize') {
       shouldReconnect = false;
-      if (bot) bot.quit('Account reauthorization requested');
-      await clearLegacyAuthCacheForReauthorization();
+      suppressDefaultAuthCachePersist = true;
+      try {
+        if (bot) bot.quit('Account reauthorization requested');
+        for (let attempt=0; bot && attempt<50; attempt++) await new Promise(resolve => setTimeout(resolve,100));
+        await clearLegacyAuthCacheForReauthorization();
+      } finally {
+        suppressDefaultAuthCachePersist = false;
+      }
       shouldReconnect = true;
       if (!bot) createBot();
     } else {
@@ -5134,6 +5157,7 @@ async function initializeMultiAccountManager() {
       const runtime = new MinecraftBotRuntime({
         account,
         authCacheRoot: MINECRAFT_PROFILES_FOLDER,
+        authCacheStore,
         botFactory: options => {
           const managedBot = createMinecraftBot({ ...options, closeTimeout: MINECRAFT_CONNECT_TIMEOUT_MS });
           managedBot.loadPlugin(pathfinder);
@@ -5141,6 +5165,7 @@ async function initializeMultiAccountManager() {
         }
       });
       runtime.on('status', status => persistManagedRuntimeStatus(status).catch(error => console.error(`[Accounts] Status persistence failed for ${account.id}:`, error.message)));
+      runtime.on('auth-cache-error', error => console.error(`[Accounts] Auth-cache persistence failed for ${account.id}:`,error.message));
       runtime.on('profile-resolved', async profile => {
         try {
           const duplicate = multiAccountRegistry.list().find(item => item.id !== profile.accountId && item.username.toLowerCase() === profile.username.toLowerCase());
@@ -7406,6 +7431,9 @@ function createBot() {
     }
     clearTimeout(connectionWatchdog);
     console.log('[Bot] Spawned.');
+    setTimeout(() => {
+      if (!suppressDefaultAuthCachePersist) authCacheStore.persist(DEFAULT_ACCOUNT_ID,config.profilesFolder).catch(error => console.error('[Accounts] Default auth-cache persistence failed:',error.message));
+    },1000);
     reconnectAttemptTimes.length = 0;
     recordFarmAnnotation('bot_reconnected', 'Bot reconnected', {}, connectionCorrelationId).catch(() => {});
     reportNotification('bot_disconnected', {
@@ -7538,6 +7566,7 @@ function createBot() {
 
 
   bot.on('end', (reason) => {
+    if (!suppressDefaultAuthCachePersist) authCacheStore.persist(DEFAULT_ACCOUNT_ID,config.profilesFolder).catch(error => console.error('[Accounts] Default auth-cache persistence failed:',error.message));
     recordFarmAnnotation('bot_disconnected', 'Bot disconnected', { reason: normalizeStatusReason(reason) }, connectionCorrelationId).catch(() => {});
     const reasonStr = chatComponentToString(reason);
     recordSystemLog({

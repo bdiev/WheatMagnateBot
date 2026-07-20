@@ -7,7 +7,7 @@ const path = require('node:path');
 const TASKS = new Set(['obsidian','observe','follow','chat','idle','paused']);
 
 class MinecraftBotRuntime extends EventEmitter {
-  constructor({ account, botFactory, authCacheRoot = path.join('data', 'auth-cache'), reconnectBackoffMs } = {}) {
+  constructor({ account, botFactory, authCacheRoot = path.join('data', 'auth-cache'), authCacheStore = null, reconnectBackoffMs } = {}) {
     super();
     if (!account?.id) throw new Error('Runtime requires an account.');
     if (typeof botFactory !== 'function') throw new Error('Runtime requires a Mineflayer factory.');
@@ -15,6 +15,7 @@ class MinecraftBotRuntime extends EventEmitter {
     this.botFactory = botFactory;
     this.authCacheRoot = path.resolve(authCacheRoot);
     this.authCachePath = path.resolve(this.authCacheRoot, account.id);
+    this.authCacheStore = authCacheStore;
     this.reconnectBackoffMs = reconnectBackoffMs || account.reconnectBackoffMs || 5000;
     this.bot = null;
     this.status = 'stopped';
@@ -33,7 +34,9 @@ class MinecraftBotRuntime extends EventEmitter {
     if (this.bot) return this.getStatus();
     this.status = 'connecting';
     this.emit('status', this.getStatus());
-    this.startPromise = Promise.resolve().then(() => this.botFactory({
+    this.startPromise = Promise.resolve().then(async () => {
+      await this.authCacheStore?.hydrate(this.account.id,this.authCachePath);
+      return this.botFactory({
       username: this.account.username,
       host: this.account.host,
       port: this.account.port,
@@ -41,7 +44,8 @@ class MinecraftBotRuntime extends EventEmitter {
       auth: this.account.authType,
       profilesFolder: this.authCachePath,
       onMsaCode: code => this.emit('device-code', { accountId: this.account.id, ...code })
-    })).then(bot => {
+      });
+    }).then(bot => {
       this.bot = bot;
       this.startedAt = new Date();
       this.status = 'connecting';
@@ -56,6 +60,7 @@ class MinecraftBotRuntime extends EventEmitter {
         this.lastError = null;
         this.status = this.task === 'paused' ? 'paused' : 'connected';
         this.emit('status', this.getStatus());
+        if (this.authCacheStore) setTimeout(() => this.authCacheStore.persist(this.account.id,this.authCachePath).catch(error => this.emit('auth-cache-error',error)),1000);
       });
       bot.on?.('error', error => { this.lastError = error?.message || String(error); this.status = 'error'; this.emit('status', this.getStatus()); });
       bot.once?.('end', reason => { this.bot = null; if (!this.destroyed && this.status !== 'stopped') this.status = 'stopped'; this.emit('end', reason); });
@@ -70,6 +75,7 @@ class MinecraftBotRuntime extends EventEmitter {
     for (const timer of this.intervals) clearInterval(timer);
     this.intervals.clear();
     const bot = this.bot;
+    if (this.authCacheStore) await this.authCacheStore.persist(this.account.id,this.authCachePath).catch(error => this.emit('auth-cache-error',error));
     this.bot = null;
     this.status = 'stopped';
     if (bot) {
@@ -88,6 +94,7 @@ class MinecraftBotRuntime extends EventEmitter {
       throw new Error('Unsafe account auth-cache path.');
     }
     await fs.promises.rm(this.authCachePath, { recursive:true, force:true });
+    await this.authCacheStore?.remove(this.account.id);
     this.lastError = null;
     return this.start();
   }
