@@ -707,6 +707,7 @@ function setMobileAccountSwitcherOpen(open) {
   if (!switcher) return;
   switcher.classList.toggle('expanded',Boolean(open));
   switcher.setAttribute('aria-expanded',String(Boolean(open)));
+  document.body.classList.toggle('account-switcher-open',Boolean(open));
 }
 
 async function postJson(path, body = {}) {
