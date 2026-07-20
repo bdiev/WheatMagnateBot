@@ -1997,6 +1997,7 @@ async function getPlayerProfile(url) {
         SELECT DISTINCT ON (LOWER(username))
           LOWER(username) AS username_key,
           username,
+          player_uuid,
           last_seen,
           last_online,
           registration_at,
