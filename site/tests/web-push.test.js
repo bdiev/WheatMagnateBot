@@ -34,7 +34,8 @@ async function run() {
   assert.deepEqual(preferences.detailedEventTypes, ['low_tps'], 'detailed types must be valid and selected for delivery');
 
   const whisperSubscription = { ...base, minimum_severity: 'info', event_types: ['whisper_message'], detailed_event_types: ['whisper_message'] };
-  const whisper = { id: 'whisper-42', event_type: 'whisper_message', severity: 'info', metadata: { sender: 'SecretPlayer', message: 'secret whisper text' } };
+  const whisperAccountId = '11111111-1111-4111-8111-111111111111';
+  const whisper = { id: 'whisper-42', event_type: 'whisper_message', severity: 'info', metadata: { sender: 'SecretPlayer', message: 'secret whisper text', accountId: whisperAccountId } };
   assert.equal(shouldDeliverSubscription(whisperSubscription, whisper), true, 'whisper event selection must be supported');
   assert.equal(shouldDeliverSubscription({ ...whisperSubscription, minimum_severity: 'critical' }, whisper), true, 'whispers must not be hidden by operational severity filters');
   const compactWhisper = safePushPayload(whisper);
@@ -43,6 +44,7 @@ async function run() {
   const whisperUrl = new URL(compactWhisper.data.url, 'https://dashboard.example');
   assert.equal(whisperUrl.searchParams.get('push'), 'whispers');
   assert.equal(whisperUrl.searchParams.get('player'), 'SecretPlayer', 'whisper push must deep-link to its dialog');
+  assert.equal(whisperUrl.searchParams.get('accountId'), whisperAccountId, 'whisper push must deep-link to the bot that received it');
   assert.doesNotMatch(compactWhisper.body, /SecretPlayer|secret whisper text/, 'compact whisper lock screen must omit sender and text');
   const detailedWhisperPayload = JSON.stringify(safePushPayload(whisper, { detailed: true }));
   assert.match(detailedWhisperPayload, /SecretPlayer: secret whisper text/, 'explicit whisper detailed mode must include sender and text');
@@ -92,7 +94,7 @@ async function run() {
     sender: { setVapidDetails() {}, sendNotification: async (_subscription, sentPayload) => sentPayloads.push(sentPayload) }
   });
   const personal = await service.deliverWhisper({
-    id: 42, recipientUsername: 'Alice', sender: 'SecretPlayer', message: 'secret whisper text',
+    id: 42, recipientUsername: 'Alice', sender: 'SecretPlayer', message: 'secret whisper text', accountId: whisperAccountId,
     now: new Date('2026-07-19T08:00:00Z')
   });
   assert.equal(personal.sent, 1);
@@ -101,6 +103,7 @@ async function run() {
   assert.doesNotMatch(queries[0].sql, /u\.role='admin'/, 'whisper push must work for non-admin site users');
   assert.equal(sentPayloads.length, 1);
   assert.match(sentPayloads[0], /SecretPlayer: secret whisper text/);
+  assert.match(sentPayloads[0], new RegExp(whisperAccountId), 'delivered whisper push must retain its bot account');
 
   console.log('Web push tests passed.');
 }

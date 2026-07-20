@@ -1371,6 +1371,7 @@ async function initDatabase() {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS site_whisper_messages (
         id BIGSERIAL PRIMARY KEY,
+        account_id UUID NOT NULL DEFAULT '00000000-0000-4000-8000-000000000001'::uuid,
         player_username VARCHAR(255) NOT NULL,
         direction VARCHAR(16) NOT NULL CHECK (direction IN ('incoming', 'outgoing')),
         site_username VARCHAR(64),
@@ -1384,6 +1385,7 @@ async function initDatabase() {
       ALTER TABLE site_whisper_messages
       ADD COLUMN IF NOT EXISTS delivery_status VARCHAR(16) NOT NULL DEFAULT 'delivered'
     `);
+    await pool.query(`ALTER TABLE site_whisper_messages ADD COLUMN IF NOT EXISTS account_id UUID NOT NULL DEFAULT '00000000-0000-4000-8000-000000000001'::uuid`);
     await pool.query(`
       DO $$
       BEGIN
@@ -4637,7 +4639,7 @@ async function recordGameChatMessage(username, message) {
   }
 }
 
-async function recordSiteWhisperMessage(username, direction, message, siteUsername = null) {
+async function recordSiteWhisperMessage(username, direction, message, siteUsername = null, accountId = DEFAULT_ACCOUNT_ID) {
   if (!pool) return;
 
   const safeUsername = String(username || '').replace(/[^A-Za-z0-9_]/g, '').trim().slice(0, 32);
@@ -4657,14 +4659,14 @@ async function recordSiteWhisperMessage(username, direction, message, siteUserna
 
   try {
     const inserted = await pool.query(
-      `INSERT INTO site_whisper_messages (player_username, direction, site_username, message, delivery_status)
-       VALUES ($1, $2, $3, $4, 'delivered') RETURNING id`,
-      [safeUsername, safeDirection, safeSiteUsername, cleanMessage]
+      `INSERT INTO site_whisper_messages (account_id,player_username,direction,site_username,message,delivery_status)
+       VALUES ($5::uuid,$1,$2,$3,$4,'delivered') RETURNING id`,
+      [safeUsername, safeDirection, safeSiteUsername, cleanMessage,accountId]
     );
     if (safeDirection === 'incoming' && safeSiteUsername && inserted.rows[0]?.id) {
       await webPushService.deliverWhisper({
         id: inserted.rows[0].id, recipientUsername: safeSiteUsername,
-        sender: safeUsername, message: cleanMessage
+        sender: safeUsername, message: cleanMessage, accountId
       })
         .catch(err => console.error('[Push] Failed to deliver whisper notification:', err.message));
     }
@@ -5169,6 +5171,12 @@ async function initializeMultiAccountManager() {
       runtime.on('status', status => persistManagedRuntimeStatus(status).catch(error => console.error(`[Accounts] Status persistence failed for ${account.id}:`, error.message)));
       runtime.on('auth-cache-error', error => console.error(`[Accounts] Auth-cache persistence failed for ${account.id}:`,error.message));
       runtime.on('monitor-error', error => console.error(`[Accounts] AFK monitor failed for ${account.id}:`,error.message));
+      runtime.on('whisper', whisper => {
+        const key = `${account.id}:${String(whisper.username || '').toLowerCase()}`;
+        const target = siteWhisperTargets.get(key);
+        const siteUsername = typeof target === 'object' && target.siteUsername ? target.siteUsername : DEFAULT_SITE_WHISPER_USERNAME;
+        recordSiteWhisperMessage(whisper.username,'incoming',whisper.message,siteUsername,account.id).catch(error => console.error(`[Accounts] Whisper persistence failed for ${account.id}:`,error.message));
+      });
       runtime.on('profile-resolved', async profile => {
         try {
           const duplicate = multiAccountRegistry.list().find(item => item.id !== profile.accountId && item.username.toLowerCase() === profile.username.toLowerCase());
@@ -5225,6 +5233,7 @@ async function executeManagedAccountCommand(command) {
   if (type === 'site_whisper_claim') {
     const username = String(payload.username || '').replace(/[^A-Za-z0-9_]/g,'').slice(0,32);
     if (!username) throw new Error('Whisper target is required.');
+    siteWhisperTargets.set(`${command.account_id}:${username.toLowerCase()}`,{timestamp:Date.now(),siteUsername:command.requested_by || null});
     return { username,claimed:true };
   }
   if (type === 'site_whisper') {
@@ -5232,6 +5241,7 @@ async function executeManagedAccountCommand(command) {
     const username = String(payload.username || '').replace(/[^A-Za-z0-9_]/g,'').slice(0,32);
     const message = sanitizeSiteChatMessage(payload.message);
     if (!username || !message) throw new Error('Whisper target and message are required.');
+    siteWhisperTargets.set(`${command.account_id}:${username.toLowerCase()}`,{timestamp:Date.now(),siteUsername:command.requested_by || null});
     runtime.bot.chat(`/msg ${username} ${message}`);
     return { username,sent:true };
   }
@@ -5961,8 +5971,8 @@ async function sendDiscordOwnerNotification(message, color = 3447003) {
 }
 
 async function sendScheduledObsidianReport() {
-  if (!pool || !DISCORD_OWNER_ID || !discordClient?.isReady?.()) return;
-  const settingsResult = await pool.query(`SELECT timezone,daily_report_enabled,daily_report_hour,last_daily_report_date FROM obsidian_farm_analytics_settings WHERE id=1`);
+  if (!pool) return;
+  const settingsResult = await pool.query(`SELECT timezone,daily_report_enabled,daily_report_hour,last_daily_report_date,last_daily_push_date FROM obsidian_farm_analytics_settings WHERE id=1`);
   const settings = settingsResult.rows[0] || {
     timezone: process.env.OBSIDIAN_ANALYTICS_TIMEZONE || 'Europe/Vilnius',
     daily_report_enabled: process.env.OBSIDIAN_DAILY_REPORT_ENABLED !== 'false',
@@ -5979,15 +5989,22 @@ async function sendScheduledObsidianReport() {
     (SELECT supplies FROM obsidian_farm_supply_snapshot WHERE id=1) AS supplies`);
   const row = result.rows[0];
   const report = buildDailyObsidianReport(row, slot);
-  // Claim the local calendar date atomically before delivery. This prevents
-  // duplicate Discord or push reports from overlapping timers, reconnects, or replicas.
-  if (!await claimDailyReportDate(pool, slot.dateKey)) return;
-  const [discordDelivery, pushDelivery] = await Promise.allSettled([
-    sendDiscordOwnerNotification(report.discordMessage, 3447003),
-    webPushService.deliver(report.notification)
-  ]);
-  if (discordDelivery.status === 'rejected') console.error('[Obsidian Report] Discord delivery failed:', discordDelivery.reason?.message || discordDelivery.reason);
-  if (pushDelivery.status === 'rejected') console.error('[Obsidian Report] Push delivery failed:', pushDelivery.reason?.message || pushDelivery.reason);
+  const sameDate = value => value && new Date(value).toISOString().slice(0,10) === slot.dateKey;
+  if (!sameDate(settings.last_daily_report_date) && DISCORD_OWNER_ID && discordClient?.isReady?.() && await claimDailyReportDate(pool,slot.dateKey)) {
+    const delivered = await sendDiscordOwnerNotification(report.discordMessage,3447003).catch(error => { console.error('[Obsidian Report] Discord delivery failed:',error.message); return false; });
+    if (!delivered) await pool.query('UPDATE obsidian_farm_analytics_settings SET last_daily_report_date=NULL WHERE id=1 AND last_daily_report_date=$1::date',[slot.dateKey]);
+  }
+  if (!sameDate(settings.last_daily_push_date)) {
+    const claimed = await pool.query(`UPDATE obsidian_farm_analytics_settings SET last_daily_push_date=$1::date,updated_at=NOW()
+      WHERE id=1 AND last_daily_push_date IS DISTINCT FROM $1::date RETURNING id`,[slot.dateKey]);
+    if (claimed.rowCount) {
+      const delivery = await webPushService.deliver(report.notification).catch(error => ({sent:0,failed:1,error:error.message}));
+      if (!delivery.sent) {
+        await pool.query('UPDATE obsidian_farm_analytics_settings SET last_daily_push_date=NULL WHERE id=1 AND last_daily_push_date=$1::date',[slot.dateKey]);
+        if (delivery.failed || delivery.error) console.error('[Obsidian Report] Push delivery failed:',delivery.error || `${delivery.failed} subscription(s) failed`);
+      }
+    }
+  }
 }
 
 function startObsidianDailyReportScheduler() {

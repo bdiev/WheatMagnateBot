@@ -36,6 +36,7 @@ const SITE_TRUST_PROXY = trustProxyEnabled();
 const SITE_ALLOWED_ORIGINS = configuredOrigins();
 const SESSION_COOKIE = 'wm_session';
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
+const DEFAULT_MINECRAFT_ACCOUNT_ID = '00000000-0000-4000-8000-000000000001';
 const SUPPORTED_TIMEZONES = Object.freeze([...new Set([
   ...(typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : []),
   'UTC', 'Europe/Vilnius'
@@ -630,6 +631,7 @@ async function ensureOptionalTables() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS site_whisper_messages (
       id BIGSERIAL PRIMARY KEY,
+      account_id UUID NOT NULL DEFAULT '00000000-0000-4000-8000-000000000001'::uuid,
       player_username VARCHAR(255) NOT NULL,
       direction VARCHAR(16) NOT NULL CHECK (direction IN ('incoming', 'outgoing')),
       site_username VARCHAR(64),
@@ -643,6 +645,7 @@ async function ensureOptionalTables() {
     ALTER TABLE site_whisper_messages
     ADD COLUMN IF NOT EXISTS delivery_status VARCHAR(16) NOT NULL DEFAULT 'delivered'
   `);
+  await pool.query(`ALTER TABLE site_whisper_messages ADD COLUMN IF NOT EXISTS account_id UUID NOT NULL DEFAULT '00000000-0000-4000-8000-000000000001'::uuid`);
   await pool.query(`
     DO $$
     BEGIN
@@ -668,11 +671,12 @@ async function ensureOptionalTables() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS site_whisper_read_state (
       site_user_id BIGINT NOT NULL REFERENCES site_users(id) ON DELETE CASCADE,
+      account_id UUID NOT NULL DEFAULT '00000000-0000-4000-8000-000000000001'::uuid,
       player_key VARCHAR(32) NOT NULL,
       player_username VARCHAR(255) NOT NULL,
       last_read_message_id BIGINT NOT NULL DEFAULT 0,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      PRIMARY KEY (site_user_id, player_key)
+      PRIMARY KEY (site_user_id,account_id,player_key)
     )
   `);
   await pool.query(`
@@ -1072,6 +1076,11 @@ async function commandAccountId(body, currentUser) {
   return accountId;
 }
 
+async function whisperAccountId(currentUser, source) {
+  const requested = source instanceof URL ? source.searchParams.get('accountId') : source?.accountId;
+  return await commandAccountId({accountId:requested || DEFAULT_MINECRAFT_ACCOUNT_ID},currentUser) || DEFAULT_MINECRAFT_ACCOUNT_ID;
+}
+
 async function queueSiteChatMessage(currentUser, body) {
   assertDatabase();
   const message = String(body.message || '')
@@ -1126,16 +1135,17 @@ function parseWhisperReadState(url) {
 
 async function getWhisperOnlinePlayers(currentUser, url) {
   assertDatabase();
+  const accountId = await whisperAccountId(currentUser,url);
   const result = await pool.query(`
     WITH read_state AS (
       SELECT player_key, last_read_message_id AS read_id
       FROM site_whisper_read_state
-      WHERE site_user_id = $2
+      WHERE site_user_id = $2 AND account_id=$3::uuid
     ),
     owned_dialogs AS (
       SELECT player_username
       FROM site_whisper_messages
-      WHERE LOWER(site_username) = LOWER($1)
+      WHERE LOWER(site_username) = LOWER($1) AND account_id=$3::uuid
       GROUP BY LOWER(player_username), player_username
     ),
     dialog_players AS (
@@ -1150,7 +1160,7 @@ async function getWhisperOnlinePlayers(currentUser, url) {
       FROM site_whisper_messages messages
       JOIN owned_dialogs dialogs ON LOWER(dialogs.player_username) = LOWER(messages.player_username)
       LEFT JOIN read_state ON read_state.player_key = LOWER(messages.player_username)
-      WHERE (
+      WHERE messages.account_id=$3::uuid AND (
           messages.direction = 'outgoing'
           AND LOWER(messages.site_username) = LOWER($1)
         )
@@ -1193,7 +1203,7 @@ async function getWhisperOnlinePlayers(currentUser, url) {
       LOWER(names.username),
       dialogs.last_message_at DESC NULLS LAST,
       COALESCE(pa.is_online, FALSE) DESC
-  `, [currentUser.username, currentUser.id]);
+  `, [currentUser.username, currentUser.id,accountId]);
 
   return {
     players: result.rows
@@ -1222,6 +1232,7 @@ async function getWhisperOnlinePlayers(currentUser, url) {
 
 async function getWhisperDialog(currentUser, url) {
   assertDatabase();
+  const accountId = await whisperAccountId(currentUser,url);
   const username = cleanMinecraftUsername(url.searchParams.get('username'));
   if (!username) {
     const err = new Error('Player username is required.');
@@ -1262,8 +1273,9 @@ async function getWhisperDialog(currentUser, url) {
     FROM site_whisper_messages
     WHERE LOWER(player_username) = LOWER($1)
       AND LOWER(site_username) = LOWER($2)
+      AND account_id=$3::uuid
     LIMIT 1
-  `, [username, currentUser.username]);
+  `, [username, currentUser.username,accountId]);
 
   if (!owned.rowCount) {
     return { username, player, messages: [] };
@@ -1273,6 +1285,7 @@ async function getWhisperDialog(currentUser, url) {
     SELECT id, player_username, direction, site_username, message, delivery_status, created_at
     FROM site_whisper_messages
     WHERE LOWER(player_username) = LOWER($1)
+      AND account_id=$4::uuid
       AND (
         (
           direction = 'outgoing'
@@ -1285,7 +1298,7 @@ async function getWhisperDialog(currentUser, url) {
       )
     ORDER BY created_at DESC
     LIMIT $3
-  `, [username, currentUser.username, limit]);
+  `, [username, currentUser.username, limit,accountId]);
 
   return {
     username,
@@ -1304,6 +1317,7 @@ async function getWhisperDialog(currentUser, url) {
 
 async function deleteWhisperDialog(currentUser, body) {
   assertDatabase();
+  const accountId = await whisperAccountId(currentUser,body);
   const username = cleanMinecraftUsername(body.username);
   if (!username) {
     const err = new Error('Player username is required.');
@@ -1314,8 +1328,9 @@ async function deleteWhisperDialog(currentUser, body) {
   const result = await pool.query(
     `DELETE FROM site_whisper_messages
      WHERE LOWER(player_username) = LOWER($1)
-       AND LOWER(site_username) = LOWER($2)`,
-    [username, currentUser.username]
+       AND LOWER(site_username) = LOWER($2)
+       AND account_id=$3::uuid`,
+    [username, currentUser.username,accountId]
   );
 
   return {
@@ -1327,18 +1342,19 @@ async function deleteWhisperDialog(currentUser, body) {
 
 async function getWhisperNotifications(currentUser, url) {
   assertDatabase();
+  const accountId = await whisperAccountId(currentUser,url);
   const result = await pool.query(`
     WITH owned_dialogs AS (
       SELECT player_username
       FROM site_whisper_messages
-      WHERE LOWER(site_username) = LOWER($2)
+      WHERE LOWER(site_username) = LOWER($2) AND account_id=$3::uuid
       GROUP BY LOWER(player_username), player_username
     ),
     visible_messages AS (
       SELECT messages.id, messages.direction, LOWER(messages.player_username) AS player_key
       FROM site_whisper_messages messages
       JOIN owned_dialogs dialogs ON LOWER(dialogs.player_username) = LOWER(messages.player_username)
-      WHERE (
+      WHERE messages.account_id=$3::uuid AND (
           messages.direction = 'outgoing'
           AND LOWER(messages.site_username) = LOWER($2)
         )
@@ -1356,8 +1372,9 @@ async function getWhisperNotifications(currentUser, url) {
     FROM visible_messages
     LEFT JOIN site_whisper_read_state read_state
       ON read_state.site_user_id = $1
+      AND read_state.account_id=$3::uuid
       AND read_state.player_key = visible_messages.player_key
-  `, [currentUser.id, currentUser.username]);
+  `, [currentUser.id, currentUser.username,accountId]);
   const row = result.rows[0] || {};
 
   return {
@@ -1368,6 +1385,7 @@ async function getWhisperNotifications(currentUser, url) {
 
 async function markWhisperRead(currentUser, body) {
   assertDatabase();
+  const accountId = await whisperAccountId(currentUser,body);
   const username = cleanMinecraftUsername(body.username);
   const rawMessageId = String(body.messageId || '0').replace(/[^\d]/g, '');
   const messageId = rawMessageId || '0';
@@ -1385,32 +1403,35 @@ async function markWhisperRead(currentUser, body) {
 
     for (const entry of entries) {
       await pool.query(`
-        INSERT INTO site_whisper_read_state (site_user_id, player_key, player_username, last_read_message_id, updated_at)
-        VALUES ($1, LOWER($2), $2, $3::bigint, NOW())
-        ON CONFLICT (site_user_id, player_key) DO UPDATE
+        INSERT INTO site_whisper_read_state (site_user_id,account_id,player_key,player_username,last_read_message_id,updated_at)
+        VALUES ($1,$4::uuid,LOWER($2),$2,$3::bigint,NOW())
+        ON CONFLICT (site_user_id,account_id,player_key) DO UPDATE
         SET player_username = EXCLUDED.player_username,
             last_read_message_id = GREATEST(site_whisper_read_state.last_read_message_id, EXCLUDED.last_read_message_id::bigint),
             updated_at = NOW()
-      `, [currentUser.id, entry.username, entry.id]);
+      `, [currentUser.id, entry.username, entry.id,accountId]);
     }
   }
 
   if (username && Number(messageId) > 0) {
     await pool.query(`
-      INSERT INTO site_whisper_read_state (site_user_id, player_key, player_username, last_read_message_id, updated_at)
-      VALUES ($1, LOWER($2), $2, $3::bigint, NOW())
-      ON CONFLICT (site_user_id, player_key) DO UPDATE
+      INSERT INTO site_whisper_read_state (site_user_id,account_id,player_key,player_username,last_read_message_id,updated_at)
+      VALUES ($1,$4::uuid,LOWER($2),$2,$3::bigint,NOW())
+      ON CONFLICT (site_user_id,account_id,player_key) DO UPDATE
       SET player_username = EXCLUDED.player_username,
           last_read_message_id = GREATEST(site_whisper_read_state.last_read_message_id, EXCLUDED.last_read_message_id::bigint),
           updated_at = NOW()
-    `, [currentUser.id, username, messageId]);
+    `, [currentUser.id, username, messageId,accountId]);
   }
 
-  return getWhisperNotifications(currentUser, new URL('http://localhost/api/whisper/notifications'));
+  const notificationsUrl = new URL('http://localhost/api/whisper/notifications');
+  notificationsUrl.searchParams.set('accountId',accountId);
+  return getWhisperNotifications(currentUser,notificationsUrl);
 }
 
 async function queueSiteWhisperMessage(currentUser, body) {
   assertDatabase();
+  const accountId = await whisperAccountId(currentUser,body);
   const username = cleanMinecraftUsername(body.username);
   const message = cleanWhisperMessage(body.message);
   if (!username) {
@@ -1430,16 +1451,16 @@ async function queueSiteWhisperMessage(currentUser, body) {
   }
 
   const inserted = await pool.query(`
-    INSERT INTO site_whisper_messages (player_username, direction, site_username, message, delivery_status)
-    VALUES ($1, 'outgoing', $2, $3, 'sent')
+    INSERT INTO site_whisper_messages (account_id,player_username,direction,site_username,message,delivery_status)
+    VALUES ($4::uuid,$1,'outgoing',$2,$3,'sent')
     RETURNING id
-  `, [username, currentUser?.username || null, message]);
+  `, [username, currentUser?.username || null, message,accountId]);
 
   const queued = await queueBotCommand(currentUser, 'site_whisper', {
     username,
     message,
     messageId: String(inserted.rows[0]?.id || '')
-  }, { accountId:await commandAccountId(body,currentUser) });
+  }, { accountId });
   return {
     ...queued,
     username,
@@ -3746,11 +3767,11 @@ async function pollDatabaseEvents() {
       for (const message of messages.rows) sseHub.publish('chat_message', { id: message.id, createdAt: message.created_at });
     }
     if (next.whisperId !== previous.whisperId) {
-      const messages = await pool.query(`SELECT id::text, site_username, player_username, direction, created_at FROM site_whisper_messages WHERE id>$1 ORDER BY id ASC LIMIT 100`, [previous.whisperId]);
+      const messages = await pool.query(`SELECT id::text,account_id::text,site_username,player_username,direction,created_at FROM site_whisper_messages WHERE id>$1 ORDER BY id ASC LIMIT 100`, [previous.whisperId]);
       for (const message of messages.rows) {
         sseHub.publish('whisper_message', {
           id: message.id, playerUsername: message.player_username,
-          direction: message.direction, createdAt: message.created_at
+          direction: message.direction,createdAt:message.created_at,accountId:message.account_id
         }, { usernames: [message.site_username] });
       }
     }

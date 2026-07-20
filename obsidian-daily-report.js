@@ -13,7 +13,7 @@ function getDailyReportSlot(settings = {}, now = new Date()) {
 
   return {
     dateKey: `${parts.year}-${parts.month}-${parts.day}`,
-    due: Number(parts.hour) === Number(settings.daily_report_hour),
+    due: Number(parts.hour) >= Number(settings.daily_report_hour),
     hour: Number(parts.hour),
     timezone
   };

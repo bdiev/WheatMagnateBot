@@ -9,6 +9,8 @@ async function run() {
 
   const notDue = getDailyReportSlot({ timezone: 'Europe/Vilnius', daily_report_hour: 13 }, new Date('2026-07-19T09:15:00Z'));
   assert.equal(notDue.due, false);
+  const late = getDailyReportSlot({ timezone: 'Europe/Vilnius', daily_report_hour: 9 }, new Date('2026-07-19T12:15:00Z'));
+  assert.equal(late.due,true,'a missed report remains due later on the same local day');
 
   const calls = [];
   const pool = {

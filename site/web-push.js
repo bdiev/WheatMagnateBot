@@ -136,7 +136,9 @@ function safePushPayload(notification, { resolved = false, test = false, detaile
   const destinationParams = new URLSearchParams({ push: destination });
   if (destination === 'whispers') {
     const player = String(notification.metadata?.sender || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 32);
+    const accountId = String(notification.metadata?.accountId || '').trim();
     if (player) destinationParams.set('player', player);
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(accountId)) destinationParams.set('accountId', accountId);
   }
   return {
     title: test ? 'WheatMagnateBot test' : dailyReport ? label : critical ? 'Critical bot alert' : resolved ? 'Issue resolved' : detailed ? label : 'WheatMagnateBot alert',
@@ -290,14 +292,14 @@ class WebPushService {
     return result;
   }
 
-  async deliverWhisper({ id, recipientUsername, sender, message, now = new Date() } = {}) {
+  async deliverWhisper({ id, recipientUsername, sender, message, accountId = null, now = new Date() } = {}) {
     if (!this.configured || !this.pool || !recipientUsername) return { sent: 0, skipped: 0, failed: 0, removed: 0, unavailable: true };
     const rows = await this.pool.query(`SELECT ps.*,COALESCE(np.account_timezone,ps.timezone) AS timezone FROM push_subscriptions ps JOIN site_users u ON u.id=ps.user_id
       LEFT JOIN site_navigation_preferences np ON np.user_id=ps.user_id
       WHERE ps.enabled=TRUE AND u.status='approved' AND LOWER(u.username)=LOWER($1)`, [String(recipientUsername).slice(0, 64)]);
     const notification = {
       id: `whisper-${String(id || 'new').replace(/[^\d]/g, '').slice(0, 20) || 'new'}`,
-      event_type: 'whisper_message', severity: 'info', metadata: { sender, message }
+      event_type: 'whisper_message', severity: 'info', metadata: { sender, message, accountId }
     };
     const result = await deliverPushSubscriptions({
       subscriptions: rows.rows, notification, now,

@@ -637,6 +637,10 @@ async function selectAccount(accountId) {
   state.activeAccountId = accountId;
   localStorage.setItem('wm-active-account', accountId);
   state.renderSignatures = {};
+  closeWhisperDialog();
+  state.whisperPlayers = [];
+  state.whisperMessagesSignature = '';
+  loadWhisperLastSeenId();
   renderAccountSwitcher();
   setBanner(`Loading ${state.accounts.find(account => account.id === accountId)?.displayName || 'account'}…`);
   try { await loadAll(); setBanner(''); } catch (error) { if (error.name !== 'AbortError') setBanner(error.message); }
@@ -2275,12 +2279,12 @@ function renderWhisperBadge() {
 
 function whisperLastSeenStorageKey() {
   const username = String(state.currentUser?.username || 'anonymous').toLowerCase();
-  return `wm-whisper-last-seen-id:${username}`;
+  return `wm-whisper-last-seen-id:${username}:${state.activeAccountId || 'default'}`;
 }
 
 function whisperDialogReadStorageKey() {
   const username = String(state.currentUser?.username || 'anonymous').toLowerCase();
-  return `wm-whisper-dialog-read-ids:${username}`;
+  return `wm-whisper-dialog-read-ids:${username}:${state.activeAccountId || 'default'}`;
 }
 
 function loadWhisperLastSeenId() {
@@ -2301,7 +2305,7 @@ async function syncLegacyWhisperReadState() {
   if (Object.keys(state.whisperDialogReadIds || {}).length === 0) return;
   try {
     const payload = await postJson('/api/whisper/read', {
-      readState: state.whisperDialogReadIds
+      readState: state.whisperDialogReadIds,accountId:state.activeAccountId
     });
     state.whisperUnreadCount = payload.unreadCount || 0;
     renderWhisperBadge();
@@ -2320,7 +2324,8 @@ function markWhisperDialogRead(username, maxId) {
   localStorage.setItem(whisperDialogReadStorageKey(), JSON.stringify(state.whisperDialogReadIds));
   postJson('/api/whisper/read', {
     username,
-    messageId: String(nextId)
+    messageId: String(nextId),
+    accountId:state.activeAccountId
   }).then(payload => {
     state.whisperUnreadCount = payload.unreadCount || 0;
     renderWhisperBadge();
@@ -2688,7 +2693,7 @@ async function handleWhisperDeleteDialog() {
   const button = $('#whisperDeleteDialog');
   if (button) button.disabled = true;
   try {
-    await postJson('/api/whisper/dialog/delete', { username });
+    await postJson('/api/whisper/dialog/delete', { username,accountId:state.activeAccountId });
     closeWhisperDialog();
     await loadWhisperOnlinePlayers();
   } catch (err) {
@@ -4355,18 +4360,20 @@ async function handlePushDeviceClick(event) {
   } catch (err) { setBanner(`Push action failed: ${err.message}`); }
 }
 
-function openPushDestination(destination = null, player = null) {
+async function openPushDestination(destination = null, player = null, accountId = null) {
   const pageUrl = new URL(location.href);
   const pending = state.pendingPushDestination;
   const target = destination || pending?.destination || pageUrl.searchParams.get('push');
   const targetPlayer = player || pending?.player || pageUrl.searchParams.get('player');
+  const targetAccountId = accountId || pending?.accountId || pageUrl.searchParams.get('accountId');
   if (!target) return;
   if (!state.currentUser) {
-    state.pendingPushDestination = { destination: target, player: targetPlayer };
+    state.pendingPushDestination = { destination: target, player: targetPlayer, accountId: targetAccountId };
     return;
   }
   state.pendingPushDestination = null;
   if (target === 'whispers') {
+    if (targetAccountId && state.accounts.some(account => account.id === targetAccountId)) await selectAccount(targetAccountId);
     setActiveTab('chat');
     setTimeout(() => {
       setWhisperOpen(true);
@@ -4380,6 +4387,7 @@ function openPushDestination(destination = null, player = null) {
   }
   pageUrl.searchParams.delete('push');
   pageUrl.searchParams.delete('player');
+  pageUrl.searchParams.delete('accountId');
   history.replaceState({}, '', `${pageUrl.pathname}${pageUrl.search}${pageUrl.hash}`);
 }
 
@@ -4936,8 +4944,10 @@ async function refreshWhispersFromEvent() {
 
 function handleRealtimeEvent(event) {
   const type = event.type;
+  let eventPayload = {};
+  try { eventPayload=JSON.parse(event.data || '{}'); } catch {}
   if (type === 'chat_message') queueRealtimeRefresh('chat', refreshChatFromEvent, 30);
-  else if (type === 'whisper_message') queueRealtimeRefresh('whisper', refreshWhispersFromEvent);
+  else if (type === 'whisper_message' && (!eventPayload.accountId || eventPayload.accountId === state.activeAccountId)) queueRealtimeRefresh('whisper', refreshWhispersFromEvent);
   else if (type === 'bot_status_updated') {
     queueRealtimeRefresh('bot', refreshBotFromEvent);
     scheduleRealtimeChartRefresh();
@@ -5179,7 +5189,7 @@ $('#accountSettingsForm')?.addEventListener('submit', saveAccountSettings);
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.addEventListener('message', event => {
-    if (event.data?.type === 'open_push_destination') openPushDestination(event.data.destination, event.data.player);
+    if (event.data?.type === 'open_push_destination') openPushDestination(event.data.destination, event.data.player, event.data.accountId);
   });
 }
 $('#adminUsersList')?.addEventListener('click', handleAdminUserAction);

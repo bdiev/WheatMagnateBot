@@ -136,6 +136,7 @@ class MinecraftBotRuntime extends EventEmitter {
         if (this.authCacheStore) setTimeout(() => this.authCacheStore.persist(this.account.id,this.authCachePath).catch(error => this.emit('auth-cache-error',error)),1000);
       });
       bot.on?.('error', error => { this.lastError = error?.message || String(error); this.status = 'error'; this.emit('status', this.getStatus()); });
+      bot.on?.('whisper',(username,message) => this.emit('whisper',{accountId:this.account.id,username,message}));
       bot.once?.('end', reason => {
         const securityDisconnect = this.securityDisconnectPending;
         this.securityDisconnectPending = false;
