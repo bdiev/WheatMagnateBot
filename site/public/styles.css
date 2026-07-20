@@ -2686,6 +2686,8 @@ body.search-focus-active #logoutButton {
   border-radius: 999px;
   background: #d84343;
   animation: player-offline-pulse 2.4s ease-in-out infinite;
+  transform-origin: center;
+  will-change: transform, box-shadow;
 }
 
 .player-profile-avatar-wrap[data-status="online"]::after {
@@ -2695,10 +2697,12 @@ body.search-focus-active #logoutButton {
 
 @keyframes player-online-pulse {
   0%, 100% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, #55c85a 48%, transparent);
+    box-shadow: 0 0 0 0 rgba(85, 200, 90, 0.55);
+    transform: scale(1);
   }
   50% {
-    box-shadow: 0 0 0 6px color-mix(in srgb, #55c85a 0%, transparent);
+    box-shadow: 0 0 0 7px rgba(85, 200, 90, 0);
+    transform: scale(1.12);
   }
 }
 
@@ -2714,10 +2718,12 @@ body.search-focus-active #logoutButton {
 
 @keyframes player-offline-pulse {
   0%, 100% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, #d84343 38%, transparent);
+    box-shadow: 0 0 0 0 rgba(216, 67, 67, 0.46);
+    transform: scale(1);
   }
   50% {
-    box-shadow: 0 0 0 5px color-mix(in srgb, #d84343 0%, transparent);
+    box-shadow: 0 0 0 6px rgba(216, 67, 67, 0);
+    transform: scale(1.09);
   }
 }
 
@@ -5544,16 +5550,27 @@ body.search-focus-active #logoutButton {
   }
 
   .player-profile-uuid {
-    display: flex;
-    width: 100%;
+    display: inline-flex;
+    width: auto;
+    max-width: 100%;
     min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
   }
 
   .player-profile-uuid code {
+    display: block;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    font-size: 0;
+  }
+
+  .player-profile-uuid code::after {
+    content: attr(data-compact-uuid);
+    font-size: 8.5px;
+    letter-spacing: -0.025em;
   }
 
   .player-profile-actions {

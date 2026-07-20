@@ -1778,7 +1778,7 @@ function renderPlayerProfile(profile) {
           </div>
         </div>
         <div class="player-profile-meta">
-          ${profile.uuid ? `<span class="player-profile-uuid" title="Minecraft UUID"><small>UUID</small><code>${escapeHtml(profile.uuid)}</code></span>` : ''}
+          ${profile.uuid ? `<span class="player-profile-uuid" title="Minecraft UUID"><small>UUID</small><code data-compact-uuid="${escapeHtml(String(profile.uuid).replaceAll('-', ''))}">${escapeHtml(profile.uuid)}</code></span>` : ''}
           ${nameHistoryControl}
         </div>
         <div class="player-profile-actions">
