@@ -588,6 +588,13 @@ function accountStatusClass(account) {
   return 'stopped';
 }
 
+function applyAccountTabScope(account) {
+  const restricted = Boolean(account && !account.isDefault);
+  const allowed = new Set(['chat','bot']);
+  $$('.tab-button[data-tab]').forEach(button => button.classList.toggle('account-tab-restricted',restricted && !allowed.has(button.dataset.tab)));
+  if (restricted && !allowed.has(state.activeTab)) setActiveTab('chat');
+}
+
 function renderAccountSwitcher() {
   const list = $('#accountSwitcherList');
   if (!list) return;
@@ -606,6 +613,7 @@ function renderAccountSwitcher() {
     : '';
   list.innerHTML = accountButtons + addButton + manageButton;
   const current = state.accounts.find(account => account.id === state.activeAccountId);
+  applyAccountTabScope(current);
   const heading = $('.topbar h1');
   if (heading) heading.title = current ? `Active Minecraft account: ${current.displayName}` : '';
 }
@@ -708,6 +716,8 @@ function setMobileAccountSwitcherOpen(open) {
   switcher.classList.toggle('expanded',Boolean(open));
   switcher.setAttribute('aria-expanded',String(Boolean(open)));
   document.body.classList.toggle('account-switcher-open',Boolean(open));
+  const backdrop = $('#accountSwitcherBackdrop');
+  if (backdrop) backdrop.hidden = !open;
 }
 
 async function postJson(path, body = {}) {

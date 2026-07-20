@@ -5158,6 +5158,8 @@ async function initializeMultiAccountManager() {
         account,
         authCacheRoot: MINECRAFT_PROFILES_FOLDER,
         authCacheStore,
+        isWhitelisted: username => ignoredUsernames.some(item => item.toLowerCase() === String(username).toLowerCase()),
+        dangerRadius: runtimeSettings.dangerRadius,
         botFactory: options => {
           const managedBot = createMinecraftBot({ ...options, closeTimeout: MINECRAFT_CONNECT_TIMEOUT_MS });
           managedBot.loadPlugin(pathfinder);
@@ -5166,6 +5168,7 @@ async function initializeMultiAccountManager() {
       });
       runtime.on('status', status => persistManagedRuntimeStatus(status).catch(error => console.error(`[Accounts] Status persistence failed for ${account.id}:`, error.message)));
       runtime.on('auth-cache-error', error => console.error(`[Accounts] Auth-cache persistence failed for ${account.id}:`,error.message));
+      runtime.on('monitor-error', error => console.error(`[Accounts] AFK monitor failed for ${account.id}:`,error.message));
       runtime.on('profile-resolved', async profile => {
         try {
           const duplicate = multiAccountRegistry.list().find(item => item.id !== profile.accountId && item.username.toLowerCase() === profile.username.toLowerCase());

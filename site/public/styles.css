@@ -5682,6 +5682,7 @@ body.search-focus-active #logoutButton {
 .account-status-dot.connected { background:#2fbf71; }.account-status-dot.connecting { background:#e5b94b; }.account-status-dot.error { background:#e45656; }.account-status-dot.active-task { background:#4b91e5; }
 .account-add { flex:0 0 42px; width:42px; min-width:42px; max-width:42px; font-size:22px; font-weight:500; line-height:1; }
 .account-mobile-manage { display:none; }
+.tab-button.account-tab-restricted { display:none!important; }
 .account-modal-overlay { position:fixed; inset:0; z-index:1200; display:grid; place-items:center; padding:18px; background:color-mix(in srgb,var(--bg) 72%,transparent); backdrop-filter:blur(8px); animation:overlayIn 180ms ease; }
 .account-modal-overlay[hidden] { display:none; }
 .account-modal { position:relative; width:min(500px,100%); max-height:calc(100vh - 36px); overflow:auto; display:grid; gap:14px; padding:24px; border:1px solid var(--line); border-radius:var(--button-radius); background:var(--panel); box-shadow:var(--shadow); }
@@ -5698,7 +5699,8 @@ body.search-focus-active #logoutButton {
 .account-auth-note { padding:11px 12px; border-left:3px solid var(--accent); border-radius:0 10px 10px 0; color:var(--muted); background:var(--panel-soft); font-size:12px; line-height:1.5; }.account-modal-actions { display:flex; justify-content:flex-end; gap:10px; padding-top:2px; }.account-modal-actions button { min-width:112px; }.account-modal-close { position:absolute; top:14px; right:14px; width:34px; min-width:34px; max-width:34px; height:34px; min-height:34px; max-height:34px; padding:0; border:1px solid var(--line); border-radius:50%; color:var(--muted); background:var(--panel-soft); font-size:22px; font-weight:500; }.account-modal-close:hover { color:var(--text); background:color-mix(in srgb,var(--accent) 14%,var(--panel-soft)); border-color:var(--accent); }
 @media (max-width:700px) {
   body.account-switcher-open { overflow:hidden; }
-  body.account-switcher-open::before { content:""; position:fixed; inset:0; z-index:150; background:color-mix(in srgb,var(--bg) 58%,transparent); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); animation:overlayIn 160ms ease; }
+  .account-switcher-backdrop { position:fixed; inset:0; z-index:150; background:rgb(8 11 17 / .58); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); transform:translateZ(0); }
+  .account-switcher-backdrop[hidden] { display:none; }
   .account-switcher { width:var(--button-height); max-width:var(--button-height); height:var(--button-height); order:initial; overflow:visible; }
   .account-switcher-list { width:var(--button-height); height:var(--button-height); padding:0; overflow:visible; }
   .account-switcher:not(.expanded) .account-avatar:not(.active),
