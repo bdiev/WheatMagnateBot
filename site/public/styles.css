@@ -2741,6 +2741,7 @@ body.search-focus-active #logoutButton {
 
 .player-profile-actions {
   display: flex;
+  grid-column: 2;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
@@ -5574,6 +5575,7 @@ body.search-focus-active #logoutButton {
   }
 
   .player-profile-actions {
+    width: 100%;
     grid-column: 1 / -1;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 7px;
@@ -5602,9 +5604,9 @@ body.search-focus-active #logoutButton {
   }
 
   .player-profile-grid div {
-    min-height: 68px;
+    min-height: 60px;
     border-radius: 10px;
-    padding: 11px;
+    padding: 9px 10px;
   }
 
   .player-profile-grid span {

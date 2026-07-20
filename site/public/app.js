@@ -1781,17 +1781,17 @@ function renderPlayerProfile(profile) {
           ${profile.uuid ? `<span class="player-profile-uuid" title="Minecraft UUID"><small>UUID</small><code data-compact-uuid="${escapeHtml(String(profile.uuid).replaceAll('-', ''))}">${escapeHtml(profile.uuid)}</code></span>` : ''}
           ${nameHistoryControl}
         </div>
-        <div class="player-profile-actions">
-          <button class="player-profile-message-action" type="button" data-whisper-player="${escapeHtml(profileUsername)}">
-            <img src="/items/Writable_Book.png" alt="" aria-hidden="true">
-            <span>Message</span>
-          </button>
-          <a class="player-profile-message-action player-profile-namemc-action" href="https://namemc.com/profile/${encodeURIComponent(profileUsername)}" target="_blank" rel="noopener noreferrer">
-            <img src="/logos/namemc_dark.png" alt="" aria-hidden="true">
-            <span>NameMC</span>
-          </a>
-          ${ignoreButton}
-        </div>
+      </div>
+      <div class="player-profile-actions">
+        <button class="player-profile-message-action" type="button" data-whisper-player="${escapeHtml(profileUsername)}">
+          <img src="/items/Writable_Book.png" alt="" aria-hidden="true">
+          <span>Message</span>
+        </button>
+        <a class="player-profile-message-action player-profile-namemc-action" href="https://namemc.com/profile/${encodeURIComponent(profileUsername)}" target="_blank" rel="noopener noreferrer">
+          <img src="/logos/namemc_dark.png" alt="" aria-hidden="true">
+          <span>NameMC</span>
+        </a>
+        ${ignoreButton}
       </div>
     </header>
     <section class="player-profile-grid">
