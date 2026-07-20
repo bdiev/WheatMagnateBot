@@ -722,6 +722,11 @@ function cancelAccountLongPress() { clearTimeout(accountLongPressTimer); account
 function setMobileAccountSwitcherOpen(open) {
   const switcher = $('#accountSwitcher');
   if (!switcher) return;
+  if (open) {
+    setNavMenuOpen(false);
+    clearSeenSearch({ collapse: true });
+    setWhisperOpen(false);
+  }
   switcher.classList.toggle('expanded',Boolean(open));
   switcher.setAttribute('aria-expanded',String(Boolean(open)));
   document.body.classList.toggle('account-switcher-open',Boolean(open));
@@ -850,6 +855,11 @@ function setNavMenuOpen(open) {
   const toggle = $('#navMenuToggle');
   if (!menu || !toggle) return;
   const isOpen = Boolean(open);
+  if (isOpen) {
+    clearSeenSearch({ collapse: true });
+    setWhisperOpen(false);
+    setMobileAccountSwitcherOpen(false);
+  }
   menu.classList.toggle('open', isOpen);
   document.body.classList.toggle('nav-focus-active', isOpen);
   toggle.setAttribute('aria-expanded', String(isOpen));
@@ -966,6 +976,16 @@ function applyNavigationVisibility() {
     const roleAllowsTab = !button.classList.contains('admin-only') || isAdmin;
     button.hidden = !roleAllowsTab || preferences[tab] === false;
   });
+  ensureActiveTabAvailable();
+}
+
+function ensureActiveTabAvailable() {
+  const activeButton = $(`.tab-button[data-tab="${state.activeTab}"]`);
+  if (activeButton && !activeButton.hidden && !activeButton.classList.contains('account-tab-restricted')) return;
+  const fallback = $$('.tab-button[data-tab]').find(button =>
+    !button.hidden && !button.classList.contains('account-tab-restricted')
+  );
+  if (fallback) setActiveTab(fallback.dataset.tab);
 }
 
 function renderNavigationSettings() {
@@ -1163,6 +1183,14 @@ function toggleTheme() {
 
 function setActiveTab(tab) {
   if (['admin', 'notifications', 'timeline', 'child-ai'].includes(tab) && state.currentUser?.role !== 'admin') return;
+  const requestedButton = $(`.tab-button[data-tab="${tab}"]`);
+  if (!requestedButton || requestedButton.hidden || requestedButton.classList.contains('account-tab-restricted')) {
+    const fallback = $$('.tab-button[data-tab]').find(button =>
+      !button.hidden && !button.classList.contains('account-tab-restricted')
+    );
+    if (!fallback) return;
+    tab = fallback.dataset.tab;
+  }
   state.activeTab = tab;
   localStorage.setItem('wm-active-tab', tab);
   $$('.tab-button').forEach(button => {
@@ -2145,6 +2173,9 @@ function setSeenSearchOpen(open) {
   const toggle = $('#seenSearchToggle');
   if (!search || !toggle) return;
   if (open) {
+    setNavMenuOpen(false);
+    setWhisperOpen(false);
+    setMobileAccountSwitcherOpen(false);
     const rect = toggle.getBoundingClientRect();
     const isMobile = window.matchMedia('(max-width: 700px)').matches;
     const targetTop = isMobile ? 82 : 88;
@@ -2250,6 +2281,11 @@ function setWhisperOpen(open) {
   const toggle = $('#whisperToggle');
   const popover = $('#whisperPopover');
   if (!panel || !toggle || !popover) return;
+  if (open) {
+    setNavMenuOpen(false);
+    clearSeenSearch({ collapse: true });
+    setMobileAccountSwitcherOpen(false);
+  }
   panel.classList.toggle('open', open);
   document.body.classList.toggle('whisper-focus-active', Boolean(open));
   panel.classList.toggle('has-dialog', Boolean(state.whisperTarget));
@@ -5225,9 +5261,24 @@ function scheduleViewportRedraw() {
 }
 
 window.addEventListener('resize', scheduleViewportRedraw, { passive: true });
-window.addEventListener('pageshow', scheduleViewportRedraw);
+window.addEventListener('pageshow', event => {
+  // Standalone mobile PWAs may restore transient body classes from BFCache
+  // after the popup itself was discarded. Clear them so the page stays usable.
+  if (event.persisted) {
+    setNavMenuOpen(false);
+    clearSeenSearch({ collapse: true });
+    setWhisperOpen(false);
+    setMobileAccountSwitcherOpen(false);
+    closePlayerProfile();
+  }
+  ensureActiveTabAvailable();
+  scheduleViewportRedraw();
+});
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') scheduleViewportRedraw();
+  if (document.visibilityState === 'visible') {
+    ensureActiveTabAvailable();
+    scheduleViewportRedraw();
+  }
 });
 $$('.chart').forEach(chart => {
   chart.addEventListener('pointerdown', event => showChartTooltip(event.currentTarget, event, { pin: true }));
