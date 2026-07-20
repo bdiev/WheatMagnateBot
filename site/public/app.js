@@ -590,7 +590,7 @@ function renderAccountSwitcher() {
     const active = account.id === state.activeAccountId;
     const uptime = account.startedAt ? formatDurationMs(Math.max(0, Date.now() - new Date(account.startedAt).getTime())) : 'not running';
     const tooltip = `${account.username} · ${account.status} · ${account.host}:${account.port} · ${account.task || 'idle'} · ${uptime}`;
-    return `<button class="account-avatar${active ? ' active' : ''}" type="button" role="listitem" data-account-id="${escapeHtml(account.id)}" style="--account-color:${escapeHtml(account.color || '#f1c232')}" aria-label="Switch to ${escapeHtml(account.displayName)}" aria-pressed="${active}" title="${escapeHtml(tooltip)}"><img src="https://minotar.net/avatar/${encodeURIComponent(account.username)}/64" alt=""><span class="account-status-dot ${accountStatusClass(account)}" aria-hidden="true"></span></button>`;
+    return `<button class="account-avatar${active ? ' active' : ''}" type="button" role="listitem" data-account-id="${escapeHtml(account.id)}" data-initial="${escapeHtml(String(account.displayName || account.username || '?').charAt(0))}" style="--account-color:${escapeHtml(account.color || '#f1c232')}" aria-label="Switch to ${escapeHtml(account.displayName)}" aria-pressed="${active}" title="${escapeHtml(tooltip)}"><img src="https://minotar.net/avatar/${encodeURIComponent(account.username)}/64" alt=""><span class="account-status-dot ${accountStatusClass(account)}" aria-hidden="true"></span></button>`;
   }).join('');
   const current = state.accounts.find(account => account.id === state.activeAccountId);
   const heading = $('.topbar h1');
@@ -5196,6 +5196,12 @@ document.addEventListener('click', event => {
 
 });
 document.addEventListener('error', event => {
+  const accountImage = event.target.closest?.('.account-avatar img');
+  if (accountImage) {
+    accountImage.closest('.account-avatar')?.classList.add('avatar-image-failed');
+    accountImage.remove();
+    return;
+  }
   const image = event.target.closest?.('[data-item-icon-image]');
   if (!image) return;
   image.closest('.item-icon')?.classList.add('fallback');
