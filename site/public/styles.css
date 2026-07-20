@@ -5435,3 +5435,211 @@ body.search-focus-active #logoutButton {
     display: grid;
   }
 }
+
+.player-profile-grid div {
+  position: relative;
+  overflow: hidden;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 5%, transparent), transparent 55%),
+    var(--panel-soft);
+}
+
+.player-profile-grid div::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 12px;
+  width: 28px;
+  height: 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 62%, transparent);
+}
+
+.player-profile-chat h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.player-profile-chat h3::before {
+  content: "";
+  width: 4px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.player-profile-message {
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+
+.player-profile-message:hover {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+}
+
+/* Player profile has its own mobile composition instead of shrinking desktop. */
+@media (max-width: 700px) {
+  .player-profile-overlay {
+    place-items: start center;
+    padding: max(8px, env(safe-area-inset-top)) 8px max(8px, env(safe-area-inset-bottom));
+  }
+
+  .player-profile-card {
+    width: 100%;
+    max-height: calc(100dvh - max(16px, env(safe-area-inset-top) + env(safe-area-inset-bottom)));
+    border-radius: 14px;
+  }
+
+  .player-profile-close {
+    top: 12px;
+    right: 12px;
+    width: 38px;
+    min-width: 38px;
+    height: 38px;
+    min-height: 38px;
+    border-radius: 11px;
+  }
+
+  .player-profile-head {
+    grid-template-columns: 72px minmax(0, 1fr);
+    gap: 13px;
+    padding: 18px 58px 16px 16px;
+  }
+
+  .player-profile-head::before {
+    left: 16px;
+    right: 58px;
+  }
+
+  .player-profile-avatar-wrap,
+  .player-profile-avatar {
+    width: 72px;
+    height: 72px;
+  }
+
+  .player-profile-avatar-wrap::after {
+    width: 15px;
+    height: 15px;
+  }
+
+  .player-profile-head h2 {
+    max-width: 100%;
+    font-size: clamp(23px, 7vw, 30px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .player-profile-identity {
+    display: grid;
+    justify-items: start;
+    gap: 7px;
+  }
+
+  .player-profile-meta {
+    display: grid;
+    justify-items: start;
+    gap: 7px;
+    margin-top: 8px;
+  }
+
+  .player-profile-uuid {
+    display: flex;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .player-profile-uuid code {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .player-profile-actions {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 7px;
+    margin-top: 13px;
+  }
+
+  .player-profile-ignore-action {
+    grid-column: auto;
+  }
+
+  .player-profile-message-action {
+    min-height: 40px;
+    padding: 0 7px;
+    font-size: 12px;
+  }
+
+  .player-profile-message-action img,
+  .player-profile-ignore-action img {
+    width: 17px;
+    height: 17px;
+  }
+
+  .player-profile-grid {
+    gap: 7px;
+    padding: 10px 8px 8px;
+  }
+
+  .player-profile-grid div {
+    min-height: 68px;
+    border-radius: 10px;
+    padding: 11px;
+  }
+
+  .player-profile-grid span {
+    font-size: 10px;
+    letter-spacing: 0.035em;
+  }
+
+  .player-profile-grid strong,
+  .player-profile-value-button {
+    margin-top: 7px;
+    font-size: 14px;
+    line-height: 1.25;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  .player-profile-chat {
+    gap: 7px;
+    padding: 6px 8px 10px;
+  }
+
+  .player-profile-chat h3 {
+    margin: 4px 2px 2px;
+    font-size: 17px;
+  }
+
+  .player-profile-message {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+    border-radius: 10px;
+    padding: 11px 12px;
+  }
+
+  .player-profile-message p {
+    font-size: 14px;
+    line-height: 1.35;
+  }
+
+  .player-profile-message time {
+    font-size: 10px;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 370px) {
+  .player-profile-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .player-profile-ignore-action {
+    grid-column: 1 / -1;
+  }
+}
