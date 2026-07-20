@@ -1062,11 +1062,13 @@ async function queueBotCommand(currentUser, commandType, payload = {}, { source 
   };
 }
 
-async function commandAccountId(body) {
+async function commandAccountId(body, currentUser) {
   const accountId = body?.accountId == null ? null : String(body.accountId);
-  if (accountId && (!validAccountId(accountId) || !(await getAccountRegistry()).get(accountId))) {
+  const account = accountId && validAccountId(accountId) ? (await getAccountRegistry()).get(accountId) : null;
+  if (accountId && !account) {
     throw Object.assign(new Error('Minecraft account not found.'), { statusCode:404 });
   }
+  if (account && !account.isDefault && currentUser?.role !== 'admin') throw Object.assign(new Error('Administrator access is required to switch Minecraft accounts.'),{statusCode:403});
   return accountId;
 }
 
@@ -1086,7 +1088,7 @@ async function queueSiteChatMessage(currentUser, body) {
     err.statusCode = 400;
     throw err;
   }
-  return queueBotCommand(currentUser, 'chat', { message }, { accountId:await commandAccountId(body) });
+  return queueBotCommand(currentUser, 'chat', { message }, { accountId:await commandAccountId(body,currentUser) });
 }
 
 function cleanMinecraftUsername(value) {
@@ -1437,7 +1439,7 @@ async function queueSiteWhisperMessage(currentUser, body) {
     username,
     message,
     messageId: String(inserted.rows[0]?.id || '')
-  }, { accountId:await commandAccountId(body) });
+  }, { accountId:await commandAccountId(body,currentUser) });
   return {
     ...queued,
     username,
@@ -1804,7 +1806,7 @@ async function accountPayloads() {
   });
 }
 
-async function scopedAccountRuntime(url) {
+async function scopedAccountRuntime(url, currentUser) {
   const accountId = String(url.searchParams.get('accountId') || '');
   if (!accountId) return null;
   if (!validAccountId(accountId)) throw Object.assign(new Error('Invalid account ID.'), { statusCode:400 });
@@ -1812,6 +1814,7 @@ async function scopedAccountRuntime(url) {
   const account = registry.get(accountId);
   if (!account) throw Object.assign(new Error('Minecraft account not found.'), { statusCode:404 });
   if (account.isDefault) return null;
+  assertAdminUser(currentUser);
   const stateResult = await pool.query('SELECT status_payload,updated_at FROM bot_account_runtime_state WHERE account_id=$1::uuid',[accountId]);
   return { account, bot:stateResult.rows[0]?.status_payload || {accountId,username:account.username,server:`${account.host}:${account.port}`,connected:false,status:account.enabled?'stopped':'disabled',task:'idle'}, observedAt:stateResult.rows[0]?.updated_at || account.updatedAt };
 }
@@ -1821,7 +1824,10 @@ async function handleAccountsApi(req, currentUser, url) {
   const match = url.pathname.match(/^\/api\/accounts\/([0-9a-f-]{36})(?:\/(start|stop|restart|pause|resume|reauthorize|status|inventory|obsidian|server-stats))?$/i);
   if (!collection && !match) return null;
   const registry = await getAccountRegistry();
-  if (collection && req.method === 'GET') return { statusCode: 200, payload: { accounts: await accountPayloads() } };
+  if (collection && req.method === 'GET') {
+    const accounts = await accountPayloads();
+    return { statusCode:200,payload:{accounts:currentUser?.role === 'admin' ? accounts : accounts.filter(account => account.isDefault)} };
+  }
   if (collection && req.method === 'POST') {
     assertAdminUser(currentUser);
     const max = Math.max(1, Number(process.env.MAX_BOT_ACCOUNTS) || 8);
@@ -1835,6 +1841,7 @@ async function handleAccountsApi(req, currentUser, url) {
   const accountId = match[1].toLowerCase();
   const account = registry.get(accountId);
   if (!account) throw Object.assign(new Error('Minecraft account not found.'), { statusCode: 404 });
+  if (!account.isDefault && currentUser?.role !== 'admin') throw Object.assign(new Error('Administrator access is required to switch Minecraft accounts.'),{statusCode:403});
   const action = match[2];
   if (!action && req.method === 'GET') return { statusCode: 200, payload: { account:(await accountPayloads()).find(item => item.id === accountId) } };
   if (!action && req.method === 'PATCH') {
@@ -1934,7 +1941,7 @@ async function queueSiteWhisperClaim(currentUser, body) {
     err.statusCode = 400;
     throw err;
   }
-  const queued = await queueBotCommand(currentUser, 'site_whisper_claim', { username }, { accountId:await commandAccountId(body) });
+  const queued = await queueBotCommand(currentUser, 'site_whisper_claim', { username }, { accountId:await commandAccountId(body,currentUser) });
   return { ...queued, username, claimed: true };
 }
 
@@ -2656,7 +2663,7 @@ async function queueAdminBotCommand(currentUser, body) {
     }
   }
 
-  const accountId = await commandAccountId(body);
+  const accountId = await commandAccountId(body,currentUser);
   return queueBotCommand(currentUser, commandType, payload, { accountId });
 }
 
@@ -3487,19 +3494,19 @@ async function handleApi(req, res, url) {
       return;
     }
     if (url.pathname === '/api/bot-stats') {
-      const scoped = await scopedAccountRuntime(url);
+      const scoped = await scopedAccountRuntime(url,currentUser);
       if (scoped) { sendJson(res,200,{bot:scoped.bot,observedAt:scoped.observedAt}); return; }
       sendJson(res, 200, await getBotStats());
       return;
     }
     if (url.pathname === '/api/live-dashboard') {
-      const scoped = await scopedAccountRuntime(url);
+      const scoped = await scopedAccountRuntime(url,currentUser);
       if (scoped) { sendJson(res,200,{bot:scoped.bot,observedAt:scoped.observedAt,supplies:{hasSnapshot:false,inventory:null,barrel:null,barrelError:'No account supply snapshot yet.'},nearby:scoped.bot.nearbyPlayers || []}); return; }
       sendJson(res, 200, await getLiveDashboardStats());
       return;
     }
     if (url.pathname === '/api/obsidian') {
-      const scoped = req.method === 'GET' ? await scopedAccountRuntime(url) : null;
+      const scoped = req.method === 'GET' ? await scopedAccountRuntime(url,currentUser) : null;
       if (req.method === 'GET' && scoped) sendJson(res,200,{farm:{desiredEnabled:false,totalMined:0,todayMined:0,sessionPerHour:0,updatedAt:scoped.observedAt},hourly:[],daily:[],supplies:{hasSnapshot:false,inventory:null,barrel:null},settings:{timezone:'Europe/Vilnius'},goals:[],annotations:[],analytics:{}});
       else if (req.method === 'GET') sendJson(res, 200, await getObsidianStats(currentUser));
       else if (req.method === 'POST') sendJson(res, 200, await updateObsidianAnalytics(currentUser, await readJsonBody(req)));
@@ -3511,7 +3518,7 @@ async function handleApi(req, res, url) {
       return;
     }
     if (url.pathname === '/api/server-stats') {
-      const scoped = await scopedAccountRuntime(url);
+      const scoped = await scopedAccountRuntime(url,currentUser);
       if (scoped) { sendJson(res,200,{playerStats:{players:{online:0,total:0,onlineUnwhitelisted:0,seen24h:0,seen7d:0},playtimeLeaderboard:[],milestones:[]},nearby:scoped.bot.nearbyPlayers || [],tps:{latest:null,latestAt:scoped.observedAt,min24h:null,max24h:null},hourlyTps:[]}); return; }
       sendJson(res, 200, await getServerStats());
       return;

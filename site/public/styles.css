@@ -5671,6 +5671,7 @@ body.search-focus-active #logoutButton {
 }
 
 .account-switcher { display:flex; align-items:center; gap:6px; max-width:min(280px,32vw); }
+.account-switcher[hidden] { display:none!important; }
 .account-switcher-list { display:flex; gap:6px; overflow-x:auto; scrollbar-width:none; padding:4px; }
 .account-switcher-list::-webkit-scrollbar { display:none; }
 .account-avatar { position:relative; flex:0 0 42px; width:42px; min-width:42px; max-width:42px; height:42px; min-height:42px; max-height:42px; aspect-ratio:1; padding:3px; border:1px solid var(--line); border-radius:var(--button-radius); overflow:visible; background:var(--panel); color:var(--text); box-shadow:inset 0 1px 0 rgb(255 255 255 / .035); transition:border-color 160ms ease,background-color 160ms ease,box-shadow 160ms ease,transform 160ms ease; }
@@ -5697,6 +5698,9 @@ body.search-focus-active #logoutButton {
 .account-form-row { display:grid; grid-template-columns:minmax(0,1fr) 120px; gap:12px; }.account-checkbox { display:flex!important; align-items:center; gap:9px; min-height:32px; color:var(--text); font-size:13px; font-weight:700; cursor:pointer; }.account-checkbox input { width:16px; height:16px; margin:0; accent-color:var(--accent); }
 .account-auth-note { padding:11px 12px; border-left:3px solid var(--accent); border-radius:0 10px 10px 0; color:var(--muted); background:var(--panel-soft); font-size:12px; line-height:1.5; }.account-modal-actions { display:flex; justify-content:flex-end; gap:10px; padding-top:2px; }.account-modal-actions button { min-width:112px; }.account-modal-close { position:absolute; top:14px; right:14px; width:34px; min-width:34px; max-width:34px; height:34px; min-height:34px; max-height:34px; padding:0; border:1px solid var(--line); border-radius:50%; color:var(--muted); background:var(--panel-soft); font-size:22px; font-weight:500; }.account-modal-close:hover { color:var(--text); background:color-mix(in srgb,var(--accent) 14%,var(--panel-soft)); border-color:var(--accent); }
 @media (max-width:700px) {
+  body.account-switching-disabled .topbar-actions { grid-template-columns:var(--button-height) var(--button-height) 74px minmax(0,1fr); }
+  body.account-switching-disabled .topbar-actions #themeToggle { grid-column:3; }
+  body.account-switching-disabled .topbar-actions #logoutButton { grid-column:4; }
   body.account-switcher-open { overflow:hidden; }
   .account-switcher-backdrop { position:fixed; inset:0; z-index:150; background:rgb(8 11 17 / .58); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); transform:translateZ(0); }
   .account-switcher-backdrop[hidden] { display:none; }

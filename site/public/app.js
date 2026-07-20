@@ -598,6 +598,10 @@ function applyAccountTabScope(account) {
 function renderAccountSwitcher() {
   const list = $('#accountSwitcherList');
   if (!list) return;
+  const canSwitch = state.currentUser?.role === 'admin';
+  const switcher = $('#accountSwitcher');
+  if (switcher) switcher.hidden = !canSwitch;
+  document.body.classList.toggle('account-switching-disabled',!canSwitch);
   const accountButtons = state.accounts.map(account => {
     const active = account.id === state.activeAccountId;
     const uptime = account.startedAt ? formatDurationMs(Math.max(0, Date.now() - new Date(account.startedAt).getTime())) : 'not running';
@@ -618,8 +622,10 @@ function renderAccountSwitcher() {
 async function loadAccounts() {
   const payload = await fetchJson('/api/accounts', { signal: null });
   state.accounts = Array.isArray(payload.accounts) ? payload.accounts : [];
-  const saved = localStorage.getItem('wm-active-account');
-  state.activeAccountId = state.accounts.some(account => account.id === saved) ? saved : state.accounts[0]?.id || null;
+  const canSwitch = state.currentUser?.role === 'admin';
+  const saved = canSwitch ? localStorage.getItem('wm-active-account') : null;
+  const defaultAccount = state.accounts.find(account => account.isDefault) || state.accounts[0];
+  state.activeAccountId = canSwitch && state.accounts.some(account => account.id === saved) ? saved : defaultAccount?.id || null;
   if (state.activeAccountId) localStorage.setItem('wm-active-account', state.activeAccountId);
   renderAccountSwitcher();
   state.accountsRefreshedAt = Date.now();
