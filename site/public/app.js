@@ -912,9 +912,11 @@ async function handleAuthSubmit(event) {
     state.csrfToken = payload.csrfToken || null;
     applyCurrentUser(payload.user);
     hideAuthScreen();
-    await loadNavigationSettings({ migrateLocal: true });
-    await loadTimezones();
-    await loadAccountSettings();
+    await Promise.all([
+      loadNavigationSettings({ migrateLocal: true }),
+      loadTimezones(),
+      loadAccountSettings()
+    ]);
     restoreActiveTab();
     openPushDestination();
     await loadAll();
@@ -935,9 +937,11 @@ async function initAuth() {
     if (payload.authenticated) {
       applyCurrentUser(payload.user);
       hideAuthScreen();
-      await loadNavigationSettings({ migrateLocal: true });
-      await loadTimezones();
-      await loadAccountSettings();
+      await Promise.all([
+        loadNavigationSettings({ migrateLocal: true }),
+        loadTimezones(),
+        loadAccountSettings()
+      ]);
       restoreActiveTab();
       openPushDestination();
       await loadAll();
@@ -4795,17 +4799,17 @@ async function loadAll() {
   if (!state.currentUser || state.fullSyncLoading) return;
   state.fullSyncLoading = true;
   try {
-    const [chat, botStats, obsidian, serverStats] = await Promise.all([
-      ensureItemIcons(),
-      fetchJson(`/api/chat?limit=${CHAT_HISTORY_LIMIT}`),
-      fetchJson('/api/bot-stats'),
-      fetchJson('/api/obsidian'),
-      fetchJson('/api/server-stats')
-    ]).then(([_, chat, botStats, obsidian, serverStats]) => [chat, botStats, obsidian, serverStats]);
-    renderChat(chat);
-    renderBotStats(botStats);
-    renderObsidian(obsidian);
-    renderServerStats(serverStats);
+    // Render each dashboard section as soon as its own request completes. A slow
+    // analytics query or the icon manifest must not hold the whole first screen.
+    const sectionLoads = [
+      fetchJson(`/api/chat?limit=${CHAT_HISTORY_LIMIT}`).then(renderChat),
+      fetchJson('/api/bot-stats').then(renderBotStats),
+      Promise.all([ensureItemIcons(), fetchJson('/api/obsidian')]).then(([, payload]) => renderObsidian(payload)),
+      fetchJson('/api/server-stats').then(renderServerStats)
+    ];
+    const results = await Promise.allSettled(sectionLoads);
+    const failed = results.find(result => result.status === 'rejected');
+    if (failed) throw failed.reason;
     if (state.currentUser?.role === 'admin') await loadNotificationCount();
     if (state.currentUser?.role === 'admin') {
       await loadAdminControlState();

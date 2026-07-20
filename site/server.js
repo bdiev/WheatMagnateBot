@@ -4,6 +4,7 @@ const http = require('node:http');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const zlib = require('node:zlib');
 const { pathToFileURL } = require('node:url');
 const { Pool } = require('pg');
 const { runMigrations } = require('./migrations');
@@ -3344,9 +3345,36 @@ function serveStatic(req, res) {
       return;
     }
 
-    const type = MIME_TYPES[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
-    res.writeHead(200, { 'Content-Type': type });
-    res.end(req.method === 'HEAD' ? undefined : data);
+    const extension = path.extname(filePath).toLowerCase();
+    const type = MIME_TYPES[extension] || 'application/octet-stream';
+    const etag = `\"${data.length.toString(16)}-${Math.trunc((realPathErr ? fs.statSync(filePath) : fs.statSync(realFilePath)).mtimeMs).toString(16)}\"`;
+    const cacheControl = extension === '.html'
+      ? 'no-cache'
+      : 'public, max-age=3600, stale-while-revalidate=86400';
+    const headers = { 'Content-Type': type, 'Cache-Control': cacheControl, ETag: etag };
+    if (req.headers['if-none-match'] === etag) {
+      res.writeHead(304, headers);
+      res.end();
+      return;
+    }
+
+    const compressible = data.length >= 1024 && new Set([
+      '.html', '.css', '.js', '.json', '.webmanifest', '.svg', '.ttf', '.woff'
+    ]).has(extension);
+    const acceptedEncoding = String(req.headers['accept-encoding'] || '');
+    let body = data;
+    if (compressible && /\bbr\b/.test(acceptedEncoding)) {
+      body = zlib.brotliCompressSync(data);
+      headers['Content-Encoding'] = 'br';
+      headers.Vary = 'Accept-Encoding';
+    } else if (compressible && /\bgzip\b/.test(acceptedEncoding)) {
+      body = zlib.gzipSync(data);
+      headers['Content-Encoding'] = 'gzip';
+      headers.Vary = 'Accept-Encoding';
+    }
+    headers['Content-Length'] = body.length;
+    res.writeHead(200, headers);
+    res.end(req.method === 'HEAD' ? undefined : body);
     });
   });
 }
