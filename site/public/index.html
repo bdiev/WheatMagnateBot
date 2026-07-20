@@ -12,8 +12,8 @@
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="icon" type="image/png" href="/items/Wheat.png">
     <link rel="apple-touch-icon" href="/items/Wheat.png">
-    <script src="/theme-init.js?v=119"></script>
-    <link rel="stylesheet" href="/styles.css?v=119">
+    <script src="/theme-init.js?v=120"></script>
+    <link rel="stylesheet" href="/styles.css?v=120">
   </head>
   <body>
     <section id="authScreen" class="auth-screen" aria-label="Site access">
@@ -171,9 +171,9 @@
           <div class="account-form-row"><label class="account-field">Server<input name="host" required maxlength="255" placeholder="oldfag.org"></label><label class="account-field">Port<input name="port" type="number" min="1" max="65535" value="25565" required></label></div>
           <label class="account-field">Minecraft version<input name="minecraftVersion" maxlength="32" placeholder="Auto-detect"></label>
           <label class="account-field account-color-field">Account color<input name="color" type="color" value="#f1c232"></label>
-          <label class="account-checkbox"><input name="enabled" type="checkbox" checked> Enable after adding</label>
+          <label class="account-checkbox"><input name="enabled" type="checkbox" checked> <span id="accountEnabledText">Enable after adding</span></label>
           <p class="account-auth-note">Microsoft passwords are never requested. Authorization uses Mineflayer's device-code flow and a separate local auth-cache directory.</p>
-          <div class="account-modal-actions"><button type="button" id="accountModalCancel" class="ghost-button">Cancel</button><button type="submit">Add account</button></div>
+          <div class="account-modal-actions"><button type="button" id="accountModalCancel" class="ghost-button">Cancel</button><button type="submit" id="accountModalSubmit">Add account</button></div>
         </form>
       </div>
 
@@ -934,6 +934,6 @@
       </section>
     </main>
 
-    <script src="/app.js?v=119" defer></script>
+    <script src="/app.js?v=120" defer></script>
   </body>
 </html>

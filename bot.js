@@ -4800,6 +4800,17 @@ async function executeBotCommand(command) {
     return { message: type === 'account_pause' ? 'Account paused.' : 'Account stopped.', accountId: DEFAULT_ACCOUNT_ID };
   }
   if (type === 'account_restart' || type === 'account_reauthorize') {
+    if (pool) {
+      const refreshed = await pool.query('SELECT username,host,port,minecraft_version,auth_type FROM bot_accounts WHERE id=$1::uuid AND deleted_at IS NULL',[DEFAULT_ACCOUNT_ID]).catch(() => ({rows:[]}));
+      const account = refreshed.rows[0];
+      if (account) {
+        config.username = account.username;
+        config.host = account.host;
+        config.port = Number(account.port || 25565);
+        config.version = account.minecraft_version || false;
+        config.auth = account.auth_type;
+      }
+    }
     clearReconnectTimer();
     if (type === 'account_reauthorize') {
       shouldReconnect = false;
@@ -5163,8 +5174,10 @@ async function initializeMultiAccountManager() {
 }
 
 async function executeManagedAccountCommand(command) {
-  if (!multiAccountRegistry?.get(command.account_id)) await multiAccountRegistry?.load();
+  await multiAccountRegistry?.load();
   const runtime = multiBotManager?.get(command.account_id);
+  const refreshedAccount = multiAccountRegistry?.get(command.account_id);
+  if (runtime && refreshedAccount) runtime.account = refreshedAccount;
   const type = String(command.command_type || '');
   const payload = command.payload || {};
   if (type === 'account_start') return multiBotManager.start(command.account_id);

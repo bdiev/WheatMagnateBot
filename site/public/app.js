@@ -87,6 +87,7 @@ const state = {
   activeAccountId: null,
   accountAbortController: null,
   accountsRefreshedAt: 0,
+  editingAccountId: null,
   pendingPushDestination: null,
   chartRanges: {
     chatHourlyChart: 'hours',
@@ -628,10 +629,28 @@ async function selectAccount(accountId) {
   try { await loadAll(); setBanner(''); } catch (error) { if (error.name !== 'AbortError') setBanner(error.message); }
 }
 
-function setAccountModalOpen(open) {
+function setAccountModalOpen(open, account = null) {
   const overlay = $('#accountModal');
   if (!overlay) return;
+  const form = $('#accountForm');
+  if (open && form) {
+    state.editingAccountId = account?.id || null;
+    form.reset();
+    form.elements.displayName.value = account?.displayName || '';
+    form.elements.username.value = account?.username || '';
+    form.elements.authType.value = account?.authType || 'microsoft';
+    form.elements.host.value = account?.host || '';
+    form.elements.port.value = account?.port || 25565;
+    form.elements.minecraftVersion.value = account?.minecraftVersion || '';
+    form.elements.color.value = account?.color || '#f1c232';
+    form.elements.enabled.checked = account ? Boolean(account.enabled) : true;
+    $('#accountModalTitle').textContent = account ? 'Edit account' : 'Add account';
+    $('#accountModalSubmit').textContent = account ? 'Save changes' : 'Add account';
+    $('#accountEnabledText').textContent = account ? 'Account enabled' : 'Enable after adding';
+    $('#accountFormError').hidden = true;
+  }
   overlay.hidden = !open;
+  if (!open) state.editingAccountId = null;
   if (open) $('#accountForm')?.elements.displayName?.focus();
 }
 
@@ -642,8 +661,14 @@ async function submitAccount(event) {
   error.hidden = true;
   const data = new FormData(form);
   try {
-    const payload = await postJson('/api/accounts', { displayName:data.get('displayName'),username:data.get('username'),authType:data.get('authType'),host:data.get('host'),port:Number(data.get('port')),minecraftVersion:data.get('minecraftVersion') || null,color:data.get('color') || null,enabled:data.get('enabled') === 'on' });
-    form.reset(); setAccountModalOpen(false); await loadAccounts(); await selectAccount(payload.account.id);
+    const body = { displayName:data.get('displayName'),username:data.get('username'),authType:data.get('authType'),host:data.get('host'),port:Number(data.get('port')),minecraftVersion:data.get('minecraftVersion') || null,color:data.get('color') || null,enabled:data.get('enabled') === 'on' };
+    const editingId = state.editingAccountId;
+    const payload = editingId
+      ? await patchJson(`/api/accounts/${editingId}`, body)
+      : await postJson('/api/accounts', body);
+    form.reset(); setAccountModalOpen(false); await loadAccounts();
+    if (!editingId) await selectAccount(payload.account.id);
+    else setBanner(`${payload.account.displayName} updated. Runtime restart queued.`);
   } catch (err) { error.textContent=err.message; error.hidden=false; }
 }
 
@@ -665,9 +690,9 @@ async function runAccountAction(accountId, action) {
 function openAccountMenu(accountId, anchor) {
   document.querySelector('.account-context-menu')?.remove();
   const menu=document.createElement('div'); menu.className='account-context-menu';
-  for (const action of ['start','stop','restart','pause','resume','reauthorize','delete']) { const button=document.createElement('button'); button.type='button'; button.dataset.action=action; button.textContent=action[0].toUpperCase()+action.slice(1); menu.append(button); }
+  for (const action of ['edit','start','stop','restart','pause','resume','reauthorize','delete']) { const button=document.createElement('button'); button.type='button'; button.dataset.action=action; button.textContent=action[0].toUpperCase()+action.slice(1); menu.append(button); }
   const rect=anchor.getBoundingClientRect(); menu.style.left=`${Math.min(innerWidth-180,rect.left)}px`; menu.style.top=`${rect.bottom+6}px`; document.body.append(menu);
-  menu.addEventListener('click', event => { const action=event.target.dataset.action; if(action) runAccountAction(accountId,action).catch(err=>setBanner(err.message)); menu.remove(); });
+  menu.addEventListener('click', event => { const action=event.target.dataset.action; if (!action) return; if (action === 'edit') setAccountModalOpen(true,state.accounts.find(item => item.id === accountId)); else runAccountAction(accountId,action).catch(err=>setBanner(err.message)); menu.remove(); });
 }
 
 async function postJson(path, body = {}) {
@@ -682,6 +707,17 @@ async function postJson(path, body = {}) {
   if (!response.ok) {
     throw new Error(payload.error || `HTTP ${response.status}`);
   }
+  return payload;
+}
+
+async function patchJson(path, body = {}) {
+  const response = await fetch(path, {
+    method:'PATCH', cache:'no-store', credentials:'same-origin',
+    headers:{'Content-Type':'application/json', ...(state.csrfToken ? {'X-CSRF-Token':state.csrfToken} : {})},
+    body:JSON.stringify(body)
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
   return payload;
 }
 
@@ -5039,6 +5075,7 @@ $('#accountForm')?.addEventListener('submit', submitAccount);
 $('#accountSwitcherList')?.addEventListener('click', event => { const avatar=event.target.closest('[data-account-id]'); if(avatar) selectAccount(avatar.dataset.accountId); });
 $('#accountSwitcherList')?.addEventListener('contextmenu', event => { const avatar=event.target.closest('[data-account-id]'); if(!avatar)return; event.preventDefault(); openAccountMenu(avatar.dataset.accountId,avatar); });
 $('#accountSwitcherList')?.addEventListener('keydown', event => { const avatar=event.target.closest('[data-account-id]'); if(avatar && (event.key==='ContextMenu' || (event.shiftKey&&event.key==='F10'))) { event.preventDefault(); openAccountMenu(avatar.dataset.accountId,avatar); } });
+document.addEventListener('pointerdown', event => { const menu=document.querySelector('.account-context-menu'); if(menu && !menu.contains(event.target)) menu.remove(); });
 $('#adminUsersRefresh')?.addEventListener('click', loadAdminUsers);
 $('#adminLogsRefresh')?.addEventListener('click', loadAdminSystemLogs);
 $('#adminLogLevel')?.addEventListener('change', loadAdminSystemLogs);

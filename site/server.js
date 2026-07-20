@@ -1833,7 +1833,10 @@ async function handleAccountsApi(req, currentUser, url) {
     assertAdminUser(currentUser);
     const updated = await registry.update(accountId, cleanAccountInput(await readJsonBody(req, 32 * 1024), { partial:true }));
     await recordSystemLog({level:'audit',category:'accounts',actor:currentUser.username,message:`Updated Minecraft account ${updated.displayName}.`,details:{accountId}});
-    return { statusCode:200,payload:{account:updated} };
+    const restartCommand = updated.enabled
+      ? await queueBotCommand(currentUser,'account_restart',{accountId},{source:'site',accountId})
+      : await queueBotCommand(currentUser,'account_stop',{accountId},{source:'site',accountId});
+    return { statusCode:200,payload:{account:updated,restartCommand:restartCommand?.command || null} };
   }
   if (!action && req.method === 'DELETE') {
     assertAdminUser(currentUser);
