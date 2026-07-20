@@ -8,6 +8,8 @@ const state = {
   timer: null,
   liveChatTimer: null,
   liveChatLoading: false,
+  liveDashboardTimer: null,
+  liveDashboardLoading: false,
   fullSyncLoading: false,
   eventSource: null,
   sseWasConnected: false,
@@ -1146,7 +1148,12 @@ function prepareChartCanvas(canvas, data, options = {}) {
   const ratio = window.devicePixelRatio || 1;
   const pointWidth = options.pointWidth || 44;
   const minWidth = viewport ? viewport.clientWidth : canvas.getBoundingClientRect().width;
-  const cssWidth = Math.max(minWidth || 320, (Array.isArray(data) ? data.length : 0) * pointWidth + 92);
+  // Long-lived series can contain many thousands of hourly points. Keep the
+  // backing bitmap below common browser/GPU canvas limits while retaining the
+  // complete dataset and horizontal navigation through its history.
+  const safeCanvasWidth = Math.max(4096, Math.floor(16_000 / ratio));
+  const requestedWidth = (Array.isArray(data) ? data.length : 0) * pointWidth + 92;
+  const cssWidth = Math.min(safeCanvasWidth, Math.max(minWidth || 320, requestedWidth));
   const cssHeight = Math.max(1, Math.floor(canvas.getBoundingClientRect().height || canvas.height || 260));
   const pixelWidth = Math.floor(cssWidth * ratio);
   const pixelHeight = Math.floor(cssHeight * ratio);
@@ -2766,18 +2773,7 @@ function renderPlayerStats(payload = {}, nearbyPlayers = []) {
     leaderboard.map(player => [player.username, player.isOnline, player.playtime])
   );
 
-  const nearby = nearbyPlayers || [];
-  renderStable('#nearbyList', nearby.length
-    ? nearby.map(player => `
-      <div class="rank-item activity-item">
-        ${playerIdentity(player.username, 28)}
-        <strong>${formatNumber(player.distance)} blocks</strong>
-        <span class="muted">${formatAgo(player.lastSeen)}</span>
-      </div>
-    `).join('')
-    : '<div class="empty">No nearby sightings yet.</div>',
-    nearby.map(player => [player.username, player.distance, player.lastSeen])
-  );
+  renderNearbySightings(nearbyPlayers);
 
   const milestones = payload.milestones || [];
   renderStable('#playerMilestones', milestones.length
@@ -2803,6 +2799,22 @@ function renderPlayerStats(payload = {}, nearbyPlayers = []) {
       milestone.isRound
     ])
   );
+}
+
+function renderNearbySightings(nearbyPlayers = []) {
+  const nearby = nearbyPlayers || [];
+  renderStable('#nearbyList', nearby.length
+    ? nearby.map(player => `
+      <div class="rank-item activity-item">
+        ${playerIdentity(player.username, 28)}
+        <strong>${formatNumber(player.distance)} blocks</strong>
+        <span class="muted">${formatAgo(player.lastSeen)}</span>
+      </div>
+    `).join('')
+    : '<div class="empty">No nearby sightings yet.</div>',
+    nearby.map(player => [player.username, player.distance, player.lastSeen])
+  );
+
 }
 
 function countSupplyItems(supplies, predicate) {
@@ -4592,8 +4604,10 @@ function schedulePollingStatus(source) {
 function clearDashboardPolling() {
   clearInterval(state.timer);
   clearInterval(state.liveChatTimer);
+  clearInterval(state.liveDashboardTimer);
   state.timer = null;
   state.liveChatTimer = null;
+  state.liveDashboardTimer = null;
   state.pollingMode = null;
 }
 
@@ -4603,6 +4617,8 @@ function startSlowPolling() {
   state.pollingMode = 'slow';
   state.timer = setInterval(loadAll, 60_000);
   state.liveChatTimer = setInterval(checkChatVersion, 750);
+  state.liveDashboardTimer = setInterval(refreshLiveDashboard, 1_000);
+  refreshLiveDashboard();
 }
 
 function startFallbackPolling() {
@@ -4611,6 +4627,8 @@ function startFallbackPolling() {
   state.pollingMode = 'fallback';
   state.timer = setInterval(loadAll, 15_000);
   state.liveChatTimer = setInterval(loadLiveChats, 2_000);
+  state.liveDashboardTimer = setInterval(refreshLiveDashboard, 1_000);
+  refreshLiveDashboard();
 }
 
 function queueRealtimeRefresh(key, callback, delay = 180) {
@@ -4652,6 +4670,22 @@ async function checkChatVersion() {
 
 async function refreshBotFromEvent() {
   renderBotStats(await fetchJson('/api/bot-stats'));
+}
+
+async function refreshLiveDashboard() {
+  if (!state.currentUser || state.liveDashboardLoading || document.visibilityState === 'hidden') return;
+  state.liveDashboardLoading = true;
+  try {
+    const payload = await fetchJson('/api/live-dashboard');
+    renderBotStats({ bot: payload.bot, observedAt: payload.observedAt });
+    renderNearbySightings(payload.nearby || []);
+    renderSupplies('#inventorySupplies', payload.supplies?.inventory);
+    renderSupplies('#barrelSupplies', payload.supplies?.barrel, payload.supplies?.barrelError);
+  } catch {
+    // SSE and the periodic full dashboard refresh remain as fallbacks.
+  } finally {
+    state.liveDashboardLoading = false;
+  }
 }
 
 async function refreshFarmFromEvent() {

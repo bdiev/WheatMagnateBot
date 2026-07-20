@@ -1708,6 +1708,36 @@ async function getObsidianStats(currentUser = null) {
   };
 }
 
+async function getLiveDashboardStats() {
+  assertDatabase();
+  const [botResult, supplyResult, nearbyResult] = await Promise.all([
+    pool.query(`SELECT status, observed_at FROM bot_status_snapshots WHERE id = 1`),
+    pool.query(`SELECT supplies, observed_at, updated_at FROM obsidian_farm_supply_snapshot WHERE id = 1`),
+    pool.query(`SELECT username, distance, last_seen FROM nearby_player_sightings ORDER BY last_seen DESC LIMIT 5`)
+  ]);
+  const botRow = botResult.rows[0] || {};
+  const bot = botRow.status || null;
+  const observedAt = botRow.observed_at || null;
+  const liveNearby = Array.isArray(bot?.nearbyPlayers) ? bot.nearbyPlayers : [];
+  const nearby = [];
+  const seen = new Set();
+  for (const player of [...liveNearby.map(player => ({ ...player, lastSeen: observedAt })), ...nearbyResult.rows.map(row => ({
+    username: row.username, distance: toInt(row.distance), lastSeen: row.last_seen
+  }))]) {
+    const key = String(player.username || '').toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    nearby.push(player);
+    if (nearby.length >= 5) break;
+  }
+  return {
+    bot,
+    observedAt,
+    supplies: normalizeSupplySnapshot(supplyResult.rows[0]),
+    nearby
+  };
+}
+
 async function queueSiteWhisperClaim(currentUser, body) {
   assertDatabase();
   const username = cleanMinecraftUsername(body.username);
@@ -1805,21 +1835,12 @@ async function getServerStats() {
       WHERE sampled_at >= NOW() - INTERVAL '24 hours'
     `),
     pool.query(`
-      WITH buckets AS (
-        SELECT generate_series(
-          date_trunc('hour', NOW() - INTERVAL '167 hours'),
-          date_trunc('hour', NOW()),
-          INTERVAL '1 hour'
-        ) AS bucket
-      )
-      SELECT TO_CHAR(buckets.bucket, 'MM-DD HH24:00') AS label,
-             buckets.bucket AS bucket,
-             ROUND(AVG(samples.tps)::numeric, 1) AS avg_tps
-      FROM buckets
-      LEFT JOIN bot_tps_samples samples
-        ON date_trunc('hour', samples.sampled_at) = buckets.bucket
-      GROUP BY buckets.bucket
-      ORDER BY buckets.bucket
+      SELECT TO_CHAR(date_trunc('hour', sampled_at), 'YYYY-MM-DD HH24:00') AS label,
+             date_trunc('hour', sampled_at) AS bucket,
+             ROUND(AVG(tps)::numeric, 1) AS avg_tps
+      FROM bot_tps_samples
+      GROUP BY date_trunc('hour', sampled_at)
+      ORDER BY bucket
     `),
     pool.query(`
       SELECT username, distance, last_seen
@@ -3241,6 +3262,10 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/bot-stats') {
       sendJson(res, 200, await getBotStats());
+      return;
+    }
+    if (url.pathname === '/api/live-dashboard') {
+      sendJson(res, 200, await getLiveDashboardStats());
       return;
     }
     if (url.pathname === '/api/obsidian') {

@@ -3336,7 +3336,7 @@ function startObsidianSupplySnapshotWriter() {
   refreshObsidianSupplySnapshotForSite().catch(() => {});
   obsidianSupplySnapshotInterval = setInterval(() => {
     refreshObsidianSupplySnapshotForSite().catch(() => {});
-  }, 10_000);
+  }, 2_000);
   obsidianSupplySnapshotInterval.unref?.();
 }
 
@@ -5953,7 +5953,6 @@ async function recordTpsSample(force = false) {
       'INSERT INTO bot_tps_samples (tps) VALUES ($1)',
       [Math.max(0, Math.min(20, Number(tps.toFixed(2))))]
     );
-    await pool.query("DELETE FROM bot_tps_samples WHERE sampled_at < NOW() - INTERVAL '14 days'");
   } catch (err) {
     console.error('[DB] Failed to record TPS sample:', err.message);
   }
@@ -5992,6 +5991,8 @@ async function recordNearbyPlayerSighting(username, distance) {
   if (!pool || !username) return;
   const key = String(username).toLowerCase();
   const now = Date.now();
+  // Historical sightings stay rate-limited; current distances are delivered
+  // through the one-second bot snapshot instead of flooding the event log.
   if (now - (nearbyPlayerSightingWriteAt.get(key) || 0) < 60_000) return;
   nearbyPlayerSightingWriteAt.set(key, now);
 
@@ -6708,7 +6709,7 @@ function startBotStatusSnapshotWriter() {
   writeBotStatusSnapshot().catch(() => {});
   botStatusSnapshotInterval = setInterval(() => {
     writeBotStatusSnapshot().catch(() => {});
-  }, 10_000);
+  }, 1_000);
 }
 
 async function buildAdminPanelEmbed() {
