@@ -5681,7 +5681,6 @@ body.search-focus-active #logoutButton {
 .account-status-dot { position:absolute; z-index:4; right:-4px; bottom:-4px; width:13px; height:13px; border:2px solid var(--bg); border-radius:50%; background:#8b949e; box-shadow:0 0 0 1px var(--line),0 2px 5px rgb(0 0 0 / .35); pointer-events:none; }
 .account-status-dot.connected { background:#2fbf71; }.account-status-dot.connecting { background:#e5b94b; }.account-status-dot.error { background:#e45656; }.account-status-dot.active-task { background:#4b91e5; }
 .account-add { flex:0 0 42px; width:42px; min-width:42px; max-width:42px; font-size:22px; font-weight:500; line-height:1; }
-.account-mobile-manage { display:none; }
 .tab-button.account-tab-restricted { display:none!important; }
 .account-modal-overlay { position:fixed; inset:0; z-index:1200; display:grid; place-items:center; padding:18px; background:color-mix(in srgb,var(--bg) 72%,transparent); backdrop-filter:blur(8px); animation:overlayIn 180ms ease; }
 .account-modal-overlay[hidden] { display:none; }
@@ -5704,12 +5703,10 @@ body.search-focus-active #logoutButton {
   .account-switcher { width:var(--button-height); max-width:var(--button-height); height:var(--button-height); order:initial; overflow:visible; }
   .account-switcher-list { width:var(--button-height); height:var(--button-height); padding:0; overflow:visible; }
   .account-switcher:not(.expanded) .account-avatar:not(.active),
-  .account-switcher:not(.expanded) .account-add,
-  .account-switcher:not(.expanded) .account-mobile-manage { display:none; }
+  .account-switcher:not(.expanded) .account-add { display:none; }
   .account-switcher.expanded { z-index:180; }
   .account-switcher.expanded .account-switcher-list { position:absolute; top:-8px; left:-8px; width:max-content; min-width:58px; max-width:calc(100vw - 32px); height:auto; display:flex; flex-wrap:wrap; gap:8px; padding:8px; border:1px solid var(--line); border-radius:var(--button-radius); overflow:visible; background:var(--panel); box-shadow:var(--shadow); }
-  .account-switcher.expanded .account-mobile-manage { display:grid; place-items:center; flex:0 0 42px; width:42px; min-width:42px; height:42px; min-height:42px; padding:0; border:1px solid var(--line); border-radius:var(--button-radius); color:var(--text); background:var(--panel-soft); font-size:25px; line-height:1; }
-  .account-switcher.expanded .account-mobile-manage:hover { border-color:var(--accent); background:color-mix(in srgb,var(--accent) 12%,var(--panel-soft)); }
+  .account-switcher .account-avatar[data-account-id] { touch-action:manipulation; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; }
   .account-form-row { grid-template-columns:1fr; }
   .account-modal { padding:22px 16px; }
 }

@@ -608,10 +608,7 @@ function renderAccountSwitcher() {
   const addButton = state.currentUser?.role === 'admin'
     ? '<button id="accountAddButton" class="account-avatar account-add admin-only" type="button" aria-label="Add Minecraft account">+</button>'
     : '';
-  const manageButton = state.currentUser?.role === 'admin' && state.activeAccountId
-    ? '<button id="accountManageButton" class="account-mobile-manage admin-only" type="button" aria-label="Manage active Minecraft account" title="Manage active account">&#8942;</button>'
-    : '';
-  list.innerHTML = accountButtons + addButton + manageButton;
+  list.innerHTML = accountButtons + addButton;
   const current = state.accounts.find(account => account.id === state.activeAccountId);
   applyAccountTabScope(current);
   const heading = $('.topbar h1');
@@ -704,11 +701,20 @@ async function runAccountAction(accountId, action) {
 
 function openAccountMenu(accountId, anchor) {
   document.querySelector('.account-context-menu')?.remove();
+  const account=state.accounts.find(item => item.id === accountId);
+  if (!account) return;
   const menu=document.createElement('div'); menu.className='account-context-menu';
-  for (const action of ['edit','start','stop','restart','pause','resume','reauthorize','delete']) { const button=document.createElement('button'); button.type='button'; button.dataset.action=action; button.textContent=action[0].toUpperCase()+action.slice(1); menu.append(button); }
+  const paused=account.status === 'paused' || account.task === 'paused';
+  const running=['connected','connecting','authorizing'].includes(account.status);
+  const actions=['edit',...(paused?['resume','stop']:running?['stop','restart']:['start']),'reauthorize',...(account.isDefault?[]:['delete'])];
+  for (const action of actions) { const button=document.createElement('button'); button.type='button'; button.dataset.action=action; button.textContent=action[0].toUpperCase()+action.slice(1); menu.append(button); }
   const rect=anchor.getBoundingClientRect(); menu.style.left=`${Math.min(innerWidth-180,rect.left)}px`; menu.style.top=`${rect.bottom+6}px`; document.body.append(menu);
   menu.addEventListener('click', event => { const action=event.target.dataset.action; if (!action) return; if (action === 'edit') setAccountModalOpen(true,state.accounts.find(item => item.id === accountId)); else runAccountAction(accountId,action).catch(err=>setBanner(err.message)); menu.remove(); });
 }
+
+let accountLongPressTimer = null;
+let accountLongPressConsumedUntil = 0;
+function cancelAccountLongPress() { clearTimeout(accountLongPressTimer); accountLongPressTimer=null; }
 
 function setMobileAccountSwitcherOpen(open) {
   const switcher = $('#accountSwitcher');
@@ -5099,9 +5105,8 @@ $('#accountModalCancel')?.addEventListener('click', () => setAccountModalOpen(fa
 $('#accountModal')?.addEventListener('click', event => { if (event.target.id === 'accountModal') setAccountModalOpen(false); });
 $('#accountForm')?.addEventListener('submit', submitAccount);
 $('#accountSwitcherList')?.addEventListener('click', event => {
+  if (Date.now() < accountLongPressConsumedUntil) { event.preventDefault(); return; }
   if (event.target.closest('#accountAddButton')) { setMobileAccountSwitcherOpen(false); setAccountModalOpen(true); return; }
-  const manageButton=event.target.closest('#accountManageButton');
-  if (manageButton) { setMobileAccountSwitcherOpen(false); if (state.activeAccountId) openAccountMenu(state.activeAccountId,manageButton); return; }
   const avatar=event.target.closest('[data-account-id]');
   if (!avatar) return;
   const mobile=matchMedia('(max-width: 700px)').matches;
@@ -5110,6 +5115,19 @@ $('#accountSwitcherList')?.addEventListener('click', event => {
   setMobileAccountSwitcherOpen(false);
   selectAccount(avatar.dataset.accountId);
 });
+$('#accountSwitcherList')?.addEventListener('pointerdown', event => {
+  const avatar=event.target.closest('[data-account-id]');
+  if (!avatar || !matchMedia('(max-width: 700px)').matches || event.pointerType === 'mouse') return;
+  cancelAccountLongPress();
+  accountLongPressTimer=setTimeout(() => {
+    accountLongPressTimer=null;
+    accountLongPressConsumedUntil=Date.now()+800;
+    navigator.vibrate?.(20);
+    openAccountMenu(avatar.dataset.accountId,avatar);
+    setMobileAccountSwitcherOpen(false);
+  },550);
+});
+for (const eventName of ['pointerup','pointercancel','pointerleave']) $('#accountSwitcherList')?.addEventListener(eventName,cancelAccountLongPress);
 $('#accountSwitcherList')?.addEventListener('contextmenu', event => { const avatar=event.target.closest('[data-account-id]'); if(!avatar)return; event.preventDefault(); openAccountMenu(avatar.dataset.accountId,avatar); });
 $('#accountSwitcherList')?.addEventListener('keydown', event => { const avatar=event.target.closest('[data-account-id]'); if(avatar && (event.key==='ContextMenu' || (event.shiftKey&&event.key==='F10'))) { event.preventDefault(); openAccountMenu(avatar.dataset.accountId,avatar); } });
 document.addEventListener('pointerdown', event => { const menu=document.querySelector('.account-context-menu'); if(menu && !menu.contains(event.target)) menu.remove(); if (!event.target.closest('#accountSwitcher')) setMobileAccountSwitcherOpen(false); });
