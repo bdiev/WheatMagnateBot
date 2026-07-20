@@ -538,14 +538,7 @@ function scrollToBottom(selector, { smooth = false } = {}) {
 }
 
 function setBanner(message) {
-  const banner = $('#statusBanner');
-  if (!message) {
-    banner.hidden = true;
-    banner.textContent = '';
-    return;
-  }
-  banner.hidden = false;
-  banner.textContent = message;
+  if (message) console.warn('[Dashboard]',message);
 }
 
 async function fetchJson(path, { transientRetries = 0, signal = null } = {}) {
@@ -583,9 +576,11 @@ function accountHeadUrl(username) {
 }
 
 function accountStatusClass(account) {
-  if (account.task && !['idle','paused'].includes(account.task) && account.status === 'connected') return 'active-task';
-  if (['connected','connecting','error'].includes(account.status)) return account.status;
-  return 'stopped';
+  if (account.status === 'connected' && account.task === 'obsidian') return 'mining';
+  if (account.status === 'connected') return 'online';
+  if (['connecting','authorizing'].includes(account.status)) return 'connecting';
+  if (account.status === 'error') return 'error';
+  return 'offline';
 }
 
 function applyAccountTabScope(account) {

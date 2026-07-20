@@ -194,21 +194,18 @@ h2 {
 
 body.search-focus-active .topbar > :first-child,
 body.search-focus-active .nav-menu,
-body.search-focus-active .status-banner,
 body.search-focus-active .tab-panel,
 body.nav-focus-active .topbar > :first-child,
 body.nav-focus-active .whisper-panel,
 body.nav-focus-active .seen-search,
 body.nav-focus-active #themeToggle,
 body.nav-focus-active #logoutButton,
-body.nav-focus-active .status-banner,
 body.nav-focus-active .tab-panel,
 body.whisper-focus-active .topbar > :first-child,
 body.whisper-focus-active .nav-menu,
 body.whisper-focus-active .seen-search,
 body.whisper-focus-active #themeToggle,
 body.whisper-focus-active #logoutButton,
-body.whisper-focus-active .status-banner,
 body.whisper-focus-active .tab-panel {
   opacity: 0.48;
   pointer-events: none;
@@ -729,16 +726,6 @@ body.search-focus-active #logoutButton {
 
 :root[data-theme="dark"] .tab-button.active {
   color: #0d0f14;
-}
-
-.status-banner {
-  margin-bottom: 16px;
-  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
-  border-radius: 8px;
-  padding: 12px 14px;
-  color: var(--warn);
-  background: color-mix(in srgb, var(--warn) 13%, var(--panel));
-  transition: color 260ms ease, background-color 260ms ease, border-color 260ms ease;
 }
 
 .seen-search {
@@ -5680,7 +5667,15 @@ body.search-focus-active #logoutButton {
 .account-avatar.avatar-image-failed::after { content:attr(data-initial); position:absolute; inset:0; display:grid; place-items:center; color:var(--account-color,var(--accent)); font-size:15px; font-weight:800; text-transform:uppercase; }
 .account-avatar.active { border-color:var(--account-color,var(--accent)); background:color-mix(in srgb,var(--account-color,var(--accent)) 10%,var(--panel)); box-shadow:inset 0 -3px 0 var(--account-color,var(--accent)),0 0 0 1px color-mix(in srgb,var(--account-color,var(--accent)) 18%,transparent); }
 .account-status-dot { position:absolute; z-index:4; right:-4px; bottom:-4px; width:13px; height:13px; border:2px solid var(--bg); border-radius:50%; background:#8b949e; box-shadow:0 0 0 1px var(--line),0 2px 5px rgb(0 0 0 / .35); pointer-events:none; }
-.account-status-dot.connected { background:#2fbf71; }.account-status-dot.connecting { background:#e5b94b; }.account-status-dot.error { background:#e45656; }.account-status-dot.active-task { background:#4b91e5; }
+.account-status-dot.online { background:#2fd478; animation:account-status-pulse-green 2.2s ease-in-out infinite; }
+.account-status-dot.mining { background:#4b91e5; animation:account-status-pulse-blue 1.35s ease-in-out infinite; }
+.account-status-dot.connecting { background:#e5b94b; animation:account-status-blink 1.15s ease-in-out infinite; }
+.account-status-dot.error { background:#ff8a3d; }
+.account-status-dot.offline { background:#e45656; }
+@keyframes account-status-pulse-green { 0%,100% { box-shadow:0 0 0 1px var(--line),0 0 0 0 rgb(47 212 120 / .42); } 50% { box-shadow:0 0 0 1px var(--line),0 0 0 5px rgb(47 212 120 / 0); } }
+@keyframes account-status-pulse-blue { 0%,100% { box-shadow:0 0 0 1px var(--line),0 0 0 0 rgb(75 145 229 / .52); transform:scale(.92); } 50% { box-shadow:0 0 0 1px var(--line),0 0 0 6px rgb(75 145 229 / 0); transform:scale(1.08); } }
+@keyframes account-status-blink { 0%,100% { opacity:.55; } 50% { opacity:1; } }
+@media (prefers-reduced-motion:reduce) { .account-status-dot { animation:none!important; } }
 .account-add { flex:0 0 42px; width:42px; min-width:42px; max-width:42px; font-size:22px; font-weight:500; line-height:1; }
 .tab-button.account-tab-restricted { display:none!important; }
 .account-modal-overlay { position:fixed; inset:0; z-index:1200; display:grid; place-items:center; padding:18px; background:color-mix(in srgb,var(--bg) 72%,transparent); backdrop-filter:blur(8px); animation:overlayIn 180ms ease; }
