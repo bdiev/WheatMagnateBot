@@ -1033,6 +1033,19 @@ const config = {
   session: loadedSession
 };
 
+async function clearLegacyAuthCacheForReauthorization() {
+  const root = path.resolve(MINECRAFT_PROFILES_FOLDER);
+  const entries = await fs.promises.readdir(root, { withFileTypes:true }).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error));
+  for (const entry of entries) {
+    // UUID directories belong to managed accounts and must never be touched by
+    // reauthorization of the compatibility runtime.
+    if (entry.isDirectory() && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(entry.name)) continue;
+    const target = path.resolve(root, entry.name);
+    if (!target.startsWith(`${root}${path.sep}`)) throw new Error('Unsafe legacy auth-cache path.');
+    await fs.promises.rm(target, { recursive:true, force:true });
+  }
+}
+
 
 function loadWhitelist() {
   try {
@@ -1110,10 +1123,21 @@ async function initDatabase() {
 
   try {
     await runMigrations(pool);
-    await pool.query(`UPDATE bot_accounts SET username=$2,display_name=CASE WHEN username='legacy' THEN $2 ELSE display_name END,
-      host=$3,port=$4,auth_type=$5,minecraft_version=$6,updated_at=NOW() WHERE id=$1::uuid`, [
-      DEFAULT_ACCOUNT_ID, config.username, config.host, Number(config.port || 25565), config.auth, config.version || null
-    ]);
+    const legacyAccountResult = await pool.query(`SELECT username,display_name,host,port,minecraft_version,auth_type
+      FROM bot_accounts WHERE id=$1::uuid AND deleted_at IS NULL`, [DEFAULT_ACCOUNT_ID]);
+    const legacyAccount = legacyAccountResult.rows[0];
+    if (!legacyAccount || legacyAccount.username === 'legacy') {
+      await pool.query(`UPDATE bot_accounts SET username=$2,display_name=$2,host=$3,port=$4,auth_type=$5,minecraft_version=$6,updated_at=NOW() WHERE id=$1::uuid`, [
+        DEFAULT_ACCOUNT_ID,config.username,config.host,Number(config.port || 25565),config.auth,config.version || null
+      ]);
+    } else {
+      config.username = legacyAccount.username;
+      config.host = legacyAccount.host;
+      config.port = Number(legacyAccount.port || 25565);
+      config.auth = legacyAccount.auth_type;
+      config.version = legacyAccount.minecraft_version || false;
+      console.log(`[Accounts] Legacy runtime bound to ${legacyAccount.display_name} (${legacyAccount.username}, ${legacyAccount.host}:${config.port}).`);
+    }
     await pool.query(`INSERT INTO obsidian_farm_analytics_settings(id,timezone,daily_report_enabled,daily_report_hour)
       VALUES(1,$1,$2,$3) ON CONFLICT(id) DO NOTHING`, [
       process.env.OBSIDIAN_ANALYTICS_TIMEZONE || 'Europe/Vilnius',
@@ -4776,7 +4800,17 @@ async function executeBotCommand(command) {
     return { message: type === 'account_pause' ? 'Account paused.' : 'Account stopped.', accountId: DEFAULT_ACCOUNT_ID };
   }
   if (type === 'account_restart' || type === 'account_reauthorize') {
-    shouldReconnect = true; clearReconnectTimer(); if (bot) bot.quit(type === 'account_reauthorize' ? 'Account reauthorization requested' : 'Account restart requested'); else createBot();
+    clearReconnectTimer();
+    if (type === 'account_reauthorize') {
+      shouldReconnect = false;
+      if (bot) bot.quit('Account reauthorization requested');
+      await clearLegacyAuthCacheForReauthorization();
+      shouldReconnect = true;
+      if (!bot) createBot();
+    } else {
+      shouldReconnect = true;
+      if (bot) bot.quit('Account restart requested'); else createBot();
+    }
     return { message: type === 'account_reauthorize' ? 'Account reauthorization requested.' : 'Account restart requested.', accountId: DEFAULT_ACCOUNT_ID };
   }
 
@@ -5119,7 +5153,8 @@ async function executeManagedAccountCommand(command) {
   const payload = command.payload || {};
   if (type === 'account_start') return multiBotManager.start(command.account_id);
   if (type === 'account_stop') return multiBotManager.stop(command.account_id);
-  if (type === 'account_restart' || type === 'account_reauthorize') return multiBotManager.restart(command.account_id);
+  if (type === 'account_restart') return multiBotManager.restart(command.account_id);
+  if (type === 'account_reauthorize') return multiBotManager.reauthorize(command.account_id);
   if (type === 'account_pause') return multiBotManager.pause(command.account_id);
   if (type === 'account_resume') return multiBotManager.resume(command.account_id);
   if (!runtime) throw new Error('Account runtime is not active.');
@@ -7309,6 +7344,14 @@ function createBot() {
   });
 
   bot.on('spawn', async () => {
+    if (bot === createdBot && bot.username && bot.username.toLowerCase() !== String(config.username).toLowerCase()) {
+      shouldReconnect = false;
+      const mismatch = `Authenticated Minecraft profile ${bot.username} does not match configured account ${config.username}. Reauthorize the selected account.`;
+      setDisconnectReason(mismatch);
+      await recordSystemLog({level:'error',category:'minecraft',message:mismatch,details:{accountId:DEFAULT_ACCOUNT_ID,configuredUsername:config.username,actualUsername:bot.username}}).catch(()=>{});
+      finalizeConnectionLoss('Authenticated Minecraft profile mismatch');
+      return;
+    }
     clearTimeout(connectionWatchdog);
     console.log('[Bot] Spawned.');
     reconnectAttemptTimes.length = 0;

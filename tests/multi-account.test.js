@@ -30,6 +30,7 @@ async function main(){
   assert.notEqual(factoryOptions[0].profilesFolder,factoryOptions[1].profilesFolder,'auth-cache directories are isolated');
   const firstRuntime=manager.get(first.id); const secondRuntime=manager.get(second.id); assert.notEqual(firstRuntime.intervals,secondRuntime.intervals,'timer collections are isolated');
   const duplicate=await Promise.all([manager.start(first.id),manager.start(first.id)]); assert.equal(bots.length,2,'concurrent starts do not create duplicate runtimes'); assert.equal(duplicate[0].accountId,first.id);
+  bots[1].username='WheatMagnate'; bots[1].emit('spawn'); assert.equal(secondRuntime.status,'error','runtime rejects a Microsoft profile belonging to another configured account'); assert.match(secondRuntime.lastError,/does not match configured account SecondBot/);
   firstRuntime.assignTask('obsidian'); secondRuntime.assignTask('follow'); assert.equal(firstRuntime.task,'obsidian');assert.equal(secondRuntime.task,'follow');
   await manager.shutdown(); assert.equal(firstRuntime.status,'stopped');assert.equal(secondRuntime.status,'stopped');
   const publicStatus=firstRuntime.getStatus(); assert.equal(Object.hasOwn(publicStatus,'authCachePath'),true); assert.equal(publicStatus.authCachePath,undefined,'status never exposes auth-cache path');

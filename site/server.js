@@ -58,6 +58,7 @@ let liveDashboardCache = null;
 let liveDashboardCacheAt = 0;
 let liveDashboardRequest = null;
 let accountRegistry = null;
+const minecraftAvatarCache = new Map();
 const rateLimiter = new RateLimiter();
 const rateLimiterTimer = setInterval(() => rateLimiter.prune(), 60_000);
 rateLimiterTimer.unref?.();
@@ -105,6 +106,29 @@ function sendDownload(res, filename, contentType, body) {
 
 function sendError(res, statusCode, message) {
   sendJson(res, statusCode, { error: message });
+}
+
+async function sendMinecraftAvatar(res, url) {
+  const username = String(url.searchParams.get('username') || '').trim();
+  if (!/^[A-Za-z0-9_]{1,16}$/.test(username)) { sendError(res,400,'Invalid Minecraft username.'); return; }
+  const cacheKey = username.toLowerCase();
+  const cached = minecraftAvatarCache.get(cacheKey);
+  if (cached && Date.now()-cached.storedAt < 6*60*60_000) {
+    res.writeHead(200,{'Content-Type':'image/png','Cache-Control':'public, max-age=21600','Content-Length':cached.body.length}); res.end(cached.body); return;
+  }
+  const sources = [`https://minotar.net/avatar/${encodeURIComponent(username)}/64`,`https://mc-heads.net/avatar/${encodeURIComponent(username)}/64`];
+  for (const source of sources) {
+    try {
+      const response = await fetch(source,{signal:AbortSignal.timeout(5_000),headers:{Accept:'image/png'}});
+      if (!response.ok) continue;
+      const body = Buffer.from(await response.arrayBuffer());
+      if (!body.length || body.length > 128*1024) continue;
+      minecraftAvatarCache.set(cacheKey,{body,storedAt:Date.now()});
+      if (minecraftAvatarCache.size > 200) minecraftAvatarCache.delete(minecraftAvatarCache.keys().next().value);
+      res.writeHead(200,{'Content-Type':'image/png','Cache-Control':'public, max-age=21600','Content-Length':body.length}); res.end(body); return;
+    } catch { /* Try the next avatar provider. */ }
+  }
+  sendError(res,502,'Minecraft avatar is temporarily unavailable.');
 }
 
 function publicError(err) {
@@ -3248,6 +3272,10 @@ async function handleApi(req, res, url) {
       sendJson(res, 200, { ok: true, database: Boolean(pool) });
       return;
     }
+    if (url.pathname === '/api/minecraft-avatar' && req.method === 'GET') {
+      await sendMinecraftAvatar(res,url);
+      return;
+    }
     if (url.pathname.startsWith('/api/auth/')) {
       if (await handleAuth(req, res, url)) return;
       sendError(res, 404, 'Auth route not found.');
@@ -3259,7 +3287,6 @@ async function handleApi(req, res, url) {
       sendError(res, 401, 'Login required.');
       return;
     }
-
     const isAdminMutation = MUTATING_METHODS.has(req.method) && (url.pathname.startsWith('/api/admin/') || url.pathname === '/api/obsidian' || url.pathname === '/api/notifications/read');
     if (isAdminMutation && !enforceRateLimit(req, res, 'admin', currentUser.username, { limit: 60, windowMs: 60_000 })) return;
     if (url.pathname.startsWith('/api/admin/') && !MUTATING_METHODS.has(req.method) && !enforceRateLimit(req, res, 'admin_read', currentUser.username, { limit: 180, windowMs: 60_000 })) return;

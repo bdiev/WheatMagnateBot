@@ -577,6 +577,10 @@ async function fetchJson(path, { transientRetries = 0, signal = null } = {}) {
   }
 }
 
+function accountHeadUrl(username) {
+  return `/api/minecraft-avatar?username=${encodeURIComponent(String(username || '').trim())}`;
+}
+
 function accountStatusClass(account) {
   if (account.task && !['idle','paused'].includes(account.task) && account.status === 'connected') return 'active-task';
   if (['connected','connecting','error'].includes(account.status)) return account.status;
@@ -590,7 +594,8 @@ function renderAccountSwitcher() {
     const active = account.id === state.activeAccountId;
     const uptime = account.startedAt ? formatDurationMs(Math.max(0, Date.now() - new Date(account.startedAt).getTime())) : 'not running';
     const tooltip = `${account.username} · ${account.status} · ${account.host}:${account.port} · ${account.task || 'idle'} · ${uptime}`;
-    return `<button class="account-avatar${active ? ' active' : ''}" type="button" role="listitem" data-account-id="${escapeHtml(account.id)}" data-initial="${escapeHtml(String(account.displayName || account.username || '?').charAt(0))}" style="--account-color:${escapeHtml(account.color || '#f1c232')}" aria-label="Switch to ${escapeHtml(account.displayName)}" aria-pressed="${active}" title="${escapeHtml(tooltip)}"><img src="https://minotar.net/avatar/${encodeURIComponent(account.username)}/64" alt=""><span class="account-status-dot ${accountStatusClass(account)}" aria-hidden="true"></span></button>`;
+    const avatarUsername = account.statusPayload?.username || account.username;
+    return `<button class="account-avatar${active ? ' active' : ''}" type="button" role="listitem" data-account-id="${escapeHtml(account.id)}" data-initial="${escapeHtml(String(account.displayName || avatarUsername || '?').charAt(0))}" style="--account-color:${escapeHtml(account.color || '#f1c232')}" aria-label="Switch to ${escapeHtml(account.displayName)}" aria-pressed="${active}" title="${escapeHtml(tooltip)}"><img src="${accountHeadUrl(avatarUsername)}" data-account-avatar-username="${escapeHtml(avatarUsername)}" alt=""><span class="account-status-dot ${accountStatusClass(account)}" aria-hidden="true"></span></button>`;
   }).join('');
   const current = state.accounts.find(account => account.id === state.activeAccountId);
   const heading = $('.topbar h1');
@@ -650,7 +655,9 @@ async function runAccountAction(accountId, action) {
     const response = await fetch(`/api/accounts/${accountId}`, {method:'DELETE',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':state.csrfToken},body:JSON.stringify({confirm:account.displayName})});
     const payload = await response.json().catch(() => ({})); if(!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
   } else {
+    if (action === 'reauthorize' && !confirm(`Reauthorize ${account.displayName}? Its local auth cache will be cleared and a new Microsoft device code will be requested.`)) return;
     await postJson(`/api/accounts/${accountId}/${action}`, {});
+    setBanner(`${action[0].toUpperCase()}${action.slice(1)} queued for ${account.displayName} (${account.username}).`);
   }
   await loadAccounts();
 }

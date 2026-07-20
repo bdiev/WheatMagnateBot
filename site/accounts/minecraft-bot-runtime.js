@@ -1,6 +1,7 @@
 'use strict';
 
 const { EventEmitter } = require('node:events');
+const fs = require('node:fs');
 const path = require('node:path');
 
 const TASKS = new Set(['obsidian','observe','follow','chat','idle','paused']);
@@ -12,7 +13,8 @@ class MinecraftBotRuntime extends EventEmitter {
     if (typeof botFactory !== 'function') throw new Error('Runtime requires a Mineflayer factory.');
     this.account = account;
     this.botFactory = botFactory;
-    this.authCachePath = path.resolve(authCacheRoot, account.id);
+    this.authCacheRoot = path.resolve(authCacheRoot);
+    this.authCachePath = path.resolve(this.authCacheRoot, account.id);
     this.reconnectBackoffMs = reconnectBackoffMs || account.reconnectBackoffMs || 5000;
     this.bot = null;
     this.status = 'stopped';
@@ -43,7 +45,18 @@ class MinecraftBotRuntime extends EventEmitter {
       this.bot = bot;
       this.startedAt = new Date();
       this.status = 'connecting';
-      bot.once?.('spawn', () => { this.status = this.task === 'paused' ? 'paused' : 'connected'; this.emit('status', this.getStatus()); });
+      bot.once?.('spawn', () => {
+        const actualUsername = String(bot.username || '');
+        if (actualUsername && actualUsername.toLowerCase() !== String(this.account.username).toLowerCase()) {
+          this.lastError = `Authenticated Minecraft profile ${actualUsername} does not match configured account ${this.account.username}. Reauthorize this account.`;
+          this.status = 'error';
+          this.emit('status', this.getStatus());
+          try { bot.quit?.('Authenticated Minecraft profile mismatch'); } catch { bot.end?.('Authenticated Minecraft profile mismatch'); }
+          return;
+        }
+        this.status = this.task === 'paused' ? 'paused' : 'connected';
+        this.emit('status', this.getStatus());
+      });
       bot.on?.('error', error => { this.lastError = error?.message || String(error); this.status = 'error'; this.emit('status', this.getStatus()); });
       bot.once?.('end', reason => { this.bot = null; if (!this.destroyed && this.status !== 'stopped') this.status = 'stopped'; this.emit('end', reason); });
       return this.getStatus();
@@ -68,6 +81,16 @@ class MinecraftBotRuntime extends EventEmitter {
   }
 
   async restart() { await this.stop('Account restarting'); return this.start(); }
+  async reauthorize() {
+    await this.stop('Account reauthorization requested');
+    const expectedParent = `${this.authCacheRoot}${path.sep}`;
+    if (!this.authCachePath.startsWith(expectedParent) || path.basename(this.authCachePath) !== this.account.id) {
+      throw new Error('Unsafe account auth-cache path.');
+    }
+    await fs.promises.rm(this.authCachePath, { recursive:true, force:true });
+    this.lastError = null;
+    return this.start();
+  }
   pause() { this.task = 'paused'; this.status = this.bot ? 'paused' : 'stopped'; return this.getStatus(); }
   resume() { this.task = 'idle'; this.status = this.bot ? 'connected' : 'stopped'; return this.getStatus(); }
   assignTask(task) { if (!TASKS.has(task)) throw new Error('Unsupported account task.'); this.task = task; return this.getStatus(); }

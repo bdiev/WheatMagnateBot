@@ -34,6 +34,7 @@ class BotManager {
 
   async stop(accountId) { const runtime=this.get(accountId); return runtime ? runtime.stop() : {accountId,status:'stopped',task:'idle'}; }
   async restart(accountId) { const runtime=this.get(accountId); return runtime ? runtime.restart() : this.start(accountId); }
+  async reauthorize(accountId) { const runtime=this.get(accountId); if(runtime) return runtime.reauthorize(); return this.start(accountId); }
   pause(accountId) { const runtime=this.get(accountId); if (!runtime) throw Object.assign(new Error('Account runtime is not running.'),{statusCode:409}); return runtime.pause(); }
   resume(accountId) { const runtime=this.get(accountId); if (!runtime) throw Object.assign(new Error('Account runtime is not running.'),{statusCode:409}); return runtime.resume(); }
   async remove(accountId, { force = false } = {}) { const runtime=this.get(accountId); if (runtime?.isCritical() && !force) throw Object.assign(new Error('Account has a critical operation in progress.'),{statusCode:409}); if(runtime) await runtime.destroy(); this.runtimes.delete(accountId); return this.registry.remove(accountId); }
