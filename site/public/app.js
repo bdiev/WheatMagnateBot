@@ -5130,13 +5130,17 @@ $('#accountSwitcherList')?.addEventListener('pointerdown', event => {
     accountLongPressConsumedUntil=Date.now()+800;
     navigator.vibrate?.(20);
     openAccountMenu(avatar.dataset.accountId,avatar);
-    setMobileAccountSwitcherOpen(false);
   },550);
 });
 for (const eventName of ['pointerup','pointercancel','pointerleave']) $('#accountSwitcherList')?.addEventListener(eventName,cancelAccountLongPress);
 $('#accountSwitcherList')?.addEventListener('contextmenu', event => { const avatar=event.target.closest('[data-account-id]'); if(!avatar)return; event.preventDefault(); openAccountMenu(avatar.dataset.accountId,avatar); });
 $('#accountSwitcherList')?.addEventListener('keydown', event => { const avatar=event.target.closest('[data-account-id]'); if(avatar && (event.key==='ContextMenu' || (event.shiftKey&&event.key==='F10'))) { event.preventDefault(); openAccountMenu(avatar.dataset.accountId,avatar); } });
-document.addEventListener('pointerdown', event => { const menu=document.querySelector('.account-context-menu'); if(menu && !menu.contains(event.target)) menu.remove(); if (!event.target.closest('#accountSwitcher')) setMobileAccountSwitcherOpen(false); });
+document.addEventListener('pointerdown', event => {
+  const menu=document.querySelector('.account-context-menu');
+  const insideMenu=Boolean(event.target.closest('.account-context-menu'));
+  if (menu && !insideMenu) menu.remove();
+  if (!event.target.closest('#accountSwitcher') && !insideMenu) setMobileAccountSwitcherOpen(false);
+});
 $('#adminUsersRefresh')?.addEventListener('click', loadAdminUsers);
 $('#adminLogsRefresh')?.addEventListener('click', loadAdminSystemLogs);
 $('#adminLogLevel')?.addEventListener('change', loadAdminSystemLogs);
