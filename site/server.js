@@ -1826,8 +1826,29 @@ async function accountPayloads() {
   const byId = new Map(states.rows.map(row => [row.account_id, row]));
   return registry.list().map(account => {
     const runtime = byId.get(account.id) || {};
-    return { ...account, status: runtime.status || (account.enabled ? 'stopped' : 'disabled'), task: runtime.current_task || 'idle', lastError: runtime.last_error || null, startedAt: runtime.started_at || null, statusUpdatedAt: runtime.updated_at || null, statusPayload: runtime.status_payload || null };
+    const statusPayload = freshStoredRuntimePayload(runtime.status_payload, runtime.updated_at);
+    const staleConnectedState = Boolean(runtime.status_payload?.connected && !statusPayload.connected);
+    return { ...account, status: staleConnectedState ? 'stopped' : runtime.status || (account.enabled ? 'stopped' : 'disabled'), task: runtime.current_task || 'idle', lastError: runtime.last_error || null, startedAt: runtime.started_at || null, statusUpdatedAt: runtime.updated_at || null, statusPayload };
   });
+}
+
+const MANAGED_RUNTIME_HEARTBEAT_TIMEOUT_MS = 30_000;
+
+function freshStoredRuntimePayload(payload, updatedAt, now = Date.now()) {
+  if (!payload || typeof payload !== 'object') return payload || null;
+  if (!payload.connected) return payload;
+  const heartbeatAt = new Date(updatedAt).getTime();
+  if (Number.isFinite(heartbeatAt) && now-heartbeatAt <= MANAGED_RUNTIME_HEARTBEAT_TIMEOUT_MS) return payload;
+  return {
+    ...payload,
+    connected: false,
+    status: 'stopped',
+    health: null,
+    food: null,
+    ping: null,
+    nearbyPlayers: [],
+    lastOfflineReason: payload.lastOfflineReason || 'Runtime heartbeat expired.'
+  };
 }
 
 async function scopedAccountRuntime(url, currentUser) {
@@ -1840,7 +1861,10 @@ async function scopedAccountRuntime(url, currentUser) {
   if (account.isDefault) return null;
   assertAdminUser(currentUser);
   const stateResult = await pool.query('SELECT status_payload,updated_at FROM bot_account_runtime_state WHERE account_id=$1::uuid',[accountId]);
-  return { account, bot:stateResult.rows[0]?.status_payload || {accountId,username:account.username,server:`${account.host}:${account.port}`,connected:false,status:account.enabled?'stopped':'disabled',task:'idle'}, observedAt:stateResult.rows[0]?.updated_at || account.updatedAt };
+  const storedState = stateResult.rows[0];
+  const botStatus = freshStoredRuntimePayload(storedState?.status_payload, storedState?.updated_at)
+    || {accountId,username:account.username,server:`${account.host}:${account.port}`,connected:false,status:account.enabled?'stopped':'disabled',task:'idle'};
+  return { account, bot:botStatus, observedAt:storedState?.updated_at || account.updatedAt };
 }
 
 async function handleAccountsApi(req, currentUser, url) {
@@ -3871,4 +3895,4 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown);
 }
 
-module.exports = { assertAdminUser, hashPassword, normalizeNavigationPreferences, registrationDefaults, requestHandler, server, startSiteServer, validateCredentials, verifyPassword };
+module.exports = { assertAdminUser, freshStoredRuntimePayload, hashPassword, normalizeNavigationPreferences, registrationDefaults, requestHandler, server, startSiteServer, validateCredentials, verifyPassword };
