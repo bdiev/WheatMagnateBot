@@ -5156,6 +5156,7 @@ async function initializeMultiAccountManager() {
     maxConcurrentBots: MAX_CONCURRENT_BOTS,
     startDelayMs: BOT_START_DELAY_MS,
     runtimeFactory: account => {
+      let lastLoggedRuntimeState = null;
       const runtime = new MinecraftBotRuntime({
         account,
         authCacheRoot: MINECRAFT_PROFILES_FOLDER,
@@ -5168,7 +5169,26 @@ async function initializeMultiAccountManager() {
           return managedBot;
         }
       });
-      runtime.on('status', status => persistManagedRuntimeStatus(status).catch(error => console.error(`[Accounts] Status persistence failed for ${account.id}:`, error.message)));
+      runtime.on('status', status => {
+        persistManagedRuntimeStatus(status).catch(error => console.error(`[Accounts] Status persistence failed for ${account.id}:`, error.message));
+        const signature = `${status.status}:${status.task}:${status.lastError || ''}`;
+        if (signature === lastLoggedRuntimeState) return;
+        lastLoggedRuntimeState = signature;
+        recordSystemLog({
+          level: status.status === 'error' ? 'error' : status.lastError ? 'warn' : 'info',
+          category: 'minecraft_runtime',
+          message: `${account.displayName}: ${status.status} (${status.task}).`,
+          details: { status: status.status, task: status.task, error: status.lastError || null },
+          accountId: account.id
+        }).catch(() => {});
+      });
+      runtime.on('security-disconnect', threat => recordSystemLog({
+        level: 'warn',
+        category: 'security',
+        message: `${account.displayName}: disconnected after detecting non-whitelisted player ${threat.username}.`,
+        details: { username: threat.username, distance: threat.distance, detectedAt: threat.detectedAt },
+        accountId: account.id
+      }).catch(() => {}));
       runtime.on('auth-cache-error', error => console.error(`[Accounts] Auth-cache persistence failed for ${account.id}:`,error.message));
       runtime.on('monitor-error', error => console.error(`[Accounts] AFK monitor failed for ${account.id}:`,error.message));
       runtime.on('whisper', whisper => {

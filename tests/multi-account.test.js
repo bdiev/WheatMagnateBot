@@ -46,6 +46,32 @@ async function main(){
   assert.equal(failedStarts,1);
   await retryRuntime.stop();
   assert.equal(retryRuntime.reconnectTimer,null,'stopping cancels the startup retry');
+
+  const safetyBot=new EventEmitter();
+  safetyBot.username='SecondBot'; safetyBot.food=12;
+  safetyBot.entity={position:{distanceTo:position=>position.distance}};
+  safetyBot.entities={enemy:{type:'player',username:'Enemy',position:{distance:8}}};
+  safetyBot.inventory={items:()=>[{name:'raw_beef'},{name:'golden_carrot'}]};
+  let equipped=null; let consumed=0; let quitReason=null;
+  safetyBot.equip=async item=>{equipped=item.name;}; safetyBot.consume=async()=>{consumed+=1;};
+  safetyBot.quit=reason=>{quitReason=reason; safetyBot.emit('end',reason);};
+  const safetyRuntime=new MinecraftBotRuntime({account:second,reconnectBackoffMs:1000,dangerRadius:32,isWhitelisted:name=>name==='Friend',botFactory:()=>safetyBot});
+  await safetyRuntime.start(); safetyBot.emit('spawn');
+  await safetyRuntime.runAfkChecks();
+  assert.match(quitReason,/Enemy/,'an unwhitelisted nearby player causes an immediate disconnect');
+  assert.equal(safetyRuntime.reconnectTimer,null,'a security disconnect cannot reconnect into the threat');
+  assert.equal(safetyRuntime.status,'stopped');
+
+  const foodBot=new EventEmitter();
+  foodBot.username='SecondBot'; foodBot.food=12; foodBot.entity={position:{distanceTo:()=>100}}; foodBot.entities={};
+  foodBot.inventory={items:()=>[{name:'raw_beef'},{name:'bread'},{name:'golden_carrot'}]};
+  foodBot.equip=async item=>{equipped=item.name;}; foodBot.consume=async()=>{consumed+=1;}; foodBot.quit=()=>{};
+  const foodRuntime=new MinecraftBotRuntime({account:second,botFactory:()=>foodBot});
+  await foodRuntime.start(); foodBot.emit('spawn'); consumed=0; equipped=null;
+  await foodRuntime.runAfkChecks();
+  assert.equal(equipped,'golden_carrot','auto-eat selects the best safe food instead of raw food');
+  assert.equal(consumed,1);
+  await foodRuntime.stop();
   console.log('Multi-account tests passed.');
 }
 

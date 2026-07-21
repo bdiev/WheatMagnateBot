@@ -506,9 +506,11 @@ function createSystemLogRepository(pool) {
         actor_username VARCHAR(64),
         message TEXT NOT NULL,
         details JSONB,
+        account_id UUID,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
+    await pool.query(`ALTER TABLE site_system_logs ADD COLUMN IF NOT EXISTS account_id UUID`);
     await pool.query(`
       CREATE INDEX IF NOT EXISTS site_system_logs_created_at_idx
       ON site_system_logs (created_at DESC)
@@ -517,20 +519,21 @@ function createSystemLogRepository(pool) {
       CREATE INDEX IF NOT EXISTS site_system_logs_level_created_idx
       ON site_system_logs (level, created_at DESC)
     `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS site_system_logs_account_created_idx ON site_system_logs (account_id, created_at DESC)`);
     return true;
   }
 
-  async function recordSystemLog({ level = 'info', category = 'bot', actor = null, message = '', details = null } = {}) {
+  async function recordSystemLog({ level = 'info', category = 'bot', actor = null, message = '', details = null, accountId = null } = {}) {
     if (!pool || !message) return false;
     const safeLevel = ['debug', 'info', 'warn', 'error', 'audit'].includes(level) ? level : 'info';
     const safeCategory = String(category || 'bot').trim().slice(0, 64) || 'bot';
     const safeActor = actor ? String(actor).trim().slice(0, 64) : null;
     try {
       const inserted = await pool.query(`
-        INSERT INTO site_system_logs (level, category, actor_username, message, details)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO site_system_logs (level, category, actor_username, message, details, account_id)
+        VALUES ($1, $2, $3, $4, $5, COALESCE($6::uuid, '00000000-0000-4000-8000-000000000001'::uuid))
         RETURNING id,created_at
-      `, [safeLevel, safeCategory, safeActor, String(message).slice(0, 2000), details || null]);
+      `, [safeLevel, safeCategory, safeActor, String(message).slice(0, 2000), details || null, accountId]);
       await recordOperationalEvent(pool, {
         eventType: eventTypeFromLog(safeCategory, message), severity: severityFromLevel(safeLevel), source: 'system_log',
         title: String(message).slice(0, 255), details: details || {}, actor: safeActor,

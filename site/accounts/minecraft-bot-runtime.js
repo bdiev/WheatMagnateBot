@@ -5,7 +5,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const TASKS = new Set(['obsidian','observe','follow','chat','idle','paused']);
-const FOOD_NAMES = ['bread','apple','beef','porkchop','chicken','mutton','rabbit','potato','carrot','melon_slice','cookie','pumpkin_pie','mushroom_stew','rabbit_stew'];
+// Keep this list deliberately conservative. Raw meat, spider eyes and poisonous
+// potatoes are technically consumable, but are a poor choice for an unattended bot.
+const SAFE_FOOD_PRIORITY = [
+  'golden_carrot','cooked_beef','cooked_porkchop','cooked_mutton','cooked_chicken',
+  'cooked_rabbit','bread','baked_potato','pumpkin_pie','rabbit_stew','mushroom_stew',
+  'apple','carrot','melon_slice','cookie','dried_kelp'
+];
 
 class MinecraftBotRuntime extends EventEmitter {
   constructor({ account, botFactory, authCacheRoot = path.join('data', 'auth-cache'), authCacheStore = null, reconnectBackoffMs, isWhitelisted = () => false, dangerRadius = 32 } = {}) {
@@ -36,11 +42,13 @@ class MinecraftBotRuntime extends EventEmitter {
     this.lastMonitorStatusAt = 0;
     this.nearbySnapshot = [];
     this.reconnectAttempts = 0;
+    this.safetyLockout = false;
+    this.lastEatErrorAt = 0;
   }
 
   clearRuntimeIntervals() { for (const timer of this.intervals) clearInterval(timer); this.intervals.clear(); }
   scheduleReconnect(delay = this.reconnectBackoffMs) {
-    if (this.destroyed || this.intentionalStop || this.reconnectTimer) return;
+    if (this.destroyed || this.intentionalStop || this.safetyLockout || this.reconnectTimer) return;
     this.status = 'connecting';
     this.emit('status',this.getStatus());
     const requestedDelay = Math.max(1000,Number(delay) || this.reconnectBackoffMs);
@@ -84,16 +92,40 @@ class MinecraftBotRuntime extends EventEmitter {
       this.lastThreat = {...threat,detectedAt:new Date().toISOString()};
       this.lastError = `Non-whitelisted player nearby: ${threat.username} (${threat.distance} blocks)`;
       this.securityDisconnectPending = true;
+      // Do not repeatedly reconnect into the same player. A deliberate Start or
+      // Restart from the control panel clears this lockout.
+      this.safetyLockout = true;
       this.status = 'stopped';
       this.clearRuntimeIntervals();
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+      this.emit('security-disconnect',{accountId:this.account.id,...this.lastThreat});
+      this.emit('status',this.getStatus());
       try { bot.quit?.(`Non-whitelisted player nearby: ${threat.username}`); } catch { bot.end?.('Safety disconnect'); }
       return;
     }
-    if (bot.food >= 18 || this.eating) return;
-    const food = bot.inventory?.items?.().find(item => FOOD_NAMES.some(name => item.name === name || item.name?.endsWith(`_${name}`)));
+    if (!Number.isFinite(bot.food) || bot.food >= 18 || this.eating) return;
+    const items = bot.inventory?.items?.() || [];
+    const food = SAFE_FOOD_PRIORITY
+      .map(name => items.find(item => item?.name === name))
+      .find(Boolean);
     if (!food || typeof bot.equip !== 'function' || typeof bot.consume !== 'function') return;
     this.eating = true;
-    try { await bot.equip(food,'hand'); await bot.consume(); }
+    try {
+      await bot.equip(food,'hand');
+      // The connection or hunger level may have changed while equip was pending.
+      if (this.bot !== bot || !bot.entity || bot.food >= 20) return;
+      await bot.consume();
+    } catch (error) {
+      // Consumption failures are normally transient (movement, lag, inventory
+      // update). Surface them without taking the whole AFK monitor down.
+      this.lastError = `Auto-eat failed: ${error?.message || String(error)}`;
+      if (Date.now()-this.lastEatErrorAt >= 10000) {
+        this.lastEatErrorAt = Date.now();
+        this.emit('monitor-error',error);
+        this.emit('status',this.getStatus());
+      }
+    }
     finally { this.eating = false; }
   }
 
@@ -101,6 +133,9 @@ class MinecraftBotRuntime extends EventEmitter {
     if (this.destroyed) throw new Error('Runtime has been destroyed.');
     if (this.startPromise) return this.startPromise;
     if (this.bot) return this.getStatus();
+    // start() is an explicit operator action unless invoked by the reconnect
+    // timer, which never runs while safetyLockout is set.
+    this.safetyLockout = false;
     this.intentionalStop = false;
     this.nearbySnapshot = [];
     this.status = 'connecting';
@@ -143,10 +178,11 @@ class MinecraftBotRuntime extends EventEmitter {
         if (this.bot === bot) this.bot = null;
         this.nearbySnapshot = [];
         this.clearRuntimeIntervals();
-        if (!this.destroyed && !this.intentionalStop) {
+        if (!this.destroyed && !this.intentionalStop && !securityDisconnect && !this.safetyLockout) {
           this.status = 'connecting';
-          this.scheduleReconnect(securityDisconnect ? Math.max(30000,this.reconnectBackoffMs) : this.reconnectBackoffMs);
+          this.scheduleReconnect(this.reconnectBackoffMs);
         } else this.status = 'stopped';
+        this.emit('status',this.getStatus());
         this.emit('end', reason);
       });
       return this.getStatus();
@@ -165,6 +201,7 @@ class MinecraftBotRuntime extends EventEmitter {
 
   async stop(reason = 'Account stopped') {
     this.intentionalStop = true;
+    this.safetyLockout = false;
     clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
     this.clearRuntimeIntervals();

@@ -210,17 +210,17 @@ function assertDatabase() {
   }
 }
 
-async function recordSystemLog({ level = 'info', category = 'site', actor = null, message = '', details = null } = {}) {
+async function recordSystemLog({ level = 'info', category = 'site', actor = null, message = '', details = null, accountId = null } = {}) {
   if (!pool || !message) return;
   const safeLevel = ['debug', 'info', 'warn', 'error', 'audit'].includes(level) ? level : 'info';
   const safeCategory = String(category || 'site').trim().slice(0, 64) || 'site';
   const safeActor = actor ? String(actor).trim().slice(0, 64) : null;
   try {
     const inserted = await pool.query(`
-      INSERT INTO site_system_logs (level, category, actor_username, message, details)
-      VALUES ($1, $2, $3, $4, $5)
+      INSERT INTO site_system_logs (level, category, actor_username, message, details, account_id)
+      VALUES ($1, $2, $3, $4, $5, COALESCE($6::uuid, '00000000-0000-4000-8000-000000000001'::uuid))
       RETURNING id,created_at
-    `, [safeLevel, safeCategory, safeActor, String(message).slice(0, 2000), details || null]);
+    `, [safeLevel, safeCategory, safeActor, String(message).slice(0, 2000), details || null, accountId]);
     const event = await recordOperationalEvent(pool, {
       eventType: eventTypeFromLog(safeCategory, message), severity: severityFromLevel(safeLevel), source: 'system_log',
       title: String(message).slice(0, 255), details: details || {}, actor: safeActor,
@@ -714,9 +714,12 @@ async function ensureOptionalTables() {
       actor_username VARCHAR(64),
       message TEXT NOT NULL,
       details JSONB,
+      account_id UUID,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await pool.query(`ALTER TABLE site_system_logs ADD COLUMN IF NOT EXISTS account_id UUID`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS site_system_logs_account_created_idx ON site_system_logs (account_id, created_at DESC)`);
   await pool.query(`
     CREATE INDEX IF NOT EXISTS site_system_logs_created_at_idx
     ON site_system_logs (created_at DESC)
@@ -2807,6 +2810,8 @@ function commandLogLevel(status, error) {
 
 async function getAdminSystemLogs(currentUser, url) {
   assertAdminUser(currentUser);
+  const accountId = await commandAccountId({ accountId: url.searchParams.get('accountId') }, currentUser)
+    || DEFAULT_MINECRAFT_ACCOUNT_ID;
   const limit = Math.min(300, Math.max(20, toInt(url.searchParams.get('limit'), 120)));
   const level = String(url.searchParams.get('level') || 'all').toLowerCase();
   const allowedLevels = new Set(['debug', 'info', 'warn', 'error', 'audit']);
@@ -2814,33 +2819,36 @@ async function getAdminSystemLogs(currentUser, url) {
 
   const logsQuery = useLevelFilter
     ? pool.query(`
-        SELECT id::text, level, category, actor_username, message, details, created_at
+        SELECT id::text, level, category, actor_username, message, details, created_at, account_id
         FROM site_system_logs
-        WHERE level = $1
+        WHERE account_id = $1::uuid
+          AND level = $2
           AND NOT (
             category = 'bot_console'
             AND (message LIKE '[PlayerJoined]%' OR message LIKE '[PlayerLeft]%')
           )
         ORDER BY created_at DESC
-        LIMIT $2
-      `, [level, limit])
+        LIMIT $3
+      `, [accountId, level, limit])
     : pool.query(`
-        SELECT id::text, level, category, actor_username, message, details, created_at
+        SELECT id::text, level, category, actor_username, message, details, created_at, account_id
         FROM site_system_logs
-        WHERE NOT (
+        WHERE account_id = $1::uuid
+          AND NOT (
           category = 'bot_console'
           AND (message LIKE '[PlayerJoined]%' OR message LIKE '[PlayerLeft]%')
         )
         ORDER BY created_at DESC
-        LIMIT $1
-      `, [limit]);
+        LIMIT $2
+      `, [accountId, limit]);
 
   const commandsQuery = pool.query(`
-    SELECT id::text, source, requested_by, command_type, payload, status, error, created_at, finished_at
+    SELECT id::text, source, requested_by, command_type, payload, status, error, created_at, finished_at, account_id
     FROM bot_commands
+    WHERE account_id = $1::uuid
     ORDER BY created_at DESC
-    LIMIT $1
-  `, [limit]);
+    LIMIT $2
+  `, [accountId, limit]);
 
   const [logsResult, commandsResult] = await Promise.all([logsQuery, commandsQuery]);
   const logs = logsResult.rows.map(row => ({
@@ -2851,6 +2859,7 @@ async function getAdminSystemLogs(currentUser, url) {
     actor: row.actor_username,
     message: row.message,
     details: row.details,
+    accountId: row.account_id,
     createdAt: row.created_at
   }));
   const commands = commandsResult.rows
@@ -2869,11 +2878,13 @@ async function getAdminSystemLogs(currentUser, url) {
         error: row.error,
         finishedAt: row.finished_at
       },
-      createdAt: row.created_at
+      createdAt: row.created_at,
+      accountId: row.account_id
     }))
     .filter(row => !useLevelFilter || row.level === level);
 
   return {
+    accountId,
     logs: [...logs, ...commands]
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
       .slice(0, limit)
