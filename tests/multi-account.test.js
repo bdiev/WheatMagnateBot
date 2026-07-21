@@ -34,6 +34,18 @@ async function main(){
   firstRuntime.assignTask('obsidian'); secondRuntime.assignTask('follow'); assert.equal(firstRuntime.task,'obsidian');assert.equal(secondRuntime.task,'follow');
   await manager.shutdown(); assert.equal(firstRuntime.status,'stopped');assert.equal(secondRuntime.status,'stopped');
   const publicStatus=firstRuntime.getStatus(); assert.equal(Object.hasOwn(publicStatus,'authCachePath'),true); assert.equal(publicStatus.authCachePath,undefined,'status never exposes auth-cache path');
+
+  let failedStarts=0;
+  const retryRuntime=new MinecraftBotRuntime({account:second,reconnectBackoffMs:1000,botFactory:()=>{
+    failedStarts += 1;
+    throw new Error('temporary startup failure');
+  }});
+  await assert.rejects(retryRuntime.start(),/temporary startup failure/);
+  assert.equal(retryRuntime.status,'connecting','a pre-Mineflayer startup failure enters the reconnect path');
+  assert.ok(retryRuntime.reconnectTimer,'a pre-Mineflayer startup failure schedules a retry');
+  assert.equal(failedStarts,1);
+  await retryRuntime.stop();
+  assert.equal(retryRuntime.reconnectTimer,null,'stopping cancels the startup retry');
   console.log('Multi-account tests passed.');
 }
 

@@ -150,6 +150,15 @@ class MinecraftBotRuntime extends EventEmitter {
         this.emit('end', reason);
       });
       return this.getStatus();
+    }).catch(error => {
+      this.lastError = error?.message || String(error);
+      this.status = 'error';
+      this.emit('status', this.getStatus());
+      // A connection can fail before Mineflayer returns a bot instance (for
+      // example while restoring the Microsoft auth cache). In that case no
+      // `end` event will arrive to schedule the normal reconnect path.
+      this.scheduleReconnect();
+      throw error;
     }).finally(() => { this.startPromise = null; });
     return this.startPromise;
   }
