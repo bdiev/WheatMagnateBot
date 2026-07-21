@@ -3895,4 +3895,4 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown);
 }
 
-module.exports = { assertAdminUser, freshStoredRuntimePayload, hashPassword, normalizeNavigationPreferences, registrationDefaults, requestHandler, server, startSiteServer, validateCredentials, verifyPassword };
+module.exports = { assertAdminUser, cleanAccountInput, freshStoredRuntimePayload, hashPassword, normalizeNavigationPreferences, registrationDefaults, requestHandler, server, startSiteServer, validateCredentials, verifyPassword };

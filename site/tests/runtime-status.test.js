@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const { freshStoredRuntimePayload } = require('../server');
+const { cleanAccountInput, freshStoredRuntimePayload } = require('../server');
 
 const now = Date.parse('2026-07-21T12:00:00.000Z');
 const connected = { connected:true,status:'connected',health:20,food:18,ping:42,nearbyPlayers:[{username:'Player'}] };
@@ -20,5 +20,8 @@ assert.deepEqual(stale.nearbyPlayers,[]);
 
 const alreadyOffline = {connected:false,status:'stopped',lastOfflineReason:'Stopped by user'};
 assert.equal(freshStoredRuntimePayload(alreadyOffline, new Date(0), now),alreadyOffline,'offline state is preserved');
+
+const accountWithoutPort = cleanAccountInput({displayName:'Second',username:'SecondBot',host:'example.org',port:null,authType:'microsoft'});
+assert.equal(accountWithoutPort.port,25565,'an empty optional port uses the Minecraft default');
 
 console.log('Managed runtime status tests passed.');

@@ -167,7 +167,7 @@
           <label class="account-field">Display name<input name="displayName" required maxlength="96"></label>
           <label class="account-field">Minecraft username<input name="username" required maxlength="16" pattern="[A-Za-z0-9_]{1,16}"></label>
           <label class="account-field">Authentication<select name="authType"><option value="microsoft">Microsoft device code</option><option value="offline">Offline</option></select></label>
-          <div class="account-form-row"><label class="account-field">Server<input name="host" required maxlength="255" placeholder="oldfag.org"></label><label class="account-field">Port<input name="port" type="number" min="1" max="65535" value="25565" required></label></div>
+          <div class="account-form-row"><label class="account-field">Server<input name="host" required maxlength="255" placeholder="oldfag.org"></label><label class="account-field">Port (optional)<input name="port" type="number" min="1" max="65535" placeholder="25565"></label></div>
           <label class="account-field">Minecraft version<input name="minecraftVersion" maxlength="32" placeholder="Auto-detect"></label>
           <label class="account-field account-color-field">Account color<input name="color" type="color" value="#f1c232"></label>
           <label class="account-checkbox"><input name="enabled" type="checkbox" checked> <span id="accountEnabledText">Enable after adding</span></label>

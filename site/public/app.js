@@ -657,7 +657,7 @@ function setAccountModalOpen(open, account = null) {
     form.elements.username.value = account?.username || '';
     form.elements.authType.value = account?.authType || 'microsoft';
     form.elements.host.value = account?.host || '';
-    form.elements.port.value = account?.port || 25565;
+    form.elements.port.value = account?.port || '';
     form.elements.minecraftVersion.value = account?.minecraftVersion || '';
     form.elements.color.value = account?.color || '#f1c232';
     form.elements.enabled.checked = account ? Boolean(account.enabled) : true;
@@ -678,7 +678,8 @@ async function submitAccount(event) {
   error.hidden = true;
   const data = new FormData(form);
   try {
-    const body = { displayName:data.get('displayName'),username:data.get('username'),authType:data.get('authType'),host:data.get('host'),port:Number(data.get('port')),minecraftVersion:data.get('minecraftVersion') || null,color:data.get('color') || null,enabled:data.get('enabled') === 'on' };
+    const portValue = String(data.get('port') || '').trim();
+    const body = { displayName:data.get('displayName'),username:data.get('username'),authType:data.get('authType'),host:data.get('host'),port:portValue ? Number(portValue) : null,minecraftVersion:data.get('minecraftVersion') || null,color:data.get('color') || null,enabled:data.get('enabled') === 'on' };
     const editingId = state.editingAccountId;
     const payload = editingId
       ? await patchJson(`/api/accounts/${editingId}`, body)
