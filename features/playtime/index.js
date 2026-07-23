@@ -60,7 +60,7 @@ function createPlaytimeFeature({
       await pool.query(`
         INSERT INTO player_playtime (username)
         SELECT username FROM whitelist
-        ON CONFLICT (username) DO NOTHING
+        ON CONFLICT (LOWER(username)) DO NOTHING
       `);
       const result = await pool.query(`
         SELECT w.username,
@@ -69,7 +69,7 @@ function createPlaytimeFeature({
                       ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - pt.tracking_since)))::BIGINT)
                  END AS total_seconds
         FROM whitelist w
-        LEFT JOIN player_playtime pt ON pt.username = w.username
+        LEFT JOIN player_playtime pt ON LOWER(pt.username) = LOWER(w.username)
         ORDER BY total_seconds DESC, LOWER(w.username)
       `);
       return { players: result.rows };
