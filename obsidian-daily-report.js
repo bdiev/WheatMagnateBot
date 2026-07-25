@@ -19,6 +19,13 @@ function getDailyReportSlot(settings = {}, now = new Date()) {
   };
 }
 
+function getDailyReportChannels(settings = {}) {
+  return {
+    discord: Boolean(settings.daily_report_enabled),
+    push: true
+  };
+}
+
 async function claimDailyReportDate(pool, dateKey) {
   const result = await pool.query(`
     UPDATE obsidian_farm_analytics_settings
@@ -51,4 +58,4 @@ function buildDailyObsidianReport(row = {}, slot = {}) {
   };
 }
 
-module.exports = { buildDailyObsidianReport, claimDailyReportDate, getDailyReportSlot };
+module.exports = { buildDailyObsidianReport, claimDailyReportDate, getDailyReportChannels, getDailyReportSlot };

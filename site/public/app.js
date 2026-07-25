@@ -3211,7 +3211,8 @@ function renderObsidian(payload) {
     ? payload.goals.map(goal => `<div class="goal-item"><span>${escapeHtml(goal.name)}</span><strong><span class="goal-target">${formatNumber(goal.progress || 0)} / ${formatNumber(goal.targetTotal)}${goal.active ? '' : ' · inactive'}</span>${state.currentUser?.role === 'admin' ? `<span class="goal-actions"><button class="mini-button" type="button" data-obsidian-goal-id="${goal.id}" data-obsidian-goal-action="state" data-obsidian-goal-active="${goal.active ? 'false' : 'true'}">${goal.active ? 'Pause' : 'Activate'}</button><button class="mini-button danger-button" type="button" data-obsidian-goal-id="${goal.id}" data-obsidian-goal-action="delete" data-obsidian-goal-name="${escapeHtml(goal.name)}">Delete</button></span>` : ''}</strong></div>`).join('')
     : '<div class="empty">No production goals.</div>';
   $('#obsidianSettingsSummary').innerHTML = `<div><span>Timezone</span><strong>${escapeHtml(payload.settings?.timezone || 'Europe/Vilnius')}</strong></div><div><span>Discord report</span><strong>${payload.settings?.dailyReportEnabled ? `${payload.settings.dailyReportHour}:00` : 'Disabled'}</strong></div>`;
-  if (state.currentUser?.role === 'admin') {
+  const analyticsSettingsForm = $('#obsidianAnalyticsSettings');
+  if (state.currentUser?.role === 'admin' && analyticsSettingsForm?.dataset.dirty !== 'true') {
     $('#obsidianReportHour').value = payload.settings?.dailyReportHour ?? 9;
     $('#obsidianReportEnabled').checked = Boolean(payload.settings?.dailyReportEnabled);
   }
@@ -3254,6 +3255,7 @@ async function saveObsidianAnalyticsSettings(event) {
   event.preventDefault();
   try {
     const payload = await postJson('/api/obsidian', { action: 'settings', dailyReportHour: Number($('#obsidianReportHour').value), dailyReportEnabled: $('#obsidianReportEnabled').checked });
+    delete event.currentTarget.dataset.dirty;
     renderObsidian(payload); setBanner('Obsidian analytics settings saved.');
   } catch (err) { setBanner(`Could not save settings: ${err.message}`); }
 }
@@ -4960,7 +4962,16 @@ async function refreshLiveDashboard() {
 }
 
 async function refreshFarmFromEvent() {
+  if (hasActiveTextSelection()) {
+    queueRealtimeRefresh('farm-selection', refreshFarmFromEvent, 1_000);
+    return;
+  }
   renderObsidian(await fetchJson('/api/obsidian'));
+}
+
+function hasActiveTextSelection() {
+  const selection = window.getSelection?.();
+  return Boolean(selection && !selection.isCollapsed && selection.toString());
 }
 
 async function refreshPlayersFromEvent() {
@@ -5073,7 +5084,13 @@ async function loadAll() {
     const sectionLoads = [
       fetchJson(`/api/chat?limit=${CHAT_HISTORY_LIMIT}`).then(renderChat),
       fetchJson('/api/bot-stats').then(renderBotStats),
-      Promise.all([ensureItemIcons(), fetchJson('/api/obsidian')]).then(([, payload]) => renderObsidian(payload)),
+      Promise.all([ensureItemIcons(), fetchJson('/api/obsidian')]).then(([, payload]) => {
+        if (hasActiveTextSelection()) {
+          queueRealtimeRefresh('farm-selection', refreshFarmFromEvent, 1_000);
+          return;
+        }
+        renderObsidian(payload);
+      }),
       fetchJson('/api/server-stats').then(renderServerStats)
     ];
     const results = await Promise.allSettled(sectionLoads);
@@ -5206,6 +5223,7 @@ $('#notificationHistory')?.addEventListener('click', markNotificationRead);
 $('#notificationRules')?.addEventListener('submit', saveNotificationRule);
 $('#obsidianGoalForm')?.addEventListener('submit', saveObsidianGoal);
 $('#obsidianAnalyticsSettings')?.addEventListener('submit', saveObsidianAnalyticsSettings);
+$('#obsidianAnalyticsSettings')?.addEventListener('input', event => { event.currentTarget.dataset.dirty = 'true'; });
 $('#obsidianGoals')?.addEventListener('click', changeObsidianGoalState);
 $('#notificationsMarkAllRead')?.addEventListener('click', async () => {
   await postJson('/api/notifications/read', { all: true });

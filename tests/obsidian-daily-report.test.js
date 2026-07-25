@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const { buildDailyObsidianReport, claimDailyReportDate, getDailyReportSlot } = require('../obsidian-daily-report');
+const { buildDailyObsidianReport, claimDailyReportDate, getDailyReportChannels, getDailyReportSlot } = require('../obsidian-daily-report');
 
 async function run() {
   const due = getDailyReportSlot({ timezone: 'Europe/Vilnius', daily_report_hour: 12 }, new Date('2026-07-19T09:15:00Z'));
@@ -11,6 +11,11 @@ async function run() {
   assert.equal(notDue.due, false);
   const late = getDailyReportSlot({ timezone: 'Europe/Vilnius', daily_report_hour: 9 }, new Date('2026-07-19T12:15:00Z'));
   assert.equal(late.due,true,'a missed report remains due later on the same local day');
+  assert.deepEqual(
+    getDailyReportChannels({ daily_report_enabled: false }),
+    { discord: false, push: true },
+    'phone push reports must remain enabled when Discord reports are disabled'
+  );
 
   const calls = [];
   const pool = {

@@ -23,7 +23,7 @@ const { sanitizePublicPhrase } = require('./features/growingChild/safety');
 const { runMigrations } = require('./database/migrations');
 const { NotificationService } = require('./notifications');
 const { newCorrelationId, recordOperationalEvent } = require('./operational-events');
-const { buildDailyObsidianReport, claimDailyReportDate, getDailyReportSlot } = require('./obsidian-daily-report');
+const { buildDailyObsidianReport, claimDailyReportDate, getDailyReportChannels, getDailyReportSlot } = require('./obsidian-daily-report');
 const { WebPushService } = require('./site/web-push');
 const { chatComponentToString } = require('./minecraft-chat-component');
 const { AccountRepository } = require('./site/accounts/account-repository');
@@ -5999,9 +5999,9 @@ async function sendScheduledObsidianReport() {
     daily_report_hour: process.env.OBSIDIAN_DAILY_REPORT_HOUR == null ? 9 : Number(process.env.OBSIDIAN_DAILY_REPORT_HOUR),
     last_daily_report_date: null
   };
-  if (!settings.daily_report_enabled) return;
   const slot = getDailyReportSlot(settings);
   if (!slot.due) return;
+  const channels = getDailyReportChannels(settings);
   const result = await pool.query(`SELECT
     COALESCE((SELECT SUM(mined) FROM obsidian_farm_hourly WHERE bucket>=NOW()-INTERVAL '24 hours'),0)::bigint AS mined_24h,
     COALESCE((SELECT SUM(mined) FROM obsidian_farm_hourly WHERE bucket>=NOW()-INTERVAL '48 hours' AND bucket<NOW()-INTERVAL '24 hours'),0)::bigint AS previous_24h,
@@ -6010,11 +6010,11 @@ async function sendScheduledObsidianReport() {
   const row = result.rows[0];
   const report = buildDailyObsidianReport(row, slot);
   const sameDate = value => value && new Date(value).toISOString().slice(0,10) === slot.dateKey;
-  if (!sameDate(settings.last_daily_report_date) && DISCORD_OWNER_ID && discordClient?.isReady?.() && await claimDailyReportDate(pool,slot.dateKey)) {
+  if (channels.discord && !sameDate(settings.last_daily_report_date) && DISCORD_OWNER_ID && discordClient?.isReady?.() && await claimDailyReportDate(pool,slot.dateKey)) {
     const delivered = await sendDiscordOwnerNotification(report.discordMessage,3447003).catch(error => { console.error('[Obsidian Report] Discord delivery failed:',error.message); return false; });
     if (!delivered) await pool.query('UPDATE obsidian_farm_analytics_settings SET last_daily_report_date=NULL WHERE id=1 AND last_daily_report_date=$1::date',[slot.dateKey]);
   }
-  if (!sameDate(settings.last_daily_push_date)) {
+  if (channels.push && !sameDate(settings.last_daily_push_date)) {
     const claimed = await pool.query(`UPDATE obsidian_farm_analytics_settings SET last_daily_push_date=$1::date,updated_at=NOW()
       WHERE id=1 AND last_daily_push_date IS DISTINCT FROM $1::date RETURNING id`,[slot.dateKey]);
     if (claimed.rowCount) {
