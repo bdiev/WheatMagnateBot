@@ -2080,6 +2080,7 @@ body.search-focus-active #logoutButton {
 
 .chat-message {
   display: grid;
+  flex: 0 0 auto;
   grid-template-columns: max-content minmax(0, 1fr) max-content;
   gap: 12px;
   align-items: center;
@@ -6063,7 +6064,8 @@ body.search-focus-active #logoutButton {
 
   .chat-message,
   .chat-message.chat-activity {
-    min-height: 0;
+    flex: 0 0 auto;
+    min-height: 58px;
     border-radius: 10px;
     padding: 8px 10px;
     background: color-mix(in srgb, var(--panel-soft) 92%, transparent);

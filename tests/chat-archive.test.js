@@ -36,9 +36,11 @@ assert.match(stylesSource, /Mobile composition for the permanent chat archive an
   'chat archive and player history must have a dedicated mobile composition');
 assert.match(stylesSource, /\.chat-message,\s*\.chat-message\.chat-activity\s*\{[^}]*grid-template-areas:/s,
   'mobile chat messages must keep identity, timestamp, and text in stable grid areas');
-assert.match(indexSource, /styles\.css\?v=140/, 'the updated mobile layout must use a fresh stylesheet URL');
-assert.match(indexSource, /app\.js\?v=140/, 'the updated chat behavior must use a fresh script URL');
-assert.match(serviceWorkerSource, /CACHE_VERSION = '117'/, 'the app shell cache must be replaced after the UI update');
+assert.match(indexSource, /styles\.css\?v=141/, 'the updated mobile layout must use a fresh stylesheet URL');
+assert.match(indexSource, /app\.js\?v=141/, 'the updated chat behavior must use a fresh script URL');
+assert.match(serviceWorkerSource, /CACHE_VERSION = '118'/, 'the app shell cache must be replaced after the UI update');
+assert.match(stylesSource, /\.chat-message\s*\{[^}]*flex:\s*0 0 auto;/s,
+  'chat cards must retain their natural height inside the scrolling flex list');
 assert.doesNotMatch(serviceWorkerSource, /return cached \|\| fresh/, 'UI assets must not prefer stale cached responses');
 
 console.log('Chat archive tests passed.');
