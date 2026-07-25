@@ -1935,16 +1935,24 @@ body.search-focus-active #logoutButton {
   letter-spacing: 0.025em;
   line-height: 1;
   white-space: nowrap;
+  opacity: 0;
   pointer-events: none;
+  transform: translate(-50%, -4px);
+  transition: opacity 180ms ease, transform 220ms ease;
+}
+
+.chat-date-indicator.visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
 }
 
 .chat-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 0;
   height: 674px;
   overflow: auto;
-  padding: 14px;
+  padding: 8px 14px;
 }
 
 .chat-scroll-bottom {
@@ -2081,24 +2089,56 @@ body.search-focus-active #logoutButton {
 .chat-message {
   display: grid;
   flex: 0 0 auto;
-  grid-template-columns: max-content minmax(0, 1fr) max-content;
-  gap: 12px;
-  align-items: center;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 7px 12px;
-  background: var(--panel-soft);
+  grid-template-columns: 32px minmax(0, 1fr) 30px;
+  gap: 10px;
+  align-items: start;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 68%, transparent);
+  border-radius: 0;
+  padding: 10px 4px;
+  background: transparent;
   transition: background-color 260ms ease, border-color 260ms ease;
 }
 
 .chat-message.chat-activity {
-  border-style: dashed;
-  background: color-mix(in srgb, var(--accent) 8%, var(--panel-soft));
+  grid-template-columns: 8px minmax(0, max-content) max-content;
+  justify-content: center;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  padding: 7px 12px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--panel-soft) 58%, transparent);
 }
 
 .chat-message.chat-activity .chat-text {
-  color: var(--muted);
-  font-weight: 800;
+  color: inherit;
+  font-weight: 500;
+}
+
+.chat-activity-mark {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.chat-activity-join .chat-activity-mark {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.chat-activity-copy {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 5px;
+  font-size: 12px;
+}
+
+.chat-activity-copy strong {
+  color: var(--text);
+  font-weight: 750;
 }
 
 .chat-message.new-message {
@@ -2127,15 +2167,42 @@ body.search-focus-active #logoutButton {
 
 .chat-user {
   min-width: 0;
-  color: var(--accent-strong);
-  font-weight: 800;
   overflow-wrap: anywhere;
   transition: color 260ms ease;
 }
 
+.chat-user .player-identity > span {
+  display: none;
+}
+
+.chat-message-body {
+  min-width: 0;
+}
+
+.chat-message-head {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 3px;
+}
+
+.chat-message-name {
+  min-width: 0;
+  color: var(--accent-strong);
+  font-size: 14px;
+  font-weight: 850;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .chat-text {
   min-width: 0;
-  line-height: 1.35;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.42;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -2155,14 +2222,6 @@ body.search-focus-active #logoutButton {
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
-}
-
-/* Activity rows have no reply button. Reserve the same trailing slot so their
-   timestamps line up with regular chat messages. */
-.chat-message.chat-activity .chat-meta::after {
-  content: "";
-  flex: 0 0 30px;
-  width: 30px;
 }
 
 .chat-reply-button {
@@ -2921,6 +2980,25 @@ body.search-focus-active #logoutButton {
 
 .chat-panel {
   position: relative;
+}
+
+.chat-panel > .panel-head > div:first-child {
+  opacity: 1;
+  transform: translateX(0);
+  transition:
+    opacity 180ms ease,
+    transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    visibility 0s linear;
+}
+
+.chat-panel.chat-search-open > .panel-head > div:first-child {
+  visibility: hidden;
+  opacity: 0;
+  transform: translateX(-10px);
+  transition:
+    opacity 180ms ease,
+    transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    visibility 0s linear 240ms;
 }
 
 .chat-panel-actions {
@@ -5006,7 +5084,7 @@ body.search-focus-active #logoutButton {
     box-shadow: none;
   }
 
-  @media (prefers-reduced-motion: reduce) {
+@media (prefers-reduced-motion: reduce) {
     .server-stats-grid .stat,
     .obsidian-stats-grid .stat,
     .farm-admin-grid[data-loop-carousel] .panel {
@@ -5921,35 +5999,35 @@ body.search-focus-active #logoutButton {
   .chat-list {
     height: min(62dvh, 600px);
     min-height: 420px;
-    gap: 8px;
-    padding: 12px 8px max(14px, env(safe-area-inset-bottom));
+    gap: 0;
+    padding: 8px 10px max(14px, env(safe-area-inset-bottom));
     overscroll-behavior-y: contain;
     scroll-padding-block: 38px 72px;
   }
 
-  .chat-message,
-  .chat-message.chat-activity {
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas: "user meta" "text text";
-    gap: 5px 8px;
-    min-height: 58px;
-    padding: 9px 10px;
+  .chat-message {
+    grid-template-columns: 30px minmax(0, 1fr) 34px;
+    gap: 9px;
+    min-height: 0;
+    padding: 9px 2px;
   }
-  .chat-user { grid-area: user; min-width: 0; }
+  .chat-message.chat-activity {
+    grid-template-columns: 7px minmax(0, max-content) max-content;
+    gap: 6px;
+    min-height: 0;
+    padding: 7px 8px;
+  }
+  .chat-user { min-width: 0; }
   .chat-user .player-identity { min-width: 0; }
-  .chat-user .player-identity > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .chat-text { grid-area: text; font-size: 14px; }
+  .chat-text { font-size: 14px; }
   .chat-meta {
-    grid-area: meta;
     justify-content: flex-end;
-    align-self: start;
     width: auto;
     min-width: max-content;
-    gap: 6px;
   }
   .chat-time { font-size: 10px; white-space: nowrap; }
   .chat-reply-button { width: 34px; min-width: 34px; height: 34px; min-height: 34px; }
-  .chat-message[data-open-chat-context] { min-height: 64px; touch-action: manipulation; }
+  .chat-message[data-open-chat-context] { min-height: 0; touch-action: manipulation; }
   .chat-scroll-bottom { right: 12px; bottom: 12px; width: 44px; min-width: 44px; height: 44px; min-height: 44px; }
 
   .chat-send-form {
@@ -6058,22 +6136,27 @@ body.search-focus-active #logoutButton {
   }
 
   .chat-list {
-    gap: 7px;
+    gap: 0;
     padding-inline: 8px;
   }
 
-  .chat-message,
-  .chat-message.chat-activity {
+  .chat-message {
     flex: 0 0 auto;
-    min-height: 58px;
-    border-radius: 10px;
-    padding: 8px 10px;
-    background: color-mix(in srgb, var(--panel-soft) 92%, transparent);
+    min-height: 0;
+    border-radius: 0;
+    padding: 9px 3px;
+    background: transparent;
+  }
+
+  .chat-message.chat-activity {
+    min-height: 0;
+    border-radius: 6px;
+    padding: 7px 8px;
+    background: color-mix(in srgb, var(--panel-soft) 58%, transparent);
   }
 
   .chat-user .player-identity {
-    gap: 8px;
-    font-size: 15px;
+    gap: 0;
     line-height: 1.15;
   }
 
@@ -6083,18 +6166,14 @@ body.search-focus-active #logoutButton {
     border-radius: 7px;
   }
 
-  .chat-text {
-    padding-left: 36px;
-    font-size: 14px;
-    line-height: 1.35;
-  }
+  .chat-text { padding-left: 0; font-size: 14px; line-height: 1.4; }
 
   .chat-message.chat-activity .chat-text {
-    font-size: 13px;
+    font-size: 12px;
   }
 
   .chat-time {
-    padding-top: 2px;
+    padding-top: 0;
     font-size: 10px;
   }
 
@@ -6115,7 +6194,4 @@ body.search-focus-active #logoutButton {
     font-size: 12px;
   }
 
-  .chat-text {
-    padding-left: 34px;
-  }
 }

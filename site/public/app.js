@@ -99,6 +99,9 @@ const state = {
   },
   chartScrollInitialized: {},
   chatDateIndicatorFrame: null,
+  chatDateIndicatorShowPending: false,
+  chatDateIndicatorHideTimer: null,
+  chatDateIndicatorHiddenTimer: null,
   renderSignatures: {}
 };
 
@@ -538,10 +541,13 @@ function chatDateLabel(value) {
   return formatted;
 }
 
-function updateChatDateIndicator() {
+function updateChatDateIndicator({ show = false } = {}) {
+  if (show) state.chatDateIndicatorShowPending = true;
   if (state.chatDateIndicatorFrame) return;
   state.chatDateIndicatorFrame = requestAnimationFrame(() => {
     state.chatDateIndicatorFrame = null;
+    const shouldShow = state.chatDateIndicatorShowPending;
+    state.chatDateIndicatorShowPending = false;
     const list = $('#chatList');
     const indicator = $('#chatDateIndicator');
     if (!list || !indicator) return;
@@ -549,9 +555,30 @@ function updateChatDateIndicator() {
     const message = Array.from(list.querySelectorAll('.chat-message[data-created-at]'))
       .find(item => item.offsetTop + item.offsetHeight >= visibleTop);
     const label = message ? chatDateLabel(message.dataset.createdAt) : '';
-    indicator.hidden = !label;
-    if (label && indicator.textContent !== label) indicator.textContent = label;
+    if (!label) {
+      indicator.classList.remove('visible');
+      indicator.hidden = true;
+      return;
+    }
+    if (indicator.textContent !== label) indicator.textContent = label;
+    if (!shouldShow) return;
+
+    clearTimeout(state.chatDateIndicatorHideTimer);
+    clearTimeout(state.chatDateIndicatorHiddenTimer);
+    indicator.hidden = false;
+    requestAnimationFrame(() => indicator.classList.add('visible'));
+    state.chatDateIndicatorHideTimer = setTimeout(() => {
+      indicator.classList.remove('visible');
+      state.chatDateIndicatorHiddenTimer = setTimeout(() => {
+        if (!indicator.classList.contains('visible')) indicator.hidden = true;
+      }, 220);
+    }, 900);
   });
+}
+
+function handleChatListScroll() {
+  updateChatScrollButton();
+  updateChatDateIndicator({ show: true });
 }
 
 function scrollToBottom(selector, { smooth = false } = {}) {
@@ -2852,19 +2879,31 @@ function renderChatMessages(messages) {
     article.dataset.messageId = id;
     article.dataset.createdAt = String(message.createdAt || '');
     if (state.chatSearchQuery && !isActivity) article.dataset.openChatContext = id;
-    article.className = `chat-message${isActivity ? ' chat-activity' : ''}${isNew ? ' new-message' : ''}`;
+    const activityKind = isActivity && message.event === 'join' ? 'join' : 'leave';
+    article.className = `chat-message${isActivity ? ` chat-activity chat-activity-${activityKind}` : ''}${isNew ? ' new-message' : ''}`;
     article.classList.toggle('reply-active', !isActivity && state.chatReplyActiveMessageId === id);
     const username = String(message.username || 'Minecraft');
     const text = isActivity
       ? (message.event === 'join' ? 'joined the game' : 'left the game')
       : String(message.message || '');
-    article.innerHTML = `
-      <div class="chat-user">${playerIdentity(username, isActivity ? 24 : 28)}</div>
-      <div class="chat-text"></div>
-      <div class="chat-meta">
-        <time class="chat-time">${formatChatTime(message.createdAt)}</time>
-        ${isActivity ? '' : `<button class="chat-reply-button" type="button" aria-label="Reply to ${escapeHtml(username)}" title="Reply"><img src="/logos/reply.png" alt="" aria-hidden="true"></button>`}
-      </div>`;
+    article.innerHTML = isActivity
+      ? `<span class="chat-activity-mark" aria-hidden="true"></span>
+         <div class="chat-activity-copy">
+           <strong>${escapeHtml(username)}</strong>
+           <span class="chat-text"></span>
+         </div>
+         <time class="chat-time">${formatChatTime(message.createdAt)}</time>`
+      : `<div class="chat-user">${playerIdentity(username, 28)}</div>
+         <div class="chat-message-body">
+           <div class="chat-message-head">
+             <span class="chat-message-name">${escapeHtml(username)}</span>
+             <time class="chat-time">${formatChatTime(message.createdAt)}</time>
+           </div>
+           <div class="chat-text"></div>
+         </div>
+         <div class="chat-meta">
+           <button class="chat-reply-button" type="button" aria-label="Reply to ${escapeHtml(username)}" title="Reply"><img src="/logos/reply.png" alt="" aria-hidden="true"></button>
+         </div>`;
     article.querySelector('.chat-text').textContent = text;
     const replyButton = article.querySelector('.chat-reply-button');
     if (replyButton) {
@@ -3413,6 +3452,7 @@ function setChatArchiveSearchOpen(open) {
   const toggle = $('#chatSearchToggle');
   if (!search || !toggle) return;
   search.classList.toggle('open', open);
+  search.closest('.chat-panel')?.classList.toggle('chat-search-open', open);
   toggle.setAttribute('aria-expanded', String(open));
   if (open) requestAnimationFrame(() => $('#chatSearchInput')?.focus());
 }
@@ -5430,7 +5470,7 @@ $('#chatSearchInput')?.addEventListener('keydown', event => {
   event.preventDefault();
   closeChatArchiveSearch().catch(err => setBanner(`Could not load live chat: ${err.message}`));
 });
-$('#chatList')?.addEventListener('scroll', updateChatScrollButton);
+$('#chatList')?.addEventListener('scroll', handleChatListScroll, { passive: true });
 $('#chatList')?.addEventListener('pointerdown', handleChatMessagePointerDown);
 $('#chatList')?.addEventListener('click', handleChatReplyClick);
 $('#gameChatReplyCancel')?.addEventListener('click', clearGameChatReply);
