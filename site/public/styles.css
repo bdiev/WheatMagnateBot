@@ -2896,15 +2896,119 @@ body.search-focus-active #logoutButton {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
-.chat-search-form {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  padding: 0 14px 12px;
+.chat-panel {
+  position: relative;
 }
 
-.chat-search-form input {
+.chat-panel-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
   min-width: 0;
+}
+
+.chat-archive-search {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--button-height);
+  align-items: center;
+  width: var(--button-height);
+  height: var(--button-height);
+  z-index: 12;
+  transition: width 260ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.chat-archive-search.open {
+  width: min(480px, calc(100vw - 64px));
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.chat-search-toggle {
+  position: relative;
+  width: var(--button-height);
+  min-width: var(--button-height);
+  height: var(--button-height);
+  min-height: var(--button-height);
+  border: 1px solid var(--line);
+  border-radius: var(--button-radius);
+  padding: 0;
+  color: var(--text);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.chat-search-toggle:hover {
+  color: var(--text);
+  background: var(--panel-soft);
+}
+
+.chat-archive-search.open .chat-search-toggle {
+  display: none;
+}
+
+.chat-archive-search-box {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: var(--button-height);
+  min-height: var(--button-height);
+  border: 1px solid var(--line);
+  border-radius: var(--button-radius);
+  padding: 0 6px 0 12px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  opacity: 0;
+  overflow: hidden;
+  transform: scaleX(0.94);
+  transform-origin: right center;
+  pointer-events: none;
+  transition: opacity 180ms ease, transform 260ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.chat-archive-search.open .chat-archive-search-box {
+  opacity: 1;
+  overflow: visible;
+  transform: scaleX(1);
+  pointer-events: auto;
+}
+
+.chat-archive-search-box label {
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.chat-archive-search-box input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  color: var(--text);
+  background: transparent;
+  font: inherit;
+  font-size: 16px;
+}
+
+@media (max-width: 700px) {
+  .chat-panel .panel-head {
+    align-items: center;
+  }
+
+  .chat-archive-search.open {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    left: 12px;
+    width: auto;
+  }
 }
 
 .chat-message[data-open-chat-context] {

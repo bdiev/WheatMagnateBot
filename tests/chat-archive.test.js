@@ -25,6 +25,7 @@ assert.match(appSource, /data-player-chat-more/, 'player profile must expose old
 assert.match(appSource, /data-chat-message-id/, 'player messages must link back to their chat context');
 assert.match(appSource, /chatContextMessageId/, 'live refreshes must preserve historical context viewing');
 assert.match(appSource, /searchGameChat/, 'the chat UI must expose archive search');
+assert.match(appSource, /setChatArchiveSearchOpen/, 'archive search must use a compact expandable control');
 assert.match(appSource, /state\.charts\.chatMonthly/, 'the month chart must use archive-wide monthly statistics');
 assert.match(stylesSource, /\.player-profile-message p\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere;/s,
   'long player messages must wrap without overlapping their timestamp');

@@ -202,12 +202,20 @@
                 <h2>Game Chat</h2>
                 <p>Permanent Minecraft chat archive recorded by the bot.</p>
               </div>
-              <button id="chatReturnLive" class="ghost-button" type="button" hidden>Return to live chat</button>
+              <div class="chat-panel-actions">
+                <button id="chatReturnLive" class="ghost-button" type="button" hidden>Return to live chat</button>
+                <section id="chatArchiveSearch" class="chat-archive-search" aria-label="Search game chat archive">
+                  <button id="chatSearchToggle" class="chat-search-toggle" type="button" aria-label="Open chat search" aria-expanded="false">
+                    <img class="search-icon" src="/items/Icon_Search.png" alt="" aria-hidden="true">
+                  </button>
+                  <form id="chatSearchForm" class="chat-archive-search-box" role="search">
+                    <label for="chatSearchInput">Chat</label>
+                    <input id="chatSearchInput" type="search" maxlength="100" autocomplete="off" placeholder="Search the entire archive..." aria-label="Search game chat">
+                    <button id="chatSearchClose" class="seen-search-close" type="button" aria-label="Close chat search">&times;</button>
+                  </form>
+                </section>
+              </div>
             </div>
-            <form id="chatSearchForm" class="chat-search-form" role="search">
-              <input id="chatSearchInput" type="search" maxlength="100" placeholder="Search the entire chat archive..." aria-label="Search game chat">
-              <button type="submit">Search</button>
-            </form>
             <div class="chat-list-wrap">
               <div id="chatList" class="chat-list" aria-live="polite"></div>
               <button id="chatScrollBottom" class="chat-scroll-bottom" type="button" aria-label="Scroll to latest chat messages">↓</button>

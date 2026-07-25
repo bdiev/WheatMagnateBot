@@ -3371,6 +3371,20 @@ async function searchGameChat(event) {
   if (list) list.scrollTop = 0;
 }
 
+function setChatArchiveSearchOpen(open) {
+  const search = $('#chatArchiveSearch');
+  const toggle = $('#chatSearchToggle');
+  if (!search || !toggle) return;
+  search.classList.toggle('open', open);
+  toggle.setAttribute('aria-expanded', String(open));
+  if (open) requestAnimationFrame(() => $('#chatSearchInput')?.focus());
+}
+
+async function closeChatArchiveSearch() {
+  setChatArchiveSearchOpen(false);
+  if (state.chatSearchQuery) await returnToLiveChat();
+}
+
 function initializeCollapsibleSections() {
   $$('[data-collapse-key]').forEach(section => {
     const storageKey = `wm-collapse-${section.dataset.collapseKey}`;
@@ -5372,6 +5386,13 @@ $('#gameChatForm')?.addEventListener('submit', handleGameChatSubmit);
 $('#chatScrollBottom')?.addEventListener('click', () => scrollToBottom('#chatList', { smooth: true }));
 $('#chatReturnLive')?.addEventListener('click', () => returnToLiveChat().catch(err => setBanner(`Could not load live chat: ${err.message}`)));
 $('#chatSearchForm')?.addEventListener('submit', event => searchGameChat(event).catch(err => setBanner(`Could not search chat: ${err.message}`)));
+$('#chatSearchToggle')?.addEventListener('click', () => setChatArchiveSearchOpen(true));
+$('#chatSearchClose')?.addEventListener('click', () => closeChatArchiveSearch().catch(err => setBanner(`Could not load live chat: ${err.message}`)));
+$('#chatSearchInput')?.addEventListener('keydown', event => {
+  if (event.key !== 'Escape') return;
+  event.preventDefault();
+  closeChatArchiveSearch().catch(err => setBanner(`Could not load live chat: ${err.message}`));
+});
 $('#chatList')?.addEventListener('scroll', updateChatScrollButton);
 $('#chatList')?.addEventListener('pointerdown', handleChatMessagePointerDown);
 $('#chatList')?.addEventListener('click', handleChatReplyClick);
