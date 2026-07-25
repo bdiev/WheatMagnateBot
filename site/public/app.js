@@ -98,6 +98,7 @@ const state = {
     unwhitelistedHourlyChart: 'hours'
   },
   chartScrollInitialized: {},
+  chatDateIndicatorFrame: null,
   renderSignatures: {}
 };
 
@@ -517,6 +518,40 @@ function updateChatScrollButton() {
   if (!list || !button) return;
   const distanceFromBottom = list.scrollHeight - list.clientHeight - list.scrollTop;
   button.classList.toggle('hidden', distanceFromBottom < 16);
+  updateChatDateIndicator();
+}
+
+function chatDateLabel(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const keyFormatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: state.accountTimezone, year: 'numeric', month: '2-digit', day: '2-digit'
+  });
+  const today = new Date();
+  const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
+  const dateKey = keyFormatter.format(date);
+  const formatted = new Intl.DateTimeFormat('en-US', {
+    timeZone: state.accountTimezone, month: 'short', day: 'numeric', year: 'numeric'
+  }).format(date);
+  if (dateKey === keyFormatter.format(today)) return `Today · ${formatted}`;
+  if (dateKey === keyFormatter.format(yesterday)) return `Yesterday · ${formatted}`;
+  return formatted;
+}
+
+function updateChatDateIndicator() {
+  if (state.chatDateIndicatorFrame) return;
+  state.chatDateIndicatorFrame = requestAnimationFrame(() => {
+    state.chatDateIndicatorFrame = null;
+    const list = $('#chatList');
+    const indicator = $('#chatDateIndicator');
+    if (!list || !indicator) return;
+    const visibleTop = list.scrollTop + 8;
+    const message = Array.from(list.querySelectorAll('.chat-message[data-created-at]'))
+      .find(item => item.offsetTop + item.offsetHeight >= visibleTop);
+    const label = message ? chatDateLabel(message.dataset.createdAt) : '';
+    indicator.hidden = !label;
+    if (label && indicator.textContent !== label) indicator.textContent = label;
+  });
 }
 
 function scrollToBottom(selector, { smooth = false } = {}) {
@@ -2815,6 +2850,7 @@ function renderChatMessages(messages) {
     const isNew = state.chatInitialized && !previousIds.has(id);
     const article = document.createElement('article');
     article.dataset.messageId = id;
+    article.dataset.createdAt = String(message.createdAt || '');
     if (state.chatSearchQuery && !isActivity) article.dataset.openChatContext = id;
     article.className = `chat-message${isActivity ? ' chat-activity' : ''}${isNew ? ' new-message' : ''}`;
     article.classList.toggle('reply-active', !isActivity && state.chatReplyActiveMessageId === id);
@@ -2847,6 +2883,7 @@ function renderChatMessages(messages) {
     } else {
       list.scrollTop = previousScrollTop;
     }
+    updateChatDateIndicator();
   });
 }
 

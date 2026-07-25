@@ -1916,6 +1916,28 @@ body.search-focus-active #logoutButton {
   min-height: 0;
 }
 
+.chat-date-indicator {
+  position: absolute;
+  top: 9px;
+  left: 50%;
+  z-index: 8;
+  max-width: calc(100% - 120px);
+  transform: translateX(-50%);
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  border-radius: 999px;
+  padding: 5px 11px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--panel) 86%, transparent);
+  box-shadow: 0 4px 14px color-mix(in srgb, #000 14%, transparent);
+  backdrop-filter: blur(10px);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.025em;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 .chat-list {
   display: flex;
   flex-direction: column;
@@ -5877,4 +5899,99 @@ body.search-focus-active #logoutButton {
   .account-auth-note { font-size:11px; }
   .account-modal-actions { position:sticky; bottom:calc(-16px - env(safe-area-inset-bottom,0px)); z-index:2; margin:0 -16px calc(-16px - env(safe-area-inset-bottom,0px)); padding:12px 16px calc(16px + env(safe-area-inset-bottom,0px)); background:linear-gradient(to bottom,color-mix(in srgb,var(--panel) 82%,transparent),var(--panel) 22%); }
   .account-modal-actions button { flex:1 1 0; min-width:0; }
+}
+
+/* Mobile composition for the permanent chat archive and player history. */
+@media (max-width: 700px) {
+  .chat-panel { overflow: hidden; }
+  .chat-panel > .panel-head { position: relative; min-height: 108px; gap: 12px; padding: 14px; }
+  .chat-panel-actions { width: 100%; min-height: 44px; }
+  #chatReturnLive { min-height: 44px; min-width: 0; padding-inline: 12px; font-size: 12px; white-space: nowrap; }
+
+  .chat-archive-search,
+  .chat-search-toggle { width: 44px; min-width: 44px; height: 44px; min-height: 44px; }
+  .chat-archive-search { margin-left: auto; }
+  .chat-archive-search.open { position: absolute; inset: auto 10px 10px; width: auto; height: 46px; }
+  .chat-archive-search-box { height: 46px; min-height: 46px; gap: 8px; padding-left: 10px; }
+  .chat-archive-search-box label { font-size: 11px; }
+  .chat-archive-search-box input { font-size: 16px; }
+
+  .chat-date-indicator { top: 8px; max-width: calc(100% - 88px); padding: 5px 10px; font-size: 10px; }
+  .chat-list {
+    height: min(62dvh, 600px);
+    min-height: 420px;
+    gap: 8px;
+    padding: 12px 8px max(14px, env(safe-area-inset-bottom));
+    overscroll-behavior-y: contain;
+    scroll-padding-block: 38px 72px;
+  }
+
+  .chat-message,
+  .chat-message.chat-activity {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "user meta" "text text";
+    gap: 5px 8px;
+    min-height: 58px;
+    padding: 9px 10px;
+  }
+  .chat-user { grid-area: user; min-width: 0; }
+  .chat-user .player-identity { min-width: 0; }
+  .chat-user .player-identity > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chat-text { grid-area: text; font-size: 14px; }
+  .chat-meta {
+    grid-area: meta;
+    justify-content: flex-end;
+    align-self: start;
+    width: auto;
+    min-width: max-content;
+    gap: 6px;
+  }
+  .chat-time { font-size: 10px; white-space: nowrap; }
+  .chat-reply-button { width: 34px; min-width: 34px; height: 34px; min-height: 34px; }
+  .chat-message[data-open-chat-context] { min-height: 64px; touch-action: manipulation; }
+  .chat-scroll-bottom { right: 12px; bottom: 12px; width: 44px; min-width: 44px; height: 44px; min-height: 44px; }
+
+  .chat-send-form {
+    position: relative;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    padding: 10px 8px max(10px, env(safe-area-inset-bottom));
+  }
+  .chat-send-form input { min-width: 0; padding-inline: 12px; }
+  .chat-send-form button { min-width: 82px; padding-inline: 12px; }
+  .chat-reply-preview { padding: 9px 10px; }
+
+  .side-stack .panel-head { gap: 10px; }
+  .chart-controls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+  .chart-range-button { min-width: 0; min-height: 42px; padding-inline: 8px; touch-action: manipulation; }
+  .chart-scroll {
+    min-height: 250px;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+  }
+  #chatHourlyChart { min-height: 220px; }
+
+  .player-profile-card { overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch; }
+  .player-profile-chat { padding-bottom: max(14px, env(safe-area-inset-bottom)); }
+  .player-profile-message {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 7px;
+    min-height: 64px;
+    padding: 11px 12px;
+    white-space: normal;
+    touch-action: manipulation;
+  }
+  .player-profile-message p { font-size: 14px; line-height: 1.4; }
+  .player-profile-message time { justify-self: end; font-size: 10px; }
+  .player-profile-load-more { min-height: 46px; touch-action: manipulation; }
+  .player-profile-message-action { min-height: 44px; touch-action: manipulation; }
+}
+
+@media (max-width: 390px) {
+  .chat-panel > .panel-head { min-height: 116px; }
+  #chatReturnLive { max-width: calc(100% - 54px); overflow: hidden; text-overflow: ellipsis; }
+  .chat-list { height: min(58dvh, 540px); min-height: 360px; }
+  .chat-send-form button { min-width: 72px; padding-inline: 10px; }
+  .player-profile-message { padding: 10px; }
 }

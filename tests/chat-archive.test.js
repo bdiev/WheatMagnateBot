@@ -26,8 +26,13 @@ assert.match(appSource, /data-chat-message-id/, 'player messages must link back 
 assert.match(appSource, /chatContextMessageId/, 'live refreshes must preserve historical context viewing');
 assert.match(appSource, /searchGameChat/, 'the chat UI must expose archive search');
 assert.match(appSource, /setChatArchiveSearchOpen/, 'archive search must use a compact expandable control');
+assert.match(appSource, /updateChatDateIndicator/, 'the chat must show the date of the currently visible messages');
 assert.match(appSource, /state\.charts\.chatMonthly/, 'the month chart must use archive-wide monthly statistics');
 assert.match(stylesSource, /\.player-profile-message p\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere;/s,
   'long player messages must wrap without overlapping their timestamp');
+assert.match(stylesSource, /Mobile composition for the permanent chat archive and player history/,
+  'chat archive and player history must have a dedicated mobile composition');
+assert.match(stylesSource, /\.chat-message,\s*\.chat-message\.chat-activity\s*\{[^}]*grid-template-areas:/s,
+  'mobile chat messages must keep identity, timestamp, and text in stable grid areas');
 
 console.log('Chat archive tests passed.');
