@@ -2896,6 +2896,25 @@ body.search-focus-active #logoutButton {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
+.chat-search-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 0 14px 12px;
+}
+
+.chat-search-form input {
+  min-width: 0;
+}
+
+.chat-message[data-open-chat-context] {
+  cursor: pointer;
+}
+
+.chat-message[data-open-chat-context]:hover {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--line));
+}
+
 .player-profile-chat h3 {
   margin: 4px 0 0;
   font-size: 15px;
@@ -2906,15 +2925,24 @@ body.search-focus-active #logoutButton {
   grid-template-columns: minmax(0, 1fr) max-content;
   gap: 12px;
   align-items: start;
+  min-width: 0;
+  white-space: normal;
 }
 
 .player-profile-message p {
+  min-width: 0;
+  margin: 0;
+  line-height: 1.35;
   overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .player-profile-message time {
+  align-self: start;
   color: var(--muted);
   font-size: 12px;
+  line-height: 1.35;
+  white-space: nowrap;
 }
 
 .player-profile-loading {

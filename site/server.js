@@ -929,7 +929,14 @@ async function getChat(url) {
 
   const limit = Math.min(1000, Math.max(1, toInt(url.searchParams.get('limit'), 500)));
   const aroundId = /^\d+$/.test(url.searchParams.get('around') || '') ? url.searchParams.get('around') : null;
-  const messagesSql = aroundId
+  const searchQuery = String(url.searchParams.get('q') || '').trim().slice(0, 100);
+  const messagesSql = searchQuery
+    ? `SELECT id, username, message, created_at
+       FROM game_chat_messages
+       WHERE POSITION(LOWER($2) IN LOWER(message)) > 0
+       ORDER BY id DESC
+       LIMIT $1`
+    : aroundId
     ? `SELECT id, username, message, created_at FROM (
          (SELECT id, username, message, created_at
           FROM game_chat_messages
@@ -947,8 +954,8 @@ async function getChat(url) {
        FROM game_chat_messages
        ORDER BY created_at DESC
        LIMIT $1`;
-  const [messagesResult, activityResult, hourlyResult, topChattersResult, totalsResult] = await Promise.all([
-    pool.query(messagesSql, aroundId ? [limit, aroundId] : [limit]),
+  const [messagesResult, activityResult, hourlyResult, dailyResult, monthlyResult, topChattersResult, totalsResult] = await Promise.all([
+    pool.query(messagesSql, searchQuery ? [limit, searchQuery] : aroundId ? [limit, aroundId] : [limit]),
     pool.query(`
       SELECT
         username,
@@ -981,6 +988,33 @@ async function getChat(url) {
         ON date_trunc('hour', messages.created_at) = buckets.bucket
       GROUP BY buckets.bucket
       ORDER BY buckets.bucket
+    `),
+    pool.query(`
+      WITH bounds AS (
+        SELECT date_trunc('day', MIN(created_at)) AS first_day,
+               date_trunc('day', NOW()) AS last_day
+        FROM game_chat_messages
+      ),
+      buckets AS (
+        SELECT generate_series(first_day, last_day, INTERVAL '1 day') AS bucket
+        FROM bounds
+        WHERE first_day IS NOT NULL
+      )
+      SELECT buckets.bucket,
+             COALESCE(COUNT(messages.id), 0)::int AS count
+      FROM buckets
+      LEFT JOIN game_chat_messages messages
+        ON messages.created_at >= buckets.bucket
+       AND messages.created_at < buckets.bucket + INTERVAL '1 day'
+      GROUP BY buckets.bucket
+      ORDER BY buckets.bucket
+    `),
+    pool.query(`
+      SELECT date_trunc('month', created_at) AS bucket,
+             COUNT(*)::int AS count
+      FROM game_chat_messages
+      GROUP BY date_trunc('month', created_at)
+      ORDER BY bucket
     `),
     pool.query(`
       SELECT username, COUNT(*)::int AS count
@@ -1019,12 +1053,21 @@ async function getChat(url) {
 
   return {
     latestId: messagesResult.rows[0]?.id == null ? '0' : String(messagesResult.rows[0].id),
-    messages: [...chatMessages, ...(aroundId ? [] : activityMessages)]
+    searchQuery: searchQuery || null,
+    messages: [...chatMessages, ...(aroundId || searchQuery ? [] : activityMessages)]
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
       .slice(0, limit)
       .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
     hourly: hourlyResult.rows.map(row => ({
       label: row.label,
+      bucket: row.bucket,
+      value: toInt(row.count)
+    })),
+    daily: dailyResult.rows.map(row => ({
+      bucket: row.bucket,
+      value: toInt(row.count)
+    })),
+    monthly: monthlyResult.rows.map(row => ({
       bucket: row.bucket,
       value: toInt(row.count)
     })),

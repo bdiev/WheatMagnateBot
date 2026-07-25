@@ -49,6 +49,7 @@ const state = {
   playerProfileUsername: null,
   playerProfileSignature: '',
   chatContextMessageId: null,
+  chatSearchQuery: '',
   whitelistSearchPlayers: [],
   adminPlayerSearchRequests: {},
   adminControlState: null,
@@ -1742,7 +1743,11 @@ function drawChartById(chartId) {
   const range = getChartRange(chartId);
   switch (chartId) {
     case 'chatHourlyChart':
-      drawBarChart($('#chatHourlyChart'), aggregateSeries(state.charts.chatHourly, range), {
+      drawBarChart($('#chatHourlyChart'), range === 'hours'
+        ? state.charts.chatHourly.map(localizedChartItem)
+        : range === 'months'
+          ? aggregateSeries(state.charts.chatMonthly, 'months')
+          : aggregateSeries(state.charts.chatDaily, 'days'), {
         tooltip: item => `${item.label}: ${formatNumber(item.value)} messages`
       });
       break;
@@ -2771,19 +2776,24 @@ function renderChatMessages(messages) {
   const list = $('#chatList');
   if (!list) return;
   const safeMessages = Array.isArray(messages) ? messages.filter(message => message?.id != null) : [];
-  const listSignature = stableSignature(safeMessages.map(message => [
-    message.id,
-    message.type,
-    message.username,
-    message.message,
-    message.event,
-    message.createdAt
-  ]));
+  const listSignature = stableSignature([
+    state.chatSearchQuery,
+    ...safeMessages.map(message => [
+      message.id,
+      message.type,
+      message.username,
+      message.message,
+      message.event,
+      message.createdAt
+    ])
+  ]);
 
   if (!safeMessages.length) {
     if (state.renderSignatures['#chatList'] === listSignature) return;
     if (list.dataset.empty !== 'true') {
-      list.innerHTML = '<div class="empty">No chat messages yet. New messages will appear after the bot records them.</div>';
+      list.innerHTML = state.chatSearchQuery
+        ? `<div class="empty">No archived messages contain “${escapeHtml(state.chatSearchQuery)}”.</div>`
+        : '<div class="empty">No chat messages yet. New messages will appear after the bot records them.</div>';
       list.dataset.empty = 'true';
     }
     state.renderSignatures['#chatList'] = listSignature;
@@ -2805,6 +2815,7 @@ function renderChatMessages(messages) {
     const isNew = state.chatInitialized && !previousIds.has(id);
     const article = document.createElement('article');
     article.dataset.messageId = id;
+    if (state.chatSearchQuery && !isActivity) article.dataset.openChatContext = id;
     article.className = `chat-message${isActivity ? ' chat-activity' : ''}${isNew ? ' new-message' : ''}`;
     article.classList.toggle('reply-active', !isActivity && state.chatReplyActiveMessageId === id);
     const username = String(message.username || 'Minecraft');
@@ -2845,6 +2856,7 @@ function renderChat(payload) {
   setRollingNumber('#chatAllTime', payload.totals?.allTime);
 
   const messages = payload.messages || [];
+  state.chatSearchQuery = String(payload.searchQuery || state.chatSearchQuery || '');
   renderChatMessages(messages);
   ensureInitialChatScroll();
   updateChatScrollButton();
@@ -2866,10 +2878,18 @@ function renderChat(payload) {
   );
 
   state.charts.chatHourly = payload.hourly || [];
+  state.charts.chatDaily = payload.daily || [];
+  state.charts.chatMonthly = payload.monthly || [];
   redrawCharts();
 }
 
 function handleChatReplyClick(event) {
+  const contextMessage = event.target.closest('[data-open-chat-context]');
+  if (contextMessage && !event.target.closest('[data-chat-reply]')) {
+    openChatContext(contextMessage.dataset.openChatContext)
+      .catch(err => setBanner(`Could not open chat context: ${err.message}`));
+    return;
+  }
   const button = event.target.closest('[data-chat-reply]');
   if (!button) return;
 
@@ -3309,6 +3329,7 @@ async function loadMorePlayerMessages(button) {
 async function openChatContext(messageId) {
   if (!/^\d+$/.test(String(messageId || ''))) return;
   const payload = await fetchJson(`/api/chat?around=${encodeURIComponent(messageId)}&limit=200`);
+  state.chatSearchQuery = '';
   state.chatContextMessageId = String(messageId);
   closePlayerProfile();
   setActiveTab('chat');
@@ -3324,10 +3345,30 @@ async function openChatContext(messageId) {
 
 async function returnToLiveChat() {
   state.chatContextMessageId = null;
+  state.chatSearchQuery = '';
+  const searchInput = $('#chatSearchInput');
+  if (searchInput) searchInput.value = '';
   const button = $('#chatReturnLive');
   if (button) button.hidden = true;
   renderChat(await fetchJson(`/api/chat?limit=${CHAT_HISTORY_LIMIT}`));
   scrollToBottom('#chatList', { smooth: true });
+}
+
+async function searchGameChat(event) {
+  event.preventDefault();
+  const query = String($('#chatSearchInput')?.value || '').trim();
+  if (!query) {
+    await returnToLiveChat();
+    return;
+  }
+  state.chatContextMessageId = null;
+  state.chatSearchQuery = query;
+  const payload = await fetchJson(`/api/chat?q=${encodeURIComponent(query)}&limit=200`);
+  renderChat(payload);
+  const returnButton = $('#chatReturnLive');
+  if (returnButton) returnButton.hidden = false;
+  const list = $('#chatList');
+  if (list) list.scrollTop = 0;
 }
 
 function initializeCollapsibleSections() {
@@ -4983,7 +5024,7 @@ function queueRealtimeRefresh(key, callback, delay = 180) {
 }
 
 async function refreshChatFromEvent() {
-  if (state.chatContextMessageId) return;
+  if (state.chatContextMessageId || state.chatSearchQuery) return;
   if (state.liveChatLoading) return;
   state.liveChatLoading = true;
   try {
@@ -4997,7 +5038,7 @@ async function refreshChatFromEvent() {
 }
 
 async function checkChatVersion() {
-  if (!state.currentUser || state.liveChatLoading || state.chatContextMessageId) return;
+  if (!state.currentUser || state.liveChatLoading || state.chatContextMessageId || state.chatSearchQuery) return;
   try {
     const payload = await fetchJson('/api/chat/version');
     const latestId = String(payload.latestId ?? '0');
@@ -5153,7 +5194,9 @@ async function loadAll() {
     // Render each dashboard section as soon as its own request completes. A slow
     // analytics query or the icon manifest must not hold the whole first screen.
     const sectionLoads = [
-      fetchJson(`/api/chat?limit=${CHAT_HISTORY_LIMIT}`).then(renderChat),
+      fetchJson(`/api/chat?limit=${CHAT_HISTORY_LIMIT}`).then(payload => {
+        if (!state.chatContextMessageId && !state.chatSearchQuery) renderChat(payload);
+      }),
       fetchJson('/api/bot-stats').then(renderBotStats),
       Promise.all([ensureItemIcons(), fetchJson('/api/obsidian')]).then(([, payload]) => {
         if (hasActiveTextSelection()) {
@@ -5206,7 +5249,7 @@ async function loadLiveChats() {
   state.liveChatLoading = true;
   try {
     const chat = await fetchJson(`/api/chat?limit=${CHAT_HISTORY_LIMIT}`);
-    renderChat(chat);
+    if (!state.chatContextMessageId && !state.chatSearchQuery) renderChat(chat);
     if ($('#whisperPanel')?.classList.contains('open')) {
       await loadWhisperOnlinePlayers();
       await loadWhisperDialog();
@@ -5328,6 +5371,7 @@ $('#adminWhitelistSuggestions')?.addEventListener('click', handleWhitelistSugges
 $('#gameChatForm')?.addEventListener('submit', handleGameChatSubmit);
 $('#chatScrollBottom')?.addEventListener('click', () => scrollToBottom('#chatList', { smooth: true }));
 $('#chatReturnLive')?.addEventListener('click', () => returnToLiveChat().catch(err => setBanner(`Could not load live chat: ${err.message}`)));
+$('#chatSearchForm')?.addEventListener('submit', event => searchGameChat(event).catch(err => setBanner(`Could not search chat: ${err.message}`)));
 $('#chatList')?.addEventListener('scroll', updateChatScrollButton);
 $('#chatList')?.addEventListener('pointerdown', handleChatMessagePointerDown);
 $('#chatList')?.addEventListener('click', handleChatReplyClick);

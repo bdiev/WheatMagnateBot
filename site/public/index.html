@@ -204,6 +204,10 @@
               </div>
               <button id="chatReturnLive" class="ghost-button" type="button" hidden>Return to live chat</button>
             </div>
+            <form id="chatSearchForm" class="chat-search-form" role="search">
+              <input id="chatSearchInput" type="search" maxlength="100" placeholder="Search the entire chat archive..." aria-label="Search game chat">
+              <button type="submit">Search</button>
+            </form>
             <div class="chat-list-wrap">
               <div id="chatList" class="chat-list" aria-live="polite"></div>
               <button id="chatScrollBottom" class="chat-scroll-bottom" type="button" aria-label="Scroll to latest chat messages">↓</button>
@@ -231,8 +235,8 @@
             <section class="panel">
               <div class="panel-head">
               <div>
-                <h2>Messages by Hour</h2>
-                <p>Chat volume over the last 24 hours.</p>
+                <h2>Chat Activity</h2>
+                <p>Full archive by day or month; Hours shows the latest 7 days.</p>
               </div>
               <div class="chart-controls" data-chart-controls="chatHourlyChart">
                 <button class="chart-range-button active" type="button" data-chart-range="hours">Hours</button>
