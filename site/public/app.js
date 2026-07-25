@@ -48,6 +48,7 @@ const state = {
   whisperSearchPlayers: [],
   playerProfileUsername: null,
   playerProfileSignature: '',
+  chatContextMessageId: null,
   whitelistSearchPlayers: [],
   adminPlayerSearchRequests: {},
   adminControlState: null,
@@ -2043,12 +2044,15 @@ function renderPlayerProfile(profile) {
       <h3>Recent Chat</h3>
       ${recentMessages.length
         ? recentMessages.map(message => `
-          <div class="player-profile-message">
+          <button class="player-profile-message" type="button" data-chat-message-id="${escapeHtml(message.id)}" title="Open this moment in game chat">
             <p>${escapeHtml(message.message)}</p>
             <time>${formatDate(message.createdAt)}</time>
-          </div>
+          </button>
         `).join('')
         : '<div class="empty">No recorded chat messages for this player.</div>'}
+      ${profile.chat?.hasMoreMessages
+        ? `<button class="ghost-button player-profile-load-more" type="button" data-player-chat-more="${escapeHtml(profile.chat.nextBeforeMessageId || '')}">Load older messages</button>`
+        : ''}
     </section>
   `;
 }
@@ -2072,7 +2076,8 @@ function playerProfileSignature(profile) {
     profile.chat?.lastMessageAt,
     profile.nearby?.distance,
     profile.nearby?.lastSeen,
-    ...(profile.chat?.recentMessages || []).map(message => [message.message, message.createdAt])
+    profile.chat?.hasMoreMessages,
+    ...(profile.chat?.recentMessages || []).map(message => [message.id, message.message, message.createdAt])
   ]);
 }
 
@@ -2094,7 +2099,17 @@ async function loadPlayerProfile(username, { showLoading = false } = {}) {
   }
 
   try {
-    const profile = await fetchJson(`/api/player?username=${encodeURIComponent(username)}`);
+    let profile = await fetchJson(`/api/player?username=${encodeURIComponent(username)}&messageLimit=100`);
+    const previous = state.playerProfileLastPayload;
+    if (previous && String(previous.username).toLowerCase() === String(profile.username).toLowerCase()) {
+      const merged = [...(profile.chat?.recentMessages || []), ...(previous.chat?.recentMessages || [])];
+      profile.chat.recentMessages = [...new Map(merged.map(message => [String(message.id), message])).values()]
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      if (previous.chat?.recentMessages?.length > 100) {
+        profile.chat.hasMoreMessages = previous.chat.hasMoreMessages;
+        profile.chat.nextBeforeMessageId = previous.chat.nextBeforeMessageId;
+      }
+    }
     state.playerProfileLastPayload = profile;
     const signature = playerProfileSignature(profile);
     if (state.playerProfileSignature !== signature) {
@@ -2126,6 +2141,18 @@ function closePlayerProfile() {
 }
 
 async function handlePlayerProfileClick(event) {
+  const chatMessage = event.target.closest('[data-chat-message-id]');
+  if (chatMessage) {
+    event.preventDefault();
+    await openChatContext(chatMessage.dataset.chatMessageId);
+    return;
+  }
+  const loadMore = event.target.closest('[data-player-chat-more]');
+  if (loadMore) {
+    event.preventDefault();
+    await loadMorePlayerMessages(loadMore);
+    return;
+  }
   const ignoreButton = event.target.closest('[data-player-ignore-action]');
   if (ignoreButton) {
     event.preventDefault();
@@ -3258,6 +3285,49 @@ async function saveObsidianAnalyticsSettings(event) {
     delete event.currentTarget.dataset.dirty;
     renderObsidian(payload); setBanner('Obsidian analytics settings saved.');
   } catch (err) { setBanner(`Could not save settings: ${err.message}`); }
+}
+
+async function loadMorePlayerMessages(button) {
+  const profile = state.playerProfileLastPayload;
+  if (!profile?.username || !button.dataset.playerChatMore) return;
+  button.disabled = true;
+  try {
+    const page = await fetchJson(`/api/player?username=${encodeURIComponent(profile.username)}&messageLimit=100&beforeMessageId=${encodeURIComponent(button.dataset.playerChatMore)}`);
+    const merged = [...(profile.chat?.recentMessages || []), ...(page.chat?.recentMessages || [])];
+    profile.chat.recentMessages = [...new Map(merged.map(message => [String(message.id), message])).values()]
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    profile.chat.hasMoreMessages = page.chat?.hasMoreMessages;
+    profile.chat.nextBeforeMessageId = page.chat?.nextBeforeMessageId;
+    state.playerProfileSignature = '';
+    $('#playerProfileContent').innerHTML = renderPlayerProfile(profile);
+  } catch (err) {
+    setBanner(`Could not load older chat messages: ${err.message}`);
+    button.disabled = false;
+  }
+}
+
+async function openChatContext(messageId) {
+  if (!/^\d+$/.test(String(messageId || ''))) return;
+  const payload = await fetchJson(`/api/chat?around=${encodeURIComponent(messageId)}&limit=200`);
+  state.chatContextMessageId = String(messageId);
+  closePlayerProfile();
+  setActiveTab('chat');
+  renderChat(payload);
+  const returnButton = $('#chatReturnLive');
+  if (returnButton) returnButton.hidden = false;
+  requestAnimationFrame(() => {
+    const target = $(`#chatList [data-message-id="${CSS.escape(String(messageId))}"]`);
+    target?.classList.add('chat-context-target');
+    target?.scrollIntoView({ block: 'center' });
+  });
+}
+
+async function returnToLiveChat() {
+  state.chatContextMessageId = null;
+  const button = $('#chatReturnLive');
+  if (button) button.hidden = true;
+  renderChat(await fetchJson(`/api/chat?limit=${CHAT_HISTORY_LIMIT}`));
+  scrollToBottom('#chatList', { smooth: true });
 }
 
 function initializeCollapsibleSections() {
@@ -4913,6 +4983,7 @@ function queueRealtimeRefresh(key, callback, delay = 180) {
 }
 
 async function refreshChatFromEvent() {
+  if (state.chatContextMessageId) return;
   if (state.liveChatLoading) return;
   state.liveChatLoading = true;
   try {
@@ -4926,7 +4997,7 @@ async function refreshChatFromEvent() {
 }
 
 async function checkChatVersion() {
-  if (!state.currentUser || state.liveChatLoading) return;
+  if (!state.currentUser || state.liveChatLoading || state.chatContextMessageId) return;
   try {
     const payload = await fetchJson('/api/chat/version');
     const latestId = String(payload.latestId ?? '0');
@@ -5256,6 +5327,7 @@ $('#adminWhitelistPlayer')?.addEventListener('focus', event => runWhitelistSearc
 $('#adminWhitelistSuggestions')?.addEventListener('click', handleWhitelistSuggestionClick);
 $('#gameChatForm')?.addEventListener('submit', handleGameChatSubmit);
 $('#chatScrollBottom')?.addEventListener('click', () => scrollToBottom('#chatList', { smooth: true }));
+$('#chatReturnLive')?.addEventListener('click', () => returnToLiveChat().catch(err => setBanner(`Could not load live chat: ${err.message}`)));
 $('#chatList')?.addEventListener('scroll', updateChatScrollButton);
 $('#chatList')?.addEventListener('pointerdown', handleChatMessagePointerDown);
 $('#chatList')?.addEventListener('click', handleChatReplyClick);

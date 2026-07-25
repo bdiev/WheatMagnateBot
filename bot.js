@@ -4633,7 +4633,6 @@ async function recordGameChatMessage(username, message) {
       'INSERT INTO game_chat_messages (username, message) VALUES ($1, $2)',
       [safeUsername, cleanMessage]
     );
-    await pool.query("DELETE FROM game_chat_messages WHERE created_at < NOW() - INTERVAL '30 days'");
   } catch (err) {
     console.error('[DB] Failed to record game chat message:', err.message);
   }

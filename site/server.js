@@ -928,13 +928,27 @@ async function getChat(url) {
   assertDatabase();
 
   const limit = Math.min(1000, Math.max(1, toInt(url.searchParams.get('limit'), 500)));
+  const aroundId = /^\d+$/.test(url.searchParams.get('around') || '') ? url.searchParams.get('around') : null;
+  const messagesSql = aroundId
+    ? `SELECT id, username, message, created_at FROM (
+         (SELECT id, username, message, created_at
+          FROM game_chat_messages
+          WHERE id <= $2::bigint
+          ORDER BY id DESC
+          LIMIT (($1 + 1) / 2))
+         UNION ALL
+         (SELECT id, username, message, created_at
+          FROM game_chat_messages
+          WHERE id > $2::bigint
+          ORDER BY id ASC
+          LIMIT ($1 / 2))
+       ) context_messages`
+    : `SELECT id, username, message, created_at
+       FROM game_chat_messages
+       ORDER BY created_at DESC
+       LIMIT $1`;
   const [messagesResult, activityResult, hourlyResult, topChattersResult, totalsResult] = await Promise.all([
-    pool.query(`
-      SELECT id, username, message, created_at
-      FROM game_chat_messages
-      ORDER BY created_at DESC
-      LIMIT $1
-    `, [limit]),
+    pool.query(messagesSql, aroundId ? [limit, aroundId] : [limit]),
     pool.query(`
       SELECT
         username,
@@ -1005,7 +1019,7 @@ async function getChat(url) {
 
   return {
     latestId: messagesResult.rows[0]?.id == null ? '0' : String(messagesResult.rows[0].id),
-    messages: [...chatMessages, ...activityMessages]
+    messages: [...chatMessages, ...(aroundId ? [] : activityMessages)]
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
       .slice(0, limit)
       .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
@@ -2211,6 +2225,10 @@ async function getPlayerProfile(url) {
   assertDatabase();
 
   const username = String(url.searchParams.get('username') || '').trim();
+  const messageLimit = Math.min(200, Math.max(20, toInt(url.searchParams.get('messageLimit'), 100)));
+  const beforeMessageId = /^\d+$/.test(url.searchParams.get('beforeMessageId') || '')
+    ? url.searchParams.get('beforeMessageId')
+    : null;
   if (!username) {
     const err = new Error('username is required.');
     err.statusCode = 400;
@@ -2281,12 +2299,13 @@ async function getPlayerProfile(url) {
       WHERE LOWER(username) = LOWER($1)
     `, [username]),
     pool.query(`
-      SELECT message, created_at
+      SELECT id, message, created_at
       FROM game_chat_messages
       WHERE LOWER(username) = LOWER($1)
+        AND ($2::bigint IS NULL OR id < $2::bigint)
       ORDER BY created_at DESC
-      LIMIT 5
-    `, [username]),
+      LIMIT $3
+    `, [username, beforeMessageId, messageLimit]),
     pool.query(`
       SELECT distance, last_seen
       FROM nearby_player_sightings
@@ -2347,9 +2366,14 @@ async function getPlayerProfile(url) {
       last24h: toInt(chat.last_24h),
       lastMessageAt: chat.last_message_at || null,
       recentMessages: recentChatResult.rows.map(row => ({
+        id: String(row.id),
         message: row.message,
         createdAt: row.created_at
-      }))
+      })),
+      hasMoreMessages: recentChatResult.rows.length === messageLimit,
+      nextBeforeMessageId: recentChatResult.rows.length
+        ? String(recentChatResult.rows[recentChatResult.rows.length - 1].id)
+        : null
     },
     nearby: nearby
       ? {

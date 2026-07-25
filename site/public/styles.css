@@ -2871,6 +2871,31 @@ body.search-focus-active #logoutButton {
   padding: 0 14px 16px;
 }
 
+.player-profile-message {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--text);
+  background: var(--panel-soft);
+  text-align: left;
+  cursor: pointer;
+}
+
+.player-profile-message:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+}
+
+.player-profile-load-more {
+  width: 100%;
+}
+
+.chat-message.chat-context-target {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel-soft));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
 .player-profile-chat h3 {
   margin: 4px 0 0;
   font-size: 15px;
