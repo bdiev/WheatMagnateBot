@@ -9,6 +9,8 @@ const botSource = fs.readFileSync(path.join(root, 'bot.js'), 'utf8');
 const serverSource = fs.readFileSync(path.join(root, 'site', 'server.js'), 'utf8');
 const appSource = fs.readFileSync(path.join(root, 'site', 'public', 'app.js'), 'utf8');
 const stylesSource = fs.readFileSync(path.join(root, 'site', 'public', 'styles.css'), 'utf8');
+const indexSource = fs.readFileSync(path.join(root, 'site', 'public', 'index.html'), 'utf8');
+const serviceWorkerSource = fs.readFileSync(path.join(root, 'site', 'public', 'sw.js'), 'utf8');
 
 assert.doesNotMatch(
   botSource,
@@ -34,5 +36,9 @@ assert.match(stylesSource, /Mobile composition for the permanent chat archive an
   'chat archive and player history must have a dedicated mobile composition');
 assert.match(stylesSource, /\.chat-message,\s*\.chat-message\.chat-activity\s*\{[^}]*grid-template-areas:/s,
   'mobile chat messages must keep identity, timestamp, and text in stable grid areas');
+assert.match(indexSource, /styles\.css\?v=139/, 'the updated mobile layout must use a fresh stylesheet URL');
+assert.match(indexSource, /app\.js\?v=139/, 'the updated chat behavior must use a fresh script URL');
+assert.match(serviceWorkerSource, /CACHE_VERSION = '116'/, 'the app shell cache must be replaced after the UI update');
+assert.doesNotMatch(serviceWorkerSource, /return cached \|\| fresh/, 'UI assets must not prefer stale cached responses');
 
 console.log('Chat archive tests passed.');

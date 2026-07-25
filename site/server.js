@@ -3716,8 +3716,10 @@ function serveStatic(req, res) {
     const type = MIME_TYPES[extension] || 'application/octet-stream';
     const etag = `\"${data.length.toString(16)}-${Math.trunc((realPathErr ? fs.statSync(filePath) : fs.statSync(realFilePath)).mtimeMs).toString(16)}\"`;
     const cacheControl = extension === '.html'
-      ? 'no-cache'
-      : 'public, max-age=3600, stale-while-revalidate=86400';
+      ? 'no-store'
+      : path.basename(filePath) === 'sw.js'
+        ? 'no-store'
+        : 'public, max-age=3600, stale-while-revalidate=86400';
     const headers = { 'Content-Type': type, 'Cache-Control': cacheControl, ETag: etag };
     if (req.headers['if-none-match'] === etag) {
       res.writeHead(304, headers);

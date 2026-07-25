@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = '115';
+const CACHE_VERSION = '116';
 const CACHE_NAME = `wheatmagnatebot-v${CACHE_VERSION}`;
 const APP_SHELL = [
   '/',
@@ -69,13 +69,16 @@ self.addEventListener('fetch', event => {
 
   if (request.mode === 'navigate') {
     event.respondWith(
-      caches.match('/index.html').then(cached => {
-        const fresh = fetch(request).then(response => {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put('/index.html', copy));
-          return response;
-        }).catch(() => cached);
-        return cached || fresh;
+      fetch(request).then(response => {
+        const copy = response.clone();
+        caches.open(CACHE_NAME).then(cache => cache.put('/index.html', copy));
+        return response;
+      }).catch(() => caches.match('/index.html')).then(response => {
+        if (response) return response;
+        return new Response('Dashboard is unavailable offline.', {
+          status: 503,
+          headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+        });
       })
     );
     return;
@@ -85,14 +88,11 @@ self.addEventListener('fetch', event => {
 
   if (['script', 'style', 'worker'].includes(request.destination)) {
     event.respondWith(
-      caches.match(request).then(cached => {
-        const fresh = fetch(request).then(response => {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put(request, copy));
-          return response;
-        }).catch(() => cached);
-        return cached || fresh;
-      })
+      fetch(request).then(response => {
+        const copy = response.clone();
+        caches.open(CACHE_NAME).then(cache => cache.put(request, copy));
+        return response;
+      }).catch(() => caches.match(request))
     );
     return;
   }
