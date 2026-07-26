@@ -13,6 +13,7 @@ const {
   GRAMMAR_WORDS,
   extractCandidatePhrases,
   sharesLongContiguousRun,
+  tokenizePhrase,
   validateAIGeneratedPhrase
 } = require('./ai_generation');
 
@@ -23,6 +24,26 @@ function randomSample(items, count) {
     [copy[i], copy[j]] = [copy[j], copy[i]];
   }
   return copy.slice(0, count);
+}
+
+function matchingResponseExamples(examples, text, limit = 5) {
+  const input = new Set(tokenizePhrase(text));
+  if (!input.size) return [];
+  return examples
+    .map(example => {
+      const trigger = new Set(tokenizePhrase(example.trigger_text));
+      const shared = [...trigger].filter(word => input.has(word)).length;
+      const score = shared / Math.max(1, Math.min(input.size, trigger.size));
+      const exact = String(text || '').trim().toLocaleLowerCase() === String(example.trigger_text || '').trim().toLocaleLowerCase();
+      return { ...example, matchScore: exact ? 1 : score };
+    })
+    .filter(example => example.matchScore >= 0.5)
+    .sort((a, b) =>
+      b.matchScore - a.matchScore ||
+      Number(Boolean(b.subject_id)) - Number(Boolean(a.subject_id)) ||
+      Number(b.id) - Number(a.id)
+    )
+    .slice(0, limit);
 }
 
 class GrowingChildAI {
@@ -119,6 +140,12 @@ class GrowingChildAI {
       if (containsSensitiveData(context.text)) return { blocked: 'sensitive_data' };
 
       const conversationKey = this.conversationKey(context);
+      this.database.observePlayerStyle({
+        source: context.source,
+        subjectId: context.authorId,
+        subjectName: context.authorName,
+        text: context.text
+      });
       this.database.addConversationMessage({
         conversationKey, source: context.source, authorId: context.authorId,
         authorName: context.authorName, role: 'user', content: context.text,
@@ -162,6 +189,12 @@ class GrowingChildAI {
     const conversationKey = this.conversationKey(context);
     const contextMessages = this.database.getConversationContext(conversationKey, this.config.conversationContextMessages);
     const memories = this.database.getMemories({ subjectSource: context.source, subjectId: context.authorId, limit: 12 });
+    const playerStyle = this.database.getPlayerStyle(context.source, context.authorId);
+    const responseExamples = matchingResponseExamples(
+      this.database.getResponseExamples({ subjectSource: context.source, subjectId: context.authorId, limit: 30 }),
+      context.text,
+      5
+    );
     // Candidate relevance is judged against the message being answered. The
     // wider window is still sent to the external model for conversational context.
     const contextWords = this.learning.tokenize(context.text);
@@ -170,7 +203,9 @@ class GrowingChildAI {
       this.pendingReactiveTimer = null;
       this.lastReactiveSpeechAt = Date.now();
       try {
-        await this.speak('reaction', contextWords, 'minecraft', { conversationKey, contextMessages, memories });
+        await this.speak('reaction', contextWords, 'minecraft', {
+          conversationKey, contextMessages, memories, playerStyle, responseExamples
+        });
       } catch (err) {
         console.error('[GrowingChild] Reactive speech failed:', err.message);
       }
@@ -230,6 +265,17 @@ class GrowingChildAI {
   }
 
   async choosePhrase(reason, contextWords, context = {}) {
+    const approvedExample = (context.responseExamples || []).find(example => example.matchScore >= 0.5);
+    if (approvedExample) {
+      const phrase = sanitizePublicPhrase(approvedExample.response_text);
+      if (phrase && !this.database.hasRecentlyGeneratedPhrase(phrase)) {
+        this.database.rememberGenerationAttempt({
+          phrase, generator: 'admin_example', accepted: true,
+          coherence: 1, toxicity: 0, repetition: 0, unknownRatio: 0
+        });
+        return phrase;
+      }
+    }
     const aiCandidates = await this.generateAIPhrases(reason, contextWords, context);
     const localCandidates = this.generateLocalPhrases(reason, contextWords);
     const candidates = [
@@ -343,7 +389,9 @@ class GrowingChildAI {
           grammarWords: GRAMMAR_WORDS,
           candidateCount: this.config.aiCandidateCount,
           contextMessages: context.contextMessages || [],
-          memories: context.memories || []
+          memories: context.memories || [],
+          playerStyle: context.playerStyle || null,
+          responseExamples: context.responseExamples || []
         });
         for (const phrase of extractCandidatePhrases(response)) {
           const validated = validateAIGeneratedPhrase({
@@ -399,6 +447,54 @@ class GrowingChildAI {
   }
   deleteMemory(id) { const result = this.database.deleteMemory(id); if (!result) throw new Error('Memory fact was not found or was already deleted.'); this.notifyStateChanged(); return result; }
   forgetUser(source, id) { const result = this.database.forgetUser(source, id); this.notifyStateChanged(); return result; }
+  updatePlayerStyle(source, id, patch) {
+    if (!String(id || '').trim()) throw new Error('Player ID is required.');
+    const result = this.database.updatePlayerStyle(source, id, patch);
+    this.notifyStateChanged();
+    return result;
+  }
+  addResponseExample(example) {
+    const safeResponse = sanitizePublicPhrase(example?.responseText);
+    const wordCount = tokenizePhrase(safeResponse || '').length;
+    if (!safeResponse || wordCount < 2 || wordCount > 12) {
+      throw new Error('Preferred response must be a safe phrase of 2 to 12 words.');
+    }
+    const id = this.database.addResponseExample({ ...example, responseText: safeResponse });
+    this.learnApprovedVocabulary(safeResponse);
+    this.notifyStateChanged();
+    return id;
+  }
+  updateResponseExample(id, patch) {
+    if (patch.responseText != null) {
+      const safeResponse = sanitizePublicPhrase(patch.responseText);
+      const wordCount = tokenizePhrase(safeResponse || '').length;
+      if (!safeResponse || wordCount < 2 || wordCount > 12) throw new Error('Preferred response must be a safe phrase of 2 to 12 words.');
+      patch = { ...patch, responseText: safeResponse };
+    }
+    const result = this.database.updateResponseExample(id, patch);
+    if (!result) throw new Error('Training example was not found.');
+    if (patch.responseText) this.learnApprovedVocabulary(patch.responseText);
+    this.notifyStateChanged();
+    return result;
+  }
+  deleteResponseExample(id) {
+    const result = this.database.deleteResponseExample(id);
+    if (!result) throw new Error('Training example was not found.');
+    this.notifyStateChanged();
+    return result;
+  }
+  learnApprovedVocabulary(text) {
+    const words = this.learning.tokenize(text);
+    const frequencies = new Map();
+    for (const word of words) frequencies.set(word, (frequencies.get(word) || 0) + 1);
+    if (!frequencies.size) return null;
+    return this.database.learn({
+      frequencies, topics: new Map(), sequence: [],
+      source: 'admin_training', authorId: 'dashboard', authorName: 'Dashboard',
+      channelId: 'response_examples', channelName: 'Response examples',
+      xp: this.config.xpPerMessage || 1, maxMessages: this.config.maxLearnedMessages || 5000
+    });
+  }
   exportState() { return this.database.exportState(); }
   importState(payload) { const result = this.database.importState(payload); this.database.cleanup(this.config); this.notifyStateChanged(); return result; }
 
@@ -445,4 +541,4 @@ class GrowingChildAI {
   }
 }
 
-module.exports = { GrowingChildAI };
+module.exports = { GrowingChildAI, matchingResponseExamples };

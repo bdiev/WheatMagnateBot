@@ -40,6 +40,8 @@ const DEFAULTS = Object.freeze({
   maxConversationMessages: 1500,
   memoryDefaultTtlDays: 180,
   maxMemories: 2000,
+  maxPlayerStyles: 2000,
+  maxResponseExamples: 1000,
   maxGenerationAttempts: 1000,
   maxGeneratedPhrases: 200,
   maxDatabaseBytes: 26214400,
@@ -103,6 +105,8 @@ function loadConfig(configPath = path.join(__dirname, 'config.json')) {
   config.maxConversationMessages = Math.max(100, Number(config.maxConversationMessages) || 1500);
   config.memoryDefaultTtlDays = Math.max(1, Number(config.memoryDefaultTtlDays) || 180);
   config.maxMemories = Math.max(100, Number(config.maxMemories) || 2000);
+  config.maxPlayerStyles = Math.max(100, Number(config.maxPlayerStyles) || 2000);
+  config.maxResponseExamples = Math.max(50, Number(config.maxResponseExamples) || 1000);
   config.maxGenerationAttempts = Math.max(100, Number(config.maxGenerationAttempts) || 1000);
   config.maxGeneratedPhrases = Math.max(50, Number(config.maxGeneratedPhrases) || 200);
   config.maxDatabaseBytes = Math.max(5 * 1024 * 1024, Number(config.maxDatabaseBytes) || 25 * 1024 * 1024);

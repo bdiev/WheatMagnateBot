@@ -1869,7 +1869,9 @@ async function generateGrowingChildPhrase({
   grammarWords,
   candidateCount = 5,
   contextMessages = [],
-  memories = []
+  memories = [],
+  playerStyle = null,
+  responseExamples = []
 }) {
   if (!GEMINI_API_KEY || !runtimeSettings.geminiEnabled) return null;
 
@@ -1898,6 +1900,12 @@ async function generateGrowingChildPhrase({
       : '',
     memories.length
       ? `Relevant memory:\n${memories.map(item => `${item.kind}/${item.fact_key}: ${item.fact_value} (confidence ${item.confidence})`).join('\n')}`
+      : '',
+    playerStyle
+      ? `Player communication profile: use a ${playerStyle.tone} tone and ${playerStyle.responseLength} response length; language ${playerStyle.language}; observed signals: ${(playerStyle.signals || []).join(', ') || 'none'}.${playerStyle.adminNotes ? ` Administrator note: ${playerStyle.adminNotes}` : ''}`
+      : '',
+    responseExamples.length
+      ? `Administrator-approved examples for similar messages. Follow their intent and style without copying unrelated details:\n${responseExamples.map(item => `Player: ${item.trigger_text}\nBot: ${item.response_text}`).join('\n')}`
       : '',
     'Basic grammar words:',
     grammarWords.join(', '),
@@ -5115,7 +5123,7 @@ async function executeBotCommand(command) {
     return { childPublicSpeech: runtimeSettings.childPublicSpeech };
   }
 
-  if (['child_memory_delete','child_memory_correct','child_forget_user','child_export_state','child_import_state'].includes(type)) {
+  if (['child_memory_delete','child_memory_correct','child_forget_user','child_style_update','child_example_add','child_example_update','child_example_delete','child_export_state','child_import_state'].includes(type)) {
     if (!growingChild) initializeGrowingChild();
     if (type === 'child_memory_delete') return { deleted: growingChild.deleteMemory(Number(payload.memoryId ?? payload.id)) };
     if (type === 'child_memory_correct') {
@@ -5129,6 +5137,23 @@ async function executeBotCommand(command) {
       }) };
     }
     if (type === 'child_forget_user') return { deleted: growingChild.forgetUser(String(payload.source || 'minecraft'), String(payload.subjectId || '')) };
+    if (type === 'child_style_update') return { profile: growingChild.updatePlayerStyle(
+      String(payload.source || 'minecraft'),
+      String(payload.subjectId || ''),
+      { tone: String(payload.tone || 'auto'), responseLength: String(payload.responseLength || 'auto'), notes: String(payload.notes || '') }
+    ) };
+    if (type === 'child_example_add') return { exampleId: growingChild.addResponseExample({
+      subjectSource: payload.subjectId ? String(payload.source || 'minecraft') : null,
+      subjectId: payload.subjectId ? String(payload.subjectId) : null,
+      triggerText: String(payload.triggerText || ''),
+      responseText: String(payload.responseText || ''),
+      createdBy: command.requested_by || null
+    }) };
+    if (type === 'child_example_update') return { exampleId: growingChild.updateResponseExample(
+      Number(payload.exampleId ?? payload.id),
+      { triggerText: payload.triggerText, responseText: payload.responseText, active: payload.active }
+    ) };
+    if (type === 'child_example_delete') return { deleted: growingChild.deleteResponseExample(Number(payload.exampleId ?? payload.id)) };
     if (type === 'child_export_state') return { state: growingChild.exportState() };
     if (type === 'child_import_state') return { stats: growingChild.importState(payload.state) };
   }

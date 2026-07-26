@@ -743,6 +743,21 @@
             <div><span>Database</span><strong id="childAiDatabaseSize">-</strong><small>cleanup enabled</small></div>
           </div>
         </section>
+        <section class="panel child-ai-training-panel">
+          <div class="panel-head"><div><h2>Response Training</h2><p>Teach a preferred answer for a similar player message without changing code.</p></div></div>
+          <form id="childAiExampleForm" class="child-ai-training-form">
+            <label class="auth-field"><span>Player message</span><input id="childAiExampleTrigger" maxlength="300" required placeholder="Can you help with my farm?"></label>
+            <label class="auth-field"><span>Preferred bot response</span><input id="childAiExampleResponse" maxlength="300" required placeholder="Sure, what does the farm need?"></label>
+            <label class="auth-field"><span>Player ID (optional)</span><input id="childAiExampleSubjectId" maxlength="64" placeholder="Leave empty to teach everyone"></label>
+            <label class="auth-field"><span>Source</span><select id="childAiExampleSource"><option value="minecraft">Minecraft</option><option value="discord">Discord</option><option value="owner_dm">Owner DM</option></select></label>
+            <button type="submit">Add example</button>
+          </form>
+          <div id="childAiExamples" class="child-ai-list"></div>
+        </section>
+        <section class="panel child-ai-style-panel">
+          <div class="panel-head"><div><h2>Player Communication Styles</h2><p>Per-player speaking patterns learned locally. Administrators can override tone and reply length.</p></div></div>
+          <div id="childAiStyles" class="child-ai-list"></div>
+        </section>
         <section class="panel child-ai-memory-panel">
           <div class="panel-head"><div><h2>Long-term Memory</h2><p>Safe facts, preferences, relationships and important events.</p></div></div>
           <div id="childAiMemories" class="child-ai-list"></div>

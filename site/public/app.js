@@ -4879,13 +4879,15 @@ function qualitySummary(item) {
 function renderChildAiAdmin(payload) {
   const snapshot = payload?.snapshot;
   if (!snapshot) {
-    ['#childAiMemories', '#childAiWords', '#childAiTopics', '#childAiEmotions', '#childAiResponses', '#childAiRejections']
+    ['#childAiMemories', '#childAiStyles', '#childAiExamples', '#childAiWords', '#childAiTopics', '#childAiEmotions', '#childAiResponses', '#childAiRejections']
       .forEach(selector => { if ($(selector)) $(selector).innerHTML = '<div class="empty">Waiting for the bot to publish its first snapshot.</div>'; });
     return;
   }
 
   const memories = Array.isArray(snapshot.memories) ? snapshot.memories : [];
   const generations = Array.isArray(snapshot.generations) ? snapshot.generations : [];
+  const playerStyles = Array.isArray(snapshot.playerStyles) ? snapshot.playerStyles : [];
+  const responseExamples = Array.isArray(snapshot.responseExamples) ? snapshot.responseExamples : [];
   $('#childAiWordCount').textContent = formatNumber(snapshot.stats?.knownWords || 0);
   $('#childAiMemoryCount').textContent = formatNumber(memories.length);
   $('#childAiEmotion').textContent = String(snapshot.emotion || 'neutral');
@@ -4904,6 +4906,24 @@ function renderChildAiAdmin(payload) {
       <small>Confidence ${Math.round((Number(item.confidence) || 0) * 100)}% · ${escapeHtml(item.source_type)} · expires ${formatDate(item.expires_at)}</small>
       <div class="child-ai-row-actions"><button class="ghost-button" type="button" data-child-memory-correct="${item.id}" data-current-value="${escapeHtml(item.fact_value)}" data-current-confidence="${Number(item.confidence) || 0.8}" data-current-expiry="${escapeHtml(item.expires_at)}">Correct</button><button class="danger-button" type="button" data-child-memory-delete="${item.id}">Delete</button></div>
     </article>`).join('') : '<div class="empty">No active long-term memories.</div>';
+
+  $('#childAiStyles').innerHTML = playerStyles.length ? playerStyles.map(profile => `
+    <article class="child-ai-row">
+      <div><strong>${escapeHtml(profile.subjectName || profile.subjectId)}</strong><span>${escapeHtml(profile.source)} · ${formatNumber(profile.messagesSeen)} messages</span></div>
+      <p>${escapeHtml(profile.tone)} tone · ${escapeHtml(profile.responseLength)} replies · ${escapeHtml(profile.language)} · ${profile.averageWords} words/message</p>
+      ${profile.adminNotes ? `<small>Administrator note: ${escapeHtml(profile.adminNotes)}</small>` : ''}
+      <div class="child-ai-style-signals">${(profile.signals || []).map(signal => `<span>${escapeHtml(signal)}</span>`).join('') || '<span>collecting style signals</span>'}</div>
+      <div class="child-ai-row-actions"><button class="ghost-button" type="button" data-child-style-edit="${escapeHtml(profile.subjectId)}" data-source="${escapeHtml(profile.source)}" data-tone="${escapeHtml(profile.adminTone || 'auto')}" data-length="${escapeHtml(profile.adminLength || 'auto')}" data-notes="${escapeHtml(profile.adminNotes || '')}">Adjust style</button></div>
+    </article>`).join('') : '<div class="empty">Player styles appear after safe messages are learned.</div>';
+
+  $('#childAiExamples').innerHTML = responseExamples.length ? responseExamples.map(example => `
+    <article class="child-ai-row">
+      <div><strong>${example.subject_id ? `${escapeHtml(example.subject_source)} · ${escapeHtml(example.subject_id)}` : 'All players'}</strong><span>${example.active ? 'Active' : 'Paused'}</span></div>
+      <p><span>Player:</span> ${escapeHtml(example.trigger_text)}</p>
+      <p><span>Bot:</span> ${escapeHtml(example.response_text)}</p>
+      <small>Added by ${escapeHtml(example.created_by || 'administrator')} · ${formatDate(example.updated_at)}</small>
+      <div class="child-ai-row-actions"><button class="ghost-button" type="button" data-child-example-edit="${example.id}" data-trigger="${escapeHtml(example.trigger_text)}" data-response="${escapeHtml(example.response_text)}">Edit</button><button class="ghost-button" type="button" data-child-example-toggle="${example.id}" data-active="${example.active ? 'true' : 'false'}">${example.active ? 'Pause' : 'Enable'}</button><button class="danger-button" type="button" data-child-example-delete="${example.id}">Delete</button></div>
+    </article>`).join('') : '<div class="empty">No response examples yet.</div>';
 
   $('#childAiEmotions').innerHTML = (snapshot.emotions || []).length
     ? snapshot.emotions.map(item => `<article class="child-ai-row"><strong>${escapeHtml(item.emotion)}</strong><span>${escapeHtml(item.reason || 'State update')}</span><small>${formatDate(item.created_at)}</small></article>`).join('')
@@ -5004,6 +5024,94 @@ async function forgetChildAiUser() {
   }
 }
 
+async function addChildAiExample(event) {
+  event.preventDefault();
+  const triggerText = $('#childAiExampleTrigger')?.value.trim();
+  const responseText = $('#childAiExampleResponse')?.value.trim();
+  const subjectId = $('#childAiExampleSubjectId')?.value.trim();
+  if (!triggerText || !responseText) return setBanner('Enter both the player message and preferred response.');
+  const button = event.currentTarget.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    await runChildAiCommand('child_example_add', {
+      triggerText, responseText, subjectId,
+      source: $('#childAiExampleSource')?.value || 'minecraft'
+    });
+    event.currentTarget.reset();
+    await new Promise(resolve => setTimeout(resolve, 650));
+    await loadChildAiAdmin();
+    setBanner('Response example added. It will guide similar conversations.');
+  } catch (err) {
+    setBanner(`Could not add response example: ${err.message}`);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function handleChildAiExampleAction(event) {
+  const edit = event.target.closest('[data-child-example-edit]');
+  const toggle = event.target.closest('[data-child-example-toggle]');
+  const remove = event.target.closest('[data-child-example-delete]');
+  if (!edit && !toggle && !remove) return;
+  const button = edit || toggle || remove;
+  const exampleId = Number(edit?.dataset.childExampleEdit || toggle?.dataset.childExampleToggle || remove?.dataset.childExampleDelete);
+  let commandType;
+  let payload = { exampleId };
+  if (remove) {
+    if (!confirm('Delete this response example?')) return;
+    commandType = 'child_example_delete';
+  } else if (toggle) {
+    commandType = 'child_example_update';
+    payload.active = toggle.dataset.active !== 'true';
+  } else {
+    const triggerText = prompt('Player message:', edit.dataset.trigger || '');
+    if (triggerText == null || !triggerText.trim()) return;
+    const responseText = prompt('Preferred bot response (2-12 words):', edit.dataset.response || '');
+    if (responseText == null || !responseText.trim()) return;
+    commandType = 'child_example_update';
+    payload = { exampleId, triggerText: triggerText.trim(), responseText: responseText.trim() };
+  }
+  button.disabled = true;
+  try {
+    await runChildAiCommand(commandType, payload);
+    await new Promise(resolve => setTimeout(resolve, 650));
+    await loadChildAiAdmin();
+    setBanner(remove ? 'Response example deleted.' : 'Response example updated.');
+  } catch (err) {
+    setBanner(`Could not update response example: ${err.message}`);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function handleChildAiStyleAction(event) {
+  const button = event.target.closest('[data-child-style-edit]');
+  if (!button) return;
+  const tone = prompt('Tone (auto, casual, friendly, helpful, energetic, reserved):', button.dataset.tone || 'auto');
+  if (tone == null) return;
+  const responseLength = prompt('Response length (auto, short, balanced, detailed):', button.dataset.length || 'auto');
+  if (responseLength == null) return;
+  const notes = prompt('Optional instruction for this player:', button.dataset.notes || '');
+  if (notes == null) return;
+  button.disabled = true;
+  try {
+    await runChildAiCommand('child_style_update', {
+      source: button.dataset.source,
+      subjectId: button.dataset.childStyleEdit,
+      tone: tone.trim().toLowerCase(),
+      responseLength: responseLength.trim().toLowerCase(),
+      notes: notes.trim()
+    });
+    await new Promise(resolve => setTimeout(resolve, 650));
+    await loadChildAiAdmin();
+    setBanner('Player communication style updated.');
+  } catch (err) {
+    setBanner(`Could not update player style: ${err.message}`);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function exportChildAiState() {
   const button = $('#childAiExport');
   button.disabled = true;
@@ -5030,7 +5138,7 @@ async function selectChildAiImport(event) {
   if (!file) return;
   try {
     const parsed = JSON.parse(await file.text());
-    if (Number(parsed.version) !== 2 || !parsed.tables) throw new Error('This is not a supported Growing Child export.');
+    if (![2, 3].includes(Number(parsed.version)) || !parsed.tables) throw new Error('This is not a supported Growing Child export.');
     state.childAiImportState = parsed;
     $('#childAiImport').disabled = false;
     setBanner(`${file.name} is ready to import.`);
@@ -5416,6 +5524,9 @@ $('#adminLogsRefresh')?.addEventListener('click', loadAdminSystemLogs);
 $('#adminLogLevel')?.addEventListener('change', loadAdminSystemLogs);
 $('#childAiRefresh')?.addEventListener('click', loadChildAiAdmin);
 $('#childAiMemories')?.addEventListener('click', handleChildAiMemoryAction);
+$('#childAiExampleForm')?.addEventListener('submit', addChildAiExample);
+$('#childAiExamples')?.addEventListener('click', handleChildAiExampleAction);
+$('#childAiStyles')?.addEventListener('click', handleChildAiStyleAction);
 $('#childAiForgetUser')?.addEventListener('click', forgetChildAiUser);
 $('#childAiExport')?.addEventListener('click', exportChildAiState);
 $('#childAiImportFile')?.addEventListener('change', selectChildAiImport);

@@ -2765,6 +2765,10 @@ async function queueAdminBotCommand(currentUser, body) {
     'child_memory_delete',
     'child_memory_correct',
     'child_forget_user',
+    'child_style_update',
+    'child_example_add',
+    'child_example_update',
+    'child_example_delete',
     'child_export_state',
     'child_import_state'
   ]);

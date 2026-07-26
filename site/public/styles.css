@@ -5582,6 +5582,31 @@ body.search-focus-active #logoutButton {
   flex: 1 1 220px;
 }
 
+.child-ai-training-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1.5fr) minmax(170px, .8fr) minmax(140px, .55fr) auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 14px;
+}
+
+.child-ai-training-form button {
+  min-height: 43px;
+}
+
+.child-ai-style-signals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.child-ai-style-signals span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 7px;
+  font-size: 12px;
+}
+
 .child-ai-memory-panel .child-ai-tools .auth-field:nth-child(2) {
   flex: 0 1 260px;
 }
@@ -5669,6 +5694,10 @@ body.search-focus-active #logoutButton {
 @media (max-width: 1050px) {
   .child-ai-section-grid.child-ai-diagnostics {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .child-ai-training-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -6023,6 +6052,10 @@ body.search-focus-active #logoutButton {
     padding: 8px 10px max(14px, env(safe-area-inset-bottom));
     overscroll-behavior-y: contain;
     scroll-padding-block: 38px 72px;
+  }
+
+  .child-ai-training-form {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .chat-message {

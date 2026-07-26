@@ -35,6 +35,8 @@
   "maxConversationMessages": 1500,
   "memoryDefaultTtlDays": 180,
   "maxMemories": 2000,
+  "maxPlayerStyles": 2000,
+  "maxResponseExamples": 1000,
   "maxGenerationAttempts": 1000,
   "maxGeneratedPhrases": 200,
   "maxDatabaseBytes": 26214400,

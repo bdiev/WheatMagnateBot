@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
 const { containsSensitiveData } = require('./memory');
+const { analyzeMessageStyle, presentPlayerStyle } = require('./personalization');
 
 const START_TOKEN = '__start__';
 const END_TOKEN = '__end__';
@@ -142,6 +143,40 @@ class GrowingChildDatabase {
         reason TEXT,
         created_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS player_style_profiles (
+        source TEXT NOT NULL,
+        subject_id TEXT NOT NULL,
+        subject_name TEXT,
+        messages_seen INTEGER NOT NULL DEFAULT 0,
+        total_words INTEGER NOT NULL DEFAULT 0,
+        total_characters INTEGER NOT NULL DEFAULT 0,
+        short_messages INTEGER NOT NULL DEFAULT 0,
+        question_messages INTEGER NOT NULL DEFAULT 0,
+        exclamation_messages INTEGER NOT NULL DEFAULT 0,
+        emoji_messages INTEGER NOT NULL DEFAULT 0,
+        uppercase_messages INTEGER NOT NULL DEFAULT 0,
+        greeting_messages INTEGER NOT NULL DEFAULT 0,
+        courtesy_messages INTEGER NOT NULL DEFAULT 0,
+        cyrillic_characters INTEGER NOT NULL DEFAULT 0,
+        latin_characters INTEGER NOT NULL DEFAULT 0,
+        admin_tone TEXT NOT NULL DEFAULT 'auto',
+        admin_length TEXT NOT NULL DEFAULT 'auto',
+        admin_notes TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(source, subject_id)
+      );
+      CREATE TABLE IF NOT EXISTS response_examples (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        subject_source TEXT,
+        subject_id TEXT,
+        trigger_text TEXT NOT NULL,
+        response_text TEXT NOT NULL,
+        active INTEGER NOT NULL DEFAULT 1,
+        created_by TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS state (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -167,6 +202,8 @@ class GrowingChildDatabase {
         ON generation_attempts(created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_emotion_history_created
         ON emotion_history(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_response_examples_subject
+        ON response_examples(subject_source, subject_id, active, updated_at DESC);
     `);
 
     // Transition rows created by older versions cannot be matched back to
@@ -392,6 +429,110 @@ class GrowingChildDatabase {
       FROM conversation_messages WHERE conversation_key=? ORDER BY id DESC LIMIT ?`).all(String(conversationKey), limit).reverse();
   }
 
+  observePlayerStyle({ source, subjectId, subjectName = null, text }) {
+    if (!source || !subjectId) return null;
+    const sample = analyzeMessageStyle(text);
+    if (sample.words === 0) return this.getPlayerStyle(source, subjectId);
+    const now = new Date().toISOString();
+    this.db.prepare(`INSERT INTO player_style_profiles(
+      source,subject_id,subject_name,messages_seen,total_words,total_characters,short_messages,
+      question_messages,exclamation_messages,emoji_messages,uppercase_messages,greeting_messages,
+      courtesy_messages,cyrillic_characters,latin_characters,created_at,updated_at
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(source,subject_id) DO UPDATE SET
+      subject_name=COALESCE(excluded.subject_name,subject_name),
+      messages_seen=messages_seen+excluded.messages_seen,
+      total_words=total_words+excluded.total_words,
+      total_characters=total_characters+excluded.total_characters,
+      short_messages=short_messages+excluded.short_messages,
+      question_messages=question_messages+excluded.question_messages,
+      exclamation_messages=exclamation_messages+excluded.exclamation_messages,
+      emoji_messages=emoji_messages+excluded.emoji_messages,
+      uppercase_messages=uppercase_messages+excluded.uppercase_messages,
+      greeting_messages=greeting_messages+excluded.greeting_messages,
+      courtesy_messages=courtesy_messages+excluded.courtesy_messages,
+      cyrillic_characters=cyrillic_characters+excluded.cyrillic_characters,
+      latin_characters=latin_characters+excluded.latin_characters,
+      updated_at=excluded.updated_at`).run(
+      String(source), String(subjectId), subjectName == null ? null : String(subjectName).slice(0, 64),
+      1, sample.words, sample.characters, sample.short, sample.question, sample.exclamation,
+      sample.emoji, sample.uppercase, sample.greeting, sample.courtesy, sample.cyrillic,
+      sample.latin, now, now
+    );
+    return this.getPlayerStyle(source, subjectId);
+  }
+
+  getPlayerStyle(source, subjectId) {
+    const row = this.db.prepare('SELECT * FROM player_style_profiles WHERE source=? AND subject_id=?')
+      .get(String(source), String(subjectId));
+    return presentPlayerStyle(row);
+  }
+
+  getPlayerStyles(limit = 200) {
+    return this.db.prepare('SELECT * FROM player_style_profiles ORDER BY updated_at DESC LIMIT ?')
+      .all(limit).map(presentPlayerStyle);
+  }
+
+  updatePlayerStyle(source, subjectId, { tone = 'auto', responseLength = 'auto', notes = '' } = {}) {
+    const tones = new Set(['auto', 'casual', 'friendly', 'helpful', 'energetic', 'reserved']);
+    const lengths = new Set(['auto', 'short', 'balanced', 'detailed']);
+    if (!tones.has(tone) || !lengths.has(responseLength)) throw new Error('Unsupported style preference.');
+    const cleanNotes = String(notes || '').replace(/\s+/g, ' ').trim().slice(0, 240);
+    if (containsSensitiveData(cleanNotes)) throw new Error('Style notes cannot contain secrets or personal data.');
+    const now = new Date().toISOString();
+    this.db.prepare(`INSERT INTO player_style_profiles(source,subject_id,messages_seen,created_at,updated_at,admin_tone,admin_length,admin_notes)
+      VALUES(?,?,0,?,?,?,?,?)
+      ON CONFLICT(source,subject_id) DO UPDATE SET admin_tone=excluded.admin_tone,
+      admin_length=excluded.admin_length,admin_notes=excluded.admin_notes,updated_at=excluded.updated_at`)
+      .run(String(source), String(subjectId), now, now, tone, responseLength, cleanNotes || null);
+    return this.getPlayerStyle(source, subjectId);
+  }
+
+  addResponseExample({ subjectSource = null, subjectId = null, triggerText, responseText, createdBy = null }) {
+    const trigger = String(triggerText || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+    const response = String(responseText || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+    if (!trigger || !response) throw new Error('Both the player message and preferred response are required.');
+    if (containsSensitiveData(trigger) || containsSensitiveData(response)) throw new Error('Training examples cannot contain secrets or personal data.');
+    const now = new Date().toISOString();
+    const result = this.db.prepare(`INSERT INTO response_examples
+      (subject_source,subject_id,trigger_text,response_text,active,created_by,created_at,updated_at)
+      VALUES(?,?,?,?,1,?,?,?)`).run(
+      subjectSource ? String(subjectSource) : null, subjectId ? String(subjectId) : null,
+      trigger, response, createdBy ? String(createdBy).slice(0, 64) : null, now, now
+    );
+    return Number(result.lastInsertRowid);
+  }
+
+  getResponseExamples({ subjectSource = null, subjectId = null, activeOnly = true, limit = 100 } = {}) {
+    const clauses = [];
+    const args = [];
+    if (activeOnly) clauses.push('active=1');
+    if (subjectSource && subjectId) {
+      clauses.push('(subject_source IS NULL OR (subject_source=? AND subject_id=?))');
+      args.push(String(subjectSource), String(subjectId));
+    }
+    args.push(limit);
+    return this.db.prepare(`SELECT * FROM response_examples${clauses.length ? ` WHERE ${clauses.join(' AND ')}` : ''}
+      ORDER BY updated_at DESC LIMIT ?`).all(...args);
+  }
+
+  updateResponseExample(id, patch = {}) {
+    const existing = this.db.prepare('SELECT * FROM response_examples WHERE id=?').get(Number(id));
+    if (!existing) return null;
+    const trigger = String(patch.triggerText ?? existing.trigger_text).replace(/\s+/g, ' ').trim().slice(0, 300);
+    const response = String(patch.responseText ?? existing.response_text).replace(/\s+/g, ' ').trim().slice(0, 300);
+    if (!trigger || !response || containsSensitiveData(trigger) || containsSensitiveData(response)) {
+      throw new Error('Training example is empty or contains prohibited sensitive data.');
+    }
+    this.db.prepare(`UPDATE response_examples SET trigger_text=?,response_text=?,active=?,updated_at=? WHERE id=?`)
+      .run(trigger, response, patch.active == null ? existing.active : patch.active ? 1 : 0, new Date().toISOString(), Number(id));
+    return Number(id);
+  }
+
+  deleteResponseExample(id) {
+    return Number(this.db.prepare('DELETE FROM response_examples WHERE id=?').run(Number(id)).changes) > 0;
+  }
+
   upsertMemory(memory) {
     const now = new Date().toISOString();
     const existing = this.db.prepare(`SELECT id FROM memories
@@ -443,6 +584,8 @@ class GrowingChildDatabase {
     const memoryChanges = this.db.prepare(`UPDATE memories SET deleted_at=?,updated_at=?
       WHERE subject_source=? AND subject_id=? AND deleted_at IS NULL`).run(now, now, String(source), String(subjectId)).changes;
     this.db.prepare(`DELETE FROM conversation_messages WHERE source=? AND author_id=?`).run(String(source), String(subjectId));
+    this.db.prepare('DELETE FROM player_style_profiles WHERE source=? AND subject_id=?').run(String(source), String(subjectId));
+    this.db.prepare('DELETE FROM response_examples WHERE subject_source=? AND subject_id=?').run(String(source), String(subjectId));
     return Number(memoryChanges);
   }
 
@@ -480,6 +623,10 @@ class GrowingChildDatabase {
       (SELECT phrase FROM generated_phrases ORDER BY created_at DESC LIMIT ?)`).run(config.maxGeneratedPhrases || 200);
     this.db.prepare(`DELETE FROM memories WHERE id NOT IN
       (SELECT id FROM memories ORDER BY updated_at DESC LIMIT ?)`).run(config.maxMemories || 2000);
+    this.db.prepare(`DELETE FROM player_style_profiles WHERE (source,subject_id) NOT IN
+      (SELECT source,subject_id FROM player_style_profiles ORDER BY updated_at DESC LIMIT ?)`).run(config.maxPlayerStyles || 2000);
+    this.db.prepare(`DELETE FROM response_examples WHERE id NOT IN
+      (SELECT id FROM response_examples ORDER BY updated_at DESC LIMIT ?)`).run(config.maxResponseExamples || 1000);
     this.db.exec(`DELETE FROM emotion_history WHERE id NOT IN (SELECT id FROM emotion_history ORDER BY id DESC LIMIT 500);`);
     const size = (() => { try { return fs.statSync(this.filename).size; } catch (_) { return 0; } })();
     if (size > (config.maxDatabaseBytes || 25 * 1024 * 1024)) {
@@ -495,17 +642,18 @@ class GrowingChildDatabase {
       stats: this.getStats(), words: this.getWords({ limit: 100 }), topics: this.getTopics(50),
       memories: this.getMemories({ limit: 200 }), emotions: this.getEmotionHistory(50),
       generations: this.getGenerationAttempts(100),
+      playerStyles: this.getPlayerStyles(200), responseExamples: this.getResponseExamples({ activeOnly: false, limit: 200 }),
       databaseSizeBytes: (() => { try { return fs.statSync(this.filename).size; } catch (_) { return 0; } })()
     };
   }
 
   exportState() {
-    const tables = ['words','members','channels','topics','learned_messages','word_transitions','learned_sequences','generated_phrases','conversation_messages','memories','generation_attempts','emotion_history','state'];
-    return { version: 2, exportedAt: new Date().toISOString(), tables: Object.fromEntries(tables.map(table => [table, this.db.prepare(`SELECT * FROM ${table}`).all()])) };
+    const tables = ['words','members','channels','topics','learned_messages','word_transitions','learned_sequences','generated_phrases','conversation_messages','memories','generation_attempts','emotion_history','player_style_profiles','response_examples','state'];
+    return { version: 3, exportedAt: new Date().toISOString(), tables: Object.fromEntries(tables.map(table => [table, this.db.prepare(`SELECT * FROM ${table}`).all()])) };
   }
 
   importState(payload) {
-    if (!payload || Number(payload.version) !== 2 || !payload.tables) throw new Error('Unsupported Growing Child state export.');
+    if (!payload || ![2, 3].includes(Number(payload.version)) || !payload.tables) throw new Error('Unsupported Growing Child state export.');
     const allowed = {
       words:['word','times_seen','first_seen','last_seen','learned_at_level'], members:['source','member_id','name','times_seen','first_seen','last_seen'],
       channels:['source','channel_id','name','times_seen','first_seen','last_seen'], topics:['topic','times_seen','first_seen','last_seen'],
@@ -516,6 +664,8 @@ class GrowingChildDatabase {
       memories:['subject_source','subject_id','subject_name','kind','fact_key','fact_value','confidence','source_type','source_ref','created_at','updated_at','expires_at','deleted_at'],
       generation_attempts:['phrase','generator','accepted','rejection_reason','coherence','toxicity','repetition','unknown_ratio','created_at'],
       emotion_history:['emotion','reason','created_at'],
+      player_style_profiles:['source','subject_id','subject_name','messages_seen','total_words','total_characters','short_messages','question_messages','exclamation_messages','emoji_messages','uppercase_messages','greeting_messages','courtesy_messages','cyrillic_characters','latin_characters','admin_tone','admin_length','admin_notes','created_at','updated_at'],
+      response_examples:['subject_source','subject_id','trigger_text','response_text','active','created_by','created_at','updated_at'],
       state:['key','value']
     };
     for (const row of payload.tables.memories || []) {
@@ -524,12 +674,15 @@ class GrowingChildDatabase {
     for (const row of payload.tables.conversation_messages || []) {
       if (containsSensitiveData(row.content)) throw new Error('Import contains prohibited sensitive conversation data.');
     }
+    for (const row of payload.tables.response_examples || []) {
+      if (containsSensitiveData(row.trigger_text) || containsSensitiveData(row.response_text)) throw new Error('Import contains prohibited sensitive training data.');
+    }
     this.db.exec('BEGIN IMMEDIATE');
     try {
       for (const [table, columns] of Object.entries(allowed)) {
         const rows = Array.isArray(payload.tables[table]) ? payload.tables[table] : [];
         const statement = this.db.prepare(`INSERT OR IGNORE INTO ${table}(${columns.join(',')}) VALUES(${columns.map(() => '?').join(',')})`);
-        const hasNaturalPrimaryKey = ['words','members','channels','topics','word_transitions','learned_sequences','generated_phrases','state'].includes(table);
+        const hasNaturalPrimaryKey = ['words','members','channels','topics','word_transitions','learned_sequences','generated_phrases','player_style_profiles','state'].includes(table);
         const duplicate = hasNaturalPrimaryKey ? null : this.db.prepare(`SELECT 1 FROM ${table} WHERE ${columns.map(column => `${column} IS ?`).join(' AND ')} LIMIT 1`);
         for (const row of rows) {
           const values = columns.map(column => row[column] ?? null);
@@ -563,6 +716,8 @@ class GrowingChildDatabase {
       DELETE FROM memories;
       DELETE FROM generation_attempts;
       DELETE FROM emotion_history;
+      DELETE FROM player_style_profiles;
+      DELETE FROM response_examples;
       DELETE FROM learned_messages;
       DELETE FROM state;
       DELETE FROM sqlite_sequence WHERE name = 'learned_messages';

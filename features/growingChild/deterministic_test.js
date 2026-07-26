@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { GrowingChildDatabase } = require('./database');
-const { GrowingChildAI } = require('./index');
+const { GrowingChildAI, matchingResponseExamples } = require('./index');
 const { MessageGenerator } = require('./generator');
 const { extractMemories, containsSensitiveData } = require('./memory');
 const { evaluateGeneration } = require('./quality');
@@ -77,6 +77,38 @@ async function run() {
   database.addConversationMessage({ conversationKey: 'minecraft:room', source: 'minecraft', authorId: 'uuid-1', content: 'fourth' });
   assert.deepEqual(database.getConversationContext('minecraft:room', 3).map(row => row.content), ['second', 'third', 'fourth']);
 
+  database.observePlayerStyle({
+    source: 'minecraft', subjectId: 'uuid-1', subjectName: 'Alex',
+    text: 'HEY! Can you help please?'
+  });
+  database.observePlayerStyle({
+    source: 'minecraft', subjectId: 'uuid-1', subjectName: 'Alex',
+    text: 'Thanks!'
+  });
+  let profile = database.getPlayerStyle('minecraft', 'uuid-1');
+  assert.equal(profile.subjectName, 'Alex');
+  assert.equal(profile.messagesSeen, 2);
+  assert.ok(profile.signals.includes('uses polite language'));
+  profile = database.updatePlayerStyle('minecraft', 'uuid-1', {
+    tone: 'friendly', responseLength: 'short', notes: 'Answer warmly'
+  });
+  assert.equal(profile.tone, 'friendly');
+  assert.equal(profile.responseLength, 'short');
+  assert.equal(profile.adminNotes, 'Answer warmly');
+  const exampleId = database.addResponseExample({
+    subjectSource: 'minecraft', subjectId: 'uuid-1',
+    triggerText: 'Can you help with the farm?',
+    responseText: 'I can help with your farm.',
+    createdBy: 'admin'
+  });
+  assert.equal(database.getResponseExamples({ subjectSource: 'minecraft', subjectId: 'uuid-1' })[0].id, exampleId);
+  database.updateResponseExample(exampleId, { responseText: 'I can help with the farm.' });
+  assert.equal(database.getResponseExamples({ subjectSource: 'minecraft', subjectId: 'uuid-1' })[0].response_text, 'I can help with the farm.');
+  assert.equal(matchingResponseExamples(
+    database.getResponseExamples({ subjectSource: 'minecraft', subjectId: 'uuid-1' }),
+    'Could you help with this farm?'
+  )[0].id, exampleId);
+
   const accepted = evaluateGeneration({ phrase: 'Do you need obsidian today?', database, config });
   assert.equal(accepted.accepted, true);
   const wordSalad = evaluateGeneration({
@@ -130,6 +162,9 @@ async function run() {
   assert.deepEqual(firstGenerated, secondGenerated, 'Seeded generation must be deterministic.');
 
   const exportPayload = database.exportState();
+  assert.equal(exportPayload.version, 3);
+  assert.equal(exportPayload.tables.player_style_profiles.length, 1);
+  assert.equal(exportPayload.tables.response_examples.length, 1);
   const currentCount = database.getWords({ limit: 100 }).find(row => row.word === 'obsidian').times_seen;
   database.importState(exportPayload);
   assert.equal(database.getWords({ limit: 100 }).find(row => row.word === 'obsidian').times_seen, currentCount,
@@ -148,6 +183,16 @@ async function run() {
   });
   await child.generateAIPhrases('button', [], {});
   assert.equal(externalCalls, 0, 'External AI must not be called while its runtime flag is disabled.');
+  const taughtId = child.addResponseExample({
+    subjectSource: 'minecraft', subjectId: 'alex',
+    triggerText: 'Can you help with my farm?',
+    responseText: 'I can help with your farm.'
+  });
+  assert.ok(taughtId > 0);
+  const taughtReply = await child.choosePhrase('reaction', ['help', 'farm'], {
+    responseExamples: [{ id: taughtId, response_text: 'I can help with your farm.', matchScore: 1 }]
+  });
+  assert.equal(taughtReply, 'I can help with your farm.');
   child.stop();
 
   console.log('Growing Child deterministic tests passed.');
