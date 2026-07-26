@@ -1952,7 +1952,8 @@ body.search-focus-active #logoutButton {
   gap: 0;
   height: 674px;
   overflow: auto;
-  padding: 8px 14px;
+  padding: 10px 14px 14px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--panel-soft) 28%, transparent), transparent 18%);
 }
 
 .chat-scroll-bottom {
@@ -2093,22 +2094,42 @@ body.search-focus-active #logoutButton {
   gap: 10px;
   align-items: start;
   border: 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 68%, transparent);
-  border-radius: 0;
-  padding: 10px 4px;
+  border-radius: 10px;
+  padding: 9px 7px;
   background: transparent;
-  transition: background-color 260ms ease, border-color 260ms ease;
+  transition: background-color 180ms ease, box-shadow 180ms ease;
+}
+
+.chat-message:not(.chat-activity) + .chat-message:not(.chat-activity) {
+  margin-top: 2px;
+}
+
+.chat-message:not(.chat-activity):hover,
+.chat-message:not(.chat-activity):focus-within {
+  background: color-mix(in srgb, var(--panel-soft) 72%, transparent);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 70%, transparent);
 }
 
 .chat-message.chat-activity {
   grid-template-columns: 8px minmax(0, max-content) max-content;
+  align-self: center;
   justify-content: center;
   align-items: center;
   gap: 7px;
   border: 0;
-  padding: 7px 12px;
+  border-radius: 999px;
+  padding: 6px 12px;
   color: var(--muted);
-  background: color-mix(in srgb, var(--panel-soft) 58%, transparent);
+  background: color-mix(in srgb, var(--panel-soft) 76%, transparent);
+}
+
+.chat-message.chat-activity + .chat-message.chat-activity {
+  margin-top: 3px;
+}
+
+.chat-message.chat-activity + .chat-message:not(.chat-activity),
+.chat-message:not(.chat-activity) + .chat-message.chat-activity {
+  margin-top: 8px;
 }
 
 .chat-message.chat-activity .chat-text {
@@ -2160,8 +2181,7 @@ body.search-focus-active #logoutButton {
   100% {
     opacity: 1;
     transform: translateY(0) scale(1);
-    background: var(--panel-soft);
-    border-color: var(--line);
+    background: transparent;
   }
 }
 
@@ -6137,22 +6157,22 @@ body.search-focus-active #logoutButton {
 
   .chat-list {
     gap: 0;
-    padding-inline: 8px;
+    padding: 10px 8px 14px;
   }
 
   .chat-message {
     flex: 0 0 auto;
     min-height: 0;
-    border-radius: 0;
-    padding: 9px 3px;
+    border-radius: 9px;
+    padding: 9px 5px;
     background: transparent;
   }
 
   .chat-message.chat-activity {
     min-height: 0;
-    border-radius: 6px;
+    border-radius: 999px;
     padding: 7px 8px;
-    background: color-mix(in srgb, var(--panel-soft) 58%, transparent);
+    background: color-mix(in srgb, var(--panel-soft) 76%, transparent);
   }
 
   .chat-user .player-identity {
