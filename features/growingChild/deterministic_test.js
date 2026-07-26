@@ -23,7 +23,7 @@ const config = {
   conversationContextMessages: 3, maxConversationMessages: 20, memoryDefaultTtlDays: 30,
   maxMemories: 100, maxGenerationAttempts: 100, maxGeneratedPhrases: 50,
   maxDatabaseBytes: 5 * 1024 * 1024, cleanupIntervalHours: 6,
-  qualityMinimumCoherence: 0.35, qualityMaximumToxicity: 0.15,
+  qualityMinimumCoherence: 0.6, qualityMaximumToxicity: 0.15,
   qualityMaximumRepetition: 0.72, qualityMaximumUnknownRatio: 0.2
 };
 
@@ -77,8 +77,36 @@ async function run() {
   database.addConversationMessage({ conversationKey: 'minecraft:room', source: 'minecraft', authorId: 'uuid-1', content: 'fourth' });
   assert.deepEqual(database.getConversationContext('minecraft:room', 3).map(row => row.content), ['second', 'third', 'fourth']);
 
-  const accepted = evaluateGeneration({ phrase: 'hello obsidian farm today', database, config });
+  const accepted = evaluateGeneration({ phrase: 'Do you need obsidian today?', database, config });
   assert.equal(accepted.accepted, true);
+  const wordSalad = evaluateGeneration({
+    phrase: 'Onto stars dip fixed alla phase subs mio honestly schweet finder.',
+    database: {
+      getAllWords: () => 'onto stars dip fixed alla phase subs mio honestly schweet finder'.split(' ').map(word => ({ word })),
+      getRecentGeneratedPhrases: () => []
+    },
+    config
+  });
+  assert.equal(wordSalad.accepted, false);
+  assert.ok(wordSalad.reasons.includes('low_coherence'));
+  assert.ok(wordSalad.coherence < 0.6);
+  const offTopic = evaluateGeneration({
+    phrase: 'Do you need rockets?',
+    database,
+    config,
+    contextWords: ['obsidian', 'farm'],
+    reason: 'reaction'
+  });
+  assert.equal(offTopic.accepted, false);
+  assert.ok(offTopic.reasons.includes('off_topic'));
+  const onTopic = evaluateGeneration({
+    phrase: 'Do you need obsidian?',
+    database,
+    config,
+    contextWords: ['obsidian', 'farm'],
+    reason: 'reaction'
+  });
+  assert.equal(onTopic.accepted, true);
   const toxic = evaluateGeneration({ phrase: 'hello stupid obsidian farm', database, config });
   assert.ok(toxic.reasons.includes('toxicity'));
   const unknown = evaluateGeneration({ phrase: 'zorb blarg obsidian farm', database, config });

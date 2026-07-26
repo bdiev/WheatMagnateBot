@@ -1885,7 +1885,7 @@ async function generateGrowingChildPhrase({
     `Write ${candidateCount} different coherent English sentences of 3 to 12 words.`,
     'Put each sentence on its own line. No numbering, bullets, quotes, labels, or explanations.',
     selectedWordLine,
-    'Prefer natural Minecraft chat over perfect grammar if needed.',
+    'Prefer a direct, natural reply that clearly responds to the latest message.',
     'You may use any words from the learned vocabulary plus basic grammar words.',
     'Do not return empty generic phrases such as "what is this", "what is that", or "I do not know".',
     'Do not force unrelated words together or produce nonsense.',
@@ -1910,8 +1910,8 @@ async function generateGrowingChildPhrase({
   return askGemini(prompt, {
     systemInstruction:
       'You write short, natural Minecraft chat sentences under strict vocabulary constraints. Return only plain text candidate sentences, one per line.',
-    temperature: 0.95,
-    maxOutputTokens: 120,
+    temperature: 0.45,
+    maxOutputTokens: 180,
     maxResponseLength: 500
   });
 }

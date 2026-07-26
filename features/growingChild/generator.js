@@ -10,6 +10,36 @@ const FUNCTION_WORDS = new Set([
   'where', 'who', 'why', 'with', 'you', 'your'
 ]);
 
+// Local generation is deliberately conservative. A bag of learned words is not
+// a language model: shuffling that bag produced fluent-looking word salad. Only
+// use words whose Minecraft meaning is reasonably stable, and put one topic into
+// a small grammatical frame. If no such topic is known, staying silent is safer.
+const MINECRAFT_TOPICS = new Set([
+  'armor', 'axe', 'base', 'beacon', 'bed', 'block', 'blocks', 'boat', 'boots',
+  'bow', 'bread', 'build', 'chest', 'coal', 'cobble', 'cobblestone', 'copper',
+  'diamond', 'diamonds', 'elytra', 'emerald', 'emeralds', 'farm', 'food', 'gear',
+  'gold', 'helmet', 'home', 'iron', 'item', 'items', 'lava', 'mine', 'mining',
+  'nether', 'obsidian', 'pick', 'pickaxe', 'pickaxes', 'portal', 'potion',
+  'potions', 'rail', 'redstone', 'rocket', 'rockets', 'server', 'shell', 'shells',
+  'shield', 'shop', 'shulker', 'shulkers', 'spawn', 'stone', 'sword', 'tools',
+  'torch', 'torches', 'trade', 'trading', 'village', 'villager', 'villagers',
+  'wheat', 'wood'
+]);
+
+const STATEMENT_FRAMES = Object.freeze([
+  topic => ['what', 'about', 'the', topic],
+  topic => ['do', 'you', 'need', topic],
+  topic => ['we', 'can', 'use', topic],
+  topic => ['i', 'can', 'help', 'with', topic]
+]);
+
+const REPLY_FRAMES = Object.freeze([
+  topic => ['do', 'you', 'need', topic],
+  topic => ['i', 'can', 'help', 'with', topic],
+  topic => ['what', 'about', 'the', topic],
+  topic => ['we', 'can', 'use', topic]
+]);
+
 function shuffle(items, random = Math.random) {
   const copy = [...items];
   for (let i = copy.length - 1; i > 0; i--) {
@@ -98,26 +128,21 @@ class MessageGenerator {
 
   makeCandidate(reply = false, contextWords = []) {
     const pool = this.getRandomWordPool(contextWords);
-    const contentWords = pool.filter(word => !FUNCTION_WORDS.has(word));
-    if (contentWords.length < 5) return null;
+    const contextTopics = [...new Set(contextWords)]
+      .filter(word => pool.includes(word) && MINECRAFT_TOPICS.has(word));
+    const learnedTopics = pool.filter(word => MINECRAFT_TOPICS.has(word));
+    const topics = contextTopics.length > 0 ? contextTopics : learnedTopics;
+    if (topics.length === 0) return null;
 
-    const targetLength = Math.min(
-      pool.length,
-      4 + Math.floor(this.random() * (reply ? 6 : 8))
-    );
-    const context = randomSample(
-      [...new Set(contextWords.filter(word => pool.includes(word) && !FUNCTION_WORDS.has(word)))],
-      reply ? 2 : 1,
-      this.random
-    );
-    const remaining = pool.filter(word => !context.includes(word));
-    const words = shuffle([
-      ...context,
-      ...randomSample(remaining, Math.max(0, targetLength - context.length), this.random)
-    ], this.random);
+    const topic = topics[Math.floor(this.random() * topics.length)];
+    const frames = reply ? REPLY_FRAMES : STATEMENT_FRAMES;
+    const words = frames[Math.floor(this.random() * frames.length)](topic);
 
     if (words.length < 3 || hasMixedLatinCyrillicWords(words)) return null;
-    return { words, phrase: finish(words, this.getPunctuation(reply)), score: scoreWords(words, reply, this.random) };
+    const punctuation = ['do', 'what'].includes(words[0])
+      ? '?'
+      : this.emotionSystem.get() === 'sleepy' ? '...' : '.';
+    return { words, phrase: finish(words, punctuation), score: scoreWords(words, reply, this.random) };
   }
 
   generateCandidates({ reply = false, contextWords = [], attempts = 80, limit = 8 } = {}) {

@@ -7,7 +7,7 @@ Growing Child is a local language-learning feature. It is not a model-training p
 1. Allowed Minecraft, owner-DM or configured Discord messages are filtered for secrets and personal data.
 2. Safe words, topics and transition statistics are learned locally. The latest messages in the same conversation form a bounded context window.
 3. Explicit statements such as “I prefer silk touch pickaxes” can create a memory with its subject, kind, confidence, source and expiry date.
-4. Local candidates are generated from learned transition chains. Gemini may propose constrained candidates only when `aiGenerationEnabled`, `GEMINI_ENABLED` and `GEMINI_API_KEY` are all enabled.
+4. Local candidates use conservative grammatical Minecraft templates with one learned topic word. Gemini may propose constrained candidates only when `aiGenerationEnabled`, `GEMINI_ENABLED` and `GEMINI_API_KEY` are all enabled.
 5. Every candidate is scored for coherence, toxicity, similarity to recent answers and unknown-word ratio. Rejected candidates and their reasons are retained for the administrator.
 
 The external AI never receives a request when its runtime switch is off. It receives only the bounded recent context, selected safe memories and learned vocabulary when enabled; local filtering still decides whether its output can be used.

@@ -162,7 +162,9 @@ class GrowingChildAI {
     const conversationKey = this.conversationKey(context);
     const contextMessages = this.database.getConversationContext(conversationKey, this.config.conversationContextMessages);
     const memories = this.database.getMemories({ subjectSource: context.source, subjectId: context.authorId, limit: 12 });
-    const contextWords = this.learning.tokenize(contextMessages.map(message => message.content).join(' '));
+    // Candidate relevance is judged against the message being answered. The
+    // wider window is still sent to the external model for conversational context.
+    const contextWords = this.learning.tokenize(context.text);
 
     this.pendingReactiveTimer = setTimeout(async () => {
       this.pendingReactiveTimer = null;
@@ -237,7 +239,13 @@ class GrowingChildAI {
 
     for (const candidate of candidates) {
       if (!candidate.phrase) continue;
-      const quality = evaluateGeneration({ phrase: candidate.phrase, database: this.database, config: this.config });
+      const quality = evaluateGeneration({
+        phrase: candidate.phrase,
+        database: this.database,
+        config: this.config,
+        contextWords,
+        reason
+      });
       if (this.database.hasRecentlyGeneratedPhrase(candidate.phrase)) {
         quality.accepted = false;
         if (!quality.reasons.includes('repetition')) quality.reasons.push('repetition');
@@ -299,10 +307,9 @@ class GrowingChildAI {
     if (contentVocabulary.length < this.config.aiWordsPerPhraseMin) return [];
 
     const isRequestedSpeech = reason === 'button' || reason === 'slash command';
-    const minimumSelected = isRequestedSpeech ? 1 : this.config.aiWordsPerPhraseMin;
-    const maximumSelected = isRequestedSpeech
-      ? Math.min(2, this.config.aiWordsPerPhraseMax)
-      : this.config.aiWordsPerPhraseMax;
+    const isReaction = reason === 'reaction';
+    const minimumSelected = 1;
+    const maximumSelected = isReaction || isRequestedSpeech ? 1 : Math.min(2, this.config.aiWordsPerPhraseMax);
     const selectedCount = Math.min(
       contentVocabulary.length,
       minimumSelected + Math.floor(Math.random() * (maximumSelected - minimumSelected + 1))
@@ -310,7 +317,7 @@ class GrowingChildAI {
     const knownContext = [...new Set(
       contextWords.filter(word => known.has(word) && !grammar.has(word))
     )];
-    const selectedContext = randomSample(knownContext, Math.min(2, selectedCount));
+    const selectedContext = randomSample(knownContext, Math.min(1, selectedCount));
     const remainingVocabulary = contentVocabulary.filter(word => !selectedContext.includes(word));
     const selectedWords = [
       ...selectedContext,
@@ -322,9 +329,11 @@ class GrowingChildAI {
       const seen = new Set();
       const attempts = isRequestedSpeech ? 3 : 2;
       for (let attempt = 1; attempt <= attempts; attempt++) {
-        const attemptSelectedWords = attempt === 1
-          ? selectedWords
-          : randomSample(contentVocabulary, selectedCount);
+        const attemptSelectedWords = isReaction && knownContext.length > 0
+          ? randomSample(knownContext, 1)
+          : attempt === 1
+            ? selectedWords
+            : randomSample(contentVocabulary, selectedCount);
         const response = await this.generateWithAI({
           reason,
           emotion: this.emotions.get(),
@@ -341,7 +350,7 @@ class GrowingChildAI {
             phrase,
             learnedWords,
             requiredWords: attemptSelectedWords,
-            minRequiredWords: Math.min(2, attemptSelectedWords.length),
+            minRequiredWords: Math.min(1, attemptSelectedWords.length),
             isTooSimilar: words =>
               this.isTooSimilarToLearnedText(words) ||
               this.database.hasRecentlyGeneratedPhrase(words.join(' '))

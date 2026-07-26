@@ -44,7 +44,7 @@ const DEFAULTS = Object.freeze({
   maxGeneratedPhrases: 200,
   maxDatabaseBytes: 26214400,
   cleanupIntervalHours: 6,
-  qualityMinimumCoherence: 0.35,
+  qualityMinimumCoherence: 0.6,
   qualityMaximumToxicity: 0.15,
   qualityMaximumRepetition: 0.72,
   qualityMaximumUnknownRatio: 0.2

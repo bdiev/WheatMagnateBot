@@ -10,12 +10,12 @@ const APOSTROPHE_CHARS = "'\u2019";
 const WORD_RE = new RegExp(`[\\p{L}]+(?:[${APOSTROPHE_CHARS}][\\p{L}]+)*`, 'gu');
 
 const GRAMMAR_WORDS = Object.freeze([
-  'a', 'am', 'an', 'and', 'are', 'as', 'at', 'be', 'but', 'can', 'could', 'did',
+  'a', 'about', 'am', 'an', 'and', 'are', 'as', 'at', 'be', 'but', 'can', 'could', 'did',
   'do', 'does', 'for', 'from', 'had', 'has', 'have', 'he', 'her', 'here', 'him',
-  'his', 'how', 'i', 'if', 'in', 'is', 'it', 'me', 'my', 'no', 'not', 'of', 'on',
+  'help', 'his', 'how', 'i', 'if', 'in', 'is', 'it', 'me', 'my', 'need', 'no', 'not', 'of', 'on',
   'or', 'our', 'she', 'should', 'so', 'some', 'that', 'the', 'their', 'them',
   'there', 'they', 'this', 'to', 'was', 'we', 'were', 'what', 'when', 'where',
-  'who', 'why', 'will', 'with', 'would', 'yes', 'you', 'your'
+  'who', 'why', 'will', 'with', 'would', 'yes', 'you', 'your', 'use'
 ]);
 
 function tokenizePhrase(value) {

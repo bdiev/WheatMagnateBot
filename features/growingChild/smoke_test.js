@@ -50,8 +50,13 @@ try {
   }
   const phrase = generator.generate();
   const reply = generator.generateReply(['obsidian', 'unknown-word']);
-  if (phrase !== null || reply !== null) {
-    throw new Error(`Generator should stay silent instead of copying or templating: ${phrase} / ${reply}`);
+  if (!phrase || !reply || !reply.toLocaleLowerCase().includes('obsidian')) {
+    throw new Error(`Generator did not produce a constrained Minecraft phrase: ${phrase} / ${reply}`);
+  }
+  if (generator.isTooSimilarToChat(
+    String(phrase).toLocaleLowerCase().match(/\p{L}+/gu) || []
+  )) {
+    throw new Error(`Generator copied learned chat: ${phrase}`);
   }
   if (known.has('x3402889') || known.has('68') || known.has('672222')) {
     throw new Error('Coordinate-like tokens entered the vocabulary.');
