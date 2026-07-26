@@ -6215,3 +6215,44 @@ body.search-focus-active #logoutButton {
   }
 
 }
+
+/* Profile history mirrors chat rows, without the avatar and reply column. */
+.player-profile-message {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  border-radius: 10px;
+  padding: 9px 7px;
+  color: var(--text);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  white-space: normal;
+  cursor: pointer;
+  transition: background-color 180ms ease, box-shadow 180ms ease;
+}
+
+.player-profile-message:hover,
+.player-profile-message:focus-visible {
+  background: color-mix(in srgb, var(--panel-soft) 72%, transparent);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 70%, transparent);
+  outline: 0;
+}
+
+.player-profile-message .chat-message-head {
+  margin-bottom: 3px;
+}
+
+.player-profile-message .chat-text {
+  padding-left: 0;
+}
+
+@media (max-width: 700px) {
+  .player-profile-message {
+    display: block;
+    min-height: 0;
+    padding: 9px 5px;
+    touch-action: manipulation;
+  }
+}

@@ -2112,8 +2112,13 @@ function renderPlayerProfile(profile) {
       ${recentMessages.length
         ? recentMessages.map(message => `
           <button class="player-profile-message" type="button" data-chat-message-id="${escapeHtml(message.id)}" title="Open this moment in game chat">
-            <p>${escapeHtml(message.message)}</p>
-            <time>${formatDate(message.createdAt)}</time>
+            <div class="chat-message-body">
+              <div class="chat-message-head">
+                <span class="chat-message-name">${escapeHtml(profileUsername)}</span>
+                <time class="chat-time">${formatChatTime(message.createdAt)}</time>
+              </div>
+              <div class="chat-text">${escapeHtml(message.message)}</div>
+            </div>
           </button>
         `).join('')
         : '<div class="empty">No recorded chat messages for this player.</div>'}
@@ -2981,6 +2986,9 @@ function handleChatReplyClick(event) {
 
 function handleChatMessagePointerDown(event) {
   if (event.pointerType === 'mouse') return;
+  // Player avatars open profiles on tap. Do not use that tap merely to reveal
+  // the reply action for the surrounding chat message.
+  if (event.target.closest('[data-player], [data-chat-reply]')) return;
   const message = event.target.closest('.chat-message:not(.chat-activity)');
   const list = event.currentTarget;
   if (!message || !list.contains(message)) return;
