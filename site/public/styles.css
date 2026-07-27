@@ -2090,7 +2090,7 @@ body.search-focus-active #logoutButton {
 .chat-message {
   display: grid;
   flex: 0 0 auto;
-  grid-template-columns: 32px minmax(0, 1fr) 30px;
+  grid-template-columns: 32px minmax(0, 1fr) max-content;
   gap: 10px;
   align-items: start;
   border: 0;
@@ -2102,6 +2102,19 @@ body.search-focus-active #logoutButton {
 
 .chat-message:not(.chat-activity) + .chat-message:not(.chat-activity) {
   margin-top: 2px;
+}
+
+.chat-message-continuation {
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+
+.chat-message:not(.chat-activity):not(.chat-message-continuation):not(:first-child) {
+  margin-top: 8px;
+}
+
+.chat-message-continuation + .chat-message:not(.chat-activity):not(.chat-message-continuation) {
+  margin-top: 10px;
 }
 
 .chat-message:not(.chat-activity):hover,
@@ -2241,7 +2254,12 @@ body.search-focus-active #logoutButton {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 6px;
+  gap: 4px;
+}
+
+.chat-meta .chat-time {
+  order: 2;
+  min-width: 68px;
 }
 
 .chat-reply-button {
@@ -6059,7 +6077,7 @@ body.search-focus-active #logoutButton {
   }
 
   .chat-message {
-    grid-template-columns: 30px minmax(0, 1fr) 34px;
+    grid-template-columns: 30px minmax(0, 1fr) max-content;
     gap: 9px;
     min-height: 0;
     padding: 9px 2px;

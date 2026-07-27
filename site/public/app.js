@@ -2876,18 +2876,23 @@ function renderChatMessages(messages) {
   const previousIds = state.chatMessageIds;
   const fragment = document.createDocumentFragment();
 
+  let previousChatUsername = null;
   safeMessages.forEach(message => {
     const id = String(message.id);
     const isActivity = message.type === 'activity';
     const isNew = state.chatInitialized && !previousIds.has(id);
+    const username = String(message.username || 'Minecraft');
+    const normalizedUsername = username.trim().toLocaleLowerCase();
+    const isContinuation = !isActivity
+      && previousChatUsername !== null
+      && normalizedUsername === previousChatUsername;
     const article = document.createElement('article');
     article.dataset.messageId = id;
     article.dataset.createdAt = String(message.createdAt || '');
     if (state.chatSearchQuery && !isActivity) article.dataset.openChatContext = id;
     const activityKind = isActivity && message.event === 'join' ? 'join' : 'leave';
-    article.className = `chat-message${isActivity ? ` chat-activity chat-activity-${activityKind}` : ''}${isNew ? ' new-message' : ''}`;
+    article.className = `chat-message${isActivity ? ` chat-activity chat-activity-${activityKind}` : ''}${isContinuation ? ' chat-message-continuation' : ''}${isNew ? ' new-message' : ''}`;
     article.classList.toggle('reply-active', !isActivity && state.chatReplyActiveMessageId === id);
-    const username = String(message.username || 'Minecraft');
     const text = isActivity
       ? (message.event === 'join' ? 'joined the game' : 'left the game')
       : String(message.message || '');
@@ -2898,16 +2903,16 @@ function renderChatMessages(messages) {
            <span class="chat-text"></span>
          </div>
          <time class="chat-time">${formatChatTime(message.createdAt)}</time>`
-      : `<div class="chat-user">${playerIdentity(username, 28)}</div>
+      : `<div class="chat-user">${isContinuation ? '' : playerIdentity(username, 28)}</div>
          <div class="chat-message-body">
-           <div class="chat-message-head">
+           ${isContinuation ? '' : `<div class="chat-message-head">
              <span class="chat-message-name">${escapeHtml(username)}</span>
-             <time class="chat-time">${formatChatTime(message.createdAt)}</time>
-           </div>
+           </div>`}
            <div class="chat-text"></div>
          </div>
          <div class="chat-meta">
            <button class="chat-reply-button" type="button" aria-label="Reply to ${escapeHtml(username)}" title="Reply"><img src="/logos/reply.png" alt="" aria-hidden="true"></button>
+           <time class="chat-time">${formatChatTime(message.createdAt)}</time>
          </div>`;
     article.querySelector('.chat-text').textContent = text;
     const replyButton = article.querySelector('.chat-reply-button');
@@ -2916,6 +2921,7 @@ function renderChatMessages(messages) {
       replyButton.dataset.chatReplyText = text;
     }
     fragment.append(article);
+    previousChatUsername = isActivity ? null : normalizedUsername;
   });
 
   delete list.dataset.empty;
