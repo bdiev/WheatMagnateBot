@@ -77,6 +77,8 @@ const state = {
   chatReply: null,
   chatReplyActiveMessageId: null,
   chatReplyHideTimer: null,
+  chatPlayerTap: null,
+  chatPlayerClickSuppression: null,
   chatMessageIds: new Set(),
   chatInitialized: false,
   chatLatestId: null,
@@ -2994,7 +2996,18 @@ function handleChatMessagePointerDown(event) {
   if (event.pointerType === 'mouse') return;
   // Player avatars open profiles on tap. Do not use that tap merely to reveal
   // the reply action for the surrounding chat message.
-  if (event.target.closest('[data-player], [data-chat-reply]')) return;
+  const player = event.target.closest('[data-player]');
+  if (player) {
+    state.chatPlayerTap = {
+      pointerId: event.pointerId,
+      username: player.dataset.player,
+      startX: event.clientX,
+      startY: event.clientY
+    };
+    return;
+  }
+  state.chatPlayerTap = null;
+  if (event.target.closest('[data-chat-reply]')) return;
   const message = event.target.closest('.chat-message:not(.chat-activity)');
   const list = event.currentTarget;
   if (!message || !list.contains(message)) return;
@@ -3004,6 +3017,30 @@ function handleChatMessagePointerDown(event) {
     if (node !== message) node.classList.remove('reply-active');
   });
   message.classList.add('reply-active');
+}
+
+function handleChatPlayerPointerMove(event) {
+  const tap = state.chatPlayerTap;
+  if (!tap || tap.pointerId !== event.pointerId) return;
+  if (Math.hypot(event.clientX - tap.startX, event.clientY - tap.startY) > 10) {
+    state.chatPlayerTap = null;
+  }
+}
+
+function handleChatPlayerPointerEnd(event) {
+  const tap = state.chatPlayerTap;
+  state.chatPlayerTap = null;
+  if (event.type === 'pointercancel' || !tap || tap.pointerId !== event.pointerId) return;
+  const player = event.target.closest('[data-player]');
+  if (!player || player.dataset.player !== tap.username) return;
+
+  event.preventDefault();
+  event.stopPropagation();
+  state.chatPlayerClickSuppression = {
+    username: tap.username,
+    until: Date.now() + 700
+  };
+  openPlayerProfile(tap.username).catch(err => setBanner(`Could not open player profile: ${err.message}`));
 }
 
 function clearGameChatReply() {
@@ -5630,6 +5667,9 @@ $('#chatSearchInput')?.addEventListener('keydown', event => {
 });
 $('#chatList')?.addEventListener('scroll', handleChatListScroll, { passive: true });
 $('#chatList')?.addEventListener('pointerdown', handleChatMessagePointerDown);
+$('#chatList')?.addEventListener('pointermove', handleChatPlayerPointerMove, { passive: true });
+$('#chatList')?.addEventListener('pointerup', handleChatPlayerPointerEnd);
+$('#chatList')?.addEventListener('pointercancel', handleChatPlayerPointerEnd);
 $('#chatList')?.addEventListener('click', handleChatReplyClick);
 $('#gameChatReplyCancel')?.addEventListener('click', clearGameChatReply);
 $$('.chart-controls').forEach(controls => controls.addEventListener('click', handleChartRangeClick));
@@ -5729,6 +5769,16 @@ document.addEventListener('click', event => {
   if (player) {
     event.preventDefault();
     event.stopPropagation();
+    const suppressed = state.chatPlayerClickSuppression;
+    if (
+      suppressed
+      && player.closest('#chatList')
+      && suppressed.username === player.dataset.player
+      && suppressed.until >= Date.now()
+    ) {
+      state.chatPlayerClickSuppression = null;
+      return;
+    }
     openPlayerProfile(player.dataset.player);
     return;
   }

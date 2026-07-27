@@ -44,8 +44,14 @@ assert.match(stylesSource, /\.chat-message\.chat-activity\s*\{[^}]*grid-template
   'mobile join and leave events must use their own compact status-row layout');
 assert.match(appSource, /chat-activity-\$\{activityKind\}/,
   'join and leave events must expose distinct visual states');
-assert.match(appSource, /event\.target\.closest\('\[data-player\], \[data-chat-reply\]'\)/,
+assert.match(appSource, /const player = event\.target\.closest\('\[data-player\]'\);[\s\S]*if \(player\) \{[\s\S]*state\.chatPlayerTap[\s\S]*return;/,
   'tapping a player avatar must not first activate the message reply action');
+assert.match(appSource, /function handleChatPlayerPointerEnd\(event\)[\s\S]*openPlayerProfile\(tap\.username\)/,
+  'a mobile avatar tap must open the player profile directly on pointerup');
+assert.match(appSource, /Math\.hypot\(event\.clientX - tap\.startX, event\.clientY - tap\.startY\) > 10/,
+  'scrolling from an avatar must not be mistaken for a profile tap');
+assert.match(appSource, /chatPlayerClickSuppression[\s\S]*player\.closest\('#chatList'\)/,
+  'the synthetic click following a mobile avatar tap must not open the profile twice');
 assert.match(appSource, /player-profile-message[\s\S]*chat-message-head[\s\S]*chat-message-name/,
   'player profile history must use the same message header as game chat');
 assert.match(stylesSource, /Profile history mirrors chat rows[\s\S]*player-profile-message:hover,[\s\S]*player-profile-message:focus-visible/,
@@ -56,9 +62,9 @@ assert.match(stylesSource, /\.chat-date-indicator\.visible\s*\{[^}]*opacity:\s*1
   'the date indicator must fade into view while scrolling');
 assert.match(stylesSource, /\.chat-panel\.chat-search-open > \.panel-head > div:first-child\s*\{[^}]*opacity:\s*0;/s,
   'the chat heading must fade away while archive search expands');
-assert.match(indexSource, /styles\.css\?v=146/, 'the updated mobile layout must use a fresh stylesheet URL');
-assert.match(indexSource, /app\.js\?v=148/, 'the updated chat behavior must use a fresh script URL');
-assert.match(serviceWorkerSource, /CACHE_VERSION = '125'/, 'the app shell cache must be replaced after the UI update');
+assert.match(indexSource, /styles\.css\?v=147/, 'the updated mobile layout must use a fresh stylesheet URL');
+assert.match(indexSource, /app\.js\?v=149/, 'the updated chat behavior must use a fresh script URL');
+assert.match(serviceWorkerSource, /CACHE_VERSION = '126'/, 'the app shell cache must be replaced after the UI update');
 assert.match(stylesSource, /\.chat-message\s*\{[^}]*flex:\s*0 0 auto;/s,
   'chat cards must retain their natural height inside the scrolling flex list');
 assert.doesNotMatch(serviceWorkerSource, /return cached \|\| fresh/, 'UI assets must not prefer stale cached responses');

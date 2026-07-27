@@ -6229,6 +6229,8 @@ body.search-focus-active #logoutButton {
   .chat-user .player-identity {
     gap: 0;
     line-height: 1.15;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
 
   .chat-user .player-head {
