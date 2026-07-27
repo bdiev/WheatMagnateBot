@@ -1495,6 +1495,19 @@ function shortChartLabel(label, index, total) {
   return value;
 }
 
+function chartAxisLabelFitsViewport(canvas, ctx, label, x) {
+  const viewport = canvas?.closest('.chart-scroll');
+  if (!viewport || viewport.clientWidth <= 0) return true;
+  const canvasLeft = canvas.offsetLeft || 0;
+  const visibleLeft = viewport.scrollLeft - canvasLeft;
+  const visibleRight = visibleLeft + viewport.clientWidth;
+  const halfWidth = ctx.measureText(label).width / 2;
+  const stickyAxisClearance = 64;
+  const edgeClearance = 8;
+  return x - halfWidth >= visibleLeft + stickyAxisClearance
+    && x + halfWidth <= visibleRight - edgeClearance;
+}
+
 function drawNoData(ctx, width, height, muted) {
   ctx.fillStyle = muted;
   ctx.font = '13px system-ui, sans-serif';
@@ -1653,6 +1666,7 @@ function drawBarChart(canvas, data, options = {}) {
     const label = shortChartLabel(item.label, index, chartData.length);
     if (!label) return;
     const x = padding.left + index * slotWidth + slotWidth / 2;
+    if (!chartAxisLabelFitsViewport(canvas, ctx, label, x)) return;
     ctx.fillText(label, x, height - 16);
   });
 }
@@ -1744,9 +1758,11 @@ function drawLineChart(canvas, data, options = {}) {
   ctx.font = '11px system-ui, sans-serif';
   ctx.textAlign = 'center';
   chartData.forEach((item, index) => {
-    const label = shortChartLabel(item.label, index, chartData.length);
+    const axisLabel = options.axisLabel ? options.axisLabel(item) : item.label;
+    const label = shortChartLabel(axisLabel, index, chartData.length);
     if (!label) return;
     const x = padding.left + (chartWidth * index) / Math.max(1, chartData.length - 1);
+    if (!chartAxisLabelFitsViewport(canvas, ctx, label, x)) return;
     ctx.fillText(label, x, height - 16);
   });
 }
@@ -1834,6 +1850,7 @@ function drawChartById(chartId) {
       drawLineChart($('#tpsHourlyChart'), aggregateSeries(state.charts.tpsHourly, range, 'avg'), {
         max: 20,
         pointWidth: range === 'hours' ? 48 : 42,
+        axisLabel: item => range === 'hours' ? String(item.label || '').slice(-5) : item.label,
         tooltip: item => `${item.label}: ${formatTps(item.value)} TPS`
       });
       break;

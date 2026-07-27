@@ -58,6 +58,10 @@ assert.match(appSource, /if \(lastIndex - index < step\) return '';/,
   'the final chart timestamp must not overlap the preceding interval label');
 assert.match(appSource, /pointWidth: range === 'hours' \? 48 : 42/,
   'hourly TPS points must leave additional horizontal room for timestamps');
+assert.match(appSource, /axisLabel: item => range === 'hours' \? String\(item\.label \|\| ''\)\.slice\(-5\) : item\.label/,
+  'hourly TPS axis labels must use compact times while tooltips retain the full date');
+assert.match(appSource, /function chartAxisLabelFitsViewport[\s\S]*stickyAxisClearance = 64[\s\S]*visibleRight - edgeClearance/,
+  'chart labels hidden behind the sticky axis or viewport edge must not be drawn');
 assert.match(appSource, /player-profile-message[\s\S]*chat-message-head[\s\S]*chat-message-name/,
   'player profile history must use the same message header as game chat');
 assert.match(stylesSource, /Profile history mirrors chat rows[\s\S]*player-profile-message:hover,[\s\S]*player-profile-message:focus-visible/,
@@ -69,8 +73,8 @@ assert.match(stylesSource, /\.chat-date-indicator\.visible\s*\{[^}]*opacity:\s*1
 assert.match(stylesSource, /\.chat-panel\.chat-search-open > \.panel-head > div:first-child\s*\{[^}]*opacity:\s*0;/s,
   'the chat heading must fade away while archive search expands');
 assert.match(indexSource, /styles\.css\?v=147/, 'the updated mobile layout must use a fresh stylesheet URL');
-assert.match(indexSource, /app\.js\?v=150/, 'the updated chat behavior must use a fresh script URL');
-assert.match(serviceWorkerSource, /CACHE_VERSION = '127'/, 'the app shell cache must be replaced after the UI update');
+assert.match(indexSource, /app\.js\?v=151/, 'the updated chat behavior must use a fresh script URL');
+assert.match(serviceWorkerSource, /CACHE_VERSION = '128'/, 'the app shell cache must be replaced after the UI update');
 assert.match(stylesSource, /\.chat-message\s*\{[^}]*flex:\s*0 0 auto;/s,
   'chat cards must retain their natural height inside the scrolling flex list');
 assert.doesNotMatch(serviceWorkerSource, /return cached \|\| fresh/, 'UI assets must not prefer stale cached responses');
