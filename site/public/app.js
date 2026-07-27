@@ -1485,8 +1485,13 @@ function animateChart(chartId, duration = 220) {
 
 function shortChartLabel(label, index, total) {
   const value = String(label || '').replace(/^\d{4}-/, '');
-  if (total > 48 && index % 6 !== 0 && index !== total - 1) return '';
-  if (total > 24 && index % 3 !== 0 && index !== total - 1) return '';
+  const step = total > 48 ? 6 : total > 24 ? 3 : total > 12 ? 2 : 1;
+  const lastIndex = total - 1;
+  if (index === lastIndex) return value;
+  if (index % step !== 0) return '';
+  // The final label is always useful, but it can sit only one point after a
+  // regular interval label. Suppress that neighbour so both remain readable.
+  if (lastIndex - index < step) return '';
   return value;
 }
 
@@ -1563,7 +1568,7 @@ function drawBarChart(canvas, data, options = {}) {
   const line = getCssColor('--line');
   const accent = getCssColor('--accent');
   const panelSoft = getCssColor('--panel-soft');
-  const padding = { top: 24, right: 18, bottom: 44, left: 58 };
+  const padding = { top: 24, right: 52, bottom: 44, left: 58 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
   const values = visibleChartValues(canvas, chartData, padding, chartWidth, 'bar');
@@ -1662,7 +1667,7 @@ function drawLineChart(canvas, data, options = {}) {
   const line = getCssColor('--line');
   const accent = getCssColor('--accent');
   const panelSoft = getCssColor('--panel-soft');
-  const padding = { top: 24, right: 18, bottom: 44, left: 58 };
+  const padding = { top: 24, right: 52, bottom: 44, left: 58 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
   const numericValues = visibleChartValues(canvas, chartData, padding, chartWidth, 'line');
@@ -1828,6 +1833,7 @@ function drawChartById(chartId) {
     case 'tpsHourlyChart':
       drawLineChart($('#tpsHourlyChart'), aggregateSeries(state.charts.tpsHourly, range, 'avg'), {
         max: 20,
+        pointWidth: range === 'hours' ? 48 : 42,
         tooltip: item => `${item.label}: ${formatTps(item.value)} TPS`
       });
       break;
