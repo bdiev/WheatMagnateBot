@@ -6,7 +6,7 @@ const EVENT_TYPES = Object.freeze([
   'bot_disconnected', 'bot_reconnected', 'bot_kicked', 'unauthorized_player_nearby',
   'low_pickaxe_durability', 'no_pickaxes', 'low_food', 'farm_stalled', 'low_tps',
   'database_unavailable', 'repeated_reconnects', 'command_failed', 'whisper_message',
-  'daily_obsidian_report'
+  'daily_obsidian_report', 'player_milestone'
 ]);
 const EVENT_TYPE_SET = new Set(EVENT_TYPES);
 const SEVERITY_RANK = Object.freeze({ info: 0, warning: 1, critical: 2 });
@@ -16,7 +16,8 @@ const SAFE_EVENT_LABELS = Object.freeze({
   no_pickaxes: 'No usable pickaxes', low_food: 'Food supply is low', farm_stalled: 'Obsidian farm stalled',
   low_tps: 'Server TPS is low', database_unavailable: 'Database unavailable',
   repeated_reconnects: 'Repeated reconnects', command_failed: 'A bot command failed',
-  whisper_message: 'New private message', daily_obsidian_report: 'Daily Obsidian Farm Report'
+  whisper_message: 'New private message', daily_obsidian_report: 'Daily Obsidian Farm Report',
+  player_milestone: 'Player Milestone'
 });
 
 function normalizeTime(value, fallback) {
@@ -55,7 +56,7 @@ function shouldDeliverSubscription(subscription, notification, { resolved = fals
   if (resolved && !subscription.include_resolved) return false;
   const selected = Array.isArray(subscription.event_types) ? subscription.event_types : [];
   if (selected.length && !selected.includes(notification.event_type)) return false;
-  if (notification.event_type === 'whisper_message' || notification.event_type === 'daily_obsidian_report') return true;
+  if (notification.event_type === 'whisper_message' || notification.event_type === 'daily_obsidian_report' || notification.event_type === 'player_milestone') return true;
   if (resolved) return true;
   return (SEVERITY_RANK[notification.severity] ?? -1) >= (SEVERITY_RANK[subscription.minimum_severity] ?? 2);
 }
@@ -121,6 +122,17 @@ function safeDetailedBody(notification, { resolved = false } = {}) {
       const formattedRate = Math.max(0, rate || 0).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
       return `Last 24 hours: ${Math.max(0, Math.round(mined || 0)).toLocaleString('en-US')} obsidian${change}. Average: ${formattedRate}/h. Supplies: ${Math.max(0, Math.round(pickaxes || 0))} pickaxes, ${Math.max(0, Math.round(food || 0))} food.`;
     }
+    case 'player_milestone': {
+      const milestones = (Array.isArray(metadata.milestones) ? metadata.milestones : []).map(item => {
+        const username = String(item?.username || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 32);
+        const years = Number.isFinite(Number(item?.years)) ? Math.max(1, Math.round(Number(item.years))) : null;
+        return username && years ? `${username}: ${years} ${years === 1 ? 'year' : 'years'}` : null;
+      }).filter(Boolean);
+      if (!milestones.length) return 'A player anniversary is today.';
+      const visible = milestones.slice(0, 3).join(', ');
+      const remaining = milestones.length - 3;
+      return `Today: ${visible}${remaining > 0 ? `, and ${remaining} more` : ''}.`;
+    }
     default:
       return `${label}. Open the dashboard for details.`;
   }
@@ -131,8 +143,10 @@ function safePushPayload(notification, { resolved = false, test = false, detaile
   const critical = !resolved && notification.severity === 'critical';
   const destination = test ? 'settings'
     : notification.event_type === 'whisper_message' ? 'whispers'
-      : notification.event_type === 'daily_obsidian_report' ? 'obsidian' : 'notifications';
+      : notification.event_type === 'daily_obsidian_report' ? 'obsidian'
+        : notification.event_type === 'player_milestone' ? 'players' : 'notifications';
   const dailyReport = notification.event_type === 'daily_obsidian_report';
+  const scheduledEvent = dailyReport || notification.event_type === 'player_milestone';
   const destinationParams = new URLSearchParams({ push: destination });
   if (destination === 'whispers') {
     const player = String(notification.metadata?.sender || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 32);
@@ -141,7 +155,7 @@ function safePushPayload(notification, { resolved = false, test = false, detaile
     if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(accountId)) destinationParams.set('accountId', accountId);
   }
   return {
-    title: test ? 'WheatMagnateBot test' : dailyReport ? label : critical ? 'Critical bot alert' : resolved ? 'Issue resolved' : detailed ? label : 'WheatMagnateBot alert',
+    title: test ? 'WheatMagnateBot test' : scheduledEvent ? label : critical ? 'Critical bot alert' : resolved ? 'Issue resolved' : detailed ? label : 'WheatMagnateBot alert',
     body: test ? `${label}. Open the dashboard for details.` : detailed
       ? safeDetailedBody(notification, { resolved })
       : `${label}. Open the dashboard for details.`,
@@ -301,6 +315,22 @@ class WebPushService {
       id: `whisper-${String(id || 'new').replace(/[^\d]/g, '').slice(0, 20) || 'new'}`,
       event_type: 'whisper_message', severity: 'info', metadata: { sender, message, accountId }
     };
+    const result = await deliverPushSubscriptions({
+      subscriptions: rows.rows, notification, now,
+      sendNotification: (...args) => this.sender.sendNotification(...args),
+      removeInvalid: subscriptionId => this.pool.query('DELETE FROM push_subscriptions WHERE id=$1', [subscriptionId])
+    });
+    if (result.sentIds.length) await this.pool.query(`UPDATE push_subscriptions SET last_success_at=NOW(),failure_count=0 WHERE id=ANY($1::bigint[])`, [result.sentIds]).catch(() => {});
+    if (result.failedIds.length) await this.pool.query(`UPDATE push_subscriptions SET failure_count=failure_count+1 WHERE id=ANY($1::bigint[])`, [result.failedIds]).catch(() => {});
+    return result;
+  }
+
+  async deliverPlayerMilestones(notification, { now = new Date() } = {}) {
+    if (!this.configured || !this.pool) return { sent: 0, skipped: 0, failed: 0, removed: 0, unavailable: true };
+    if (notification?.event_type !== 'player_milestone') throw new Error('A player milestone notification is required.');
+    const rows = await this.pool.query(`SELECT ps.*,COALESCE(np.account_timezone,ps.timezone) AS timezone FROM push_subscriptions ps JOIN site_users u ON u.id=ps.user_id
+      LEFT JOIN site_navigation_preferences np ON np.user_id=ps.user_id
+      WHERE ps.enabled=TRUE AND u.status='approved'`);
     const result = await deliverPushSubscriptions({
       subscriptions: rows.rows, notification, now,
       sendNotification: (...args) => this.sender.sendNotification(...args),

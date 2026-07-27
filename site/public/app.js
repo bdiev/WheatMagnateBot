@@ -4637,6 +4637,8 @@ async function openPushDestination(destination = null, player = null, accountId 
     }, 0);
   } else if (target === 'obsidian') {
     setActiveTab('obsidian');
+  } else if (target === 'players') {
+    setActiveTab('players');
   } else {
     setActiveTab(target === 'notifications' && state.currentUser.role === 'admin' ? 'notifications' : 'settings');
   }

@@ -63,6 +63,20 @@ async function run() {
   assert.match(detailedDailyPayload.body, /29,419 obsidian \(\+5%\)/);
   assert.match(detailedDailyPayload.body, /1,225\.8\/h/);
 
+  const milestone = {
+    id: 'player-milestones-2026-07-27', event_type: 'player_milestone', severity: 'info',
+    metadata: { milestones: [{ username: 'ChunkBase', years: 3 }, { username: 'H4YWIRE', years: 5 }] }
+  };
+  const milestoneSubscription = { ...base, minimum_severity: 'critical', event_types: ['player_milestone'] };
+  assert.equal(shouldDeliverSubscription(milestoneSubscription, milestone), true, 'selected milestones must not be suppressed by alert severity');
+  const compactMilestonePayload = safePushPayload(milestone);
+  assert.equal(compactMilestonePayload.title, 'Player Milestone');
+  assert.equal(new URL(compactMilestonePayload.data.url, 'https://dashboard.example').searchParams.get('push'), 'players');
+  assert.doesNotMatch(compactMilestonePayload.body, /ChunkBase|H4YWIRE/, 'compact milestone push must omit player names');
+  const detailedMilestonePayload = safePushPayload(milestone, { detailed: true });
+  assert.match(detailedMilestonePayload.body, /ChunkBase: 3 years/);
+  assert.match(detailedMilestonePayload.body, /H4YWIRE: 5 years/);
+
   const deliveredPayloads = [];
   const detailedResult = await deliverPushSubscriptions({
     subscriptions: [{ ...base, id: 2, detailed_event_types: ['low_tps'] }],
@@ -87,7 +101,7 @@ async function run() {
   const service = new WebPushService({
     pool: { query: async (sql, params) => {
       queries.push({ sql, params });
-      if (/SELECT ps\.\*/.test(sql)) return { rows: [whisperSubscription] };
+      if (/SELECT ps\.\*/.test(sql)) return { rows: params?.length ? [whisperSubscription] : [milestoneSubscription] };
       return { rows: [], rowCount: 1 };
     } },
     publicKey: 'public', privateKey: 'private', subject: 'mailto:test@example.com',
@@ -104,6 +118,13 @@ async function run() {
   assert.equal(sentPayloads.length, 1);
   assert.match(sentPayloads[0], /SecretPlayer: secret whisper text/);
   assert.match(sentPayloads[0], new RegExp(whisperAccountId), 'delivered whisper push must retain its bot account');
+
+  const milestoneDelivery = await service.deliverPlayerMilestones(milestone);
+  assert.equal(milestoneDelivery.sent, 1);
+  const milestoneQuery = queries.find(item => /SELECT ps\.\*/.test(item.sql) && !item.params?.length);
+  assert.ok(milestoneQuery, 'milestone delivery must query approved push subscribers');
+  assert.match(milestoneQuery.sql, /u\.status='approved'/);
+  assert.doesNotMatch(milestoneQuery.sql, /u\.role='admin'/, 'milestone push must work for non-admin site users');
 
   console.log('Web push tests passed.');
 }

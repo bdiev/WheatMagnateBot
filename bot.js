@@ -24,6 +24,7 @@ const { runMigrations } = require('./database/migrations');
 const { NotificationService } = require('./notifications');
 const { newCorrelationId, recordOperationalEvent } = require('./operational-events');
 const { buildDailyObsidianReport, claimDailyReportDate, getDailyReportChannels, getDailyReportSlot } = require('./obsidian-daily-report');
+const { buildPlayerMilestonePush, buildPlayerMilestones } = require('./player-milestones');
 const { WebPushService } = require('./site/web-push');
 const { chatComponentToString } = require('./minecraft-chat-component');
 const { AccountRepository } = require('./site/accounts/account-repository');
@@ -6014,6 +6015,59 @@ async function sendDiscordOwnerNotification(message, color = 3447003) {
   }
 }
 
+async function sendScheduledPlayerMilestones(slot) {
+  const claimed = await pool.query(`UPDATE obsidian_farm_analytics_settings
+    SET last_player_milestone_push_date=$1::date,updated_at=NOW()
+    WHERE id=1 AND last_player_milestone_push_date IS DISTINCT FROM $1::date
+    RETURNING id`, [slot.dateKey]);
+  if (!claimed.rowCount) return;
+
+  try {
+    const result = await pool.query(`
+      WITH whitelist_players AS (
+        SELECT DISTINCT ON (LOWER(username))
+          LOWER(username) AS username_key,
+          username
+        FROM whitelist
+        ORDER BY LOWER(username), id
+      ),
+      activity AS (
+        SELECT DISTINCT ON (LOWER(username))
+          LOWER(username) AS username_key,
+          registration_at
+        FROM player_activity
+        WHERE registration_at IS NOT NULL
+        ORDER BY LOWER(username), registration_at ASC NULLS LAST, id
+      )
+      SELECT w.username, activity.registration_at
+      FROM whitelist_players w
+      JOIN activity ON activity.username_key = w.username_key
+      WHERE activity.registration_at IS NOT NULL
+    `);
+    const milestoneDate = new Date(`${slot.dateKey}T00:00:00.000Z`);
+    const milestones = buildPlayerMilestones(result.rows, { daysAhead: 0, limit: 100, now: milestoneDate });
+    const notification = buildPlayerMilestonePush(milestones, slot.dateKey);
+    if (!notification) return;
+
+    const delivery = await webPushService.deliverPlayerMilestones(notification).catch(error => ({
+      sent: 0,
+      failed: 1,
+      error: error.message
+    }));
+    if (!delivery.sent && (delivery.failed || delivery.error)) {
+      await pool.query(`UPDATE obsidian_farm_analytics_settings
+        SET last_player_milestone_push_date=NULL
+        WHERE id=1 AND last_player_milestone_push_date=$1::date`, [slot.dateKey]);
+      console.error('[Player Milestones] Push delivery failed:', delivery.error || `${delivery.failed || 0} subscription(s) failed`);
+    }
+  } catch (error) {
+    await pool.query(`UPDATE obsidian_farm_analytics_settings
+      SET last_player_milestone_push_date=NULL
+      WHERE id=1 AND last_player_milestone_push_date=$1::date`, [slot.dateKey]).catch(() => {});
+    throw error;
+  }
+}
+
 async function sendScheduledObsidianReport() {
   if (!pool) return;
   const settingsResult = await pool.query(`SELECT timezone,daily_report_enabled,daily_report_hour,last_daily_report_date,last_daily_push_date FROM obsidian_farm_analytics_settings WHERE id=1`);
@@ -6025,6 +6079,7 @@ async function sendScheduledObsidianReport() {
   };
   const slot = getDailyReportSlot(settings);
   if (!slot.due) return;
+  await sendScheduledPlayerMilestones(slot).catch(error => console.error('[Player Milestones]', error.message));
   const channels = getDailyReportChannels(settings);
   const result = await pool.query(`SELECT
     COALESCE((SELECT SUM(mined) FROM obsidian_farm_hourly WHERE bucket>=NOW()-INTERVAL '24 hours'),0)::bigint AS mined_24h,

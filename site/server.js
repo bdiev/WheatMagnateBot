@@ -16,6 +16,7 @@ const { calculateAnalytics } = require('./obsidian-analytics');
 const { eventTypeFromLog, newCorrelationId, recordOperationalEvent, severityFromLevel } = require('./operational-events');
 const { assertTimelineAccess, normalizeTimelineFilters, queryTimeline } = require('./incident-timeline');
 const { EVENT_TYPES: PUSH_EVENT_TYPES, WebPushService } = require('./web-push');
+const { buildPlayerMilestones } = require('../player-milestones');
 const {
   MUTATING_METHODS, RateLimiter, clientIp, configuredOrigins, requestIsHttps,
   resolveStaticPath, securityHeaders, trustProxyEnabled, validateOrigin, validHost, verifyCsrfToken
@@ -297,54 +298,6 @@ function parseRegistrationDate(value) {
 function toNumber(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function utcDateOnly(value) {
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-}
-
-function anniversaryUtcDate(startDate, year) {
-  const month = startDate.getUTCMonth();
-  const day = startDate.getUTCDate();
-  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
-  return new Date(Date.UTC(year, month, Math.min(day, lastDay)));
-}
-
-function buildPlayerMilestones(rows, { daysAhead = 365, limit = 12 } = {}) {
-  const today = utcDateOnly(new Date());
-  if (!today) return [];
-  const dayMs = 24 * 60 * 60 * 1000;
-
-  return rows
-    .map(row => {
-      const registeredAt = utcDateOnly(row.registration_at);
-      if (!registeredAt || registeredAt > today) return null;
-
-      let targetYear = today.getUTCFullYear();
-      let milestoneAt = anniversaryUtcDate(registeredAt, targetYear);
-      if (milestoneAt < today) {
-        targetYear += 1;
-        milestoneAt = anniversaryUtcDate(registeredAt, targetYear);
-      }
-
-      const years = targetYear - registeredAt.getUTCFullYear();
-      const daysUntil = Math.round((milestoneAt - today) / dayMs);
-      if (years < 1 || daysUntil < 0 || daysUntil > daysAhead) return null;
-
-      return {
-        username: row.username,
-        years,
-        daysUntil,
-        milestoneAt: milestoneAt.toISOString(),
-        registeredAt: row.registration_at,
-        isRound: years % 5 === 0
-      };
-    })
-    .filter(Boolean)
-    .sort((a, b) => (a.daysUntil - b.daysUntil) || (b.years - a.years) || a.username.localeCompare(b.username))
-    .slice(0, limit);
 }
 
 function compactFarmState(row = {}) {
