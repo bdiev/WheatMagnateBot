@@ -9,6 +9,14 @@ for (const moduleName of ['account-repository','account-registry','account-schem
   require(resolved);
 }
 
+const milestoneModule = require.resolve('../player-milestones');
+assert.equal(
+  path.dirname(milestoneModule),
+  path.resolve(__dirname, '..'),
+  'standalone site modules must not resolve outside the Docker build context'
+);
+require(milestoneModule);
+
 // This is the same resolution graph used by `node server.js` in the site image.
 require('../server');
 console.log('Site module layout tests passed.');

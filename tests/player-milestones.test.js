@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const { buildPlayerMilestonePush, buildPlayerMilestones } = require('../player-milestones');
+const { buildPlayerMilestonePush, buildPlayerMilestones } = require('../site/player-milestones');
 
 const rows = [
   { username: 'ChunkBase', registration_at: '2023-07-27T18:30:00.000Z' },

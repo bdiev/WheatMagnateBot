@@ -16,7 +16,7 @@ const { calculateAnalytics } = require('./obsidian-analytics');
 const { eventTypeFromLog, newCorrelationId, recordOperationalEvent, severityFromLevel } = require('./operational-events');
 const { assertTimelineAccess, normalizeTimelineFilters, queryTimeline } = require('./incident-timeline');
 const { EVENT_TYPES: PUSH_EVENT_TYPES, WebPushService } = require('./web-push');
-const { buildPlayerMilestones } = require('../player-milestones');
+const { buildPlayerMilestones } = require('./player-milestones');
 const {
   MUTATING_METHODS, RateLimiter, clientIp, configuredOrigins, requestIsHttps,
   resolveStaticPath, securityHeaders, trustProxyEnabled, validateOrigin, validHost, verifyCsrfToken
