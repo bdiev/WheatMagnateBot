@@ -119,12 +119,55 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
       : null;
     let previousOnline = null;
     if (recordEvent) {
-      const previous = await pool.query(`SELECT is_online FROM player_activity WHERE LOWER(username)=LOWER($1) ORDER BY id DESC LIMIT 1`, [username]).catch(() => ({ rows: [] }));
+      const previous = await pool.query(`SELECT is_online FROM player_activity
+        WHERE ($2::uuid IS NOT NULL AND player_uuid=$2::uuid) OR LOWER(username)=LOWER($1)
+        ORDER BY is_online DESC, COALESCE(last_seen,last_online) DESC NULLS LAST,id DESC LIMIT 1`,
+      [username, normalizedUuid]).catch(() => ({ rows: [] }));
       previousOnline = previous.rows[0]?.is_online;
     }
-    const runUpdate = async () => {
+    const reconcileUuidAndUsernameRows = async executor => {
+      if (!normalizedUuid) return;
+      const matches = await executor.query(`
+        SELECT id,username,player_uuid
+        FROM player_activity
+        WHERE player_uuid=$1::uuid OR LOWER(username)=LOWER($2)
+        ORDER BY id
+        FOR UPDATE
+      `, [normalizedUuid, username]);
+      const uuidRow = matches.rows.find(row => String(row.player_uuid || '').toLowerCase() === normalizedUuid);
+      const nameRow = matches.rows.find(row => String(row.username || '').toLowerCase() === String(username).toLowerCase());
+      if (!uuidRow || !nameRow || String(uuidRow.id) === String(nameRow.id)) return;
+      const nameRowUuid = String(nameRow.player_uuid || '').toLowerCase();
+      if (nameRowUuid && nameRowUuid !== normalizedUuid) {
+        throw new Error(`Username ${username} is already linked to a different player UUID.`);
+      }
+
+      await executor.query(`
+        UPDATE player_activity target
+        SET last_seen = CASE
+              WHEN target.last_seen IS NULL THEN source.last_seen
+              WHEN source.last_seen IS NULL THEN target.last_seen
+              ELSE GREATEST(target.last_seen,source.last_seen)
+            END,
+            last_online = CASE
+              WHEN target.last_online IS NULL THEN source.last_online
+              WHEN source.last_online IS NULL THEN target.last_online
+              ELSE GREATEST(target.last_online,source.last_online)
+            END,
+            registration_at = CASE
+              WHEN target.registration_at IS NULL THEN source.registration_at
+              WHEN source.registration_at IS NULL THEN target.registration_at
+              ELSE LEAST(target.registration_at,source.registration_at)
+            END,
+            is_online = COALESCE(target.is_online,FALSE) OR COALESCE(source.is_online,FALSE)
+        FROM player_activity source
+        WHERE target.id=$1 AND source.id=$2
+      `, [uuidRow.id, nameRow.id]);
+      await executor.query('DELETE FROM player_activity WHERE id=$1', [nameRow.id]);
+    };
+    const runUpdate = async (executor = pool) => {
       if (normalizedUuid) {
-        await pool.query(`
+        await executor.query(`
           INSERT INTO player_name_history (player_uuid, username, first_seen, last_seen)
           VALUES ($1::uuid, $2, $3, $3)
           ON CONFLICT (player_uuid, (LOWER(username)))
@@ -132,7 +175,7 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
         `, [normalizedUuid, username, timestamp]);
       }
       if (isOnline) {
-        await pool.query(`
+        await executor.query(`
           WITH updated AS (
             UPDATE player_activity
             SET username = CASE WHEN $4::uuid IS NULL THEN player_activity.username ELSE $1 END,
@@ -166,7 +209,7 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
           WHERE NOT EXISTS (SELECT 1 FROM updated)
         `, [username, timestamp, recordEvent, normalizedUuid]);
       } else {
-        await pool.query(`
+        await executor.query(`
           WITH updated AS (
             UPDATE player_activity
             SET username = CASE WHEN $4::uuid IS NULL THEN player_activity.username ELSE $1 END,
@@ -193,9 +236,27 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
         `, [username, timestamp, recordEvent, normalizedUuid]);
       }
     };
+    const executeUpdate = async () => {
+      if (!normalizedUuid) {
+        await runUpdate();
+        return;
+      }
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await reconcileUuidAndUsernameRows(client);
+        await runUpdate(client);
+        await client.query('COMMIT');
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw error;
+      } finally {
+        client.release();
+      }
+    };
 
     try {
-      await runUpdate();
+      await executeUpdate();
       if (recordEvent && previousOnline !== Boolean(isOnline)) {
         await recordOperationalEvent(pool, {
           eventType: isOnline ? 'player_joined' : 'player_left', severity: 'info', source: 'player_activity',
@@ -207,7 +268,7 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
       if (err?.code === '42703') {
         try {
           await pool.query('ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS registration_at TIMESTAMPTZ');
-          await runUpdate();
+          await executeUpdate();
           return;
         } catch (retryErr) {
           console.error(`[DB] Failed to update player activity for ${username} after migration retry:`, retryErr.message);
