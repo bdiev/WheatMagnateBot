@@ -3896,6 +3896,18 @@ function renderLogDetails(details) {
 function renderAdminSystemLogs(logs = []) {
   const list = $('#adminSystemLogs');
   if (!list) return;
+  const renderSignature = stableSignature(logs.map(entry => [
+    entry.id,
+    entry.level,
+    entry.category,
+    entry.kind,
+    entry.actor,
+    entry.message,
+    entry.details,
+    entry.createdAt
+  ]));
+  if (state.renderSignatures['#adminSystemLogs'] === renderSignature) return;
+
   list.querySelectorAll('.admin-log-details[data-log-id]').forEach(details => {
     if (details.open) state.adminOpenLogDetails.add(details.dataset.logId);
     else state.adminOpenLogDetails.delete(details.dataset.logId);
@@ -3903,6 +3915,7 @@ function renderAdminSystemLogs(logs = []) {
   if (!logs.length) {
     list.innerHTML = '<div class="empty">No system log entries yet.</div>';
     state.adminOpenLogDetails.clear();
+    state.renderSignatures['#adminSystemLogs'] = renderSignature;
     return;
   }
 
@@ -3933,6 +3946,7 @@ function renderAdminSystemLogs(logs = []) {
       </article>
     `;
   }).join('');
+  state.renderSignatures['#adminSystemLogs'] = renderSignature;
 
   list.querySelectorAll('.admin-log-details[data-log-id]').forEach(details => {
     details.addEventListener('toggle', () => {
@@ -3946,14 +3960,25 @@ async function loadAdminSystemLogs() {
   if (state.currentUser?.role !== 'admin') return;
   if (state.adminLogsLoading) return;
   const list = $('#adminSystemLogs');
+  if (hasActiveTextSelectionWithin(list)) {
+    queueRealtimeRefresh('admin-log-selection', loadAdminSystemLogs, 750);
+    return;
+  }
   const level = $('#adminLogLevel')?.value || 'all';
   state.adminLogsLoading = true;
   try {
     if (list && !list.children.length) list.innerHTML = '<div class="empty">Loading system log...</div>';
     const payload = await fetchJson(`/api/admin/system-logs?limit=160&level=${encodeURIComponent(level)}`);
+    if (hasActiveTextSelectionWithin(list)) {
+      queueRealtimeRefresh('admin-log-selection', loadAdminSystemLogs, 750);
+      return;
+    }
     renderAdminSystemLogs(payload.logs || []);
   } catch (err) {
-    if (list) list.innerHTML = `<div class="empty">Could not load system log: ${escapeHtml(err.message)}</div>`;
+    if (list) {
+      delete state.renderSignatures['#adminSystemLogs'];
+      list.innerHTML = `<div class="empty">Could not load system log: ${escapeHtml(err.message)}</div>`;
+    }
   } finally {
     state.adminLogsLoading = false;
   }
@@ -5299,6 +5324,12 @@ async function refreshFarmFromEvent() {
 function hasActiveTextSelection() {
   const selection = window.getSelection?.();
   return Boolean(selection && !selection.isCollapsed && selection.toString());
+}
+
+function hasActiveTextSelectionWithin(container) {
+  if (!container || !hasActiveTextSelection()) return false;
+  const selection = window.getSelection();
+  return [selection.anchorNode, selection.focusNode].some(node => node && container.contains(node));
 }
 
 async function refreshPlayersFromEvent() {
