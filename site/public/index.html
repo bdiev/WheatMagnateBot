@@ -13,7 +13,7 @@
     <link rel="icon" type="image/png" href="/items/Wheat.png">
     <link rel="apple-touch-icon" href="/items/Wheat.png">
     <script src="/theme-init.js?v=136"></script>
-    <link rel="stylesheet" href="/styles.css?v=150">
+    <link rel="stylesheet" href="/styles.css?v=151">
   </head>
   <body>
     <section id="authScreen" class="auth-screen" aria-label="Site access">
@@ -334,8 +334,23 @@
       </section>
 
       <section id="tab-kill-aura" class="tab-panel" data-panel="kill-aura">
+        <header class="kill-aura-page-intro">
+          <div>
+            <span class="kill-aura-page-kicker">Combat automation</span>
+            <div class="kill-aura-title-row">
+              <h2>Stationary defense</h2>
+              <span id="killAuraPageStatus" class="kill-aura-status-badge">Disabled</span>
+            </div>
+            <p>Bring the bot into position. It will hold its ground, attack selected mobs in reach, and equip the best available weapon.</p>
+          </div>
+          <div class="kill-aura-mode-list" aria-label="Kill Aura behavior">
+            <span>Zero movement</span>
+            <span>Automatic weapon</span>
+          </div>
+        </header>
+
         <section class="stats-grid four kill-aura-stats-grid">
-          <article class="stat">
+          <article class="stat kill-aura-state-card">
             <span class="stat-label">Module State</span>
             <strong id="killAuraState">-</strong>
             <small id="killAuraUpdated">last update: -</small>
@@ -363,7 +378,10 @@
               <h2>Kill Aura Control</h2>
               <p id="killAuraControlMeta">Choose targets and control the module</p>
             </div>
-            <span class="kill-aura-summary-chevron" aria-hidden="true"></span>
+            <span class="kill-aura-summary-side">
+              <small>Configure</small>
+              <span class="kill-aura-summary-chevron" aria-hidden="true"></span>
+            </span>
           </summary>
 
           <div class="kill-aura-control-body">
@@ -415,7 +433,7 @@
               <h2>Kill Statistics</h2>
               <p>All-time performance grouped by mob.</p>
             </div>
-            <small id="killAuraHistoryCount">0 mob types</small>
+            <small id="killAuraHistoryCount" class="kill-aura-history-count">0 mob types</small>
           </div>
           <div id="killAuraKillStats" class="rank-list"></div>
         </section>
@@ -1051,6 +1069,6 @@
       </section>
     </main>
 
-    <script src="/app.js?v=154" defer></script>
+    <script src="/app.js?v=155" defer></script>
   </body>
 </html>

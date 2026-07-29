@@ -3281,7 +3281,12 @@ function renderKillAura(payload = {}) {
   state.killAuraData = payload;
   const aura = payload.state || {};
   const stateLabel = aura.active ? 'Active' : aura.enabled ? 'Waiting' : 'Disabled';
+  const stateKey = aura.active ? 'active' : aura.enabled ? 'waiting' : 'disabled';
   $('#killAuraState').textContent = stateLabel;
+  const pageStatus = $('#killAuraPageStatus');
+  if (pageStatus) pageStatus.textContent = stateLabel;
+  const page = $('#tab-kill-aura');
+  if (page) page.dataset.auraState = stateKey;
   $('#killAuraUpdated').textContent = `last update: ${formatDate(aura.observedAt || aura.updatedAt)}`;
   setRollingNumber('#killAuraSessionKills', aura.sessionKills || 0);
   setRollingNumber('#killAuraTotalKills', payload.totalKills || 0);
@@ -3295,7 +3300,7 @@ function renderKillAura(payload = {}) {
   if (toggle) {
     toggle.textContent = aura.enabled ? 'Disable Kill Aura' : 'Enable Kill Aura';
     toggle.classList.toggle('danger-button', Boolean(aura.enabled));
-    toggle.classList.toggle('ghost-button', !aura.enabled);
+    toggle.classList.remove('ghost-button');
     toggle.disabled = !aura.enabled && !(aura.selectedMobs || []).length && !state.killAuraSelectedMobs.size;
   }
 
