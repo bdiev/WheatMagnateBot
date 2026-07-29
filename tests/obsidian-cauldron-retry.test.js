@@ -64,8 +64,8 @@ async function run() {
     bot.findBlocks = () => [position, fartherPosition];
     assert.deepStrictEqual(
       findLavaCauldrons(bot, 5).map(candidate => candidate.toString()),
-      [fartherPosition.toString(), position.toString()],
-      'farthest cauldron should be attempted before nearer cauldrons'
+      [position.toString(), fartherPosition.toString()],
+      'nearest cauldron should be attempted before farther cauldrons'
     );
     bot.findBlocks = () => [position];
 
@@ -94,6 +94,17 @@ async function run() {
     await fillBucket(bot);
     assert.strictEqual(clicks, 2, 'cauldron should be retried after the short cooldown');
     assert.strictEqual(inventoryItems[0].name, 'lava_bucket');
+
+    inventoryItems = [emptyBucket];
+    bot.heldItem = null;
+    bot.findBlocks = () => [fartherPosition];
+    clearCauldronMemory();
+    await assert.rejects(
+      fillBucket(bot),
+      err => /none are within .* interaction reach/i.test(err.message)
+    );
+    assert.strictEqual(clicks, 2, 'out-of-reach cauldrons must be rejected without a click attempt');
+    assert.strictEqual(constants.MAX_INTERACT_DISTANCE, 4.25);
 
     clearCauldronMemory();
     farm.resetConfig();

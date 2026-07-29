@@ -4,7 +4,7 @@
  * Obsidian Farm Module
  *
  * Cycle:
- *   1. Find lava cauldrons (within maxCauldronDist blocks), farthest first
+ *   1. Find reachable lava cauldrons (within maxCauldronDist blocks), nearest first
  *   2. Navigate to it, fill an empty bucket with lava
  *   3. Navigate to target (x, y, z), pour lava there
  *   4. Wait for the lava to become obsidian (water must already be present)
@@ -1563,7 +1563,8 @@ async function digBlockWithTimeout(bot, block, attempt, context = {}) {
 }
 
 /**
- * Find lava cauldron blocks, ordered from farthest to nearest.
+ * Find lava cauldron blocks, ordered from nearest to farthest so the first
+ * interaction is the cheapest and most likely to be within server reach.
  * Handles both 1.17+ (lava_cauldron block) and old cauldron with metadata ≥ 3.
  */
 function findLavaCauldrons(bot, maxDistance, options = {}) {
@@ -1595,7 +1596,7 @@ function findLavaCauldrons(bot, maxDistance, options = {}) {
 
   const sorted = [...unique.values()]
     .sort((a, b) => {
-      return bot.entity.position.distanceSquared(b) - bot.entity.position.distanceSquared(a);
+      return bot.entity.position.distanceSquared(a) - bot.entity.position.distanceSquared(b);
     });
 
   return options.includeCoolingDown
@@ -1639,13 +1640,21 @@ async function fillBucket(bot, context = {}) {
   const detectedCauldronPositions = findLavaCauldrons(bot, maxCauldronDist, {
     includeCoolingDown: true
   });
-  const cauldronPositions = detectedCauldronPositions.filter(
-    position => !getCauldronFailure(position)
+  const reachableCauldronPositions = detectedCauldronPositions.filter(position => {
+    const clickPoint = position.offset(0.5, 0.8, 0.5);
+    const distance = bot.entity?.position?.distanceTo(clickPoint);
+    return Number.isFinite(distance) &&
+      distance <= maxCauldronDist &&
+      distance <= MAX_INTERACT_DISTANCE;
+  });
+  const cauldronPositions = reachableCauldronPositions.filter(position =>
+    !getCauldronFailure(position)
   );
   writeFarmDebug('cauldron_search_completed', {
     ...context,
     durationMs: Date.now() - startedAt,
     detectedCandidates: detectedCauldronPositions.map(position => position.toString()),
+    reachableCandidates: reachableCauldronPositions.map(position => position.toString()),
     candidates: cauldronPositions.map(position => position.toString())
   });
   if (detectedCauldronPositions.length === 0) {
@@ -1654,9 +1663,15 @@ async function fillBucket(bot, context = {}) {
       'Place a lava cauldron nearby and retry.'
     );
   }
+  if (reachableCauldronPositions.length === 0) {
+    throw new Error(
+      `Found ${detectedCauldronPositions.length} lava cauldron(s), but none are within ` +
+      `${MAX_INTERACT_DISTANCE} blocks of interaction reach. Move the bot closer.`
+    );
+  }
   if (cauldronPositions.length === 0) {
     const err = new Error(
-      `All ${detectedCauldronPositions.length} detected lava cauldron(s) are briefly cooling down after failed clicks.`
+      `All ${reachableCauldronPositions.length} reachable lava cauldron(s) are briefly cooling down after failed clicks.`
     );
     err.code = CAULDRON_RETRY_CODE;
     throw err;
@@ -1684,13 +1699,18 @@ async function fillBucket(bot, context = {}) {
 
       const clickPoint = position.offset(0.5, 0.8, 0.5);
       const distance = bot.entity?.position?.distanceTo(clickPoint);
-      if (!Number.isFinite(distance) || distance > maxCauldronDist) {
-        failures.push(`${position}:outside_configured_radius_${Number.isFinite(distance) ? distance.toFixed(2) : 'unknown'}`);
+      if (
+        !Number.isFinite(distance) ||
+        distance > maxCauldronDist ||
+        distance > MAX_INTERACT_DISTANCE
+      ) {
+        failures.push(`${position}:outside_interaction_reach_${Number.isFinite(distance) ? distance.toFixed(2) : 'unknown'}`);
         writeFarmDebug('cauldron_skipped', {
           ...context,
           position: position.toString(),
-          reason: 'outside_configured_radius',
+          reason: 'outside_interaction_reach',
           configuredRadius: maxCauldronDist,
+          interactionRadius: MAX_INTERACT_DISTANCE,
           distance: Number.isFinite(distance) ? Number(distance.toFixed(2)) : null
         });
         break;
@@ -2420,7 +2440,8 @@ module.exports = {
     constants: {
       CAULDRON_FAILURE_COOLDOWN_MS,
       CAULDRON_RETRY_DELAY_MS,
-      CAULDRON_RETRY_CODE
+      CAULDRON_RETRY_CODE,
+      MAX_INTERACT_DISTANCE
     }
   }
 };
