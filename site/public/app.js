@@ -3282,12 +3282,6 @@ function renderKillAura(payload = {}) {
   const aura = payload.state || {};
   const stateLabel = aura.active ? 'Active' : aura.enabled ? 'Waiting' : 'Disabled';
   $('#killAuraState').textContent = stateLabel;
-  $('#killAuraHeroState').textContent = stateLabel;
-  const stateOrb = $('#killAuraStateOrb');
-  if (stateOrb) {
-    stateOrb.classList.toggle('active', Boolean(aura.active));
-    stateOrb.classList.toggle('waiting', Boolean(aura.enabled && !aura.active));
-  }
   $('#killAuraUpdated').textContent = `last update: ${formatDate(aura.observedAt || aura.updatedAt)}`;
   setRollingNumber('#killAuraSessionKills', aura.sessionKills || 0);
   setRollingNumber('#killAuraTotalKills', payload.totalKills || 0);
@@ -3315,12 +3309,11 @@ function renderKillAura(payload = {}) {
     .sort((first, second) => Number(second.kills) - Number(first.kills) || first.name.localeCompare(second.name));
   const historyCount = $('#killAuraHistoryCount');
   if (historyCount) historyCount.textContent = `${killed.length} mob ${killed.length === 1 ? 'type' : 'types'}`;
-  const maxKills = Math.max(1, ...killed.map(mob => Number(mob.kills) || 0));
   renderStable('#killAuraKillStats', killed.length
     ? killed.map((mob, index) => `
-      <div class="kill-aura-history-item" style="--kill-share:${Math.round((Number(mob.kills) / maxKills) * 100)}%">
+      <div class="rank-item">
         <span class="rank-index">${index + 1}</span>
-        <span class="kill-aura-history-name">${escapeHtml(mob.name)}</span>
+        <span>${escapeHtml(mob.name)}</span>
         <strong>${formatNumber(mob.kills)}</strong>
       </div>
     `).join('')

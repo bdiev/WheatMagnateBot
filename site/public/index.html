@@ -13,7 +13,7 @@
     <link rel="icon" type="image/png" href="/items/Wheat.png">
     <link rel="apple-touch-icon" href="/items/Wheat.png">
     <script src="/theme-init.js?v=136"></script>
-    <link rel="stylesheet" href="/styles.css?v=149">
+    <link rel="stylesheet" href="/styles.css?v=150">
   </head>
   <body>
     <section id="authScreen" class="auth-screen" aria-label="Site access">
@@ -334,42 +334,23 @@
       </section>
 
       <section id="tab-kill-aura" class="tab-panel" data-panel="kill-aura">
-        <section class="panel kill-aura-hero">
-          <div class="kill-aura-hero-copy">
-            <span class="kill-aura-kicker">Combat automation</span>
-            <h2>Kill Aura</h2>
-            <p>Hold position, engage selected mobs in reach, and automatically equip the strongest weapon for every target.</p>
-          </div>
-          <div class="kill-aura-live-state" aria-live="polite">
-            <span id="killAuraStateOrb" class="kill-aura-state-orb" aria-hidden="true"></span>
-            <div>
-              <small>Runtime</small>
-              <strong id="killAuraHeroState">Disabled</strong>
-            </div>
-          </div>
-        </section>
-
         <section class="stats-grid four kill-aura-stats-grid">
-          <article class="stat kill-aura-stat">
-            <span class="kill-aura-stat-mark" aria-hidden="true">01</span>
+          <article class="stat">
             <span class="stat-label">Module State</span>
             <strong id="killAuraState">-</strong>
             <small id="killAuraUpdated">last update: -</small>
           </article>
-          <article class="stat kill-aura-stat">
-            <span class="kill-aura-stat-mark" aria-hidden="true">02</span>
+          <article class="stat">
             <span class="stat-label">Session Kills</span>
             <strong id="killAuraSessionKills">-</strong>
             <small>since the last enable</small>
           </article>
-          <article class="stat kill-aura-stat">
-            <span class="kill-aura-stat-mark" aria-hidden="true">03</span>
+          <article class="stat">
             <span class="stat-label">All-time Kills</span>
             <strong id="killAuraTotalKills">-</strong>
             <small>credited Kill Aura kills</small>
           </article>
-          <article class="stat kill-aura-stat">
-            <span class="kill-aura-stat-mark" aria-hidden="true">04</span>
+          <article class="stat">
             <span class="stat-label">Current Weapon</span>
             <strong id="killAuraWeapon">-</strong>
             <small id="killAuraTarget">target: none</small>
@@ -377,9 +358,8 @@
         </section>
 
         <details class="panel kill-aura-control-panel admin-only" hidden>
-          <summary class="kill-aura-control-summary">
+          <summary class="panel-head kill-aura-control-summary">
             <div>
-              <span class="kill-aura-summary-icon" aria-hidden="true"></span>
               <h2>Kill Aura Control</h2>
               <p id="killAuraControlMeta">Choose targets and control the module</p>
             </div>
@@ -435,7 +415,7 @@
               <h2>Kill Statistics</h2>
               <p>All-time performance grouped by mob.</p>
             </div>
-            <span id="killAuraHistoryCount" class="kill-aura-history-count">0 species</span>
+            <small id="killAuraHistoryCount">0 mob types</small>
           </div>
           <div id="killAuraKillStats" class="rank-list"></div>
         </section>
@@ -1071,6 +1051,6 @@
       </section>
     </main>
 
-    <script src="/app.js?v=153" defer></script>
+    <script src="/app.js?v=154" defer></script>
   </body>
 </html>

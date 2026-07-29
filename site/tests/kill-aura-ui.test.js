@@ -11,7 +11,7 @@ const stylesSource = fs.readFileSync(path.join(publicDirectory, 'styles.css'), '
 
 assert.match(
   indexSource,
-  /<details class="panel kill-aura-control-panel admin-only"[^>]*>[\s\S]*?<summary class="kill-aura-control-summary">/,
+  /<details class="panel kill-aura-control-panel admin-only"[^>]*>[\s\S]*?<summary class="panel-head kill-aura-control-summary">/,
   'Kill Aura Control must be a collapsible dropdown'
 );
 assert.match(
@@ -27,6 +27,10 @@ assert.match(
 assert.match(appSource, /function setKillAuraMobDropdownOpen\(open\)/);
 assert.match(appSource, /event\.key === 'Escape'/, 'the dropdown must support keyboard dismissal');
 assert.match(stylesSource, /\.kill-aura-select-menu\s*\{[^}]*position:\s*absolute;/s);
-assert.match(stylesSource, /\.kill-aura-hero\s*\{/, 'the page must include a designed module header');
+assert.doesNotMatch(
+  indexSource,
+  /kill-aura-hero|kill-aura-stat-mark/,
+  'Kill Aura must use the standard dashboard cards without a separate visual theme'
+);
 
 console.log('Kill Aura UI tests passed.');

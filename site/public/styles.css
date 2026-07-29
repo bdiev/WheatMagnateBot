@@ -5612,115 +5612,6 @@ body.search-focus-active #logoutButton {
   white-space: nowrap;
 }
 
-.kill-aura-hero {
-  position: relative;
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  min-height: 170px;
-  overflow: hidden;
-  padding: 28px 30px;
-  border-color: color-mix(in srgb, var(--accent) 18%, transparent);
-  background:
-    radial-gradient(circle at 88% 20%, color-mix(in srgb, var(--accent) 22%, transparent) 0, transparent 34%),
-    linear-gradient(135deg, var(--panel) 0%, color-mix(in srgb, var(--panel) 91%, var(--accent)) 100%);
-}
-
-.kill-aura-hero::after {
-  content: "";
-  position: absolute;
-  right: 16%;
-  bottom: -62px;
-  width: 180px;
-  height: 180px;
-  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
-  border-radius: 50%;
-  box-shadow:
-    0 0 0 24px color-mix(in srgb, var(--accent) 5%, transparent),
-    0 0 0 48px color-mix(in srgb, var(--accent) 3%, transparent);
-  pointer-events: none;
-}
-
-.kill-aura-hero-copy {
-  position: relative;
-  z-index: 1;
-  max-width: 650px;
-}
-
-.kill-aura-kicker {
-  display: inline-flex;
-  margin-bottom: 9px;
-  color: var(--accent-strong);
-  font-size: 11px;
-  font-weight: 900;
-  letter-spacing: .14em;
-  text-transform: uppercase;
-}
-
-.kill-aura-hero h2 {
-  font-size: clamp(30px, 4vw, 46px);
-  line-height: 1;
-}
-
-.kill-aura-hero p {
-  max-width: 620px;
-  margin-top: 12px;
-  color: var(--muted);
-  font-size: 14px;
-  line-height: 1.6;
-}
-
-.kill-aura-live-state {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 12px;
-  min-width: 145px;
-  border: 1px solid color-mix(in srgb, var(--line) 76%, transparent);
-  border-radius: 999px;
-  padding: 10px 16px 10px 11px;
-  background: color-mix(in srgb, var(--panel) 78%, transparent);
-  backdrop-filter: blur(12px);
-}
-
-.kill-aura-live-state small {
-  display: block;
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-}
-
-.kill-aura-live-state strong {
-  display: block;
-  margin-top: 2px;
-  font-size: 14px;
-}
-
-.kill-aura-state-orb {
-  width: 13px;
-  height: 13px;
-  border: 3px solid color-mix(in srgb, var(--muted) 22%, transparent);
-  border-radius: 50%;
-  background: var(--muted);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--muted) 10%, transparent);
-}
-
-.kill-aura-state-orb.waiting {
-  background: #d49a24;
-  box-shadow: 0 0 0 4px color-mix(in srgb, #d49a24 15%, transparent);
-}
-
-.kill-aura-state-orb.active {
-  background: #36a852;
-  box-shadow: 0 0 0 4px color-mix(in srgb, #36a852 16%, transparent), 0 0 18px color-mix(in srgb, #36a852 46%, transparent);
-}
-
 .kill-aura-stats-grid {
   grid-column: 1 / -1;
   display: grid;
@@ -5730,33 +5621,6 @@ body.search-focus-active #logoutButton {
 
 .kill-aura-stats-grid .stat {
   grid-column: auto;
-}
-
-.kill-aura-stat {
-  position: relative;
-  overflow: hidden;
-  padding: 18px;
-}
-
-.kill-aura-stat::after {
-  content: "";
-  position: absolute;
-  right: -28px;
-  bottom: -40px;
-  width: 92px;
-  height: 92px;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--accent) 7%, transparent);
-}
-
-.kill-aura-stat-mark {
-  position: absolute;
-  top: 14px;
-  right: 15px;
-  color: color-mix(in srgb, var(--muted) 55%, transparent);
-  font-size: 10px;
-  font-weight: 900;
-  letter-spacing: .1em;
 }
 
 .kill-aura-control-panel,
@@ -5769,12 +5633,6 @@ body.search-focus-active #logoutButton {
 }
 
 .kill-aura-control-summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  min-height: 82px;
-  padding: 18px 20px;
   cursor: pointer;
   list-style: none;
   user-select: none;
@@ -5784,41 +5642,9 @@ body.search-focus-active #logoutButton {
   display: none;
 }
 
-.kill-aura-control-summary > div {
-  display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
-  column-gap: 12px;
-  align-items: center;
-}
-
-.kill-aura-control-summary h2,
-.kill-aura-control-summary p {
-  grid-column: 2;
-}
-
-.kill-aura-control-summary h2 {
-  font-size: 16px;
-}
-
-.kill-aura-control-summary p {
-  margin-top: 3px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.kill-aura-summary-icon {
-  grid-row: 1 / span 2;
-  width: 34px;
-  height: 34px;
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line));
-  border-radius: 10px;
-  background:
-    linear-gradient(45deg, transparent 44%, var(--accent-strong) 45% 55%, transparent 56%),
-    color-mix(in srgb, var(--accent) 11%, var(--panel-soft));
-}
-
 .kill-aura-summary-chevron,
 .kill-aura-select-trigger i {
+  flex: 0 0 auto;
   width: 9px;
   height: 9px;
   border-right: 2px solid var(--muted);
@@ -5831,14 +5657,10 @@ body.search-focus-active #logoutButton {
   transform: rotate(225deg);
 }
 
-.kill-aura-control-panel[open] .kill-aura-control-summary {
-  border-bottom: 1px solid var(--line);
-}
-
 .kill-aura-control-body {
   display: grid;
-  gap: 18px;
-  padding: 20px;
+  gap: 16px;
+  padding: 16px 18px;
 }
 
 .kill-aura-control-intro,
@@ -5853,7 +5675,7 @@ body.search-focus-active #logoutButton {
 .kill-aura-save-row p {
   margin-top: 4px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .kill-aura-control-intro button,
@@ -5868,10 +5690,8 @@ body.search-focus-active #logoutButton {
 
 .kill-aura-field-label {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 800;
-  letter-spacing: .06em;
-  text-transform: uppercase;
 }
 
 .kill-aura-select {
@@ -5881,13 +5701,13 @@ body.search-focus-active #logoutButton {
 .kill-aura-select-trigger {
   display: flex;
   width: 100%;
-  min-height: 62px;
+  min-height: var(--button-height);
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
   border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 10px 16px;
+  border-radius: var(--button-radius);
+  padding: 8px 13px;
   color: var(--text);
   background: var(--panel-soft);
   text-align: left;
@@ -5895,8 +5715,9 @@ body.search-focus-active #logoutButton {
 
 .kill-aura-select-trigger:hover,
 .kill-aura-select-trigger[aria-expanded="true"] {
-  border-color: color-mix(in srgb, var(--accent) 52%, var(--line));
-  background: color-mix(in srgb, var(--panel-soft) 94%, var(--accent));
+  border-color: var(--accent);
+  color: var(--text);
+  background: var(--panel-soft);
 }
 
 .kill-aura-select-trigger > span {
@@ -5920,14 +5741,14 @@ body.search-focus-active #logoutButton {
 .kill-aura-select-menu {
   position: absolute;
   z-index: 30;
-  top: calc(100% + 8px);
+  top: calc(100% + 6px);
   right: 0;
   left: 0;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
-  border-radius: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--button-radius);
   background: var(--panel);
-  box-shadow: 0 18px 45px color-mix(in srgb, #000 20%, transparent);
+  box-shadow: var(--shadow);
 }
 
 .kill-aura-toolbar {
@@ -5937,7 +5758,7 @@ body.search-focus-active #logoutButton {
   gap: 12px;
   padding: 12px;
   border-bottom: 1px solid var(--line);
-  background: color-mix(in srgb, var(--panel-soft) 75%, transparent);
+  background: var(--panel-soft);
 }
 
 .kill-aura-search {
@@ -5946,17 +5767,19 @@ body.search-focus-active #logoutButton {
 
 .kill-aura-search input {
   width: 100%;
-  min-height: 38px;
+  min-height: var(--button-height);
   border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 0 12px;
+  border-radius: var(--button-radius);
+  padding: 0 13px;
   color: var(--text);
   background: var(--panel);
+  font: inherit;
+  outline: none;
 }
 
 .kill-aura-search input:focus {
-  outline: 2px solid color-mix(in srgb, var(--accent) 34%, transparent);
-  border-color: var(--accent-strong);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 .kill-aura-quick-actions {
@@ -5965,9 +5788,7 @@ body.search-focus-active #logoutButton {
 }
 
 .kill-aura-quick-actions button {
-  min-height: 34px;
-  padding: 0 11px;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .kill-aura-mob-list {
@@ -5985,7 +5806,7 @@ body.search-focus-active #logoutButton {
   align-items: center;
   gap: 9px;
   min-width: 0;
-  border: 1px solid transparent;
+  border: 1px solid var(--line);
   border-radius: 8px;
   padding: 9px 10px;
   background: var(--panel-soft);
@@ -5995,8 +5816,7 @@ body.search-focus-active #logoutButton {
 
 .kill-aura-mob-option:hover,
 .kill-aura-mob-option:has(input:checked) {
-  border-color: color-mix(in srgb, var(--accent) 38%, var(--line));
-  background: color-mix(in srgb, var(--panel-soft) 91%, var(--accent));
+  border-color: var(--accent);
 }
 
 .kill-aura-mob-option input {
@@ -6027,76 +5847,14 @@ body.search-focus-active #logoutButton {
   padding-top: 16px;
 }
 
-.kill-aura-history-count {
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 5px 9px;
-  color: var(--muted);
-  background: var(--panel-soft);
-  font-size: 10px;
-  font-weight: 800;
-}
-
-.kill-aura-history-panel .rank-list {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  padding: 14px;
-}
-
-.kill-aura-history-item {
-  position: relative;
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) auto;
-  gap: 10px;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  padding: 11px 12px;
-  background: var(--panel-soft);
-}
-
-.kill-aura-history-item::before {
-  content: "";
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  width: var(--kill-share, 0%);
-  height: 2px;
-  background: var(--accent-strong);
-}
-
-.kill-aura-history-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  font-weight: 750;
-}
-
 @media (max-width: 900px) {
   .kill-aura-stats-grid,
   .kill-aura-mob-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-
-  .kill-aura-history-panel .rank-list {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 620px) {
-  .kill-aura-hero {
-    min-height: 210px;
-    align-items: flex-start;
-    flex-direction: column;
-    padding: 22px;
-  }
-
-  .kill-aura-live-state {
-    min-width: 0;
-  }
-
   .kill-aura-stats-grid {
     display: flex;
     grid-column: 1 / -1;
