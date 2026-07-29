@@ -99,12 +99,12 @@ async function run() {
     bot.heldItem = null;
     bot.findBlocks = () => [fartherPosition];
     clearCauldronMemory();
-    await assert.rejects(
-      fillBucket(bot),
-      err => /none are within .* interaction reach/i.test(err.message)
+    await fillBucket(bot);
+    assert.strictEqual(
+      clicks,
+      3,
+      'a cauldron inside the configured 5-block radius must remain eligible'
     );
-    assert.strictEqual(clicks, 2, 'out-of-reach cauldrons must be rejected without a click attempt');
-    assert.strictEqual(constants.MAX_INTERACT_DISTANCE, 4.25);
 
     clearCauldronMemory();
     farm.resetConfig();
