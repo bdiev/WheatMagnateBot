@@ -3255,6 +3255,14 @@ function updateKillAuraSelectionSummary() {
     const enabled = Boolean(state.killAuraData?.state?.enabled);
     controlMeta.textContent = `${enabled ? 'Enabled' : 'Disabled'} · ${count || 'No'} target${count === 1 ? '' : 's'}${state.killAuraTargetsDirty ? ' · Unsaved' : ''}`;
   }
+  const selectedCount = $('#killAuraSelectedCount');
+  if (selectedCount) selectedCount.textContent = formatNumber(count);
+  const selectedMeta = $('#killAuraSelectedMeta');
+  if (selectedMeta) selectedMeta.textContent = state.killAuraTargetsDirty
+    ? 'unsaved selection'
+    : `mob ${count === 1 ? 'type' : 'types'}`;
+  const detailTargets = $('#killAuraDetailTargets');
+  if (detailTargets) detailTargets.textContent = formatNumber(count);
 }
 
 function renderKillAuraMobList() {
@@ -3281,12 +3289,7 @@ function renderKillAura(payload = {}) {
   state.killAuraData = payload;
   const aura = payload.state || {};
   const stateLabel = aura.active ? 'Active' : aura.enabled ? 'Waiting' : 'Disabled';
-  const stateKey = aura.active ? 'active' : aura.enabled ? 'waiting' : 'disabled';
   $('#killAuraState').textContent = stateLabel;
-  const pageStatus = $('#killAuraPageStatus');
-  if (pageStatus) pageStatus.textContent = stateLabel;
-  const page = $('#tab-kill-aura');
-  if (page) page.dataset.auraState = stateKey;
   $('#killAuraUpdated').textContent = `last update: ${formatDate(aura.observedAt || aura.updatedAt)}`;
   setRollingNumber('#killAuraSessionKills', aura.sessionKills || 0);
   setRollingNumber('#killAuraTotalKills', payload.totalKills || 0);
@@ -3295,12 +3298,16 @@ function renderKillAura(payload = {}) {
   $('#killAuraTarget').textContent = target
     ? `target: ${formatMobLabel(target.name)}${target.distance == null ? '' : ` · ${target.distance} blocks`}`
     : 'target: none';
+  const detailTarget = $('#killAuraDetailTarget');
+  if (detailTarget) detailTarget.textContent = target
+    ? `${formatMobLabel(target.name)}${target.distance == null ? '' : ` В· ${target.distance} blocks`}`
+    : 'None';
 
   const toggle = $('#killAuraToggleButton');
   if (toggle) {
     toggle.textContent = aura.enabled ? 'Disable Kill Aura' : 'Enable Kill Aura';
-    toggle.classList.toggle('danger-button', Boolean(aura.enabled));
-    toggle.classList.remove('ghost-button');
+    toggle.classList.remove('danger-button');
+    toggle.classList.add('ghost-button');
     toggle.disabled = !aura.enabled && !(aura.selectedMobs || []).length && !state.killAuraSelectedMobs.size;
   }
 

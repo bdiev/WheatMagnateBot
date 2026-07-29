@@ -72,9 +72,9 @@ assert.match(stylesSource, /\.chat-date-indicator\.visible\s*\{[^}]*opacity:\s*1
   'the date indicator must fade into view while scrolling');
 assert.match(stylesSource, /\.chat-panel\.chat-search-open > \.panel-head > div:first-child\s*\{[^}]*opacity:\s*0;/s,
   'the chat heading must fade away while archive search expands');
-assert.match(indexSource, /styles\.css\?v=151/, 'the updated mobile layout must use a fresh stylesheet URL');
-assert.match(indexSource, /app\.js\?v=155/, 'the updated chat behavior must use a fresh script URL');
-assert.match(serviceWorkerSource, /CACHE_VERSION = '132'/, 'the app shell cache must be replaced after the UI update');
+assert.match(indexSource, /styles\.css\?v=152/, 'the updated mobile layout must use a fresh stylesheet URL');
+assert.match(indexSource, /app\.js\?v=156/, 'the updated chat behavior must use a fresh script URL');
+assert.match(serviceWorkerSource, /CACHE_VERSION = '133'/, 'the app shell cache must be replaced after the UI update');
 assert.match(stylesSource, /\.chat-message\s*\{[^}]*flex:\s*0 0 auto;/s,
   'chat cards must retain their natural height inside the scrolling flex list');
 assert.doesNotMatch(serviceWorkerSource, /return cached \|\| fresh/, 'UI assets must not prefer stale cached responses');

@@ -11,7 +11,7 @@ const stylesSource = fs.readFileSync(path.join(publicDirectory, 'styles.css'), '
 
 assert.match(
   indexSource,
-  /<details class="panel kill-aura-control-panel admin-only"[^>]*>[\s\S]*?<summary class="panel-head kill-aura-control-summary">/,
+  /<details class="panel admin-command-panel kill-aura-control-panel"[^>]*>[\s\S]*?<summary class="kill-aura-control-summary">/,
   'Kill Aura Control must be a collapsible dropdown'
 );
 assert.match(
@@ -29,23 +29,23 @@ assert.match(appSource, /event\.key === 'Escape'/, 'the dropdown must support ke
 assert.match(stylesSource, /\.kill-aura-select-menu\s*\{[^}]*position:\s*absolute;/s);
 assert.doesNotMatch(
   indexSource,
-  /kill-aura-hero|kill-aura-stat-mark/,
-  'Kill Aura must use the standard dashboard cards without a separate visual theme'
+  /kill-aura-hero|kill-aura-page-intro|kill-aura-stat-mark/,
+  'Kill Aura must not use a separate visual theme'
 );
 assert.match(
   indexSource,
-  /class="kill-aura-page-intro"[\s\S]*?id="killAuraPageStatus"/,
-  'the page must provide a compact module heading with live status'
+  /class="stats-grid five kill-aura-stats-grid"/,
+  'Kill Aura must use the same five-card metric layout as Obsidian Farm'
 );
 assert.match(
-  stylesSource,
-  /\.kill-aura-control-panel\s*\{[^}]*grid-column:\s*1 \/ span 3;/s,
-  'desktop control and history panels must use a balanced two-column composition'
+  indexSource,
+  /class="farm-admin-grid kill-aura-admin-grid admin-only"/,
+  'Kill Aura controls must reuse the Obsidian Farm control-card grid'
 );
 assert.match(
-  stylesSource,
-  /@media \(max-width:\s*900px\)[\s\S]*?\.kill-aura-control-panel,[\s\S]*?\.kill-aura-history-panel\s*\{[^}]*grid-column:\s*1 \/ -1;/s,
-  'the two-column composition must collapse on smaller screens'
+  indexSource,
+  /class="split-grid kill-aura-data-grid"[\s\S]*?<h2>Kill Statistics<\/h2>[\s\S]*?<h2>Combat Details<\/h2>/,
+  'Kill Aura data panels must reuse the Obsidian Farm split layout'
 );
 
 console.log('Kill Aura UI tests passed.');
