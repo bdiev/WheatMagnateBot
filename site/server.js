@@ -17,6 +17,7 @@ const { eventTypeFromLog, newCorrelationId, recordOperationalEvent, severityFrom
 const { assertTimelineAccess, normalizeTimelineFilters, queryTimeline } = require('./incident-timeline');
 const { EVENT_TYPES: PUSH_EVENT_TYPES, WebPushService } = require('./web-push');
 const { buildPlayerMilestones } = require('./player-milestones');
+const { KILL_AURA_MOBS, normalizeKillAuraTargets } = require('./kill-aura-catalog');
 const {
   MUTATING_METHODS, RateLimiter, clientIp, configuredOrigins, requestIsHttps,
   resolveStaticPath, securityHeaders, trustProxyEnabled, validateOrigin, validHost, verifyCsrfToken
@@ -1877,6 +1878,66 @@ async function scopedAccountRuntime(url, currentUser) {
   return { account, bot:botStatus, observedAt:storedState?.updated_at || account.updatedAt };
 }
 
+async function getKillAuraStats(currentUser, url) {
+  assertDatabase();
+  const scoped = await scopedAccountRuntime(url, currentUser);
+  const accountId = scoped?.account?.id || DEFAULT_MINECRAFT_ACCOUNT_ID;
+  const [stateResult, killsResult, defaultBotResult] = await Promise.all([
+    pool.query(`
+      WITH inserted AS (
+        INSERT INTO kill_aura_state(account_id)
+        VALUES($1::uuid)
+        ON CONFLICT(account_id) DO NOTHING
+        RETURNING desired_enabled,selected_mobs,updated_at
+      )
+      SELECT desired_enabled,selected_mobs,updated_at FROM inserted
+      UNION ALL
+      SELECT desired_enabled,selected_mobs,updated_at
+      FROM kill_aura_state
+      WHERE account_id=$1::uuid
+      LIMIT 1
+    `, [accountId]),
+    pool.query(`
+      SELECT mob_name,kills,updated_at
+      FROM kill_aura_kills
+      WHERE account_id=$1::uuid
+      ORDER BY kills DESC,mob_name
+    `, [accountId]),
+    scoped
+      ? Promise.resolve({ rows: [] })
+      : pool.query('SELECT status,observed_at FROM bot_status_snapshots WHERE id=1')
+  ]);
+  const saved = stateResult.rows[0] || {};
+  const runtimeBot = scoped?.bot || defaultBotResult.rows[0]?.status || {};
+  const runtime = runtimeBot.killAura || {};
+  const runtimeConnected = Boolean(runtimeBot.connected);
+  const killCounts = new Map(killsResult.rows.map(row => [row.mob_name, toInt(row.kills)]));
+  const selectedMobs = normalizeKillAuraTargets(saved.selected_mobs);
+  const mobs = KILL_AURA_MOBS.map(mob => ({
+    ...mob,
+    selected: selectedMobs.includes(mob.id),
+    kills: killCounts.get(mob.id) || 0
+  }));
+
+  return {
+    accountId,
+    state: {
+      enabled: Boolean(saved.desired_enabled),
+      active: Boolean(runtime.active && runtimeConnected),
+      selectedMobs,
+      currentTarget: runtimeConnected ? runtime.currentTarget || null : null,
+      currentWeapon: runtimeConnected ? runtime.currentWeapon || null : null,
+      sessionKills: toInt(runtime.sessionKills),
+      sessionStartedAt: runtime.sessionStartedAt || null,
+      lastError: runtime.lastError || null,
+      updatedAt: saved.updated_at || null,
+      observedAt: scoped?.observedAt || defaultBotResult.rows[0]?.observed_at || null
+    },
+    totalKills: killsResult.rows.reduce((sum, row) => sum + toInt(row.kills), 0),
+    mobs
+  };
+}
+
 async function handleAccountsApi(req, currentUser, url) {
   const collection = url.pathname === '/api/accounts';
   const match = url.pathname.match(/^\/api\/accounts\/([0-9a-f-]{36})(?:\/(start|stop|restart|pause|resume|reauthorize|status|inventory|obsidian|server-stats))?$/i);
@@ -2711,6 +2772,8 @@ async function queueAdminBotCommand(currentUser, body) {
     'obsidian_radius_toggle',
     'obsidian_reset_coordinates',
     'obsidian_set_coordinates',
+    'kill_aura_toggle',
+    'kill_aura_targets',
     'child_toggle',
     'child_say',
     'gemini_toggle',
@@ -2737,6 +2800,15 @@ async function queueAdminBotCommand(currentUser, body) {
     if (Number.isFinite(minutes) && minutes > 0) {
       payload.minutes = Math.min(1440, Math.floor(minutes));
     }
+  }
+  if (commandType === 'kill_aura_targets') {
+    payload.targets = normalizeKillAuraTargets(payload.targets);
+  }
+  if (commandType === 'kill_aura_toggle' && typeof payload.enabled !== 'boolean') {
+    delete payload.enabled;
+  }
+  if (commandType === 'kill_aura_toggle' && Array.isArray(payload.targets)) {
+    payload.targets = normalizeKillAuraTargets(payload.targets);
   }
 
   const accountId = await commandAccountId(body,currentUser);
@@ -3084,7 +3156,7 @@ async function getPushSettings(currentUser) {
   };
 }
 
-const NAVIGATION_SECTION_ORDER = Object.freeze(['chat', 'bot', 'obsidian', 'server', 'players', 'settings', 'notifications', 'timeline', 'child-ai', 'admin']);
+const NAVIGATION_SECTION_ORDER = Object.freeze(['chat', 'bot', 'kill-aura', 'obsidian', 'server', 'players', 'settings', 'notifications', 'timeline', 'child-ai', 'admin']);
 
 function normalizeNavigationPreferences(input = {}) {
   const rawVisibility = input.visibility && typeof input.visibility === 'object' && !Array.isArray(input.visibility) ? input.visibility : {};
@@ -3587,6 +3659,10 @@ async function handleApi(req, res, url) {
       const scoped = await scopedAccountRuntime(url,currentUser);
       if (scoped) { sendJson(res,200,{bot:scoped.bot,observedAt:scoped.observedAt,supplies:{hasSnapshot:false,inventory:null,barrel:null,barrelError:'No account supply snapshot yet.'},nearby:scoped.bot.nearbyPlayers || []}); return; }
       sendJson(res, 200, await getLiveDashboardStats());
+      return;
+    }
+    if (url.pathname === '/api/kill-aura' && req.method === 'GET') {
+      sendJson(res, 200, await getKillAuraStats(currentUser, url));
       return;
     }
     if (url.pathname === '/api/obsidian') {

@@ -17,6 +17,7 @@ const {
 const { createPlaytimeFeature } = require('./features/playtime');
 const { createWhisperFeature } = require('./features/whisper');
 const { createFollowFeature } = require('./features/follow');
+const { createKillAuraFeature } = require('./features/killAura');
 const farm = require('./features/obsidianFarm');
 const { GrowingChildAI } = require('./features/growingChild');
 const { sanitizePublicPhrase } = require('./features/growingChild/safety');
@@ -33,6 +34,7 @@ const { MinecraftBotRuntime } = require('./site/accounts/minecraft-bot-runtime')
 const { BotManager } = require('./site/accounts/bot-manager');
 const { ensureAccountColumns } = require('./site/accounts/account-schema');
 const { AuthCacheStore } = require('./site/accounts/auth-cache-store');
+const { normalizeKillAuraTargets } = require('./site/kill-aura-catalog');
 
 // Base64 utils for Node.js (btoa/atob polyfill)
 const b64encode = (str) => Buffer.from(String(str), 'utf8').toString('base64');
@@ -747,6 +749,11 @@ let obsidianStats = {
 let growingChild = null;
 let growingChildSnapshotTimer = null;
 const followFeature = createFollowFeature();
+const killAura = createKillAuraFeature({
+  onKill: ({ mobName }) => recordKillAuraKill(DEFAULT_ACCOUNT_ID, mobName)
+    .catch(error => console.error('[Kill Aura] Failed to persist kill:', error.message)),
+  onStatus: () => writeBotStatusSnapshot().catch(() => {})
+});
 let obsidianStatsWriteQueue = Promise.resolve();
 let whisperConversations = new Map(); // username -> messageId
 let whisperChannels = new Map(); // key: `${ownerId}:${mcUsername}` -> channelId
@@ -1127,6 +1134,45 @@ const {
 
 let ignoredChatUsernames = IGNORED_CHAT_USERNAMES; // Fallback
 
+async function loadKillAuraStateForAccount(accountId) {
+  if (!pool) return { desiredEnabled: false, selectedMobs: [] };
+  const result = await pool.query(`
+    INSERT INTO kill_aura_state(account_id)
+    VALUES($1::uuid)
+    ON CONFLICT(account_id) DO UPDATE SET account_id=EXCLUDED.account_id
+    RETURNING desired_enabled, selected_mobs
+  `, [accountId]);
+  const row = result.rows[0] || {};
+  return {
+    desiredEnabled: Boolean(row.desired_enabled),
+    selectedMobs: normalizeKillAuraTargets(row.selected_mobs)
+  };
+}
+
+async function persistKillAuraState(accountId, { desiredEnabled, selectedMobs }) {
+  if (!pool) return;
+  await pool.query(`
+    INSERT INTO kill_aura_state(account_id,desired_enabled,selected_mobs,updated_at)
+    VALUES($1::uuid,$2,$3::text[],NOW())
+    ON CONFLICT(account_id) DO UPDATE SET
+      desired_enabled=EXCLUDED.desired_enabled,
+      selected_mobs=EXCLUDED.selected_mobs,
+      updated_at=NOW()
+  `, [accountId, Boolean(desiredEnabled), normalizeKillAuraTargets(selectedMobs)]);
+}
+
+async function recordKillAuraKill(accountId, mobName) {
+  const normalized = normalizeKillAuraTargets([mobName])[0];
+  if (!pool || !normalized) return;
+  await pool.query(`
+    INSERT INTO kill_aura_kills(account_id,mob_name,kills,updated_at)
+    VALUES($1::uuid,$2,1,NOW())
+    ON CONFLICT(account_id,mob_name) DO UPDATE SET
+      kills=kill_aura_kills.kills+1,
+      updated_at=NOW()
+  `, [accountId, normalized]);
+}
+
 // Initialize DB table and load ignored users
 async function initDatabase() {
   if (!pool) {
@@ -1155,6 +1201,11 @@ async function initDatabase() {
       config.auth = legacyAccount.auth_type;
       config.version = legacyAccount.minecraft_version || false;
       console.log(`[Accounts] Legacy runtime bound to ${legacyAccount.display_name} (${legacyAccount.username}, ${legacyAccount.host}:${config.port}).`);
+    }
+    const defaultKillAuraState = await loadKillAuraStateForAccount(DEFAULT_ACCOUNT_ID);
+    killAura.setTargets(defaultKillAuraState.selectedMobs);
+    if (defaultKillAuraState.desiredEnabled && defaultKillAuraState.selectedMobs.length) {
+      killAura.setEnabled(true);
     }
     await pool.query(`INSERT INTO obsidian_farm_analytics_settings(id,timezone,daily_report_enabled,daily_report_hour)
       VALUES(1,$1,$2,$3) ON CONFLICT(id) DO NOTHING`, [
@@ -2671,6 +2722,13 @@ async function toggleObsidianFarmFromControl() {
     };
   }
 
+  if (killAura.getStatus().enabled) {
+    killAura.setEnabled(false);
+    await persistKillAuraState(DEFAULT_ACCOUNT_ID, {
+      desiredEnabled: false,
+      selectedMobs: killAura.getStatus().targets
+    });
+  }
   const result = await startConfiguredObsidianFarm();
   await recordFarmAnnotation('resume', 'Farm resumed', { source: 'admin_control' }).catch(() => {});
   return {
@@ -3942,6 +4000,7 @@ function pauseMinecraftConnection(reason) {
   clearIntervals();
   followFeature.stop();
   farm.suspend();
+  killAura.detachBot();
   safelyCloseMinecraftBot(currentBot, reason);
   updateStatusMessage().catch(() => {});
   recordFarmAnnotation('pause', 'Bot paused', { reason }).catch(() => {});
@@ -3969,6 +4028,7 @@ function disconnectForNonWhitelistedPlayer(entity, distance) {
   clearResumeTimer();
   followFeature.stop();
   farm.suspend();
+  killAura.detachBot();
   setDisconnectReason(`${reason} (${roundedDistance} blocks)`);
 
   if (currentBot) {
@@ -4990,10 +5050,50 @@ async function executeBotCommand(command) {
     return { messageCooldownMs: value };
   }
 
+  if (type === 'kill_aura_targets') {
+    const targets = normalizeKillAuraTargets(payload.targets);
+    const status = killAura.setTargets(targets);
+    if (!targets.length && status.enabled) killAura.setEnabled(false);
+    const nextStatus = killAura.getStatus();
+    await persistKillAuraState(DEFAULT_ACCOUNT_ID, {
+      desiredEnabled: nextStatus.enabled,
+      selectedMobs: nextStatus.targets
+    });
+    await writeBotStatusSnapshot().catch(() => {});
+    return nextStatus;
+  }
+
+  if (type === 'kill_aura_toggle') {
+    if (Array.isArray(payload.targets)) {
+      killAura.setTargets(normalizeKillAuraTargets(payload.targets));
+    }
+    const current = killAura.getStatus();
+    const enabled = typeof payload.enabled === 'boolean' ? payload.enabled : !current.enabled;
+    if (enabled) {
+      farm.suspend();
+      await setObsidianFarmDesiredEnabled(false);
+      followFeature.stop();
+    }
+    const status = killAura.setEnabled(enabled, bot);
+    await persistKillAuraState(DEFAULT_ACCOUNT_ID, {
+      desiredEnabled: status.enabled,
+      selectedMobs: status.targets
+    });
+    await writeBotStatusSnapshot().catch(() => {});
+    return status;
+  }
+
   if (type === 'follow') {
     if (!bot?.entity) throw new Error('Minecraft bot is offline.');
     const username = String(payload.username || '').trim();
     if (!username) throw new Error('Username is required.');
+    if (killAura.getStatus().enabled) {
+      killAura.setEnabled(false);
+      await persistKillAuraState(DEFAULT_ACCOUNT_ID, {
+        desiredEnabled: false,
+        selectedMobs: killAura.getStatus().targets
+      });
+    }
     farm.suspend();
     followFeature.start(bot, username);
     return { targetUsername: followFeature.getStatus().targetUsername };
@@ -5175,6 +5275,16 @@ async function initializeMultiAccountManager() {
   if (!pool || multiBotManager) return;
   multiAccountRegistry = new AccountRegistry(new AccountRepository(pool));
   const accounts = await multiAccountRegistry.load();
+  const killAuraStatesResult = await pool.query(
+    'SELECT account_id,desired_enabled,selected_mobs FROM kill_aura_state'
+  );
+  const killAuraStates = new Map(killAuraStatesResult.rows.map(row => [
+    row.account_id,
+    {
+      desiredEnabled: Boolean(row.desired_enabled),
+      selectedMobs: normalizeKillAuraTargets(row.selected_mobs)
+    }
+  ]));
   if (accounts.length > MAX_BOT_ACCOUNTS) console.warn(`[Accounts] ${accounts.length} accounts exceed MAX_BOT_ACCOUNTS=${MAX_BOT_ACCOUNTS}.`);
   multiBotManager = new BotManager({
     registry: multiAccountRegistry,
@@ -5182,18 +5292,31 @@ async function initializeMultiAccountManager() {
     startDelayMs: BOT_START_DELAY_MS,
     runtimeFactory: account => {
       let lastLoggedRuntimeState = null;
-      const runtime = new MinecraftBotRuntime({
+      let runtime = null;
+      runtime = new MinecraftBotRuntime({
         account,
         authCacheRoot: MINECRAFT_PROFILES_FOLDER,
         authCacheStore,
         isWhitelisted: username => ignoredUsernames.some(item => item.toLowerCase() === String(username).toLowerCase()),
         dangerRadius: runtimeSettings.dangerRadius,
+        killAuraFactory: () => createKillAuraFeature({
+          onKill: ({ mobName }) => recordKillAuraKill(account.id, mobName)
+            .catch(error => console.error(`[Kill Aura] Failed to persist kill for ${account.displayName}:`, error.message)),
+          onStatus: () => {
+            if (runtime) runtime.emit('status', runtime.getStatus());
+          }
+        }),
         botFactory: options => {
           const managedBot = createMinecraftBot({ ...options, closeTimeout: MINECRAFT_CONNECT_TIMEOUT_MS });
           managedBot.loadPlugin(pathfinder);
           return managedBot;
         }
       });
+      const savedKillAura = killAuraStates.get(account.id) || { desiredEnabled: false, selectedMobs: [] };
+      runtime.setKillAuraTargets(savedKillAura.selectedMobs);
+      if (savedKillAura.desiredEnabled && savedKillAura.selectedMobs.length) {
+        runtime.setKillAuraEnabled(true);
+      }
       runtime.on('status', status => {
         persistManagedRuntimeStatus(status).catch(error => console.error(`[Accounts] Status persistence failed for ${account.id}:`, error.message));
         const signature = `${status.status}:${status.task}:${status.lastError || ''}`;
@@ -5290,7 +5413,39 @@ async function executeManagedAccountCommand(command) {
     runtime.bot.chat(`/msg ${username} ${message}`);
     return { username,sent:true };
   }
-  if (['follow','follow_stop','obsidian_toggle'].includes(type)) return runtime.assignTask(type === 'follow' ? 'follow' : type === 'obsidian_toggle' ? 'obsidian' : 'idle');
+  if (type === 'kill_aura_targets') {
+    const targets = normalizeKillAuraTargets(payload.targets);
+    const status = runtime.setKillAuraTargets(targets);
+    if (!targets.length && status.enabled) runtime.setKillAuraEnabled(false);
+    await persistKillAuraState(command.account_id, {
+      desiredEnabled: targets.length ? runtime.killAura.getStatus().enabled : false,
+      selectedMobs: targets
+    });
+    return runtime.killAura.getStatus();
+  }
+  if (type === 'kill_aura_toggle') {
+    if (Array.isArray(payload.targets)) {
+      runtime.setKillAuraTargets(normalizeKillAuraTargets(payload.targets));
+    }
+    const current = runtime.killAura?.getStatus?.();
+    const enabled = typeof payload.enabled === 'boolean' ? payload.enabled : !current?.enabled;
+    const status = runtime.setKillAuraEnabled(enabled);
+    await persistKillAuraState(command.account_id, {
+      desiredEnabled: status.enabled,
+      selectedMobs: status.targets
+    });
+    return status;
+  }
+  if (['follow','follow_stop','obsidian_toggle'].includes(type)) {
+    if (type !== 'follow_stop' && runtime.killAura?.getStatus?.().enabled) {
+      const auraStatus = runtime.setKillAuraEnabled(false);
+      await persistKillAuraState(command.account_id, {
+        desiredEnabled: false,
+        selectedMobs: auraStatus.targets
+      });
+    }
+    return runtime.assignTask(type === 'follow' ? 'follow' : type === 'obsidian_toggle' ? 'obsidian' : 'idle');
+  }
   throw new Error(`Command ${type} is not supported by managed runtimes yet.`);
 }
 
@@ -7127,6 +7282,7 @@ function getBotStatusSnapshot() {
       desiredEnabled: obsidianStats.desiredEnabled,
       config: farm.getStatus().config
     },
+    killAura: killAura.getStatus(),
     child: {
       enabled: growingChild?.getStatus().enabled ?? false,
       geminiEnabled: runtimeSettings.geminiEnabled,
@@ -7152,7 +7308,11 @@ async function writeBotStatusSnapshot() {
       started_at=EXCLUDED.started_at,updated_at=NOW(),status_payload=EXCLUDED.status_payload`, [
       DEFAULT_ACCOUNT_ID,
       bot?.entity ? 'connected' : (shouldReconnect ? 'connecting' : 'stopped'),
-      farm.getStatus()?.enabled ? 'obsidian' : (followFeature.getStatus()?.active ? 'follow' : 'idle'),
+      killAura.getStatus().active
+        ? 'kill_aura'
+        : farm.getStatus()?.enabled
+          ? 'obsidian'
+          : (followFeature.getStatus()?.active ? 'follow' : 'idle'),
       shouldReconnect,
       bot?.entity ? new Date(startTime) : null,
       snapshot
@@ -7470,6 +7630,7 @@ function createBot() {
     clearIntervals();
     followFeature.stop();
     farm.suspend();
+    killAura.detachBot();
     bot = null;
     safelyCloseMinecraftBot(createdBot, reason);
     setDisconnectReason(buildDisconnectReason(reason, 'Connection lost'));
@@ -7496,10 +7657,15 @@ function createBot() {
     shouldReconnect = false;
     followFeature.stop();
     farm.suspend();
+    killAura.setEnabled(false);
     obsidianStats.desiredEnabled = false;
     setDisconnectReason('Emergency exit: bot caught fire');
     try { createdBot.quit('Emergency exit: on fire'); } catch (_) {}
     setObsidianFarmDesiredEnabled(false).catch(() => {});
+    persistKillAuraState(DEFAULT_ACCOUNT_ID, {
+      desiredEnabled: false,
+      selectedMobs: killAura.getStatus().targets
+    }).catch(() => {});
     sendOwnerDM(
       'Emergency fire exit',
       'The bot detected that it was on fire and disconnected immediately. Auto-reconnect and farm auto-resume were disabled.',
@@ -7590,6 +7756,7 @@ function createBot() {
     startRestartProtectionMonitor();
     startObsidianFarmWatchdog();
     startObsidianSupplySnapshotWriter();
+    killAura.attachBot(createdBot);
     scheduleQueuedSiteWhispersForOnlinePlayers().catch(err => {
       console.error('[Site Whisper] Failed to schedule queued whispers after spawn:', err.message);
     });

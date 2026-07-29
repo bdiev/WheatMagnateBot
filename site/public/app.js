@@ -71,6 +71,9 @@ const state = {
   accountTimezone: 'Europe/Vilnius',
   accountSettingsLoading: null,
   obsidianCoordinateEditorOpen: false,
+  killAuraData: null,
+  killAuraSelectedMobs: new Set(),
+  killAuraTargetsDirty: false,
   supplyTooltipItems: {},
   itemIcons: {},
   itemIconsLoading: null,
@@ -113,6 +116,7 @@ const CHAT_HISTORY_LIMIT = 500;
 const NAV_SECTION_INFO = Object.freeze({
   chat: ['Chat', 'Minecraft and site chat'],
   bot: ['Bot Stats', 'Connection, health and inventory'],
+  'kill-aura': ['Kill Aura', 'Mob targets and combat statistics'],
   obsidian: ['Obsidian Farm', 'Farm controls and analytics'],
   server: ['Server Stats', 'TPS and server activity'],
   players: ['Player Stats', 'Profiles and activity'],
@@ -122,7 +126,7 @@ const NAV_SECTION_INFO = Object.freeze({
   'child-ai': ['Child AI', 'Learning and memory administration'],
   admin: ['Admin', 'Administrative controls']
 });
-const NAV_DEFAULT_ORDER = Object.freeze(['chat', 'bot', 'obsidian', 'server', 'players', 'settings', 'notifications', 'timeline', 'child-ai', 'admin']);
+const NAV_DEFAULT_ORDER = Object.freeze(['chat', 'bot', 'kill-aura', 'obsidian', 'server', 'players', 'settings', 'notifications', 'timeline', 'child-ai', 'admin']);
 
 function fallbackTimezones() {
   const supported = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : [];
@@ -651,7 +655,7 @@ function accountStatusClass(account) {
 
 function applyAccountTabScope(account) {
   const restricted = Boolean(account && !account.isDefault);
-  const allowed = new Set(['chat','bot']);
+  const allowed = new Set(['chat','bot','kill-aura']);
   $$('.tab-button[data-tab]').forEach(button => button.classList.toggle('account-tab-restricted',restricted && !allowed.has(button.dataset.tab)));
   if (restricted && !allowed.has(state.activeTab)) setActiveTab('chat');
 }
@@ -703,6 +707,9 @@ async function selectAccount(accountId) {
   state.activeAccountId = accountId;
   localStorage.setItem('wm-active-account', accountId);
   state.renderSignatures = {};
+  state.killAuraData = null;
+  state.killAuraSelectedMobs = new Set();
+  state.killAuraTargetsDirty = false;
   closeWhisperDialog();
   state.whisperPlayers = [];
   state.whisperMessagesSignature = '';
@@ -900,6 +907,9 @@ function applyCurrentUser(user) {
   if (String(previousUserId || '') !== String(state.currentUser?.id || '')) {
     state.navigationPreferences = null;
     state.accountTimezone = 'Europe/Vilnius';
+    state.killAuraData = null;
+    state.killAuraSelectedMobs = new Set();
+    state.killAuraTargetsDirty = false;
   }
   if (String(previousUserId || '') !== String(state.currentUser?.id || '')) state.whisperClaimedPlayers = new Set();
   if (!state.currentUser) state.chatInitialScrollDone = false;
@@ -1282,6 +1292,7 @@ function setActiveTab(tab) {
     if ($('.settings-tab.active')?.dataset.settingsView !== 'navigation') loadPushSettings();
   }
   if (tab === 'child-ai') loadChildAiAdmin();
+  if (tab === 'kill-aura') loadKillAura();
   if (tab === 'chat') ensureInitialChatScroll();
   requestAnimationFrame(updateCarousels);
   redrawCharts();
@@ -3214,6 +3225,131 @@ function renderBotStats(payload) {
   `;
 }
 
+function formatMobLabel(value) {
+  return String(value || '')
+    .replace(/^minecraft:/, '')
+    .split('_')
+    .filter(Boolean)
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+function updateKillAuraSelectionSummary() {
+  const summary = $('#killAuraSelectionSummary');
+  if (!summary) return;
+  const count = state.killAuraSelectedMobs.size;
+  summary.textContent = count
+    ? `${count} mob${count === 1 ? '' : 's'} selected${state.killAuraTargetsDirty ? ' · unsaved changes' : ''}.`
+    : `No mobs selected${state.killAuraTargetsDirty ? ' · unsaved changes' : ''}.`;
+}
+
+function renderKillAuraMobList() {
+  const container = $('#killAuraMobList');
+  if (!container) return;
+  const mobs = state.killAuraData?.mobs || [];
+  const query = String($('#killAuraSearch')?.value || '').trim().toLowerCase();
+  const visible = mobs.filter(mob =>
+    !query || mob.name.toLowerCase().includes(query) || mob.id.toLowerCase().includes(query)
+  );
+  container.innerHTML = visible.length
+    ? visible.map(mob => `
+      <label class="kill-aura-mob-option">
+        <input type="checkbox" value="${escapeHtml(mob.id)}" ${state.killAuraSelectedMobs.has(mob.id) ? 'checked' : ''}>
+        <span>${escapeHtml(mob.name)}</span>
+        <small>${escapeHtml(mob.category)}</small>
+      </label>
+    `).join('')
+    : '<div class="empty">No matching mobs.</div>';
+  updateKillAuraSelectionSummary();
+}
+
+function renderKillAura(payload = {}) {
+  state.killAuraData = payload;
+  const aura = payload.state || {};
+  $('#killAuraState').textContent = aura.active ? 'Active' : aura.enabled ? 'Waiting' : 'Disabled';
+  $('#killAuraUpdated').textContent = `last update: ${formatDate(aura.observedAt || aura.updatedAt)}`;
+  setRollingNumber('#killAuraSessionKills', aura.sessionKills || 0);
+  setRollingNumber('#killAuraTotalKills', payload.totalKills || 0);
+  $('#killAuraWeapon').textContent = aura.currentWeapon ? formatMobLabel(aura.currentWeapon) : 'None';
+  const target = aura.currentTarget;
+  $('#killAuraTarget').textContent = target
+    ? `target: ${formatMobLabel(target.name)}${target.distance == null ? '' : ` · ${target.distance} blocks`}`
+    : 'target: none';
+
+  const toggle = $('#killAuraToggleButton');
+  if (toggle) {
+    toggle.textContent = aura.enabled ? 'Disable Kill Aura' : 'Enable Kill Aura';
+    toggle.classList.toggle('danger-button', Boolean(aura.enabled));
+    toggle.classList.toggle('ghost-button', !aura.enabled);
+    toggle.disabled = !aura.enabled && !(aura.selectedMobs || []).length && !state.killAuraSelectedMobs.size;
+  }
+
+  if (!state.killAuraTargetsDirty) {
+    state.killAuraSelectedMobs = new Set(aura.selectedMobs || []);
+  }
+  renderKillAuraMobList();
+
+  const killed = (payload.mobs || [])
+    .filter(mob => Number(mob.kills) > 0)
+    .sort((first, second) => Number(second.kills) - Number(first.kills) || first.name.localeCompare(second.name));
+  renderStable('#killAuraKillStats', killed.length
+    ? killed.map((mob, index) => `
+      <div class="rank-item">
+        <span class="rank-index">${index + 1}</span>
+        <span>${escapeHtml(mob.name)}</span>
+        <strong>${formatNumber(mob.kills)}</strong>
+      </div>
+    `).join('')
+    : '<div class="empty">No Kill Aura kills recorded yet.</div>',
+    killed.map(mob => [mob.id, mob.kills])
+  );
+}
+
+async function loadKillAura() {
+  if (!state.currentUser) return;
+  renderKillAura(await fetchJson('/api/kill-aura'));
+}
+
+function handleKillAuraMobChange(event) {
+  const checkbox = event.target.closest('input[type="checkbox"]');
+  if (!checkbox) return;
+  if (checkbox.checked) state.killAuraSelectedMobs.add(checkbox.value);
+  else state.killAuraSelectedMobs.delete(checkbox.value);
+  state.killAuraTargetsDirty = true;
+  updateKillAuraSelectionSummary();
+  const toggle = $('#killAuraToggleButton');
+  if (toggle && !state.killAuraData?.state?.enabled) toggle.disabled = !state.killAuraSelectedMobs.size;
+}
+
+function setKillAuraSelection(predicate) {
+  const mobs = state.killAuraData?.mobs || [];
+  state.killAuraSelectedMobs = new Set(mobs.filter(predicate).map(mob => mob.id));
+  state.killAuraTargetsDirty = true;
+  renderKillAuraMobList();
+}
+
+async function saveKillAuraTargets() {
+  const button = $('#killAuraSaveTargets');
+  if (!button || state.currentUser?.role !== 'admin') return;
+  button.disabled = true;
+  try {
+    const targets = [...state.killAuraSelectedMobs];
+    await postJson('/api/admin/bot-command', {
+      commandType: 'kill_aura_targets',
+      payload: { targets },
+      accountId: state.activeAccountId
+    });
+    state.killAuraTargetsDirty = false;
+    if (state.killAuraData?.state) state.killAuraData.state.selectedMobs = targets;
+    renderKillAuraMobList();
+    scheduleAdminControlRefresh();
+  } catch (error) {
+    setBanner(`Could not save Kill Aura targets: ${error.message}`);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function renderPlayerStats(payload = {}, nearbyPlayers = []) {
   $('#onlinePlayers').textContent = formatNumber(payload.players?.online);
   $('#totalPlayers').textContent = `of ${formatNumber(payload.players?.total)} whitelisted`;
@@ -4332,7 +4468,12 @@ function clearObsidianCoordinateEditor() {
 }
 
 function setButtonBusyState(commandType) {
-  if (commandType === 'obsidian_toggle') {
+  if (commandType === 'kill_aura_toggle') {
+    const button = $('#killAuraToggleButton');
+    if (button) button.textContent = button.textContent.toLowerCase().includes('disable')
+      ? 'Disabling Kill Aura...'
+      : 'Enabling Kill Aura...';
+  } else if (commandType === 'obsidian_toggle') {
     const button = $('#obsidianToggleButton');
     if (button) {
       const stopping = button.textContent.toLowerCase().includes('stop');
@@ -4400,6 +4541,10 @@ async function handleAdminBotCommand(event) {
 
   const commandType = button.dataset.botCommand;
   const body = { commandType };
+  const submitsKillAuraTargets = commandType === 'kill_aura_toggle' && state.killAuraTargetsDirty;
+  if (commandType === 'kill_aura_toggle' && state.killAuraTargetsDirty) {
+    body.payload = { targets: [...state.killAuraSelectedMobs] };
+  }
   if (commandType === 'obsidian_reset_coordinates' && !confirm('Reset Obsidian Farm coordinates? The farm will stop and ask for new coordinates next time.')) {
     return;
   }
@@ -4415,6 +4560,12 @@ async function handleAdminBotCommand(event) {
     await Promise.all([loadAll(), loadAdminControlState()]);
     await loadAdminSystemLogs();
     scheduleAdminControlRefresh();
+    if (submitsKillAuraTargets) {
+      setTimeout(() => {
+        state.killAuraTargetsDirty = false;
+        loadKillAura().catch(() => {});
+      }, 1800);
+    }
   } catch (err) {
     console.error(`Could not queue bot command ${commandType}:`, err);
   } finally {
@@ -5356,6 +5507,10 @@ async function refreshBotFromEvent() {
   renderBotStats(await fetchJson('/api/bot-stats'));
 }
 
+async function refreshKillAuraFromEvent() {
+  renderKillAura(await fetchJson('/api/kill-aura'));
+}
+
 async function refreshLiveDashboard() {
   if (!state.currentUser || state.liveDashboardLoading || document.visibilityState === 'hidden') return;
   state.liveDashboardLoading = true;
@@ -5416,6 +5571,7 @@ function handleRealtimeEvent(event) {
   else if (type === 'whisper_message' && (!eventPayload.accountId || eventPayload.accountId === state.activeAccountId)) queueRealtimeRefresh('whisper', refreshWhispersFromEvent);
   else if (type === 'bot_status_updated') {
     queueRealtimeRefresh('bot', refreshBotFromEvent);
+    queueRealtimeRefresh('kill-aura', refreshKillAuraFromEvent);
     scheduleRealtimeChartRefresh();
     if (state.currentUser?.role === 'admin' && state.activeTab === 'timeline') queueRealtimeRefresh('timeline-snapshots', loadTimeline, 500);
   }
@@ -5504,6 +5660,7 @@ async function loadAll() {
         if (!state.chatContextMessageId && !state.chatSearchQuery) renderChat(payload);
       }),
       fetchJson('/api/bot-stats').then(renderBotStats),
+      fetchJson('/api/kill-aura').then(renderKillAura),
       Promise.all([ensureItemIcons(), fetchJson('/api/obsidian')]).then(([, payload]) => {
         if (hasActiveTextSelection()) {
           queueRealtimeRefresh('farm-selection', refreshFarmFromEvent, 1_000);
@@ -5648,6 +5805,12 @@ $('#obsidianGoalForm')?.addEventListener('submit', saveObsidianGoal);
 $('#obsidianAnalyticsSettings')?.addEventListener('submit', saveObsidianAnalyticsSettings);
 $('#obsidianAnalyticsSettings')?.addEventListener('input', event => { event.currentTarget.dataset.dirty = 'true'; });
 $('#obsidianGoals')?.addEventListener('click', changeObsidianGoalState);
+$('#killAuraSearch')?.addEventListener('input', renderKillAuraMobList);
+$('#killAuraMobList')?.addEventListener('change', handleKillAuraMobChange);
+$('#killAuraSelectHostile')?.addEventListener('click', () => setKillAuraSelection(mob => mob.category === 'hostile'));
+$('#killAuraSelectAll')?.addEventListener('click', () => setKillAuraSelection(() => true));
+$('#killAuraClear')?.addEventListener('click', () => setKillAuraSelection(() => false));
+$('#killAuraSaveTargets')?.addEventListener('click', saveKillAuraTargets);
 $('#notificationsMarkAllRead')?.addEventListener('click', async () => {
   await postJson('/api/notifications/read', { all: true });
   await loadNotifications();

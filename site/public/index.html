@@ -13,7 +13,7 @@
     <link rel="icon" type="image/png" href="/items/Wheat.png">
     <link rel="apple-touch-icon" href="/items/Wheat.png">
     <script src="/theme-init.js?v=136"></script>
-    <link rel="stylesheet" href="/styles.css?v=147">
+    <link rel="stylesheet" href="/styles.css?v=148">
   </head>
   <body>
     <section id="authScreen" class="auth-screen" aria-label="Site access">
@@ -61,6 +61,7 @@
             <div id="navMenuPanel" class="tab-nav" role="menu">
               <button class="tab-button active" type="button" data-tab="chat" role="menuitem">Chat</button>
               <button class="tab-button" type="button" data-tab="bot" role="menuitem">Bot Stats</button>
+              <button class="tab-button" type="button" data-tab="kill-aura" role="menuitem">Kill Aura</button>
               <button class="tab-button" type="button" data-tab="obsidian" role="menuitem">Obsidian Farm</button>
               <button class="tab-button" type="button" data-tab="server" role="menuitem">Server Stats</button>
               <button class="tab-button" type="button" data-tab="players" role="menuitem">Player Stats</button>
@@ -329,6 +330,65 @@
             </div>
             <div id="botDetails" class="detail-list"></div>
           </section>
+        </section>
+      </section>
+
+      <section id="tab-kill-aura" class="tab-panel" data-panel="kill-aura">
+        <section class="stats-grid four kill-aura-stats-grid">
+          <article class="stat">
+            <span class="stat-label">Module State</span>
+            <strong id="killAuraState">-</strong>
+            <small id="killAuraUpdated">last update: -</small>
+          </article>
+          <article class="stat">
+            <span class="stat-label">Session Kills</span>
+            <strong id="killAuraSessionKills">-</strong>
+            <small>since the last enable</small>
+          </article>
+          <article class="stat">
+            <span class="stat-label">All-time Kills</span>
+            <strong id="killAuraTotalKills">-</strong>
+            <small>credited Kill Aura kills</small>
+          </article>
+          <article class="stat">
+            <span class="stat-label">Current Weapon</span>
+            <strong id="killAuraWeapon">-</strong>
+            <small id="killAuraTarget">target: none</small>
+          </article>
+        </section>
+
+        <section class="panel kill-aura-control-panel admin-only" hidden>
+          <div class="panel-head">
+            <div>
+              <h2>Kill Aura Control</h2>
+              <p>Choose one or more mobs. The bot stays in place, attacks only targets within reach, and equips the strongest usable melee weapon.</p>
+            </div>
+            <button id="killAuraToggleButton" class="ghost-button" type="button" data-bot-command="kill_aura_toggle">Enable Kill Aura</button>
+          </div>
+          <div class="kill-aura-toolbar">
+            <label class="auth-field kill-aura-search">
+              <span>Find Mob</span>
+              <input id="killAuraSearch" type="search" autocomplete="off" placeholder="Search all mobs...">
+            </label>
+            <div class="admin-command-actions compact">
+              <button id="killAuraSelectHostile" class="ghost-button" type="button">Hostile</button>
+              <button id="killAuraSelectAll" class="ghost-button" type="button">Select All</button>
+              <button id="killAuraClear" class="ghost-button" type="button">Clear</button>
+              <button id="killAuraSaveTargets" type="button">Save Targets</button>
+            </div>
+          </div>
+          <div id="killAuraMobList" class="kill-aura-mob-list" aria-label="Kill Aura mob targets"></div>
+          <p id="killAuraSelectionSummary" class="muted">No mobs selected.</p>
+        </section>
+
+        <section class="panel kill-aura-history-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Kill Statistics</h2>
+              <p>All-time kills grouped by mob.</p>
+            </div>
+          </div>
+          <div id="killAuraKillStats" class="rank-list"></div>
         </section>
       </section>
 
@@ -962,6 +1022,6 @@
       </section>
     </main>
 
-    <script src="/app.js?v=151" defer></script>
+    <script src="/app.js?v=152" defer></script>
   </body>
 </html>

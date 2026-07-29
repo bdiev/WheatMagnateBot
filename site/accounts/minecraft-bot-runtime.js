@@ -4,7 +4,7 @@ const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const TASKS = new Set(['obsidian','observe','follow','chat','idle','paused']);
+const TASKS = new Set(['obsidian','observe','follow','kill_aura','chat','idle','paused']);
 // Keep this list deliberately conservative. Raw meat, spider eyes and poisonous
 // potatoes are technically consumable, but are a poor choice for an unattended bot.
 const SAFE_FOOD_PRIORITY = [
@@ -14,7 +14,7 @@ const SAFE_FOOD_PRIORITY = [
 ];
 
 class MinecraftBotRuntime extends EventEmitter {
-  constructor({ account, botFactory, authCacheRoot = path.join('data', 'auth-cache'), authCacheStore = null, reconnectBackoffMs, isWhitelisted = () => false, dangerRadius = 32 } = {}) {
+  constructor({ account, botFactory, killAuraFactory = null, authCacheRoot = path.join('data', 'auth-cache'), authCacheStore = null, reconnectBackoffMs, isWhitelisted = () => false, dangerRadius = 32 } = {}) {
     super();
     if (!account?.id) throw new Error('Runtime requires an account.');
     if (typeof botFactory !== 'function') throw new Error('Runtime requires a Mineflayer factory.');
@@ -44,6 +44,7 @@ class MinecraftBotRuntime extends EventEmitter {
     this.reconnectAttempts = 0;
     this.safetyLockout = false;
     this.lastEatErrorAt = 0;
+    this.killAura = typeof killAuraFactory === 'function' ? killAuraFactory(account) : null;
   }
 
   clearRuntimeIntervals() { for (const timer of this.intervals) clearInterval(timer); this.intervals.clear(); }
@@ -168,6 +169,7 @@ class MinecraftBotRuntime extends EventEmitter {
         this.status = this.task === 'paused' ? 'paused' : 'connected';
         this.emit('status', this.getStatus());
         this.startAfkMonitors();
+        this.killAura?.attachBot(bot);
         if (this.authCacheStore) setTimeout(() => this.authCacheStore.persist(this.account.id,this.authCachePath).catch(error => this.emit('auth-cache-error',error)),1000);
       });
       bot.on?.('error', error => { this.lastError = error?.message || String(error); this.status = 'error'; this.emit('status', this.getStatus()); });
@@ -178,6 +180,7 @@ class MinecraftBotRuntime extends EventEmitter {
         if (this.bot === bot) this.bot = null;
         this.nearbySnapshot = [];
         this.clearRuntimeIntervals();
+        this.killAura?.detachBot();
         if (!this.destroyed && !this.intentionalStop && !securityDisconnect && !this.safetyLockout) {
           this.status = 'connecting';
           this.scheduleReconnect(this.reconnectBackoffMs);
@@ -205,6 +208,7 @@ class MinecraftBotRuntime extends EventEmitter {
     clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
     this.clearRuntimeIntervals();
+    this.killAura?.detachBot();
     const bot = this.bot;
     if (this.authCacheStore) await this.authCacheStore.persist(this.account.id,this.authCachePath).catch(error => this.emit('auth-cache-error',error));
     this.bot = null;
@@ -230,9 +234,35 @@ class MinecraftBotRuntime extends EventEmitter {
     this.lastError = null;
     return this.start();
   }
-  pause() { this.task = 'paused'; this.status = this.bot ? 'paused' : 'stopped'; return this.getStatus(); }
-  resume() { this.task = 'idle'; this.status = this.bot ? 'connected' : 'stopped'; return this.getStatus(); }
+  pause() {
+    this.killAura?.detachBot();
+    this.task = 'paused';
+    this.status = this.bot ? 'paused' : 'stopped';
+    const status = this.getStatus();
+    this.emit('status', status);
+    return status;
+  }
+  resume() {
+    this.task = this.killAura?.getStatus?.().enabled ? 'kill_aura' : 'idle';
+    this.status = this.bot ? 'connected' : 'stopped';
+    this.killAura?.attachBot(this.bot);
+    const status = this.getStatus();
+    this.emit('status', status);
+    return status;
+  }
   assignTask(task) { if (!TASKS.has(task)) throw new Error('Unsupported account task.'); this.task = task; return this.getStatus(); }
+  setKillAuraTargets(targets) {
+    if (!this.killAura) throw new Error('Kill Aura is unavailable for this runtime.');
+    return this.killAura.setTargets(targets);
+  }
+  setKillAuraEnabled(enabled) {
+    if (!this.killAura) throw new Error('Kill Aura is unavailable for this runtime.');
+    const status = this.killAura.setEnabled(enabled, this.bot);
+    this.task = status.enabled ? 'kill_aura' : 'idle';
+    this.status = this.bot ? 'connected' : 'stopped';
+    this.emit('status', this.getStatus());
+    return status;
+  }
   cancelTask() { return this.assignTask('idle'); }
   isCritical() { return Boolean(this.criticalOperation); }
   getStatus() {
@@ -243,10 +273,15 @@ class MinecraftBotRuntime extends EventEmitter {
       uptimeMs:this.startedAt ? Date.now()-this.startedAt.getTime() : 0,health:this.bot?.health ?? null,food:this.bot?.food ?? null,
       ping:this.bot?.player?.ping ?? null,dimension:this.bot?.game?.dimension || null,gameMode:this.bot?.game?.gameMode || null,
       xpLevel:this.bot?.experience?.level ?? null,inventory:items.map(item=>({name:item.name,displayName:item.displayName,count:item.count,slot:item.slot})),
-      nearbyPlayers:this.nearbySnapshot,lastThreat:this.lastThreat,authCachePath:undefined
+      nearbyPlayers:this.nearbySnapshot,lastThreat:this.lastThreat,killAura:this.killAura?.getStatus?.() || null,authCachePath:undefined
     };
   }
-  async destroy() { this.destroyed = true; await this.stop('Account removed'); this.removeAllListeners(); }
+  async destroy() {
+    this.destroyed = true;
+    this.killAura?.setEnabled(false);
+    await this.stop('Account removed');
+    this.removeAllListeners();
+  }
 }
 
 module.exports = { MinecraftBotRuntime, TASKS };
