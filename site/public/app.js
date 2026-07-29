@@ -1259,6 +1259,7 @@ function toggleTheme() {
 }
 
 function setActiveTab(tab) {
+  if (tab !== 'kill-aura') setKillAuraMobDropdownOpen(false);
   if (['admin', 'notifications', 'timeline', 'child-ai'].includes(tab) && state.currentUser?.role !== 'admin') return;
   const requestedButton = $(`.tab-button[data-tab="${tab}"]`);
   if (!requestedButton || requestedButton.hidden || requestedButton.classList.contains('account-tab-restricted')) {
@@ -3236,11 +3237,24 @@ function formatMobLabel(value) {
 
 function updateKillAuraSelectionSummary() {
   const summary = $('#killAuraSelectionSummary');
-  if (!summary) return;
   const count = state.killAuraSelectedMobs.size;
-  summary.textContent = count
-    ? `${count} mob${count === 1 ? '' : 's'} selected${state.killAuraTargetsDirty ? ' · unsaved changes' : ''}.`
-    : `No mobs selected${state.killAuraTargetsDirty ? ' · unsaved changes' : ''}.`;
+  const suffix = state.killAuraTargetsDirty ? ' · unsaved changes' : '';
+  if (summary) {
+    summary.textContent = count
+      ? `${count} mob${count === 1 ? '' : 's'} selected${suffix}`
+      : `No mobs selected${suffix}`;
+  }
+  const dropdownLabel = $('#killAuraMobDropdownLabel');
+  if (dropdownLabel) {
+    dropdownLabel.textContent = count
+      ? `${count} target${count === 1 ? '' : 's'}`
+      : 'Choose mobs';
+  }
+  const controlMeta = $('#killAuraControlMeta');
+  if (controlMeta) {
+    const enabled = Boolean(state.killAuraData?.state?.enabled);
+    controlMeta.textContent = `${enabled ? 'Enabled' : 'Disabled'} · ${count || 'No'} target${count === 1 ? '' : 's'}${state.killAuraTargetsDirty ? ' · Unsaved' : ''}`;
+  }
 }
 
 function renderKillAuraMobList() {
@@ -3266,7 +3280,14 @@ function renderKillAuraMobList() {
 function renderKillAura(payload = {}) {
   state.killAuraData = payload;
   const aura = payload.state || {};
-  $('#killAuraState').textContent = aura.active ? 'Active' : aura.enabled ? 'Waiting' : 'Disabled';
+  const stateLabel = aura.active ? 'Active' : aura.enabled ? 'Waiting' : 'Disabled';
+  $('#killAuraState').textContent = stateLabel;
+  $('#killAuraHeroState').textContent = stateLabel;
+  const stateOrb = $('#killAuraStateOrb');
+  if (stateOrb) {
+    stateOrb.classList.toggle('active', Boolean(aura.active));
+    stateOrb.classList.toggle('waiting', Boolean(aura.enabled && !aura.active));
+  }
   $('#killAuraUpdated').textContent = `last update: ${formatDate(aura.observedAt || aura.updatedAt)}`;
   setRollingNumber('#killAuraSessionKills', aura.sessionKills || 0);
   setRollingNumber('#killAuraTotalKills', payload.totalKills || 0);
@@ -3292,11 +3313,14 @@ function renderKillAura(payload = {}) {
   const killed = (payload.mobs || [])
     .filter(mob => Number(mob.kills) > 0)
     .sort((first, second) => Number(second.kills) - Number(first.kills) || first.name.localeCompare(second.name));
+  const historyCount = $('#killAuraHistoryCount');
+  if (historyCount) historyCount.textContent = `${killed.length} mob ${killed.length === 1 ? 'type' : 'types'}`;
+  const maxKills = Math.max(1, ...killed.map(mob => Number(mob.kills) || 0));
   renderStable('#killAuraKillStats', killed.length
     ? killed.map((mob, index) => `
-      <div class="rank-item">
+      <div class="kill-aura-history-item" style="--kill-share:${Math.round((Number(mob.kills) / maxKills) * 100)}%">
         <span class="rank-index">${index + 1}</span>
-        <span>${escapeHtml(mob.name)}</span>
+        <span class="kill-aura-history-name">${escapeHtml(mob.name)}</span>
         <strong>${formatNumber(mob.kills)}</strong>
       </div>
     `).join('')
@@ -3308,6 +3332,23 @@ function renderKillAura(payload = {}) {
 async function loadKillAura() {
   if (!state.currentUser) return;
   renderKillAura(await fetchJson('/api/kill-aura'));
+}
+
+function setKillAuraMobDropdownOpen(open) {
+  const menu = $('#killAuraMobDropdown');
+  const toggle = $('#killAuraMobDropdownToggle');
+  if (!menu || !toggle) return;
+  const nextOpen = Boolean(open);
+  menu.hidden = !nextOpen;
+  toggle.setAttribute('aria-expanded', String(nextOpen));
+  if (nextOpen) {
+    requestAnimationFrame(() => $('#killAuraSearch')?.focus());
+  }
+}
+
+function toggleKillAuraMobDropdown() {
+  const expanded = $('#killAuraMobDropdownToggle')?.getAttribute('aria-expanded') === 'true';
+  setKillAuraMobDropdownOpen(!expanded);
 }
 
 function handleKillAuraMobChange(event) {
@@ -3342,6 +3383,7 @@ async function saveKillAuraTargets() {
     state.killAuraTargetsDirty = false;
     if (state.killAuraData?.state) state.killAuraData.state.selectedMobs = targets;
     renderKillAuraMobList();
+    setKillAuraMobDropdownOpen(false);
     scheduleAdminControlRefresh();
   } catch (error) {
     setBanner(`Could not save Kill Aura targets: ${error.message}`);
@@ -5807,10 +5849,23 @@ $('#obsidianAnalyticsSettings')?.addEventListener('input', event => { event.curr
 $('#obsidianGoals')?.addEventListener('click', changeObsidianGoalState);
 $('#killAuraSearch')?.addEventListener('input', renderKillAuraMobList);
 $('#killAuraMobList')?.addEventListener('change', handleKillAuraMobChange);
+$('#killAuraMobDropdownToggle')?.addEventListener('click', toggleKillAuraMobDropdown);
+$('.kill-aura-control-panel')?.addEventListener('toggle', event => {
+  if (!event.currentTarget.open) setKillAuraMobDropdownOpen(false);
+});
 $('#killAuraSelectHostile')?.addEventListener('click', () => setKillAuraSelection(mob => mob.category === 'hostile'));
 $('#killAuraSelectAll')?.addEventListener('click', () => setKillAuraSelection(() => true));
 $('#killAuraClear')?.addEventListener('click', () => setKillAuraSelection(() => false));
 $('#killAuraSaveTargets')?.addEventListener('click', saveKillAuraTargets);
+document.addEventListener('pointerdown', event => {
+  if (!event.target.closest('.kill-aura-select')) setKillAuraMobDropdownOpen(false);
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && $('#killAuraMobDropdownToggle')?.getAttribute('aria-expanded') === 'true') {
+    setKillAuraMobDropdownOpen(false);
+    $('#killAuraMobDropdownToggle')?.focus();
+  }
+});
 $('#notificationsMarkAllRead')?.addEventListener('click', async () => {
   await postJson('/api/notifications/read', { all: true });
   await loadNotifications();
