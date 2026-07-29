@@ -33,7 +33,7 @@ class PostgresNotificationRepository {
   async createNotification(data) {
     const result = await this.pool.query(`
       INSERT INTO notifications (event_type, dedup_key, severity, status, title, message, metadata, correlation_id, resolved_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,CASE WHEN $4='resolved' THEN NOW() ELSE NULL END)
+      VALUES ($1,$2,$3,$4::varchar,$5,$6,$7,$8,CASE WHEN $4::varchar='resolved' THEN NOW() ELSE NULL END)
       RETURNING *
     `, [data.eventType, data.dedupKey, data.severity, data.status, data.title, data.message, data.metadata || {}, data.correlationId]);
     const row = result.rows[0];
@@ -66,7 +66,7 @@ class PostgresNotificationRepository {
   async addDelivery(notificationId, channel, status, error = null) {
     await this.pool.query(`
       INSERT INTO notification_deliveries (notification_id, channel, status, error, delivered_at)
-      VALUES ($1,$2,$3,$4,CASE WHEN $3='sent' THEN NOW() ELSE NULL END)
+      VALUES ($1,$2,$3::varchar,$4,CASE WHEN $3::varchar='sent' THEN NOW() ELSE NULL END)
     `, [notificationId, channel, status, error]);
   }
 }

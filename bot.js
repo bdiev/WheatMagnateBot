@@ -2683,7 +2683,17 @@ async function clearObsidianFarmCoordinates() {
 async function startConfiguredObsidianFarm() {
   const config = farm.getStatus().config;
   if (!config) throw new Error('Farm coordinates are not configured.');
-  if (!bot?.entity) throw new Error('Minecraft bot is offline.');
+  if (!bot?.entity) {
+    // Keep the operator's intent while Mineflayer reconnects. The spawn
+    // handler observes desiredEnabled and resumes the configured farm as soon
+    // as the bot is online again.
+    await beginObsidianFarmSession();
+    return {
+      started: false,
+      queued: true,
+      config
+    };
+  }
 
   await farm.prepareStart(bot);
   await beginObsidianFarmSession();
@@ -2704,6 +2714,7 @@ async function startConfiguredObsidianFarm() {
 
   return {
     started: farm.getStatus().enabled,
+    queued: false,
     config: farm.getStatus().config
   };
 }
@@ -2734,6 +2745,7 @@ async function toggleObsidianFarmFromControl() {
   return {
     enabled: true,
     started: result.started,
+    queued: result.queued,
     config: result.config
   };
 }

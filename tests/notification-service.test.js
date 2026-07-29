@@ -1,7 +1,11 @@
 'use strict';
 
 const assert = require('assert');
-const { NotificationService, MemoryNotificationRepository } = require('../notifications');
+const {
+  NotificationService,
+  MemoryNotificationRepository,
+  PostgresNotificationRepository
+} = require('../notifications');
 
 function rule(overrides = {}) {
   return {
@@ -79,6 +83,51 @@ async function run() {
   await pushService.report('low_tps', { key: 'push', metadata: { tps: 10 } });
   await pushService.report('low_tps', { key: 'push', metadata: { tps: 9 } });
   assert.equal(pushCalls, 1, 'deduplication within cooldown must suppress repeated push delivery');
+
+  const postgresQueries = [];
+  const postgresRepository = new PostgresNotificationRepository({
+    async query(sql, params) {
+      postgresQueries.push({ sql, params });
+      if (sql.includes('INSERT INTO notifications')) {
+        return {
+          rows: [{
+            id: 1,
+            event_type: 'command_failed',
+            dedup_key: 'command-1',
+            severity: 'warning',
+            status: 'resolved',
+            title: 'Command failed',
+            message: 'Failure',
+            metadata: {},
+            correlation_id: 'operation-1',
+            created_at: new Date()
+          }]
+        };
+      }
+      return { rows: [] };
+    }
+  });
+  await postgresRepository.createNotification({
+    eventType: 'command_failed',
+    dedupKey: 'command-1',
+    severity: 'warning',
+    status: 'resolved',
+    title: 'Command failed',
+    message: 'Failure',
+    metadata: {},
+    correlationId: 'operation-1'
+  });
+  await postgresRepository.addDelivery(1, 'site', 'sent');
+  assert.match(
+    postgresQueries[0].sql,
+    /\$4::varchar[\s\S]*CASE WHEN \$4::varchar='resolved'/,
+    'notification status parameters must use one explicit PostgreSQL type'
+  );
+  assert.match(
+    postgresQueries.at(-1).sql,
+    /\$3::varchar[\s\S]*CASE WHEN \$3::varchar='sent'/,
+    'delivery status parameters must use one explicit PostgreSQL type'
+  );
 
   console.log('NotificationService tests passed.');
 }
