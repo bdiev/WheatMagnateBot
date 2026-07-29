@@ -15,6 +15,7 @@ async function run() {
     const farm = require('../features/obsidianFarm');
     const {
       fillBucket,
+      findLavaCauldrons,
       getCauldronFailure,
       clearCauldronMemory,
       constants
@@ -25,6 +26,7 @@ async function run() {
     clearCauldronMemory();
 
     const position = new Vec3(1, 64, 0);
+    const fartherPosition = new Vec3(4, 64, 0);
     const cauldron = { name: 'lava_cauldron', position };
     const emptyBucket = { name: 'bucket', slot: 36, count: 1 };
     const lavaBucket = { name: 'lava_bucket', slot: 36, count: 1 };
@@ -58,6 +60,14 @@ async function run() {
         }
       }
     };
+
+    bot.findBlocks = () => [position, fartherPosition];
+    assert.deepStrictEqual(
+      findLavaCauldrons(bot, 5).map(candidate => candidate.toString()),
+      [fartherPosition.toString(), position.toString()],
+      'farthest cauldron should be attempted before nearer cauldrons'
+    );
+    bot.findBlocks = () => [position];
 
     await assert.rejects(
       fillBucket(bot),

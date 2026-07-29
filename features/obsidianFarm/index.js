@@ -4,7 +4,7 @@
  * Obsidian Farm Module
  *
  * Cycle:
- *   1. Find nearest lava cauldron (within maxCauldronDist blocks)
+ *   1. Find lava cauldrons (within maxCauldronDist blocks), farthest first
  *   2. Navigate to it, fill an empty bucket with lava
  *   3. Navigate to target (x, y, z), pour lava there
  *   4. Wait for the lava to become obsidian (water must already be present)
@@ -90,7 +90,6 @@ const cauldronReachStats = {
   samples: 0
 };
 const cauldronFailures = new Map();
-const cauldronSuccesses = new Map();
 
 // ── Exported helpers ───────────────────────────────────────────────────────────
 
@@ -1401,9 +1400,7 @@ function rememberCauldronFailure(position, reason, details = {}) {
 }
 
 function rememberCauldronSuccess(position) {
-  const key = getCauldronKey(position);
-  cauldronFailures.delete(key);
-  cauldronSuccesses.set(key, (cauldronSuccesses.get(key) || 0) + 1);
+  cauldronFailures.delete(getCauldronKey(position));
 }
 
 function getMiningDebugState(bot, block, attempt, expectedDigTime, holdMs, face, context = {}) {
@@ -1566,7 +1563,7 @@ async function digBlockWithTimeout(bot, block, attempt, context = {}) {
 }
 
 /**
- * Find the nearest lava cauldron block.
+ * Find lava cauldron blocks, ordered from farthest to nearest.
  * Handles both 1.17+ (lava_cauldron block) and old cauldron with metadata ≥ 3.
  */
 function findLavaCauldrons(bot, maxDistance, options = {}) {
@@ -1598,10 +1595,7 @@ function findLavaCauldrons(bot, maxDistance, options = {}) {
 
   const sorted = [...unique.values()]
     .sort((a, b) => {
-      const aSuccesses = cauldronSuccesses.get(getCauldronKey(a)) || 0;
-      const bSuccesses = cauldronSuccesses.get(getCauldronKey(b)) || 0;
-      if (aSuccesses !== bSuccesses) return bSuccesses - aSuccesses;
-      return bot.entity.position.distanceSquared(a) - bot.entity.position.distanceSquared(b);
+      return bot.entity.position.distanceSquared(b) - bot.entity.position.distanceSquared(a);
     });
 
   return options.includeCoolingDown
@@ -2418,10 +2412,10 @@ module.exports = {
   loadPlugin,
   __test: {
     fillBucket,
+    findLavaCauldrons,
     getCauldronFailure,
     clearCauldronMemory() {
       cauldronFailures.clear();
-      cauldronSuccesses.clear();
     },
     constants: {
       CAULDRON_FAILURE_COOLDOWN_MS,
