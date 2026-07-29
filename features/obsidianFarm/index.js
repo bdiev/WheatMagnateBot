@@ -41,7 +41,8 @@ const OBSIDIAN_DIG_STABILITY_MS = 50;
 const OBSIDIAN_DIG_MAX_ATTEMPTS = 3;
 const CAULDRON_FILL_ATTEMPTS_PER_BLOCK = 1;
 const CAULDRON_FILL_CONFIRM_TIMEOUT_MS = 200;
-const CAULDRON_FAILURE_COOLDOWN_MS = 15_000;
+const CAULDRON_FAILURE_COOLDOWN_MS = 500;
+const CAULDRON_RETRY_DELAY_MS = 100;
 // Wait generously for the server/chunk update. This does not resend the bucket
 // action, so a slow response cannot cause placement at a second location.
 const LAVA_PLACEMENT_CONFIRM_TIMEOUT_MS = 5_000;
@@ -51,6 +52,7 @@ const PLACEMENT_RECHECK_DELAY_MS = 750;
 const LOW_PICKAXE_DURABILITY_CODE = 'LOW_PICKAXE_DURABILITY';
 const RESOURCE_EXHAUSTED_CODE = 'RESOURCE_EXHAUSTED';
 const PLACEMENT_RECHECK_CODE = 'PLACEMENT_STATE_RECHECK';
+const CAULDRON_RETRY_CODE = 'CAULDRON_RETRY';
 const SUPPLY_BARREL_RADIUS = 5;
 const FOOD_ITEM_PARTS = [
   'bread',
@@ -1567,7 +1569,7 @@ async function digBlockWithTimeout(bot, block, attempt, context = {}) {
  * Find the nearest lava cauldron block.
  * Handles both 1.17+ (lava_cauldron block) and old cauldron with metadata ≥ 3.
  */
-function findLavaCauldrons(bot, maxDistance) {
+function findLavaCauldrons(bot, maxDistance, options = {}) {
   const positions = [];
 
   // Modern: dedicated lava_cauldron block
@@ -1594,14 +1596,17 @@ function findLavaCauldrons(bot, maxDistance) {
   const unique = new Map();
   for (const pos of positions) unique.set(pos.toString(), pos);
 
-  return [...unique.values()]
-    .filter(pos => !getCauldronFailure(pos))
+  const sorted = [...unique.values()]
     .sort((a, b) => {
       const aSuccesses = cauldronSuccesses.get(getCauldronKey(a)) || 0;
       const bSuccesses = cauldronSuccesses.get(getCauldronKey(b)) || 0;
       if (aSuccesses !== bSuccesses) return bSuccesses - aSuccesses;
       return bot.entity.position.distanceSquared(a) - bot.entity.position.distanceSquared(b);
     });
+
+  return options.includeCoolingDown
+    ? sorted
+    : sorted.filter(pos => !getCauldronFailure(pos));
 }
 
 async function waitForLavaBucket(bot, timeoutMs = CAULDRON_FILL_CONFIRM_TIMEOUT_MS) {
@@ -1637,17 +1642,30 @@ async function fillBucket(bot, context = {}) {
     botPosition: getBotDebugPosition(bot),
     inventory: getInventoryDebugSummary(bot)
   });
-  const cauldronPositions = findLavaCauldrons(bot, maxCauldronDist);
+  const detectedCauldronPositions = findLavaCauldrons(bot, maxCauldronDist, {
+    includeCoolingDown: true
+  });
+  const cauldronPositions = detectedCauldronPositions.filter(
+    position => !getCauldronFailure(position)
+  );
   writeFarmDebug('cauldron_search_completed', {
     ...context,
     durationMs: Date.now() - startedAt,
+    detectedCandidates: detectedCauldronPositions.map(position => position.toString()),
     candidates: cauldronPositions.map(position => position.toString())
   });
-  if (cauldronPositions.length === 0) {
+  if (detectedCauldronPositions.length === 0) {
     throw new Error(
       `No lava cauldron found within ${maxCauldronDist} blocks. ` +
       'Place a lava cauldron nearby and retry.'
     );
+  }
+  if (cauldronPositions.length === 0) {
+    const err = new Error(
+      `All ${detectedCauldronPositions.length} detected lava cauldron(s) are briefly cooling down after failed clicks.`
+    );
+    err.code = CAULDRON_RETRY_CODE;
+    throw err;
   }
 
   setFarmPhase('filling', context);
@@ -1774,10 +1792,12 @@ async function fillBucket(bot, context = {}) {
     }
   }
 
-  throw new Error(
+  const err = new Error(
     `Could not fill bucket from ${cauldronPositions.length} lava cauldron(s) within ${maxCauldronDist} blocks. ` +
     `Attempts: ${failures.slice(0, 8).join(' | ')}`
   );
+  err.code = CAULDRON_RETRY_CODE;
+  throw err;
 }
 
 /** Phase 3+4: navigate to target, place lava. */
@@ -2248,9 +2268,15 @@ async function persistentLoop(bot, notify) {
     if (!farm.enabled) return;
 
     farm.lastErrorMessage = err.message;
-    farmFailureStartedAt ||= Date.now();
-    const stalledSeconds = Math.max(0, Math.round((Date.now() - farmFailureStartedAt) / 1000));
-    retryDelay = err.code === PLACEMENT_RECHECK_CODE
+    if (err.code !== CAULDRON_RETRY_CODE) {
+      farmFailureStartedAt ||= Date.now();
+    }
+    const stalledSeconds = farmFailureStartedAt == null
+      ? 0
+      : Math.max(0, Math.round((Date.now() - farmFailureStartedAt) / 1000));
+    retryDelay = err.code === CAULDRON_RETRY_CODE
+      ? CAULDRON_RETRY_DELAY_MS
+      : err.code === PLACEMENT_RECHECK_CODE
       ? PLACEMENT_RECHECK_DELAY_MS
       : (
           err.code === RESOURCE_EXHAUSTED_CODE ||
@@ -2268,7 +2294,10 @@ async function persistentLoop(bot, notify) {
         retryInMs: retryDelay
       }
     );
-    if (err.code === LOW_PICKAXE_DURABILITY_CODE) {
+    if (err.code === CAULDRON_RETRY_CODE) {
+      // A dry/temporarily rejected cauldron is routine. Retry quickly without
+      // turning the short refill wait into a farm-stalled notification.
+    } else if (err.code === LOW_PICKAXE_DURABILITY_CODE) {
       activeFarmNotificationTypes.add('low_pickaxe_durability');
       const percent = Number(err.message.match(/has\s+([\d.]+)%/i)?.[1]);
       notify?.({ eventType: 'low_pickaxe_durability', key: 'obsidian-farm', title: 'Low pickaxe durability', message: err.message, metadata: { errorCode: err.code, percent } });
@@ -2386,5 +2415,18 @@ module.exports = {
   getDetailedStatus,
   getDebugLoggingEnabled,
   setDebugLoggingEnabled,
-  loadPlugin
+  loadPlugin,
+  __test: {
+    fillBucket,
+    getCauldronFailure,
+    clearCauldronMemory() {
+      cauldronFailures.clear();
+      cauldronSuccesses.clear();
+    },
+    constants: {
+      CAULDRON_FAILURE_COOLDOWN_MS,
+      CAULDRON_RETRY_DELAY_MS,
+      CAULDRON_RETRY_CODE
+    }
+  }
 };
