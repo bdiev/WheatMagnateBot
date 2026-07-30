@@ -17,6 +17,11 @@ assert.doesNotMatch(
   /DELETE FROM game_chat_messages WHERE created_at < NOW\(\) - INTERVAL '30 days'/,
   'recorded game chat must not be deleted by the old 30-day retention rule'
 );
+assert.match(
+  botSource,
+  /const wmMatch = message\.match\([\s\S]*?if \(wmMatch\) \{\s*\/\/[\s\S]*?scheduleGameChatForward\(username, message, 'chat'\);\s*await handleWmCommand/,
+  '!wm commands must use the shared chat forwarder so message/messagestr echoes are deduplicated'
+);
 assert.match(serverSource, /beforeMessageId/, 'player chat history must support stable pagination');
 assert.match(serverSource, /WHERE id <= \$2::bigint/, 'chat API must load messages before the exact message ID');
 assert.match(serverSource, /WHERE id > \$2::bigint/, 'chat API must load messages after the exact message ID');

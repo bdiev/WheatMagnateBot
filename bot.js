@@ -7984,7 +7984,10 @@ function createBot() {
 
     const wmMatch = message.match(/^!wm(?:\s+([\s\S]*))?$/i);
     if (wmMatch) {
-      await sendGameChatMessageToDiscord(username, message);
+      // Minecraft exposes the same line through chat, message, and messagestr.
+      // Route commands through the shared forwarder so the raw events cannot
+      // persist and mirror a second copy of the command.
+      scheduleGameChatForward(username, message, 'chat');
       await handleWmCommand(username, wmMatch[1] || '');
       return;
     }
