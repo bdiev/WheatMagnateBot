@@ -1304,7 +1304,9 @@ function toggleTheme() {
 }
 
 function setActiveTab(tab) {
-  if (tab !== 'kill-aura') setKillAuraMobDropdownOpen(false);
+  if (tab !== 'kill-aura' && $('#killAuraTargetModal')?.classList.contains('is-open')) {
+    setKillAuraTargetModalOpen(false, { restoreSelection: true, restoreFocus: false });
+  }
   if (['admin', 'notifications', 'timeline', 'child-ai'].includes(tab) && state.currentUser?.role !== 'admin') return;
   const requestedButton = $(`.tab-button[data-tab="${tab}"]`);
   if (!requestedButton || requestedButton.hidden || requestedButton.classList.contains('account-tab-restricted')) {
@@ -3386,7 +3388,7 @@ async function loadKillAura() {
   renderKillAura(await fetchJson('/api/kill-aura'));
 }
 
-function setKillAuraTargetModalOpen(open, { restoreSelection = false } = {}) {
+function setKillAuraTargetModalOpen(open, { restoreSelection = false, restoreFocus = true } = {}) {
   const modal = $('#killAuraTargetModal');
   const opener = $('#killAuraTargetModalOpen');
   if (!modal || !opener) return;
@@ -3413,7 +3415,7 @@ function setKillAuraTargetModalOpen(open, { restoreSelection = false } = {}) {
   document.body.classList.remove('kill-aura-modal-open');
   const search = $('#killAuraSearch');
   if (search) search.value = '';
-  requestAnimationFrame(() => opener.focus());
+  if (restoreFocus) requestAnimationFrame(() => opener.focus());
 }
 
 function closeKillAuraTargetModal() {

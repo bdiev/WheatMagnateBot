@@ -32,6 +32,8 @@ assert.match(stylesSource, /\.kill-aura-target-modal\s*\{[^}]*pointer-events:\s*
 assert.match(stylesSource, /\.kill-aura-target-modal\.is-open\s*\{[^}]*pointer-events:\s*auto;/s, 'only the visible dialog may intercept clicks');
 assert.match(appSource, /modal\.classList\.add\('is-open'\)/);
 assert.match(appSource, /modal\.classList\.remove\('is-open'\)/);
+assert.doesNotMatch(appSource, /setKillAuraMobDropdownOpen/, 'removed dropdown helpers must not break navigation');
+assert.match(appSource, /setKillAuraTargetModalOpen\(false, \{ restoreSelection: true, restoreFocus: false \}\)/, 'tab navigation must close the target dialog safely');
 assert.doesNotMatch(indexSource, /<details class="panel admin-command-panel kill-aura-control-panel"/);
 assert.doesNotMatch(
   indexSource,
