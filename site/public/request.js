@@ -279,30 +279,36 @@ function adminRequestCard(request) {
   const coordinateLock = locked ? ' disabled' : '';
   const coordinateReadonly = locked ? ' readonly' : '';
   return `<article class="admin-request" data-request-id="${escapeHtml(request.id)}">
-    <div>
-      <div class="request-card-head"><span class="request-id">Request #${escapeHtml(request.id)}</span><span class="status status-${escapeHtml(request.status)}">${escapeHtml(STATUS_LABELS[request.status] || request.status)}</span></div>
-      <div class="requester-line">${avatar}<span><strong>${escapeHtml(request.minecraftUsername)}</strong> · ${escapeHtml(requester.displayName || requester.discordUsername || 'Discord')}</span></div>
-      <p class="request-resources">${escapeHtml(request.resources)}</p>
-      <div class="request-meta"><span>Created ${escapeHtml(formatDate(request.createdAt))}</span>${request.notifiedAt ? `<span>Sent ${escapeHtml(formatDate(request.notifiedAt))}</span>` : ''}</div>
-    </div>
-    <form class="admin-form">
-      <fieldset class="admin-coordinate-picker" data-original-coordinates="${escapeHtml(request.deliveryCoordinates || '')}">
-        <legend>Delivery coordinates</legend>
-        <label><span>Dimension</span><select name="deliveryDimension"${coordinateLock}>${coordinateOption('Overworld', coordinates.dimension)}${coordinateOption('Nether', coordinates.dimension)}${coordinateOption('The End', coordinates.dimension)}</select></label>
-        <div class="admin-coordinate-grid">
-          <label><span>X</span><input name="deliveryX" inputmode="numeric" maxlength="10" placeholder="120" value="${escapeHtml(coordinates.x)}"${coordinateReadonly}></label>
-          <label><span>Y</span><input name="deliveryY" inputmode="numeric" maxlength="10" placeholder="64" value="${escapeHtml(coordinates.y)}"${coordinateReadonly}></label>
-          <label><span>Z</span><input name="deliveryZ" inputmode="numeric" maxlength="10" placeholder="-840" value="${escapeHtml(coordinates.z)}"${coordinateReadonly}></label>
-        </div>
-      </fieldset>
-      <label><span>Note for the player</span><textarea name="adminNote" maxlength="500" ${locked ? 'readonly' : ''}>${escapeHtml(request.adminNote || '')}</textarea></label>
-      <div class="admin-actions">
-        ${request.status === 'pending' ? '<button class="small-action" type="button" data-status="preparing">Start preparing</button>' : ''}
-        ${['pending', 'preparing'].includes(request.status) ? '<button class="small-action ready" type="button" data-status="ready">Ready &amp; Queue</button><button class="small-action danger" type="button" data-status="cancelled">Cancel</button>' : ''}
-        ${request.status === 'ready' && !request.deliveryQueued ? '<button class="small-action ready" type="button" data-status="ready">Retry queueing</button>' : ''}
-        ${request.status === 'notified' ? '<button class="small-action ready" type="button" data-status="completed">Complete</button>' : ''}
+    <button class="admin-request-summary" type="button" data-admin-toggle aria-expanded="false">
+      <span class="admin-summary-player">${avatar}<span class="admin-summary-copy"><strong>${escapeHtml(request.minecraftUsername)}</strong><small><span>Request #${escapeHtml(request.id)}</span><span>Created ${escapeHtml(formatDate(request.createdAt))}</span></small></span></span>
+      <span class="status status-${escapeHtml(request.status)}">${escapeHtml(STATUS_LABELS[request.status] || request.status)}</span>
+      <span class="admin-summary-chevron" aria-hidden="true">⌄</span>
+    </button>
+    <div class="admin-request-details" hidden>
+      <div class="admin-request-order">
+        <span class="request-section-kicker">Order details</span>
+        <p class="request-resources">${escapeHtml(request.resources)}</p>
+        <div class="request-meta"><span>Discord: ${escapeHtml(requester.displayName || requester.discordUsername || 'Unknown')}</span>${request.notifiedAt ? `<span>Sent ${escapeHtml(formatDate(request.notifiedAt))}</span>` : ''}</div>
       </div>
-    </form>
+      <form class="admin-form">
+        <fieldset class="admin-coordinate-picker" data-original-coordinates="${escapeHtml(request.deliveryCoordinates || '')}">
+          <legend>Delivery coordinates</legend>
+          <label><span>Dimension</span><select name="deliveryDimension"${coordinateLock}>${coordinateOption('Overworld', coordinates.dimension)}${coordinateOption('Nether', coordinates.dimension)}${coordinateOption('The End', coordinates.dimension)}</select></label>
+          <div class="admin-coordinate-grid">
+            <label><span>X</span><input name="deliveryX" inputmode="numeric" maxlength="10" placeholder="120" value="${escapeHtml(coordinates.x)}"${coordinateReadonly}></label>
+            <label><span>Y</span><input name="deliveryY" inputmode="numeric" maxlength="10" placeholder="64" value="${escapeHtml(coordinates.y)}"${coordinateReadonly}></label>
+            <label><span>Z</span><input name="deliveryZ" inputmode="numeric" maxlength="10" placeholder="-840" value="${escapeHtml(coordinates.z)}"${coordinateReadonly}></label>
+          </div>
+        </fieldset>
+        <label><span>Note for the player</span><textarea name="adminNote" maxlength="500" ${locked ? 'readonly' : ''}>${escapeHtml(request.adminNote || '')}</textarea></label>
+        <div class="admin-actions">
+          ${request.status === 'pending' ? '<button class="small-action" type="button" data-status="preparing">Start preparing</button>' : ''}
+          ${['pending', 'preparing'].includes(request.status) ? '<button class="small-action ready" type="button" data-status="ready">Ready &amp; Queue</button><button class="small-action danger" type="button" data-status="cancelled">Cancel</button>' : ''}
+          ${request.status === 'ready' && !request.deliveryQueued ? '<button class="small-action ready" type="button" data-status="ready">Retry queueing</button>' : ''}
+          ${request.status === 'notified' ? '<button class="small-action ready" type="button" data-status="completed">Complete</button>' : ''}
+        </div>
+      </form>
+    </div>
   </article>`;
 }
 
@@ -440,6 +446,16 @@ $('#refreshRequests').addEventListener('click', () => loadRequests().catch(error
 $('#refreshAdmin').addEventListener('click', () => loadAdminRequests().catch(error => showMessage(error.message, true)));
 $('#adminStatusFilter').addEventListener('change', () => loadAdminRequests().catch(error => showMessage(error.message, true)));
 $('#adminRequestList').addEventListener('click', event => {
+  const toggle = event.target.closest('[data-admin-toggle]');
+  if (toggle) {
+    const card = toggle.closest('[data-request-id]');
+    const details = card.querySelector('.admin-request-details');
+    const expanded = toggle.getAttribute('aria-expanded') !== 'true';
+    toggle.setAttribute('aria-expanded', String(expanded));
+    card.classList.toggle('expanded', expanded);
+    details.hidden = !expanded;
+    return;
+  }
   const button = event.target.closest('[data-status]');
   if (!button) return;
   const card = button.closest('[data-request-id]');

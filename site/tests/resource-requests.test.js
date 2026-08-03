@@ -1,6 +1,8 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const {
   ACTIVE_STATUSES,
   normalizeCoordinates,
@@ -8,6 +10,9 @@ const {
   normalizeRequestText,
   publicRequest
 } = require('../resource-requests');
+
+const requestClientSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'request.js'), 'utf8');
+const requestStylesSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'request.css'), 'utf8');
 
 function testMinecraftUsernameValidation() {
   assert.equal(normalizeMinecraftUsername(' WheatMagnate '), 'WheatMagnate');
@@ -45,8 +50,18 @@ function testActiveStatusContract() {
   assert.deepEqual(ACTIVE_STATUSES, ['pending', 'preparing', 'ready', 'notified']);
 }
 
+function testCompactAdminRequestCards() {
+  assert.match(requestClientSource, /data-admin-toggle aria-expanded="false"/, 'admin requests must start as compact summaries');
+  assert.match(requestClientSource, /class="admin-request-details" hidden/, 'full request controls must start collapsed');
+  assert.match(requestClientSource, /details\.hidden = !expanded/, 'clicking an admin summary must toggle its details');
+  assert.match(requestStylesSource, /\.request-admin-list\s*\{[^}]*grid-template-columns:\s*repeat\(4,/s, 'admin request tiles must use four desktop columns');
+  assert.match(requestStylesSource, /\.admin-request\s*\{[^}]*aspect-ratio:\s*1;/s, 'collapsed admin request tiles must remain square');
+  assert.match(requestStylesSource, /\.admin-request\.expanded\s*\{[^}]*grid-column:\s*1\s*\/\s*-1;[^}]*aspect-ratio:\s*auto;/s, 'expanded requests must span the full grid width');
+}
+
 testMinecraftUsernameValidation();
 testContentNormalization();
 testPublicRequestDoesNotLeakCommandInternals();
 testActiveStatusContract();
+testCompactAdminRequestCards();
 console.log('resource request tests passed');
