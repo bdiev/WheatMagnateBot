@@ -224,6 +224,13 @@ function requestCard(request) {
 }
 
 function renderRequests() {
+  const activeCount = state.requests.filter(request => ['pending', 'preparing', 'ready', 'notified'].includes(request.status)).length;
+  const quota = $('#requestQuota');
+  const historyCount = $('#requestHistoryCount');
+  if (quota) quota.textContent = `${activeCount} / 3`;
+  if (historyCount) historyCount.textContent = state.requests.length
+    ? `${state.requests.length} ${state.requests.length === 1 ? 'request' : 'requests'}`
+    : 'No requests';
   $('#requestList').innerHTML = state.requests.length
     ? state.requests.map(requestCard).join('')
     : '<div class="empty-state">Your requests will appear here.</div>';

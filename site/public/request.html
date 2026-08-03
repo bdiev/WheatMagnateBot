@@ -9,15 +9,15 @@
     <link rel="icon" type="image/png" href="/items/Wheat.png">
     <script src="/theme-init.js?v=136"></script>
     <link rel="stylesheet" href="/styles.css?v=154">
-    <link rel="stylesheet" href="/request.css?v=5">
-    <script src="/request.js?v=3" defer></script>
+    <link rel="stylesheet" href="/request.css?v=6">
+    <script src="/request.js?v=4" defer></script>
   </head>
   <body class="request-page">
     <main class="shell request-shell">
       <header class="topbar request-topbar">
         <div>
-          <p class="eyebrow">Resource delivery</p>
-          <h1>WheatMagnateBot <span class="minedings-mark" aria-hidden="true">W</span></h1>
+          <p class="eyebrow">WheatMagnateBot</p>
+          <h1>Resource Requests <span class="minedings-mark" aria-hidden="true">W</span></h1>
         </div>
         <div class="topbar-actions">
           <a class="ghost-button request-nav-link" href="/">Dashboard</a>
@@ -30,43 +30,42 @@
         </div>
       </header>
 
-      <section class="panel request-intro">
-        <div class="panel-head">
-          <div>
-            <h2>Resource Requests</h2>
-            <p>Request resources, track their status, and receive the delivery coordinates in-game.</p>
-          </div>
-          <img class="request-title-icon" src="/items/Writable_Book.png" alt="">
-        </div>
+      <section class="request-intro">
         <div class="request-intro-body">
-          <div>
-            <p class="eyebrow">Minecraft delivery</p>
+          <div class="request-intro-copy-wrap">
+            <span class="request-availability"><i aria-hidden="true"></i> Delivery queue open</span>
+            <p class="eyebrow">Minecraft resource courier</p>
             <h2 class="request-intro-title">Resources delivered where you need them</h2>
-            <p class="muted request-intro-copy">Once your order is ready, its coordinates are queued for the game bot. If you are offline, the bot will wait for your next server login and send them through <code>/w</code>.</p>
+            <p class="muted request-intro-copy">Build an order from the Minecraft catalog and follow it from request to delivery. When it is ready, the bot privately sends the coordinates through <code>/w</code>.</p>
           </div>
-          <div class="request-intro-action">
+          <div class="request-intro-action" aria-label="Request access">
+            <div class="request-hero-package" aria-hidden="true">
+              <span class="request-package-ring"></span>
+              <img src="/items/Chest.png" alt="">
+              <img src="/items/Compass.png" alt="">
+            </div>
+            <div>
+              <span class="request-action-label">Private order portal</span>
+              <strong>Your requests stay tied to your Discord account.</strong>
+            </div>
             <a id="heroAction" class="request-primary-link" href="/api/request/auth/start">Sign in with Discord</a>
-            <small id="authHint">Discord keeps your requests private and tied to your account.</small>
+            <small id="authHint">Sign in once to create and track deliveries.</small>
           </div>
         </div>
-      </section>
-
-      <section class="request-steps" aria-label="How it works">
-        <article class="stat request-step">
-          <span class="request-step-number">01</span>
-          <strong>Describe your order</strong>
-          <small>List the resources and quantities you need.</small>
-        </article>
-        <article class="stat request-step">
-          <span class="request-step-number">02</span>
-          <strong>Wait for delivery</strong>
-          <small>Your request status will update on this page.</small>
-        </article>
-        <article class="stat request-step">
-          <span class="request-step-number">03</span>
-          <strong>Receive coordinates</strong>
-          <small>The bot will whisper the location when you join.</small>
-        </article>
+        <div class="request-steps" aria-label="How it works">
+          <article class="request-step">
+            <span class="request-step-number">01</span>
+            <div><strong>Build your order</strong><small>Choose items and quantities.</small></div>
+          </article>
+          <article class="request-step">
+            <span class="request-step-number">02</span>
+            <div><strong>We deliver it</strong><small>Track progress on this page.</small></div>
+          </article>
+          <article class="request-step">
+            <span class="request-step-number">03</span>
+            <div><strong>Get coordinates</strong><small>Receive a private in-game whisper.</small></div>
+          </article>
+        </div>
       </section>
 
       <div id="pageMessage" class="request-message" role="status" aria-live="polite" hidden></div>
@@ -74,7 +73,7 @@
       <section id="requesterApp" class="request-portal-grid" hidden>
         <article class="panel request-form-panel">
           <div class="panel-head">
-            <div><h2>New Request</h2><p>Tell us what you need delivered.</p></div>
+            <div><span class="request-section-kicker">Order builder</span><h2>New Request</h2><p>Choose resources, set quantities, and send the order.</p></div>
             <img class="request-panel-icon" src="/items/Chest.png" alt="">
           </div>
           <form id="requestForm" class="request-form">
@@ -114,7 +113,7 @@
               <textarea id="resources" name="resources" minlength="3" maxlength="2000" rows="7" placeholder="For example:&#10;4 shulker boxes of Stone&#10;2 stacks of Oak Logs&#10;32 items of Glass" required></textarea>
             </label>
             <div class="request-form-footer">
-              <small class="muted">You may have up to three active requests at once.</small>
+              <div class="request-quota"><span>Active requests</span><strong id="requestQuota">0 / 3</strong></div>
               <button id="requestSubmit" type="submit">Submit Request</button>
             </div>
           </form>
@@ -122,8 +121,8 @@
 
         <section class="panel request-history-panel">
           <div class="panel-head">
-            <div><h2>Your Requests</h2><p>Order history and current delivery status.</p></div>
-            <button id="refreshRequests" class="ghost-button request-icon-button" type="button" aria-label="Refresh">↻</button>
+            <div><span class="request-section-kicker">Delivery timeline</span><h2>Your Requests</h2><p>Order history and current delivery status.</p></div>
+            <div class="request-history-tools"><span id="requestHistoryCount" class="request-history-count">No requests</span><button id="refreshRequests" class="ghost-button request-icon-button" type="button" aria-label="Refresh">↻</button></div>
           </div>
           <div id="requestList" class="request-list"></div>
         </section>
