@@ -1189,6 +1189,7 @@
 
 .request-quota strong,
 .request-history-count {
+  flex: 0 0 auto;
   border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--line));
   border-radius: 999px;
   padding: 5px 8px;
@@ -1198,6 +1199,7 @@
   font-weight: 900;
   letter-spacing: .035em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .request-history-tools {
