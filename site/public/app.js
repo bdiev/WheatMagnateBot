@@ -3371,7 +3371,7 @@ function renderKillAura(payload = {}) {
     ? killed.map((mob, index) => `
       <div class="rank-item">
         <span class="rank-index">${index + 1}</span>
-        <span class="aura-mob-name"><img src="${mob.id === 'blaze' ? '/mobs/Blaze.png' : '/items/Target.png'}" alt=""><span>${escapeHtml(mob.name)}</span></span>
+        <span class="aura-mob-name"><img src="${mob.id === 'blaze' ? '/items/Blaze_Powder.png' : '/items/Target.png'}" alt=""><span>${escapeHtml(mob.name)}</span></span>
         <strong>${formatNumber(mob.kills)}</strong>
       </div>
     `).join('')
