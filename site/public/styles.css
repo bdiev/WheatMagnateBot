@@ -6315,6 +6315,162 @@ body.search-focus-active #logoutButton {
   white-space: nowrap;
 }
 
+body.kill-aura-modal-open {
+  overflow: hidden;
+}
+
+.kill-aura-target-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 180;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+}
+
+.kill-aura-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, #05070b 72%, transparent);
+  backdrop-filter: blur(8px);
+  animation: killAuraModalFade 160ms ease both;
+}
+
+.kill-aura-modal-dialog {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto auto minmax(220px, 1fr) auto;
+  width: min(820px, calc(100vw - 32px));
+  max-height: min(780px, calc(100dvh - 44px));
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--aura-accent) 42%, var(--line));
+  border-radius: 18px;
+  color: var(--text);
+  background: var(--panel);
+  box-shadow: 0 28px 90px rgba(0, 0, 0, .46);
+  animation: killAuraModalIn 190ms cubic-bezier(.16, 1, .3, 1) both;
+}
+
+.kill-aura-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--line);
+  background:
+    radial-gradient(circle at 0 0, var(--aura-glow), transparent 52%),
+    var(--panel-soft);
+}
+
+.kill-aura-modal-head .eyebrow {
+  margin-bottom: 3px;
+  color: var(--aura-accent-strong);
+  font-size: 10px;
+}
+
+.kill-aura-modal-head h2 {
+  font-size: 19px;
+}
+
+#tab-kill-aura .kill-aura-modal-close {
+  width: 38px;
+  min-width: 38px;
+  height: 38px;
+  min-height: 38px;
+  padding: 0;
+  border-radius: 11px;
+  font-size: 24px;
+  font-weight: 500;
+}
+
+.kill-aura-modal-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.kill-aura-modal-toolbar .kill-aura-search input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  padding: 0 14px;
+  color: var(--text);
+  background: var(--panel-soft);
+  font: inherit;
+  outline: none;
+}
+
+.kill-aura-modal-toolbar .kill-aura-search input:focus {
+  border-color: var(--aura-accent);
+  box-shadow: 0 0 0 3px var(--aura-glow);
+}
+
+.kill-aura-modal-toolbar .kill-aura-quick-actions button {
+  min-width: 72px;
+  min-height: 42px;
+  border-radius: 11px;
+}
+
+#tab-kill-aura .kill-aura-modal-list {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-content: start;
+  max-height: none;
+  min-height: 0;
+  padding: 16px;
+  background: color-mix(in srgb, var(--panel-soft) 50%, var(--panel));
+}
+
+#tab-kill-aura .kill-aura-modal-list .kill-aura-mob-option {
+  min-height: 44px;
+  background: var(--panel);
+}
+
+.kill-aura-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 16px;
+  border-top: 1px solid var(--line);
+  background: var(--panel-soft);
+}
+
+.kill-aura-modal-footer p {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.kill-aura-modal-footer > div {
+  display: flex;
+  gap: 8px;
+}
+
+#tab-kill-aura .kill-aura-modal-footer button {
+  min-height: 40px;
+  border-radius: 11px;
+}
+
+#tab-kill-aura #killAuraSaveTargets {
+  color: #201804;
+  background: linear-gradient(180deg, #f2ca59, #dba52c);
+}
+
+@keyframes killAuraModalFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes killAuraModalIn {
+  from { opacity: 0; transform: translateY(12px) scale(.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
 #tab-kill-aura button:focus-visible,
 #tab-kill-aura summary:focus-visible,
 #tab-kill-aura input:focus-visible {
@@ -6324,17 +6480,23 @@ body.search-focus-active #logoutButton {
 
 @media (max-width: 960px) {
   .kill-aura-stats-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    display: flex;
+    grid-column: 1 / -1;
+    gap: 10px;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    padding: 2px 1px 8px;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: thin;
   }
 
   .kill-aura-stats-grid .stat,
   .kill-aura-stats-grid .stat:nth-child(-n + 3),
   .kill-aura-stats-grid .stat:nth-child(-n + 2) {
+    flex: 0 0 min(220px, 72vw);
     grid-column: auto;
-  }
-
-  .kill-aura-stats-grid .aura-total-stat {
-    grid-column: 1 / -1;
+    scroll-snap-align: start;
   }
 }
 
@@ -6344,7 +6506,6 @@ body.search-focus-active #logoutButton {
   }
 
   .kill-aura-stats-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
   }
 
@@ -6352,10 +6513,6 @@ body.search-focus-active #logoutButton {
   .kill-aura-stats-grid .stat:nth-child(-n + 3),
   .kill-aura-stats-grid .stat:nth-child(-n + 2) {
     grid-column: auto;
-  }
-
-  .kill-aura-stats-grid .aura-total-stat {
-    grid-column: 1 / -1;
   }
 
   #tab-kill-aura .aura-stat {
@@ -6373,22 +6530,37 @@ body.search-focus-active #logoutButton {
     min-height: 128px;
   }
 
-  #tab-kill-aura .kill-aura-control-panel[open] .kill-aura-control-summary {
-    height: 128px;
+  .kill-aura-modal-dialog {
+    max-height: calc(100dvh - 24px);
   }
 
-  #tab-kill-aura .kill-aura-save-row {
+  .kill-aura-modal-toolbar {
     grid-template-columns: 1fr;
+  }
+
+  .kill-aura-modal-toolbar .kill-aura-quick-actions {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  #tab-kill-aura .kill-aura-modal-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .kill-aura-modal-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .kill-aura-modal-footer > div {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
   }
 }
 
 @media (max-width: 460px) {
   .kill-aura-stats-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .kill-aura-stats-grid .aura-total-stat {
-    grid-column: auto;
+    display: flex;
   }
 
   #tab-kill-aura .aura-stat {
@@ -6413,6 +6585,27 @@ body.search-focus-active #logoutButton {
     justify-self: end;
     width: auto;
     text-align: right;
+  }
+
+  .kill-aura-target-modal {
+    padding: 8px;
+  }
+
+  .kill-aura-modal-dialog {
+    width: calc(100vw - 16px);
+    max-height: calc(100dvh - 16px);
+    border-radius: 14px;
+  }
+
+  .kill-aura-modal-head,
+  .kill-aura-modal-toolbar,
+  .kill-aura-modal-footer {
+    padding: 12px;
+  }
+
+  #tab-kill-aura .kill-aura-modal-list {
+    grid-template-columns: 1fr;
+    padding: 12px;
   }
 }
 

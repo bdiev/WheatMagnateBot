@@ -75,6 +75,7 @@ const state = {
   obsidianCoordinateEditorOpen: false,
   killAuraData: null,
   killAuraSelectedMobs: new Set(),
+  killAuraModalSelectionSnapshot: new Set(),
   killAuraTargetsDirty: false,
   supplyTooltipItems: {},
   itemIcons: {},
@@ -3385,21 +3386,71 @@ async function loadKillAura() {
   renderKillAura(await fetchJson('/api/kill-aura'));
 }
 
-function setKillAuraMobDropdownOpen(open) {
-  const menu = $('#killAuraMobDropdown');
-  const toggle = $('#killAuraMobDropdownToggle');
-  if (!menu || !toggle) return;
+function setKillAuraTargetModalOpen(open, { restoreSelection = false } = {}) {
+  const modal = $('#killAuraTargetModal');
+  const opener = $('#killAuraTargetModalOpen');
+  if (!modal || !opener) return;
   const nextOpen = Boolean(open);
-  menu.hidden = !nextOpen;
-  toggle.setAttribute('aria-expanded', String(nextOpen));
   if (nextOpen) {
+    state.killAuraModalSelectionSnapshot = new Set(state.killAuraSelectedMobs);
+    modal.hidden = false;
+    opener.setAttribute('aria-expanded', 'true');
+    document.body.classList.add('kill-aura-modal-open');
+    renderKillAuraMobList();
     requestAnimationFrame(() => $('#killAuraSearch')?.focus());
+    return;
+  }
+
+  if (restoreSelection) {
+    state.killAuraSelectedMobs = new Set(state.killAuraModalSelectionSnapshot);
+    state.killAuraTargetsDirty = false;
+    renderKillAuraMobList();
+  }
+  modal.hidden = true;
+  opener.setAttribute('aria-expanded', 'false');
+  document.body.classList.remove('kill-aura-modal-open');
+  const search = $('#killAuraSearch');
+  if (search) search.value = '';
+  requestAnimationFrame(() => opener.focus());
+}
+
+function closeKillAuraTargetModal() {
+  setKillAuraTargetModalOpen(false, { restoreSelection: true });
+}
+
+function trapKillAuraModalFocus(event) {
+  const modal = $('#killAuraTargetModal');
+  if (!modal || modal.hidden || event.key !== 'Tab') return;
+  const focusable = $$('button:not(:disabled), input:not(:disabled)').filter(element => modal.contains(element));
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
   }
 }
 
-function toggleKillAuraMobDropdown() {
-  const expanded = $('#killAuraMobDropdownToggle')?.getAttribute('aria-expanded') === 'true';
-  setKillAuraMobDropdownOpen(!expanded);
+function handleKillAuraModalKeydown(event) {
+  const modal = $('#killAuraTargetModal');
+  if (!modal || modal.hidden) return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeKillAuraTargetModal();
+    return;
+  }
+  trapKillAuraModalFocus(event);
+}
+
+function openKillAuraTargetModal() {
+  setKillAuraTargetModalOpen(true);
+}
+
+function handleKillAuraModalClick(event) {
+  if (event.target.closest('[data-kill-aura-modal-close]')) closeKillAuraTargetModal();
 }
 
 function handleKillAuraMobChange(event) {
@@ -3434,7 +3485,7 @@ async function saveKillAuraTargets() {
     state.killAuraTargetsDirty = false;
     if (state.killAuraData?.state) state.killAuraData.state.selectedMobs = targets;
     renderKillAuraMobList();
-    setKillAuraMobDropdownOpen(false);
+    setKillAuraTargetModalOpen(false);
     scheduleAdminControlRefresh();
   } catch (error) {
     setBanner(`Could not save Kill Aura targets: ${error.message}`);
@@ -5933,23 +5984,15 @@ $('#obsidianAnalyticsSettings')?.addEventListener('input', event => { event.curr
 $('#obsidianGoals')?.addEventListener('click', changeObsidianGoalState);
 $('#killAuraSearch')?.addEventListener('input', renderKillAuraMobList);
 $('#killAuraMobList')?.addEventListener('change', handleKillAuraMobChange);
-$('#killAuraMobDropdownToggle')?.addEventListener('click', toggleKillAuraMobDropdown);
-$('.kill-aura-control-panel')?.addEventListener('toggle', event => {
-  if (!event.currentTarget.open) setKillAuraMobDropdownOpen(false);
-});
+$('#killAuraTargetModalOpen')?.addEventListener('click', openKillAuraTargetModal);
+$('#killAuraTargetModalClose')?.addEventListener('click', closeKillAuraTargetModal);
+$('#killAuraTargetModalCancel')?.addEventListener('click', closeKillAuraTargetModal);
+$('#killAuraTargetModal')?.addEventListener('click', handleKillAuraModalClick);
 $('#killAuraSelectHostile')?.addEventListener('click', () => setKillAuraSelection(mob => mob.category === 'hostile'));
 $('#killAuraSelectAll')?.addEventListener('click', () => setKillAuraSelection(() => true));
 $('#killAuraClear')?.addEventListener('click', () => setKillAuraSelection(() => false));
 $('#killAuraSaveTargets')?.addEventListener('click', saveKillAuraTargets);
-document.addEventListener('pointerdown', event => {
-  if (!event.target.closest('.kill-aura-select')) setKillAuraMobDropdownOpen(false);
-});
-document.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && $('#killAuraMobDropdownToggle')?.getAttribute('aria-expanded') === 'true') {
-    setKillAuraMobDropdownOpen(false);
-    $('#killAuraMobDropdownToggle')?.focus();
-  }
-});
+document.addEventListener('keydown', handleKillAuraModalKeydown);
 $('#notificationsMarkAllRead')?.addEventListener('click', async () => {
   await postJson('/api/notifications/read', { all: true });
   await loadNotifications();

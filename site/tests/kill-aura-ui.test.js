@@ -11,22 +11,24 @@ const stylesSource = fs.readFileSync(path.join(publicDirectory, 'styles.css'), '
 
 assert.match(
   indexSource,
-  /<details class="panel admin-command-panel kill-aura-control-panel"[^>]*>[\s\S]*?<summary class="kill-aura-control-summary">/,
-  'Kill Aura Control must be a collapsible dropdown'
+  /id="killAuraTargetModalOpen"[\s\S]*?aria-haspopup="dialog"[\s\S]*?aria-controls="killAuraTargetModal"/,
+  'Kill Aura Control must open an accessible target dialog'
 );
 assert.match(
   indexSource,
-  /id="killAuraMobDropdownToggle"[\s\S]*?aria-controls="killAuraMobDropdown"/,
-  'the mob multiselect must expose an accessible dropdown trigger'
+  /id="killAuraTargetModal" class="kill-aura-target-modal" hidden>[\s\S]*?role="dialog" aria-modal="true"/,
+  'the target dialog must start hidden and expose modal semantics'
 );
 assert.match(
   indexSource,
-  /id="killAuraMobDropdown" class="kill-aura-select-menu" hidden/,
-  'the mob options must start collapsed'
+  /id="killAuraSearch"[\s\S]*?id="killAuraMobList"[\s\S]*?id="killAuraSaveTargets"/,
+  'the target dialog must include search, mob selection, and save controls'
 );
-assert.match(appSource, /function setKillAuraMobDropdownOpen\(open\)/);
-assert.match(appSource, /event\.key === 'Escape'/, 'the dropdown must support keyboard dismissal');
-assert.match(stylesSource, /\.kill-aura-select-menu\s*\{[^}]*position:\s*absolute;/s);
+assert.match(appSource, /function setKillAuraTargetModalOpen\(open,/);
+assert.match(appSource, /event\.key === 'Escape'/, 'the dialog must support keyboard dismissal');
+assert.match(appSource, /trapKillAuraModalFocus/, 'the dialog must keep keyboard focus inside while open');
+assert.match(stylesSource, /\.kill-aura-target-modal\s*\{[^}]*position:\s*fixed;/s);
+assert.doesNotMatch(indexSource, /<details class="panel admin-command-panel kill-aura-control-panel"/);
 assert.doesNotMatch(
   indexSource,
   /kill-aura-hero|kill-aura-page-intro|kill-aura-stat-mark/,
