@@ -607,6 +607,11 @@
   gap: 8px;
 }
 
+.admin-actions .small-action {
+  flex: 1 1 0;
+  min-width: 128px;
+}
+
 .small-action {
   min-height: 36px;
   min-width: 0;
@@ -733,6 +738,10 @@
   .request-login-body .request-primary-link,
   .admin-actions .small-action {
     width: 100%;
+  }
+
+  .admin-actions .small-action {
+    flex-basis: 100%;
   }
 
   .request-intro-body,
