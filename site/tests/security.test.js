@@ -30,7 +30,10 @@ function testRateLimit() {
   let now = 1000;
   const limiter = new RateLimiter({ now: () => now });
   for (let i = 0; i < 3; i += 1) assert.equal(limiter.consume('login:ip:user', { limit: 3, windowMs: 1000 }).allowed, true);
-  assert.equal(limiter.consume('login:ip:user', { limit: 3, windowMs: 1000 }).allowed, false, 'brute force must become HTTP 429 at the handler boundary');
+  const firstExceeded = limiter.consume('login:ip:user', { limit: 3, windowMs: 1000 });
+  assert.equal(firstExceeded.allowed, false, 'brute force must become HTTP 429 at the handler boundary');
+  assert.equal(firstExceeded.firstExceeded, true, 'the first rejected request should be auditable');
+  assert.equal(limiter.consume('login:ip:user', { limit: 3, windowMs: 1000 }).firstExceeded, false, 'repeated rejected requests must not spam the audit log');
   now += 1001;
   assert.equal(limiter.consume('login:ip:user', { limit: 3, windowMs: 1000 }).allowed, true);
 }

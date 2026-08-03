@@ -54,6 +54,7 @@ const state = {
   adminPlayerSearchRequests: {},
   adminControlState: null,
   adminControlLoading: false,
+  adminControlRefreshedAt: 0,
   adminLogsLoading: false,
   childAiLoading: false,
   childAiImportState: null,
@@ -707,6 +708,8 @@ async function selectAccount(accountId) {
   state.activeAccountId = accountId;
   localStorage.setItem('wm-active-account', accountId);
   state.renderSignatures = {};
+  state.adminControlState = null;
+  state.adminControlRefreshedAt = 0;
   state.killAuraData = null;
   state.killAuraSelectedMobs = new Set();
   state.killAuraTargetsDirty = false;
@@ -907,6 +910,8 @@ function applyCurrentUser(user) {
   if (String(previousUserId || '') !== String(state.currentUser?.id || '')) {
     state.navigationPreferences = null;
     state.accountTimezone = 'Europe/Vilnius';
+    state.adminControlState = null;
+    state.adminControlRefreshedAt = 0;
     state.killAuraData = null;
     state.killAuraSelectedMobs = new Set();
     state.killAuraTargetsDirty = false;
@@ -4544,17 +4549,19 @@ function setButtonBusyState(commandType) {
 function scheduleAdminControlRefresh(delayMs = 1800) {
   setTimeout(() => {
     if (state.currentUser?.role === 'admin') {
-      Promise.all([loadAll(), loadAdminControlState()]).catch(() => {});
+      Promise.all([loadAll(), loadAdminControlState({ force: true })]).catch(() => {});
     }
   }, delayMs);
 }
 
-async function loadAdminControlState() {
+async function loadAdminControlState({ force = false } = {}) {
   if (state.currentUser?.role !== 'admin') return;
   if (state.adminControlLoading) return;
+  if (!force && state.adminControlState && Date.now() - state.adminControlRefreshedAt < 3_000) return;
   state.adminControlLoading = true;
   try {
     const payload = await fetchJson('/api/admin/control-state', { transientRetries: 2 });
+    state.adminControlRefreshedAt = Date.now();
     renderAdminControlState(payload);
   } catch (err) {
     setBanner(`Could not load bot controls: ${err.message}`);
@@ -4604,7 +4611,7 @@ async function handleAdminBotCommand(event) {
       state.obsidianCoordinateEditorOpen = true;
       clearObsidianCoordinateEditor();
     }
-    await Promise.all([loadAll(), loadAdminControlState()]);
+    await Promise.all([loadAll(), loadAdminControlState({ force: true })]);
     await loadAdminSystemLogs();
     scheduleAdminControlRefresh();
     if (submitsKillAuraTargets) {
@@ -4622,7 +4629,7 @@ async function handleAdminBotCommand(event) {
 
 async function queueAdminCommand(commandType, payload = {}) {
   await postJson('/api/admin/bot-command', { commandType, payload, accountId:state.activeAccountId });
-  await Promise.all([loadAll(), loadAdminControlState(), loadAdminSystemLogs()]);
+  await Promise.all([loadAll(), loadAdminControlState({ force: true }), loadAdminSystemLogs()]);
 }
 
 async function handleAdminControlAction(event) {

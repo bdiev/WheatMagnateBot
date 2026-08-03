@@ -112,7 +112,12 @@ class RateLimiter {
     this.entries.delete(key);
     this.entries.set(key, entry);
     while (this.entries.size > this.maxEntries) this.entries.delete(this.entries.keys().next().value);
-    return { allowed: entry.count <= limit, remaining: Math.max(0, limit - entry.count), retryAfter: Math.max(1, Math.ceil((entry.resetAt - now) / 1000)) };
+    return {
+      allowed: entry.count <= limit,
+      firstExceeded: entry.count === limit + 1,
+      remaining: Math.max(0, limit - entry.count),
+      retryAfter: Math.max(1, Math.ceil((entry.resetAt - now) / 1000))
+    };
   }
 
   prune() {

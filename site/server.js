@@ -2090,7 +2090,9 @@ function enforceRateLimit(req, res, scope, subject, policy) {
   if (result.allowed) return true;
   res.setHeader('Retry-After', String(result.retryAfter));
   sendError(res, 429, 'Too many requests. Try again later.');
-  recordSecurityEvent(req, `Rate limit exceeded for ${scope}.`, { actor: normalized || null, reason: 'rate_limit' });
+  if (result.firstExceeded) {
+    recordSecurityEvent(req, `Rate limit exceeded for ${scope}.`, { actor: normalized || null, reason: 'rate_limit' });
+  }
   return false;
 }
 
