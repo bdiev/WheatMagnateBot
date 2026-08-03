@@ -1129,9 +1129,9 @@
 .request-history-panel {
   position: static;
   display: flex;
-  height: 0;
-  min-height: 100%;
+  min-height: 0;
   flex-direction: column;
+  contain: size;
 }
 
 .request-form-panel > .panel-head,
@@ -1249,9 +1249,10 @@
   flex: 1 1 auto;
   gap: 10px;
   min-height: 0;
-  max-height: 680px;
+  max-height: none;
   padding: 16px;
   overflow-y: auto;
+  overscroll-behavior: contain;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
@@ -1365,8 +1366,12 @@
 
   .request-history-panel {
     position: static;
-    height: auto;
     min-height: 0;
+    contain: none;
+  }
+
+  .request-list {
+    max-height: 680px;
   }
 }
 
