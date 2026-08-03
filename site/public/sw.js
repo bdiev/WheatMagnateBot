@@ -1,10 +1,14 @@
 'use strict';
 
-const CACHE_VERSION = '133';
+const CACHE_VERSION = '134';
 const CACHE_NAME = `wheatmagnatebot-v${CACHE_VERSION}`;
 const APP_SHELL = [
   '/',
   '/index.html',
+  '/request',
+  '/request.html',
+  '/request.css',
+  '/request.js',
   '/styles.css',
   '/theme-init.js',
   '/app.js',
@@ -68,12 +72,15 @@ self.addEventListener('fetch', event => {
   }
 
   if (request.mode === 'navigate') {
+    const fallbackPath = url.pathname === '/request' || url.pathname === '/request/' || url.pathname === '/request.html'
+      ? '/request.html'
+      : '/index.html';
     event.respondWith(
       fetch(request).then(response => {
         const copy = response.clone();
-        caches.open(CACHE_NAME).then(cache => cache.put('/index.html', copy));
+        caches.open(CACHE_NAME).then(cache => cache.put(fallbackPath, copy));
         return response;
-      }).catch(() => caches.match('/index.html')).then(response => {
+      }).catch(() => caches.match(fallbackPath)).then(response => {
         if (response) return response;
         return new Response('Dashboard is unavailable offline.', {
           status: 503,

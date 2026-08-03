@@ -1,5 +1,9 @@
 'use strict';
 
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+}
+
 const state = { session: null, csrfToken: null, requests: [], adminRequests: [] };
 const $ = selector => document.querySelector(selector);
 
@@ -7,6 +11,19 @@ const STATUS_LABELS = {
   pending: 'Новая', preparing: 'Собирается', ready: 'Ждёт входа',
   notified: 'Координаты отправлены', completed: 'Завершена', cancelled: 'Отменена'
 };
+
+function applyTheme(theme) {
+  const nextTheme = theme === 'dark' ? 'dark' : 'light';
+  document.documentElement.dataset.theme = nextTheme;
+  localStorage.setItem('wm-theme', nextTheme);
+  const toggle = $('#themeToggle');
+  toggle?.setAttribute('aria-pressed', String(nextTheme === 'dark'));
+  toggle?.setAttribute('aria-label', nextTheme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme');
+}
+
+function toggleTheme() {
+  applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+}
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]);
@@ -156,6 +173,7 @@ async function logout() {
 }
 
 async function init() {
+  applyTheme(localStorage.getItem('wm-theme') || 'light');
   const query = new URLSearchParams(window.location.search);
   if (query.has('auth_error')) showMessage('Не удалось войти через Discord. Попробуйте ещё раз.', true);
   try {
@@ -186,6 +204,7 @@ async function init() {
 }
 
 $('#requestForm').addEventListener('submit', submitRequest);
+$('#themeToggle').addEventListener('click', toggleTheme);
 $('#refreshRequests').addEventListener('click', () => loadRequests().catch(error => showMessage(error.message, true)));
 $('#refreshAdmin').addEventListener('click', () => loadAdminRequests().catch(error => showMessage(error.message, true)));
 $('#adminStatusFilter').addEventListener('change', () => loadAdminRequests().catch(error => showMessage(error.message, true)));
