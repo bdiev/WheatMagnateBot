@@ -12,7 +12,9 @@ const state = {
   items: [],
   itemMatches: [],
   itemSuggestionIndex: 0,
-  selectedRequestItem: null
+  selectedRequestItem: null,
+  adminModalRestoreFocus: null,
+  adminModalCloseTimer: null
 };
 const $ = selector => document.querySelector(selector);
 
@@ -279,10 +281,9 @@ function adminRequestCard(request) {
   const coordinateLock = locked ? ' disabled' : '';
   const coordinateReadonly = locked ? ' readonly' : '';
   return `<article class="admin-request" data-request-id="${escapeHtml(request.id)}">
-    <button class="admin-request-summary" type="button" data-admin-toggle aria-expanded="false">
+    <button class="admin-request-summary" type="button" data-admin-open aria-haspopup="dialog" aria-controls="adminRequestModal">
       <span class="admin-summary-player">${avatar}<span class="admin-summary-copy"><strong>${escapeHtml(request.minecraftUsername)}</strong><small><span>Request #${escapeHtml(request.id)}</span><span>Created ${escapeHtml(formatDate(request.createdAt))}</span></small></span></span>
       <span class="status status-${escapeHtml(request.status)}">${escapeHtml(STATUS_LABELS[request.status] || request.status)}</span>
-      <span class="admin-summary-chevron" aria-hidden="true">⌄</span>
     </button>
     <div class="admin-request-details" hidden>
       <div class="admin-request-order">
@@ -316,6 +317,36 @@ function renderAdminRequests() {
   $('#adminRequestList').innerHTML = state.adminRequests.length
     ? state.adminRequests.map(adminRequestCard).join('')
     : '<div class="empty-state">No requests match this status.</div>';
+}
+
+function openAdminRequestModal(card, trigger) {
+  const modal = $('#adminRequestModal');
+  const details = card.querySelector('.admin-request-details');
+  if (!details || typeof modal.showModal !== 'function') return;
+  window.clearTimeout(state.adminModalCloseTimer);
+  state.adminModalRestoreFocus = trigger;
+  modal.classList.remove('closing');
+  modal.dataset.requestId = card.dataset.requestId;
+  $('#adminRequestModalTitle').textContent = `Request #${card.dataset.requestId}`;
+  $('#adminRequestModalContent').innerHTML = details.innerHTML;
+  document.body.classList.add('request-modal-open');
+  modal.showModal();
+  $('#adminRequestModalClose').focus();
+}
+
+function closeAdminRequestModal() {
+  const modal = $('#adminRequestModal');
+  if (!modal.open || modal.classList.contains('closing')) return;
+  modal.classList.add('closing');
+  state.adminModalCloseTimer = window.setTimeout(() => {
+    modal.close();
+    modal.classList.remove('closing');
+    modal.removeAttribute('data-request-id');
+    $('#adminRequestModalContent').innerHTML = '';
+    document.body.classList.remove('request-modal-open');
+    if (state.adminModalRestoreFocus?.isConnected) state.adminModalRestoreFocus.focus();
+    state.adminModalRestoreFocus = null;
+  }, 190);
 }
 
 async function loadRequests() {
@@ -373,6 +404,7 @@ async function updateAdminRequest(card, status) {
         adminNote: card.querySelector('[name="adminNote"]').value
       })
     });
+    closeAdminRequestModal();
     await loadAdminRequests();
     showMessage(status === 'ready' ? `Coordinates for request #${requestId} were queued.` : `Request #${requestId} was updated.`);
   } catch (error) {
@@ -446,20 +478,23 @@ $('#refreshRequests').addEventListener('click', () => loadRequests().catch(error
 $('#refreshAdmin').addEventListener('click', () => loadAdminRequests().catch(error => showMessage(error.message, true)));
 $('#adminStatusFilter').addEventListener('change', () => loadAdminRequests().catch(error => showMessage(error.message, true)));
 $('#adminRequestList').addEventListener('click', event => {
-  const toggle = event.target.closest('[data-admin-toggle]');
-  if (toggle) {
-    const card = toggle.closest('[data-request-id]');
-    const details = card.querySelector('.admin-request-details');
-    const expanded = toggle.getAttribute('aria-expanded') !== 'true';
-    toggle.setAttribute('aria-expanded', String(expanded));
-    card.classList.toggle('expanded', expanded);
-    details.hidden = !expanded;
+  const opener = event.target.closest('[data-admin-open]');
+  if (!opener) return;
+  openAdminRequestModal(opener.closest('[data-request-id]'), opener);
+});
+$('#adminRequestModal').addEventListener('click', event => {
+  if (event.target === event.currentTarget || event.target.closest('[data-admin-modal-close]')) {
+    closeAdminRequestModal();
     return;
   }
   const button = event.target.closest('[data-status]');
   if (!button) return;
   const card = button.closest('[data-request-id]');
   updateAdminRequest(card, button.dataset.status);
+});
+$('#adminRequestModal').addEventListener('cancel', event => {
+  event.preventDefault();
+  closeAdminRequestModal();
 });
 
 init();

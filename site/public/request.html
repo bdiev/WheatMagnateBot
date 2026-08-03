@@ -9,8 +9,8 @@
     <link rel="icon" type="image/png" href="/items/Wheat.png">
     <script src="/theme-init.js?v=136"></script>
     <link rel="stylesheet" href="/styles.css?v=154">
-    <link rel="stylesheet" href="/request.css?v=12">
-    <script src="/request.js?v=6" defer></script>
+    <link rel="stylesheet" href="/request.css?v=14">
+    <script src="/request.js?v=7" defer></script>
   </head>
   <body class="request-page">
     <main class="shell request-shell">
@@ -164,5 +164,13 @@
         <span>Resource delivery</span>
       </footer>
     </main>
+
+    <dialog id="adminRequestModal" class="admin-request-modal" aria-labelledby="adminRequestModalTitle">
+      <header class="admin-request-modal-head">
+        <div><span class="request-section-kicker">Request management</span><h2 id="adminRequestModalTitle">Request details</h2></div>
+        <button id="adminRequestModalClose" class="request-modal-close" type="button" data-admin-modal-close aria-label="Close request details">×</button>
+      </header>
+      <div id="adminRequestModalContent" class="admin-request-details request-modal-details"></div>
+    </dialog>
   </body>
 </html>

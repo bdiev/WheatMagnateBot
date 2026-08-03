@@ -51,12 +51,15 @@ function testActiveStatusContract() {
 }
 
 function testCompactAdminRequestCards() {
-  assert.match(requestClientSource, /data-admin-toggle aria-expanded="false"/, 'admin requests must start as compact summaries');
+  assert.match(requestClientSource, /data-admin-open aria-haspopup="dialog"/, 'admin request tiles must open a details dialog');
+  assert.doesNotMatch(requestClientSource, /admin-summary-chevron/, 'request tiles must not render expand arrows');
   assert.match(requestClientSource, /class="admin-request-details" hidden/, 'full request controls must start collapsed');
-  assert.match(requestClientSource, /details\.hidden = !expanded/, 'clicking an admin summary must toggle its details');
+  assert.match(requestClientSource, /modal\.showModal\(\)/, 'clicking an admin request must open its modal');
+  assert.match(requestClientSource, /event\.target === event\.currentTarget/, 'clicking the modal backdrop must close it');
   assert.match(requestStylesSource, /\.request-admin-list\s*\{[^}]*grid-template-columns:\s*repeat\(4,/s, 'admin request tiles must use four desktop columns');
-  assert.match(requestStylesSource, /\.admin-request\s*\{[^}]*aspect-ratio:\s*1;/s, 'collapsed admin request tiles must remain square');
-  assert.match(requestStylesSource, /\.admin-request\.expanded\s*\{[^}]*grid-column:\s*1\s*\/\s*-1;[^}]*aspect-ratio:\s*auto;/s, 'expanded requests must span the full grid width');
+  assert.match(requestStylesSource, /\.admin-request\s*\{[^}]*min-height:\s*168px;/s, 'admin request tiles must use a compact fixed minimum height');
+  assert.doesNotMatch(requestStylesSource, /\.admin-request\s*\{[^}]*aspect-ratio:\s*1;/s, 'admin request tiles must not waste space on a square aspect ratio');
+  assert.match(requestStylesSource, /@keyframes request-modal-in/, 'the request modal must animate into view');
 }
 
 testMinecraftUsernameValidation();
