@@ -115,7 +115,7 @@ async function testHttpBoundary() {
     assert.match(page.headers['content-security-policy'], /frame-ancestors 'none'/);
     const requestPage = await httpRequest(port, '/request');
     assert.equal(requestPage.status, 200);
-    assert.match(requestPage.body, /<title>Заявки на ресурсы — WheatMagnateBot<\/title>/);
+    assert.match(requestPage.body, /<title>Resource Requests — WheatMagnateBot<\/title>/);
     assert.equal((await httpRequest(port, '/%252e%252e/server.js')).status, 403);
     const crossOrigin = await httpRequest(port, '/api/auth/login', {
       method: 'POST', headers: { Origin: 'http://evil.example', 'Content-Type': 'application/json' }, body: '{}'

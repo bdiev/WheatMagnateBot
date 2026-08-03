@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <title>Заявки на ресурсы — WheatMagnateBot</title>
-    <meta name="description" content="Закажите ресурсы и получите координаты доставки личным сообщением в Minecraft.">
+    <title>Resource Requests — WheatMagnateBot</title>
+    <meta name="description" content="Request resources and receive the delivery coordinates in a private Minecraft message.">
     <meta name="theme-color" content="#f1c232">
     <link rel="icon" type="image/png" href="/items/Wheat.png">
     <script src="/theme-init.js?v=136"></script>
@@ -33,39 +33,39 @@
       <section class="panel request-intro">
         <div class="panel-head">
           <div>
-            <h2>Заявки на ресурсы</h2>
-            <p>Закажите ресурсы, следите за статусом и получите координаты доставки в игре.</p>
+            <h2>Resource Requests</h2>
+            <p>Request resources, track their status, and receive the delivery coordinates in-game.</p>
           </div>
           <img class="request-title-icon" src="/items/Writable_Book.png" alt="">
         </div>
         <div class="request-intro-body">
           <div>
             <p class="eyebrow">Minecraft delivery</p>
-            <h2 class="request-intro-title">Доставим ресурсы в удобную точку</h2>
-            <p class="muted request-intro-copy">После подготовки заказа координаты попадут в очередь игрового бота. Если вы офлайн, бот дождётся следующего входа на сервер и отправит сообщение через <code>/w</code>.</p>
+            <h2 class="request-intro-title">Resources delivered where you need them</h2>
+            <p class="muted request-intro-copy">Once your order is ready, its coordinates are queued for the game bot. If you are offline, the bot will wait for your next server login and send them through <code>/w</code>.</p>
           </div>
           <div class="request-intro-action">
-            <a id="heroAction" class="request-primary-link" href="/api/request/auth/start">Войти через Discord</a>
-            <small id="authHint">Discord нужен, чтобы ваши заявки были доступны только вам.</small>
+            <a id="heroAction" class="request-primary-link" href="/api/request/auth/start">Sign in with Discord</a>
+            <small id="authHint">Discord keeps your requests private and tied to your account.</small>
           </div>
         </div>
       </section>
 
-      <section class="request-steps" aria-label="Как это работает">
+      <section class="request-steps" aria-label="How it works">
         <article class="stat request-step">
           <span class="request-step-number">01</span>
-          <strong>Опишите заказ</strong>
-          <small>Укажите ресурсы и количество в свободной форме.</small>
+          <strong>Describe your order</strong>
+          <small>List the resources and quantities you need.</small>
         </article>
         <article class="stat request-step">
           <span class="request-step-number">02</span>
-          <strong>Дождитесь доставки</strong>
-          <small>Статус заявки обновится на этой странице.</small>
+          <strong>Wait for delivery</strong>
+          <small>Your request status will update on this page.</small>
         </article>
         <article class="stat request-step">
           <span class="request-step-number">03</span>
-          <strong>Получите координаты</strong>
-          <small>Бот отправит точку личным сообщением при входе.</small>
+          <strong>Receive coordinates</strong>
+          <small>The bot will whisper the location when you join.</small>
         </article>
       </section>
 
@@ -74,29 +74,29 @@
       <section id="requesterApp" class="request-portal-grid" hidden>
         <article class="panel request-form-panel">
           <div class="panel-head">
-            <div><h2>Новая заявка</h2><p>Опишите, что нужно доставить.</p></div>
+            <div><h2>New Request</h2><p>Tell us what you need delivered.</p></div>
             <img class="request-panel-icon" src="/items/Chest.png" alt="">
           </div>
           <form id="requestForm" class="request-form">
             <label class="auth-field">
-              <span>Minecraft-ник</span>
+              <span>Minecraft username</span>
               <input id="minecraftUsername" name="minecraftUsername" maxlength="16" pattern="[A-Za-z0-9_]{1,16}" autocomplete="off" placeholder="Steve" required>
             </label>
             <label class="auth-field">
-              <span>Ресурсы и количество</span>
-              <textarea id="resources" name="resources" minlength="3" maxlength="2000" rows="7" placeholder="Например:&#10;4 шалкера камня&#10;2 стака дуба&#10;32 блока стекла" required></textarea>
+              <span>Resources and quantities</span>
+              <textarea id="resources" name="resources" minlength="3" maxlength="2000" rows="7" placeholder="For example:&#10;4 shulker boxes of stone&#10;2 stacks of oak logs&#10;32 glass blocks" required></textarea>
             </label>
             <div class="request-form-footer">
-              <small class="muted">Не более трёх активных заявок одновременно.</small>
-              <button id="requestSubmit" type="submit">Отправить заявку</button>
+              <small class="muted">You may have up to three active requests at once.</small>
+              <button id="requestSubmit" type="submit">Submit Request</button>
             </div>
           </form>
         </article>
 
         <section class="panel request-history-panel">
           <div class="panel-head">
-            <div><h2>Ваши заявки</h2><p>История и текущий статус доставки.</p></div>
-            <button id="refreshRequests" class="ghost-button request-icon-button" type="button" aria-label="Обновить">↻</button>
+            <div><h2>Your Requests</h2><p>Order history and current delivery status.</p></div>
+            <button id="refreshRequests" class="ghost-button request-icon-button" type="button" aria-label="Refresh">↻</button>
           </div>
           <div id="requestList" class="request-list"></div>
         </section>
@@ -104,32 +104,32 @@
 
       <section id="adminApp" class="panel request-admin-panel" hidden>
         <div class="panel-head">
-          <div><h2>Управление заявками</h2><p>Подготовка заказов и назначение координат.</p></div>
+          <div><h2>Request Management</h2><p>Prepare orders and assign delivery coordinates.</p></div>
           <div class="request-admin-controls">
-            <select id="adminStatusFilter" aria-label="Фильтр статуса">
-              <option value="">Все статусы</option>
-              <option value="pending">Новые</option>
-              <option value="preparing">Собираются</option>
-              <option value="ready">Ждут входа игрока</option>
-              <option value="notified">Координаты отправлены</option>
-              <option value="completed">Завершённые</option>
-              <option value="cancelled">Отменённые</option>
+            <select id="adminStatusFilter" aria-label="Status filter">
+              <option value="">All statuses</option>
+              <option value="pending">Pending</option>
+              <option value="preparing">Preparing</option>
+              <option value="ready">Waiting for player</option>
+              <option value="notified">Coordinates sent</option>
+              <option value="completed">Completed</option>
+              <option value="cancelled">Cancelled</option>
             </select>
-            <button id="refreshAdmin" class="ghost-button request-icon-button" type="button" aria-label="Обновить">↻</button>
+            <button id="refreshAdmin" class="ghost-button request-icon-button" type="button" aria-label="Refresh">↻</button>
           </div>
         </div>
-        <p class="request-admin-note">Укажите координаты и нажмите «Готово и отправить». Если игрок офлайн, бот дождётся его входа.</p>
+        <p class="request-admin-note">Enter the delivery coordinates and select “Ready &amp; Queue”. If the player is offline, the bot will wait until they join.</p>
         <div id="adminRequestList" class="request-admin-list"></div>
       </section>
 
       <section id="loginPrompt" class="panel request-login-panel">
         <div class="panel-head">
-          <div><h2>Войдите, чтобы оставить заявку</h2><p>Авторизация защищает историю ваших заказов.</p></div>
+          <div><h2>Sign in to submit a request</h2><p>Authentication keeps your order history private.</p></div>
           <img class="request-title-icon" src="/items/Ender_Chest.png" alt="">
         </div>
         <div class="request-login-body">
-          <p class="muted">Сайт получит только базовый профиль Discord: идентификатор, имя и аватар.</p>
-          <a class="request-primary-link" href="/api/request/auth/start">Войти через Discord</a>
+          <p class="muted">The site only receives your basic Discord profile: ID, display name, and avatar.</p>
+          <a class="request-primary-link" href="/api/request/auth/start">Sign in with Discord</a>
         </div>
       </section>
 

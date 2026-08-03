@@ -360,7 +360,7 @@ function createResourceRequestService({
     let row = updated.rows[0];
 
     if (status === 'ready' && !row.delivery_command_id) {
-      const message = `Ваш заказ #${row.id} готов. Координаты: ${row.delivery_coordinates}`;
+      const message = `Your order #${row.id} is ready. Coordinates: ${row.delivery_coordinates}`;
       let queued;
       try {
         queued = await queueBotCommand(ctx.admin.user, 'site_whisper', {
