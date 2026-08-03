@@ -78,7 +78,7 @@ function safeEqual(first, second) {
 function createResourceRequestService({
   pool, hashToken, parseCookies, readJsonBody, sendJson, sendError,
   requestIsHttps, trustProxy, getCurrentSession, queueBotCommand,
-  enforceRateLimit, recordSystemLog, onRequestCreated, onRequestUpdated
+  enforceRateLimit, recordSystemLog, getItemCatalog, onRequestCreated, onRequestUpdated
 }) {
   const clientId = String(process.env.DISCORD_OAUTH_CLIENT_ID || process.env.DISCORD_CLIENT_ID || '').trim();
   const clientSecret = String(process.env.DISCORD_OAUTH_CLIENT_SECRET || process.env.DISCORD_CLIENT_SECRET || '').trim();
@@ -447,6 +447,11 @@ function createResourceRequestService({
       }
       if (url.pathname === '/api/request/profile' && req.method === 'PUT') {
         sendJson(res, 200, { requester: await updateProfile(req, ctx) }); return true;
+      }
+      if (url.pathname === '/api/request/items' && req.method === 'GET') {
+        if (!ctx.requester && !ctx.admin) throw Object.assign(new Error('Discord login required.'), { statusCode: 401 });
+        const items = typeof getItemCatalog === 'function' ? await getItemCatalog() : [];
+        sendJson(res, 200, { items }); return true;
       }
       if (url.pathname === '/api/request/summary' && req.method === 'GET') {
         sendJson(res, 200, await requestSummary(ctx)); return true;

@@ -4,7 +4,16 @@ if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
 }
 
-const state = { session: null, csrfToken: null, requests: [], adminRequests: [] };
+const state = {
+  session: null,
+  csrfToken: null,
+  requests: [],
+  adminRequests: [],
+  items: [],
+  itemMatches: [],
+  itemSuggestionIndex: 0,
+  selectedRequestItem: null
+};
 const $ = selector => document.querySelector(selector);
 
 const STATUS_LABELS = {
@@ -50,6 +59,140 @@ function showMessage(message, error = false) {
   target.hidden = false;
   window.clearTimeout(showMessage.timer);
   showMessage.timer = window.setTimeout(() => { target.hidden = true; }, 6500);
+}
+
+function hideItemSuggestions() {
+  const suggestions = $('#requestItemSuggestions');
+  suggestions.hidden = true;
+  suggestions.innerHTML = '';
+  $('#requestItemSearch').setAttribute('aria-expanded', 'false');
+}
+
+function itemMatchScore(item, query) {
+  const name = item.name.toLowerCase();
+  if (name === query) return 0;
+  if (name.startsWith(query)) return 1;
+  if (name.split(/\s+/).some(word => word.startsWith(query))) return 2;
+  return name.includes(query) ? 3 : 99;
+}
+
+function renderItemSuggestions() {
+  const input = $('#requestItemSearch');
+  const query = input.value.trim().toLowerCase();
+  if (!query || !state.items.length) {
+    hideItemSuggestions();
+    return;
+  }
+  state.itemMatches = state.items
+    .map(item => ({ item, score: itemMatchScore(item, query) }))
+    .filter(match => match.score < 99)
+    .sort((first, second) => first.score - second.score || first.item.name.length - second.item.name.length || first.item.name.localeCompare(second.item.name))
+    .slice(0, 8)
+    .map(match => match.item);
+  if (!state.itemMatches.length) {
+    hideItemSuggestions();
+    return;
+  }
+  state.itemSuggestionIndex = Math.min(state.itemSuggestionIndex, state.itemMatches.length - 1);
+  const suggestions = $('#requestItemSuggestions');
+  suggestions.innerHTML = state.itemMatches.map((item, index) => `
+    <button class="request-item-option${index === state.itemSuggestionIndex ? ' active' : ''}" type="button" role="option" aria-selected="${index === state.itemSuggestionIndex}" data-item-index="${index}">
+      <img src="${escapeHtml(item.iconUrl)}" alt="">
+      <span>${escapeHtml(item.name)}</span>
+    </button>
+  `).join('');
+  suggestions.hidden = false;
+  input.setAttribute('aria-expanded', 'true');
+}
+
+function chooseRequestItem(index) {
+  const item = state.itemMatches[index];
+  if (!item) return;
+  state.selectedRequestItem = item;
+  $('#requestItemSearch').value = item.name;
+  $('#requestItemHint').textContent = `${item.name} selected. Choose an amount and unit.`;
+  hideItemSuggestions();
+  $('#requestItemAmount').focus();
+  $('#requestItemAmount').select();
+}
+
+function handleItemSearchInput() {
+  const value = $('#requestItemSearch').value.trim();
+  if (state.selectedRequestItem?.name !== value) state.selectedRequestItem = null;
+  state.itemSuggestionIndex = 0;
+  renderItemSuggestions();
+}
+
+function handleItemSearchKeydown(event) {
+  if ($('#requestItemSuggestions').hidden && ['ArrowDown', 'ArrowUp'].includes(event.key)) renderItemSuggestions();
+  if (!state.itemMatches.length || $('#requestItemSuggestions').hidden) return;
+  if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    state.itemSuggestionIndex = (state.itemSuggestionIndex + 1) % state.itemMatches.length;
+    renderItemSuggestions();
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    state.itemSuggestionIndex = (state.itemSuggestionIndex - 1 + state.itemMatches.length) % state.itemMatches.length;
+    renderItemSuggestions();
+  } else if (event.key === 'Enter' || event.key === 'Tab') {
+    event.preventDefault();
+    chooseRequestItem(state.itemSuggestionIndex);
+  } else if (event.key === 'Escape') {
+    hideItemSuggestions();
+  }
+}
+
+function addRequestItem() {
+  const typedName = $('#requestItemSearch').value.trim().toLowerCase();
+  const item = state.selectedRequestItem?.name.toLowerCase() === typedName
+    ? state.selectedRequestItem
+    : state.items.find(candidate => candidate.name.toLowerCase() === typedName);
+  if (!item) {
+    showMessage('Choose an item from the suggestions first.', true);
+    $('#requestItemSearch').focus();
+    return;
+  }
+  const amount = Number($('#requestItemAmount').value);
+  if (!Number.isInteger(amount) || amount < 1 || amount > 999) {
+    showMessage('Amount must be a whole number between 1 and 999.', true);
+    $('#requestItemAmount').focus();
+    return;
+  }
+  const unit = $('#requestItemUnit').value;
+  const unitLabels = {
+    item: amount === 1 ? 'item' : 'items',
+    stack: amount === 1 ? 'stack' : 'stacks',
+    shulker: amount === 1 ? 'shulker box' : 'shulker boxes'
+  };
+  const line = `${amount} ${unitLabels[unit] || 'items'} of ${item.name}`;
+  const resources = $('#resources');
+  const nextValue = resources.value.trim() ? `${resources.value.trimEnd()}\n${line}` : line;
+  if (nextValue.length > resources.maxLength) {
+    showMessage('The order details are too long.', true);
+    return;
+  }
+  resources.value = nextValue;
+  resources.dispatchEvent(new Event('input', { bubbles: true }));
+  state.selectedRequestItem = null;
+  $('#requestItemSearch').value = '';
+  $('#requestItemAmount').value = '1';
+  $('#requestItemHint').textContent = `${line} added. Add another item or edit the details below.`;
+  hideItemSuggestions();
+  $('#requestItemSearch').focus();
+}
+
+async function loadItemCatalog() {
+  try {
+    const payload = await api('/api/request/items');
+    state.items = Array.isArray(payload.items) ? payload.items : [];
+    $('#requestItemHint').textContent = state.items.length
+      ? `${state.items.length.toLocaleString('en-US')} Minecraft items available. Start typing to search.`
+      : 'Enter your order details manually below.';
+  } catch {
+    $('#requestItemSearch').disabled = true;
+    $('#requestItemAdd').disabled = true;
+    $('#requestItemHint').textContent = 'The item catalog is unavailable. Enter your order details manually below.';
+  }
 }
 
 function renderAccount() {
@@ -141,6 +284,9 @@ async function submitRequest(event) {
       body: JSON.stringify({ minecraftUsername: $('#minecraftUsername').value, resources: $('#resources').value })
     });
     $('#resources').value = '';
+    state.selectedRequestItem = null;
+    $('#requestItemSearch').value = '';
+    $('#requestItemAmount').value = '1';
     state.requests.unshift(payload.request);
     renderRequests();
     showMessage(`Request #${payload.request.id} was submitted.`);
@@ -197,7 +343,10 @@ async function init() {
     $('#heroAction').textContent = 'Create a request';
     $('#heroAction').href = '#requesterApp';
     $('#authHint').textContent = `Signed in as ${requester.displayName}.`;
-    await loadRequests().catch(error => showMessage(error.message, true));
+    await Promise.all([
+      loadRequests().catch(error => showMessage(error.message, true)),
+      loadItemCatalog()
+    ]);
   } else if (!state.session.discordConfigured) {
     $('#heroAction').classList.add('disabled');
     $('#heroAction').href = '#';
@@ -208,6 +357,24 @@ async function init() {
 }
 
 $('#requestForm').addEventListener('submit', submitRequest);
+$('#requestItemSearch').addEventListener('input', handleItemSearchInput);
+$('#requestItemSearch').addEventListener('focus', renderItemSuggestions);
+$('#requestItemSearch').addEventListener('keydown', handleItemSearchKeydown);
+$('#requestItemAdd').addEventListener('click', addRequestItem);
+[$('#requestItemAmount'), $('#requestItemUnit')].forEach(control => control.addEventListener('keydown', event => {
+  if (event.key !== 'Enter') return;
+  event.preventDefault();
+  addRequestItem();
+}));
+$('#requestItemSuggestions').addEventListener('pointerdown', event => {
+  const option = event.target.closest('[data-item-index]');
+  if (!option) return;
+  event.preventDefault();
+  chooseRequestItem(Number(option.dataset.itemIndex));
+});
+document.addEventListener('pointerdown', event => {
+  if (!event.target.closest('.request-item-search')) hideItemSuggestions();
+});
 $('#themeToggle').addEventListener('click', toggleTheme);
 $('#refreshRequests').addEventListener('click', () => loadRequests().catch(error => showMessage(error.message, true)));
 $('#refreshAdmin').addEventListener('click', () => loadAdminRequests().catch(error => showMessage(error.message, true)));

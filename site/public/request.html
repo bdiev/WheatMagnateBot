@@ -9,8 +9,8 @@
     <link rel="icon" type="image/png" href="/items/Wheat.png">
     <script src="/theme-init.js?v=136"></script>
     <link rel="stylesheet" href="/styles.css?v=154">
-    <link rel="stylesheet" href="/request.css?v=3">
-    <script src="/request.js?v=2" defer></script>
+    <link rel="stylesheet" href="/request.css?v=4">
+    <script src="/request.js?v=3" defer></script>
   </head>
   <body class="request-page">
     <main class="shell request-shell">
@@ -82,9 +82,36 @@
               <span>Minecraft username</span>
               <input id="minecraftUsername" name="minecraftUsername" maxlength="16" pattern="[A-Za-z0-9_]{1,16}" autocomplete="off" placeholder="Steve" required>
             </label>
+            <fieldset class="request-item-builder">
+              <legend>Add an item</legend>
+              <p>Search the Minecraft catalog, choose an amount, and add it to your request.</p>
+              <div class="request-item-composer">
+                <label class="request-item-search-field">
+                  <span>Item</span>
+                  <div class="request-item-search">
+                    <input id="requestItemSearch" type="text" autocomplete="off" placeholder="Start typing, for example Sto" role="combobox" aria-autocomplete="list" aria-controls="requestItemSuggestions" aria-expanded="false">
+                    <div id="requestItemSuggestions" class="request-item-suggestions" role="listbox" hidden></div>
+                  </div>
+                </label>
+                <label>
+                  <span>Amount</span>
+                  <input id="requestItemAmount" type="number" inputmode="numeric" min="1" max="999" value="1">
+                </label>
+                <label>
+                  <span>Unit</span>
+                  <select id="requestItemUnit">
+                    <option value="item">Items</option>
+                    <option value="stack">Stacks</option>
+                    <option value="shulker">Shulker boxes</option>
+                  </select>
+                </label>
+                <button id="requestItemAdd" type="button">Add item</button>
+              </div>
+              <small id="requestItemHint">You can add several lines and edit the final text below.</small>
+            </fieldset>
             <label class="auth-field">
-              <span>Resources and quantities</span>
-              <textarea id="resources" name="resources" minlength="3" maxlength="2000" rows="7" placeholder="For example:&#10;4 shulker boxes of stone&#10;2 stacks of oak logs&#10;32 glass blocks" required></textarea>
+              <span>Order details</span>
+              <textarea id="resources" name="resources" minlength="3" maxlength="2000" rows="7" placeholder="For example:&#10;4 shulker boxes of Stone&#10;2 stacks of Oak Logs&#10;32 items of Glass" required></textarea>
             </label>
             <div class="request-form-footer">
               <small class="muted">You may have up to three active requests at once.</small>

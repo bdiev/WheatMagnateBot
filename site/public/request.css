@@ -195,8 +195,123 @@
   margin: 0;
 }
 
+.request-item-builder {
+  min-width: 0;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--button-radius);
+  padding: 14px;
+  background: color-mix(in srgb, var(--accent) 5%, var(--panel-soft));
+}
+
+.request-item-builder legend {
+  padding: 0 6px;
+  color: var(--text);
+  font-weight: 800;
+}
+
+.request-item-builder > p,
+.request-item-builder > small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.request-item-builder > p {
+  margin: 0 0 12px;
+}
+
+.request-item-builder > small {
+  display: block;
+  margin-top: 10px;
+}
+
+.request-item-composer {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 92px 145px auto;
+  gap: 9px;
+  align-items: end;
+}
+
+.request-item-composer label {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.request-item-search {
+  position: relative;
+  min-width: 0;
+}
+
+.request-item-suggestions {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 90;
+  display: grid;
+  gap: 4px;
+  max-height: 286px;
+  border: 1px solid var(--line);
+  border-radius: var(--button-radius);
+  padding: 6px;
+  overflow-y: auto;
+  background: color-mix(in srgb, var(--panel) 96%, transparent);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(12px);
+}
+
+.request-item-suggestions[hidden] {
+  display: none;
+}
+
+.request-item-option {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  align-items: center;
+  justify-content: stretch;
+  gap: 9px;
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  border: 1px solid transparent;
+  padding: 5px 8px;
+  color: var(--text);
+  background: transparent;
+  text-align: left;
+}
+
+.request-item-option:hover,
+.request-item-option.active {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel-soft));
+}
+
+.request-item-option img {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.request-item-option span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#requestItemAdd {
+  min-width: 94px;
+}
+
 .request-form input,
 .request-form textarea,
+.request-item-composer select,
 .admin-form input,
 .admin-form textarea,
 .request-admin-controls select {
@@ -214,6 +329,10 @@
   height: var(--button-height);
 }
 
+.request-item-composer select {
+  height: var(--button-height);
+}
+
 .request-form textarea,
 .admin-form textarea {
   min-height: 138px;
@@ -222,6 +341,7 @@
 
 .request-form input:focus,
 .request-form textarea:focus,
+.request-item-composer select:focus,
 .admin-form input:focus,
 .admin-form textarea:focus,
 .request-admin-controls select:focus {
@@ -567,10 +687,24 @@
 
   .request-form input,
   .request-form textarea,
+  .request-item-composer select,
   .admin-form input,
   .admin-form textarea,
   .request-admin-controls select {
     font-size: 16px;
+  }
+
+  .request-item-composer {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .request-item-search-field,
+  #requestItemAdd {
+    grid-column: 1 / -1;
+  }
+
+  #requestItemAdd {
+    width: 100%;
   }
 
   .request-card-head {
@@ -629,6 +763,10 @@
 
   .request-card,
   .admin-request {
+    padding: 12px;
+  }
+
+  .request-item-builder {
     padding: 12px;
   }
 

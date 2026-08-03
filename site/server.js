@@ -64,6 +64,7 @@ let liveDashboardRequest = null;
 let accountRegistry = null;
 let resourceRequestService = null;
 const minecraftAvatarCache = new Map();
+let requestItemCatalogPromise = null;
 const rateLimiter = new RateLimiter();
 const rateLimiterTimer = setInterval(() => rateLimiter.prune(), 60_000);
 rateLimiterTimer.unref?.();
@@ -367,6 +368,22 @@ async function getItemIcons() {
   await addIconsFromDirectory(FOOD_DIR, '/food');
 
   return { icons };
+}
+
+async function getRequestItemCatalog() {
+  if (!requestItemCatalogPromise) {
+    const nonItemAssets = new Set(['icon_search', 'moon', 'muted', 'unmuted']);
+    requestItemCatalogPromise = getItemIcons()
+      .then(({ icons }) => Object.entries(icons)
+        .filter(([key]) => !nonItemAssets.has(key))
+        .map(([key, iconUrl]) => ({ key, name: normalizeItemName(key), iconUrl }))
+        .sort((first, second) => first.name.localeCompare(second.name)))
+      .catch(error => {
+        requestItemCatalogPromise = null;
+        throw error;
+      });
+  }
+  return requestItemCatalogPromise;
 }
 
 function summarizeSupplyLocation(location) {
@@ -3833,7 +3850,7 @@ async function requestHandler(req, res) {
       resourceRequestService = createResourceRequestService({
         pool, hashToken, parseCookies, readJsonBody, sendJson, sendError,
         requestIsHttps, trustProxy: SITE_TRUST_PROXY, getCurrentSession,
-        queueBotCommand, enforceRateLimit, recordSystemLog,
+        queueBotCommand, enforceRateLimit, recordSystemLog, getItemCatalog: getRequestItemCatalog,
         onRequestCreated: ({ request, requester }) => {
           sseHub.publish('resource_request_updated', {
             action: 'created', requestId: request.id, status: request.status
