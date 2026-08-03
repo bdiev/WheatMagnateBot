@@ -228,9 +228,13 @@
 
 .request-item-composer {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) 92px 145px auto;
+  grid-template-columns: 92px minmax(130px, 1fr) auto;
   gap: 9px;
   align-items: end;
+}
+
+.request-item-search-field {
+  grid-column: 1 / -1;
 }
 
 .request-item-composer label {
@@ -306,7 +310,8 @@
 }
 
 #requestItemAdd {
-  min-width: 94px;
+  min-width: 108px;
+  padding-inline: 14px;
 }
 
 .request-form input,
