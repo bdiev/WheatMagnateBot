@@ -78,7 +78,7 @@ function safeEqual(first, second) {
 function createResourceRequestService({
   pool, hashToken, parseCookies, readJsonBody, sendJson, sendError,
   requestIsHttps, trustProxy, getCurrentSession, queueBotCommand,
-  enforceRateLimit, recordSystemLog
+  enforceRateLimit, recordSystemLog, onRequestCreated, onRequestUpdated
 }) {
   const clientId = String(process.env.DISCORD_OAUTH_CLIENT_ID || process.env.DISCORD_CLIENT_ID || '').trim();
   const clientSecret = String(process.env.DISCORD_OAUTH_CLIENT_SECRET || process.env.DISCORD_CLIENT_SECRET || '').trim();
@@ -288,6 +288,20 @@ function createResourceRequestService({
     return result.rows.map(publicRequest);
   }
 
+  async function requestSummary(ctx) {
+    if (!ctx.admin) throw Object.assign(new Error('Administrator access is required.'), { statusCode: 403 });
+    const result = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status=ANY($1::text[]))::int AS active_count,
+        COUNT(*) FILTER (WHERE status='pending')::int AS pending_count
+      FROM resource_requests
+    `, [ACTIVE_STATUSES]);
+    return {
+      activeCount: Number(result.rows[0]?.active_count) || 0,
+      pendingCount: Number(result.rows[0]?.pending_count) || 0
+    };
+  }
+
   async function createRequest(req, ctx) {
     if (!ctx.requester) throw Object.assign(new Error('Discord login required.'), { statusCode: 401 });
     assertCsrf(req, ctx, 'requester');
@@ -308,7 +322,12 @@ function createResourceRequestService({
       message: `Resource request #${inserted.rows[0].id} created.`,
       details: { requestId: String(inserted.rows[0].id), minecraftUsername }
     });
-    return publicRequest(inserted.rows[0]);
+    const request = publicRequest(inserted.rows[0]);
+    if (typeof onRequestCreated === 'function') {
+      Promise.resolve(onRequestCreated({ request, requester: publicRequester(ctx.requester) }))
+        .catch(error => console.error('[Resource Requests] New request notification failed:', error.message));
+    }
+    return request;
   }
 
   async function updateProfile(req, ctx) {
@@ -389,7 +408,12 @@ function createResourceRequestService({
       message: `Resource request #${row.id} changed to ${status}.`,
       details: { requestId: String(row.id), minecraftUsername: row.minecraft_username, status }
     });
-    return publicRequest(row);
+    const request = publicRequest(row);
+    if (typeof onRequestUpdated === 'function') {
+      Promise.resolve(onRequestUpdated({ request, previousStatus: current.status, actor: ctx.admin.user.username }))
+        .catch(error => console.error('[Resource Requests] Request update notification failed:', error.message));
+    }
+    return request;
   }
 
   async function handle(req, res, url) {
@@ -423,6 +447,9 @@ function createResourceRequestService({
       }
       if (url.pathname === '/api/request/profile' && req.method === 'PUT') {
         sendJson(res, 200, { requester: await updateProfile(req, ctx) }); return true;
+      }
+      if (url.pathname === '/api/request/summary' && req.method === 'GET') {
+        sendJson(res, 200, await requestSummary(ctx)); return true;
       }
       if (url.pathname === '/api/request/requests' && req.method === 'GET') {
         sendJson(res, 200, { requests: await listRequests(ctx, url) }); return true;

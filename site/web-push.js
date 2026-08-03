@@ -6,7 +6,7 @@ const EVENT_TYPES = Object.freeze([
   'bot_disconnected', 'bot_reconnected', 'bot_kicked', 'unauthorized_player_nearby',
   'low_pickaxe_durability', 'no_pickaxes', 'low_food', 'farm_stalled', 'low_tps',
   'database_unavailable', 'repeated_reconnects', 'command_failed', 'whisper_message',
-  'daily_obsidian_report', 'player_milestone'
+  'daily_obsidian_report', 'player_milestone', 'resource_request_created'
 ]);
 const EVENT_TYPE_SET = new Set(EVENT_TYPES);
 const SEVERITY_RANK = Object.freeze({ info: 0, warning: 1, critical: 2 });
@@ -17,7 +17,7 @@ const SAFE_EVENT_LABELS = Object.freeze({
   low_tps: 'Server TPS is low', database_unavailable: 'Database unavailable',
   repeated_reconnects: 'Repeated reconnects', command_failed: 'A bot command failed',
   whisper_message: 'New private message', daily_obsidian_report: 'Daily Obsidian Farm Report',
-  player_milestone: 'Player Milestone'
+  player_milestone: 'Player Milestone', resource_request_created: 'New resource request'
 });
 
 function normalizeTime(value, fallback) {
@@ -56,7 +56,7 @@ function shouldDeliverSubscription(subscription, notification, { resolved = fals
   if (resolved && !subscription.include_resolved) return false;
   const selected = Array.isArray(subscription.event_types) ? subscription.event_types : [];
   if (selected.length && !selected.includes(notification.event_type)) return false;
-  if (notification.event_type === 'whisper_message' || notification.event_type === 'daily_obsidian_report' || notification.event_type === 'player_milestone') return true;
+  if (['whisper_message', 'daily_obsidian_report', 'player_milestone', 'resource_request_created'].includes(notification.event_type)) return true;
   if (resolved) return true;
   return (SEVERITY_RANK[notification.severity] ?? -1) >= (SEVERITY_RANK[subscription.minimum_severity] ?? 2);
 }
@@ -133,6 +133,13 @@ function safeDetailedBody(notification, { resolved = false } = {}) {
       const remaining = milestones.length - 3;
       return `Today: ${visible}${remaining > 0 ? `, and ${remaining} more` : ''}.`;
     }
+    case 'resource_request_created': {
+      const requestId = String(metadata.requestId || '').replace(/[^0-9]/g, '').slice(0, 20);
+      const username = String(metadata.minecraftUsername || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 16);
+      const resources = String(metadata.resources || '').replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 140);
+      const identity = username ? `${username}${requestId ? ` submitted request #${requestId}` : ' submitted a request'}` : `Resource request${requestId ? ` #${requestId}` : ''}`;
+      return resources ? `${identity}: ${resources}` : `${identity} is waiting for review.`;
+    }
     default:
       return `${label}. Open the dashboard for details.`;
   }
@@ -144,9 +151,11 @@ function safePushPayload(notification, { resolved = false, test = false, detaile
   const destination = test ? 'settings'
     : notification.event_type === 'whisper_message' ? 'whispers'
       : notification.event_type === 'daily_obsidian_report' ? 'obsidian'
-        : notification.event_type === 'player_milestone' ? 'players' : 'notifications';
+        : notification.event_type === 'player_milestone' ? 'players'
+          : notification.event_type === 'resource_request_created' ? 'requests' : 'notifications';
   const dailyReport = notification.event_type === 'daily_obsidian_report';
   const scheduledEvent = dailyReport || notification.event_type === 'player_milestone';
+  const highlightedEvent = scheduledEvent || notification.event_type === 'resource_request_created';
   const destinationParams = new URLSearchParams({ push: destination });
   if (destination === 'whispers') {
     const player = String(notification.metadata?.sender || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 32);
@@ -155,7 +164,7 @@ function safePushPayload(notification, { resolved = false, test = false, detaile
     if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(accountId)) destinationParams.set('accountId', accountId);
   }
   return {
-    title: test ? 'WheatMagnateBot test' : scheduledEvent ? label : critical ? 'Critical bot alert' : resolved ? 'Issue resolved' : detailed ? label : 'WheatMagnateBot alert',
+    title: test ? 'WheatMagnateBot test' : highlightedEvent ? label : critical ? 'Critical bot alert' : resolved ? 'Issue resolved' : detailed ? label : 'WheatMagnateBot alert',
     body: test ? `${label}. Open the dashboard for details.` : detailed
       ? safeDetailedBody(notification, { resolved })
       : `${label}. Open the dashboard for details.`,

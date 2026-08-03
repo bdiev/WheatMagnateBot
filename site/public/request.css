@@ -500,8 +500,38 @@
 }
 
 @media (max-width: 660px) {
+  .request-shell {
+    width: min(1180px, calc(100% - 20px));
+    padding-bottom: max(18px, env(safe-area-inset-bottom));
+  }
+
+  .request-topbar {
+    gap: 12px;
+  }
+
+  .request-topbar .topbar-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .request-topbar .request-nav-link {
+    flex: 1 1 auto;
+  }
+
+  .request-topbar .account-area {
+    flex: 1 1 100%;
+    justify-content: space-between;
+  }
+
+  .request-topbar .account-chip {
+    min-width: 0;
+  }
+
   .request-steps {
     grid-template-columns: 1fr;
+    gap: 10px;
   }
 
   .request-step {
@@ -516,8 +546,40 @@
   }
 
   .request-form-footer button,
-  .request-login-body .request-primary-link {
+  .request-login-body .request-primary-link,
+  .admin-actions .small-action {
     width: 100%;
+  }
+
+  .request-intro-body,
+  .request-form,
+  .request-list,
+  .request-admin-list,
+  .request-login-body {
+    padding: 14px;
+  }
+
+  .request-list,
+  .request-admin-list {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .request-form input,
+  .request-form textarea,
+  .admin-form input,
+  .admin-form textarea,
+  .request-admin-controls select {
+    font-size: 16px;
+  }
+
+  .request-card-head {
+    align-items: flex-start;
+  }
+
+  .request-meta {
+    flex-direction: column;
+    gap: 5px;
   }
 
   .request-admin-controls {
@@ -529,6 +591,54 @@
   }
 
   .account-chip span {
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 430px) {
+  .request-topbar h1 {
+    font-size: 22px;
+  }
+
+  .request-topbar .request-nav-link,
+  .request-topbar .text-button {
+    min-width: 0;
+    padding-inline: 11px;
+  }
+
+  .account-chip span {
+    max-width: 120px;
+  }
+
+  .request-intro-title {
+    font-size: 23px;
+  }
+
+  .request-title-icon,
+  .request-panel-icon {
     display: none;
+  }
+
+  .request-step {
+    min-height: 0;
+    padding: 14px;
+  }
+
+  .request-card,
+  .admin-request {
+    padding: 12px;
+  }
+
+  .status {
+    flex: 0 0 auto;
+    max-width: 58%;
+    text-align: right;
+  }
+
+  .request-footer {
+    flex-direction: column;
   }
 }

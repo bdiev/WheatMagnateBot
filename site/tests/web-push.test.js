@@ -77,6 +77,20 @@ async function run() {
   assert.match(detailedMilestonePayload.body, /ChunkBase: 3 years/);
   assert.match(detailedMilestonePayload.body, /H4YWIRE: 5 years/);
 
+  const resourceRequest = {
+    id: 'resource-request-17', event_type: 'resource_request_created', severity: 'info',
+    metadata: { requestId: '17', minecraftUsername: 'Steve', resources: '4 shulker boxes of stone' }
+  };
+  const requestSubscription = { ...base, minimum_severity: 'critical', event_types: ['resource_request_created'] };
+  assert.equal(shouldDeliverSubscription(requestSubscription, resourceRequest), true, 'new requests must not be suppressed by operational severity filters');
+  const compactRequestPayload = safePushPayload(resourceRequest);
+  assert.equal(compactRequestPayload.title, 'New resource request');
+  assert.equal(new URL(compactRequestPayload.data.url, 'https://dashboard.example').searchParams.get('push'), 'requests');
+  assert.doesNotMatch(compactRequestPayload.body, /Steve|shulker/, 'compact request push must omit order details');
+  const detailedRequestPayload = safePushPayload(resourceRequest, { detailed: true });
+  assert.match(detailedRequestPayload.body, /Steve submitted request #17/);
+  assert.match(detailedRequestPayload.body, /4 shulker boxes of stone/);
+
   const deliveredPayloads = [];
   const detailedResult = await deliverPushSubscriptions({
     subscriptions: [{ ...base, id: 2, detailed_event_types: ['low_tps'] }],

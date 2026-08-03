@@ -1916,6 +1916,18 @@ body.search-focus-active #logoutButton {
   min-height: 0;
 }
 
+.requests-nav-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-radius: var(--button-radius);
+  padding: var(--button-padding);
+  text-decoration: none;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .chat-date-indicator {
   position: absolute;
   top: 9px;

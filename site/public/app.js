@@ -55,6 +55,7 @@ const state = {
   adminControlState: null,
   adminControlLoading: false,
   adminControlRefreshedAt: 0,
+  requestCountLoading: false,
   adminLogsLoading: false,
   childAiLoading: false,
   childAiImportState: null,
@@ -4749,6 +4750,32 @@ function updateNotificationBadge(count) {
   badge.hidden = value === 0;
 }
 
+function updateRequestsBadge(count) {
+  const badge = $('#requestsBadge');
+  if (!badge) return;
+  const value = Math.max(0, Number(count) || 0);
+  badge.textContent = value > 99 ? '99+' : String(value);
+  badge.hidden = value === 0;
+  badge.closest('.requests-nav-link')?.setAttribute('aria-label', value
+    ? `Requests, ${value} active`
+    : 'Requests');
+}
+
+async function loadRequestCount() {
+  if (state.currentUser?.role !== 'admin') {
+    updateRequestsBadge(0);
+    return;
+  }
+  if (state.requestCountLoading) return;
+  state.requestCountLoading = true;
+  try {
+    const payload = await fetchJson('/api/request/summary');
+    updateRequestsBadge(payload.activeCount);
+  } finally {
+    state.requestCountLoading = false;
+  }
+}
+
 function browserPushSupported() {
   return window.isSecureContext && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 }
@@ -4929,6 +4956,9 @@ async function openPushDestination(destination = null, player = null, accountId 
     setActiveTab('obsidian');
   } else if (target === 'players') {
     setActiveTab('players');
+  } else if (target === 'requests' && state.currentUser.role === 'admin') {
+    window.location.assign('/request');
+    return;
   } else {
     setActiveTab(target === 'notifications' && state.currentUser.role === 'admin' ? 'notifications' : 'settings');
   }
@@ -5639,6 +5669,8 @@ function handleRealtimeEvent(event) {
       await loadNotificationCount();
       if (state.activeTab === 'notifications') await loadNotifications();
     });
+  } else if (type === 'resource_request_updated' && state.currentUser?.role === 'admin') {
+    queueRealtimeRefresh('resource-requests', loadRequestCount, 100);
   } else if (type === 'admin_control_updated' && state.currentUser?.role === 'admin') {
     queueRealtimeRefresh('admin-control', async () => {
       await loadAdminControlState();
@@ -5682,7 +5714,7 @@ function startRealtimeUpdates() {
   const eventTypes = [
     'bot_status_updated', 'player_joined', 'player_left', 'chat_message',
     'whisper_message', 'farm_status_updated', 'notification_created', 'admin_control_updated', 'operational_event_created',
-    'navigation_settings_updated', 'account_settings_updated'
+    'navigation_settings_updated', 'account_settings_updated', 'resource_request_updated'
   ];
   eventTypes.forEach(type => source.addEventListener(type, handleRealtimeEvent));
   source.onopen = () => {
@@ -5727,7 +5759,7 @@ async function loadAll() {
     const results = await Promise.allSettled(sectionLoads);
     const failed = results.find(result => result.status === 'rejected');
     if (failed) throw failed.reason;
-    if (state.currentUser?.role === 'admin') await loadNotificationCount();
+    if (state.currentUser?.role === 'admin') await Promise.all([loadNotificationCount(), loadRequestCount()]);
     if (state.currentUser?.role === 'admin') {
       await loadAdminControlState();
       if (state.activeTab === 'admin') await loadAdminSystemLogs();
@@ -5786,7 +5818,7 @@ async function loadLiveChats() {
 applyTheme(localStorage.getItem('wm-theme') || 'light');
 initializeCollapsibleSections();
 setAuthMode('login');
-$$('.tab-button').forEach(button => {
+$$('.tab-button[data-tab]').forEach(button => {
   button.addEventListener('click', () => setActiveTab(button.dataset.tab));
 });
 $('#authForm').addEventListener('submit', handleAuthSubmit);

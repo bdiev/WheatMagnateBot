@@ -3833,7 +3833,28 @@ async function requestHandler(req, res) {
       resourceRequestService = createResourceRequestService({
         pool, hashToken, parseCookies, readJsonBody, sendJson, sendError,
         requestIsHttps, trustProxy: SITE_TRUST_PROXY, getCurrentSession,
-        queueBotCommand, enforceRateLimit, recordSystemLog
+        queueBotCommand, enforceRateLimit, recordSystemLog,
+        onRequestCreated: ({ request, requester }) => {
+          sseHub.publish('resource_request_updated', {
+            action: 'created', requestId: request.id, status: request.status
+          }, { roles: ['admin'] });
+          webPushService.deliver({
+            id: `resource-request-${request.id}`,
+            event_type: 'resource_request_created',
+            severity: 'info',
+            metadata: {
+              requestId: request.id,
+              minecraftUsername: request.minecraftUsername,
+              resources: request.resources,
+              requester: requester?.displayName || requester?.discordUsername || null
+            }
+          }).catch(error => console.error('[Resource Requests] Push delivery failed:', error.message));
+        },
+        onRequestUpdated: ({ request, previousStatus }) => {
+          sseHub.publish('resource_request_updated', {
+            action: 'updated', requestId: request.id, status: request.status, previousStatus
+          }, { roles: ['admin'] });
+        }
       });
     }
     await resourceRequestService.handle(req, res, url);
