@@ -6187,8 +6187,23 @@ body.search-focus-active #logoutButton {
   box-shadow: 0 18px 38px color-mix(in srgb, #02050a 16%, transparent);
 }
 
+#tab-kill-aura .kill-aura-admin-grid .kill-aura-control-panel[open] {
+  height: auto;
+  min-height: 132px;
+  overflow: visible;
+  grid-template-rows: auto auto;
+  align-self: start;
+}
+
 #tab-kill-aura .kill-aura-control-panel[open] .kill-aura-control-summary {
   height: 132px;
+}
+
+#tab-kill-aura .kill-aura-control-panel[open] .kill-aura-control-body {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  background: var(--panel);
 }
 
 #tab-kill-aura .kill-aura-select-trigger,

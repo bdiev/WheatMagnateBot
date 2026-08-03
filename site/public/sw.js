@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = '154';
+const CACHE_VERSION = '155';
 const CACHE_NAME = `wheatmagnatebot-v${CACHE_VERSION}`;
 const APP_SHELL = [
   '/',
@@ -22,6 +22,12 @@ const APP_SHELL = [
   '/items/Lead.png',
   '/items/Muted.png',
   '/items/Unmuted.png',
+  '/items/Netherite_Sword.png',
+  '/items/Lever.png',
+  '/items/Clock.png',
+  '/items/Iron_Sword.png',
+  '/items/Target.png',
+  '/items/Blaze_Powder.png',
   '/logos/namemc_dark.png',
   '/logos/reply.png'
 ];
