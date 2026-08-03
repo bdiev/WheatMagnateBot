@@ -6329,6 +6329,15 @@ body.kill-aura-modal-open {
   display: grid;
   place-items: center;
   padding: 22px;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.kill-aura-target-modal.is-open {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .kill-aura-modal-backdrop {

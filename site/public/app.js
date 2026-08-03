@@ -3394,6 +3394,7 @@ function setKillAuraTargetModalOpen(open, { restoreSelection = false } = {}) {
   if (nextOpen) {
     state.killAuraModalSelectionSnapshot = new Set(state.killAuraSelectedMobs);
     modal.hidden = false;
+    modal.classList.add('is-open');
     opener.setAttribute('aria-expanded', 'true');
     document.body.classList.add('kill-aura-modal-open');
     renderKillAuraMobList();
@@ -3406,6 +3407,7 @@ function setKillAuraTargetModalOpen(open, { restoreSelection = false } = {}) {
     state.killAuraTargetsDirty = false;
     renderKillAuraMobList();
   }
+  modal.classList.remove('is-open');
   modal.hidden = true;
   opener.setAttribute('aria-expanded', 'false');
   document.body.classList.remove('kill-aura-modal-open');
@@ -3420,7 +3422,7 @@ function closeKillAuraTargetModal() {
 
 function trapKillAuraModalFocus(event) {
   const modal = $('#killAuraTargetModal');
-  if (!modal || modal.hidden || event.key !== 'Tab') return;
+  if (!modal?.classList.contains('is-open') || event.key !== 'Tab') return;
   const focusable = $$('button:not(:disabled), input:not(:disabled)').filter(element => modal.contains(element));
   if (!focusable.length) return;
   const first = focusable[0];
@@ -3436,7 +3438,7 @@ function trapKillAuraModalFocus(event) {
 
 function handleKillAuraModalKeydown(event) {
   const modal = $('#killAuraTargetModal');
-  if (!modal || modal.hidden) return;
+  if (!modal?.classList.contains('is-open')) return;
   if (event.key === 'Escape') {
     event.preventDefault();
     closeKillAuraTargetModal();
@@ -5988,6 +5990,12 @@ $('#killAuraTargetModalOpen')?.addEventListener('click', openKillAuraTargetModal
 $('#killAuraTargetModalClose')?.addEventListener('click', closeKillAuraTargetModal);
 $('#killAuraTargetModalCancel')?.addEventListener('click', closeKillAuraTargetModal);
 $('#killAuraTargetModal')?.addEventListener('click', handleKillAuraModalClick);
+const initialKillAuraModal = $('#killAuraTargetModal');
+if (initialKillAuraModal) {
+  initialKillAuraModal.classList.remove('is-open');
+  initialKillAuraModal.hidden = true;
+  document.body.classList.remove('kill-aura-modal-open');
+}
 $('#killAuraSelectHostile')?.addEventListener('click', () => setKillAuraSelection(mob => mob.category === 'hostile'));
 $('#killAuraSelectAll')?.addEventListener('click', () => setKillAuraSelection(() => true));
 $('#killAuraClear')?.addEventListener('click', () => setKillAuraSelection(() => false));

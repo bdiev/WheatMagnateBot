@@ -28,6 +28,10 @@ assert.match(appSource, /function setKillAuraTargetModalOpen\(open,/);
 assert.match(appSource, /event\.key === 'Escape'/, 'the dialog must support keyboard dismissal');
 assert.match(appSource, /trapKillAuraModalFocus/, 'the dialog must keep keyboard focus inside while open');
 assert.match(stylesSource, /\.kill-aura-target-modal\s*\{[^}]*position:\s*fixed;/s);
+assert.match(stylesSource, /\.kill-aura-target-modal\s*\{[^}]*pointer-events:\s*none;/s, 'the closed dialog must never intercept navigation clicks');
+assert.match(stylesSource, /\.kill-aura-target-modal\.is-open\s*\{[^}]*pointer-events:\s*auto;/s, 'only the visible dialog may intercept clicks');
+assert.match(appSource, /modal\.classList\.add\('is-open'\)/);
+assert.match(appSource, /modal\.classList\.remove\('is-open'\)/);
 assert.doesNotMatch(indexSource, /<details class="panel admin-command-panel kill-aura-control-panel"/);
 assert.doesNotMatch(
   indexSource,
