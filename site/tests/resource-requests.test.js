@@ -62,11 +62,15 @@ function testCompactAdminRequestCards() {
   assert.match(requestStylesSource, /@keyframes request-modal-in/, 'the request modal must animate into view');
 }
 
-function testRequesterPanelsUseNaturalEqualHeight() {
+function testRequesterPanelsUseEqualScrollableHeight() {
   assert.match(requestStylesSource, /\.request-portal-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1\.28fr\)[^}]*align-items:\s*stretch;/s,
     'the new-request and request-history panels must stretch to the same row height');
-  assert.match(requestStylesSource, /\.request-list\s*\{[^}]*max-height:\s*none;[^}]*overflow:\s*visible;/s,
-    'request history must expand naturally instead of rendering an inner scrollbar');
+  assert.match(requestStylesSource, /\.request-history-panel\s*\{[^}]*height:\s*0;[^}]*min-height:\s*100%;/s,
+    'request history must derive its desktop height from the new-request panel');
+  assert.match(requestStylesSource, /\.request-list\s*\{[^}]*overflow-y:\s*auto;[^}]*scrollbar-width:\s*none;/s,
+    'request history must remain scrollable while hiding the scrollbar');
+  assert.match(requestStylesSource, /\.request-list::\-webkit-scrollbar\s*\{[^}]*display:\s*none;/s,
+    'request history must hide the scrollbar in Chromium and Safari');
 }
 
 testMinecraftUsernameValidation();
@@ -74,5 +78,5 @@ testContentNormalization();
 testPublicRequestDoesNotLeakCommandInternals();
 testActiveStatusContract();
 testCompactAdminRequestCards();
-testRequesterPanelsUseNaturalEqualHeight();
+testRequesterPanelsUseEqualScrollableHeight();
 console.log('resource request tests passed');
