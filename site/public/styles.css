@@ -5917,11 +5917,14 @@ body.search-focus-active #logoutButton {
   gap: 18px;
 }
 
-.kill-aura-stats-grid {
-  display: grid;
-  grid-column: 1 / -1;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+#tab-kill-aura > .kill-aura-stats-grid {
+  display: grid !important;
+  grid-column: 1 / -1 !important;
+  grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
   gap: 12px;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
 }
 
 .kill-aura-stats-grid .stat,
@@ -6479,8 +6482,8 @@ body.kill-aura-modal-open {
 }
 
 @media (max-width: 960px) {
-  .kill-aura-stats-grid {
-    display: flex;
+  #tab-kill-aura > .kill-aura-stats-grid {
+    display: flex !important;
     grid-column: 1 / -1;
     gap: 10px;
     width: 100%;

@@ -36,9 +36,10 @@ assert.doesNotMatch(
 );
 assert.match(
   indexSource,
-  /class="stats-grid five kill-aura-stats-grid"/,
-  'Kill Aura must use the same five-card metric layout as Obsidian Farm'
+  /class="kill-aura-stats-grid"/,
+  'Kill Aura must use its dedicated five-card metric layout'
 );
+assert.doesNotMatch(indexSource, /class="stats-grid five kill-aura-stats-grid"/, 'Kill Aura metrics must not inherit the legacy contents-based grid');
 assert.match(
   indexSource,
   /class="farm-admin-grid kill-aura-admin-grid admin-only"/,
