@@ -163,7 +163,11 @@ async function updateAdminRequest(card, status) {
     });
     await loadAdminRequests();
     showMessage(status === 'ready' ? `Координаты для заявки #${requestId} поставлены в очередь.` : `Статус заявки #${requestId} обновлён.`);
-  } catch (error) { showMessage(error.message, true); if (button) button.disabled = false; }
+  } catch (error) {
+    await loadAdminRequests().catch(() => {});
+    showMessage(error.message, true);
+    if (button?.isConnected) button.disabled = false;
+  }
 }
 
 async function logout() {

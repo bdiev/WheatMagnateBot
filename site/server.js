@@ -660,6 +660,12 @@ async function ensureOptionalTables() {
     CREATE INDEX IF NOT EXISTS bot_commands_status_created_idx
     ON bot_commands (status, created_at)
   `);
+  await pool.query(`ALTER TABLE bot_commands
+    ADD COLUMN IF NOT EXISTS correlation_id VARCHAR(64),
+    ADD COLUMN IF NOT EXISTS locked_by VARCHAR(128),
+    ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(128)`);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS bot_commands_account_idempotency_idx
     ON bot_commands(account_id,idempotency_key) WHERE idempotency_key IS NOT NULL`);
   await pool.query(`

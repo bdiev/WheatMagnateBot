@@ -361,12 +361,23 @@ function createResourceRequestService({
 
     if (status === 'ready' && !row.delivery_command_id) {
       const message = `Ваш заказ #${row.id} готов. Координаты: ${row.delivery_coordinates}`;
-      const queued = await queueBotCommand(ctx.admin.user, 'site_whisper', {
-        username: row.minecraft_username,
-        message,
-        commandAlias: 'w',
-        resourceRequestId: String(row.id)
-      }, { source: 'resource_request', idempotencyKey: `resource-request:${row.id}:delivery` });
+      let queued;
+      try {
+        queued = await queueBotCommand(ctx.admin.user, 'site_whisper', {
+          username: row.minecraft_username,
+          message,
+          commandAlias: 'w',
+          resourceRequestId: String(row.id)
+        }, { source: 'site', idempotencyKey: `resource-request:${row.id}:delivery` });
+      } catch (error) {
+        console.error(`[Resource Requests] Coordinates for request #${row.id} were saved, but delivery queueing failed:`, error.message);
+        await recordSystemLog({
+          level: 'error', category: 'resource_requests', actor: ctx.admin.user.username,
+          message: `Delivery queueing failed for resource request #${row.id}.`,
+          details: { requestId: String(row.id), minecraftUsername: row.minecraft_username, errorCode: error.code || null }
+        });
+        throw Object.assign(new Error('Coordinates were saved, but the Minecraft message could not be queued. Press the retry button after the site restarts.'), { statusCode: 503 });
+      }
       const linked = await pool.query(`
         UPDATE resource_requests SET delivery_command_id=$2,updated_at=NOW()
         WHERE id=$1 AND delivery_command_id IS NULL RETURNING *
