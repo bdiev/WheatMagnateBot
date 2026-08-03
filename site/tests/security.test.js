@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const path = require('node:path');
 const { RateLimiter, configuredOrigins, requestIsHttps, resolveStaticPath, securityHeaders, validateOrigin, verifyCsrfToken } = require('../security');
-const { assertAdminUser, hashPassword, normalizeNavigationPreferences, registrationDefaults, server, verifyPassword } = require('../server');
+const { assertAdminUser, changeSitePassword, hashPassword, normalizeNavigationPreferences, registrationDefaults, server, validatePasswordChange, verifyPassword } = require('../server');
 
 function request(method, headers = {}, encrypted = false) {
   return { method, headers, socket: { encrypted, remoteAddress: '127.0.0.1' } };
@@ -83,6 +83,39 @@ function testNormalAuthAndAdminRemainValid() {
   assert.throws(() => assertAdminUser({ role: 'user' }), /Admin access required/);
 }
 
+function testPasswordChangeValidation() {
+  assert.deepEqual(validatePasswordChange({
+    currentPassword: 'old password', newPassword: 'new password', confirmPassword: 'new password'
+  }), { currentPassword: 'old password', newPassword: 'new password' });
+  assert.throws(() => validatePasswordChange({ currentPassword: '', newPassword: 'new password', confirmPassword: 'new password' }), /Current password is required/);
+  assert.throws(() => validatePasswordChange({ currentPassword: 'old password', newPassword: 'short', confirmPassword: 'short' }), /between 6 and 256/);
+  assert.throws(() => validatePasswordChange({ currentPassword: 'old password', newPassword: 'new password', confirmPassword: 'different' }), /does not match/);
+  assert.throws(() => validatePasswordChange({ currentPassword: 'same password', newPassword: 'same password', confirmPassword: 'same password' }), /must be different/);
+}
+
+async function testPasswordChangeTransaction() {
+  let storedHash = hashPassword('old password');
+  let signedOutSessions = 0;
+  const statements = [];
+  const client = {
+    async query(sql, params = []) {
+      statements.push(sql);
+      if (sql.startsWith('SELECT password_hash')) return { rows: [{ password_hash: storedHash }], rowCount: 1 };
+      if (sql.startsWith('UPDATE site_users')) { storedHash = params[0]; return { rows: [], rowCount: 1 }; }
+      if (sql.startsWith('DELETE FROM site_sessions')) { signedOutSessions = 2; return { rows: [], rowCount: signedOutSessions }; }
+      return { rows: [], rowCount: 0 };
+    },
+    release() {}
+  };
+  const database = { async connect() { return client; } };
+  const result = await changeSitePassword({ id: '7' }, 'current-session', {
+    currentPassword: 'old password', newPassword: 'new password', confirmPassword: 'new password'
+  }, database);
+  assert.deepEqual(result, { ok: true, signedOutSessions: 2 });
+  assert.equal(verifyPassword('new password', storedHash), true);
+  assert.ok(statements.includes('COMMIT'));
+}
+
 function testHeadersAndCsrfContract() {
   const headers = securityHeaders({ https: true });
   assert.match(headers['Content-Security-Policy'], /frame-ancestors 'none'/);
@@ -136,6 +169,8 @@ async function testHttpBoundary() {
   testOriginValidation();
   testStaticTraversal();
   testNormalAuthAndAdminRemainValid();
+  testPasswordChangeValidation();
+  await testPasswordChangeTransaction();
   testHeadersAndCsrfContract();
   await testHttpBoundary();
   console.log('Security hardening tests passed.');

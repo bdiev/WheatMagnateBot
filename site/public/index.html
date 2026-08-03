@@ -13,7 +13,7 @@
     <link rel="icon" type="image/png" href="/items/Wheat.png">
     <link rel="apple-touch-icon" href="/items/Wheat.png">
     <script src="/theme-init.js?v=136"></script>
-    <link rel="stylesheet" href="/styles.css?v=154">
+    <link rel="stylesheet" href="/styles.css?v=155">
   </head>
   <body>
     <section id="authScreen" class="auth-screen" aria-label="Site access">
@@ -842,12 +842,26 @@
           <div id="navSectionsList" class="nav-sections-list"></div>
         </section>
         <section class="panel account-settings-panel" data-settings-panel="account" hidden>
-          <div class="panel-head"><div><h2>Account</h2><p>One timezone for dates, charts, reports and notification quiet hours.</p></div></div>
-          <form id="accountSettingsForm" class="account-settings-form">
-            <label class="auth-field"><span>Timezone</span><input id="accountTimezone" list="accountTimezoneOptions" value="Europe/Vilnius" placeholder="Start typing a city or timezone" autocomplete="off" spellcheck="false"><datalist id="accountTimezoneOptions"><option value="Europe/Vilnius"></datalist></label>
-            <button id="accountTimezoneSave" type="submit"><span class="button-label">Save timezone</span></button>
-          </form>
-          <div class="push-privacy-note">This setting is synchronized across all devices signed in to your account.</div>
+          <div class="panel-head"><div><h2>Account</h2><p>Manage your timezone and sign-in security.</p></div></div>
+          <div class="account-settings-group">
+            <div class="account-settings-copy"><h3>Timezone</h3><p>Used for dates, charts, reports and notification quiet hours.</p></div>
+            <form id="accountSettingsForm" class="account-settings-form">
+              <label class="auth-field"><span>Timezone</span><input id="accountTimezone" list="accountTimezoneOptions" value="Europe/Vilnius" placeholder="Start typing a city or timezone" autocomplete="off" spellcheck="false"><datalist id="accountTimezoneOptions"><option value="Europe/Vilnius"></datalist></label>
+              <button id="accountTimezoneSave" type="submit"><span class="button-label">Save timezone</span></button>
+            </form>
+            <div class="push-privacy-note">This setting is synchronized across all devices signed in to your account.</div>
+          </div>
+          <div class="account-settings-group">
+            <div class="account-settings-copy"><h3>Change password</h3><p>Enter your current password before choosing a new one.</p></div>
+            <form id="accountPasswordForm" class="account-password-form">
+              <label class="auth-field"><span>Current password</span><input id="accountCurrentPassword" name="currentPassword" type="password" autocomplete="current-password" required maxlength="256"></label>
+              <label class="auth-field"><span>New password</span><input id="accountNewPassword" name="newPassword" type="password" autocomplete="new-password" required minlength="6" maxlength="256"></label>
+              <label class="auth-field"><span>Confirm new password</span><input id="accountConfirmPassword" name="confirmPassword" type="password" autocomplete="new-password" required minlength="6" maxlength="256"></label>
+              <button id="accountPasswordSave" type="submit">Change password</button>
+              <p id="accountPasswordStatus" class="account-password-status" role="status" aria-live="polite" hidden></p>
+            </form>
+            <div class="push-privacy-note">After the change, other signed-in sessions will be logged out for security.</div>
+          </div>
         </section>
       </section>
 
@@ -1111,6 +1125,6 @@
       </section>
     </main>
 
-    <script src="/app.js?v=158" defer></script>
+    <script src="/app.js?v=159" defer></script>
   </body>
 </html>

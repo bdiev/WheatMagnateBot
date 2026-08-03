@@ -30,6 +30,24 @@
   border: 1px solid var(--line);
 }
 
+.account-sign-in {
+  gap: 8px;
+  color: var(--text);
+  background: var(--panel);
+}
+
+.account-sign-in:hover {
+  color: var(--text);
+  background: var(--panel-soft);
+}
+
+.discord-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  color: #5865f2;
+}
+
 .request-primary-link {
   color: #fff;
   background: var(--accent);

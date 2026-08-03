@@ -4066,7 +4066,15 @@ body.search-focus-active #logoutButton {
 .push-settings-panel { grid-column: 1 / -1; min-width: 0; }
 .navigation-settings-panel { grid-column: 1 / -1; min-width: 0; }
 .account-settings-panel { grid-column: 1 / -1; min-width: 0; }
+.account-settings-copy { display: grid; gap: 4px; padding: 16px 16px 0; }
+.account-settings-copy h3,
+.account-settings-copy p { margin: 0; }
+.account-settings-copy p { color: var(--muted); font-size: 13px; }
 .account-settings-form { display: grid; grid-template-columns: minmax(240px, 1fr) auto; align-items: end; gap: 12px; padding: 16px; }
+.account-password-form { display: grid; grid-template-columns: repeat(3, minmax(160px, 1fr)) auto; align-items: end; gap: 12px; padding: 16px; }
+.account-password-status { grid-column: 1 / -1; margin: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--button-radius); color: var(--muted); background: var(--panel-soft); font-size: 13px; }
+.account-password-status.success { border-color: color-mix(in srgb, #65a94a 55%, var(--line)); color: #65a94a; }
+.account-password-status.error { border-color: color-mix(in srgb, #d45b5b 55%, var(--line)); color: #d45b5b; }
 
 #accountTimezoneSave {
   position: relative;
@@ -4199,6 +4207,8 @@ body.search-focus-active #logoutButton {
   .push-device-fields { grid-template-columns: minmax(0, 1fr); }
   .account-settings-form { grid-template-columns: minmax(0, 1fr); padding: 12px; }
   .account-settings-form button { width: 100%; }
+  .account-password-form { grid-template-columns: minmax(0, 1fr); padding: 12px; }
+  .account-password-form button { width: 100%; }
   .push-event-types > div { grid-template-columns: minmax(0, 1fr); }
   .push-device-actions > button { flex: 1 1 100%; width: 100%; }
   .push-quiet-hours { grid-template-columns: repeat(2, minmax(0, 1fr)); }

@@ -236,6 +236,41 @@ async function saveAccountSettings(event) {
   }
 }
 
+async function changeAccountPassword(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = $('#accountPasswordSave');
+  const status = $('#accountPasswordStatus');
+  const currentPassword = $('#accountCurrentPassword')?.value || '';
+  const newPassword = $('#accountNewPassword')?.value || '';
+  const confirmPassword = $('#accountConfirmPassword')?.value || '';
+  const showStatus = (message, type) => {
+    if (!status) return;
+    status.textContent = message;
+    status.className = `account-password-status ${type}`;
+    status.hidden = false;
+  };
+  if (newPassword !== confirmPassword) {
+    showStatus('New password confirmation does not match.', 'error');
+    $('#accountConfirmPassword')?.focus();
+    return;
+  }
+  if (button) button.disabled = true;
+  if (status) status.hidden = true;
+  try {
+    const payload = await putJson('/api/settings/password', { currentPassword, newPassword, confirmPassword });
+    form.reset();
+    const signedOut = Number(payload.signedOutSessions) || 0;
+    showStatus(signedOut
+      ? `Password changed. ${signedOut} other signed-in ${signedOut === 1 ? 'session was' : 'sessions were'} logged out.`
+      : 'Password changed successfully.', 'success');
+  } catch (err) {
+    showStatus(err.message, 'error');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js')
@@ -5929,6 +5964,7 @@ $('#navSectionsList')?.addEventListener('change', saveNavigationVisibility);
 $('#navSectionsList')?.addEventListener('click', moveNavigationSection);
 $('#navSectionsReset')?.addEventListener('click', resetNavigationVisibility);
 $('#accountSettingsForm')?.addEventListener('submit', saveAccountSettings);
+$('#accountPasswordForm')?.addEventListener('submit', changeAccountPassword);
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.addEventListener('message', event => {

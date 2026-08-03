@@ -2570,6 +2570,59 @@ function validateCredentials(username, password, minimumLength = 6) {
   }
 }
 
+function validatePasswordChange(body = {}) {
+  const currentPassword = String(body.currentPassword || '');
+  const newPassword = String(body.newPassword || '');
+  const confirmPassword = String(body.confirmPassword || '');
+  if (!currentPassword || currentPassword.length > 256) {
+    const err = new Error('Current password is required.');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (newPassword.length < 6 || newPassword.length > 256) {
+    const err = new Error('New password must be between 6 and 256 characters.');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (newPassword !== confirmPassword) {
+    const err = new Error('New password confirmation does not match.');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (newPassword === currentPassword) {
+    const err = new Error('New password must be different from the current password.');
+    err.statusCode = 400;
+    throw err;
+  }
+  return { currentPassword, newPassword };
+}
+
+async function changeSitePassword(currentUser, currentSessionHash, body, database = pool) {
+  const { currentPassword, newPassword } = validatePasswordChange(body);
+  const client = await database.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query('SELECT password_hash FROM site_users WHERE id=$1 FOR UPDATE', [currentUser.id]);
+    if (!result.rows[0] || !verifyPassword(currentPassword, result.rows[0].password_hash)) {
+      const err = new Error('Current password is incorrect.');
+      err.statusCode = 400;
+      throw err;
+    }
+    await client.query('UPDATE site_users SET password_hash=$1 WHERE id=$2', [hashPassword(newPassword), currentUser.id]);
+    const removedSessions = await client.query(
+      'DELETE FROM site_sessions WHERE user_id=$1 AND token_hash<>$2',
+      [currentUser.id, currentSessionHash]
+    );
+    await client.query('COMMIT');
+    return { ok: true, signedOutSessions: removedSessions.rowCount || 0 };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 async function handleAuth(req, res, url) {
   assertDatabase();
 
@@ -3598,6 +3651,20 @@ async function handleApi(req, res, url) {
       sendJson(res, 200, await updateAccountSettings(currentUser, await readJsonBody(req, 16 * 1024)));
       return;
     }
+    if (url.pathname === '/api/settings/password' && req.method === 'PUT') {
+      if (!enforceRateLimit(req, res, 'password_change', currentUser.username, { limit: 5, windowMs: 15 * 60_000 })) return;
+      const currentSessionHash = hashToken(parseCookies(req)[SESSION_COOKIE] || '');
+      const result = await changeSitePassword(currentUser, currentSessionHash, await readJsonBody(req, 16 * 1024));
+      await recordSystemLog({
+        level: 'audit',
+        category: 'security',
+        actor: currentUser.username,
+        message: 'Changed account password.',
+        details: { signedOutSessions: result.signedOutSessions }
+      });
+      sendJson(res, 200, result);
+      return;
+    }
     if (url.pathname === '/api/notifications' && req.method === 'GET') {
       sendJson(res, 200, await getNotifications(currentUser, url)); return;
     }
@@ -4057,4 +4124,4 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown);
 }
 
-module.exports = { assertAdminUser, cleanAccountInput, freshStoredRuntimePayload, hashPassword, normalizeNavigationPreferences, registrationDefaults, requestHandler, server, startSiteServer, validateCredentials, verifyPassword };
+module.exports = { assertAdminUser, changeSitePassword, cleanAccountInput, freshStoredRuntimePayload, hashPassword, normalizeNavigationPreferences, registrationDefaults, requestHandler, server, startSiteServer, validateCredentials, validatePasswordChange, verifyPassword };
