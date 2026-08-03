@@ -538,6 +538,65 @@
   font-weight: 800;
 }
 
+.admin-coordinate-picker {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--line));
+  border-radius: 10px;
+  padding: 13px;
+  background: color-mix(in srgb, var(--accent) 5%, var(--panel-soft));
+}
+
+.admin-coordinate-picker legend {
+  padding: 0 6px;
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.admin-coordinate-picker select {
+  width: 100%;
+  height: var(--button-height);
+  border: 1px solid var(--line);
+  border-radius: var(--button-radius);
+  padding: 0 11px;
+  color: var(--text);
+  background: var(--panel-soft);
+  outline: none;
+}
+
+.admin-coordinate-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.admin-coordinate-picker label > span {
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .045em;
+  text-transform: uppercase;
+}
+
+.admin-coordinate-picker input {
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-weight: 700;
+}
+
+.admin-coordinate-picker select:focus {
+  border-color: color-mix(in srgb, var(--accent) 65%, var(--line));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+.admin-coordinate-picker select:disabled,
+.admin-coordinate-picker input:read-only {
+  cursor: default;
+  opacity: .78;
+}
+
 .admin-form textarea {
   min-height: 74px;
 }
@@ -695,7 +754,8 @@
   .request-item-composer select,
   .admin-form input,
   .admin-form textarea,
-  .request-admin-controls select {
+  .request-admin-controls select,
+  .admin-coordinate-picker select {
     font-size: 16px;
   }
 

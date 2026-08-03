@@ -236,10 +236,48 @@ function renderRequests() {
     : '<div class="empty-state">Your requests will appear here.</div>';
 }
 
+function parseDeliveryCoordinates(value) {
+  const raw = String(value || '').trim();
+  const lower = raw.toLowerCase();
+  const dimension = lower.includes('nether') ? 'Nether' : lower.includes('end') ? 'The End' : 'Overworld';
+  const byAxis = axis => raw.match(new RegExp(`\\b${axis}\\s*[:=]?\\s*(-?\\d+)`, 'i'))?.[1] || '';
+  let x = byAxis('x');
+  let y = byAxis('y');
+  let z = byAxis('z');
+  if (!x || !y || !z) {
+    const values = raw.match(/-?\d+/g) || [];
+    if (values.length === 3) [x, y, z] = values;
+  }
+  return { dimension, x, y, z };
+}
+
+function coordinateOption(value, selected) {
+  return `<option value="${escapeHtml(value)}"${value === selected ? ' selected' : ''}>${escapeHtml(value)}</option>`;
+}
+
+function deliveryCoordinatesFromCard(card, required) {
+  const picker = card.querySelector('.admin-coordinate-picker');
+  const dimension = picker.querySelector('[name="deliveryDimension"]').value;
+  const values = ['X', 'Y', 'Z'].map(axis => picker.querySelector(`[name="delivery${axis}"]`).value.trim());
+  const original = picker.dataset.originalCoordinates || '';
+  if (values.every(value => !value)) {
+    if (original) return original;
+    if (!required) return '';
+    throw new Error('Enter the X, Y and Z delivery coordinates.');
+  }
+  if (values.some(value => !/^-?\d+$/.test(value))) {
+    throw new Error('X, Y and Z must be whole numbers.');
+  }
+  return `${dimension}: X ${values[0]}, Y ${values[1]}, Z ${values[2]}`;
+}
+
 function adminRequestCard(request) {
   const requester = request.requester || {};
   const avatar = requester.avatarUrl ? `<img src="${escapeHtml(requester.avatarUrl)}" alt="">` : '';
   const locked = ['ready', 'notified', 'completed', 'cancelled'].includes(request.status);
+  const coordinates = parseDeliveryCoordinates(request.deliveryCoordinates);
+  const coordinateLock = locked ? ' disabled' : '';
+  const coordinateReadonly = locked ? ' readonly' : '';
   return `<article class="admin-request" data-request-id="${escapeHtml(request.id)}">
     <div>
       <div class="request-card-head"><span class="request-id">Request #${escapeHtml(request.id)}</span><span class="status status-${escapeHtml(request.status)}">${escapeHtml(STATUS_LABELS[request.status] || request.status)}</span></div>
@@ -248,7 +286,15 @@ function adminRequestCard(request) {
       <div class="request-meta"><span>Created ${escapeHtml(formatDate(request.createdAt))}</span>${request.notifiedAt ? `<span>Sent ${escapeHtml(formatDate(request.notifiedAt))}</span>` : ''}</div>
     </div>
     <form class="admin-form">
-      <label><span>Delivery coordinates</span><input name="deliveryCoordinates" maxlength="160" placeholder="Overworld: X 120, Y 64, Z -840" value="${escapeHtml(request.deliveryCoordinates || '')}" ${locked ? 'readonly' : ''}></label>
+      <fieldset class="admin-coordinate-picker" data-original-coordinates="${escapeHtml(request.deliveryCoordinates || '')}">
+        <legend>Delivery coordinates</legend>
+        <label><span>Dimension</span><select name="deliveryDimension"${coordinateLock}>${coordinateOption('Overworld', coordinates.dimension)}${coordinateOption('Nether', coordinates.dimension)}${coordinateOption('The End', coordinates.dimension)}</select></label>
+        <div class="admin-coordinate-grid">
+          <label><span>X</span><input name="deliveryX" inputmode="numeric" maxlength="10" placeholder="120" value="${escapeHtml(coordinates.x)}"${coordinateReadonly}></label>
+          <label><span>Y</span><input name="deliveryY" inputmode="numeric" maxlength="10" placeholder="64" value="${escapeHtml(coordinates.y)}"${coordinateReadonly}></label>
+          <label><span>Z</span><input name="deliveryZ" inputmode="numeric" maxlength="10" placeholder="-840" value="${escapeHtml(coordinates.z)}"${coordinateReadonly}></label>
+        </div>
+      </fieldset>
       <label><span>Note for the player</span><textarea name="adminNote" maxlength="500" ${locked ? 'readonly' : ''}>${escapeHtml(request.adminNote || '')}</textarea></label>
       <div class="admin-actions">
         ${request.status === 'pending' ? '<button class="small-action" type="button" data-status="preparing">Start preparing</button>' : ''}
@@ -304,13 +350,20 @@ async function submitRequest(event) {
 async function updateAdminRequest(card, status) {
   const requestId = card.dataset.requestId;
   const button = card.querySelector(`[data-status="${status}"]`);
+  let deliveryCoordinates;
+  try {
+    deliveryCoordinates = deliveryCoordinatesFromCard(card, status === 'ready');
+  } catch (error) {
+    showMessage(error.message, true);
+    return;
+  }
   if (button) button.disabled = true;
   try {
     await api(`/api/request/requests/${encodeURIComponent(requestId)}`, {
       method: 'PATCH',
       body: JSON.stringify({
         status,
-        deliveryCoordinates: card.querySelector('[name="deliveryCoordinates"]').value,
+        deliveryCoordinates,
         adminNote: card.querySelector('[name="adminNote"]').value
       })
     });
