@@ -5898,6 +5898,508 @@ body.search-focus-active #logoutButton {
   }
 }
 
+/* Kill Aura: focused combat dashboard */
+#tab-kill-aura {
+  --aura-accent: #b78116;
+  --aura-accent-strong: #76500c;
+  --aura-soft: color-mix(in srgb, #e8b633 12%, var(--panel));
+  --aura-glow: color-mix(in srgb, #e8b633 20%, transparent);
+}
+
+:root[data-theme="dark"] #tab-kill-aura {
+  --aura-accent: #e3b341;
+  --aura-accent-strong: #ffd970;
+  --aura-soft: color-mix(in srgb, #d9a62e 10%, var(--panel));
+  --aura-glow: color-mix(in srgb, #e3b341 16%, transparent);
+}
+
+#tab-kill-aura.active {
+  gap: 18px;
+}
+
+.kill-aura-stats-grid {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.kill-aura-stats-grid .stat,
+.kill-aura-stats-grid .stat:nth-child(-n + 3) {
+  grid-column: auto;
+}
+
+#tab-kill-aura .stat,
+#tab-kill-aura .panel {
+  border-color: color-mix(in srgb, var(--line) 82%, transparent);
+  border-radius: 16px;
+  box-shadow: 0 12px 30px color-mix(in srgb, #02050a 10%, transparent);
+}
+
+#tab-kill-aura .aura-stat {
+  position: relative;
+  min-height: 142px;
+  overflow: hidden;
+  padding: 17px 18px 16px;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--panel) 96%, white), var(--panel)),
+    var(--panel);
+}
+
+:root[data-theme="dark"] #tab-kill-aura .aura-stat {
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--panel) 94%, white), var(--panel)),
+    var(--panel);
+}
+
+#tab-kill-aura .aura-stat::after {
+  content: "";
+  position: absolute;
+  right: -32px;
+  bottom: -48px;
+  width: 110px;
+  height: 110px;
+  border: 1px solid var(--aura-glow);
+  border-radius: 28px;
+  opacity: .7;
+  transform: rotate(24deg);
+  pointer-events: none;
+}
+
+#tab-kill-aura .aura-total-stat {
+  border-color: color-mix(in srgb, var(--aura-accent) 38%, var(--line));
+  background:
+    radial-gradient(circle at 100% 0, var(--aura-glow), transparent 48%),
+    linear-gradient(145deg, var(--aura-soft), var(--panel) 64%);
+}
+
+#tab-kill-aura .aura-stat:hover {
+  border-color: color-mix(in srgb, var(--aura-accent) 48%, var(--line));
+  box-shadow: 0 16px 34px color-mix(in srgb, #02050a 14%, transparent);
+  transform: translateY(-2px);
+}
+
+.aura-stat-topline {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+#tab-kill-aura .stat-label {
+  color: color-mix(in srgb, var(--muted) 88%, var(--text));
+  font-size: 12px;
+  letter-spacing: .055em;
+  text-transform: uppercase;
+}
+
+.aura-stat-icon,
+.aura-control-icon {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--aura-accent) 28%, var(--line));
+  background: var(--aura-soft);
+}
+
+.aura-stat-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+}
+
+.aura-stat-icon img {
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 4px 5px color-mix(in srgb, #000 26%, transparent));
+}
+
+#tab-kill-aura .aura-stat > strong,
+.aura-state-value {
+  position: relative;
+  z-index: 1;
+  margin: 14px 0 6px;
+}
+
+#tab-kill-aura .aura-stat > strong,
+.aura-state-value strong {
+  font-size: clamp(24px, 2vw, 30px);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.025em;
+}
+
+.aura-state-value {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.aura-state-value strong {
+  display: block;
+  min-width: 0;
+  margin: 0;
+}
+
+.aura-state-value i {
+  width: 10px;
+  height: 10px;
+  border: 2px solid color-mix(in srgb, #d65c58 30%, var(--panel));
+  border-radius: 999px;
+  background: #d65c58;
+  box-shadow: 0 0 0 5px color-mix(in srgb, #d65c58 12%, transparent);
+}
+
+#tab-kill-aura[data-aura-state="waiting"] .aura-state-value i {
+  border-color: color-mix(in srgb, #e8ad38 30%, var(--panel));
+  background: #e8ad38;
+  box-shadow: 0 0 0 5px color-mix(in srgb, #e8ad38 13%, transparent);
+}
+
+#tab-kill-aura[data-aura-state="active"] .aura-state-value i {
+  border-color: color-mix(in srgb, #5bc66b 30%, var(--panel));
+  background: #5bc66b;
+  box-shadow: 0 0 0 5px color-mix(in srgb, #5bc66b 14%, transparent);
+}
+
+#tab-kill-aura .aura-stat small {
+  position: relative;
+  z-index: 1;
+  display: block;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kill-aura-admin-grid {
+  gap: 12px;
+}
+
+#tab-kill-aura .kill-aura-admin-grid .panel {
+  height: 132px;
+  min-height: 132px;
+  background: linear-gradient(155deg, color-mix(in srgb, var(--panel-soft) 56%, var(--panel)), var(--panel));
+}
+
+#tab-kill-aura .kill-aura-admin-grid .panel-head {
+  padding: 16px 16px 8px;
+}
+
+.aura-control-title {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+
+.aura-control-title > div {
+  min-width: 0;
+}
+
+.aura-control-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+}
+
+.aura-control-icon img {
+  width: 23px;
+  height: 23px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+#tab-kill-aura .kill-aura-admin-grid .admin-command-actions {
+  padding: 0 16px 16px;
+}
+
+#tab-kill-aura .kill-aura-admin-grid .admin-command-actions button,
+#tab-kill-aura .kill-aura-control-prompt,
+#tab-kill-aura .kill-aura-control-readout {
+  min-height: 38px;
+  height: 38px;
+  border-radius: 10px;
+}
+
+#tab-kill-aura .aura-primary-button {
+  border: 1px solid color-mix(in srgb, var(--aura-accent) 76%, #fff);
+  color: #201804;
+  background: linear-gradient(180deg, #f2ca59, #dba52c);
+  box-shadow: 0 8px 18px color-mix(in srgb, #c99019 24%, transparent);
+}
+
+#tab-kill-aura .aura-primary-button:hover {
+  color: #171102;
+  background: linear-gradient(180deg, #ffdc72, #e8b43d);
+  box-shadow: 0 10px 22px color-mix(in srgb, #c99019 32%, transparent);
+}
+
+#tab-kill-aura .aura-primary-button:disabled {
+  border-color: var(--line);
+  color: var(--muted);
+  background: var(--panel-soft);
+  box-shadow: none;
+}
+
+#tab-kill-aura #killAuraToggleButton.danger-button {
+  border: 1px solid color-mix(in srgb, #d45c56 58%, var(--line));
+  color: #fff;
+  background: linear-gradient(180deg, #c94e49, #a93734);
+  box-shadow: 0 8px 18px color-mix(in srgb, #b33d38 22%, transparent);
+}
+
+#tab-kill-aura #killAuraToggleButton.danger-button:hover {
+  background: linear-gradient(180deg, #db625c, #b13e39);
+}
+
+#tab-kill-aura .kill-aura-control-prompt {
+  border-color: color-mix(in srgb, var(--aura-accent) 25%, var(--line));
+  background: var(--aura-soft);
+}
+
+#tab-kill-aura .kill-aura-control-summary:hover .kill-aura-control-prompt {
+  border-color: color-mix(in srgb, var(--aura-accent) 60%, var(--line));
+}
+
+#tab-kill-aura .kill-aura-control-readout {
+  gap: 8px;
+  color: var(--muted);
+  background: var(--panel-soft);
+}
+
+.kill-aura-control-readout > span {
+  color: var(--text);
+}
+
+.kill-aura-control-readout > i {
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--aura-accent);
+}
+
+#tab-kill-aura .kill-aura-control-panel[open] {
+  border-color: color-mix(in srgb, var(--aura-accent) 42%, var(--line));
+  box-shadow: 0 18px 38px color-mix(in srgb, #02050a 16%, transparent);
+}
+
+#tab-kill-aura .kill-aura-control-panel[open] .kill-aura-control-summary {
+  height: 132px;
+}
+
+#tab-kill-aura .kill-aura-select-trigger,
+#tab-kill-aura .kill-aura-search input {
+  border-radius: 10px;
+}
+
+#tab-kill-aura .kill-aura-select-trigger:hover,
+#tab-kill-aura .kill-aura-select-trigger[aria-expanded="true"],
+#tab-kill-aura .kill-aura-search input:focus {
+  border-color: var(--aura-accent);
+  box-shadow: 0 0 0 3px var(--aura-glow);
+}
+
+#tab-kill-aura .kill-aura-select-menu {
+  border-color: color-mix(in srgb, var(--aura-accent) 36%, var(--line));
+  border-radius: 14px;
+  box-shadow: 0 22px 54px color-mix(in srgb, #02050a 28%, transparent);
+}
+
+#tab-kill-aura .kill-aura-mob-option {
+  border-radius: 10px;
+}
+
+#tab-kill-aura .kill-aura-mob-option:hover,
+#tab-kill-aura .kill-aura-mob-option:has(input:checked) {
+  border-color: var(--aura-accent);
+  background: var(--aura-soft);
+}
+
+#tab-kill-aura .kill-aura-mob-option input {
+  accent-color: var(--aura-accent);
+}
+
+#tab-kill-aura .kill-aura-save-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+#tab-kill-aura .kill-aura-data-grid > .panel {
+  min-height: 270px;
+}
+
+#tab-kill-aura .kill-aura-data-grid .panel-head {
+  align-items: center;
+  padding: 19px 20px;
+  background: linear-gradient(180deg, var(--panel-soft), var(--panel));
+}
+
+#tab-kill-aura .kill-aura-data-grid .panel-head h2 {
+  font-size: 16px;
+}
+
+#tab-kill-aura .kill-aura-data-grid .panel-head > small {
+  border: 1px solid color-mix(in srgb, var(--aura-accent) 25%, var(--line));
+  border-radius: 999px;
+  padding: 6px 9px;
+  color: var(--aura-accent-strong);
+  background: var(--aura-soft);
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+#tab-kill-aura .rank-list,
+#tab-kill-aura .detail-list {
+  gap: 8px;
+  padding: 12px;
+}
+
+#tab-kill-aura .rank-item,
+#tab-kill-aura .detail-list div {
+  min-height: 48px;
+  border-color: color-mix(in srgb, var(--line) 84%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel-soft) 74%, var(--panel));
+}
+
+#tab-kill-aura .rank-item:hover,
+#tab-kill-aura .detail-list div:hover {
+  border-color: color-mix(in srgb, var(--aura-accent) 32%, var(--line));
+  background: var(--aura-soft);
+}
+
+#tab-kill-aura .rank-index {
+  color: var(--aura-accent-strong);
+  background: var(--aura-soft);
+}
+
+.aura-mob-name {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 10px;
+  font-weight: 750;
+}
+
+.aura-mob-name img {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.aura-mob-name span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#tab-kill-aura button:focus-visible,
+#tab-kill-aura summary:focus-visible,
+#tab-kill-aura input:focus-visible {
+  outline: 3px solid var(--aura-glow);
+  outline-offset: 2px;
+}
+
+@media (max-width: 1180px) {
+  .kill-aura-stats-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  .kill-aura-stats-grid .stat,
+  .kill-aura-stats-grid .stat:nth-child(-n + 3) {
+    grid-column: span 2;
+  }
+
+  .kill-aura-stats-grid .stat:nth-child(-n + 2) {
+    grid-column: span 3;
+  }
+}
+
+@media (max-width: 760px) {
+  #tab-kill-aura.active {
+    gap: 14px;
+  }
+
+  .kill-aura-stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .kill-aura-stats-grid .stat,
+  .kill-aura-stats-grid .stat:nth-child(-n + 3),
+  .kill-aura-stats-grid .stat:nth-child(-n + 2) {
+    grid-column: auto;
+  }
+
+  .kill-aura-stats-grid .aura-total-stat {
+    grid-column: 1 / -1;
+  }
+
+  #tab-kill-aura .aura-stat {
+    min-height: 128px;
+    padding: 14px;
+  }
+
+  .aura-stat-icon {
+    width: 34px;
+    height: 34px;
+  }
+
+  #tab-kill-aura .kill-aura-admin-grid .panel {
+    height: 128px;
+    min-height: 128px;
+  }
+
+  #tab-kill-aura .kill-aura-control-panel[open] .kill-aura-control-summary {
+    height: 128px;
+  }
+
+  #tab-kill-aura .kill-aura-save-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 460px) {
+  .kill-aura-stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .kill-aura-stats-grid .aura-total-stat {
+    grid-column: auto;
+  }
+
+  #tab-kill-aura .aura-stat {
+    min-height: 116px;
+  }
+
+  #tab-kill-aura .aura-stat > strong,
+  .aura-state-value {
+    margin-top: 9px;
+  }
+
+  #tab-kill-aura .kill-aura-data-grid .panel-head {
+    align-items: flex-start;
+  }
+
+  #tab-kill-aura .detail-list div {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  #tab-kill-aura .detail-list strong {
+    justify-self: end;
+    width: auto;
+    text-align: right;
+  }
+}
+
 .child-ai-training-form {
   display: grid;
   grid-template-columns: minmax(0, 1.5fr) minmax(0, 1.5fr) minmax(170px, .8fr) minmax(140px, .55fr) auto;

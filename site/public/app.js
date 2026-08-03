@@ -3333,6 +3333,8 @@ function renderKillAura(payload = {}) {
   state.killAuraData = payload;
   const aura = payload.state || {};
   const stateLabel = aura.active ? 'Active' : aura.enabled ? 'Waiting' : 'Disabled';
+  const auraPanel = $('#tab-kill-aura');
+  if (auraPanel) auraPanel.dataset.auraState = aura.active ? 'active' : aura.enabled ? 'waiting' : 'disabled';
   $('#killAuraState').textContent = stateLabel;
   $('#killAuraUpdated').textContent = `last update: ${formatDate(aura.observedAt || aura.updatedAt)}`;
   setRollingNumber('#killAuraSessionKills', aura.sessionKills || 0);
@@ -3350,8 +3352,8 @@ function renderKillAura(payload = {}) {
   const toggle = $('#killAuraToggleButton');
   if (toggle) {
     toggle.textContent = aura.enabled ? 'Disable Kill Aura' : 'Enable Kill Aura';
-    toggle.classList.remove('danger-button');
-    toggle.classList.add('ghost-button');
+    toggle.classList.toggle('danger-button', Boolean(aura.enabled));
+    toggle.classList.toggle('aura-primary-button', !aura.enabled);
     toggle.disabled = !aura.enabled && !(aura.selectedMobs || []).length && !state.killAuraSelectedMobs.size;
   }
 
@@ -3369,7 +3371,7 @@ function renderKillAura(payload = {}) {
     ? killed.map((mob, index) => `
       <div class="rank-item">
         <span class="rank-index">${index + 1}</span>
-        <span>${escapeHtml(mob.name)}</span>
+        <span class="aura-mob-name"><img src="${mob.id === 'blaze' ? '/mobs/Blaze.png' : '/items/Target.png'}" alt=""><span>${escapeHtml(mob.name)}</span></span>
         <strong>${formatNumber(mob.kills)}</strong>
       </div>
     `).join('')

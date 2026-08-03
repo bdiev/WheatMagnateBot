@@ -336,28 +336,43 @@
 
       <section id="tab-kill-aura" class="tab-panel" data-panel="kill-aura">
         <section class="stats-grid five kill-aura-stats-grid">
-          <article class="stat">
-            <span class="stat-label">All-time Kills</span>
+          <article class="stat aura-stat aura-total-stat">
+            <div class="aura-stat-topline">
+              <span class="stat-label">All-time Kills</span>
+              <span class="aura-stat-icon" aria-hidden="true"><img src="/items/Netherite_Sword.png" alt=""></span>
+            </div>
             <strong id="killAuraTotalKills">-</strong>
-            <small>credited Kill Aura kills</small>
+            <small>Total enemies eliminated</small>
           </article>
-          <article class="stat">
-            <span class="stat-label">Module State</span>
-            <strong id="killAuraState">-</strong>
+          <article class="stat aura-stat aura-state-stat">
+            <div class="aura-stat-topline">
+              <span class="stat-label">Module State</span>
+              <span class="aura-stat-icon" aria-hidden="true"><img src="/items/Lever.png" alt=""></span>
+            </div>
+            <div class="aura-state-value"><i aria-hidden="true"></i><strong id="killAuraState">-</strong></div>
             <small id="killAuraUpdated">last update: -</small>
           </article>
-          <article class="stat">
-            <span class="stat-label">Session Kills</span>
+          <article class="stat aura-stat">
+            <div class="aura-stat-topline">
+              <span class="stat-label">Session Kills</span>
+              <span class="aura-stat-icon" aria-hidden="true"><img src="/items/Clock.png" alt=""></span>
+            </div>
             <strong id="killAuraSessionKills">-</strong>
-            <small>since the last enable</small>
+            <small>Since the last activation</small>
           </article>
-          <article class="stat">
-            <span class="stat-label">Current Weapon</span>
+          <article class="stat aura-stat">
+            <div class="aura-stat-topline">
+              <span class="stat-label">Current Weapon</span>
+              <span class="aura-stat-icon" aria-hidden="true"><img src="/items/Iron_Sword.png" alt=""></span>
+            </div>
             <strong id="killAuraWeapon">-</strong>
             <small id="killAuraTarget">target: none</small>
           </article>
-          <article class="stat">
-            <span class="stat-label">Selected Targets</span>
+          <article class="stat aura-stat">
+            <div class="aura-stat-topline">
+              <span class="stat-label">Selected Targets</span>
+              <span class="aura-stat-icon" aria-hidden="true"><img src="/items/Target.png" alt=""></span>
+            </div>
             <strong id="killAuraSelectedCount">-</strong>
             <small id="killAuraSelectedMeta">mob types</small>
           </article>
@@ -366,22 +381,28 @@
         <section class="farm-admin-grid kill-aura-admin-grid admin-only" hidden>
           <section class="panel admin-command-panel">
             <div class="panel-head">
-              <div>
-                <h2>Aura Power</h2>
-                <p>Start or stop stationary combat.</p>
+              <div class="aura-control-title">
+                <span class="aura-control-icon" aria-hidden="true"><img src="/items/Lever.png" alt=""></span>
+                <div>
+                  <h2>Aura Power</h2>
+                  <p>Start or stop stationary combat.</p>
+                </div>
               </div>
             </div>
             <div class="admin-command-actions">
-              <button id="killAuraToggleButton" class="ghost-button" type="button" data-bot-command="kill_aura_toggle">Enable Kill Aura</button>
+              <button id="killAuraToggleButton" class="aura-primary-button" type="button" data-bot-command="kill_aura_toggle">Enable Kill Aura</button>
             </div>
           </section>
 
           <details class="panel admin-command-panel kill-aura-control-panel">
             <summary class="kill-aura-control-summary">
               <div class="panel-head">
-                <div>
-                  <h2>Kill Aura Control</h2>
-                  <p id="killAuraControlMeta">Choose mob targets.</p>
+                <div class="aura-control-title">
+                  <span class="aura-control-icon" aria-hidden="true"><img src="/items/Target.png" alt=""></span>
+                  <div>
+                    <h2>Kill Aura Control</h2>
+                    <p id="killAuraControlMeta">Choose mob targets.</p>
+                  </div>
                 </div>
               </div>
               <div class="admin-command-actions">
@@ -429,13 +450,16 @@
 
           <section class="panel admin-command-panel">
             <div class="panel-head">
-              <div>
-                <h2>Combat Mode</h2>
-                <p>Movement and weapon behavior.</p>
+              <div class="aura-control-title">
+                <span class="aura-control-icon" aria-hidden="true"><img src="/items/Iron_Sword.png" alt=""></span>
+                <div>
+                  <h2>Combat Mode</h2>
+                  <p>Movement and weapon behavior.</p>
+                </div>
               </div>
             </div>
             <div class="admin-command-actions">
-              <span class="kill-aura-control-readout">Stationary · Auto Weapon</span>
+              <span class="kill-aura-control-readout"><span>Stationary</span><i aria-hidden="true"></i><span>Auto Weapon</span></span>
             </div>
           </section>
         </section>
