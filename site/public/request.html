@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Заказать ресурсы — bdiev.org</title>
+    <meta name="description" content="Закажите ресурсы на сервере и получите координаты доставки личным сообщением в игре.">
+    <meta name="theme-color" content="#11130f">
+    <link rel="icon" type="image/png" href="/items/Wheat.png">
+    <link rel="stylesheet" href="/request.css?v=1">
+    <script src="/request.js?v=1" defer></script>
+  </head>
+  <body>
+    <header class="request-header">
+      <a class="brand" href="/request" aria-label="bdiev.org — заявки на ресурсы">
+        <img src="/items/Wheat.png" alt="">
+        <span><strong>bdiev.org</strong><small>resource delivery</small></span>
+      </a>
+      <div id="accountArea" class="account-area"></div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="kicker">Доставка на сервере</p>
+          <h1>Ресурсы — туда,<br><em>где они нужны.</em></h1>
+          <p class="hero-text">Оставьте заявку. Я соберу заказ, доставлю его в безопасную точку, а бот пришлёт координаты личным сообщением, когда вы войдёте на сервер.</p>
+          <a id="heroAction" class="primary-action discord-action" href="/api/request/auth/start">
+            <span class="discord-mark" aria-hidden="true">◖◗</span>
+            Войти через Discord
+          </a>
+          <p id="authHint" class="auth-hint">Discord нужен, чтобы ваши заявки были доступны только вам.</p>
+        </div>
+        <div class="delivery-visual" aria-hidden="true">
+          <div class="map-grid"></div>
+          <div class="route-line"></div>
+          <span class="route-dot start"></span>
+          <span class="route-dot end"></span>
+          <div class="crate crate-back"><img src="/items/Chest.png" alt=""></div>
+          <div class="crate crate-front"><img src="/items/Barrel.png" alt=""></div>
+          <div class="coord-card"><small>ТОЧКА ДОСТАВКИ</small><strong>X: — &nbsp; Y: — &nbsp; Z: —</strong></div>
+        </div>
+      </section>
+
+      <section class="steps" aria-label="Как это работает">
+        <article><span>01</span><div><h2>Опишите заказ</h2><p>Укажите ресурсы и количество в свободной форме.</p></div></article>
+        <article><span>02</span><div><h2>Дождитесь доставки</h2><p>Статус заявки обновится прямо на этой странице.</p></div></article>
+        <article><span>03</span><div><h2>Получите координаты</h2><p>При входе на сервер бот отправит вам точку через <code>/w</code>.</p></div></article>
+      </section>
+
+      <div id="pageMessage" class="page-message" role="status" aria-live="polite" hidden></div>
+
+      <section id="requesterApp" class="portal-grid" hidden>
+        <article class="panel request-form-panel">
+          <div class="panel-heading">
+            <div><p class="kicker">Новая заявка</p><h2>Что вам доставить?</h2></div>
+            <img src="/items/Writable_Book.png" alt="">
+          </div>
+          <form id="requestForm">
+            <label>
+              <span>Minecraft-ник</span>
+              <input id="minecraftUsername" name="minecraftUsername" maxlength="16" pattern="[A-Za-z0-9_]{1,16}" autocomplete="off" placeholder="Steve" required>
+            </label>
+            <label>
+              <span>Ресурсы и количество</span>
+              <textarea id="resources" name="resources" minlength="3" maxlength="2000" rows="7" placeholder="Например:&#10;— 4 шалкера камня&#10;— 2 стака дуба&#10;— 32 блока стекла" required></textarea>
+            </label>
+            <div class="form-footer">
+              <small>Одновременно можно иметь до трёх активных заявок.</small>
+              <button id="requestSubmit" class="primary-action" type="submit">Отправить заявку</button>
+            </div>
+          </form>
+        </article>
+
+        <section class="panel history-panel">
+          <div class="panel-heading compact">
+            <div><p class="kicker">Ваши заказы</p><h2>История заявок</h2></div>
+            <button id="refreshRequests" class="icon-button" type="button" aria-label="Обновить">↻</button>
+          </div>
+          <div id="requestList" class="request-list"></div>
+        </section>
+      </section>
+
+      <section id="adminApp" class="panel admin-panel" hidden>
+        <div class="panel-heading">
+          <div><p class="kicker">Управление доставкой</p><h2>Все заявки</h2></div>
+          <div class="admin-controls">
+            <select id="adminStatusFilter" aria-label="Фильтр статуса">
+              <option value="">Все статусы</option>
+              <option value="pending">Новые</option>
+              <option value="preparing">Собираются</option>
+              <option value="ready">Ждут входа игрока</option>
+              <option value="notified">Координаты отправлены</option>
+              <option value="completed">Завершённые</option>
+              <option value="cancelled">Отменённые</option>
+            </select>
+            <button id="refreshAdmin" class="icon-button" type="button" aria-label="Обновить">↻</button>
+          </div>
+        </div>
+        <p class="admin-explainer">Укажите координаты и нажмите «Готово». Команда попадёт в очередь; если игрок офлайн, бот дождётся его следующего входа.</p>
+        <div id="adminRequestList" class="admin-request-list"></div>
+      </section>
+
+      <section id="loginPrompt" class="login-prompt">
+        <img src="/items/Ender_Chest.png" alt="">
+        <div><p class="kicker">Личный кабинет</p><h2>Войдите, чтобы оставить заявку</h2><p>Мы получим только базовый профиль Discord: идентификатор, имя и аватар.</p></div>
+        <a class="primary-action discord-action" href="/api/request/auth/start"><span class="discord-mark" aria-hidden="true">◖◗</span>Войти через Discord</a>
+      </section>
+    </main>
+
+    <footer><span>WheatMagnate delivery service</span><a href="/">Панель бота</a></footer>
+  </body>
+</html>

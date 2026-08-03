@@ -18,6 +18,7 @@ const { assertTimelineAccess, normalizeTimelineFilters, queryTimeline } = requir
 const { EVENT_TYPES: PUSH_EVENT_TYPES, WebPushService } = require('./web-push');
 const { buildPlayerMilestones } = require('./player-milestones');
 const { KILL_AURA_MOBS, normalizeKillAuraTargets } = require('./kill-aura-catalog');
+const { createResourceRequestService } = require('./resource-requests');
 const {
   MUTATING_METHODS, RateLimiter, clientIp, configuredOrigins, requestIsHttps,
   resolveStaticPath, securityHeaders, trustProxyEnabled, validateOrigin, validHost, verifyCsrfToken
@@ -61,6 +62,7 @@ let liveDashboardCache = null;
 let liveDashboardCacheAt = 0;
 let liveDashboardRequest = null;
 let accountRegistry = null;
+let resourceRequestService = null;
 const minecraftAvatarCache = new Map();
 const rateLimiter = new RateLimiter();
 const rateLimiterTimer = setInterval(() => rateLimiter.prune(), 60_000);
@@ -3707,7 +3709,8 @@ async function handleApi(req, res, url) {
 
 function serveStatic(req, res) {
   if (!['GET', 'HEAD'].includes(req.method)) { sendError(res, 405, 'Method not allowed.'); return; }
-  const resolved = resolveStaticPath(req.url, [
+  const staticUrl = /^\/request\/?(?:\?|$)/.test(String(req.url || '')) ? '/request.html' : req.url;
+  const resolved = resolveStaticPath(staticUrl, [
     { mount: '/items', root: ITEMS_DIR }, { mount: '/food', root: FOOD_DIR },
     { mount: '/logos', root: LOGOS_DIR }, { mount: '/', root: PUBLIC_DIR, index: 'index.html' }
   ]);
@@ -3805,7 +3808,7 @@ async function requestHandler(req, res) {
       sendError(res, 403, 'Request origin is not allowed.');
       return;
     }
-    const csrfExempt = ['/api/auth/login', '/api/auth/register', '/api/auth/bootstrap'].includes(url.pathname);
+    const csrfExempt = ['/api/auth/login', '/api/auth/register', '/api/auth/bootstrap'].includes(url.pathname) || url.pathname.startsWith('/api/request/');
     if (url.pathname.startsWith('/api/') && !csrfExempt) {
       const session = await getCurrentSession(req);
       if (!session) { sendError(res, 401, 'Login required.'); return; }
@@ -3816,6 +3819,17 @@ async function requestHandler(req, res) {
         return;
       }
     }
+  }
+  if (url.pathname.startsWith('/api/request/')) {
+    if (!resourceRequestService) {
+      resourceRequestService = createResourceRequestService({
+        pool, hashToken, parseCookies, readJsonBody, sendJson, sendError,
+        requestIsHttps, trustProxy: SITE_TRUST_PROXY, getCurrentSession,
+        queueBotCommand, enforceRateLimit, recordSystemLog
+      });
+    }
+    await resourceRequestService.handle(req, res, url);
+    return;
   }
   if (url.pathname === '/api/events' && req.method === 'GET') {
     handleSseRequest({ req, res, getCurrentUser, hub: sseHub }).catch(err => {

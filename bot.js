@@ -4961,6 +4961,7 @@ async function executeBotCommand(command) {
       .trim()
       .slice(0, 32);
     const cleanMessage = sanitizeSiteChatMessage(payload.message);
+    const commandAlias = String(payload.commandAlias || '').toLowerCase() === 'w' ? 'w' : 'msg';
     if (!username) throw new Error('Whisper target is required.');
     if (!cleanMessage) throw new Error('Queued whisper is empty.');
     if (!isMinecraftPlayerOnline(username)) {
@@ -4978,7 +4979,7 @@ async function executeBotCommand(command) {
     let sentChunks = 0;
     for (const chunk of splitMinecraftMessage(cleanMessage)) {
       if (!bot?.entity) throw new Error('Minecraft bot is not ready.');
-      const sent = sendMinecraftChat(`/msg ${username} ${chunk}`);
+      const sent = sendMinecraftChat(`/${commandAlias} ${username} ${chunk}`);
       if (!sent) throw new Error('Minecraft bot is not ready.');
       outboundWhispers.set(`OUTBOUND:${username.toLowerCase()}:${cleanMinecraftChatMessage(chunk)}`, Date.now());
       sentChunks += 1;
@@ -4993,6 +4994,19 @@ async function executeBotCommand(command) {
         WHERE id = $1
           AND direction = 'outgoing'
       `, [messageId]);
+    }
+
+    const resourceRequestId = String(payload.resourceRequestId || '').replace(/[^\d]/g, '');
+    if (resourceRequestId && pool) {
+      await pool.query(`
+        UPDATE resource_requests
+        SET status=CASE WHEN status='ready' THEN 'notified' ELSE status END,
+            notified_at=COALESCE(notified_at,NOW()),
+            updated_at=NOW()
+        WHERE id=$1
+      `, [resourceRequestId]).catch(error => {
+        console.error(`[Resource Requests] Failed to mark request #${resourceRequestId} as notified:`, error.message);
+      });
     }
 
     return { username, chunks: sentChunks };

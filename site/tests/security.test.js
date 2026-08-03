@@ -83,6 +83,7 @@ function testNormalAuthAndAdminRemainValid() {
 function testHeadersAndCsrfContract() {
   const headers = securityHeaders({ https: true });
   assert.match(headers['Content-Security-Policy'], /frame-ancestors 'none'/);
+  assert.match(headers['Content-Security-Policy'], /https:\/\/cdn\.discordapp\.com/);
   assert.equal(headers['X-Content-Type-Options'], 'nosniff');
   assert.ok(headers['Strict-Transport-Security']);
   const csrf = 'random-csrf-token';
@@ -112,6 +113,9 @@ async function testHttpBoundary() {
     const page = await httpRequest(port, '/index.html');
     assert.equal(page.status, 200);
     assert.match(page.headers['content-security-policy'], /frame-ancestors 'none'/);
+    const requestPage = await httpRequest(port, '/request');
+    assert.equal(requestPage.status, 200);
+    assert.match(requestPage.body, /<title>Заказать ресурсы — bdiev\.org<\/title>/);
     assert.equal((await httpRequest(port, '/%252e%252e/server.js')).status, 403);
     const crossOrigin = await httpRequest(port, '/api/auth/login', {
       method: 'POST', headers: { Origin: 'http://evil.example', 'Content-Type': 'application/json' }, body: '{}'
