@@ -348,11 +348,11 @@ function createResourceRequestService({
 
     const updated = await pool.query(`
       UPDATE resource_requests SET
-        status=$2,
-        delivery_coordinates=CASE WHEN $3::text='' THEN delivery_coordinates ELSE $3 END,
-        admin_note=$4,
-        ready_at=CASE WHEN $2='ready' THEN COALESCE(ready_at,NOW()) ELSE ready_at END,
-        completed_at=CASE WHEN $2='completed' THEN COALESCE(completed_at,NOW()) ELSE completed_at END,
+        status=$2::varchar(20),
+        delivery_coordinates=CASE WHEN $3::varchar(160)='' THEN delivery_coordinates ELSE $3::varchar(160) END,
+        admin_note=$4::varchar(500),
+        ready_at=CASE WHEN $2::varchar(20)='ready' THEN COALESCE(ready_at,NOW()) ELSE ready_at END,
+        completed_at=CASE WHEN $2::varchar(20)='completed' THEN COALESCE(completed_at,NOW()) ELSE completed_at END,
         updated_at=NOW()
       WHERE id=$1
       RETURNING *
