@@ -62,9 +62,17 @@ function testCompactAdminRequestCards() {
   assert.match(requestStylesSource, /@keyframes request-modal-in/, 'the request modal must animate into view');
 }
 
+function testRequesterPanelsUseNaturalEqualHeight() {
+  assert.match(requestStylesSource, /\.request-portal-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1\.28fr\)[^}]*align-items:\s*stretch;/s,
+    'the new-request and request-history panels must stretch to the same row height');
+  assert.match(requestStylesSource, /\.request-list\s*\{[^}]*max-height:\s*none;[^}]*overflow:\s*visible;/s,
+    'request history must expand naturally instead of rendering an inner scrollbar');
+}
+
 testMinecraftUsernameValidation();
 testContentNormalization();
 testPublicRequestDoesNotLeakCommandInternals();
 testActiveStatusContract();
 testCompactAdminRequestCards();
+testRequesterPanelsUseNaturalEqualHeight();
 console.log('resource request tests passed');

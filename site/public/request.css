@@ -1114,6 +1114,7 @@
   grid-template-columns: minmax(0, 1.28fr) minmax(340px, .72fr);
   gap: 20px;
   margin-bottom: 20px;
+  align-items: stretch;
 }
 
 .request-form-panel,
@@ -1126,8 +1127,7 @@
 }
 
 .request-history-panel {
-  position: sticky;
-  top: 16px;
+  position: static;
 }
 
 .request-form-panel > .panel-head,
@@ -1243,8 +1243,9 @@
 
 .request-list {
   gap: 10px;
-  max-height: 680px;
+  max-height: none;
   padding: 16px;
+  overflow: visible;
 }
 
 .request-card {
