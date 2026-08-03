@@ -1041,6 +1041,9 @@ function applyNavigationOrder() {
     const button = buttons.get(tab);
     if (button) panel.append(button);
   });
+  const requestsLink = panel.querySelector('.requests-nav-link');
+  const adminButton = panel.querySelector('.tab-button[data-tab="admin"]');
+  if (requestsLink) panel.insertBefore(requestsLink, adminButton || null);
 }
 
 function navigationTabAllowed(button) {
