@@ -1247,6 +1247,8 @@
 
 .request-list {
   flex: 1 1 auto;
+  grid-auto-rows: max-content;
+  align-content: start;
   gap: 10px;
   min-height: 0;
   max-height: none;

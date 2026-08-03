@@ -69,6 +69,8 @@ function testRequesterPanelsUseEqualScrollableHeight() {
     'request history must derive its desktop height from the new-request panel without clipping its scroll area');
   assert.match(requestStylesSource, /\.request-list\s*\{[^}]*overflow-y:\s*auto;[^}]*overscroll-behavior:\s*contain;[^}]*scrollbar-width:\s*none;/s,
     'request history must remain scrollable while hiding the scrollbar');
+  assert.match(requestStylesSource, /\.request-list\s*\{[^}]*grid-auto-rows:\s*max-content;[^}]*align-content:\s*start;/s,
+    'request cards must retain their content height inside the scroll area');
   assert.match(requestStylesSource, /\.request-list::\-webkit-scrollbar\s*\{[^}]*display:\s*none;/s,
     'request history must hide the scrollbar in Chromium and Safari');
 }
