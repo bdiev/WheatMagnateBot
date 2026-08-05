@@ -271,7 +271,7 @@ const PLAYER_HEAD_EMOJIS = new Map([
   ['beetroot_bot', '<:Beetroot_Bot:1519314808455958628>'],
   ['bdiev_', '<:bdiev_:1519314806992142457>'],
   ['balbux', '<:balbux:1519314805729525843>'],
-  ['alphaneon', '<:AlphaNeon:1534362534168101045>'],
+  ['alphaneon', '<:AlphaNeon:1534365906766004314>'],
   ['9pus', '<:9pus:1519314804224036874>'],
   ['7pus', '<:7pus:1519314802772545688>'],
   ['1amfero1', '<:1Amfero1:1519314801287762101>'],
