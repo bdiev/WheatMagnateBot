@@ -234,6 +234,9 @@ const ITEM_EMOJIS = {
   totem_of_undying: '<:Totem_Of_Undying:1519380252583923932>',
   firework_rocket: '<:Firework_Rocket:1519380253649408046>'
 };
+const PINNED_APPLICATION_PLAYER_HEAD_EMOJIS = new Map([
+  ['callmecason', '<:CallMeCason:1534665595826471032>']
+]);
 const PLAYER_HEAD_EMOJIS = new Map([
   ['wheatmagnate', '<:WheatMagnate:1519314847073046568>'],
   ['wheatemperor', '<:wheatemperor:1519314845151789197>'],
@@ -284,6 +287,9 @@ loadPlayerHeadEmojiCache();
 
 function getPlayerHeadEmoji(username) {
   const key = normalizePlayerHeadUsername(username);
+  const pinnedEmoji = PINNED_APPLICATION_PLAYER_HEAD_EMOJIS.get(key);
+  if (pinnedEmoji) return pinnedEmoji;
+
   const emoji = PLAYER_HEAD_EMOJIS.get(key);
   if (emoji) return emoji;
 
@@ -315,8 +321,7 @@ function loadPlayerHeadEmojiCache() {
       const value = String(emoji || '').trim();
       if (
         key &&
-        /^<a?:[A-Za-z0-9_]+:\d+>$/.test(value) &&
-        !PLAYER_HEAD_EMOJIS.has(key)
+        /^<a?:[A-Za-z0-9_]+:\d+>$/.test(value)
       ) {
         PLAYER_HEAD_EMOJIS.set(key, value);
       }
@@ -362,6 +367,22 @@ async function getPlayerHeadEmojiGuild() {
   if (!DISCORD_CHANNEL_ID || !discordClient?.isReady?.()) return null;
   const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID).catch(() => null);
   return channel?.guild || null;
+}
+
+async function getPlayerHeadApplicationEmojiManager() {
+  if (!discordClient?.isReady?.()) return null;
+  return discordClient.application?.emojis || null;
+}
+
+function parsePlayerHeadEmojiReference(username, value) {
+  const expectedName = getDiscordEmojiNameForPlayer(username).toLowerCase();
+  const matches = String(value || '').matchAll(/<a?:([A-Za-z0-9_]+):(\d+)>/g);
+  for (const match of matches) {
+    if (match[1].toLowerCase() === expectedName) {
+      return { name: match[1], id: match[2] };
+    }
+  }
+  return null;
 }
 
 async function fetchPlayerHeadImageBuffer(imageUrl, source) {
@@ -498,13 +519,13 @@ async function fetchPlayerHeadImage(username) {
 }
 
 async function importPlayerHeadEmoji(username) {
-  const guild = await getPlayerHeadEmojiGuild();
-  if (!guild) return null;
+  const emojiManager = await getPlayerHeadApplicationEmojiManager();
+  if (!emojiManager) return null;
 
   const emojiName = getDiscordEmojiNameForPlayer(username);
-  await guild.emojis.fetch().catch(() => null);
+  const applicationEmojis = await emojiManager.fetch();
 
-  const existing = guild.emojis.cache.find(emoji =>
+  const existing = applicationEmojis.find(emoji =>
     emoji.name?.toLowerCase() === emojiName.toLowerCase()
   );
   if (existing) {
@@ -517,17 +538,75 @@ async function importPlayerHeadEmoji(username) {
   const { imageBuffer, error } = await fetchPlayerHeadImage(username);
   if (!imageBuffer) throw error || new Error('No player head image was returned');
 
-  const created = await guild.emojis.create({
+  const created = await emojiManager.create({
     attachment: imageBuffer,
-    name: emojiName,
-    reason: `Imported Minecraft head for ${username}`
+    name: emojiName
   });
 
   const emojiText = `<:${created.name}:${created.id}>`;
   PLAYER_HEAD_EMOJIS.set(normalizePlayerHeadUsername(username), emojiText);
   savePlayerHeadEmojiCache();
-  console.log(`[PlayerHeads] Imported ${username} as ${emojiText}`);
+  console.log(`[PlayerHeads] Imported ${username} as application emoji ${emojiText}`);
   return emojiText;
+}
+
+async function migratePlayerHeadEmojisToApplication() {
+  const guild = await getPlayerHeadEmojiGuild();
+  const emojiManager = await getPlayerHeadApplicationEmojiManager();
+  if (!guild || !emojiManager) return;
+
+  const [guildEmojis, applicationEmojis] = await Promise.all([
+    guild.emojis.fetch(),
+    emojiManager.fetch()
+  ]);
+  const applicationEmojisByName = new Map(
+    applicationEmojis.map(emoji => [emoji.name?.toLowerCase(), emoji])
+  );
+  let migrated = 0;
+  let cacheChanged = false;
+
+  for (const [username, emojiText] of PLAYER_HEAD_EMOJIS) {
+    const legacyReference = parsePlayerHeadEmojiReference(username, emojiText);
+    if (!legacyReference) continue;
+
+    const guildEmoji = guildEmojis.get(legacyReference.id);
+    if (!guildEmoji) continue;
+
+    let author = guildEmoji.author;
+    if (!author) author = await guildEmoji.fetchAuthor().catch(() => null);
+    if (author?.id !== discordClient.user.id) continue;
+
+    try {
+      const emojiName = getDiscordEmojiNameForPlayer(username);
+      let applicationEmoji = applicationEmojisByName.get(emojiName.toLowerCase());
+      if (!applicationEmoji) {
+        const imageUrl = guildEmoji.imageURL({ extension: 'png', size: 64 });
+        const { imageBuffer, error } = await fetchPlayerHeadImageBuffer(imageUrl, 'Discord CDN');
+        if (!imageBuffer) throw error || new Error(`Could not download legacy emoji ${guildEmoji.id}`);
+
+        applicationEmoji = await emojiManager.create({
+          attachment: imageBuffer,
+          name: emojiName
+        });
+        applicationEmojisByName.set(emojiName.toLowerCase(), applicationEmoji);
+      }
+
+      // Keep the old reference in the cache if deletion fails so the cleanup can
+      // be retried on the next startup instead of losing track of the guild emoji.
+      await guildEmoji.delete(`Moved Minecraft head ${username} to the bot application emoji list`);
+
+      const applicationEmojiText = `<:${applicationEmoji.name}:${applicationEmoji.id}>`;
+      PLAYER_HEAD_EMOJIS.set(normalizePlayerHeadUsername(username), applicationEmojiText);
+      cacheChanged = true;
+      migrated += 1;
+      console.log(`[PlayerHeads] Migrated ${username} to application emoji ${applicationEmojiText}`);
+    } catch (err) {
+      console.warn(`[PlayerHeads] Could not migrate legacy guild emoji ${guildEmoji.name}:`, err.message);
+    }
+  }
+
+  if (cacheChanged) savePlayerHeadEmojiCache();
+  console.log(`[PlayerHeads] Application emoji migration complete: ${migrated} guild emoji(s) moved.`);
 }
 
 function formatPlayerHeadName(username, style = 'code') {
@@ -2086,6 +2165,12 @@ if (DISCORD_BOT_TOKEN) {
     } catch (channelErr) {
       console.error('[Discord] ❌ Failed to fetch channel:', channelErr.message);
       console.error('[Discord] This means the bot cannot see the configured channel!');
+    }
+
+    try {
+      await migratePlayerHeadEmojisToApplication();
+    } catch (err) {
+      console.error('[PlayerHeads] Failed to migrate guild emojis to the application:', err.message);
     }
 
     await initDatabase();
