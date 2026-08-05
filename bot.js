@@ -313,7 +313,11 @@ function loadPlayerHeadEmojiCache() {
     for (const [username, emoji] of entries) {
       const key = normalizePlayerHeadUsername(username);
       const value = String(emoji || '').trim();
-      if (key && /^<a?:[A-Za-z0-9_]+:\d+>$/.test(value)) {
+      if (
+        key &&
+        /^<a?:[A-Za-z0-9_]+:\d+>$/.test(value) &&
+        !PLAYER_HEAD_EMOJIS.has(key)
+      ) {
         PLAYER_HEAD_EMOJIS.set(key, value);
       }
     }
