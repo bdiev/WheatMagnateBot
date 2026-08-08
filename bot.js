@@ -2984,6 +2984,11 @@ function formatCompactCount(value) {
   return `${millions >= 10 ? Math.floor(millions) : Math.floor(millions * 10) / 10}m`;
 }
 
+function formatFullCount(value) {
+  const count = Math.max(0, Math.floor(Number(value) || 0));
+  return count.toLocaleString('en-US');
+}
+
 function formatDurationShort(milliseconds) {
   const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
   const days = Math.floor(totalSeconds / 86400);
@@ -6795,6 +6800,56 @@ function getLastBotPublicChatStatusLine() {
   return `${lastBotPublicChatEmoji || STATUS_EMOJIS.axolotlBucket} > \`${phrase}\``;
 }
 
+function formatObsidianFarmPhase(phase) {
+  const labels = {
+    idle: 'Idle',
+    seeking: 'Seeking cauldron',
+    filling: 'Filling buckets',
+    navigating: 'Moving',
+    pouring: 'Pouring lava',
+    waiting: 'Waiting for obsidian',
+    mining: 'Mining'
+  };
+  return labels[String(phase || '').toLowerCase()] || String(phase || 'Unknown');
+}
+
+function getObsidianStatusLines() {
+  const farmStatus = farm.getStatus();
+  const sessionStartedAt = obsidianStats.sessionStartedAt
+    ? new Date(obsidianStats.sessionStartedAt)
+    : null;
+  const validSessionStart = sessionStartedAt && !Number.isNaN(sessionStartedAt.getTime());
+  const sessionMs = validSessionStart
+    ? Math.max(0, Date.now() - sessionStartedAt.getTime())
+    : 0;
+  const sessionHours = sessionMs / 3_600_000;
+  const perHour = sessionHours > 0 ? obsidianStats.sessionMined / sessionHours : 0;
+
+  let state = 'Stopped';
+  if (farmStatus.enabled) state = 'Running';
+  else if (obsidianStats.desiredEnabled) state = bot?.entity ? 'Starting / recovering' : 'Waiting for reconnect';
+
+  const lines = [
+    `${FARM_EMOJIS.netheritePickaxe} Session: **${formatFullCount(obsidianStats.sessionMined)}** · All time: **${formatFullCount(obsidianStats.totalMined)}**`
+  ];
+
+  if (validSessionStart) {
+    if (farmStatus.enabled || obsidianStats.desiredEnabled) {
+      const rate = sessionMs >= 60_000
+        ? `**${formatCompactCount(Math.round(perHour))}/h**`
+        : '**Calculating...**';
+      lines.push(`${STATUS_EMOJIS.playtime} Elapsed: **${formatDurationShort(sessionMs)}** · Average: ${rate}`);
+    } else {
+      lines.push(`${STATUS_EMOJIS.playtime} Last session started: <t:${Math.floor(sessionStartedAt.getTime() / 1000)}:R>`);
+    }
+  }
+
+  lines.push(
+    `${FARM_EMOJIS.obsidian} Status: **${state}** · Phase: **${formatObsidianFarmPhase(farmStatus.phase)}**`
+  );
+  return lines;
+}
+
 function getStatusDescription() {
   const reasonLine = lastDisconnectReason ? `\n${STATUS_EMOJIS.map} Reason: ${lastDisconnectReason}` : '';
 
@@ -6823,16 +6878,24 @@ function getStatusDescription() {
   const whitelistOnlineDisplay = formatCompactInlineList(
     whitelistOnline.map(username => formatPlayerHeadName(username))
   );
-  const obsidianMined = `${formatCompactCount(obsidianStats.sessionMined)}/${formatCompactCount(obsidianStats.totalMined)}`;
-  return `${STATUS_EMOJIS.serverPing} Bot **${bot.username}** connected to \`${config.host}\`\n` +
-    `${STATUS_EMOJIS.players} Players online: ${playerCount}\n` +
-    `${STATUS_EMOJIS.nearby} Players nearby: ${formatCompactInlineList(nearbyNames)}\n` +
-    `${STATUS_EMOJIS.tps} TPS: ${avgTps}\n` +
-    `${STATUS_EMOJIS.food} Food: ${Math.round(bot.food * 2) / 2}/20\n` +
-    `${STATUS_EMOJIS.health} Health: ${Math.round(bot.health * 2) / 2}/20\n` +
-    `${STATUS_EMOJIS.whitelist} Whitelist online: ${whitelistOnlineDisplay}\n` +
-    `${FARM_EMOJIS.netheritePickaxe} Obsidian mined: ${obsidianMined}\n\n` +
-    `${getWheatMagnateStatusLine()}`;
+  const botUptime = formatDurationShort(Math.max(0, Date.now() - startTime));
+  const health = Math.round(bot.health * 2) / 2;
+  const food = Math.round(bot.food * 2) / 2;
+
+  return [
+    '**Server**',
+    `${STATUS_EMOJIS.connected} Connected to \`${config.host}\``,
+    `${STATUS_EMOJIS.players} Players: **${playerCount}** · ${STATUS_EMOJIS.tps} TPS: **${avgTps}** · ${STATUS_EMOJIS.serverPing} Ping: **${getBotPingDisplay()}**`,
+    `${STATUS_EMOJIS.nearby} Nearby: ${formatCompactInlineList(nearbyNames)}`,
+    `${STATUS_EMOJIS.whitelist} Whitelist online: ${whitelistOnlineDisplay}`,
+    '',
+    '**Bot**',
+    `${getPlayerHeadEmoji(ADMIN_PANEL_BOT_NAME)} **${bot.username}** · ${STATUS_EMOJIS.playtime} Uptime: **${botUptime}** · Playtime: **${wheatMagnatePlaytimeDisplay}**`,
+    `${STATUS_EMOJIS.health} Health: **${health}/20** · ${STATUS_EMOJIS.food} Food: **${food}/20**`,
+    '',
+    '**Obsidian Farm**',
+    ...getObsidianStatusLines()
+  ].join('\n');
 }
 
 function getServerStatusTitle() {
@@ -6979,18 +7042,15 @@ function buildAdminServerStatusValue() {
   const whitelistOnlineDisplay = formatCompactInlineList(
     whitelistOnline.map(u => formatPlayerHeadName(u))
   );
-  const obsidianMined = `${formatCompactCount(obsidianStats.sessionMined)}/${formatCompactCount(obsidianStats.totalMined)}`;
-
   return [
-    getWheatMagnateStatusLine(),
-    `${STATUS_EMOJIS.players} Players online: ${playerCount}`,
-    `${STATUS_EMOJIS.nearby} Players nearby: ${nearbyNames}`,
-    `${STATUS_EMOJIS.tps} TPS: ${getCurrentTpsDisplay()}`,
-    `${STATUS_EMOJIS.food} Food: ${Math.round(bot.food * 2) / 2}/20`,
-    `${STATUS_EMOJIS.health} Health: ${Math.round(bot.health * 2) / 2}/20`,
-    `${STATUS_EMOJIS.nearby} Following: ${followFeature.getStatus().targetUsername || 'None'}`,
+    `${getPlayerHeadEmoji(ADMIN_PANEL_BOT_NAME)} **${bot.username}** · Uptime: **${formatDurationShort(Math.max(0, Date.now() - startTime))}** · Playtime: **${wheatMagnatePlaytimeDisplay}**`,
+    `${STATUS_EMOJIS.players} Players: **${playerCount}** · ${STATUS_EMOJIS.tps} TPS: **${getCurrentTpsDisplay()}** · ${STATUS_EMOJIS.serverPing} Ping: **${getBotPingDisplay()}**`,
+    `${STATUS_EMOJIS.health} Health: **${Math.round(bot.health * 2) / 2}/20** · ${STATUS_EMOJIS.food} Food: **${Math.round(bot.food * 2) / 2}/20**`,
+    `${STATUS_EMOJIS.nearby} Nearby: ${nearbyNames}`,
     `${STATUS_EMOJIS.whitelist} Whitelist online: ${whitelistOnlineDisplay}`,
-    `${FARM_EMOJIS.netheritePickaxe} Obsidian mined: ${obsidianMined}`
+    `${STATUS_EMOJIS.nearby} Following: ${followFeature.getStatus().targetUsername || 'None'}`,
+    '',
+    ...getObsidianStatusLines()
   ].join('\n');
 }
 
