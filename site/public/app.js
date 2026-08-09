@@ -3649,16 +3649,28 @@ async function saveKillAuraTargets() {
   }
 }
 
-function renderPlaytimeLeaderboard({ resetScroll = false } = {}) {
-  const scope = state.playtimeLeaderboardScope === 'whitelisted' ? 'whitelisted' : 'global';
-  const leaderboard = state.playtimeLeaderboards[scope] || [];
-  const list = $('#playtimeLeaderboard');
-
+function updatePlaytimeLeaderboardScopeControls(scope, { animateButton = false } = {}) {
+  const controls = $('#playtimeLeaderboardScope');
+  if (controls) controls.dataset.activeScope = scope;
   $$('#playtimeLeaderboardScope [data-playtime-scope]').forEach(button => {
     const active = button.dataset.playtimeScope === scope;
     button.classList.toggle('active', active);
     button.setAttribute('aria-pressed', String(active));
+    if (active && animateButton) {
+      button.classList.remove('pressed');
+      void button.offsetWidth;
+      button.classList.add('pressed');
+    }
   });
+}
+
+function renderPlaytimeLeaderboard({ resetScroll = false, force = false } = {}) {
+  const scope = state.playtimeLeaderboardScope === 'whitelisted' ? 'whitelisted' : 'global';
+  const leaderboard = state.playtimeLeaderboards[scope] || [];
+  const list = $('#playtimeLeaderboard');
+
+  updatePlaytimeLeaderboardScopeControls(scope);
+  if (list?.classList.contains('is-leaving') && !force) return;
 
   const description = $('#playtimeLeaderboardDescription');
   if (description) {
@@ -3688,7 +3700,31 @@ function setPlaytimeLeaderboardScope(scope) {
   const nextScope = scope === 'whitelisted' ? 'whitelisted' : 'global';
   if (state.playtimeLeaderboardScope === nextScope) return;
   state.playtimeLeaderboardScope = nextScope;
-  renderPlaytimeLeaderboard({ resetScroll: true });
+  updatePlaytimeLeaderboardScopeControls(nextScope, { animateButton: true });
+
+  const list = $('#playtimeLeaderboard');
+  const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  if (!list || reducedMotion) {
+    renderPlaytimeLeaderboard({ resetScroll: true, force: true });
+    return;
+  }
+
+  window.clearTimeout(list.playtimeSwapTimer);
+  window.clearTimeout(list.playtimeEnterTimer);
+  list.classList.remove('is-entering');
+  void list.offsetWidth;
+  list.classList.add('is-leaving');
+  list.setAttribute('aria-busy', 'true');
+  list.playtimeSwapTimer = window.setTimeout(() => {
+    renderPlaytimeLeaderboard({ resetScroll: true, force: true });
+    list.classList.remove('is-leaving');
+    void list.offsetWidth;
+    list.classList.add('is-entering');
+    list.playtimeEnterTimer = window.setTimeout(() => {
+      list.classList.remove('is-entering');
+      list.removeAttribute('aria-busy');
+    }, 320);
+  }, 160);
 }
 
 function renderPlayerStats(payload = {}, nearbyPlayers = []) {

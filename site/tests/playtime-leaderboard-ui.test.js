@@ -20,10 +20,15 @@ assert.match(serverSource, /playtimeLeaderboards:\s*\{\s*global:/, 'player stats
 assert.match(serverSource, /whitelisted:\s*whitelistLeaderboardResult\.rows/, 'player stats must expose the whitelist leaderboard separately');
 assert.match(indexSource, /data-playtime-scope="global"[^>]*aria-pressed="true"[^>]*>Global</, 'Global must be the default leaderboard tab');
 assert.match(indexSource, /data-playtime-scope="whitelisted"[^>]*>Whitelisted</, 'the leaderboard must provide a Whitelisted tab');
+assert.match(indexSource, /id="playtimeLeaderboardScope"[^>]*data-active-scope="global"/, 'the segmented control indicator must start on Global');
 assert.match(appSource, /playtimeLeaderboardScope:\s*'global'/, 'the leaderboard must default to the server-wide scope');
 assert.match(appSource, /leaderboardSources\.global\) \? leaderboardSources\.global\.slice\(0, 100\)/, 'the client must defensively cap Global to 100 players');
 assert.match(appSource, /function setPlaytimeLeaderboardScope\(scope\)/, 'the leaderboard tabs must switch without reloading the dashboard');
-assert.match(stylesSource, /\.playtime-scope-controls \.chart-range-button\s*\{[^}]*min-width:\s*88px;/s, 'leaderboard tabs must have stable desktop sizing');
+assert.match(appSource, /classList\.add\('is-leaving'\)[\s\S]*classList\.add\('is-entering'\)[\s\S]*160/, 'the old list must leave before the new list enters');
+assert.match(appSource, /setAttribute\('aria-busy', 'true'\)[\s\S]*removeAttribute\('aria-busy'\)/, 'the animated list swap must expose its busy state');
+assert.match(stylesSource, /\.playtime-scope-controls::before\s*\{[^}]*transition:\s*transform 300ms/s, 'the active scope indicator must slide smoothly');
+assert.match(stylesSource, /data-active-scope="whitelisted"[^}]*translateX\(calc\(100% \+ 4px\)\)/s, 'the active indicator must move to Whitelisted');
+assert.match(stylesSource, /@keyframes playtime-leaderboard-out[\s\S]*@keyframes playtime-leaderboard-in/, 'leaderboard content must animate in both directions of the swap');
 assert.match(stylesSource, /\.playtime-scope-controls \.chart-range-button\s*\{[^}]*flex:\s*1 1 50%;/s, 'leaderboard tabs must share the available mobile width');
 
 console.log('Playtime leaderboard UI tests passed.');

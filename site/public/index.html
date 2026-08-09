@@ -13,7 +13,7 @@
     <link rel="icon" type="image/png" href="/items/Wheat.png">
     <link rel="apple-touch-icon" href="/items/Wheat.png">
     <script src="/theme-init.js?v=136"></script>
-    <link rel="stylesheet" href="/styles.css?v=168">
+    <link rel="stylesheet" href="/styles.css?v=169">
     <script src="/page-transitions.js?v=1" defer></script>
   </head>
   <body>
@@ -781,7 +781,7 @@
             <div class="panel-head">
               <div>
                 <h2>Not Whitelisted Activity</h2>
-                <p>Current hour shows online now; past hours use last seen.</p>
+                <p>Full recorded history; current hour shows players online now.</p>
               </div>
               <div class="chart-controls" data-chart-controls="unwhitelistedHourlyChart">
                 <button class="chart-range-button active" type="button" data-chart-range="hours">Hours</button>
@@ -808,7 +808,7 @@
                 <h2>Playtime Leaderboard</h2>
                 <p id="playtimeLeaderboardDescription">Top 100 server-wide playtime totals.</p>
               </div>
-              <div id="playtimeLeaderboardScope" class="chart-controls playtime-scope-controls" role="group" aria-label="Playtime leaderboard source">
+              <div id="playtimeLeaderboardScope" class="chart-controls playtime-scope-controls" data-active-scope="global" role="group" aria-label="Playtime leaderboard source">
                 <button class="chart-range-button active" type="button" data-playtime-scope="global" aria-pressed="true">Global</button>
                 <button class="chart-range-button" type="button" data-playtime-scope="whitelisted" aria-pressed="false">Whitelisted</button>
               </div>
@@ -820,7 +820,7 @@
             <div class="panel-head">
               <div>
                 <h2>Nearby Sightings</h2>
-                <p>Players recently detected near the bot.</p>
+                <p>All players ever detected near the bot.</p>
               </div>
             </div>
             <div id="nearbyList" class="rank-list"></div>
@@ -1175,6 +1175,6 @@
       </section>
     </main>
 
-    <script src="/app.js?v=170" defer></script>
+    <script src="/app.js?v=171" defer></script>
   </body>
 </html>

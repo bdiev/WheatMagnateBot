@@ -2476,9 +2476,11 @@ async function syncPlayerActivityOnlineState() {
 const {
   syncWhitelistPlaytime,
   getWhitelistPlaytime,
+  searchNonWhitelistPlaytime,
   parsePlaytime,
   formatPlaytime,
   formatPlaytimeLeaderboard,
+  buildPlaytimeComponents,
   buildWhitelistPlaytimeMessage,
   setPlayerPlaytime
 } = createPlaytimeFeature({
@@ -2486,7 +2488,7 @@ const {
   getOnlinePlayerUsernames,
   getPlayerHeadEmoji,
   statusEmojis: STATUS_EMOJIS,
-  uiButtonEmojis: UI_BUTTON_EMOJIS
+  uiButtonEmojis: { ...UI_BUTTON_EMOJIS, search: STATUS_BUTTON_EMOJIS.seen }
 });
 
 async function refreshWheatMagnatePlaytimeDisplay({ force = false } = {}) {
@@ -7339,6 +7341,25 @@ function buildNonWhitelistSeenSearchEmbed(query, result) {
   };
 }
 
+function buildNonWhitelistPlaytimeSearchEmbed(query, result) {
+  const players = result.players || [];
+  const description = result.error
+    ? result.error
+    : players.length === 0
+      ? `No non-whitelist playtime found for \`${query}\`.`
+      : players
+          .map(player => `${formatPlayerHeadName(player.username, 'bold')} - \`${formatPlaytime(player.total_seconds)}\``)
+          .join('\n');
+
+  return {
+    title: `${STATUS_EMOJIS.playtime} Non-whitelist Playtime: ${query}`,
+    description,
+    color: result.error ? 16711680 : 3447003,
+    timestamp: new Date(),
+    footer: players.length >= 25 ? { text: 'Showing first 25 matches. Type more letters to narrow it down.' } : undefined
+  };
+}
+
 function formatDailyTpsAverages(rows) {
   if (!rows || rows.length === 0) return 'No TPS samples yet.';
   return rows
@@ -9688,6 +9709,11 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
                 .setCustomId('playtime_refresh_button')
                 .setLabel('Refresh')
                 .setEmoji(UI_BUTTON_EMOJIS.slowFalling)
+                .setStyle(ButtonStyle.Secondary),
+              new ButtonBuilder()
+                .setCustomId('playtime_non_whitelist_search')
+                .setLabel('Search non-whitelist')
+                .setEmoji(STATUS_BUTTON_EMOJIS.seen)
                 .setStyle(ButtonStyle.Secondary)
             )
           ]
@@ -9696,6 +9722,20 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       } else if (interaction.customId === 'playtime_refresh_button') {
         await interaction.deferUpdate();
         await interaction.editReply(await buildWhitelistPlaytimeMessage());
+      } else if (interaction.customId === 'playtime_non_whitelist_search') {
+        const modal = new ModalBuilder()
+          .setCustomId('playtime_non_whitelist_search_modal')
+          .setTitle('Search non-whitelist playtime');
+
+        const usernameInput = new TextInputBuilder()
+          .setCustomId('playtime_search_query')
+          .setLabel('Nickname contains')
+          .setPlaceholder('Type at least 2 characters')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
+
+        modal.addComponents(new ActionRowBuilder().addComponents(usernameInput));
+        await interaction.showModal(modal);
       } else if (interaction.customId === 'whitelist_button') {
         // Restrict Whitelist to owner/admin only
         if (interaction.user.id !== DISCORD_OWNER_ID) {
@@ -10171,6 +10211,33 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         await interaction.deferUpdate();
         await openObsidianStatsPanel(interaction, { updateMessage: true, deferredUpdate: true });
         return;
+      }
+    } else if (interaction.isModalSubmit() && interaction.customId === 'playtime_non_whitelist_search_modal') {
+      const query = interaction.fields.getTextInputValue('playtime_search_query').trim();
+      try {
+        await interaction.deferUpdate();
+        const result = await searchNonWhitelistPlaytime(query, 25);
+        const payload = {
+          embeds: [buildNonWhitelistPlaytimeSearchEmbed(query, result)],
+          components: buildPlaytimeComponents()
+        };
+        if (interaction.message) await interaction.message.edit(payload);
+        else await interaction.editReply(payload);
+      } catch (err) {
+        const errorPayload = {
+          embeds: [{
+            title: `${STATUS_EMOJIS.playtime} Non-whitelist Playtime`,
+            description: `Search failed: ${err.message}`,
+            color: 16711680,
+            timestamp: new Date()
+          }],
+          components: buildPlaytimeComponents()
+        };
+        if (interaction.message && interaction.deferred) {
+          await interaction.message.edit(errorPayload).catch(() => {});
+        } else if (!interaction.replied && !interaction.deferred) {
+          await interaction.reply({ ...errorPayload, flags: MessageFlags.Ephemeral }).catch(() => {});
+        }
       }
     } else if (interaction.isModalSubmit() && interaction.customId === 'seen_non_whitelist_search_modal') {
       const query = interaction.fields.getTextInputValue('seen_search_query').trim();

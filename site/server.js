@@ -798,7 +798,6 @@ async function getSummary() {
       SELECT username, distance, last_seen
       FROM nearby_player_sightings
       ORDER BY last_seen DESC
-      LIMIT 5
     `),
     pool.query(`
       SELECT COUNT(*)::int AS total
@@ -1646,41 +1645,60 @@ async function getPlayerStats() {
         )
     `),
     pool.query(`
-      WITH buckets AS (
-        SELECT generate_series(
-          date_trunc('hour', NOW() - INTERVAL '167 hours'),
-          date_trunc('hour', NOW()),
-          INTERVAL '1 hour'
-        ) AS bucket
+      WITH recorded_events AS (
+        SELECT e.occurred_at,
+               LOWER(COALESCE(NULLIF(e.details->>'username', ''), e.actor, REGEXP_REPLACE(e.resource_key, '^player:', ''))) AS username_key
+        FROM operational_events e
+        WHERE e.source = 'player_activity'
+          AND e.event_type = 'player_joined'
+        UNION ALL
+        SELECT e.occurred_at,
+               LOWER(COALESCE(NULLIF(e.details->>'username', ''), e.actor, REGEXP_REPLACE(e.resource_key, '^player:', ''))) AS username_key
+        FROM operational_events_archive e
+        WHERE e.source = 'player_activity'
+          AND e.event_type = 'player_joined'
       ),
-      activity AS (
-        SELECT DISTINCT ON (LOWER(username))
-          LOWER(username) AS username_key,
-          username,
-          last_seen,
-          is_online
-        FROM player_activity
-        WHERE last_seen IS NOT NULL
-        ORDER BY LOWER(username), is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
-      )
-      SELECT TO_CHAR(buckets.bucket, 'MM-DD HH24:00') AS label,
-             buckets.bucket AS bucket,
-             COUNT(activity.username)::int AS total
-      FROM buckets
-      LEFT JOIN activity
-        ON (
-          (buckets.bucket = date_trunc('hour', NOW()) AND activity.is_online = TRUE)
-          OR (
-            buckets.bucket < date_trunc('hour', NOW())
-            AND activity.last_seen >= buckets.bucket
-            AND activity.last_seen < buckets.bucket + INTERVAL '1 hour'
+      historical_events AS (
+        SELECT occurred_at, username_key
+        FROM recorded_events
+        WHERE username_key IS NOT NULL AND username_key <> ''
+        UNION ALL
+        SELECT pa.last_seen, LOWER(pa.username)
+        FROM player_activity pa
+        WHERE pa.last_seen IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM recorded_events e WHERE e.username_key = LOWER(pa.username)
           )
-        )
-       AND NOT EXISTS (
-         SELECT 1 FROM whitelist w WHERE LOWER(w.username) = activity.username_key
-       )
-      GROUP BY buckets.bucket
-      ORDER BY buckets.bucket
+      ),
+      historical_buckets AS (
+        SELECT date_trunc('hour', event.occurred_at) AS bucket,
+               COUNT(DISTINCT event.username_key)::int AS total
+        FROM historical_events event
+        WHERE event.occurred_at < date_trunc('hour', NOW())
+          AND NOT EXISTS (
+            SELECT 1 FROM whitelist w WHERE LOWER(w.username) = event.username_key
+          )
+        GROUP BY date_trunc('hour', event.occurred_at)
+      ),
+      current_activity AS (
+        SELECT date_trunc('hour', NOW()) AS bucket,
+               COUNT(DISTINCT LOWER(pa.username))::int AS total
+        FROM player_activity pa
+        WHERE pa.is_online = TRUE
+          AND NOT EXISTS (
+            SELECT 1 FROM whitelist w WHERE LOWER(w.username) = LOWER(pa.username)
+          )
+      ),
+      all_buckets AS (
+        SELECT bucket, total FROM historical_buckets
+        UNION ALL
+        SELECT bucket, total FROM current_activity
+      )
+      SELECT TO_CHAR(bucket, 'YYYY-MM-DD HH24:00') AS label,
+             bucket,
+             total
+      FROM all_buckets
+      ORDER BY bucket
     `),
     pool.query(`
       WITH whitelist_players AS (
@@ -2089,7 +2107,7 @@ async function loadLiveDashboardStats() {
   try {
     botResult = await client.query(`SELECT status, observed_at FROM bot_status_snapshots WHERE id = 1`);
     supplyResult = await client.query(`SELECT supplies, observed_at, updated_at FROM obsidian_farm_supply_snapshot WHERE id = 1`);
-    nearbyResult = await client.query(`SELECT username, distance, last_seen FROM nearby_player_sightings ORDER BY last_seen DESC LIMIT 5`);
+    nearbyResult = await client.query(`SELECT username, distance, last_seen FROM nearby_player_sightings ORDER BY last_seen DESC`);
   } finally {
     client.release();
   }
@@ -2106,7 +2124,6 @@ async function loadLiveDashboardStats() {
     if (!key || seen.has(key)) continue;
     seen.add(key);
     nearby.push(player);
-    if (nearby.length >= 5) break;
   }
   return {
     bot,
@@ -2244,7 +2261,6 @@ async function getServerStats() {
       SELECT username, distance, last_seen
       FROM nearby_player_sightings
       ORDER BY last_seen DESC
-      LIMIT 5
     `),
     getPlayerStats()
   ]);

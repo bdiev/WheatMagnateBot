@@ -78,6 +78,36 @@ function createPlaytimeFeature({
     }
   }
 
+  async function searchNonWhitelistPlaytime(query, limit = 25) {
+    if (!pool) return { error: 'Database not configured' };
+
+    const search = String(query || '').trim();
+    if (search.length < 2) return { error: 'Type at least 2 characters.' };
+    const safeLimit = Math.max(1, Math.min(25, Number(limit) || 25));
+
+    try {
+      const result = await pool.query(`
+        SELECT pt.username,
+               COALESCE(pt.total_seconds, 0) +
+                 CASE WHEN pt.tracking_since IS NULL THEN 0
+                      ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - pt.tracking_since)))::BIGINT)
+                 END AS total_seconds
+        FROM player_playtime pt
+        WHERE LOWER(pt.username) LIKE LOWER($1)
+          AND NOT EXISTS (
+            SELECT 1
+            FROM whitelist w
+            WHERE LOWER(w.username) = LOWER(pt.username)
+          )
+        ORDER BY total_seconds DESC, LOWER(pt.username)
+        LIMIT $2
+      `, [`%${search}%`, safeLimit]);
+      return { players: result.rows };
+    } catch (err) {
+      return { error: err.message };
+    }
+  }
+
   function parsePlaytime(value) {
     const input = String(value || '').trim();
     if (!input) return null;
@@ -127,6 +157,25 @@ function createPlaytimeFeature({
     return lines.length > 0 ? lines.join('\n') : 'No whitelist players found.';
   }
 
+  function buildPlaytimeComponents() {
+    const searchButton = new ButtonBuilder()
+      .setCustomId('playtime_non_whitelist_search')
+      .setLabel('Search non-whitelist')
+      .setStyle(ButtonStyle.Secondary);
+    if (uiButtonEmojis.search) searchButton.setEmoji(uiButtonEmojis.search);
+
+    return [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('playtime_refresh_button')
+          .setLabel('Refresh')
+          .setEmoji(uiButtonEmojis.slowFalling)
+          .setStyle(ButtonStyle.Secondary),
+        searchButton
+      )
+    ];
+  }
+
   async function buildWhitelistPlaytimeMessage() {
     const playtimeData = await getWhitelistPlaytime();
     if (playtimeData.error) {
@@ -152,15 +201,7 @@ function createPlaytimeFeature({
         timestamp: new Date(),
         footer: { text: 'Press Refresh to update this table' }
       }],
-      components: [
-        new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId('playtime_refresh_button')
-            .setLabel('Refresh')
-            .setEmoji(uiButtonEmojis.slowFalling)
-            .setStyle(ButtonStyle.Secondary)
-        )
-      ]
+      components: buildPlaytimeComponents()
     };
   }
 
@@ -189,9 +230,11 @@ function createPlaytimeFeature({
   return {
     syncWhitelistPlaytime,
     getWhitelistPlaytime,
+    searchNonWhitelistPlaytime,
     parsePlaytime,
     formatPlaytime,
     formatPlaytimeLeaderboard,
+    buildPlaytimeComponents,
     buildWhitelistPlaytimeMessage,
     setPlayerPlaytime
   };
