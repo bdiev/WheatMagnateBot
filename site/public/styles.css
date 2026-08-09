@@ -2130,6 +2130,7 @@ body.search-focus-active #logoutButton {
   max-height: none;
   min-height: 0;
   overflow: auto;
+  overflow-anchor: none;
 }
 
 #playtimeLeaderboard.is-leaving {
@@ -4266,7 +4267,8 @@ body.search-focus-active #logoutButton {
   flex-wrap: wrap;
 }
 
-.player-profile-uuid {
+.player-profile-uuid,
+.player-name-history summary {
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -4280,32 +4282,50 @@ body.search-focus-active #logoutButton {
   overflow-wrap: anywhere;
 }
 
-.player-profile-uuid small {
+.player-profile-uuid small,
+.player-name-history summary small {
   color: var(--accent-strong);
   font-size: 9px;
   font-weight: 900;
   letter-spacing: 0.08em;
 }
 
-.player-profile-uuid code {
+.player-profile-uuid code,
+.player-name-history summary code {
   color: var(--muted);
   font-size: 10px;
 }
 
 .player-name-history {
   position: relative;
-  font-size: 12px;
 }
 
 .player-name-history summary {
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  padding: 4px 8px;
-  background: color-mix(in srgb, var(--panel) 72%, transparent);
-  color: var(--accent-strong);
   cursor: pointer;
-  font-weight: 700;
-  list-style-position: inside;
+  list-style: none;
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+
+.player-name-history summary::-webkit-details-marker {
+  display: none;
+}
+
+.player-name-history summary::before {
+  color: var(--accent-strong);
+  content: '\25B8';
+  font-size: 9px;
+  line-height: 1;
+  transition: transform 160ms ease;
+}
+
+.player-name-history[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.player-name-history summary:hover,
+.player-name-history summary:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel));
 }
 
 .player-name-history-list {

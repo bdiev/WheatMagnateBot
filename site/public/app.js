@@ -2288,7 +2288,7 @@ function renderPlayerProfile(profile) {
   const nameHistory = Array.isArray(profile.nameHistory) ? profile.nameHistory : [];
   const nameHistoryControl = nameHistory.length > 1
     ? `<details class="player-name-history">
-        <summary>Name history &middot; ${formatNumber(nameHistory.length)}</summary>
+        <summary><small>Name history</small><code>&middot; ${formatNumber(nameHistory.length)}</code></summary>
         <div class="player-name-history-list">
           ${nameHistory.map((entry, index) => `
             <div>
@@ -3690,6 +3690,14 @@ function updatePlaytimeLeaderboardScopeControls(scope, { animateButton = false }
   });
 }
 
+function resetPlaytimeLeaderboardScroll(list, scope) {
+  if (!list) return;
+  list.scrollTop = 0;
+  requestAnimationFrame(() => {
+    if (state.playtimeLeaderboardScope === scope) list.scrollTop = 0;
+  });
+}
+
 function renderPlaytimeLeaderboard({ resetScroll = false, force = false } = {}) {
   const scope = state.playtimeLeaderboardScope === 'whitelisted' ? 'whitelisted' : 'global';
   const leaderboard = state.playtimeLeaderboards[scope] || [];
@@ -3719,7 +3727,7 @@ function renderPlaytimeLeaderboard({ resetScroll = false, force = false } = {}) 
     [scope, ...leaderboard.map(player => [player.username, player.isOnline, player.playtime])]
   );
 
-  if (resetScroll && list) list.scrollTop = 0;
+  if (resetScroll) resetPlaytimeLeaderboardScroll(list, scope);
 }
 
 function setPlaytimeLeaderboardScope(scope) {
