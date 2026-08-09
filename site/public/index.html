@@ -13,7 +13,7 @@
     <link rel="icon" type="image/png" href="/items/Wheat.png">
     <link rel="apple-touch-icon" href="/items/Wheat.png">
     <script src="/theme-init.js?v=136"></script>
-    <link rel="stylesheet" href="/styles.css?v=164">
+    <link rel="stylesheet" href="/styles.css?v=165">
   </head>
   <body>
     <section id="authScreen" class="auth-screen" aria-label="Site access">
@@ -33,7 +33,7 @@
         <label class="auth-field">
           <span>Password</span>
           <input id="authPassword" name="password" type="password" autocomplete="current-password" required minlength="6">
-          <div id="authPasswordStrength" class="password-strength" data-password-strength data-score="0" hidden>
+          <div id="authPasswordStrength" class="password-strength" data-password-strength data-score="0" aria-hidden="true" hidden>
             <span class="password-strength-sparkles" aria-hidden="true"><i></i><i></i></span>
             <div class="password-strength-head"><span>Password strength</span><strong data-password-strength-label>Not set</strong></div>
             <div class="password-strength-track" role="progressbar" aria-label="Password strength" aria-valuemin="0" aria-valuemax="4" aria-valuenow="0"><span></span></div>
@@ -887,7 +887,7 @@
               <label class="auth-field"><span>New password</span><input id="accountNewPassword" name="newPassword" type="password" autocomplete="new-password" required minlength="6" maxlength="256"></label>
               <label class="auth-field"><span>Confirm new password</span><input id="accountConfirmPassword" name="confirmPassword" type="password" autocomplete="new-password" required minlength="6" maxlength="256"></label>
               <button id="accountPasswordSave" type="submit">Change password</button>
-              <div id="accountNewPasswordStrength" class="password-strength account-password-strength" data-password-strength data-score="0">
+              <div id="accountNewPasswordStrength" class="password-strength account-password-strength" data-password-strength data-score="0" aria-hidden="true" hidden>
                 <span class="password-strength-sparkles" aria-hidden="true"><i></i><i></i></span>
                 <div class="password-strength-head"><span>Password strength</span><strong data-password-strength-label>Not set</strong></div>
                 <div class="password-strength-track" role="progressbar" aria-label="New password strength" aria-valuemin="0" aria-valuemax="4" aria-valuenow="0"><span></span></div>
@@ -1170,6 +1170,6 @@
       </section>
     </main>
 
-    <script src="/app.js?v=167" defer></script>
+    <script src="/app.js?v=168" defer></script>
   </body>
 </html>

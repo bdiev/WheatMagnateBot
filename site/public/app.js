@@ -278,7 +278,10 @@ function assessPasswordStrength(value) {
 function updatePasswordStrength(selector, value) {
   const meter = $(selector);
   if (!meter) return;
-  const strength = assessPasswordStrength(value);
+  const password = String(value || '');
+  const canShow = meter.id !== 'authPasswordStrength' || ['register', 'bootstrap'].includes(state.authMode);
+  const shouldShow = canShow && password.length > 0;
+  const strength = assessPasswordStrength(canShow ? password : '');
   const previousScore = Number(meter.dataset.score) || 0;
   const input = meter.id === 'authPasswordStrength' ? $('#authPassword') : $('#accountNewPassword');
   meter.dataset.score = String(strength.score);
@@ -292,6 +295,25 @@ function updatePasswordStrength(selector, value) {
   }
   if (label) label.textContent = strength.label;
   if (hint) hint.textContent = strength.hint;
+
+  window.clearTimeout(meter.passwordStrengthVisibilityTimer);
+  if (shouldShow) {
+    const wasHidden = meter.hidden;
+    meter.hidden = false;
+    meter.setAttribute('aria-hidden', 'false');
+    if (wasHidden) void meter.offsetHeight;
+    meter.classList.add('is-visible');
+  } else {
+    meter.setAttribute('aria-hidden', 'true');
+    meter.classList.remove('is-visible', 'is-updating', 'is-strong-celebration');
+    input?.classList.remove('is-strength-updating', 'is-strong-celebration');
+    if (!meter.hidden) {
+      meter.passwordStrengthVisibilityTimer = window.setTimeout(() => {
+        if (!meter.classList.contains('is-visible')) meter.hidden = true;
+      }, 280);
+    }
+    return;
+  }
 
   if (previousScore === strength.score) return;
   window.clearTimeout(meter.passwordStrengthUpdateTimer);
@@ -1015,7 +1037,7 @@ function setAuthMode(mode) {
   $('#authModeToggle').textContent = state.authMode === 'login' ? 'Create a new account' : 'Back to sign in';
   $('#authPassword').setAttribute('autocomplete', isRegister || isBootstrap ? 'new-password' : 'current-password');
   $('#authPassword').minLength = isBootstrap ? 12 : 6;
-  $('#authPasswordStrength').hidden = !(isRegister || isBootstrap);
+  if (!(isRegister || isBootstrap)) $('#authPasswordStrength').hidden = true;
   updatePasswordStrength('#authPasswordStrength', $('#authPassword').value);
   $('#authBootstrapTokenField').hidden = !isBootstrap;
   $('#authBootstrapToken').required = isBootstrap;

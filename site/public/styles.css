@@ -492,10 +492,36 @@ button:disabled {
   isolation: isolate;
   display: grid;
   gap: 5px;
+  max-height: 0;
   min-width: 0;
+  overflow: hidden;
+  visibility: hidden;
+  opacity: 0;
   color: var(--muted);
   font-size: 11px;
   font-weight: 600;
+  pointer-events: none;
+  transform: translateY(-7px) scale(.985);
+  transform-origin: top center;
+  transition:
+    max-height 280ms cubic-bezier(.2, .8, .2, 1),
+    opacity 220ms ease,
+    transform 280ms cubic-bezier(.2, .8, .2, 1),
+    visibility 0s linear 280ms;
+}
+
+.password-strength.is-visible {
+  max-height: 76px;
+  overflow: visible;
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+  transition:
+    max-height 280ms cubic-bezier(.2, .8, .2, 1),
+    opacity 220ms ease 35ms,
+    transform 280ms cubic-bezier(.2, .8, .2, 1),
+    visibility 0s;
 }
 
 .password-strength-sparkles {
