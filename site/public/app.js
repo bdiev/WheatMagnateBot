@@ -2823,6 +2823,12 @@ function renderWhisperMessages(messages) {
   if (signature === state.whisperMessagesSignature) return;
   state.whisperMessagesSignature = signature;
 
+  const targetKey = String(state.whisperTarget || '').toLowerCase();
+  const targetChanged = list.dataset.whisperTarget !== targetKey;
+  const distanceFromBottom = list.scrollHeight - list.clientHeight - list.scrollTop;
+  const shouldScrollToBottom = targetChanged || !list.childElementCount || distanceFromBottom <= 48;
+  const previousScrollTop = list.scrollTop;
+
   list.innerHTML = messages.length
     ? messages.map(message => `
       <div class="whisper-message ${message.direction === 'outgoing' ? 'outgoing' : 'incoming'}">
@@ -2835,7 +2841,12 @@ function renderWhisperMessages(messages) {
       </div>
     `).join('')
     : '<div class="empty">No private messages yet.</div>';
-  list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' });
+  list.dataset.whisperTarget = targetKey;
+  if (shouldScrollToBottom) {
+    list.scrollTop = list.scrollHeight;
+  } else {
+    list.scrollTop = previousScrollTop;
+  }
 }
 
 async function loadWhisperDialog() {

@@ -1193,11 +1193,17 @@ body.search-focus-active #logoutButton {
 
 .whisper-messages {
   display: grid;
-  align-content: end;
+  align-content: start;
   gap: 8px;
   min-height: 0;
   overflow-y: auto;
   padding: 12px;
+}
+
+/* Keep short dialogs at the bottom without placing the start of long dialogs
+   above the scroll container's reachable area. */
+.whisper-messages > :first-child {
+  margin-top: auto;
 }
 
 .whisper-message {
