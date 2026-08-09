@@ -1707,6 +1707,31 @@ function chartAxisLabelFitsViewport(canvas, ctx, label, x) {
     && x + halfWidth <= visibleRight - edgeClearance;
 }
 
+function drawChartAxisLabels(canvas, ctx, chartData, xForIndex, labelForItem, y) {
+  const minimumGap = 8;
+  const candidates = chartData.map((item, index) => {
+    const label = shortChartLabel(labelForItem(item), index, chartData.length);
+    if (!label) return null;
+    const x = xForIndex(index);
+    if (!chartAxisLabelFitsViewport(canvas, ctx, label, x)) return null;
+    const halfWidth = ctx.measureText(label).width / 2;
+    return { label, x, left: x - halfWidth, right: x + halfWidth };
+  }).filter(Boolean);
+
+  // Select labels from right to left so the newest visible date wins when a
+  // narrow mobile viewport cannot fit two neighbouring labels.
+  const visibleLabels = [];
+  let nextLabelLeft = Infinity;
+  for (let index = candidates.length - 1; index >= 0; index -= 1) {
+    const candidate = candidates[index];
+    if (candidate.right + minimumGap > nextLabelLeft) continue;
+    visibleLabels.push(candidate);
+    nextLabelLeft = candidate.left;
+  }
+
+  visibleLabels.reverse().forEach(({ label, x }) => ctx.fillText(label, x, y));
+}
+
 function drawNoData(ctx, width, height, muted) {
   ctx.fillStyle = muted;
   ctx.font = '13px system-ui, sans-serif';
@@ -1861,13 +1886,14 @@ function drawBarChart(canvas, data, options = {}) {
   ctx.fillStyle = text;
   ctx.font = '11px system-ui, sans-serif';
   ctx.textAlign = 'center';
-  chartData.forEach((item, index) => {
-    const label = shortChartLabel(item.label, index, chartData.length);
-    if (!label) return;
-    const x = padding.left + index * slotWidth + slotWidth / 2;
-    if (!chartAxisLabelFitsViewport(canvas, ctx, label, x)) return;
-    ctx.fillText(label, x, height - 16);
-  });
+  drawChartAxisLabels(
+    canvas,
+    ctx,
+    chartData,
+    index => padding.left + index * slotWidth + slotWidth / 2,
+    item => item.label,
+    height - 16
+  );
 }
 
 function drawLineChart(canvas, data, options = {}) {
@@ -1956,14 +1982,14 @@ function drawLineChart(canvas, data, options = {}) {
   ctx.fillStyle = text;
   ctx.font = '11px system-ui, sans-serif';
   ctx.textAlign = 'center';
-  chartData.forEach((item, index) => {
-    const axisLabel = options.axisLabel ? options.axisLabel(item) : item.label;
-    const label = shortChartLabel(axisLabel, index, chartData.length);
-    if (!label) return;
-    const x = padding.left + (chartWidth * index) / Math.max(1, chartData.length - 1);
-    if (!chartAxisLabelFitsViewport(canvas, ctx, label, x)) return;
-    ctx.fillText(label, x, height - 16);
-  });
+  drawChartAxisLabels(
+    canvas,
+    ctx,
+    chartData,
+    index => padding.left + (chartWidth * index) / Math.max(1, chartData.length - 1),
+    item => options.axisLabel ? options.axisLabel(item) : item.label,
+    height - 16
+  );
 }
 
 function chartDateParts(date) {

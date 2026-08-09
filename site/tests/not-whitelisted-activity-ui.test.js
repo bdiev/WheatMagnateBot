@@ -36,5 +36,10 @@ assert.match(
   /aggregateSeries\(state\.charts\.unwhitelistedHourly, range\)/,
   'all chart modes must aggregate the complete server series'
 );
+assert.match(
+  appSource,
+  /function drawChartAxisLabels[\s\S]*measureText\(label\)[\s\S]*candidate\.right \+ minimumGap > nextLabelLeft/,
+  'chart date labels must be measured and de-duplicated before drawing on narrow viewports'
+);
 
 console.log('Not-whitelisted activity UI tests passed.');
