@@ -423,7 +423,8 @@ async function updateAdminRequest(card, status) {
 async function logout() {
   try { await api('/api/request/auth/logout', { method: 'POST' }); }
   catch (error) { showMessage(error.message, true); return; }
-  window.location.assign('/request');
+  if (typeof window.navigateWithPageTransition === 'function') window.navigateWithPageTransition('/request');
+  else window.location.assign('/request');
 }
 
 async function init() {

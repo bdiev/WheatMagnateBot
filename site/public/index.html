@@ -13,7 +13,8 @@
     <link rel="icon" type="image/png" href="/items/Wheat.png">
     <link rel="apple-touch-icon" href="/items/Wheat.png">
     <script src="/theme-init.js?v=136"></script>
-    <link rel="stylesheet" href="/styles.css?v=165">
+    <link rel="stylesheet" href="/styles.css?v=168">
+    <script src="/page-transitions.js?v=1" defer></script>
   </head>
   <body>
     <section id="authScreen" class="auth-screen" aria-label="Site access">
@@ -805,10 +806,14 @@
             <div class="panel-head">
               <div>
                 <h2>Playtime Leaderboard</h2>
-                <p>Top whitelist playtime totals.</p>
+                <p id="playtimeLeaderboardDescription">Top 100 server-wide playtime totals.</p>
+              </div>
+              <div id="playtimeLeaderboardScope" class="chart-controls playtime-scope-controls" role="group" aria-label="Playtime leaderboard source">
+                <button class="chart-range-button active" type="button" data-playtime-scope="global" aria-pressed="true">Global</button>
+                <button class="chart-range-button" type="button" data-playtime-scope="whitelisted" aria-pressed="false">Whitelisted</button>
               </div>
             </div>
-            <div id="playtimeLeaderboard" class="rank-list leaderboard-list"></div>
+            <div id="playtimeLeaderboard" class="rank-list leaderboard-list" aria-live="polite"></div>
           </section>
 
           <section class="panel player-nearby-panel">
@@ -968,7 +973,7 @@
         </section>
         <section class="panel child-ai-memory-panel">
           <div class="panel-head"><div><h2>Long-term Memory</h2><p>Safe facts, preferences, relationships and important events.</p></div></div>
-          <div id="childAiMemories" class="child-ai-list"></div>
+          <div id="childAiMemories" class="child-ai-list child-ai-memory-list" role="region" aria-label="Long-term memories" tabindex="0"></div>
           <details class="child-ai-privacy" data-collapse-key="child-ai-privacy">
             <summary><span>Privacy and deletion</span><i class="collapse-indicator" aria-hidden="true"></i></summary>
             <div class="child-ai-tools">
@@ -1170,6 +1175,6 @@
       </section>
     </main>
 
-    <script src="/app.js?v=168" defer></script>
+    <script src="/app.js?v=170" defer></script>
   </body>
 </html>

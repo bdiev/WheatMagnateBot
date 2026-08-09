@@ -1526,13 +1526,44 @@ async function getPlayerStats() {
   assertDatabase();
 
   const [
+    globalLeaderboardResult,
     playersResult,
-    leaderboardResult,
+    whitelistLeaderboardResult,
     activityTotalsResult,
     onlineUnwhitelistedResult,
     hourlyUnwhitelistedResult,
     milestoneResult
   ] = await Promise.all([
+    pool.query(`
+      WITH activity AS (
+        SELECT DISTINCT ON (LOWER(username))
+          LOWER(username) AS username_key,
+          last_seen,
+          is_online
+        FROM player_activity
+        ORDER BY LOWER(username), is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
+      ),
+      playtime AS (
+        SELECT DISTINCT ON (LOWER(username))
+          LOWER(username) AS username_key,
+          username,
+          COALESCE(total_seconds, 0) +
+            CASE WHEN tracking_since IS NULL THEN 0
+                 ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - tracking_since)))::BIGINT)
+            END AS total_seconds
+        FROM player_playtime
+        ORDER BY LOWER(username), updated_at DESC NULLS LAST
+      )
+      SELECT
+        pt.username,
+        COALESCE(pa.is_online, FALSE) AS is_online,
+        pa.last_seen,
+        pt.total_seconds
+      FROM playtime pt
+      LEFT JOIN activity pa ON pa.username_key = pt.username_key
+      ORDER BY pt.total_seconds DESC, pt.username_key
+      LIMIT 100
+    `),
     pool.query(`
       WITH whitelist_players AS (
         SELECT DISTINCT ON (LOWER(username))
@@ -1687,7 +1718,29 @@ async function getPlayerStats() {
       seen24h: toInt(activityTotals.seen_24h),
       seen7d: toInt(activityTotals.seen_7d)
     },
-    playtimeLeaderboard: leaderboardResult.rows.map(row => {
+    playtimeLeaderboards: {
+      global: globalLeaderboardResult.rows.map(row => {
+        const seconds = toInt(row.total_seconds);
+        return {
+          username: row.username,
+          isOnline: Boolean(row.is_online),
+          lastSeen: row.last_seen,
+          totalSeconds: seconds,
+          playtime: formatSeconds(seconds)
+        };
+      }),
+      whitelisted: whitelistLeaderboardResult.rows.map(row => {
+        const seconds = toInt(row.total_seconds);
+        return {
+          username: row.username,
+          isOnline: Boolean(row.is_online),
+          lastSeen: row.last_seen,
+          totalSeconds: seconds,
+          playtime: formatSeconds(seconds)
+        };
+      })
+    },
+    playtimeLeaderboard: whitelistLeaderboardResult.rows.map(row => {
       const seconds = toInt(row.total_seconds);
       return {
         username: row.username,
@@ -3773,7 +3826,7 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/server-stats') {
       const scoped = await scopedAccountRuntime(url,currentUser);
-      if (scoped) { sendJson(res,200,{playerStats:{players:{online:0,total:0,onlineUnwhitelisted:0,seen24h:0,seen7d:0},playtimeLeaderboard:[],milestones:[]},nearby:scoped.bot.nearbyPlayers || [],tps:{latest:null,latestAt:scoped.observedAt,min24h:null,max24h:null},hourlyTps:[]}); return; }
+      if (scoped) { sendJson(res,200,{playerStats:{players:{online:0,total:0,onlineUnwhitelisted:0,seen24h:0,seen7d:0},playtimeLeaderboards:{global:[],whitelisted:[]},playtimeLeaderboard:[],milestones:[]},nearby:scoped.bot.nearbyPlayers || [],tps:{latest:null,latestAt:scoped.observedAt,min24h:null,max24h:null},hourlyTps:[]}); return; }
       sendJson(res, 200, await getServerStats());
       return;
     }

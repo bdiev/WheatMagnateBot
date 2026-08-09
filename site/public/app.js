@@ -45,6 +45,8 @@ const state = {
   whisperUnreadCount: 0,
   playerProfileRegistrationAgeMode: false,
   playerProfileLastPayload: null,
+  playtimeLeaderboardScope: 'global',
+  playtimeLeaderboards: { global: [], whitelisted: [] },
   whisperSearchPlayers: [],
   playerProfileUsername: null,
   playerProfileSignature: '',
@@ -1043,6 +1045,40 @@ function setAuthMode(mode) {
   $('#authBootstrapToken').required = isBootstrap;
   $('#authBootstrapToggle').hidden = !state.bootstrapAvailable || isBootstrap;
   $('#authError').hidden = true;
+}
+
+function transitionAuthMode(mode) {
+  const nextMode = ['register', 'bootstrap'].includes(mode) ? mode : 'login';
+  const form = $('#authForm');
+  if (!form || nextMode === state.authMode) return;
+
+  window.clearTimeout(form.authModeSwapTimer);
+  window.clearTimeout(form.authModeEnterTimer);
+  form.authModeTarget = nextMode;
+
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+    form.classList.remove('auth-mode-exit', 'auth-mode-enter');
+    form.removeAttribute('aria-busy');
+    setAuthMode(nextMode);
+    form.authModeTarget = null;
+    return;
+  }
+
+  form.classList.remove('auth-mode-enter');
+  void form.offsetWidth;
+  form.classList.add('auth-mode-exit');
+  form.setAttribute('aria-busy', 'true');
+  form.authModeSwapTimer = window.setTimeout(() => {
+    setAuthMode(form.authModeTarget);
+    form.authModeTarget = null;
+    form.classList.remove('auth-mode-exit');
+    void form.offsetWidth;
+    form.classList.add('auth-mode-enter');
+    form.authModeEnterTimer = window.setTimeout(() => {
+      form.classList.remove('auth-mode-enter');
+      form.removeAttribute('aria-busy');
+    }, 380);
+  }, 140);
 }
 
 function applyCurrentUser(user) {
@@ -3613,15 +3649,24 @@ async function saveKillAuraTargets() {
   }
 }
 
-function renderPlayerStats(payload = {}, nearbyPlayers = []) {
-  $('#onlinePlayers').textContent = formatNumber(payload.players?.online);
-  $('#totalPlayers').textContent = `of ${formatNumber(payload.players?.total)} whitelisted`;
-  $('#onlineUnwhitelistedPlayers').textContent = formatNumber(payload.players?.onlineUnwhitelisted);
-  $('#seen24h').textContent = formatNumber(payload.players?.seen24h);
-  $('#seen7d').textContent = formatNumber(payload.players?.seen7d);
-  state.charts.unwhitelistedHourly = payload.hourlyUnwhitelisted || [];
+function renderPlaytimeLeaderboard({ resetScroll = false } = {}) {
+  const scope = state.playtimeLeaderboardScope === 'whitelisted' ? 'whitelisted' : 'global';
+  const leaderboard = state.playtimeLeaderboards[scope] || [];
+  const list = $('#playtimeLeaderboard');
 
-  const leaderboard = payload.playtimeLeaderboard || [];
+  $$('#playtimeLeaderboardScope [data-playtime-scope]').forEach(button => {
+    const active = button.dataset.playtimeScope === scope;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+
+  const description = $('#playtimeLeaderboardDescription');
+  if (description) {
+    description.textContent = scope === 'global'
+      ? 'Top 100 server-wide playtime totals.'
+      : 'Playtime totals for players in the whitelist database.';
+  }
+
   renderStable('#playtimeLeaderboard', leaderboard.length
     ? leaderboard.map((player, index) => `
       <div class="rank-item leaderboard-item">
@@ -3632,9 +3677,36 @@ function renderPlayerStats(payload = {}, nearbyPlayers = []) {
         <strong>${escapeHtml(player.playtime)}</strong>
       </div>
     `).join('')
-    : '<div class="empty">No whitelist playtime data found.</div>',
-    leaderboard.map(player => [player.username, player.isOnline, player.playtime])
+    : `<div class="empty">No ${scope === 'global' ? 'global' : 'whitelist'} playtime data found.</div>`,
+    [scope, ...leaderboard.map(player => [player.username, player.isOnline, player.playtime])]
   );
+
+  if (resetScroll && list) list.scrollTop = 0;
+}
+
+function setPlaytimeLeaderboardScope(scope) {
+  const nextScope = scope === 'whitelisted' ? 'whitelisted' : 'global';
+  if (state.playtimeLeaderboardScope === nextScope) return;
+  state.playtimeLeaderboardScope = nextScope;
+  renderPlaytimeLeaderboard({ resetScroll: true });
+}
+
+function renderPlayerStats(payload = {}, nearbyPlayers = []) {
+  $('#onlinePlayers').textContent = formatNumber(payload.players?.online);
+  $('#totalPlayers').textContent = `of ${formatNumber(payload.players?.total)} whitelisted`;
+  $('#onlineUnwhitelistedPlayers').textContent = formatNumber(payload.players?.onlineUnwhitelisted);
+  $('#seen24h').textContent = formatNumber(payload.players?.seen24h);
+  $('#seen7d').textContent = formatNumber(payload.players?.seen7d);
+  state.charts.unwhitelistedHourly = payload.hourlyUnwhitelisted || [];
+
+  const leaderboardSources = payload.playtimeLeaderboards || {};
+  state.playtimeLeaderboards = {
+    global: Array.isArray(leaderboardSources.global) ? leaderboardSources.global.slice(0, 100) : [],
+    whitelisted: Array.isArray(leaderboardSources.whitelisted)
+      ? leaderboardSources.whitelisted
+      : Array.isArray(payload.playtimeLeaderboard) ? payload.playtimeLeaderboard : []
+  };
+  renderPlaytimeLeaderboard();
 
   renderNearbySightings(nearbyPlayers);
 
@@ -6078,8 +6150,8 @@ $$('.tab-button[data-tab]').forEach(button => {
 });
 $('#authForm').addEventListener('submit', handleAuthSubmit);
 $('#authPassword').addEventListener('input', event => updatePasswordStrength('#authPasswordStrength', event.currentTarget.value));
-$('#authModeToggle').addEventListener('click', () => setAuthMode(state.authMode === 'login' ? 'register' : 'login'));
-$('#authBootstrapToggle').addEventListener('click', () => setAuthMode('bootstrap'));
+$('#authModeToggle').addEventListener('click', () => transitionAuthMode(state.authMode === 'login' ? 'register' : 'login'));
+$('#authBootstrapToggle').addEventListener('click', () => transitionAuthMode('bootstrap'));
 $('#navMenuToggle')?.addEventListener('click', toggleNavMenu);
 $('#logoutButton')?.addEventListener('click', handleLogout);
 $('#accountModalClose')?.addEventListener('click', () => setAccountModalOpen(false));
@@ -6164,6 +6236,10 @@ $('#killAuraSelectHostile')?.addEventListener('click', () => setKillAuraSelectio
 $('#killAuraSelectAll')?.addEventListener('click', () => setKillAuraSelection(() => true));
 $('#killAuraClear')?.addEventListener('click', () => setKillAuraSelection(() => false));
 $('#killAuraSaveTargets')?.addEventListener('click', saveKillAuraTargets);
+$('#playtimeLeaderboardScope')?.addEventListener('click', event => {
+  const button = event.target.closest('[data-playtime-scope]');
+  if (button) setPlaytimeLeaderboardScope(button.dataset.playtimeScope);
+});
 document.addEventListener('keydown', handleKillAuraModalKeydown);
 $('#notificationsMarkAllRead')?.addEventListener('click', async () => {
   await postJson('/api/notifications/read', { all: true });
