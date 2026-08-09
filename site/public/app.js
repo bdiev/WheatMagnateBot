@@ -58,6 +58,7 @@ const state = {
   requestCountLoading: false,
   adminLogsLoading: false,
   childAiLoading: false,
+  childAiPlayerStyles: [],
   childAiImportState: null,
   timelineLoading: false,
   timelineSelectedEventId: null,
@@ -237,6 +238,84 @@ async function saveAccountSettings(event) {
   }
 }
 
+function assessPasswordStrength(value) {
+  const password = String(value || '');
+  if (!password) {
+    return { score: 0, label: 'Not set', hint: 'Use 12 or more characters for a strong password.' };
+  }
+  if (password.length < 6) {
+    return { score: 1, label: 'Weak', hint: 'At least 6 characters are required.' };
+  }
+
+  const characterGroups = [/[a-z]/, /[A-Z]/, /\d/, /[^A-Za-z0-9]/]
+    .filter(pattern => pattern.test(password)).length;
+  const uniqueRatio = new Set(password).size / password.length;
+  let points = 1;
+  if (password.length >= 8) points += 1;
+  if (password.length >= 12) points += 1;
+  if (password.length >= 16) points += 1;
+  if (characterGroups >= 2) points += 1;
+  if (characterGroups >= 3) points += 1;
+  if (characterGroups === 4) points += 1;
+  if (uniqueRatio >= 0.6) points += 1;
+  if (password.length >= 18 && characterGroups >= 2) points += 2;
+  if (uniqueRatio < 0.35 || /(.)\1{3}/.test(password)) points -= 2;
+
+  let score = points <= 2 ? 1 : points <= 4 ? 2 : points <= 6 ? 3 : 4;
+  if (password.length < 8) score = Math.min(score, 1);
+  else if (password.length < 10) score = Math.min(score, 2);
+  else if (password.length < 12) score = Math.min(score, 3);
+
+  const feedback = {
+    1: { label: 'Weak', hint: 'Add length and mix different character types.' },
+    2: { label: 'Fair', hint: 'Use 12 or more characters for a stronger password.' },
+    3: { label: 'Good', hint: 'Almost strong — add length or another character type.' },
+    4: { label: 'Strong', hint: 'Strong password.' }
+  }[score];
+  return { score, ...feedback };
+}
+
+function updatePasswordStrength(selector, value) {
+  const meter = $(selector);
+  if (!meter) return;
+  const strength = assessPasswordStrength(value);
+  const previousScore = Number(meter.dataset.score) || 0;
+  const input = meter.id === 'authPasswordStrength' ? $('#authPassword') : $('#accountNewPassword');
+  meter.dataset.score = String(strength.score);
+  if (input) input.dataset.passwordStrengthScore = String(strength.score);
+  const progress = meter.querySelector('[role="progressbar"]');
+  const label = meter.querySelector('[data-password-strength-label]');
+  const hint = meter.querySelector('[data-password-strength-hint]');
+  if (progress) {
+    progress.setAttribute('aria-valuenow', String(strength.score));
+    progress.setAttribute('aria-valuetext', strength.label);
+  }
+  if (label) label.textContent = strength.label;
+  if (hint) hint.textContent = strength.hint;
+
+  if (previousScore === strength.score) return;
+  window.clearTimeout(meter.passwordStrengthUpdateTimer);
+  window.clearTimeout(meter.passwordStrengthCelebrationTimer);
+  meter.classList.remove('is-updating', 'is-strong-celebration');
+  input?.classList.remove('is-strength-updating', 'is-strong-celebration');
+  void meter.offsetWidth;
+  meter.classList.add('is-updating');
+  input?.classList.add('is-strength-updating');
+  meter.passwordStrengthUpdateTimer = window.setTimeout(() => {
+    meter.classList.remove('is-updating');
+    input?.classList.remove('is-strength-updating');
+  }, 380);
+
+  if (strength.score === 4) {
+    meter.classList.add('is-strong-celebration');
+    input?.classList.add('is-strong-celebration');
+    meter.passwordStrengthCelebrationTimer = window.setTimeout(() => {
+      meter.classList.remove('is-strong-celebration');
+      input?.classList.remove('is-strong-celebration');
+    }, 1250);
+  }
+}
+
 async function changeAccountPassword(event) {
   event.preventDefault();
   const form = event.currentTarget;
@@ -261,6 +340,7 @@ async function changeAccountPassword(event) {
   try {
     const payload = await putJson('/api/settings/password', { currentPassword, newPassword, confirmPassword });
     form.reset();
+    updatePasswordStrength('#accountNewPasswordStrength', '');
     const signedOut = Number(payload.signedOutSessions) || 0;
     showStatus(signedOut
       ? `Password changed. ${signedOut} other signed-in ${signedOut === 1 ? 'session was' : 'sessions were'} logged out.`
@@ -935,6 +1015,8 @@ function setAuthMode(mode) {
   $('#authModeToggle').textContent = state.authMode === 'login' ? 'Create a new account' : 'Back to sign in';
   $('#authPassword').setAttribute('autocomplete', isRegister || isBootstrap ? 'new-password' : 'current-password');
   $('#authPassword').minLength = isBootstrap ? 12 : 6;
+  $('#authPasswordStrength').hidden = !(isRegister || isBootstrap);
+  updatePasswordStrength('#authPasswordStrength', $('#authPassword').value);
   $('#authBootstrapTokenField').hidden = !isBootstrap;
   $('#authBootstrapToken').required = isBootstrap;
   $('#authBootstrapToggle').hidden = !state.bootstrapAvailable || isBootstrap;
@@ -5310,17 +5392,69 @@ function qualitySummary(item) {
   return `coherence ${percent(item.coherence)} · toxicity ${percent(item.toxicity)} · repetition ${percent(item.repetition)} · unknown ${percent(item.unknown_ratio)}`;
 }
 
+function renderChildAiPlayerStyles({ resetScroll = false } = {}) {
+  const list = $('#childAiStyles');
+  const count = $('#childAiStyleCount');
+  if (!list) return;
+
+  const styles = Array.isArray(state.childAiPlayerStyles) ? state.childAiPlayerStyles : [];
+  const query = String($('#childAiStyleSearch')?.value || '').trim().toLocaleLowerCase();
+  const filteredStyles = query
+    ? styles.filter(profile => String(profile.subjectName || profile.subjectId || '').toLocaleLowerCase().includes(query))
+    : styles;
+
+  if (count) {
+    count.textContent = query
+      ? `${formatNumber(filteredStyles.length)} of ${formatNumber(styles.length)} players`
+      : `${formatNumber(styles.length)} players`;
+  }
+
+  list.innerHTML = filteredStyles.length ? filteredStyles.map(profile => {
+    const displayName = profile.subjectName || profile.subjectId || 'Unknown player';
+    const isMinecraftPlayer = String(profile.source || '').toLowerCase() === 'minecraft';
+    const identity = isMinecraftPlayer
+      ? playerIdentity(displayName, 28)
+      : `<strong class="child-ai-style-name">${escapeHtml(displayName)}</strong>`;
+    return `
+      <article class="child-ai-style-row">
+        <div class="child-ai-style-main">
+          <div class="child-ai-style-identity">
+            ${identity}
+            <span class="child-ai-style-source">${escapeHtml(profile.source)}</span>
+          </div>
+          <p class="child-ai-style-summary">
+            <span>${escapeHtml(profile.tone)} tone</span>
+            <span>${escapeHtml(profile.responseLength)} replies</span>
+            <span>${escapeHtml(profile.language)}</span>
+            <span>${escapeHtml(profile.averageWords)} words/message</span>
+          </p>
+          <div class="child-ai-style-signals">${(profile.signals || []).map(signal => `<span>${escapeHtml(signal)}</span>`).join('') || '<span>collecting style signals</span>'}</div>
+          ${profile.adminNotes ? `<small class="child-ai-style-note">Administrator note: ${escapeHtml(profile.adminNotes)}</small>` : ''}
+        </div>
+        <div class="child-ai-style-meta">
+          <span><strong>${formatNumber(profile.messagesSeen)}</strong> messages</span>
+          <button class="ghost-button" type="button" data-child-style-edit="${escapeHtml(profile.subjectId)}" data-source="${escapeHtml(profile.source)}" data-tone="${escapeHtml(profile.adminTone || 'auto')}" data-length="${escapeHtml(profile.adminLength || 'auto')}" data-notes="${escapeHtml(profile.adminNotes || '')}">Adjust style</button>
+        </div>
+      </article>`;
+  }).join('') : `<div class="empty">${styles.length ? 'No player styles match this nickname.' : 'Player styles appear after safe messages are learned.'}</div>`;
+
+  if (resetScroll) list.scrollTop = 0;
+}
+
 function renderChildAiAdmin(payload) {
   const snapshot = payload?.snapshot;
   if (!snapshot) {
+    state.childAiPlayerStyles = [];
     ['#childAiMemories', '#childAiStyles', '#childAiExamples', '#childAiWords', '#childAiTopics', '#childAiEmotions', '#childAiResponses', '#childAiRejections']
       .forEach(selector => { if ($(selector)) $(selector).innerHTML = '<div class="empty">Waiting for the bot to publish its first snapshot.</div>'; });
+    if ($('#childAiStyleCount')) $('#childAiStyleCount').textContent = '0 players';
     return;
   }
 
   const memories = Array.isArray(snapshot.memories) ? snapshot.memories : [];
   const generations = Array.isArray(snapshot.generations) ? snapshot.generations : [];
   const playerStyles = Array.isArray(snapshot.playerStyles) ? snapshot.playerStyles : [];
+  state.childAiPlayerStyles = playerStyles;
   const responseExamples = Array.isArray(snapshot.responseExamples) ? snapshot.responseExamples : [];
   $('#childAiWordCount').textContent = formatNumber(snapshot.stats?.knownWords || 0);
   $('#childAiMemoryCount').textContent = formatNumber(memories.length);
@@ -5341,14 +5475,7 @@ function renderChildAiAdmin(payload) {
       <div class="child-ai-row-actions"><button class="ghost-button" type="button" data-child-memory-correct="${item.id}" data-current-value="${escapeHtml(item.fact_value)}" data-current-confidence="${Number(item.confidence) || 0.8}" data-current-expiry="${escapeHtml(item.expires_at)}">Correct</button><button class="danger-button" type="button" data-child-memory-delete="${item.id}">Delete</button></div>
     </article>`).join('') : '<div class="empty">No active long-term memories.</div>';
 
-  $('#childAiStyles').innerHTML = playerStyles.length ? playerStyles.map(profile => `
-    <article class="child-ai-row">
-      <div><strong>${escapeHtml(profile.subjectName || profile.subjectId)}</strong><span>${escapeHtml(profile.source)} · ${formatNumber(profile.messagesSeen)} messages</span></div>
-      <p>${escapeHtml(profile.tone)} tone · ${escapeHtml(profile.responseLength)} replies · ${escapeHtml(profile.language)} · ${profile.averageWords} words/message</p>
-      ${profile.adminNotes ? `<small>Administrator note: ${escapeHtml(profile.adminNotes)}</small>` : ''}
-      <div class="child-ai-style-signals">${(profile.signals || []).map(signal => `<span>${escapeHtml(signal)}</span>`).join('') || '<span>collecting style signals</span>'}</div>
-      <div class="child-ai-row-actions"><button class="ghost-button" type="button" data-child-style-edit="${escapeHtml(profile.subjectId)}" data-source="${escapeHtml(profile.source)}" data-tone="${escapeHtml(profile.adminTone || 'auto')}" data-length="${escapeHtml(profile.adminLength || 'auto')}" data-notes="${escapeHtml(profile.adminNotes || '')}">Adjust style</button></div>
-    </article>`).join('') : '<div class="empty">Player styles appear after safe messages are learned.</div>';
+  renderChildAiPlayerStyles();
 
   $('#childAiExamples').innerHTML = responseExamples.length ? responseExamples.map(example => `
     <article class="child-ai-row">
@@ -5928,6 +6055,7 @@ $$('.tab-button[data-tab]').forEach(button => {
   button.addEventListener('click', () => setActiveTab(button.dataset.tab));
 });
 $('#authForm').addEventListener('submit', handleAuthSubmit);
+$('#authPassword').addEventListener('input', event => updatePasswordStrength('#authPasswordStrength', event.currentTarget.value));
 $('#authModeToggle').addEventListener('click', () => setAuthMode(state.authMode === 'login' ? 'register' : 'login'));
 $('#authBootstrapToggle').addEventListener('click', () => setAuthMode('bootstrap'));
 $('#navMenuToggle')?.addEventListener('click', toggleNavMenu);
@@ -5975,6 +6103,7 @@ $('#childAiMemories')?.addEventListener('click', handleChildAiMemoryAction);
 $('#childAiExampleForm')?.addEventListener('submit', addChildAiExample);
 $('#childAiExamples')?.addEventListener('click', handleChildAiExampleAction);
 $('#childAiStyles')?.addEventListener('click', handleChildAiStyleAction);
+$('#childAiStyleSearch')?.addEventListener('input', () => renderChildAiPlayerStyles({ resetScroll: true }));
 $('#childAiForgetUser')?.addEventListener('click', forgetChildAiUser);
 $('#childAiExport')?.addEventListener('click', exportChildAiState);
 $('#childAiImportFile')?.addEventListener('change', selectChildAiImport);
@@ -6031,6 +6160,7 @@ $('#navSectionsList')?.addEventListener('click', moveNavigationSection);
 $('#navSectionsReset')?.addEventListener('click', resetNavigationVisibility);
 $('#accountSettingsForm')?.addEventListener('submit', saveAccountSettings);
 $('#accountPasswordForm')?.addEventListener('submit', changeAccountPassword);
+$('#accountNewPassword')?.addEventListener('input', event => updatePasswordStrength('#accountNewPasswordStrength', event.currentTarget.value));
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.addEventListener('message', event => {

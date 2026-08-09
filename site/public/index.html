@@ -13,7 +13,7 @@
     <link rel="icon" type="image/png" href="/items/Wheat.png">
     <link rel="apple-touch-icon" href="/items/Wheat.png">
     <script src="/theme-init.js?v=136"></script>
-    <link rel="stylesheet" href="/styles.css?v=161">
+    <link rel="stylesheet" href="/styles.css?v=164">
   </head>
   <body>
     <section id="authScreen" class="auth-screen" aria-label="Site access">
@@ -33,6 +33,12 @@
         <label class="auth-field">
           <span>Password</span>
           <input id="authPassword" name="password" type="password" autocomplete="current-password" required minlength="6">
+          <div id="authPasswordStrength" class="password-strength" data-password-strength data-score="0" hidden>
+            <span class="password-strength-sparkles" aria-hidden="true"><i></i><i></i></span>
+            <div class="password-strength-head"><span>Password strength</span><strong data-password-strength-label>Not set</strong></div>
+            <div class="password-strength-track" role="progressbar" aria-label="Password strength" aria-valuemin="0" aria-valuemax="4" aria-valuenow="0"><span></span></div>
+            <small data-password-strength-hint>Use 12 or more characters for a strong password.</small>
+          </div>
         </label>
 
         <div id="authError" class="auth-error" hidden></div>
@@ -881,6 +887,12 @@
               <label class="auth-field"><span>New password</span><input id="accountNewPassword" name="newPassword" type="password" autocomplete="new-password" required minlength="6" maxlength="256"></label>
               <label class="auth-field"><span>Confirm new password</span><input id="accountConfirmPassword" name="confirmPassword" type="password" autocomplete="new-password" required minlength="6" maxlength="256"></label>
               <button id="accountPasswordSave" type="submit">Change password</button>
+              <div id="accountNewPasswordStrength" class="password-strength account-password-strength" data-password-strength data-score="0">
+                <span class="password-strength-sparkles" aria-hidden="true"><i></i><i></i></span>
+                <div class="password-strength-head"><span>Password strength</span><strong data-password-strength-label>Not set</strong></div>
+                <div class="password-strength-track" role="progressbar" aria-label="New password strength" aria-valuemin="0" aria-valuemax="4" aria-valuenow="0"><span></span></div>
+                <small data-password-strength-hint>Use 12 or more characters for a strong password.</small>
+              </div>
               <p id="accountPasswordStatus" class="account-password-status" role="status" aria-live="polite" hidden></p>
             </form>
             <div class="push-privacy-note">After the change, other signed-in sessions will be logged out for security.</div>
@@ -941,8 +953,18 @@
           <div id="childAiExamples" class="child-ai-list"></div>
         </section>
         <section class="panel child-ai-style-panel">
-          <div class="panel-head"><div><h2>Player Communication Styles</h2><p>Per-player speaking patterns learned locally. Administrators can override tone and reply length.</p></div></div>
-          <div id="childAiStyles" class="child-ai-list"></div>
+          <div class="panel-head child-ai-style-head">
+            <div><h2>Player Communication Styles</h2><p>Per-player speaking patterns learned locally. Administrators can override tone and reply length.</p></div>
+            <div class="child-ai-style-toolbar">
+              <label class="child-ai-style-search">
+                <span class="sr-only">Search player communication styles by nickname</span>
+                <img src="/items/Icon_Search.png" alt="" aria-hidden="true">
+                <input id="childAiStyleSearch" type="search" autocomplete="off" spellcheck="false" placeholder="Search nickname..." aria-controls="childAiStyles">
+              </label>
+              <span id="childAiStyleCount" class="child-ai-style-count" aria-live="polite">0 players</span>
+            </div>
+          </div>
+          <div id="childAiStyles" class="child-ai-list child-ai-style-list" role="region" aria-label="Player communication styles" tabindex="0"></div>
         </section>
         <section class="panel child-ai-memory-panel">
           <div class="panel-head"><div><h2>Long-term Memory</h2><p>Safe facts, preferences, relationships and important events.</p></div></div>
@@ -1148,6 +1170,6 @@
       </section>
     </main>
 
-    <script src="/app.js?v=164" defer></script>
+    <script src="/app.js?v=167" defer></script>
   </body>
 </html>
