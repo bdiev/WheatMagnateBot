@@ -30,6 +30,7 @@ assert.match(stylesSource, /\.playtime-scope-controls::before\s*\{[^}]*transitio
 assert.match(stylesSource, /data-active-scope="whitelisted"[^}]*translateX\(calc\(100% \+ 4px\)\)/s, 'the active indicator must move to Whitelisted');
 assert.match(stylesSource, /@keyframes playtime-leaderboard-out[\s\S]*@keyframes playtime-leaderboard-in/, 'leaderboard content must animate in both directions of the swap');
 assert.match(stylesSource, /\.playtime-scope-controls \.chart-range-button\s*\{[^}]*flex:\s*1 1 50%;/s, 'leaderboard tabs must share the available mobile width');
+assert.match(stylesSource, /\.chart-controls:not\(\.playtime-scope-controls\)\s*\{[^}]*grid-template-columns:\s*repeat\(3,/s, 'three-column mobile chart controls must not override the two-column leaderboard switch');
 assert.match(stylesSource, /\.player-leaderboard-panel \.leaderboard-list\s*\{[^}]*overflow-anchor:\s*none;/s, 'scope changes must not restore the previous mobile scroll anchor');
 assert.match(appSource, /function resetPlaytimeLeaderboardScroll[\s\S]*list\.scrollTop = 0;[\s\S]*requestAnimationFrame[\s\S]*state\.playtimeLeaderboardScope === scope[\s\S]*list\.scrollTop = 0;/, 'scope changes must reset the leaderboard before and after layout');
 

@@ -4269,35 +4269,49 @@ body.search-focus-active #logoutButton {
 
 .player-profile-uuid,
 .player-name-history summary {
+  box-sizing: border-box;
   display: inline-flex;
   align-items: center;
   gap: 7px;
+  height: 24px;
   margin: 0;
   border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
   border-radius: 7px;
-  padding: 4px 7px;
+  padding: 0 7px;
   background: color-mix(in srgb, var(--panel) 72%, transparent);
   color: var(--muted);
   font-size: 10px;
+  line-height: 1;
   overflow-wrap: anywhere;
+  white-space: nowrap;
 }
 
 .player-profile-uuid small,
 .player-name-history summary small {
+  display: inline-flex;
+  align-items: center;
   color: var(--accent-strong);
   font-size: 9px;
   font-weight: 900;
+  line-height: 1;
   letter-spacing: 0.08em;
 }
 
 .player-profile-uuid code,
 .player-name-history summary code {
+  display: inline-flex;
+  align-items: center;
   color: var(--muted);
   font-size: 10px;
+  line-height: 1;
 }
 
 .player-name-history {
   position: relative;
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  margin: 0;
 }
 
 .player-name-history summary {
@@ -4311,10 +4325,16 @@ body.search-focus-active #logoutButton {
 }
 
 .player-name-history summary::before {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 8px;
+  width: 8px;
+  height: 8px;
   color: var(--accent-strong);
   content: '\25B8';
-  font-size: 9px;
+  font-size: 8px;
   line-height: 1;
+  transform-origin: center;
   transition: transform 160ms ease;
 }
 
@@ -7788,7 +7808,7 @@ body.kill-aura-modal-open {
   .chat-reply-preview { padding: 9px 10px; }
 
   .side-stack .panel-head { gap: 10px; }
-  .chart-controls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+  .chart-controls:not(.playtime-scope-controls) { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
   .chart-range-button { min-width: 0; min-height: 42px; padding-inline: 8px; touch-action: manipulation; }
   .chart-scroll {
     min-height: 250px;
