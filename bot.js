@@ -77,6 +77,8 @@ const MINECRAFT_CONNECT_TIMEOUT_MS = 20_000;
 const MINECRAFT_PROFILES_FOLDER = path.resolve(process.env.MINECRAFT_PROFILES_FOLDER || path.join('data', 'auth-cache'));
 const DEFAULT_ACCOUNT_ID = '00000000-0000-4000-8000-000000000001';
 const COMMAND_WORKER_ID = `legacy:${process.pid}:${require('node:crypto').randomUUID()}`;
+const BOT_COMMAND_EXECUTION_TIMEOUT_MS = 40_000;
+let botCommandWorkerRunning = false;
 const MAX_BOT_ACCOUNTS = Math.max(1, Number(process.env.MAX_BOT_ACCOUNTS) || 8);
 const MAX_CONCURRENT_BOTS = Math.max(1, Number(process.env.MAX_CONCURRENT_BOTS) || 3);
 const BOT_START_DELAY_MS = Math.max(0, Number(process.env.BOT_START_DELAY_MS) || 1500);
@@ -2787,14 +2789,18 @@ async function startConfiguredObsidianFarm() {
     };
   }
 
-  await farm.prepareStart(bot);
+  // Persist the requested state before any Mineflayer interaction. Opening a
+  // barrel can wait indefinitely when the server drops the window-open packet;
+  // command-bus work must not be held open by that preparation.
   await beginObsidianFarmSession();
   const startingBot = bot;
   ensureObsidianFarmRunning(startingBot, { freshSession: true }).catch(err => {
     console.error('[Obsidian] Manual farm start retry loop failed:', err.message);
   });
 
-  const startupDeadline = Date.now() + 15_000;
+  // Give an immediately available lever a chance to start the loop while still
+  // acknowledging the site command well inside its command-bus lease.
+  const startupDeadline = Date.now() + 5_000;
   while (
     Date.now() < startupDeadline &&
     bot === startingBot &&
@@ -2806,7 +2812,7 @@ async function startConfiguredObsidianFarm() {
 
   return {
     started: farm.getStatus().enabled,
-    queued: false,
+    queued: !farm.getStatus().enabled,
     config: farm.getStatus().config
   };
 }
@@ -2815,8 +2821,10 @@ async function toggleObsidianFarmFromControl() {
   const farmStatus = farm.getStatus();
   if (farmStatus.enabled || obsidianStats.desiredEnabled) {
     farm.suspend();
-    const leverProtected = await setProtectionLeverState(true).catch(() => false);
+    // Disable auto-resume first so a slow lever response cannot restart the
+    // farm while the stop command is still being processed.
     await setObsidianFarmDesiredEnabled(false);
+    const leverProtected = await setProtectionLeverState(true).catch(() => false);
     await recordFarmAnnotation('pause', 'Farm paused', { source: 'admin_control' }).catch(() => {});
     return {
       enabled: false,
@@ -3513,6 +3521,16 @@ function withObsidianStatsTimeout(promise, timeoutMs = 20_000) {
         () => reject(new Error(`Obsidian statistics update timed out after ${timeoutMs}ms`)),
         timeoutMs
       );
+    })
+  ]).finally(() => clearTimeout(timeout));
+}
+
+function withTimeout(promise, timeoutMs, message = `Operation timed out after ${timeoutMs}ms`) {
+  let timeout;
+  return Promise.race([
+    Promise.resolve(promise),
+    new Promise((_, reject) => {
+      timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
     })
   ]).finally(() => clearTimeout(timeout));
 }
@@ -4294,12 +4312,15 @@ async function ensureObsidianFarmRunning(createdBot, { freshSession = false } = 
   let warningSent = false;
 
   try {
-    // The spawn event fires before all nearby chunks, inventory slots and
-    // interactions are necessarily synchronized. The manual stats Refresh
-    // succeeds because its barrel inspection naturally completes that setup.
-    // Run the same safe preparation before touching the protection lever.
+    // The spawn event fires before nearby chunks are necessarily synchronized.
+    // Do not open the supply barrel here: a missing window-open packet would
+    // hold the farm's shared interaction queue and prevent its first cycle.
     try {
-      await createdBot.waitForChunksToLoad();
+      await withTimeout(
+        createdBot.waitForChunksToLoad(),
+        15_000,
+        'Chunk readiness timed out'
+      );
     } catch (err) {
       console.log(`[Obsidian] Chunk readiness wait ended early: ${err.message}`);
     }
@@ -4313,12 +4334,6 @@ async function ensureObsidianFarmRunning(createdBot, { freshSession = false } = 
     }
 
     await new Promise(resolve => setTimeout(resolve, 1_000));
-    const reconnectSupplies = await farm.inspectSupplies(createdBot);
-    if (reconnectSupplies?.barrelError) {
-      console.log(`[Obsidian] Reconnect barrel preparation: ${reconnectSupplies.barrelError}`);
-    } else {
-      console.log('[Obsidian] Reconnect barrel preparation completed.');
-    }
 
     while (
       bot === createdBot &&
@@ -5507,6 +5522,12 @@ async function executeManagedAccountCommand(command) {
   if (runtime && refreshedAccount) runtime.account = refreshedAccount;
   const type = String(command.command_type || '');
   const payload = command.payload || {};
+  // Obsidian state is global and implemented by the default runtime. Forward
+  // commands queued by older site builds against a managed account so they do
+  // real work instead of merely setting runtime.task = 'obsidian'.
+  if (type.startsWith('obsidian_')) {
+    return executeBotCommand({ ...command, account_id: DEFAULT_ACCOUNT_ID });
+  }
   if (type === 'account_start') return multiBotManager.start(command.account_id);
   if (type === 'account_stop') return multiBotManager.stop(command.account_id);
   if (type === 'account_restart') return multiBotManager.restart(command.account_id);
@@ -5559,7 +5580,7 @@ async function executeManagedAccountCommand(command) {
     });
     return status;
   }
-  if (['follow','follow_stop','obsidian_toggle'].includes(type)) {
+  if (['follow','follow_stop'].includes(type)) {
     if (type !== 'follow_stop' && runtime.killAura?.getStatus?.().enabled) {
       const auraStatus = runtime.setKillAuraEnabled(false);
       await persistKillAuraState(command.account_id, {
@@ -5567,7 +5588,7 @@ async function executeManagedAccountCommand(command) {
         selectedMobs: auraStatus.targets
       });
     }
-    return runtime.assignTask(type === 'follow' ? 'follow' : type === 'obsidian_toggle' ? 'obsidian' : 'idle');
+    return runtime.assignTask(type === 'follow' ? 'follow' : 'idle');
   }
   throw new Error(`Command ${type} is not supported by managed runtimes yet.`);
 }
@@ -5591,6 +5612,16 @@ async function processManagedAccountCommands() {
 }
 
 async function processBotCommands() {
+  if (botCommandWorkerRunning) return;
+  botCommandWorkerRunning = true;
+  try {
+    await processBotCommandsOnce();
+  } finally {
+    botCommandWorkerRunning = false;
+  }
+}
+
+async function processBotCommandsOnce() {
   if (!pool) return;
 
   let commands = [];
@@ -5616,7 +5647,7 @@ async function processBotCommands() {
             OR (payload->>'deferredUntil')::timestamptz <= NOW()
           )
         ORDER BY created_at ASC
-        LIMIT 5
+        LIMIT 1
         FOR UPDATE SKIP LOCKED
       )
       UPDATE bot_commands commands
@@ -5638,16 +5669,24 @@ async function processBotCommands() {
 
   for (const command of commands) {
     try {
-      const result = await executeBotCommand(command);
-      await writeBotStatusSnapshot().catch(() => {});
+      const result = await withTimeout(
+        executeBotCommand(command),
+        BOT_COMMAND_EXECUTION_TIMEOUT_MS,
+        `Bot command ${command.command_type} timed out after ${BOT_COMMAND_EXECUTION_TIMEOUT_MS / 1000}s`
+      );
       await pool.query(`
         UPDATE bot_commands
         SET status = 'done',
             result = $2,
             error = NULL,
-            finished_at = NOW()
+            finished_at = NOW(),
+            locked_by = NULL,
+            lease_expires_at = NULL
         WHERE id = $1
       `, [command.id, result || {}]);
+      // The command result is authoritative; a slow status snapshot must not
+      // leave an already executed command displayed as processing.
+      withTimeout(writeBotStatusSnapshot(), 5_000, 'Bot status snapshot timed out').catch(() => {});
       console.log(`[Command Bus] Completed ${command.command_type} #${command.id}`);
       await recordSystemLog({
         level: 'audit',
@@ -5664,7 +5703,9 @@ async function processBotCommands() {
               payload = payload || $2::jsonb,
               result = jsonb_build_object('deferred', true, 'reason', $3::text),
               error = NULL,
-              started_at = NULL
+              started_at = NULL,
+              locked_by = NULL,
+              lease_expires_at = NULL
           WHERE id = $1
         `, [command.id, JSON.stringify(err.payloadPatch || {}), err.message]);
         console.log(`[Command Bus] Deferred ${command.command_type} #${command.id}: ${err.message}`);
@@ -5681,7 +5722,9 @@ async function processBotCommands() {
         UPDATE bot_commands
         SET status = 'failed',
             error = $2,
-            finished_at = NOW()
+            finished_at = NOW(),
+            locked_by = NULL,
+            lease_expires_at = NULL
         WHERE id = $1
       `, [command.id, err.message]);
       console.error(`[Command Bus] Failed ${command.command_type} #${command.id}:`, err.message);

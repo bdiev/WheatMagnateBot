@@ -2960,7 +2960,13 @@ async function queueAdminBotCommand(currentUser, body) {
     payload.targets = normalizeKillAuraTargets(payload.targets);
   }
 
-  const accountId = await commandAccountId(body,currentUser);
+  // The obsidian farm is owned by the compatibility/default runtime. Managed
+  // accounts currently expose only a task label, not the actual farming loop;
+  // routing these global controls to a selected managed account silently did
+  // nothing while the Obsidian page still showed the default farm state.
+  const accountId = commandType.startsWith('obsidian_')
+    ? DEFAULT_MINECRAFT_ACCOUNT_ID
+    : await commandAccountId(body,currentUser);
   return queueBotCommand(currentUser, commandType, payload, { accountId });
 }
 
