@@ -3337,6 +3337,73 @@ body.search-focus-active #logoutButton {
   text-transform: uppercase;
 }
 
+.player-profile-metric-head {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.player-profile-refresh-button {
+  flex: 0 0 24px;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  min-height: 24px;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--line));
+  border-radius: 7px;
+  padding: 0;
+  color: var(--accent-strong);
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 28%, transparent);
+  transition: border-color 160ms ease, background-color 160ms ease, transform 160ms ease;
+}
+
+.player-profile-refresh-button svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 320ms cubic-bezier(.2, .8, .2, 1);
+}
+
+.player-profile-refresh-button:hover,
+.player-profile-refresh-button:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  background: color-mix(in srgb, var(--accent) 15%, var(--panel));
+  transform: translateY(-1px);
+}
+
+.player-profile-refresh-button:hover svg,
+.player-profile-refresh-button:focus-visible svg {
+  transform: rotate(180deg);
+}
+
+.player-profile-refresh-button.is-refreshing svg {
+  animation: player-profile-refresh-spin 650ms linear infinite;
+}
+
+@keyframes player-profile-refresh-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .player-profile-refresh-button,
+  .player-profile-refresh-button svg {
+    transition: none;
+  }
+
+  .player-profile-refresh-button.is-refreshing svg {
+    animation-duration: 1.4s;
+  }
+}
+
 .player-profile-grid strong {
   display: block;
   margin-top: 5px;

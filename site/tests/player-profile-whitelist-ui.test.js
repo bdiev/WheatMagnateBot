@@ -21,5 +21,15 @@ assert.match(
   /isWhitelisted = action === 'whitelist_add';[\s\S]*state\.playerProfileLastPayload\.isWhitelisted = isWhitelisted;[\s\S]*renderPlayerProfile\(state\.playerProfileLastPayload\)/,
   'the card must immediately reflect a successful whitelist addition or removal'
 );
+assert.match(
+  appSource,
+  /data-player-refresh-command="!pt"[\s\S]*data-player-refresh-command="!jd"/,
+  'the playtime and registration metrics must expose refresh actions'
+);
+assert.match(
+  appSource,
+  /closest\('\[data-player-refresh-command\]'\)[\s\S]*postJson\('\/api\/chat\/send',[\s\S]*message: `\$\{command\} \$\{username\}`/,
+  'player metric refresh actions must send their command through game chat'
+);
 
 console.log('Player profile whitelist UI tests passed.');

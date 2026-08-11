@@ -2361,9 +2361,22 @@ function renderPlayerProfile(profile) {
       </div>
     </header>
     <section class="player-profile-grid">
-      <div><span>Playtime</span><strong>${escapeHtml(profile.playtime || '-')}</strong></div>
       <div>
-        <span>Registered</span>
+        <header class="player-profile-metric-head">
+          <span>Playtime</span>
+          <button class="player-profile-refresh-button" type="button" data-player-refresh-command="!pt" aria-label="Refresh playtime for ${escapeHtml(profileUsername)}" title="Request current playtime">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0 1 11.5-2.6L20 9M4 15l2.4 2.6A7 7 0 0 0 17.9 15"/></svg>
+          </button>
+        </header>
+        <strong>${escapeHtml(profile.playtime || '-')}</strong>
+      </div>
+      <div>
+        <header class="player-profile-metric-head">
+          <span>Registered</span>
+          <button class="player-profile-refresh-button" type="button" data-player-refresh-command="!jd" aria-label="Refresh registration date for ${escapeHtml(profileUsername)}" title="Request current registration date">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0 1 11.5-2.6L20 9M4 15l2.4 2.6A7 7 0 0 0 17.9 15"/></svg>
+          </button>
+        </header>
         <button class="player-profile-value-button" type="button" data-profile-toggle="registration-age" title="${registrationTitle}">
           ${escapeHtml(registrationProfileValue(profile))}
         </button>
@@ -2491,6 +2504,35 @@ async function handlePlayerProfileClick(event) {
   if (loadMore) {
     event.preventDefault();
     await loadMorePlayerMessages(loadMore);
+    return;
+  }
+  const refreshButton = event.target.closest('[data-player-refresh-command]');
+  if (refreshButton) {
+    event.preventDefault();
+    const command = refreshButton.dataset.playerRefreshCommand;
+    const username = String(state.playerProfileLastPayload?.username || '');
+    if (!['!pt', '!jd'].includes(command) || !/^[A-Za-z0-9_]{1,32}$/.test(username)) return;
+
+    const startedAt = Date.now();
+    refreshButton.disabled = true;
+    refreshButton.classList.add('is-refreshing');
+    refreshButton.setAttribute('aria-busy', 'true');
+    try {
+      await postJson('/api/chat/send', {
+        message: `${command} ${username}`,
+        accountId: state.activeAccountId
+      });
+      const label = command === '!pt' ? 'Playtime' : 'Registration date';
+      setBanner(`${label} refresh requested for ${username}.`);
+    } catch (err) {
+      setBanner(`Could not request player data: ${err.message}`);
+    } finally {
+      window.setTimeout(() => {
+        refreshButton.disabled = false;
+        refreshButton.classList.remove('is-refreshing');
+        refreshButton.removeAttribute('aria-busy');
+      }, Math.max(0, 650 - (Date.now() - startedAt)));
+    }
     return;
   }
   const whitelistButton = event.target.closest('[data-player-whitelist-action]');
