@@ -532,12 +532,16 @@ async function ensureOptionalTables() {
       last_seen TIMESTAMP,
       last_online TIMESTAMP,
       registration_at TIMESTAMPTZ,
-      is_online BOOLEAN DEFAULT FALSE
+      is_online BOOLEAN DEFAULT FALSE,
+      admin_notes TEXT,
+      admin_tags TEXT[] NOT NULL DEFAULT '{}'::text[]
     )
   `);
   await pool.query(`ALTER TABLE player_activity ALTER COLUMN last_seen DROP DEFAULT`);
   await pool.query(`ALTER TABLE player_activity ALTER COLUMN last_online DROP DEFAULT`);
   await pool.query(`ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS registration_at TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS admin_notes TEXT`);
+  await pool.query(`ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS admin_tags TEXT[] NOT NULL DEFAULT '{}'::text[]`);
   await pool.query(`
     UPDATE player_activity
     SET registration_at = COALESCE(last_online, last_seen, NOW())
@@ -2414,7 +2418,7 @@ async function searchSeenPlayers(url) {
   };
 }
 
-async function getPlayerProfile(url) {
+async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
   assertDatabase();
 
   const username = String(url.searchParams.get('username') || '').trim();
@@ -2461,7 +2465,8 @@ async function getPlayerProfile(url) {
   const [profileResult, chatResult, recentChatResult, nearbyResult, ignoredResult, namesResult] = await Promise.all([
     pool.query(`
       WITH activity AS (
-        SELECT username, player_uuid, last_seen, last_online, registration_at, is_online
+        SELECT id, username, player_uuid, last_seen, last_online, registration_at, is_online,
+               admin_notes, admin_tags
         FROM player_activity
         WHERE ($2::uuid IS NOT NULL AND player_uuid = $2::uuid)
            OR ($2::uuid IS NULL AND LOWER(username) = ANY($3::text[]))
@@ -2470,7 +2475,10 @@ async function getPlayerProfile(url) {
       )
       SELECT
         $1::text AS username,
+        pa.id,
         pa.player_uuid,
+        pa.admin_notes,
+        pa.admin_tags,
         EXISTS (
           SELECT 1 FROM whitelist w WHERE LOWER(w.username) = ANY($3::text[])
         ) AS is_whitelisted,
@@ -2581,8 +2589,244 @@ async function getPlayerProfile(url) {
           distance: toInt(nearby.distance),
           lastSeen: nearby.last_seen
         }
-      : null
+      : null,
+    ...(includeAdminFields ? {
+      id: profile.id == null ? null : String(profile.id),
+      identityKey: profile.player_uuid || (profile.id == null ? null : String(profile.id)),
+      adminNotes: profile.admin_notes || '',
+      adminTags: Array.isArray(profile.admin_tags) ? profile.admin_tags : []
+    } : {})
   };
+}
+
+const ADMIN_PLAYER_EDITABLE_FIELDS = Object.freeze(['notes', 'tags']);
+const MINECRAFT_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function publicAdminPlayer(row) {
+  if (!row) return null;
+  const seconds = toInt(row.total_seconds);
+  return {
+    id: String(row.id),
+    identityKey: row.player_uuid || String(row.id),
+    username: row.username,
+    uuid: row.player_uuid || null,
+    aliases: Array.isArray(row.aliases) ? row.aliases : [],
+    isOnline: Boolean(row.is_online),
+    firstSeen: row.registration_at || null,
+    lastSeen: row.last_seen || null,
+    lastOnline: row.last_online || null,
+    totalSeconds: seconds,
+    playtime: formatSeconds(seconds),
+    totalMessages: toInt(row.total_messages),
+    lastMessageAt: row.last_message_at || null,
+    notes: row.admin_notes || '',
+    tags: Array.isArray(row.admin_tags) ? row.admin_tags : []
+  };
+}
+
+function normalizeAdminPlayerPatch(body = {}) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    const err = new Error('A JSON object is required.'); err.statusCode = 400; throw err;
+  }
+  const keys = Object.keys(body);
+  const unknownFields = keys.filter(key => !ADMIN_PLAYER_EDITABLE_FIELDS.includes(key));
+  if (unknownFields.length) {
+    const err = new Error(`Player fields cannot be edited: ${unknownFields.join(', ')}.`); err.statusCode = 400; throw err;
+  }
+  if (!keys.length) {
+    const err = new Error('No player fields were provided.'); err.statusCode = 400; throw err;
+  }
+  const patch = {};
+  if (Object.hasOwn(body, 'notes')) {
+    if (typeof body.notes !== 'string') {
+      const err = new Error('Notes must be text.'); err.statusCode = 400; throw err;
+    }
+    patch.notes = body.notes.trim();
+    if (patch.notes.length > 2000) {
+      const err = new Error('Notes must not exceed 2000 characters.'); err.statusCode = 400; throw err;
+    }
+  }
+  if (Object.hasOwn(body, 'tags')) {
+    if (!Array.isArray(body.tags) || body.tags.length > 20 || body.tags.some(tag => typeof tag !== 'string')) {
+      const err = new Error('Tags must be an array containing at most 20 text values.'); err.statusCode = 400; throw err;
+    }
+    const seen = new Set();
+    patch.tags = body.tags.map(tag => tag.trim()).filter(tag => {
+      if (!tag || tag.length > 32 || !/^[\p{L}\p{N}_. -]+$/u.test(tag)) {
+        const err = new Error('Each tag must be 1-32 characters and contain only letters, numbers, spaces, dot, dash or underscore.'); err.statusCode = 400; throw err;
+      }
+      const key = tag.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+  return patch;
+}
+
+function adminPlayerIdentity(value) {
+  const identifier = String(value || '').trim();
+  if (MINECRAFT_UUID_PATTERN.test(identifier)) return { type: 'uuid', value: identifier.toLowerCase() };
+  if (/^[1-9]\d*$/.test(identifier)) return { type: 'id', value: identifier };
+  const err = new Error('Player not found.'); err.statusCode = 404; throw err;
+}
+
+async function selectAdminPlayer(executor, identifier, { forUpdate = false } = {}) {
+  const identity = adminPlayerIdentity(identifier);
+  const result = await executor.query(`
+    SELECT id,username,player_uuid,last_seen,last_online,registration_at,is_online,admin_notes,admin_tags
+    FROM player_activity
+    WHERE ${identity.type === 'uuid' ? 'player_uuid=$1::uuid' : 'id=$1::bigint'}
+    ${forUpdate ? 'FOR UPDATE' : ''}
+  `, [identity.value]);
+  if (!result.rows[0]) {
+    const err = new Error('Player not found.'); err.statusCode = 404; throw err;
+  }
+  return result.rows[0];
+}
+
+async function getAdminPlayers(currentUser, url, database = pool) {
+  assertAdminUser(currentUser);
+  const search = String(url?.searchParams?.get('query') || '').trim().slice(0, 64);
+  const result = await database.query(`
+    SELECT pa.id,pa.username,pa.player_uuid,pa.last_seen,pa.last_online,pa.registration_at,pa.is_online,
+           pa.admin_notes,pa.admin_tags,
+           COALESCE(playtime.total_seconds,0)::bigint AS total_seconds,
+           COALESCE(chat.total_messages,0)::int AS total_messages,
+           chat.last_message_at,
+           COALESCE(names.aliases,'{}'::text[]) AS aliases
+    FROM player_activity pa
+    LEFT JOIN LATERAL (
+      SELECT SUM(COALESCE(pt.total_seconds,0) + CASE WHEN pt.tracking_since IS NULL THEN 0
+        ELSE GREATEST(0,FLOOR(EXTRACT(EPOCH FROM (NOW()-pt.tracking_since)))::bigint) END)::bigint AS total_seconds
+      FROM player_playtime pt
+      WHERE (pa.player_uuid IS NOT NULL AND pt.player_uuid=pa.player_uuid)
+         OR (pa.player_uuid IS NULL AND pt.player_uuid IS NULL AND LOWER(pt.username)=LOWER(pa.username))
+    ) playtime ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*)::int AS total_messages,MAX(message.created_at) AS last_message_at
+      FROM game_chat_messages message
+      WHERE (pa.player_uuid IS NOT NULL AND message.player_uuid=pa.player_uuid)
+         OR (pa.player_uuid IS NULL AND message.player_uuid IS NULL AND LOWER(message.username)=LOWER(pa.username))
+    ) chat ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT ARRAY_AGG(history.username ORDER BY history.last_seen DESC) AS aliases
+      FROM player_name_history history WHERE history.player_uuid=pa.player_uuid
+    ) names ON TRUE
+    WHERE $1::text=''
+       OR LOWER(pa.username) LIKE LOWER('%'||$1||'%')
+       OR COALESCE(pa.player_uuid::text,'') LIKE LOWER('%'||$1||'%')
+       OR EXISTS (SELECT 1 FROM player_name_history alias WHERE alias.player_uuid=pa.player_uuid AND LOWER(alias.username) LIKE LOWER('%'||$1||'%'))
+    ORDER BY pa.is_online DESC,COALESCE(pa.last_seen,pa.last_online,pa.registration_at) DESC NULLS LAST,LOWER(pa.username)
+    LIMIT 200
+  `, [search]);
+  return { players: result.rows.map(publicAdminPlayer), query: search };
+}
+
+async function patchAdminPlayer(currentUser, identifier, body, database = pool, audit = recordSystemLog) {
+  assertAdminUser(currentUser);
+  adminPlayerIdentity(identifier);
+  const patch = normalizeAdminPlayerPatch(body);
+  const client = await database.connect();
+  let target;
+  let updated;
+  try {
+    await client.query('BEGIN');
+    target = await selectAdminPlayer(client, identifier, { forUpdate: true });
+    const updates = [];
+    const values = [];
+    if (Object.hasOwn(patch, 'notes')) {
+      values.push(patch.notes || null);
+      updates.push(`admin_notes=$${values.length}`);
+    }
+    if (Object.hasOwn(patch, 'tags')) {
+      values.push(patch.tags);
+      updates.push(`admin_tags=$${values.length}::text[]`);
+    }
+    values.push(target.id);
+    const result = await client.query(`
+      UPDATE player_activity SET ${updates.join(',')}
+      WHERE id=$${values.length}
+      RETURNING id,username,player_uuid,last_seen,last_online,registration_at,is_online,admin_notes,admin_tags
+    `, values);
+    updated = result.rows[0];
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+  await audit({
+    level: 'audit', category: 'admin_players', actor: currentUser.username,
+    message: `Admin ${currentUser.username} edited player ${updated.username}.`,
+    details: { playerId: String(updated.id), playerUuid: updated.player_uuid || null, changedFields: Object.keys(patch) }
+  });
+  return {
+    player: {
+      id: String(updated.id),
+      identityKey: updated.player_uuid || String(updated.id),
+      username: updated.username,
+      uuid: updated.player_uuid || null,
+      notes: updated.admin_notes || '',
+      tags: Array.isArray(updated.admin_tags) ? updated.admin_tags : []
+    }
+  };
+}
+
+async function deleteAdminPlayer(currentUser, identifier, database = pool, audit = recordSystemLog) {
+  assertAdminUser(currentUser);
+  adminPlayerIdentity(identifier);
+  const client = await database.connect();
+  let target;
+  const deleted = {};
+  try {
+    await client.query('BEGIN');
+    target = await selectAdminPlayer(client, identifier, { forUpdate: true });
+    let unambiguousAliases = [String(target.username).toLowerCase()];
+    if (target.player_uuid) {
+      const aliases = await client.query(`
+        SELECT LOWER(own_name.username) AS username_key
+        FROM player_name_history own_name
+        WHERE own_name.player_uuid=$1::uuid
+          AND NOT EXISTS (
+            SELECT 1 FROM player_name_history reused_name
+            WHERE LOWER(reused_name.username)=LOWER(own_name.username)
+              AND reused_name.player_uuid<>$1::uuid
+          )
+      `, [target.player_uuid]);
+      unambiguousAliases = [...new Set(aliases.rows.map(row => row.username_key).filter(Boolean))];
+      const playtime = await client.query(`DELETE FROM player_playtime
+        WHERE player_uuid=$1::uuid
+           OR (player_uuid IS NULL AND LOWER(username)=ANY($2::text[]))`, [target.player_uuid, unambiguousAliases]);
+      deleted.playtime = playtime.rowCount || 0;
+      const names = await client.query('DELETE FROM player_name_history WHERE player_uuid=$1::uuid', [target.player_uuid]);
+      deleted.aliases = names.rowCount || 0;
+    } else {
+      const playtime = await client.query(`DELETE FROM player_playtime WHERE player_uuid IS NULL AND LOWER(username)=LOWER($1)`, [target.username]);
+      deleted.playtime = playtime.rowCount || 0;
+      deleted.aliases = 0;
+    }
+    const nearby = await client.query('DELETE FROM nearby_player_sightings WHERE LOWER(username)=ANY($1::text[])', [unambiguousAliases]);
+    deleted.nearbySightings = nearby.rowCount || 0;
+    const activity = await client.query('DELETE FROM player_activity WHERE id=$1', [target.id]);
+    if (!activity.rowCount) {
+      const err = new Error('Player not found.'); err.statusCode = 404; throw err;
+    }
+    deleted.profile = activity.rowCount;
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+  await audit({
+    level: 'audit', category: 'admin_players', actor: currentUser.username,
+    message: `Admin ${currentUser.username} deleted player ${target.username}.`,
+    details: { playerId: String(target.id), playerUuid: target.player_uuid || null, deleted, preserved: ['game_chat_messages', 'whitelist', 'ignored_users', 'site_whisper_messages', 'operational_events'] }
+  });
+  return { ok: true, deletedPlayer: { id: String(target.id), username: target.username, uuid: target.player_uuid || null }, deleted };
 }
 
 function publicUser(row) {
@@ -3853,6 +4097,19 @@ async function handleApi(req, res, url) {
       const body = await readJsonBody(req);
       sendJson(res, 200, await sendTestPush(currentUser, String(body.subscriptionId || ''))); return;
     }
+    if (url.pathname === '/api/admin/players' && req.method === 'GET') {
+      sendJson(res, 200, await getAdminPlayers(currentUser, url));
+      return;
+    }
+    const adminPlayerRoute = url.pathname.match(/^\/api\/admin\/players\/([^/]+)$/);
+    if (adminPlayerRoute && ['PATCH', 'DELETE'].includes(req.method)) {
+      let identifier;
+      try { identifier = decodeURIComponent(adminPlayerRoute[1]); }
+      catch { sendError(res, 404, 'Player not found.'); return; }
+      if (req.method === 'PATCH') sendJson(res, 200, await patchAdminPlayer(currentUser, identifier, await readJsonBody(req)));
+      else sendJson(res, 200, await deleteAdminPlayer(currentUser, identifier));
+      return;
+    }
     if (url.pathname === '/api/players') {
       sendJson(res, 200, await getPlayers());
       return;
@@ -3941,7 +4198,7 @@ async function handleApi(req, res, url) {
       return;
     }
     if (url.pathname === '/api/player') {
-      sendJson(res, 200, await getPlayerProfile(url));
+      sendJson(res, 200, await getPlayerProfile(url, { includeAdminFields: currentUser.role === 'admin' }));
       return;
     }
     sendError(res, 404, 'API route not found.');
@@ -4283,4 +4540,4 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown);
 }
 
-module.exports = { assertAdminUser, changeSitePassword, cleanAccountInput, freshStoredRuntimePayload, hashPassword, normalizeNavigationPreferences, registrationDefaults, requestHandler, server, startSiteServer, validateCredentials, validatePasswordChange, verifyPassword };
+module.exports = { ADMIN_PLAYER_EDITABLE_FIELDS, adminPlayerIdentity, assertAdminUser, changeSitePassword, cleanAccountInput, deleteAdminPlayer, freshStoredRuntimePayload, getAdminPlayers, hashPassword, normalizeAdminPlayerPatch, normalizeNavigationPreferences, patchAdminPlayer, registrationDefaults, requestHandler, server, startSiteServer, validateCredentials, validatePasswordChange, verifyPassword };

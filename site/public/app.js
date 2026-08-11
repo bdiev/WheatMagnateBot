@@ -57,6 +57,12 @@ const state = {
   adminControlState: null,
   adminControlLoading: false,
   adminControlRefreshedAt: 0,
+  adminPlayers: [],
+  adminPlayersLoading: false,
+  adminPlayersRequestId: 0,
+  adminPlayerSearchTimer: null,
+  adminPlayerEditTarget: null,
+  adminPlayerDeleteTarget: null,
   requestCountLoading: false,
   adminLogsLoading: false,
   childAiLoading: false,
@@ -1481,6 +1487,7 @@ function setActiveTab(tab) {
   setNavMenuOpen(false);
   if (tab === 'admin') {
     loadAdminUsers();
+    loadAdminPlayers();
     loadAdminControlState();
     loadAdminSystemLogs();
   }
@@ -2335,6 +2342,13 @@ function renderPlayerProfile(profile) {
             <span>${whitelistLabel}</span>
           </button>`
     : '';
+  const adminMetadata = state.currentUser?.role === 'admin' && (Object.hasOwn(profile, 'adminNotes') || Object.hasOwn(profile, 'adminTags'))
+    ? `<section class="player-profile-admin-metadata">
+        <h3>Admin metadata</h3>
+        <div><span>Tags</span><strong>${profile.adminTags?.length ? profile.adminTags.map(tag => `<span class="admin-player-tag">${escapeHtml(tag)}</span>`).join('') : 'None'}</strong></div>
+        <div><span>Notes</span><p>${profile.adminNotes ? escapeHtml(profile.adminNotes) : 'No admin notes.'}</p></div>
+      </section>`
+    : '';
   return `
     <header class="player-profile-head">
       <span class="player-profile-avatar-wrap" data-status="${profile.isOnline ? 'online' : 'offline'}" aria-label="${profile.isOnline ? 'Online' : 'Offline'}">
@@ -2394,6 +2408,7 @@ function renderPlayerProfile(profile) {
       <div><span>Nearby</span><strong>${nearby ? `${formatNumber(nearby.distance)} blocks` : 'No sighting'}</strong></div>
       <div><span>Nearby Seen</span><strong>${nearby?.lastSeen ? formatDate(nearby.lastSeen) : '-'}</strong></div>
     </section>
+    ${adminMetadata}
     <section class="player-profile-chat">
       <h3>Recent Chat</h3>
       ${recentMessages.length
@@ -2435,6 +2450,8 @@ function playerProfileSignature(profile) {
     profile.chat?.lastMessageAt,
     profile.nearby?.distance,
     profile.nearby?.lastSeen,
+    profile.adminNotes,
+    profile.adminTags,
     profile.chat?.hasMoreMessages,
     ...(profile.chat?.recentMessages || []).map(message => [message.id, message.message, message.createdAt])
   ]);
@@ -4710,6 +4727,215 @@ function escapeHtml(value) {
     .replace(/'/g, '&#039;');
 }
 
+function setAdminPlayersNotice(message = '', kind = 'success') {
+  const notice = $('#adminPlayersNotice');
+  if (!notice) return;
+  notice.textContent = message;
+  notice.dataset.kind = kind;
+  notice.hidden = !message;
+}
+
+function adminPlayerByIdentity(identityKey) {
+  return state.adminPlayers.find(player => String(player.identityKey) === String(identityKey)) || null;
+}
+
+function renderAdminPlayers(players = state.adminPlayers) {
+  const list = $('#adminPlayersList');
+  if (!list) return;
+  if (!players.length) {
+    list.innerHTML = '<div class="empty">No tracked Minecraft players found.</div>';
+    return;
+  }
+  list.innerHTML = players.map(player => {
+    const identityKey = escapeHtml(player.identityKey);
+    const username = escapeHtml(player.username);
+    const uuid = player.uuid ? escapeHtml(player.uuid) : '';
+    const tags = Array.isArray(player.tags) ? player.tags : [];
+    return `
+      <article class="admin-player-card" data-admin-player-key="${identityKey}">
+        <img class="admin-player-avatar" src="${playerHeadUrl(player.username, 64)}" alt="" loading="lazy">
+        <div class="admin-player-card-main">
+          <div class="admin-player-card-title"><strong>${username}</strong><span class="pill ${player.isOnline ? 'online' : ''}">${player.isOnline ? 'online' : 'offline'}</span></div>
+          <code title="${uuid || `Legacy profile ID ${escapeHtml(player.id)}`}">${uuid || `Legacy ID ${escapeHtml(player.id)}`}</code>
+          <div class="admin-player-card-tags">${tags.length ? tags.map(tag => `<span class="admin-player-tag">${escapeHtml(tag)}</span>`).join('') : '<span class="muted">No tags</span>'}</div>
+        </div>
+        <dl class="admin-player-card-stats">
+          <div><dt>First seen</dt><dd>${player.firstSeen ? formatDate(player.firstSeen) : 'Unknown'}</dd></div>
+          <div><dt>Last seen</dt><dd>${player.lastSeen ? formatRecentDate(player.lastSeen) : 'Never'}</dd></div>
+          <div><dt>Playtime</dt><dd>${escapeHtml(player.playtime || '0m')}</dd></div>
+          <div><dt>Messages</dt><dd>${formatNumber(player.totalMessages)}</dd></div>
+        </dl>
+        <details class="admin-player-card-menu">
+          <summary aria-label="Actions for ${username}">&hellip;</summary>
+          <div>
+            <button type="button" data-admin-player-action="view" data-player-key="${identityKey}">View details</button>
+            <button type="button" data-admin-player-action="edit" data-player-key="${identityKey}">Edit</button>
+            <hr>
+            <button class="danger-text" type="button" data-admin-player-action="delete" data-player-key="${identityKey}">Delete player</button>
+          </div>
+        </details>
+      </article>`;
+  }).join('');
+}
+
+async function loadAdminPlayers({ query = $('#adminPlayersSearch')?.value || '', showLoading = true } = {}) {
+  if (state.currentUser?.role !== 'admin') return;
+  const list = $('#adminPlayersList');
+  const refresh = $('#adminPlayersRefresh');
+  const requestId = ++state.adminPlayersRequestId;
+  state.adminPlayersLoading = true;
+  if (refresh) refresh.disabled = true;
+  try {
+    if (showLoading && list) list.innerHTML = '<div class="empty">Loading Minecraft players...</div>';
+    const payload = await fetchJson(`/api/admin/players?query=${encodeURIComponent(query.trim())}`);
+    if (requestId !== state.adminPlayersRequestId) return;
+    state.adminPlayers = payload.players || [];
+    renderAdminPlayers();
+  } catch (err) {
+    if (requestId !== state.adminPlayersRequestId) return;
+    if (list) list.innerHTML = `<div class="empty">Could not load players: ${escapeHtml(err.message)}</div>`;
+    setAdminPlayersNotice(`Could not load players: ${err.message}`, 'error');
+  } finally {
+    if (requestId === state.adminPlayersRequestId) {
+      state.adminPlayersLoading = false;
+      if (refresh) refresh.disabled = false;
+    }
+  }
+}
+
+function adminPlayerIdentityMarkup(player) {
+  return `<img src="${playerHeadUrl(player.username, 48)}" alt=""><div><strong>${escapeHtml(player.username)}</strong><code>${escapeHtml(player.uuid || `Legacy profile ID ${player.id}`)}</code></div>`;
+}
+
+function renderAdminPlayerReadonly(player) {
+  $('#adminPlayerEditReadonly').innerHTML = [
+    ['First seen', player.firstSeen ? formatDate(player.firstSeen) : 'Unknown'],
+    ['Last seen', player.lastSeen ? formatRecentDate(player.lastSeen) : 'Never'],
+    ['Playtime', player.playtime || '0m'],
+    ['Messages', formatNumber(player.totalMessages)]
+  ].map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join('');
+}
+
+async function openAdminPlayerEdit(identityKey) {
+  const listPlayer = adminPlayerByIdentity(identityKey);
+  if (!listPlayer) return;
+  const modal = $('#adminPlayerEditModal');
+  const error = $('#adminPlayerEditError');
+  state.adminPlayerEditTarget = { ...listPlayer };
+  $('#adminPlayerEditIdentity').innerHTML = adminPlayerIdentityMarkup(listPlayer);
+  renderAdminPlayerReadonly(listPlayer);
+  $('#adminPlayerNotes').value = listPlayer.notes || '';
+  $('#adminPlayerTags').value = (listPlayer.tags || []).join(', ');
+  error.hidden = true;
+  modal.hidden = false;
+  document.body.classList.add('modal-open');
+  try {
+    const profile = await fetchJson(`/api/player?username=${encodeURIComponent(listPlayer.username)}&messageLimit=20`);
+    if (String(state.adminPlayerEditTarget?.identityKey) !== String(identityKey)) return;
+    state.adminPlayerEditTarget = { ...listPlayer, notes: profile.adminNotes || '', tags: profile.adminTags || [] };
+    $('#adminPlayerNotes').value = state.adminPlayerEditTarget.notes;
+    $('#adminPlayerTags').value = state.adminPlayerEditTarget.tags.join(', ');
+  } catch (err) {
+    error.textContent = `Could not refresh player details: ${err.message}`;
+    error.hidden = false;
+  }
+}
+
+function closeAdminPlayerEdit() {
+  $('#adminPlayerEditModal').hidden = true;
+  state.adminPlayerEditTarget = null;
+  if ($('#adminPlayerDeleteModal')?.hidden) document.body.classList.remove('modal-open');
+}
+
+function openAdminPlayerDelete(identityKey) {
+  const player = adminPlayerByIdentity(identityKey);
+  if (!player) return;
+  state.adminPlayerDeleteTarget = player;
+  $('#adminPlayerDeleteIdentity').innerHTML = adminPlayerIdentityMarkup(player);
+  $('#adminPlayerDeleteError').hidden = true;
+  $('#adminPlayerDeleteModal').hidden = false;
+  document.body.classList.add('modal-open');
+}
+
+function closeAdminPlayerDelete() {
+  $('#adminPlayerDeleteModal').hidden = true;
+  state.adminPlayerDeleteTarget = null;
+  if ($('#adminPlayerEditModal')?.hidden) document.body.classList.remove('modal-open');
+}
+
+async function saveAdminPlayer(event) {
+  event.preventDefault();
+  const player = state.adminPlayerEditTarget;
+  if (!player) return;
+  const button = $('#adminPlayerEditSubmit');
+  const error = $('#adminPlayerEditError');
+  const values = {
+    notes: $('#adminPlayerNotes').value.trim(),
+    tags: $('#adminPlayerTags').value.split(',').map(tag => tag.trim()).filter(Boolean)
+  };
+  const patch = {};
+  if (values.notes !== String(player.notes || '')) patch.notes = values.notes;
+  if (JSON.stringify(values.tags) !== JSON.stringify(player.tags || [])) patch.tags = values.tags;
+  if (!Object.keys(patch).length) {
+    closeAdminPlayerEdit();
+    return;
+  }
+  error.hidden = true;
+  button.disabled = true;
+  button.textContent = 'Saving...';
+  try {
+    const payload = await patchJson(`/api/admin/players/${encodeURIComponent(player.identityKey)}`, patch);
+    state.adminPlayers = state.adminPlayers.map(item => String(item.identityKey) === String(player.identityKey) ? { ...item, ...payload.player } : item);
+    renderAdminPlayers();
+    closeAdminPlayerEdit();
+    setAdminPlayersNotice('Player updated.');
+    loadAdminSystemLogs().catch(() => {});
+  } catch (err) {
+    error.textContent = err.message;
+    error.hidden = false;
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Save changes';
+  }
+}
+
+async function confirmAdminPlayerDelete() {
+  const player = state.adminPlayerDeleteTarget;
+  if (!player) return;
+  const button = $('#adminPlayerDeleteConfirm');
+  const error = $('#adminPlayerDeleteError');
+  error.hidden = true;
+  button.disabled = true;
+  button.textContent = 'Deleting...';
+  try {
+    await deleteJson(`/api/admin/players/${encodeURIComponent(player.identityKey)}`);
+    state.adminPlayers = state.adminPlayers.filter(item => String(item.identityKey) !== String(player.identityKey));
+    renderAdminPlayers();
+    if (String(state.playerProfileLastPayload?.uuid || '').toLowerCase() === String(player.uuid || '').toLowerCase() ||
+        String(state.playerProfileLastPayload?.username || '').toLowerCase() === String(player.username || '').toLowerCase()) closePlayerProfile();
+    closeAdminPlayerDelete();
+    setAdminPlayersNotice('Player deleted.');
+    loadAdminSystemLogs().catch(() => {});
+  } catch (err) {
+    error.textContent = err.message;
+    error.hidden = false;
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Delete player';
+  }
+}
+
+async function handleAdminPlayerAction(event) {
+  const button = event.target.closest('[data-admin-player-action]');
+  if (!button) return;
+  button.closest('details')?.removeAttribute('open');
+  const player = adminPlayerByIdentity(button.dataset.playerKey);
+  if (!player) return;
+  if (button.dataset.adminPlayerAction === 'view') await openPlayerProfile(player.username);
+  else if (button.dataset.adminPlayerAction === 'edit') await openAdminPlayerEdit(player.identityKey);
+  else if (button.dataset.adminPlayerAction === 'delete') openAdminPlayerDelete(player.identityKey);
+}
+
 function renderAdminUsers(users = []) {
   const list = $('#adminUsersList');
   if (!list) return;
@@ -6381,6 +6607,9 @@ function handleRealtimeEvent(event) {
   else if (type === 'player_joined' || type === 'player_left') {
     queueRealtimeRefresh('players', refreshPlayersFromEvent);
     queueRealtimeRefresh('chat-activity', refreshChatFromEvent, 30);
+    if (state.currentUser?.role === 'admin' && state.activeTab === 'admin') {
+      queueRealtimeRefresh('admin-players', () => loadAdminPlayers({ showLoading: false }), 350);
+    }
   }
   else if (type === 'notification_created' && state.currentUser?.role === 'admin') {
     queueRealtimeRefresh('notifications', async () => {
@@ -6581,6 +6810,20 @@ document.addEventListener('pointerdown', event => {
   if (!event.target.closest('#accountSwitcher') && !insideMenu) setMobileAccountSwitcherOpen(false);
 });
 $('#adminUsersRefresh')?.addEventListener('click', loadAdminUsers);
+$('#adminPlayersRefresh')?.addEventListener('click', () => loadAdminPlayers());
+$('#adminPlayersSearch')?.addEventListener('input', () => {
+  clearTimeout(state.adminPlayerSearchTimer);
+  state.adminPlayerSearchTimer = setTimeout(() => loadAdminPlayers(), 250);
+});
+$('#adminPlayersList')?.addEventListener('click', event => handleAdminPlayerAction(event).catch(err => setAdminPlayersNotice(err.message, 'error')));
+$('#adminPlayerEditForm')?.addEventListener('submit', saveAdminPlayer);
+$('#adminPlayerEditClose')?.addEventListener('click', closeAdminPlayerEdit);
+$('#adminPlayerEditCancel')?.addEventListener('click', closeAdminPlayerEdit);
+$('#adminPlayerEditModal')?.addEventListener('click', event => { if (event.target.id === 'adminPlayerEditModal') closeAdminPlayerEdit(); });
+$('#adminPlayerDeleteClose')?.addEventListener('click', closeAdminPlayerDelete);
+$('#adminPlayerDeleteCancel')?.addEventListener('click', closeAdminPlayerDelete);
+$('#adminPlayerDeleteConfirm')?.addEventListener('click', confirmAdminPlayerDelete);
+$('#adminPlayerDeleteModal')?.addEventListener('click', event => { if (event.target.id === 'adminPlayerDeleteModal') closeAdminPlayerDelete(); });
 $('#adminLogsRefresh')?.addEventListener('click', loadAdminSystemLogs);
 $('#adminLogLevel')?.addEventListener('change', loadAdminSystemLogs);
 $('#childAiRefresh')?.addEventListener('click', loadChildAiAdmin);
@@ -6839,6 +7082,14 @@ document.addEventListener('error', event => {
   image.remove();
 }, true);
 document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !$('#adminPlayerDeleteModal')?.hidden) {
+    closeAdminPlayerDelete();
+    return;
+  }
+  if (event.key === 'Escape' && !$('#adminPlayerEditModal')?.hidden) {
+    closeAdminPlayerEdit();
+    return;
+  }
   if (event.key === 'Escape' && $('#accountSwitcher')?.classList.contains('expanded')) {
     setMobileAccountSwitcherOpen(false);
     return;

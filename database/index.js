@@ -172,7 +172,13 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
               WHEN source.registration_at IS NULL THEN target.registration_at
               ELSE LEAST(target.registration_at,source.registration_at)
             END,
-            is_online = COALESCE(target.is_online,FALSE) OR COALESCE(source.is_online,FALSE)
+            is_online = COALESCE(target.is_online,FALSE) OR COALESCE(source.is_online,FALSE),
+            admin_notes = COALESCE(NULLIF(target.admin_notes,''),source.admin_notes),
+            admin_tags = ARRAY(
+              SELECT DISTINCT tag
+              FROM UNNEST(COALESCE(target.admin_tags,'{}'::text[]) || COALESCE(source.admin_tags,'{}'::text[])) tag
+              ORDER BY tag
+            )
         FROM player_activity source
         WHERE target.id=$1 AND source.id=$2
       `, [uuidRow.id, nameRow.id]);

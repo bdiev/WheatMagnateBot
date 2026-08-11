@@ -1356,12 +1356,16 @@ async function initDatabase() {
         last_seen TIMESTAMP,
         last_online TIMESTAMP,
         registration_at TIMESTAMPTZ,
-        is_online BOOLEAN DEFAULT FALSE
+        is_online BOOLEAN DEFAULT FALSE,
+        admin_notes TEXT,
+        admin_tags TEXT[] NOT NULL DEFAULT '{}'::text[]
       )
     `);
     await pool.query('ALTER TABLE player_activity ALTER COLUMN last_seen DROP DEFAULT');
     await pool.query('ALTER TABLE player_activity ALTER COLUMN last_online DROP DEFAULT');
     await pool.query('ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS registration_at TIMESTAMPTZ');
+    await pool.query('ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS admin_notes TEXT');
+    await pool.query("ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS admin_tags TEXT[] NOT NULL DEFAULT '{}'::text[]");
     await pool.query(`
       UPDATE player_activity
       SET registration_at = COALESCE(last_online, last_seen, NOW())
