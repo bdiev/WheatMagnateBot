@@ -2456,7 +2456,7 @@ async function getPlayerProfile(url) {
 
   const [profileResult, chatResult, recentChatResult, nearbyResult, ignoredResult, namesResult] = await Promise.all([
     pool.query(`
-      activity AS (
+      WITH activity AS (
         SELECT username, player_uuid, last_seen, last_online, registration_at, is_online
         FROM player_activity
         WHERE ($2::uuid IS NOT NULL AND player_uuid = $2::uuid)
