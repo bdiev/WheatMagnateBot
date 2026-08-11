@@ -7751,6 +7751,13 @@ body.kill-aura-modal-open {
     height: 17px;
   }
 
+  .player-profile-whitelist-action span {
+    min-width: 0;
+    line-height: 1.15;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
   .player-profile-grid {
     gap: 7px;
     padding: 10px 8px 8px;

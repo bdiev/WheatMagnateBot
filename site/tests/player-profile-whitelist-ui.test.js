@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const appSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
+const stylesSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'styles.css'), 'utf8');
 
 assert.match(
   appSource,
@@ -30,6 +31,11 @@ assert.match(
   appSource,
   /closest\('\[data-player-refresh-command\]'\)[\s\S]*postJson\('\/api\/chat\/send',[\s\S]*message: `\$\{command\} \$\{username\}`/,
   'player metric refresh actions must send their command through game chat'
+);
+assert.match(
+  stylesSource,
+  /@media \(max-width: 700px\)[\s\S]*\.player-profile-whitelist-action span\s*\{[^}]*white-space:\s*normal;/,
+  'the mobile whitelist action label must wrap inside its button'
 );
 
 console.log('Player profile whitelist UI tests passed.');
