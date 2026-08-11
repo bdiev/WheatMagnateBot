@@ -2320,6 +2320,15 @@ function renderPlayerProfile(profile) {
             <span>${ignoreLabel}</span>
           </button>`
     : '';
+  const whitelistAction = profile.isWhitelisted ? 'whitelist_remove' : 'whitelist_add';
+  const whitelistLabel = profile.isWhitelisted ? 'Remove from whitelist' : 'Add to whitelist';
+  const whitelistButton = state.currentUser?.role === 'admin'
+    ? `
+          <button class="player-profile-message-action player-profile-whitelist-action${profile.isWhitelisted ? ' is-remove' : ''}" type="button" data-player-whitelist-action="${whitelistAction}" aria-label="${whitelistLabel} for ${escapeHtml(profileUsername)}" title="${whitelistLabel}" aria-pressed="${profile.isWhitelisted}">
+            <img src="/items/Book.png" alt="" aria-hidden="true">
+            <span>${whitelistLabel}</span>
+          </button>`
+    : '';
   return `
     <header class="player-profile-head">
       <span class="player-profile-avatar-wrap" data-status="${profile.isOnline ? 'online' : 'offline'}" aria-label="${profile.isOnline ? 'Online' : 'Offline'}">
@@ -2347,6 +2356,7 @@ function renderPlayerProfile(profile) {
           <img src="/logos/namemc_dark.png" alt="" aria-hidden="true">
           <span>NameMC</span>
         </a>
+        ${whitelistButton}
         ${ignoreButton}
       </div>
     </header>
@@ -2481,6 +2491,34 @@ async function handlePlayerProfileClick(event) {
   if (loadMore) {
     event.preventDefault();
     await loadMorePlayerMessages(loadMore);
+    return;
+  }
+  const whitelistButton = event.target.closest('[data-player-whitelist-action]');
+  if (whitelistButton) {
+    event.preventDefault();
+    if (state.currentUser?.role !== 'admin' || !state.playerProfileLastPayload) return;
+
+    const action = whitelistButton.dataset.playerWhitelistAction;
+    if (!['whitelist_add', 'whitelist_remove'].includes(action)) return;
+    const username = state.playerProfileLastPayload.username;
+    whitelistButton.disabled = true;
+    try {
+      await postJson('/api/admin/bot-command', {
+        commandType: action,
+        payload: { username },
+        accountId: state.activeAccountId
+      });
+      const isWhitelisted = action === 'whitelist_add';
+      state.playerProfileLastPayload.isWhitelisted = isWhitelisted;
+      state.playerProfileSignature = '';
+      const content = $('#playerProfileContent');
+      if (content) content.innerHTML = renderPlayerProfile(state.playerProfileLastPayload);
+      setBanner(`${username} ${isWhitelisted ? 'added to' : 'removed from'} whitelist.`);
+      scheduleAdminControlRefresh();
+    } catch (err) {
+      whitelistButton.disabled = false;
+      setBanner(`Could not ${action === 'whitelist_add' ? 'add' : 'remove'} ${username} ${action === 'whitelist_add' ? 'to' : 'from'} whitelist: ${err.message}`);
+    }
     return;
   }
   const ignoreButton = event.target.closest('[data-player-ignore-action]');

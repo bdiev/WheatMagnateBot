@@ -3290,9 +3290,22 @@ body.search-focus-active #logoutButton {
   color: var(--text);
 }
 
-.player-profile-ignore-action:disabled {
+.player-profile-ignore-action:disabled,
+.player-profile-whitelist-action:disabled {
   cursor: wait;
   opacity: 0.58;
+}
+
+.player-profile-whitelist-action.is-remove {
+  border-color: color-mix(in srgb, var(--annotation-disconnected) 45%, var(--line));
+  color: var(--annotation-disconnected);
+}
+
+.player-profile-whitelist-action.is-remove:hover,
+.player-profile-whitelist-action.is-remove:focus-visible {
+  border-color: var(--annotation-disconnected);
+  color: var(--annotation-disconnected);
+  background: color-mix(in srgb, var(--annotation-disconnected) 10%, var(--panel-soft));
 }
 
 :root[data-theme="dark"] .player-profile-ignore-action:hover,
@@ -7650,7 +7663,7 @@ body.kill-aura-modal-open {
   .player-profile-actions {
     width: 100%;
     grid-column: 1 / -1;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 7px;
     margin-top: 13px;
   }
