@@ -114,7 +114,12 @@ assert.match(
   /isKnownOnlinePlayer[\s\S]*isSignedPlayerChat[\s\S]*rejected-player-shaped-system-text/,
   'player-shaped system text must require a signed chat position or a currently known player'
 );
-assert.match(botSource, /debugLog\('\[MC CHAT DEBUG\]'/, 'component diagnostics must use the existing opt-in debug logger');
+assert.match(botSource, /debugLog\(\s*'\[MC CHAT DEBUG\]'/, 'component diagnostics must use the existing opt-in debug logger');
+assert.match(
+  botSource,
+  /debugLog\(\s*'\[MC CHAT DEBUG\]',\s*JSON\.stringify\(\{[\s\S]*json: message\?\.json \?\? null[\s\S]*\}, null, 2\)/,
+  'GreenChat diagnostics must serialize the complete nested component JSON'
+);
 assert.match(botSource, /isPrivateMinecraftChatLine\(text\)[\s\S]*evidence: \['private_message'\]/, 'whispers must be rejected before component GreenChat classification');
 
 console.log('Chat archive tests passed.');

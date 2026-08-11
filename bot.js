@@ -8712,14 +8712,18 @@ function createBot() {
       });
     if (componentChat.isGreenChat) {
       rememberGreenComponentMessage(text, position, componentChat.isPlayerChat);
-      debugLog('[MC CHAT DEBUG]', {
-        kind: componentChat.isPlayerChat ? 'greenchat' : 'unmatched-green-component',
-        text,
-        position,
-        username: componentChat.username,
-        evidence: componentChat.evidence,
-        json: message?.json || null
-      });
+      debugLog(
+        '[MC CHAT DEBUG]',
+        JSON.stringify({
+          kind: componentChat.isPlayerChat ? 'greenchat' : 'unmatched-green-component',
+          text,
+          position,
+          senderUuid: senderUuid || null,
+          username: componentChat.username,
+          evidence: componentChat.evidence,
+          json: message?.json ?? null
+        }, null, 2)
+      );
       if (componentChat.isPlayerChat) {
         handleMinecraftPlayerChat(
           componentChat.username,
