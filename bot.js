@@ -4,6 +4,7 @@ const path = require('path');
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ChannelType, PermissionsBitField, MessageFlags, InteractionContextType, SlashCommandBuilder, ActivityType } = require('discord.js');
 const { pathfinder } = require('mineflayer-pathfinder');
 const { createDiscordClient, saveStatusMessageId, loadStatusMessageId } = require('./discord');
+const { DiscordChatForwardQueue, positiveInteger } = require('./discord/chat-forward-queue');
 const { createMinecraftBot } = require('./minecraft');
 const {
   createDatabasePool,
@@ -46,6 +47,12 @@ const NOTIFICATION_DISCORD_CHANNEL_ID = process.env.NOTIFICATION_DISCORD_CHANNEL
 const DISCORD_CHAT_CHANNEL_ID = process.env.DISCORD_CHAT_CHANNEL_ID;
 const DISCORD_DM_CATEGORY_ID = process.env.DISCORD_DM_CATEGORY_ID;
 const DISCORD_OWNER_ID = process.env.DISCORD_OWNER_ID || '623303738991443968';
+const DISCORD_CHAT_QUEUE_MAX_SIZE = positiveInteger(process.env.DISCORD_CHAT_QUEUE_MAX_SIZE, 20);
+const DISCORD_CHAT_MESSAGE_MAX_AGE_MS = positiveInteger(process.env.DISCORD_CHAT_MESSAGE_MAX_AGE_MS, 15_000);
+const DISCORD_CHAT_USER_BURST = positiveInteger(process.env.DISCORD_CHAT_USER_BURST, 8);
+const DISCORD_CHAT_USER_WINDOW_MS = positiveInteger(process.env.DISCORD_CHAT_USER_WINDOW_MS, 10_000);
+const DISCORD_CHAT_FLOOD_SUMMARY_DELAY_MS = positiveInteger(process.env.DISCORD_CHAT_FLOOD_SUMMARY_DELAY_MS, 5_000);
+const DISCORD_CHAT_MIN_SEND_INTERVAL_MS = positiveInteger(process.env.DISCORD_CHAT_MIN_SEND_INTERVAL_MS, 250, { min: 0 });
 const IGNORED_CHAT_USERNAMES = process.env.IGNORED_CHAT_USERNAMES ? process.env.IGNORED_CHAT_USERNAMES.split(',').map(u => u.trim().toLowerCase()) : [];
 const GEMINI_API_KEY = String(process.env.GEMINI_API_KEY || '').trim();
 function parseGeminiModelList(...values) {
@@ -792,6 +799,16 @@ console.error = (...args) => {
 
 // Discord bot client
 const discordClient = createDiscordClient();
+const gameChatDiscordForwardQueue = new DiscordChatForwardQueue({
+  maxQueueSize: DISCORD_CHAT_QUEUE_MAX_SIZE,
+  maxAgeMs: DISCORD_CHAT_MESSAGE_MAX_AGE_MS,
+  perUserBurst: DISCORD_CHAT_USER_BURST,
+  perUserWindowMs: DISCORD_CHAT_USER_WINDOW_MS,
+  summaryDelayMs: DISCORD_CHAT_FLOOD_SUMMARY_DELAY_MS,
+  minSendIntervalMs: DISCORD_CHAT_MIN_SEND_INTERVAL_MS,
+  send: deliverGameChatMessageToDiscord,
+  onError: error => console.error('[Discord Chat Queue]', error?.message || error)
+});
 
 let loadedSession = null;
 if (process.env.MINECRAFT_SESSION) {
@@ -4761,31 +4778,40 @@ async function sendGameChatMessageToDiscord(username, message, { allowMentions =
     return false;
   }
 
+  return gameChatDiscordForwardQueue.enqueue({
+    username: safeUsername,
+    message: cleanMessage,
+    allowMentions
+  });
+}
+
+async function deliverGameChatMessageToDiscord({ username, message, allowMentions = true, createdAt = Date.now(), isSummary = false }) {
   try {
     const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
     if (!channel?.isTextBased?.()) return false;
 
-    const avatarUrl = `https://minotar.net/avatar/${safeUsername.toLowerCase()}/28`;
-    let displayMessage = neutralizeDiscordInviteLinks(flattenMarkdownLinks(cleanMessage))
+    const avatarUrl = `https://minotar.net/avatar/${username.toLowerCase()}/28`;
+    let displayMessage = neutralizeDiscordInviteLinks(flattenMarkdownLinks(message))
       .replace(/([*_`~|>\\])/g, '\\$1');
     displayMessage = displayMessage.replace(/\[/g, '\\[').replace(/\]/g, '\\]');
 
     const sendOptions = {
       embeds: [{
         author: {
-          name: safeUsername,
-          url: `https://namemc.com/profile/${encodeURIComponent(safeUsername)}`
+          name: username,
+          url: `https://namemc.com/profile/${encodeURIComponent(username)}`
         },
         description: displayMessage,
-        color: 3447003,
+        color: isSummary ? 16753920 : 3447003,
         thumbnail: { url: avatarUrl },
-        timestamp: new Date()
+        timestamp: new Date(createdAt),
+        ...(isSummary ? { footer: { text: 'Discord bridge flood protection' } } : {})
       }]
     };
 
-    const isBridgeMessage = /^\[[^\]]+\]\s/.test(cleanMessage);
+    const isBridgeMessage = /^\[[^\]]+\]\s/.test(message);
     if (allowMentions && !isBridgeMessage) {
-      const lowerMessage = cleanMessage.toLowerCase();
+      const lowerMessage = message.toLowerCase();
       const usersToMention = new Set();
       const mentionKeywords = await getMentionKeywords();
       for (const { discord_id, keyword } of mentionKeywords) {

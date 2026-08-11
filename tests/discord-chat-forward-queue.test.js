@@ -1,0 +1,130 @@
+'use strict';
+
+const assert = require('node:assert/strict');
+const { DiscordChatForwardQueue } = require('../discord/chat-forward-queue');
+
+const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+
+async function testSerialDelivery() {
+  let active = 0;
+  let maxActive = 0;
+  const delivered = [];
+  const forwarder = new DiscordChatForwardQueue({
+    perUserBurst: 20,
+    minSendIntervalMs: 0,
+    send: async item => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await wait(5);
+      delivered.push(item.message);
+      active -= 1;
+      return true;
+    }
+  });
+
+  const results = await Promise.all([
+    forwarder.enqueue({ username: 'Alice', message: 'one' }),
+    forwarder.enqueue({ username: 'Bob', message: 'two' }),
+    forwarder.enqueue({ username: 'Carol', message: 'three' })
+  ]);
+
+  assert.deepEqual(results, [true, true, true]);
+  assert.equal(maxActive, 1, 'only one Discord request may be in flight');
+  assert.deepEqual(delivered, ['one', 'two', 'three']);
+}
+
+async function testFloodSuppressionAndSummary() {
+  const delivered = [];
+  const forwarder = new DiscordChatForwardQueue({
+    perUserBurst: 2,
+    perUserWindowMs: 1_000,
+    summaryDelayMs: 10,
+    minSendIntervalMs: 0,
+    send: async item => {
+      delivered.push(item);
+      return true;
+    }
+  });
+
+  const results = await Promise.all([
+    forwarder.enqueue({ username: 'Spammer', message: 'one' }),
+    forwarder.enqueue({ username: 'Spammer', message: 'two' }),
+    forwarder.enqueue({ username: 'Spammer', message: 'three' }),
+    forwarder.enqueue({ username: 'Spammer', message: 'four' }),
+    forwarder.enqueue({ username: 'Spammer', message: 'five' })
+  ]);
+  await wait(30);
+
+  assert.deepEqual(results, [true, true, true, true, true]);
+  assert.equal(delivered.length, 3, 'suppressed flood must become one summary');
+  assert.deepEqual(delivered.slice(0, 2).map(item => item.message), ['one', 'two']);
+  assert.match(delivered[2].message, /Skipped 3 messages/);
+  assert.equal(delivered[2].allowMentions, false);
+}
+
+async function testStaleMessagesAreNotSent() {
+  const delivered = [];
+  let releaseFirst;
+  const firstBlocked = new Promise(resolve => { releaseFirst = resolve; });
+  const forwarder = new DiscordChatForwardQueue({
+    maxAgeMs: 10,
+    perUserBurst: 20,
+    summaryDelayMs: 10,
+    minSendIntervalMs: 0,
+    send: async item => {
+      delivered.push(item.message);
+      if (item.message === 'blocking') await firstBlocked;
+      return true;
+    }
+  });
+
+  const first = forwarder.enqueue({ username: 'Alice', message: 'blocking' });
+  const stale = forwarder.enqueue({ username: 'Bob', message: 'old news' });
+  await wait(20);
+  releaseFirst();
+  assert.equal(await first, true);
+  assert.equal(await stale, true);
+  await wait(30);
+
+  assert.equal(delivered.includes('old news'), false, 'expired queue entries must be discarded');
+  assert.equal(delivered.some(message => /Skipped 1 message/.test(message)), true);
+}
+
+async function testQueueCapacityIsBounded() {
+  let releaseFirst;
+  const firstBlocked = new Promise(resolve => { releaseFirst = resolve; });
+  const delivered = [];
+  const forwarder = new DiscordChatForwardQueue({
+    maxQueueSize: 1,
+    perUserBurst: 20,
+    summaryDelayMs: 10,
+    minSendIntervalMs: 0,
+    send: async item => {
+      delivered.push(item.message);
+      if (item.message === 'blocking') await firstBlocked;
+      return true;
+    }
+  });
+
+  const first = forwarder.enqueue({ username: 'Alice', message: 'blocking' });
+  const second = forwarder.enqueue({ username: 'Bob', message: 'queued' });
+  const overflow = await forwarder.enqueue({ username: 'Carol', message: 'overflow' });
+  assert.equal(overflow, true, 'overflow is handled by suppression instead of failing the caller');
+  assert.equal(forwarder.pendingCount, 2, 'the active request plus one queued request is the hard bound');
+
+  releaseFirst();
+  await Promise.all([first, second]);
+  await wait(30);
+  assert.equal(delivered.includes('overflow'), false);
+}
+
+(async () => {
+  await testSerialDelivery();
+  await testFloodSuppressionAndSummary();
+  await testStaleMessagesAreNotSent();
+  await testQueueCapacityIsBounded();
+  console.log('Discord chat forward queue tests passed.');
+})().catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});
