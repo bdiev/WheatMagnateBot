@@ -119,13 +119,52 @@ class DiscordChatForwardQueue {
   }
 
   _tryQueue(item) {
-    if (this.queue.length >= this.maxQueueSize) return null;
+    if (this.queue.length >= this.maxQueueSize && !this._makeFairQueueRoom(item)) return null;
 
     const promise = new Promise(resolve => {
       this.queue.push({ ...item, resolve });
     });
     this._process().catch(error => this.onError(error));
     return promise;
+  }
+
+  _makeFairQueueRoom(incoming) {
+    if (incoming.isSummary) return false;
+
+    const incomingKey = incoming.safeUsername.toLowerCase();
+    const queuedByUser = new Map();
+    for (const item of this.queue) {
+      if (item.isSummary) continue;
+      const key = item.safeUsername.toLowerCase();
+      queuedByUser.set(key, (queuedByUser.get(key) || 0) + 1);
+    }
+
+    const incomingCount = queuedByUser.get(incomingKey) || 0;
+    let crowdedKey = null;
+    let crowdedCount = incomingCount;
+    for (const [key, count] of queuedByUser) {
+      if (key !== incomingKey && count >= incomingCount + 2 && count > crowdedCount) {
+        crowdedKey = key;
+        crowdedCount = count;
+      }
+    }
+    if (!crowdedKey) return false;
+
+    const evictedIndex = this.queue.findLastIndex(item =>
+      !item.isSummary && item.safeUsername.toLowerCase() === crowdedKey
+    );
+    if (evictedIndex < 0) return false;
+
+    const [evicted] = this.queue.splice(evictedIndex, 1);
+    this._notifySuppressed({
+      username: evicted.safeUsername,
+      message: evicted.message,
+      source: evicted.source,
+      reason: 'queue-fairness'
+    });
+    this._recordSuppressed(evicted.safeUsername, 1);
+    evicted.resolve(true);
+    return true;
   }
 
   async _process() {

@@ -132,11 +132,51 @@ async function testQueueCapacityIsBounded() {
   assert.equal(delivered.includes('overflow'), false);
 }
 
+async function testFloodCannotDisplaceAnotherPlayer() {
+  let releaseFirst;
+  const firstBlocked = new Promise(resolve => { releaseFirst = resolve; });
+  const delivered = [];
+  const suppressed = [];
+  const forwarder = new DiscordChatForwardQueue({
+    maxQueueSize: 3,
+    perUserBurst: 20,
+    summaryDelayMs: 1_000,
+    minSendIntervalMs: 0,
+    send: async item => {
+      delivered.push(`${item.username}:${item.message}`);
+      if (item.message === 'blocking') await firstBlocked;
+      return true;
+    },
+    onSuppressed: event => suppressed.push(event)
+  });
+
+  const pending = [
+    forwarder.enqueue({ username: 'Spammer', message: 'blocking' }),
+    forwarder.enqueue({ username: 'Spammer', message: 'spam two' }),
+    forwarder.enqueue({ username: 'Spammer', message: 'spam three' }),
+    forwarder.enqueue({ username: 'Spammer', message: 'spam four' })
+  ];
+  const normalPlayer = forwarder.enqueue({ username: 'Alice', message: 'normal message' });
+
+  assert.equal(forwarder.pendingCount, 4, 'the active request plus the bounded queue must remain the hard limit');
+  assert.deepEqual(
+    suppressed.map(event => [event.username, event.message, event.reason]),
+    [['Spammer', 'spam four', 'queue-fairness']],
+    'a repeated spam message must make room for a different player'
+  );
+
+  releaseFirst();
+  await Promise.all([...pending, normalPlayer]);
+  assert.equal(delivered.includes('Alice:normal message'), true, 'an ordinary player must not be suppressed by another user flood');
+  assert.equal(delivered.includes('Spammer:spam four'), false);
+}
+
 (async () => {
   await testSerialDelivery();
   await testFloodSuppressionAndSummary();
   await testStaleMessagesAreNotSent();
   await testQueueCapacityIsBounded();
+  await testFloodCannotDisplaceAnotherPlayer();
   console.log('Discord chat forward queue tests passed.');
 })().catch(error => {
   console.error(error);
