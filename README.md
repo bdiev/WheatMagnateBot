@@ -75,6 +75,7 @@ DISCORD_CHAT_QUEUE_MAX_SIZE=20
 DISCORD_CHAT_MESSAGE_MAX_AGE_MS=15000
 DISCORD_CHAT_USER_BURST=8
 DISCORD_CHAT_USER_WINDOW_MS=10000
+DISCORD_CHAT_DUPLICATE_WINDOW_MS=5000
 DATABASE_URL=
 MINECRAFT_USERNAME=
 MINECRAFT_AUTH=microsoft
@@ -99,7 +100,7 @@ GEMINI_API_KEY=
 
 `NOTIFICATION_DISCORD_CHANNEL_ID` is optional; when omitted, notification delivery uses `DISCORD_CHANNEL_ID` for backward compatibility. Notification rules are managed by an administrator on the **Notifications** dashboard page. Database schema changes in `database/migrations/` are applied automatically by the bot and site at startup.
 
-The Minecraft-to-Discord bridge sends messages sequentially and keeps only a bounded, short-lived queue. By default, a player may burst up to 8 messages per 10 seconds; additional messages remain in the database archive but are replaced in Discord by one flood summary. Queue limits and timing can be adjusted with the `DISCORD_CHAT_*` variables in `.env.example`.
+The Minecraft-to-Discord bridge sends messages sequentially and keeps only a bounded, short-lived queue. By default, a player may burst up to 8 distinct messages per 10 seconds, while repeated copies of the same normalized message are suppressed for 5 seconds. Additional messages remain in the database archive but are replaced in Discord by one flood summary. Queue limits and timing can be adjusted with the `DISCORD_CHAT_*` variables in `.env.example`.
 
 Browser push is optional and disabled by default. Generate a persistent VAPID pair with `npx web-push generate-vapid-keys`, store both keys in the deployment environment, and never commit the private key. Users enable permission explicitly from **Settings**, then configure each device's severity, event types, resolved events, and quiet hours. Operational delivery remains admin-only to match the notification center's access policy; `whisper_message` push is routed personally to the site user assigned to the dialog. The existing daily scheduler can also deliver `daily_obsidian_report` once per local calendar day. The complete behavior and privacy model are documented in [`site/PUSH_NOTIFICATIONS.md`](site/PUSH_NOTIFICATIONS.md).
 

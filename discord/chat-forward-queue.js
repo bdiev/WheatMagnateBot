@@ -7,6 +7,14 @@ function positiveInteger(value, fallback, { min = 1, max = Number.MAX_SAFE_INTEG
   return Math.max(min, Math.min(max, Math.floor(parsed)));
 }
 
+function normalizeFloodMessage(value) {
+  return String(value || '')
+    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
 class DiscordChatForwardQueue {
   constructor({
     send,
@@ -14,6 +22,7 @@ class DiscordChatForwardQueue {
     maxAgeMs = 15_000,
     perUserBurst = 8,
     perUserWindowMs = 10_000,
+    duplicateWindowMs = 5_000,
     summaryDelayMs = 5_000,
     minSendIntervalMs = 250,
     now = () => Date.now(),
@@ -29,6 +38,7 @@ class DiscordChatForwardQueue {
     this.maxAgeMs = positiveInteger(maxAgeMs, 15_000);
     this.perUserBurst = positiveInteger(perUserBurst, 8);
     this.perUserWindowMs = positiveInteger(perUserWindowMs, 10_000);
+    this.duplicateWindowMs = positiveInteger(duplicateWindowMs, 5_000, { min: 0 });
     this.summaryDelayMs = positiveInteger(summaryDelayMs, 5_000);
     this.minSendIntervalMs = positiveInteger(minSendIntervalMs, 250, { min: 0 });
     this.now = now;
@@ -49,6 +59,23 @@ class DiscordChatForwardQueue {
     const cutoff = createdAt - this.perUserWindowMs;
     state.acceptedAt = state.acceptedAt.filter(timestamp => timestamp > cutoff);
 
+    const normalizedMessage = normalizeFloodMessage(message);
+    const duplicateCutoff = createdAt - this.duplicateWindowMs;
+    for (const [key, timestamp] of state.recentMessages) {
+      if (timestamp <= duplicateCutoff) state.recentMessages.delete(key);
+    }
+
+    if (
+      this.duplicateWindowMs > 0 &&
+      normalizedMessage &&
+      state.recentMessages.has(normalizedMessage)
+    ) {
+      state.recentMessages.set(normalizedMessage, createdAt);
+      this._notifySuppressed({ username: safeUsername, message, source, reason: 'duplicate-message' });
+      this._recordSuppressed(safeUsername, 1);
+      return Promise.resolve(true);
+    }
+
     if (state.acceptedAt.length >= this.perUserBurst) {
       this._notifySuppressed({ username: safeUsername, message, source, reason: 'per-user-burst' });
       this._recordSuppressed(safeUsername, 1);
@@ -56,6 +83,9 @@ class DiscordChatForwardQueue {
     }
 
     state.acceptedAt.push(createdAt);
+    if (this.duplicateWindowMs > 0 && normalizedMessage) {
+      state.recentMessages.set(normalizedMessage, createdAt);
+    }
     const queued = this._tryQueue({ safeUsername, message, allowMentions, createdAt, source, isSummary: false });
     if (queued) return queued;
 
@@ -72,7 +102,7 @@ class DiscordChatForwardQueue {
     const key = username.toLowerCase();
     let state = this.userStates.get(key);
     if (!state) {
-      state = { username, acceptedAt: [], suppressed: 0, summaryTimer: null };
+      state = { username, acceptedAt: [], recentMessages: new Map(), suppressed: 0, summaryTimer: null };
       this.userStates.set(key, state);
     } else {
       state.username = username;
@@ -212,4 +242,4 @@ class DiscordChatForwardQueue {
   }
 }
 
-module.exports = { DiscordChatForwardQueue, positiveInteger };
+module.exports = { DiscordChatForwardQueue, normalizeFloodMessage, positiveInteger };

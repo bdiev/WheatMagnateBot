@@ -163,6 +163,16 @@ async function testAdminPlayerSortingAndOptimizedQuery() {
   assert.match(calls[2].sql, /ORDER BY pa\.last_seen DESC NULLS FIRST,LOWER\(pa\.username\) ASC/);
   assert.match(calls[2].sql, /ORDER BY candidate\.last_seen DESC NULLS FIRST,LOWER\(candidate\.username\) ASC/);
 
+  const uuid = await getAdminPlayers(
+    admin,
+    new URL('https://example.test/api/admin/players?sort=uuid&direction=desc'),
+    database
+  );
+  assert.equal(uuid.sort, 'uuid');
+  assert.equal(uuid.direction, 'desc');
+  assert.match(calls[3].sql, /ORDER BY pa\.player_uuid DESC NULLS LAST,LOWER\(pa\.username\) ASC/);
+  assert.match(calls[3].sql, /ORDER BY candidate\.player_uuid DESC NULLS LAST,LOWER\(candidate\.username\) ASC/);
+
   const messages = await getAdminPlayers(
     admin,
     new URL('https://example.test/api/admin/players?sort=messages&direction=desc'),
@@ -170,11 +180,11 @@ async function testAdminPlayerSortingAndOptimizedQuery() {
   );
   assert.equal(messages.sort, 'messages');
   assert.equal(messages.direction, 'desc');
-  assert.match(calls[3].sql, /chat_counts_uuid AS MATERIALIZED/);
-  assert.match(calls[3].sql, /chat_counts_name AS MATERIALIZED/);
-  assert.match(calls[3].sql, /ORDER BY total_messages DESC,LOWER\(pa\.username\) ASC/);
-  assert.match(calls[3].sql, /ORDER BY candidate\.total_messages DESC,LOWER\(candidate\.username\) ASC/);
-  assert.doesNotMatch(calls[3].sql, /FROM game_chat_messages message/, 'message sorting must reuse the pre-pagination aggregates');
+  assert.match(calls[4].sql, /chat_counts_uuid AS MATERIALIZED/);
+  assert.match(calls[4].sql, /chat_counts_name AS MATERIALIZED/);
+  assert.match(calls[4].sql, /ORDER BY total_messages DESC,LOWER\(pa\.username\) ASC/);
+  assert.match(calls[4].sql, /ORDER BY candidate\.total_messages DESC,LOWER\(candidate\.username\) ASC/);
+  assert.doesNotMatch(calls[4].sql, /FROM game_chat_messages message/, 'message sorting must reuse the pre-pagination aggregates');
 }
 
 function testArchitectureAndUiContracts() {
@@ -196,7 +206,7 @@ function testArchitectureAndUiContracts() {
   assert.match(databaseSource, /admin_notes = COALESCE[\s\S]*admin_tags = ARRAY/, 'UUID reconciliation must preserve admin-managed metadata');
   assert.match(databaseSource, /INSERT INTO player_activity \(username, player_uuid/, 'a returning UUID player must be recreated by normal tracking');
   assert.match(htmlSource, /id="adminPlayersSearch"[\s\S]*id="adminPlayersSort"[\s\S]*id="adminPlayersDirection"[\s\S]*id="adminPlayersScroller"[\s\S]*id="adminPlayersList"[\s\S]*id="adminPlayersScrollStatus"/);
-  assert.match(htmlSource, /option value="playtime">Playtime<[\s\S]*option value="nickname">Nickname<[\s\S]*option value="joindate">Join date<[\s\S]*option value="seen">Seen<[\s\S]*option value="messages">Messages</, 'all requested player sort fields must be available');
+  assert.match(htmlSource, /option value="playtime">Playtime<[\s\S]*option value="nickname">Nickname<[\s\S]*option value="uuid">UUID<[\s\S]*option value="joindate">Join date<[\s\S]*option value="seen">Seen<[\s\S]*option value="messages">Messages</, 'all requested player sort fields must be available');
   assert.match(htmlSource, /id="adminPlayerDeleteModal"[\s\S]*role="alertdialog"/);
   assert.match(appSource, /Object\.keys\(patch\)\.length/, 'the frontend must build a partial patch');
   assert.match(appSource, /state\.adminPlayers = state\.adminPlayers\.filter/, 'delete must remove the card without reloading the page');

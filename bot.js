@@ -57,6 +57,7 @@ const DISCORD_CHAT_QUEUE_MAX_SIZE = positiveInteger(process.env.DISCORD_CHAT_QUE
 const DISCORD_CHAT_MESSAGE_MAX_AGE_MS = positiveInteger(process.env.DISCORD_CHAT_MESSAGE_MAX_AGE_MS, 15_000);
 const DISCORD_CHAT_USER_BURST = positiveInteger(process.env.DISCORD_CHAT_USER_BURST, 8);
 const DISCORD_CHAT_USER_WINDOW_MS = positiveInteger(process.env.DISCORD_CHAT_USER_WINDOW_MS, 10_000);
+const DISCORD_CHAT_DUPLICATE_WINDOW_MS = positiveInteger(process.env.DISCORD_CHAT_DUPLICATE_WINDOW_MS, 5_000, { min: 0 });
 const DISCORD_CHAT_FLOOD_SUMMARY_DELAY_MS = positiveInteger(process.env.DISCORD_CHAT_FLOOD_SUMMARY_DELAY_MS, 5_000);
 const DISCORD_CHAT_MIN_SEND_INTERVAL_MS = positiveInteger(process.env.DISCORD_CHAT_MIN_SEND_INTERVAL_MS, 250, { min: 0 });
 const IGNORED_CHAT_USERNAMES = process.env.IGNORED_CHAT_USERNAMES ? process.env.IGNORED_CHAT_USERNAMES.split(',').map(u => u.trim().toLowerCase()) : [];
@@ -814,6 +815,7 @@ const gameChatDiscordForwardQueue = new DiscordChatForwardQueue({
   maxAgeMs: DISCORD_CHAT_MESSAGE_MAX_AGE_MS,
   perUserBurst: DISCORD_CHAT_USER_BURST,
   perUserWindowMs: DISCORD_CHAT_USER_WINDOW_MS,
+  duplicateWindowMs: DISCORD_CHAT_DUPLICATE_WINDOW_MS,
   summaryDelayMs: DISCORD_CHAT_FLOOD_SUMMARY_DELAY_MS,
   minSendIntervalMs: DISCORD_CHAT_MIN_SEND_INTERVAL_MS,
   send: deliverGameChatMessageToDiscord,
@@ -4768,8 +4770,42 @@ async function sendGameChatMessageToDiscord(username, message, { allowMentions =
   });
 }
 
+async function isTaggedBotPlayer(username) {
+  if (!pool) return false;
+
+  const safeUsername = String(username || '').trim();
+  if (!safeUsername) return false;
+  const onlinePlayer = Object.values(bot?.players || {}).find(player =>
+    String(player?.username || '').toLowerCase() === safeUsername.toLowerCase()
+  );
+  const playerUuid = dashedMinecraftUuid(onlinePlayer?.uuid);
+
+  try {
+    const result = await pool.query(`
+      SELECT EXISTS (
+        SELECT 1
+        FROM player_activity player
+        WHERE (
+            ($1::uuid IS NOT NULL AND player.player_uuid = $1::uuid)
+            OR ($1::uuid IS NULL AND LOWER(player.username) = LOWER($2))
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM UNNEST(COALESCE(player.admin_tags, '{}'::text[])) AS admin_tag(value)
+            WHERE LOWER(TRIM(admin_tag.value)) = 'bot'
+          )
+      ) AS is_bot
+    `, [playerUuid, safeUsername]);
+    return Boolean(result.rows[0]?.is_bot);
+  } catch (error) {
+    console.error('[Discord Chat] Failed to resolve player tags:', error.message);
+    return false;
+  }
+}
+
 async function deliverGameChatMessageToDiscord({ username, message, allowMentions = true, createdAt = Date.now(), isSummary = false }) {
   try {
+    const isBotPlayer = !isSummary && await isTaggedBotPlayer(username);
     const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
     if (!channel?.isTextBased?.()) return false;
 
@@ -4781,11 +4817,11 @@ async function deliverGameChatMessageToDiscord({ username, message, allowMention
     const sendOptions = {
       embeds: [{
         author: {
-          name: username,
+          name: isBotPlayer ? `${username} • BOT` : username,
           url: `https://namemc.com/profile/${encodeURIComponent(username)}`
         },
         description: displayMessage,
-        color: isSummary ? 16753920 : 3447003,
+        color: isSummary ? 16753920 : isBotPlayer ? 10181046 : 3447003,
         thumbnail: { url: avatarUrl },
         timestamp: new Date(createdAt),
         ...(isSummary ? { footer: { text: 'Discord bridge flood protection' } } : {})

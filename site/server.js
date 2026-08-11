@@ -928,27 +928,40 @@ async function getChat(url) {
   const limit = Math.min(1000, Math.max(1, toInt(url.searchParams.get('limit'), 500)));
   const aroundId = /^\d+$/.test(url.searchParams.get('around') || '') ? url.searchParams.get('around') : null;
   const searchQuery = String(url.searchParams.get('q') || '').trim().slice(0, 100);
+  const botTagColumn = `EXISTS (
+    SELECT 1
+    FROM player_activity tagged_player
+    WHERE (
+        (game_chat_messages.player_uuid IS NOT NULL AND tagged_player.player_uuid = game_chat_messages.player_uuid)
+        OR (game_chat_messages.player_uuid IS NULL AND LOWER(tagged_player.username) = LOWER(game_chat_messages.username))
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM UNNEST(COALESCE(tagged_player.admin_tags, '{}'::text[])) AS admin_tag(value)
+        WHERE LOWER(TRIM(admin_tag.value)) = 'bot'
+      )
+  ) AS is_bot`;
   const messagesSql = searchQuery
-    ? `SELECT id, username, message, created_at
+    ? `SELECT id, username, message, created_at, ${botTagColumn}
        FROM game_chat_messages
        WHERE POSITION(LOWER($2) IN LOWER(message)) > 0
        ORDER BY id DESC
        LIMIT $1`
     : aroundId
-    ? `SELECT id, username, message, created_at FROM (
-         (SELECT id, username, message, created_at
+    ? `SELECT id, username, message, created_at, is_bot FROM (
+         (SELECT id, username, message, created_at, ${botTagColumn}
           FROM game_chat_messages
           WHERE id <= $2::bigint
           ORDER BY id DESC
           LIMIT (($1 + 1) / 2))
          UNION ALL
-         (SELECT id, username, message, created_at
+         (SELECT id, username, message, created_at, ${botTagColumn}
           FROM game_chat_messages
           WHERE id > $2::bigint
           ORDER BY id ASC
           LIMIT ($1 / 2))
        ) context_messages`
-    : `SELECT id, username, message, created_at
+    : `SELECT id, username, message, created_at, ${botTagColumn}
        FROM game_chat_messages
        ORDER BY created_at DESC
        LIMIT $1`;
@@ -958,6 +971,7 @@ async function getChat(url) {
       SELECT
         username,
         is_online,
+        admin_tags,
         CASE
           WHEN is_online THEN last_online
           ELSE last_seen
@@ -1036,6 +1050,7 @@ async function getChat(url) {
       type: 'chat',
       username: row.username,
       message: displayGameChatMessage(row.message),
+      isBot: Boolean(row.is_bot),
       createdAt: row.created_at
     }));
   const activityMessages = activityResult.rows
@@ -1044,6 +1059,7 @@ async function getChat(url) {
       id: `activity:${String(row.username).toLowerCase()}:${row.is_online ? 'join' : 'leave'}:${new Date(row.event_at).getTime()}`,
       type: 'activity',
       username: row.username,
+      isBot: Array.isArray(row.admin_tags) && row.admin_tags.some(tag => String(tag).trim().toLowerCase() === 'bot'),
       event: row.is_online ? 'join' : 'leave',
       message: row.is_online ? 'joined the game' : 'left the game',
       createdAt: row.event_at
@@ -2562,6 +2578,7 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
     })),
     isWhitelisted: Boolean(profile.is_whitelisted),
     isIgnored: Boolean(ignoredResult.rows[0]?.is_ignored),
+    isBot: Array.isArray(profile.admin_tags) && profile.admin_tags.some(tag => String(tag).trim().toLowerCase() === 'bot'),
     isOnline: Boolean(profile.is_online),
     trackingSince: profile.tracking_since || null,
     lastSeen: profile.last_seen || null,
@@ -2600,7 +2617,7 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
 }
 
 const ADMIN_PLAYER_EDITABLE_FIELDS = Object.freeze(['notes', 'tags']);
-const ADMIN_PLAYER_SORT_FIELDS = new Set(['playtime', 'nickname', 'joindate', 'seen', 'messages']);
+const ADMIN_PLAYER_SORT_FIELDS = new Set(['playtime', 'nickname', 'uuid', 'joindate', 'seen', 'messages']);
 const MINECRAFT_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function publicAdminPlayer(row) {
@@ -2736,6 +2753,7 @@ async function getAdminPlayers(currentUser, url, database = pool) {
   const candidateOrder = {
     playtime: `total_seconds ${directionSql},LOWER(pa.username) ASC,pa.id ASC`,
     nickname: `LOWER(pa.username) ${directionSql},pa.id ${directionSql}`,
+    uuid: `pa.player_uuid ${directionSql} NULLS LAST,LOWER(pa.username) ASC,pa.id ASC`,
     joindate: `pa.registration_at ${directionSql} NULLS ${direction === 'asc' ? 'FIRST' : 'LAST'},LOWER(pa.username) ASC,pa.id ASC`,
     seen: `pa.last_seen ${direction === 'asc' ? 'DESC NULLS FIRST' : 'ASC NULLS LAST'},LOWER(pa.username) ASC,pa.id ASC`,
     messages: `total_messages ${directionSql},LOWER(pa.username) ASC,pa.id ASC`
@@ -2743,6 +2761,7 @@ async function getAdminPlayers(currentUser, url, database = pool) {
   const resultOrder = {
     playtime: `candidate.total_seconds ${directionSql},LOWER(candidate.username) ASC,candidate.id ASC`,
     nickname: `LOWER(candidate.username) ${directionSql},candidate.id ${directionSql}`,
+    uuid: `candidate.player_uuid ${directionSql} NULLS LAST,LOWER(candidate.username) ASC,candidate.id ASC`,
     joindate: `candidate.registration_at ${directionSql} NULLS ${direction === 'asc' ? 'FIRST' : 'LAST'},LOWER(candidate.username) ASC,candidate.id ASC`,
     seen: `candidate.last_seen ${direction === 'asc' ? 'DESC NULLS FIRST' : 'ASC NULLS LAST'},LOWER(candidate.username) ASC,candidate.id ASC`,
     messages: `candidate.total_messages ${directionSql},LOWER(candidate.username) ASC,candidate.id ASC`

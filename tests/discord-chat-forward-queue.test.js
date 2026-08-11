@@ -76,6 +76,62 @@ async function testFloodSuppressionAndSummary() {
   );
 }
 
+async function testSameMillisecondDuplicatesAreSuppressed() {
+  const delivered = [];
+  const suppressed = [];
+  const forwarder = new DiscordChatForwardQueue({
+    perUserBurst: 8,
+    perUserWindowMs: 10_000,
+    duplicateWindowMs: 5_000,
+    summaryDelayMs: 10,
+    minSendIntervalMs: 0,
+    send: async item => {
+      delivered.push(item);
+      return true;
+    },
+    onSuppressed: event => suppressed.push(event)
+  });
+
+  const repeated = 'same flood message';
+  const createdAt = Date.now();
+  const results = await Promise.all(Array.from({ length: 8 }, () =>
+    forwarder.enqueue({ username: 'Spammer', message: repeated, createdAt })
+  ));
+  await wait(30);
+
+  assert.deepEqual(results, Array(8).fill(true));
+  assert.equal(delivered.length, 2, 'only the first duplicate and one summary may reach Discord');
+  assert.equal(delivered[0].message, repeated);
+  assert.match(delivered[1].message, /Skipped 7 messages/);
+  assert.equal(suppressed.length, 7);
+  assert.equal(suppressed.every(event => event.reason === 'duplicate-message'), true);
+}
+
+async function testDuplicateNormalizationAndExpiry() {
+  const delivered = [];
+  let currentTime = 10_000;
+  const forwarder = new DiscordChatForwardQueue({
+    perUserBurst: 20,
+    duplicateWindowMs: 1_000,
+    summaryDelayMs: 10_000,
+    minSendIntervalMs: 0,
+    now: () => currentTime,
+    send: async item => {
+      delivered.push(item.message);
+      return true;
+    }
+  });
+
+  await forwarder.enqueue({ username: 'Alice', message: 'Hello   World' });
+  await forwarder.enqueue({ username: 'Alice', message: ' hello\u200B world ' });
+  currentTime += 999;
+  await forwarder.enqueue({ username: 'Alice', message: 'HELLO WORLD' });
+  currentTime += 1_001;
+  await forwarder.enqueue({ username: 'Alice', message: 'HELLO WORLD' });
+
+  assert.deepEqual(delivered, ['Hello   World', 'HELLO WORLD']);
+}
+
 async function testStaleMessagesAreNotSent() {
   const delivered = [];
   let releaseFirst;
@@ -174,6 +230,8 @@ async function testFloodCannotDisplaceAnotherPlayer() {
 (async () => {
   await testSerialDelivery();
   await testFloodSuppressionAndSummary();
+  await testSameMillisecondDuplicatesAreSuppressed();
+  await testDuplicateNormalizationAndExpiry();
   await testStaleMessagesAreNotSent();
   await testQueueCapacityIsBounded();
   await testFloodCannotDisplaceAnotherPlayer();

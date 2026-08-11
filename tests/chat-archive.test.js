@@ -26,6 +26,18 @@ assert.match(serverSource, /beforeMessageId/, 'player chat history must support 
 assert.match(serverSource, /WHERE id <= \$2::bigint/, 'chat API must load messages before the exact message ID');
 assert.match(serverSource, /WHERE id > \$2::bigint/, 'chat API must load messages after the exact message ID');
 assert.match(serverSource, /POSITION\(LOWER\(\$2\) IN LOWER\(message\)\) > 0/, 'chat search must query the full stored message table');
+assert.match(serverSource, /LOWER\(TRIM\(admin_tag\.value\)\) = 'bot'/,
+  'chat API must classify the case-insensitive Minecraft Players Bot tag');
+assert.match(serverSource, /isBot: Boolean\(row\.is_bot\)/,
+  'chat API must expose the bot classification to the dashboard');
+assert.match(appSource, /chat-message-bot[\s\S]*chat-bot-badge/,
+  'bot chat messages must render with a dedicated class and badge');
+assert.match(stylesSource, /\.chat-message\.chat-message-bot:not\(\.chat-activity\)[\s\S]*--bot-accent/,
+  'bot chat messages must have a distinct visual treatment');
+assert.match(botSource, /isTaggedBotPlayer\(username\)[\s\S]*name: isBotPlayer \? `\$\{username\} • BOT`/,
+  'Discord bridge messages from tagged bots must have a visible BOT label');
+assert.doesNotMatch(botSource, /Automated player/,
+  'tagged bot messages must not add an Automated player caption');
 assert.match(
   serverSource,
   /function displayGameChatMessage[\s\S]*replace\(\/\^>\\s\*\/[\s\S]*message: displayGameChatMessage\(row\.message\)/,
@@ -82,9 +94,9 @@ assert.match(stylesSource, /\.chat-date-indicator\.visible\s*\{[^}]*opacity:\s*1
   'the date indicator must fade into view while scrolling');
 assert.match(stylesSource, /\.chat-panel\.chat-search-open > \.panel-head > div:first-child\s*\{[^}]*opacity:\s*0;/s,
   'the chat heading must fade away while archive search expands');
-assert.match(indexSource, /styles\.css\?v=188/, 'the updated mobile layout must use a fresh stylesheet URL');
-assert.match(indexSource, /app\.js\?v=188/, 'the updated dashboard behavior must use a fresh script URL');
-assert.match(serviceWorkerSource, /CACHE_VERSION = '188'/, 'the app shell cache must be replaced after dashboard behavior changes');
+assert.match(indexSource, /styles\.css\?v=190/, 'the updated mobile layout must use a fresh stylesheet URL');
+assert.match(indexSource, /app\.js\?v=190/, 'the updated dashboard behavior must use a fresh script URL');
+assert.match(serviceWorkerSource, /CACHE_VERSION = '190'/, 'the app shell cache must be replaced after dashboard behavior changes');
 assert.match(serviceWorkerSource, /fallbackPath[\s\S]*?'\/request\.html'/, 'resource requests must have their own navigation fallback');
 assert.match(stylesSource, /\.chat-message\s*\{[^}]*flex:\s*0 0 auto;/s,
   'chat cards must retain their natural height inside the scrolling flex list');

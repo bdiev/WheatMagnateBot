@@ -8,6 +8,7 @@
   --line: #dbe5d0;
   --accent: #4d7d28;
   --accent-strong: #2f5f16;
+  --bot-accent: #7546bd;
   --warn: #9a5b09;
   --annotation-connected: #45a83f;
   --annotation-disconnected: #d94b4b;
@@ -58,6 +59,7 @@
   --line: #2a3140;
   --accent: #7dbd45;
   --accent-strong: #a7d96a;
+  --bot-accent: #bd9cff;
   --warn: #f0bd6a;
   --annotation-connected: #7dcc67;
   --annotation-disconnected: #ff7474;
@@ -3848,6 +3850,50 @@ body.search-focus-active #logoutButton {
 .admin-user-actions button {
   min-height: var(--button-height);
   padding: var(--button-padding);
+}
+
+.chat-message.chat-message-bot:not(.chat-activity),
+.player-profile-message.player-profile-message-bot {
+  background: color-mix(in srgb, var(--bot-accent) 8%, transparent);
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--bot-accent) 82%, transparent);
+}
+
+.chat-message.chat-message-bot:not(.chat-activity):hover,
+.chat-message.chat-message-bot:not(.chat-activity):focus-within,
+.player-profile-message.player-profile-message-bot:hover,
+.player-profile-message.player-profile-message-bot:focus-visible {
+  background: color-mix(in srgb, var(--bot-accent) 14%, var(--panel-soft));
+  box-shadow: inset 3px 0 0 var(--bot-accent);
+}
+
+.chat-message-bot .chat-message-name,
+.player-profile-message-bot .chat-message-name {
+  color: var(--bot-accent);
+}
+
+.chat-message-bot .chat-message-head,
+.player-profile-message-bot .chat-message-head {
+  justify-content: flex-start;
+}
+
+.player-profile-message-bot .chat-time {
+  margin-left: auto;
+}
+
+.chat-bot-badge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  min-height: 17px;
+  border: 1px solid color-mix(in srgb, var(--bot-accent) 42%, transparent);
+  border-radius: 999px;
+  padding: 1px 6px;
+  color: var(--bot-accent);
+  background: color-mix(in srgb, var(--bot-accent) 11%, var(--panel));
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  line-height: 1;
 }
 
 .admin-players-panel { grid-column: 1 / -1; overflow:visible; }
@@ -8041,7 +8087,7 @@ body.kill-aura-modal-open {
     min-height: 0;
     padding: 9px 2px;
   }
-  .chat-message.chat-activity {
+.chat-message.chat-activity {
     grid-template-columns: 7px minmax(0, max-content) max-content;
     gap: 6px;
     min-height: 0;
@@ -8095,6 +8141,15 @@ body.kill-aura-modal-open {
   .player-profile-message time { justify-self: end; font-size: 10px; }
   .player-profile-load-more { min-height: 46px; touch-action: manipulation; }
   .player-profile-message-action { min-height: 44px; touch-action: manipulation; }
+}
+
+.chat-message.chat-activity.chat-message-bot {
+  background: color-mix(in srgb, var(--bot-accent) 10%, var(--panel-soft));
+}
+
+.chat-message.chat-activity.chat-message-bot .chat-activity-mark {
+  background: var(--bot-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--bot-accent) 14%, transparent);
 }
 
 @media (max-width:700px) {

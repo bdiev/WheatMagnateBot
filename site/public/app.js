@@ -2419,10 +2419,11 @@ function renderPlayerProfile(profile) {
       <h3>Recent Chat</h3>
       ${recentMessages.length
         ? recentMessages.map(message => `
-          <button class="player-profile-message" type="button" data-chat-message-id="${escapeHtml(message.id)}" title="Open this moment in game chat">
+          <button class="player-profile-message${profile.isBot ? ' player-profile-message-bot' : ''}" type="button" data-chat-message-id="${escapeHtml(message.id)}" title="Open this moment in game chat">
             <div class="chat-message-body">
               <div class="chat-message-head">
                 <span class="chat-message-name">${escapeHtml(profileUsername)}</span>
+                ${profile.isBot ? '<span class="chat-bot-badge">BOT</span>' : ''}
                 <time class="chat-time">${formatChatTime(message.createdAt)}</time>
               </div>
               <div class="chat-text">${escapeHtml(message.message)}</div>
@@ -2445,6 +2446,7 @@ function playerProfileSignature(profile) {
     profile.isOnline,
     profile.isWhitelisted,
     profile.isIgnored,
+    profile.isBot,
     profile.playtime,
     profile.registrationAt,
     profile.registrationDisplay,
@@ -3229,6 +3231,7 @@ function renderChatMessages(messages) {
       message.username,
       message.message,
       message.event,
+      message.isBot,
       message.createdAt
     ])
   ]);
@@ -3258,6 +3261,7 @@ function renderChatMessages(messages) {
   safeMessages.forEach(message => {
     const id = String(message.id);
     const isActivity = message.type === 'activity';
+    const isBot = Boolean(message.isBot);
     const isNew = state.chatInitialized && !previousIds.has(id);
     const username = String(message.username || 'Minecraft');
     const normalizedUsername = username.trim().toLocaleLowerCase();
@@ -3269,7 +3273,7 @@ function renderChatMessages(messages) {
     article.dataset.createdAt = String(message.createdAt || '');
     if (state.chatSearchQuery && !isActivity) article.dataset.openChatContext = id;
     const activityKind = isActivity && message.event === 'join' ? 'join' : 'leave';
-    article.className = `chat-message${isActivity ? ` chat-activity chat-activity-${activityKind}` : ''}${isContinuation ? ' chat-message-continuation' : ''}${isNew ? ' new-message' : ''}`;
+    article.className = `chat-message${isActivity ? ` chat-activity chat-activity-${activityKind}` : ''}${isBot ? ' chat-message-bot' : ''}${isContinuation ? ' chat-message-continuation' : ''}${isNew ? ' new-message' : ''}`;
     article.classList.toggle('reply-active', !isActivity && state.chatReplyActiveMessageId === id);
     const text = isActivity
       ? (message.event === 'join' ? 'joined the game' : 'left the game')
@@ -3278,6 +3282,7 @@ function renderChatMessages(messages) {
       ? `<span class="chat-activity-mark" aria-hidden="true"></span>
          <div class="chat-activity-copy">
            <strong>${escapeHtml(username)}</strong>
+           ${isBot ? '<span class="chat-bot-badge">BOT</span>' : ''}
            <span class="chat-text"></span>
          </div>
          <time class="chat-time">${formatChatTime(message.createdAt)}</time>`
@@ -3285,6 +3290,7 @@ function renderChatMessages(messages) {
          <div class="chat-message-body">
            ${isContinuation ? '' : `<div class="chat-message-head">
              <span class="chat-message-name">${escapeHtml(username)}</span>
+             ${isBot ? '<span class="chat-bot-badge">BOT</span>' : ''}
            </div>`}
            <div class="chat-text"></div>
          </div>
