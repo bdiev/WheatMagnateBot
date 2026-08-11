@@ -162,6 +162,19 @@ async function testAdminPlayerSortingAndOptimizedQuery() {
   assert.equal(seen.sort, 'seen');
   assert.match(calls[2].sql, /ORDER BY pa\.last_seen DESC NULLS FIRST,LOWER\(pa\.username\) ASC/);
   assert.match(calls[2].sql, /ORDER BY candidate\.last_seen DESC NULLS FIRST,LOWER\(candidate\.username\) ASC/);
+
+  const messages = await getAdminPlayers(
+    admin,
+    new URL('https://example.test/api/admin/players?sort=messages&direction=desc'),
+    database
+  );
+  assert.equal(messages.sort, 'messages');
+  assert.equal(messages.direction, 'desc');
+  assert.match(calls[3].sql, /chat_counts_uuid AS MATERIALIZED/);
+  assert.match(calls[3].sql, /chat_counts_name AS MATERIALIZED/);
+  assert.match(calls[3].sql, /ORDER BY total_messages DESC,LOWER\(pa\.username\) ASC/);
+  assert.match(calls[3].sql, /ORDER BY candidate\.total_messages DESC,LOWER\(candidate\.username\) ASC/);
+  assert.doesNotMatch(calls[3].sql, /FROM game_chat_messages message/, 'message sorting must reuse the pre-pagination aggregates');
 }
 
 function testArchitectureAndUiContracts() {
@@ -183,11 +196,13 @@ function testArchitectureAndUiContracts() {
   assert.match(databaseSource, /admin_notes = COALESCE[\s\S]*admin_tags = ARRAY/, 'UUID reconciliation must preserve admin-managed metadata');
   assert.match(databaseSource, /INSERT INTO player_activity \(username, player_uuid/, 'a returning UUID player must be recreated by normal tracking');
   assert.match(htmlSource, /id="adminPlayersSearch"[\s\S]*id="adminPlayersSort"[\s\S]*id="adminPlayersDirection"[\s\S]*id="adminPlayersScroller"[\s\S]*id="adminPlayersList"[\s\S]*id="adminPlayersScrollStatus"/);
-  assert.match(htmlSource, /option value="playtime">Playtime<[\s\S]*option value="nickname">Nickname<[\s\S]*option value="joindate">Join date<[\s\S]*option value="seen">Seen</, 'all requested player sort fields must be available');
+  assert.match(htmlSource, /option value="playtime">Playtime<[\s\S]*option value="nickname">Nickname<[\s\S]*option value="joindate">Join date<[\s\S]*option value="seen">Seen<[\s\S]*option value="messages">Messages</, 'all requested player sort fields must be available');
   assert.match(htmlSource, /id="adminPlayerDeleteModal"[\s\S]*role="alertdialog"/);
   assert.match(appSource, /Object\.keys\(patch\)\.length/, 'the frontend must build a partial patch');
   assert.match(appSource, /state\.adminPlayers = state\.adminPlayers\.filter/, 'delete must remove the card without reloading the page');
   assert.match(appSource, /classList\.toggle\('menu-open', menu\.open\)/, 'an open actions menu must elevate its entire card');
+  assert.match(appSource, /document\.addEventListener\('pointerdown', closeAdminPlayerMenus, true\)/, 'clicking or tapping outside a player menu must close it');
+  assert.match(appSource, /menu\.contains\(event\.target\)[\s\S]*menu\.removeAttribute\('open'\)/, 'interactions inside the active player menu must not close it');
   assert.match(appSource, /new URLSearchParams\(\{[\s\S]*sort: state\.adminPlayersSort,[\s\S]*direction: state\.adminPlayersDirection,[\s\S]*limit: String\(state\.adminPlayersLimit\),[\s\S]*offset:/, 'sorting and pagination must happen on the server');
   assert.match(appSource, /admin-player-avatar[^\n]*accountHeadUrl\(player\.username\)[^\n]*loading="lazy" decoding="async"/, 'player cards must use the cached avatar proxy and asynchronous decoding');
   assert.match(appSource, /admin-player-avatar-button[^>]*data-admin-player-action="view"[^>]*data-player-key/, 'clicking a player avatar must open the profile');

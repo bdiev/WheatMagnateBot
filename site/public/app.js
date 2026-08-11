@@ -4812,6 +4812,14 @@ function updateAdminPlayersScrollStatus() {
   status.textContent = loadingMore ? 'Loading more players…' : 'Scroll to load more';
 }
 
+function closeAdminPlayerMenus(event) {
+  document.querySelectorAll('.admin-player-card-menu[open]').forEach(menu => {
+    if (menu.contains(event.target)) return;
+    menu.removeAttribute('open');
+    menu.closest('.admin-player-card')?.classList.remove('menu-open');
+  });
+}
+
 function maybeLoadMoreAdminPlayers() {
   const scroller = $('#adminPlayersScroller');
   if (!scroller || state.adminPlayersLoading || !state.adminPlayersHasMore) return;
@@ -6897,6 +6905,7 @@ $('#adminPlayersSearch')?.addEventListener('input', () => {
 });
 $('#adminPlayersScroller')?.addEventListener('scroll', maybeLoadMoreAdminPlayers, { passive: true });
 $('#adminPlayersList')?.addEventListener('click', event => handleAdminPlayerAction(event).catch(err => setAdminPlayersNotice(err.message, 'error')));
+document.addEventListener('pointerdown', closeAdminPlayerMenus, true);
 $('#adminPlayerEditForm')?.addEventListener('submit', saveAdminPlayer);
 $('#adminPlayerEditClose')?.addEventListener('click', closeAdminPlayerEdit);
 $('#adminPlayerEditCancel')?.addEventListener('click', closeAdminPlayerEdit);
