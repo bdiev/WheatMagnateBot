@@ -6869,6 +6869,7 @@ function getObsidianStatusLines() {
     : 0;
   const sessionHours = sessionMs / 3_600_000;
   const perHour = sessionHours > 0 ? obsidianStats.sessionMined / sessionHours : 0;
+  const perMonth = perHour * 24 * 30;
 
   let state = 'Stopped';
   if (farmStatus.enabled) state = 'Running';
@@ -6881,7 +6882,7 @@ function getObsidianStatusLines() {
   if (validSessionStart) {
     if (farmStatus.enabled || obsidianStats.desiredEnabled) {
       const rate = sessionMs >= 60_000
-        ? `**${formatCompactCount(Math.round(perHour))}/h**`
+        ? `**${formatCompactCount(Math.round(perHour))}/h** · **${formatCompactCount(Math.round(perMonth))}/m**`
         : '**Calculating...**';
       lines.push(`${STATUS_EMOJIS.playtime} Elapsed: **${formatDurationShort(sessionMs)}** · Average: ${rate}`);
     } else {
