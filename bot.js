@@ -4823,7 +4823,7 @@ async function deliverGameChatMessageToDiscord({ username, message, allowMention
         color: isSummary ? 16753920 : isBotPlayer ? 10181046 : 3447003,
         thumbnail: { url: avatarUrl },
         timestamp: new Date(createdAt),
-        ...(isSummary ? { footer: { text: 'Discord bridge flood protection' } } : {})
+        ...(isSummary ? { footer: { text: 'Flood protection' } } : {})
       }]
     };
 

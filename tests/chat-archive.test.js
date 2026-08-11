@@ -38,6 +38,10 @@ assert.match(botSource, /isTaggedBotPlayer\(username\)[\s\S]*name: isBotPlayer \
   'Discord bridge messages from tagged bots must have a visible BOT label');
 assert.doesNotMatch(botSource, /Automated player/,
   'tagged bot messages must not add an Automated player caption');
+assert.match(botSource, /footer: \{ text: 'Flood protection' \}/,
+  'flood summaries must use the concise footer label');
+assert.doesNotMatch(botSource, /Discord bridge flood protection/,
+  'the old verbose flood footer must not remain');
 assert.match(
   serverSource,
   /function displayGameChatMessage[\s\S]*replace\(\/\^>\\s\*\/[\s\S]*message: displayGameChatMessage\(row\.message\)/,
