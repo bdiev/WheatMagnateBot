@@ -196,6 +196,8 @@ function testArchitectureAndUiContracts() {
   assert.match(appSource, /insertAdjacentHTML\('beforeend', markup\)/, 'new cards must append without rebuilding loaded cards');
   assert.match(stylesSource, /\.admin-players-scroller\s*\{[^}]*max-height:[^;]+;[^}]*overflow-y:auto;/, 'the player card area must stay compact and scroll internally');
   assert.match(stylesSource, /\.admin-player-card\.menu-open\s*\{[^}]*z-index:100/, 'the active player card must render above later cards');
+  assert.match(stylesSource, /\.admin-player-avatar-button\s*\{[^}]*grid-column:1;[^}]*min-width:52px!important;/, 'the clickable avatar must stay inside its grid column');
+  assert.match(stylesSource, /\.admin-player-card-main\s*\{[^}]*grid-column:2;[^}]*grid-row:1;/, 'the nickname must occupy a separate grid column from the avatar');
   assert.doesNotMatch(appSource.match(/async function confirmAdminPlayerDelete\(\)[\s\S]*?\n}/)?.[0] || '', /location\.reload/);
 }
 

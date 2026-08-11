@@ -3898,20 +3898,20 @@ body.search-focus-active #logoutButton {
 }
 .admin-player-card:hover { border-color:color-mix(in srgb,var(--accent) 38%,var(--line)); background:color-mix(in srgb,var(--accent) 4%,var(--panel-soft)); transform:translateY(-1px); }
 .admin-player-card.menu-open { z-index:100; transform:none; }
-.admin-player-avatar-button { display:block; width:52px; height:52px; min-height:0!important; padding:0!important; border:0!important; border-radius:12px; background:transparent!important; cursor:pointer; box-shadow:none!important; }
+.admin-player-avatar-button { grid-column:1; grid-row:1; display:block; width:52px; min-width:52px!important; max-width:52px; height:52px; min-height:0!important; padding:0!important; overflow:hidden; border:0!important; border-radius:12px; background:transparent!important; cursor:pointer; box-shadow:none!important; }
 .admin-player-avatar-button:focus-visible,.admin-player-name-button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-.admin-player-avatar { width:52px; height:52px; border:1px solid var(--line); border-radius:12px; image-rendering:pixelated; background:var(--panel); }
-.admin-player-card-main { display:grid; min-width:0; gap:6px; }
+.admin-player-avatar { display:block; width:52px; height:52px; border:1px solid var(--line); border-radius:12px; image-rendering:pixelated; background:var(--panel); }
+.admin-player-card-main { grid-column:2; grid-row:1; display:grid; min-width:0; gap:6px; }
 .admin-player-card-title { display:flex; min-width:0; align-items:center; gap:7px; }
-.admin-player-name-button { overflow:hidden; min-width:0; min-height:0!important; padding:0!important; border:0!important; color:var(--text)!important; background:transparent!important; box-shadow:none!important; cursor:pointer; font:inherit; font-size:17px; font-weight:800; text-align:left; text-overflow:ellipsis; white-space:nowrap; }
+.admin-player-name-button { display:block; overflow:hidden; min-width:0; max-width:100%; min-height:0!important; padding:0!important; border:0!important; color:var(--text)!important; background:transparent!important; box-shadow:none!important; cursor:pointer; font:inherit; font-size:17px; font-weight:800; line-height:1.2; text-align:left; text-overflow:ellipsis; white-space:nowrap; }
 .admin-player-card-main code { overflow:hidden; color:var(--muted); font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
 .admin-player-card-tags { display:flex; gap:5px; flex-wrap:wrap; min-height:22px; }
 .admin-player-tag { display:inline-flex; align-items:center; min-height:22px; padding:3px 7px; border-radius:999px; color:var(--accent); background:color-mix(in srgb,var(--accent) 12%,var(--panel)); font-size:11px; font-weight:800; }
-.admin-player-card-stats { grid-column:1 / -1; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:7px; margin:0; }
+.admin-player-card-stats { grid-column:1 / -1; grid-row:2; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:7px; margin:0; }
 .admin-player-card-stats div { min-width:0; padding:8px 9px; border:1px solid var(--line); border-radius:10px; background:var(--panel); }
 .admin-player-card-stats dt { color:var(--muted); font-size:10px; font-weight:800; text-transform:uppercase; }
 .admin-player-card-stats dd { overflow:hidden; margin:4px 0 0; font-size:12px; font-weight:800; text-overflow:ellipsis; white-space:nowrap; }
-.admin-player-card-menu { position:relative; }
+.admin-player-card-menu { position:relative; grid-column:3; grid-row:1; }
 .admin-player-card-menu[open] { z-index:101; }
 .admin-player-card-menu summary { display:grid; place-items:center; width:38px; height:38px; border:1px solid var(--line); border-radius:var(--button-radius); color:var(--muted); background:var(--panel); cursor:pointer; font-size:22px; line-height:1; list-style:none; }
 .admin-player-card-menu summary::-webkit-details-marker { display:none; }
@@ -8106,7 +8106,7 @@ body.kill-aura-modal-open {
   .admin-players-scroller { max-height:min(62dvh,620px); }
   .admin-players-list { grid-template-columns:minmax(0,1fr); padding:10px; }
   .admin-player-card { grid-template-columns:46px minmax(0,1fr) auto; padding:12px; }
-  .admin-player-avatar-button { width:46px; height:46px; }
+  .admin-player-avatar-button { width:46px; min-width:46px!important; max-width:46px; height:46px; }
   .admin-player-avatar { width:46px; height:46px; }
   .admin-player-card-stats { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .admin-player-card-menu > div { position:fixed; z-index:1600; top:auto; right:12px; bottom:calc(12px + env(safe-area-inset-bottom,0px)); left:12px; width:auto; padding:10px; }
