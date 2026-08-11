@@ -7562,6 +7562,13 @@ body.kill-aura-modal-open {
   .child-ai-style-row {
     grid-template-columns: minmax(0, 1fr);
     gap: 9px;
+    content-visibility: auto;
+    contain-intrinsic-size: auto 132px;
+  }
+
+  .child-ai-load-more {
+    width: 100%;
+    min-height: 44px;
   }
 
   .child-ai-style-meta {

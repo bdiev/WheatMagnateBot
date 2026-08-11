@@ -61,6 +61,8 @@ const state = {
   adminLogsLoading: false,
   childAiLoading: false,
   childAiPlayerStyles: [],
+  childAiStyleVisibleLimit: 40,
+  childAiStyleRenderFrame: null,
   childAiImportState: null,
   timelineLoading: false,
   timelineSelectedEventId: null,
@@ -122,6 +124,7 @@ const state = {
 const $ = selector => document.querySelector(selector);
 const $$ = selector => Array.from(document.querySelectorAll(selector));
 const CHAT_HISTORY_LIMIT = 500;
+const CHILD_AI_MOBILE_STYLE_BATCH = 40;
 const NAV_SECTION_INFO = Object.freeze({
   chat: ['Chat', 'Minecraft and site chat'],
   bot: ['Bot Stats', 'Connection, health and inventory'],
@@ -539,14 +542,15 @@ function playerHeadUrl(username, size = 32) {
   return `https://minotar.net/avatar/${safeUsername}/${size}`;
 }
 
-function playerIdentity(username, size = 28, { status = null } = {}) {
+function playerIdentity(username, size = 28, { status = null, loading = 'eager' } = {}) {
   const safeName = escapeHtml(username || 'Unknown');
   const safeUsername = escapeHtml(username || '');
   const statusClass = status === 'online' ? ' online' : status === 'offline' ? ' offline' : '';
   const statusLabel = status === 'online' ? 'Online' : status === 'offline' ? 'Offline' : '';
+  const imageLoading = loading === 'lazy' ? 'lazy' : 'eager';
   return `
     <span class="player-identity${statusClass}" role="button" tabindex="0" data-player="${safeUsername}" title="Open player profile"${statusLabel ? ` aria-label="${safeName}: ${statusLabel}"` : ''}>
-      <img class="player-head" src="${playerHeadUrl(username, size)}" alt="" loading="eager" decoding="async" width="${size}" height="${size}">
+      <img class="player-head" src="${playerHeadUrl(username, size)}" alt="" loading="${imageLoading}" decoding="async" width="${size}" height="${size}">
       <span>${safeName}</span>
     </span>
   `;
@@ -5835,18 +5839,26 @@ function renderChildAiPlayerStyles({ resetScroll = false } = {}) {
   const filteredStyles = query
     ? styles.filter(profile => String(profile.subjectName || profile.subjectId || '').toLocaleLowerCase().includes(query))
     : styles;
+  const compact = window.matchMedia?.('(max-width: 700px)').matches;
+  const visibleLimit = compact
+    ? Math.max(CHILD_AI_MOBILE_STYLE_BATCH, Number(state.childAiStyleVisibleLimit) || 0)
+    : filteredStyles.length;
+  const visibleStyles = filteredStyles.slice(0, visibleLimit);
+  const remaining = Math.max(0, filteredStyles.length - visibleStyles.length);
 
   if (count) {
-    count.textContent = query
-      ? `${formatNumber(filteredStyles.length)} of ${formatNumber(styles.length)} players`
-      : `${formatNumber(styles.length)} players`;
+    count.textContent = remaining
+      ? `${formatNumber(visibleStyles.length)} of ${formatNumber(filteredStyles.length)} players`
+      : query
+        ? `${formatNumber(filteredStyles.length)} of ${formatNumber(styles.length)} players`
+        : `${formatNumber(styles.length)} players`;
   }
 
-  list.innerHTML = filteredStyles.length ? filteredStyles.map(profile => {
+  const rows = visibleStyles.map(profile => {
     const displayName = profile.subjectName || profile.subjectId || 'Unknown player';
     const isMinecraftPlayer = String(profile.source || '').toLowerCase() === 'minecraft';
     const identity = isMinecraftPlayer
-      ? playerIdentity(displayName, 28)
+      ? playerIdentity(displayName, 28, { loading: 'lazy' })
       : `<strong class="child-ai-style-name">${escapeHtml(displayName)}</strong>`;
     return `
       <article class="child-ai-style-row">
@@ -5869,9 +5881,24 @@ function renderChildAiPlayerStyles({ resetScroll = false } = {}) {
           <button class="ghost-button" type="button" data-child-style-edit="${escapeHtml(profile.subjectId)}" data-source="${escapeHtml(profile.source)}" data-tone="${escapeHtml(profile.adminTone || 'auto')}" data-length="${escapeHtml(profile.adminLength || 'auto')}" data-notes="${escapeHtml(profile.adminNotes || '')}">Adjust style</button>
         </div>
       </article>`;
-  }).join('') : `<div class="empty">${styles.length ? 'No player styles match this nickname.' : 'Player styles appear after safe messages are learned.'}</div>`;
+  }).join('');
+  const loadMore = remaining
+    ? `<button class="ghost-button child-ai-load-more" type="button" data-child-style-load-more>Show ${formatNumber(Math.min(CHILD_AI_MOBILE_STYLE_BATCH, remaining))} more</button>`
+    : '';
+  list.innerHTML = visibleStyles.length
+    ? `${rows}${loadMore}`
+    : `<div class="empty">${styles.length ? 'No player styles match this nickname.' : 'Player styles appear after safe messages are learned.'}</div>`;
 
   if (resetScroll) list.scrollTop = 0;
+}
+
+function handleChildAiStyleSearch() {
+  state.childAiStyleVisibleLimit = CHILD_AI_MOBILE_STYLE_BATCH;
+  cancelAnimationFrame(state.childAiStyleRenderFrame);
+  state.childAiStyleRenderFrame = requestAnimationFrame(() => {
+    state.childAiStyleRenderFrame = null;
+    renderChildAiPlayerStyles({ resetScroll: true });
+  });
 }
 
 function renderChildAiAdmin(payload) {
@@ -5888,6 +5915,7 @@ function renderChildAiAdmin(payload) {
   const generations = Array.isArray(snapshot.generations) ? snapshot.generations : [];
   const playerStyles = Array.isArray(snapshot.playerStyles) ? snapshot.playerStyles : [];
   state.childAiPlayerStyles = playerStyles;
+  state.childAiStyleVisibleLimit = CHILD_AI_MOBILE_STYLE_BATCH;
   const responseExamples = Array.isArray(snapshot.responseExamples) ? snapshot.responseExamples : [];
   $('#childAiWordCount').textContent = formatNumber(snapshot.stats?.knownWords || 0);
   $('#childAiMemoryCount').textContent = formatNumber(memories.length);
@@ -6079,6 +6107,12 @@ async function handleChildAiExampleAction(event) {
 }
 
 async function handleChildAiStyleAction(event) {
+  const loadMoreButton = event.target.closest('[data-child-style-load-more]');
+  if (loadMoreButton) {
+    state.childAiStyleVisibleLimit += CHILD_AI_MOBILE_STYLE_BATCH;
+    renderChildAiPlayerStyles();
+    return;
+  }
   const button = event.target.closest('[data-child-style-edit]');
   if (!button) return;
   const tone = prompt('Tone (auto, casual, friendly, helpful, energetic, reserved):', button.dataset.tone || 'auto');
@@ -6536,7 +6570,7 @@ $('#childAiMemories')?.addEventListener('click', handleChildAiMemoryAction);
 $('#childAiExampleForm')?.addEventListener('submit', addChildAiExample);
 $('#childAiExamples')?.addEventListener('click', handleChildAiExampleAction);
 $('#childAiStyles')?.addEventListener('click', handleChildAiStyleAction);
-$('#childAiStyleSearch')?.addEventListener('input', () => renderChildAiPlayerStyles({ resetScroll: true }));
+$('#childAiStyleSearch')?.addEventListener('input', handleChildAiStyleSearch);
 $('#childAiForgetUser')?.addEventListener('click', forgetChildAiUser);
 $('#childAiExport')?.addEventListener('click', exportChildAiState);
 $('#childAiImportFile')?.addEventListener('change', selectChildAiImport);
