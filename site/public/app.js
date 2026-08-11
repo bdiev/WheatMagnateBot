@@ -549,19 +549,21 @@ function formatDurationMs(value) {
   return `${totalSeconds}s`;
 }
 
-function playerHeadUrl(username, size = 32) {
+function playerHeadUrl(username, size = 32, { uuid = null } = {}) {
   const safeUsername = encodeURIComponent(String(username || 'Steve').trim() || 'Steve');
-  return `/api/minecraft-avatar?username=${safeUsername}`;
+  const compactUuid = String(uuid || '').replaceAll('-', '').trim().toLowerCase();
+  const uuidQuery = /^[0-9a-f]{32}$/.test(compactUuid) ? `&uuid=${encodeURIComponent(compactUuid)}` : '';
+  return `/api/minecraft-avatar?username=${safeUsername}${uuidQuery}&v=2`;
 }
 
-function playerIdentity(username, size = 28, { status = null } = {}) {
+function playerIdentity(username, size = 28, { status = null, uuid = null } = {}) {
   const safeName = escapeHtml(username || 'Unknown');
   const safeUsername = escapeHtml(username || '');
   const statusClass = status === 'online' ? ' online' : status === 'offline' ? ' offline' : '';
   const statusLabel = status === 'online' ? 'Online' : status === 'offline' ? 'Offline' : '';
   return `
     <span class="player-identity${statusClass}" role="button" tabindex="0" data-player="${safeUsername}" title="Open player profile"${statusLabel ? ` aria-label="${safeName}: ${statusLabel}"` : ''}>
-      <img class="player-head" src="${playerHeadUrl(username, size)}" alt="" loading="eager" decoding="async" width="${size}" height="${size}">
+      <img class="player-head" src="${playerHeadUrl(username, size, { uuid })}" alt="" loading="eager" decoding="async" width="${size}" height="${size}">
       <span>${safeName}</span>
     </span>
   `;
@@ -801,8 +803,8 @@ async function fetchJson(path, { transientRetries = 0, signal = null } = {}) {
   }
 }
 
-function accountHeadUrl(username) {
-  return playerHeadUrl(username, 64);
+function accountHeadUrl(username, uuid = null) {
+  return playerHeadUrl(username, 64, { uuid });
 }
 
 function accountStatusClass(account) {
@@ -2358,7 +2360,7 @@ function renderPlayerProfile(profile) {
   return `
     <header class="player-profile-head">
       <span class="player-profile-avatar-wrap" data-status="${profile.isOnline ? 'online' : 'offline'}" aria-label="${profile.isOnline ? 'Online' : 'Offline'}">
-        <img class="player-profile-avatar" src="${playerHeadUrl(profile.username, 96)}" alt="" loading="lazy">
+        <img class="player-profile-avatar" src="${playerHeadUrl(profile.username, 96, { uuid: profile.uuid })}" alt="" loading="lazy">
       </span>
       <div>
         <div class="player-profile-identity">
@@ -3229,6 +3231,7 @@ function renderChatMessages(messages) {
       message.id,
       message.type,
       message.username,
+      message.playerUuid,
       message.message,
       message.event,
       message.isBot,
@@ -3286,7 +3289,7 @@ function renderChatMessages(messages) {
            <span class="chat-text"></span>
          </div>
          <time class="chat-time">${formatChatTime(message.createdAt)}</time>`
-      : `<div class="chat-user">${isContinuation ? '' : playerIdentity(username, 28)}</div>
+      : `<div class="chat-user">${isContinuation ? '' : playerIdentity(username, 28, { uuid: message.playerUuid })}</div>
          <div class="chat-message-body">
            ${isContinuation ? '' : `<div class="chat-message-head">
              <span class="chat-message-name">${escapeHtml(username)}</span>
@@ -4766,7 +4769,7 @@ function renderAdminPlayers(players = state.adminPlayers, { append = false } = {
     return `
       <article class="admin-player-card" data-admin-player-key="${identityKey}">
         <button class="admin-player-avatar-button" type="button" data-admin-player-action="view" data-player-key="${identityKey}" aria-label="Open ${username} profile">
-          <img class="admin-player-avatar" src="${accountHeadUrl(player.username)}" alt="" loading="lazy" decoding="async">
+          <img class="admin-player-avatar" src="${accountHeadUrl(player.username, player.uuid)}" alt="" loading="lazy" decoding="async">
         </button>
         <div class="admin-player-card-main">
           <div class="admin-player-card-title"><button class="admin-player-name-button" type="button" data-admin-player-action="view" data-player-key="${identityKey}">${username}</button><span class="pill ${player.isOnline ? 'online' : ''}">${player.isOnline ? 'online' : 'offline'}</span></div>
@@ -4888,7 +4891,7 @@ async function loadAdminPlayers({ query = $('#adminPlayersSearch')?.value || '',
 }
 
 function adminPlayerIdentityMarkup(player) {
-  return `<img src="${accountHeadUrl(player.username)}" alt="" decoding="async"><div><strong>${escapeHtml(player.username)}</strong><code>${escapeHtml(player.uuid || `Legacy profile ID ${player.id}`)}</code></div>`;
+  return `<img src="${accountHeadUrl(player.username, player.uuid)}" alt="" decoding="async"><div><strong>${escapeHtml(player.username)}</strong><code>${escapeHtml(player.uuid || `Legacy profile ID ${player.id}`)}</code></div>`;
 }
 
 function renderAdminPlayerReadonly(player) {

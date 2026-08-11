@@ -121,12 +121,15 @@ function displayGameChatMessage(value) {
 async function sendMinecraftAvatar(res, url) {
   const username = String(url.searchParams.get('username') || '').trim();
   if (!/^[A-Za-z0-9_]{1,16}$/.test(username)) { sendError(res,400,'Invalid Minecraft username.'); return; }
-  const cacheKey = username.toLowerCase();
+  const compactUuid = String(url.searchParams.get('uuid') || '').replace(/-/g, '').trim().toLowerCase();
+  if (compactUuid && !/^[0-9a-f]{32}$/.test(compactUuid)) { sendError(res,400,'Invalid Minecraft UUID.'); return; }
+  const avatarIdentity = compactUuid || username;
+  const cacheKey = `v2:${avatarIdentity.toLowerCase()}`;
   const cached = minecraftAvatarCache.get(cacheKey);
   if (cached && Date.now()-cached.storedAt < 6*60*60_000) {
     res.writeHead(200,{'Content-Type':'image/png','Cache-Control':'public, max-age=21600','Content-Length':cached.body.length}); res.end(cached.body); return;
   }
-  const sources = [`https://minotar.net/avatar/${encodeURIComponent(username)}/64`,`https://mc-heads.net/avatar/${encodeURIComponent(username)}/64`];
+  const sources = [`https://minotar.net/avatar/${encodeURIComponent(avatarIdentity)}/64`,`https://mc-heads.net/avatar/${encodeURIComponent(avatarIdentity)}/64`];
   for (const source of sources) {
     try {
       const response = await fetch(source,{signal:AbortSignal.timeout(5_000),headers:{Accept:'image/png'}});
@@ -942,26 +945,26 @@ async function getChat(url) {
       )
   ) AS is_bot`;
   const messagesSql = searchQuery
-    ? `SELECT id, username, message, created_at, ${botTagColumn}
+    ? `SELECT id, username, player_uuid, message, created_at, ${botTagColumn}
        FROM game_chat_messages
        WHERE POSITION(LOWER($2) IN LOWER(message)) > 0
        ORDER BY id DESC
        LIMIT $1`
     : aroundId
-    ? `SELECT id, username, message, created_at, is_bot FROM (
-         (SELECT id, username, message, created_at, ${botTagColumn}
+    ? `SELECT id, username, player_uuid, message, created_at, is_bot FROM (
+         (SELECT id, username, player_uuid, message, created_at, ${botTagColumn}
           FROM game_chat_messages
           WHERE id <= $2::bigint
           ORDER BY id DESC
           LIMIT (($1 + 1) / 2))
          UNION ALL
-         (SELECT id, username, message, created_at, ${botTagColumn}
+         (SELECT id, username, player_uuid, message, created_at, ${botTagColumn}
           FROM game_chat_messages
           WHERE id > $2::bigint
           ORDER BY id ASC
           LIMIT ($1 / 2))
        ) context_messages`
-    : `SELECT id, username, message, created_at, ${botTagColumn}
+    : `SELECT id, username, player_uuid, message, created_at, ${botTagColumn}
        FROM game_chat_messages
        ORDER BY created_at DESC
        LIMIT $1`;
@@ -970,6 +973,7 @@ async function getChat(url) {
     pool.query(`
       SELECT
         username,
+        player_uuid,
         is_online,
         admin_tags,
         CASE
@@ -1049,6 +1053,7 @@ async function getChat(url) {
       id: row.id,
       type: 'chat',
       username: row.username,
+      playerUuid: row.player_uuid || null,
       message: displayGameChatMessage(row.message),
       isBot: Boolean(row.is_bot),
       createdAt: row.created_at
@@ -1059,6 +1064,7 @@ async function getChat(url) {
       id: `activity:${String(row.username).toLowerCase()}:${row.is_online ? 'join' : 'leave'}:${new Date(row.event_at).getTime()}`,
       type: 'activity',
       username: row.username,
+      playerUuid: row.player_uuid || null,
       isBot: Array.isArray(row.admin_tags) && row.admin_tags.some(tag => String(tag).trim().toLowerCase() === 'bot'),
       event: row.is_online ? 'join' : 'leave',
       message: row.is_online ? 'joined the game' : 'left the game',

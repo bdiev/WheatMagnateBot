@@ -224,7 +224,7 @@ function testArchitectureAndUiContracts() {
   assert.match(appSource, /document\.addEventListener\('pointerdown', closeAdminPlayerMenus, true\)/, 'clicking or tapping outside a player menu must close it');
   assert.match(appSource, /menu\.contains\(event\.target\)[\s\S]*menu\.removeAttribute\('open'\)/, 'interactions inside the active player menu must not close it');
   assert.match(appSource, /new URLSearchParams\(\{[\s\S]*sort: state\.adminPlayersSort,[\s\S]*direction: state\.adminPlayersDirection,[\s\S]*limit: String\(state\.adminPlayersLimit\),[\s\S]*offset:/, 'sorting and pagination must happen on the server');
-  assert.match(appSource, /admin-player-avatar[^\n]*accountHeadUrl\(player\.username\)[^\n]*loading="lazy" decoding="async"/, 'player cards must use the cached avatar proxy and asynchronous decoding');
+  assert.match(appSource, /admin-player-avatar[^\n]*accountHeadUrl\(player\.username, player\.uuid\)[^\n]*loading="lazy" decoding="async"/, 'player cards must use the UUID-aware cached avatar proxy and asynchronous decoding');
   assert.match(appSource, /admin-player-avatar-button[^>]*data-admin-player-action="view"[^>]*data-player-key/, 'clicking a player avatar must open the profile');
   assert.match(appSource, /admin-player-name-button[^>]*data-admin-player-action="view"[^>]*data-player-key/, 'clicking a player nickname must open the profile');
   assert.match(appSource, /adminPlayersScroller'[\s\S]*addEventListener\('scroll', maybeLoadMoreAdminPlayers/, 'scrolling must progressively load the next server page');
