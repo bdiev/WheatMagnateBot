@@ -6,6 +6,7 @@ const { pathfinder } = require('mineflayer-pathfinder');
 const { createDiscordClient, saveStatusMessageId, loadStatusMessageId } = require('./discord');
 const { DiscordChatForwardQueue, positiveInteger } = require('./discord/chat-forward-queue');
 const { createMinecraftBot } = require('./minecraft');
+const { moveInventorySlot } = require('./minecraft/inventory-slot-move');
 const {
   createDatabasePool,
   logDatabaseStatus,
@@ -5283,6 +5284,12 @@ async function executeBotCommand(command) {
     return { item: item.name, count: item.count, targetUsername };
   }
 
+  if (type === 'inventory_move') {
+    const result = await moveInventorySlot(bot, payload);
+    await writeBotStatusSnapshot().catch(() => {});
+    return result;
+  }
+
   if (type === 'whitelist_add') {
     const username = String(payload.username || '').trim();
     if (!username) throw new Error('Username is required.');
@@ -5567,6 +5574,11 @@ async function executeManagedAccountCommand(command) {
     if (!runtime.bot?.chat) throw new Error('Account is not connected.');
     runtime.bot.chat(sanitizeSiteChatMessage(payload.message));
     return { sent: true };
+  }
+  if (type === 'inventory_move') {
+    const result = await moveInventorySlot(runtime.bot, payload);
+    await persistManagedRuntimeStatus(runtime.getStatus());
+    return result;
   }
   if (type === 'site_whisper_claim') {
     const username = String(payload.username || '').replace(/[^A-Za-z0-9_]/g,'').slice(0,32);

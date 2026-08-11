@@ -81,6 +81,9 @@ const state = {
   killAuraModalSelectionSnapshot: new Set(),
   killAuraTargetsDirty: false,
   supplyTooltipItems: {},
+  inventoryMoveSelection: null,
+  inventoryMovePending: false,
+  inventoryDragConsumedUntil: 0,
   itemIcons: {},
   itemIconsLoading: null,
   chatReply: null,
@@ -844,6 +847,11 @@ async function loadAccounts() {
 
 async function selectAccount(accountId) {
   if (accountId === state.activeAccountId || !state.accounts.some(account => account.id === accountId)) return;
+  if (state.inventoryMovePending) {
+    setInventoryMoveHint('Wait for the current inventory move to finish.');
+    return;
+  }
+  clearInventoryMoveSelection();
   state.accountAbortController?.abort();
   state.accountAbortController = new AbortController();
   state.activeAccountId = accountId;
@@ -3358,11 +3366,11 @@ function equipmentBySlot(armor = []) {
   return bySlot;
 }
 
-function renderEquipmentSlot(label, slot, item, tooltipPrefix) {
+function renderEquipmentSlot(label, slot, item, tooltipPrefix, { inventoryControl = false } = {}) {
   return `
     <div class="equipment-slot">
       <span class="inventory-slot-label">${escapeHtml(label)}</span>
-      ${renderInventorySlot(slot, item, { label: `${label} slot`, tooltipPrefix })}
+      ${renderInventorySlot(slot, item, { label: `${label} slot`, tooltipPrefix, inventoryControl })}
     </div>
   `;
 }
@@ -3373,6 +3381,15 @@ function renderBotInventory(selector, bot, connected) {
   const heldItem = normalizeInventoryItem(bot?.heldItem);
   const offhandItem = inventory.find(item => Number(item.slot) === 45);
   const slots = inventoryGridSlots(inventory);
+  const inventoryControl = connected && state.currentUser?.role === 'admin';
+  if (!connected && state.inventoryMoveSelection) clearInventoryMoveSelection();
+  const hint = $('#botInventoryHint');
+  if (hint && !state.inventoryMovePending && !state.inventoryMoveSelection) {
+    hint.textContent = inventoryControl
+      ? 'Drag an item to another slot, or select the item and then its destination.'
+      : 'Latest item snapshot reported by the Minecraft bot.';
+    hint.classList.remove('inventory-hint-error');
+  }
 
   state.supplyTooltipItems = Object.fromEntries(Object.entries(state.supplyTooltipItems).filter(([key]) => (
     !key.startsWith('bot-inventory:') &&
@@ -3386,29 +3403,30 @@ function renderBotInventory(selector, bot, connected) {
   }
 
   const html = `
-    <div class="bot-inventory-layout">
+    <div class="bot-inventory-layout${state.inventoryMoveSelection ? ' inventory-move-active' : ''}${state.inventoryMovePending ? ' inventory-move-pending' : ''}">
       <div class="bot-equipment-panel" aria-label="Bot equipment">
-        ${renderEquipmentSlot('Helmet', 5, armor.get(5), 'bot-equipment')}
-        ${renderEquipmentSlot('Chest / Elytra', 6, armor.get(6), 'bot-equipment')}
-        ${renderEquipmentSlot('Leggings', 7, armor.get(7), 'bot-equipment')}
-        ${renderEquipmentSlot('Boots', 8, armor.get(8), 'bot-equipment')}
+        ${renderEquipmentSlot('Helmet', 5, armor.get(5), 'bot-equipment', { inventoryControl })}
+        ${renderEquipmentSlot('Chest / Elytra', 6, armor.get(6), 'bot-equipment', { inventoryControl })}
+        ${renderEquipmentSlot('Leggings', 7, armor.get(7), 'bot-equipment', { inventoryControl })}
+        ${renderEquipmentSlot('Boots', 8, armor.get(8), 'bot-equipment', { inventoryControl })}
       </div>
       <div class="bot-hand-panel" aria-label="Bot hands">
         <div class="inventory-offhand">
           <span class="inventory-slot-label">Offhand</span>
-          ${renderInventorySlot(45, offhandItem, { tooltipPrefix: 'bot-inventory', label: 'Offhand slot' })}
+          ${renderInventorySlot(45, offhandItem, { tooltipPrefix: 'bot-inventory', label: 'Offhand slot', inventoryControl })}
         </div>
         ${renderEquipmentSlot('Held', 'held', heldItem, 'bot-held')}
       </div>
       <div class="inventory-layout bot-main-inventory">
         <div class="inventory-grid" aria-label="Bot inventory slots">
-          ${slots.map(({ slot, item, fallback }) => renderInventorySlot(slot, item, { fallback, tooltipPrefix: 'bot-inventory' })).join('')}
+          ${slots.map(({ slot, item, fallback }) => renderInventorySlot(slot, item, { fallback, tooltipPrefix: 'bot-inventory', inventoryControl: inventoryControl && !fallback })).join('')}
         </div>
       </div>
     </div>
   `;
 
   renderStable(selector, html, {
+    inventoryControl,
     inventory: inventory.map(item => [item.name, item.displayName, item.label, item.count, item.slot, item.remainingPercent]),
     armor: (bot?.armor || []).map(item => [item.name, item.displayName, item.count, item.slot, item.remainingPercent]),
     heldItem: heldItem ? [heldItem.name, heldItem.displayName, heldItem.count, heldItem.slot, heldItem.remainingPercent] : null
@@ -3436,7 +3454,7 @@ function renderBotStats(payload) {
     pauseResumeButton.classList.toggle('ghost-button', isPaused);
   }
 
-  renderBotInventory('#botInventory', bot, connected);
+  if (!state.inventoryMovePending) renderBotInventory('#botInventory', bot, connected);
 
   $('#botDetails').innerHTML = `
     <div><span>Username</span><strong>${escapeHtml(bot?.username || '-')}</strong></div>
@@ -3688,6 +3706,139 @@ function updatePlaytimeLeaderboardScopeControls(scope, { animateButton = false }
       button.classList.add('pressed');
     }
   });
+}
+
+function setInventoryMoveHint(message, { error = false } = {}) {
+  const hint = $('#botInventoryHint');
+  if (!hint) return;
+  hint.textContent = message;
+  hint.classList.toggle('inventory-hint-error', error);
+}
+
+function clearInventoryMoveSelection() {
+  state.inventoryMoveSelection = null;
+  $$('#botInventory .inventory-selected, #botInventory .inventory-drag-over, #botInventory .inventory-dragging')
+    .forEach(slot => slot.classList.remove('inventory-selected', 'inventory-drag-over', 'inventory-dragging'));
+  $('#botInventory .bot-inventory-layout')?.classList.remove('inventory-move-active');
+}
+
+function inventorySlotItemFromElement(slot) {
+  if (!slot?.dataset.inventoryItemName) return null;
+  const item = {
+    name: slot.dataset.inventoryItemName,
+    count: Number(slot.dataset.inventoryItemCount) || 1
+  };
+  if (slot.dataset.inventoryItemDurability != null && slot.dataset.inventoryItemDurability !== '') {
+    item.durabilityUsed = Number(slot.dataset.inventoryItemDurability);
+  }
+  return item;
+}
+
+function selectInventoryMoveSource(slot) {
+  const item = inventorySlotItemFromElement(slot);
+  const sourceSlot = Number(slot?.dataset.inventorySlot);
+  if (!item || !Number.isInteger(sourceSlot) || state.inventoryMovePending) return false;
+
+  clearInventoryMoveSelection();
+  state.inventoryMoveSelection = { sourceSlot, item };
+  slot.classList.add('inventory-selected');
+  $('#botInventory .bot-inventory-layout')?.classList.add('inventory-move-active');
+  setInventoryMoveHint(`Selected ${item.name.replaceAll('_', ' ')}. Choose its destination slot.`);
+  return true;
+}
+
+async function moveSelectedInventoryItem(targetSlotElement) {
+  const selection = state.inventoryMoveSelection;
+  const targetSlot = Number(targetSlotElement?.dataset.inventorySlot);
+  if (!selection || !Number.isInteger(targetSlot) || state.inventoryMovePending) return;
+  if (selection.sourceSlot === targetSlot) {
+    clearInventoryMoveSelection();
+    setInventoryMoveHint('Inventory move cancelled.');
+    return;
+  }
+
+  const expectedTarget = inventorySlotItemFromElement(targetSlotElement);
+  state.inventoryMovePending = true;
+  $('#botInventory .bot-inventory-layout')?.classList.add('inventory-move-pending');
+  setInventoryMoveHint(`Moving item from slot ${selection.sourceSlot} to slot ${targetSlot}...`);
+
+  try {
+    const queued = await postJson('/api/admin/bot-command', {
+      commandType: 'inventory_move',
+      accountId: state.activeAccountId,
+      payload: {
+        sourceSlot: selection.sourceSlot,
+        targetSlot,
+        expectedSource: selection.item,
+        expectedTarget
+      }
+    });
+    await waitForAdminBotCommand(queued.command.id);
+    state.inventoryMovePending = false;
+    clearInventoryMoveSelection();
+    state.renderSignatures['#botInventory'] = null;
+    await refreshBotFromEvent();
+    setInventoryMoveHint(`Moved item to slot ${targetSlot}.`);
+  } catch (error) {
+    state.inventoryMovePending = false;
+    clearInventoryMoveSelection();
+    state.renderSignatures['#botInventory'] = null;
+    await refreshBotFromEvent().catch(() => {});
+    setInventoryMoveHint(error.message || 'Could not move the inventory item.', { error: true });
+  } finally {
+    $('#botInventory .bot-inventory-layout')?.classList.remove('inventory-move-pending');
+  }
+}
+
+function handleBotInventoryClick(event) {
+  const slot = event.target.closest('[data-inventory-slot]');
+  if (!slot || state.currentUser?.role !== 'admin' || Date.now() < state.inventoryDragConsumedUntil) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (!state.inventoryMoveSelection) selectInventoryMoveSource(slot);
+  else moveSelectedInventoryItem(slot);
+}
+
+function handleBotInventoryKeydown(event) {
+  if (!['Enter', ' '].includes(event.key) || !event.target.closest('[data-inventory-slot]')) return;
+  event.preventDefault();
+  handleBotInventoryClick(event);
+}
+
+function handleBotInventoryDragStart(event) {
+  const slot = event.target.closest('[data-inventory-item-name]');
+  if (!slot || state.currentUser?.role !== 'admin' || state.inventoryMovePending) {
+    event.preventDefault();
+    return;
+  }
+  selectInventoryMoveSource(slot);
+  slot.classList.add('inventory-dragging');
+  event.dataTransfer.effectAllowed = 'move';
+  event.dataTransfer.setData('text/plain', slot.dataset.inventorySlot);
+}
+
+function handleBotInventoryDragOver(event) {
+  const slot = event.target.closest('[data-inventory-slot]');
+  if (!slot || !state.inventoryMoveSelection || state.inventoryMovePending) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'move';
+  $$('#botInventory .inventory-drag-over').forEach(item => item.classList.remove('inventory-drag-over'));
+  if (Number(slot.dataset.inventorySlot) !== state.inventoryMoveSelection.sourceSlot) {
+    slot.classList.add('inventory-drag-over');
+  }
+}
+
+function handleBotInventoryDrop(event) {
+  const slot = event.target.closest('[data-inventory-slot]');
+  if (!slot || !state.inventoryMoveSelection || state.inventoryMovePending) return;
+  event.preventDefault();
+  state.inventoryDragConsumedUntil = Date.now() + 500;
+  moveSelectedInventoryItem(slot);
+}
+
+function handleBotInventoryDragEnd() {
+  $$('#botInventory .inventory-drag-over, #botInventory .inventory-dragging')
+    .forEach(slot => slot.classList.remove('inventory-drag-over', 'inventory-dragging'));
 }
 
 function resetPlaytimeLeaderboardScroll(list, scope) {
@@ -4273,16 +4424,23 @@ function renderContainerSupplies(selector, items) {
   });
 }
 
-function renderInventorySlot(slot, item, { fallback = false, label = 'Empty slot', tooltipPrefix = 'inventory' } = {}) {
-  if (!item) return `<div class="inventory-slot" data-slot="${slot}" aria-label="${escapeHtml(label)}"></div>`;
+function renderInventorySlot(slot, item, { fallback = false, label = 'Empty slot', tooltipPrefix = 'inventory', inventoryControl = false } = {}) {
+  const selected = inventoryControl && Number(state.inventoryMoveSelection?.sourceSlot) === Number(slot);
+  const controlAttributes = inventoryControl
+    ? `data-inventory-slot="${slot}" role="button" tabindex="0"`
+    : '';
+  if (!item) return `<div class="inventory-slot${inventoryControl ? ' inventory-drop-target' : ''}" data-slot="${slot}" ${controlAttributes} aria-label="${escapeHtml(label)}"></div>`;
   const itemLabel = item.displayName || item.label || item.name || 'Item';
   const durability = item.remainingPercent == null
     ? ''
     : `<span class="inventory-durability">${Number(item.remainingPercent).toFixed(0)}%</span>`;
   const low = item.usable === false ? ' low' : '';
   const tooltipKey = supplyTooltipKey(tooltipPrefix, slot, item);
+  const movableAttributes = inventoryControl
+    ? `draggable="true" data-inventory-slot="${slot}" data-inventory-item-name="${escapeHtml(item.name || '')}" data-inventory-item-count="${Number(item.count) || 1}"${item.durabilityUsed != null && Number.isFinite(Number(item.durabilityUsed)) ? ` data-inventory-item-durability="${Number(item.durabilityUsed)}"` : ''} aria-label="Move ${escapeHtml(itemLabel)} from slot ${slot}"`
+    : '';
   return `
-    <div class="inventory-slot filled${low}${fallback ? ' fallback-position' : ''}" role="button" tabindex="0" data-slot="${slot}" data-supply-tooltip="${escapeHtml(tooltipKey)}" title="${escapeHtml(itemLabel)} x${formatNumber(item.count)}">
+    <div class="inventory-slot filled${low}${fallback ? ' fallback-position' : ''}${inventoryControl ? ' inventory-draggable' : ''}${selected ? ' inventory-selected' : ''}" role="button" tabindex="0" data-slot="${slot}" ${movableAttributes} data-supply-tooltip="${escapeHtml(tooltipKey)}" title="${escapeHtml(itemLabel)} x${formatNumber(item.count)}">
       ${itemIcon(item)}
       <span class="inventory-count">${formatNumber(item.count)}</span>
       ${durability}
@@ -5678,7 +5836,7 @@ async function waitForAdminBotCommand(id, timeoutMs = 20_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const command = await fetchJson(`/api/admin/bot-command/${encodeURIComponent(id)}`);
-    if (command.status === 'completed') return command.result;
+    if (command.status === 'completed' || command.status === 'done') return command.result;
     if (command.status === 'failed') throw new Error(command.error || 'Bot command failed.');
     await new Promise(resolve => setTimeout(resolve, 400));
   }
@@ -6415,6 +6573,12 @@ $('#whisperForm')?.addEventListener('submit', handleWhisperSubmit);
 $('#whisperDeleteDialog')?.addEventListener('click', handleWhisperDeleteDialog);
 $('#whisperCloseDialog')?.addEventListener('click', closeWhisperDialog);
 $('#playerProfileContent')?.addEventListener('click', handlePlayerProfileClick);
+$('#botInventory')?.addEventListener('click', handleBotInventoryClick);
+$('#botInventory')?.addEventListener('keydown', handleBotInventoryKeydown);
+$('#botInventory')?.addEventListener('dragstart', handleBotInventoryDragStart);
+$('#botInventory')?.addEventListener('dragover', handleBotInventoryDragOver);
+$('#botInventory')?.addEventListener('drop', handleBotInventoryDrop);
+$('#botInventory')?.addEventListener('dragend', handleBotInventoryDragEnd);
 document.addEventListener('pointerdown', event => {
   if ($('#navMenu')?.classList.contains('open') && !event.target.closest('.nav-menu')) {
     setNavMenuOpen(false);

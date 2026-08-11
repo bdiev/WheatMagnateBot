@@ -109,7 +109,13 @@ function createPlaytimeFeature({
   }
 
   function parsePlaytime(value) {
-    const input = String(value || '').trim();
+    const input = String(value || '')
+      .trim()
+      // !pt responses may append the player's rank/total after the duration,
+      // for example: "20 days 15 hours 19 minutes 30 seconds. [329/50368]".
+      .replace(/\s*\[\d+\s*\/\s*\d+\]\s*$/, '')
+      .replace(/[.!]\s*$/, '')
+      .trim();
     if (!input) return null;
 
     const units = {

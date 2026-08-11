@@ -32,6 +32,16 @@ async function main(){
   const duplicate=await Promise.all([manager.start(first.id),manager.start(first.id)]); assert.equal(bots.length,2,'concurrent starts do not create duplicate runtimes'); assert.equal(duplicate[0].accountId,first.id);
   bots[1].username='RenamedSecondBot'; bots[1].emit('spawn'); assert.equal(secondRuntime.status,'connected','runtime accepts a renamed profile under the same immutable account ID'); assert.equal(secondRuntime.account.username,'RenamedSecondBot');
   firstRuntime.assignTask('obsidian'); secondRuntime.assignTask('follow'); assert.equal(firstRuntime.task,'obsidian');assert.equal(secondRuntime.task,'follow');
+  const managedSlots=[];
+  managedSlots[5]={name:'diamond_helmet',displayName:'Diamond Helmet',count:1,slot:5,maxDurability:363,durabilityUsed:20};
+  managedSlots[9]={name:'bread',displayName:'Bread',count:8,slot:9};
+  managedSlots[45]={name:'totem_of_undying',displayName:'Totem of Undying',count:1,slot:45};
+  bots[1].inventory={slots:managedSlots,items:()=>managedSlots.filter(Boolean)};
+  bots[1].heldItem=managedSlots[9];
+  const managedInventoryStatus=secondRuntime.getStatus();
+  assert.equal(managedInventoryStatus.armor[0].slot,5,'managed runtime snapshots include equipment slots');
+  assert.deepEqual(managedInventoryStatus.inventory.map(item=>item.slot),[9,45],'managed runtime snapshots keep main inventory and offhand slot numbers');
+  assert.equal(managedInventoryStatus.heldItem.slot,9,'managed runtime snapshots include the held item');
   await manager.shutdown(); assert.equal(firstRuntime.status,'stopped');assert.equal(secondRuntime.status,'stopped');
   const publicStatus=firstRuntime.getStatus(); assert.equal(Object.hasOwn(publicStatus,'authCachePath'),true); assert.equal(publicStatus.authCachePath,undefined,'status never exposes auth-cache path');
 

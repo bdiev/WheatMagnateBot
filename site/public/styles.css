@@ -4146,6 +4146,50 @@ body.search-focus-active #logoutButton {
   cursor: pointer;
 }
 
+.inventory-slot.inventory-draggable {
+  cursor: grab;
+}
+
+.inventory-slot.inventory-draggable:active,
+.inventory-slot.inventory-dragging {
+  cursor: grabbing;
+}
+
+.bot-inventory-layout.inventory-move-active .inventory-slot[data-inventory-slot] {
+  border-style: dashed;
+}
+
+.inventory-slot.inventory-selected {
+  z-index: 1;
+  border-color: var(--accent);
+  border-style: solid !important;
+  transform: translateY(-2px);
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--accent) 24%, transparent),
+    inset 2px 2px 0 color-mix(in srgb, #000 14%, transparent),
+    inset -2px -2px 0 color-mix(in srgb, #fff 28%, transparent);
+}
+
+.inventory-slot.inventory-drag-over {
+  border-color: var(--annotation-connected);
+  border-style: solid !important;
+  background: color-mix(in srgb, var(--annotation-connected) 18%, var(--panel));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--annotation-connected) 22%, transparent);
+}
+
+.inventory-slot.inventory-dragging {
+  opacity: 0.48;
+}
+
+.bot-inventory-layout.inventory-move-pending {
+  pointer-events: none;
+  opacity: 0.72;
+}
+
+#botInventoryHint.inventory-hint-error {
+  color: var(--annotation-disconnected);
+}
+
 .inventory-slot.low {
   border-color: color-mix(in srgb, var(--warn) 72%, var(--line));
 }

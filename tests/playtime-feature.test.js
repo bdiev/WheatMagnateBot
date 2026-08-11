@@ -31,6 +31,17 @@ async function run() {
   const searchResult = await feature.searchNonWhitelistPlaytime('vis', 100);
   const componentIds = feature.buildPlaytimeComponents()[0].components.map(component => component.data.custom_id);
 
+  assert.equal(
+    feature.parsePlaytime('20 days 15 hours 19 minutes 30 seconds. [329/50368]'),
+    1_783_170,
+    'rank metadata in a live !pt response must not prevent synchronization'
+  );
+  assert.equal(
+    feature.parsePlaytime('20 days 15 hours unexpected text'),
+    null,
+    'arbitrary trailing text must remain invalid'
+  );
+
   assert.deepStrictEqual(result.players, [{ username: 'Player', total_seconds: 120 }]);
   assert.deepStrictEqual(searchResult.players, [{ username: 'Visitor', total_seconds: 3600 }]);
   assert.match(queries[0].sql, /ON CONFLICT \(LOWER\(username\)\) DO NOTHING/);

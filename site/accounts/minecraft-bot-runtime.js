@@ -13,6 +13,20 @@ const SAFE_FOOD_PRIORITY = [
   'apple','carrot','melon_slice','cookie','dried_kelp'
 ];
 
+function compactInventoryItem(item) {
+  if (!item) return null;
+  const maxDurability = Number(item.maxDurability);
+  const durabilityUsed = Number(item.durabilityUsed);
+  return {
+    name:item.name,displayName:item.displayName || item.name,count:item.count,slot:item.slot,
+    maxDurability:maxDurability>0?maxDurability:null,
+    durabilityUsed:Number.isFinite(durabilityUsed)?durabilityUsed:null,
+    remainingPercent:maxDurability>0&&Number.isFinite(durabilityUsed)
+      ?Math.max(0,Math.min(100,((maxDurability-durabilityUsed)/maxDurability)*100))
+      :null
+  };
+}
+
 class MinecraftBotRuntime extends EventEmitter {
   constructor({ account, botFactory, killAuraFactory = null, authCacheRoot = path.join('data', 'auth-cache'), authCacheStore = null, reconnectBackoffMs, isWhitelisted = () => false, dangerRadius = 32 } = {}) {
     super();
@@ -266,13 +280,20 @@ class MinecraftBotRuntime extends EventEmitter {
   cancelTask() { return this.assignTask('idle'); }
   isCritical() { return Boolean(this.criticalOperation); }
   getStatus() {
-    const items = this.bot?.inventory?.items?.() || [];
+    const inventorySlots = this.bot?.inventory?.slots;
+    const items = Array.isArray(inventorySlots)
+      ? inventorySlots.filter(item => item && Number(item.slot) >= 9 && Number(item.slot) <= 45)
+      : (this.bot?.inventory?.items?.() || []);
+    const armor = Array.isArray(inventorySlots)
+      ? inventorySlots.slice(5,9).filter(Boolean).map(compactInventoryItem)
+      : [];
     return {
       accountId:this.account.id,username:this.bot?.username || this.account.username,server:`${this.account.host}:${this.account.port}`,
       connected:Boolean(this.bot?.entity),status:this.status,task:this.task,lastError:this.lastError,startedAt:this.startedAt,
       uptimeMs:this.startedAt ? Date.now()-this.startedAt.getTime() : 0,health:this.bot?.health ?? null,food:this.bot?.food ?? null,
       ping:this.bot?.player?.ping ?? null,dimension:this.bot?.game?.dimension || null,gameMode:this.bot?.game?.gameMode || null,
-      xpLevel:this.bot?.experience?.level ?? null,inventory:items.map(item=>({name:item.name,displayName:item.displayName,count:item.count,slot:item.slot})),
+      xpLevel:this.bot?.experience?.level ?? null,inventory:items.map(compactInventoryItem),armor,armorCount:armor.length,
+      heldItem:compactInventoryItem(this.bot?.heldItem),
       nearbyPlayers:this.nearbySnapshot,lastThreat:this.lastThreat,killAura:this.killAura?.getStatus?.() || null,authCachePath:undefined
     };
   }

@@ -2913,6 +2913,7 @@ async function queueAdminBotCommand(currentUser, body) {
     'follow',
     'follow_stop',
     'drop_item',
+    'inventory_move',
     'whitelist_add',
     'whitelist_remove',
     'ignore_chat',
