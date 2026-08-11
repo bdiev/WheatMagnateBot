@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
 const { containsSensitiveData } = require('./memory');
-const { analyzeMessageStyle, presentPlayerStyle } = require('./personalization');
+const { analyzeMessageStyle, mergeLanguageScores, presentPlayerStyle } = require('./personalization');
 
 const START_TOKEN = '__start__';
 const END_TOKEN = '__end__';
@@ -159,6 +159,16 @@ class GrowingChildDatabase {
         courtesy_messages INTEGER NOT NULL DEFAULT 0,
         cyrillic_characters INTEGER NOT NULL DEFAULT 0,
         latin_characters INTEGER NOT NULL DEFAULT 0,
+        laughter_messages INTEGER NOT NULL DEFAULT 0,
+        slang_messages INTEGER NOT NULL DEFAULT 0,
+        directive_messages INTEGER NOT NULL DEFAULT 0,
+        positive_messages INTEGER NOT NULL DEFAULT 0,
+        advice_messages INTEGER NOT NULL DEFAULT 0,
+        ellipsis_messages INTEGER NOT NULL DEFAULT 0,
+        emoticon_messages INTEGER NOT NULL DEFAULT 0,
+        language_scores_json TEXT NOT NULL DEFAULT '{}',
+        language_evidence_messages INTEGER NOT NULL DEFAULT 0,
+        mixed_language_messages INTEGER NOT NULL DEFAULT 0,
         admin_tone TEXT NOT NULL DEFAULT 'auto',
         admin_length TEXT NOT NULL DEFAULT 'auto',
         admin_notes TEXT,
@@ -205,6 +215,29 @@ class GrowingChildDatabase {
       CREATE INDEX IF NOT EXISTS idx_response_examples_subject
         ON response_examples(subject_source, subject_id, active, updated_at DESC);
     `);
+
+    const styleColumns = new Map([
+      ['laughter_messages', 'INTEGER NOT NULL DEFAULT 0'],
+      ['slang_messages', 'INTEGER NOT NULL DEFAULT 0'],
+      ['directive_messages', 'INTEGER NOT NULL DEFAULT 0'],
+      ['positive_messages', 'INTEGER NOT NULL DEFAULT 0'],
+      ['advice_messages', 'INTEGER NOT NULL DEFAULT 0'],
+      ['ellipsis_messages', 'INTEGER NOT NULL DEFAULT 0'],
+      ['emoticon_messages', 'INTEGER NOT NULL DEFAULT 0'],
+      ['language_scores_json', "TEXT NOT NULL DEFAULT '{}'"],
+      ['language_evidence_messages', 'INTEGER NOT NULL DEFAULT 0'],
+      ['mixed_language_messages', 'INTEGER NOT NULL DEFAULT 0']
+    ]);
+    const existingStyleColumns = new Set(
+      this.db.prepare('PRAGMA table_info(player_style_profiles)').all().map(column => column.name)
+    );
+    for (const [column, definition] of styleColumns) {
+      if (!existingStyleColumns.has(column)) {
+        this.db.exec(`ALTER TABLE player_style_profiles ADD COLUMN ${column} ${definition}`);
+      }
+    }
+
+    this.backfillPlayerStyleV2();
 
     // Transition rows created by older versions cannot be matched back to
     // their source messages. Drop only those links once so they cannot be
@@ -414,6 +447,76 @@ class GrowingChildDatabase {
     ).get(since).count);
   }
 
+  backfillPlayerStyleV2() {
+    const migrationKey = 'player_style_metrics_v2_backfilled';
+    if (this.db.prepare('SELECT 1 FROM state WHERE key=?').get(migrationKey)) return;
+
+    const aggregates = new Map();
+    const messages = this.db.prepare(`SELECT source,author_id,content
+      FROM conversation_messages
+      WHERE role='user' AND author_id IS NOT NULL`).all();
+    for (const message of messages) {
+      const key = `${message.source}\u0000${message.author_id}`;
+      const aggregate = aggregates.get(key) || {
+        source: message.source,
+        subjectId: message.author_id,
+        laughter: 0,
+        slang: 0,
+        directive: 0,
+        positive: 0,
+        advice: 0,
+        ellipsis: 0,
+        emoticon: 0,
+        languageEvidence: 0,
+        mixedLanguage: 0,
+        languageScores: {}
+      };
+      const sample = analyzeMessageStyle(message.content);
+      aggregate.laughter += sample.laughter;
+      aggregate.slang += sample.slang;
+      aggregate.directive += sample.directive;
+      aggregate.positive += sample.positive;
+      aggregate.advice += sample.advice;
+      aggregate.ellipsis += sample.ellipsis;
+      aggregate.emoticon += sample.emoticon;
+      aggregate.languageEvidence += sample.languageEvidence;
+      aggregate.mixedLanguage += sample.mixedLanguage;
+      aggregate.languageScores = mergeLanguageScores(aggregate.languageScores, sample.languageScores);
+      aggregates.set(key, aggregate);
+    }
+
+    const update = this.db.prepare(`UPDATE player_style_profiles SET
+      laughter_messages=?, slang_messages=?, directive_messages=?, positive_messages=?,
+      advice_messages=?, ellipsis_messages=?, emoticon_messages=?, language_scores_json=?,
+      language_evidence_messages=?, mixed_language_messages=?
+      WHERE source=? AND subject_id=?`);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const aggregate of aggregates.values()) {
+        update.run(
+          aggregate.laughter,
+          aggregate.slang,
+          aggregate.directive,
+          aggregate.positive,
+          aggregate.advice,
+          aggregate.ellipsis,
+          aggregate.emoticon,
+          JSON.stringify(aggregate.languageScores),
+          aggregate.languageEvidence,
+          aggregate.mixedLanguage,
+          String(aggregate.source),
+          String(aggregate.subjectId)
+        );
+      }
+      this.db.prepare(`INSERT INTO state(key,value) VALUES(?,?)
+        ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(migrationKey, new Date().toISOString());
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
   addConversationMessage({ conversationKey, source, authorId = null, authorName = null, role = 'user', content, maxMessages = 1500 }) {
     const clean = String(content || '').replace(/\s+/g, ' ').trim().slice(0, 500);
     if (!conversationKey || !clean) return;
@@ -432,7 +535,9 @@ class GrowingChildDatabase {
   observePlayerStyle({ source, subjectId, subjectName = null, text }) {
     if (!source || !subjectId) return null;
     const sample = analyzeMessageStyle(text);
-    if (sample.words === 0) return this.getPlayerStyle(source, subjectId);
+    if (sample.words === 0 && !sample.emoji && !sample.emoticon && !sample.laughter) {
+      return this.getPlayerStyle(source, subjectId);
+    }
     const now = new Date().toISOString();
     this.db.prepare(`INSERT INTO player_style_profiles(
       source,subject_id,subject_name,messages_seen,total_words,total_characters,short_messages,
@@ -459,6 +564,35 @@ class GrowingChildDatabase {
       sample.emoji, sample.uppercase, sample.greeting, sample.courtesy, sample.cyrillic,
       sample.latin, now, now
     );
+    const storedLanguage = this.db.prepare(`SELECT language_scores_json
+      FROM player_style_profiles WHERE source=? AND subject_id=?`)
+      .get(String(source), String(subjectId));
+    const languageScores = mergeLanguageScores(storedLanguage?.language_scores_json, sample.languageScores);
+    this.db.prepare(`UPDATE player_style_profiles SET
+      laughter_messages=laughter_messages+?,
+      slang_messages=slang_messages+?,
+      directive_messages=directive_messages+?,
+      positive_messages=positive_messages+?,
+      advice_messages=advice_messages+?,
+      ellipsis_messages=ellipsis_messages+?,
+      emoticon_messages=emoticon_messages+?,
+      language_scores_json=?,
+      language_evidence_messages=language_evidence_messages+?,
+      mixed_language_messages=mixed_language_messages+?
+      WHERE source=? AND subject_id=?`).run(
+      sample.laughter,
+      sample.slang,
+      sample.directive,
+      sample.positive,
+      sample.advice,
+      sample.ellipsis,
+      sample.emoticon,
+      JSON.stringify(languageScores),
+      sample.languageEvidence,
+      sample.mixedLanguage,
+      String(source),
+      String(subjectId)
+    );
     return this.getPlayerStyle(source, subjectId);
   }
 
@@ -474,7 +608,10 @@ class GrowingChildDatabase {
   }
 
   updatePlayerStyle(source, subjectId, { tone = 'auto', responseLength = 'auto', notes = '' } = {}) {
-    const tones = new Set(['auto', 'casual', 'friendly', 'helpful', 'energetic', 'reserved']);
+    const tones = new Set([
+      'auto', 'neutral', 'casual', 'friendly', 'helpful', 'energetic',
+      'reserved', 'inquisitive', 'playful', 'direct', 'formal'
+    ]);
     const lengths = new Set(['auto', 'short', 'balanced', 'detailed']);
     if (!tones.has(tone) || !lengths.has(responseLength)) throw new Error('Unsupported style preference.');
     const cleanNotes = String(notes || '').replace(/\s+/g, ' ').trim().slice(0, 240);
@@ -649,11 +786,11 @@ class GrowingChildDatabase {
 
   exportState() {
     const tables = ['words','members','channels','topics','learned_messages','word_transitions','learned_sequences','generated_phrases','conversation_messages','memories','generation_attempts','emotion_history','player_style_profiles','response_examples','state'];
-    return { version: 3, exportedAt: new Date().toISOString(), tables: Object.fromEntries(tables.map(table => [table, this.db.prepare(`SELECT * FROM ${table}`).all()])) };
+    return { version: 4, exportedAt: new Date().toISOString(), tables: Object.fromEntries(tables.map(table => [table, this.db.prepare(`SELECT * FROM ${table}`).all()])) };
   }
 
   importState(payload) {
-    if (!payload || ![2, 3].includes(Number(payload.version)) || !payload.tables) throw new Error('Unsupported Growing Child state export.');
+    if (!payload || ![2, 3, 4].includes(Number(payload.version)) || !payload.tables) throw new Error('Unsupported Growing Child state export.');
     const allowed = {
       words:['word','times_seen','first_seen','last_seen','learned_at_level'], members:['source','member_id','name','times_seen','first_seen','last_seen'],
       channels:['source','channel_id','name','times_seen','first_seen','last_seen'], topics:['topic','times_seen','first_seen','last_seen'],
@@ -664,7 +801,14 @@ class GrowingChildDatabase {
       memories:['subject_source','subject_id','subject_name','kind','fact_key','fact_value','confidence','source_type','source_ref','created_at','updated_at','expires_at','deleted_at'],
       generation_attempts:['phrase','generator','accepted','rejection_reason','coherence','toxicity','repetition','unknown_ratio','created_at'],
       emotion_history:['emotion','reason','created_at'],
-      player_style_profiles:['source','subject_id','subject_name','messages_seen','total_words','total_characters','short_messages','question_messages','exclamation_messages','emoji_messages','uppercase_messages','greeting_messages','courtesy_messages','cyrillic_characters','latin_characters','admin_tone','admin_length','admin_notes','created_at','updated_at'],
+      player_style_profiles:[
+        'source','subject_id','subject_name','messages_seen','total_words','total_characters','short_messages',
+        'question_messages','exclamation_messages','emoji_messages','uppercase_messages','greeting_messages',
+        'courtesy_messages','cyrillic_characters','latin_characters','laughter_messages','slang_messages',
+        'directive_messages','positive_messages','advice_messages','ellipsis_messages','emoticon_messages',
+        'language_scores_json','language_evidence_messages','mixed_language_messages','admin_tone','admin_length',
+        'admin_notes','created_at','updated_at'
+      ],
       response_examples:['subject_source','subject_id','trigger_text','response_text','active','created_by','created_at','updated_at'],
       state:['key','value']
     };
@@ -685,7 +829,15 @@ class GrowingChildDatabase {
         const hasNaturalPrimaryKey = ['words','members','channels','topics','word_transitions','learned_sequences','generated_phrases','player_style_profiles','state'].includes(table);
         const duplicate = hasNaturalPrimaryKey ? null : this.db.prepare(`SELECT 1 FROM ${table} WHERE ${columns.map(column => `${column} IS ?`).join(' AND ')} LIMIT 1`);
         for (const row of rows) {
-          const values = columns.map(column => row[column] ?? null);
+          const values = columns.map(column => {
+            if (row[column] != null) return row[column];
+            if (table === 'player_style_profiles' && column === 'language_scores_json') return '{}';
+            if (table === 'player_style_profiles' && [
+              'laughter_messages','slang_messages','directive_messages','positive_messages','advice_messages',
+              'ellipsis_messages','emoticon_messages','language_evidence_messages','mixed_language_messages'
+            ].includes(column)) return 0;
+            return null;
+          });
           if (!duplicate?.get(...values)) statement.run(...values);
         }
       }

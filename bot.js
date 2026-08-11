@@ -2042,10 +2042,18 @@ async function generateGrowingChildPhrase({
   const selectedWordLine = selectedWords.length > 0
     ? `Try to include at least ${Math.min(2, selectedWords.length)} of these learned topic words: ${selectedWords.join(', ')}.`
     : 'Use at least one specific learned topic word.';
+  const learnedLanguageIsReliable = playerStyle &&
+    Number(playerStyle.languageConfidence || 0) >= 0.35 &&
+    playerStyle.language &&
+    !/(?:unknown|undetermined)/i.test(playerStyle.language);
+  const preferredLanguage = learnedLanguageIsReliable ? playerStyle.language : 'English';
+  const responseWordRange = playerStyle?.responseLength === 'short'
+    ? '3 to 6'
+    : playerStyle?.responseLength === 'detailed' ? '7 to 12' : '4 to 9';
   const prompt = [
     replyInstruction,
     `Mood: ${emotion}.`,
-    `Write ${candidateCount} different coherent English sentences of 3 to 12 words.`,
+    `Write ${candidateCount} different coherent ${preferredLanguage} sentences of ${responseWordRange} words.`,
     'Put each sentence on its own line. No numbering, bullets, quotes, labels, or explanations.',
     selectedWordLine,
     'Prefer a direct, natural reply that clearly responds to the latest message.',
@@ -2063,7 +2071,7 @@ async function generateGrowingChildPhrase({
       ? `Relevant memory:\n${memories.map(item => `${item.kind}/${item.fact_key}: ${item.fact_value} (confidence ${item.confidence})`).join('\n')}`
       : '',
     playerStyle
-      ? `Player communication profile: use a ${playerStyle.tone} tone and ${playerStyle.responseLength} response length; language ${playerStyle.language}; observed signals: ${(playerStyle.signals || []).join(', ') || 'none'}.${playerStyle.adminNotes ? ` Administrator note: ${playerStyle.adminNotes}` : ''}`
+      ? `Player communication profile: use a ${playerStyle.tone} tone and ${playerStyle.responseLength} response length; reply language ${preferredLanguage} (detected ${playerStyle.language}, confidence ${Math.round(Number(playerStyle.languageConfidence || 0) * 100)}%); evidence quality ${playerStyle.learningStatus}; observed signals: ${(playerStyle.signals || []).join(', ') || 'none'}.${playerStyle.adminNotes ? ` Administrator note: ${playerStyle.adminNotes}` : ''}`
       : '',
     responseExamples.length
       ? `Administrator-approved examples for similar messages. Follow their intent and style without copying unrelated details:\n${responseExamples.map(item => `Player: ${item.trigger_text}\nBot: ${item.response_text}`).join('\n')}`

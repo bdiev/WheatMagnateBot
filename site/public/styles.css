@@ -7366,6 +7366,29 @@ body.kill-aura-modal-open {
   text-transform: uppercase;
 }
 
+.child-ai-style-confidence {
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.child-ai-style-confidence[data-confidence="insufficient"] {
+  border-color: var(--line);
+  color: var(--muted);
+  background: transparent;
+}
+
+.child-ai-style-confidence[data-confidence="strong"] {
+  border-color: color-mix(in srgb, var(--accent-strong) 40%, var(--line));
+  color: var(--accent-strong);
+  background: color-mix(in srgb, var(--accent-strong) 8%, transparent);
+}
+
 .child-ai-style-summary {
   flex-wrap: wrap;
   gap: 4px 12px;

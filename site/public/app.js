@@ -5856,6 +5856,17 @@ function renderChildAiPlayerStyles({ resetScroll = false } = {}) {
   const rows = visibleStyles.map(profile => {
     const displayName = profile.subjectName || profile.subjectId || 'Unknown player';
     const isMinecraftPlayer = String(profile.source || '').toLowerCase() === 'minecraft';
+    const confidencePercent = value => `${Math.round((Number(value) || 0) * 100)}%`;
+    const manuallyAdjusted = profile.adminTone && profile.adminTone !== 'auto';
+    const toneLabel = manuallyAdjusted
+      ? `${profile.tone} (manual)`
+      : `${profile.detectedTone || profile.tone} · ${confidencePercent(profile.toneConfidence)}`;
+    const languageBreakdown = Array.isArray(profile.languageBreakdown) ? profile.languageBreakdown : [];
+    const secondaryLanguage = profile.multilingual && languageBreakdown[1]
+      ? ` + ${languageBreakdown[1].name}`
+      : '';
+    const languageLabel = `${profile.language}${secondaryLanguage} · ${confidencePercent(profile.languageConfidence)}`;
+    const learningStatus = profile.learningStatus || 'insufficient';
     const identity = isMinecraftPlayer
       ? playerIdentity(displayName, 28)
       : `<strong class="child-ai-style-name">${escapeHtml(displayName)}</strong>`;
@@ -5865,11 +5876,12 @@ function renderChildAiPlayerStyles({ resetScroll = false } = {}) {
           <div class="child-ai-style-identity">
             ${identity}
             <span class="child-ai-style-source">${escapeHtml(profile.source)}</span>
+            <span class="child-ai-style-confidence" data-confidence="${escapeHtml(learningStatus)}">${escapeHtml(learningStatus)} evidence</span>
           </div>
           <p class="child-ai-style-summary">
-            <span>${escapeHtml(profile.tone)} tone</span>
+            <span>tone: ${escapeHtml(toneLabel)}</span>
             <span>${escapeHtml(profile.responseLength)} replies</span>
-            <span>${escapeHtml(profile.language)}</span>
+            <span>language: ${escapeHtml(languageLabel)}</span>
             <span>${escapeHtml(profile.averageWords)} words/message</span>
           </p>
           <div class="child-ai-style-signals">${(profile.signals || []).map(signal => `<span>${escapeHtml(signal)}</span>`).join('') || '<span>collecting style signals</span>'}</div>
@@ -6114,7 +6126,7 @@ async function handleChildAiStyleAction(event) {
   }
   const button = event.target.closest('[data-child-style-edit]');
   if (!button) return;
-  const tone = prompt('Tone (auto, casual, friendly, helpful, energetic, reserved):', button.dataset.tone || 'auto');
+  const tone = prompt('Tone (auto, neutral, casual, friendly, helpful, energetic, reserved, inquisitive, playful, direct, formal):', button.dataset.tone || 'auto');
   if (tone == null) return;
   const responseLength = prompt('Response length (auto, short, balanced, detailed):', button.dataset.length || 'auto');
   if (responseLength == null) return;

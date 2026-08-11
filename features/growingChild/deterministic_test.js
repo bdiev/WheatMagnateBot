@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { DatabaseSync } = require('node:sqlite');
 const { GrowingChildDatabase } = require('./database');
 const { GrowingChildAI, matchingResponseExamples } = require('./index');
 const { MessageGenerator } = require('./generator');
@@ -46,6 +47,41 @@ function seededRandom(seed) {
 }
 
 async function run() {
+  const legacyStyleFilename = path.join(directory, 'legacy-style.sqlite');
+  const legacyStyleDatabase = new DatabaseSync(legacyStyleFilename);
+  legacyStyleDatabase.exec(`
+    CREATE TABLE player_style_profiles (
+      source TEXT NOT NULL, subject_id TEXT NOT NULL, subject_name TEXT,
+      messages_seen INTEGER NOT NULL DEFAULT 0, total_words INTEGER NOT NULL DEFAULT 0,
+      total_characters INTEGER NOT NULL DEFAULT 0, short_messages INTEGER NOT NULL DEFAULT 0,
+      question_messages INTEGER NOT NULL DEFAULT 0, exclamation_messages INTEGER NOT NULL DEFAULT 0,
+      emoji_messages INTEGER NOT NULL DEFAULT 0, uppercase_messages INTEGER NOT NULL DEFAULT 0,
+      greeting_messages INTEGER NOT NULL DEFAULT 0, courtesy_messages INTEGER NOT NULL DEFAULT 0,
+      cyrillic_characters INTEGER NOT NULL DEFAULT 0, latin_characters INTEGER NOT NULL DEFAULT 0,
+      admin_tone TEXT NOT NULL DEFAULT 'auto', admin_length TEXT NOT NULL DEFAULT 'auto',
+      admin_notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      PRIMARY KEY(source, subject_id)
+    );
+    CREATE TABLE conversation_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, conversation_key TEXT NOT NULL, source TEXT NOT NULL,
+      author_id TEXT, author_name TEXT, role TEXT NOT NULL DEFAULT 'user', content TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    INSERT INTO player_style_profiles(source,subject_id,subject_name,messages_seen,total_words,
+      total_characters,short_messages,latin_characters,created_at,updated_at)
+    VALUES('minecraft','legacy-carlos','Carlos',2,10,50,0,42,'2026-01-01','2026-01-01');
+    INSERT INTO conversation_messages(conversation_key,source,author_id,author_name,role,content,created_at)
+    VALUES
+      ('minecraft:room','minecraft','legacy-carlos','Carlos','user','hola gracias donde esta mi base','2026-01-01'),
+      ('minecraft:room','minecraft','legacy-carlos','Carlos','user','yo no puedo encontrar netherite porque esta lejos','2026-01-01');
+  `);
+  legacyStyleDatabase.close();
+  const migratedStyleDatabase = new GrowingChildDatabase(legacyStyleFilename);
+  const migratedStyleProfile = migratedStyleDatabase.getPlayerStyle('minecraft', 'legacy-carlos');
+  assert.equal(migratedStyleProfile.language, 'Spanish', 'retained conversation context must backfill legacy language evidence');
+  assert.equal(migratedStyleProfile.languageEvidenceMessages, 2);
+  migratedStyleDatabase.close();
+
   let database = new GrowingChildDatabase(filename);
   learnVocabulary(database);
   const beforeMigration = database.getWords({ limit: 100 }).find(row => row.word === 'obsidian').times_seen;
@@ -88,13 +124,61 @@ async function run() {
   let profile = database.getPlayerStyle('minecraft', 'uuid-1');
   assert.equal(profile.subjectName, 'Alex');
   assert.equal(profile.messagesSeen, 2);
-  assert.ok(profile.signals.includes('uses polite language'));
+  assert.ok(profile.signals.some(signal => signal.startsWith('polite wording in ')));
+  assert.equal(profile.language, 'English');
+  assert.equal(profile.learningStatus, 'insufficient');
+  assert.ok(profile.languageConfidence > 0 && profile.languageConfidence < 0.3);
   profile = database.updatePlayerStyle('minecraft', 'uuid-1', {
     tone: 'friendly', responseLength: 'short', notes: 'Answer warmly'
   });
   assert.equal(profile.tone, 'friendly');
   assert.equal(profile.responseLength, 'short');
   assert.equal(profile.adminNotes, 'Answer warmly');
+
+  for (let index = 0; index < 12; index++) {
+    database.observePlayerStyle({
+      source: 'minecraft', subjectId: 'spanish-player', subjectName: 'Carlos',
+      text: index % 2 ? 'hola gracias donde esta mi base' : 'yo no puedo encontrar netherite porque esta lejos'
+    });
+    database.observePlayerStyle({
+      source: 'minecraft', subjectId: 'playful-player', subjectName: 'Mrow',
+      text: 'lol bro thats wild :3'
+    });
+    database.observePlayerStyle({
+      source: 'minecraft', subjectId: 'question-player', subjectName: 'Curious',
+      text: 'where is the farm and how can I help?'
+    });
+    database.observePlayerStyle({
+      source: 'minecraft', subjectId: 'turkish-player', subjectName: 'Efe',
+      text: 'merhaba teşekkürler benim base nerede'
+    });
+    database.observePlayerStyle({
+      source: 'minecraft', subjectId: 'russian-player', subjectName: 'Ivan',
+      text: 'привет спасибо где моя база и как пройти'
+    });
+    database.observePlayerStyle({
+      source: 'minecraft', subjectId: 'multilingual-player', subjectName: 'Polyglot',
+      text: index % 2 ? 'hello thanks where is my base' : 'hola gracias donde esta mi base'
+    });
+  }
+  const spanishProfile = database.getPlayerStyle('minecraft', 'spanish-player');
+  assert.equal(spanishProfile.language, 'Spanish');
+  assert.ok(spanishProfile.languageConfidence >= 0.7, 'repeated Spanish evidence must produce a confident language');
+  const playfulProfile = database.getPlayerStyle('minecraft', 'playful-player');
+  assert.equal(playfulProfile.detectedTone, 'playful');
+  assert.ok(playfulProfile.signals.some(signal => signal.startsWith('humor markers in ')));
+  const questionProfile = database.getPlayerStyle('minecraft', 'question-player');
+  assert.equal(questionProfile.detectedTone, 'inquisitive', 'questions are inquisitive rather than helpful/casual');
+  assert.equal(database.getPlayerStyle('minecraft', 'turkish-player').language, 'Turkish');
+  assert.equal(database.getPlayerStyle('minecraft', 'russian-player').language, 'Russian');
+  const multilingualProfile = database.getPlayerStyle('minecraft', 'multilingual-player');
+  assert.equal(multilingualProfile.multilingual, true);
+  assert.ok(multilingualProfile.languageBreakdown.some(item => item.name === 'English'));
+  assert.ok(multilingualProfile.languageBreakdown.some(item => item.name === 'Spanish'));
+  database.observePlayerStyle({
+    source: 'minecraft', subjectId: 'unknown-latin', subjectName: 'Miner', text: 'netherite quartz spawn'
+  });
+  assert.equal(database.getPlayerStyle('minecraft', 'unknown-latin').language, 'Latin (undetermined)');
   const exampleId = database.addResponseExample({
     subjectSource: 'minecraft', subjectId: 'uuid-1',
     triggerText: 'Can you help with the farm?',
@@ -162,8 +246,8 @@ async function run() {
   assert.deepEqual(firstGenerated, secondGenerated, 'Seeded generation must be deterministic.');
 
   const exportPayload = database.exportState();
-  assert.equal(exportPayload.version, 3);
-  assert.equal(exportPayload.tables.player_style_profiles.length, 1);
+  assert.equal(exportPayload.version, 4);
+  assert.equal(exportPayload.tables.player_style_profiles.length, 8);
   assert.equal(exportPayload.tables.response_examples.length, 1);
   const currentCount = database.getWords({ limit: 100 }).find(row => row.word === 'obsidian').times_seen;
   database.importState(exportPayload);
@@ -173,6 +257,10 @@ async function run() {
   assert.equal(database.getMemories({ subjectId: 'uuid-1' }).length, 0);
   assert.equal(database.getConversationContext('minecraft:room', 10).length, 0);
   database.close();
+
+  const botSource = fs.readFileSync(path.resolve(__dirname, '..', '..', 'bot.js'), 'utf8');
+  assert.match(botSource, /learnedLanguageIsReliable[\s\S]*preferredLanguage/, 'generation must only trust sufficiently confident language evidence');
+  assert.match(botSource, /responseWordRange[\s\S]*playerStyle\?\.responseLength/, 'detected reply length must change the generation constraint');
 
   let externalCalls = 0;
   const child = new GrowingChildAI({

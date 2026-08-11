@@ -7,7 +7,7 @@ Growing Child is a local language-learning feature. It is not a model-training p
 1. Allowed Minecraft, owner-DM or configured Discord messages are filtered for secrets and personal data.
 2. Safe words, topics and transition statistics are learned locally. The latest messages in the same conversation form a bounded context window.
 3. Explicit statements such as “I prefer silk touch pickaxes” can create a memory with its subject, kind, confidence, source and expiry date.
-4. A per-player style profile tracks aggregate communication signals such as typical message length, punctuation, language and courtesy. Administrator tone, reply-length and note overrides take precedence over inferred values.
+4. A per-player style profile tracks aggregate communication evidence such as typical message length, questions, humor, slang, direct requests, punctuation and courtesy. Language is inferred from script plus language-specific words across messages; Latin text without enough evidence is reported as undetermined instead of being assumed to be English. Tone and language include confidence/sample quality, while administrator tone, reply-length and note overrides still take precedence.
 5. Administrator-approved “player message → preferred answer” examples are matched to similar messages first and are also supplied to Gemini as few-shot guidance.
 6. Local candidates use conservative grammatical Minecraft templates with one learned topic word. Gemini may propose constrained candidates only when `aiGenerationEnabled`, `GEMINI_ENABLED` and `GEMINI_API_KEY` are all enabled.
 7. Every generated candidate is scored for coherence, toxicity, similarity to recent answers and unknown-word ratio. Rejected candidates and their reasons are retained for the administrator.
@@ -26,6 +26,6 @@ The external AI never receives a request when its runtime switch is off. It rece
 
 The database periodically removes expired/deleted memories and caps context, generation attempts, recent phrases and memories. If it exceeds `maxDatabaseBytes`, old raw learning history and sequences are trimmed before SQLite compaction; the vocabulary is retained.
 
-The administrator-only **Child AI** dashboard shows vocabulary, topics, active memory, player communication profiles, editable response examples, emotion history, recent accepted responses and rejection reasons. State can be exported/imported as versioned JSON (version 3; version 2 backups remain importable). All changes submitted from the page use the existing audited bot-command channel.
+The administrator-only **Child AI** dashboard shows vocabulary, topics, active memory, evidence-based player communication profiles, editable response examples, emotion history, recent accepted responses and rejection reasons. Retained safe conversation context is used once to backfill the improved language classifier. State can be exported/imported as versioned JSON (version 4; version 2 and 3 backups remain importable). All changes submitted from the page use the existing audited bot-command channel.
 
 The main limits and quality thresholds live in [`config.json`](config.json). Run `npm test` for the smoke test and deterministic memory, privacy, quality, migration and external-AI gating checks.
