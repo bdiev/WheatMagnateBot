@@ -115,6 +115,7 @@ function testArchitectureAndUiContracts() {
   const serverSource = fs.readFileSync(path.join(root, 'site', 'server.js'), 'utf8');
   const databaseSource = fs.readFileSync(path.join(root, 'database', 'index.js'), 'utf8');
   const appSource = fs.readFileSync(path.join(root, 'site', 'public', 'app.js'), 'utf8');
+  const stylesSource = fs.readFileSync(path.join(root, 'site', 'public', 'styles.css'), 'utf8');
   const htmlSource = fs.readFileSync(path.join(root, 'site', 'public', 'index.html'), 'utf8');
   const databaseMigration = fs.readFileSync(path.join(root, 'database', 'migrations', '023_player_admin_metadata.sql'), 'utf8');
   const siteMigration = fs.readFileSync(path.join(root, 'site', 'migrations', '023_player_admin_metadata.sql'), 'utf8');
@@ -128,6 +129,8 @@ function testArchitectureAndUiContracts() {
   assert.match(htmlSource, /id="adminPlayerDeleteModal"[\s\S]*role="alertdialog"/);
   assert.match(appSource, /Object\.keys\(patch\)\.length/, 'the frontend must build a partial patch');
   assert.match(appSource, /state\.adminPlayers = state\.adminPlayers\.filter/, 'delete must remove the card without reloading the page');
+  assert.match(appSource, /classList\.toggle\('menu-open', menu\.open\)/, 'an open actions menu must elevate its entire card');
+  assert.match(stylesSource, /\.admin-player-card\.menu-open\s*\{[^}]*z-index:100/, 'the active player card must render above later cards');
   assert.doesNotMatch(appSource.match(/async function confirmAdminPlayerDelete\(\)[\s\S]*?\n}/)?.[0] || '', /location\.reload/);
 }
 

@@ -82,9 +82,9 @@ assert.match(stylesSource, /\.chat-date-indicator\.visible\s*\{[^}]*opacity:\s*1
   'the date indicator must fade into view while scrolling');
 assert.match(stylesSource, /\.chat-panel\.chat-search-open > \.panel-head > div:first-child\s*\{[^}]*opacity:\s*0;/s,
   'the chat heading must fade away while archive search expands');
-assert.match(indexSource, /styles\.css\?v=180/, 'the updated mobile layout must use a fresh stylesheet URL');
-assert.match(indexSource, /app\.js\?v=180/, 'the updated dashboard behavior must use a fresh script URL');
-assert.match(serviceWorkerSource, /CACHE_VERSION = '180'/, 'the app shell cache must be replaced after dashboard behavior changes');
+assert.match(indexSource, /styles\.css\?v=181/, 'the updated mobile layout must use a fresh stylesheet URL');
+assert.match(indexSource, /app\.js\?v=181/, 'the updated dashboard behavior must use a fresh script URL');
+assert.match(serviceWorkerSource, /CACHE_VERSION = '181'/, 'the app shell cache must be replaced after dashboard behavior changes');
 assert.match(serviceWorkerSource, /fallbackPath[\s\S]*?'\/request\.html'/, 'resource requests must have their own navigation fallback');
 assert.match(stylesSource, /\.chat-message\s*\{[^}]*flex:\s*0 0 auto;/s,
   'chat cards must retain their natural height inside the scrolling flex list');
@@ -139,27 +139,12 @@ assert.doesNotMatch(
 );
 assert.match(
   botSource,
-  /isKnownOnlinePlayer[\s\S]*isSignedPlayerChat[\s\S]*rejected-player-shaped-system-text/,
+  /isKnownOnlinePlayer[\s\S]*isSignedPlayerChat[\s\S]*if \(!isKnownOnlinePlayer && !isSignedPlayerChat\) \{\s*return false;/,
   'player-shaped system text must require a signed chat position or a currently known player'
 );
-assert.match(botSource, /debugLog\(\s*'\[MC CHAT DEBUG\]'/, 'component diagnostics must use the existing opt-in debug logger');
-assert.match(
-  botSource,
-  /kind: 'chat-forward-suppressed'[\s\S]*reason[\s\S]*kind: 'chat-forward-completed'/,
-  'debug mode must report whether a parsed player message was suppressed or completed downstream'
-);
-assert.match(
-  botSource,
-  /kind: 'discord-chat-forward-suppressed'[\s\S]*reason: event\.reason/,
-  'debug mode must expose Discord queue flood, capacity, and stale-message suppression'
-);
-assert.match(botSource, /'\[MC->DISCORD TRACE\]'/, 'every bridge path must expose its source in debug mode');
+assert.doesNotMatch(botSource, /\[MC CHAT DEBUG\]/, 'temporary Minecraft chat diagnostics must be removed');
+assert.doesNotMatch(botSource, /\[MC->DISCORD TRACE\]/, 'temporary Discord bridge traces must be removed');
 assert.match(botSource, /'\[MC->DISCORD SEND\]'/, 'the final Discord send must expose its source in debug mode');
-assert.match(
-  botSource,
-  /debugLog\(\s*'\[MC CHAT DEBUG\]',\s*JSON\.stringify\(\{[\s\S]*json: message\?\.json \?\? null[\s\S]*\}, null, 2\)/,
-  'GreenChat diagnostics must serialize the complete nested component JSON'
-);
 assert.match(botSource, /isPrivateMinecraftChatLine\(text\)[\s\S]*evidence: \['private_message'\]/, 'whispers must be rejected before component GreenChat classification');
 
 console.log('Chat archive tests passed.');

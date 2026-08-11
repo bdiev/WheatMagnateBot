@@ -12,7 +12,7 @@ const transitionsSource = fs.readFileSync(path.join(publicDirectory, 'page-trans
 const serviceWorkerSource = fs.readFileSync(path.join(publicDirectory, 'sw.js'), 'utf8');
 
 assert.match(indexSource, /page-transitions\.js\?v=1/, 'the dashboard must load shared page transitions');
-assert.match(requestHtmlSource, /styles\.css\?v=180/, 'the request page must load the current shared transition styles');
+assert.match(requestHtmlSource, /styles\.css\?v=181/, 'the request page must load the current shared transition styles');
 assert.match(requestHtmlSource, /page-transitions\.js\?v=1/, 'the request page must load shared page transitions');
 assert.match(requestHtmlSource, /id="loginPrompt"[^>]*hidden/, 'the request login state must not flash before the session loads');
 assert.match(stylesSource, /@view-transition\s*\{\s*navigation:\s*auto;/, 'same-origin navigation must use native cross-document transitions when available');

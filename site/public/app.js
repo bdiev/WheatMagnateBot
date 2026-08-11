@@ -4776,6 +4776,18 @@ function renderAdminPlayers(players = state.adminPlayers) {
         </details>
       </article>`;
   }).join('');
+
+  list.querySelectorAll('.admin-player-card-menu').forEach(menu => {
+    menu.addEventListener('toggle', () => {
+      if (menu.open) {
+        list.querySelectorAll('.admin-player-card-menu[open]').forEach(otherMenu => {
+          if (otherMenu !== menu) otherMenu.removeAttribute('open');
+        });
+      }
+
+      menu.closest('.admin-player-card')?.classList.toggle('menu-open', menu.open);
+    });
+  });
 }
 
 async function loadAdminPlayers({ query = $('#adminPlayersSearch')?.value || '', showLoading = true } = {}) {
