@@ -113,10 +113,23 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
   async function updatePlayerActivity(username, isOnline, { recordEvent = true, uuid = null } = {}) {
     if (!pool) return;
 
+    username = String(username || '').trim();
+    if (!/^[A-Za-z0-9_]{1,16}$/.test(username)) return;
+
     const timestamp = new Date();
     const normalizedUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(uuid || ''))
       ? String(uuid).toLowerCase()
       : null;
+    if (!normalizedUuid) {
+      const existingIdentity = await pool.query(
+        'SELECT 1 FROM player_activity WHERE LOWER(username)=LOWER($1) LIMIT 1',
+        [username]
+      ).catch(() => ({ rows: [] }));
+      // A TAB display value is not a player identity. Only a packet carrying a
+      // UUID may create a new observed profile; UUID-less events can still
+      // update records that were established previously.
+      if (!existingIdentity.rows[0]) return;
+    }
     let previousOnline = null;
     if (recordEvent) {
       const previous = await pool.query(`SELECT is_online FROM player_activity

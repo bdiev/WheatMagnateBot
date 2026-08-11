@@ -2460,8 +2460,6 @@ function getOnlinePlayerUsernames() {
   for (const player of Object.values(bot.tablist?.players || {})) {
     addObservedOnlineUsername(usernames, player?.username);
     addObservedOnlineUsername(usernames, player?.profile?.name);
-    const displayName = player?.displayName ? chatComponentToString(player.displayName) : '';
-    addObservedOnlineUsername(usernames, displayName);
   }
 
   return [...usernames.values()];
@@ -2476,10 +2474,16 @@ function getOnlinePlayerUuid(username) {
   );
   if (player?.uuid) return dashedMinecraftUuid(player.uuid);
 
-  const tablistPlayer = Object.values(bot.tablist?.players || {}).find(candidate =>
-    String(candidate?.username || candidate?.profile?.name || '').toLowerCase() === usernameKey
+  const tablistEntry = Object.entries(bot.tablist?.players || {}).find(([, candidate]) =>
+    [candidate?.username, candidate?.profile?.name].some(name =>
+      String(name || '').toLowerCase() === usernameKey
+    )
   );
-  return dashedMinecraftUuid(tablistPlayer?.uuid || tablistPlayer?.profile?.id);
+  if (!tablistEntry) return null;
+  const [tablistKey, tablistPlayer] = tablistEntry;
+  return dashedMinecraftUuid(
+    tablistPlayer?.uuid || tablistPlayer?.profile?.id || tablistKey
+  );
 }
 
 async function syncPlayerActivityOnlineState() {

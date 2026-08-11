@@ -69,9 +69,14 @@ async function run() {
   const root = path.resolve(__dirname, '..');
   const databaseMigration = fs.readFileSync(path.join(root, 'database', 'migrations', '020_player_uuid_identity.sql'), 'utf8');
   const siteMigration = fs.readFileSync(path.join(root, 'site', 'migrations', '020_player_uuid_identity.sql'), 'utf8');
+  const phantomCleanupMigration = fs.readFileSync(path.join(root, 'database', 'migrations', '021_remove_numeric_tab_phantoms.sql'), 'utf8');
+  const sitePhantomCleanupMigration = fs.readFileSync(path.join(root, 'site', 'migrations', '021_remove_numeric_tab_phantoms.sql'), 'utf8');
   const siteSource = fs.readFileSync(path.join(root, 'site', 'server.js'), 'utf8');
   const botSource = fs.readFileSync(path.join(root, 'bot.js'), 'utf8');
   assert.equal(siteMigration, databaseMigration, 'bot and site must apply the same UUID identity migration');
+  assert.equal(sitePhantomCleanupMigration, phantomCleanupMigration, 'bot and site must apply the same phantom-profile cleanup');
+  assert.match(phantomCleanupMigration, /player_uuid IS NULL[\s\S]*username ~ '\^\[0-9\]\+\$'/);
+  assert.match(phantomCleanupMigration, /NOT EXISTS \([\s\S]*FROM game_chat_messages/);
   assert.match(databaseMigration, /ALTER TABLE player_playtime[\s\S]*player_uuid UUID/);
   assert.match(databaseMigration, /ALTER TABLE game_chat_messages[\s\S]*player_uuid UUID/);
   assert.match(databaseMigration, /player_playtime_uuid_unique_idx/);
@@ -80,6 +85,26 @@ async function run() {
   assert.match(siteSource, /game_chat_messages[\s\S]*player_uuid = \$1::uuid/, 'profile chat must be selected by UUID');
   assert.match(botSource, /INSERT INTO game_chat_messages \(username, player_uuid, message\)/, 'new chat messages must store the UUID');
   assert.match(botSource, /INSERT INTO player_playtime \(username, player_uuid, total_seconds, tracking_since, updated_at\)/, 'startup deduplication must preserve UUID ownership');
+  const onlineSnapshotSource = botSource.match(/function getOnlinePlayerUsernames\(\)[\s\S]*?\n}/)?.[0] || '';
+  assert.doesNotMatch(onlineSnapshotSource, /displayName/, 'TAB display values must never become player usernames');
+  assert.match(botSource, /tablistPlayer\?\.profile\?\.id \|\| tablistKey/, 'TAB UUID lookup must fall back to the UUID map key');
+
+  const unresolvedQueries = [];
+  const unresolvedRepository = createPlayerActivityRepository({
+    pool: {
+      async query(sql, params = []) {
+        unresolvedQueries.push({ sql: String(sql), params });
+        return { rows: [], rowCount: 0 };
+      }
+    }
+  });
+  await unresolvedRepository.updatePlayerActivity('2666', true, {
+    recordEvent: false,
+    uuid: null
+  });
+  assert.equal(unresolvedQueries.length, 1, 'an unknown UUID-less TAB value must only check for an existing identity');
+  assert.match(unresolvedQueries[0].sql, /SELECT 1 FROM player_activity/);
+  assert.doesNotMatch(unresolvedQueries[0].sql, /INSERT|UPDATE/i, 'an unknown UUID-less TAB value must not create a profile');
 
   console.log('Player activity identity tests passed.');
 }
