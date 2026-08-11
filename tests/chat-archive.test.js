@@ -84,5 +84,10 @@ assert.match(serviceWorkerSource, /fallbackPath[\s\S]*?'\/request\.html'/, 'reso
 assert.match(stylesSource, /\.chat-message\s*\{[^}]*flex:\s*0 0 auto;/s,
   'chat cards must retain their natural height inside the scrolling flex list');
 assert.doesNotMatch(serviceWorkerSource, /return cached \|\| fresh/, 'UI assets must not prefer stale cached responses');
+assert.match(
+  botSource,
+  /function resolvePublicChatEnvelope\([\s\S]*if \(jsonMessage\)[\s\S]*parseRawPublicChatLine\(candidate\)[\s\S]*if \(parsed\?\.username && parsed\?\.message\) return parsed;[\s\S]*const targetKey/,
+  'the raw Minecraft chat component must determine the sender before command-response heuristics'
+);
 
 console.log('Chat archive tests passed.');

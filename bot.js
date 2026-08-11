@@ -3936,6 +3936,22 @@ function resolvePublicChatEnvelope(username, message, jsonMessage) {
     message: cleanMinecraftChatMessage(message)
   };
 
+  // The rendered chat component is the authoritative source for the visible
+  // sender. Some server plugins expose the command target through Mineflayer's
+  // `username` argument, which can make a player's reply look like it came
+  // from LoLRiTTeRBot (or make the bot's reply look like it came from the
+  // target). Resolve the raw envelope before applying lookup heuristics.
+  if (jsonMessage) {
+    const candidates = [
+      typeof jsonMessage.toString === 'function' ? jsonMessage.toString() : '',
+      chatComponentToString(jsonMessage)
+    ];
+    for (const candidate of candidates) {
+      const parsed = parseRawPublicChatLine(candidate);
+      if (parsed?.username && parsed?.message) return parsed;
+    }
+  }
+
   const targetKey = `target:${String(username || '').toLowerCase()}`;
   const playtimeLookup = pendingPlaytimeLookups.get(targetKey);
   const joinDateLookup = pendingJoinDateLookups.get(targetKey);
@@ -3952,19 +3968,6 @@ function resolvePublicChatEnvelope(username, message, jsonMessage) {
       username: COMMAND_RESPONSE_DISPLAY_USERNAME,
       message: `> ${expectedLookup.targetUsername}: ${fallback.message}`
     };
-  }
-
-  if (!jsonMessage) return fallback;
-
-  const candidates = [
-    typeof jsonMessage.toString === 'function' ? jsonMessage.toString() : '',
-    chatComponentToString(jsonMessage)
-  ];
-  for (const candidate of candidates) {
-    const parsed = parseRawPublicChatLine(candidate);
-    if (parsed && COMMAND_RESPONSE_BOT_USERNAMES.has(parsed.username.toLowerCase())) {
-      return parsed;
-    }
   }
   return fallback;
 }
