@@ -44,10 +44,18 @@ function pixelAt(raw, channels, x, y) {
   assert.deepEqual(pixelAt(data, info.channels, 396, 396), [0, 0, 0, 0]);
   assert.ok(output.length < 256 * 1024, 'prepared PNG must fit the Discord emoji upload limit');
   await assert.rejects(() => preparePlayerHeadEmojiImage(Buffer.alloc(0)), /non-empty/);
+  await assert.rejects(() => preparePlayerHeadEmojiImage(source, { imageSize: 513 }), /between 1 and 512/);
+
+  const enlargedOutput = await preparePlayerHeadEmojiImage(source, { imageSize: 360 });
+  const enlargedRaw = await sharp(enlargedOutput).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  assert.deepEqual(pixelAt(enlargedRaw.data, enlargedRaw.info.channels, 75, 76), [0, 0, 0, 0]);
+  assert.deepEqual(pixelAt(enlargedRaw.data, enlargedRaw.info.channels, 76, 76), [214, 55, 72, 255]);
+  assert.deepEqual(pixelAt(enlargedRaw.data, enlargedRaw.info.channels, 435, 435), [214, 55, 72, 255]);
+  assert.deepEqual(pixelAt(enlargedRaw.data, enlargedRaw.info.channels, 436, 436), [0, 0, 0, 0]);
 
   const botSource = fs.readFileSync(path.resolve(__dirname, '..', 'bot.js'), 'utf8');
-  assert.match(botSource, /REQUESTED_PLAYER_HEAD_EMOJI_REDRAWS[\s\S]*username: 'ObbyMagnate', version: 1/,
-    'ObbyMagnate must be queued for one-time redraw');
+  assert.match(botSource, /REQUESTED_PLAYER_HEAD_EMOJI_REDRAWS[\s\S]*username: 'ObbyMagnate', version: 2, imageSize: 360/,
+    'ObbyMagnate must be queued for an enlarged one-time redraw');
   assert.match(botSource, /attachment: preparedImage,[\s\S]*name: temporaryName[\s\S]*existing\.delete\(\)[\s\S]*temporaryEmoji\.setName\(emojiName\)/,
     'redraw must upload the replacement before deleting and renaming the old emoji');
   assert.match(botSource, /redrawState\[key\] = request\.version[\s\S]*savePlayerHeadEmojiRedrawState/,

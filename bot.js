@@ -106,7 +106,7 @@ const BOT_CHAT_STATUS_EMOJIS_FILE = path.resolve('data', 'bot_chat_status_emojis
 const PLAYER_HEAD_EMOJIS_FILE = path.resolve('data', 'player_head_emojis.json');
 const PLAYER_HEAD_EMOJI_REDRAWS_FILE = path.resolve('data', 'player_head_emoji_redraws.json');
 const REQUESTED_PLAYER_HEAD_EMOJI_REDRAWS = Object.freeze([
-  { username: 'ObbyMagnate', version: 1 }
+  { username: 'ObbyMagnate', version: 2, imageSize: 360 }
 ]);
 const OBSIDIAN_STATS_MESSAGES_FILE = path.resolve('data', 'obsidian_stats_messages.json');
 const OBSIDIAN_FARM_DEBUG_LOG_FILE = path.resolve('obsidian_farm_debug.log');
@@ -622,7 +622,7 @@ async function redrawRequestedPlayerHeadEmojis() {
 
       const { imageBuffer, error } = await fetchPlayerHeadImage(username);
       if (!imageBuffer) throw error || new Error('No player head image was returned');
-      const preparedImage = await preparePlayerHeadEmojiImage(imageBuffer);
+      const preparedImage = await preparePlayerHeadEmojiImage(imageBuffer, { imageSize: request.imageSize });
       if (preparedImage.length > 256 * 1024) throw new Error('Prepared player head image is too large for an emoji');
 
       temporaryEmoji = await emojiManager.create({

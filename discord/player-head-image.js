@@ -6,13 +6,17 @@ const PLAYER_HEAD_CANVAS_SIZE = 512;
 const PLAYER_HEAD_IMAGE_SIZE = 280;
 const PLAYER_HEAD_IMAGE_OFFSET = (PLAYER_HEAD_CANVAS_SIZE - PLAYER_HEAD_IMAGE_SIZE) / 2;
 
-async function preparePlayerHeadEmojiImage(input) {
+async function preparePlayerHeadEmojiImage(input, { imageSize = PLAYER_HEAD_IMAGE_SIZE } = {}) {
   if (!Buffer.isBuffer(input) || input.length === 0) {
     throw new TypeError('A non-empty player head image buffer is required.');
   }
+  if (!Number.isInteger(imageSize) || imageSize < 1 || imageSize > PLAYER_HEAD_CANVAS_SIZE) {
+    throw new RangeError(`Player head image size must be between 1 and ${PLAYER_HEAD_CANVAS_SIZE}.`);
+  }
+  const imageOffset = Math.floor((PLAYER_HEAD_CANVAS_SIZE - imageSize) / 2);
 
   const centeredHead = await sharp(input, { failOn: 'error' })
-    .resize(PLAYER_HEAD_IMAGE_SIZE, PLAYER_HEAD_IMAGE_SIZE, {
+    .resize(imageSize, imageSize, {
       fit: 'fill',
       kernel: sharp.kernel.nearest
     })
@@ -29,8 +33,8 @@ async function preparePlayerHeadEmojiImage(input) {
   })
     .composite([{
       input: centeredHead,
-      left: PLAYER_HEAD_IMAGE_OFFSET,
-      top: PLAYER_HEAD_IMAGE_OFFSET
+      left: imageOffset,
+      top: imageOffset
     }])
     .png()
     .toBuffer();
