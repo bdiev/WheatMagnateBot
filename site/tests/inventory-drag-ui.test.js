@@ -22,6 +22,10 @@ assert.match(appSource, /handleBotInventoryDragStart[\s\S]*handleBotInventoryDro
   'the inventory UI must support drag and drop');
 assert.match(appSource, /handleBotInventoryKeydown/,
   'the inventory UI must retain a keyboard and tap alternative');
+assert.match(appSource, /function handleBotInventoryClick\(event\)[\s\S]*?if \(!state\.inventoryMoveSelection\) return;/,
+  'a normal inventory click must remain available for the item tooltip');
+assert.match(appSource, /data-tooltip-move=[\s\S]*?>Move<\/button>[\s\S]*?data-tooltip-drop=[\s\S]*?>Drop<\/button>/,
+  'the item tooltip must expose both Move and Drop actions');
 assert.match(appSource, /commandType: 'inventory_move'[\s\S]*expectedSource:[\s\S]*expectedTarget/,
   'inventory commands must include optimistic concurrency checks');
 assert.match(appSource, /command\.status === 'completed' \|\| command\.status === 'done'/,
@@ -30,6 +34,8 @@ assert.match(stylesSource, /\.inventory-slot\.inventory-selected/,
   'the selected source slot must have visible feedback');
 assert.match(stylesSource, /\.inventory-slot\.inventory-drag-over/,
   'the current drop target must have visible feedback');
+assert.match(stylesSource, /\.tooltip-item-actions/,
+  'the item actions must share a stable tooltip layout');
 assert.match(indexSource, /id="botInventoryHint"/,
   'the inventory panel must expose move progress and errors');
 

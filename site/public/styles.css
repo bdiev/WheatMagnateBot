@@ -4275,9 +4275,20 @@ body.search-focus-active #logoutButton {
   color: #95a08f;
 }
 
+.tooltip-item-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.tooltip-item-actions.single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.tooltip-move-button,
 .tooltip-drop-button {
   min-height: 30px;
-  margin-top: 4px;
   padding: 0 10px;
   font-size: 12px;
 }

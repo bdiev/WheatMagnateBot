@@ -3386,7 +3386,7 @@ function renderBotInventory(selector, bot, connected) {
   const hint = $('#botInventoryHint');
   if (hint && !state.inventoryMovePending && !state.inventoryMoveSelection) {
     hint.textContent = inventoryControl
-      ? 'Drag an item to another slot, or select the item and then its destination.'
+      ? 'Click an item for stats, Move and Drop. You can also drag it directly to another slot.'
       : 'Latest item snapshot reported by the Minecraft bot.';
     hint.classList.remove('inventory-hint-error');
   }
@@ -3793,16 +3793,22 @@ async function moveSelectedInventoryItem(targetSlotElement) {
 function handleBotInventoryClick(event) {
   const slot = event.target.closest('[data-inventory-slot]');
   if (!slot || state.currentUser?.role !== 'admin' || Date.now() < state.inventoryDragConsumedUntil) return;
+  if (!state.inventoryMoveSelection) return;
   event.preventDefault();
   event.stopPropagation();
-  if (!state.inventoryMoveSelection) selectInventoryMoveSource(slot);
-  else moveSelectedInventoryItem(slot);
+  moveSelectedInventoryItem(slot);
 }
 
 function handleBotInventoryKeydown(event) {
-  if (!['Enter', ' '].includes(event.key) || !event.target.closest('[data-inventory-slot]')) return;
+  const slot = event.target.closest('[data-inventory-slot]');
+  if (!['Enter', ' '].includes(event.key) || !slot) return;
   event.preventDefault();
-  handleBotInventoryClick(event);
+  if (state.inventoryMoveSelection) {
+    handleBotInventoryClick(event);
+    return;
+  }
+  const tooltipKey = slot.dataset.supplyTooltip;
+  if (tooltipKey) showSupplyTooltip(tooltipKey, slot);
 }
 
 function handleBotInventoryDragStart(event) {
@@ -3839,6 +3845,10 @@ function handleBotInventoryDrop(event) {
 function handleBotInventoryDragEnd() {
   $$('#botInventory .inventory-drag-over, #botInventory .inventory-dragging')
     .forEach(slot => slot.classList.remove('inventory-drag-over', 'inventory-dragging'));
+  if (!state.inventoryMovePending && state.inventoryMoveSelection) {
+    clearInventoryMoveSelection();
+    setInventoryMoveHint('Inventory move cancelled.');
+  }
 }
 
 function resetPlaytimeLeaderboardScroll(list, scope) {
@@ -4546,15 +4556,24 @@ function showSupplyTooltip(key, anchor) {
     key.startsWith('bot-equipment:') ||
     key.startsWith('bot-held:')
   );
+  const canMove = state.currentUser?.role === 'admin' && item.slot != null && Number.isInteger(Number(item.slot)) && (
+    key.startsWith('bot-inventory:') || key.startsWith('bot-equipment:')
+  );
   const dropPayload = canDrop
     ? escapeHtml(JSON.stringify({ slot: item.slot, name: item.name }))
+    : '';
+  const movePayload = canMove
+    ? escapeHtml(JSON.stringify({ slot: item.slot }))
     : '';
   tooltip.innerHTML = `
     <strong>${escapeHtml(item.displayName || item.label || item.name || 'Item')}</strong>
     <span>Count: ${formatNumber(item.count)}</span>
     ${item.slot == null ? '' : `<span>Slot: ${formatNumber(item.slot)}</span>`}
     ${item.remainingPercent == null ? '' : `<span>Durability: ${Number(item.remainingPercent).toFixed(1)}%</span>`}
-    ${canDrop ? `<button class="tooltip-drop-button danger-button" type="button" data-tooltip-drop="${dropPayload}">Drop</button>` : ''}
+    ${(canMove || canDrop) ? `<div class="tooltip-item-actions${canMove && canDrop ? '' : ' single'}">
+      ${canMove ? `<button class="tooltip-move-button ghost-button" type="button" data-tooltip-move="${movePayload}">Move</button>` : ''}
+      ${canDrop ? `<button class="tooltip-drop-button danger-button" type="button" data-tooltip-drop="${dropPayload}">Drop</button>` : ''}
+    </div>` : ''}
   `;
   tooltip.hidden = false;
   const rect = anchor.getBoundingClientRect();
@@ -5063,6 +5082,18 @@ function scheduleAdminControlRefresh(delayMs = 1800) {
       Promise.all([loadAll(), loadAdminControlState({ force: true })]).catch(() => {});
     }
   }, delayMs);
+}
+
+function handleTooltipMove(button) {
+  const payload = JSON.parse(button.dataset.tooltipMove || '{}');
+  const slotNumber = Number(payload.slot);
+  const sourceSlot = Number.isInteger(slotNumber)
+    ? document.querySelector(`#botInventory [data-inventory-slot="${slotNumber}"][data-inventory-item-name]`)
+    : null;
+  if (!sourceSlot || !selectInventoryMoveSource(sourceSlot)) {
+    throw new Error('Item cannot be moved from this snapshot.');
+  }
+  hideSupplyTooltip();
 }
 
 async function loadAdminControlState({ force = false } = {}) {
@@ -6585,6 +6616,18 @@ document.addEventListener('pointerdown', event => {
   }
 }, true);
 document.addEventListener('click', event => {
+  const tooltipMove = event.target.closest('[data-tooltip-move]');
+  if (tooltipMove) {
+    event.preventDefault();
+    event.stopPropagation();
+    try {
+      handleTooltipMove(tooltipMove);
+    } catch (err) {
+      setInventoryMoveHint(err.message || 'Could not select the inventory item.', { error: true });
+    }
+    return;
+  }
+
   const tooltipDrop = event.target.closest('[data-tooltip-drop]');
   if (tooltipDrop) {
     event.preventDefault();
