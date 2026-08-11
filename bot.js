@@ -475,6 +475,9 @@ async function backfillExistingPlayerProfiles() {
           await client.query('BEGIN');
           await client.query(`INSERT INTO player_name_history(player_uuid,username,first_seen,last_seen)
             VALUES($1::uuid,$2,NOW(),NOW()) ON CONFLICT(player_uuid,(LOWER(username)))
+            DO UPDATE SET username=EXCLUDED.username,last_seen=NOW()`, [uuid, row.username]);
+          await client.query(`INSERT INTO player_name_history(player_uuid,username,first_seen,last_seen)
+            VALUES($1::uuid,$2,NOW(),NOW()) ON CONFLICT(player_uuid,(LOWER(username)))
             DO UPDATE SET username=EXCLUDED.username,last_seen=NOW()`, [uuid, profile.name]);
           const attached = await client.query(`UPDATE player_activity SET player_uuid=$1::uuid,username=$2
             WHERE LOWER(username)=LOWER($3) AND player_uuid IS NULL`, [uuid, profile.name, row.username]);
@@ -484,6 +487,7 @@ async function backfillExistingPlayerProfiles() {
               DO UPDATE SET player_uuid=COALESCE(player_activity.player_uuid,EXCLUDED.player_uuid)`, [profile.name, uuid]);
           }
           await client.query('COMMIT');
+          await updatePlayerActivity(profile.name, false, { recordEvent: false, uuid });
           stats.updated += 1;
         } catch (err) {
           await client.query('ROLLBACK').catch(() => {});
@@ -1390,6 +1394,7 @@ async function initDatabase() {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS player_playtime (
         username VARCHAR(255) PRIMARY KEY,
+        player_uuid UUID,
         total_seconds BIGINT NOT NULL DEFAULT 0 CHECK (total_seconds >= 0),
         tracking_since TIMESTAMPTZ,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -1404,20 +1409,19 @@ async function initDatabase() {
     await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS whitelist_username_lower_idx ON whitelist (LOWER(username))');
     await pool.query(`
       CREATE TEMP TABLE deduplicated_player_playtime ON COMMIT DROP AS
-      SELECT LOWER(username) AS username_key,
-             SUM(total_seconds)::BIGINT AS total_seconds
-      FROM player_playtime
-      GROUP BY LOWER(username);
+      SELECT
+        COALESCE(pa.username, MIN(pt.username)) AS username,
+        pt.player_uuid,
+        SUM(pt.total_seconds)::BIGINT AS total_seconds,
+        MIN(pt.tracking_since) FILTER (WHERE pt.tracking_since IS NOT NULL) AS tracking_since,
+        MAX(pt.updated_at) AS updated_at
+      FROM player_playtime pt
+      LEFT JOIN player_activity pa ON pa.player_uuid = pt.player_uuid
+      GROUP BY COALESCE(pt.player_uuid::text, LOWER(pt.username)), pt.player_uuid, pa.username;
       TRUNCATE player_playtime;
-      INSERT INTO player_playtime (username, total_seconds)
-      SELECT COALESCE(
-               (SELECT w.username FROM whitelist w
-                WHERE LOWER(w.username) = d.username_key
-                LIMIT 1),
-               d.username_key
-             ),
-             d.total_seconds
-      FROM deduplicated_player_playtime d;
+      INSERT INTO player_playtime (username, player_uuid, total_seconds, tracking_since, updated_at)
+      SELECT username, player_uuid, total_seconds, tracking_since, updated_at
+      FROM deduplicated_player_playtime;
     `);
     await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS player_playtime_username_lower_idx ON player_playtime (LOWER(username))');
     // A previous process may have stopped without a final flush. Never count
@@ -1501,6 +1505,7 @@ async function initDatabase() {
       CREATE TABLE IF NOT EXISTS game_chat_messages (
         id BIGSERIAL PRIMARY KEY,
         username VARCHAR(255) NOT NULL,
+        player_uuid UUID,
         message TEXT NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
@@ -2454,6 +2459,21 @@ function getOnlinePlayerUsernames() {
   return [...usernames.values()];
 }
 
+function getOnlinePlayerUuid(username) {
+  const usernameKey = String(username || '').toLowerCase();
+  if (!usernameKey || !bot) return null;
+
+  const player = Object.values(bot.players || {}).find(candidate =>
+    String(candidate?.username || '').toLowerCase() === usernameKey
+  );
+  if (player?.uuid) return dashedMinecraftUuid(player.uuid);
+
+  const tablistPlayer = Object.values(bot.tablist?.players || {}).find(candidate =>
+    String(candidate?.username || candidate?.profile?.name || '').toLowerCase() === usernameKey
+  );
+  return dashedMinecraftUuid(tablistPlayer?.uuid || tablistPlayer?.profile?.id);
+}
+
 async function syncPlayerActivityOnlineState() {
   if (!pool || !bot || playerActivitySyncRunning) return;
 
@@ -2473,7 +2493,10 @@ async function syncPlayerActivityOnlineState() {
     const onlineByKey = new Map(onlineUsernames.map(username => [username.toLowerCase(), username]));
     const onlineKeys = new Set(onlineByKey.keys());
 
-    await Promise.all(onlineUsernames.map(username => updatePlayerActivity(username, true, { recordEvent: false })));
+    await Promise.all(onlineUsernames.map(username => updatePlayerActivity(username, true, {
+      recordEvent: false,
+      uuid: getOnlinePlayerUuid(username)
+    })));
 
     if (lastObservedOnlinePlayerKeys) {
       const leftUsernames = [...lastObservedOnlinePlayerKeys]
@@ -2544,13 +2567,29 @@ async function getEffectivePlayerPlaytime(username) {
 
   try {
     const result = await pool.query(`
-      SELECT username,
-             COALESCE(total_seconds, 0) +
-               CASE WHEN tracking_since IS NULL THEN 0
+      WITH identity AS (
+        SELECT pa.username, pa.player_uuid
+        FROM player_activity pa
+        WHERE pa.player_uuid IS NOT NULL
+          AND (
+            LOWER(pa.username) = LOWER($1)
+            OR EXISTS (
+              SELECT 1 FROM player_name_history pnh
+              WHERE pnh.player_uuid = pa.player_uuid
+                AND LOWER(pnh.username) = LOWER($1)
+            )
+          )
+        LIMIT 1
+      )
+      SELECT COALESCE(identity.username, pt.username) AS username,
+             COALESCE(pt.total_seconds, 0) +
+               CASE WHEN pt.tracking_since IS NULL THEN 0
                     ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - tracking_since)))::BIGINT)
                END AS effective_seconds
-      FROM player_playtime
-      WHERE LOWER(username) = LOWER($1)
+      FROM player_playtime pt
+      LEFT JOIN identity ON TRUE
+      WHERE (identity.player_uuid IS NOT NULL AND pt.player_uuid = identity.player_uuid)
+         OR (identity.player_uuid IS NULL AND LOWER(pt.username) = LOWER($1))
       LIMIT 1
     `, [safeUsername]);
     const row = result.rows[0];
@@ -2572,13 +2611,28 @@ async function reconcileObservedPlaytime(targetUsername, observedSeconds) {
 
   try {
     const result = await pool.query(`
-      SELECT username,
-             COALESCE(total_seconds, 0) +
-               CASE WHEN tracking_since IS NULL THEN 0
+      WITH identity AS (
+        SELECT pa.player_uuid
+        FROM player_activity pa
+        WHERE pa.player_uuid IS NOT NULL
+          AND (
+            LOWER(pa.username) = LOWER($1)
+            OR EXISTS (
+              SELECT 1 FROM player_name_history pnh
+              WHERE pnh.player_uuid = pa.player_uuid
+                AND LOWER(pnh.username) = LOWER($1)
+            )
+          )
+        LIMIT 1
+      )
+      SELECT pt.username,
+             COALESCE(pt.total_seconds, 0) +
+               CASE WHEN pt.tracking_since IS NULL THEN 0
                     ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - tracking_since)))::BIGINT)
                END AS effective_seconds
-      FROM player_playtime
-      WHERE LOWER(username) = LOWER($1)
+      FROM player_playtime pt
+      WHERE (pt.player_uuid = (SELECT player_uuid FROM identity))
+         OR ((SELECT player_uuid FROM identity) IS NULL AND LOWER(pt.username) = LOWER($1))
       LIMIT 1
     `, [safeUsername]);
     const currentSeconds = Number(result.rows[0]?.effective_seconds || 0);
@@ -4852,9 +4906,13 @@ async function recordGameChatMessage(username, message) {
   if (!safeUsername || !cleanMessage || cleanMessage.startsWith('/msg ')) return;
 
   try {
+    const onlinePlayer = Object.values(bot?.players || {}).find(player =>
+      String(player?.username || '').toLowerCase() === safeUsername.toLowerCase()
+    );
+    const playerUuid = dashedMinecraftUuid(onlinePlayer?.uuid);
     await pool.query(
-      'INSERT INTO game_chat_messages (username, message) VALUES ($1, $2)',
-      [safeUsername, cleanMessage]
+      'INSERT INTO game_chat_messages (username, player_uuid, message) VALUES ($1, $2::uuid, $3)',
+      [safeUsername, playerUuid, cleanMessage]
     );
   } catch (err) {
     console.error('[DB] Failed to record game chat message:', err.message);

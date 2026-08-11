@@ -35,10 +35,33 @@ function createPlaytimeFeature({
 
       for (const username of onlineUsernames) {
         await client.query(`
-          INSERT INTO player_playtime (username, tracking_since)
-          VALUES ($1, NOW())
+          WITH identity AS (
+            SELECT pa.player_uuid
+            FROM player_activity pa
+            WHERE pa.player_uuid IS NOT NULL
+              AND (
+                LOWER(pa.username) = LOWER($1)
+                OR EXISTS (
+                  SELECT 1 FROM player_name_history pnh
+                  WHERE pnh.player_uuid = pa.player_uuid
+                    AND LOWER(pnh.username) = LOWER($1)
+                )
+              )
+            LIMIT 1
+          ), updated_by_uuid AS (
+            UPDATE player_playtime pt
+            SET username = $1,
+                tracking_since = NOW(),
+                updated_at = NOW()
+            WHERE pt.player_uuid = (SELECT player_uuid FROM identity)
+            RETURNING 1
+          )
+          INSERT INTO player_playtime (username, player_uuid, tracking_since)
+          SELECT $1, (SELECT player_uuid FROM identity), NOW()
+          WHERE NOT EXISTS (SELECT 1 FROM updated_by_uuid)
           ON CONFLICT (LOWER(username))
           DO UPDATE SET username = EXCLUDED.username,
+                        player_uuid = COALESCE(EXCLUDED.player_uuid, player_playtime.player_uuid),
                         tracking_since = NOW(),
                         updated_at = NOW()
         `, [username]);
@@ -57,20 +80,41 @@ function createPlaytimeFeature({
     if (!pool) return { error: 'Database not configured' };
 
     try {
-      await pool.query(`
-        INSERT INTO player_playtime (username)
-        SELECT username FROM whitelist
-        ON CONFLICT (LOWER(username)) DO NOTHING
-      `);
       const result = await pool.query(`
-        SELECT w.username,
-               COALESCE(pt.total_seconds, 0) +
-                 CASE WHEN pt.tracking_since IS NULL THEN 0
-                      ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - pt.tracking_since)))::BIGINT)
-                 END AS total_seconds
-        FROM whitelist w
-        LEFT JOIN player_playtime pt ON LOWER(pt.username) = LOWER(w.username)
-        ORDER BY total_seconds DESC, LOWER(w.username)
+        WITH matched AS (
+          SELECT
+            COALESCE(pa.username, w.username) AS username,
+            COALESCE(pa.player_uuid::text, LOWER(w.username)) AS identity_key,
+            COALESCE(pt.total_seconds, 0) +
+              CASE WHEN pt.tracking_since IS NULL THEN 0
+                   ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - pt.tracking_since)))::BIGINT)
+              END AS total_seconds
+          FROM whitelist w
+          LEFT JOIN LATERAL (
+            SELECT candidate.username, candidate.player_uuid
+            FROM player_activity candidate
+            WHERE candidate.player_uuid IS NOT NULL
+              AND (
+                LOWER(candidate.username) = LOWER(w.username)
+                OR EXISTS (
+                  SELECT 1 FROM player_name_history pnh
+                  WHERE pnh.player_uuid = candidate.player_uuid
+                    AND LOWER(pnh.username) = LOWER(w.username)
+                )
+              )
+            LIMIT 1
+          ) pa ON TRUE
+          LEFT JOIN player_playtime pt
+            ON (pa.player_uuid IS NOT NULL AND pt.player_uuid = pa.player_uuid)
+            OR (pa.player_uuid IS NULL AND pt.player_uuid IS NULL AND LOWER(pt.username) = LOWER(w.username))
+        ), deduplicated AS (
+          SELECT DISTINCT ON (identity_key) username, identity_key, total_seconds
+          FROM matched
+          ORDER BY identity_key, total_seconds DESC
+        )
+        SELECT username, total_seconds
+        FROM deduplicated
+        ORDER BY total_seconds DESC, LOWER(username)
       `);
       return { players: result.rows };
     } catch (err) {
@@ -87,19 +131,35 @@ function createPlaytimeFeature({
 
     try {
       const result = await pool.query(`
-        SELECT pt.username,
+        SELECT COALESCE(pa.username, pt.username) AS username,
                COALESCE(pt.total_seconds, 0) +
                  CASE WHEN pt.tracking_since IS NULL THEN 0
                       ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - pt.tracking_since)))::BIGINT)
                  END AS total_seconds
         FROM player_playtime pt
-        WHERE LOWER(pt.username) LIKE LOWER($1)
+        LEFT JOIN player_activity pa ON pa.player_uuid = pt.player_uuid
+        WHERE (
+            LOWER(COALESCE(pa.username, pt.username)) LIKE LOWER($1)
+            OR EXISTS (
+              SELECT 1 FROM player_name_history searched_name
+              WHERE searched_name.player_uuid = pt.player_uuid
+                AND LOWER(searched_name.username) LIKE LOWER($1)
+            )
+          )
           AND NOT EXISTS (
             SELECT 1
             FROM whitelist w
-            WHERE LOWER(w.username) = LOWER(pt.username)
+            WHERE LOWER(w.username) = LOWER(COALESCE(pa.username, pt.username))
+               OR (
+                 pt.player_uuid IS NOT NULL
+                 AND EXISTS (
+                   SELECT 1 FROM player_name_history whitelisted_name
+                   WHERE whitelisted_name.player_uuid = pt.player_uuid
+                     AND LOWER(whitelisted_name.username) = LOWER(w.username)
+                 )
+               )
           )
-        ORDER BY total_seconds DESC, LOWER(pt.username)
+        ORDER BY total_seconds DESC, LOWER(COALESCE(pa.username, pt.username))
         LIMIT $2
       `, [`%${search}%`, safeLimit]);
       return { players: result.rows };
@@ -217,16 +277,46 @@ function createPlaytimeFeature({
     return enqueuePlaytimeWrite(async () => {
     try {
       const result = await pool.query(`
-        INSERT INTO player_playtime (username, total_seconds)
-        VALUES ($1, $2)
+        WITH identity AS (
+          SELECT pa.username, pa.player_uuid
+          FROM player_activity pa
+          WHERE pa.player_uuid IS NOT NULL
+            AND (
+              LOWER(pa.username) = LOWER($1)
+              OR EXISTS (
+                SELECT 1 FROM player_name_history pnh
+                WHERE pnh.player_uuid = pa.player_uuid
+                  AND LOWER(pnh.username) = LOWER($1)
+              )
+            )
+          LIMIT 1
+        ), updated_by_uuid AS (
+          UPDATE player_playtime pt
+          SET username = (SELECT username FROM identity),
+              total_seconds = $2,
+              tracking_since = CASE WHEN pt.tracking_since IS NULL THEN NULL ELSE NOW() END,
+              updated_at = NOW()
+          WHERE pt.player_uuid = (SELECT player_uuid FROM identity)
+          RETURNING username
+        ), inserted AS (
+          INSERT INTO player_playtime (username, player_uuid, total_seconds)
+          SELECT COALESCE((SELECT username FROM identity), $1),
+                 (SELECT player_uuid FROM identity),
+                 $2
+          WHERE NOT EXISTS (SELECT 1 FROM updated_by_uuid)
         ON CONFLICT (LOWER(username))
         DO UPDATE SET username = EXCLUDED.username,
+                      player_uuid = COALESCE(EXCLUDED.player_uuid, player_playtime.player_uuid),
                       total_seconds = EXCLUDED.total_seconds,
                       tracking_since = CASE WHEN player_playtime.tracking_since IS NULL THEN NULL ELSE NOW() END,
                       updated_at = NOW()
-        RETURNING username
+          RETURNING username
+        )
+        SELECT username FROM updated_by_uuid
+        UNION ALL
+        SELECT username FROM inserted
       `, [username, totalSeconds]);
-      return { username: result.rows[0].username };
+      return { username: result.rows[0]?.username || username };
     } catch (err) {
       return { error: err.message };
     }

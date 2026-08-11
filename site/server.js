@@ -578,6 +578,7 @@ async function ensureOptionalTables() {
     CREATE TABLE IF NOT EXISTS game_chat_messages (
       id BIGSERIAL PRIMARY KEY,
       username VARCHAR(255) NOT NULL,
+      player_uuid UUID,
       message TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
@@ -847,44 +848,55 @@ async function getPlayers() {
   const result = await pool.query(`
     WITH whitelist_players AS (
       SELECT DISTINCT ON (LOWER(username))
-        LOWER(username) AS username_key,
         username
       FROM whitelist
       ORDER BY LOWER(username), id
-    ),
-    activity AS (
-      SELECT DISTINCT ON (LOWER(username))
-        LOWER(username) AS username_key,
-        last_seen,
-        last_online,
-        is_online
-      FROM player_activity
-      ORDER BY LOWER(username), is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
-    ),
-    playtime AS (
+    ), matched AS (
       SELECT
-        LOWER(username) AS username_key,
-        SUM(total_seconds)::BIGINT AS total_seconds,
-        MIN(tracking_since) FILTER (WHERE tracking_since IS NOT NULL) AS tracking_since
-      FROM player_playtime
-      GROUP BY LOWER(username)
+        COALESCE(pa.username, w.username) AS username,
+        COALESCE(pa.player_uuid::text, LOWER(w.username)) AS identity_key,
+        pa.last_seen,
+        pa.last_online,
+        COALESCE(pa.is_online, FALSE) AS is_online,
+        COALESCE(pt.total_seconds, 0) AS total_seconds
+      FROM whitelist_players w
+      LEFT JOIN LATERAL (
+        SELECT candidate.*
+        FROM player_activity candidate
+        WHERE candidate.player_uuid IS NOT NULL
+          AND (
+            LOWER(candidate.username) = LOWER(w.username)
+            OR EXISTS (
+              SELECT 1 FROM player_name_history pnh
+              WHERE pnh.player_uuid = candidate.player_uuid
+                AND LOWER(pnh.username) = LOWER(w.username)
+            )
+          )
+        LIMIT 1
+      ) pa ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT SUM(
+          COALESCE(candidate.total_seconds, 0) +
+          CASE WHEN candidate.tracking_since IS NULL THEN 0
+               ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - candidate.tracking_since)))::BIGINT)
+          END
+        )::BIGINT AS total_seconds
+        FROM player_playtime candidate
+        WHERE (pa.player_uuid IS NOT NULL AND candidate.player_uuid = pa.player_uuid)
+           OR (pa.player_uuid IS NULL AND candidate.player_uuid IS NULL AND LOWER(candidate.username) = LOWER(w.username))
+      ) pt ON TRUE
+    ), deduplicated AS (
+      SELECT DISTINCT ON (identity_key) *
+      FROM matched
+      ORDER BY identity_key, is_online DESC, last_seen DESC NULLS LAST
     )
     SELECT
-      w.username,
-      pa.last_seen,
-      pa.last_online,
-      COALESCE(pa.is_online, FALSE) AS is_online,
-      COALESCE(pt.total_seconds, 0) +
-        CASE WHEN pt.tracking_since IS NULL THEN 0
-             ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - pt.tracking_since)))::BIGINT)
-        END AS total_seconds
-    FROM whitelist_players w
-    LEFT JOIN activity pa ON pa.username_key = w.username_key
-    LEFT JOIN playtime pt ON pt.username_key = w.username_key
+      username, last_seen, last_online, is_online, total_seconds
+    FROM deduplicated
     ORDER BY
-      COALESCE(pa.is_online, FALSE) DESC,
+      is_online DESC,
       total_seconds DESC,
-      w.username_key
+      LOWER(username)
   `);
 
   return {
@@ -2298,29 +2310,64 @@ async function searchSeenPlayers(url) {
   }
 
   const result = await pool.query(`
-    WITH names AS (
-      SELECT username FROM whitelist
-      UNION
-      SELECT username FROM player_activity
-      UNION
-      SELECT username FROM player_playtime
-    ),
-    activity AS (
-      SELECT DISTINCT ON (LOWER(username))
-        LOWER(username) AS username_key,
-        username,
-        last_seen,
-        last_online,
-        is_online
-      FROM player_activity
-      ORDER BY LOWER(username), is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
-    ),
-    matched AS (
+    WITH uuid_matches AS (
       SELECT
-        names.username,
+        pa.username,
         EXISTS (
-          SELECT 1 FROM whitelist w WHERE LOWER(w.username) = LOWER(names.username)
+          SELECT 1 FROM whitelist w
+          WHERE LOWER(w.username) = LOWER(pa.username)
+             OR EXISTS (
+               SELECT 1 FROM player_name_history whitelisted_name
+               WHERE whitelisted_name.player_uuid = pa.player_uuid
+                 AND LOWER(whitelisted_name.username) = LOWER(w.username)
+             )
         ) AS is_whitelisted,
+        pa.last_seen,
+        pa.last_online,
+        COALESCE(pa.is_online, FALSE) AS is_online,
+        COALESCE(pt.total_seconds, 0) AS total_seconds
+      FROM player_activity pa
+      LEFT JOIN LATERAL (
+        SELECT SUM(
+          COALESCE(candidate.total_seconds, 0) +
+          CASE WHEN candidate.tracking_since IS NULL THEN 0
+               ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - candidate.tracking_since)))::BIGINT)
+          END
+        )::BIGINT AS total_seconds
+        FROM player_playtime candidate
+        WHERE candidate.player_uuid = pa.player_uuid
+      ) pt ON TRUE
+      WHERE pa.player_uuid IS NOT NULL
+        AND (
+          LOWER(pa.username) LIKE LOWER($1)
+          OR EXISTS (
+            SELECT 1 FROM player_name_history searched_name
+            WHERE searched_name.player_uuid = pa.player_uuid
+              AND LOWER(searched_name.username) LIKE LOWER($1)
+          )
+        )
+    ), legacy_names AS (
+      SELECT w.username FROM whitelist w
+      WHERE NOT EXISTS (
+        SELECT 1 FROM player_activity resolved
+        WHERE resolved.player_uuid IS NOT NULL
+          AND (
+            LOWER(resolved.username) = LOWER(w.username)
+            OR EXISTS (
+              SELECT 1 FROM player_name_history known_name
+              WHERE known_name.player_uuid = resolved.player_uuid
+                AND LOWER(known_name.username) = LOWER(w.username)
+            )
+          )
+      )
+      UNION
+      SELECT username FROM player_activity WHERE player_uuid IS NULL
+      UNION
+      SELECT username FROM player_playtime WHERE player_uuid IS NULL
+    ), legacy_matches AS (
+      SELECT DISTINCT ON (LOWER(names.username))
+        names.username,
+        EXISTS (SELECT 1 FROM whitelist w WHERE LOWER(w.username) = LOWER(names.username)) AS is_whitelisted,
         pa.last_seen,
         pa.last_online,
         COALESCE(pa.is_online, FALSE) AS is_online,
@@ -2328,28 +2375,17 @@ async function searchSeenPlayers(url) {
           CASE WHEN pt.tracking_since IS NULL THEN 0
                ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - pt.tracking_since)))::BIGINT)
           END AS total_seconds
-      FROM names
-      LEFT JOIN activity pa ON pa.username_key = LOWER(names.username)
-      LEFT JOIN player_playtime pt ON LOWER(pt.username) = LOWER(names.username)
+      FROM legacy_names names
+      LEFT JOIN player_activity pa ON pa.player_uuid IS NULL AND LOWER(pa.username) = LOWER(names.username)
+      LEFT JOIN player_playtime pt ON pt.player_uuid IS NULL AND LOWER(pt.username) = LOWER(names.username)
       WHERE LOWER(names.username) LIKE LOWER($1)
+      ORDER BY LOWER(names.username), pa.is_online DESC, pa.last_seen DESC NULLS LAST
+    ), matched AS (
+      SELECT * FROM uuid_matches
+      UNION ALL
+      SELECT * FROM legacy_matches
     )
-    SELECT *
-    FROM (
-      SELECT DISTINCT ON (LOWER(username))
-        username,
-        is_whitelisted,
-        last_seen,
-        last_online,
-        is_online,
-        total_seconds
-      FROM matched
-      ORDER BY
-        LOWER(username),
-        is_whitelisted DESC,
-        is_online DESC,
-        last_seen DESC NULLS LAST,
-        username
-    ) deduped
+    SELECT * FROM matched
     ORDER BY
       CASE WHEN LOWER(username) = LOWER($2) THEN 0 ELSE 1 END,
       is_online DESC,
@@ -2388,46 +2424,51 @@ async function getPlayerProfile(url) {
     throw err;
   }
 
+  const identityResult = await pool.query(`
+    SELECT pa.username, pa.player_uuid,
+           ARRAY(
+             SELECT LOWER(pnh.username)
+             FROM player_name_history pnh
+             WHERE pnh.player_uuid = pa.player_uuid
+           ) AS aliases
+    FROM player_activity pa
+    WHERE LOWER(pa.username) = LOWER($1)
+       OR EXISTS (
+         SELECT 1 FROM player_name_history pnh
+         WHERE pnh.player_uuid = pa.player_uuid
+           AND LOWER(pnh.username) = LOWER($1)
+       )
+    ORDER BY
+      CASE WHEN LOWER(pa.username) = LOWER($1) THEN 0 ELSE 1 END,
+      pa.is_online DESC,
+      COALESCE(pa.last_seen, pa.last_online) DESC NULLS LAST,
+      pa.id DESC
+    LIMIT 1
+  `, [username]);
+  const identity = identityResult.rows[0] || null;
+  const currentUsername = identity?.username || username;
+  const playerUuid = identity?.player_uuid || null;
+  const aliases = [...new Set([
+    username.toLowerCase(),
+    currentUsername.toLowerCase(),
+    ...((identity?.aliases || []).map(alias => String(alias).toLowerCase()))
+  ])];
+
   const [profileResult, chatResult, recentChatResult, nearbyResult, ignoredResult, namesResult] = await Promise.all([
     pool.query(`
-      WITH names AS (
-        SELECT username, 0 AS priority FROM whitelist WHERE LOWER(username) = LOWER($1)
-        UNION
-        SELECT username, 1 AS priority FROM player_playtime WHERE LOWER(username) = LOWER($1)
-        UNION
-        SELECT username, 2 AS priority FROM player_activity WHERE LOWER(username) = LOWER($1)
-        UNION
-        SELECT pa.username, 2 AS priority
-        FROM player_name_history pnh
-        JOIN player_activity pa ON pa.player_uuid = pnh.player_uuid
-        WHERE LOWER(pnh.username) = LOWER($1)
-      ),
-      selected AS (
-        SELECT COALESCE((
-          SELECT username
-          FROM names
-          ORDER BY priority, CASE WHEN username = $1 THEN 0 ELSE 1 END, username
-          LIMIT 1
-        ), $1) AS username
-      ),
       activity AS (
-        SELECT DISTINCT ON (LOWER(username))
-          LOWER(username) AS username_key,
-          username,
-          player_uuid,
-          last_seen,
-          last_online,
-          registration_at,
-          is_online
+        SELECT username, player_uuid, last_seen, last_online, registration_at, is_online
         FROM player_activity
-        WHERE LOWER(username) = LOWER($1)
-        ORDER BY LOWER(username), is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
+        WHERE ($2::uuid IS NOT NULL AND player_uuid = $2::uuid)
+           OR ($2::uuid IS NULL AND LOWER(username) = ANY($3::text[]))
+        ORDER BY is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
+        LIMIT 1
       )
       SELECT
-        selected.username,
+        $1::text AS username,
         pa.player_uuid,
         EXISTS (
-          SELECT 1 FROM whitelist w WHERE LOWER(w.username) = LOWER(selected.username)
+          SELECT 1 FROM whitelist w WHERE LOWER(w.username) = ANY($3::text[])
         ) AS is_whitelisted,
         pa.last_seen,
         pa.last_online,
@@ -2435,60 +2476,63 @@ async function getPlayerProfile(url) {
         TO_CHAR(pa.registration_at AT TIME ZONE 'UTC', 'MM/DD/YYYY HH24:MI:SS') AS registration_display,
         pt.tracking_since,
         COALESCE(pa.is_online, FALSE) AS is_online,
-        COALESCE(pt.total_seconds, 0) +
-          CASE WHEN pt.tracking_since IS NULL THEN 0
-               ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - pt.tracking_since)))::BIGINT)
-          END AS total_seconds
-      FROM selected
-      LEFT JOIN activity pa ON pa.username_key = LOWER(selected.username)
-      LEFT JOIN player_playtime pt ON LOWER(pt.username) = LOWER(selected.username)
-    `, [username]),
+        COALESCE(pt.total_seconds, 0) AS total_seconds
+      FROM (SELECT 1) seed
+      LEFT JOIN activity pa ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT
+          SUM(
+            COALESCE(candidate.total_seconds, 0) +
+            CASE WHEN candidate.tracking_since IS NULL THEN 0
+                 ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - candidate.tracking_since)))::BIGINT)
+            END
+          )::BIGINT AS total_seconds,
+          MIN(candidate.tracking_since) AS tracking_since
+        FROM player_playtime candidate
+        WHERE ($2::uuid IS NOT NULL AND candidate.player_uuid = $2::uuid)
+           OR (candidate.player_uuid IS NULL AND LOWER(candidate.username) = ANY($3::text[]))
+      ) pt ON TRUE
+    `, [currentUsername, playerUuid, aliases]),
     pool.query(`
       SELECT
         COUNT(*)::int AS total,
         COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')::int AS last_24h,
         MAX(created_at) AS last_message_at
       FROM game_chat_messages
-      WHERE LOWER(username) = LOWER($1)
-    `, [username]),
+      WHERE ($1::uuid IS NOT NULL AND player_uuid = $1::uuid)
+         OR (player_uuid IS NULL AND LOWER(username) = ANY($2::text[]))
+    `, [playerUuid, aliases]),
     pool.query(`
       SELECT id, message, created_at
       FROM game_chat_messages
-      WHERE LOWER(username) = LOWER($1)
-        AND ($2::bigint IS NULL OR id < $2::bigint)
+      WHERE (
+          ($1::uuid IS NOT NULL AND player_uuid = $1::uuid)
+          OR (player_uuid IS NULL AND LOWER(username) = ANY($2::text[]))
+        )
+        AND ($3::bigint IS NULL OR id < $3::bigint)
       ORDER BY created_at DESC
-      LIMIT $3
-    `, [username, beforeMessageId, messageLimit]),
+      LIMIT $4
+    `, [playerUuid, aliases, beforeMessageId, messageLimit]),
     pool.query(`
       SELECT distance, last_seen
       FROM nearby_player_sightings
-      WHERE LOWER(username) = LOWER($1)
+      WHERE LOWER(username) = ANY($1::text[])
       ORDER BY last_seen DESC
       LIMIT 1
-    `, [username]),
+    `, [aliases]),
     pool.query(`
       SELECT EXISTS (
         SELECT 1
         FROM ignored_users
-        WHERE LOWER(username) = LOWER($1)
+        WHERE LOWER(username) = ANY($1::text[])
       ) AS is_ignored
-    `, [username]),
+    `, [aliases]),
     pool.query(`
-      WITH target AS (
-        SELECT player_uuid
-        FROM player_activity
-        WHERE LOWER(username) = LOWER($1) AND player_uuid IS NOT NULL
-        UNION
-        SELECT player_uuid
-        FROM player_name_history
-        WHERE LOWER(username) = LOWER($1)
-        LIMIT 1
-      )
       SELECT username, first_seen, last_seen
       FROM player_name_history
-      WHERE player_uuid = (SELECT player_uuid FROM target)
+      WHERE player_uuid = $1::uuid
       ORDER BY last_seen DESC, first_seen DESC
-    `, [username])
+    `, [playerUuid])
   ]);
 
   const profile = profileResult.rows[0] || { username };
@@ -2992,14 +3036,44 @@ async function setAdminPlaytime(currentUser, body) {
   }
 
   const result = await pool.query(`
-    INSERT INTO player_playtime (username, total_seconds)
-    VALUES ($1, $2)
-    ON CONFLICT (LOWER(username))
-    DO UPDATE SET username = EXCLUDED.username,
-                  total_seconds = EXCLUDED.total_seconds,
-                  tracking_since = CASE WHEN player_playtime.tracking_since IS NULL THEN NULL ELSE NOW() END,
-                  updated_at = NOW()
-    RETURNING username
+    WITH identity AS (
+      SELECT pa.username, pa.player_uuid
+      FROM player_activity pa
+      WHERE pa.player_uuid IS NOT NULL
+        AND (
+          LOWER(pa.username) = LOWER($1)
+          OR EXISTS (
+            SELECT 1 FROM player_name_history pnh
+            WHERE pnh.player_uuid = pa.player_uuid
+              AND LOWER(pnh.username) = LOWER($1)
+          )
+        )
+      LIMIT 1
+    ), updated_by_uuid AS (
+      UPDATE player_playtime pt
+      SET username = (SELECT username FROM identity),
+          total_seconds = $2,
+          tracking_since = CASE WHEN pt.tracking_since IS NULL THEN NULL ELSE NOW() END,
+          updated_at = NOW()
+      WHERE pt.player_uuid = (SELECT player_uuid FROM identity)
+      RETURNING username
+    ), inserted AS (
+      INSERT INTO player_playtime (username, player_uuid, total_seconds)
+      SELECT COALESCE((SELECT username FROM identity), $1),
+             (SELECT player_uuid FROM identity),
+             $2
+      WHERE NOT EXISTS (SELECT 1 FROM updated_by_uuid)
+      ON CONFLICT (LOWER(username))
+      DO UPDATE SET username = EXCLUDED.username,
+                    player_uuid = COALESCE(EXCLUDED.player_uuid, player_playtime.player_uuid),
+                    total_seconds = EXCLUDED.total_seconds,
+                    tracking_since = CASE WHEN player_playtime.tracking_since IS NULL THEN NULL ELSE NOW() END,
+                    updated_at = NOW()
+      RETURNING username
+    )
+    SELECT username FROM updated_by_uuid
+    UNION ALL
+    SELECT username FROM inserted
   `, [username, totalSeconds]);
   await recordSystemLog({
     level: 'audit',
@@ -3041,10 +3115,15 @@ async function setAdminRegistrationDate(currentUser, body) {
       UPDATE player_activity
       SET registration_at = $2
       WHERE id = (
-        SELECT id
-        FROM player_activity
-        WHERE LOWER(username) = LOWER($1)
-        ORDER BY is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
+        SELECT pa.id
+        FROM player_activity pa
+        WHERE LOWER(pa.username) = LOWER($1)
+           OR EXISTS (
+             SELECT 1 FROM player_name_history pnh
+             WHERE pnh.player_uuid = pa.player_uuid
+               AND LOWER(pnh.username) = LOWER($1)
+           )
+        ORDER BY pa.is_online DESC, COALESCE(pa.last_seen, pa.last_online) DESC NULLS LAST, pa.id DESC
         LIMIT 1
       )
       RETURNING username, registration_at

@@ -165,6 +165,63 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
       `, [uuidRow.id, nameRow.id]);
       await executor.query('DELETE FROM player_activity WHERE id=$1', [nameRow.id]);
     };
+    const reconcileUuidOwnedData = async executor => {
+      if (!normalizedUuid) return;
+      const playtimeRows = await executor.query(`
+        SELECT username,player_uuid,total_seconds,tracking_since,updated_at
+        FROM player_playtime
+        WHERE player_uuid=$1::uuid
+           OR (
+             player_uuid IS NULL
+             AND LOWER(username) IN (
+               SELECT LOWER(own_name.username)
+               FROM player_name_history own_name
+               WHERE own_name.player_uuid=$1::uuid
+                 AND NOT EXISTS (
+                   SELECT 1 FROM player_name_history reused_name
+                   WHERE LOWER(reused_name.username)=LOWER(own_name.username)
+                     AND reused_name.player_uuid<>$1::uuid
+                 )
+             )
+           )
+        ORDER BY updated_at DESC NULLS LAST
+        FOR UPDATE
+      `, [normalizedUuid]);
+      if (playtimeRows.rows.length) {
+        const totalSeconds = playtimeRows.rows.reduce(
+          (total, row) => total + BigInt(row.total_seconds || 0),
+          0n
+        );
+        const trackingSince = playtimeRows.rows
+          .map(row => row.tracking_since)
+          .filter(Boolean)
+          .sort((first, second) => new Date(first) - new Date(second))[0] || null;
+        await executor.query(
+          'DELETE FROM player_playtime WHERE username=ANY($1::text[])',
+          [playtimeRows.rows.map(row => row.username)]
+        );
+        await executor.query(`
+          INSERT INTO player_playtime(username,player_uuid,total_seconds,tracking_since,updated_at)
+          VALUES($1,$2::uuid,$3::bigint,$4,NOW())
+        `, [username, normalizedUuid, totalSeconds.toString(), trackingSince]);
+      }
+
+      await executor.query(`
+        UPDATE game_chat_messages
+        SET player_uuid=$1::uuid
+        WHERE player_uuid IS NULL
+          AND LOWER(username) IN (
+            SELECT LOWER(own_name.username)
+            FROM player_name_history own_name
+            WHERE own_name.player_uuid=$1::uuid
+              AND NOT EXISTS (
+                SELECT 1 FROM player_name_history reused_name
+                WHERE LOWER(reused_name.username)=LOWER(own_name.username)
+                  AND reused_name.player_uuid<>$1::uuid
+              )
+          )
+      `, [normalizedUuid]);
+    };
     const runUpdate = async (executor = pool) => {
       if (normalizedUuid) {
         await executor.query(`
@@ -246,6 +303,7 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
         await client.query('BEGIN');
         await reconcileUuidAndUsernameRows(client);
         await runUpdate(client);
+        await reconcileUuidOwnedData(client);
         await client.query('COMMIT');
       } catch (error) {
         await client.query('ROLLBACK').catch(() => {});
