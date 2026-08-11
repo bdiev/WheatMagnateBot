@@ -2600,6 +2600,7 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
 }
 
 const ADMIN_PLAYER_EDITABLE_FIELDS = Object.freeze(['notes', 'tags']);
+const ADMIN_PLAYER_SORT_FIELDS = new Set(['playtime', 'nickname', 'joindate']);
 const MINECRAFT_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function publicAdminPlayer(row) {
@@ -2688,39 +2689,79 @@ async function selectAdminPlayer(executor, identifier, { forUpdate = false } = {
 async function getAdminPlayers(currentUser, url, database = pool) {
   assertAdminUser(currentUser);
   const search = String(url?.searchParams?.get('query') || '').trim().slice(0, 64);
+  const requestedSort = String(url?.searchParams?.get('sort') || '').toLowerCase();
+  const requestedDirection = String(url?.searchParams?.get('direction') || '').toLowerCase();
+  const sort = ADMIN_PLAYER_SORT_FIELDS.has(requestedSort) ? requestedSort : 'playtime';
+  const direction = requestedDirection === 'desc' ? 'desc' : 'asc';
+  const limit = Math.min(24, Math.max(4, Number.parseInt(url?.searchParams?.get('limit'), 10) || 8));
+  const offset = Math.min(100_000, Math.max(0, Number.parseInt(url?.searchParams?.get('offset'), 10) || 0));
+  const directionSql = direction.toUpperCase();
+  const candidateOrder = {
+    playtime: `total_seconds ${directionSql},LOWER(pa.username) ASC,pa.id ASC`,
+    nickname: `LOWER(pa.username) ${directionSql},pa.id ${directionSql}`,
+    joindate: `pa.registration_at ${directionSql} NULLS ${direction === 'asc' ? 'FIRST' : 'LAST'},LOWER(pa.username) ASC,pa.id ASC`
+  }[sort];
+  const resultOrder = {
+    playtime: `candidate.total_seconds ${directionSql},LOWER(candidate.username) ASC,candidate.id ASC`,
+    nickname: `LOWER(candidate.username) ${directionSql},candidate.id ${directionSql}`,
+    joindate: `candidate.registration_at ${directionSql} NULLS ${direction === 'asc' ? 'FIRST' : 'LAST'},LOWER(candidate.username) ASC,candidate.id ASC`
+  }[sort];
   const result = await database.query(`
-    SELECT pa.id,pa.username,pa.player_uuid,pa.last_seen,pa.last_online,pa.registration_at,pa.is_online,
-           pa.admin_notes,pa.admin_tags,
-           COALESCE(playtime.total_seconds,0)::bigint AS total_seconds,
-           COALESCE(chat.total_messages,0)::int AS total_messages,
-           chat.last_message_at,
+    WITH candidate_players AS MATERIALIZED (
+      SELECT pa.id,pa.username,pa.player_uuid,pa.last_seen,pa.last_online,pa.registration_at,pa.is_online,
+             pa.admin_notes,pa.admin_tags,
+             COALESCE(
+               pt_uuid.total_seconds + CASE WHEN pt_uuid.tracking_since IS NULL THEN 0
+                 ELSE GREATEST(0,FLOOR(EXTRACT(EPOCH FROM (NOW()-pt_uuid.tracking_since)))::bigint) END,
+               pt_name.total_seconds + CASE WHEN pt_name.tracking_since IS NULL THEN 0
+                 ELSE GREATEST(0,FLOOR(EXTRACT(EPOCH FROM (NOW()-pt_name.tracking_since)))::bigint) END,
+               0
+             )::bigint AS total_seconds
+      FROM player_activity pa
+      LEFT JOIN player_playtime pt_uuid
+        ON pa.player_uuid IS NOT NULL AND pt_uuid.player_uuid=pa.player_uuid
+      LEFT JOIN player_playtime pt_name
+        ON pa.player_uuid IS NULL AND pt_name.player_uuid IS NULL AND LOWER(pt_name.username)=LOWER(pa.username)
+      WHERE $1::text=''
+         OR LOWER(pa.username) LIKE LOWER('%'||$1||'%')
+         OR COALESCE(pa.player_uuid::text,'') LIKE LOWER('%'||$1||'%')
+         OR EXISTS (SELECT 1 FROM player_name_history alias WHERE alias.player_uuid=pa.player_uuid AND LOWER(alias.username) LIKE LOWER('%'||$1||'%'))
+      ORDER BY ${candidateOrder}
+      LIMIT $2 OFFSET $3
+    )
+    SELECT candidate.id,candidate.username,candidate.player_uuid,candidate.last_seen,candidate.last_online,
+           candidate.registration_at,candidate.is_online,candidate.admin_notes,candidate.admin_tags,
+           candidate.total_seconds,
+           COALESCE(chat_uuid.total_messages,chat_name.total_messages,0)::int AS total_messages,
+           COALESCE(chat_uuid.last_message_at,chat_name.last_message_at) AS last_message_at,
            COALESCE(names.aliases,'{}'::text[]) AS aliases
-    FROM player_activity pa
-    LEFT JOIN LATERAL (
-      SELECT SUM(COALESCE(pt.total_seconds,0) + CASE WHEN pt.tracking_since IS NULL THEN 0
-        ELSE GREATEST(0,FLOOR(EXTRACT(EPOCH FROM (NOW()-pt.tracking_since)))::bigint) END)::bigint AS total_seconds
-      FROM player_playtime pt
-      WHERE (pa.player_uuid IS NOT NULL AND pt.player_uuid=pa.player_uuid)
-         OR (pa.player_uuid IS NULL AND pt.player_uuid IS NULL AND LOWER(pt.username)=LOWER(pa.username))
-    ) playtime ON TRUE
+    FROM candidate_players candidate
     LEFT JOIN LATERAL (
       SELECT COUNT(*)::int AS total_messages,MAX(message.created_at) AS last_message_at
       FROM game_chat_messages message
-      WHERE (pa.player_uuid IS NOT NULL AND message.player_uuid=pa.player_uuid)
-         OR (pa.player_uuid IS NULL AND message.player_uuid IS NULL AND LOWER(message.username)=LOWER(pa.username))
-    ) chat ON TRUE
+      WHERE message.player_uuid=candidate.player_uuid
+    ) chat_uuid ON candidate.player_uuid IS NOT NULL
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*)::int AS total_messages,MAX(message.created_at) AS last_message_at
+      FROM game_chat_messages message
+      WHERE message.player_uuid IS NULL AND LOWER(message.username)=LOWER(candidate.username)
+    ) chat_name ON candidate.player_uuid IS NULL
     LEFT JOIN LATERAL (
       SELECT ARRAY_AGG(history.username ORDER BY history.last_seen DESC) AS aliases
-      FROM player_name_history history WHERE history.player_uuid=pa.player_uuid
-    ) names ON TRUE
-    WHERE $1::text=''
-       OR LOWER(pa.username) LIKE LOWER('%'||$1||'%')
-       OR COALESCE(pa.player_uuid::text,'') LIKE LOWER('%'||$1||'%')
-       OR EXISTS (SELECT 1 FROM player_name_history alias WHERE alias.player_uuid=pa.player_uuid AND LOWER(alias.username) LIKE LOWER('%'||$1||'%'))
-    ORDER BY pa.is_online DESC,COALESCE(pa.last_seen,pa.last_online,pa.registration_at) DESC NULLS LAST,LOWER(pa.username)
-    LIMIT 200
-  `, [search]);
-  return { players: result.rows.map(publicAdminPlayer), query: search };
+      FROM player_name_history history WHERE history.player_uuid=candidate.player_uuid
+    ) names ON candidate.player_uuid IS NOT NULL
+    ORDER BY ${resultOrder}
+  `, [search, limit + 1, offset]);
+  const hasMore = result.rows.length > limit;
+  return {
+    players: result.rows.slice(0, limit).map(publicAdminPlayer),
+    query: search,
+    sort,
+    direction,
+    limit,
+    offset,
+    hasMore
+  };
 }
 
 async function patchAdminPlayer(currentUser, identifier, body, database = pool, audit = recordSystemLog) {

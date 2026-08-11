@@ -6,6 +6,7 @@ const path = require('node:path');
 const {
   adminPlayerIdentity,
   deleteAdminPlayer,
+  getAdminPlayers,
   normalizeAdminPlayerPatch,
   patchAdminPlayer
 } = require('../server');
@@ -110,6 +111,50 @@ async function testDeleteGuardsAndMissingPlayer() {
   await assert.rejects(deleteAdminPlayer(admin, 'not-a-uuid', fakeDatabase(), () => {}), error => error.statusCode === 404);
 }
 
+async function testAdminPlayerSortingAndOptimizedQuery() {
+  const calls = [];
+  const database = {
+    async query(sql, params) {
+      const callIndex = calls.length;
+      calls.push({ sql: String(sql).replace(/\s+/g, ' ').trim(), params });
+      return {
+        rows: callIndex === 0
+          ? Array.from({ length: 7 }, (_, index) => ({ id: index + 1, username: `Player${index + 1}`, total_seconds: index }))
+          : []
+      };
+    }
+  };
+  const sorted = await getAdminPlayers(
+    admin,
+    new URL('https://example.test/api/admin/players?query=bad&sort=joindate&direction=desc&limit=6&offset=12'),
+    database
+  );
+  assert.equal(sorted.players.length, 6);
+  assert.deepEqual(
+    { query: sorted.query, sort: sorted.sort, direction: sorted.direction, limit: sorted.limit, offset: sorted.offset, hasMore: sorted.hasMore },
+    { query: 'bad', sort: 'joindate', direction: 'desc', limit: 6, offset: 12, hasMore: true }
+  );
+  assert.deepEqual(calls[0].params, ['bad', 7, 12]);
+  assert.match(calls[0].sql, /WITH candidate_players AS MATERIALIZED/);
+  assert.match(calls[0].sql, /ORDER BY pa\.registration_at DESC NULLS LAST/);
+  assert.match(calls[0].sql, /LEFT JOIN player_playtime pt_uuid[\s\S]*LEFT JOIN player_playtime pt_name/);
+  assert.match(calls[0].sql, /chat_uuid ON candidate\.player_uuid IS NOT NULL[\s\S]*chat_name ON candidate\.player_uuid IS NULL/);
+  assert.doesNotMatch(calls[0].sql, /message\.player_uuid=candidate\.player_uuid\)\s+OR/);
+
+  const normalized = await getAdminPlayers(
+    admin,
+    new URL('https://example.test/api/admin/players?sort=DROP%20TABLE&direction=sideways'),
+    database
+  );
+  assert.equal(normalized.sort, 'playtime');
+  assert.equal(normalized.direction, 'asc');
+  assert.equal(normalized.limit, 8);
+  assert.equal(normalized.offset, 0);
+  assert.equal(normalized.hasMore, false);
+  assert.deepEqual(calls[1].params, ['', 9, 0]);
+  assert.match(calls[1].sql, /ORDER BY total_seconds ASC,LOWER\(pa\.username\) ASC/);
+}
+
 function testArchitectureAndUiContracts() {
   const root = path.resolve(__dirname, '..', '..');
   const serverSource = fs.readFileSync(path.join(root, 'site', 'server.js'), 'utf8');
@@ -119,17 +164,23 @@ function testArchitectureAndUiContracts() {
   const htmlSource = fs.readFileSync(path.join(root, 'site', 'public', 'index.html'), 'utf8');
   const databaseMigration = fs.readFileSync(path.join(root, 'database', 'migrations', '023_player_admin_metadata.sql'), 'utf8');
   const siteMigration = fs.readFileSync(path.join(root, 'site', 'migrations', '023_player_admin_metadata.sql'), 'utf8');
+  const databaseListIndexes = fs.readFileSync(path.join(root, 'database', 'migrations', '024_admin_player_list_indexes.sql'), 'utf8');
+  const siteListIndexes = fs.readFileSync(path.join(root, 'site', 'migrations', '024_admin_player_list_indexes.sql'), 'utf8');
   assert.equal(databaseMigration, siteMigration, 'bot and site must migrate the same player metadata fields');
+  assert.equal(databaseListIndexes, siteListIndexes, 'bot and site must install the same admin-list indexes');
   assert.match(serverSource, /getPlayerProfile\(url, \{ includeAdminFields = false \}/, 'the existing player GET must be reused');
   assert.match(serverSource, /MINECRAFT_UUID_PATTERN[\s\S]*type: 'uuid'/, 'UUID must remain the primary admin identity');
   assert.match(serverSource, /preserved: \['game_chat_messages'/, 'shared history preservation must be explicit and auditable');
   assert.match(databaseSource, /admin_notes = COALESCE[\s\S]*admin_tags = ARRAY/, 'UUID reconciliation must preserve admin-managed metadata');
   assert.match(databaseSource, /INSERT INTO player_activity \(username, player_uuid/, 'a returning UUID player must be recreated by normal tracking');
-  assert.match(htmlSource, /id="adminPlayersSearch"[\s\S]*id="adminPlayersList"/);
+  assert.match(htmlSource, /id="adminPlayersSearch"[\s\S]*id="adminPlayersSort"[\s\S]*id="adminPlayersDirection"[\s\S]*id="adminPlayersList"[\s\S]*id="adminPlayersPrevious"[\s\S]*id="adminPlayersNext"/);
   assert.match(htmlSource, /id="adminPlayerDeleteModal"[\s\S]*role="alertdialog"/);
   assert.match(appSource, /Object\.keys\(patch\)\.length/, 'the frontend must build a partial patch');
   assert.match(appSource, /state\.adminPlayers = state\.adminPlayers\.filter/, 'delete must remove the card without reloading the page');
   assert.match(appSource, /classList\.toggle\('menu-open', menu\.open\)/, 'an open actions menu must elevate its entire card');
+  assert.match(appSource, /new URLSearchParams\(\{[\s\S]*sort: state\.adminPlayersSort,[\s\S]*direction: state\.adminPlayersDirection,[\s\S]*limit: String\(state\.adminPlayersLimit\),[\s\S]*offset:/, 'sorting and pagination must happen on the server');
+  assert.match(appSource, /admin-player-avatar[^\n]*accountHeadUrl\(player\.username\)[^\n]*loading="lazy" decoding="async"/, 'player cards must use the cached avatar proxy and asynchronous decoding');
+  assert.match(stylesSource, /\.admin-players-pagination\s*\{[^}]*grid-template-columns:/, 'the compact player list must expose pagination controls');
   assert.match(stylesSource, /\.admin-player-card\.menu-open\s*\{[^}]*z-index:100/, 'the active player card must render above later cards');
   assert.doesNotMatch(appSource.match(/async function confirmAdminPlayerDelete\(\)[\s\S]*?\n}/)?.[0] || '', /location\.reload/);
 }
@@ -139,6 +190,7 @@ function testArchitectureAndUiContracts() {
   await testEditValidationAndAuthorization();
   await testDeleteAndRelations();
   await testDeleteGuardsAndMissingPlayer();
+  await testAdminPlayerSortingAndOptimizedQuery();
   testArchitectureAndUiContracts();
   console.log('Admin Minecraft player management tests passed.');
 })().catch(error => {

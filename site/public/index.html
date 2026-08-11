@@ -13,7 +13,7 @@
     <link rel="icon" type="image/png" href="/items/Wheat.png">
     <link rel="apple-touch-icon" href="/items/Wheat.png">
     <script src="/theme-init.js?v=136"></script>
-    <link rel="stylesheet" href="/styles.css?v=181">
+    <link rel="stylesheet" href="/styles.css?v=183">
     <script src="/page-transitions.js?v=1" defer></script>
   </head>
   <body>
@@ -1174,11 +1174,18 @@
             </div>
             <div class="admin-player-tools">
               <label class="admin-player-search" for="adminPlayersSearch"><span class="visually-hidden">Search players</span><input id="adminPlayersSearch" type="search" autocomplete="off" placeholder="Search players..."></label>
+              <label class="admin-player-sort" for="adminPlayersSort"><span class="visually-hidden">Sort Minecraft players by</span><select id="adminPlayersSort" aria-label="Sort Minecraft players by"><option value="playtime">Playtime</option><option value="nickname">Nickname</option><option value="joindate">Join date</option></select></label>
+              <label class="admin-player-sort" for="adminPlayersDirection"><span class="visually-hidden">Sort direction</span><select id="adminPlayersDirection" aria-label="Sort direction"><option value="asc">Ascending</option><option value="desc">Descending</option></select></label>
               <button id="adminPlayersRefresh" type="button">Refresh</button>
             </div>
           </div>
           <div id="adminPlayersNotice" class="admin-players-notice" role="status" aria-live="polite" hidden></div>
           <div id="adminPlayersList" class="admin-players-list" aria-live="polite"></div>
+          <nav id="adminPlayersPagination" class="admin-players-pagination" aria-label="Minecraft player pages" hidden>
+            <button id="adminPlayersPrevious" class="ghost-button" type="button">Previous</button>
+            <span id="adminPlayersPage" aria-live="polite">Page 1</span>
+            <button id="adminPlayersNext" class="ghost-button" type="button">Next</button>
+          </nav>
         </section>
 
         <section class="panel admin-log-panel">
@@ -1215,6 +1222,6 @@
       </section>
     </main>
 
-    <script src="/app.js?v=181" defer></script>
+    <script src="/app.js?v=183" defer></script>
   </body>
 </html>

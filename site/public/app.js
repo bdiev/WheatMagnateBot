@@ -60,6 +60,11 @@ const state = {
   adminPlayers: [],
   adminPlayersLoading: false,
   adminPlayersRequestId: 0,
+  adminPlayersSort: 'playtime',
+  adminPlayersDirection: 'asc',
+  adminPlayersLimit: 6,
+  adminPlayersOffset: 0,
+  adminPlayersHasMore: false,
   adminPlayerSearchTimer: null,
   adminPlayerEditTarget: null,
   adminPlayerDeleteTarget: null,
@@ -4753,7 +4758,7 @@ function renderAdminPlayers(players = state.adminPlayers) {
     const tags = Array.isArray(player.tags) ? player.tags : [];
     return `
       <article class="admin-player-card" data-admin-player-key="${identityKey}">
-        <img class="admin-player-avatar" src="${playerHeadUrl(player.username, 64)}" alt="" loading="lazy">
+        <img class="admin-player-avatar" src="${accountHeadUrl(player.username)}" alt="" loading="lazy" decoding="async">
         <div class="admin-player-card-main">
           <div class="admin-player-card-title"><strong>${username}</strong><span class="pill ${player.isOnline ? 'online' : ''}">${player.isOnline ? 'online' : 'offline'}</span></div>
           <code title="${uuid || `Legacy profile ID ${escapeHtml(player.id)}`}">${uuid || `Legacy ID ${escapeHtml(player.id)}`}</code>
@@ -4790,19 +4795,45 @@ function renderAdminPlayers(players = state.adminPlayers) {
   });
 }
 
-async function loadAdminPlayers({ query = $('#adminPlayersSearch')?.value || '', showLoading = true } = {}) {
+function updateAdminPlayersPagination() {
+  const pagination = $('#adminPlayersPagination');
+  const previous = $('#adminPlayersPrevious');
+  const next = $('#adminPlayersNext');
+  const page = $('#adminPlayersPage');
+  const pageNumber = Math.floor(state.adminPlayersOffset / state.adminPlayersLimit) + 1;
+  if (pagination) pagination.hidden = state.adminPlayersOffset === 0 && !state.adminPlayersHasMore;
+  if (previous) previous.disabled = state.adminPlayersLoading || state.adminPlayersOffset === 0;
+  if (next) next.disabled = state.adminPlayersLoading || !state.adminPlayersHasMore;
+  if (page) page.textContent = `Page ${pageNumber}`;
+}
+
+async function loadAdminPlayers({ query = $('#adminPlayersSearch')?.value || '', showLoading = true, offset = state.adminPlayersOffset } = {}) {
   if (state.currentUser?.role !== 'admin') return;
   const list = $('#adminPlayersList');
   const refresh = $('#adminPlayersRefresh');
   const requestId = ++state.adminPlayersRequestId;
   state.adminPlayersLoading = true;
   if (refresh) refresh.disabled = true;
+  updateAdminPlayersPagination();
   try {
     if (showLoading && list) list.innerHTML = '<div class="empty">Loading Minecraft players...</div>';
-    const payload = await fetchJson(`/api/admin/players?query=${encodeURIComponent(query.trim())}`);
+    const params = new URLSearchParams({
+      query: query.trim(),
+      sort: state.adminPlayersSort,
+      direction: state.adminPlayersDirection,
+      limit: String(state.adminPlayersLimit),
+      offset: String(Math.max(0, offset))
+    });
+    const payload = await fetchJson(`/api/admin/players?${params}`);
     if (requestId !== state.adminPlayersRequestId) return;
+    state.adminPlayersSort = payload.sort || state.adminPlayersSort;
+    state.adminPlayersDirection = payload.direction || state.adminPlayersDirection;
+    state.adminPlayersLimit = Number(payload.limit) || state.adminPlayersLimit;
+    state.adminPlayersOffset = Number(payload.offset) || 0;
+    state.adminPlayersHasMore = Boolean(payload.hasMore);
     state.adminPlayers = payload.players || [];
     renderAdminPlayers();
+    updateAdminPlayersPagination();
   } catch (err) {
     if (requestId !== state.adminPlayersRequestId) return;
     if (list) list.innerHTML = `<div class="empty">Could not load players: ${escapeHtml(err.message)}</div>`;
@@ -4811,12 +4842,13 @@ async function loadAdminPlayers({ query = $('#adminPlayersSearch')?.value || '',
     if (requestId === state.adminPlayersRequestId) {
       state.adminPlayersLoading = false;
       if (refresh) refresh.disabled = false;
+      updateAdminPlayersPagination();
     }
   }
 }
 
 function adminPlayerIdentityMarkup(player) {
-  return `<img src="${playerHeadUrl(player.username, 48)}" alt=""><div><strong>${escapeHtml(player.username)}</strong><code>${escapeHtml(player.uuid || `Legacy profile ID ${player.id}`)}</code></div>`;
+  return `<img src="${accountHeadUrl(player.username)}" alt="" decoding="async"><div><strong>${escapeHtml(player.username)}</strong><code>${escapeHtml(player.uuid || `Legacy profile ID ${player.id}`)}</code></div>`;
 }
 
 function renderAdminPlayerReadonly(player) {
@@ -4923,10 +4955,15 @@ async function confirmAdminPlayerDelete() {
     await deleteJson(`/api/admin/players/${encodeURIComponent(player.identityKey)}`);
     state.adminPlayers = state.adminPlayers.filter(item => String(item.identityKey) !== String(player.identityKey));
     renderAdminPlayers();
+    updateAdminPlayersPagination();
     if (String(state.playerProfileLastPayload?.uuid || '').toLowerCase() === String(player.uuid || '').toLowerCase() ||
         String(state.playerProfileLastPayload?.username || '').toLowerCase() === String(player.username || '').toLowerCase()) closePlayerProfile();
     closeAdminPlayerDelete();
     setAdminPlayersNotice('Player deleted.');
+    const refillOffset = state.adminPlayers.length || state.adminPlayersOffset === 0
+      ? state.adminPlayersOffset
+      : Math.max(0, state.adminPlayersOffset - state.adminPlayersLimit);
+    loadAdminPlayers({ showLoading: false, offset: refillOffset }).catch(() => {});
     loadAdminSystemLogs().catch(() => {});
   } catch (err) {
     error.textContent = err.message;
@@ -6823,9 +6860,23 @@ document.addEventListener('pointerdown', event => {
 });
 $('#adminUsersRefresh')?.addEventListener('click', loadAdminUsers);
 $('#adminPlayersRefresh')?.addEventListener('click', () => loadAdminPlayers());
+$('#adminPlayersSort')?.addEventListener('change', event => {
+  state.adminPlayersSort = event.target.value;
+  loadAdminPlayers({ offset: 0 });
+});
+$('#adminPlayersDirection')?.addEventListener('change', event => {
+  state.adminPlayersDirection = event.target.value;
+  loadAdminPlayers({ offset: 0 });
+});
 $('#adminPlayersSearch')?.addEventListener('input', () => {
   clearTimeout(state.adminPlayerSearchTimer);
-  state.adminPlayerSearchTimer = setTimeout(() => loadAdminPlayers(), 250);
+  state.adminPlayerSearchTimer = setTimeout(() => loadAdminPlayers({ offset: 0 }), 250);
+});
+$('#adminPlayersPrevious')?.addEventListener('click', () => {
+  loadAdminPlayers({ offset: Math.max(0, state.adminPlayersOffset - state.adminPlayersLimit) });
+});
+$('#adminPlayersNext')?.addEventListener('click', () => {
+  if (state.adminPlayersHasMore) loadAdminPlayers({ offset: state.adminPlayersOffset + state.adminPlayersLimit });
 });
 $('#adminPlayersList')?.addEventListener('click', event => handleAdminPlayerAction(event).catch(err => setAdminPlayersNotice(err.message, 'error')));
 $('#adminPlayerEditForm')?.addEventListener('submit', saveAdminPlayer);
