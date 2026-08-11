@@ -542,15 +542,14 @@ function playerHeadUrl(username, size = 32) {
   return `https://minotar.net/avatar/${safeUsername}/${size}`;
 }
 
-function playerIdentity(username, size = 28, { status = null, loading = 'eager' } = {}) {
+function playerIdentity(username, size = 28, { status = null } = {}) {
   const safeName = escapeHtml(username || 'Unknown');
   const safeUsername = escapeHtml(username || '');
   const statusClass = status === 'online' ? ' online' : status === 'offline' ? ' offline' : '';
   const statusLabel = status === 'online' ? 'Online' : status === 'offline' ? 'Offline' : '';
-  const imageLoading = loading === 'lazy' ? 'lazy' : 'eager';
   return `
     <span class="player-identity${statusClass}" role="button" tabindex="0" data-player="${safeUsername}" title="Open player profile"${statusLabel ? ` aria-label="${safeName}: ${statusLabel}"` : ''}>
-      <img class="player-head" src="${playerHeadUrl(username, size)}" alt="" loading="${imageLoading}" decoding="async" width="${size}" height="${size}">
+      <img class="player-head" src="${playerHeadUrl(username, size)}" alt="" loading="eager" decoding="async" width="${size}" height="${size}">
       <span>${safeName}</span>
     </span>
   `;
@@ -5858,7 +5857,7 @@ function renderChildAiPlayerStyles({ resetScroll = false } = {}) {
     const displayName = profile.subjectName || profile.subjectId || 'Unknown player';
     const isMinecraftPlayer = String(profile.source || '').toLowerCase() === 'minecraft';
     const identity = isMinecraftPlayer
-      ? playerIdentity(displayName, 28, { loading: 'lazy' })
+      ? playerIdentity(displayName, 28)
       : `<strong class="child-ai-style-name">${escapeHtml(displayName)}</strong>`;
     return `
       <article class="child-ai-style-row">
