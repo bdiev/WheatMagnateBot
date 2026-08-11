@@ -69,13 +69,14 @@ async function run() {
   const root = path.resolve(__dirname, '..');
   const databaseMigration = fs.readFileSync(path.join(root, 'database', 'migrations', '020_player_uuid_identity.sql'), 'utf8');
   const siteMigration = fs.readFileSync(path.join(root, 'site', 'migrations', '020_player_uuid_identity.sql'), 'utf8');
-  const phantomCleanupMigration = fs.readFileSync(path.join(root, 'database', 'migrations', '021_remove_numeric_tab_phantoms.sql'), 'utf8');
-  const sitePhantomCleanupMigration = fs.readFileSync(path.join(root, 'site', 'migrations', '021_remove_numeric_tab_phantoms.sql'), 'utf8');
+  const phantomCleanupMigration = fs.readFileSync(path.join(root, 'database', 'migrations', '022_remove_text_tab_phantoms.sql'), 'utf8');
+  const sitePhantomCleanupMigration = fs.readFileSync(path.join(root, 'site', 'migrations', '022_remove_text_tab_phantoms.sql'), 'utf8');
   const siteSource = fs.readFileSync(path.join(root, 'site', 'server.js'), 'utf8');
   const botSource = fs.readFileSync(path.join(root, 'bot.js'), 'utf8');
   assert.equal(siteMigration, databaseMigration, 'bot and site must apply the same UUID identity migration');
   assert.equal(sitePhantomCleanupMigration, phantomCleanupMigration, 'bot and site must apply the same phantom-profile cleanup');
-  assert.match(phantomCleanupMigration, /player_uuid IS NULL[\s\S]*username ~ '\^\[0-9\]\+\$'/);
+  assert.match(phantomCleanupMigration, /player_uuid IS NULL/);
+  assert.doesNotMatch(phantomCleanupMigration, /username ~/, 'cleanup must include textual TAB labels such as BALANCE');
   assert.match(phantomCleanupMigration, /NOT EXISTS \([\s\S]*FROM game_chat_messages/);
   assert.match(databaseMigration, /ALTER TABLE player_playtime[\s\S]*player_uuid UUID/);
   assert.match(databaseMigration, /ALTER TABLE game_chat_messages[\s\S]*player_uuid UUID/);
