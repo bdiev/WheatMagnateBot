@@ -19,7 +19,7 @@ assert.doesNotMatch(
 );
 assert.match(
   botSource,
-  /const wmMatch = message\.match\([\s\S]*?if \(wmMatch\) \{\s*\/\/[\s\S]*?scheduleGameChatForward\(username, message, 'chat'\);\s*await handleWmCommand/,
+  /const wmMatch = message\.match\([\s\S]*?if \(wmMatch\) \{\s*\/\/[\s\S]*?scheduleGameChatForward\(username, message, source\);\s*await handleWmCommand/,
   '!wm commands must use the shared chat forwarder so message/messagestr echoes are deduplicated'
 );
 assert.match(serverSource, /beforeMessageId/, 'player chat history must support stable pagination');
@@ -89,5 +89,32 @@ assert.match(
   /function resolvePublicChatEnvelope\([\s\S]*if \(jsonMessage\)[\s\S]*parseRawPublicChatLine\(candidate\)[\s\S]*if \(parsed\?\.username && parsed\?\.message\) return parsed;[\s\S]*const targetKey/,
   'the raw Minecraft chat component must determine the sender before command-response heuristics'
 );
+assert.match(
+  botSource,
+  /const handleMinecraftPlayerChat = async[\s\S]*bot\.on\('chat', handleMinecraftPlayerChat\)/,
+  'standard chat and component-only GreenChat must share one player-message handler'
+);
+assert.match(
+  botSource,
+  /analyzeMinecraftChatComponent\(message,[\s\S]*componentChat\.isGreenChat[\s\S]*handleMinecraftPlayerChat\([\s\S]*source: 'message-green'/,
+  'GreenChat must be recovered from structured message components and enter the shared pipeline'
+);
+assert.match(
+  botSource,
+  /rememberGreenComponentMessage[\s\S]*consumeGreenComponentMessage\(message, position\)/,
+  'the messagestr echo of a classified GreenChat component must be consumed without another forward'
+);
+assert.match(
+  botSource,
+  /duplicate && duplicate\.source !== source && nowTs - duplicate\.timestamp < 1_500/,
+  'chat and message events for the same player message must collapse before Discord delivery'
+);
+assert.match(
+  botSource,
+  /isKnownOnlinePlayer[\s\S]*isSignedPlayerChat[\s\S]*rejected-player-shaped-system-text/,
+  'player-shaped system text must require a signed chat position or a currently known player'
+);
+assert.match(botSource, /debugLog\('\[MC CHAT DEBUG\]'/, 'component diagnostics must use the existing opt-in debug logger');
+assert.match(botSource, /isPrivateMinecraftChatLine\(text\)[\s\S]*evidence: \['private_message'\]/, 'whispers must be rejected before component GreenChat classification');
 
 console.log('Chat archive tests passed.');

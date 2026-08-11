@@ -29,7 +29,7 @@ const { newCorrelationId, recordOperationalEvent } = require('./operational-even
 const { buildDailyObsidianReport, claimDailyReportDate, getDailyReportChannels, getDailyReportSlot } = require('./obsidian-daily-report');
 const { buildPlayerMilestonePush, buildPlayerMilestones } = require('./site/player-milestones');
 const { WebPushService } = require('./site/web-push');
-const { chatComponentToString } = require('./minecraft-chat-component');
+const { analyzeMinecraftChatComponent, chatComponentToString } = require('./minecraft-chat-component');
 const { AccountRepository } = require('./site/accounts/account-repository');
 const { AccountRegistry } = require('./site/accounts/account-registry');
 const { MinecraftBotRuntime } = require('./site/accounts/minecraft-bot-runtime');
@@ -886,6 +886,7 @@ class DeferredBotCommandError extends Error {
   }
 }
 let recentlyForwardedGameChat = new Map(); // normalized message key -> { source, timestamp }
+const recentGreenComponentMessages = new Map(); // message/position key -> short-lived classification for messagestr
 let recentCommandBotResponses = []; // raw command-bot replies used to reject truncated chat-event copies
 const COMMAND_RESPONSE_BOT_USERNAMES = new Set(['lolritterbot']);
 const COMMAND_RESPONSE_DISPLAY_USERNAME = 'LoLRiTTeRBot';
@@ -2484,6 +2485,23 @@ function getOnlinePlayerUuid(username) {
   return dashedMinecraftUuid(
     tablistPlayer?.uuid || tablistPlayer?.profile?.id || tablistKey
   );
+}
+
+function getOnlinePlayerUsernameByUuid(value) {
+  const uuid = dashedMinecraftUuid(value);
+  if (!uuid || !bot) return null;
+  const compactUuid = uuid.replace(/-/g, '');
+  const directPlayer = Object.values(bot.players || {}).find(candidate =>
+    dashedMinecraftUuid(candidate?.uuid)?.replace(/-/g, '') === compactUuid
+  );
+  if (directPlayer?.username) return directPlayer.username;
+
+  const tablistEntry = Object.entries(bot.tablist?.players || {}).find(([key, candidate]) =>
+    [candidate?.uuid, candidate?.profile?.id, key].some(candidateUuid =>
+      dashedMinecraftUuid(candidateUuid)?.replace(/-/g, '') === compactUuid
+    )
+  );
+  return tablistEntry?.[1]?.username || tablistEntry?.[1]?.profile?.name || null;
 }
 
 async function syncPlayerActivityOnlineState() {
@@ -5881,6 +5899,32 @@ function cleanMinecraftChatMessage(message) {
     .trim();
 }
 
+function greenComponentMessageKey(text, position) {
+  return `${String(position || '')}:${cleanMinecraftChatMessage(text)}`;
+}
+
+function rememberGreenComponentMessage(text, position, isPlayerChat) {
+  const now = Date.now();
+  for (const [key, entry] of recentGreenComponentMessages.entries()) {
+    if (now - entry.timestamp > 2_000) recentGreenComponentMessages.delete(key);
+  }
+  recentGreenComponentMessages.set(greenComponentMessageKey(text, position), {
+    isPlayerChat: Boolean(isPlayerChat),
+    timestamp: now
+  });
+}
+
+function consumeGreenComponentMessage(text, position) {
+  const key = greenComponentMessageKey(text, position);
+  const entry = recentGreenComponentMessages.get(key);
+  if (!entry || Date.now() - entry.timestamp > 2_000) {
+    recentGreenComponentMessages.delete(key);
+    return null;
+  }
+  recentGreenComponentMessages.delete(key);
+  return entry;
+}
+
 function isPrivateMinecraftChatLine(text) {
   const clean = cleanMinecraftChatMessage(text).replace(/\s+/g, ' ').trim();
   if (!clean) return false;
@@ -6093,7 +6137,23 @@ function forwardRawPublicChatText(text, source = 'raw', position = '') {
     }
     return false;
   }
-  if (COMMAND_RESPONSE_BOT_USERNAMES.has(String(rawChat.username || '').toLowerCase())) {
+  if (String(position || '') === 'game_info') return false;
+  const rawUsernameKey = String(rawChat.username || '').toLowerCase();
+  const isCommandResponseBot = COMMAND_RESPONSE_BOT_USERNAMES.has(rawUsernameKey);
+  const isKnownOnlinePlayer = getOnlinePlayerUsernames().some(username =>
+    String(username || '').toLowerCase() === rawUsernameKey
+  );
+  const isSignedPlayerChat = String(position || '') === 'chat';
+  if (!isCommandResponseBot && !isKnownOnlinePlayer && !isSignedPlayerChat) {
+    debugLog('[MC CHAT DEBUG]', {
+      kind: 'rejected-player-shaped-system-text',
+      text: cleanMinecraftChatMessage(text),
+      position,
+      parsedUsername: rawChat.username
+    });
+    return false;
+  }
+  if (isCommandResponseBot) {
     rememberCommandBotResponse(rawChat.message);
   }
   const forwarded = scheduleGameChatForward(rawChat.username, rawChat.message, source);
@@ -8315,10 +8375,13 @@ function createBot() {
   });
 
   // ------- CHAT COMMANDS -------
-  bot.on('chat', async (username, message, translate, jsonMessage) => {
+  const handleMinecraftPlayerChat = async (username, message, translate, jsonMessage, context = {}) => {
+    const source = context?.source || 'chat';
     const observedUsername = username;
     const observedMessage = message;
-    ({ username, message } = resolvePublicChatEnvelope(username, message, jsonMessage));
+    if (!context?.trustedEnvelope) {
+      ({ username, message } = resolvePublicChatEnvelope(username, message, jsonMessage));
+    }
     handleObservedPlaytimeChat(observedUsername, observedMessage);
     handleObservedJoinDateChat(observedUsername, observedMessage);
 
@@ -8327,7 +8390,7 @@ function createBot() {
       // Minecraft exposes the same line through chat, message, and messagestr.
       // Route commands through the shared forwarder so the raw events cannot
       // persist and mirror a second copy of the command.
-      scheduleGameChatForward(username, message, 'chat');
+      scheduleGameChatForward(username, message, source);
       await handleWmCommand(username, wmMatch[1] || '');
       return;
     }
@@ -8476,7 +8539,7 @@ function createBot() {
     // via the dedicated bot death event handler.
 
     armSeenCommandResponseCapture(message);
-    scheduleGameChatForward(username, message, 'chat');
+    scheduleGameChatForward(username, message, source);
     return;
 
     // Send all chat messages to Discord chat channel
@@ -8553,7 +8616,9 @@ function createBot() {
     }, PENDING_CHAT_DELAY_MS);
 
     pendingChatTimers.set(pendingKey, timer);
-  });
+  };
+
+  bot.on('chat', handleMinecraftPlayerChat);
 
   bot.on('whisper', (username, message, translate, jsonMsg, matches) => {
     debugLog(`[Whisper] ⭐ EVENT FIRED for ${username}: "${message}"`);
@@ -8618,7 +8683,7 @@ function createBot() {
     sendWhisperToDiscord(username, message);
   });
 
-  bot.on('message', (message, position) => {
+  bot.on('message', (message, position, senderUuid) => {
     const text = chatComponentToString(message);
     const tpsMatch = text.match(/(\d+\.?\d*)\s*tps/i);
     if (tpsMatch) {
@@ -8630,10 +8695,50 @@ function createBot() {
       });
     }
 
+    const componentChat = isPrivateMinecraftChatLine(text)
+      ? {
+          text,
+          position: String(position || ''),
+          isGreenChat: false,
+          isPlayerChat: false,
+          username: null,
+          message: null,
+          evidence: ['private_message']
+        }
+      : analyzeMinecraftChatComponent(message, {
+          knownUsernames: getOnlinePlayerUsernames(),
+          senderUsername: getOnlinePlayerUsernameByUuid(senderUuid),
+          position
+      });
+    if (componentChat.isGreenChat) {
+      rememberGreenComponentMessage(text, position, componentChat.isPlayerChat);
+      debugLog('[MC CHAT DEBUG]', {
+        kind: componentChat.isPlayerChat ? 'greenchat' : 'unmatched-green-component',
+        text,
+        position,
+        username: componentChat.username,
+        evidence: componentChat.evidence,
+        json: message?.json || null
+      });
+      if (componentChat.isPlayerChat) {
+        handleMinecraftPlayerChat(
+          componentChat.username,
+          componentChat.message,
+          message?.translate,
+          null,
+          { source: 'message-green', trustedEnvelope: true }
+        ).catch(error => console.error('[Chat] Failed to process GreenChat:', error.message));
+      }
+      // Never pass an unmatched green component to the permissive text parser:
+      // green announcements and plugin labels are not player messages.
+      return;
+    }
+
     forwardRawPublicChatText(text, 'message', position);
   });
 
   bot.on('messagestr', (message, position) => {
+    if (consumeGreenComponentMessage(message, position)) return;
     forwardRawPublicChatText(message, 'messagestr', position);
   });
 }
