@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const {
   analyzeMinecraftChatComponent,
   chatComponentToString,
+  createChatComponentEventGuard,
   isGreenColor,
   parseGreenChatComponent,
   safeOpenUrl
@@ -60,7 +61,7 @@ function run() {
   };
   assert.deepEqual(parseGreenChatComponent(actualServerGreenJson), {
     username: 'bdiev_',
-    message: '> test'
+    message: 'test'
   });
   const actualServerGreenChat = analyzeMinecraftChatComponent(actualServerGreenJson, {
     knownUsernames: [],
@@ -68,8 +69,67 @@ function run() {
   });
   assert.equal(actualServerGreenChat.isPlayerChat, true);
   assert.equal(actualServerGreenChat.username, 'bdiev_');
-  assert.equal(actualServerGreenChat.message, '> test');
+  assert.equal(actualServerGreenChat.message, 'test');
   assert.deepEqual(actualServerGreenChat.evidence, ['green_component', 'empty_key_sender']);
+
+  const greenComponent = (username, message) => ({
+    json: {
+      extra: [
+        { '': `<${username}> ` },
+        { color: 'green', text: message }
+      ],
+      text: ''
+    },
+    toString() { return message; }
+  });
+  const guardedComponent = greenComponent('LolRiTTeRBot', '> bdiev_: sign');
+  const componentGuard = createChatComponentEventGuard();
+  const discordSends = [];
+  const handleStructuredMessage = component => {
+    const parsed = analyzeMinecraftChatComponent(component, { position: 'system' });
+    assert.equal(parsed.isPlayerChat, true);
+    componentGuard.mark(component);
+    discordSends.push({ username: parsed.username, message: parsed.message });
+  };
+  const handleMineflayerLegacyChat = (username, message, originalComponent) => {
+    if (componentGuard.has(originalComponent)) return;
+    discordSends.push({ username, message });
+  };
+
+  handleStructuredMessage(guardedComponent);
+  handleMineflayerLegacyChat('bdiev_', 'sign', guardedComponent);
+  assert.deepEqual(discordSends, [{
+    username: 'LolRiTTeRBot',
+    message: 'bdiev_: sign'
+  }], 'one systemChat component must produce exactly one Discord send');
+
+  const intentionalRepeat = greenComponent('LolRiTTeRBot', '> bdiev_: sign');
+  handleStructuredMessage(intentionalRepeat);
+  handleMineflayerLegacyChat('bdiev_', 'sign', intentionalRepeat);
+  assert.equal(discordSends.length, 2, 'a distinct component with identical content must still be forwarded');
+
+  assert.deepEqual(
+    parseGreenChatComponent(greenComponent(
+      'moooomoooo',
+      '> Mar 1st, 2025: <bdiev_> we know how to grow wheat'
+    )),
+    {
+      username: 'moooomoooo',
+      message: 'Mar 1st, 2025: <bdiev_> we know how to grow wheat'
+    },
+    'an inner angle-bracket username is message content, not the sender'
+  );
+  assert.deepEqual(
+    parseGreenChatComponent(greenComponent(
+      'quicbot',
+      '> [2025-02-21 12:57:05:168] bdiev_: hi!'
+    )),
+    {
+      username: 'quicbot',
+      message: '[2025-02-21 12:57:05:168] bdiev_: hi!'
+    },
+    'an inner username-colon fragment is message content, not the sender'
+  );
 
   assert.deepEqual(parseGreenChatComponent({
     extra: [
@@ -77,7 +137,7 @@ function run() {
       { '': '<OrderSafe_1> ' }
     ],
     text: ''
-  }), { username: 'OrderSafe_1', message: '> reordered' });
+  }), { username: 'OrderSafe_1', message: 'reordered' });
 
   assert.deepEqual(parseGreenChatComponent({
     extra: [
@@ -85,7 +145,14 @@ function run() {
       { extra: [{ color: 'green', text: '> nested' }] }
     ],
     text: ''
-  }), { username: 'Nested_1', message: '> nested' });
+  }), { username: 'Nested_1', message: 'nested' });
+  assert.deepEqual(parseGreenChatComponent({
+    extra: [
+      { '': '<Quoted_1> ' },
+      { color: 'green', text: '> keep > inner marker' }
+    ],
+    text: ''
+  }), { username: 'Quoted_1', message: 'keep > inner marker' });
 
   assert.equal(parseGreenChatComponent({
     extra: [{ '': 'Server' }, { color: 'green', text: 'announcement' }],
@@ -141,7 +208,7 @@ function run() {
   }, { knownUsernames: ['Carol'], position: 'system' });
   assert.equal(hiddenSenderGreenChat.isPlayerChat, true);
   assert.equal(hiddenSenderGreenChat.username, 'Carol');
-  assert.equal(hiddenSenderGreenChat.message, '> hello');
+  assert.equal(hiddenSenderGreenChat.message, 'hello');
 
   const rankedGreenChat = analyzeMinecraftChatComponent({
     text: '[VIP] Dave » ranked green chat',

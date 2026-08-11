@@ -9,6 +9,7 @@ async function testSerialDelivery() {
   let active = 0;
   let maxActive = 0;
   const delivered = [];
+  const sources = [];
   const forwarder = new DiscordChatForwardQueue({
     perUserBurst: 20,
     minSendIntervalMs: 0,
@@ -17,13 +18,14 @@ async function testSerialDelivery() {
       maxActive = Math.max(maxActive, active);
       await wait(5);
       delivered.push(item.message);
+      sources.push(item.source);
       active -= 1;
       return true;
     }
   });
 
   const results = await Promise.all([
-    forwarder.enqueue({ username: 'Alice', message: 'one' }),
+    forwarder.enqueue({ username: 'Alice', message: 'one', source: 'mineflayer-message-greenchat' }),
     forwarder.enqueue({ username: 'Bob', message: 'two' }),
     forwarder.enqueue({ username: 'Carol', message: 'three' })
   ]);
@@ -31,10 +33,12 @@ async function testSerialDelivery() {
   assert.deepEqual(results, [true, true, true]);
   assert.equal(maxActive, 1, 'only one Discord request may be in flight');
   assert.deepEqual(delivered, ['one', 'two', 'three']);
+  assert.deepEqual(sources, ['mineflayer-message-greenchat', 'unspecified', 'unspecified']);
 }
 
 async function testFloodSuppressionAndSummary() {
   const delivered = [];
+  const suppressed = [];
   const forwarder = new DiscordChatForwardQueue({
     perUserBurst: 2,
     perUserWindowMs: 1_000,
@@ -43,7 +47,8 @@ async function testFloodSuppressionAndSummary() {
     send: async item => {
       delivered.push(item);
       return true;
-    }
+    },
+    onSuppressed: event => suppressed.push(event)
   });
 
   const results = await Promise.all([
@@ -60,6 +65,15 @@ async function testFloodSuppressionAndSummary() {
   assert.deepEqual(delivered.slice(0, 2).map(item => item.message), ['one', 'two']);
   assert.match(delivered[2].message, /Skipped 3 messages/);
   assert.equal(delivered[2].allowMentions, false);
+  assert.deepEqual(
+    suppressed.map(event => [event.reason, event.message]),
+    [
+      ['per-user-burst', 'three'],
+      ['per-user-burst', 'four'],
+      ['per-user-burst', 'five']
+    ],
+    'flood suppression must report which messages were not delivered'
+  );
 }
 
 async function testStaleMessagesAreNotSent() {

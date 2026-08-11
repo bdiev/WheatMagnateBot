@@ -114,6 +114,10 @@ function sendError(res, statusCode, message) {
   sendJson(res, statusCode, { error: message });
 }
 
+function displayGameChatMessage(value) {
+  return String(value || '').trim().replace(/^>\s*/, '').trim();
+}
+
 async function sendMinecraftAvatar(res, url) {
   const username = String(url.searchParams.get('username') || '').trim();
   if (!/^[A-Za-z0-9_]{1,16}$/.test(username)) { sendError(res,400,'Invalid Minecraft username.'); return; }
@@ -1027,7 +1031,7 @@ async function getChat(url) {
       id: row.id,
       type: 'chat',
       username: row.username,
-      message: row.message,
+      message: displayGameChatMessage(row.message),
       createdAt: row.created_at
     }));
   const activityMessages = activityResult.rows
@@ -2564,7 +2568,7 @@ async function getPlayerProfile(url) {
       lastMessageAt: chat.last_message_at || null,
       recentMessages: recentChatResult.rows.map(row => ({
         id: String(row.id),
-        message: row.message,
+        message: displayGameChatMessage(row.message),
         createdAt: row.created_at
       })),
       hasMoreMessages: recentChatResult.rows.length === messageLimit,

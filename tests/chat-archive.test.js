@@ -26,6 +26,11 @@ assert.match(serverSource, /beforeMessageId/, 'player chat history must support 
 assert.match(serverSource, /WHERE id <= \$2::bigint/, 'chat API must load messages before the exact message ID');
 assert.match(serverSource, /WHERE id > \$2::bigint/, 'chat API must load messages after the exact message ID');
 assert.match(serverSource, /POSITION\(LOWER\(\$2\) IN LOWER\(message\)\) > 0/, 'chat search must query the full stored message table');
+assert.match(
+  serverSource,
+  /function displayGameChatMessage[\s\S]*replace\(\/\^>\\s\*\/[\s\S]*message: displayGameChatMessage\(row\.message\)/,
+  'site chat responses must hide the leading GreenChat marker, including archived messages'
+);
 assert.match(serverSource, /date_trunc\('day', MIN\(created_at\)\)/, 'daily chat statistics must begin at the first archived message');
 assert.match(serverSource, /date_trunc\('month', created_at\)/, 'monthly chat statistics must cover the archive');
 assert.match(appSource, /data-player-chat-more/, 'player profile must expose older archived messages');
@@ -101,18 +106,36 @@ assert.match(
 );
 assert.match(
   botSource,
-  /analyzeMinecraftChatComponent\(message,[\s\S]*componentChat\.isGreenChat[\s\S]*handleMinecraftPlayerChat\([\s\S]*source: 'message-green'/,
+  /analyzeMinecraftChatComponent\(message,[\s\S]*componentChat\.isGreenChat[\s\S]*handleMinecraftPlayerChat\([\s\S]*source: 'mineflayer-message-greenchat'/,
   'GreenChat must be recovered from structured message components and enter the shared pipeline'
 );
 assert.match(
   botSource,
-  /rememberGreenComponentMessage[\s\S]*consumeGreenComponentMessage\(message, position\)/,
-  'the messagestr echo of a classified GreenChat component must be consumed without another forward'
+  /handledGreenChatComponents\.has\(jsonMessage\)[\s\S]*handledGreenChatComponents\.mark\(message\)[\s\S]*handledGreenChatComponents\.has\(originalMessage\)/,
+  'chat and messagestr echoes of a classified GreenChat must be rejected by exact ChatMessage identity'
+);
+assert.doesNotMatch(
+  botSource,
+  /recentGreenComponentMessages|greenComponentMessageKey|rememberGreenComponentMessage|consumeGreenComponentMessage/,
+  'GreenChat event exclusion must not rely on text keys or timeout windows'
 );
 assert.match(
   botSource,
   /duplicate && duplicate\.source !== source && nowTs - duplicate\.timestamp < 1_500/,
   'chat and message events for the same player message must collapse before Discord delivery'
+);
+const discordCommandBranch = botSource.match(
+  /if \(gameText\.startsWith\('\/'\) \|\| gameText\.startsWith\('!'\)\) \{[\s\S]*?\n\s*\} else \{/
+)?.[0] || '';
+assert.match(
+  discordCommandBranch,
+  /recordGameChatMessage\(username, gameText\)/,
+  'Discord-to-Minecraft commands must still be written to the chat archive'
+);
+assert.doesNotMatch(
+  discordCommandBranch,
+  /sendGameChatMessageToDiscord/,
+  'Discord-to-Minecraft commands must not create a second Discord bridge message before confirmation'
 );
 assert.match(
   botSource,
@@ -120,6 +143,18 @@ assert.match(
   'player-shaped system text must require a signed chat position or a currently known player'
 );
 assert.match(botSource, /debugLog\(\s*'\[MC CHAT DEBUG\]'/, 'component diagnostics must use the existing opt-in debug logger');
+assert.match(
+  botSource,
+  /kind: 'chat-forward-suppressed'[\s\S]*reason[\s\S]*kind: 'chat-forward-completed'/,
+  'debug mode must report whether a parsed player message was suppressed or completed downstream'
+);
+assert.match(
+  botSource,
+  /kind: 'discord-chat-forward-suppressed'[\s\S]*reason: event\.reason/,
+  'debug mode must expose Discord queue flood, capacity, and stale-message suppression'
+);
+assert.match(botSource, /'\[MC->DISCORD TRACE\]'/, 'every bridge path must expose its source in debug mode');
+assert.match(botSource, /'\[MC->DISCORD SEND\]'/, 'the final Discord send must expose its source in debug mode');
 assert.match(
   botSource,
   /debugLog\(\s*'\[MC CHAT DEBUG\]',\s*JSON\.stringify\(\{[\s\S]*json: message\?\.json \?\? null[\s\S]*\}, null, 2\)/,

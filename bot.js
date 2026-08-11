@@ -29,7 +29,11 @@ const { newCorrelationId, recordOperationalEvent } = require('./operational-even
 const { buildDailyObsidianReport, claimDailyReportDate, getDailyReportChannels, getDailyReportSlot } = require('./obsidian-daily-report');
 const { buildPlayerMilestonePush, buildPlayerMilestones } = require('./site/player-milestones');
 const { WebPushService } = require('./site/web-push');
-const { analyzeMinecraftChatComponent, chatComponentToString } = require('./minecraft-chat-component');
+const {
+  analyzeMinecraftChatComponent,
+  chatComponentToString,
+  createChatComponentEventGuard
+} = require('./minecraft-chat-component');
 const { AccountRepository } = require('./site/accounts/account-repository');
 const { AccountRegistry } = require('./site/accounts/account-registry');
 const { MinecraftBotRuntime } = require('./site/accounts/minecraft-bot-runtime');
@@ -812,6 +816,16 @@ const gameChatDiscordForwardQueue = new DiscordChatForwardQueue({
   summaryDelayMs: DISCORD_CHAT_FLOOD_SUMMARY_DELAY_MS,
   minSendIntervalMs: DISCORD_CHAT_MIN_SEND_INTERVAL_MS,
   send: deliverGameChatMessageToDiscord,
+  onSuppressed: event => debugLog(
+    '[MC CHAT DEBUG]',
+    JSON.stringify({
+      kind: 'discord-chat-forward-suppressed',
+      reason: event.reason,
+      source: event.source,
+      username: event.username,
+      message: cleanMinecraftChatMessage(event.message)
+    }, null, 2)
+  ),
   onError: error => console.error('[Discord Chat Queue]', error?.message || error)
 });
 
@@ -886,7 +900,7 @@ class DeferredBotCommandError extends Error {
   }
 }
 let recentlyForwardedGameChat = new Map(); // normalized message key -> { source, timestamp }
-const recentGreenComponentMessages = new Map(); // message/position key -> short-lived classification for messagestr
+const handledGreenChatComponents = createChatComponentEventGuard(); // exact ChatMessage objects classified by message
 let tpsTabInterval = null;
 let playtimeSyncInterval = null;
 let playerActivitySyncInterval = null;
@@ -1812,7 +1826,8 @@ async function sendGrowingChildMinecraftMessage(payload) {
   if (!sent) return false;
 
   await sendGameChatMessageToDiscord(bot.username, safePhrase, {
-    allowMentions: false
+    allowMentions: false,
+    source: 'growing-child-outbound'
   });
   return true;
 }
@@ -4803,7 +4818,7 @@ async function sendPrivateMinecraftMessage(username, text) {
   }
 }
 
-async function sendGameChatMessageToDiscord(username, message, { allowMentions = true } = {}) {
+async function sendGameChatMessageToDiscord(username, message, { allowMentions = true, source = 'unspecified' } = {}) {
   const cleanMessage = String(message || '')
     .replace(/\u00a7[0-9a-fk-or]/gi, '')
     .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
@@ -4814,6 +4829,11 @@ async function sendGameChatMessageToDiscord(username, message, { allowMentions =
   }
 
   const safeUsername = String(username || bot?.username || 'Minecraft');
+  traceMinecraftDiscord('[MC->DISCORD TRACE]', {
+    source,
+    username: safeUsername,
+    message: cleanMessage
+  });
   recordGameChatMessage(safeUsername, cleanMessage).catch(() => {});
 
   if (!DISCORD_CHAT_CHANNEL_ID || !discordClient || !discordClient.isReady()) {
@@ -4823,11 +4843,12 @@ async function sendGameChatMessageToDiscord(username, message, { allowMentions =
   return gameChatDiscordForwardQueue.enqueue({
     username: safeUsername,
     message: cleanMessage,
-    allowMentions
+    allowMentions,
+    source
   });
 }
 
-async function deliverGameChatMessageToDiscord({ username, message, allowMentions = true, createdAt = Date.now(), isSummary = false }) {
+async function deliverGameChatMessageToDiscord({ username, message, allowMentions = true, createdAt = Date.now(), source = 'unspecified', isSummary = false }) {
   try {
     const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
     if (!channel?.isTextBased?.()) return false;
@@ -4870,6 +4891,7 @@ async function deliverGameChatMessageToDiscord({ username, message, allowMention
       }
     }
 
+    traceMinecraftDiscord('[MC->DISCORD SEND]', { source, username, message });
     await channel.send(sendOptions);
     return true;
   } catch (e) {
@@ -4983,7 +5005,10 @@ async function processSiteGameChatOutbox() {
       if (!cleanMessage) throw new Error('Queued message is empty.');
       const sent = sendMinecraftChat(outgoing);
       if (!sent) throw new Error('Minecraft bot is not ready.');
-      await sendGameChatMessageToDiscord(bot.username || 'WheatMagnate', outgoing, { allowMentions: false });
+      await sendGameChatMessageToDiscord(bot.username || 'WheatMagnate', outgoing, {
+        allowMentions: false,
+        source: 'site-chat-outbox'
+      });
       await pool.query(`
         UPDATE site_game_chat_outbox
         SET status = 'sent',
@@ -5122,7 +5147,11 @@ async function executeBotCommand(command) {
     const outgoing = isCommand ? cleanMessage : `[${requestedBy}] ${cleanMessage}`;
     const sent = sendMinecraftChat(outgoing);
     if (!sent) throw new Error('Minecraft bot is not ready.');
-    const sentToDiscord = await sendGameChatMessageToDiscord(isCommand ? requestedBy : (bot.username || 'WheatMagnate'), isCommand ? cleanMessage : outgoing, { allowMentions: false });
+    const sentToDiscord = await sendGameChatMessageToDiscord(
+      isCommand ? requestedBy : (bot.username || 'WheatMagnate'),
+      isCommand ? cleanMessage : outgoing,
+      { allowMentions: false, source: 'site-command-chat' }
+    );
     if (!sentToDiscord && DISCORD_CHAT_CHANNEL_ID && discordClient?.isReady?.()) {
       console.warn(`[Site Chat] Sent "${outgoing}" to Minecraft but failed to mirror it to Discord.`);
     }
@@ -5852,32 +5881,6 @@ function cleanMinecraftChatMessage(message) {
     .trim();
 }
 
-function greenComponentMessageKey(text, position) {
-  return `${String(position || '')}:${cleanMinecraftChatMessage(text)}`;
-}
-
-function rememberGreenComponentMessage(text, position, isPlayerChat) {
-  const now = Date.now();
-  for (const [key, entry] of recentGreenComponentMessages.entries()) {
-    if (now - entry.timestamp > 2_000) recentGreenComponentMessages.delete(key);
-  }
-  recentGreenComponentMessages.set(greenComponentMessageKey(text, position), {
-    isPlayerChat: Boolean(isPlayerChat),
-    timestamp: now
-  });
-}
-
-function consumeGreenComponentMessage(text, position) {
-  const key = greenComponentMessageKey(text, position);
-  const entry = recentGreenComponentMessages.get(key);
-  if (!entry || Date.now() - entry.timestamp > 2_000) {
-    recentGreenComponentMessages.delete(key);
-    return null;
-  }
-  recentGreenComponentMessages.delete(key);
-  return entry;
-}
-
 function isPrivateMinecraftChatLine(text) {
   const clean = cleanMinecraftChatMessage(text).replace(/\s+/g, ' ').trim();
   if (!clean) return false;
@@ -5901,6 +5904,31 @@ function cancelPendingGameChat(username, message) {
   return true;
 }
 
+function debugGameChatForwardSuppressed(reason, username, message, source) {
+  debugLog(
+    '[MC CHAT DEBUG]',
+    JSON.stringify({
+      kind: 'chat-forward-suppressed',
+      reason,
+      source,
+      username: String(username || ''),
+      message: cleanMinecraftChatMessage(message)
+    }, null, 2)
+  );
+}
+
+function traceMinecraftDiscord(kind, { source, username, message, reason = null }) {
+  debugLog(
+    kind,
+    JSON.stringify({
+      source,
+      username: String(username || ''),
+      message: cleanMinecraftChatMessage(message),
+      ...(reason ? { reason } : {})
+    }, null, 2)
+  );
+}
+
 function scheduleGameChatForward(username, message, source = 'chat') {
   const cleanMessage = cleanMinecraftChatMessage(message);
   if (!cleanMessage || cleanMessage.startsWith('/msg ')) return false;
@@ -5915,13 +5943,18 @@ function scheduleGameChatForward(username, message, source = 'chat') {
     if (nowTs - state.timestamp > 2_000) recentlyForwardedGameChat.delete(key);
   }
   const duplicate = recentlyForwardedGameChat.get(pendingKey);
-  if (duplicate && duplicate.source !== source && nowTs - duplicate.timestamp < 1_500) return false;
+  if (duplicate && duplicate.source !== source && nowTs - duplicate.timestamp < 1_500) {
+    debugGameChatForwardSuppressed(`duplicate-of-${duplicate.source}`, safeUsername, cleanMessage, source);
+    return false;
+  }
   if (isSelfMessage && consumeOutboundSelfEcho(cleanMessage)) {
     recentlyForwardedGameChat.set(pendingKey, { source, timestamp: nowTs });
+    debugGameChatForwardSuppressed('outbound-self-echo', safeUsername, cleanMessage, source);
     return false;
   }
 
   if (!isSelfMessage && ignoredChatUsernames.includes(safeUsername.toLowerCase())) {
+    debugGameChatForwardSuppressed('ignored-user', safeUsername, cleanMessage, source);
     return false;
   }
 
@@ -5929,6 +5962,7 @@ function scheduleGameChatForward(username, message, source = 'chat') {
   const whisperLowerKey = `WHISPER:${safeUsername.toLowerCase()}:${cleanMessage}`;
   if (recentWhispers.has(whisperKey) || recentWhispers.has(whisperLowerKey)) {
     debugLog(`[Chat] Suppressed whisper from ${safeUsername}: "${cleanMessage}"`);
+    debugGameChatForwardSuppressed('whisper', safeUsername, cleanMessage, source);
     return false;
   }
 
@@ -5938,6 +5972,7 @@ function scheduleGameChatForward(username, message, source = 'chat') {
   }
   if (outboundWhispers.has(outboundKey)) {
     debugLog(`[Chat] Suppressed outbound echo to ${safeUsername}: "${cleanMessage}"`);
+    debugGameChatForwardSuppressed('outbound-whisper-echo', safeUsername, cleanMessage, source);
     return false;
   }
 
@@ -5946,14 +5981,26 @@ function scheduleGameChatForward(username, message, source = 'chat') {
     try {
       if (recentWhispers.has(whisperKey) || recentWhispers.has(whisperLowerKey)) {
         debugLog(`[Chat] Suppressed whisper (late mark) from ${safeUsername}: "${cleanMessage}"`);
+        debugGameChatForwardSuppressed('late-whisper', safeUsername, cleanMessage, source);
         return;
       }
       if (outboundWhispers.has(outboundKey)) {
         debugLog(`[Chat] Suppressed outbound echo (late) to ${safeUsername}: "${cleanMessage}"`);
+        debugGameChatForwardSuppressed('late-outbound-whisper-echo', safeUsername, cleanMessage, source);
         return;
       }
       recentlyForwardedGameChat.set(pendingKey, { source, timestamp: Date.now() });
-      const sent = await sendGameChatMessageToDiscord(safeUsername, cleanMessage);
+      const sent = await sendGameChatMessageToDiscord(safeUsername, cleanMessage, { source });
+      debugLog(
+        '[MC CHAT DEBUG]',
+        JSON.stringify({
+          kind: 'chat-forward-completed',
+          source,
+          username: safeUsername,
+          message: cleanMessage,
+          discordAccepted: sent
+        }, null, 2)
+      );
       if (!sent && DISCORD_CHAT_CHANNEL_ID && discordClient?.isReady?.()) {
         console.warn(`[Chat] Forwarded ${safeUsername} to site DB but failed to mirror to Discord.`);
       }
@@ -6241,7 +6288,10 @@ async function handleWmCommand(username, question) {
       const prefix = chunks.length > 1 ? `[${index + 1}/${chunks.length}] ` : '';
       const message = `${prefix}${chunks[index]}`;
       sendMinecraftChat(message);
-      await sendGameChatMessageToDiscord(bot.username, message, { allowMentions: false });
+      await sendGameChatMessageToDiscord(bot.username, message, {
+        allowMentions: false,
+        source: 'wm-command-response'
+      });
       await new Promise(resolve => setTimeout(resolve, 400));
     }
   } catch (err) {
@@ -8250,7 +8300,16 @@ function createBot() {
 
   // ------- CHAT COMMANDS -------
   const handleMinecraftPlayerChat = async (username, message, translate, jsonMessage, context = {}) => {
-    const source = context?.source || 'chat';
+    const source = context?.source || 'mineflayer-chat';
+    if (jsonMessage && handledGreenChatComponents.has(jsonMessage)) {
+      traceMinecraftDiscord('[MC->DISCORD TRACE]', {
+        source: 'mineflayer-chat-greenchat-echo',
+        username,
+        message,
+        reason: 'same-chat-component-already-handled'
+      });
+      return false;
+    }
     const observedUsername = username;
     const observedMessage = message;
     if (!context?.trustedEnvelope) {
@@ -8413,82 +8472,6 @@ function createBot() {
     // via the dedicated bot death event handler.
 
     scheduleGameChatForward(username, message, source);
-    return;
-
-    // Send all chat messages to Discord chat channel
-    if (!DISCORD_CHAT_CHANNEL_ID || !discordClient || !discordClient.isReady()) {
-      return;
-    }
-    
-    // Suppress only exact echoes of messages we sent. Plugin/server responses can
-    // also use our username and still need to reach the Discord game-chat channel.
-    const isSelfMessage = username === bot.username;
-    if (isSelfMessage && consumeOutboundSelfEcho(message)) {
-      return;
-    }
-
-    if (!isSelfMessage && ignoredChatUsernames.includes(username.toLowerCase())) {
-      return;
-    }
-
-    // Clean message - only remove Minecraft color codes and problematic control characters
-    let cleanMessage = message
-      .replace(/§[0-9a-fk-or]/gi, '') // Remove Minecraft color codes
-      .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '') // Remove control chars (keep newlines \n)
-      .trim();
-
-    if (!cleanMessage) {
-      return;
-    }
-
-    // Skip /msg commands - these are relayed from dialog channels
-    if (cleanMessage.startsWith('/msg ')) {
-      return;
-    }
-
-    // Suppress whispers: if whisper arrives shortly, don't forward to public chat
-    const whisperKey = `WHISPER:${username}:${cleanMessage}`;
-    if (recentWhispers.has(whisperKey)) {
-      debugLog(`[Chat] Suppressed whisper from ${username}: "${cleanMessage}"`);
-      return;
-    }
-
-    // Suppress any unexpected public echo of our own outgoing /msg to this username
-    const outboundKey = `OUTBOUND:${username.toLowerCase()}:${cleanMessage}`;
-    const nowTs = Date.now();
-    for (const [ok, ts] of outboundWhispers.entries()) {
-      if (nowTs - ts > OUTBOUND_WHISPER_TTL_MS) outboundWhispers.delete(ok);
-    }
-    if (outboundWhispers.has(outboundKey)) {
-      debugLog(`[Chat] Suppressed outbound echo to ${username}: "${cleanMessage}"`);
-      return;
-    }
-
-    const pendingKey = `CHAT:${username}:${cleanMessage}`;
-    if (pendingChatTimers.has(pendingKey)) {
-      clearTimeout(pendingChatTimers.get(pendingKey));
-      pendingChatTimers.delete(pendingKey);
-    }
-
-    const timer = setTimeout(async () => {
-      try {
-        if (recentWhispers.has(whisperKey)) {
-          debugLog(`[Chat] Suppressed whisper (late mark) from ${username}: "${cleanMessage}"`);
-          return;
-        }
-        if (outboundWhispers.has(outboundKey)) {
-          debugLog(`[Chat] Suppressed outbound echo (late) to ${username}: "${cleanMessage}"`);
-          return;
-        }
-        await sendGameChatMessageToDiscord(username, cleanMessage);
-      } catch (e) {
-        // Silent
-      } finally {
-        pendingChatTimers.delete(pendingKey);
-      }
-    }, PENDING_CHAT_DELAY_MS);
-
-    pendingChatTimers.set(pendingKey, timer);
   };
 
   bot.on('chat', handleMinecraftPlayerChat);
@@ -8584,7 +8567,7 @@ function createBot() {
           position
       });
     if (componentChat.isGreenChat) {
-      rememberGreenComponentMessage(text, position, componentChat.isPlayerChat);
+      handledGreenChatComponents.mark(message);
       debugLog(
         '[MC CHAT DEBUG]',
         JSON.stringify({
@@ -8603,7 +8586,7 @@ function createBot() {
           componentChat.message,
           message?.translate,
           null,
-          { source: 'message-green', trustedEnvelope: true }
+          { source: 'mineflayer-message-greenchat', trustedEnvelope: true }
         ).catch(error => console.error('[Chat] Failed to process GreenChat:', error.message));
       }
       // Never pass an unmatched green component to the permissive text parser:
@@ -8611,12 +8594,20 @@ function createBot() {
       return;
     }
 
-    forwardRawPublicChatText(text, 'message', position);
+    forwardRawPublicChatText(text, 'mineflayer-message-legacy', position);
   });
 
-  bot.on('messagestr', (message, position) => {
-    if (consumeGreenComponentMessage(message, position)) return;
-    forwardRawPublicChatText(message, 'messagestr', position);
+  bot.on('messagestr', (message, position, originalMessage) => {
+    if (originalMessage && handledGreenChatComponents.has(originalMessage)) {
+      traceMinecraftDiscord('[MC->DISCORD TRACE]', {
+        source: 'mineflayer-messagestr-greenchat-echo',
+        username: '',
+        message,
+        reason: 'same-chat-component-already-handled'
+      });
+      return;
+    }
+    forwardRawPublicChatText(message, 'mineflayer-messagestr-legacy', position);
   });
 }
 
@@ -11292,7 +11283,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         if (gameText.startsWith('/') || gameText.startsWith('!')) {
           const sentToGame = sendMinecraftChat(gameText);
           if (sentToGame) {
-            await sendGameChatMessageToDiscord(username, gameText, { allowMentions: false });
+            recordGameChatMessage(username, gameText).catch(() => {});
           }
           console.log(`[Chat] Sent "${gameText}" by ${message.author.tag}`);
         } else {

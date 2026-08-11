@@ -19,6 +19,7 @@ class DiscordChatForwardQueue {
     now = () => Date.now(),
     setTimer = setTimeout,
     clearTimer = clearTimeout,
+    onSuppressed = () => {},
     onError = error => console.error('[Discord Chat Queue]', error)
   } = {}) {
     if (typeof send !== 'function') throw new TypeError('DiscordChatForwardQueue requires a send function.');
@@ -33,6 +34,7 @@ class DiscordChatForwardQueue {
     this.now = now;
     this.setTimer = setTimer;
     this.clearTimer = clearTimer;
+    this.onSuppressed = onSuppressed;
     this.onError = onError;
 
     this.queue = [];
@@ -41,21 +43,23 @@ class DiscordChatForwardQueue {
     this.lastSendStartedAt = 0;
   }
 
-  enqueue({ username, message, allowMentions = true, createdAt = this.now() }) {
+  enqueue({ username, message, allowMentions = true, createdAt = this.now(), source = 'unspecified' }) {
     const safeUsername = String(username || 'Minecraft');
     const state = this._getUserState(safeUsername);
     const cutoff = createdAt - this.perUserWindowMs;
     state.acceptedAt = state.acceptedAt.filter(timestamp => timestamp > cutoff);
 
     if (state.acceptedAt.length >= this.perUserBurst) {
+      this._notifySuppressed({ username: safeUsername, message, source, reason: 'per-user-burst' });
       this._recordSuppressed(safeUsername, 1);
       return Promise.resolve(true);
     }
 
     state.acceptedAt.push(createdAt);
-    const queued = this._tryQueue({ safeUsername, message, allowMentions, createdAt, isSummary: false });
+    const queued = this._tryQueue({ safeUsername, message, allowMentions, createdAt, source, isSummary: false });
     if (queued) return queued;
 
+    this._notifySuppressed({ username: safeUsername, message, source, reason: 'queue-capacity' });
     this._recordSuppressed(safeUsername, 1);
     return Promise.resolve(true);
   }
@@ -87,6 +91,14 @@ class DiscordChatForwardQueue {
     state.summaryTimer?.unref?.();
   }
 
+  _notifySuppressed(event) {
+    try {
+      this.onSuppressed(event);
+    } catch (error) {
+      this.onError(error);
+    }
+  }
+
   _flushSummary(state) {
     const count = state.suppressed;
     if (!count) return;
@@ -98,6 +110,7 @@ class DiscordChatForwardQueue {
       message,
       allowMentions: false,
       createdAt: this.now(),
+      source: 'discord-flood-summary',
       isSummary: true,
       summaryCount: count
     });
@@ -126,6 +139,12 @@ class DiscordChatForwardQueue {
         if (delay) await new Promise(resolve => this.setTimer(resolve, delay));
 
         if (this.now() - item.createdAt > this.maxAgeMs) {
+          this._notifySuppressed({
+            username: item.safeUsername,
+            message: item.message,
+            source: item.source,
+            reason: 'stale'
+          });
           if (item.isSummary) this._recordSuppressed(item.safeUsername, item.summaryCount || 0);
           else this._recordSuppressed(item.safeUsername, 1);
           item.resolve(true);
@@ -139,6 +158,7 @@ class DiscordChatForwardQueue {
             message: item.message,
             allowMentions: item.allowMentions,
             createdAt: item.createdAt,
+            source: item.source,
             isSummary: item.isSummary
           })));
         } catch (error) {

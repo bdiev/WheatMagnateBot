@@ -126,6 +126,10 @@ function componentHasGreenText(component, inheritedColor = null) {
   return found;
 }
 
+function normalizeGreenChatMessage(value) {
+  return String(value || '').trim().replace(/^>\s*/, '').trim();
+}
+
 function parseGreenChatComponent(component) {
   const json = rawComponent(component);
   if (!json || typeof json !== 'object' || !Array.isArray(json.extra)) return null;
@@ -146,7 +150,7 @@ function parseGreenChatComponent(component) {
   });
 
   if (usernames.length !== 1 || messageParts.length === 0) return null;
-  const message = messageParts.join('').trim();
+  const message = normalizeGreenChatMessage(messageParts.join(''));
   if (!message) return null;
   return { username: usernames[0], message };
 }
@@ -284,6 +288,7 @@ function analyzeMinecraftChatComponent(component, {
     }
   }
 
+  message = normalizeGreenChatMessage(message);
   const knownUsername = canonicalKnownUsername(username, knownUsernames);
   const hasStrongSender = Boolean(knownUsername || result.evidence.includes('signed_sender'));
   if (!hasStrongSender || !message) return result;
@@ -294,9 +299,24 @@ function analyzeMinecraftChatComponent(component, {
   return result;
 }
 
+function createChatComponentEventGuard() {
+  const handledComponents = new WeakSet();
+  return Object.freeze({
+    mark(component) {
+      if (!component || typeof component !== 'object') return false;
+      handledComponents.add(component);
+      return true;
+    },
+    has(component) {
+      return Boolean(component && typeof component === 'object' && handledComponents.has(component));
+    }
+  });
+}
+
 module.exports = {
   analyzeMinecraftChatComponent,
   chatComponentToString,
+  createChatComponentEventGuard,
   isGreenColor,
   parseGreenChatComponent,
   safeOpenUrl
