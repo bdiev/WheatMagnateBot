@@ -17,6 +17,7 @@ const {
   createSystemLogRepository
 } = require('./database');
 const { createPlaytimeFeature } = require('./features/playtime');
+const { createPlayerInfoObservation } = require('./features/playerInfoObservation');
 const { createWhisperFeature } = require('./features/whisper');
 const { createFollowFeature } = require('./features/follow');
 const { createKillAuraFeature } = require('./features/killAura');
@@ -897,8 +898,6 @@ let playerActivitySyncInterval = null;
 let playerActivitySyncRunning = false;
 let lastObservedOnlinePlayerKeys = null;
 let playerActivityJoinEventsReady = false;
-const pendingPlaytimeLookups = new Map(); // lookup key -> { targetUsername, timestamp }
-const pendingJoinDateLookups = new Map(); // lookup key -> { targetUsername, timestamp }
 let botStatusSnapshotInterval = null;
 let wheatMagnatePlaytimeDisplay = 'N/A';
 let wheatMagnatePlaytimeCacheAt = 0;
@@ -2687,62 +2686,6 @@ async function reconcileObservedPlaytime(targetUsername, observedSeconds) {
   }
 }
 
-function handleObservedPlaytimeChat(username, message) {
-  const safeSpeaker = String(username || '').replace(/[^A-Za-z0-9_]/g, '').trim().slice(0, 32);
-  const cleanMessage = String(message || '').replace(/\u00a7[0-9a-fk-or]/gi, '').trim();
-  if (!safeSpeaker || !cleanMessage) return;
-
-  const speakerKey = safeSpeaker.toLowerCase();
-  const commandMatch = cleanMessage.match(/^!(?:pt|playtime)(?:\s+([A-Za-z0-9_]{1,32}))?$/i);
-  if (commandMatch) {
-    const targetUsername = commandMatch[1] || safeSpeaker;
-    const pending = {
-      targetUsername,
-      timestamp: Date.now()
-    };
-    pendingPlaytimeLookups.set(`speaker:${speakerKey}`, pending);
-    pendingPlaytimeLookups.set(`target:${targetUsername.toLowerCase()}`, pending);
-    return;
-  }
-
-  const observedSeconds = parsePlaytime(cleanMessage);
-  if (observedSeconds == null) return;
-
-  const pendingKeys = [
-    `speaker:${speakerKey}`,
-    `target:${speakerKey}`
-  ];
-  const pending = pendingKeys.map(key => pendingPlaytimeLookups.get(key)).find(Boolean);
-  if (!pending || Date.now() - pending.timestamp > 20_000) {
-    for (const key of pendingKeys) pendingPlaytimeLookups.delete(key);
-    return;
-  }
-
-  for (const [key, value] of pendingPlaytimeLookups.entries()) {
-    if (value === pending) pendingPlaytimeLookups.delete(key);
-  }
-  reconcileObservedPlaytime(pending.targetUsername, observedSeconds).catch(() => {});
-}
-
-function parseObservedJoinDate(message) {
-  const match = String(message || '').trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})\b/);
-  if (!match) return null;
-  const [, month, day, year, hour, minute, second] = match.map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
-  if (!Number.isFinite(date.getTime())) return null;
-  if (
-    date.getUTCFullYear() !== year ||
-    date.getUTCMonth() !== month - 1 ||
-    date.getUTCDate() !== day ||
-    date.getUTCHours() !== hour ||
-    date.getUTCMinutes() !== minute ||
-    date.getUTCSeconds() !== second
-  ) {
-    return null;
-  }
-  return date;
-}
-
 async function reconcileObservedJoinDate(targetUsername, observedDate) {
   if (!pool || !targetUsername || !(observedDate instanceof Date) || !Number.isFinite(observedDate.getTime())) return;
 
@@ -2767,42 +2710,30 @@ async function reconcileObservedJoinDate(targetUsername, observedDate) {
   }
 }
 
-function handleObservedJoinDateChat(username, message) {
-  const safeSpeaker = String(username || '').replace(/[^A-Za-z0-9_]/g, '').trim().slice(0, 32);
-  const cleanMessage = String(message || '').replace(/\u00a7[0-9a-fk-or]/gi, '').trim();
-  if (!safeSpeaker || !cleanMessage) return;
+let observedPlayerInfoWriteQueue = Promise.resolve();
 
-  const speakerKey = safeSpeaker.toLowerCase();
-  const commandMatch = cleanMessage.match(/^!(?:jd|joindate)(?:\s+([A-Za-z0-9_]{1,32}))?$/i);
-  if (commandMatch) {
-    const targetUsername = commandMatch[1] || safeSpeaker;
-    const pending = {
-      targetUsername,
-      timestamp: Date.now()
-    };
-    pendingJoinDateLookups.set(`speaker:${speakerKey}`, pending);
-    pendingJoinDateLookups.set(`target:${targetUsername.toLowerCase()}`, pending);
-    return;
-  }
-
-  const observedDate = parseObservedJoinDate(cleanMessage);
-  if (!observedDate) return;
-
-  const pendingKeys = [
-    `speaker:${speakerKey}`,
-    `target:${speakerKey}`
-  ];
-  const pending = pendingKeys.map(key => pendingJoinDateLookups.get(key)).find(Boolean);
-  if (!pending || Date.now() - pending.timestamp > 20_000) {
-    for (const key of pendingKeys) pendingJoinDateLookups.delete(key);
-    return;
-  }
-
-  for (const [key, value] of pendingJoinDateLookups.entries()) {
-    if (value === pending) pendingJoinDateLookups.delete(key);
-  }
-  reconcileObservedJoinDate(pending.targetUsername, observedDate).catch(() => {});
+function enqueueObservedPlayerInfoWrite(task) {
+  const run = observedPlayerInfoWriteQueue.then(task, task);
+  observedPlayerInfoWriteQueue = run.catch(() => {});
+  return run;
 }
+
+const playerInfoObservation = createPlayerInfoObservation({
+  parsePlaytime,
+  isSourceOnline: source => getOnlinePlayerUsernames().some(
+    username => username.toLowerCase() === String(source || '').toLowerCase()
+  ),
+  onPlaytime: (targetUsername, observedSeconds) => {
+    enqueueObservedPlayerInfoWrite(
+      () => reconcileObservedPlaytime(targetUsername, observedSeconds)
+    ).catch(() => {});
+  },
+  onJoinDate: (targetUsername, observedDate) => {
+    enqueueObservedPlayerInfoWrite(
+      () => reconcileObservedJoinDate(targetUsername, observedDate)
+    ).catch(() => {});
+  }
+});
 
 async function beginObsidianFarmSession() {
   // Do not reset the session while writes from the previous run are pending.
@@ -8262,8 +8193,7 @@ function createBot() {
     if (!context?.trustedEnvelope) {
       ({ username, message } = resolvePublicChatEnvelope(username, message, jsonMessage));
     }
-    handleObservedPlaytimeChat(observedUsername, observedMessage);
-    handleObservedJoinDateChat(observedUsername, observedMessage);
+    playerInfoObservation.observe(observedUsername, observedMessage);
 
     const wmMatch = message.match(/^!wm(?:\s+([\s\S]*))?$/i);
     if (wmMatch) {
