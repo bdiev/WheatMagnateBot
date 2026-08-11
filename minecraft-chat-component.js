@@ -126,6 +126,31 @@ function componentHasGreenText(component, inheritedColor = null) {
   return found;
 }
 
+function parseGreenChatComponent(component) {
+  const json = rawComponent(component);
+  if (!json || typeof json !== 'object' || !Array.isArray(json.extra)) return null;
+
+  const usernames = [];
+  const messageParts = [];
+  walkComponents(json, (node, effectiveColor) => {
+    if (Object.hasOwn(node, '') && typeof node[''] === 'string') {
+      const match = node[''].match(/^<([A-Za-z0-9_]{1,16})>\s*$/);
+      if (match && !usernames.some(username => username.toLowerCase() === match[1].toLowerCase())) {
+        usernames.push(match[1]);
+      }
+    }
+
+    if (isGreenColor(effectiveColor) && typeof node.text === 'string' && node.text) {
+      messageParts.push(node.text);
+    }
+  });
+
+  if (usernames.length !== 1 || messageParts.length === 0) return null;
+  const message = messageParts.join('').trim();
+  if (!message) return null;
+  return { username: usernames[0], message };
+}
+
 function normalizeUsernameCandidate(value) {
   const candidate = String(value || '').trim().replace(/^<|>$/g, '');
   return MINECRAFT_USERNAME_PATTERN.test(candidate) ? candidate : null;
@@ -204,6 +229,15 @@ function analyzeMinecraftChatComponent(component, {
   if (!green || result.position === 'game_info') return result;
   result.evidence.push('green_component');
 
+  const serverGreenChat = parseGreenChatComponent(json);
+  if (serverGreenChat) {
+    result.isPlayerChat = true;
+    result.username = serverGreenChat.username;
+    result.message = serverGreenChat.message;
+    result.evidence.push('empty_key_sender');
+    return result;
+  }
+
   let username = canonicalKnownUsername(senderUsername, knownUsernames) || normalizeUsernameCandidate(senderUsername);
   let message = null;
   if (username) result.evidence.push('signed_sender');
@@ -264,5 +298,6 @@ module.exports = {
   analyzeMinecraftChatComponent,
   chatComponentToString,
   isGreenColor,
+  parseGreenChatComponent,
   safeOpenUrl
 };

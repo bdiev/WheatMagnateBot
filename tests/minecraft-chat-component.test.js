@@ -5,6 +5,7 @@ const {
   analyzeMinecraftChatComponent,
   chatComponentToString,
   isGreenColor,
+  parseGreenChatComponent,
   safeOpenUrl
 } = require('../minecraft-chat-component');
 
@@ -41,6 +42,64 @@ function run() {
   );
   assert.equal(safeOpenUrl('https://example.com/a'), 'https://example.com/a');
   assert.equal(safeOpenUrl('javascript:alert(1)'), null);
+
+  const actualServerGreenJson = {
+    extra: [
+      { '': '<bdiev_> ' },
+      {
+        italic: 0,
+        underlined: 0,
+        bold: 0,
+        color: 'green',
+        obfuscated: 0,
+        strikethrough: 0,
+        text: '> test'
+      }
+    ],
+    text: ''
+  };
+  assert.deepEqual(parseGreenChatComponent(actualServerGreenJson), {
+    username: 'bdiev_',
+    message: '> test'
+  });
+  const actualServerGreenChat = analyzeMinecraftChatComponent(actualServerGreenJson, {
+    knownUsernames: [],
+    position: 'system'
+  });
+  assert.equal(actualServerGreenChat.isPlayerChat, true);
+  assert.equal(actualServerGreenChat.username, 'bdiev_');
+  assert.equal(actualServerGreenChat.message, '> test');
+  assert.deepEqual(actualServerGreenChat.evidence, ['green_component', 'empty_key_sender']);
+
+  assert.deepEqual(parseGreenChatComponent({
+    extra: [
+      { color: 'green', text: '> reordered' },
+      { '': '<OrderSafe_1> ' }
+    ],
+    text: ''
+  }), { username: 'OrderSafe_1', message: '> reordered' });
+
+  assert.deepEqual(parseGreenChatComponent({
+    extra: [
+      { extra: [{ '': '<Nested_1> ' }] },
+      { extra: [{ color: 'green', text: '> nested' }] }
+    ],
+    text: ''
+  }), { username: 'Nested_1', message: '> nested' });
+
+  assert.equal(parseGreenChatComponent({
+    extra: [{ '': 'Server' }, { color: 'green', text: 'announcement' }],
+    text: ''
+  }), null, 'an empty-key value without the exact <username> format must be rejected');
+  assert.equal(parseGreenChatComponent({
+    extra: [{ '': '<Alice> ' }, { '': '<Bob> ' }, { color: 'green', text: '> ambiguous' }],
+    text: ''
+  }), null, 'components with multiple possible senders must be rejected');
+  assert.equal(parseGreenChatComponent({
+    extra: [{ '': '<name-that-is-too-long> ' }, { color: 'green', text: '> invalid' }],
+    text: ''
+  }), null, 'invalid Minecraft usernames must be rejected');
+  assert.doesNotThrow(() => parseGreenChatComponent({ extra: [null, 4, [], {}], text: '' }));
 
   const translatedGreenChat = analyzeMinecraftChatComponent({
     translate: 'chat.type.text',
