@@ -887,10 +887,6 @@ class DeferredBotCommandError extends Error {
 }
 let recentlyForwardedGameChat = new Map(); // normalized message key -> { source, timestamp }
 const recentGreenComponentMessages = new Map(); // message/position key -> short-lived classification for messagestr
-let recentCommandBotResponses = []; // raw command-bot replies used to reject truncated chat-event copies
-const COMMAND_RESPONSE_BOT_USERNAMES = new Set(['lolritterbot']);
-const COMMAND_RESPONSE_DISPLAY_USERNAME = 'LoLRiTTeRBot';
-let rawChatTraceUntil = 0;
 let tpsTabInterval = null;
 let playtimeSyncInterval = null;
 let playerActivitySyncInterval = null;
@@ -4000,31 +3996,13 @@ farm.configureRuntime({
   }
 });
 
-function resolveRelayedChatUsername(username, jsonMessage) {
-  if (!jsonMessage) return username;
-
-  const rawMessage = typeof jsonMessage.toString === 'function'
-    ? jsonMessage.toString()
-    : chatComponentToString(jsonMessage);
-  const cleanRawMessage = normalizeOutboundChat(rawMessage);
-  const relayMatch = cleanRawMessage.match(/^<([A-Za-z0-9_]{1,16})>\s*>\s*[A-Za-z0-9_]{1,16}\s*:/);
-
-  if (!relayMatch) return username;
-  debugLog(`[Chat] Corrected relayed sender ${username} -> ${relayMatch[1]} from: "${cleanRawMessage}"`);
-  return relayMatch[1];
-}
-
 function resolvePublicChatEnvelope(username, message, jsonMessage) {
   const fallback = {
-    username: resolveRelayedChatUsername(username, jsonMessage),
+    username,
     message: cleanMinecraftChatMessage(message)
   };
 
-  // The rendered chat component is the authoritative source for the visible
-  // sender. Some server plugins expose the command target through Mineflayer's
-  // `username` argument, which can make a player's reply look like it came
-  // from LoLRiTTeRBot (or make the bot's reply look like it came from the
-  // target). Resolve the raw envelope before applying lookup heuristics.
+  // Prefer the rendered public-chat envelope when Mineflayer provides it.
   if (jsonMessage) {
     const candidates = [
       typeof jsonMessage.toString === 'function' ? jsonMessage.toString() : '',
@@ -4034,24 +4012,6 @@ function resolvePublicChatEnvelope(username, message, jsonMessage) {
       const parsed = parseRawPublicChatLine(candidate);
       if (parsed?.username && parsed?.message) return parsed;
     }
-  }
-
-  const targetKey = `target:${String(username || '').toLowerCase()}`;
-  const playtimeLookup = pendingPlaytimeLookups.get(targetKey);
-  const joinDateLookup = pendingJoinDateLookups.get(targetKey);
-  const now = Date.now();
-  const expectedLookup = [playtimeLookup, joinDateLookup].find(lookup =>
-    lookup && now - lookup.timestamp <= 20_000
-  );
-  const isExpectedResult = Boolean(
-    (playtimeLookup && now - playtimeLookup.timestamp <= 20_000 && parsePlaytime(fallback.message) != null) ||
-    (joinDateLookup && now - joinDateLookup.timestamp <= 20_000 && parseObservedJoinDate(fallback.message))
-  );
-  if (expectedLookup && isExpectedResult) {
-    return {
-      username: COMMAND_RESPONSE_DISPLAY_USERNAME,
-      message: `> ${expectedLookup.targetUsername}: ${fallback.message}`
-    };
   }
   return fallback;
 }
@@ -4785,12 +4745,6 @@ function sendMinecraftChat(message, options = {}) {
   return true;
 }
 
-function armSeenCommandResponseCapture(message) {
-  if (/^!(?:seen|seenplayer)(?:\s|$)/i.test(String(message || '').trim())) {
-    rawChatTraceUntil = Date.now() + 8_000;
-  }
-}
-
 function splitMinecraftMessage(text, maxLength = MINECRAFT_PRIVATE_MESSAGE_LENGTH) {
   const words = String(text || '').trim().split(/\s+/).filter(Boolean);
   const chunks = [];
@@ -5166,7 +5120,6 @@ async function executeBotCommand(command) {
     if (!cleanMessage) throw new Error('Queued message is empty.');
     const isCommand = cleanMessage.startsWith('/') || cleanMessage.startsWith('!');
     const outgoing = isCommand ? cleanMessage : `[${requestedBy}] ${cleanMessage}`;
-    armSeenCommandResponseCapture(cleanMessage);
     const sent = sendMinecraftChat(outgoing);
     if (!sent) throw new Error('Minecraft bot is not ready.');
     const sentToDiscord = await sendGameChatMessageToDiscord(isCommand ? requestedBy : (bot.username || 'WheatMagnate'), isCommand ? cleanMessage : outgoing, { allowMentions: false });
@@ -5948,36 +5901,12 @@ function cancelPendingGameChat(username, message) {
   return true;
 }
 
-function rememberCommandBotResponse(message) {
-  const match = cleanMinecraftChatMessage(message).match(/^>\s*([A-Za-z0-9_]{1,32})\s*:\s*([\s\S]+)$/);
-  if (!match) return;
-  const now = Date.now();
-  recentCommandBotResponses = recentCommandBotResponses
-    .filter(entry => now - entry.timestamp < 5_000)
-    .concat({
-      target: match[1].toLowerCase(),
-      message: cleanMinecraftChatMessage(match[2]),
-      timestamp: now
-    });
-}
-
-function isTruncatedCommandBotResponse(username, message) {
-  const now = Date.now();
-  const target = String(username || '').toLowerCase();
-  const cleanMessage = cleanMinecraftChatMessage(message);
-  recentCommandBotResponses = recentCommandBotResponses.filter(entry => now - entry.timestamp < 5_000);
-  return recentCommandBotResponses.some(entry =>
-    entry.target === target && entry.message === cleanMessage
-  );
-}
-
 function scheduleGameChatForward(username, message, source = 'chat') {
   const cleanMessage = cleanMinecraftChatMessage(message);
   if (!cleanMessage || cleanMessage.startsWith('/msg ')) return false;
 
   const safeUsername = String(username || '').trim();
   if (!safeUsername) return false;
-  const isCommandResponseBot = COMMAND_RESPONSE_BOT_USERNAMES.has(safeUsername.toLowerCase());
 
   const nowTs = Date.now();
   const isSelfMessage = bot?.username && safeUsername.toLowerCase() === bot.username.toLowerCase();
@@ -5992,8 +5921,7 @@ function scheduleGameChatForward(username, message, source = 'chat') {
     return false;
   }
 
-  if (!isSelfMessage && !isCommandResponseBot && ignoredChatUsernames.includes(safeUsername.toLowerCase())) {
-    if (/^[>›»]/.test(cleanMessage)) console.warn(`[Chat] Suppressed leading-greater message from ignored user ${safeUsername}: ${cleanMessage}`);
+  if (!isSelfMessage && ignoredChatUsernames.includes(safeUsername.toLowerCase())) {
     return false;
   }
 
@@ -6001,7 +5929,6 @@ function scheduleGameChatForward(username, message, source = 'chat') {
   const whisperLowerKey = `WHISPER:${safeUsername.toLowerCase()}:${cleanMessage}`;
   if (recentWhispers.has(whisperKey) || recentWhispers.has(whisperLowerKey)) {
     debugLog(`[Chat] Suppressed whisper from ${safeUsername}: "${cleanMessage}"`);
-    if (/^[>›»]/.test(cleanMessage)) console.warn(`[Chat] Suppressed leading-greater message as whisper from ${safeUsername}: ${cleanMessage}`);
     return false;
   }
 
@@ -6011,25 +5938,18 @@ function scheduleGameChatForward(username, message, source = 'chat') {
   }
   if (outboundWhispers.has(outboundKey)) {
     debugLog(`[Chat] Suppressed outbound echo to ${safeUsername}: "${cleanMessage}"`);
-    if (/^[>›»]/.test(cleanMessage)) console.warn(`[Chat] Suppressed leading-greater message as outbound echo from ${safeUsername}: ${cleanMessage}`);
     return false;
   }
 
   recentlyForwardedGameChat.set(pendingKey, { source, timestamp: nowTs });
   const timer = setTimeout(async () => {
     try {
-      if (source === 'chat' && !isCommandResponseBot && isTruncatedCommandBotResponse(safeUsername, cleanMessage)) {
-        debugLog(`[Chat] Suppressed truncated command-bot copy attributed to ${safeUsername}: "${cleanMessage}"`);
-        return;
-      }
       if (recentWhispers.has(whisperKey) || recentWhispers.has(whisperLowerKey)) {
         debugLog(`[Chat] Suppressed whisper (late mark) from ${safeUsername}: "${cleanMessage}"`);
-        if (/^[>›»]/.test(cleanMessage)) console.warn(`[Chat] Suppressed leading-greater message as late whisper from ${safeUsername}: ${cleanMessage}`);
         return;
       }
       if (outboundWhispers.has(outboundKey)) {
         debugLog(`[Chat] Suppressed outbound echo (late) to ${safeUsername}: "${cleanMessage}"`);
-        if (/^[>›»]/.test(cleanMessage)) console.warn(`[Chat] Suppressed leading-greater message as late outbound echo from ${safeUsername}: ${cleanMessage}`);
         return;
       }
       recentlyForwardedGameChat.set(pendingKey, { source, timestamp: Date.now() });
@@ -6055,32 +5975,6 @@ function scheduleGameChatForward(username, message, source = 'chat') {
 function parseRawPublicChatLine(text) {
   if (isPrivateMinecraftChatLine(text)) return null;
   const clean = cleanMinecraftChatMessage(text);
-  if (Date.now() < rawChatTraceUntil && /^>\s+I\s+saw\s+[A-Za-z0-9_]{1,32}\b/i.test(clean)) {
-    return {
-      username: COMMAND_RESPONSE_DISPLAY_USERNAME,
-      message: clean
-    };
-  }
-
-  const commandBotMatch = clean.match(/(?:<|\[)?(LoLRiTTeRBot)(?:>|\])?\s*([>›»:]?)\s*([\s\S]+)$/i);
-  if (commandBotMatch) {
-    const message = commandBotMatch[3].trim();
-    if (message) {
-      return {
-        username: commandBotMatch[1],
-        message: message.startsWith('>') ? message : `> ${message}`
-      };
-    }
-  }
-
-  const commandResponseMatch = clean.match(/^(?:<([A-Za-z0-9_]{1,32})>|\[([A-Za-z0-9_]{1,32})\]|([A-Za-z0-9_]{1,32}))\s*[>›»]\s+([\s\S]+)$/);
-  if (commandResponseMatch) {
-    const username = commandResponseMatch[1] || commandResponseMatch[2] || commandResponseMatch[3];
-    const message = commandResponseMatch[4].trim();
-    if (COMMAND_RESPONSE_BOT_USERNAMES.has(String(username || '').toLowerCase())) {
-      return { username, message: `> ${message}` };
-    }
-  }
 
   const angleMatch = clean.match(/^<([A-Za-z0-9_]{1,32})>\s+([\s\S]+)$/);
   if (angleMatch) {
@@ -6123,28 +6017,15 @@ function parseRawPublicChatLine(text) {
 }
 
 function forwardRawPublicChatText(text, source = 'raw', position = '') {
-  if (Date.now() < rawChatTraceUntil) {
-    const cleanTraceText = cleanMinecraftChatMessage(text).replace(/\s+/g, ' ').trim();
-    if (cleanTraceText) {
-      console.log(`[Chat Raw Trace] ${source}${position ? `/${position}` : ''}: ${cleanTraceText.slice(0, 300)}`);
-    }
-  }
-
   const rawChat = parseRawPublicChatLine(text);
-  if (!rawChat) {
-    if (String(text || '').toLowerCase().includes('lolritter')) {
-      console.warn(`[Chat Raw] Saw LoLRiTTeRBot text but could not parse it: ${String(text).slice(0, 300)}`);
-    }
-    return false;
-  }
+  if (!rawChat) return false;
   if (String(position || '') === 'game_info') return false;
   const rawUsernameKey = String(rawChat.username || '').toLowerCase();
-  const isCommandResponseBot = COMMAND_RESPONSE_BOT_USERNAMES.has(rawUsernameKey);
   const isKnownOnlinePlayer = getOnlinePlayerUsernames().some(username =>
     String(username || '').toLowerCase() === rawUsernameKey
   );
   const isSignedPlayerChat = String(position || '') === 'chat';
-  if (!isCommandResponseBot && !isKnownOnlinePlayer && !isSignedPlayerChat) {
+  if (!isKnownOnlinePlayer && !isSignedPlayerChat) {
     debugLog('[MC CHAT DEBUG]', {
       kind: 'rejected-player-shaped-system-text',
       text: cleanMinecraftChatMessage(text),
@@ -6153,14 +6034,7 @@ function forwardRawPublicChatText(text, source = 'raw', position = '') {
     });
     return false;
   }
-  if (isCommandResponseBot) {
-    rememberCommandBotResponse(rawChat.message);
-  }
-  const forwarded = scheduleGameChatForward(rawChat.username, rawChat.message, source);
-  if (String(rawChat.username || '').toLowerCase() === 'lolritterbot') {
-    console.log(`[Chat Raw] Forwarded LoLRiTTeRBot message: ${rawChat.message}`);
-  }
-  return forwarded;
+  return scheduleGameChatForward(rawChat.username, rawChat.message, source);
 }
 
 async function requestGeminiModel(model, question, options = {}) {
@@ -8538,7 +8412,6 @@ function createBot() {
     // Do NOT infer deaths from chat messages. We only notify on the bot's own death
     // via the dedicated bot death event handler.
 
-    armSeenCommandResponseCapture(message);
     scheduleGameChatForward(username, message, source);
     return;
 
@@ -11417,7 +11290,6 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           : text;
         // Don't add username prefix for commands (starting with / or !)
         if (gameText.startsWith('/') || gameText.startsWith('!')) {
-          armSeenCommandResponseCapture(gameText);
           const sentToGame = sendMinecraftChat(gameText);
           if (sentToGame) {
             await sendGameChatMessageToDiscord(username, gameText, { allowMentions: false });

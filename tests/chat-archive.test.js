@@ -86,8 +86,13 @@ assert.match(stylesSource, /\.chat-message\s*\{[^}]*flex:\s*0 0 auto;/s,
 assert.doesNotMatch(serviceWorkerSource, /return cached \|\| fresh/, 'UI assets must not prefer stale cached responses');
 assert.match(
   botSource,
-  /function resolvePublicChatEnvelope\([\s\S]*if \(jsonMessage\)[\s\S]*parseRawPublicChatLine\(candidate\)[\s\S]*if \(parsed\?\.username && parsed\?\.message\) return parsed;[\s\S]*const targetKey/,
-  'the raw Minecraft chat component must determine the sender before command-response heuristics'
+  /function resolvePublicChatEnvelope\([\s\S]*if \(jsonMessage\)[\s\S]*parseRawPublicChatLine\(candidate\)[\s\S]*if \(parsed\?\.username && parsed\?\.message\) return parsed;[\s\S]*return fallback;/,
+  'the rendered Minecraft chat envelope must determine the sender when it is available'
+);
+assert.doesNotMatch(
+  botSource,
+  /COMMAND_RESPONSE_|recentCommandBotResponses|rawChatTraceUntil|armSeenCommandResponseCapture|rememberCommandBotResponse|isTruncatedCommandBotResponse/i,
+  'chat handling must not contain command-bot-specific attribution or tracing workarounds'
 );
 assert.match(
   botSource,
