@@ -2753,7 +2753,7 @@ async function getAdminPlayers(currentUser, url, database = pool) {
   const candidateOrder = {
     playtime: `total_seconds ${directionSql},LOWER(pa.username) ASC,pa.id ASC`,
     nickname: `LOWER(pa.username) ${directionSql},pa.id ${directionSql}`,
-    uuid: `pa.player_uuid ${directionSql} NULLS LAST,LOWER(pa.username) ASC,pa.id ASC`,
+    uuid: `pa.player_uuid ${directionSql} NULLS ${direction === 'asc' ? 'FIRST' : 'LAST'},LOWER(pa.username) ASC,pa.id ASC`,
     joindate: `pa.registration_at ${directionSql} NULLS ${direction === 'asc' ? 'FIRST' : 'LAST'},LOWER(pa.username) ASC,pa.id ASC`,
     seen: `pa.last_seen ${direction === 'asc' ? 'DESC NULLS FIRST' : 'ASC NULLS LAST'},LOWER(pa.username) ASC,pa.id ASC`,
     messages: `total_messages ${directionSql},LOWER(pa.username) ASC,pa.id ASC`
@@ -2761,7 +2761,7 @@ async function getAdminPlayers(currentUser, url, database = pool) {
   const resultOrder = {
     playtime: `candidate.total_seconds ${directionSql},LOWER(candidate.username) ASC,candidate.id ASC`,
     nickname: `LOWER(candidate.username) ${directionSql},candidate.id ${directionSql}`,
-    uuid: `candidate.player_uuid ${directionSql} NULLS LAST,LOWER(candidate.username) ASC,candidate.id ASC`,
+    uuid: `candidate.player_uuid ${directionSql} NULLS ${direction === 'asc' ? 'FIRST' : 'LAST'},LOWER(candidate.username) ASC,candidate.id ASC`,
     joindate: `candidate.registration_at ${directionSql} NULLS ${direction === 'asc' ? 'FIRST' : 'LAST'},LOWER(candidate.username) ASC,candidate.id ASC`,
     seen: `candidate.last_seen ${direction === 'asc' ? 'DESC NULLS FIRST' : 'ASC NULLS LAST'},LOWER(candidate.username) ASC,candidate.id ASC`,
     messages: `candidate.total_messages ${directionSql},LOWER(candidate.username) ASC,candidate.id ASC`

@@ -173,6 +173,16 @@ async function testAdminPlayerSortingAndOptimizedQuery() {
   assert.match(calls[3].sql, /ORDER BY pa\.player_uuid DESC NULLS LAST,LOWER\(pa\.username\) ASC/);
   assert.match(calls[3].sql, /ORDER BY candidate\.player_uuid DESC NULLS LAST,LOWER\(candidate\.username\) ASC/);
 
+  const uuidMissingFirst = await getAdminPlayers(
+    admin,
+    new URL('https://example.test/api/admin/players?sort=uuid&direction=asc'),
+    database
+  );
+  assert.equal(uuidMissingFirst.sort, 'uuid');
+  assert.equal(uuidMissingFirst.direction, 'asc');
+  assert.match(calls[4].sql, /ORDER BY pa\.player_uuid ASC NULLS FIRST,LOWER\(pa\.username\) ASC/);
+  assert.match(calls[4].sql, /ORDER BY candidate\.player_uuid ASC NULLS FIRST,LOWER\(candidate\.username\) ASC/);
+
   const messages = await getAdminPlayers(
     admin,
     new URL('https://example.test/api/admin/players?sort=messages&direction=desc'),
@@ -180,11 +190,11 @@ async function testAdminPlayerSortingAndOptimizedQuery() {
   );
   assert.equal(messages.sort, 'messages');
   assert.equal(messages.direction, 'desc');
-  assert.match(calls[4].sql, /chat_counts_uuid AS MATERIALIZED/);
-  assert.match(calls[4].sql, /chat_counts_name AS MATERIALIZED/);
-  assert.match(calls[4].sql, /ORDER BY total_messages DESC,LOWER\(pa\.username\) ASC/);
-  assert.match(calls[4].sql, /ORDER BY candidate\.total_messages DESC,LOWER\(candidate\.username\) ASC/);
-  assert.doesNotMatch(calls[4].sql, /FROM game_chat_messages message/, 'message sorting must reuse the pre-pagination aggregates');
+  assert.match(calls[5].sql, /chat_counts_uuid AS MATERIALIZED/);
+  assert.match(calls[5].sql, /chat_counts_name AS MATERIALIZED/);
+  assert.match(calls[5].sql, /ORDER BY total_messages DESC,LOWER\(pa\.username\) ASC/);
+  assert.match(calls[5].sql, /ORDER BY candidate\.total_messages DESC,LOWER\(candidate\.username\) ASC/);
+  assert.doesNotMatch(calls[5].sql, /FROM game_chat_messages message/, 'message sorting must reuse the pre-pagination aggregates');
 }
 
 function testArchitectureAndUiContracts() {
