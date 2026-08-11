@@ -33,5 +33,7 @@ assert.match(stylesSource, /\.playtime-scope-controls \.chart-range-button\s*\{[
 assert.match(stylesSource, /\.chart-controls:not\(\.playtime-scope-controls\)\s*\{[^}]*grid-template-columns:\s*repeat\(3,/s, 'three-column mobile chart controls must not override the two-column leaderboard switch');
 assert.match(stylesSource, /\.player-leaderboard-panel \.leaderboard-list\s*\{[^}]*overflow-anchor:\s*none;/s, 'scope changes must not restore the previous mobile scroll anchor');
 assert.match(appSource, /function resetPlaytimeLeaderboardScroll[\s\S]*list\.scrollTop = 0;[\s\S]*requestAnimationFrame[\s\S]*state\.playtimeLeaderboardScope === scope[\s\S]*list\.scrollTop = 0;/, 'scope changes must reset the leaderboard before and after layout');
+assert.match(appSource, /tab === 'players'[\s\S]*resetPlaytimeLeaderboardScroll\(\$\('#playtimeLeaderboard'\)/, 'opening Players must reset the leaderboard to first place');
+assert.match(appSource, /isFirstRender[\s\S]*didRender && isFirstRender[\s\S]*resetPlaytimeLeaderboardScroll/, 'the initial asynchronous render must override bottom anchoring');
 
 console.log('Playtime leaderboard UI tests passed.');

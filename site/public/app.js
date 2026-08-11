@@ -1493,6 +1493,9 @@ function setActiveTab(tab) {
   if (tab === 'child-ai') loadChildAiAdmin();
   if (tab === 'kill-aura') loadKillAura();
   if (tab === 'chat') ensureInitialChatScroll();
+  if (tab === 'players') {
+    resetPlaytimeLeaderboardScroll($('#playtimeLeaderboard'), state.playtimeLeaderboardScope);
+  }
   requestAnimationFrame(updateCarousels);
   redrawCharts();
 }
@@ -3957,7 +3960,8 @@ function renderPlaytimeLeaderboard({ resetScroll = false, force = false } = {}) 
       : 'Playtime totals for players in the whitelist database.';
   }
 
-  renderStable('#playtimeLeaderboard', leaderboard.length
+  const isFirstRender = Boolean(list && list.dataset.leaderboardRendered !== 'true');
+  const didRender = renderStable('#playtimeLeaderboard', leaderboard.length
     ? leaderboard.map((player, index) => `
       <div class="rank-item leaderboard-item">
         <span class="rank-index">${index + 1}</span>
@@ -3971,7 +3975,10 @@ function renderPlaytimeLeaderboard({ resetScroll = false, force = false } = {}) 
     [scope, ...leaderboard.map(player => [player.username, player.isOnline, player.playtime])]
   );
 
-  if (resetScroll) resetPlaytimeLeaderboardScroll(list, scope);
+  if (didRender && list) list.dataset.leaderboardRendered = 'true';
+  if (resetScroll || (didRender && isFirstRender)) {
+    resetPlaytimeLeaderboardScroll(list, scope);
+  }
 }
 
 function setPlaytimeLeaderboardScope(scope) {
