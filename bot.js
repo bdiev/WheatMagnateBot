@@ -5,6 +5,7 @@ const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBui
 const { pathfinder } = require('mineflayer-pathfinder');
 const { createDiscordClient, saveStatusMessageId, loadStatusMessageId } = require('./discord');
 const { DiscordChatForwardQueue, positiveInteger } = require('./discord/chat-forward-queue');
+const { formatDiscordBridgeMessage } = require('./discord/chat-message-format');
 const { createMinecraftBot } = require('./minecraft');
 const { moveInventorySlot } = require('./minecraft/inventory-slot-move');
 const {
@@ -4810,9 +4811,7 @@ async function deliverGameChatMessageToDiscord({ username, message, allowMention
     if (!channel?.isTextBased?.()) return false;
 
     const avatarUrl = `https://minotar.net/avatar/${username.toLowerCase()}/28`;
-    let displayMessage = neutralizeDiscordInviteLinks(flattenMarkdownLinks(message))
-      .replace(/([*_`~|>\\])/g, '\\$1');
-    displayMessage = displayMessage.replace(/\[/g, '\\[').replace(/\]/g, '\\]');
+    const displayMessage = formatDiscordBridgeMessage(message, { allowDiscordInvites: isBotPlayer });
 
     const sendOptions = {
       embeds: [{
@@ -5810,23 +5809,6 @@ async function processBotCommandsOnce() {
       });
     }
   }
-}
-
-function neutralizeDiscordInviteLinks(message) {
-  return String(message || '')
-    .replace(/\b(discord\.gg|discord(?:app)?\.com\/invite)\//gi, match =>
-      match.replace(/\./g, '[.]')
-    );
-}
-
-function flattenMarkdownLinks(message) {
-  return String(message || '').replace(/\[([^\]\r\n]{1,300})\]\((https?:\/\/[^\s)<>]{1,500})\)/gi, (match, label, url) => {
-    const cleanLabel = String(label || '').trim();
-    const cleanUrl = String(url || '').trim();
-    if (!cleanLabel || !cleanUrl) return match;
-    if (cleanLabel === cleanUrl) return cleanUrl;
-    return `${cleanLabel} (${cleanUrl})`;
-  });
 }
 
 function cleanMinecraftChatMessage(message) {

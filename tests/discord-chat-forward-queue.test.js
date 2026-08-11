@@ -2,8 +2,48 @@
 
 const assert = require('node:assert/strict');
 const { DiscordChatForwardQueue } = require('../discord/chat-forward-queue');
+const { formatDiscordBridgeMessage } = require('../discord/chat-message-format');
 
 const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+
+function testDiscordInviteFormatting() {
+  const expectedInvite = 'Join: https://discord\\[.\\]gg/4RQJvRngwy';
+  const clickableInvite = 'Join: https://discord.gg/4RQJvRngwy';
+  assert.equal(
+    formatDiscordBridgeMessage('Join: [https://discord.gg/4RQJvRngwy](https://discord.gg/4RQJvRngwy)'),
+    expectedInvite
+  );
+  assert.equal(
+    formatDiscordBridgeMessage('Join: [https://discord[.]gg/4RQJvRngwy](https://discord[.]gg/4RQJvRngwy)'),
+    expectedInvite,
+    'an already neutralized invite label must not break Markdown parsing'
+  );
+  assert.equal(
+    formatDiscordBridgeMessage('Join: [https://discord/[./]gg/4RQJvRngwy](https://discord[.]gg/4RQJvRngwy)'),
+    expectedInvite,
+    'a server-obfuscated invite label must collapse to the clean destination once'
+  );
+  assert.equal(
+    formatDiscordBridgeMessage(
+      'Join: [https://discord.gg/4RQJvRngwy](https://discord.gg/4RQJvRngwy)',
+      { allowDiscordInvites: true }
+    ),
+    clickableInvite,
+    'trusted bot invites must remain clickable'
+  );
+  assert.equal(
+    formatDiscordBridgeMessage(
+      'Join: [https://discord/[./]gg/4RQJvRngwy](https://discord[.]gg/4RQJvRngwy)',
+      { allowDiscordInvites: true }
+    ),
+    clickableInvite,
+    'trusted server-obfuscated invites must be restored after flattening'
+  );
+  assert.equal(
+    formatDiscordBridgeMessage('[Server map](https://map.example.net/)'),
+    'Server map (https://map.example.net/)'
+  );
+}
 
 async function testSerialDelivery() {
   let active = 0;
@@ -228,6 +268,7 @@ async function testFloodCannotDisplaceAnotherPlayer() {
 }
 
 (async () => {
+  testDiscordInviteFormatting();
   await testSerialDelivery();
   await testFloodSuppressionAndSummary();
   await testSameMillisecondDuplicatesAreSuppressed();
