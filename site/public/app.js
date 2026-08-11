@@ -64,6 +64,7 @@ const state = {
   adminPlayersDirection: 'asc',
   adminPlayersLimit: 6,
   adminPlayersOffset: 0,
+  adminPlayersNextOffset: 0,
   adminPlayersHasMore: false,
   adminPlayerSearchTimer: null,
   adminPlayerEditTarget: null,
@@ -4744,23 +4745,25 @@ function adminPlayerByIdentity(identityKey) {
   return state.adminPlayers.find(player => String(player.identityKey) === String(identityKey)) || null;
 }
 
-function renderAdminPlayers(players = state.adminPlayers) {
+function renderAdminPlayers(players = state.adminPlayers, { append = false } = {}) {
   const list = $('#adminPlayersList');
   if (!list) return;
   if (!players.length) {
-    list.innerHTML = '<div class="empty">No tracked Minecraft players found.</div>';
+    if (!append) list.innerHTML = '<div class="empty">No tracked Minecraft players found.</div>';
     return;
   }
-  list.innerHTML = players.map(player => {
+  const markup = players.map(player => {
     const identityKey = escapeHtml(player.identityKey);
     const username = escapeHtml(player.username);
     const uuid = player.uuid ? escapeHtml(player.uuid) : '';
     const tags = Array.isArray(player.tags) ? player.tags : [];
     return `
       <article class="admin-player-card" data-admin-player-key="${identityKey}">
-        <img class="admin-player-avatar" src="${accountHeadUrl(player.username)}" alt="" loading="lazy" decoding="async">
+        <button class="admin-player-avatar-button" type="button" data-admin-player-action="view" data-player-key="${identityKey}" aria-label="Open ${username} profile">
+          <img class="admin-player-avatar" src="${accountHeadUrl(player.username)}" alt="" loading="lazy" decoding="async">
+        </button>
         <div class="admin-player-card-main">
-          <div class="admin-player-card-title"><strong>${username}</strong><span class="pill ${player.isOnline ? 'online' : ''}">${player.isOnline ? 'online' : 'offline'}</span></div>
+          <div class="admin-player-card-title"><button class="admin-player-name-button" type="button" data-admin-player-action="view" data-player-key="${identityKey}">${username}</button><span class="pill ${player.isOnline ? 'online' : ''}">${player.isOnline ? 'online' : 'offline'}</span></div>
           <code title="${uuid || `Legacy profile ID ${escapeHtml(player.id)}`}">${uuid || `Legacy ID ${escapeHtml(player.id)}`}</code>
           <div class="admin-player-card-tags">${tags.length ? tags.map(tag => `<span class="admin-player-tag">${escapeHtml(tag)}</span>`).join('') : '<span class="muted">No tags</span>'}</div>
         </div>
@@ -4781,8 +4784,11 @@ function renderAdminPlayers(players = state.adminPlayers) {
         </details>
       </article>`;
   }).join('');
+  if (append) list.insertAdjacentHTML('beforeend', markup);
+  else list.innerHTML = markup;
 
-  list.querySelectorAll('.admin-player-card-menu').forEach(menu => {
+  list.querySelectorAll('.admin-player-card-menu:not([data-menu-bound])').forEach(menu => {
+    menu.dataset.menuBound = 'true';
     menu.addEventListener('toggle', () => {
       if (menu.open) {
         list.querySelectorAll('.admin-player-card-menu[open]').forEach(otherMenu => {
@@ -4791,32 +4797,42 @@ function renderAdminPlayers(players = state.adminPlayers) {
       }
 
       menu.closest('.admin-player-card')?.classList.toggle('menu-open', menu.open);
+      if (menu.open && !matchMedia('(max-width: 700px)').matches) {
+        requestAnimationFrame(() => menu.querySelector(':scope > div')?.scrollIntoView({ block: 'nearest' }));
+      }
     });
   });
 }
 
-function updateAdminPlayersPagination() {
-  const pagination = $('#adminPlayersPagination');
-  const previous = $('#adminPlayersPrevious');
-  const next = $('#adminPlayersNext');
-  const page = $('#adminPlayersPage');
-  const pageNumber = Math.floor(state.adminPlayersOffset / state.adminPlayersLimit) + 1;
-  if (pagination) pagination.hidden = state.adminPlayersOffset === 0 && !state.adminPlayersHasMore;
-  if (previous) previous.disabled = state.adminPlayersLoading || state.adminPlayersOffset === 0;
-  if (next) next.disabled = state.adminPlayersLoading || !state.adminPlayersHasMore;
-  if (page) page.textContent = `Page ${pageNumber}`;
+function updateAdminPlayersScrollStatus() {
+  const status = $('#adminPlayersScrollStatus');
+  if (!status) return;
+  const loadingMore = state.adminPlayersLoading && state.adminPlayers.length > 0;
+  status.hidden = !loadingMore && !state.adminPlayersHasMore;
+  status.textContent = loadingMore ? 'Loading more players…' : 'Scroll to load more';
 }
 
-async function loadAdminPlayers({ query = $('#adminPlayersSearch')?.value || '', showLoading = true, offset = state.adminPlayersOffset } = {}) {
+function maybeLoadMoreAdminPlayers() {
+  const scroller = $('#adminPlayersScroller');
+  if (!scroller || state.adminPlayersLoading || !state.adminPlayersHasMore) return;
+  const distanceFromBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+  if (distanceFromBottom <= 180) {
+    loadAdminPlayers({ showLoading: false, offset: state.adminPlayersNextOffset, append: true });
+  }
+}
+
+async function loadAdminPlayers({ query = $('#adminPlayersSearch')?.value || '', showLoading = true, offset = 0, append = false } = {}) {
   if (state.currentUser?.role !== 'admin') return;
+  if (append && state.adminPlayersLoading) return;
   const list = $('#adminPlayersList');
+  const scroller = $('#adminPlayersScroller');
   const refresh = $('#adminPlayersRefresh');
   const requestId = ++state.adminPlayersRequestId;
   state.adminPlayersLoading = true;
   if (refresh) refresh.disabled = true;
-  updateAdminPlayersPagination();
+  updateAdminPlayersScrollStatus();
   try {
-    if (showLoading && list) list.innerHTML = '<div class="empty">Loading Minecraft players...</div>';
+    if (showLoading && !append && list) list.innerHTML = '<div class="empty">Loading Minecraft players...</div>';
     const params = new URLSearchParams({
       query: query.trim(),
       sort: state.adminPlayersSort,
@@ -4830,19 +4846,29 @@ async function loadAdminPlayers({ query = $('#adminPlayersSearch')?.value || '',
     state.adminPlayersDirection = payload.direction || state.adminPlayersDirection;
     state.adminPlayersLimit = Number(payload.limit) || state.adminPlayersLimit;
     state.adminPlayersOffset = Number(payload.offset) || 0;
+    state.adminPlayersNextOffset = state.adminPlayersOffset + (payload.players || []).length;
     state.adminPlayersHasMore = Boolean(payload.hasMore);
-    state.adminPlayers = payload.players || [];
-    renderAdminPlayers();
-    updateAdminPlayersPagination();
+    if (append) {
+      const knownKeys = new Set(state.adminPlayers.map(player => String(player.identityKey)));
+      const additions = (payload.players || []).filter(player => !knownKeys.has(String(player.identityKey)));
+      state.adminPlayers.push(...additions);
+      renderAdminPlayers(additions, { append: true });
+    } else {
+      state.adminPlayers = payload.players || [];
+      renderAdminPlayers();
+      if (scroller) scroller.scrollTop = 0;
+    }
+    updateAdminPlayersScrollStatus();
   } catch (err) {
     if (requestId !== state.adminPlayersRequestId) return;
-    if (list) list.innerHTML = `<div class="empty">Could not load players: ${escapeHtml(err.message)}</div>`;
+    if (!append && list) list.innerHTML = `<div class="empty">Could not load players: ${escapeHtml(err.message)}</div>`;
     setAdminPlayersNotice(`Could not load players: ${err.message}`, 'error');
   } finally {
     if (requestId === state.adminPlayersRequestId) {
       state.adminPlayersLoading = false;
       if (refresh) refresh.disabled = false;
-      updateAdminPlayersPagination();
+      updateAdminPlayersScrollStatus();
+      requestAnimationFrame(maybeLoadMoreAdminPlayers);
     }
   }
 }
@@ -4955,15 +4981,12 @@ async function confirmAdminPlayerDelete() {
     await deleteJson(`/api/admin/players/${encodeURIComponent(player.identityKey)}`);
     state.adminPlayers = state.adminPlayers.filter(item => String(item.identityKey) !== String(player.identityKey));
     renderAdminPlayers();
-    updateAdminPlayersPagination();
+    updateAdminPlayersScrollStatus();
     if (String(state.playerProfileLastPayload?.uuid || '').toLowerCase() === String(player.uuid || '').toLowerCase() ||
         String(state.playerProfileLastPayload?.username || '').toLowerCase() === String(player.username || '').toLowerCase()) closePlayerProfile();
     closeAdminPlayerDelete();
     setAdminPlayersNotice('Player deleted.');
-    const refillOffset = state.adminPlayers.length || state.adminPlayersOffset === 0
-      ? state.adminPlayersOffset
-      : Math.max(0, state.adminPlayersOffset - state.adminPlayersLimit);
-    loadAdminPlayers({ showLoading: false, offset: refillOffset }).catch(() => {});
+    loadAdminPlayers({ showLoading: false, offset: 0 }).catch(() => {});
     loadAdminSystemLogs().catch(() => {});
   } catch (err) {
     error.textContent = err.message;
@@ -6872,12 +6895,7 @@ $('#adminPlayersSearch')?.addEventListener('input', () => {
   clearTimeout(state.adminPlayerSearchTimer);
   state.adminPlayerSearchTimer = setTimeout(() => loadAdminPlayers({ offset: 0 }), 250);
 });
-$('#adminPlayersPrevious')?.addEventListener('click', () => {
-  loadAdminPlayers({ offset: Math.max(0, state.adminPlayersOffset - state.adminPlayersLimit) });
-});
-$('#adminPlayersNext')?.addEventListener('click', () => {
-  if (state.adminPlayersHasMore) loadAdminPlayers({ offset: state.adminPlayersOffset + state.adminPlayersLimit });
-});
+$('#adminPlayersScroller')?.addEventListener('scroll', maybeLoadMoreAdminPlayers, { passive: true });
 $('#adminPlayersList')?.addEventListener('click', event => handleAdminPlayerAction(event).catch(err => setAdminPlayersNotice(err.message, 'error')));
 $('#adminPlayerEditForm')?.addEventListener('submit', saveAdminPlayer);
 $('#adminPlayerEditClose')?.addEventListener('click', closeAdminPlayerEdit);

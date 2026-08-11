@@ -2600,7 +2600,7 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
 }
 
 const ADMIN_PLAYER_EDITABLE_FIELDS = Object.freeze(['notes', 'tags']);
-const ADMIN_PLAYER_SORT_FIELDS = new Set(['playtime', 'nickname', 'joindate']);
+const ADMIN_PLAYER_SORT_FIELDS = new Set(['playtime', 'nickname', 'joindate', 'seen']);
 const MINECRAFT_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function publicAdminPlayer(row) {
@@ -2699,12 +2699,14 @@ async function getAdminPlayers(currentUser, url, database = pool) {
   const candidateOrder = {
     playtime: `total_seconds ${directionSql},LOWER(pa.username) ASC,pa.id ASC`,
     nickname: `LOWER(pa.username) ${directionSql},pa.id ${directionSql}`,
-    joindate: `pa.registration_at ${directionSql} NULLS ${direction === 'asc' ? 'FIRST' : 'LAST'},LOWER(pa.username) ASC,pa.id ASC`
+    joindate: `pa.registration_at ${directionSql} NULLS ${direction === 'asc' ? 'FIRST' : 'LAST'},LOWER(pa.username) ASC,pa.id ASC`,
+    seen: `pa.last_seen ${direction === 'asc' ? 'DESC NULLS FIRST' : 'ASC NULLS LAST'},LOWER(pa.username) ASC,pa.id ASC`
   }[sort];
   const resultOrder = {
     playtime: `candidate.total_seconds ${directionSql},LOWER(candidate.username) ASC,candidate.id ASC`,
     nickname: `LOWER(candidate.username) ${directionSql},candidate.id ${directionSql}`,
-    joindate: `candidate.registration_at ${directionSql} NULLS ${direction === 'asc' ? 'FIRST' : 'LAST'},LOWER(candidate.username) ASC,candidate.id ASC`
+    joindate: `candidate.registration_at ${directionSql} NULLS ${direction === 'asc' ? 'FIRST' : 'LAST'},LOWER(candidate.username) ASC,candidate.id ASC`,
+    seen: `candidate.last_seen ${direction === 'asc' ? 'DESC NULLS FIRST' : 'ASC NULLS LAST'},LOWER(candidate.username) ASC,candidate.id ASC`
   }[sort];
   const result = await database.query(`
     WITH candidate_players AS MATERIALIZED (

@@ -4768,7 +4768,7 @@ async function sendGameChatMessageToDiscord(username, message, { allowMentions =
   });
 }
 
-async function deliverGameChatMessageToDiscord({ username, message, allowMentions = true, createdAt = Date.now(), source = 'unspecified', isSummary = false }) {
+async function deliverGameChatMessageToDiscord({ username, message, allowMentions = true, createdAt = Date.now(), isSummary = false }) {
   try {
     const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
     if (!channel?.isTextBased?.()) return false;
@@ -4811,7 +4811,6 @@ async function deliverGameChatMessageToDiscord({ username, message, allowMention
       }
     }
 
-    traceMinecraftDiscord('[MC->DISCORD SEND]', { source, username, message });
     await channel.send(sendOptions);
     return true;
   } catch (e) {
@@ -5822,18 +5821,6 @@ function cancelPendingGameChat(username, message) {
   for (const timer of timers) clearTimeout(timer);
   pendingChatTimers.delete(key);
   return true;
-}
-
-function traceMinecraftDiscord(kind, { source, username, message, reason = null }) {
-  debugLog(
-    kind,
-    JSON.stringify({
-      source,
-      username: String(username || ''),
-      message: cleanMinecraftChatMessage(message),
-      ...(reason ? { reason } : {})
-    }, null, 2)
-  );
 }
 
 function scheduleGameChatForward(username, message, source = 'chat') {
