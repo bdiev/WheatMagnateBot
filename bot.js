@@ -6,6 +6,7 @@ const { pathfinder } = require('mineflayer-pathfinder');
 const { createDiscordClient, saveStatusMessageId, loadStatusMessageId } = require('./discord');
 const { DiscordChatForwardQueue, positiveInteger } = require('./discord/chat-forward-queue');
 const { formatDiscordBridgeMessage } = require('./discord/chat-message-format');
+const { preparePlayerHeadEmojiImage } = require('./discord/player-head-image');
 const { createMinecraftBot } = require('./minecraft');
 const { moveInventorySlot } = require('./minecraft/inventory-slot-move');
 const {
@@ -103,6 +104,10 @@ let discordActiveAccountId = DEFAULT_ACCOUNT_ID;
 const BOT_PUBLIC_CHAT_STATUS_FILE = path.resolve('data', 'bot_public_chat_status.json');
 const BOT_CHAT_STATUS_EMOJIS_FILE = path.resolve('data', 'bot_chat_status_emojis.json');
 const PLAYER_HEAD_EMOJIS_FILE = path.resolve('data', 'player_head_emojis.json');
+const PLAYER_HEAD_EMOJI_REDRAWS_FILE = path.resolve('data', 'player_head_emoji_redraws.json');
+const REQUESTED_PLAYER_HEAD_EMOJI_REDRAWS = Object.freeze([
+  { username: 'ObbyMagnate', version: 1 }
+]);
 const OBSIDIAN_STATS_MESSAGES_FILE = path.resolve('data', 'obsidian_stats_messages.json');
 const OBSIDIAN_FARM_DEBUG_LOG_FILE = path.resolve('obsidian_farm_debug.log');
 const OBSIDIAN_STATS_UPDATE_INTERVAL_MS = 30_000;
@@ -558,9 +563,11 @@ async function importPlayerHeadEmoji(username) {
 
   const { imageBuffer, error } = await fetchPlayerHeadImage(username);
   if (!imageBuffer) throw error || new Error('No player head image was returned');
+  const preparedImage = await preparePlayerHeadEmojiImage(imageBuffer);
+  if (preparedImage.length > 256 * 1024) throw new Error('Prepared player head image is too large for an emoji');
 
   const created = await emojiManager.create({
-    attachment: imageBuffer,
+    attachment: preparedImage,
     name: emojiName
   });
 
@@ -569,6 +576,78 @@ async function importPlayerHeadEmoji(username) {
   savePlayerHeadEmojiCache();
   console.log(`[PlayerHeads] Imported ${username} as application emoji ${emojiText}`);
   return emojiText;
+}
+
+function loadPlayerHeadEmojiRedrawState() {
+  try {
+    if (!fs.existsSync(PLAYER_HEAD_EMOJI_REDRAWS_FILE)) return {};
+    const parsed = JSON.parse(fs.readFileSync(PLAYER_HEAD_EMOJI_REDRAWS_FILE, 'utf8'));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (error) {
+    console.warn('[PlayerHeads] Could not load redraw state:', error.message);
+    return {};
+  }
+}
+
+function savePlayerHeadEmojiRedrawState(state) {
+  fs.mkdirSync(path.dirname(PLAYER_HEAD_EMOJI_REDRAWS_FILE), { recursive: true });
+  fs.writeFileSync(PLAYER_HEAD_EMOJI_REDRAWS_FILE, JSON.stringify(state, null, 2));
+}
+
+async function redrawRequestedPlayerHeadEmojis() {
+  const emojiManager = await getPlayerHeadApplicationEmojiManager();
+  if (!emojiManager) return;
+
+  const redrawState = loadPlayerHeadEmojiRedrawState();
+  for (const request of REQUESTED_PLAYER_HEAD_EMOJI_REDRAWS) {
+    const username = String(request.username || '').trim();
+    const key = normalizePlayerHeadUsername(username);
+    if (!key || Number(redrawState[key]) >= request.version) continue;
+
+    const emojiName = getDiscordEmojiNameForPlayer(username);
+    const temporarySuffix = '_redraw';
+    const temporaryName = `${emojiName.slice(0, 32 - temporarySuffix.length)}${temporarySuffix}`;
+    let temporaryEmoji = null;
+    let oldEmojiDeleted = false;
+
+    try {
+      const applicationEmojis = await emojiManager.fetch();
+      const existing = applicationEmojis.find(emoji =>
+        emoji.name?.toLowerCase() === emojiName.toLowerCase()
+      );
+      const staleTemporary = applicationEmojis.find(emoji =>
+        emoji.name?.toLowerCase() === temporaryName.toLowerCase()
+      );
+      if (staleTemporary) await staleTemporary.delete();
+
+      const { imageBuffer, error } = await fetchPlayerHeadImage(username);
+      if (!imageBuffer) throw error || new Error('No player head image was returned');
+      const preparedImage = await preparePlayerHeadEmojiImage(imageBuffer);
+      if (preparedImage.length > 256 * 1024) throw new Error('Prepared player head image is too large for an emoji');
+
+      temporaryEmoji = await emojiManager.create({
+        attachment: preparedImage,
+        name: temporaryName
+      });
+      if (existing) {
+        await existing.delete();
+        oldEmojiDeleted = true;
+      }
+
+      const redrawnEmoji = await temporaryEmoji.setName(emojiName);
+      const emojiText = `<:${redrawnEmoji.name}:${redrawnEmoji.id}>`;
+      PLAYER_HEAD_EMOJIS.set(key, emojiText);
+      savePlayerHeadEmojiCache();
+      redrawState[key] = request.version;
+      savePlayerHeadEmojiRedrawState(redrawState);
+      console.log(`[PlayerHeads] Redrew ${username} as application emoji ${emojiText}`);
+    } catch (error) {
+      if (temporaryEmoji && !oldEmojiDeleted) {
+        await temporaryEmoji.delete().catch(() => {});
+      }
+      console.warn(`[PlayerHeads] Could not redraw ${username}:`, error.message);
+    }
+  }
 }
 
 async function migratePlayerHeadEmojisToApplication() {
@@ -604,9 +683,11 @@ async function migratePlayerHeadEmojisToApplication() {
         const imageUrl = guildEmoji.imageURL({ extension: 'png', size: 64 });
         const { imageBuffer, error } = await fetchPlayerHeadImageBuffer(imageUrl, 'Discord CDN');
         if (!imageBuffer) throw error || new Error(`Could not download legacy emoji ${guildEmoji.id}`);
+        const preparedImage = await preparePlayerHeadEmojiImage(imageBuffer);
+        if (preparedImage.length > 256 * 1024) throw new Error('Prepared player head image is too large for an emoji');
 
         applicationEmoji = await emojiManager.create({
-          attachment: imageBuffer,
+          attachment: preparedImage,
           name: emojiName
         });
         applicationEmojisByName.set(emojiName.toLowerCase(), applicationEmoji);
@@ -2210,6 +2291,7 @@ if (DISCORD_BOT_TOKEN) {
 
     try {
       await migratePlayerHeadEmojisToApplication();
+      await redrawRequestedPlayerHeadEmojis();
     } catch (err) {
       console.error('[PlayerHeads] Failed to migrate guild emojis to the application:', err.message);
     }
