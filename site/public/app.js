@@ -551,7 +551,7 @@ function formatDurationMs(value) {
 
 function playerHeadUrl(username, size = 32) {
   const safeUsername = encodeURIComponent(String(username || 'Steve').trim() || 'Steve');
-  return `https://minotar.net/avatar/${safeUsername}/${size}`;
+  return `/api/minecraft-avatar?username=${safeUsername}`;
 }
 
 function playerIdentity(username, size = 28, { status = null } = {}) {
@@ -802,7 +802,7 @@ async function fetchJson(path, { transientRetries = 0, signal = null } = {}) {
 }
 
 function accountHeadUrl(username) {
-  return `/api/minecraft-avatar?username=${encodeURIComponent(String(username || '').trim())}`;
+  return playerHeadUrl(username, 64);
 }
 
 function accountStatusClass(account) {

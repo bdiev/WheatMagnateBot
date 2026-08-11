@@ -60,6 +60,8 @@ assert.match(stylesSource, /\.chat-message\s*\{[^}]*grid-template-columns:\s*30p
   'mobile chat messages must keep avatar, readable message body, reply action, and time in stable columns');
 assert.match(appSource, /isContinuation[\s\S]*chat-message-continuation[\s\S]*isContinuation \? '' : playerIdentity/s,
   'consecutive messages from one player must render as a group with one avatar and username');
+assert.match(appSource, /function playerHeadUrl\([\s\S]*\/api\/minecraft-avatar\?username=\$\{safeUsername\}/,
+  'chat avatars must use the cached fallback avatar endpoint');
 assert.match(appSource, /previousChatUsername = isActivity \? null : normalizedUsername/,
   'join and leave events must end the current player message group');
 assert.match(stylesSource, /\.chat-message\.chat-activity\s*\{[^}]*grid-template-columns:\s*7px minmax\(0, max-content\) max-content;/s,
@@ -94,9 +96,9 @@ assert.match(stylesSource, /\.chat-date-indicator\.visible\s*\{[^}]*opacity:\s*1
   'the date indicator must fade into view while scrolling');
 assert.match(stylesSource, /\.chat-panel\.chat-search-open > \.panel-head > div:first-child\s*\{[^}]*opacity:\s*0;/s,
   'the chat heading must fade away while archive search expands');
-assert.match(indexSource, /styles\.css\?v=190/, 'the updated mobile layout must use a fresh stylesheet URL');
-assert.match(indexSource, /app\.js\?v=190/, 'the updated dashboard behavior must use a fresh script URL');
-assert.match(serviceWorkerSource, /CACHE_VERSION = '190'/, 'the app shell cache must be replaced after dashboard behavior changes');
+assert.match(indexSource, /styles\.css\?v=191/, 'the updated mobile layout must use a fresh stylesheet URL');
+assert.match(indexSource, /app\.js\?v=191/, 'the updated dashboard behavior must use a fresh script URL');
+assert.match(serviceWorkerSource, /CACHE_VERSION = '191'/, 'the app shell cache must be replaced after dashboard behavior changes');
 assert.match(serviceWorkerSource, /fallbackPath[\s\S]*?'\/request\.html'/, 'resource requests must have their own navigation fallback');
 assert.match(stylesSource, /\.chat-message\s*\{[^}]*flex:\s*0 0 auto;/s,
   'chat cards must retain their natural height inside the scrolling flex list');
