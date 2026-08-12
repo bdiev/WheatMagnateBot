@@ -927,6 +927,7 @@ async function selectAccount(accountId) {
   state.killAuraData = null;
   state.killAuraSelectedMobs = new Set();
   state.killAuraTargetsDirty = false;
+  state.obsidianCoordinateEditorOpen = false;
   closeWhisperDialog();
   state.whisperPlayers = [];
   state.whisperMessagesSignature = '';
@@ -5499,7 +5500,9 @@ function renderAdminControlState(payload = {}) {
   }
   const obsidianResetButton = $('#obsidianResetButton');
   if (obsidianResetButton) {
-    obsidianResetButton.disabled = !bot?.obsidian?.config;
+    const hasCoordinates = Boolean(bot?.obsidian?.config);
+    obsidianResetButton.textContent = hasCoordinates ? 'Reset Coordinates' : 'Set Coordinates';
+    obsidianResetButton.disabled = state.currentUser?.role !== 'admin';
   }
   const obsidianConfig = bot?.obsidian?.config || null;
   const coordX = $('#obsidianCoordX');
@@ -5663,8 +5666,16 @@ async function handleAdminBotCommand(event) {
   if (commandType === 'kill_aura_toggle' && state.killAuraTargetsDirty) {
     body.payload = { targets: [...state.killAuraSelectedMobs] };
   }
-  if (commandType === 'obsidian_reset_coordinates' && !confirm('Reset Obsidian Farm coordinates? The farm will stop and ask for new coordinates next time.')) {
-    return;
+  if (commandType === 'obsidian_reset_coordinates') {
+    const hasCoordinates = Boolean(state.adminControlState?.bot?.obsidian?.config);
+    if (!hasCoordinates) {
+      state.obsidianCoordinateEditorOpen = true;
+      clearObsidianCoordinateEditor();
+      renderAdminControlState(state.adminControlState || {});
+      setTimeout(() => $('#obsidianCoordX')?.focus(), 0);
+      return;
+    }
+    if (!confirm('Reset Obsidian Farm coordinates? The farm will stop and ask for new coordinates next time.')) return;
   }
 
   button.disabled = true;
