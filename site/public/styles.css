@@ -139,7 +139,9 @@ html.page-transition-leaving body {
   ::view-transition-new(root),
   html.page-transition-ready body,
   html.page-transition-leaving body,
-  .dashboard-brand {
+  .dashboard-brand,
+  .topbar,
+  .topbar::before {
     animation: none !important;
     transition: none !important;
   }
@@ -185,21 +187,59 @@ select {
 }
 
 .topbar {
+  position: sticky;
+  top: env(safe-area-inset-top, 0px);
+  z-index: 70;
+  isolation: isolate;
   display: grid;
   gap: 14px;
   margin-bottom: 16px;
+  padding: 8px 0 10px;
+  transition: gap 360ms cubic-bezier(.2, .8, .2, 1);
+}
+
+.topbar::before {
+  content: "";
+  position: absolute;
+  inset: 0 -16px;
+  z-index: -1;
+  border-bottom: 1px solid transparent;
+  background: color-mix(in srgb, var(--bg) 94%, transparent);
+  box-shadow: 0 14px 30px transparent;
+  opacity: 0;
+  backdrop-filter: blur(12px) saturate(1.08);
+  transition:
+    opacity 220ms ease,
+    border-color 280ms ease,
+    box-shadow 280ms ease;
+}
+
+.topbar.topbar-stuck::before {
+  border-color: color-mix(in srgb, var(--line) 72%, transparent);
+  box-shadow: 0 14px 30px color-mix(in srgb, #000 8%, transparent);
+  opacity: 1;
+}
+
+.topbar.topbar-compact {
+  gap: 0;
 }
 
 .dashboard-brand {
+  position: relative;
+  z-index: 1;
+  max-height: 72px;
+  overflow: hidden;
   transform-origin: left center;
-  will-change: opacity, transform, filter;
+  will-change: max-height, opacity, transform, filter;
   transition:
+    max-height 360ms cubic-bezier(.2, .8, .2, 1),
     opacity 280ms ease,
     transform 360ms cubic-bezier(.2, .8, .2, 1),
     filter 280ms ease;
 }
 
 .dashboard-brand.dashboard-brand-hidden {
+  max-height: 0;
   opacity: 0;
   filter: blur(5px);
   pointer-events: none;
@@ -253,6 +293,8 @@ h2 {
 }
 
 .topbar-actions {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   gap: 10px;

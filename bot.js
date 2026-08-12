@@ -20,6 +20,7 @@ const {
 } = require('./database');
 const { createPlaytimeFeature } = require('./features/playtime');
 const { createPlayerInfoObservation } = require('./features/playerInfoObservation');
+const { createPlayerInfoObservationStore } = require('./features/playerInfoObservationStore');
 const { createWhisperFeature } = require('./features/whisper');
 const { createFollowFeature } = require('./features/follow');
 const { createKillAuraFeature } = require('./features/killAura');
@@ -2721,6 +2722,8 @@ async function getEffectivePlayerPlaytime(username) {
   }
 }
 
+const playerInfoObservationStore = createPlayerInfoObservationStore({ pool });
+
 async function reconcileObservedPlaytime(targetUsername, observedSeconds) {
   if (!pool || !targetUsername || !Number.isFinite(observedSeconds)) return;
 
@@ -2729,42 +2732,57 @@ async function reconcileObservedPlaytime(targetUsername, observedSeconds) {
   if (!safeUsername) return;
 
   try {
-    const result = await pool.query(`
-      WITH identity AS (
-        SELECT pa.player_uuid
-        FROM player_activity pa
-        WHERE pa.player_uuid IS NOT NULL
-          AND (
-            LOWER(pa.username) = LOWER($1)
-            OR EXISTS (
-              SELECT 1 FROM player_name_history pnh
-              WHERE pnh.player_uuid = pa.player_uuid
-                AND LOWER(pnh.username) = LOWER($1)
-            )
-          )
-        LIMIT 1
-      )
-      SELECT pt.username,
-             COALESCE(pt.total_seconds, 0) +
-               CASE WHEN pt.tracking_since IS NULL THEN 0
-                    ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - tracking_since)))::BIGINT)
-               END AS effective_seconds
-      FROM player_playtime pt
-      WHERE (pt.player_uuid = (SELECT player_uuid FROM identity))
-         OR ((SELECT player_uuid FROM identity) IS NULL AND LOWER(pt.username) = LOWER($1))
-      LIMIT 1
-    `, [safeUsername]);
-    const currentSeconds = Number(result.rows[0]?.effective_seconds || 0);
-    const diffSeconds = Math.abs(currentSeconds - safeSeconds);
-    if (diffSeconds < 60) return;
+    const result = await playerInfoObservationStore.withPermission(
+      'playtime',
+      safeUsername,
+      async (client, identity) => {
+        const current = await client.query(`
+          SELECT pt.username,
+                 COALESCE(pt.total_seconds, 0) +
+                   CASE WHEN pt.tracking_since IS NULL THEN 0
+                        ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - tracking_since)))::BIGINT)
+                   END AS effective_seconds
+          FROM player_playtime pt
+          WHERE ($2::uuid IS NOT NULL AND pt.player_uuid = $2::uuid)
+             OR ($2::uuid IS NULL AND LOWER(pt.username) = LOWER($1))
+          LIMIT 1
+        `, [identity.username, identity.playerUuid]);
+        const currentSeconds = Number(current.rows[0]?.effective_seconds || 0);
+        if (Math.abs(currentSeconds - safeSeconds) < 60) {
+          return { username: current.rows[0]?.username || identity.username, currentSeconds, unchanged: true };
+        }
 
-    const updateResult = await setPlayerPlaytime(safeUsername, safeSeconds);
-    if (updateResult.error) {
-      console.error(`[Playtime] Failed to update observed !pt for ${safeUsername}: ${updateResult.error}`);
-      return;
-    }
+        const updated = await client.query(`
+          WITH updated_by_uuid AS (
+            UPDATE player_playtime pt
+            SET username = $1,
+                total_seconds = $2,
+                tracking_since = CASE WHEN pt.tracking_since IS NULL THEN NULL ELSE NOW() END,
+                updated_at = NOW()
+            WHERE $3::uuid IS NOT NULL AND pt.player_uuid = $3::uuid
+            RETURNING username
+          ), inserted AS (
+            INSERT INTO player_playtime (username, player_uuid, total_seconds)
+            SELECT $1, $3::uuid, $2
+            WHERE NOT EXISTS (SELECT 1 FROM updated_by_uuid)
+            ON CONFLICT (LOWER(username))
+            DO UPDATE SET username = EXCLUDED.username,
+                          player_uuid = COALESCE(EXCLUDED.player_uuid, player_playtime.player_uuid),
+                          total_seconds = EXCLUDED.total_seconds,
+                          tracking_since = CASE WHEN player_playtime.tracking_since IS NULL THEN NULL ELSE NOW() END,
+                          updated_at = NOW()
+            RETURNING username
+          )
+          SELECT username FROM updated_by_uuid
+          UNION ALL
+          SELECT username FROM inserted
+        `, [identity.username, safeSeconds, identity.playerUuid]);
+        return { username: updated.rows[0]?.username || identity.username, currentSeconds, unchanged: false };
+      }
+    );
+    if (!result.allowed || result.value?.unchanged) return;
     console.log(
-      `[Playtime] Updated ${updateResult.username} from observed !pt: ${formatPlaytime(currentSeconds)} -> ${formatPlaytime(safeSeconds)}`
+      `[Playtime] ${result.reason === 'site-refresh' ? 'Refreshed' : 'Initially imported'} ${result.value.username} from observed !pt: ${formatPlaytime(result.value.currentSeconds)} -> ${formatPlaytime(safeSeconds)}`
     );
   } catch (err) {
     console.error('[Playtime] Failed to reconcile observed !pt:', err.message);
@@ -2778,17 +2796,45 @@ async function reconcileObservedJoinDate(targetUsername, observedDate) {
   if (!safeUsername) return;
 
   try {
-    const result = await pool.query(`
-      INSERT INTO player_activity (username, registration_at)
-      VALUES ($1, $2)
-      ON CONFLICT (LOWER(username))
-      DO UPDATE SET username = EXCLUDED.username,
-                    registration_at = EXCLUDED.registration_at
-      WHERE player_activity.registration_at IS DISTINCT FROM EXCLUDED.registration_at
-      RETURNING username
-    `, [safeUsername, observedDate]);
-    if (result.rowCount > 0) {
-      console.log(`[JoinDate] Updated ${result.rows[0].username} registration date to ${observedDate.toISOString()}`);
+    const result = await playerInfoObservationStore.withPermission(
+      'joinDate',
+      safeUsername,
+      async (client, identity) => client.query(`
+        WITH updated_by_uuid AS (
+          UPDATE player_activity activity
+          SET registration_at = $3
+          WHERE $2::uuid IS NOT NULL
+            AND activity.player_uuid = $2::uuid
+            AND activity.registration_at IS DISTINCT FROM $3
+          RETURNING username
+        ), inserted AS (
+          INSERT INTO player_activity (username, player_uuid, registration_at)
+          SELECT $1, $2::uuid, $3
+          WHERE NOT EXISTS (
+            SELECT 1 FROM player_activity activity
+            WHERE ($2::uuid IS NOT NULL AND activity.player_uuid = $2::uuid)
+               OR ($2::uuid IS NULL AND LOWER(activity.username) = LOWER($1))
+          )
+          ON CONFLICT (LOWER(username))
+          DO UPDATE SET player_uuid = COALESCE(EXCLUDED.player_uuid, player_activity.player_uuid),
+                        registration_at = EXCLUDED.registration_at
+          WHERE player_activity.registration_at IS DISTINCT FROM EXCLUDED.registration_at
+          RETURNING username
+        ), updated_by_name AS (
+          UPDATE player_activity activity
+          SET registration_at = $3
+          WHERE $2::uuid IS NULL
+            AND LOWER(activity.username) = LOWER($1)
+            AND activity.registration_at IS DISTINCT FROM $3
+          RETURNING username
+        )
+        SELECT username FROM updated_by_uuid
+        UNION ALL SELECT username FROM inserted
+        UNION ALL SELECT username FROM updated_by_name
+      `, [identity.username, identity.playerUuid, observedDate])
+    );
+    if (result.allowed) {
+      console.log(`[JoinDate] ${result.reason === 'site-refresh' ? 'Refreshed' : 'Initially imported'} ${result.username} from observed !jd: ${observedDate.toISOString()}`);
     }
   } catch (err) {
     console.error('[JoinDate] Failed to reconcile observed !jd:', err.message);
@@ -5080,6 +5126,25 @@ function sanitizeSiteChatMessage(value) {
     .slice(0, 240);
 }
 
+async function preparePlayerInfoRefresh(payload, cleanMessage) {
+  const refresh = payload?.playerInfoRefresh;
+  if (!refresh) return null;
+  const metric = refresh.metric === 'playtime' ? 'playtime' : refresh.metric === 'joinDate' ? 'joinDate' : '';
+  const username = String(refresh.username || '').replace(/[^A-Za-z0-9_]/g, '').trim().slice(0, 32);
+  const expectedCommand = metric === 'playtime'
+    ? `!pt ${username}`
+    : metric === 'joinDate' ? `!jd ${username}` : '';
+  if (!metric || !username || cleanMessage.toLowerCase() !== expectedCommand.toLowerCase()) {
+    throw new Error('Invalid player information refresh command.');
+  }
+
+  await playerInfoObservationStore.requestRefresh(metric, username);
+  if (!playerInfoObservation.requestSiteRefresh(metric, username)) {
+    throw new Error('Could not prepare the player information refresh.');
+  }
+  return { metric, username };
+}
+
 function isMinecraftPlayerOnline(username) {
   const target = String(username || '').toLowerCase();
   if (!target || !bot?.players) return false;
@@ -5179,6 +5244,7 @@ async function executeBotCommand(command) {
     if (!bot || typeof bot.chat !== 'function') throw new Error('Minecraft bot is not ready.');
     const cleanMessage = sanitizeSiteChatMessage(payload.message);
     if (!cleanMessage) throw new Error('Queued message is empty.');
+    await preparePlayerInfoRefresh(payload, cleanMessage);
     const isCommand = cleanMessage.startsWith('/') || cleanMessage.startsWith('!');
     const outgoing = isCommand ? cleanMessage : `[${requestedBy}] ${cleanMessage}`;
     const sent = sendMinecraftChat(outgoing);
@@ -5681,7 +5747,10 @@ async function executeManagedAccountCommand(command) {
   if (type === 'resume') return runtime.resume();
   if (type === 'chat') {
     if (!runtime.bot?.chat) throw new Error('Account is not connected.');
-    runtime.bot.chat(sanitizeSiteChatMessage(payload.message));
+    const cleanMessage = sanitizeSiteChatMessage(payload.message);
+    if (!cleanMessage) throw new Error('Queued message is empty.');
+    await preparePlayerInfoRefresh(payload, cleanMessage);
+    runtime.bot.chat(cleanMessage);
     return { sent: true };
   }
   if (type === 'inventory_move') {

@@ -109,14 +109,16 @@ function createPlayerInfoObservation({
     lookup.delete(targetKey);
   }
 
-  function registerLookup(type, targetUsername) {
+  function registerLookup(type, targetUsername, reason = 'chat') {
     const targetKey = targetUsername.toLowerCase();
     const lookup = lookups[type];
     const previous = lookup.get(targetKey);
+    if (previous?.reason === 'site' && reason !== 'site') return previous;
     if (previous) deleteLookup(type, targetKey, previous);
 
     const pending = {
       targetUsername,
+      reason,
       createdAt: now(),
       appliedSource: null,
       fallbackCandidate: null,
@@ -131,12 +133,9 @@ function createPlayerInfoObservation({
   function applyCandidate(type, targetKey, pending, candidate) {
     if (candidate.source === FALLBACK_SOURCE && pending.appliedSource) return;
     const handler = type === 'playtime' ? onPlaytime : onJoinDate;
-    handler?.(pending.targetUsername, candidate.observedValue, candidate.source);
+    handler?.(pending.targetUsername, candidate.observedValue, candidate.source, { reason: pending.reason });
     pending.appliedSource = candidate.source;
-
-    if (candidate.source === PREFERRED_SOURCE) {
-      deleteLookup(type, targetKey, pending);
-    }
+    deleteLookup(type, targetKey, pending);
   }
 
   function acceptCandidate(type, candidate) {
@@ -203,6 +202,14 @@ function createPlayerInfoObservation({
     return false;
   }
 
+  function requestSiteRefresh(metric, targetUsername) {
+    const username = normalizeUsername(targetUsername);
+    const type = metric === 'playtime' ? 'playtime' : metric === 'joinDate' ? 'joinDate' : '';
+    if (!username || !type) return false;
+    registerLookup(type, username, 'site');
+    return true;
+  }
+
   function clear() {
     for (const [type, lookup] of Object.entries(lookups)) {
       for (const [targetKey, pending] of lookup.entries()) {
@@ -211,7 +218,7 @@ function createPlayerInfoObservation({
     }
   }
 
-  return { observe, clear };
+  return { observe, requestSiteRefresh, clear };
 }
 
 module.exports = {

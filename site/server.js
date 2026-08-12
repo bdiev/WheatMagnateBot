@@ -1177,7 +1177,15 @@ async function queueSiteChatMessage(currentUser, body) {
     err.statusCode = 400;
     throw err;
   }
-  return queueBotCommand(currentUser, 'chat', { message }, { accountId:await commandAccountId(body,currentUser) });
+
+  const playerInfoRefresh = normalizePlayerInfoRefreshRequest(body?.playerInfoRefresh, message);
+
+  return queueBotCommand(
+    currentUser,
+    'chat',
+    { message, ...(playerInfoRefresh ? { playerInfoRefresh } : {}) },
+    { accountId:await commandAccountId(body,currentUser) }
+  );
 }
 
 function cleanMinecraftUsername(value) {
@@ -1185,6 +1193,21 @@ function cleanMinecraftUsername(value) {
     .replace(/[^A-Za-z0-9_]/g, '')
     .trim()
     .slice(0, 32);
+}
+
+function normalizePlayerInfoRefreshRequest(value, message) {
+  if (value == null) return null;
+  const metric = value?.metric;
+  const username = cleanMinecraftUsername(value?.username);
+  const expectedCommand = metric === 'playtime'
+    ? `!pt ${username}`
+    : metric === 'joinDate' ? `!jd ${username}` : '';
+  if (!username || !expectedCommand || String(message || '').toLowerCase() !== expectedCommand.toLowerCase()) {
+    const err = new Error('Invalid player information refresh request.');
+    err.statusCode = 400;
+    throw err;
+  }
+  return { metric, username };
 }
 
 function cleanWhisperMessage(value) {
@@ -4639,4 +4662,4 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown);
 }
 
-module.exports = { ADMIN_PLAYER_EDITABLE_FIELDS, adminPlayerIdentity, assertAdminUser, changeSitePassword, cleanAccountInput, deleteAdminPlayer, freshStoredRuntimePayload, getAdminPlayers, hashPassword, normalizeAdminPlayerPatch, normalizeNavigationPreferences, patchAdminPlayer, registrationDefaults, requestHandler, server, startSiteServer, validateCredentials, validatePasswordChange, verifyPassword };
+module.exports = { ADMIN_PLAYER_EDITABLE_FIELDS, adminPlayerIdentity, assertAdminUser, changeSitePassword, cleanAccountInput, deleteAdminPlayer, freshStoredRuntimePayload, getAdminPlayers, hashPassword, normalizeAdminPlayerPatch, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, patchAdminPlayer, registrationDefaults, requestHandler, server, startSiteServer, validateCredentials, validatePasswordChange, verifyPassword };

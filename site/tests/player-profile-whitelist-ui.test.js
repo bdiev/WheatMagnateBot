@@ -29,8 +29,8 @@ assert.match(
 );
 assert.match(
   appSource,
-  /closest\('\[data-player-refresh-command\]'\)[\s\S]*postJson\('\/api\/chat\/send',[\s\S]*message: `\$\{command\} \$\{username\}`/,
-  'player metric refresh actions must send their command through game chat'
+  /closest\('\[data-player-refresh-command\]'\)[\s\S]*postJson\('\/api\/chat\/send',[\s\S]*message: `\$\{command\} \$\{username\}`[\s\S]*playerInfoRefresh:[\s\S]*metric: command === '!pt' \? 'playtime' : 'joinDate'/,
+  'player metric refresh actions must explicitly authorize one observed update before sending the game command'
 );
 assert.match(
   stylesSource,

@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const path = require('node:path');
 const { RateLimiter, configuredOrigins, requestIsHttps, resolveStaticPath, securityHeaders, validateOrigin, verifyCsrfToken } = require('../security');
-const { assertAdminUser, changeSitePassword, hashPassword, normalizeNavigationPreferences, registrationDefaults, server, validatePasswordChange, verifyPassword } = require('../server');
+const { assertAdminUser, changeSitePassword, hashPassword, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, registrationDefaults, server, validatePasswordChange, verifyPassword } = require('../server');
 
 function request(method, headers = {}, encrypted = false) {
   return { method, headers, socket: { encrypted, remoteAddress: '127.0.0.1' } };
@@ -12,6 +12,16 @@ function request(method, headers = {}, encrypted = false) {
 
 function testAdminNameCannotEscalate() {
   assert.deepEqual(registrationDefaults('bdiev_'), { role: 'user', status: 'pending' });
+  assert.deepEqual(
+    normalizePlayerInfoRefreshRequest({ metric: 'playtime', username: 'bdiev_' }, '!pt bdiev_'),
+    { metric: 'playtime', username: 'bdiev_' },
+    'profile refresh metadata must match the exact command sent to Minecraft'
+  );
+  assert.throws(
+    () => normalizePlayerInfoRefreshRequest({ metric: 'joinDate', username: 'bdiev_' }, '!pt bdiev_'),
+    error => error.statusCode === 400,
+    'ordinary chat requests must not forge a mismatched profile refresh authorization'
+  );
 }
 
 function testNavigationPreferencesAreNormalized() {

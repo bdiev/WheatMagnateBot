@@ -49,6 +49,7 @@ function fakeClock() {
 function createTracker({ preferredOnline = true } = {}) {
   const clock = fakeClock();
   const updates = [];
+  const reasons = [];
   const tracker = createPlayerInfoObservation({
     parsePlaytime,
     now: clock.now,
@@ -57,10 +58,16 @@ function createTracker({ preferredOnline = true } = {}) {
     fallbackGraceMs: 2_500,
     lookupTtlMs: 20_000,
     isSourceOnline: source => source === 'lolritterbot' && preferredOnline,
-    onPlaytime: (targetUsername, value, source) => updates.push({ type: 'pt', targetUsername, value, source }),
-    onJoinDate: (targetUsername, value, source) => updates.push({ type: 'jd', targetUsername, value, source })
+    onPlaytime: (targetUsername, value, source, context) => {
+      updates.push({ type: 'pt', targetUsername, value, source });
+      reasons.push(context?.reason);
+    },
+    onJoinDate: (targetUsername, value, source, context) => {
+      updates.push({ type: 'jd', targetUsername, value, source });
+      reasons.push(context?.reason);
+    }
   });
-  return { clock, tracker, updates };
+  return { clock, tracker, updates, reasons };
 }
 
 function testActualResponseFormats() {
@@ -114,13 +121,30 @@ function testFallbackWhenPreferredIsOffline() {
   assert.equal(updates[0].value.toISOString(), '2024-11-16T10:30:37.000Z');
 }
 
-function testPreferredJoinDateOverridesFallback() {
+function testFallbackJoinDateAppliesOnlyOnce() {
   const { tracker, updates } = createTracker({ preferredOnline: false });
   tracker.observe('Requester', '!jd bdiev_');
   tracker.observe('moooomoooo', 'bdiev_: 11/16/2024 10:30:37 (1 year, 268 days ago)');
   tracker.observe('LolRiTTeRBot', 'I first saw bdiev_ 2 years ago on Nov 16th, 2024.');
-  assert.deepEqual(updates.map(update => update.source), ['moooomoooo', 'lolritterbot']);
-  assert.equal(updates.at(-1).value.toISOString(), '2024-11-16T00:00:00.000Z');
+  assert.deepEqual(updates.map(update => update.source), ['moooomoooo'], 'one lookup must update a metric only once');
+  assert.equal(updates[0].value.toISOString(), '2024-11-16T10:30:37.000Z');
+}
+
+function testSiteRefreshSurvivesEchoedCommand() {
+  const { tracker, updates, reasons } = createTracker({ preferredOnline: false });
+  assert.equal(tracker.requestSiteRefresh('playtime', 'bdiev_'), true);
+  tracker.observe('WheatMagnate', '!pt bdiev_');
+  tracker.observe('moooomoooo', 'bdiev_: 76 days 17 hours 57 minutes. [81/50375]');
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].type, 'pt');
+  assert.deepEqual(reasons, ['site'], 'an echoed command must not downgrade a site-authorized refresh');
+}
+
+function testInvalidSiteRefreshIsRejected() {
+  const { tracker, updates } = createTracker();
+  assert.equal(tracker.requestSiteRefresh('unknown', 'bdiev_'), false);
+  assert.equal(tracker.requestSiteRefresh('playtime', 'not a player'), false);
+  assert.deepEqual(updates, []);
 }
 
 function testUntrustedSpeakersAndUnrequestedResponsesAreIgnored() {
@@ -135,6 +159,8 @@ testActualResponseFormats();
 testPreferredPlaytimeWins();
 testFallbackWhenPreferredDoesNotAnswer();
 testFallbackWhenPreferredIsOffline();
-testPreferredJoinDateOverridesFallback();
+testFallbackJoinDateAppliesOnlyOnce();
+testSiteRefreshSurvivesEchoedCommand();
+testInvalidSiteRefreshIsRejected();
 testUntrustedSpeakersAndUnrequestedResponsesAreIgnored();
 console.log('Player info observation tests passed.');

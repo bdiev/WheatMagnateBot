@@ -161,13 +161,16 @@ function updateDashboardBrandVisibility() {
 
   const scrollY = Math.max(0, window.scrollY);
   const delta = scrollY - dashboardBrandLastScrollY;
-  if (scrollY <= 8) {
+  const topbar = brand.closest('.topbar');
+  topbar?.classList.toggle('topbar-stuck', scrollY > 20);
+  if (scrollY <= 64) {
     brand.classList.remove('dashboard-brand-hidden');
-  } else if (delta > 2 && scrollY > 24) {
+  } else if (delta > 2 && scrollY > 96) {
     brand.classList.add('dashboard-brand-hidden');
-  } else if (delta < -2 && scrollY < 110) {
+  } else if (delta < -2 && scrollY < 88) {
     brand.classList.remove('dashboard-brand-hidden');
   }
+  topbar?.classList.toggle('topbar-compact', brand.classList.contains('dashboard-brand-hidden'));
   dashboardBrandLastScrollY = scrollY;
 }
 
@@ -179,7 +182,11 @@ function scheduleDashboardBrandVisibility() {
 function initializeDashboardBrandVisibility() {
   const brand = $('.dashboard-brand');
   if (!brand) return;
-  brand.classList.toggle('dashboard-brand-hidden', window.scrollY > 24);
+  const scrollY = Math.max(0, window.scrollY);
+  const hidden = scrollY > 96;
+  brand.classList.toggle('dashboard-brand-hidden', hidden);
+  brand.closest('.topbar')?.classList.toggle('topbar-stuck', scrollY > 20);
+  brand.closest('.topbar')?.classList.toggle('topbar-compact', hidden);
   window.addEventListener('scroll', scheduleDashboardBrandVisibility, { passive: true });
 }
 
@@ -2599,6 +2606,10 @@ async function handlePlayerProfileClick(event) {
     try {
       await postJson('/api/chat/send', {
         message: `${command} ${username}`,
+        playerInfoRefresh: {
+          metric: command === '!pt' ? 'playtime' : 'joinDate',
+          username
+        },
         accountId: state.activeAccountId
       });
       const label = command === '!pt' ? 'Playtime' : 'Registration date';
