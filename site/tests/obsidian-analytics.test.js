@@ -45,6 +45,18 @@ const bucket = hoursAgo => new Date(now.getTime() - hoursAgo * HOUR).toISOString
 }
 
 {
+  const end = now.getTime();
+  const result = calculateDowntime([
+    { accountId:'bot-a', eventType:'pause', occurredAt:new Date(end - 4 * HOUR) },
+    { accountId:'bot-a', eventType:'resume', occurredAt:new Date(end - 2 * HOUR) },
+    { accountId:'bot-b', eventType:'pause', occurredAt:new Date(end - 3 * HOUR) },
+    { accountId:'bot-b', eventType:'resume', occurredAt:new Date(end - 2 * HOUR) }
+  ], end - 6 * HOUR, end, { accountCount:2 });
+  assert.equal(result.percent, 25, 'aggregate downtime is normalized by available bot-hours');
+  assert.equal(result.stopCount, 2);
+}
+
+{
   const result = calculateAnalytics({
     now,
     hourly: Array.from({ length: 30 }, (_, index) => ({ bucket: bucket(index + 1), value: 100, observed: true })),

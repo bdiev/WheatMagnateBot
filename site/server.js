@@ -1167,6 +1167,65 @@ async function primaryOnlyAccountId(currentUser, source, moduleName = 'whisper')
   return accountId;
 }
 
+function combineRawSupplySnapshots(rows = []) {
+  const snapshots = rows
+    .map(row => ({ supplies: row?.supplies || null, observedAt: row?.observed_at || row?.supplies?.observedAt || null, updatedAt: row?.updated_at || null }))
+    .filter(row => row.supplies);
+  if (!snapshots.length) return null;
+  const mergeLocation = key => {
+    const locations = snapshots.map(row => row.supplies?.[key]).filter(Boolean);
+    if (!locations.length) return null;
+    return {
+      allItems: locations.flatMap(location => Array.isArray(location.allItems) ? location.allItems : []),
+      pickaxes: locations.flatMap(location => Array.isArray(location.pickaxes) ? location.pickaxes : []),
+      foodCount: locations.reduce((sum, location) => sum + toInt(location.foodCount), 0),
+      usablePickaxeCount: locations.reduce((sum, location) => sum + toInt(location.usablePickaxeCount), 0)
+    };
+  };
+  const latest = values => values.filter(Boolean).sort((a, b) => new Date(b) - new Date(a))[0] || null;
+  return {
+    supplies: {
+      inventory: mergeLocation('inventory'),
+      barrel: mergeLocation('barrel'),
+      barrelError: snapshots.every(row => !row.supplies?.barrel)
+        ? snapshots.map(row => row.supplies?.barrelError).find(Boolean) || 'No barrel snapshots have been recorded yet.'
+        : null,
+      observedAt: latest(snapshots.map(row => row.observedAt))
+    },
+    observed_at: latest(snapshots.map(row => row.observedAt)),
+    updated_at: latest(snapshots.map(row => row.updatedAt))
+  };
+}
+
+function aggregateSupplyHistory(rows = []) {
+  const latestByAccount = new Map();
+  const result = [];
+  for (const row of [...rows].sort((a, b) => new Date(a.observed_at) - new Date(b.observed_at))) {
+    latestByAccount.set(String(row.account_id), row);
+    const combined = combineRawSupplySnapshots([...latestByAccount.values()]);
+    if (combined?.supplies) result.push({ supplies: combined.supplies, observed_at: row.observed_at });
+  }
+  return result;
+}
+
+function combineFarmStateRows(rows = []) {
+  const present = rows.filter(Boolean);
+  const dates = key => present.map(row => row[key]).filter(Boolean).sort((a, b) => new Date(b) - new Date(a));
+  return {
+    session_mined: present.reduce((sum, row) => sum + toInt(row.session_mined), 0),
+    total_mined: present.reduce((sum, row) => sum + toInt(row.total_mined), 0),
+    desired_enabled: present.some(row => Boolean(row.desired_enabled)),
+    session_started_at: dates('session_started_at').at(-1) || null,
+    retired_pickaxes: present.reduce((sum, row) => sum + toInt(row.retired_pickaxes), 0),
+    retired_pickaxe_blocks: present.reduce((sum, row) => sum + toInt(row.retired_pickaxe_blocks), 0),
+    target_x: present.length === 1 ? present[0].target_x : null,
+    target_y: present.length === 1 ? present[0].target_y : null,
+    target_z: present.length === 1 ? present[0].target_z : null,
+    target_radius: present.length === 1 ? present[0].target_radius : null,
+    updated_at: dates('updated_at')[0] || null
+  };
+}
+
 async function whisperAccountId(currentUser, source) {
   return primaryOnlyAccountId(currentUser, source);
 }
@@ -1852,11 +1911,15 @@ async function getPlayerStats() {
   };
 }
 
-async function getObsidianStats(currentUser = null) {
+async function getObsidianStats(currentUser = null, { scope = 'personal', accountId = DEFAULT_MINECRAFT_ACCOUNT_ID, runtimeFarm = null } = {}) {
   assertDatabase();
-  await pool.query(`UPDATE obsidian_farm_goals
-    SET baseline_mined=COALESCE((SELECT total_mined FROM obsidian_farm_state WHERE id=1),0),updated_at=NOW()
-    WHERE baseline_mined IS NULL`);
+  const aggregate = scope === 'all';
+  const includePrimary = aggregate || accountId === DEFAULT_MINECRAFT_ACCOUNT_ID;
+  if (includePrimary) {
+    await pool.query(`UPDATE obsidian_farm_goals
+      SET baseline_mined=COALESCE((SELECT total_mined FROM obsidian_farm_state WHERE id=1),0),updated_at=NOW()
+      WHERE baseline_mined IS NULL`);
+  }
   const settingsResult = await pool.query(`SELECT timezone, daily_report_enabled, daily_report_hour FROM obsidian_farm_analytics_settings WHERE id=1`);
   const settings = settingsResult.rows[0] || {
     timezone: process.env.OBSIDIAN_ANALYTICS_TIMEZONE || 'Europe/Vilnius',
@@ -1864,72 +1927,140 @@ async function getObsidianStats(currentUser = null) {
     daily_report_hour: process.env.OBSIDIAN_DAILY_REPORT_HOUR == null ? 9 : Number(process.env.OBSIDIAN_DAILY_REPORT_HOUR)
   };
   const timezone = currentUser ? await getAccountTimezone(currentUser.id) : (settings.timezone || 'Europe/Vilnius');
-  const [farmResult, todayResult, dailyResult, hourlyResult, supplyResult, supplyHistoryResult, annotationsResult, goalsResult, tpsResult, comparisonResult, toolUsageResult] = await Promise.all([
+  const managedWhere = `a.is_default=FALSE AND a.deleted_at IS NULL AND ($1::boolean OR stats.account_id=$2::uuid)`;
+  const [primaryFarmResult, managedFarmResult, dailyResult, hourlyResult, supplyResult, supplyHistoryResult, annotationsResult, goalsResult, tpsResult, comparisonResult, toolUsageResult] = await Promise.all([
+    includePrimary ? pool.query(`
+      SELECT session_mined,total_mined,desired_enabled,session_started_at,
+             retired_pickaxes,retired_pickaxe_blocks,target_x,target_y,target_z,target_radius,updated_at
+      FROM obsidian_farm_state WHERE id=1
+    `) : Promise.resolve({ rows: [] }),
     pool.query(`
-      SELECT session_mined, total_mined, desired_enabled, session_started_at,
-             retired_pickaxes, retired_pickaxe_blocks, target_x, target_y,
-             target_z, target_radius, updated_at
-      FROM obsidian_farm_state
-      WHERE id = 1
-    `),
-    pool.query(`
-      SELECT COALESCE(mined, 0)::bigint AS mined
-      FROM obsidian_farm_daily
-      WHERE farm_date = (NOW() AT TIME ZONE $1)::date
-    `, [timezone]),
+      SELECT COALESCE(SUM(stats.session_mined),0)::bigint AS session_mined,
+             COALESCE(SUM(stats.total_mined),0)::bigint AS total_mined,
+             COALESCE(BOOL_OR(stats.desired_enabled),FALSE) AS desired_enabled,
+             MIN(stats.session_started_at) FILTER(WHERE stats.desired_enabled) AS session_started_at,
+             COALESCE(SUM(stats.retired_pickaxes),0)::bigint AS retired_pickaxes,
+             COALESCE(SUM(stats.retired_pickaxe_blocks),0)::bigint AS retired_pickaxe_blocks,
+             COUNT(stats.account_id)::int AS account_count,
+             MAX(stats.updated_at) AS updated_at
+      FROM obsidian_account_farm_state stats
+      JOIN bot_accounts a ON a.id=stats.account_id
+      WHERE ${managedWhere}
+    `, [aggregate, accountId]),
     pool.query(`
       WITH dates AS (
-        SELECT generate_series(
-          (NOW() AT TIME ZONE $1)::date - 89,
-          (NOW() AT TIME ZONE $1)::date,
-          INTERVAL '1 day'
-        )::date AS farm_date
+        SELECT generate_series((NOW() AT TIME ZONE $1)::date-89,(NOW() AT TIME ZONE $1)::date,INTERVAL '1 day')::date AS farm_date
+      ), stats AS (
+        SELECT farm_date,mined FROM obsidian_farm_daily WHERE $2::boolean
+        UNION ALL
+        SELECT managed.farm_date,managed.mined
+        FROM obsidian_account_farm_daily managed
+        JOIN bot_accounts a ON a.id=managed.account_id
+        WHERE a.is_default=FALSE AND a.deleted_at IS NULL AND ($3::boolean OR managed.account_id=$4::uuid)
+      ), totals AS (
+        SELECT farm_date,SUM(mined)::bigint AS mined FROM stats GROUP BY farm_date
       )
-      SELECT TO_CHAR(dates.farm_date, 'MM-DD') AS label,
-             dates.farm_date::text AS bucket,
-             COALESCE(stats.mined, 0)::bigint AS mined
-      FROM dates
-      LEFT JOIN obsidian_farm_daily stats USING (farm_date)
-      ORDER BY dates.farm_date
-    `, [timezone]),
+      SELECT TO_CHAR(dates.farm_date,'MM-DD') AS label,dates.farm_date::text AS bucket,
+             COALESCE(totals.mined,0)::bigint AS mined
+      FROM dates LEFT JOIN totals USING(farm_date) ORDER BY dates.farm_date
+    `, [timezone, includePrimary, aggregate, accountId]),
     pool.query(`
       WITH buckets AS (
-        SELECT generate_series(
-          date_trunc('hour', NOW() - INTERVAL '167 hours'),
-          date_trunc('hour', NOW()),
-          INTERVAL '1 hour'
-        ) AS bucket
+        SELECT generate_series(date_trunc('hour',NOW()-INTERVAL '167 hours'),date_trunc('hour',NOW()),INTERVAL '1 hour') AS bucket
+      ), stats AS (
+        SELECT bucket,mined FROM obsidian_farm_hourly WHERE $1::boolean
+        UNION ALL
+        SELECT managed.bucket,managed.mined
+        FROM obsidian_account_farm_hourly managed
+        JOIN bot_accounts a ON a.id=managed.account_id
+        WHERE a.is_default=FALSE AND a.deleted_at IS NULL AND ($2::boolean OR managed.account_id=$3::uuid)
+      ), totals AS (
+        SELECT bucket,SUM(mined)::bigint AS mined FROM stats GROUP BY bucket
       )
-      SELECT TO_CHAR(buckets.bucket, 'MM-DD HH24:00') AS label,
-             buckets.bucket AS bucket,
-             COALESCE(stats.mined, 0)::bigint AS mined,
-             (stats.bucket IS NOT NULL) AS observed
-      FROM buckets
-      LEFT JOIN obsidian_farm_hourly stats USING (bucket)
-      ORDER BY buckets.bucket
-    `),
+      SELECT TO_CHAR(buckets.bucket,'MM-DD HH24:00') AS label,buckets.bucket,
+             COALESCE(totals.mined,0)::bigint AS mined,(totals.bucket IS NOT NULL) AS observed
+      FROM buckets LEFT JOIN totals USING(bucket) ORDER BY buckets.bucket
+    `, [includePrimary, aggregate, accountId]),
     pool.query(`
-      SELECT supplies, observed_at, updated_at
-      FROM obsidian_farm_supply_snapshot
-      WHERE id = 1
-    `),
-    pool.query(`SELECT supplies, observed_at FROM obsidian_farm_supply_history WHERE observed_at >= NOW() - INTERVAL '7 days' ORDER BY observed_at`),
-    pool.query(`SELECT id,event_type,title,details,occurred_at FROM obsidian_farm_annotations WHERE occurred_at >= NOW() - INTERVAL '90 days' ORDER BY occurred_at`),
-    pool.query(`SELECT id,name,target_total,baseline_mined,active,created_at,reached_at FROM obsidian_farm_goals ORDER BY active DESC,created_at DESC`),
-    pool.query(`SELECT sampled_at,tps FROM bot_tps_samples WHERE sampled_at >= NOW() - INTERVAL '7 days' ORDER BY sampled_at`),
-    pool.query(`SELECT
-      COALESCE(SUM(mined) FILTER (WHERE farm_date=(NOW() AT TIME ZONE $1)::date),0)::bigint AS today,
-      COALESCE(SUM(mined) FILTER (WHERE farm_date=(NOW() AT TIME ZONE $1)::date-1),0)::bigint AS yesterday,
-      COALESCE((SELECT SUM(h.mined) FROM obsidian_farm_hourly h
-        WHERE h.bucket >= (((NOW() AT TIME ZONE $1)::date - 1)::timestamp AT TIME ZONE $1)
-          AND h.bucket < NOW() - INTERVAL '1 day'),0)::bigint AS yesterday_comparable,
-      COALESCE(SUM(mined) FILTER (WHERE farm_date BETWEEN (NOW() AT TIME ZONE $1)::date-6 AND (NOW() AT TIME ZONE $1)::date),0)::bigint AS week,
-      COALESCE(SUM(mined) FILTER (WHERE farm_date BETWEEN (NOW() AT TIME ZONE $1)::date-13 AND (NOW() AT TIME ZONE $1)::date-7),0)::bigint AS previous_week
-      FROM obsidian_farm_daily`, [timezone]),
-    pool.query(`SELECT tool_name,blocks_mined,durability_used,remaining_percent,changed_at FROM obsidian_farm_tool_usage WHERE changed_at >= NOW()-INTERVAL '90 days' ORDER BY changed_at`)
+      SELECT supplies,observed_at,updated_at FROM obsidian_farm_supply_snapshot WHERE id=1 AND $1::boolean
+      UNION ALL
+      SELECT stats.supplies,stats.observed_at,stats.updated_at
+      FROM obsidian_account_farm_supply_snapshot stats
+      JOIN bot_accounts a ON a.id=stats.account_id
+      WHERE a.is_default=FALSE AND a.deleted_at IS NULL AND ($2::boolean OR stats.account_id=$3::uuid)
+    `, [includePrimary, aggregate, accountId]),
+    pool.query(`
+      SELECT $4::uuid AS account_id,supplies,observed_at
+      FROM obsidian_farm_supply_history
+      WHERE observed_at>=NOW()-INTERVAL '7 days' AND $1::boolean
+      UNION ALL
+      SELECT stats.account_id,stats.supplies,stats.observed_at
+      FROM obsidian_account_farm_supply_history stats
+      JOIN bot_accounts a ON a.id=stats.account_id
+      WHERE stats.observed_at>=NOW()-INTERVAL '7 days' AND a.is_default=FALSE AND a.deleted_at IS NULL
+        AND ($2::boolean OR stats.account_id=$3::uuid)
+      ORDER BY observed_at
+    `, [includePrimary, aggregate, accountId, DEFAULT_MINECRAFT_ACCOUNT_ID]),
+    pool.query(`
+      SELECT CONCAT('primary:',id) AS id,$4::uuid AS account_id,event_type,title,details,occurred_at
+      FROM obsidian_farm_annotations
+      WHERE occurred_at>=NOW()-INTERVAL '90 days' AND $1::boolean
+      UNION ALL
+      SELECT CONCAT('managed:',stats.id) AS id,stats.account_id,stats.event_type,stats.title,stats.details,stats.occurred_at
+      FROM obsidian_account_farm_annotations stats
+      JOIN bot_accounts a ON a.id=stats.account_id
+      WHERE stats.occurred_at>=NOW()-INTERVAL '90 days' AND a.is_default=FALSE AND a.deleted_at IS NULL
+        AND ($2::boolean OR stats.account_id=$3::uuid)
+      ORDER BY occurred_at
+    `, [includePrimary, aggregate, accountId, DEFAULT_MINECRAFT_ACCOUNT_ID]),
+    includePrimary ? pool.query(`SELECT id,name,target_total,baseline_mined,active,created_at,reached_at FROM obsidian_farm_goals ORDER BY active DESC,created_at DESC`) : Promise.resolve({ rows: [] }),
+    includePrimary ? pool.query(`SELECT sampled_at,tps FROM bot_tps_samples WHERE sampled_at>=NOW()-INTERVAL '7 days' ORDER BY sampled_at`) : Promise.resolve({ rows: [] }),
+    pool.query(`
+      WITH daily AS (
+        SELECT farm_date,mined FROM obsidian_farm_daily WHERE $2::boolean
+        UNION ALL
+        SELECT stats.farm_date,stats.mined FROM obsidian_account_farm_daily stats
+        JOIN bot_accounts a ON a.id=stats.account_id
+        WHERE a.is_default=FALSE AND a.deleted_at IS NULL AND ($3::boolean OR stats.account_id=$4::uuid)
+      ), hourly AS (
+        SELECT bucket,mined FROM obsidian_farm_hourly WHERE $2::boolean
+        UNION ALL
+        SELECT stats.bucket,stats.mined FROM obsidian_account_farm_hourly stats
+        JOIN bot_accounts a ON a.id=stats.account_id
+        WHERE a.is_default=FALSE AND a.deleted_at IS NULL AND ($3::boolean OR stats.account_id=$4::uuid)
+      )
+      SELECT COALESCE(SUM(mined) FILTER(WHERE farm_date=(NOW() AT TIME ZONE $1)::date),0)::bigint AS today,
+        COALESCE(SUM(mined) FILTER(WHERE farm_date=(NOW() AT TIME ZONE $1)::date-1),0)::bigint AS yesterday,
+        COALESCE((SELECT SUM(mined) FROM hourly WHERE bucket>=(((NOW() AT TIME ZONE $1)::date-1)::timestamp AT TIME ZONE $1) AND bucket<NOW()-INTERVAL '1 day'),0)::bigint AS yesterday_comparable,
+        COALESCE(SUM(mined) FILTER(WHERE farm_date BETWEEN (NOW() AT TIME ZONE $1)::date-6 AND (NOW() AT TIME ZONE $1)::date),0)::bigint AS week,
+        COALESCE(SUM(mined) FILTER(WHERE farm_date BETWEEN (NOW() AT TIME ZONE $1)::date-13 AND (NOW() AT TIME ZONE $1)::date-7),0)::bigint AS previous_week
+      FROM daily
+    `, [timezone, includePrimary, aggregate, accountId]),
+    pool.query(`
+      SELECT tool_name,blocks_mined,durability_used,remaining_percent,changed_at
+      FROM obsidian_farm_tool_usage WHERE changed_at>=NOW()-INTERVAL '90 days' AND $1::boolean
+      UNION ALL
+      SELECT stats.tool_name,stats.blocks_mined,stats.durability_used,stats.remaining_percent,stats.changed_at
+      FROM obsidian_account_farm_tool_usage stats
+      JOIN bot_accounts a ON a.id=stats.account_id
+      WHERE stats.changed_at>=NOW()-INTERVAL '90 days' AND a.is_default=FALSE AND a.deleted_at IS NULL
+        AND ($2::boolean OR stats.account_id=$3::uuid)
+      ORDER BY changed_at
+    `, [includePrimary, aggregate, accountId])
   ]);
 
-  const farm = compactFarmState(farmResult.rows[0] || {});
+  const farmRows = [
+    ...primaryFarmResult.rows,
+    ...((aggregate || !includePrimary) && managedFarmResult.rows[0] ? [managedFarmResult.rows[0]] : [])
+  ];
+  if (!aggregate && !includePrimary && runtimeFarm?.config) {
+    const row = farmRows[0] || {};
+    row.target_x = runtimeFarm.config.x;
+    row.target_y = runtimeFarm.config.y;
+    row.target_z = runtimeFarm.config.z;
+    row.target_radius = runtimeFarm.config.maxCauldronDist;
+  }
+  const farm = compactFarmState(combineFarmStateRows(farmRows));
   const hourly = hourlyResult.rows.map(row => ({
     label: row.label,
     bucket: row.bucket,
@@ -1943,17 +2074,23 @@ async function getObsidianStats(currentUser = null) {
   }));
   const last7Days = daily.slice(-7).reduce((sum, item) => sum + item.value, 0);
 
-  const supplies = normalizeSupplySnapshot(supplyResult.rows[0]);
+  const supplies = normalizeSupplySnapshot(combineRawSupplySnapshots(supplyResult.rows));
   const goals = goalsResult.rows.map(row => {
     const targetTotal = toInt(row.target_total);
     const baselineMined = toInt(row.baseline_mined);
     const progress = Math.max(0, farm.totalMined - baselineMined);
     return { id: row.id, name: row.name, targetTotal, baselineMined, progress: Math.min(targetTotal, progress), remaining: Math.max(0, targetTotal - progress), active: row.active, createdAt: row.created_at, reachedAt: row.reached_at };
   });
-  const annotations = annotationsResult.rows.map(row => ({ id: row.id, eventType: row.event_type, title: row.title, details: row.details, occurredAt: row.occurred_at }));
+  const annotations = annotationsResult.rows.map(row => ({ id: row.id, accountId: row.account_id, eventType: row.event_type, title: row.title, details: row.details, occurredAt: row.occurred_at }));
   const comparison = comparisonResult.rows[0] || {};
-  const farmPayload = { ...farm, todayMined: toInt(todayResult.rows[0]?.mined), last7Days };
+  const farmPayload = { ...farm, todayMined: toInt(comparison.today), last7Days };
+  const supplyHistory = aggregate ? aggregateSupplyHistory(supplyHistoryResult.rows) : supplyHistoryResult.rows;
+  const accountCount = aggregate
+    ? (includePrimary ? 1 : 0) + toInt(managedFarmResult.rows[0]?.account_count)
+    : 1;
   return {
+    scope: aggregate ? 'all' : 'personal',
+    accountId,
     farm: {
       ...farmPayload
     },
@@ -1963,8 +2100,8 @@ async function getObsidianStats(currentUser = null) {
     settings: { timezone, dailyReportEnabled: settings.daily_report_enabled, dailyReportHour: settings.daily_report_hour },
     goals,
     annotations,
-    analytics: calculateAnalytics({ farm: farmPayload, hourly, supplies, goals, annotations,
-      supplyHistory: supplyHistoryResult.rows, toolUsage: toolUsageResult.rows, tps: tpsResult.rows,
+    analytics: calculateAnalytics({ farm: farmPayload, hourly, supplies, goals, annotations, accountCount,
+      supplyHistory, toolUsage: toolUsageResult.rows, tps: tpsResult.rows,
       comparison: { today: comparison.today, yesterdayComparable: comparison.yesterday_comparable, yesterday: comparison.yesterday, week: comparison.week, previousWeek: comparison.previous_week } })
   };
 }
@@ -4309,11 +4446,20 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/obsidian') {
       const scoped = req.method === 'GET' ? await scopedAccountRuntime(url,currentUser) : null;
-      if (req.method === 'GET' && scoped) {
-        const localFarm = scoped.bot.modules?.obsidianFarm || scoped.bot.obsidian || {};
-        sendJson(res,200,{farm:{...localFarm,totalMined:localFarm.cyclesCompleted || 0,todayMined:localFarm.cyclesCompleted || 0,sessionPerHour:0,updatedAt:scoped.observedAt},hourly:[],daily:[],supplies:{hasSnapshot:false,inventory:null,barrel:null},settings:{timezone:'Europe/Vilnius'},goals:[],annotations:[],analytics:{}});
+      if (req.method === 'GET') {
+        const requestedScope = String(url.searchParams.get('scope') || 'personal').toLowerCase();
+        if (!['personal','all'].includes(requestedScope)) throw Object.assign(new Error('Invalid Obsidian statistics scope.'), { statusCode:400 });
+        if (requestedScope === 'all') {
+          assertAdminUser(currentUser);
+          if (scoped) throw Object.assign(new Error('All-bot statistics are available from the primary account only.'), { statusCode:400 });
+        }
+        const localFarm = scoped?.bot?.modules?.obsidianFarm || scoped?.bot?.obsidian || null;
+        sendJson(res, 200, await getObsidianStats(currentUser, {
+          scope: requestedScope,
+          accountId: scoped?.account?.id || DEFAULT_MINECRAFT_ACCOUNT_ID,
+          runtimeFarm: localFarm
+        }));
       }
-      else if (req.method === 'GET') sendJson(res, 200, await getObsidianStats(currentUser));
       else if (req.method === 'POST') sendJson(res, 200, await updateObsidianAnalytics(currentUser, await readJsonBody(req)));
       else sendError(res, 405, 'Method not allowed.');
       return;

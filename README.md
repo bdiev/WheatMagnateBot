@@ -135,6 +135,8 @@ The dashboard uses `HttpOnly`, `SameSite=Lax` session cookies, per-session CSRF 
 
 ## Obsidian farm analytics
 
+On the primary account, administrators can switch the complete Obsidian dashboard between **Personal** and **All Bots**. The aggregate scope combines totals, daily/hourly charts, supplies, pickaxe efficiency, per-account downtime, forecasts, and period comparisons on the server. Primary-account history remains in the legacy farm tables; account-scoped history for managed bots is collected after migration `026_obsidian_account_statistics.sql` is deployed.
+
 Analytics combines `obsidian_farm_daily`, `obsidian_farm_hourly`, TPS samples, mined totals, retired-pickaxe statistics, supply snapshots, and recorded farm annotations. The default timezone is `Europe/Vilnius`; each site account can change its synchronized timezone in **Settings → Account**. That timezone controls displayed dates and charts, push quiet hours, and—for administrators—the daily Obsidian report schedule. The report is sent once per local calendar day in a direct message to `DISCORD_OWNER_ID`; it is never posted to a server channel. Settings changes and production goals are written to the audit/system log.
 
 Forecasts deliberately remain unavailable while confidence is `insufficient` (fewer than six completed hourly observations). Pickaxe exhaustion uses remaining durability and historical blocks per retired pickaxe. Food exhaustion needs at least six hours of supply-history coverage and ignores increases caused by refills. These are operational estimates, not guarantees. CSV data is available from `/api/obsidian/export.csv` to every authenticated dashboard user.

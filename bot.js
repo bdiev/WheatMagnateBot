@@ -28,6 +28,12 @@ const farm = require('./features/obsidianFarm');
 const { GrowingChildAI } = require('./features/growingChild');
 const { sanitizePublicPhrase } = require('./features/growingChild/safety');
 const { runMigrations } = require('./database/migrations');
+const {
+  recordManagedObsidianMined,
+  recordManagedPickaxeRetired,
+  saveManagedObsidianSupplies,
+  syncManagedFarmState
+} = require('./database/obsidian-account-stats');
 const { NotificationService } = require('./notifications');
 const { newCorrelationId, recordOperationalEvent } = require('./operational-events');
 const { buildDailyObsidianReport, claimDailyReportDate, getDailyReportChannels, getDailyReportSlot } = require('./obsidian-daily-report');
@@ -5718,6 +5724,12 @@ async function initializeMultiAccountManager() {
     runtimeFactory: account => {
       let lastLoggedRuntimeState = null;
       let runtime = null;
+      let managedFarmWriteQueue = Promise.resolve();
+      const enqueueManagedFarmWrite = (label, operation) => {
+        managedFarmWriteQueue = managedFarmWriteQueue
+          .then(operation)
+          .catch(error => console.error(`[Obsidian Stats] ${label} failed for ${account.displayName}:`, error.message));
+      };
       runtime = new MinecraftBotRuntime({
         account,
         authCacheRoot: MINECRAFT_PROFILES_FOLDER,
@@ -5744,6 +5756,19 @@ async function initializeMultiAccountManager() {
           return managedBot;
         }
       });
+      runtime.obsidianFarm.configureRuntime({
+        onMined: () => enqueueManagedFarmWrite('Mining persistence', () => recordManagedObsidianMined(pool, account.id)),
+        onPickaxeRetired: details => enqueueManagedFarmWrite('Pickaxe persistence', () => recordManagedPickaxeRetired(pool, account.id, details)),
+        onSuppliesChanged: supplies => enqueueManagedFarmWrite('Supply persistence', () => saveManagedObsidianSupplies(pool, account.id, supplies)),
+        onFatalStop: error => {
+          enqueueManagedFarmWrite('Farm state persistence', () => syncManagedFarmState(pool, account.id, { desiredEnabled: false }));
+          return reportNotification('farm_stalled', {
+            title: `${account.displayName} — Obsidian Farm stopped`,
+            message: error?.message || 'The farm stopped unexpectedly.',
+            metadata: { accountId: account.id, username: account.username }
+          });
+        }
+      });
       const savedKillAura = killAuraStates.get(account.id) || { desiredEnabled: false, selectedMobs: [] };
       runtime.setKillAuraTargets(savedKillAura.selectedMobs);
       if (savedKillAura.desiredEnabled && savedKillAura.selectedMobs.length) {
@@ -5751,6 +5776,11 @@ async function initializeMultiAccountManager() {
       }
       runtime.on('status', status => {
         persistManagedRuntimeStatus(status).catch(error => console.error(`[Accounts] Status persistence failed for ${account.id}:`, error.message));
+        enqueueManagedFarmWrite('Farm state persistence', () => syncManagedFarmState(
+          pool,
+          account.id,
+          status.modules?.obsidianFarm || status.obsidian || {}
+        ));
         const signature = `${status.status}:${status.task}:${status.lastError || ''}`;
         if (signature === lastLoggedRuntimeState) return;
         lastLoggedRuntimeState = signature;

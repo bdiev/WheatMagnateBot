@@ -50,7 +50,7 @@ function summarizeSupplies(supplies) {
   };
 }
 
-function calculateDowntime(annotations, fromMs, toMs) {
+function calculateDowntimeSeries(annotations, fromMs, toMs) {
   const startTypes = new Set(['farm_stalled', 'pause', 'bot_disconnected']);
   const endTypes = new Set(['farm_resumed', 'resume', 'bot_reconnected']);
   const events = (annotations || []).map(row => ({ ...row, at: new Date(row.occurredAt || row.occurred_at).getTime() }))
@@ -71,9 +71,33 @@ function calculateDowntime(annotations, fromMs, toMs) {
   if (openAt != null) downMs += Math.max(0, toMs - openAt);
   const gaps = stops.slice(1).map((at, i) => at - stops[i]);
   return {
+    downMs,
     percent: round((downMs / Math.max(1, toMs - fromMs)) * 100, 1),
     stopCount: stops.length,
-    meanHoursBetweenStops: gaps.length ? round(gaps.reduce((a, b) => a + b, 0) / gaps.length / HOUR, 1) : null
+    meanHoursBetweenStops: gaps.length ? round(gaps.reduce((a, b) => a + b, 0) / gaps.length / HOUR, 1) : null,
+    gaps
+  };
+}
+
+function calculateDowntime(annotations, fromMs, toMs, { accountCount = 1 } = {}) {
+  const rows = Array.isArray(annotations) ? annotations : [];
+  const groups = new Map();
+  for (const row of rows) {
+    const key = String(row.accountId || row.account_id || 'default');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row);
+  }
+  const totalAccounts = Math.max(1, number(accountCount), groups.size);
+  if (totalAccounts === 1) {
+    const result = calculateDowntimeSeries(rows, fromMs, toMs);
+    return { percent:result.percent, stopCount:result.stopCount, meanHoursBetweenStops:result.meanHoursBetweenStops };
+  }
+  const results = [...groups.values()].map(events => calculateDowntimeSeries(events, fromMs, toMs));
+  const gaps = results.flatMap(result => result.gaps);
+  return {
+    percent: round(results.reduce((sum, result) => sum + result.downMs, 0) / (Math.max(1, toMs - fromMs) * totalAccounts) * 100, 1),
+    stopCount: results.reduce((sum, result) => sum + result.stopCount, 0),
+    meanHoursBetweenStops: gaps.length ? round(gaps.reduce((sum, gap) => sum + gap, 0) / gaps.length / HOUR, 1) : null
   };
 }
 
@@ -105,7 +129,7 @@ function calculateAnalytics(input = {}) {
   const activeHours = completed.length;
   const mined = completed.reduce((sum, row) => sum + row.value, 0);
   const rawRate = activeHours ? mined / activeHours : 0;
-  const downtime = calculateDowntime(input.annotations, nowMs - 7 * 24 * HOUR, nowMs);
+  const downtime = calculateDowntime(input.annotations, nowMs - 7 * 24 * HOUR, nowMs, { accountCount:input.accountCount });
   const uptime = Math.max(0, 1 - downtime.percent / 100);
   const adjustedRate = rawRate * uptime;
   const forecastConfidence = confidence(activeHours, 'recorded downtime is included');

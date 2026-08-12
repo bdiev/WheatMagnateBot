@@ -115,6 +115,7 @@ const state = {
   currentUser: null,
   accounts: [],
   activeAccountId: null,
+  obsidianStatsScope: localStorage.getItem('wm-obsidian-stats-scope') === 'all' ? 'all' : 'personal',
   accountAbortController: null,
   accountsRefreshedAt: 0,
   editingAccountId: null,
@@ -4211,6 +4212,34 @@ function foodItemCount(...locations) {
   }, 0);
 }
 
+function activeAccountIsPrimary() {
+  return Boolean(state.accounts.find(account => account.id === state.activeAccountId)?.isDefault);
+}
+
+function obsidianStatsPath() {
+  const scope = activeAccountIsPrimary() && state.currentUser?.role === 'admin' ? state.obsidianStatsScope : 'personal';
+  return `/api/obsidian?scope=${encodeURIComponent(scope)}`;
+}
+
+async function changeObsidianStatsScope(event) {
+  const button = event.target.closest('[data-obsidian-scope]');
+  if (!button || !activeAccountIsPrimary()) return;
+  const scope = button.dataset.obsidianScope === 'all' ? 'all' : 'personal';
+  if (scope === state.obsidianStatsScope) return;
+  const previousScope = state.obsidianStatsScope;
+  state.obsidianStatsScope = scope;
+  localStorage.setItem('wm-obsidian-stats-scope', scope);
+  $('#obsidianStatsScope')?.querySelectorAll('[data-obsidian-scope]').forEach(item => { item.disabled = true; });
+  try {
+    renderObsidian(await fetchJson(obsidianStatsPath()));
+  } catch (error) {
+    state.obsidianStatsScope = previousScope;
+    localStorage.setItem('wm-obsidian-stats-scope', previousScope);
+    renderObsidian(await fetchJson(obsidianStatsPath()));
+    throw error;
+  }
+}
+
 function recentObsidianRatePerDay(payload = {}) {
   const hourly = Array.isArray(payload.hourly) ? payload.hourly : [];
   const recentHours = hourly.slice(-48);
@@ -4266,6 +4295,18 @@ function estimateSupplyRefill(payload = {}) {
 }
 
 function renderObsidian(payload) {
+  const renderedScope = payload.scope === 'all' ? 'all' : 'personal';
+  if (activeAccountIsPrimary()) state.obsidianStatsScope = renderedScope;
+  const scopeControl = $('#obsidianStatsScope');
+  if (scopeControl) {
+    scopeControl.dataset.activeScope = renderedScope;
+    scopeControl.querySelectorAll('[data-obsidian-scope]').forEach(button => {
+      const active = button.dataset.obsidianScope === renderedScope;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+      button.disabled = false;
+    });
+  }
   const farm = payload.farm || {};
   $('#farmState').textContent = farm.desiredEnabled ? 'Enabled' : 'Disabled';
   $('#farmUpdated').textContent = `last update: ${formatDate(farm.updatedAt)}`;
@@ -4347,17 +4388,17 @@ function renderObsidian(payload) {
 async function saveObsidianGoal(event) {
   event.preventDefault();
   try {
-    const payload = await postJson('/api/obsidian', { action: 'goal', name: $('#obsidianGoalName').value, targetTotal: Number($('#obsidianGoalTarget').value) });
-    event.currentTarget.reset(); renderObsidian(payload); setBanner('Obsidian goal saved.');
+    await postJson('/api/obsidian', { action: 'goal', name: $('#obsidianGoalName').value, targetTotal: Number($('#obsidianGoalTarget').value) });
+    event.currentTarget.reset(); renderObsidian(await fetchJson(obsidianStatsPath())); setBanner('Obsidian goal saved.');
   } catch (err) { setBanner(`Could not save goal: ${err.message}`); }
 }
 
 async function saveObsidianAnalyticsSettings(event) {
   event.preventDefault();
   try {
-    const payload = await postJson('/api/obsidian', { action: 'settings', dailyReportHour: Number($('#obsidianReportHour').value), dailyReportEnabled: $('#obsidianReportEnabled').checked });
+    await postJson('/api/obsidian', { action: 'settings', dailyReportHour: Number($('#obsidianReportHour').value), dailyReportEnabled: $('#obsidianReportEnabled').checked });
     delete event.currentTarget.dataset.dirty;
-    renderObsidian(payload); setBanner('Obsidian analytics settings saved.');
+    renderObsidian(await fetchJson(obsidianStatsPath())); setBanner('Obsidian analytics settings saved.');
   } catch (err) { setBanner(`Could not save settings: ${err.message}`); }
 }
 
@@ -4457,9 +4498,10 @@ async function changeObsidianGoalState(event) {
   if (action === 'delete' && !confirm(`Delete production goal "${button.dataset.obsidianGoalName || ''}"?`)) return;
   button.disabled = true;
   try {
-    renderObsidian(await postJson('/api/obsidian', action === 'delete'
+    await postJson('/api/obsidian', action === 'delete'
       ? { action: 'goal_delete', id: button.dataset.obsidianGoalId }
-      : { action: 'goal_state', id: button.dataset.obsidianGoalId, active: button.dataset.obsidianGoalActive === 'true' }));
+      : { action: 'goal_state', id: button.dataset.obsidianGoalId, active: button.dataset.obsidianGoalActive === 'true' });
+    renderObsidian(await fetchJson(obsidianStatsPath()));
   } catch (err) { setBanner(`Could not update goal: ${err.message}`); button.disabled = false; }
 }
 
@@ -6779,7 +6821,7 @@ async function refreshFarmFromEvent() {
     queueRealtimeRefresh('farm-selection', refreshFarmFromEvent, 1_000);
     return;
   }
-  renderObsidian(await fetchJson('/api/obsidian'));
+  renderObsidian(await fetchJson(obsidianStatsPath()));
 }
 
 function hasActiveTextSelection() {
@@ -6912,7 +6954,7 @@ async function loadAll() {
       }),
       fetchJson('/api/bot-stats').then(renderBotStats),
       fetchJson('/api/kill-aura').then(renderKillAura),
-      Promise.all([ensureItemIcons(), fetchJson('/api/obsidian')]).then(([, payload]) => {
+      Promise.all([ensureItemIcons(), fetchJson(obsidianStatsPath())]).then(([, payload]) => {
         if (hasActiveTextSelection()) {
           queueRealtimeRefresh('farm-selection', refreshFarmFromEvent, 1_000);
           return;
@@ -7082,6 +7124,7 @@ $('#obsidianGoalForm')?.addEventListener('submit', saveObsidianGoal);
 $('#obsidianAnalyticsSettings')?.addEventListener('submit', saveObsidianAnalyticsSettings);
 $('#obsidianAnalyticsSettings')?.addEventListener('input', event => { event.currentTarget.dataset.dirty = 'true'; });
 $('#obsidianGoals')?.addEventListener('click', changeObsidianGoalState);
+$('#obsidianStatsScope')?.addEventListener('click', event => changeObsidianStatsScope(event).catch(error => setBanner(`Could not switch Obsidian statistics: ${error.message}`)));
 $('#killAuraSearch')?.addEventListener('input', renderKillAuraMobList);
 $('#killAuraMobList')?.addEventListener('change', handleKillAuraMobChange);
 $('#killAuraTargetModalOpen')?.addEventListener('click', openKillAuraTargetModal);

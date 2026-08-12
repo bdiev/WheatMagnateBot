@@ -549,6 +549,13 @@
       </section>
 
       <section id="tab-obsidian" class="tab-panel" data-panel="obsidian">
+        <div id="obsidianStatsScope" class="obsidian-scope-switch admin-only" data-primary-only role="group" aria-label="Obsidian statistics source" hidden>
+          <span>Statistics</span>
+          <div class="chart-controls">
+            <button class="chart-range-button active" type="button" data-obsidian-scope="personal" aria-pressed="true">Personal</button>
+            <button class="chart-range-button" type="button" data-obsidian-scope="all" aria-pressed="false">All Bots</button>
+          </div>
+        </div>
         <section id="obsidianStatsCarousel" class="stats-grid five obsidian-stats-grid" data-loop-carousel>
           <article class="stat">
             <span class="stat-label">Total Mined</span>

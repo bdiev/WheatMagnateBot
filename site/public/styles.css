@@ -4065,6 +4065,21 @@ body.search-focus-active #logoutButton {
   padding: var(--button-padding);
 }
 
+.obsidian-scope-switch {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.obsidian-scope-switch[hidden] {
+  display: none;
+}
+
 .chat-message.chat-message-bot:not(.chat-activity),
 .player-profile-message.player-profile-message-bot {
   background: color-mix(in srgb, var(--bot-accent) 8%, transparent);
