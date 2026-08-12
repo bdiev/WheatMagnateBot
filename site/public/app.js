@@ -1039,6 +1039,7 @@ function showAuthScreen(message = '') {
   const shell = $('.shell');
   if (authScreen) authScreen.hidden = false;
   if (shell) shell.classList.add('app-locked');
+  dismissAppLoader();
   if (message) {
     const error = $('#authError');
     error.textContent = message;
@@ -1050,6 +1051,20 @@ function hideAuthScreen() {
   $('#authScreen').hidden = true;
   $('.shell')?.classList.remove('app-locked');
   $('#authError').hidden = true;
+  dismissAppLoader();
+}
+
+function dismissAppLoader() {
+  const loader = $('#appLoader');
+  if (!loader || loader.hidden || loader.classList.contains('app-loader-leaving')) return;
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+    loader.hidden = true;
+    return;
+  }
+  loader.classList.add('app-loader-leaving');
+  window.setTimeout(() => {
+    loader.hidden = true;
+  }, 240);
 }
 
 function setAuthMode(mode) {

@@ -472,6 +472,135 @@ button:disabled {
   background: #7d2424;
 }
 
+.app-loader {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--accent) 14%, transparent) 0, transparent 18rem),
+    var(--bg);
+}
+
+.app-loader::before,
+.app-loader::after {
+  content: "";
+  position: absolute;
+  width: 22rem;
+  height: 22rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 10%, transparent);
+  transform: rotate(45deg);
+}
+
+.app-loader::before {
+  top: -17rem;
+  left: -12rem;
+}
+
+.app-loader::after {
+  right: -12rem;
+  bottom: -17rem;
+}
+
+.app-loader-content {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  justify-items: center;
+  width: min(100%, 300px);
+  text-align: center;
+}
+
+.app-loader-emblem {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 88px;
+  height: 88px;
+  margin-bottom: 20px;
+}
+
+.app-loader-emblem img {
+  position: relative;
+  z-index: 1;
+  width: 58px;
+  height: 58px;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 8px 12px color-mix(in srgb, #000 18%, transparent));
+  animation: app-loader-wheat 1.6s cubic-bezier(.45, 0, .2, 1) infinite;
+}
+
+.app-loader-glow {
+  position: absolute;
+  inset: 0;
+  border-radius: 24px;
+  background: color-mix(in srgb, var(--accent) 13%, var(--panel));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent),
+    0 16px 42px color-mix(in srgb, var(--accent) 17%, transparent);
+  animation: app-loader-glow 1.6s ease-in-out infinite;
+}
+
+.app-loader-title {
+  color: var(--text);
+  font-family: "MineCrafter Madpixel", Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 24px;
+  line-height: 1.15;
+}
+
+.app-loader-track {
+  width: 156px;
+  height: 4px;
+  margin-top: 18px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 13%, var(--panel-soft));
+}
+
+.app-loader-track span {
+  display: block;
+  width: 44%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 55%, #f1c232));
+  animation: app-loader-progress 1.25s cubic-bezier(.65, 0, .35, 1) infinite;
+}
+
+.app-loader p {
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: .01em;
+}
+
+.app-loader.app-loader-leaving {
+  pointer-events: none;
+  animation: app-loader-leave 240ms ease-in both;
+}
+
+@keyframes app-loader-wheat {
+  0%, 100% { transform: translateY(0) rotate(-2deg) scale(1); }
+  50% { transform: translateY(-7px) rotate(2deg) scale(1.04); }
+}
+
+@keyframes app-loader-glow {
+  0%, 100% { opacity: .72; transform: scale(.92) rotate(0); }
+  50% { opacity: 1; transform: scale(1) rotate(4deg); }
+}
+
+@keyframes app-loader-progress {
+  0% { transform: translateX(-115%); }
+  100% { transform: translateX(345%); }
+}
+
+@keyframes app-loader-leave {
+  to { opacity: 0; transform: scale(1.015); }
+}
+
 .auth-screen {
   position: fixed;
   inset: 0;
@@ -782,6 +911,15 @@ button:disabled {
   pointer-events: none;
   user-select: none;
   filter: blur(2px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-loader-emblem img,
+  .app-loader-glow,
+  .app-loader-track span,
+  .app-loader.app-loader-leaving {
+    animation: none !important;
+  }
 }
 
 .tab-button {
