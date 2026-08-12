@@ -53,6 +53,14 @@ async function main(){
   assert.equal(oldSecondBot.eventNames().length,0,'reconnect removes every listener from the old bot');
   assert.equal(manager.getBot(first.id),firstBotBeforeSecondReconnect,'reconnecting Bot B does not replace Bot A');
   assert.equal(manager.getContext(second.id),secondRuntime,'reconnect preserves the account context and module instances');
+  const paused=await manager.pause(second.id);
+  assert.equal(paused.status,'paused');
+  assert.equal(paused.connected,false,'paused accounts are disconnected from the Minecraft server');
+  assert.equal(manager.getBot(second.id),null,'pause releases the Mineflayer instance');
+  assert.equal(secondRuntime.reconnectTimer,null,'pause cannot schedule an automatic reconnect');
+  const resumed=await manager.resume(second.id);
+  assert.equal(resumed.status,'connecting','resume creates a fresh Minecraft connection');
+  assert.equal(bots.length,4,'resume creates exactly one replacement bot');
   await manager.shutdown(); assert.equal(firstRuntime.status,'stopped');assert.equal(secondRuntime.status,'stopped');
   const publicStatus=firstRuntime.getStatus(); assert.equal(Object.hasOwn(publicStatus,'authCachePath'),true); assert.equal(publicStatus.authCachePath,undefined,'status never exposes auth-cache path');
 

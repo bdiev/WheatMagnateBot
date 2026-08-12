@@ -238,7 +238,7 @@ class MinecraftBotRuntime extends BotContext {
     return this.startPromise;
   }
 
-  async stop(reason = 'Account stopped') {
+  async stop(reason = 'Account stopped', { finalStatus = 'stopped', finalTask = this.task } = {}) {
     this.setLifecycle('disconnecting');
     this.intentionalStop = true;
     this.safetyLockout = false;
@@ -250,7 +250,8 @@ class MinecraftBotRuntime extends BotContext {
     if (this.authCacheStore) await this.authCacheStore.persist(this.account.id,this.authCachePath).catch(error => this.emit('auth-cache-error',error));
     this.bot = null;
     this.nearbySnapshot = [];
-    this.status = 'stopped';
+    this.status = finalStatus;
+    this.task = finalTask;
     if (bot) {
       bot.removeAllListeners?.();
       try { bot.quit?.(reason); } catch { bot.end?.(reason); }
@@ -272,17 +273,12 @@ class MinecraftBotRuntime extends BotContext {
     this.lastError = null;
     return this.start();
   }
-  pause() {
-    this.obsidianFarm?.detachBot?.();
-    this.follow?.detachBot?.();
-    this.killAura?.detachBot();
-    this.task = 'paused';
-    this.status = this.bot ? 'paused' : 'stopped';
-    const status = this.getStatus();
-    this.emit('status', status);
-    return status;
+  async pause() {
+    return this.stop('Account paused', { finalStatus:'paused', finalTask:'paused' });
   }
-  resume() {
+  async resume() {
+    this.task = 'idle';
+    if (!this.bot) return this.start();
     this.status = this.bot ? 'connected' : 'stopped';
     this.killAura?.attachBot(this.bot);
     if (this.bot?.entity) this.notifySpawn();
