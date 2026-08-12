@@ -1,5 +1,6 @@
 node_modules/
 data/auth-cache/
+data/bots/
 data/bot_public_chat_status.json
 data/player_head_emojis.json
 data/*.sqlite

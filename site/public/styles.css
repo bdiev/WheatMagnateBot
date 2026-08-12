@@ -535,6 +535,20 @@ button:disabled {
   background: #7d2424;
 }
 
+.topbar h1[data-account-label]:not([data-account-label=""])::after {
+  content: attr(data-account-label);
+  display: inline-block;
+  margin-left: 10px;
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--muted);
+  font-family: "Minecraft", Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 400;
+  vertical-align: middle;
+}
+
 .app-loader {
   position: fixed;
   inset: 0;
