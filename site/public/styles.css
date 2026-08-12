@@ -294,10 +294,11 @@ h2 {
 
 .topbar-actions {
   position: relative;
+  top: 0;
   z-index: 1;
   pointer-events: auto;
-  will-change: transform;
-  transition: transform 360ms cubic-bezier(.2, .8, .2, 1);
+  will-change: top;
+  transition: top 360ms cubic-bezier(.2, .8, .2, 1);
   display: flex;
   align-items: center;
   gap: 10px;
@@ -341,7 +342,7 @@ body.whisper-focus-active .whisper-panel {
 
 body.search-focus-active .topbar-actions .seen-search.open {
   position: fixed;
-  top: calc(env(safe-area-inset-top, 0px) + 88px);
+  top: var(--seen-search-target-top, calc(env(safe-area-inset-top, 0px) + 88px));
   left: 50%;
   z-index: 130;
   transform: translateX(-50%);
@@ -4077,7 +4078,7 @@ body.search-focus-active #logoutButton {
 }
 
 .topbar.topbar-compact .topbar-actions {
-  transform: translate3d(0, calc(0px - var(--dashboard-brand-collapse-shift)), 0);
+  top: calc(0px - var(--dashboard-brand-collapse-shift));
 }
 
 .player-profile-message-bot .chat-time {
@@ -5762,7 +5763,7 @@ body.modal-open { overflow:hidden; }
   }
 
   body.search-focus-active .topbar-actions .seen-search.open {
-    top: calc(env(safe-area-inset-top, 0px) + 82px);
+    top: var(--seen-search-target-top, calc(env(safe-area-inset-top, 0px) + 82px));
     left: 8px;
     right: 8px;
     transform: none;
