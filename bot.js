@@ -4885,12 +4885,6 @@ async function sendGameChatMessageToDiscord(username, message, { allowMentions =
   }
 
   const safeUsername = String(username || bot?.username || 'Minecraft');
-  recordGameChatMessage(safeUsername, cleanMessage).catch(() => {});
-
-  if (!DISCORD_CHAT_CHANNEL_ID || !discordClient || !discordClient.isReady()) {
-    return false;
-  }
-
   return gameChatDiscordForwardQueue.enqueue({
     username: safeUsername,
     message: cleanMessage,
@@ -4934,6 +4928,14 @@ async function isTaggedBotPlayer(username) {
 
 async function deliverGameChatMessageToDiscord({ username, message, allowMentions = true, createdAt = Date.now(), isSummary = false }) {
   try {
+    // Persist only messages that passed the shared flood queue. This keeps the
+    // website archive/live feed aligned with Discord suppression and summaries.
+    await recordGameChatMessage(username, message);
+
+    if (!DISCORD_CHAT_CHANNEL_ID || !discordClient || !discordClient.isReady()) {
+      return true;
+    }
+
     const isBotPlayer = !isSummary && await isTaggedBotPlayer(username);
     const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
     if (!channel?.isTextBased?.()) return false;

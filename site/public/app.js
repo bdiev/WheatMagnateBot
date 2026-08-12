@@ -2705,10 +2705,21 @@ function setSeenSearchOpen(open) {
     setWhisperOpen(false);
     setMobileAccountSwitcherOpen(false);
     const rect = toggle.getBoundingClientRect();
+    const isMobile = window.matchMedia('(max-width: 700px)').matches;
     const targetTop = rect.top;
+    const targetWidth = isMobile
+      ? Math.max(0, window.innerWidth - 16)
+      : Math.min(560, Math.max(0, window.innerWidth - 32));
+    const targetLeft = isMobile ? 8 : (window.innerWidth - targetWidth) / 2;
+    const transformOriginX = Math.max(0, Math.min(targetWidth, rect.left + rect.width / 2 - targetLeft));
+    const collapsedScale = targetWidth > 0 ? Math.min(1, rect.width / targetWidth) : 1;
     search.style.setProperty('--seen-search-target-top', `${targetTop}px`);
+    search.style.setProperty('--seen-search-transform-origin-x', `${transformOriginX}px`);
+    search.style.setProperty('--seen-search-collapsed-scale', String(collapsedScale));
   } else {
     search.style.removeProperty('--seen-search-target-top');
+    search.style.removeProperty('--seen-search-transform-origin-x');
+    search.style.removeProperty('--seen-search-collapsed-scale');
   }
   search.classList.toggle('open', open);
   document.body.classList.toggle('search-focus-active', open);

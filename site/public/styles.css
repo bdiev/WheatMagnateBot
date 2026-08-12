@@ -1796,8 +1796,8 @@ body.search-focus-active #logoutButton {
   min-width: 0;
   opacity: 0;
   overflow: hidden;
-  transform: scaleX(0.78);
-  transform-origin: center;
+  transform: scaleX(var(--seen-search-collapsed-scale, 0.08)) scaleY(0.88);
+  transform-origin: var(--seen-search-transform-origin-x, 50%) center;
   pointer-events: none;
   transition:
     opacity 180ms ease,
@@ -1810,7 +1810,7 @@ body.search-focus-active #logoutButton {
 .seen-search.open .seen-search-box {
   opacity: 1;
   overflow: visible;
-  transform: translateX(0) scaleX(1);
+  transform: scaleX(1) scaleY(1);
   pointer-events: auto;
 }
 

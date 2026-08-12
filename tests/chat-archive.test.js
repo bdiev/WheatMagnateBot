@@ -42,6 +42,16 @@ assert.match(botSource, /footer: \{ text: 'Flood protection' \}/,
   'flood summaries must use the concise footer label');
 assert.doesNotMatch(botSource, /Discord bridge flood protection/,
   'the old verbose flood footer must not remain');
+assert.doesNotMatch(
+  botSource.match(/async function sendGameChatMessageToDiscord[\s\S]*?\n\}/)?.[0] || '',
+  /recordGameChatMessage/,
+  'website chat must not archive a message before shared AntiFlood accepts it'
+);
+assert.match(
+  botSource,
+  /async function deliverGameChatMessageToDiscord[\s\S]*await recordGameChatMessage\(username, message\);[\s\S]*!DISCORD_CHAT_CHANNEL_ID[\s\S]*return true;/,
+  'accepted messages and flood summaries must reach the website archive even while Discord is unavailable'
+);
 assert.match(
   serverSource,
   /function displayGameChatMessage[\s\S]*replace\(\/\^>\\s\*\/[\s\S]*message: displayGameChatMessage\(row\.message\)/,
@@ -106,9 +116,9 @@ assert.match(stylesSource, /\.chat-date-indicator\.visible\s*\{[^}]*opacity:\s*1
   'the date indicator must fade into view while scrolling');
 assert.match(stylesSource, /\.chat-panel\.chat-search-open > \.panel-head > div:first-child\s*\{[^}]*opacity:\s*0;/s,
   'the chat heading must fade away while archive search expands');
-assert.match(indexSource, /styles\.css\?v=199/, 'the updated mobile layout must use a fresh stylesheet URL');
-assert.match(indexSource, /app\.js\?v=199/, 'the updated dashboard behavior must use a fresh script URL');
-assert.match(serviceWorkerSource, /CACHE_VERSION = '199'/, 'the app shell cache must be replaced after dashboard behavior changes');
+assert.match(indexSource, /styles\.css\?v=200/, 'the updated mobile layout must use a fresh stylesheet URL');
+assert.match(indexSource, /app\.js\?v=200/, 'the updated dashboard behavior must use a fresh script URL');
+assert.match(serviceWorkerSource, /CACHE_VERSION = '200'/, 'the app shell cache must be replaced after dashboard behavior changes');
 assert.match(serviceWorkerSource, /fallbackPath[\s\S]*?'\/request\.html'/, 'resource requests must have their own navigation fallback');
 assert.match(stylesSource, /\.chat-message\s*\{[^}]*flex:\s*0 0 auto;/s,
   'chat cards must retain their natural height inside the scrolling flex list');
