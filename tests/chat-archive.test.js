@@ -7,6 +7,7 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const botSource = fs.readFileSync(path.join(root, 'bot.js'), 'utf8');
 const minecraftChatSource = fs.readFileSync(path.join(root, 'minecraft-chat-component.js'), 'utf8');
+const chatNormalizationSource = fs.readFileSync(path.join(root, 'site', 'chat-message-normalization.js'), 'utf8');
 const serverSource = fs.readFileSync(path.join(root, 'site', 'server.js'), 'utf8');
 const appSource = fs.readFileSync(path.join(root, 'site', 'public', 'app.js'), 'utf8');
 const stylesSource = fs.readFileSync(path.join(root, 'site', 'public', 'styles.css'), 'utf8');
@@ -58,8 +59,9 @@ assert.match(
   /function displayGameChatMessage[\s\S]*normalizeGreenChatMessage\(value\)[\s\S]*message: displayGameChatMessage\(row\.message\)/,
   'site chat responses must use the shared safe GreenChat prefix normalizer'
 );
-assert.match(minecraftChatSource, /function normalizeGreenChatMessage[\s\S]*replace\(\/\^>\\s\+\//, 'GreenChat normalization must require whitespace after its marker');
-assert.doesNotMatch(minecraftChatSource, /replace\(\/\^>\\s\*\//, 'message content such as >_< must retain its leading angle bracket');
+assert.match(minecraftChatSource, /require\('\.\/site\/chat-message-normalization'\)/, 'the bot and website must share one GreenChat normalizer');
+assert.match(chatNormalizationSource, /function normalizeGreenChatMessage[\s\S]*replace\(\/\^>\\s\+\//, 'GreenChat normalization must require whitespace after its marker');
+assert.doesNotMatch(chatNormalizationSource, /replace\(\/\^>\\s\*\//, 'message content such as >_< must retain its leading angle bracket');
 assert.match(serverSource, /date_trunc\('day', MIN\(created_at\)\)/, 'daily chat statistics must begin at the first archived message');
 assert.match(serverSource, /date_trunc\('month', created_at\)/, 'monthly chat statistics must cover the archive');
 assert.match(appSource, /data-player-chat-more/, 'player profile must expose older archived messages');

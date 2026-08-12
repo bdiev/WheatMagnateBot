@@ -1,5 +1,7 @@
 'use strict';
 
+const { normalizeGreenChatMessage } = require('./site/chat-message-normalization');
+
 const MAX_COMPONENT_DEPTH = 32;
 const MAX_URL_LENGTH = 2048;
 const MINECRAFT_USERNAME_PATTERN = /^[A-Za-z0-9_]{1,16}$/;
@@ -124,10 +126,6 @@ function componentHasGreenText(component, inheritedColor = null) {
     if ((isGreenColor(effectiveColor) || hasLegacyGreen) && (text.trim() || node.translate)) found = true;
   }, 0, inheritedColor);
   return found;
-}
-
-function normalizeGreenChatMessage(value) {
-  return String(value || '').trim().replace(/^>\s+/, '').trim();
 }
 
 function parseGreenChatComponent(component) {

@@ -19,7 +19,7 @@ const { EVENT_TYPES: PUSH_EVENT_TYPES, WebPushService } = require('./web-push');
 const { buildPlayerMilestones } = require('./player-milestones');
 const { KILL_AURA_MOBS, normalizeKillAuraTargets } = require('./kill-aura-catalog');
 const { createResourceRequestService } = require('./resource-requests');
-const { normalizeGreenChatMessage } = require('../minecraft-chat-component');
+const { normalizeGreenChatMessage } = require('./chat-message-normalization');
 const {
   MUTATING_METHODS, RateLimiter, clientIp, configuredOrigins, requestIsHttps,
   resolveStaticPath, securityHeaders, trustProxyEnabled, validateOrigin, validHost, verifyCsrfToken
