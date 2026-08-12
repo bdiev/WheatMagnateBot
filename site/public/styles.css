@@ -2798,6 +2798,21 @@ body.search-focus-active #logoutButton {
   overflow-wrap: anywhere;
 }
 
+.chat-link {
+  color: var(--accent-strong);
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.chat-link:hover,
+.chat-link:focus-visible {
+  color: var(--accent);
+  text-decoration-thickness: 2px;
+}
+
 .chat-time {
   min-width: 68px;
   color: var(--muted);

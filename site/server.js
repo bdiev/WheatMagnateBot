@@ -19,6 +19,7 @@ const { EVENT_TYPES: PUSH_EVENT_TYPES, WebPushService } = require('./web-push');
 const { buildPlayerMilestones } = require('./player-milestones');
 const { KILL_AURA_MOBS, normalizeKillAuraTargets } = require('./kill-aura-catalog');
 const { createResourceRequestService } = require('./resource-requests');
+const { normalizeGreenChatMessage } = require('../minecraft-chat-component');
 const {
   MUTATING_METHODS, RateLimiter, clientIp, configuredOrigins, requestIsHttps,
   resolveStaticPath, securityHeaders, trustProxyEnabled, validateOrigin, validHost, verifyCsrfToken
@@ -115,7 +116,7 @@ function sendError(res, statusCode, message) {
 }
 
 function displayGameChatMessage(value) {
-  return String(value || '').trim().replace(/^>\s*/, '').trim();
+  return normalizeGreenChatMessage(value);
 }
 
 async function sendMinecraftAvatar(res, url) {

@@ -6,6 +6,7 @@ const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
 const botSource = fs.readFileSync(path.join(root, 'bot.js'), 'utf8');
+const minecraftChatSource = fs.readFileSync(path.join(root, 'minecraft-chat-component.js'), 'utf8');
 const serverSource = fs.readFileSync(path.join(root, 'site', 'server.js'), 'utf8');
 const appSource = fs.readFileSync(path.join(root, 'site', 'public', 'app.js'), 'utf8');
 const stylesSource = fs.readFileSync(path.join(root, 'site', 'public', 'styles.css'), 'utf8');
@@ -54,13 +55,20 @@ assert.match(
 );
 assert.match(
   serverSource,
-  /function displayGameChatMessage[\s\S]*replace\(\/\^>\\s\*\/[\s\S]*message: displayGameChatMessage\(row\.message\)/,
-  'site chat responses must hide the leading GreenChat marker, including archived messages'
+  /function displayGameChatMessage[\s\S]*normalizeGreenChatMessage\(value\)[\s\S]*message: displayGameChatMessage\(row\.message\)/,
+  'site chat responses must use the shared safe GreenChat prefix normalizer'
 );
+assert.match(minecraftChatSource, /function normalizeGreenChatMessage[\s\S]*replace\(\/\^>\\s\+\//, 'GreenChat normalization must require whitespace after its marker');
+assert.doesNotMatch(minecraftChatSource, /replace\(\/\^>\\s\*\//, 'message content such as >_< must retain its leading angle bracket');
 assert.match(serverSource, /date_trunc\('day', MIN\(created_at\)\)/, 'daily chat statistics must begin at the first archived message');
 assert.match(serverSource, /date_trunc\('month', created_at\)/, 'monthly chat statistics must cover the archive');
 assert.match(appSource, /data-player-chat-more/, 'player profile must expose older archived messages');
 assert.match(appSource, /data-chat-message-id/, 'player messages must link back to their chat context');
+assert.match(appSource, /function linkifyChatMessage[\s\S]*new URL[\s\S]*parsed\.protocol !== 'http:'[\s\S]*rel="noopener noreferrer"/, 'game-chat links must be protocol-checked and safely opened in a new tab');
+assert.match(appSource, /chatText\.innerHTML = linkifyChatMessage\(text\)/, 'the main game-chat feed must render safe clickable links');
+assert.match(appSource, /player-profile-message[\s\S]*linkifyChatMessage\(message\.message\)/, 'player chat history must render the same safe clickable links');
+assert.match(appSource, /handlePlayerProfileClick[\s\S]*closest\('\.chat-link'\)[\s\S]*handleChatReplyClick[\s\S]*closest\('\.chat-link'\)/, 'clicking a chat link must not trigger profile-history or reply actions');
+assert.match(stylesSource, /\.chat-link\s*\{[^}]*text-decoration:\s*underline;/s, 'clickable chat links must remain visually recognizable');
 assert.match(appSource, /chatContextMessageId/, 'live refreshes must preserve historical context viewing');
 assert.match(appSource, /searchGameChat/, 'the chat UI must expose archive search');
 assert.match(appSource, /setChatArchiveSearchOpen/, 'archive search must use a compact expandable control');
@@ -116,9 +124,9 @@ assert.match(stylesSource, /\.chat-date-indicator\.visible\s*\{[^}]*opacity:\s*1
   'the date indicator must fade into view while scrolling');
 assert.match(stylesSource, /\.chat-panel\.chat-search-open > \.panel-head > div:first-child\s*\{[^}]*opacity:\s*0;/s,
   'the chat heading must fade away while archive search expands');
-assert.match(indexSource, /styles\.css\?v=200/, 'the updated mobile layout must use a fresh stylesheet URL');
-assert.match(indexSource, /app\.js\?v=200/, 'the updated dashboard behavior must use a fresh script URL');
-assert.match(serviceWorkerSource, /CACHE_VERSION = '200'/, 'the app shell cache must be replaced after dashboard behavior changes');
+assert.match(indexSource, /styles\.css\?v=201/, 'the updated mobile layout must use a fresh stylesheet URL');
+assert.match(indexSource, /app\.js\?v=201/, 'the updated dashboard behavior must use a fresh script URL');
+assert.match(serviceWorkerSource, /CACHE_VERSION = '201'/, 'the app shell cache must be replaced after dashboard behavior changes');
 assert.match(serviceWorkerSource, /fallbackPath[\s\S]*?'\/request\.html'/, 'resource requests must have their own navigation fallback');
 assert.match(stylesSource, /\.chat-message\s*\{[^}]*flex:\s*0 0 auto;/s,
   'chat cards must retain their natural height inside the scrolling flex list');

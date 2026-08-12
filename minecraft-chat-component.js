@@ -127,7 +127,7 @@ function componentHasGreenText(component, inheritedColor = null) {
 }
 
 function normalizeGreenChatMessage(value) {
-  return String(value || '').trim().replace(/^>\s*/, '').trim();
+  return String(value || '').trim().replace(/^>\s+/, '').trim();
 }
 
 function parseGreenChatComponent(component) {
@@ -318,6 +318,7 @@ module.exports = {
   chatComponentToString,
   createChatComponentEventGuard,
   isGreenColor,
+  normalizeGreenChatMessage,
   parseGreenChatComponent,
   safeOpenUrl
 };

@@ -2474,16 +2474,16 @@ function renderPlayerProfile(profile) {
       <h3>Recent Chat</h3>
       ${recentMessages.length
         ? recentMessages.map(message => `
-          <button class="player-profile-message${profile.isBot ? ' player-profile-message-bot' : ''}" type="button" data-chat-message-id="${escapeHtml(message.id)}" title="Open this moment in game chat">
+          <article class="player-profile-message${profile.isBot ? ' player-profile-message-bot' : ''}" data-chat-message-id="${escapeHtml(message.id)}" title="Open this moment in game chat" role="button" tabindex="0">
             <div class="chat-message-body">
               <div class="chat-message-head">
                 <span class="chat-message-name">${escapeHtml(profileUsername)}</span>
                 ${profile.isBot ? '<span class="chat-bot-badge">BOT</span>' : ''}
                 <time class="chat-time">${formatChatTime(message.createdAt)}</time>
               </div>
-              <div class="chat-text">${escapeHtml(message.message)}</div>
+              <div class="chat-text">${linkifyChatMessage(message.message)}</div>
             </div>
-          </button>
+          </article>
         `).join('')
         : '<div class="empty">No recorded chat messages for this player.</div>'}
       ${profile.chat?.hasMoreMessages
@@ -2580,6 +2580,7 @@ function closePlayerProfile() {
 }
 
 async function handlePlayerProfileClick(event) {
+  if (event.target.closest('.chat-link')) return;
   const chatMessage = event.target.closest('[data-chat-message-id]');
   if (chatMessage) {
     event.preventDefault();
@@ -3364,7 +3365,9 @@ function renderChatMessages(messages) {
            <button class="chat-reply-button" type="button" aria-label="Reply to ${escapeHtml(username)}" title="Reply"><img src="/logos/reply.png" alt="" aria-hidden="true"></button>
            <time class="chat-time">${formatChatTime(message.createdAt)}</time>
          </div>`;
-    article.querySelector('.chat-text').textContent = text;
+    const chatText = article.querySelector('.chat-text');
+    if (isActivity) chatText.textContent = text;
+    else chatText.innerHTML = linkifyChatMessage(text);
     const replyButton = article.querySelector('.chat-reply-button');
     if (replyButton) {
       replyButton.dataset.chatReply = username;
@@ -3421,6 +3424,7 @@ function renderChat(payload) {
 }
 
 function handleChatReplyClick(event) {
+  if (event.target.closest('.chat-link')) return;
   const contextMessage = event.target.closest('[data-open-chat-context]');
   if (contextMessage && !event.target.closest('[data-chat-reply]')) {
     openChatContext(contextMessage.dataset.openChatContext)
@@ -3442,6 +3446,7 @@ function handleChatReplyClick(event) {
 
 function handleChatMessagePointerDown(event) {
   if (event.pointerType === 'mouse') return;
+  if (event.target.closest('.chat-link')) return;
   // Player avatars open profiles on tap. Do not use that tap merely to reveal
   // the reply action for the surrounding chat message.
   const player = event.target.closest('[data-player]');
@@ -4803,6 +4808,45 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+
+function linkifyChatMessage(value) {
+  const source = String(value ?? '');
+  const urlPattern = /\b(?:https?:\/\/|www\.)[^\s<>"']+/gi;
+  let html = '';
+  let cursor = 0;
+
+  for (const match of source.matchAll(urlPattern)) {
+    const start = Number(match.index) || 0;
+    let visibleUrl = match[0];
+    let trailing = '';
+    while (visibleUrl && /[.,!?;:)\]}]/.test(visibleUrl.at(-1))) {
+      trailing = visibleUrl.at(-1) + trailing;
+      visibleUrl = visibleUrl.slice(0, -1);
+    }
+    if (!visibleUrl) continue;
+
+    html += escapeHtml(source.slice(cursor, start));
+    try {
+      const parsed = new URL(/^www\./i.test(visibleUrl) ? `https://${visibleUrl}` : visibleUrl);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('Unsupported URL protocol');
+      html += `<a class="chat-link" href="${escapeHtml(parsed.href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(visibleUrl)}</a>${escapeHtml(trailing)}`;
+    } catch {
+      html += escapeHtml(visibleUrl + trailing);
+    }
+    cursor = start + match[0].length;
+  }
+
+  return html + escapeHtml(source.slice(cursor));
+}
+
+async function handlePlayerProfileKeydown(event) {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  if (event.target.closest('.chat-link')) return;
+  const chatMessage = event.target.closest('[data-chat-message-id]');
+  if (!chatMessage) return;
+  event.preventDefault();
+  await openChatContext(chatMessage.dataset.chatMessageId);
 }
 
 function setAdminPlayersNotice(message = '', kind = 'success') {
@@ -7141,6 +7185,7 @@ $('#whisperForm')?.addEventListener('submit', handleWhisperSubmit);
 $('#whisperDeleteDialog')?.addEventListener('click', handleWhisperDeleteDialog);
 $('#whisperCloseDialog')?.addEventListener('click', closeWhisperDialog);
 $('#playerProfileContent')?.addEventListener('click', handlePlayerProfileClick);
+$('#playerProfileContent')?.addEventListener('keydown', handlePlayerProfileKeydown);
 $('#botInventory')?.addEventListener('click', handleBotInventoryClick);
 $('#botInventory')?.addEventListener('keydown', handleBotInventoryKeydown);
 $('#botInventory')?.addEventListener('dragstart', handleBotInventoryDragStart);

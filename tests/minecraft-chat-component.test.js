@@ -6,11 +6,15 @@ const {
   chatComponentToString,
   createChatComponentEventGuard,
   isGreenColor,
+  normalizeGreenChatMessage,
   parseGreenChatComponent,
   safeOpenUrl
 } = require('../minecraft-chat-component');
 
 function run() {
+  assert.equal(normalizeGreenChatMessage('> regular GreenChat message'), 'regular GreenChat message');
+  assert.equal(normalizeGreenChatMessage('>_<'), '>_<', 'a leading angle bracket without whitespace is message content');
+  assert.equal(normalizeGreenChatMessage('>hello'), '>hello', 'ordinary text beginning with an angle bracket must be preserved');
   assert.equal(
     chatComponentToString({ text: '<Alice> ', extra: [{ text: 'https://example.com/path?q=1' }] }),
     '<Alice> https://example.com/path?q=1'
