@@ -187,6 +187,7 @@ select {
 }
 
 .topbar {
+  --dashboard-brand-collapse-shift: 70px;
   position: sticky;
   top: env(safe-area-inset-top, 0px);
   z-index: 70;
@@ -195,13 +196,14 @@ select {
   gap: 14px;
   margin-bottom: 16px;
   padding: 8px 0 10px;
-  transition: gap 360ms cubic-bezier(.2, .8, .2, 1);
+  pointer-events: none;
 }
 
 .topbar::before {
   content: "";
   position: absolute;
-  inset: 0 -16px;
+  inset: 0 -16px auto;
+  height: 100%;
   z-index: -1;
   border-bottom: 1px solid transparent;
   background: color-mix(in srgb, var(--bg) 94%, transparent);
@@ -209,6 +211,7 @@ select {
   opacity: 0;
   backdrop-filter: blur(12px) saturate(1.08);
   transition:
+    height 360ms cubic-bezier(.2, .8, .2, 1),
     opacity 220ms ease,
     border-color 280ms ease,
     box-shadow 280ms ease;
@@ -220,26 +223,23 @@ select {
   opacity: 1;
 }
 
-.topbar.topbar-compact {
-  gap: 0;
+.topbar.topbar-compact::before {
+  height: calc(100% - var(--dashboard-brand-collapse-shift));
 }
 
 .dashboard-brand {
   position: relative;
   z-index: 1;
-  max-height: 72px;
-  overflow: hidden;
   transform-origin: left center;
-  will-change: max-height, opacity, transform, filter;
+  pointer-events: auto;
+  will-change: opacity, transform, filter;
   transition:
-    max-height 360ms cubic-bezier(.2, .8, .2, 1),
     opacity 280ms ease,
     transform 360ms cubic-bezier(.2, .8, .2, 1),
     filter 280ms ease;
 }
 
 .dashboard-brand.dashboard-brand-hidden {
-  max-height: 0;
   opacity: 0;
   filter: blur(5px);
   pointer-events: none;
@@ -295,6 +295,9 @@ h2 {
 .topbar-actions {
   position: relative;
   z-index: 1;
+  pointer-events: auto;
+  will-change: transform;
+  transition: transform 360ms cubic-bezier(.2, .8, .2, 1);
   display: flex;
   align-items: center;
   gap: 10px;
@@ -4073,6 +4076,10 @@ body.search-focus-active #logoutButton {
   justify-content: flex-start;
 }
 
+.topbar.topbar-compact .topbar-actions {
+  transform: translate3d(0, calc(0px - var(--dashboard-brand-collapse-shift)), 0);
+}
+
 .player-profile-message-bot .chat-time {
   margin-left: auto;
 }
@@ -5644,6 +5651,7 @@ body.modal-open { overflow:hidden; }
   }
 
   .topbar {
+    --dashboard-brand-collapse-shift: 57px;
     align-items: stretch;
     gap: 10px;
   }
