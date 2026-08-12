@@ -7,12 +7,16 @@ class AccountRegistry {
   }
 
   async load() {
-    this.accounts = new Map((await this.repository.list()).map(account => [account.id, account]));
+    const accounts = await this.repository.list();
+    const primaryAccounts = accounts.filter(account => account.isDefault);
+    if (primaryAccounts.length > 1) throw new Error('Only one Minecraft account can be primary.');
+    this.accounts = new Map(accounts.map(account => [account.id, account]));
     return this.list();
   }
 
   list() { return [...this.accounts.values()].sort((a, b) => a.sortOrder - b.sortOrder); }
   get(id) { return this.accounts.get(id) || null; }
+  getPrimary() { return this.list().find(account => account.isDefault) || null; }
 
   async add(input) {
     const account = await this.repository.create(input);

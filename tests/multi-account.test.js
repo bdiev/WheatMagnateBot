@@ -27,6 +27,10 @@ async function main(){
   await registry.add(second); const bots=[]; const factoryOptions=[];
   const manager=new BotManager({registry,startDelayMs:0,maxConcurrentBots:2,runtimeFactory:account=>new MinecraftBotRuntime({account,authCacheRoot:path.join('data','auth-cache'),botFactory:options=>{factoryOptions.push(options);const bot=new EventEmitter();bot.quit=()=>{};bots.push(bot);return bot;}})});
   const [a,b]=await Promise.all([manager.start(first.id),manager.start(second.id)]); assert.equal(a.accountId,first.id);assert.equal(b.accountId,second.id);assert.equal(bots.length,2,'runtimes do not share Mineflayer instances');
+  assert.equal(manager.getPrimaryContext()?.accountId,first.id,'primary context is resolved by account metadata');
+  assert.equal(manager.getContext(second.id)?.accountId,second.id);
+  assert.equal(manager.getBot(second.id),bots[1]);
+  assert.equal(bots[1].listenerCount('whisper'),0,'secondary does not register Whisper listeners');
   assert.notEqual(factoryOptions[0].profilesFolder,factoryOptions[1].profilesFolder,'auth-cache directories are isolated');
   const firstRuntime=manager.get(first.id); const secondRuntime=manager.get(second.id); assert.notEqual(firstRuntime.intervals,secondRuntime.intervals,'timer collections are isolated');
   const duplicate=await Promise.all([manager.start(first.id),manager.start(first.id)]); assert.equal(bots.length,2,'concurrent starts do not create duplicate runtimes'); assert.equal(duplicate[0].accountId,first.id);
@@ -42,6 +46,13 @@ async function main(){
   assert.equal(managedInventoryStatus.armor[0].slot,5,'managed runtime snapshots include equipment slots');
   assert.deepEqual(managedInventoryStatus.inventory.map(item=>item.slot),[9,45],'managed runtime snapshots keep main inventory and offhand slot numbers');
   assert.equal(managedInventoryStatus.heldItem.slot,9,'managed runtime snapshots include the held item');
+  const firstBotBeforeSecondReconnect=bots[0];
+  const oldSecondBot=bots[1];
+  await manager.reconnect(second.id);
+  assert.equal(bots.length,3,'reconnect creates exactly one replacement Mineflayer instance');
+  assert.equal(oldSecondBot.eventNames().length,0,'reconnect removes every listener from the old bot');
+  assert.equal(manager.getBot(first.id),firstBotBeforeSecondReconnect,'reconnecting Bot B does not replace Bot A');
+  assert.equal(manager.getContext(second.id),secondRuntime,'reconnect preserves the account context and module instances');
   await manager.shutdown(); assert.equal(firstRuntime.status,'stopped');assert.equal(secondRuntime.status,'stopped');
   const publicStatus=firstRuntime.getStatus(); assert.equal(Object.hasOwn(publicStatus,'authCachePath'),true); assert.equal(publicStatus.authCachePath,undefined,'status never exposes auth-cache path');
 

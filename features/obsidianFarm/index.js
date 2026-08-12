@@ -18,6 +18,20 @@ const { Movements, pathfinder } = require('mineflayer-pathfinder');
 const { GoalNear }              = require('mineflayer-pathfinder').goals;
 const Vec3                      = require('vec3');
 const fs                        = require('fs');
+const path                      = require('node:path');
+
+/**
+ * Create one fully isolated Obsidian Farm runtime.
+ *
+ * Every mutable value below lives in this factory closure. Requiring this
+ * module no longer makes multiple Minecraft accounts share a loop, lock,
+ * coordinates, statistics or error state.
+ */
+function createObsidianFarm(context = {}) {
+const identity = {
+  botId: String(context.accountId || context.botId || 'legacy-primary'),
+  username: String(context.username || 'WheatMagnate')
+};
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 const PICKAXE_PRIORITY = [
@@ -31,8 +45,8 @@ const INTERACT_SETTLE_MS    = 25;     // settle delay after block interaction
 const CAULDRON_RADIUS_OPTIONS = [4, 5, 6];
 const DEFAULT_CAULDRON_DIST = 5;
 const MIN_PICKAXE_REMAINING_PERCENT = 5;
-const FARM_CONFIG_FILE = 'obsidian_farm_config.json';
-const FARM_DEBUG_LOG_FILE = 'obsidian_farm_debug.log';
+const FARM_CONFIG_FILE = path.resolve(context.configFile || 'obsidian_farm_config.json');
+const FARM_DEBUG_LOG_FILE = path.resolve(context.debugLogFile || 'obsidian_farm_debug.log');
 const MAX_INTERACT_DISTANCE = 4.25;
 const OBSIDIAN_DIG_BASE_HOLD_MS = 1_650;
 const OBSIDIAN_DIG_RETRY_HOLD_BONUS_MS = 250;
@@ -169,6 +183,7 @@ function saveFarmConfig() {
           maxCauldronDist: normalizeCauldronRadius(farm.config.maxCauldronDist),
         }
       : null;
+    fs.mkdirSync(path.dirname(FARM_CONFIG_FILE), { recursive: true });
     fs.writeFileSync(FARM_CONFIG_FILE, JSON.stringify(payload, null, 2), 'utf8');
   } catch (_) {}
 }
@@ -1268,12 +1283,16 @@ function writeFarmDebug(event, details = {}) {
   if (!farmDebugLoggingEnabled) return;
   const line = JSON.stringify({
     time: new Date().toISOString(),
+    botId: identity.botId,
+    username: identity.username,
     event,
     ...details
   });
   // Debug logging must not block the time-sensitive farming loop, especially
   // when the project directory is synced by OneDrive.
-  fs.appendFile(FARM_DEBUG_LOG_FILE, `${line}\n`, 'utf8', () => {});
+  fs.mkdir(path.dirname(FARM_DEBUG_LOG_FILE), { recursive: true }, () => {
+    fs.appendFile(FARM_DEBUG_LOG_FILE, `${line}\n`, 'utf8', () => {});
+  });
 }
 
 function getDebugLoggingEnabled() {
@@ -2394,7 +2413,7 @@ function stop(notify) {
 
 loadFarmConfig();
 
-module.exports = {
+return {
   start,
   resume,
   suspend,
@@ -2418,6 +2437,19 @@ module.exports = {
     clearCauldronMemory() {
       cauldronFailures.clear();
     },
+    getIsolationState() {
+      return {
+        identity: { ...identity },
+        loopHandle: farm.loopHandle,
+        worldInteractionQueue,
+        pickaxeBlocksMined,
+        farmCycleSequence,
+        farmFailureStartedAt,
+        activeFarmNotificationTypes,
+        cauldronReachStats,
+        cauldronFailures
+      };
+    },
     constants: {
       CAULDRON_FAILURE_COOLDOWN_MS,
       CAULDRON_RETRY_DELAY_MS,
@@ -2425,3 +2457,13 @@ module.exports = {
     }
   }
 };
+}
+
+// Backward-compatible primary instance. Existing single-account deployments
+// keep their legacy settings while BotContext users call the factory above.
+const legacyPrimaryFarm = createObsidianFarm({
+  accountId: '00000000-0000-4000-8000-000000000001',
+  username: 'WheatMagnate'
+});
+
+module.exports = Object.assign(legacyPrimaryFarm, { createObsidianFarm });

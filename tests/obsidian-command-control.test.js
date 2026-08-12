@@ -30,15 +30,17 @@ assert.match(
   /if \(botCommandWorkerRunning\) return;[\s\S]*?await processBotCommandsOnce\(\)/,
   'the command worker must not overlap itself'
 );
-assert.match(
+assert.doesNotMatch(
   serverSource,
-  /const accountId = commandType\.startsWith\('obsidian_'\)[\s\S]*?DEFAULT_MINECRAFT_ACCOUNT_ID/,
-  'global obsidian controls must be routed to the runtime that owns the farm'
+  /commandType\.startsWith\('obsidian_'\)[\s\S]*?DEFAULT_MINECRAFT_ACCOUNT_ID/,
+  'Obsidian controls must retain the explicitly selected account ID'
 );
-assert.match(
+assert.doesNotMatch(
   botSource,
-  /if \(type\.startsWith\('obsidian_'\)\) \{[\s\S]*?executeBotCommand\(\{ \.\.\.command, account_id: DEFAULT_ACCOUNT_ID \}\)/,
-  'previously queued managed-account obsidian commands must be forwarded to the real farm runtime'
+  /type\.startsWith\('obsidian_'\)[\s\S]*?executeBotCommand\(\{ \.\.\.command, account_id: DEFAULT_ACCOUNT_ID \}\)/,
+  'managed-account Obsidian commands must never be forwarded to the primary farm'
 );
+assert.match(botSource, /if \(type === 'obsidian_set_coordinates'\)/, 'managed runtimes configure their own farm');
+assert.match(botSource, /if \(type === 'obsidian_toggle'\)/, 'managed runtimes start and stop their own farm');
 
 console.log('Obsidian command control tests passed.');

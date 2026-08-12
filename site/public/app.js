@@ -855,8 +855,15 @@ function accountStatusClass(account) {
 
 function applyAccountTabScope(account) {
   const restricted = Boolean(account && !account.isDefault);
-  const allowed = new Set(['chat','bot','kill-aura']);
+  const allowed = new Set(['chat','bot','kill-aura','obsidian','admin']);
   $$('.tab-button[data-tab]').forEach(button => button.classList.toggle('account-tab-restricted',restricted && !allowed.has(button.dataset.tab)));
+  const childTab = $('.tab-button[data-tab="child-ai"]');
+  if (childTab) childTab.hidden = restricted || state.currentUser?.role !== 'admin';
+  $$('[data-primary-only]').forEach(element => { element.hidden = restricted; });
+  const whisperPanel = $('#whisperPanel');
+  if (whisperPanel) whisperPanel.hidden = restricted;
+  if (restricted) setWhisperOpen(false);
+  document.body.classList.toggle('secondary-account-active', restricted);
   if (restricted && !allowed.has(state.activeTab)) setActiveTab('chat');
 }
 
@@ -881,7 +888,10 @@ function renderAccountSwitcher() {
   const current = state.accounts.find(account => account.id === state.activeAccountId);
   applyAccountTabScope(current);
   const heading = $('.topbar h1');
-  if (heading) heading.title = current ? `Active Minecraft account: ${current.displayName}` : '';
+  if (heading) {
+    heading.title = current ? `Active Minecraft account: ${current.displayName}` : '';
+    heading.dataset.accountLabel = current?.displayName || '';
+  }
 }
 
 async function loadAccounts() {

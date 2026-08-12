@@ -42,7 +42,9 @@ const { AccountRepository } = require('./site/accounts/account-repository');
 const { AccountRegistry } = require('./site/accounts/account-registry');
 const { MinecraftBotRuntime } = require('./site/accounts/minecraft-bot-runtime');
 const { BotManager } = require('./site/accounts/bot-manager');
+const { BotContext } = require('./site/accounts/bot-context');
 const { ensureAccountColumns } = require('./site/accounts/account-schema');
+const { assertModuleAvailable } = require('./site/accounts/module-policy');
 const { AuthCacheStore } = require('./site/accounts/auth-cache-store');
 const { normalizeKillAuraTargets } = require('./site/kill-aura-catalog');
 
@@ -1236,6 +1238,57 @@ const config = {
   profilesFolder: path.join(MINECRAFT_PROFILES_FOLDER,DEFAULT_ACCOUNT_ID),
   session: loadedSession
 };
+
+// Explicit, stable owner for the legacy primary pipeline. The primary bot is
+// identified by account metadata, never by array order or the selected UI tab.
+const primaryBotContext = new BotContext({
+  account: {
+    id: DEFAULT_ACCOUNT_ID,
+    username: config.username,
+    displayName: 'WheatMagnate',
+    isDefault: true
+  }
+});
+primaryBotContext.modules = {
+  obsidianFarm: farm,
+  killAura,
+  follow: followFeature,
+  growingChild: { primaryOnly: true, get instance() { return growingChild; } },
+  whisper: { primaryOnly: true },
+  globalObservers: {
+    primaryOnly: true,
+    chatCollection: true,
+    greenChat: true,
+    discordBridge: true,
+    playerObservation: true,
+    globalPlaytime: true
+  }
+};
+primaryBotContext.getStatus = () => ({
+  accountId: DEFAULT_ACCOUNT_ID,
+  username: bot?.username || config.username,
+  isPrimary: true,
+  lifecycle: primaryBotContext.lifecycle,
+  connected: Boolean(bot?.entity),
+  status: bot?.entity ? 'connected' : primaryBotContext.lifecycle,
+  task: farm.getStatus().enabled ? 'obsidian' : killAura.getStatus().enabled ? 'kill_aura' : followFeature.getStatus().enabled ? 'follow' : 'idle',
+  modules: {
+    obsidianFarm: farm.getStatus(),
+    killAura: killAura.getStatus(),
+    follow: followFeature.getStatus()
+  }
+});
+
+function attachPrimaryBot(createdBot, lifecycle = 'connecting') {
+  primaryBotContext.bot = createdBot || null;
+  primaryBotContext.username = createdBot?.username || config.username;
+  primaryBotContext.setLifecycle(lifecycle);
+}
+
+function detachPrimaryBot(lifecycle = 'offline') {
+  primaryBotContext.bot = null;
+  primaryBotContext.setLifecycle(lifecycle);
+}
 
 async function clearLegacyAuthCacheForReauthorization() {
   const root = path.resolve(MINECRAFT_PROFILES_FOLDER);
@@ -4260,6 +4313,7 @@ function safelyCloseMinecraftBot(targetBot, reason = 'Connection closed') {
 function pauseMinecraftConnection(reason) {
   const currentBot = bot;
   bot = null;
+  detachPrimaryBot('offline');
   clearIntervals();
   followFeature.stop();
   farm.suspend();
@@ -4296,6 +4350,7 @@ function disconnectForNonWhitelistedPlayer(entity, distance) {
 
   if (currentBot) {
     bot = null;
+    detachPrimaryBot('offline');
     clearIntervals();
     safelyCloseMinecraftBot(currentBot, reason);
   }
@@ -5647,6 +5702,13 @@ async function initializeMultiAccountManager() {
         authCacheStore,
         isWhitelisted: username => ignoredUsernames.some(item => item.toLowerCase() === String(username).toLowerCase()),
         dangerRadius: runtimeSettings.dangerRadius,
+        moduleOptions: {
+          notify: payload => reportNotification(payload.eventType || 'farm_stalled', {
+            ...payload,
+            title: `${account.displayName} — ${payload.title || 'Obsidian Farm'}`,
+            metadata: { ...(payload.metadata || {}), accountId: account.id, username: account.username }
+          })
+        },
         killAuraFactory: () => createKillAuraFeature({
           onKill: ({ mobName }) => recordKillAuraKill(account.id, mobName)
             .catch(error => console.error(`[Kill Aura] Failed to persist kill for ${account.displayName}:`, error.message)),
@@ -5720,6 +5782,7 @@ async function initializeMultiAccountManager() {
       return runtime;
     }
   });
+  multiBotManager.registerContext(primaryBotContext);
   for (const account of accounts.filter(item => item.enabled && !item.isDefault)) {
     await multiBotManager.start(account.id).catch(error => console.error(`[Accounts] Could not start ${account.displayName}:`, error.message));
   }
@@ -5732,19 +5795,17 @@ async function executeManagedAccountCommand(command) {
   if (runtime && refreshedAccount) runtime.account = refreshedAccount;
   const type = String(command.command_type || '');
   const payload = command.payload || {};
-  // Obsidian state is global and implemented by the default runtime. Forward
-  // commands queued by older site builds against a managed account so they do
-  // real work instead of merely setting runtime.task = 'obsidian'.
-  if (type.startsWith('obsidian_')) {
-    return executeBotCommand({ ...command, account_id: DEFAULT_ACCOUNT_ID });
-  }
   if (type === 'account_start') return multiBotManager.start(command.account_id);
   if (type === 'account_stop') return multiBotManager.stop(command.account_id);
+  if (type === 'account_remove') return multiBotManager.remove(command.account_id, { force: true });
   if (type === 'account_restart') return multiBotManager.restart(command.account_id);
   if (type === 'account_reauthorize') return multiBotManager.reauthorize(command.account_id);
   if (type === 'account_pause') return multiBotManager.pause(command.account_id);
   if (type === 'account_resume') return multiBotManager.resume(command.account_id);
   if (!runtime) throw new Error('Account runtime is not active.');
+  if (type.startsWith('child_') || type.startsWith('gemini_') || type.startsWith('site_whisper')) {
+    assertModuleAvailable(runtime.account, type.startsWith('site_whisper') ? 'whisper' : 'growingChild');
+  }
   if (type === 'pause') return runtime.pause();
   if (type === 'resume') return runtime.resume();
   if (type === 'chat') {
@@ -5760,20 +5821,24 @@ async function executeManagedAccountCommand(command) {
     await persistManagedRuntimeStatus(runtime.getStatus());
     return result;
   }
-  if (type === 'site_whisper_claim') {
-    const username = String(payload.username || '').replace(/[^A-Za-z0-9_]/g,'').slice(0,32);
-    if (!username) throw new Error('Whisper target is required.');
-    siteWhisperTargets.set(`${command.account_id}:${username.toLowerCase()}`,{timestamp:Date.now(),siteUsername:command.requested_by || null});
-    return { username,claimed:true };
+  if (type === 'obsidian_set_coordinates') {
+    const x = Number(payload.x);
+    const y = Number(payload.y);
+    const z = Number(payload.z);
+    if (![x, y, z].every(Number.isFinite)) throw new Error('Valid Obsidian Farm coordinates are required.');
+    return runtime.configureObsidian(x, y, z, { maxCauldronDist: payload.maxCauldronDist ?? payload.radius });
   }
-  if (type === 'site_whisper') {
-    if (!runtime.bot?.chat) throw new Error('Account is not connected.');
-    const username = String(payload.username || '').replace(/[^A-Za-z0-9_]/g,'').slice(0,32);
-    const message = sanitizeSiteChatMessage(payload.message);
-    if (!username || !message) throw new Error('Whisper target and message are required.');
-    siteWhisperTargets.set(`${command.account_id}:${username.toLowerCase()}`,{timestamp:Date.now(),siteUsername:command.requested_by || null});
-    runtime.bot.chat(`/msg ${username} ${message}`);
-    return { username,sent:true };
+  if (type === 'obsidian_radius_toggle') {
+    return { maxCauldronDist: runtime.obsidianFarm.cycleCauldronRadius(), ...runtime.obsidianFarm.getStatus() };
+  }
+  if (type === 'obsidian_reset_coordinates') {
+    runtime.setObsidianEnabled(false);
+    runtime.obsidianFarm.resetConfig();
+    return runtime.obsidianFarm.getStatus();
+  }
+  if (type === 'obsidian_toggle') {
+    const current = runtime.obsidianFarm.getStatus();
+    return runtime.setObsidianEnabled(!(current.enabled || runtime.task === 'obsidian'));
   }
   if (type === 'kill_aura_targets') {
     const targets = normalizeKillAuraTargets(payload.targets);
@@ -5806,7 +5871,10 @@ async function executeManagedAccountCommand(command) {
         selectedMobs: auraStatus.targets
       });
     }
-    return runtime.assignTask(type === 'follow' ? 'follow' : 'idle');
+    if (type === 'follow_stop') return runtime.stopFollowing();
+    const username = String(payload.username || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 16);
+    if (!username) throw new Error('Follow target is required.');
+    return runtime.startFollowing(username, { distance: payload.distance });
   }
   throw new Error(`Command ${type} is not supported by managed runtimes yet.`);
 }
@@ -7970,8 +8038,10 @@ function createBot() {
   }).catch(() => {});
   try {
     bot = createMinecraftBot(config);
+    attachPrimaryBot(bot, 'connecting');
   } catch (err) {
     bot = null;
+    detachPrimaryBot('offline');
     console.log(`[x] Failed to create Minecraft connection: ${err.message}`);
     recordSystemLog({
       level: 'error',
@@ -8010,6 +8080,7 @@ function createBot() {
     farm.suspend();
     killAura.detachBot();
     bot = null;
+    detachPrimaryBot(shouldReconnect ? 'reconnecting' : 'offline');
     safelyCloseMinecraftBot(createdBot, reason);
     setDisconnectReason(buildDisconnectReason(reason, 'Connection lost'));
     reportNotification('bot_disconnected', {
@@ -8076,6 +8147,7 @@ function createBot() {
   });
 
   bot.on('spawn', async () => {
+    attachPrimaryBot(createdBot, 'online');
     if (bot === createdBot && bot.username && bot.username.toLowerCase() !== String(config.username).toLowerCase()) {
       const previousUsername = config.username;
       const duplicate = pool

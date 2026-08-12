@@ -10,6 +10,7 @@ const { Pool } = require('pg');
 const { AccountRepository } = require('./accounts/account-repository');
 const { AccountRegistry } = require('./accounts/account-registry');
 const { ensureAccountColumns } = require('./accounts/account-schema');
+const { assertModuleAvailable } = require('./accounts/module-policy');
 const { runMigrations } = require('./migrations');
 const { SseHub, handleSseRequest } = require('./sse');
 const { calculateAnalytics } = require('./obsidian-analytics');
@@ -1157,9 +1158,17 @@ async function commandAccountId(body, currentUser) {
   return accountId;
 }
 
-async function whisperAccountId(currentUser, source) {
+async function primaryOnlyAccountId(currentUser, source, moduleName = 'whisper') {
   const requested = source instanceof URL ? source.searchParams.get('accountId') : source?.accountId;
-  return await commandAccountId({accountId:requested || DEFAULT_MINECRAFT_ACCOUNT_ID},currentUser) || DEFAULT_MINECRAFT_ACCOUNT_ID;
+  const accountId = await commandAccountId({accountId:requested || DEFAULT_MINECRAFT_ACCOUNT_ID},currentUser)
+    || DEFAULT_MINECRAFT_ACCOUNT_ID;
+  const account = (await getAccountRegistry()).get(accountId);
+  assertModuleAvailable(account, moduleName);
+  return accountId;
+}
+
+async function whisperAccountId(currentUser, source) {
+  return primaryOnlyAccountId(currentUser, source);
 }
 
 async function queueSiteChatMessage(currentUser, body) {
@@ -2143,7 +2152,7 @@ async function handleAccountsApi(req, currentUser, url) {
     if (account.isDefault) throw Object.assign(new Error('The default account cannot be deleted.'), { statusCode:409 });
     const body = await readJsonBody(req, 8 * 1024).catch(() => ({}));
     if (body.confirm !== account.displayName) throw Object.assign(new Error('Account deletion confirmation does not match.'), { statusCode:409 });
-    await queueBotCommand(currentUser, 'account_stop', { accountId }, { source:'site',accountId });
+    await queueBotCommand(currentUser, 'account_remove', { accountId }, { source:'site',accountId });
     const removed = await registry.remove(accountId);
     await recordSystemLog({level:'audit',category:'accounts',actor:currentUser.username,message:`Deleted Minecraft account ${removed.displayName}.`,details:{accountId,authCachePreserved:true}});
     return { statusCode:200,payload:{removed:true,accountId,authCachePreserved:true} };
@@ -3376,13 +3385,9 @@ async function queueAdminBotCommand(currentUser, body) {
     payload.targets = normalizeKillAuraTargets(payload.targets);
   }
 
-  // The obsidian farm is owned by the compatibility/default runtime. Managed
-  // accounts currently expose only a task label, not the actual farming loop;
-  // routing these global controls to a selected managed account silently did
-  // nothing while the Obsidian page still showed the default farm state.
-  const accountId = commandType.startsWith('obsidian_')
-    ? DEFAULT_MINECRAFT_ACCOUNT_ID
-    : await commandAccountId(body,currentUser);
+  const accountId = await commandAccountId(body,currentUser) || DEFAULT_MINECRAFT_ACCOUNT_ID;
+  const account = (await getAccountRegistry()).get(accountId);
+  if (commandType.startsWith('child_') || commandType.startsWith('gemini_')) assertModuleAvailable(account, 'growingChild');
   return queueBotCommand(currentUser, commandType, payload, { accountId });
 }
 
@@ -3617,8 +3622,9 @@ async function getAdminSystemLogs(currentUser, url) {
   };
 }
 
-async function getAdminControlState(currentUser) {
+async function getAdminControlState(currentUser, url) {
   assertAdminUser(currentUser);
+  const scoped = url ? await scopedAccountRuntime(url, currentUser) : null;
 
   const [
     settingsResult,
@@ -3630,17 +3636,19 @@ async function getAdminControlState(currentUser) {
     farmStateResult
   ] = await Promise.all([
     pool.query('SELECT key, value FROM admin_settings'),
-    pool.query('SELECT status, observed_at FROM bot_status_snapshots WHERE id = 1'),
+    scoped
+      ? Promise.resolve({ rows:[{ status:scoped.bot, observed_at:scoped.observedAt }] })
+      : pool.query('SELECT status, observed_at FROM bot_status_snapshots WHERE id = 1'),
     pool.query('SELECT username FROM whitelist ORDER BY LOWER(username) ASC'),
     pool.query('SELECT username FROM ignored_users ORDER BY LOWER(username) ASC'),
-    pool.query(`
+    scoped ? Promise.resolve({ rows:(scoped.bot.nearbyPlayers || []).map(player => ({ username:player.username })) }) : pool.query(`
       SELECT username
       FROM player_activity
       WHERE is_online = TRUE
       ORDER BY LOWER(username) ASC
     `),
     pool.query('SELECT COUNT(DISTINCT LOWER(username))::int AS total FROM player_activity'),
-    pool.query(`
+    scoped ? Promise.resolve({ rows:[] }) : pool.query(`
       SELECT target_x, target_y, target_z, target_radius
       FROM obsidian_farm_state
       WHERE id = 1
@@ -4124,7 +4132,7 @@ async function handleApi(req, res, url) {
       sendJson(res, 200, await updateIncident(currentUser, incidentMatch[1], await readJsonBody(req))); return;
     }
     if (url.pathname === '/api/admin/control-state' && req.method === 'GET') {
-      sendJson(res, 200, await getAdminControlState(currentUser));
+      sendJson(res, 200, await getAdminControlState(currentUser, url));
       return;
     }
     if (url.pathname === '/api/admin/system-logs' && req.method === 'GET') {
@@ -4138,6 +4146,7 @@ async function handleApi(req, res, url) {
       sendJson(res, 200, await updateNotificationRule(currentUser, await readJsonBody(req))); return;
     }
     if (url.pathname === '/api/admin/growing-child' && req.method === 'GET') {
+      await primaryOnlyAccountId(currentUser, url, 'growingChild');
       sendJson(res, 200, await getGrowingChildAdmin(currentUser)); return;
     }
     if (url.pathname === '/api/admin/growing-child' && req.method === 'POST') {
@@ -4300,7 +4309,10 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/obsidian') {
       const scoped = req.method === 'GET' ? await scopedAccountRuntime(url,currentUser) : null;
-      if (req.method === 'GET' && scoped) sendJson(res,200,{farm:{desiredEnabled:false,totalMined:0,todayMined:0,sessionPerHour:0,updatedAt:scoped.observedAt},hourly:[],daily:[],supplies:{hasSnapshot:false,inventory:null,barrel:null},settings:{timezone:'Europe/Vilnius'},goals:[],annotations:[],analytics:{}});
+      if (req.method === 'GET' && scoped) {
+        const localFarm = scoped.bot.modules?.obsidianFarm || scoped.bot.obsidian || {};
+        sendJson(res,200,{farm:{...localFarm,totalMined:localFarm.cyclesCompleted || 0,todayMined:localFarm.cyclesCompleted || 0,sessionPerHour:0,updatedAt:scoped.observedAt},hourly:[],daily:[],supplies:{hasSnapshot:false,inventory:null,barrel:null},settings:{timezone:'Europe/Vilnius'},goals:[],annotations:[],analytics:{}});
+      }
       else if (req.method === 'GET') sendJson(res, 200, await getObsidianStats(currentUser));
       else if (req.method === 'POST') sendJson(res, 200, await updateObsidianAnalytics(currentUser, await readJsonBody(req)));
       else sendError(res, 405, 'Method not allowed.');
