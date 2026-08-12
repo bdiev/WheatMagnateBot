@@ -25,7 +25,7 @@ async function main(){
   const context=new ActiveAccountContext(registry); assert.equal(context.current().id,first.id); context.select(second.id); assert.equal(context.current().id,second.id); await registry.remove(second.id); assert.equal(context.current().id,first.id,'deleted selection falls back to first account');
 
   await registry.add(second); const bots=[]; const factoryOptions=[];
-  const manager=new BotManager({registry,startDelayMs:0,maxConcurrentBots:2,runtimeFactory:account=>new MinecraftBotRuntime({account,authCacheRoot:path.join('data','auth-cache'),botFactory:options=>{factoryOptions.push(options);const bot=new EventEmitter();bot.quit=()=>{};bots.push(bot);return bot;}})});
+  const manager=new BotManager({registry,startDelayMs:0,startJitterMs:0,maxConcurrentBots:2,runtimeFactory:account=>new MinecraftBotRuntime({account,authCacheRoot:path.join('data','auth-cache'),botFactory:options=>{factoryOptions.push(options);const bot=new EventEmitter();bot.quit=()=>{};bots.push(bot);return bot;}})});
   const [a,b]=await Promise.all([manager.start(first.id),manager.start(second.id)]); assert.equal(a.accountId,first.id);assert.equal(b.accountId,second.id);assert.equal(bots.length,2,'runtimes do not share Mineflayer instances');
   assert.equal(manager.getPrimaryContext()?.accountId,first.id,'primary context is resolved by account metadata');
   assert.equal(manager.getContext(second.id)?.accountId,second.id);
@@ -101,6 +101,22 @@ async function main(){
   assert.equal(equipped,'golden_carrot','auto-eat selects the best safe food instead of raw food');
   assert.equal(consumed,1);
   await foodRuntime.stop();
+
+  const staggerStarts=[];
+  const staggerManager=new BotManager({
+    registry,
+    startDelayMs:30,
+    startJitterMs:0,
+    maxConcurrentBots:2,
+    runtimeFactory:account=>({
+      accountId:account.id,isPrimary:Boolean(account.isDefault),bot:null,status:'stopped',
+      async start(){return this.connectionGate(async()=>{this.status='connecting';staggerStarts.push(Date.now());return {accountId:this.accountId,status:this.status};});},
+      async destroy(){this.status='stopped';},getStatus(){return {accountId:this.accountId,status:this.status};}
+    })
+  });
+  await Promise.all([staggerManager.start(first.id),staggerManager.start(second.id)]);
+  assert.ok(staggerStarts[1]-staggerStarts[0]>=25,'parallel starts are serialized with the configured handshake interval');
+  await staggerManager.shutdown();
   console.log('Multi-account tests passed.');
 }
 

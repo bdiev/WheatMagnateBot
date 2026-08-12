@@ -22,7 +22,10 @@ Resource controls:
 
 - `MAX_BOT_ACCOUNTS` (default `8`) limits stored account metadata.
 - `MAX_CONCURRENT_BOTS` (default `3`) limits simultaneous runtimes.
-- `BOT_START_DELAY_MS` (default `1500`) staggers authentication and server connections.
+- `BOT_START_DELAY_MS` (default `10000`) is the minimum interval between Minecraft login handshakes. Set `15000`–`30000` for stricter server/proxy rate limits.
+- `BOT_START_JITTER_MS` (default `3000`) adds random delay so reconnects cannot form a synchronized wave.
+
+The primary account connects first. Secondary starts and reconnects pass through a serialized connection queue, so two managed accounts never initiate a login handshake simultaneously. If a server enforces a hard concurrent-account limit per public IP rather than a login-rate limit, staggering cannot bypass that policy; use fewer simultaneous accounts or server-approved distinct proxies/IPs.
 - `LIVE_DASHBOARD_CACHE_MS` (default `1000`) coalesces dashboard reads.
 
 Account management endpoints are under `/api/accounts`. Reads require an authenticated site user; account creation, editing, deletion and runtime actions require an administrator. Deleting an account preserves statistics and its auth cache unless an operator removes that directory separately.

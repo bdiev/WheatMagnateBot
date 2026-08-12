@@ -1,15 +1,18 @@
 'use strict';
 
 class BotManager {
-  constructor({ registry, runtimeFactory, maxConcurrentBots = 3, startDelayMs = 1500 } = {}) {
+  constructor({ registry, runtimeFactory, maxConcurrentBots = 3, startDelayMs = 10_000, startJitterMs = 3_000, random = Math.random } = {}) {
     this.registry = registry;
     this.runtimeFactory = runtimeFactory;
     this.maxConcurrentBots = Math.max(1, Number(maxConcurrentBots) || 3);
     this.startDelayMs = Math.max(0, Number(startDelayMs) || 0);
+    this.startJitterMs = Math.max(0, Number(startJitterMs) || 0);
+    this.random = typeof random === 'function' ? random : Math.random;
     this.runtimes = new Map();
     this.contexts = new Map();
     this.startPromises = new Map();
     this.lastStartAt = 0;
+    this.connectionQueue = Promise.resolve();
   }
 
   get(accountId) { return this.runtimes.get(accountId) || null; }
@@ -30,6 +33,26 @@ class BotManager {
   }
   statuses() { return this.registry.list().map(account => this.getContext(account.id)?.getStatus?.() || { accountId:account.id,status:'stopped',task:'idle',uptimeMs:0,lastError:null }); }
 
+  withConnectionSlot(connect) {
+    const queued = this.connectionQueue.catch(() => {}).then(async () => {
+      const jitterMs = this.startJitterMs ? Math.floor(this.random() * (this.startJitterMs + 1)) : 0;
+      while (this.lastStartAt) {
+        const waitMs = this.startDelayMs - (Date.now() - this.lastStartAt);
+        if (waitMs <= 0) break;
+        await new Promise(resolve => setTimeout(resolve, waitMs));
+      }
+      if (jitterMs) await new Promise(resolve => setTimeout(resolve, jitterMs));
+      this.lastStartAt = Date.now();
+      return connect();
+    });
+    this.connectionQueue = queued.then(() => undefined, () => undefined);
+    return queued;
+  }
+
+  noteExternalConnectionStart(startedAt = Date.now()) {
+    this.lastStartAt = Math.max(this.lastStartAt, Number(startedAt) || Date.now());
+  }
+
   async start(accountId) {
     if (this.startPromises.has(accountId)) return this.startPromises.get(accountId);
     const account = this.registry.get(accountId);
@@ -37,13 +60,13 @@ class BotManager {
     const active = [...this.runtimes.values()].filter(runtime => !['stopped','error'].includes(runtime.status));
     if (active.length >= this.maxConcurrentBots && !this.runtimes.has(accountId)) throw Object.assign(new Error('Concurrent bot limit reached.'), { statusCode: 409 });
     let runtime = this.runtimes.get(accountId);
-    if (!runtime) { runtime = this.runtimeFactory(account); this.runtimes.set(accountId, runtime); this.registerContext(runtime); }
-    const promise = (async () => {
-      const waitMs = Math.max(0, this.startDelayMs - (Date.now() - this.lastStartAt));
-      if (waitMs) await new Promise(resolve => setTimeout(resolve, waitMs));
-      this.lastStartAt = Date.now();
-      return runtime.start();
-    })().finally(() => this.startPromises.delete(accountId));
+    if (!runtime) {
+      runtime = this.runtimeFactory(account);
+      runtime.connectionGate = connect => this.withConnectionSlot(connect);
+      this.runtimes.set(accountId, runtime);
+      this.registerContext(runtime);
+    }
+    const promise = runtime.start().finally(() => this.startPromises.delete(accountId));
     this.startPromises.set(accountId, promise);
     return promise;
   }

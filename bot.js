@@ -100,7 +100,14 @@ const BOT_COMMAND_EXECUTION_TIMEOUT_MS = 40_000;
 let botCommandWorkerRunning = false;
 const MAX_BOT_ACCOUNTS = Math.max(1, Number(process.env.MAX_BOT_ACCOUNTS) || 8);
 const MAX_CONCURRENT_BOTS = Math.max(1, Number(process.env.MAX_CONCURRENT_BOTS) || 3);
-const BOT_START_DELAY_MS = Math.max(0, Number(process.env.BOT_START_DELAY_MS) || 1500);
+const configuredBotStartDelayMs = Number(process.env.BOT_START_DELAY_MS);
+const configuredBotStartJitterMs = Number(process.env.BOT_START_JITTER_MS);
+const BOT_START_DELAY_MS = Number.isFinite(configuredBotStartDelayMs) && configuredBotStartDelayMs >= 0
+  ? configuredBotStartDelayMs
+  : 10_000;
+const BOT_START_JITTER_MS = Number.isFinite(configuredBotStartJitterMs) && configuredBotStartJitterMs >= 0
+  ? configuredBotStartJitterMs
+  : 3_000;
 let multiAccountRegistry = null;
 let multiBotManager = null;
 let discordActiveAccountId = DEFAULT_ACCOUNT_ID;
@@ -1290,6 +1297,19 @@ function detachPrimaryBot(lifecycle = 'offline') {
   primaryBotContext.setLifecycle(lifecycle);
 }
 
+async function waitBeforeStartingSecondaryAccounts() {
+  const deadline = Date.now() + MINECRAFT_CONNECT_TIMEOUT_MS + 5_000;
+  while (bot && !bot.entity && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+  const jitterMs = BOT_START_JITTER_MS ? Math.floor(Math.random() * (BOT_START_JITTER_MS + 1)) : 0;
+  const delayMs = BOT_START_DELAY_MS + jitterMs;
+  if (delayMs) {
+    console.log(`[Accounts] Waiting ${delayMs}ms before starting secondary Minecraft accounts.`);
+    await new Promise(resolve => setTimeout(resolve, delayMs));
+  }
+}
+
 async function clearLegacyAuthCacheForReauthorization() {
   const root = path.resolve(MINECRAFT_PROFILES_FOLDER);
   const target = path.resolve(config.profilesFolder);
@@ -2351,7 +2371,6 @@ if (DISCORD_BOT_TOKEN) {
     }
 
     await initDatabase();
-    await initializeMultiAccountManager();
     startObsidianDailyReportScheduler();
     await loadRuntimeSettingsFromDB();
     await saveAdminSettings(runtimeSettings);
@@ -2374,6 +2393,8 @@ if (DISCORD_BOT_TOKEN) {
       mineflayerStarted = true;
       createBot();
     }
+    await waitBeforeStartingSecondaryAccounts();
+    await initializeMultiAccountManager();
 
     console.log('[Discord] Bot is ready and waiting for interactions...');
 
@@ -5693,6 +5714,7 @@ async function initializeMultiAccountManager() {
     registry: multiAccountRegistry,
     maxConcurrentBots: MAX_CONCURRENT_BOTS,
     startDelayMs: BOT_START_DELAY_MS,
+    startJitterMs: BOT_START_JITTER_MS,
     runtimeFactory: account => {
       let lastLoggedRuntimeState = null;
       let runtime = null;
@@ -8036,6 +8058,7 @@ function createBot() {
     category: 'minecraft',
     message: 'Starting Minecraft connection.'
   }).catch(() => {});
+  multiBotManager?.noteExternalConnectionStart();
   try {
     bot = createMinecraftBot(config);
     attachPrimaryBot(bot, 'connecting');

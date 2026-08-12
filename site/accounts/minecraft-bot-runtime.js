@@ -56,6 +56,7 @@ class MinecraftBotRuntime extends BotContext {
     this.reconnectAttempts = 0;
     this.safetyLockout = false;
     this.lastEatErrorAt = 0;
+    this.connectionGate = connect => connect();
     const resolvedModuleOptions = { ...moduleOptions };
     if (typeof killAuraFactory === 'function') resolvedModuleOptions.killAuraFactory = killAuraFactory;
     this.modules = moduleFactory(this, resolvedModuleOptions);
@@ -162,7 +163,7 @@ class MinecraftBotRuntime extends BotContext {
     this.status = 'connecting';
     this.setLifecycle(this.lifecycle === 'offline' ? 'reconnecting' : 'connecting');
     this.emit('status', this.getStatus());
-    this.startPromise = Promise.resolve().then(async () => {
+    this.startPromise = this.connectionGate(async () => {
       await this.authCacheStore?.hydrate(this.account.id,this.authCachePath);
       return this.botFactory({
       username: this.account.username,
