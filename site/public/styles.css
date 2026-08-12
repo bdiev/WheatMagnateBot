@@ -138,7 +138,8 @@ html.page-transition-leaving body {
   ::view-transition-old(root),
   ::view-transition-new(root),
   html.page-transition-ready body,
-  html.page-transition-leaving body {
+  html.page-transition-leaving body,
+  .dashboard-brand {
     animation: none !important;
     transition: none !important;
   }
@@ -187,6 +188,22 @@ select {
   display: grid;
   gap: 14px;
   margin-bottom: 16px;
+}
+
+.dashboard-brand {
+  transform-origin: left center;
+  will-change: opacity, transform, filter;
+  transition:
+    opacity 280ms ease,
+    transform 360ms cubic-bezier(.2, .8, .2, 1),
+    filter 280ms ease;
+}
+
+.dashboard-brand.dashboard-brand-hidden {
+  opacity: 0;
+  filter: blur(5px);
+  pointer-events: none;
+  transform: translate3d(0, -18px, 0) scale(.975);
 }
 
 .eyebrow {

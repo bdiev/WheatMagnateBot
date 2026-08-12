@@ -151,6 +151,37 @@ const NAV_SECTION_INFO = Object.freeze({
   admin: ['Admin', 'Administrative controls']
 });
 const NAV_DEFAULT_ORDER = Object.freeze(['chat', 'bot', 'kill-aura', 'obsidian', 'server', 'players', 'settings', 'notifications', 'timeline', 'child-ai', 'admin']);
+let dashboardBrandLastScrollY = Math.max(0, window.scrollY);
+let dashboardBrandScrollFrame = null;
+
+function updateDashboardBrandVisibility() {
+  dashboardBrandScrollFrame = null;
+  const brand = $('.dashboard-brand');
+  if (!brand) return;
+
+  const scrollY = Math.max(0, window.scrollY);
+  const delta = scrollY - dashboardBrandLastScrollY;
+  if (scrollY <= 8) {
+    brand.classList.remove('dashboard-brand-hidden');
+  } else if (delta > 2 && scrollY > 24) {
+    brand.classList.add('dashboard-brand-hidden');
+  } else if (delta < -2 && scrollY < 110) {
+    brand.classList.remove('dashboard-brand-hidden');
+  }
+  dashboardBrandLastScrollY = scrollY;
+}
+
+function scheduleDashboardBrandVisibility() {
+  if (dashboardBrandScrollFrame != null) return;
+  dashboardBrandScrollFrame = requestAnimationFrame(updateDashboardBrandVisibility);
+}
+
+function initializeDashboardBrandVisibility() {
+  const brand = $('.dashboard-brand');
+  if (!brand) return;
+  brand.classList.toggle('dashboard-brand-hidden', window.scrollY > 24);
+  window.addEventListener('scroll', scheduleDashboardBrandVisibility, { passive: true });
+}
 
 function fallbackTimezones() {
   const supported = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : [];
@@ -7257,5 +7288,6 @@ $('#playerProfileOverlay').addEventListener('click', event => {
 });
 
 updateNavLabel('chat');
+initializeDashboardBrandVisibility();
 initLoopingCarousels();
 initAuth();
