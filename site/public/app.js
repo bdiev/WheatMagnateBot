@@ -11,6 +11,9 @@ const state = {
   liveDashboardTimer: null,
   liveDashboardLoading: false,
   fullSyncLoading: false,
+  fullSyncToken: null,
+  fullSyncPromise: null,
+  accountSwitchGeneration: 0,
   eventSource: null,
   sseWasConnected: false,
   sseNeedsFullSync: false,
@@ -117,6 +120,7 @@ const state = {
   activeAccountId: null,
   obsidianStatsScope: localStorage.getItem('wm-obsidian-stats-scope') === 'all' ? 'all' : 'personal',
   accountAbortController: null,
+  adminControlToken: null,
   accountsRefreshedAt: 0,
   editingAccountId: null,
   pendingPushDestination: null,
@@ -813,6 +817,10 @@ function setBanner(message) {
 }
 
 async function fetchJson(path, { transientRetries = 0, signal = null } = {}) {
+  const accountIdAtStart = state.activeAccountId;
+  const scopedToActiveAccount = path.startsWith('/api/')
+    && !path.startsWith('/api/auth/')
+    && !path.startsWith('/api/accounts');
   let attempt = 0;
   while (true) {
     try {
@@ -824,6 +832,11 @@ async function fetchJson(path, { transientRetries = 0, signal = null } = {}) {
       }
       const response = await fetch(requestPath, { cache: 'no-store', credentials: 'same-origin', signal: signal || state.accountAbortController?.signal });
       const payload = await response.json().catch(() => ({}));
+      if (scopedToActiveAccount && accountIdAtStart !== state.activeAccountId) {
+        const staleError = new Error('The active Minecraft account changed while loading data.');
+        staleError.name = 'AbortError';
+        throw staleError;
+      }
       if (!response.ok) {
         if (response.status === 401 && !path.startsWith('/api/auth/')) {
           showAuthScreen('Please sign in to continue.');
@@ -834,6 +847,7 @@ async function fetchJson(path, { transientRetries = 0, signal = null } = {}) {
       }
       return payload;
     } catch (error) {
+      if (error?.name === 'AbortError') throw error;
       const isTransient = error?.status == null || [502, 503, 504].includes(error.status);
       if (!isTransient || attempt >= transientRetries) throw error;
       await new Promise(resolve => setTimeout(resolve, 350 * (2 ** attempt)));
@@ -865,6 +879,7 @@ function applyAccountTabScope(account) {
   if (whisperPanel) whisperPanel.hidden = restricted;
   if (restricted) setWhisperOpen(false);
   document.body.classList.toggle('secondary-account-active', restricted);
+  updateObsidianStatsScopeVisibility();
   if (restricted && !allowed.has(state.activeTab)) setActiveTab('chat');
 }
 
@@ -918,13 +933,18 @@ async function selectAccount(accountId) {
     return;
   }
   clearInventoryMoveSelection();
+  const switchGeneration = ++state.accountSwitchGeneration;
   state.accountAbortController?.abort();
   state.accountAbortController = new AbortController();
+  if (state.realtimeRefreshTimers.whisper) clearTimeout(state.realtimeRefreshTimers.whisper);
+  delete state.realtimeRefreshTimers.whisper;
   state.activeAccountId = accountId;
   localStorage.setItem('wm-active-account', accountId);
   state.renderSignatures = {};
   state.adminControlState = null;
   state.adminControlRefreshedAt = 0;
+  state.adminControlToken = null;
+  state.adminControlLoading = false;
   state.killAuraData = null;
   state.killAuraSelectedMobs = new Set();
   state.killAuraTargetsDirty = false;
@@ -935,7 +955,12 @@ async function selectAccount(accountId) {
   loadWhisperLastSeenId();
   renderAccountSwitcher();
   setBanner(`Loading ${state.accounts.find(account => account.id === accountId)?.displayName || 'account'}…`);
-  try { await loadAll(); setBanner(''); } catch (error) { if (error.name !== 'AbortError') setBanner(error.message); }
+  try {
+    const loaded = await loadAll({ force:true, switchGeneration });
+    if (loaded && switchGeneration === state.accountSwitchGeneration && accountId === state.activeAccountId) setBanner('');
+  } catch (error) {
+    if (error.name !== 'AbortError' && switchGeneration === state.accountSwitchGeneration) setBanner(error.message);
+  }
 }
 
 function setAccountModalOpen(open, account = null) {
@@ -1190,6 +1215,7 @@ function applyCurrentUser(user) {
   $$('.admin-only').forEach(element => {
     element.hidden = !isAdmin;
   });
+  updateObsidianStatsScopeVisibility();
   applyNavigationOrder();
   applyNavigationVisibility();
   const logoutButton = $('#logoutButton');
@@ -1547,6 +1573,7 @@ function setActiveTab(tab) {
     tab = fallback.dataset.tab;
   }
   state.activeTab = tab;
+  updateObsidianStatsScopeVisibility();
   localStorage.setItem('wm-active-tab', tab);
   $$('.tab-button').forEach(button => {
     const active = button.dataset.tab === tab;
@@ -2828,6 +2855,7 @@ function setWhisperOpen(open) {
   const toggle = $('#whisperToggle');
   const popover = $('#whisperPopover');
   if (!panel || !toggle || !popover) return;
+  if (open && !activeAccountIsPrimary()) open = false;
   if (open) {
     setNavMenuOpen(false);
     clearSeenSearch({ collapse: true });
@@ -3154,6 +3182,12 @@ function updateWhisperDialogTitle() {
 }
 
 async function loadWhisperOnlinePlayers({ force = false } = {}) {
+  if (!activeAccountIsPrimary()) {
+    state.whisperPlayers = [];
+    state.whisperUnreadCount = 0;
+    renderWhisperBadge();
+    return false;
+  }
   if (!force && !$('#whisperPanel')?.classList.contains('open')) return;
   await syncLegacyWhisperReadState();
   const payload = await fetchJson('/api/whisper/online');
@@ -3164,6 +3198,7 @@ async function loadWhisperOnlinePlayers({ force = false } = {}) {
     renderWhisperPlayers();
   }
   updateWhisperDialogTitle();
+  return true;
 }
 
 function renderWhisperMessages(messages) {
@@ -3213,12 +3248,14 @@ function renderWhisperMessages(messages) {
 }
 
 async function loadWhisperDialog() {
+  if (!activeAccountIsPrimary()) return false;
   if (!state.whisperTarget || !$('#whisperPanel')?.classList.contains('open')) return;
   const payload = await fetchJson(`/api/whisper/dialog?username=${encodeURIComponent(state.whisperTarget)}&limit=80`);
   mergeWhisperPlayerStatus(payload.player);
   renderWhisperPlayers();
   updateWhisperDialogTitle();
   renderWhisperMessages(payload.messages || []);
+  return true;
 }
 
 async function openWhisperDialog(username) {
@@ -4214,6 +4251,15 @@ function foodItemCount(...locations) {
 
 function activeAccountIsPrimary() {
   return Boolean(state.accounts.find(account => account.id === state.activeAccountId)?.isDefault);
+}
+
+function updateObsidianStatsScopeVisibility() {
+  const control = $('#obsidianStatsScope');
+  const visible = state.currentUser?.role === 'admin'
+    && activeAccountIsPrimary()
+    && state.activeTab === 'obsidian';
+  if (control) control.hidden = !visible;
+  document.body.classList.toggle('obsidian-scope-visible', Boolean(visible));
 }
 
 function obsidianStatsPath() {
@@ -5668,15 +5714,22 @@ async function loadAdminControlState({ force = false } = {}) {
   if (state.currentUser?.role !== 'admin') return;
   if (state.adminControlLoading) return;
   if (!force && state.adminControlState && Date.now() - state.adminControlRefreshedAt < 3_000) return;
+  const accountId = state.activeAccountId;
+  const token = Symbol('admin-control');
+  state.adminControlToken = token;
   state.adminControlLoading = true;
   try {
     const payload = await fetchJson('/api/admin/control-state', { transientRetries: 2 });
+    if (state.adminControlToken !== token || state.activeAccountId !== accountId) return;
     state.adminControlRefreshedAt = Date.now();
     renderAdminControlState(payload);
   } catch (err) {
-    setBanner(`Could not load bot controls: ${err.message}`);
+    if (state.adminControlToken === token && err?.name !== 'AbortError') setBanner(`Could not load bot controls: ${err.message}`);
   } finally {
-    state.adminControlLoading = false;
+    if (state.adminControlToken === token) {
+      state.adminControlLoading = false;
+      state.adminControlToken = null;
+    }
   }
 }
 
@@ -6847,6 +6900,7 @@ function scheduleRealtimeChartRefresh() {
 }
 
 async function refreshWhispersFromEvent() {
+  if (!activeAccountIsPrimary()) return;
   await loadWhisperOnlinePlayers({ force: true });
   if ($('#whisperPanel')?.classList.contains('open')) await loadWhisperDialog();
 }
@@ -6942,47 +6996,78 @@ function startRealtimeUpdates() {
   };
 }
 
-async function loadAll() {
-  if (!state.currentUser || state.fullSyncLoading) return;
+async function loadAll({ force = false, switchGeneration = state.accountSwitchGeneration } = {}) {
+  if (!state.currentUser) return false;
+  if (state.fullSyncLoading && !force) return state.fullSyncPromise || false;
+
+  const syncToken = Symbol('dashboard-sync');
+  const accountId = state.activeAccountId;
+  const signal = state.accountAbortController?.signal || null;
+  const isCurrentSync = () => (
+    state.fullSyncToken === syncToken
+    && state.accountSwitchGeneration === switchGeneration
+    && state.activeAccountId === accountId
+    && !signal?.aborted
+  );
+  const renderIfCurrent = renderer => payload => {
+    if (isCurrentSync()) renderer(payload);
+  };
+
+  state.fullSyncToken = syncToken;
   state.fullSyncLoading = true;
-  try {
-    // Render each dashboard section as soon as its own request completes. A slow
-    // analytics query or the icon manifest must not hold the whole first screen.
-    const sectionLoads = [
-      fetchJson(`/api/chat?limit=${CHAT_HISTORY_LIMIT}`).then(payload => {
-        if (!state.chatContextMessageId && !state.chatSearchQuery) renderChat(payload);
-      }),
-      fetchJson('/api/bot-stats').then(renderBotStats),
-      fetchJson('/api/kill-aura').then(renderKillAura),
-      Promise.all([ensureItemIcons(), fetchJson(obsidianStatsPath())]).then(([, payload]) => {
-        if (hasActiveTextSelection()) {
-          queueRealtimeRefresh('farm-selection', refreshFarmFromEvent, 1_000);
-          return;
-        }
-        renderObsidian(payload);
-      }),
-      fetchJson('/api/server-stats').then(renderServerStats)
-    ];
-    const results = await Promise.allSettled(sectionLoads);
-    const failed = results.find(result => result.status === 'rejected');
-    if (failed) throw failed.reason;
-    if (state.currentUser?.role === 'admin') await Promise.all([loadNotificationCount(), loadRequestCount()]);
-    if (state.currentUser?.role === 'admin') {
-      await loadAdminControlState();
-      if (state.activeTab === 'admin') await loadAdminSystemLogs();
+  const syncPromise = (async () => {
+    try {
+      // Render each dashboard section as soon as its own request completes. A slow
+      // analytics query or the icon manifest must not hold the whole first screen.
+      const sectionLoads = [
+        fetchJson(`/api/chat?limit=${CHAT_HISTORY_LIMIT}`, { signal }).then(payload => {
+          if (isCurrentSync() && !state.chatContextMessageId && !state.chatSearchQuery) renderChat(payload);
+        }),
+        fetchJson('/api/bot-stats', { signal }).then(renderIfCurrent(renderBotStats)),
+        fetchJson('/api/kill-aura', { signal }).then(renderIfCurrent(renderKillAura)),
+        Promise.all([ensureItemIcons(), fetchJson(obsidianStatsPath(), { signal })]).then(([, payload]) => {
+          if (!isCurrentSync()) return;
+          if (hasActiveTextSelection()) {
+            queueRealtimeRefresh('farm-selection', refreshFarmFromEvent, 1_000);
+            return;
+          }
+          renderObsidian(payload);
+        }),
+        fetchJson('/api/server-stats', { signal }).then(renderIfCurrent(renderServerStats))
+      ];
+      const results = await Promise.allSettled(sectionLoads);
+      if (!isCurrentSync()) return false;
+      const failed = results.find(result => result.status === 'rejected');
+      if (failed) throw failed.reason;
+      if (state.currentUser?.role === 'admin') await Promise.all([loadNotificationCount(), loadRequestCount()]);
+      if (!isCurrentSync()) return false;
+      if (state.currentUser?.role === 'admin') {
+        await loadAdminControlState();
+        if (state.activeTab === 'admin') await loadAdminSystemLogs();
+      }
+      if (!isCurrentSync()) return false;
+      if ($('#whisperPanel')?.classList.contains('open')) {
+        await loadWhisperOnlinePlayers();
+        await loadWhisperDialog();
+      } else {
+        await loadWhisperOnlinePlayers({ force: true });
+      }
+      if (!isCurrentSync()) return false;
+      setBanner('');
+      return true;
+    } catch (err) {
+      if (isCurrentSync() && err?.name !== 'AbortError') setBanner(`Could not load dashboard data: ${err.message}`);
+      return false;
+    } finally {
+      if (state.fullSyncToken === syncToken) {
+        state.fullSyncLoading = false;
+        state.fullSyncToken = null;
+        state.fullSyncPromise = null;
+      }
     }
-    if ($('#whisperPanel')?.classList.contains('open')) {
-      await loadWhisperOnlinePlayers();
-      await loadWhisperDialog();
-    } else {
-      await loadWhisperOnlinePlayers({ force: true });
-    }
-    setBanner('');
-  } catch (err) {
-    setBanner(`Could not load dashboard data: ${err.message}`);
-  } finally {
-    state.fullSyncLoading = false;
-  }
+  })();
+  state.fullSyncPromise = syncPromise;
+  return syncPromise;
 }
 
 async function ensureItemIcons() {

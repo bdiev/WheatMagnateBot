@@ -10,8 +10,14 @@ const serverSource = fs.readFileSync(path.resolve(__dirname, '..', 'server.js'),
 
 assert.match(htmlSource, /id="obsidianStatsScope"[\s\S]*?data-obsidian-scope="personal"[\s\S]*?data-obsidian-scope="all"/,
   'the primary Obsidian page exposes Personal and All Bots choices');
+assert.match(htmlSource, /id="accountSwitcher"[\s\S]*?id="obsidianStatsScope"[\s\S]*?id="themeToggle"/,
+  'the Obsidian scope switch is placed between Minecraft profiles and the theme switch');
+assert.doesNotMatch(htmlSource, /id="obsidianStatsScope"[^>]*>[\s\S]*?<span>Statistics<\/span>/,
+  'the compact topbar switch has no redundant Statistics label');
 assert.match(appSource, /function obsidianStatsPath\(\)[\s\S]*?scope=/,
   'every Obsidian statistics refresh uses the selected scope');
+assert.match(appSource, /function updateObsidianStatsScopeVisibility\(\)[\s\S]*?role === 'admin'[\s\S]*?activeAccountIsPrimary\(\)[\s\S]*?state\.activeTab === 'obsidian'/,
+  'the switch is visible only to an admin on the primary Obsidian page');
 assert.match(appSource, /state\.charts\.obsidianHourly = payload\.hourly[\s\S]*?state\.charts\.obsidianDaily = payload\.daily/,
   'scope payloads replace both Obsidian chart series');
 assert.match(serverSource, /requestedScope === 'all'[\s\S]*?assertAdminUser\(currentUser\)/,

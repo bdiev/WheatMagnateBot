@@ -309,11 +309,13 @@ h2 {
 body.search-focus-active .topbar > :first-child,
 body.search-focus-active .nav-menu,
 body.search-focus-active .account-switcher,
+body.search-focus-active .obsidian-scope-switch,
 body.search-focus-active .tab-panel,
 body.nav-focus-active .topbar > :first-child,
 body.nav-focus-active .whisper-panel,
 body.nav-focus-active .seen-search,
 body.nav-focus-active .account-switcher,
+body.nav-focus-active .obsidian-scope-switch,
 body.nav-focus-active #themeToggle,
 body.nav-focus-active #logoutButton,
 body.nav-focus-active .tab-panel,
@@ -321,6 +323,7 @@ body.whisper-focus-active .topbar > :first-child,
 body.whisper-focus-active .nav-menu,
 body.whisper-focus-active .seen-search,
 body.whisper-focus-active .account-switcher,
+body.whisper-focus-active .obsidian-scope-switch,
 body.whisper-focus-active #themeToggle,
 body.whisper-focus-active #logoutButton,
 body.whisper-focus-active .tab-panel {
@@ -1049,6 +1052,7 @@ button:disabled {
 
 body.search-focus-active #whisperPanel,
 body.search-focus-active #accountSwitcher,
+body.search-focus-active #obsidianStatsScope,
 body.search-focus-active #themeToggle,
 body.search-focus-active #logoutButton {
   max-width: 0;
@@ -4066,18 +4070,26 @@ body.search-focus-active #logoutButton {
 }
 
 .obsidian-scope-switch {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-  margin: 0 0 12px;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
+  flex: 0 0 auto;
+  gap: 4px;
+  height: var(--button-height);
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: var(--button-radius);
+  background: var(--panel-soft);
+  overflow: hidden;
+  transform-origin: center;
 }
 
 .obsidian-scope-switch[hidden] {
   display: none;
+}
+
+.obsidian-scope-switch .chart-range-button {
+  min-height: 34px;
+  white-space: nowrap;
 }
 
 .chat-message.chat-message-bot:not(.chat-activity),
@@ -5714,6 +5726,7 @@ body.modal-open { overflow:hidden; }
 
   .topbar-actions .whisper-panel,
   .topbar-actions .seen-search,
+  .topbar-actions .obsidian-scope-switch,
   .topbar-actions #themeToggle,
   .topbar-actions #logoutButton {
     position: relative;
@@ -5739,6 +5752,12 @@ body.modal-open { overflow:hidden; }
     grid-column: 3;
     grid-row: 2;
     z-index: 110;
+  }
+
+  .topbar-actions .obsidian-scope-switch {
+    position: relative;
+    grid-row: 2;
+    z-index: 1;
   }
 
   .topbar-actions #themeToggle {
@@ -8239,6 +8258,11 @@ body.kill-aura-modal-open {
 .account-auth-note { padding:11px 12px; border-left:3px solid var(--accent); border-radius:0 10px 10px 0; color:var(--muted); background:var(--panel-soft); font-size:12px; line-height:1.5; }.account-modal-actions { display:flex; justify-content:flex-end; gap:10px; padding-top:2px; }.account-modal-actions button { min-width:112px; }.account-modal-close { position:absolute; top:14px; right:14px; width:34px; min-width:34px; max-width:34px; height:34px; min-height:34px; max-height:34px; padding:0; border:1px solid var(--line); border-radius:50%; color:var(--muted); background:var(--panel-soft); font-size:22px; font-weight:500; }.account-modal-close:hover { color:var(--text); background:color-mix(in srgb,var(--accent) 14%,var(--panel-soft)); border-color:var(--accent); }
 @media (max-width:700px) {
   .realtime-status { display:none!important; }
+  body.obsidian-scope-visible .topbar-actions { grid-template-columns:var(--button-height) var(--button-height) var(--button-height) minmax(132px,1fr); }
+  body.obsidian-scope-visible .topbar-actions #obsidianStatsScope { grid-column:4; grid-row:2; width:100%; }
+  body.obsidian-scope-visible .topbar-actions #themeToggle { grid-column:1; grid-row:3; }
+  body.obsidian-scope-visible .topbar-actions #logoutButton { grid-column:2 / -1; grid-row:3; width:100%; max-width:none; justify-self:stretch; }
+  body.obsidian-scope-visible .obsidian-scope-switch .chart-range-button { flex:1 1 50%; padding-inline:7px; }
   body.account-switching-disabled .topbar-actions { grid-template-columns:var(--button-height) var(--button-height) 74px minmax(0,1fr); }
   body.account-switching-disabled .topbar-actions #themeToggle { grid-column:3; }
   body.account-switching-disabled .topbar-actions #logoutButton { grid-column:4; }

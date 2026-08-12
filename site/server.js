@@ -4401,6 +4401,11 @@ async function handleApi(req, res, url) {
       return;
     }
     if (url.pathname === '/api/whisper/online' && req.method === 'GET') {
+      const scoped = await scopedAccountRuntime(url, currentUser);
+      if (scoped) {
+        sendJson(res, 200, { players:[], available:false, accountId:scoped.account.id });
+        return;
+      }
       sendJson(res, 200, await getWhisperOnlinePlayers(currentUser, url));
       return;
     }
