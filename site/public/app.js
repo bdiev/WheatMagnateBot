@@ -3680,14 +3680,14 @@ function updateKillAuraSelectionSummary() {
   const suffix = state.killAuraTargetsDirty ? ' · unsaved changes' : '';
   if (summary) {
     summary.textContent = count
-      ? `${count} mob${count === 1 ? '' : 's'} selected${suffix}`
-      : `No mobs selected${suffix}`;
+      ? `${count} target${count === 1 ? '' : 's'} selected${suffix}`
+      : `No targets selected${suffix}`;
   }
   const dropdownLabel = $('#killAuraMobDropdownLabel');
   if (dropdownLabel) {
     dropdownLabel.textContent = count
       ? `${count} target${count === 1 ? '' : 's'}`
-      : 'Choose mobs';
+      : 'Choose targets';
   }
   const controlMeta = $('#killAuraControlMeta');
   if (controlMeta) {
@@ -3699,7 +3699,7 @@ function updateKillAuraSelectionSummary() {
   const selectedMeta = $('#killAuraSelectedMeta');
   if (selectedMeta) selectedMeta.textContent = state.killAuraTargetsDirty
     ? 'unsaved selection'
-    : `mob ${count === 1 ? 'type' : 'types'}`;
+    : `target ${count === 1 ? 'type' : 'types'}`;
   const detailTargets = $('#killAuraDetailTargets');
   if (detailTargets) detailTargets.textContent = formatNumber(count);
 }
@@ -3720,7 +3720,7 @@ function renderKillAuraMobList() {
         <small>${escapeHtml(mob.category)}</small>
       </label>
     `).join('')
-    : '<div class="empty">No matching mobs.</div>';
+    : '<div class="empty">No matching targets.</div>';
   updateKillAuraSelectionSummary();
 }
 
@@ -3736,12 +3736,13 @@ function renderKillAura(payload = {}) {
   setRollingNumber('#killAuraTotalKills', payload.totalKills || 0);
   $('#killAuraWeapon').textContent = aura.currentWeapon ? formatMobLabel(aura.currentWeapon) : 'None';
   const target = aura.currentTarget;
+  const targetLabel = target?.username || target?.displayName || target?.name;
   $('#killAuraTarget').textContent = target
-    ? `target: ${formatMobLabel(target.name)}${target.distance == null ? '' : ` · ${target.distance} blocks`}`
+    ? `target: ${formatMobLabel(targetLabel)}${target.distance == null ? '' : ` · ${target.distance} blocks`}`
     : 'target: none';
   const detailTarget = $('#killAuraDetailTarget');
   if (detailTarget) detailTarget.textContent = target
-    ? `${formatMobLabel(target.name)}${target.distance == null ? '' : ` В· ${target.distance} blocks`}`
+    ? `${formatMobLabel(targetLabel)}${target.distance == null ? '' : ` В· ${target.distance} blocks`}`
     : 'None';
 
   const toggle = $('#killAuraToggleButton');
@@ -3761,7 +3762,7 @@ function renderKillAura(payload = {}) {
     .filter(mob => Number(mob.kills) > 0)
     .sort((first, second) => Number(second.kills) - Number(first.kills) || first.name.localeCompare(second.name));
   const historyCount = $('#killAuraHistoryCount');
-  if (historyCount) historyCount.textContent = `${killed.length} mob ${killed.length === 1 ? 'type' : 'types'}`;
+  if (historyCount) historyCount.textContent = `${killed.length} target ${killed.length === 1 ? 'type' : 'types'}`;
   renderStable('#killAuraKillStats', killed.length
     ? killed.map((mob, index) => `
       <div class="rank-item">

@@ -117,6 +117,7 @@ function selectBestWeapon(items, targetMobName = '') {
 }
 
 function entityMobName(entity) {
+  if (entity?.type === 'player') return 'player';
   return normalizeMobName(entity?.name || entity?.mobType || entity?.displayName);
 }
 
@@ -177,7 +178,11 @@ function createKillAuraFeature({
   }
 
   function isSelectedEntity(entity) {
-    if (!entity?.position || entity === state.bot?.entity || entity.type === 'player') return false;
+    if (!entity?.position || entity === state.bot?.entity) return false;
+    if (entity.type === 'player') {
+      if (!state.targets.has('player')) return false;
+      return !entity.username || entity.username.toLowerCase() !== String(state.bot?.username || '').toLowerCase();
+    }
     const name = entityMobName(entity);
     return Boolean(name && state.targets.has(name));
   }
@@ -355,6 +360,7 @@ function createKillAuraFeature({
       currentTarget: target ? {
         id: target.id,
         name: entityMobName(target),
+        username: target.type === 'player' ? target.username || null : null,
         displayName: typeof target.displayName === 'string'
           ? target.displayName
           : String(target.mobType || entityMobName(target)),
@@ -370,7 +376,14 @@ function createKillAuraFeature({
     };
   }
 
-  return { attachBot, detachBot, setTargets, setEnabled, getStatus };
+  return {
+    attachBot,
+    detachBot,
+    setTargets,
+    setEnabled,
+    getStatus,
+    __test: { isSelectedEntity, nearestTarget }
+  };
 }
 
 module.exports = {

@@ -418,7 +418,7 @@
               <span class="aura-stat-icon" aria-hidden="true"><img src="/items/Target.png" alt=""></span>
             </div>
             <strong id="killAuraSelectedCount">-</strong>
-            <small id="killAuraSelectedMeta">mob types</small>
+            <small id="killAuraSelectedMeta">target types</small>
           </article>
         </section>
 
@@ -444,7 +444,7 @@
                 <span class="aura-control-icon" aria-hidden="true"><img src="/items/Target.png" alt=""></span>
                 <div>
                   <h2>Kill Aura Control</h2>
-                  <p id="killAuraControlMeta">Choose mob targets.</p>
+                  <p id="killAuraControlMeta">Choose players or mob targets.</p>
                 </div>
               </div>
             </div>
@@ -477,7 +477,7 @@
                 <span class="aura-control-icon" aria-hidden="true"><img src="/items/Target.png" alt=""></span>
                 <div>
                   <p class="eyebrow">Kill Aura</p>
-                  <h2 id="killAuraModalTitle">Choose mob targets</h2>
+                  <h2 id="killAuraModalTitle">Choose targets</h2>
                 </div>
               </div>
               <button id="killAuraTargetModalClose" class="kill-aura-modal-close ghost-button" type="button" aria-label="Close target selection">&times;</button>
@@ -485,8 +485,8 @@
 
             <div class="kill-aura-modal-toolbar">
               <label class="kill-aura-search">
-                <span class="sr-only">Find mob</span>
-                <input id="killAuraSearch" type="search" autocomplete="off" placeholder="Search all mobs...">
+                <span class="sr-only">Find target</span>
+                <input id="killAuraSearch" type="search" autocomplete="off" placeholder="Search players and mobs...">
               </label>
               <div class="kill-aura-quick-actions">
                 <button id="killAuraSelectHostile" class="ghost-button" type="button">Hostile</button>
@@ -495,10 +495,10 @@
               </div>
             </div>
 
-            <div id="killAuraMobList" class="kill-aura-mob-list kill-aura-modal-list" aria-label="Kill Aura mob targets"></div>
+            <div id="killAuraMobList" class="kill-aura-mob-list kill-aura-modal-list" aria-label="Kill Aura player and mob targets"></div>
 
             <footer class="kill-aura-modal-footer">
-              <p id="killAuraSelectionSummary">No mobs selected</p>
+              <p id="killAuraSelectionSummary">No targets selected</p>
               <div>
                 <button id="killAuraTargetModalCancel" class="ghost-button" type="button">Cancel</button>
                 <button id="killAuraSaveTargets" type="button">Save Targets</button>
@@ -512,9 +512,9 @@
             <div class="panel-head">
               <div>
                 <h2>Kill Statistics</h2>
-                <p>All-time performance grouped by mob.</p>
+                <p>All-time performance grouped by target type.</p>
               </div>
-              <small id="killAuraHistoryCount">0 mob types</small>
+              <small id="killAuraHistoryCount">0 target types</small>
             </div>
             <div id="killAuraKillStats" class="rank-list"></div>
           </section>
@@ -532,7 +532,7 @@
                 <strong>Stationary</strong>
               </div>
               <div>
-                <span>Selected mob types</span>
+                <span>Selected target types</span>
                 <strong id="killAuraDetailTargets">-</strong>
               </div>
               <div>

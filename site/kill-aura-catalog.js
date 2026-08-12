@@ -4,6 +4,7 @@
 // project's minecraft-data version. IDs are stable resource names and work
 // across Mineflayer versions; unavailable mobs simply never become targets.
 const KILL_AURA_MOBS = Object.freeze([
+  ['player', 'Player (Steve)', 'player'],
   ['allay', 'Allay', 'passive'], ['armadillo', 'Armadillo', 'passive'],
   ['axolotl', 'Axolotl', 'passive'], ['bat', 'Bat', 'passive'],
   ['bee', 'Bee', 'passive'], ['blaze', 'Blaze', 'hostile'],
