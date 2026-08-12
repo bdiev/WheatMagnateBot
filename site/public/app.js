@@ -2706,15 +2706,9 @@ function setSeenSearchOpen(open) {
     setMobileAccountSwitcherOpen(false);
     const rect = toggle.getBoundingClientRect();
     const targetTop = rect.top;
-    const targetCenterX = window.innerWidth / 2;
-    const targetCenterY = targetTop + rect.height / 2;
     search.style.setProperty('--seen-search-target-top', `${targetTop}px`);
-    search.style.setProperty('--seen-search-origin-x', `${rect.left + rect.width / 2 - targetCenterX}px`);
-    search.style.setProperty('--seen-search-origin-y', `${rect.top + rect.height / 2 - targetCenterY}px`);
   } else {
     search.style.removeProperty('--seen-search-target-top');
-    search.style.removeProperty('--seen-search-origin-x');
-    search.style.removeProperty('--seen-search-origin-y');
   }
   search.classList.toggle('open', open);
   document.body.classList.toggle('search-focus-active', open);

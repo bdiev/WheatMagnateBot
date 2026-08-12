@@ -13,7 +13,7 @@ const transitionsSource = fs.readFileSync(path.join(publicDirectory, 'page-trans
 const serviceWorkerSource = fs.readFileSync(path.join(publicDirectory, 'sw.js'), 'utf8');
 
 assert.match(indexSource, /page-transitions\.js\?v=1/, 'the dashboard must load shared page transitions');
-assert.match(requestHtmlSource, /styles\.css\?v=198/, 'the request page must load the current shared transition styles');
+assert.match(requestHtmlSource, /styles\.css\?v=199/, 'the request page must load the current shared transition styles');
 assert.match(requestHtmlSource, /page-transitions\.js\?v=1/, 'the request page must load shared page transitions');
 assert.match(requestHtmlSource, /id="loginPrompt"[^>]*hidden/, 'the request login state must not flash before the session loads');
 assert.match(stylesSource, /@view-transition\s*\{\s*navigation:\s*auto;/, 'same-origin navigation must use native cross-document transitions when available');
@@ -35,6 +35,8 @@ assert.doesNotMatch(stylesSource, /\.topbar\.topbar-compact\s*\{[^}]*gap:/s, 'co
 assert.doesNotMatch(stylesSource, /\.dashboard-brand\.dashboard-brand-hidden\s*\{[^}]*max-height:/s, 'hidden title must not change sticky header layout height');
 assert.match(appSource, /const targetTop = rect\.top;[\s\S]*--seen-search-target-top/, 'Seen search must open on the actual row occupied by its toggle');
 assert.match(stylesSource, /top:\s*var\(--seen-search-target-top/, 'Seen search must use its measured row position');
+assert.match(stylesSource, /body\.search-focus-active #accountSwitcher[\s\S]*max-width:\s*0;[\s\S]*opacity:\s*0;/, 'profile and add-account controls must disappear while Seen search is focused');
+assert.doesNotMatch(stylesSource, /seen-search-(?:mobile-)?center-in/, 'Seen search must not fly diagonally from the old toggle position');
 assert.match(appSource, /topbar-stuck[\s\S]*scrollY > 96[\s\S]*topbar-compact/, 'the title must stay pinned briefly before collapsing into the control row');
 
 console.log('Page transition UI tests passed.');

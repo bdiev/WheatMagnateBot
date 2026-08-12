@@ -1034,6 +1034,7 @@ button:disabled {
 }
 
 body.search-focus-active #whisperPanel,
+body.search-focus-active #accountSwitcher,
 body.search-focus-active #themeToggle,
 body.search-focus-active #logoutButton {
   max-width: 0;
@@ -1229,24 +1230,6 @@ body.search-focus-active #logoutButton {
 .topbar-actions .seen-search.open {
   width: min(560px, calc(100vw - 32px));
   grid-template-columns: minmax(0, 1fr);
-  animation: seen-search-center-in 320ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-@keyframes seen-search-center-in {
-  from {
-    opacity: 0.72;
-    transform:
-      translate(
-        calc(-50% + var(--seen-search-origin-x, 0px)),
-        var(--seen-search-origin-y, -18px)
-      )
-      scale(0.82);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateX(-50%) translateY(0) scale(1);
-  }
 }
 
 .seen-search-toggle {
@@ -1813,12 +1796,12 @@ body.search-focus-active #logoutButton {
   min-width: 0;
   opacity: 0;
   overflow: hidden;
-  transform: scaleX(0.96);
-  transform-origin: left center;
+  transform: scaleX(0.78);
+  transform-origin: center;
   pointer-events: none;
   transition:
-    opacity 200ms ease,
-    transform 260ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    opacity 180ms ease,
+    transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1),
     background-color 260ms ease,
     border-color 260ms ease,
     box-shadow 260ms ease;
@@ -5769,27 +5752,6 @@ body.modal-open { overflow:hidden; }
     transform: none;
   }
 
-  body.search-focus-active .topbar-actions .seen-search.open {
-    animation-name: seen-search-mobile-center-in;
-  }
-
-  @keyframes seen-search-mobile-center-in {
-    from {
-      opacity: 0.72;
-      transform:
-        translate(
-          var(--seen-search-origin-x, 0px),
-          var(--seen-search-origin-y, -16px)
-        )
-        scale(0.86);
-    }
-
-    to {
-      opacity: 1;
-      transform: translateY(0) scale(1);
-    }
-  }
-
   .whisper-popover {
     position: fixed;
     top: calc(env(safe-area-inset-top, 0px) + 92px);
@@ -8196,7 +8158,7 @@ body.kill-aura-modal-open {
   }
 }
 
-.account-switcher { display:flex; align-items:center; gap:6px; max-width:min(280px,32vw); }
+.account-switcher { display:flex; align-items:center; gap:6px; width:auto; min-width:0; max-width:min(280px,32vw); transform-origin:left center; transition:opacity 180ms ease,width 240ms cubic-bezier(.2,.8,.2,1),max-width 240ms cubic-bezier(.2,.8,.2,1),margin 240ms cubic-bezier(.2,.8,.2,1),transform 220ms ease; }
 .account-switcher[hidden] { display:none!important; }
 .account-switcher-list { display:flex; gap:6px; overflow-x:auto; scrollbar-width:none; padding:4px; }
 .account-switcher-list::-webkit-scrollbar { display:none; }
