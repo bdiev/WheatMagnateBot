@@ -25,6 +25,7 @@ const { createWhisperFeature } = require('./features/whisper');
 const { createFollowFeature } = require('./features/follow');
 const { createKillAuraFeature } = require('./features/killAura');
 const farm = require('./features/obsidianFarm');
+const { createProtectionLeverController } = require('./features/obsidianFarm/protection-lever');
 const { GrowingChildAI } = require('./features/growingChild');
 const { sanitizePublicPhrase } = require('./features/growingChild/safety');
 const { runMigrations } = require('./database/migrations');
@@ -4225,8 +4226,9 @@ let obsidianFarmWatchdogInterval = null;
 let obsidianSupplySnapshotInterval = null;
 let obsidianDailyReportInterval = null;
 let restartProtectionDateKey = null;
-let leverOperation = Promise.resolve();
-let protectionLeverPosition = null;
+const primaryProtectionLever = createProtectionLeverController({
+  log: message => console.log(`[Obsidian] ${message}`)
+});
 let obsidianFarmResumeBot = null;
 const reconnectAttemptTimes = [];
 
@@ -4411,119 +4413,8 @@ function getKyivDateParts(date = new Date()) {
   };
 }
 
-function findProtectionLever(currentBot) {
-  if (!currentBot?.entity) return null;
-
-  if (protectionLeverPosition) {
-    const cached = currentBot.blockAt(protectionLeverPosition);
-    const cachedDistance = currentBot.entity.position.distanceTo(
-      protectionLeverPosition.offset(0.5, 0.5, 0.5)
-    );
-    if (cached?.name === 'lever' && cachedDistance <= 4.5) return cached;
-    protectionLeverPosition = null;
-  }
-
-  // Do not depend on findBlocks immediately after spawn: its palette search can
-  // briefly miss an otherwise loaded nearby block. Read the local cube directly.
-  const base = currentBot.entity.position.floored();
-  const origin = currentBot.entity.position.offset(0, 0.5, 0);
-  const candidates = [];
-  for (let dx = -4; dx <= 4; dx++) {
-    for (let dy = -3; dy <= 3; dy++) {
-      for (let dz = -4; dz <= 4; dz++) {
-        const position = base.offset(dx, dy, dz);
-        const block = currentBot.blockAt(position);
-        if (block?.name !== 'lever') continue;
-        const distance = origin.distanceTo(position.offset(0.5, 0.5, 0.5));
-        if (distance <= 4.5) candidates.push({ block, distance });
-      }
-    }
-  }
-  const nearest = candidates.sort((a, b) => a.distance - b.distance)[0];
-
-  if (!nearest) return null;
-  protectionLeverPosition = nearest.block.position.clone();
-  return nearest.block;
-}
-
-function isLeverPowered(block) {
-  const powered = block?.getProperties?.().powered;
-  return powered === true || powered === 'true';
-}
-
 async function setProtectionLeverState(powered) {
-  const operation = async () => {
-    const currentBot = bot;
-    if (!currentBot?.entity) return false;
-    const lever = findProtectionLever(currentBot);
-    if (!lever) {
-      console.log('[Obsidian] Protection lever is not loaded or is out of interaction range.');
-      return false;
-    }
-
-    if (typeof currentBot.clearControlStates === 'function') {
-      currentBot.clearControlStates();
-    }
-    currentBot.pathfinder?.stop();
-
-    const leverPosition = lever.position.clone();
-    const initialState = isLeverPowered(lever);
-    console.log(
-      `[Obsidian] Protection lever at ${leverPosition} is ${initialState ? 'ON' : 'OFF'}; ` +
-      `required state is ${powered ? 'ON' : 'OFF'}.`
-    );
-    if (initialState === powered) return true;
-
-    // Never right-click the lever while a lava/water bucket is selected.
-    if (currentBot.heldItem?.name?.includes('bucket')) {
-      try {
-        const safeHandItem = currentBot.inventory.items().find(
-          item => !item.name.includes('bucket')
-        );
-        if (safeHandItem) {
-          await currentBot.equip(safeHandItem, 'hand');
-        } else {
-          await currentBot.unequip('hand');
-        }
-      } catch (err) {
-        console.log(`[Obsidian] Could not select a safe item before lever use: ${err.message}`);
-        return false;
-      }
-    }
-
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      const currentLever = currentBot.blockAt(leverPosition);
-      if (currentLever?.name !== 'lever') return false;
-      if (isLeverPowered(currentLever) === powered) return true;
-
-      try {
-        // Use Mineflayer's ordinary block interaction, exactly like the
-        // successful barrel interaction used during farm preparation.
-        await currentBot.activateBlock(currentLever);
-        console.log(`[Obsidian] Activated protection lever (attempt ${attempt}/3).`);
-      } catch (err) {
-        console.log(`[Obsidian] Lever click ${attempt}/3 failed: ${err.message}`);
-        await new Promise(resolve => setTimeout(resolve, 100));
-        continue;
-      }
-
-      const deadline = Date.now() + 2_000;
-      while (Date.now() < deadline) {
-        const updated = currentBot.blockAt(leverPosition);
-        if (updated?.name === 'lever' && isLeverPowered(updated) === powered) {
-          console.log(`[Obsidian] Protection lever switched ${powered ? 'ON' : 'OFF'}.`);
-          return true;
-        }
-        await new Promise(resolve => setTimeout(resolve, 40));
-      }
-
-      console.log(`[Obsidian] Lever click ${attempt}/3 was not confirmed by the server.`);
-    }
-    return false;
-  };
-
-  leverOperation = leverOperation.then(operation, operation);
-  return leverOperation;
+  return primaryProtectionLever.setState(bot, powered);
 }
 
 async function ensureObsidianFarmRunning(createdBot, { freshSession = false } = {}) {

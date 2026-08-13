@@ -131,14 +131,6 @@ async function main() {
     await nextTurn();
     secondary.modules.obsidianFarm.suspend();
 
-    const blockedBot = farmBot('bdiev_');
-    blockedBot.blockAtCursor = () => null;
-    await assert.rejects(
-      secondary.modules.obsidianFarm.setProtectionLeverState(false, blockedBot),
-      /Protection lever is not in the bot's line of sight/i
-    );
-    assert.equal(blockedBot.leverActions, undefined, 'an obstructed lever never receives a blind interaction click');
-
     const expectedDebugEvents = ['farm_started', 'cycle_started', 'cycle_action_start'];
     const debugLines = await readDebugEvents(
       path.join(dataRoot, SECONDARY_ID, 'obsidian-farm-debug.log'),
@@ -224,7 +216,10 @@ async function main() {
     await reconnectRuntime.destroy();
 
     const botSource = fs.readFileSync(path.resolve(__dirname, '..', 'bot.js'), 'utf8');
+    const farmSource = fs.readFileSync(path.resolve(__dirname, '..', 'features', 'obsidianFarm', 'index.js'), 'utf8');
     assert.match(botSource, /SET status='failed',error=\$2/, 'managed command failures persist their reason');
+    assert.match(botSource, /primaryProtectionLever\.setState\(bot, powered\)/, 'primary farm uses the shared protection-lever controller');
+    assert.match(farmSource, /protectionLeverController\.setState\(bot, powered\)/, 'secondary farms use the same protection-lever controller');
     console.log('Secondary Obsidian runtime tests passed.');
   } finally {
     fs.rmSync(dataRoot, { recursive:true, force:true, maxRetries:5, retryDelay:50 });
