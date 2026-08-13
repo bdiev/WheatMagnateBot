@@ -202,6 +202,12 @@ async function main() {
     bot.activateBlock = async (block, direction, cursorPos) => {
       placementInteraction = { block, direction, cursorPos };
     };
+    let secondaryItemActivations = 0;
+    let secondaryActivationAim = null;
+    bot.activateItem = () => {
+      secondaryItemActivations += 1;
+      secondaryActivationAim = bot.lastLookAt.clone();
+    };
     const placementPackets = [];
     bot._client = { write:(name, data) => { placementPackets.push({ name, data }); } };
     bot.supportFeature = feature => feature === 'blockPlaceHasInsideBlock';
@@ -212,24 +218,20 @@ async function main() {
       placementFace,
       configuredTarget
     );
-    const placementPacket = placementPackets[0];
-    assert.equal(placementInteraction, null, 'Precise secondary placement does not let Mineflayer reset the verified aim');
-    assert.equal(placementPacket.name, 'block_place', 'Secondary lava placement sends one raw block interaction');
-    assert.ok(placementPacket.data.location.equals(placementAnchor.position), 'Raw placement packet targets the verified anchor');
-    assert.equal(placementPacket.data.direction, 4, 'Raw placement packet preserves the target-facing west side');
-    assert.deepEqual(
-      [placementPacket.data.cursorX, placementPacket.data.cursorY, placementPacket.data.cursorZ],
-      [0, 0.5, 0.5],
-      'Raw placement packet preserves the west-face cursor'
+    assert.equal(secondaryItemActivations, 1, 'Secondary lava placement uses the server-compatible use-item packet');
+    assert.ok(
+      secondaryActivationAim.equals(placementAnchor.position.offset(0, 0.5, 0.5)),
+      'Secondary use-item action preserves the dynamically selected anchor face aim'
     );
-    assert.equal(placementPacket.data.sequence, 1, 'First precise packet starts a real interaction sequence');
+    assert.equal(placementInteraction, null, 'Secondary lava placement does not let Mineflayer reset the verified aim');
+    assert.equal(placementPackets.length, 0, 'Secondary lava placement does not send the rejected handcrafted block packet');
     await secondary.modules.obsidianFarm.__test.useBucketOnFace(
       bot,
       placementAnchor,
       placementFace,
       configuredTarget
     );
-    assert.equal(placementPackets[1].data.sequence, 2, 'Repeated precise packets use increasing interaction sequences');
+    assert.equal(secondaryItemActivations, 2, 'Repeated placements still send exactly one use-item action each');
 
     const retryBot = farmBot('LeverRetryAlt');
     const retryActivateBlock = retryBot.activateBlock;
@@ -267,6 +269,19 @@ async function main() {
     bot.swingArm = originalSwingArm;
     bot.heldItem = null;
 
+    let releaseWorldInteraction;
+    const occupiedInteraction = secondary.modules.obsidianFarm.__test.withWorldInteractionLock(
+      () => new Promise(resolve => { releaseWorldInteraction = resolve; })
+    );
+    await nextTurn();
+    const queuedLeverChange = secondary.modules.obsidianFarm.setProtectionLeverState(false, bot);
+    await nextTurn();
+    assert.equal(bot.leverActions || 0, 0, 'Protection lever waits while another farm interaction is active');
+    releaseWorldInteraction();
+    await occupiedInteraction;
+    await queuedLeverChange;
+    assert.equal(bot.leverActions, 1, 'Protection lever runs after the active farm interaction finishes');
+
     secondary.modules.obsidianFarm.configureRuntime({ onSuppliesChanged:() => undefined });
     const preparedSupplies = await secondary.modules.obsidianFarm.prepareStart(bot);
     assert.ok(preparedSupplies.barrel, 'Mandatory preflight accepts a synchronous supply callback');
@@ -294,7 +309,7 @@ async function main() {
       line.action === 'lava_placement' &&
       line.stage === 'sent'
     );
-    assert.equal(placementTrace?.method, 'raw_block_place', 'Temporary click trace records the exact secondary lava packet');
+    assert.equal(placementTrace?.method, 'activate_item', 'Temporary click trace records the server-compatible secondary lava action');
     const clickSystemLog = systemLogs.find(entry =>
       entry.category === 'obsidian_click' &&
       entry.details?.event === 'farm_click_trace' &&

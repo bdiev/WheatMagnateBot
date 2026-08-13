@@ -908,40 +908,30 @@ async function useBucketOnFace(bot, referenceBlock, face, expectedTarget) {
     );
   }
 
-  // The legacy primary connection is accepted through the ordinary use-item
-  // packet, while managed/secondary connections require an explicit block and
-  // face interaction. Send exactly one of them: falling back after a packet
-  // was sent could place a second lava source if the first acknowledgement is
-  // merely delayed.
-  if (identity.isPrimary) {
-    writeFarmClickDebug(bot, 'lava_placement', 'before_send', {
-      method:'activate_item',
-      block:currentReference.name,
-      blockPosition:currentReference.position.toString(),
-      direction:face.toString(),
-      directionNum:faceVectorToDirection(face),
-      cursor:cursor.toString(),
-      target:expectedTarget.toString()
-    });
-    bot.activateItem();
-    writeFarmClickDebug(bot, 'lava_placement', 'sent', {
-      method:'activate_item',
-      block:currentReference.name,
-      blockPosition:currentReference.position.toString(),
-      direction:face.toString(),
-      directionNum:faceVectorToDirection(face),
-      cursor:cursor.toString(),
-      target:expectedTarget.toString()
-    });
-  } else {
-    await activateBlockPrecisely(bot, currentReference, {
-      action:'lava_placement',
-      name:'rotated-anchor-face',
-      direction:face,
-      cursorPos:cursor,
-      lookAt:hitPoint
-    });
-  }
+  // BucketItem uses the player's current view ray. This is the same packet
+  // path that is already accepted for the primary bot. At this point the
+  // dynamically selected face and the live raycast have both been verified,
+  // so it is also safer for rotated managed farms than a handcrafted
+  // block_place packet rejected by some server implementations.
+  writeFarmClickDebug(bot, 'lava_placement', 'before_send', {
+    method:'activate_item',
+    block:currentReference.name,
+    blockPosition:currentReference.position.toString(),
+    direction:face.toString(),
+    directionNum:faceVectorToDirection(face),
+    cursor:cursor.toString(),
+    target:expectedTarget.toString()
+  });
+  bot.activateItem();
+  writeFarmClickDebug(bot, 'lava_placement', 'sent', {
+    method:'activate_item',
+    block:currentReference.name,
+    blockPosition:currentReference.position.toString(),
+    direction:face.toString(),
+    directionNum:faceVectorToDirection(face),
+    cursor:cursor.toString(),
+    target:expectedTarget.toString()
+  });
 }
 
 async function findLavaPlacementAnchor(bot, targetPos, context = {}) {
@@ -2886,16 +2876,18 @@ function start(bot, notify) {
 }
 
 async function setProtectionLeverState(bot, powered) {
-  if (!bot?.entity) throw new Error('Obsidian Farm cannot operate protection lever: Minecraft bot is offline.');
-  const confirmed = await protectionLeverController.setState(bot, powered);
-  if (!confirmed) {
-    const reason = protectionLeverController.getLastFailure?.();
-    throw new Error(
-      `Obsidian Farm could not switch protection lever ${powered ? 'ON' : 'OFF'}` +
-      `${reason ? `: ${reason}` : ''}.`
-    );
-  }
-  return true;
+  return withWorldInteractionLock(async () => {
+    if (!bot?.entity) throw new Error('Obsidian Farm cannot operate protection lever: Minecraft bot is offline.');
+    const confirmed = await protectionLeverController.setState(bot, powered);
+    if (!confirmed) {
+      const reason = protectionLeverController.getLastFailure?.();
+      throw new Error(
+        `Obsidian Farm could not switch protection lever ${powered ? 'ON' : 'OFF'}` +
+        `${reason ? `: ${reason}` : ''}.`
+      );
+    }
+    return true;
+  });
 }
 
 function resume(bot, notify) {
@@ -2976,6 +2968,7 @@ return {
   __test: {
     fillBucket,
     useBucketOnFace,
+    withWorldInteractionLock,
     findLavaPlacementAnchor,
     findLavaCauldrons,
     getCauldronFailure,
