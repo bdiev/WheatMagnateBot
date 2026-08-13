@@ -47,15 +47,21 @@ function farmBot(username, { online = true } = {}) {
   };
   bot.blockAtCursor = () => {
     if (bot.lastLookAt?.equals?.(leverPosition.offset(0.5, 0.5, 0.5))) return bot.blockAt(leverPosition);
-    if (bot.lastLookAt?.equals?.(barrelPosition.offset(0.5, 0.5, 0.5))) return bot.blockAt(barrelPosition);
+    if (bot.lastLookAt?.equals?.(barrelPosition.offset(0.5, 0.5, 0.5))) {
+      const barrel = bot.blockAt(barrelPosition);
+      barrel.face = 5;
+      barrel.intersect = barrelPosition.offset(1, 0.4, 0.6);
+      return barrel;
+    }
     return null;
   };
-  bot.activateBlock = async block => {
+  bot.activateBlock = async (block, direction, cursorPos) => {
     if (block?.name === 'lever') {
       leverPowered = !leverPowered;
       bot.leverActions = (bot.leverActions || 0) + 1;
     } else if (block?.name === 'barrel') {
       bot.barrelOpens = (bot.barrelOpens || 0) + 1;
+      bot.barrelInteraction = { direction, cursorPos };
       bot.emit('windowOpen', { containerItems:() => [], close() {} });
     }
   };
@@ -202,6 +208,11 @@ async function main() {
     assert.equal(reconnectRuntime.obsidianFarm.getStatus().desiredEnabled, true);
     assert.equal(reconnectBots[0].leverActions, 1, 'secondary startup switches its protection lever OFF');
     assert.equal(reconnectBots[0].barrelOpens, 1, 'secondary startup always opens its supply barrel');
+    assert.deepEqual(reconnectBots[0].barrelInteraction.direction, new Vec3(1, 0, 0), 'barrel click uses the visible ray-traced face');
+    assert.ok(
+      reconnectBots[0].barrelInteraction.cursorPos.distanceTo(new Vec3(0.999, 0.4, 0.6)) < 0.0001,
+      'barrel click uses the visible hit point'
+    );
     assert.ok(reconnectBots[0].lookActions >= 2, 'secondary startup turns toward both the lever and the barrel');
 
     await reconnectRuntime.restart();

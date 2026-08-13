@@ -275,14 +275,14 @@ function withTimeout(promise, timeoutMs, message) {
   ]).finally(() => clearTimeout(timer));
 }
 
-async function openContainerWithTimeout(bot, block) {
+async function openContainerWithTimeout(bot, block, interaction = {}) {
   let abandoned = false;
   let onWindowOpen = null;
   const opening = new Promise((resolve, reject) => {
     onWindowOpen = window => resolve(window);
     bot.once('windowOpen', onWindowOpen);
     Promise.resolve()
-      .then(() => bot.activateBlock(block))
+      .then(() => bot.activateBlock(block, interaction.direction, interaction.cursorPos))
       .catch(reject);
   });
   opening.then(container => {
@@ -310,8 +310,9 @@ async function aimAtInteractionBlock(bot, block, label) {
   // Give the forced rotation packet a brief moment to reach servers that
   // validate block use with their own eye-position ray trace.
   await sleep(100);
+  let aimed = null;
   if (typeof bot.blockAtCursor === 'function') {
-    const aimed = bot.blockAtCursor(MAX_INTERACT_DISTANCE + 0.25);
+    aimed = bot.blockAtCursor(MAX_INTERACT_DISTANCE + 0.25);
     if (!aimed?.position?.equals(block.position)) {
       throw new Error(
         `${label} is not in the bot's line of sight after turning ` +
@@ -322,8 +323,28 @@ async function aimAtInteractionBlock(bot, block, label) {
   writeFarmDebug('interaction_aim_confirmed', {
     action: label,
     position: block.position.toString(),
+    face: Number.isInteger(aimed?.face) ? aimed.face : null,
+    intersect: aimed?.intersect?.toString?.() || null,
     botPosition: getBotDebugPosition(bot)
   });
+  const directions = [
+    new Vec3(0, -1, 0), new Vec3(0, 1, 0),
+    new Vec3(0, 0, -1), new Vec3(0, 0, 1),
+    new Vec3(-1, 0, 0), new Vec3(1, 0, 0)
+  ];
+  const face = Number.isInteger(aimed?.face) && aimed.face >= 0 && aimed.face < directions.length
+    ? aimed.face
+    : 1;
+  const hit = aimed?.intersect?.minus?.(block.position) || new Vec3(0.5, 0.5, 0.5);
+  const clamp = value => {
+    const numeric = Number(value);
+    return Math.max(0.001, Math.min(0.999, Number.isFinite(numeric) ? numeric : 0.5));
+  };
+  return {
+    direction: directions[face],
+    cursorPos: new Vec3(clamp(hit.x), clamp(hit.y), clamp(hit.z)),
+    face
+  };
 }
 
 function withWorldInteractionLock(action) {
@@ -586,8 +607,8 @@ async function inspectSupplyStatusUnlocked(bot) {
   try {
     await prepareSafeBarrelHand(bot);
     stopAllMovement(bot);
-    await aimAtInteractionBlock(bot, barrel, 'Supply barrel');
-    container = await openContainerWithTimeout(bot, barrel);
+    const interaction = await aimAtInteractionBlock(bot, barrel, 'Supply barrel');
+    container = await openContainerWithTimeout(bot, barrel, interaction);
     const supplies = {
       inventory,
       barrel: {
@@ -1174,8 +1195,8 @@ async function ensureFarmSupplies(bot, context = {}) {
   let latestSuppliesSnapshot = null;
   try {
     await prepareSafeBarrelHand(bot);
-    await aimAtInteractionBlock(bot, barrel, 'Supply barrel');
-    container = await openContainerWithTimeout(bot, barrel);
+    const interaction = await aimAtInteractionBlock(bot, barrel, 'Supply barrel');
+    container = await openContainerWithTimeout(bot, barrel, interaction);
     writeFarmDebug('supply_barrel_opened', {
       ...context,
       durationMs: Date.now() - startedAt,
