@@ -869,6 +869,101 @@ async function useBucketOnFace(bot, referenceBlock, face, expectedTarget) {
   }
 }
 
+async function findLavaPlacementAnchor(bot, targetPos, context = {}) {
+  const directions = [
+    { label:'east', offset:new Vec3(1, 0, 0), face:new Vec3(-1, 0, 0) },
+    { label:'west', offset:new Vec3(-1, 0, 0), face:new Vec3(1, 0, 0) },
+    { label:'south', offset:new Vec3(0, 0, 1), face:new Vec3(0, 0, -1) },
+    { label:'north', offset:new Vec3(0, 0, -1), face:new Vec3(0, 0, 1) }
+  ];
+  const diagnostics = [];
+  const candidates = [];
+
+  for (const direction of directions) {
+    const position = targetPos.plus(direction.offset);
+    const block = bot.blockAt(position);
+    const valid = block?.name === 'smooth_stone' &&
+      block.boundingBox === 'block' &&
+      block.position.plus(direction.face).equals(targetPos);
+    if (!valid) {
+      diagnostics.push({
+        side:direction.label,
+        position:position.toString(),
+        block:block?.name || null,
+        boundingBox:block?.boundingBox || null,
+        result:'not_anchor'
+      });
+      continue;
+    }
+    const cursor = getFaceCursor(direction.face);
+    const hitPoint = block.position.offset(cursor.x, cursor.y, cursor.z);
+    const clickDistance = bot.entity?.position?.distanceTo(hitPoint);
+    candidates.push({ ...direction, block, cursor, hitPoint, clickDistance });
+  }
+
+  candidates.sort((a, b) => {
+    const aDistance = Number.isFinite(a.clickDistance) ? a.clickDistance : Infinity;
+    const bDistance = Number.isFinite(b.clickDistance) ? b.clickDistance : Infinity;
+    return aDistance - bDistance;
+  });
+
+  for (const candidate of candidates) {
+    if (!Number.isFinite(candidate.clickDistance) || candidate.clickDistance > MAX_INTERACT_DISTANCE) {
+      diagnostics.push({
+        side:candidate.label,
+        position:candidate.block.position.toString(),
+        block:candidate.block.name,
+        distance:Number.isFinite(candidate.clickDistance) ? Number(candidate.clickDistance.toFixed(3)) : null,
+        result:'out_of_range'
+      });
+      continue;
+    }
+
+    await bot.lookAt(candidate.hitPoint, true);
+    await sleep(25);
+    const aimed = typeof bot.blockAtCursor === 'function'
+      ? bot.blockAtCursor(MAX_INTERACT_DISTANCE + 0.25)
+      : null;
+    if (
+      aimed?.position?.equals(candidate.block.position) &&
+      aimed.face === faceVectorToDirection(candidate.face)
+    ) {
+      writeFarmDebug('lava_place_anchor_selected', {
+        ...context,
+        target:targetPos.toString(),
+        side:candidate.label,
+        anchor:candidate.block.position.toString(),
+        face:candidate.face.toString(),
+        clickDistance:Number(candidate.clickDistance.toFixed(3))
+      });
+      return candidate;
+    }
+    diagnostics.push({
+      side:candidate.label,
+      position:candidate.block.position.toString(),
+      block:candidate.block.name,
+      distance:Number(candidate.clickDistance.toFixed(3)),
+      aimedBlock:aimed?.name || null,
+      aimedPosition:aimed?.position?.toString?.() || null,
+      aimedFace:Number.isInteger(aimed?.face) ? aimed.face : null,
+      result:'not_visible'
+    });
+  }
+
+  writeFarmDebug('lava_place_anchor_failed', {
+    ...context,
+    target:targetPos.toString(),
+    checkedSides:diagnostics
+  });
+  const summary = diagnostics.map(item =>
+    `${item.side}:${item.result}${item.block ? `(${item.block})` : ''}`
+  ).join(', ');
+  throw createPlacementSafetyError(
+    `No reachable visible smooth_stone anchor points into target ${targetPos}. ` +
+    `Checked ${summary || 'no loaded adjacent blocks'}; refusing bucket use.`
+  );
+}
+
 function getAdjacentBlockDebug(bot, x, y, z) {
   const checks = [
     ['down', 0, -1, 0],
@@ -2090,60 +2185,18 @@ async function pourLava(bot, targetPos, context = {}) {
   await waitForHeldItem(bot, 'lava_bucket');
   await sleep(INTERACT_SETTLE_MS);
 
-  // The farm has one allow-listed placement surface: the west face of the
-  // smooth-stone block at X + 1. That face points exactly into target.
-  const ref = {
-    label: 'east',
-    face: new Vec3(-1, 0, 0),
-    block: bot.blockAt(new Vec3(x + 1, y, z))
-  };
-  if (
-    ref.block?.name !== 'smooth_stone' ||
-    ref.block.boundingBox !== 'block' ||
-    !ref.block.position.plus(ref.face).equals(targetPos)
-  ) {
-    writeFarmDebug('lava_place_anchor_failed', {
-      ...context,
-      target: targetPos.toString(),
-      anchor: new Vec3(x + 1, y, z).toString(),
-      anchorBlock: ref.block?.name || null,
-      boundingBox: ref.block?.boundingBox || null
-    });
-    throw createPlacementSafetyError(
-      `Required smooth_stone anchor is missing at (${x + 1}, ${y}, ${z}); refusing bucket use.`
-    );
-  }
-
-  const cursor = getFaceCursor(ref.face);
-  const hitPoint = ref.block.position.offset(cursor.x, cursor.y, cursor.z);
-  const clickDistance = bot.entity?.position?.distanceTo(hitPoint);
+  // Farm copies may be rotated or mirrored. Select the nearest visible
+  // horizontal smooth-stone face whose adjacent block is still exactly the
+  // configured target; never infer or permit a different destination.
+  const ref = await findLavaPlacementAnchor(bot, targetPos, context);
   writeFarmDebug('lava_place_anchor_checked', {
     ...context,
     target: targetPos.toString(),
     anchor: ref.block.position.toString(),
+    side: ref.label,
     face: ref.face.toString(),
-    clickDistance: Number.isFinite(clickDistance) ? Number(clickDistance.toFixed(3)) : null
+    clickDistance: Number(ref.clickDistance.toFixed(3))
   });
-  if (!Number.isFinite(clickDistance) || clickDistance > MAX_INTERACT_DISTANCE) {
-    throw createPlacementSafetyError(
-      `Required smooth_stone west face is out of reach for target (${x}, ${y}, ${z}).`
-    );
-  }
-
-  await bot.lookAt(hitPoint, true);
-  await sleep(25);
-
-  const aimedBlock = typeof bot.blockAtCursor === 'function'
-    ? bot.blockAtCursor(MAX_INTERACT_DISTANCE + 0.25)
-    : null;
-  if (
-    !aimedBlock?.position?.equals(ref.block.position) ||
-    aimedBlock.face !== faceVectorToDirection(ref.face)
-  ) {
-    throw createPlacementSafetyError(
-      `Cannot see the required smooth_stone west face for (${x}, ${y}, ${z}); refusing bucket use.`
-    );
-  }
 
   // Sneak prevents activation of the anchor. There is one verified use-item
   // action and deliberately no retry or second anchor after packet send.
@@ -2701,6 +2754,7 @@ return {
   __test: {
     fillBucket,
     useBucketOnFace,
+    findLavaPlacementAnchor,
     findLavaCauldrons,
     getCauldronFailure,
     clearCauldronMemory() {

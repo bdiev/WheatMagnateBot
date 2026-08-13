@@ -158,6 +158,28 @@ async function main() {
     const originalBlockAtCursor = bot.blockAtCursor;
     const originalActivateBlock = bot.activateBlock;
     const originalActivateItem = bot.activateItem;
+    const originalBotPosition = bot.entity.position;
+
+    const rotatedAnchor = {
+      name:'smooth_stone', type:3, boundingBox:'block',
+      position:configuredTarget.offset(0, 0, 1)
+    };
+    bot.entity.position = configuredTarget.offset(0, 0, -2);
+    bot.blockAt = position => position?.equals?.(rotatedAnchor.position) ? rotatedAnchor : null;
+    bot.blockAtCursor = () => ({ ...rotatedAnchor, face:2 });
+    const selectedRotatedAnchor = await secondary.modules.obsidianFarm.__test.findLavaPlacementAnchor(
+      bot,
+      configuredTarget,
+      { test:'rotated_secondary_farm' }
+    );
+    assert.equal(selectedRotatedAnchor.label, 'south', 'rotated farm discovers its south-side placement anchor');
+    assert.ok(selectedRotatedAnchor.face.equals(new Vec3(0, 0, -1)), 'rotated anchor face still points exactly into target');
+    assert.ok(
+      bot.lastLookAt.equals(rotatedAnchor.position.offset(0.5, 0.5, 0)),
+      'secondary turns away from the lever and barrel toward the rotated placement face'
+    );
+
+    bot.entity.position = originalBotPosition;
     let placementInteraction = null;
     bot.heldItem = { name:'lava_bucket' };
     bot.blockAt = position => position?.equals?.(placementAnchor.position)
