@@ -10,10 +10,10 @@ const startFunction = botSource.match(
   /async function startConfiguredObsidianFarm\(\) \{[\s\S]*?\n\}/
 )?.[0] || '';
 
-assert.doesNotMatch(
-  startFunction,
-  /await farm\.prepareStart\(bot\)/,
-  'the command handler must not wait indefinitely for a barrel window'
+assert.match(
+  botSource,
+  /async function ensureObsidianFarmRunning[\s\S]*?await farm\.prepareStart\(createdBot\)[\s\S]*?farm\.(?:start|resume)\(createdBot/,
+  'the primary runtime must complete the shared barrel preparation before starting its farm loop'
 );
 assert.ok(
   startFunction.indexOf('await beginObsidianFarmSession()') <

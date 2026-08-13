@@ -54,11 +54,10 @@ function farmBot(username, { online = true } = {}) {
     if (block?.name === 'lever') {
       leverPowered = !leverPowered;
       bot.leverActions = (bot.leverActions || 0) + 1;
+    } else if (block?.name === 'barrel') {
+      bot.barrelOpens = (bot.barrelOpens || 0) + 1;
+      bot.emit('windowOpen', { containerItems:() => [], close() {} });
     }
-  };
-  bot.openContainer = async () => {
-    bot.barrelOpens = (bot.barrelOpens || 0) + 1;
-    return { containerItems:() => [], close() {} };
   };
   bot.quit = () => {};
   bot.loadPlugin = () => {
@@ -202,8 +201,8 @@ async function main() {
     assert.equal(reconnectRuntime.task, 'obsidian');
     assert.equal(reconnectRuntime.obsidianFarm.getStatus().desiredEnabled, true);
     assert.equal(reconnectBots[0].leverActions, 1, 'secondary startup switches its protection lever OFF');
-    assert.equal(reconnectBots[0].barrelOpens, 1, 'secondary startup opens its supply barrel during preflight');
-    assert.ok(reconnectBots[0].lookActions >= 2, 'secondary startup turns toward the lever and the barrel before interacting');
+    assert.equal(reconnectBots[0].barrelOpens, 1, 'secondary startup always opens its supply barrel');
+    assert.ok(reconnectBots[0].lookActions >= 2, 'secondary startup turns toward both the lever and the barrel');
 
     await reconnectRuntime.restart();
     assert.equal(reconnectBots.length, 2);

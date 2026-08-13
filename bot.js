@@ -4474,6 +4474,13 @@ async function ensureObsidianFarmRunning(createdBot, { freshSession = false } = 
       }
 
       if (leverReady) {
+        try {
+          await farm.prepareStart(createdBot);
+        } catch (err) {
+          console.error(`[Obsidian] Supply barrel preparation attempt ${attempts} failed:`, err.message);
+          await new Promise(resolve => setTimeout(resolve, attempts < 3 ? 2_000 : 5_000));
+          continue;
+        }
         if (freshSession) {
           farm.start(createdBot, farmNotification);
         } else {

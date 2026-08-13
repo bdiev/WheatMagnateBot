@@ -277,7 +277,14 @@ function withTimeout(promise, timeoutMs, message) {
 
 async function openContainerWithTimeout(bot, block) {
   let abandoned = false;
-  const opening = Promise.resolve().then(() => bot.openContainer(block));
+  let onWindowOpen = null;
+  const opening = new Promise((resolve, reject) => {
+    onWindowOpen = window => resolve(window);
+    bot.once('windowOpen', onWindowOpen);
+    Promise.resolve()
+      .then(() => bot.activateBlock(block))
+      .catch(reject);
+  });
   opening.then(container => {
     if (abandoned) {
       try { container?.close?.(); } catch {}
@@ -291,6 +298,7 @@ async function openContainerWithTimeout(bot, block) {
     );
   } catch (error) {
     abandoned = true;
+    if (onWindowOpen) bot.removeListener('windowOpen', onWindowOpen);
     throw error;
   }
 }
@@ -1103,6 +1111,7 @@ async function waitForInventorySupply(bot, predicate, timeoutMs = 2_000) {
 
 async function ensureFarmSupplies(bot, context = {}) {
   const startedAt = Date.now();
+  const forceBarrelInspection = Boolean(context.forceBarrelInspection);
   const hasUsablePickaxe = Boolean(findUsablePickaxe(bot, MIN_PICKAXE_REMAINING_PERCENT));
   const hasFood = bot.inventory.items().some(isFoodItem);
   const lowPickaxes = bot.inventory.items().filter(item =>
@@ -1125,13 +1134,13 @@ async function ensureFarmSupplies(bot, context = {}) {
   const lowPickaxeTrackingKeys = new Map(
     lowPickaxes.map(item => [item, getPickaxeTrackingKey(item)])
   );
-  if (hasUsablePickaxe && hasFood && lowPickaxes.length === 0) {
+  if (hasUsablePickaxe && hasFood && lowPickaxes.length === 0 && !forceBarrelInspection) {
     writeFarmDebug('supply_check_ok', {
       ...context,
       durationMs: Date.now() - startedAt,
       inventory: getInventoryDebugSummary(bot)
     });
-    return;
+    return null;
   }
 
   const barrel = findReachableSupplyBarrel(bot);
@@ -1339,14 +1348,17 @@ async function ensureFarmSupplies(bot, context = {}) {
     durationMs: Date.now() - startedAt,
     inventory: getInventoryDebugSummary(bot)
   });
+  return latestSuppliesSnapshot;
 }
 
 async function prepareStart(bot) {
   if (!bot?.entity) throw new Error('Bot is offline.');
-  await ensureFarmSupplies(bot, { trigger: 'prepare_start' });
-  const supplies = await inspectSupplyStatus(bot);
-  if (!supplies?.barrel || supplies.barrelError) {
-    throw new Error(`Obsidian Farm supply barrel preflight failed: ${supplies?.barrelError || 'barrel not found'}.`);
+  const supplies = await withWorldInteractionLock(() => ensureFarmSupplies(bot, {
+    trigger: 'prepare_start',
+    forceBarrelInspection: true
+  }));
+  if (!supplies?.barrel) {
+    throw new Error('Obsidian Farm supply barrel preflight failed: barrel was not opened.');
   }
   writeFarmDebug('farm_start_preflight_completed', {
     barrel: supplies.barrel.position,

@@ -349,8 +349,6 @@ class MinecraftBotRuntime extends BotContext {
         if (this.bot !== startingBot || !startingBot?.entity) {
           throw new Error('Obsidian Farm cannot start: Minecraft connection changed during barrel preparation.');
         }
-        // Stop mutually exclusive automation only after every farm prerequisite
-        // has passed, so a rejected farm start does not interrupt current work.
         this.killAura?.setEnabled(false);
         this.follow?.stop?.();
         const farmStatus = this.obsidianFarm.start();

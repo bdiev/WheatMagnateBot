@@ -14,10 +14,10 @@ assert.match(
   /if \(!bot\?\.entity\) \{[\s\S]*?await beginObsidianFarmSession\(\);[\s\S]*?queued: true/,
   'an offline farm start must persist the desired state for the next spawn'
 );
-assert.doesNotMatch(
-  startFunction,
-  /await farm\.prepareStart\(bot\)/,
-  'online Mineflayer preparation must not block the command acknowledgement'
+assert.match(
+  botSource,
+  /async function ensureObsidianFarmRunning[\s\S]*?await farm\.prepareStart\(createdBot\)[\s\S]*?farm\.(?:start|resume)\(createdBot/,
+  'online startup must prepare the shared supply barrel before starting the farm loop'
 );
 assert.ok(
   startFunction.indexOf('if (!bot?.entity)') < startFunction.indexOf('ensureObsidianFarmRunning(startingBot'),
