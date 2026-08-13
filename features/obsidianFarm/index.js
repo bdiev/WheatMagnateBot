@@ -81,8 +81,17 @@ const FOOD_ITEM_PARTS = [
   'beef',
   'steak',
   'porkchop',
+  'mutton',
+  'chicken',
+  'rabbit',
   'carrot',
-  'baked_potato'
+  'baked_potato',
+  'pumpkin_pie',
+  'mushroom_stew',
+  'rabbit_stew',
+  'melon_slice',
+  'cookie',
+  'dried_kelp'
 ];
 // ── Internal state ─────────────────────────────────────────────────────────────
 const farm = {
@@ -716,17 +725,14 @@ function findReachableSupplyBarrel(bot) {
 }
 
 async function prepareSafeBarrelHand(bot) {
-  if (bot.heldItem?.name === 'lava_bucket') {
-    throw createPlacementSafetyError(
-      'Barrel access blocked: lava must be placed at the configured target first.'
-    );
-  }
-
   const safeItem = findUsablePickaxe(bot, MIN_PICKAXE_REMAINING_PERCENT)?.item ||
     bot.inventory.items().find(item => item.name !== 'lava_bucket' && item.name !== 'bucket');
-  if (safeItem && bot.heldItem?.name !== safeItem.name) {
+  if (safeItem && bot.heldItem !== safeItem) {
     await bot.equip(safeItem, 'hand');
     await waitForHeldItem(bot, safeItem.name);
+  } else if (bot.heldItem?.name === 'lava_bucket') {
+    await bot.unequip?.('hand');
+    await waitForInventorySupply(bot, () => bot.heldItem?.name !== 'lava_bucket');
   }
 
   if (bot.heldItem?.name === 'lava_bucket') {
@@ -1071,11 +1077,11 @@ function getRemainingDurabilityPercent(bot, item) {
   return (remaining / maxDurability) * 100;
 }
 
-// Statistics display durability to one decimal place. Use the same precision
-// for eligibility so a pickaxe shown as 5.0% is not simultaneously marked low.
+// Retire a pickaxe as soon as the dashboard reaches 5.0%. Mining is allowed
+// only while the displayed durability is strictly above the threshold.
 function isPickaxeUsable(bot, item) {
   const remainingPercent = getRemainingDurabilityPercent(bot, item);
-  return Number(remainingPercent.toFixed(1)) >= MIN_PICKAXE_REMAINING_PERCENT;
+  return Number(remainingPercent.toFixed(1)) > MIN_PICKAXE_REMAINING_PERCENT;
 }
 
 function findUsablePickaxe(bot, minRemainingPercent) {
@@ -1096,7 +1102,7 @@ function findUsablePickaxe(bot, minRemainingPercent) {
 
     if (
       bestCandidate &&
-      Number(bestPercent.toFixed(1)) >= minRemainingPercent
+      Number(bestPercent.toFixed(1)) > minRemainingPercent
     ) {
       return { item: bestCandidate, remainingPercent: bestPercent };
     }
@@ -1124,7 +1130,7 @@ function findBestPickaxe(bot) {
 function createLowDurabilityError(percent) {
   const err = new Error(
     `Best diamond/netherite pickaxe has ${percent.toFixed(1)}% durability ` +
-    `(minimum required: at least ${MIN_PICKAXE_REMAINING_PERCENT}%).`
+    `(replacement threshold: ${MIN_PICKAXE_REMAINING_PERCENT}% or less).`
   );
   err.code = LOW_PICKAXE_DURABILITY_CODE;
   return err;
@@ -1132,6 +1138,10 @@ function createLowDurabilityError(percent) {
 
 function isFoodItem(item) {
   return Boolean(item?.name) && FOOD_ITEM_PARTS.some(part => item.name.includes(part));
+}
+
+function isFarmBucket(item) {
+  return item?.name === 'bucket' || item?.name === 'lava_bucket';
 }
 
 function createResourceExhaustedError(missing) {
@@ -1392,6 +1402,7 @@ async function ensureFarmSupplies(bot, context = {}) {
   const forceBarrelInspection = Boolean(context.forceBarrelInspection);
   const hasUsablePickaxe = Boolean(findUsablePickaxe(bot, MIN_PICKAXE_REMAINING_PERCENT));
   const hasFood = bot.inventory.items().some(isFoodItem);
+  const hasBucket = bot.inventory.items().some(isFarmBucket);
   const lowPickaxes = bot.inventory.items().filter(item =>
     PICKAXE_PRIORITY.includes(item.name) &&
     !isPickaxeUsable(bot, item)
@@ -1401,6 +1412,7 @@ async function ensureFarmSupplies(bot, context = {}) {
     inventory: getInventoryDebugSummary(bot),
     hasUsablePickaxe,
     hasFood,
+    hasBucket,
     lowPickaxes: lowPickaxes.map(item => ({
       name: item.name,
       slot: item.slot,
@@ -1412,7 +1424,7 @@ async function ensureFarmSupplies(bot, context = {}) {
   const lowPickaxeTrackingKeys = new Map(
     lowPickaxes.map(item => [item, getPickaxeTrackingKey(item)])
   );
-  if (hasUsablePickaxe && hasFood && lowPickaxes.length === 0 && !forceBarrelInspection) {
+  if (hasUsablePickaxe && hasFood && hasBucket && lowPickaxes.length === 0 && !forceBarrelInspection) {
     writeFarmDebug('supply_check_ok', {
       ...context,
       durationMs: Date.now() - startedAt,
@@ -1426,6 +1438,7 @@ async function ensureFarmSupplies(bot, context = {}) {
     const missing = [];
     if (!hasUsablePickaxe) missing.push('pickaxe');
     if (!hasFood) missing.push('food');
+    if (!hasBucket) missing.push('bucket');
     if (lowPickaxes.length > 0) missing.push('barrel access for worn pickaxe deposit');
     writeFarmDebug('supply_barrel_missing', {
       ...context,
@@ -1448,6 +1461,7 @@ async function ensureFarmSupplies(bot, context = {}) {
   let container = null;
   let pickaxeWasAvailable = false;
   let foodWasAvailable = false;
+  let bucketWasAvailable = false;
   let pickaxeChanged = false;
   let latestSuppliesSnapshot = null;
   try {
@@ -1544,6 +1558,24 @@ async function ensureFarmSupplies(bot, context = {}) {
       }
     }
 
+    containerItems = container.containerItems();
+    if (!hasBucket) {
+      // Prefer an empty bucket; a lava bucket is still a valid ready-to-pour
+      // cycle supply when that is what the barrel contains.
+      const bucket = containerItems.find(item => item.name === 'bucket') ||
+        containerItems.find(item => item.name === 'lava_bucket');
+      if (bucket) {
+        bucketWasAvailable = true;
+        await container.withdraw(bucket.type, bucket.metadata, 1, bucket.nbt);
+        writeFarmDebug('supply_withdrawn', {
+          ...context,
+          item: bucket.name,
+          count: 1,
+          barrel: barrel.position.toString()
+        });
+      }
+    }
+
     if (pickaxeChanged) {
       latestSuppliesSnapshot = {
         reason: 'pickaxe_changed',
@@ -1591,6 +1623,9 @@ async function ensureFarmSupplies(bot, context = {}) {
   if (!hasFood && foodWasAvailable) {
     await waitForInventorySupply(bot, () => bot.inventory.items().some(isFoodItem));
   }
+  if (!hasBucket && bucketWasAvailable) {
+    await waitForInventorySupply(bot, () => bot.inventory.items().some(isFarmBucket));
+  }
 
   if (latestSuppliesSnapshot) {
     latestSuppliesSnapshot = {
@@ -1608,10 +1643,12 @@ async function ensureFarmSupplies(bot, context = {}) {
   const missing = [];
   if (!findUsablePickaxe(bot, MIN_PICKAXE_REMAINING_PERCENT)) missing.push('pickaxe');
   if (!bot.inventory.items().some(isFoodItem)) missing.push('food');
+  if (!bot.inventory.items().some(isFarmBucket)) missing.push('bucket');
   if (missing.length > 0) {
     const unavailable = missing.filter(name =>
       (name === 'pickaxe' && !pickaxeWasAvailable) ||
-      (name === 'food' && !foodWasAvailable)
+      (name === 'food' && !foodWasAvailable) ||
+      (name === 'bucket' && !bucketWasAvailable)
     );
     if (unavailable.length === 0) {
       const err = new Error(
@@ -2549,7 +2586,7 @@ async function mineObsidian(bot, targetPos, context = {}) {
       durationMs: Date.now() - startedAt
     });
     throw new Error(
-      `No usable diamond/netherite pickaxe found with durability >= ${MIN_PICKAXE_REMAINING_PERCENT}%. ` +
+      `No usable diamond/netherite pickaxe found with durability above ${MIN_PICKAXE_REMAINING_PERCENT}%. ` +
       'Waiting for a suitable pickaxe.'
     );
   }
@@ -2969,6 +3006,9 @@ return {
     fillBucket,
     useBucketOnFace,
     withWorldInteractionLock,
+    ensureFarmSupplies,
+    isPickaxeUsable,
+    swapPickaxesInExactSlots,
     findLavaPlacementAnchor,
     findLavaCauldrons,
     getCauldronFailure,

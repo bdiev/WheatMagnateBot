@@ -28,7 +28,8 @@ function farmBot(username, { online = true } = {}) {
   const barrelPosition = new Vec3(-1, 64, 0);
   const inventoryItems = [
     { name:'diamond_pickaxe', type:100, count:1, slot:9, maxDurability:1561, durabilityUsed:0 },
-    { name:'bread', type:101, count:8, slot:10 }
+    { name:'bread', type:101, count:8, slot:10 },
+    { name:'bucket', type:102, count:1, slot:11 }
   ];
   let leverPowered = true;
   bot.entity = online ? { position:botPosition, effects:{} } : null;
