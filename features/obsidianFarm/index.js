@@ -293,6 +293,29 @@ async function openContainerWithTimeout(bot, block) {
   }
 }
 
+async function aimAtInteractionBlock(bot, block, label) {
+  if (!block?.position) throw new Error(`${label} is unavailable before interaction.`);
+  const center = block.position.offset(0.5, 0.5, 0.5);
+  await bot.lookAt(center, true);
+  // Give the forced rotation packet a brief moment to reach servers that
+  // validate block use with their own eye-position ray trace.
+  await sleep(100);
+  if (typeof bot.blockAtCursor === 'function') {
+    const aimed = bot.blockAtCursor(MAX_INTERACT_DISTANCE + 0.25);
+    if (!aimed?.position?.equals(block.position)) {
+      throw new Error(
+        `${label} is not in the bot's line of sight after turning ` +
+        `(aimed at ${aimed?.name || 'air'}).`
+      );
+    }
+  }
+  writeFarmDebug('interaction_aim_confirmed', {
+    action: label,
+    position: block.position.toString(),
+    botPosition: getBotDebugPosition(bot)
+  });
+}
+
 function withWorldInteractionLock(action) {
   const result = worldInteractionQueue.then(action, action);
   worldInteractionQueue = result.catch(() => {});
@@ -553,6 +576,7 @@ async function inspectSupplyStatusUnlocked(bot) {
   try {
     await prepareSafeBarrelHand(bot);
     stopAllMovement(bot);
+    await aimAtInteractionBlock(bot, barrel, 'Supply barrel');
     container = await openContainerWithTimeout(bot, barrel);
     const supplies = {
       inventory,
@@ -1139,6 +1163,7 @@ async function ensureFarmSupplies(bot, context = {}) {
   let latestSuppliesSnapshot = null;
   try {
     await prepareSafeBarrelHand(bot);
+    await aimAtInteractionBlock(bot, barrel, 'Supply barrel');
     container = await openContainerWithTimeout(bot, barrel);
     writeFarmDebug('supply_barrel_opened', {
       ...context,
@@ -2510,6 +2535,7 @@ async function setProtectionLeverState(bot, powered) {
         writeFarmDebug('protection_lever_action_start', {
           position: position.toString(), attempt, requiredState: powered ? 'on' : 'off'
         });
+        await aimAtInteractionBlock(bot, current, 'Protection lever');
         await bot.activateBlock(current);
       } catch (error) {
         lastError = error;

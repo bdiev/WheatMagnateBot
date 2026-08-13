@@ -36,12 +36,18 @@ function farmBot(username, { online = true } = {}) {
   bot.clearControlStates = () => {};
   bot.equip = async item => { bot.heldItem = item; };
   bot.unequip = async () => { bot.heldItem = null; };
+  bot.lookAt = async target => { bot.lastLookAt = target; bot.lookActions = (bot.lookActions || 0) + 1; };
   bot.findBlocks = options => options?.matching === 1 ? [barrelPosition] : [];
   bot.blockAt = position => {
     if (position?.equals?.(leverPosition)) return {
       name:'lever', position:leverPosition, getProperties:() => ({ powered:leverPowered })
     };
     if (position?.equals?.(barrelPosition)) return { name:'barrel', type:1, position:barrelPosition };
+    return null;
+  };
+  bot.blockAtCursor = () => {
+    if (bot.lastLookAt?.equals?.(leverPosition.offset(0.5, 0.5, 0.5))) return bot.blockAt(leverPosition);
+    if (bot.lastLookAt?.equals?.(barrelPosition.offset(0.5, 0.5, 0.5))) return bot.blockAt(barrelPosition);
     return null;
   };
   bot.activateBlock = async block => {
@@ -63,6 +69,15 @@ function farmBot(username, { online = true } = {}) {
 }
 
 function nextTurn() { return new Promise(resolve => setImmediate(resolve)); }
+
+async function waitFor(predicate, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+  return predicate();
+}
 
 async function readDebugEvents(file, expected) {
   for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -115,6 +130,14 @@ async function main() {
     assert.equal(started.accountId, SECONDARY_ID);
     await nextTurn();
     secondary.modules.obsidianFarm.suspend();
+
+    const blockedBot = farmBot('bdiev_');
+    blockedBot.blockAtCursor = () => null;
+    await assert.rejects(
+      secondary.modules.obsidianFarm.setProtectionLeverState(false, blockedBot),
+      /Protection lever is not in the bot's line of sight/i
+    );
+    assert.equal(blockedBot.leverActions, undefined, 'an obstructed lever never receives a blind interaction click');
 
     const expectedDebugEvents = ['farm_started', 'cycle_started', 'cycle_action_start'];
     const debugLines = await readDebugEvents(
@@ -188,12 +211,13 @@ async function main() {
     assert.equal(reconnectRuntime.obsidianFarm.getStatus().desiredEnabled, true);
     assert.equal(reconnectBots[0].leverActions, 1, 'secondary startup switches its protection lever OFF');
     assert.equal(reconnectBots[0].barrelOpens, 1, 'secondary startup opens its supply barrel during preflight');
+    assert.ok(reconnectBots[0].lookActions >= 2, 'secondary startup turns toward the lever and the barrel before interacting');
 
     await reconnectRuntime.restart();
     assert.equal(reconnectBots.length, 2);
     assert.ok(reconnectBots[1].pathfinder, 'a replacement bot receives Pathfinder before spawn');
     reconnectBots[1].emit('spawn');
-    await nextTurn();
+    await waitFor(() => reconnectRuntime.obsidianFarm.getStatus().enabled);
     assert.equal(reconnectRuntime.obsidianFarm.getStatus().enabled, true, 'desired farm state resumes after reconnect');
     assert.equal(reconnectRuntime.task, 'obsidian');
     assert.equal(reconnectRuntime.getStatus().lastError, null);
