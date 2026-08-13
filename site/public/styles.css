@@ -4082,6 +4082,8 @@ body.search-focus-active #logoutButton {
 }
 
 .obsidian-scope-switch {
+  position: relative;
+  isolation: isolate;
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
@@ -4095,18 +4097,62 @@ body.search-focus-active #logoutButton {
   transform-origin: center;
 }
 
+.obsidian-scope-switch::before {
+  position: absolute;
+  z-index: 0;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc((100% - 10px) / 2);
+  border-radius: calc(var(--button-radius) - 3px);
+  background: var(--accent);
+  box-shadow: 0 5px 14px color-mix(in srgb, var(--accent) 28%, transparent);
+  content: '';
+  transform: translateX(0);
+  transition: transform 340ms cubic-bezier(.2, .85, .2, 1), background-color 220ms ease, box-shadow 220ms ease;
+}
+
+.obsidian-scope-switch[data-active-scope="all"]::before {
+  transform: translateX(calc(100% + 4px));
+}
+
 .obsidian-scope-switch[hidden] {
   display: none;
 }
 
 .obsidian-scope-switch .chart-range-button {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 50%;
   min-height: 34px;
   white-space: nowrap;
+  background: transparent;
+  box-shadow: none;
+}
+
+.obsidian-scope-switch .chart-range-button:hover,
+.obsidian-scope-switch .chart-range-button.active,
+.obsidian-scope-switch .chart-range-button.active:hover {
+  background: transparent;
+  box-shadow: none;
+}
+
+.obsidian-scope-switch .chart-range-button.active,
+.obsidian-scope-switch .chart-range-button.active:hover {
+  color: #fff;
 }
 
 .obsidian-scope-toolbar {
   grid-column: 1 / -1;
   justify-self: start;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .obsidian-scope-switch::before,
+  .obsidian-scope-switch .chart-range-button {
+    animation: none !important;
+    transition: none !important;
+  }
 }
 
 .chat-message.chat-message-bot:not(.chat-activity),

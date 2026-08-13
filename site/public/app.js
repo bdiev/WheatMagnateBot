@@ -4313,6 +4313,47 @@ function obsidianStatsPath() {
   return `/api/obsidian?scope=${encodeURIComponent(scope)}`;
 }
 
+function updateObsidianScopeControl(scope, { disabled = false } = {}) {
+  const control = $('#obsidianStatsScope');
+  if (!control) return;
+  control.dataset.activeScope = scope;
+  control.querySelectorAll('[data-obsidian-scope]').forEach(button => {
+    const active = button.dataset.obsidianScope === scope;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+    button.disabled = disabled;
+  });
+}
+
+function startObsidianScopeAnimation(direction) {
+  const tab = $('#tab-obsidian');
+  const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  if (!tab || reducedMotion) return { finished: Promise.resolve(), cancel() {} };
+  const elements = Array.from(tab.querySelectorAll(
+    ':scope > .stats-grid > .stat, :scope > .farm-admin-grid > .panel, :scope > .panel, :scope > .split-grid > .panel, :scope > .collapsible-section'
+  )).filter(element => !element.hidden && typeof element.animate === 'function');
+  const leaving = direction === 'out';
+  const keyframes = leaving
+    ? [
+      { opacity: 1, filter: 'blur(0)', transform: 'translateY(0) scale(1)' },
+      { opacity: 0.08, filter: 'blur(5px)', transform: 'translateY(9px) scale(.992)' }
+    ]
+    : [
+      { opacity: 0, filter: 'blur(5px)', transform: 'translateY(11px) scale(.992)' },
+      { opacity: 1, filter: 'blur(0)', transform: 'translateY(0) scale(1)' }
+    ];
+  const animations = elements.map((element, index) => element.animate(keyframes, {
+    duration: leaving ? 180 : 380,
+    delay: leaving ? Math.min(index, 6) * 7 : Math.min(index, 8) * 24,
+    easing: leaving ? 'cubic-bezier(.4, 0, 1, 1)' : 'cubic-bezier(.16, 1, .3, 1)',
+    fill: 'both'
+  }));
+  return {
+    finished: Promise.all(animations.map(animation => animation.finished.catch(() => {}))),
+    cancel() { animations.forEach(animation => animation.cancel()); }
+  };
+}
+
 async function changeObsidianStatsScope(event) {
   const button = event.target.closest('[data-obsidian-scope]');
   if (!button || !activeAccountIsPrimary()) return;
@@ -4320,17 +4361,27 @@ async function changeObsidianStatsScope(event) {
   if (scope === state.obsidianStatsScope) return;
   const previousScope = state.obsidianStatsScope;
   state.obsidianStatsScope = scope;
-  updateObsidianFarmControlsVisibility(scope);
   localStorage.setItem('wm-obsidian-stats-scope', scope);
-  $('#obsidianStatsScope')?.querySelectorAll('[data-obsidian-scope]').forEach(item => { item.disabled = true; });
+  updateObsidianScopeControl(scope, { disabled: true });
+  const exitAnimation = startObsidianScopeAnimation('out');
   try {
-    renderObsidian(await fetchJson(obsidianStatsPath()));
+    const payloadPromise = fetchJson(obsidianStatsPath());
+    await exitAnimation.finished;
+    renderObsidian(await payloadPromise);
+    updateObsidianScopeControl(state.obsidianStatsScope, { disabled: true });
   } catch (error) {
+    await exitAnimation.finished;
     state.obsidianStatsScope = previousScope;
-    updateObsidianFarmControlsVisibility(previousScope);
     localStorage.setItem('wm-obsidian-stats-scope', previousScope);
     renderObsidian(await fetchJson(obsidianStatsPath()));
+    updateObsidianScopeControl(state.obsidianStatsScope, { disabled: true });
     throw error;
+  } finally {
+    exitAnimation.cancel();
+    const enterAnimation = startObsidianScopeAnimation('in');
+    await enterAnimation.finished;
+    enterAnimation.cancel();
+    updateObsidianScopeControl(state.obsidianStatsScope);
   }
 }
 
@@ -4393,15 +4444,7 @@ function renderObsidian(payload) {
   if (activeAccountIsPrimary()) state.obsidianStatsScope = renderedScope;
   updateObsidianFarmControlsVisibility(renderedScope);
   const scopeControl = $('#obsidianStatsScope');
-  if (scopeControl) {
-    scopeControl.dataset.activeScope = renderedScope;
-    scopeControl.querySelectorAll('[data-obsidian-scope]').forEach(button => {
-      const active = button.dataset.obsidianScope === renderedScope;
-      button.classList.toggle('active', active);
-      button.setAttribute('aria-pressed', String(active));
-      button.disabled = false;
-    });
-  }
+  if (scopeControl) updateObsidianScopeControl(renderedScope);
   const chartAccounts = Array.isArray(payload.chartAccounts) ? payload.chartAccounts : [];
   const chartLegend = $('#obsidianChartLegend');
   if (chartLegend) {
