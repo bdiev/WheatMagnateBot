@@ -429,6 +429,36 @@ async function main() {
     assert.equal(reconnectRuntime.getStatus().lastError, null);
     await reconnectRuntime.destroy();
 
+    const redeployBots = [];
+    const redeployRuntime = new MinecraftBotRuntime({
+      account:account(SECONDARY_ID, 'bdiev_'),
+      moduleOptions:{
+        dataRoot:path.join(dataRoot, 'fresh-redeploy'),
+        obsidianState:{
+          desiredEnabled:true,
+          config:{ x:3404567, y:39, z:674998, maxCauldronDist:5 }
+        }
+      },
+      botFactory:() => {
+        const created = farmBot('bdiev_');
+        redeployBots.push(created);
+        return created;
+      }
+    });
+    assert.equal(redeployRuntime.obsidianFarm.getStatus().desiredEnabled, true, 'database state restores auto-resume on a fresh deploy');
+    assert.deepEqual(
+      redeployRuntime.obsidianFarm.getStatus().config,
+      { x:3404567, y:39, z:674998, maxCauldronDist:5 },
+      'database state restores managed farm coordinates on a fresh deploy'
+    );
+    await redeployRuntime.start();
+    redeployBots[0].emit('spawn');
+    await waitFor(() => redeployRuntime.obsidianFarm.getStatus().enabled);
+    assert.equal(redeployBots[0].leverActions, 1, 'fresh deploy verifies and switches the protection lever OFF');
+    assert.equal(redeployBots[0].barrelOpens, 1, 'fresh deploy inspects the supply barrel before resuming');
+    assert.equal(redeployRuntime.obsidianFarm.getStatus().enabled, true, 'fresh deploy resumes farming only after preflight');
+    await redeployRuntime.destroy();
+
     const botSource = fs.readFileSync(path.resolve(__dirname, '..', 'bot.js'), 'utf8');
     const farmSource = fs.readFileSync(path.resolve(__dirname, '..', 'features', 'obsidianFarm', 'index.js'), 'utf8');
     assert.match(botSource, /SET status='failed',error=\$2/, 'managed command failures persist their reason');

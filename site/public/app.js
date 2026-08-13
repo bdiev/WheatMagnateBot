@@ -6874,10 +6874,12 @@ async function refreshKillAuraFromEvent() {
 
 async function refreshLiveDashboard() {
   if (!state.currentUser || state.liveDashboardLoading || document.visibilityState === 'hidden') return;
+  const accountId = state.activeAccountId;
   state.liveDashboardLoading = true;
   try {
     if (Date.now() - state.accountsRefreshedAt >= 5_000) loadAccounts().catch(() => {});
     const payload = await fetchJson('/api/live-dashboard');
+    if (accountId !== state.activeAccountId) return;
     renderBotStats({ bot: payload.bot, observedAt: payload.observedAt });
     renderNearbySightings(payload.nearby || []);
     renderSupplies('#inventorySupplies', payload.supplies?.inventory);

@@ -30,6 +30,7 @@ const { GrowingChildAI } = require('./features/growingChild');
 const { sanitizePublicPhrase } = require('./features/growingChild/safety');
 const { runMigrations } = require('./database/migrations');
 const {
+  loadManagedFarmStates,
   recordManagedObsidianMined,
   recordManagedPickaxeRetired,
   saveManagedObsidianSupplies,
@@ -5616,9 +5617,10 @@ async function initializeMultiAccountManager() {
   if (!pool || multiBotManager) return;
   multiAccountRegistry = new AccountRegistry(new AccountRepository(pool));
   const accounts = await multiAccountRegistry.load();
-  const killAuraStatesResult = await pool.query(
-    'SELECT account_id,desired_enabled,selected_mobs FROM kill_aura_state'
-  );
+  const [killAuraStatesResult, managedFarmStates] = await Promise.all([
+    pool.query('SELECT account_id,desired_enabled,selected_mobs FROM kill_aura_state'),
+    loadManagedFarmStates(pool)
+  ]);
   const killAuraStates = new Map(killAuraStatesResult.rows.map(row => [
     row.account_id,
     {
@@ -5649,6 +5651,7 @@ async function initializeMultiAccountManager() {
         isWhitelisted: username => ignoredUsernames.some(item => item.toLowerCase() === String(username).toLowerCase()),
         dangerRadius: runtimeSettings.dangerRadius,
         moduleOptions: {
+          obsidianState: managedFarmStates.get(account.id) || null,
           notify: payload => reportNotification(payload.eventType || 'farm_stalled', {
             ...payload,
             title: `${account.displayName} — ${payload.title || 'Obsidian Farm'}`,
@@ -5798,15 +5801,24 @@ async function executeManagedAccountCommand(command) {
     const y = Number(payload.y);
     const z = Number(payload.z);
     if (![x, y, z].every(Number.isFinite)) throw new Error('Valid Obsidian Farm coordinates are required.');
-    return runtime.configureObsidian(x, y, z, { maxCauldronDist: payload.maxCauldronDist ?? payload.radius });
+    const status = runtime.configureObsidian(x, y, z, { maxCauldronDist: payload.maxCauldronDist ?? payload.radius });
+    await syncManagedFarmState(pool, command.account_id, status);
+    return status;
   }
   if (type === 'obsidian_radius_toggle') {
-    return { maxCauldronDist: runtime.obsidianFarm.cycleCauldronRadius(), ...runtime.obsidianFarm.getStatus() };
+    const status = {
+      maxCauldronDist: runtime.obsidianFarm.cycleCauldronRadius(),
+      ...runtime.obsidianFarm.getStatus()
+    };
+    await syncManagedFarmState(pool, command.account_id, status);
+    return status;
   }
   if (type === 'obsidian_reset_coordinates') {
     await runtime.setObsidianEnabled(false);
     runtime.obsidianFarm.resetConfig();
-    return runtime.obsidianFarm.getStatus();
+    const status = runtime.obsidianFarm.getStatus();
+    await syncManagedFarmState(pool, command.account_id, status);
+    return status;
   }
   if (type === 'obsidian_toggle') {
     const current = runtime.obsidianFarm.getStatus();

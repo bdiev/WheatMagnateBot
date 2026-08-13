@@ -4448,7 +4448,20 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/live-dashboard') {
       const scoped = await scopedAccountRuntime(url,currentUser);
-      if (scoped) { sendJson(res,200,{bot:scoped.bot,observedAt:scoped.observedAt,supplies:{hasSnapshot:false,inventory:null,barrel:null,barrelError:'No account supply snapshot yet.'},nearby:scoped.bot.nearbyPlayers || []}); return; }
+      if (scoped) {
+        const supplyResult = await pool.query(`
+          SELECT supplies,observed_at,updated_at
+          FROM obsidian_account_farm_supply_snapshot
+          WHERE account_id=$1::uuid
+        `, [scoped.account.id]);
+        sendJson(res,200,{
+          bot:scoped.bot,
+          observedAt:scoped.observedAt,
+          supplies:normalizeSupplySnapshot(supplyResult.rows[0]),
+          nearby:scoped.bot.nearbyPlayers || []
+        });
+        return;
+      }
       sendJson(res, 200, await getLiveDashboardStats());
       return;
     }

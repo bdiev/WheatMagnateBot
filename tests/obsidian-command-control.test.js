@@ -41,6 +41,11 @@ assert.doesNotMatch(
   'managed-account Obsidian commands must never be forwarded to the primary farm'
 );
 assert.match(botSource, /if \(type === 'obsidian_set_coordinates'\)/, 'managed runtimes configure their own farm');
+assert.match(
+  botSource,
+  /if \(type === 'obsidian_set_coordinates'\)[\s\S]*?syncManagedFarmState\(pool, command\.account_id, status\)/,
+  'managed coordinates are persisted for redeploy recovery'
+);
 assert.match(botSource, /if \(type === 'obsidian_toggle'\)/, 'managed runtimes start and stop their own farm');
 
 console.log('Obsidian command control tests passed.');

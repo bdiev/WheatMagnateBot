@@ -6,9 +6,12 @@ const { createObsidianFarm } = require('../../features/obsidianFarm');
 const { createKillAuraFeature } = require('../../features/killAura');
 const { createFollowFeature } = require('../../features/follow');
 
-function ownObsidianFarm(context, farm, settingsFile, notify = null) {
+function ownObsidianFarm(context, farm, settingsFile, notify = null, initialState = null) {
   let desiredEnabled = false;
   try { desiredEnabled = Boolean(JSON.parse(fs.readFileSync(settingsFile, 'utf8'))?.enabled); } catch {}
+  if (typeof initialState?.desiredEnabled === 'boolean') {
+    desiredEnabled = initialState.desiredEnabled;
+  }
   const persist = () => {
     fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
     fs.writeFileSync(settingsFile, JSON.stringify({ enabled: desiredEnabled }, null, 2), 'utf8');
@@ -136,6 +139,7 @@ function createModulesForBot(context, {
   followFactory = createFollowFeature,
   notify = null,
   systemLogger = null,
+  obsidianState = null,
   primaryFactories = {}
 } = {}) {
   if (!context?.accountId) throw new Error('Module registry requires a BotContext.');
@@ -148,10 +152,24 @@ function createModulesForBot(context, {
     debugLogFile: path.join(accountRoot, 'obsidian-farm-debug.log'),
     systemLogger
   });
+  if (obsidianState?.config) {
+    rawFarm.configure(
+      obsidianState.config.x,
+      obsidianState.config.y,
+      obsidianState.config.z,
+      { maxCauldronDist:obsidianState.config.maxCauldronDist }
+    );
+  }
   const killAura = killAuraFactory(context.account);
   const follow = followFactory(context.account);
   const modules = {
-    obsidianFarm: ownObsidianFarm(context, rawFarm, path.join(accountRoot, 'obsidian-runtime.json'), notify),
+    obsidianFarm: ownObsidianFarm(
+      context,
+      rawFarm,
+      path.join(accountRoot, 'obsidian-runtime.json'),
+      notify,
+      obsidianState
+    ),
     killAura,
     follow: ownFollow(context, follow, path.join(accountRoot, 'follow.json'))
   };

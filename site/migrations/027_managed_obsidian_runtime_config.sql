@@ -1,0 +1,5 @@
+ALTER TABLE obsidian_account_farm_state
+  ADD COLUMN IF NOT EXISTS target_x INTEGER,
+  ADD COLUMN IF NOT EXISTS target_y INTEGER,
+  ADD COLUMN IF NOT EXISTS target_z INTEGER,
+  ADD COLUMN IF NOT EXISTS target_radius INTEGER;

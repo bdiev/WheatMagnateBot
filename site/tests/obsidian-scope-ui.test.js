@@ -32,5 +32,15 @@ assert.match(serverSource, /obsidian_account_farm_daily[\s\S]*?SUM\(mined\)/,
   'the API aggregates account-scoped farm buckets on the server');
 assert.doesNotMatch(serverSource, /totalMined:localFarm\.cyclesCompleted/,
   'secondary accounts no longer expose session-only placeholder totals');
+assert.match(
+  serverSource,
+  /url\.pathname === '\/api\/live-dashboard'[\s\S]*?obsidian_account_farm_supply_snapshot[\s\S]*?WHERE account_id=\$1::uuid[\s\S]*?normalizeSupplySnapshot/,
+  'secondary live dashboard refreshes retain the selected account supply snapshot'
+);
+assert.doesNotMatch(
+  serverSource,
+  /supplies:\{hasSnapshot:false,inventory:null,barrel:null,barrelError:'No account supply snapshot yet\.'/,
+  'secondary live dashboard no longer overwrites valid supplies with a placeholder'
+);
 
 console.log('Obsidian statistics scope UI tests passed.');
