@@ -282,12 +282,35 @@ async function activateBlockPrecisely(bot, block, interaction) {
   const { direction, cursorPos, lookAt } = interaction;
   await bot.lookAt(lookAt, true);
   await sleep(100);
+  const directionNum = faceVectorToDirection(direction);
+  if (directionNum == null) throw new Error('Cannot map block interaction face.');
+  const preciseMethod = bot?._client?.write && typeof bot.supportFeature === 'function'
+    ? 'raw_block_place'
+    : 'mineflayer_activate_block';
+  writeFarmClickDebug(bot, interaction.action || 'block_activation', 'before_send', {
+    strategy:interaction.name || interaction.strategy || 'precise',
+    method:preciseMethod,
+    block:block?.name || null,
+    blockPosition:block?.position?.toString?.() || null,
+    direction:direction.toString(),
+    directionNum,
+    cursor:cursorPos.toString(),
+    lookAt:lookAt.toString()
+  });
   if (!bot?._client?.write || typeof bot.supportFeature !== 'function') {
-    return bot.activateBlock(block, direction, cursorPos);
+    const result = await bot.activateBlock(block, direction, cursorPos);
+    writeFarmClickDebug(bot, interaction.action || 'block_activation', 'sent', {
+      strategy:interaction.name || interaction.strategy || 'precise',
+      method:preciseMethod,
+      block:block?.name || null,
+      blockPosition:block?.position?.toString?.() || null,
+      direction:direction.toString(),
+      directionNum,
+      cursor:cursorPos.toString()
+    });
+    return result;
   }
 
-  const directionNum = faceVectorToDirection(direction);
-  if (directionNum == null) throw new Error('Cannot map barrel interaction face.');
   const packet = {
     location: block.position,
     direction: directionNum,
@@ -314,6 +337,17 @@ async function activateBlockPrecisely(bot, block, interaction) {
   }
   bot._client.write('block_place', packet);
   bot.swingArm?.();
+  writeFarmClickDebug(bot, interaction.action || 'block_activation', 'sent', {
+    strategy:interaction.name || interaction.strategy || 'precise',
+    method:preciseMethod,
+    block:block?.name || null,
+    blockPosition:block?.position?.toString?.() || null,
+    direction:direction.toString(),
+    directionNum,
+    cursor:cursorPos.toString(),
+    packetCursor:{ x:packet.cursorX, y:packet.cursorY, z:packet.cursorZ },
+    packetFields:Object.keys(packet).sort()
+  });
 }
 
 async function openContainerAttempt(bot, block, interaction, timeoutMs) {
@@ -323,7 +357,7 @@ async function openContainerAttempt(bot, block, interaction, timeoutMs) {
     onWindowOpen = window => resolve(window);
     bot.once('windowOpen', onWindowOpen);
     Promise.resolve()
-      .then(() => activateBlockPrecisely(bot, block, interaction))
+      .then(() => activateBlockPrecisely(bot, block, { ...interaction, action:'supply_barrel' }))
       .catch(reject);
   });
   opening.then(container => {
@@ -332,14 +366,26 @@ async function openContainerAttempt(bot, block, interaction, timeoutMs) {
     }
   }).catch(() => {});
   try {
-    return await withTimeout(
+    const container = await withTimeout(
       opening,
       timeoutMs,
       `Supply barrel did not open using ${interaction.name}`
     );
+    writeFarmClickDebug(bot, 'supply_barrel', 'confirmed', {
+      strategy:interaction.name,
+      block:block?.name || null,
+      blockPosition:block?.position?.toString?.() || null
+    });
+    return container;
   } catch (error) {
     abandoned = true;
     if (onWindowOpen) bot.removeListener('windowOpen', onWindowOpen);
+    writeFarmClickDebug(bot, 'supply_barrel', 'unconfirmed', {
+      strategy:interaction.name,
+      block:block?.name || null,
+      blockPosition:block?.position?.toString?.() || null,
+      error:error.message
+    });
     throw error;
   }
 }
@@ -863,9 +909,33 @@ async function useBucketOnFace(bot, referenceBlock, face, expectedTarget) {
   // was sent could place a second lava source if the first acknowledgement is
   // merely delayed.
   if (identity.isPrimary) {
+    writeFarmClickDebug(bot, 'lava_placement', 'before_send', {
+      method:'activate_item',
+      block:currentReference.name,
+      blockPosition:currentReference.position.toString(),
+      direction:face.toString(),
+      directionNum:faceVectorToDirection(face),
+      cursor:cursor.toString(),
+      target:expectedTarget.toString()
+    });
     bot.activateItem();
+    writeFarmClickDebug(bot, 'lava_placement', 'sent', {
+      method:'activate_item',
+      block:currentReference.name,
+      blockPosition:currentReference.position.toString(),
+      direction:face.toString(),
+      directionNum:faceVectorToDirection(face),
+      cursor:cursor.toString(),
+      target:expectedTarget.toString()
+    });
   } else {
-    await bot.activateBlock(currentReference, face, cursor);
+    await activateBlockPrecisely(bot, currentReference, {
+      action:'lava_placement',
+      name:'rotated-anchor-face',
+      direction:face,
+      cursorPos:cursor,
+      lookAt:hitPoint
+    });
   }
 }
 
@@ -1633,6 +1703,24 @@ function writeFarmDebug(event, details = {}) {
   });
 }
 
+// TEMPORARY: verbose trace for every farm interaction packet. It uses the
+// existing debug switch so production tracing can be turned off immediately.
+function writeFarmClickDebug(bot, action, stage, details = {}) {
+  const number = value => Number.isFinite(Number(value))
+    ? Number(Number(value).toFixed(6))
+    : null;
+  writeFarmDebug('farm_click_trace', {
+    action,
+    stage,
+    ...details,
+    heldItem:bot?.heldItem?.name || null,
+    heldSlot:Number.isInteger(bot?.heldItem?.slot) ? bot.heldItem.slot : null,
+    yaw:number(bot?.entity?.yaw),
+    pitch:number(bot?.entity?.pitch),
+    botPosition:getBotDebugPosition(bot)
+  });
+}
+
 function getDebugLoggingEnabled() {
   return farmDebugLoggingEnabled;
 }
@@ -1841,12 +1929,29 @@ async function digBlockWithTimeout(bot, block, attempt, context = {}) {
   }
 
   try {
+    writeFarmClickDebug(bot, 'obsidian_mining', 'before_send', {
+      method:'raw_block_dig',
+      packetStatus:0,
+      attempt,
+      block:block.name,
+      blockPosition:block.position.toString(),
+      directionNum:face,
+      lookAt:center.toString()
+    });
     bot._client.write('block_dig', {
       status: 0,
       location: block.position,
       face
     });
     bot.swingArm();
+    writeFarmClickDebug(bot, 'obsidian_mining', 'sent', {
+      method:'raw_block_dig',
+      packetStatus:0,
+      attempt,
+      block:block.name,
+      blockPosition:block.position.toString(),
+      directionNum:face
+    });
 
     const firstResult = await Promise.race([
       serverConfirmation.then(blockName => ({ type: 'server', blockName })),
@@ -1861,10 +1966,27 @@ async function digBlockWithTimeout(bot, block, attempt, context = {}) {
       reason: firstResult.type === 'server' ? `server_${firstResult.blockName}` : 'hold_timer',
       blockBeforeFinish: bot.blockAt(block.position)?.name || null
     });
+    writeFarmClickDebug(bot, 'obsidian_mining', 'before_send', {
+      method:'raw_block_dig',
+      packetStatus:2,
+      attempt,
+      block:block.name,
+      blockPosition:block.position.toString(),
+      directionNum:face,
+      reason:firstResult.type === 'server' ? `server_${firstResult.blockName}` : 'hold_timer'
+    });
     bot._client.write('block_dig', {
       status: 2,
       location: block.position,
       face
+    });
+    writeFarmClickDebug(bot, 'obsidian_mining', 'sent', {
+      method:'raw_block_dig',
+      packetStatus:2,
+      attempt,
+      block:block.name,
+      blockPosition:block.position.toString(),
+      directionNum:face
     });
 
     if (firstResult.type === 'timer') {
@@ -1907,10 +2029,28 @@ async function digBlockWithTimeout(bot, block, attempt, context = {}) {
       heldItem: bot.heldItem?.name || null
     });
     if (!completed) {
+      writeFarmClickDebug(bot, 'obsidian_mining', 'before_send', {
+        method:'raw_block_dig',
+        packetStatus:1,
+        attempt,
+        block:block.name,
+        blockPosition:block.position.toString(),
+        directionNum:face,
+        reason:'cancel_after_failure'
+      });
       bot._client.write('block_dig', {
         status: 1,
         location: block.position,
         face
+      });
+      writeFarmClickDebug(bot, 'obsidian_mining', 'sent', {
+        method:'raw_block_dig',
+        packetStatus:1,
+        attempt,
+        block:block.name,
+        blockPosition:block.position.toString(),
+        directionNum:face,
+        reason:'cancel_after_failure'
       });
     }
     throw err;
@@ -2081,8 +2221,32 @@ async function fillBucket(bot, context = {}) {
       await sleep(25);
 
       try {
+        writeFarmClickDebug(bot, 'lava_cauldron_fill', 'before_send', {
+          method:'mineflayer_activate_block',
+          attempt,
+          block:cauldron.name,
+          blockPosition:cauldron.position.toString(),
+          direction:new Vec3(0, 1, 0).toString(),
+          directionNum:1,
+          cursor:new Vec3(0.5, 0.5, 0.5).toString(),
+          lookAt:clickPoint.toString()
+        });
         await bot.activateBlock(cauldron);
+        writeFarmClickDebug(bot, 'lava_cauldron_fill', 'sent', {
+          method:'mineflayer_activate_block',
+          attempt,
+          block:cauldron.name,
+          blockPosition:cauldron.position.toString(),
+          currentBlock:bot.blockAt(position)?.name || null
+        });
       } catch (err) {
+        writeFarmClickDebug(bot, 'lava_cauldron_fill', 'failed', {
+          method:'mineflayer_activate_block',
+          attempt,
+          block:cauldron.name,
+          blockPosition:cauldron.position.toString(),
+          error:err.message
+        });
         failures.push(`${position}:click#${attempt}_${err.message}`);
         rememberCauldronFailure(position, 'click_failed', { error: err.message });
         recordCauldronReachSample(context, {
@@ -2099,6 +2263,12 @@ async function fillBucket(bot, context = {}) {
       }
 
       if (await waitForLavaBucket(bot)) {
+        writeFarmClickDebug(bot, 'lava_cauldron_fill', 'confirmed', {
+          attempt,
+          block:cauldron.name,
+          blockPosition:cauldron.position.toString(),
+          resultingBlock:bot.blockAt(position)?.name || null
+        });
         rememberCauldronSuccess(position);
         recordCauldronReachSample(context, {
           success: true,
@@ -2121,6 +2291,12 @@ async function fillBucket(bot, context = {}) {
       }
 
       failures.push(`${position}:no_lava_bucket#${attempt}`);
+      writeFarmClickDebug(bot, 'lava_cauldron_fill', 'unconfirmed', {
+        attempt,
+        block:cauldron.name,
+        blockPosition:cauldron.position.toString(),
+        resultingBlock:bot.blockAt(position)?.name || null
+      });
       rememberCauldronFailure(position, 'no_lava_bucket', {
         currentBlock: bot.blockAt(position)?.name || null
       });
@@ -2217,6 +2393,16 @@ async function pourLava(bot, targetPos, context = {}) {
   }
 
   if (placementError) {
+    writeFarmClickDebug(bot, 'lava_placement', 'failed', {
+      target:targetPos.toString(),
+      anchor:ref.block.position.toString(),
+      side:ref.label,
+      direction:ref.face.toString(),
+      directionNum:faceVectorToDirection(ref.face),
+      cursor:ref.cursor.toString(),
+      targetBlock:bot.blockAt(targetPos)?.name || null,
+      error:placementError.message
+    });
     writeFarmDebug('lava_place_packet_failed', {
       ...context,
       target: targetPos.toString(),
@@ -2229,6 +2415,16 @@ async function pourLava(bot, targetPos, context = {}) {
   }
 
   if (!await waitForLavaPlacement(bot, x, y, z)) {
+    writeFarmClickDebug(bot, 'lava_placement', 'unconfirmed', {
+      target:targetPos.toString(),
+      anchor:ref.block.position.toString(),
+      side:ref.label,
+      direction:ref.face.toString(),
+      directionNum:faceVectorToDirection(ref.face),
+      cursor:ref.cursor.toString(),
+      targetBlock:bot.blockAt(targetPos)?.name || null,
+      waitedMs:LAVA_PLACEMENT_CONFIRM_TIMEOUT_MS
+    });
     writeFarmDebug('safe_placement_unconfirmed', {
       ...context,
       target: targetPos.toString(),
@@ -2244,6 +2440,15 @@ async function pourLava(bot, targetPos, context = {}) {
   }
 
   await sleep(INTERACT_SETTLE_MS);
+  writeFarmClickDebug(bot, 'lava_placement', 'confirmed', {
+    target:targetPos.toString(),
+    anchor:ref.block.position.toString(),
+    side:ref.label,
+    direction:ref.face.toString(),
+    directionNum:faceVectorToDirection(ref.face),
+    cursor:ref.cursor.toString(),
+    targetBlock:bot.blockAt(targetPos)?.name || null
+  });
   writeFarmDebug('lava_place_confirmed', {
     ...context,
     target: targetPos.toString(),

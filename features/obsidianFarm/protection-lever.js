@@ -153,6 +153,26 @@ function createProtectionLeverController({
   let cachedPosition = null;
   let lastFailure = null;
 
+  function traceClick(bot, stage, details = {}) {
+    const number = value => Number.isFinite(Number(value))
+      ? Number(Number(value).toFixed(6))
+      : null;
+    debug('farm_click_trace', {
+      action:'protection_lever',
+      stage,
+      ...details,
+      heldItem:bot?.heldItem?.name || null,
+      heldSlot:Number.isInteger(bot?.heldItem?.slot) ? bot.heldItem.slot : null,
+      yaw:number(bot?.entity?.yaw),
+      pitch:number(bot?.entity?.pitch),
+      botPosition:bot?.entity?.position ? {
+        x:number(bot.entity.position.x),
+        y:number(bot.entity.position.y),
+        z:number(bot.entity.position.z)
+      } : null
+    });
+  }
+
   function isPowered(block) {
     const powered = block?.getProperties?.().powered;
     return powered === true || powered === 'true';
@@ -245,15 +265,64 @@ function createProtectionLeverController({
             cursor:interaction.cursorPos.toString(),
             lookAt:interaction.lookAt.toString()
           });
+          traceClick(bot, 'before_send', {
+            method:bot?._client?.write && typeof bot.supportFeature === 'function'
+              ? 'raw_block_place'
+              : 'mineflayer_activate_block',
+            attempt,
+            block:current.name,
+            blockPosition:position.toString(),
+            direction:interaction.direction.toString(),
+            directionNum:interaction.face,
+            cursor:interaction.cursorPos.toString(),
+            lookAt:interaction.lookAt.toString(),
+            requiredState:powered ? 'on' : 'off'
+          });
           await activatePrecisely(bot, current, interaction);
+          traceClick(bot, 'sent', {
+            method:bot?._client?.write && typeof bot.supportFeature === 'function'
+              ? 'raw_block_place'
+              : 'mineflayer_activate_block',
+            attempt,
+            block:current.name,
+            blockPosition:position.toString(),
+            direction:interaction.direction.toString(),
+            directionNum:interaction.face,
+            cursor:interaction.cursorPos.toString(),
+            requiredState:powered ? 'on' : 'off'
+          });
         } else {
           await bot.lookAt(current.position.offset(0.5, 0.5, 0.5), true);
           await sleep(100);
+          traceClick(bot, 'before_send', {
+            method:'mineflayer_activate_block',
+            attempt,
+            block:current.name,
+            blockPosition:position.toString(),
+            direction:new Vec3(0, 1, 0).toString(),
+            directionNum:1,
+            cursor:new Vec3(0.5, 0.5, 0.5).toString(),
+            requiredState:powered ? 'on' : 'off'
+          });
           await bot.activateBlock(current);
+          traceClick(bot, 'sent', {
+            method:'mineflayer_activate_block',
+            attempt,
+            block:current.name,
+            blockPosition:position.toString(),
+            requiredState:powered ? 'on' : 'off'
+          });
         }
         log(`Activated protection lever (attempt ${attempt}/3).`);
       } catch (error) {
         lastFailure = error.message;
+        traceClick(bot, 'failed', {
+          attempt,
+          block:current.name,
+          blockPosition:position.toString(),
+          requiredState:powered ? 'on' : 'off',
+          error:error.message
+        });
         log(`Lever click ${attempt}/3 failed: ${error.message}`);
         debug('protection_lever_action_failed', { position:position.toString(), attempt, error:error.message });
         await sleep(100);
@@ -264,6 +333,12 @@ function createProtectionLeverController({
       while (Date.now() < deadline) {
         const updated = bot.blockAt(position);
         if (updated?.name === 'lever' && isPowered(updated) === powered) {
+          traceClick(bot, 'confirmed', {
+            attempt,
+            block:updated.name,
+            blockPosition:position.toString(),
+            resultingState:powered ? 'on' : 'off'
+          });
           log(`Protection lever switched ${powered ? 'ON' : 'OFF'}.`);
           debug('protection_lever_confirmed', {
             position:position.toString(), attempt, state:powered ? 'on' : 'off'
@@ -273,6 +348,12 @@ function createProtectionLeverController({
         await sleep(40);
       }
       lastFailure = 'server did not confirm the new lever state';
+      traceClick(bot, 'unconfirmed', {
+        attempt,
+        blockPosition:position.toString(),
+        resultingState:isPowered(bot.blockAt(position)) ? 'on' : 'off',
+        requiredState:powered ? 'on' : 'off'
+      });
       log(`Lever click ${attempt}/3 was not confirmed by the server.`);
     }
     return false;

@@ -159,6 +159,9 @@ async function main() {
     const originalActivateBlock = bot.activateBlock;
     const originalActivateItem = bot.activateItem;
     const originalBotPosition = bot.entity.position;
+    const originalClient = bot._client;
+    const originalSupportFeature = bot.supportFeature;
+    const originalSwingArm = bot.swingArm;
 
     const rotatedAnchor = {
       name:'smooth_stone', type:3, boundingBox:'block',
@@ -189,15 +192,25 @@ async function main() {
     bot.activateBlock = async (block, direction, cursorPos) => {
       placementInteraction = { block, direction, cursorPos };
     };
+    let placementPacket = null;
+    bot._client = { write:(name, data) => { placementPacket = { name, data }; } };
+    bot.supportFeature = feature => feature === 'blockPlaceHasInsideBlock';
+    bot.swingArm = () => { bot.swingActions = (bot.swingActions || 0) + 1; };
     await secondary.modules.obsidianFarm.__test.useBucketOnFace(
       bot,
       placementAnchor,
       placementFace,
       configuredTarget
     );
-    assert.equal(placementInteraction.block, placementAnchor, 'Lava placement explicitly activates the verified anchor');
-    assert.ok(placementInteraction.direction.equals(placementFace), 'Lava placement sends the exact target-facing side');
-    assert.ok(placementInteraction.cursorPos.equals(new Vec3(0, 0.5, 0.5)), 'Lava placement sends the west-face cursor');
+    assert.equal(placementInteraction, null, 'Precise secondary placement does not let Mineflayer reset the verified aim');
+    assert.equal(placementPacket.name, 'block_place', 'Secondary lava placement sends one raw block interaction');
+    assert.ok(placementPacket.data.location.equals(placementAnchor.position), 'Raw placement packet targets the verified anchor');
+    assert.equal(placementPacket.data.direction, 4, 'Raw placement packet preserves the target-facing west side');
+    assert.deepEqual(
+      [placementPacket.data.cursorX, placementPacket.data.cursorY, placementPacket.data.cursorZ],
+      [0, 0.5, 0.5],
+      'Raw placement packet preserves the west-face cursor'
+    );
 
     const primary = new BotContext({ account:account('00000000-0000-4000-8000-000000000001', 'WheatMagnate', true) });
     primary.modules = createModulesForBot(primary, { dataRoot });
@@ -218,6 +231,9 @@ async function main() {
     bot.blockAtCursor = originalBlockAtCursor;
     bot.activateBlock = originalActivateBlock;
     bot.activateItem = originalActivateItem;
+    bot._client = originalClient;
+    bot.supportFeature = originalSupportFeature;
+    bot.swingArm = originalSwingArm;
     bot.heldItem = null;
 
     secondary.modules.obsidianFarm.configureRuntime({ onSuppliesChanged:() => undefined });
@@ -231,7 +247,7 @@ async function main() {
     await nextTurn();
     secondary.modules.obsidianFarm.suspend();
 
-    const expectedDebugEvents = ['farm_started', 'cycle_started', 'cycle_action_start'];
+    const expectedDebugEvents = ['farm_started', 'cycle_started', 'cycle_action_start', 'farm_click_trace'];
     const debugLines = await readDebugEvents(
       path.join(dataRoot, SECONDARY_ID, 'obsidian-farm-debug.log'),
       expectedDebugEvents
@@ -242,6 +258,12 @@ async function main() {
       assert.equal(record.botId, SECONDARY_ID);
       assert.equal(record.username, 'bdiev_');
     }
+    const placementTrace = debugLines.find(line =>
+      line.event === 'farm_click_trace' &&
+      line.action === 'lava_placement' &&
+      line.stage === 'sent'
+    );
+    assert.equal(placementTrace?.method, 'raw_block_place', 'Temporary click trace records the exact secondary lava packet');
 
     secondary.modules.obsidianFarm.resetConfig();
     assert.throws(() => secondary.modules.obsidianFarm.start(), /coordinates are not configured/i);
