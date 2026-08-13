@@ -38,6 +38,8 @@ assert.match(stylesSource, /\.chat-message\.chat-message-bot:not\(\.chat-activit
   'bot chat messages must have a distinct visual treatment');
 assert.match(botSource, /isTaggedBotPlayer\(username\)[\s\S]*name: isBotPlayer \? `\$\{username\} • BOT`/,
   'Discord bridge messages from tagged bots must have a visible BOT label');
+assert.match(botSource, /if \(allowMentions && !isBridgeMessage && !isBotPlayer\)/,
+  'Minecraft players carrying the Bot tag must never trigger mention keywords');
 assert.doesNotMatch(botSource, /Automated player/,
   'tagged bot messages must not add an Automated player caption');
 assert.match(botSource, /footer: \{ text: 'Flood protection' \}/,

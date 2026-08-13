@@ -4959,7 +4959,10 @@ async function deliverGameChatMessageToDiscord({ username, message, allowMention
     };
 
     const isBridgeMessage = /^\[[^\]]+\]\s/.test(message);
-    if (allowMentions && !isBridgeMessage) {
+    // Messages from Minecraft accounts carrying the admin `Bot` tag remain
+    // visible in Discord, but automated chat must never trigger user keyword
+    // mentions (for example messages relayed by moooomoooo).
+    if (allowMentions && !isBridgeMessage && !isBotPlayer) {
       const lowerMessage = message.toLowerCase();
       const usersToMention = new Set();
       const mentionKeywords = await getMentionKeywords();
