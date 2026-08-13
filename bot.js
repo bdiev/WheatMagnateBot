@@ -5640,6 +5640,7 @@ async function initializeMultiAccountManager() {
         managedFarmWriteQueue = managedFarmWriteQueue
           .then(operation)
           .catch(error => console.error(`[Obsidian Stats] ${label} failed for ${account.displayName}:`, error.message));
+        return managedFarmWriteQueue;
       };
       runtime = new MinecraftBotRuntime({
         account,

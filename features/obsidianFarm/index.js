@@ -705,12 +705,14 @@ async function inspectSupplyStatusUnlocked(bot) {
       observedAt: new Date().toISOString(),
       barrelError: null
     };
-    runtime.onSuppliesChanged(supplies).catch(err => {
-      writeFarmDebug('supply_stats_refresh_failed', {
-        trigger: 'inspect_supply_status',
-        error: err.message
+    Promise.resolve()
+      .then(() => runtime.onSuppliesChanged(supplies))
+      .catch(err => {
+        writeFarmDebug('supply_stats_refresh_failed', {
+          trigger: 'inspect_supply_status',
+          error: err.message
+        });
       });
-    });
     return supplies;
   } catch (err) {
     return {
@@ -1427,9 +1429,11 @@ async function ensureFarmSupplies(bot, context = {}) {
       inventory: summarizeSupplyItems(bot, getInventorySupplyItems(bot)),
       observedAt: new Date().toISOString()
     };
-    runtime.onSuppliesChanged(latestSuppliesSnapshot).catch(err => {
-      writeFarmDebug('supply_stats_refresh_failed', { ...context, error: err.message });
-    });
+    Promise.resolve()
+      .then(() => runtime.onSuppliesChanged(latestSuppliesSnapshot))
+      .catch(err => {
+        writeFarmDebug('supply_stats_refresh_failed', { ...context, error: err.message });
+      });
   }
 
   const missing = [];

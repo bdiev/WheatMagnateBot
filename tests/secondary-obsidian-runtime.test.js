@@ -129,6 +129,10 @@ async function main() {
     secondary.modules.obsidianFarm.configure(3404567, 39, 674998, { maxCauldronDist:5 });
     const storedConfig = JSON.parse(fs.readFileSync(path.join(dataRoot, SECONDARY_ID, 'obsidian-farm.json'), 'utf8'));
     assert.deepEqual(storedConfig, { x:3404567, y:39, z:674998, maxCauldronDist:5 });
+    secondary.modules.obsidianFarm.configureRuntime({ onSuppliesChanged:() => undefined });
+    const preparedSupplies = await secondary.modules.obsidianFarm.prepareStart(bot);
+    assert.ok(preparedSupplies.barrel, 'Mandatory preflight accepts a synchronous supply callback');
+    assert.equal(bot.barrelOpens, 1, 'Mandatory preflight opens the supply barrel');
     const started = secondary.modules.obsidianFarm.start();
     assert.equal(started.enabled, true);
     assert.equal(started.desiredEnabled, true);
