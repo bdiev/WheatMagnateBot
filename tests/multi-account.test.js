@@ -25,7 +25,7 @@ async function main(){
   const context=new ActiveAccountContext(registry); assert.equal(context.current().id,first.id); context.select(second.id); assert.equal(context.current().id,second.id); await registry.remove(second.id); assert.equal(context.current().id,first.id,'deleted selection falls back to first account');
 
   await registry.add(second); const bots=[]; const factoryOptions=[];
-  const manager=new BotManager({registry,startDelayMs:0,startJitterMs:0,maxConcurrentBots:2,runtimeFactory:account=>new MinecraftBotRuntime({account,authCacheRoot:path.join('data','auth-cache'),botFactory:options=>{factoryOptions.push(options);const bot=new EventEmitter();bot.quit=()=>{};bots.push(bot);return bot;}})});
+  const manager=new BotManager({registry,startDelayMs:0,startJitterMs:0,maxConcurrentBots:2,runtimeFactory:account=>new MinecraftBotRuntime({account,authCacheRoot:path.join('data','auth-cache'),botFactory:options=>{factoryOptions.push(options);const bot=new EventEmitter();bot.pathfinder={};bot.quit=()=>{};bots.push(bot);return bot;}})});
   const [a,b]=await Promise.all([manager.start(first.id),manager.start(second.id)]); assert.equal(a.accountId,first.id);assert.equal(b.accountId,second.id);assert.equal(bots.length,2,'runtimes do not share Mineflayer instances');
   assert.equal(manager.getPrimaryContext()?.accountId,first.id,'primary context is resolved by account metadata');
   assert.equal(manager.getContext(second.id)?.accountId,second.id);
@@ -77,6 +77,7 @@ async function main(){
   assert.equal(retryRuntime.reconnectTimer,null,'stopping cancels the startup retry');
 
   const safetyBot=new EventEmitter();
+  safetyBot.pathfinder={};
   safetyBot.username='SecondBot'; safetyBot.food=12;
   safetyBot.entity={position:{distanceTo:position=>position.distance}};
   safetyBot.entities={enemy:{type:'player',username:'Enemy',position:{distance:8}}};
@@ -92,6 +93,7 @@ async function main(){
   assert.equal(safetyRuntime.status,'stopped');
 
   const foodBot=new EventEmitter();
+  foodBot.pathfinder={};
   foodBot.username='SecondBot'; foodBot.food=12; foodBot.entity={position:{distanceTo:()=>100}}; foodBot.entities={};
   foodBot.inventory={items:()=>[{name:'raw_beef'},{name:'bread'},{name:'golden_carrot'}]};
   foodBot.equip=async item=>{equipped=item.name;}; foodBot.consume=async()=>{consumed+=1;}; foodBot.quit=()=>{};

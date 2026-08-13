@@ -880,6 +880,7 @@ function applyAccountTabScope(account) {
   if (restricted) setWhisperOpen(false);
   document.body.classList.toggle('secondary-account-active', restricted);
   updateObsidianStatsScopeVisibility();
+  updateObsidianFarmControlsVisibility();
   if (restricted && !allowed.has(state.activeTab)) setActiveTab('chat');
 }
 
@@ -1216,6 +1217,7 @@ function applyCurrentUser(user) {
     element.hidden = !isAdmin;
   });
   updateObsidianStatsScopeVisibility();
+  updateObsidianFarmControlsVisibility();
   applyNavigationOrder();
   applyNavigationVisibility();
   const logoutButton = $('#logoutButton');
@@ -4262,6 +4264,19 @@ function updateObsidianStatsScopeVisibility() {
   document.body.classList.toggle('obsidian-scope-visible', Boolean(visible));
 }
 
+function updateObsidianFarmControlsVisibility(scope = state.obsidianStatsScope) {
+  const aggregate = activeAccountIsPrimary() && scope === 'all';
+  if (aggregate) state.obsidianCoordinateEditorOpen = false;
+  const adminCarousel = $('#obsidianAdminCarousel');
+  if (adminCarousel) adminCarousel.hidden = state.currentUser?.role !== 'admin' || aggregate;
+  const coordinateEditor = $('#obsidianCoordinateEditor');
+  if (coordinateEditor) {
+    coordinateEditor.hidden = state.currentUser?.role !== 'admin'
+      || aggregate
+      || !state.obsidianCoordinateEditorOpen;
+  }
+}
+
 function obsidianStatsPath() {
   const scope = activeAccountIsPrimary() && state.currentUser?.role === 'admin' ? state.obsidianStatsScope : 'personal';
   return `/api/obsidian?scope=${encodeURIComponent(scope)}`;
@@ -4274,12 +4289,14 @@ async function changeObsidianStatsScope(event) {
   if (scope === state.obsidianStatsScope) return;
   const previousScope = state.obsidianStatsScope;
   state.obsidianStatsScope = scope;
+  updateObsidianFarmControlsVisibility(scope);
   localStorage.setItem('wm-obsidian-stats-scope', scope);
   $('#obsidianStatsScope')?.querySelectorAll('[data-obsidian-scope]').forEach(item => { item.disabled = true; });
   try {
     renderObsidian(await fetchJson(obsidianStatsPath()));
   } catch (error) {
     state.obsidianStatsScope = previousScope;
+    updateObsidianFarmControlsVisibility(previousScope);
     localStorage.setItem('wm-obsidian-stats-scope', previousScope);
     renderObsidian(await fetchJson(obsidianStatsPath()));
     throw error;
@@ -4343,6 +4360,7 @@ function estimateSupplyRefill(payload = {}) {
 function renderObsidian(payload) {
   const renderedScope = payload.scope === 'all' ? 'all' : 'personal';
   if (activeAccountIsPrimary()) state.obsidianStatsScope = renderedScope;
+  updateObsidianFarmControlsVisibility(renderedScope);
   const scopeControl = $('#obsidianStatsScope');
   if (scopeControl) {
     scopeControl.dataset.activeScope = renderedScope;
@@ -5606,7 +5624,9 @@ function renderAdminControlState(payload = {}) {
   }
   const coordinateEditor = $('#obsidianCoordinateEditor');
   if (coordinateEditor) {
-    coordinateEditor.hidden = state.currentUser?.role !== 'admin' || !state.obsidianCoordinateEditorOpen;
+    coordinateEditor.hidden = state.currentUser?.role !== 'admin'
+      || (activeAccountIsPrimary() && state.obsidianStatsScope === 'all')
+      || !state.obsidianCoordinateEditorOpen;
   }
   const child = bot.child || {};
   const childButton = $('#childToggleButton');

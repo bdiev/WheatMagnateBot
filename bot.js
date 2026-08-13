@@ -5890,7 +5890,7 @@ async function executeManagedAccountCommand(command) {
   }
   if (type === 'obsidian_toggle') {
     const current = runtime.obsidianFarm.getStatus();
-    return runtime.setObsidianEnabled(!(current.enabled || runtime.task === 'obsidian'));
+    return runtime.setObsidianEnabled(!(current.enabled || current.desiredEnabled || runtime.task === 'obsidian'));
   }
   if (type === 'kill_aura_targets') {
     const targets = normalizeKillAuraTargets(payload.targets);

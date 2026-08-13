@@ -29,12 +29,24 @@ class BotContext extends EventEmitter {
 
   attachBot(bot) {
     this.bot = bot || null;
-    for (const module of Object.values(this.modules)) module?.attachBot?.(this.bot);
-    return this.bot;
+    try {
+      for (const module of Object.values(this.modules)) module?.attachBot?.(this.bot);
+      return this.bot;
+    } catch (error) {
+      for (const module of Object.values(this.modules)) {
+        try { module?.detachBot?.(this.bot); } catch {}
+      }
+      if (this.bot === bot) this.bot = null;
+      throw error;
+    }
   }
 
-  notifySpawn() {
-    for (const module of Object.values(this.modules)) module?.onSpawn?.(this.bot);
+  async notifySpawn() {
+    const results = [];
+    for (const module of Object.values(this.modules)) {
+      if (typeof module?.onSpawn === 'function') results.push(await module.onSpawn(this.bot));
+    }
+    return results;
   }
 
   detachBot(bot = this.bot) {

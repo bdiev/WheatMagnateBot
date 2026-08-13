@@ -110,6 +110,8 @@ const cauldronFailures = new Map();
 /** Return a plain-object snapshot of current farm state (safe to JSON.stringify). */
 function getStatus() {
   return {
+    accountId:       identity.botId,
+    username:        identity.username,
     enabled:         farm.enabled,
     phase:           farm.phase,
     cyclesCompleted: farm.cyclesCompleted,
@@ -168,9 +170,35 @@ function resetConfig() {
 
 /** Load pathfinder plugin into a freshly created bot. Call once from createBot(). */
 function loadPlugin(bot) {
-  try {
-    if (!bot.pathfinder) bot.loadPlugin(pathfinder);
-  } catch (_) {}
+  if (!bot) throw new Error('Obsidian Farm cannot initialize: Minecraft bot is unavailable.');
+  if (!bot.pathfinder) {
+    if (typeof bot.loadPlugin !== 'function') {
+      throw new Error('Obsidian Farm cannot initialize: Mineflayer plugin loader is unavailable.');
+    }
+    try {
+      bot.loadPlugin(pathfinder);
+    } catch (error) {
+      throw new Error(`Obsidian Farm cannot initialize Pathfinder: ${error?.message || String(error)}`, { cause:error });
+    }
+  }
+  if (!bot.pathfinder) {
+    throw new Error('Obsidian Farm cannot initialize: Pathfinder plugin is not loaded.');
+  }
+  writeFarmDebug('pathfinder_ready');
+  return bot.pathfinder;
+}
+
+function validateStart(bot) {
+  const reject = message => {
+    farm.lastErrorMessage = message;
+    writeFarmDebug('farm_start_rejected', { error:message });
+    throw new Error(message);
+  };
+  if (!bot) reject('Obsidian Farm cannot start: Minecraft bot is unavailable.');
+  if (!bot.entity) reject('Obsidian Farm cannot start: Minecraft bot is offline.');
+  if (!farm.config) reject('Obsidian Farm cannot start: coordinates are not configured.');
+  if (!bot.pathfinder) reject('Obsidian Farm cannot start: Pathfinder plugin is not loaded.');
+  return { accountId:identity.botId, config:{ ...farm.config } };
 }
 
 function saveFarmConfig() {
@@ -2337,48 +2365,49 @@ async function persistentLoop(bot, notify) {
 function start(bot, notify) {
   if (farm.enabled) {
     writeFarmDebug('farm_start_skipped', { reason: 'already_enabled' });
-    return;
+    return getStatus();
   }
-  if (!bot) {
-    writeFarmDebug('farm_start_skipped', { reason: 'missing_bot' });
-    return;
-  }
-  if (!bot.pathfinder) {
-    writeFarmDebug('farm_start_skipped', { reason: 'missing_pathfinder' });
-    return;
-  }
-  if (!farm.config) {
-    writeFarmDebug('farm_start_skipped', { reason: 'missing_config' });
-    return;
-  }
+  validateStart(bot);
 
   farm.enabled         = true;
   farm.cyclesCompleted = 0;
   farm.lastErrorMessage = null;
+  const sequenceBeforeStart = farmCycleSequence;
   writeFarmDebug('farm_started', {
     config: { ...farm.config },
     botPosition: getBotDebugPosition(bot),
     inventory: getInventoryDebugSummary(bot)
   });
   persistentLoop(bot, notify);
+  const status = getStatus();
+  if (!status.enabled || farmCycleSequence <= sequenceBeforeStart) {
+    farm.enabled = false;
+    throw new Error('Obsidian Farm cannot start: persistent loop did not start.');
+  }
+  return status;
 }
 
 function resume(bot, notify) {
-  if (farm.enabled || !bot || !farm.config) {
-    writeFarmDebug('farm_resume_skipped', {
-      reason: farm.enabled ? 'already_enabled' : (!bot ? 'missing_bot' : 'missing_config')
-    });
-    return false;
+  if (farm.enabled) {
+    writeFarmDebug('farm_resume_skipped', { reason: 'already_enabled' });
+    return getStatus();
   }
+  validateStart(bot);
   farm.enabled = true;
   farm.lastErrorMessage = null;
+  const sequenceBeforeResume = farmCycleSequence;
   writeFarmDebug('farm_resumed', {
     config: { ...farm.config },
     botPosition: getBotDebugPosition(bot),
     inventory: getInventoryDebugSummary(bot)
   });
   persistentLoop(bot, notify);
-  return true;
+  const status = getStatus();
+  if (!status.enabled || farmCycleSequence <= sequenceBeforeResume) {
+    farm.enabled = false;
+    throw new Error('Obsidian Farm cannot resume: persistent loop did not start.');
+  }
+  return status;
 }
 
 function suspend() {
@@ -2430,6 +2459,7 @@ return {
   getDebugLoggingEnabled,
   setDebugLoggingEnabled,
   loadPlugin,
+  validateStart,
   __test: {
     fillBucket,
     findLavaCauldrons,

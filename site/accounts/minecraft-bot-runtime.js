@@ -178,7 +178,7 @@ class MinecraftBotRuntime extends BotContext {
       this.attachBot(bot);
       this.startedAt = new Date();
       this.status = 'connecting';
-      bot.once?.('spawn', () => {
+      bot.once?.('spawn', async () => {
         const actualUsername = String(bot.username || '');
         if (actualUsername && actualUsername.toLowerCase() !== String(this.account.username).toLowerCase()) {
           const previousUsername = this.account.username;
@@ -191,7 +191,16 @@ class MinecraftBotRuntime extends BotContext {
         this.status = this.task === 'paused' ? 'paused' : 'connected';
         this.setLifecycle('online');
         this.killAura?.attachBot(bot);
-        this.notifySpawn();
+        try {
+          await this.notifySpawn();
+        } catch (error) {
+          this.lastError = error?.message || String(error);
+          this.emit('module-error', error);
+        }
+        // A reconnect/stop may replace this Mineflayer instance while an
+        // asynchronous module onSpawn hook is running. Never let the stale
+        // spawn handler alter task state or create monitor intervals.
+        if (this.bot !== bot) return;
         if (this.task !== 'paused') {
           this.task = this.obsidianFarm?.getStatus?.().enabled
             ? 'obsidian'
@@ -282,7 +291,14 @@ class MinecraftBotRuntime extends BotContext {
     if (!this.bot) return this.start();
     this.status = this.bot ? 'connected' : 'stopped';
     this.killAura?.attachBot(this.bot);
-    if (this.bot?.entity) this.notifySpawn();
+    if (this.bot?.entity) {
+      try {
+        await this.notifySpawn();
+      } catch (error) {
+        this.lastError = error?.message || String(error);
+        this.emit('module-error', error);
+      }
+    }
     this.task = this.killAura?.getStatus?.().enabled
       ? 'kill_aura'
       : this.obsidianFarm?.getStatus?.().enabled
@@ -316,16 +332,32 @@ class MinecraftBotRuntime extends BotContext {
   }
   setObsidianEnabled(enabled) {
     if (enabled) {
-      if (!this.bot?.entity) throw new Error('Minecraft bot is offline.');
-      if (!this.obsidianFarm.getStatus().config) throw new Error('Obsidian Farm coordinates are not configured.');
-      this.killAura?.setEnabled(false);
-      this.follow?.stop?.();
-      this.obsidianFarm.start();
-      this.task = 'obsidian';
+      try {
+        const preflight = this.obsidianFarm.validateStart();
+        if (preflight?.accountId && preflight.accountId !== this.account.id) {
+          throw new Error('Obsidian Farm module belongs to another account.');
+        }
+        // Stop mutually exclusive automation only after every farm prerequisite
+        // has passed, so a rejected farm start does not interrupt current work.
+        this.killAura?.setEnabled(false);
+        this.follow?.stop?.();
+        const farmStatus = this.obsidianFarm.start();
+        if (!farmStatus?.enabled) throw new Error('Obsidian Farm cannot start: farm loop is not enabled.');
+        this.task = 'obsidian';
+        this.lastError = null;
+      } catch (error) {
+        this.lastError = error?.message || String(error);
+        this.status = this.bot ? 'connected' : 'stopped';
+        this.emit('status', this.getStatus());
+        throw error;
+      }
     } else {
       this.obsidianFarm.suspend();
-      this.task = 'idle';
+      this.task = this.killAura?.getStatus?.().enabled
+        ? 'kill_aura'
+        : this.follow?.getStatus?.().enabled ? 'follow' : 'idle';
     }
+    this.status = this.bot ? 'connected' : 'stopped';
     this.emit('status', this.getStatus());
     return this.obsidianFarm.getStatus();
   }

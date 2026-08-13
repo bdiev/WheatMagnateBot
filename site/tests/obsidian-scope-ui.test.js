@@ -18,6 +18,12 @@ assert.match(appSource, /function obsidianStatsPath\(\)[\s\S]*?scope=/,
   'every Obsidian statistics refresh uses the selected scope');
 assert.match(appSource, /function updateObsidianStatsScopeVisibility\(\)[\s\S]*?role === 'admin'[\s\S]*?activeAccountIsPrimary\(\)[\s\S]*?state\.activeTab === 'obsidian'/,
   'the switch is visible only to an admin on the primary Obsidian page');
+assert.match(appSource, /function updateObsidianFarmControlsVisibility\(scope = state\.obsidianStatsScope\)[\s\S]*?scope === 'all'[\s\S]*?adminCarousel\.hidden = state\.currentUser\?\.role !== 'admin' \|\| aggregate/,
+  'Farm Power, Search Radius and Coordinates controls are hidden in All Bots scope');
+assert.match(appSource, /if \(aggregate\) state\.obsidianCoordinateEditorOpen = false;/,
+  'switching to All Bots closes the coordinate editor');
+assert.match(appSource, /state\.obsidianStatsScope = scope;[\s\S]*?updateObsidianFarmControlsVisibility\(scope\);/,
+  'farm controls disappear immediately when All Bots is selected');
 assert.match(appSource, /state\.charts\.obsidianHourly = payload\.hourly[\s\S]*?state\.charts\.obsidianDaily = payload\.daily/,
   'scope payloads replace both Obsidian chart series');
 assert.match(serverSource, /requestedScope === 'all'[\s\S]*?assertAdminUser\(currentUser\)/,

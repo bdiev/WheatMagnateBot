@@ -14,18 +14,29 @@ function ownObsidianFarm(context, farm, settingsFile, notify = null) {
     fs.writeFileSync(settingsFile, JSON.stringify({ enabled: desiredEnabled }, null, 2), 'utf8');
   };
   return {
-    attachBot: () => {},
+    attachBot: bot => bot ? farm.loadPlugin(bot) : null,
     detachBot: () => farm.suspend(),
-    onSpawn: () => desiredEnabled && farm.getStatus().config ? farm.resume(context.bot, notify) : false,
+    onSpawn: () => desiredEnabled ? farm.resume(context.bot, notify) : false,
     start: notificationHandler => {
-      desiredEnabled = true;
-      persist();
-      return farm.start(context.bot, notificationHandler || notify);
+      const previousDesired = desiredEnabled;
+      try {
+        const status = farm.start(context.bot, notificationHandler || notify);
+        if (!status?.enabled) throw new Error('Obsidian Farm cannot start: farm loop is not enabled.');
+        desiredEnabled = true;
+        persist();
+        return { ...status, desiredEnabled };
+      } catch (error) {
+        desiredEnabled = previousDesired;
+        persist();
+        throw error;
+      }
     },
     resume: notificationHandler => {
+      const status = farm.resume(context.bot, notificationHandler || notify);
+      if (!status?.enabled) throw new Error('Obsidian Farm cannot resume: farm loop is not enabled.');
       desiredEnabled = true;
       persist();
-      return farm.resume(context.bot, notificationHandler || notify);
+      return { ...status, desiredEnabled };
     },
     suspend: () => {
       desiredEnabled = false;
@@ -43,6 +54,7 @@ function ownObsidianFarm(context, farm, settingsFile, notify = null) {
     cycleCauldronRadius: () => farm.cycleCauldronRadius(),
     resetConfig: () => farm.resetConfig(),
     configureRuntime: hooks => farm.configureRuntime(hooks),
+    validateStart: () => farm.validateStart(context.bot),
     prepareStart: (...args) => farm.prepareStart(context.bot, ...args),
     inspectSupplies: () => farm.inspectSupplies(context.bot),
     getStatus: () => ({ ...farm.getStatus(), desiredEnabled }),

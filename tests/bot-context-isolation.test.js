@@ -95,8 +95,8 @@ async function main() {
     assert.equal(secondary.modules.killAura.getStatus().enabled, false);
     assert.deepEqual(secondary.modules.killAura.getStatus().targets, ['skeleton']);
 
-    primary.attachBot({ username:'WheatMagnate', entity:{} });
-    secondary.attachBot({ username:'AltBot1', entity:{} });
+    primary.attachBot({ username:'WheatMagnate', entity:{}, pathfinder:{} });
+    secondary.attachBot({ username:'AltBot1', entity:{}, pathfinder:{} });
     primary.modules.follow.start('PlayerA', { distance: 2 });
     secondary.modules.follow.start('PlayerB', { distance: 4 });
     assert.equal(primary.modules.follow.getStatus().targetUsername, 'PlayerA');
