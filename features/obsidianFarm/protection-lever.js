@@ -27,18 +27,42 @@ function directionNumber(direction) {
   return null;
 }
 
-function getAimCandidates(block) {
-  const candidates = [];
-  for (const shape of block?.shapes || []) {
-    if (!Array.isArray(shape) || shape.length < 6) continue;
-    candidates.push(block.position.offset(
-      (Number(shape[0]) + Number(shape[3])) / 2,
-      (Number(shape[1]) + Number(shape[4])) / 2,
-      (Number(shape[2]) + Number(shape[5])) / 2
-    ));
+function getLeverOutlineShape(block) {
+  const properties = block?.getProperties?.() || {};
+  const face = properties.face;
+  const facing = properties.facing;
+  if (face === 'wall') {
+    if (facing === 'north') return [5 / 16, 4 / 16, 10 / 16, 11 / 16, 12 / 16, 1];
+    if (facing === 'south') return [5 / 16, 4 / 16, 0, 11 / 16, 12 / 16, 6 / 16];
+    if (facing === 'west') return [10 / 16, 4 / 16, 5 / 16, 1, 12 / 16, 11 / 16];
+    if (facing === 'east') return [0, 4 / 16, 5 / 16, 6 / 16, 12 / 16, 11 / 16];
   }
-  candidates.push(block.position.offset(0.5, 0.5, 0.5));
-  return candidates;
+  const xAxis = facing === 'east' || facing === 'west';
+  if (face === 'ceiling') {
+    return xAxis
+      ? [4 / 16, 10 / 16, 5 / 16, 12 / 16, 1, 11 / 16]
+      : [5 / 16, 10 / 16, 4 / 16, 11 / 16, 1, 12 / 16];
+  }
+  return xAxis
+    ? [4 / 16, 0, 5 / 16, 12 / 16, 6 / 16, 11 / 16]
+    : [5 / 16, 0, 4 / 16, 11 / 16, 6 / 16, 12 / 16];
+}
+
+function getInteractionShapes(block) {
+  const collisionShapes = (block?.shapes || []).filter(shape => Array.isArray(shape) && shape.length >= 6);
+  // Prismarine intentionally exposes collision shapes here. Levers have no
+  // collision shape, but Minecraft ray-traces their non-empty outline shape
+  // for interaction. Supply that vanilla outline locally so blockAtCursor can
+  // distinguish the lever from its supporting wall.
+  return collisionShapes.length ? collisionShapes : [getLeverOutlineShape(block)];
+}
+
+function getAimCandidates(block, shapes) {
+  return shapes.map(shape => block.position.offset(
+    (Number(shape[0]) + Number(shape[3])) / 2,
+    (Number(shape[1]) + Number(shape[4])) / 2,
+    (Number(shape[2]) + Number(shape[5])) / 2
+  ));
 }
 
 async function resolvePreciseInteraction(bot, block) {
@@ -51,11 +75,21 @@ async function resolvePreciseInteraction(bot, block) {
     };
   }
 
+  const interactionShapes = getInteractionShapes(block);
   let lastAimedName = 'air';
-  for (const lookAt of getAimCandidates(block)) {
+  for (const lookAt of getAimCandidates(block, interactionShapes)) {
     await bot.lookAt(lookAt, true);
     await sleep(100);
-    const aimed = bot.blockAtCursor(4.75);
+    const aimed = bot.blockAtCursor(4.75, (candidate, iterator) => {
+      const shapes = candidate?.position?.equals(block.position)
+        ? interactionShapes
+        : candidate?.shapes || [];
+      const intersect = iterator.intersect(shapes, candidate.position);
+      if (!intersect) return false;
+      candidate.face = intersect.face;
+      candidate.intersect = intersect.pos;
+      return true;
+    });
     lastAimedName = aimed?.name || 'air';
     if (!aimed?.position?.equals(block.position)) continue;
     const face = Number.isInteger(aimed.face) && aimed.face >= 0 && aimed.face < FACE_DIRECTIONS.length
