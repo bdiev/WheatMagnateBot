@@ -4453,7 +4453,11 @@ function renderObsidian(payload) {
     chartLegend.hidden = renderedScope !== 'all' || !chartAccounts.length;
   }
   const farm = payload.farm || {};
-  $('#farmState').textContent = farm.desiredEnabled ? 'Enabled' : 'Disabled';
+  $('#farmState').textContent = farm.running === true
+    ? 'Running'
+    : farm.desiredEnabled
+      ? (farm.running === false ? 'Waiting to resume' : 'Enabled')
+      : 'Disabled';
   $('#farmUpdated').textContent = `last update: ${formatDate(farm.updatedAt)}`;
   setRollingNumber('#obsidianTotal', farm.totalMined);
   setRollingNumber('#obsidianToday', farm.todayMined);
@@ -5864,6 +5868,12 @@ async function handleAdminBotCommand(event) {
   if (commandType === 'kill_aura_toggle' && state.killAuraTargetsDirty) {
     body.payload = { targets: [...state.killAuraSelectedMobs] };
   }
+  if (commandType === 'obsidian_toggle') {
+    const farm = state.adminControlState?.bot?.obsidian || {};
+    body.payload = {
+      enabled: !(farm.enabled || farm.desiredEnabled || state.adminControlState?.bot?.task === 'obsidian')
+    };
+  }
   if (commandType === 'obsidian_reset_coordinates') {
     const hasCoordinates = Boolean(state.adminControlState?.bot?.obsidian?.config);
     if (!hasCoordinates) {
@@ -5879,7 +5889,8 @@ async function handleAdminBotCommand(event) {
   button.disabled = true;
   try {
     setButtonBusyState(commandType);
-    await postJson('/api/admin/bot-command', { ...body,accountId:state.activeAccountId });
+    const queued = await postJson('/api/admin/bot-command', { ...body,accountId:state.activeAccountId });
+    await waitForAdminBotCommand(queued.command.id);
     if (commandType === 'obsidian_reset_coordinates') {
       state.obsidianCoordinateEditorOpen = true;
       clearObsidianCoordinateEditor();
@@ -5895,14 +5906,17 @@ async function handleAdminBotCommand(event) {
     }
   } catch (err) {
     console.error(`Could not queue bot command ${commandType}:`, err);
+    setBanner(`Could not update bot: ${err.message}`);
   } finally {
     button.disabled = false;
   }
 }
 
 async function queueAdminCommand(commandType, payload = {}) {
-  await postJson('/api/admin/bot-command', { commandType, payload, accountId:state.activeAccountId });
+  const queued = await postJson('/api/admin/bot-command', { commandType, payload, accountId:state.activeAccountId });
+  const result = await waitForAdminBotCommand(queued.command.id);
   await Promise.all([loadAll(), loadAdminControlState({ force: true }), loadAdminSystemLogs()]);
+  return result;
 }
 
 async function handleAdminControlAction(event) {

@@ -2163,6 +2163,9 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
   const annotations = annotationsResult.rows.map(row => ({ id: row.id, accountId: row.account_id, eventType: row.event_type, title: row.title, details: row.details, occurredAt: row.occurred_at }));
   const comparison = comparisonResult.rows[0] || {};
   const farmPayload = { ...farm, todayMined: toInt(comparison.today), last7Days };
+  farmPayload.running = !aggregate && typeof runtimeFarm?.enabled === 'boolean'
+    ? Boolean(runtimeFarm.enabled)
+    : null;
   const supplyHistory = aggregate ? aggregateSupplyHistory(supplyHistoryResult.rows) : supplyHistoryResult.rows;
   const accountCount = aggregate
     ? (includePrimary ? 1 : 0) + toInt(managedFarmResult.rows[0]?.account_count)
@@ -3616,6 +3619,9 @@ async function queueAdminBotCommand(currentUser, body) {
   }
   if (commandType === 'kill_aura_toggle' && Array.isArray(payload.targets)) {
     payload.targets = normalizeKillAuraTargets(payload.targets);
+  }
+  if (commandType === 'obsidian_toggle' && typeof payload.enabled !== 'boolean') {
+    delete payload.enabled;
   }
 
   const accountId = await commandAccountId(body,currentUser) || DEFAULT_MINECRAFT_ACCOUNT_ID;

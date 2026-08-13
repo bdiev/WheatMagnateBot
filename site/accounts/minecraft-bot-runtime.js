@@ -29,7 +29,7 @@ function compactInventoryItem(item) {
 }
 
 class MinecraftBotRuntime extends BotContext {
-  constructor({ account, botFactory, moduleFactory = createModulesForBot, moduleOptions = {}, killAuraFactory = null, authCacheRoot = path.join('data', 'auth-cache'), authCacheStore = null, reconnectBackoffMs, isWhitelisted = () => false, dangerRadius = 32 } = {}) {
+  constructor({ account, botFactory, moduleFactory = createModulesForBot, moduleOptions = {}, killAuraFactory = null, authCacheRoot = path.join('data', 'auth-cache'), authCacheStore = null, reconnectBackoffMs, obsidianResumeRetryMs = 5000, isWhitelisted = () => false, dangerRadius = 32 } = {}) {
     super({ account });
     if (!account?.id) throw new Error('Runtime requires an account.');
     if (typeof botFactory !== 'function') throw new Error('Runtime requires a Mineflayer factory.');
@@ -54,6 +54,9 @@ class MinecraftBotRuntime extends BotContext {
     this.lastMonitorStatusAt = 0;
     this.nearbySnapshot = [];
     this.reconnectAttempts = 0;
+    this.obsidianResumeRetryMs = Math.max(25, Number(obsidianResumeRetryMs) || 5000);
+    this.obsidianResumePromise = null;
+    this.nextObsidianResumeAt = 0;
     this.safetyLockout = false;
     this.lastEatErrorAt = 0;
     this.connectionGate = connect => connect();
@@ -126,6 +129,15 @@ class MinecraftBotRuntime extends BotContext {
       try { bot.quit?.(`Non-whitelisted player nearby: ${threat.username}`); } catch { bot.end?.('Safety disconnect'); }
       return;
     }
+    const farmStatus = this.obsidianFarm?.getStatus?.();
+    if (
+      farmStatus?.desiredEnabled &&
+      !farmStatus.enabled &&
+      this.task !== 'paused' &&
+      Date.now() >= this.nextObsidianResumeAt
+    ) {
+      this.retryDesiredObsidian(bot);
+    }
     if (!Number.isFinite(bot.food) || bot.food >= 18 || this.eating) return;
     const items = bot.inventory?.items?.() || [];
     const food = SAFE_FOOD_PRIORITY
@@ -149,6 +161,48 @@ class MinecraftBotRuntime extends BotContext {
       }
     }
     finally { this.eating = false; }
+  }
+
+  retryDesiredObsidian(bot = this.bot) {
+    if (this.obsidianResumePromise) return this.obsidianResumePromise;
+    const farmStatus = this.obsidianFarm?.getStatus?.();
+    if (
+      bot !== this.bot ||
+      !bot?.entity ||
+      !farmStatus?.desiredEnabled ||
+      farmStatus.enabled ||
+      this.task === 'paused'
+    ) return Promise.resolve(farmStatus || null);
+
+    this.nextObsidianResumeAt = Date.now() + this.obsidianResumeRetryMs;
+    const attempt = Promise.resolve()
+      .then(() => this.obsidianFarm.onSpawn(bot))
+      .then(status => {
+        if (this.bot !== bot || !bot.entity) return status;
+        const current = this.obsidianFarm.getStatus();
+        if (!current.desiredEnabled) return current;
+        if (!current.enabled) throw new Error('Obsidian Farm cannot resume: farm loop is not enabled.');
+        this.task = 'obsidian';
+        this.status = 'connected';
+        this.lastError = null;
+        this.nextObsidianResumeAt = 0;
+        this.emit('status', this.getStatus());
+        return current;
+      })
+      .catch(error => {
+        if (this.bot === bot && bot.entity && this.obsidianFarm?.getStatus?.().desiredEnabled) {
+          this.lastError = error?.message || String(error);
+          this.status = 'connected';
+          this.nextObsidianResumeAt = Date.now() + this.obsidianResumeRetryMs;
+          this.emit('status', this.getStatus());
+        }
+        return null;
+      })
+      .finally(() => {
+        if (this.obsidianResumePromise === attempt) this.obsidianResumePromise = null;
+      });
+    this.obsidianResumePromise = attempt;
+    return attempt;
   }
 
   async start() {
@@ -195,8 +249,11 @@ class MinecraftBotRuntime extends BotContext {
         try {
           await this.notifySpawn();
         } catch (error) {
-          this.lastError = error?.message || String(error);
-          this.emit('module-error', error);
+          if (this.bot === bot) {
+            this.lastError = error?.message || String(error);
+            this.nextObsidianResumeAt = Date.now() + this.obsidianResumeRetryMs;
+            this.emit('module-error', error);
+          }
         }
         // A reconnect/stop may replace this Mineflayer instance while an
         // asynchronous module onSpawn hook is running. Never let the stale
@@ -355,6 +412,7 @@ class MinecraftBotRuntime extends BotContext {
         if (!farmStatus?.enabled) throw new Error('Obsidian Farm cannot start: farm loop is not enabled.');
         this.task = 'obsidian';
         this.lastError = null;
+        this.nextObsidianResumeAt = 0;
       } catch (error) {
         if (leverDisabled) {
           await Promise.resolve()
@@ -368,6 +426,15 @@ class MinecraftBotRuntime extends BotContext {
       }
     } else {
       this.obsidianFarm.suspend();
+      this.nextObsidianResumeAt = 0;
+      this.task = this.killAura?.getStatus?.().enabled
+        ? 'kill_aura'
+        : this.follow?.getStatus?.().enabled ? 'follow' : 'idle';
+      this.status = this.bot?.entity ? 'connected' : 'stopped';
+      this.lastError = null;
+      // The farm loop and reconnect intent are already disabled. Publish that
+      // before a queued barrel/lever interaction delays physical protection.
+      this.emit('status', this.getStatus());
       const leverProtected = await Promise.resolve()
         .then(() => this.obsidianFarm.setProtectionLeverState(true))
         .then(() => true)
@@ -375,9 +442,6 @@ class MinecraftBotRuntime extends BotContext {
           this.lastError = error?.message || String(error);
           return false;
         });
-      this.task = this.killAura?.getStatus?.().enabled
-        ? 'kill_aura'
-        : this.follow?.getStatus?.().enabled ? 'follow' : 'idle';
       this.status = this.bot?.entity ? 'connected' : 'stopped';
       this.emit('status', this.getStatus());
       return { ...this.obsidianFarm.getStatus(), leverProtected };

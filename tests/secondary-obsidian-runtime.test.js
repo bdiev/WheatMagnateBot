@@ -391,6 +391,7 @@ async function main() {
     const reconnectRuntime = new MinecraftBotRuntime({
       account:account(SECONDARY_ID, 'bdiev_'),
       moduleOptions:{ dataRoot },
+      obsidianResumeRetryMs:50,
       botFactory:() => {
         const created = farmBot('bdiev_');
         reconnectBots.push(created);
@@ -422,11 +423,25 @@ async function main() {
     await reconnectRuntime.restart();
     assert.equal(reconnectBots.length, 2);
     assert.ok(reconnectBots[1].pathfinder, 'a replacement bot receives Pathfinder before spawn');
+    const restoredBlockAtCursor = reconnectBots[1].blockAtCursor;
+    reconnectBots[1].blockAtCursor = () => null;
     reconnectBots[1].emit('spawn');
-    await waitFor(() => reconnectRuntime.obsidianFarm.getStatus().enabled);
+    await waitFor(() => /line of sight/i.test(reconnectRuntime.getStatus().lastError || ''), 3_000);
+    assert.equal(reconnectRuntime.obsidianFarm.getStatus().enabled, false, 'a transient reconnect preflight failure leaves the farm waiting');
+    assert.equal(reconnectRuntime.obsidianFarm.getStatus().desiredEnabled, true, 'a transient reconnect failure preserves the requested farm state');
+    reconnectBots[1].blockAtCursor = restoredBlockAtCursor;
+    await waitFor(() => reconnectRuntime.obsidianFarm.getStatus().enabled, 4_000);
     assert.equal(reconnectRuntime.obsidianFarm.getStatus().enabled, true, 'desired farm state resumes after reconnect');
     assert.equal(reconnectRuntime.task, 'obsidian');
     assert.equal(reconnectRuntime.getStatus().lastError, null);
+    let immediateStopStatus = null;
+    reconnectRuntime.once('status', status => { immediateStopStatus = status; });
+    const stoppingFarm = reconnectRuntime.setObsidianEnabled(false);
+    assert.equal(reconnectRuntime.obsidianFarm.getStatus().desiredEnabled, false, 'Stop Farm immediately disables reconnect intent');
+    assert.equal(reconnectRuntime.obsidianFarm.getStatus().enabled, false, 'Stop Farm immediately suspends the active loop');
+    assert.equal(reconnectRuntime.task, 'idle', 'Stop Farm immediately releases the runtime task');
+    assert.equal(immediateStopStatus?.modules?.obsidianFarm?.desiredEnabled, false, 'the stopped state is published before lever protection completes');
+    await stoppingFarm;
     await reconnectRuntime.destroy();
 
     const redeployBots = [];

@@ -62,5 +62,25 @@ assert.doesNotMatch(
   /supplies:\{hasSnapshot:false,inventory:null,barrel:null,barrelError:'No account supply snapshot yet\.'/,
   'secondary live dashboard no longer overwrites valid supplies with a placeholder'
 );
+assert.match(
+  serverSource,
+  /farmPayload\.running = !aggregate[\s\S]*?runtimeFarm\?\.enabled/,
+  'personal Obsidian statistics expose the selected runtime\'s actual farm loop state'
+);
+assert.match(
+  appSource,
+  /farm\.running === true[\s\S]*?'Running'[\s\S]*?farm\.running === false \? 'Waiting to resume'/,
+  'the Obsidian page distinguishes a running farm from one waiting to resume'
+);
+assert.match(
+  appSource,
+  /commandType === 'obsidian_toggle'[\s\S]*?body\.payload = \{[\s\S]*?enabled: !\(farm\.enabled \|\| farm\.desiredEnabled/,
+  'Start Farm and Stop Farm send an explicit requested state instead of a race-prone toggle'
+);
+assert.match(
+  appSource,
+  /const queued = await postJson\('\/api\/admin\/bot-command'[\s\S]*?await waitForAdminBotCommand\(queued\.command\.id\)/,
+  'farm controls wait for command completion instead of immediately repainting stale state'
+);
 
 console.log('Obsidian statistics scope UI tests passed.');

@@ -3088,9 +3088,13 @@ async function startConfiguredObsidianFarm() {
   };
 }
 
-async function toggleObsidianFarmFromControl() {
+async function toggleObsidianFarmFromControl(requestedEnabled = null) {
   const farmStatus = farm.getStatus();
-  if (farmStatus.enabled || obsidianStats.desiredEnabled) {
+  const currentlyEnabled = farmStatus.enabled || obsidianStats.desiredEnabled;
+  const nextEnabled = typeof requestedEnabled === 'boolean'
+    ? requestedEnabled
+    : !currentlyEnabled;
+  if (!nextEnabled) {
     farm.suspend();
     // Disable auto-resume first so a slow lever response cannot restart the
     // farm while the stop command is still being processed.
@@ -3101,6 +3105,15 @@ async function toggleObsidianFarmFromControl() {
       enabled: false,
       leverProtected,
       sessionMined: obsidianStats.sessionMined
+    };
+  }
+
+  if (currentlyEnabled) {
+    return {
+      enabled: true,
+      started: farmStatus.enabled,
+      queued: !farmStatus.enabled,
+      config: farmStatus.config
     };
   }
 
@@ -5519,7 +5532,9 @@ async function executeBotCommand(command) {
   }
 
   if (type === 'obsidian_toggle') {
-    return toggleObsidianFarmFromControl();
+    return toggleObsidianFarmFromControl(
+      typeof payload.enabled === 'boolean' ? payload.enabled : null
+    );
   }
 
   if (type === 'obsidian_radius_toggle') {
@@ -5879,7 +5894,20 @@ async function executeManagedAccountCommand(command) {
   }
   if (type === 'obsidian_toggle') {
     const current = runtime.obsidianFarm.getStatus();
-    return runtime.setObsidianEnabled(!(current.enabled || current.desiredEnabled || runtime.task === 'obsidian'));
+    const enabled = typeof payload.enabled === 'boolean'
+      ? payload.enabled
+      : !(current.enabled || current.desiredEnabled || runtime.task === 'obsidian');
+    const operation = runtime.setObsidianEnabled(enabled);
+    if (!enabled) {
+      // setObsidianEnabled(false) suspends synchronously before protecting the
+      // lever. Persist that intent now so both control-state and analytics
+      // endpoints stop reporting the farm while the interaction finishes.
+      await Promise.all([
+        syncManagedFarmState(pool, command.account_id, runtime.obsidianFarm.getStatus()),
+        persistManagedRuntimeStatus(runtime.getStatus())
+      ]);
+    }
+    return operation;
   }
   if (type === 'kill_aura_targets') {
     const targets = normalizeKillAuraTargets(payload.targets);

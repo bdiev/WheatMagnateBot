@@ -47,5 +47,15 @@ assert.match(
   'managed coordinates are persisted for redeploy recovery'
 );
 assert.match(botSource, /if \(type === 'obsidian_toggle'\)/, 'managed runtimes start and stop their own farm');
+assert.match(
+  botSource,
+  /type === 'obsidian_toggle'[\s\S]*?typeof payload\.enabled === 'boolean'[\s\S]*?runtime\.setObsidianEnabled\(enabled\)[\s\S]*?syncManagedFarmState\(pool, command\.account_id, runtime\.obsidianFarm\.getStatus\(\)\)/,
+  'managed farm controls honor the explicit Start or Stop action selected on the site'
+);
+assert.match(
+  serverSource,
+  /commandType === 'obsidian_toggle'[\s\S]*?typeof payload\.enabled !== 'boolean'[\s\S]*?delete payload\.enabled/,
+  'the command API validates an explicit Obsidian farm state'
+);
 
 console.log('Obsidian command control tests passed.');

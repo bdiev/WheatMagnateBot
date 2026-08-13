@@ -31,13 +31,26 @@ function ownObsidianFarm(context, farm, settingsFile, notify = null, initialStat
   return {
     attachBot: bot => bot ? farm.loadPlugin(bot) : null,
     detachBot: () => farm.suspend(),
-    onSpawn: async () => {
-      farm.assertPathfinderReady(context.bot);
+    onSpawn: async spawnedBot => {
+      const targetBot = spawnedBot || context.bot;
+      const assertCurrentConnection = () => {
+        if (context.bot !== targetBot || !targetBot?.entity) {
+          throw new Error('Obsidian Farm cannot resume: Minecraft connection changed during startup.');
+        }
+        if (!desiredEnabled) {
+          throw new Error('Obsidian Farm resume was cancelled during startup.');
+        }
+      };
+      farm.assertPathfinderReady(targetBot);
       if (!desiredEnabled) return false;
-      await waitForFarmChunks(context.bot);
-      await farm.setProtectionLeverState(context.bot, false);
-      await farm.prepareStart(context.bot);
-      return farm.resume(context.bot, notify);
+      assertCurrentConnection();
+      await waitForFarmChunks(targetBot);
+      assertCurrentConnection();
+      await farm.setProtectionLeverState(targetBot, false);
+      assertCurrentConnection();
+      await farm.prepareStart(targetBot);
+      assertCurrentConnection();
+      return farm.resume(targetBot, notify);
     },
     start: notificationHandler => {
       const previousDesired = desiredEnabled;
