@@ -10,6 +10,7 @@ const { RaycastIterator } = require('prismarine-world').iterators;
 const { BotContext } = require('../site/accounts/bot-context');
 const { createModulesForBot } = require('../site/accounts/module-registry');
 const { MinecraftBotRuntime } = require('../site/accounts/minecraft-bot-runtime');
+const { createProtectionLeverController } = require('../features/obsidianFarm/protection-lever');
 
 const SECONDARY_ID = '00000000-0000-4000-8000-000000000002';
 const OTHER_ID = '00000000-0000-4000-8000-000000000003';
@@ -50,11 +51,16 @@ function farmBot(username, { online = true } = {}) {
     return null;
   };
   bot.blockAtCursor = (maxDistance = 4.75, matcher = null) => {
-    if (bot.lastLookAt?.equals?.(leverShapeCenter)) {
+    const leverAim = bot.lastLookAt?.minus?.(leverPosition);
+    const aimsInsideLeverOutline = leverAim &&
+      leverAim.x >= 5 / 16 && leverAim.x <= 11 / 16 &&
+      leverAim.y >= 4 / 16 && leverAim.y <= 12 / 16 &&
+      leverAim.z >= 10 / 16 && leverAim.z <= 1;
+    if (aimsInsideLeverOutline) {
       const lever = bot.blockAt(leverPosition);
       if (matcher) {
         const eye = bot.entity.position.offset(0, 1.62, 0);
-        const direction = leverShapeCenter.minus(eye).normalize();
+        const direction = bot.lastLookAt.minus(eye).normalize();
         const iterator = new RaycastIterator(eye, direction, maxDistance);
         if (matcher(lever, iterator)) return lever;
       }
@@ -192,8 +198,8 @@ async function main() {
     bot.activateBlock = async (block, direction, cursorPos) => {
       placementInteraction = { block, direction, cursorPos };
     };
-    let placementPacket = null;
-    bot._client = { write:(name, data) => { placementPacket = { name, data }; } };
+    const placementPackets = [];
+    bot._client = { write:(name, data) => { placementPackets.push({ name, data }); } };
     bot.supportFeature = feature => feature === 'blockPlaceHasInsideBlock';
     bot.swingArm = () => { bot.swingActions = (bot.swingActions || 0) + 1; };
     await secondary.modules.obsidianFarm.__test.useBucketOnFace(
@@ -202,6 +208,7 @@ async function main() {
       placementFace,
       configuredTarget
     );
+    const placementPacket = placementPackets[0];
     assert.equal(placementInteraction, null, 'Precise secondary placement does not let Mineflayer reset the verified aim');
     assert.equal(placementPacket.name, 'block_place', 'Secondary lava placement sends one raw block interaction');
     assert.ok(placementPacket.data.location.equals(placementAnchor.position), 'Raw placement packet targets the verified anchor');
@@ -211,6 +218,26 @@ async function main() {
       [0, 0.5, 0.5],
       'Raw placement packet preserves the west-face cursor'
     );
+    assert.equal(placementPacket.data.sequence, 1, 'First precise packet starts a real interaction sequence');
+    await secondary.modules.obsidianFarm.__test.useBucketOnFace(
+      bot,
+      placementAnchor,
+      placementFace,
+      configuredTarget
+    );
+    assert.equal(placementPackets[1].data.sequence, 2, 'Repeated precise packets use increasing interaction sequences');
+
+    const retryBot = farmBot('LeverRetryAlt');
+    const retryActivateBlock = retryBot.activateBlock;
+    const retryAimPoints = [];
+    retryBot.activateBlock = async (...args) => {
+      retryAimPoints.push(retryBot.lastLookAt.clone());
+      if (retryAimPoints.length > 1) await retryActivateBlock(...args);
+    };
+    const retryController = createProtectionLeverController({ preciseInteraction:true });
+    assert.equal(await retryController.setState(retryBot, false), true);
+    assert.equal(retryAimPoints.length, 2, 'Lever retry succeeds after an unconfirmed first click');
+    assert.ok(!retryAimPoints[0].equals(retryAimPoints[1]), 'Lever retries use different safe points inside its outline');
 
     const primary = new BotContext({ account:account('00000000-0000-4000-8000-000000000001', 'WheatMagnate', true) });
     primary.modules = createModulesForBot(primary, { dataRoot });
@@ -349,10 +376,11 @@ async function main() {
     assert.equal(reconnectRuntime.obsidianFarm.getStatus().desiredEnabled, true);
     assert.equal(reconnectBots[0].leverActions, 1, 'secondary startup switches its protection lever OFF');
     assert.deepEqual(reconnectBots[0].leverInteraction.direction, new Vec3(-1, 0, 0), 'wall lever uses its visible ray-traced face');
-    assert.ok(
-      reconnectBots[0].leverInteraction.cursorPos.distanceTo(new Vec3(0.3125, 0.64, 0.7109375)) < 0.0001,
-      'empty-collision lever uses its synthetic outline hit instead of selecting the stone-brick support'
-    );
+    const leverCursor = reconnectBots[0].leverInteraction.cursorPos;
+    const outlineTolerance = 0.0001;
+    assert.ok(leverCursor.x >= 5 / 16 - outlineTolerance && leverCursor.x <= 11 / 16 + outlineTolerance);
+    assert.ok(leverCursor.y >= 4 / 16 - outlineTolerance && leverCursor.y <= 12 / 16 + outlineTolerance);
+    assert.ok(leverCursor.z >= 10 / 16 - outlineTolerance && leverCursor.z <= 1 + outlineTolerance);
     assert.equal(reconnectBots[0].barrelOpens, 1, 'secondary startup always opens its supply barrel');
     assert.deepEqual(reconnectBots[0].barrelInteraction.direction, new Vec3(0, 1, 0), 'barrel below the bot is clicked through its top face');
     assert.ok(

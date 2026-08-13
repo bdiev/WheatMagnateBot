@@ -1,6 +1,7 @@
 'use strict';
 
 const Vec3 = require('vec3');
+const { nextInteractionSequence } = require('./interaction-sequence');
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -57,15 +58,36 @@ function getInteractionShapes(block) {
   return collisionShapes.length ? collisionShapes : [getLeverOutlineShape(block)];
 }
 
-function getAimCandidates(block, shapes) {
-  return shapes.map(shape => block.position.offset(
-    (Number(shape[0]) + Number(shape[3])) / 2,
-    (Number(shape[1]) + Number(shape[4])) / 2,
-    (Number(shape[2]) + Number(shape[5])) / 2
-  ));
+function getAimCandidates(bot, block, shapes) {
+  const eye = bot?.entity?.position?.offset(
+    0,
+    Number.isFinite(bot?.entity?.eyeHeight) ? bot.entity.eyeHeight : 1.62,
+    0
+  );
+  const inset = 1 / 64;
+  const candidates = [];
+  for (const shape of shapes) {
+    const min = new Vec3(Number(shape[0]), Number(shape[1]), Number(shape[2]));
+    const max = new Vec3(Number(shape[3]), Number(shape[4]), Number(shape[5]));
+    const center = min.plus(max).scaled(0.5);
+    if (eye) {
+      const localEye = eye.minus(block.position);
+      const nearest = new Vec3(
+        Math.max(min.x + inset, Math.min(max.x - inset, localEye.x)),
+        Math.max(min.y + inset, Math.min(max.y - inset, localEye.y)),
+        Math.max(min.z + inset, Math.min(max.z - inset, localEye.z))
+      );
+      // Keep away from exact outline edges while shortening the ray from the
+      // bot's current position. This matters when the bot ended a cycle on the
+      // opposite side of the rotated farm.
+      candidates.push(block.position.plus(nearest.scaled(0.75).plus(center.scaled(0.25))));
+    }
+    candidates.push(block.position.plus(center));
+  }
+  return candidates;
 }
 
-async function resolvePreciseInteraction(bot, block) {
+async function resolvePreciseInteraction(bot, block, preferredCandidate = 0) {
   if (typeof bot.blockAtCursor !== 'function') {
     return {
       direction: FACE_DIRECTIONS[1],
@@ -76,8 +98,13 @@ async function resolvePreciseInteraction(bot, block) {
   }
 
   const interactionShapes = getInteractionShapes(block);
+  const candidates = getAimCandidates(bot, block, interactionShapes);
+  if (candidates.length > 1) {
+    const offset = Math.abs(Number(preferredCandidate) || 0) % candidates.length;
+    candidates.push(...candidates.splice(0, offset));
+  }
   let lastAimedName = 'air';
-  for (const lookAt of getAimCandidates(block, interactionShapes)) {
+  for (const lookAt of candidates) {
     await bot.lookAt(lookAt, true);
     await sleep(100);
     const aimed = bot.blockAtCursor(4.75, (candidate, iterator) => {
@@ -96,11 +123,17 @@ async function resolvePreciseInteraction(bot, block) {
       ? aimed.face
       : 1;
     const hit = aimed?.intersect?.minus?.(block.position) || new Vec3(0.5, 0.5, 0.5);
+    const eye = bot.entity.position.offset(
+      0,
+      Number.isFinite(bot.entity.eyeHeight) ? bot.entity.eyeHeight : 1.62,
+      0
+    );
     return {
       direction: FACE_DIRECTIONS[face],
       cursorPos: new Vec3(clampCursor(hit.x), clampCursor(hit.y), clampCursor(hit.z)),
       lookAt,
-      face
+      face,
+      distance: eye.distanceTo(aimed.intersect || lookAt)
     };
   }
   throw new Error(`protection lever is not in line of sight (aimed at ${lastAimedName})`);
@@ -137,11 +170,12 @@ async function activatePrecisely(bot, block, interaction) {
     packet.cursorZ *= 16;
   } else if (bot.supportFeature('blockPlaceHasInsideBlock')) {
     packet.insideBlock = false;
-    packet.sequence = 0;
+    packet.sequence = nextInteractionSequence(bot);
     packet.worldBorderHit = false;
   }
   bot._client.write('block_place', packet);
   bot.swingArm?.();
+  return packet;
 }
 
 function createProtectionLeverController({
@@ -244,6 +278,7 @@ function createProtectionLeverController({
       }
     }
 
+    let lastInteraction = null;
     for (let attempt = 1; attempt <= 3; attempt++) {
       const current = bot.blockAt(position);
       if (current?.name !== 'lever') {
@@ -256,14 +291,16 @@ function createProtectionLeverController({
           position:position.toString(), attempt, requiredState:powered ? 'on' : 'off'
         });
         if (preciseInteraction) {
-          const interaction = await resolvePreciseInteraction(bot, current);
+          const interaction = await resolvePreciseInteraction(bot, current, attempt - 1);
+          lastInteraction = interaction;
           debug('protection_lever_aim_confirmed', {
             position:position.toString(),
             attempt,
             face:interaction.face,
             direction:interaction.direction.toString(),
             cursor:interaction.cursorPos.toString(),
-            lookAt:interaction.lookAt.toString()
+            lookAt:interaction.lookAt.toString(),
+            distance:Number(interaction.distance.toFixed(3))
           });
           traceClick(bot, 'before_send', {
             method:bot?._client?.write && typeof bot.supportFeature === 'function'
@@ -276,9 +313,10 @@ function createProtectionLeverController({
             directionNum:interaction.face,
             cursor:interaction.cursorPos.toString(),
             lookAt:interaction.lookAt.toString(),
-            requiredState:powered ? 'on' : 'off'
+            requiredState:powered ? 'on' : 'off',
+            distance:Number(interaction.distance.toFixed(3))
           });
-          await activatePrecisely(bot, current, interaction);
+          const packet = await activatePrecisely(bot, current, interaction);
           traceClick(bot, 'sent', {
             method:bot?._client?.write && typeof bot.supportFeature === 'function'
               ? 'raw_block_place'
@@ -289,7 +327,9 @@ function createProtectionLeverController({
             direction:interaction.direction.toString(),
             directionNum:interaction.face,
             cursor:interaction.cursorPos.toString(),
-            requiredState:powered ? 'on' : 'off'
+            requiredState:powered ? 'on' : 'off',
+            distance:Number(interaction.distance.toFixed(3)),
+            packetSequence:Number.isInteger(packet?.sequence) ? packet.sequence : null
           });
         } else {
           await bot.lookAt(current.position.offset(0.5, 0.5, 0.5), true);
@@ -347,12 +387,15 @@ function createProtectionLeverController({
         }
         await sleep(40);
       }
-      lastFailure = 'server did not confirm the new lever state';
+      const distance = Number(lastInteraction?.distance);
+      lastFailure = 'server did not confirm the new lever state' +
+        (Number.isFinite(distance) ? ` (click distance ${distance.toFixed(2)} blocks)` : '');
       traceClick(bot, 'unconfirmed', {
         attempt,
         blockPosition:position.toString(),
         resultingState:isPowered(bot.blockAt(position)) ? 'on' : 'off',
-        requiredState:powered ? 'on' : 'off'
+        requiredState:powered ? 'on' : 'off',
+        distance:Number.isFinite(distance) ? Number(distance.toFixed(3)) : null
       });
       log(`Lever click ${attempt}/3 was not confirmed by the server.`);
     }

@@ -20,6 +20,7 @@ const Vec3                      = require('vec3');
 const fs                        = require('fs');
 const path                      = require('node:path');
 const { createProtectionLeverController } = require('./protection-lever');
+const { nextInteractionSequence } = require('./interaction-sequence');
 
 /**
  * Create one fully isolated Obsidian Farm runtime.
@@ -332,7 +333,7 @@ async function activateBlockPrecisely(bot, block, interaction) {
     packet.cursorZ *= 16;
   } else if (bot.supportFeature('blockPlaceHasInsideBlock')) {
     packet.insideBlock = false;
-    packet.sequence = 0;
+    packet.sequence = nextInteractionSequence(bot);
     packet.worldBorderHit = false;
   }
   bot._client.write('block_place', packet);
@@ -346,6 +347,7 @@ async function activateBlockPrecisely(bot, block, interaction) {
     directionNum,
     cursor:cursorPos.toString(),
     packetCursor:{ x:packet.cursorX, y:packet.cursorY, z:packet.cursorZ },
+    packetSequence:Number.isInteger(packet.sequence) ? packet.sequence : null,
     packetFields:Object.keys(packet).sort()
   });
 }
