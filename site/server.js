@@ -1911,10 +1911,46 @@ async function getPlayerStats() {
   };
 }
 
+function obsidianChartBucketKey(value) {
+  if (value instanceof Date) return value.toISOString();
+  return String(value ?? '');
+}
+
+function attachObsidianAccountSegments(items, rows, accounts) {
+  const valuesByBucket = new Map();
+  for (const row of rows || []) {
+    const bucket = obsidianChartBucketKey(row.bucket);
+    if (!valuesByBucket.has(bucket)) valuesByBucket.set(bucket, new Map());
+    const values = valuesByBucket.get(bucket);
+    values.set(String(row.account_id), (values.get(String(row.account_id)) || 0) + toInt(row.mined));
+  }
+  return (items || []).map(item => {
+    const values = valuesByBucket.get(obsidianChartBucketKey(item.bucket)) || new Map();
+    return {
+      ...item,
+      segments: accounts.map(account => ({
+        accountId: account.id,
+        name: account.name,
+        color: account.color,
+        value: values.get(String(account.id)) || 0
+      }))
+    };
+  });
+}
+
 async function getObsidianStats(currentUser = null, { scope = 'personal', accountId = DEFAULT_MINECRAFT_ACCOUNT_ID, runtimeFarm = null } = {}) {
   assertDatabase();
   const aggregate = scope === 'all';
   const includePrimary = aggregate || accountId === DEFAULT_MINECRAFT_ACCOUNT_ID;
+  const chartAccounts = aggregate
+    ? (await getAccountRegistry()).list().map((account, index) => ({
+      id: account.id,
+      name: account.displayName || account.username,
+      color: /^#[0-9a-f]{6}$/i.test(String(account.color || ''))
+        ? account.color
+        : ['#7cc242', '#4b91e5', '#e5b94b', '#d26cf0'][index % 4]
+    }))
+    : [];
   if (includePrimary) {
     await pool.query(`UPDATE obsidian_farm_goals
       SET baseline_mined=COALESCE((SELECT total_mined FROM obsidian_farm_state WHERE id=1),0),updated_at=NOW()
@@ -1928,7 +1964,7 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
   };
   const timezone = currentUser ? await getAccountTimezone(currentUser.id) : (settings.timezone || 'Europe/Vilnius');
   const managedWhere = `a.is_default=FALSE AND a.deleted_at IS NULL AND ($1::boolean OR stats.account_id=$2::uuid)`;
-  const [primaryFarmResult, managedFarmResult, dailyResult, hourlyResult, supplyResult, supplyHistoryResult, annotationsResult, goalsResult, tpsResult, comparisonResult, toolUsageResult] = await Promise.all([
+  const [primaryFarmResult, managedFarmResult, dailyResult, hourlyResult, supplyResult, supplyHistoryResult, annotationsResult, goalsResult, tpsResult, comparisonResult, toolUsageResult, dailyAccountResult, hourlyAccountResult] = await Promise.all([
     includePrimary ? pool.query(`
       SELECT session_mined,total_mined,desired_enabled,session_started_at,
              retired_pickaxes,retired_pickaxe_blocks,target_x,target_y,target_z,target_radius,updated_at
@@ -2046,7 +2082,29 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
       WHERE stats.changed_at>=NOW()-INTERVAL '90 days' AND a.is_default=FALSE AND a.deleted_at IS NULL
         AND ($2::boolean OR stats.account_id=$3::uuid)
       ORDER BY changed_at
-    `, [includePrimary, aggregate, accountId])
+    `, [includePrimary, aggregate, accountId]),
+    aggregate ? pool.query(`
+      SELECT $1::uuid AS account_id,farm_date::text AS bucket,mined
+      FROM obsidian_farm_daily
+      WHERE farm_date>=(NOW() AT TIME ZONE $2)::date-89
+      UNION ALL
+      SELECT stats.account_id,stats.farm_date::text AS bucket,stats.mined
+      FROM obsidian_account_farm_daily stats
+      JOIN bot_accounts a ON a.id=stats.account_id
+      WHERE stats.farm_date>=(NOW() AT TIME ZONE $2)::date-89
+        AND a.is_default=FALSE AND a.deleted_at IS NULL
+    `, [DEFAULT_MINECRAFT_ACCOUNT_ID, timezone]) : Promise.resolve({ rows: [] }),
+    aggregate ? pool.query(`
+      SELECT $1::uuid AS account_id,bucket,mined
+      FROM obsidian_farm_hourly
+      WHERE bucket>=date_trunc('hour',NOW()-INTERVAL '167 hours')
+      UNION ALL
+      SELECT stats.account_id,stats.bucket,stats.mined
+      FROM obsidian_account_farm_hourly stats
+      JOIN bot_accounts a ON a.id=stats.account_id
+      WHERE stats.bucket>=date_trunc('hour',NOW()-INTERVAL '167 hours')
+        AND a.is_default=FALSE AND a.deleted_at IS NULL
+    `, [DEFAULT_MINECRAFT_ACCOUNT_ID]) : Promise.resolve({ rows: [] })
   ]);
 
   const farmRows = [
@@ -2061,17 +2119,23 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
     row.target_radius = runtimeFarm.config.maxCauldronDist;
   }
   const farm = compactFarmState(combineFarmStateRows(farmRows));
-  const hourly = hourlyResult.rows.map(row => ({
+  const hourlyTotals = hourlyResult.rows.map(row => ({
     label: row.label,
     bucket: row.bucket,
     value: toInt(row.mined),
     observed: Boolean(row.observed)
   }));
-  const daily = dailyResult.rows.map(row => ({
+  const dailyTotals = dailyResult.rows.map(row => ({
     label: row.label,
     bucket: row.bucket,
     value: toInt(row.mined)
   }));
+  const hourly = aggregate
+    ? attachObsidianAccountSegments(hourlyTotals, hourlyAccountResult.rows, chartAccounts)
+    : hourlyTotals;
+  const daily = aggregate
+    ? attachObsidianAccountSegments(dailyTotals, dailyAccountResult.rows, chartAccounts)
+    : dailyTotals;
   const last7Days = daily.slice(-7).reduce((sum, item) => sum + item.value, 0);
 
   const supplies = normalizeSupplySnapshot(combineRawSupplySnapshots(supplyResult.rows));
@@ -2096,6 +2160,7 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
     },
     hourly,
     daily,
+    chartAccounts,
     supplies,
     settings: { timezone, dailyReportEnabled: settings.daily_report_enabled, dailyReportHour: settings.daily_report_hour },
     goals,

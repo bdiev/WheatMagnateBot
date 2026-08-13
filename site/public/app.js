@@ -1974,8 +1974,21 @@ function drawBarChart(canvas, data, options = {}) {
     const x = slotX + (slotWidth - barWidth) / 2;
     const barHeight = Math.max(1, (value / maxValue) * chartHeight);
     const y = padding.top + chartHeight - barHeight;
-    ctx.fillStyle = accent;
-    ctx.fillRect(x, y, barWidth, barHeight);
+    const segments = options.stacked && Array.isArray(item.segments) ? item.segments : [];
+    if (segments.length) {
+      let segmentBottom = padding.top + chartHeight;
+      segments.forEach(segment => {
+        const segmentValue = Math.max(0, Number(segment.value) || 0);
+        if (!segmentValue) return;
+        const segmentHeight = (segmentValue / maxValue) * chartHeight;
+        segmentBottom -= segmentHeight;
+        ctx.fillStyle = /^#[0-9a-f]{6}$/i.test(String(segment.color || '')) ? segment.color : accent;
+        ctx.fillRect(x, segmentBottom, barWidth, Math.max(1, segmentHeight));
+      });
+    } else {
+      ctx.fillStyle = accent;
+      ctx.fillRect(x, y, barWidth, barHeight);
+    }
     hitboxes.push({
       x: slotX,
       y: padding.top,
@@ -2151,16 +2164,35 @@ function aggregateSeries(data, range, reducer = 'sum') {
       key = String(key).slice(0, 7);
       label = key;
     }
-    if (!groups.has(key)) groups.set(key, { label, values: [] });
+    if (!groups.has(key)) groups.set(key, { label, values: [], segments: new Map() });
     const value = Number(item.value);
     if (Number.isFinite(value)) groups.get(key).values.push(value);
+    if (Array.isArray(item.segments)) {
+      item.segments.forEach(segment => {
+        const accountId = String(segment.accountId || segment.name || '');
+        if (!accountId) return;
+        const existing = groups.get(key).segments.get(accountId) || { ...segment, value: 0 };
+        existing.value += Number(segment.value) || 0;
+        groups.get(key).segments.set(accountId, existing);
+      });
+    }
   });
   return Array.from(groups.values()).map(group => ({
     label: group.label,
     value: reducer === 'avg'
       ? group.values.reduce((sum, value) => sum + value, 0) / Math.max(1, group.values.length)
-      : group.values.reduce((sum, value) => sum + value, 0)
+      : group.values.reduce((sum, value) => sum + value, 0),
+    segments: Array.from(group.segments.values())
   }));
+}
+
+function obsidianChartTooltip(item) {
+  const total = `${item.label}: ${formatNumber(item.value)} blocks`;
+  if (!Array.isArray(item.segments)) return total;
+  const breakdown = item.segments
+    .filter(segment => Number(segment.value) > 0)
+    .map(segment => `${segment.name}: ${formatNumber(segment.value)}`);
+  return breakdown.length ? `${total}\n${breakdown.join('\n')}` : total;
 }
 
 function getChartRange(id) {
@@ -2184,7 +2216,8 @@ function drawChartById(chartId) {
         ? state.charts.obsidianHourly.map(localizedChartItem)
         : aggregateSeries(state.charts.obsidianDaily, range);
       drawBarChart($('#obsidianDailyChart'), obsidianData, {
-        tooltip: item => `${item.label}: ${formatNumber(item.value)} blocks`,
+        stacked: state.obsidianStatsScope === 'all',
+        tooltip: obsidianChartTooltip,
         annotations: range === 'hours' ? state.charts.obsidianAnnotations || [] : []
       });
       break;
@@ -4264,6 +4297,9 @@ function updateObsidianFarmControlsVisibility(scope = state.obsidianStatsScope) 
   if (aggregate) state.obsidianCoordinateEditorOpen = false;
   const adminCarousel = $('#obsidianAdminCarousel');
   if (adminCarousel) adminCarousel.hidden = state.currentUser?.role !== 'admin' || aggregate;
+  const supplyPanels = $('#obsidianSupplyPanels');
+  if (supplyPanels) supplyPanels.hidden = aggregate;
+  if (!aggregate) $('#obsidianChartLegend').hidden = true;
   const coordinateEditor = $('#obsidianCoordinateEditor');
   if (coordinateEditor) {
     coordinateEditor.hidden = state.currentUser?.role !== 'admin'
@@ -4366,6 +4402,12 @@ function renderObsidian(payload) {
       button.disabled = false;
     });
   }
+  const chartAccounts = Array.isArray(payload.chartAccounts) ? payload.chartAccounts : [];
+  const chartLegend = $('#obsidianChartLegend');
+  if (chartLegend) {
+    chartLegend.innerHTML = chartAccounts.map(account => `<span><i style="--series-color:${escapeHtml(account.color)}" aria-hidden="true"></i>${escapeHtml(account.name)}</span>`).join('');
+    chartLegend.hidden = renderedScope !== 'all' || !chartAccounts.length;
+  }
   const farm = payload.farm || {};
   $('#farmState').textContent = farm.desiredEnabled ? 'Enabled' : 'Disabled';
   $('#farmUpdated').textContent = `last update: ${formatDate(farm.updatedAt)}`;
@@ -4440,6 +4482,7 @@ function renderObsidian(payload) {
   renderSupplies('#barrelSupplies', payload.supplies?.barrel, payload.supplies?.barrelError);
   state.charts.obsidianHourly = payload.hourly || [];
   state.charts.obsidianDaily = payload.daily || [];
+  state.charts.obsidianAccounts = chartAccounts;
   state.charts.obsidianAnnotations = payload.annotations || [];
   redrawCharts();
 }

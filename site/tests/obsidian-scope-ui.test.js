@@ -22,12 +22,24 @@ assert.match(appSource, /function updateObsidianStatsScopeVisibility\(\)[\s\S]*?
   'the switch is visible only to an admin on the primary Obsidian page');
 assert.match(appSource, /function updateObsidianFarmControlsVisibility\(scope = state\.obsidianStatsScope\)[\s\S]*?scope === 'all'[\s\S]*?adminCarousel\.hidden = state\.currentUser\?\.role !== 'admin' \|\| aggregate/,
   'Farm Power, Search Radius and Coordinates controls are hidden in All Bots scope');
+assert.match(htmlSource, /id="obsidianSupplyPanels"[\s\S]*?Bot Inventory Supplies[\s\S]*?Supply Barrel/,
+  'the two personal supply panels share a stable visibility container');
+assert.match(appSource, /const supplyPanels = \$\('#obsidianSupplyPanels'\);[\s\S]*?supplyPanels\.hidden = aggregate;/,
+  'Bot Inventory Supplies and Supply Barrel are hidden immediately in All Bots scope');
 assert.match(appSource, /if \(aggregate\) state\.obsidianCoordinateEditorOpen = false;/,
   'switching to All Bots closes the coordinate editor');
 assert.match(appSource, /state\.obsidianStatsScope = scope;[\s\S]*?updateObsidianFarmControlsVisibility\(scope\);/,
   'farm controls disappear immediately when All Bots is selected');
 assert.match(appSource, /state\.charts\.obsidianHourly = payload\.hourly[\s\S]*?state\.charts\.obsidianDaily = payload\.daily/,
   'scope payloads replace both Obsidian chart series');
+assert.match(serverSource, /attachObsidianAccountSegments[\s\S]*?account\.color[\s\S]*?obsidian_account_farm_daily[\s\S]*?obsidian_account_farm_hourly/,
+  'All Bots chart points retain ordered account segments and Account colors');
+assert.match(appSource, /options\.stacked[\s\S]*?item\.segments[\s\S]*?segment\.color[\s\S]*?fillRect/,
+  'the chart renderer paints account segments as stacked colored bars');
+assert.match(appSource, /function aggregateSeries[\s\S]*?segments: new Map\(\)[\s\S]*?segments: Array\.from/,
+  'day and month ranges preserve the per-account stack');
+assert.match(htmlSource, /id="obsidianChartLegend"[^>]*hidden/,
+  'the Obsidian chart exposes a color legend for aggregate mode');
 assert.match(serverSource, /requestedScope === 'all'[\s\S]*?assertAdminUser\(currentUser\)/,
   'all-bot statistics require administrator access');
 assert.match(serverSource, /obsidian_account_farm_daily[\s\S]*?SUM\(mined\)/,

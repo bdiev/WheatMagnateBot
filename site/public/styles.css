@@ -3114,7 +3114,33 @@ body.search-focus-active #logoutButton {
   box-shadow: var(--shadow);
   font-size: 13px;
   font-weight: 800;
+  white-space: pre-line;
   transition: background-color 260ms ease, border-color 260ms ease, color 260ms ease, box-shadow 260ms ease;
+}
+
+.chart-series-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 14px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.chart-series-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.chart-series-legend i {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  background: var(--series-color, var(--accent));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--series-color, var(--accent)) 65%, var(--line));
 }
 
 .rank-list,
