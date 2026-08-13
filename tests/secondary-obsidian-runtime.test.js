@@ -22,6 +22,7 @@ function farmBot(username, { online = true } = {}) {
   bot.username = username;
   const botPosition = new Vec3(0, 64, 0);
   const leverPosition = new Vec3(1, 64, 0);
+  const leverShapeCenter = leverPosition.offset(0.5, 0.5, 0.125);
   const barrelPosition = new Vec3(-1, 64, 0);
   const inventoryItems = [
     { name:'diamond_pickaxe', type:100, count:1, slot:9, maxDurability:1561, durabilityUsed:0 },
@@ -40,13 +41,24 @@ function farmBot(username, { online = true } = {}) {
   bot.findBlocks = options => options?.matching === 1 ? [barrelPosition] : [];
   bot.blockAt = position => {
     if (position?.equals?.(leverPosition)) return {
-      name:'lever', position:leverPosition, getProperties:() => ({ powered:leverPowered })
+      name:'lever', position:leverPosition,
+      shapes:[[0.375, 0.2, 0, 0.625, 0.8, 0.25]],
+      getProperties:() => ({ face:'wall', facing:'north', powered:leverPowered })
     };
     if (position?.equals?.(barrelPosition)) return { name:'barrel', type:1, position:barrelPosition };
     return null;
   };
   bot.blockAtCursor = () => {
-    if (bot.lastLookAt?.equals?.(leverPosition.offset(0.5, 0.5, 0.5))) return bot.blockAt(leverPosition);
+    if (bot.lastLookAt?.equals?.(leverShapeCenter)) {
+      const lever = bot.blockAt(leverPosition);
+      lever.face = 2;
+      lever.intersect = leverShapeCenter;
+      return lever;
+    }
+    // A wall lever's block center may be behind its small visible shape.
+    if (bot.lastLookAt?.equals?.(leverPosition.offset(0.5, 0.5, 0.5))) {
+      return { name:'smooth_stone', position:leverPosition.offset(0, 0, 1) };
+    }
     if (bot.lastLookAt?.equals?.(barrelPosition.offset(0.5, 0.5, 0.5))) {
       const barrel = bot.blockAt(barrelPosition);
       barrel.face = 5;
@@ -59,6 +71,7 @@ function farmBot(username, { online = true } = {}) {
     if (block?.name === 'lever') {
       leverPowered = !leverPowered;
       bot.leverActions = (bot.leverActions || 0) + 1;
+      bot.leverInteraction = { direction, cursorPos };
     } else if (block?.name === 'barrel') {
       bot.barrelOpens = (bot.barrelOpens || 0) + 1;
       bot.barrelInteraction = { direction, cursorPos };
@@ -286,6 +299,11 @@ async function main() {
     assert.equal(reconnectRuntime.task, 'obsidian');
     assert.equal(reconnectRuntime.obsidianFarm.getStatus().desiredEnabled, true);
     assert.equal(reconnectBots[0].leverActions, 1, 'secondary startup switches its protection lever OFF');
+    assert.deepEqual(reconnectBots[0].leverInteraction.direction, new Vec3(0, 0, -1), 'wall lever uses its visible ray-traced face');
+    assert.ok(
+      reconnectBots[0].leverInteraction.cursorPos.distanceTo(new Vec3(0.5, 0.5, 0.125)) < 0.0001,
+      'wall lever click preserves the visible hit point instead of resetting aim to block center'
+    );
     assert.equal(reconnectBots[0].barrelOpens, 1, 'secondary startup always opens its supply barrel');
     assert.deepEqual(reconnectBots[0].barrelInteraction.direction, new Vec3(0, 1, 0), 'barrel below the bot is clicked through its top face');
     assert.ok(

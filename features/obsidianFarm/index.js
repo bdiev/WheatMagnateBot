@@ -103,7 +103,8 @@ let farmRecoveryCheckPending = true;
 const activeFarmNotificationTypes = new Set();
 let farmDebugLoggingEnabled = true;
 const protectionLeverController = createProtectionLeverController({
-  debug: (event, details) => writeFarmDebug(event, details)
+  debug: (event, details) => writeFarmDebug(event, details),
+  preciseInteraction: !identity.isPrimary
 });
 const cauldronReachStats = {
   successMaxDistance: null,
@@ -2613,7 +2614,11 @@ async function setProtectionLeverState(bot, powered) {
   if (!bot?.entity) throw new Error('Obsidian Farm cannot operate protection lever: Minecraft bot is offline.');
   const confirmed = await protectionLeverController.setState(bot, powered);
   if (!confirmed) {
-    throw new Error(`Obsidian Farm could not switch protection lever ${powered ? 'ON' : 'OFF'}.`);
+    const reason = protectionLeverController.getLastFailure?.();
+    throw new Error(
+      `Obsidian Farm could not switch protection lever ${powered ? 'ON' : 'OFF'}` +
+      `${reason ? `: ${reason}` : ''}.`
+    );
   }
   return true;
 }

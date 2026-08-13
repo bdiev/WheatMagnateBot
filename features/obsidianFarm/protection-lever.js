@@ -1,12 +1,123 @@
 'use strict';
 
+const Vec3 = require('vec3');
+
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function createProtectionLeverController({ log = () => {}, debug = () => {} } = {}) {
+const FACE_DIRECTIONS = [
+  new Vec3(0, -1, 0), new Vec3(0, 1, 0),
+  new Vec3(0, 0, -1), new Vec3(0, 0, 1),
+  new Vec3(-1, 0, 0), new Vec3(1, 0, 0)
+];
+
+function clampCursor(value) {
+  const numeric = Number(value);
+  return Math.max(0.001, Math.min(0.999, Number.isFinite(numeric) ? numeric : 0.5));
+}
+
+function directionNumber(direction) {
+  if (direction.y < 0) return 0;
+  if (direction.y > 0) return 1;
+  if (direction.z < 0) return 2;
+  if (direction.z > 0) return 3;
+  if (direction.x < 0) return 4;
+  if (direction.x > 0) return 5;
+  return null;
+}
+
+function getAimCandidates(block) {
+  const candidates = [];
+  for (const shape of block?.shapes || []) {
+    if (!Array.isArray(shape) || shape.length < 6) continue;
+    candidates.push(block.position.offset(
+      (Number(shape[0]) + Number(shape[3])) / 2,
+      (Number(shape[1]) + Number(shape[4])) / 2,
+      (Number(shape[2]) + Number(shape[5])) / 2
+    ));
+  }
+  candidates.push(block.position.offset(0.5, 0.5, 0.5));
+  return candidates;
+}
+
+async function resolvePreciseInteraction(bot, block) {
+  if (typeof bot.blockAtCursor !== 'function') {
+    return {
+      direction: FACE_DIRECTIONS[1],
+      cursorPos: new Vec3(0.5, 0.5, 0.5),
+      lookAt: block.position.offset(0.5, 0.5, 0.5),
+      face: 1
+    };
+  }
+
+  let lastAimedName = 'air';
+  for (const lookAt of getAimCandidates(block)) {
+    await bot.lookAt(lookAt, true);
+    await sleep(100);
+    const aimed = bot.blockAtCursor(4.75);
+    lastAimedName = aimed?.name || 'air';
+    if (!aimed?.position?.equals(block.position)) continue;
+    const face = Number.isInteger(aimed.face) && aimed.face >= 0 && aimed.face < FACE_DIRECTIONS.length
+      ? aimed.face
+      : 1;
+    const hit = aimed?.intersect?.minus?.(block.position) || new Vec3(0.5, 0.5, 0.5);
+    return {
+      direction: FACE_DIRECTIONS[face],
+      cursorPos: new Vec3(clampCursor(hit.x), clampCursor(hit.y), clampCursor(hit.z)),
+      lookAt,
+      face
+    };
+  }
+  throw new Error(`protection lever is not in line of sight (aimed at ${lastAimedName})`);
+}
+
+async function activatePrecisely(bot, block, interaction) {
+  const { direction, cursorPos, lookAt } = interaction;
+  await bot.lookAt(lookAt, true);
+  await sleep(100);
+  if (!bot?._client?.write || typeof bot.supportFeature !== 'function') {
+    return bot.activateBlock(block, direction, cursorPos);
+  }
+
+  const directionNum = directionNumber(direction);
+  if (directionNum == null) throw new Error('cannot map protection lever interaction face');
+  const packet = {
+    location: block.position,
+    direction: directionNum,
+    hand: 0,
+    cursorX: cursorPos.x,
+    cursorY: cursorPos.y,
+    cursorZ: cursorPos.z
+  };
+  if (bot.supportFeature('blockPlaceHasHeldItem')) {
+    const Item = require('prismarine-item')(bot.registry);
+    delete packet.hand;
+    packet.heldItem = Item.toNotch(bot.heldItem);
+    packet.cursorX *= 16;
+    packet.cursorY *= 16;
+    packet.cursorZ *= 16;
+  } else if (bot.supportFeature('blockPlaceHasHandAndIntCursor')) {
+    packet.cursorX *= 16;
+    packet.cursorY *= 16;
+    packet.cursorZ *= 16;
+  } else if (bot.supportFeature('blockPlaceHasInsideBlock')) {
+    packet.insideBlock = false;
+    packet.sequence = 0;
+    packet.worldBorderHit = false;
+  }
+  bot._client.write('block_place', packet);
+  bot.swingArm?.();
+}
+
+function createProtectionLeverController({
+  log = () => {},
+  debug = () => {},
+  preciseInteraction = false
+} = {}) {
   let operationQueue = Promise.resolve();
   let cachedPosition = null;
+  let lastFailure = null;
 
   function isPowered(block) {
     const powered = block?.getProperties?.().powered;
@@ -43,9 +154,14 @@ function createProtectionLeverController({ log = () => {}, debug = () => {} } = 
   }
 
   async function perform(bot, powered) {
-    if (!bot?.entity) return false;
+    lastFailure = null;
+    if (!bot?.entity) {
+      lastFailure = 'Minecraft bot is offline';
+      return false;
+    }
     const lever = find(bot);
     if (!lever) {
+      lastFailure = 'protection lever was not found within 4.5 blocks';
       log('Protection lever is not loaded or is out of interaction range.');
       debug('protection_lever_missing', { requiredState:powered ? 'on' : 'off' });
       return false;
@@ -67,6 +183,7 @@ function createProtectionLeverController({ log = () => {}, debug = () => {} } = 
         if (safeItem) await bot.equip(safeItem, 'hand');
         else await bot.unequip?.('hand');
       } catch (error) {
+        lastFailure = `could not select a safe hand item: ${error.message}`;
         log(`Could not select a safe item before lever use: ${error.message}`);
         debug('protection_lever_safe_item_failed', { error:error.message });
         return false;
@@ -75,20 +192,34 @@ function createProtectionLeverController({ log = () => {}, debug = () => {} } = 
 
     for (let attempt = 1; attempt <= 3; attempt++) {
       const current = bot.blockAt(position);
-      if (current?.name !== 'lever') return false;
+      if (current?.name !== 'lever') {
+        lastFailure = 'protection lever disappeared before interaction';
+        return false;
+      }
       if (isPowered(current) === powered) return true;
       try {
         debug('protection_lever_action_start', {
           position:position.toString(), attempt, requiredState:powered ? 'on' : 'off'
         });
-        // This forced turn is shared by primary and secondary accounts. Do not
-        // reject wall-mounted levers via blockAtCursor(center): their center ray
-        // can legitimately intersect the supporting block behind the lever.
-        await bot.lookAt(current.position.offset(0.5, 0.5, 0.5), true);
-        await sleep(100);
-        await bot.activateBlock(current);
+        if (preciseInteraction) {
+          const interaction = await resolvePreciseInteraction(bot, current);
+          debug('protection_lever_aim_confirmed', {
+            position:position.toString(),
+            attempt,
+            face:interaction.face,
+            direction:interaction.direction.toString(),
+            cursor:interaction.cursorPos.toString(),
+            lookAt:interaction.lookAt.toString()
+          });
+          await activatePrecisely(bot, current, interaction);
+        } else {
+          await bot.lookAt(current.position.offset(0.5, 0.5, 0.5), true);
+          await sleep(100);
+          await bot.activateBlock(current);
+        }
         log(`Activated protection lever (attempt ${attempt}/3).`);
       } catch (error) {
+        lastFailure = error.message;
         log(`Lever click ${attempt}/3 failed: ${error.message}`);
         debug('protection_lever_action_failed', { position:position.toString(), attempt, error:error.message });
         await sleep(100);
@@ -107,6 +238,7 @@ function createProtectionLeverController({ log = () => {}, debug = () => {} } = 
         }
         await sleep(40);
       }
+      lastFailure = 'server did not confirm the new lever state';
       log(`Lever click ${attempt}/3 was not confirmed by the server.`);
     }
     return false;
@@ -118,7 +250,12 @@ function createProtectionLeverController({ log = () => {}, debug = () => {} } = 
     return operationQueue;
   }
 
-  return { find, isPowered, setState };
+  return {
+    find,
+    isPowered,
+    setState,
+    getLastFailure: () => lastFailure
+  };
 }
 
 module.exports = { createProtectionLeverController };
