@@ -13,7 +13,7 @@
     <link rel="icon" type="image/png" href="/items/Wheat.png">
     <link rel="apple-touch-icon" href="/items/Wheat.png">
     <script src="/theme-init.js?v=136"></script>
-    <link rel="stylesheet" href="/styles.css?v=201">
+    <link rel="stylesheet" href="/styles.css?v=202">
     <script src="/page-transitions.js?v=1" defer></script>
   </head>
   <body>
@@ -144,17 +144,13 @@
           <section id="accountSwitcher" class="account-switcher" aria-label="Minecraft accounts" aria-expanded="false">
             <div id="accountSwitcherList" class="account-switcher-list" role="list"></div>
           </section>
-          <div id="obsidianStatsScope" class="obsidian-scope-switch admin-only" role="group" aria-label="Obsidian statistics source" hidden>
-            <button class="chart-range-button active" type="button" data-obsidian-scope="personal" aria-pressed="true">Personal</button>
-            <button class="chart-range-button" type="button" data-obsidian-scope="all" aria-pressed="false">All Bots</button>
-          </div>
+          <button id="logoutButton" class="ghost-button logout-button" type="button" hidden>Log out</button>
           <button id="themeToggle" class="theme-switch" type="button" aria-label="Switch to dark theme" aria-pressed="false">
             <span class="theme-icon sun" aria-hidden="true"><img src="/items/Sunflower.png" alt=""></span>
             <span class="theme-icon moon" aria-hidden="true"><img src="/items/Moon.png" alt=""></span>
             <span class="theme-thumb" aria-hidden="true"></span>
           </button>
           <span id="realtimeStatus" class="realtime-status" role="status" aria-live="polite" hidden><span aria-hidden="true"></span>Reconnecting live updates…</span>
-          <button id="logoutButton" class="ghost-button logout-button" type="button" hidden>Log out</button>
         </div>
       </header>
 
@@ -553,6 +549,11 @@
       </section>
 
       <section id="tab-obsidian" class="tab-panel" data-panel="obsidian">
+        <div id="obsidianStatsScope" class="obsidian-scope-switch obsidian-scope-toolbar admin-only" role="group" aria-label="Obsidian statistics source" hidden>
+          <button class="chart-range-button active" type="button" data-obsidian-scope="personal" aria-pressed="true">Personal</button>
+          <button class="chart-range-button" type="button" data-obsidian-scope="all" aria-pressed="false">All Bots</button>
+        </div>
+
         <section id="obsidianStatsCarousel" class="stats-grid five obsidian-stats-grid" data-loop-carousel>
           <article class="stat">
             <span class="stat-label">Total Mined</span>
@@ -1236,6 +1237,6 @@
       </section>
     </main>
 
-    <script src="/app.js?v=201" defer></script>
+    <script src="/app.js?v=202" defer></script>
   </body>
 </html>

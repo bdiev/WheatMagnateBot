@@ -904,11 +904,6 @@ function renderAccountSwitcher() {
   list.innerHTML = accountButtons + addButton;
   const current = state.accounts.find(account => account.id === state.activeAccountId);
   applyAccountTabScope(current);
-  const heading = $('.topbar h1');
-  if (heading) {
-    heading.title = current ? `Active Minecraft account: ${current.displayName}` : '';
-    heading.dataset.accountLabel = current?.displayName || '';
-  }
 }
 
 async function loadAccounts() {
@@ -7150,11 +7145,12 @@ $('#accountSwitcherList')?.addEventListener('click', event => {
   if (event.target.closest('#accountAddButton')) { setMobileAccountSwitcherOpen(false); setAccountModalOpen(true); return; }
   const avatar=event.target.closest('[data-account-id]');
   if (!avatar) return;
+  const accountId=avatar.dataset.accountId;
   const mobile=matchMedia('(max-width: 700px)').matches;
   const switcher=$('#accountSwitcher');
-  if (mobile && avatar.dataset.accountId === state.activeAccountId && !switcher?.classList.contains('expanded')) { setMobileAccountSwitcherOpen(true); return; }
+  if (mobile && accountId === state.activeAccountId && !switcher?.classList.contains('expanded')) { setMobileAccountSwitcherOpen(true); return; }
+  selectAccount(accountId);
   setMobileAccountSwitcherOpen(false);
-  selectAccount(avatar.dataset.accountId);
 });
 $('#accountSwitcherList')?.addEventListener('pointerdown', event => {
   const avatar=event.target.closest('[data-account-id]');

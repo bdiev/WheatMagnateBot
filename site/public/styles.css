@@ -538,20 +538,6 @@ button:disabled {
   background: #7d2424;
 }
 
-.topbar h1[data-account-label]:not([data-account-label=""])::after {
-  content: attr(data-account-label);
-  display: inline-block;
-  margin-left: 10px;
-  padding: 3px 7px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  color: var(--muted);
-  font-family: "Minecraft", Inter, ui-sans-serif, system-ui, sans-serif;
-  font-size: 12px;
-  font-weight: 400;
-  vertical-align: middle;
-}
-
 .app-loader {
   position: fixed;
   inset: 0;
@@ -4092,6 +4078,11 @@ body.search-focus-active #logoutButton {
   white-space: nowrap;
 }
 
+.obsidian-scope-toolbar {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
 .chat-message.chat-message-bot:not(.chat-activity),
 .player-profile-message.player-profile-message-bot {
   background: color-mix(in srgb, var(--bot-accent) 8%, transparent);
@@ -5699,7 +5690,7 @@ body.modal-open { overflow:hidden; }
   .topbar-actions {
     position: relative;
     display: grid;
-    grid-template-columns: var(--button-height) var(--button-height) var(--button-height) 74px minmax(0, 1fr);
+    grid-template-columns: var(--button-height) var(--button-height) var(--button-height) minmax(0, 1fr) 74px;
     gap: 10px;
     width: 100%;
     align-items: center;
@@ -5726,7 +5717,6 @@ body.modal-open { overflow:hidden; }
 
   .topbar-actions .whisper-panel,
   .topbar-actions .seen-search,
-  .topbar-actions .obsidian-scope-switch,
   .topbar-actions #themeToggle,
   .topbar-actions #logoutButton {
     position: relative;
@@ -5754,19 +5744,15 @@ body.modal-open { overflow:hidden; }
     z-index: 110;
   }
 
-  .topbar-actions .obsidian-scope-switch {
-    position: relative;
-    grid-row: 2;
-    z-index: 1;
-  }
-
   .topbar-actions #themeToggle {
-    grid-column: 4;
+    grid-column: 5;
   }
 
   .topbar-actions #logoutButton {
-    grid-column: 5;
-    justify-self: end;
+    grid-column: 4;
+    width: 100%;
+    max-width: none;
+    justify-self: stretch;
   }
 
   .panel-head {
@@ -6005,6 +5991,15 @@ body.modal-open { overflow:hidden; }
 
   .tab-panel.active {
     grid-template-columns: 1fr;
+  }
+
+  #tab-obsidian > .obsidian-scope-toolbar {
+    width: 100%;
+    justify-self: stretch;
+  }
+
+  #tab-obsidian > .obsidian-scope-toolbar .chart-range-button {
+    flex: 1 1 50%;
   }
 
   .stat,
@@ -8258,14 +8253,9 @@ body.kill-aura-modal-open {
 .account-auth-note { padding:11px 12px; border-left:3px solid var(--accent); border-radius:0 10px 10px 0; color:var(--muted); background:var(--panel-soft); font-size:12px; line-height:1.5; }.account-modal-actions { display:flex; justify-content:flex-end; gap:10px; padding-top:2px; }.account-modal-actions button { min-width:112px; }.account-modal-close { position:absolute; top:14px; right:14px; width:34px; min-width:34px; max-width:34px; height:34px; min-height:34px; max-height:34px; padding:0; border:1px solid var(--line); border-radius:50%; color:var(--muted); background:var(--panel-soft); font-size:22px; font-weight:500; }.account-modal-close:hover { color:var(--text); background:color-mix(in srgb,var(--accent) 14%,var(--panel-soft)); border-color:var(--accent); }
 @media (max-width:700px) {
   .realtime-status { display:none!important; }
-  body.obsidian-scope-visible .topbar-actions { grid-template-columns:var(--button-height) var(--button-height) var(--button-height) minmax(132px,1fr); }
-  body.obsidian-scope-visible .topbar-actions #obsidianStatsScope { grid-column:4; grid-row:2; width:100%; }
-  body.obsidian-scope-visible .topbar-actions #themeToggle { grid-column:1; grid-row:3; }
-  body.obsidian-scope-visible .topbar-actions #logoutButton { grid-column:2 / -1; grid-row:3; width:100%; max-width:none; justify-self:stretch; }
-  body.obsidian-scope-visible .obsidian-scope-switch .chart-range-button { flex:1 1 50%; padding-inline:7px; }
-  body.account-switching-disabled .topbar-actions { grid-template-columns:var(--button-height) var(--button-height) 74px minmax(0,1fr); }
-  body.account-switching-disabled .topbar-actions #themeToggle { grid-column:3; }
-  body.account-switching-disabled .topbar-actions #logoutButton { grid-column:4; }
+  body.account-switching-disabled .topbar-actions { grid-template-columns:var(--button-height) var(--button-height) minmax(0,1fr) 74px; }
+  body.account-switching-disabled .topbar-actions #logoutButton { grid-column:3; }
+  body.account-switching-disabled .topbar-actions #themeToggle { grid-column:4; }
   body.account-switcher-open { overflow:hidden; }
   .account-switcher-backdrop { position:fixed; inset:0; z-index:150; background:rgb(8 11 17 / .58); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); transform:translateZ(0); }
   .account-switcher-backdrop[hidden] { display:none; }

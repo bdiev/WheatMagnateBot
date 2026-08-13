@@ -10,8 +10,10 @@ const serverSource = fs.readFileSync(path.resolve(__dirname, '..', 'server.js'),
 
 assert.match(htmlSource, /id="obsidianStatsScope"[\s\S]*?data-obsidian-scope="personal"[\s\S]*?data-obsidian-scope="all"/,
   'the primary Obsidian page exposes Personal and All Bots choices');
-assert.match(htmlSource, /id="accountSwitcher"[\s\S]*?id="obsidianStatsScope"[\s\S]*?id="themeToggle"/,
-  'the Obsidian scope switch is placed between Minecraft profiles and the theme switch');
+assert.match(htmlSource, /id="accountSwitcher"[\s\S]*?id="logoutButton"[\s\S]*?id="themeToggle"/,
+  'Log out occupies the former scope-switch position between profiles and the theme switch');
+assert.match(htmlSource, /id="tab-obsidian"[\s\S]*?id="obsidianStatsScope"[\s\S]*?id="obsidianStatsCarousel"[\s\S]*?Total Mined/,
+  'the Obsidian scope switch is placed immediately above the statistics beginning with Total Mined');
 assert.doesNotMatch(htmlSource, /id="obsidianStatsScope"[^>]*>[\s\S]*?<span>Statistics<\/span>/,
   'the compact topbar switch has no redundant Statistics label');
 assert.match(appSource, /function obsidianStatsPath\(\)[\s\S]*?scope=/,
