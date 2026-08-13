@@ -65,6 +65,19 @@ async function main() {
       'Pathfinder initialization errors are not swallowed'
     );
 
+    const queuedContext = new BotContext({ account:account(OTHER_ID, 'QueuedAlt') });
+    queuedContext.modules = createModulesForBot(queuedContext, { dataRoot });
+    let queuedPlugin = null;
+    const queuedBot = farmBot('QueuedAlt');
+    delete queuedBot.pathfinder;
+    queuedBot.loadPlugin = plugin => { queuedPlugin = plugin; };
+    queuedBot.hasPlugin = plugin => queuedPlugin === plugin;
+    queuedContext.attachBot(queuedBot);
+    assert.ok(queuedPlugin, 'Pathfinder may be queued before Mineflayer allows plugin injection');
+    assert.equal(queuedBot.pathfinder, undefined, 'queued Pathfinder is not mistaken for a failed initialization');
+    queuedBot.pathfinder = { setGoal() {}, stop() {} };
+    await queuedContext.notifySpawn();
+
     secondary.modules.obsidianFarm.configure(3404567, 39, 674998, { maxCauldronDist:5 });
     const storedConfig = JSON.parse(fs.readFileSync(path.join(dataRoot, SECONDARY_ID, 'obsidian-farm.json'), 'utf8'));
     assert.deepEqual(storedConfig, { x:3404567, y:39, z:674998, maxCauldronDist:5 });

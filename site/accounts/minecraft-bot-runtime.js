@@ -190,6 +190,7 @@ class MinecraftBotRuntime extends BotContext {
         this.reconnectAttempts = 0;
         this.status = this.task === 'paused' ? 'paused' : 'connected';
         this.setLifecycle('online');
+        if (this.bot !== bot) return;
         this.killAura?.attachBot(bot);
         try {
           await this.notifySpawn();

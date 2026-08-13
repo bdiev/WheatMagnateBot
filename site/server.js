@@ -2301,9 +2301,16 @@ async function handleAccountsApi(req, currentUser, url) {
   }
   if (['start','stop','restart','pause','resume','reauthorize'].includes(action) && req.method === 'POST') {
     assertAdminUser(currentUser);
+    // `enabled` is the durable desired connection state. Persist it before
+    // queueing the runtime command so Stop survives a process restart/redeploy,
+    // even when the command worker is temporarily unavailable.
+    let persistedAccount = account;
+    if (action === 'start' || action === 'stop') {
+      persistedAccount = await registry.update(accountId, { enabled:action === 'start' });
+    }
     const queued = await queueBotCommand(currentUser, `account_${action}`, { accountId }, { source:'site',accountId,idempotencyKey:String(req.headers['idempotency-key'] || '').slice(0,128) || null });
-    await recordSystemLog({level:'audit',category:'accounts',actor:currentUser.username,message:`Queued ${action} for Minecraft account ${account.displayName}.`,details:{accountId,commandId:queued.command.id}});
-    return {statusCode:202,payload:queued};
+    await recordSystemLog({level:'audit',category:'accounts',actor:currentUser.username,message:`Queued ${action} for Minecraft account ${account.displayName}.`,details:{accountId,commandId:queued.command.id,enabled:persistedAccount.enabled}});
+    return {statusCode:202,payload:{...queued,account:persistedAccount}};
   }
   throw Object.assign(new Error('Method not allowed.'), { statusCode:405 });
 }

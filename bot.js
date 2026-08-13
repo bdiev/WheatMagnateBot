@@ -2397,7 +2397,14 @@ if (DISCORD_BOT_TOKEN) {
     initializeGrowingChild();
     if (!mineflayerStarted) {
       mineflayerStarted = true;
-      createBot();
+      const defaultAccountState = await pool.query(
+        'SELECT enabled FROM bot_accounts WHERE id=$1::uuid AND deleted_at IS NULL',
+        [DEFAULT_ACCOUNT_ID]
+      );
+      const defaultAccountEnabled = defaultAccountState.rows[0]?.enabled !== false;
+      shouldReconnect = defaultAccountEnabled;
+      if (defaultAccountEnabled) createBot();
+      else console.log('[Accounts] Default Minecraft profile is stopped; automatic startup skipped.');
     }
     await waitBeforeStartingSecondaryAccounts();
     await initializeMultiAccountManager();
@@ -5285,10 +5292,16 @@ async function executeBotCommand(command) {
     throw new Error('The requested account runtime is not active in this worker.');
   }
   if (type === 'account_start' || type === 'account_resume') {
+    if (type === 'account_start' && pool) {
+      await pool.query('UPDATE bot_accounts SET enabled=TRUE,updated_at=NOW() WHERE id=$1::uuid AND deleted_at IS NULL',[DEFAULT_ACCOUNT_ID]);
+    }
     shouldReconnect = true; clearResumeTimer(); clearReconnectTimer(); setDisconnectReason(null); if (!bot) createBot();
     return { message: 'Account start requested.', accountId: DEFAULT_ACCOUNT_ID };
   }
   if (type === 'account_stop' || type === 'account_pause') {
+    if (type === 'account_stop' && pool) {
+      await pool.query('UPDATE bot_accounts SET enabled=FALSE,updated_at=NOW() WHERE id=$1::uuid AND deleted_at IS NULL',[DEFAULT_ACCOUNT_ID]);
+    }
     shouldReconnect = false; clearReconnectTimer(); clearResumeTimer(); if (bot) bot.quit(type === 'account_pause' ? 'Account paused' : 'Account stopped');
     return { message: type === 'account_pause' ? 'Account paused.' : 'Account stopped.', accountId: DEFAULT_ACCOUNT_ID };
   }
@@ -5751,9 +5764,7 @@ async function initializeMultiAccountManager() {
           }
         }),
         botFactory: options => {
-          const managedBot = createMinecraftBot({ ...options, closeTimeout: MINECRAFT_CONNECT_TIMEOUT_MS });
-          managedBot.loadPlugin(pathfinder);
-          return managedBot;
+          return createMinecraftBot({ ...options, closeTimeout: MINECRAFT_CONNECT_TIMEOUT_MS });
         }
       });
       runtime.obsidianFarm.configureRuntime({
@@ -5847,8 +5858,14 @@ async function executeManagedAccountCommand(command) {
   if (runtime && refreshedAccount) runtime.account = refreshedAccount;
   const type = String(command.command_type || '');
   const payload = command.payload || {};
-  if (type === 'account_start') return multiBotManager.start(command.account_id);
-  if (type === 'account_stop') return multiBotManager.stop(command.account_id);
+  if (type === 'account_start') {
+    await multiAccountRegistry.update(command.account_id, { enabled:true });
+    return multiBotManager.start(command.account_id);
+  }
+  if (type === 'account_stop') {
+    await multiAccountRegistry.update(command.account_id, { enabled:false });
+    return multiBotManager.stop(command.account_id);
+  }
   if (type === 'account_remove') return multiBotManager.remove(command.account_id, { force: true });
   if (type === 'account_restart') return multiBotManager.restart(command.account_id);
   if (type === 'account_reauthorize') return multiBotManager.reauthorize(command.account_id);

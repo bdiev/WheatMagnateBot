@@ -176,13 +176,28 @@ function loadPlugin(bot) {
       throw new Error('Obsidian Farm cannot initialize: Mineflayer plugin loader is unavailable.');
     }
     try {
-      bot.loadPlugin(pathfinder);
+      // Mineflayer queues external plugins until `inject_allowed`. Calling
+      // loadPlugin successfully before that event does not create
+      // bot.pathfinder immediately, so use hasPlugin() to distinguish a queued
+      // plugin from a failed initialization.
+      if (!bot.hasPlugin?.(pathfinder)) bot.loadPlugin(pathfinder);
     } catch (error) {
       throw new Error(`Obsidian Farm cannot initialize Pathfinder: ${error?.message || String(error)}`, { cause:error });
     }
   }
-  if (!bot.pathfinder) {
+  if (!bot.pathfinder && !bot.hasPlugin?.(pathfinder)) {
     throw new Error('Obsidian Farm cannot initialize: Pathfinder plugin is not loaded.');
+  }
+  writeFarmDebug(bot.pathfinder ? 'pathfinder_ready' : 'pathfinder_queued');
+  return bot.pathfinder || null;
+}
+
+function assertPathfinderReady(bot) {
+  if (!bot?.pathfinder) {
+    const message = 'Obsidian Farm cannot initialize: Pathfinder plugin is not loaded after spawn.';
+    farm.lastErrorMessage = message;
+    writeFarmDebug('pathfinder_not_ready', { error:message });
+    throw new Error(message);
   }
   writeFarmDebug('pathfinder_ready');
   return bot.pathfinder;
@@ -2459,6 +2474,7 @@ return {
   getDebugLoggingEnabled,
   setDebugLoggingEnabled,
   loadPlugin,
+  assertPathfinderReady,
   validateStart,
   __test: {
     fillBucket,

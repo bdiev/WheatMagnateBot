@@ -16,7 +16,10 @@ function ownObsidianFarm(context, farm, settingsFile, notify = null) {
   return {
     attachBot: bot => bot ? farm.loadPlugin(bot) : null,
     detachBot: () => farm.suspend(),
-    onSpawn: () => desiredEnabled ? farm.resume(context.bot, notify) : false,
+    onSpawn: () => {
+      farm.assertPathfinderReady(context.bot);
+      return desiredEnabled ? farm.resume(context.bot, notify) : false;
+    },
     start: notificationHandler => {
       const previousDesired = desiredEnabled;
       try {
