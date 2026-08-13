@@ -5653,6 +5653,10 @@ async function initializeMultiAccountManager() {
             ...payload,
             title: `${account.displayName} — ${payload.title || 'Obsidian Farm'}`,
             metadata: { ...(payload.metadata || {}), accountId: account.id, username: account.username }
+          }),
+          systemLogger: entry => recordSystemLog({
+            ...entry,
+            accountId: account.id
           })
         },
         killAuraFactory: () => createKillAuraFeature({

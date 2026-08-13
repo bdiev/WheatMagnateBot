@@ -50,6 +50,9 @@ const DEFAULT_CAULDRON_DIST = 5;
 const MIN_PICKAXE_REMAINING_PERCENT = 5;
 const FARM_CONFIG_FILE = path.resolve(context.configFile || 'obsidian_farm_config.json');
 const FARM_DEBUG_LOG_FILE = path.resolve(context.debugLogFile || 'obsidian_farm_debug.log');
+const FARM_SYSTEM_LOGGER = typeof context.systemLogger === 'function'
+  ? context.systemLogger
+  : null;
 const MAX_INTERACT_DISTANCE = 4.25;
 const OBSIDIAN_DIG_BASE_HOLD_MS = 1_650;
 const OBSIDIAN_DIG_RETRY_HOLD_BONUS_MS = 250;
@@ -1691,18 +1694,30 @@ function ensureInteractionRange(bot, pos, actionName) {
 
 function writeFarmDebug(event, details = {}) {
   if (!farmDebugLoggingEnabled) return;
-  const line = JSON.stringify({
+  const record = {
     time: new Date().toISOString(),
     botId: identity.botId,
     username: identity.username,
     event,
     ...details
-  });
+  };
+  const line = JSON.stringify(record);
   // Debug logging must not block the time-sensitive farming loop, especially
   // when the project directory is synced by OneDrive.
   fs.mkdir(path.dirname(FARM_DEBUG_LOG_FILE), { recursive: true }, () => {
     fs.appendFile(FARM_DEBUG_LOG_FILE, `${line}\n`, 'utf8', () => {});
   });
+  if (event === 'farm_click_trace' && FARM_SYSTEM_LOGGER) {
+    const stage = String(details.stage || 'unknown');
+    const action = String(details.action || 'interaction');
+    Promise.resolve(FARM_SYSTEM_LOGGER({
+      level:['failed', 'unconfirmed'].includes(stage) ? 'warn' : 'debug',
+      category:'obsidian_click',
+      actor:identity.username,
+      message:`Obsidian Farm click ${action}: ${stage}.`,
+      details:record
+    })).catch(() => {});
+  }
 }
 
 // TEMPORARY: verbose trace for every farm interaction packet. It uses the

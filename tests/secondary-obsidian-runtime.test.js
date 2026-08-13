@@ -125,8 +125,12 @@ async function readDebugEvents(file, expected) {
 async function main() {
   const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wheat-secondary-farm-'));
   try {
+    const systemLogs = [];
     const secondary = new BotContext({ account:account(SECONDARY_ID, 'bdiev_') });
-    secondary.modules = createModulesForBot(secondary, { dataRoot });
+    secondary.modules = createModulesForBot(secondary, {
+      dataRoot,
+      systemLogger: entry => { systemLogs.push(entry); }
+    });
     const bot = farmBot('bdiev_');
     secondary.attachBot(bot);
     assert.ok(bot.pathfinder, 'Pathfinder is installed when a secondary bot is attached');
@@ -291,6 +295,17 @@ async function main() {
       line.stage === 'sent'
     );
     assert.equal(placementTrace?.method, 'raw_block_place', 'Temporary click trace records the exact secondary lava packet');
+    const clickSystemLog = systemLogs.find(entry =>
+      entry.category === 'obsidian_click' &&
+      entry.details?.event === 'farm_click_trace' &&
+      entry.details?.action === 'lava_placement' &&
+      entry.details?.stage === 'sent'
+    );
+    assert.ok(clickSystemLog, 'Temporary click traces are forwarded to the selected bot System Log');
+    assert.equal(clickSystemLog.level, 'debug');
+    assert.equal(clickSystemLog.actor, 'bdiev_');
+    assert.equal(clickSystemLog.details.botId, SECONDARY_ID);
+    assert.equal(clickSystemLog.details.username, 'bdiev_');
 
     secondary.modules.obsidianFarm.resetConfig();
     assert.throws(() => secondary.modules.obsidianFarm.start(), /coordinates are not configured/i);

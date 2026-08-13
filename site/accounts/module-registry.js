@@ -135,6 +135,7 @@ function createModulesForBot(context, {
   killAuraFactory = createKillAuraFeature,
   followFactory = createFollowFeature,
   notify = null,
+  systemLogger = null,
   primaryFactories = {}
 } = {}) {
   if (!context?.accountId) throw new Error('Module registry requires a BotContext.');
@@ -144,7 +145,8 @@ function createModulesForBot(context, {
     username: context.username,
     isPrimary: context.isPrimary,
     configFile: path.join(accountRoot, 'obsidian-farm.json'),
-    debugLogFile: path.join(accountRoot, 'obsidian-farm-debug.log')
+    debugLogFile: path.join(accountRoot, 'obsidian-farm-debug.log'),
+    systemLogger
   });
   const killAura = killAuraFactory(context.account);
   const follow = followFactory(context.account);
