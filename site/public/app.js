@@ -123,6 +123,9 @@ const state = {
   adminControlToken: null,
   accountsRefreshedAt: 0,
   editingAccountId: null,
+  accountDragId: null,
+  accountDragConsumedUntil: 0,
+  accountReorderPending: false,
   pendingPushDestination: null,
   chartRanges: {
     chatHourlyChart: 'hours',
@@ -142,6 +145,10 @@ const $ = selector => document.querySelector(selector);
 const $$ = selector => Array.from(document.querySelectorAll(selector));
 const CHAT_HISTORY_LIMIT = 500;
 const CHILD_AI_MOBILE_STYLE_BATCH = 40;
+const ACCOUNT_COLOR_PALETTE = Object.freeze([
+  '#f1c232', '#4b91e5', '#d26cf0', '#55c9ba', '#ef7373', '#f28c48',
+  '#8c78e8', '#7cc242', '#e56aa6', '#41b6d7', '#b78b59', '#8dbb61'
+]);
 const NAV_SECTION_INFO = Object.freeze({
   chat: ['Chat', 'Minecraft and site chat'],
   bot: ['Bot Stats', 'Connection, health and inventory'],
@@ -869,6 +876,18 @@ function accountStatusClass(account) {
   return 'offline';
 }
 
+function nextUniqueAccountColor() {
+  const used = new Set(state.accounts.map(account => String(account.color || '').toLowerCase()));
+  const paletteColor = ACCOUNT_COLOR_PALETTE.find(color => !used.has(color));
+  if (paletteColor) return paletteColor;
+  for (let index = 0; index < 0xffffff; index += 1) {
+    const value = (0x4b91e5 + index * 0x9e3779) & 0xffffff;
+    const color = `#${value.toString(16).padStart(6, '0')}`;
+    if (!used.has(color)) return color;
+  }
+  return '#f1c232';
+}
+
 function applyAccountTabScope(account) {
   const restricted = Boolean(account && !account.isDefault);
   const allowed = new Set(['chat','bot','kill-aura','obsidian','admin']);
@@ -897,7 +916,9 @@ function renderAccountSwitcher() {
     const uptime = account.startedAt ? formatDurationMs(Math.max(0, Date.now() - new Date(account.startedAt).getTime())) : 'not running';
     const tooltip = `${account.username} · ${account.status} · ${account.host}:${account.port} · ${account.task || 'idle'} · ${uptime}`;
     const avatarUsername = account.statusPayload?.username || account.username;
-    return `<button class="account-avatar${active ? ' active' : ''}" type="button" role="listitem" data-account-id="${escapeHtml(account.id)}" data-initial="${escapeHtml(String(account.displayName || avatarUsername || '?').charAt(0))}" style="--account-color:${escapeHtml(account.color || '#f1c232')}" aria-label="Switch to ${escapeHtml(account.displayName)}" aria-pressed="${active}" title="${escapeHtml(tooltip)}"><img src="${accountHeadUrl(avatarUsername)}" data-account-avatar-username="${escapeHtml(avatarUsername)}" alt=""><span class="account-status-dot ${accountStatusClass(account)}" aria-hidden="true"></span></button>`;
+    const pinned = Boolean(account.isDefault);
+    const orderHint = pinned ? 'Primary account is pinned first' : 'Drag to reorder; open menu for Move left/right';
+    return `<button class="account-avatar${active ? ' active' : ''}${pinned ? ' account-avatar-pinned' : ' account-avatar-reorderable'}" type="button" role="listitem" data-account-id="${escapeHtml(account.id)}" data-account-primary="${pinned}" draggable="${!pinned}" data-initial="${escapeHtml(String(account.displayName || avatarUsername || '?').charAt(0))}" style="--account-color:${escapeHtml(account.color || '#f1c232')}" aria-label="Switch to ${escapeHtml(account.displayName)}" aria-pressed="${active}" title="${escapeHtml(`${tooltip} · ${orderHint}`)}"><img src="${accountHeadUrl(avatarUsername)}" draggable="false" data-account-avatar-username="${escapeHtml(avatarUsername)}" alt=""><span class="account-status-dot ${accountStatusClass(account)}" aria-hidden="true"></span></button>`;
   }).join('');
   const addButton = state.currentUser?.role === 'admin'
     ? '<button id="accountAddButton" class="account-avatar account-add admin-only" type="button" aria-label="Add Minecraft account">+</button>'
@@ -973,7 +994,7 @@ function setAccountModalOpen(open, account = null) {
     form.elements.host.value = account?.host || '';
     form.elements.port.value = account?.port || '';
     form.elements.minecraftVersion.value = account?.minecraftVersion || '';
-    form.elements.color.value = account?.color || '#f1c232';
+    form.elements.color.value = account?.color || nextUniqueAccountColor();
     form.elements.enabled.checked = account ? Boolean(account.enabled) : true;
     $('#accountModalTitle').textContent = account ? 'Edit account' : 'Add account';
     $('#accountModalSubmit').textContent = account ? 'Save changes' : 'Add account';
@@ -1017,6 +1038,37 @@ async function runAccountAction(accountId, action) {
   await loadAccounts();
 }
 
+async function persistAccountOrder(orderedSecondaryIds) {
+  if (state.accountReorderPending) return;
+  const primary = state.accounts.find(account => account.isDefault);
+  const byId = new Map(state.accounts.map(account => [account.id, account]));
+  const previous = [...state.accounts];
+  state.accounts = [primary, ...orderedSecondaryIds.map(id => byId.get(id))].filter(Boolean)
+    .map((account, index) => ({ ...account, sortOrder:index }));
+  state.accountReorderPending = true;
+  renderAccountSwitcher();
+  try {
+    const payload = await patchJson('/api/accounts/reorder', { accountIds:orderedSecondaryIds });
+    state.accounts = Array.isArray(payload.accounts) ? payload.accounts : state.accounts;
+    renderAccountSwitcher();
+  } catch (error) {
+    state.accounts = previous;
+    renderAccountSwitcher();
+    throw error;
+  } finally {
+    state.accountReorderPending = false;
+  }
+}
+
+async function moveAccountInOrder(accountId, direction) {
+  const secondaryIds = state.accounts.filter(account => !account.isDefault).map(account => account.id);
+  const index = secondaryIds.indexOf(accountId);
+  const nextIndex = direction === 'left' ? index - 1 : index + 1;
+  if (index < 0 || nextIndex < 0 || nextIndex >= secondaryIds.length) return;
+  [secondaryIds[index], secondaryIds[nextIndex]] = [secondaryIds[nextIndex], secondaryIds[index]];
+  await persistAccountOrder(secondaryIds);
+}
+
 function openAccountMenu(accountId, anchor) {
   document.querySelector('.account-context-menu')?.remove();
   const account=state.accounts.find(item => item.id === accountId);
@@ -1024,10 +1076,17 @@ function openAccountMenu(accountId, anchor) {
   const menu=document.createElement('div'); menu.className='account-context-menu';
   const paused=account.status === 'paused' || account.task === 'paused';
   const running=['connected','connecting','authorizing'].includes(account.status);
-  const actions=['edit',...(paused?['resume','stop']:running?['stop','restart']:['start']),'reauthorize',...(account.isDefault?[]:['delete'])];
-  for (const action of actions) { const button=document.createElement('button'); button.type='button'; button.dataset.action=action; button.textContent=action[0].toUpperCase()+action.slice(1); menu.append(button); }
+  const secondaryAccounts=state.accounts.filter(item => !item.isDefault);
+  const secondaryIndex=secondaryAccounts.findIndex(item => item.id === accountId);
+  const orderActions=account.isDefault ? [] : [
+    ...(secondaryIndex > 0 ? ['move-left'] : []),
+    ...(secondaryIndex >= 0 && secondaryIndex < secondaryAccounts.length - 1 ? ['move-right'] : [])
+  ];
+  const actions=[...orderActions,'edit',...(paused?['resume','stop']:running?['stop','restart']:['start']),'reauthorize',...(account.isDefault?[]:['delete'])];
+  const labels={ 'move-left':'Move left', 'move-right':'Move right' };
+  for (const action of actions) { const button=document.createElement('button'); button.type='button'; button.dataset.action=action; button.textContent=labels[action] || action[0].toUpperCase()+action.slice(1); menu.append(button); }
   const rect=anchor.getBoundingClientRect(); menu.style.left=`${Math.min(innerWidth-180,rect.left)}px`; menu.style.top=`${rect.bottom+6}px`; document.body.append(menu);
-  menu.addEventListener('click', event => { const action=event.target.dataset.action; if (!action) return; if (action === 'edit') setAccountModalOpen(true,state.accounts.find(item => item.id === accountId)); else runAccountAction(accountId,action).catch(err=>setBanner(err.message)); menu.remove(); });
+  menu.addEventListener('click', event => { const action=event.target.dataset.action; if (!action) return; if (action === 'edit') setAccountModalOpen(true,state.accounts.find(item => item.id === accountId)); else if (action === 'move-left' || action === 'move-right') moveAccountInOrder(accountId,action.slice(5)).catch(err=>setBanner(err.message)); else runAccountAction(accountId,action).catch(err=>setBanner(err.message)); menu.remove(); });
 }
 
 let accountLongPressTimer = null;
@@ -7242,7 +7301,7 @@ $('#accountModalCancel')?.addEventListener('click', () => setAccountModalOpen(fa
 $('#accountModal')?.addEventListener('click', event => { if (event.target.id === 'accountModal') setAccountModalOpen(false); });
 $('#accountForm')?.addEventListener('submit', submitAccount);
 $('#accountSwitcherList')?.addEventListener('click', event => {
-  if (Date.now() < accountLongPressConsumedUntil) { event.preventDefault(); return; }
+  if (Date.now() < accountLongPressConsumedUntil || Date.now() < state.accountDragConsumedUntil) { event.preventDefault(); return; }
   if (event.target.closest('#accountAddButton')) { setMobileAccountSwitcherOpen(false); setAccountModalOpen(true); return; }
   const avatar=event.target.closest('[data-account-id]');
   if (!avatar) return;
@@ -7252,6 +7311,50 @@ $('#accountSwitcherList')?.addEventListener('click', event => {
   if (mobile && accountId === state.activeAccountId && !switcher?.classList.contains('expanded')) { setMobileAccountSwitcherOpen(true); return; }
   selectAccount(accountId);
   setMobileAccountSwitcherOpen(false);
+});
+$('#accountSwitcherList')?.addEventListener('dragstart', event => {
+  const avatar=event.target.closest('[data-account-id]');
+  if (!avatar || avatar.dataset.accountPrimary === 'true' || state.accountReorderPending) {
+    event.preventDefault();
+    return;
+  }
+  state.accountDragId=avatar.dataset.accountId;
+  avatar.classList.add('account-avatar-dragging');
+  event.dataTransfer.effectAllowed='move';
+  event.dataTransfer.setData('text/plain',state.accountDragId);
+});
+$('#accountSwitcherList')?.addEventListener('dragover', event => {
+  if (!state.accountDragId) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect='move';
+  $$('.account-avatar-drop-target').forEach(element => element.classList.remove('account-avatar-drop-target'));
+  event.target.closest('[data-account-id]')?.classList.add('account-avatar-drop-target');
+});
+$('#accountSwitcherList')?.addEventListener('drop', event => {
+  if (!state.accountDragId) return;
+  event.preventDefault();
+  const sourceId=state.accountDragId;
+  state.accountDragId=null;
+  $$('.account-avatar-dragging,.account-avatar-drop-target').forEach(element => element.classList.remove('account-avatar-dragging','account-avatar-drop-target'));
+  const target=event.target.closest('[data-account-id]');
+  const secondaryIds=state.accounts.filter(account => !account.isDefault && account.id !== sourceId).map(account => account.id);
+  if (target?.dataset.accountPrimary === 'true') {
+    secondaryIds.unshift(sourceId);
+  } else if (!target) {
+    secondaryIds.push(sourceId);
+  } else if (target.dataset.accountId !== sourceId) {
+    const targetIndex=secondaryIds.indexOf(target.dataset.accountId);
+    const after=event.clientX > target.getBoundingClientRect().left + target.getBoundingClientRect().width / 2;
+    secondaryIds.splice(Math.max(0,targetIndex + (after ? 1 : 0)),0,sourceId);
+  } else {
+    return;
+  }
+  state.accountDragConsumedUntil=Date.now()+500;
+  persistAccountOrder(secondaryIds).catch(error => setBanner(error.message));
+});
+$('#accountSwitcherList')?.addEventListener('dragend', () => {
+  state.accountDragId=null;
+  $$('.account-avatar-dragging,.account-avatar-drop-target').forEach(element => element.classList.remove('account-avatar-dragging','account-avatar-drop-target'));
 });
 $('#accountSwitcherList')?.addEventListener('pointerdown', event => {
   const avatar=event.target.closest('[data-account-id]');

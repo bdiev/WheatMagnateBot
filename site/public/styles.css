@@ -8294,6 +8294,11 @@ body.kill-aura-modal-open {
 .account-switcher-list::-webkit-scrollbar { display:none; }
 .account-avatar { position:relative; flex:0 0 42px; width:42px; min-width:42px; max-width:42px; height:42px; min-height:42px; max-height:42px; aspect-ratio:1; padding:3px; border:1px solid var(--line); border-radius:var(--button-radius); overflow:visible; background:var(--panel); color:var(--text); box-shadow:inset 0 1px 0 rgb(255 255 255 / .035); transition:border-color 160ms ease,background-color 160ms ease,box-shadow 160ms ease,transform 160ms ease; }
 .account-avatar:hover { border-color:color-mix(in srgb,var(--accent) 48%,var(--line)); background:var(--panel-soft); transform:translateY(-1px); }
+.account-avatar-reorderable { cursor:grab; }
+.account-avatar-reorderable:active { cursor:grabbing; }
+.account-avatar-pinned::before { content:'◆'; position:absolute; z-index:5; top:-5px; left:-4px; color:var(--account-color,var(--accent)); font-size:8px; filter:drop-shadow(0 1px 1px var(--bg)); pointer-events:none; }
+.account-avatar-dragging { opacity:.42; transform:scale(.92); }
+.account-avatar-drop-target { border-color:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 25%,transparent); transform:translateY(-2px); }
 .account-avatar img { position:relative; z-index:1; display:block; width:100%; height:100%; border-radius:calc(var(--button-radius) - 5px); image-rendering:pixelated; object-fit:cover; }
 .account-avatar.avatar-image-failed::after { content:attr(data-initial); position:absolute; inset:0; display:grid; place-items:center; color:var(--account-color,var(--accent)); font-size:15px; font-weight:800; text-transform:uppercase; }
 .account-avatar.active { border-color:var(--account-color,var(--accent)); background:color-mix(in srgb,var(--account-color,var(--accent)) 10%,var(--panel)); box-shadow:inset 0 -3px 0 var(--account-color,var(--accent)),0 0 0 1px color-mix(in srgb,var(--account-color,var(--accent)) 18%,transparent); }

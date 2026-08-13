@@ -14,7 +14,13 @@ class AccountRegistry {
     return this.list();
   }
 
-  list() { return [...this.accounts.values()].sort((a, b) => a.sortOrder - b.sortOrder); }
+  list() {
+    return [...this.accounts.values()].sort((a, b) =>
+      Number(Boolean(b.isDefault)) - Number(Boolean(a.isDefault)) ||
+      a.sortOrder - b.sortOrder ||
+      String(a.id).localeCompare(String(b.id))
+    );
+  }
   get(id) { return this.accounts.get(id) || null; }
   getPrimary() { return this.list().find(account => account.isDefault) || null; }
 
@@ -29,6 +35,12 @@ class AccountRegistry {
     const account = await this.repository.update(id, changes);
     if (account) this.accounts.set(id, account);
     return account;
+  }
+
+  async reorder(orderedSecondaryIds) {
+    const accounts = await this.repository.reorder(orderedSecondaryIds);
+    this.accounts = new Map(accounts.map(account => [account.id, account]));
+    return this.list();
   }
 
   async remove(id) {

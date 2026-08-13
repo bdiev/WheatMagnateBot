@@ -34,7 +34,7 @@ class AccountRepository {
 
   async list({ includeDisabled = true } = {}) {
     const result = await this.pool.query(`SELECT ${ACCOUNT_FIELDS} FROM bot_accounts
-      WHERE deleted_at IS NULL${includeDisabled ? '' : ' AND enabled=TRUE'} ORDER BY sort_order,created_at,id`);
+      WHERE deleted_at IS NULL${includeDisabled ? '' : ' AND enabled=TRUE'} ORDER BY is_default DESC,sort_order,created_at,id`);
     return result.rows.map(accountFromRow);
   }
 
@@ -79,6 +79,37 @@ class AccountRepository {
     const result = await this.pool.query(`UPDATE bot_accounts SET ${assignments.join(',')},updated_at=NOW()
       WHERE id=$${values.length}::uuid RETURNING ${ACCOUNT_FIELDS}`, values);
     return accountFromRow(result.rows[0]);
+  }
+
+  async reorder(orderedSecondaryIds) {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const locked = await client.query(`SELECT id,is_default FROM bot_accounts
+        WHERE deleted_at IS NULL ORDER BY is_default DESC,sort_order,created_at,id FOR UPDATE`);
+      const primary = locked.rows.find(row => row.is_default);
+      const secondaryIds = locked.rows.filter(row => !row.is_default).map(row => String(row.id));
+      const requested = orderedSecondaryIds.map(String);
+      if (
+        requested.length !== secondaryIds.length ||
+        new Set(requested).size !== requested.length ||
+        requested.some(id => !secondaryIds.includes(id))
+      ) throw new Error('Account order must contain every secondary account exactly once.');
+
+      if (primary) {
+        await client.query('UPDATE bot_accounts SET sort_order=0,updated_at=NOW() WHERE id=$1::uuid', [primary.id]);
+      }
+      for (let index = 0; index < requested.length; index += 1) {
+        await client.query('UPDATE bot_accounts SET sort_order=$2,updated_at=NOW() WHERE id=$1::uuid', [requested[index], index + 1]);
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+    return this.list();
   }
 
   async remove(id) {

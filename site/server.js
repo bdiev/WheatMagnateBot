@@ -9,6 +9,7 @@ const { pathToFileURL } = require('node:url');
 const { Pool } = require('pg');
 const { AccountRepository } = require('./accounts/account-repository');
 const { AccountRegistry } = require('./accounts/account-registry');
+const { normalizeAccountColor, pickUniqueAccountColor } = require('./accounts/account-colors');
 const { ensureAccountColumns } = require('./accounts/account-schema');
 const { assertModuleAvailable } = require('./accounts/module-policy');
 const { runMigrations } = require('./migrations');
@@ -2212,13 +2213,14 @@ function cleanAccountInput(body, { partial = false } = {}) {
   assign('minecraftVersion', body.minecraftVersion ? String(body.minecraftVersion).trim() : null);
   assign('authType', String(body.authType || 'microsoft').toLowerCase());
   assign('enabled', body.enabled !== false);
-  assign('color', body.color ? String(body.color).slice(0, 16) : null);
+  assign('color', body.color ? String(body.color).slice(0, 16).toLowerCase() : null);
   if ((!partial || Object.hasOwn(body, 'reconnectBackoffMs'))) assign('reconnectBackoffMs', Number(body.reconnectBackoffMs) || 5000);
   if (Object.hasOwn(input, 'username') && !/^[A-Za-z0-9_]{1,16}$/.test(input.username)) throw Object.assign(new Error('Invalid Minecraft username.'), { statusCode: 400 });
   if (Object.hasOwn(input, 'displayName') && (!input.displayName || input.displayName.length > 96)) throw Object.assign(new Error('Display name is required and must be at most 96 characters.'), { statusCode: 400 });
   if (Object.hasOwn(input, 'host') && (!input.host || input.host.length > 255 || /[\s/]/.test(input.host))) throw Object.assign(new Error('Invalid Minecraft server address.'), { statusCode: 400 });
   if (Object.hasOwn(input, 'port') && (!Number.isInteger(input.port) || input.port < 1 || input.port > 65535)) throw Object.assign(new Error('Port must be between 1 and 65535.'), { statusCode: 400 });
   if (Object.hasOwn(input, 'authType') && !['microsoft','offline'].includes(input.authType)) throw Object.assign(new Error('Unsupported authentication type.'), { statusCode: 400 });
+  if (Object.hasOwn(input, 'color') && input.color != null && !normalizeAccountColor(input.color)) throw Object.assign(new Error('Account color must be a six-digit hex color.'), { statusCode: 400 });
   return input;
 }
 
@@ -2340,8 +2342,9 @@ async function getKillAuraStats(currentUser, url) {
 
 async function handleAccountsApi(req, currentUser, url) {
   const collection = url.pathname === '/api/accounts';
+  const reorder = url.pathname === '/api/accounts/reorder';
   const match = url.pathname.match(/^\/api\/accounts\/([0-9a-f-]{36})(?:\/(start|stop|restart|pause|resume|reauthorize|status|inventory|obsidian|server-stats))?$/i);
-  if (!collection && !match) return null;
+  if (!collection && !reorder && !match) return null;
   const registry = await getAccountRegistry();
   if (collection && req.method === 'GET') {
     const accounts = await accountPayloads();
@@ -2351,10 +2354,36 @@ async function handleAccountsApi(req, currentUser, url) {
     assertAdminUser(currentUser);
     const max = Math.max(1, Number(process.env.MAX_BOT_ACCOUNTS) || 8);
     if (registry.list().length >= max) throw Object.assign(new Error('Minecraft account limit reached.'), { statusCode: 409 });
-    const account = await registry.add(cleanAccountInput(await readJsonBody(req, 32 * 1024)));
+    const input = cleanAccountInput(await readJsonBody(req, 32 * 1024));
+    input.color = pickUniqueAccountColor(registry.list(), input.color);
+    const account = await registry.add(input);
     await recordSystemLog({ level:'audit',category:'accounts',actor:currentUser.username,message:`Created Minecraft account ${account.displayName}.`,details:{accountId:account.id} });
     const startCommand = account.enabled ? await queueBotCommand(currentUser,'account_start',{accountId:account.id},{source:'site',accountId:account.id}) : null;
     return { statusCode: 201, payload: { account, startCommand:startCommand?.command || null } };
+  }
+  if (reorder && req.method === 'PATCH') {
+    assertAdminUser(currentUser);
+    const body = await readJsonBody(req, 16 * 1024);
+    const orderedAccountIds = Array.isArray(body.accountIds) ? body.accountIds.map(id => String(id).toLowerCase()) : [];
+    if (orderedAccountIds.some(id => !validAccountId(id))) {
+      throw Object.assign(new Error('Account order contains an invalid account ID.'), { statusCode:400 });
+    }
+    const accounts = registry.list();
+    const secondaryIds = accounts.filter(account => !account.isDefault).map(account => account.id);
+    if (
+      orderedAccountIds.length !== secondaryIds.length ||
+      new Set(orderedAccountIds).size !== orderedAccountIds.length ||
+      orderedAccountIds.some(id => !secondaryIds.includes(id))
+    ) {
+      throw Object.assign(new Error('Account order must contain every secondary account exactly once.'), { statusCode:409 });
+    }
+    const reordered = await registry.reorder(orderedAccountIds);
+    await recordSystemLog({
+      level:'audit', category:'accounts', actor:currentUser.username,
+      message:'Reordered Minecraft accounts.',
+      details:{ primaryAccountId:reordered.find(account => account.isDefault)?.id || null, secondaryAccountIds:orderedAccountIds }
+    });
+    return { statusCode:200, payload:{ accounts:reordered } };
   }
   if (!match || !validAccountId(match[1])) throw Object.assign(new Error('Invalid account ID.'), { statusCode: 400 });
   const accountId = match[1].toLowerCase();
