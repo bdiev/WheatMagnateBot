@@ -188,6 +188,30 @@ async function main() {
     failingRuntime.bot = farmBot('PreflightAlt');
     failingRuntime.status = 'connected';
     await assert.rejects(failingRuntime.setObsidianEnabled(true), /Pathfinder plugin is not loaded/i);
+
+    const originalPreflightError = new Error('Supply barrel preflight failed after opening.');
+    const recoveryRuntime = new MinecraftBotRuntime({
+      account:account(OTHER_ID, 'RecoveryAlt'),
+      botFactory:() => farmBot('RecoveryAlt'),
+      moduleFactory:() => ({
+        obsidianFarm:{
+          attachBot() {}, onSpawn() {}, suspend() {},
+          validateStart() { return { accountId:OTHER_ID }; },
+          setProtectionLeverState() {},
+          prepareStart() { throw originalPreflightError; },
+          getStatus() { return { enabled:false, desiredEnabled:false, config:{ x:1, y:2, z:3 } }; }
+        },
+        killAura:{ attachBot() {}, setEnabled() {}, getStatus() { return { enabled:false }; } },
+        follow:{ stop() {}, getStatus() { return { enabled:false }; } }
+      })
+    });
+    recoveryRuntime.bot = farmBot('RecoveryAlt');
+    recoveryRuntime.status = 'connected';
+    await assert.rejects(
+      recoveryRuntime.setObsidianEnabled(true),
+      error => error === originalPreflightError,
+      'Synchronous lever recovery must preserve the original startup failure'
+    );
     assert.equal(failingRuntime.task, 'idle');
     assert.equal(auraStops, 0, 'failed farm preflight does not stop Kill Aura');
     assert.equal(followStops, 0, 'failed farm preflight does not stop Follow');

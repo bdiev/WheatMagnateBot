@@ -356,7 +356,11 @@ class MinecraftBotRuntime extends BotContext {
         this.task = 'obsidian';
         this.lastError = null;
       } catch (error) {
-        if (leverDisabled) await this.obsidianFarm.setProtectionLeverState(true, startingBot).catch(() => {});
+        if (leverDisabled) {
+          await Promise.resolve()
+            .then(() => this.obsidianFarm.setProtectionLeverState(true, startingBot))
+            .catch(() => {});
+        }
         this.lastError = error?.message || String(error);
         this.status = this.bot?.entity ? 'connected' : 'stopped';
         this.emit('status', this.getStatus());
@@ -364,10 +368,13 @@ class MinecraftBotRuntime extends BotContext {
       }
     } else {
       this.obsidianFarm.suspend();
-      const leverProtected = await this.obsidianFarm.setProtectionLeverState(true).then(() => true).catch(error => {
-        this.lastError = error?.message || String(error);
-        return false;
-      });
+      const leverProtected = await Promise.resolve()
+        .then(() => this.obsidianFarm.setProtectionLeverState(true))
+        .then(() => true)
+        .catch(error => {
+          this.lastError = error?.message || String(error);
+          return false;
+        });
       this.task = this.killAura?.getStatus?.().enabled
         ? 'kill_aura'
         : this.follow?.getStatus?.().enabled ? 'follow' : 'idle';
