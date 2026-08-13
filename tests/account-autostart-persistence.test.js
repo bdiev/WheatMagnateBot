@@ -33,5 +33,15 @@ assert.match(
   /accounts\.filter\(item => item\.enabled && !item\.isDefault\)/,
   'only enabled secondary profiles may start after redeploy'
 );
+assert.match(
+  botSource,
+  /const runtimeBootResetPromise = resetAccountRuntimeStatusesForBoot\(\)[\s\S]*?await runtimeBootResetPromise;[\s\S]*?await resetAccountRuntimeStatusesForBoot\(\);[\s\S]*?if \(defaultAccountEnabled\) createBot\(\)[\s\S]*?await startBotStatusSnapshotWriter\(\);/,
+  'persisted connected flags must be cleared before Minecraft accounts start after redeploy'
+);
+assert.match(
+  botSource,
+  /resetAccountRuntimeStatusesForBoot[\s\S]*?'connected',false[\s\S]*?status_payload=EXCLUDED\.status_payload/,
+  'the boot reset must publish an explicitly disconnected runtime payload'
+);
 
 console.log('Account autostart persistence tests passed.');

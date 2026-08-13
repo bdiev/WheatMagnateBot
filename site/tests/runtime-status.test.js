@@ -12,7 +12,7 @@ assert.equal(
   'a recent runtime heartbeat remains online'
 );
 
-const stale = freshStoredRuntimePayload(connected, new Date(now-31_000), now);
+const stale = freshStoredRuntimePayload(connected, new Date(now-16_000), now);
 assert.equal(stale.connected,false,'an expired runtime heartbeat is offline');
 assert.equal(stale.status,'stopped');
 assert.equal(stale.health,null);

@@ -861,8 +861,9 @@ function accountHeadUrl(username, uuid = null) {
 }
 
 function accountStatusClass(account) {
-  if (account.status === 'connected' && account.task === 'obsidian') return 'mining';
-  if (account.status === 'connected') return 'online';
+  const connected = account.status === 'connected' && account.statusPayload?.connected === true;
+  if (connected && account.task === 'obsidian') return 'mining';
+  if (connected) return 'online';
   if (['connecting','authorizing'].includes(account.status)) return 'connecting';
   if (account.status === 'error') return 'error';
   return 'offline';

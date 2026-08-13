@@ -4,6 +4,7 @@ const path = require('path');
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ChannelType, PermissionsBitField, MessageFlags, InteractionContextType, SlashCommandBuilder, ActivityType } = require('discord.js');
 const { pathfinder } = require('mineflayer-pathfinder');
 const { createDiscordClient, saveStatusMessageId, loadStatusMessageId } = require('./discord');
+const { summarizeAggregateObsidianRows } = require('./discord/aggregate-obsidian-status');
 const { DiscordChatForwardQueue, positiveInteger } = require('./discord/chat-forward-queue');
 const { formatDiscordBridgeMessage } = require('./discord/chat-message-format');
 const { preparePlayerHeadEmojiImage } = require('./discord/player-head-image');
@@ -820,6 +821,12 @@ let pool = createDatabasePool();
 let authCacheStore = new AuthCacheStore({ pool });
 let suppressDefaultAuthCachePersist = false;
 logDatabaseStatus(pool);
+// Clear persisted "connected" flags as soon as this process can reach the
+// database. The previous process may have been terminated before its Mineflayer
+// clients emitted `end`, so its last heartbeat must not survive a redeploy.
+const runtimeBootResetPromise = resetAccountRuntimeStatusesForBoot().catch(error => {
+  console.warn('[Accounts] Early runtime status reset will be retried after database initialization:', error.message);
+});
 const {
   getMentionKeywords,
   addMentionKeyword,
@@ -961,6 +968,9 @@ let obsidianStats = {
   desiredEnabled: false,
   sessionStartedAt: null
 };
+let aggregateObsidianStatus = null;
+let aggregateObsidianStatusRefresh = null;
+let aggregateObsidianStatusRefreshedAt = 0;
 let growingChild = null;
 let growingChildSnapshotTimer = null;
 const followFeature = createFollowFeature();
@@ -1225,6 +1235,7 @@ async function ensureStatusMessage() {
     // If still not found, create a new one
     if (!statusMessage) {
       await refreshWheatMagnatePlaytimeDisplay();
+      await refreshAggregateObsidianStatus({ force: true });
       statusMessage = await channel.send({
         embeds: [{
           title: getServerStatusTitle(),
@@ -2382,7 +2393,8 @@ if (DISCORD_BOT_TOKEN) {
     startObsidianDailyReportScheduler();
     await loadRuntimeSettingsFromDB();
     await saveAdminSettings(runtimeSettings);
-    startBotStatusSnapshotWriter();
+    await runtimeBootResetPromise;
+    await resetAccountRuntimeStatusesForBoot();
     try {
       await registerApplicationCommands();
     } catch (err) {
@@ -2408,6 +2420,7 @@ if (DISCORD_BOT_TOKEN) {
       if (defaultAccountEnabled) createBot();
       else console.log('[Accounts] Default Minecraft profile is stopped; automatic startup skipped.');
     }
+    await startBotStatusSnapshotWriter();
     await waitBeforeStartingSecondaryAccounts();
     await initializeMultiAccountManager();
 
@@ -5613,6 +5626,47 @@ async function persistManagedRuntimeStatus(status) {
   [status.accountId,status.status,status.task,status.lastError,status.startedAt,status]);
 }
 
+async function resetAccountRuntimeStatusesForBoot() {
+  if (!pool) return;
+  await pool.query(`
+    INSERT INTO bot_account_runtime_state(
+      account_id,status,current_task,desired_enabled,last_error,started_at,updated_at,status_payload
+    )
+    SELECT
+      account.id,
+      CASE WHEN account.enabled THEN 'connecting' ELSE 'stopped' END,
+      'idle',
+      account.enabled,
+      NULL,
+      NULL,
+      NOW(),
+      jsonb_build_object(
+        'accountId',account.id,
+        'username',account.username,
+        'isPrimary',account.is_default,
+        'connected',false,
+        'lifecycle',CASE WHEN account.enabled THEN 'connecting' ELSE 'offline' END,
+        'status',CASE WHEN account.enabled THEN 'connecting' ELSE 'stopped' END,
+        'task','idle',
+        'health',NULL,
+        'food',NULL,
+        'ping',NULL,
+        'nearbyPlayers','[]'::jsonb,
+        'observedAt',NOW()
+      )
+    FROM bot_accounts account
+    WHERE account.deleted_at IS NULL
+    ON CONFLICT(account_id) DO UPDATE SET
+      status=EXCLUDED.status,
+      current_task='idle',
+      desired_enabled=EXCLUDED.desired_enabled,
+      last_error=NULL,
+      started_at=NULL,
+      updated_at=NOW(),
+      status_payload=EXCLUDED.status_payload
+  `);
+}
+
 async function initializeMultiAccountManager() {
   if (!pool || multiBotManager) return;
   multiAccountRegistry = new AccountRegistry(new AccountRepository(pool));
@@ -7034,55 +7088,69 @@ function getLastBotPublicChatStatusLine() {
   return `${lastBotPublicChatEmoji || STATUS_EMOJIS.axolotlBucket} > \`${phrase}\``;
 }
 
-function formatObsidianFarmPhase(phase) {
-  const labels = {
-    idle: 'Idle',
-    seeking: 'Seeking cauldron',
-    filling: 'Filling buckets',
-    navigating: 'Moving',
-    pouring: 'Pouring lava',
-    waiting: 'Waiting for obsidian',
-    mining: 'Mining'
-  };
-  return labels[String(phase || '').toLowerCase()] || String(phase || 'Unknown');
-}
-
 function getObsidianStatusLines() {
-  const farmStatus = farm.getStatus();
-  const sessionStartedAt = obsidianStats.sessionStartedAt
-    ? new Date(obsidianStats.sessionStartedAt)
-    : null;
-  const validSessionStart = sessionStartedAt && !Number.isNaN(sessionStartedAt.getTime());
-  const sessionMs = validSessionStart
-    ? Math.max(0, Date.now() - sessionStartedAt.getTime())
-    : 0;
-  const sessionHours = sessionMs / 3_600_000;
-  const perHour = sessionHours > 0 ? obsidianStats.sessionMined / sessionHours : 0;
+  const localFarm = farm.getStatus();
+  const status = aggregateObsidianStatus || summarizeAggregateObsidianRows([{
+    sessionMined: obsidianStats.sessionMined,
+    totalMined: obsidianStats.totalMined,
+    desiredEnabled: obsidianStats.desiredEnabled,
+    accountEnabled: shouldReconnect,
+    sessionStartedAt: obsidianStats.sessionStartedAt,
+    isMining: Boolean(bot?.entity && localFarm.enabled)
+  }]);
+  const perHour = Math.round(status.ratePerHour);
   const perMonth = perHour * 24 * 30;
 
-  let state = 'Stopped';
-  if (farmStatus.enabled) state = 'Running';
-  else if (obsidianStats.desiredEnabled) state = bot?.entity ? 'Starting / recovering' : 'Waiting for reconnect';
-
   const lines = [
-    `${FARM_EMOJIS.netheritePickaxe} Session: **${formatFullCount(obsidianStats.sessionMined)}** · All time: **${formatFullCount(obsidianStats.totalMined)}**`
+    `${FARM_EMOJIS.netheritePickaxe} Session: **${formatFullCount(status.sessionMined)}** · All time: **${formatFullCount(status.totalMined)}**`
   ];
-
-  if (validSessionStart) {
-    if (farmStatus.enabled || obsidianStats.desiredEnabled) {
-      const rate = sessionMs >= 60_000
-        ? `**${formatCompactCount(Math.round(perHour))}/h** · **${formatCompactCount(Math.round(perMonth))}/m**`
-        : '**Calculating...**';
-      lines.push(`${STATUS_EMOJIS.playtime} Elapsed: **${formatDurationShort(sessionMs)}** · Average: ${rate}`);
-    } else {
-      lines.push(`${STATUS_EMOJIS.playtime} Last session started: <t:${Math.floor(sessionStartedAt.getTime() / 1000)}:R>`);
-    }
-  }
-
-  lines.push(
-    `${FARM_EMOJIS.obsidian} Status: **${state}** · Phase: **${formatObsidianFarmPhase(farmStatus.phase)}**`
-  );
+  const rate = status.miningCount > 0 && !status.rateReady
+    ? '**Calculating...**'
+    : `**${formatCompactCount(perHour)}/h** · **${formatCompactCount(perMonth)}/m**`;
+  lines.push(`${STATUS_EMOJIS.playtime} Combined average: ${rate}`);
+  lines.push(`${FARM_EMOJIS.obsidian} Farms: **${status.miningCount} mining · ${status.recoveringCount} recovering · ${status.stoppedCount} stopped**`);
   return lines;
+}
+
+async function refreshAggregateObsidianStatus({ force = false } = {}) {
+  if (!pool) return aggregateObsidianStatus;
+  if (!force && aggregateObsidianStatus && Date.now() - aggregateObsidianStatusRefreshedAt < 2_000) return aggregateObsidianStatus;
+  if (aggregateObsidianStatusRefresh) return aggregateObsidianStatusRefresh;
+  aggregateObsidianStatusRefresh = pool.query(`
+    WITH farm_states AS (
+      SELECT account.id AS account_id,account.enabled AS account_enabled,
+             farm.session_mined,farm.total_mined,farm.desired_enabled,farm.session_started_at,farm.updated_at
+      FROM bot_accounts account
+      JOIN obsidian_farm_state farm ON farm.id=1
+      WHERE account.is_default=TRUE AND account.deleted_at IS NULL
+      UNION ALL
+      SELECT account.id,account.enabled,
+             farm.session_mined,farm.total_mined,farm.desired_enabled,farm.session_started_at,farm.updated_at
+      FROM obsidian_account_farm_state farm
+      JOIN bot_accounts account ON account.id=farm.account_id
+      WHERE account.is_default=FALSE AND account.deleted_at IS NULL
+    )
+    SELECT farm_states.*,
+           COALESCE(
+             runtime.status='connected'
+             AND runtime.current_task='obsidian'
+             AND runtime.updated_at>=NOW()-INTERVAL '15 seconds'
+             AND runtime.status_payload->>'connected'='true',
+             FALSE
+           ) AS is_mining
+    FROM farm_states
+    LEFT JOIN bot_account_runtime_state runtime ON runtime.account_id=farm_states.account_id
+  `).then(result => {
+    aggregateObsidianStatus = summarizeAggregateObsidianRows(result.rows);
+    aggregateObsidianStatusRefreshedAt = Date.now();
+    return aggregateObsidianStatus;
+  }).catch(error => {
+    console.error('[Obsidian Status] Failed to refresh aggregate farm status:', error.message);
+    return aggregateObsidianStatus;
+  }).finally(() => {
+    aggregateObsidianStatusRefresh = null;
+  });
+  return aggregateObsidianStatusRefresh;
 }
 
 function getStatusDescription() {
@@ -7090,10 +7158,22 @@ function getStatusDescription() {
 
   if (!bot || !bot.entity) {
     if (!shouldReconnect) {
-      return `${lastDisconnectReason ? `${STATUS_EMOJIS.pause} ${lastDisconnectReason}` : `${STATUS_EMOJIS.pause} Bot paused`}\n${getWheatMagnateStatusLine()}`;
+      return [
+        lastDisconnectReason ? `${STATUS_EMOJIS.pause} ${lastDisconnectReason}` : `${STATUS_EMOJIS.pause} Bot paused`,
+        getWheatMagnateStatusLine(),
+        '',
+        '**Obsidian Farm**',
+        ...getObsidianStatusLines()
+      ].join('\n');
     }
     if (shouldReconnect) {
-      return `${STATUS_EMOJIS.update} Trying to reconnect.\n${getWheatMagnateStatusLine()}`;
+      return [
+        `${STATUS_EMOJIS.update} Primary bot is trying to reconnect.`,
+        getWheatMagnateStatusLine(),
+        '',
+        '**Obsidian Farm**',
+        ...getObsidianStatusLines()
+      ].join('\n');
     }
     return `❌ Bot not connected${reasonLine}`;
   }
@@ -7752,9 +7832,9 @@ async function writeBotStatusSnapshot() {
   }
 }
 
-function startBotStatusSnapshotWriter() {
+async function startBotStatusSnapshotWriter() {
   if (botStatusSnapshotInterval) clearInterval(botStatusSnapshotInterval);
-  writeBotStatusSnapshot().catch(() => {});
+  await writeBotStatusSnapshot();
   botStatusSnapshotInterval = setInterval(() => {
     writeBotStatusSnapshot().catch(() => {});
   }, 1_000);
@@ -7966,6 +8046,7 @@ async function updateStatusMessage() {
       console.error('[Discord] Failed to update presence:', presenceErr.message);
     }
     await refreshWheatMagnatePlaytimeDisplay();
+    await refreshAggregateObsidianStatus();
 
     // Allow status updates even if bot is not connected to show offline state
     const description = `${getStatusDescription()}\n\n${getLastBotPublicChatStatusLine()}`;
@@ -11855,9 +11936,24 @@ async function shutdownAllAccounts(signal) {
   clearReconnectTimer();
   clearResumeTimer();
   if (bot) safelyCloseMinecraftBot(bot, 'Process shutdown');
+  await resetAccountRuntimeStatusesForShutdown().catch(error => console.error('[Shutdown] Runtime status reset:', error.message));
   discordClient?.destroy?.();
   await (pool?.end?.() || Promise.resolve()).catch(() => {});
   process.exit(0);
+}
+
+async function resetAccountRuntimeStatusesForShutdown() {
+  if (!pool) return;
+  await pool.query(`
+    UPDATE bot_account_runtime_state runtime
+    SET status='stopped',current_task='idle',last_error=NULL,started_at=NULL,updated_at=NOW(),
+        status_payload=COALESCE(runtime.status_payload,'{}'::jsonb) || jsonb_build_object(
+          'connected',false,'lifecycle','offline','status','stopped','task','idle',
+          'health',NULL,'food',NULL,'ping',NULL,'nearbyPlayers','[]'::jsonb,'observedAt',NOW()
+        )
+    FROM bot_accounts account
+    WHERE runtime.account_id=account.id AND account.deleted_at IS NULL
+  `);
 }
 process.once('SIGINT', () => shutdownAllAccounts('SIGINT'));
 process.once('SIGTERM', () => shutdownAllAccounts('SIGTERM'));

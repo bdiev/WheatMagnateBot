@@ -105,7 +105,7 @@ class MinecraftBotRuntime extends BotContext {
     const bot = this.bot;
     if (!bot?.entity) return;
     this.nearbySnapshot = this.nearbyPlayers();
-    if (Date.now()-this.lastMonitorStatusAt >= 10000) {
+    if (Date.now()-this.lastMonitorStatusAt >= 5000) {
       this.lastMonitorStatusAt = Date.now();
       this.emit('status',this.getStatus());
     }

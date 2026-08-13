@@ -28,5 +28,7 @@ assert.match(source, /state\.adminControlToken = null;[\s\S]*?state\.adminContro
   'switching accounts must release the previous admin-control request lock');
 assert.match(source, /const token = Symbol\('admin-control'\)[\s\S]*?state\.adminControlToken !== token \|\| state\.activeAccountId !== accountId/,
   'stale admin controls must not render for the newly selected account');
+assert.match(source, /const connected = account\.status === 'connected' && account\.statusPayload\?\.connected === true;/,
+  'an account status dot must require a confirmed live runtime payload');
 
 console.log('Account switching race UI tests passed.');

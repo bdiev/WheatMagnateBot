@@ -2226,12 +2226,21 @@ async function accountPayloads() {
   return registry.list().map(account => {
     const runtime = byId.get(account.id) || {};
     const statusPayload = freshStoredRuntimePayload(runtime.status_payload, runtime.updated_at);
-    const staleConnectedState = Boolean(runtime.status_payload?.connected && !statusPayload.connected);
-    return { ...account, status: staleConnectedState ? 'stopped' : runtime.status || (account.enabled ? 'stopped' : 'disabled'), task: runtime.current_task || 'idle', lastError: runtime.last_error || null, startedAt: runtime.started_at || null, statusUpdatedAt: runtime.updated_at || null, statusPayload };
+    const confirmedConnected = runtime.status === 'connected' && statusPayload?.connected === true;
+    const unconfirmedConnectedState = runtime.status === 'connected' && !confirmedConnected;
+    return {
+      ...account,
+      status: unconfirmedConnectedState ? (account.enabled ? 'stopped' : 'disabled') : runtime.status || (account.enabled ? 'stopped' : 'disabled'),
+      task: unconfirmedConnectedState ? 'idle' : runtime.current_task || 'idle',
+      lastError: runtime.last_error || null,
+      startedAt: unconfirmedConnectedState ? null : runtime.started_at || null,
+      statusUpdatedAt: runtime.updated_at || null,
+      statusPayload
+    };
   });
 }
 
-const MANAGED_RUNTIME_HEARTBEAT_TIMEOUT_MS = 30_000;
+const MANAGED_RUNTIME_HEARTBEAT_TIMEOUT_MS = 15_000;
 
 function freshStoredRuntimePayload(payload, updatedAt, now = Date.now()) {
   if (!payload || typeof payload !== 'object') return payload || null;
