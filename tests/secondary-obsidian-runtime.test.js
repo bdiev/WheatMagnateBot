@@ -129,6 +129,39 @@ async function main() {
     secondary.modules.obsidianFarm.configure(3404567, 39, 674998, { maxCauldronDist:5 });
     const storedConfig = JSON.parse(fs.readFileSync(path.join(dataRoot, SECONDARY_ID, 'obsidian-farm.json'), 'utf8'));
     assert.deepEqual(storedConfig, { x:3404567, y:39, z:674998, maxCauldronDist:5 });
+
+    const configuredTarget = new Vec3(3404567, 39, 674998);
+    const placementFace = new Vec3(-1, 0, 0);
+    const placementAnchor = {
+      name:'smooth_stone', type:3, boundingBox:'block',
+      position:configuredTarget.offset(1, 0, 0)
+    };
+    const originalBlockAt = bot.blockAt;
+    const originalBlockAtCursor = bot.blockAtCursor;
+    const originalActivateBlock = bot.activateBlock;
+    let placementInteraction = null;
+    bot.heldItem = { name:'lava_bucket' };
+    bot.blockAt = position => position?.equals?.(placementAnchor.position)
+      ? placementAnchor
+      : originalBlockAt(position);
+    bot.blockAtCursor = () => ({ ...placementAnchor, face:4 });
+    bot.activateBlock = async (block, direction, cursorPos) => {
+      placementInteraction = { block, direction, cursorPos };
+    };
+    await secondary.modules.obsidianFarm.__test.useBucketOnFace(
+      bot,
+      placementAnchor,
+      placementFace,
+      configuredTarget
+    );
+    assert.equal(placementInteraction.block, placementAnchor, 'Lava placement explicitly activates the verified anchor');
+    assert.ok(placementInteraction.direction.equals(placementFace), 'Lava placement sends the exact target-facing side');
+    assert.ok(placementInteraction.cursorPos.equals(new Vec3(0, 0.5, 0.5)), 'Lava placement sends the west-face cursor');
+    bot.blockAt = originalBlockAt;
+    bot.blockAtCursor = originalBlockAtCursor;
+    bot.activateBlock = originalActivateBlock;
+    bot.heldItem = null;
+
     secondary.modules.obsidianFarm.configureRuntime({ onSuppliesChanged:() => undefined });
     const preparedSupplies = await secondary.modules.obsidianFarm.prepareStart(bot);
     assert.ok(preparedSupplies.barrel, 'Mandatory preflight accepts a synchronous supply callback');

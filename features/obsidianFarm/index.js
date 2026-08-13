@@ -854,10 +854,12 @@ async function useBucketOnFace(bot, referenceBlock, face, expectedTarget) {
     );
   }
 
-  // This server handles buckets through the ordinary use-item action and
-  // ray-traces the face from the included rotation. The ray has just been
-  // verified to hit the anchor face whose adjacent block is exactly target.
-  bot.activateItem();
+  // Send an explicit block/face interaction. A generic activateItem packet
+  // relies on the server reconstructing the ray from rotation and can be
+  // ignored for managed/secondary connections even though the bot visibly
+  // holds a lava bucket. The destination has already been proven to be the
+  // configured target immediately above.
+  await bot.activateBlock(currentReference, face, cursor);
 }
 
 function getAdjacentBlockDebug(bot, x, y, z) {
@@ -2679,6 +2681,7 @@ return {
   setProtectionLeverState,
   __test: {
     fillBucket,
+    useBucketOnFace,
     findLavaCauldrons,
     getCauldronFailure,
     clearCauldronMemory() {
