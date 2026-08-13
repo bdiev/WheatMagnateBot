@@ -208,10 +208,10 @@ async function main() {
     assert.equal(reconnectRuntime.obsidianFarm.getStatus().desiredEnabled, true);
     assert.equal(reconnectBots[0].leverActions, 1, 'secondary startup switches its protection lever OFF');
     assert.equal(reconnectBots[0].barrelOpens, 1, 'secondary startup always opens its supply barrel');
-    assert.deepEqual(reconnectBots[0].barrelInteraction.direction, new Vec3(1, 0, 0), 'barrel click uses the visible ray-traced face');
+    assert.deepEqual(reconnectBots[0].barrelInteraction.direction, new Vec3(0, 1, 0), 'barrel below the bot is clicked through its top face');
     assert.ok(
-      reconnectBots[0].barrelInteraction.cursorPos.distanceTo(new Vec3(0.999, 0.4, 0.6)) < 0.0001,
-      'barrel click uses the visible hit point'
+      reconnectBots[0].barrelInteraction.cursorPos.distanceTo(new Vec3(0.5, 0.999, 0.5)) < 0.0001,
+      'barrel click uses a point on the top surface'
     );
     assert.ok(reconnectBots[0].lookActions >= 2, 'secondary startup turns toward both the lever and the barrel');
 

@@ -275,14 +275,52 @@ function withTimeout(promise, timeoutMs, message) {
   ]).finally(() => clearTimeout(timer));
 }
 
-async function openContainerWithTimeout(bot, block, interaction = {}) {
+async function activateBlockPrecisely(bot, block, interaction) {
+  const { direction, cursorPos, lookAt } = interaction;
+  await bot.lookAt(lookAt, true);
+  await sleep(100);
+  if (!bot?._client?.write || typeof bot.supportFeature !== 'function') {
+    return bot.activateBlock(block, direction, cursorPos);
+  }
+
+  const directionNum = faceVectorToDirection(direction);
+  if (directionNum == null) throw new Error('Cannot map barrel interaction face.');
+  const packet = {
+    location: block.position,
+    direction: directionNum,
+    hand: 0,
+    cursorX: cursorPos.x,
+    cursorY: cursorPos.y,
+    cursorZ: cursorPos.z
+  };
+  if (bot.supportFeature('blockPlaceHasHeldItem')) {
+    const Item = require('prismarine-item')(bot.registry);
+    delete packet.hand;
+    packet.heldItem = Item.toNotch(bot.heldItem);
+    packet.cursorX *= 16;
+    packet.cursorY *= 16;
+    packet.cursorZ *= 16;
+  } else if (bot.supportFeature('blockPlaceHasHandAndIntCursor')) {
+    packet.cursorX *= 16;
+    packet.cursorY *= 16;
+    packet.cursorZ *= 16;
+  } else if (bot.supportFeature('blockPlaceHasInsideBlock')) {
+    packet.insideBlock = false;
+    packet.sequence = 0;
+    packet.worldBorderHit = false;
+  }
+  bot._client.write('block_place', packet);
+  bot.swingArm?.();
+}
+
+async function openContainerAttempt(bot, block, interaction, timeoutMs) {
   let abandoned = false;
   let onWindowOpen = null;
   const opening = new Promise((resolve, reject) => {
     onWindowOpen = window => resolve(window);
     bot.once('windowOpen', onWindowOpen);
     Promise.resolve()
-      .then(() => bot.activateBlock(block, interaction.direction, interaction.cursorPos))
+      .then(() => activateBlockPrecisely(bot, block, interaction))
       .catch(reject);
   });
   opening.then(container => {
@@ -293,14 +331,62 @@ async function openContainerWithTimeout(bot, block, interaction = {}) {
   try {
     return await withTimeout(
       opening,
-      BARREL_OPEN_TIMEOUT_MS,
-      `Supply barrel did not open within ${BARREL_OPEN_TIMEOUT_MS / 1000} seconds`
+      timeoutMs,
+      `Supply barrel did not open using ${interaction.name}`
     );
   } catch (error) {
     abandoned = true;
     if (onWindowOpen) bot.removeListener('windowOpen', onWindowOpen);
     throw error;
   }
+}
+
+async function openContainerWithTimeout(bot, block, rayInteraction = {}) {
+  if (bot.currentWindow) {
+    try { bot.closeWindow?.(bot.currentWindow); } catch {}
+    await sleep(100);
+  }
+  const topCursor = new Vec3(0.5, 0.999, 0.5);
+  const strategies = [
+    {
+      name:'top-face',
+      direction:new Vec3(0, 1, 0),
+      cursorPos:topCursor,
+      lookAt:block.position.plus(topCursor)
+    },
+    {
+      name:'ray-traced-face',
+      direction:rayInteraction.direction || new Vec3(0, 1, 0),
+      cursorPos:rayInteraction.cursorPos || new Vec3(0.5, 0.5, 0.5),
+      lookAt:block.position.plus(rayInteraction.cursorPos || new Vec3(0.5, 0.5, 0.5))
+    },
+    {
+      name:'center-face',
+      direction:new Vec3(0, 1, 0),
+      cursorPos:new Vec3(0.5, 0.5, 0.5),
+      lookAt:block.position.offset(0.5, 0.5, 0.5)
+    }
+  ];
+  const errors = [];
+  for (const strategy of strategies) {
+    writeFarmDebug('supply_barrel_interaction_attempt', {
+      strategy:strategy.name,
+      barrel:block.position.toString(),
+      direction:strategy.direction.toString(),
+      cursor:strategy.cursorPos.toString()
+    });
+    try {
+      const container = await openContainerAttempt(bot, block, strategy, 2_500);
+      writeFarmDebug('supply_barrel_interaction_confirmed', {
+        strategy:strategy.name,
+        barrel:block.position.toString()
+      });
+      return container;
+    } catch (error) {
+      errors.push(`${strategy.name}: ${error.message}`);
+    }
+  }
+  throw new Error(`Supply barrel did not open within ${BARREL_OPEN_TIMEOUT_MS / 1000} seconds (${errors.join('; ')})`);
 }
 
 async function aimAtInteractionBlock(bot, block, label) {
