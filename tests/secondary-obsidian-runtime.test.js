@@ -13,8 +13,8 @@ const { MinecraftBotRuntime } = require('../site/accounts/minecraft-bot-runtime'
 const SECONDARY_ID = '00000000-0000-4000-8000-000000000002';
 const OTHER_ID = '00000000-0000-4000-8000-000000000003';
 
-function account(id, username) {
-  return { id, username, displayName:username, host:'example.test', port:25565, authType:'offline', isDefault:false };
+function account(id, username, isDefault = false) {
+  return { id, username, displayName:username, host:'example.test', port:25565, authType:'offline', isDefault };
 }
 
 function farmBot(username, { online = true } = {}) {
@@ -139,6 +139,7 @@ async function main() {
     const originalBlockAt = bot.blockAt;
     const originalBlockAtCursor = bot.blockAtCursor;
     const originalActivateBlock = bot.activateBlock;
+    const originalActivateItem = bot.activateItem;
     let placementInteraction = null;
     bot.heldItem = { name:'lava_bucket' };
     bot.blockAt = position => position?.equals?.(placementAnchor.position)
@@ -157,9 +158,26 @@ async function main() {
     assert.equal(placementInteraction.block, placementAnchor, 'Lava placement explicitly activates the verified anchor');
     assert.ok(placementInteraction.direction.equals(placementFace), 'Lava placement sends the exact target-facing side');
     assert.ok(placementInteraction.cursorPos.equals(new Vec3(0, 0.5, 0.5)), 'Lava placement sends the west-face cursor');
+
+    const primary = new BotContext({ account:account('00000000-0000-4000-8000-000000000001', 'WheatMagnate', true) });
+    primary.modules = createModulesForBot(primary, { dataRoot });
+    primary.modules.obsidianFarm.configure(3404567, 39, 674998, { maxCauldronDist:5 });
+    let primaryItemActivations = 0;
+    placementInteraction = null;
+    bot.activateItem = () => { primaryItemActivations += 1; };
+    await primary.modules.obsidianFarm.__test.useBucketOnFace(
+      bot,
+      placementAnchor,
+      placementFace,
+      configuredTarget
+    );
+    assert.equal(primaryItemActivations, 1, 'Primary lava placement uses the server-compatible use-item packet');
+    assert.equal(placementInteraction, null, 'Primary lava placement does not also send the managed-account packet');
+
     bot.blockAt = originalBlockAt;
     bot.blockAtCursor = originalBlockAtCursor;
     bot.activateBlock = originalActivateBlock;
+    bot.activateItem = originalActivateItem;
     bot.heldItem = null;
 
     secondary.modules.obsidianFarm.configureRuntime({ onSuppliesChanged:() => undefined });

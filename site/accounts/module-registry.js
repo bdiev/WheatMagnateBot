@@ -142,6 +142,7 @@ function createModulesForBot(context, {
   const rawFarm = obsidianFarmFactory({
     accountId: context.accountId,
     username: context.username,
+    isPrimary: context.isPrimary,
     configFile: path.join(accountRoot, 'obsidian-farm.json'),
     debugLogFile: path.join(accountRoot, 'obsidian-farm-debug.log')
   });

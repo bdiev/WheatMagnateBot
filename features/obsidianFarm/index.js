@@ -31,7 +31,8 @@ const { createProtectionLeverController } = require('./protection-lever');
 function createObsidianFarm(context = {}) {
 const identity = {
   botId: String(context.accountId || context.botId || 'legacy-primary'),
-  username: String(context.username || 'WheatMagnate')
+  username: String(context.username || 'WheatMagnate'),
+  isPrimary: context.isPrimary !== false
 };
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -98,6 +99,7 @@ let worldInteractionQueue = Promise.resolve();
 const pickaxeBlocksMined = new Map();
 let farmCycleSequence = 0;
 let farmFailureStartedAt = null;
+let farmRecoveryCheckPending = true;
 const activeFarmNotificationTypes = new Set();
 let farmDebugLoggingEnabled = true;
 const protectionLeverController = createProtectionLeverController({
@@ -854,12 +856,16 @@ async function useBucketOnFace(bot, referenceBlock, face, expectedTarget) {
     );
   }
 
-  // Send an explicit block/face interaction. A generic activateItem packet
-  // relies on the server reconstructing the ray from rotation and can be
-  // ignored for managed/secondary connections even though the bot visibly
-  // holds a lava bucket. The destination has already been proven to be the
-  // configured target immediately above.
-  await bot.activateBlock(currentReference, face, cursor);
+  // The legacy primary connection is accepted through the ordinary use-item
+  // packet, while managed/secondary connections require an explicit block and
+  // face interaction. Send exactly one of them: falling back after a packet
+  // was sent could place a second lava source if the first acknowledgement is
+  // merely delayed.
+  if (identity.isPrimary) {
+    bot.activateItem();
+  } else {
+    await bot.activateBlock(currentReference, face, cursor);
+  }
 }
 
 function getAdjacentBlockDebug(bot, x, y, z) {
@@ -2509,10 +2515,17 @@ async function persistentLoop(bot, notify) {
       low_pickaxe_durability: ['Pickaxe durability restored', 'A usable pickaxe is available.'],
       no_pickaxes: ['Pickaxe supply restored', 'A usable pickaxe is available.']
     };
-    for (const eventType of activeFarmNotificationTypes) {
+    const notificationTypesToResolve = new Set(activeFarmNotificationTypes);
+    // The notification itself is persisted, but this in-memory set is not.
+    // Reconcile a possibly stale farm_stalled alert after the first successful
+    // cycle following startup/manual restart. NotificationService safely skips
+    // the event when there is no active alert.
+    if (farmRecoveryCheckPending) notificationTypesToResolve.add('farm_stalled');
+    for (const eventType of notificationTypesToResolve) {
       const [title, message] = recoveryMessages[eventType];
       notify?.({ eventType, key: 'obsidian-farm', resolved: true, title, message });
     }
+    farmRecoveryCheckPending = false;
     activeFarmNotificationTypes.clear();
   } catch (err) {
     if (!farm.enabled) return;
@@ -2580,6 +2593,7 @@ function start(bot, notify) {
   farm.enabled         = true;
   farm.cyclesCompleted = 0;
   farm.lastErrorMessage = null;
+  farmRecoveryCheckPending = true;
   const sequenceBeforeStart = farmCycleSequence;
   writeFarmDebug('farm_started', {
     config: { ...farm.config },
@@ -2713,7 +2727,8 @@ return {
 // keep their legacy settings while BotContext users call the factory above.
 const legacyPrimaryFarm = createObsidianFarm({
   accountId: '00000000-0000-4000-8000-000000000001',
-  username: 'WheatMagnate'
+  username: 'WheatMagnate',
+  isPrimary: true
 });
 
 module.exports = Object.assign(legacyPrimaryFarm, { createObsidianFarm });
