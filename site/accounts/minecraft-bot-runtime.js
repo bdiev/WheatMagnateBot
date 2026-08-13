@@ -331,12 +331,23 @@ class MinecraftBotRuntime extends BotContext {
     this.obsidianFarm.configure(x, y, z, options);
     return this.obsidianFarm.getStatus();
   }
-  setObsidianEnabled(enabled) {
+  async setObsidianEnabled(enabled) {
     if (enabled) {
+      let leverDisabled = false;
+      const startingBot = this.bot;
       try {
         const preflight = this.obsidianFarm.validateStart();
         if (preflight?.accountId && preflight.accountId !== this.account.id) {
           throw new Error('Obsidian Farm module belongs to another account.');
+        }
+        await this.obsidianFarm.setProtectionLeverState(false, startingBot);
+        leverDisabled = true;
+        if (this.bot !== startingBot || !startingBot?.entity) {
+          throw new Error('Obsidian Farm cannot start: Minecraft connection changed during lever preparation.');
+        }
+        await this.obsidianFarm.prepareStart(startingBot);
+        if (this.bot !== startingBot || !startingBot?.entity) {
+          throw new Error('Obsidian Farm cannot start: Minecraft connection changed during barrel preparation.');
         }
         // Stop mutually exclusive automation only after every farm prerequisite
         // has passed, so a rejected farm start does not interrupt current work.
@@ -347,18 +358,26 @@ class MinecraftBotRuntime extends BotContext {
         this.task = 'obsidian';
         this.lastError = null;
       } catch (error) {
+        if (leverDisabled) await this.obsidianFarm.setProtectionLeverState(true, startingBot).catch(() => {});
         this.lastError = error?.message || String(error);
-        this.status = this.bot ? 'connected' : 'stopped';
+        this.status = this.bot?.entity ? 'connected' : 'stopped';
         this.emit('status', this.getStatus());
         throw error;
       }
     } else {
       this.obsidianFarm.suspend();
+      const leverProtected = await this.obsidianFarm.setProtectionLeverState(true).then(() => true).catch(error => {
+        this.lastError = error?.message || String(error);
+        return false;
+      });
       this.task = this.killAura?.getStatus?.().enabled
         ? 'kill_aura'
         : this.follow?.getStatus?.().enabled ? 'follow' : 'idle';
+      this.status = this.bot?.entity ? 'connected' : 'stopped';
+      this.emit('status', this.getStatus());
+      return { ...this.obsidianFarm.getStatus(), leverProtected };
     }
-    this.status = this.bot ? 'connected' : 'stopped';
+    this.status = this.bot?.entity ? 'connected' : 'stopped';
     this.emit('status', this.getStatus());
     return this.obsidianFarm.getStatus();
   }

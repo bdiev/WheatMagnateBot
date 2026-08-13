@@ -68,6 +68,7 @@ const RESOURCE_EXHAUSTED_CODE = 'RESOURCE_EXHAUSTED';
 const PLACEMENT_RECHECK_CODE = 'PLACEMENT_STATE_RECHECK';
 const CAULDRON_RETRY_CODE = 'CAULDRON_RETRY';
 const SUPPLY_BARREL_RADIUS = 5;
+const BARREL_OPEN_TIMEOUT_MS = 8_000;
 const FOOD_ITEM_PARTS = [
   'bread',
   'apple',
@@ -98,6 +99,8 @@ let farmCycleSequence = 0;
 let farmFailureStartedAt = null;
 const activeFarmNotificationTypes = new Set();
 let farmDebugLoggingEnabled = true;
+let protectionLeverPosition = null;
+let leverOperation = Promise.resolve();
 const cauldronReachStats = {
   successMaxDistance: null,
   failureMinDistance: null,
@@ -258,6 +261,36 @@ function loadFarmConfig() {
 
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
+}
+
+function withTimeout(promise, timeoutMs, message) {
+  let timer = null;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+    })
+  ]).finally(() => clearTimeout(timer));
+}
+
+async function openContainerWithTimeout(bot, block) {
+  let abandoned = false;
+  const opening = Promise.resolve().then(() => bot.openContainer(block));
+  opening.then(container => {
+    if (abandoned) {
+      try { container?.close?.(); } catch {}
+    }
+  }).catch(() => {});
+  try {
+    return await withTimeout(
+      opening,
+      BARREL_OPEN_TIMEOUT_MS,
+      `Supply barrel did not open within ${BARREL_OPEN_TIMEOUT_MS / 1000} seconds`
+    );
+  } catch (error) {
+    abandoned = true;
+    throw error;
+  }
 }
 
 function withWorldInteractionLock(action) {
@@ -520,7 +553,7 @@ async function inspectSupplyStatusUnlocked(bot) {
   try {
     await prepareSafeBarrelHand(bot);
     stopAllMovement(bot);
-    container = await bot.openContainer(barrel);
+    container = await openContainerWithTimeout(bot, barrel);
     const supplies = {
       inventory,
       barrel: {
@@ -1106,7 +1139,7 @@ async function ensureFarmSupplies(bot, context = {}) {
   let latestSuppliesSnapshot = null;
   try {
     await prepareSafeBarrelHand(bot);
-    container = await bot.openContainer(barrel);
+    container = await openContainerWithTimeout(bot, barrel);
     writeFarmDebug('supply_barrel_opened', {
       ...context,
       durationMs: Date.now() - startedAt,
@@ -1284,7 +1317,15 @@ async function ensureFarmSupplies(bot, context = {}) {
 async function prepareStart(bot) {
   if (!bot?.entity) throw new Error('Bot is offline.');
   await ensureFarmSupplies(bot, { trigger: 'prepare_start' });
-  return inspectSupplyStatus(bot);
+  const supplies = await inspectSupplyStatus(bot);
+  if (!supplies?.barrel || supplies.barrelError) {
+    throw new Error(`Obsidian Farm supply barrel preflight failed: ${supplies?.barrelError || 'barrel not found'}.`);
+  }
+  writeFarmDebug('farm_start_preflight_completed', {
+    barrel: supplies.barrel.position,
+    inventory: getInventoryDebugSummary(bot)
+  });
+  return supplies;
 }
 
 /**
@@ -2402,6 +2443,103 @@ function start(bot, notify) {
   return status;
 }
 
+function findProtectionLever(bot) {
+  if (!bot?.entity?.position) return null;
+  if (protectionLeverPosition) {
+    const cached = bot.blockAt(protectionLeverPosition);
+    const distance = bot.entity.position.distanceTo(protectionLeverPosition.offset(0.5, 0.5, 0.5));
+    if (cached?.name === 'lever' && distance <= 4.5) return cached;
+    protectionLeverPosition = null;
+  }
+
+  const base = bot.entity.position.floored();
+  const origin = bot.entity.position.offset(0, 0.5, 0);
+  const candidates = [];
+  for (let dx = -4; dx <= 4; dx++) {
+    for (let dy = -3; dy <= 3; dy++) {
+      for (let dz = -4; dz <= 4; dz++) {
+        const position = base.offset(dx, dy, dz);
+        const block = bot.blockAt(position);
+        if (block?.name !== 'lever') continue;
+        const distance = origin.distanceTo(position.offset(0.5, 0.5, 0.5));
+        if (distance <= 4.5) candidates.push({ block, distance });
+      }
+    }
+  }
+  const nearest = candidates.sort((a, b) => a.distance - b.distance)[0];
+  if (!nearest) return null;
+  protectionLeverPosition = nearest.block.position.clone();
+  return nearest.block;
+}
+
+function isLeverPowered(block) {
+  const powered = block?.getProperties?.().powered;
+  return powered === true || powered === 'true';
+}
+
+async function setProtectionLeverState(bot, powered) {
+  const operation = async () => {
+    if (!bot?.entity) throw new Error('Obsidian Farm cannot operate protection lever: Minecraft bot is offline.');
+    const lever = findProtectionLever(bot);
+    if (!lever) {
+      throw new Error('Obsidian Farm cannot start: protection lever was not found within 4.5 blocks.');
+    }
+
+    stopAllMovement(bot);
+    const position = lever.position.clone();
+    const initialPowered = isLeverPowered(lever);
+    writeFarmDebug('protection_lever_check', {
+      position: position.toString(),
+      currentState: initialPowered ? 'on' : 'off',
+      requiredState: powered ? 'on' : 'off'
+    });
+    if (initialPowered === powered) return true;
+
+    if (bot.heldItem?.name?.includes('bucket')) {
+      const safeItem = bot.inventory?.items?.().find(item => !item.name.includes('bucket'));
+      if (safeItem) await bot.equip(safeItem, 'hand');
+      else await bot.unequip?.('hand');
+    }
+
+    let lastError = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const current = bot.blockAt(position);
+      if (current?.name !== 'lever') throw new Error('Protection lever disappeared before interaction.');
+      if (isLeverPowered(current) === powered) return true;
+      try {
+        writeFarmDebug('protection_lever_action_start', {
+          position: position.toString(), attempt, requiredState: powered ? 'on' : 'off'
+        });
+        await bot.activateBlock(current);
+      } catch (error) {
+        lastError = error;
+        writeFarmDebug('protection_lever_action_failed', { position:position.toString(), attempt, error:error.message });
+        await sleep(100);
+        continue;
+      }
+
+      const deadline = Date.now() + 2_000;
+      while (Date.now() < deadline) {
+        const updated = bot.blockAt(position);
+        if (updated?.name === 'lever' && isLeverPowered(updated) === powered) {
+          writeFarmDebug('protection_lever_confirmed', {
+            position: position.toString(), attempt, state:powered ? 'on' : 'off'
+          });
+          return true;
+        }
+        await sleep(40);
+      }
+      lastError = new Error('server did not confirm the new lever state');
+    }
+    throw new Error(
+      `Obsidian Farm could not switch protection lever ${powered ? 'ON' : 'OFF'}: ${lastError?.message || 'unknown error'}`
+    );
+  };
+
+  leverOperation = leverOperation.then(operation, operation);
+  return leverOperation;
+}
+
 function resume(bot, notify) {
   if (farm.enabled) {
     writeFarmDebug('farm_resume_skipped', { reason: 'already_enabled' });
@@ -2476,6 +2614,7 @@ return {
   loadPlugin,
   assertPathfinderReady,
   validateStart,
+  setProtectionLeverState,
   __test: {
     fillBucket,
     findLavaCauldrons,

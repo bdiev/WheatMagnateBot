@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
+const Vec3 = require('vec3');
 const { BotContext } = require('../site/accounts/bot-context');
 const { createModulesForBot } = require('../site/accounts/module-registry');
 const { MinecraftBotRuntime } = require('../site/accounts/minecraft-bot-runtime');
@@ -19,13 +20,40 @@ function account(id, username) {
 function farmBot(username, { online = true } = {}) {
   const bot = new EventEmitter();
   bot.username = username;
-  bot.entity = online ? { position:{ x:0, y:64, z:0, distanceTo:() => 100 } } : null;
-  bot.inventory = { items:() => [], slots:[] };
+  const botPosition = new Vec3(0, 64, 0);
+  const leverPosition = new Vec3(1, 64, 0);
+  const barrelPosition = new Vec3(-1, 64, 0);
+  const inventoryItems = [
+    { name:'diamond_pickaxe', type:100, count:1, slot:9, maxDurability:1561, durabilityUsed:0 },
+    { name:'bread', type:101, count:8, slot:10 }
+  ];
+  let leverPowered = true;
+  bot.entity = online ? { position:botPosition, effects:{} } : null;
+  bot.inventory = { items:() => inventoryItems, slots:[], inventoryStart:9, hotbarStart:36 };
+  bot.registry = { blocksByName:{ barrel:{ id:1 }, lava_cauldron:{ id:2 } }, itemsByName:{} };
   bot.entities = {};
   bot.food = 20;
   bot.clearControlStates = () => {};
-  bot.findBlocks = () => [];
-  bot.blockAt = () => null;
+  bot.equip = async item => { bot.heldItem = item; };
+  bot.unequip = async () => { bot.heldItem = null; };
+  bot.findBlocks = options => options?.matching === 1 ? [barrelPosition] : [];
+  bot.blockAt = position => {
+    if (position?.equals?.(leverPosition)) return {
+      name:'lever', position:leverPosition, getProperties:() => ({ powered:leverPowered })
+    };
+    if (position?.equals?.(barrelPosition)) return { name:'barrel', type:1, position:barrelPosition };
+    return null;
+  };
+  bot.activateBlock = async block => {
+    if (block?.name === 'lever') {
+      leverPowered = !leverPowered;
+      bot.leverActions = (bot.leverActions || 0) + 1;
+    }
+  };
+  bot.openContainer = async () => {
+    bot.barrelOpens = (bot.barrelOpens || 0) + 1;
+    return { containerItems:() => [], close() {} };
+  };
   bot.quit = () => {};
   bot.loadPlugin = () => {
     bot.pluginLoads = (bot.pluginLoads || 0) + 1;
@@ -125,6 +153,7 @@ async function main() {
         obsidianFarm:{
           attachBot() {}, onSpawn() {}, suspend() {},
           validateStart() { throw new Error('Obsidian Farm cannot start: Pathfinder plugin is not loaded.'); },
+          setProtectionLeverState() {}, prepareStart() {},
           start() { throw new Error('start must not be reached'); },
           getStatus() { return { enabled:false, desiredEnabled:false, config:{ x:1, y:2, z:3 } }; }
         },
@@ -134,7 +163,7 @@ async function main() {
     });
     failingRuntime.bot = farmBot('PreflightAlt');
     failingRuntime.status = 'connected';
-    assert.throws(() => failingRuntime.setObsidianEnabled(true), /Pathfinder plugin is not loaded/i);
+    await assert.rejects(failingRuntime.setObsidianEnabled(true), /Pathfinder plugin is not loaded/i);
     assert.equal(failingRuntime.task, 'idle');
     assert.equal(auraStops, 0, 'failed farm preflight does not stop Kill Aura');
     assert.equal(followStops, 0, 'failed farm preflight does not stop Follow');
@@ -154,9 +183,11 @@ async function main() {
     reconnectBots[0].emit('spawn');
     await nextTurn();
     reconnectRuntime.configureObsidian(3404567, 39, 674998, { maxCauldronDist:5 });
-    reconnectRuntime.setObsidianEnabled(true);
+    await reconnectRuntime.setObsidianEnabled(true);
     assert.equal(reconnectRuntime.task, 'obsidian');
     assert.equal(reconnectRuntime.obsidianFarm.getStatus().desiredEnabled, true);
+    assert.equal(reconnectBots[0].leverActions, 1, 'secondary startup switches its protection lever OFF');
+    assert.equal(reconnectBots[0].barrelOpens, 1, 'secondary startup opens its supply barrel during preflight');
 
     await reconnectRuntime.restart();
     assert.equal(reconnectBots.length, 2);
@@ -172,7 +203,7 @@ async function main() {
     assert.match(botSource, /SET status='failed',error=\$2/, 'managed command failures persist their reason');
     console.log('Secondary Obsidian runtime tests passed.');
   } finally {
-    fs.rmSync(dataRoot, { recursive:true, force:true });
+    fs.rmSync(dataRoot, { recursive:true, force:true, maxRetries:5, retryDelay:50 });
   }
 }
 

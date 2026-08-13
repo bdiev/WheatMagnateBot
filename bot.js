@@ -5901,7 +5901,7 @@ async function executeManagedAccountCommand(command) {
     return { maxCauldronDist: runtime.obsidianFarm.cycleCauldronRadius(), ...runtime.obsidianFarm.getStatus() };
   }
   if (type === 'obsidian_reset_coordinates') {
-    runtime.setObsidianEnabled(false);
+    await runtime.setObsidianEnabled(false);
     runtime.obsidianFarm.resetConfig();
     return runtime.obsidianFarm.getStatus();
   }

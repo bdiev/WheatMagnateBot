@@ -13,12 +13,28 @@ function ownObsidianFarm(context, farm, settingsFile, notify = null) {
     fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
     fs.writeFileSync(settingsFile, JSON.stringify({ enabled: desiredEnabled }, null, 2), 'utf8');
   };
+  const waitForFarmChunks = async bot => {
+    if (typeof bot?.waitForChunksToLoad !== 'function') return;
+    let timer = null;
+    try {
+      await Promise.race([
+        bot.waitForChunksToLoad(),
+        new Promise(resolve => { timer = setTimeout(resolve, 15_000); })
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
   return {
     attachBot: bot => bot ? farm.loadPlugin(bot) : null,
     detachBot: () => farm.suspend(),
-    onSpawn: () => {
+    onSpawn: async () => {
       farm.assertPathfinderReady(context.bot);
-      return desiredEnabled ? farm.resume(context.bot, notify) : false;
+      if (!desiredEnabled) return false;
+      await waitForFarmChunks(context.bot);
+      await farm.setProtectionLeverState(context.bot, false);
+      await farm.prepareStart(context.bot);
+      return farm.resume(context.bot, notify);
     },
     start: notificationHandler => {
       const previousDesired = desiredEnabled;
@@ -58,7 +74,8 @@ function ownObsidianFarm(context, farm, settingsFile, notify = null) {
     resetConfig: () => farm.resetConfig(),
     configureRuntime: hooks => farm.configureRuntime(hooks),
     validateStart: () => farm.validateStart(context.bot),
-    prepareStart: (...args) => farm.prepareStart(context.bot, ...args),
+    setProtectionLeverState: (powered, targetBot = context.bot) => farm.setProtectionLeverState(targetBot, powered),
+    prepareStart: (targetBot = context.bot, ...args) => farm.prepareStart(targetBot, ...args),
     inspectSupplies: () => farm.inspectSupplies(context.bot),
     getStatus: () => ({ ...farm.getStatus(), desiredEnabled }),
     getDetailedStatus: options => farm.getDetailedStatus(context.bot, options),
