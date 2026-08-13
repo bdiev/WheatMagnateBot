@@ -34,6 +34,8 @@ assert.match(appSource, /state\.charts\.obsidianHourly = payload\.hourly[\s\S]*?
   'scope payloads replace both Obsidian chart series');
 assert.match(serverSource, /attachObsidianAccountSegments[\s\S]*?account\.color[\s\S]*?obsidian_account_farm_daily[\s\S]*?obsidian_account_farm_hourly/,
   'All Bots chart points retain ordered account segments and Account colors');
+assert.match(serverSource, /accountRateResult[\s\S]*?obsidian_farm_state[\s\S]*?obsidian_account_farm_state[\s\S]*?farm\.sessionPerHour = accountRateResult\.rows[\s\S]*?compactFarmState\(row\)\.sessionPerHour/,
+  'All Bots Rate is the sum of rates calculated from every bot\'s own session');
 assert.match(appSource, /options\.stacked[\s\S]*?item\.segments[\s\S]*?segment\.color[\s\S]*?fillRect/,
   'the chart renderer paints account segments as stacked colored bars');
 assert.match(appSource, /function aggregateSeries[\s\S]*?segments: new Map\(\)[\s\S]*?segments: Array\.from/,

@@ -1964,7 +1964,7 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
   };
   const timezone = currentUser ? await getAccountTimezone(currentUser.id) : (settings.timezone || 'Europe/Vilnius');
   const managedWhere = `a.is_default=FALSE AND a.deleted_at IS NULL AND ($1::boolean OR stats.account_id=$2::uuid)`;
-  const [primaryFarmResult, managedFarmResult, dailyResult, hourlyResult, supplyResult, supplyHistoryResult, annotationsResult, goalsResult, tpsResult, comparisonResult, toolUsageResult, dailyAccountResult, hourlyAccountResult] = await Promise.all([
+  const [primaryFarmResult, managedFarmResult, dailyResult, hourlyResult, supplyResult, supplyHistoryResult, annotationsResult, goalsResult, tpsResult, comparisonResult, toolUsageResult, dailyAccountResult, hourlyAccountResult, accountRateResult] = await Promise.all([
     includePrimary ? pool.query(`
       SELECT session_mined,total_mined,desired_enabled,session_started_at,
              retired_pickaxes,retired_pickaxe_blocks,target_x,target_y,target_z,target_radius,updated_at
@@ -2104,7 +2104,17 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
       JOIN bot_accounts a ON a.id=stats.account_id
       WHERE stats.bucket>=date_trunc('hour',NOW()-INTERVAL '167 hours')
         AND a.is_default=FALSE AND a.deleted_at IS NULL
-    `, [DEFAULT_MINECRAFT_ACCOUNT_ID]) : Promise.resolve({ rows: [] })
+    `, [DEFAULT_MINECRAFT_ACCOUNT_ID]) : Promise.resolve({ rows: [] }),
+    aggregate ? pool.query(`
+      SELECT session_mined,session_started_at
+      FROM obsidian_farm_state
+      WHERE id=1
+      UNION ALL
+      SELECT stats.session_mined,stats.session_started_at
+      FROM obsidian_account_farm_state stats
+      JOIN bot_accounts a ON a.id=stats.account_id
+      WHERE a.is_default=FALSE AND a.deleted_at IS NULL
+    `) : Promise.resolve({ rows: [] })
   ]);
 
   const farmRows = [
@@ -2119,6 +2129,11 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
     row.target_radius = runtimeFarm.config.maxCauldronDist;
   }
   const farm = compactFarmState(combineFarmStateRows(farmRows));
+  if (aggregate) {
+    farm.sessionPerHour = accountRateResult.rows
+      .reduce((sum, row) => sum + compactFarmState(row).sessionPerHour, 0);
+    farm.sessionPerMinute = Number((farm.sessionPerHour / 60).toFixed(1));
+  }
   const hourlyTotals = hourlyResult.rows.map(row => ({
     label: row.label,
     bucket: row.bucket,
