@@ -15,8 +15,8 @@ assert.match(
 );
 assert.match(
   botSource,
-  /type === 'account_stop'[\s\S]*?UPDATE bot_accounts SET enabled=FALSE/,
-  'the primary command worker must persist Stop'
+  /type === 'account_stop'[\s\S]*?UPDATE bot_accounts SET enabled=FALSE[\s\S]*?shouldReconnect = false;[\s\S]*?pauseMinecraftConnection\(reason\)/,
+  'the primary command worker must persist Stop and detach its active connection'
 );
 assert.match(
   botSource,
@@ -27,6 +27,16 @@ assert.match(
   botSource,
   /SELECT enabled FROM bot_accounts[\s\S]*?defaultAccountEnabled[\s\S]*?if \(defaultAccountEnabled\) createBot\(\)/,
   'the default Minecraft profile must respect persisted enabled state after redeploy'
+);
+assert.doesNotMatch(
+  botSource,
+  /Initialization without Discord failed:[\s\S]{0,200}\.finally\(\(\) => createBot\(\)\)/,
+  'startup without Discord must not unconditionally reconnect a stopped primary account'
+);
+assert.match(
+  botSource,
+  /function createBot\(\) \{[\s\S]*?if \(!shouldReconnect\) \{[\s\S]*?Connection attempt skipped: the primary account is stopped/,
+  'late callbacks must not recreate a primary connection after Stop'
 );
 assert.match(
   botSource,

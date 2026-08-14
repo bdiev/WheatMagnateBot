@@ -2529,9 +2529,21 @@ if (DISCORD_BOT_TOKEN) {
   // No Discord, start Mineflayer directly
   mineflayerStarted = true;
   initDatabase()
-    .then(() => loadRuntimeSettingsFromDB())
-    .catch(err => console.error('[DB] Initialization without Discord failed:', err.message))
-    .finally(() => createBot());
+    .then(async () => {
+      await loadRuntimeSettingsFromDB();
+      const defaultAccountState = await pool.query(
+        'SELECT enabled FROM bot_accounts WHERE id=$1::uuid AND deleted_at IS NULL',
+        [DEFAULT_ACCOUNT_ID]
+      );
+      const defaultAccountEnabled = defaultAccountState.rows[0]?.enabled !== false;
+      shouldReconnect = defaultAccountEnabled;
+      if (defaultAccountEnabled) createBot();
+      else console.log('[Accounts] Default Minecraft profile is stopped; automatic startup skipped.');
+    })
+    .catch(err => {
+      console.error('[DB] Initialization without Discord failed:', err.message);
+      if (shouldReconnect) createBot();
+    });
 }
 
 
@@ -5225,7 +5237,12 @@ async function executeBotCommand(command) {
     if (type === 'account_stop' && pool) {
       await pool.query('UPDATE bot_accounts SET enabled=FALSE,updated_at=NOW() WHERE id=$1::uuid AND deleted_at IS NULL',[DEFAULT_ACCOUNT_ID]);
     }
-    shouldReconnect = false; clearReconnectTimer(); clearResumeTimer(); if (bot) bot.quit(type === 'account_pause' ? 'Account paused' : 'Account stopped');
+    const reason = type === 'account_pause' ? 'Account paused' : 'Account stopped';
+    shouldReconnect = false;
+    clearReconnectTimer();
+    clearResumeTimer();
+    setDisconnectReason(reason);
+    pauseMinecraftConnection(reason);
     return { message: type === 'account_pause' ? 'Account paused.' : 'Account stopped.', accountId: DEFAULT_ACCOUNT_ID };
   }
   if (type === 'account_restart' || type === 'account_reauthorize') {
@@ -8115,6 +8132,13 @@ async function updateStatusMessage() {
 
 function createBot() {
   clearReconnectTimer();
+
+  // Stop is authoritative. A late timer, event handler, or startup continuation
+  // must never recreate the primary connection after reconnect was disabled.
+  if (!shouldReconnect) {
+    console.log('[Bot] Connection attempt skipped: the primary account is stopped.');
+    return;
+  }
 
   // Never replace a live/connecting instance. Late events from the old instance
   // could otherwise clear the new global reference and leave an orphaned socket.
