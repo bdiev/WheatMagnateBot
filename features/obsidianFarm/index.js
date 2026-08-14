@@ -1670,19 +1670,26 @@ async function ensureFarmSupplies(bot, context = {}) {
 }
 
 async function prepareStart(bot) {
-  if (!bot?.entity) throw new Error('Bot is offline.');
-  const supplies = await withWorldInteractionLock(() => ensureFarmSupplies(bot, {
-    trigger: 'prepare_start',
-    forceBarrelInspection: true
-  }));
-  if (!supplies?.barrel) {
-    throw new Error('Obsidian Farm supply barrel preflight failed: barrel was not opened.');
+  try {
+    if (!bot?.entity) throw new Error('Bot is offline.');
+    const supplies = await withWorldInteractionLock(() => ensureFarmSupplies(bot, {
+      trigger: 'prepare_start',
+      forceBarrelInspection: true
+    }));
+    if (!supplies?.barrel) {
+      throw new Error('Obsidian Farm supply barrel preflight failed: barrel was not opened.');
+    }
+    farm.lastErrorMessage = null;
+    writeFarmDebug('farm_start_preflight_completed', {
+      barrel: supplies.barrel.position,
+      inventory: getInventoryDebugSummary(bot)
+    });
+    return supplies;
+  } catch (error) {
+    farm.lastErrorMessage = error?.message || String(error);
+    writeFarmDebug('farm_start_preflight_failed', { error:farm.lastErrorMessage });
+    throw error;
   }
-  writeFarmDebug('farm_start_preflight_completed', {
-    barrel: supplies.barrel.position,
-    inventory: getInventoryDebugSummary(bot)
-  });
-  return supplies;
 }
 
 /**
@@ -2939,18 +2946,23 @@ function start(bot, notify) {
 }
 
 async function setProtectionLeverState(bot, powered) {
-  return withWorldInteractionLock(async () => {
-    if (!bot?.entity) throw new Error('Obsidian Farm cannot operate protection lever: Minecraft bot is offline.');
-    const confirmed = await protectionLeverController.setState(bot, powered);
-    if (!confirmed) {
-      const reason = protectionLeverController.getLastFailure?.();
-      throw new Error(
-        `Obsidian Farm could not switch protection lever ${powered ? 'ON' : 'OFF'}` +
-        `${reason ? `: ${reason}` : ''}.`
-      );
-    }
-    return true;
-  });
+  try {
+    return await withWorldInteractionLock(async () => {
+      if (!bot?.entity) throw new Error('Obsidian Farm cannot operate protection lever: Minecraft bot is offline.');
+      const confirmed = await protectionLeverController.setState(bot, powered);
+      if (!confirmed) {
+        const reason = protectionLeverController.getLastFailure?.();
+        throw new Error(
+          `Obsidian Farm could not switch protection lever ${powered ? 'ON' : 'OFF'}` +
+          `${reason ? `: ${reason}` : ''}.`
+        );
+      }
+      return true;
+    });
+  } catch (error) {
+    if (!powered) farm.lastErrorMessage = error?.message || String(error);
+    throw error;
+  }
 }
 
 function resume(bot, notify) {

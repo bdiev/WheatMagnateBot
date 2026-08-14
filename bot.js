@@ -7808,7 +7808,9 @@ function getBotStatusSnapshot() {
     obsidian: {
       enabled: farm.getStatus().enabled,
       desiredEnabled: obsidianStats.desiredEnabled,
-      config: farm.getStatus().config
+      config: farm.getStatus().config,
+      phase: farm.getStatus().phase,
+      lastErrorMessage: farm.getStatus().lastErrorMessage
     },
     killAura: killAura.getStatus(),
     child: {

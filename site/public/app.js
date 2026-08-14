@@ -93,6 +93,9 @@ const state = {
   accountTimezone: 'Europe/Vilnius',
   accountSettingsLoading: null,
   obsidianCoordinateEditorOpen: false,
+  farmLaunchToastTimer: null,
+  farmLaunchToastHideTimer: null,
+  farmLaunchFailureSignatures: {},
   killAuraData: null,
   killAuraSelectedMobs: new Set(),
   killAuraModalSelectionSnapshot: new Set(),
@@ -823,6 +826,72 @@ function setBanner(message) {
   if (message) console.warn('[Dashboard]',message);
 }
 
+function farmLaunchBotName(bot = null) {
+  const account = state.accounts.find(item => item.id === state.activeAccountId);
+  return String(account?.displayName || bot?.username || account?.username || 'Bot').trim() || 'Bot';
+}
+
+function normalizeFarmLaunchFailureReason(reason) {
+  return String(reason || 'Unknown error.')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 360) || 'Unknown error.';
+}
+
+function hideFarmLaunchFailureToast({ immediate = false } = {}) {
+  const toast = $('#farmLaunchToast');
+  clearTimeout(state.farmLaunchToastTimer);
+  clearTimeout(state.farmLaunchToastHideTimer);
+  state.farmLaunchToastTimer = null;
+  state.farmLaunchToastHideTimer = null;
+  if (!toast) return;
+  toast.classList.remove('visible');
+  if (immediate) {
+    toast.hidden = true;
+    return;
+  }
+  state.farmLaunchToastHideTimer = setTimeout(() => {
+    if (!toast.classList.contains('visible')) toast.hidden = true;
+    state.farmLaunchToastHideTimer = null;
+  }, 260);
+}
+
+function reportFarmLaunchFailure(reason, bot = null, { force = false } = {}) {
+  const toast = $('#farmLaunchToast');
+  if (!toast) return;
+  const accountKey = state.activeAccountId || 'default';
+  const safeReason = normalizeFarmLaunchFailureReason(reason);
+  const signature = `${accountKey}:${safeReason}`;
+  if (!force && state.farmLaunchFailureSignatures[accountKey] === signature) return;
+  state.farmLaunchFailureSignatures[accountKey] = signature;
+
+  clearTimeout(state.farmLaunchToastTimer);
+  clearTimeout(state.farmLaunchToastHideTimer);
+  state.farmLaunchToastHideTimer = null;
+  $('#farmLaunchToastBot').textContent = farmLaunchBotName(bot);
+  $('#farmLaunchToastReason').textContent = safeReason;
+  toast.hidden = false;
+  requestAnimationFrame(() => toast.classList.add('visible'));
+  state.farmLaunchToastTimer = setTimeout(() => hideFarmLaunchFailureToast(), 10_000);
+}
+
+function syncFarmLaunchFailureToast(bot = null) {
+  if (!bot) return;
+  const farm = bot.modules?.obsidianFarm || bot.obsidian || {};
+  const accountKey = state.activeAccountId || 'default';
+  if (farm.enabled) {
+    delete state.farmLaunchFailureSignatures[accountKey];
+    return;
+  }
+
+  const moduleError = String(farm.lastErrorMessage || '').trim();
+  const runtimeError = String(bot.lastError || '').trim();
+  const desired = farm.desiredEnabled === true;
+  const runtimeLooksFarmRelated = /obsidian|farm|barrel|lever|pickaxe|bucket|pathfinder|coordinates/i.test(runtimeError);
+  const reason = desired ? (moduleError || runtimeError) : (runtimeLooksFarmRelated ? runtimeError : '');
+  if (reason) reportFarmLaunchFailure(reason, bot);
+}
+
 async function fetchJson(path, { transientRetries = 0, signal = null } = {}) {
   const accountIdAtStart = state.activeAccountId;
   const scopedToActiveAccount = path.startsWith('/api/')
@@ -963,6 +1032,7 @@ async function selectAccount(accountId) {
   if (state.realtimeRefreshTimers.whisper) clearTimeout(state.realtimeRefreshTimers.whisper);
   delete state.realtimeRefreshTimers.whisper;
   state.activeAccountId = accountId;
+  hideFarmLaunchFailureToast({ immediate: true });
   localStorage.setItem('wm-active-account', accountId);
   state.renderSignatures = {};
   state.adminControlState = null;
@@ -3766,6 +3836,7 @@ function renderBotInventory(selector, bot, connected) {
 
 function renderBotStats(payload) {
   const bot = payload.bot || null;
+  syncFarmLaunchFailureToast(bot);
   const connected = Boolean(bot?.connected);
   $('#botConnectionState').textContent = bot?.status ? bot.status : 'unknown';
   $('#botStatusUpdated').textContent = `updated: ${formatDate(payload.observedAt || bot?.observedAt)}`;
@@ -6019,7 +6090,11 @@ async function handleAdminBotCommand(event) {
     }
   } catch (err) {
     console.error(`Could not queue bot command ${commandType}:`, err);
-    setBanner(`Could not update bot: ${err.message}`);
+    if (commandType === 'obsidian_toggle' && body.payload?.enabled === true) {
+      reportFarmLaunchFailure(err.message, state.adminControlState?.bot || null, { force: true });
+    } else {
+      setBanner(`Could not update bot: ${err.message}`);
+    }
   } finally {
     button.disabled = false;
   }
@@ -7525,6 +7600,7 @@ $('#navSectionsReset')?.addEventListener('click', resetNavigationVisibility);
 $('#accountSettingsForm')?.addEventListener('submit', saveAccountSettings);
 $('#accountPasswordForm')?.addEventListener('submit', changeAccountPassword);
 $('#accountNewPassword')?.addEventListener('input', event => updatePasswordStrength('#accountNewPasswordStrength', event.currentTarget.value));
+$('#farmLaunchToastClose')?.addEventListener('click', () => hideFarmLaunchFailureToast());
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.addEventListener('message', event => {
