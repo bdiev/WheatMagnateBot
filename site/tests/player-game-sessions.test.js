@@ -39,5 +39,11 @@ assert.match(appSource, /<section class="player-profile-grid">[\s\S]*?\$\{gameSe
   'Game sessions must render between the metric cards and Recent Chat');
 assert.match(stylesSource, /\.player-profile-session-list\.is-scrollable\s*\{[\s\S]*?max-height:\s*202px;[\s\S]*?overflow-y:\s*auto;/,
   'only three 62px session rows should be visible before older sessions scroll');
+assert.match(appSource, /data-current-session-start=[\s\S]*?function updatePlayerProfileSessionClock\(\)[\s\S]*?formatDurationMs\(Math\.max\(0, now - startedAt\)\)[\s\S]*?setInterval\(updatePlayerProfileSessionClock, 1_000\)/,
+  'the active session duration must update every second while the profile is open');
+assert.match(appSource, /function closePlayerProfile\(\)[\s\S]*?stopPlayerProfileSessionClock\(\)/,
+  'closing the profile must stop its session clock');
+assert.match(appSource, /type === 'player_joined' \|\| type === 'player_left'[\s\S]*?player-profile-activity[\s\S]*?loadPlayerProfile/,
+  'join and leave events must refresh an open matching profile');
 
 console.log('Player game session tests passed.');

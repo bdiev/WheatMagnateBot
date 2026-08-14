@@ -48,6 +48,7 @@ const state = {
   whisperUnreadCount: 0,
   playerProfileRegistrationAgeMode: false,
   playerProfileLastPayload: null,
+  playerProfileSessionTimer: null,
   playtimeLeaderboardScope: 'global',
   playtimeLeaderboards: { global: [], whitelisted: [] },
   whisperSearchPlayers: [],
@@ -2735,7 +2736,7 @@ function renderPlayerProfile(profile) {
                 <strong>${escapeHtml(formatDate(session.startedAt))}</strong>
                 <small>${session.isCurrent ? 'Online now' : `Ended ${escapeHtml(formatDate(session.endedAt))}`}</small>
               </div>
-              <time>${escapeHtml(formatDurationMs((Number(session.durationSeconds) || 0) * 1000))}</time>
+              <time${session.isCurrent ? ` data-current-session-start="${escapeHtml(session.startedAt)}"` : ''}>${escapeHtml(formatDurationMs((Number(session.durationSeconds) || 0) * 1000))}</time>
             </article>
           `).join('')
           : '<div class="empty">No completed game sessions recorded yet.</div>'}
@@ -2840,7 +2841,9 @@ function playerProfileSignature(profile) {
     state.playerProfileRegistrationAgeMode,
     profile.lastSeen,
     profile.lastOnline,
-    ...(profile.gameSessions || []).map(session => [session.startedAt, session.endedAt, session.durationSeconds, session.isCurrent]),
+    ...(profile.gameSessions || []).map(session => session.isCurrent
+      ? [session.startedAt, null, true]
+      : [session.startedAt, session.endedAt, session.durationSeconds, false]),
     profile.chat?.totalMessages,
     profile.chat?.last24h,
     profile.chat?.lastMessageAt,
@@ -2851,6 +2854,33 @@ function playerProfileSignature(profile) {
     profile.chat?.hasMoreMessages,
     ...(profile.chat?.recentMessages || []).map(message => [message.id, message.message, message.createdAt])
   ]);
+}
+
+function stopPlayerProfileSessionClock() {
+  if (state.playerProfileSessionTimer) clearInterval(state.playerProfileSessionTimer);
+  state.playerProfileSessionTimer = null;
+}
+
+function updatePlayerProfileSessionClock() {
+  const overlay = $('#playerProfileOverlay');
+  const clocks = document.querySelectorAll('[data-current-session-start]');
+  if (overlay?.hidden || !clocks.length) {
+    stopPlayerProfileSessionClock();
+    return;
+  }
+  const now = Date.now();
+  for (const clock of clocks) {
+    const startedAt = new Date(clock.dataset.currentSessionStart).getTime();
+    if (Number.isFinite(startedAt)) clock.textContent = formatDurationMs(Math.max(0, now - startedAt));
+  }
+}
+
+function startPlayerProfileSessionClock() {
+  stopPlayerProfileSessionClock();
+  updatePlayerProfileSessionClock();
+  if (document.querySelector('[data-current-session-start]')) {
+    state.playerProfileSessionTimer = setInterval(updatePlayerProfileSessionClock, 1_000);
+  }
 }
 
 async function loadPlayerProfile(username, { showLoading = false } = {}) {
@@ -2886,10 +2916,12 @@ async function loadPlayerProfile(username, { showLoading = false } = {}) {
     const signature = playerProfileSignature(profile);
     if (state.playerProfileSignature !== signature) {
       content.innerHTML = renderPlayerProfile(profile);
+      startPlayerProfileSessionClock();
       state.playerProfileSignature = signature;
       state.playerProfileUsername = profile.username || username;
     }
   } catch (err) {
+    stopPlayerProfileSessionClock();
     content.innerHTML = `<div class="empty">Could not load player profile: ${escapeHtml(err.message)}</div>`;
   }
 }
@@ -2905,6 +2937,7 @@ function closePlayerProfile() {
   const overlay = $('#playerProfileOverlay');
   if (!overlay) return;
   overlay.hidden = true;
+  stopPlayerProfileSessionClock();
   document.body.classList.remove('profile-open');
   state.playerProfileUsername = null;
   state.playerProfileSignature = '';
@@ -7421,6 +7454,9 @@ function handleRealtimeEvent(event) {
   else if (type === 'player_joined' || type === 'player_left') {
     queueRealtimeRefresh('players', refreshPlayersFromEvent);
     queueRealtimeRefresh('chat-activity', refreshChatFromEvent, 30);
+    if (state.playerProfileUsername && String(state.playerProfileUsername).toLowerCase() === String(eventPayload.username || '').toLowerCase()) {
+      queueRealtimeRefresh('player-profile-activity', () => loadPlayerProfile(state.playerProfileUsername), 100);
+    }
     if (state.currentUser?.role === 'admin' && state.activeTab === 'admin') {
       queueRealtimeRefresh('admin-players', () => loadAdminPlayers({ showLoading: false }), 350);
     }
