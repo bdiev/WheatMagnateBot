@@ -244,11 +244,14 @@ class WebPushService {
   constructor({ pool, publicKey = process.env.VAPID_PUBLIC_KEY, privateKey = process.env.VAPID_PRIVATE_KEY, subject = process.env.VAPID_SUBJECT || 'mailto:admin@localhost', sender = webPush } = {}) {
     this.pool = pool;
     this.publicKey = String(publicKey || '').trim();
+    const normalizedPrivateKey = String(privateKey || '').trim();
     this.sender = sender;
     this.configured = false;
-    if (this.publicKey && privateKey) {
+    if (!this.publicKey || !normalizedPrivateKey) {
+      this.configurationError = 'VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY must both be configured.';
+    } else {
       try {
-        this.sender.setVapidDetails(String(subject), this.publicKey, String(privateKey));
+        this.sender.setVapidDetails(String(subject), this.publicKey, normalizedPrivateKey);
         this.configured = true;
       } catch (err) { this.configurationError = err.message; }
     }
@@ -367,7 +370,12 @@ class WebPushService {
         return { sent: false, removed: true };
       }
       await this.pool.query('UPDATE push_subscriptions SET failure_count=failure_count+1 WHERE id=$1', [id]).catch(() => {});
-      throw Object.assign(new Error('Test push could not be delivered.'), { statusCode: 502 });
+      const status = Number(err.statusCode);
+      const reason = [401, 403].includes(status)
+        ? 'The push service rejected the VAPID credentials. Repair the device subscription and verify the server keys.'
+        : status === 429 ? 'The push service rate-limited this device. Try again later.'
+          : 'The browser push service could not be reached.';
+      throw Object.assign(new Error(`Test push could not be delivered. ${reason}`), { statusCode: 502 });
     }
   }
 }

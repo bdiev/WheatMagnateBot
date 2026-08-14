@@ -12,6 +12,8 @@ npx web-push generate-vapid-keys
 
 Configure `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and a valid `VAPID_SUBJECT` (`mailto:` or HTTPS URL) in the deployment environment. The private key is read only by the bot and site processes. It is never returned by an API, written to PostgreSQL, included in a push payload, or exposed to frontend code. Keep the same key pair across deployments; replacing it invalidates existing browser subscriptions.
 
+If the VAPID pair is replaced, **Settings** now detects that the browser still uses the old public key and offers **Repair push on this device**. Repairing unsubscribes the stale browser endpoint and creates a new subscription with the current key. A test push should be sent after enabling or repairing a device.
+
 ## Delivery rules
 
 Each subscription belongs to one `site_users` row and stores per-device preferences:
@@ -25,6 +27,8 @@ Each subscription belongs to one `site_users` row and stores per-device preferen
 Operational notifications are delivered only to approved administrators because the existing notification center is admin-only. A test notification can be sent to an owned device from **Settings**. `NotificationService` invokes push only when its existing deduplication and cooldown permit channel delivery, so suppressed repetitions do not generate push messages.
 
 Incoming Minecraft whispers can be enabled with the `whisper_message` event type. They are routed only to subscriptions owned by the site username assigned to that whisper dialog and follow the device's quiet hours. Clicking one opens the Chat page and the matching private-message dialog; an already open PWA is focused, while a closed PWA is launched with the same deep link. If authentication has expired, the destination is retained and opened after login. Because a private message is not an operational alert, the minimum-severity filter does not suppress it; the event-type checkbox controls it directly. By default the visible lock-screen text is generic. If `Detailed` is explicitly enabled for `whisper_message`, the lock screen includes the Minecraft sender and message text.
+
+While the dashboard is open, the same authenticated realtime event displays a ten-second in-app toast for an incoming private message. The toast shows the sender but not the message body; clicking it switches to the relevant bot account and opens that player's dialog. Outgoing messages never create this toast.
 
 The scheduled `daily_obsidian_report` event is emitted by the existing daily-report scheduler after its atomic per-calendar-day claim, so reconnects, overlapping timers, and multiple replicas cannot create repeated push reports. It follows each device's event selection and quiet hours but is not suppressed by the operational minimum-severity filter. Compact mode shows only the report title; Detailed mode adds the 24-hour mined total, percentage change, hourly average, and aggregate pickaxe and food counts. Clicking the push opens **Obsidian Farm**.
 

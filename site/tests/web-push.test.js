@@ -6,6 +6,11 @@ const {
 } = require('../web-push');
 
 async function run() {
+  const unconfigured = new WebPushService({ pool: {}, publicKey: '', privateKey: '' });
+  assert.equal(unconfigured.configured, false);
+  assert.match(unconfigured.configurationError, /VAPID_PUBLIC_KEY.*VAPID_PRIVATE_KEY/,
+    'missing VAPID keys must produce an actionable configuration reason');
+
   const base = {
     id: 1, endpoint: 'https://push.example/subscription', p256dh: 'a'.repeat(64), auth: 'b'.repeat(16),
     enabled: true, minimum_severity: 'warning', event_types: ['low_tps'], detailed_event_types: [], include_resolved: false,

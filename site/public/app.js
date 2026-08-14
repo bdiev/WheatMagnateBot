@@ -98,6 +98,11 @@ const state = {
   farmLaunchFailureSignatures: {},
   adminDataToastTimer: null,
   adminDataToastHideTimer: null,
+  whisperToastTimer: null,
+  whisperToastHideTimer: null,
+  whisperToastPayload: null,
+  lastWhisperToastEventId: null,
+  pushSubscriptionKeyMismatch: false,
   killAuraData: null,
   killAuraSelectedMobs: new Set(),
   killAuraModalSelectionSnapshot: new Set(),
@@ -934,6 +939,56 @@ function showAdminDataToast({ kind = 'success', title, message }) {
   state.adminDataToastTimer = setTimeout(() => hideAdminDataToast(), durationMs);
 }
 
+function hideWhisperToast({ immediate = false } = {}) {
+  const toast = $('#whisperToast');
+  clearTimeout(state.whisperToastTimer);
+  clearTimeout(state.whisperToastHideTimer);
+  state.whisperToastTimer = null;
+  state.whisperToastHideTimer = null;
+  if (!toast) return;
+  toast.classList.remove('visible');
+  if (immediate) {
+    toast.hidden = true;
+    state.whisperToastPayload = null;
+    return;
+  }
+  state.whisperToastHideTimer = setTimeout(() => {
+    if (!toast.classList.contains('visible')) {
+      toast.hidden = true;
+      state.whisperToastPayload = null;
+    }
+    state.whisperToastHideTimer = null;
+  }, 260);
+}
+
+function showWhisperToast(payload = {}) {
+  if (payload.direction !== 'incoming') return;
+  const eventId = String(payload.id || '');
+  if (eventId && eventId === state.lastWhisperToastEventId) return;
+  const player = String(payload.playerUsername || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 32);
+  if (!player) return;
+  state.lastWhisperToastEventId = eventId || null;
+  state.whisperToastPayload = { player, accountId: String(payload.accountId || '') || null };
+  const toast = $('#whisperToast');
+  if (!toast) return;
+  clearTimeout(state.whisperToastTimer);
+  clearTimeout(state.whisperToastHideTimer);
+  state.whisperToastHideTimer = null;
+  $('#whisperToastPlayer').textContent = player;
+  toast.classList.remove('visible');
+  toast.hidden = false;
+  void toast.offsetWidth;
+  requestAnimationFrame(() => toast.classList.add('visible'));
+  state.whisperToastTimer = setTimeout(() => hideWhisperToast(), 10_000);
+}
+
+async function openWhisperToast() {
+  const payload = state.whisperToastPayload;
+  if (!payload) return;
+  hideWhisperToast({ immediate: true });
+  await openPushDestination('whispers', payload.player, payload.accountId);
+}
+
 async function fetchJson(path, { transientRetries = 0, signal = null } = {}) {
   const accountIdAtStart = state.activeAccountId;
   const scopedToActiveAccount = path.startsWith('/api/')
@@ -1076,6 +1131,7 @@ async function selectAccount(accountId) {
   state.activeAccountId = accountId;
   hideFarmLaunchFailureToast({ immediate: true });
   hideAdminDataToast({ immediate: true });
+  hideWhisperToast({ immediate: true });
   localStorage.setItem('wm-active-account', accountId);
   state.renderSignatures = {};
   state.adminControlState = null;
@@ -1290,6 +1346,7 @@ function showAuthScreen(message = '') {
   if (authScreen) authScreen.hidden = false;
   if (shell) shell.classList.add('app-locked');
   hideAdminDataToast({ immediate: true });
+  hideWhisperToast({ immediate: true });
   dismissAppLoader();
   if (message) {
     const error = $('#authError');
@@ -2614,6 +2671,7 @@ function registrationProfileValue(profile) {
 
 function renderPlayerProfile(profile) {
   const recentMessages = profile.chat?.recentMessages || [];
+  const gameSessions = Array.isArray(profile.gameSessions) ? profile.gameSessions : [];
   const nearby = profile.nearby;
   const profileUsername = String(profile.username || '');
   const nameHistory = Array.isArray(profile.nameHistory) ? profile.nameHistory : [];
@@ -2659,6 +2717,30 @@ function renderPlayerProfile(profile) {
         <div><span>Notes</span><p>${profile.adminNotes ? escapeHtml(profile.adminNotes) : 'No admin notes.'}</p></div>
       </section>`
     : '';
+  const gameSessionsSection = `
+    <section class="player-profile-sessions">
+      <header class="player-profile-section-head">
+        <div>
+          <h3>Game sessions</h3>
+          <small>${gameSessions.length ? `${formatNumber(gameSessions.length)} most recent recorded` : 'Join and leave history'}</small>
+        </div>
+        ${gameSessions.length > 3 ? '<span>Scroll for older</span>' : ''}
+      </header>
+      <div class="player-profile-session-list${gameSessions.length > 3 ? ' is-scrollable' : ''}"${gameSessions.length > 3 ? ' tabindex="0" aria-label="Game sessions, newest first"' : ''}>
+        ${gameSessions.length
+          ? gameSessions.map(session => `
+            <article class="player-profile-session${session.isCurrent ? ' is-current' : ''}">
+              <span class="player-profile-session-marker" aria-hidden="true"></span>
+              <div>
+                <strong>${escapeHtml(formatDate(session.startedAt))}</strong>
+                <small>${session.isCurrent ? 'Online now' : `Ended ${escapeHtml(formatDate(session.endedAt))}`}</small>
+              </div>
+              <time>${escapeHtml(formatDurationMs((Number(session.durationSeconds) || 0) * 1000))}</time>
+            </article>
+          `).join('')
+          : '<div class="empty">No completed game sessions recorded yet.</div>'}
+      </div>
+    </section>`;
   return `
     <header class="player-profile-head">
       <span class="player-profile-avatar-wrap" data-status="${profile.isOnline ? 'online' : 'offline'}" aria-label="${profile.isOnline ? 'Online' : 'Offline'}">
@@ -2718,6 +2800,7 @@ function renderPlayerProfile(profile) {
       <div><span>Nearby</span><strong>${nearby ? `${formatNumber(nearby.distance)} blocks` : 'No sighting'}</strong></div>
       <div><span>Nearby Seen</span><strong>${nearby?.lastSeen ? formatDate(nearby.lastSeen) : '-'}</strong></div>
     </section>
+    ${gameSessionsSection}
     ${adminMetadata}
     <section class="player-profile-chat">
       <h3>Recent Chat</h3>
@@ -2757,6 +2840,7 @@ function playerProfileSignature(profile) {
     state.playerProfileRegistrationAgeMode,
     profile.lastSeen,
     profile.lastOnline,
+    ...(profile.gameSessions || []).map(session => [session.startedAt, session.endedAt, session.durationSeconds, session.isCurrent]),
     profile.chat?.totalMessages,
     profile.chat?.last24h,
     profile.chat?.lastMessageAt,
@@ -6346,6 +6430,14 @@ function applicationServerKey(value) {
   return Uint8Array.from(raw, char => char.charCodeAt(0));
 }
 
+function pushSubscriptionUsesServerKey(subscription, publicKey) {
+  const subscribedKey = subscription?.options?.applicationServerKey;
+  if (!subscribedKey || !publicKey) return false;
+  const expectedKey = applicationServerKey(publicKey);
+  const actualKey = new Uint8Array(subscribedKey);
+  return actualKey.length === expectedKey.length && actualKey.every((value, index) => value === expectedKey[index]);
+}
+
 function defaultPushDeviceName() {
   const platform = navigator.userAgentData?.platform || navigator.platform || 'Device';
   const browser = navigator.userAgentData?.brands?.find(item => !/not.a.brand/i.test(item.brand))?.brand || 'Browser';
@@ -6382,10 +6474,15 @@ function pushDeviceHtml(device, eventTypes) {
 
 async function identifyCurrentPushDevice(devices) {
   state.currentPushSubscriptionId = null;
+  state.pushSubscriptionKeyMismatch = false;
   if (!browserPushSupported()) return;
   const registration = await navigator.serviceWorker.ready;
   const subscription = await registration.pushManager.getSubscription();
   if (!subscription) return;
+  if (!pushSubscriptionUsesServerKey(subscription, state.pushSettings?.publicKey)) {
+    state.pushSubscriptionKeyMismatch = true;
+    return;
+  }
   const suffix = subscription.endpoint.slice(-18);
   state.currentPushSubscriptionId = devices.find(device => device.endpointSuffix === suffix)?.id || null;
 }
@@ -6399,10 +6496,14 @@ async function loadPushSettings() {
     state.pushSettings = payload;
     await identifyCurrentPushDevice(payload.devices || []);
     const supported = browserPushSupported();
-    if (button) button.disabled = !supported || !payload.configured || Notification.permission === 'denied';
+    if (button) {
+      button.disabled = !supported || !payload.configured || Notification.permission === 'denied';
+      button.textContent = state.pushSubscriptionKeyMismatch ? 'Repair push on this device' : 'Enable on this device';
+    }
     if (status) status.textContent = !supported ? 'Push API is not supported in this browser or the page is not using HTTPS.'
-      : !payload.configured ? 'Push is not configured on the server.'
+      : !payload.configured ? (payload.configurationError || 'Push is not configured on the server.')
         : Notification.permission === 'denied' ? 'Browser permission is blocked. Change it in the browser site settings.'
+          : state.pushSubscriptionKeyMismatch ? 'This browser subscription uses an old server key. Repair it to receive notifications again.'
           : state.currentPushSubscriptionId ? 'This browser is registered. Manage it below.' : 'Push is off on this browser.';
     $('#pushDeviceList').innerHTML = payload.devices?.length
       ? payload.devices.map(device => pushDeviceHtml(device, payload.eventTypes || [])).join('')
@@ -6422,6 +6523,10 @@ async function enablePushOnCurrentDevice() {
     if (permission !== 'granted') throw new Error('Browser notification permission was not granted.');
     const registration = await navigator.serviceWorker.ready;
     let subscription = await registration.pushManager.getSubscription();
+    if (subscription && !pushSubscriptionUsesServerKey(subscription, state.pushSettings.publicKey)) {
+      await subscription.unsubscribe();
+      subscription = null;
+    }
     if (!subscription) subscription = await registration.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: applicationServerKey(state.pushSettings.publicKey)
@@ -6434,7 +6539,7 @@ async function enablePushOnCurrentDevice() {
     });
     state.pushSettings = payload;
     state.currentPushSubscriptionId = payload.currentSubscriptionId;
-    setBanner('Browser push enabled for this device.');
+    setBanner('Browser push enabled for this device. Send a test below to verify delivery.');
     await loadPushSettings();
   } catch (err) { setBanner(`Could not enable push: ${err.message}`); }
   finally { button.disabled = false; }
@@ -7302,7 +7407,10 @@ function handleRealtimeEvent(event) {
   let eventPayload = {};
   try { eventPayload=JSON.parse(event.data || '{}'); } catch {}
   if (type === 'chat_message') queueRealtimeRefresh('chat', refreshChatFromEvent, 30);
-  else if (type === 'whisper_message' && (!eventPayload.accountId || eventPayload.accountId === state.activeAccountId)) queueRealtimeRefresh('whisper', refreshWhispersFromEvent);
+  else if (type === 'whisper_message') {
+    showWhisperToast(eventPayload);
+    if (!eventPayload.accountId || eventPayload.accountId === state.activeAccountId) queueRealtimeRefresh('whisper', refreshWhispersFromEvent);
+  }
   else if (type === 'bot_status_updated') {
     queueRealtimeRefresh('bot', refreshBotFromEvent);
     queueRealtimeRefresh('kill-aura', refreshKillAuraFromEvent);
@@ -7688,6 +7796,8 @@ $('#accountPasswordForm')?.addEventListener('submit', changeAccountPassword);
 $('#accountNewPassword')?.addEventListener('input', event => updatePasswordStrength('#accountNewPasswordStrength', event.currentTarget.value));
 $('#farmLaunchToastClose')?.addEventListener('click', () => hideFarmLaunchFailureToast());
 $('#adminDataToastClose')?.addEventListener('click', () => hideAdminDataToast());
+$('#whisperToastClose')?.addEventListener('click', () => hideWhisperToast());
+$('#whisperToastOpen')?.addEventListener('click', () => openWhisperToast().catch(err => setBanner(`Could not open dialog: ${err.message}`)));
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.addEventListener('message', event => {

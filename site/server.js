@@ -2857,6 +2857,51 @@ async function searchSeenPlayers(url) {
   };
 }
 
+function buildPlayerGameSessions(events = [], { isOnline = false, currentStartedAt = null, now = new Date() } = {}) {
+  const transitions = events
+    .map(event => ({
+      type: event.event_type,
+      at: new Date(event.occurred_at)
+    }))
+    .filter(event => ['player_joined', 'player_left'].includes(event.type) && Number.isFinite(event.at.getTime()))
+    .sort((first, second) => first.at - second.at);
+  const sessions = [];
+  let startedAt = null;
+
+  for (const transition of transitions) {
+    if (transition.type === 'player_joined') {
+      startedAt = transition.at;
+      continue;
+    }
+    if (!startedAt || transition.at < startedAt) continue;
+    sessions.push({
+      startedAt: startedAt.toISOString(),
+      endedAt: transition.at.toISOString(),
+      durationSeconds: Math.max(0, Math.floor((transition.at - startedAt) / 1000)),
+      isCurrent: false
+    });
+    startedAt = null;
+  }
+
+  if (isOnline) {
+    const fallbackStart = new Date(currentStartedAt || 0);
+    const activeStart = startedAt || (Number.isFinite(fallbackStart.getTime()) && fallbackStart.getTime() > 0 ? fallbackStart : null);
+    const currentTime = new Date(now);
+    if (activeStart && Number.isFinite(currentTime.getTime()) && currentTime >= activeStart) {
+      sessions.push({
+        startedAt: activeStart.toISOString(),
+        endedAt: null,
+        durationSeconds: Math.max(0, Math.floor((currentTime - activeStart) / 1000)),
+        isCurrent: true
+      });
+    }
+  }
+
+  return sessions
+    .sort((first, second) => new Date(second.startedAt) - new Date(first.startedAt))
+    .slice(0, 100);
+}
+
 async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
   assertDatabase();
 
@@ -2901,7 +2946,7 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
     ...((identity?.aliases || []).map(alias => String(alias).toLowerCase()))
   ])];
 
-  const [profileResult, chatResult, recentChatResult, nearbyResult, ignoredResult, namesResult] = await Promise.all([
+  const [profileResult, chatResult, recentChatResult, nearbyResult, ignoredResult, namesResult, gameSessionEventsResult] = await Promise.all([
     pool.query(`
       WITH activity AS (
         SELECT id, username, player_uuid, last_seen, last_online, registration_at, is_online,
@@ -2983,7 +3028,37 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
       FROM player_name_history
       WHERE player_uuid = $1::uuid
       ORDER BY last_seen DESC, first_seen DESC
-    `, [playerUuid])
+    `, [playerUuid]),
+    pool.query(`
+      SELECT event_type,occurred_at
+      FROM (
+        SELECT event_type,occurred_at,id
+        FROM operational_events
+        WHERE source='player_activity'
+          AND event_type IN ('player_joined','player_left')
+          AND (
+            LOWER(COALESCE(actor,''))=ANY($1::text[])
+            OR LOWER(COALESCE(details->>'username',''))=ANY($1::text[])
+            OR LOWER(COALESCE(resource_key,''))=ANY(
+              ARRAY(SELECT 'player:' || name FROM UNNEST($1::text[]) AS known_name(name))
+            )
+          )
+        UNION ALL
+        SELECT event_type,occurred_at,id
+        FROM operational_events_archive
+        WHERE source='player_activity'
+          AND event_type IN ('player_joined','player_left')
+          AND (
+            LOWER(COALESCE(actor,''))=ANY($1::text[])
+            OR LOWER(COALESCE(details->>'username',''))=ANY($1::text[])
+            OR LOWER(COALESCE(resource_key,''))=ANY(
+              ARRAY(SELECT 'player:' || name FROM UNNEST($1::text[]) AS known_name(name))
+            )
+          )
+      ) session_events
+      ORDER BY occurred_at DESC,id DESC
+      LIMIT 500
+    `, [aliases])
   ]);
 
   const profile = profileResult.rows[0] || { username };
@@ -3010,6 +3085,10 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
     registrationDisplay: profile.registration_display || null,
     totalSeconds: seconds,
     playtime: formatSeconds(seconds),
+    gameSessions: buildPlayerGameSessions(gameSessionEventsResult.rows, {
+      isOnline: Boolean(profile.is_online),
+      currentStartedAt: profile.tracking_since || profile.last_online
+    }),
     chat: {
       totalMessages: toInt(chat.total),
       last24h: toInt(chat.last_24h),
@@ -4151,6 +4230,7 @@ async function markNotificationsRead(currentUser, body) {
 async function getPushSettings(currentUser) {
   return {
     configured: webPushService.configured,
+    configurationError: webPushService.configured ? null : webPushService.configurationError,
     publicKey: webPushService.configured ? webPushService.publicKey : null,
     eventTypes: PUSH_EVENT_TYPES,
     devices: await webPushService.listForUser(currentUser.id)
@@ -5089,4 +5169,4 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown);
 }
 
-module.exports = { ADMIN_PLAYER_EDITABLE_FIELDS, adminPlayerIdentity, assertAdminUser, changeSitePassword, cleanAccountInput, deleteAdminPlayer, freshStoredRuntimePayload, getAdminPlayers, hashPassword, normalizeAdminPlayerPatch, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, parsePlaytimeSeconds, patchAdminPlayer, registrationDefaults, requestHandler, server, setAdminPlaytime, startSiteServer, validateCredentials, validatePasswordChange, verifyPassword };
+module.exports = { ADMIN_PLAYER_EDITABLE_FIELDS, adminPlayerIdentity, assertAdminUser, buildPlayerGameSessions, changeSitePassword, cleanAccountInput, deleteAdminPlayer, freshStoredRuntimePayload, getAdminPlayers, hashPassword, normalizeAdminPlayerPatch, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, parsePlaytimeSeconds, patchAdminPlayer, registrationDefaults, requestHandler, server, setAdminPlaytime, startSiteServer, validateCredentials, validatePasswordChange, verifyPassword };

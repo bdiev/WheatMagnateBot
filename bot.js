@@ -5041,11 +5041,16 @@ async function recordSiteWhisperMessage(username, direction, message, siteUserna
       [safeUsername, safeDirection, safeSiteUsername, cleanMessage,accountId]
     );
     if (safeDirection === 'incoming' && safeSiteUsername && inserted.rows[0]?.id) {
-      await webPushService.deliverWhisper({
+      const pushResult = await webPushService.deliverWhisper({
         id: inserted.rows[0].id, recipientUsername: safeSiteUsername,
         sender: safeUsername, message: cleanMessage, accountId
-      })
-        .catch(err => console.error('[Push] Failed to deliver whisper notification:', err.message));
+      }).catch(err => {
+        console.error('[Push] Failed to deliver whisper notification:', err.message);
+        return null;
+      });
+      if (pushResult?.failed) {
+        console.error(`[Push] ${pushResult.failed} whisper notification delivery attempt(s) failed.`);
+      }
     }
     await pool.query("DELETE FROM site_whisper_messages WHERE created_at < NOW() - INTERVAL '30 days'");
   } catch (err) {

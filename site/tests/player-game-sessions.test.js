@@ -1,0 +1,43 @@
+'use strict';
+
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { buildPlayerGameSessions } = require('../server');
+
+const sessions = buildPlayerGameSessions([
+  { event_type: 'player_left', occurred_at: '2026-08-15T11:00:00.000Z' },
+  { event_type: 'player_joined', occurred_at: '2026-08-15T10:00:00.000Z' },
+  { event_type: 'player_joined', occurred_at: '2026-08-15T12:00:00.000Z' },
+  { event_type: 'player_left', occurred_at: '2026-08-15T12:30:00.000Z' },
+  { event_type: 'player_joined', occurred_at: '2026-08-15T13:00:00.000Z' },
+  { event_type: 'player_left', occurred_at: '2026-08-15T14:00:00.000Z' },
+  { event_type: 'player_joined', occurred_at: '2026-08-15T15:00:00.000Z' }
+], { isOnline: true, now: new Date('2026-08-15T16:00:00.000Z') });
+
+assert.equal(sessions.length, 4);
+assert.equal(sessions[0].isCurrent, true, 'the active session must be shown first');
+assert.equal(sessions[0].durationSeconds, 3600);
+assert.equal(sessions[1].startedAt, '2026-08-15T13:00:00.000Z');
+assert.equal(sessions[2].durationSeconds, 1800);
+assert.equal(sessions[3].durationSeconds, 3600);
+
+const fallbackCurrent = buildPlayerGameSessions([], {
+  isOnline: true,
+  currentStartedAt: '2026-08-15T15:45:00.000Z',
+  now: new Date('2026-08-15T16:00:00.000Z')
+});
+assert.equal(fallbackCurrent[0].durationSeconds, 900, 'an online profile must use its tracked start when no join event is available');
+
+const appSource = fs.readFileSync(path.resolve(__dirname, '..', 'public', 'app.js'), 'utf8');
+const stylesSource = fs.readFileSync(path.resolve(__dirname, '..', 'public', 'styles.css'), 'utf8');
+const serverSource = fs.readFileSync(path.resolve(__dirname, '..', 'server.js'), 'utf8');
+
+assert.match(serverSource, /FROM operational_events[\s\S]*UNION ALL[\s\S]*FROM operational_events_archive[\s\S]*LIMIT 500/,
+  'player profiles must load recent and archived join/leave transitions');
+assert.match(appSource, /<section class="player-profile-grid">[\s\S]*?\$\{gameSessionsSection\}[\s\S]*?<section class="player-profile-chat">/,
+  'Game sessions must render between the metric cards and Recent Chat');
+assert.match(stylesSource, /\.player-profile-session-list\.is-scrollable\s*\{[\s\S]*?max-height:\s*202px;[\s\S]*?overflow-y:\s*auto;/,
+  'only three 62px session rows should be visible before older sessions scroll');
+
+console.log('Player game session tests passed.');

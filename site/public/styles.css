@@ -713,6 +713,68 @@ button:disabled {
   background: color-mix(in srgb, #48b978 10%, var(--panel-soft));
 }
 
+.whisper-toast {
+  top: auto;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--line));
+  background:
+    linear-gradient(110deg, color-mix(in srgb, var(--accent) 14%, var(--panel)) 0%, var(--panel) 58%),
+    var(--panel);
+}
+
+.whisper-toast::after {
+  background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 22%, transparent));
+}
+
+.whisper-toast .farm-launch-toast-icon {
+  border-color: color-mix(in srgb, var(--accent) 58%, transparent);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 88%, #fff), color-mix(in srgb, var(--accent) 70%, #111));
+  box-shadow: 0 7px 18px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.whisper-toast-open {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  min-height: 0;
+  border: 0;
+  border-radius: calc(var(--button-radius) - 4px);
+  padding: 6px 8px;
+  color: var(--text);
+  background: transparent;
+  box-shadow: none;
+  text-align: left;
+}
+
+.whisper-toast-open:hover,
+.whisper-toast-open:focus-visible {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel-soft));
+}
+
+.whisper-toast-open strong {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.whisper-toast-open span {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.whisper-toast-open b {
+  color: var(--text);
+}
+
+.whisper-toast .farm-launch-toast-close:hover,
+.whisper-toast .farm-launch-toast-close:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel-soft));
+}
+
 .farm-launch-toast.visible + .admin-data-toast.visible {
   top: calc(env(safe-area-inset-top, 0px) + 92px);
 }
@@ -770,6 +832,11 @@ button:disabled {
 
   .farm-launch-toast.visible + .admin-data-toast.visible {
     top: calc(env(safe-area-inset-top, 0px) + 78px);
+  }
+
+  .whisper-toast {
+    top: auto;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
   }
 }
 
@@ -3952,6 +4019,127 @@ body.search-focus-active #logoutButton {
 
 .player-profile-load-more {
   width: 100%;
+}
+
+.player-profile-sessions {
+  display: grid;
+  gap: 10px;
+  padding: 0 14px 16px;
+}
+
+.player-profile-section-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.player-profile-section-head h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.player-profile-section-head h3::before {
+  content: "";
+  width: 4px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.player-profile-section-head small,
+.player-profile-section-head > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.player-profile-section-head small {
+  display: block;
+  margin-top: 3px;
+}
+
+.player-profile-section-head > span {
+  flex: 0 0 auto;
+  font-weight: 800;
+}
+
+.player-profile-session-list {
+  display: grid;
+  gap: 8px;
+}
+
+.player-profile-session-list.is-scrollable {
+  max-height: 202px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--accent) 62%, var(--line)) transparent;
+}
+
+.player-profile-session {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 62px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 12px;
+  background: var(--panel-soft);
+}
+
+.player-profile-session-marker {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--muted);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--muted) 12%, transparent);
+}
+
+.player-profile-session.is-current {
+  border-color: color-mix(in srgb, #55c85a 44%, var(--line));
+}
+
+.player-profile-session.is-current .player-profile-session-marker {
+  background: #55c85a;
+  box-shadow: 0 0 0 4px color-mix(in srgb, #55c85a 16%, transparent);
+}
+
+.player-profile-session div {
+  min-width: 0;
+}
+
+.player-profile-session strong,
+.player-profile-session small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.player-profile-session strong {
+  font-size: 13px;
+}
+
+.player-profile-session small {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.player-profile-session time {
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+  border-radius: 999px;
+  padding: 5px 8px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel));
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
 }
 
 .chat-message.chat-context-target {
@@ -8508,6 +8696,26 @@ body.kill-aura-modal-open {
     overflow: visible;
     text-overflow: clip;
     white-space: normal;
+  }
+
+  .player-profile-sessions {
+    gap: 8px;
+    padding: 6px 8px 10px;
+  }
+
+  .player-profile-section-head {
+    align-items: center;
+    padding: 0 2px;
+  }
+
+  .player-profile-section-head h3 {
+    font-size: 17px;
+  }
+
+  .player-profile-session {
+    grid-template-columns: 9px minmax(0, 1fr) auto;
+    gap: 8px;
+    padding-inline: 10px;
   }
 
   .player-profile-chat {
