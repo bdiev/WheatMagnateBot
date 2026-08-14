@@ -2019,13 +2019,36 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
       FROM buckets LEFT JOIN totals USING(bucket) ORDER BY buckets.bucket
     `, [includePrimary, aggregate, accountId]),
     pool.query(`
-      SELECT $4::uuid AS account_id,supplies,observed_at,updated_at
-      FROM obsidian_farm_supply_snapshot WHERE id=1 AND $1::boolean
+      SELECT $4::uuid AS account_id,snapshot.supplies,snapshot.observed_at,snapshot.updated_at
+      FROM obsidian_farm_supply_snapshot snapshot
+      LEFT JOIN bot_account_runtime_state runtime ON runtime.account_id=$4::uuid
+      WHERE snapshot.id=1 AND $1::boolean
+        AND (NOT $2::boolean OR (
+          runtime.status='connected'
+          AND runtime.current_task='obsidian'
+          AND runtime.updated_at>=NOW()-INTERVAL '15 seconds'
+          AND runtime.status_payload->>'connected'='true'
+          AND (
+            runtime.status_payload#>>'{modules,obsidianFarm,enabled}'='true'
+            OR runtime.status_payload#>>'{obsidian,enabled}'='true'
+          )
+        ))
       UNION ALL
       SELECT stats.account_id,stats.supplies,stats.observed_at,stats.updated_at
       FROM obsidian_account_farm_supply_snapshot stats
       JOIN bot_accounts a ON a.id=stats.account_id
+      LEFT JOIN bot_account_runtime_state runtime ON runtime.account_id=stats.account_id
       WHERE a.is_default=FALSE AND a.deleted_at IS NULL AND ($2::boolean OR stats.account_id=$3::uuid)
+        AND (NOT $2::boolean OR (
+          runtime.status='connected'
+          AND runtime.current_task='obsidian'
+          AND runtime.updated_at>=NOW()-INTERVAL '15 seconds'
+          AND runtime.status_payload->>'connected'='true'
+          AND (
+            runtime.status_payload#>>'{modules,obsidianFarm,enabled}'='true'
+            OR runtime.status_payload#>>'{obsidian,enabled}'='true'
+          )
+        ))
     `, [includePrimary, aggregate, accountId, DEFAULT_MINECRAFT_ACCOUNT_ID]),
     pool.query(`
       SELECT $4::uuid AS account_id,supplies,observed_at
