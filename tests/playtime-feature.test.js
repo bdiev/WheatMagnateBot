@@ -102,6 +102,10 @@ async function run() {
   assert.match(botSource, /buildNonWhitelistPlaytimeSearchEmbed\(query, result\)/, 'search results must render in the playtime message');
   assert.match(botSource, /preparePrimaryBotForShutdown\(\)[\s\S]*?syncWhitelistPlaytime\(\[\], \{ allowEmptySnapshot: true \}\)[\s\S]*?safelyCloseMinecraftBot\(bot, 'Process shutdown'\)[\s\S]*?pool\?\.end/,
     'redeploy shutdown must stop farm work, flush PT, disconnect Minecraft, and only then close the database');
+  assert.match(botSource, /preparePrimaryBotForShutdown\(\)[\s\S]*?obsidianStats\.desiredEnabled = false;[\s\S]*?setObsidianFarmDesiredEnabled\(false\)[\s\S]*?primaryProtectionLever\.setState\(currentBot, true\)/,
+    'redeploy shutdown must persist Stop before the replacement process can auto-resume the primary farm');
+  assert.match(botSource, /runtime\.flushFarmPersistence = \(\) => managedFarmWriteQueue[\s\S]*?managedPersistence[\s\S]*?context\.flushFarmPersistence\(\)/,
+    'redeploy shutdown must flush the stopped intent for managed farms');
   console.log('playtime feature tests passed');
 }
 

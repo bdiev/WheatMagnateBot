@@ -141,6 +141,7 @@ async function main(){
     'every managed farm is prepared before any managed bot is disconnected');
 
   const farmShutdownCalls=[];
+  let shutdownFarmDesired=true;
   const shutdownBot=new EventEmitter();
   shutdownBot.username='ShutdownBot';shutdownBot.entity={};shutdownBot.quit=()=>{};
   const farmShutdownRuntime=new MinecraftBotRuntime({
@@ -149,8 +150,8 @@ async function main(){
     moduleFactory:()=>({
       obsidianFarm:{
         attachBot(){},detachBot(){},dispose(){},
-        getStatus:()=>({enabled:true,desiredEnabled:true}),
-        pauseForServerRestart(){farmShutdownCalls.push('farm-paused');},
+        getStatus:()=>({enabled:true,desiredEnabled:shutdownFarmDesired}),
+        suspend(){shutdownFarmDesired=false;farmShutdownCalls.push('farm-stopped');},
         async setProtectionLeverState(powered,targetBot){farmShutdownCalls.push(`lever:${powered}`);assert.equal(targetBot,shutdownBot);return true;}
       },
       killAura:{attachBot(){},detachBot(){},dispose(){},setEnabled(){farmShutdownCalls.push('kill-aura-stopped');},getStatus:()=>({enabled:false})},
@@ -160,8 +161,9 @@ async function main(){
   await farmShutdownRuntime.start();
   const farmShutdownResult=await farmShutdownRuntime.prepareForShutdown();
   assert.deepEqual(farmShutdownResult,{accountId:second.id,farmStopped:true,leverProtected:true});
-  assert.ok(farmShutdownCalls.indexOf('farm-paused')<farmShutdownCalls.indexOf('lever:true'),
-    'a managed Obsidian loop stops before its protection lever is switched on');
+  assert.equal(shutdownFarmDesired,false,'a deploy persists Stop instead of auto-resuming the managed farm');
+  assert.ok(farmShutdownCalls.indexOf('farm-stopped')<farmShutdownCalls.indexOf('lever:true'),
+    'a managed Obsidian loop and its restart intent stop before the protection lever is switched on');
   await farmShutdownRuntime.destroy();
   console.log('Multi-account tests passed.');
 }

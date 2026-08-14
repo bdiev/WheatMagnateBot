@@ -5757,6 +5757,10 @@ async function initializeMultiAccountManager() {
           return createMinecraftBot({ ...options, closeTimeout: MINECRAFT_CONNECT_TIMEOUT_MS });
         }
       });
+      // Shutdown waits for this queue after the runtime has persisted its
+      // stopped farm intent, so a late mining write cannot restore
+      // desired_enabled=true during the redeploy.
+      runtime.flushFarmPersistence = () => managedFarmWriteQueue;
       runtime.obsidianFarm.configureRuntime({
         onMined: () => enqueueManagedFarmWrite('Mining persistence', () => recordManagedObsidianMined(pool, account.id)),
         onPickaxeRetired: details => enqueueManagedFarmWrite('Pickaxe persistence', () => recordManagedPickaxeRetired(pool, account.id, details)),
@@ -11991,11 +11995,27 @@ async function preparePrimaryBotForShutdown() {
   followFeature.stop();
   farm.suspend();
 
+  // Change the in-memory intent immediately, then serialize the durable Stop
+  // behind any final mined-block writes already queued before SIGTERM.
+  obsidianStats.desiredEnabled = false;
+  const persistStoppedIntent = obsidianStatsWriteQueue
+    .then(() => setObsidianFarmDesiredEnabled(false));
+
   let leverProtected = null;
   if (shouldProtectFarm) {
-    leverProtected = Boolean(await primaryProtectionLever.setState(currentBot, true));
+    try {
+      leverProtected = Boolean(await primaryProtectionLever.setState(currentBot, true));
+      if (!leverProtected) {
+        console.error(`[Shutdown] Primary Obsidian Farm protection was not confirmed: ${primaryProtectionLever.getLastFailure?.() || 'unknown reason'}.`);
+      }
+    } catch (error) {
+      leverProtected = false;
+      console.error(`[Shutdown] Primary Obsidian Farm protection failed: ${error?.message || String(error)}`);
+    }
   }
-  return { farmStopped: Boolean(farmStatus.enabled), leverProtected };
+  await persistStoppedIntent;
+  console.log(`[Shutdown] Primary Obsidian Farm: wasRunning=${Boolean(farmStatus.enabled)}, protected=${leverProtected}.`);
+  return { accountId: DEFAULT_ACCOUNT_ID, farmStopped: Boolean(farmStatus.enabled), leverProtected };
 }
 
 async function shutdownAllAccounts(signal) {
@@ -12006,21 +12026,48 @@ async function shutdownAllAccounts(signal) {
   clearReconnectTimer();
   clearResumeTimer();
 
+  // PT persistence and physical farm protection use independent resources and
+  // run together, keeping the graceful path inside a typical deploy deadline.
   const preparationResults = await Promise.allSettled([
     withTimeout(preparePrimaryBotForShutdown(), 8_000, 'Primary Obsidian Farm shutdown preparation timed out'),
     multiBotManager
       ? withTimeout(multiBotManager.prepareForShutdown({ timeoutMs: 7_500 }), 8_000, 'Managed Obsidian Farm shutdown preparation timed out')
-      : Promise.resolve([])
+      : Promise.resolve([]),
+    withTimeout(
+      syncWhitelistPlaytime([], { allowEmptySnapshot: true }),
+      5_000,
+      'Final playtime flush timed out'
+    )
   ]);
-  for (const result of preparationResults) {
-    if (result.status === 'rejected') console.error('[Shutdown] Farm preparation:', result.reason?.message || result.reason);
+  for (const [index, result] of preparationResults.entries()) {
+    if (result.status !== 'rejected') continue;
+    const label = index === 2 ? 'Final playtime flush' : 'Farm preparation';
+    console.error(`[Shutdown] ${label}:`, result.reason?.message || result.reason);
   }
 
+  const managedPreparation = preparationResults[1];
+  if (managedPreparation?.status === 'fulfilled') {
+    for (const result of managedPreparation.value) {
+      if (result.status === 'rejected') {
+        console.error('[Shutdown] Managed Obsidian Farm protection failed:', result.reason?.message || result.reason);
+        continue;
+      }
+      if (!result.value) continue;
+      const log = result.value.leverProtected === false ? console.error : console.log;
+      log(`[Shutdown] Managed Obsidian Farm ${result.value.accountId}: wasRunning=${result.value.farmStopped}, protected=${result.value.leverProtected}.`);
+    }
+  }
+
+  const managedPersistence = multiBotManager
+    ? multiBotManager.getAllContexts()
+      .filter(context => !context.isPrimary && typeof context.flushFarmPersistence === 'function')
+      .map(context => context.flushFarmPersistence())
+    : [];
   await withTimeout(
-    syncWhitelistPlaytime([], { allowEmptySnapshot: true }),
-    5_000,
-    'Final playtime flush timed out'
-  ).catch(error => console.error('[Shutdown] Final playtime flush:', error.message));
+    Promise.allSettled(managedPersistence),
+    2_000,
+    'Managed farm Stop persistence timed out'
+  ).catch(error => console.error('[Shutdown] Managed farm Stop persistence:', error.message));
 
   if (bot) safelyCloseMinecraftBot(bot, 'Process shutdown');
   await multiBotManager?.shutdown({ prepare: false }).catch(error => console.error('[Shutdown] Managed runtimes:', error.message));
@@ -12043,5 +12090,8 @@ async function resetAccountRuntimeStatusesForShutdown() {
     WHERE runtime.account_id=account.id AND account.deleted_at IS NULL
   `);
 }
-process.once('SIGINT', () => shutdownAllAccounts('SIGINT'));
-process.once('SIGTERM', () => shutdownAllAccounts('SIGTERM'));
+// Keep the listeners installed while graceful shutdown is in progress. A
+// repeated signal must not restore Node's default immediate-exit behaviour and
+// interrupt a lever action halfway through.
+process.on('SIGINT', () => shutdownAllAccounts('SIGINT'));
+process.on('SIGTERM', () => shutdownAllAccounts('SIGTERM'));
