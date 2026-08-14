@@ -119,19 +119,30 @@ function supplyConsumptionPerHour(history, key, nowMs) {
   return { rate: observedMs >= 6 * HOUR ? consumed / (observedMs / HOUR) : 0, sampleHours: observedMs / HOUR };
 }
 
-function calculateAnalytics(input = {}) {
-  const nowMs = new Date(input.now || Date.now()).getTime();
-  const hourly = (input.hourly || []).map(row => ({
+function calculateHourlyProduction(hourlyRows, now = Date.now()) {
+  const nowMs = new Date(now).getTime();
+  const hourly = (hourlyRows || []).map(row => ({
     at: new Date(row.bucket).getTime(), value: number(row.value ?? row.mined), observed: row.observed !== false && (row.observed === true || number(row.value ?? row.mined) > 0)
   })).filter(row => Number.isFinite(row.at) && row.at <= nowMs).sort((a, b) => a.at - b.at);
   const firstObserved = hourly.find(row => row.observed)?.at;
   const completed = firstObserved == null ? [] : hourly.filter(row => row.at >= firstObserved && row.at + HOUR <= nowMs && row.at >= nowMs - 7 * 24 * HOUR);
-  const activeHours = completed.length;
+  const sampleHours = completed.length;
   const mined = completed.reduce((sum, row) => sum + row.value, 0);
-  const rawRate = activeHours ? mined / activeHours : 0;
+  return { hourly, completed, sampleHours, rawRate: sampleHours ? mined / sampleHours : 0 };
+}
+
+function calculateAnalytics(input = {}) {
+  const nowMs = new Date(input.now || Date.now()).getTime();
+  const production = calculateHourlyProduction(input.hourly, nowMs);
+  const { completed } = production;
+  const sampleHoursOverride = input.productionSampleHours == null ? null : number(input.productionSampleHours);
+  const rateOverride = input.productionRate == null ? null : number(input.productionRate);
+  const adjustedRateOverride = input.adjustedProductionRate == null ? null : number(input.adjustedProductionRate);
+  const activeHours = sampleHoursOverride == null ? production.sampleHours : Math.max(0, sampleHoursOverride);
+  const rawRate = rateOverride == null ? production.rawRate : Math.max(0, rateOverride);
   const downtime = calculateDowntime(input.annotations, nowMs - 7 * 24 * HOUR, nowMs, { accountCount:input.accountCount });
   const uptime = Math.max(0, 1 - downtime.percent / 100);
-  const adjustedRate = rawRate * uptime;
+  const adjustedRate = adjustedRateOverride == null ? rawRate * uptime : Math.max(0, adjustedRateOverride);
   const forecastConfidence = confidence(activeHours, 'recorded downtime is included');
   const state = input.farm || {};
   const blocksPerPickaxe = number(state.blocksPerPickaxe) || (number(state.retiredPickaxes) > 0
@@ -198,4 +209,4 @@ function calculateAnalytics(input = {}) {
   };
 }
 
-module.exports = { calculateAnalytics, calculateDowntime, summarizeSupplies, confidence };
+module.exports = { calculateAnalytics, calculateDowntime, calculateHourlyProduction, summarizeSupplies, confidence };

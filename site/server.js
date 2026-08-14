@@ -14,7 +14,7 @@ const { ensureAccountColumns } = require('./accounts/account-schema');
 const { assertModuleAvailable } = require('./accounts/module-policy');
 const { runMigrations } = require('./migrations');
 const { SseHub, handleSseRequest } = require('./sse');
-const { calculateAnalytics } = require('./obsidian-analytics');
+const { calculateAnalytics, calculateDowntime, calculateHourlyProduction } = require('./obsidian-analytics');
 const { eventTypeFromLog, newCorrelationId, recordOperationalEvent, severityFromLevel } = require('./operational-events');
 const { assertTimelineAccess, normalizeTimelineFilters, queryTimeline } = require('./incident-timeline');
 const { EVENT_TYPES: PUSH_EVENT_TYPES, WebPushService } = require('./web-push');
@@ -2256,6 +2256,33 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
     : farmPayload;
   const analyticsAnnotations = activeAccountRows(annotations);
   const analyticsToolUsage = activeAccountRows(toolUsageResult.rows);
+  const analyticsNow = new Date();
+  const accountProduction = aggregate
+    ? [...activeAccountIds].map(activeId => {
+        const accountHourly = aggregateObsidianAccountSeries(hourlyTotals, hourlyAccountResult.rows, new Set([activeId]));
+        const production = calculateHourlyProduction(accountHourly, analyticsNow);
+        const accountAnnotations = analyticsAnnotations.filter(row => String(row.accountId ?? row.account_id) === activeId);
+        const downtime = calculateDowntime(
+          accountAnnotations,
+          analyticsNow.getTime() - 7 * 24 * 60 * 60 * 1000,
+          analyticsNow.getTime()
+        );
+        return {
+          rawRate: production.rawRate,
+          adjustedRate: production.rawRate * Math.max(0, 1 - downtime.percent / 100),
+          sampleHours: production.sampleHours
+        };
+      })
+    : [];
+  const aggregateProduction = aggregate
+    ? {
+        productionRate: accountProduction.reduce((sum, item) => sum + item.rawRate, 0),
+        adjustedProductionRate: accountProduction.reduce((sum, item) => sum + item.adjustedRate, 0),
+        productionSampleHours: accountProduction.length
+          ? Math.min(...accountProduction.map(item => item.sampleHours))
+          : 0
+      }
+    : {};
   return {
     scope: aggregate ? 'all' : 'personal',
     accountId,
@@ -2270,7 +2297,8 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
     settings: { timezone, dailyReportEnabled: settings.daily_report_enabled, dailyReportHour: settings.daily_report_hour },
     goals,
     annotations,
-    analytics: calculateAnalytics({ farm: analyticsFarm, hourly: analyticsHourly, supplies, goals, annotations: analyticsAnnotations, accountCount,
+    analytics: calculateAnalytics({ farm: analyticsFarm, hourly: analyticsHourly, supplies, goals, annotations: analyticsAnnotations, accountCount, now: analyticsNow,
+      ...aggregateProduction,
       supplyHistory, toolUsage: analyticsToolUsage, tps: tpsResult.rows,
       comparison: { today: comparison.today, yesterdayComparable: comparison.yesterday_comparable, yesterday: comparison.yesterday, week: comparison.week, previousWeek: comparison.previous_week } })
   };

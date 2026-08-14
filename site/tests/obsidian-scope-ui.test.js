@@ -46,6 +46,8 @@ assert.match(serverSource, /obsidian_farm_supply_snapshot snapshot[\s\S]*?runtim
   'All Bots refill estimates include only connected accounts with a fresh heartbeat and an active Obsidian loop');
 assert.match(serverSource, /activeAccountResult[\s\S]*?JOIN bot_account_runtime_state runtime[\s\S]*?runtime\.current_task='obsidian'[\s\S]*?activeAccountIds[\s\S]*?aggregateObsidianAccountSeries\(hourlyTotals, hourlyAccountResult\.rows, activeAccountIds\)/,
   'All Bots efficiency uses hourly production from only currently active Obsidian accounts');
+assert.match(serverSource, /accountProduction = aggregate[\s\S]*?new Set\(\[activeId\]\)[\s\S]*?calculateHourlyProduction\(accountHourly, analyticsNow\)[\s\S]*?productionRate: accountProduction\.reduce[\s\S]*?productionSampleHours:[\s\S]*?Math\.min/,
+  'All Bots sums independently normalized active-account rates and uses the shortest observation window for confidence');
 assert.match(serverSource, /aggregateSupplyHistory\(activeAccountRows\(supplyHistoryResult\.rows\)\)[\s\S]*?analyticsAnnotations = activeAccountRows\(annotations\)[\s\S]*?analyticsToolUsage = activeAccountRows\(toolUsageResult\.rows\)/,
   'All Bots forecast and downtime use supply, tool, and event history from the same active accounts');
 assert.match(serverSource, /farm\.sessionPerHour = activeFarmRows[\s\S]*?accountCount = aggregate[\s\S]*?activeAccountIds\.size/,

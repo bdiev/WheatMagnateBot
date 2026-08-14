@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const { calculateAnalytics, calculateDowntime } = require('../obsidian-analytics');
+const { calculateAnalytics, calculateDowntime, calculateHourlyProduction } = require('../obsidian-analytics');
 
 const HOUR = 3_600_000;
 const now = new Date('2026-07-19T12:30:00Z');
@@ -21,6 +21,27 @@ const bucket = hoursAgo => new Date(now.getTime() - hoursAgo * HOUR).toISOString
   assert.equal(result.efficiency.obsidianPerHour, 100, 'partial current hour must be excluded');
   assert.equal(result.forecast.confidence.level, 'medium');
   assert.equal(result.forecast.expected24h, 2400);
+}
+
+{
+  const primary = calculateHourlyProduction(
+    Array.from({ length: 25 }, (_, index) => ({ bucket: bucket(index + 1), value: 1100, observed: true })),
+    now
+  );
+  const secondary = calculateHourlyProduction(
+    Array.from({ length: 12 }, (_, index) => ({ bucket: bucket(index + 1), value: 1200, observed: true })),
+    now
+  );
+  const result = calculateAnalytics({
+    now,
+    hourly: [],
+    productionRate: primary.rawRate + secondary.rawRate,
+    adjustedProductionRate: 2200,
+    productionSampleHours: Math.min(primary.sampleHours, secondary.sampleHours)
+  });
+  assert.equal(result.efficiency.obsidianPerHour, 2300, 'All Bots sums each active bot\'s independently normalized hourly rate');
+  assert.equal(result.forecast.confidence.sampleHours, 12, 'aggregate confidence uses the least-observed active bot');
+  assert.equal(result.forecast.expected24h, 52800, 'aggregate forecast sums per-account downtime-adjusted rates');
 }
 
 {
