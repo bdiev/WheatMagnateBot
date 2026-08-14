@@ -49,6 +49,7 @@ const state = {
   playerProfileRegistrationAgeMode: false,
   playerProfileLastPayload: null,
   playerProfileSessionTimer: null,
+  playerProfileRevealTimer: null,
   playtimeLeaderboardScope: 'global',
   playtimeLeaderboards: { global: [], whitelisted: [] },
   whisperSearchPlayers: [],
@@ -293,7 +294,7 @@ async function saveAccountSettings(event) {
     state.playerProfileSignature = '';
     state.chartScrollInitialized = {};
     if (state.playerProfileLastPayload && !$('#playerProfileOverlay')?.hidden) {
-      $('#playerProfileContent').innerHTML = renderPlayerProfile(state.playerProfileLastPayload);
+      replacePlayerProfileContent(state.playerProfileLastPayload);
       state.playerProfileSignature = playerProfileSignature(state.playerProfileLastPayload);
     }
     await loadAll();
@@ -2670,6 +2671,45 @@ function registrationProfileValue(profile) {
   return state.playerProfileRegistrationAgeMode ? formatRegistrationAge(profile.registrationAt) : dateText;
 }
 
+function renderPlayerProfileSkeleton() {
+  const metricCards = Array.from({ length: 8 }, () => `
+    <div class="player-profile-skeleton-card">
+      <span class="profile-skeleton-line short"></span>
+      <span class="profile-skeleton-line value"></span>
+    </div>`).join('');
+  const sessionRows = Array.from({ length: 3 }, () => `
+    <div class="player-profile-skeleton-session">
+      <span class="profile-skeleton-dot"></span>
+      <span class="profile-skeleton-line"></span>
+      <span class="profile-skeleton-line duration"></span>
+    </div>`).join('');
+  return `
+    <div class="player-profile-skeleton" aria-hidden="true">
+      <header class="player-profile-skeleton-head">
+        <span class="profile-skeleton-avatar"></span>
+        <div>
+          <span class="profile-skeleton-line title"></span>
+          <span class="profile-skeleton-line badge"></span>
+          <span class="profile-skeleton-line meta"></span>
+        </div>
+        <div class="player-profile-skeleton-actions">
+          <span></span><span></span><span></span><span></span>
+        </div>
+      </header>
+      <section class="player-profile-skeleton-grid">${metricCards}</section>
+      <section class="player-profile-skeleton-section">
+        <span class="profile-skeleton-line heading"></span>
+        <div class="player-profile-skeleton-sessions">${sessionRows}</div>
+      </section>
+      <section class="player-profile-skeleton-section chat">
+        <span class="profile-skeleton-line heading"></span>
+        <span class="profile-skeleton-chat-row"></span>
+        <span class="profile-skeleton-chat-row"></span>
+      </section>
+    </div>
+    <span class="visually-hidden" role="status">Loading player profile...</span>`;
+}
+
 function renderPlayerProfile(profile) {
   const recentMessages = profile.chat?.recentMessages || [];
   const gameSessions = Array.isArray(profile.gameSessions) ? profile.gameSessions : [];
@@ -2883,6 +2923,23 @@ function startPlayerProfileSessionClock() {
   }
 }
 
+function replacePlayerProfileContent(profile, { animate = false } = {}) {
+  const content = $('#playerProfileContent');
+  if (!content) return;
+  clearTimeout(state.playerProfileRevealTimer);
+  state.playerProfileRevealTimer = null;
+  content.classList.remove('is-loading', 'profile-data-enter');
+  content.innerHTML = renderPlayerProfile(profile);
+  startPlayerProfileSessionClock();
+  if (!animate) return;
+  void content.offsetWidth;
+  content.classList.add('profile-data-enter');
+  state.playerProfileRevealTimer = setTimeout(() => {
+    content.classList.remove('profile-data-enter');
+    state.playerProfileRevealTimer = null;
+  }, 620);
+}
+
 async function loadPlayerProfile(username, { showLoading = false } = {}) {
   const overlay = $('#playerProfileOverlay');
   const content = $('#playerProfileContent');
@@ -2892,22 +2949,20 @@ async function loadPlayerProfile(username, { showLoading = false } = {}) {
   document.body.classList.add('profile-open');
   state.playerProfileUsername = username;
   if (showLoading) {
-    content.innerHTML = `
-    <div class="player-profile-loading">
-      ${playerIdentity(username, 40)}
-      <span>Loading player profile...</span>
-    </div>
-  `;
+    stopPlayerProfileSessionClock();
+    content.classList.remove('profile-data-enter');
+    content.classList.add('is-loading');
+    content.innerHTML = renderPlayerProfileSkeleton();
   }
 
   try {
-    let profile = await fetchJson(`/api/player?username=${encodeURIComponent(username)}&messageLimit=100`);
+    let profile = await fetchJson(`/api/player?username=${encodeURIComponent(username)}&messageLimit=20`);
     const previous = state.playerProfileLastPayload;
     if (previous && String(previous.username).toLowerCase() === String(profile.username).toLowerCase()) {
       const merged = [...(profile.chat?.recentMessages || []), ...(previous.chat?.recentMessages || [])];
       profile.chat.recentMessages = [...new Map(merged.map(message => [String(message.id), message])).values()]
         .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-      if (previous.chat?.recentMessages?.length > 100) {
+      if (previous.chat?.recentMessages?.length > 20) {
         profile.chat.hasMoreMessages = previous.chat.hasMoreMessages;
         profile.chat.nextBeforeMessageId = previous.chat.nextBeforeMessageId;
       }
@@ -2915,13 +2970,13 @@ async function loadPlayerProfile(username, { showLoading = false } = {}) {
     state.playerProfileLastPayload = profile;
     const signature = playerProfileSignature(profile);
     if (state.playerProfileSignature !== signature) {
-      content.innerHTML = renderPlayerProfile(profile);
-      startPlayerProfileSessionClock();
+      replacePlayerProfileContent(profile, { animate: content.classList.contains('is-loading') });
       state.playerProfileSignature = signature;
       state.playerProfileUsername = profile.username || username;
     }
   } catch (err) {
     stopPlayerProfileSessionClock();
+    content.classList.remove('is-loading', 'profile-data-enter');
     content.innerHTML = `<div class="empty">Could not load player profile: ${escapeHtml(err.message)}</div>`;
   }
 }
@@ -2938,6 +2993,8 @@ function closePlayerProfile() {
   if (!overlay) return;
   overlay.hidden = true;
   stopPlayerProfileSessionClock();
+  clearTimeout(state.playerProfileRevealTimer);
+  state.playerProfileRevealTimer = null;
   document.body.classList.remove('profile-open');
   state.playerProfileUsername = null;
   state.playerProfileSignature = '';
@@ -3010,8 +3067,7 @@ async function handlePlayerProfileClick(event) {
       const isWhitelisted = action === 'whitelist_add';
       state.playerProfileLastPayload.isWhitelisted = isWhitelisted;
       state.playerProfileSignature = '';
-      const content = $('#playerProfileContent');
-      if (content) content.innerHTML = renderPlayerProfile(state.playerProfileLastPayload);
+      replacePlayerProfileContent(state.playerProfileLastPayload);
       setBanner(`${username} ${isWhitelisted ? 'added to' : 'removed from'} whitelist.`);
       scheduleAdminControlRefresh();
     } catch (err) {
@@ -3036,8 +3092,7 @@ async function handlePlayerProfileClick(event) {
       });
       state.playerProfileLastPayload.isIgnored = action === 'ignore_chat';
       state.playerProfileSignature = '';
-      const content = $('#playerProfileContent');
-      if (content) content.innerHTML = renderPlayerProfile(state.playerProfileLastPayload);
+      replacePlayerProfileContent(state.playerProfileLastPayload);
       scheduleAdminControlRefresh();
     } catch (err) {
       ignoreButton.disabled = false;
@@ -3052,8 +3107,7 @@ async function handlePlayerProfileClick(event) {
   state.playerProfileRegistrationAgeMode = !state.playerProfileRegistrationAgeMode;
   state.playerProfileSignature = '';
   if (state.playerProfileLastPayload) {
-    const content = $('#playerProfileContent');
-    if (content) content.innerHTML = renderPlayerProfile(state.playerProfileLastPayload);
+    replacePlayerProfileContent(state.playerProfileLastPayload);
   }
 }
 
@@ -4937,7 +4991,7 @@ async function loadMorePlayerMessages(button) {
     profile.chat.hasMoreMessages = page.chat?.hasMoreMessages;
     profile.chat.nextBeforeMessageId = page.chat?.nextBeforeMessageId;
     state.playerProfileSignature = '';
-    $('#playerProfileContent').innerHTML = renderPlayerProfile(profile);
+    replacePlayerProfileContent(profile);
   } catch (err) {
     setBanner(`Could not load older chat messages: ${err.message}`);
     button.disabled = false;

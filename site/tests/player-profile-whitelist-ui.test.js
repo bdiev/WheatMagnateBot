@@ -19,7 +19,7 @@ assert.match(
 );
 assert.match(
   appSource,
-  /isWhitelisted = action === 'whitelist_add';[\s\S]*state\.playerProfileLastPayload\.isWhitelisted = isWhitelisted;[\s\S]*renderPlayerProfile\(state\.playerProfileLastPayload\)/,
+  /isWhitelisted = action === 'whitelist_add';[\s\S]*state\.playerProfileLastPayload\.isWhitelisted = isWhitelisted;[\s\S]*replacePlayerProfileContent\(state\.playerProfileLastPayload\)/,
   'the card must immediately reflect a successful whitelist addition or removal'
 );
 assert.match(

@@ -32,6 +32,7 @@ assert.equal(fallbackCurrent[0].durationSeconds, 900, 'an online profile must us
 const appSource = fs.readFileSync(path.resolve(__dirname, '..', 'public', 'app.js'), 'utf8');
 const stylesSource = fs.readFileSync(path.resolve(__dirname, '..', 'public', 'styles.css'), 'utf8');
 const serverSource = fs.readFileSync(path.resolve(__dirname, '..', 'server.js'), 'utf8');
+const migrationSource = fs.readFileSync(path.resolve(__dirname, '..', 'migrations', '029_player_profile_session_indexes.sql'), 'utf8');
 
 assert.match(serverSource, /FROM operational_events[\s\S]*UNION ALL[\s\S]*FROM operational_events_archive[\s\S]*LIMIT 500/,
   'player profiles must load recent and archived join/leave transitions');
@@ -45,5 +46,15 @@ assert.match(appSource, /function closePlayerProfile\(\)[\s\S]*?stopPlayerProfil
   'closing the profile must stop its session clock');
 assert.match(appSource, /type === 'player_joined' \|\| type === 'player_left'[\s\S]*?player-profile-activity[\s\S]*?loadPlayerProfile/,
   'join and leave events must refresh an open matching profile');
+assert.match(appSource, /function renderPlayerProfileSkeleton\(\)[\s\S]*?player-profile-skeleton-head[\s\S]*?player-profile-skeleton-grid[\s\S]*?player-profile-skeleton-sessions/,
+  'the profile must open immediately with a full-size structural skeleton');
+assert.match(appSource, /messageLimit=20[\s\S]*?replacePlayerProfileContent\(profile, \{ animate: content\.classList\.contains\('is-loading'\) \}\)/,
+  'initial profiles should load a smaller chat page and animate from the skeleton');
+assert.match(stylesSource, /player-profile-skeleton-shimmer[\s\S]*?player-profile-data-reveal/,
+  'loading placeholders and resolved profile data must both be animated');
+assert.match(serverSource, /sessionResourceKeys = aliases\.map[\s\S]*?LOWER\(resource_key\)=ANY\(\$1::text\[\]\)/,
+  'session history must use its indexed resource key instead of scanning event JSON');
+assert.match(migrationSource, /operational_events_player_session_resource_idx[\s\S]*?operational_events_archive_player_session_resource_idx/,
+  'active and archived session events must both have profile lookup indexes');
 
 console.log('Player game session tests passed.');

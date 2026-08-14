@@ -2945,6 +2945,7 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
     currentUsername.toLowerCase(),
     ...((identity?.aliases || []).map(alias => String(alias).toLowerCase()))
   ])];
+  const sessionResourceKeys = aliases.map(alias => `player:${alias}`);
 
   const [profileResult, chatResult, recentChatResult, nearbyResult, ignoredResult, namesResult, gameSessionEventsResult] = await Promise.all([
     pool.query(`
@@ -3036,29 +3037,17 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
         FROM operational_events
         WHERE source='player_activity'
           AND event_type IN ('player_joined','player_left')
-          AND (
-            LOWER(COALESCE(actor,''))=ANY($1::text[])
-            OR LOWER(COALESCE(details->>'username',''))=ANY($1::text[])
-            OR LOWER(COALESCE(resource_key,''))=ANY(
-              ARRAY(SELECT 'player:' || name FROM UNNEST($1::text[]) AS known_name(name))
-            )
-          )
+          AND LOWER(resource_key)=ANY($1::text[])
         UNION ALL
         SELECT event_type,occurred_at,id
         FROM operational_events_archive
         WHERE source='player_activity'
           AND event_type IN ('player_joined','player_left')
-          AND (
-            LOWER(COALESCE(actor,''))=ANY($1::text[])
-            OR LOWER(COALESCE(details->>'username',''))=ANY($1::text[])
-            OR LOWER(COALESCE(resource_key,''))=ANY(
-              ARRAY(SELECT 'player:' || name FROM UNNEST($1::text[]) AS known_name(name))
-            )
-          )
+          AND LOWER(resource_key)=ANY($1::text[])
       ) session_events
       ORDER BY occurred_at DESC,id DESC
       LIMIT 500
-    `, [aliases])
+    `, [sessionResourceKeys])
   ]);
 
   const profile = profileResult.rows[0] || { username };
