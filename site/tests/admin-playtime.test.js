@@ -59,20 +59,19 @@ function testUiFeedback() {
   const app = fs.readFileSync(path.join(root, 'site', 'public', 'app.js'), 'utf8');
   const styles = fs.readFileSync(path.join(root, 'site', 'public', 'styles.css'), 'utf8');
 
-  assert.match(html, /id="adminPlayerDataNotice"[^>]*role="status"[^>]*aria-live="polite"/,
-    'playtime updates must expose visible status feedback');
   assert.match(html, /id="adminDataToast"[^>]*role="status"[^>]*aria-live="polite"[\s\S]*id="adminDataToastTitle"[\s\S]*id="adminDataToastMessage"/,
     'playtime and registration updates must expose a centered toast');
-  assert.match(app, /function setAdminPlayerDataNotice[\s\S]*notice\.hidden = !message/);
-  assert.match(app, /action === 'playtime_set'[\s\S]*Updating player playtime[\s\S]*Updated \$\{result\.username\} playtime/);
+  assert.doesNotMatch(html, /id="adminPlayerDataNotice"/,
+    'the old inline confirmation must not duplicate toast notifications');
+  assert.doesNotMatch(app, /setAdminPlayerDataNotice/,
+    'player-data results must have a single notification path');
   assert.match(app, /title:'Playtime updated'[\s\S]*title:'Registration date updated'/,
     'both player-data actions must show successful toast notifications');
   assert.match(app, /kind:'error'[\s\S]*Could not update playtime[\s\S]*Could not update registration date/,
     'failed player-data actions must show their reason in an error toast');
   assert.match(app, /#adminPlaytimeInput'[\s\S]*event\.key !== 'Enter'[\s\S]*\.click\(\)/,
     'pressing Enter in the playtime field must submit it');
-  assert.match(styles, /\.admin-player-data-notice\s*\{[\s\S]*grid-column:\s*1 \/ -1/);
-  assert.match(styles, /\.admin-player-data-notice\[data-kind="error"\]/);
+  assert.doesNotMatch(styles, /\.admin-player-data-notice/);
   assert.match(styles, /\.admin-data-toast\[data-kind="success"\][\s\S]*#48b978/,
     'successful player-data updates must have a styled success state');
   assert.match(styles, /\.admin-data-toast\.visible\s*\{[\s\S]*admin-data-toast-enter/,

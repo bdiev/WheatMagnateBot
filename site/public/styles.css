@@ -4787,23 +4787,6 @@ body.modal-open { overflow:hidden; }
   padding: 14px;
 }
 
-.admin-player-data-notice {
-  grid-column: 1 / -1;
-  margin: 0;
-  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--line));
-  border-radius: var(--button-radius);
-  padding: 10px 12px;
-  color: var(--text);
-  background: color-mix(in srgb, var(--accent) 9%, var(--panel-soft));
-  animation: adminActionIn 220ms ease both;
-}
-
-.admin-player-data-notice[data-kind="error"] {
-  border-color: color-mix(in srgb, #d04a4a 48%, var(--line));
-  color: color-mix(in srgb, #ffb8b8 78%, var(--text));
-  background: color-mix(in srgb, #8b1f1f 22%, var(--panel));
-}
-
 .coordinate-control-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(72px, 1fr)) auto;

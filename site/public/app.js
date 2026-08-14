@@ -6179,14 +6179,6 @@ async function queueAdminCommand(commandType, payload = {}) {
   return result;
 }
 
-function setAdminPlayerDataNotice(message, kind = 'status') {
-  const notice = $('#adminPlayerDataNotice');
-  if (!notice) return;
-  notice.textContent = String(message || '');
-  notice.dataset.kind = kind;
-  notice.hidden = !message;
-}
-
 async function handleAdminControlAction(event) {
   const button = event.target.closest('[data-admin-control-action]');
   if (!button) return;
@@ -6235,10 +6227,8 @@ async function handleAdminControlAction(event) {
 
     button.disabled = true;
     if (action === 'playtime_set') {
-      setAdminPlayerDataNotice('Updating player playtime...');
       const result = await postJson('/api/admin/playtime', payload);
       $('#adminPlaytimeInput').value = '';
-      setAdminPlayerDataNotice(`Updated ${result.username} playtime to ${result.playtime}.`);
       showAdminDataToast({
         title:'Playtime updated',
         message:`${result.username} now has ${result.playtime}.`
@@ -6249,10 +6239,8 @@ async function handleAdminControlAction(event) {
       return;
     }
     if (action === 'registration_date_set') {
-      setAdminPlayerDataNotice('Updating player registration date...');
       const result = await postJson('/api/admin/registration-date', payload);
       $('#adminRegistrationDateInput').value = '';
-      setAdminPlayerDataNotice(`Updated ${result.username} registration date to ${result.registrationDisplay}.`);
       showAdminDataToast({
         title:'Registration date updated',
         message:`${result.username}: ${result.registrationDisplay}.`
@@ -6275,7 +6263,6 @@ async function handleAdminControlAction(event) {
     }
   } catch (err) {
     if (['playtime_set', 'registration_date_set'].includes(action)) {
-      setAdminPlayerDataNotice(`Could not update player data: ${err.message}`, 'error');
       showAdminDataToast({
         kind:'error',
         title:action === 'playtime_set' ? 'Could not update playtime' : 'Could not update registration date',
