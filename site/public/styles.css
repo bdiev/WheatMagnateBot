@@ -714,8 +714,7 @@ button:disabled {
 }
 
 .whisper-toast {
-  top: auto;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);
+  bottom: auto;
   border-color: color-mix(in srgb, var(--accent) 52%, var(--line));
   background:
     linear-gradient(110deg, color-mix(in srgb, var(--accent) 14%, var(--panel)) 0%, var(--panel) 58%),
@@ -730,6 +729,43 @@ button:disabled {
   border-color: color-mix(in srgb, var(--accent) 58%, transparent);
   background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 88%, #fff), color-mix(in srgb, var(--accent) 70%, #111));
   box-shadow: 0 7px 18px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.whisper-toast-avatar-frame {
+  position: relative;
+  overflow: hidden;
+  padding: 0;
+}
+
+.whisper-toast-avatar {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  image-rendering: pixelated;
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+
+.whisper-toast-avatar-frame.is-loaded .whisper-toast-avatar {
+  opacity: 1;
+}
+
+.whisper-toast-avatar-fallback {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  font-size: 17px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.whisper-toast-avatar-frame.is-loaded .whisper-toast-avatar-fallback {
+  opacity: 0;
 }
 
 .whisper-toast-open {
@@ -777,6 +813,15 @@ button:disabled {
 
 .farm-launch-toast.visible + .admin-data-toast.visible {
   top: calc(env(safe-area-inset-top, 0px) + 92px);
+}
+
+#farmLaunchToast.visible ~ .whisper-toast.visible,
+#adminDataToast.visible + .whisper-toast.visible {
+  top: calc(env(safe-area-inset-top, 0px) + 92px);
+}
+
+#farmLaunchToast.visible + #adminDataToast.visible + .whisper-toast.visible {
+  top: calc(env(safe-area-inset-top, 0px) + 170px);
 }
 
 @keyframes admin-data-toast-enter {
@@ -834,9 +879,13 @@ button:disabled {
     top: calc(env(safe-area-inset-top, 0px) + 78px);
   }
 
-  .whisper-toast {
-    top: auto;
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
+  #farmLaunchToast.visible ~ .whisper-toast.visible,
+  #adminDataToast.visible + .whisper-toast.visible {
+    top: calc(env(safe-area-inset-top, 0px) + 78px);
+  }
+
+  #farmLaunchToast.visible + #adminDataToast.visible + .whisper-toast.visible {
+    top: calc(env(safe-area-inset-top, 0px) + 148px);
   }
 }
 

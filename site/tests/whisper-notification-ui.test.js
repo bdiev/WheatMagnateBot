@@ -8,12 +8,18 @@ const appSource = fs.readFileSync(path.resolve(__dirname, '..', 'public', 'app.j
 const htmlSource = fs.readFileSync(path.resolve(__dirname, '..', 'public', 'index.html'), 'utf8');
 const stylesSource = fs.readFileSync(path.resolve(__dirname, '..', 'public', 'styles.css'), 'utf8');
 
-assert.match(htmlSource, /id="whisperToast"[^>]*role="status"[\s\S]*?id="whisperToastOpen"[\s\S]*?id="whisperToastPlayer"[\s\S]*?id="whisperToastClose"/,
+assert.match(htmlSource, /id="whisperToast"[^>]*role="status"[\s\S]*?id="whisperToastAvatar"[\s\S]*?id="whisperToastOpen"[\s\S]*?id="whisperToastPlayer"[\s\S]*?id="whisperToastClose"/,
   'the dashboard must expose a clickable, dismissible private-message toast');
-assert.match(stylesSource, /\.whisper-toast\s*\{[\s\S]*?bottom:[\s\S]*?\.whisper-toast-open/,
-  'the private-message toast must have a visible non-blocking layout');
+assert.match(stylesSource, /\.whisper-toast\s*\{[^}]*bottom:\s*auto;/,
+  'the private-message toast must use the shared top-center toast position');
+assert.doesNotMatch(stylesSource, /\.whisper-toast\s*\{[^}]*top:\s*auto;/,
+  'the private-message toast must not override the shared top position');
+assert.match(stylesSource, /\.whisper-toast-avatar\s*\{[\s\S]*?image-rendering:\s*pixelated;[\s\S]*?\.whisper-toast-avatar-frame\.is-loaded/,
+  'the private-message toast must render the Minecraft sender avatar');
 assert.match(appSource, /function showWhisperToast\(payload = \{\}\)[\s\S]*?payload\.direction !== 'incoming'[\s\S]*?whisperToastPlayer[\s\S]*?classList\.add\('visible'\)/,
   'only incoming whisper SSE events should display the toast');
+assert.match(appSource, /whisperToastAvatar[\s\S]*?avatar\.src = playerHeadUrl\(player, 64\)/,
+  'each incoming private message must load the sender Minecraft avatar');
 assert.match(appSource, /async function openWhisperToast\(\)[\s\S]*?openPushDestination\('whispers', payload\.player, payload\.accountId\)/,
   'clicking the toast must reuse the account-aware private-dialog deep link');
 assert.match(appSource, /type === 'whisper_message'[\s\S]*?showWhisperToast\(eventPayload\)[\s\S]*?queueRealtimeRefresh\('whisper'/,

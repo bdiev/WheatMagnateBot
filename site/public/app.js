@@ -977,6 +977,21 @@ function showWhisperToast(payload = {}) {
   clearTimeout(state.whisperToastHideTimer);
   state.whisperToastHideTimer = null;
   $('#whisperToastPlayer').textContent = player;
+  const avatarFrame = $('#whisperToastAvatarFrame');
+  const avatar = $('#whisperToastAvatar');
+  const avatarFallback = $('#whisperToastAvatarFallback');
+  if (avatarFrame && avatar && avatarFallback) {
+    avatarFrame.classList.remove('is-loaded');
+    avatarFallback.textContent = player.charAt(0).toUpperCase() || '?';
+    avatar.hidden = false;
+    avatar.onload = () => avatarFrame.classList.add('is-loaded');
+    avatar.onerror = () => {
+      avatarFrame.classList.remove('is-loaded');
+      avatar.hidden = true;
+    };
+    avatar.src = playerHeadUrl(player, 64);
+    if (avatar.complete && avatar.naturalWidth > 0) avatarFrame.classList.add('is-loaded');
+  }
   toast.classList.remove('visible');
   toast.hidden = false;
   void toast.offsetWidth;
