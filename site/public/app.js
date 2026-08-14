@@ -896,8 +896,14 @@ function applyAccountTabScope(account) {
   if (childTab) childTab.hidden = restricted || state.currentUser?.role !== 'admin';
   $$('[data-primary-only]').forEach(element => { element.hidden = restricted; });
   const whisperPanel = $('#whisperPanel');
-  if (whisperPanel) whisperPanel.hidden = restricted;
   if (restricted) setWhisperOpen(false);
+  if (whisperPanel) {
+    whisperPanel.classList.toggle('account-scope-hidden', restricted);
+    whisperPanel.setAttribute('aria-hidden', String(restricted));
+    whisperPanel.inert = restricted;
+    const whisperToggle = $('#whisperToggle');
+    if (whisperToggle) whisperToggle.disabled = restricted;
+  }
   document.body.classList.toggle('secondary-account-active', restricted);
   updateObsidianStatsScopeVisibility();
   updateObsidianFarmControlsVisibility();

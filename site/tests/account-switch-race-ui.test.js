@@ -11,8 +11,12 @@ assert.doesNotMatch(source, /dataset\.accountLabel/, 'the header does not render
 assert.doesNotMatch(styles, /data-account-label/, 'the selected-account header badge styling is removed');
 assert.match(source, /const accountId=avatar\.dataset\.accountId;[\s\S]*?selectAccount\(accountId\);[\s\S]*?setMobileAccountSwitcherOpen\(false\);/,
   'mobile profile taps capture and select the account before collapsing the switcher');
-assert.match(styles, /grid-template-columns:\s*var\(--button-height\) var\(--button-height\) var\(--button-height\) minmax\(0, 1fr\) 74px;[\s\S]*?#themeToggle\s*\{[\s\S]*?grid-column:\s*5;[\s\S]*?#logoutButton\s*\{[\s\S]*?grid-column:\s*4;/,
-  'the phone header gives Log out the wide slot before the theme toggle');
+assert.match(styles, /\.topbar-actions\s*\{[\s\S]*?display:\s*flex;[\s\S]*?flex-wrap:\s*wrap;[\s\S]*?\.topbar-actions #themeToggle\s*\{[\s\S]*?flex:\s*0 0 74px;[\s\S]*?\.topbar-actions #logoutButton\s*\{[\s\S]*?flex:\s*1 1 0;/,
+  'the phone header lets Log out grow before the fixed-width theme toggle');
+assert.match(source, /whisperPanel\.classList\.toggle\('account-scope-hidden', restricted\)/,
+  'secondary accounts must collapse the primary-only dialogs control');
+assert.match(styles, /\.whisper-panel\.account-scope-hidden\s*\{[\s\S]*?flex-basis:\s*0;[\s\S]*?margin-right:\s*-10px;[\s\S]*?opacity:\s*0;/,
+  'the dialogs slot must animate closed without leaving the flex gap behind');
 assert.match(styles, /body\.account-switcher-open \.topbar\s*\{\s*z-index:\s*180;\s*\}[\s\S]*?\.account-switcher-backdrop\s*\{[^}]*z-index:\s*150;/,
   'the expanded phone account menu stays above its blurred backdrop');
 

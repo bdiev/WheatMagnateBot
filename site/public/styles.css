@@ -141,7 +141,8 @@ html.page-transition-leaving body {
   html.page-transition-leaving body,
   .dashboard-brand,
   .topbar,
-  .topbar::before {
+  .topbar::before,
+  .whisper-panel {
     animation: none !important;
     transition: none !important;
   }
@@ -1278,9 +1279,35 @@ body.search-focus-active #logoutButton {
 .whisper-panel {
   position: relative;
   z-index: 70;
+  flex: 0 0 var(--button-height);
   width: var(--button-height);
+  min-width: var(--button-height);
+  max-width: var(--button-height);
   height: var(--button-height);
   align-self: center;
+  transform-origin: center;
+  transition:
+    flex-basis 260ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    width 260ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    min-width 260ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    max-width 260ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    margin-right 260ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 160ms ease,
+    transform 220ms ease,
+    visibility 0s linear 0s;
+}
+
+.whisper-panel.account-scope-hidden {
+  flex-basis: 0;
+  width: 0;
+  min-width: 0;
+  max-width: 0;
+  margin-right: -10px;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: scale(0.72);
+  transition-delay: 0s, 0s, 0s, 0s, 0s, 0s, 0s, 260ms;
 }
 
 @keyframes whisper-popover-in {
@@ -5761,8 +5788,8 @@ body.modal-open { overflow:hidden; }
 
   .topbar-actions {
     position: relative;
-    display: grid;
-    grid-template-columns: var(--button-height) var(--button-height) var(--button-height) minmax(0, 1fr) 74px;
+    display: flex;
+    flex-wrap: wrap;
     gap: 10px;
     width: 100%;
     align-items: center;
@@ -5775,11 +5802,9 @@ body.modal-open { overflow:hidden; }
   }
 
   .topbar-actions .nav-menu {
-    grid-column: 1 / -1;
-    grid-row: 1;
+    flex: 0 0 100%;
     width: 100%;
     max-width: none;
-    flex: none;
     z-index: 30;
   }
 
@@ -5792,7 +5817,6 @@ body.modal-open { overflow:hidden; }
   .topbar-actions #themeToggle,
   .topbar-actions #logoutButton {
     position: relative;
-    grid-row: 2;
     z-index: 1;
   }
 
@@ -5802,29 +5826,32 @@ body.modal-open { overflow:hidden; }
   }
 
   .topbar-actions .whisper-panel {
-    grid-column: 1;
+    flex: 0 0 var(--button-height);
+  }
+
+  .topbar-actions .whisper-panel.account-scope-hidden {
+    flex-basis: 0;
   }
 
   .topbar-actions .seen-search {
-    grid-column: 2;
+    flex: 0 0 var(--button-height);
   }
 
   .topbar-actions .account-switcher {
     position: relative;
-    grid-column: 3;
-    grid-row: 2;
+    flex: 0 0 var(--button-height);
     z-index: 110;
   }
 
   .topbar-actions #themeToggle {
-    grid-column: 5;
+    flex: 0 0 74px;
   }
 
   .topbar-actions #logoutButton {
-    grid-column: 4;
+    flex: 1 1 0;
+    min-width: 0;
     width: 100%;
     max-width: none;
-    justify-self: stretch;
   }
 
   .panel-head {
@@ -8330,9 +8357,6 @@ body.kill-aura-modal-open {
 .account-auth-note { padding:11px 12px; border-left:3px solid var(--accent); border-radius:0 10px 10px 0; color:var(--muted); background:var(--panel-soft); font-size:12px; line-height:1.5; }.account-modal-actions { display:flex; justify-content:flex-end; gap:10px; padding-top:2px; }.account-modal-actions button { min-width:112px; }.account-modal-close { position:absolute; top:14px; right:14px; width:34px; min-width:34px; max-width:34px; height:34px; min-height:34px; max-height:34px; padding:0; border:1px solid var(--line); border-radius:50%; color:var(--muted); background:var(--panel-soft); font-size:22px; font-weight:500; }.account-modal-close:hover { color:var(--text); background:color-mix(in srgb,var(--accent) 14%,var(--panel-soft)); border-color:var(--accent); }
 @media (max-width:700px) {
   .realtime-status { display:none!important; }
-  body.account-switching-disabled .topbar-actions { grid-template-columns:var(--button-height) var(--button-height) minmax(0,1fr) 74px; }
-  body.account-switching-disabled .topbar-actions #logoutButton { grid-column:3; }
-  body.account-switching-disabled .topbar-actions #themeToggle { grid-column:4; }
   body.account-switcher-open { overflow:hidden; }
   body.account-switcher-open .topbar { z-index:180; }
   .account-switcher-backdrop { position:fixed; inset:0; z-index:150; background:rgb(8 11 17 / .58); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); transform:translateZ(0); }
