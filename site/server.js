@@ -1939,6 +1939,20 @@ function attachObsidianAccountSegments(items, rows, accounts) {
   });
 }
 
+function aggregateObsidianAccountSeries(items, rows, accountIds) {
+  const allowed = accountIds instanceof Set ? accountIds : new Set(accountIds || []);
+  const valuesByBucket = new Map();
+  for (const row of rows || []) {
+    if (!allowed.has(String(row.account_id))) continue;
+    const bucket = obsidianChartBucketKey(row.bucket);
+    valuesByBucket.set(bucket, (valuesByBucket.get(bucket) || 0) + toInt(row.mined));
+  }
+  return (items || []).map(item => {
+    const bucket = obsidianChartBucketKey(item.bucket);
+    return { ...item, value: valuesByBucket.get(bucket) || 0, observed: valuesByBucket.has(bucket) };
+  });
+}
+
 async function getObsidianStats(currentUser = null, { scope = 'personal', accountId = DEFAULT_MINECRAFT_ACCOUNT_ID, runtimeFarm = null } = {}) {
   assertDatabase();
   const aggregate = scope === 'all';
@@ -1965,7 +1979,7 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
   };
   const timezone = currentUser ? await getAccountTimezone(currentUser.id) : (settings.timezone || 'Europe/Vilnius');
   const managedWhere = `a.is_default=FALSE AND a.deleted_at IS NULL AND ($1::boolean OR stats.account_id=$2::uuid)`;
-  const [primaryFarmResult, managedFarmResult, dailyResult, hourlyResult, supplyResult, supplyHistoryResult, annotationsResult, goalsResult, tpsResult, comparisonResult, toolUsageResult, dailyAccountResult, hourlyAccountResult, accountRateResult] = await Promise.all([
+  const [primaryFarmResult, managedFarmResult, dailyResult, hourlyResult, supplyResult, supplyHistoryResult, annotationsResult, goalsResult, tpsResult, comparisonResult, toolUsageResult, dailyAccountResult, hourlyAccountResult, accountRateResult, activeAccountResult] = await Promise.all([
     includePrimary ? pool.query(`
       SELECT session_mined,total_mined,desired_enabled,session_started_at,
              retired_pickaxes,retired_pickaxe_blocks,target_x,target_y,target_z,target_radius,updated_at
@@ -2098,16 +2112,16 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
       FROM daily
     `, [timezone, includePrimary, aggregate, accountId]),
     pool.query(`
-      SELECT tool_name,blocks_mined,durability_used,remaining_percent,changed_at
+      SELECT $4::uuid AS account_id,tool_name,blocks_mined,durability_used,remaining_percent,changed_at
       FROM obsidian_farm_tool_usage WHERE changed_at>=NOW()-INTERVAL '90 days' AND $1::boolean
       UNION ALL
-      SELECT stats.tool_name,stats.blocks_mined,stats.durability_used,stats.remaining_percent,stats.changed_at
+      SELECT stats.account_id,stats.tool_name,stats.blocks_mined,stats.durability_used,stats.remaining_percent,stats.changed_at
       FROM obsidian_account_farm_tool_usage stats
       JOIN bot_accounts a ON a.id=stats.account_id
       WHERE stats.changed_at>=NOW()-INTERVAL '90 days' AND a.is_default=FALSE AND a.deleted_at IS NULL
         AND ($2::boolean OR stats.account_id=$3::uuid)
       ORDER BY changed_at
-    `, [includePrimary, aggregate, accountId]),
+    `, [includePrimary, aggregate, accountId, DEFAULT_MINECRAFT_ACCOUNT_ID]),
     aggregate ? pool.query(`
       SELECT $1::uuid AS account_id,farm_date::text AS bucket,mined
       FROM obsidian_farm_daily
@@ -2131,17 +2145,31 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
         AND a.is_default=FALSE AND a.deleted_at IS NULL
     `, [DEFAULT_MINECRAFT_ACCOUNT_ID]) : Promise.resolve({ rows: [] }),
     aggregate ? pool.query(`
-      SELECT $1::uuid AS account_id,session_mined,session_started_at,
-             retired_pickaxes,retired_pickaxe_blocks
+      SELECT $1::uuid AS account_id,session_mined,total_mined,desired_enabled,session_started_at,
+             retired_pickaxes,retired_pickaxe_blocks,updated_at
       FROM obsidian_farm_state
       WHERE id=1
       UNION ALL
-      SELECT stats.account_id,stats.session_mined,stats.session_started_at,
-             stats.retired_pickaxes,stats.retired_pickaxe_blocks
+      SELECT stats.account_id,stats.session_mined,stats.total_mined,stats.desired_enabled,stats.session_started_at,
+             stats.retired_pickaxes,stats.retired_pickaxe_blocks,stats.updated_at
       FROM obsidian_account_farm_state stats
       JOIN bot_accounts a ON a.id=stats.account_id
       WHERE a.is_default=FALSE AND a.deleted_at IS NULL
-    `, [DEFAULT_MINECRAFT_ACCOUNT_ID]) : Promise.resolve({ rows: [] })
+    `, [DEFAULT_MINECRAFT_ACCOUNT_ID]) : Promise.resolve({ rows: [] }),
+    aggregate ? pool.query(`
+      SELECT a.id AS account_id
+      FROM bot_accounts a
+      JOIN bot_account_runtime_state runtime ON runtime.account_id=a.id
+      WHERE a.deleted_at IS NULL
+        AND runtime.status='connected'
+        AND runtime.current_task='obsidian'
+        AND runtime.updated_at>=NOW()-INTERVAL '15 seconds'
+        AND runtime.status_payload->>'connected'='true'
+        AND (
+          runtime.status_payload#>>'{modules,obsidianFarm,enabled}'='true'
+          OR runtime.status_payload#>>'{obsidian,enabled}'='true'
+        )
+    `) : Promise.resolve({ rows: [] })
   ]);
 
   const farmRows = [
@@ -2156,8 +2184,13 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
     row.target_radius = runtimeFarm.config.maxCauldronDist;
   }
   const farm = compactFarmState(combineFarmStateRows(farmRows));
+  const activeAccountIds = new Set(activeAccountResult.rows.map(row => String(row.account_id)));
+  const activeAccountRows = rows => aggregate
+    ? (rows || []).filter(row => activeAccountIds.has(String(row.account_id ?? row.accountId)))
+    : (rows || []);
+  const activeFarmRows = activeAccountRows(accountRateResult.rows);
   if (aggregate) {
-    farm.sessionPerHour = accountRateResult.rows
+    farm.sessionPerHour = activeFarmRows
       .reduce((sum, row) => sum + compactFarmState(row).sessionPerHour, 0);
     farm.sessionPerMinute = Number((farm.sessionPerHour / 60).toFixed(1));
   }
@@ -2178,6 +2211,9 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
   const daily = aggregate
     ? attachObsidianAccountSegments(dailyTotals, dailyAccountResult.rows, chartAccounts)
     : dailyTotals;
+  const analyticsHourly = aggregate
+    ? aggregateObsidianAccountSeries(hourlyTotals, hourlyAccountResult.rows, activeAccountIds)
+    : hourly;
   const last7Days = daily.slice(-7).reduce((sum, item) => sum + item.value, 0);
 
   const supplies = normalizeSupplySnapshot(combineRawSupplySnapshots(supplyResult.rows));
@@ -2209,10 +2245,17 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
   farmPayload.running = !aggregate && typeof runtimeFarm?.enabled === 'boolean'
     ? Boolean(runtimeFarm.enabled)
     : null;
-  const supplyHistory = aggregate ? aggregateSupplyHistory(supplyHistoryResult.rows) : supplyHistoryResult.rows;
+  const supplyHistory = aggregate
+    ? aggregateSupplyHistory(activeAccountRows(supplyHistoryResult.rows))
+    : supplyHistoryResult.rows;
   const accountCount = aggregate
-    ? (includePrimary ? 1 : 0) + toInt(managedFarmResult.rows[0]?.account_count)
+    ? activeAccountIds.size
     : 1;
+  const analyticsFarm = aggregate
+    ? { ...compactFarmState(combineFarmStateRows(activeFarmRows)), desiredEnabled: activeAccountIds.size > 0, running: activeAccountIds.size > 0 }
+    : farmPayload;
+  const analyticsAnnotations = activeAccountRows(annotations);
+  const analyticsToolUsage = activeAccountRows(toolUsageResult.rows);
   return {
     scope: aggregate ? 'all' : 'personal',
     accountId,
@@ -2227,8 +2270,8 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
     settings: { timezone, dailyReportEnabled: settings.daily_report_enabled, dailyReportHour: settings.daily_report_hour },
     goals,
     annotations,
-    analytics: calculateAnalytics({ farm: farmPayload, hourly, supplies, goals, annotations, accountCount,
-      supplyHistory, toolUsage: toolUsageResult.rows, tps: tpsResult.rows,
+    analytics: calculateAnalytics({ farm: analyticsFarm, hourly: analyticsHourly, supplies, goals, annotations: analyticsAnnotations, accountCount,
+      supplyHistory, toolUsage: analyticsToolUsage, tps: tpsResult.rows,
       comparison: { today: comparison.today, yesterdayComparable: comparison.yesterday_comparable, yesterday: comparison.yesterday, week: comparison.week, previousWeek: comparison.previous_week } })
   };
 }

@@ -38,12 +38,18 @@ assert.match(appSource, /state\.charts\.obsidianHourly = payload\.hourly[\s\S]*?
   'scope payloads replace both Obsidian chart series');
 assert.match(serverSource, /attachObsidianAccountSegments[\s\S]*?account\.color[\s\S]*?obsidian_account_farm_daily[\s\S]*?obsidian_account_farm_hourly/,
   'All Bots chart points retain ordered account segments and Account colors');
-assert.match(serverSource, /accountRateResult[\s\S]*?obsidian_farm_state[\s\S]*?obsidian_account_farm_state[\s\S]*?farm\.sessionPerHour = accountRateResult\.rows[\s\S]*?compactFarmState\(row\)\.sessionPerHour/,
-  'All Bots Rate is the sum of rates calculated from every bot\'s own session');
+assert.match(serverSource, /accountRateResult[\s\S]*?obsidian_farm_state[\s\S]*?obsidian_account_farm_state[\s\S]*?activeFarmRows = activeAccountRows\(accountRateResult\.rows\)[\s\S]*?farm\.sessionPerHour = activeFarmRows[\s\S]*?compactFarmState\(row\)\.sessionPerHour/,
+  'All Bots Rate is the sum of rates calculated from every active bot\'s own session');
 assert.match(serverSource, /SELECT \$4::uuid AS account_id,snapshot\.supplies[\s\S]*?SELECT stats\.account_id,stats\.supplies[\s\S]*?supplyAccounts = aggregate/,
   'All Bots supplies retain separate snapshots for each account');
 assert.match(serverSource, /obsidian_farm_supply_snapshot snapshot[\s\S]*?runtime\.status='connected'[\s\S]*?runtime\.current_task='obsidian'[\s\S]*?runtime\.updated_at>=NOW\(\)-INTERVAL '15 seconds'[\s\S]*?obsidianFarm,enabled[\s\S]*?obsidian,enabled/,
   'All Bots refill estimates include only connected accounts with a fresh heartbeat and an active Obsidian loop');
+assert.match(serverSource, /activeAccountResult[\s\S]*?JOIN bot_account_runtime_state runtime[\s\S]*?runtime\.current_task='obsidian'[\s\S]*?activeAccountIds[\s\S]*?aggregateObsidianAccountSeries\(hourlyTotals, hourlyAccountResult\.rows, activeAccountIds\)/,
+  'All Bots efficiency uses hourly production from only currently active Obsidian accounts');
+assert.match(serverSource, /aggregateSupplyHistory\(activeAccountRows\(supplyHistoryResult\.rows\)\)[\s\S]*?analyticsAnnotations = activeAccountRows\(annotations\)[\s\S]*?analyticsToolUsage = activeAccountRows\(toolUsageResult\.rows\)/,
+  'All Bots forecast and downtime use supply, tool, and event history from the same active accounts');
+assert.match(serverSource, /farm\.sessionPerHour = activeFarmRows[\s\S]*?accountCount = aggregate[\s\S]*?activeAccountIds\.size/,
+  'All Bots current rate and downtime denominator exclude inactive accounts');
 assert.match(appSource, /payload\.scope === 'all'[\s\S]*?payload\.supplyAccounts\.map[\s\S]*?estimate\.days < current\.days/,
   'All Bots Refill around uses the nearest per-account estimate instead of summed supplies');
 assert.match(appSource, /options\.stacked[\s\S]*?item\.segments[\s\S]*?segment\.color[\s\S]*?fillRect/,
