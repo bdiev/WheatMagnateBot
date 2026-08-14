@@ -96,6 +96,8 @@ const state = {
   farmLaunchToastTimer: null,
   farmLaunchToastHideTimer: null,
   farmLaunchFailureSignatures: {},
+  adminDataToastTimer: null,
+  adminDataToastHideTimer: null,
   killAuraData: null,
   killAuraSelectedMobs: new Set(),
   killAuraModalSelectionSnapshot: new Set(),
@@ -892,6 +894,46 @@ function syncFarmLaunchFailureToast(bot = null) {
   if (reason) reportFarmLaunchFailure(reason, bot);
 }
 
+function hideAdminDataToast({ immediate = false } = {}) {
+  const toast = $('#adminDataToast');
+  clearTimeout(state.adminDataToastTimer);
+  clearTimeout(state.adminDataToastHideTimer);
+  state.adminDataToastTimer = null;
+  state.adminDataToastHideTimer = null;
+  if (!toast) return;
+  toast.classList.remove('visible');
+  if (immediate) {
+    toast.hidden = true;
+    return;
+  }
+  state.adminDataToastHideTimer = setTimeout(() => {
+    if (!toast.classList.contains('visible')) toast.hidden = true;
+    state.adminDataToastHideTimer = null;
+  }, 260);
+}
+
+function showAdminDataToast({ kind = 'success', title, message }) {
+  const toast = $('#adminDataToast');
+  if (!toast) return;
+  const isError = kind === 'error';
+  const durationMs = isError ? 9_000 : 6_000;
+  clearTimeout(state.adminDataToastTimer);
+  clearTimeout(state.adminDataToastHideTimer);
+  state.adminDataToastHideTimer = null;
+  toast.dataset.kind = isError ? 'error' : 'success';
+  toast.setAttribute('role', isError ? 'alert' : 'status');
+  toast.setAttribute('aria-live', isError ? 'assertive' : 'polite');
+  $('#adminDataToastIcon').textContent = isError ? '!' : '✓';
+  $('#adminDataToastTitle').textContent = String(title || (isError ? 'Update failed' : 'Player data updated'));
+  $('#adminDataToastMessage').textContent = String(message || '');
+  toast.style.setProperty('--admin-data-toast-duration', `${durationMs}ms`);
+  toast.classList.remove('visible');
+  toast.hidden = false;
+  void toast.offsetWidth;
+  requestAnimationFrame(() => toast.classList.add('visible'));
+  state.adminDataToastTimer = setTimeout(() => hideAdminDataToast(), durationMs);
+}
+
 async function fetchJson(path, { transientRetries = 0, signal = null } = {}) {
   const accountIdAtStart = state.activeAccountId;
   const scopedToActiveAccount = path.startsWith('/api/')
@@ -1033,6 +1075,7 @@ async function selectAccount(accountId) {
   delete state.realtimeRefreshTimers.whisper;
   state.activeAccountId = accountId;
   hideFarmLaunchFailureToast({ immediate: true });
+  hideAdminDataToast({ immediate: true });
   localStorage.setItem('wm-active-account', accountId);
   state.renderSignatures = {};
   state.adminControlState = null;
@@ -1246,6 +1289,7 @@ function showAuthScreen(message = '') {
   const shell = $('.shell');
   if (authScreen) authScreen.hidden = false;
   if (shell) shell.classList.add('app-locked');
+  hideAdminDataToast({ immediate: true });
   dismissAppLoader();
   if (message) {
     const error = $('#authError');
@@ -6135,6 +6179,14 @@ async function queueAdminCommand(commandType, payload = {}) {
   return result;
 }
 
+function setAdminPlayerDataNotice(message, kind = 'status') {
+  const notice = $('#adminPlayerDataNotice');
+  if (!notice) return;
+  notice.textContent = String(message || '');
+  notice.dataset.kind = kind;
+  notice.hidden = !message;
+}
+
 async function handleAdminControlAction(event) {
   const button = event.target.closest('[data-admin-control-action]');
   if (!button) return;
@@ -6183,17 +6235,31 @@ async function handleAdminControlAction(event) {
 
     button.disabled = true;
     if (action === 'playtime_set') {
+      setAdminPlayerDataNotice('Updating player playtime...');
       const result = await postJson('/api/admin/playtime', payload);
-      setBanner(`Updated ${result.username} playtime to ${result.playtime}.`);
       $('#adminPlaytimeInput').value = '';
-      await Promise.all([loadAll(), loadAdminSystemLogs()]);
+      setAdminPlayerDataNotice(`Updated ${result.username} playtime to ${result.playtime}.`);
+      showAdminDataToast({
+        title:'Playtime updated',
+        message:`${result.username} now has ${result.playtime}.`
+      });
+      await Promise.all([loadAll(), loadAdminSystemLogs()]).catch(error => {
+        console.warn('Playtime was updated, but dashboard refresh failed:', error);
+      });
       return;
     }
     if (action === 'registration_date_set') {
+      setAdminPlayerDataNotice('Updating player registration date...');
       const result = await postJson('/api/admin/registration-date', payload);
-      setBanner(`Updated ${result.username} registration date to ${result.registrationDisplay}.`);
       $('#adminRegistrationDateInput').value = '';
-      await Promise.all([loadAll(), loadAdminSystemLogs()]);
+      setAdminPlayerDataNotice(`Updated ${result.username} registration date to ${result.registrationDisplay}.`);
+      showAdminDataToast({
+        title:'Registration date updated',
+        message:`${result.username}: ${result.registrationDisplay}.`
+      });
+      await Promise.all([loadAll(), loadAdminSystemLogs()]).catch(error => {
+        console.warn('Registration date was updated, but dashboard refresh failed:', error);
+      });
       return;
     }
     await queueAdminCommand(action, payload);
@@ -6209,7 +6275,12 @@ async function handleAdminControlAction(event) {
     }
   } catch (err) {
     if (['playtime_set', 'registration_date_set'].includes(action)) {
-      setBanner(`Could not update player data: ${err.message}`);
+      setAdminPlayerDataNotice(`Could not update player data: ${err.message}`, 'error');
+      showAdminDataToast({
+        kind:'error',
+        title:action === 'playtime_set' ? 'Could not update playtime' : 'Could not update registration date',
+        message:err.message
+      });
     } else {
       console.error(`Could not queue bot command ${action}:`, err);
     }
@@ -7629,6 +7700,7 @@ $('#accountSettingsForm')?.addEventListener('submit', saveAccountSettings);
 $('#accountPasswordForm')?.addEventListener('submit', changeAccountPassword);
 $('#accountNewPassword')?.addEventListener('input', event => updatePasswordStrength('#accountNewPasswordStrength', event.currentTarget.value));
 $('#farmLaunchToastClose')?.addEventListener('click', () => hideFarmLaunchFailureToast());
+$('#adminDataToastClose')?.addEventListener('click', () => hideAdminDataToast());
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.addEventListener('message', event => {
@@ -7638,6 +7710,16 @@ if ('serviceWorker' in navigator) {
 $('#adminUsersList')?.addEventListener('click', handleAdminUserAction);
 document.addEventListener('click', handleAdminBotCommand);
 document.addEventListener('click', handleAdminControlAction);
+for (const [selector, action] of [
+  ['#adminPlaytimeInput', 'playtime_set'],
+  ['#adminRegistrationDateInput', 'registration_date_set']
+]) {
+  $(selector)?.addEventListener('keydown', event => {
+    if (event.key !== 'Enter' || event.isComposing) return;
+    event.preventDefault();
+    document.querySelector(`[data-admin-control-action="${action}"]`)?.click();
+  });
+}
 $('#adminFollowTarget')?.addEventListener('change', updateFollowControl);
 $('#adminWhitelistPlayer')?.addEventListener('input', handleWhitelistPlayerInput);
 $('#adminWhitelistPlayer')?.addEventListener('focus', event => runWhitelistSearch(event.currentTarget.value));

@@ -144,7 +144,11 @@ html.page-transition-leaving body {
   .topbar::before,
   .whisper-panel,
   .farm-launch-toast,
-  .farm-launch-toast-icon {
+  .farm-launch-toast-icon,
+  .admin-data-toast,
+  .admin-data-toast::after,
+  .admin-data-toast .farm-launch-toast-copy > *,
+  .admin-data-toast .farm-launch-toast-close {
     animation: none !important;
     transition: none !important;
   }
@@ -649,6 +653,100 @@ button:disabled {
   background: color-mix(in srgb, #e45656 10%, var(--panel-soft));
 }
 
+.admin-data-toast[data-kind="success"] {
+  --admin-data-toast-accent: #48b978;
+  border-color: color-mix(in srgb, #48b978 52%, var(--line));
+  background:
+    linear-gradient(110deg, color-mix(in srgb, #48b978 13%, var(--panel)) 0%, var(--panel) 58%),
+    var(--panel);
+  box-shadow:
+    0 18px 55px color-mix(in srgb, #000 38%, transparent),
+    0 0 0 1px color-mix(in srgb, #48b978 10%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #fff 5%, transparent);
+}
+
+.admin-data-toast[data-kind="error"] {
+  --admin-data-toast-accent: #e45656;
+}
+
+.admin-data-toast.visible {
+  animation: admin-data-toast-enter 460ms cubic-bezier(.16, 1, .3, 1) both;
+}
+
+.admin-data-toast.visible::after {
+  transform-origin: left center;
+  animation: admin-data-toast-progress var(--admin-data-toast-duration, 6000ms) linear both;
+}
+
+.admin-data-toast.visible .farm-launch-toast-copy strong,
+.admin-data-toast.visible .farm-launch-toast-copy p,
+.admin-data-toast.visible .farm-launch-toast-close {
+  animation: admin-data-toast-content-in 360ms cubic-bezier(.16, 1, .3, 1) both;
+}
+
+.admin-data-toast.visible .farm-launch-toast-copy p { animation-delay: 55ms; }
+.admin-data-toast.visible .farm-launch-toast-close { animation-delay: 90ms; }
+
+.admin-data-toast.visible[data-kind="success"] .farm-launch-toast-icon {
+  animation: admin-data-toast-success-icon-in 560ms cubic-bezier(.16, 1.35, .3, 1) both;
+}
+
+.admin-data-toast.visible[data-kind="error"] .farm-launch-toast-icon {
+  animation: admin-data-toast-error-icon-in 520ms cubic-bezier(.2, .9, .2, 1) both;
+}
+
+.admin-data-toast[data-kind="success"]::after {
+  background: linear-gradient(90deg, #48b978, color-mix(in srgb, #48b978 22%, transparent));
+}
+
+.admin-data-toast[data-kind="success"] .farm-launch-toast-icon {
+  border-color: color-mix(in srgb, #70dc9d 58%, transparent);
+  background: linear-gradient(145deg, #45b777, #247048);
+  box-shadow: 0 7px 18px color-mix(in srgb, #48b978 30%, transparent);
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-weight: 900;
+}
+
+.admin-data-toast[data-kind="success"] .farm-launch-toast-close:hover,
+.admin-data-toast[data-kind="success"] .farm-launch-toast-close:focus-visible {
+  border-color: color-mix(in srgb, #48b978 35%, var(--line));
+  background: color-mix(in srgb, #48b978 10%, var(--panel-soft));
+}
+
+.farm-launch-toast.visible + .admin-data-toast.visible {
+  top: calc(env(safe-area-inset-top, 0px) + 92px);
+}
+
+@keyframes admin-data-toast-enter {
+  0% { opacity: 0; filter: blur(5px); transform: translate(-50%, -22px) scale(.94); }
+  68% { opacity: 1; filter: blur(0); transform: translate(-50%, 2px) scale(1.008); }
+  100% { opacity: 1; filter: blur(0); transform: translate(-50%, 0) scale(1); }
+}
+
+@keyframes admin-data-toast-content-in {
+  from { opacity: 0; transform: translateY(7px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes admin-data-toast-success-icon-in {
+  0% { opacity: 0; transform: scale(.45) rotate(-18deg); }
+  62% { opacity: 1; transform: scale(1.13) rotate(3deg); }
+  100% { opacity: 1; transform: scale(1) rotate(0); }
+}
+
+@keyframes admin-data-toast-error-icon-in {
+  0% { opacity: 0; transform: scale(.55); }
+  45% { opacity: 1; transform: scale(1.08) translateX(0); }
+  60% { transform: scale(1) translateX(-2px); }
+  75% { transform: scale(1) translateX(2px); }
+  100% { opacity: 1; transform: scale(1) translateX(0); }
+}
+
+@keyframes admin-data-toast-progress {
+  from { transform: scaleX(1); opacity: 1; }
+  to { transform: scaleX(0); opacity: .45; }
+}
+
 @keyframes farm-launch-toast-icon-in {
   from { opacity: .35; transform: scale(.72) rotate(-7deg); }
   to { opacity: 1; transform: scale(1) rotate(0); }
@@ -668,6 +766,10 @@ button:disabled {
     width: 34px;
     height: 34px;
     font-size: 18px;
+  }
+
+  .farm-launch-toast.visible + .admin-data-toast.visible {
+    top: calc(env(safe-area-inset-top, 0px) + 78px);
   }
 }
 
@@ -4683,6 +4785,23 @@ body.modal-open { overflow:hidden; }
   gap: 12px;
   align-items: end;
   padding: 14px;
+}
+
+.admin-player-data-notice {
+  grid-column: 1 / -1;
+  margin: 0;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--line));
+  border-radius: var(--button-radius);
+  padding: 10px 12px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 9%, var(--panel-soft));
+  animation: adminActionIn 220ms ease both;
+}
+
+.admin-player-data-notice[data-kind="error"] {
+  border-color: color-mix(in srgb, #d04a4a 48%, var(--line));
+  color: color-mix(in srgb, #ffb8b8 78%, var(--text));
+  background: color-mix(in srgb, #8b1f1f 22%, var(--panel));
 }
 
 .coordinate-control-grid {

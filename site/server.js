@@ -269,7 +269,12 @@ function formatSeconds(seconds) {
 }
 
 function parsePlaytimeSeconds(value) {
-  const input = String(value || '').trim();
+  const input = String(value || '')
+    .trim()
+    // A copied !pt response can include punctuation and the player's rank.
+    .replace(/\s*\[\d+\s*\/\s*\d+\]\s*$/, '')
+    .replace(/[.!]\s*$/, '')
+    .trim();
   if (!input) return null;
 
   const units = {
@@ -3773,9 +3778,9 @@ async function queueAdminBotCommand(currentUser, body) {
   return queueBotCommand(currentUser, commandType, payload, { accountId });
 }
 
-async function setAdminPlaytime(currentUser, body) {
+async function setAdminPlaytime(currentUser, body, database = pool, audit = recordSystemLog) {
   assertAdminUser(currentUser);
-  assertDatabase();
+  if (!database) assertDatabase();
 
   const rawLine = String(body.line || '').trim();
   const match = rawLine.match(/^([A-Za-z0-9_]{1,32})\s*:\s*([\s\S]+)$/);
@@ -3793,7 +3798,7 @@ async function setAdminPlaytime(currentUser, body) {
     throw err;
   }
 
-  const result = await pool.query(`
+  const result = await database.query(`
     WITH identity AS (
       SELECT pa.username, pa.player_uuid
       FROM player_activity pa
@@ -3833,7 +3838,7 @@ async function setAdminPlaytime(currentUser, body) {
     UNION ALL
     SELECT username FROM inserted
   `, [username, totalSeconds]);
-  await recordSystemLog({
+  await audit({
     level: 'audit',
     category: 'admin_data',
     actor: currentUser.username,
@@ -5084,4 +5089,4 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown);
 }
 
-module.exports = { ADMIN_PLAYER_EDITABLE_FIELDS, adminPlayerIdentity, assertAdminUser, changeSitePassword, cleanAccountInput, deleteAdminPlayer, freshStoredRuntimePayload, getAdminPlayers, hashPassword, normalizeAdminPlayerPatch, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, patchAdminPlayer, registrationDefaults, requestHandler, server, startSiteServer, validateCredentials, validatePasswordChange, verifyPassword };
+module.exports = { ADMIN_PLAYER_EDITABLE_FIELDS, adminPlayerIdentity, assertAdminUser, changeSitePassword, cleanAccountInput, deleteAdminPlayer, freshStoredRuntimePayload, getAdminPlayers, hashPassword, normalizeAdminPlayerPatch, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, parsePlaytimeSeconds, patchAdminPlayer, registrationDefaults, requestHandler, server, setAdminPlaytime, startSiteServer, validateCredentials, validatePasswordChange, verifyPassword };
