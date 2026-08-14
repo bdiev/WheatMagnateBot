@@ -56,7 +56,6 @@ const FARM_SYSTEM_LOGGER = typeof context.systemLogger === 'function'
 const MAX_INTERACT_DISTANCE = 4.25;
 const OBSIDIAN_DIG_BASE_HOLD_MS = 1_650;
 const OBSIDIAN_DIG_RETRY_HOLD_BONUS_MS = 250;
-const OBSIDIAN_DIG_TIMING_MARGIN_MS = 250;
 const OBSIDIAN_DIG_AIM_SETTLE_MS = 100;
 const OBSIDIAN_DIG_CONFIRM_TIMEOUT_MS = 700;
 const OBSIDIAN_DIG_STABILITY_MS = 50;
@@ -1924,13 +1923,9 @@ function getMiningDebugState(bot, block, attempt, expectedDigTime, holdMs, face,
   };
 }
 
-function getObsidianDigHoldMs(expectedDigTime, attempt) {
-  const calibratedMinimum = OBSIDIAN_DIG_BASE_HOLD_MS +
+function getObsidianDigHoldMs(attempt) {
+  return OBSIDIAN_DIG_BASE_HOLD_MS +
     ((Math.max(1, Number(attempt) || 1) - 1) * OBSIDIAN_DIG_RETRY_HOLD_BONUS_MS);
-  return Math.max(
-    calibratedMinimum,
-    Math.ceil(expectedDigTime) + OBSIDIAN_DIG_TIMING_MARGIN_MS
-  );
 }
 
 async function aimAtObsidianForMining(bot, block) {
@@ -1961,25 +1956,21 @@ async function digBlockWithTimeout(bot, block, attempt, context = {}) {
     throw new Error(`Cannot calculate dig time for ${block.name}`);
   }
 
-  const holdMs = getObsidianDigHoldMs(expectedDigTime, attempt);
+  const holdMs = getObsidianDigHoldMs(attempt);
   const { center, face } = await aimAtObsidianForMining(bot, block);
   if (!farm.enabled) throw new Error('farm_stopped');
   const startedAt = Date.now();
   writeFarmDebug('dig_start', {
     ...getMiningDebugState(bot, block, attempt, expectedDigTime, holdMs, face, context),
-    calibratedMinimumHoldMs: OBSIDIAN_DIG_BASE_HOLD_MS +
-      ((attempt - 1) * OBSIDIAN_DIG_RETRY_HOLD_BONUS_MS),
-    timingMarginMs: OBSIDIAN_DIG_TIMING_MARGIN_MS,
+    calibratedHoldMs: holdMs,
     aimSettleMs: OBSIDIAN_DIG_AIM_SETTLE_MS,
-    timingSource: holdMs > OBSIDIAN_DIG_BASE_HOLD_MS +
-      ((attempt - 1) * OBSIDIAN_DIG_RETRY_HOLD_BONUS_MS)
-      ? 'mineflayer_dig_time_with_margin'
-      : 'calibrated_server_minimum'
+    timingSource: attempt === 1 ? 'calibrated_server_measurement' : 'calibrated_server_measurement_with_retry_bonus'
   });
 
   const eventName = `blockUpdate:${block.position}`;
   let completed = false;
   let onBlockUpdate = null;
+  let swingInterval = null;
 
   const serverConfirmation = new Promise(resolve => {
     onBlockUpdate = (_oldBlock, newBlock) => {
@@ -2000,6 +1991,8 @@ async function digBlockWithTimeout(bot, block, attempt, context = {}) {
 
   function cleanup() {
     if (onBlockUpdate) bot.removeListener(eventName, onBlockUpdate);
+    if (swingInterval) clearInterval(swingInterval);
+    swingInterval = null;
   }
 
   try {
@@ -2018,6 +2011,9 @@ async function digBlockWithTimeout(bot, block, attempt, context = {}) {
       face
     });
     bot.swingArm();
+    swingInterval = setInterval(() => {
+      if (farm.enabled) bot.swingArm();
+    }, 350);
     writeFarmClickDebug(bot, 'obsidian_mining', 'sent', {
       method:'raw_block_dig',
       packetStatus:0,
@@ -3066,7 +3062,6 @@ return {
       CAULDRON_RETRY_CODE,
       OBSIDIAN_DIG_BASE_HOLD_MS,
       OBSIDIAN_DIG_RETRY_HOLD_BONUS_MS,
-      OBSIDIAN_DIG_TIMING_MARGIN_MS,
       OBSIDIAN_DIG_AIM_SETTLE_MS
     }
   }

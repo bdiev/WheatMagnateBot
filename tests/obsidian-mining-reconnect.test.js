@@ -22,17 +22,12 @@ async function main() {
     } = farm.__test;
 
     assert.equal(
-      getObsidianDigHoldMs(900, 1),
+      getObsidianDigHoldMs(1),
       constants.OBSIDIAN_DIG_BASE_HOLD_MS,
-      'normal fast mining keeps the calibrated server minimum'
+      'mining after reconnect keeps the server-calibrated duration'
     );
     assert.equal(
-      getObsidianDigHoldMs(9_000, 1),
-      9_000 + constants.OBSIDIAN_DIG_TIMING_MARGIN_MS,
-      'a reconnect without synchronized haste waits for the calculated dig time'
-    );
-    assert.equal(
-      getObsidianDigHoldMs(900, 3),
+      getObsidianDigHoldMs(3),
       constants.OBSIDIAN_DIG_BASE_HOLD_MS + (2 * constants.OBSIDIAN_DIG_RETRY_HOLD_BONUS_MS),
       'retry timing still receives its calibrated bonus'
     );
