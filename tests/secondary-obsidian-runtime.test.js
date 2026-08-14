@@ -261,6 +261,22 @@ async function main() {
     assert.equal(primaryItemActivations, 1, 'Primary lava placement uses the server-compatible use-item packet');
     assert.equal(placementInteraction, null, 'Primary lava placement does not also send the managed-account packet');
 
+    const primaryLeverBot = farmBot('WheatMagnate');
+    await primary.modules.obsidianFarm.setProtectionLeverState(false, primaryLeverBot);
+    assert.equal(primaryLeverBot.leverActions, 1, 'Primary startup switches its protection lever OFF');
+    assert.deepEqual(
+      primaryLeverBot.leverInteraction.direction,
+      new Vec3(-1, 0, 0),
+      'Primary uses the same visible ray-traced lever face as secondary farms'
+    );
+    const primaryLeverCursor = primaryLeverBot.leverInteraction.cursorPos;
+    assert.ok(
+      primaryLeverCursor.x >= 5 / 16 - 0.0001 && primaryLeverCursor.x <= 11 / 16 + 0.0001 &&
+      primaryLeverCursor.y >= 4 / 16 - 0.0001 && primaryLeverCursor.y <= 12 / 16 + 0.0001 &&
+      primaryLeverCursor.z >= 10 / 16 - 0.0001 && primaryLeverCursor.z <= 1 + 0.0001,
+      'Primary preserves a visible lever hit point inside the rotated wall outline'
+    );
+
     bot.blockAt = originalBlockAt;
     bot.blockAtCursor = originalBlockAtCursor;
     bot.activateBlock = originalActivateBlock;
@@ -500,6 +516,7 @@ async function main() {
     const farmSource = fs.readFileSync(path.resolve(__dirname, '..', 'features', 'obsidianFarm', 'index.js'), 'utf8');
     assert.match(botSource, /SET status='failed',error=\$2/, 'managed command failures persist their reason');
     assert.match(botSource, /primaryProtectionLever\.setState\(bot, powered\)/, 'primary farm uses the shared protection-lever controller');
+    assert.match(botSource, /primaryProtectionLever = createProtectionLeverController\(\{[\s\S]*?preciseInteraction: true[\s\S]*?\}\)/, 'legacy primary runtime enables rotated-farm lever interaction');
     assert.match(farmSource, /protectionLeverController\.setState\(bot, powered\)/, 'secondary farms use the same protection-lever controller');
     console.log('Secondary Obsidian runtime tests passed.');
   } finally {

@@ -4259,7 +4259,10 @@ let obsidianSupplySnapshotInterval = null;
 let obsidianDailyReportInterval = null;
 let restartProtectionDateKey = null;
 const primaryProtectionLever = createProtectionLeverController({
-  log: message => console.log(`[Obsidian] ${message}`)
+  log: message => console.log(`[Obsidian] ${message}`),
+  // Match managed farms: resolve the visible lever face dynamically so the
+  // primary farm also works after rotating or mirroring the build.
+  preciseInteraction: true
 });
 let obsidianFarmResumeBot = null;
 const reconnectAttemptTimes = [];

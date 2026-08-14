@@ -118,7 +118,10 @@ const activeFarmNotificationTypes = new Set();
 let farmDebugLoggingEnabled = true;
 const protectionLeverController = createProtectionLeverController({
   debug: (event, details) => writeFarmDebug(event, details),
-  preciseInteraction: !identity.isPrimary
+  // Farm copies can face any horizontal direction. Primary and managed bots
+  // therefore use the same ray-traced lever interaction instead of keeping
+  // the primary on the old block-centre click that only suited one layout.
+  preciseInteraction: true
 });
 const cauldronReachStats = {
   successMaxDistance: null,
