@@ -1,6 +1,8 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const {
   loadManagedFarmStates,
   recordManagedObsidianMined,
@@ -12,6 +14,15 @@ const {
 const accountId = '00000000-0000-4000-8000-000000000002';
 
 async function main() {
+  const annotationMigration = fs.readFileSync(
+    path.resolve(__dirname, '..', 'database', 'migrations', '028_managed_pickaxe_annotations.sql'),
+    'utf8'
+  );
+  assert.match(annotationMigration, /FROM obsidian_account_farm_tool_usage/,
+    'existing managed pickaxe usage is backfilled into chart annotations');
+  assert.match(annotationMigration, /sourceToolUsageId[\s\S]*?NOT EXISTS/,
+    'managed pickaxe annotation backfill is idempotent');
+
   const queries = [];
   const client = {
     query: async (sql, params = []) => { queries.push({ sql:String(sql), params }); return { rows:[] }; },
@@ -36,6 +47,17 @@ async function main() {
   assert.equal(queries[2].params[1], 'diamond_pickaxe');
   assert.equal(queries[2].params[2], 1200);
   assert.ok(queries[2].params[3] > 0, 'durability consumption is retained for aggregate efficiency');
+  assert.match(queries[3].sql, /obsidian_account_farm_annotations/,
+    'managed pickaxe replacements are persisted as chart annotations');
+  assert.match(queries[3].sql, /pickaxe_changed/);
+  assert.equal(queries[3].params[0], accountId);
+  assert.deepEqual(JSON.parse(queries[3].params[1]), {
+    name:'diamond_pickaxe',
+    blocksMined:1200,
+    remainingPercent:25,
+    durabilityUsed:1561 * 0.75,
+    countInAverage:true
+  });
 
   queries.length = 0;
   await saveManagedObsidianSupplies(pool, accountId, { observedAt:'2026-08-12T18:00:00.000Z', inventory:{ allItems:[] } });

@@ -157,6 +157,7 @@ async function recordManagedPickaxeRetired(pool, accountId, details = {}) {
   const durabilityUsed = Number(details.maxDurability) > 0 && remainingPercent != null
     ? Number(details.maxDurability) * Math.max(0, 100 - remainingPercent) / 100
     : null;
+  const toolName = String(details.name || 'pickaxe').slice(0, 80);
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -172,7 +173,17 @@ async function recordManagedPickaxeRetired(pool, accountId, details = {}) {
       INSERT INTO obsidian_account_farm_tool_usage(
         account_id,tool_name,blocks_mined,durability_used,remaining_percent
       ) VALUES($1::uuid,$2,$3,$4,$5)
-    `, [id, String(details.name || 'pickaxe').slice(0, 80), blocksMined, durabilityUsed, remainingPercent]);
+    `, [id, toolName, blocksMined, durabilityUsed, remainingPercent]);
+    await client.query(`
+      INSERT INTO obsidian_account_farm_annotations(account_id,event_type,title,details)
+      VALUES($1::uuid,'pickaxe_changed','Pickaxe changed',$2::jsonb)
+    `, [id, JSON.stringify({
+      name:toolName,
+      blocksMined,
+      remainingPercent,
+      durabilityUsed,
+      countInAverage:Boolean(details.countInAverage)
+    })]);
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
