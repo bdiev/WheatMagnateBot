@@ -4533,11 +4533,26 @@ function obsidianSeriesValueForAccount(item, accountId = null) {
 function recentObsidianRatePerDay(payload = {}, accountId = null, accountFarm = null) {
   const hourly = Array.isArray(payload.hourly) ? payload.hourly : [];
   const recentHours = hourly.slice(-48);
-  const recentHourlyTotal = recentHours.reduce(
-    (sum, item) => sum + obsidianSeriesValueForAccount(item, accountId),
-    0
+  const sessionRate = Number(accountFarm?.sessionPerHour ?? payload.farm?.sessionPerHour) || 0;
+  const sessionSeconds = Number(accountFarm?.sessionSeconds ?? payload.farm?.sessionSeconds) || 0;
+  if (accountFarm?.running === true && sessionRate > 0 && sessionSeconds >= 15 * 60) {
+    return sessionRate * 24;
+  }
+
+  // Generated chart buckets predate a newly added account. Begin at that
+  // account's first productive hour instead of treating those buckets as
+  // observed zero-production time and diluting its refill rate.
+  const firstProductiveHour = recentHours.findIndex(
+    item => obsidianSeriesValueForAccount(item, accountId) > 0
   );
-  if (recentHourlyTotal > 0) return recentHourlyTotal / Math.max(1, recentHours.length / 24);
+  if (firstProductiveHour >= 0) {
+    const productiveWindow = recentHours.slice(firstProductiveHour);
+    const recentHourlyTotal = productiveWindow.reduce(
+      (sum, item) => sum + obsidianSeriesValueForAccount(item, accountId),
+      0
+    );
+    return recentHourlyTotal / Math.max(1 / 24, productiveWindow.length / 24);
+  }
 
   const daily = Array.isArray(payload.daily) ? payload.daily : [];
   const recentDays = daily.slice(-7)
@@ -4547,7 +4562,6 @@ function recentObsidianRatePerDay(payload = {}, accountId = null, accountFarm = 
     return recentDays.reduce((sum, value) => sum + value, 0) / recentDays.length;
   }
 
-  const sessionRate = Number(accountFarm?.sessionPerHour ?? payload.farm?.sessionPerHour) || 0;
   return sessionRate > 0 ? sessionRate * 24 : 0;
 }
 
@@ -4565,6 +4579,20 @@ function formatSupplyNeededDate(daysUntilNeeded) {
 function calculateSupplyRefill(payload, { supplies, farm, accountId = null, name = null } = {}) {
   supplies = supplies || {};
   farm = farm || {};
+  if (farm.running === false) {
+    return { available:false,reason:'inactive',name };
+  }
+  if (!supplies.hasSnapshot) {
+    return { available:false,reason:'snapshot',name };
+  }
+  if (!supplies.barrel || supplies.barrelError) {
+    return { available:false,reason:'barrel',name };
+  }
+  const observedAt = new Date(supplies.observedAt).getTime();
+  if (farm.running === true && (!Number.isFinite(observedAt) || Date.now() - observedAt > 30 * 60_000)) {
+    return { available:false,reason:'stale',name };
+  }
+
   const inventory = supplies.inventory;
   const barrel = supplies.barrel;
   const pickaxes = usablePickaxeCount(inventory, barrel);
@@ -4572,10 +4600,6 @@ function calculateSupplyRefill(payload, { supplies, farm, accountId = null, name
   const blocksPerPickaxe = Number(farm.blocksPerPickaxe) > 0 ? Number(farm.blocksPerPickaxe) : 1500;
   const foodPerDay = 7;
   const ratePerDay = recentObsidianRatePerDay(payload, accountId, farm);
-
-  if (!supplies.hasSnapshot) {
-    return { available:false,reason:'snapshot',name };
-  }
   if (ratePerDay <= 0) {
     return { available:false,reason:'rate',pickaxes,food,name };
   }
@@ -4589,10 +4613,14 @@ function calculateSupplyRefill(payload, { supplies, farm, accountId = null, name
 
 function formatSupplyRefillEstimate(estimate, { includeAccount = false } = {}) {
   if (!estimate?.available) {
+    const accountLabel = includeAccount && estimate?.name ? ` · ${estimate.name}` : '';
     if (estimate?.reason === 'rate') {
-      return `Need rate data (${formatNumber(estimate.pickaxes)} picks, ${formatNumber(estimate.food)} food)`;
+      return `Need rate data (${formatNumber(estimate.pickaxes)} picks, ${formatNumber(estimate.food)} food${accountLabel})`;
     }
-    return 'No supply snapshot';
+    if (estimate?.reason === 'inactive') return `Farm is not running${accountLabel}`;
+    if (estimate?.reason === 'barrel') return `Barrel snapshot unavailable${accountLabel}`;
+    if (estimate?.reason === 'stale') return `Supply snapshot is stale${accountLabel}`;
+    return `No supply snapshot${accountLabel}`;
   }
   const approxDate = formatSupplyNeededDate(estimate.days);
   const accountLabel = includeAccount && estimate.name ? ` · ${estimate.name}` : '';
@@ -4615,7 +4643,7 @@ function estimateSupplyRefill(payload = {}) {
       return formatSupplyRefillEstimate(nearest, { includeAccount:true });
     }
     const rateMissing = estimates.find(estimate => estimate.reason === 'rate');
-    return formatSupplyRefillEstimate(rateMissing || estimates[0]);
+    return formatSupplyRefillEstimate(rateMissing || estimates[0], { includeAccount:true });
   }
 
   return formatSupplyRefillEstimate(calculateSupplyRefill(payload, {
