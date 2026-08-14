@@ -27,6 +27,11 @@ const { createFollowFeature } = require('./features/follow');
 const { createKillAuraFeature } = require('./features/killAura');
 const farm = require('./features/obsidianFarm');
 const { createProtectionLeverController } = require('./features/obsidianFarm/protection-lever');
+const {
+  getServerRestartDateParts: getKyivDateParts,
+  isRestartPreparationWindow,
+  isPostRestartStartupWindow
+} = require('./features/obsidianFarm/restart-schedule');
 const { GrowingChildAI } = require('./features/growingChild');
 const { sanitizePublicPhrase } = require('./features/growingChild/safety');
 const { runMigrations } = require('./database/migrations');
@@ -4422,24 +4427,6 @@ function disconnectForNonWhitelistedPlayer(entity, distance) {
   updateStatusMessage().catch(() => {});
 }
 
-function getKyivDateParts(date = new Date()) {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Europe/Kyiv',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23'
-  }).formatToParts(date);
-  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
-  return {
-    dateKey: `${values.year}-${values.month}-${values.day}`,
-    hour: Number(values.hour),
-    minute: Number(values.minute)
-  };
-}
-
 async function setProtectionLeverState(powered) {
   return primaryProtectionLever.setState(bot, powered);
 }
@@ -4554,7 +4541,7 @@ function startRestartProtectionMonitor() {
   restartProtectionInterval = setInterval(async () => {
     if (!bot?.entity || !obsidianStats.desiredEnabled) return;
     const { dateKey, hour, minute } = getKyivDateParts();
-    const inPreparationWindow = (hour === 8 && minute >= 59) || (hour === 9 && minute <= 30);
+    const inPreparationWindow = isRestartPreparationWindow({ hour, minute });
     if (!inPreparationWindow || restartProtectionDateKey === dateKey) return;
 
     restartProtectionDateKey = dateKey;
@@ -4586,7 +4573,7 @@ function startObsidianFarmWatchdog() {
     }
 
     const { hour, minute } = getKyivDateParts();
-    const inRestartWindow = (hour === 8 && minute >= 59) || (hour === 9 && minute <= 30);
+    const inRestartWindow = isRestartPreparationWindow({ hour, minute });
     if (inRestartWindow) return;
 
     recovering = true;
@@ -8310,7 +8297,7 @@ function createBot() {
 
     if (obsidianStats.desiredEnabled) {
       const { dateKey, hour, minute } = getKyivDateParts();
-      if (hour === 9 && minute <= 30) restartProtectionDateKey = dateKey;
+      if (isPostRestartStartupWindow({ hour, minute })) restartProtectionDateKey = dateKey;
       await new Promise(resolve => setTimeout(resolve, 1000));
       ensureObsidianFarmRunning(createdBot).catch(err => {
         console.error('[Obsidian] Farm resume retry loop failed:', err.message);

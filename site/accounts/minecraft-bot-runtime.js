@@ -4,6 +4,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { BotContext } = require('./bot-context');
 const { createModulesForBot } = require('./module-registry');
+const {
+  getServerRestartDateParts,
+  isRestartPreparationWindow,
+  isPostRestartStartupWindow
+} = require('../../features/obsidianFarm/restart-schedule');
 
 const TASKS = new Set(['obsidian','observe','follow','kill_aura','chat','idle','paused']);
 // Keep this list deliberately conservative. Raw meat, spider eyes and poisonous
@@ -29,7 +34,7 @@ function compactInventoryItem(item) {
 }
 
 class MinecraftBotRuntime extends BotContext {
-  constructor({ account, botFactory, moduleFactory = createModulesForBot, moduleOptions = {}, killAuraFactory = null, authCacheRoot = path.join('data', 'auth-cache'), authCacheStore = null, reconnectBackoffMs, obsidianResumeRetryMs = 5000, isWhitelisted = () => false, dangerRadius = 32 } = {}) {
+  constructor({ account, botFactory, moduleFactory = createModulesForBot, moduleOptions = {}, killAuraFactory = null, authCacheRoot = path.join('data', 'auth-cache'), authCacheStore = null, reconnectBackoffMs, obsidianResumeRetryMs = 5000, isWhitelisted = () => false, dangerRadius = 32, now = () => new Date() } = {}) {
     super({ account });
     if (!account?.id) throw new Error('Runtime requires an account.');
     if (typeof botFactory !== 'function') throw new Error('Runtime requires a Mineflayer factory.');
@@ -59,6 +64,9 @@ class MinecraftBotRuntime extends BotContext {
     this.nextObsidianResumeAt = 0;
     this.safetyLockout = false;
     this.lastEatErrorAt = 0;
+    this.now = typeof now === 'function' ? now : () => new Date();
+    this.restartProtectionDateKey = null;
+    this.restartProtectionPromise = null;
     this.connectionGate = connect => connect();
     const resolvedModuleOptions = { ...moduleOptions };
     if (typeof killAuraFactory === 'function') resolvedModuleOptions.killAuraFactory = killAuraFactory;
@@ -104,6 +112,47 @@ class MinecraftBotRuntime extends BotContext {
     this.intervals.add(timer);
   }
 
+  protectFarmForScheduledRestart(bot = this.bot, date = this.now()) {
+    const farmStatus = this.obsidianFarm?.getStatus?.();
+    const dateParts = getServerRestartDateParts(date);
+    if (
+      bot !== this.bot ||
+      !bot?.entity ||
+      !farmStatus?.desiredEnabled ||
+      !isRestartPreparationWindow(dateParts) ||
+      this.restartProtectionDateKey === dateParts.dateKey
+    ) return Promise.resolve(false);
+
+    // Mark the date before starting world interactions so overlapping monitor
+    // ticks cannot queue the lever action more than once.
+    this.restartProtectionDateKey = dateParts.dateKey;
+    this.obsidianFarm.pauseForServerRestart?.();
+    this.emit('status', this.getStatus());
+
+    const attempt = Promise.resolve()
+      .then(() => this.obsidianFarm.setProtectionLeverState(true, bot))
+      .then(() => {
+        if (this.bot === bot) {
+          this.emit('status', this.getStatus());
+          this.emit('restart-protection', { accountId:this.account.id,dateKey:dateParts.dateKey,protected:true });
+        }
+        return true;
+      })
+      .catch(error => {
+        if (this.bot === bot) {
+          this.lastError = `Scheduled restart protection failed: ${error?.message || String(error)}`;
+          this.emit('status', this.getStatus());
+          this.emit('restart-protection', { accountId:this.account.id,dateKey:dateParts.dateKey,protected:false,error:this.lastError });
+        }
+        return false;
+      })
+      .finally(() => {
+        if (this.restartProtectionPromise === attempt) this.restartProtectionPromise = null;
+      });
+    this.restartProtectionPromise = attempt;
+    return attempt;
+  }
+
   async runAfkChecks() {
     const bot = this.bot;
     if (!bot?.entity) return;
@@ -129,11 +178,15 @@ class MinecraftBotRuntime extends BotContext {
       try { bot.quit?.(`Non-whitelisted player nearby: ${threat.username}`); } catch { bot.end?.('Safety disconnect'); }
       return;
     }
+    const restartNow = this.now();
+    const restartDateParts = getServerRestartDateParts(restartNow);
+    await this.protectFarmForScheduledRestart(bot, restartNow);
     const farmStatus = this.obsidianFarm?.getStatus?.();
     if (
       farmStatus?.desiredEnabled &&
       !farmStatus.enabled &&
       this.task !== 'paused' &&
+      !isRestartPreparationWindow(restartDateParts) &&
       Date.now() >= this.nextObsidianResumeAt
     ) {
       this.retryDesiredObsidian(bot);
@@ -242,6 +295,13 @@ class MinecraftBotRuntime extends BotContext {
         }
         this.lastError = null;
         this.reconnectAttempts = 0;
+        const restartDateParts = getServerRestartDateParts(this.now());
+        if (
+          this.obsidianFarm?.getStatus?.().desiredEnabled &&
+          isPostRestartStartupWindow(restartDateParts)
+        ) {
+          this.restartProtectionDateKey = restartDateParts.dateKey;
+        }
         this.status = this.task === 'paused' ? 'paused' : 'connected';
         this.setLifecycle('online');
         if (this.bot !== bot) return;

@@ -78,6 +78,10 @@ function ownObsidianFarm(context, farm, settingsFile, notify = null, initialStat
       persist();
       return farm.suspend();
     },
+    // Scheduled restart protection must stop the physical loop without
+    // changing the operator's persisted Start Farm intent. onSpawn can then
+    // resume this account normally after the server comes back.
+    pauseForServerRestart: () => farm.suspend(),
     stop: notify => {
       desiredEnabled = false;
       persist();

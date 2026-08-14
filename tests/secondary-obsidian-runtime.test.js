@@ -389,10 +389,12 @@ async function main() {
     assert.match(failingRuntime.getStatus().lastError, /Pathfinder plugin is not loaded/i);
 
     const reconnectBots = [];
+    let runtimeNow = new Date('2026-08-14T05:00:00.000Z'); // 08:00 in Kyiv
     const reconnectRuntime = new MinecraftBotRuntime({
       account:account(SECONDARY_ID, 'bdiev_'),
       moduleOptions:{ dataRoot },
       obsidianResumeRetryMs:50,
+      now:() => runtimeNow,
       botFactory:() => {
         const created = farmBot('bdiev_');
         reconnectBots.push(created);
@@ -435,6 +437,25 @@ async function main() {
     assert.equal(reconnectRuntime.obsidianFarm.getStatus().enabled, true, 'desired farm state resumes after reconnect');
     assert.equal(reconnectRuntime.task, 'obsidian');
     assert.equal(reconnectRuntime.getStatus().lastError, null);
+
+    runtimeNow = new Date('2026-08-14T05:59:00.000Z'); // 08:59 in Kyiv
+    await reconnectRuntime.runAfkChecks();
+    assert.equal(reconnectRuntime.obsidianFarm.getStatus().enabled, false, 'secondary farm pauses before the scheduled restart');
+    assert.equal(reconnectRuntime.obsidianFarm.getStatus().desiredEnabled, true, 'restart protection preserves Start Farm intent');
+    assert.equal(reconnectRuntime.task, 'obsidian', 'secondary keeps waiting on its assigned farm task');
+    assert.equal(reconnectBots[1].leverActions, 2, 'secondary switches its protection lever ON before restart');
+    await reconnectRuntime.runAfkChecks();
+    assert.equal(reconnectBots[1].leverActions, 2, 'restart protection is applied only once per Kyiv calendar day');
+    assert.equal(reconnectRuntime.obsidianFarm.getStatus().enabled, false, 'watchdog does not resume the farm inside the restart window');
+
+    runtimeNow = new Date('2026-08-14T06:05:00.000Z'); // 09:05 in Kyiv, after server reconnect
+    await reconnectRuntime.restart();
+    assert.equal(reconnectBots.length, 3);
+    reconnectBots[2].emit('spawn');
+    await waitFor(() => reconnectRuntime.obsidianFarm.getStatus().enabled);
+    assert.equal(reconnectBots[2].leverActions, 1, 'reconnected secondary switches protection OFF before resuming');
+    assert.equal(reconnectRuntime.obsidianFarm.getStatus().desiredEnabled, true, 'reconnected secondary retains farm intent');
+    assert.equal(reconnectRuntime.obsidianFarm.getStatus().enabled, true, 'reconnected secondary resumes the farm');
     let immediateStopStatus = null;
     reconnectRuntime.once('status', status => { immediateStopStatus = status; });
     const stoppingFarm = reconnectRuntime.setObsidianEnabled(false);

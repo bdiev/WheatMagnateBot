@@ -56,6 +56,8 @@ const FARM_SYSTEM_LOGGER = typeof context.systemLogger === 'function'
 const MAX_INTERACT_DISTANCE = 4.25;
 const OBSIDIAN_DIG_BASE_HOLD_MS = 1_650;
 const OBSIDIAN_DIG_RETRY_HOLD_BONUS_MS = 250;
+const OBSIDIAN_DIG_TIMING_MARGIN_MS = 250;
+const OBSIDIAN_DIG_AIM_SETTLE_MS = 100;
 const OBSIDIAN_DIG_CONFIRM_TIMEOUT_MS = 700;
 const OBSIDIAN_DIG_STABILITY_MS = 50;
 const OBSIDIAN_DIG_MAX_ATTEMPTS = 3;
@@ -1922,29 +1924,57 @@ function getMiningDebugState(bot, block, attempt, expectedDigTime, holdMs, face,
   };
 }
 
+function getObsidianDigHoldMs(expectedDigTime, attempt) {
+  const calibratedMinimum = OBSIDIAN_DIG_BASE_HOLD_MS +
+    ((Math.max(1, Number(attempt) || 1) - 1) * OBSIDIAN_DIG_RETRY_HOLD_BONUS_MS);
+  return Math.max(
+    calibratedMinimum,
+    Math.ceil(expectedDigTime) + OBSIDIAN_DIG_TIMING_MARGIN_MS
+  );
+}
+
+async function aimAtObsidianForMining(bot, block) {
+  const center = block.position.offset(0.5, 0.5, 0.5);
+  // A forced Mineflayer look updates yaw/pitch for the next physics packet but
+  // resolves immediately. Let that packet leave before sending block_dig, or
+  // the server can still see the bot's reconnect yaw (often facing backward).
+  await bot.lookAt(center, true);
+  await sleep(OBSIDIAN_DIG_AIM_SETTLE_MS);
+
+  const aimedBlock = typeof bot.blockAtCursor === 'function'
+    ? bot.blockAtCursor(MAX_INTERACT_DISTANCE + 0.75)
+    : null;
+  if (!aimedBlock?.position?.equals(block.position)) {
+    throw new Error(
+      `Cannot keep obsidian at (${block.position.x}, ${block.position.y}, ${block.position.z}) in sight while mining.`
+    );
+  }
+  return {
+    center,
+    face: Number.isInteger(aimedBlock.face) ? aimedBlock.face : 1
+  };
+}
+
 async function digBlockWithTimeout(bot, block, attempt, context = {}) {
   const expectedDigTime = typeof bot.digTime === 'function' ? bot.digTime(block) : null;
   if (!Number.isFinite(expectedDigTime)) {
     throw new Error(`Cannot calculate dig time for ${block.name}`);
   }
 
-  const holdMs = OBSIDIAN_DIG_BASE_HOLD_MS + ((attempt - 1) * OBSIDIAN_DIG_RETRY_HOLD_BONUS_MS);
-  const center = block.position.offset(0.5, 0.5, 0.5);
-  await bot.lookAt(center, true);
-
-  const aimedBlock = typeof bot.blockAtCursor === 'function' ? bot.blockAtCursor(MAX_INTERACT_DISTANCE + 0.75) : null;
-  if (!aimedBlock?.position?.equals(block.position)) {
-    throw new Error(
-      `Cannot keep obsidian at (${block.position.x}, ${block.position.y}, ${block.position.z}) in sight while mining.`
-    );
-  }
-
-  const face = Number.isInteger(aimedBlock.face) ? aimedBlock.face : 1;
+  const holdMs = getObsidianDigHoldMs(expectedDigTime, attempt);
+  const { center, face } = await aimAtObsidianForMining(bot, block);
+  if (!farm.enabled) throw new Error('farm_stopped');
   const startedAt = Date.now();
   writeFarmDebug('dig_start', {
     ...getMiningDebugState(bot, block, attempt, expectedDigTime, holdMs, face, context),
-    measuredManualDigTimeMs: 2_500,
-    timingSource: attempt === 1 ? 'manual_server_measurement' : 'manual_server_measurement_with_retry_bonus'
+    calibratedMinimumHoldMs: OBSIDIAN_DIG_BASE_HOLD_MS +
+      ((attempt - 1) * OBSIDIAN_DIG_RETRY_HOLD_BONUS_MS),
+    timingMarginMs: OBSIDIAN_DIG_TIMING_MARGIN_MS,
+    aimSettleMs: OBSIDIAN_DIG_AIM_SETTLE_MS,
+    timingSource: holdMs > OBSIDIAN_DIG_BASE_HOLD_MS +
+      ((attempt - 1) * OBSIDIAN_DIG_RETRY_HOLD_BONUS_MS)
+      ? 'mineflayer_dig_time_with_margin'
+      : 'calibrated_server_minimum'
   });
 
   const eventName = `blockUpdate:${block.position}`;
@@ -3008,6 +3038,8 @@ return {
     withWorldInteractionLock,
     ensureFarmSupplies,
     isPickaxeUsable,
+    aimAtObsidianForMining,
+    getObsidianDigHoldMs,
     swapPickaxesInExactSlots,
     findLavaPlacementAnchor,
     findLavaCauldrons,
@@ -3031,7 +3063,11 @@ return {
     constants: {
       CAULDRON_FAILURE_COOLDOWN_MS,
       CAULDRON_RETRY_DELAY_MS,
-      CAULDRON_RETRY_CODE
+      CAULDRON_RETRY_CODE,
+      OBSIDIAN_DIG_BASE_HOLD_MS,
+      OBSIDIAN_DIG_RETRY_HOLD_BONUS_MS,
+      OBSIDIAN_DIG_TIMING_MARGIN_MS,
+      OBSIDIAN_DIG_AIM_SETTLE_MS
     }
   }
 };
