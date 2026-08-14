@@ -151,7 +151,7 @@ async function main(){
       obsidianFarm:{
         attachBot(){},detachBot(){},dispose(){},
         getStatus:()=>({enabled:true,desiredEnabled:shutdownFarmDesired}),
-        suspend(){shutdownFarmDesired=false;farmShutdownCalls.push('farm-stopped');},
+        pauseForServerRestart(){farmShutdownCalls.push('farm-paused');},
         async setProtectionLeverState(powered,targetBot){farmShutdownCalls.push(`lever:${powered}`);assert.equal(targetBot,shutdownBot);return true;}
       },
       killAura:{attachBot(){},detachBot(){},dispose(){},setEnabled(){farmShutdownCalls.push('kill-aura-stopped');},getStatus:()=>({enabled:false})},
@@ -161,9 +161,9 @@ async function main(){
   await farmShutdownRuntime.start();
   const farmShutdownResult=await farmShutdownRuntime.prepareForShutdown();
   assert.deepEqual(farmShutdownResult,{accountId:second.id,farmStopped:true,leverProtected:true});
-  assert.equal(shutdownFarmDesired,false,'a deploy persists Stop instead of auto-resuming the managed farm');
-  assert.ok(farmShutdownCalls.indexOf('farm-stopped')<farmShutdownCalls.indexOf('lever:true'),
-    'a managed Obsidian loop and its restart intent stop before the protection lever is switched on');
+  assert.equal(shutdownFarmDesired,true,'a deploy preserves the managed farm resume intent');
+  assert.ok(farmShutdownCalls.indexOf('farm-paused')<farmShutdownCalls.indexOf('lever:true'),
+    'a managed Obsidian loop pauses before the protection lever is switched on');
   await farmShutdownRuntime.destroy();
   console.log('Multi-account tests passed.');
 }

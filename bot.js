@@ -107,6 +107,7 @@ const WM_CHAT_CHUNK_LENGTH = 190;
 const MINECRAFT_PRIVATE_MESSAGE_LENGTH = 180;
 const RECONNECT_INTERVAL_MS = 15_000;
 const MINECRAFT_CONNECT_TIMEOUT_MS = 20_000;
+const SHUTDOWN_FARM_SETTLE_MS = 3_000;
 const MINECRAFT_PROFILES_FOLDER = path.resolve(process.env.MINECRAFT_PROFILES_FOLDER || path.join('data', 'auth-cache'));
 const DEFAULT_ACCOUNT_ID = '00000000-0000-4000-8000-000000000001';
 const COMMAND_WORKER_ID = `legacy:${process.pid}:${require('node:crypto').randomUUID()}`;
@@ -5757,9 +5758,8 @@ async function initializeMultiAccountManager() {
           return createMinecraftBot({ ...options, closeTimeout: MINECRAFT_CONNECT_TIMEOUT_MS });
         }
       });
-      // Shutdown waits for this queue after the runtime has persisted its
-      // stopped farm intent, so a late mining write cannot restore
-      // desired_enabled=true during the redeploy.
+      // Shutdown waits for this queue after the runtime has published its
+      // paused physical loop while preserving desired_enabled=true for resume.
       runtime.flushFarmPersistence = () => managedFarmWriteQueue;
       runtime.obsidianFarm.configureRuntime({
         onMined: () => enqueueManagedFarmWrite('Mining persistence', () => recordManagedObsidianMined(pool, account.id)),
@@ -11989,17 +11989,20 @@ let multiAccountShuttingDown = false;
 async function preparePrimaryBotForShutdown() {
   const currentBot = bot;
   const farmStatus = farm.getStatus();
-  const shouldProtectFarm = Boolean(currentBot?.entity && (farmStatus.enabled || obsidianStats.desiredEnabled));
+  const resumeAfterRedeploy = Boolean(farmStatus.enabled || obsidianStats.desiredEnabled);
+  const shouldProtectFarm = Boolean(currentBot?.entity && resumeAfterRedeploy);
 
   clearIntervals();
   followFeature.stop();
   farm.suspend();
 
-  // Change the in-memory intent immediately, then serialize the durable Stop
-  // behind any final mined-block writes already queued before SIGTERM.
-  obsidianStats.desiredEnabled = false;
-  const persistStoppedIntent = obsidianStatsWriteQueue
-    .then(() => setObsidianFarmDesiredEnabled(false));
+  // The loop is physically paused for the old process, but its durable intent
+  // remains enabled. Serialize it behind final mining writes so the new
+  // process reliably resumes only after connecting and protecting startup.
+  if (resumeAfterRedeploy) obsidianStats.desiredEnabled = true;
+  const persistResumeIntent = resumeAfterRedeploy
+    ? obsidianStatsWriteQueue.then(() => setObsidianFarmDesiredEnabled(true))
+    : Promise.resolve();
 
   let leverProtected = null;
   if (shouldProtectFarm) {
@@ -12013,9 +12016,9 @@ async function preparePrimaryBotForShutdown() {
       console.error(`[Shutdown] Primary Obsidian Farm protection failed: ${error?.message || String(error)}`);
     }
   }
-  await persistStoppedIntent;
-  console.log(`[Shutdown] Primary Obsidian Farm: wasRunning=${Boolean(farmStatus.enabled)}, protected=${leverProtected}.`);
-  return { accountId: DEFAULT_ACCOUNT_ID, farmStopped: Boolean(farmStatus.enabled), leverProtected };
+  await persistResumeIntent;
+  console.log(`[Shutdown] Primary Obsidian Farm: wasRunning=${Boolean(farmStatus.enabled)}, protected=${leverProtected}, resumeAfterRedeploy=${resumeAfterRedeploy}.`);
+  return { accountId: DEFAULT_ACCOUNT_ID, farmStopped: Boolean(farmStatus.enabled), leverProtected, resumeAfterRedeploy };
 }
 
 async function shutdownAllAccounts(signal) {
@@ -12046,6 +12049,9 @@ async function shutdownAllAccounts(signal) {
   }
 
   const managedPreparation = preparationResults[1];
+  let protectedFarmCount = preparationResults[0]?.status === 'fulfilled' && preparationResults[0].value?.leverProtected
+    ? 1
+    : 0;
   if (managedPreparation?.status === 'fulfilled') {
     for (const result of managedPreparation.value) {
       if (result.status === 'rejected') {
@@ -12053,6 +12059,7 @@ async function shutdownAllAccounts(signal) {
         continue;
       }
       if (!result.value) continue;
+      if (result.value.leverProtected) protectedFarmCount++;
       const log = result.value.leverProtected === false ? console.error : console.log;
       log(`[Shutdown] Managed Obsidian Farm ${result.value.accountId}: wasRunning=${result.value.farmStopped}, protected=${result.value.leverProtected}.`);
     }
@@ -12063,11 +12070,18 @@ async function shutdownAllAccounts(signal) {
       .filter(context => !context.isPrimary && typeof context.flushFarmPersistence === 'function')
       .map(context => context.flushFarmPersistence())
     : [];
-  await withTimeout(
+  const managedPersistencePromise = withTimeout(
     Promise.allSettled(managedPersistence),
     2_000,
-    'Managed farm Stop persistence timed out'
-  ).catch(error => console.error('[Shutdown] Managed farm Stop persistence:', error.message));
+    'Managed farm resume intent persistence timed out'
+  ).catch(error => console.error('[Shutdown] Managed farm resume intent persistence:', error.message));
+
+  const farmSettlePromise = protectedFarmCount > 0
+    ? sleep(SHUTDOWN_FARM_SETTLE_MS).then(() => {
+        console.log(`[Shutdown] Protection levers remained engaged for ${SHUTDOWN_FARM_SETTLE_MS / 1000} seconds before disconnect.`);
+      })
+    : Promise.resolve();
+  await Promise.all([managedPersistencePromise, farmSettlePromise]);
 
   if (bot) safelyCloseMinecraftBot(bot, 'Process shutdown');
   await multiBotManager?.shutdown({ prepare: false }).catch(error => console.error('[Shutdown] Managed runtimes:', error.message));

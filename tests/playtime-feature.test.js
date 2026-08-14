@@ -103,10 +103,14 @@ async function run() {
   assert.match(botSource, /buildNonWhitelistPlaytimeSearchEmbed\(query, result\)/, 'search results must render in the playtime message');
   assert.match(botSource, /preparePrimaryBotForShutdown\(\)[\s\S]*?syncWhitelistPlaytime\(\[\], \{ allowEmptySnapshot: true \}\)[\s\S]*?safelyCloseMinecraftBot\(bot, 'Process shutdown'\)[\s\S]*?pool\?\.end/,
     'redeploy shutdown must stop farm work, flush PT, disconnect Minecraft, and only then close the database');
-  assert.match(botSource, /preparePrimaryBotForShutdown\(\)[\s\S]*?obsidianStats\.desiredEnabled = false;[\s\S]*?setObsidianFarmDesiredEnabled\(false\)[\s\S]*?primaryProtectionLever\.setState\(currentBot, true\)/,
-    'redeploy shutdown must persist Stop before the replacement process can auto-resume the primary farm');
+  assert.match(botSource, /preparePrimaryBotForShutdown\(\)[\s\S]*?resumeAfterRedeploy[\s\S]*?obsidianStats\.desiredEnabled = true;[\s\S]*?setObsidianFarmDesiredEnabled\(true\)[\s\S]*?primaryProtectionLever\.setState\(currentBot, true\)/,
+    'redeploy shutdown must protect the primary farm while preserving its resume intent');
+  assert.match(botSource, /ensureObsidianFarmRunning\(createdBot[\s\S]*?!obsidianStats\.desiredEnabled[\s\S]*?setProtectionLeverState\(false\)[\s\S]*?farm\.prepareStart\(createdBot\)[\s\S]*?farm\.resume\(createdBot, farmNotification\)/,
+    'the primary farm must reopen its lever and resume after the replacement process reconnects');
   assert.match(botSource, /runtime\.flushFarmPersistence = \(\) => managedFarmWriteQueue[\s\S]*?managedPersistence[\s\S]*?context\.flushFarmPersistence\(\)/,
-    'redeploy shutdown must flush the stopped intent for managed farms');
+    'redeploy shutdown must flush the preserved resume intent for managed farms');
+  assert.match(botSource, /SHUTDOWN_FARM_SETTLE_MS = 3_000[\s\S]*?farmSettlePromise[\s\S]*?sleep\(SHUTDOWN_FARM_SETTLE_MS\)[\s\S]*?await Promise\.all\(\[managedPersistencePromise, farmSettlePromise\]\)[\s\S]*?safelyCloseMinecraftBot\(bot, 'Process shutdown'\)/,
+    'protected farm levers must remain engaged for at least three seconds before Minecraft disconnects');
   assert.match(nixpacksSource, /\[start\][\s\S]*?cmd\s*=\s*["']exec node bot\.js["']/,
     'Coolify/Nixpacks must exec Node directly so SIGTERM reaches the shutdown handlers');
   console.log('playtime feature tests passed');

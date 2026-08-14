@@ -397,10 +397,10 @@ class MinecraftBotRuntime extends BotContext {
     this.clearRuntimeIntervals();
     this.killAura?.setEnabled?.(false);
     this.follow?.stop?.();
-    // A process shutdown is different from the scheduled daily server restart:
-    // persist an explicit Stop so the replacement process cannot immediately
-    // reopen the protection lever and resume the farm after a redeploy.
-    this.obsidianFarm?.suspend?.();
+    // Stop only the physical loop. Keep desiredEnabled intact so the
+    // replacement process can reopen the protection lever and resume the farm
+    // after its Minecraft connection and chunks are ready.
+    this.obsidianFarm?.pauseForServerRestart?.();
     this.task = 'idle';
     this.emit('status', this.getStatus());
 
