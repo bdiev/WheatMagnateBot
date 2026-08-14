@@ -8414,7 +8414,10 @@ function createBot() {
       ))
         .catch(err => console.error('[PlayerActivity] Disconnect offline flush failed:', err.message));
     }
-    syncWhitelistPlaytime([]).catch(err => console.error('[Playtime] Disconnect flush failed:', err.message));
+    if (!multiAccountShuttingDown) {
+      syncWhitelistPlaytime([], { allowEmptySnapshot: true })
+        .catch(err => console.error('[Playtime] Disconnect flush failed:', err.message));
+    }
     const now = new Date();
     const kyivTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Kyiv' }));
     const hour = kyivTime.getHours();
@@ -11955,15 +11958,48 @@ async function cleanupAuthMessages() {
 })();
 
 let multiAccountShuttingDown = false;
+async function preparePrimaryBotForShutdown() {
+  const currentBot = bot;
+  const farmStatus = farm.getStatus();
+  const shouldProtectFarm = Boolean(currentBot?.entity && (farmStatus.enabled || obsidianStats.desiredEnabled));
+
+  clearIntervals();
+  followFeature.stop();
+  farm.suspend();
+
+  let leverProtected = null;
+  if (shouldProtectFarm) {
+    leverProtected = Boolean(await primaryProtectionLever.setState(currentBot, true));
+  }
+  return { farmStopped: Boolean(farmStatus.enabled), leverProtected };
+}
+
 async function shutdownAllAccounts(signal) {
   if (multiAccountShuttingDown) return;
   multiAccountShuttingDown = true;
   console.log(`[Shutdown] ${signal}: stopping Minecraft account runtimes.`);
-  await multiBotManager?.shutdown().catch(error => console.error('[Shutdown] Managed runtimes:', error.message));
   shouldReconnect = false;
   clearReconnectTimer();
   clearResumeTimer();
+
+  const preparationResults = await Promise.allSettled([
+    withTimeout(preparePrimaryBotForShutdown(), 8_000, 'Primary Obsidian Farm shutdown preparation timed out'),
+    multiBotManager
+      ? withTimeout(multiBotManager.prepareForShutdown({ timeoutMs: 7_500 }), 8_000, 'Managed Obsidian Farm shutdown preparation timed out')
+      : Promise.resolve([])
+  ]);
+  for (const result of preparationResults) {
+    if (result.status === 'rejected') console.error('[Shutdown] Farm preparation:', result.reason?.message || result.reason);
+  }
+
+  await withTimeout(
+    syncWhitelistPlaytime([], { allowEmptySnapshot: true }),
+    5_000,
+    'Final playtime flush timed out'
+  ).catch(error => console.error('[Shutdown] Final playtime flush:', error.message));
+
   if (bot) safelyCloseMinecraftBot(bot, 'Process shutdown');
+  await multiBotManager?.shutdown({ prepare: false }).catch(error => console.error('[Shutdown] Managed runtimes:', error.message));
   await resetAccountRuntimeStatusesForShutdown().catch(error => console.error('[Shutdown] Runtime status reset:', error.message));
   discordClient?.destroy?.();
   await (pool?.end?.() || Promise.resolve()).catch(() => {});

@@ -80,8 +80,23 @@ class BotManager {
   pause(accountId) { const runtime=this.get(accountId); if (!runtime) throw Object.assign(new Error('Account runtime is not running.'),{statusCode:409}); return runtime.pause(); }
   resume(accountId) { const runtime=this.get(accountId); if (!runtime) throw Object.assign(new Error('Account runtime is not running.'),{statusCode:409}); return runtime.resume(); }
   async remove(accountId, { force = false } = {}) { const runtime=this.get(accountId); if (runtime?.isCritical() && !force) throw Object.assign(new Error('Account has a critical operation in progress.'),{statusCode:409}); if(runtime) await runtime.destroy(); this.runtimes.delete(accountId); this.contexts.delete(accountId); return this.registry.remove(accountId); }
-  async shutdown() {
+  async prepareForShutdown({ timeoutMs = 8_000 } = {}) {
+    const protectRuntime = runtime => {
+      if (typeof runtime.prepareForShutdown !== 'function') return Promise.resolve(null);
+      let timer = null;
+      return Promise.race([
+        Promise.resolve(runtime.prepareForShutdown('Process shutdown')),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`Shutdown preparation timed out for ${runtime.accountId}.`)), timeoutMs);
+          timer.unref?.();
+        })
+      ]).finally(() => clearTimeout(timer));
+    };
+    return Promise.allSettled([...this.runtimes.values()].map(protectRuntime));
+  }
+  async shutdown({ prepare = true, prepareTimeoutMs = 8_000 } = {}) {
     const runtimeIds = [...this.runtimes.keys()];
+    if (prepare) await this.prepareForShutdown({ timeoutMs: prepareTimeoutMs });
     await Promise.allSettled([...this.runtimes.values()].map(runtime => runtime.destroy()));
     this.runtimes.clear();
     for (const id of runtimeIds) this.contexts.delete(id);

@@ -17,23 +17,55 @@ function createPlaytimeFeature({
     return run;
   }
 
-  async function syncWhitelistPlaytime(onlineUsernames = getOnlinePlayerUsernames()) {
+  async function syncWhitelistPlaytime(
+    onlineUsernames = getOnlinePlayerUsernames(),
+    { allowEmptySnapshot = false } = {}
+  ) {
     if (!pool) return;
+
+    const onlineByKey = new Map();
+    for (const rawUsername of Array.isArray(onlineUsernames) ? onlineUsernames : []) {
+      const username = String(rawUsername || '').trim();
+      if (!/^[A-Za-z0-9_]{1,32}$/.test(username)) continue;
+      if (!onlineByKey.has(username.toLowerCase())) onlineByKey.set(username.toLowerCase(), username);
+    }
+    const normalizedOnlineUsernames = [...onlineByKey.values()];
+    const onlineUsernameKeys = [...onlineByKey.keys()];
+    if (!normalizedOnlineUsernames.length && !allowEmptySnapshot) {
+      console.warn('[Playtime] Skipping an empty online-player snapshot.');
+      return { skipped: true, reason: 'empty-snapshot' };
+    }
 
     return enqueuePlaytimeWrite(async () => {
     let client = null;
     try {
       client = await pool.connect();
       await client.query('BEGIN');
+      // Persist complete seconds while carrying the sub-second remainder into
+      // the next checkpoint. This makes repeated checkpoints equivalent to
+      // flooring once at the end of the whole session instead of losing a
+      // fraction of a second every 30 seconds.
       await client.query(`
-        UPDATE player_playtime
-        SET total_seconds = total_seconds + GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - tracking_since)))::BIGINT),
-            tracking_since = NULL,
+        WITH elapsed AS (
+          SELECT username,
+                 GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - tracking_since)))::BIGINT) AS whole_seconds,
+                 LOWER(username) = ANY($1::text[]) AS remains_online
+          FROM player_playtime
+          WHERE tracking_since IS NOT NULL
+        )
+        UPDATE player_playtime pt
+        SET total_seconds = pt.total_seconds + elapsed.whole_seconds,
+            tracking_since = CASE
+              WHEN elapsed.remains_online
+                THEN pt.tracking_since + elapsed.whole_seconds * INTERVAL '1 second'
+              ELSE NULL
+            END,
             updated_at = NOW()
-        WHERE tracking_since IS NOT NULL
-      `);
+        FROM elapsed
+        WHERE pt.username = elapsed.username
+      `, [onlineUsernameKeys]);
 
-      for (const username of onlineUsernames) {
+      for (const username of normalizedOnlineUsernames) {
         await client.query(`
           WITH identity AS (
             SELECT pa.player_uuid
@@ -51,7 +83,7 @@ function createPlaytimeFeature({
           ), updated_by_uuid AS (
             UPDATE player_playtime pt
             SET username = $1,
-                tracking_since = NOW(),
+                tracking_since = COALESCE(pt.tracking_since, NOW()),
                 updated_at = NOW()
             WHERE pt.player_uuid = (SELECT player_uuid FROM identity)
             RETURNING 1
@@ -62,11 +94,12 @@ function createPlaytimeFeature({
           ON CONFLICT (LOWER(username))
           DO UPDATE SET username = EXCLUDED.username,
                         player_uuid = COALESCE(EXCLUDED.player_uuid, player_playtime.player_uuid),
-                        tracking_since = NOW(),
+                        tracking_since = COALESCE(player_playtime.tracking_since, NOW()),
                         updated_at = NOW()
         `, [username]);
       }
       await client.query('COMMIT');
+      return { synchronized: true, onlineCount: normalizedOnlineUsernames.length };
     } catch (err) {
       if (client) await client.query('ROLLBACK').catch(() => {});
       console.error('[Playtime] Failed to synchronize:', err.message);

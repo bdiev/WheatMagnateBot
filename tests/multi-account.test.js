@@ -119,6 +119,50 @@ async function main(){
   await Promise.all([staggerManager.start(first.id),staggerManager.start(second.id)]);
   assert.ok(staggerStarts[1]-staggerStarts[0]>=25,'parallel starts are serialized with the configured handshake interval');
   await staggerManager.shutdown();
+
+  const shutdownOrder=[];
+  const shutdownManager=new BotManager({
+    registry,
+    startDelayMs:0,
+    startJitterMs:0,
+    maxConcurrentBots:2,
+    runtimeFactory:account=>({
+      accountId:account.id,isPrimary:Boolean(account.isDefault),bot:null,status:'stopped',
+      async start(){this.status='connected';return this.getStatus();},
+      async prepareForShutdown(){shutdownOrder.push(`prepare:${this.accountId}`);},
+      async destroy(){shutdownOrder.push(`destroy:${this.accountId}`);this.status='stopped';},
+      getStatus(){return {accountId:this.accountId,status:this.status};}
+    })
+  });
+  await Promise.all([shutdownManager.start(first.id),shutdownManager.start(second.id)]);
+  await shutdownManager.shutdown();
+  const firstDestroy=shutdownOrder.findIndex(entry=>entry.startsWith('destroy:'));
+  assert.equal(shutdownOrder.slice(0,firstDestroy).filter(entry=>entry.startsWith('prepare:')).length,2,
+    'every managed farm is prepared before any managed bot is disconnected');
+
+  const farmShutdownCalls=[];
+  const shutdownBot=new EventEmitter();
+  shutdownBot.username='ShutdownBot';shutdownBot.entity={};shutdownBot.quit=()=>{};
+  const farmShutdownRuntime=new MinecraftBotRuntime({
+    account:second,
+    botFactory:()=>shutdownBot,
+    moduleFactory:()=>({
+      obsidianFarm:{
+        attachBot(){},detachBot(){},dispose(){},
+        getStatus:()=>({enabled:true,desiredEnabled:true}),
+        pauseForServerRestart(){farmShutdownCalls.push('farm-paused');},
+        async setProtectionLeverState(powered,targetBot){farmShutdownCalls.push(`lever:${powered}`);assert.equal(targetBot,shutdownBot);return true;}
+      },
+      killAura:{attachBot(){},detachBot(){},dispose(){},setEnabled(){farmShutdownCalls.push('kill-aura-stopped');},getStatus:()=>({enabled:false})},
+      follow:{attachBot(){},detachBot(){},dispose(){},stop(){farmShutdownCalls.push('follow-stopped');},getStatus:()=>({enabled:false})}
+    })
+  });
+  await farmShutdownRuntime.start();
+  const farmShutdownResult=await farmShutdownRuntime.prepareForShutdown();
+  assert.deepEqual(farmShutdownResult,{accountId:second.id,farmStopped:true,leverProtected:true});
+  assert.ok(farmShutdownCalls.indexOf('farm-paused')<farmShutdownCalls.indexOf('lever:true'),
+    'a managed Obsidian loop stops before its protection lever is switched on');
+  await farmShutdownRuntime.destroy();
   console.log('Multi-account tests passed.');
 }
 

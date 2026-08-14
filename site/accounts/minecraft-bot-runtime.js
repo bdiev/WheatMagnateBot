@@ -389,6 +389,33 @@ class MinecraftBotRuntime extends BotContext {
     return this.getStatus();
   }
 
+  async prepareForShutdown(reason = 'Process shutdown') {
+    const bot = this.bot;
+    const farmStatus = this.obsidianFarm?.getStatus?.() || {};
+    const shouldProtectFarm = Boolean(bot?.entity && (farmStatus.enabled || farmStatus.desiredEnabled));
+
+    this.clearRuntimeIntervals();
+    this.killAura?.setEnabled?.(false);
+    this.follow?.stop?.();
+    // Preserve desiredEnabled so a farm that was running before a redeploy can
+    // resume after startup, while stopping its physical loop immediately.
+    this.obsidianFarm?.pauseForServerRestart?.();
+    this.task = 'idle';
+    this.emit('status', this.getStatus());
+
+    let leverProtected = null;
+    if (shouldProtectFarm) {
+      try {
+        leverProtected = Boolean(await this.obsidianFarm.setProtectionLeverState(true, bot));
+      } catch (error) {
+        leverProtected = false;
+        this.lastError = `${reason}: could not protect Obsidian Farm lever: ${error?.message || String(error)}`;
+        this.emit('status', this.getStatus());
+      }
+    }
+    return { accountId: this.account.id, farmStopped: Boolean(farmStatus.enabled), leverProtected };
+  }
+
   async restart() { await this.stop('Account restarting'); return this.start(); }
   async reauthorize() {
     await this.stop('Account reauthorization requested');
