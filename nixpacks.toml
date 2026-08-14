@@ -1,0 +1,5 @@
+[start]
+# Keep Node as the container's signal-owning process. Without exec, Coolify's
+# SIGTERM can stop the generated shell/npm parent before bot.js has protected
+# the Obsidian Farm levers and flushed playtime.
+cmd = "exec node bot.js"

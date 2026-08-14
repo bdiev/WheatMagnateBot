@@ -97,6 +97,7 @@ async function run() {
   assert.equal(syncConnections, 2, 'an explicit disconnect must still finalize every active timer');
 
   const botSource = fs.readFileSync(path.resolve(__dirname, '..', 'bot.js'), 'utf8');
+  const nixpacksSource = fs.readFileSync(path.resolve(__dirname, '..', 'nixpacks.toml'), 'utf8');
   assert.match(botSource, /playtime_non_whitelist_search_modal[\s\S]*playtime_search_query/, 'the search button must open a nickname modal');
   assert.match(botSource, /searchNonWhitelistPlaytime\(query, 25\)/, 'the modal must run the non-whitelist playtime search');
   assert.match(botSource, /buildNonWhitelistPlaytimeSearchEmbed\(query, result\)/, 'search results must render in the playtime message');
@@ -106,6 +107,8 @@ async function run() {
     'redeploy shutdown must persist Stop before the replacement process can auto-resume the primary farm');
   assert.match(botSource, /runtime\.flushFarmPersistence = \(\) => managedFarmWriteQueue[\s\S]*?managedPersistence[\s\S]*?context\.flushFarmPersistence\(\)/,
     'redeploy shutdown must flush the stopped intent for managed farms');
+  assert.match(nixpacksSource, /\[start\][\s\S]*?cmd\s*=\s*["']exec node bot\.js["']/,
+    'Coolify/Nixpacks must exec Node directly so SIGTERM reaches the shutdown handlers');
   console.log('playtime feature tests passed');
 }
 
