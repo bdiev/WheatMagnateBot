@@ -4445,19 +4445,32 @@ async function changeObsidianStatsScope(event) {
   }
 }
 
-function recentObsidianRatePerDay(payload = {}) {
+function obsidianSeriesValueForAccount(item, accountId = null) {
+  if (!accountId) return Number(item?.value) || 0;
+  const segment = Array.isArray(item?.segments)
+    ? item.segments.find(entry => String(entry.accountId) === String(accountId))
+    : null;
+  return Number(segment?.value) || 0;
+}
+
+function recentObsidianRatePerDay(payload = {}, accountId = null, accountFarm = null) {
   const hourly = Array.isArray(payload.hourly) ? payload.hourly : [];
   const recentHours = hourly.slice(-48);
-  const recentHourlyTotal = recentHours.reduce((sum, item) => sum + (Number(item.value) || 0), 0);
+  const recentHourlyTotal = recentHours.reduce(
+    (sum, item) => sum + obsidianSeriesValueForAccount(item, accountId),
+    0
+  );
   if (recentHourlyTotal > 0) return recentHourlyTotal / Math.max(1, recentHours.length / 24);
 
   const daily = Array.isArray(payload.daily) ? payload.daily : [];
-  const recentDays = daily.slice(-7).filter(item => (Number(item.value) || 0) > 0);
+  const recentDays = daily.slice(-7)
+    .map(item => obsidianSeriesValueForAccount(item, accountId))
+    .filter(value => value > 0);
   if (recentDays.length > 0) {
-    return recentDays.reduce((sum, item) => sum + (Number(item.value) || 0), 0) / recentDays.length;
+    return recentDays.reduce((sum, value) => sum + value, 0) / recentDays.length;
   }
 
-  const sessionRate = Number(payload.farm?.sessionPerHour) || 0;
+  const sessionRate = Number(accountFarm?.sessionPerHour ?? payload.farm?.sessionPerHour) || 0;
   return sessionRate > 0 ? sessionRate * 24 : 0;
 }
 
@@ -4472,31 +4485,66 @@ function formatSupplyNeededDate(daysUntilNeeded) {
   }).format(date);
 }
 
-function estimateSupplyRefill(payload = {}) {
-  const farm = payload.farm || {};
-  const supplies = payload.supplies || {};
+function calculateSupplyRefill(payload, { supplies, farm, accountId = null, name = null } = {}) {
+  supplies = supplies || {};
+  farm = farm || {};
   const inventory = supplies.inventory;
   const barrel = supplies.barrel;
   const pickaxes = usablePickaxeCount(inventory, barrel);
   const food = foodItemCount(inventory, barrel);
   const blocksPerPickaxe = Number(farm.blocksPerPickaxe) > 0 ? Number(farm.blocksPerPickaxe) : 1500;
   const foodPerDay = 7;
-  const ratePerDay = recentObsidianRatePerDay(payload);
+  const ratePerDay = recentObsidianRatePerDay(payload, accountId, farm);
 
   if (!supplies.hasSnapshot) {
-    return 'No supply snapshot';
+    return { available:false,reason:'snapshot',name };
   }
   if (ratePerDay <= 0) {
-    return `Need rate data (${formatNumber(pickaxes)} picks, ${formatNumber(food)} food)`;
+    return { available:false,reason:'rate',pickaxes,food,name };
   }
 
   const pickaxeDays = pickaxes > 0 ? (pickaxes * blocksPerPickaxe) / ratePerDay : 0;
   const foodDays = food > 0 ? food / foodPerDay : 0;
   const limitingDays = Math.min(pickaxeDays, foodDays);
   const limitingSupply = pickaxeDays <= foodDays ? 'pickaxes' : 'food est.';
-  const approxDate = formatSupplyNeededDate(limitingDays);
+  return { available:true,days:limitingDays,limitingSupply,name };
+}
 
-  return `${approxDate} (${Math.max(0, Math.round(limitingDays))}d, ${limitingSupply})`;
+function formatSupplyRefillEstimate(estimate, { includeAccount = false } = {}) {
+  if (!estimate?.available) {
+    if (estimate?.reason === 'rate') {
+      return `Need rate data (${formatNumber(estimate.pickaxes)} picks, ${formatNumber(estimate.food)} food)`;
+    }
+    return 'No supply snapshot';
+  }
+  const approxDate = formatSupplyNeededDate(estimate.days);
+  const accountLabel = includeAccount && estimate.name ? ` · ${estimate.name}` : '';
+  return `${approxDate} (${Math.max(0, Math.round(estimate.days))}d, ${estimate.limitingSupply}${accountLabel})`;
+}
+
+function estimateSupplyRefill(payload = {}) {
+  if (payload.scope === 'all' && Array.isArray(payload.supplyAccounts)) {
+    const estimates = payload.supplyAccounts.map(account => calculateSupplyRefill(payload, {
+      supplies:account.supplies,
+      farm:account.farm,
+      accountId:account.accountId,
+      name:account.name
+    }));
+    const available = estimates.filter(estimate => estimate.available);
+    if (available.length > 0) {
+      const nearest = available.reduce((current, estimate) =>
+        estimate.days < current.days ? estimate : current
+      );
+      return formatSupplyRefillEstimate(nearest, { includeAccount:true });
+    }
+    const rateMissing = estimates.find(estimate => estimate.reason === 'rate');
+    return formatSupplyRefillEstimate(rateMissing || estimates[0]);
+  }
+
+  return formatSupplyRefillEstimate(calculateSupplyRefill(payload, {
+    supplies:payload.supplies,
+    farm:payload.farm
+  }));
 }
 
 function renderObsidian(payload) {

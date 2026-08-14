@@ -40,6 +40,10 @@ assert.match(serverSource, /attachObsidianAccountSegments[\s\S]*?account\.color[
   'All Bots chart points retain ordered account segments and Account colors');
 assert.match(serverSource, /accountRateResult[\s\S]*?obsidian_farm_state[\s\S]*?obsidian_account_farm_state[\s\S]*?farm\.sessionPerHour = accountRateResult\.rows[\s\S]*?compactFarmState\(row\)\.sessionPerHour/,
   'All Bots Rate is the sum of rates calculated from every bot\'s own session');
+assert.match(serverSource, /SELECT \$4::uuid AS account_id,supplies[\s\S]*?SELECT stats\.account_id,stats\.supplies[\s\S]*?supplyAccounts = aggregate/,
+  'All Bots supplies retain separate snapshots for each account');
+assert.match(appSource, /payload\.scope === 'all'[\s\S]*?payload\.supplyAccounts\.map[\s\S]*?estimate\.days < current\.days/,
+  'All Bots Refill around uses the nearest per-account estimate instead of summed supplies');
 assert.match(appSource, /options\.stacked[\s\S]*?item\.segments[\s\S]*?segment\.color[\s\S]*?fillRect/,
   'the chart renderer paints account segments as stacked colored bars');
 assert.match(appSource, /function aggregateSeries[\s\S]*?segments: new Map\(\)[\s\S]*?segments: Array\.from/,

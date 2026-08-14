@@ -2019,13 +2019,14 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
       FROM buckets LEFT JOIN totals USING(bucket) ORDER BY buckets.bucket
     `, [includePrimary, aggregate, accountId]),
     pool.query(`
-      SELECT supplies,observed_at,updated_at FROM obsidian_farm_supply_snapshot WHERE id=1 AND $1::boolean
+      SELECT $4::uuid AS account_id,supplies,observed_at,updated_at
+      FROM obsidian_farm_supply_snapshot WHERE id=1 AND $1::boolean
       UNION ALL
-      SELECT stats.supplies,stats.observed_at,stats.updated_at
+      SELECT stats.account_id,stats.supplies,stats.observed_at,stats.updated_at
       FROM obsidian_account_farm_supply_snapshot stats
       JOIN bot_accounts a ON a.id=stats.account_id
       WHERE a.is_default=FALSE AND a.deleted_at IS NULL AND ($2::boolean OR stats.account_id=$3::uuid)
-    `, [includePrimary, aggregate, accountId]),
+    `, [includePrimary, aggregate, accountId, DEFAULT_MINECRAFT_ACCOUNT_ID]),
     pool.query(`
       SELECT $4::uuid AS account_id,supplies,observed_at
       FROM obsidian_farm_supply_history
@@ -2107,15 +2108,17 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
         AND a.is_default=FALSE AND a.deleted_at IS NULL
     `, [DEFAULT_MINECRAFT_ACCOUNT_ID]) : Promise.resolve({ rows: [] }),
     aggregate ? pool.query(`
-      SELECT session_mined,session_started_at
+      SELECT $1::uuid AS account_id,session_mined,session_started_at,
+             retired_pickaxes,retired_pickaxe_blocks
       FROM obsidian_farm_state
       WHERE id=1
       UNION ALL
-      SELECT stats.session_mined,stats.session_started_at
+      SELECT stats.account_id,stats.session_mined,stats.session_started_at,
+             stats.retired_pickaxes,stats.retired_pickaxe_blocks
       FROM obsidian_account_farm_state stats
       JOIN bot_accounts a ON a.id=stats.account_id
       WHERE a.is_default=FALSE AND a.deleted_at IS NULL
-    `) : Promise.resolve({ rows: [] })
+    `, [DEFAULT_MINECRAFT_ACCOUNT_ID]) : Promise.resolve({ rows: [] })
   ]);
 
   const farmRows = [
@@ -2155,6 +2158,22 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
   const last7Days = daily.slice(-7).reduce((sum, item) => sum + item.value, 0);
 
   const supplies = normalizeSupplySnapshot(combineRawSupplySnapshots(supplyResult.rows));
+  const accountFarmById = new Map(accountRateResult.rows.map(row => [
+    String(row.account_id),
+    compactFarmState(row)
+  ]));
+  const chartAccountById = new Map(chartAccounts.map(account => [String(account.id), account]));
+  const supplyAccounts = aggregate
+    ? supplyResult.rows.map(row => {
+        const accountId = String(row.account_id);
+        return {
+          accountId,
+          name: chartAccountById.get(accountId)?.name || accountId,
+          farm: accountFarmById.get(accountId) || compactFarmState(),
+          supplies: normalizeSupplySnapshot(row)
+        };
+      })
+    : [];
   const goals = goalsResult.rows.map(row => {
     const targetTotal = toInt(row.target_total);
     const baselineMined = toInt(row.baseline_mined);
@@ -2181,6 +2200,7 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
     daily,
     chartAccounts,
     supplies,
+    supplyAccounts,
     settings: { timezone, dailyReportEnabled: settings.daily_report_enabled, dailyReportHour: settings.daily_report_hour },
     goals,
     annotations,
