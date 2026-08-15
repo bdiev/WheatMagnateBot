@@ -30,6 +30,11 @@ assert.match(serverSource, /WHERE id > \$2::bigint/, 'chat API must load message
 assert.match(serverSource, /POSITION\(LOWER\(\$2\) IN LOWER\(message\)\) > 0/, 'chat search must query the full stored message table');
 assert.match(serverSource, /LOWER\(TRIM\(admin_tag\.value\)\) = 'bot'/,
   'chat API must classify the case-insensitive Minecraft Players Bot tag');
+assert.match(
+  serverSource,
+  /SELECT messages\.username, COUNT\(\*\)::int AS count[\s\S]*?NOT EXISTS \([\s\S]*?UNNEST\(COALESCE\(tagged_player\.admin_tags, '\{\}'::text\[\]\)\)[\s\S]*?LOWER\(TRIM\(admin_tag\.value\)\) = 'bot'[\s\S]*?GROUP BY messages\.username/,
+  'Top chatters must exclude players carrying the case-insensitive Bot tag'
+);
 assert.match(serverSource, /isBot: Boolean\(row\.is_bot\)/,
   'chat API must expose the bot classification to the dashboard');
 assert.match(appSource, /chat-message-bot[\s\S]*chat-bot-badge/,
@@ -55,6 +60,16 @@ assert.match(
   botSource,
   /async function deliverGameChatMessageToDiscord[\s\S]*await recordGameChatMessage\(username, message\);[\s\S]*!DISCORD_CHAT_CHANNEL_ID[\s\S]*return true;/,
   'accepted messages and flood summaries must reach the website archive even while Discord is unavailable'
+);
+assert.match(
+  botSource,
+  /const playerInfoRefresh = await preparePlayerInfoRefresh\(payload, cleanMessage\);[\s\S]*const commandSender = playerInfoRefresh[\s\S]*?bot\.username \|\| 'WheatMagnate'[\s\S]*?isCommand \? commandSender/,
+  'profile metric refresh commands must be displayed and archived as Minecraft bot messages'
+);
+assert.match(
+  botSource,
+  /async function reconcileObservedJoinDate[\s\S]*?SELECT \$1::text, \$2::uuid, \$3::timestamptz[\s\S]*?LOWER\(\$1::text\)/,
+  'observed join-date reconciliation must explicitly type PostgreSQL parameters'
 );
 assert.match(
   serverSource,

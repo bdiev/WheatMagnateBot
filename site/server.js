@@ -1041,10 +1041,23 @@ async function getChat(url) {
       ORDER BY bucket
     `),
     pool.query(`
-      SELECT username, COUNT(*)::int AS count
-      FROM game_chat_messages
-      WHERE created_at >= NOW() - INTERVAL '24 hours'
-      GROUP BY username
+      SELECT messages.username, COUNT(*)::int AS count
+      FROM game_chat_messages messages
+      WHERE messages.created_at >= NOW() - INTERVAL '24 hours'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM player_activity tagged_player
+          WHERE (
+              (messages.player_uuid IS NOT NULL AND tagged_player.player_uuid = messages.player_uuid)
+              OR (messages.player_uuid IS NULL AND LOWER(tagged_player.username) = LOWER(messages.username))
+            )
+            AND EXISTS (
+              SELECT 1
+              FROM UNNEST(COALESCE(tagged_player.admin_tags, '{}'::text[])) AS admin_tag(value)
+              WHERE LOWER(TRIM(admin_tag.value)) = 'bot'
+            )
+        )
+      GROUP BY messages.username
       ORDER BY count DESC, LOWER(username)
       LIMIT 5
     `),

@@ -2922,18 +2922,18 @@ async function reconcileObservedJoinDate(targetUsername, observedDate) {
       async (client, identity) => client.query(`
         WITH updated_by_uuid AS (
           UPDATE player_activity activity
-          SET registration_at = $3
+          SET registration_at = $3::timestamptz
           WHERE $2::uuid IS NOT NULL
             AND activity.player_uuid = $2::uuid
-            AND activity.registration_at IS DISTINCT FROM $3
+            AND activity.registration_at IS DISTINCT FROM $3::timestamptz
           RETURNING username
         ), inserted AS (
           INSERT INTO player_activity (username, player_uuid, registration_at)
-          SELECT $1, $2::uuid, $3
+          SELECT $1::text, $2::uuid, $3::timestamptz
           WHERE NOT EXISTS (
             SELECT 1 FROM player_activity activity
             WHERE ($2::uuid IS NOT NULL AND activity.player_uuid = $2::uuid)
-               OR ($2::uuid IS NULL AND LOWER(activity.username) = LOWER($1))
+               OR ($2::uuid IS NULL AND LOWER(activity.username) = LOWER($1::text))
           )
           ON CONFLICT (LOWER(username))
           DO UPDATE SET player_uuid = COALESCE(EXCLUDED.player_uuid, player_activity.player_uuid),
@@ -2942,10 +2942,10 @@ async function reconcileObservedJoinDate(targetUsername, observedDate) {
           RETURNING username
         ), updated_by_name AS (
           UPDATE player_activity activity
-          SET registration_at = $3
+          SET registration_at = $3::timestamptz
           WHERE $2::uuid IS NULL
-            AND LOWER(activity.username) = LOWER($1)
-            AND activity.registration_at IS DISTINCT FROM $3
+            AND LOWER(activity.username) = LOWER($1::text)
+            AND activity.registration_at IS DISTINCT FROM $3::timestamptz
           RETURNING username
         )
         SELECT username FROM updated_by_uuid
@@ -5282,13 +5282,19 @@ async function executeBotCommand(command) {
     if (!bot || typeof bot.chat !== 'function') throw new Error('Minecraft bot is not ready.');
     const cleanMessage = sanitizeSiteChatMessage(payload.message);
     if (!cleanMessage) throw new Error('Queued message is empty.');
-    await preparePlayerInfoRefresh(payload, cleanMessage);
+    const playerInfoRefresh = await preparePlayerInfoRefresh(payload, cleanMessage);
     const isCommand = cleanMessage.startsWith('/') || cleanMessage.startsWith('!');
     const outgoing = isCommand ? cleanMessage : `[${requestedBy}] ${cleanMessage}`;
     const sent = sendMinecraftChat(outgoing);
     if (!sent) throw new Error('Minecraft bot is not ready.');
+    // Profile refresh buttons are bot-owned maintenance actions. Keep the
+    // requesting site user in the command audit trail, but attribute the chat
+    // line and its archived copy to the Minecraft bot.
+    const commandSender = playerInfoRefresh
+      ? (bot.username || 'WheatMagnate')
+      : requestedBy;
     const sentToDiscord = await sendGameChatMessageToDiscord(
-      isCommand ? requestedBy : (bot.username || 'WheatMagnate'),
+      isCommand ? commandSender : (bot.username || 'WheatMagnate'),
       isCommand ? cleanMessage : outgoing,
       { allowMentions: false, source: 'site-command-chat' }
     );
