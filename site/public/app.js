@@ -5591,12 +5591,14 @@ function maybeLoadMoreAdminPlayers() {
   }
 }
 
-async function loadAdminPlayers({ query = $('#adminPlayersSearch')?.value || '', showLoading = true, offset = 0, append = false } = {}) {
+async function loadAdminPlayers({ query = $('#adminPlayersSearch')?.value || '', showLoading = true, offset = 0, append = false, preserveScroll = false } = {}) {
   if (state.currentUser?.role !== 'admin') return;
   if (append && state.adminPlayersLoading) return;
   const list = $('#adminPlayersList');
   const scroller = $('#adminPlayersScroller');
   const refresh = $('#adminPlayersRefresh');
+  const previousScrollTop = scroller?.scrollTop || 0;
+  const previousPlayers = preserveScroll && !append ? [...state.adminPlayers] : [];
   const requestId = ++state.adminPlayersRequestId;
   state.adminPlayersLoading = true;
   if (refresh) refresh.disabled = true;
@@ -5610,24 +5612,43 @@ async function loadAdminPlayers({ query = $('#adminPlayersSearch')?.value || '',
       limit: String(state.adminPlayersLimit),
       offset: String(Math.max(0, offset))
     });
+    if (preserveScroll && !append) {
+      params.set('limit', String(Math.min(24, Math.max(state.adminPlayersLimit, previousPlayers.length))));
+    }
     const payload = await fetchJson(`/api/admin/players?${params}`);
     if (requestId !== state.adminPlayersRequestId) return;
     state.adminPlayersSort = payload.sort || state.adminPlayersSort;
     state.adminPlayersDirection = payload.direction || state.adminPlayersDirection;
-    state.adminPlayersLimit = Number(payload.limit) || state.adminPlayersLimit;
+    if (!preserveScroll) state.adminPlayersLimit = Number(payload.limit) || state.adminPlayersLimit;
     state.adminPlayersOffset = Number(payload.offset) || 0;
-    state.adminPlayersNextOffset = state.adminPlayersOffset + (payload.players || []).length;
     state.adminPlayersHasMore = Boolean(payload.hasMore);
     if (append) {
       const knownKeys = new Set(state.adminPlayers.map(player => String(player.identityKey)));
       const additions = (payload.players || []).filter(player => !knownKeys.has(String(player.identityKey)));
       state.adminPlayers.push(...additions);
       renderAdminPlayers(additions, { append: true });
+    } else if (preserveScroll) {
+      const refreshedPlayers = payload.players || [];
+      const refreshedKeys = new Set(refreshedPlayers.map(player => String(player.identityKey)));
+      state.adminPlayers = [
+        ...refreshedPlayers,
+        ...previousPlayers.filter(player => !refreshedKeys.has(String(player.identityKey)))
+      ];
+      renderAdminPlayers();
+      if (scroller) {
+        scroller.scrollTop = previousScrollTop;
+        requestAnimationFrame(() => {
+          if (requestId === state.adminPlayersRequestId) scroller.scrollTop = previousScrollTop;
+        });
+      }
     } else {
       state.adminPlayers = payload.players || [];
       renderAdminPlayers();
       if (scroller) scroller.scrollTop = 0;
     }
+    state.adminPlayersNextOffset = preserveScroll && !append
+      ? state.adminPlayers.length
+      : state.adminPlayersOffset + (payload.players || []).length;
     updateAdminPlayersScrollStatus();
   } catch (err) {
     if (requestId !== state.adminPlayersRequestId) return;
@@ -7593,7 +7614,7 @@ function handleRealtimeEvent(event) {
       queueRealtimeRefresh('player-profile-activity', () => loadPlayerProfile(state.playerProfileUsername), 100);
     }
     if (state.currentUser?.role === 'admin' && state.activeTab === 'admin') {
-      queueRealtimeRefresh('admin-players', () => loadAdminPlayers({ showLoading: false }), 350);
+      queueRealtimeRefresh('admin-players', () => loadAdminPlayers({ showLoading: false, preserveScroll: true }), 350);
     }
   }
   else if (type === 'notification_created' && state.currentUser?.role === 'admin') {

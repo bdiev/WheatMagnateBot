@@ -229,6 +229,8 @@ function testArchitectureAndUiContracts() {
   assert.match(appSource, /admin-player-name-button[^>]*data-admin-player-action="view"[^>]*data-player-key/, 'clicking a player nickname must open the profile');
   assert.match(appSource, /adminPlayersScroller'[\s\S]*addEventListener\('scroll', maybeLoadMoreAdminPlayers/, 'scrolling must progressively load the next server page');
   assert.match(appSource, /insertAdjacentHTML\('beforeend', markup\)/, 'new cards must append without rebuilding loaded cards');
+  assert.match(appSource, /player_joined[\s\S]*player_left[\s\S]*loadAdminPlayers\(\{ showLoading: false, preserveScroll: true \}\)/, 'join and leave refreshes must preserve the admin player scroll position');
+  assert.match(appSource, /previousScrollTop[\s\S]*preserveScroll[\s\S]*requestAnimationFrame[\s\S]*scroller\.scrollTop = previousScrollTop/, 'background player refreshes must restore the scroll position after rendering');
   assert.match(stylesSource, /\.admin-players-scroller\s*\{[^}]*max-height:[^;]+;[^}]*overflow-y:auto;/, 'the player card area must stay compact and scroll internally');
   assert.match(stylesSource, /\.admin-player-card\.menu-open\s*\{[^}]*z-index:100/, 'the active player card must render above later cards');
   assert.match(stylesSource, /\.admin-player-avatar-button\s*\{[^}]*grid-column:1;[^}]*min-width:52px!important;/, 'the clickable avatar must stay inside its grid column');
