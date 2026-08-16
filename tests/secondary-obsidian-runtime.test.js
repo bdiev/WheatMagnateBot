@@ -312,7 +312,7 @@ async function main() {
 
     const expectedDebugEvents = ['farm_started', 'cycle_started', 'cycle_action_start', 'farm_click_trace'];
     const debugLines = await readDebugEvents(
-      path.join(dataRoot, SECONDARY_ID, 'obsidian-farm-debug.log'),
+      secondary.modules.obsidianFarm.getDebugLogFile(),
       expectedDebugEvents
     );
     for (const event of expectedDebugEvents) {

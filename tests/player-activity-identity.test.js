@@ -84,7 +84,7 @@ async function run() {
   assert.match(siteSource, /searched_name\.player_uuid = pa\.player_uuid/, 'profile search must resolve previous names to the current UUID');
   assert.match(siteSource, /pool\.query\(`\s*WITH activity AS \(/, 'the UUID profile query must start a valid CTE');
   assert.match(siteSource, /game_chat_messages[\s\S]*player_uuid = \$1::uuid/, 'profile chat must be selected by UUID');
-  assert.match(botSource, /INSERT INTO game_chat_messages \(username, player_uuid, message\)/, 'new chat messages must store the UUID');
+  assert.match(botSource, /INSERT INTO game_chat_messages \(username, player_uuid, message, message_count, is_visible\)/, 'new chat messages must store the UUID and statistical visibility metadata');
   assert.match(botSource, /INSERT INTO player_playtime \(username, player_uuid, total_seconds, tracking_since, updated_at\)/, 'startup deduplication must preserve UUID ownership');
   const onlineSnapshotSource = botSource.match(/function getOnlinePlayerUsernames\(\)[\s\S]*?\n}/)?.[0] || '';
   assert.doesNotMatch(onlineSnapshotSource, /displayName/, 'TAB display values must never become player usernames');

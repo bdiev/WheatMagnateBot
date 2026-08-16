@@ -1694,6 +1694,8 @@ async function initDatabase() {
         username VARCHAR(255) NOT NULL,
         player_uuid UUID,
         message TEXT NOT NULL,
+        message_count INTEGER NOT NULL DEFAULT 1,
+        is_visible BOOLEAN NOT NULL DEFAULT TRUE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
@@ -3659,14 +3661,16 @@ function createObsidianLogsComponents() {
 
 function buildObsidianLogsEmbed() {
   const loggingEnabled = farm.getDebugLoggingEnabled?.() !== false;
+  const currentLogFile = farm.getDebugLogFile?.() || OBSIDIAN_FARM_DEBUG_LOG_FILE;
   return {
     title: `${FARM_EMOJIS.obsidian} Obsidian Farm Logs`,
     color: loggingEnabled ? 65280 : 16776960,
     description: [
       `Debug logging: **${loggingEnabled ? 'Enabled' : 'Disabled'}**`,
-      `File: \`${OBSIDIAN_FARM_DEBUG_LOG_FILE}\``
+      `Today's file: \`${currentLogFile}\``,
+      'Retention: **7 daily files**'
     ].join('\n'),
-    footer: { text: 'Download sends the current log file or its latest tail if it is too large' },
+    footer: { text: "Download sends today's log file or its latest tail if it is too large" },
     timestamp: new Date()
   };
 }
@@ -3697,15 +3701,16 @@ function formatBytes(bytes) {
 }
 
 async function sendObsidianDebugLog(interaction) {
+  const currentLogFile = farm.getDebugLogFile?.() || OBSIDIAN_FARM_DEBUG_LOG_FILE;
   let stat;
   try {
-    stat = await fs.promises.stat(OBSIDIAN_FARM_DEBUG_LOG_FILE);
+    stat = await fs.promises.stat(currentLogFile);
   } catch (err) {
     if (err.code === 'ENOENT') {
       await interaction.editReply({
         content:
           'Obsidian farm debug log has not been created yet.\n' +
-          `Expected path inside the bot container: \`${OBSIDIAN_FARM_DEBUG_LOG_FILE}\``
+          `Expected path inside the bot container: \`${currentLogFile}\``
       });
       return;
     }
@@ -3714,7 +3719,7 @@ async function sendObsidianDebugLog(interaction) {
 
   if (!stat.isFile()) {
     await interaction.editReply({
-      content: `Debug log path exists but is not a file: \`${OBSIDIAN_FARM_DEBUG_LOG_FILE}\``
+      content: `Debug log path exists but is not a file: \`${currentLogFile}\``
     });
     return;
   }
@@ -3724,7 +3729,7 @@ async function sendObsidianDebugLog(interaction) {
     await interaction.editReply({
       content: `Obsidian farm debug log (${formatBytes(stat.size)}).`,
       files: [{
-        attachment: OBSIDIAN_FARM_DEBUG_LOG_FILE,
+        attachment: currentLogFile,
         name: `obsidian_farm_debug_${date}.log`
       }]
     });
@@ -3732,7 +3737,7 @@ async function sendObsidianDebugLog(interaction) {
   }
 
   const tail = await readFileTail(
-    OBSIDIAN_FARM_DEBUG_LOG_FILE,
+    currentLogFile,
     DISCORD_ATTACHMENT_SAFE_LIMIT_BYTES - 1024
   );
   const notice = Buffer.from(
@@ -4943,11 +4948,21 @@ async function isTaggedBotPlayer(username) {
   }
 }
 
-async function deliverGameChatMessageToDiscord({ username, message, allowMentions = true, createdAt = Date.now(), isSummary = false }) {
+async function deliverGameChatMessageToDiscord({
+  username,
+  message,
+  allowMentions = true,
+  createdAt = Date.now(),
+  isSummary = false,
+  summaryCount = 0
+}) {
   try {
-    // Persist only messages that passed the shared flood queue. This keeps the
-    // website archive/live feed aligned with Discord suppression and summaries.
-    await recordGameChatMessage(username, message);
+    // A flood summary contributes the number of suppressed messages to chat
+    // statistics, but stays hidden from the public archive and player history.
+    await recordGameChatMessage(username, message, {
+      messageCount: isSummary ? summaryCount : 1,
+      visible: !isSummary
+    });
 
     if (!DISCORD_CHAT_CHANNEL_ID || !discordClient || !discordClient.isReady()) {
       return true;
@@ -4959,19 +4974,28 @@ async function deliverGameChatMessageToDiscord({ username, message, allowMention
 
     const avatarUrl = `https://minotar.net/avatar/${username.toLowerCase()}/28`;
     const displayMessage = formatDiscordBridgeMessage(message, { allowDiscordInvites: isBotPlayer });
+    const skippedCount = Math.max(1, Number.parseInt(summaryCount, 10) || 1);
+    const skippedLabel = `${skippedCount} ${skippedCount === 1 ? 'message' : 'messages'} skipped`;
 
     const sendOptions = {
-      embeds: [{
-        author: {
-          name: isBotPlayer ? `${username} • BOT` : username,
-          url: `https://namemc.com/profile/${encodeURIComponent(username)}`
-        },
-        description: displayMessage,
-        color: isSummary ? 16753920 : isBotPlayer ? 10181046 : 3447003,
-        thumbnail: { url: avatarUrl },
-        timestamp: new Date(createdAt),
-        ...(isSummary ? { footer: { text: 'Flood protection' } } : {})
-      }]
+      embeds: [isSummary
+        ? {
+            title: '🛡️ Flood protection activated',
+            description: `**${username}** sent messages too quickly.`,
+            color: 16753920,
+            footer: { text: skippedLabel },
+            timestamp: new Date(createdAt)
+          }
+        : {
+            author: {
+              name: isBotPlayer ? `${username} • BOT` : username,
+              url: `https://namemc.com/profile/${encodeURIComponent(username)}`
+            },
+            description: displayMessage,
+            color: isBotPlayer ? 10181046 : 3447003,
+            thumbnail: { url: avatarUrl },
+            timestamp: new Date(createdAt)
+          }]
     };
 
     const isBridgeMessage = /^\[[^\]]+\]\s/.test(message);
@@ -5004,7 +5028,7 @@ async function deliverGameChatMessageToDiscord({ username, message, allowMention
   }
 }
 
-async function recordGameChatMessage(username, message) {
+async function recordGameChatMessage(username, message, { messageCount = 1, visible = true } = {}) {
   if (!pool) return;
 
   const safeUsername = String(username || 'Minecraft').trim().slice(0, 255);
@@ -5014,6 +5038,7 @@ async function recordGameChatMessage(username, message) {
     .trim();
 
   if (!safeUsername || !cleanMessage || cleanMessage.startsWith('/msg ')) return;
+  const safeMessageCount = Math.max(1, Number.parseInt(messageCount, 10) || 1);
 
   try {
     const onlinePlayer = Object.values(bot?.players || {}).find(player =>
@@ -5021,8 +5046,8 @@ async function recordGameChatMessage(username, message) {
     );
     const playerUuid = dashedMinecraftUuid(onlinePlayer?.uuid);
     await pool.query(
-      'INSERT INTO game_chat_messages (username, player_uuid, message) VALUES ($1, $2::uuid, $3)',
-      [safeUsername, playerUuid, cleanMessage]
+      'INSERT INTO game_chat_messages (username, player_uuid, message, message_count, is_visible) VALUES ($1, $2::uuid, $3, $4, $5)',
+      [safeUsername, playerUuid, cleanMessage, safeMessageCount, Boolean(visible)]
     );
   } catch (err) {
     console.error('[DB] Failed to record game chat message:', err.message);

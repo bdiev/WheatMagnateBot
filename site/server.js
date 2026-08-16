@@ -606,6 +606,8 @@ async function ensureOptionalTables() {
       username VARCHAR(255) NOT NULL,
       player_uuid UUID,
       message TEXT NOT NULL,
+      message_count INTEGER NOT NULL DEFAULT 1,
+      is_visible BOOLEAN NOT NULL DEFAULT TRUE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
@@ -827,7 +829,7 @@ async function getSummary() {
       ORDER BY last_seen DESC
     `),
     pool.query(`
-      SELECT COUNT(*)::int AS total
+      SELECT COALESCE(SUM(message_count), 0)::bigint AS total
       FROM game_chat_messages
       WHERE created_at >= NOW() - INTERVAL '24 hours'
     `)
@@ -962,25 +964,27 @@ async function getChat(url) {
   const messagesSql = searchQuery
     ? `SELECT id, username, player_uuid, message, created_at, ${botTagColumn}
        FROM game_chat_messages
-       WHERE POSITION(LOWER($2) IN LOWER(message)) > 0
+       WHERE is_visible = TRUE
+         AND POSITION(LOWER($2) IN LOWER(message)) > 0
        ORDER BY id DESC
        LIMIT $1`
     : aroundId
     ? `SELECT id, username, player_uuid, message, created_at, is_bot FROM (
          (SELECT id, username, player_uuid, message, created_at, ${botTagColumn}
           FROM game_chat_messages
-          WHERE id <= $2::bigint
+          WHERE is_visible = TRUE AND id <= $2::bigint
           ORDER BY id DESC
           LIMIT (($1 + 1) / 2))
          UNION ALL
          (SELECT id, username, player_uuid, message, created_at, ${botTagColumn}
           FROM game_chat_messages
-          WHERE id > $2::bigint
+          WHERE is_visible = TRUE AND id > $2::bigint
           ORDER BY id ASC
           LIMIT ($1 / 2))
        ) context_messages`
     : `SELECT id, username, player_uuid, message, created_at, ${botTagColumn}
        FROM game_chat_messages
+       WHERE is_visible = TRUE
        ORDER BY created_at DESC
        LIMIT $1`;
   const [messagesResult, activityResult, hourlyResult, dailyResult, monthlyResult, topChattersResult, totalsResult] = await Promise.all([
@@ -1013,7 +1017,7 @@ async function getChat(url) {
       )
       SELECT TO_CHAR(buckets.bucket, 'MM-DD HH24:00') AS label,
              buckets.bucket AS bucket,
-             COALESCE(COUNT(messages.id), 0)::int AS count
+             COALESCE(SUM(messages.message_count), 0)::bigint AS count
       FROM buckets
       LEFT JOIN game_chat_messages messages
         ON date_trunc('hour', messages.created_at) = buckets.bucket
@@ -1032,7 +1036,7 @@ async function getChat(url) {
         WHERE first_day IS NOT NULL
       )
       SELECT buckets.bucket,
-             COALESCE(COUNT(messages.id), 0)::int AS count
+             COALESCE(SUM(messages.message_count), 0)::bigint AS count
       FROM buckets
       LEFT JOIN game_chat_messages messages
         ON messages.created_at >= buckets.bucket
@@ -1042,13 +1046,13 @@ async function getChat(url) {
     `),
     pool.query(`
       SELECT date_trunc('month', created_at) AS bucket,
-             COUNT(*)::int AS count
+             SUM(message_count)::bigint AS count
       FROM game_chat_messages
       GROUP BY date_trunc('month', created_at)
       ORDER BY bucket
     `),
     pool.query(`
-      SELECT messages.username, COUNT(*)::int AS count
+      SELECT messages.username, SUM(messages.message_count)::bigint AS count
       FROM game_chat_messages messages
       WHERE messages.created_at >= NOW() - INTERVAL '24 hours'
         AND NOT EXISTS (
@@ -1070,8 +1074,8 @@ async function getChat(url) {
     `),
     pool.query(`
       SELECT
-        COUNT(*)::int AS total,
-        COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')::int AS last_24h,
+        COALESCE(SUM(message_count), 0)::bigint AS total,
+        COALESCE(SUM(message_count) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours'), 0)::bigint AS last_24h,
         COUNT(DISTINCT LOWER(username)) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')::int AS active_chatters_24h
       FROM game_chat_messages
     `)
@@ -3012,8 +3016,8 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
     `, [currentUsername, playerUuid, aliases]),
     pool.query(`
       SELECT
-        COUNT(*)::int AS total,
-        COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')::int AS last_24h,
+        COALESCE(SUM(message_count), 0)::bigint AS total,
+        COALESCE(SUM(message_count) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours'), 0)::bigint AS last_24h,
         MAX(created_at) AS last_message_at
       FROM game_chat_messages
       WHERE ($1::uuid IS NOT NULL AND player_uuid = $1::uuid)
@@ -3026,6 +3030,7 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
           ($1::uuid IS NOT NULL AND player_uuid = $1::uuid)
           OR (player_uuid IS NULL AND LOWER(username) = ANY($2::text[]))
         )
+        AND is_visible = TRUE
         AND ($3::bigint IS NULL OR id < $3::bigint)
       ORDER BY created_at DESC
       LIMIT $4
@@ -3227,13 +3232,13 @@ async function getAdminPlayers(currentUser, url, database = pool) {
   const sortingByMessages = sort === 'messages';
   const messageCountCtes = sortingByMessages ? `
     chat_counts_uuid AS MATERIALIZED (
-      SELECT player_uuid,COUNT(*)::int AS total_messages,MAX(created_at) AS last_message_at
+      SELECT player_uuid,SUM(message_count)::bigint AS total_messages,MAX(created_at) AS last_message_at
       FROM game_chat_messages
       WHERE player_uuid IS NOT NULL
       GROUP BY player_uuid
     ),
     chat_counts_name AS MATERIALIZED (
-      SELECT LOWER(username) AS username_key,COUNT(*)::int AS total_messages,MAX(created_at) AS last_message_at
+      SELECT LOWER(username) AS username_key,SUM(message_count)::bigint AS total_messages,MAX(created_at) AS last_message_at
       FROM game_chat_messages
       WHERE player_uuid IS NULL
       GROUP BY LOWER(username)
@@ -3252,12 +3257,12 @@ async function getAdminPlayers(currentUser, url, database = pool) {
            COALESCE(chat_uuid.last_message_at,chat_name.last_message_at) AS last_message_at`;
   const resultMessageJoins = sortingByMessages ? '' : `
     LEFT JOIN LATERAL (
-      SELECT COUNT(*)::int AS total_messages,MAX(message.created_at) AS last_message_at
+      SELECT COALESCE(SUM(message.message_count),0)::bigint AS total_messages,MAX(message.created_at) AS last_message_at
       FROM game_chat_messages message
       WHERE message.player_uuid=candidate.player_uuid
     ) chat_uuid ON candidate.player_uuid IS NOT NULL
     LEFT JOIN LATERAL (
-      SELECT COUNT(*)::int AS total_messages,MAX(message.created_at) AS last_message_at
+      SELECT COALESCE(SUM(message.message_count),0)::bigint AS total_messages,MAX(message.created_at) AS last_message_at
       FROM game_chat_messages message
       WHERE message.player_uuid IS NULL AND LOWER(message.username)=LOWER(candidate.username)
     ) chat_name ON candidate.player_uuid IS NULL`;
@@ -4775,7 +4780,7 @@ async function handleApi(req, res, url) {
       return;
     }
     if (url.pathname === '/api/chat/version' && req.method === 'GET') {
-      const result = await pool.query('SELECT COALESCE(MAX(id),0)::text AS latest_id FROM game_chat_messages');
+      const result = await pool.query('SELECT COALESCE(MAX(id),0)::text AS latest_id FROM game_chat_messages WHERE is_visible = TRUE');
       sendJson(res, 200, { latestId: result.rows[0]?.latest_id || '0' });
       return;
     }
@@ -5082,7 +5087,7 @@ async function pollDatabaseEvents() {
     const markersResult = await pool.query(`
         SELECT
           (SELECT observed_at FROM bot_status_snapshots WHERE id=1) AS bot_status_at,
-          (SELECT COALESCE(MAX(id),0) FROM game_chat_messages) AS chat_id,
+          (SELECT COALESCE(MAX(id),0) FROM game_chat_messages WHERE is_visible = TRUE) AS chat_id,
           (SELECT COALESCE(MAX(id),0) FROM site_whisper_messages) AS whisper_id,
           GREATEST(
             COALESCE((SELECT updated_at FROM obsidian_farm_state WHERE id=1), '-infinity'::timestamptz),
@@ -5129,7 +5134,7 @@ async function pollDatabaseEvents() {
       if (!next.players.has(key)) sseHub.publish('player_left', { username });
     }
     if (next.chatId !== previous.chatId) {
-      const messages = await pool.query(`SELECT id::text, created_at FROM game_chat_messages WHERE id>$1 ORDER BY id ASC LIMIT 100`, [previous.chatId]);
+      const messages = await pool.query(`SELECT id::text, created_at FROM game_chat_messages WHERE is_visible = TRUE AND id>$1 ORDER BY id ASC LIMIT 100`, [previous.chatId]);
       for (const message of messages.rows) sseHub.publish('chat_message', { id: message.id, createdAt: message.created_at });
     }
     if (next.whisperId !== previous.whisperId) {

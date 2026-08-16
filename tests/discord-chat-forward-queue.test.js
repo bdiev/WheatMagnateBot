@@ -105,6 +105,7 @@ async function testFloodSuppressionAndSummary() {
   assert.deepEqual(delivered.slice(0, 2).map(item => item.message), ['one', 'two']);
   assert.match(delivered[2].message, /Skipped 3 messages/);
   assert.equal(delivered[2].allowMentions, false);
+  assert.equal(delivered[2].summaryCount, 3);
   assert.deepEqual(
     suppressed.map(event => [event.reason, event.message]),
     [

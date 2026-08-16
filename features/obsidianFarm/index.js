@@ -19,6 +19,7 @@ const { GoalNear }              = require('mineflayer-pathfinder').goals;
 const Vec3                      = require('vec3');
 const fs                        = require('fs');
 const path                      = require('node:path');
+const { randomUUID }            = require('node:crypto');
 const { createProtectionLeverController } = require('./protection-lever');
 const { nextInteractionSequence } = require('./interaction-sequence');
 
@@ -50,6 +51,8 @@ const DEFAULT_CAULDRON_DIST = 5;
 const MIN_PICKAXE_REMAINING_PERCENT = 5;
 const FARM_CONFIG_FILE = path.resolve(context.configFile || 'obsidian_farm_config.json');
 const FARM_DEBUG_LOG_FILE = path.resolve(context.debugLogFile || 'obsidian_farm_debug.log');
+const FARM_DEBUG_RETENTION_DAYS = 7;
+const FARM_DEBUG_NOW = typeof context.now === 'function' ? context.now : () => new Date();
 const FARM_SYSTEM_LOGGER = typeof context.systemLogger === 'function'
   ? context.systemLogger
   : null;
@@ -113,6 +116,7 @@ let worldInteractionQueue = Promise.resolve();
 const pickaxeBlocksMined = new Map();
 let farmCycleSequence = 0;
 let farmFailureStartedAt = null;
+let farmFailureCorrelationId = null;
 let farmRecoveryCheckPending = true;
 const activeFarmNotificationTypes = new Set();
 let farmDebugLoggingEnabled = true;
@@ -1730,20 +1734,88 @@ function ensureInteractionRange(bot, pos, actionName) {
   }
 }
 
+function getFarmDebugDateKey(date = FARM_DEBUG_NOW()) {
+  const value = date instanceof Date ? date : new Date(date);
+  return value.toISOString().slice(0, 10);
+}
+
+function getFarmDebugLogFile(date = FARM_DEBUG_NOW()) {
+  const parsed = path.parse(FARM_DEBUG_LOG_FILE);
+  const extension = parsed.ext || '.log';
+  const stem = parsed.ext ? parsed.name : parsed.base;
+  return path.join(parsed.dir, `${stem}-${getFarmDebugDateKey(date)}${extension}`);
+}
+
+function getFarmDebugRetentionCutoff(date = FARM_DEBUG_NOW()) {
+  const cutoff = new Date(date);
+  cutoff.setUTCHours(0, 0, 0, 0);
+  cutoff.setUTCDate(cutoff.getUTCDate() - (FARM_DEBUG_RETENTION_DAYS - 1));
+  return cutoff;
+}
+
+let farmDebugCleanupDateKey = null;
+let farmDebugCleanupPromise = Promise.resolve();
+
+function cleanupFarmDebugLogs(date = FARM_DEBUG_NOW()) {
+  const cleanupDateKey = getFarmDebugDateKey(date);
+  if (farmDebugCleanupDateKey === cleanupDateKey) return farmDebugCleanupPromise;
+  farmDebugCleanupDateKey = cleanupDateKey;
+
+  const parsed = path.parse(FARM_DEBUG_LOG_FILE);
+  const extension = parsed.ext || '.log';
+  const stem = parsed.ext ? parsed.name : parsed.base;
+  const dailyPattern = new RegExp(
+    `^${stem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-(\\d{4}-\\d{2}-\\d{2})${extension.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`
+  );
+  const cutoff = getFarmDebugRetentionCutoff(date);
+  const cutoffDateKey = getFarmDebugDateKey(cutoff);
+
+  farmDebugCleanupPromise = fs.promises.mkdir(parsed.dir, { recursive: true })
+    .then(() => fs.promises.readdir(parsed.dir, { withFileTypes: true }))
+    .then(async entries => {
+      const removals = [];
+      for (const entry of entries) {
+        if (!entry.isFile()) continue;
+        const match = entry.name.match(dailyPattern);
+        if (match && match[1] < cutoffDateKey) {
+          removals.push(fs.promises.unlink(path.join(parsed.dir, entry.name)));
+        }
+      }
+
+      // The pre-rotation monolithic file has no date in its name. Once it has
+      // remained untouched for the retention period, remove it as legacy data.
+      try {
+        const legacyStat = await fs.promises.stat(FARM_DEBUG_LOG_FILE);
+        if (legacyStat.isFile() && legacyStat.mtimeMs < cutoff.getTime()) {
+          removals.push(fs.promises.unlink(FARM_DEBUG_LOG_FILE));
+        }
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+      }
+
+      await Promise.allSettled(removals);
+    })
+    .catch(() => {});
+  return farmDebugCleanupPromise;
+}
+
 function writeFarmDebug(event, details = {}) {
   if (!farmDebugLoggingEnabled) return;
+  const now = FARM_DEBUG_NOW();
   const record = {
-    time: new Date().toISOString(),
+    time: now.toISOString(),
     botId: identity.botId,
     username: identity.username,
     event,
     ...details
   };
   const line = JSON.stringify(record);
+  const dailyLogFile = getFarmDebugLogFile(now);
   // Debug logging must not block the time-sensitive farming loop, especially
   // when the project directory is synced by OneDrive.
-  fs.mkdir(path.dirname(FARM_DEBUG_LOG_FILE), { recursive: true }, () => {
-    fs.appendFile(FARM_DEBUG_LOG_FILE, `${line}\n`, 'utf8', () => {});
+  cleanupFarmDebugLogs(now);
+  fs.mkdir(path.dirname(dailyLogFile), { recursive: true }, () => {
+    fs.appendFile(dailyLogFile, `${line}\n`, 'utf8', () => {});
   });
   if (event === 'farm_click_trace' && FARM_SYSTEM_LOGGER) {
     const stage = String(details.stage || 'unknown');
@@ -2687,7 +2759,7 @@ async function mineObsidian(bot, targetPos, context = {}) {
     if (attempt === OBSIDIAN_DIG_MAX_ATTEMPTS) {
       throw new Error(
         `Server kept obsidian at (${x}, ${y}, ${z}) after ${OBSIDIAN_DIG_MAX_ATTEMPTS} mining attempts. ` +
-        `Diagnostics were written to ${FARM_DEBUG_LOG_FILE}.`
+        `Diagnostics were written to ${getFarmDebugLogFile()}.`
       );
     }
 
@@ -2832,6 +2904,7 @@ async function persistentLoop(bot, notify) {
     cycleId,
     startedCyclesCompleted: farm.cyclesCompleted
   };
+  if (farmFailureCorrelationId) context.correlationId = farmFailureCorrelationId;
   writeFarmDebug('cycle_started', {
     ...context,
     config: farm.config ? { ...farm.config } : null,
@@ -2843,9 +2916,12 @@ async function persistentLoop(bot, notify) {
     // Refresh/barrel inspection cannot interleave with any part of a farm cycle.
     await withWorldInteractionLock(() => runCycle(bot, () => {}, context));
     farm.lastErrorMessage = null;
+    const recoveredCorrelationId = farmFailureCorrelationId;
     farmFailureStartedAt = null;
+    farmFailureCorrelationId = null;
     writeFarmDebug('cycle_completed', {
       ...context,
+      correlationId: recoveredCorrelationId,
       durationMs: Date.now() - cycleStartedAt,
       cyclesCompleted: farm.cyclesCompleted
     });
@@ -2862,7 +2938,14 @@ async function persistentLoop(bot, notify) {
     if (farmRecoveryCheckPending) notificationTypesToResolve.add('farm_stalled');
     for (const eventType of notificationTypesToResolve) {
       const [title, message] = recoveryMessages[eventType];
-      notify?.({ eventType, key: 'obsidian-farm', resolved: true, title, message });
+      notify?.({
+        eventType,
+        key: 'obsidian-farm',
+        resolved: true,
+        title,
+        message,
+        metadata: recoveredCorrelationId ? { correlationId: recoveredCorrelationId } : undefined
+      });
     }
     farmRecoveryCheckPending = false;
     activeFarmNotificationTypes.clear();
@@ -2872,6 +2955,7 @@ async function persistentLoop(bot, notify) {
     farm.lastErrorMessage = err.message;
     if (err.code !== CAULDRON_RETRY_CODE) {
       farmFailureStartedAt ||= Date.now();
+      farmFailureCorrelationId ||= randomUUID();
     }
     const stalledSeconds = farmFailureStartedAt == null
       ? 0
@@ -2893,7 +2977,8 @@ async function persistentLoop(bot, notify) {
         error: err.message,
         errorCode: err.code || null,
         phase: farm.phase,
-        retryInMs: retryDelay
+        retryInMs: retryDelay,
+        correlationId: farmFailureCorrelationId
       }
     );
     if (err.code === CAULDRON_RETRY_CODE) {
@@ -2902,13 +2987,13 @@ async function persistentLoop(bot, notify) {
     } else if (err.code === LOW_PICKAXE_DURABILITY_CODE) {
       activeFarmNotificationTypes.add('low_pickaxe_durability');
       const percent = Number(err.message.match(/has\s+([\d.]+)%/i)?.[1]);
-      notify?.({ eventType: 'low_pickaxe_durability', key: 'obsidian-farm', title: 'Low pickaxe durability', message: err.message, metadata: { errorCode: err.code, percent } });
+      notify?.({ eventType: 'low_pickaxe_durability', key: 'obsidian-farm', title: 'Low pickaxe durability', message: err.message, metadata: { errorCode: err.code, percent, correlationId: farmFailureCorrelationId } });
     } else if (err.code === RESOURCE_EXHAUSTED_CODE && /pickaxe/i.test(err.message)) {
       activeFarmNotificationTypes.add('no_pickaxes');
-      notify?.({ eventType: 'no_pickaxes', key: 'obsidian-farm', title: 'No usable pickaxes', message: err.message, metadata: { errorCode: err.code, count: 0 } });
+      notify?.({ eventType: 'no_pickaxes', key: 'obsidian-farm', title: 'No usable pickaxes', message: err.message, metadata: { errorCode: err.code, count: 0, correlationId: farmFailureCorrelationId } });
     } else {
       activeFarmNotificationTypes.add('farm_stalled');
-      notify?.({ eventType: 'farm_stalled', key: 'obsidian-farm', title: 'Obsidian farm stalled', message: err.message, metadata: { errorCode: err.code || null, phase: farm.phase, seconds: stalledSeconds } });
+      notify?.({ eventType: 'farm_stalled', key: 'obsidian-farm', title: 'Obsidian farm stalled', message: err.message, metadata: { errorCode: err.code || null, phase: farm.phase, seconds: stalledSeconds, correlationId: farmFailureCorrelationId } });
     }
   }
 
@@ -3021,6 +3106,7 @@ function stop(notify) {
   }
 }
 
+cleanupFarmDebugLogs();
 loadFarmConfig();
 
 return {
@@ -3039,6 +3125,7 @@ return {
   getDetailedStatus,
   getDebugLoggingEnabled,
   setDebugLoggingEnabled,
+  getDebugLogFile: getFarmDebugLogFile,
   loadPlugin,
   assertPathfinderReady,
   validateStart,
@@ -3051,6 +3138,9 @@ return {
     isPickaxeUsable,
     aimAtObsidianForMining,
     getObsidianDigHoldMs,
+    getFarmDebugLogFile,
+    cleanupFarmDebugLogs,
+    writeFarmDebug,
     swapPickaxesInExactSlots,
     findLavaPlacementAnchor,
     findLavaCauldrons,
@@ -3066,6 +3156,7 @@ return {
         pickaxeBlocksMined,
         farmCycleSequence,
         farmFailureStartedAt,
+        farmFailureCorrelationId,
         activeFarmNotificationTypes,
         cauldronReachStats,
         cauldronFailures
@@ -3077,7 +3168,8 @@ return {
       CAULDRON_RETRY_CODE,
       OBSIDIAN_DIG_BASE_HOLD_MS,
       OBSIDIAN_DIG_RETRY_HOLD_BONUS_MS,
-      OBSIDIAN_DIG_AIM_SETTLE_MS
+      OBSIDIAN_DIG_AIM_SETTLE_MS,
+      FARM_DEBUG_RETENTION_DAYS
     }
   }
 };

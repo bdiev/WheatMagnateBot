@@ -101,6 +101,7 @@ function ownObsidianFarm(context, farm, settingsFile, notify = null, initialStat
     getDetailedStatus: options => farm.getDetailedStatus(context.bot, options),
     getDebugLoggingEnabled: () => farm.getDebugLoggingEnabled(),
     setDebugLoggingEnabled: enabled => farm.setDebugLoggingEnabled(enabled),
+    getDebugLogFile: date => farm.getDebugLogFile(date),
     loadPlugin: bot => farm.loadPlugin(bot || context.bot),
     __test: farm.__test
   };

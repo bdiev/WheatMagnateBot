@@ -228,7 +228,8 @@ class DiscordChatForwardQueue {
             allowMentions: item.allowMentions,
             createdAt: item.createdAt,
             source: item.source,
-            isSummary: item.isSummary
+            isSummary: item.isSummary,
+            summaryCount: item.summaryCount
           })));
         } catch (error) {
           this.onError(error);
