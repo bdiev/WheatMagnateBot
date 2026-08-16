@@ -5414,6 +5414,8 @@ body.modal-open { overflow:hidden; }
 
 .admin-log-entry {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: 7px;
   border: 1px solid var(--line);
   border-left: 4px solid var(--accent);
@@ -5421,6 +5423,12 @@ body.modal-open { overflow:hidden; }
   padding: 10px 12px;
   background: var(--panel-soft);
   transition: border-color 180ms ease, background-color 180ms ease, transform 180ms ease;
+}
+
+.admin-log-content {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
 }
 
 .admin-log-entry:hover {
@@ -5476,6 +5484,38 @@ body.modal-open { overflow:hidden; }
 .admin-log-entry p {
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+.admin-log-download {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 34px;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--line));
+  border-radius: var(--button-radius);
+  padding: 0 11px;
+  color: var(--accent-strong);
+  background: color-mix(in srgb, var(--accent) 9%, var(--panel));
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: border-color 160ms ease, background-color 160ms ease, transform 160ms ease;
+}
+
+.admin-log-download span {
+  font-size: 17px;
+  line-height: 1;
+}
+
+.admin-log-download:hover,
+.admin-log-download:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  background: color-mix(in srgb, var(--accent) 16%, var(--panel));
+  transform: translateY(-1px);
 }
 
 .admin-log-details summary {
@@ -10021,6 +10061,15 @@ body.kill-aura-modal-open {
     width: 100%;
     min-width: 0;
     min-height: 44px;
+  }
+
+  .admin-log-entry {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .admin-log-download {
+    justify-self: start;
+    min-height: 38px;
   }
 }
 

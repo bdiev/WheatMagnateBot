@@ -84,6 +84,18 @@ async function run() {
   await pushService.report('low_tps', { key: 'push', metadata: { tps: 9 } });
   assert.equal(pushCalls, 1, 'deduplication within cooldown must suppress repeated push delivery');
 
+  const accountId = '11111111-1111-4111-8111-111111111111';
+  const systemLogEntries = [];
+  const systemLogService = new NotificationService({
+    repository: new MemoryNotificationRepository([rule({ delivery_channels: ['system_log'] })]),
+    systemLogger: async entry => { systemLogEntries.push(entry); return true; }
+  });
+  await systemLogService.report('low_tps', {
+    key: 'managed-bot',
+    metadata: { tps: 10, accountId }
+  });
+  assert.equal(systemLogEntries[0]?.accountId, accountId, 'notification system logs must retain the Minecraft account scope');
+
   const postgresQueries = [];
   const postgresRepository = new PostgresNotificationRepository({
     async query(sql, params) {

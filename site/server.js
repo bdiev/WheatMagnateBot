@@ -115,6 +115,72 @@ function sendDownload(res, filename, contentType, body) {
   res.end(body);
 }
 
+function resolveObsidianDebugLogPath({ accountId, createdAt } = {}) {
+  const safeAccountId = String(accountId || DEFAULT_MINECRAFT_ACCOUNT_ID).trim().toLowerCase();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(safeAccountId)) {
+    throw Object.assign(new Error('Invalid Minecraft account ID.'), { statusCode: 400 });
+  }
+  const occurredAt = new Date(createdAt);
+  if (!Number.isFinite(occurredAt.getTime())) {
+    throw Object.assign(new Error('Invalid system log date.'), { statusCode: 400 });
+  }
+  const dateKey = occurredAt.toISOString().slice(0, 10);
+  const filePath = safeAccountId === DEFAULT_MINECRAFT_ACCOUNT_ID
+    ? path.resolve(`obsidian_farm_debug-${dateKey}.log`)
+    : path.resolve('data', 'bots', safeAccountId, `obsidian-farm-debug-${dateKey}.log`);
+  return {
+    accountId: safeAccountId,
+    dateKey,
+    filePath,
+    filename: `obsidian-farm-debug-${dateKey}.log`
+  };
+}
+
+async function sendObsidianDebugLogForSystemEntry(currentUser, res, rawId) {
+  assertAdminUser(currentUser);
+  const id = Number(rawId);
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    throw Object.assign(new Error('Invalid system log entry.'), { statusCode: 400 });
+  }
+  const result = await pool.query(`
+    SELECT category, message, details, account_id, created_at
+    FROM site_system_logs
+    WHERE id=$1
+  `, [id]);
+  const entry = result.rows[0];
+  if (!entry || entry.category !== 'notification' || entry.details?.eventType !== 'farm_stalled') {
+    throw Object.assign(new Error('Obsidian Farm diagnostics are not available for this entry.'), { statusCode: 404 });
+  }
+
+  const debugLog = resolveObsidianDebugLogPath({
+    accountId: entry.account_id,
+    createdAt: entry.created_at
+  });
+  let stat;
+  try {
+    stat = await fs.promises.stat(debugLog.filePath);
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      throw Object.assign(new Error(`Obsidian Farm diagnostics for ${debugLog.dateKey} are no longer available.`), { statusCode: 404 });
+    }
+    throw error;
+  }
+  if (!stat.isFile()) {
+    throw Object.assign(new Error('Obsidian Farm diagnostics are unavailable.'), { statusCode: 404 });
+  }
+
+  res.writeHead(200, {
+    'Content-Type': 'application/x-ndjson; charset=utf-8',
+    'Content-Disposition': `attachment; filename="${debugLog.filename}"`,
+    'Content-Length': stat.size,
+    'Cache-Control': 'private, no-store',
+    'X-Content-Type-Options': 'nosniff'
+  });
+  const stream = fs.createReadStream(debugLog.filePath);
+  stream.on('error', () => res.destroy());
+  stream.pipe(res);
+}
+
 function sendError(res, statusCode, message) {
   sendJson(res, statusCode, { error: message });
 }
@@ -4668,6 +4734,11 @@ async function handleApi(req, res, url) {
       sendJson(res, 200, await getAdminSystemLogs(currentUser, url));
       return;
     }
+    const obsidianDebugLogMatch = url.pathname.match(/^\/api\/admin\/system-logs\/(\d+)\/obsidian-debug-log$/);
+    if (obsidianDebugLogMatch && req.method === 'GET') {
+      await sendObsidianDebugLogForSystemEntry(currentUser, res, obsidianDebugLogMatch[1]);
+      return;
+    }
     if (url.pathname === '/api/admin/notification-rules' && req.method === 'GET') {
       sendJson(res, 200, await getNotificationRules(currentUser)); return;
     }
@@ -5231,4 +5302,4 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown);
 }
 
-module.exports = { ADMIN_PLAYER_EDITABLE_FIELDS, adminPlayerIdentity, assertAdminUser, buildPlayerGameSessions, changeSitePassword, cleanAccountInput, deleteAdminPlayer, freshStoredRuntimePayload, getAdminPlayers, getAdminUsers, hashPassword, normalizeAdminPlayerPatch, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, parsePlaytimeSeconds, patchAdminPlayer, publicUser, registrationDefaults, requestHandler, server, setAdminPlaytime, startSiteServer, touchSiteSessionActivity, validateCredentials, validatePasswordChange, verifyPassword };
+module.exports = { ADMIN_PLAYER_EDITABLE_FIELDS, adminPlayerIdentity, assertAdminUser, buildPlayerGameSessions, changeSitePassword, cleanAccountInput, deleteAdminPlayer, freshStoredRuntimePayload, getAdminPlayers, getAdminUsers, hashPassword, normalizeAdminPlayerPatch, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, parsePlaytimeSeconds, patchAdminPlayer, publicUser, registrationDefaults, requestHandler, resolveObsidianDebugLogPath, server, setAdminPlaytime, startSiteServer, touchSiteSessionActivity, validateCredentials, validatePasswordChange, verifyPassword };

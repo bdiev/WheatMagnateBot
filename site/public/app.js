@@ -5863,6 +5863,34 @@ function renderLogDetails(details) {
   return `<pre>${escapeHtml(text)}</pre>`;
 }
 
+function renderObsidianDebugLogDownload(entry) {
+  const logId = String(entry?.id || '').match(/^log-(\d+)$/)?.[1];
+  const createdAt = new Date(entry?.createdAt);
+  if (
+    !logId ||
+    entry?.kind !== 'system' ||
+    entry?.category !== 'notification' ||
+    entry?.details?.eventType !== 'farm_stalled' ||
+    !Number.isFinite(createdAt.getTime())
+  ) return '';
+
+  const retainedFrom = new Date();
+  retainedFrom.setUTCHours(0, 0, 0, 0);
+  retainedFrom.setUTCDate(retainedFrom.getUTCDate() - 6);
+  if (createdAt < retainedFrom) return '';
+
+  const dateKey = createdAt.toISOString().slice(0, 10);
+  return `<a
+    class="admin-log-download"
+    href="/api/admin/system-logs/${logId}/obsidian-debug-log"
+    target="_blank"
+    rel="noopener"
+    download
+    aria-label="Download Obsidian Farm logs for ${dateKey}"
+    title="Download logs for ${dateKey}"
+  ><span aria-hidden="true">&#8595;</span> Download logs</a>`;
+}
+
 function renderAdminSystemLogs(logs = []) {
   const list = $('#adminSystemLogs');
   if (!list) return;
@@ -5901,18 +5929,22 @@ function renderAdminSystemLogs(logs = []) {
     const actor = entry.actor ? `<span class="admin-log-actor">${escapeHtml(entry.actor)}</span>` : '';
     const kind = escapeHtml(entry.kind || 'system');
     const details = renderLogDetails(entry.details);
+    const debugLogDownload = renderObsidianDebugLogDownload(entry);
     const detailsOpen = logId && state.adminOpenLogDetails.has(logId) ? ' open' : '';
     const detailsId = logId ? ` data-log-id="${escapeHtml(logId)}"` : '';
     return `
       <article class="admin-log-entry ${level}" data-kind="${kind}">
-        <div class="admin-log-main">
-          <span class="admin-log-time">${formatDate(entry.createdAt)}</span>
-          <span class="pill ${level}">${level}</span>
-          <span class="admin-log-category">${category}</span>
-          ${actor}
+        <div class="admin-log-content">
+          <div class="admin-log-main">
+            <span class="admin-log-time">${formatDate(entry.createdAt)}</span>
+            <span class="pill ${level}">${level}</span>
+            <span class="admin-log-category">${category}</span>
+            ${actor}
+          </div>
+          <p>${escapeHtml(entry.message || '')}</p>
+          ${details ? `<details class="admin-log-details"${detailsId}${detailsOpen}><summary>Details</summary>${details}</details>` : ''}
         </div>
-        <p>${escapeHtml(entry.message || '')}</p>
-        ${details ? `<details class="admin-log-details"${detailsId}${detailsOpen}><summary>Details</summary>${details}</details>` : ''}
+        ${debugLogDownload}
       </article>
     `;
   }).join('');
