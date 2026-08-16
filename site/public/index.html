@@ -13,7 +13,7 @@
     <link rel="icon" type="image/png" href="/items/Wheat.png">
     <link rel="apple-touch-icon" href="/items/Wheat.png">
     <script src="/theme-init.js?v=136"></script>
-    <link rel="stylesheet" href="/styles.css?v=220">
+    <link rel="stylesheet" href="/styles.css?v=221">
     <script src="/page-transitions.js?v=1" defer></script>
   </head>
   <body>
@@ -1087,19 +1087,54 @@
       </section>
 
       <section id="tab-admin" class="tab-panel" data-panel="admin">
-        <article class="stat admin-database-stat">
-          <span class="stat-label">Database</span>
-          <strong id="adminDatabasePlayers">-</strong>
-          <small>all-time tracked players</small>
-        </article>
+        <header class="admin-hero">
+          <div class="admin-hero-copy">
+            <span class="admin-eyebrow">Admin workspace</span>
+            <h2>Control center</h2>
+            <p>Manage the bot, Minecraft data, site access and operational health from one workspace.</p>
+          </div>
+          <div class="admin-hero-stats" aria-label="Admin overview">
+            <article class="admin-overview-stat admin-database-stat">
+              <span>Tracked players</span>
+              <strong id="adminDatabasePlayers">-</strong>
+              <small>all time</small>
+            </article>
+            <article class="admin-overview-stat">
+              <span>Site users</span>
+              <strong id="adminUsersTotal">-</strong>
+              <small>registered</small>
+            </article>
+            <article class="admin-overview-stat is-online">
+              <span>Online now</span>
+              <strong id="adminUsersOnline">-</strong>
+              <small>active sessions</small>
+            </article>
+            <article class="admin-overview-stat">
+              <span>Administrators</span>
+              <strong id="adminUsersAdmins">-</strong>
+              <small>approved</small>
+            </article>
+            <article class="admin-overview-stat is-pending">
+              <span>Pending access</span>
+              <strong id="adminUsersPending">-</strong>
+              <small>need review</small>
+            </article>
+          </div>
+        </header>
 
-        <section class="panel-flow-grid section-grid">
-          <section class="panel" data-primary-only>
+        <div class="admin-section-heading">
+          <span>01</span>
+          <div><h2>Bot operations</h2><p>Quick actions for the active Minecraft account.</p></div>
+        </div>
+
+        <section class="panel-flow-grid section-grid admin-operations-grid">
+          <section class="panel admin-operation-card" data-primary-only>
             <div class="panel-head">
               <div>
                 <h2>Child</h2>
                 <p>Growing child controls.</p>
               </div>
+              <span class="admin-card-icon" aria-hidden="true">AI</span>
             </div>
             <div class="admin-command-actions">
               <button id="childToggleButton" type="button" data-bot-command="child_toggle">Toggle Child</button>
@@ -1109,12 +1144,13 @@
             </div>
           </section>
 
-          <section class="panel">
+          <section class="panel admin-operation-card">
             <div class="panel-head">
               <div>
                 <h2>Follow</h2>
                 <p>Follow a player currently near the bot.</p>
               </div>
+              <span class="admin-card-icon" aria-hidden="true">&#8594;</span>
             </div>
             <div class="admin-control-grid">
               <label class="auth-field">
@@ -1127,12 +1163,13 @@
             </div>
           </section>
 
-          <section class="panel">
+          <section class="panel admin-operation-card">
             <div class="panel-head">
               <div>
                 <h2>Drop</h2>
                 <p>Drop an item from the bot inventory.</p>
               </div>
+              <span class="admin-card-icon" aria-hidden="true">&#9638;</span>
             </div>
             <div class="admin-control-grid">
               <label class="auth-field">
@@ -1145,12 +1182,13 @@
             </div>
           </section>
 
-          <section class="panel">
+          <section class="panel admin-operation-card">
             <div class="panel-head">
               <div>
                 <h2>Playtime</h2>
                 <p>Paste a full <code>!pt</code> response or set a registration date from a single line.</p>
               </div>
+              <span class="admin-card-icon" aria-hidden="true">PT</span>
             </div>
             <div class="admin-control-grid">
               <label class="auth-field">
@@ -1184,12 +1222,13 @@
             </div>
           </section>
 
-          <section class="panel admin-picker-panel">
+          <section class="panel admin-picker-panel admin-operation-card">
             <div class="panel-head">
               <div>
                 <h2>Whitelist</h2>
                 <p>Add online players or remove existing whitelist entries.</p>
               </div>
+              <span class="admin-card-icon" aria-hidden="true">+</span>
             </div>
             <div class="admin-control-grid">
               <div class="auth-field admin-player-picker">
@@ -1214,6 +1253,35 @@
 
         </section>
 
+        <div class="admin-section-heading">
+          <span>02</span>
+          <div><h2>People &amp; permissions</h2><p>Review registrations and control administrative access.</p></div>
+        </div>
+
+        <section class="panel admin-access-panel">
+          <div class="panel-head">
+            <div>
+              <span class="admin-panel-kicker">Site security</span>
+              <h2>User Access</h2>
+              <p>Approve new registrations, review activity and manage roles.</p>
+            </div>
+            <button id="adminUsersRefresh" class="admin-refresh-button" type="button" aria-label="Refresh user access">
+              <span aria-hidden="true">&#8635;</span> Refresh
+            </button>
+          </div>
+          <div class="admin-access-legend" aria-label="Access overview">
+            <span><i class="online" aria-hidden="true"></i><strong id="adminUsersOnlineSummary">0</strong> online</span>
+            <span><i class="pending" aria-hidden="true"></i><strong id="adminUsersPendingSummary">0</strong> pending</span>
+            <span><i class="admin" aria-hidden="true"></i><strong id="adminUsersAdminSummary">0</strong> admins</span>
+          </div>
+          <div id="adminUsersList" class="admin-users-list"></div>
+        </section>
+
+        <div class="admin-section-heading">
+          <span>03</span>
+          <div><h2>Minecraft data</h2><p>Search, inspect and maintain tracked player profiles.</p></div>
+        </div>
+
         <section class="panel admin-players-panel">
           <div class="panel-head">
             <div>
@@ -1233,6 +1301,11 @@
             <div id="adminPlayersScrollStatus" class="admin-players-scroll-status" role="status" aria-live="polite" hidden></div>
           </div>
         </section>
+
+        <div class="admin-section-heading">
+          <span>04</span>
+          <div><h2>Observability</h2><p>Audit recent events and investigate bot activity.</p></div>
+        </div>
 
         <section class="panel admin-log-panel">
           <div class="panel-head">
@@ -1254,20 +1327,9 @@
           </div>
           <div id="adminSystemLogs" class="admin-log-list"></div>
         </section>
-
-        <section class="panel">
-          <div class="panel-head">
-            <div>
-              <h2>User Access</h2>
-              <p>Approve new site registrations and manage admin access.</p>
-            </div>
-            <button id="adminUsersRefresh" type="button">Refresh</button>
-          </div>
-          <div id="adminUsersList" class="admin-users-list"></div>
-        </section>
       </section>
     </main>
 
-    <script src="/app.js?v=220" defer></script>
+    <script src="/app.js?v=221" defer></script>
   </body>
 </html>

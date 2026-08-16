@@ -5781,6 +5781,18 @@ async function handleAdminPlayerAction(event) {
 function renderAdminUsers(users = []) {
   const list = $('#adminUsersList');
   if (!list) return;
+
+  const onlineCount = users.filter(user => user.isOnline).length;
+  const pendingCount = users.filter(user => user.status === 'pending').length;
+  const adminCount = users.filter(user => user.role === 'admin' && user.status === 'approved').length;
+  setRollingNumber('#adminUsersTotal', users.length);
+  setRollingNumber('#adminUsersOnline', onlineCount);
+  setRollingNumber('#adminUsersAdmins', adminCount);
+  setRollingNumber('#adminUsersPending', pendingCount);
+  if ($('#adminUsersOnlineSummary')) $('#adminUsersOnlineSummary').textContent = String(onlineCount);
+  if ($('#adminUsersPendingSummary')) $('#adminUsersPendingSummary').textContent = String(pendingCount);
+  if ($('#adminUsersAdminSummary')) $('#adminUsersAdminSummary').textContent = String(adminCount);
+
   if (!users.length) {
     list.innerHTML = '<div class="empty">No registered users yet.</div>';
     return;
@@ -5791,9 +5803,13 @@ function renderAdminUsers(users = []) {
     const username = escapeHtml(user.username);
     const status = escapeHtml(user.status);
     const role = escapeHtml(user.role);
+    const roleLabel = user.role === 'admin' ? 'Administrator' : 'Member';
+    const statusLabel = user.status === 'pending' ? 'Pending review'
+      : user.status === 'approved' ? 'Approved' : String(user.status || 'Unknown');
     const lower = String(user.username || '').toLowerCase();
     const isSelf = lower === currentUsername;
     const isOnline = Boolean(user.isOnline);
+    const initial = escapeHtml(Array.from(String(user.username || '?'))[0]?.toUpperCase() || '?');
     const presenceText = isOnline
       ? 'Online now'
       : user.lastSeenAt ? `Last online ${formatRecentDate(user.lastSeenAt)}` : 'Never online';
@@ -5801,30 +5817,40 @@ function renderAdminUsers(users = []) {
     const actions = [];
 
     if (user.status !== 'approved') {
-      actions.push(`<button type="button" data-admin-action="approve" data-username="${username}">Approve</button>`);
+      actions.push(`<button class="admin-user-action approve" type="button" data-admin-action="approve" data-username="${username}">Approve access</button>`);
     }
     if (!isSelf) {
-      actions.push(`<button class="danger-button" type="button" data-admin-action="reject" data-username="${username}">Reject</button>`);
+      actions.push(`<button class="admin-user-action danger-button reject" type="button" data-admin-action="reject" data-username="${username}">Reject</button>`);
     }
     if (user.role !== 'admin' && user.status === 'approved') {
-      actions.push(`<button class="ghost-button" type="button" data-admin-action="make_admin" data-username="${username}">Make admin</button>`);
+      actions.push(`<button class="admin-user-action ghost-button role" type="button" data-admin-action="make_admin" data-username="${username}">Make admin</button>`);
     }
     if (user.role === 'admin' && !isSelf) {
-      actions.push(`<button class="ghost-button" type="button" data-admin-action="remove_admin" data-username="${username}">Remove admin</button>`);
+      actions.push(`<button class="admin-user-action ghost-button role" type="button" data-admin-action="remove_admin" data-username="${username}">Remove admin</button>`);
     }
 
     return `
-      <article class="admin-user">
-        <div>
-          <strong>${username}</strong>
-          <span class="muted">Registered ${formatDate(user.createdAt)}</span>
+      <article class="admin-user" data-status="${status}" data-role="${role}">
+        <div class="admin-user-identity">
+          <span class="admin-user-avatar" aria-hidden="true">${initial}</span>
+          <div class="admin-user-copy">
+            <div class="admin-user-name-line">
+              <strong>${username}</strong>
+              ${isSelf ? '<span class="admin-user-self">You</span>' : ''}
+            </div>
+            <span class="muted">Joined ${formatDate(user.createdAt)}</span>
+          </div>
+        </div>
+        <div class="admin-user-state">
           <span class="admin-user-presence ${isOnline ? 'online' : ''}" title="${escapeHtml(presenceTitle)}">
             <span class="admin-user-presence-dot" aria-hidden="true"></span>${escapeHtml(presenceText)}
           </span>
+          <div class="admin-user-badges">
+            <span class="admin-user-badge status ${status}">${escapeHtml(statusLabel)}</span>
+            <span class="admin-user-badge role ${role}">${escapeHtml(roleLabel)}</span>
+          </div>
         </div>
-        <span class="pill ${status}">${status}</span>
-        <span class="pill">${role}</span>
-        <div class="admin-user-actions">${actions.join('')}</div>
+        <div class="admin-user-actions">${actions.length ? actions.join('') : '<span class="admin-user-current-note">Current account</span>'}</div>
       </article>
     `;
   }).join('');
