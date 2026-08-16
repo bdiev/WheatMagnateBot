@@ -5793,6 +5793,11 @@ function renderAdminUsers(users = []) {
     const role = escapeHtml(user.role);
     const lower = String(user.username || '').toLowerCase();
     const isSelf = lower === currentUsername;
+    const isOnline = Boolean(user.isOnline);
+    const presenceText = isOnline
+      ? 'Online now'
+      : user.lastSeenAt ? `Last online ${formatRecentDate(user.lastSeenAt)}` : 'Never online';
+    const presenceTitle = user.lastSeenAt ? `Last activity: ${formatDate(user.lastSeenAt)}` : presenceText;
     const actions = [];
 
     if (user.status !== 'approved') {
@@ -5813,6 +5818,9 @@ function renderAdminUsers(users = []) {
         <div>
           <strong>${username}</strong>
           <span class="muted">Registered ${formatDate(user.createdAt)}</span>
+          <span class="admin-user-presence ${isOnline ? 'online' : ''}" title="${escapeHtml(presenceTitle)}">
+            <span class="admin-user-presence-dot" aria-hidden="true"></span>${escapeHtml(presenceText)}
+          </span>
         </div>
         <span class="pill ${status}">${status}</span>
         <span class="pill">${role}</span>
@@ -5920,11 +5928,11 @@ async function loadAdminSystemLogs() {
   }
 }
 
-async function loadAdminUsers() {
+async function loadAdminUsers({ showLoading = true } = {}) {
   if (state.currentUser?.role !== 'admin') return;
   const list = $('#adminUsersList');
   try {
-    if (list) list.innerHTML = '<div class="empty">Loading users...</div>';
+    if (showLoading && list) list.innerHTML = '<div class="empty">Loading users...</div>';
     const payload = await fetchJson('/api/admin/users');
     renderAdminUsers(payload.users || []);
   } catch (err) {
@@ -7648,7 +7656,9 @@ async function loadAll({ force = false, switchGeneration = state.accountSwitchGe
       if (!isCurrentSync()) return false;
       if (state.currentUser?.role === 'admin') {
         await loadAdminControlState();
-        if (state.activeTab === 'admin') await loadAdminSystemLogs();
+        if (state.activeTab === 'admin') {
+          await Promise.all([loadAdminSystemLogs(), loadAdminUsers({ showLoading: false })]);
+        }
       }
       if (!isCurrentSync()) return false;
       if ($('#whisperPanel')?.classList.contains('open')) {

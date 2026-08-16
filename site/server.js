@@ -42,6 +42,8 @@ const SITE_TRUST_PROXY = trustProxyEnabled();
 const SITE_ALLOWED_ORIGINS = configuredOrigins();
 const SESSION_COOKIE = 'wm_session';
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
+const USER_ONLINE_WINDOW_SECONDS = 2 * 60;
+const USER_ACTIVITY_TOUCH_INTERVAL_SECONDS = 30;
 const DEFAULT_MINECRAFT_ACCOUNT_ID = '00000000-0000-4000-8000-000000000001';
 const SUPPORTED_TIMEZONES = Object.freeze([...new Set([
   ...(typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : []),
@@ -474,6 +476,7 @@ async function ensureOptionalTables() {
       status VARCHAR(20) NOT NULL DEFAULT 'approved',
       approved_by BIGINT REFERENCES site_users(id) ON DELETE SET NULL,
       approved_at TIMESTAMPTZ,
+      last_seen_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
@@ -481,6 +484,7 @@ async function ensureOptionalTables() {
   await pool.query(`ALTER TABLE site_users ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'approved'`);
   await pool.query(`ALTER TABLE site_users ADD COLUMN IF NOT EXISTS approved_by BIGINT REFERENCES site_users(id) ON DELETE SET NULL`);
   await pool.query(`ALTER TABLE site_users ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE site_users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ`);
   await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS site_users_username_lower_idx
     ON site_users (LOWER(username))
@@ -507,10 +511,12 @@ async function ensureOptionalTables() {
       user_id BIGINT NOT NULL REFERENCES site_users(id) ON DELETE CASCADE,
       csrf_token_hash TEXT,
       expires_at TIMESTAMPTZ NOT NULL,
+      last_active_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
   await pool.query(`ALTER TABLE site_sessions ADD COLUMN IF NOT EXISTS csrf_token_hash TEXT`);
+  await pool.query(`ALTER TABLE site_sessions ADD COLUMN IF NOT EXISTS last_active_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS site_security_state (
       key TEXT PRIMARY KEY,
@@ -519,6 +525,7 @@ async function ensureOptionalTables() {
     )
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS site_sessions_user_id_idx ON site_sessions (user_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS site_sessions_user_activity_idx ON site_sessions (user_id,last_active_at DESC)`);
   await pool.query(`DELETE FROM site_sessions WHERE expires_at <= NOW()`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS ignored_users (
@@ -3434,7 +3441,9 @@ function publicUser(row) {
     role: row.role,
     status: row.status,
     createdAt: row.created_at || null,
-    approvedAt: row.approved_at || null
+    approvedAt: row.approved_at || null,
+    lastSeenAt: row.last_seen_at || null,
+    isOnline: Boolean(row.is_online)
   };
 }
 
@@ -3483,11 +3492,18 @@ async function getCurrentSession(req) {
   const token = parseCookies(req)[SESSION_COOKIE];
   if (!token) return null;
   const result = await pool.query(`
-    SELECT u.id, u.username, u.role, u.status, u.created_at, u.approved_at, s.csrf_token_hash, s.token_hash
+    SELECT u.id, u.username, u.role, u.status, u.created_at, u.approved_at, u.last_seen_at,
+           s.csrf_token_hash, s.token_hash, s.last_active_at
     FROM site_sessions s JOIN site_users u ON u.id=s.user_id
     WHERE s.token_hash=$1 AND s.expires_at>NOW() AND u.status='approved'
   `, [hashToken(token)]);
   const row = result.rows[0];
+  const lastActiveAt = row?.last_active_at ? new Date(row.last_active_at).getTime() : Number.NaN;
+  if (row && (!Number.isFinite(lastActiveAt) || Date.now() - lastActiveAt >= USER_ACTIVITY_TOUCH_INTERVAL_SECONDS * 1000)) {
+    await touchSiteSessionActivity(row.token_hash, row.id);
+    row.last_active_at = new Date();
+    row.last_seen_at = row.last_active_at;
+  }
   return row ? { user: publicUser(row), csrfTokenHash: row.csrf_token_hash, sessionHash: row.token_hash } : null;
 }
 
@@ -3495,12 +3511,36 @@ async function getCurrentUser(req) {
   return (await getCurrentSession(req))?.user || null;
 }
 
+async function touchSiteSessionActivity(sessionHash, userId, database = pool) {
+  return database.query(`
+    WITH touched_session AS (
+      UPDATE site_sessions
+      SET last_active_at=NOW()
+      WHERE token_hash=$1 AND user_id=$2
+        AND (last_active_at IS NULL OR last_active_at < NOW() - ($3 * INTERVAL '1 second'))
+      RETURNING user_id,last_active_at
+    )
+    UPDATE site_users AS site_user
+    SET last_seen_at=touched_session.last_active_at
+    FROM touched_session
+    WHERE site_user.id=touched_session.user_id
+  `, [sessionHash, userId, USER_ACTIVITY_TOUCH_INTERVAL_SECONDS]);
+}
+
 async function createSession(req, res, userId) {
   const token = crypto.randomBytes(32).toString('hex');
   const csrfToken = crypto.randomBytes(32).toString('base64url');
   const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_SECONDS * 1000);
   await pool.query(
-    `INSERT INTO site_sessions (token_hash, user_id, csrf_token_hash, expires_at) VALUES ($1, $2, $3, $4)`,
+    `WITH created_session AS (
+       INSERT INTO site_sessions (token_hash, user_id, csrf_token_hash, expires_at, last_active_at)
+       VALUES ($1, $2, $3, $4, NOW())
+       RETURNING user_id,last_active_at
+     )
+     UPDATE site_users AS site_user
+     SET last_seen_at=created_session.last_active_at
+     FROM created_session
+     WHERE site_user.id=created_session.user_id`,
     [hashToken(token), userId, hashToken(csrfToken), expiresAt]
   );
   setSessionCookie(req, res, token);
@@ -3599,7 +3639,15 @@ async function handleAuth(req, res, url) {
   if (url.pathname === '/api/auth/logout' && req.method === 'POST') {
     const token = parseCookies(req)[SESSION_COOKIE];
     if (token) {
-      await pool.query(`DELETE FROM site_sessions WHERE token_hash = $1`, [hashToken(token)]);
+      await pool.query(`
+        WITH removed_session AS (
+          DELETE FROM site_sessions WHERE token_hash=$1 RETURNING user_id
+        )
+        UPDATE site_users AS site_user
+        SET last_seen_at=NOW()
+        FROM removed_session
+        WHERE site_user.id=removed_session.user_id
+      `, [hashToken(token)]);
     }
     await recordSystemLog({ level: 'info', category: 'auth', message: 'User logged out.' });
     clearSessionCookie(req, res);
@@ -3703,19 +3751,26 @@ async function handleAuth(req, res, url) {
   return false;
 }
 
-async function getAdminUsers(currentUser) {
+async function getAdminUsers(currentUser, database = pool) {
   if (currentUser.role !== 'admin') {
     const err = new Error('Admin access required.');
     err.statusCode = 403;
     throw err;
   }
-  const result = await pool.query(`
-    SELECT id, username, role, status, created_at, approved_at
-    FROM site_users
+  const result = await database.query(`
+    SELECT site_user.id, site_user.username, site_user.role, site_user.status,
+           site_user.created_at, site_user.approved_at, site_user.last_seen_at,
+           COALESCE(presence.is_online, FALSE) AS is_online
+    FROM site_users AS site_user
+    LEFT JOIN LATERAL (
+      SELECT BOOL_OR(site_session.last_active_at >= NOW() - ($1 * INTERVAL '1 second')) AS is_online
+      FROM site_sessions AS site_session
+      WHERE site_session.user_id=site_user.id AND site_session.expires_at>NOW()
+    ) AS presence ON TRUE
     ORDER BY
-      CASE status WHEN 'pending' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END,
-      created_at DESC
-  `);
+      CASE site_user.status WHEN 'pending' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END,
+      site_user.created_at DESC
+  `, [USER_ONLINE_WINDOW_SECONDS]);
   return { users: result.rows.map(publicUser) };
 }
 
@@ -5171,4 +5226,4 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown);
 }
 
-module.exports = { ADMIN_PLAYER_EDITABLE_FIELDS, adminPlayerIdentity, assertAdminUser, buildPlayerGameSessions, changeSitePassword, cleanAccountInput, deleteAdminPlayer, freshStoredRuntimePayload, getAdminPlayers, hashPassword, normalizeAdminPlayerPatch, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, parsePlaytimeSeconds, patchAdminPlayer, registrationDefaults, requestHandler, server, setAdminPlaytime, startSiteServer, validateCredentials, validatePasswordChange, verifyPassword };
+module.exports = { ADMIN_PLAYER_EDITABLE_FIELDS, adminPlayerIdentity, assertAdminUser, buildPlayerGameSessions, changeSitePassword, cleanAccountInput, deleteAdminPlayer, freshStoredRuntimePayload, getAdminPlayers, getAdminUsers, hashPassword, normalizeAdminPlayerPatch, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, parsePlaytimeSeconds, patchAdminPlayer, publicUser, registrationDefaults, requestHandler, server, setAdminPlaytime, startSiteServer, touchSiteSessionActivity, validateCredentials, validatePasswordChange, verifyPassword };

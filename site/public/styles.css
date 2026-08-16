@@ -4773,6 +4773,33 @@ body.search-focus-active #logoutButton {
   padding: var(--button-padding);
 }
 
+.admin-user-presence {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.admin-user-presence-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--muted) 68%, transparent);
+}
+
+.admin-user-presence.online {
+  color: var(--ok);
+}
+
+.admin-user-presence.online .admin-user-presence-dot {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent);
+}
+
 .obsidian-scope-switch {
   position: relative;
   isolation: isolate;
