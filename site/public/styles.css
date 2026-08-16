@@ -9817,35 +9817,159 @@ body.kill-aura-modal-open {
 }
 
 @media (max-width: 760px) {
+  #tab-admin.tab-panel.active {
+    gap: 12px;
+  }
+
   .admin-hero {
-    gap: 18px;
-    padding: 18px;
+    min-height: 0;
+    gap: 14px;
+    padding: 16px;
+  }
+
+  .admin-hero-copy {
+    gap: 6px;
+  }
+
+  .admin-hero-copy h2 {
+    font-size: 28px;
+  }
+
+  .admin-hero-copy p {
+    margin-top: 1px;
+    font-size: 13px;
+    line-height: 1.4;
   }
 
   .admin-hero-stats {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    display: flex;
+    gap: 8px;
+    margin: 0 -16px -4px;
+    padding: 2px 16px 8px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-padding-inline: 16px;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+  }
+
+  .admin-hero-stats::-webkit-scrollbar {
+    display: none;
   }
 
   .admin-overview-stat {
-    min-height: 92px;
+    flex: 0 0 min(148px, 42vw);
+    min-height: 80px;
+    padding: 11px 12px;
+    scroll-snap-align: start;
   }
 
   .admin-overview-stat:first-child {
-    grid-column: 1 / -1;
+    grid-column: auto;
+  }
+
+  .admin-overview-stat strong {
+    margin: 6px 0 3px;
+    font-size: 22px;
   }
 
   .admin-section-heading {
-    align-items: flex-start;
+    align-items: center;
+    gap: 9px;
+    padding-top: 3px;
+  }
+
+  .admin-section-heading > span {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+  }
+
+  .admin-section-heading h2 {
+    font-size: 15px;
   }
 
   .admin-section-heading p {
+    margin-top: 2px;
+    font-size: 11px;
     line-height: 1.4;
+  }
+
+  .admin-operation-card:hover {
+    transform: none;
+  }
+
+  .admin-operation-card .panel-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 36px;
+    gap: 10px;
+    align-items: center;
+    padding: 13px 14px;
+  }
+
+  .admin-operation-card .panel-head > div {
+    min-width: 0;
+  }
+
+  .admin-operation-card .panel-head h2 {
+    font-size: 17px;
+  }
+
+  .admin-operation-card .panel-head p {
+    margin-top: 3px;
+    font-size: 12px;
+    line-height: 1.35;
+  }
+
+  .admin-card-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 9px;
+  }
+
+  .admin-operation-card > .admin-command-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding: 12px;
+  }
+
+  #tab-admin .admin-operation-card button {
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+    padding-inline: 10px;
+    font-size: 13px;
+    line-height: 1.2;
+  }
+
+  .admin-control-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(104px, auto);
+    gap: 8px;
+    padding: 12px;
+  }
+
+  .admin-control-grid > *,
+  .admin-control-grid .auth-field {
+    min-width: 0;
+  }
+
+  .admin-control-grid input,
+  .admin-control-grid select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .admin-control-grid .admin-command-actions.compact {
+    display: block;
   }
 
   .admin-access-panel > .panel-head,
   .admin-players-panel > .panel-head,
   .admin-log-panel > .panel-head {
     align-items: stretch;
+    gap: 12px;
+    padding: 14px;
   }
 
   .admin-access-panel > .panel-head {
@@ -9854,6 +9978,11 @@ body.kill-aura-modal-open {
 
   .admin-access-panel .admin-refresh-button {
     width: 100%;
+  }
+
+  .admin-access-legend {
+    gap: 8px 14px;
+    padding-inline: 14px;
   }
 
   .admin-users-list {
@@ -9878,6 +10007,36 @@ body.kill-aura-modal-open {
 
   .admin-user-actions button {
     flex: 1 1 130px;
+  }
+
+  .admin-log-tools {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(104px, auto);
+    width: 100%;
+    gap: 8px;
+  }
+
+  .admin-log-tools select,
+  .admin-log-tools button {
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 360px) {
+  .admin-control-grid {
+    grid-template-columns: minmax(0, 1fr) 96px;
+  }
+
+  #tab-admin .admin-operation-card button {
+    padding-inline: 7px;
+    font-size: 12px;
+  }
+
+  .admin-access-legend {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

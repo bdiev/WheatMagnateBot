@@ -26,7 +26,13 @@ assert.match(stylesSource, /\.admin-hero\s*\{[\s\S]*grid-column:\s*1\s*\/\s*-1[\
   'Admin hero must span the workspace and use the dashboard visual language');
 assert.match(stylesSource, /\.admin-users-list\s*\{[\s\S]*grid-template-columns:\s*repeat\(2,[\s\S]*\.admin-user\s*\{[\s\S]*grid-template-columns:/,
   'User Access must use responsive cards rather than the previous table-like rows');
-assert.match(stylesSource, /@media \(max-width:\s*760px\)[\s\S]*\.admin-hero-stats[\s\S]*repeat\(2,[\s\S]*\.admin-user-state[\s\S]*justify-items:\s*start/,
+assert.match(stylesSource, /@media \(max-width:\s*760px\)[\s\S]*\.admin-hero-stats[\s\S]*display:\s*flex[\s\S]*\.admin-user-state[\s\S]*justify-items:\s*start/,
   'Admin workspace must adapt its overview and user cards for phones');
+assert.match(stylesSource, /@media \(max-width:\s*760px\)[\s\S]*\.admin-hero-stats\s*\{[\s\S]*scroll-snap-type:\s*x mandatory/,
+  'Admin overview metrics must use a compact horizontal rail on phones');
+assert.match(stylesSource, /@media \(max-width:\s*760px\)[\s\S]*\.admin-operation-card \.panel-head\s*\{[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\) 36px/,
+  'Admin operation headers must keep their copy and icon on one compact phone row');
+assert.match(stylesSource, /@media \(max-width:\s*760px\)[\s\S]*\.admin-operation-card > \.admin-command-actions\s*\{[\s\S]*repeat\(2,\s*minmax\(0,\s*1fr\)\)/,
+  'Admin quick actions must form a balanced two-column touch grid on phones');
 
 console.log('Admin page UI tests passed.');
