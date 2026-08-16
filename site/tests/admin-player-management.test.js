@@ -130,6 +130,7 @@ async function testAdminPlayerSortingAndOptimizedQuery() {
     database
   );
   assert.equal(sorted.players.length, 6);
+  assert.equal(sorted.players[1].playtime, '1s', 'sub-minute playtime must remain visible in player cards');
   assert.deepEqual(
     { query: sorted.query, sort: sorted.sort, direction: sorted.direction, limit: sorted.limit, offset: sorted.offset, hasMore: sorted.hasMore },
     { query: 'bad', sort: 'joindate', direction: 'desc', limit: 6, offset: 12, hasMore: true }

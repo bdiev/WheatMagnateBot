@@ -330,6 +330,7 @@ function formatSeconds(seconds) {
   left %= 3600;
   const minutes = Math.floor(left / 60);
   const parts = [];
+  if (!days && !hours && !minutes) return `${left}s`;
   if (days) parts.push(`${days}d`);
   if (hours || days) parts.push(`${hours}h`);
   parts.push(`${minutes}m`);
