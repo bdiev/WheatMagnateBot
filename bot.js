@@ -4958,17 +4958,18 @@ async function deliverGameChatMessageToDiscord({
 }) {
   try {
     // A flood summary contributes the number of suppressed messages to chat
-    // statistics, but stays hidden from the public archive and player history.
+    // statistics and is also kept as a visible system notice in the site chat.
     await recordGameChatMessage(username, message, {
       messageCount: isSummary ? summaryCount : 1,
-      visible: !isSummary
+      visible: true
     });
 
     if (!DISCORD_CHAT_CHANNEL_ID || !discordClient || !discordClient.isReady()) {
       return true;
     }
 
-    const isBotPlayer = !isSummary && await isTaggedBotPlayer(username);
+    const isSystemMessage = isMinecraftSystemUsername(username);
+    const isBotPlayer = !isSummary && !isSystemMessage && await isTaggedBotPlayer(username);
     const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
     if (!channel?.isTextBased?.()) return false;
 
@@ -4984,6 +4985,13 @@ async function deliverGameChatMessageToDiscord({
             description: `**${username}** sent messages too quickly.`,
             color: 16753920,
             footer: { text: skippedLabel },
+            timestamp: new Date(createdAt)
+          }
+        : isSystemMessage
+        ? {
+            title: 'Server message',
+            description: displayMessage,
+            color: 8421504,
             timestamp: new Date(createdAt)
           }
         : {
@@ -5002,7 +5010,7 @@ async function deliverGameChatMessageToDiscord({
     // Messages from Minecraft accounts carrying the admin `Bot` tag remain
     // visible in Discord, but automated chat must never trigger user keyword
     // mentions (for example messages relayed by moooomoooo).
-    if (allowMentions && !isBridgeMessage && !isBotPlayer) {
+    if (allowMentions && !isBridgeMessage && !isBotPlayer && !isSystemMessage) {
       const lowerMessage = message.toLowerCase();
       const usersToMention = new Set();
       const mentionKeywords = await getMentionKeywords();
@@ -6155,6 +6163,10 @@ function cleanMinecraftChatMessage(message) {
     .trim();
 }
 
+function isMinecraftSystemUsername(username) {
+  return /^(?:server|console)$/i.test(String(username || '').trim());
+}
+
 function isPrivateMinecraftChatLine(text) {
   const clean = cleanMinecraftChatMessage(text).replace(/\s+/g, ' ').trim();
   if (!clean) return false;
@@ -6299,6 +6311,9 @@ function forwardRawPublicChatText(text, source = 'raw', position = '') {
   const rawChat = parseRawPublicChatLine(text);
   if (!rawChat) return false;
   if (String(position || '') === 'game_info') return false;
+  if (isMinecraftSystemUsername(rawChat.username)) {
+    return scheduleGameChatForward('SERVER', rawChat.message, source);
+  }
   const rawUsernameKey = String(rawChat.username || '').toLowerCase();
   const isKnownOnlinePlayer = getOnlinePlayerUsernames().some(username =>
     String(username || '').toLowerCase() === rawUsernameKey
@@ -8578,6 +8593,10 @@ function createBot() {
     const observedMessage = message;
     if (!context?.trustedEnvelope) {
       ({ username, message } = resolvePublicChatEnvelope(username, message, jsonMessage));
+    }
+    if (isMinecraftSystemUsername(username)) {
+      scheduleGameChatForward('SERVER', message, source);
+      return;
     }
     playerInfoObservation.observe(observedUsername, observedMessage);
 

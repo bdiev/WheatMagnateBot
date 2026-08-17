@@ -90,6 +90,14 @@ const MIME_TYPES = {
   '.woff2': 'font/woff2'
 };
 
+function isMinecraftSystemUsername(username) {
+  return /^(?:server|console)$/i.test(String(username || '').trim());
+}
+
+function isFloodProtectionNotice(message) {
+  return /^Skipped [0-9]+ (?:message|messages) due to chat flooding\.$/.test(String(message || '').trim());
+}
+
 function sendJson(res, statusCode, payload) {
   const body = JSON.stringify(payload);
   res.writeHead(statusCode, {
@@ -899,6 +907,7 @@ async function getSummary() {
       SELECT COALESCE(SUM(message_count), 0)::bigint AS total
       FROM game_chat_messages
       WHERE created_at >= NOW() - INTERVAL '24 hours'
+        AND LOWER(username) NOT IN ('server', 'console')
     `)
   ]);
 
@@ -1029,27 +1038,27 @@ async function getChat(url) {
       )
   ) AS is_bot`;
   const messagesSql = searchQuery
-    ? `SELECT id, username, player_uuid, message, created_at, ${botTagColumn}
+    ? `SELECT id, username, player_uuid, message, message_count, created_at, ${botTagColumn}
        FROM game_chat_messages
        WHERE is_visible = TRUE
          AND POSITION(LOWER($2) IN LOWER(message)) > 0
        ORDER BY id DESC
        LIMIT $1`
     : aroundId
-    ? `SELECT id, username, player_uuid, message, created_at, is_bot FROM (
-         (SELECT id, username, player_uuid, message, created_at, ${botTagColumn}
+    ? `SELECT id, username, player_uuid, message, message_count, created_at, is_bot FROM (
+         (SELECT id, username, player_uuid, message, message_count, created_at, ${botTagColumn}
           FROM game_chat_messages
           WHERE is_visible = TRUE AND id <= $2::bigint
           ORDER BY id DESC
           LIMIT (($1 + 1) / 2))
          UNION ALL
-         (SELECT id, username, player_uuid, message, created_at, ${botTagColumn}
+         (SELECT id, username, player_uuid, message, message_count, created_at, ${botTagColumn}
           FROM game_chat_messages
           WHERE is_visible = TRUE AND id > $2::bigint
           ORDER BY id ASC
           LIMIT ($1 / 2))
        ) context_messages`
-    : `SELECT id, username, player_uuid, message, created_at, ${botTagColumn}
+    : `SELECT id, username, player_uuid, message, message_count, created_at, ${botTagColumn}
        FROM game_chat_messages
        WHERE is_visible = TRUE
        ORDER BY created_at DESC
@@ -1088,6 +1097,7 @@ async function getChat(url) {
       FROM buckets
       LEFT JOIN game_chat_messages messages
         ON date_trunc('hour', messages.created_at) = buckets.bucket
+       AND LOWER(messages.username) NOT IN ('server', 'console')
       GROUP BY buckets.bucket
       ORDER BY buckets.bucket
     `),
@@ -1096,6 +1106,7 @@ async function getChat(url) {
         SELECT date_trunc('day', MIN(created_at)) AS first_day,
                date_trunc('day', NOW()) AS last_day
         FROM game_chat_messages
+        WHERE LOWER(username) NOT IN ('server', 'console')
       ),
       buckets AS (
         SELECT generate_series(first_day, last_day, INTERVAL '1 day') AS bucket
@@ -1108,6 +1119,7 @@ async function getChat(url) {
       LEFT JOIN game_chat_messages messages
         ON messages.created_at >= buckets.bucket
        AND messages.created_at < buckets.bucket + INTERVAL '1 day'
+       AND LOWER(messages.username) NOT IN ('server', 'console')
       GROUP BY buckets.bucket
       ORDER BY buckets.bucket
     `),
@@ -1115,6 +1127,7 @@ async function getChat(url) {
       SELECT date_trunc('month', created_at) AS bucket,
              SUM(message_count)::bigint AS count
       FROM game_chat_messages
+      WHERE LOWER(username) NOT IN ('server', 'console')
       GROUP BY date_trunc('month', created_at)
       ORDER BY bucket
     `),
@@ -1122,6 +1135,7 @@ async function getChat(url) {
       SELECT messages.username, SUM(messages.message_count)::bigint AS count
       FROM game_chat_messages messages
       WHERE messages.created_at >= NOW() - INTERVAL '24 hours'
+        AND LOWER(messages.username) NOT IN ('server', 'console')
         AND NOT EXISTS (
           SELECT 1
           FROM player_activity tagged_player
@@ -1145,15 +1159,19 @@ async function getChat(url) {
         COALESCE(SUM(message_count) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours'), 0)::bigint AS last_24h,
         COUNT(DISTINCT LOWER(username)) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')::int AS active_chatters_24h
       FROM game_chat_messages
+      WHERE LOWER(username) NOT IN ('server', 'console')
     `)
   ]);
 
   const chatMessages = messagesResult.rows.map(row => ({
       id: row.id,
-      type: 'chat',
+      type: isFloodProtectionNotice(row.message)
+        ? 'flood'
+        : isMinecraftSystemUsername(row.username) ? 'server' : 'chat',
       username: row.username,
       playerUuid: row.player_uuid || null,
       message: displayGameChatMessage(row.message),
+      messageCount: toInt(row.message_count),
       isBot: Boolean(row.is_bot),
       createdAt: row.created_at
     }));
@@ -3006,6 +3024,11 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
     err.statusCode = 400;
     throw err;
   }
+  if (isMinecraftSystemUsername(username)) {
+    const err = new Error('Player not found.');
+    err.statusCode = 404;
+    throw err;
+  }
 
   const identityResult = await pool.query(`
     SELECT pa.username, pa.player_uuid,
@@ -3098,6 +3121,7 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
           OR (player_uuid IS NULL AND LOWER(username) = ANY($2::text[]))
         )
         AND is_visible = TRUE
+        AND message !~ '^Skipped [0-9]+ (message|messages) due to chat flooding\\.$'
         AND ($3::bigint IS NULL OR id < $3::bigint)
       ORDER BY created_at DESC
       LIMIT $4

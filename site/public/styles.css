@@ -3271,6 +3271,54 @@ body.search-focus-active #logoutButton {
   font-weight: 750;
 }
 
+.chat-message.chat-notice {
+  grid-template-columns: 9px minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: 9px;
+  margin: 6px 0;
+  border: 1px solid color-mix(in srgb, var(--notice-accent) 24%, var(--line));
+  padding: 8px 11px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--notice-accent) 8%, var(--panel-soft));
+  box-shadow: none;
+}
+
+.chat-message.chat-notice-flood {
+  --notice-accent: #e89922;
+}
+
+.chat-message.chat-notice-server {
+  --notice-accent: var(--accent);
+}
+
+.chat-notice-mark {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--notice-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--notice-accent) 16%, transparent);
+}
+
+.chat-notice-copy {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 5px 8px;
+  font-size: 12px;
+}
+
+.chat-notice-copy strong {
+  color: color-mix(in srgb, var(--notice-accent) 78%, var(--text));
+  font-weight: 800;
+}
+
+.chat-message.chat-notice .chat-text {
+  min-width: 0;
+  color: var(--text);
+  font-weight: 550;
+}
+
 .chat-message.new-message {
   animation: chatMessageIn 360ms cubic-bezier(0.16, 1, 0.3, 1);
 }

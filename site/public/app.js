@@ -3742,6 +3742,7 @@ function renderChatMessages(messages) {
       message.username,
       message.playerUuid,
       message.message,
+      message.messageCount,
       message.event,
       message.isBot,
       message.createdAt
@@ -3773,11 +3774,15 @@ function renderChatMessages(messages) {
   safeMessages.forEach(message => {
     const id = String(message.id);
     const isActivity = message.type === 'activity';
+    const isFloodNotice = message.type === 'flood';
+    const isServerNotice = message.type === 'server';
+    const isNotice = isFloodNotice || isServerNotice;
     const isBot = Boolean(message.isBot);
     const isNew = state.chatInitialized && !previousIds.has(id);
     const username = String(message.username || 'Minecraft');
     const normalizedUsername = username.trim().toLocaleLowerCase();
     const isContinuation = !isActivity
+      && !isNotice
       && previousChatUsername !== null
       && normalizedUsername === previousChatUsername;
     const article = document.createElement('article');
@@ -3785,8 +3790,8 @@ function renderChatMessages(messages) {
     article.dataset.createdAt = String(message.createdAt || '');
     if (state.chatSearchQuery && !isActivity) article.dataset.openChatContext = id;
     const activityKind = isActivity && message.event === 'join' ? 'join' : 'leave';
-    article.className = `chat-message${isActivity ? ` chat-activity chat-activity-${activityKind}` : ''}${isBot ? ' chat-message-bot' : ''}${isContinuation ? ' chat-message-continuation' : ''}${isNew ? ' new-message' : ''}`;
-    article.classList.toggle('reply-active', !isActivity && state.chatReplyActiveMessageId === id);
+    article.className = `chat-message${isActivity ? ` chat-activity chat-activity-${activityKind}` : ''}${isNotice ? ` chat-notice chat-notice-${message.type}` : ''}${isBot ? ' chat-message-bot' : ''}${isContinuation ? ' chat-message-continuation' : ''}${isNew ? ' new-message' : ''}`;
+    article.classList.toggle('reply-active', !isActivity && !isNotice && state.chatReplyActiveMessageId === id);
     const text = isActivity
       ? (message.event === 'join' ? 'joined the game' : 'left the game')
       : String(message.message || '');
@@ -3795,6 +3800,13 @@ function renderChatMessages(messages) {
          <div class="chat-activity-copy">
            <strong>${escapeHtml(username)}</strong>
            ${isBot ? '<span class="chat-bot-badge">BOT</span>' : ''}
+           <span class="chat-text"></span>
+         </div>
+         <time class="chat-time">${formatChatTime(message.createdAt)}</time>`
+      : isNotice
+      ? `<span class="chat-notice-mark" aria-hidden="true"></span>
+         <div class="chat-notice-copy">
+           <strong>${isFloodNotice ? 'Flood protection' : 'SERVER'}</strong>
            <span class="chat-text"></span>
          </div>
          <time class="chat-time">${formatChatTime(message.createdAt)}</time>`
@@ -3812,6 +3824,8 @@ function renderChatMessages(messages) {
          </div>`;
     const chatText = article.querySelector('.chat-text');
     if (isActivity) chatText.textContent = text;
+    else if (isFloodNotice) chatText.textContent = `${username}: ${text}`;
+    else if (isServerNotice) chatText.textContent = text;
     else chatText.innerHTML = linkifyChatMessage(text);
     const replyButton = article.querySelector('.chat-reply-button');
     if (replyButton) {
@@ -3819,7 +3833,7 @@ function renderChatMessages(messages) {
       replyButton.dataset.chatReplyText = text;
     }
     fragment.append(article);
-    previousChatUsername = isActivity ? null : normalizedUsername;
+    previousChatUsername = isActivity || isNotice ? null : normalizedUsername;
   });
 
   delete list.dataset.empty;

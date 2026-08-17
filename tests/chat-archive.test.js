@@ -15,11 +15,17 @@ const indexSource = fs.readFileSync(path.join(root, 'site', 'public', 'index.htm
 const serviceWorkerSource = fs.readFileSync(path.join(root, 'site', 'public', 'sw.js'), 'utf8');
 const floodStatsMigration = fs.readFileSync(path.join(root, 'database', 'migrations', '031_flood_message_statistics.sql'), 'utf8');
 const siteFloodStatsMigration = fs.readFileSync(path.join(root, 'site', 'migrations', '031_flood_message_statistics.sql'), 'utf8');
+const floodNoticeMigration = fs.readFileSync(path.join(root, 'database', 'migrations', '032_restore_flood_notices.sql'), 'utf8');
+const siteFloodNoticeMigration = fs.readFileSync(path.join(root, 'site', 'migrations', '032_restore_flood_notices.sql'), 'utf8');
 
 assert.equal(floodStatsMigration, siteFloodStatsMigration,
   'the bot and site must install identical flood-statistics metadata');
 assert.match(floodStatsMigration, /message_count = SUBSTRING[\s\S]*is_visible = FALSE[\s\S]*Skipped \[0-9\]\+/,
   'legacy flood summaries must be hidden while retaining their full suppressed-message count');
+assert.equal(floodNoticeMigration, siteFloodNoticeMigration,
+  'the bot and site must install identical flood-notice restoration metadata');
+assert.match(floodNoticeMigration, /SET is_visible = TRUE[\s\S]*Skipped \[0-9\]\+/,
+  'previously hidden flood summaries must be restored as visible site notices');
 
 assert.doesNotMatch(
   botSource,
@@ -50,8 +56,8 @@ assert.match(stylesSource, /\.chat-message\.chat-message-bot:not\(\.chat-activit
   'bot chat messages must have a distinct visual treatment');
 assert.match(botSource, /isTaggedBotPlayer\(username\)[\s\S]*name: isBotPlayer \? `\$\{username\} • BOT`/,
   'Discord bridge messages from tagged bots must have a visible BOT label');
-assert.match(botSource, /if \(allowMentions && !isBridgeMessage && !isBotPlayer\)/,
-  'Minecraft players carrying the Bot tag must never trigger mention keywords');
+assert.match(botSource, /if \(allowMentions && !isBridgeMessage && !isBotPlayer && !isSystemMessage\)/,
+  'Minecraft bots and server notices must never trigger mention keywords');
 assert.doesNotMatch(botSource, /Automated player/,
   'tagged bot messages must not add an Automated player caption');
 assert.match(botSource, /title: '🛡️ Flood protection activated'/,
@@ -67,13 +73,25 @@ assert.doesNotMatch(
 );
 assert.match(
   botSource,
-  /async function deliverGameChatMessageToDiscord[\s\S]*recordGameChatMessage\(username, message, \{[\s\S]*messageCount: isSummary \? summaryCount : 1,[\s\S]*visible: !isSummary[\s\S]*!DISCORD_CHAT_CHANNEL_ID[\s\S]*return true;/,
-  'flood summaries must contribute their skipped count without appearing in visible chat history'
+  /async function deliverGameChatMessageToDiscord[\s\S]*recordGameChatMessage\(username, message, \{[\s\S]*messageCount: isSummary \? summaryCount : 1,[\s\S]*visible: true[\s\S]*!DISCORD_CHAT_CHANNEL_ID[\s\S]*return true;/,
+  'flood summaries must contribute their skipped count and remain visible to the site chat'
 );
 assert.match(serverSource, /SUM\(messages\.message_count\)::bigint AS count/,
   'Top Chatters must count every message suppressed by flood protection');
 assert.match(serverSource, /COALESCE\(SUM\(message_count\), 0\)::bigint AS total[\s\S]*AND is_visible = TRUE/,
-  'player totals must include hidden flood counts while player history excludes their rows');
+  'player totals must include flood counts while player history excludes notice rows');
+assert.match(serverSource, /type: isFloodProtectionNotice\(row\.message\)[\s\S]*\? 'flood'[\s\S]*isMinecraftSystemUsername\(row\.username\) \? 'server' : 'chat'/,
+  'the chat API must classify flood and server rows as system notices');
+assert.match(appSource, /const isFloodNotice = message\.type === 'flood'[\s\S]*const isServerNotice = message\.type === 'server'[\s\S]*chat-notice-/,
+  'the dashboard must render flood and server rows without player message controls');
+assert.match(stylesSource, /\.chat-message\.chat-notice-flood[\s\S]*--notice-accent/,
+  'flood notices must have a distinct visual treatment');
+assert.match(botSource, /isMinecraftSystemUsername\(username\)[\s\S]*scheduleGameChatForward\('SERVER', message, source\)/,
+  'SERVER chat events must leave the player-message branch before player processing');
+assert.match(serverSource, /if \(isMinecraftSystemUsername\(username\)\)[\s\S]*Player not found/,
+  'system senders must not resolve to virtual player profiles');
+assert.match(serverSource, /LOWER\(username\) NOT IN \('server', 'console'\)/,
+  'server announcements must not contribute to player chat statistics');
 assert.match(
   botSource,
   /const playerInfoRefresh = await preparePlayerInfoRefresh\(payload, cleanMessage\);[\s\S]*const commandSender = playerInfoRefresh[\s\S]*?bot\.username \|\| 'WheatMagnate'[\s\S]*?isCommand \? commandSender/,
@@ -122,8 +140,8 @@ assert.match(serverSource, /playerUuid: row\.player_uuid \|\| null/,
   'chat API must expose the recorded player UUID for stable skin resolution');
 assert.match(serverSource, /const cacheKey = `v2:\$\{avatarIdentity\.toLowerCase\(\)\}`/,
   'avatar cache must not reuse stale username-only placeholder entries');
-assert.match(appSource, /previousChatUsername = isActivity \? null : normalizedUsername/,
-  'join and leave events must end the current player message group');
+assert.match(appSource, /previousChatUsername = isActivity \|\| isNotice \? null : normalizedUsername/,
+  'join, leave, flood, and server notices must end the current player message group');
 assert.match(stylesSource, /\.chat-message\.chat-activity\s*\{[^}]*grid-template-columns:\s*7px minmax\(0, max-content\) max-content;/s,
   'mobile join and leave events must use their own compact status-row layout');
 assert.match(appSource, /chat-activity-\$\{activityKind\}/,
@@ -156,9 +174,9 @@ assert.match(stylesSource, /\.chat-date-indicator\.visible\s*\{[^}]*opacity:\s*1
   'the date indicator must fade into view while scrolling');
 assert.match(stylesSource, /\.chat-panel\.chat-search-open > \.panel-head > div:first-child\s*\{[^}]*opacity:\s*0;/s,
   'the chat heading must fade away while archive search expands');
-assert.match(indexSource, /styles\.css\?v=223/, 'the updated mobile layout must use a fresh stylesheet URL');
-assert.match(indexSource, /app\.js\?v=222/, 'the updated dashboard behavior must use a fresh script URL');
-assert.match(serviceWorkerSource, /CACHE_VERSION = '220'/, 'the app shell cache must be replaced after dashboard behavior changes');
+assert.match(indexSource, /styles\.css\?v=224/, 'the updated mobile layout must use a fresh stylesheet URL');
+assert.match(indexSource, /app\.js\?v=223/, 'the updated dashboard behavior must use a fresh script URL');
+assert.match(serviceWorkerSource, /CACHE_VERSION = '221'/, 'the app shell cache must be replaced after dashboard behavior changes');
 assert.match(serviceWorkerSource, /fallbackPath[\s\S]*?'\/request\.html'/, 'resource requests must have their own navigation fallback');
 assert.match(stylesSource, /\.chat-message\s*\{[^}]*flex:\s*0 0 auto;/s,
   'chat cards must retain their natural height inside the scrolling flex list');
