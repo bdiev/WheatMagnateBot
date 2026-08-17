@@ -88,6 +88,8 @@ assert.match(stylesSource, /\.chat-message\.chat-notice-flood[\s\S]*--notice-acc
   'flood notices must have a distinct visual treatment');
 assert.match(botSource, /isMinecraftSystemUsername\(username\)[\s\S]*scheduleGameChatForward\('SERVER', message, source\)/,
   'SERVER chat events must leave the player-message branch before player processing');
+assert.match(botSource, /bypassFloodProtection: isMinecraftSystemUsername\(safeUsername\)/,
+  'server messages must bypass player flood limits in the shared forward queue');
 assert.match(serverSource, /if \(isMinecraftSystemUsername\(username\)\)[\s\S]*Player not found/,
   'system senders must not resolve to virtual player profiles');
 assert.match(serverSource, /LOWER\(username\) NOT IN \('server', 'console'\)/,

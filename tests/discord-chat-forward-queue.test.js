@@ -173,6 +173,53 @@ async function testDuplicateNormalizationAndExpiry() {
   assert.deepEqual(delivered, ['Hello   World', 'HELLO WORLD']);
 }
 
+async function testSystemMessagesBypassFloodButStillDeduplicate() {
+  const delivered = [];
+  const suppressed = [];
+  const forwarder = new DiscordChatForwardQueue({
+    perUserBurst: 2,
+    perUserWindowMs: 10_000,
+    duplicateWindowMs: 5_000,
+    summaryDelayMs: 10,
+    minSendIntervalMs: 0,
+    send: async item => {
+      delivered.push(item.message);
+      return true;
+    },
+    onSuppressed: event => suppressed.push(event)
+  });
+
+  const serverMessages = [
+    'Restarting in 10..',
+    'Restarting in 9..',
+    'Restarting in 8..',
+    'Restarting in 8..',
+    'Restarting in 7..',
+    'Restarting in 6..'
+  ];
+  await Promise.all(serverMessages.map(message => forwarder.enqueue({
+    username: 'SERVER',
+    message,
+    bypassFloodProtection: true
+  })));
+  await wait(30);
+
+  assert.deepEqual(delivered, [
+    'Restarting in 10..',
+    'Restarting in 9..',
+    'Restarting in 8..',
+    'Restarting in 7..',
+    'Restarting in 6..'
+  ], 'every distinct server message must bypass the player burst limit');
+  assert.deepEqual(
+    suppressed.map(event => [event.reason, event.message]),
+    [['duplicate-message', 'Restarting in 8..']],
+    'identical server messages must still collapse to the first copy'
+  );
+  assert.equal(delivered.some(message => /^Skipped /.test(message)), false,
+    'a duplicate server message must not create a flood summary');
+}
+
 async function testStaleMessagesAreNotSent() {
   const delivered = [];
   let releaseFirst;
@@ -274,6 +321,7 @@ async function testFloodCannotDisplaceAnotherPlayer() {
   await testFloodSuppressionAndSummary();
   await testSameMillisecondDuplicatesAreSuppressed();
   await testDuplicateNormalizationAndExpiry();
+  await testSystemMessagesBypassFloodButStillDeduplicate();
   await testStaleMessagesAreNotSent();
   await testQueueCapacityIsBounded();
   await testFloodCannotDisplaceAnotherPlayer();

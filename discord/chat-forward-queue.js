@@ -53,8 +53,16 @@ class DiscordChatForwardQueue {
     this.lastSendStartedAt = 0;
   }
 
-  enqueue({ username, message, allowMentions = true, createdAt = this.now(), source = 'unspecified' }) {
+  enqueue({
+    username,
+    message,
+    allowMentions = true,
+    createdAt = this.now(),
+    source = 'unspecified',
+    bypassFloodProtection = false
+  }) {
     const safeUsername = String(username || 'Minecraft');
+    const bypassFlood = Boolean(bypassFloodProtection);
     const state = this._getUserState(safeUsername);
     const cutoff = createdAt - this.perUserWindowMs;
     state.acceptedAt = state.acceptedAt.filter(timestamp => timestamp > cutoff);
@@ -72,25 +80,35 @@ class DiscordChatForwardQueue {
     ) {
       state.recentMessages.set(normalizedMessage, createdAt);
       this._notifySuppressed({ username: safeUsername, message, source, reason: 'duplicate-message' });
-      this._recordSuppressed(safeUsername, 1);
+      // System messages retain duplicate collapsing, but a duplicate is not a
+      // server flood and must not generate a flood-protection summary.
+      if (!bypassFlood) this._recordSuppressed(safeUsername, 1);
       return Promise.resolve(true);
     }
 
-    if (state.acceptedAt.length >= this.perUserBurst) {
+    if (!bypassFlood && state.acceptedAt.length >= this.perUserBurst) {
       this._notifySuppressed({ username: safeUsername, message, source, reason: 'per-user-burst' });
       this._recordSuppressed(safeUsername, 1);
       return Promise.resolve(true);
     }
 
-    state.acceptedAt.push(createdAt);
+    if (!bypassFlood) state.acceptedAt.push(createdAt);
     if (this.duplicateWindowMs > 0 && normalizedMessage) {
       state.recentMessages.set(normalizedMessage, createdAt);
     }
-    const queued = this._tryQueue({ safeUsername, message, allowMentions, createdAt, source, isSummary: false });
+    const queued = this._tryQueue({
+      safeUsername,
+      message,
+      allowMentions,
+      createdAt,
+      source,
+      isSummary: false,
+      bypassFloodProtection: bypassFlood
+    });
     if (queued) return queued;
 
     this._notifySuppressed({ username: safeUsername, message, source, reason: 'queue-capacity' });
-    this._recordSuppressed(safeUsername, 1);
+    if (!bypassFlood) this._recordSuppressed(safeUsername, 1);
     return Promise.resolve(true);
   }
 
@@ -192,7 +210,7 @@ class DiscordChatForwardQueue {
       source: evicted.source,
       reason: 'queue-fairness'
     });
-    this._recordSuppressed(evicted.safeUsername, 1);
+    if (!evicted.bypassFloodProtection) this._recordSuppressed(evicted.safeUsername, 1);
     evicted.resolve(true);
     return true;
   }
@@ -215,7 +233,7 @@ class DiscordChatForwardQueue {
             reason: 'stale'
           });
           if (item.isSummary) this._recordSuppressed(item.safeUsername, item.summaryCount || 0);
-          else this._recordSuppressed(item.safeUsername, 1);
+          else if (!item.bypassFloodProtection) this._recordSuppressed(item.safeUsername, 1);
           item.resolve(true);
           continue;
         }

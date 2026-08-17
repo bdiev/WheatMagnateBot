@@ -4911,7 +4911,8 @@ async function sendGameChatMessageToDiscord(username, message, { allowMentions =
     username: safeUsername,
     message: cleanMessage,
     allowMentions,
-    source
+    source,
+    bypassFloodProtection: isMinecraftSystemUsername(safeUsername)
   });
 }
 
