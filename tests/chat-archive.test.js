@@ -17,6 +17,8 @@ const floodStatsMigration = fs.readFileSync(path.join(root, 'database', 'migrati
 const siteFloodStatsMigration = fs.readFileSync(path.join(root, 'site', 'migrations', '031_flood_message_statistics.sql'), 'utf8');
 const floodNoticeMigration = fs.readFileSync(path.join(root, 'database', 'migrations', '032_restore_flood_notices.sql'), 'utf8');
 const siteFloodNoticeMigration = fs.readFileSync(path.join(root, 'site', 'migrations', '032_restore_flood_notices.sql'), 'utf8');
+const serverFloodCleanupMigration = fs.readFileSync(path.join(root, 'database', 'migrations', '033_hide_server_flood_summaries.sql'), 'utf8');
+const siteServerFloodCleanupMigration = fs.readFileSync(path.join(root, 'site', 'migrations', '033_hide_server_flood_summaries.sql'), 'utf8');
 
 assert.equal(floodStatsMigration, siteFloodStatsMigration,
   'the bot and site must install identical flood-statistics metadata');
@@ -26,6 +28,10 @@ assert.equal(floodNoticeMigration, siteFloodNoticeMigration,
   'the bot and site must install identical flood-notice restoration metadata');
 assert.match(floodNoticeMigration, /SET is_visible = TRUE[\s\S]*Skipped \[0-9\]\+/,
   'previously hidden flood summaries must be restored as visible site notices');
+assert.equal(serverFloodCleanupMigration, siteServerFloodCleanupMigration,
+  'the bot and site must install identical server-summary cleanup metadata');
+assert.match(serverFloodCleanupMigration, /SET is_visible = FALSE[\s\S]*LOWER\(username\) IN \('server', 'console'\)[\s\S]*Skipped \[0-9\]\+/,
+  'legacy SERVER flood summaries must be hidden from the site archive');
 
 assert.doesNotMatch(
   botSource,
@@ -38,8 +44,8 @@ assert.match(
   '!wm commands must use the shared chat forwarder so message/messagestr echoes are deduplicated'
 );
 assert.match(serverSource, /beforeMessageId/, 'player chat history must support stable pagination');
-assert.match(serverSource, /WHERE is_visible = TRUE AND id <= \$2::bigint/, 'chat API must load visible messages before the exact message ID');
-assert.match(serverSource, /WHERE is_visible = TRUE AND id > \$2::bigint/, 'chat API must load visible messages after the exact message ID');
+assert.match(serverSource, /WHERE is_visible = TRUE[\s\S]*?AND id <= \$2::bigint/, 'chat API must load visible messages before the exact message ID');
+assert.match(serverSource, /WHERE is_visible = TRUE[\s\S]*?AND id > \$2::bigint/, 'chat API must load visible messages after the exact message ID');
 assert.match(serverSource, /POSITION\(LOWER\(\$2\) IN LOWER\(message\)\) > 0/, 'chat search must query the full stored message table');
 assert.match(serverSource, /LOWER\(TRIM\(admin_tag\.value\)\) = 'bot'/,
   'chat API must classify the case-insensitive Minecraft Players Bot tag');
@@ -76,6 +82,8 @@ assert.match(
   /async function deliverGameChatMessageToDiscord[\s\S]*recordGameChatMessage\(username, message, \{[\s\S]*messageCount: isSummary \? summaryCount : 1,[\s\S]*visible: true[\s\S]*!DISCORD_CHAT_CHANNEL_ID[\s\S]*return true;/,
   'flood summaries must contribute their skipped count and remain visible to the site chat'
 );
+assert.match(botSource, /const isSystemMessage = isMinecraftSystemUsername\(username\);[\s\S]*if \(isSummary && isSystemMessage\) return true;[\s\S]*recordGameChatMessage/,
+  'server flood summaries must be rejected before database and Discord delivery');
 assert.match(serverSource, /SUM\(messages\.message_count\)::bigint AS count/,
   'Top Chatters must count every message suppressed by flood protection');
 assert.match(serverSource, /COALESCE\(SUM\(message_count\), 0\)::bigint AS total[\s\S]*AND is_visible = TRUE/,
@@ -94,6 +102,8 @@ assert.match(serverSource, /if \(isMinecraftSystemUsername\(username\)\)[\s\S]*P
   'system senders must not resolve to virtual player profiles');
 assert.match(serverSource, /LOWER\(username\) NOT IN \('server', 'console'\)/,
   'server announcements must not contribute to player chat statistics');
+assert.match(serverSource, /WHERE is_visible = TRUE[\s\S]*AND NOT \([\s\S]*LOWER\(username\) IN \('server', 'console'\)[\s\S]*Skipped \[0-9\]\+/,
+  'the chat API must defensively exclude legacy SERVER flood summaries');
 assert.match(
   botSource,
   /const playerInfoRefresh = await preparePlayerInfoRefresh\(payload, cleanMessage\);[\s\S]*const commandSender = playerInfoRefresh[\s\S]*?bot\.username \|\| 'WheatMagnate'[\s\S]*?isCommand \? commandSender/,

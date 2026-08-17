@@ -1041,6 +1041,10 @@ async function getChat(url) {
     ? `SELECT id, username, player_uuid, message, message_count, created_at, ${botTagColumn}
        FROM game_chat_messages
        WHERE is_visible = TRUE
+         AND NOT (
+           LOWER(username) IN ('server', 'console')
+           AND message ~ '^Skipped [0-9]+ (message|messages) due to chat flooding\\.$'
+         )
          AND POSITION(LOWER($2) IN LOWER(message)) > 0
        ORDER BY id DESC
        LIMIT $1`
@@ -1048,19 +1052,33 @@ async function getChat(url) {
     ? `SELECT id, username, player_uuid, message, message_count, created_at, is_bot FROM (
          (SELECT id, username, player_uuid, message, message_count, created_at, ${botTagColumn}
           FROM game_chat_messages
-          WHERE is_visible = TRUE AND id <= $2::bigint
+          WHERE is_visible = TRUE
+            AND NOT (
+              LOWER(username) IN ('server', 'console')
+              AND message ~ '^Skipped [0-9]+ (message|messages) due to chat flooding\\.$'
+            )
+            AND id <= $2::bigint
           ORDER BY id DESC
           LIMIT (($1 + 1) / 2))
          UNION ALL
          (SELECT id, username, player_uuid, message, message_count, created_at, ${botTagColumn}
           FROM game_chat_messages
-          WHERE is_visible = TRUE AND id > $2::bigint
+          WHERE is_visible = TRUE
+            AND NOT (
+              LOWER(username) IN ('server', 'console')
+              AND message ~ '^Skipped [0-9]+ (message|messages) due to chat flooding\\.$'
+            )
+            AND id > $2::bigint
           ORDER BY id ASC
           LIMIT ($1 / 2))
        ) context_messages`
     : `SELECT id, username, player_uuid, message, message_count, created_at, ${botTagColumn}
        FROM game_chat_messages
        WHERE is_visible = TRUE
+         AND NOT (
+           LOWER(username) IN ('server', 'console')
+           AND message ~ '^Skipped [0-9]+ (message|messages) due to chat flooding\\.$'
+         )
        ORDER BY created_at DESC
        LIMIT $1`;
   const [messagesResult, activityResult, hourlyResult, dailyResult, monthlyResult, topChattersResult, totalsResult] = await Promise.all([

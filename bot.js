@@ -4957,6 +4957,11 @@ async function deliverGameChatMessageToDiscord({
   isSummary = false,
   summaryCount = 0
 }) {
+  const isSystemMessage = isMinecraftSystemUsername(username);
+  // Server announcements bypass player anti-flood. A stale or legacy queue
+  // item must therefore never persist or deliver a server flood summary.
+  if (isSummary && isSystemMessage) return true;
+
   try {
     // A flood summary contributes the number of suppressed messages to chat
     // statistics and is also kept as a visible system notice in the site chat.
@@ -4969,7 +4974,6 @@ async function deliverGameChatMessageToDiscord({
       return true;
     }
 
-    const isSystemMessage = isMinecraftSystemUsername(username);
     const isBotPlayer = !isSummary && !isSystemMessage && await isTaggedBotPlayer(username);
     const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
     if (!channel?.isTextBased?.()) return false;
