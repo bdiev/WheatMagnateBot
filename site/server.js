@@ -1021,9 +1021,13 @@ async function getPlayers() {
 async function getChat(url) {
   assertDatabase();
 
-  const limit = Math.min(1000, Math.max(1, toInt(url.searchParams.get('limit'), 500)));
+  const limit = Math.min(500, Math.max(1, toInt(url.searchParams.get('limit'), 200)));
   const aroundId = /^\d+$/.test(url.searchParams.get('around') || '') ? url.searchParams.get('around') : null;
+  const beforeId = !aroundId && /^\d+$/.test(url.searchParams.get('before') || '')
+    ? url.searchParams.get('before')
+    : null;
   const searchQuery = String(url.searchParams.get('q') || '').trim().slice(0, 100);
+  const pageLimit = aroundId ? limit : limit + 1;
   const botTagColumn = `EXISTS (
     SELECT 1
     FROM player_activity tagged_player
@@ -1045,7 +1049,11 @@ async function getChat(url) {
            LOWER(username) IN ('server', 'console')
            AND message ~ '^Skipped [0-9]+ (message|messages) due to chat flooding\\.$'
          )
-         AND POSITION(LOWER($2) IN LOWER(message)) > 0
+         AND (
+           POSITION(LOWER($2) IN LOWER(message)) > 0
+           OR POSITION(LOWER($2) IN LOWER(username)) > 0
+         )
+         AND ($3::bigint IS NULL OR id < $3::bigint)
        ORDER BY id DESC
        LIMIT $1`
     : aroundId
@@ -1079,10 +1087,52 @@ async function getChat(url) {
            LOWER(username) IN ('server', 'console')
            AND message ~ '^Skipped [0-9]+ (message|messages) due to chat flooding\\.$'
          )
-       ORDER BY created_at DESC
+         AND ($2::bigint IS NULL OR id < $2::bigint)
+       ORDER BY id DESC
        LIMIT $1`;
+  const messageParams = searchQuery
+    ? [pageLimit, searchQuery, beforeId]
+    : aroundId ? [limit, aroundId] : [pageLimit, beforeId];
+
+  const mapChatRow = row => ({
+    id: row.id,
+    type: isFloodProtectionNotice(row.message)
+      ? 'flood'
+      : isMinecraftSystemUsername(row.username) ? 'server' : 'chat',
+    username: row.username,
+    playerUuid: row.player_uuid || null,
+    message: displayGameChatMessage(row.message),
+    messageCount: toInt(row.message_count),
+    isBot: Boolean(row.is_bot),
+    createdAt: row.created_at
+  });
+  const buildMessagePage = result => {
+    const rows = result.rows.slice(0, limit);
+    const hasMore = !aroundId && result.rows.length > limit;
+    return {
+      rows,
+      hasMore,
+      nextBeforeId: hasMore && rows.length ? String(rows[rows.length - 1].id) : null,
+      messages: rows.map(mapChatRow)
+        .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+    };
+  };
+
+  // Older archive/search pages only need message rows. Avoid recalculating all
+  // charts and leaderboards on every upward-scroll request.
+  if (beforeId) {
+    const page = buildMessagePage(await pool.query(messagesSql, messageParams));
+    return {
+      latestId: null,
+      searchQuery: searchQuery || null,
+      messages: page.messages,
+      hasMore: page.hasMore,
+      nextBeforeId: page.nextBeforeId
+    };
+  }
+
   const [messagesResult, activityResult, hourlyResult, dailyResult, monthlyResult, topChattersResult, totalsResult] = await Promise.all([
-    pool.query(messagesSql, searchQuery ? [limit, searchQuery] : aroundId ? [limit, aroundId] : [limit]),
+    pool.query(messagesSql, messageParams),
     pool.query(`
       SELECT
         username,
@@ -1181,18 +1231,8 @@ async function getChat(url) {
     `)
   ]);
 
-  const chatMessages = messagesResult.rows.map(row => ({
-      id: row.id,
-      type: isFloodProtectionNotice(row.message)
-        ? 'flood'
-        : isMinecraftSystemUsername(row.username) ? 'server' : 'chat',
-      username: row.username,
-      playerUuid: row.player_uuid || null,
-      message: displayGameChatMessage(row.message),
-      messageCount: toInt(row.message_count),
-      isBot: Boolean(row.is_bot),
-      createdAt: row.created_at
-    }));
+  const messagePage = buildMessagePage(messagesResult);
+  const chatMessages = messagePage.messages;
   const activityMessages = activityResult.rows
     .filter(row => row.event_at)
     .map(row => ({
@@ -1207,11 +1247,11 @@ async function getChat(url) {
     }));
 
   return {
-    latestId: messagesResult.rows[0]?.id == null ? '0' : String(messagesResult.rows[0].id),
+    latestId: messagePage.rows[0]?.id == null ? '0' : String(messagePage.rows[0].id),
     searchQuery: searchQuery || null,
+    hasMore: messagePage.hasMore,
+    nextBeforeId: messagePage.nextBeforeId,
     messages: [...chatMessages, ...(aroundId || searchQuery ? [] : activityMessages)]
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      .slice(0, limit)
       .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
     hourly: hourlyResult.rows.map(row => ({
       label: row.label,

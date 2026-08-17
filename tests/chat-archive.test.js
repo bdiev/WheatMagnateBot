@@ -44,6 +44,14 @@ assert.match(
   '!wm commands must use the shared chat forwarder so message/messagestr echoes are deduplicated'
 );
 assert.match(serverSource, /beforeMessageId/, 'player chat history must support stable pagination');
+assert.match(serverSource, /const beforeId = !aroundId[\s\S]*url\.searchParams\.get\('before'\)/,
+  'the full chat archive must accept an older-message cursor');
+assert.match(serverSource, /const pageLimit = aroundId \? limit : limit \+ 1/,
+  'chat pages must fetch one extra row to report whether older history exists');
+assert.match(serverSource, /\(\$3::bigint IS NULL OR id < \$3::bigint\)/,
+  'search pagination must continue before the exact message ID');
+assert.match(serverSource, /if \(beforeId\)[\s\S]*messages: page\.messages[\s\S]*hasMore: page\.hasMore[\s\S]*nextBeforeId: page\.nextBeforeId/,
+  'older archive pages must avoid recalculating dashboard analytics');
 assert.match(serverSource, /WHERE is_visible = TRUE[\s\S]*?AND id <= \$2::bigint/, 'chat API must load visible messages before the exact message ID');
 assert.match(serverSource, /WHERE is_visible = TRUE[\s\S]*?AND id > \$2::bigint/, 'chat API must load visible messages after the exact message ID');
 assert.match(serverSource, /POSITION\(LOWER\(\$2\) IN LOWER\(message\)\) > 0/, 'chat search must query the full stored message table');
@@ -133,6 +141,14 @@ assert.match(appSource, /handlePlayerProfileClick[\s\S]*closest\('\.chat-link'\)
 assert.match(stylesSource, /\.chat-link\s*\{[^}]*text-decoration:\s*underline;/s, 'clickable chat links must remain visually recognizable');
 assert.match(appSource, /chatContextMessageId/, 'live refreshes must preserve historical context viewing');
 assert.match(appSource, /searchGameChat/, 'the chat UI must expose archive search');
+assert.match(appSource, /function loadOlderChatMessages\([\s\S]*before: String\(beforeId\)[\s\S]*if \(expectedQuery\) params\.set\('q', expectedQuery\)/,
+  'scroll pagination must work for both the live archive and search results');
+assert.match(appSource, /scrollMode === 'prepend'[\s\S]*previousScrollTop \+ Math\.max\(0, list\.scrollHeight - previousScrollHeight\)/,
+  'prepending older chat must preserve the current visible position');
+assert.match(appSource, /list\.scrollTop <= 120[\s\S]*loadOlderChatMessages\(\)/,
+  'scrolling near the top must request the next archive page');
+assert.match(appSource, /function renderLiveChat\([\s\S]*mode: state\.chatInitialized \? 'mergeLatest' : 'replace'/,
+  'live refreshes must retain already loaded historical pages');
 assert.match(appSource, /setChatArchiveSearchOpen/, 'archive search must use a compact expandable control');
 assert.match(appSource, /updateChatDateIndicator/, 'the chat must show the date of the currently visible messages');
 assert.match(appSource, /state\.charts\.chatMonthly/, 'the month chart must use archive-wide monthly statistics');
@@ -186,9 +202,9 @@ assert.match(stylesSource, /\.chat-date-indicator\.visible\s*\{[^}]*opacity:\s*1
   'the date indicator must fade into view while scrolling');
 assert.match(stylesSource, /\.chat-panel\.chat-search-open > \.panel-head > div:first-child\s*\{[^}]*opacity:\s*0;/s,
   'the chat heading must fade away while archive search expands');
-assert.match(indexSource, /styles\.css\?v=224/, 'the updated mobile layout must use a fresh stylesheet URL');
-assert.match(indexSource, /app\.js\?v=223/, 'the updated dashboard behavior must use a fresh script URL');
-assert.match(serviceWorkerSource, /CACHE_VERSION = '221'/, 'the app shell cache must be replaced after dashboard behavior changes');
+assert.match(indexSource, /styles\.css\?v=225/, 'the updated mobile layout must use a fresh stylesheet URL');
+assert.match(indexSource, /app\.js\?v=224/, 'the updated dashboard behavior must use a fresh script URL');
+assert.match(serviceWorkerSource, /CACHE_VERSION = '222'/, 'the app shell cache must be replaced after dashboard behavior changes');
 assert.match(serviceWorkerSource, /fallbackPath[\s\S]*?'\/request\.html'/, 'resource requests must have their own navigation fallback');
 assert.match(stylesSource, /\.chat-message\s*\{[^}]*flex:\s*0 0 auto;/s,
   'chat cards must retain their natural height inside the scrolling flex list');

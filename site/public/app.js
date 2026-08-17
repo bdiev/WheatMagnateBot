@@ -57,6 +57,11 @@ const state = {
   playerProfileSignature: '',
   chatContextMessageId: null,
   chatSearchQuery: '',
+  chatMessages: [],
+  chatHasMore: false,
+  chatNextBeforeId: null,
+  chatOlderLoading: false,
+  chatArchiveStatusTimer: null,
   whitelistSearchPlayers: [],
   adminPlayerSearchRequests: {},
   adminControlState: null,
@@ -809,6 +814,10 @@ function updateChatDateIndicator({ show = false } = {}) {
 function handleChatListScroll() {
   updateChatScrollButton();
   updateChatDateIndicator({ show: true });
+  const list = $('#chatList');
+  if (list && list.scrollTop <= 120) {
+    loadOlderChatMessages().catch(err => setBanner(`Could not load older chat: ${err.message}`));
+  }
 }
 
 function scrollToBottom(selector, { smooth = false } = {}) {
@@ -3730,7 +3739,7 @@ async function handleWhisperDeleteDialog() {
   }
 }
 
-function renderChatMessages(messages) {
+function renderChatMessages(messages, { scrollMode = 'preserve' } = {}) {
   const list = $('#chatList');
   if (!list) return;
   const safeMessages = Array.isArray(messages) ? messages.filter(message => message?.id != null) : [];
@@ -3767,6 +3776,7 @@ function renderChatMessages(messages) {
   const distanceFromBottom = list.scrollHeight - list.clientHeight - list.scrollTop;
   const keepBottom = distanceFromBottom < 48;
   const previousScrollTop = list.scrollTop;
+  const previousScrollHeight = list.scrollHeight;
   const previousIds = state.chatMessageIds;
   const fragment = document.createDocumentFragment();
 
@@ -3840,8 +3850,12 @@ function renderChatMessages(messages) {
   list.replaceChildren(fragment);
 
   requestAnimationFrame(() => {
-    if (keepBottom) {
+    if (scrollMode === 'prepend') {
+      list.scrollTop = previousScrollTop + Math.max(0, list.scrollHeight - previousScrollHeight);
+    } else if (scrollMode === 'bottom' || keepBottom) {
       list.scrollTop = list.scrollHeight;
+    } else if (scrollMode === 'top') {
+      list.scrollTop = 0;
     } else {
       list.scrollTop = previousScrollTop;
     }
@@ -3849,37 +3863,71 @@ function renderChatMessages(messages) {
   });
 }
 
-function renderChat(payload) {
-  setRollingNumber('#chat24h', payload.totals?.last24h);
-  setRollingNumber('#activeChatters', payload.totals?.activeChatters24h);
-  setRollingNumber('#chatAllTime', payload.totals?.allTime);
+function mergeChatMessagePages(...pages) {
+  const messages = new Map();
+  pages.flat().forEach(message => {
+    if (message?.id != null) messages.set(String(message.id), message);
+  });
+  return [...messages.values()].sort((first, second) => {
+    const timeDifference = new Date(first.createdAt).getTime() - new Date(second.createdAt).getTime();
+    if (timeDifference) return timeDifference;
+    return String(first.id).localeCompare(String(second.id), undefined, { numeric: true });
+  });
+}
 
-  const messages = payload.messages || [];
-  state.chatSearchQuery = String(payload.searchQuery || state.chatSearchQuery || '');
-  renderChatMessages(messages);
-  ensureInitialChatScroll();
+function renderChat(payload, { mode = 'replace', scrollMode = null } = {}) {
+  if (payload.totals) {
+    setRollingNumber('#chat24h', payload.totals.last24h);
+    setRollingNumber('#activeChatters', payload.totals.activeChatters24h);
+    setRollingNumber('#chatAllTime', payload.totals.allTime);
+  }
+
+  const incomingMessages = Array.isArray(payload.messages) ? payload.messages : [];
+  const messages = mode === 'prepend'
+    ? mergeChatMessagePages(incomingMessages, state.chatMessages)
+    : mode === 'mergeLatest'
+      ? mergeChatMessagePages(state.chatMessages, incomingMessages)
+      : incomingMessages;
+  if (mode === 'replace') {
+    state.chatSearchQuery = String(payload.searchQuery || '');
+  }
+  state.chatMessages = messages;
+  renderChatMessages(messages, {
+    scrollMode: scrollMode || (mode === 'prepend' ? 'prepend' : 'preserve')
+  });
+  if (mode === 'replace') ensureInitialChatScroll();
   updateChatScrollButton();
   state.chatMessageIds = new Set(messages.map(message => String(message.id)));
-  state.chatLatestId = String(payload.latestId ?? state.chatLatestId ?? '0');
+  if (payload.latestId != null) state.chatLatestId = String(payload.latestId);
+  if (mode !== 'mergeLatest') {
+    state.chatHasMore = Boolean(payload.hasMore);
+    state.chatNextBeforeId = payload.nextBeforeId == null ? null : String(payload.nextBeforeId);
+  }
   state.chatInitialized = true;
 
-  const topChatters = payload.topChatters || [];
-  renderStable('#topChatters', topChatters.length
-    ? topChatters.map((player, index) => `
-      <div class="rank-item top-chatter-item">
-        <span class="rank-index">${index + 1}</span>
-        ${playerIdentity(player.username, 28)}
-        <strong>${formatNumber(player.count)}</strong>
-      </div>
-    `).join('')
-    : '<div class="empty">No chat activity in the last 24 hours.</div>',
-    topChatters.map(player => [player.username, player.count])
-  );
+  if (Array.isArray(payload.topChatters)) {
+    const topChatters = payload.topChatters;
+    renderStable('#topChatters', topChatters.length
+      ? topChatters.map((player, index) => `
+        <div class="rank-item top-chatter-item">
+          <span class="rank-index">${index + 1}</span>
+          ${playerIdentity(player.username, 28)}
+          <strong>${formatNumber(player.count)}</strong>
+        </div>
+      `).join('')
+      : '<div class="empty">No chat activity in the last 24 hours.</div>',
+      topChatters.map(player => [player.username, player.count])
+    );
+  }
 
-  state.charts.chatHourly = payload.hourly || [];
-  state.charts.chatDaily = payload.daily || [];
-  state.charts.chatMonthly = payload.monthly || [];
-  redrawCharts();
+  if (Array.isArray(payload.hourly)) state.charts.chatHourly = payload.hourly;
+  if (Array.isArray(payload.daily)) state.charts.chatDaily = payload.daily;
+  if (Array.isArray(payload.monthly)) state.charts.chatMonthly = payload.monthly;
+  if (payload.hourly || payload.daily || payload.monthly) redrawCharts();
+}
+
+function renderLiveChat(payload) {
+  renderChat(payload, { mode: state.chatInitialized ? 'mergeLatest' : 'replace' });
 }
 
 function handleChatReplyClick(event) {
@@ -5032,6 +5080,7 @@ async function openChatContext(messageId) {
   const payload = await fetchJson(`/api/chat?around=${encodeURIComponent(messageId)}&limit=200`);
   state.chatSearchQuery = '';
   state.chatContextMessageId = String(messageId);
+  setChatArchiveStatus('');
   closePlayerProfile();
   setActiveTab('chat');
   renderChat(payload);
@@ -5044,15 +5093,66 @@ async function openChatContext(messageId) {
   });
 }
 
+function setChatArchiveStatus(message = '') {
+  const status = $('#chatArchiveStatus');
+  if (!status) return;
+  clearTimeout(state.chatArchiveStatusTimer);
+  state.chatArchiveStatusTimer = null;
+  status.textContent = message;
+  status.hidden = !message;
+}
+
+async function loadOlderChatMessages() {
+  if (
+    state.chatOlderLoading
+    || state.chatContextMessageId
+    || !state.chatHasMore
+    || !/^\d+$/.test(String(state.chatNextBeforeId || ''))
+  ) return false;
+
+  const expectedQuery = state.chatSearchQuery;
+  const beforeId = state.chatNextBeforeId;
+  const params = new URLSearchParams({
+    limit: String(CHAT_HISTORY_LIMIT),
+    before: String(beforeId)
+  });
+  if (expectedQuery) params.set('q', expectedQuery);
+
+  state.chatOlderLoading = true;
+  setChatArchiveStatus(expectedQuery ? 'Loading older matches…' : 'Loading older messages…');
+  try {
+    const payload = await fetchJson(`/api/chat?${params}`);
+    if (
+      state.chatContextMessageId
+      || state.chatSearchQuery !== expectedQuery
+      || state.chatNextBeforeId !== beforeId
+    ) return false;
+    renderChat(payload, { mode: 'prepend', scrollMode: 'prepend' });
+    if (!payload.hasMore) {
+      setChatArchiveStatus(expectedQuery ? 'Beginning of search results' : 'Beginning of chat history');
+      state.chatArchiveStatusTimer = setTimeout(() => setChatArchiveStatus(''), 1_600);
+    } else {
+      setChatArchiveStatus('');
+    }
+    return true;
+  } finally {
+    state.chatOlderLoading = false;
+    if (state.chatHasMore) setChatArchiveStatus('');
+  }
+}
+
 async function returnToLiveChat() {
   state.chatContextMessageId = null;
   state.chatSearchQuery = '';
+  setChatArchiveStatus('');
   const searchInput = $('#chatSearchInput');
   if (searchInput) searchInput.value = '';
   const button = $('#chatReturnLive');
   if (button) button.hidden = true;
-  renderChat(await fetchJson(`/api/chat?limit=${CHAT_HISTORY_LIMIT}`));
-  scrollToBottom('#chatList', { smooth: true });
+  renderChat(await fetchJson(`/api/chat?limit=${CHAT_HISTORY_LIMIT}`), {
+    mode: 'replace',
+    scrollMode: 'bottom'
+  });
 }
 
 async function searchGameChat(event) {
@@ -5064,12 +5164,11 @@ async function searchGameChat(event) {
   }
   state.chatContextMessageId = null;
   state.chatSearchQuery = query;
-  const payload = await fetchJson(`/api/chat?q=${encodeURIComponent(query)}&limit=200`);
-  renderChat(payload);
+  setChatArchiveStatus('');
+  const payload = await fetchJson(`/api/chat?q=${encodeURIComponent(query)}&limit=${CHAT_HISTORY_LIMIT}`);
+  renderChat(payload, { mode: 'replace', scrollMode: 'bottom' });
   const returnButton = $('#chatReturnLive');
   if (returnButton) returnButton.hidden = false;
-  const list = $('#chatList');
-  if (list) list.scrollTop = 0;
 }
 
 function setChatArchiveSearchOpen(open) {
@@ -7518,7 +7617,7 @@ async function refreshChatFromEvent() {
   if (state.liveChatLoading) return;
   state.liveChatLoading = true;
   try {
-    renderChat(await fetchJson(`/api/chat?limit=${CHAT_HISTORY_LIMIT}`));
+    renderLiveChat(await fetchJson(`/api/chat?limit=${CHAT_HISTORY_LIMIT}`));
     if (state.playerProfileUsername && !$('#playerProfileOverlay')?.hidden) {
       await loadPlayerProfile(state.playerProfileUsername);
     }
@@ -7727,7 +7826,7 @@ async function loadAll({ force = false, switchGeneration = state.accountSwitchGe
       // analytics query or the icon manifest must not hold the whole first screen.
       const sectionLoads = [
         fetchJson(`/api/chat?limit=${CHAT_HISTORY_LIMIT}`, { signal }).then(payload => {
-          if (isCurrentSync() && !state.chatContextMessageId && !state.chatSearchQuery) renderChat(payload);
+          if (isCurrentSync() && !state.chatContextMessageId && !state.chatSearchQuery) renderLiveChat(payload);
         }),
         fetchJson('/api/bot-stats', { signal }).then(renderIfCurrent(renderBotStats)),
         fetchJson('/api/kill-aura', { signal }).then(renderIfCurrent(renderKillAura)),
@@ -7798,7 +7897,7 @@ async function loadLiveChats() {
   state.liveChatLoading = true;
   try {
     const chat = await fetchJson(`/api/chat?limit=${CHAT_HISTORY_LIMIT}`);
-    if (!state.chatContextMessageId && !state.chatSearchQuery) renderChat(chat);
+    if (!state.chatContextMessageId && !state.chatSearchQuery) renderLiveChat(chat);
     if ($('#whisperPanel')?.classList.contains('open')) {
       await loadWhisperOnlinePlayers();
       await loadWhisperDialog();
