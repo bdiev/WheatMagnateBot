@@ -13,6 +13,11 @@ assert.match(
 );
 assert.match(
   appSource,
+  /details\?\.debugLogId[\s\S]*Debug Log ID:[\s\S]*admin-log-record-id[^\n]*ID \$\{escapeHtml\(logId\)\}/,
+  'system logs must visibly expose both their site record ID and exact Obsidian debug-log ID'
+);
+assert.match(
+  appSource,
   /async function loadAdminSystemLogs\(\)[\s\S]*hasActiveTextSelectionWithin\(list\)[\s\S]*admin-log-selection[\s\S]*await fetchJson[\s\S]*hasActiveTextSelectionWithin\(list\)/,
   'system logs must defer replacement both before and after their asynchronous fetch while text is selected'
 );

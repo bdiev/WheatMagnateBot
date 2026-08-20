@@ -17,6 +17,11 @@ function testAdminNameCannotEscalate() {
     { metric: 'playtime', username: 'bdiev_' },
     'profile refresh metadata must match the exact command sent to Minecraft'
   );
+  assert.deepEqual(
+    normalizePlayerInfoRefreshRequest({ metric: 'lastSeen', username: 'bdiev_' }, '!seen bdiev_'),
+    { metric: 'lastSeen', username: 'bdiev_' },
+    'last-seen refresh metadata must match the exact !seen command'
+  );
   assert.throws(
     () => normalizePlayerInfoRefreshRequest({ metric: 'joinDate', username: 'bdiev_' }, '!pt bdiev_'),
     error => error.statusCode === 400,

@@ -1800,14 +1800,18 @@ function cleanupFarmDebugLogs(date = FARM_DEBUG_NOW()) {
 }
 
 function writeFarmDebug(event, details = {}) {
-  if (!farmDebugLoggingEnabled) return;
+  if (!farmDebugLoggingEnabled) return null;
   const now = FARM_DEBUG_NOW();
   const record = {
     time: now.toISOString(),
     botId: identity.botId,
     username: identity.username,
     event,
-    ...details
+    ...details,
+    // Unique per JSONL line. correlationId intentionally remains separate:
+    // it groups all records from one failure/recovery chain, while logId finds
+    // one exact record inside a downloaded debug file.
+    logId: randomUUID()
   };
   const line = JSON.stringify(record);
   const dailyLogFile = getFarmDebugLogFile(now);
@@ -1828,6 +1832,7 @@ function writeFarmDebug(event, details = {}) {
       details:record
     })).catch(() => {});
   }
+  return record;
 }
 
 // TEMPORARY: verbose trace for every farm interaction packet. It uses the
@@ -2970,7 +2975,7 @@ async function persistentLoop(bot, notify) {
         )
         ? SUPPLY_RETRY_DELAY_MS
         : FARM_RETRY_DELAY_MS;
-    writeFarmDebug(
+    const retryLogEntry = writeFarmDebug(
       err.code === PLACEMENT_RECHECK_CODE ? 'placement_state_recheck' : 'cycle_retry',
       {
         ...context,
@@ -2981,19 +2986,20 @@ async function persistentLoop(bot, notify) {
         correlationId: farmFailureCorrelationId
       }
     );
+    const debugLogId = retryLogEntry?.logId || null;
     if (err.code === CAULDRON_RETRY_CODE) {
       // A dry/temporarily rejected cauldron is routine. Retry quickly without
       // turning the short refill wait into a farm-stalled notification.
     } else if (err.code === LOW_PICKAXE_DURABILITY_CODE) {
       activeFarmNotificationTypes.add('low_pickaxe_durability');
       const percent = Number(err.message.match(/has\s+([\d.]+)%/i)?.[1]);
-      notify?.({ eventType: 'low_pickaxe_durability', key: 'obsidian-farm', title: 'Low pickaxe durability', message: err.message, metadata: { errorCode: err.code, percent, correlationId: farmFailureCorrelationId } });
+      notify?.({ eventType: 'low_pickaxe_durability', key: 'obsidian-farm', title: 'Low pickaxe durability', message: err.message, metadata: { errorCode: err.code, percent, correlationId: farmFailureCorrelationId, debugLogId } });
     } else if (err.code === RESOURCE_EXHAUSTED_CODE && /pickaxe/i.test(err.message)) {
       activeFarmNotificationTypes.add('no_pickaxes');
-      notify?.({ eventType: 'no_pickaxes', key: 'obsidian-farm', title: 'No usable pickaxes', message: err.message, metadata: { errorCode: err.code, count: 0, correlationId: farmFailureCorrelationId } });
+      notify?.({ eventType: 'no_pickaxes', key: 'obsidian-farm', title: 'No usable pickaxes', message: err.message, metadata: { errorCode: err.code, count: 0, correlationId: farmFailureCorrelationId, debugLogId } });
     } else {
       activeFarmNotificationTypes.add('farm_stalled');
-      notify?.({ eventType: 'farm_stalled', key: 'obsidian-farm', title: 'Obsidian farm stalled', message: err.message, metadata: { errorCode: err.code || null, phase: farm.phase, seconds: stalledSeconds, correlationId: farmFailureCorrelationId } });
+      notify?.({ eventType: 'farm_stalled', key: 'obsidian-farm', title: 'Obsidian farm stalled', message: err.message, metadata: { errorCode: err.code || null, phase: farm.phase, seconds: stalledSeconds, correlationId: farmFailureCorrelationId, debugLogId } });
     }
   }
 

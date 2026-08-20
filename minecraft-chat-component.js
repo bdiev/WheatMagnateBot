@@ -5,6 +5,10 @@ const { normalizeGreenChatMessage } = require('./site/chat-message-normalization
 const MAX_COMPONENT_DEPTH = 32;
 const MAX_URL_LENGTH = 2048;
 const MINECRAFT_USERNAME_PATTERN = /^[A-Za-z0-9_]{1,16}$/;
+const PRIVATE_MESSAGE_TRANSLATION_KEYS = new Set([
+  'commands.message.display.incoming',
+  'commands.message.display.outgoing'
+]);
 
 function safeOpenUrl(value) {
   const clean = String(value || '')
@@ -86,6 +90,41 @@ function chatComponentToString(component) {
 function rawComponent(component) {
   if (!component || typeof component !== 'object') return component;
   return component.json && component.json !== component ? component.json : component;
+}
+
+function isPrivateMinecraftChatText(value, { recipientUsernames = [] } = {}) {
+  const text = String(value || '')
+    .replace(/(?:\u00a7|\u00c2\u00a7)[0-9a-fk-or]/gi, '')
+    .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return false;
+
+  const recipients = ['you', 'me', ...recipientUsernames]
+    .map(value => String(value || '').trim())
+    .filter(Boolean)
+    .map(value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const recipientPattern = recipients.length ? `(?:${recipients.join('|')})` : '(?:you|me)';
+  const privatePatterns = [
+    /^(?:\[(?:pm|dm|whisper)\]\s*)?(?:from|to)\s+[A-Za-z0-9_]{1,16}\s*[:>»]/i,
+    /^(?:\[(?:pm|dm|whisper)\]\s*)?[A-Za-z0-9_]{1,16}\s+(?:whispers?|whispered|tells?|messages?|msgs?)\s*(?:(?:to\s+)?(?:you|me)\s*)?[:>»]/i,
+    /^(?:\[(?:pm|dm|whisper)\]\s*)?(?:you|me)\s+(?:whisper|tell|message|msg)\s+(?:to\s+)?[A-Za-z0-9_]{1,16}\s*[:>»]/i,
+    /^(?:whispers?|whispered|private\s+(?:message|msg)|pm|dm)\s*[:>»]/i,
+    new RegExp(`^\\[?[A-Za-z0-9_]{1,16}\\s*(?:->|→)\\s*${recipientPattern}\\]?\\s*:?`, 'i'),
+    new RegExp(`^\\[?${recipientPattern}\\s*(?:->|→)\\s*[A-Za-z0-9_]{1,16}\\]?\\s*:?`, 'i')
+  ];
+  return privatePatterns.some(pattern => pattern.test(text));
+}
+
+function isPrivateMinecraftChatComponent(component, options = {}) {
+  const json = rawComponent(component);
+  let hasPrivateTranslation = false;
+  walkComponents(json, node => {
+    const translationKey = String(node.translate || node.translationKey || '').trim().toLowerCase();
+    if (PRIVATE_MESSAGE_TRANSLATION_KEYS.has(translationKey)) hasPrivateTranslation = true;
+  });
+  if (hasPrivateTranslation) return true;
+  return isPrivateMinecraftChatText(chatComponentToString(component), options);
 }
 
 function isGreenColor(value) {
@@ -316,6 +355,8 @@ module.exports = {
   chatComponentToString,
   createChatComponentEventGuard,
   isGreenColor,
+  isPrivateMinecraftChatComponent,
+  isPrivateMinecraftChatText,
   normalizeGreenChatMessage,
   parseGreenChatComponent,
   safeOpenUrl

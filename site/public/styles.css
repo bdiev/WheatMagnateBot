@@ -5533,9 +5533,15 @@ body.modal-open { overflow:hidden; }
 
 .admin-log-time,
 .admin-log-category,
-.admin-log-actor {
+.admin-log-actor,
+.admin-log-record-id {
   color: var(--muted);
   font-size: 12px;
+}
+
+.admin-log-record-id {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  user-select: text;
 }
 
 .admin-log-category {
@@ -5550,6 +5556,16 @@ body.modal-open { overflow:hidden; }
 .admin-log-entry p {
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+.admin-log-entry .admin-debug-log-id {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.admin-debug-log-id code {
+  color: var(--text);
+  user-select: all;
 }
 
 .admin-log-download {

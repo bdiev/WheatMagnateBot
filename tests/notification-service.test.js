@@ -92,9 +92,14 @@ async function run() {
   });
   await systemLogService.report('low_tps', {
     key: 'managed-bot',
-    metadata: { tps: 10, accountId }
+    metadata: { tps: 10, accountId, debugLogId: '4aa70a35-a073-477a-975b-9d02e9032e0a' }
   });
   assert.equal(systemLogEntries[0]?.accountId, accountId, 'notification system logs must retain the Minecraft account scope');
+  assert.equal(
+    systemLogEntries[0]?.details?.debugLogId,
+    '4aa70a35-a073-477a-975b-9d02e9032e0a',
+    'notification system logs must expose the exact Obsidian debug record ID'
+  );
 
   const postgresQueries = [];
   const postgresRepository = new PostgresNotificationRepository({

@@ -36,7 +36,11 @@ async function main() {
       now:() => now
     });
     const correlationId = '38b58368-3204-42bc-8136-a11e07a71433';
-    farm.__test.writeFarmDebug('cycle_retry', { correlationId });
+    const firstRecord = farm.__test.writeFarmDebug('cycle_retry', { correlationId });
+    const secondRecord = farm.__test.writeFarmDebug('cycle_retry', { correlationId });
+
+    assert.match(firstRecord.logId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    assert.notEqual(firstRecord.logId, secondRecord.logId, 'every debug line must receive its own unique log ID');
 
     const currentLog = farm.getDebugLogFile();
     assert.equal(currentLog, path.join(tempRoot, 'obsidian-farm-debug-2026-08-16.log'));
@@ -48,9 +52,19 @@ async function main() {
     );
     assert.equal(fs.existsSync(retainedDailyLog), true, 'the seven-day retention boundary is preserved');
 
+    assert.equal(
+      await waitFor(() => fs.readFileSync(currentLog, 'utf8').trim().split(/\r?\n/).length >= 2),
+      true,
+      'both debug records are appended'
+    );
     const records = fs.readFileSync(currentLog, 'utf8').trim().split(/\r?\n/).map(JSON.parse);
-    assert.equal(records[0].time, now.toISOString());
-    assert.equal(records[0].correlationId, correlationId, 'correlation ID is searchable in JSONL');
+    assert.ok(records.every(record => record.time === now.toISOString()));
+    assert.ok(records.every(record => record.correlationId === correlationId), 'correlation ID is searchable in JSONL');
+    assert.deepEqual(
+      new Set(records.map(record => record.logId)),
+      new Set([firstRecord.logId, secondRecord.logId]),
+      'returned log IDs must match the persisted JSONL records'
+    );
     assert.equal(farm.__test.constants.FARM_DEBUG_RETENTION_DAYS, 7);
 
     console.log('Obsidian debug log rotation tests passed.');

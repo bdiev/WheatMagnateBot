@@ -123,6 +123,11 @@ assert.match(
   'observed join-date reconciliation must explicitly type PostgreSQL parameters'
 );
 assert.match(
+  botSource,
+  /async function reconcileObservedLastSeen[\s\S]*INSERT INTO player_activity \(username,player_uuid,last_seen,is_online\)[\s\S]*WHERE player_activity\.last_seen IS NULL/,
+  'observed !seen responses may create a profile or fill an empty Last Seen value, but must never overwrite one'
+);
+assert.match(
   serverSource,
   /function displayGameChatMessage[\s\S]*normalizeGreenChatMessage\(value\)[\s\S]*message: displayGameChatMessage\(row\.message\)/,
   'site chat responses must use the shared safe GreenChat prefix normalizer'
@@ -194,6 +199,11 @@ assert.match(appSource, /function chartAxisLabelFitsViewport[\s\S]*stickyAxisCle
   'chart labels hidden behind the sticky axis or viewport edge must not be drawn');
 assert.match(appSource, /player-profile-message[\s\S]*chat-message-head[\s\S]*chat-message-name/,
   'player profile history must use the same message header as game chat');
+assert.match(
+  appSource,
+  /function formatPlayerProfileChatTimestamp\(value\)[\s\S]*year: 'numeric'[\s\S]*timeZone: state\.accountTimezone[\s\S]*formatPlayerProfileChatTimestamp\(message\.createdAt\)/,
+  'Recent Chat must show each message date and time in the selected account timezone'
+);
 assert.match(stylesSource, /Profile history mirrors chat rows[\s\S]*player-profile-message:hover,[\s\S]*player-profile-message:focus-visible/,
   'player profile messages must share the chat hover treatment');
 assert.match(appSource, /updateChatDateIndicator\(\{ show: true \}\)/,
@@ -203,8 +213,8 @@ assert.match(stylesSource, /\.chat-date-indicator\.visible\s*\{[^}]*opacity:\s*1
 assert.match(stylesSource, /\.chat-panel\.chat-search-open > \.panel-head > div:first-child\s*\{[^}]*opacity:\s*0;/s,
   'the chat heading must fade away while archive search expands');
 assert.match(indexSource, /styles\.css\?v=225/, 'the updated mobile layout must use a fresh stylesheet URL');
-assert.match(indexSource, /app\.js\?v=224/, 'the updated dashboard behavior must use a fresh script URL');
-assert.match(serviceWorkerSource, /CACHE_VERSION = '222'/, 'the app shell cache must be replaced after dashboard behavior changes');
+assert.match(indexSource, /app\.js\?v=227/, 'the updated dashboard behavior must use a fresh script URL');
+assert.match(serviceWorkerSource, /CACHE_VERSION = '225'/, 'the app shell cache must be replaced after dashboard behavior changes');
 assert.match(serviceWorkerSource, /fallbackPath[\s\S]*?'\/request\.html'/, 'resource requests must have their own navigation fallback');
 assert.match(stylesSource, /\.chat-message\s*\{[^}]*flex:\s*0 0 auto;/s,
   'chat cards must retain their natural height inside the scrolling flex list');
@@ -265,6 +275,20 @@ assert.match(
 assert.doesNotMatch(botSource, /\[MC CHAT DEBUG\]/, 'temporary Minecraft chat diagnostics must be removed');
 assert.doesNotMatch(botSource, /\[MC->DISCORD TRACE\]/, 'temporary Discord bridge traces must be removed');
 assert.doesNotMatch(botSource, /\[MC->DISCORD SEND\]/, 'temporary final Discord send traces must be removed');
-assert.match(botSource, /isPrivateMinecraftChatLine\(text\)[\s\S]*evidence: \['private_message'\]/, 'whispers must be rejected before component GreenChat classification');
+assert.match(
+  botSource,
+  /isPrivateMinecraftChatComponent\(message,[\s\S]*handledPrivateChatComponents\.mark\(message\);[\s\S]*return;/,
+  'structured whispers must be rejected before component GreenChat classification'
+);
+assert.match(
+  botSource,
+  /handledPrivateChatComponents\.has\(originalMessage\)[\s\S]*isPrivateMinecraftChatLine\(message\)[\s\S]*forwardRawPublicChatText/,
+  'messagestr whisper echoes must be rejected before the public text parser'
+);
+assert.match(
+  botSource,
+  /isPrivateMinecraftChatLine\(`\$\{safeUsername\} > \$\{cleanMessage\}`\)[\s\S]*Suppressed private-message-shaped public envelope/,
+  'malformed whisper envelopes must be rejected at the final public forwarding boundary'
+);
 
 console.log('Chat archive tests passed.');

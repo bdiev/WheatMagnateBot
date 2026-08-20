@@ -38,6 +38,16 @@ assert.match(appSource, /state\.charts\.obsidianHourly = payload\.hourly[\s\S]*?
   'scope payloads replace both Obsidian chart series');
 assert.match(serverSource, /attachObsidianAccountSegments[\s\S]*?account\.color[\s\S]*?obsidian_account_farm_daily[\s\S]*?obsidian_account_farm_hourly/,
   'All Bots chart points retain ordered account segments and Account colors');
+assert.match(serverSource, /chartAccountResult[\s\S]*?SELECT account\.id,account\.username,account\.display_name,account\.color,account\.deleted_at[\s\S]*?EXISTS\(SELECT 1 FROM obsidian_account_farm_daily/,
+  'All Bots chart metadata includes soft-deleted accounts that still own farm history');
+assert.match(serverSource, /managedWhere = `a\.is_default=FALSE AND \(\$1::boolean OR \(a\.deleted_at IS NULL AND stats\.account_id=\$2::uuid\)\)`/,
+  'aggregate totals include archived accounts while personal views remain active-only');
+assert.doesNotMatch(serverSource, /WHERE stats\.farm_date>=\(NOW\(\) AT TIME ZONE \$2\)::date-89[\s\S]{0,120}a\.deleted_at IS NULL/,
+  'archived account daily buckets remain in All Bots charts');
+assert.doesNotMatch(serverSource, /WHERE stats\.bucket>=date_trunc\('hour',NOW\(\)-INTERVAL '167 hours'\)[\s\S]{0,120}a\.deleted_at IS NULL/,
+  'archived account hourly buckets remain in All Bots charts');
+assert.match(appSource, /account\.archived \? ' <small>\(deleted\)<\/small>' : ''/,
+  'the chart legend identifies historical series from deleted accounts');
 assert.match(serverSource, /accountRateResult[\s\S]*?obsidian_farm_state[\s\S]*?obsidian_account_farm_state[\s\S]*?activeFarmRows = activeAccountRows\(accountRateResult\.rows\)[\s\S]*?farm\.sessionPerHour = activeFarmRows[\s\S]*?compactFarmState\(row\)\.sessionPerHour/,
   'All Bots Rate is the sum of rates calculated from every active bot\'s own session');
 assert.match(serverSource, /SELECT \$4::uuid AS account_id,snapshot\.supplies[\s\S]*?SELECT stats\.account_id,stats\.supplies[\s\S]*?supplyAccounts = aggregate/,
@@ -48,8 +58,8 @@ assert.match(serverSource, /activeAccountResult[\s\S]*?JOIN bot_account_runtime_
   'All Bots efficiency uses hourly production from only currently active Obsidian accounts');
 assert.match(serverSource, /accountProduction = aggregate[\s\S]*?new Set\(\[activeId\]\)[\s\S]*?calculateHourlyProduction\(accountHourly, analyticsNow\)[\s\S]*?productionRate: accountProduction\.reduce[\s\S]*?productionSampleHours:[\s\S]*?Math\.min/,
   'All Bots sums independently normalized active-account rates and uses the shortest observation window for confidence');
-assert.match(serverSource, /aggregateSupplyHistory\(activeAccountRows\(supplyHistoryResult\.rows\)\)[\s\S]*?analyticsAnnotations = activeAccountRows\(annotations\)[\s\S]*?analyticsToolUsage = activeAccountRows\(toolUsageResult\.rows\)/,
-  'All Bots forecast and downtime use supply, tool, and event history from the same active accounts');
+assert.match(serverSource, /aggregateSupplyHistory\(activeAccountRows\(supplyHistoryResult\.rows\)\)[\s\S]*?analyticsAnnotations = activeAccountRows\(annotations\)[\s\S]*?analyticsToolUsage = aggregate \? toolUsageResult\.rows : activeAccountRows\(toolUsageResult\.rows\)/,
+  'All Bots live forecasts use active supply/event history while historical tool efficiency survives account deletion');
 assert.match(serverSource, /farm\.sessionPerHour = activeFarmRows[\s\S]*?accountCount = aggregate[\s\S]*?activeAccountIds\.size/,
   'All Bots current rate and downtime denominator exclude inactive accounts');
 assert.match(appSource, /payload\.scope === 'all'[\s\S]*?payload\.supplyAccounts\.map[\s\S]*?estimate\.days < current\.days/,

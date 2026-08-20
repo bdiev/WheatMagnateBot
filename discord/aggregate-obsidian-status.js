@@ -19,10 +19,18 @@ function summarizeAggregateObsidianRows(rows = [], now = Date.now()) {
   };
 
   for (const row of rows) {
+    const archived = row.account_archived === true || row.accountArchived === true;
     const mining = row.is_mining === true || row.isMining === true;
     const recovering = !mining && Boolean(row.account_enabled ?? row.accountEnabled) && Boolean(row.desired_enabled ?? row.desiredEnabled);
     summary.sessionMined += number(row.session_mined ?? row.sessionMined);
     summary.totalMined += number(row.total_mined ?? row.totalMined);
+
+    // Archived accounts retain their mined totals but are no longer farms that
+    // can be mining, recovering, or stopped in the live status summary.
+    if (archived) {
+      summary.accountCount -= 1;
+      continue;
+    }
 
     if (mining) summary.miningCount += 1;
     else if (recovering) summary.recoveringCount += 1;

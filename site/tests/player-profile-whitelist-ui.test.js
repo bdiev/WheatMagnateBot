@@ -24,12 +24,12 @@ assert.match(
 );
 assert.match(
   appSource,
-  /data-player-refresh-command="!pt"[\s\S]*data-player-refresh-command="!jd"/,
-  'the playtime and registration metrics must expose refresh actions'
+  /data-player-refresh-command="!pt"[\s\S]*data-player-refresh-command="!jd"[\s\S]*data-player-refresh-command="!seen"/,
+  'playtime, registration, and empty Last Seen metrics must expose refresh actions'
 );
 assert.match(
   appSource,
-  /closest\('\[data-player-refresh-command\]'\)[\s\S]*postJson\('\/api\/chat\/send',[\s\S]*message: `\$\{command\} \$\{username\}`[\s\S]*playerInfoRefresh:[\s\S]*metric: command === '!pt' \? 'playtime' : 'joinDate'/,
+  /closest\('\[data-player-refresh-command\]'\)[\s\S]*'!seen': \{ metric: 'lastSeen'[\s\S]*postJson\('\/api\/chat\/send',[\s\S]*message: `\$\{command\} \$\{username\}`[\s\S]*playerInfoRefresh:[\s\S]*metric: refresh\.metric/,
   'player metric refresh actions must explicitly authorize one observed update before sending the game command'
 );
 assert.match(

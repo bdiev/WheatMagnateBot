@@ -5,6 +5,7 @@ const { createPlaytimeFeature } = require('../features/playtime');
 const {
   createPlayerInfoObservation,
   parseJoinDateResponse,
+  parseLastSeenResponse,
   parsePlaytimeResponse
 } = require('../features/playerInfoObservation');
 
@@ -65,6 +66,10 @@ function createTracker({ preferredOnline = true } = {}) {
     onJoinDate: (targetUsername, value, source, context) => {
       updates.push({ type: 'jd', targetUsername, value, source });
       reasons.push(context?.reason);
+    },
+    onLastSeen: (targetUsername, value, source, context) => {
+      updates.push({ type: 'seen', targetUsername, value, source });
+      reasons.push(context?.reason);
     }
   });
   return { clock, tracker, updates, reasons };
@@ -87,6 +92,21 @@ function testActualResponseFormats() {
     parseJoinDateResponse('bdiev_: 11/16/2024 10:30:37 (1 year, 268 days ago)'),
     { targetUsername: 'bdiev_', observedValue: new Date('2024-11-16T10:30:37.000Z') }
   );
+  assert.deepEqual(
+    parseLastSeenResponse(
+      'I saw bdiev_ 2 hours, 14 minutes, 12 seconds ago',
+      new Date('2026-08-20T12:00:00.000Z')
+    ),
+    { targetUsername: 'bdiev_', observedValue: new Date('2026-08-20T09:45:48.000Z') }
+  );
+  assert.deepEqual(
+    parseLastSeenResponse(
+      'bdiev_: 1 day, 2 hours ago.',
+      new Date('2026-08-20T12:00:00.000Z')
+    ),
+    { targetUsername: 'bdiev_', observedValue: new Date('2026-08-19T10:00:00.000Z') }
+  );
+  assert.equal(parseLastSeenResponse('I have never seen bdiev_.'), null);
 }
 
 function testPreferredPlaytimeWins() {
@@ -140,6 +160,27 @@ function testSiteRefreshSurvivesEchoedCommand() {
   assert.deepEqual(reasons, ['site'], 'an echoed command must not downgrade a site-authorized refresh');
 }
 
+function testLastSeenResponseIsIntercepted() {
+  const { tracker, updates } = createTracker({ preferredOnline: true });
+  tracker.observe('Requester', '!seen bdiev_');
+  tracker.observe('LolRiTTeRBot', 'I saw bdiev_ 2 hours, 14 minutes, 12 seconds ago');
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].type, 'seen');
+  assert.equal(updates[0].targetUsername, 'bdiev_');
+  assert.equal(updates[0].source, 'lolritterbot');
+  assert.equal(updates[0].value.getTime(), -(2 * 3_600 + 14 * 60 + 12) * 1_000);
+}
+
+function testLastSeenSiteRequestSurvivesEchoedCommand() {
+  const { tracker, updates, reasons } = createTracker({ preferredOnline: true });
+  assert.equal(tracker.requestSiteRefresh('lastSeen', 'bdiev_'), true);
+  tracker.observe('WheatMagnate', '!seen bdiev_');
+  tracker.observe('LolRiTTeRBot', 'I saw bdiev_ 12 seconds ago');
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].type, 'seen');
+  assert.deepEqual(reasons, ['site']);
+}
+
 function testInvalidSiteRefreshIsRejected() {
   const { tracker, updates } = createTracker();
   assert.equal(tracker.requestSiteRefresh('unknown', 'bdiev_'), false);
@@ -161,6 +202,8 @@ testFallbackWhenPreferredDoesNotAnswer();
 testFallbackWhenPreferredIsOffline();
 testFallbackJoinDateAppliesOnlyOnce();
 testSiteRefreshSurvivesEchoedCommand();
+testLastSeenResponseIsIntercepted();
+testLastSeenSiteRequestSurvivesEchoedCommand();
 testInvalidSiteRefreshIsRejected();
 testUntrustedSpeakersAndUnrequestedResponsesAreIgnored();
 console.log('Player info observation tests passed.');

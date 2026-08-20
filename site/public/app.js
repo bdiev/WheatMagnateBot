@@ -582,6 +582,20 @@ function formatChatTime(value) {
   }).format(date);
 }
 
+function formatPlayerProfileChatTimestamp(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return new Intl.DateTimeFormat('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: state.accountTimezone
+  }).format(date);
+}
+
 function formatAgo(value) {
   if (!value) return '-';
   const date = new Date(value);
@@ -2737,6 +2751,7 @@ function renderPlayerProfileSkeleton() {
 function renderPlayerProfile(profile) {
   const recentMessages = profile.chat?.recentMessages || [];
   const gameSessions = Array.isArray(profile.gameSessions) ? profile.gameSessions : [];
+  const gameSessionCount = Math.max(Number(profile.gameSessionCount) || 0, gameSessions.length);
   const nearby = profile.nearby;
   const profileUsername = String(profile.username || '');
   const nameHistory = Array.isArray(profile.nameHistory) ? profile.nameHistory : [];
@@ -2787,7 +2802,7 @@ function renderPlayerProfile(profile) {
       <header class="player-profile-section-head">
         <div>
           <h3>Game sessions</h3>
-          <small>${gameSessions.length ? `${formatNumber(gameSessions.length)} most recent recorded` : 'Join and leave history'}</small>
+          <small>${formatNumber(gameSessionCount)} total ${gameSessionCount === 1 ? 'session' : 'sessions'}</small>
         </div>
         ${gameSessions.length > 3 ? '<span>Scroll for older</span>' : ''}
       </header>
@@ -2858,7 +2873,16 @@ function renderPlayerProfile(profile) {
           ${escapeHtml(registrationProfileValue(profile))}
         </button>
       </div>
-      <div><span>Last Seen</span><strong>${profile.lastSeen ? formatRecentDate(profile.lastSeen) : 'Never'}</strong></div>
+      <div>
+        <header class="player-profile-metric-head">
+          <span>Last Seen</span>
+          ${profile.lastSeen ? '' : `
+            <button class="player-profile-refresh-button" type="button" data-player-refresh-command="!seen" aria-label="Request last seen for ${escapeHtml(profileUsername)}" title="Request last seen">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0 1 11.5-2.6L20 9M4 15l2.4 2.6A7 7 0 0 0 17.9 15"/></svg>
+            </button>`}
+        </header>
+        <strong>${profile.lastSeen ? formatRecentDate(profile.lastSeen) : 'Never'}</strong>
+      </div>
       <div><span>Chat Messages</span><strong>${formatNumber(profile.chat?.totalMessages)}</strong></div>
       <div><span>Messages 24h</span><strong>${formatNumber(profile.chat?.last24h)}</strong></div>
       <div><span>Last Message</span><strong>${profile.chat?.lastMessageAt ? formatRecentDate(profile.chat.lastMessageAt) : 'None'}</strong></div>
@@ -2876,7 +2900,7 @@ function renderPlayerProfile(profile) {
               <div class="chat-message-head">
                 <span class="chat-message-name">${escapeHtml(profileUsername)}</span>
                 ${profile.isBot ? '<span class="chat-bot-badge">BOT</span>' : ''}
-                <time class="chat-time">${formatChatTime(message.createdAt)}</time>
+                <time class="chat-time" datetime="${escapeHtml(message.createdAt || '')}">${escapeHtml(formatPlayerProfileChatTimestamp(message.createdAt))}</time>
               </div>
               <div class="chat-text">${linkifyChatMessage(message.message)}</div>
             </div>
@@ -2905,6 +2929,7 @@ function playerProfileSignature(profile) {
     state.playerProfileRegistrationAgeMode,
     profile.lastSeen,
     profile.lastOnline,
+    profile.gameSessionCount,
     ...(profile.gameSessions || []).map(session => session.isCurrent
       ? [session.startedAt, null, true]
       : [session.startedAt, session.endedAt, session.durationSeconds, false]),
@@ -3045,7 +3070,13 @@ async function handlePlayerProfileClick(event) {
     event.preventDefault();
     const command = refreshButton.dataset.playerRefreshCommand;
     const username = String(state.playerProfileLastPayload?.username || '');
-    if (!['!pt', '!jd'].includes(command) || !/^[A-Za-z0-9_]{1,32}$/.test(username)) return;
+    const refreshByCommand = {
+      '!pt': { metric: 'playtime', label: 'Playtime' },
+      '!jd': { metric: 'joinDate', label: 'Registration date' },
+      '!seen': { metric: 'lastSeen', label: 'Last seen' }
+    };
+    const refresh = refreshByCommand[command];
+    if (!refresh || !/^[A-Za-z0-9_]{1,32}$/.test(username)) return;
 
     const startedAt = Date.now();
     refreshButton.disabled = true;
@@ -3055,13 +3086,12 @@ async function handlePlayerProfileClick(event) {
       await postJson('/api/chat/send', {
         message: `${command} ${username}`,
         playerInfoRefresh: {
-          metric: command === '!pt' ? 'playtime' : 'joinDate',
+          metric: refresh.metric,
           username
         },
         accountId: state.activeAccountId
       });
-      const label = command === '!pt' ? 'Playtime' : 'Registration date';
-      setBanner(`${label} refresh requested for ${username}.`);
+      setBanner(`${refresh.label} refresh requested for ${username}.`);
     } catch (err) {
       setBanner(`Could not request player data: ${err.message}`);
     } finally {
@@ -4953,7 +4983,7 @@ function renderObsidian(payload) {
   const chartAccounts = Array.isArray(payload.chartAccounts) ? payload.chartAccounts : [];
   const chartLegend = $('#obsidianChartLegend');
   if (chartLegend) {
-    chartLegend.innerHTML = chartAccounts.map(account => `<span><i style="--series-color:${escapeHtml(account.color)}" aria-hidden="true"></i>${escapeHtml(account.name)}</span>`).join('');
+    chartLegend.innerHTML = chartAccounts.map(account => `<span><i style="--series-color:${escapeHtml(account.color)}" aria-hidden="true"></i>${escapeHtml(account.name)}${account.archived ? ' <small>(deleted)</small>' : ''}</span>`).join('');
     chartLegend.hidden = renderedScope !== 'all' || !chartAccounts.length;
   }
   const farm = payload.farm || {};
@@ -6064,6 +6094,10 @@ function renderAdminSystemLogs(logs = []) {
     const kind = escapeHtml(entry.kind || 'system');
     const details = renderLogDetails(entry.details);
     const debugLogDownload = renderObsidianDebugLogDownload(entry);
+    const debugLogId = String(entry?.details?.debugLogId || '').trim();
+    const debugLogReference = debugLogId
+      ? `<p class="admin-debug-log-id">Debug Log ID: <code>${escapeHtml(debugLogId)}</code></p>`
+      : '';
     const detailsOpen = logId && state.adminOpenLogDetails.has(logId) ? ' open' : '';
     const detailsId = logId ? ` data-log-id="${escapeHtml(logId)}"` : '';
     return `
@@ -6074,8 +6108,10 @@ function renderAdminSystemLogs(logs = []) {
             <span class="pill ${level}">${level}</span>
             <span class="admin-log-category">${category}</span>
             ${actor}
+            <span class="admin-log-record-id">ID ${escapeHtml(logId)}</span>
           </div>
           <p>${escapeHtml(entry.message || '')}</p>
+          ${debugLogReference}
           ${details ? `<details class="admin-log-details"${detailsId}${detailsOpen}><summary>Details</summary>${details}</details>` : ''}
         </div>
         ${debugLogDownload}

@@ -79,10 +79,57 @@ function parseJoinDateResponse(message) {
   return { targetUsername: numeric[1], observedValue: observedDate };
 }
 
+function parseRelativeDurationMs(value) {
+  const input = String(value || '').trim();
+  if (!input) return null;
+  const unitMilliseconds = {
+    day: 86_400_000,
+    days: 86_400_000,
+    hour: 3_600_000,
+    hours: 3_600_000,
+    minute: 60_000,
+    minutes: 60_000,
+    second: 1_000,
+    seconds: 1_000
+  };
+  const tokenPattern = /(\d+)\s+(days?|hours?|minutes?|seconds?)/gi;
+  const seenUnits = new Set();
+  let totalMilliseconds = 0;
+  let tokenCount = 0;
+  for (const match of input.matchAll(tokenPattern)) {
+    const unit = match[2].toLowerCase().replace(/s$/, '');
+    if (seenUnits.has(unit)) return null;
+    seenUnits.add(unit);
+    totalMilliseconds += Number(match[1]) * unitMilliseconds[match[2].toLowerCase()];
+    tokenCount += 1;
+  }
+  const remainder = input
+    .replace(tokenPattern, '')
+    .replace(/\band\b/gi, '')
+    .replace(/[\s,]+/g, '');
+  return tokenCount > 0 && !remainder && Number.isSafeInteger(totalMilliseconds)
+    ? totalMilliseconds
+    : null;
+}
+
+function parseLastSeenResponse(message, now = new Date()) {
+  const cleanMessage = String(message || '').trim();
+  const match = cleanMessage.match(
+    /^(?:I saw\s+([A-Za-z0-9_]{1,32})\s+|([A-Za-z0-9_]{1,32}):\s+)([\s\S]+?)\s+ago\.?$/i
+  );
+  if (!match) return null;
+  const elapsedMilliseconds = parseRelativeDurationMs(match[3]);
+  const observedAt = new Date(now);
+  if (elapsedMilliseconds == null || !Number.isFinite(observedAt.getTime())) return null;
+  observedAt.setTime(observedAt.getTime() - elapsedMilliseconds);
+  return { targetUsername: match[1] || match[2], observedValue: observedAt };
+}
+
 function createPlayerInfoObservation({
   parsePlaytime,
   onPlaytime,
   onJoinDate,
+  onLastSeen,
   isSourceOnline = () => false,
   now = () => Date.now(),
   setTimer = setTimeout,
@@ -94,7 +141,8 @@ function createPlayerInfoObservation({
 
   const lookups = {
     playtime: new Map(),
-    joinDate: new Map()
+    joinDate: new Map(),
+    lastSeen: new Map()
   };
 
   function cancelTimer(timer) {
@@ -132,7 +180,9 @@ function createPlayerInfoObservation({
 
   function applyCandidate(type, targetKey, pending, candidate) {
     if (candidate.source === FALLBACK_SOURCE && pending.appliedSource) return;
-    const handler = type === 'playtime' ? onPlaytime : onJoinDate;
+    const handler = type === 'playtime'
+      ? onPlaytime
+      : type === 'joinDate' ? onJoinDate : onLastSeen;
     handler?.(pending.targetUsername, candidate.observedValue, candidate.source, { reason: pending.reason });
     pending.appliedSource = candidate.source;
     deleteLookup(type, targetKey, pending);
@@ -187,6 +237,12 @@ function createPlayerInfoObservation({
       return true;
     }
 
+    const lastSeenCommand = cleanMessage.match(/^!seen(?:\s+([A-Za-z0-9_]{1,32}))?$/i);
+    if (lastSeenCommand) {
+      registerLookup('lastSeen', lastSeenCommand[1] || speaker);
+      return true;
+    }
+
     const source = speaker.toLowerCase();
     if (source !== PREFERRED_SOURCE && source !== FALLBACK_SOURCE) return false;
 
@@ -199,12 +255,19 @@ function createPlayerInfoObservation({
     if (joinDateResponse) {
       return acceptCandidate('joinDate', { ...joinDateResponse, source });
     }
+
+    const lastSeenResponse = parseLastSeenResponse(cleanMessage, new Date(now()));
+    if (lastSeenResponse) {
+      return acceptCandidate('lastSeen', { ...lastSeenResponse, source });
+    }
     return false;
   }
 
   function requestSiteRefresh(metric, targetUsername) {
     const username = normalizeUsername(targetUsername);
-    const type = metric === 'playtime' ? 'playtime' : metric === 'joinDate' ? 'joinDate' : '';
+    const type = metric === 'playtime'
+      ? 'playtime'
+      : metric === 'joinDate' ? 'joinDate' : metric === 'lastSeen' ? 'lastSeen' : '';
     if (!username || !type) return false;
     registerLookup(type, username, 'site');
     return true;
@@ -226,6 +289,8 @@ module.exports = {
   PREFERRED_SOURCE,
   createPlayerInfoObservation,
   parseJoinDateResponse,
+  parseLastSeenResponse,
   parseNumericJoinDate,
+  parseRelativeDurationMs,
   parsePlaytimeResponse
 };

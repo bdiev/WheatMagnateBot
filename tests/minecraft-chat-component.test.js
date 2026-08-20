@@ -6,6 +6,8 @@ const {
   chatComponentToString,
   createChatComponentEventGuard,
   isGreenColor,
+  isPrivateMinecraftChatComponent,
+  isPrivateMinecraftChatText,
   normalizeGreenChatMessage,
   parseGreenChatComponent,
   safeOpenUrl
@@ -47,6 +49,28 @@ function run() {
   );
   assert.equal(safeOpenUrl('https://example.com/a'), 'https://example.com/a');
   assert.equal(safeOpenUrl('javascript:alert(1)'), null);
+
+  assert.equal(isPrivateMinecraftChatComponent({
+    translate: 'commands.message.display.incoming',
+    with: [{ text: 'Alice' }, { text: 'no problem :)' }]
+  }), true, 'vanilla incoming whisper translations must never enter public chat');
+  assert.equal(isPrivateMinecraftChatComponent({
+    json: {
+      translate: 'commands.message.display.outgoing',
+      with: [{ text: 'Alice' }, { text: 'nope' }]
+    },
+    toString() { return 'whispers > nope'; }
+  }), true, 'wrapped outgoing whisper translations must remain private');
+  assert.equal(isPrivateMinecraftChatText('Alice whispers to you: no problem :)'), true);
+  assert.equal(isPrivateMinecraftChatText('Alice whispers > nope'), true,
+    'plugin whisper envelopes without "to you" must remain private');
+  assert.equal(isPrivateMinecraftChatText('whispers > nope'), true,
+    'a malformed envelope that would attribute the message to "whispers" must remain private');
+  assert.equal(isPrivateMinecraftChatText('[Alice -> WheatMagnate] secret', {
+    recipientUsernames: ['WheatMagnate']
+  }), true);
+  assert.equal(isPrivateMinecraftChatText('<Alice> whispers are working'), false,
+    'ordinary public messages containing the word whispers must still be allowed');
 
   const actualServerGreenJson = {
     extra: [

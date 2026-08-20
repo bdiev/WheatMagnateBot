@@ -1458,7 +1458,7 @@ function normalizePlayerInfoRefreshRequest(value, message) {
   const username = cleanMinecraftUsername(value?.username);
   const expectedCommand = metric === 'playtime'
     ? `!pt ${username}`
-    : metric === 'joinDate' ? `!jd ${username}` : '';
+    : metric === 'joinDate' ? `!jd ${username}` : metric === 'lastSeen' ? `!seen ${username}` : '';
   if (!username || !expectedCommand || String(message || '').toLowerCase() !== expectedCommand.toLowerCase()) {
     const err = new Error('Invalid player information refresh request.');
     err.statusCode = 400;
@@ -2144,15 +2144,25 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
   assertDatabase();
   const aggregate = scope === 'all';
   const includePrimary = aggregate || accountId === DEFAULT_MINECRAFT_ACCOUNT_ID;
-  const chartAccounts = aggregate
-    ? (await getAccountRegistry()).list().map((account, index) => ({
+  const chartAccountResult = aggregate
+    ? await pool.query(`
+      SELECT account.id,account.username,account.display_name,account.color,account.deleted_at
+      FROM bot_accounts account
+      WHERE account.is_default=TRUE
+         OR EXISTS(SELECT 1 FROM obsidian_account_farm_state stats WHERE stats.account_id=account.id)
+         OR EXISTS(SELECT 1 FROM obsidian_account_farm_daily stats WHERE stats.account_id=account.id)
+         OR EXISTS(SELECT 1 FROM obsidian_account_farm_hourly stats WHERE stats.account_id=account.id)
+      ORDER BY account.is_default DESC,account.sort_order,account.created_at,account.id
+    `)
+    : { rows: [] };
+  const chartAccounts = chartAccountResult.rows.map((account, index) => ({
       id: account.id,
-      name: account.displayName || account.username,
+      name: account.display_name || account.username,
       color: /^#[0-9a-f]{6}$/i.test(String(account.color || ''))
         ? account.color
-        : ['#7cc242', '#4b91e5', '#e5b94b', '#d26cf0'][index % 4]
-    }))
-    : [];
+        : ['#7cc242', '#4b91e5', '#e5b94b', '#d26cf0'][index % 4],
+      archived: Boolean(account.deleted_at)
+    }));
   if (includePrimary) {
     await pool.query(`UPDATE obsidian_farm_goals
       SET baseline_mined=COALESCE((SELECT total_mined FROM obsidian_farm_state WHERE id=1),0),updated_at=NOW()
@@ -2165,7 +2175,9 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
     daily_report_hour: process.env.OBSIDIAN_DAILY_REPORT_HOUR == null ? 9 : Number(process.env.OBSIDIAN_DAILY_REPORT_HOUR)
   };
   const timezone = currentUser ? await getAccountTimezone(currentUser.id) : (settings.timezone || 'Europe/Vilnius');
-  const managedWhere = `a.is_default=FALSE AND a.deleted_at IS NULL AND ($1::boolean OR stats.account_id=$2::uuid)`;
+  // Aggregate history is immutable account data and survives a soft-deleted
+  // bot profile. Personal/live views still require an active account.
+  const managedWhere = `a.is_default=FALSE AND ($1::boolean OR (a.deleted_at IS NULL AND stats.account_id=$2::uuid))`;
   const [primaryFarmResult, managedFarmResult, dailyResult, hourlyResult, supplyResult, supplyHistoryResult, annotationsResult, goalsResult, tpsResult, comparisonResult, toolUsageResult, dailyAccountResult, hourlyAccountResult, accountRateResult, activeAccountResult] = await Promise.all([
     includePrimary ? pool.query(`
       SELECT session_mined,total_mined,desired_enabled,session_started_at,
@@ -2194,7 +2206,7 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
         SELECT managed.farm_date,managed.mined
         FROM obsidian_account_farm_daily managed
         JOIN bot_accounts a ON a.id=managed.account_id
-        WHERE a.is_default=FALSE AND a.deleted_at IS NULL AND ($3::boolean OR managed.account_id=$4::uuid)
+        WHERE a.is_default=FALSE AND ($3::boolean OR (a.deleted_at IS NULL AND managed.account_id=$4::uuid))
       ), totals AS (
         SELECT farm_date,SUM(mined)::bigint AS mined FROM stats GROUP BY farm_date
       )
@@ -2211,7 +2223,7 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
         SELECT managed.bucket,managed.mined
         FROM obsidian_account_farm_hourly managed
         JOIN bot_accounts a ON a.id=managed.account_id
-        WHERE a.is_default=FALSE AND a.deleted_at IS NULL AND ($2::boolean OR managed.account_id=$3::uuid)
+        WHERE a.is_default=FALSE AND ($2::boolean OR (a.deleted_at IS NULL AND managed.account_id=$3::uuid))
       ), totals AS (
         SELECT bucket,SUM(mined)::bigint AS mined FROM stats GROUP BY bucket
       )
@@ -2271,8 +2283,8 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
       SELECT CONCAT('managed:',stats.id) AS id,stats.account_id,stats.event_type,stats.title,stats.details,stats.occurred_at
       FROM obsidian_account_farm_annotations stats
       JOIN bot_accounts a ON a.id=stats.account_id
-      WHERE stats.occurred_at>=NOW()-INTERVAL '90 days' AND a.is_default=FALSE AND a.deleted_at IS NULL
-        AND ($2::boolean OR stats.account_id=$3::uuid)
+      WHERE stats.occurred_at>=NOW()-INTERVAL '90 days' AND a.is_default=FALSE
+        AND ($2::boolean OR (a.deleted_at IS NULL AND stats.account_id=$3::uuid))
       ORDER BY occurred_at
     `, [includePrimary, aggregate, accountId, DEFAULT_MINECRAFT_ACCOUNT_ID]),
     includePrimary ? pool.query(`SELECT id,name,target_total,baseline_mined,active,created_at,reached_at FROM obsidian_farm_goals ORDER BY active DESC,created_at DESC`) : Promise.resolve({ rows: [] }),
@@ -2283,13 +2295,13 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
         UNION ALL
         SELECT stats.farm_date,stats.mined FROM obsidian_account_farm_daily stats
         JOIN bot_accounts a ON a.id=stats.account_id
-        WHERE a.is_default=FALSE AND a.deleted_at IS NULL AND ($3::boolean OR stats.account_id=$4::uuid)
+        WHERE a.is_default=FALSE AND ($3::boolean OR (a.deleted_at IS NULL AND stats.account_id=$4::uuid))
       ), hourly AS (
         SELECT bucket,mined FROM obsidian_farm_hourly WHERE $2::boolean
         UNION ALL
         SELECT stats.bucket,stats.mined FROM obsidian_account_farm_hourly stats
         JOIN bot_accounts a ON a.id=stats.account_id
-        WHERE a.is_default=FALSE AND a.deleted_at IS NULL AND ($3::boolean OR stats.account_id=$4::uuid)
+        WHERE a.is_default=FALSE AND ($3::boolean OR (a.deleted_at IS NULL AND stats.account_id=$4::uuid))
       )
       SELECT COALESCE(SUM(mined) FILTER(WHERE farm_date=(NOW() AT TIME ZONE $1)::date),0)::bigint AS today,
         COALESCE(SUM(mined) FILTER(WHERE farm_date=(NOW() AT TIME ZONE $1)::date-1),0)::bigint AS yesterday,
@@ -2305,8 +2317,8 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
       SELECT stats.account_id,stats.tool_name,stats.blocks_mined,stats.durability_used,stats.remaining_percent,stats.changed_at
       FROM obsidian_account_farm_tool_usage stats
       JOIN bot_accounts a ON a.id=stats.account_id
-      WHERE stats.changed_at>=NOW()-INTERVAL '90 days' AND a.is_default=FALSE AND a.deleted_at IS NULL
-        AND ($2::boolean OR stats.account_id=$3::uuid)
+      WHERE stats.changed_at>=NOW()-INTERVAL '90 days' AND a.is_default=FALSE
+        AND ($2::boolean OR (a.deleted_at IS NULL AND stats.account_id=$3::uuid))
       ORDER BY changed_at
     `, [includePrimary, aggregate, accountId, DEFAULT_MINECRAFT_ACCOUNT_ID]),
     aggregate ? pool.query(`
@@ -2318,7 +2330,7 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
       FROM obsidian_account_farm_daily stats
       JOIN bot_accounts a ON a.id=stats.account_id
       WHERE stats.farm_date>=(NOW() AT TIME ZONE $2)::date-89
-        AND a.is_default=FALSE AND a.deleted_at IS NULL
+        AND a.is_default=FALSE
     `, [DEFAULT_MINECRAFT_ACCOUNT_ID, timezone]) : Promise.resolve({ rows: [] }),
     aggregate ? pool.query(`
       SELECT $1::uuid AS account_id,bucket,mined
@@ -2329,7 +2341,7 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
       FROM obsidian_account_farm_hourly stats
       JOIN bot_accounts a ON a.id=stats.account_id
       WHERE stats.bucket>=date_trunc('hour',NOW()-INTERVAL '167 hours')
-        AND a.is_default=FALSE AND a.deleted_at IS NULL
+        AND a.is_default=FALSE
     `, [DEFAULT_MINECRAFT_ACCOUNT_ID]) : Promise.resolve({ rows: [] }),
     aggregate ? pool.query(`
       SELECT $1::uuid AS account_id,session_mined,total_mined,desired_enabled,session_started_at,
@@ -2341,7 +2353,7 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
              stats.retired_pickaxes,stats.retired_pickaxe_blocks,stats.updated_at
       FROM obsidian_account_farm_state stats
       JOIN bot_accounts a ON a.id=stats.account_id
-      WHERE a.is_default=FALSE AND a.deleted_at IS NULL
+      WHERE a.is_default=FALSE
     `, [DEFAULT_MINECRAFT_ACCOUNT_ID]) : Promise.resolve({ rows: [] }),
     aggregate ? pool.query(`
       SELECT a.id AS account_id
@@ -2380,6 +2392,7 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
     farm.sessionPerHour = activeFarmRows
       .reduce((sum, row) => sum + compactFarmState(row).sessionPerHour, 0);
     farm.sessionPerMinute = Number((farm.sessionPerHour / 60).toFixed(1));
+    farm.desiredEnabled = activeAccountIds.size > 0;
   }
   const hourlyTotals = hourlyResult.rows.map(row => ({
     label: row.label,
@@ -2442,7 +2455,9 @@ async function getObsidianStats(currentUser = null, { scope = 'personal', accoun
     ? { ...compactFarmState(combineFarmStateRows(activeFarmRows)), desiredEnabled: activeAccountIds.size > 0, running: activeAccountIds.size > 0 }
     : farmPayload;
   const analyticsAnnotations = activeAccountRows(annotations);
-  const analyticsToolUsage = activeAccountRows(toolUsageResult.rows);
+  // Tool usage is a historical efficiency baseline, so archived accounts stay
+  // in it. Live downtime and forecasts remain scoped to active runtimes.
+  const analyticsToolUsage = aggregate ? toolUsageResult.rows : activeAccountRows(toolUsageResult.rows);
   const analyticsNow = new Date();
   const accountProduction = aggregate
     ? [...activeAccountIds].map(activeId => {
@@ -3220,7 +3235,8 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
       ORDER BY last_seen DESC, first_seen DESC
     `, [playerUuid]),
     pool.query(`
-      SELECT event_type,occurred_at
+      SELECT event_type,occurred_at,
+             (COUNT(*) FILTER (WHERE event_type='player_joined') OVER ())::bigint AS total_sessions
       FROM (
         SELECT event_type,occurred_at,id
         FROM operational_events
@@ -3243,6 +3259,14 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
   const chat = chatResult.rows[0] || {};
   const nearby = nearbyResult.rows[0] || null;
   const seconds = toInt(profile.total_seconds);
+  const gameSessions = buildPlayerGameSessions(gameSessionEventsResult.rows, {
+    isOnline: Boolean(profile.is_online),
+    currentStartedAt: profile.tracking_since || profile.last_online
+  });
+  const gameSessionCount = Math.max(
+    toInt(gameSessionEventsResult.rows[0]?.total_sessions),
+    gameSessions.length
+  );
 
   return {
     username: profile.username || username,
@@ -3263,10 +3287,8 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
     registrationDisplay: profile.registration_display || null,
     totalSeconds: seconds,
     playtime: formatSeconds(seconds),
-    gameSessions: buildPlayerGameSessions(gameSessionEventsResult.rows, {
-      isOnline: Boolean(profile.is_online),
-      currentStartedAt: profile.tracking_since || profile.last_online
-    }),
+    gameSessionCount,
+    gameSessions,
     chat: {
       totalMessages: toInt(chat.total),
       last24h: toInt(chat.last_24h),

@@ -51,7 +51,9 @@ const { WebPushService } = require('./site/web-push');
 const {
   analyzeMinecraftChatComponent,
   chatComponentToString,
-  createChatComponentEventGuard
+  createChatComponentEventGuard,
+  isPrivateMinecraftChatComponent,
+  isPrivateMinecraftChatText
 } = require('./minecraft-chat-component');
 const { AccountRepository } = require('./site/accounts/account-repository');
 const { AccountRegistry } = require('./site/accounts/account-registry');
@@ -1182,6 +1184,7 @@ class DeferredBotCommandError extends Error {
 }
 let recentlyForwardedGameChat = new Map(); // normalized message key -> { source, timestamp }
 const handledGreenChatComponents = createChatComponentEventGuard(); // exact ChatMessage objects classified by message
+const handledPrivateChatComponents = createChatComponentEventGuard(); // exact private ChatMessage objects rejected by message
 let tpsTabInterval = null;
 let playtimeSyncInterval = null;
 let playerActivitySyncInterval = null;
@@ -3205,6 +3208,53 @@ async function reconcileObservedJoinDate(targetUsername, observedDate) {
   }
 }
 
+async function reconcileObservedLastSeen(targetUsername, observedDate) {
+  if (!pool || !targetUsername || !(observedDate instanceof Date) || !Number.isFinite(observedDate.getTime())) return;
+
+  const safeUsername = String(targetUsername || '').replace(/[^A-Za-z0-9_]/g, '').trim().slice(0, 32);
+  if (!safeUsername) return;
+
+  try {
+    const result = await pool.query(`
+      WITH identity AS (
+        SELECT activity.username,activity.player_uuid
+        FROM player_activity activity
+        WHERE LOWER(activity.username)=LOWER($1)
+           OR (
+             activity.player_uuid IS NOT NULL
+             AND EXISTS (
+               SELECT 1 FROM player_name_history history
+               WHERE history.player_uuid=activity.player_uuid
+                 AND LOWER(history.username)=LOWER($1)
+             )
+           )
+        ORDER BY (LOWER(activity.username)=LOWER($1)) DESC,
+                 activity.is_online DESC,
+                 activity.id DESC
+        LIMIT 1
+      ), target AS (
+        SELECT COALESCE(identity.username,$1::text) AS username,
+               identity.player_uuid
+        FROM (SELECT 1) seed
+        LEFT JOIN identity ON TRUE
+      )
+      INSERT INTO player_activity (username,player_uuid,last_seen,is_online)
+      SELECT target.username,target.player_uuid,$2::timestamptz,FALSE
+      FROM target
+      ON CONFLICT (LOWER(username))
+      DO UPDATE SET player_uuid=COALESCE(player_activity.player_uuid,EXCLUDED.player_uuid),
+                    last_seen=EXCLUDED.last_seen
+      WHERE player_activity.last_seen IS NULL
+      RETURNING username,last_seen
+    `, [safeUsername, observedDate]);
+    if (result.rowCount > 0) {
+      console.log(`[LastSeen] Initially imported ${result.rows[0].username} from observed !seen: ${observedDate.toISOString()}`);
+    }
+  } catch (err) {
+    console.error('[LastSeen] Failed to reconcile observed !seen:', err.message);
+  }
+}
+
 let observedPlayerInfoWriteQueue = Promise.resolve();
 
 function enqueueObservedPlayerInfoWrite(task) {
@@ -3226,6 +3276,11 @@ const playerInfoObservation = createPlayerInfoObservation({
   onJoinDate: (targetUsername, observedDate) => {
     enqueueObservedPlayerInfoWrite(
       () => reconcileObservedJoinDate(targetUsername, observedDate)
+    ).catch(() => {});
+  },
+  onLastSeen: (targetUsername, observedDate) => {
+    enqueueObservedPlayerInfoWrite(
+      () => reconcileObservedLastSeen(targetUsername, observedDate)
     ).catch(() => {});
   }
 });
@@ -5436,16 +5491,18 @@ function sanitizeSiteChatMessage(value) {
 async function preparePlayerInfoRefresh(payload, cleanMessage) {
   const refresh = payload?.playerInfoRefresh;
   if (!refresh) return null;
-  const metric = refresh.metric === 'playtime' ? 'playtime' : refresh.metric === 'joinDate' ? 'joinDate' : '';
+  const metric = refresh.metric === 'playtime'
+    ? 'playtime'
+    : refresh.metric === 'joinDate' ? 'joinDate' : refresh.metric === 'lastSeen' ? 'lastSeen' : '';
   const username = String(refresh.username || '').replace(/[^A-Za-z0-9_]/g, '').trim().slice(0, 32);
   const expectedCommand = metric === 'playtime'
     ? `!pt ${username}`
-    : metric === 'joinDate' ? `!jd ${username}` : '';
+    : metric === 'joinDate' ? `!jd ${username}` : metric === 'lastSeen' ? `!seen ${username}` : '';
   if (!metric || !username || cleanMessage.toLowerCase() !== expectedCommand.toLowerCase()) {
     throw new Error('Invalid player information refresh command.');
   }
 
-  await playerInfoObservationStore.requestRefresh(metric, username);
+  if (metric !== 'lastSeen') await playerInfoObservationStore.requestRefresh(metric, username);
   if (!playerInfoObservation.requestSiteRefresh(metric, username)) {
     throw new Error('Could not prepare the player information refresh.');
   }
@@ -6411,17 +6468,9 @@ function isMinecraftSystemUsername(username) {
 }
 
 function isPrivateMinecraftChatLine(text) {
-  const clean = cleanMinecraftChatMessage(text).replace(/\s+/g, ' ').trim();
-  if (!clean) return false;
-  const botName = bot?.username ? escapeRegExp(bot.username) : '[A-Za-z0-9_]{1,16}';
-  const privatePatterns = [
-    /^(?:from|to)\s+[A-Za-z0-9_]{1,16}\s*[:>»]/i,
-    /^[A-Za-z0-9_]{1,16}\s+(?:whispers?|whispered|tells?|messages?|msgs?)\s+(?:to\s+)?(?:you|me)\s*[:>»]/i,
-    /^(?:you|me)\s+(?:whisper|tell|message|msg)\s+(?:to\s+)?[A-Za-z0-9_]{1,16}\s*[:>»]/i,
-    new RegExp(`^\\[?[A-Za-z0-9_]{1,16}\\s*(?:->|→)\\s*(?:you|me|${botName})\\]?\\s*:?`, 'i'),
-    new RegExp(`^\\[?(?:you|me|${botName})\\s*(?:->|→)\\s*[A-Za-z0-9_]{1,16}\\]?\\s*:?`, 'i')
-  ];
-  return privatePatterns.some(pattern => pattern.test(clean));
+  return isPrivateMinecraftChatText(cleanMinecraftChatMessage(text), {
+    recipientUsernames: bot?.username ? [bot.username] : []
+  });
 }
 
 function cancelPendingGameChat(username, message) {
@@ -6439,6 +6488,10 @@ function scheduleGameChatForward(username, message, source = 'chat') {
 
   const safeUsername = String(username || '').trim();
   if (!safeUsername) return false;
+  if (isPrivateMinecraftChatLine(`${safeUsername} > ${cleanMessage}`)) {
+    debugLog(`[Chat] Suppressed private-message-shaped public envelope from ${safeUsername}.`);
+    return false;
+  }
 
   const nowTs = Date.now();
   const isSelfMessage = bot?.username && safeUsername.toLowerCase() === bot.username.toLowerCase();
@@ -7455,16 +7508,17 @@ async function refreshAggregateObsidianStatus({ force = false } = {}) {
   aggregateObsidianStatusRefresh = pool.query(`
     WITH farm_states AS (
       SELECT account.id AS account_id,account.enabled AS account_enabled,
+             (account.deleted_at IS NOT NULL) AS account_archived,
              farm.session_mined,farm.total_mined,farm.desired_enabled,farm.session_started_at,farm.updated_at
       FROM bot_accounts account
       JOIN obsidian_farm_state farm ON farm.id=1
-      WHERE account.is_default=TRUE AND account.deleted_at IS NULL
+      WHERE account.is_default=TRUE
       UNION ALL
-      SELECT account.id,account.enabled,
+      SELECT account.id,account.enabled,(account.deleted_at IS NOT NULL),
              farm.session_mined,farm.total_mined,farm.desired_enabled,farm.session_started_at,farm.updated_at
       FROM obsidian_account_farm_state farm
       JOIN bot_accounts account ON account.id=farm.account_id
-      WHERE account.is_default=FALSE AND account.deleted_at IS NULL
+      WHERE account.is_default=FALSE
     )
     SELECT farm_states.*,
            COALESCE(
@@ -8829,7 +8883,17 @@ function createBot() {
   // ------- CHAT COMMANDS -------
   const handleMinecraftPlayerChat = async (username, message, translate, jsonMessage, context = {}) => {
     const source = context?.source || 'mineflayer-chat';
-    if (jsonMessage && handledGreenChatComponents.has(jsonMessage)) {
+    if (jsonMessage && (
+      handledGreenChatComponents.has(jsonMessage) ||
+      handledPrivateChatComponents.has(jsonMessage) ||
+      isPrivateMinecraftChatComponent(jsonMessage, {
+        recipientUsernames: bot?.username ? [bot.username] : []
+      })
+    )) {
+      handledPrivateChatComponents.mark(jsonMessage);
+      return false;
+    }
+    if (isPrivateMinecraftChatLine(`${username} > ${message}`)) {
       return false;
     }
     const observedUsername = username;
@@ -9072,21 +9136,18 @@ function createBot() {
       });
     }
 
-    const componentChat = isPrivateMinecraftChatLine(text)
-      ? {
-          text,
-          position: String(position || ''),
-          isGreenChat: false,
-          isPlayerChat: false,
-          username: null,
-          message: null,
-          evidence: ['private_message']
-        }
-      : analyzeMinecraftChatComponent(message, {
+    if (isPrivateMinecraftChatComponent(message, {
+      recipientUsernames: bot?.username ? [bot.username] : []
+    })) {
+      handledPrivateChatComponents.mark(message);
+      return;
+    }
+
+    const componentChat = analyzeMinecraftChatComponent(message, {
           knownUsernames: getOnlinePlayerUsernames(),
           senderUsername: getOnlinePlayerUsernameByUuid(senderUuid),
           position
-      });
+    });
     if (componentChat.isGreenChat) {
       handledGreenChatComponents.mark(message);
       if (componentChat.isPlayerChat) {
@@ -9107,9 +9168,16 @@ function createBot() {
   });
 
   bot.on('messagestr', (message, position, originalMessage) => {
-    if (originalMessage && handledGreenChatComponents.has(originalMessage)) {
+    if (originalMessage && (
+      handledGreenChatComponents.has(originalMessage) ||
+      handledPrivateChatComponents.has(originalMessage) ||
+      isPrivateMinecraftChatComponent(originalMessage, {
+        recipientUsernames: bot?.username ? [bot.username] : []
+      })
+    )) {
       return;
     }
+    if (isPrivateMinecraftChatLine(message)) return;
     forwardRawPublicChatText(message, 'mineflayer-messagestr-legacy', position);
   });
 }

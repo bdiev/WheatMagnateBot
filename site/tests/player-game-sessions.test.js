@@ -36,6 +36,12 @@ const migrationSource = fs.readFileSync(path.resolve(__dirname, '..', 'migration
 
 assert.match(serverSource, /FROM operational_events[\s\S]*UNION ALL[\s\S]*FROM operational_events_archive[\s\S]*LIMIT 500/,
   'player profiles must load recent and archived join/leave transitions');
+assert.match(serverSource, /COUNT\(\*\) FILTER \(WHERE event_type='player_joined'\) OVER \(\)[\s\S]*AS total_sessions/,
+  'the profile API must count all recorded sessions before limiting the visible transition history');
+assert.match(serverSource, /const gameSessionCount = Math\.max\([\s\S]*total_sessions[\s\S]*gameSessions\.length[\s\S]*gameSessionCount,[\s\S]*gameSessions,/,
+  'the profile API must expose the full session count alongside the recent session list');
+assert.match(appSource, /const gameSessionCount = Math\.max\([\s\S]*profile\.gameSessionCount[\s\S]*gameSessions\.length[\s\S]*total \$\{gameSessionCount === 1 \? 'session' : 'sessions'\}/,
+  'the Game sessions heading must show the total session count instead of the capped list length');
 assert.match(appSource, /<section class="player-profile-grid">[\s\S]*?\$\{gameSessionsSection\}[\s\S]*?<section class="player-profile-chat">/,
   'Game sessions must render between the metric cards and Recent Chat');
 assert.match(stylesSource, /\.player-profile-session-list\.is-scrollable\s*\{[\s\S]*?max-height:\s*202px;[\s\S]*?overflow-y:\s*auto;/,
@@ -60,5 +66,7 @@ assert.match(serverSource, /sessionResourceKeys = aliases\.map[\s\S]*?LOWER\(res
   'session history must use its indexed resource key instead of scanning event JSON');
 assert.match(migrationSource, /operational_events_player_session_resource_idx[\s\S]*?operational_events_archive_player_session_resource_idx/,
   'active and archived session events must both have profile lookup indexes');
+assert.doesNotMatch(appSource, /most recent recorded/,
+  'the capped session-list size must not be presented as the total number of sessions');
 
 console.log('Player game session tests passed.');

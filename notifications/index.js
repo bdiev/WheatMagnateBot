@@ -183,7 +183,13 @@ class NotificationService {
             level: resolved ? 'info' : notification.severity === 'critical' ? 'error' : notification.severity === 'warning' ? 'warn' : 'info',
             category: 'notification', message: `${notification.title}: ${notification.message}`,
             accountId: notification.metadata?.accountId || null,
-            details: { eventType: notification.event_type, dedupKey: notification.dedup_key, status: notification.status, correlationId: notification.correlation_id || notification.metadata?.correlationId }
+            details: {
+              eventType: notification.event_type,
+              dedupKey: notification.dedup_key,
+              status: notification.status,
+              correlationId: notification.correlation_id || notification.metadata?.correlationId,
+              debugLogId: notification.metadata?.debugLogId || null
+            }
           });
           if (logged === false) throw new Error('System log delivery failed.');
         }
