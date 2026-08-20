@@ -3,6 +3,7 @@ data/auth-cache/
 data/bots/
 data/bot_public_chat_status.json
 data/player_head_emojis.json
+data/player_head_skin_hashes.json
 data/*.sqlite
 data/*.sqlite-shm
 data/*.sqlite-wal

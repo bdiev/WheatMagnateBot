@@ -1,6 +1,7 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
+const crypto = require('node:crypto');
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ChannelType, PermissionsBitField, MessageFlags, InteractionContextType, SlashCommandBuilder, ActivityType } = require('discord.js');
 const { pathfinder } = require('mineflayer-pathfinder');
 const { createDiscordClient, saveStatusMessageId, loadStatusMessageId } = require('./discord');
@@ -129,7 +130,12 @@ let discordActiveAccountId = DEFAULT_ACCOUNT_ID;
 const BOT_PUBLIC_CHAT_STATUS_FILE = path.resolve('data', 'bot_public_chat_status.json');
 const BOT_CHAT_STATUS_EMOJIS_FILE = path.resolve('data', 'bot_chat_status_emojis.json');
 const PLAYER_HEAD_EMOJIS_FILE = path.resolve('data', 'player_head_emojis.json');
+const PLAYER_HEAD_SKIN_HASHES_FILE = path.resolve('data', 'player_head_skin_hashes.json');
 const PLAYER_HEAD_EMOJI_REDRAWS_FILE = path.resolve('data', 'player_head_emoji_redraws.json');
+const PLAYER_HEAD_SKIN_SYNC_INTERVAL_MS = Math.max(
+  5 * 60_000,
+  Number(process.env.PLAYER_HEAD_SKIN_SYNC_INTERVAL_MS) || 30 * 60_000
+);
 const REQUESTED_PLAYER_HEAD_EMOJI_REDRAWS = Object.freeze([
   { username: 'ObbyMagnate', version: 2, imageSize: 360 }
 ]);
@@ -281,10 +287,8 @@ const ITEM_EMOJIS = {
   totem_of_undying: '<:Totem_Of_Undying:1519380252583923932>',
   firework_rocket: '<:Firework_Rocket:1519380253649408046>'
 };
-const PINNED_APPLICATION_PLAYER_HEAD_EMOJIS = new Map([
-  ['callmecason', '<:CallMeCason:1534665595826471032>']
-]);
 const PLAYER_HEAD_EMOJIS = new Map([
+  ['callmecason', '<:CallMeCason:1534665595826471032>'],
   ['wheatmagnate', '<:WheatMagnate:1519314847073046568>'],
   ['wheatemperor', '<:wheatemperor:1519314845151789197>'],
   ['vendell', '<:Vendell:1519314843545501726>'],
@@ -327,15 +331,19 @@ const PLAYER_HEAD_EMOJIS = new Map([
   ['1amfero1', '<:1Amfero1:1519314801287762101>'],
   ['0x003a47d4', '<:0x003A47D4:1519314799647916162>']
 ]);
+const PLAYER_HEAD_SKIN_HASHES = new Map();
 const pendingPlayerHeadEmojiImports = new Set();
 const failedPlayerHeadEmojiImports = new Set();
+const playerHeadEmojiOperationChains = new Map();
+let playerHeadEmojiSyncPromise = null;
 
 loadPlayerHeadEmojiCache();
+loadPlayerHeadSkinHashes();
 
 function getPlayerHeadEmoji(username) {
   const key = normalizePlayerHeadUsername(username);
-  const pinnedEmoji = PINNED_APPLICATION_PLAYER_HEAD_EMOJIS.get(key);
-  if (pinnedEmoji) return pinnedEmoji;
+  const isWhitelisted = ignoredUsernames.some(name => normalizePlayerHeadUsername(name) === key);
+  if (!isWhitelisted) return STATUS_EMOJIS.players;
 
   const emoji = PLAYER_HEAD_EMOJIS.get(key);
   if (emoji) return emoji;
@@ -363,6 +371,9 @@ function loadPlayerHeadEmojiCache() {
     if (!fs.existsSync(PLAYER_HEAD_EMOJIS_FILE)) return;
     const parsed = JSON.parse(fs.readFileSync(PLAYER_HEAD_EMOJIS_FILE, 'utf8'));
     const entries = Array.isArray(parsed) ? parsed : Object.entries(parsed || {});
+    // Once a cache exists it is authoritative. This preserves removals across
+    // restarts instead of restoring deleted legacy entries from the seed map.
+    PLAYER_HEAD_EMOJIS.clear();
     for (const [username, emoji] of entries) {
       const key = normalizePlayerHeadUsername(username);
       const value = String(emoji || '').trim();
@@ -375,6 +386,31 @@ function loadPlayerHeadEmojiCache() {
     }
   } catch (err) {
     console.error('[PlayerHeads] Failed to load emoji cache:', err.message);
+  }
+}
+
+function loadPlayerHeadSkinHashes() {
+  try {
+    if (!fs.existsSync(PLAYER_HEAD_SKIN_HASHES_FILE)) return;
+    const parsed = JSON.parse(fs.readFileSync(PLAYER_HEAD_SKIN_HASHES_FILE, 'utf8'));
+    for (const [username, hash] of Object.entries(parsed || {})) {
+      const key = normalizePlayerHeadUsername(username);
+      const value = String(hash || '').trim().toLowerCase();
+      if (key && /^[0-9a-f]{64}$/.test(value)) PLAYER_HEAD_SKIN_HASHES.set(key, value);
+    }
+  } catch (err) {
+    console.error('[PlayerHeads] Failed to load skin hash cache:', err.message);
+  }
+}
+
+function savePlayerHeadSkinHashes() {
+  try {
+    fs.mkdirSync(path.dirname(PLAYER_HEAD_SKIN_HASHES_FILE), { recursive: true });
+    const sorted = [...PLAYER_HEAD_SKIN_HASHES.entries()]
+      .sort(([a], [b]) => a.localeCompare(b));
+    fs.writeFileSync(PLAYER_HEAD_SKIN_HASHES_FILE, JSON.stringify(Object.fromEntries(sorted), null, 2));
+  } catch (err) {
+    console.error('[PlayerHeads] Failed to save skin hash cache:', err.message);
   }
 }
 
@@ -394,15 +430,17 @@ function queuePlayerHeadEmojiImport(username) {
   if (!/^[A-Za-z0-9_]{1,16}$/.test(safeUsername)) return;
 
   const key = normalizePlayerHeadUsername(safeUsername);
+  const isWhitelisted = ignoredUsernames.some(name => normalizePlayerHeadUsername(name) === key);
   if (
     !key ||
+    !isWhitelisted ||
     pendingPlayerHeadEmojiImports.has(key) ||
     failedPlayerHeadEmojiImports.has(key) ||
     PLAYER_HEAD_EMOJIS.has(key)
   ) return;
 
   pendingPlayerHeadEmojiImports.add(key);
-  importPlayerHeadEmoji(safeUsername)
+  synchronizePlayerHeadEmoji(safeUsername)
     .catch(err => {
       failedPlayerHeadEmojiImports.add(key);
       console.warn(`[PlayerHeads] Skipping ${safeUsername} after failed import:`, err.message);
@@ -436,7 +474,8 @@ async function fetchPlayerHeadImageBuffer(imageUrl, source) {
   const response = await fetch(imageUrl, {
     headers: {
       'User-Agent': 'WheatMagnateBot/1.0 (+https://namemc.com/)'
-    }
+    },
+    signal: AbortSignal.timeout(15_000)
   });
   if (!response.ok) {
     return { error: new Error(`${source} returned HTTP ${response.status}`), status: response.status };
@@ -455,7 +494,9 @@ async function fetchPlayerHeadImageBuffer(imageUrl, source) {
 }
 
 async function resolveMinecraftProfile(username) {
-  const response = await fetch(`https://api.mojang.com/users/profiles/minecraft/${encodeURIComponent(username)}`);
+  const response = await fetch(`https://api.mojang.com/users/profiles/minecraft/${encodeURIComponent(username)}`, {
+    signal: AbortSignal.timeout(15_000)
+  });
   if (response.status === 204 || response.status === 404) return null;
   if (!response.ok) throw new Error(`Mojang API returned HTTP ${response.status}`);
 
@@ -569,38 +610,168 @@ async function fetchPlayerHeadImage(username) {
   return { error: lastError };
 }
 
-async function importPlayerHeadEmoji(username) {
+function hashPlayerHeadImage(imageBuffer) {
+  return crypto.createHash('sha256').update(imageBuffer).digest('hex');
+}
+
+function runPlayerHeadEmojiOperation(username, operation) {
+  const key = normalizePlayerHeadUsername(username);
+  const previous = playerHeadEmojiOperationChains.get(key) || Promise.resolve();
+  const current = previous.catch(() => {}).then(operation);
+  playerHeadEmojiOperationChains.set(key, current);
+  current.finally(() => {
+    if (playerHeadEmojiOperationChains.get(key) === current) playerHeadEmojiOperationChains.delete(key);
+  }).catch(() => {});
+  return current;
+}
+
+async function synchronizePlayerHeadEmoji(username, options = {}) {
+  return runPlayerHeadEmojiOperation(
+    username,
+    () => synchronizePlayerHeadEmojiUnlocked(username, options)
+  );
+}
+
+async function synchronizePlayerHeadEmojiUnlocked(username, { forceRecreate = false, applicationEmojis = null } = {}) {
+  const safeUsername = String(username || '').trim();
+  if (!/^[A-Za-z0-9_]{1,16}$/.test(safeUsername)) return null;
+
+  const key = normalizePlayerHeadUsername(safeUsername);
+  if (!ignoredUsernames.some(name => normalizePlayerHeadUsername(name) === key)) return null;
+
   const emojiManager = await getPlayerHeadApplicationEmojiManager();
   if (!emojiManager) return null;
 
-  const emojiName = getDiscordEmojiNameForPlayer(username);
-  const applicationEmojis = await emojiManager.fetch();
+  const emojiName = getDiscordEmojiNameForPlayer(safeUsername);
+  const emojis = applicationEmojis || await emojiManager.fetch();
+  let existing = emojis.find(emoji => emoji.name?.toLowerCase() === emojiName.toLowerCase());
+  const cachedReference = parsePlayerHeadEmojiReference(safeUsername, PLAYER_HEAD_EMOJIS.get(key));
+  if (!existing && cachedReference) existing = emojis.get?.(cachedReference.id) || null;
 
-  const existing = applicationEmojis.find(emoji =>
-    emoji.name?.toLowerCase() === emojiName.toLowerCase()
-  );
-  if (existing) {
-    const emojiText = `<:${existing.name}:${existing.id}>`;
-    PLAYER_HEAD_EMOJIS.set(normalizePlayerHeadUsername(username), emojiText);
-    savePlayerHeadEmojiCache();
-    return emojiText;
-  }
-
-  const { imageBuffer, error } = await fetchPlayerHeadImage(username);
+  const { imageBuffer, error } = await fetchPlayerHeadImage(safeUsername);
   if (!imageBuffer) throw error || new Error('No player head image was returned');
   const preparedImage = await preparePlayerHeadEmojiImage(imageBuffer);
   if (preparedImage.length > 256 * 1024) throw new Error('Prepared player head image is too large for an emoji');
+  const skinHash = hashPlayerHeadImage(preparedImage);
 
-  const created = await emojiManager.create({
-    attachment: preparedImage,
-    name: emojiName
+  if (existing && !forceRecreate && PLAYER_HEAD_SKIN_HASHES.get(key) === skinHash) {
+    const emojiText = `<:${existing.name}:${existing.id}>`;
+    if (PLAYER_HEAD_EMOJIS.get(key) !== emojiText) {
+      PLAYER_HEAD_EMOJIS.set(key, emojiText);
+      savePlayerHeadEmojiCache();
+    }
+    return { emojiText, changed: false, skinHash };
+  }
+
+  const temporarySuffix = '_skin';
+  const temporaryName = `${emojiName.slice(0, 32 - temporarySuffix.length)}${temporarySuffix}`;
+  const staleTemporary = emojis.find(emoji => emoji.name?.toLowerCase() === temporaryName.toLowerCase());
+  if (staleTemporary && staleTemporary.id !== existing?.id) await staleTemporary.delete().catch(() => {});
+
+  let replacement = null;
+  let oldEmojiDeleted = false;
+  try {
+    replacement = await emojiManager.create({
+      attachment: preparedImage,
+      name: existing ? temporaryName : emojiName
+    });
+    if (existing) {
+      await existing.delete();
+      oldEmojiDeleted = true;
+      replacement = await replacement.setName(emojiName);
+    }
+
+    const emojiText = `<:${replacement.name}:${replacement.id}>`;
+    PLAYER_HEAD_EMOJIS.set(key, emojiText);
+    PLAYER_HEAD_SKIN_HASHES.set(key, skinHash);
+    failedPlayerHeadEmojiImports.delete(key);
+    savePlayerHeadEmojiCache();
+    savePlayerHeadSkinHashes();
+    console.log(`[PlayerHeads] ${existing ? 'Refreshed' : 'Created'} ${safeUsername} as application emoji ${emojiText}`);
+    return { emojiText, changed: true, skinHash };
+  } catch (err) {
+    if (replacement && !oldEmojiDeleted) await replacement.delete().catch(() => {});
+    throw err;
+  }
+}
+
+async function deletePlayerHeadEmoji(username) {
+  return runPlayerHeadEmojiOperation(username, () => deletePlayerHeadEmojiUnlocked(username));
+}
+
+async function deletePlayerHeadEmojiUnlocked(username) {
+  const safeUsername = String(username || '').trim();
+  const key = normalizePlayerHeadUsername(safeUsername);
+  if (!key) return true;
+
+  const emojiManager = await getPlayerHeadApplicationEmojiManager();
+  if (!emojiManager) return false;
+
+  const emojiName = getDiscordEmojiNameForPlayer(safeUsername);
+  const removableNames = new Set([
+    emojiName,
+    `${emojiName.slice(0, 32 - '_skin'.length)}_skin`,
+    `${emojiName.slice(0, 32 - '_redraw'.length)}_redraw`
+  ].map(name => name.toLowerCase()));
+  const cachedReference = parsePlayerHeadEmojiReference(safeUsername, PLAYER_HEAD_EMOJIS.get(key));
+  const applicationEmojis = await emojiManager.fetch();
+  const applicationMatches = applicationEmojis.filter(emoji =>
+    removableNames.has(emoji.name?.toLowerCase()) || emoji.id === cachedReference?.id
+  );
+  for (const emoji of applicationMatches.values()) await emoji.delete();
+
+  if (cachedReference && !applicationEmojis.has(cachedReference.id)) {
+    const guild = await getPlayerHeadEmojiGuild();
+    if (guild) {
+      const guildEmojis = await guild.emojis.fetch();
+      const guildEmoji = guildEmojis.get(cachedReference.id);
+      if (guildEmoji) await guildEmoji.delete(`Removed ${safeUsername} from whitelist`);
+    }
+  }
+
+  PLAYER_HEAD_EMOJIS.delete(key);
+  PLAYER_HEAD_SKIN_HASHES.delete(key);
+  pendingPlayerHeadEmojiImports.delete(key);
+  failedPlayerHeadEmojiImports.delete(key);
+  savePlayerHeadEmojiCache();
+  savePlayerHeadSkinHashes();
+  console.log(`[PlayerHeads] Deleted the Discord emoji for ${safeUsername}`);
+  return true;
+}
+
+async function reconcileWhitelistedPlayerHeadEmojis() {
+  if (playerHeadEmojiSyncPromise) return playerHeadEmojiSyncPromise;
+
+  playerHeadEmojiSyncPromise = (async () => {
+    const whitelistByKey = new Map(
+      ignoredUsernames.map(username => [normalizePlayerHeadUsername(username), String(username).trim()])
+    );
+
+    for (const [key] of [...PLAYER_HEAD_EMOJIS]) {
+      if (whitelistByKey.has(key)) continue;
+      try {
+        await deletePlayerHeadEmoji(key);
+      } catch (err) {
+        console.warn(`[PlayerHeads] Could not delete non-whitelist emoji ${key}:`, err.message);
+      }
+    }
+
+    const emojiManager = await getPlayerHeadApplicationEmojiManager();
+    if (!emojiManager) return;
+    let applicationEmojis = await emojiManager.fetch();
+    for (const username of whitelistByKey.values()) {
+      try {
+        await synchronizePlayerHeadEmoji(username, { applicationEmojis });
+        applicationEmojis = await emojiManager.fetch();
+      } catch (err) {
+        console.warn(`[PlayerHeads] Could not synchronize ${username}:`, err.message);
+      }
+    }
+  })().finally(() => {
+    playerHeadEmojiSyncPromise = null;
   });
 
-  const emojiText = `<:${created.name}:${created.id}>`;
-  PLAYER_HEAD_EMOJIS.set(normalizePlayerHeadUsername(username), emojiText);
-  savePlayerHeadEmojiCache();
-  console.log(`[PlayerHeads] Imported ${username} as application emoji ${emojiText}`);
-  return emojiText;
+  return playerHeadEmojiSyncPromise;
 }
 
 function loadPlayerHeadEmojiRedrawState() {
@@ -952,6 +1123,7 @@ let adminPanelView = 'main';
 let statusUpdateInterval = null;
 let adminPanelUpdateInterval = null;
 let siteGameChatOutboxInterval = null;
+let playerHeadSkinSyncInterval = null;
 let isUpdatingStatus = false; // Prevent concurrent updates
 let lastPresenceText = null;
 let lastPresenceUpdateAt = 0;
@@ -1412,7 +1584,7 @@ const ignoredUsernames = loadWhitelist();
 const {
   loadWhitelistFromDB,
   migrateWhitelistToDB,
-  addUsernameToWhitelist
+  addUsernameToWhitelist: addUsernameToWhitelistRepository
 } = createWhitelistRepository({
   pool,
   loadWhitelistFile: loadWhitelist,
@@ -1422,6 +1594,64 @@ const {
     ignoredUsernames.push(...whitelist);
   }
 });
+
+async function addUsernameToWhitelist(targetUsername, addedBy = 'system') {
+  const result = await addUsernameToWhitelistRepository(targetUsername, addedBy);
+  if (result.changed) {
+    const key = normalizePlayerHeadUsername(targetUsername);
+    // A re-added player must receive a fresh emoji even if a previous Discord
+    // deletion was delayed or the new skin happens to have the same pixels.
+    failedPlayerHeadEmojiImports.delete(key);
+    PLAYER_HEAD_SKIN_HASHES.delete(key);
+    savePlayerHeadSkinHashes();
+    try {
+      await synchronizePlayerHeadEmoji(targetUsername, { forceRecreate: true });
+    } catch (err) {
+      console.warn(`[PlayerHeads] Whitelist add succeeded, but the emoji for ${targetUsername} will be retried:`, err.message);
+    }
+  }
+  updateStatusMessage().catch(() => {});
+  return result;
+}
+
+async function removeUsernameFromWhitelist(targetUsername) {
+  const safeUsername = String(targetUsername || '').trim();
+  if (!safeUsername) throw new Error('Username is required.');
+
+  let changed = false;
+  if (pool) {
+    const result = await pool.query(
+      'DELETE FROM whitelist WHERE LOWER(username) = LOWER($1)',
+      [safeUsername]
+    );
+    changed = result.rowCount > 0;
+  }
+
+  const fileWhitelist = loadWhitelist();
+  const newFileWhitelist = fileWhitelist.filter(
+    username => normalizePlayerHeadUsername(username) !== normalizePlayerHeadUsername(safeUsername)
+  );
+  if (newFileWhitelist.length !== fileWhitelist.length) {
+    fs.writeFileSync('whitelist.txt', newFileWhitelist.join('\n') + (newFileWhitelist.length ? '\n' : ''));
+    changed = true;
+  }
+
+  const newWhitelist = pool
+    ? await loadWhitelistFromDB()
+    : newFileWhitelist;
+  ignoredUsernames.length = 0;
+  ignoredUsernames.push(...newWhitelist);
+
+  try {
+    await deletePlayerHeadEmoji(safeUsername);
+  } catch (err) {
+    // Keep the cached reference so the periodic reconciliation can retry the
+    // Discord deletion, while the non-whitelist guard stops displaying it.
+    console.warn(`[PlayerHeads] Whitelist removal succeeded, but emoji deletion for ${safeUsername} will be retried:`, err.message);
+  }
+  updateStatusMessage().catch(() => {});
+  return { username: safeUsername, whitelist: newWhitelist, changed };
+}
 
 let ignoredChatUsernames = IGNORED_CHAT_USERNAMES; // Fallback
 
@@ -2412,9 +2642,21 @@ if (DISCORD_BOT_TOKEN) {
     await migrateWhitelistToDB();
     // Reload whitelist after migration
     const wl = await loadWhitelistFromDB();
-    if (Array.isArray(wl) && wl.length > 0) {
+    if (Array.isArray(wl)) {
       ignoredUsernames.length = 0;
       ignoredUsernames.push(...wl);
+    }
+    reconcileWhitelistedPlayerHeadEmojis().catch(err => {
+      console.error('[PlayerHeads] Initial skin synchronization failed:', err.message);
+    });
+    if (!playerHeadSkinSyncInterval) {
+      playerHeadSkinSyncInterval = setInterval(() => {
+        reconcileWhitelistedPlayerHeadEmojis().catch(err => {
+          console.error('[PlayerHeads] Periodic skin synchronization failed:', err.message);
+        });
+      }, PLAYER_HEAD_SKIN_SYNC_INTERVAL_MS);
+      playerHeadSkinSyncInterval.unref?.();
+      console.log(`[PlayerHeads] Skin synchronization interval started (${Math.round(PLAYER_HEAD_SKIN_SYNC_INTERVAL_MS / 60_000)} minutes)`);
     }
     initializeGrowingChild();
     if (!mineflayerStarted) {
@@ -5559,12 +5801,8 @@ async function executeBotCommand(command) {
   if (type === 'whitelist_remove') {
     const username = String(payload.username || '').trim();
     if (!username) throw new Error('Username is required.');
-    if (pool) await pool.query('DELETE FROM whitelist WHERE LOWER(username) = LOWER($1)', [username]);
-    const newWhitelist = ignoredUsernames.filter(entry => entry.toLowerCase() !== username.toLowerCase());
-    fs.writeFileSync('whitelist.txt', newWhitelist.join('\n') + (newWhitelist.length ? '\n' : ''));
-    ignoredUsernames.length = 0;
-    ignoredUsernames.push(...newWhitelist);
-    return { username };
+    const result = await removeUsernameFromWhitelist(username);
+    return { username, changed: result.changed };
   }
 
   if (type === 'ignore_chat') {
@@ -8689,11 +8927,7 @@ function createBot() {
               sendDiscordNotification('Database not configured.', 16711680);
               return;
             }
-            await pool.query('INSERT INTO whitelist (username, added_by) VALUES ($1, $2) ON CONFLICT DO NOTHING', [targetUsername, username]);
-            // Reload whitelist
-            const newWhitelist = await loadWhitelistFromDB();
-            ignoredUsernames.length = 0;
-            ignoredUsernames.push(...newWhitelist);
+            await addUsernameToWhitelist(targetUsername, username);
             console.log(`[Command] Added ${targetUsername} to whitelist by ${username}`);
             sendDiscordNotification(`${STATUS_EMOJIS.connected} Added ${targetUsername} to whitelist. Requested by ${username} (in-game)`, 65280);
           } catch (err) {
@@ -11266,61 +11500,9 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         const selectedUsername = b64decode(encodedUsername);
         
 
-        let whitelist = [];
-        let source = 'database';
-        let success = false;
-
         try {
-          // Try database first
-          if (pool) {
-            
-            const result = await pool.query('DELETE FROM whitelist WHERE username = $1', [selectedUsername]);
-            
-
-            if (result.rowCount > 0) {
-              // Reload whitelist from database
-              const newWhitelist = await loadWhitelistFromDB();
-              ignoredUsernames.length = 0;
-              ignoredUsernames.push(...newWhitelist);
-              whitelist = newWhitelist;
-              
-              success = true;
-            } else {
-              
-            }
-          }
-
-          // If database failed or not available, try file-based whitelist
-          if (!success && !pool) {
-            source = 'file';
-            
-            const fileWhitelist = loadWhitelist();
-            const newWhitelist = fileWhitelist.filter(username => username !== selectedUsername);
-
-            if (newWhitelist.length === fileWhitelist.length) {
-              
-              await interaction.editReply({
-              embeds: [{
-                description: `${selectedUsername} is not in whitelist.`,
-                color: 16776960,
-                timestamp: new Date()
-              }],
-                components: createAdminBackComponents()
-              });
-              return;
-            }
-
-            // Update the file
-            fs.writeFileSync('whitelist.txt', newWhitelist.join('\n') + '\n');
-            whitelist = newWhitelist;
-            ignoredUsernames.length = 0;
-            ignoredUsernames.push(...newWhitelist);
-            
-            success = true;
-          }
-
-          if (!success) {
-            
+          const { whitelist, changed } = await removeUsernameFromWhitelist(selectedUsername);
+          if (!changed) {
             await interaction.editReply({
               embeds: [{
                 description: `${selectedUsername} is not in whitelist.`,
@@ -11702,36 +11884,13 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
     if (wlAddMatch) {
       const targetUsername = wlAddMatch[1];
       try {
-        let success = false;
-        let source = 'database';
-        if (pool) {
-          try {
-            await pool.query('INSERT INTO whitelist (username, added_by) VALUES ($1, $2) ON CONFLICT DO NOTHING', [targetUsername, message.author.tag]);
-            const newWhitelist = await loadWhitelistFromDB();
-            ignoredUsernames.length = 0;
-            ignoredUsernames.push(...newWhitelist);
-            success = true;
-          } catch (dbErr) {
-            console.error('[Whitelist Add Cmd] DB error:', dbErr.message);
-          }
-        }
-        if (!success && !pool) {
-          source = 'file';
-          const fileWhitelist = loadWhitelist();
-          if (!fileWhitelist.some(n => n.toLowerCase() === targetUsername.toLowerCase())) {
-            fs.appendFileSync('whitelist.txt', `${targetUsername}\n`);
-          }
-          const newWhitelist = loadWhitelist();
-          ignoredUsernames.length = 0;
-          ignoredUsernames.push(...newWhitelist);
-          success = true;
-        }
+        const { changed, source } = await addUsernameToWhitelist(targetUsername, message.author.tag);
 
         await message.reply({
           embeds: [{
             title: 'Whitelist',
-            description: success ? `${STATUS_EMOJIS.connected} Added ${targetUsername} to whitelist (${source}).` : `No changes for ${targetUsername}.`,
-            color: success ? 65280 : 16776960,
+            description: changed ? `${STATUS_EMOJIS.connected} Added ${targetUsername} to whitelist (${source}).` : `No changes for ${targetUsername}.`,
+            color: changed ? 65280 : 16776960,
             timestamp: new Date()
           }]
         });
@@ -11756,11 +11915,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           await message.reply('Database not configured.');
           return;
         }
-        await pool.query('INSERT INTO whitelist (username, added_by) VALUES ($1, $2) ON CONFLICT DO NOTHING', [targetUsername, message.author.tag]);
-        // Reload whitelist
-        const newWhitelist = await loadWhitelistFromDB();
-        ignoredUsernames.length = 0;
-        ignoredUsernames.push(...newWhitelist);
+        await addUsernameToWhitelist(targetUsername, message.author.tag);
         console.log(`[Command] Added ${targetUsername} to whitelist by ${message.author.tag} via Discord`);
         sendDiscordNotification(`Command: !allow ${targetUsername} by \`${message.author.tag}\` via Discord`, 65280);
         await message.reply(`${targetUsername} added to whitelist.`);
