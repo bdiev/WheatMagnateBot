@@ -3973,19 +3973,20 @@ body.search-focus-active #logoutButton {
 .player-profile-head {
   position: relative;
   display: grid;
-  grid-template-columns: 96px minmax(0, 1fr);
-  gap: 20px;
+  grid-template-columns: 72px minmax(0, 1fr);
+  column-gap: 16px;
+  row-gap: 0;
   align-items: center;
-  padding: 24px 64px 22px 24px;
+  padding: 18px 64px 0 18px;
   border-bottom: 1px solid var(--line);
-  background: var(--panel-soft);
+  background: var(--panel);
 }
 
 .player-profile-avatar-wrap {
   position: relative;
   display: block;
-  width: 96px;
-  height: 96px;
+  width: 72px;
+  height: 72px;
 }
 
 .player-profile-avatar-wrap::after {
@@ -3995,7 +3996,7 @@ body.search-focus-active #logoutButton {
   bottom: -3px;
   width: 18px;
   height: 18px;
-  border: 3px solid var(--panel-soft);
+  border: 3px solid var(--panel);
   border-radius: 999px;
   background: #d84343;
   animation: player-offline-pulse 2.4s ease-in-out infinite;
@@ -4020,8 +4021,8 @@ body.search-focus-active #logoutButton {
 }
 
 .player-profile-avatar {
-  width: 96px;
-  height: 96px;
+  width: 72px;
+  height: 72px;
   image-rendering: pixelated;
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -4054,11 +4055,14 @@ body.search-focus-active #logoutButton {
 
 .player-profile-actions {
   display: flex;
-  grid-column: 2;
+  grid-column: 1 / -1;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-  margin-top: 14px;
+  margin: 16px -64px 0 -18px;
+  padding: 12px 64px 12px 18px;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel-soft) 82%, var(--panel));
 }
 
 .player-profile-message-action {
@@ -4137,6 +4141,19 @@ body.search-focus-active #logoutButton {
   border-color: var(--annotation-disconnected);
   color: var(--annotation-disconnected);
   background: color-mix(in srgb, var(--annotation-disconnected) 10%, var(--panel-soft));
+}
+
+.player-profile-actions > .player-profile-message-action:first-child {
+  border-color: var(--accent);
+  color: var(--bg);
+  background: var(--accent);
+}
+
+.player-profile-actions > .player-profile-message-action:first-child:hover,
+.player-profile-actions > .player-profile-message-action:first-child:focus-visible {
+  border-color: var(--accent-strong);
+  color: var(--panel);
+  background: var(--accent-strong);
 }
 
 :root[data-theme="dark"] .player-profile-ignore-action:hover,
@@ -4656,12 +4673,13 @@ body.search-focus-active #logoutButton {
 
 .player-profile-skeleton-head {
   display: grid;
-  grid-template-columns: 96px minmax(0, 1fr);
-  gap: 20px;
+  grid-template-columns: 72px minmax(0, 1fr);
+  column-gap: 16px;
+  row-gap: 0;
   min-height: 178px;
-  padding: 24px 64px 22px 24px;
+  padding: 18px 64px 0 18px;
   border-bottom: 1px solid var(--line);
-  background: var(--panel-soft);
+  background: var(--panel);
 }
 
 .player-profile-skeleton-head > div:nth-child(2) {
@@ -4706,8 +4724,8 @@ body.search-focus-active #logoutButton {
 }
 
 .profile-skeleton-avatar {
-  width: 96px;
-  height: 96px;
+  width: 72px;
+  height: 72px;
   align-self: center;
   border-radius: 10px;
 }
@@ -4728,10 +4746,14 @@ body.search-focus-active #logoutButton {
 
 .player-profile-skeleton-actions {
   display: grid;
-  grid-column: 2;
+  grid-column: 1 / -1;
   grid-template-columns: repeat(4, minmax(78px, 110px));
   gap: 8px;
   align-self: end;
+  margin: 16px -64px 0 -18px;
+  padding: 12px 64px 12px 18px;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel-soft) 82%, var(--panel));
 }
 
 .player-profile-skeleton-actions span {
@@ -6477,14 +6499,7 @@ body.modal-open { overflow:hidden; }
 }
 
 .player-profile-head::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 24px;
-  right: 64px;
-  height: 2px;
-  border-radius: 0 0 999px 999px;
-  background: linear-gradient(90deg, var(--accent), transparent 70%);
+  content: none;
 }
 
 .notification-overview-panel,
@@ -9341,9 +9356,11 @@ body.kill-aura-modal-open {
 
   .player-profile-skeleton-head {
     grid-template-columns: 72px minmax(0, 1fr);
-    gap: 13px;
+    column-gap: 13px;
+    row-gap: 0;
     min-height: 216px;
-    padding: 18px 16px 16px;
+    padding: 18px 58px 0 16px;
+    background: var(--panel);
   }
 
   .profile-skeleton-avatar {
@@ -9356,7 +9373,9 @@ body.kill-aura-modal-open {
   .player-profile-skeleton-actions {
     grid-column: 1 / -1;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    width: 100%;
+    width: auto;
+    margin: 14px -58px 0 -16px;
+    padding: 10px 58px 12px 16px;
   }
 
   .player-profile-skeleton-actions span { height: 40px; }
@@ -9389,8 +9408,9 @@ body.kill-aura-modal-open {
 
   .player-profile-head {
     grid-template-columns: 72px minmax(0, 1fr);
-    gap: 13px;
-    padding: 18px 58px 16px 16px;
+    column-gap: 13px;
+    row-gap: 0;
+    padding: 18px 58px 0 16px;
   }
 
   .player-profile-head::before {
@@ -9455,11 +9475,13 @@ body.kill-aura-modal-open {
   }
 
   .player-profile-actions {
-    width: 100%;
+    display: grid;
+    width: auto;
     grid-column: 1 / -1;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 7px;
-    margin-top: 13px;
+    margin: 14px -58px 0 -16px;
+    padding: 10px 58px 12px 16px;
   }
 
   .player-profile-ignore-action {

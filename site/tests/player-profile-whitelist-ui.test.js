@@ -52,5 +52,20 @@ assert.match(
   /@media \(max-width: 700px\)[\s\S]*\.player-profile-whitelist-action span\s*\{[^}]*white-space:\s*normal;/,
   'the mobile whitelist action label must wrap inside its button'
 );
+assert.match(
+  stylesSource,
+  /\.player-profile-head\s*\{[^}]*grid-template-columns:\s*72px minmax\(0, 1fr\);[^}]*padding:\s*18px 64px 0 18px;[^}]*background:\s*var\(--panel\);/s,
+  'the profile header must use the compact square-avatar composition'
+);
+assert.match(
+  stylesSource,
+  /\.player-profile-actions\s*\{[^}]*grid-column:\s*1 \/ -1;[^}]*margin:\s*16px -64px 0 -18px;[^}]*border-top:\s*1px solid var\(--line\);/s,
+  'profile actions must live in a full-width footer toolbar'
+);
+assert.match(
+  stylesSource,
+  /\.player-profile-actions > \.player-profile-message-action:first-child\s*\{[^}]*background:\s*var\(--accent\);/s,
+  'the primary message action must be visually emphasized'
+);
 
 console.log('Player profile whitelist UI tests passed.');
