@@ -7,6 +7,7 @@ const { EmotionSystem } = require('./emotion');
 const { MessageGenerator } = require('./generator');
 const { GrowingChildScheduler } = require('./scheduler');
 const { sanitizePublicPhrase } = require('./safety');
+const { getIdentityReply } = require('./identity');
 const { containsSensitiveData, extractMemories, parseForgetRequest } = require('./memory');
 const { evaluateGeneration } = require('./quality');
 const {
@@ -164,6 +165,8 @@ class GrowingChildAI {
           this.maybeReact(context);
         }
         this.notifyStateChanged();
+      } else if (!context.trainingOnly && context.addressed && getIdentityReply(context.text)) {
+        this.maybeReact(context);
       }
       return result;
     } catch (err) {
@@ -173,18 +176,24 @@ class GrowingChildAI {
   }
 
   maybeReact(context) {
-    if (!this.config.reactiveSpeechEnabled || this.pendingReactiveTimer) return;
+    if (!this.config.reactiveSpeechEnabled) return;
     if (context.source !== 'minecraft' || !context.addressed) return;
+    const identityReply = getIdentityReply(context.text);
+    if (this.pendingReactiveTimer) {
+      if (!identityReply) return;
+      clearTimeout(this.pendingReactiveTimer);
+      this.pendingReactiveTimer = null;
+    }
     const cooldownMs = this.config.reactiveCooldownMinutes * 60_000;
-    if (Date.now() - this.lastReactiveSpeechAt < cooldownMs) return;
+    if (!identityReply && Date.now() - this.lastReactiveSpeechAt < cooldownMs) return;
 
-    const chance = context.addressed
+    const chance = identityReply ? 1 : context.addressed
       ? this.config.addressedSpeechChance
       : this.config.reactiveSpeechChance;
     if (Math.random() >= chance) return;
 
-    const min = this.config.reactiveDelayMinSeconds;
-    const max = this.config.reactiveDelayMaxSeconds;
+    const min = identityReply ? 1 : this.config.reactiveDelayMinSeconds;
+    const max = identityReply ? 3 : this.config.reactiveDelayMaxSeconds;
     const delayMs = (min + Math.random() * (max - min)) * 1000;
     const conversationKey = this.conversationKey(context);
     const contextMessages = this.database.getConversationContext(conversationKey, this.config.conversationContextMessages);
@@ -204,7 +213,7 @@ class GrowingChildAI {
       this.lastReactiveSpeechAt = Date.now();
       try {
         await this.speak('reaction', contextWords, 'minecraft', {
-          conversationKey, contextMessages, memories, playerStyle, responseExamples
+          conversationKey, contextMessages, memories, playerStyle, responseExamples, identityReply
         });
       } catch (err) {
         console.error('[GrowingChild] Reactive speech failed:', err.message);
@@ -265,6 +274,14 @@ class GrowingChildAI {
   }
 
   async choosePhrase(reason, contextWords, context = {}) {
+    const identityReply = sanitizePublicPhrase(context.identityReply);
+    if (identityReply) {
+      this.database.rememberGenerationAttempt({
+        phrase: identityReply, generator: 'identity', accepted: true,
+        coherence: 1, toxicity: 0, repetition: 0, unknownRatio: 0
+      });
+      return identityReply;
+    }
     const approvedExample = (context.responseExamples || []).find(example => example.matchScore >= 0.5);
     if (approvedExample) {
       const phrase = sanitizePublicPhrase(approvedExample.response_text);

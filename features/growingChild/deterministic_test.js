@@ -10,6 +10,7 @@ const { GrowingChildAI, matchingResponseExamples } = require('./index');
 const { MessageGenerator } = require('./generator');
 const { extractMemories, containsSensitiveData } = require('./memory');
 const { evaluateGeneration } = require('./quality');
+const { getIdentityReply } = require('./identity');
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'growing-child-deterministic-'));
 const filename = path.join(directory, 'state.sqlite');
@@ -281,6 +282,12 @@ async function run() {
     responseExamples: [{ id: taughtId, response_text: 'I can help with your farm.', matchScore: 1 }]
   });
   assert.equal(taughtReply, 'I can help with your farm.');
+  const identityReply = getIdentityReply('whose bot are you?');
+  assert.equal(
+    await child.choosePhrase('reaction', [], { identityReply }),
+    'My owner is bdiev_.',
+    'identity replies must bypass learned-vocabulary availability without using external AI'
+  );
   child.stop();
 
   console.log('Growing Child deterministic tests passed.');

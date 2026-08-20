@@ -14,12 +14,17 @@ Growing Child is a local language-learning feature. It is not a model-training p
 
 The external AI never receives a request when its runtime switch is off. It receives only the bounded recent context, selected safe memories and learned vocabulary when enabled; local filtering still decides whether its output can be used.
 
+## Stable identity
+
+Addressed questions about the bot itself use a deterministic identity that does not depend on learned vocabulary or Gemini: it is **WheatMagnate**, belongs to **bdiev_**, lives on the anarchy server **oldfag.org**, and harvests a lot of wheat. Owner, name, server and purpose questions are recognized in English and Russian. These replies still pass through the same public-speech safety gate.
+
 ## Memory and privacy
 
 - Memories have a configurable TTL (`memoryDefaultTtlDays`) and a confidence score.
 - Repeating or correcting a fact supersedes the prior value without silently changing its history.
 - A user can send `forget me` or `forget fact #ID`. Administrators can correct/delete facts or forget a user from the **Child AI** page. Forgetting a user also removes their style profile and player-specific response examples.
 - Messages containing credential terms, email addresses, URLs, phone/card-like numbers, IP addresses or coordinate-like data are not learned or stored as conversation context.
+- Public Growing Child speech rejects digits, commands and written-out number words before generation and again immediately before Minecraft chat, so identity replies cannot expose coordinates.
 - Import validates memory and conversation rows using the same sensitive-data rule. Import is a merge: existing vocabulary counters and accumulated experience are not overwritten.
 
 ## Retention and administration

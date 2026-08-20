@@ -8,6 +8,7 @@ const { LearningSystem } = require('./learning');
 const { EmotionSystem } = require('./emotion');
 const { MessageGenerator } = require('./generator');
 const { sanitizePublicPhrase } = require('./safety');
+const { getIdentityReply } = require('./identity');
 const { validateAIGeneratedPhrase } = require('./ai_generation');
 
 const filename = path.join(os.tmpdir(), `growing-child-${process.pid}.sqlite`);
@@ -72,6 +73,17 @@ try {
   }
   if (sanitizePublicPhrase('hello farm?') !== 'hello farm?') {
     throw new Error('Coordinate safety filter rejected a safe phrase.');
+  }
+  const russianIdentityReply = getIdentityReply('чей ты бот?');
+  if (russianIdentityReply !== 'Я бот игрока bdiev_.' || sanitizePublicPhrase(russianIdentityReply) !== russianIdentityReply) {
+    throw new Error('The Russian owner identity response is missing or unsafe.');
+  }
+  const englishIdentityReply = getIdentityReply('who are you?');
+  if (!englishIdentityReply?.includes('WheatMagnate') || !englishIdentityReply.includes('oldfag.org') || sanitizePublicPhrase(englishIdentityReply) !== englishIdentityReply) {
+    throw new Error('The English full identity response is incomplete or unsafe.');
+  }
+  if (sanitizePublicPhrase('hello_someone') !== null) {
+    throw new Error('Identity token support allowed an arbitrary underscore token.');
   }
   if (sanitizePublicPhrase('is олеся still at the guaira farm') !== null) {
     throw new Error('Public phrase safety accepted mixed English/Russian text.');
