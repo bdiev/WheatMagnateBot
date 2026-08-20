@@ -67,5 +67,20 @@ assert.match(
   /\.player-profile-actions > \.player-profile-message-action:first-child\s*\{[^}]*border-color:\s*var\(--text\);[^}]*color:\s*var\(--panel\);[^}]*background:\s*var\(--text\);/s,
   'the primary message action must use the minimal inverted treatment'
 );
+assert.match(
+  appSource,
+  /player-profile-action-icon[\s\S]*m22 9-6 6[\s\S]*M4 19\.5v-15[\s\S]*M21 15a4 4[\s\S]*M15 3h6v6/,
+  'profile actions must use the proposed outline message, external-link, book, and mute icons'
+);
+assert.doesNotMatch(
+  appSource,
+  /player-profile-actions[\s\S]{0,1000}(?:Writable_Book|namemc_dark|Muted|Unmuted|Book)\.png/,
+  'profile actions must not fall back to the old bitmap icons'
+);
+assert.match(
+  stylesSource,
+  /\.player-profile-action-icon\s*\{[^}]*stroke:\s*currentColor;[^}]*stroke-width:\s*2;[^}]*stroke-linecap:\s*round;/s,
+  'profile action icons must use the same thin outline treatment as the selected mockup'
+);
 
 console.log('Player profile whitelist UI tests passed.');

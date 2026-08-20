@@ -4076,15 +4076,9 @@ body.search-focus-active #logoutButton {
   color: var(--muted);
   background: transparent;
   font: inherit;
-  font-weight: 900;
+  font-weight: 800;
   cursor: pointer;
   transition: background-color 180ms ease, border-color 180ms ease, transform 160ms ease;
-}
-
-.player-profile-message-action img {
-  width: 18px;
-  height: 18px;
-  image-rendering: pixelated;
 }
 
 .player-profile-namemc-action {
@@ -4094,8 +4088,15 @@ body.search-focus-active #logoutButton {
   text-decoration: none;
 }
 
-.player-profile-namemc-action img {
-  image-rendering: auto;
+.player-profile-action-icon {
+  flex: 0 0 17px;
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .player-profile-message-action:hover {
@@ -4115,11 +4116,6 @@ body.search-focus-active #logoutButton {
   border-color: transparent;
   color: var(--muted);
   background: transparent;
-}
-
-.player-profile-ignore-action img {
-  width: 20px;
-  height: 20px;
 }
 
 .player-profile-ignore-action:hover,
@@ -9505,8 +9501,7 @@ body.kill-aura-modal-open {
     font-size: 12px;
   }
 
-  .player-profile-message-action img,
-  .player-profile-ignore-action img {
+  .player-profile-action-icon {
     width: 17px;
     height: 17px;
   }

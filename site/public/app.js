@@ -2825,20 +2825,25 @@ function renderPlayerProfile(profile) {
     : 'Show exact last seen date';
   const ignoreAction = profile.isIgnored ? 'unignore_chat' : 'ignore_chat';
   const ignoreLabel = profile.isIgnored ? 'Unignore' : 'Ignore';
-  const ignoreIcon = profile.isIgnored ? 'Unmuted.png' : 'Muted.png';
+  const ignoreIcon = profile.isIgnored
+    ? '<svg class="player-profile-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>'
+    : '<svg class="player-profile-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="m22 9-6 6"/><path d="m16 9 6 6"/></svg>';
   const ignoreButton = state.currentUser?.role === 'admin'
     ? `
           <button class="player-profile-message-action player-profile-ignore-action" type="button" data-player-ignore-action="${ignoreAction}" aria-label="${ignoreLabel} ${escapeHtml(profileUsername)}" title="${ignoreLabel}" aria-pressed="${profile.isIgnored}">
-            <img src="/items/${ignoreIcon}" alt="" aria-hidden="true">
+            ${ignoreIcon}
             <span>${ignoreLabel}</span>
           </button>`
     : '';
   const whitelistAction = profile.isWhitelisted ? 'whitelist_remove' : 'whitelist_add';
   const whitelistLabel = profile.isWhitelisted ? 'Remove from whitelist' : 'Add to whitelist';
+  const whitelistIcon = profile.isWhitelisted
+    ? '<svg class="player-profile-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H21v20H6.5A2.5 2.5 0 0 1 4 19.5z"/><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H21"/><path d="M9 10h6"/></svg>'
+    : '<svg class="player-profile-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H21v20H6.5A2.5 2.5 0 0 1 4 19.5z"/><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H21"/><path d="M12 7v6M9 10h6"/></svg>';
   const whitelistButton = state.currentUser?.role === 'admin'
     ? `
           <button class="player-profile-message-action player-profile-whitelist-action${profile.isWhitelisted ? ' is-remove' : ''}" type="button" data-player-whitelist-action="${whitelistAction}" aria-label="${whitelistLabel} for ${escapeHtml(profileUsername)}" title="${whitelistLabel}" aria-pressed="${profile.isWhitelisted}">
-            <img src="/items/Book.png" alt="" aria-hidden="true">
+            ${whitelistIcon}
             <span>${whitelistLabel}</span>
           </button>`
     : '';
@@ -2893,11 +2898,11 @@ function renderPlayerProfile(profile) {
       </div>
       <div class="player-profile-actions">
         <button class="player-profile-message-action" type="button" data-whisper-player="${escapeHtml(profileUsername)}">
-          <img src="/items/Writable_Book.png" alt="" aria-hidden="true">
+          <svg class="player-profile-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a4 4 0 0 1-4 4H7l-4 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>
           <span>Message</span>
         </button>
         <a class="player-profile-message-action player-profile-namemc-action" href="https://namemc.com/profile/${encodeURIComponent(profileUsername)}" target="_blank" rel="noopener noreferrer">
-          <img src="/logos/namemc_dark.png" alt="" aria-hidden="true">
+          <svg class="player-profile-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
           <span>NameMC</span>
         </a>
         ${whitelistButton}
