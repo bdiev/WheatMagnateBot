@@ -463,14 +463,6 @@ async function changeAccountPassword(event) {
   }
 }
 
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js')
-      .then(registration => registration.update().catch(() => {}))
-      .catch(() => {});
-  });
-}
-
 function formatNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) ? new Intl.NumberFormat('en-US').format(number) : '-';

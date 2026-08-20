@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = '227';
+const CACHE_VERSION = '228';
 const CACHE_NAME = `wheatmagnatebot-v${CACHE_VERSION}`;
 const APP_SHELL = [
   '/',
@@ -9,6 +9,7 @@ const APP_SHELL = [
   '/request.html',
   '/request.css',
   '/request.js',
+  '/pwa-update.js',
   '/page-transitions.js',
   '/styles.css',
   '/theme-init.js',
@@ -58,16 +59,11 @@ self.addEventListener('activate', event => {
           .map(key => caches.delete(key))
       ))
       .then(() => self.clients.claim())
-      .then(() => self.clients.matchAll({ type: 'window', includeUncontrolled: true }))
-      .then(clients => Promise.all(clients.map(client => {
-        // Installed PWAs can remain alive in the background for days. Reload
-        // each same-origin window once when the new worker takes control.
-        const url = new URL(client.url);
-        return url.origin === self.location.origin && typeof client.navigate === 'function'
-          ? client.navigate(client.url)
-          : null;
-      })))
   );
+});
+
+self.addEventListener('message', event => {
+  if (event.data?.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
 self.addEventListener('fetch', event => {

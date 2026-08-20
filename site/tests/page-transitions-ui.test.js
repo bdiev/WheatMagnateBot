@@ -10,8 +10,14 @@ const requestHtmlSource = fs.readFileSync(path.join(publicDirectory, 'request.ht
 const appSource = fs.readFileSync(path.join(publicDirectory, 'app.js'), 'utf8');
 const stylesSource = fs.readFileSync(path.join(publicDirectory, 'styles.css'), 'utf8');
 const transitionsSource = fs.readFileSync(path.join(publicDirectory, 'page-transitions.js'), 'utf8');
+const pwaUpdateSource = fs.readFileSync(path.join(publicDirectory, 'pwa-update.js'), 'utf8');
 const serviceWorkerSource = fs.readFileSync(path.join(publicDirectory, 'sw.js'), 'utf8');
 
+assert.match(indexSource, /pwa-update\.js/, 'the dashboard must load the shared PWA updater');
+assert.match(requestHtmlSource, /pwa-update\.js/, 'the request page must load the shared PWA updater');
+assert.match(pwaUpdateSource, /register\('\/sw\.js', \{ updateViaCache: 'none' \}\)/, 'PWA launches must bypass the HTTP cache when checking the worker');
+assert.match(pwaUpdateSource, /controllerchange[\s\S]*hadController[\s\S]*window\.location\.reload\(\)/, 'an activated update must reload an existing PWA exactly once');
+assert.match(pwaUpdateSource, /visibilitychange[\s\S]*visibilityState === 'visible'[\s\S]*checkForUpdate\(\)/, 'a resumed PWA must check for updates');
 assert.match(indexSource, /page-transitions\.js\?v=1/, 'the dashboard must load shared page transitions');
 assert.match(requestHtmlSource, /styles\.css\?v=223/, 'the request page must load the current shared transition styles');
 assert.match(requestHtmlSource, /page-transitions\.js\?v=1/, 'the request page must load shared page transitions');
@@ -24,6 +30,8 @@ assert.match(transitionsSource, /url\.pathname\.startsWith\('\/api\/'\)/, 'authe
 assert.match(transitionsSource, /sameDocument && url\.hash/, 'same-page anchor links must not trigger page transitions');
 assert.match(transitionsSource, /prefers-reduced-motion: reduce/, 'page transitions must respect reduced-motion preferences');
 assert.match(serviceWorkerSource, /'\/page-transitions\.js'/, 'the shared transition module must be available in the offline app shell');
+assert.match(serviceWorkerSource, /'\/pwa-update\.js'/, 'the shared PWA updater must be available in the offline app shell');
+assert.match(serviceWorkerSource, /event\.data\?\.type === 'SKIP_WAITING'/, 'a waiting worker must support immediate activation');
 assert.match(indexSource, /class="dashboard-brand"/, 'the dashboard identity must expose a stable animation target');
 assert.match(appSource, /function scheduleDashboardBrandVisibility\(\)[\s\S]*requestAnimationFrame\(updateDashboardBrandVisibility\)/, 'dashboard identity scroll work must be coalesced into animation frames');
 assert.match(appSource, /delta > 2[\s\S]*classList\.add\('dashboard-brand-hidden'\)[\s\S]*delta < -2[\s\S]*classList\.remove\('dashboard-brand-hidden'\)/, 'dashboard identity must hide while scrolling down and return while approaching the top');
