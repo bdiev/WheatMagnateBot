@@ -3960,6 +3960,25 @@ body.search-focus-active #logoutButton {
   --player-accent-contrast: var(--player-accent-dark-contrast);
 }
 
+.player-profile-card.profile-loading {
+  --panel: #e5e7e6;
+  --panel-soft: #dcdedd;
+  --muted: #767c79;
+  --line: #c5cac8;
+  --accent: #737a77;
+  --accent-strong: #555c59;
+  border-color: var(--line);
+}
+
+:root[data-theme="dark"] .player-profile-card.profile-loading {
+  --panel: #191b1e;
+  --panel-soft: #202326;
+  --muted: #92999f;
+  --line: #30353a;
+  --accent: #879097;
+  --accent-strong: #b8bec4;
+}
+
 .player-profile-close {
   position: absolute;
   top: 12px;

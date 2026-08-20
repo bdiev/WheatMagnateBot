@@ -659,6 +659,11 @@ function setPlayerProfileAccent(theme = null) {
   }
 }
 
+function setPlayerProfileLoading(isLoading) {
+  $('#playerProfileOverlay')?.querySelector('.player-profile-card')
+    ?.classList.toggle('profile-loading', Boolean(isLoading));
+}
+
 function applyPlayerProfileAccent(profile) {
   const accentApi = globalThis.PlayerAccent;
   const key = playerProfileAccentKey(profile);
@@ -3090,6 +3095,7 @@ function replacePlayerProfileContent(profile, { animate = false } = {}) {
   if (!content) return;
   clearTimeout(state.playerProfileRevealTimer);
   state.playerProfileRevealTimer = null;
+  setPlayerProfileLoading(false);
   content.classList.remove('is-loading', 'profile-data-enter');
   content.innerHTML = renderPlayerProfile(profile);
   applyPlayerProfileAccent(profile);
@@ -3113,6 +3119,7 @@ async function loadPlayerProfile(username, { showLoading = false } = {}) {
   state.playerProfileUsername = username;
   if (showLoading) {
     stopPlayerProfileSessionClock();
+    setPlayerProfileLoading(true);
     content.classList.remove('profile-data-enter');
     content.classList.add('is-loading');
     content.innerHTML = renderPlayerProfileSkeleton();
@@ -3139,6 +3146,7 @@ async function loadPlayerProfile(username, { showLoading = false } = {}) {
     }
   } catch (err) {
     stopPlayerProfileSessionClock();
+    setPlayerProfileLoading(false);
     content.classList.remove('is-loading', 'profile-data-enter');
     content.innerHTML = `<div class="empty">Could not load player profile: ${escapeHtml(err.message)}</div>`;
   }
@@ -3157,6 +3165,7 @@ function closePlayerProfile() {
   const overlay = $('#playerProfileOverlay');
   if (!overlay) return;
   overlay.hidden = true;
+  setPlayerProfileLoading(false);
   stopPlayerProfileSessionClock();
   clearTimeout(state.playerProfileRevealTimer);
   state.playerProfileRevealTimer = null;
