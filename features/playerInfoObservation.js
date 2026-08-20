@@ -79,37 +79,62 @@ function parseJoinDateResponse(message) {
   return { targetUsername: numeric[1], observedValue: observedDate };
 }
 
-function parseRelativeDurationMs(value) {
+function parseRelativeDuration(value) {
   const input = String(value || '').trim();
   if (!input) return null;
   const unitMilliseconds = {
+    week: 604_800_000,
     day: 86_400_000,
-    days: 86_400_000,
     hour: 3_600_000,
-    hours: 3_600_000,
     minute: 60_000,
-    minutes: 60_000,
-    second: 1_000,
-    seconds: 1_000
+    second: 1_000
   };
-  const tokenPattern = /(\d+)\s+(days?|hours?|minutes?|seconds?)/gi;
+  const tokenPattern = /(\d+)\s+(years?|months?|weeks?|days?|hours?|minutes?|seconds?)/gi;
   const seenUnits = new Set();
+  let calendarMonths = 0;
   let totalMilliseconds = 0;
   let tokenCount = 0;
   for (const match of input.matchAll(tokenPattern)) {
     const unit = match[2].toLowerCase().replace(/s$/, '');
     if (seenUnits.has(unit)) return null;
     seenUnits.add(unit);
-    totalMilliseconds += Number(match[1]) * unitMilliseconds[match[2].toLowerCase()];
+    const amount = Number(match[1]);
+    if (!Number.isSafeInteger(amount)) return null;
+    if (unit === 'year') calendarMonths += amount * 12;
+    else if (unit === 'month') calendarMonths += amount;
+    else totalMilliseconds += amount * unitMilliseconds[unit];
     tokenCount += 1;
   }
   const remainder = input
     .replace(tokenPattern, '')
     .replace(/\band\b/gi, '')
     .replace(/[\s,]+/g, '');
-  return tokenCount > 0 && !remainder && Number.isSafeInteger(totalMilliseconds)
-    ? totalMilliseconds
+  return tokenCount > 0
+    && !remainder
+    && Number.isSafeInteger(calendarMonths)
+    && Number.isSafeInteger(totalMilliseconds)
+    ? { calendarMonths, totalMilliseconds }
     : null;
+}
+
+function parseRelativeDurationMs(value) {
+  const duration = parseRelativeDuration(value);
+  return duration && duration.calendarMonths === 0 ? duration.totalMilliseconds : null;
+}
+
+function subtractCalendarMonthsUtc(date, months) {
+  const result = new Date(date);
+  if (!months) return result;
+  const originalDay = result.getUTCDate();
+  result.setUTCDate(1);
+  result.setUTCMonth(result.getUTCMonth() - months);
+  const daysInTargetMonth = new Date(Date.UTC(
+    result.getUTCFullYear(),
+    result.getUTCMonth() + 1,
+    0
+  )).getUTCDate();
+  result.setUTCDate(Math.min(originalDay, daysInTargetMonth));
+  return result;
 }
 
 function parseLastSeenResponse(message, now = new Date()) {
@@ -118,10 +143,11 @@ function parseLastSeenResponse(message, now = new Date()) {
     /^(?:I saw\s+([A-Za-z0-9_]{1,32})\s+|([A-Za-z0-9_]{1,32}):\s+)([\s\S]+?)\s+ago\.?$/i
   );
   if (!match) return null;
-  const elapsedMilliseconds = parseRelativeDurationMs(match[3]);
-  const observedAt = new Date(now);
-  if (elapsedMilliseconds == null || !Number.isFinite(observedAt.getTime())) return null;
-  observedAt.setTime(observedAt.getTime() - elapsedMilliseconds);
+  const duration = parseRelativeDuration(match[3]);
+  let observedAt = new Date(now);
+  if (!duration || !Number.isFinite(observedAt.getTime())) return null;
+  observedAt = subtractCalendarMonthsUtc(observedAt, duration.calendarMonths);
+  observedAt.setTime(observedAt.getTime() - duration.totalMilliseconds);
   return { targetUsername: match[1] || match[2], observedValue: observedAt };
 }
 

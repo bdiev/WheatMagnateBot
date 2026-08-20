@@ -106,6 +106,22 @@ function testActualResponseFormats() {
     ),
     { targetUsername: 'bdiev_', observedValue: new Date('2026-08-19T10:00:00.000Z') }
   );
+  assert.deepEqual(
+    parseLastSeenResponse(
+      'I saw FitMC 60 months, 15 days, 12 hours, 26 minutes, 57 seconds ago',
+      new Date('2026-08-20T12:00:00.000Z')
+    ),
+    { targetUsername: 'FitMC', observedValue: new Date('2021-08-04T23:33:03.000Z') },
+    'month-based LolRiTTeRBot responses must use calendar-month subtraction'
+  );
+  assert.deepEqual(
+    parseLastSeenResponse(
+      'I saw LeapPlayer 1 year ago',
+      new Date('2024-02-29T12:00:00.000Z')
+    ),
+    { targetUsername: 'LeapPlayer', observedValue: new Date('2023-02-28T12:00:00.000Z') },
+    'calendar subtraction must clamp leap-day observations to the target month'
+  );
   assert.equal(parseLastSeenResponse('I have never seen bdiev_.'), null);
 }
 
