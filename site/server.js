@@ -133,13 +133,24 @@ function resolveObsidianDebugLogPath({ accountId, createdAt } = {}) {
     throw Object.assign(new Error('Invalid system log date.'), { statusCode: 400 });
   }
   const dateKey = occurredAt.toISOString().slice(0, 10);
-  const filePath = safeAccountId === DEFAULT_MINECRAFT_ACCOUNT_ID
-    ? path.resolve(`obsidian_farm_debug-${dateKey}.log`)
-    : path.resolve('data', 'bots', safeAccountId, `obsidian-farm-debug-${dateKey}.log`);
+  const accountScopedFilePath = path.resolve(
+    'data',
+    'bots',
+    safeAccountId,
+    `obsidian-farm-debug-${dateKey}.log`
+  );
+  const candidatePaths = [accountScopedFilePath];
+  if (safeAccountId === DEFAULT_MINECRAFT_ACCOUNT_ID) {
+    // The legacy primary runtime wrote logs in the project root. Keep that
+    // location as a fallback while preferring the account-scoped location
+    // used by the current multi-account runtime.
+    candidatePaths.push(path.resolve(`obsidian_farm_debug-${dateKey}.log`));
+  }
   return {
     accountId: safeAccountId,
     dateKey,
-    filePath,
+    filePath: candidatePaths[0],
+    candidatePaths,
     filename: `obsidian-farm-debug-${dateKey}.log`
   };
 }
@@ -164,17 +175,21 @@ async function sendObsidianDebugLogForSystemEntry(currentUser, res, rawId) {
     accountId: entry.account_id,
     createdAt: entry.created_at
   });
-  let stat;
-  try {
-    stat = await fs.promises.stat(debugLog.filePath);
-  } catch (error) {
-    if (error.code === 'ENOENT') {
-      throw Object.assign(new Error(`Obsidian Farm diagnostics for ${debugLog.dateKey} are no longer available.`), { statusCode: 404 });
+  let selectedFilePath = null;
+  let stat = null;
+  for (const candidatePath of debugLog.candidatePaths) {
+    try {
+      const candidateStat = await fs.promises.stat(candidatePath);
+      if (!candidateStat.isFile()) continue;
+      selectedFilePath = candidatePath;
+      stat = candidateStat;
+      break;
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
     }
-    throw error;
   }
-  if (!stat.isFile()) {
-    throw Object.assign(new Error('Obsidian Farm diagnostics are unavailable.'), { statusCode: 404 });
+  if (!selectedFilePath || !stat) {
+    throw Object.assign(new Error(`Obsidian Farm diagnostics for ${debugLog.dateKey} are no longer available.`), { statusCode: 404 });
   }
 
   res.writeHead(200, {
@@ -184,7 +199,7 @@ async function sendObsidianDebugLogForSystemEntry(currentUser, res, rawId) {
     'Cache-Control': 'private, no-store',
     'X-Content-Type-Options': 'nosniff'
   });
-  const stream = fs.createReadStream(debugLog.filePath);
+  const stream = fs.createReadStream(selectedFilePath);
   stream.on('error', () => res.destroy());
   stream.pipe(res);
 }
