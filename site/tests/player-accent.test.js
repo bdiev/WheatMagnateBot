@@ -33,9 +33,10 @@ const serviceWorkerSource = fs.readFileSync(path.join(__dirname, '..', 'public',
 assert.match(appSource, /function applyPlayerProfileAccent\(profile\)[\s\S]*accentFromImage\(image, key\)[\s\S]*setPlayerProfileAccent\(theme\)/);
 assert.match(stylesSource, /\.player-profile-card\.has-player-accent[\s\S]*--accent:\s*var\(--player-accent-light\)/);
 assert.match(stylesSource, /\.player-profile-actions > \.player-profile-message-action:first-child[\s\S]*background:\s*var\(--accent\)/);
-assert.ok(indexSource.indexOf('/player-accent.js?v=1') < indexSource.indexOf('/app.js?v=232'), 'accent extraction must load before the app');
+assert.ok(indexSource.indexOf('/player-accent.js?v=1') < indexSource.indexOf('/app.js?v=233'), 'accent extraction must load before the app');
 assert.match(serviceWorkerSource, /'\/player-accent\.js'/, 'accent extraction must be available in the offline app shell');
 assert.match(appSource, /setPlayerProfileLoading\(true\)[\s\S]*renderPlayerProfileSkeleton\(\)/, 'the profile card must enter its neutral loading theme before rendering the skeleton');
 assert.match(stylesSource, /\.player-profile-card\.profile-loading\s*\{[^}]*--panel:\s*#e5e7e6;[^}]*--accent:\s*#737a77;/s, 'the light loading theme must use neutral gray surfaces and accents');
+assert.match(appSource, /const resolveAccent = \(\) => \{[\s\S]*setPlayerProfileAccent\(theme\);[\s\S]*setPlayerProfileLoading\(false\);[\s\S]*\};/, 'the neutral loading theme must remain until the avatar accent is ready');
 
 console.log('Player accent tests passed.');

@@ -668,10 +668,16 @@ function applyPlayerProfileAccent(profile) {
   const accentApi = globalThis.PlayerAccent;
   const key = playerProfileAccentKey(profile);
   const image = $('#playerProfileContent')?.querySelector('.player-profile-avatar');
-  if (!accentApi || !key || !image) return;
+  if (!accentApi || !key || !image) {
+    setPlayerProfileLoading(false);
+    return;
+  }
 
   const cachedTheme = state.playerProfileAccentCache.get(key);
-  if (cachedTheme) setPlayerProfileAccent(cachedTheme);
+  if (cachedTheme) {
+    setPlayerProfileAccent(cachedTheme);
+    setPlayerProfileLoading(false);
+  }
 
   const resolveAccent = () => {
     if (playerProfileAccentKey(state.playerProfileLastPayload) !== key) return;
@@ -683,7 +689,10 @@ function applyPlayerProfileAccent(profile) {
     }
     const theme = accentApi.createPlayerAccentTheme(accent);
     state.playerProfileAccentCache.set(key, theme);
-    if (playerProfileAccentKey(state.playerProfileLastPayload) === key) setPlayerProfileAccent(theme);
+    if (playerProfileAccentKey(state.playerProfileLastPayload) === key) {
+      setPlayerProfileAccent(theme);
+      setPlayerProfileLoading(false);
+    }
   };
 
   if (image.complete && image.naturalWidth > 0) resolveAccent();
@@ -3095,7 +3104,6 @@ function replacePlayerProfileContent(profile, { animate = false } = {}) {
   if (!content) return;
   clearTimeout(state.playerProfileRevealTimer);
   state.playerProfileRevealTimer = null;
-  setPlayerProfileLoading(false);
   content.classList.remove('is-loading', 'profile-data-enter');
   content.innerHTML = renderPlayerProfile(profile);
   applyPlayerProfileAccent(profile);
