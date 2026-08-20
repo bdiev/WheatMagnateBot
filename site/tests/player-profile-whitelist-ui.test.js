@@ -6,6 +6,7 @@ const path = require('node:path');
 
 const appSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
 const stylesSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'styles.css'), 'utf8');
+const indexSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
 
 assert.match(
   appSource,
@@ -81,6 +82,21 @@ assert.match(
   stylesSource,
   /\.player-profile-action-icon\s*\{[^}]*stroke:\s*currentColor;[^}]*stroke-width:\s*2;[^}]*stroke-linecap:\s*round;/s,
   'profile action icons must use the same thin outline treatment as the selected mockup'
+);
+assert.match(
+  stylesSource,
+  /\.player-profile-whitelist-action\.is-remove\s*\{[^}]*color:\s*var\(--muted\);[^}]*background:\s*transparent;/s,
+  'the remove-from-whitelist state must retain the neutral ghost-button color'
+);
+assert.match(
+  indexSource,
+  /id="playerProfileClose"[\s\S]*player-profile-close-icon[\s\S]*M18 6 6 18M6 6l12 12/,
+  'the player profile close control must use the selected outline X icon'
+);
+assert.match(
+  stylesSource,
+  /\.player-profile-close\s*\{[^}]*border:\s*1px solid transparent;[^}]*background:\s*transparent;/s,
+  'the player profile close control must use the minimal ghost treatment'
 );
 
 console.log('Player profile whitelist UI tests passed.');

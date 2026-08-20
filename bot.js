@@ -6,6 +6,11 @@ const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBui
 const { pathfinder } = require('mineflayer-pathfinder');
 const { createDiscordClient, saveStatusMessageId, loadStatusMessageId } = require('./discord');
 const { summarizeAggregateObsidianRows } = require('./discord/aggregate-obsidian-status');
+const {
+  SERVER_STATUS_HIDDEN_TAG_KEYS,
+  createServerStatusHiddenIndex,
+  isServerStatusIdentityHidden
+} = require('./discord/server-status-visibility');
 const { DiscordChatForwardQueue, positiveInteger } = require('./discord/chat-forward-queue');
 const { formatDiscordBridgeMessage } = require('./discord/chat-message-format');
 const { preparePlayerHeadEmojiImage } = require('./discord/player-head-image');
@@ -997,6 +1002,10 @@ async function ensureDMDeleteButton(message) {
 
 // Database connection
 let pool = createDatabasePool();
+const SERVER_STATUS_HIDDEN_REFRESH_MS = 5_000;
+let serverStatusHiddenIndex = createServerStatusHiddenIndex();
+let serverStatusHiddenRefreshedAt = 0;
+let serverStatusHiddenRefresh = null;
 let authCacheStore = new AuthCacheStore({ pool });
 let suppressDefaultAuthCachePersist = false;
 logDatabaseStatus(pool);
@@ -1417,6 +1426,7 @@ async function ensureStatusMessage() {
     if (!statusMessage) {
       await refreshWheatMagnatePlaytimeDisplay();
       await refreshAggregateObsidianStatus({ force: true });
+      await refreshServerStatusHiddenPlayers({ force: true });
       statusMessage = await channel.send({
         embeds: [{
           title: getServerStatusTitle(),
@@ -7299,6 +7309,64 @@ const canonicalPlayerNames = new Map([
   ['bdiev', 'bdiev_']
 ]);
 
+async function refreshServerStatusHiddenPlayers({ force = false } = {}) {
+  if (!pool) return serverStatusHiddenIndex;
+  if (!force && Date.now() - serverStatusHiddenRefreshedAt < SERVER_STATUS_HIDDEN_REFRESH_MS) {
+    return serverStatusHiddenIndex;
+  }
+  if (serverStatusHiddenRefresh) return serverStatusHiddenRefresh;
+
+  serverStatusHiddenRefreshedAt = Date.now();
+  serverStatusHiddenRefresh = pool.query(`
+    SELECT
+      tagged_player.username,
+      tagged_player.player_uuid::text AS player_uuid,
+      tagged_player.admin_tags,
+      COALESCE((
+        SELECT ARRAY_AGG(history.username ORDER BY history.last_seen DESC)
+        FROM player_name_history history
+        WHERE history.player_uuid = tagged_player.player_uuid
+      ), '{}'::text[]) AS aliases
+    FROM player_activity tagged_player
+    WHERE EXISTS (
+      SELECT 1
+      FROM UNNEST(COALESCE(tagged_player.admin_tags, '{}'::text[])) AS admin_tag(value)
+      WHERE LOWER(TRIM(admin_tag.value)) = ANY($1::text[])
+    )
+  `, [SERVER_STATUS_HIDDEN_TAG_KEYS]).then(result => {
+    serverStatusHiddenIndex = createServerStatusHiddenIndex(result.rows);
+    return serverStatusHiddenIndex;
+  }).catch(error => {
+    console.error('[Server Status] Failed to refresh hidden player tags:', error.message);
+    return serverStatusHiddenIndex;
+  }).finally(() => {
+    serverStatusHiddenRefresh = null;
+  });
+
+  return serverStatusHiddenRefresh;
+}
+
+function isServerStatusPlayerHidden(username) {
+  const normalizedUsername = String(username || '').trim().toLowerCase();
+  const onlinePlayer = Object.values(bot?.players || {}).find(player =>
+    String(player?.username || '').trim().toLowerCase() === normalizedUsername
+  );
+  return isServerStatusIdentityHidden(serverStatusHiddenIndex, {
+    username,
+    uuid: onlinePlayer?.uuid
+  });
+}
+
+function getVisibleServerStatusOnlinePlayers() {
+  return Object.values(bot?.players || {})
+    .filter(player => player?.username && !isServerStatusPlayerHidden(player.username))
+    .map(player => player.username);
+}
+
+function getVisibleServerStatusNearbyPlayers() {
+  return getNearbyPlayers().filter(player => !isServerStatusPlayerHidden(player.username));
+}
+
 function getCanonicalWhitelistUsername(username) {
   const normalized = String(username || '').toLowerCase().replace(/_+$/, '');
   if (!normalized) return null;
@@ -7569,12 +7637,12 @@ function getStatusDescription() {
   }
 
   const playerCount = Object.keys(bot.players || {}).length;
-  const onlinePlayers = Object.values(bot.players || {}).map(p => p.username);
+  const onlinePlayers = getVisibleServerStatusOnlinePlayers();
   const whitelistOnline = [...new Set(onlinePlayers
     .filter(username => username.toLowerCase() !== bot.username.toLowerCase())
     .map(getCanonicalWhitelistUsername)
     .filter(Boolean))];
-  const nearbyPlayers = getNearbyPlayers();
+  const nearbyPlayers = getVisibleServerStatusNearbyPlayers();
   const avgTps = getCurrentTpsDisplay();
 
   const nearbyNames = nearbyPlayers
@@ -7734,12 +7802,12 @@ function buildAdminServerStatusValue() {
   }
 
   const playerCount = Object.keys(bot.players || {}).length;
-  const onlinePlayers = Object.values(bot.players || {}).map(p => p.username);
+  const onlinePlayers = getVisibleServerStatusOnlinePlayers();
   const whitelistOnline = [...new Set(onlinePlayers
     .filter(username => username.toLowerCase() !== bot.username.toLowerCase())
     .map(getCanonicalWhitelistUsername)
     .filter(Boolean))];
-  const nearbyPlayers = getNearbyPlayers();
+  const nearbyPlayers = getVisibleServerStatusNearbyPlayers();
   const nearbyNameEntries = nearbyPlayers
     .map(player => getCanonicalWhitelistUsername(player.username) || player.username)
     .map(username => formatPlayerHeadName(username));
@@ -8083,12 +8151,12 @@ function getAdminPanelStatusSnapshot() {
   }
 
   const playerCount = Object.keys(bot.players || {}).length;
-  const onlinePlayers = Object.values(bot.players || {}).map(p => p.username);
+  const onlinePlayers = getVisibleServerStatusOnlinePlayers();
   const whitelistOnline = [...new Set(onlinePlayers
     .filter(username => username.toLowerCase() !== bot.username.toLowerCase())
     .map(getCanonicalWhitelistUsername)
     .filter(Boolean))];
-  const nearbyPlayers = getNearbyPlayers();
+  const nearbyPlayers = getVisibleServerStatusNearbyPlayers();
   const nearbyNameEntries = nearbyPlayers
     .map(player => getCanonicalWhitelistUsername(player.username) || player.username)
     .map(username => formatPlayerHeadName(username));
@@ -8234,6 +8302,7 @@ async function startBotStatusSnapshotWriter() {
 
 async function buildAdminPanelEmbed() {
   await refreshWheatMagnatePlaytimeDisplay();
+  await refreshServerStatusHiddenPlayers();
   const [dailyTps, nearbySightings] = await Promise.all([
     getDailyTpsAverages(7),
     getRecentNearbyPlayerSightings(5)
@@ -8439,6 +8508,7 @@ async function updateStatusMessage() {
     }
     await refreshWheatMagnatePlaytimeDisplay();
     await refreshAggregateObsidianStatus();
+    await refreshServerStatusHiddenPlayers();
 
     // Allow status updates even if bot is not connected to show offline state
     const description = `${getStatusDescription()}\n\n${getLastBotPublicChatStatusLine()}`;

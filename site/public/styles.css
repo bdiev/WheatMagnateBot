@@ -3956,18 +3956,25 @@ body.search-focus-active #logoutButton {
   min-width: var(--button-height);
   height: var(--button-height);
   min-height: var(--button-height);
-  border: 1px solid var(--line);
-  border-radius: var(--button-radius);
+  border: 1px solid transparent;
+  border-radius: 10px;
   padding: 0;
   color: var(--muted);
-  background: var(--panel-soft);
-  font-size: 22px;
-  line-height: 1;
+  background: transparent;
 }
 
 .player-profile-close:hover {
   color: var(--text);
-  background: var(--panel);
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+
+.player-profile-close-icon {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
 }
 
 .player-profile-head {
@@ -4139,15 +4146,15 @@ body.search-focus-active #logoutButton {
 
 .player-profile-whitelist-action.is-remove {
   border-color: transparent;
-  color: var(--annotation-disconnected);
+  color: var(--muted);
   background: transparent;
 }
 
 .player-profile-whitelist-action.is-remove:hover,
 .player-profile-whitelist-action.is-remove:focus-visible {
-  border-color: var(--annotation-disconnected);
-  color: var(--annotation-disconnected);
-  background: color-mix(in srgb, var(--annotation-disconnected) 10%, var(--panel-soft));
+  border-color: transparent;
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 7%, transparent);
 }
 
 .player-profile-actions > .player-profile-message-action:first-child {
