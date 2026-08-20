@@ -1,11 +1,11 @@
 :root {
   color-scheme: light;
-  --bg: #f4f7ef;
-  --panel: #ffffff;
-  --panel-soft: #fbfdf8;
-  --text: #172012;
-  --muted: #65715d;
-  --line: #dbe5d0;
+  --bg: #dde3da;
+  --panel: #edf0e9;
+  --panel-soft: #e5eae1;
+  --text: #192217;
+  --muted: #5d6856;
+  --line: #c7d0c1;
   --accent: #4d7d28;
   --accent-strong: #2f5f16;
   --bot-accent: #7546bd;
@@ -24,7 +24,7 @@
   --annotation-goal-state: #718c24;
   --annotation-goal: #b99218;
   --annotation-default: #7b8797;
-  --shadow: 0 14px 40px rgba(36, 59, 26, 0.09);
+  --shadow: 0 14px 40px rgba(31, 47, 24, 0.12);
   --button-height: 42px;
   --button-min-width: 108px;
   --button-radius: 14px;
