@@ -3961,22 +3961,14 @@ body.search-focus-active #logoutButton {
 }
 
 .player-profile-card.profile-loading {
-  --panel: #e5e7e6;
-  --panel-soft: #dcdedd;
-  --muted: #767c79;
-  --line: #c5cac8;
-  --accent: #737a77;
-  --accent-strong: #555c59;
+  --accent: #c9ccca;
+  --accent-strong: #8b918e;
   border-color: var(--line);
 }
 
 :root[data-theme="dark"] .player-profile-card.profile-loading {
-  --panel: #191b1e;
-  --panel-soft: #202326;
-  --muted: #92999f;
-  --line: #30353a;
-  --accent: #879097;
-  --accent-strong: #b8bec4;
+  --accent: #30353a;
+  --accent-strong: #6f767c;
 }
 
 .player-profile-close {
