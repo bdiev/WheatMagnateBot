@@ -64,8 +64,8 @@ assert.match(
 );
 assert.match(
   stylesSource,
-  /\.player-profile-actions > \.player-profile-message-action:first-child\s*\{[^}]*background:\s*var\(--accent\);/s,
-  'the primary message action must be visually emphasized'
+  /\.player-profile-actions > \.player-profile-message-action:first-child\s*\{[^}]*border-color:\s*var\(--text\);[^}]*color:\s*var\(--panel\);[^}]*background:\s*var\(--text\);/s,
+  'the primary message action must use the minimal inverted treatment'
 );
 
 console.log('Player profile whitelist UI tests passed.');
