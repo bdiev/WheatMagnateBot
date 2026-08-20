@@ -48,6 +48,10 @@ assert.match(stylesSource, /\.player-profile-session-list\.is-scrollable\s*\{[\s
   'only three 62px session rows should be visible before older sessions scroll');
 assert.match(appSource, /data-current-session-start=[\s\S]*?function updatePlayerProfileSessionClock\(\)[\s\S]*?formatDurationMs\(Math\.max\(0, now - startedAt\)\)[\s\S]*?setInterval\(updatePlayerProfileSessionClock, 1_000\)/,
   'the active session duration must update every second while the profile is open');
+assert.match(appSource, /Last Message[\s\S]{0,300}data-profile-relative-time=[\s\S]*?function updatePlayerProfileSessionClock\(\)[\s\S]*?formatRecentDate\(relativeTime\.dataset\.profileRelativeTime\)[\s\S]*?setInterval\(updatePlayerProfileSessionClock, 1_000\)/,
+  'the Last Message relative age must update every second while the profile is open');
+assert.match(appSource, /function startSlowPolling\(\)[\s\S]*?liveDashboardTimer = setInterval\(refreshLiveDashboard, 1_000\)[\s\S]*?function startFallbackPolling\(\)[\s\S]*?liveDashboardTimer = setInterval\(refreshLiveDashboard, 1_000\)/,
+  'live dashboard cards must refresh every second in connected and fallback modes');
 assert.match(appSource, /function formatDate\(value\)[\s\S]*?timeZone:\s*state\.accountTimezone[\s\S]*?Ended \$\{escapeHtml\(formatDate\(session\.endedAt\)\)\}/,
   'completed session timestamps must use the timezone selected in account settings');
 assert.match(appSource, /state\.accountTimezone = String\(payload\.timezone \|\| timezone\)[\s\S]*?replacePlayerProfileContent\(state\.playerProfileLastPayload\)/,

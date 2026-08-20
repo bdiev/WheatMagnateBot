@@ -5328,6 +5328,10 @@ async function pollDatabaseEvents() {
     databaseEventState = next;
 
     if (next.botStatusAt !== previous.botStatusAt) {
+      // Do not let the shared dashboard cache hide a newly persisted one-second
+      // bot snapshot from the next live refresh.
+      liveDashboardCache = null;
+      liveDashboardCacheAt = 0;
       sseHub.publish('bot_status_updated', { observedAt: next.botStatusAt });
       sseHub.publish('admin_control_updated', { source: 'bot_status', updatedAt: next.botStatusAt }, { roles: ['admin'] });
     }

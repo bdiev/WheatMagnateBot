@@ -3011,7 +3011,7 @@ function renderPlayerProfile(profile) {
       </div>
       <div><span>Chat Messages</span><strong>${formatNumber(profile.chat?.totalMessages)}</strong></div>
       <div><span>Messages 24h</span><strong>${formatNumber(profile.chat?.last24h)}</strong></div>
-      <div><span>Last Message</span><strong>${profile.chat?.lastMessageAt ? formatRecentDate(profile.chat.lastMessageAt) : 'None'}</strong></div>
+      <div><span>Last Message</span><strong${profile.chat?.lastMessageAt ? ` data-profile-relative-time="${escapeHtml(profile.chat.lastMessageAt)}"` : ''}>${profile.chat?.lastMessageAt ? formatRecentDate(profile.chat.lastMessageAt) : 'None'}</strong></div>
       <div><span>Nearby</span><strong>${nearby ? `${formatNumber(nearby.distance)} blocks` : 'No sighting'}</strong></div>
       <div><span>Nearby Seen</span><strong>${nearby?.lastSeen ? formatDate(nearby.lastSeen) : '-'}</strong></div>
     </section>
@@ -3080,7 +3080,8 @@ function stopPlayerProfileSessionClock() {
 function updatePlayerProfileSessionClock() {
   const overlay = $('#playerProfileOverlay');
   const clocks = document.querySelectorAll('[data-current-session-start]');
-  if (overlay?.hidden || !clocks.length) {
+  const relativeTimes = document.querySelectorAll('[data-profile-relative-time]');
+  if (overlay?.hidden || (!clocks.length && !relativeTimes.length)) {
     stopPlayerProfileSessionClock();
     return;
   }
@@ -3089,12 +3090,15 @@ function updatePlayerProfileSessionClock() {
     const startedAt = new Date(clock.dataset.currentSessionStart).getTime();
     if (Number.isFinite(startedAt)) clock.textContent = formatDurationMs(Math.max(0, now - startedAt));
   }
+  for (const relativeTime of relativeTimes) {
+    relativeTime.textContent = formatRecentDate(relativeTime.dataset.profileRelativeTime);
+  }
 }
 
 function startPlayerProfileSessionClock() {
   stopPlayerProfileSessionClock();
   updatePlayerProfileSessionClock();
-  if (document.querySelector('[data-current-session-start]')) {
+  if (document.querySelector('[data-current-session-start], [data-profile-relative-time]')) {
     state.playerProfileSessionTimer = setInterval(updatePlayerProfileSessionClock, 1_000);
   }
 }
@@ -7765,7 +7769,7 @@ function startSlowPolling() {
   state.pollingMode = 'slow';
   state.timer = setInterval(loadAll, 60_000);
   state.liveChatTimer = setInterval(checkChatVersion, 750);
-  state.liveDashboardTimer = setInterval(refreshLiveDashboard, 5_000);
+  state.liveDashboardTimer = setInterval(refreshLiveDashboard, 1_000);
   refreshLiveDashboard();
 }
 
@@ -7775,7 +7779,7 @@ function startFallbackPolling() {
   state.pollingMode = 'fallback';
   state.timer = setInterval(loadAll, 15_000);
   state.liveChatTimer = setInterval(loadLiveChats, 2_000);
-  state.liveDashboardTimer = setInterval(refreshLiveDashboard, 3_000);
+  state.liveDashboardTimer = setInterval(refreshLiveDashboard, 1_000);
   refreshLiveDashboard();
 }
 
