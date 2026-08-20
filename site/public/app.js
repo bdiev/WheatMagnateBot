@@ -1340,7 +1340,19 @@ function setMobileAccountSwitcherOpen(open) {
   if (backdrop) backdrop.hidden = !open;
 }
 
-async function postJson(path, body = {}) {
+async function refreshCsrfToken() {
+  const response = await fetch('/api/auth/me', {
+    cache: 'no-store',
+    credentials: 'same-origin'
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload.authenticated || !payload.csrfToken) {
+    throw new Error(payload.error || 'Your session has expired. Please sign in again.');
+  }
+  state.csrfToken = payload.csrfToken;
+}
+
+async function postJson(path, body = {}, retryInvalidCsrf = true) {
   const response = await fetch(path, {
     method: 'POST',
     cache: 'no-store',
@@ -1349,6 +1361,10 @@ async function postJson(path, body = {}) {
     body: JSON.stringify(body)
   });
   const payload = await response.json().catch(() => ({}));
+  if (retryInvalidCsrf && response.status === 403 && payload.error === 'Invalid CSRF token.') {
+    await refreshCsrfToken();
+    return postJson(path, body, false);
+  }
   if (!response.ok) {
     throw new Error(payload.error || `HTTP ${response.status}`);
   }

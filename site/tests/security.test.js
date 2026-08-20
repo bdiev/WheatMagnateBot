@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const path = require('node:path');
 const { RateLimiter, configuredOrigins, requestIsHttps, resolveStaticPath, securityHeaders, validateOrigin, verifyCsrfToken } = require('../security');
-const { assertAdminUser, changeSitePassword, hashPassword, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, registrationDefaults, server, validatePasswordChange, verifyPassword } = require('../server');
+const { assertAdminUser, changeSitePassword, csrfTokenForSessionHash, hashPassword, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, registrationDefaults, server, validatePasswordChange, verifyPassword } = require('../server');
 
 function request(method, headers = {}, encrypted = false) {
   return { method, headers, socket: { encrypted, remoteAddress: '127.0.0.1' } };
@@ -144,6 +144,19 @@ function testHeadersAndCsrfContract() {
   assert.equal(verifyCsrfToken(csrf, stored), true);
 }
 
+function testCsrfTokenIsStablePerSession() {
+  const firstSession = 'a'.repeat(64);
+  const secondSession = 'b'.repeat(64);
+  const firstToken = csrfTokenForSessionHash(firstSession);
+  assert.equal(csrfTokenForSessionHash(firstSession), firstToken,
+    'opening or refreshing another tab must not rotate the session CSRF token');
+  assert.notEqual(csrfTokenForSessionHash(secondSession), firstToken,
+    'different sessions must receive different CSRF tokens');
+  const stored = require('node:crypto').createHash('sha256').update(firstToken).digest('hex');
+  assert.equal(verifyCsrfToken(firstToken, stored), true,
+    'the stable session token must keep the existing hashed verification contract');
+}
+
 function httpRequest(port, requestPath, { method = 'GET', headers = {}, body = null } = {}) {
   return new Promise((resolve, reject) => {
     const req = http.request({ port, path: requestPath, method, headers: { Host: 'localhost', ...headers } }, res => {
@@ -187,6 +200,7 @@ async function testHttpBoundary() {
   testPasswordChangeValidation();
   await testPasswordChangeTransaction();
   testHeadersAndCsrfContract();
+  testCsrfTokenIsStablePerSession();
   await testHttpBoundary();
   console.log('Security hardening tests passed.');
 })().catch(err => {

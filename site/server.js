@@ -270,6 +270,14 @@ function hashToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
 
+function csrfTokenForSessionHash(sessionHash) {
+  if (!sessionHash) return null;
+  return crypto.createHash('sha256')
+    .update('wheatmagnate-csrf:')
+    .update(String(sessionHash))
+    .digest('base64url');
+}
+
 function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   const hash = crypto.scryptSync(password, salt, 64).toString('hex');
   return `scrypt:${salt}:${hash}`;
@@ -3720,7 +3728,8 @@ async function touchSiteSessionActivity(sessionHash, userId, database = pool) {
 
 async function createSession(req, res, userId) {
   const token = crypto.randomBytes(32).toString('hex');
-  const csrfToken = crypto.randomBytes(32).toString('base64url');
+  const sessionHash = hashToken(token);
+  const csrfToken = csrfTokenForSessionHash(sessionHash);
   const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_SECONDS * 1000);
   await pool.query(
     `WITH created_session AS (
@@ -3732,7 +3741,7 @@ async function createSession(req, res, userId) {
      SET last_seen_at=created_session.last_active_at
      FROM created_session
      WHERE site_user.id=created_session.user_id`,
-    [hashToken(token), userId, hashToken(csrfToken), expiresAt]
+    [sessionHash, userId, hashToken(csrfToken), expiresAt]
   );
   setSessionCookie(req, res, token);
   return csrfToken;
@@ -3819,8 +3828,12 @@ async function handleAuth(req, res, url) {
     const session = await getCurrentSession(req);
     let csrfToken = null;
     if (session) {
-      csrfToken = crypto.randomBytes(32).toString('base64url');
-      await pool.query(`UPDATE site_sessions SET csrf_token_hash=$1 WHERE token_hash=$2`, [hashToken(csrfToken), session.sessionHash]);
+      // Keep the token stable for the lifetime of this session. Rotating it on
+      // every /api/auth/me request makes another tab's token invalid.
+      csrfToken = csrfTokenForSessionHash(session.sessionHash);
+      if (!verifyCsrfToken(csrfToken, session.csrfTokenHash)) {
+        await pool.query(`UPDATE site_sessions SET csrf_token_hash=$1 WHERE token_hash=$2`, [hashToken(csrfToken), session.sessionHash]);
+      }
     }
     const bootstrapAvailable = BOOTSTRAP_TOKEN_CONFIGURED && !await hasAdmin() && !await bootstrapCompleted();
     sendJson(res, 200, { authenticated: Boolean(session), user: session?.user || null, csrfToken, bootstrapAvailable });
@@ -5422,4 +5435,4 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown);
 }
 
-module.exports = { ADMIN_PLAYER_EDITABLE_FIELDS, adminPlayerIdentity, assertAdminUser, buildPlayerGameSessions, changeSitePassword, cleanAccountInput, deleteAdminPlayer, freshStoredRuntimePayload, getAdminPlayers, getAdminUsers, hashPassword, normalizeAdminPlayerPatch, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, parsePlaytimeSeconds, patchAdminPlayer, publicUser, registrationDefaults, requestHandler, resolveObsidianDebugLogPath, server, setAdminPlaytime, startSiteServer, touchSiteSessionActivity, validateCredentials, validatePasswordChange, verifyPassword };
+module.exports = { ADMIN_PLAYER_EDITABLE_FIELDS, adminPlayerIdentity, assertAdminUser, buildPlayerGameSessions, changeSitePassword, cleanAccountInput, csrfTokenForSessionHash, deleteAdminPlayer, freshStoredRuntimePayload, getAdminPlayers, getAdminUsers, hashPassword, normalizeAdminPlayerPatch, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, parsePlaytimeSeconds, patchAdminPlayer, publicUser, registrationDefaults, requestHandler, resolveObsidianDebugLogPath, server, setAdminPlaytime, startSiteServer, touchSiteSessionActivity, validateCredentials, validatePasswordChange, verifyPassword };
