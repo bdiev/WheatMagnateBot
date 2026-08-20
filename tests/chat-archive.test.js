@@ -201,7 +201,7 @@ assert.match(appSource, /player-profile-message[\s\S]*chat-message-head[\s\S]*ch
   'player profile history must use the same message header as game chat');
 assert.match(
   appSource,
-  /function formatPlayerProfileChatTimestamp\(value\)[\s\S]*year: 'numeric'[\s\S]*timeZone: state\.accountTimezone[\s\S]*formatPlayerProfileChatTimestamp\(message\.createdAt\)/,
+  /function formatFullDateTime\(value\)[\s\S]*year: 'numeric'[\s\S]*timeZone: state\.accountTimezone[\s\S]*formatPlayerProfileChatTimestamp\(message\.createdAt\)/,
   'Recent Chat must show each message date and time in the selected account timezone'
 );
 assert.match(stylesSource, /Profile history mirrors chat rows[\s\S]*player-profile-message:hover,[\s\S]*player-profile-message:focus-visible/,
@@ -213,8 +213,8 @@ assert.match(stylesSource, /\.chat-date-indicator\.visible\s*\{[^}]*opacity:\s*1
 assert.match(stylesSource, /\.chat-panel\.chat-search-open > \.panel-head > div:first-child\s*\{[^}]*opacity:\s*0;/s,
   'the chat heading must fade away while archive search expands');
 assert.match(indexSource, /styles\.css\?v=225/, 'the updated mobile layout must use a fresh stylesheet URL');
-assert.match(indexSource, /app\.js\?v=227/, 'the updated dashboard behavior must use a fresh script URL');
-assert.match(serviceWorkerSource, /CACHE_VERSION = '225'/, 'the app shell cache must be replaced after dashboard behavior changes');
+assert.match(indexSource, /app\.js\?v=229/, 'the updated dashboard behavior must use a fresh script URL');
+assert.match(serviceWorkerSource, /CACHE_VERSION = '227'/, 'the app shell cache must be replaced after dashboard behavior changes');
 assert.match(serviceWorkerSource, /fallbackPath[\s\S]*?'\/request\.html'/, 'resource requests must have their own navigation fallback');
 assert.match(stylesSource, /\.chat-message\s*\{[^}]*flex:\s*0 0 auto;/s,
   'chat cards must retain their natural height inside the scrolling flex list');

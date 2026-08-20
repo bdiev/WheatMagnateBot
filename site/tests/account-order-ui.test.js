@@ -14,8 +14,10 @@ assert.match(appSource, /persistAccountOrder[\s\S]*?\/api\/accounts\/reorder[\s\
   'drag and menu ordering is persisted through the account reorder endpoint');
 assert.match(appSource, /move-left[\s\S]*?move-right[\s\S]*?moveAccountInOrder/,
   'secondary profiles expose accessible left and right ordering controls');
-assert.match(appSource, /function nextUniqueAccountColor[\s\S]*?ACCOUNT_COLOR_PALETTE\.find[\s\S]*?form\.elements\.color\.value = account\?\.color \|\| nextUniqueAccountColor\(\)/,
-  'the Add account form immediately selects an unused account color');
+assert.match(appSource, /function randomUniqueAccountColor[\s\S]*?ACCOUNT_COLOR_PALETTE\.filter[\s\S]*?color !== previous[\s\S]*?Math\.random\(\)[\s\S]*?state\.lastSuggestedAccountColor = color/,
+  'each Add account opening must randomly select an unused color different from the previous suggestion');
+assert.match(appSource, /form\.elements\.color\.value = account\?\.color \|\| randomUniqueAccountColor\(\)/,
+  'editing must preserve the stored color while each new-account form requests a random suggestion');
 assert.match(serverSource, /pickUniqueAccountColor\(registry\.list\(\), input\.color\)/,
   'the server guarantees a unique color when creating an account');
 assert.match(serverSource, /url\.pathname === '\/api\/accounts\/reorder'[\s\S]*?filter\(account => !account\.isDefault\)/,

@@ -33,6 +33,21 @@ assert.match(
   'player metric refresh actions must explicitly authorize one observed update before sending the game command'
 );
 assert.match(
+  appSource,
+  /function registrationProfileValue\(profile\)[\s\S]*playerProfileRegistrationDateMode[\s\S]*formatRegistrationAge[\s\S]*function lastSeenProfileValue\(profile\)[\s\S]*playerProfileLastSeenDateMode[\s\S]*formatRegistrationAge\(profile\.lastSeen\).*ago/,
+  'Registered and Last Seen must show elapsed time first and expose their exact-date modes independently'
+);
+assert.match(
+  appSource,
+  /data-profile-toggle="registration-date"[\s\S]*data-profile-toggle="last-seen-date"[\s\S]*closest\('\[data-profile-toggle\]'\)[\s\S]*playerProfileLastSeenDateMode = !state\.playerProfileLastSeenDateMode/,
+  'Registered and Last Seen values must both be clickable toggles'
+);
+assert.match(
+  appSource,
+  /function formatFullDateTime\(value\)[\s\S]*year: 'numeric'[\s\S]*registrationProfileValue[\s\S]*formatFullDateTime\(profile\.registrationAt\)[\s\S]*lastSeenProfileValue[\s\S]*formatFullDateTime\(profile\.lastSeen\)/,
+  'both exact metric dates must include the year'
+);
+assert.match(
   stylesSource,
   /@media \(max-width: 700px\)[\s\S]*\.player-profile-whitelist-action span\s*\{[^}]*white-space:\s*normal;/,
   'the mobile whitelist action label must wrap inside its button'

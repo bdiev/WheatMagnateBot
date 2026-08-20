@@ -46,7 +46,8 @@ const state = {
   whisperReadStateSynced: false,
   whisperClaimedPlayers: new Set(),
   whisperUnreadCount: 0,
-  playerProfileRegistrationAgeMode: false,
+  playerProfileRegistrationDateMode: false,
+  playerProfileLastSeenDateMode: false,
   playerProfileLastPayload: null,
   playerProfileSessionTimer: null,
   playerProfileRevealTimer: null,
@@ -140,6 +141,7 @@ const state = {
   adminControlToken: null,
   accountsRefreshedAt: 0,
   editingAccountId: null,
+  lastSuggestedAccountColor: null,
   accountDragId: null,
   accountDragConsumedUntil: 0,
   accountReorderPending: false,
@@ -582,7 +584,7 @@ function formatChatTime(value) {
   }).format(date);
 }
 
-function formatPlayerProfileChatTimestamp(value) {
+function formatFullDateTime(value) {
   if (!value) return '-';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '-';
@@ -594,6 +596,10 @@ function formatPlayerProfileChatTimestamp(value) {
     minute: '2-digit',
     timeZone: state.accountTimezone
   }).format(date);
+}
+
+function formatPlayerProfileChatTimestamp(value) {
+  return formatFullDateTime(value);
 }
 
 function formatAgo(value) {
@@ -1082,16 +1088,27 @@ function accountStatusClass(account) {
   return 'offline';
 }
 
-function nextUniqueAccountColor() {
+function randomUniqueAccountColor() {
   const used = new Set(state.accounts.map(account => String(account.color || '').toLowerCase()));
-  const paletteColor = ACCOUNT_COLOR_PALETTE.find(color => !used.has(color));
-  if (paletteColor) return paletteColor;
-  for (let index = 0; index < 0xffffff; index += 1) {
-    const value = (0x4b91e5 + index * 0x9e3779) & 0xffffff;
-    const color = `#${value.toString(16).padStart(6, '0')}`;
-    if (!used.has(color)) return color;
+  const previous = String(state.lastSuggestedAccountColor || '').toLowerCase();
+  const candidates = ACCOUNT_COLOR_PALETTE.filter(color => !used.has(color) && color !== previous);
+  let color = candidates.length
+    ? candidates[Math.floor(Math.random() * candidates.length)]
+    : null;
+
+  for (let attempt = 0; !color && attempt < 128; attempt += 1) {
+    const value = Math.floor(Math.random() * 0x1000000);
+    const candidate = `#${value.toString(16).padStart(6, '0')}`;
+    if (!used.has(candidate) && candidate !== previous) color = candidate;
   }
-  return '#f1c232';
+  for (let index = 0; !color && index < 0xffffff; index += 1) {
+    const value = (0x4b91e5 + index * 0x9e3779) & 0xffffff;
+    const candidate = `#${value.toString(16).padStart(6, '0')}`;
+    if (!used.has(candidate) && candidate !== previous) color = candidate;
+  }
+  color ||= ACCOUNT_COLOR_PALETTE.find(candidate => candidate !== previous) || '#f1c232';
+  state.lastSuggestedAccountColor = color;
+  return color;
 }
 
 function applyAccountTabScope(account) {
@@ -1209,7 +1226,7 @@ function setAccountModalOpen(open, account = null) {
     form.elements.host.value = account?.host || '';
     form.elements.port.value = account?.port || '';
     form.elements.minecraftVersion.value = account?.minecraftVersion || '';
-    form.elements.color.value = account?.color || nextUniqueAccountColor();
+    form.elements.color.value = account?.color || randomUniqueAccountColor();
     form.elements.enabled.checked = account ? Boolean(account.enabled) : true;
     $('#accountModalTitle').textContent = account ? 'Edit account' : 'Add account';
     $('#accountModalSubmit').textContent = account ? 'Save changes' : 'Add account';
@@ -2673,6 +2690,17 @@ function formatRegistrationAge(value) {
   let years = end.getFullYear() - start.getFullYear();
   let months = end.getMonth() - start.getMonth();
   let days = end.getDate() - start.getDate();
+  let hours = end.getHours() - start.getHours();
+  let minutes = end.getMinutes() - start.getMinutes();
+
+  if (minutes < 0) {
+    hours -= 1;
+    minutes += 60;
+  }
+  if (hours < 0) {
+    days -= 1;
+    hours += 24;
+  }
 
   if (days < 0) {
     months -= 1;
@@ -2685,11 +2713,17 @@ function formatRegistrationAge(value) {
     months += 12;
   }
 
-  const parts = [];
-  if (years) parts.push(`${years}y`);
-  if (months || years) parts.push(`${months}m`);
-  parts.push(`${days}d`);
-  return parts.join(' ');
+  const parts = [
+    [years, 'y'],
+    [months, 'm'],
+    [days, 'd'],
+    [hours, 'h'],
+    [minutes, 'm']
+  ]
+    .filter(([amount]) => amount > 0)
+    .slice(0, 3)
+    .map(([amount, suffix]) => `${amount}${suffix}`);
+  return parts.join(' ') || 'Just now';
 }
 
 function formatMilestoneWhen(daysUntil) {
@@ -2705,8 +2739,15 @@ function formatMilestoneYears(years) {
 }
 
 function registrationProfileValue(profile) {
-  const dateText = profile.registrationAt ? formatDate(profile.registrationAt) : (profile.registrationDisplay || 'Unknown');
-  return state.playerProfileRegistrationAgeMode ? formatRegistrationAge(profile.registrationAt) : dateText;
+  const dateText = profile.registrationAt ? formatFullDateTime(profile.registrationAt) : (profile.registrationDisplay || 'Unknown');
+  return state.playerProfileRegistrationDateMode ? dateText : formatRegistrationAge(profile.registrationAt);
+}
+
+function lastSeenProfileValue(profile) {
+  if (!profile.lastSeen) return 'Never';
+  return state.playerProfileLastSeenDateMode
+    ? formatFullDateTime(profile.lastSeen)
+    : `${formatRegistrationAge(profile.lastSeen)} ago`;
 }
 
 function renderPlayerProfileSkeleton() {
@@ -2768,9 +2809,12 @@ function renderPlayerProfile(profile) {
         </div>
       </details>`
     : '';
-  const registrationTitle = state.playerProfileRegistrationAgeMode
-    ? 'Show registration date'
-    : 'Show time since registration';
+  const registrationTitle = state.playerProfileRegistrationDateMode
+    ? 'Show time since registration'
+    : 'Show registration date';
+  const lastSeenTitle = state.playerProfileLastSeenDateMode
+    ? 'Show time since last seen'
+    : 'Show exact last seen date';
   const ignoreAction = profile.isIgnored ? 'unignore_chat' : 'ignore_chat';
   const ignoreLabel = profile.isIgnored ? 'Unignore' : 'Ignore';
   const ignoreIcon = profile.isIgnored ? 'Unmuted.png' : 'Muted.png';
@@ -2869,7 +2913,7 @@ function renderPlayerProfile(profile) {
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0 1 11.5-2.6L20 9M4 15l2.4 2.6A7 7 0 0 0 17.9 15"/></svg>
           </button>
         </header>
-        <button class="player-profile-value-button" type="button" data-profile-toggle="registration-age" title="${registrationTitle}">
+        <button class="player-profile-value-button" type="button" data-profile-toggle="registration-date" title="${registrationTitle}">
           ${escapeHtml(registrationProfileValue(profile))}
         </button>
       </div>
@@ -2881,7 +2925,9 @@ function renderPlayerProfile(profile) {
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0 1 11.5-2.6L20 9M4 15l2.4 2.6A7 7 0 0 0 17.9 15"/></svg>
             </button>`}
         </header>
-        <strong>${profile.lastSeen ? formatRecentDate(profile.lastSeen) : 'Never'}</strong>
+        ${profile.lastSeen
+          ? `<button class="player-profile-value-button" type="button" data-profile-toggle="last-seen-date" title="${lastSeenTitle}">${escapeHtml(lastSeenProfileValue(profile))}</button>`
+          : '<strong>Never</strong>'}
       </div>
       <div><span>Chat Messages</span><strong>${formatNumber(profile.chat?.totalMessages)}</strong></div>
       <div><span>Messages 24h</span><strong>${formatNumber(profile.chat?.last24h)}</strong></div>
@@ -2926,7 +2972,8 @@ function playerProfileSignature(profile) {
     profile.playtime,
     profile.registrationAt,
     profile.registrationDisplay,
-    state.playerProfileRegistrationAgeMode,
+    state.playerProfileRegistrationDateMode,
+    state.playerProfileLastSeenDateMode,
     profile.lastSeen,
     profile.lastOnline,
     profile.gameSessionCount,
@@ -3032,7 +3079,8 @@ async function loadPlayerProfile(username, { showLoading = false } = {}) {
 
 async function openPlayerProfile(username) {
   state.playerProfileSignature = '';
-  state.playerProfileRegistrationAgeMode = false;
+  state.playerProfileRegistrationDateMode = false;
+  state.playerProfileLastSeenDateMode = false;
   state.playerProfileLastPayload = null;
   await loadPlayerProfile(username, { showLoading: true });
 }
@@ -3047,7 +3095,8 @@ function closePlayerProfile() {
   document.body.classList.remove('profile-open');
   state.playerProfileUsername = null;
   state.playerProfileSignature = '';
-  state.playerProfileRegistrationAgeMode = false;
+  state.playerProfileRegistrationDateMode = false;
+  state.playerProfileLastSeenDateMode = false;
   state.playerProfileLastPayload = null;
 }
 
@@ -3155,10 +3204,16 @@ async function handlePlayerProfileClick(event) {
     return;
   }
 
-  const toggle = event.target.closest('[data-profile-toggle="registration-age"]');
+  const toggle = event.target.closest('[data-profile-toggle]');
   if (!toggle) return;
   event.preventDefault();
-  state.playerProfileRegistrationAgeMode = !state.playerProfileRegistrationAgeMode;
+  if (toggle.dataset.profileToggle === 'registration-date') {
+    state.playerProfileRegistrationDateMode = !state.playerProfileRegistrationDateMode;
+  } else if (toggle.dataset.profileToggle === 'last-seen-date') {
+    state.playerProfileLastSeenDateMode = !state.playerProfileLastSeenDateMode;
+  } else {
+    return;
+  }
   state.playerProfileSignature = '';
   if (state.playerProfileLastPayload) {
     replacePlayerProfileContent(state.playerProfileLastPayload);
