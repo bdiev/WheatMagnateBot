@@ -55,7 +55,7 @@ assert.match(
 );
 assert.match(
   stylesSource,
-  /\.player-profile-head\s*\{[^}]*grid-template-columns:\s*72px minmax\(0, 1fr\);[^}]*padding:\s*18px 64px 0 18px;[^}]*background:\s*var\(--panel\);/s,
+  /\.player-profile-head\s*\{[^}]*grid-template-columns:\s*72px minmax\(0, 1fr\);[^}]*padding:\s*18px 64px 0 18px;[^}]*background:\s*[^}]*var\(--panel\);/s,
   'the profile header must use the compact square-avatar composition'
 );
 assert.match(
@@ -65,8 +65,8 @@ assert.match(
 );
 assert.match(
   stylesSource,
-  /\.player-profile-actions > \.player-profile-message-action:first-child\s*\{[^}]*border-color:\s*var\(--text\);[^}]*color:\s*var\(--panel\);[^}]*background:\s*var\(--text\);/s,
-  'the primary message action must use the minimal inverted treatment'
+  /\.player-profile-actions > \.player-profile-message-action:first-child\s*\{[^}]*border-color:\s*var\(--accent\);[^}]*color:\s*var\(--player-accent-contrast, var\(--panel\)\);[^}]*background:\s*var\(--accent\);/s,
+  'the primary message action must use the current player accent with accessible text'
 );
 assert.match(
   appSource,

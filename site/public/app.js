@@ -51,6 +51,7 @@ const state = {
   playerProfileLastPayload: null,
   playerProfileSessionTimer: null,
   playerProfileRevealTimer: null,
+  playerProfileAccentCache: new Map(),
   playtimeLeaderboardScope: 'global',
   playtimeLeaderboards: { global: [], whitelisted: [] },
   whisperSearchPlayers: [],
@@ -633,6 +634,58 @@ function playerHeadUrl(username, size = 32, { uuid = null } = {}) {
   const compactUuid = String(uuid || '').replaceAll('-', '').trim().toLowerCase();
   const uuidQuery = /^[0-9a-f]{32}$/.test(compactUuid) ? `&uuid=${encodeURIComponent(compactUuid)}` : '';
   return `/api/minecraft-avatar?username=${safeUsername}${uuidQuery}&v=2`;
+}
+
+function playerProfileAccentKey(profile) {
+  const uuid = String(profile?.uuid || '').replaceAll('-', '').trim().toLowerCase();
+  return uuid || String(profile?.username || '').trim().toLowerCase();
+}
+
+function setPlayerProfileAccent(theme = null) {
+  const card = $('#playerProfileOverlay')?.querySelector('.player-profile-card');
+  if (!card) return;
+  const propertyNames = [
+    '--player-accent-light',
+    '--player-accent-light-strong',
+    '--player-accent-light-contrast',
+    '--player-accent-dark',
+    '--player-accent-dark-strong',
+    '--player-accent-dark-contrast'
+  ];
+  card.classList.toggle('has-player-accent', Boolean(theme));
+  for (const propertyName of propertyNames) {
+    if (theme?.[propertyName]) card.style.setProperty(propertyName, theme[propertyName]);
+    else card.style.removeProperty(propertyName);
+  }
+}
+
+function applyPlayerProfileAccent(profile) {
+  const accentApi = globalThis.PlayerAccent;
+  const key = playerProfileAccentKey(profile);
+  const image = $('#playerProfileContent')?.querySelector('.player-profile-avatar');
+  if (!accentApi || !key || !image) return;
+
+  const cachedTheme = state.playerProfileAccentCache.get(key);
+  if (cachedTheme) setPlayerProfileAccent(cachedTheme);
+
+  const resolveAccent = () => {
+    if (playerProfileAccentKey(state.playerProfileLastPayload) !== key) return;
+    let accent;
+    try {
+      accent = accentApi.accentFromImage(image, key);
+    } catch {
+      accent = accentApi.pickPlayerAccent([], key);
+    }
+    const theme = accentApi.createPlayerAccentTheme(accent);
+    state.playerProfileAccentCache.set(key, theme);
+    if (playerProfileAccentKey(state.playerProfileLastPayload) === key) setPlayerProfileAccent(theme);
+  };
+
+  if (image.complete && image.naturalWidth > 0) resolveAccent();
+  else {
+    image.addEventListener('load', resolveAccent, { once: true });
+    image.addEventListener('error', resolveAccent, { once: true });
+  }
 }
 
 function playerIdentity(username, size = 28, { status = null, uuid = null } = {}) {
@@ -3039,6 +3092,7 @@ function replacePlayerProfileContent(profile, { animate = false } = {}) {
   state.playerProfileRevealTimer = null;
   content.classList.remove('is-loading', 'profile-data-enter');
   content.innerHTML = renderPlayerProfile(profile);
+  applyPlayerProfileAccent(profile);
   startPlayerProfileSessionClock();
   if (!animate) return;
   void content.offsetWidth;
@@ -3091,6 +3145,7 @@ async function loadPlayerProfile(username, { showLoading = false } = {}) {
 }
 
 async function openPlayerProfile(username) {
+  setPlayerProfileAccent();
   state.playerProfileSignature = '';
   state.playerProfileRegistrationDateMode = false;
   state.playerProfileLastSeenDateMode = false;

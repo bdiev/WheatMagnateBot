@@ -3947,6 +3947,19 @@ body.search-focus-active #logoutButton {
   animation: profileCardIn 240ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+.player-profile-card.has-player-accent {
+  --accent: var(--player-accent-light);
+  --accent-strong: var(--player-accent-light-strong);
+  --player-accent-contrast: var(--player-accent-light-contrast);
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--line));
+}
+
+:root[data-theme="dark"] .player-profile-card.has-player-accent {
+  --accent: var(--player-accent-dark);
+  --accent-strong: var(--player-accent-dark-strong);
+  --player-accent-contrast: var(--player-accent-dark-contrast);
+}
+
 .player-profile-close {
   position: absolute;
   top: 12px;
@@ -3986,7 +3999,9 @@ body.search-focus-active #logoutButton {
   align-items: center;
   padding: 18px 64px 0 18px;
   border-bottom: 1px solid var(--line);
-  background: var(--panel);
+  background:
+    radial-gradient(circle at 8% 0%, color-mix(in srgb, var(--accent) 13%, transparent), transparent 32%),
+    var(--panel);
 }
 
 .player-profile-avatar-wrap {
@@ -4031,10 +4046,12 @@ body.search-focus-active #logoutButton {
   width: 72px;
   height: 72px;
   image-rendering: pixelated;
-  border: 1px solid var(--line);
+  border: 1px solid color-mix(in srgb, var(--accent) 46%, var(--line));
   border-radius: 10px;
   background: var(--panel);
-  box-shadow: 0 12px 30px color-mix(in srgb, #000 18%, transparent);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 13%, transparent),
+    0 12px 30px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 @keyframes player-offline-pulse {
@@ -4158,16 +4175,20 @@ body.search-focus-active #logoutButton {
 }
 
 .player-profile-actions > .player-profile-message-action:first-child {
-  border-color: var(--text);
-  color: var(--panel);
-  background: var(--text);
+  border-color: var(--accent);
+  color: var(--player-accent-contrast, var(--panel));
+  background: var(--accent);
+  box-shadow: 0 5px 16px color-mix(in srgb, var(--accent) 26%, transparent);
 }
 
 .player-profile-actions > .player-profile-message-action:first-child:hover,
 .player-profile-actions > .player-profile-message-action:first-child:focus-visible {
-  border-color: var(--text);
-  color: var(--panel);
-  background: color-mix(in srgb, var(--text) 88%, var(--panel));
+  border-color: color-mix(in srgb, var(--accent) 82%, var(--text));
+  color: var(--player-accent-contrast, var(--panel));
+  background: color-mix(in srgb, var(--accent) 86%, var(--text));
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent),
+    0 7px 20px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 :root[data-theme="dark"] .player-profile-ignore-action:hover,
