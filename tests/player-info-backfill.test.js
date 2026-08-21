@@ -1,6 +1,8 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const {
   buildMissingCommands,
   createPlayerInfoBackfill,
@@ -21,6 +23,15 @@ function testOnlyMissingMetricsBecomeCommands() {
     { metric: 'joinDate', username: 'HasPT', command: '!jd HasPT' },
     { metric: 'lastSeen', username: 'HasPT', command: '!seen HasPT' }
   ]);
+}
+
+function testAutomaticCommandsAreMirroredToPublicChat() {
+  const botSource = fs.readFileSync(path.join(__dirname, '..', 'bot.js'), 'utf8');
+  assert.match(
+    botSource,
+    /sendCommand:\s*command\s*=>\s*\{[\s\S]*?sendMinecraftChat\(command\)[\s\S]*?sendGameChatMessageToDiscord\(bot\.username \|\| 'WheatMagnate', command,[\s\S]*?source:\s*'player-info-backfill'/,
+    'automatic player-info commands must appear in the shared game chat without relying on their suppressed self echo'
+  );
 }
 
 async function testDatabaseQueryUsesAllPlayerSourcesAndUuidIdentity() {
@@ -92,6 +103,7 @@ async function testOfflineRunDoesNotQueryDatabase() {
 
 Promise.resolve()
   .then(testOnlyMissingMetricsBecomeCommands)
+  .then(testAutomaticCommandsAreMirroredToPublicChat)
   .then(testDatabaseQueryUsesAllPlayerSourcesAndUuidIdentity)
   .then(testRunPreparesAndThrottlesCommands)
   .then(testOfflineRunDoesNotQueryDatabase)

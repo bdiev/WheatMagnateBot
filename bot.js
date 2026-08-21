@@ -3308,7 +3308,18 @@ const playerInfoBackfill = createPlayerInfoBackfill({
     }
     return playerInfoObservation.requestLookup(metric, username, 'automatic');
   },
-  sendCommand: command => sendMinecraftChat(command)
+  sendCommand: command => {
+    const sent = sendMinecraftChat(command);
+    if (sent) {
+      sendGameChatMessageToDiscord(bot.username || 'WheatMagnate', command, {
+        allowMentions: false,
+        source: 'player-info-backfill'
+      }).catch(error => {
+        console.error('[PlayerInfo] Failed to mirror automatic command:', error.message);
+      });
+    }
+    return sent;
+  }
 });
 
 async function beginObsidianFarmSession() {
