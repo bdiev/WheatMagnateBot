@@ -176,6 +176,15 @@ function testSiteRefreshSurvivesEchoedCommand() {
   assert.deepEqual(reasons, ['site'], 'an echoed command must not downgrade a site-authorized refresh');
 }
 
+function testAutomaticLookupSurvivesEchoedCommand() {
+  const { tracker, updates, reasons } = createTracker({ preferredOnline: false });
+  assert.equal(tracker.requestLookup('playtime', 'bdiev_', 'automatic'), true);
+  tracker.observe('WheatMagnate', '!pt bdiev_');
+  tracker.observe('moooomoooo', 'bdiev_: 76 days 17 hours 57 minutes. [81/50375]');
+  assert.equal(updates.length, 1);
+  assert.deepEqual(reasons, ['automatic']);
+}
+
 function testLastSeenResponseIsIntercepted() {
   const { tracker, updates } = createTracker({ preferredOnline: true });
   tracker.observe('Requester', '!seen bdiev_');
@@ -218,6 +227,7 @@ testFallbackWhenPreferredDoesNotAnswer();
 testFallbackWhenPreferredIsOffline();
 testFallbackJoinDateAppliesOnlyOnce();
 testSiteRefreshSurvivesEchoedCommand();
+testAutomaticLookupSurvivesEchoedCommand();
 testLastSeenResponseIsIntercepted();
 testLastSeenSiteRequestSurvivesEchoedCommand();
 testInvalidSiteRefreshIsRejected();

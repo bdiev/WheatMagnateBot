@@ -187,7 +187,10 @@ function createPlayerInfoObservation({
     const targetKey = targetUsername.toLowerCase();
     const lookup = lookups[type];
     const previous = lookup.get(targetKey);
-    if (previous?.reason === 'site' && reason !== 'site') return previous;
+    if (previous && (
+      (previous.reason === 'site' && reason !== 'site')
+      || (previous.reason === 'automatic' && reason === 'chat')
+    )) return previous;
     if (previous) deleteLookup(type, targetKey, previous);
 
     const pending = {
@@ -290,12 +293,16 @@ function createPlayerInfoObservation({
   }
 
   function requestSiteRefresh(metric, targetUsername) {
+    return requestLookup(metric, targetUsername, 'site');
+  }
+
+  function requestLookup(metric, targetUsername, reason = 'automatic') {
     const username = normalizeUsername(targetUsername);
     const type = metric === 'playtime'
       ? 'playtime'
       : metric === 'joinDate' ? 'joinDate' : metric === 'lastSeen' ? 'lastSeen' : '';
     if (!username || !type) return false;
-    registerLookup(type, username, 'site');
+    registerLookup(type, username, reason === 'site' ? 'site' : 'automatic');
     return true;
   }
 
@@ -307,7 +314,7 @@ function createPlayerInfoObservation({
     }
   }
 
-  return { observe, requestSiteRefresh, clear };
+  return { observe, requestLookup, requestSiteRefresh, clear };
 }
 
 module.exports = {

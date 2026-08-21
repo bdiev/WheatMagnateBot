@@ -28,6 +28,7 @@ const {
 const { createPlaytimeFeature } = require('./features/playtime');
 const { createPlayerInfoObservation } = require('./features/playerInfoObservation');
 const { createPlayerInfoObservationStore } = require('./features/playerInfoObservationStore');
+const { createPlayerInfoBackfill } = require('./features/playerInfoBackfill');
 const { createWhisperFeature } = require('./features/whisper');
 const { createFollowFeature } = require('./features/follow');
 const { createKillAuraFeature } = require('./features/killAura');
@@ -3293,6 +3294,21 @@ const playerInfoObservation = createPlayerInfoObservation({
       () => reconcileObservedLastSeen(targetUsername, observedDate)
     ).catch(() => {});
   }
+});
+
+const playerInfoBackfill = createPlayerInfoBackfill({
+  pool,
+  intervalMs: process.env.PLAYER_INFO_CHECK_INTERVAL_MS,
+  initialDelayMs: process.env.PLAYER_INFO_CHECK_INITIAL_DELAY_MS,
+  commandDelayMs: process.env.PLAYER_INFO_CHECK_COMMAND_DELAY_MS,
+  isReady: () => Boolean(bot?.entity && typeof bot.chat === 'function'),
+  prepareLookup: async ({ metric, username }) => {
+    if (metric !== 'lastSeen') {
+      await playerInfoObservationStore.requestRefresh(metric, username);
+    }
+    return playerInfoObservation.requestLookup(metric, username, 'automatic');
+  },
+  sendCommand: command => sendMinecraftChat(command)
 });
 
 async function beginObsidianFarmSession() {
@@ -8777,6 +8793,8 @@ function createBot() {
       syncWhitelistPlaytime().catch(err => console.error('[Playtime] Sync interval failed:', err.message));
     }, 30_000);
 
+    playerInfoBackfill.start();
+
     // Start TPS from TAB monitor
     tpsTabInterval = setInterval(() => {
       let found = false;
@@ -9274,6 +9292,7 @@ function clearIntervals() {
     clearInterval(playerActivitySyncInterval);
     playerActivitySyncInterval = null;
   }
+  playerInfoBackfill.stop();
   if (restartProtectionInterval) {
     clearInterval(restartProtectionInterval);
     restartProtectionInterval = null;
