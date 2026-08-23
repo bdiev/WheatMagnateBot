@@ -38,6 +38,11 @@ assert.doesNotMatch(
   /ORDER BY identities\.registration_at DESC, LOWER\(identities\.username\)\s+LIMIT/,
   'the New Players history must not have a row limit'
 );
+assert.match(
+  appSource,
+  /const resetNewPlayersScroll = state\.renderSignatures\['#newPlayersList'\] == null;[\s\S]*requestAnimationFrame\(\(\) => \{ list\.scrollTop = 0; \}\)/,
+  'the initial New Players render must stay at the newest record instead of preserving the empty-list bottom position'
+);
 assert.match(stylesSource, /\.player-new-panel\s*\{[\s\S]*?grid-template-rows:/, 'the new player list must have a bounded panel layout');
 assert.doesNotMatch(
   stylesSource,

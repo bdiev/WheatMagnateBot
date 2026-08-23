@@ -22,6 +22,7 @@ const { buildPlayerMilestones } = require('./player-milestones');
 const { KILL_AURA_MOBS, normalizeKillAuraTargets } = require('./kill-aura-catalog');
 const { createResourceRequestService } = require('./resource-requests');
 const { normalizeGreenChatMessage } = require('./chat-message-normalization');
+const { NEW_PLAYER_WINDOW_DAYS } = require('./player-new-status');
 const {
   MUTATING_METHODS, RateLimiter, clientIp, configuredOrigins, requestIsHttps,
   resolveStaticPath, securityHeaders, trustProxyEnabled, validateOrigin, validHost, verifyCsrfToken
@@ -1064,8 +1065,15 @@ async function getChat(url) {
         WHERE LOWER(TRIM(admin_tag.value)) = 'bot'
       )
   ) AS is_bot`;
+  const newPlayerTagColumn = `COALESCE((
+    SELECT MIN(new_player.registration_at) > NOW() - INTERVAL '${NEW_PLAYER_WINDOW_DAYS} days'
+       AND MIN(new_player.registration_at) <= NOW()
+    FROM player_activity new_player
+    WHERE (game_chat_messages.player_uuid IS NOT NULL AND new_player.player_uuid = game_chat_messages.player_uuid)
+       OR (game_chat_messages.player_uuid IS NULL AND LOWER(new_player.username) = LOWER(game_chat_messages.username))
+  ), FALSE) AS is_new_player`;
   const messagesSql = searchQuery
-    ? `SELECT id, username, player_uuid, message, message_count, created_at, ${botTagColumn}
+    ? `SELECT id, username, player_uuid, message, message_count, created_at, ${botTagColumn}, ${newPlayerTagColumn}
        FROM game_chat_messages
        WHERE is_visible = TRUE
          AND NOT (
@@ -1080,8 +1088,8 @@ async function getChat(url) {
        ORDER BY id DESC
        LIMIT $1`
     : aroundId
-    ? `SELECT id, username, player_uuid, message, message_count, created_at, is_bot FROM (
-         (SELECT id, username, player_uuid, message, message_count, created_at, ${botTagColumn}
+    ? `SELECT id, username, player_uuid, message, message_count, created_at, is_bot, is_new_player FROM (
+         (SELECT id, username, player_uuid, message, message_count, created_at, ${botTagColumn}, ${newPlayerTagColumn}
           FROM game_chat_messages
           WHERE is_visible = TRUE
             AND NOT (
@@ -1092,7 +1100,7 @@ async function getChat(url) {
           ORDER BY id DESC
           LIMIT (($1 + 1) / 2))
          UNION ALL
-         (SELECT id, username, player_uuid, message, message_count, created_at, ${botTagColumn}
+         (SELECT id, username, player_uuid, message, message_count, created_at, ${botTagColumn}, ${newPlayerTagColumn}
           FROM game_chat_messages
           WHERE is_visible = TRUE
             AND NOT (
@@ -1103,7 +1111,7 @@ async function getChat(url) {
           ORDER BY id ASC
           LIMIT ($1 / 2))
        ) context_messages`
-    : `SELECT id, username, player_uuid, message, message_count, created_at, ${botTagColumn}
+    : `SELECT id, username, player_uuid, message, message_count, created_at, ${botTagColumn}, ${newPlayerTagColumn}
        FROM game_chat_messages
        WHERE is_visible = TRUE
          AND NOT (
@@ -1127,6 +1135,7 @@ async function getChat(url) {
     message: displayGameChatMessage(row.message),
     messageCount: toInt(row.message_count),
     isBot: Boolean(row.is_bot),
+    isNewPlayer: Boolean(row.is_new_player),
     createdAt: row.created_at
   });
   const buildMessagePage = result => {
@@ -1162,6 +1171,8 @@ async function getChat(url) {
         player_uuid,
         is_online,
         admin_tags,
+        registration_at > NOW() - INTERVAL '${NEW_PLAYER_WINDOW_DAYS} days'
+          AND registration_at <= NOW() AS is_new_player,
         CASE
           WHEN is_online THEN last_online
           ELSE last_seen
@@ -1264,6 +1275,7 @@ async function getChat(url) {
       username: row.username,
       playerUuid: row.player_uuid || null,
       isBot: Array.isArray(row.admin_tags) && row.admin_tags.some(tag => String(tag).trim().toLowerCase() === 'bot'),
+      isNewPlayer: Boolean(row.is_new_player),
       event: row.is_online ? 'join' : 'leave',
       message: row.is_online ? 'joined the game' : 'left the game',
       createdAt: row.event_at

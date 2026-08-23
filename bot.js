@@ -13,6 +13,7 @@ const {
 } = require('./discord/server-status-visibility');
 const { DiscordChatForwardQueue, positiveInteger } = require('./discord/chat-forward-queue');
 const { formatDiscordBridgeMessage } = require('./discord/chat-message-format');
+const { NEW_PLAYER_WINDOW_DAYS } = require('./site/player-new-status');
 const { preparePlayerHeadEmojiImage } = require('./discord/player-head-image');
 const { createMinecraftBot } = require('./minecraft');
 const { moveInventorySlot } = require('./minecraft/inventory-slot-move');
@@ -5321,11 +5322,11 @@ async function sendGameChatMessageToDiscord(username, message, { allowMentions =
   });
 }
 
-async function isTaggedBotPlayer(username) {
-  if (!pool) return false;
+async function resolvePlayerChatTags(username) {
+  if (!pool) return { isBot: false, isNewPlayer: false };
 
   const safeUsername = String(username || '').trim();
-  if (!safeUsername) return false;
+  if (!safeUsername) return { isBot: false, isNewPlayer: false };
   const onlinePlayer = Object.values(bot?.players || {}).find(player =>
     String(player?.username || '').toLowerCase() === safeUsername.toLowerCase()
   );
@@ -5333,24 +5334,35 @@ async function isTaggedBotPlayer(username) {
 
   try {
     const result = await pool.query(`
-      SELECT EXISTS (
-        SELECT 1
+      WITH matching_players AS (
+        SELECT player.registration_at, player.admin_tags
         FROM player_activity player
-        WHERE (
-            ($1::uuid IS NOT NULL AND player.player_uuid = $1::uuid)
-            OR ($1::uuid IS NULL AND LOWER(player.username) = LOWER($2))
-          )
-          AND EXISTS (
+        WHERE ($1::uuid IS NOT NULL AND player.player_uuid = $1::uuid)
+           OR ($1::uuid IS NULL AND LOWER(player.username) = LOWER($2))
+      )
+      SELECT
+        EXISTS (
+          SELECT 1
+          FROM matching_players player
+          WHERE EXISTS (
             SELECT 1
             FROM UNNEST(COALESCE(player.admin_tags, '{}'::text[])) AS admin_tag(value)
             WHERE LOWER(TRIM(admin_tag.value)) = 'bot'
           )
-      ) AS is_bot
+        ) AS is_bot,
+        COALESCE((
+          SELECT MIN(player.registration_at) > NOW() - INTERVAL '${NEW_PLAYER_WINDOW_DAYS} days'
+             AND MIN(player.registration_at) <= NOW()
+          FROM matching_players player
+        ), FALSE) AS is_new_player
     `, [playerUuid, safeUsername]);
-    return Boolean(result.rows[0]?.is_bot);
+    return {
+      isBot: Boolean(result.rows[0]?.is_bot),
+      isNewPlayer: Boolean(result.rows[0]?.is_new_player)
+    };
   } catch (error) {
     console.error('[Discord Chat] Failed to resolve player tags:', error.message);
-    return false;
+    return { isBot: false, isNewPlayer: false };
   }
 }
 
@@ -5379,7 +5391,11 @@ async function deliverGameChatMessageToDiscord({
       return true;
     }
 
-    const isBotPlayer = !isSummary && !isSystemMessage && await isTaggedBotPlayer(username);
+    const playerTags = !isSummary && !isSystemMessage
+      ? await resolvePlayerChatTags(username)
+      : { isBot: false, isNewPlayer: false };
+    const isBotPlayer = playerTags.isBot;
+    const isNewPlayer = playerTags.isNewPlayer;
     const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
     if (!channel?.isTextBased?.()) return false;
 
@@ -5406,7 +5422,9 @@ async function deliverGameChatMessageToDiscord({
           }
         : {
             author: {
-              name: isBotPlayer ? `${username} • BOT` : username,
+              name: [username, isBotPlayer ? 'BOT' : '', isNewPlayer ? 'New Player' : '']
+                .filter(Boolean)
+                .join(' • '),
               url: `https://namemc.com/profile/${encodeURIComponent(username)}`
             },
             description: displayMessage,

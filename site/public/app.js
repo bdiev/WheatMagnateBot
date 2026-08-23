@@ -4021,6 +4021,7 @@ function renderChatMessages(messages, { scrollMode = 'preserve' } = {}) {
       message.messageCount,
       message.event,
       message.isBot,
+      message.isNewPlayer,
       message.createdAt
     ])
   ]);
@@ -4055,6 +4056,7 @@ function renderChatMessages(messages, { scrollMode = 'preserve' } = {}) {
     const isServerNotice = message.type === 'server';
     const isNotice = isFloodNotice || isServerNotice;
     const isBot = Boolean(message.isBot);
+    const isNewPlayer = Boolean(message.isNewPlayer);
     const isNew = state.chatInitialized && !previousIds.has(id);
     const username = String(message.username || 'Minecraft');
     const normalizedUsername = username.trim().toLocaleLowerCase();
@@ -4067,7 +4069,7 @@ function renderChatMessages(messages, { scrollMode = 'preserve' } = {}) {
     article.dataset.createdAt = String(message.createdAt || '');
     if (state.chatSearchQuery && !isActivity) article.dataset.openChatContext = id;
     const activityKind = isActivity && message.event === 'join' ? 'join' : 'leave';
-    article.className = `chat-message${isActivity ? ` chat-activity chat-activity-${activityKind}` : ''}${isNotice ? ` chat-notice chat-notice-${message.type}` : ''}${isBot ? ' chat-message-bot' : ''}${isContinuation ? ' chat-message-continuation' : ''}${isNew ? ' new-message' : ''}`;
+    article.className = `chat-message${isActivity ? ` chat-activity chat-activity-${activityKind}` : ''}${isNotice ? ` chat-notice chat-notice-${message.type}` : ''}${isBot ? ' chat-message-bot' : ''}${isNewPlayer ? ' chat-message-new-player' : ''}${isContinuation ? ' chat-message-continuation' : ''}${isNew ? ' new-message' : ''}`;
     article.classList.toggle('reply-active', !isActivity && !isNotice && state.chatReplyActiveMessageId === id);
     const text = isActivity
       ? (message.event === 'join' ? 'joined the game' : 'left the game')
@@ -4077,6 +4079,7 @@ function renderChatMessages(messages, { scrollMode = 'preserve' } = {}) {
          <div class="chat-activity-copy">
            <button class="chat-activity-player" type="button" data-player="${escapeHtml(username)}" title="Open player profile">${escapeHtml(username)}</button>
            ${isBot ? '<span class="chat-bot-badge">BOT</span>' : ''}
+           ${isNewPlayer ? '<span class="chat-new-player-badge">New Player</span>' : ''}
            <span class="chat-text"></span>
          </div>
          <time class="chat-time">${formatChatTime(message.createdAt)}</time>`
@@ -4092,6 +4095,7 @@ function renderChatMessages(messages, { scrollMode = 'preserve' } = {}) {
            ${isContinuation ? '' : `<div class="chat-message-head">
              <span class="chat-message-name">${escapeHtml(username)}</span>
              ${isBot ? '<span class="chat-bot-badge">BOT</span>' : ''}
+             ${isNewPlayer ? '<span class="chat-new-player-badge">New Player</span>' : ''}
            </div>`}
            <div class="chat-text"></div>
          </div>
@@ -4908,7 +4912,8 @@ function renderPlayerStats(payload = {}, nearbyPlayers = []) {
   renderNearbySightings(nearbyPlayers);
 
   const newPlayers = Array.isArray(payload.newPlayers) ? payload.newPlayers : [];
-  renderStable('#newPlayersList', newPlayers.length
+  const resetNewPlayersScroll = state.renderSignatures['#newPlayersList'] == null;
+  const renderedNewPlayers = renderStable('#newPlayersList', newPlayers.length
     ? newPlayers.map(player => `
       <div class="rank-item new-player-item">
         ${playerIdentity(player.username, 28, {
@@ -4930,6 +4935,13 @@ function renderPlayerStats(payload = {}, nearbyPlayers = []) {
       player.isWhitelisted
     ])
   );
+  if (resetNewPlayersScroll && renderedNewPlayers) {
+    const list = $('#newPlayersList');
+    if (list) {
+      list.scrollTop = 0;
+      requestAnimationFrame(() => { list.scrollTop = 0; });
+    }
+  }
 
   const milestones = payload.milestones || [];
   renderStable('#playerMilestones', milestones.length

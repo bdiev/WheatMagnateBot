@@ -9,6 +9,7 @@
   --accent: #4d7d28;
   --accent-strong: #2f5f16;
   --bot-accent: #7546bd;
+  --new-player-accent: #2f8a48;
   --warn: #9a5b09;
   --annotation-connected: #45a83f;
   --annotation-disconnected: #d94b4b;
@@ -60,6 +61,7 @@
   --accent: #7dbd45;
   --accent-strong: #a7d96a;
   --bot-accent: #bd9cff;
+  --new-player-accent: #76d88e;
   --warn: #f0bd6a;
   --annotation-connected: #7dcc67;
   --annotation-disconnected: #ff7474;
@@ -5505,7 +5507,8 @@ body.search-focus-active #logoutButton {
 }
 
 .chat-message-bot .chat-message-head,
-.player-profile-message-bot .chat-message-head {
+.player-profile-message-bot .chat-message-head,
+.chat-message-new-player .chat-message-head {
   justify-content: flex-start;
 }
 
@@ -6293,6 +6296,23 @@ body.modal-open { overflow:hidden; }
   color: var(--muted);
   font-size: 10px;
   line-height: 1;
+}
+
+.chat-new-player-badge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  min-height: 17px;
+  border: 1px solid color-mix(in srgb, var(--new-player-accent) 48%, transparent);
+  border-radius: 999px;
+  padding: 1px 6px;
+  color: var(--new-player-accent);
+  background: color-mix(in srgb, var(--new-player-accent) 11%, var(--panel));
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .uuid-copy {
