@@ -125,7 +125,9 @@ self.addEventListener('push', event => {
   try { payload = event.data?.json() || {}; } catch { payload = {}; }
   const title = String(payload.title || 'WheatMagnateBot alert').slice(0, 80);
   const options = {
-    body: String(payload.body || 'Open the dashboard for details.').slice(0, 160),
+    // Keep a defensive cap, but retain enough text for expanded daily reports
+    // and per-account supply estimates in Notification Center.
+    body: String(payload.body || 'Open the dashboard for details.').slice(0, 2000),
     icon: payload.icon || '/items/Wheat.png',
     badge: payload.badge || '/items/Wheat.png',
     tag: String(payload.tag || 'wheatmagnate-alert').slice(0, 128),

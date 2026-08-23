@@ -163,6 +163,9 @@ function safeDetailedBody(notification, { resolved = false } = {}) {
 function safePushPayload(notification, { resolved = false, test = false, detailed = false } = {}) {
   const label = test ? 'Browser push test' : (SAFE_EVENT_LABELS[notification.event_type] || 'Bot status changed');
   const critical = !resolved && notification.severity === 'critical';
+  const whisperSender = notification.event_type === 'whisper_message'
+    ? String(notification.metadata?.sender || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 16)
+    : '';
   const destination = test ? 'settings'
     : notification.event_type === 'whisper_message' ? 'whispers'
       : notification.event_type === 'daily_obsidian_report' ? 'obsidian'
@@ -173,17 +176,19 @@ function safePushPayload(notification, { resolved = false, test = false, detaile
   const highlightedEvent = scheduledEvent || notification.event_type === 'resource_request_created';
   const destinationParams = new URLSearchParams({ push: destination });
   if (destination === 'whispers') {
-    const player = String(notification.metadata?.sender || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 32);
     const accountId = String(notification.metadata?.accountId || '').trim();
-    if (player) destinationParams.set('player', player);
+    if (whisperSender) destinationParams.set('player', whisperSender);
     if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(accountId)) destinationParams.set('accountId', accountId);
   }
+  const icon = notification.event_type === 'whisper_message' && detailed && whisperSender
+    ? `/api/minecraft-avatar?username=${encodeURIComponent(whisperSender)}&v=2`
+    : '/items/Wheat.png';
   return {
     title: test ? 'WheatMagnateBot test' : highlightedEvent ? label : critical ? 'Critical bot alert' : resolved ? 'Issue resolved' : detailed ? label : 'WheatMagnateBot alert',
     body: test ? `${label}. Open the dashboard for details.` : detailed
       ? safeDetailedBody(notification, { resolved })
       : `${label}. Open the dashboard for details.`,
-    icon: '/items/Wheat.png',
+    icon,
     badge: '/items/Wheat.png',
     tag: test ? 'wheatmagnate-test' : `wheatmagnate-${notification.id || notification.event_type}`,
     data: { url: `/?${destinationParams.toString()}` },

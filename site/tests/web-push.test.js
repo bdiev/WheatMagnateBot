@@ -1,6 +1,8 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const {
   WebPushService, deliverPushSubscriptions, isQuietHours, normalizePreferences, safePushPayload, shouldDeliverSubscription
 } = require('../web-push');
@@ -51,8 +53,15 @@ async function run() {
   assert.equal(whisperUrl.searchParams.get('player'), 'SecretPlayer', 'whisper push must deep-link to its dialog');
   assert.equal(whisperUrl.searchParams.get('accountId'), whisperAccountId, 'whisper push must deep-link to the bot that received it');
   assert.doesNotMatch(compactWhisper.body, /SecretPlayer|secret whisper text/, 'compact whisper lock screen must omit sender and text');
-  const detailedWhisperPayload = JSON.stringify(safePushPayload(whisper, { detailed: true }));
+  assert.equal(compactWhisper.icon, '/items/Wheat.png', 'compact whispers must not reveal the sender through an avatar');
+  const detailedWhisper = safePushPayload(whisper, { detailed: true });
+  const detailedWhisperPayload = JSON.stringify(detailedWhisper);
   assert.match(detailedWhisperPayload, /SecretPlayer: secret whisper text/, 'explicit whisper detailed mode must include sender and text');
+  assert.equal(
+    detailedWhisper.icon,
+    '/api/minecraft-avatar?username=SecretPlayer&v=2',
+    'detailed whisper pushes must request the sender Minecraft avatar'
+  );
 
   const dailyReport = {
     id: 'daily-obsidian-2026-07-19', event_type: 'daily_obsidian_report', severity: 'info',
@@ -75,6 +84,10 @@ async function run() {
   assert.match(detailedDailyPayload.body, /1,225\.8\/h/);
   assert.match(detailedDailyPayload.body, /WheatMagnate: 3\.4d \(5 picks\)/);
   assert.match(detailedDailyPayload.body, /Obsidian Alt: 1\.2d \(3 picks\)/);
+
+  const serviceWorkerSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'sw.js'), 'utf8');
+  assert.match(serviceWorkerSource, /payload\.body[\s\S]*?slice\(0, 2000\)/,
+    'expanded push bodies must retain complete multi-account report details');
 
   const milestone = {
     id: 'player-milestones-2026-07-27', event_type: 'player_milestone', severity: 'info',
