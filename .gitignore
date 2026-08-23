@@ -8,3 +8,4 @@ data/*.sqlite
 data/*.sqlite-shm
 data/*.sqlite-wal
 site/data/config.local.json
+site/data/minecraft-icons/

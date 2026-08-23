@@ -23,6 +23,7 @@ const { KILL_AURA_MOBS, normalizeKillAuraTargets } = require('./kill-aura-catalo
 const { createResourceRequestService } = require('./resource-requests');
 const { normalizeGreenChatMessage } = require('./chat-message-normalization');
 const { NEW_PLAYER_WINDOW_DAYS, isNewPlayerRegistration } = require('./player-new-status');
+const { MinecraftIconCache, minecraftIconEtag } = require('./minecraft-icon-cache');
 const {
   MUTATING_METHODS, RateLimiter, clientIp, configuredOrigins, requestIsHttps,
   resolveStaticPath, securityHeaders, trustProxyEnabled, validateOrigin, validHost, verifyCsrfToken
@@ -34,6 +35,7 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const ITEMS_DIR = path.join(__dirname, 'items');
 const FOOD_DIR = path.join(__dirname, 'food');
 const LOGOS_DIR = path.join(__dirname, 'logos');
+const MINECRAFT_ICON_CACHE_DIR = path.join(__dirname, 'data', 'minecraft-icons');
 const DATABASE_URL = process.env.DATABASE_URL;
 const SITE_ADMIN_USERNAME = String(process.env.SITE_ADMIN_USERNAME || '').trim();
 const SITE_ADMIN_PASSWORD = process.env.SITE_ADMIN_PASSWORD || '';
@@ -70,6 +72,10 @@ let liveDashboardRequest = null;
 let accountRegistry = null;
 let resourceRequestService = null;
 const minecraftAvatarCache = new Map();
+const minecraftIconCache = new MinecraftIconCache({
+  cacheDir: MINECRAFT_ICON_CACHE_DIR,
+  apiKey: process.env.MINECRAFT_ASSET_API_KEY
+});
 let requestItemCatalogPromise = null;
 const rateLimiter = new RateLimiter();
 const rateLimiterTimer = setInterval(() => rateLimiter.prune(), 60_000);
@@ -237,6 +243,25 @@ async function sendMinecraftAvatar(res, url) {
     } catch { /* Try the next avatar provider. */ }
   }
   sendError(res,502,'Minecraft avatar is temporarily unavailable.');
+}
+
+async function sendMinecraftIcon(req, res, type, id) {
+  const icon = await minecraftIconCache.get(type, id);
+  const etag = minecraftIconEtag(icon.body);
+  const headers = {
+    'Content-Type': 'image/png',
+    'Content-Length': icon.body.length,
+    'Cache-Control': 'public, max-age=86400, stale-while-revalidate=604800',
+    'X-Minecraft-Icon-Cache': icon.cacheStatus,
+    ETag: etag
+  };
+  if (req.headers['if-none-match'] === etag) {
+    res.writeHead(304, headers);
+    res.end();
+    return;
+  }
+  res.writeHead(200, headers);
+  res.end(req.method === 'HEAD' ? undefined : icon.body);
 }
 
 function publicError(err) {
@@ -4830,6 +4855,15 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/minecraft-avatar' && req.method === 'GET') {
       await sendMinecraftAvatar(res,url);
+      return;
+    }
+    const minecraftIconRoute = url.pathname.match(/^\/api\/minecraft-icon\/(mob|item)\/([^/]+)\.png$/);
+    if (minecraftIconRoute && ['GET', 'HEAD'].includes(req.method)) {
+      if (!enforceRateLimit(req, res, 'minecraft_icon', '', { limit: 600, windowMs: 60_000 })) return;
+      let iconId;
+      try { iconId = decodeURIComponent(minecraftIconRoute[2]); }
+      catch { sendError(res, 400, 'Invalid Minecraft icon identifier.'); return; }
+      await sendMinecraftIcon(req, res, minecraftIconRoute[1], iconId);
       return;
     }
     if (url.pathname.startsWith('/api/auth/')) {

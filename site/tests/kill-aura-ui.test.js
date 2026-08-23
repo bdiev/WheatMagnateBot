@@ -8,6 +8,7 @@ const publicDirectory = path.resolve(__dirname, '..', 'public');
 const indexSource = fs.readFileSync(path.join(publicDirectory, 'index.html'), 'utf8');
 const appSource = fs.readFileSync(path.join(publicDirectory, 'app.js'), 'utf8');
 const stylesSource = fs.readFileSync(path.join(publicDirectory, 'styles.css'), 'utf8');
+const serverSource = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
 
 assert.match(
   indexSource,
@@ -55,6 +56,21 @@ assert.match(
   indexSource,
   /class="split-grid kill-aura-data-grid"[\s\S]*?<h2>Kill Statistics<\/h2>[\s\S]*?<h2>Combat Details<\/h2>/,
   'Kill Aura data panels must reuse the Obsidian Farm split layout'
+);
+assert.match(
+  appSource,
+  /minecraftIconUrl\('mob', mob\.id\)[\s\S]*data-minecraft-mob-icon[\s\S]*data-fallback-src="\/items\/Target\.png"/,
+  'Kill Statistics must request the matching mob render and retain the target icon only as a fallback'
+);
+assert.match(
+  appSource,
+  /localItemIconUrl\(item\) \|\| minecraftIconUrl\('item', item\?\.name \|\| item\?\.label\)/,
+  'missing local item icons must use the same cached Minecraft icon endpoint'
+);
+assert.match(
+  serverSource,
+  /\/api\\\/minecraft-icon\\\/\(mob\|item\)[\s\S]*sendMinecraftIcon\(req, res, minecraftIconRoute\[1\], iconId\)/,
+  'the server must expose the validated cached mob and item icon route'
 );
 
 console.log('Kill Aura UI tests passed.');

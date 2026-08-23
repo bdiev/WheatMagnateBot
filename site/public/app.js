@@ -806,65 +806,10 @@ function playerIdentity(username, size = 28, { status = null, uuid = null } = {}
   `;
 }
 
-const CCVAULTS_BASE_URL = 'https://ccvaults.com';
-const CCVAULTS_EXACT_ITEMS = {
-  obsidian: { category: '20. Blocks', subcategory: '37. Nether' },
-  crying_obsidian: { category: '20. Blocks', subcategory: '37. Nether' },
-  barrel: { category: '20. Blocks', subcategory: '33. Workplaces' },
-  chest: { category: '20. Blocks', subcategory: '33. Workplaces' },
-  ender_chest: { category: '20. Blocks', subcategory: '33. Workplaces' },
-  cobblestone: { category: '20. Blocks', subcategory: '18. Decoration' },
-  stone: { category: '20. Blocks', subcategory: '18. Decoration' },
-  smooth_stone: { category: '20. Blocks', subcategory: '18. Decoration' },
-  blackstone: { category: '20. Blocks', subcategory: '37. Nether' },
-  netherrack: { category: '20. Blocks', subcategory: '37. Nether' },
-  glowstone: { category: '20. Blocks', subcategory: '37. Nether' },
-  end_stone: { category: '20. Blocks', subcategory: '36. End' }
-};
 const LOCAL_ITEM_ICONS = {
   firework_rocket: '/items/Firework_Rocket.png',
   lead: '/items/Lead.png'
 };
-const CCVAULTS_ITEM_CATEGORIES = [
-  { pattern: /_pickaxe$/, category: '10. Items', subcategory: '2. Pickaxes' },
-  { pattern: /_axe$/, category: '10. Items', subcategory: '3. Axes' },
-  { pattern: /_shovel$/, category: '10. Items', subcategory: '4. Shovels' },
-  { pattern: /_hoe$/, category: '10. Items', subcategory: '5. Hoes' },
-  { pattern: /_sword$|^trident$|^mace$/, category: '10. Items', subcategory: '1. Swords' },
-  { pattern: /bucket$/, category: '10. Items', subcategory: '19. Buckets' },
-  {
-    pattern: /apple|bread|carrot|potato|beef|chicken|cod|mutton|porkchop|rabbit|salmon|stew|soup|cake|cookie|kelp|berries|flesh|pie|honey_bottle|spider_eye/,
-    category: '10. Items',
-    subcategory: '10. Food'
-  },
-  { pattern: /golden_apple|totem_of_undying|potion|splash_potion|lingering_potion/, category: '10. Items', subcategory: '18. Consumables' },
-  { pattern: /obsidian|cobblestone|stone|dirt|sand|gravel|netherrack|basalt|blackstone|deepslate|ore|log|wood|planks|leaves|glass|wool|terracotta|concrete|brick|block$/, category: '20. Blocks', subcategory: null }
-];
-
-function toCcvaultsFileName(item) {
-  const raw = String(item?.name || item?.label || '').trim();
-  if (!raw) return '';
-  return raw
-    .replace(/[^a-zA-Z0-9_ -]/g, '')
-    .replace(/[-\s]+/g, '_')
-    .split('_')
-    .filter(Boolean)
-    .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
-    .join('_') + '.png';
-}
-
-function ccvaultsIconUrl(item) {
-  const name = normalizeItemIconKey(item?.name || item?.label);
-  const file = toCcvaultsFileName(item);
-  if (!name || !file) return '';
-  const match = CCVAULTS_EXACT_ITEMS[name] || CCVAULTS_ITEM_CATEGORIES.find(entry => entry.pattern.test(name));
-  if (!match) return `${CCVAULTS_BASE_URL}/thumbnails/${encodeURIComponent('10. Items')}/${encodeURIComponent(file)}`;
-
-  const parts = [CCVAULTS_BASE_URL, 'thumbnails', match.category];
-  if (match.subcategory) parts.push(match.subcategory);
-  parts.push(file);
-  return parts.map((part, index) => index < 2 ? part : encodeURIComponent(part)).join('/');
-}
 
 function normalizeItemIconKey(value) {
   return String(value || '')
@@ -878,10 +823,16 @@ function localItemIconUrl(item) {
   return state.itemIcons[iconKey] || LOCAL_ITEM_ICONS[iconKey] || '';
 }
 
+function minecraftIconUrl(type, value) {
+  const iconKey = normalizeItemIconKey(value);
+  if (!['mob', 'item'].includes(type) || !/^[a-z0-9_]{1,80}$/.test(iconKey)) return '';
+  return `/api/minecraft-icon/${type}/${encodeURIComponent(iconKey)}.png`;
+}
+
 function itemIcon(item) {
   const label = item?.label || item?.name || 'Item';
   const fallback = escapeHtml(label.slice(0, 2).toUpperCase());
-  const url = localItemIconUrl(item) || ccvaultsIconUrl(item);
+  const url = localItemIconUrl(item) || minecraftIconUrl('item', item?.name || item?.label);
   if (!url) return `<span class="item-icon fallback">${fallback}</span>`;
   return `
     <span class="item-icon">
@@ -4567,7 +4518,7 @@ function renderKillAura(payload = {}) {
     ? killed.map((mob, index) => `
       <div class="rank-item">
         <span class="rank-index">${index + 1}</span>
-        <span class="aura-mob-name"><img src="${mob.id === 'blaze' ? '/items/Blaze_Powder.png' : '/items/Target.png'}" alt=""><span>${escapeHtml(mob.name)}</span></span>
+        <span class="aura-mob-name"><img src="${minecraftIconUrl('mob', mob.id) || '/items/Target.png'}" alt="" loading="lazy" data-minecraft-mob-icon data-fallback-src="/items/Target.png"><span>${escapeHtml(mob.name)}</span></span>
         <strong>${formatNumber(mob.kills)}</strong>
       </div>
     `).join('')
@@ -8674,6 +8625,14 @@ document.addEventListener('error', event => {
   if (accountImage) {
     accountImage.closest('.account-avatar')?.classList.add('avatar-image-failed');
     accountImage.remove();
+    return;
+  }
+  const minecraftMobImage = event.target.closest?.('[data-minecraft-mob-icon]');
+  if (minecraftMobImage) {
+    const fallbackSrc = minecraftMobImage.dataset.fallbackSrc;
+    minecraftMobImage.removeAttribute('data-fallback-src');
+    if (fallbackSrc) minecraftMobImage.src = fallbackSrc;
+    else minecraftMobImage.remove();
     return;
   }
   const image = event.target.closest?.('[data-item-icon-image]');
