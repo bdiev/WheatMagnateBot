@@ -6465,11 +6465,9 @@ body.modal-open { overflow:hidden; }
 .push-device-fields label,
 .push-quiet-hours label { display: grid; min-width: 0; gap: 5px; color: var(--muted); font-size: 12px; font-weight: 700; }
 .push-device-fields input,
-.push-device-fields select,
-.push-quiet-hours input { width: 100%; min-width: 0; max-width: 100%; min-height: 42px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 11px; color: var(--text); background: color-mix(in srgb, var(--panel) 92%, transparent); font: inherit; transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease; }
+.push-device-fields select { width: 100%; min-width: 0; max-width: 100%; min-height: 42px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 11px; color: var(--text); background: color-mix(in srgb, var(--panel) 92%, transparent); font: inherit; transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease; }
 .push-device-fields input:focus,
-.push-device-fields select:focus,
-.push-quiet-hours input:focus { outline: 0; border-color: color-mix(in srgb, var(--accent) 70%, var(--line)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent); }
+.push-device-fields select:focus { outline: 0; border-color: color-mix(in srgb, var(--accent) 70%, var(--line)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent); }
 .push-toggle-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .push-toggle-grid label { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 9px; border: 1px solid var(--line); border-radius: 11px; background: color-mix(in srgb, var(--panel-soft) 72%, transparent); cursor: pointer; transition: border-color 150ms ease, background-color 150ms ease, transform 150ms ease; }
 .push-toggle-grid label:hover { border-color: color-mix(in srgb, var(--accent) 42%, var(--line)); background: color-mix(in srgb, var(--accent) 5%, var(--panel)); }
@@ -6478,6 +6476,9 @@ body.modal-open { overflow:hidden; }
 .push-toggle-grid strong { font-size: 11px; line-height: 1.2; }
 .push-toggle-grid small { color: var(--muted); font-size: 9px; line-height: 1.25; }
 .push-quiet-hours { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: end; gap: 9px; }
+.push-time-control { display: block; contain: inline-size; width: 100%; min-width: 0; max-width: 100%; overflow: hidden; border: 1px solid var(--line); border-radius: 11px; background: color-mix(in srgb, var(--panel) 92%, transparent); transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease; }
+.push-time-control:focus-within { border-color: color-mix(in srgb, var(--accent) 70%, var(--line)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent); }
+.push-time-control input { display: block; box-sizing: border-box !important; inline-size: 100%; width: 100%; min-inline-size: 0; min-width: 0 !important; max-inline-size: 100%; max-width: 100% !important; min-height: 40px; padding: 8px 10px; overflow: hidden; border: 0; border-radius: 0; outline: 0; color: var(--text); background: transparent; font: inherit; -webkit-min-logical-width: 0; }
 .push-time-divider { display: grid; width: 28px; height: 42px; place-items: center; color: var(--muted); font-size: 16px; }
 .push-event-types { overflow: hidden; border: 1px solid var(--line); border-radius: var(--card-radius); background: color-mix(in srgb, var(--panel) 68%, transparent); }
 .push-event-types summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 14px; cursor: pointer; list-style: none; }
@@ -6592,8 +6593,8 @@ body.modal-open { overflow:hidden; }
   .push-toggle-grid { grid-template-columns: minmax(0, 1fr); }
   .push-quiet-hours { grid-template-columns: minmax(0, 1fr); gap: 10px; }
   .push-quiet-hours label,
-  .push-quiet-hours input { width: 100%; min-width: 0; max-width: 100%; }
-  .push-quiet-hours input { display: block; inline-size: 100%; }
+  .push-time-control,
+  .push-time-control input { width: 100%; min-width: 0; max-width: 100%; }
   .push-time-divider { display: none; }
   .push-test-panel { grid-template-columns: minmax(0, 1fr); }
   .push-test-copy { grid-column: auto; }

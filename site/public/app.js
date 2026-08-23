@@ -6960,7 +6960,7 @@ function pushDeviceHtml(device, eventTypes, testTypes = []) {
         <label><input type="checkbox" name="includeResolved"${device.includeResolved ? ' checked' : ''}><span><strong>Resolved events</strong><small>Send recovery updates</small></span></label>
         <label><input type="checkbox" name="quietHoursEnabled"${device.quietHoursEnabled ? ' checked' : ''}><span><strong>Quiet hours</strong><small>Pause overnight</small></span></label>
       </div>
-      <div class="push-quiet-hours"><label><span>Quiet from</span><input type="time" name="quietStart" value="${escapeHtml(device.quietStart || '22:00')}"></label><span class="push-time-divider" aria-hidden="true">→</span><label><span>Until</span><input type="time" name="quietEnd" value="${escapeHtml(device.quietEnd || '07:00')}"></label></div>
+      <div class="push-quiet-hours"><label><span>Quiet from</span><span class="push-time-control"><input type="time" name="quietStart" value="${escapeHtml(device.quietStart || '22:00')}"></span></label><span class="push-time-divider" aria-hidden="true">→</span><label><span>Until</span><span class="push-time-control"><input type="time" name="quietEnd" value="${escapeHtml(device.quietEnd || '07:00')}"></span></label></div>
     </section>
     <details class="push-event-types"><summary><span><strong>Event types</strong><small>Fine-tune notifications and details</small></span><span class="push-event-count">${selectedEventCount} selected</span></summary><div>${eventOptions}</div><p class="muted">Uncheck every event to allow all event types.</p></details>
     <section class="push-test-panel" aria-label="Test notification">

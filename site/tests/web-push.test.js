@@ -100,6 +100,12 @@ async function run() {
   const serviceWorkerSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'sw.js'), 'utf8');
   assert.match(serviceWorkerSource, /payload\.body[\s\S]*?slice\(0, 2000\)/,
     'expanded push bodies must retain complete multi-account report details');
+  const pushAppSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
+  const pushStylesSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'styles.css'), 'utf8');
+  assert.match(pushAppSource, /class="push-time-control"><input type="time"/,
+    'quiet-hours inputs must have a width-constraining wrapper for iOS');
+  assert.match(pushStylesSource, /\.push-time-control \{[^}]*overflow: hidden;/,
+    'the iOS time-input wrapper must clip native intrinsic overflow');
 
   const milestone = {
     id: 'player-milestones-2026-07-27', event_type: 'player_milestone', severity: 'info',
