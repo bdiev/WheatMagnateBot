@@ -6926,7 +6926,7 @@ function defaultPushDeviceName() {
   return `${platform} · ${browser}`.slice(0, 80);
 }
 
-function pushDeviceHtml(device, eventTypes) {
+function pushDeviceHtml(device, eventTypes, testTypes = []) {
   const detailedEventTypes = Array.isArray(device.detailedEventTypes) ? device.detailedEventTypes : [];
   const eventOptions = eventTypes.map(type => {
     const selected = device.eventTypes.length === 0 || device.eventTypes.includes(type);
@@ -6936,6 +6936,9 @@ function pushDeviceHtml(device, eventTypes) {
       <label class="push-event-detailed"><input type="checkbox" name="detailedEventType" value="${escapeHtml(type)}"${detailed ? ' checked' : ''}${selected ? '' : ' disabled'}> Detailed</label>
     </div>`;
   }).join('');
+  const testOptions = (testTypes.length ? testTypes : [{ value:'generic', label:'Generic test' }])
+    .map(item => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`)
+    .join('');
   return `<form class="push-device-card" data-push-device-id="${escapeHtml(device.id)}">
     <div class="push-device-head"><div><strong>${escapeHtml(device.deviceName)}</strong><small>Endpoint …${escapeHtml(device.endpointSuffix || '')}</small></div><span class="pill">${device.enabled ? 'enabled' : 'disabled'}</span></div>
     <div class="push-device-fields">
@@ -6949,7 +6952,7 @@ function pushDeviceHtml(device, eventTypes) {
     </div>
     <div class="push-quiet-hours"><label><span>From</span><input type="time" name="quietStart" value="${escapeHtml(device.quietStart || '22:00')}"></label><label><span>To</span><input type="time" name="quietEnd" value="${escapeHtml(device.quietEnd || '07:00')}"></label></div>
     <details class="push-event-types"><summary>Event types <small>${device.eventTypes.length ? `${device.eventTypes.length} selected` : 'all selected'}</small></summary><div>${eventOptions}</div><p class="muted">Uncheck every event to allow all event types.</p></details>
-    <div class="push-device-actions"><button type="submit">Save</button><button class="ghost-button" type="button" data-push-test="${escapeHtml(device.id)}">Send test</button><button class="danger-button" type="button" data-push-remove="${escapeHtml(device.id)}">Remove device</button></div>
+    <div class="push-device-actions"><button type="submit">Save</button><label class="push-test-type"><span>Test type</span><select name="pushTestType">${testOptions}</select></label><button class="ghost-button" type="button" data-push-test="${escapeHtml(device.id)}">Send test</button><button class="danger-button" type="button" data-push-remove="${escapeHtml(device.id)}">Remove device</button></div>
     <small class="muted">${device.lastSuccessAt ? `Last delivered ${escapeHtml(formatDate(device.lastSuccessAt))}` : 'No successful delivery yet'}${device.failureCount ? ` · ${escapeHtml(device.failureCount)} failures` : ''}</small>
   </form>`;
 }
@@ -6988,7 +6991,7 @@ async function loadPushSettings() {
           : state.pushSubscriptionKeyMismatch ? 'This browser subscription uses an old server key. Repair it to receive notifications again.'
           : state.currentPushSubscriptionId ? 'This browser is registered. Manage it below.' : 'Push is off on this browser.';
     $('#pushDeviceList').innerHTML = payload.devices?.length
-      ? payload.devices.map(device => pushDeviceHtml(device, payload.eventTypes || [])).join('')
+      ? payload.devices.map(device => pushDeviceHtml(device, payload.eventTypes || [], payload.testTypes || [])).join('')
       : '<div class="empty">No push devices registered. Push is off by default.</div>';
   } catch (err) {
     if (status) status.textContent = `Could not load push settings: ${err.message}`;
@@ -7064,7 +7067,10 @@ async function handlePushDeviceClick(event) {
   const remove = event.target.closest('[data-push-remove]');
   try {
     if (test) {
-      await postJson('/api/push/test', { subscriptionId: test.dataset.pushTest });
+      const form = test.closest('[data-push-device-id]');
+      const testType = form?.elements?.pushTestType?.value || 'generic';
+      const result = await postJson('/api/push/test', { subscriptionId: test.dataset.pushTest, testType });
+      setBanner(`Sent ${result.testType || testType} test push.`);
       await loadPushSettings();
     }
     if (remove) {

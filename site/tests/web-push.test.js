@@ -4,7 +4,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const {
-  WebPushService, deliverPushSubscriptions, isQuietHours, normalizePreferences, safePushPayload, shouldDeliverSubscription
+  PUSH_TEST_TYPES, WebPushService, buildTestPushPayload, deliverPushSubscriptions, isQuietHours,
+  normalizePreferences, safePushPayload, shouldDeliverSubscription
 } = require('../web-push');
 
 async function run() {
@@ -84,6 +85,17 @@ async function run() {
   assert.match(detailedDailyPayload.body, /1,225\.8\/h/);
   assert.match(detailedDailyPayload.body, /WheatMagnate: 3\.4d \(5 picks\)/);
   assert.match(detailedDailyPayload.body, /Obsidian Alt: 1\.2d \(3 picks\)/);
+
+  assert.deepEqual(PUSH_TEST_TYPES.map(item => item.value), ['generic', 'critical', 'whisper', 'obsidian', 'milestone']);
+  const whisperTest = buildTestPushPayload('whisper', '42');
+  assert.match(whisperTest.title, /^Test · New private message$/);
+  assert.match(whisperTest.body, /Notch: This is a test Minecraft whisper\./);
+  assert.equal(whisperTest.icon, '/api/minecraft-avatar?username=Notch&v=2');
+  assert.equal(whisperTest.data.url, '/?push=settings');
+  const obsidianTest = buildTestPushPayload('obsidian', '42');
+  assert.match(obsidianTest.body, /WheatMagnate: 4\.3d/);
+  assert.match(obsidianTest.body, /Obsidian Alt: 2\.0d/);
+  assert.throws(() => buildTestPushPayload('not-a-test-type'), /Invalid test push type/);
 
   const serviceWorkerSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'sw.js'), 'utf8');
   assert.match(serviceWorkerSource, /payload\.body[\s\S]*?slice\(0, 2000\)/,

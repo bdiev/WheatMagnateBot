@@ -17,7 +17,7 @@ const { SseHub, handleSseRequest } = require('./sse');
 const { calculateAnalytics, calculateDowntime, calculateHourlyProduction } = require('./obsidian-analytics');
 const { eventTypeFromLog, newCorrelationId, recordOperationalEvent, severityFromLevel } = require('./operational-events');
 const { assertTimelineAccess, normalizeTimelineFilters, queryTimeline } = require('./incident-timeline');
-const { EVENT_TYPES: PUSH_EVENT_TYPES, WebPushService } = require('./web-push');
+const { EVENT_TYPES: PUSH_EVENT_TYPES, PUSH_TEST_TYPES, WebPushService } = require('./web-push');
 const { buildPlayerMilestones } = require('./player-milestones');
 const { KILL_AURA_MOBS, normalizeKillAuraTargets } = require('./kill-aura-catalog');
 const { createResourceRequestService } = require('./resource-requests');
@@ -4494,6 +4494,7 @@ async function getPushSettings(currentUser) {
     configurationError: webPushService.configured ? null : webPushService.configurationError,
     publicKey: webPushService.configured ? webPushService.publicKey : null,
     eventTypes: PUSH_EVENT_TYPES,
+    testTypes: PUSH_TEST_TYPES,
     devices: await webPushService.listForUser(currentUser.id)
   };
 }
@@ -4586,12 +4587,12 @@ async function deletePushSubscription(currentUser, id) {
   return getPushSettings(currentUser);
 }
 
-async function sendTestPush(currentUser, id) {
-  const result = await webPushService.sendTest(currentUser.id, id);
+async function sendTestPush(currentUser, id, testType = 'generic') {
+  const result = await webPushService.sendTest(currentUser.id, id, testType);
   await recordSystemLog({
     level: 'audit', category: 'push_settings', actor: currentUser.username,
     message: result.removed ? 'Test push removed an invalid device.' : 'Sent a test browser push.',
-    details: { subscriptionId: String(id), sent: Boolean(result.sent), removed: Boolean(result.removed) }
+    details: { subscriptionId: String(id), testType: String(testType), sent: Boolean(result.sent), removed: Boolean(result.removed) }
   });
   return result;
 }
@@ -4811,7 +4812,7 @@ async function handleApi(req, res, url) {
     if (MUTATING_METHODS.has(req.method) && url.pathname.startsWith('/api/push/') &&
         !enforceRateLimit(req, res, 'push_settings', currentUser.username, { limit: 20, windowMs: 60_000 })) return;
     if (url.pathname === '/api/push/test' && req.method === 'POST' &&
-        !enforceRateLimit(req, res, 'push_test', currentUser.username, { limit: 3, windowMs: 10 * 60_000 })) return;
+        !enforceRateLimit(req, res, 'push_test', currentUser.username, { limit: 10, windowMs: 10 * 60_000 })) return;
     if (url.pathname === '/api/settings/navigation' && req.method === 'PUT' &&
         !enforceRateLimit(req, res, 'navigation_settings', currentUser.username, { limit: 60, windowMs: 60_000 })) return;
 
@@ -4960,7 +4961,7 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/push/test' && req.method === 'POST') {
       const body = await readJsonBody(req);
-      sendJson(res, 200, await sendTestPush(currentUser, String(body.subscriptionId || ''))); return;
+      sendJson(res, 200, await sendTestPush(currentUser, String(body.subscriptionId || ''), String(body.testType || 'generic'))); return;
     }
     if (url.pathname === '/api/admin/players' && req.method === 'GET') {
       sendJson(res, 200, await getAdminPlayers(currentUser, url));

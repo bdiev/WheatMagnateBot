@@ -9,6 +9,14 @@ const EVENT_TYPES = Object.freeze([
   'daily_obsidian_report', 'player_milestone', 'resource_request_created'
 ]);
 const EVENT_TYPE_SET = new Set(EVENT_TYPES);
+const PUSH_TEST_TYPES = Object.freeze([
+  { value: 'generic', label: 'Generic test' },
+  { value: 'critical', label: 'Critical alert' },
+  { value: 'whisper', label: 'Detailed Whisper' },
+  { value: 'obsidian', label: 'Obsidian daily report' },
+  { value: 'milestone', label: 'Player milestone' }
+]);
+const PUSH_TEST_TYPE_SET = new Set(PUSH_TEST_TYPES.map(item => item.value));
 const SEVERITY_RANK = Object.freeze({ info: 0, warning: 1, critical: 2 });
 const SAFE_EVENT_LABELS = Object.freeze({
   bot_disconnected: 'Bot disconnected', bot_reconnected: 'Bot reconnected', bot_kicked: 'Bot was kicked',
@@ -196,6 +204,49 @@ function safePushPayload(notification, { resolved = false, test = false, detaile
   };
 }
 
+function buildTestPushPayload(testType = 'generic', id = 'preview') {
+  const type = String(testType || 'generic');
+  if (!PUSH_TEST_TYPE_SET.has(type)) {
+    throw Object.assign(new Error('Invalid test push type.'), { statusCode: 400 });
+  }
+  if (type === 'generic') {
+    return safePushPayload({ id: `test-${id}`, event_type: 'test', severity: 'info' }, { test: true });
+  }
+  const samples = {
+    critical: {
+      event_type: 'bot_disconnected', severity: 'critical',
+      metadata: { reason: 'Test connection loss' }
+    },
+    whisper: {
+      event_type: 'whisper_message', severity: 'info',
+      metadata: { sender: 'Notch', message: 'This is a test Minecraft whisper.' }
+    },
+    obsidian: {
+      event_type: 'daily_obsidian_report', severity: 'info',
+      metadata: {
+        mined24h: 75000, changePercent: 25, averageRate: 3125, pickaxes: 17, food: 240,
+        pickaxeDaysByBot: [
+          { name: 'WheatMagnate', hasSnapshot: true, pickaxes: 10, days: 4.3 },
+          { name: 'Obsidian Alt', hasSnapshot: true, pickaxes: 7, days: 2 }
+        ]
+      }
+    },
+    milestone: {
+      event_type: 'player_milestone', severity: 'info',
+      metadata: { milestones: [{ username: 'ChunkBase', years: 3 }, { username: 'H4YWIRE', years: 5 }] }
+    }
+  };
+  const notification = { id: `test-${type}-${id}`, ...samples[type] };
+  const payload = safePushPayload(notification, { detailed: true });
+  return {
+    ...payload,
+    title: `Test · ${payload.title}`.slice(0, 80),
+    tag: `wheatmagnate-test-${type}-${id}`.slice(0, 128),
+    data: { url: '/?push=settings' },
+    requireInteraction: false
+  };
+}
+
 function normalizePreferences(input = {}) {
   const severity = Object.hasOwn(SEVERITY_RANK, input.minimumSeverity) ? input.minimumSeverity : 'critical';
   const eventTypes = [...new Set((Array.isArray(input.eventTypes) ? input.eventTypes : []).map(String).filter(type => EVENT_TYPE_SET.has(type)))];
@@ -373,17 +424,18 @@ class WebPushService {
     return result;
   }
 
-  async sendTest(userId, id) {
+  async sendTest(userId, id, testType = 'generic') {
     id = normalizeSubscriptionId(id);
+    const payload = buildTestPushPayload(testType, id);
     if (!this.configured) throw Object.assign(new Error('Browser push is not configured.'), { statusCode: 503 });
     const result = await this.pool.query('SELECT * FROM push_subscriptions WHERE id=$1 AND user_id=$2', [id, userId]);
     const row = result.rows[0];
     if (!row) throw Object.assign(new Error('Push device not found.'), { statusCode: 404 });
     try {
       await this.sender.sendNotification({ endpoint: row.endpoint, keys: { p256dh: row.p256dh, auth: row.auth } },
-        JSON.stringify(safePushPayload({ id: `test-${id}`, event_type: 'test', severity: 'info' }, { test: true })), { TTL: 60, urgency: 'normal' });
+        JSON.stringify(payload), { TTL: 60, urgency: 'normal' });
       await this.pool.query('UPDATE push_subscriptions SET last_success_at=NOW(),failure_count=0 WHERE id=$1', [id]);
-      return { sent: true };
+      return { sent: true, testType: String(testType || 'generic') };
     } catch (err) {
       if ([404, 410].includes(Number(err.statusCode))) {
         await this.pool.query('DELETE FROM push_subscriptions WHERE id=$1 AND user_id=$2', [id, userId]);
@@ -401,6 +453,6 @@ class WebPushService {
 }
 
 module.exports = {
-  EVENT_TYPES, WebPushService, deliverPushSubscriptions, isQuietHours, normalizePreferences,
-  safePushPayload, shouldDeliverSubscription, validateBrowserSubscription
+  EVENT_TYPES, PUSH_TEST_TYPES, WebPushService, buildTestPushPayload, deliverPushSubscriptions,
+  isQuietHours, normalizePreferences, safePushPayload, shouldDeliverSubscription, validateBrowserSubscription
 };

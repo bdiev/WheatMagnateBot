@@ -6455,6 +6455,9 @@ body.modal-open { overflow:hidden; }
 .push-event-detailed:has(input:disabled) { opacity: .45; }
 .push-event-types p { margin: 0 0 10px; font-size: 11px; }
 .push-device-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.push-test-type { display: flex; align-items: center; gap: 7px; min-width: 220px; padding: 0 9px; border: 1px solid var(--line); border-radius: var(--button-radius); background: var(--panel); }
+.push-test-type span { color: var(--muted); font-size: 11px; font-weight: 700; white-space: nowrap; }
+.push-test-type select { min-width: 0; border: 0; background: transparent; box-shadow: none; }
 
 #tab-settings input[type="checkbox"] {
   appearance: none;
@@ -6519,6 +6522,7 @@ body.modal-open { overflow:hidden; }
   .account-password-strength { grid-column: 1; }
   .push-event-types > div { grid-template-columns: minmax(0, 1fr); }
   .push-device-actions > button { flex: 1 1 100%; width: 100%; }
+  .push-test-type { flex: 1 1 100%; width: 100%; }
   .push-quiet-hours { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
