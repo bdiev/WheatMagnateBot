@@ -9,6 +9,8 @@ const indexSource = fs.readFileSync(path.join(publicDirectory, 'index.html'), 'u
 const appSource = fs.readFileSync(path.join(publicDirectory, 'app.js'), 'utf8');
 const stylesSource = fs.readFileSync(path.join(publicDirectory, 'styles.css'), 'utf8');
 const serverSource = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+const botSource = fs.readFileSync(path.join(__dirname, '..', '..', 'bot.js'), 'utf8');
+const historyMigration = fs.readFileSync(path.join(__dirname, '..', 'migrations', '035_kill_aura_hourly_history.sql'), 'utf8');
 
 assert.match(
   indexSource,
@@ -72,5 +74,26 @@ assert.match(
   /\/api\\\/minecraft-icon\\\/\(mob\|item\)[\s\S]*sendMinecraftIcon\(req, res, minecraftIconRoute\[1\], iconId\)/,
   'the server must expose the validated cached mob and item icon route'
 );
+assert.match(
+  indexSource,
+  /<h2>Kills Over Time<\/h2>[\s\S]*data-chart-controls="killAuraKillsChart"[\s\S]*data-chart-range="hours"[\s\S]*data-chart-range="days"[\s\S]*data-chart-range="months"[\s\S]*id="killAuraKillsChart"/,
+  'Kill Aura must expose an hourly, daily, and monthly history chart'
+);
+assert.match(
+  appSource,
+  /case 'killAuraKillsChart':[\s\S]*killAuraHourly[\s\S]*killAuraDaily[\s\S]*killAuraMonthly[\s\S]*hourlyKills\.map\(localizedChartItem\)[\s\S]*Number\(item\.value\) === 1 \? 'kill' : 'kills'/,
+  'the Kill Aura chart must select the matching time series and format kill tooltips'
+);
+assert.match(
+  serverSource,
+  /INTERVAL '167 hours'[\s\S]*INTERVAL '1 hour'[\s\S]*kill_aura_hourly_kills[\s\S]*INTERVAL '91 days'[\s\S]*MIN\(date_trunc\('month',bucket AT TIME ZONE \$2\)\)[\s\S]*killHistory:/,
+  'the API must provide zero-filled hourly, daily, and monthly kill series'
+);
+assert.match(
+  botSource,
+  /WITH total AS[\s\S]*INSERT INTO kill_aura_kills[\s\S]*INSERT INTO kill_aura_hourly_kills[\s\S]*date_trunc\('hour',NOW\(\)\)[\s\S]*kills=kill_aura_hourly_kills\.kills\+1/,
+  'each credited kill must update the all-time and hourly counters atomically'
+);
+assert.match(historyMigration, /PRIMARY KEY \(account_id, mob_name, bucket\)/);
 
 console.log('Kill Aura UI tests passed.');

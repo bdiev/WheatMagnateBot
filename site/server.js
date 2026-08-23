@@ -2672,7 +2672,8 @@ async function getKillAuraStats(currentUser, url) {
   assertDatabase();
   const scoped = await scopedAccountRuntime(url, currentUser);
   const accountId = scoped?.account?.id || DEFAULT_MINECRAFT_ACCOUNT_ID;
-  const [stateResult, killsResult, defaultBotResult] = await Promise.all([
+  const timezone = await getAccountTimezone(currentUser.id);
+  const [stateResult, killsResult, defaultBotResult, hourlyKillsResult, dailyKillsResult, monthlyKillsResult] = await Promise.all([
     pool.query(`
       WITH inserted AS (
         INSERT INTO kill_aura_state(account_id)
@@ -2695,7 +2696,68 @@ async function getKillAuraStats(currentUser, url) {
     `, [accountId]),
     scoped
       ? Promise.resolve({ rows: [] })
-      : pool.query('SELECT status,observed_at FROM bot_status_snapshots WHERE id=1')
+      : pool.query('SELECT status,observed_at FROM bot_status_snapshots WHERE id=1'),
+    pool.query(`
+      WITH buckets AS (
+        SELECT generate_series(
+          date_trunc('hour',NOW()-INTERVAL '167 hours'),
+          date_trunc('hour',NOW()),
+          INTERVAL '1 hour'
+        ) AS bucket
+      ), totals AS (
+        SELECT bucket,SUM(kills)::bigint AS kills
+        FROM kill_aura_hourly_kills
+        WHERE account_id=$1::uuid
+          AND bucket>=date_trunc('hour',NOW()-INTERVAL '167 hours')
+        GROUP BY bucket
+      )
+      SELECT buckets.bucket,COALESCE(totals.kills,0)::bigint AS kills
+      FROM buckets LEFT JOIN totals USING(bucket)
+      ORDER BY buckets.bucket
+    `, [accountId]),
+    pool.query(`
+      WITH dates AS (
+        SELECT generate_series(
+          (NOW() AT TIME ZONE $2)::date-89,
+          (NOW() AT TIME ZONE $2)::date,
+          INTERVAL '1 day'
+        )::date AS bucket
+      ), totals AS (
+        SELECT (bucket AT TIME ZONE $2)::date AS bucket,SUM(kills)::bigint AS kills
+        FROM kill_aura_hourly_kills
+        WHERE account_id=$1::uuid
+          AND bucket>=NOW()-INTERVAL '91 days'
+        GROUP BY (bucket AT TIME ZONE $2)::date
+      )
+      SELECT dates.bucket::text AS bucket,COALESCE(totals.kills,0)::bigint AS kills
+      FROM dates LEFT JOIN totals USING(bucket)
+      ORDER BY dates.bucket
+    `, [accountId, timezone]),
+    pool.query(`
+      WITH bounds AS (
+        SELECT COALESCE(
+          MIN(date_trunc('month',bucket AT TIME ZONE $2)),
+          date_trunc('month',NOW() AT TIME ZONE $2)
+        ) AS first_month
+        FROM kill_aura_hourly_kills
+        WHERE account_id=$1::uuid
+      ), months AS (
+        SELECT generate_series(
+          bounds.first_month,
+          date_trunc('month',NOW() AT TIME ZONE $2),
+          INTERVAL '1 month'
+        )::date AS bucket
+        FROM bounds
+      ), totals AS (
+        SELECT date_trunc('month',bucket AT TIME ZONE $2)::date AS bucket,SUM(kills)::bigint AS kills
+        FROM kill_aura_hourly_kills
+        WHERE account_id=$1::uuid
+        GROUP BY date_trunc('month',bucket AT TIME ZONE $2)::date
+      )
+      SELECT months.bucket::text AS bucket,COALESCE(totals.kills,0)::bigint AS kills
+      FROM months LEFT JOIN totals USING(bucket)
+      ORDER BY months.bucket
+    `, [accountId, timezone])
   ]);
   const saved = stateResult.rows[0] || {};
   const runtimeBot = scoped?.bot || defaultBotResult.rows[0]?.status || {};
@@ -2724,6 +2786,11 @@ async function getKillAuraStats(currentUser, url) {
       observedAt: scoped?.observedAt || defaultBotResult.rows[0]?.observed_at || null
     },
     totalKills: killsResult.rows.reduce((sum, row) => sum + toInt(row.kills), 0),
+    killHistory: {
+      hourly: hourlyKillsResult.rows.map(row => ({ bucket: row.bucket, value: toInt(row.kills) })),
+      daily: dailyKillsResult.rows.map(row => ({ bucket: row.bucket, label: String(row.bucket).slice(5), value: toInt(row.kills) })),
+      monthly: monthlyKillsResult.rows.map(row => ({ bucket: row.bucket, label: String(row.bucket).slice(0, 7), value: toInt(row.kills) }))
+    },
     mobs
   };
 }

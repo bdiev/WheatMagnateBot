@@ -1707,10 +1707,18 @@ async function recordKillAuraKill(accountId, mobName) {
   const normalized = normalizeKillAuraTargets([mobName])[0];
   if (!pool || !normalized) return;
   await pool.query(`
-    INSERT INTO kill_aura_kills(account_id,mob_name,kills,updated_at)
-    VALUES($1::uuid,$2,1,NOW())
-    ON CONFLICT(account_id,mob_name) DO UPDATE SET
-      kills=kill_aura_kills.kills+1,
+    WITH total AS (
+      INSERT INTO kill_aura_kills(account_id,mob_name,kills,updated_at)
+      VALUES($1::uuid,$2,1,NOW())
+      ON CONFLICT(account_id,mob_name) DO UPDATE SET
+        kills=kill_aura_kills.kills+1,
+        updated_at=NOW()
+      RETURNING account_id
+    )
+    INSERT INTO kill_aura_hourly_kills(account_id,mob_name,bucket,kills,updated_at)
+    SELECT account_id,$2,date_trunc('hour',NOW()),1,NOW() FROM total
+    ON CONFLICT(account_id,mob_name,bucket) DO UPDATE SET
+      kills=kill_aura_hourly_kills.kills+1,
       updated_at=NOW()
   `, [accountId, normalized]);
 }

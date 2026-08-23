@@ -151,6 +151,7 @@ const state = {
   pendingPushDestination: null,
   chartRanges: {
     chatHourlyChart: 'hours',
+    killAuraKillsChart: 'hours',
     obsidianDailyChart: 'days',
     tpsHourlyChart: 'hours',
     unwhitelistedHourlyChart: 'hours'
@@ -2633,6 +2634,20 @@ function drawChartById(chartId) {
       });
       break;
     }
+    case 'killAuraKillsChart': {
+      const hourlyKills = state.charts.killAuraHourly || [];
+      const dailyKills = state.charts.killAuraDaily || [];
+      const monthlyKills = state.charts.killAuraMonthly || [];
+      const killHistory = range === 'months'
+        ? monthlyKills
+        : range === 'days'
+          ? dailyKills
+          : hourlyKills.map(localizedChartItem);
+      drawBarChart($('#killAuraKillsChart'), killHistory, {
+        tooltip: item => `${item.label}: ${formatNumber(item.value)} ${Number(item.value) === 1 ? 'kill' : 'kills'}`
+      });
+      break;
+    }
     case 'tpsHourlyChart':
       drawLineChart($('#tpsHourlyChart'), aggregateSeries(state.charts.tpsHourly, range, 'avg'), {
         max: 20,
@@ -2654,7 +2669,7 @@ function drawChartById(chartId) {
 function redrawCharts() {
   if (state.chartRedrawFrame) cancelAnimationFrame(state.chartRedrawFrame);
   const generation = ++state.chartRedrawGeneration;
-  const chartIds = ['chatHourlyChart', 'obsidianDailyChart', 'tpsHourlyChart', 'unwhitelistedHourlyChart'];
+  const chartIds = ['chatHourlyChart', 'killAuraKillsChart', 'obsidianDailyChart', 'tpsHourlyChart', 'unwhitelistedHourlyChart'];
   let index = 0;
 
   // Canvas resizing and drawing is synchronous. Spread the four charts across
@@ -4477,6 +4492,9 @@ function renderKillAuraMobList() {
 
 function renderKillAura(payload = {}) {
   state.killAuraData = payload;
+  state.charts.killAuraHourly = payload.killHistory?.hourly || [];
+  state.charts.killAuraDaily = payload.killHistory?.daily || [];
+  state.charts.killAuraMonthly = payload.killHistory?.monthly || [];
   const aura = payload.state || {};
   const stateLabel = aura.active ? 'Active' : aura.enabled ? 'Waiting' : 'Disabled';
   const auraPanel = $('#tab-kill-aura');
@@ -4525,6 +4543,7 @@ function renderKillAura(payload = {}) {
     : '<div class="empty">No Kill Aura kills recorded yet.</div>',
     killed.map(mob => [mob.id, mob.kills])
   );
+  redrawCharts();
 }
 
 async function loadKillAura() {

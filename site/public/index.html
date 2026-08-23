@@ -541,6 +541,21 @@
           </section>
         </div>
 
+        <section class="panel kill-aura-chart-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Kills Over Time</h2>
+              <p>Recorded kills across the last 7 days, 90 days, or full monthly history.</p>
+            </div>
+            <div class="chart-controls" data-chart-controls="killAuraKillsChart">
+              <button class="chart-range-button active" type="button" data-chart-range="hours">Hours</button>
+              <button class="chart-range-button" type="button" data-chart-range="days">Days</button>
+              <button class="chart-range-button" type="button" data-chart-range="months">Months</button>
+            </div>
+          </div>
+          <div class="chart-scroll"><canvas id="killAuraKillsChart" class="chart tall" height="300"></canvas></div>
+        </section>
+
         <section class="split-grid kill-aura-data-grid">
           <section class="panel kill-aura-history-panel">
             <div class="panel-head">
@@ -1345,6 +1360,6 @@
     </main>
 
     <script src="/player-accent.js?v=1" defer></script>
-    <script src="/app.js?v=236" defer></script>
+    <script src="/app.js?v=237" defer></script>
   </body>
 </html>
