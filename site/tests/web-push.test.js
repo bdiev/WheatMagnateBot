@@ -56,7 +56,13 @@ async function run() {
 
   const dailyReport = {
     id: 'daily-obsidian-2026-07-19', event_type: 'daily_obsidian_report', severity: 'info',
-    metadata: { mined24h: 29419, changePercent: 5, averageRate: 1225.8, pickaxes: 8, food: 100 }
+    metadata: {
+      mined24h: 29419, changePercent: 5, averageRate: 1225.8, pickaxes: 8, food: 100,
+      pickaxeDaysByBot: [
+        { name: 'WheatMagnate', hasSnapshot: true, pickaxes: 5, days: 3.4 },
+        { name: 'Obsidian Alt', hasSnapshot: true, pickaxes: 3, days: 1.2 }
+      ]
+    }
   };
   const dailySubscription = { ...base, minimum_severity: 'critical', event_types: ['daily_obsidian_report'] };
   assert.equal(shouldDeliverSubscription(dailySubscription, dailyReport), true, 'selected scheduled reports must not be suppressed by alert severity');
@@ -67,6 +73,8 @@ async function run() {
   const detailedDailyPayload = safePushPayload(dailyReport, { detailed: true });
   assert.match(detailedDailyPayload.body, /29,419 obsidian \(\+5%\)/);
   assert.match(detailedDailyPayload.body, /1,225\.8\/h/);
+  assert.match(detailedDailyPayload.body, /WheatMagnate: 3\.4d \(5 picks\)/);
+  assert.match(detailedDailyPayload.body, /Obsidian Alt: 1\.2d \(3 picks\)/);
 
   const milestone = {
     id: 'player-milestones-2026-07-27', event_type: 'player_milestone', severity: 'info',

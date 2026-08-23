@@ -52,7 +52,13 @@ const {
 } = require('./database/obsidian-account-stats');
 const { NotificationService } = require('./notifications');
 const { newCorrelationId, recordOperationalEvent } = require('./operational-events');
-const { buildDailyObsidianReport, claimDailyReportDate, getDailyReportChannels, getDailyReportSlot } = require('./obsidian-daily-report');
+const {
+  DAILY_OBSIDIAN_REPORT_QUERY,
+  buildDailyObsidianReport,
+  claimDailyReportDate,
+  getDailyReportChannels,
+  getDailyReportSlot
+} = require('./obsidian-daily-report');
 const { buildPlayerMilestonePush, buildPlayerMilestones } = require('./site/player-milestones');
 const { WebPushService } = require('./site/web-push');
 const {
@@ -7056,11 +7062,7 @@ async function sendScheduledObsidianReport() {
   if (!slot.due) return;
   await sendScheduledPlayerMilestones(slot).catch(error => console.error('[Player Milestones]', error.message));
   const channels = getDailyReportChannels(settings);
-  const result = await pool.query(`SELECT
-    COALESCE((SELECT SUM(mined) FROM obsidian_farm_hourly WHERE bucket>=NOW()-INTERVAL '24 hours'),0)::bigint AS mined_24h,
-    COALESCE((SELECT SUM(mined) FROM obsidian_farm_hourly WHERE bucket>=NOW()-INTERVAL '48 hours' AND bucket<NOW()-INTERVAL '24 hours'),0)::bigint AS previous_24h,
-    COALESCE((SELECT AVG(mined) FROM obsidian_farm_hourly WHERE bucket>=NOW()-INTERVAL '24 hours'),0)::numeric AS rate,
-    (SELECT supplies FROM obsidian_farm_supply_snapshot WHERE id=1) AS supplies`);
+  const result = await pool.query(DAILY_OBSIDIAN_REPORT_QUERY);
   const row = result.rows[0];
   const report = buildDailyObsidianReport(row, slot);
   const sameDate = value => value && new Date(value).toISOString().slice(0,10) === slot.dateKey;

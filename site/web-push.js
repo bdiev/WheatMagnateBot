@@ -120,7 +120,22 @@ function safeDetailedBody(notification, { resolved = false } = {}) {
       const changePercent = number('changePercent');
       const change = changePercent === null ? '' : ` (${changePercent > 0 ? '+' : ''}${Math.round(changePercent)}%)`;
       const formattedRate = Math.max(0, rate || 0).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-      return `Last 24 hours: ${Math.max(0, Math.round(mined || 0)).toLocaleString('en-US')} obsidian${change}. Average: ${formattedRate}/h. Supplies: ${Math.max(0, Math.round(pickaxes || 0))} pickaxes, ${Math.max(0, Math.round(food || 0))} food.`;
+      const estimates = (Array.isArray(metadata.pickaxeDaysByBot) ? metadata.pickaxeDaysByBot : [])
+        .map(item => {
+          const name = String(item?.name || 'Bot').replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 32) || 'Bot';
+          const count = Math.max(0, Math.round(Number(item?.pickaxes) || 0));
+          const days = item?.days == null ? null : Number(item.days);
+          if (item?.hasSnapshot === false) return `${name}: no snapshot`;
+          return Number.isFinite(days)
+            ? `${name}: ${Math.max(0, days).toFixed(1)}d (${count} picks)`
+            : `${name}: estimate unavailable (${count} picks)`;
+        });
+      const visibleEstimates = estimates.slice(0, 12);
+      const remaining = estimates.length - visibleEstimates.length;
+      const reserve = visibleEstimates.length
+        ? `\nPickaxe reserve:\n${visibleEstimates.map(item => `• ${item}`).join('\n')}${remaining > 0 ? `\n• +${remaining} bots` : ''}`
+        : '';
+      return `Last 24 hours: ${Math.max(0, Math.round(mined || 0)).toLocaleString('en-US')} obsidian${change}.\nAverage: ${formattedRate}/h.\nSupplies: ${Math.max(0, Math.round(pickaxes || 0))} pickaxes, ${Math.max(0, Math.round(food || 0))} food.${reserve}`;
     }
     case 'player_milestone': {
       const milestones = (Array.isArray(metadata.milestones) ? metadata.milestones : []).map(item => {
