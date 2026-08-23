@@ -44,10 +44,15 @@ assert.match(
   'the initial New Players render must stay at the newest record instead of preserving the empty-list bottom position'
 );
 assert.match(stylesSource, /\.player-new-panel\s*\{[\s\S]*?grid-template-rows:/, 'the new player list must have a bounded panel layout');
-assert.doesNotMatch(
+assert.match(
   stylesSource,
-  /\.chat-activity-player:hover\s*\{[^}]*(?:color|background|text-decoration|box-shadow)/s,
-  'clickable join and leave nicknames must not gain a visual hover highlight'
+  /\.chat-activity-player:hover,\s*\.chat-activity-player:active\s*\{[^}]*color:\s*var\(--text\);[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;[^}]*text-decoration:\s*none;/s,
+  'clickable join and leave nicknames must explicitly neutralize the global button hover treatment'
+);
+assert.match(
+  stylesSource,
+  /\.chat-message \.player-identity\[role="button"\]:hover,\s*\.chat-message \.player-identity\[role="button"\]:active\s*\{[^}]*color:\s*inherit;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;/s,
+  'player identity controls inside chat messages must remain visually unchanged on hover'
 );
 
 console.log('player stats new players UI tests passed');

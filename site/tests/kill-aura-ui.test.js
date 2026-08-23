@@ -95,5 +95,15 @@ assert.match(
   'each credited kill must update the all-time and hourly counters atomically'
 );
 assert.match(historyMigration, /PRIMARY KEY \(account_id, mob_name, bucket\)/);
+assert.match(
+  indexSource,
+  /kill-aura-section-title[\s\S]*Clock\.png[\s\S]*Kills Over Time[\s\S]*Netherite_Sword\.png[\s\S]*Kill Statistics[\s\S]*Iron_Sword\.png[\s\S]*Combat Details/,
+  'each Kill Aura data section must have a recognizable Minecraft emblem'
+);
+assert.match(
+  stylesSource,
+  /@media \(max-width: 760px\)[\s\S]*\.kill-aura-history-panel \.rank-item:has\(\.rank-index\)[^{]*\{[^}]*grid-template-columns:\s*32px minmax\(0, 1fr\) auto;[\s\S]*\.kill-aura-data-grid \.detail-list div\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto;/,
+  'mobile Kill Aura rank and detail entries must stay on one compact row'
+);
 
 console.log('Kill Aura UI tests passed.');
