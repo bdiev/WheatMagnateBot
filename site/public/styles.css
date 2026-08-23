@@ -1820,6 +1820,31 @@ body.search-focus-active #logoutButton {
   box-shadow: var(--shadow);
   transform-origin: top left;
   animation: whisper-popover-in 220ms cubic-bezier(0.2, 0.9, 0.2, 1);
+  transition: background-color 360ms ease, border-color 360ms ease, box-shadow 360ms ease;
+}
+
+.whisper-panel.has-player-accent {
+  --accent: var(--player-accent-light);
+  --accent-strong: var(--player-accent-light-strong);
+  --player-accent-contrast: var(--player-accent-light-contrast);
+}
+
+:root[data-theme="dark"] .whisper-panel.has-player-accent {
+  --accent: var(--player-accent-dark);
+  --accent-strong: var(--player-accent-dark-strong);
+  --player-accent-contrast: var(--player-accent-dark-contrast);
+}
+
+.whisper-panel.has-player-accent .whisper-toggle {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel));
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.whisper-panel.has-player-accent .whisper-popover {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+  background: color-mix(in srgb, var(--accent) 5%, var(--panel));
+  box-shadow: 0 18px 52px color-mix(in srgb, var(--accent) 18%, rgba(0, 0, 0, 0.18));
 }
 
 .whisper-popover[hidden],
@@ -1842,6 +1867,13 @@ body.search-focus-active #logoutButton {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel-soft);
+  transition: background-color 360ms ease, border-color 360ms ease;
+}
+
+.whisper-panel.has-player-accent .whisper-sidebar,
+.whisper-panel.has-player-accent .whisper-dialog {
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--line));
+  background: color-mix(in srgb, var(--accent) 6%, var(--panel-soft));
 }
 
 .whisper-sidebar {
@@ -1857,6 +1889,7 @@ body.search-focus-active #logoutButton {
   font-weight: 900;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  transition: color 360ms ease;
 }
 
 .whisper-search {
@@ -1935,6 +1968,12 @@ body.search-focus-active #logoutButton {
   outline: 0;
 }
 
+.whisper-panel.has-player-accent .whisper-player.active {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+  background: color-mix(in srgb, var(--accent) 11%, var(--panel));
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
 .whisper-player:hover .player-identity[role="button"],
 .whisper-player .player-identity[role="button"]:hover,
 .whisper-player .player-identity[role="button"]:focus-visible {
@@ -1998,6 +2037,12 @@ body.search-focus-active #logoutButton {
   padding: 6px 8px 6px 12px;
   border-bottom: 1px solid var(--line);
   font-weight: 900;
+  transition: background-color 360ms ease, border-color 360ms ease;
+}
+
+.whisper-panel.has-player-accent .whisper-dialog-header {
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--line));
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 
 .whisper-dialog-header #whisperTargetTitle {
@@ -2082,7 +2127,12 @@ body.search-focus-active #logoutButton {
   padding: 9px;
   border-top: 1px solid var(--line);
   background: color-mix(in srgb, var(--panel-soft) 82%, var(--panel));
-  transition: background-color 180ms ease;
+  transition: background-color 360ms ease, border-color 360ms ease;
+}
+
+.whisper-panel.has-player-accent .whisper-form {
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--line));
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel-soft));
 }
 
 .whisper-form input {
@@ -2119,6 +2169,14 @@ body.search-focus-active #logoutButton {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   box-shadow: none;
   font-size: 13px;
+  transition: background-color 360ms ease, border-color 360ms ease, color 360ms ease, box-shadow 360ms ease;
+}
+
+.whisper-panel.has-player-accent .whisper-form button {
+  border-color: var(--accent);
+  color: var(--player-accent-contrast, var(--text));
+  background: var(--accent);
+  box-shadow: 0 5px 14px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 .whisper-form button:hover,
@@ -2126,6 +2184,16 @@ body.search-focus-active #logoutButton {
   color: var(--text);
   border-color: color-mix(in srgb, var(--accent) 58%, var(--line));
   background: color-mix(in srgb, var(--accent) 16%, var(--panel));
+}
+
+.whisper-panel.has-player-accent .whisper-form button:hover,
+.whisper-panel.has-player-accent .whisper-form button:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 82%, var(--text));
+  color: var(--player-accent-contrast, var(--text));
+  background: color-mix(in srgb, var(--accent) 86%, var(--text));
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent),
+    0 7px 18px color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 .whisper-form.sending {
@@ -2718,6 +2786,14 @@ body.search-focus-active #logoutButton {
   min-height: 0;
 }
 
+.player-new-panel {
+  grid-column: 3;
+  grid-row: 1;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+}
+
 .server-tps-panel {
   grid-column: 1 / -1;
   display: grid;
@@ -2727,7 +2803,7 @@ body.search-focus-active #logoutButton {
 
 .player-nearby-panel {
   grid-column: 3;
-  grid-row: 1 / span 2;
+  grid-row: 2;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
@@ -2748,6 +2824,33 @@ body.search-focus-active #logoutButton {
   grid-auto-rows: max-content;
   min-height: 0;
   overflow: auto;
+}
+
+.player-new-panel .rank-list {
+  align-content: start;
+  grid-auto-rows: max-content;
+  min-height: 0;
+  overflow: auto;
+}
+
+.new-player-item {
+  grid-template-columns: minmax(0, 1fr) max-content;
+}
+
+.new-player-meta {
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.new-player-meta .pill {
+  min-height: 18px;
+  padding: 2px 6px;
+  font-size: 9px;
 }
 
 .player-milestones-panel .milestone-list {
@@ -3287,6 +3390,33 @@ body.search-focus-active #logoutButton {
 .chat-activity-copy strong {
   color: var(--text);
   font-weight: 750;
+}
+
+.chat-activity-player {
+  display: inline;
+  min-width: 0;
+  min-height: 0;
+  border: 0;
+  border-radius: 3px;
+  padding: 0;
+  color: var(--text);
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 750;
+  line-height: inherit;
+}
+
+.chat-activity-player:hover {
+  color: var(--accent-strong);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.chat-activity-player:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .chat-message.chat-notice {
@@ -6171,6 +6301,47 @@ body.modal-open { overflow:hidden; }
   line-height: 1;
 }
 
+.uuid-copy {
+  cursor: copy;
+  transition: border-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+}
+
+.uuid-copy:hover,
+.uuid-copy:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 65%, var(--line));
+  color: var(--text);
+  outline: none;
+}
+
+.uuid-copy.uuid-copy-confirmed {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.copy-toast {
+  position: fixed;
+  z-index: 3000;
+  left: 50%;
+  bottom: max(22px, env(safe-area-inset-bottom, 0px));
+  padding: 9px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--line));
+  border-radius: 999px;
+  color: var(--text);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  font-weight: 800;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 10px);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.copy-toast.visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
 .player-name-history {
   position: relative;
   display: inline-flex;
@@ -6985,6 +7156,7 @@ body.modal-open { overflow:hidden; }
   .player-unwhitelisted-chart-panel,
   .player-milestones-panel,
   .player-leaderboard-panel,
+  .player-new-panel,
   .player-nearby-panel {
     grid-column: 1 / -1;
     grid-row: auto;
@@ -7005,12 +7177,25 @@ body.modal-open { overflow:hidden; }
     order: 1;
   }
 
+  .player-new-panel {
+    order: 2;
+    max-height: 420px;
+  }
+
+  .player-unwhitelisted-chart-panel {
+    order: 3;
+  }
+
+  .player-leaderboard-panel {
+    order: 4;
+  }
+
   .player-milestones-panel .milestone-list {
     --milestone-peek: 26px;
   }
 
   .player-nearby-panel {
-    order: 4;
+    order: 5;
     min-height: 0;
   }
 
@@ -7082,6 +7267,7 @@ body.modal-open { overflow:hidden; }
   }
 
   .player-nearby-panel,
+  .player-new-panel,
   .player-leaderboard-panel {
     max-height: 460px;
   }
@@ -7101,6 +7287,7 @@ body.modal-open { overflow:hidden; }
   }
 
   .player-nearby-panel .rank-list,
+  .player-new-panel .rank-list,
   .player-leaderboard-panel .leaderboard-list {
     max-height: 360px;
   }

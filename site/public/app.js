@@ -52,6 +52,7 @@ const state = {
   playerProfileSessionTimer: null,
   playerProfileRevealTimer: null,
   playerProfileAccentCache: new Map(),
+  whisperAccentCache: new Map(),
   playtimeLeaderboardScope: 'global',
   playtimeLeaderboards: { global: [], whitelisted: [] },
   whisperSearchPlayers: [],
@@ -629,6 +630,54 @@ function formatDurationMs(value) {
   return `${totalSeconds}s`;
 }
 
+async function writeClipboardText(value) {
+  const text = String(value || '').trim();
+  if (!text) throw new Error('Nothing to copy.');
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // The textarea fallback also works when clipboard permissions are denied.
+    }
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.append(textarea);
+  textarea.select();
+  const copied = document.execCommand('copy');
+  textarea.remove();
+  if (!copied) throw new Error('Clipboard access is unavailable.');
+}
+
+function showCopyToast(message) {
+  let toast = $('#copyToast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'copyToast';
+    toast.className = 'copy-toast';
+    toast.setAttribute('role', 'status');
+    toast.setAttribute('aria-live', 'polite');
+    document.body.append(toast);
+  }
+  window.clearTimeout(toast.hideTimer);
+  toast.textContent = message;
+  toast.classList.add('visible');
+  toast.hideTimer = window.setTimeout(() => toast.classList.remove('visible'), 1500);
+}
+
+async function copyUuid(target) {
+  const uuid = String(target?.dataset?.copyUuid || '').trim();
+  if (!uuid) return;
+  await writeClipboardText(uuid);
+  target.classList.add('uuid-copy-confirmed');
+  window.setTimeout(() => target.classList.remove('uuid-copy-confirmed'), 900);
+  showCopyToast('UUID copied');
+}
+
 function playerHeadUrl(username, size = 32, { uuid = null } = {}) {
   const safeUsername = encodeURIComponent(String(username || 'Steve').trim() || 'Steve');
   const compactUuid = String(uuid || '').replaceAll('-', '').trim().toLowerCase();
@@ -641,21 +690,62 @@ function playerProfileAccentKey(profile) {
   return uuid || String(profile?.username || '').trim().toLowerCase();
 }
 
-function setPlayerProfileAccent(theme = null) {
-  const card = $('#playerProfileOverlay')?.querySelector('.player-profile-card');
-  if (!card) return;
-  const propertyNames = [
+const PLAYER_ACCENT_PROPERTY_NAMES = [
     '--player-accent-light',
     '--player-accent-light-strong',
     '--player-accent-light-contrast',
     '--player-accent-dark',
     '--player-accent-dark-strong',
     '--player-accent-dark-contrast'
-  ];
-  card.classList.toggle('has-player-accent', Boolean(theme));
-  for (const propertyName of propertyNames) {
-    if (theme?.[propertyName]) card.style.setProperty(propertyName, theme[propertyName]);
-    else card.style.removeProperty(propertyName);
+];
+
+function setPlayerAccentProperties(element, theme = null) {
+  if (!element) return;
+  element.classList.toggle('has-player-accent', Boolean(theme));
+  for (const propertyName of PLAYER_ACCENT_PROPERTY_NAMES) {
+    if (theme?.[propertyName]) element.style.setProperty(propertyName, theme[propertyName]);
+    else element.style.removeProperty(propertyName);
+  }
+}
+
+function setPlayerProfileAccent(theme = null) {
+  setPlayerAccentProperties($('#playerProfileOverlay')?.querySelector('.player-profile-card'), theme);
+}
+
+function setWhisperAccent(theme = null) {
+  setPlayerAccentProperties($('#whisperPanel'), theme);
+}
+
+function whisperAccentKey(username = state.whisperTarget) {
+  return String(username || '').trim().toLowerCase();
+}
+
+function applyWhisperAccent(username = state.whisperTarget) {
+  const accentApi = globalThis.PlayerAccent;
+  const key = whisperAccentKey(username);
+  const image = $('#whisperTargetTitle')?.querySelector('.player-head');
+  if (!accentApi || !key || !image) return;
+
+  const cachedTheme = state.whisperAccentCache.get(key);
+  if (cachedTheme) setWhisperAccent(cachedTheme);
+
+  const resolveAccent = () => {
+    if (whisperAccentKey() !== key) return;
+    let accent;
+    try {
+      accent = accentApi.accentFromImage(image, key);
+    } catch {
+      accent = accentApi.pickPlayerAccent([], key);
+    }
+    const theme = accentApi.createPlayerAccentTheme(accent);
+    state.whisperAccentCache.set(key, theme);
+    if (whisperAccentKey() === key) setWhisperAccent(theme);
+  };
+
+  if (image.complete) resolveAccent();
+  else {
+    image.addEventListener('load', resolveAccent, { once: true });
+    image.addEventListener('error', resolveAccent, { once: true });
   }
 }
 
@@ -2959,7 +3049,7 @@ function renderPlayerProfile(profile) {
           </div>
         </div>
         <div class="player-profile-meta">
-          ${profile.uuid ? `<span class="player-profile-uuid" title="Minecraft UUID"><small>UUID</small><code data-compact-uuid="${escapeHtml(String(profile.uuid).replaceAll('-', ''))}">${escapeHtml(profile.uuid)}</code></span>` : ''}
+          ${profile.uuid ? `<span class="player-profile-uuid uuid-copy" role="button" tabindex="0" data-copy-uuid="${escapeHtml(profile.uuid)}" title="Copy Minecraft UUID" aria-label="Copy UUID ${escapeHtml(profile.uuid)}"><small>UUID</small><code data-compact-uuid="${escapeHtml(String(profile.uuid).replaceAll('-', ''))}">${escapeHtml(profile.uuid)}</code></span>` : ''}
           ${nameHistoryControl}
         </div>
       </div>
@@ -3540,6 +3630,7 @@ async function loadWhisperNotifications({ markRead = false } = {}) {
 function closeWhisperDialog() {
   state.whisperTarget = null;
   state.whisperMessagesSignature = '';
+  setWhisperAccent();
   $('#whisperPanel')?.classList.remove('has-dialog');
   const dialog = $('#whisperDialog');
   const messages = $('#whisperMessages');
@@ -3753,11 +3844,13 @@ function updateWhisperDialogTitle() {
   );
   const isOnline = Boolean(player?.isOnline);
   const signature = JSON.stringify([state.whisperTarget, isOnline]);
-  if (title.dataset.renderSignature === signature) return;
-  title.innerHTML = `
-    ${playerIdentity(state.whisperTarget, 26, { status: isOnline ? 'online' : 'offline' })}
-  `;
-  title.dataset.renderSignature = signature;
+  if (title.dataset.renderSignature !== signature) {
+    title.innerHTML = `
+      ${playerIdentity(state.whisperTarget, 26, { status: isOnline ? 'online' : 'offline' })}
+    `;
+    title.dataset.renderSignature = signature;
+  }
+  applyWhisperAccent(state.whisperTarget);
 }
 
 async function loadWhisperOnlinePlayers({ force = false } = {}) {
@@ -3982,7 +4075,7 @@ function renderChatMessages(messages, { scrollMode = 'preserve' } = {}) {
     article.innerHTML = isActivity
       ? `<span class="chat-activity-mark" aria-hidden="true"></span>
          <div class="chat-activity-copy">
-           <strong>${escapeHtml(username)}</strong>
+           <button class="chat-activity-player" type="button" data-player="${escapeHtml(username)}" title="Open player profile">${escapeHtml(username)}</button>
            ${isBot ? '<span class="chat-bot-badge">BOT</span>' : ''}
            <span class="chat-text"></span>
          </div>
@@ -4813,6 +4906,30 @@ function renderPlayerStats(payload = {}, nearbyPlayers = []) {
   renderPlaytimeLeaderboard();
 
   renderNearbySightings(nearbyPlayers);
+
+  const newPlayers = Array.isArray(payload.newPlayers) ? payload.newPlayers : [];
+  renderStable('#newPlayersList', newPlayers.length
+    ? newPlayers.map(player => `
+      <div class="rank-item new-player-item">
+        ${playerIdentity(player.username, 28, {
+          status: player.isOnline ? 'online' : 'offline',
+          uuid: player.uuid
+        })}
+        <div class="new-player-meta">
+          ${player.isWhitelisted ? '<span class="pill">whitelisted</span>' : ''}
+          <time>${player.firstSeen ? formatRecentDate(player.firstSeen) : 'Unknown'}</time>
+        </div>
+      </div>
+    `).join('')
+    : '<div class="empty">No tracked players yet.</div>',
+    newPlayers.map(player => [
+      player.username,
+      player.uuid,
+      player.firstSeen,
+      player.isOnline,
+      player.isWhitelisted
+    ])
+  );
 
   const milestones = payload.milestones || [];
   renderStable('#playerMilestones', milestones.length
@@ -5813,7 +5930,9 @@ function renderAdminPlayers(players = state.adminPlayers, { append = false } = {
         </button>
         <div class="admin-player-card-main">
           <div class="admin-player-card-title"><button class="admin-player-name-button" type="button" data-admin-player-action="view" data-player-key="${identityKey}">${username}</button><span class="pill ${player.isOnline ? 'online' : ''}">${player.isOnline ? 'online' : 'offline'}</span></div>
-          <code title="${uuid || `Legacy profile ID ${escapeHtml(player.id)}`}">${uuid || `Legacy ID ${escapeHtml(player.id)}`}</code>
+          ${uuid
+            ? `<code class="uuid-copy" role="button" tabindex="0" data-copy-uuid="${uuid}" title="Copy UUID" aria-label="Copy UUID ${uuid}">${uuid}</code>`
+            : `<code title="Legacy profile ID ${escapeHtml(player.id)}">Legacy ID ${escapeHtml(player.id)}</code>`}
           <div class="admin-player-card-tags">${tags.length ? tags.map(tag => `<span class="admin-player-tag">${escapeHtml(tag)}</span>`).join('') : '<span class="muted">No tags</span>'}</div>
         </div>
         <dl class="admin-player-card-stats">
@@ -5952,7 +6071,11 @@ async function loadAdminPlayers({ query = $('#adminPlayersSearch')?.value || '',
 }
 
 function adminPlayerIdentityMarkup(player) {
-  return `<img src="${accountHeadUrl(player.username, player.uuid)}" alt="" decoding="async"><div><strong>${escapeHtml(player.username)}</strong><code>${escapeHtml(player.uuid || `Legacy profile ID ${player.id}`)}</code></div>`;
+  const uuid = player.uuid ? escapeHtml(player.uuid) : '';
+  const identity = uuid
+    ? `<code class="uuid-copy" role="button" tabindex="0" data-copy-uuid="${uuid}" title="Copy UUID" aria-label="Copy UUID ${uuid}">${uuid}</code>`
+    : `<code>Legacy profile ID ${escapeHtml(player.id)}</code>`;
+  return `<img src="${accountHeadUrl(player.username, player.uuid)}" alt="" decoding="async"><div><strong>${escapeHtml(player.username)}</strong>${identity}</div>`;
 }
 
 function renderAdminPlayerReadonly(player) {
@@ -8452,6 +8575,14 @@ document.addEventListener('click', event => {
     hideSupplyTooltip();
   }
 
+  const uuidTarget = event.target.closest('[data-copy-uuid]');
+  if (uuidTarget) {
+    event.preventDefault();
+    event.stopPropagation();
+    copyUuid(uuidTarget).catch(err => showCopyToast(err.message || 'Could not copy UUID'));
+    return;
+  }
+
   const whisperPlayer = event.target.closest('[data-whisper-player]');
   if (whisperPlayer) {
     event.preventDefault();
@@ -8528,6 +8659,13 @@ document.addEventListener('keydown', event => {
 
   if (event.key === 'Escape' && !$('#supplyTooltip')?.hidden) {
     hideSupplyTooltip();
+    return;
+  }
+
+  const uuidTarget = event.target.closest?.('[data-copy-uuid]');
+  if (uuidTarget && (event.key === 'Enter' || event.key === ' ')) {
+    event.preventDefault();
+    copyUuid(uuidTarget).catch(err => showCopyToast(err.message || 'Could not copy UUID'));
     return;
   }
 

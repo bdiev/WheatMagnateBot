@@ -1861,7 +1861,8 @@ async function getPlayerStats() {
     activityTotalsResult,
     onlineUnwhitelistedResult,
     hourlyUnwhitelistedResult,
-    milestoneResult
+    milestoneResult,
+    newPlayersResult
   ] = await Promise.all([
     pool.query(`
       WITH activity AS (
@@ -2050,6 +2051,26 @@ async function getPlayerStats() {
       FROM whitelist_players w
       JOIN activity ON activity.username_key = w.username_key
       WHERE activity.registration_at IS NOT NULL
+    `),
+    pool.query(`
+      WITH identities AS (
+        SELECT
+          COALESCE(pa.player_uuid::text, LOWER(pa.username)) AS identity_key,
+          (ARRAY_AGG(pa.username ORDER BY COALESCE(pa.last_seen, pa.last_online, pa.registration_at) DESC NULLS LAST, pa.id DESC))[1] AS username,
+          MIN(pa.player_uuid::text)::uuid AS player_uuid,
+          MIN(pa.registration_at) AS registration_at,
+          BOOL_OR(pa.is_online) AS is_online
+        FROM player_activity pa
+        WHERE pa.registration_at IS NOT NULL
+        GROUP BY COALESCE(pa.player_uuid::text, LOWER(pa.username))
+      )
+      SELECT identities.username, identities.player_uuid, identities.registration_at, identities.is_online,
+             EXISTS (
+               SELECT 1 FROM whitelist w WHERE LOWER(w.username) = LOWER(identities.username)
+             ) AS is_whitelisted
+      FROM identities
+      ORDER BY identities.registration_at DESC, LOWER(identities.username)
+      LIMIT 12
     `)
   ]);
 
@@ -2103,7 +2124,14 @@ async function getPlayerStats() {
       bucket: row.bucket,
       value: toInt(row.total)
     })),
-    milestones: buildPlayerMilestones(milestoneResult.rows)
+    milestones: buildPlayerMilestones(milestoneResult.rows),
+    newPlayers: newPlayersResult.rows.map(row => ({
+      username: row.username,
+      uuid: row.player_uuid || null,
+      firstSeen: row.registration_at,
+      isOnline: Boolean(row.is_online),
+      isWhitelisted: Boolean(row.is_whitelisted)
+    }))
   };
 }
 
@@ -5085,7 +5113,7 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/server-stats') {
       const scoped = await scopedAccountRuntime(url,currentUser);
-      if (scoped) { sendJson(res,200,{playerStats:{players:{online:0,total:0,onlineUnwhitelisted:0,seen24h:0,seen7d:0},playtimeLeaderboards:{global:[],whitelisted:[]},playtimeLeaderboard:[],milestones:[]},nearby:scoped.bot.nearbyPlayers || [],tps:{latest:null,latestAt:scoped.observedAt,min24h:null,max24h:null},hourlyTps:[]}); return; }
+      if (scoped) { sendJson(res,200,{playerStats:{players:{online:0,total:0,onlineUnwhitelisted:0,seen24h:0,seen7d:0},playtimeLeaderboards:{global:[],whitelisted:[]},playtimeLeaderboard:[],milestones:[],newPlayers:[]},nearby:scoped.bot.nearbyPlayers || [],tps:{latest:null,latestAt:scoped.observedAt,min24h:null,max24h:null},hourlyTps:[]}); return; }
       sendJson(res, 200, await getServerStats());
       return;
     }

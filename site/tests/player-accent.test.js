@@ -38,5 +38,21 @@ assert.match(serviceWorkerSource, /'\/player-accent\.js'/, 'accent extraction mu
 assert.match(appSource, /setPlayerProfileLoading\(true\)[\s\S]*renderPlayerProfileSkeleton\(\)/, 'the profile card must enter its neutral loading theme before rendering the skeleton');
 assert.match(stylesSource, /\.player-profile-card\.profile-loading\s*\{[^}]*--accent:\s*#c9ccca;[^}]*border-color:\s*var\(--line\);/s, 'the loading theme must blend into the current surface with a low-contrast neutral accent');
 assert.match(appSource, /const resolveAccent = \(\) => \{[\s\S]*setPlayerProfileAccent\(theme\);[\s\S]*setPlayerProfileLoading\(false\);[\s\S]*\};/, 'the neutral loading theme must remain until the avatar accent is ready');
+assert.match(
+  appSource,
+  /function applyWhisperAccent\(username = state\.whisperTarget\)[\s\S]*accentFromImage\(image, key\)[\s\S]*setWhisperAccent\(theme\)/,
+  'the open private dialog must derive its accent from the selected player avatar'
+);
+assert.match(
+  appSource,
+  /function updateWhisperDialogTitle\(\)[\s\S]*applyWhisperAccent\(state\.whisperTarget\)/,
+  'changing the active private dialog must refresh the player accent'
+);
+assert.match(
+  stylesSource,
+  /\.whisper-panel\.has-player-accent\s*\{[\s\S]*--accent:\s*var\(--player-accent-light\)[\s\S]*\.whisper-panel\.has-player-accent \.whisper-popover/,
+  'private dialog surfaces must transition through the selected player color scheme'
+);
+assert.match(stylesSource, /\.whisper-popover\s*\{[^}]*transition:\s*background-color 360ms ease/s, 'private dialog color changes must be smooth');
 
 console.log('Player accent tests passed.');
