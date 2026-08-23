@@ -6928,6 +6928,7 @@ function defaultPushDeviceName() {
 
 function pushDeviceHtml(device, eventTypes, testTypes = []) {
   const detailedEventTypes = Array.isArray(device.detailedEventTypes) ? device.detailedEventTypes : [];
+  const isCurrentDevice = String(state.currentPushSubscriptionId || '') === String(device.id);
   const eventOptions = eventTypes.map(type => {
     const selected = device.eventTypes.length === 0 || device.eventTypes.includes(type);
     const detailed = selected && detailedEventTypes.includes(type);
@@ -6939,21 +6940,36 @@ function pushDeviceHtml(device, eventTypes, testTypes = []) {
   const testOptions = (testTypes.length ? testTypes : [{ value:'generic', label:'Generic test' }])
     .map(item => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`)
     .join('');
-  return `<form class="push-device-card" data-push-device-id="${escapeHtml(device.id)}">
-    <div class="push-device-head"><div><strong>${escapeHtml(device.deviceName)}</strong><small>Endpoint …${escapeHtml(device.endpointSuffix || '')}</small></div><span class="pill">${device.enabled ? 'enabled' : 'disabled'}</span></div>
-    <div class="push-device-fields">
-      <label><span>Device name</span><input name="deviceName" maxlength="80" value="${escapeHtml(device.deviceName)}"></label>
-      <label><span>Minimum severity</span><select name="minimumSeverity"><option value="info"${device.minimumSeverity === 'info' ? ' selected' : ''}>Info</option><option value="warning"${device.minimumSeverity === 'warning' ? ' selected' : ''}>Warning</option><option value="critical"${device.minimumSeverity === 'critical' ? ' selected' : ''}>Critical</option></select></label>
+  const selectedEventCount = device.eventTypes.length || eventTypes.length;
+  return `<form class="push-device-card${isCurrentDevice ? ' is-current-device' : ''}" data-push-device-id="${escapeHtml(device.id)}">
+    <div class="push-device-head">
+      <div class="push-device-identity">
+        <span class="push-device-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5.5" y="2.5" width="13" height="19" rx="3"></rect><path d="M9.5 5h5M10.5 18.5h3"></path></svg></span>
+        <div><div class="push-device-title"><strong>${escapeHtml(device.deviceName)}</strong>${isCurrentDevice ? '<span>Current device</span>' : ''}</div><small>Endpoint …${escapeHtml(device.endpointSuffix || '')}</small></div>
+      </div>
+      <span class="push-device-status ${device.enabled ? 'is-enabled' : 'is-disabled'}"><i></i>${device.enabled ? 'Enabled' : 'Disabled'}</span>
     </div>
-    <div class="push-toggle-grid">
-      <label><input type="checkbox" name="enabled"${device.enabled ? ' checked' : ''}> Push enabled</label>
-      <label><input type="checkbox" name="includeResolved"${device.includeResolved ? ' checked' : ''}> Send resolved events</label>
-      <label><input type="checkbox" name="quietHoursEnabled"${device.quietHoursEnabled ? ' checked' : ''}> Quiet hours</label>
-    </div>
-    <div class="push-quiet-hours"><label><span>From</span><input type="time" name="quietStart" value="${escapeHtml(device.quietStart || '22:00')}"></label><label><span>To</span><input type="time" name="quietEnd" value="${escapeHtml(device.quietEnd || '07:00')}"></label></div>
-    <details class="push-event-types"><summary>Event types <small>${device.eventTypes.length ? `${device.eventTypes.length} selected` : 'all selected'}</small></summary><div>${eventOptions}</div><p class="muted">Uncheck every event to allow all event types.</p></details>
-    <div class="push-device-actions"><button type="submit">Save</button><label class="push-test-type"><span>Test type</span><select name="pushTestType">${testOptions}</select></label><button class="ghost-button" type="button" data-push-test="${escapeHtml(device.id)}">Send test</button><button class="danger-button" type="button" data-push-remove="${escapeHtml(device.id)}">Remove device</button></div>
-    <small class="muted">${device.lastSuccessAt ? `Last delivered ${escapeHtml(formatDate(device.lastSuccessAt))}` : 'No successful delivery yet'}${device.failureCount ? ` · ${escapeHtml(device.failureCount)} failures` : ''}</small>
+    <section class="push-device-section" aria-label="Delivery settings">
+      <div class="push-device-section-head"><strong>Delivery settings</strong><small>Choose when and what this device receives</small></div>
+      <div class="push-device-fields">
+        <label><span>Device name</span><input name="deviceName" maxlength="80" value="${escapeHtml(device.deviceName)}"></label>
+        <label><span>Minimum severity</span><select name="minimumSeverity"><option value="info"${device.minimumSeverity === 'info' ? ' selected' : ''}>Info</option><option value="warning"${device.minimumSeverity === 'warning' ? ' selected' : ''}>Warning</option><option value="critical"${device.minimumSeverity === 'critical' ? ' selected' : ''}>Critical</option></select></label>
+      </div>
+      <div class="push-toggle-grid">
+        <label><input type="checkbox" name="enabled"${device.enabled ? ' checked' : ''}><span><strong>Push enabled</strong><small>Receive notifications</small></span></label>
+        <label><input type="checkbox" name="includeResolved"${device.includeResolved ? ' checked' : ''}><span><strong>Resolved events</strong><small>Send recovery updates</small></span></label>
+        <label><input type="checkbox" name="quietHoursEnabled"${device.quietHoursEnabled ? ' checked' : ''}><span><strong>Quiet hours</strong><small>Pause overnight</small></span></label>
+      </div>
+      <div class="push-quiet-hours"><label><span>Quiet from</span><input type="time" name="quietStart" value="${escapeHtml(device.quietStart || '22:00')}"></label><span class="push-time-divider" aria-hidden="true">→</span><label><span>Until</span><input type="time" name="quietEnd" value="${escapeHtml(device.quietEnd || '07:00')}"></label></div>
+    </section>
+    <details class="push-event-types"><summary><span><strong>Event types</strong><small>Fine-tune notifications and details</small></span><span class="push-event-count">${selectedEventCount} selected</span></summary><div>${eventOptions}</div><p class="muted">Uncheck every event to allow all event types.</p></details>
+    <section class="push-test-panel" aria-label="Test notification">
+      <div class="push-test-copy"><strong>Test notification</strong><small>Preview delivery on this device</small></div>
+      <label class="push-test-type"><span>Message type</span><select name="pushTestType">${testOptions}</select></label>
+      <button class="ghost-button push-test-button" type="button" data-push-test="${escapeHtml(device.id)}">Send test</button>
+    </section>
+    <div class="push-device-actions"><button class="push-save-button" type="submit">Save changes</button><button class="push-remove-button" type="button" data-push-remove="${escapeHtml(device.id)}">Remove device</button></div>
+    <small class="push-delivery-status"><i class="${device.failureCount ? 'has-failures' : ''}"></i>${device.lastSuccessAt ? `Last delivered ${escapeHtml(formatDate(device.lastSuccessAt))}` : 'No successful delivery yet'}${device.failureCount ? ` · ${escapeHtml(device.failureCount)} failures` : ''}</small>
   </form>`;
 }
 
