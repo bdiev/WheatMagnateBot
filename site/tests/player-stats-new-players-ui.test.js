@@ -34,5 +34,10 @@ assert.match(
   'Player Stats must return the latest tracked player identities'
 );
 assert.match(stylesSource, /\.player-new-panel\s*\{[\s\S]*?grid-template-rows:/, 'the new player list must have a bounded panel layout');
+assert.doesNotMatch(
+  stylesSource,
+  /\.chat-activity-player:hover\s*\{[^}]*(?:color|background|text-decoration|box-shadow)/s,
+  'clickable join and leave nicknames must not gain a visual hover highlight'
+);
 
 console.log('player stats new players UI tests passed');
