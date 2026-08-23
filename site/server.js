@@ -2070,7 +2070,6 @@ async function getPlayerStats() {
              ) AS is_whitelisted
       FROM identities
       ORDER BY identities.registration_at DESC, LOWER(identities.username)
-      LIMIT 12
     `)
   ]);
 

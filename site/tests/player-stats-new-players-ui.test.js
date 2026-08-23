@@ -30,8 +30,13 @@ assert.match(
 );
 assert.match(
   serverSource,
-  /WITH identities AS[\s\S]*ORDER BY identities\.registration_at DESC[\s\S]*LIMIT 12[\s\S]*newPlayers: newPlayersResult\.rows\.map/,
-  'Player Stats must return the latest tracked player identities'
+  /WITH identities AS[\s\S]*ORDER BY identities\.registration_at DESC[\s\S]*newPlayers: newPlayersResult\.rows\.map/,
+  'Player Stats must return all tracked player identities, newest first'
+);
+assert.doesNotMatch(
+  serverSource,
+  /ORDER BY identities\.registration_at DESC, LOWER\(identities\.username\)\s+LIMIT/,
+  'the New Players history must not have a row limit'
 );
 assert.match(stylesSource, /\.player-new-panel\s*\{[\s\S]*?grid-template-rows:/, 'the new player list must have a bounded panel layout');
 assert.doesNotMatch(
