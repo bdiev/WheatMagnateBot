@@ -76,10 +76,12 @@ async function testSerialDelivery() {
   assert.deepEqual(sources, ['mineflayer-message-greenchat', 'unspecified', 'unspecified']);
 }
 
-async function testFloodSuppressionAndSummary() {
+async function testDistinctMessagesAreNeverTreatedAsFlood() {
   const delivered = [];
   const suppressed = [];
   const forwarder = new DiscordChatForwardQueue({
+    // These retired options deliberately reproduce the old low burst limit.
+    // Distinct messages must still pass if a deployment has them in its env.
     perUserBurst: 2,
     perUserWindowMs: 1_000,
     summaryDelayMs: 10,
@@ -101,20 +103,8 @@ async function testFloodSuppressionAndSummary() {
   await wait(30);
 
   assert.deepEqual(results, [true, true, true, true, true]);
-  assert.equal(delivered.length, 3, 'suppressed flood must become one summary');
-  assert.deepEqual(delivered.slice(0, 2).map(item => item.message), ['one', 'two']);
-  assert.match(delivered[2].message, /Skipped 3 messages/);
-  assert.equal(delivered[2].allowMentions, false);
-  assert.equal(delivered[2].summaryCount, 3);
-  assert.deepEqual(
-    suppressed.map(event => [event.reason, event.message]),
-    [
-      ['per-user-burst', 'three'],
-      ['per-user-burst', 'four'],
-      ['per-user-burst', 'five']
-    ],
-    'flood suppression must report which messages were not delivered'
-  );
+  assert.deepEqual(delivered.map(item => item.message), ['one', 'two', 'three', 'four', 'five']);
+  assert.deepEqual(suppressed, [], 'flood protection must only suppress copied messages');
 }
 
 async function testSameMillisecondDuplicatesAreSuppressed() {
@@ -123,7 +113,7 @@ async function testSameMillisecondDuplicatesAreSuppressed() {
   const forwarder = new DiscordChatForwardQueue({
     perUserBurst: 8,
     perUserWindowMs: 10_000,
-    duplicateWindowMs: 5_000,
+    duplicateWindowMs: 10_000,
     summaryDelayMs: 10,
     minSendIntervalMs: 0,
     send: async item => {
@@ -179,7 +169,7 @@ async function testSystemMessagesBypassFloodButStillDeduplicate() {
   const forwarder = new DiscordChatForwardQueue({
     perUserBurst: 2,
     perUserWindowMs: 10_000,
-    duplicateWindowMs: 5_000,
+    duplicateWindowMs: 10_000,
     summaryDelayMs: 10,
     minSendIntervalMs: 0,
     send: async item => {
@@ -318,7 +308,7 @@ async function testFloodCannotDisplaceAnotherPlayer() {
 (async () => {
   testDiscordInviteFormatting();
   await testSerialDelivery();
-  await testFloodSuppressionAndSummary();
+  await testDistinctMessagesAreNeverTreatedAsFlood();
   await testSameMillisecondDuplicatesAreSuppressed();
   await testDuplicateNormalizationAndExpiry();
   await testSystemMessagesBypassFloodButStillDeduplicate();

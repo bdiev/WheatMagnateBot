@@ -35,6 +35,8 @@ async function main(){
   const firstRuntime=manager.get(first.id); const secondRuntime=manager.get(second.id); assert.notEqual(firstRuntime.intervals,secondRuntime.intervals,'timer collections are isolated');
   const duplicate=await Promise.all([manager.start(first.id),manager.start(first.id)]); assert.equal(bots.length,2,'concurrent starts do not create duplicate runtimes'); assert.equal(duplicate[0].accountId,first.id);
   bots[1].username='RenamedSecondBot'; bots[1].emit('spawn'); assert.equal(secondRuntime.status,'connected','runtime accepts a renamed profile under the same immutable account ID'); assert.equal(secondRuntime.account.username,'RenamedSecondBot');
+  let observedChat=null; secondRuntime.once('chat',event=>{observedChat=event;}); bots[1].emit('chat','LolRiTTeRBot','Player: 10 Days');
+  assert.deepEqual(observedChat,{accountId:second.id,username:'LolRiTTeRBot',message:'Player: 10 Days'},'secondary runtimes expose player-info responses to the global observer');
   firstRuntime.assignTask('obsidian'); secondRuntime.assignTask('follow'); assert.equal(firstRuntime.task,'obsidian');assert.equal(secondRuntime.task,'follow');
   const managedSlots=[];
   managedSlots[5]={name:'diamond_helmet',displayName:'Diamond Helmet',count:1,slot:5,maxDurability:363,durabilityUsed:20};

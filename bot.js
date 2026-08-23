@@ -28,7 +28,11 @@ const {
 const { createPlaytimeFeature } = require('./features/playtime');
 const { createPlayerInfoObservation } = require('./features/playerInfoObservation');
 const { createPlayerInfoObservationStore } = require('./features/playerInfoObservationStore');
-const { createPlayerInfoBackfill } = require('./features/playerInfoBackfill');
+const {
+  createPlayerInfoBackfill,
+  listReadyCommandSenders,
+  pickRandomCommandSender
+} = require('./features/playerInfoBackfill');
 const { createWhisperFeature } = require('./features/whisper');
 const { createFollowFeature } = require('./features/follow');
 const { createKillAuraFeature } = require('./features/killAura');
@@ -89,9 +93,7 @@ const DISCORD_DM_CATEGORY_ID = process.env.DISCORD_DM_CATEGORY_ID;
 const DISCORD_OWNER_ID = process.env.DISCORD_OWNER_ID || '623303738991443968';
 const DISCORD_CHAT_QUEUE_MAX_SIZE = positiveInteger(process.env.DISCORD_CHAT_QUEUE_MAX_SIZE, 20);
 const DISCORD_CHAT_MESSAGE_MAX_AGE_MS = positiveInteger(process.env.DISCORD_CHAT_MESSAGE_MAX_AGE_MS, 15_000);
-const DISCORD_CHAT_USER_BURST = positiveInteger(process.env.DISCORD_CHAT_USER_BURST, 8);
-const DISCORD_CHAT_USER_WINDOW_MS = positiveInteger(process.env.DISCORD_CHAT_USER_WINDOW_MS, 10_000);
-const DISCORD_CHAT_DUPLICATE_WINDOW_MS = positiveInteger(process.env.DISCORD_CHAT_DUPLICATE_WINDOW_MS, 5_000, { min: 0 });
+const DISCORD_CHAT_DUPLICATE_WINDOW_MS = positiveInteger(process.env.DISCORD_CHAT_DUPLICATE_WINDOW_MS, 10_000, { min: 0 });
 const DISCORD_CHAT_FLOOD_SUMMARY_DELAY_MS = positiveInteger(process.env.DISCORD_CHAT_FLOOD_SUMMARY_DELAY_MS, 5_000);
 const DISCORD_CHAT_MIN_SEND_INTERVAL_MS = positiveInteger(process.env.DISCORD_CHAT_MIN_SEND_INTERVAL_MS, 250, { min: 0 });
 const IGNORED_CHAT_USERNAMES = process.env.IGNORED_CHAT_USERNAMES ? process.env.IGNORED_CHAT_USERNAMES.split(',').map(u => u.trim().toLowerCase()) : [];
@@ -1115,8 +1117,6 @@ const discordClient = createDiscordClient();
 const gameChatDiscordForwardQueue = new DiscordChatForwardQueue({
   maxQueueSize: DISCORD_CHAT_QUEUE_MAX_SIZE,
   maxAgeMs: DISCORD_CHAT_MESSAGE_MAX_AGE_MS,
-  perUserBurst: DISCORD_CHAT_USER_BURST,
-  perUserWindowMs: DISCORD_CHAT_USER_WINDOW_MS,
   duplicateWindowMs: DISCORD_CHAT_DUPLICATE_WINDOW_MS,
   summaryDelayMs: DISCORD_CHAT_FLOOD_SUMMARY_DELAY_MS,
   minSendIntervalMs: DISCORD_CHAT_MIN_SEND_INTERVAL_MS,
@@ -2693,6 +2693,7 @@ if (DISCORD_BOT_TOKEN) {
     await startBotStatusSnapshotWriter();
     await waitBeforeStartingSecondaryAccounts();
     await initializeMultiAccountManager();
+    await playerInfoBackfill.start();
 
     console.log('[Discord] Bot is ready and waiting for interactions...');
 
@@ -2804,6 +2805,9 @@ if (DISCORD_BOT_TOKEN) {
       shouldReconnect = defaultAccountEnabled;
       if (defaultAccountEnabled) createBot();
       else console.log('[Accounts] Default Minecraft profile is stopped; automatic startup skipped.');
+      await waitBeforeStartingSecondaryAccounts();
+      await initializeMultiAccountManager();
+      await playerInfoBackfill.start();
     })
     .catch(err => {
       console.error('[DB] Initialization without Discord failed:', err.message);
@@ -3282,9 +3286,14 @@ function enqueueObservedPlayerInfoWrite(task) {
 
 const playerInfoObservation = createPlayerInfoObservation({
   parsePlaytime,
-  isSourceOnline: source => getOnlinePlayerUsernames().some(
-    username => username.toLowerCase() === String(source || '').toLowerCase()
-  ),
+  isSourceOnline: source => {
+    const sourceKey = String(source || '').toLowerCase();
+    return getReadyPlayerInfoCommandSenders().some(context =>
+      Object.values(context.bot?.players || {}).some(player =>
+        String(player?.username || '').toLowerCase() === sourceKey
+      )
+    );
+  },
   onPlaytime: (targetUsername, observedSeconds) => {
     enqueueObservedPlayerInfoWrite(
       () => reconcileObservedPlaytime(targetUsername, observedSeconds)
@@ -3302,30 +3311,82 @@ const playerInfoObservation = createPlayerInfoObservation({
   }
 });
 
+function getReadyPlayerInfoCommandSenders() {
+  const contexts = multiBotManager?.getAllContexts?.() || [primaryBotContext];
+  return listReadyCommandSenders(contexts);
+}
+
+async function loadPlayerInfoBackfillNextRunAt() {
+  if (!pool) return null;
+  const result = await pool.query(
+    'SELECT next_run_at FROM player_info_backfill_schedule WHERE id = 1'
+  );
+  const nextRunAt = result.rows[0]?.next_run_at;
+  const timestamp = nextRunAt instanceof Date ? nextRunAt.getTime() : Date.parse(nextRunAt);
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+async function savePlayerInfoBackfillNextRunAt(timestamp) {
+  if (!pool) return;
+  const nextRunAt = new Date(Number(timestamp));
+  if (!Number.isFinite(nextRunAt.getTime())) throw new Error('Invalid next player-info run time.');
+  await pool.query(`
+    INSERT INTO player_info_backfill_schedule(id,next_run_at,updated_at)
+    VALUES(1,$1,NOW())
+    ON CONFLICT(id) DO UPDATE SET
+      next_run_at=EXCLUDED.next_run_at,
+      updated_at=NOW()
+  `, [nextRunAt]);
+}
+
+function sendPlayerInfoBackfillCommand(command, selectedSender) {
+  let sender = listReadyCommandSenders([selectedSender])[0] || null;
+  if (!sender) sender = pickRandomCommandSender(getReadyPlayerInfoCommandSenders());
+  if (!sender) return false;
+
+  const senderBot = sender.bot;
+  const senderUsername = senderBot.username || sender.username || sender.account?.username || 'Minecraft';
+  if (sender.isPrimary) {
+    if (!sendMinecraftChat(command)) return false;
+  } else {
+    senderBot.chat(command);
+    // The primary listener may observe this account's public echo shortly
+    // afterwards. Mark the manually mirrored line so it is not archived twice.
+    recentlyForwardedGameChat.set(
+      `CHAT:${String(senderUsername).toLowerCase()}:${cleanMinecraftChatMessage(command)}`,
+      { source: 'player-info-backfill', timestamp: Date.now() }
+    );
+  }
+
+  sendGameChatMessageToDiscord(senderUsername, command, {
+    allowMentions: false,
+    source: 'player-info-backfill'
+  }).catch(error => {
+    console.error('[PlayerInfo] Failed to mirror automatic command:', error.message);
+  });
+  console.log(`[PlayerInfo] ${senderUsername} sent ${command}.`);
+  return true;
+}
+
 const playerInfoBackfill = createPlayerInfoBackfill({
   pool,
-  intervalMs: process.env.PLAYER_INFO_CHECK_INTERVAL_MS,
-  initialDelayMs: process.env.PLAYER_INFO_CHECK_INITIAL_DELAY_MS,
-  commandDelayMs: process.env.PLAYER_INFO_CHECK_COMMAND_DELAY_MS,
-  isReady: () => Boolean(bot?.entity && typeof bot.chat === 'function'),
+  minIntervalMs: process.env.PLAYER_INFO_CHECK_MIN_INTERVAL_MS,
+  maxIntervalMs: process.env.PLAYER_INFO_CHECK_MAX_INTERVAL_MS,
+  initialDelayMinMs: process.env.PLAYER_INFO_CHECK_INITIAL_DELAY_MIN_MS,
+  initialDelayMaxMs: process.env.PLAYER_INFO_CHECK_INITIAL_DELAY_MAX_MS,
+  commandDelayMinMs: process.env.PLAYER_INFO_CHECK_COMMAND_DELAY_MIN_MS,
+  commandDelayMaxMs: process.env.PLAYER_INFO_CHECK_COMMAND_DELAY_MAX_MS,
+  loadNextRunAt: loadPlayerInfoBackfillNextRunAt,
+  saveNextRunAt: savePlayerInfoBackfillNextRunAt,
+  isReady: () => getReadyPlayerInfoCommandSenders().length > 0,
+  selectSender: () => pickRandomCommandSender(getReadyPlayerInfoCommandSenders()),
   prepareLookup: async ({ metric, username }) => {
     if (metric !== 'lastSeen') {
       await playerInfoObservationStore.requestRefresh(metric, username);
     }
     return playerInfoObservation.requestLookup(metric, username, 'automatic');
   },
-  sendCommand: command => {
-    const sent = sendMinecraftChat(command);
-    if (sent) {
-      sendGameChatMessageToDiscord(bot.username || 'WheatMagnate', command, {
-        allowMentions: false,
-        source: 'player-info-backfill'
-      }).catch(error => {
-        console.error('[PlayerInfo] Failed to mirror automatic command:', error.message);
-      });
-    }
-    return sent;
-  }
+  sendCommand: (command, _item, sender) => sendPlayerInfoBackfillCommand(command, sender)
 });
 
 async function beginObsidianFarmSession() {
@@ -6192,6 +6253,9 @@ async function initializeMultiAccountManager() {
       }).catch(() => {}));
       runtime.on('auth-cache-error', error => console.error(`[Accounts] Auth-cache persistence failed for ${account.id}:`,error.message));
       runtime.on('monitor-error', error => console.error(`[Accounts] AFK monitor failed for ${account.id}:`,error.message));
+      runtime.on('chat', event => {
+        playerInfoObservation.observe(event.username, event.message);
+      });
       runtime.on('whisper', whisper => {
         const key = `${account.id}:${String(whisper.username || '').toLowerCase()}`;
         const target = siteWhisperTargets.get(key);
@@ -8792,8 +8856,6 @@ function createBot() {
       syncWhitelistPlaytime().catch(err => console.error('[Playtime] Sync interval failed:', err.message));
     }, 30_000);
 
-    playerInfoBackfill.start();
-
     // Start TPS from TAB monitor
     tpsTabInterval = setInterval(() => {
       let found = false;
@@ -9291,7 +9353,6 @@ function clearIntervals() {
     clearInterval(playerActivitySyncInterval);
     playerActivitySyncInterval = null;
   }
-  playerInfoBackfill.stop();
   if (restartProtectionInterval) {
     clearInterval(restartProtectionInterval);
     restartProtectionInterval = null;
@@ -12394,6 +12455,7 @@ async function shutdownAllAccounts(signal) {
   multiAccountShuttingDown = true;
   console.log(`[Shutdown] ${signal}: stopping Minecraft account runtimes.`);
   shouldReconnect = false;
+  playerInfoBackfill.stop();
   clearReconnectTimer();
   clearResumeTimer();
 

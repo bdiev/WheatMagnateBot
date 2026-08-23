@@ -20,9 +20,7 @@ class DiscordChatForwardQueue {
     send,
     maxQueueSize = 20,
     maxAgeMs = 15_000,
-    perUserBurst = 8,
-    perUserWindowMs = 10_000,
-    duplicateWindowMs = 5_000,
+    duplicateWindowMs = 10_000,
     summaryDelayMs = 5_000,
     minSendIntervalMs = 250,
     now = () => Date.now(),
@@ -36,9 +34,7 @@ class DiscordChatForwardQueue {
     this.send = send;
     this.maxQueueSize = positiveInteger(maxQueueSize, 20);
     this.maxAgeMs = positiveInteger(maxAgeMs, 15_000);
-    this.perUserBurst = positiveInteger(perUserBurst, 8);
-    this.perUserWindowMs = positiveInteger(perUserWindowMs, 10_000);
-    this.duplicateWindowMs = positiveInteger(duplicateWindowMs, 5_000, { min: 0 });
+    this.duplicateWindowMs = positiveInteger(duplicateWindowMs, 10_000, { min: 0 });
     this.summaryDelayMs = positiveInteger(summaryDelayMs, 5_000);
     this.minSendIntervalMs = positiveInteger(minSendIntervalMs, 250, { min: 0 });
     this.now = now;
@@ -64,8 +60,6 @@ class DiscordChatForwardQueue {
     const safeUsername = String(username || 'Minecraft');
     const bypassFlood = Boolean(bypassFloodProtection);
     const state = this._getUserState(safeUsername);
-    const cutoff = createdAt - this.perUserWindowMs;
-    state.acceptedAt = state.acceptedAt.filter(timestamp => timestamp > cutoff);
 
     const normalizedMessage = normalizeFloodMessage(message);
     const duplicateCutoff = createdAt - this.duplicateWindowMs;
@@ -86,13 +80,6 @@ class DiscordChatForwardQueue {
       return Promise.resolve(true);
     }
 
-    if (!bypassFlood && state.acceptedAt.length >= this.perUserBurst) {
-      this._notifySuppressed({ username: safeUsername, message, source, reason: 'per-user-burst' });
-      this._recordSuppressed(safeUsername, 1);
-      return Promise.resolve(true);
-    }
-
-    if (!bypassFlood) state.acceptedAt.push(createdAt);
     if (this.duplicateWindowMs > 0 && normalizedMessage) {
       state.recentMessages.set(normalizedMessage, createdAt);
     }
@@ -120,7 +107,7 @@ class DiscordChatForwardQueue {
     const key = username.toLowerCase();
     let state = this.userStates.get(key);
     if (!state) {
-      state = { username, acceptedAt: [], recentMessages: new Map(), suppressed: 0, summaryTimer: null };
+      state = { username, recentMessages: new Map(), suppressed: 0, summaryTimer: null };
       this.userStates.set(key, state);
     } else {
       state.username = username;

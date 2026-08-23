@@ -4,9 +4,15 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const {
+  DEFAULT_INITIAL_DELAY_MAX_MS,
+  DEFAULT_INITIAL_DELAY_MIN_MS,
+  DEFAULT_MAX_INTERVAL_MS,
+  DEFAULT_MIN_INTERVAL_MS,
   buildMissingCommands,
   createPlayerInfoBackfill,
-  loadMissingPlayerInfo
+  listReadyCommandSenders,
+  loadMissingPlayerInfo,
+  pickRandomCommandSender
 } = require('../features/playerInfoBackfill');
 
 function testOnlyMissingMetricsBecomeCommands() {
@@ -29,9 +35,135 @@ function testAutomaticCommandsAreMirroredToPublicChat() {
   const botSource = fs.readFileSync(path.join(__dirname, '..', 'bot.js'), 'utf8');
   assert.match(
     botSource,
-    /sendCommand:\s*command\s*=>\s*\{[\s\S]*?sendMinecraftChat\(command\)[\s\S]*?sendGameChatMessageToDiscord\(bot\.username \|\| 'WheatMagnate', command,[\s\S]*?source:\s*'player-info-backfill'/,
-    'automatic player-info commands must appear in the shared game chat without relying on their suppressed self echo'
+    /selectSender:\s*\(\)\s*=>\s*pickRandomCommandSender[\s\S]*?sendCommand:[\s\S]*?sendPlayerInfoBackfillCommand/,
+    'automatic player-info commands must select a connected account at random'
   );
+  assert.match(
+    botSource,
+    /function sendPlayerInfoBackfillCommand[\s\S]*?sendGameChatMessageToDiscord\(senderUsername, command,[\s\S]*?source:\s*'player-info-backfill'/,
+    'automatic player-info commands must appear in the shared chat without relying on their suppressed self echo'
+  );
+}
+
+function testScheduleMigrationIsSharedByBotAndSite() {
+  const root = path.join(__dirname, '..');
+  const botMigration = fs.readFileSync(
+    path.join(root, 'database', 'migrations', '034_player_info_backfill_schedule.sql'),
+    'utf8'
+  );
+  const siteMigration = fs.readFileSync(
+    path.join(root, 'site', 'migrations', '034_player_info_backfill_schedule.sql'),
+    'utf8'
+  );
+  assert.equal(botMigration, siteMigration);
+  assert.match(botMigration, /player_info_backfill_schedule[\s\S]*next_run_at TIMESTAMPTZ/);
+}
+
+function testRandomSenderUsesOnlyConnectedAccounts() {
+  const firstBot = { entity: {}, chat() {} };
+  const secondBot = { entity: {}, chat() {} };
+  const contexts = [
+    { accountId: 'offline', bot: { chat() {} } },
+    { accountId: 'first', bot: firstBot },
+    { accountId: 'duplicate', bot: firstBot },
+    { accountId: 'second', bot: secondBot }
+  ];
+  assert.deepEqual(listReadyCommandSenders(contexts).map(context => context.accountId), ['first', 'second']);
+  assert.equal(pickRandomCommandSender(contexts, () => 0).accountId, 'first');
+  assert.equal(pickRandomCommandSender(contexts, () => 0.999).accountId, 'second');
+}
+
+async function testScheduleUsesIrregularRanges() {
+  const scheduled = [];
+  const backfill = createPlayerInfoBackfill({
+    pool: { async query() { return { rows: [] }; } },
+    isReady: () => true,
+    random: () => 0.5,
+    setTimer: (callback, delay) => {
+      const timer = { callback, delay, unref() {} };
+      scheduled.push(timer);
+      return timer;
+    },
+    clearTimer: () => {},
+    onLog: () => {}
+  });
+
+  await backfill.start();
+  assert.ok(scheduled[0].delay >= DEFAULT_INITIAL_DELAY_MIN_MS);
+  assert.ok(scheduled[0].delay <= DEFAULT_INITIAL_DELAY_MAX_MS);
+  await scheduled[0].callback();
+  assert.ok(scheduled[1].delay >= DEFAULT_MIN_INTERVAL_MS);
+  assert.ok(scheduled[1].delay <= DEFAULT_MAX_INTERVAL_MS);
+  backfill.stop();
+}
+
+async function testRedeployRestoresTheSameRandomizedSlot() {
+  let persistedNextRunAt = null;
+  let currentTime = 1_000_000;
+  const firstTimers = [];
+  const createPersistentBackfill = (random, timers) => createPlayerInfoBackfill({
+    pool: { async query() { return { rows: [] }; } },
+    isReady: () => true,
+    now: () => currentTime,
+    random,
+    loadNextRunAt: async () => persistedNextRunAt,
+    saveNextRunAt: async timestamp => { persistedNextRunAt = timestamp; },
+    setTimer: (callback, delay) => {
+      const timer = { callback, delay, unref() {} };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimer: () => {},
+    onLog: () => {}
+  });
+
+  const beforeDeploy = createPersistentBackfill(() => 0, firstTimers);
+  await beforeDeploy.start();
+  const originallySelectedAt = persistedNextRunAt;
+  assert.equal(originallySelectedAt, currentTime + DEFAULT_INITIAL_DELAY_MIN_MS);
+  beforeDeploy.stop();
+
+  currentTime += 60_000;
+  const afterDeployTimers = [];
+  const afterDeploy = createPersistentBackfill(() => 0.999, afterDeployTimers);
+  await afterDeploy.start();
+  assert.equal(persistedNextRunAt, originallySelectedAt, 'redeploy must not draw a new startup delay');
+  assert.equal(afterDeployTimers[0].delay, originallySelectedAt - currentTime);
+  afterDeploy.stop();
+}
+
+async function testNextSlotIsPersistedBeforeCommandsRun() {
+  let currentTime = 5_000;
+  let persistedNextRunAt = null;
+  const timers = [];
+  const backfill = createPlayerInfoBackfill({
+    pool: {
+      async query() {
+        assert.equal(persistedNextRunAt, currentTime + 1_000,
+          'the next slot must be durable before querying and sending commands');
+        return { rows: [] };
+      }
+    },
+    isReady: () => true,
+    intervalMs: 1_000,
+    initialDelayMs: 0,
+    now: () => currentTime,
+    random: () => 0,
+    loadNextRunAt: async () => null,
+    saveNextRunAt: async timestamp => { persistedNextRunAt = timestamp; },
+    setTimer: (callback, delay) => {
+      const timer = { callback, delay, unref() {} };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimer: () => {},
+    onLog: () => {}
+  });
+
+  await backfill.start();
+  assert.equal(timers[0].delay, 0);
+  await timers[0].callback();
+  backfill.stop();
 }
 
 async function testDatabaseQueryUsesAllPlayerSourcesAndUuidIdentity() {
@@ -56,6 +188,7 @@ async function testRunPreparesAndThrottlesCommands() {
   const sent = [];
   const prepared = [];
   const delays = [];
+  const selectedSender = { accountId: 'random-bot' };
   const pool = {
     async query() {
       return { rows: [{
@@ -69,8 +202,11 @@ async function testRunPreparesAndThrottlesCommands() {
   const backfill = createPlayerInfoBackfill({
     pool,
     isReady: () => true,
+    random: () => 0.999,
+    selectSender: () => selectedSender,
     prepareLookup: async item => prepared.push(item),
-    sendCommand: command => {
+    sendCommand: (command, _item, sender) => {
+      assert.equal(sender, selectedSender, 'one randomly selected account sends the whole lookup batch');
       sent.push(command);
       return true;
     },
@@ -104,6 +240,11 @@ async function testOfflineRunDoesNotQueryDatabase() {
 Promise.resolve()
   .then(testOnlyMissingMetricsBecomeCommands)
   .then(testAutomaticCommandsAreMirroredToPublicChat)
+  .then(testScheduleMigrationIsSharedByBotAndSite)
+  .then(testRandomSenderUsesOnlyConnectedAccounts)
+  .then(testScheduleUsesIrregularRanges)
+  .then(testRedeployRestoresTheSameRandomizedSlot)
+  .then(testNextSlotIsPersistedBeforeCommandsRun)
   .then(testDatabaseQueryUsesAllPlayerSourcesAndUuidIdentity)
   .then(testRunPreparesAndThrottlesCommands)
   .then(testOfflineRunDoesNotQueryDatabase)

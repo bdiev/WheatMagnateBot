@@ -76,9 +76,7 @@ DISCORD_CHANNEL_ID=
 DISCORD_CHAT_CHANNEL_ID=
 DISCORD_CHAT_QUEUE_MAX_SIZE=20
 DISCORD_CHAT_MESSAGE_MAX_AGE_MS=15000
-DISCORD_CHAT_USER_BURST=8
-DISCORD_CHAT_USER_WINDOW_MS=10000
-DISCORD_CHAT_DUPLICATE_WINDOW_MS=5000
+DISCORD_CHAT_DUPLICATE_WINDOW_MS=10000
 DATABASE_URL=
 MINECRAFT_USERNAME=
 MINECRAFT_AUTH=microsoft
@@ -102,7 +100,9 @@ GEMINI_API_KEY=
 
 Discord notification delivery always uses a direct message to `DISCORD_OWNER_ID` and never posts alerts beside the server-status message. Notification rules are managed by an administrator on the **Notifications** dashboard page. Database schema changes in `database/migrations/` are applied automatically by the bot and site at startup. Connection lifecycle notifications are suppressed during the scheduled daily restart window (08:59–09:30 in `Europe/Kyiv`), and intentional process shutdowns do not create disconnect alerts.
 
-The shared Minecraft chat pipeline sends messages sequentially and keeps only a bounded, short-lived queue. By default, a player may burst up to 8 distinct messages per 10 seconds, while repeated copies of the same normalized message are suppressed for 5 seconds. The website archive/live feed and Discord receive the same accepted player messages. The website loads the permanent archive in cursor-based pages while scrolling upward, including paginated full-archive search by message text or sender. Suppressed copies stay out of visible chat history, while one system notice reports the flood and every suppressed message is still counted in player Chat Messages, Top Chatters, and aggregate chat statistics. Server announcements render as system notices, do not contribute to player profiles or chat statistics, and bypass the player burst limit; identical server announcements within the duplicate window still collapse silently to one row. Queue limits and timing can be adjusted with the `DISCORD_CHAT_*` variables in `.env.example`.
+The shared Minecraft chat pipeline sends messages sequentially and keeps only a bounded, short-lived queue. Distinct player messages are not rate-limited, while repeated copies of the same normalized message are suppressed for 10 seconds by default. The website archive/live feed and Discord receive the same accepted player messages. The website loads the permanent archive in cursor-based pages while scrolling upward, including paginated full-archive search by message text or sender. Suppressed copies stay out of visible chat history, while one system notice reports the flood and every suppressed message is still counted in player Chat Messages, Top Chatters, and aggregate chat statistics. Server announcements render as system notices, do not contribute to player profiles or chat statistics; identical server announcements within the duplicate window collapse silently to one row. Queue limits and timing can be adjusted with the `DISCORD_CHAT_*` variables in `.env.example`.
+
+Missing player PT, join-date, and last-seen values are refreshed on an irregular 2–5 hour schedule. Each check selects one random connected Minecraft account, shuffles the required `!pt`, `!jd`, and `!seen` commands, and waits a random 12–45 seconds between them. The chosen next-run timestamp is stored in PostgreSQL before commands execute, so reconnects and redeploys resume the existing randomized schedule instead of drawing a new startup delay or repeating an interrupted batch. Startup and command timing ranges can be adjusted with the `PLAYER_INFO_CHECK_*` variables in `.env.example`.
 
 Browser push is optional and disabled by default. Generate a persistent VAPID pair with `npx web-push generate-vapid-keys`, store both keys in the deployment environment, and never commit the private key. Users enable permission explicitly from **Settings**, then configure each device's severity, event types, resolved events, and quiet hours. Operational delivery remains admin-only to match the notification center's access policy; `whisper_message` push is routed personally to the site user assigned to the dialog. The existing daily scheduler can also deliver `daily_obsidian_report` once per local calendar day. The complete behavior and privacy model are documented in [`site/PUSH_NOTIFICATIONS.md`](site/PUSH_NOTIFICATIONS.md).
 
