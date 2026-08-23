@@ -37,7 +37,8 @@ const { createProtectionLeverController } = require('./features/obsidianFarm/pro
 const {
   getServerRestartDateParts: getKyivDateParts,
   isRestartPreparationWindow,
-  isPostRestartStartupWindow
+  isPostRestartStartupWindow,
+  isScheduledRestartConnectionEvent
 } = require('./features/obsidianFarm/restart-schedule');
 const { GrowingChildAI } = require('./features/growingChild');
 const { sanitizePublicPhrase } = require('./features/growingChild/safety');
@@ -77,7 +78,6 @@ const b64decode = (str) => Buffer.from(String(str), 'base64').toString('utf8');
 
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
-const NOTIFICATION_DISCORD_CHANNEL_ID = process.env.NOTIFICATION_DISCORD_CHANNEL_ID || DISCORD_CHANNEL_ID;
 const DISCORD_CHAT_CHANNEL_ID = process.env.DISCORD_CHAT_CHANNEL_ID;
 const DISCORD_DM_CATEGORY_ID = process.env.DISCORD_DM_CATEGORY_ID;
 const DISCORD_OWNER_ID = process.env.DISCORD_OWNER_ID || '623303738991443968';
@@ -1048,7 +1048,7 @@ const notificationService = new NotificationService({
   pushSender: (notification, context) => webPushService.deliver(notification, context),
   discordSender: async notification => {
     if (notification.event_type === 'unauthorized_player_nearby' && notification.status === 'active') {
-      const sent = await sendDiscordStatusMention({
+      const sent = await sendDiscordSafetyAlertDM({
         playerName: notification.metadata?.playerName || 'Unknown',
         distance: notification.metadata?.distance ?? 0,
         serverAction: 'Bot left the server and auto-reconnect was disabled.'
@@ -1057,7 +1057,7 @@ const notificationService = new NotificationService({
       return;
     }
     const colors = { info: 3447003, warning: 16776960, critical: 16711680 };
-    const sent = await sendDiscordNotification(`**${notification.title}**\n${notification.message}`, colors[notification.severity] || 3447003, NOTIFICATION_DISCORD_CHANNEL_ID);
+    const sent = await sendOwnerDM(notification.title, notification.message, colors[notification.severity] || 3447003);
     if (!sent) throw new Error('Discord notification was not delivered.');
   }
 });
@@ -1066,7 +1066,7 @@ if (pool) {
     notificationService.report('database_unavailable', {
       key: 'postgresql', title: 'Database unavailable', message: err.message,
       metadata: { error: err.message }
-    }).catch(() => sendDiscordNotification(`**Database unavailable**\n${err.message}`, 16711680, NOTIFICATION_DISCORD_CHANNEL_ID));
+    }).catch(() => sendOwnerDM('Database unavailable', err.message, 16711680));
   });
 }
 const originalConsoleLog = console.log.bind(console);
@@ -2146,7 +2146,7 @@ async function initDatabase() {
     notificationService.report('database_unavailable', {
       key: 'postgresql', title: 'Database unavailable', message: err.message,
       metadata: { error: err.message }
-    }).catch(() => sendDiscordNotification(`**Database unavailable**\n${err.message}`, 16711680, NOTIFICATION_DISCORD_CHANNEL_ID));
+    }).catch(() => sendOwnerDM('Database unavailable', err.message, 16711680));
   }
 }
 
@@ -4620,6 +4620,10 @@ let obsidianFarmResumeBot = null;
 const reconnectAttemptTimes = [];
 
 function reportNotification(eventType, details = {}) {
+  if (isScheduledRestartConnectionEvent(eventType)) {
+    console.log(`[Notification] ${eventType} suppressed during the scheduled server restart window.`);
+    return Promise.resolve({ skipped: true, reason: 'scheduled_server_restart' });
+  }
   return notificationService.report(eventType, details).catch(err => {
     console.error(`[Notification] ${eventType} failed:`, err.message);
   });
@@ -6960,27 +6964,8 @@ function consumeOutboundSelfEcho(message) {
 
 
 // Helper function to send messages to Discord
-async function sendDiscordNotification(message, color = 3447003, channelId = DISCORD_CHANNEL_ID) {
-  if (!channelId || !discordClient || !discordClient.isReady()) {
-    console.log('[Discord] Bot not ready or no channel configured. Skipped.');
-    return false;
-  }
-  try {
-    const channel = await discordClient.channels.fetch(channelId);
-    if (channel && channel.isTextBased()) {
-      await channel.send({
-        embeds: [{
-          description: message,
-          color,
-          timestamp: new Date()
-        }]
-      });
-      return true;
-    }
-  } catch (e) {
-    console.error('[Discord Bot] Failed to send:', e.message);
-  }
-  return false;
+async function sendDiscordNotification(message, color = 3447003) {
+  return sendOwnerDM('WheatMagnate notification', message, color);
 }
 
 async function sendDiscordOwnerNotification(message, color = 3447003) {
@@ -7103,17 +7088,15 @@ function startObsidianDailyReportScheduler() {
   obsidianDailyReportInterval.unref?.();
 }
 
-async function sendDiscordStatusMention({ playerName, distance, serverAction = 'Bot is leaving the server.' }) {
-  if (!DISCORD_CHANNEL_ID || !discordClient || !discordClient.isReady()) {
-    console.log('[Discord] Bot not ready or no channel configured. Skipped mention.');
+async function sendDiscordSafetyAlertDM({ playerName, distance, serverAction = 'Bot is leaving the server.' }) {
+  if (!DISCORD_OWNER_ID || !discordClient || !discordClient.isReady()) {
+    console.log('[Discord] Bot not ready or no owner configured. Skipped safety DM.');
     return false;
   }
   try {
-    const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
-    if (channel && channel.isTextBased()) {
-      const mentionPrefix = DISCORD_OWNER_ID ? `<@${DISCORD_OWNER_ID}>` : '@bdiev';
-      const sentMessage = await channel.send({
-        content: mentionPrefix,
+    const owner = await discordClient.users.fetch(DISCORD_OWNER_ID);
+    if (owner) {
+      await owner.send({
         embeds: [{
           title: '🚨 Security Alert',
           description: [
@@ -7127,15 +7110,12 @@ async function sendDiscordStatusMention({ playerName, distance, serverAction = '
           footer: { text: 'WheatMagnate Security System' },
           timestamp: new Date()
         }],
-        components: buildSecurityAlertComponents(playerName)
+        components: [...buildSecurityAlertComponents(playerName), createDeleteDMRow()]
       });
-      if (sentMessage && !excludedMessageIds.includes(sentMessage.id)) {
-        excludedMessageIds.push(sentMessage.id);
-      }
       return true;
     }
   } catch (e) {
-    console.error('[Discord Bot] Failed to send mention:', e.message);
+    console.error('[Discord Bot] Failed to send safety DM:', e.message);
   }
   return false;
 }
@@ -12246,14 +12226,14 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
 // Send Microsoft auth link only to the configured owner's Discord DM.
 async function sendOwnerDM(title, description, color = 16711680) {
-  if (!DISCORD_OWNER_ID) return;
+  if (!DISCORD_OWNER_ID) return false;
   if (!discordClient?.isReady()) {
     pendingOwnerDMs.push({ title, description, color });
-    return;
+    return true;
   }
   try {
     const owner = await discordClient.users.fetch(DISCORD_OWNER_ID);
-    if (!owner) return;
+    if (!owner) return false;
     await owner.send({
       embeds: [{
         title,
@@ -12263,8 +12243,10 @@ async function sendOwnerDM(title, description, color = 16711680) {
       }],
       components: [createDeleteDMRow()]
     });
+    return true;
   } catch (err) {
     console.error('[Discord] Failed to DM owner:', err.message);
+    return false;
   }
 }
 

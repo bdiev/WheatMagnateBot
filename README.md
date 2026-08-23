@@ -88,7 +88,6 @@ SITE_ADMIN_PASSWORD=
 ADMIN_BOOTSTRAP_TOKEN=
 SITE_TRUST_PROXY=false
 SITE_ALLOWED_ORIGINS=http://localhost:3080
-NOTIFICATION_DISCORD_CHANNEL_ID=
 VAPID_PUBLIC_KEY=
 VAPID_PRIVATE_KEY=
 VAPID_SUBJECT=mailto:admin@example.com
@@ -101,7 +100,7 @@ GEMINI_ENABLED=false
 GEMINI_API_KEY=
 ```
 
-`NOTIFICATION_DISCORD_CHANNEL_ID` is optional; when omitted, notification delivery uses `DISCORD_CHANNEL_ID` for backward compatibility. Notification rules are managed by an administrator on the **Notifications** dashboard page. Database schema changes in `database/migrations/` are applied automatically by the bot and site at startup.
+Discord notification delivery always uses a direct message to `DISCORD_OWNER_ID` and never posts alerts beside the server-status message. Notification rules are managed by an administrator on the **Notifications** dashboard page. Database schema changes in `database/migrations/` are applied automatically by the bot and site at startup. Connection lifecycle notifications are suppressed during the scheduled daily restart window (08:59–09:30 in `Europe/Kyiv`).
 
 The shared Minecraft chat pipeline sends messages sequentially and keeps only a bounded, short-lived queue. By default, a player may burst up to 8 distinct messages per 10 seconds, while repeated copies of the same normalized message are suppressed for 5 seconds. The website archive/live feed and Discord receive the same accepted player messages. The website loads the permanent archive in cursor-based pages while scrolling upward, including paginated full-archive search by message text or sender. Suppressed copies stay out of visible chat history, while one system notice reports the flood and every suppressed message is still counted in player Chat Messages, Top Chatters, and aggregate chat statistics. Server announcements render as system notices, do not contribute to player profiles or chat statistics, and bypass the player burst limit; identical server announcements within the duplicate window still collapse silently to one row. Queue limits and timing can be adjusted with the `DISCORD_CHAT_*` variables in `.env.example`.
 

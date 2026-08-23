@@ -1,6 +1,12 @@
 'use strict';
 
 const SERVER_TIME_ZONE = 'Europe/Kyiv';
+const SCHEDULED_RESTART_CONNECTION_EVENTS = new Set([
+  'bot_disconnected',
+  'bot_reconnected',
+  'bot_kicked',
+  'repeated_reconnects'
+]);
 
 function getServerRestartDateParts(date = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -28,9 +34,16 @@ function isPostRestartStartupWindow({ hour, minute }) {
   return hour === 9 && minute <= 30;
 }
 
+function isScheduledRestartConnectionEvent(eventType, date = new Date()) {
+  if (!SCHEDULED_RESTART_CONNECTION_EVENTS.has(String(eventType || ''))) return false;
+  return isRestartPreparationWindow(getServerRestartDateParts(date));
+}
+
 module.exports = {
   SERVER_TIME_ZONE,
+  SCHEDULED_RESTART_CONNECTION_EVENTS,
   getServerRestartDateParts,
   isRestartPreparationWindow,
-  isPostRestartStartupWindow
+  isPostRestartStartupWindow,
+  isScheduledRestartConnectionEvent
 };
