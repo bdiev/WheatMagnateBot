@@ -6590,8 +6590,11 @@ body.modal-open { overflow:hidden; }
   .push-device-section-head { display: grid; gap: 3px; }
   .push-device-section-head small { text-align: left; }
   .push-toggle-grid { grid-template-columns: minmax(0, 1fr); }
-  .push-quiet-hours { grid-template-columns: minmax(0, 1fr) 20px minmax(0, 1fr); gap: 6px; }
-  .push-time-divider { width: 20px; }
+  .push-quiet-hours { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .push-quiet-hours label,
+  .push-quiet-hours input { width: 100%; min-width: 0; max-width: 100%; }
+  .push-quiet-hours input { display: block; inline-size: 100%; }
+  .push-time-divider { display: none; }
   .push-test-panel { grid-template-columns: minmax(0, 1fr); }
   .push-test-copy { grid-column: auto; }
   .push-test-button { width: 100%; }
