@@ -8625,11 +8625,17 @@ function createBot() {
     detachPrimaryBot(shouldReconnect ? 'reconnecting' : 'offline');
     safelyCloseMinecraftBot(createdBot, reason);
     setDisconnectReason(buildDisconnectReason(reason, 'Connection lost'));
-    reportNotification('bot_disconnected', {
-      key: 'minecraft', title: 'Bot disconnected',
-      message: buildDisconnectReason(reason, 'Connection lost'),
-      metadata: { reason: normalizeStatusReason(reason) || null, correlationId: connectionCorrelationId }
-    });
+    const normalizedReason = normalizeStatusReason(reason);
+    const intentionalProcessShutdown = multiAccountShuttingDown || normalizedReason === 'Process shutdown';
+    if (!intentionalProcessShutdown) {
+      reportNotification('bot_disconnected', {
+        key: 'minecraft', title: 'Bot disconnected',
+        message: buildDisconnectReason(reason, 'Connection lost'),
+        metadata: { reason: normalizedReason || null, correlationId: connectionCorrelationId }
+      });
+    } else {
+      console.log('[Notification] bot_disconnected suppressed for intentional process shutdown.');
+    }
 
     if (shouldReconnect) {
       scheduleReconnect(

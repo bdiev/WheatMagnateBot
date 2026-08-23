@@ -46,5 +46,10 @@ assert.match(
   /async function sendDiscordNotification[\s\S]*?return sendOwnerDM\(/,
   'legacy operational notifications must also use the owner DM'
 );
+assert.match(
+  botSource,
+  /intentionalProcessShutdown\s*=\s*multiAccountShuttingDown\s*\|\|\s*normalizedReason\s*===\s*'Process shutdown'[\s\S]*?if \(!intentionalProcessShutdown\)\s*\{[\s\S]*?reportNotification\('bot_disconnected'/,
+  'intentional process shutdown must not create a disconnect notification'
+);
 
 console.log('Scheduled restart notification policy tests passed.');
