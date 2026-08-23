@@ -51,6 +51,7 @@ const state = {
   playerProfileLastPayload: null,
   playerProfileSessionTimer: null,
   playerProfileRevealTimer: null,
+  playerProfileRefreshTimers: [],
   playerProfileAccentCache: new Map(),
   whisperAccentCache: new Map(),
   playtimeLeaderboardScope: 'global',
@@ -3004,10 +3005,18 @@ function renderPlayerProfile(profile) {
             <span>${whitelistLabel}</span>
           </button>`
     : '';
+  const storedAdminTags = (Array.isArray(profile.adminTags) ? profile.adminTags : [])
+    .filter(tag => String(tag).trim().toLowerCase() !== 'new player');
+  const adminTagMarkup = [
+    ...storedAdminTags.map(tag => `<span class="admin-player-tag">${escapeHtml(tag)}</span>`),
+    ...(profile.isNewPlayer
+      ? ['<span class="admin-player-tag is-new-player" title="Automatic tag: shown for 14 days after registration">New Player</span>']
+      : [])
+  ].join('');
   const adminMetadata = state.currentUser?.role === 'admin' && (Object.hasOwn(profile, 'adminNotes') || Object.hasOwn(profile, 'adminTags'))
     ? `<section class="player-profile-admin-metadata">
         <h3>Admin metadata</h3>
-        <div><span>Tags</span><strong>${profile.adminTags?.length ? profile.adminTags.map(tag => `<span class="admin-player-tag">${escapeHtml(tag)}</span>`).join('') : 'None'}</strong></div>
+        <div><span>Tags</span><strong>${adminTagMarkup || 'None'}</strong></div>
         <div><span>Notes</span><p>${profile.adminNotes ? escapeHtml(profile.adminNotes) : 'No admin notes.'}</p></div>
       </section>`
     : '';
@@ -3139,6 +3148,7 @@ function playerProfileSignature(profile) {
     profile.isWhitelisted,
     profile.isIgnored,
     profile.isBot,
+    profile.isNewPlayer,
     profile.playtime,
     profile.registrationAt,
     profile.registrationDisplay,
@@ -3165,6 +3175,25 @@ function playerProfileSignature(profile) {
 function stopPlayerProfileSessionClock() {
   if (state.playerProfileSessionTimer) clearInterval(state.playerProfileSessionTimer);
   state.playerProfileSessionTimer = null;
+}
+
+function clearPlayerProfileRefreshTimers() {
+  for (const timer of state.playerProfileRefreshTimers) clearTimeout(timer);
+  state.playerProfileRefreshTimers = [];
+}
+
+function schedulePlayerProfileRefresh(username) {
+  clearPlayerProfileRefreshTimers();
+  const expectedUsername = String(username).toLowerCase();
+  for (const delay of [1_500, 4_000, 8_000]) {
+    const timer = window.setTimeout(() => {
+      state.playerProfileRefreshTimers = state.playerProfileRefreshTimers.filter(item => item !== timer);
+      if ($('#playerProfileOverlay')?.hidden) return;
+      if (String(state.playerProfileUsername || '').toLowerCase() !== expectedUsername) return;
+      loadPlayerProfile(state.playerProfileUsername);
+    }, delay);
+    state.playerProfileRefreshTimers.push(timer);
+  }
 }
 
 function updatePlayerProfileSessionClock() {
@@ -3255,6 +3284,7 @@ async function loadPlayerProfile(username, { showLoading = false } = {}) {
 }
 
 async function openPlayerProfile(username) {
+  clearPlayerProfileRefreshTimers();
   setPlayerProfileAccent();
   state.playerProfileSignature = '';
   state.playerProfileRegistrationDateMode = false;
@@ -3269,6 +3299,7 @@ function closePlayerProfile() {
   overlay.hidden = true;
   setPlayerProfileLoading(false);
   stopPlayerProfileSessionClock();
+  clearPlayerProfileRefreshTimers();
   clearTimeout(state.playerProfileRevealTimer);
   state.playerProfileRevealTimer = null;
   document.body.classList.remove('profile-open');
@@ -3320,6 +3351,7 @@ async function handlePlayerProfileClick(event) {
         accountId: state.activeAccountId
       });
       setBanner(`${refresh.label} refresh requested for ${username}.`);
+      schedulePlayerProfileRefresh(username);
     } catch (err) {
       setBanner(`Could not request player data: ${err.message}`);
     } finally {

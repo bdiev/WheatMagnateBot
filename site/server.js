@@ -22,7 +22,7 @@ const { buildPlayerMilestones } = require('./player-milestones');
 const { KILL_AURA_MOBS, normalizeKillAuraTargets } = require('./kill-aura-catalog');
 const { createResourceRequestService } = require('./resource-requests');
 const { normalizeGreenChatMessage } = require('./chat-message-normalization');
-const { NEW_PLAYER_WINDOW_DAYS } = require('./player-new-status');
+const { NEW_PLAYER_WINDOW_DAYS, isNewPlayerRegistration } = require('./player-new-status');
 const {
   MUTATING_METHODS, RateLimiter, clientIp, configuredOrigins, requestIsHttps,
   resolveStaticPath, securityHeaders, trustProxyEnabled, validateOrigin, validHost, verifyCsrfToken
@@ -3326,6 +3326,7 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
     isWhitelisted: Boolean(profile.is_whitelisted),
     isIgnored: Boolean(ignoredResult.rows[0]?.is_ignored),
     isBot: Array.isArray(profile.admin_tags) && profile.admin_tags.some(tag => String(tag).trim().toLowerCase() === 'bot'),
+    isNewPlayer: isNewPlayerRegistration(profile.registration_at),
     isOnline: Boolean(profile.is_online),
     trackingSince: profile.tracking_since || null,
     lastSeen: profile.last_seen || null,

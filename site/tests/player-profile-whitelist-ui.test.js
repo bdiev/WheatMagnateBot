@@ -7,6 +7,7 @@ const path = require('node:path');
 const appSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
 const stylesSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'styles.css'), 'utf8');
 const indexSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+const serverSource = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
 
 assert.match(
   appSource,
@@ -32,6 +33,21 @@ assert.match(
   appSource,
   /closest\('\[data-player-refresh-command\]'\)[\s\S]*'!seen': \{ metric: 'lastSeen'[\s\S]*postJson\('\/api\/chat\/send',[\s\S]*message: `\$\{command\} \$\{username\}`[\s\S]*playerInfoRefresh:[\s\S]*metric: refresh\.metric/,
   'player metric refresh actions must explicitly authorize one observed update before sending the game command'
+);
+assert.match(
+  serverSource,
+  /isNewPlayer:\s*isNewPlayerRegistration\(profile\.registration_at\)/,
+  'the player-profile API must compute the two-week New Player status from the current registration date'
+);
+assert.match(
+  appSource,
+  /storedAdminTags[\s\S]*toLowerCase\(\) !== 'new player'[\s\S]*profile\.isNewPlayer[\s\S]*New Player[\s\S]*adminTagMarkup \|\| 'None'/,
+  'Admin metadata must show New Player as a computed tag and hide a stale stored copy'
+);
+assert.match(
+  appSource,
+  /function schedulePlayerProfileRefresh\(username\)[\s\S]*\[1_500, 4_000, 8_000\][\s\S]*loadPlayerProfile\(state\.playerProfileUsername\)[\s\S]*schedulePlayerProfileRefresh\(username\)/,
+  'a player card must re-query the profile after an observed !jd response can update the registration date'
 );
 assert.match(
   appSource,

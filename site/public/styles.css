@@ -5608,6 +5608,7 @@ body.search-focus-active #logoutButton {
 .admin-player-card-main code { overflow:hidden; color:var(--muted); font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
 .admin-player-card-tags { display:flex; gap:5px; flex-wrap:wrap; min-height:22px; }
 .admin-player-tag { display:inline-flex; align-items:center; min-height:22px; padding:3px 7px; border-radius:999px; color:var(--accent); background:color-mix(in srgb,var(--accent) 12%,var(--panel)); font-size:11px; font-weight:800; }
+.admin-player-tag.is-new-player { color:#27c986; background:color-mix(in srgb,#27c986 15%,var(--panel)); }
 .admin-player-card-stats { grid-column:1 / -1; grid-row:2; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:7px; margin:0; }
 .admin-player-card-stats div { min-width:0; padding:8px 9px; border:1px solid var(--line); border-radius:10px; background:var(--panel); }
 .admin-player-card-stats dt { color:var(--muted); font-size:10px; font-weight:800; text-transform:uppercase; }
