@@ -5682,10 +5682,12 @@ async function preparePlayerInfoRefresh(payload, cleanMessage) {
   if (!refresh) return null;
   const metric = refresh.metric === 'playtime'
     ? 'playtime'
+    : refresh.metric === 'messages' ? 'messages'
     : refresh.metric === 'joinDate' ? 'joinDate' : refresh.metric === 'lastSeen' ? 'lastSeen' : '';
   const username = String(refresh.username || '').replace(/[^A-Za-z0-9_]/g, '').trim().slice(0, 32);
   const expectedCommand = metric === 'playtime'
     ? `!pt ${username}`
+    : metric === 'messages' ? `!messages ${username}`
     : metric === 'joinDate' ? `!jd ${username}` : metric === 'lastSeen' ? `!seen ${username}` : '';
   if (!metric || !username || cleanMessage.toLowerCase() !== expectedCommand.toLowerCase()) {
     throw new Error('Invalid player information refresh command.');

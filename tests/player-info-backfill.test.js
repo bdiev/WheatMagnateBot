@@ -23,7 +23,7 @@ function testOnlyMissingMetricsBecomeCommands() {
     { username: 'Complete', missing_playtime: false, missing_messages: false, missing_join_date: false, missing_last_seen: false }
   ]), [
     { metric: 'playtime', username: 'HasJD', command: '!pt HasJD' },
-    { metric: 'messages', username: 'HasJD', command: '!messages HasJD' },
+    { metric: 'messages', username: 'HasJD', command: '!msgs HasJD' },
     { metric: 'lastSeen', username: 'HasJD', command: '!seen HasJD' },
     { metric: 'playtime', username: 'HasSeen', command: '!pt HasSeen' },
     { metric: 'joinDate', username: 'HasSeen', command: '!jd HasSeen' },

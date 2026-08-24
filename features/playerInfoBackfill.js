@@ -10,7 +10,7 @@ const DEFAULT_COMMAND_DELAY_MAX_MS = 45_000;
 
 const METRIC_COMMANDS = Object.freeze([
   { metric: 'playtime', missingColumn: 'missing_playtime', command: '!pt' },
-  { metric: 'messages', missingColumn: 'missing_messages', command: '!messages' },
+  { metric: 'messages', missingColumn: 'missing_messages', command: '!msgs' },
   { metric: 'joinDate', missingColumn: 'missing_join_date', command: '!jd' },
   { metric: 'lastSeen', missingColumn: 'missing_last_seen', command: '!seen' }
 ]);

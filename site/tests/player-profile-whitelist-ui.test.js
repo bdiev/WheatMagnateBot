@@ -31,7 +31,17 @@ assert.match(
 );
 assert.match(
   appSource,
-  /closest\('\[data-player-refresh-command\]'\)[\s\S]*'!seen': \{ metric: 'lastSeen'[\s\S]*postJson\('\/api\/chat\/send',[\s\S]*message: `\$\{command\} \$\{username\}`[\s\S]*playerInfoRefresh:[\s\S]*metric: refresh\.metric/,
+  /messageRefreshRequested = state\.playerProfileMessageRefreshes\.has[\s\S]*<span>Chat Messages<\/span>[\s\S]*messageRefreshRequested \? ''[\s\S]*data-player-refresh-command="!messages"[\s\S]*formatNumber\(profile\.chat\?\.totalMessages\)/,
+  'the Chat Messages metric must expose a refresh action'
+);
+assert.match(
+  appSource,
+  /refresh\.metric === 'messages'[\s\S]*playerProfileMessageRefreshes\.add\(username\.toLowerCase\(\)\)[\s\S]*refreshButton\.remove\(\)/,
+  'the Chat Messages refresh button must stay hidden after its first successful click'
+);
+assert.match(
+  appSource,
+  /closest\('\[data-player-refresh-command\]'\)[\s\S]*'!seen': \{ metric: 'lastSeen'[\s\S]*'!messages': \{ metric: 'messages'[\s\S]*postJson\('\/api\/chat\/send',[\s\S]*message: `\$\{command\} \$\{username\}`[\s\S]*playerInfoRefresh:[\s\S]*metric: refresh\.metric/,
   'player metric refresh actions must explicitly authorize one observed update before sending the game command'
 );
 assert.match(

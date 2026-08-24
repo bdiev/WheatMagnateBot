@@ -52,6 +52,7 @@ const state = {
   playerProfileSessionTimer: null,
   playerProfileRevealTimer: null,
   playerProfileRefreshTimers: [],
+  playerProfileMessageRefreshes: new Set(),
   playerProfileAccentCache: new Map(),
   whisperAccentCache: new Map(),
   playtimeLeaderboardScope: 'global',
@@ -2934,6 +2935,7 @@ function renderPlayerProfile(profile) {
   const gameSessionCount = Math.max(Number(profile.gameSessionCount) || 0, gameSessions.length);
   const nearby = profile.nearby;
   const profileUsername = String(profile.username || '');
+  const messageRefreshRequested = state.playerProfileMessageRefreshes.has(profileUsername.toLowerCase());
   const nameHistory = Array.isArray(profile.nameHistory) ? profile.nameHistory : [];
   const nameHistoryControl = nameHistory.length > 1
     ? `<details class="player-name-history">
@@ -3081,7 +3083,16 @@ function renderPlayerProfile(profile) {
           ? `<button class="player-profile-value-button" type="button" data-profile-toggle="last-seen-date" title="${lastSeenTitle}">${escapeHtml(lastSeenProfileValue(profile))}</button>`
           : '<strong>Never</strong>'}
       </div>
-      <div><span>Chat Messages</span><strong>${formatNumber(profile.chat?.totalMessages)}</strong></div>
+      <div>
+        <header class="player-profile-metric-head">
+          <span>Chat Messages</span>
+          ${messageRefreshRequested ? '' : `
+            <button class="player-profile-refresh-button" type="button" data-player-refresh-command="!messages" aria-label="Refresh chat messages for ${escapeHtml(profileUsername)}" title="Request current chat message count">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0 1 11.5-2.6L20 9M4 15l2.4 2.6A7 7 0 0 0 17.9 15"/></svg>
+            </button>`}
+        </header>
+        <strong>${formatNumber(profile.chat?.totalMessages)}</strong>
+      </div>
       <div><span>Messages 24h</span><strong>${formatNumber(profile.chat?.last24h)}</strong></div>
       <div><span>Last Message</span><strong${profile.chat?.lastMessageAt ? ` data-profile-relative-time="${escapeHtml(profile.chat.lastMessageAt)}"` : ''}>${profile.chat?.lastMessageAt ? formatRecentDate(profile.chat.lastMessageAt) : 'None'}</strong></div>
       <div><span>Nearby</span><strong>${nearby ? `${formatNumber(nearby.distance)} blocks` : 'No sighting'}</strong></div>
@@ -3305,7 +3316,8 @@ async function handlePlayerProfileClick(event) {
     const refreshByCommand = {
       '!pt': { metric: 'playtime', label: 'Playtime' },
       '!jd': { metric: 'joinDate', label: 'Registration date' },
-      '!seen': { metric: 'lastSeen', label: 'Last seen' }
+      '!seen': { metric: 'lastSeen', label: 'Last seen' },
+      '!messages': { metric: 'messages', label: 'Chat messages' }
     };
     const refresh = refreshByCommand[command];
     if (!refresh || !/^[A-Za-z0-9_]{1,32}$/.test(username)) return;
@@ -3323,6 +3335,10 @@ async function handlePlayerProfileClick(event) {
         },
         accountId: state.activeAccountId
       });
+      if (refresh.metric === 'messages') {
+        state.playerProfileMessageRefreshes.add(username.toLowerCase());
+        refreshButton.remove();
+      }
       setBanner(`${refresh.label} refresh requested for ${username}.`);
       schedulePlayerProfileRefresh(username);
     } catch (err) {

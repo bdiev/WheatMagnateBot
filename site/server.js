@@ -1504,6 +1504,7 @@ function normalizePlayerInfoRefreshRequest(value, message) {
   const username = cleanMinecraftUsername(value?.username);
   const expectedCommand = metric === 'playtime'
     ? `!pt ${username}`
+    : metric === 'messages' ? `!messages ${username}`
     : metric === 'joinDate' ? `!jd ${username}` : metric === 'lastSeen' ? `!seen ${username}` : '';
   if (!username || !expectedCommand || String(message || '').toLowerCase() !== expectedCommand.toLowerCase()) {
     const err = new Error('Invalid player information refresh request.');

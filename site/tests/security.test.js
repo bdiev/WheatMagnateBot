@@ -22,6 +22,11 @@ function testAdminNameCannotEscalate() {
     { metric: 'lastSeen', username: 'bdiev_' },
     'last-seen refresh metadata must match the exact !seen command'
   );
+  assert.deepEqual(
+    normalizePlayerInfoRefreshRequest({ metric: 'messages', username: 'bdiev_' }, '!messages bdiev_'),
+    { metric: 'messages', username: 'bdiev_' },
+    'message-count refresh metadata must match the exact !messages command'
+  );
   assert.throws(
     () => normalizePlayerInfoRefreshRequest({ metric: 'joinDate', username: 'bdiev_' }, '!pt bdiev_'),
     error => error.statusCode === 400,
