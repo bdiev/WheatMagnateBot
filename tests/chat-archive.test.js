@@ -94,12 +94,35 @@ assert.match(
   /async function deliverGameChatMessageToDiscord[\s\S]*recordGameChatMessage\(username, message, \{[\s\S]*messageCount: isSummary \? summaryCount : 1,[\s\S]*visible: true[\s\S]*!DISCORD_CHAT_CHANNEL_ID[\s\S]*return true;/,
   'flood summaries must contribute their skipped count and remain visible to the site chat'
 );
+assert.match(
+  botSource,
+  /const isIgnoredPlayer = !isSelfMessage[\s\S]*setTimeout\(async \(\) => \{[\s\S]*if \(isIgnoredPlayer\) \{[\s\S]*recordGameChatMessage\(safeUsername, cleanMessage, \{ visible: false \}\);[\s\S]*return;[\s\S]*sendGameChatMessageToDiscord/,
+  'ignored player messages must be archived as hidden rows without entering the Discord delivery queue'
+);
 assert.match(botSource, /const isSystemMessage = isMinecraftSystemUsername\(username\);[\s\S]*if \(isSummary && isSystemMessage\) return true;[\s\S]*recordGameChatMessage/,
   'server flood summaries must be rejected before database and Discord delivery');
 assert.match(serverSource, /SUM\(messages\.message_count\)::bigint AS count/,
   'Top Chatters must count every message suppressed by flood protection');
-assert.match(serverSource, /COALESCE\(SUM\(message_count\), 0\)::bigint AS total[\s\S]*AND is_visible = TRUE/,
-  'player totals must include flood counts while player history excludes notice rows');
+const playerProfileSource = serverSource.match(/async function getPlayerProfile[\s\S]*?const ADMIN_PLAYER_EDITABLE_FIELDS/)?.[0] || '';
+assert.ok(
+  playerProfileSource.includes("AND message !~ '^Skipped [0-9]+ (message|messages) due to chat flooding\\\\.$'"),
+  'player history must exclude synthetic flood notices'
+);
+assert.doesNotMatch(
+  playerProfileSource.match(/SELECT id, message, created_at, is_visible[\s\S]*?LIMIT \$4/)?.[0] || '',
+  /is_visible = TRUE/,
+  'player history must include hidden messages from ignored players'
+);
+assert.match(
+  serverSource,
+  /SELECT id, message, created_at, is_visible[\s\S]*isVisible: Boolean\(row\.is_visible\)/,
+  'player history must tell the UI which archived messages are hidden from public chat'
+);
+assert.match(
+  appSource,
+  /message\.isVisible === false \? ' is-hidden'[\s\S]*Hidden from public chat[\s\S]*chat-hidden-badge">Hidden/,
+  'hidden ignored-player messages must remain readable in profiles without linking to public chat context'
+);
 assert.match(serverSource, /type: isFloodProtectionNotice\(row\.message\)[\s\S]*\? 'flood'[\s\S]*isMinecraftSystemUsername\(row\.username\) \? 'server' : 'chat'/,
   'the chat API must classify flood and server rows as system notices');
 assert.match(appSource, /const isFloodNotice = message\.type === 'flood'[\s\S]*const isServerNotice = message\.type === 'server'[\s\S]*chat-notice-/,
@@ -216,9 +239,9 @@ assert.match(stylesSource, /\.chat-date-indicator\.visible\s*\{[^}]*opacity:\s*1
   'the date indicator must fade into view while scrolling');
 assert.match(stylesSource, /\.chat-panel\.chat-search-open > \.panel-head > div:first-child\s*\{[^}]*opacity:\s*0;/s,
   'the chat heading must fade away while archive search expands');
-assert.match(indexSource, /styles\.css\?v=238/, 'the updated mobile layout must use a fresh stylesheet URL');
-assert.match(indexSource, /app\.js\?v=237/, 'the updated dashboard behavior must use a fresh script URL');
-assert.match(serviceWorkerSource, /CACHE_VERSION = '255'/, 'the app shell cache must be replaced after dashboard behavior changes');
+assert.match(indexSource, /styles\.css\?v=239/, 'the updated mobile layout must use a fresh stylesheet URL');
+assert.match(indexSource, /app\.js\?v=238/, 'the updated dashboard behavior must use a fresh script URL');
+assert.match(serviceWorkerSource, /CACHE_VERSION = '256'/, 'the app shell cache must be replaced after dashboard behavior changes');
 assert.match(serviceWorkerSource, /fallbackPath[\s\S]*?'\/request\.html'/, 'resource requests must have their own navigation fallback');
 assert.match(stylesSource, /\.chat-message\s*\{[^}]*flex:\s*0 0 auto;/s,
   'chat cards must retain their natural height inside the scrolling flex list');

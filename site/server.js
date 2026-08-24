@@ -3438,13 +3438,12 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
          OR (player_uuid IS NULL AND LOWER(username) = ANY($2::text[]))
     `, [playerUuid, aliases]),
     pool.query(`
-      SELECT id, message, created_at
+      SELECT id, message, created_at, is_visible
       FROM game_chat_messages
       WHERE (
           ($1::uuid IS NOT NULL AND player_uuid = $1::uuid)
           OR (player_uuid IS NULL AND LOWER(username) = ANY($2::text[]))
         )
-        AND is_visible = TRUE
         AND message !~ '^Skipped [0-9]+ (message|messages) due to chat flooding\\.$'
         AND ($3::bigint IS NULL OR id < $3::bigint)
       ORDER BY created_at DESC
@@ -3535,7 +3534,8 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
       recentMessages: recentChatResult.rows.map(row => ({
         id: String(row.id),
         message: displayGameChatMessage(row.message),
-        createdAt: row.created_at
+        createdAt: row.created_at,
+        isVisible: Boolean(row.is_visible)
       })),
       hasMoreMessages: recentChatResult.rows.length === messageLimit,
       nextBeforeMessageId: recentChatResult.rows.length

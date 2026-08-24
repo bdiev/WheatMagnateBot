@@ -3104,11 +3104,12 @@ function renderPlayerProfile(profile) {
       <h3>Recent Chat</h3>
       ${recentMessages.length
         ? recentMessages.map(message => `
-          <article class="player-profile-message${profile.isBot ? ' player-profile-message-bot' : ''}" data-chat-message-id="${escapeHtml(message.id)}" title="Open this moment in game chat" role="button" tabindex="0">
+          <article class="player-profile-message${profile.isBot ? ' player-profile-message-bot' : ''}${message.isVisible === false ? ' is-hidden' : ''}"${message.isVisible === false ? ' title="Hidden from public chat"' : ` data-chat-message-id="${escapeHtml(message.id)}" title="Open this moment in game chat" role="button" tabindex="0"`}>
             <div class="chat-message-body">
               <div class="chat-message-head">
                 <span class="chat-message-name">${escapeHtml(profileUsername)}</span>
                 ${profile.isBot ? '<span class="chat-bot-badge">BOT</span>' : ''}
+                ${message.isVisible === false ? '<span class="chat-hidden-badge">Hidden</span>' : ''}
                 <time class="chat-time" datetime="${escapeHtml(message.createdAt || '')}">${escapeHtml(formatPlayerProfileChatTimestamp(message.createdAt))}</time>
               </div>
               <div class="chat-text">${linkifyChatMessage(message.message)}</div>
@@ -3152,7 +3153,7 @@ function playerProfileSignature(profile) {
     profile.adminNotes,
     profile.adminTags,
     profile.chat?.hasMoreMessages,
-    ...(profile.chat?.recentMessages || []).map(message => [message.id, message.message, message.createdAt])
+    ...(profile.chat?.recentMessages || []).map(message => [message.id, message.message, message.createdAt, message.isVisible])
   ]);
 }
 

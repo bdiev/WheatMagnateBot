@@ -4508,6 +4508,31 @@ body.search-focus-active #logoutButton {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
 }
 
+.player-profile-message.is-hidden {
+  border-style: dashed;
+  cursor: default;
+}
+
+.player-profile-message.is-hidden:hover {
+  border-color: var(--line);
+}
+
+.chat-hidden-badge {
+  border-radius: 999px;
+  padding: 2px 6px;
+  color: #b65c24;
+  background: color-mix(in srgb, #e58b4c 15%, transparent);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .06em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+:root[data-theme="dark"] .chat-hidden-badge {
+  color: #ffad72;
+}
+
 .player-profile-load-more {
   width: 100%;
 }

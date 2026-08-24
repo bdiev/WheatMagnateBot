@@ -6702,9 +6702,7 @@ function scheduleGameChatForward(username, message, source = 'chat') {
     return false;
   }
 
-  if (!isSelfMessage && ignoredChatUsernames.includes(safeUsername.toLowerCase())) {
-    return false;
-  }
+  const isIgnoredPlayer = !isSelfMessage && ignoredChatUsernames.includes(safeUsername.toLowerCase());
 
   const whisperKey = `WHISPER:${safeUsername}:${cleanMessage}`;
   const whisperLowerKey = `WHISPER:${safeUsername.toLowerCase()}:${cleanMessage}`;
@@ -6734,6 +6732,10 @@ function scheduleGameChatForward(username, message, source = 'chat') {
         return;
       }
       recentlyForwardedGameChat.set(pendingKey, { source, timestamp: Date.now() });
+      if (isIgnoredPlayer) {
+        await recordGameChatMessage(safeUsername, cleanMessage, { visible: false });
+        return;
+      }
       const sent = await sendGameChatMessageToDiscord(safeUsername, cleanMessage, { source });
       if (!sent && DISCORD_CHAT_CHANNEL_ID && discordClient?.isReady?.()) {
         console.warn(`[Chat] Forwarded ${safeUsername} to site DB but failed to mirror to Discord.`);
