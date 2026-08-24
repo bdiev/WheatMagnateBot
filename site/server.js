@@ -682,6 +682,7 @@ async function ensureOptionalTables() {
   await pool.query(`ALTER TABLE player_activity ALTER COLUMN last_seen DROP DEFAULT`);
   await pool.query(`ALTER TABLE player_activity ALTER COLUMN last_online DROP DEFAULT`);
   await pool.query(`ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS registration_at TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS observed_message_count BIGINT CHECK (observed_message_count >= 0)`);
   await pool.query(`ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS admin_notes TEXT`);
   await pool.query(`ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS admin_tags TEXT[] NOT NULL DEFAULT '{}'::text[]`);
   await pool.query(`
@@ -3320,7 +3321,7 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
   const [profileResult, chatResult, recentChatResult, nearbyResult, ignoredResult, namesResult, gameSessionEventsResult] = await Promise.all([
     pool.query(`
       WITH activity AS (
-        SELECT id, username, player_uuid, last_seen, last_online, registration_at, is_online,
+        SELECT id, username, player_uuid, last_seen, last_online, registration_at, observed_message_count, is_online,
                admin_notes, admin_tags
         FROM player_activity
         WHERE ($2::uuid IS NOT NULL AND player_uuid = $2::uuid)
@@ -3340,6 +3341,7 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
         pa.last_seen,
         pa.last_online,
         pa.registration_at,
+        pa.observed_message_count,
         TO_CHAR(pa.registration_at AT TIME ZONE 'UTC', 'MM/DD/YYYY HH24:MI:SS') AS registration_display,
         pt.tracking_since,
         COALESCE(pa.is_online, FALSE) AS is_online,
@@ -3459,7 +3461,9 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
     gameSessionCount,
     gameSessions,
     chat: {
-      totalMessages: toInt(chat.total),
+      totalMessages: profile.observed_message_count == null
+        ? toInt(chat.total)
+        : toInt(profile.observed_message_count),
       last24h: toInt(chat.last_24h),
       lastMessageAt: chat.last_message_at || null,
       recentMessages: recentChatResult.rows.map(row => ({

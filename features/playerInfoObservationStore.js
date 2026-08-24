@@ -1,6 +1,6 @@
 'use strict';
 
-const METRICS = new Set(['playtime', 'joinDate']);
+const METRICS = new Set(['playtime', 'messages', 'joinDate']);
 const DEFAULT_REFRESH_TTL_MS = 2 * 60 * 1000;
 
 function normalizeMetric(value) {

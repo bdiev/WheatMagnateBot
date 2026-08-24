@@ -55,6 +55,17 @@ async function testInitialImportOnlyRunsOnce() {
   assert.equal(writes, 1, 'aliases of one UUID must share the one-time import state');
 }
 
+async function testMessagesImportOnlyRunsOnce() {
+  const { pool } = createFakePool();
+  const store = createPlayerInfoObservationStore({ pool });
+  let writes = 0;
+  const first = await store.withPermission('messages', 'OldName', async () => ++writes);
+  const repeated = await store.withPermission('messages', 'CurrentName', async () => ++writes);
+  assert.equal(first.allowed, true);
+  assert.equal(repeated.allowed, false);
+  assert.equal(writes, 1);
+}
+
 async function testSiteRefreshOpensExactlyOneUpdate() {
   const { pool } = createFakePool();
   const store = createPlayerInfoObservationStore({ pool });
@@ -84,6 +95,7 @@ async function testExpiredRefreshDoesNotAuthorizeAWrite() {
 
 Promise.resolve()
   .then(testInitialImportOnlyRunsOnce)
+  .then(testMessagesImportOnlyRunsOnce)
   .then(testSiteRefreshOpensExactlyOneUpdate)
   .then(testExpiredRefreshDoesNotAuthorizeAWrite)
   .then(() => console.log('Player info observation store tests passed.'));

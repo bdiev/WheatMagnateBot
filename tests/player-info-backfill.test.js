@@ -17,12 +17,13 @@ const {
 
 function testOnlyMissingMetricsBecomeCommands() {
   assert.deepEqual(buildMissingCommands([
-    { username: 'HasJD', missing_playtime: true, missing_join_date: false, missing_last_seen: true },
-    { username: 'HasSeen', missing_playtime: true, missing_join_date: true, missing_last_seen: false },
-    { username: 'HasPT', missing_playtime: false, missing_join_date: true, missing_last_seen: true },
-    { username: 'Complete', missing_playtime: false, missing_join_date: false, missing_last_seen: false }
+    { username: 'HasJD', missing_playtime: true, missing_messages: true, missing_join_date: false, missing_last_seen: true },
+    { username: 'HasSeen', missing_playtime: true, missing_messages: false, missing_join_date: true, missing_last_seen: false },
+    { username: 'HasPT', missing_playtime: false, missing_messages: false, missing_join_date: true, missing_last_seen: true },
+    { username: 'Complete', missing_playtime: false, missing_messages: false, missing_join_date: false, missing_last_seen: false }
   ]), [
     { metric: 'playtime', username: 'HasJD', command: '!pt HasJD' },
+    { metric: 'messages', username: 'HasJD', command: '!messages HasJD' },
     { metric: 'lastSeen', username: 'HasJD', command: '!seen HasJD' },
     { metric: 'playtime', username: 'HasSeen', command: '!pt HasSeen' },
     { metric: 'joinDate', username: 'HasSeen', command: '!jd HasSeen' },
@@ -57,6 +58,18 @@ function testScheduleMigrationIsSharedByBotAndSite() {
   );
   assert.equal(botMigration, siteMigration);
   assert.match(botMigration, /player_info_backfill_schedule[\s\S]*next_run_at TIMESTAMPTZ/);
+
+  const botMessagesMigration = fs.readFileSync(
+    path.join(root, 'database', 'migrations', '036_player_message_observation.sql'),
+    'utf8'
+  );
+  const siteMessagesMigration = fs.readFileSync(
+    path.join(root, 'site', 'migrations', '036_player_message_observation.sql'),
+    'utf8'
+  );
+  assert.equal(botMessagesMigration, siteMessagesMigration);
+  assert.match(botMessagesMigration, /observed_message_count BIGINT[\s\S]*'messages'/);
+  assert.doesNotMatch(botMessagesMigration, /^\+/m, 'the SQL migration must not contain patch markers');
 }
 
 function testRandomSenderUsesOnlyConnectedAccounts() {
@@ -168,7 +181,7 @@ async function testNextSlotIsPersistedBeforeCommandsRun() {
 
 async function testDatabaseQueryUsesAllPlayerSourcesAndUuidIdentity() {
   let query = '';
-  const rows = [{ username: 'Player', missing_playtime: true, missing_join_date: false, missing_last_seen: false }];
+  const rows = [{ username: 'Player', missing_playtime: true, missing_messages: true, missing_join_date: false, missing_last_seen: false }];
   const result = await loadMissingPlayerInfo({
     async query(sql) {
       query = sql;
@@ -180,7 +193,7 @@ async function testDatabaseQueryUsesAllPlayerSourcesAndUuidIdentity() {
   assert.match(query, /FROM whitelist whitelist_player/);
   assert.match(query, /FROM player_playtime playtime/);
   assert.match(query, /candidate\.player_uuid IS NOT NULL AND playtime\.player_uuid = candidate\.player_uuid/);
-  assert.match(query, /WHERE missing_playtime OR missing_join_date OR missing_last_seen/);
+  assert.match(query, /WHERE missing_playtime OR missing_messages OR missing_join_date OR missing_last_seen/);
   assert.match(query, /ORDER BY RANDOM\(\)\s+LIMIT 1/);
 }
 

@@ -40,6 +40,11 @@ assert.match(
   'the player-profile API must compute the two-week New Player status from the current registration date'
 );
 assert.match(
+  serverSource,
+  /pa\.observed_message_count[\s\S]*totalMessages:\s*profile\.observed_message_count == null[\s\S]*toInt\(profile\.observed_message_count\)/,
+  'the player profile must prefer the one-time observed !messages total when available'
+);
+assert.match(
   appSource,
   /storedAdminTags[\s\S]*toLowerCase\(\) !== 'new player'[\s\S]*profile\.isNewPlayer[\s\S]*New Player[\s\S]*adminTagMarkup \|\| 'None'/,
   'Admin metadata must show New Player as a computed tag and hide a stale stored copy'

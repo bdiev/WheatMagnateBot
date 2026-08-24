@@ -6,6 +6,7 @@ const {
   createPlayerInfoObservation,
   parseJoinDateResponse,
   parseLastSeenResponse,
+  parseMessagesResponse,
   parsePlaytimeResponse
 } = require('../features/playerInfoObservation');
 
@@ -63,6 +64,10 @@ function createTracker({ preferredOnline = true } = {}) {
       updates.push({ type: 'pt', targetUsername, value, source });
       reasons.push(context?.reason);
     },
+    onMessages: (targetUsername, value, source, context) => {
+      updates.push({ type: 'messages', targetUsername, value, source });
+      reasons.push(context?.reason);
+    },
     onJoinDate: (targetUsername, value, source, context) => {
       updates.push({ type: 'jd', targetUsername, value, source });
       reasons.push(context?.reason);
@@ -76,6 +81,14 @@ function createTracker({ preferredOnline = true } = {}) {
 }
 
 function testActualResponseFormats() {
+  assert.deepEqual(
+    parseMessagesResponse('bdiev_: 10758 messages'),
+    { targetUsername: 'bdiev_', observedValue: 10_758 }
+  );
+  assert.deepEqual(
+    parseMessagesResponse('bdiev_: 10,758 messages.'),
+    { targetUsername: 'bdiev_', observedValue: 10_758 }
+  );
   assert.deepEqual(
     parsePlaytimeResponse('bdiev_: 77 Days, 9 Hours, 5 Minutes', parsePlaytime),
     { targetUsername: 'bdiev_', observedValue: 6_685_500 }
@@ -123,6 +136,26 @@ function testActualResponseFormats() {
     'calendar subtraction must clamp leap-day observations to the target month'
   );
   assert.equal(parseLastSeenResponse('I have never seen bdiev_.'), null);
+}
+
+function testMessagesResponseOnlyComesFromLolritterbotAndAppliesOnce() {
+  const { tracker, updates } = createTracker({ preferredOnline: false });
+  tracker.observe('Requester', '!messages bdiev_');
+  tracker.observe('moooomoooo', 'bdiev_: 99999 messages');
+  assert.deepEqual(updates, [], 'moooomoooo must never supply the saved message count');
+  tracker.observe('LolRiTTeRBot', 'bdiev_: 10758 messages');
+  tracker.observe('LolRiTTeRBot', 'bdiev_: 10759 messages');
+  assert.deepEqual(updates, [{
+    type: 'messages', targetUsername: 'bdiev_', value: 10_758, source: 'lolritterbot'
+  }], 'one command must import one response for that player');
+}
+
+function testMessagesAliasWithoutTargetUsesRequester() {
+  const { tracker, updates } = createTracker();
+  tracker.observe('bdiev_', '!msgs');
+  tracker.observe('LolRiTTeRBot', 'bdiev_: 10758 messages');
+  assert.equal(updates[0]?.type, 'messages');
+  assert.equal(updates[0]?.targetUsername, 'bdiev_');
 }
 
 function testPreferredPlaytimeWins() {
@@ -222,6 +255,8 @@ function testUntrustedSpeakersAndUnrequestedResponsesAreIgnored() {
 }
 
 testActualResponseFormats();
+testMessagesResponseOnlyComesFromLolritterbotAndAppliesOnce();
+testMessagesAliasWithoutTargetUsesRequester();
 testPreferredPlaytimeWins();
 testFallbackWhenPreferredDoesNotAnswer();
 testFallbackWhenPreferredIsOffline();

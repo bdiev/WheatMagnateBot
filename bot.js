@@ -1795,6 +1795,7 @@ async function initDatabase() {
     await pool.query('ALTER TABLE player_activity ALTER COLUMN last_seen DROP DEFAULT');
     await pool.query('ALTER TABLE player_activity ALTER COLUMN last_online DROP DEFAULT');
     await pool.query('ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS registration_at TIMESTAMPTZ');
+    await pool.query('ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS observed_message_count BIGINT CHECK (observed_message_count >= 0)');
     await pool.query('ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS admin_notes TEXT');
     await pool.query("ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS admin_tags TEXT[] NOT NULL DEFAULT '{}'::text[]");
     await pool.query(`
@@ -3238,6 +3239,55 @@ async function reconcileObservedJoinDate(targetUsername, observedDate) {
   }
 }
 
+async function reconcileObservedMessages(targetUsername, observedCount) {
+  if (!pool || !targetUsername || !Number.isSafeInteger(observedCount) || observedCount < 0) return;
+
+  const safeUsername = String(targetUsername || '').replace(/[^A-Za-z0-9_]/g, '').trim().slice(0, 32);
+  if (!safeUsername) return;
+
+  try {
+    const result = await playerInfoObservationStore.withPermission(
+      'messages',
+      safeUsername,
+      async (client, identity) => client.query(`
+        WITH updated_by_uuid AS (
+          UPDATE player_activity activity
+          SET observed_message_count = $3::bigint
+          WHERE $2::uuid IS NOT NULL
+            AND activity.player_uuid = $2::uuid
+          RETURNING username
+        ), inserted AS (
+          INSERT INTO player_activity (username, player_uuid, observed_message_count)
+          SELECT $1::text, $2::uuid, $3::bigint
+          WHERE NOT EXISTS (SELECT 1 FROM updated_by_uuid)
+            AND NOT EXISTS (
+              SELECT 1 FROM player_activity activity
+              WHERE LOWER(activity.username) = LOWER($1::text)
+            )
+          ON CONFLICT (LOWER(username))
+          DO UPDATE SET player_uuid = COALESCE(EXCLUDED.player_uuid, player_activity.player_uuid),
+                        observed_message_count = EXCLUDED.observed_message_count
+          RETURNING username
+        ), updated_by_name AS (
+          UPDATE player_activity activity
+          SET observed_message_count = $3::bigint
+          WHERE LOWER(activity.username) = LOWER($1::text)
+            AND NOT EXISTS (SELECT 1 FROM updated_by_uuid)
+          RETURNING username
+        )
+        SELECT username FROM updated_by_uuid
+        UNION ALL SELECT username FROM inserted
+        UNION ALL SELECT username FROM updated_by_name
+      `, [identity.username, identity.playerUuid, observedCount])
+    );
+    if (result.allowed) {
+      console.log(`[Messages] ${result.reason === 'site-refresh' ? 'Refreshed' : 'Initially imported'} ${result.username} from observed !messages: ${observedCount}`);
+    }
+  } catch (err) {
+    console.error('[Messages] Failed to reconcile observed !messages:', err.message);
+  }
+}
+
 async function reconcileObservedLastSeen(targetUsername, observedDate) {
   if (!pool || !targetUsername || !(observedDate instanceof Date) || !Number.isFinite(observedDate.getTime())) return;
 
@@ -3306,6 +3356,11 @@ const playerInfoObservation = createPlayerInfoObservation({
   onPlaytime: (targetUsername, observedSeconds) => {
     enqueueObservedPlayerInfoWrite(
       () => reconcileObservedPlaytime(targetUsername, observedSeconds)
+    ).catch(() => {});
+  },
+  onMessages: (targetUsername, observedCount) => {
+    enqueueObservedPlayerInfoWrite(
+      () => reconcileObservedMessages(targetUsername, observedCount)
     ).catch(() => {});
   },
   onJoinDate: (targetUsername, observedDate) => {

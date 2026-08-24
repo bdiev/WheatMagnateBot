@@ -10,6 +10,7 @@ const DEFAULT_COMMAND_DELAY_MAX_MS = 45_000;
 
 const METRIC_COMMANDS = Object.freeze([
   { metric: 'playtime', missingColumn: 'missing_playtime', command: '!pt' },
+  { metric: 'messages', missingColumn: 'missing_messages', command: '!messages' },
   { metric: 'joinDate', missingColumn: 'missing_join_date', command: '!jd' },
   { metric: 'lastSeen', missingColumn: 'missing_last_seen', command: '!seen' }
 ]);
@@ -85,7 +86,8 @@ async function loadMissingPlayerInfo(pool) {
       SELECT activity.username,
              activity.player_uuid,
              activity.registration_at,
-             activity.last_seen
+             activity.last_seen,
+             activity.observed_message_count
       FROM player_activity activity
 
       UNION ALL
@@ -93,7 +95,8 @@ async function loadMissingPlayerInfo(pool) {
       SELECT whitelist_player.username,
              NULL::uuid AS player_uuid,
              NULL::timestamptz AS registration_at,
-             NULL::timestamptz AS last_seen
+             NULL::timestamptz AS last_seen,
+             NULL::bigint AS observed_message_count
       FROM whitelist whitelist_player
       WHERE NOT EXISTS (
         SELECT 1 FROM player_activity activity
@@ -105,7 +108,8 @@ async function loadMissingPlayerInfo(pool) {
       SELECT playtime.username,
              playtime.player_uuid,
              NULL::timestamptz AS registration_at,
-             NULL::timestamptz AS last_seen
+             NULL::timestamptz AS last_seen,
+             NULL::bigint AS observed_message_count
       FROM player_playtime playtime
       WHERE NOT EXISTS (
         SELECT 1 FROM player_activity activity
@@ -123,13 +127,14 @@ async function loadMissingPlayerInfo(pool) {
                WHERE (candidate.player_uuid IS NOT NULL AND playtime.player_uuid = candidate.player_uuid)
                   OR LOWER(playtime.username) = LOWER(candidate.username)
              ) AS missing_playtime,
+             candidate.observed_message_count IS NULL AS missing_messages,
              candidate.registration_at IS NULL AS missing_join_date,
              candidate.last_seen IS NULL AS missing_last_seen
       FROM candidate_players candidate
     )
-    SELECT username, missing_playtime, missing_join_date, missing_last_seen
+    SELECT username, missing_playtime, missing_messages, missing_join_date, missing_last_seen
     FROM missing
-    WHERE missing_playtime OR missing_join_date OR missing_last_seen
+    WHERE missing_playtime OR missing_messages OR missing_join_date OR missing_last_seen
     ORDER BY RANDOM()
     LIMIT 1
   `);
@@ -258,7 +263,7 @@ function createPlayerInfoBackfill({
       lastRunAt = now();
       const commands = shuffleItems(buildMissingCommands(rows), random);
       if (commands.length === 0) {
-        onLog('[PlayerInfo] Automatic check found no missing PT, JD, or Seen values.');
+        onLog('[PlayerInfo] Automatic check found no missing PT, Messages, JD, or Seen values.');
         return { skipped: false, sent, total: 0 };
       }
 

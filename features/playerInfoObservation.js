@@ -65,6 +65,16 @@ function parsePlaytimeResponse(message, parsePlaytime) {
   return { targetUsername: match[1], observedValue: observedSeconds };
 }
 
+function parseMessagesResponse(message) {
+  const match = String(message || '').trim().match(
+    /^([A-Za-z0-9_]{1,32}):\s+([\d,]+)\s+messages?\s*[.!]?$/i
+  );
+  if (!match) return null;
+  const observedValue = Number(match[2].replace(/,/g, ''));
+  if (!Number.isSafeInteger(observedValue) || observedValue < 0) return null;
+  return { targetUsername: match[1], observedValue };
+}
+
 function parseJoinDateResponse(message) {
   const cleanMessage = String(message || '').trim();
   const named = parseNamedJoinDate(cleanMessage);
@@ -154,6 +164,7 @@ function parseLastSeenResponse(message, now = new Date()) {
 function createPlayerInfoObservation({
   parsePlaytime,
   onPlaytime,
+  onMessages,
   onJoinDate,
   onLastSeen,
   isSourceOnline = () => false,
@@ -167,6 +178,7 @@ function createPlayerInfoObservation({
 
   const lookups = {
     playtime: new Map(),
+    messages: new Map(),
     joinDate: new Map(),
     lastSeen: new Map()
   };
@@ -211,6 +223,7 @@ function createPlayerInfoObservation({
     if (candidate.source === FALLBACK_SOURCE && pending.appliedSource) return;
     const handler = type === 'playtime'
       ? onPlaytime
+      : type === 'messages' ? onMessages
       : type === 'joinDate' ? onJoinDate : onLastSeen;
     handler?.(pending.targetUsername, candidate.observedValue, candidate.source, { reason: pending.reason });
     pending.appliedSource = candidate.source;
@@ -260,6 +273,12 @@ function createPlayerInfoObservation({
       return true;
     }
 
+    const messagesCommand = cleanMessage.match(/^!(?:messages|msgs)(?:\s+([A-Za-z0-9_]{1,32}))?$/i);
+    if (messagesCommand) {
+      registerLookup('messages', messagesCommand[1] || speaker);
+      return true;
+    }
+
     const joinDateCommand = cleanMessage.match(/^!(?:jd|joindate)(?:\s+([A-Za-z0-9_]{1,32}))?$/i);
     if (joinDateCommand) {
       registerLookup('joinDate', joinDateCommand[1] || speaker);
@@ -278,6 +297,11 @@ function createPlayerInfoObservation({
     const playtimeResponse = parsePlaytimeResponse(cleanMessage, parsePlaytime);
     if (playtimeResponse) {
       return acceptCandidate('playtime', { ...playtimeResponse, source });
+    }
+
+    const messagesResponse = parseMessagesResponse(cleanMessage);
+    if (messagesResponse && source === PREFERRED_SOURCE) {
+      return acceptCandidate('messages', { ...messagesResponse, source });
     }
 
     const joinDateResponse = parseJoinDateResponse(cleanMessage);
@@ -300,6 +324,7 @@ function createPlayerInfoObservation({
     const username = normalizeUsername(targetUsername);
     const type = metric === 'playtime'
       ? 'playtime'
+      : metric === 'messages' ? 'messages'
       : metric === 'joinDate' ? 'joinDate' : metric === 'lastSeen' ? 'lastSeen' : '';
     if (!username || !type) return false;
     registerLookup(type, username, reason === 'site' ? 'site' : 'automatic');
@@ -325,5 +350,6 @@ module.exports = {
   parseLastSeenResponse,
   parseNumericJoinDate,
   parseRelativeDurationMs,
+  parseMessagesResponse,
   parsePlaytimeResponse
 };
