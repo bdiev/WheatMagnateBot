@@ -3391,17 +3391,24 @@ async function handlePlayerProfileClick(event) {
   const toggle = event.target.closest('[data-profile-toggle]');
   if (!toggle) return;
   event.preventDefault();
+  const profile = state.playerProfileLastPayload;
+  if (!profile) return;
   if (toggle.dataset.profileToggle === 'registration-date') {
     state.playerProfileRegistrationDateMode = !state.playerProfileRegistrationDateMode;
+    toggle.textContent = registrationProfileValue(profile);
+    toggle.title = state.playerProfileRegistrationDateMode
+      ? 'Show time since registration'
+      : 'Show registration date';
   } else if (toggle.dataset.profileToggle === 'last-seen-date') {
     state.playerProfileLastSeenDateMode = !state.playerProfileLastSeenDateMode;
+    toggle.textContent = lastSeenProfileValue(profile);
+    toggle.title = state.playerProfileLastSeenDateMode
+      ? 'Show time since last seen'
+      : 'Show exact last seen date';
   } else {
     return;
   }
-  state.playerProfileSignature = '';
-  if (state.playerProfileLastPayload) {
-    replacePlayerProfileContent(state.playerProfileLastPayload);
-  }
+  state.playerProfileSignature = playerProfileSignature(profile);
 }
 
 function openWhisperFromProfile(username) {

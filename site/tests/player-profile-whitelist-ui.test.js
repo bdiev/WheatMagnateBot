@@ -61,6 +61,11 @@ assert.match(
 );
 assert.match(
   appSource,
+  /const toggle = event\.target\.closest\('\[data-profile-toggle\]'\);[\s\S]*toggle\.textContent = registrationProfileValue\(profile\);[\s\S]*toggle\.textContent = lastSeenProfileValue\(profile\);[\s\S]*state\.playerProfileSignature = playerProfileSignature\(profile\);/,
+  'date toggles must update only their own button instead of rebuilding the profile and blinking the avatar'
+);
+assert.match(
+  appSource,
   /function formatFullDateTime\(value\)[\s\S]*year: 'numeric'[\s\S]*registrationProfileValue[\s\S]*formatFullDateTime\(profile\.registrationAt\)[\s\S]*lastSeenProfileValue[\s\S]*formatFullDateTime\(profile\.lastSeen\)/,
   'both exact metric dates must include the year'
 );
