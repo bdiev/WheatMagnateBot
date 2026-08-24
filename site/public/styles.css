@@ -7791,33 +7791,34 @@ body.modal-open { overflow:hidden; }
   }
 
   .new-player-item {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
-    padding: 10px;
+    grid-template-columns: minmax(0, 1fr) max-content;
+    gap: 10px;
+    padding: 8px 10px;
   }
 
   .new-player-item .player-identity {
-    width: 100%;
+    width: auto;
     min-height: 32px;
   }
 
   .new-player-meta {
-    display: flex;
+    display: block;
     align-items: center;
-    justify-content: space-between;
-    width: 100%;
+    justify-self: end;
+    width: auto;
     min-width: 0;
-    padding-left: 37px;
-    gap: 8px;
-    white-space: normal;
+    padding-left: 0;
+    white-space: nowrap;
+  }
+
+  .new-player-meta .pill {
+    display: none;
   }
 
   .new-player-meta time {
-    min-width: 0;
-    margin-left: auto;
-    overflow: hidden;
+    display: block;
     text-align: right;
-    text-overflow: ellipsis;
+    font-size: 10px;
     white-space: nowrap;
   }
 

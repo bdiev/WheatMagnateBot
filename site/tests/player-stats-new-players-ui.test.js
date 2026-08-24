@@ -56,8 +56,8 @@ assert.match(
 assert.match(stylesSource, /\.player-new-panel\s*\{[\s\S]*?grid-template-rows:/, 'the new player list must have a bounded panel layout');
 assert.match(
   stylesSource,
-  /\.new-player-item\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);[\s\S]*?\.new-player-meta\s*\{[^}]*display:\s*flex;[^}]*padding-left:\s*37px;/s,
-  'mobile New Player rows must stack identity and metadata without squeezing either column'
+  /\.new-player-item\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) max-content;[\s\S]*?\.new-player-meta\s*\{[^}]*justify-self:\s*end;[^}]*white-space:\s*nowrap;/s,
+  'mobile New Player rows must keep identity left and date right on one line'
 );
 assert.match(
   stylesSource,
