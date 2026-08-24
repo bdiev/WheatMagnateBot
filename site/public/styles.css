@@ -2855,6 +2855,20 @@ body.search-focus-active #logoutButton {
   font-size: 9px;
 }
 
+.new-players-load-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 46px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.new-players-load-status .ghost-button {
+  width: 100%;
+  min-height: 38px;
+}
+
 .player-milestones-panel .milestone-list {
   --milestone-peek: 28px;
   display: flex;
@@ -7774,6 +7788,37 @@ body.modal-open { overflow:hidden; }
   .detail-list div {
     grid-template-columns: 1fr;
     gap: 7px;
+  }
+
+  .new-player-item {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .new-player-item .player-identity {
+    width: 100%;
+    min-height: 32px;
+  }
+
+  .new-player-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    min-width: 0;
+    padding-left: 37px;
+    gap: 8px;
+    white-space: normal;
+  }
+
+  .new-player-meta time {
+    min-width: 0;
+    margin-left: auto;
+    overflow: hidden;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .chat-meta {

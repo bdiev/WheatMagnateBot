@@ -56,6 +56,12 @@ const state = {
   whisperAccentCache: new Map(),
   playtimeLeaderboardScope: 'global',
   playtimeLeaderboards: { global: [], whitelisted: [] },
+  newPlayers: [],
+  newPlayersInitialized: false,
+  newPlayersLoading: false,
+  newPlayersHasMore: false,
+  newPlayersNextOffset: 0,
+  newPlayersAccountId: null,
   whisperSearchPlayers: [],
   playerProfileUsername: null,
   playerProfileSignature: '',
@@ -168,6 +174,7 @@ const $ = selector => document.querySelector(selector);
 const $$ = selector => Array.from(document.querySelectorAll(selector));
 const CHAT_HISTORY_LIMIT = 500;
 const CHILD_AI_MOBILE_STYLE_BATCH = 40;
+const NEW_PLAYERS_PAGE_SIZE = 24;
 const ACCOUNT_COLOR_PALETTE = Object.freeze([
   '#f1c232', '#4b91e5', '#d26cf0', '#55c9ba', '#ef7373', '#f28c48',
   '#8c78e8', '#7cc242', '#e56aa6', '#41b6d7', '#b78b59', '#8dbb61'
@@ -794,14 +801,14 @@ function applyPlayerProfileAccent(profile) {
   }
 }
 
-function playerIdentity(username, size = 28, { status = null, uuid = null } = {}) {
+function playerIdentity(username, size = 28, { status = null, uuid = null, loading = 'eager' } = {}) {
   const safeName = escapeHtml(username || 'Unknown');
   const safeUsername = escapeHtml(username || '');
   const statusClass = status === 'online' ? ' online' : status === 'offline' ? ' offline' : '';
   const statusLabel = status === 'online' ? 'Online' : status === 'offline' ? 'Offline' : '';
   return `
     <span class="player-identity${statusClass}" role="button" tabindex="0" data-player="${safeUsername}" title="Open player profile"${statusLabel ? ` aria-label="${safeName}: ${statusLabel}"` : ''}>
-      <img class="player-head" src="${playerHeadUrl(username, size, { uuid })}" alt="" loading="eager" decoding="async" width="${size}" height="${size}">
+      <img class="player-head" src="${playerHeadUrl(username, size, { uuid })}" alt="" loading="${loading === 'lazy' ? 'lazy' : 'eager'}" decoding="async" width="${size}" height="${size}">
       <span>${safeName}</span>
     </span>
   `;
@@ -4894,6 +4901,126 @@ function setPlaytimeLeaderboardScope(scope) {
   }, 160);
 }
 
+function newPlayerIdentityKey(player) {
+  return String(player?.uuid || player?.username || '').toLowerCase();
+}
+
+function newPlayerRow(player) {
+  return `
+    <div class="rank-item new-player-item">
+      ${playerIdentity(player.username, 28, {
+        status: player.isOnline ? 'online' : 'offline',
+        uuid: player.uuid,
+        loading: 'lazy'
+      })}
+      <div class="new-player-meta">
+        ${player.isWhitelisted ? '<span class="pill">whitelisted</span>' : ''}
+        <time>${player.firstSeen ? formatRecentDate(player.firstSeen) : 'Unknown'}</time>
+      </div>
+    </div>
+  `;
+}
+
+function renderNewPlayers({ resetScroll = false } = {}) {
+  const list = $('#newPlayersList');
+  if (!list) return false;
+  const players = state.newPlayers;
+  const status = state.newPlayersLoading
+    ? '<div class="new-players-load-status" role="status"><span>Loading more profiles&hellip;</span></div>'
+    : state.newPlayersHasMore
+      ? '<div class="new-players-load-status"><button class="ghost-button" type="button" data-new-players-more>Load more</button></div>'
+      : '';
+  const signature = stableSignature({
+    players: players.map(player => [
+      player.username,
+      player.uuid,
+      player.firstSeen,
+      player.isOnline,
+      player.isWhitelisted
+    ]),
+    loading: state.newPlayersLoading,
+    hasMore: state.newPlayersHasMore
+  });
+  if (state.renderSignatures['#newPlayersList'] === signature) return false;
+
+  const scrollTop = resetScroll ? 0 : list.scrollTop;
+  if (state.newPlayersLoading) list.setAttribute('aria-busy', 'true');
+  else list.removeAttribute('aria-busy');
+  list.innerHTML = players.length
+    ? `${players.map(newPlayerRow).join('')}${status}`
+    : state.newPlayersLoading
+      ? status
+      : '<div class="empty">No tracked players yet.</div>';
+  state.renderSignatures['#newPlayersList'] = signature;
+  requestAnimationFrame(() => { list.scrollTop = resetScroll ? 0 : scrollTop; });
+  return true;
+}
+
+function syncNewPlayers(firstPage = [], page = {}) {
+  const accountId = state.activeAccountId || 'primary';
+  const changedAccount = state.newPlayersAccountId !== accountId;
+  if (changedAccount) {
+    state.newPlayers = [];
+    state.newPlayersInitialized = false;
+    state.newPlayersLoading = false;
+    state.newPlayersHasMore = false;
+    state.newPlayersNextOffset = 0;
+    state.newPlayersAccountId = accountId;
+    delete state.renderSignatures['#newPlayersList'];
+  }
+
+  const wasInitialized = state.newPlayersInitialized;
+  const hadLoadedEverything = wasInitialized && !state.newPlayersHasMore;
+  const existingKeys = new Set(state.newPlayers.map(newPlayerIdentityKey));
+  const firstPageOverlapsExisting = firstPage.some(player => existingKeys.has(newPlayerIdentityKey(player)));
+  const firstKeys = new Set(firstPage.map(newPlayerIdentityKey));
+  state.newPlayers = [
+    ...firstPage,
+    ...state.newPlayers.filter(player => !firstKeys.has(newPlayerIdentityKey(player)))
+  ];
+  state.newPlayersInitialized = true;
+  state.newPlayersNextOffset = state.newPlayers.length;
+  state.newPlayersHasMore = hadLoadedEverything && (!page.hasMore || firstPageOverlapsExisting)
+    ? false
+    : Boolean(page.hasMore);
+  renderNewPlayers({ resetScroll: changedAccount || !wasInitialized });
+}
+
+async function loadMoreNewPlayers() {
+  if (state.newPlayersLoading || !state.newPlayersHasMore) return;
+  const accountId = state.activeAccountId || 'primary';
+  const offset = state.newPlayersNextOffset;
+  state.newPlayersLoading = true;
+  renderNewPlayers();
+  try {
+    const params = new URLSearchParams({
+      limit: String(NEW_PLAYERS_PAGE_SIZE),
+      offset: String(offset)
+    });
+    const payload = await fetchJson(`/api/new-players?${params}`);
+    if ((state.activeAccountId || 'primary') !== accountId) return;
+    const knownKeys = new Set(state.newPlayers.map(newPlayerIdentityKey));
+    const additions = (payload.players || []).filter(player => !knownKeys.has(newPlayerIdentityKey(player)));
+    state.newPlayers.push(...additions);
+    state.newPlayersNextOffset = Math.max(state.newPlayers.length, Number(payload.nextOffset) || 0);
+    state.newPlayersHasMore = Boolean(payload.hasMore);
+  } catch (error) {
+    if (error?.name !== 'AbortError') setBanner(`Could not load more players: ${error.message}`);
+  } finally {
+    if ((state.activeAccountId || 'primary') === accountId) {
+      state.newPlayersLoading = false;
+      renderNewPlayers();
+    }
+  }
+}
+
+function maybeLoadMoreNewPlayers() {
+  const list = $('#newPlayersList');
+  if (!list || state.newPlayersLoading || !state.newPlayersHasMore) return;
+  const distanceFromBottom = list.scrollHeight - list.scrollTop - list.clientHeight;
+  if (distanceFromBottom <= 160) loadMoreNewPlayers();
+}
+
 function renderPlayerStats(payload = {}, nearbyPlayers = []) {
   $('#onlinePlayers').textContent = formatNumber(payload.players?.online);
   $('#totalPlayers').textContent = `of ${formatNumber(payload.players?.total)} whitelisted`;
@@ -4913,37 +5040,10 @@ function renderPlayerStats(payload = {}, nearbyPlayers = []) {
 
   renderNearbySightings(nearbyPlayers);
 
-  const newPlayers = Array.isArray(payload.newPlayers) ? payload.newPlayers : [];
-  const resetNewPlayersScroll = state.renderSignatures['#newPlayersList'] == null;
-  const renderedNewPlayers = renderStable('#newPlayersList', newPlayers.length
-    ? newPlayers.map(player => `
-      <div class="rank-item new-player-item">
-        ${playerIdentity(player.username, 28, {
-          status: player.isOnline ? 'online' : 'offline',
-          uuid: player.uuid
-        })}
-        <div class="new-player-meta">
-          ${player.isWhitelisted ? '<span class="pill">whitelisted</span>' : ''}
-          <time>${player.firstSeen ? formatRecentDate(player.firstSeen) : 'Unknown'}</time>
-        </div>
-      </div>
-    `).join('')
-    : '<div class="empty">No tracked players yet.</div>',
-    newPlayers.map(player => [
-      player.username,
-      player.uuid,
-      player.firstSeen,
-      player.isOnline,
-      player.isWhitelisted
-    ])
+  syncNewPlayers(
+    Array.isArray(payload.newPlayers) ? payload.newPlayers : [],
+    payload.newPlayersPage || {}
   );
-  if (resetNewPlayersScroll && renderedNewPlayers) {
-    const list = $('#newPlayersList');
-    if (list) {
-      list.scrollTop = 0;
-      requestAnimationFrame(() => { list.scrollTop = 0; });
-    }
-  }
 
   const milestones = payload.milestones || [];
   renderStable('#playerMilestones', milestones.length
@@ -8420,6 +8520,10 @@ $('#killAuraSaveTargets')?.addEventListener('click', saveKillAuraTargets);
 $('#playtimeLeaderboardScope')?.addEventListener('click', event => {
   const button = event.target.closest('[data-playtime-scope]');
   if (button) setPlaytimeLeaderboardScope(button.dataset.playtimeScope);
+});
+$('#newPlayersList')?.addEventListener('scroll', maybeLoadMoreNewPlayers, { passive: true });
+$('#newPlayersList')?.addEventListener('click', event => {
+  if (event.target.closest('[data-new-players-more]')) loadMoreNewPlayers();
 });
 document.addEventListener('keydown', handleKillAuraModalKeydown);
 $('#notificationsMarkAllRead')?.addEventListener('click', async () => {

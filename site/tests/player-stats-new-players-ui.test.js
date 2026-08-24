@@ -30,20 +30,35 @@ assert.match(
 );
 assert.match(
   serverSource,
-  /WITH identities AS[\s\S]*ORDER BY identities\.registration_at DESC[\s\S]*newPlayers: newPlayersResult\.rows\.map/,
-  'Player Stats must return all tracked player identities, newest first'
+  /function getNewPlayersPage[\s\S]*WITH identities AS[\s\S]*ORDER BY identities\.registration_at DESC[\s\S]*LIMIT \$1 OFFSET \$2/,
+  'Player Stats must query tracked identities in newest-first pages'
 );
-assert.doesNotMatch(
+assert.match(
   serverSource,
-  /ORDER BY identities\.registration_at DESC, LOWER\(identities\.username\)\s+LIMIT/,
-  'the New Players history must not have a row limit'
+  /url\.pathname === '\/api\/new-players'[\s\S]*getNewPlayersPage\(url\)/,
+  'the remaining New Players history must be available through a paginated API'
 );
 assert.match(
   appSource,
-  /const resetNewPlayersScroll = state\.renderSignatures\['#newPlayersList'\] == null;[\s\S]*requestAnimationFrame\(\(\) => \{ list\.scrollTop = 0; \}\)/,
-  'the initial New Players render must stay at the newest record instead of preserving the empty-list bottom position'
+  /const NEW_PLAYERS_PAGE_SIZE = 24;[\s\S]*function loadMoreNewPlayers\(\)[\s\S]*\/api\/new-players\?\$\{params\}/,
+  'New Players must load in small client-side pages'
+);
+assert.match(
+  appSource,
+  /function maybeLoadMoreNewPlayers\(\)[\s\S]*distanceFromBottom <= 160[\s\S]*loadMoreNewPlayers\(\)/,
+  'scrolling near the end of New Players must request the next page'
+);
+assert.match(
+  appSource,
+  /function newPlayerRow[\s\S]*loading: 'lazy'/,
+  'New Player avatars must not all load eagerly'
 );
 assert.match(stylesSource, /\.player-new-panel\s*\{[\s\S]*?grid-template-rows:/, 'the new player list must have a bounded panel layout');
+assert.match(
+  stylesSource,
+  /\.new-player-item\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);[\s\S]*?\.new-player-meta\s*\{[^}]*display:\s*flex;[^}]*padding-left:\s*37px;/s,
+  'mobile New Player rows must stack identity and metadata without squeezing either column'
+);
 assert.match(
   stylesSource,
   /\.chat-activity-player:hover,\s*\.chat-activity-player:active\s*\{[^}]*color:\s*var\(--text\);[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;[^}]*text-decoration:\s*none;/s,

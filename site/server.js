@@ -1888,6 +1888,53 @@ async function getBotStats() {
   };
 }
 
+const NEW_PLAYERS_PAGE_LIMIT = 24;
+
+function publicNewPlayer(row) {
+  return {
+    username: row.username,
+    uuid: row.player_uuid || null,
+    firstSeen: row.registration_at,
+    isOnline: Boolean(row.is_online),
+    isWhitelisted: Boolean(row.is_whitelisted)
+  };
+}
+
+async function getNewPlayersPage(url = null, database = pool) {
+  assertDatabase();
+  const limit = Math.min(48, Math.max(8, Number.parseInt(url?.searchParams?.get('limit'), 10) || NEW_PLAYERS_PAGE_LIMIT));
+  const offset = Math.min(100_000, Math.max(0, Number.parseInt(url?.searchParams?.get('offset'), 10) || 0));
+  const result = await database.query(`
+    WITH identities AS (
+      SELECT
+        COALESCE(pa.player_uuid::text, LOWER(pa.username)) AS identity_key,
+        (ARRAY_AGG(pa.username ORDER BY COALESCE(pa.last_seen, pa.last_online, pa.registration_at) DESC NULLS LAST, pa.id DESC))[1] AS username,
+        MIN(pa.player_uuid::text)::uuid AS player_uuid,
+        MIN(pa.registration_at) AS registration_at,
+        BOOL_OR(pa.is_online) AS is_online
+      FROM player_activity pa
+      WHERE pa.registration_at IS NOT NULL
+      GROUP BY COALESCE(pa.player_uuid::text, LOWER(pa.username))
+    )
+    SELECT identities.username, identities.player_uuid, identities.registration_at, identities.is_online,
+           EXISTS (
+             SELECT 1 FROM whitelist w WHERE LOWER(w.username) = LOWER(identities.username)
+           ) AS is_whitelisted
+    FROM identities
+    ORDER BY identities.registration_at DESC, LOWER(identities.username)
+    LIMIT $1 OFFSET $2
+  `, [limit + 1, offset]);
+  const hasMore = result.rows.length > limit;
+  const rows = result.rows.slice(0, limit);
+  return {
+    players: rows.map(publicNewPlayer),
+    limit,
+    offset,
+    nextOffset: offset + rows.length,
+    hasMore
+  };
+}
+
 async function getPlayerStats() {
   assertDatabase();
 
@@ -2089,25 +2136,7 @@ async function getPlayerStats() {
       JOIN activity ON activity.username_key = w.username_key
       WHERE activity.registration_at IS NOT NULL
     `),
-    pool.query(`
-      WITH identities AS (
-        SELECT
-          COALESCE(pa.player_uuid::text, LOWER(pa.username)) AS identity_key,
-          (ARRAY_AGG(pa.username ORDER BY COALESCE(pa.last_seen, pa.last_online, pa.registration_at) DESC NULLS LAST, pa.id DESC))[1] AS username,
-          MIN(pa.player_uuid::text)::uuid AS player_uuid,
-          MIN(pa.registration_at) AS registration_at,
-          BOOL_OR(pa.is_online) AS is_online
-        FROM player_activity pa
-        WHERE pa.registration_at IS NOT NULL
-        GROUP BY COALESCE(pa.player_uuid::text, LOWER(pa.username))
-      )
-      SELECT identities.username, identities.player_uuid, identities.registration_at, identities.is_online,
-             EXISTS (
-               SELECT 1 FROM whitelist w WHERE LOWER(w.username) = LOWER(identities.username)
-             ) AS is_whitelisted
-      FROM identities
-      ORDER BY identities.registration_at DESC, LOWER(identities.username)
-    `)
+    getNewPlayersPage()
   ]);
 
   const totals = playersResult.rows[0] || {};
@@ -2161,13 +2190,13 @@ async function getPlayerStats() {
       value: toInt(row.total)
     })),
     milestones: buildPlayerMilestones(milestoneResult.rows),
-    newPlayers: newPlayersResult.rows.map(row => ({
-      username: row.username,
-      uuid: row.player_uuid || null,
-      firstSeen: row.registration_at,
-      isOnline: Boolean(row.is_online),
-      isWhitelisted: Boolean(row.is_whitelisted)
-    }))
+    newPlayers: newPlayersResult.players,
+    newPlayersPage: {
+      limit: newPlayersResult.limit,
+      offset: newPlayersResult.offset,
+      nextOffset: newPlayersResult.nextOffset,
+      hasMore: newPlayersResult.hasMore
+    }
   };
 }
 
@@ -5226,8 +5255,17 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/server-stats') {
       const scoped = await scopedAccountRuntime(url,currentUser);
-      if (scoped) { sendJson(res,200,{playerStats:{players:{online:0,total:0,onlineUnwhitelisted:0,seen24h:0,seen7d:0},playtimeLeaderboards:{global:[],whitelisted:[]},playtimeLeaderboard:[],milestones:[],newPlayers:[]},nearby:scoped.bot.nearbyPlayers || [],tps:{latest:null,latestAt:scoped.observedAt,min24h:null,max24h:null},hourlyTps:[]}); return; }
+      if (scoped) { sendJson(res,200,{playerStats:{players:{online:0,total:0,onlineUnwhitelisted:0,seen24h:0,seen7d:0},playtimeLeaderboards:{global:[],whitelisted:[]},playtimeLeaderboard:[],milestones:[],newPlayers:[],newPlayersPage:{limit:NEW_PLAYERS_PAGE_LIMIT,offset:0,nextOffset:0,hasMore:false}},nearby:scoped.bot.nearbyPlayers || [],tps:{latest:null,latestAt:scoped.observedAt,min24h:null,max24h:null},hourlyTps:[]}); return; }
       sendJson(res, 200, await getServerStats());
+      return;
+    }
+    if (url.pathname === '/api/new-players' && req.method === 'GET') {
+      const scoped = await scopedAccountRuntime(url,currentUser);
+      if (scoped) {
+        sendJson(res, 200, { players: [], limit: NEW_PLAYERS_PAGE_LIMIT, offset: 0, nextOffset: 0, hasMore: false });
+        return;
+      }
+      sendJson(res, 200, await getNewPlayersPage(url));
       return;
     }
     if (url.pathname === '/api/seen-search') {
