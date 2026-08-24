@@ -70,6 +70,17 @@ function testScheduleMigrationIsSharedByBotAndSite() {
   assert.equal(botMessagesMigration, siteMessagesMigration);
   assert.match(botMessagesMigration, /observed_message_count BIGINT[\s\S]*'messages'/);
   assert.doesNotMatch(botMessagesMigration, /^\+/m, 'the SQL migration must not contain patch markers');
+
+  const botZeroCleanup = fs.readFileSync(
+    path.join(root, 'database', 'migrations', '037_reject_zero_player_messages.sql'),
+    'utf8'
+  );
+  const siteZeroCleanup = fs.readFileSync(
+    path.join(root, 'site', 'migrations', '037_reject_zero_player_messages.sql'),
+    'utf8'
+  );
+  assert.equal(botZeroCleanup, siteZeroCleanup);
+  assert.match(botZeroCleanup, /observed_message_count = NULL[\s\S]*observation\.metric = 'messages'/);
 }
 
 function testRandomSenderUsesOnlyConnectedAccounts() {

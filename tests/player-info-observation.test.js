@@ -89,6 +89,11 @@ function testActualResponseFormats() {
     parseMessagesResponse('bdiev_: 10,758 messages.'),
     { targetUsername: 'bdiev_', observedValue: 10_758 }
   );
+  assert.equal(
+    parseMessagesResponse('deireide: 0 messages'),
+    null,
+    'zero must not be imported because a case-mismatched username produces the same response'
+  );
   assert.deepEqual(
     parsePlaytimeResponse('bdiev_: 77 Days, 9 Hours, 5 Minutes', parsePlaytime),
     { targetUsername: 'bdiev_', observedValue: 6_685_500 }
@@ -148,6 +153,17 @@ function testMessagesResponseOnlyComesFromLolritterbotAndAppliesOnce() {
   assert.deepEqual(updates, [{
     type: 'messages', targetUsername: 'bdiev_', value: 10_758, source: 'lolritterbot'
   }], 'one command must import one response for that player');
+}
+
+function testZeroMessagesDoesNotConsumeThePendingLookup() {
+  const { tracker, updates } = createTracker();
+  tracker.observe('Requester', '!messages deireide');
+  tracker.observe('LolRiTTeRBot', 'deireide: 0 messages');
+  assert.deepEqual(updates, []);
+  tracker.observe('LolRiTTeRBot', 'deireide: 42 messages');
+  assert.deepEqual(updates, [{
+    type: 'messages', targetUsername: 'deireide', value: 42, source: 'lolritterbot'
+  }]);
 }
 
 function testMessagesAliasWithoutTargetUsesRequester() {
@@ -256,6 +272,7 @@ function testUntrustedSpeakersAndUnrequestedResponsesAreIgnored() {
 
 testActualResponseFormats();
 testMessagesResponseOnlyComesFromLolritterbotAndAppliesOnce();
+testZeroMessagesDoesNotConsumeThePendingLookup();
 testMessagesAliasWithoutTargetUsesRequester();
 testPreferredPlaytimeWins();
 testFallbackWhenPreferredDoesNotAnswer();

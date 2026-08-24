@@ -71,7 +71,10 @@ function parseMessagesResponse(message) {
   );
   if (!match) return null;
   const observedValue = Number(match[2].replace(/,/g, ''));
-  if (!Number.isSafeInteger(observedValue) || observedValue < 0) return null;
+  // A zero response is ambiguous: LolRiTTeRBot also returns it when the
+  // username casing does not match. Keep the lookup open so a correctly-cased
+  // retry can still provide a trustworthy value.
+  if (!Number.isSafeInteger(observedValue) || observedValue <= 0) return null;
   return { targetUsername: match[1], observedValue };
 }
 

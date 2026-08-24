@@ -3240,7 +3240,7 @@ async function reconcileObservedJoinDate(targetUsername, observedDate) {
 }
 
 async function reconcileObservedMessages(targetUsername, observedCount) {
-  if (!pool || !targetUsername || !Number.isSafeInteger(observedCount) || observedCount < 0) return;
+  if (!pool || !targetUsername || !Number.isSafeInteger(observedCount) || observedCount <= 0) return;
 
   const safeUsername = String(targetUsername || '').replace(/[^A-Za-z0-9_]/g, '').trim().slice(0, 32);
   if (!safeUsername) return;
