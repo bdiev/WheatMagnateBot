@@ -162,6 +162,61 @@ function resolveObsidianDebugLogPath({ accountId, createdAt } = {}) {
   };
 }
 
+function serializeObsidianDebugLogFallback(entry, rows = []) {
+  const occurredAt = new Date(entry?.created_at);
+  const debugLogId = String(entry?.details?.debugLogId || '').trim() || null;
+  const header = {
+    time: Number.isFinite(occurredAt.getTime()) ? occurredAt.toISOString() : new Date().toISOString(),
+    event: 'diagnostic_export',
+    source: 'database_fallback',
+    reason: 'The container-local daily log was unavailable; this export was reconstructed from persisted system logs.',
+    accountId: entry?.account_id || null,
+    debugLogId,
+    notification: entry?.message || null
+  };
+  const records = rows.map(row => {
+    const details = row?.details && typeof row.details === 'object' && !Array.isArray(row.details)
+      ? row.details
+      : {};
+    if (details.event || details.logId) {
+      return {
+        time: details.time || row.created_at,
+        ...details,
+        persistedSystemLog: {
+          id: row.id == null ? null : String(row.id),
+          level: row.level,
+          category: row.category,
+          message: row.message
+        }
+      };
+    }
+    return {
+      time: row.created_at,
+      event: 'system_log',
+      systemLogId: row.id == null ? null : String(row.id),
+      level: row.level,
+      category: row.category,
+      message: row.message,
+      details
+    };
+  });
+  return Buffer.from([...records, header].map(record => JSON.stringify(record)).join('\n') + '\n', 'utf8');
+}
+
+async function loadObsidianDebugLogFallback(entry) {
+  const result = await pool.query(`
+    SELECT id, level, category, message, details, created_at
+    FROM site_system_logs
+    WHERE account_id = $1::uuid
+      AND created_at BETWEEN $2::timestamptz - INTERVAL '15 minutes'
+                         AND $2::timestamptz + INTERVAL '5 minutes'
+      AND category IN ('obsidian_click', 'minecraft_runtime', 'notification')
+    ORDER BY created_at ASC, id ASC
+    LIMIT 5000
+  `, [entry.account_id, entry.created_at]);
+  return serializeObsidianDebugLogFallback(entry, result.rows);
+}
+
 async function sendObsidianDebugLogForSystemEntry(currentUser, res, rawId) {
   assertAdminUser(currentUser);
   const id = Number(rawId);
@@ -196,7 +251,17 @@ async function sendObsidianDebugLogForSystemEntry(currentUser, res, rawId) {
     }
   }
   if (!selectedFilePath || !stat) {
-    throw Object.assign(new Error(`Obsidian Farm diagnostics for ${debugLog.dateKey} are no longer available.`), { statusCode: 404 });
+    const fallback = await loadObsidianDebugLogFallback(entry);
+    res.writeHead(200, {
+      'Content-Type': 'application/x-ndjson; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${debugLog.filename}"`,
+      'Content-Length': fallback.length,
+      'Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'X-Obsidian-Debug-Source': 'database-fallback'
+    });
+    res.end(fallback);
+    return;
   }
 
   res.writeHead(200, {
@@ -5624,4 +5689,4 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown);
 }
 
-module.exports = { ADMIN_PLAYER_EDITABLE_FIELDS, adminPlayerIdentity, assertAdminUser, buildPlayerGameSessions, changeSitePassword, cleanAccountInput, csrfTokenForSessionHash, deleteAdminPlayer, freshStoredRuntimePayload, getAdminPlayers, getAdminUsers, hashPassword, normalizeAdminPlayerPatch, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, parsePlaytimeSeconds, patchAdminPlayer, publicUser, registrationDefaults, requestHandler, resolveObsidianDebugLogPath, server, setAdminPlaytime, startSiteServer, touchSiteSessionActivity, validateCredentials, validatePasswordChange, verifyPassword };
+module.exports = { ADMIN_PLAYER_EDITABLE_FIELDS, adminPlayerIdentity, assertAdminUser, buildPlayerGameSessions, changeSitePassword, cleanAccountInput, csrfTokenForSessionHash, deleteAdminPlayer, freshStoredRuntimePayload, getAdminPlayers, getAdminUsers, hashPassword, normalizeAdminPlayerPatch, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, parsePlaytimeSeconds, patchAdminPlayer, publicUser, registrationDefaults, requestHandler, resolveObsidianDebugLogPath, serializeObsidianDebugLogFallback, server, setAdminPlaytime, startSiteServer, touchSiteSessionActivity, validateCredentials, validatePasswordChange, verifyPassword };
