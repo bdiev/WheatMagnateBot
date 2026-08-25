@@ -94,6 +94,14 @@ assert.match(appSource, /function lastSeenProfileValue\(profile\)\s*\{\s*if \(pr
   'an online profile must never present its previous Last Seen age as the current status');
 assert.match(appSource, /<span>Last Seen<\/span>[\s\S]*profile\.isOnline\s*\? '<strong>Online now<\/strong>'/,
   'the Last Seen metric must explicitly render Online now for a connected profile');
+assert.match(serverSource, /async function searchSeenPlayers[\s\S]*FROM bot_accounts account[\s\S]*LEFT JOIN bot_account_runtime_state runtime[\s\S]*runtimesByUsername[\s\S]*Boolean\(row\.is_online\) \|\| runtimePresence\.isOnline/,
+  'Seen search must merge fresh bot-account runtime presence into player activity results');
+assert.match(serverSource, /const onlineSince = isOnline[\s\S]*runtimePresence\.currentStartedAt \|\| row\.last_online[\s\S]*onlineSince,/,
+  'Seen search must expose the beginning of the current online session');
+assert.match(appSource, /function seenPlayerStatusText\(player, now = Date\.now\(\)\)[\s\S]*online for \$\{formatDurationMs\(Math\.max\(0, now - startedAt\)\)\}[\s\S]*data-seen-online-since/,
+  'Seen search must show the elapsed duration of the current online session');
+assert.match(appSource, /function startSeenOnlineTimer\(\)[\s\S]*setInterval\(updateSeenOnlineDurations, 1_000\)/,
+  'Seen online durations must update every second while search results are visible');
 assert.match(migrationSource, /operational_events_player_session_resource_idx[\s\S]*?operational_events_archive_player_session_resource_idx/,
   'active and archived session events must both have profile lookup indexes');
 assert.doesNotMatch(appSource, /most recent recorded/,

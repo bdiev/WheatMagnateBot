@@ -27,6 +27,7 @@ const state = {
   chartMeta: {},
   rollingNumbers: {},
   seenSearchTimer: null,
+  seenOnlineTimer: null,
   whisperSearchTimer: null,
   whitelistSearchTimer: null,
   chartTooltipTimer: null,
@@ -3478,12 +3479,45 @@ function clearSeenSearch({ collapse = false } = {}) {
     input.value = '';
     if (collapse) input.blur();
   }
+  stopSeenOnlineTimer();
   if (suggestions) suggestions.hidden = true;
   state.seenPlayers = [];
   if (collapse) setSeenSearchOpen(false);
   if (collapse) {
     setTimeout(() => window.scrollTo(window.scrollX, window.scrollY), 80);
   }
+}
+
+function seenPlayerStatusText(player, now = Date.now()) {
+  if (!player?.isOnline) return player?.lastSeen ? formatAgo(player.lastSeen) : 'never seen';
+  const startedAt = new Date(player.onlineSince || player.lastOnline || 0).getTime();
+  return Number.isFinite(startedAt) && startedAt > 0
+    ? `online for ${formatDurationMs(Math.max(0, now - startedAt))}`
+    : 'online now';
+}
+
+function updateSeenOnlineDurations() {
+  const suggestions = $('#seenSuggestions');
+  if (!suggestions || suggestions.hidden) return;
+  const now = Date.now();
+  suggestions.querySelectorAll('[data-seen-online-since]').forEach(status => {
+    const startedAt = new Date(status.dataset.seenOnlineSince).getTime();
+    if (Number.isFinite(startedAt) && startedAt > 0) {
+      status.textContent = `online for ${formatDurationMs(Math.max(0, now - startedAt))}`;
+    }
+  });
+}
+
+function stopSeenOnlineTimer() {
+  clearInterval(state.seenOnlineTimer);
+  state.seenOnlineTimer = null;
+}
+
+function startSeenOnlineTimer() {
+  stopSeenOnlineTimer();
+  if (!state.seenPlayers.some(player => player.isOnline && (player.onlineSince || player.lastOnline))) return;
+  updateSeenOnlineDurations();
+  state.seenOnlineTimer = setInterval(updateSeenOnlineDurations, 1_000);
 }
 
 function toggleSeenSearch() {
@@ -3495,6 +3529,7 @@ function toggleSeenSearch() {
 function renderSeenSuggestions(players) {
   const suggestions = $('#seenSuggestions');
   state.seenPlayers = players || [];
+  stopSeenOnlineTimer();
 
   if (!suggestions) return;
   if (state.seenPlayers.length === 0) {
@@ -3506,16 +3541,18 @@ function renderSeenSuggestions(players) {
   suggestions.innerHTML = state.seenPlayers.map((player, index) => `
     <button class="seen-option" type="button" data-index="${index}">
       ${playerIdentity(player.username, 24, { status: player.isOnline ? 'online' : 'offline' })}
-      <span class="muted">${player.lastSeen ? formatAgo(player.lastSeen) : 'never seen'}</span>
+      <span class="muted"${player.isOnline && (player.onlineSince || player.lastOnline) ? ` data-seen-online-since="${escapeHtml(player.onlineSince || player.lastOnline)}"` : ''}>${escapeHtml(seenPlayerStatusText(player))}</span>
     </button>
   `).join('');
   suggestions.hidden = false;
+  startSeenOnlineTimer();
 }
 
 async function runSeenSearch(query) {
   const cleanQuery = query.trim();
   const suggestions = $('#seenSuggestions');
   if (cleanQuery.length < 1) {
+    stopSeenOnlineTimer();
     if (suggestions) suggestions.hidden = true;
     state.seenPlayers = [];
     return;
@@ -3525,6 +3562,7 @@ async function runSeenSearch(query) {
     const payload = await fetchJson(`/api/seen-search?query=${encodeURIComponent(cleanQuery)}`);
     renderSeenSuggestions(payload.players || []);
   } catch (err) {
+    stopSeenOnlineTimer();
     if (suggestions) {
       suggestions.innerHTML = `<div class="seen-empty">Search failed: ${escapeHtml(err.message)}</div>`;
       suggestions.hidden = false;

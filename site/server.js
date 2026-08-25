@@ -3273,13 +3273,39 @@ async function searchSeenPlayers(url) {
     LIMIT 8
   `, [`%${query}%`, query]);
 
+  const matchedUsernames = result.rows
+    .map(row => String(row.username || '').toLowerCase())
+    .filter(Boolean);
+  const runtimeResult = matchedUsernames.length
+    ? await pool.query(`
+        SELECT account.username,runtime.status,runtime.started_at,
+               runtime.updated_at,runtime.status_payload
+        FROM bot_accounts account
+        LEFT JOIN bot_account_runtime_state runtime ON runtime.account_id=account.id
+        WHERE account.deleted_at IS NULL
+          AND LOWER(account.username)=ANY($1::text[])
+      `, [matchedUsernames])
+    : { rows: [] };
+  const runtimesByUsername = new Map(runtimeResult.rows.map(runtime => [
+    String(runtime.username || '').toLowerCase(),
+    runtime
+  ]));
+
   return {
     players: result.rows.map(row => {
       const seconds = toInt(row.total_seconds);
+      const runtimePresence = playerProfileRuntimePresence(
+        runtimesByUsername.get(String(row.username || '').toLowerCase())
+      );
+      const isOnline = Boolean(row.is_online) || runtimePresence.isOnline;
+      const onlineSince = isOnline
+        ? (runtimePresence.isOnline ? runtimePresence.currentStartedAt || row.last_online : row.last_online)
+        : null;
       return {
         username: row.username,
         isWhitelisted: Boolean(row.is_whitelisted),
-        isOnline: Boolean(row.is_online),
+        isOnline,
+        onlineSince,
         lastSeen: row.last_seen,
         lastOnline: row.last_online,
         totalSeconds: seconds,
