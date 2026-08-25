@@ -29,6 +29,7 @@ const {
 const { createPlaytimeFeature } = require('./features/playtime');
 const { createPlayerInfoObservation } = require('./features/playerInfoObservation');
 const { createPlayerInfoObservationStore } = require('./features/playerInfoObservationStore');
+const { createPlayerInfoFirstJoinCheck } = require('./features/playerInfoFirstJoinCheck');
 const {
   createPlayerInfoBackfill,
   listReadyCommandSenders,
@@ -3011,10 +3012,16 @@ async function syncPlayerActivityOnlineState() {
     const onlineByKey = new Map(onlineUsernames.map(username => [username.toLowerCase(), username]));
     const onlineKeys = new Set(onlineByKey.keys());
 
-    await Promise.all(onlineUsernames.map(username => updatePlayerActivity(username, true, {
-      recordEvent: false,
-      uuid: getOnlinePlayerUuid(username)
+    const activityUpdates = await Promise.all(onlineUsernames.map(async username => ({
+      username,
+      result: await updatePlayerActivity(username, true, {
+        recordEvent: false,
+        uuid: getOnlinePlayerUuid(username)
+      })
     })));
+    activityUpdates.forEach(({ username, result }) => {
+      if (result?.created) playerInfoFirstJoinCheck?.enqueue(username);
+    });
 
     if (lastObservedOnlinePlayerKeys) {
       const leftUsernames = [...lastObservedOnlinePlayerKeys]
@@ -3336,6 +3343,7 @@ async function reconcileObservedLastSeen(targetUsername, observedDate) {
 }
 
 let observedPlayerInfoWriteQueue = Promise.resolve();
+let playerInfoFirstJoinCheck = null;
 
 function enqueueObservedPlayerInfoWrite(task) {
   const run = observedPlayerInfoWriteQueue.then(task, task);
@@ -3345,6 +3353,7 @@ function enqueueObservedPlayerInfoWrite(task) {
 
 const playerInfoObservation = createPlayerInfoObservation({
   parsePlaytime,
+  onResult: result => playerInfoFirstJoinCheck?.observe(result),
   isSourceOnline: source => {
     const sourceKey = String(source || '').toLowerCase();
     return getReadyPlayerInfoCommandSenders().some(context =>
@@ -3431,6 +3440,21 @@ function sendPlayerInfoBackfillCommand(command, selectedSender) {
   console.log(`[PlayerInfo] ${senderUsername} sent ${command}.`);
   return true;
 }
+
+playerInfoFirstJoinCheck = createPlayerInfoFirstJoinCheck({
+  initialDelayMinMs: process.env.PLAYER_INFO_FIRST_JOIN_INITIAL_DELAY_MIN_MS,
+  initialDelayMaxMs: process.env.PLAYER_INFO_FIRST_JOIN_INITIAL_DELAY_MAX_MS,
+  commandDelayMinMs: process.env.PLAYER_INFO_FIRST_JOIN_COMMAND_DELAY_MIN_MS,
+  commandDelayMaxMs: process.env.PLAYER_INFO_FIRST_JOIN_COMMAND_DELAY_MAX_MS,
+  responseTimeoutMs: process.env.PLAYER_INFO_FIRST_JOIN_RESPONSE_TIMEOUT_MS,
+  isReady: () => getReadyPlayerInfoCommandSenders().length > 0,
+  selectSender: () => pickRandomCommandSender(getReadyPlayerInfoCommandSenders()),
+  prepareLookup: async ({ metric, username }) => {
+    await playerInfoObservationStore.requestRefresh(metric, username);
+    return playerInfoObservation.requestLookup(metric, username, 'first-join');
+  },
+  sendCommand: (command, _item, sender) => sendPlayerInfoBackfillCommand(command, sender)
+});
 
 const playerInfoBackfill = createPlayerInfoBackfill({
   pool,
@@ -9086,10 +9110,11 @@ function createBot() {
     if (player.username && player.username.toLowerCase() !== bot.username.toLowerCase()) {
       if (!lastObservedOnlinePlayerKeys) lastObservedOnlinePlayerKeys = new Map();
       lastObservedOnlinePlayerKeys.set(player.username.toLowerCase(), player.username);
-      await updatePlayerActivity(player.username, true, {
+      const activityResult = await updatePlayerActivity(player.username, true, {
         recordEvent: playerActivityJoinEventsReady,
         uuid: player.uuid
       });
+      if (activityResult?.created) playerInfoFirstJoinCheck?.enqueue(player.username);
       await scheduleQueuedSiteWhispersForPlayer(player.username);
     }
     if (player.username) {
@@ -12541,6 +12566,7 @@ async function shutdownAllAccounts(signal) {
   console.log(`[Shutdown] ${signal}: stopping Minecraft account runtimes.`);
   shouldReconnect = false;
   playerInfoBackfill.stop();
+  playerInfoFirstJoinCheck?.stop();
   clearReconnectTimer();
   clearResumeTimer();
 

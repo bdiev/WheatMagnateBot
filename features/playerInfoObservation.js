@@ -92,6 +92,18 @@ function parseJoinDateResponse(message) {
   return { targetUsername: numeric[1], observedValue: observedDate };
 }
 
+function parseNamedJoinDateAgeMs(message, now = new Date()) {
+  const match = String(message || '').trim().match(
+    /^I first saw\s+[A-Za-z0-9_]{1,32}\s+([\s\S]+?)\s+ago\s+on\s+[A-Za-z]{3,9}\s+\d{1,2}(?:st|nd|rd|th)?,\s+\d{4}\.?$/i
+  );
+  const currentDate = new Date(now);
+  const duration = match ? parseRelativeDuration(match[1]) : null;
+  if (!duration || !Number.isFinite(currentDate.getTime())) return null;
+  const observedAt = subtractCalendarMonthsUtc(currentDate, duration.calendarMonths);
+  observedAt.setTime(observedAt.getTime() - duration.totalMilliseconds);
+  return Math.max(0, currentDate.getTime() - observedAt.getTime());
+}
+
 function parseRelativeDuration(value) {
   const input = String(value || '').trim();
   if (!input) return null;
@@ -170,6 +182,7 @@ function createPlayerInfoObservation({
   onMessages,
   onJoinDate,
   onLastSeen,
+  onResult,
   isSourceOnline = () => false,
   now = () => Date.now(),
   setTimer = setTimeout,
@@ -202,10 +215,10 @@ function createPlayerInfoObservation({
     const targetKey = targetUsername.toLowerCase();
     const lookup = lookups[type];
     const previous = lookup.get(targetKey);
-    if (previous && (
-      (previous.reason === 'site' && reason !== 'site')
-      || (previous.reason === 'automatic' && reason === 'chat')
-    )) return previous;
+    const reasonPriority = { chat: 0, automatic: 1, 'first-join': 2, site: 3 };
+    if (previous && (reasonPriority[previous.reason] || 0) > (reasonPriority[reason] || 0)) {
+      return previous;
+    }
     if (previous) deleteLookup(type, targetKey, previous);
 
     const pending = {
@@ -229,6 +242,14 @@ function createPlayerInfoObservation({
       : type === 'messages' ? onMessages
       : type === 'joinDate' ? onJoinDate : onLastSeen;
     handler?.(pending.targetUsername, candidate.observedValue, candidate.source, { reason: pending.reason });
+    onResult?.({
+      metric: type,
+      targetUsername: pending.targetUsername,
+      observedValue: candidate.observedValue,
+      observedAgeMs: candidate.observedAgeMs,
+      source: candidate.source,
+      reason: pending.reason
+    });
     pending.appliedSource = candidate.source;
     deleteLookup(type, targetKey, pending);
   }
@@ -309,7 +330,11 @@ function createPlayerInfoObservation({
 
     const joinDateResponse = parseJoinDateResponse(cleanMessage);
     if (joinDateResponse) {
-      return acceptCandidate('joinDate', { ...joinDateResponse, source });
+      return acceptCandidate('joinDate', {
+        ...joinDateResponse,
+        observedAgeMs: parseNamedJoinDateAgeMs(cleanMessage, new Date(now())),
+        source
+      });
     }
 
     const lastSeenResponse = parseLastSeenResponse(cleanMessage, new Date(now()));
@@ -330,7 +355,7 @@ function createPlayerInfoObservation({
       : metric === 'messages' ? 'messages'
       : metric === 'joinDate' ? 'joinDate' : metric === 'lastSeen' ? 'lastSeen' : '';
     if (!username || !type) return false;
-    registerLookup(type, username, reason === 'site' ? 'site' : 'automatic');
+    registerLookup(type, username, ['site', 'first-join'].includes(reason) ? reason : 'automatic');
     return true;
   }
 
@@ -350,6 +375,7 @@ module.exports = {
   PREFERRED_SOURCE,
   createPlayerInfoObservation,
   parseJoinDateResponse,
+  parseNamedJoinDateAgeMs,
   parseLastSeenResponse,
   parseNumericJoinDate,
   parseRelativeDurationMs,

@@ -5,6 +5,7 @@ const { createPlaytimeFeature } = require('../features/playtime');
 const {
   createPlayerInfoObservation,
   parseJoinDateResponse,
+  parseNamedJoinDateAgeMs,
   parseLastSeenResponse,
   parseMessagesResponse,
   parsePlaytimeResponse
@@ -52,6 +53,7 @@ function createTracker({ preferredOnline = true } = {}) {
   const clock = fakeClock();
   const updates = [];
   const reasons = [];
+  const results = [];
   const tracker = createPlayerInfoObservation({
     parsePlaytime,
     now: clock.now,
@@ -60,6 +62,7 @@ function createTracker({ preferredOnline = true } = {}) {
     fallbackGraceMs: 2_500,
     lookupTtlMs: 20_000,
     isSourceOnline: source => source === 'lolritterbot' && preferredOnline,
+    onResult: result => results.push(result),
     onPlaytime: (targetUsername, value, source, context) => {
       updates.push({ type: 'pt', targetUsername, value, source });
       reasons.push(context?.reason);
@@ -77,7 +80,7 @@ function createTracker({ preferredOnline = true } = {}) {
       reasons.push(context?.reason);
     }
   });
-  return { clock, tracker, updates, reasons };
+  return { clock, tracker, updates, reasons, results };
 }
 
 function testActualResponseFormats() {
@@ -105,6 +108,13 @@ function testActualResponseFormats() {
   assert.deepEqual(
     parseJoinDateResponse('I first saw bdiev_ 2 years ago on Nov 16th, 2024.'),
     { targetUsername: 'bdiev_', observedValue: new Date('2024-11-16T00:00:00.000Z') }
+  );
+  assert.equal(
+    parseNamedJoinDateAgeMs(
+      'I first saw FreshPlayer 2 minutes ago on Aug 25th, 2026.',
+      new Date('2026-08-25T12:00:00.000Z')
+    ),
+    120_000
   );
   assert.deepEqual(
     parseJoinDateResponse('bdiev_: 11/16/2024 10:30:37 (1 year, 268 days ago)'),
@@ -234,6 +244,17 @@ function testAutomaticLookupSurvivesEchoedCommand() {
   assert.deepEqual(reasons, ['automatic']);
 }
 
+function testFirstJoinLookupReportsRelativeJoinAge() {
+  const { tracker, results } = createTracker({ preferredOnline: true });
+  assert.equal(tracker.requestLookup('joinDate', 'FreshPlayer', 'first-join'), true);
+  tracker.observe('Requester', '!jd FreshPlayer');
+  tracker.observe('LolRiTTeRBot', 'I first saw FreshPlayer 2 minutes ago on Jan 1st, 1970.');
+  assert.equal(results.length, 1);
+  assert.equal(results[0].metric, 'joinDate');
+  assert.equal(results[0].reason, 'first-join');
+  assert.equal(results[0].observedAgeMs, 120_000);
+}
+
 function testLastSeenResponseIsIntercepted() {
   const { tracker, updates } = createTracker({ preferredOnline: true });
   tracker.observe('Requester', '!seen bdiev_');
@@ -280,6 +301,7 @@ testFallbackWhenPreferredIsOffline();
 testFallbackJoinDateAppliesOnlyOnce();
 testSiteRefreshSurvivesEchoedCommand();
 testAutomaticLookupSurvivesEchoedCommand();
+testFirstJoinLookupReportsRelativeJoinAge();
 testLastSeenResponseIsIntercepted();
 testLastSeenSiteRequestSurvivesEchoedCommand();
 testInvalidSiteRefreshIsRejected();

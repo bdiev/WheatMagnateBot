@@ -251,7 +251,7 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
         `, [normalizedUuid, username, timestamp]);
       }
       if (isOnline) {
-        await executor.query(`
+        const result = await executor.query(`
           WITH updated AS (
             UPDATE player_activity
             SET username = CASE WHEN $4::uuid IS NULL THEN player_activity.username ELSE $1 END,
@@ -283,9 +283,11 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
                  NOW(),
                  TRUE
           WHERE NOT EXISTS (SELECT 1 FROM updated)
+          RETURNING id
         `, [username, timestamp, recordEvent, normalizedUuid]);
+        return { created: result.rowCount > 0 };
       } else {
-        await executor.query(`
+        const result = await executor.query(`
           WITH updated AS (
             UPDATE player_activity
             SET username = CASE WHEN $4::uuid IS NULL THEN player_activity.username ELSE $1 END,
@@ -309,21 +311,23 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
           INSERT INTO player_activity (username, player_uuid, last_seen, registration_at, is_online)
           SELECT $1, $4::uuid, CASE WHEN $3::boolean THEN $2::timestamp ELSE NULL END, NOW(), FALSE
           WHERE NOT EXISTS (SELECT 1 FROM updated)
+          RETURNING id
         `, [username, timestamp, recordEvent, normalizedUuid]);
+        return { created: result.rowCount > 0 };
       }
     };
     const executeUpdate = async () => {
       if (!normalizedUuid) {
-        await runUpdate();
-        return;
+        return runUpdate();
       }
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
         await reconcileUuidAndUsernameRows(client);
-        await runUpdate(client);
+        const result = await runUpdate(client);
         await reconcileUuidOwnedData(client);
         await client.query('COMMIT');
+        return result;
       } catch (error) {
         await client.query('ROLLBACK').catch(() => {});
         throw error;
@@ -333,7 +337,7 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
     };
 
     try {
-      await executeUpdate();
+      const result = await executeUpdate();
       if (recordEvent && previousOnline !== Boolean(isOnline)) {
         await recordOperationalEvent(pool, {
           eventType: isOnline ? 'player_joined' : 'player_left', severity: 'info', source: 'player_activity',
@@ -341,12 +345,13 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
           actor: username, resourceKey: `player:${String(username).toLowerCase()}`, correlationId: newCorrelationId(), occurredAt: timestamp
         });
       }
+      return { ...result, previousOnline, isOnline: Boolean(isOnline) };
     } catch (err) {
       if (err?.code === '42703') {
         try {
           await pool.query('ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS registration_at TIMESTAMPTZ');
-          await executeUpdate();
-          return;
+          const result = await executeUpdate();
+          return { ...result, previousOnline, isOnline: Boolean(isOnline) };
         } catch (retryErr) {
           console.error(`[DB] Failed to update player activity for ${username} after migration retry:`, retryErr.message);
           return;
