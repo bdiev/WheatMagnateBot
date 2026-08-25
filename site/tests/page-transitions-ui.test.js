@@ -19,10 +19,14 @@ assert.match(pwaUpdateSource, /register\('\/sw\.js', \{ updateViaCache: 'none' \
 assert.match(pwaUpdateSource, /controllerchange[\s\S]*hadController[\s\S]*window\.location\.reload\(\)/, 'an activated update must reload an existing PWA exactly once');
 assert.match(pwaUpdateSource, /visibilitychange[\s\S]*visibilityState === 'visible'[\s\S]*checkForUpdate\(\)/, 'a resumed PWA must check for updates');
 assert.match(indexSource, /page-transitions\.js\?v=1/, 'the dashboard must load shared page transitions');
-assert.match(requestHtmlSource, /styles\.css\?v=228/, 'the request page must load the current shared transition styles');
+assert.match(indexSource, /styles\.css\?v=240/, 'the dashboard must load the current shared styles');
+assert.match(requestHtmlSource, /styles\.css\?v=240/, 'the request page must load the current shared transition styles');
 assert.match(requestHtmlSource, /page-transitions\.js\?v=1/, 'the request page must load shared page transitions');
 assert.match(requestHtmlSource, /id="loginPrompt"[^>]*hidden/, 'the request login state must not flash before the session loads');
 assert.match(stylesSource, /@view-transition\s*\{\s*navigation:\s*auto;/, 'same-origin navigation must use native cross-document transitions when available');
+assert.match(stylesSource, /html,\s*body\s*\{[^}]*max-width:\s*100%;[^}]*overflow-x:\s*hidden;[^}]*overscroll-behavior-x:\s*none;/s, 'the page root must not pan horizontally on mobile');
+assert.match(stylesSource, /@supports \(overflow:\s*clip\)[\s\S]*html,[\s\S]*body\s*\{[^}]*overflow-x:\s*clip;/, 'modern browsers must clip visual horizontal overflow without creating a root scroller');
+assert.match(stylesSource, /\.server-stats-grid,[\s\S]*\.obsidian-stats-grid,[\s\S]*\.farm-admin-grid\[data-loop-carousel\][\s\S]*overflow-x:\s*auto;/, 'dashboard carousels must retain their own horizontal scrolling');
 assert.match(stylesSource, /::view-transition-old\(root\)[\s\S]*::view-transition-new\(root\)/, 'native navigation must animate both page snapshots');
 assert.match(stylesSource, /page-fallback-transition-in/, 'browsers without native support must still animate page entry');
 assert.match(transitionsSource, /page-transition-leaving[\s\S]*window\.location\.assign/, 'fallback navigation must animate before changing location');
