@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { buildPlayerGameSessions } = require('../server');
+const { buildPlayerGameSessions, playerProfileRuntimePresence } = require('../server');
 
 const sessions = buildPlayerGameSessions([
   { event_type: 'player_left', occurred_at: '2026-08-15T11:00:00.000Z' },
@@ -28,6 +28,26 @@ const fallbackCurrent = buildPlayerGameSessions([], {
   now: new Date('2026-08-15T16:00:00.000Z')
 });
 assert.equal(fallbackCurrent[0].durationSeconds, 900, 'an online profile must use its tracked start when no join event is available');
+
+const runtimeStartedAt = '2026-08-15T15:45:00.000Z';
+const freshRuntimePresence = playerProfileRuntimePresence({
+  status: 'connected',
+  started_at: runtimeStartedAt,
+  updated_at: '2026-08-15T16:00:00.000Z',
+  status_payload: { connected: true, observedAt: '2026-08-15T16:00:00.000Z' }
+}, new Date('2026-08-15T16:00:10.000Z').getTime());
+assert.deepEqual(freshRuntimePresence, {
+  isOnline: true,
+  currentStartedAt: runtimeStartedAt
+}, 'a fresh connected bot runtime must make its matching player profile online');
+
+const staleRuntimePresence = playerProfileRuntimePresence({
+  status: 'connected',
+  started_at: runtimeStartedAt,
+  updated_at: '2026-08-15T16:00:00.000Z',
+  status_payload: { connected: true }
+}, new Date('2026-08-15T16:00:16.000Z').getTime());
+assert.equal(staleRuntimePresence.isOnline, false, 'an expired bot heartbeat must not leave the profile online');
 
 const appSource = fs.readFileSync(path.resolve(__dirname, '..', 'public', 'app.js'), 'utf8');
 const stylesSource = fs.readFileSync(path.resolve(__dirname, '..', 'public', 'styles.css'), 'utf8');
@@ -68,6 +88,12 @@ assert.match(stylesSource, /player-profile-skeleton-shimmer[\s\S]*?player-profil
   'loading placeholders and resolved profile data must both be animated');
 assert.match(serverSource, /sessionResourceKeys = aliases\.map[\s\S]*?LOWER\(resource_key\)=ANY\(\$1::text\[\]\)/,
   'session history must use its indexed resource key instead of scanning event JSON');
+assert.match(serverSource, /FROM bot_accounts account[\s\S]*LEFT JOIN bot_account_runtime_state runtime[\s\S]*LOWER\(account\.username\)=ANY\(\$1::text\[\]\)[\s\S]*playerProfileRuntimePresence\(botAccount\)/,
+  'a bot player profile must merge the matching account runtime presence');
+assert.match(appSource, /function lastSeenProfileValue\(profile\)\s*\{\s*if \(profile\.isOnline\) return 'Online now';/,
+  'an online profile must never present its previous Last Seen age as the current status');
+assert.match(appSource, /<span>Last Seen<\/span>[\s\S]*profile\.isOnline\s*\? '<strong>Online now<\/strong>'/,
+  'the Last Seen metric must explicitly render Online now for a connected profile');
 assert.match(migrationSource, /operational_events_player_session_resource_idx[\s\S]*?operational_events_archive_player_session_resource_idx/,
   'active and archived session events must both have profile lookup indexes');
 assert.doesNotMatch(appSource, /most recent recorded/,

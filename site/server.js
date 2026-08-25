@@ -3334,6 +3334,18 @@ function buildPlayerGameSessions(events = [], { isOnline = false, currentStarted
     .slice(0, 100);
 }
 
+function playerProfileRuntimePresence(runtime = null, now = Date.now()) {
+  if (!runtime) return { isOnline: false, currentStartedAt: null };
+  const statusPayload = freshStoredRuntimePayload(runtime.status_payload, runtime.updated_at, now);
+  const isOnline = runtime.status === 'connected' && statusPayload?.connected === true;
+  return {
+    isOnline,
+    currentStartedAt: isOnline
+      ? runtime.started_at || statusPayload?.observedAt || null
+      : null
+  };
+}
+
 async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
   assertDatabase();
 
@@ -3384,7 +3396,7 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
   ])];
   const sessionResourceKeys = aliases.map(alias => `player:${alias}`);
 
-  const [profileResult, chatResult, recentChatResult, nearbyResult, ignoredResult, namesResult, gameSessionEventsResult] = await Promise.all([
+  const [profileResult, chatResult, recentChatResult, nearbyResult, ignoredResult, namesResult, gameSessionEventsResult, accountRuntimeResult] = await Promise.all([
     pool.query(`
       WITH activity AS (
         SELECT id, username, player_uuid, last_seen, last_online, registration_at, observed_message_count, is_online,
@@ -3487,16 +3499,32 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
       ) session_events
       ORDER BY occurred_at DESC,id DESC
       LIMIT 500
-    `, [sessionResourceKeys])
+    `, [sessionResourceKeys]),
+    pool.query(`
+      SELECT account.id,account.username,runtime.status,runtime.started_at,
+             runtime.updated_at,runtime.status_payload
+      FROM bot_accounts account
+      LEFT JOIN bot_account_runtime_state runtime ON runtime.account_id=account.id
+      WHERE account.deleted_at IS NULL
+        AND LOWER(account.username)=ANY($1::text[])
+      ORDER BY account.is_default DESC,account.sort_order,account.created_at,account.id
+      LIMIT 1
+    `, [aliases])
   ]);
 
   const profile = profileResult.rows[0] || { username };
   const chat = chatResult.rows[0] || {};
   const nearby = nearbyResult.rows[0] || null;
   const seconds = toInt(profile.total_seconds);
+  const botAccount = accountRuntimeResult.rows[0] || null;
+  const runtimePresence = playerProfileRuntimePresence(botAccount);
+  const isOnline = Boolean(profile.is_online) || runtimePresence.isOnline;
+  const trackingSince = runtimePresence.isOnline
+    ? runtimePresence.currentStartedAt || profile.tracking_since
+    : profile.tracking_since;
   const gameSessions = buildPlayerGameSessions(gameSessionEventsResult.rows, {
-    isOnline: Boolean(profile.is_online),
-    currentStartedAt: profile.tracking_since || profile.last_online
+    isOnline,
+    currentStartedAt: trackingSince || profile.last_online
   });
   const gameSessionCount = Math.max(
     toInt(gameSessionEventsResult.rows[0]?.total_sessions),
@@ -3513,10 +3541,10 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
     })),
     isWhitelisted: Boolean(profile.is_whitelisted),
     isIgnored: Boolean(ignoredResult.rows[0]?.is_ignored),
-    isBot: Array.isArray(profile.admin_tags) && profile.admin_tags.some(tag => String(tag).trim().toLowerCase() === 'bot'),
+    isBot: Boolean(botAccount) || (Array.isArray(profile.admin_tags) && profile.admin_tags.some(tag => String(tag).trim().toLowerCase() === 'bot')),
     isNewPlayer: isNewPlayerRegistration(profile.registration_at),
-    isOnline: Boolean(profile.is_online),
-    trackingSince: profile.tracking_since || null,
+    isOnline,
+    trackingSince: trackingSince || null,
     lastSeen: profile.last_seen || null,
     lastOnline: profile.last_online || null,
     registrationAt: profile.registration_at || null,
@@ -5689,4 +5717,4 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown);
 }
 
-module.exports = { ADMIN_PLAYER_EDITABLE_FIELDS, adminPlayerIdentity, assertAdminUser, buildPlayerGameSessions, changeSitePassword, cleanAccountInput, csrfTokenForSessionHash, deleteAdminPlayer, freshStoredRuntimePayload, getAdminPlayers, getAdminUsers, hashPassword, normalizeAdminPlayerPatch, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, parsePlaytimeSeconds, patchAdminPlayer, publicUser, registrationDefaults, requestHandler, resolveObsidianDebugLogPath, serializeObsidianDebugLogFallback, server, setAdminPlaytime, startSiteServer, touchSiteSessionActivity, validateCredentials, validatePasswordChange, verifyPassword };
+module.exports = { ADMIN_PLAYER_EDITABLE_FIELDS, adminPlayerIdentity, assertAdminUser, buildPlayerGameSessions, changeSitePassword, cleanAccountInput, csrfTokenForSessionHash, deleteAdminPlayer, freshStoredRuntimePayload, getAdminPlayers, getAdminUsers, hashPassword, normalizeAdminPlayerPatch, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, parsePlaytimeSeconds, patchAdminPlayer, playerProfileRuntimePresence, publicUser, registrationDefaults, requestHandler, resolveObsidianDebugLogPath, serializeObsidianDebugLogFallback, server, setAdminPlaytime, startSiteServer, touchSiteSessionActivity, validateCredentials, validatePasswordChange, verifyPassword };

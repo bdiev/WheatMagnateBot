@@ -2884,6 +2884,7 @@ function registrationProfileValue(profile) {
 }
 
 function lastSeenProfileValue(profile) {
+  if (profile.isOnline) return 'Online now';
   if (!profile.lastSeen) return 'Never';
   return state.playerProfileLastSeenDateMode
     ? formatFullDateTime(profile.lastSeen)
@@ -3074,12 +3075,14 @@ function renderPlayerProfile(profile) {
       <div>
         <header class="player-profile-metric-head">
           <span>Last Seen</span>
-          ${profile.lastSeen ? '' : `
+          ${profile.isOnline || profile.lastSeen ? '' : `
             <button class="player-profile-refresh-button" type="button" data-player-refresh-command="!seen" aria-label="Request last seen for ${escapeHtml(profileUsername)}" title="Request last seen">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0 1 11.5-2.6L20 9M4 15l2.4 2.6A7 7 0 0 0 17.9 15"/></svg>
             </button>`}
         </header>
-        ${profile.lastSeen
+        ${profile.isOnline
+          ? '<strong>Online now</strong>'
+          : profile.lastSeen
           ? `<button class="player-profile-value-button" type="button" data-profile-toggle="last-seen-date" title="${lastSeenTitle}">${escapeHtml(lastSeenProfileValue(profile))}</button>`
           : '<strong>Never</strong>'}
       </div>
