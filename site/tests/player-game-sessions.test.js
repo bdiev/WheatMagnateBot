@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { buildPlayerGameSessions, playerProfileRuntimePresence } = require('../server');
+const { buildPlayerGameSessions, playerProfileRuntimePresence, sortSeenPlayers } = require('../server');
 
 const sessions = buildPlayerGameSessions([
   { event_type: 'player_left', occurred_at: '2026-08-15T11:00:00.000Z' },
@@ -48,6 +48,18 @@ const staleRuntimePresence = playerProfileRuntimePresence({
   status_payload: { connected: true }
 }, new Date('2026-08-15T16:00:16.000Z').getTime());
 assert.equal(staleRuntimePresence.isOnline, false, 'an expired bot heartbeat must not leave the profile online');
+
+const sortedSeenPlayers = sortSeenPlayers([
+  { username: 'WheatEmperor', isOnline: false, lastSeen: '2026-08-24T12:00:00.000Z' },
+  { username: 'WheatMagnate', isOnline: true, onlineSince: '2026-08-25T11:59:00.000Z', lastSeen: '2026-06-01T00:00:00.000Z' },
+  { username: 'WheatExplorer', isOnline: false, lastSeen: '2026-08-01T12:00:00.000Z' },
+  { username: 'WheatChancelor', isOnline: true, onlineSince: '2026-08-25T10:00:00.000Z' }
+]);
+assert.deepEqual(
+  sortedSeenPlayers.map(player => player.username),
+  ['WheatMagnate', 'WheatChancelor', 'WheatEmperor', 'WheatExplorer'],
+  'connected players must sort first using their current online start, even when their stored Last Seen is old'
+);
 
 const appSource = fs.readFileSync(path.resolve(__dirname, '..', 'public', 'app.js'), 'utf8');
 const stylesSource = fs.readFileSync(path.resolve(__dirname, '..', 'public', 'styles.css'), 'utf8');
@@ -96,6 +108,8 @@ assert.match(appSource, /<span>Last Seen<\/span>[\s\S]*profile\.isOnline\s*\? '<
   'the Last Seen metric must explicitly render Online now for a connected profile');
 assert.match(serverSource, /async function searchSeenPlayers[\s\S]*FROM bot_accounts account[\s\S]*LEFT JOIN bot_account_runtime_state runtime[\s\S]*runtimesByUsername[\s\S]*Boolean\(row\.is_online\) \|\| runtimePresence\.isOnline/,
   'Seen search must merge fresh bot-account runtime presence into player activity results');
+assert.match(serverSource, /activeRuntimeUsernames[\s\S]*CASE WHEN is_online OR LOWER\(username\)=ANY\(\$3::text\[\]\) THEN 0 ELSE 1 END[\s\S]*LIMIT 8/,
+  'fresh bot runtime presence must participate in Seen sorting before the result limit');
 assert.match(serverSource, /const onlineSince = isOnline[\s\S]*runtimePresence\.currentStartedAt \|\| row\.last_online[\s\S]*onlineSince,/,
   'Seen search must expose the beginning of the current online session');
 assert.match(appSource, /function seenPlayerStatusText\(player, now = Date\.now\(\)\)[\s\S]*online for \$\{formatDurationMs\(Math\.max\(0, now - startedAt\)\)\}[\s\S]*data-seen-online-since/,

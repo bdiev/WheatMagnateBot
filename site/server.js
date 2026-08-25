@@ -3188,6 +3188,23 @@ async function searchSeenPlayers(url) {
     return { players: [] };
   }
 
+  const runtimeResult = await pool.query(`
+    SELECT account.username,runtime.status,runtime.started_at,
+           runtime.updated_at,runtime.status_payload
+    FROM bot_accounts account
+    LEFT JOIN bot_account_runtime_state runtime ON runtime.account_id=account.id
+    WHERE account.deleted_at IS NULL
+      AND LOWER(account.username) LIKE LOWER($1)
+  `, [`%${query}%`]);
+  const runtimesByUsername = new Map(runtimeResult.rows.map(runtime => [
+    String(runtime.username || '').toLowerCase(),
+    runtime
+  ]));
+  const activeRuntimeUsernames = runtimeResult.rows
+    .filter(runtime => playerProfileRuntimePresence(runtime).isOnline)
+    .map(runtime => String(runtime.username || '').toLowerCase())
+    .filter(Boolean);
+
   const result = await pool.query(`
     WITH uuid_matches AS (
       SELECT
@@ -3266,53 +3283,54 @@ async function searchSeenPlayers(url) {
     )
     SELECT * FROM matched
     ORDER BY
+      CASE WHEN is_online OR LOWER(username)=ANY($3::text[]) THEN 0 ELSE 1 END,
+      CASE WHEN is_online OR LOWER(username)=ANY($3::text[])
+        THEN COALESCE(last_online,last_seen)
+        ELSE last_seen
+      END DESC NULLS LAST,
       CASE WHEN LOWER(username) = LOWER($2) THEN 0 ELSE 1 END,
-      is_online DESC,
-      last_seen DESC NULLS LAST,
       LOWER(username)
     LIMIT 8
-  `, [`%${query}%`, query]);
+  `, [`%${query}%`, query, activeRuntimeUsernames]);
 
-  const matchedUsernames = result.rows
-    .map(row => String(row.username || '').toLowerCase())
-    .filter(Boolean);
-  const runtimeResult = matchedUsernames.length
-    ? await pool.query(`
-        SELECT account.username,runtime.status,runtime.started_at,
-               runtime.updated_at,runtime.status_payload
-        FROM bot_accounts account
-        LEFT JOIN bot_account_runtime_state runtime ON runtime.account_id=account.id
-        WHERE account.deleted_at IS NULL
-          AND LOWER(account.username)=ANY($1::text[])
-      `, [matchedUsernames])
-    : { rows: [] };
-  const runtimesByUsername = new Map(runtimeResult.rows.map(runtime => [
-    String(runtime.username || '').toLowerCase(),
-    runtime
-  ]));
-
+  const players = result.rows.map(row => {
+    const seconds = toInt(row.total_seconds);
+    const runtimePresence = playerProfileRuntimePresence(
+      runtimesByUsername.get(String(row.username || '').toLowerCase())
+    );
+    const isOnline = Boolean(row.is_online) || runtimePresence.isOnline;
+    const onlineSince = isOnline
+      ? (runtimePresence.isOnline ? runtimePresence.currentStartedAt || row.last_online : row.last_online)
+      : null;
+    return {
+      username: row.username,
+      isWhitelisted: Boolean(row.is_whitelisted),
+      isOnline,
+      onlineSince,
+      lastSeen: row.last_seen,
+      lastOnline: row.last_online,
+      totalSeconds: seconds,
+      playtime: formatSeconds(seconds)
+    };
+  });
   return {
-    players: result.rows.map(row => {
-      const seconds = toInt(row.total_seconds);
-      const runtimePresence = playerProfileRuntimePresence(
-        runtimesByUsername.get(String(row.username || '').toLowerCase())
-      );
-      const isOnline = Boolean(row.is_online) || runtimePresence.isOnline;
-      const onlineSince = isOnline
-        ? (runtimePresence.isOnline ? runtimePresence.currentStartedAt || row.last_online : row.last_online)
-        : null;
-      return {
-        username: row.username,
-        isWhitelisted: Boolean(row.is_whitelisted),
-        isOnline,
-        onlineSince,
-        lastSeen: row.last_seen,
-        lastOnline: row.last_online,
-        totalSeconds: seconds,
-        playtime: formatSeconds(seconds)
-      };
-    })
+    players: sortSeenPlayers(players)
   };
+}
+
+function sortSeenPlayers(players = []) {
+  const activityAt = player => {
+    const value = player?.isOnline
+      ? player.onlineSince || player.lastOnline || player.lastSeen
+      : player?.lastSeen || player?.lastOnline;
+    const timestamp = new Date(value || 0).getTime();
+    return Number.isFinite(timestamp) ? timestamp : 0;
+  };
+  return [...players].sort((first, second) => {
+    if (Boolean(first?.isOnline) !== Boolean(second?.isOnline)) return first?.isOnline ? -1 : 1;
+    return activityAt(second) - activityAt(first)
+      || String(first?.username || '').localeCompare(String(second?.username || ''), 'en', { sensitivity: 'base' });
+  });
 }
 
 function buildPlayerGameSessions(events = [], { isOnline = false, currentStartedAt = null, now = new Date() } = {}) {
@@ -5743,4 +5761,4 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown);
 }
 
-module.exports = { ADMIN_PLAYER_EDITABLE_FIELDS, adminPlayerIdentity, assertAdminUser, buildPlayerGameSessions, changeSitePassword, cleanAccountInput, csrfTokenForSessionHash, deleteAdminPlayer, freshStoredRuntimePayload, getAdminPlayers, getAdminUsers, hashPassword, normalizeAdminPlayerPatch, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, parsePlaytimeSeconds, patchAdminPlayer, playerProfileRuntimePresence, publicUser, registrationDefaults, requestHandler, resolveObsidianDebugLogPath, serializeObsidianDebugLogFallback, server, setAdminPlaytime, startSiteServer, touchSiteSessionActivity, validateCredentials, validatePasswordChange, verifyPassword };
+module.exports = { ADMIN_PLAYER_EDITABLE_FIELDS, adminPlayerIdentity, assertAdminUser, buildPlayerGameSessions, changeSitePassword, cleanAccountInput, csrfTokenForSessionHash, deleteAdminPlayer, freshStoredRuntimePayload, getAdminPlayers, getAdminUsers, hashPassword, normalizeAdminPlayerPatch, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, parsePlaytimeSeconds, patchAdminPlayer, playerProfileRuntimePresence, publicUser, registrationDefaults, requestHandler, resolveObsidianDebugLogPath, serializeObsidianDebugLogFallback, server, setAdminPlaytime, sortSeenPlayers, startSiteServer, touchSiteSessionActivity, validateCredentials, validatePasswordChange, verifyPassword };
