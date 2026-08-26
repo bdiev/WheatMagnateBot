@@ -10,13 +10,13 @@ const {
 const { KILL_AURA_MOBS, normalizeKillAuraTargets } = require('../site/kill-aura-catalog');
 
 const registryMobs = require('minecraft-data')('1.21.9').entitiesArray
-  .filter(entity => !['other', 'projectile', 'player', 'living'].includes(entity.type))
+  .filter(entity => !['other', 'projectile', 'player', 'living'].includes(entity.type) || entity.name === 'shulker_bullet')
   .map(entity => entity.name)
   .sort();
 assert.deepEqual(
   KILL_AURA_MOBS.filter(target => target.id !== 'player').map(mob => mob.id).sort(),
   registryMobs,
-  'the selectable catalog must contain every living mob in the bundled Java registry in addition to players'
+  'the selectable catalog must contain every living mob plus Shulker Bullet in addition to players'
 );
 assert.deepEqual(normalizeKillAuraTargets(['Zombie', 'minecraft:cow', 'player']), ['zombie', 'cow', 'player']);
 
@@ -36,7 +36,7 @@ const brokenSword = { name: 'netherite_sword', slot: 4, maxDurability: 2031, dur
 assert.equal(selectBestWeapon([brokenSword, weakSword], 'cow').item, weakSword);
 
 const bot = new EventEmitter();
-bot.entity = { id: 1, position: { distanceTo: () => 2 } };
+bot.entity = { id: 1, onGround: true, position: { x: 10, y: 64, z: 20, distanceTo: () => 2 } };
 bot.entities = {};
 bot.inventory = { items: () => [strongSword] };
 const pathfinderGoals = [];
@@ -77,5 +77,41 @@ playerAura.setEnabled(true);
 assert.deepEqual(playerAura.getStatus().targets, ['player'], 'players can be selected as a Kill Aura target type');
 playerAura.setEnabled(false);
 playerAura.detachBot();
+
+const rangedAura = createKillAuraFeature({ attackRange: 1.4 });
+bot.entity.position.distanceTo = position => position.distance;
+bot.entities = {
+  close: { id:11, name:'zombie', position:{ distance:1.4 } },
+  far: { id:12, name:'zombie', position:{ distance:1.5 } }
+};
+rangedAura.setTargets(['zombie']);
+rangedAura.attachBot(bot);
+assert.equal(rangedAura.getStatus().attackRange, 1.4, 'the configured attack range is exposed in status');
+assert.equal(rangedAura.__test.nearestTarget()?.entity.id, 11, 'targets outside the configured range are ignored');
+assert.equal(rangedAura.setAttackRange(0.1).attackRange, 0.5, 'attack range is clamped to the slider minimum');
+assert.equal(rangedAura.setAttackRange(9).attackRange, 3, 'attack range is clamped to the slider maximum');
+assert.equal(rangedAura.setAttackRange(1.26).attackRange, 1.3, 'attack range follows the slider step');
+rangedAura.detachBot();
+
+const defenseAura = createKillAuraFeature({ attackRange: 3, criticalsEnabled: true });
+const criticalPackets = [];
+bot._client = { write: (name, packet) => criticalPackets.push({ name, packet }) };
+bot.entity.position.distanceTo = position => position.distance;
+const shulkerBullet = { id:13, type:'projectile', name:'shulker_bullet', height:0.3125, position:{ distance:2.5 } };
+const closerZombie = { id:14, type:'hostile', name:'zombie', position:{ distance:1 } };
+bot.entities = { shulkerBullet, closerZombie };
+defenseAura.setTargets(['shulker_bullet', 'zombie']);
+defenseAura.attachBot(bot);
+assert.equal(defenseAura.__test.nearestTarget()?.entity.id, shulkerBullet.id, 'Shulker Bullets are deflected before closer living targets');
+assert.equal(defenseAura.__test.performPacketCritical(shulkerBullet), false, 'projectiles never trigger Criticals packets');
+assert.equal(defenseAura.__test.performPacketCritical(closerZombie), true, 'grounded living-target attacks use Packet Criticals');
+assert.deepEqual(criticalPackets.map(entry => [entry.name, entry.packet.y, entry.packet.onGround]), [
+  ['position', 64.0625, false],
+  ['position', 64, false]
+]);
+defenseAura.setCriticalsEnabled(false);
+assert.equal(defenseAura.getStatus().criticalsEnabled, false);
+assert.equal(defenseAura.__test.performPacketCritical(closerZombie), false, 'disabled Criticals send no movement packets');
+defenseAura.detachBot();
 
 console.log('Kill Aura feature tests passed.');

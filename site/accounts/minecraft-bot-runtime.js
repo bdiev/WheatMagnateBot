@@ -495,6 +495,18 @@ class MinecraftBotRuntime extends BotContext {
     if (!this.killAura) throw new Error('Kill Aura is unavailable for this runtime.');
     return this.killAura.setTargets(targets);
   }
+  setKillAuraAttackRange(value) {
+    if (!this.killAura) throw new Error('Kill Aura is unavailable for this runtime.');
+    const status = this.killAura.setAttackRange(value);
+    this.emit('status', this.getStatus());
+    return status;
+  }
+  setKillAuraCriticalsEnabled(enabled) {
+    if (!this.killAura) throw new Error('Kill Aura is unavailable for this runtime.');
+    const status = this.killAura.setCriticalsEnabled(enabled);
+    this.emit('status', this.getStatus());
+    return status;
+  }
   setKillAuraEnabled(enabled) {
     if (!this.killAura) throw new Error('Kill Aura is unavailable for this runtime.');
     if (enabled) {

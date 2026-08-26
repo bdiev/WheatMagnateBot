@@ -126,6 +126,11 @@ const state = {
   killAuraSelectedMobs: new Set(),
   killAuraModalSelectionSnapshot: new Set(),
   killAuraTargetsDirty: false,
+  killAuraRangeDirty: false,
+  killAuraRangeSaveTimer: null,
+  killAuraRangeSaving: false,
+  killAuraRangeSaveQueued: false,
+  killAuraRangeGeneration: 0,
   supplyTooltipItems: {},
   inventoryMoveSelection: null,
   inventoryMovePending: false,
@@ -1309,6 +1314,7 @@ async function selectAccount(accountId) {
   state.killAuraData = null;
   state.killAuraSelectedMobs = new Set();
   state.killAuraTargetsDirty = false;
+  resetKillAuraRangeEditor();
   state.obsidianCoordinateEditorOpen = false;
   closeWhisperDialog();
   state.whisperPlayers = [];
@@ -1624,6 +1630,7 @@ function applyCurrentUser(user) {
     state.killAuraData = null;
     state.killAuraSelectedMobs = new Set();
     state.killAuraTargetsDirty = false;
+    resetKillAuraRangeEditor();
   }
   if (String(previousUserId || '') !== String(state.currentUser?.id || '')) state.whisperClaimedPlayers = new Set();
   if (!state.currentUser) state.chatInitialScrollDone = false;
@@ -4513,6 +4520,108 @@ function formatMobLabel(value) {
     .join(' ');
 }
 
+const KILL_AURA_RANGE_MIN = 0.5;
+const KILL_AURA_RANGE_MAX = 3;
+
+function normalizeKillAuraRangeValue(value, fallback = KILL_AURA_RANGE_MAX) {
+  const numeric = Number(value);
+  const resolved = Number.isFinite(numeric) ? numeric : Number(fallback);
+  return Number(Math.max(KILL_AURA_RANGE_MIN, Math.min(KILL_AURA_RANGE_MAX, resolved || KILL_AURA_RANGE_MAX)).toFixed(1));
+}
+
+function renderKillAuraRangeControl(value, { status = null } = {}) {
+  const range = normalizeKillAuraRangeValue(value);
+  const input = $('#killAuraAttackRange');
+  const output = $('#killAuraRangeValue');
+  const statusNode = $('#killAuraRangeStatus');
+  const progress = ((range - KILL_AURA_RANGE_MIN) / (KILL_AURA_RANGE_MAX - KILL_AURA_RANGE_MIN)) * 100;
+  if (input) {
+    input.value = range.toFixed(1);
+    input.style.setProperty('--range-progress', `${progress}%`);
+    input.setAttribute('aria-valuetext', `${range.toFixed(1)} blocks`);
+  }
+  if (output) output.textContent = `${range.toFixed(1)} blocks`;
+  const detail = $('#killAuraDetailRange');
+  if (detail) detail.textContent = `${range.toFixed(1)} blocks`;
+  if (statusNode && status != null) statusNode.textContent = status;
+}
+
+function resetKillAuraRangeEditor() {
+  clearTimeout(state.killAuraRangeSaveTimer);
+  state.killAuraRangeSaveTimer = null;
+  state.killAuraRangeDirty = false;
+  state.killAuraRangeSaving = false;
+  state.killAuraRangeSaveQueued = false;
+  state.killAuraRangeGeneration += 1;
+  renderKillAuraRangeControl(KILL_AURA_RANGE_MAX, { status: 'Loading saved range…' });
+}
+
+function scheduleKillAuraRangeSave(delay = 350) {
+  clearTimeout(state.killAuraRangeSaveTimer);
+  state.killAuraRangeSaveTimer = setTimeout(() => {
+    state.killAuraRangeSaveTimer = null;
+    saveKillAuraAttackRange().catch(error => setBanner(`Could not save Kill Aura range: ${error.message}`));
+  }, delay);
+}
+
+function handleKillAuraRangeInput(event) {
+  const value = normalizeKillAuraRangeValue(event.currentTarget.value);
+  state.killAuraRangeDirty = true;
+  renderKillAuraRangeControl(value, { status: 'Release to save · applies immediately.' });
+  scheduleKillAuraRangeSave(450);
+}
+
+async function saveKillAuraAttackRange() {
+  if (state.currentUser?.role !== 'admin') return;
+  if (state.killAuraRangeSaving) {
+    state.killAuraRangeSaveQueued = true;
+    return;
+  }
+
+  const input = $('#killAuraAttackRange');
+  if (!input) return;
+  const value = normalizeKillAuraRangeValue(input.value);
+  const accountId = state.activeAccountId;
+  const generation = state.killAuraRangeGeneration;
+  state.killAuraRangeSaving = true;
+  state.killAuraRangeSaveQueued = false;
+  renderKillAuraRangeControl(value, { status: `Saving ${value.toFixed(1)} blocks…` });
+
+  try {
+    const queued = await postJson('/api/admin/bot-command', {
+      commandType: 'kill_aura_range',
+      payload: { value },
+      accountId
+    });
+    await waitForAdminBotCommand(queued.command.id);
+    if (generation !== state.killAuraRangeGeneration || accountId !== state.activeAccountId) return;
+
+    const currentValue = normalizeKillAuraRangeValue(input.value);
+    if (state.killAuraData?.state) state.killAuraData.state.attackRange = value;
+    if (currentValue === value) {
+      state.killAuraRangeDirty = false;
+      renderKillAuraRangeControl(value, { status: 'Saved · applies immediately.' });
+    } else {
+      state.killAuraRangeSaveQueued = true;
+    }
+  } catch (error) {
+    if (generation === state.killAuraRangeGeneration && accountId === state.activeAccountId) {
+      state.killAuraRangeDirty = false;
+      const savedValue = normalizeKillAuraRangeValue(state.killAuraData?.state?.attackRange);
+      renderKillAuraRangeControl(savedValue, { status: 'Save failed · previous value restored.' });
+      setBanner(`Could not save Kill Aura range: ${error.message}`);
+    }
+  } finally {
+    if (generation === state.killAuraRangeGeneration && accountId === state.activeAccountId) {
+      state.killAuraRangeSaving = false;
+      if (state.killAuraRangeSaveQueued) {
+        state.killAuraRangeSaveQueued = false;
+        scheduleKillAuraRangeSave(0);
+      }
+    }
+  }
+}
+
 function updateKillAuraSelectionSummary() {
   const summary = $('#killAuraSelectionSummary');
   const count = state.killAuraSelectedMobs.size;
@@ -4569,6 +4678,9 @@ function renderKillAura(payload = {}) {
   state.charts.killAuraDaily = payload.killHistory?.daily || [];
   state.charts.killAuraMonthly = payload.killHistory?.monthly || [];
   const aura = payload.state || {};
+  if (!state.killAuraRangeDirty && !state.killAuraRangeSaving) {
+    renderKillAuraRangeControl(aura.attackRange, { status: 'Saved · applies immediately.' });
+  }
   const stateLabel = aura.active ? 'Active' : aura.enabled ? 'Waiting' : 'Disabled';
   const auraPanel = $('#tab-kill-aura');
   if (auraPanel) auraPanel.dataset.auraState = aura.active ? 'active' : aura.enabled ? 'waiting' : 'disabled';
@@ -4594,6 +4706,22 @@ function renderKillAura(payload = {}) {
     toggle.classList.toggle('aura-primary-button', !aura.enabled);
     toggle.disabled = !aura.enabled && !(aura.selectedMobs || []).length && !state.killAuraSelectedMobs.size;
   }
+
+  const criticalsEnabled = Boolean(aura.criticalsEnabled);
+  const criticalsButton = $('#killAuraCriticalsButton');
+  if (criticalsButton) {
+    criticalsButton.textContent = `Criticals: ${criticalsEnabled ? 'On' : 'Off'}`;
+    criticalsButton.setAttribute('aria-pressed', String(criticalsEnabled));
+    criticalsButton.classList.toggle('ghost-button', !criticalsEnabled);
+  }
+  const criticalsStatus = $('#killAuraCriticalsStatus');
+  if (criticalsStatus) {
+    criticalsStatus.textContent = criticalsEnabled
+      ? 'Packet mode enabled for living targets.'
+      : 'Packet mode for living targets.';
+  }
+  const detailCriticals = $('#killAuraDetailCriticals');
+  if (detailCriticals) detailCriticals.textContent = criticalsEnabled ? 'Packet · On' : 'Off';
 
   if (!state.killAuraTargetsDirty) {
     state.killAuraSelectedMobs = new Set(aura.selectedMobs || []);
@@ -6900,6 +7028,9 @@ function setButtonBusyState(commandType) {
     if (button) button.textContent = button.textContent.toLowerCase().includes('disable')
       ? 'Disabling Kill Aura...'
       : 'Enabling Kill Aura...';
+  } else if (commandType === 'kill_aura_criticals_toggle') {
+    const button = $('#killAuraCriticalsButton');
+    if (button) button.textContent = 'Updating Criticals...';
   } else if (commandType === 'obsidian_toggle') {
     const button = $('#obsidianToggleButton');
     if (button) {
@@ -8580,9 +8711,12 @@ if (initialKillAuraModal) {
   document.body.classList.remove('kill-aura-modal-open');
 }
 $('#killAuraSelectHostile')?.addEventListener('click', () => setKillAuraSelection(mob => mob.category === 'hostile'));
+$('#killAuraSelectProjectiles')?.addEventListener('click', () => setKillAuraSelection(mob => mob.category === 'projectile'));
 $('#killAuraSelectAll')?.addEventListener('click', () => setKillAuraSelection(() => true));
 $('#killAuraClear')?.addEventListener('click', () => setKillAuraSelection(() => false));
 $('#killAuraSaveTargets')?.addEventListener('click', saveKillAuraTargets);
+$('#killAuraAttackRange')?.addEventListener('input', handleKillAuraRangeInput);
+$('#killAuraAttackRange')?.addEventListener('change', () => scheduleKillAuraRangeSave(100));
 $('#playtimeLeaderboardScope')?.addEventListener('click', event => {
   const button = event.target.closest('[data-playtime-scope]');
   if (button) setPlaytimeLeaderboardScope(button.dataset.playtimeScope);

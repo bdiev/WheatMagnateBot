@@ -11,6 +11,12 @@ const stylesSource = fs.readFileSync(path.join(publicDirectory, 'styles.css'), '
 const serverSource = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
 const botSource = fs.readFileSync(path.join(__dirname, '..', '..', 'bot.js'), 'utf8');
 const historyMigration = fs.readFileSync(path.join(__dirname, '..', 'migrations', '035_kill_aura_hourly_history.sql'), 'utf8');
+const rangeMigration = fs.readFileSync(path.join(__dirname, '..', 'migrations', '038_kill_aura_attack_range.sql'), 'utf8');
+const botRangeMigration = fs.readFileSync(path.join(__dirname, '..', '..', 'database', 'migrations', '038_kill_aura_attack_range.sql'), 'utf8');
+const criticalsMigration = fs.readFileSync(path.join(__dirname, '..', 'migrations', '039_kill_aura_criticals.sql'), 'utf8');
+const botCriticalsMigration = fs.readFileSync(path.join(__dirname, '..', '..', 'database', 'migrations', '039_kill_aura_criticals.sql'), 'utf8');
+const rangeValidation = require('../kill-aura-range');
+const { KILL_AURA_MOBS } = require('../kill-aura-catalog');
 
 assert.match(
   indexSource,
@@ -38,6 +44,39 @@ assert.match(appSource, /modal\.classList\.remove\('is-open'\)/);
 assert.doesNotMatch(appSource, /setKillAuraMobDropdownOpen/, 'removed dropdown helpers must not break navigation');
 assert.match(appSource, /setKillAuraTargetModalOpen\(false, \{ restoreSelection: true, restoreFocus: false \}\)/, 'tab navigation must close the target dialog safely');
 assert.doesNotMatch(indexSource, /<details class="panel admin-command-panel kill-aura-control-panel"/);
+assert.doesNotMatch(indexSource, /<h2>Combat Mode<\/h2>/, 'the static Combat Mode card must be replaced');
+assert.match(
+  indexSource,
+  /<h2>Attack Range<\/h2>[\s\S]*?id="killAuraAttackRange" type="range" min="0\.5" max="3" step="0\.1"/,
+  'Kill Aura must expose an accessible 0.5-3.0 block range slider'
+);
+assert.match(appSource, /commandType:\s*'kill_aura_range'[\s\S]*?payload:\s*\{ value \}/, 'range changes must be persisted through the bot command queue');
+assert.match(appSource, /--range-progress[\s\S]*?aria-valuetext/, 'the slider fill and accessible value must follow the selected range');
+assert.match(stylesSource, /#killAuraAttackRange::-(?:webkit-slider-thumb|moz-range-thumb)/, 'the range slider must provide a site-styled drag handle');
+assert.match(serverSource, /'kill_aura_range'[\s\S]*?isValidKillAuraRange\(payload\.value\)/, 'the server must validate range commands');
+assert.equal(rangeMigration, botRangeMigration, 'the bot and site must apply the same Kill Aura range migration');
+assert.match(rangeMigration, /attack_range NUMERIC\(2,1\)[\s\S]*CHECK \(attack_range >= 0\.5 AND attack_range <= 3\.0\)/);
+assert.equal(rangeValidation.isValidKillAuraRange(0.5), true);
+assert.equal(rangeValidation.isValidKillAuraRange(3), true);
+assert.equal(rangeValidation.isValidKillAuraRange(3.1), false);
+assert.equal(rangeValidation.normalizeKillAuraRange(1.26), 1.3);
+assert.deepEqual(
+  KILL_AURA_MOBS.find(mob => mob.id === 'shulker_bullet'),
+  { id: 'shulker_bullet', name: 'Shulker Bullet', category: 'projectile' },
+  'Shulker Bullet must be exposed as a projectile target'
+);
+assert.match(indexSource, /id="killAuraSelectProjectiles"/, 'the target dialog must expose a Projectiles quick filter');
+assert.match(appSource, /killAuraSelectProjectiles[\s\S]*?mob\.category === 'projectile'/, 'the Projectiles filter must select projectile targets');
+assert.match(
+  indexSource,
+  /id="killAuraCriticalsButton"[^>]*data-bot-command="kill_aura_criticals_toggle"[^>]*aria-pressed="false"/,
+  'Kill Aura must expose an accessible Criticals toggle'
+);
+assert.match(appSource, /aura\.criticalsEnabled[\s\S]*?killAuraCriticalsButton[\s\S]*?aria-pressed/, 'the Criticals button must reflect persisted state');
+assert.match(serverSource, /'kill_aura_criticals_toggle'/, 'the server must accept Criticals commands');
+assert.match(botSource, /type === 'kill_aura_criticals_toggle'[\s\S]*?setCriticalsEnabled/, 'the bot must apply Criticals commands');
+assert.equal(criticalsMigration, botCriticalsMigration, 'the bot and site must apply the same Criticals migration');
+assert.match(criticalsMigration, /criticals_enabled BOOLEAN NOT NULL DEFAULT FALSE/);
 assert.doesNotMatch(
   indexSource,
   /kill-aura-hero|kill-aura-page-intro|kill-aura-stat-mark/,

@@ -1,8 +1,13 @@
 'use strict';
 
-const ATTACK_RANGE = 3.2;
+const {
+  DEFAULT_KILL_AURA_RANGE,
+  normalizeKillAuraRange
+} = require('./range');
 const TARGET_CREDIT_MS = 15_000;
 const IDLE_TICK_MS = 250;
+const PROJECTILE_ATTACK_COOLDOWN_MS = 100;
+const PACKET_CRITICAL_HEIGHT = 0.0625;
 
 const MATERIAL_DAMAGE = Object.freeze({
   wooden: { sword: 4, axe: 7 },
@@ -121,6 +126,37 @@ function entityMobName(entity) {
   return normalizeMobName(entity?.name || entity?.mobType || entity?.displayName);
 }
 
+function isDeflectableProjectile(entity) {
+  return entity?.type === 'projectile' && entityMobName(entity) === 'shulker_bullet';
+}
+
+function canPacketCritical(bot, target) {
+  const entity = bot?.entity;
+  return Boolean(
+    bot?._client?.write &&
+    target &&
+    !isDeflectableProjectile(target) &&
+    entity?.onGround &&
+    !entity.isInWater &&
+    !entity.isInLava &&
+    !entity.isInWeb &&
+    Number.isFinite(entity.position?.x) &&
+    Number.isFinite(entity.position?.y) &&
+    Number.isFinite(entity.position?.z)
+  );
+}
+
+function writeCriticalPosition(bot, yOffset) {
+  const { x, y, z } = bot.entity.position;
+  bot._client.write('position', {
+    x,
+    y: y + yOffset,
+    z,
+    onGround: false,
+    flags: { onGround: false, hasHorizontalCollision: false }
+  });
+}
+
 function stopMovement(bot) {
   if (!bot) return;
   try { bot.pathfinder?.setGoal?.(null); } catch {}
@@ -131,7 +167,8 @@ function stopMovement(bot) {
 }
 
 function createKillAuraFeature({
-  attackRange = ATTACK_RANGE,
+  attackRange = DEFAULT_KILL_AURA_RANGE,
+  criticalsEnabled = false,
   onKill = () => {},
   onStatus = () => {}
 } = {}) {
@@ -150,10 +187,11 @@ function createKillAuraFeature({
     recentlyAttacked: new Map(),
     lastError: null,
     sessionStartedAt: null,
-    lastStatusEmitAt: 0
+    lastStatusEmitAt: 0,
+    attackRange: normalizeKillAuraRange(attackRange),
+    criticalsEnabled: Boolean(criticalsEnabled),
+    lastAttackWasCritical: false
   };
-
-  const safeAttackRange = Math.max(2, Math.min(4.5, Number(attackRange) || ATTACK_RANGE));
 
   function emitStatus(force = false) {
     if (!force && Date.now() - state.lastStatusEmitAt < 1_000) return;
@@ -193,8 +231,11 @@ function createKillAuraFeature({
     return Object.values(state.bot.entities || {})
       .filter(isSelectedEntity)
       .map(entity => ({ entity, distance: botPosition.distanceTo(entity.position) }))
-      .filter(candidate => Number.isFinite(candidate.distance) && candidate.distance <= safeAttackRange)
-      .sort((first, second) => first.distance - second.distance)[0] || null;
+      .filter(candidate => Number.isFinite(candidate.distance) && candidate.distance <= state.attackRange)
+      .sort((first, second) =>
+        Number(isDeflectableProjectile(second.entity)) - Number(isDeflectableProjectile(first.entity)) ||
+        first.distance - second.distance
+      )[0] || null;
   }
 
   async function equipBestWeapon(targetName) {
@@ -233,11 +274,16 @@ function createKillAuraFeature({
         state.currentTarget = entity;
       }
 
-      if (distance > safeAttackRange) return;
+      if (distance > state.attackRange) return;
       if (typeof bot.canSeeEntity === 'function' && !bot.canSeeEntity(entity)) return;
 
-      const profile = await equipBestWeapon(entityMobName(entity));
-      const cooldownMs = Math.max(250, profile.cooldownMs || 625);
+      const projectile = isDeflectableProjectile(entity);
+      const profile = projectile
+        ? { cooldownMs: PROJECTILE_ATTACK_COOLDOWN_MS, item: null }
+        : await equipBestWeapon(entityMobName(entity));
+      const cooldownMs = projectile
+        ? PROJECTILE_ATTACK_COOLDOWN_MS
+        : Math.max(250, profile.cooldownMs || 625);
       const waitMs = cooldownMs - (Date.now() - state.lastAttackAt);
       if (waitMs > 0) {
         nextDelay = Math.min(waitMs, 150);
@@ -247,6 +293,7 @@ function createKillAuraFeature({
       const lookPosition = entity.position.offset(0, Math.max(0.2, Number(entity.height || 1) * 0.55), 0);
       await bot.lookAt?.(lookPosition, true);
       if (!state.desiredEnabled || state.bot !== bot || !bot.entity || !isSelectedEntity(entity)) return;
+      state.lastAttackWasCritical = performPacketCritical(entity);
       bot.attack(entity);
       state.lastAttackAt = Date.now();
       state.recentlyAttacked.set(entity.id, { name: entityMobName(entity), attackedAt: state.lastAttackAt });
@@ -322,6 +369,36 @@ function createKillAuraFeature({
     return getStatus();
   }
 
+  function setAttackRange(value) {
+    state.attackRange = normalizeKillAuraRange(value, state.attackRange);
+    const targetDistance = state.currentTarget?.position && state.bot?.entity?.position
+      ? state.bot.entity.position.distanceTo(state.currentTarget.position)
+      : null;
+    if (Number.isFinite(targetDistance) && targetDistance > state.attackRange) {
+      state.currentTarget = null;
+    }
+    if (state.desiredEnabled) schedule(25);
+    emitStatus(true);
+    return getStatus();
+  }
+
+  function performPacketCritical(target) {
+    if (!state.criticalsEnabled || !canPacketCritical(state.bot, target)) return false;
+    try {
+      writeCriticalPosition(state.bot, PACKET_CRITICAL_HEIGHT);
+      writeCriticalPosition(state.bot, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function setCriticalsEnabled(enabled) {
+    state.criticalsEnabled = Boolean(enabled);
+    emitStatus(true);
+    return getStatus();
+  }
+
   function setEnabled(enabled, bot = state.bot) {
     const nextEnabled = Boolean(enabled);
     if (nextEnabled && !state.targets.size) throw new Error('Select at least one mob before enabling Kill Aura.');
@@ -370,8 +447,10 @@ function createKillAuraFeature({
       sessionKills: state.sessionKills,
       sessionKillsByMob: Object.fromEntries(state.sessionKillsByMob),
       sessionStartedAt: state.sessionStartedAt,
-      searchRange: safeAttackRange,
-      attackRange: safeAttackRange,
+      searchRange: state.attackRange,
+      attackRange: state.attackRange,
+      criticalsEnabled: state.criticalsEnabled,
+      lastAttackWasCritical: state.lastAttackWasCritical,
       lastError: state.lastError
     };
   }
@@ -379,16 +458,19 @@ function createKillAuraFeature({
   return {
     attachBot,
     detachBot,
+    setAttackRange,
+    setCriticalsEnabled,
     setTargets,
     setEnabled,
     getStatus,
-    __test: { isSelectedEntity, nearestTarget }
+    __test: { isSelectedEntity, nearestTarget, performPacketCritical }
   };
 }
 
 module.exports = {
   createKillAuraFeature,
   entityMobName,
+  isDeflectableProjectile,
   normalizeMobName,
   selectBestWeapon,
   weaponProfile

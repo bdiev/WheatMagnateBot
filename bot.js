@@ -39,6 +39,7 @@ const {
 const { createWhisperFeature } = require('./features/whisper');
 const { createFollowFeature } = require('./features/follow');
 const { createKillAuraFeature } = require('./features/killAura');
+const { isValidKillAuraRange, normalizeKillAuraRange } = require('./features/killAura/range');
 const farm = require('./features/obsidianFarm');
 const { createProtectionLeverController } = require('./features/obsidianFarm/protection-lever');
 const {
@@ -1679,30 +1680,35 @@ async function removeUsernameFromWhitelist(targetUsername) {
 let ignoredChatUsernames = IGNORED_CHAT_USERNAMES; // Fallback
 
 async function loadKillAuraStateForAccount(accountId) {
-  if (!pool) return { desiredEnabled: false, selectedMobs: [] };
+  if (!pool) return { desiredEnabled: false, selectedMobs: [], attackRange: 3, criticalsEnabled: false };
   const result = await pool.query(`
     INSERT INTO kill_aura_state(account_id)
     VALUES($1::uuid)
     ON CONFLICT(account_id) DO UPDATE SET account_id=EXCLUDED.account_id
-    RETURNING desired_enabled, selected_mobs
+    RETURNING desired_enabled, selected_mobs, attack_range, criticals_enabled
   `, [accountId]);
   const row = result.rows[0] || {};
   return {
     desiredEnabled: Boolean(row.desired_enabled),
-    selectedMobs: normalizeKillAuraTargets(row.selected_mobs)
+    selectedMobs: normalizeKillAuraTargets(row.selected_mobs),
+    attackRange: normalizeKillAuraRange(row.attack_range),
+    criticalsEnabled: Boolean(row.criticals_enabled)
   };
 }
 
-async function persistKillAuraState(accountId, { desiredEnabled, selectedMobs }) {
+async function persistKillAuraState(accountId, { desiredEnabled, selectedMobs, attackRange = null, criticalsEnabled = null }) {
   if (!pool) return;
+  const normalizedRange = attackRange == null ? null : normalizeKillAuraRange(attackRange);
   await pool.query(`
-    INSERT INTO kill_aura_state(account_id,desired_enabled,selected_mobs,updated_at)
-    VALUES($1::uuid,$2,$3::text[],NOW())
+    INSERT INTO kill_aura_state(account_id,desired_enabled,selected_mobs,attack_range,criticals_enabled,updated_at)
+    VALUES($1::uuid,$2,$3::text[],COALESCE($4::numeric,3.0),COALESCE($5::boolean,FALSE),NOW())
     ON CONFLICT(account_id) DO UPDATE SET
       desired_enabled=EXCLUDED.desired_enabled,
       selected_mobs=EXCLUDED.selected_mobs,
+      attack_range=COALESCE($4::numeric,kill_aura_state.attack_range),
+      criticals_enabled=COALESCE($5::boolean,kill_aura_state.criticals_enabled),
       updated_at=NOW()
-  `, [accountId, Boolean(desiredEnabled), normalizeKillAuraTargets(selectedMobs)]);
+  `, [accountId, Boolean(desiredEnabled), normalizeKillAuraTargets(selectedMobs), normalizedRange, criticalsEnabled]);
 }
 
 async function recordKillAuraKill(accountId, mobName) {
@@ -1756,6 +1762,8 @@ async function initDatabase() {
     }
     const defaultKillAuraState = await loadKillAuraStateForAccount(DEFAULT_ACCOUNT_ID);
     killAura.setTargets(defaultKillAuraState.selectedMobs);
+    killAura.setAttackRange(defaultKillAuraState.attackRange);
+    killAura.setCriticalsEnabled(defaultKillAuraState.criticalsEnabled);
     if (defaultKillAuraState.desiredEnabled && defaultKillAuraState.selectedMobs.length) {
       killAura.setEnabled(true);
     }
@@ -6032,6 +6040,31 @@ async function executeBotCommand(command) {
     return nextStatus;
   }
 
+  if (type === 'kill_aura_range') {
+    if (!isValidKillAuraRange(payload.value)) throw new Error('Kill Aura range must be between 0.5 and 3.0 blocks in 0.1 increments.');
+    const status = killAura.setAttackRange(payload.value);
+    await persistKillAuraState(DEFAULT_ACCOUNT_ID, {
+      desiredEnabled: status.enabled,
+      selectedMobs: status.targets,
+      attackRange: status.attackRange
+    });
+    await writeBotStatusSnapshot().catch(() => {});
+    return status;
+  }
+
+  if (type === 'kill_aura_criticals_toggle') {
+    const current = killAura.getStatus();
+    const enabled = typeof payload.enabled === 'boolean' ? payload.enabled : !current.criticalsEnabled;
+    const status = killAura.setCriticalsEnabled(enabled);
+    await persistKillAuraState(DEFAULT_ACCOUNT_ID, {
+      desiredEnabled: status.enabled,
+      selectedMobs: status.targets,
+      criticalsEnabled: status.criticalsEnabled
+    });
+    await writeBotStatusSnapshot().catch(() => {});
+    return status;
+  }
+
   if (type === 'kill_aura_toggle') {
     if (Array.isArray(payload.targets)) {
       killAura.setTargets(normalizeKillAuraTargets(payload.targets));
@@ -6290,14 +6323,16 @@ async function initializeMultiAccountManager() {
   multiAccountRegistry = new AccountRegistry(new AccountRepository(pool));
   const accounts = await multiAccountRegistry.load();
   const [killAuraStatesResult, managedFarmStates] = await Promise.all([
-    pool.query('SELECT account_id,desired_enabled,selected_mobs FROM kill_aura_state'),
+    pool.query('SELECT account_id,desired_enabled,selected_mobs,attack_range,criticals_enabled FROM kill_aura_state'),
     loadManagedFarmStates(pool)
   ]);
   const killAuraStates = new Map(killAuraStatesResult.rows.map(row => [
     row.account_id,
     {
       desiredEnabled: Boolean(row.desired_enabled),
-      selectedMobs: normalizeKillAuraTargets(row.selected_mobs)
+      selectedMobs: normalizeKillAuraTargets(row.selected_mobs),
+      attackRange: normalizeKillAuraRange(row.attack_range),
+      criticalsEnabled: Boolean(row.criticals_enabled)
     }
   ]));
   if (accounts.length > MAX_BOT_ACCOUNTS) console.warn(`[Accounts] ${accounts.length} accounts exceed MAX_BOT_ACCOUNTS=${MAX_BOT_ACCOUNTS}.`);
@@ -6335,6 +6370,8 @@ async function initializeMultiAccountManager() {
           })
         },
         killAuraFactory: () => createKillAuraFeature({
+          attackRange: killAuraStates.get(account.id)?.attackRange,
+          criticalsEnabled: killAuraStates.get(account.id)?.criticalsEnabled,
           onKill: ({ mobName }) => recordKillAuraKill(account.id, mobName)
             .catch(error => console.error(`[Kill Aura] Failed to persist kill for ${account.displayName}:`, error.message)),
           onStatus: () => {
@@ -6361,8 +6398,10 @@ async function initializeMultiAccountManager() {
           });
         }
       });
-      const savedKillAura = killAuraStates.get(account.id) || { desiredEnabled: false, selectedMobs: [] };
+      const savedKillAura = killAuraStates.get(account.id) || { desiredEnabled: false, selectedMobs: [], attackRange: 3, criticalsEnabled: false };
       runtime.setKillAuraTargets(savedKillAura.selectedMobs);
+      runtime.setKillAuraAttackRange(savedKillAura.attackRange);
+      runtime.setKillAuraCriticalsEnabled(savedKillAura.criticalsEnabled);
       if (savedKillAura.desiredEnabled && savedKillAura.selectedMobs.length) {
         runtime.setKillAuraEnabled(true);
       }
@@ -6534,6 +6573,27 @@ async function executeManagedAccountCommand(command) {
       selectedMobs: targets
     });
     return runtime.killAura.getStatus();
+  }
+  if (type === 'kill_aura_range') {
+    if (!isValidKillAuraRange(payload.value)) throw new Error('Kill Aura range must be between 0.5 and 3.0 blocks in 0.1 increments.');
+    const status = runtime.setKillAuraAttackRange(payload.value);
+    await persistKillAuraState(command.account_id, {
+      desiredEnabled: status.enabled,
+      selectedMobs: status.targets,
+      attackRange: status.attackRange
+    });
+    return status;
+  }
+  if (type === 'kill_aura_criticals_toggle') {
+    const current = runtime.killAura.getStatus();
+    const enabled = typeof payload.enabled === 'boolean' ? payload.enabled : !current.criticalsEnabled;
+    const status = runtime.setKillAuraCriticalsEnabled(enabled);
+    await persistKillAuraState(command.account_id, {
+      desiredEnabled: status.enabled,
+      selectedMobs: status.targets,
+      criticalsEnabled: status.criticalsEnabled
+    });
+    return status;
   }
   if (type === 'kill_aura_toggle') {
     if (Array.isArray(payload.targets)) {

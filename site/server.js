@@ -20,6 +20,7 @@ const { assertTimelineAccess, normalizeTimelineFilters, queryTimeline } = requir
 const { EVENT_TYPES: PUSH_EVENT_TYPES, PUSH_TEST_TYPES, WebPushService } = require('./web-push');
 const { buildPlayerMilestones } = require('./player-milestones');
 const { KILL_AURA_MOBS, normalizeKillAuraTargets } = require('./kill-aura-catalog');
+const { isValidKillAuraRange, normalizeKillAuraRange } = require('./kill-aura-range');
 const { createResourceRequestService } = require('./resource-requests');
 const { normalizeGreenChatMessage } = require('./chat-message-normalization');
 const { NEW_PLAYER_WINDOW_DAYS, isNewPlayerRegistration } = require('./player-new-status');
@@ -2787,11 +2788,11 @@ async function getKillAuraStats(currentUser, url) {
         INSERT INTO kill_aura_state(account_id)
         VALUES($1::uuid)
         ON CONFLICT(account_id) DO NOTHING
-        RETURNING desired_enabled,selected_mobs,updated_at
+        RETURNING desired_enabled,selected_mobs,attack_range,criticals_enabled,updated_at
       )
-      SELECT desired_enabled,selected_mobs,updated_at FROM inserted
+      SELECT desired_enabled,selected_mobs,attack_range,criticals_enabled,updated_at FROM inserted
       UNION ALL
-      SELECT desired_enabled,selected_mobs,updated_at
+      SELECT desired_enabled,selected_mobs,attack_range,criticals_enabled,updated_at
       FROM kill_aura_state
       WHERE account_id=$1::uuid
       LIMIT 1
@@ -2885,6 +2886,8 @@ async function getKillAuraStats(currentUser, url) {
       enabled: Boolean(saved.desired_enabled),
       active: Boolean(runtime.active && runtimeConnected),
       selectedMobs,
+      attackRange: normalizeKillAuraRange(saved.attack_range ?? runtime.attackRange),
+      criticalsEnabled: Boolean(saved.criticals_enabled),
       currentTarget: runtimeConnected ? runtime.currentTarget || null : null,
       currentWeapon: runtimeConnected ? runtime.currentWeapon || null : null,
       sessionKills: toInt(runtime.sessionKills),
@@ -4387,6 +4390,8 @@ async function queueAdminBotCommand(currentUser, body) {
     'obsidian_set_coordinates',
     'kill_aura_toggle',
     'kill_aura_targets',
+    'kill_aura_range',
+    'kill_aura_criticals_toggle',
     'child_toggle',
     'child_say',
     'gemini_toggle',
@@ -4416,6 +4421,17 @@ async function queueAdminBotCommand(currentUser, body) {
   }
   if (commandType === 'kill_aura_targets') {
     payload.targets = normalizeKillAuraTargets(payload.targets);
+  }
+  if (commandType === 'kill_aura_range') {
+    if (!isValidKillAuraRange(payload.value)) {
+      const err = new Error('Kill Aura range must be between 0.5 and 3.0 blocks in 0.1 increments.');
+      err.statusCode = 400;
+      throw err;
+    }
+    payload.value = normalizeKillAuraRange(payload.value);
+  }
+  if (commandType === 'kill_aura_criticals_toggle' && typeof payload.enabled !== 'boolean') {
+    delete payload.enabled;
   }
   if (commandType === 'kill_aura_toggle' && typeof payload.enabled !== 'boolean') {
     delete payload.enabled;

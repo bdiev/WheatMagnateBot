@@ -33,7 +33,7 @@ const KILL_AURA_MOBS = Object.freeze([
   ['polar_bear', 'Polar Bear', 'passive'], ['pufferfish', 'Pufferfish', 'passive'],
   ['rabbit', 'Rabbit', 'passive'], ['ravager', 'Ravager', 'hostile'],
   ['salmon', 'Salmon', 'passive'], ['sheep', 'Sheep', 'passive'],
-  ['shulker', 'Shulker', 'hostile'], ['silverfish', 'Silverfish', 'hostile'],
+  ['shulker', 'Shulker', 'hostile'], ['shulker_bullet', 'Shulker Bullet', 'projectile'], ['silverfish', 'Silverfish', 'hostile'],
   ['skeleton', 'Skeleton', 'hostile'], ['skeleton_horse', 'Skeleton Horse', 'passive'],
   ['slime', 'Slime', 'hostile'], ['sniffer', 'Sniffer', 'passive'],
   ['snow_golem', 'Snow Golem', 'passive'], ['spider', 'Spider', 'hostile'],

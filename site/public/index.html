@@ -487,18 +487,36 @@
             </div>
           </section>
 
-          <section class="panel admin-command-panel">
+          <section class="panel admin-command-panel kill-aura-range-panel">
             <div class="panel-head">
               <div class="aura-control-title">
-                <span class="aura-control-icon" aria-hidden="true"><img src="/items/Iron_Sword.png" alt=""></span>
+                <span class="aura-control-icon" aria-hidden="true"><img src="/items/Compass.png" alt=""></span>
                 <div>
-                  <h2>Combat Mode</h2>
-                  <p>Movement and weapon behavior.</p>
+                  <h2>Attack Range</h2>
+                  <p id="killAuraRangeStatus" aria-live="polite">Maximum target distance.</p>
                 </div>
               </div>
             </div>
             <div class="admin-command-actions">
-              <span class="kill-aura-control-readout"><span>Stationary</span><i aria-hidden="true"></i><span>Auto Weapon</span></span>
+              <label class="kill-aura-range-control" for="killAuraAttackRange">
+                <span class="kill-aura-range-meta"><span>0.5</span><output id="killAuraRangeValue" for="killAuraAttackRange">3.0 blocks</output><span>3.0</span></span>
+                <input id="killAuraAttackRange" type="range" min="0.5" max="3" step="0.1" value="3" aria-label="Kill Aura attack range in blocks" aria-describedby="killAuraRangeStatus">
+              </label>
+            </div>
+          </section>
+
+          <section class="panel admin-command-panel kill-aura-criticals-panel">
+            <div class="panel-head">
+              <div class="aura-control-title">
+                <span class="aura-control-icon" aria-hidden="true"><img src="/items/Feather.png" alt=""></span>
+                <div>
+                  <h2>Criticals</h2>
+                  <p id="killAuraCriticalsStatus">Packet mode for living targets.</p>
+                </div>
+              </div>
+            </div>
+            <div class="admin-command-actions">
+              <button id="killAuraCriticalsButton" class="ghost-button" type="button" data-bot-command="kill_aura_criticals_toggle" aria-pressed="false">Criticals: Off</button>
             </div>
           </section>
         </section>
@@ -524,6 +542,7 @@
               </label>
               <div class="kill-aura-quick-actions">
                 <button id="killAuraSelectHostile" class="ghost-button" type="button">Hostile</button>
+                <button id="killAuraSelectProjectiles" class="ghost-button" type="button">Projectiles</button>
                 <button id="killAuraSelectAll" class="ghost-button" type="button">All</button>
                 <button id="killAuraClear" class="ghost-button" type="button">Clear</button>
               </div>
@@ -596,6 +615,14 @@
               <div>
                 <span>Current target</span>
                 <strong id="killAuraDetailTarget">None</strong>
+              </div>
+              <div>
+                <span>Attack range</span>
+                <strong id="killAuraDetailRange">3.0 blocks</strong>
+              </div>
+              <div>
+                <span>Criticals</span>
+                <strong id="killAuraDetailCriticals">Off</strong>
               </div>
               <div>
                 <span>Weapon selection</span>

@@ -1,0 +1,2 @@
+ALTER TABLE kill_aura_state
+  ADD COLUMN IF NOT EXISTS criticals_enabled BOOLEAN NOT NULL DEFAULT FALSE;
