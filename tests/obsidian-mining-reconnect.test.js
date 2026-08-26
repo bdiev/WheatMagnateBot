@@ -6,8 +6,17 @@ const os = require('node:os');
 const path = require('node:path');
 const Vec3 = require('vec3');
 const { createObsidianFarm } = require('../features/obsidianFarm');
+const { MAX_FARM_PING_MS, isFarmPingTooHigh } = require('../features/obsidianFarm/ping-protection');
 
 async function main() {
+  assert.equal(isFarmPingTooHigh(MAX_FARM_PING_MS), false, 'the farm may run at exactly 150 ms');
+  assert.equal(isFarmPingTooHigh(MAX_FARM_PING_MS + 1), true, 'the farm must pause above 150 ms');
+  const primarySource = fs.readFileSync(path.resolve(__dirname, '..', 'bot.js'), 'utf8');
+  const managedSource = fs.readFileSync(path.resolve(__dirname, '..', 'site', 'accounts', 'minecraft-bot-runtime.js'), 'utf8');
+  assert.match(primarySource, /startObsidianFarmWatchdog[\s\S]*isFarmPingTooHigh\(ping\)[\s\S]*farm\.suspend\(\)[\s\S]*primaryFarmPausedForHighPing[\s\S]*ensureObsidianFarmRunning/,
+    'the primary farm must pause on high ping and recover through its watchdog');
+  assert.match(managedSource, /isFarmPingTooHigh\(ping\)[\s\S]*pauseForHighPing[\s\S]*farmPausedForHighPing[\s\S]*retryDesiredObsidian/,
+    'managed farms must pause on high ping and retry as soon as ping recovers');
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'obsidian-mining-reconnect-'));
   try {
     const farm = createObsidianFarm({

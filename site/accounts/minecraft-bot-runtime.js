@@ -9,8 +9,10 @@ const {
   isRestartPreparationWindow,
   isPostRestartStartupWindow
 } = require('../../features/obsidianFarm/restart-schedule');
+const { MAX_FARM_PING_MS, botPingMs, isFarmPingTooHigh } = require('../../features/obsidianFarm/ping-protection');
 
 const TASKS = new Set(['obsidian','observe','follow','kill_aura','chat','idle','paused']);
+const STABLE_CONNECTION_RESET_MS = 60_000;
 // Keep this list deliberately conservative. Raw meat, spider eyes and poisonous
 // potatoes are technically consumable, but are a poor choice for an unattended bot.
 const SAFE_FOOD_PRIORITY = [
@@ -67,6 +69,7 @@ class MinecraftBotRuntime extends BotContext {
     this.now = typeof now === 'function' ? now : () => new Date();
     this.restartProtectionDateKey = null;
     this.restartProtectionPromise = null;
+    this.farmPausedForHighPing = false;
     this.connectionGate = connect => connect();
     const resolvedModuleOptions = { ...moduleOptions };
     if (typeof killAuraFactory === 'function') resolvedModuleOptions.killAuraFactory = killAuraFactory;
@@ -178,6 +181,32 @@ class MinecraftBotRuntime extends BotContext {
       try { bot.quit?.(`Non-whitelisted player nearby: ${threat.username}`); } catch { bot.end?.('Safety disconnect'); }
       return;
     }
+    const ping = botPingMs(bot);
+    const farmBeforePingCheck = this.obsidianFarm?.getStatus?.() || {};
+    if (isFarmPingTooHigh(ping)) {
+      if (farmBeforePingCheck.desiredEnabled) {
+        if (farmBeforePingCheck.enabled) this.obsidianFarm.pauseForHighPing?.();
+        if (!this.farmPausedForHighPing) {
+          this.farmPausedForHighPing = true;
+          this.lastError = `Obsidian Farm paused: ping ${Math.round(ping)} ms exceeds ${MAX_FARM_PING_MS} ms.`;
+          this.emit('status', this.getStatus());
+        }
+      } else {
+        this.farmPausedForHighPing = false;
+      }
+      return;
+    }
+    if (this.farmPausedForHighPing && ping == null) return;
+    if (this.farmPausedForHighPing) {
+      const recoveryDateParts = getServerRestartDateParts(this.now());
+      if (isRestartPreparationWindow(recoveryDateParts)) return;
+      this.farmPausedForHighPing = false;
+      if (/Obsidian Farm paused: ping/i.test(this.lastError || '')) this.lastError = null;
+      this.nextObsidianResumeAt = 0;
+      this.emit('status', this.getStatus());
+      this.retryDesiredObsidian(bot);
+      return;
+    }
     const restartNow = this.now();
     const restartDateParts = getServerRestartDateParts(restartNow);
     await this.protectFarmForScheduledRestart(bot, restartNow);
@@ -267,6 +296,7 @@ class MinecraftBotRuntime extends BotContext {
     this.safetyLockout = false;
     this.intentionalStop = false;
     this.nearbySnapshot = [];
+    this.farmPausedForHighPing = false;
     this.status = 'connecting';
     this.setLifecycle(this.lifecycle === 'offline' ? 'reconnecting' : 'connecting');
     this.emit('status', this.getStatus());
@@ -294,7 +324,6 @@ class MinecraftBotRuntime extends BotContext {
           if (this.status === 'error') return;
         }
         this.lastError = null;
-        this.reconnectAttempts = 0;
         const restartDateParts = getServerRestartDateParts(this.now());
         if (
           this.obsidianFarm?.getStatus?.().desiredEnabled &&
@@ -340,11 +369,14 @@ class MinecraftBotRuntime extends BotContext {
       bot.once?.('end', reason => {
         const securityDisconnect = this.securityDisconnectPending;
         this.securityDisconnectPending = false;
+        const connectedForMs = this.startedAt ? Math.max(0, Date.now()-this.startedAt.getTime()) : 0;
+        if (connectedForMs >= STABLE_CONNECTION_RESET_MS) this.reconnectAttempts = 0;
         this.detachBot(bot);
         this.nearbySnapshot = [];
         this.clearRuntimeIntervals();
         bot.removeAllListeners?.();
         if (!this.destroyed && !this.intentionalStop && !securityDisconnect && !this.safetyLockout) {
+          this.lastError = `Disconnected: ${String(reason || 'Connection closed')}`;
           this.status = 'connecting';
           this.setLifecycle('reconnecting');
           this.scheduleReconnect(this.reconnectBackoffMs);
@@ -375,6 +407,7 @@ class MinecraftBotRuntime extends BotContext {
     this.safetyLockout = false;
     clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
+    this.reconnectAttempts = 0;
     this.clearRuntimeIntervals();
     const bot = this.bot;
     this.detachBot(bot);
@@ -576,6 +609,7 @@ class MinecraftBotRuntime extends BotContext {
         x:this.bot.entity.position.x,y:this.bot.entity.position.y,z:this.bot.entity.position.z
       } : null,
       nearbyPlayers:this.nearbySnapshot,lastThreat:this.lastThreat,
+      farmPausedForHighPing:this.farmPausedForHighPing,
       modules:{
         obsidianFarm:this.obsidianFarm?.getStatus?.() || null,
         killAura:this.killAura?.getStatus?.() || null,

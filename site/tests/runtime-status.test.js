@@ -21,6 +21,11 @@ assert.deepEqual(stale.nearbyPlayers,[]);
 const alreadyOffline = {connected:false,status:'stopped',lastOfflineReason:'Stopped by user'};
 assert.equal(freshStoredRuntimePayload(alreadyOffline, new Date(0), now),alreadyOffline,'offline state is preserved');
 
+const contradictoryOffline = freshStoredRuntimePayload({connected:false,status:'connected',health:20,ping:55}, new Date(now), now);
+assert.equal(contradictoryOffline.connected,false);
+assert.equal(contradictoryOffline.status,'stopped','connected status cannot survive when the runtime reports no active connection');
+assert.equal(contradictoryOffline.ping,null);
+
 const accountWithoutPort = cleanAccountInput({displayName:'Second',username:'SecondBot',host:'example.org',port:null,authType:'microsoft'});
 assert.equal(accountWithoutPort.port,25565,'an empty optional port uses the Minecraft default');
 

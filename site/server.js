@@ -2733,7 +2733,19 @@ const MANAGED_RUNTIME_HEARTBEAT_TIMEOUT_MS = 15_000;
 
 function freshStoredRuntimePayload(payload, updatedAt, now = Date.now()) {
   if (!payload || typeof payload !== 'object') return payload || null;
-  if (!payload.connected) return payload;
+  if (payload.connected !== true) {
+    if (payload.status !== 'connected') return payload;
+    return {
+      ...payload,
+      connected: false,
+      status: 'stopped',
+      health: null,
+      food: null,
+      ping: null,
+      nearbyPlayers: [],
+      lastOfflineReason: payload.lastOfflineReason || 'Runtime reported no active Minecraft connection.'
+    };
+  }
   const heartbeatAt = new Date(updatedAt).getTime();
   if (Number.isFinite(heartbeatAt) && now-heartbeatAt <= MANAGED_RUNTIME_HEARTBEAT_TIMEOUT_MS) return payload;
   return {

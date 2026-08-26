@@ -16,6 +16,7 @@ const { formatDiscordBridgeMessage } = require('./discord/chat-message-format');
 const { NEW_PLAYER_WINDOW_DAYS } = require('./site/player-new-status');
 const { preparePlayerHeadEmojiImage } = require('./discord/player-head-image');
 const { createMinecraftBot } = require('./minecraft');
+const { MAX_FARM_PING_MS, botPingMs, isFarmPingTooHigh } = require('./features/obsidianFarm/ping-protection');
 const { moveInventorySlot } = require('./minecraft/inventory-slot-move');
 const {
   createDatabasePool,
@@ -3450,6 +3451,7 @@ playerInfoFirstJoinCheck = createPlayerInfoFirstJoinCheck({
   initialDelayMaxMs: process.env.PLAYER_INFO_FIRST_JOIN_INITIAL_DELAY_MAX_MS,
   commandDelayMinMs: process.env.PLAYER_INFO_FIRST_JOIN_COMMAND_DELAY_MIN_MS,
   commandDelayMaxMs: process.env.PLAYER_INFO_FIRST_JOIN_COMMAND_DELAY_MAX_MS,
+  globalCommandDelayMs: process.env.PLAYER_INFO_FIRST_JOIN_GLOBAL_COMMAND_DELAY_MS,
   responseTimeoutMs: process.env.PLAYER_INFO_FIRST_JOIN_RESPONSE_TIMEOUT_MS,
   isReady: () => getReadyPlayerInfoCommandSenders().length > 0,
   selectSender: () => pickRandomCommandSender(getReadyPlayerInfoCommandSenders()),
@@ -4766,6 +4768,7 @@ let foodMonitorInterval = null;
 let playerScannerInterval = null;
 let restartProtectionInterval = null;
 let obsidianFarmWatchdogInterval = null;
+let primaryFarmPausedForHighPing = false;
 let obsidianSupplySnapshotInterval = null;
 let obsidianDailyReportInterval = null;
 let restartProtectionDateKey = null;
@@ -5080,15 +5083,41 @@ function startObsidianFarmWatchdog() {
   let recovering = false;
 
   obsidianFarmWatchdogInterval = setInterval(async () => {
-    if (
-      recovering ||
-      !bot?.entity ||
-      !obsidianStats.desiredEnabled ||
-      farm.getStatus().enabled ||
-      !farm.getStatus().config
-    ) {
+    if (recovering || !bot?.entity) return;
+
+    const ping = botPingMs(bot);
+    const farmStatus = farm.getStatus();
+    if (isFarmPingTooHigh(ping)) {
+      if (obsidianStats.desiredEnabled) {
+        if (farmStatus.enabled) farm.suspend();
+        if (!primaryFarmPausedForHighPing) {
+          primaryFarmPausedForHighPing = true;
+          console.warn(`[Obsidian] Farm paused because ping is ${Math.round(ping)} ms (limit ${MAX_FARM_PING_MS} ms).`);
+          recordSystemLog({
+            level: 'warn', category: 'obsidian',
+            message: 'Obsidian Farm paused because Minecraft ping is too high.',
+            details: { ping: Math.round(ping), maximumPing: MAX_FARM_PING_MS }
+          }).catch(() => {});
+          updateStatusMessage().catch(() => {});
+        }
+      } else {
+        primaryFarmPausedForHighPing = false;
+      }
       return;
     }
+
+    if (primaryFarmPausedForHighPing && ping == null) return;
+    if (primaryFarmPausedForHighPing) {
+      primaryFarmPausedForHighPing = false;
+      console.log(`[Obsidian] Ping returned to normal (${ping == null ? 'unknown' : `${Math.round(ping)} ms`}); resuming farm.`);
+      recordSystemLog({
+        level: 'info', category: 'obsidian',
+        message: 'Minecraft ping returned to normal; resuming Obsidian Farm.',
+        details: { ping: ping == null ? null : Math.round(ping), maximumPing: MAX_FARM_PING_MS }
+      }).catch(() => {});
+    }
+
+    if (!obsidianStats.desiredEnabled || farmStatus.enabled || !farmStatus.config) return;
 
     const { hour, minute } = getKyivDateParts();
     const inRestartWindow = isRestartPreparationWindow({ hour, minute });
@@ -5109,7 +5138,7 @@ function startObsidianFarmWatchdog() {
     } finally {
       recovering = false;
     }
-  }, 10_000);
+  }, 2_000);
 }
 
 function normalizeOutboundChat(message) {
@@ -6396,7 +6425,17 @@ async function initializeMultiAccountManager() {
           ON CONFLICT(account_id) DO UPDATE SET status='authorizing',updated_at=NOW(),status_payload=bot_account_runtime_state.status_payload||EXCLUDED.status_payload`, [account.id,JSON.stringify({authState:'waiting',deviceCode:userCode,verificationUri})]).catch(()=>{});
         sendOwnerDM('Microsoft Login', `Account: **${account.username}**\nAccount ID: \`${account.id}\`\n\nOpen ${verificationUri} and enter code **${userCode || 'shown in the server log'}**.`, 16776960);
       });
-      runtime.on('end', () => persistManagedRuntimeStatus(runtime.getStatus()).catch(() => {}));
+      runtime.on('end', reason => {
+        const normalizedReason = normalizeStatusReason(reason) || 'Connection closed';
+        persistManagedRuntimeStatus(runtime.getStatus()).catch(() => {});
+        recordSystemLog({
+          level: 'warn',
+          category: 'minecraft_runtime',
+          message: `${account.displayName}: Minecraft connection ended.`,
+          details: { reason: normalizedReason },
+          accountId: account.id
+        }).catch(() => {});
+      });
       return runtime;
     }
   });
@@ -8436,7 +8475,8 @@ function getBotStatusSnapshot() {
       desiredEnabled: obsidianStats.desiredEnabled,
       config: farm.getStatus().config,
       phase: farm.getStatus().phase,
-      lastErrorMessage: farm.getStatus().lastErrorMessage
+      lastErrorMessage: farm.getStatus().lastErrorMessage,
+      highPingPaused: primaryFarmPausedForHighPing
     },
     killAura: killAura.getStatus(),
     child: {

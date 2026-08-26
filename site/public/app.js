@@ -4471,7 +4471,8 @@ function renderBotStats(payload) {
   const bot = payload.bot || null;
   syncFarmLaunchFailureToast(bot);
   const connected = Boolean(bot?.connected);
-  $('#botConnectionState').textContent = bot?.status ? bot.status : 'unknown';
+  const displayedStatus = !connected && bot?.status === 'connected' ? 'stopped' : bot?.status || 'unknown';
+  $('#botConnectionState').textContent = displayedStatus;
   $('#botStatusUpdated').textContent = `updated: ${formatDate(payload.observedAt || bot?.observedAt)}`;
   $('#botHealth').textContent = bot?.health == null ? '-' : bot.health;
   $('#botFood').textContent = bot?.food == null ? '-' : bot.food;

@@ -78,6 +78,7 @@ function createCheck({ random = () => 0 } = {}) {
     initialDelayMaxMs: 15_000,
     commandDelayMinMs: 20_000,
     commandDelayMaxMs: 20_000,
+    globalCommandDelayMs: 5_000,
     responseTimeoutMs: 25_000,
     setTimer: clock.setTimer,
     clearTimer: clock.clearTimer,
@@ -221,6 +222,20 @@ async function testWaitingDoesNotInflateJoinDateGate() {
     'account age must be evaluated at the first observed join rather than after the player leaves');
 }
 
+async function testConcurrentPlayersShareOneCommandCooldown() {
+  const { check, clock, sent } = createCheck();
+  check.enqueue('FirstQueuedPlayer');
+  check.enqueue('SecondQueuedPlayer');
+  check.playerLeft('FirstQueuedPlayer');
+  check.playerLeft('SecondQueuedPlayer');
+  await clock.advance(10_000);
+  assert.equal(sent.length, 1, 'simultaneous jobs must not send commands in the same tick');
+  await clock.advance(4_999);
+  assert.equal(sent.length, 1, 'all first-join jobs must respect the shared command cooldown');
+  await clock.advance(1);
+  assert.equal(sent.length, 2, 'the next queued player may be checked after the shared cooldown');
+}
+
 function testThresholdBoundaries() {
   const now = 2_000_000;
   assert.equal(passesFirstJoinThreshold('playtime', 599, now), false);
@@ -244,5 +259,6 @@ Promise.resolve()
   .then(testLongFirstSessionDoesNotInflatePlaytimeGate)
   .then(testFirstSessionMessagesDoNotInflateMessageGate)
   .then(testWaitingDoesNotInflateJoinDateGate)
+  .then(testConcurrentPlayersShareOneCommandCooldown)
   .then(testThresholdBoundaries)
   .then(() => console.log('Player first-join info check tests passed.'));

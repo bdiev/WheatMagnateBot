@@ -82,6 +82,7 @@ function ownObsidianFarm(context, farm, settingsFile, notify = null, initialStat
     // changing the operator's persisted Start Farm intent. onSpawn can then
     // resume this account normally after the server comes back.
     pauseForServerRestart: () => farm.suspend(),
+    pauseForHighPing: () => farm.suspend(),
     stop: notify => {
       desiredEnabled = false;
       persist();

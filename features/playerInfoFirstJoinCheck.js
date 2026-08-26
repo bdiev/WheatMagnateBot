@@ -4,6 +4,7 @@ const DEFAULT_INITIAL_DELAY_MIN_MS = 10_000;
 const DEFAULT_INITIAL_DELAY_MAX_MS = 15_000;
 const DEFAULT_COMMAND_DELAY_MIN_MS = 12_000;
 const DEFAULT_COMMAND_DELAY_MAX_MS = 45_000;
+const DEFAULT_GLOBAL_COMMAND_DELAY_MS = 12_000;
 const DEFAULT_RESPONSE_TIMEOUT_MS = 25_000;
 const MIN_PLAYTIME_SECONDS = 10 * 60;
 const MIN_MESSAGES = 5;
@@ -58,6 +59,7 @@ function createPlayerInfoFirstJoinCheck({
   initialDelayMaxMs,
   commandDelayMinMs,
   commandDelayMaxMs,
+  globalCommandDelayMs,
   responseTimeoutMs,
   setTimer = setTimeout,
   clearTimer = clearTimeout,
@@ -87,8 +89,13 @@ function createPlayerInfoFirstJoinCheck({
     DEFAULT_RESPONSE_TIMEOUT_MS,
     1
   );
+  const safeGlobalCommandDelayMs = milliseconds(
+    globalCommandDelayMs,
+    DEFAULT_GLOBAL_COMMAND_DELAY_MS
+  );
   const jobs = new Map();
   let enabled = true;
+  let nextCommandAt = 0;
 
   function clearJobTimer(job, field) {
     if (job[field] != null) clearTimer(job[field]);
@@ -102,17 +109,34 @@ function createPlayerInfoFirstJoinCheck({
     if (message) onLog(message);
   }
 
-  function schedule(job, minimum, maximum) {
+  function scheduleAfter(job, delay) {
     if (!enabled || jobs.get(job.key) !== job) return;
     clearJobTimer(job, 'timer');
     job.timer = setTimer(() => {
       job.timer = null;
-      sendNext(job).catch(error => {
+      requestSend(job).catch(error => {
         onError(error);
         finish(job);
       });
-    }, randomMilliseconds(minimum, maximum, random));
+    }, Math.max(0, Math.floor(Number(delay) || 0)));
     job.timer?.unref?.();
+  }
+
+  function schedule(job, minimum, maximum) {
+    scheduleAfter(job, randomMilliseconds(minimum, maximum, random));
+  }
+
+  async function requestSend(job) {
+    if (!enabled || jobs.get(job.key) !== job || job.pendingMetric || job.waitingForLeave) return;
+    const cooldownMs = Math.max(0, nextCommandAt - now());
+    if (cooldownMs > 0) {
+      scheduleAfter(job, cooldownMs);
+      return;
+    }
+    // Reserve the shared slot before the first await in sendNext(), so timers
+    // firing in the same tick cannot send automatic commands together.
+    nextCommandAt = now() + safeGlobalCommandDelayMs;
+    await sendNext(job);
   }
 
   async function sendNext(job) {
@@ -298,6 +322,7 @@ function createPlayerInfoFirstJoinCheck({
 module.exports = {
   DEFAULT_COMMAND_DELAY_MAX_MS,
   DEFAULT_COMMAND_DELAY_MIN_MS,
+  DEFAULT_GLOBAL_COMMAND_DELAY_MS,
   DEFAULT_INITIAL_DELAY_MAX_MS,
   DEFAULT_INITIAL_DELAY_MIN_MS,
   DEFAULT_RESPONSE_TIMEOUT_MS,
