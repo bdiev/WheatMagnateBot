@@ -116,7 +116,7 @@ function createPlayerInfoFirstJoinCheck({
   }
 
   async function sendNext(job) {
-    if (!enabled || jobs.get(job.key) !== job || job.pendingMetric) return;
+    if (!enabled || jobs.get(job.key) !== job || job.pendingMetric || job.waitingForLeave) return;
     if (!isReady()) {
       finish(job, `[PlayerInfo] Stopped first-join check for ${job.username}: no connected command sender.`);
       return;
@@ -137,12 +137,14 @@ function createPlayerInfoFirstJoinCheck({
     if (prepared === false) throw new Error(`Could not prepare ${item.command}.`);
 
     if (!job.sender) job.sender = await selectSender(item, job);
+    if (job.waitingForLeave) return;
     if (!sendCommand(item.command, item, job.sender)) {
       finish(job, `[PlayerInfo] Stopped first-join check for ${job.username}: command could not be sent.`);
       return;
     }
 
     job.pendingMetric = item.metric;
+    job.hasSentCommand = true;
     onLog(`[PlayerInfo] First-join check sent ${item.command}.`);
     job.responseTimer = setTimer(() => {
       job.responseTimer = null;
@@ -157,19 +159,85 @@ function createPlayerInfoFirstJoinCheck({
     const key = username.toLowerCase();
     if (jobs.has(key)) return false;
 
+    const queuedAt = now();
     const job = {
       key,
       username,
       remaining: new Set(METRICS.map(definition => definition.metric)),
       pendingMetric: null,
       sender: null,
+      waitingForLeave: true,
+      hasSentCommand: false,
+      queuedAt,
+      onlineSince: queuedAt,
+      accumulatedOnlineMs: 0,
+      observedMessages: 0,
       timer: null,
       responseTimer: null
     };
     jobs.set(key, job);
-    schedule(job, safeInitialDelayMinMs, safeInitialDelayMaxMs);
-    onLog(`[PlayerInfo] Scheduled first-join check for ${username}.`);
+    onLog(`[PlayerInfo] Queued first-join check for ${username} until the player leaves.`);
     return true;
+  }
+
+  function playerJoined(targetUsername) {
+    const username = normalizeUsername(targetUsername);
+    const job = jobs.get(username.toLowerCase());
+    if (!job) return false;
+    job.waitingForLeave = true;
+    if (job.onlineSince == null) job.onlineSince = now();
+    clearJobTimer(job, 'timer');
+    return true;
+  }
+
+  function playerLeft(targetUsername) {
+    const username = normalizeUsername(targetUsername);
+    const job = jobs.get(username.toLowerCase());
+    if (!job || !job.waitingForLeave) return false;
+    if (job.onlineSince != null) {
+      job.accumulatedOnlineMs += Math.max(0, now() - job.onlineSince);
+      job.onlineSince = null;
+    }
+    job.waitingForLeave = false;
+    if (!job.pendingMetric) {
+      schedule(
+        job,
+        job.hasSentCommand ? safeCommandDelayMinMs : safeInitialDelayMinMs,
+        job.hasSentCommand ? safeCommandDelayMaxMs : safeInitialDelayMaxMs
+      );
+    }
+    onLog(`[PlayerInfo] Player ${job.username} left; first-join check will continue after a delay.`);
+    return true;
+  }
+
+  function observePlayerMessage(targetUsername) {
+    const username = normalizeUsername(targetUsername);
+    const job = jobs.get(username.toLowerCase());
+    if (!job) return false;
+    job.observedMessages += 1;
+    return true;
+  }
+
+  function thresholdObservationAtFirstJoin(job, metric, observedValue, observedAgeMs) {
+    if (metric === 'playtime' && Number.isFinite(observedValue)) {
+      return {
+        observedValue: Math.max(0, observedValue - Math.floor(job.accumulatedOnlineMs / 1000)),
+        observedAgeMs
+      };
+    }
+    if (metric === 'messages' && Number.isSafeInteger(observedValue)) {
+      return {
+        observedValue: Math.max(0, observedValue - job.observedMessages),
+        observedAgeMs
+      };
+    }
+    if (metric === 'joinDate' && Number.isFinite(observedAgeMs)) {
+      return {
+        observedValue,
+        observedAgeMs: Math.max(0, observedAgeMs - Math.max(0, now() - job.queuedAt))
+      };
+    }
+    return { observedValue, observedAgeMs };
   }
 
   function observe({ metric, targetUsername, observedValue, observedAgeMs, reason } = {}) {
@@ -180,7 +248,18 @@ function createPlayerInfoFirstJoinCheck({
 
     clearJobTimer(job, 'responseTimer');
     job.pendingMetric = null;
-    if (!passesFirstJoinThreshold(metric, observedValue, now(), { observedAgeMs })) {
+    const initialObservation = thresholdObservationAtFirstJoin(
+      job,
+      metric,
+      observedValue,
+      observedAgeMs
+    );
+    if (!passesFirstJoinThreshold(
+      metric,
+      initialObservation.observedValue,
+      job.queuedAt,
+      { observedAgeMs: initialObservation.observedAgeMs }
+    )) {
       finish(job, `[PlayerInfo] Stopped first-join check for ${job.username}: ${metric} is below the minimum threshold.`);
       return true;
     }
@@ -188,6 +267,8 @@ function createPlayerInfoFirstJoinCheck({
     job.remaining.delete(metric);
     if (job.remaining.size === 0) {
       finish(job, `[PlayerInfo] Completed first-join check for ${job.username}.`);
+    } else if (job.waitingForLeave) {
+      onLog(`[PlayerInfo] Paused first-join check for ${job.username} until the player leaves again.`);
     } else {
       schedule(job, safeCommandDelayMinMs, safeCommandDelayMaxMs);
     }
@@ -202,8 +283,15 @@ function createPlayerInfoFirstJoinCheck({
   return {
     enqueue,
     observe,
+    observePlayerMessage,
+    playerJoined,
+    playerLeft,
     stop,
-    getStatus: () => ({ enabled, pendingPlayers: jobs.size })
+    getStatus: () => ({
+      enabled,
+      pendingPlayers: jobs.size,
+      waitingForLeave: [...jobs.values()].filter(job => job.waitingForLeave).length
+    })
   };
 }
 

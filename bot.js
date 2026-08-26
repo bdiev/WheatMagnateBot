@@ -3021,6 +3021,7 @@ async function syncPlayerActivityOnlineState() {
     })));
     activityUpdates.forEach(({ username, result }) => {
       if (result?.created) playerInfoFirstJoinCheck?.enqueue(username);
+      playerInfoFirstJoinCheck?.playerJoined(username);
     });
 
     if (lastObservedOnlinePlayerKeys) {
@@ -3028,7 +3029,10 @@ async function syncPlayerActivityOnlineState() {
         .filter(key => !onlineKeys.has(key))
         .map(key => lastObservedOnlinePlayerKeys.get(key))
         .filter(Boolean);
-      await Promise.all(leftUsernames.map(username => updatePlayerActivity(username, false, { recordEvent: true })));
+      await Promise.all(leftUsernames.map(async username => {
+        await updatePlayerActivity(username, false, { recordEvent: true });
+        playerInfoFirstJoinCheck?.playerLeft(username);
+      }));
     }
 
     if (onlineUsernames.length > 0 || hasObservedSelf || lastObservedOnlinePlayerKeys) {
@@ -9115,6 +9119,7 @@ function createBot() {
         uuid: player.uuid
       });
       if (activityResult?.created) playerInfoFirstJoinCheck?.enqueue(player.username);
+      playerInfoFirstJoinCheck?.playerJoined(player.username);
       await scheduleQueuedSiteWhispersForPlayer(player.username);
     }
     if (player.username) {
@@ -9130,6 +9135,7 @@ function createBot() {
     if (player.username && player.username.toLowerCase() !== bot.username.toLowerCase()) {
       lastObservedOnlinePlayerKeys?.delete(player.username.toLowerCase());
       await updatePlayerActivity(player.username, false, { uuid: player.uuid });
+      playerInfoFirstJoinCheck?.playerLeft(player.username);
     }
     if (player.username) {
       const onlineUsernames = getOnlinePlayerUsernames().filter(
@@ -9164,6 +9170,7 @@ function createBot() {
       scheduleGameChatForward('SERVER', message, source);
       return;
     }
+    playerInfoFirstJoinCheck?.observePlayerMessage(username);
     playerInfoObservation.observe(observedUsername, observedMessage);
 
     const wmMatch = message.match(/^!wm(?:\s+([\s\S]*))?$/i);

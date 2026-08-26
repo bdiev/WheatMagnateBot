@@ -1,6 +1,8 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const {
   MIN_ACCOUNT_AGE_MS,
   MIN_MESSAGES,
@@ -8,6 +10,18 @@ const {
   createPlayerInfoFirstJoinCheck,
   passesFirstJoinThreshold
 } = require('../features/playerInfoFirstJoinCheck');
+
+const botSource = fs.readFileSync(path.resolve(__dirname, '..', 'bot.js'), 'utf8');
+assert.match(
+  botSource,
+  /handleMinecraftPlayerChat[\s\S]*playerInfoFirstJoinCheck\?\.observePlayerMessage\(username\)/,
+  'public messages from a queued player must contribute to the first-session adjustment'
+);
+assert.match(
+  botSource,
+  /bot\.on\('playerJoined'[\s\S]*playerInfoFirstJoinCheck\?\.playerJoined\(player\.username\)[\s\S]*bot\.on\('playerLeft'[\s\S]*playerInfoFirstJoinCheck\?\.playerLeft\(player\.username\)/,
+  'first-join checks must pause on join and resume only after leave'
+);
 
 function createClock() {
   let currentTime = 1_000_000;
@@ -75,10 +89,14 @@ function createCheck({ random = () => 0 } = {}) {
   return { check, clock, sent, prepared, logs };
 }
 
-async function testFirstCommandUsesTenToFifteenSecondDelay() {
+async function testFirstCommandWaitsForLeaveThenUsesTenToFifteenSecondDelay() {
   const { check, clock, sent } = createCheck({ random: () => 0.999 });
   assert.equal(check.enqueue('NewPlayer'), true);
   assert.equal(check.enqueue('newplayer'), false, 'one player must only have one active check');
+  assert.equal(clock.nextDelay(), undefined, 'joining for the first time must not start a command timer');
+  await clock.advance(60_000);
+  assert.equal(sent.length, 0, 'no commands may be sent while the new player remains online');
+  assert.equal(check.playerLeft('NewPlayer'), true);
   assert.ok(clock.nextDelay() >= 10_000 && clock.nextDelay() <= 15_000);
   await clock.advance(15_000);
   assert.equal(sent.length, 1);
@@ -88,6 +106,7 @@ async function testFirstCommandUsesTenToFifteenSecondDelay() {
 async function testBelowThresholdStopsRemainingChecks() {
   const { check, clock, sent } = createCheck();
   check.enqueue('FreshPlayer');
+  check.playerLeft('FreshPlayer');
   await clock.advance(10_000);
   assert.equal(sent[0].item.metric, 'playtime');
   assert.equal(check.observe({
@@ -104,6 +123,7 @@ async function testBelowThresholdStopsRemainingChecks() {
 async function testPassingResultsCheckAllRemainingMetrics() {
   const { check, clock, sent } = createCheck();
   check.enqueue('EstablishedPlayer');
+  check.playerLeft('EstablishedPlayer');
   await clock.advance(10_000);
   check.observe({
     metric: 'playtime', targetUsername: 'EstablishedPlayer',
@@ -125,6 +145,82 @@ async function testPassingResultsCheckAllRemainingMetrics() {
   assert.deepEqual(sent.map(entry => entry.item.metric), ['playtime', 'messages', 'joinDate']);
 }
 
+async function testRejoiningPausesCommandsUntilTheNextLeave() {
+  const { check, clock, sent } = createCheck();
+  check.enqueue('ReturningPlayer');
+  check.playerLeft('ReturningPlayer');
+  await clock.advance(5_000);
+  assert.equal(check.playerJoined('ReturningPlayer'), true);
+  await clock.advance(60_000);
+  assert.equal(sent.length, 0, 'a player who rejoins during the delay must not receive an automatic command');
+
+  check.playerLeft('ReturningPlayer');
+  await clock.advance(10_000);
+  assert.equal(sent.length, 1);
+  check.observe({
+    metric: 'playtime', targetUsername: 'ReturningPlayer',
+    observedValue: MIN_PLAYTIME_SECONDS + 60, reason: 'first-join'
+  });
+  check.playerJoined('ReturningPlayer');
+  await clock.advance(60_000);
+  assert.equal(sent.length, 1, 'remaining checks must pause when the player comes back online');
+  check.playerLeft('ReturningPlayer');
+  await clock.advance(20_000);
+  assert.equal(sent.length, 2, 'the remaining checks may resume after the player leaves again');
+}
+
+async function testLongFirstSessionDoesNotInflatePlaytimeGate() {
+  const { check, clock, sent } = createCheck();
+  check.enqueue('LongSessionPlayer');
+  await clock.advance(60 * 60 * 1000);
+  check.playerLeft('LongSessionPlayer');
+  await clock.advance(10_000);
+  assert.equal(sent[0].item.metric, 'playtime');
+  check.observe({
+    metric: 'playtime',
+    targetUsername: 'LongSessionPlayer',
+    observedValue: (60 * 60) + MIN_PLAYTIME_SECONDS - 1,
+    reason: 'first-join'
+  });
+  assert.equal(check.getStatus().pendingPlayers, 0,
+    'playtime earned during the first observed session must be removed before checking the threshold');
+}
+
+async function testFirstSessionMessagesDoNotInflateMessageGate() {
+  const { check, clock, sent } = createCheck({ random: () => 0.5 });
+  check.enqueue('ChattyNewPlayer');
+  for (let index = 0; index < 100; index += 1) check.observePlayerMessage('ChattyNewPlayer');
+  check.playerLeft('ChattyNewPlayer');
+  await clock.advance(15_000);
+  assert.equal(sent[0].item.metric, 'messages');
+  check.observe({
+    metric: 'messages',
+    targetUsername: 'ChattyNewPlayer',
+    observedValue: 100 + MIN_MESSAGES - 1,
+    reason: 'first-join'
+  });
+  assert.equal(check.getStatus().pendingPlayers, 0,
+    'messages sent after the first observed join must be removed before checking the threshold');
+}
+
+async function testWaitingDoesNotInflateJoinDateGate() {
+  const { check, clock, sent } = createCheck({ random: () => 0.999 });
+  check.enqueue('BrandNewAccount');
+  await clock.advance(60 * 60 * 1000);
+  check.playerLeft('BrandNewAccount');
+  await clock.advance(15_000);
+  assert.equal(sent[0].item.metric, 'joinDate');
+  check.observe({
+    metric: 'joinDate',
+    targetUsername: 'BrandNewAccount',
+    observedValue: new Date(clock.now() - (60 * 60 * 1000 + MIN_ACCOUNT_AGE_MS - 1)),
+    observedAgeMs: 60 * 60 * 1000 + MIN_ACCOUNT_AGE_MS - 1,
+    reason: 'first-join'
+  });
+  assert.equal(check.getStatus().pendingPlayers, 0,
+    'account age must be evaluated at the first observed join rather than after the player leaves');
+}
+
 function testThresholdBoundaries() {
   const now = 2_000_000;
   assert.equal(passesFirstJoinThreshold('playtime', 599, now), false);
@@ -141,8 +237,12 @@ function testThresholdBoundaries() {
 }
 
 Promise.resolve()
-  .then(testFirstCommandUsesTenToFifteenSecondDelay)
+  .then(testFirstCommandWaitsForLeaveThenUsesTenToFifteenSecondDelay)
   .then(testBelowThresholdStopsRemainingChecks)
   .then(testPassingResultsCheckAllRemainingMetrics)
+  .then(testRejoiningPausesCommandsUntilTheNextLeave)
+  .then(testLongFirstSessionDoesNotInflatePlaytimeGate)
+  .then(testFirstSessionMessagesDoNotInflateMessageGate)
+  .then(testWaitingDoesNotInflateJoinDateGate)
   .then(testThresholdBoundaries)
   .then(() => console.log('Player first-join info check tests passed.'));
