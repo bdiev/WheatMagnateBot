@@ -2671,6 +2671,9 @@ function releaseInactiveChartCanvases() {
     canvas.width = 1;
     canvas.height = 1;
     canvas.style.width = '';
+    // Shrinking the canvas also clamps its scroll container back to zero.
+    // Re-initialize the position when this tab opens again so it shows newest.
+    delete state.chartScrollInitialized[chartId];
     delete state.chartMeta[chartId];
     state.chartAnimations[chartId]?.cancel?.();
     delete state.chartAnimations[chartId];

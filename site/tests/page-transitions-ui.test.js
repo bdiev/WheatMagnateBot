@@ -53,7 +53,7 @@ assert.match(appSource, /transformOriginX[\s\S]*--seen-search-transform-origin-x
 assert.match(appSource, /collapsedScale = targetWidth > 0[\s\S]*--seen-search-collapsed-scale/, 'Seen search must begin at exactly the pressed toggle width');
 assert.match(stylesSource, /\.seen-search-box\s*\{[^}]*transform:\s*scaleX\(var\(--seen-search-collapsed-scale,[^)]+\)\)[^}]*transform-origin:\s*var\(--seen-search-transform-origin-x,[^)]+\) center;/s, 'Seen search must visually expand from the pressed toggle');
 assert.match(appSource, /topbar-stuck[\s\S]*scrollY > 96[\s\S]*topbar-compact/, 'the title must stay pinned briefly before collapsing into the control row');
-assert.match(appSource, /const CHART_TAB_BY_ID[\s\S]*function releaseInactiveChartCanvases\(\)[\s\S]*canvas\.width = 1;[\s\S]*canvas\.height = 1;/, 'hidden tabs must release their canvas backing stores');
+assert.match(appSource, /const CHART_TAB_BY_ID[\s\S]*function releaseInactiveChartCanvases\(\)[\s\S]*canvas\.width = 1;[\s\S]*canvas\.height = 1;[\s\S]*delete state\.chartScrollInitialized\[chartId\]/, 'hidden tabs must release their canvas backing stores and reset latest-position initialization');
 assert.match(appSource, /charts:\s*\{[\s\S]*chatHourly:\s*\[\][\s\S]*tpsHourly:\s*\[\]/, 'chart redraws before the first API response must use safe empty series');
 assert.match(appSource, /Math\.min\(window\.devicePixelRatio \|\| 1, mobile \? 1\.5 : 2\)/, 'mobile charts must cap Retina backing resolution');
 assert.match(appSource, /nextViewportLayout === lastViewportLayout[\s\S]*setTimeout\([\s\S]*140\)/, 'mobile browser chrome height changes must not redraw charts');
