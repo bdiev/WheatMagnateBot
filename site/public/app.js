@@ -23,7 +23,20 @@ const state = {
   realtimeHideTimer: null,
   lastRealtimeChartRefreshAt: 0,
   activeTab: 'chat',
-  charts: {},
+  charts: {
+    chatDaily: [],
+    chatHourly: [],
+    chatMonthly: [],
+    killAuraDaily: [],
+    killAuraHourly: [],
+    killAuraMonthly: [],
+    obsidianAccounts: [],
+    obsidianAnnotations: [],
+    obsidianDaily: [],
+    obsidianHourly: [],
+    tpsHourly: [],
+    unwhitelistedHourly: []
+  },
   chartMeta: {},
   rollingNumbers: {},
   seenSearchTimer: null,
@@ -2008,6 +2021,7 @@ function setActiveTab(tab) {
   $$('.tab-panel').forEach(panel => {
     panel.classList.toggle('active', panel.dataset.panel === tab);
   });
+  releaseInactiveChartCanvases();
   updateNavLabel(tab);
   setNavMenuOpen(false);
   if (tab === 'admin') {
@@ -2177,13 +2191,19 @@ function compactRecentAnnotations(annotations, { limit = 10, groupWindowMs = 6 *
 
 function prepareChartCanvas(canvas, data, options = {}) {
   const viewport = canvas.closest('.chart-scroll');
-  const ratio = window.devicePixelRatio || 1;
+  const mobile = window.matchMedia?.('(max-width: 700px)').matches;
+  // Retina iPhones can report a DPR of 3. A long chart rendered at that ratio
+  // can consume tens of megabytes in a single canvas backing store. Text and
+  // lines stay crisp at 1.5x on a phone while keeping the bitmap comfortably
+  // below WebKit's practical GPU-memory limits.
+  const ratio = Math.min(window.devicePixelRatio || 1, mobile ? 1.5 : 2);
   const pointWidth = options.pointWidth || 44;
   const minWidth = viewport ? viewport.clientWidth : canvas.getBoundingClientRect().width;
   // Long-lived series can contain many thousands of hourly points. Keep the
   // backing bitmap below common browser/GPU canvas limits while retaining the
   // complete dataset and horizontal navigation through its history.
-  const safeCanvasWidth = Math.max(4096, Math.floor(16_000 / ratio));
+  const maxBackingWidth = mobile ? 8_192 : 12_288;
+  const safeCanvasWidth = Math.max(2_048, Math.floor(maxBackingWidth / ratio));
   const requestedWidth = (Array.isArray(data) ? data.length : 0) * pointWidth + 92;
   const cssWidth = Math.min(safeCanvasWidth, Math.max(minWidth || 320, requestedWidth));
   const cssHeight = Math.max(1, Math.floor(canvas.getBoundingClientRect().height || canvas.height || 260));
@@ -2627,7 +2647,38 @@ function getChartRange(id) {
   return state.chartRanges[id] || 'hours';
 }
 
+const CHART_TAB_BY_ID = Object.freeze({
+  chatHourlyChart: 'chat',
+  killAuraKillsChart: 'kill-aura',
+  obsidianDailyChart: 'obsidian',
+  tpsHourlyChart: 'server',
+  unwhitelistedHourlyChart: 'players'
+});
+
+function chartIsActive(chartId) {
+  return document.visibilityState !== 'hidden'
+    && CHART_TAB_BY_ID[chartId] === state.activeTab
+    && document.getElementById(chartId)?.closest('.tab-panel')?.classList.contains('active');
+}
+
+function releaseInactiveChartCanvases() {
+  Object.entries(CHART_TAB_BY_ID).forEach(([chartId, tab]) => {
+    if (tab === state.activeTab) return;
+    const canvas = document.getElementById(chartId);
+    if (!canvas) return;
+    // Assigning either dimension releases the old backing bitmap immediately.
+    // This prevents hidden tabs from retaining several full Retina canvases.
+    canvas.width = 1;
+    canvas.height = 1;
+    canvas.style.width = '';
+    delete state.chartMeta[chartId];
+    state.chartAnimations[chartId]?.cancel?.();
+    delete state.chartAnimations[chartId];
+  });
+}
+
 function drawChartById(chartId) {
+  if (!chartIsActive(chartId)) return;
   const range = getChartRange(chartId);
   switch (chartId) {
     case 'chatHourlyChart':
@@ -2685,11 +2736,15 @@ function drawChartById(chartId) {
 function redrawCharts() {
   if (state.chartRedrawFrame) cancelAnimationFrame(state.chartRedrawFrame);
   const generation = ++state.chartRedrawGeneration;
-  const chartIds = ['chatHourlyChart', 'killAuraKillsChart', 'obsidianDailyChart', 'tpsHourlyChart', 'unwhitelistedHourlyChart'];
+  const chartIds = Object.keys(CHART_TAB_BY_ID).filter(chartIsActive);
+  if (!chartIds.length || document.visibilityState === 'hidden') {
+    state.chartRedrawFrame = null;
+    return;
+  }
   let index = 0;
 
-  // Canvas resizing and drawing is synchronous. Spread the four charts across
-  // separate frames so one callback does not block the main thread for 50+ ms.
+  // Canvas resizing and drawing is synchronous. Keep the frame-by-frame queue
+  // so this remains safe if a tab gains more than one chart later.
   const drawNext = () => {
     if (generation !== state.chartRedrawGeneration) return;
     drawChartById(chartIds[index]);
@@ -2706,7 +2761,7 @@ function redrawCharts() {
 function scheduleChartViewportRedraw(target) {
   const viewport = target?.currentTarget || target;
   const chartId = viewport?.querySelector?.('canvas.chart')?.id;
-  if (!chartId) return;
+  if (!chartId || !chartIsActive(chartId) || document.visibilityState === 'hidden') return;
   if (state.chartScrollRedrawFrames[chartId]) cancelAnimationFrame(state.chartScrollRedrawFrames[chartId]);
   state.chartScrollRedrawFrames[chartId] = requestAnimationFrame(() => {
     delete state.chartScrollRedrawFrames[chartId];
@@ -8244,6 +8299,10 @@ function queueRealtimeRefresh(key, callback, delay = 180) {
   state.realtimeRefreshTimers[key] = setTimeout(async () => {
     delete state.realtimeRefreshTimers[key];
     if (!state.currentUser) return;
+    if (document.visibilityState === 'hidden') {
+      state.sseNeedsFullSync = true;
+      return;
+    }
     try { await callback(); } catch { /* slow polling remains the consistency fallback */ }
   }, delay);
 }
@@ -8263,7 +8322,7 @@ async function refreshChatFromEvent() {
 }
 
 async function checkChatVersion() {
-  if (!state.currentUser || state.liveChatLoading || state.chatContextMessageId || state.chatSearchQuery) return;
+  if (!state.currentUser || document.visibilityState === 'hidden' || state.liveChatLoading || state.chatContextMessageId || state.chatSearchQuery) return;
   try {
     const payload = await fetchJson('/api/chat/version');
     const latestId = String(payload.latestId ?? '0');
@@ -8439,6 +8498,10 @@ function startRealtimeUpdates() {
 
 async function loadAll({ force = false, switchGeneration = state.accountSwitchGeneration } = {}) {
   if (!state.currentUser) return false;
+  if (document.visibilityState === 'hidden' && !force) {
+    state.sseNeedsFullSync = true;
+    return false;
+  }
   if (state.fullSyncLoading && !force) return state.fullSyncPromise || false;
 
   const syncToken = Symbol('dashboard-sync');
@@ -8529,7 +8592,7 @@ async function ensureItemIcons() {
 }
 
 async function loadLiveChats() {
-  if (!state.currentUser || state.liveChatLoading) return;
+  if (!state.currentUser || document.visibilityState === 'hidden' || state.liveChatLoading) return;
   state.liveChatLoading = true;
   try {
     const chat = await fetchJson(`/api/chat?limit=${CHAT_HISTORY_LIMIT}`);
@@ -8795,17 +8858,26 @@ $$('.chart-scroll').forEach(scroll => {
 });
 $('#themeToggle').addEventListener('click', toggleTheme);
 
-// Browsers can emit dozens of resize events while a window is restored or the
-// mobile viewport chrome changes. Reallocating every chart canvas for each one
-// can exhaust the compositor and temporarily leave a black viewport.
+// Mobile Safari emits resize events while only its address bar is moving. Chart
+// layout depends on width, not viewport height, so ignore those events and
+// debounce real width/orientation changes until the viewport has settled.
 let viewportRedrawFrame = null;
-function scheduleViewportRedraw() {
+let viewportRedrawTimer = null;
+let lastViewportLayout = `${document.documentElement.clientWidth}:${window.devicePixelRatio || 1}`;
+function scheduleViewportRedraw({ force = false } = {}) {
+  const nextViewportLayout = `${document.documentElement.clientWidth}:${window.devicePixelRatio || 1}`;
+  if (!force && nextViewportLayout === lastViewportLayout) return;
+  lastViewportLayout = nextViewportLayout;
+  clearTimeout(viewportRedrawTimer);
   if (viewportRedrawFrame != null) cancelAnimationFrame(viewportRedrawFrame);
-  viewportRedrawFrame = requestAnimationFrame(() => {
-    viewportRedrawFrame = null;
-    redrawCharts();
-    updateCarousels();
-  });
+  viewportRedrawTimer = setTimeout(() => {
+    viewportRedrawTimer = null;
+    viewportRedrawFrame = requestAnimationFrame(() => {
+      viewportRedrawFrame = null;
+      redrawCharts();
+      updateCarousels();
+    });
+  }, 140);
 }
 
 window.addEventListener('resize', scheduleViewportRedraw, { passive: true });
@@ -8820,12 +8892,24 @@ window.addEventListener('pageshow', event => {
     closePlayerProfile();
   }
   ensureActiveTabAvailable();
-  scheduleViewportRedraw();
+  scheduleViewportRedraw({ force: true });
 });
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
     ensureActiveTabAvailable();
-    scheduleViewportRedraw();
+    scheduleViewportRedraw({ force: true });
+    if (state.currentUser && state.sseNeedsFullSync) {
+      state.sseNeedsFullSync = false;
+      loadAll().catch(() => { state.sseNeedsFullSync = true; });
+    }
+  } else {
+    state.sseNeedsFullSync = Boolean(state.currentUser);
+    clearTimeout(viewportRedrawTimer);
+    viewportRedrawTimer = null;
+    if (viewportRedrawFrame != null) cancelAnimationFrame(viewportRedrawFrame);
+    viewportRedrawFrame = null;
+    if (state.chartRedrawFrame) cancelAnimationFrame(state.chartRedrawFrame);
+    state.chartRedrawFrame = null;
   }
 });
 $$('.chart').forEach(chart => {

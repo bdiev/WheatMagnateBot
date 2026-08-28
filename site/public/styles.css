@@ -10243,6 +10243,24 @@ body.kill-aura-modal-open {
 .account-auth-note { padding:11px 12px; border-left:3px solid var(--accent); border-radius:0 10px 10px 0; color:var(--muted); background:var(--panel-soft); font-size:12px; line-height:1.5; }.account-modal-actions { display:flex; justify-content:flex-end; gap:10px; padding-top:2px; }.account-modal-actions button { min-width:112px; }.account-modal-close { position:absolute; top:14px; right:14px; width:34px; min-width:34px; max-width:34px; height:34px; min-height:34px; max-height:34px; padding:0; border:1px solid var(--line); border-radius:50%; color:var(--muted); background:var(--panel-soft); font-size:22px; font-weight:500; }.account-modal-close:hover { color:var(--text); background:color-mix(in srgb,var(--accent) 14%,var(--panel-soft)); border-color:var(--accent); }
 @media (max-width:700px) {
   .realtime-status { display:none!important; }
+  /* Keep full-viewport WebKit layers cheap. Repeated backdrop blurs on sticky
+     and fixed elements can make iOS retain several screen-sized textures. */
+  .topbar::before,
+  .nav-menu-toggle,
+  .tab-nav,
+  .chat-date-indicator,
+  .chat-archive-status,
+  .chat-scroll-bottom,
+  .player-profile-overlay,
+  .kill-aura-modal-backdrop,
+  .account-modal-overlay,
+  .account-switcher-backdrop {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+  .dashboard-brand,
+  .topbar-actions { will-change: auto; }
+  .dashboard-brand.dashboard-brand-hidden { filter: none; }
   body.account-switcher-open { overflow:hidden; }
   body.account-switcher-open .topbar { z-index:180; }
   .account-switcher-backdrop { position:fixed; inset:0; z-index:150; background:rgb(8 11 17 / .58); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); transform:translateZ(0); }

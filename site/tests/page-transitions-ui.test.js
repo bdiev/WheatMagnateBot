@@ -19,8 +19,8 @@ assert.match(pwaUpdateSource, /register\('\/sw\.js', \{ updateViaCache: 'none' \
 assert.match(pwaUpdateSource, /controllerchange[\s\S]*hadController[\s\S]*window\.location\.reload\(\)/, 'an activated update must reload an existing PWA exactly once');
 assert.match(pwaUpdateSource, /visibilitychange[\s\S]*visibilityState === 'visible'[\s\S]*checkForUpdate\(\)/, 'a resumed PWA must check for updates');
 assert.match(indexSource, /page-transitions\.js\?v=1/, 'the dashboard must load shared page transitions');
-assert.match(indexSource, /styles\.css\?v=240/, 'the dashboard must load the current shared styles');
-assert.match(requestHtmlSource, /styles\.css\?v=240/, 'the request page must load the current shared transition styles');
+assert.match(indexSource, /styles\.css\?v=241/, 'the dashboard must load the current shared styles');
+assert.match(requestHtmlSource, /styles\.css\?v=241/, 'the request page must load the current shared transition styles');
 assert.match(requestHtmlSource, /page-transitions\.js\?v=1/, 'the request page must load shared page transitions');
 assert.match(requestHtmlSource, /id="loginPrompt"[^>]*hidden/, 'the request login state must not flash before the session loads');
 assert.match(stylesSource, /@view-transition\s*\{\s*navigation:\s*auto;/, 'same-origin navigation must use native cross-document transitions when available');
@@ -53,5 +53,11 @@ assert.match(appSource, /transformOriginX[\s\S]*--seen-search-transform-origin-x
 assert.match(appSource, /collapsedScale = targetWidth > 0[\s\S]*--seen-search-collapsed-scale/, 'Seen search must begin at exactly the pressed toggle width');
 assert.match(stylesSource, /\.seen-search-box\s*\{[^}]*transform:\s*scaleX\(var\(--seen-search-collapsed-scale,[^)]+\)\)[^}]*transform-origin:\s*var\(--seen-search-transform-origin-x,[^)]+\) center;/s, 'Seen search must visually expand from the pressed toggle');
 assert.match(appSource, /topbar-stuck[\s\S]*scrollY > 96[\s\S]*topbar-compact/, 'the title must stay pinned briefly before collapsing into the control row');
+assert.match(appSource, /const CHART_TAB_BY_ID[\s\S]*function releaseInactiveChartCanvases\(\)[\s\S]*canvas\.width = 1;[\s\S]*canvas\.height = 1;/, 'hidden tabs must release their canvas backing stores');
+assert.match(appSource, /charts:\s*\{[\s\S]*chatHourly:\s*\[\][\s\S]*tpsHourly:\s*\[\]/, 'chart redraws before the first API response must use safe empty series');
+assert.match(appSource, /Math\.min\(window\.devicePixelRatio \|\| 1, mobile \? 1\.5 : 2\)/, 'mobile charts must cap Retina backing resolution');
+assert.match(appSource, /nextViewportLayout === lastViewportLayout[\s\S]*setTimeout\([\s\S]*140\)/, 'mobile browser chrome height changes must not redraw charts');
+assert.match(appSource, /visibilityState === 'hidden'[\s\S]*state\.sseNeedsFullSync = true/, 'background dashboard refreshes must defer work until the app is visible');
+assert.match(stylesSource, /@media \(max-width:700px\)[\s\S]*\.topbar::before,[\s\S]*-webkit-backdrop-filter:\s*none !important;/, 'mobile fixed layers must avoid expensive WebKit backdrop textures');
 
 console.log('Page transition UI tests passed.');
