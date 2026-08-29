@@ -70,6 +70,7 @@ const {
 } = require('./obsidian-daily-report');
 const { buildPlayerMilestonePush, buildPlayerMilestones } = require('./site/player-milestones');
 const { WebPushService } = require('./site/web-push');
+const { GameTimePushMonitor } = require('./features/gameTimePush');
 const {
   analyzeMinecraftChatComponent,
   chatComponentToString,
@@ -1056,6 +1057,15 @@ const {
   recordSystemLog
 } = createSystemLogRepository(pool);
 const webPushService = new WebPushService({ pool });
+const gameTimePushMonitor = new GameTimePushMonitor({
+  getTargets: () => webPushService.listGameTimeTargets(),
+  onTrigger: event => webPushService.deliverGameTime(event).then(result => {
+    if (result.sent || result.failed || result.removed) {
+      console.log(`[Game Time Push] ${event.gameTimeMinute} on day ${event.gameDay}: sent=${result.sent}, failed=${result.failed}, removed=${result.removed}.`);
+    }
+  }),
+  onError: error => console.error('[Game Time Push]', error?.message || error)
+});
 const notificationService = new NotificationService({
   pool,
   systemLogger: entry => recordSystemLog(entry),
@@ -8890,6 +8900,7 @@ function createBot() {
   try {
     bot = createMinecraftBot(config);
     attachPrimaryBot(bot, 'connecting');
+    gameTimePushMonitor.reset();
   } catch (err) {
     bot = null;
     detachPrimaryBot('offline');
@@ -8986,6 +8997,13 @@ function createBot() {
   }
 
   bot.on('entityUpdate', checkBotFireState);
+
+  bot.on('time', () => {
+    if (bot !== createdBot) return;
+    gameTimePushMonitor.observe(createdBot.time?.time, {
+      daylightCycle: createdBot.time?.doDaylightCycle !== false
+    });
+  });
 
   bot.on('login', async () => {
     reachedLogin = true;

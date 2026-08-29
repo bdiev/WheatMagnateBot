@@ -27,7 +27,7 @@ assert.match(appSource, /type === 'whisper_message'[\s\S]*?showWhisperToast\(eve
 
 assert.match(appSource, /function pushSubscriptionUsesServerKey[\s\S]*?applicationServerKey\(publicKey\)[\s\S]*?actualKey\.every/,
   'the browser must compare its subscription key with the current VAPID public key');
-assert.match(appSource, /subscription && !pushSubscriptionUsesServerKey[\s\S]*?subscription\.unsubscribe\(\)[\s\S]*?pushManager\.subscribe/,
-  'a stale VAPID subscription must be replaced before registering the device');
+assert.match(appSource, /subscription && \(repairNeeded \|\| !pushSubscriptionUsesServerKey[\s\S]*?subscription\.unsubscribe\(\)[\s\S]*?pushManager\.subscribe/,
+  'a stale, failed, or old-key push subscription must be replaced before registering the device');
 
 console.log('Whisper notification UI tests passed.');

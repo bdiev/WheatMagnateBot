@@ -17,7 +17,8 @@ async function run() {
   const base = {
     id: 1, endpoint: 'https://push.example/subscription', p256dh: 'a'.repeat(64), auth: 'b'.repeat(16),
     enabled: true, minimum_severity: 'warning', event_types: ['low_tps'], detailed_event_types: [], include_resolved: false,
-    quiet_hours_enabled: false, quiet_start: '22:00', quiet_end: '07:00', timezone: 'Europe/Vilnius'
+    quiet_hours_enabled: false, quiet_start: '22:00', quiet_end: '07:00', timezone: 'Europe/Vilnius',
+    game_time_enabled: false, game_time_minute: 360
   };
   const warning = { id: 10, event_type: 'low_tps', severity: 'warning', title: 'Secret title', message: 'secret SQL and coordinates' };
 
@@ -40,6 +41,9 @@ async function run() {
   assert.doesNotMatch(detailedPayload, /Secret title|secret SQL|coordinates/, 'detailed mode must still exclude arbitrary sensitive text');
   const preferences = normalizePreferences({ eventTypes: ['low_tps'], detailedEventTypes: ['low_tps', 'command_failed', 'unknown'] });
   assert.deepEqual(preferences.detailedEventTypes, ['low_tps'], 'detailed types must be valid and selected for delivery');
+  const gameTimePreferences = normalizePreferences({ gameTimeEnabled: true, gameTime: '18:30' });
+  assert.equal(gameTimePreferences.gameTimeEnabled, true);
+  assert.equal(gameTimePreferences.gameTimeMinute, 1110);
 
   const whisperSubscription = { ...base, minimum_severity: 'info', event_types: ['whisper_message'], detailed_event_types: ['whisper_message'] };
   const whisperAccountId = '11111111-1111-4111-8111-111111111111';
@@ -86,7 +90,7 @@ async function run() {
   assert.match(detailedDailyPayload.body, /WheatMagnate: 3\.4d \(5 picks\)/);
   assert.match(detailedDailyPayload.body, /Obsidian Alt: 1\.2d \(3 picks\)/);
 
-  assert.deepEqual(PUSH_TEST_TYPES.map(item => item.value), ['generic', 'critical', 'whisper', 'obsidian', 'milestone']);
+  assert.deepEqual(PUSH_TEST_TYPES.map(item => item.value), ['generic', 'critical', 'whisper', 'obsidian', 'milestone', 'game_time']);
   const whisperTest = buildTestPushPayload('whisper', '42');
   assert.match(whisperTest.title, /^Test · New private message$/);
   assert.match(whisperTest.body, /Notch: This is a test Minecraft whisper\./);
@@ -95,15 +99,37 @@ async function run() {
   const obsidianTest = buildTestPushPayload('obsidian', '42');
   assert.match(obsidianTest.body, /WheatMagnate: 4\.3d/);
   assert.match(obsidianTest.body, /Obsidian Alt: 2\.0d/);
+  const gameTimeTest = buildTestPushPayload('game_time', '42');
+  assert.equal(gameTimeTest.title, 'Test · Minecraft time reached');
+  assert.match(gameTimeTest.body, /18:30 in Minecraft/);
   assert.throws(() => buildTestPushPayload('not-a-test-type'), /Invalid test push type/);
+
+  const gameTimeNotification = {
+    id: 'server-game-time-42-1110', event_type: 'server_game_time', severity: 'info',
+    metadata: { gameTimeMinute: 1110, gameDay: 42 }
+  };
+  const gameTimeSubscription = { ...base, minimum_severity: 'critical', event_types: ['low_tps'], game_time_enabled: true };
+  assert.equal(shouldDeliverSubscription(gameTimeSubscription, gameTimeNotification), true,
+    'the dedicated game-time setting must bypass operational severity and event filters');
+  assert.equal(shouldDeliverSubscription({ ...gameTimeSubscription, game_time_enabled: false }, gameTimeNotification), false);
+  const gameTimePayload = safePushPayload(gameTimeNotification);
+  assert.equal(gameTimePayload.title, 'Minecraft time reached');
+  assert.match(gameTimePayload.body, /18:30 in Minecraft/);
+  assert.equal(new URL(gameTimePayload.data.url, 'https://dashboard.example').searchParams.get('push'), 'settings');
 
   const serviceWorkerSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'sw.js'), 'utf8');
   assert.match(serviceWorkerSource, /payload\.body[\s\S]*?slice\(0, 2000\)/,
     'expanded push bodies must retain complete multi-account report details');
+  assert.match(serviceWorkerSource, /pushsubscriptionchange[\s\S]*?push_subscription_changed/,
+    'browser-side subscription rotation must tell an open PWA to repair its server registration');
   const pushAppSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
   const pushStylesSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'styles.css'), 'utf8');
   assert.match(pushAppSource, /class="push-time-control"><input type="time"/,
     'quiet-hours inputs must have a width-constraining wrapper for iOS');
+  assert.match(pushAppSource, /name="gameTimeEnabled"[\s\S]*?name="gameTime"/,
+    'each push device must expose its Minecraft time alert and target time');
+  assert.match(pushAppSource, /pushSubscriptionNeedsRepair[\s\S]*?subscription\.unsubscribe\(\)/,
+    'stale local subscriptions must be recreated instead of being reused');
   assert.match(pushStylesSource, /\.push-time-control \{[^}]*overflow: hidden;/,
     'the iOS time-input wrapper must clip native intrinsic overflow');
 
@@ -159,6 +185,7 @@ async function run() {
   const service = new WebPushService({
     pool: { query: async (sql, params) => {
       queries.push({ sql, params });
+      if (/WITH claimed AS/.test(sql)) return { rows: [gameTimeSubscription] };
       if (/SELECT ps\.\*/.test(sql)) return { rows: params?.length ? [whisperSubscription] : [milestoneSubscription] };
       return { rows: [], rowCount: 1 };
     } },
@@ -183,6 +210,12 @@ async function run() {
   assert.ok(milestoneQuery, 'milestone delivery must query approved push subscribers');
   assert.match(milestoneQuery.sql, /u\.status='approved'/);
   assert.doesNotMatch(milestoneQuery.sql, /u\.role='admin'/, 'milestone push must work for non-admin site users');
+
+  const gameTimeDelivery = await service.deliverGameTime({ gameTimeMinute: 1110, gameDay: 42 });
+  assert.equal(gameTimeDelivery.sent, 1);
+  assert.match(sentPayloads.at(-1), /18:30 in Minecraft/);
+  const gameTimeQuery = queries.find(item => /WITH claimed AS/.test(item.sql));
+  assert.deepEqual(gameTimeQuery.params, [1110, String(42 * 1440 + 1110)]);
 
   console.log('Web push tests passed.');
 }

@@ -135,6 +135,8 @@ const state = {
   whisperToastPayload: null,
   lastWhisperToastEventId: null,
   pushSubscriptionKeyMismatch: false,
+  pushSubscriptionNeedsRepair: false,
+  pushRepairDevice: null,
   killAuraData: null,
   killAuraSelectedMobs: new Set(),
   killAuraModalSelectionSnapshot: new Set(),
@@ -7471,6 +7473,10 @@ function pushDeviceHtml(device, eventTypes, testTypes = []) {
         <label><input type="checkbox" name="quietHoursEnabled"${device.quietHoursEnabled ? ' checked' : ''}><span><strong>Quiet hours</strong><small>Pause overnight</small></span></label>
       </div>
       <div class="push-quiet-hours"><label><span>Quiet from</span><span class="push-time-control"><input type="time" name="quietStart" value="${escapeHtml(device.quietStart || '22:00')}"></span></label><span class="push-time-divider" aria-hidden="true">→</span><label><span>Until</span><span class="push-time-control"><input type="time" name="quietEnd" value="${escapeHtml(device.quietEnd || '07:00')}"></span></label></div>
+      <div class="push-game-time">
+        <label class="push-game-time-toggle"><input type="checkbox" name="gameTimeEnabled"${device.gameTimeEnabled ? ' checked' : ''}><span><strong>Minecraft time alert</strong><small>Notify once per game day when this time is reached</small></span></label>
+        <label class="push-game-time-value"><span>Game time</span><span class="push-time-control"><input type="time" name="gameTime" value="${escapeHtml(device.gameTime || '06:00')}"></span></label>
+      </div>
     </section>
     <details class="push-event-types"><summary><span><strong>Event types</strong><small>Fine-tune notifications and details</small></span><span class="push-event-count">${selectedEventCount} selected</span></summary><div>${eventOptions}</div><p class="muted">Uncheck every event to allow all event types.</p></details>
     <section class="push-test-panel" aria-label="Test notification">
@@ -7486,16 +7492,24 @@ function pushDeviceHtml(device, eventTypes, testTypes = []) {
 async function identifyCurrentPushDevice(devices) {
   state.currentPushSubscriptionId = null;
   state.pushSubscriptionKeyMismatch = false;
+  state.pushSubscriptionNeedsRepair = false;
+  state.pushRepairDevice = null;
   if (!browserPushSupported()) return;
   const registration = await navigator.serviceWorker.ready;
   const subscription = await registration.pushManager.getSubscription();
   if (!subscription) return;
+  const suffix = subscription.endpoint.slice(-18);
+  const device = devices.find(item => item.endpointSuffix === suffix) || null;
+  state.currentPushSubscriptionId = device?.id || null;
+  state.pushRepairDevice = device;
   if (!pushSubscriptionUsesServerKey(subscription, state.pushSettings?.publicKey)) {
     state.pushSubscriptionKeyMismatch = true;
+    state.pushSubscriptionNeedsRepair = true;
     return;
   }
-  const suffix = subscription.endpoint.slice(-18);
-  state.currentPushSubscriptionId = devices.find(device => device.endpointSuffix === suffix)?.id || null;
+  // The server removes endpoints rejected with HTTP 404/410. If the browser
+  // kept that local subscription, it must be recreated instead of reused.
+  state.pushSubscriptionNeedsRepair = !device || Number(device.failureCount) > 0;
 }
 
 async function loadPushSettings() {
@@ -7507,14 +7521,16 @@ async function loadPushSettings() {
     state.pushSettings = payload;
     await identifyCurrentPushDevice(payload.devices || []);
     const supported = browserPushSupported();
+    const repairNeeded = state.pushSubscriptionKeyMismatch || state.pushSubscriptionNeedsRepair;
     if (button) {
       button.disabled = !supported || !payload.configured || Notification.permission === 'denied';
-      button.textContent = state.pushSubscriptionKeyMismatch ? 'Repair push on this device' : 'Enable on this device';
+      button.textContent = repairNeeded ? 'Repair push on this device' : 'Enable on this device';
     }
     if (status) status.textContent = !supported ? 'Push API is not supported in this browser or the page is not using HTTPS.'
       : !payload.configured ? (payload.configurationError || 'Push is not configured on the server.')
         : Notification.permission === 'denied' ? 'Browser permission is blocked. Change it in the browser site settings.'
           : state.pushSubscriptionKeyMismatch ? 'This browser subscription uses an old server key. Repair it to receive notifications again.'
+            : state.pushSubscriptionNeedsRepair ? 'This browser subscription is stale or has delivery failures. Repair it to receive notifications again.'
           : state.currentPushSubscriptionId ? 'This browser is registered. Manage it below.' : 'Push is off on this browser.';
     $('#pushDeviceList').innerHTML = payload.devices?.length
       ? payload.devices.map(device => pushDeviceHtml(device, payload.eventTypes || [], payload.testTypes || [])).join('')
@@ -7534,7 +7550,10 @@ async function enablePushOnCurrentDevice() {
     if (permission !== 'granted') throw new Error('Browser notification permission was not granted.');
     const registration = await navigator.serviceWorker.ready;
     let subscription = await registration.pushManager.getSubscription();
-    if (subscription && !pushSubscriptionUsesServerKey(subscription, state.pushSettings.publicKey)) {
+    const repairedDevice = state.pushRepairDevice;
+    const oldSubscriptionId = state.currentPushSubscriptionId;
+    const repairNeeded = state.pushSubscriptionKeyMismatch || state.pushSubscriptionNeedsRepair;
+    if (subscription && (repairNeeded || !pushSubscriptionUsesServerKey(subscription, state.pushSettings.publicKey))) {
       await subscription.unsubscribe();
       subscription = null;
     }
@@ -7543,11 +7562,16 @@ async function enablePushOnCurrentDevice() {
       applicationServerKey: applicationServerKey(state.pushSettings.publicKey)
     });
     const payload = await postJson('/api/push/subscriptions', {
-      subscription: subscription.toJSON(), deviceName: defaultPushDeviceName(), enabled: true,
-      minimumSeverity: 'critical', eventTypes: [], includeResolved: false,
-      quietHoursEnabled: false, quietStart: '22:00', quietEnd: '07:00',
+      subscription: subscription.toJSON(), deviceName: repairedDevice?.deviceName || defaultPushDeviceName(), enabled: true,
+      minimumSeverity: repairedDevice?.minimumSeverity || 'critical', eventTypes: repairedDevice?.eventTypes || [],
+      detailedEventTypes: repairedDevice?.detailedEventTypes || [], includeResolved: repairedDevice?.includeResolved || false,
+      quietHoursEnabled: repairedDevice?.quietHoursEnabled || false, quietStart: repairedDevice?.quietStart || '22:00', quietEnd: repairedDevice?.quietEnd || '07:00',
+      gameTimeEnabled: repairedDevice?.gameTimeEnabled || false, gameTime: repairedDevice?.gameTime || '06:00',
       timezone: state.accountTimezone
     });
+    if (oldSubscriptionId && String(oldSubscriptionId) !== String(payload.currentSubscriptionId)) {
+      await deleteJson(`/api/push/subscriptions/${encodeURIComponent(oldSubscriptionId)}`).catch(() => {});
+    }
     state.pushSettings = payload;
     state.currentPushSubscriptionId = payload.currentSubscriptionId;
     setBanner('Browser push enabled for this device. Send a test below to verify delivery.');
@@ -7565,6 +7589,8 @@ function pushPreferencesFromForm(form) {
     includeResolved: form.elements.includeResolved.checked,
     quietHoursEnabled: form.elements.quietHoursEnabled.checked,
     quietStart: form.elements.quietStart.value, quietEnd: form.elements.quietEnd.value,
+    gameTimeEnabled: form.elements.gameTimeEnabled.checked,
+    gameTime: form.elements.gameTime.value,
     timezone: state.accountTimezone
   };
 }
@@ -7596,7 +7622,15 @@ async function handlePushDeviceClick(event) {
       const form = test.closest('[data-push-device-id]');
       const testType = form?.elements?.pushTestType?.value || 'generic';
       const result = await postJson('/api/push/test', { subscriptionId: test.dataset.pushTest, testType });
-      setBanner(`Sent ${result.testType || testType} test push.`);
+      if (result.removed) {
+        if (String(test.dataset.pushTest) === String(state.currentPushSubscriptionId) && browserPushSupported()) {
+          const registration = await navigator.serviceWorker.ready;
+          await (await registration.pushManager.getSubscription())?.unsubscribe();
+        }
+        setBanner('The expired push endpoint was removed. Enable push on this device again.');
+      } else {
+        setBanner(`Sent ${result.testType || testType} test push.`);
+      }
       await loadPushSettings();
     }
     if (remove) {
@@ -8836,6 +8870,10 @@ $('#whisperToastOpen')?.addEventListener('click', () => openWhisperToast().catch
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.addEventListener('message', event => {
     if (event.data?.type === 'open_push_destination') openPushDestination(event.data.destination, event.data.player, event.data.accountId);
+    if (event.data?.type === 'push_subscription_changed') {
+      loadPushSettings().catch(() => {});
+      setBanner('The browser push subscription changed. Open Settings and repair this device.');
+    }
   });
 }
 $('#adminUsersList')?.addEventListener('click', handleAdminUserAction);

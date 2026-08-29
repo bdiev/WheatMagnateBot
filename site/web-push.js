@@ -1,6 +1,7 @@
 'use strict';
 
 const webPush = require('web-push');
+const { formatGameTimeMinute, gameTimeToMinute } = require('../features/gameTimePush');
 
 const EVENT_TYPES = Object.freeze([
   'bot_disconnected', 'bot_reconnected', 'bot_kicked', 'unauthorized_player_nearby',
@@ -14,7 +15,8 @@ const PUSH_TEST_TYPES = Object.freeze([
   { value: 'critical', label: 'Critical alert' },
   { value: 'whisper', label: 'Detailed Whisper' },
   { value: 'obsidian', label: 'Obsidian daily report' },
-  { value: 'milestone', label: 'Player milestone' }
+  { value: 'milestone', label: 'Player milestone' },
+  { value: 'game_time', label: 'Minecraft game time' }
 ]);
 const PUSH_TEST_TYPE_SET = new Set(PUSH_TEST_TYPES.map(item => item.value));
 const SEVERITY_RANK = Object.freeze({ info: 0, warning: 1, critical: 2 });
@@ -25,7 +27,8 @@ const SAFE_EVENT_LABELS = Object.freeze({
   low_tps: 'Server TPS is low', database_unavailable: 'Database unavailable',
   repeated_reconnects: 'Repeated reconnects', command_failed: 'A bot command failed',
   whisper_message: 'New private message', daily_obsidian_report: 'Daily Obsidian Farm Report',
-  player_milestone: 'Player Milestone', resource_request_created: 'New resource request'
+  player_milestone: 'Player Milestone', resource_request_created: 'New resource request',
+  server_game_time: 'Minecraft time reached'
 });
 
 function normalizeTime(value, fallback) {
@@ -62,6 +65,7 @@ function isQuietHours(subscription, now = new Date()) {
 function shouldDeliverSubscription(subscription, notification, { resolved = false, now = new Date() } = {}) {
   if (!subscription.enabled || isQuietHours(subscription, now)) return false;
   if (resolved && !subscription.include_resolved) return false;
+  if (notification.event_type === 'server_game_time') return subscription.game_time_enabled === true;
   const selected = Array.isArray(subscription.event_types) ? subscription.event_types : [];
   if (selected.length && !selected.includes(notification.event_type)) return false;
   if (['whisper_message', 'daily_obsidian_report', 'player_milestone', 'resource_request_created'].includes(notification.event_type)) return true;
@@ -163,6 +167,10 @@ function safeDetailedBody(notification, { resolved = false } = {}) {
       const identity = username ? `${username}${requestId ? ` submitted request #${requestId}` : ' submitted a request'}` : `Resource request${requestId ? ` #${requestId}` : ''}`;
       return resources ? `${identity}: ${resources}` : `${identity} is waiting for review.`;
     }
+    case 'server_game_time': {
+      const minute = number('gameTimeMinute');
+      return `It is now ${formatGameTimeMinute(minute)} in Minecraft.`;
+    }
     default:
       return `${label}. Open the dashboard for details.`;
   }
@@ -178,10 +186,12 @@ function safePushPayload(notification, { resolved = false, test = false, detaile
     : notification.event_type === 'whisper_message' ? 'whispers'
       : notification.event_type === 'daily_obsidian_report' ? 'obsidian'
         : notification.event_type === 'player_milestone' ? 'players'
+          : notification.event_type === 'server_game_time' ? 'settings'
           : notification.event_type === 'resource_request_created' ? 'requests' : 'notifications';
   const dailyReport = notification.event_type === 'daily_obsidian_report';
   const scheduledEvent = dailyReport || notification.event_type === 'player_milestone';
-  const highlightedEvent = scheduledEvent || notification.event_type === 'resource_request_created';
+  const gameTimeEvent = notification.event_type === 'server_game_time';
+  const highlightedEvent = scheduledEvent || gameTimeEvent || notification.event_type === 'resource_request_created';
   const destinationParams = new URLSearchParams({ push: destination });
   if (destination === 'whispers') {
     const accountId = String(notification.metadata?.accountId || '').trim();
@@ -193,7 +203,7 @@ function safePushPayload(notification, { resolved = false, test = false, detaile
     : '/items/Wheat.png';
   return {
     title: test ? 'WheatMagnateBot test' : highlightedEvent ? label : critical ? 'Critical bot alert' : resolved ? 'Issue resolved' : detailed ? label : 'WheatMagnateBot alert',
-    body: test ? `${label}. Open the dashboard for details.` : detailed
+    body: test ? `${label}. Open the dashboard for details.` : (detailed || gameTimeEvent)
       ? safeDetailedBody(notification, { resolved })
       : `${label}. Open the dashboard for details.`,
     icon,
@@ -234,6 +244,10 @@ function buildTestPushPayload(testType = 'generic', id = 'preview') {
     milestone: {
       event_type: 'player_milestone', severity: 'info',
       metadata: { milestones: [{ username: 'ChunkBase', years: 3 }, { username: 'H4YWIRE', years: 5 }] }
+    },
+    game_time: {
+      event_type: 'server_game_time', severity: 'info',
+      metadata: { gameTimeMinute: 1110, gameDay: 42 }
     }
   };
   const notification = { id: `test-${type}-${id}`, ...samples[type] };
@@ -263,7 +277,9 @@ function normalizePreferences(input = {}) {
     quietHoursEnabled: Boolean(input.quietHoursEnabled),
     quietStart: normalizeTime(input.quietStart, '22:00'),
     quietEnd: normalizeTime(input.quietEnd, '07:00'),
-    timezone
+    timezone,
+    gameTimeEnabled: input.gameTimeEnabled === true,
+    gameTimeMinute: gameTimeToMinute(input.gameTime, 360)
   };
 }
 
@@ -317,6 +333,7 @@ class WebPushService {
     this.publicKey = String(publicKey || '').trim();
     const normalizedPrivateKey = String(privateKey || '').trim();
     this.sender = sender;
+    this.gameTimeTargetsCache = { expiresAt: 0, values: [] };
     this.configured = false;
     if (!this.publicKey || !normalizedPrivateKey) {
       this.configurationError = 'VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY must both be configured.';
@@ -330,12 +347,14 @@ class WebPushService {
 
   async listForUser(userId) {
     const result = await this.pool.query(`SELECT id,device_name,enabled,minimum_severity,event_types,detailed_event_types,include_resolved,
-      quiet_hours_enabled,quiet_start::text,quiet_end::text,timezone,last_success_at,failure_count,created_at,updated_at,
+      quiet_hours_enabled,quiet_start::text,quiet_end::text,timezone,game_time_enabled,game_time_minute,
+      last_success_at,failure_count,created_at,updated_at,
       RIGHT(endpoint,18) endpoint_suffix FROM push_subscriptions WHERE user_id=$1 ORDER BY updated_at DESC`, [userId]);
     return result.rows.map(row => ({
       id: String(row.id), deviceName: row.device_name, enabled: row.enabled, minimumSeverity: row.minimum_severity,
       eventTypes: row.event_types || [], detailedEventTypes: row.detailed_event_types || [], includeResolved: row.include_resolved, quietHoursEnabled: row.quiet_hours_enabled,
       quietStart: normalizeTime(row.quiet_start, '22:00'), quietEnd: normalizeTime(row.quiet_end, '07:00'), timezone: row.timezone,
+      gameTimeEnabled: row.game_time_enabled === true, gameTime: formatGameTimeMinute(row.game_time_minute),
       endpointSuffix: row.endpoint_suffix, lastSuccessAt: row.last_success_at, failureCount: row.failure_count,
       createdAt: row.created_at, updatedAt: row.updated_at
     }));
@@ -346,14 +365,16 @@ class WebPushService {
     const subscription = validateBrowserSubscription(input.subscription);
     const preferences = normalizePreferences(input);
     const deviceName = String(input.deviceName || 'Browser').trim().slice(0, 80) || 'Browser';
-    const result = await this.pool.query(`INSERT INTO push_subscriptions(user_id,endpoint,p256dh,auth,device_name,enabled,minimum_severity,event_types,detailed_event_types,include_resolved,quiet_hours_enabled,quiet_start,quiet_end,timezone)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::time,$13::time,$14)
+    const result = await this.pool.query(`INSERT INTO push_subscriptions(user_id,endpoint,p256dh,auth,device_name,enabled,minimum_severity,event_types,detailed_event_types,include_resolved,quiet_hours_enabled,quiet_start,quiet_end,timezone,game_time_enabled,game_time_minute)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::time,$13::time,$14,$15,$16)
       ON CONFLICT(endpoint) DO UPDATE SET user_id=EXCLUDED.user_id,p256dh=EXCLUDED.p256dh,auth=EXCLUDED.auth,device_name=EXCLUDED.device_name,
         enabled=EXCLUDED.enabled,minimum_severity=EXCLUDED.minimum_severity,event_types=EXCLUDED.event_types,detailed_event_types=EXCLUDED.detailed_event_types,include_resolved=EXCLUDED.include_resolved,
-        quiet_hours_enabled=EXCLUDED.quiet_hours_enabled,quiet_start=EXCLUDED.quiet_start,quiet_end=EXCLUDED.quiet_end,timezone=EXCLUDED.timezone,updated_at=NOW()
+        quiet_hours_enabled=EXCLUDED.quiet_hours_enabled,quiet_start=EXCLUDED.quiet_start,quiet_end=EXCLUDED.quiet_end,timezone=EXCLUDED.timezone,
+        game_time_enabled=EXCLUDED.game_time_enabled,game_time_minute=EXCLUDED.game_time_minute,game_time_last_trigger_key=NULL,updated_at=NOW()
       RETURNING id`, [userId, subscription.endpoint, subscription.keys.p256dh, subscription.keys.auth, deviceName, preferences.enabled,
       preferences.minimumSeverity, preferences.eventTypes, preferences.detailedEventTypes, preferences.includeResolved, preferences.quietHoursEnabled,
-      preferences.quietStart, preferences.quietEnd, preferences.timezone]);
+      preferences.quietStart, preferences.quietEnd, preferences.timezone, preferences.gameTimeEnabled, preferences.gameTimeMinute]);
+    this.gameTimeTargetsCache.expiresAt = 0;
     return String(result.rows[0].id);
   }
 
@@ -362,16 +383,65 @@ class WebPushService {
     const p = normalizePreferences(input);
     const name = String(input.deviceName || 'Browser').trim().slice(0, 80) || 'Browser';
     const result = await this.pool.query(`UPDATE push_subscriptions SET device_name=$3,enabled=$4,minimum_severity=$5,event_types=$6,
-      detailed_event_types=$7,include_resolved=$8,quiet_hours_enabled=$9,quiet_start=$10::time,quiet_end=$11::time,timezone=$12,updated_at=NOW()
+      detailed_event_types=$7,include_resolved=$8,quiet_hours_enabled=$9,quiet_start=$10::time,quiet_end=$11::time,timezone=$12,
+      game_time_enabled=$13,game_time_minute=$14,game_time_last_trigger_key=CASE WHEN game_time_minute<>$14 THEN NULL ELSE game_time_last_trigger_key END,updated_at=NOW()
       WHERE id=$1 AND user_id=$2 RETURNING id`, [id, userId, name, p.enabled, p.minimumSeverity, p.eventTypes, p.detailedEventTypes, p.includeResolved,
-      p.quietHoursEnabled, p.quietStart, p.quietEnd, p.timezone]);
+      p.quietHoursEnabled, p.quietStart, p.quietEnd, p.timezone, p.gameTimeEnabled, p.gameTimeMinute]);
     if (!result.rowCount) throw Object.assign(new Error('Push device not found.'), { statusCode: 404 });
+    this.gameTimeTargetsCache.expiresAt = 0;
   }
 
   async remove(userId, id) {
     id = normalizeSubscriptionId(id);
     const result = await this.pool.query('DELETE FROM push_subscriptions WHERE id=$1 AND user_id=$2 RETURNING id', [id, userId]);
     if (!result.rowCount) throw Object.assign(new Error('Push device not found.'), { statusCode: 404 });
+    this.gameTimeTargetsCache.expiresAt = 0;
+  }
+
+  async listGameTimeTargets({ now = Date.now() } = {}) {
+    if (!this.configured || !this.pool) return [];
+    if (this.gameTimeTargetsCache.expiresAt > now) return [...this.gameTimeTargetsCache.values];
+    const result = await this.pool.query(`SELECT DISTINCT ps.game_time_minute FROM push_subscriptions ps
+      JOIN site_users u ON u.id=ps.user_id
+      WHERE ps.enabled=TRUE AND ps.game_time_enabled=TRUE AND u.status='approved'
+      ORDER BY ps.game_time_minute`);
+    const values = result.rows.map(row => Number(row.game_time_minute))
+      .filter(value => Number.isInteger(value) && value >= 0 && value < 1440);
+    this.gameTimeTargetsCache = { expiresAt: now + 5_000, values };
+    return [...values];
+  }
+
+  async deliverGameTime({ gameTimeMinute, gameDay, now = new Date() } = {}) {
+    if (!this.configured || !this.pool) return { sent: 0, skipped: 0, failed: 0, removed: 0, unavailable: true };
+    const minute = Number(gameTimeMinute);
+    const day = Number(gameDay);
+    if (!Number.isInteger(minute) || minute < 0 || minute >= 1440 || !Number.isSafeInteger(day)) {
+      throw new TypeError('Valid Minecraft game time and day are required.');
+    }
+    const triggerKey = String(day * 1440 + minute);
+    const rows = await this.pool.query(`WITH claimed AS (
+      UPDATE push_subscriptions ps SET game_time_last_trigger_key=$2::bigint
+      FROM site_users u
+      WHERE ps.user_id=u.id AND ps.enabled=TRUE AND ps.game_time_enabled=TRUE AND ps.game_time_minute=$1
+        AND u.status='approved' AND ps.game_time_last_trigger_key IS DISTINCT FROM $2::bigint
+      RETURNING ps.*
+    )
+    SELECT claimed.*,COALESCE(np.account_timezone,claimed.timezone) AS timezone FROM claimed
+    LEFT JOIN site_navigation_preferences np ON np.user_id=claimed.user_id`, [minute, triggerKey]);
+    const notification = {
+      id: `server-game-time-${day}-${minute}`,
+      event_type: 'server_game_time',
+      severity: 'info',
+      metadata: { gameTimeMinute: minute, gameDay: day }
+    };
+    const result = await deliverPushSubscriptions({
+      subscriptions: rows.rows, notification, now,
+      sendNotification: (...args) => this.sender.sendNotification(...args),
+      removeInvalid: subscriptionId => this.pool.query('DELETE FROM push_subscriptions WHERE id=$1', [subscriptionId])
+    });
+    if (result.sentIds.length) await this.pool.query(`UPDATE push_subscriptions SET last_success_at=NOW(),failure_count=0 WHERE id=ANY($1::bigint[])`, [result.sentIds]).catch(() => {});
+    if (result.failedIds.length) await this.pool.query(`UPDATE push_subscriptions SET failure_count=failure_count+1,game_time_last_trigger_key=NULL WHERE id=ANY($1::bigint[]) AND game_time_last_trigger_key=$2::bigint`, [result.failedIds, triggerKey]).catch(() => {});
+    return result;
   }
 
   async deliver(notification, { resolved = false, now = new Date() } = {}) {

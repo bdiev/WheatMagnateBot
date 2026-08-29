@@ -14,6 +14,8 @@ Configure `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and a valid `VAPID_SUBJECT` (
 
 If the VAPID pair is replaced, **Settings** now detects that the browser still uses the old public key and offers **Repair push on this device**. Repairing unsubscribes the stale browser endpoint and creates a new subscription with the current key. A test push should be sent after enabling or repairing a device.
 
+The same repair action is offered when the browser still holds a local subscription that the server removed after a `404`/`410` response, or when the device has recorded delivery failures. Repair preserves that device's preferences, replaces the browser endpoint, and removes the stale server row.
+
 ## Delivery rules
 
 Each subscription belongs to one `site_users` row and stores per-device preferences:
@@ -33,6 +35,8 @@ While the dashboard is open, the same authenticated realtime event displays a te
 The scheduled `daily_obsidian_report` event is emitted by the existing daily-report scheduler after its atomic per-calendar-day claim, so reconnects, overlapping timers, and multiple replicas cannot create repeated push reports. It follows each device's event selection and quiet hours but is not suppressed by the operational minimum-severity filter. Compact mode shows only the report title. Detailed mode adds the combined 24-hour mined total and hourly average across the primary and all managed bots, their aggregate pickaxe and food counts, and a per-bot estimate of how many days its usable pickaxes will last. The estimate uses the active session rate when enough session data exists, otherwise the bot's recent production rate, and its observed blocks per retired pickaxe with a 1,500-block fallback. Clicking the push opens **Obsidian Farm**.
 
 The scheduled `player_milestone` event uses the same daily scheduler and calendar timezone. It is emitted at most once per day when one or more whitelisted players have a registration anniversary that day and can be delivered to devices owned by any approved site account. Multiple anniversaries are combined into one push. The event follows device selection and quiet hours, but not the operational minimum-severity filter. Compact mode keeps player names private; Detailed mode lists up to three player names and anniversary years. Clicking the push opens **Player Stats**.
+
+Each device can also enable a **Minecraft time alert** and choose an in-game time in `HH:MM` format. The primary Mineflayer connection observes the server's absolute world clock and sends the push once when that time is crossed on each Minecraft day. Minecraft tick `0` is displayed as `06:00`, tick `6000` as `12:00`, tick `12000` as `18:00`, and tick `18000` as `00:00`. Reconnect baselines, backwards clock changes, frozen daylight cycles, and large `/time` jumps do not generate catch-up bursts. The alert is personal to the device, works for any approved site account, follows quiet hours, and is independent of operational severity and event-type filters.
 
 Each selected event type also has an optional `Detailed` preference. It is disabled by default and stored per device. Detailed pushes may include allowlisted operational measurements such as TPS, food level, durability, distance, stall duration, or reconnect count. Arbitrary operational errors and coordinates are not copied to the lock screen. `whisper_message` is the explicit exception: its Detailed mode shows the sender and message text and should be enabled only on a trusted device.
 

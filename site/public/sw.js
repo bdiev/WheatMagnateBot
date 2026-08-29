@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = '264';
+const CACHE_VERSION = '265';
 const CACHE_NAME = `wheatmagnatebot-v${CACHE_VERSION}`;
 const APP_SHELL = [
   '/',
@@ -135,6 +135,12 @@ self.addEventListener('push', event => {
     requireInteraction: Boolean(payload.requireInteraction)
   };
   event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener('pushsubscriptionchange', event => {
+  event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clients => {
+    for (const client of clients) client.postMessage({ type: 'push_subscription_changed' });
+  }));
 });
 
 self.addEventListener('notificationclick', event => {
