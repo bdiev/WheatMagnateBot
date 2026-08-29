@@ -1,7 +1,6 @@
 'use strict';
 
 const webPush = require('web-push');
-const { formatGameTimeMinute, gameTimeToMinute } = require('../features/gameTimePush');
 
 const EVENT_TYPES = Object.freeze([
   'bot_disconnected', 'bot_reconnected', 'bot_kicked', 'unauthorized_player_nearby',
@@ -30,6 +29,23 @@ const SAFE_EVENT_LABELS = Object.freeze({
   player_milestone: 'Player Milestone', resource_request_created: 'New resource request',
   server_game_time: 'Minecraft time reached'
 });
+
+// Keep these two formatting helpers local: the site is also deployed from the
+// `site/` directory as an independent Docker build context, where root-level
+// bot feature modules are intentionally unavailable.
+function gameTimeToMinute(value, fallback = 360) {
+  const match = String(value || '').match(/^(\d{2}):(\d{2})$/);
+  if (!match) return fallback;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  return hour <= 23 && minute <= 59 ? hour * 60 + minute : fallback;
+}
+
+function formatGameTimeMinute(value) {
+  const minute = Number(value);
+  const normalized = Number.isInteger(minute) && minute >= 0 && minute < 1440 ? minute : 360;
+  return `${String(Math.floor(normalized / 60)).padStart(2, '0')}:${String(normalized % 60).padStart(2, '0')}`;
+}
 
 function normalizeTime(value, fallback) {
   const match = String(value || '').match(/^(\d{2}):(\d{2})/);
