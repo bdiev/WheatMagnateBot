@@ -50,7 +50,7 @@ function createPearlLoaderFeature({
   openDelayMs = 2_000,
   visibilityPollMs = 250,
   interactionSettleMs = 250,
-  navigationRange = 3,
+  navigationRange = 1,
   goalFactory = (x, y, z, range) => new GoalNear(x, y, z, range),
   movementsFactory = bot => new Movements(bot),
   setTimer = setTimeout,

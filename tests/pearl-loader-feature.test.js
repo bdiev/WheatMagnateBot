@@ -66,6 +66,7 @@ async function testCompleteCycle() {
   assert.equal(recreated,1,'an existing stopped runtime is recreated from the refreshed account settings');
   assert.equal(feature.getStatus().stage,'awaiting_yes');
   assert.deepEqual(chats,['/w bdiev_ Ready?']);
+  assert.equal(bot.pathfinder.goal.range,1,'the Loader must approach within one block of the trapdoor');
   assert.equal(movementsSeen[0].canDig,false,'pathfinder must never dig blocks');
   assert.equal(movementsSeen[0].allow1by1towers,false);
   assert.equal(await feature.handleLoaderWhisper(loaderAccount.id,'SomeoneElse','Yes'),false);
