@@ -28,8 +28,14 @@ function fakeDatabase(player = null) {
       if (compact.startsWith('UPDATE player_activity SET')) {
         const notesMatch = compact.match(/admin_notes=\$(\d+)/);
         const tagsMatch = compact.match(/admin_tags=\$(\d+)/);
+        const hatchXMatch = compact.match(/pearl_hatch_x=\$(\d+)/);
+        const hatchYMatch = compact.match(/pearl_hatch_y=\$(\d+)/);
+        const hatchZMatch = compact.match(/pearl_hatch_z=\$(\d+)/);
         if (notesMatch) current.admin_notes = params[Number(notesMatch[1]) - 1];
         if (tagsMatch) current.admin_tags = params[Number(tagsMatch[1]) - 1];
+        if (hatchXMatch) current.pearl_hatch_x = params[Number(hatchXMatch[1]) - 1];
+        if (hatchYMatch) current.pearl_hatch_y = params[Number(hatchYMatch[1]) - 1];
+        if (hatchZMatch) current.pearl_hatch_z = params[Number(hatchZMatch[1]) - 1];
         return { rows: [{ ...current }], rowCount: 1 };
       }
       if (compact.startsWith('SELECT LOWER(own_name.username)')) {
@@ -57,13 +63,15 @@ async function testAdminEdit() {
   });
   const audits = [];
   const result = await patchAdminPlayer(admin, playerUuid, {
-    notes: 'Keep an eye on build activity.', tags: ['Builder', 'trusted']
+    notes: 'Keep an eye on build activity.', tags: ['Builder', 'trusted'],
+    pearlHatch: { x:120,y:64,z:-42 }
   }, database, entry => audits.push(entry));
   assert.equal(result.player.notes, 'Keep an eye on build activity.');
   assert.deepEqual(result.player.tags, ['Builder', 'trusted']);
+  assert.deepEqual(result.player.pearlHatch, { x:120,y:64,z:-42 });
   const update = database.statements.find(statement => statement.sql.startsWith('UPDATE player_activity SET'));
-  assert.match(update.sql, /admin_notes=\$1,admin_tags=\$2::text\[\]/, 'PATCH must update only allowlisted submitted fields');
-  assert.deepEqual(audits[0].details.changedFields, ['notes', 'tags']);
+  assert.match(update.sql, /admin_notes=\$1,admin_tags=\$2::text\[\],pearl_hatch_x=\$3,pearl_hatch_y=\$4,pearl_hatch_z=\$5/, 'PATCH must update only allowlisted submitted fields');
+  assert.deepEqual(audits[0].details.changedFields, ['notes', 'tags', 'pearlHatch']);
   assert.doesNotMatch(JSON.stringify(audits[0]), /Keep an eye/, 'audit logs must not include note contents');
 }
 
@@ -72,6 +80,9 @@ async function testEditValidationAndAuthorization() {
   assert.throws(() => normalizeAdminPlayerPatch({ username: 'ForgedName' }), /cannot be edited/);
   assert.throws(() => normalizeAdminPlayerPatch({ notes: 123 }), /Notes must be text/);
   assert.throws(() => normalizeAdminPlayerPatch({ tags: ['bad/tag'] }), /Each tag must be/);
+  assert.deepEqual(normalizeAdminPlayerPatch({ pearlHatch:{x:'10',y:64,z:-20} }), { pearlHatch:{x:10,y:64,z:-20} });
+  assert.deepEqual(normalizeAdminPlayerPatch({ pearlHatch:null }), { pearlHatch:null });
+  assert.throws(() => normalizeAdminPlayerPatch({ pearlHatch:{x:'',y:64,z:-20} }), /integer X, Y and Z/);
   assert.deepEqual(adminPlayerIdentity(playerUuid), { type: 'uuid', value: playerUuid });
   assert.deepEqual(adminPlayerIdentity('42'), { type: 'id', value: '42' });
   assert.throws(() => adminPlayerIdentity('CurrentName'), error => error.statusCode === 404);

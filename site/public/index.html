@@ -222,6 +222,15 @@
           <div id="adminPlayerEditError" class="auth-error" role="alert" hidden></div>
           <label class="account-field">Admin notes<textarea id="adminPlayerNotes" name="notes" maxlength="2000" rows="6" placeholder="Private notes for administrators"></textarea></label>
           <label class="account-field">Tags<input id="adminPlayerTags" name="tags" maxlength="659" placeholder="trusted, builder, Our Bot"><small>Comma-separated, up to 20 tags. <code>Our Bot</code> hides this profile from Server Status → Nearby and Whitelist online.</small></label>
+          <fieldset class="pearl-hatch-fields">
+            <legend>Pearl hatch coordinates</legend>
+            <div class="pearl-hatch-coordinate-row">
+              <label class="account-field">X<input id="adminPlayerPearlHatchX" name="pearlHatchX" type="number" step="1" placeholder="X"></label>
+              <label class="account-field">Y<input id="adminPlayerPearlHatchY" name="pearlHatchY" type="number" step="1" placeholder="Y"></label>
+              <label class="account-field">Z<input id="adminPlayerPearlHatchZ" name="pearlHatchZ" type="number" step="1" placeholder="Z"></label>
+            </div>
+            <small>Leave all three fields empty to disable Pearl Loader for this player.</small>
+          </fieldset>
           <p class="account-auth-note">UUID, username, activity, playtime and statistics are maintained automatically by the Minecraft bot.</p>
           <div class="account-modal-actions"><button id="adminPlayerEditCancel" class="ghost-button" type="button">Cancel</button><button id="adminPlayerEditSubmit" type="submit">Save changes</button></div>
         </form>
@@ -246,6 +255,7 @@
           <label class="account-field">Display name<input name="displayName" required maxlength="96"></label>
           <label class="account-field">Minecraft username<input name="username" required maxlength="16" pattern="[A-Za-z0-9_]{1,16}"></label>
           <label class="account-field">Authentication<select name="authType"><option value="microsoft">Microsoft device code</option><option value="offline">Offline</option></select></label>
+          <label class="account-field">Bot role<select name="role"><option value="general">General bot</option><option value="pearl_loader">Pearl Loader</option></select><small>Only one bot can be Pearl Loader. It connects only for a Load request and disconnects after completing it; mining, combat and follow actions are disabled.</small></label>
           <div class="account-form-row"><label class="account-field">Server<input name="host" required maxlength="255" placeholder="oldfag.org"></label><label class="account-field">Port (optional)<input name="port" type="number" min="1" max="65535" placeholder="25565"></label></div>
           <label class="account-field">Minecraft version<input name="minecraftVersion" maxlength="32" placeholder="Auto-detect"></label>
           <label class="account-field account-color-field">Account color<input name="color" type="color" value="#f1c232"></label>

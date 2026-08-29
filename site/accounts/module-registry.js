@@ -5,6 +5,35 @@ const fs = require('node:fs');
 const { createObsidianFarm } = require('../../features/obsidianFarm');
 const { createKillAuraFeature } = require('../../features/killAura');
 const { createFollowFeature } = require('../../features/follow');
+const { PEARL_LOADER_ROLE } = require('../../features/pearlLoader');
+
+function pearlLoaderOnlyModules() {
+  const restricted = feature => {
+    throw new Error(`${feature} is disabled for the Pearl Loader account.`);
+  };
+  const obsidianStatus = () => ({ enabled:false,desiredEnabled:false,running:false,configured:false });
+  const killAuraStatus = () => ({ enabled:false,desiredEnabled:false,selectedMobs:[] });
+  const followStatus = () => ({ enabled:false,desiredEnabled:false,targetUsername:null });
+  return {
+    obsidianFarm: {
+      attachBot() {}, detachBot() {}, onSpawn() {}, dispose() {}, suspend:obsidianStatus,
+      pauseForServerRestart:obsidianStatus, pauseForHighPing:obsidianStatus, stop:obsidianStatus,
+      getStatus:obsidianStatus, configure:() => restricted('Obsidian Farm'),
+      setProtectionLeverState:() => restricted('Obsidian Farm'), prepareStart:() => restricted('Obsidian Farm'),
+      validateStart:() => restricted('Obsidian Farm'), resetConfig:() => restricted('Obsidian Farm'),
+      cycleCauldronRadius:() => restricted('Obsidian Farm')
+    },
+    killAura: {
+      attachBot() {}, detachBot() {}, dispose() {}, setTargets:killAuraStatus,
+      setAttackRange:killAuraStatus, setCriticalsEnabled:killAuraStatus,
+      setEnabled:enabled => enabled ? restricted('Kill Aura') : killAuraStatus(), getStatus:killAuraStatus
+    },
+    follow: {
+      attachBot() {}, detachBot() {}, onSpawn() {}, dispose() {}, stop:followStatus,
+      start:() => restricted('Follow'), getStatus:followStatus, findPlayerEntity:() => null
+    }
+  };
+}
 
 function ownObsidianFarm(context, farm, settingsFile, notify = null, initialState = null) {
   let desiredEnabled = false;
@@ -162,6 +191,7 @@ function createModulesForBot(context, {
   primaryFactories = {}
 } = {}) {
   if (!context?.accountId) throw new Error('Module registry requires a BotContext.');
+  if (context.account?.role === PEARL_LOADER_ROLE) return pearlLoaderOnlyModules();
   const accountRoot = path.resolve(dataRoot, context.accountId);
   const rawFarm = obsidianFarmFactory({
     accountId: context.accountId,
@@ -201,4 +231,4 @@ function createModulesForBot(context, {
   return modules;
 }
 
-module.exports = { createModulesForBot };
+module.exports = { createModulesForBot, pearlLoaderOnlyModules };

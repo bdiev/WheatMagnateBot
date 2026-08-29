@@ -2,7 +2,7 @@
 
 const crypto = require('node:crypto');
 
-const ACCOUNT_FIELDS = `id,username,display_name,host,port,minecraft_version,auth_type,enabled,color,
+const ACCOUNT_FIELDS = `id,username,display_name,host,port,minecraft_version,auth_type,enabled,color,role,
   created_at,updated_at,last_connected_at,sort_order,reconnect_backoff_ms,is_default`;
 
 function accountFromRow(row) {
@@ -17,6 +17,7 @@ function accountFromRow(row) {
     authType: row.auth_type,
     enabled: Boolean(row.enabled),
     color: row.color,
+    role: row.role || 'general',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     lastConnectedAt: row.last_connected_at,
@@ -52,12 +53,12 @@ class AccountRepository {
   async create(input) {
     const id = input.id || crypto.randomUUID();
     const result = await this.pool.query(`INSERT INTO bot_accounts
-      (id,username,display_name,host,port,minecraft_version,auth_type,enabled,color,sort_order,reconnect_backoff_ms,is_default)
-      VALUES($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,
-        COALESCE($10,(SELECT COALESCE(MAX(sort_order),-1)+1 FROM bot_accounts)),$11,
+      (id,username,display_name,host,port,minecraft_version,auth_type,enabled,color,role,sort_order,reconnect_backoff_ms,is_default)
+      VALUES($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,
+        COALESCE($11,(SELECT COALESCE(MAX(sort_order),-1)+1 FROM bot_accounts)),$12,
         NOT EXISTS(SELECT 1 FROM bot_accounts)) RETURNING ${ACCOUNT_FIELDS}`,
     [id,input.username,input.displayName,input.host,input.port,input.minecraftVersion || null,input.authType,
-      input.enabled !== false,input.color || null,input.sortOrder ?? null,input.reconnectBackoffMs || 5000]);
+      input.enabled !== false,input.color || null,input.role || 'general',input.sortOrder ?? null,input.reconnectBackoffMs || 5000]);
     return accountFromRow(result.rows[0]);
   }
 
@@ -66,7 +67,7 @@ class AccountRepository {
     const assignments = [];
     const columns = {
       username: 'username', displayName: 'display_name', host: 'host', port: 'port',
-      minecraftVersion: 'minecraft_version', authType: 'auth_type', enabled: 'enabled', color: 'color',
+      minecraftVersion: 'minecraft_version', authType: 'auth_type', enabled: 'enabled', color: 'color', role: 'role',
       sortOrder: 'sort_order', reconnectBackoffMs: 'reconnect_backoff_ms'
     };
     for (const [key, column] of Object.entries(columns)) {

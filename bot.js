@@ -37,6 +37,7 @@ const {
   pickRandomCommandSender
 } = require('./features/playerInfoBackfill');
 const { createWhisperFeature } = require('./features/whisper');
+const { createPearlLoaderFeature, PEARL_LOADER_ROLE } = require('./features/pearlLoader');
 const { createFollowFeature } = require('./features/follow');
 const { createKillAuraFeature } = require('./features/killAura');
 const { isValidKillAuraRange, normalizeKillAuraRange } = require('./features/killAura/range');
@@ -146,6 +147,7 @@ const BOT_START_JITTER_MS = Number.isFinite(configuredBotStartJitterMs) && confi
   : 3_000;
 let multiAccountRegistry = null;
 let multiBotManager = null;
+let pearlLoaderFeature = null;
 let discordActiveAccountId = DEFAULT_ACCOUNT_ID;
 const BOT_PUBLIC_CHAT_STATUS_FILE = path.resolve('data', 'bot_public_chat_status.json');
 const BOT_CHAT_STATUS_EMOJIS_FILE = path.resolve('data', 'bot_chat_status_emojis.json');
@@ -1799,7 +1801,10 @@ async function initDatabase() {
         registration_at TIMESTAMPTZ,
         is_online BOOLEAN DEFAULT FALSE,
         admin_notes TEXT,
-        admin_tags TEXT[] NOT NULL DEFAULT '{}'::text[]
+        admin_tags TEXT[] NOT NULL DEFAULT '{}'::text[],
+        pearl_hatch_x INTEGER,
+        pearl_hatch_y INTEGER,
+        pearl_hatch_z INTEGER
       )
     `);
     await pool.query('ALTER TABLE player_activity ALTER COLUMN last_seen DROP DEFAULT');
@@ -1808,6 +1813,9 @@ async function initDatabase() {
     await pool.query('ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS observed_message_count BIGINT CHECK (observed_message_count >= 0)');
     await pool.query('ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS admin_notes TEXT');
     await pool.query("ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS admin_tags TEXT[] NOT NULL DEFAULT '{}'::text[]");
+    await pool.query('ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS pearl_hatch_x INTEGER');
+    await pool.query('ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS pearl_hatch_y INTEGER');
+    await pool.query('ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS pearl_hatch_z INTEGER');
     await pool.query(`
       UPDATE player_activity
       SET registration_at = COALESCE(last_online, last_seen, NOW())
@@ -3399,7 +3407,7 @@ const playerInfoObservation = createPlayerInfoObservation({
 
 function getReadyPlayerInfoCommandSenders() {
   const contexts = multiBotManager?.getAllContexts?.() || [primaryBotContext];
-  return listReadyCommandSenders(contexts);
+  return listReadyCommandSenders(contexts.filter(context => context.account?.role !== PEARL_LOADER_ROLE));
 }
 
 async function loadPlayerInfoBackfillNextRunAt() {
@@ -6355,7 +6363,9 @@ async function initializeMultiAccountManager() {
         account,
         authCacheRoot: MINECRAFT_PROFILES_FOLDER,
         authCacheStore,
-        isWhitelisted: username => ignoredUsernames.some(item => item.toLowerCase() === String(username).toLowerCase()),
+        isWhitelisted: username =>
+          ignoredUsernames.some(item => item.toLowerCase() === String(username).toLowerCase()) ||
+          (account.role === PEARL_LOADER_ROLE && pearlLoaderFeature?.isExpectedPlayer(account.id, username)),
         dangerRadius: runtimeSettings.dangerRadius,
         moduleOptions: {
           obsidianState: managedFarmStates.get(account.id) || null,
@@ -6402,7 +6412,7 @@ async function initializeMultiAccountManager() {
       runtime.setKillAuraTargets(savedKillAura.selectedMobs);
       runtime.setKillAuraAttackRange(savedKillAura.attackRange);
       runtime.setKillAuraCriticalsEnabled(savedKillAura.criticalsEnabled);
-      if (savedKillAura.desiredEnabled && savedKillAura.selectedMobs.length) {
+      if (account.role !== PEARL_LOADER_ROLE && savedKillAura.desiredEnabled && savedKillAura.selectedMobs.length) {
         runtime.setKillAuraEnabled(true);
       }
       runtime.on('status', status => {
@@ -6435,7 +6445,8 @@ async function initializeMultiAccountManager() {
       runtime.on('chat', event => {
         playerInfoObservation.observe(event.username, event.message);
       });
-      runtime.on('whisper', whisper => {
+      runtime.on('whisper', async whisper => {
+        if (account.role === PEARL_LOADER_ROLE && await pearlLoaderFeature?.handleLoaderWhisper(account.id, whisper.username, whisper.message)) return;
         const key = `${account.id}:${String(whisper.username || '').toLowerCase()}`;
         const target = siteWhisperTargets.get(key);
         const siteUsername = typeof target === 'object' && target.siteUsername ? target.siteUsername : DEFAULT_SITE_WHISPER_USERNAME;
@@ -6478,8 +6489,20 @@ async function initializeMultiAccountManager() {
       return runtime;
     }
   });
+  pearlLoaderFeature = createPearlLoaderFeature({
+    pool,
+    getRegistry: () => multiAccountRegistry,
+    getManager: () => multiBotManager,
+    sendPrimaryWhisper: async (username, message) => {
+      const safeUsername = String(username || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 16);
+      const safeMessage = String(message || '').replace(/[\r\n]+/g, ' ').trim();
+      if (!safeUsername || !safeMessage || !sendMinecraftChat(`/w ${safeUsername} ${safeMessage}`)) throw new Error('WheatMagnate is not connected.');
+    },
+    log: (level, message, details) => recordSystemLog({ level,category:'pearl_loader',message,details }).catch(() => {})
+  });
   multiBotManager.registerContext(primaryBotContext);
-  for (const account of accounts.filter(item => item.enabled && !item.isDefault)) {
+  for (const account of accounts.filter(item => item.enabled && !item.isDefault)
+    .filter(item => item.role !== PEARL_LOADER_ROLE)) {
     await multiBotManager.start(account.id).catch(error => console.error(`[Accounts] Could not start ${account.displayName}:`, error.message));
   }
 }
@@ -6491,6 +6514,10 @@ async function executeManagedAccountCommand(command) {
   if (runtime && refreshedAccount) runtime.account = refreshedAccount;
   const type = String(command.command_type || '');
   const payload = command.payload || {};
+  if (refreshedAccount?.role === PEARL_LOADER_ROLE &&
+      ['account_start','account_restart','account_reauthorize','account_resume'].includes(type)) {
+    throw new Error('Pearl Loader can start only for a player Load request.');
+  }
   if (type === 'account_start') {
     await multiAccountRegistry.update(command.account_id, { enabled:true });
     return multiBotManager.start(command.account_id);
@@ -6500,11 +6527,14 @@ async function executeManagedAccountCommand(command) {
     return multiBotManager.stop(command.account_id);
   }
   if (type === 'account_remove') return multiBotManager.remove(command.account_id, { force: true });
-  if (type === 'account_restart') return multiBotManager.restart(command.account_id);
+  if (type === 'account_restart') return multiBotManager.recreate(command.account_id);
   if (type === 'account_reauthorize') return multiBotManager.reauthorize(command.account_id);
   if (type === 'account_pause') return multiBotManager.pause(command.account_id);
   if (type === 'account_resume') return multiBotManager.resume(command.account_id);
   if (!runtime) throw new Error('Account runtime is not active.');
+  if (runtime.account?.role === PEARL_LOADER_ROLE) {
+    throw new Error('Manual modules and commands are disabled for the Pearl Loader account.');
+  }
   if (type.startsWith('child_') || type.startsWith('gemini_') || type.startsWith('site_whisper')) {
     assertModuleAvailable(runtime.account, type.startsWith('site_whisper') ? 'whisper' : 'growingChild');
   }
@@ -9427,7 +9457,7 @@ function createBot() {
 
   bot.on('chat', handleMinecraftPlayerChat);
 
-  bot.on('whisper', (username, message, translate, jsonMsg, matches) => {
+  bot.on('whisper', async (username, message, translate, jsonMsg, matches) => {
     debugLog(`[Whisper] ⭐ EVENT FIRED for ${username}: "${message}"`);
 
     let cleanedWhisper = message
@@ -9446,6 +9476,8 @@ function createBot() {
       debugLog(`[Whisper] Suppressed private message from ignored player ${username}.`);
       return;
     }
+
+    if (await pearlLoaderFeature?.handlePrimaryWhisper(username, cleanedWhisper)) return;
 
     const whisperKey = `WHISPER:${username}:${cleanedWhisper}`;
     recentWhispers.set(whisperKey, Date.now());

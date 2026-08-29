@@ -174,6 +174,9 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
             END,
             is_online = COALESCE(target.is_online,FALSE) OR COALESCE(source.is_online,FALSE),
             admin_notes = COALESCE(NULLIF(target.admin_notes,''),source.admin_notes),
+            pearl_hatch_x = COALESCE(target.pearl_hatch_x,source.pearl_hatch_x),
+            pearl_hatch_y = COALESCE(target.pearl_hatch_y,source.pearl_hatch_y),
+            pearl_hatch_z = COALESCE(target.pearl_hatch_z,source.pearl_hatch_z),
             admin_tags = ARRAY(
               SELECT DISTINCT tag
               FROM UNNEST(COALESCE(target.admin_tags,'{}'::text[]) || COALESCE(source.admin_tags,'{}'::text[])) tag

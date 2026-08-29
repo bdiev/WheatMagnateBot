@@ -1272,7 +1272,8 @@ function renderAccountSwitcher() {
   const accountButtons = state.accounts.map(account => {
     const active = account.id === state.activeAccountId;
     const uptime = account.startedAt ? formatDurationMs(Math.max(0, Date.now() - new Date(account.startedAt).getTime())) : 'not running';
-    const tooltip = `${account.username} · ${account.status} · ${account.host}:${account.port} · ${account.task || 'idle'} · ${uptime}`;
+    const roleLabel = account.role === 'pearl_loader' ? 'Pearl Loader' : 'General bot';
+    const tooltip = `${account.username} · ${roleLabel} · ${account.status} · ${account.host}:${account.port} · ${account.task || 'idle'} · ${uptime}`;
     const avatarUsername = account.statusPayload?.username || account.username;
     const pinned = Boolean(account.isDefault);
     const orderHint = pinned ? 'Primary account is pinned first' : 'Drag to reorder; open menu for Move left/right';
@@ -1353,6 +1354,7 @@ function setAccountModalOpen(open, account = null) {
     form.elements.displayName.value = account?.displayName || '';
     form.elements.username.value = account?.username || '';
     form.elements.authType.value = account?.authType || 'microsoft';
+    form.elements.role.value = account?.role || 'general';
     form.elements.host.value = account?.host || '';
     form.elements.port.value = account?.port || '';
     form.elements.minecraftVersion.value = account?.minecraftVersion || '';
@@ -1376,7 +1378,7 @@ async function submitAccount(event) {
   const data = new FormData(form);
   try {
     const portValue = String(data.get('port') || '').trim();
-    const body = { displayName:data.get('displayName'),username:data.get('username'),authType:data.get('authType'),host:data.get('host'),port:portValue ? Number(portValue) : null,minecraftVersion:data.get('minecraftVersion') || null,color:data.get('color') || null,enabled:data.get('enabled') === 'on' };
+    const body = { displayName:data.get('displayName'),username:data.get('username'),authType:data.get('authType'),role:data.get('role'),host:data.get('host'),port:portValue ? Number(portValue) : null,minecraftVersion:data.get('minecraftVersion') || null,color:data.get('color') || null,enabled:data.get('enabled') === 'on' };
     const editingId = state.editingAccountId;
     const payload = editingId
       ? await patchJson(`/api/accounts/${editingId}`, body)
@@ -6463,15 +6465,21 @@ async function openAdminPlayerEdit(identityKey) {
   renderAdminPlayerReadonly(listPlayer);
   $('#adminPlayerNotes').value = listPlayer.notes || '';
   $('#adminPlayerTags').value = (listPlayer.tags || []).join(', ');
+  $('#adminPlayerPearlHatchX').value = listPlayer.pearlHatch?.x ?? '';
+  $('#adminPlayerPearlHatchY').value = listPlayer.pearlHatch?.y ?? '';
+  $('#adminPlayerPearlHatchZ').value = listPlayer.pearlHatch?.z ?? '';
   error.hidden = true;
   modal.hidden = false;
   document.body.classList.add('modal-open');
   try {
     const profile = await fetchJson(`/api/player?username=${encodeURIComponent(listPlayer.username)}&messageLimit=20`);
     if (String(state.adminPlayerEditTarget?.identityKey) !== String(identityKey)) return;
-    state.adminPlayerEditTarget = { ...listPlayer, notes: profile.adminNotes || '', tags: profile.adminTags || [] };
+    state.adminPlayerEditTarget = { ...listPlayer, notes: profile.adminNotes || '', tags: profile.adminTags || [], pearlHatch:profile.pearlHatch || null };
     $('#adminPlayerNotes').value = state.adminPlayerEditTarget.notes;
     $('#adminPlayerTags').value = state.adminPlayerEditTarget.tags.join(', ');
+    $('#adminPlayerPearlHatchX').value = state.adminPlayerEditTarget.pearlHatch?.x ?? '';
+    $('#adminPlayerPearlHatchY').value = state.adminPlayerEditTarget.pearlHatch?.y ?? '';
+    $('#adminPlayerPearlHatchZ').value = state.adminPlayerEditTarget.pearlHatch?.z ?? '';
   } catch (err) {
     error.textContent = `Could not refresh player details: ${err.message}`;
     error.hidden = false;
@@ -6510,9 +6518,19 @@ async function saveAdminPlayer(event) {
     notes: $('#adminPlayerNotes').value.trim(),
     tags: $('#adminPlayerTags').value.split(',').map(tag => tag.trim()).filter(Boolean)
   };
+  const hatchValues = ['X','Y','Z'].map(axis => String($(`#adminPlayerPearlHatch${axis}`).value || '').trim());
+  if (hatchValues.some(Boolean) && !hatchValues.every(value => /^-?\d+$/.test(value))) {
+    error.textContent = 'Enter integer X, Y and Z coordinates, or leave all three empty.';
+    error.hidden = false;
+    return;
+  }
+  values.pearlHatch = hatchValues.every(Boolean)
+    ? { x:Number(hatchValues[0]),y:Number(hatchValues[1]),z:Number(hatchValues[2]) }
+    : null;
   const patch = {};
   if (values.notes !== String(player.notes || '')) patch.notes = values.notes;
   if (JSON.stringify(values.tags) !== JSON.stringify(player.tags || [])) patch.tags = values.tags;
+  if (JSON.stringify(values.pearlHatch) !== JSON.stringify(player.pearlHatch || null)) patch.pearlHatch = values.pearlHatch;
   if (!Object.keys(patch).length) {
     closeAdminPlayerEdit();
     return;

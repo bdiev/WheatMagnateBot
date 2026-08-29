@@ -73,6 +73,13 @@ class BotManager {
 
   async stop(accountId) { const runtime=this.get(accountId); return runtime ? runtime.stop() : {accountId,status:'stopped',task:'idle'}; }
   async restart(accountId) { const runtime=this.get(accountId); return runtime ? runtime.restart() : this.start(accountId); }
+  async recreate(accountId) {
+    const runtime = this.get(accountId);
+    if (runtime) await runtime.destroy();
+    this.runtimes.delete(accountId);
+    this.contexts.delete(accountId);
+    return this.start(accountId);
+  }
   connect(accountId) { return this.start(accountId); }
   disconnect(accountId) { return this.stop(accountId); }
   reconnect(accountId) { return this.restart(accountId); }

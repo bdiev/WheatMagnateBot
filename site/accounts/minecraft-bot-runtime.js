@@ -11,7 +11,7 @@ const {
 } = require('../../features/obsidianFarm/restart-schedule');
 const { MAX_FARM_PING_MS, botPingMs, isFarmPingTooHigh } = require('../../features/obsidianFarm/ping-protection');
 
-const TASKS = new Set(['obsidian','observe','follow','kill_aura','chat','idle','paused']);
+const TASKS = new Set(['obsidian','observe','follow','kill_aura','pearl_loader','chat','idle','paused']);
 const STABLE_CONNECTION_RESET_MS = 60_000;
 // Keep this list deliberately conservative. Raw meat, spider eyes and poisonous
 // potatoes are technically consumable, but are a poor choice for an unattended bot.
@@ -363,7 +363,7 @@ class MinecraftBotRuntime extends BotContext {
       bot.on?.('chat', (username, message) => {
         this.emit('chat', { accountId:this.account.id,username,message });
       });
-      if (this.isPrimary) {
+      if (this.isPrimary || this.account.role === 'pearl_loader') {
         bot.on?.('whisper',(username,message) => this.emit('whisper',{accountId:this.account.id,username,message}));
       }
       bot.once?.('end', reason => {

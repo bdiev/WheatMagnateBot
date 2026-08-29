@@ -742,7 +742,10 @@ async function ensureOptionalTables() {
       registration_at TIMESTAMPTZ,
       is_online BOOLEAN DEFAULT FALSE,
       admin_notes TEXT,
-      admin_tags TEXT[] NOT NULL DEFAULT '{}'::text[]
+      admin_tags TEXT[] NOT NULL DEFAULT '{}'::text[],
+      pearl_hatch_x INTEGER,
+      pearl_hatch_y INTEGER,
+      pearl_hatch_z INTEGER
     )
   `);
   await pool.query(`ALTER TABLE player_activity ALTER COLUMN last_seen DROP DEFAULT`);
@@ -751,6 +754,9 @@ async function ensureOptionalTables() {
   await pool.query(`ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS observed_message_count BIGINT CHECK (observed_message_count >= 0)`);
   await pool.query(`ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS admin_notes TEXT`);
   await pool.query(`ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS admin_tags TEXT[] NOT NULL DEFAULT '{}'::text[]`);
+  await pool.query(`ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS pearl_hatch_x INTEGER`);
+  await pool.query(`ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS pearl_hatch_y INTEGER`);
+  await pool.query(`ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS pearl_hatch_z INTEGER`);
   await pool.query(`
     UPDATE player_activity
     SET registration_at = COALESCE(last_online, last_seen, NOW())
@@ -2699,6 +2705,7 @@ function cleanAccountInput(body, { partial = false } = {}) {
   assign('authType', String(body.authType || 'microsoft').toLowerCase());
   assign('enabled', body.enabled !== false);
   assign('color', body.color ? String(body.color).slice(0, 16).toLowerCase() : null);
+  assign('role', String(body.role || 'general').trim().toLowerCase());
   if ((!partial || Object.hasOwn(body, 'reconnectBackoffMs'))) assign('reconnectBackoffMs', Number(body.reconnectBackoffMs) || 5000);
   if (Object.hasOwn(input, 'username') && !/^[A-Za-z0-9_]{1,16}$/.test(input.username)) throw Object.assign(new Error('Invalid Minecraft username.'), { statusCode: 400 });
   if (Object.hasOwn(input, 'displayName') && (!input.displayName || input.displayName.length > 96)) throw Object.assign(new Error('Display name is required and must be at most 96 characters.'), { statusCode: 400 });
@@ -2706,6 +2713,7 @@ function cleanAccountInput(body, { partial = false } = {}) {
   if (Object.hasOwn(input, 'port') && (!Number.isInteger(input.port) || input.port < 1 || input.port > 65535)) throw Object.assign(new Error('Port must be between 1 and 65535.'), { statusCode: 400 });
   if (Object.hasOwn(input, 'authType') && !['microsoft','offline'].includes(input.authType)) throw Object.assign(new Error('Unsupported authentication type.'), { statusCode: 400 });
   if (Object.hasOwn(input, 'color') && input.color != null && !normalizeAccountColor(input.color)) throw Object.assign(new Error('Account color must be a six-digit hex color.'), { statusCode: 400 });
+  if (Object.hasOwn(input, 'role') && !['general','pearl_loader'].includes(input.role)) throw Object.assign(new Error('Unsupported bot role.'), { statusCode: 400 });
   return input;
 }
 
@@ -2921,6 +2929,10 @@ async function handleAccountsApi(req, currentUser, url) {
     const max = Math.max(1, Number(process.env.MAX_BOT_ACCOUNTS) || 8);
     if (registry.list().length >= max) throw Object.assign(new Error('Minecraft account limit reached.'), { statusCode: 409 });
     const input = cleanAccountInput(await readJsonBody(req, 32 * 1024));
+    if (input.role === 'pearl_loader' && registry.list().some(account => account.role === 'pearl_loader')) {
+      throw Object.assign(new Error('Only one bot can have the Pearl Loader role.'), { statusCode:409 });
+    }
+    if (input.role === 'pearl_loader') input.enabled = false;
     input.color = pickUniqueAccountColor(registry.list(), input.color);
     const account = await registry.add(input);
     await recordSystemLog({ level:'audit',category:'accounts',actor:currentUser.username,message:`Created Minecraft account ${account.displayName}.`,details:{accountId:account.id} });
@@ -2961,10 +2973,23 @@ async function handleAccountsApi(req, currentUser, url) {
   if (!action && req.method === 'PATCH') {
     assertAdminUser(currentUser);
     const changes = cleanAccountInput(await readJsonBody(req, 32 * 1024), { partial:true });
-    const connectionKeys = ['username','host','port','minecraftVersion','authType'];
+    if (account.isDefault && changes.role === 'pearl_loader') {
+      throw Object.assign(new Error('The primary bot cannot be the Pearl Loader because it receives Load requests.'), { statusCode:409 });
+    }
+    if (changes.role === 'pearl_loader' && registry.list().some(item => item.id !== accountId && item.role === 'pearl_loader')) {
+      throw Object.assign(new Error('Only one bot can have the Pearl Loader role.'), { statusCode:409 });
+    }
+    if (changes.role === 'pearl_loader') changes.enabled = false;
+    const connectionKeys = ['username','host','port','minecraftVersion','authType','role'];
     const connectionChanged = connectionKeys.some(key => Object.hasOwn(changes,key) && changes[key] !== account[key]);
     const enabledChanged = Object.hasOwn(changes,'enabled') && changes.enabled !== account.enabled;
     const updated = await registry.update(accountId,changes);
+    if (changes.role === 'pearl_loader') {
+      await Promise.all([
+        pool.query('UPDATE kill_aura_state SET desired_enabled=FALSE,updated_at=NOW() WHERE account_id=$1::uuid',[accountId]),
+        pool.query('UPDATE obsidian_account_farm_state SET desired_enabled=FALSE,updated_at=NOW() WHERE account_id=$1::uuid',[accountId])
+      ]);
+    }
     let runtimeCommand = null;
     if (enabledChanged) runtimeCommand = await queueBotCommand(currentUser,updated.enabled?'account_start':'account_stop',{accountId},{source:'site',accountId});
     else if (connectionChanged && updated.enabled) runtimeCommand = await queueBotCommand(currentUser,'account_restart',{accountId},{source:'site',accountId});
@@ -2988,6 +3013,9 @@ async function handleAccountsApi(req, currentUser, url) {
   }
   if (['start','stop','restart','pause','resume','reauthorize'].includes(action) && req.method === 'POST') {
     assertAdminUser(currentUser);
+    if (account.role === 'pearl_loader' && ['start','restart','resume','reauthorize'].includes(action)) {
+      throw Object.assign(new Error('Pearl Loader can connect only in response to a player Load request.'), { statusCode:409 });
+    }
     // `enabled` is the durable desired connection state. Persist it before
     // queueing the runtime command so Stop survives a process restart/redeploy,
     // even when the command worker is temporarily unavailable.
@@ -3459,7 +3487,7 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
     pool.query(`
       WITH activity AS (
         SELECT id, username, player_uuid, last_seen, last_online, registration_at, observed_message_count, is_online,
-               admin_notes, admin_tags
+               admin_notes, admin_tags, pearl_hatch_x, pearl_hatch_y, pearl_hatch_z
         FROM player_activity
         WHERE ($2::uuid IS NOT NULL AND player_uuid = $2::uuid)
            OR ($2::uuid IS NULL AND LOWER(username) = ANY($3::text[]))
@@ -3472,6 +3500,9 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
         pa.player_uuid,
         pa.admin_notes,
         pa.admin_tags,
+        pa.pearl_hatch_x,
+        pa.pearl_hatch_y,
+        pa.pearl_hatch_z,
         EXISTS (
           SELECT 1 FROM whitelist w WHERE LOWER(w.username) = ANY($3::text[])
         ) AS is_whitelisted,
@@ -3639,12 +3670,15 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
       id: profile.id == null ? null : String(profile.id),
       identityKey: profile.player_uuid || (profile.id == null ? null : String(profile.id)),
       adminNotes: profile.admin_notes || '',
-      adminTags: Array.isArray(profile.admin_tags) ? profile.admin_tags : []
+      adminTags: Array.isArray(profile.admin_tags) ? profile.admin_tags : [],
+      pearlHatch: [profile.pearl_hatch_x, profile.pearl_hatch_y, profile.pearl_hatch_z].every(value => value != null)
+        ? { x:Number(profile.pearl_hatch_x),y:Number(profile.pearl_hatch_y),z:Number(profile.pearl_hatch_z) }
+        : null
     } : {})
   };
 }
 
-const ADMIN_PLAYER_EDITABLE_FIELDS = Object.freeze(['notes', 'tags']);
+const ADMIN_PLAYER_EDITABLE_FIELDS = Object.freeze(['notes', 'tags', 'pearlHatch']);
 const ADMIN_PLAYER_SORT_FIELDS = new Set(['playtime', 'nickname', 'uuid', 'joindate', 'seen', 'messages']);
 const MINECRAFT_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -3666,7 +3700,10 @@ function publicAdminPlayer(row) {
     totalMessages: toInt(row.total_messages),
     lastMessageAt: row.last_message_at || null,
     notes: row.admin_notes || '',
-    tags: Array.isArray(row.admin_tags) ? row.admin_tags : []
+    tags: Array.isArray(row.admin_tags) ? row.admin_tags : [],
+    pearlHatch: [row.pearl_hatch_x, row.pearl_hatch_y, row.pearl_hatch_z].every(value => value != null)
+      ? { x:Number(row.pearl_hatch_x),y:Number(row.pearl_hatch_y),z:Number(row.pearl_hatch_z) }
+      : null
   };
 }
 
@@ -3707,6 +3744,19 @@ function normalizeAdminPlayerPatch(body = {}) {
       return true;
     });
   }
+  if (Object.hasOwn(body, 'pearlHatch')) {
+    if (body.pearlHatch == null) {
+      patch.pearlHatch = null;
+    } else {
+      const hatch = body.pearlHatch;
+      if (!hatch || typeof hatch !== 'object' || Array.isArray(hatch) ||
+          !['x','y','z'].every(axis => hatch[axis] !== '' && hatch[axis] != null &&
+            Number.isSafeInteger(Number(hatch[axis])) && Number(hatch[axis]) >= -2147483648 && Number(hatch[axis]) <= 2147483647)) {
+        const err = new Error('Pearl hatch coordinates must contain integer X, Y and Z values.'); err.statusCode = 400; throw err;
+      }
+      patch.pearlHatch = { x:Number(hatch.x),y:Number(hatch.y),z:Number(hatch.z) };
+    }
+  }
   return patch;
 }
 
@@ -3720,7 +3770,8 @@ function adminPlayerIdentity(value) {
 async function selectAdminPlayer(executor, identifier, { forUpdate = false } = {}) {
   const identity = adminPlayerIdentity(identifier);
   const result = await executor.query(`
-    SELECT id,username,player_uuid,last_seen,last_online,registration_at,is_online,admin_notes,admin_tags
+    SELECT id,username,player_uuid,last_seen,last_online,registration_at,is_online,admin_notes,admin_tags,
+           pearl_hatch_x,pearl_hatch_y,pearl_hatch_z
     FROM player_activity
     WHERE ${identity.type === 'uuid' ? 'player_uuid=$1::uuid' : 'id=$1::bigint'}
     ${forUpdate ? 'FOR UPDATE' : ''}
@@ -3798,7 +3849,7 @@ async function getAdminPlayers(currentUser, url, database = pool) {
     WITH ${messageCountCtes}
     candidate_players AS MATERIALIZED (
       SELECT pa.id,pa.username,pa.player_uuid,pa.last_seen,pa.last_online,pa.registration_at,pa.is_online,
-             pa.admin_notes,pa.admin_tags,
+             pa.admin_notes,pa.admin_tags,pa.pearl_hatch_x,pa.pearl_hatch_y,pa.pearl_hatch_z,
              COALESCE(
                pt_uuid.total_seconds + CASE WHEN pt_uuid.tracking_since IS NULL THEN 0
                  ELSE GREATEST(0,FLOOR(EXTRACT(EPOCH FROM (NOW()-pt_uuid.tracking_since)))::bigint) END,
@@ -3821,6 +3872,7 @@ async function getAdminPlayers(currentUser, url, database = pool) {
     )
     SELECT candidate.id,candidate.username,candidate.player_uuid,candidate.last_seen,candidate.last_online,
            candidate.registration_at,candidate.is_online,candidate.admin_notes,candidate.admin_tags,
+           candidate.pearl_hatch_x,candidate.pearl_hatch_y,candidate.pearl_hatch_z,
            candidate.total_seconds,
            ${resultMessageColumns},
            COALESCE(names.aliases,'{}'::text[]) AS aliases
@@ -3864,11 +3916,18 @@ async function patchAdminPlayer(currentUser, identifier, body, database = pool, 
       values.push(patch.tags);
       updates.push(`admin_tags=$${values.length}::text[]`);
     }
+    if (Object.hasOwn(patch, 'pearlHatch')) {
+      for (const [column, axis] of [['pearl_hatch_x','x'],['pearl_hatch_y','y'],['pearl_hatch_z','z']]) {
+        values.push(patch.pearlHatch == null ? null : patch.pearlHatch[axis]);
+        updates.push(`${column}=$${values.length}`);
+      }
+    }
     values.push(target.id);
     const result = await client.query(`
       UPDATE player_activity SET ${updates.join(',')}
       WHERE id=$${values.length}
-      RETURNING id,username,player_uuid,last_seen,last_online,registration_at,is_online,admin_notes,admin_tags
+      RETURNING id,username,player_uuid,last_seen,last_online,registration_at,is_online,admin_notes,admin_tags,
+                pearl_hatch_x,pearl_hatch_y,pearl_hatch_z
     `, values);
     updated = result.rows[0];
     await client.query('COMMIT');
@@ -3890,7 +3949,10 @@ async function patchAdminPlayer(currentUser, identifier, body, database = pool, 
       username: updated.username,
       uuid: updated.player_uuid || null,
       notes: updated.admin_notes || '',
-      tags: Array.isArray(updated.admin_tags) ? updated.admin_tags : []
+      tags: Array.isArray(updated.admin_tags) ? updated.admin_tags : [],
+      pearlHatch: [updated.pearl_hatch_x,updated.pearl_hatch_y,updated.pearl_hatch_z].every(value => value != null)
+        ? { x:Number(updated.pearl_hatch_x),y:Number(updated.pearl_hatch_y),z:Number(updated.pearl_hatch_z) }
+        : null
     }
   };
 }
