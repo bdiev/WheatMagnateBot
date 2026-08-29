@@ -1,7 +1,7 @@
 'use strict';
 
 const { pathfinder, Movements } = require('mineflayer-pathfinder');
-const { GoalNear } = require('mineflayer-pathfinder').goals;
+const { GoalCompositeAll, GoalGetToBlock, GoalLookAtBlock } = require('mineflayer-pathfinder').goals;
 const { Vec3 } = require('vec3');
 
 const PEARL_LOADER_ROLE = 'pearl_loader';
@@ -51,7 +51,11 @@ function createPearlLoaderFeature({
   visibilityPollMs = 250,
   interactionSettleMs = 250,
   navigationRange = 1,
-  goalFactory = (x, y, z, range) => new GoalNear(x, y, z, range),
+  interactionReach = 4.5,
+  goalFactory = (x, y, z, range, bot, reach) => new GoalCompositeAll([
+    new GoalGetToBlock(x, y, z),
+    new GoalLookAtBlock(new Vec3(x, y, z), bot.world, { reach })
+  ]),
   movementsFactory = bot => new Movements(bot),
   setTimer = setTimeout,
   clearTimer = clearTimeout
@@ -144,13 +148,38 @@ function createPearlLoaderFeature({
     return bot?.blockAt?.(new Vec3(hatch.x, hatch.y, hatch.z)) || null;
   }
 
+  function isAdjacentToHatch(bot, hatch) {
+    const position = bot?.entity?.position?.floored?.();
+    if (!position) return false;
+    const dx = position.x - hatch.x;
+    const dy = position.y - hatch.y;
+    const dz = position.z - hatch.z;
+    return Math.abs(dx) + Math.abs(dy < 0 ? dy + 1 : dy) + Math.abs(dz) === navigationRange;
+  }
+
+  function canInteractWithHatch(bot, hatch, block) {
+    if (!isAdjacentToHatch(bot, hatch)) return false;
+    if (typeof bot?.canSeeBlock !== 'function') return false;
+    return Boolean(bot.canSeeBlock(block));
+  }
+
   async function navigateToHatch(bot, hatch) {
     configureSafeMovement(bot);
     await bot.waitForChunksToLoad?.();
-    await bot.pathfinder.goto(goalFactory(hatch.x, hatch.y, hatch.z, navigationRange));
+    await bot.pathfinder.goto(goalFactory(
+      hatch.x,
+      hatch.y,
+      hatch.z,
+      navigationRange,
+      bot,
+      interactionReach
+    ));
     const block = await blockAtHatch(bot, hatch);
     if (!isTrapdoor(block)) {
       throw new Error(`Configured block at ${hatch.x}, ${hatch.y}, ${hatch.z} is not a trapdoor.`);
+    }
+    if (!canInteractWithHatch(bot, hatch, block)) {
+      throw new Error('Pearl Loader could not reach a visible side of the trapdoor.');
     }
     return block;
   }
@@ -159,6 +188,9 @@ function createPearlLoaderFeature({
     let block = await blockAtHatch(bot, hatch);
     if (!isTrapdoor(block)) throw new Error('The configured trapdoor is no longer available.');
     if (trapdoorIsOpen(block) === shouldOpen) return false;
+    if (!canInteractWithHatch(bot, hatch, block)) {
+      block = await navigateToHatch(bot, hatch);
+    }
     await bot.activateBlock(block);
     await new Promise(resolve => setTimer(resolve, interactionSettleMs));
     block = await blockAtHatch(bot, hatch);

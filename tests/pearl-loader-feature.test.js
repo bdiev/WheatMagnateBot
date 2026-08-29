@@ -2,6 +2,7 @@
 
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
+const { Vec3 } = require('vec3');
 const { createPearlLoaderFeature } = require('../features/pearlLoader');
 const { createModulesForBot } = require('../site/accounts/module-registry');
 const { MinecraftBotRuntime } = require('../site/accounts/minecraft-bot-runtime');
@@ -18,10 +19,16 @@ async function testCompleteCycle() {
   const movementsSeen = [];
   const chats = [];
   const taskStates = [];
+  let hatchVisible = true;
   const bot = {
     username:'PearlBot',
-    entity:{ position:{ distanceTo:position => position.distance ?? 0 } },
+    entity:{ position:new Vec3(9,64,-20),eyeHeight:1.62 },
     entities:{},
+    world:{
+      raycast() {
+        return { position:hatchVisible ? new Vec3(10,64,-20) : new Vec3(9,64,-20) };
+      }
+    },
     pathfinder:{
       setMovements(movements) { movementsSeen.push(movements); },
       async goto(goal) { this.goal = goal; }
@@ -29,8 +36,9 @@ async function testCompleteCycle() {
     async waitForChunksToLoad() {},
     blockAt(position) {
       assert.deepEqual({x:position.x,y:position.y,z:position.z},{x:10,y:64,z:-20});
-      return { name:'oak_trapdoor',getProperties:() => ({ open }) };
+      return { name:'oak_trapdoor',position:new Vec3(10,64,-20),getProperties:() => ({ open }) };
     },
+    canSeeBlock() { return true; },
     async activateBlock() { open = !open; },
     chat(message) { chats.push(message); }
   };
@@ -53,7 +61,6 @@ async function testCompleteCycle() {
     getManager:() => manager,
     sendPrimaryWhisper:async (username,message) => primaryReplies.push({username,message}),
     movementsFactory:() => ({}),
-    goalFactory:(x,y,z,range) => ({x,y,z,range}),
     openDelayMs:5,
     visibilityPollMs:5,
     interactionSettleMs:1,
@@ -66,12 +73,21 @@ async function testCompleteCycle() {
   assert.equal(recreated,1,'an existing stopped runtime is recreated from the refreshed account settings');
   assert.equal(feature.getStatus().stage,'awaiting_yes');
   assert.deepEqual(chats,['/w bdiev_ Ready?']);
-  assert.equal(bot.pathfinder.goal.range,1,'the Loader must approach within one block of the trapdoor');
+  assert.deepEqual(
+    bot.pathfinder.goal.goals.map(goal => goal.constructor.name),
+    ['GoalGetToBlock','GoalLookAtBlock'],
+    'navigation must require both adjacency and a visible trapdoor face'
+  );
+  assert.equal(bot.pathfinder.goal.isEnd(new Vec3(9,64,-20)),true,'an adjacent visible position is valid');
+  hatchVisible = false;
+  assert.equal(bot.pathfinder.goal.isEnd(new Vec3(9,64,-20)),false,'an adjacent position behind a wall is invalid');
+  hatchVisible = true;
+  assert.equal(bot.pathfinder.goal.isEnd(new Vec3(8,64,-20)),false,'a visible position two blocks away is invalid');
   assert.equal(movementsSeen[0].canDig,false,'pathfinder must never dig blocks');
   assert.equal(movementsSeen[0].allow1by1towers,false);
   assert.equal(await feature.handleLoaderWhisper(loaderAccount.id,'SomeoneElse','Yes'),false);
 
-  bot.entities.player={type:'player',username:'bdiev_',position:{distance:4}};
+  bot.entities.player={type:'player',username:'bdiev_',position:new Vec3(13,64,-20)};
   assert.equal(await feature.handleLoaderWhisper(loaderAccount.id,'bdiev_','YES'),true);
   assert.equal(open,false,'Yes closes an open trapdoor immediately');
   assert.deepEqual(chats,[
