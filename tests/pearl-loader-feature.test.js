@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { Vec3 } = require('vec3');
-const { createPearlLoaderFeature } = require('../features/pearlLoader');
+const { createPearlLoaderFeature, hasEnderPearlNear } = require('../features/pearlLoader');
 const { createModulesForBot } = require('../site/accounts/module-registry');
 const { MinecraftBotRuntime } = require('../site/accounts/minecraft-bot-runtime');
 
@@ -23,7 +23,9 @@ async function testCompleteCycle() {
   const bot = {
     username:'PearlBot',
     entity:{ position:new Vec3(9,64,-20),eyeHeight:1.62 },
-    entities:{},
+    entities:{
+      pearl:{type:'projectile',name:'ender_pearl',displayName:'Thrown Ender Pearl',position:new Vec3(10.5,64.5,-19.5)}
+    },
     world:{
       raycast() {
         return { position:hatchVisible ? new Vec3(10,64,-20) : new Vec3(9,64,-20) };
@@ -105,6 +107,48 @@ async function testCompleteCycle() {
   feature.dispose();
 }
 
+async function testMissingEnderPearl() {
+  const chats = [];
+  const bot = {
+    entity:{position:new Vec3(9,64,-20),eyeHeight:1.62},
+    entities:{},
+    world:{raycast:() => ({position:new Vec3(10,64,-20)})},
+    pathfinder:{setMovements() {},async goto() {}},
+    async waitForChunksToLoad() {},
+    blockAt:() => ({name:'oak_trapdoor',position:new Vec3(10,64,-20),getProperties:() => ({open:true})}),
+    canSeeBlock:() => true,
+    chat:message => chats.push(message)
+  };
+  const runtime = new EventEmitter();
+  runtime.bot = bot;
+  runtime.assignTask = () => {};
+  let stopped = 0;
+  runtime.stop = async reason => { stopped += 1; runtime.stopReason = reason; runtime.bot = null; };
+  const feature = createPearlLoaderFeature({
+    pool:{query:async () => ({rows:[{username:'bdiev_',pearl_hatch_x:10,pearl_hatch_y:64,pearl_hatch_z:-20}]})},
+    getRegistry:() => ({load:async () => {},list:() => [loaderAccount]}),
+    getManager:() => ({get:() => runtime,recreate:async () => {}}),
+    movementsFactory:() => ({})
+  });
+
+  await feature.handlePrimaryWhisper('bdiev_','Load');
+  assert.deepEqual(chats,['/w bdiev_ Your ender pearl is not set.']);
+  assert.deepEqual(feature.getStatus(),{active:false});
+  assert.equal(stopped,1,'the Loader disconnects when no pearl is installed');
+  assert.equal(runtime.stopReason,'Pearl Loader ender pearl is not set');
+}
+
+function testEnderPearlRadius() {
+  const hatch = {x:10,y:64,z:-20};
+  const center = new Vec3(10.5,64.5,-19.5);
+  assert.equal(hasEnderPearlNear({entities:{pearl:{name:'ender_pearl',position:center.offset(2,0,0)}}},hatch),true,
+    'a thrown pearl exactly two blocks away is accepted');
+  assert.equal(hasEnderPearlNear({entities:{pearl:{name:'ender_pearl',position:center.offset(2.01,0,0)}}},hatch),false,
+    'a thrown pearl outside the two-block radius is rejected');
+  assert.equal(hasEnderPearlNear({entities:{item:{name:'item',displayName:'Ender Pearl',position:center}}},hatch),false,
+    'a dropped pearl item is not mistaken for a thrown pearl');
+}
+
 async function testMissingCoordinates() {
   const replies = [];
   const feature = createPearlLoaderFeature({
@@ -143,6 +187,8 @@ async function testLoaderRuntimeWhispers() {
 
 (async () => {
   await testCompleteCycle();
+  await testMissingEnderPearl();
+  testEnderPearlRadius();
   await testMissingCoordinates();
   testRestrictedRuntimeModules();
   await testLoaderRuntimeWhispers();

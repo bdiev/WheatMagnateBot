@@ -7,6 +7,7 @@ const { Vec3 } = require('vec3');
 const PEARL_LOADER_ROLE = 'pearl_loader';
 const LOAD_COMMAND = /^load$/i;
 const YES_COMMAND = /^yes$/i;
+const PEARL_SEARCH_RADIUS = 2;
 
 function cleanWhisperText(value) {
   return String(value || '')
@@ -22,6 +23,21 @@ function isTrapdoor(block) {
 function trapdoorIsOpen(block) {
   const properties = typeof block?.getProperties === 'function' ? block.getProperties() : null;
   return properties?.open === true || properties?.open === 'true';
+}
+
+function isEnderPearlEntity(entity) {
+  const name = String(entity?.name || '').toLowerCase().replace(/^minecraft:/, '');
+  const displayName = String(entity?.displayName || '').toLowerCase();
+  return name === 'ender_pearl' || displayName === 'thrown ender pearl';
+}
+
+function hasEnderPearlNear(bot, hatch, radius = PEARL_SEARCH_RADIUS) {
+  const center = new Vec3(hatch.x + 0.5, hatch.y + 0.5, hatch.z + 0.5);
+  return Object.values(bot?.entities || {}).some(entity =>
+    isEnderPearlEntity(entity) &&
+    entity?.position &&
+    center.distanceTo(entity.position) <= radius
+  );
 }
 
 function timeoutError(message, statusCode = 504) {
@@ -242,6 +258,20 @@ function createPearlLoaderFeature({
     });
   }
 
+  async function finishMissingPearl(job) {
+    if (!job || activeJob !== job) return;
+    clearJobTimers(job);
+    job.runtime?.assignTask?.('idle');
+    activeJob = null;
+    await job.runtime?.stop?.('Pearl Loader ender pearl is not set').catch(() => {});
+    log('info', `Pearl Loader found no ender pearl for ${job.username}.`, {
+      username:job.username,
+      accountId:job.accountId,
+      hatch:job.hatch,
+      radius:PEARL_SEARCH_RADIUS
+    });
+  }
+
   function playerVisible(bot, username) {
     const entity = Object.values(bot?.entities || {}).find(candidate =>
       candidate?.type === 'player' &&
@@ -339,6 +369,12 @@ function createPearlLoaderFeature({
       job.stage = 'navigating';
       await navigateToHatch(loaderBot, hatch);
       if (activeJob !== job || runtime.bot !== loaderBot) throw new Error('Pearl Loader connection changed while navigating.');
+      job.stage = 'checking_pearl';
+      if (!hasEnderPearlNear(loaderBot, hatch)) {
+        sendPrivateWhisper(loaderBot, job.username, 'Your ender pearl is not set.');
+        await finishMissingPearl(job);
+        return;
+      }
       job.stage = 'awaiting_yes';
       sendPrivateWhisper(loaderBot, job.username, 'Ready?');
       job.readyTimer = setTimer(() => {
@@ -401,4 +437,14 @@ function createPearlLoaderFeature({
   return { handlePrimaryWhisper, handleLoaderWhisper, isExpectedPlayer, getStatus, dispose, __test:{ isTrapdoor, trapdoorIsOpen, loadPlayerHatch } };
 }
 
-module.exports = { PEARL_LOADER_ROLE, cleanWhisperText, createPearlLoaderFeature, isTrapdoor, sendPrivateWhisper, trapdoorIsOpen };
+module.exports = {
+  PEARL_LOADER_ROLE,
+  PEARL_SEARCH_RADIUS,
+  cleanWhisperText,
+  createPearlLoaderFeature,
+  hasEnderPearlNear,
+  isEnderPearlEntity,
+  isTrapdoor,
+  sendPrivateWhisper,
+  trapdoorIsOpen
+};
