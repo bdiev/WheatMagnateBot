@@ -18,7 +18,7 @@ function pearlLoaderOnlyModules() {
     obsidianFarm: {
       attachBot() {}, detachBot() {}, onSpawn() {}, dispose() {}, suspend:obsidianStatus,
       pauseForServerRestart:obsidianStatus, pauseForHighPing:obsidianStatus, stop:obsidianStatus,
-      getStatus:obsidianStatus, configure:() => restricted('Obsidian Farm'),
+      getStatus:obsidianStatus, configureRuntime() {}, configure:() => restricted('Obsidian Farm'),
       setProtectionLeverState:() => restricted('Obsidian Farm'), prepareStart:() => restricted('Obsidian Farm'),
       validateStart:() => restricted('Obsidian Farm'), resetConfig:() => restricted('Obsidian Farm'),
       cycleCauldronRadius:() => restricted('Obsidian Farm')

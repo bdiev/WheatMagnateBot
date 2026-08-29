@@ -104,6 +104,8 @@ async function testMissingCoordinates() {
 function testRestrictedRuntimeModules() {
   const modules = createModulesForBot({accountId:loaderAccount.id,account:loaderAccount});
   assert.throws(() => modules.obsidianFarm.configure(1,2,3),/disabled for the Pearl Loader/);
+  assert.doesNotThrow(() => modules.obsidianFarm.configureRuntime({}),
+    'runtime wiring must remain available without enabling Obsidian Farm');
   assert.throws(() => modules.killAura.setEnabled(true),/disabled for the Pearl Loader/);
   assert.throws(() => modules.follow.start('Player'),/disabled for the Pearl Loader/);
   assert.equal(modules.killAura.getStatus().enabled,false);
