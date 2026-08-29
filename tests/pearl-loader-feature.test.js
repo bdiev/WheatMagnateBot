@@ -39,11 +39,17 @@ async function testCompleteCycle() {
   runtime.assignTask = task => taskStates.push(task);
   let stopped = 0;
   runtime.stop = async reason => { stopped += 1; runtime.stopReason = reason; runtime.bot = null; };
-  const manager = { async start(id) { assert.equal(id,loaderAccount.id); },get:() => runtime };
+  let recreated = 0;
+  const manager = {
+    async start(id) { assert.equal(id,loaderAccount.id); },
+    async recreate(id) { assert.equal(id,loaderAccount.id); recreated += 1; },
+    get:() => runtime
+  };
+  let registryLoads = 0;
   const primaryReplies = [];
   const feature = createPearlLoaderFeature({
     pool:{ query:async () => ({rows:[{username:'bdiev_',pearl_hatch_x:10,pearl_hatch_y:64,pearl_hatch_z:-20}]}) },
-    getRegistry:() => ({list:() => [loaderAccount]}),
+    getRegistry:() => ({load:async () => { registryLoads += 1; },list:() => [loaderAccount]}),
     getManager:() => manager,
     sendPrimaryWhisper:async (username,message) => primaryReplies.push({username,message}),
     movementsFactory:() => ({}),
@@ -56,6 +62,8 @@ async function testCompleteCycle() {
   });
 
   assert.equal(await feature.handlePrimaryWhisper('bdiev_','  LOAD  '),true);
+  assert.equal(registryLoads,1,'each Load request refreshes bot roles from the database');
+  assert.equal(recreated,1,'an existing stopped runtime is recreated from the refreshed account settings');
   assert.equal(feature.getStatus().stage,'awaiting_yes');
   assert.deepEqual(chats,['/w bdiev_ Ready?']);
   assert.equal(movementsSeen[0].canDig,false,'pathfinder must never dig blocks');

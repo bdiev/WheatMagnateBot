@@ -67,7 +67,11 @@ function createPearlLoaderFeature({
     if (typeof sendPrimaryWhisper === 'function') await sendPrimaryWhisper(username, message);
   };
 
-  const loaderAccount = () => getRegistry()?.list?.().find(account => account.role === PEARL_LOADER_ROLE && !account.isDefault) || null;
+  async function loaderAccount() {
+    const registry = getRegistry();
+    await registry?.load?.();
+    return registry?.list?.().find(account => account.role === PEARL_LOADER_ROLE && !account.isDefault) || null;
+  }
 
   async function loadPlayerHatch(username) {
     const result = await pool.query(`
@@ -270,7 +274,7 @@ function createPearlLoaderFeature({
         await tellPrimary(username, 'Pearl hatch coordinates are not configured. Ask an administrator to add them to your player card.');
         return;
       }
-      const account = loaderAccount();
+      const account = await loaderAccount();
       if (!account) {
         activeJob = null;
         await tellPrimary(username, 'Pearl Loader is not configured. Ask an administrator to assign the Pearl Loader role to one bot.');
@@ -284,7 +288,8 @@ function createPearlLoaderFeature({
         hatch,
         stage:'connecting'
       });
-      await manager.start(account.id);
+      if (manager.get(account.id)) await manager.recreate(account.id);
+      else await manager.start(account.id);
       const runtime = manager.get(account.id);
       if (!runtime) throw new Error('Pearl Loader runtime could not be started.');
       job.runtime = runtime;
