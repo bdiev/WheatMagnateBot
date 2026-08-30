@@ -376,7 +376,7 @@ function createPearlLoaderFeature({
         return;
       }
       job.stage = 'awaiting_yes';
-      sendPrivateWhisper(loaderBot, job.username, 'Ready?');
+      sendPrivateWhisper(loaderBot, job.username, 'Type "/r yes" when you ready.');
       job.readyTimer = setTimer(() => {
         failJob(job, timeoutError('The Ready? confirmation expired.'), { notify:false });
       }, readyTimeoutMs);
