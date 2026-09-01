@@ -7286,6 +7286,19 @@ function consumeOutboundSelfEcho(message) {
   let matchedKey = normalized;
   let timestamps = recentOutboundChat.get(matchedKey);
 
+  // GreenChat uses a leading `>` to color an outbound line, but the parsed
+  // player-chat component may expose the echoed message without that marker.
+  // Match the stripped echo to the original line so an explicitly mirrored
+  // !wm response is not archived and sent to Discord a second time.
+  if ((!timestamps || timestamps.length === 0) && normalized && !normalized.startsWith('>')) {
+    const greenChatKey = `> ${normalized}`;
+    const greenChatTimestamps = recentOutboundChat.get(greenChatKey);
+    if (greenChatTimestamps?.length) {
+      matchedKey = greenChatKey;
+      timestamps = greenChatTimestamps;
+    }
+  }
+
   // Some servers corrupt unsupported characters (notably emoji) in the echoed
   // chat event. Fall back to the stable ASCII portion so that echo is still
   // consumed instead of being mirrored back to Discord as a second message.

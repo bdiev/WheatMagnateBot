@@ -48,6 +48,11 @@ assert.match(
   /async function handleWmCommand[\s\S]*?const message = `> \$\{prefix\}\$\{chunks\[index\]\}`;[\s\S]*?sendMinecraftChat\(message\);/,
   '!wm public responses must start with > so Minecraft renders them as green chat'
 );
+assert.match(
+  botSource,
+  /function consumeOutboundSelfEcho[\s\S]*?const greenChatKey = `> \$\{normalized\}`;[\s\S]*?recentOutboundChat\.get\(greenChatKey\)[\s\S]*?matchedKey = greenChatKey;/,
+  'self-echo suppression must match GreenChat responses after Minecraft strips their leading > marker'
+);
 assert.match(serverSource, /beforeMessageId/, 'player chat history must support stable pagination');
 assert.match(serverSource, /const beforeId = !aroundId[\s\S]*url\.searchParams\.get\('before'\)/,
   'the full chat archive must accept an older-message cursor');
