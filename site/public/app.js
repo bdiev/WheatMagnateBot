@@ -6277,6 +6277,25 @@ function setAdminPlayersNotice(message = '', kind = 'success') {
   notice.hidden = !message;
 }
 
+function renderAdminPlayerInfoCollection(progress) {
+  const status = $('#adminPlayerInfoCollection');
+  if (!status || !progress) return;
+  const total = Math.max(0, Number(progress.totalPlayers) || 0);
+  const remaining = Math.max(0, Number(progress.remainingPlayers) || 0);
+  const missing = progress.missing || {};
+  status.classList.toggle('pending', remaining > 0);
+  status.classList.toggle('online', total > 0 && remaining === 0);
+  status.classList.toggle('info', total === 0);
+  status.textContent = total === 0
+    ? 'No tracked players yet'
+    : remaining === 0
+      ? `Information complete for all ${formatNumber(total)} players`
+      : `${formatNumber(remaining)} of ${formatNumber(total)} players still missing information`;
+  status.title = remaining > 0
+    ? `Missing values — Playtime: ${formatNumber(missing.playtime)}; Messages: ${formatNumber(missing.messages)}; Join date: ${formatNumber(missing.joinDate)}; Last seen: ${formatNumber(missing.lastSeen)}`
+    : status.textContent;
+}
+
 function adminPlayerByIdentity(identityKey) {
   return state.adminPlayers.find(player => String(player.identityKey) === String(identityKey)) || null;
 }
@@ -6388,6 +6407,9 @@ async function loadAdminPlayers({ query = $('#adminPlayersSearch')?.value || '',
       limit: String(state.adminPlayersLimit),
       offset: String(Math.max(0, offset))
     });
+    if (!append && Number(offset) === 0 && !query.trim()) {
+      params.set('includeInfoCollection', 'true');
+    }
     if (preserveScroll && !append) {
       params.set('limit', String(Math.min(24, Math.max(state.adminPlayersLimit, previousPlayers.length))));
     }
@@ -6398,6 +6420,7 @@ async function loadAdminPlayers({ query = $('#adminPlayersSearch')?.value || '',
     if (!preserveScroll) state.adminPlayersLimit = Number(payload.limit) || state.adminPlayersLimit;
     state.adminPlayersOffset = Number(payload.offset) || 0;
     state.adminPlayersHasMore = Boolean(payload.hasMore);
+    renderAdminPlayerInfoCollection(payload.infoCollection);
     if (append) {
       const knownKeys = new Set(state.adminPlayers.map(player => String(player.identityKey)));
       const additions = (payload.players || []).filter(player => !knownKeys.has(String(player.identityKey)));

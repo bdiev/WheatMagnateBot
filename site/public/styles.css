@@ -5621,6 +5621,14 @@ body.search-focus-active #logoutButton {
 .admin-players-panel > .panel-head h2,
 .admin-log-panel > .panel-head h2 { font-size: 20px; }
 
+.admin-player-info-progress {
+  max-width:100%;
+  margin-top:8px;
+  line-height:1.35;
+  text-align:left;
+  white-space:normal;
+}
+
 .admin-player-tools { display:flex; align-items:center; justify-content:flex-end; gap:9px; flex-wrap:wrap; }
 .admin-player-sort select {
   min-height:var(--button-height);

@@ -7,6 +7,7 @@ const {
   adminPlayerIdentity,
   deleteAdminPlayer,
   getAdminPlayers,
+  getPlayerInfoCollectionProgress,
   normalizeAdminPlayerPatch,
   patchAdminPlayer
 } = require('../server');
@@ -209,6 +210,35 @@ async function testAdminPlayerSortingAndOptimizedQuery() {
   assert.doesNotMatch(calls[5].sql, /FROM game_chat_messages message/, 'message sorting must reuse the pre-pagination aggregates');
 }
 
+async function testPlayerInfoCollectionProgress() {
+  let statement = null;
+  const progress = await getPlayerInfoCollectionProgress({
+    async query(sql) {
+      statement = String(sql).replace(/\s+/g, ' ').trim();
+      return { rows: [{
+        total_players: 120,
+        remaining_players: 17,
+        missing_playtime: 3,
+        missing_messages: 7,
+        missing_join_date: 11,
+        missing_last_seen: 5
+      }] };
+    }
+  });
+  assert.deepEqual(progress, {
+    totalPlayers: 120,
+    remainingPlayers: 17,
+    completedPlayers: 103,
+    missing: { playtime: 3, messages: 7, joinDate: 11, lastSeen: 5 }
+  });
+  assert.match(statement, /FROM player_activity activity UNION ALL SELECT whitelist_player\.username/,
+    'progress must include activity and whitelist-only players');
+  assert.match(statement, /UNION ALL SELECT playtime\.username[\s\S]*FROM player_playtime playtime/,
+    'progress must include playtime-only players');
+  assert.match(statement, /missing_playtime OR missing_messages OR missing_join_date OR missing_last_seen/,
+    'a player must remain pending while any collected metric is missing');
+}
+
 function testArchitectureAndUiContracts() {
   const root = path.resolve(__dirname, '..', '..');
   const serverSource = fs.readFileSync(path.join(root, 'site', 'server.js'), 'utf8');
@@ -228,6 +258,8 @@ function testArchitectureAndUiContracts() {
   assert.match(databaseSource, /admin_notes = COALESCE[\s\S]*admin_tags = ARRAY/, 'UUID reconciliation must preserve admin-managed metadata');
   assert.match(databaseSource, /INSERT INTO player_activity \(username, player_uuid/, 'a returning UUID player must be recreated by normal tracking');
   assert.match(htmlSource, /id="adminPlayersSearch"[\s\S]*id="adminPlayersSort"[\s\S]*id="adminPlayersDirection"[\s\S]*id="adminPlayersScroller"[\s\S]*id="adminPlayersList"[\s\S]*id="adminPlayersScrollStatus"/);
+  assert.match(htmlSource, /id="adminPlayerInfoCollection"[^>]*role="status"/,
+    'the Minecraft Players panel must expose information collection progress');
   assert.match(htmlSource, /option value="playtime">Playtime<[\s\S]*option value="nickname">Nickname<[\s\S]*option value="uuid">UUID<[\s\S]*option value="joindate">Join date<[\s\S]*option value="seen">Seen<[\s\S]*option value="messages">Messages</, 'all requested player sort fields must be available');
   assert.match(htmlSource, /id="adminPlayerDeleteModal"[\s\S]*role="alertdialog"/);
   assert.match(appSource, /Object\.keys\(patch\)\.length/, 'the frontend must build a partial patch');
@@ -236,6 +268,8 @@ function testArchitectureAndUiContracts() {
   assert.match(appSource, /document\.addEventListener\('pointerdown', closeAdminPlayerMenus, true\)/, 'clicking or tapping outside a player menu must close it');
   assert.match(appSource, /menu\.contains\(event\.target\)[\s\S]*menu\.removeAttribute\('open'\)/, 'interactions inside the active player menu must not close it');
   assert.match(appSource, /new URLSearchParams\(\{[\s\S]*sort: state\.adminPlayersSort,[\s\S]*direction: state\.adminPlayersDirection,[\s\S]*limit: String\(state\.adminPlayersLimit\),[\s\S]*offset:/, 'sorting and pagination must happen on the server');
+  assert.match(appSource, /function renderAdminPlayerInfoCollection[\s\S]*players still missing information[\s\S]*Missing values/,
+    'the frontend must show the remaining player count and metric breakdown');
   assert.match(appSource, /admin-player-avatar[^\n]*accountHeadUrl\(player\.username, player\.uuid\)[^\n]*loading="lazy" decoding="async"/, 'player cards must use the UUID-aware cached avatar proxy and asynchronous decoding');
   assert.match(appSource, /admin-player-avatar-button[^>]*data-admin-player-action="view"[^>]*data-player-key/, 'clicking a player avatar must open the profile');
   assert.match(appSource, /admin-player-name-button[^>]*data-admin-player-action="view"[^>]*data-player-key/, 'clicking a player nickname must open the profile');
@@ -244,6 +278,8 @@ function testArchitectureAndUiContracts() {
   assert.match(appSource, /player_joined[\s\S]*player_left[\s\S]*loadAdminPlayers\(\{ showLoading: false, preserveScroll: true \}\)/, 'join and leave refreshes must preserve the admin player scroll position');
   assert.match(appSource, /previousScrollTop[\s\S]*preserveScroll[\s\S]*requestAnimationFrame[\s\S]*scroller\.scrollTop = previousScrollTop/, 'background player refreshes must restore the scroll position after rendering');
   assert.match(stylesSource, /\.admin-players-scroller\s*\{[^}]*max-height:[^;]+;[^}]*overflow-y:auto;/, 'the player card area must stay compact and scroll internally');
+  assert.match(stylesSource, /\.admin-player-info-progress\s*\{[^}]*max-width:100%[^}]*white-space:normal;/,
+    'the information progress indicator must wrap safely on narrow screens');
   assert.match(stylesSource, /\.admin-player-card\.menu-open\s*\{[^}]*z-index:100/, 'the active player card must render above later cards');
   assert.match(stylesSource, /\.admin-player-avatar-button\s*\{[^}]*grid-column:1;[^}]*min-width:52px!important;/, 'the clickable avatar must stay inside its grid column');
   assert.match(stylesSource, /\.admin-player-card-main\s*\{[^}]*grid-column:2;[^}]*grid-row:1;/, 'the nickname must occupy a separate grid column from the avatar');
@@ -256,6 +292,7 @@ function testArchitectureAndUiContracts() {
   await testDeleteAndRelations();
   await testDeleteGuardsAndMissingPlayer();
   await testAdminPlayerSortingAndOptimizedQuery();
+  await testPlayerInfoCollectionProgress();
   testArchitectureAndUiContracts();
   console.log('Admin Minecraft player management tests passed.');
 })().catch(error => {

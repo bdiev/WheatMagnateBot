@@ -3782,6 +3782,83 @@ async function selectAdminPlayer(executor, identifier, { forUpdate = false } = {
   return result.rows[0];
 }
 
+async function getPlayerInfoCollectionProgress(database = pool) {
+  const result = await database.query(`
+    WITH candidate_players AS (
+      SELECT activity.username,
+             activity.player_uuid,
+             activity.registration_at,
+             activity.last_seen,
+             activity.observed_message_count
+      FROM player_activity activity
+
+      UNION ALL
+
+      SELECT whitelist_player.username,
+             NULL::uuid AS player_uuid,
+             NULL::timestamptz AS registration_at,
+             NULL::timestamptz AS last_seen,
+             NULL::bigint AS observed_message_count
+      FROM whitelist whitelist_player
+      WHERE NOT EXISTS (
+        SELECT 1 FROM player_activity activity
+        WHERE LOWER(activity.username) = LOWER(whitelist_player.username)
+      )
+
+      UNION ALL
+
+      SELECT playtime.username,
+             playtime.player_uuid,
+             NULL::timestamptz AS registration_at,
+             NULL::timestamptz AS last_seen,
+             NULL::bigint AS observed_message_count
+      FROM player_playtime playtime
+      WHERE NOT EXISTS (
+        SELECT 1 FROM player_activity activity
+        WHERE (playtime.player_uuid IS NOT NULL AND activity.player_uuid = playtime.player_uuid)
+           OR LOWER(activity.username) = LOWER(playtime.username)
+      )
+        AND NOT EXISTS (
+          SELECT 1 FROM whitelist whitelist_player
+          WHERE LOWER(whitelist_player.username) = LOWER(playtime.username)
+        )
+    ), missing AS (
+      SELECT NOT EXISTS (
+               SELECT 1 FROM player_playtime playtime
+               WHERE (candidate.player_uuid IS NOT NULL AND playtime.player_uuid = candidate.player_uuid)
+                  OR LOWER(playtime.username) = LOWER(candidate.username)
+             ) AS missing_playtime,
+             candidate.observed_message_count IS NULL AS missing_messages,
+             candidate.registration_at IS NULL AS missing_join_date,
+             candidate.last_seen IS NULL AS missing_last_seen
+      FROM candidate_players candidate
+    )
+    SELECT COUNT(*)::int AS total_players,
+           COUNT(*) FILTER (
+             WHERE missing_playtime OR missing_messages OR missing_join_date OR missing_last_seen
+           )::int AS remaining_players,
+           COUNT(*) FILTER (WHERE missing_playtime)::int AS missing_playtime,
+           COUNT(*) FILTER (WHERE missing_messages)::int AS missing_messages,
+           COUNT(*) FILTER (WHERE missing_join_date)::int AS missing_join_date,
+           COUNT(*) FILTER (WHERE missing_last_seen)::int AS missing_last_seen
+    FROM missing
+  `);
+  const row = result.rows[0] || {};
+  const totalPlayers = toInt(row.total_players);
+  const remainingPlayers = toInt(row.remaining_players);
+  return {
+    totalPlayers,
+    remainingPlayers,
+    completedPlayers: Math.max(0, totalPlayers - remainingPlayers),
+    missing: {
+      playtime: toInt(row.missing_playtime),
+      messages: toInt(row.missing_messages),
+      joinDate: toInt(row.missing_join_date),
+      lastSeen: toInt(row.missing_last_seen)
+    }
+  };
+}
+
 async function getAdminPlayers(currentUser, url, database = pool) {
   assertAdminUser(currentUser);
   const search = String(url?.searchParams?.get('query') || '').trim().slice(0, 64);
@@ -3791,6 +3868,7 @@ async function getAdminPlayers(currentUser, url, database = pool) {
   const direction = requestedDirection === 'desc' ? 'desc' : 'asc';
   const limit = Math.min(24, Math.max(4, Number.parseInt(url?.searchParams?.get('limit'), 10) || 8));
   const offset = Math.min(100_000, Math.max(0, Number.parseInt(url?.searchParams?.get('offset'), 10) || 0));
+  const includeInfoCollection = url?.searchParams?.get('includeInfoCollection') === 'true';
   const directionSql = direction.toUpperCase();
   const sortingByMessages = sort === 'messages';
   const messageCountCtes = sortingByMessages ? `
@@ -3884,6 +3962,9 @@ async function getAdminPlayers(currentUser, url, database = pool) {
     ) names ON candidate.player_uuid IS NOT NULL
     ORDER BY ${resultOrder}
   `, [search, limit + 1, offset]);
+  const infoCollection = includeInfoCollection
+    ? await getPlayerInfoCollectionProgress(database)
+    : null;
   const hasMore = result.rows.length > limit;
   return {
     players: result.rows.slice(0, limit).map(publicAdminPlayer),
@@ -3892,7 +3973,8 @@ async function getAdminPlayers(currentUser, url, database = pool) {
     direction,
     limit,
     offset,
-    hasMore
+    hasMore,
+    ...(infoCollection ? { infoCollection } : {})
   };
 }
 
@@ -5851,4 +5933,4 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown);
 }
 
-module.exports = { ADMIN_PLAYER_EDITABLE_FIELDS, adminPlayerIdentity, assertAdminUser, buildPlayerGameSessions, changeSitePassword, cleanAccountInput, csrfTokenForSessionHash, deleteAdminPlayer, freshStoredRuntimePayload, getAdminPlayers, getAdminUsers, hashPassword, normalizeAdminPlayerPatch, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, parsePlaytimeSeconds, patchAdminPlayer, playerProfileRuntimePresence, publicUser, registrationDefaults, requestHandler, resolveObsidianDebugLogPath, serializeObsidianDebugLogFallback, server, setAdminPlaytime, sortSeenPlayers, startSiteServer, touchSiteSessionActivity, validateCredentials, validatePasswordChange, verifyPassword };
+module.exports = { ADMIN_PLAYER_EDITABLE_FIELDS, adminPlayerIdentity, assertAdminUser, buildPlayerGameSessions, changeSitePassword, cleanAccountInput, csrfTokenForSessionHash, deleteAdminPlayer, freshStoredRuntimePayload, getAdminPlayers, getAdminUsers, getPlayerInfoCollectionProgress, hashPassword, normalizeAdminPlayerPatch, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, parsePlaytimeSeconds, patchAdminPlayer, playerProfileRuntimePresence, publicUser, registrationDefaults, requestHandler, resolveObsidianDebugLogPath, serializeObsidianDebugLogFallback, server, setAdminPlaytime, sortSeenPlayers, startSiteServer, touchSiteSessionActivity, validateCredentials, validatePasswordChange, verifyPassword };
