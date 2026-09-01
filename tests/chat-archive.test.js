@@ -40,8 +40,13 @@ assert.doesNotMatch(
 );
 assert.match(
   botSource,
-  /const wmMatch = message\.match\([\s\S]*?if \(wmMatch\) \{\s*\/\/[\s\S]*?scheduleGameChatForward\(username, message, source\);\s*await handleWmCommand/,
-  '!wm commands must use the shared chat forwarder so message/messagestr echoes are deduplicated'
+  /const wmMatch = message\.match\([\s\S]*?if \(wmMatch\) \{\s*\/\/[\s\S]*?await scheduleGameChatForward\(username, message, source, \{ waitForDelivery: true \}\);\s*await handleWmCommand/,
+  '!wm commands must be delivered through the deduplicating forwarder before their response'
+);
+assert.match(
+  botSource,
+  /async function handleWmCommand[\s\S]*?const message = `> \$\{prefix\}\$\{chunks\[index\]\}`;[\s\S]*?sendMinecraftChat\(message\);/,
+  '!wm public responses must start with > so Minecraft renders them as green chat'
 );
 assert.match(serverSource, /beforeMessageId/, 'player chat history must support stable pagination');
 assert.match(serverSource, /const beforeId = !aroundId[\s\S]*url\.searchParams\.get\('before'\)/,

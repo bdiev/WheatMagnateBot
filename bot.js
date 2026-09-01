@@ -1205,6 +1205,7 @@ const seenActivityUpdateIntervals = new Map();
 const growingChildPlainMessageIds = new Set();
 let recentWhispers = new Map(); // key: `WHISPER:username:message` -> timestamp, to mark whispers and suppress chat forwarding
 let pendingChatTimers = new Map(); // normalized message key -> Set<timeout handle>
+let pendingChatDeliveryWaiters = new Map(); // normalized message key -> { delivered, resolvers }
 let outboundWhispers = new Map(); // key: `OUTBOUND:targetUsername:message` -> timestamp, to suppress public echo of our own whispers
 let siteWhisperTargets = new Map(); // lowercase username -> { timestamp, siteUsername }, suppress Discord whisper fallback for site dialogs
 class DeferredBotCommandError extends Error {
@@ -6840,10 +6841,29 @@ function cancelPendingGameChat(username, message) {
   if (!timers) return false;
   for (const timer of timers) clearTimeout(timer);
   pendingChatTimers.delete(key);
+  settlePendingGameChatDelivery(key, false);
   return true;
 }
 
-function scheduleGameChatForward(username, message, source = 'chat') {
+function waitForPendingGameChatDelivery(key) {
+  if (!pendingChatTimers.has(key)) return Promise.resolve(true);
+  return new Promise(resolve => {
+    const state = pendingChatDeliveryWaiters.get(key) || { delivered: false, resolvers: new Set() };
+    state.resolvers.add(resolve);
+    pendingChatDeliveryWaiters.set(key, state);
+  });
+}
+
+function settlePendingGameChatDelivery(key, delivered) {
+  const state = pendingChatDeliveryWaiters.get(key);
+  if (!state) return;
+  state.delivered ||= Boolean(delivered);
+  if (pendingChatTimers.has(key)) return;
+  pendingChatDeliveryWaiters.delete(key);
+  for (const resolve of state.resolvers) resolve(state.delivered);
+}
+
+function scheduleGameChatForward(username, message, source = 'chat', { waitForDelivery = false } = {}) {
   const cleanMessage = cleanMinecraftChatMessage(message);
   if (!cleanMessage || cleanMessage.startsWith('/msg ')) return false;
 
@@ -6862,7 +6882,7 @@ function scheduleGameChatForward(username, message, source = 'chat') {
   }
   const duplicate = recentlyForwardedGameChat.get(pendingKey);
   if (duplicate && duplicate.source !== source && nowTs - duplicate.timestamp < 1_500) {
-    return false;
+    return waitForDelivery ? waitForPendingGameChatDelivery(pendingKey) : false;
   }
   if (isSelfMessage && consumeOutboundSelfEcho(cleanMessage)) {
     recentlyForwardedGameChat.set(pendingKey, { source, timestamp: nowTs });
@@ -6889,6 +6909,7 @@ function scheduleGameChatForward(username, message, source = 'chat') {
 
   recentlyForwardedGameChat.set(pendingKey, { source, timestamp: nowTs });
   const timer = setTimeout(async () => {
+    let delivered = false;
     try {
       if (recentWhispers.has(whisperKey) || recentWhispers.has(whisperLowerKey)) {
         debugLog(`[Chat] Suppressed whisper (late mark) from ${safeUsername}: "${cleanMessage}"`);
@@ -6901,9 +6922,11 @@ function scheduleGameChatForward(username, message, source = 'chat') {
       recentlyForwardedGameChat.set(pendingKey, { source, timestamp: Date.now() });
       if (isIgnoredPlayer) {
         await recordGameChatMessage(safeUsername, cleanMessage, { visible: false });
+        delivered = true;
         return;
       }
       const sent = await sendGameChatMessageToDiscord(safeUsername, cleanMessage, { source });
+      delivered = sent;
       if (!sent && DISCORD_CHAT_CHANNEL_ID && discordClient?.isReady?.()) {
         console.warn(`[Chat] Forwarded ${safeUsername} to site DB but failed to mirror to Discord.`);
       }
@@ -6913,13 +6936,14 @@ function scheduleGameChatForward(username, message, source = 'chat') {
       const timers = pendingChatTimers.get(pendingKey);
       timers?.delete(timer);
       if (timers?.size === 0) pendingChatTimers.delete(pendingKey);
+      settlePendingGameChatDelivery(pendingKey, delivered);
     }
   }, PENDING_CHAT_DELAY_MS);
 
   const timers = pendingChatTimers.get(pendingKey) || new Set();
   timers.add(timer);
   pendingChatTimers.set(pendingKey, timers);
-  return true;
+  return waitForDelivery ? waitForPendingGameChatDelivery(pendingKey) : true;
 }
 
 function parseRawPublicChatLine(text) {
@@ -7138,30 +7162,30 @@ function classifyGeminiError(err) {
 async function handleWmCommand(username, question) {
   const usernameKey = username.toLowerCase();
   if (!ignoredUsernames.some(name => name.toLowerCase() === usernameKey)) {
-    await sendPrivateMinecraftMessage(username, '[AI] This command is available only to whitelisted players.');
+    await sendPrivateMinecraftMessage(username, 'NONONO MrFish!!! This command available only to whitelisted players.');
     return;
   }
 
   if (!GEMINI_API_KEY) {
-    await sendPrivateMinecraftMessage(username, '[AI] Gemini API is not configured.');
+    await sendPrivateMinecraftMessage(username, 'Gemini API is not configured.');
     return;
   }
   if (!runtimeSettings.geminiEnabled) {
-    await sendPrivateMinecraftMessage(username, '[AI] Gemini is disabled in the admin panel.');
+    await sendPrivateMinecraftMessage(username, 'Gemini is disabled in the admin panel.');
     return;
   }
 
   const cleanQuestion = String(question || '').trim();
   if (!cleanQuestion) {
-    await sendPrivateMinecraftMessage(username, '[AI] Usage: !wm <question>');
+    await sendPrivateMinecraftMessage(username, 'Usage: !wm <question>');
     return;
   }
   if (cleanQuestion.length > WM_MAX_QUESTION_LENGTH) {
-    await sendPrivateMinecraftMessage(username, `[AI] Keep the question under ${WM_MAX_QUESTION_LENGTH} characters.`);
+    await sendPrivateMinecraftMessage(username, `Keep the question under ${WM_MAX_QUESTION_LENGTH} characters.`);
     return;
   }
   if (wmRequestsInFlight.has(usernameKey)) {
-    await sendPrivateMinecraftMessage(username, '[AI] Your previous question is still being processed.');
+    await sendPrivateMinecraftMessage(username, 'Your previous question is still being processed.');
     return;
   }
 
@@ -7170,7 +7194,7 @@ async function handleWmCommand(username, question) {
   if (cooldownRemaining > 0) {
     await sendPrivateMinecraftMessage(
       username,
-      `[AI] Please wait ${Math.ceil(cooldownRemaining / 1000)} seconds before asking again.`
+      `Please wait ${Math.ceil(cooldownRemaining / 1000)} seconds before asking again.`
     );
     return;
   }
@@ -7186,7 +7210,7 @@ async function handleWmCommand(username, question) {
     for (let index = 0; index < chunks.length; index++) {
       if (!bot?.entity) return;
       const prefix = chunks.length > 1 ? `[${index + 1}/${chunks.length}] ` : '';
-      const message = `${prefix}${chunks[index]}`;
+      const message = `> ${prefix}${chunks[index]}`;
       sendMinecraftChat(message);
       await sendGameChatMessageToDiscord(bot.username, message, {
         allowMentions: false,
@@ -7208,7 +7232,7 @@ async function handleWmCommand(username, question) {
     sendOwnerDM('Gemini command failed', diagnostic, 16711680).catch(() => {});
     await sendPrivateMinecraftMessage(
       username,
-      `[AI] Request failed (${errorCode}). Please try again later.`
+      `Request failed (${errorCode}). Please try again later.`
     );
   } finally {
     wmRequestsInFlight.delete(usernameKey);
@@ -9326,7 +9350,7 @@ function createBot() {
       // Minecraft exposes the same line through chat, message, and messagestr.
       // Route commands through the shared forwarder so the raw events cannot
       // persist and mirror a second copy of the command.
-      scheduleGameChatForward(username, message, source);
+      await scheduleGameChatForward(username, message, source, { waitForDelivery: true });
       await handleWmCommand(username, wmMatch[1] || '');
       return;
     }
