@@ -202,13 +202,13 @@ const ACCOUNT_COLOR_PALETTE = Object.freeze([
   '#8c78e8', '#7cc242', '#e56aa6', '#41b6d7', '#b78b59', '#8dbb61'
 ]);
 const NAV_SECTION_INFO = Object.freeze({
-  chat: ['Chat', 'Minecraft and site chat'],
-  bot: ['Bot Stats', 'Connection, health and inventory'],
+  chat: ['Chat', 'Minecraft chat archive and messaging'],
+  bot: ['Bot Stats', 'Connection, health, gear and inventory'],
   'kill-aura': ['Kill Aura', 'Mob targets and combat statistics'],
   obsidian: ['Obsidian Farm', 'Farm controls and analytics'],
   server: ['Server Stats', 'TPS and server activity'],
   players: ['Player Stats', 'Profiles and activity'],
-  settings: ['Settings', 'Always available'],
+  settings: ['Settings', 'Timezone, security and navigation'],
   notifications: ['Notifications', 'Alerts and notification rules'],
   timeline: ['Incident Timeline', 'Operational event investigation'],
   'child-ai': ['Child AI', 'Learning and memory administration'],

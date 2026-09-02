@@ -23,8 +23,8 @@ function testOnlyMissingMetricsBecomeCommands() {
     { username: 'Complete', missing_playtime: false, missing_messages: false, missing_join_date: false, missing_last_seen: false }
   ]), [
     { metric: 'playtime', username: 'HasJD', command: '!pt HasJD' },
-    { metric: 'messages', username: 'HasJD', command: '!msgs HasJD' },
     { metric: 'lastSeen', username: 'HasJD', command: '!seen HasJD' },
+    { metric: 'messages', username: 'HasJD', command: '!msgs HasJD' },
     { metric: 'playtime', username: 'HasSeen', command: '!pt HasSeen' },
     { metric: 'joinDate', username: 'HasSeen', command: '!jd HasSeen' },
     { metric: 'joinDate', username: 'HasPT', command: '!jd HasPT' },
@@ -205,7 +205,11 @@ async function testDatabaseQueryUsesAllPlayerSourcesAndUuidIdentity() {
   assert.match(query, /FROM player_playtime playtime/);
   assert.match(query, /candidate\.player_uuid IS NOT NULL AND playtime\.player_uuid = candidate\.player_uuid/);
   assert.match(query, /WHERE missing_playtime OR missing_messages OR missing_join_date OR missing_last_seen/);
-  assert.match(query, /ORDER BY RANDOM\(\)\s+LIMIT 1/);
+  assert.match(
+    query,
+    /ORDER BY \(\s*missing_playtime::int \+ missing_join_date::int \+ missing_last_seen::int\s*\) DESC,\s*RANDOM\(\)\s*LIMIT 1/,
+    'players missing PT, JD and Seen must be selected before message-only gaps'
+  );
 }
 
 async function testRunPreparesAndThrottlesCommands() {

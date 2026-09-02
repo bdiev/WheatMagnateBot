@@ -34,7 +34,7 @@
       <form id="authForm" class="auth-card">
         <p class="eyebrow">Private Dashboard</p>
         <h1 id="authTitle">Sign in</h1>
-        <p id="authIntro" class="auth-intro">Enter your approved account credentials to open the dashboard.</p>
+        <p id="authIntro" class="auth-intro">Enter approved credentials to open the dashboard.</p>
 
         <label class="auth-field">
           <span>Login</span>
@@ -231,7 +231,7 @@
             </div>
             <small>Leave all three fields empty to disable Pearl Loader for this player.</small>
           </fieldset>
-          <p class="account-auth-note">UUID, username, activity, playtime and statistics are maintained automatically by the Minecraft bot.</p>
+          <p class="account-auth-note">The bot maintains identity, activity, playtime, and stats.</p>
           <div class="account-modal-actions"><button id="adminPlayerEditCancel" class="ghost-button" type="button">Cancel</button><button id="adminPlayerEditSubmit" type="submit">Save changes</button></div>
         </form>
       </div>
@@ -241,7 +241,7 @@
           <p class="eyebrow">Destructive action</p>
           <h2 id="adminPlayerDeleteTitle">Delete player?</h2>
           <div id="adminPlayerDeleteIdentity" class="admin-player-modal-identity"></div>
-          <p id="adminPlayerDeleteDescription">This removes the tracked profile, aliases, playtime and latest nearby sighting. Shared chat history and access policies are preserved.</p>
+          <p id="adminPlayerDeleteDescription">Deletes the profile and stats. Chat history and access stay.</p>
           <div id="adminPlayerDeleteError" class="auth-error" role="alert" hidden></div>
           <div class="account-modal-actions"><button id="adminPlayerDeleteCancel" class="ghost-button" type="button">Cancel</button><button id="adminPlayerDeleteConfirm" class="danger-button" type="button">Delete player</button></div>
         </section>
@@ -260,7 +260,7 @@
           <label class="account-field">Minecraft version<input name="minecraftVersion" maxlength="32" placeholder="Auto-detect"></label>
           <label class="account-field account-color-field">Account color<input name="color" type="color" value="#f1c232"></label>
           <label class="account-checkbox"><input name="enabled" type="checkbox" checked> <span id="accountEnabledText">Enable after adding</span></label>
-          <p class="account-auth-note">Microsoft passwords are never requested. Authorization uses Mineflayer's device-code flow and a separate local auth-cache directory.</p>
+          <p class="account-auth-note">Microsoft device code only; passwords are never requested.</p>
           <div class="account-modal-actions"><button type="button" id="accountModalCancel" class="ghost-button">Cancel</button><button type="submit" id="accountModalSubmit">Add account</button></div>
         </form>
       </div>
@@ -280,7 +280,7 @@
           <article class="stat">
             <span class="stat-label">All-Time Messages</span>
             <strong id="chatAllTime">-</strong>
-            <small>stored in the dashboard table</small>
+            <small>entire saved archive</small>
           </article>
         </section>
 
@@ -289,7 +289,7 @@
             <div class="panel-head">
               <div>
                 <h2>Game Chat</h2>
-                <p>Permanent Minecraft chat archive. Scroll upward to load its full history.</p>
+                <p>Full Minecraft chat archive. Scroll up for older messages.</p>
               </div>
               <div class="chat-panel-actions">
                 <button id="chatReturnLive" class="ghost-button" type="button" hidden>Return to live chat</button>
@@ -335,9 +335,9 @@
               <div class="panel-head">
               <div>
                 <h2>Chat Activity</h2>
-                <p>Full archive by day or month; Hours shows the latest 7 days.</p>
+                <p>Message history.</p>
               </div>
-              <div class="chart-controls" data-chart-controls="chatHourlyChart">
+              <div class="chart-controls" data-chart-controls="chatHourlyChart" role="group" aria-label="Chat activity range: hours show 7 days; days and months show full history">
                 <button class="chart-range-button active" type="button" data-chart-range="hours">Hours</button>
                 <button class="chart-range-button" type="button" data-chart-range="days">Days</button>
                 <button class="chart-range-button" type="button" data-chart-range="months">Months</button>
@@ -576,10 +576,10 @@
               <span class="kill-aura-section-icon" aria-hidden="true"><img src="/items/Clock.png" alt=""></span>
               <div>
                 <h2>Kills Over Time</h2>
-                <p>Recorded kills across the last 7 days, 90 days, or full monthly history.</p>
+                <p>Kills by hour, day, or month.</p>
               </div>
             </div>
-            <div class="chart-controls" data-chart-controls="killAuraKillsChart">
+            <div class="chart-controls" data-chart-controls="killAuraKillsChart" role="group" aria-label="Kill history range: hours show 7 days, days show 90 days, and months show full history">
               <button class="chart-range-button active" type="button" data-chart-range="hours">Hours</button>
               <button class="chart-range-button" type="button" data-chart-range="days">Days</button>
               <button class="chart-range-button" type="button" data-chart-range="months">Months</button>
@@ -752,9 +752,9 @@
             <div class="panel-head">
               <div>
                 <h2>Daily Obsidian</h2>
-                <p>Blocks mined per day over the last 14 days.</p>
+                <p>Blocks mined by hour, day, or month.</p>
               </div>
-              <div class="chart-controls" data-chart-controls="obsidianDailyChart">
+              <div class="chart-controls" data-chart-controls="obsidianDailyChart" role="group" aria-label="Obsidian history range: hours show 7 days, days show 90 days, and months aggregate those 90 days">
                 <button class="chart-range-button" type="button" data-chart-range="hours">Hours</button>
                 <button class="chart-range-button active" type="button" data-chart-range="days">Days</button>
                 <button class="chart-range-button" type="button" data-chart-range="months">Months</button>
@@ -841,7 +841,7 @@
               </form>
             </section>
             <section class="panel">
-              <div class="panel-head"><div><h2>Analytics Settings</h2><p>Daily Discord report schedule. Timezone follows your account setting.</p></div><a class="ghost-button link-button" href="/api/obsidian/export.csv">Export CSV</a></div>
+              <div class="panel-head"><div><h2>Analytics Settings</h2><p>Schedule the daily Discord report in your timezone.</p></div><a class="ghost-button link-button" href="/api/obsidian/export.csv">Export CSV</a></div>
               <form id="obsidianAnalyticsSettings" class="settings-form admin-only" hidden>
                 <label class="auth-field"><span>Daily report hour</span><input id="obsidianReportHour" type="number" min="0" max="23"></label>
                 <label class="checkbox-row"><input id="obsidianReportEnabled" type="checkbox"><span>Daily Discord report</span></label>
@@ -877,9 +877,9 @@
             <div class="panel-head">
               <div>
                 <h2>TPS by Hour</h2>
-                <p>Average server TPS over the last 24 hours.</p>
+                <p>Average TPS by hour, day, or month.</p>
               </div>
-              <div class="chart-controls" data-chart-controls="tpsHourlyChart">
+              <div class="chart-controls" data-chart-controls="tpsHourlyChart" role="group" aria-label="TPS history range: hourly, daily, or monthly averages over full recorded history">
                 <button class="chart-range-button active" type="button" data-chart-range="hours">Hours</button>
                 <button class="chart-range-button" type="button" data-chart-range="days">Days</button>
                 <button class="chart-range-button" type="button" data-chart-range="months">Months</button>
@@ -919,9 +919,9 @@
             <div class="panel-head">
               <div>
                 <h2>Not Whitelisted Activity</h2>
-                <p>Full recorded history; current hour shows players online now.</p>
+                <p>Full history; this hour shows players online now.</p>
               </div>
-              <div class="chart-controls" data-chart-controls="unwhitelistedHourlyChart">
+              <div class="chart-controls" data-chart-controls="unwhitelistedHourlyChart" role="group" aria-label="Unwhitelisted player range: full history by hour, day, or month; current hour shows players online now">
                 <button class="chart-range-button active" type="button" data-chart-range="hours">Hours</button>
                 <button class="chart-range-button" type="button" data-chart-range="days">Days</button>
                 <button class="chart-range-button" type="button" data-chart-range="months">Months</button>
@@ -1008,7 +1008,7 @@
         </div>
         <section class="panel push-settings-panel" data-settings-panel="push">
           <div class="panel-head">
-            <div><h2>Browser Notifications</h2><p>Personal push delivery for this account and its registered devices.</p></div>
+            <div><h2>Browser Notifications</h2><p>Push alerts for this account and its registered devices.</p></div>
             <button id="pushEnableDevice" type="button">Enable on this device</button>
           </div>
           <div id="pushSupportStatus" class="push-support-status muted">Checking browser support...</div>
@@ -1017,7 +1017,7 @@
         </section>
         <section class="panel navigation-settings-panel" data-settings-panel="navigation" hidden>
           <div class="panel-head">
-            <div><h2>Navigation</h2><p>Choose which dashboard sections appear and arrange their order.</p></div>
+            <div><h2>Navigation</h2><p>Choose, show, and reorder dashboard sections.</p></div>
             <button id="navSectionsReset" class="ghost-button" type="button">Reset</button>
           </div>
           <div class="push-privacy-note">Visibility and order are synchronized across your signed-in devices. Permissions and access control are not affected, and Settings always remains available.</div>
@@ -1026,7 +1026,7 @@
         <section class="panel account-settings-panel" data-settings-panel="account" hidden>
           <div class="panel-head"><div><h2>Account</h2><p>Manage your timezone and sign-in security.</p></div></div>
           <div class="account-settings-group">
-            <div class="account-settings-copy"><h3>Timezone</h3><p>Used for dates, charts, reports and notification quiet hours.</p></div>
+            <div class="account-settings-copy"><h3>Timezone</h3><p>Used for dates, charts, reports, and quiet hours.</p></div>
             <form id="accountSettingsForm" class="account-settings-form">
               <label class="auth-field"><span>Timezone</span><input id="accountTimezone" list="accountTimezoneOptions" value="Europe/Vilnius" placeholder="Start typing a city or timezone" autocomplete="off" spellcheck="false"><datalist id="accountTimezoneOptions"><option value="Europe/Vilnius"></datalist></label>
               <button id="accountTimezoneSave" type="submit"><span class="button-label">Save timezone</span></button>
@@ -1095,7 +1095,7 @@
           </div>
         </section>
         <section class="panel child-ai-training-panel">
-          <div class="panel-head"><div><h2>Response Training</h2><p>Teach a preferred answer for a similar player message without changing code.</p></div></div>
+          <div class="panel-head"><div><h2>Response Training</h2><p>Teach a preferred reply for similar player messages.</p></div></div>
           <form id="childAiExampleForm" class="child-ai-training-form">
             <label class="auth-field"><span>Player message</span><input id="childAiExampleTrigger" maxlength="300" required placeholder="Can you help with my farm?"></label>
             <label class="auth-field"><span>Preferred bot response</span><input id="childAiExampleResponse" maxlength="300" required placeholder="Sure, what does the farm need?"></label>
@@ -1107,7 +1107,7 @@
         </section>
         <section class="panel child-ai-style-panel">
           <div class="panel-head child-ai-style-head">
-            <div><h2>Player Communication Styles</h2><p>Evidence-based language, tone, message length and speaking habits. Confidence grows with each safe message.</p></div>
+            <div><h2>Player Communication Styles</h2><p>Learned tone, vocabulary, length, and habits by player.</p></div>
             <div class="child-ai-style-toolbar">
               <label class="child-ai-style-search">
                 <span class="sr-only">Search player communication styles by nickname</span>
@@ -1156,7 +1156,7 @@
           </details>
         </section>
         <section class="panel child-ai-backup">
-          <div><h2>State backup</h2><p>Export or safely merge the vocabulary, memory and accumulated experience.</p></div>
+          <div><h2>State backup</h2><p>Export or merge vocabulary, memory, and experience.</p></div>
           <div class="child-ai-tools"><button id="childAiExport" type="button">Export JSON</button><label class="ghost-button link-button" for="childAiImportFile">Choose file</label><input id="childAiImportFile" type="file" accept="application/json,.json" hidden><button id="childAiImport" class="ghost-button" type="button" disabled>Import</button></div>
         </section>
       </section>
@@ -1166,7 +1166,7 @@
           <div class="admin-hero-copy">
             <span class="admin-eyebrow">Admin workspace</span>
             <h2>Control center</h2>
-            <p>Manage the bot, Minecraft data, site access and operational health from one workspace.</p>
+            <p>Manage bots, Minecraft data, access, and system health.</p>
           </div>
           <div class="admin-hero-stats" aria-label="Admin overview">
             <article class="admin-overview-stat admin-database-stat">
@@ -1261,7 +1261,7 @@
             <div class="panel-head">
               <div>
                 <h2>Playtime</h2>
-                <p>Paste a full <code>!pt</code> response or set a registration date from a single line.</p>
+                <p>Import a full <code>!pt</code> response or set a registration date.</p>
               </div>
               <span class="admin-card-icon" aria-hidden="true">PT</span>
             </div>

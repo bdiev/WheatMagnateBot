@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node tests/module-layout.test.js && node tests/security.test.js && node tests/admin-user-presence.test.js && node tests/admin-page-ui.test.js && node tests/resource-requests.test.js && node tests/web-push.test.js && node tests/whisper-notification-ui.test.js && node tests/player-game-sessions.test.js && node tests/player-stats-new-players-ui.test.js && node tests/system-log-selection.test.js && node tests/incident-timeline.test.js && node tests/sse.test.js && node tests/obsidian-analytics.test.js && node tests/player-accent.test.js"
+    "test": "node tests/card-descriptions-ui.test.js && node tests/module-layout.test.js && node tests/security.test.js && node tests/admin-user-presence.test.js && node tests/admin-page-ui.test.js && node tests/resource-requests.test.js && node tests/web-push.test.js && node tests/whisper-notification-ui.test.js && node tests/player-game-sessions.test.js && node tests/player-stats-new-players-ui.test.js && node tests/system-log-selection.test.js && node tests/incident-timeline.test.js && node tests/sse.test.js && node tests/obsidian-analytics.test.js && node tests/player-accent.test.js"
   },
   "engines": {
     "node": ">=22.13.0"

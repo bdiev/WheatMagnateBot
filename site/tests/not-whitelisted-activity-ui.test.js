@@ -28,7 +28,7 @@ assert.match(
 );
 assert.match(
   indexSource,
-  /Full recorded history; current hour shows players online now\./,
+  /Full history; this hour shows players online now\./,
   'the chart description must state its full-history scope'
 );
 assert.match(

@@ -10,9 +10,9 @@ const DEFAULT_COMMAND_DELAY_MAX_MS = 45_000;
 
 const METRIC_COMMANDS = Object.freeze([
   { metric: 'playtime', missingColumn: 'missing_playtime', command: '!pt' },
-  { metric: 'messages', missingColumn: 'missing_messages', command: '!msgs' },
   { metric: 'joinDate', missingColumn: 'missing_join_date', command: '!jd' },
-  { metric: 'lastSeen', missingColumn: 'missing_last_seen', command: '!seen' }
+  { metric: 'lastSeen', missingColumn: 'missing_last_seen', command: '!seen' },
+  { metric: 'messages', missingColumn: 'missing_messages', command: '!msgs' }
 ]);
 
 function positiveMilliseconds(value, fallback, { minimum = 1 } = {}) {
@@ -135,7 +135,10 @@ async function loadMissingPlayerInfo(pool) {
     SELECT username, missing_playtime, missing_messages, missing_join_date, missing_last_seen
     FROM missing
     WHERE missing_playtime OR missing_messages OR missing_join_date OR missing_last_seen
-    ORDER BY RANDOM()
+    ORDER BY (
+      missing_playtime::int + missing_join_date::int + missing_last_seen::int
+    ) DESC,
+    RANDOM()
     LIMIT 1
   `);
   return result.rows;
@@ -261,9 +264,9 @@ function createPlayerInfoBackfill({
     try {
       const rows = await loadMissingPlayerInfo(pool);
       lastRunAt = now();
-      const commands = shuffleItems(buildMissingCommands(rows), random);
+      const commands = buildMissingCommands(rows);
       if (commands.length === 0) {
-        onLog('[PlayerInfo] Automatic check found no missing PT, Messages, JD, or Seen values.');
+        onLog('[PlayerInfo] Automatic check found no missing PT, JD, Seen, or Messages values.');
         return { skipped: false, sent, total: 0 };
       }
 
