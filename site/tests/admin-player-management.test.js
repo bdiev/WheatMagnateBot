@@ -268,9 +268,16 @@ function testArchitectureAndUiContracts() {
   const siteListIndexes = fs.readFileSync(path.join(root, 'site', 'migrations', '024_admin_player_list_indexes.sql'), 'utf8');
   const databaseLookupExclusions = fs.readFileSync(path.join(root, 'database', 'migrations', '042_player_info_lookup_exclusions.sql'), 'utf8');
   const siteLookupExclusions = fs.readFileSync(path.join(root, 'site', 'migrations', '042_player_info_lookup_exclusions.sql'), 'utf8');
+  const databaseLookupExclusionReasons = fs.readFileSync(path.join(root, 'database', 'migrations', '043_player_info_lookup_exclusion_reasons.sql'), 'utf8');
+  const siteLookupExclusionReasons = fs.readFileSync(path.join(root, 'site', 'migrations', '043_player_info_lookup_exclusion_reasons.sql'), 'utf8');
   assert.equal(databaseMigration, siteMigration, 'bot and site must migrate the same player metadata fields');
   assert.equal(databaseListIndexes, siteListIndexes, 'bot and site must install the same admin-list indexes');
   assert.equal(databaseLookupExclusions, siteLookupExclusions, 'bot and site must install the same unavailable-lookup exclusions');
+  assert.equal(databaseLookupExclusionReasons, siteLookupExclusionReasons, 'bot and site must install the same lookup-exclusion reasons');
+  assert.match(databaseLookupExclusions, /reason IN \('user_not_found', 'join_date_null'\)/,
+    'fresh databases must allow null join-date exclusions');
+  assert.match(databaseLookupExclusionReasons, /DROP CONSTRAINT IF EXISTS player_info_lookup_exclusions_reason_check[\s\S]*reason IN \('user_not_found', 'join_date_null'\)/,
+    'existing databases must expand the exclusion-reason constraint');
   assert.match(serverSource, /getPlayerProfile\(url, \{ includeAdminFields = false \}/, 'the existing player GET must be reused');
   assert.match(serverSource, /MINECRAFT_UUID_PATTERN[\s\S]*type: 'uuid'/, 'UUID must remain the primary admin identity');
   assert.match(serverSource, /preserved: \['game_chat_messages'/, 'shared history preservation must be explicit and auditable');
