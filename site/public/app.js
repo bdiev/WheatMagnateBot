@@ -6459,7 +6459,7 @@ async function loadAdminPlayers({ query = $('#adminPlayersSearch')?.value || '',
       limit: String(state.adminPlayersLimit),
       offset: String(Math.max(0, offset))
     });
-    if (!append && Number(offset) === 0 && !query.trim()) {
+    if (!append && Number(offset) === 0) {
       params.set('includeInfoCollection', 'true');
     }
     if (preserveScroll && !append) {

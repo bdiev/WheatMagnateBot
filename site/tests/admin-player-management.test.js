@@ -282,6 +282,8 @@ function testArchitectureAndUiContracts() {
   assert.match(appSource, /document\.addEventListener\('pointerdown', closeAdminPlayerMenus, true\)/, 'clicking or tapping outside a player menu must close it');
   assert.match(appSource, /menu\.contains\(event\.target\)[\s\S]*menu\.removeAttribute\('open'\)/, 'interactions inside the active player menu must not close it');
   assert.match(appSource, /new URLSearchParams\(\{[\s\S]*sort: state\.adminPlayersSort,[\s\S]*direction: state\.adminPlayersDirection,[\s\S]*limit: String\(state\.adminPlayersLimit\),[\s\S]*offset:/, 'sorting and pagination must happen on the server');
+  assert.match(appSource, /!append && Number\(offset\) === 0[\s\S]*includeInfoCollection/,
+    'background refreshes must update missing commands even while the player list is filtered');
   assert.match(appSource, /function renderAdminPlayerInfoCollection[\s\S]*players still missing information[\s\S]*Missing values/,
     'the frontend must show the remaining player count and metric breakdown');
   assert.match(serverSource, /prefix:'!pt'[\s\S]*prefix:'!jd'[\s\S]*prefix:'!seen'[\s\S]*prefix:'!messages'/,

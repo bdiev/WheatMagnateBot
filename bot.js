@@ -3121,6 +3121,15 @@ const discordPlaytimeImport = createDiscordPlaytimeImport({
     if (metric === 'messages') return reconcileObservedMessages(username, observedValue);
     return { error:`Unsupported player information metric: ${metric}` };
   },
+  onDiagnostic: event => {
+    if (event.stage === 'pending') {
+      console.log(`[PlayerInfo] Waiting for Discord ${event.metric} response for ${event.username}.`);
+      return;
+    }
+    console.warn(
+      `[PlayerInfo] Trusted Discord response ${event.messageId || '(no id)'} was ${event.stage}; parsed=${event.responseCount || 0}, pending=${event.pendingCount || 0}.`
+    );
+  },
   onImported: async result => {
     const displayValue = result.metric === 'playtime'
       ? formatPlaytime(result.observedValue)
@@ -12680,6 +12689,16 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       } else {
         await message.reply(`❌ Failed to get keywords: ${result.error}`);
       }
+    }
+  });
+
+  // Some Discord applications publish a placeholder and then edit it with
+  // the final Components V2/embed response. Observe edits as well as creates.
+  discordClient.on('messageUpdate', async (_previousMessage, message) => {
+    try {
+      await discordPlaytimeImport.handle(message);
+    } catch (error) {
+      console.error('[PlayerInfo] Updated Discord lookup import failed:', error?.message || error);
     }
   });
 }

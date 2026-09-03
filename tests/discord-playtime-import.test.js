@@ -7,6 +7,8 @@ const { createPlaytimeFeature } = require('../features/playtime');
 const {
   DEFAULT_PLAYTIME_LOOKUP_CHANNEL_ID,
   createDiscordPlaytimeImport,
+  isDiscordApplicationMessage,
+  isLookupChannel,
   isTrustedPlaytimeBot,
   parseDiscordPlaytimeCommand,
   parseDiscordMessageStatistics,
@@ -17,13 +19,16 @@ const {
 const channelId = '1340779371698589696';
 const { parsePlaytime } = createPlaytimeFeature({ pool:null });
 
-function message({ content = '', channel = channelId, bot = false, username = 'Admin', id = '1', embeds = [], components = [] } = {}) {
+function message({ content = '', channel = channelId, parentId = null, bot = false, username = 'Admin', id = '1', embeds = [], components = [], applicationId = null, webhookId = null } = {}) {
   return {
     id,
     content,
     embeds,
     components,
-    channel:{ id:channel },
+    channelId:channel,
+    channel:{ id:channel,parentId },
+    applicationId,
+    webhookId,
     author:{ id:bot ? 'lookup-bot-id' : 'admin-id',bot,username }
   };
 }
@@ -83,6 +88,12 @@ async function testParsingAndTrust() {
   assert.equal(isTrustedPlaytimeBot(message({ bot:true,username:'UnrelatedBot' })), false);
   assert.equal(isTrustedPlaytimeBot(message({ bot:true,username:'LolRiTTeRBot' }), { botId:'another-id' }), false,
     'an immutable configured bot ID must take precedence over display names');
+  const webhookResponse = message({ bot:false,username:'LolRiTTeRBot',webhookId:'webhook-1' });
+  assert.equal(isDiscordApplicationMessage(webhookResponse), true);
+  assert.equal(isTrustedPlaytimeBot(webhookResponse), true,
+    'application-owned webhook responses must not be mistaken for human messages');
+  assert.equal(isLookupChannel(message({ channel:'thread-id',parentId:channelId }), channelId), true,
+    'responses inside a configured channel thread must be accepted');
 }
 
 async function testPendingRequestImport() {
@@ -107,12 +118,22 @@ async function testPendingRequestImport() {
   assert.equal(await coordinator.handle(message({ content:'!seen bdiev_' })), true);
   assert.equal(await coordinator.handle(message({ content:'!messages bdiev_' })), true);
   assert.equal(await coordinator.handle(message({ content:'!messages 2wd' })), true);
+  assert.equal(await coordinator.handle(message({ content:'!messages ThreadPlayer',channel:'thread-id',parentId:channelId })), true);
   assert.equal(await coordinator.handle(message({ content:'bdiev_: 80 Days, 22 Hours, 19 Minutes',bot:true,username:'UnrelatedBot' })), false);
   assert.equal(await coordinator.handle(message({
     bot:true,
     username:'LolRiTTeRBot',
     id:'reply-1',
     embeds:[{ description:'bdiev_: 80 Days, 22 Hours, 19 Minutes' }]
+  })), true);
+  assert.equal(await coordinator.handle(message({
+    bot:false,
+    username:'LolRiTTeRBot',
+    webhookId:'webhook-1',
+    channel:'thread-id',
+    parentId:channelId,
+    id:'reply-6',
+    embeds:[{ title:'Message statistics for ThreadPlayer',fields:[{ name:'Total messages',value:'77' }] }]
   })), true);
   assert.equal(await coordinator.handle(message({
     content:'I first saw bdiev_ 2 years ago on Nov 16th, 2024.',bot:true,username:'LolRiTTeRBot',id:'reply-2'
@@ -134,6 +155,7 @@ async function testPendingRequestImport() {
   })), true);
   assert.deepEqual(saved, [
     { metric:'playtime',username:'bdiev_',observedValue:6_992_340 },
+    { metric:'messages',username:'ThreadPlayer',observedValue:77 },
     { metric:'joinDate',username:'bdiev_',observedValue:new Date('2024-11-16T00:00:00.000Z') },
     { metric:'lastSeen',username:'bdiev_',observedValue:new Date('2026-08-20T10:00:00.000Z') },
     { metric:'messages',username:'bdiev_',observedValue:10_758 },
@@ -141,7 +163,7 @@ async function testPendingRequestImport() {
   ]);
   assert.equal(imported[0].requestedUsername, 'bdiev_');
   assert.equal(imported[0].sourceMessageId, 'reply-1');
-  assert.deepEqual(imported.map(item => item.metric), ['playtime', 'joinDate', 'lastSeen', 'messages', 'messages']);
+  assert.deepEqual(imported.map(item => item.metric), ['playtime', 'messages', 'joinDate', 'lastSeen', 'messages', 'messages']);
   assert.equal(coordinator.pending.size, 0);
 }
 
@@ -153,6 +175,8 @@ function testBotIntegrationOrder() {
   assert.match(botSource, /saveMetric:[\s\S]*setPlayerPlaytime[\s\S]*reconcileObservedJoinDate[\s\S]*reconcileObservedLastSeen[\s\S]*reconcileObservedMessages/,
     'all four Discord response types must be persisted by their matching handler');
   assert.equal(DEFAULT_PLAYTIME_LOOKUP_CHANNEL_ID, channelId, 'the requested lookup channel must be the default');
+  assert.match(botSource, /discordClient\.on\('messageUpdate'[\s\S]*discordPlaytimeImport\.handle\(message\)/,
+    'edited application responses must be imported too');
 }
 
 (async () => {

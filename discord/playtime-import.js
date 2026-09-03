@@ -103,17 +103,40 @@ function parseDiscordPlayerInfoResponses(message, parsePlaytime, now = () => Dat
   return responses;
 }
 
+function isDiscordApplicationMessage(message) {
+  return Boolean(
+    message?.author?.bot
+    || message?.applicationId
+    || message?.webhookId
+    || message?.interaction
+    || message?.interactionMetadata
+  );
+}
+
 function isTrustedPlaytimeBot(message, { botId = '', botName = DEFAULT_PLAYTIME_LOOKUP_BOT_NAME } = {}) {
-  if (!message?.author?.bot) return false;
+  if (!isDiscordApplicationMessage(message)) return false;
   const configuredId = String(botId || '').trim();
-  if (configuredId) return String(message.author.id || '') === configuredId;
   const expected = new Set(discordBotNameVariants(botName));
-  if (!expected.size) return false;
-  return [
+  const nameMatches = [
     message.author.username,
     message.author.globalName,
     message.member?.displayName
   ].flatMap(discordBotNameVariants).some(value => expected.has(value));
+  if (configuredId) {
+    return [message.author?.id, message.applicationId].some(value => String(value || '') === configuredId);
+  }
+  return expected.size > 0 && nameMatches;
+}
+
+function isLookupChannel(message, channelId) {
+  const expected = String(channelId || '').trim();
+  if (!expected) return false;
+  return [
+    message?.channelId,
+    message?.channel?.id,
+    message?.channel?.parentId,
+    message?.channel?.parent?.id
+  ].some(value => String(value || '') === expected);
 }
 
 function createDiscordPlaytimeImport({
@@ -124,6 +147,7 @@ function createDiscordPlaytimeImport({
   savePlaytime,
   saveMetric,
   onImported = async () => {},
+  onDiagnostic = async () => {},
   now = () => Date.now(),
   ttlMs = DEFAULT_PLAYTIME_LOOKUP_TTL_MS
 } = {}) {
@@ -148,10 +172,12 @@ function createDiscordPlaytimeImport({
   }
 
   async function handle(message) {
-    if (!lookupChannelId || String(message?.channel?.id || '') !== lookupChannelId) return false;
+    if (!isLookupChannel(message, lookupChannelId)) return false;
     prune();
 
-    if (!message.author?.bot) {
+    const trustedSource = isTrustedPlaytimeBot(message, { botId,botName });
+    if (!trustedSource) {
+      if (isDiscordApplicationMessage(message)) return false;
       const request = parseDiscordPlaytimeCommand(message.content);
       if (!request) return false;
       pending.set(`${request.metric}:${request.username.toLowerCase()}`, {
@@ -160,13 +186,21 @@ function createDiscordPlaytimeImport({
         requestedBy:message.author?.username || null,
         processing:false
       });
+      await onDiagnostic({ stage:'pending',metric:request.metric,username:request.username,messageId:message.id || null });
       return true;
     }
 
-    if (!isTrustedPlaytimeBot(message, { botId,botName })) return false;
     const responses = parseDiscordPlayerInfoResponses(message, parsePlaytime, now);
     const response = responses.find(candidate => pending.has(`${candidate.metric}:${candidate.targetUsername.toLowerCase()}`));
-    if (!response) return false;
+    if (!response) {
+      await onDiagnostic({
+        stage:responses.length ? 'unmatched' : 'unparsed',
+        messageId:message.id || null,
+        responseCount:responses.length,
+        pendingCount:pending.size
+      });
+      return false;
+    }
     const key = `${response.metric}:${response.targetUsername.toLowerCase()}`;
     const request = pending.get(key);
     if (!request || request.processing) return false;
@@ -204,6 +238,8 @@ module.exports = {
   discordBotNameVariants,
   discordMessageText,
   isTrustedPlaytimeBot,
+  isDiscordApplicationMessage,
+  isLookupChannel,
   parseDiscordPlaytimeCommand,
   parseDiscordMessageStatistics,
   parseDiscordPlaytimeResponse,
