@@ -71,6 +71,18 @@ function testUiFeedback() {
     'failed player-data actions must show their reason in an error toast');
   assert.match(app, /#adminPlaytimeInput'[\s\S]*event\.key !== 'Enter'[\s\S]*\.click\(\)/,
     'pressing Enter in the playtime field must submit it');
+  assert.match(html, /id="adminPlaytimeMissingCount"[\s\S]*id="adminPlaytimeCommands"[^>]*aria-live="polite"/,
+    'the card must expose the missing lookup count and live command list');
+  assert.match(html, /class="admin-playtime-fallback"[\s\S]*id="adminPlaytimeInput"/,
+    'manual entry must remain available as a fallback');
+  assert.match(app, /function renderAdminPlaytimeCommands[\s\S]*data-copy-playtime-command[\s\S]*function copyAdminPlaytimeCommand/,
+    'missing values must be rendered as copyable player-information commands');
+  assert.match(app, /writeClipboardText\(command\)[\s\S]*Copied[\s\S]*Discord lookup channel/,
+    'copying a command must give immediate clipboard feedback');
+  assert.match(app, /player_info_updated[\s\S]*admin-player-info[\s\S]*loadAdminPlayers/,
+    'Discord imports must refresh the admin command list without reloading the page');
+  assert.match(styles, /\.admin-playtime-command-list[\s\S]*\.admin-playtime-command\.copied/,
+    'the command list and copied state must be styled');
   assert.doesNotMatch(styles, /\.admin-player-data-notice/);
   assert.match(styles, /\.admin-data-toast\[data-kind="success"\][\s\S]*#48b978/,
     'successful player-data updates must have a styled success state');

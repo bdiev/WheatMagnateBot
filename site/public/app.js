@@ -6277,7 +6277,59 @@ function setAdminPlayersNotice(message = '', kind = 'success') {
   notice.hidden = !message;
 }
 
+function renderAdminPlaytimeCommands(progress) {
+  const list = $('#adminPlaytimeCommands');
+  const count = $('#adminPlaytimeMissingCount');
+  if (!list || !count || !progress) return;
+  const missing = progress.missing || {};
+  const missingCount = ['playtime', 'joinDate', 'lastSeen', 'messages']
+    .reduce((total, metric) => total + Math.max(0, Number(missing[metric]) || 0), 0);
+  const commands = (Array.isArray(progress.missingCommands) ? progress.missingCommands : [])
+    .filter(item => item && /^[A-Za-z0-9_]{1,32}$/.test(String(item.username || '')))
+    .map(item => ({ metric:String(item.metric || ''),username:String(item.username),command:String(item.command || '') }))
+    .filter(item => /^!(?:pt|jd|seen|messages) [A-Za-z0-9_]{1,32}$/i.test(item.command));
+
+  count.textContent = formatNumber(missingCount);
+  if (!missingCount) {
+    list.innerHTML = '<div class="admin-playtime-complete">All tracked player information is complete.</div>';
+    return;
+  }
+  if (!commands.length) {
+    list.innerHTML = '<div class="empty">No copyable playtime commands are available.</div>';
+    return;
+  }
+
+  list.innerHTML = commands.map(({ metric,username,command }) => `
+    <button class="admin-playtime-command" type="button" data-player-info-metric="${escapeHtml(metric)}" data-copy-playtime-command="${escapeHtml(command)}" aria-label="Copy ${escapeHtml(command)}">
+      <code>${escapeHtml(command)}</code>
+      <span>Copy</span>
+    </button>`).join('');
+  if (missingCount > commands.length) {
+    list.insertAdjacentHTML('beforeend', `<div class="admin-playtime-list-note">Showing the first ${formatNumber(commands.length)} of ${formatNumber(missingCount)} commands.</div>`);
+  }
+}
+
+async function copyAdminPlaytimeCommand(button) {
+  const command = String(button?.dataset?.copyPlaytimeCommand || '').trim();
+  if (!command) return;
+  try {
+    await writeClipboardText(command);
+    const label = button.querySelector('span');
+    window.clearTimeout(button.copyResetTimer);
+    button.classList.add('copied');
+    if (label) label.textContent = 'Copied';
+    showCopyToast(`${command} copied. Paste it into the Discord lookup channel.`);
+    button.copyResetTimer = window.setTimeout(() => {
+      button.classList.remove('copied');
+      if (label) label.textContent = 'Copy';
+    }, 1800);
+  } catch (error) {
+    showCopyToast(error.message || 'Could not copy the command.');
+  }
+}
+
 function renderAdminPlayerInfoCollection(progress) {
+  renderAdminPlaytimeCommands(progress);
   const status = $('#adminPlayerInfoCollection');
   if (!status || !progress) return;
   const total = Math.max(0, Number(progress.totalPlayers) || 0);
@@ -8503,6 +8555,14 @@ function handleRealtimeEvent(event) {
       queueRealtimeRefresh('admin-players', () => loadAdminPlayers({ showLoading: false, preserveScroll: true }), 350);
     }
   }
+  else if (type === 'player_info_updated' && state.currentUser?.role === 'admin') {
+    if (state.activeTab === 'admin') {
+      queueRealtimeRefresh('admin-player-info', () => loadAdminPlayers({ showLoading: false, preserveScroll: true }), 200);
+    }
+    if (state.playerProfileUsername && String(state.playerProfileUsername).toLowerCase() === String(eventPayload.username || '').toLowerCase()) {
+      queueRealtimeRefresh('player-profile-info', () => loadPlayerProfile(state.playerProfileUsername), 100);
+    }
+  }
   else if (type === 'notification_created' && state.currentUser?.role === 'admin') {
     queueRealtimeRefresh('notifications', async () => {
       await loadNotificationCount();
@@ -8551,7 +8611,7 @@ function startRealtimeUpdates() {
   const source = new EventSource('/api/events');
   state.eventSource = source;
   const eventTypes = [
-    'bot_status_updated', 'player_joined', 'player_left', 'chat_message',
+    'bot_status_updated', 'player_joined', 'player_left', 'player_info_updated', 'chat_message',
     'whisper_message', 'farm_status_updated', 'notification_created', 'admin_control_updated', 'operational_event_created',
     'navigation_settings_updated', 'account_settings_updated', 'resource_request_updated'
   ];
@@ -8900,6 +8960,10 @@ if ('serviceWorker' in navigator) {
   });
 }
 $('#adminUsersList')?.addEventListener('click', handleAdminUserAction);
+$('#adminPlaytimeCommands')?.addEventListener('click', event => {
+  const button = event.target.closest('[data-copy-playtime-command]');
+  if (button) copyAdminPlaytimeCommand(button);
+});
 document.addEventListener('click', handleAdminBotCommand);
 document.addEventListener('click', handleAdminControlAction);
 for (const [selector, action] of [

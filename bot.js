@@ -5,6 +5,11 @@ const crypto = require('node:crypto');
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ChannelType, PermissionsBitField, MessageFlags, InteractionContextType, SlashCommandBuilder, ActivityType } = require('discord.js');
 const { pathfinder } = require('mineflayer-pathfinder');
 const { createDiscordClient, saveStatusMessageId, loadStatusMessageId } = require('./discord');
+const {
+  DEFAULT_PLAYTIME_LOOKUP_CHANNEL_ID,
+  DEFAULT_PLAYTIME_LOOKUP_BOT_NAME,
+  createDiscordPlaytimeImport
+} = require('./discord/playtime-import');
 const { summarizeAggregateObsidianRows } = require('./discord/aggregate-obsidian-status');
 const {
   SERVER_STATUS_HIDDEN_TAG_KEYS,
@@ -103,6 +108,13 @@ const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
 const DISCORD_CHAT_CHANNEL_ID = process.env.DISCORD_CHAT_CHANNEL_ID;
 const DISCORD_DM_CATEGORY_ID = process.env.DISCORD_DM_CATEGORY_ID;
 const DISCORD_OWNER_ID = process.env.DISCORD_OWNER_ID || '623303738991443968';
+const PLAYTIME_LOOKUP_DISCORD_CHANNEL_ID = String(
+  process.env.PLAYTIME_LOOKUP_DISCORD_CHANNEL_ID || DEFAULT_PLAYTIME_LOOKUP_CHANNEL_ID
+).trim();
+const PLAYTIME_LOOKUP_DISCORD_BOT_ID = String(process.env.PLAYTIME_LOOKUP_DISCORD_BOT_ID || '').trim();
+const PLAYTIME_LOOKUP_DISCORD_BOT_NAME = String(
+  process.env.PLAYTIME_LOOKUP_DISCORD_BOT_NAME || DEFAULT_PLAYTIME_LOOKUP_BOT_NAME
+).trim();
 const DISCORD_CHAT_QUEUE_MAX_SIZE = positiveInteger(process.env.DISCORD_CHAT_QUEUE_MAX_SIZE, 20);
 const DISCORD_CHAT_MESSAGE_MAX_AGE_MS = positiveInteger(process.env.DISCORD_CHAT_MESSAGE_MAX_AGE_MS, 15_000);
 const DISCORD_CHAT_DUPLICATE_WINDOW_MS = positiveInteger(process.env.DISCORD_CHAT_DUPLICATE_WINDOW_MS, 10_000, { min: 0 });
@@ -3097,6 +3109,43 @@ const {
   uiButtonEmojis: { ...UI_BUTTON_EMOJIS, search: STATUS_BUTTON_EMOJIS.seen }
 });
 
+const discordPlaytimeImport = createDiscordPlaytimeImport({
+  channelId: PLAYTIME_LOOKUP_DISCORD_CHANNEL_ID,
+  botId: PLAYTIME_LOOKUP_DISCORD_BOT_ID,
+  botName: PLAYTIME_LOOKUP_DISCORD_BOT_NAME,
+  parsePlaytime,
+  saveMetric: async (metric, username, observedValue) => {
+    if (metric === 'playtime') return setPlayerPlaytime(username, observedValue);
+    if (metric === 'joinDate') return reconcileObservedJoinDate(username, observedValue);
+    if (metric === 'lastSeen') return reconcileObservedLastSeen(username, observedValue);
+    if (metric === 'messages') return reconcileObservedMessages(username, observedValue);
+    return { error:`Unsupported player information metric: ${metric}` };
+  },
+  onImported: async result => {
+    const displayValue = result.metric === 'playtime'
+      ? formatPlaytime(result.observedValue)
+      : result.observedValue instanceof Date ? result.observedValue.toISOString() : String(result.observedValue);
+    console.log(
+      `[PlayerInfo] Imported ${result.metric} for ${result.username} from ${PLAYTIME_LOOKUP_DISCORD_BOT_NAME} in Discord: ${displayValue}.`
+    );
+    await recordSystemLog({
+      level:'info',
+      category:'admin_data',
+      actor:result.requestedBy,
+      message:`Imported ${result.metric} for ${result.username} from the Discord lookup channel.`,
+      details:{
+        metric:result.metric,
+        username:result.username,
+        requestedUsername:result.requestedUsername,
+        observedValue:result.observedValue,
+        discordChannelId:PLAYTIME_LOOKUP_DISCORD_CHANNEL_ID,
+        sourceBot:PLAYTIME_LOOKUP_DISCORD_BOT_NAME,
+        sourceMessageId:result.sourceMessageId
+      }
+    });
+  }
+});
+
 async function refreshWheatMagnatePlaytimeDisplay({ force = false } = {}) {
   const now = Date.now();
   if (!force && now - wheatMagnatePlaytimeCacheAt < 30_000) {
@@ -3233,10 +3282,12 @@ async function reconcileObservedPlaytime(targetUsername, observedSeconds) {
 }
 
 async function reconcileObservedJoinDate(targetUsername, observedDate) {
-  if (!pool || !targetUsername || !(observedDate instanceof Date) || !Number.isFinite(observedDate.getTime())) return;
+  if (!pool || !targetUsername || !(observedDate instanceof Date) || !Number.isFinite(observedDate.getTime())) {
+    return { error:'Invalid observed join date.' };
+  }
 
   const safeUsername = String(targetUsername || '').replace(/[^A-Za-z0-9_]/g, '').trim().slice(0, 32);
-  if (!safeUsername) return;
+  if (!safeUsername) return { error:'Invalid Minecraft username.' };
 
   try {
     const result = await playerInfoObservationStore.withPermission(
@@ -3279,16 +3330,20 @@ async function reconcileObservedJoinDate(targetUsername, observedDate) {
     if (result.allowed) {
       console.log(`[JoinDate] ${result.reason === 'site-refresh' ? 'Refreshed' : 'Initially imported'} ${result.username} from observed !jd: ${observedDate.toISOString()}`);
     }
+    return { username:result.username || safeUsername,unchanged:!result.allowed };
   } catch (err) {
     console.error('[JoinDate] Failed to reconcile observed !jd:', err.message);
+    throw err;
   }
 }
 
 async function reconcileObservedMessages(targetUsername, observedCount) {
-  if (!pool || !targetUsername || !Number.isSafeInteger(observedCount) || observedCount <= 0) return;
+  if (!pool || !targetUsername || !Number.isSafeInteger(observedCount) || observedCount <= 0) {
+    return { error:'Invalid observed message count.' };
+  }
 
   const safeUsername = String(targetUsername || '').replace(/[^A-Za-z0-9_]/g, '').trim().slice(0, 32);
-  if (!safeUsername) return;
+  if (!safeUsername) return { error:'Invalid Minecraft username.' };
 
   try {
     const result = await playerInfoObservationStore.withPermission(
@@ -3328,16 +3383,20 @@ async function reconcileObservedMessages(targetUsername, observedCount) {
     if (result.allowed) {
       console.log(`[Messages] ${result.reason === 'site-refresh' ? 'Refreshed' : 'Initially imported'} ${result.username} from observed !messages: ${observedCount}`);
     }
+    return { username:result.username || safeUsername,unchanged:!result.allowed };
   } catch (err) {
     console.error('[Messages] Failed to reconcile observed !messages:', err.message);
+    throw err;
   }
 }
 
 async function reconcileObservedLastSeen(targetUsername, observedDate) {
-  if (!pool || !targetUsername || !(observedDate instanceof Date) || !Number.isFinite(observedDate.getTime())) return;
+  if (!pool || !targetUsername || !(observedDate instanceof Date) || !Number.isFinite(observedDate.getTime())) {
+    return { error:'Invalid observed last-seen date.' };
+  }
 
   const safeUsername = String(targetUsername || '').replace(/[^A-Za-z0-9_]/g, '').trim().slice(0, 32);
-  if (!safeUsername) return;
+  if (!safeUsername) return { error:'Invalid Minecraft username.' };
 
   try {
     const result = await pool.query(`
@@ -3375,8 +3434,10 @@ async function reconcileObservedLastSeen(targetUsername, observedDate) {
     if (result.rowCount > 0) {
       console.log(`[LastSeen] Initially imported ${result.rows[0].username} from observed !seen: ${observedDate.toISOString()}`);
     }
+    return { username:result.rows[0]?.username || safeUsername,unchanged:result.rowCount === 0 };
   } catch (err) {
     console.error('[LastSeen] Failed to reconcile observed !seen:', err.message);
+    throw err;
   }
 }
 
@@ -12166,6 +12227,12 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
   });
 
   discordClient.on('messageCreate', async message => {
+    try {
+      if (await discordPlaytimeImport.handle(message)) return;
+    } catch (error) {
+      console.error('[PlayerInfo] Discord lookup import failed:', error?.message || error);
+      return;
+    }
     if (message.author.bot) return;
 
     const trimmedContent = message.content.trim();

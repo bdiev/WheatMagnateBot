@@ -3823,7 +3823,8 @@ async function getPlayerInfoCollectionProgress(database = pool) {
           WHERE LOWER(whitelist_player.username) = LOWER(playtime.username)
         )
     ), missing AS (
-      SELECT NOT EXISTS (
+      SELECT candidate.username,
+             NOT EXISTS (
                SELECT 1 FROM player_playtime playtime
                WHERE (candidate.player_uuid IS NOT NULL AND playtime.player_uuid = candidate.player_uuid)
                   OR LOWER(playtime.username) = LOWER(candidate.username)
@@ -3840,7 +3841,26 @@ async function getPlayerInfoCollectionProgress(database = pool) {
            COUNT(*) FILTER (WHERE missing_playtime)::int AS missing_playtime,
            COUNT(*) FILTER (WHERE missing_messages)::int AS missing_messages,
            COUNT(*) FILTER (WHERE missing_join_date)::int AS missing_join_date,
-           COUNT(*) FILTER (WHERE missing_last_seen)::int AS missing_last_seen
+           COUNT(*) FILTER (WHERE missing_last_seen)::int AS missing_last_seen,
+           COALESCE((
+             SELECT JSONB_AGG(JSONB_BUILD_OBJECT(
+               'username', item.username,
+               'playtime', item.missing_playtime,
+               'messages', item.missing_messages,
+               'joinDate', item.missing_join_date,
+               'lastSeen', item.missing_last_seen
+             ) ORDER BY LOWER(item.username), item.username)
+             FROM (
+               SELECT player.*
+               FROM missing player
+               WHERE player.missing_playtime
+                  OR player.missing_messages
+                  OR player.missing_join_date
+                  OR player.missing_last_seen
+               ORDER BY LOWER(player.username), player.username
+               LIMIT 100
+             ) item
+           ), '[]'::jsonb) AS missing_players
     FROM missing
   `);
   const row = result.rows[0] || {};
@@ -3855,7 +3875,19 @@ async function getPlayerInfoCollectionProgress(database = pool) {
       messages: toInt(row.missing_messages),
       joinDate: toInt(row.missing_join_date),
       lastSeen: toInt(row.missing_last_seen)
-    }
+    },
+    missingCommands: (Array.isArray(row.missing_players) ? row.missing_players : [])
+      .filter(player => /^[A-Za-z0-9_]{1,32}$/.test(String(player?.username || '')))
+      .flatMap(player => [
+        { missing:Boolean(player.playtime),metric:'playtime',prefix:'!pt' },
+        { missing:Boolean(player.joinDate),metric:'joinDate',prefix:'!jd' },
+        { missing:Boolean(player.lastSeen),metric:'lastSeen',prefix:'!seen' },
+        { missing:Boolean(player.messages),metric:'messages',prefix:'!messages' }
+      ].filter(item => item.missing).map(item => ({
+        metric:item.metric,
+        username:player.username,
+        command:`${item.prefix} ${player.username}`
+      })))
   };
 }
 
@@ -5796,6 +5828,12 @@ async function pollDatabaseEvents() {
           ) AS farm_status_at,
           (SELECT COALESCE(MAX(id),0) FROM notifications) AS notification_id,
           (SELECT COALESCE(MAX(id),0) FROM operational_events) AS operational_event_id,
+          (SELECT MAX(updated_at) FROM player_playtime) AS player_info_at,
+          (SELECT CONCAT(
+            COUNT(*) FILTER (WHERE registration_at IS NOT NULL), ':',
+            COUNT(*) FILTER (WHERE last_seen IS NOT NULL), ':',
+            COUNT(*) FILTER (WHERE observed_message_count IS NOT NULL)
+          ) FROM player_activity) AS player_info_activity,
           GREATEST(
             COALESCE((SELECT MAX(updated_at) FROM admin_settings), '-infinity'::timestamptz),
             COALESCE((SELECT MAX(COALESCE(finished_at,started_at,created_at)) FROM bot_commands), '-infinity'::timestamptz),
@@ -5812,6 +5850,8 @@ async function pollDatabaseEvents() {
       botStatusAt: signature(row.bot_status_at), chatId: String(row.chat_id || 0),
       whisperId: String(row.whisper_id || 0), farmStatusAt: signature(row.farm_status_at),
       notificationId: String(row.notification_id || 0), operationalEventId: String(row.operational_event_id || 0), adminControlAt: signature(row.admin_control_at),
+      playerInfoAt: signature(row.player_info_at),
+      playerInfoActivity: String(row.player_info_activity || '0:0:0'),
       players: new Map((Array.isArray(row.online_players) ? row.online_players : []).map(username => [username.toLowerCase(), username]))
     };
     if (!databaseEventState) {
@@ -5834,6 +5874,9 @@ async function pollDatabaseEvents() {
     }
     for (const [key, username] of previous.players) {
       if (!next.players.has(key)) sseHub.publish('player_left', { username });
+    }
+    if (next.playerInfoAt !== previous.playerInfoAt || next.playerInfoActivity !== previous.playerInfoActivity) {
+      sseHub.publish('player_info_updated', { updatedAt: next.playerInfoAt }, { roles: ['admin'] });
     }
     if (next.chatId !== previous.chatId) {
       const messages = await pool.query(`SELECT id::text, created_at FROM game_chat_messages WHERE is_visible = TRUE AND id>$1 ORDER BY id ASC LIMIT 100`, [previous.chatId]);

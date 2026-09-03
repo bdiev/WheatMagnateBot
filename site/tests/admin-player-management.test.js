@@ -221,7 +221,11 @@ async function testPlayerInfoCollectionProgress() {
         missing_playtime: 3,
         missing_messages: 7,
         missing_join_date: 11,
-        missing_last_seen: 5
+        missing_last_seen: 5,
+        missing_players: [
+          { username:'bdiev_',playtime:true,messages:true,joinDate:true,lastSeen:true },
+          { username:'PlayerTwo',playtime:false,messages:true,joinDate:false,lastSeen:true }
+        ]
       }] };
     }
   });
@@ -229,7 +233,15 @@ async function testPlayerInfoCollectionProgress() {
     totalPlayers: 120,
     remainingPlayers: 17,
     completedPlayers: 103,
-    missing: { playtime: 3, messages: 7, joinDate: 11, lastSeen: 5 }
+    missing: { playtime: 3, messages: 7, joinDate: 11, lastSeen: 5 },
+    missingCommands: [
+      { metric:'playtime',username:'bdiev_',command:'!pt bdiev_' },
+      { metric:'joinDate',username:'bdiev_',command:'!jd bdiev_' },
+      { metric:'lastSeen',username:'bdiev_',command:'!seen bdiev_' },
+      { metric:'messages',username:'bdiev_',command:'!messages bdiev_' },
+      { metric:'lastSeen',username:'PlayerTwo',command:'!seen PlayerTwo' },
+      { metric:'messages',username:'PlayerTwo',command:'!messages PlayerTwo' }
+    ]
   });
   assert.match(statement, /FROM player_activity activity UNION ALL SELECT whitelist_player\.username/,
     'progress must include activity and whitelist-only players');
@@ -237,6 +249,8 @@ async function testPlayerInfoCollectionProgress() {
     'progress must include playtime-only players');
   assert.match(statement, /missing_playtime OR missing_messages OR missing_join_date OR missing_last_seen/,
     'a player must remain pending while any collected metric is missing');
+  assert.match(statement, /JSONB_AGG\(JSONB_BUILD_OBJECT\([\s\S]*'playtime'[\s\S]*'messages'[\s\S]*'joinDate'[\s\S]*'lastSeen'[\s\S]*LIMIT 100/,
+    'the admin response must include every missing metric for a bounded player list');
 }
 
 function testArchitectureAndUiContracts() {
@@ -270,6 +284,10 @@ function testArchitectureAndUiContracts() {
   assert.match(appSource, /new URLSearchParams\(\{[\s\S]*sort: state\.adminPlayersSort,[\s\S]*direction: state\.adminPlayersDirection,[\s\S]*limit: String\(state\.adminPlayersLimit\),[\s\S]*offset:/, 'sorting and pagination must happen on the server');
   assert.match(appSource, /function renderAdminPlayerInfoCollection[\s\S]*players still missing information[\s\S]*Missing values/,
     'the frontend must show the remaining player count and metric breakdown');
+  assert.match(serverSource, /prefix:'!pt'[\s\S]*prefix:'!jd'[\s\S]*prefix:'!seen'[\s\S]*prefix:'!messages'/,
+    'the API must create commands for all four player information metrics');
+  assert.match(appSource, /function renderAdminPlaytimeCommands[\s\S]*\^!\(\?:pt\|jd\|seen\|messages\)[\s\S]*data-copy-playtime-command/,
+    'the Player Data card must render every supported lookup command');
   assert.match(appSource, /admin-player-avatar[^\n]*accountHeadUrl\(player\.username, player\.uuid\)[^\n]*loading="lazy" decoding="async"/, 'player cards must use the UUID-aware cached avatar proxy and asynchronous decoding');
   assert.match(appSource, /admin-player-avatar-button[^>]*data-admin-player-action="view"[^>]*data-player-key/, 'clicking a player avatar must open the profile');
   assert.match(appSource, /admin-player-name-button[^>]*data-admin-player-action="view"[^>]*data-player-key/, 'clicking a player nickname must open the profile');
