@@ -33,13 +33,48 @@ function parseDiscordPlaytimeCommand(value) {
   return { metric,username:match[2],command:`!${prefix} ${match[2]}` };
 }
 
+function appendDiscordComponentText(component, parts, depth = 0) {
+  if (!component || depth > 8) return;
+  const data = component.data && typeof component.data === 'object' ? component.data : component;
+  for (const key of ['content', 'title', 'description', 'name', 'label', 'value']) {
+    if (typeof data[key] === 'string') parts.push(data[key].trim());
+  }
+  const children = component.components || data.components || component.items || data.items || [];
+  for (const child of children) appendDiscordComponentText(child, parts, depth + 1);
+}
+
 function discordMessageText(message) {
   const parts = [String(message?.content || '').trim()];
   for (const embed of message?.embeds || []) {
+    parts.push(String(embed?.author?.name || '').trim());
+    parts.push(String(embed?.title || '').trim());
     parts.push(String(embed?.description || '').trim());
-    for (const field of embed?.fields || []) parts.push(String(field?.value || '').trim());
+    for (const field of embed?.fields || []) {
+      parts.push(String(field?.name || '').trim());
+      parts.push(String(field?.value || '').trim());
+    }
+    parts.push(String(embed?.footer?.text || '').trim());
   }
+  for (const component of message?.components || []) appendDiscordComponentText(component, parts);
   return parts.filter(Boolean).join('\n');
+}
+
+function cleanDiscordFormatting(value) {
+  return String(value || '')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/[*_~`|]/g, '')
+    .trim();
+}
+
+function parseDiscordMessageStatistics(message) {
+  const text = cleanDiscordFormatting(discordMessageText(message));
+  const title = text.match(/\bMessage statistics for\s+([A-Za-z0-9_]{1,32})\b/i);
+  if (!title) return null;
+  const total = text.slice(title.index + title[0].length).match(/\bTotal messages\s+([\d,]+)\b/i);
+  if (!total) return null;
+  const observedValue = Number(total[1].replace(/,/g, ''));
+  if (!Number.isSafeInteger(observedValue) || observedValue <= 0) return null;
+  return { targetUsername:title[1],observedValue };
 }
 
 function parseDiscordPlaytimeResponse(message, parsePlaytime) {
@@ -52,6 +87,8 @@ function parseDiscordPlaytimeResponse(message, parsePlaytime) {
 
 function parseDiscordPlayerInfoResponses(message, parsePlaytime, now = () => Date.now()) {
   const responses = [];
+  const messageStatistics = parseDiscordMessageStatistics(message);
+  if (messageStatistics) responses.push({ metric:'messages',...messageStatistics });
   for (const line of discordMessageText(message).split(/\r?\n/).map(value => value.trim()).filter(Boolean)) {
     const candidates = [
       ['messages', parseMessagesResponse(line)],
@@ -163,10 +200,12 @@ module.exports = {
   DEFAULT_PLAYTIME_LOOKUP_CHANNEL_ID,
   DEFAULT_PLAYTIME_LOOKUP_TTL_MS,
   createDiscordPlaytimeImport,
+  appendDiscordComponentText,
   discordBotNameVariants,
   discordMessageText,
   isTrustedPlaytimeBot,
   parseDiscordPlaytimeCommand,
+  parseDiscordMessageStatistics,
   parseDiscordPlaytimeResponse,
   parseDiscordPlayerInfoResponses
 };

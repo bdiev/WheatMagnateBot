@@ -9,6 +9,7 @@ const {
   createDiscordPlaytimeImport,
   isTrustedPlaytimeBot,
   parseDiscordPlaytimeCommand,
+  parseDiscordMessageStatistics,
   parseDiscordPlayerInfoResponses,
   parseDiscordPlaytimeResponse
 } = require('../discord/playtime-import');
@@ -16,11 +17,12 @@ const {
 const channelId = '1340779371698589696';
 const { parsePlaytime } = createPlaytimeFeature({ pool:null });
 
-function message({ content = '', channel = channelId, bot = false, username = 'Admin', id = '1', embeds = [] } = {}) {
+function message({ content = '', channel = channelId, bot = false, username = 'Admin', id = '1', embeds = [], components = [] } = {}) {
   return {
     id,
     content,
     embeds,
+    components,
     channel:{ id:channel },
     author:{ id:bot ? 'lookup-bot-id' : 'admin-id',bot,username }
   };
@@ -42,6 +44,39 @@ async function testParsingAndTrust() {
       parsePlaytime
     ),
     [{ metric:'messages',targetUsername:'bdiev_',observedValue:10_758 }]
+  );
+  const messageStatisticsEmbed = message({
+    bot:true,
+    username:'LolRiTTeRBot',
+    embeds:[{
+      title:'Message statistics for 2wd',
+      description:'**Total messages**\n58929 \u200b\n\n**Last 5 messages**\n**15 days ago**: !rape ItzRubyy'
+    }]
+  });
+  assert.deepEqual(
+    parseDiscordMessageStatistics(messageStatisticsEmbed),
+    { targetUsername:'2wd',observedValue:58_929 },
+    'the current LolRiTTeRBot statistics embed must be parsed'
+  );
+  assert.deepEqual(
+    parseDiscordMessageStatistics(message({
+      bot:true,
+      embeds:[{ title:'Message statistics for 2wd',fields:[{ name:'Total messages',value:'58,929' }] }]
+    })),
+    { targetUsername:'2wd',observedValue:58_929 },
+    'the field-based variant of the statistics embed must also be parsed'
+  );
+  assert.deepEqual(
+    parseDiscordMessageStatistics(message({
+      bot:true,
+      components:[{ components:[
+        { content:'**Message statistics for 2wd**' },
+        { content:'**Total messages**\n58,929 \u200b' },
+        { content:'**Last 5 messages**\n**15 days ago**: hello' }
+      ] }]
+    })),
+    { targetUsername:'2wd',observedValue:58_929 },
+    'Discord Components V2 statistics responses must also be parsed'
   );
   assert.equal(isTrustedPlaytimeBot(message({ bot:true,username:'LolRiTTeRBot' })), true,
     'Discord renders APP as a badge, so both the displayed APP form and the username must match');
@@ -71,6 +106,7 @@ async function testPendingRequestImport() {
   assert.equal(await coordinator.handle(message({ content:'!jd bdiev_' })), true);
   assert.equal(await coordinator.handle(message({ content:'!seen bdiev_' })), true);
   assert.equal(await coordinator.handle(message({ content:'!messages bdiev_' })), true);
+  assert.equal(await coordinator.handle(message({ content:'!messages 2wd' })), true);
   assert.equal(await coordinator.handle(message({ content:'bdiev_: 80 Days, 22 Hours, 19 Minutes',bot:true,username:'UnrelatedBot' })), false);
   assert.equal(await coordinator.handle(message({
     bot:true,
@@ -87,15 +123,25 @@ async function testPendingRequestImport() {
   assert.equal(await coordinator.handle(message({
     content:'bdiev_: 10,758 messages.',bot:true,username:'LolRiTTeRBot',id:'reply-4'
   })), true);
+  assert.equal(await coordinator.handle(message({
+    bot:true,
+    username:'LolRiTTeRBot',
+    id:'reply-5',
+    embeds:[{
+      title:'Message statistics for 2wd',
+      description:'**Total messages**\n58929 \u200b\n\n**Last 5 messages**\n**15 days ago**: !rape ItzRubyy'
+    }]
+  })), true);
   assert.deepEqual(saved, [
     { metric:'playtime',username:'bdiev_',observedValue:6_992_340 },
     { metric:'joinDate',username:'bdiev_',observedValue:new Date('2024-11-16T00:00:00.000Z') },
     { metric:'lastSeen',username:'bdiev_',observedValue:new Date('2026-08-20T10:00:00.000Z') },
-    { metric:'messages',username:'bdiev_',observedValue:10_758 }
+    { metric:'messages',username:'bdiev_',observedValue:10_758 },
+    { metric:'messages',username:'2wd',observedValue:58_929 }
   ]);
   assert.equal(imported[0].requestedUsername, 'bdiev_');
   assert.equal(imported[0].sourceMessageId, 'reply-1');
-  assert.deepEqual(imported.map(item => item.metric), ['playtime', 'joinDate', 'lastSeen', 'messages']);
+  assert.deepEqual(imported.map(item => item.metric), ['playtime', 'joinDate', 'lastSeen', 'messages', 'messages']);
   assert.equal(coordinator.pending.size, 0);
 }
 
