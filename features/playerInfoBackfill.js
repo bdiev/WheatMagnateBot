@@ -129,12 +129,17 @@ async function loadMissingPlayerInfo(pool) {
              ) AS missing_playtime,
              candidate.observed_message_count IS NULL AS missing_messages,
              candidate.registration_at IS NULL AS missing_join_date,
-             candidate.last_seen IS NULL AS missing_last_seen
+             candidate.last_seen IS NULL AS missing_last_seen,
+             NOT EXISTS (
+               SELECT 1 FROM player_info_lookup_exclusions exclusion
+               WHERE exclusion.username_key = LOWER(candidate.username)
+             ) AS lookup_available
       FROM candidate_players candidate
     )
     SELECT username, missing_playtime, missing_messages, missing_join_date, missing_last_seen
     FROM missing
-    WHERE missing_playtime OR missing_messages OR missing_join_date OR missing_last_seen
+    WHERE lookup_available
+      AND (missing_playtime OR missing_messages OR missing_join_date OR missing_last_seen)
     ORDER BY (
       missing_playtime::int + missing_join_date::int + missing_last_seen::int
     ) DESC,

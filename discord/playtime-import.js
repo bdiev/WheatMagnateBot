@@ -80,6 +80,13 @@ function parseDiscordMessageStatistics(message) {
   return { targetUsername:title[1],observedValue };
 }
 
+function isDiscordUserNotFound(message) {
+  return discordMessageText(message)
+    .split(/\r?\n/)
+    .map(cleanDiscordFormatting)
+    .some(line => /^User not found[.!]?$/i.test(line));
+}
+
 function parseDiscordPlaytimeResponse(message, parsePlaytime) {
   for (const line of discordMessageText(message).split(/\r?\n/).map(value => value.trim()).filter(Boolean)) {
     const parsed = parsePlaytimeResponse(line, parsePlaytime);
@@ -151,7 +158,9 @@ function createDiscordPlaytimeImport({
   parsePlaytime,
   savePlaytime,
   saveMetric,
+  saveUnavailable,
   onImported = async () => {},
+  onUnavailable = async () => {},
   onDiagnostic = async () => {},
   now = () => Date.now(),
   ttlMs = DEFAULT_PLAYTIME_LOOKUP_TTL_MS
@@ -167,12 +176,17 @@ function createDiscordPlaytimeImport({
       return savePlaytime(username, observedValue);
     };
   const pending = new Map();
+  const processedResponses = new Map();
+  let requestSequence = 0;
   const lookupChannelId = String(channelId || '').trim();
 
   function prune() {
     const cutoff = now() - Math.max(1_000, Number(ttlMs) || DEFAULT_PLAYTIME_LOOKUP_TTL_MS);
     for (const [key, item] of pending) {
       if (item.requestedAt < cutoff) pending.delete(key);
+    }
+    for (const [messageId, handledAt] of processedResponses) {
+      if (handledAt < cutoff) processedResponses.delete(messageId);
     }
   }
 
@@ -199,6 +213,9 @@ function createDiscordPlaytimeImport({
         ...request,
         requestedAt:now(),
         requestedBy:message.author?.username || null,
+        requestMessageId:message.id || null,
+        channelId:message.channelId || message.channel?.id || null,
+        sequence:++requestSequence,
         processing:false
       });
       await onDiagnostic({
@@ -210,6 +227,51 @@ function createDiscordPlaytimeImport({
         channel:message.channel || null
       });
       return true;
+    }
+
+    const responseMessageId = String(message.id || '');
+    if (responseMessageId && processedResponses.has(responseMessageId)) return false;
+
+    if (isDiscordUserNotFound(message)) {
+      const referencedMessageId = String(message.reference?.messageId || message.reference?.message_id || '');
+      const responseChannelId = String(message.channelId || message.channel?.id || '');
+      const candidates = [...pending.values()]
+        .filter(item => !item.processing)
+        .sort((first, second) => second.requestedAt - first.requestedAt || second.sequence - first.sequence);
+      const request = candidates.find(item => referencedMessageId && String(item.requestMessageId || '') === referencedMessageId)
+        || candidates.find(item => responseChannelId && String(item.channelId || '') === responseChannelId)
+        || candidates[0];
+      if (!request || typeof saveUnavailable !== 'function') {
+        await onDiagnostic({
+          stage:'unmatched-not-found',
+          messageId:message.id || null,
+          pendingCount:pending.size
+        });
+        return false;
+      }
+
+      request.processing = true;
+      try {
+        const result = await saveUnavailable(request.username, {
+          reason:'user_not_found',
+          metric:request.metric
+        });
+        if (!result || result.error) throw new Error(result?.error || 'Could not exclude unavailable player lookup.');
+        for (const [key, item] of pending) {
+          if (item.username.toLowerCase() === request.username.toLowerCase()) pending.delete(key);
+        }
+        if (responseMessageId) processedResponses.set(responseMessageId, now());
+        await onUnavailable({
+          username:result.username || request.username,
+          requestedBy:request.requestedBy,
+          metric:request.metric,
+          sourceMessageId:message.id || null
+        });
+        return true;
+      } catch (error) {
+        request.processing = false;
+        throw error;
+      }
     }
 
     const responses = parseDiscordPlayerInfoResponses(message, parsePlaytime, now);
@@ -233,6 +295,7 @@ function createDiscordPlaytimeImport({
       const result = await persistMetric(response.metric, response.targetUsername, response.observedValue);
       if (!result || result.error) throw new Error(result?.error || 'Player information update failed.');
       pending.delete(key);
+      if (responseMessageId) processedResponses.set(responseMessageId, now());
       await onImported({
         metric:response.metric,
         username:result.username || response.targetUsername,
@@ -249,7 +312,7 @@ function createDiscordPlaytimeImport({
     }
   }
 
-  return { handle, pending };
+  return { handle, pending,processedResponses };
 }
 
 module.exports = {
@@ -262,6 +325,7 @@ module.exports = {
   discordMessageText,
   isTrustedPlaytimeBot,
   isDiscordApplicationMessage,
+  isDiscordUserNotFound,
   isLookupChannel,
   parseDiscordPlaytimeCommand,
   parseDiscordMessageStatistics,

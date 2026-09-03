@@ -264,8 +264,11 @@ function testArchitectureAndUiContracts() {
   const siteMigration = fs.readFileSync(path.join(root, 'site', 'migrations', '023_player_admin_metadata.sql'), 'utf8');
   const databaseListIndexes = fs.readFileSync(path.join(root, 'database', 'migrations', '024_admin_player_list_indexes.sql'), 'utf8');
   const siteListIndexes = fs.readFileSync(path.join(root, 'site', 'migrations', '024_admin_player_list_indexes.sql'), 'utf8');
+  const databaseLookupExclusions = fs.readFileSync(path.join(root, 'database', 'migrations', '042_player_info_lookup_exclusions.sql'), 'utf8');
+  const siteLookupExclusions = fs.readFileSync(path.join(root, 'site', 'migrations', '042_player_info_lookup_exclusions.sql'), 'utf8');
   assert.equal(databaseMigration, siteMigration, 'bot and site must migrate the same player metadata fields');
   assert.equal(databaseListIndexes, siteListIndexes, 'bot and site must install the same admin-list indexes');
+  assert.equal(databaseLookupExclusions, siteLookupExclusions, 'bot and site must install the same unavailable-lookup exclusions');
   assert.match(serverSource, /getPlayerProfile\(url, \{ includeAdminFields = false \}/, 'the existing player GET must be reused');
   assert.match(serverSource, /MINECRAFT_UUID_PATTERN[\s\S]*type: 'uuid'/, 'UUID must remain the primary admin identity');
   assert.match(serverSource, /preserved: \['game_chat_messages'/, 'shared history preservation must be explicit and auditable');
@@ -288,6 +291,8 @@ function testArchitectureAndUiContracts() {
     'the frontend must show the remaining player count and metric breakdown');
   assert.match(serverSource, /prefix:'!pt'[\s\S]*prefix:'!jd'[\s\S]*prefix:'!seen'[\s\S]*prefix:'!messages'/,
     'the API must create commands for all four player information metrics');
+  assert.match(serverSource, /player_info_lookup_exclusions exclusion[\s\S]*lookup_available[\s\S]*WHERE player\.lookup_available/,
+    'Discord usernames reported as not found must be omitted from missing lookups');
   assert.match(appSource, /function renderAdminPlaytimeCommands[\s\S]*\^!\(\?:pt\|jd\|seen\|messages\)[\s\S]*data-copy-playtime-command/,
     'the Player Data card must render every supported lookup command');
   assert.match(appSource, /admin-player-avatar[^\n]*accountHeadUrl\(player\.username, player\.uuid\)[^\n]*loading="lazy" decoding="async"/, 'player cards must use the UUID-aware cached avatar proxy and asynchronous decoding');

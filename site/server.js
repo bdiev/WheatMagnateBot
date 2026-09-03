@@ -3831,17 +3831,22 @@ async function getPlayerInfoCollectionProgress(database = pool) {
              ) AS missing_playtime,
              candidate.observed_message_count IS NULL AS missing_messages,
              candidate.registration_at IS NULL AS missing_join_date,
-             candidate.last_seen IS NULL AS missing_last_seen
+             candidate.last_seen IS NULL AS missing_last_seen,
+             NOT EXISTS (
+               SELECT 1 FROM player_info_lookup_exclusions exclusion
+               WHERE exclusion.username_key = LOWER(candidate.username)
+             ) AS lookup_available
       FROM candidate_players candidate
     )
     SELECT COUNT(*)::int AS total_players,
            COUNT(*) FILTER (
-             WHERE missing_playtime OR missing_messages OR missing_join_date OR missing_last_seen
+             WHERE lookup_available
+               AND (missing_playtime OR missing_messages OR missing_join_date OR missing_last_seen)
            )::int AS remaining_players,
-           COUNT(*) FILTER (WHERE missing_playtime)::int AS missing_playtime,
-           COUNT(*) FILTER (WHERE missing_messages)::int AS missing_messages,
-           COUNT(*) FILTER (WHERE missing_join_date)::int AS missing_join_date,
-           COUNT(*) FILTER (WHERE missing_last_seen)::int AS missing_last_seen,
+           COUNT(*) FILTER (WHERE lookup_available AND missing_playtime)::int AS missing_playtime,
+           COUNT(*) FILTER (WHERE lookup_available AND missing_messages)::int AS missing_messages,
+           COUNT(*) FILTER (WHERE lookup_available AND missing_join_date)::int AS missing_join_date,
+           COUNT(*) FILTER (WHERE lookup_available AND missing_last_seen)::int AS missing_last_seen,
            COALESCE((
              SELECT JSONB_AGG(JSONB_BUILD_OBJECT(
                'username', item.username,
@@ -3853,10 +3858,11 @@ async function getPlayerInfoCollectionProgress(database = pool) {
              FROM (
                SELECT player.*
                FROM missing player
-               WHERE player.missing_playtime
-                  OR player.missing_messages
-                  OR player.missing_join_date
-                  OR player.missing_last_seen
+               WHERE player.lookup_available
+                 AND (player.missing_playtime
+                   OR player.missing_messages
+                   OR player.missing_join_date
+                   OR player.missing_last_seen)
                ORDER BY LOWER(player.username), player.username
                LIMIT 100
              ) item
@@ -5829,6 +5835,7 @@ async function pollDatabaseEvents() {
           (SELECT COALESCE(MAX(id),0) FROM notifications) AS notification_id,
           (SELECT COALESCE(MAX(id),0) FROM operational_events) AS operational_event_id,
           (SELECT MAX(updated_at) FROM player_playtime) AS player_info_at,
+          (SELECT MAX(updated_at) FROM player_info_lookup_exclusions) AS player_info_exclusion_at,
           (SELECT CONCAT(
             COUNT(*) FILTER (WHERE registration_at IS NOT NULL), ':',
             COUNT(*) FILTER (WHERE last_seen IS NOT NULL), ':',
@@ -5851,6 +5858,7 @@ async function pollDatabaseEvents() {
       whisperId: String(row.whisper_id || 0), farmStatusAt: signature(row.farm_status_at),
       notificationId: String(row.notification_id || 0), operationalEventId: String(row.operational_event_id || 0), adminControlAt: signature(row.admin_control_at),
       playerInfoAt: signature(row.player_info_at),
+      playerInfoExclusionAt: signature(row.player_info_exclusion_at),
       playerInfoActivity: String(row.player_info_activity || '0:0:0'),
       players: new Map((Array.isArray(row.online_players) ? row.online_players : []).map(username => [username.toLowerCase(), username]))
     };
@@ -5875,7 +5883,9 @@ async function pollDatabaseEvents() {
     for (const [key, username] of previous.players) {
       if (!next.players.has(key)) sseHub.publish('player_left', { username });
     }
-    if (next.playerInfoAt !== previous.playerInfoAt || next.playerInfoActivity !== previous.playerInfoActivity) {
+    if (next.playerInfoAt !== previous.playerInfoAt
+      || next.playerInfoActivity !== previous.playerInfoActivity
+      || next.playerInfoExclusionAt !== previous.playerInfoExclusionAt) {
       sseHub.publish('player_info_updated', { updatedAt: next.playerInfoAt }, { roles: ['admin'] });
     }
     if (next.chatId !== previous.chatId) {

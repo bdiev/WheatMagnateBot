@@ -8,6 +8,7 @@ const {
   DEFAULT_PLAYTIME_LOOKUP_CHANNEL_ID,
   createDiscordPlaytimeImport,
   isDiscordApplicationMessage,
+  isDiscordUserNotFound,
   isLookupChannel,
   isTrustedPlaytimeBot,
   parseDiscordPlaytimeCommand,
@@ -113,17 +114,24 @@ async function testParsingAndTrust() {
     'application-owned webhook responses must not be mistaken for human messages');
   assert.equal(isLookupChannel(message({ channel:'thread-id',parentId:channelId }), channelId), true,
     'responses inside a configured channel thread must be accepted');
+  assert.equal(isDiscordUserNotFound(message({ content:'User not found.',bot:true })), true);
+  assert.equal(isDiscordUserNotFound(message({ bot:true,embeds:[{ description:'User not found.' }] })), true);
 }
 
 async function testPendingRequestImport() {
   const saved = [];
   const imported = [];
+  const unavailable = [];
   const coordinator = createDiscordPlaytimeImport({
     channelId,
     parsePlaytime,
     now:() => new Date('2026-08-20T12:00:00.000Z').getTime(),
     saveMetric:async (metric, username, observedValue) => {
       saved.push({ metric,username,observedValue });
+      return { username };
+    },
+    saveUnavailable:async username => {
+      unavailable.push(username);
       return { username };
     },
     onImported:async result => imported.push(result)
@@ -145,6 +153,11 @@ async function testPendingRequestImport() {
     username:'LolRiTTeRBot',
     id:'reply-1',
     embeds:[{ description:'bdiev_: 80 Days, 22 Hours, 19 Minutes' }]
+  })), true);
+  assert.equal(await coordinator.handle(message({ content:'!pt 1x09',id:'missing-pt' })), true);
+  assert.equal(await coordinator.handle(message({ content:'!messages 1x09',id:'missing-messages' })), true);
+  assert.equal(await coordinator.handle(message({
+    content:'User not found.',bot:true,username:'LolRiTTeRBot',id:'reply-not-found'
   })), true);
   assert.equal(await coordinator.handle(message({
     bot:true,
@@ -194,6 +207,7 @@ async function testPendingRequestImport() {
   assert.equal(imported[0].requestedUsername, 'bdiev_');
   assert.equal(imported[0].sourceMessageId, 'reply-1');
   assert.deepEqual(imported.map(item => item.metric), ['playtime', 'messages', 'messages', 'joinDate', 'lastSeen', 'messages', 'messages']);
+  assert.deepEqual(unavailable, ['1x09']);
   assert.equal(coordinator.pending.size, 0);
 }
 
@@ -209,6 +223,8 @@ function testBotIntegrationOrder() {
     'edited application responses must be imported too');
   assert.match(botSource, /scheduleDiscordPlayerInfoFetch[\s\S]*channel\.messages\.fetch\(\{ limit:25 \}\)[\s\S]*discordPlaytimeImport\.handle\(candidate\)/,
     'missed Gateway events must fall back to fetching recent Discord embeds through REST');
+  assert.match(botSource, /saveUnavailable:markPlayerInfoLookupUnavailable[\s\S]*Removed \$\{result\.username\} from missing lookups/,
+    'User not found responses must persistently remove a username from missing lookups');
 }
 
 (async () => {
