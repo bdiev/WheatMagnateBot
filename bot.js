@@ -3187,8 +3187,11 @@ const discordPlaytimeImport = createDiscordPlaytimeImport({
       );
       return;
     }
+    const candidates = Array.isArray(event.responses)
+      ? event.responses.map(candidate => `${candidate.metric}:${candidate.username}`).join(',')
+      : '';
     console.warn(
-      `[PlayerInfo] Trusted Discord response ${event.messageId || '(no id)'} was ${event.stage}; parsed=${event.responseCount || 0}, pending=${event.pendingCount || 0}.`
+      `[PlayerInfo] Trusted Discord response ${event.messageId || '(no id)'} was ${event.stage}; parsed=${event.responseCount || 0}, candidates=${candidates || '-'}, pending=${event.pendingCount || 0}.`
     );
   },
   onImported: async result => {

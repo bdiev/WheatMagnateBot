@@ -62,7 +62,10 @@ function discordMessageText(message) {
 function cleanDiscordFormatting(value) {
   return String(value || '')
     .replace(/[\u200B-\u200D\uFEFF]/g, '')
-    .replace(/[*_~`|]/g, '')
+    // Underscores are valid Minecraft username characters and must survive
+    // Discord markdown cleanup (for example 0000001_Armorbar).
+    .replace(/[*~`|]/g, '')
+    .replace(/\\_/g, '_')
     .trim();
 }
 
@@ -216,6 +219,7 @@ function createDiscordPlaytimeImport({
         stage:responses.length ? 'unmatched' : 'unparsed',
         messageId:message.id || null,
         responseCount:responses.length,
+        responses:responses.map(candidate => ({ metric:candidate.metric,username:candidate.targetUsername })),
         pendingCount:pending.size
       });
       return false;

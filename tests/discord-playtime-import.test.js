@@ -66,6 +66,25 @@ async function testParsingAndTrust() {
   assert.deepEqual(
     parseDiscordMessageStatistics(message({
       bot:true,
+      embeds:[{
+        title:'Message statistics for 0000001_Armorbar',
+        description:'**Total messages**\n1360 \u200b\n\n**Last 5 messages**\n**7 minutes ago**: mrow'
+      }]
+    })),
+    { targetUsername:'0000001_Armorbar',observedValue:1_360 },
+    'Minecraft underscores must survive Discord markdown cleanup'
+  );
+  assert.deepEqual(
+    parseDiscordMessageStatistics(message({
+      bot:true,
+      embeds:[{ title:'Message statistics for 0000001\\_Armorbar',fields:[{ name:'Total messages',value:'1,360' }] }]
+    })),
+    { targetUsername:'0000001_Armorbar',observedValue:1_360 },
+    'explicitly escaped Discord underscores must also be restored'
+  );
+  assert.deepEqual(
+    parseDiscordMessageStatistics(message({
+      bot:true,
       embeds:[{ title:'Message statistics for 2wd',fields:[{ name:'Total messages',value:'58,929' }] }]
     })),
     { targetUsername:'2wd',observedValue:58_929 },
@@ -119,12 +138,22 @@ async function testPendingRequestImport() {
   assert.equal(await coordinator.handle(message({ content:'!messages bdiev_' })), true);
   assert.equal(await coordinator.handle(message({ content:'!messages 2wd' })), true);
   assert.equal(await coordinator.handle(message({ content:'!messages ThreadPlayer',channel:'thread-id',parentId:channelId })), true);
+  assert.equal(await coordinator.handle(message({ content:'!messages 0000001_Armorbar' })), true);
   assert.equal(await coordinator.handle(message({ content:'bdiev_: 80 Days, 22 Hours, 19 Minutes',bot:true,username:'UnrelatedBot' })), false);
   assert.equal(await coordinator.handle(message({
     bot:true,
     username:'LolRiTTeRBot',
     id:'reply-1',
     embeds:[{ description:'bdiev_: 80 Days, 22 Hours, 19 Minutes' }]
+  })), true);
+  assert.equal(await coordinator.handle(message({
+    bot:true,
+    username:'LolRiTTeRBot',
+    id:'reply-7',
+    embeds:[{
+      title:'Message statistics for 0000001_Armorbar',
+      description:'**Total messages**\n1360 \u200b\n\n**Last 5 messages**\n**7 minutes ago**: mrow'
+    }]
   })), true);
   assert.equal(await coordinator.handle(message({
     bot:false,
@@ -155,6 +184,7 @@ async function testPendingRequestImport() {
   })), true);
   assert.deepEqual(saved, [
     { metric:'playtime',username:'bdiev_',observedValue:6_992_340 },
+    { metric:'messages',username:'0000001_Armorbar',observedValue:1_360 },
     { metric:'messages',username:'ThreadPlayer',observedValue:77 },
     { metric:'joinDate',username:'bdiev_',observedValue:new Date('2024-11-16T00:00:00.000Z') },
     { metric:'lastSeen',username:'bdiev_',observedValue:new Date('2026-08-20T10:00:00.000Z') },
@@ -163,7 +193,7 @@ async function testPendingRequestImport() {
   ]);
   assert.equal(imported[0].requestedUsername, 'bdiev_');
   assert.equal(imported[0].sourceMessageId, 'reply-1');
-  assert.deepEqual(imported.map(item => item.metric), ['playtime', 'messages', 'joinDate', 'lastSeen', 'messages', 'messages']);
+  assert.deepEqual(imported.map(item => item.metric), ['playtime', 'messages', 'messages', 'joinDate', 'lastSeen', 'messages', 'messages']);
   assert.equal(coordinator.pending.size, 0);
 }
 
