@@ -89,7 +89,7 @@ function isDiscordUserNotFound(message) {
 
 function parseDiscordPlaytimeResponse(message, parsePlaytime) {
   for (const line of discordMessageText(message).split(/\r?\n/).map(value => value.trim()).filter(Boolean)) {
-    const parsed = parsePlaytimeResponse(line, parsePlaytime);
+    const parsed = parsePlaytimeResponse(cleanDiscordFormatting(line), parsePlaytime);
     if (parsed) return parsed;
   }
   return null;
@@ -100,11 +100,12 @@ function parseDiscordPlayerInfoResponses(message, parsePlaytime, now = () => Dat
   const messageStatistics = parseDiscordMessageStatistics(message);
   if (messageStatistics) responses.push({ metric:'messages',...messageStatistics });
   for (const line of discordMessageText(message).split(/\r?\n/).map(value => value.trim()).filter(Boolean)) {
+    const cleanLine = cleanDiscordFormatting(line);
     const candidates = [
-      ['messages', parseMessagesResponse(line)],
-      ['joinDate', parseJoinDateResponse(line)],
-      ['lastSeen', parseLastSeenResponse(line, new Date(now()))],
-      ['playtime', parsePlaytimeResponse(line, parsePlaytime)]
+      ['messages', parseMessagesResponse(cleanLine)],
+      ['joinDate', parseJoinDateResponse(cleanLine)],
+      ['lastSeen', parseLastSeenResponse(cleanLine, new Date(now()))],
+      ['playtime', parsePlaytimeResponse(cleanLine, parsePlaytime)]
     ];
     for (const [metric, parsed] of candidates) {
       if (parsed) responses.push({ metric,...parsed });

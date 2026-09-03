@@ -51,6 +51,14 @@ async function testParsingAndTrust() {
     ),
     [{ metric:'messages',targetUsername:'bdiev_',observedValue:10_758 }]
   );
+  assert.deepEqual(
+    parseDiscordPlayerInfoResponses(
+      message({ bot:true,embeds:[{ description:'**AlexFart**: 09/20/2019 22:11:49' }] }),
+      parsePlaytime
+    ),
+    [{ metric:'joinDate',targetUsername:'AlexFart',observedValue:new Date('2019-09-20T22:11:49.000Z') }],
+    'bold Discord usernames in !jd embeds must be parsed'
+  );
   const messageStatisticsEmbed = message({
     bot:true,
     username:'LolRiTTeRBot',
