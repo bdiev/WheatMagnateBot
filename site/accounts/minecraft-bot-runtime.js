@@ -9,7 +9,11 @@ const {
   isRestartPreparationWindow,
   isPostRestartStartupWindow
 } = require('../../features/obsidianFarm/restart-schedule');
-const { MAX_FARM_PING_MS, botPingMs, isFarmPingTooHigh } = require('../../features/obsidianFarm/ping-protection');
+const {
+  MAX_FARM_PING_MS,
+  botPingMs,
+  createFarmPingMonitor
+} = require('../../features/obsidianFarm/ping-protection');
 
 const TASKS = new Set(['obsidian','observe','follow','kill_aura','pearl_loader','chat','idle','paused']);
 const STABLE_CONNECTION_RESET_MS = 60_000;
@@ -70,6 +74,7 @@ class MinecraftBotRuntime extends BotContext {
     this.restartProtectionDateKey = null;
     this.restartProtectionPromise = null;
     this.farmPausedForHighPing = false;
+    this.farmPingMonitor = createFarmPingMonitor();
     this.connectionGate = connect => connect();
     const resolvedModuleOptions = { ...moduleOptions };
     if (typeof killAuraFactory === 'function') resolvedModuleOptions.killAuraFactory = killAuraFactory;
@@ -183,29 +188,31 @@ class MinecraftBotRuntime extends BotContext {
     }
     const ping = botPingMs(bot);
     const farmBeforePingCheck = this.obsidianFarm?.getStatus?.() || {};
-    if (isFarmPingTooHigh(ping)) {
-      if (farmBeforePingCheck.desiredEnabled) {
-        if (farmBeforePingCheck.enabled) this.obsidianFarm.pauseForHighPing?.();
-        if (!this.farmPausedForHighPing) {
+    if (!farmBeforePingCheck.desiredEnabled) {
+      this.farmPausedForHighPing = false;
+      this.farmPingMonitor.reset();
+    } else {
+      const pingState = this.farmPingMonitor.observe(ping);
+      if (pingState.tooHigh) {
+        if (pingState.pauseConfirmed && farmBeforePingCheck.enabled) this.obsidianFarm.pauseForHighPing?.();
+        if (pingState.pauseConfirmed && !this.farmPausedForHighPing) {
           this.farmPausedForHighPing = true;
-          this.lastError = `Obsidian Farm paused: ping ${Math.round(ping)} ms exceeds ${MAX_FARM_PING_MS} ms.`;
+          this.lastError = `Obsidian Farm paused: ping ${Math.round(ping)} ms stayed above ${MAX_FARM_PING_MS} ms for ${Math.round(pingState.highForMs / 1000)}s.`;
           this.emit('status', this.getStatus());
         }
-      } else {
-        this.farmPausedForHighPing = false;
+        return;
       }
-      return;
-    }
-    if (this.farmPausedForHighPing && ping == null) return;
-    if (this.farmPausedForHighPing) {
-      const recoveryDateParts = getServerRestartDateParts(this.now());
-      if (isRestartPreparationWindow(recoveryDateParts)) return;
-      this.farmPausedForHighPing = false;
-      if (/Obsidian Farm paused: ping/i.test(this.lastError || '')) this.lastError = null;
-      this.nextObsidianResumeAt = 0;
-      this.emit('status', this.getStatus());
-      this.retryDesiredObsidian(bot);
-      return;
+      if (this.farmPausedForHighPing) {
+        if (!pingState.recoveryConfirmed) return;
+        const recoveryDateParts = getServerRestartDateParts(this.now());
+        if (isRestartPreparationWindow(recoveryDateParts)) return;
+        this.farmPausedForHighPing = false;
+        if (/Obsidian Farm paused: ping/i.test(this.lastError || '')) this.lastError = null;
+        this.nextObsidianResumeAt = 0;
+        this.emit('status', this.getStatus());
+        this.retryDesiredObsidian(bot);
+        return;
+      }
     }
     const restartNow = this.now();
     const restartDateParts = getServerRestartDateParts(restartNow);
@@ -297,6 +304,7 @@ class MinecraftBotRuntime extends BotContext {
     this.intentionalStop = false;
     this.nearbySnapshot = [];
     this.farmPausedForHighPing = false;
+    this.farmPingMonitor.reset();
     this.status = 'connecting';
     this.setLifecycle(this.lifecycle === 'offline' ? 'reconnecting' : 'connecting');
     this.emit('status', this.getStatus());

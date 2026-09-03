@@ -16,7 +16,13 @@ const { formatDiscordBridgeMessage } = require('./discord/chat-message-format');
 const { NEW_PLAYER_WINDOW_DAYS } = require('./site/player-new-status');
 const { preparePlayerHeadEmojiImage } = require('./discord/player-head-image');
 const { createMinecraftBot } = require('./minecraft');
-const { MAX_FARM_PING_MS, botPingMs, isFarmPingTooHigh } = require('./features/obsidianFarm/ping-protection');
+const {
+  MAX_FARM_PING_MS,
+  FARM_HIGH_PING_GRACE_MS,
+  FARM_PING_RECOVERY_MS,
+  botPingMs,
+  createFarmPingMonitor
+} = require('./features/obsidianFarm/ping-protection');
 const { moveInventorySlot } = require('./minecraft/inventory-slot-move');
 const {
   createDatabasePool,
@@ -5108,39 +5114,53 @@ function startRestartProtectionMonitor() {
 function startObsidianFarmWatchdog() {
   if (obsidianFarmWatchdogInterval) clearInterval(obsidianFarmWatchdogInterval);
   let recovering = false;
+  const pingMonitor = createFarmPingMonitor();
 
   obsidianFarmWatchdogInterval = setInterval(async () => {
     if (recovering || !bot?.entity) return;
 
     const ping = botPingMs(bot);
     const farmStatus = farm.getStatus();
-    if (isFarmPingTooHigh(ping)) {
-      if (obsidianStats.desiredEnabled) {
-        if (farmStatus.enabled) farm.suspend();
-        if (!primaryFarmPausedForHighPing) {
-          primaryFarmPausedForHighPing = true;
-          console.warn(`[Obsidian] Farm paused because ping is ${Math.round(ping)} ms (limit ${MAX_FARM_PING_MS} ms).`);
-          recordSystemLog({
-            level: 'warn', category: 'obsidian',
-            message: 'Obsidian Farm paused because Minecraft ping is too high.',
-            details: { ping: Math.round(ping), maximumPing: MAX_FARM_PING_MS }
-          }).catch(() => {});
-          updateStatusMessage().catch(() => {});
-        }
-      } else {
-        primaryFarmPausedForHighPing = false;
+    if (!obsidianStats.desiredEnabled) {
+      primaryFarmPausedForHighPing = false;
+      pingMonitor.reset();
+      return;
+    }
+
+    const pingState = pingMonitor.observe(ping);
+    if (pingState.tooHigh) {
+      if (pingState.pauseConfirmed && farmStatus.enabled) farm.suspend();
+      if (pingState.pauseConfirmed && !primaryFarmPausedForHighPing) {
+        primaryFarmPausedForHighPing = true;
+        console.warn(`[Obsidian] Farm paused because ping stayed above the limit for ${Math.round(pingState.highForMs / 1000)}s: ${Math.round(ping)} ms (limit ${MAX_FARM_PING_MS} ms).`);
+        recordSystemLog({
+          level: 'warn', category: 'obsidian',
+          message: 'Obsidian Farm paused because Minecraft ping stayed too high.',
+          details: {
+            ping: Math.round(ping),
+            maximumPing: MAX_FARM_PING_MS,
+            highPingDurationMs: pingState.highForMs,
+            requiredDurationMs: FARM_HIGH_PING_GRACE_MS
+          }
+        }).catch(() => {});
+        updateStatusMessage().catch(() => {});
       }
       return;
     }
 
-    if (primaryFarmPausedForHighPing && ping == null) return;
+    if (primaryFarmPausedForHighPing && !pingState.recoveryConfirmed) return;
     if (primaryFarmPausedForHighPing) {
       primaryFarmPausedForHighPing = false;
-      console.log(`[Obsidian] Ping returned to normal (${ping == null ? 'unknown' : `${Math.round(ping)} ms`}); resuming farm.`);
+      console.log(`[Obsidian] Ping remained normal for ${Math.round(pingState.normalForMs / 1000)}s (${Math.round(ping)} ms); resuming farm.`);
       recordSystemLog({
         level: 'info', category: 'obsidian',
         message: 'Minecraft ping returned to normal; resuming Obsidian Farm.',
-        details: { ping: ping == null ? null : Math.round(ping), maximumPing: MAX_FARM_PING_MS }
+        details: {
+          ping: Math.round(ping),
+          maximumPing: MAX_FARM_PING_MS,
+          normalPingDurationMs: pingState.normalForMs,
+          requiredDurationMs: FARM_PING_RECOVERY_MS
+        }
       }).catch(() => {});
     }
 
