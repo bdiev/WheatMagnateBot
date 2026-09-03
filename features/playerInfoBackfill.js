@@ -128,7 +128,10 @@ async function loadMissingPlayerInfo(pool) {
                   OR LOWER(playtime.username) = LOWER(candidate.username)
              ) AS missing_playtime,
              candidate.observed_message_count IS NULL AS missing_messages,
-             candidate.registration_at IS NULL AS missing_join_date,
+             (
+               candidate.registration_at IS NULL
+               OR candidate.registration_at = candidate.last_seen
+             ) AS missing_join_date,
              candidate.last_seen IS NULL AS missing_last_seen,
              NOT EXISTS (
                SELECT 1 FROM player_info_lookup_exclusions exclusion

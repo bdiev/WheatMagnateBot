@@ -3194,9 +3194,16 @@ const discordPlaytimeImport = createDiscordPlaytimeImport({
     return { error:`Unsupported player information metric: ${metric}` };
   },
   saveUnavailable:markPlayerInfoLookupUnavailable,
-  onDiagnostic: event => {
+  onDiagnostic: async event => {
     if (event.stage === 'pending') {
       console.log(`[PlayerInfo] Waiting for Discord ${event.metric} response for ${event.username}.`);
+      if (event.metric === 'joinDate') {
+        try {
+          await playerInfoObservationStore.requestRefresh('joinDate', event.username);
+        } catch (error) {
+          console.error(`[PlayerInfo] Could not prepare join-date refresh for ${event.username}:`, error?.message || error);
+        }
+      }
       scheduleDiscordPlayerInfoFetch(event);
       return;
     }

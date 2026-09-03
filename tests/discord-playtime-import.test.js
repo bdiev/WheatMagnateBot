@@ -233,6 +233,8 @@ function testBotIntegrationOrder() {
     'missed Gateway events must fall back to fetching recent Discord embeds through REST');
   assert.match(botSource, /saveUnavailable:markPlayerInfoLookupUnavailable[\s\S]*Removed \$\{result\.username\} from missing lookups/,
     'User not found responses must persistently remove a username from missing lookups');
+  assert.match(botSource, /event\.metric === 'joinDate'[\s\S]*playerInfoObservationStore\.requestRefresh\('joinDate', event\.username\)/,
+    'Discord !jd commands must permit replacement of a previously imported suspicious date');
 }
 
 (async () => {

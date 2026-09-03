@@ -204,6 +204,8 @@ async function testDatabaseQueryUsesAllPlayerSourcesAndUuidIdentity() {
   assert.match(query, /FROM whitelist whitelist_player/);
   assert.match(query, /FROM player_playtime playtime/);
   assert.match(query, /candidate\.player_uuid IS NOT NULL AND playtime\.player_uuid = candidate\.player_uuid/);
+  assert.match(query, /candidate\.registration_at IS NULL\s+OR candidate\.registration_at = candidate\.last_seen/,
+    'registration dates copied from last seen must be rechecked');
   assert.match(query, /WHERE lookup_available\s+AND \(missing_playtime OR missing_messages OR missing_join_date OR missing_last_seen\)/);
   assert.match(query, /FROM player_info_lookup_exclusions exclusion/,
     'players rejected by the lookup source must not be scheduled again');

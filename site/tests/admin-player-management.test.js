@@ -249,6 +249,8 @@ async function testPlayerInfoCollectionProgress() {
     'progress must include playtime-only players');
   assert.match(statement, /missing_playtime OR missing_messages OR missing_join_date OR missing_last_seen/,
     'a player must remain pending while any collected metric is missing');
+  assert.match(statement, /candidate\.registration_at IS NULL OR candidate\.registration_at = candidate\.last_seen/,
+    'an identical registration and last-seen timestamp must require a fresh !jd lookup');
   assert.match(statement, /JSONB_AGG\(JSONB_BUILD_OBJECT\([\s\S]*'playtime'[\s\S]*'messages'[\s\S]*'joinDate'[\s\S]*'lastSeen'[\s\S]*LIMIT 100/,
     'the admin response must include every missing metric for a bounded player list');
 }
@@ -293,6 +295,8 @@ function testArchitectureAndUiContracts() {
     'the API must create commands for all four player information metrics');
   assert.match(serverSource, /player_info_lookup_exclusions exclusion[\s\S]*lookup_available[\s\S]*WHERE player\.lookup_available/,
     'Discord usernames reported as not found must be omitted from missing lookups');
+  assert.match(appSource, /function renderAdminPlaytimeCommands[\s\S]*joinDate[\s\S]*progress\.missingCommands[\s\S]*pt\|jd\|seen\|messages/,
+    'suspicious join dates returned by the API must render as !jd command cards');
   assert.match(appSource, /function renderAdminPlaytimeCommands[\s\S]*\^!\(\?:pt\|jd\|seen\|messages\)[\s\S]*data-copy-playtime-command/,
     'the Player Data card must render every supported lookup command');
   assert.match(appSource, /admin-player-avatar[^\n]*accountHeadUrl\(player\.username, player\.uuid\)[^\n]*loading="lazy" decoding="async"/, 'player cards must use the UUID-aware cached avatar proxy and asynchronous decoding');
