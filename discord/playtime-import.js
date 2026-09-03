@@ -87,6 +87,14 @@ function isDiscordUserNotFound(message) {
     .some(line => /^User not found[.!]?$/i.test(line));
 }
 
+function parseDiscordNullJoinDateResponse(message) {
+  for (const line of discordMessageText(message).split(/\r?\n/).map(cleanDiscordFormatting)) {
+    const match = line.match(/^([A-Za-z0-9_]{1,32}):\s*null\s*[.!]?$/i);
+    if (match) return { targetUsername:match[1] };
+  }
+  return null;
+}
+
 function parseDiscordPlaytimeResponse(message, parsePlaytime) {
   for (const line of discordMessageText(message).split(/\r?\n/).map(value => value.trim()).filter(Boolean)) {
     const parsed = parsePlaytimeResponse(cleanDiscordFormatting(line), parsePlaytime);
@@ -233,18 +241,23 @@ function createDiscordPlaytimeImport({
     const responseMessageId = String(message.id || '');
     if (responseMessageId && processedResponses.has(responseMessageId)) return false;
 
-    if (isDiscordUserNotFound(message)) {
+    const nullJoinDate = parseDiscordNullJoinDateResponse(message);
+    if (isDiscordUserNotFound(message) || nullJoinDate) {
       const referencedMessageId = String(message.reference?.messageId || message.reference?.message_id || '');
       const responseChannelId = String(message.channelId || message.channel?.id || '');
       const candidates = [...pending.values()]
         .filter(item => !item.processing)
+        .filter(item => !nullJoinDate || (
+          item.metric === 'joinDate'
+          && item.username.toLowerCase() === nullJoinDate.targetUsername.toLowerCase()
+        ))
         .sort((first, second) => second.requestedAt - first.requestedAt || second.sequence - first.sequence);
       const request = candidates.find(item => referencedMessageId && String(item.requestMessageId || '') === referencedMessageId)
         || candidates.find(item => responseChannelId && String(item.channelId || '') === responseChannelId)
         || candidates[0];
       if (!request || typeof saveUnavailable !== 'function') {
         await onDiagnostic({
-          stage:'unmatched-not-found',
+          stage:nullJoinDate ? 'unmatched-null-join-date' : 'unmatched-not-found',
           messageId:message.id || null,
           pendingCount:pending.size
         });
@@ -254,7 +267,7 @@ function createDiscordPlaytimeImport({
       request.processing = true;
       try {
         const result = await saveUnavailable(request.username, {
-          reason:'user_not_found',
+          reason:nullJoinDate ? 'join_date_null' : 'user_not_found',
           metric:request.metric
         });
         if (!result || result.error) throw new Error(result?.error || 'Could not exclude unavailable player lookup.');
@@ -266,6 +279,7 @@ function createDiscordPlaytimeImport({
           username:result.username || request.username,
           requestedBy:request.requestedBy,
           metric:request.metric,
+          reason:nullJoinDate ? 'join_date_null' : 'user_not_found',
           sourceMessageId:message.id || null
         });
         return true;
@@ -328,6 +342,7 @@ module.exports = {
   isDiscordApplicationMessage,
   isDiscordUserNotFound,
   isLookupChannel,
+  parseDiscordNullJoinDateResponse,
   parseDiscordPlaytimeCommand,
   parseDiscordMessageStatistics,
   parseDiscordPlaytimeResponse,

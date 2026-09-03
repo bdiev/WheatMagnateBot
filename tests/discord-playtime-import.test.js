@@ -11,6 +11,7 @@ const {
   isDiscordUserNotFound,
   isLookupChannel,
   isTrustedPlaytimeBot,
+  parseDiscordNullJoinDateResponse,
   parseDiscordPlaytimeCommand,
   parseDiscordMessageStatistics,
   parseDiscordPlayerInfoResponses,
@@ -124,6 +125,11 @@ async function testParsingAndTrust() {
     'responses inside a configured channel thread must be accepted');
   assert.equal(isDiscordUserNotFound(message({ content:'User not found.',bot:true })), true);
   assert.equal(isDiscordUserNotFound(message({ bot:true,embeds:[{ description:'User not found.' }] })), true);
+  assert.deepEqual(
+    parseDiscordNullJoinDateResponse(message({ bot:true,embeds:[{ description:'**Herobrine**: null\u00a0' }] })),
+    { targetUsername:'Herobrine' },
+    'null join-date embeds must preserve and identify the target username'
+  );
 }
 
 async function testPendingRequestImport() {
@@ -138,8 +144,8 @@ async function testPendingRequestImport() {
       saved.push({ metric,username,observedValue });
       return { username };
     },
-    saveUnavailable:async username => {
-      unavailable.push(username);
+    saveUnavailable:async (username, details) => {
+      unavailable.push({ username,...details });
       return { username };
     },
     onImported:async result => imported.push(result)
@@ -155,6 +161,7 @@ async function testPendingRequestImport() {
   assert.equal(await coordinator.handle(message({ content:'!messages 2wd' })), true);
   assert.equal(await coordinator.handle(message({ content:'!messages ThreadPlayer',channel:'thread-id',parentId:channelId })), true);
   assert.equal(await coordinator.handle(message({ content:'!messages 0000001_Armorbar' })), true);
+  assert.equal(await coordinator.handle(message({ content:'!jd Herobrine',id:'missing-herobrine-jd' })), true);
   assert.equal(await coordinator.handle(message({ content:'bdiev_: 80 Days, 22 Hours, 19 Minutes',bot:true,username:'UnrelatedBot' })), false);
   assert.equal(await coordinator.handle(message({
     bot:true,
@@ -166,6 +173,12 @@ async function testPendingRequestImport() {
   assert.equal(await coordinator.handle(message({ content:'!messages 1x09',id:'missing-messages' })), true);
   assert.equal(await coordinator.handle(message({
     content:'User not found.',bot:true,username:'LolRiTTeRBot',id:'reply-not-found'
+  })), true);
+  assert.equal(await coordinator.handle(message({
+    bot:true,
+    username:'LolRiTTeRBot',
+    id:'reply-null-jd',
+    embeds:[{ description:'**Herobrine**: null\u00a0' }]
   })), true);
   assert.equal(await coordinator.handle(message({
     bot:true,
@@ -215,7 +228,10 @@ async function testPendingRequestImport() {
   assert.equal(imported[0].requestedUsername, 'bdiev_');
   assert.equal(imported[0].sourceMessageId, 'reply-1');
   assert.deepEqual(imported.map(item => item.metric), ['playtime', 'messages', 'messages', 'joinDate', 'lastSeen', 'messages', 'messages']);
-  assert.deepEqual(unavailable, ['1x09']);
+  assert.deepEqual(unavailable, [
+    { username:'1x09',reason:'user_not_found',metric:'messages' },
+    { username:'Herobrine',reason:'join_date_null',metric:'joinDate' }
+  ]);
   assert.equal(coordinator.pending.size, 0);
 }
 

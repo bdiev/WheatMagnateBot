@@ -3163,21 +3163,22 @@ function scheduleDiscordPlayerInfoFetch({ metric,username,channel,requestedAt })
   discordPlayerInfoFetchTimers.set(key, timers);
 }
 
-async function markPlayerInfoLookupUnavailable(username) {
+async function markPlayerInfoLookupUnavailable(username, { reason = 'user_not_found' } = {}) {
   if (!pool) return { error:'Database not configured' };
   const safeUsername = String(username || '').trim();
+  const safeReason = reason === 'join_date_null' ? 'join_date_null' : 'user_not_found';
   if (!/^[A-Za-z0-9_]{1,32}$/.test(safeUsername)) return { error:'Invalid Minecraft username.' };
   const result = await pool.query(`
     INSERT INTO player_info_lookup_exclusions
       (username_key,username,reason,source,updated_at)
-    VALUES (LOWER($1),$1,'user_not_found','discord',NOW())
+    VALUES (LOWER($1),$1,$2,'discord',NOW())
     ON CONFLICT (username_key)
     DO UPDATE SET username=EXCLUDED.username,
                   reason=EXCLUDED.reason,
                   source=EXCLUDED.source,
                   updated_at=NOW()
     RETURNING username
-  `, [safeUsername]);
+  `, [safeUsername,safeReason]);
   return { username:result.rows[0]?.username || safeUsername };
 }
 
@@ -3248,16 +3249,19 @@ const discordPlaytimeImport = createDiscordPlaytimeImport({
     for (const metric of ['playtime', 'joinDate', 'lastSeen', 'messages']) {
       clearDiscordPlayerInfoFetch(metric, result.username);
     }
-    console.log(`[PlayerInfo] Removed ${result.username} from missing lookups: Discord user not found.`);
+    const reasonText = result.reason === 'join_date_null'
+      ? 'Discord returned a null join date'
+      : 'Discord user not found';
+    console.log(`[PlayerInfo] Removed ${result.username} from missing lookups: ${reasonText}.`);
     await recordSystemLog({
       level:'info',
       category:'admin_data',
       actor:result.requestedBy,
-      message:`Removed ${result.username} from missing lookups after Discord returned User not found.`,
+      message:`Removed ${result.username} from missing lookups: ${reasonText}.`,
       details:{
         username:result.username,
         requestedMetric:result.metric,
-        reason:'user_not_found',
+        reason:result.reason || 'user_not_found',
         discordChannelId:PLAYTIME_LOOKUP_DISCORD_CHANNEL_ID,
         sourceBot:PLAYTIME_LOOKUP_DISCORD_BOT_NAME,
         sourceMessageId:result.sourceMessageId
