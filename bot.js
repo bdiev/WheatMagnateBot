@@ -8,7 +8,9 @@ const { createDiscordClient, saveStatusMessageId, loadStatusMessageId } = requir
 const {
   DEFAULT_PLAYTIME_LOOKUP_CHANNEL_ID,
   DEFAULT_PLAYTIME_LOOKUP_BOT_NAME,
-  createDiscordPlaytimeImport
+  createDiscordPlaytimeImport,
+  isDiscordApplicationMessage,
+  isTrustedPlaytimeBot
 } = require('./discord/playtime-import');
 const { summarizeAggregateObsidianRows } = require('./discord/aggregate-obsidian-status');
 const {
@@ -3109,6 +3111,58 @@ const {
   uiButtonEmojis: { ...UI_BUTTON_EMOJIS, search: STATUS_BUTTON_EMOJIS.seen }
 });
 
+const discordPlayerInfoFetchTimers = new Map();
+
+function clearDiscordPlayerInfoFetch(metric, username) {
+  const key = `${metric}:${String(username || '').toLowerCase()}`;
+  const timers = discordPlayerInfoFetchTimers.get(key) || [];
+  timers.forEach(timer => clearTimeout(timer));
+  discordPlayerInfoFetchTimers.delete(key);
+}
+
+function scheduleDiscordPlayerInfoFetch({ metric,username,channel,requestedAt }) {
+  const key = `${metric}:${String(username || '').toLowerCase()}`;
+  clearDiscordPlayerInfoFetch(metric, username);
+  if (!channel?.messages?.fetch) {
+    console.warn(`[PlayerInfo] Cannot fetch Discord responses for ${username}: channel history is unavailable.`);
+    return;
+  }
+
+  const timers = [1_500, 4_000, 8_000, 15_000].map((delay, index, delays) => {
+    const timer = setTimeout(async () => {
+      if (!discordPlaytimeImport.pending.has(key)) {
+        clearDiscordPlayerInfoFetch(metric, username);
+        return;
+      }
+      try {
+        const recent = await channel.messages.fetch({ limit:25 });
+        const candidates = [...recent.values()]
+          .filter(candidate => isDiscordApplicationMessage(candidate))
+          .filter(candidate => isTrustedPlaytimeBot(candidate, {
+            botId:PLAYTIME_LOOKUP_DISCORD_BOT_ID,
+            botName:PLAYTIME_LOOKUP_DISCORD_BOT_NAME
+          }))
+          .filter(candidate => !Number.isFinite(Number(candidate.createdTimestamp)) || Number(candidate.createdTimestamp) >= Number(requestedAt || 0) - 1_000)
+          .sort((first, second) => Number(first.createdTimestamp || 0) - Number(second.createdTimestamp || 0));
+        for (const candidate of candidates) {
+          if (await discordPlaytimeImport.handle(candidate)) break;
+        }
+        if (!discordPlaytimeImport.pending.has(key)) clearDiscordPlayerInfoFetch(metric, username);
+        else if (index === delays.length - 1) {
+          console.warn(`[PlayerInfo] No readable Discord ${metric} response found for ${username} after REST retries.`);
+          clearDiscordPlayerInfoFetch(metric, username);
+        }
+      } catch (error) {
+        console.error(`[PlayerInfo] Could not fetch Discord channel history for ${username}:`, error?.message || error);
+        if (index === delays.length - 1) clearDiscordPlayerInfoFetch(metric, username);
+      }
+    }, delay);
+    timer.unref?.();
+    return timer;
+  });
+  discordPlayerInfoFetchTimers.set(key, timers);
+}
+
 const discordPlaytimeImport = createDiscordPlaytimeImport({
   channelId: PLAYTIME_LOOKUP_DISCORD_CHANNEL_ID,
   botId: PLAYTIME_LOOKUP_DISCORD_BOT_ID,
@@ -3124,6 +3178,7 @@ const discordPlaytimeImport = createDiscordPlaytimeImport({
   onDiagnostic: event => {
     if (event.stage === 'pending') {
       console.log(`[PlayerInfo] Waiting for Discord ${event.metric} response for ${event.username}.`);
+      scheduleDiscordPlayerInfoFetch(event);
       return;
     }
     if (event.stage === 'untrusted') {
@@ -3137,6 +3192,7 @@ const discordPlaytimeImport = createDiscordPlaytimeImport({
     );
   },
   onImported: async result => {
+    clearDiscordPlayerInfoFetch(result.metric, result.requestedUsername);
     const displayValue = result.metric === 'playtime'
       ? formatPlaytime(result.observedValue)
       : result.observedValue instanceof Date ? result.observedValue.toISOString() : String(result.observedValue);

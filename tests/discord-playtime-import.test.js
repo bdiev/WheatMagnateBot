@@ -177,6 +177,8 @@ function testBotIntegrationOrder() {
   assert.equal(DEFAULT_PLAYTIME_LOOKUP_CHANNEL_ID, channelId, 'the requested lookup channel must be the default');
   assert.match(botSource, /discordClient\.on\('messageUpdate'[\s\S]*discordPlaytimeImport\.handle\(message\)/,
     'edited application responses must be imported too');
+  assert.match(botSource, /scheduleDiscordPlayerInfoFetch[\s\S]*channel\.messages\.fetch\(\{ limit:25 \}\)[\s\S]*discordPlaytimeImport\.handle\(candidate\)/,
+    'missed Gateway events must fall back to fetching recent Discord embeds through REST');
 }
 
 (async () => {

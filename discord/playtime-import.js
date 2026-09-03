@@ -198,7 +198,14 @@ function createDiscordPlaytimeImport({
         requestedBy:message.author?.username || null,
         processing:false
       });
-      await onDiagnostic({ stage:'pending',metric:request.metric,username:request.username,messageId:message.id || null });
+      await onDiagnostic({
+        stage:'pending',
+        metric:request.metric,
+        username:request.username,
+        messageId:message.id || null,
+        requestedAt:now(),
+        channel:message.channel || null
+      });
       return true;
     }
 
