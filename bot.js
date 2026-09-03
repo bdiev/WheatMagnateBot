@@ -3126,6 +3126,12 @@ const discordPlaytimeImport = createDiscordPlaytimeImport({
       console.log(`[PlayerInfo] Waiting for Discord ${event.metric} response for ${event.username}.`);
       return;
     }
+    if (event.stage === 'untrusted') {
+      console.warn(
+        `[PlayerInfo] Ignored Discord application response ${event.messageId || '(no id)'} from ${event.authorName || '(unknown)'}; authorId=${event.authorId || '-'}, applicationId=${event.applicationId || '-'}, pending=${event.pendingCount || 0}.`
+      );
+      return;
+    }
     console.warn(
       `[PlayerInfo] Trusted Discord response ${event.messageId || '(no id)'} was ${event.stage}; parsed=${event.responseCount || 0}, pending=${event.pendingCount || 0}.`
     );

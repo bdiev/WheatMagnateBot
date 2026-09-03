@@ -86,8 +86,8 @@ async function testParsingAndTrust() {
   assert.equal(isTrustedPlaytimeBot(message({ bot:true,username:'LolRiTTeRBot' })), true,
     'Discord renders APP as a badge, so both the displayed APP form and the username must match');
   assert.equal(isTrustedPlaytimeBot(message({ bot:true,username:'UnrelatedBot' })), false);
-  assert.equal(isTrustedPlaytimeBot(message({ bot:true,username:'LolRiTTeRBot' }), { botId:'another-id' }), false,
-    'an immutable configured bot ID must take precedence over display names');
+  assert.equal(isTrustedPlaytimeBot(message({ bot:true,username:'LolRiTTeRBot' }), { botId:'another-id' }), true,
+    'exact application-name matching must survive Discord bot-user/application ID differences');
   const webhookResponse = message({ bot:false,username:'LolRiTTeRBot',webhookId:'webhook-1' });
   assert.equal(isDiscordApplicationMessage(webhookResponse), true);
   assert.equal(isTrustedPlaytimeBot(webhookResponse), true,

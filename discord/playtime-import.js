@@ -122,10 +122,12 @@ function isTrustedPlaytimeBot(message, { botId = '', botName = DEFAULT_PLAYTIME_
     message.author.globalName,
     message.member?.displayName
   ].flatMap(discordBotNameVariants).some(value => expected.has(value));
-  if (configuredId) {
-    return [message.author?.id, message.applicationId].some(value => String(value || '') === configuredId);
-  }
-  return expected.size > 0 && nameMatches;
+  const idMatches = configuredId
+    && [message.author?.id, message.applicationId].some(value => String(value || '') === configuredId);
+  // Discord application webhooks may expose an application ID that differs
+  // from the bot user ID copied in Developer Mode. Keep exact-name matching as
+  // a fallback, but only for messages Discord identifies as application-owned.
+  return Boolean(idMatches || (expected.size > 0 && nameMatches));
 }
 
 function isLookupChannel(message, channelId) {
@@ -177,7 +179,17 @@ function createDiscordPlaytimeImport({
 
     const trustedSource = isTrustedPlaytimeBot(message, { botId,botName });
     if (!trustedSource) {
-      if (isDiscordApplicationMessage(message)) return false;
+      if (isDiscordApplicationMessage(message)) {
+        await onDiagnostic({
+          stage:'untrusted',
+          messageId:message.id || null,
+          authorId:message.author?.id || null,
+          applicationId:message.applicationId || null,
+          authorName:message.author?.username || null,
+          pendingCount:pending.size
+        });
+        return false;
+      }
       const request = parseDiscordPlaytimeCommand(message.content);
       if (!request) return false;
       pending.set(`${request.metric}:${request.username.toLowerCase()}`, {
