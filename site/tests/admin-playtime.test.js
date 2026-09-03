@@ -77,8 +77,10 @@ function testUiFeedback() {
     'manual entry must remain available as a fallback');
   assert.match(app, /function renderAdminPlaytimeCommands[\s\S]*data-copy-playtime-command[\s\S]*function copyAdminPlaytimeCommand/,
     'missing values must be rendered as copyable player-information commands');
-  assert.match(app, /writeClipboardText\(command\)[\s\S]*Copied[\s\S]*Discord lookup channel/,
+  assert.match(app, /writeClipboardText\(command\)[\s\S]*button\.classList\.add\('copied'\)[\s\S]*Discord lookup channel/,
     'copying a command must give immediate clipboard feedback');
+  assert.match(app, /admin-playtime-command[^>]*data-copy-playtime-command[^>]*title="Copy[\s\S]*<strong>\$\{escapeHtml\(username\)\}<\/strong>[\s\S]*command\.split\(' '\)\[0\]/,
+    'the whole nickname card must copy its command without a separate Copy label');
   assert.match(app, /player_info_updated[\s\S]*admin-player-info[\s\S]*loadAdminPlayers/,
     'Discord imports must refresh the admin command list without reloading the page');
   assert.match(styles, /\.admin-playtime-command-list[\s\S]*\.admin-playtime-command\.copied/,

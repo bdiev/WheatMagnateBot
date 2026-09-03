@@ -6300,9 +6300,9 @@ function renderAdminPlaytimeCommands(progress) {
   }
 
   list.innerHTML = commands.map(({ metric,username,command }) => `
-    <button class="admin-playtime-command" type="button" data-player-info-metric="${escapeHtml(metric)}" data-copy-playtime-command="${escapeHtml(command)}" aria-label="Copy ${escapeHtml(command)}">
-      <code>${escapeHtml(command)}</code>
-      <span>Copy</span>
+    <button class="admin-playtime-command" type="button" data-player-info-metric="${escapeHtml(metric)}" data-copy-playtime-command="${escapeHtml(command)}" aria-label="Copy ${escapeHtml(command)}" title="Copy ${escapeHtml(command)}">
+      <strong>${escapeHtml(username)}</strong>
+      <code>${escapeHtml(command.split(' ')[0])}</code>
     </button>`).join('');
   if (missingCount > commands.length) {
     list.insertAdjacentHTML('beforeend', `<div class="admin-playtime-list-note">Showing the first ${formatNumber(commands.length)} of ${formatNumber(missingCount)} commands.</div>`);
@@ -6314,14 +6314,11 @@ async function copyAdminPlaytimeCommand(button) {
   if (!command) return;
   try {
     await writeClipboardText(command);
-    const label = button.querySelector('span');
     window.clearTimeout(button.copyResetTimer);
     button.classList.add('copied');
-    if (label) label.textContent = 'Copied';
     showCopyToast(`${command} copied. Paste it into the Discord lookup channel.`);
     button.copyResetTimer = window.setTimeout(() => {
       button.classList.remove('copied');
-      if (label) label.textContent = 'Copy';
     }, 1800);
   } catch (error) {
     showCopyToast(error.message || 'Could not copy the command.');

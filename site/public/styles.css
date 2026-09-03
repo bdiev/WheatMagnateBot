@@ -2669,18 +2669,24 @@ body.search-focus-active #logoutButton {
 }
 
 .admin-playtime-command code {
-  overflow: hidden;
-  color: inherit;
-  text-overflow: ellipsis;
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--line));
+  border-radius: 6px;
+  color: var(--accent-strong);
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel));
+  font-size: 11px;
+  font-weight: 800;
   white-space: nowrap;
 }
 
-.admin-playtime-command span {
-  flex: 0 0 auto;
-  color: var(--accent-strong);
-  font-size: 11px;
-  font-weight: 800;
-  text-transform: uppercase;
+.admin-playtime-command strong {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 #tab-admin .admin-playtime-command:hover,
@@ -2694,9 +2700,14 @@ body.search-focus-active #logoutButton {
   background: color-mix(in srgb, #48b978 10%, var(--panel-soft));
 }
 
-.admin-playtime-command.copied span,
 .admin-playtime-complete {
   color: #48b978;
+}
+
+.admin-playtime-command.copied code {
+  border-color: color-mix(in srgb, #48b978 55%, var(--line));
+  color: #48b978;
+  background: color-mix(in srgb, #48b978 8%, var(--panel));
 }
 
 .admin-playtime-complete,
