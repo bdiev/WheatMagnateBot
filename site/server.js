@@ -6080,6 +6080,20 @@ function startOperationalRetention() {
 }
 
 async function startSiteServer() {
+  // Bind the HTTP port before migrations. Another service replica can hold a
+  // migration advisory lock during a deploy; waiting for it with a closed port
+  // makes the reverse proxy report 502 even though the process is healthy.
+  await new Promise((resolve, reject) => {
+    const handleListenError = error => reject(error);
+    server.once('error', handleListenError);
+    server.listen(PORT, () => {
+      server.off('error', handleListenError);
+      console.log(`[Site] WheatMagnateBot site: http://localhost:${PORT}`);
+      console.log(`[Site] Static files: ${pathToFileURL(PUBLIC_DIR).href}`);
+      resolve();
+    });
+  });
+
   try {
     if (ADMIN_BOOTSTRAP_TOKEN && !BOOTSTRAP_TOKEN_CONFIGURED) console.warn('[Site] ADMIN_BOOTSTRAP_TOKEN is ignored because it is shorter than 32 characters.');
     await ensureOptionalTables();
@@ -6087,18 +6101,14 @@ async function startSiteServer() {
   } catch (err) {
     console.error('[Site] Failed to initialize database tables:', err.message);
   } finally {
-    server.listen(PORT, () => {
-      console.log(`[Site] WheatMagnateBot site: http://localhost:${PORT}`);
-      console.log(`[Site] Static files: ${pathToFileURL(PUBLIC_DIR).href}`);
-      recordSystemLog({
-        level: 'info',
-        category: 'site',
-        message: `Site server started on port ${PORT}.`
-      });
-      sseHub.start();
-      startDatabaseEventPoller();
-      startOperationalRetention();
+    recordSystemLog({
+      level: 'info',
+      category: 'site',
+      message: `Site server started on port ${PORT}.`
     });
+    sseHub.start();
+    startDatabaseEventPoller();
+    startOperationalRetention();
   }
 }
 

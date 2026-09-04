@@ -1,6 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 const { RateLimiter, configuredOrigins, requestIsHttps, resolveStaticPath, securityHeaders, validateOrigin, verifyCsrfToken } = require('../security');
@@ -193,6 +194,15 @@ function testCsrfTokenIsStablePerSession() {
     'the stable session token must keep the existing hashed verification contract');
 }
 
+function testSiteBindsBeforeDatabaseInitialization() {
+  const source = fs.readFileSync(path.resolve(__dirname, '..', 'server.js'), 'utf8');
+  const startup = source.match(/async function startSiteServer\(\) \{[\s\S]*?\n\}/)?.[0] || '';
+  const listenAt = startup.indexOf('server.listen(PORT');
+  const migrationsAt = startup.indexOf('await ensureOptionalTables()');
+  assert.ok(listenAt >= 0 && migrationsAt > listenAt,
+    'the health endpoint must bind before database migrations can wait on a deployment lock');
+}
+
 function httpRequest(port, requestPath, { method = 'GET', headers = {}, body = null } = {}) {
   return new Promise((resolve, reject) => {
     const req = http.request({ port, path: requestPath, method, headers: { Host: 'localhost', ...headers } }, res => {
@@ -241,6 +251,7 @@ async function testHttpBoundary() {
   await testPasswordChangeTransaction();
   testHeadersAndCsrfContract();
   testCsrfTokenIsStablePerSession();
+  testSiteBindsBeforeDatabaseInitialization();
   await testHttpBoundary();
   console.log('Security hardening tests passed.');
 })().catch(err => {
