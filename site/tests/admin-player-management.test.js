@@ -324,6 +324,8 @@ function testArchitectureAndUiContracts() {
   assert.match(stylesSource, /\.admin-player-card\.menu-open\s*\{[^}]*z-index:100/, 'the active player card must render above later cards');
   assert.match(stylesSource, /\.admin-player-avatar-button\s*\{[^}]*grid-column:1;[^}]*min-width:52px!important;/, 'the clickable avatar must stay inside its grid column');
   assert.match(stylesSource, /\.admin-player-card-main\s*\{[^}]*grid-column:2;[^}]*grid-row:1;/, 'the nickname must occupy a separate grid column from the avatar');
+  assert.match(stylesSource, /\.admin-player-name-button\s*\{[^}]*line-height:1\.35;/,
+    'player nicknames must leave enough vertical space for underscores and glyph descenders');
   assert.doesNotMatch(appSource.match(/async function confirmAdminPlayerDelete\(\)[\s\S]*?\n}/)?.[0] || '', /location\.reload/);
 }
 
