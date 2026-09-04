@@ -313,6 +313,8 @@ function testArchitectureAndUiContracts() {
   assert.match(appSource, /insertAdjacentHTML\('beforeend', markup\)/, 'new cards must append without rebuilding loaded cards');
   assert.match(appSource, /player_joined[\s\S]*player_left[\s\S]*loadAdminPlayers\(\{ showLoading: false, preserveScroll: true \}\)/, 'join and leave refreshes must preserve the admin player scroll position');
   assert.match(appSource, /else if \(reconcile\)[\s\S]*existingCards[\s\S]*adminPlayerCardSignature[\s\S]*list\.insertBefore/, 'background refreshes must reconcile keyed cards instead of rebuilding the scrolling list');
+  assert.match(appSource, /function updateAdminPlayerCard[\s\S]*data-admin-player-status[\s\S]*data-admin-player-stat[\s\S]*field\.textContent !== String\(value\)/, 'live player values must update inside stable cards without reloading avatars or menus');
+  assert.match(appSource, /refreshedByKey[\s\S]*previousPlayers\.map[\s\S]*refreshedPlayers\.forEach/, 'background player refreshes must retain the visible card order');
   assert.match(appSource, /liveScrollTop = scroller\?\.scrollTop[\s\S]*renderAdminPlayers\(state\.adminPlayers, \{ reconcile: true \}\)[\s\S]*scroller\.scrollTop !== liveScrollTop/, 'background player refreshes must preserve the live scroll position captured after the request');
   const adminPlayerLoaderSource = appSource.match(/async function loadAdminPlayers\([\s\S]*?\n}\n\nfunction adminPlayerIdentityMarkup/)?.[0] || '';
   assert.doesNotMatch(adminPlayerLoaderSource, /previousScrollTop/, 'a completed background request must not restore a stale scroll position captured before the request');

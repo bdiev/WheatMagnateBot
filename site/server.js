@@ -1533,6 +1533,66 @@ function combineFarmStateRows(rows = []) {
   };
 }
 
+async function getLiveObsidianStats(currentUser, url) {
+  assertDatabase();
+  const scoped = await scopedAccountRuntime(url, currentUser);
+  const requestedScope = String(url.searchParams.get('scope') || 'personal').toLowerCase();
+  if (!['personal', 'all'].includes(requestedScope)) {
+    throw Object.assign(new Error('Invalid Obsidian statistics scope.'), { statusCode:400 });
+  }
+  if (requestedScope === 'all') {
+    assertAdminUser(currentUser);
+    if (scoped) {
+      throw Object.assign(new Error('All-bot statistics are available from the primary account only.'), { statusCode:400 });
+    }
+  }
+
+  let rows;
+  if (requestedScope === 'all') {
+    rows = (await pool.query(`
+      SELECT session_mined,total_mined,desired_enabled,session_started_at,
+             retired_pickaxes,retired_pickaxe_blocks,target_x,target_y,target_z,target_radius,updated_at
+      FROM obsidian_farm_state
+      WHERE id=1
+      UNION ALL
+      SELECT stats.session_mined,stats.total_mined,stats.desired_enabled,stats.session_started_at,
+             stats.retired_pickaxes,stats.retired_pickaxe_blocks,
+             NULL::integer AS target_x,NULL::integer AS target_y,NULL::integer AS target_z,
+             NULL::integer AS target_radius,stats.updated_at
+      FROM obsidian_account_farm_state stats
+      JOIN bot_accounts account ON account.id=stats.account_id
+      WHERE account.is_default=FALSE AND account.deleted_at IS NULL
+    `)).rows;
+  } else if (scoped) {
+    rows = (await pool.query(`
+      SELECT session_mined,total_mined,desired_enabled,session_started_at,
+             retired_pickaxes,retired_pickaxe_blocks,
+             NULL::integer AS target_x,NULL::integer AS target_y,NULL::integer AS target_z,
+             NULL::integer AS target_radius,updated_at
+      FROM obsidian_account_farm_state
+      WHERE account_id=$1::uuid
+    `, [scoped.account.id])).rows;
+  } else {
+    rows = (await pool.query(`
+      SELECT session_mined,total_mined,desired_enabled,session_started_at,
+             retired_pickaxes,retired_pickaxe_blocks,target_x,target_y,target_z,target_radius,updated_at
+      FROM obsidian_farm_state
+      WHERE id=1
+    `)).rows;
+  }
+
+  const farm = compactFarmState(combineFarmStateRows(rows));
+  if (requestedScope === 'all') {
+    farm.sessionPerHour = rows.reduce((total, row) => total + compactFarmState(row).sessionPerHour, 0);
+    farm.sessionPerMinute = Number((farm.sessionPerHour / 60).toFixed(1));
+  }
+  return {
+    scope: requestedScope,
+    accountId: scoped?.account?.id || DEFAULT_MINECRAFT_ACCOUNT_ID,
+    farm
+  };
+}
+
 async function whisperAccountId(currentUser, source) {
   return primaryOnlyAccountId(currentUser, source);
 }
@@ -5599,6 +5659,10 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/kill-aura' && req.method === 'GET') {
       sendJson(res, 200, await getKillAuraStats(currentUser, url));
+      return;
+    }
+    if (url.pathname === '/api/obsidian/live' && req.method === 'GET') {
+      sendJson(res, 200, await getLiveObsidianStats(currentUser, url));
       return;
     }
     if (url.pathname === '/api/obsidian') {

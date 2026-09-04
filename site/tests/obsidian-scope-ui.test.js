@@ -106,5 +106,20 @@ assert.match(
   /const queued = await postJson\('\/api\/admin\/bot-command'[\s\S]*?await waitForAdminBotCommand\(queued\.command\.id\)/,
   'farm controls wait for command completion instead of immediately repainting stale state'
 );
+assert.match(
+  serverSource,
+  /async function getLiveObsidianStats[\s\S]*?compactFarmState\(combineFarmStateRows\(rows\)\)[\s\S]*?url\.pathname === '\/api\/obsidian\/live'/,
+  'the server exposes a lightweight Obsidian counter endpoint without rebuilding analytics'
+);
+assert.match(
+  appSource,
+  /function renderLiveObsidian[\s\S]*?setRollingNumber\('#obsidianTotal'[\s\S]*?setRollingNumber\('#sessionRate'[\s\S]*?state\.activeTab === 'obsidian' \? fetchJson\(obsidianLivePath\)/,
+  'visible Obsidian headline statistics use the one-second live polling cycle'
+);
+assert.match(
+  serverSource,
+  /requestedScope === 'all'[\s\S]*?farm\.sessionPerHour = rows\.reduce[\s\S]*?compactFarmState\(row\)\.sessionPerHour/,
+  'the lightweight All Bots rate remains a sum of independently calculated account rates'
+);
 
 console.log('Obsidian statistics scope UI tests passed.');

@@ -5700,6 +5700,21 @@ function renderObsidian(payload) {
   redrawCharts();
 }
 
+function renderLiveObsidian(payload) {
+  const renderedScope = payload?.scope === 'all' ? 'all' : 'personal';
+  const activeScope = activeAccountIsPrimary() && state.currentUser?.role === 'admin'
+    ? state.obsidianStatsScope
+    : 'personal';
+  if (renderedScope !== activeScope) return;
+  const farm = payload?.farm;
+  if (!farm) return;
+  setRollingNumber('#obsidianTotal', farm.totalMined);
+  setRollingNumber('#sessionRate', farm.sessionPerHour, { suffix: '/h' });
+  setRollingNumber('#pickaxeAverage', farm.blocksPerPickaxe);
+  setRollingNumber('#retiredPickaxes', farm.retiredPickaxes, { prefix: 'retired pickaxes: ' });
+  $('#farmUpdated').textContent = `last update: ${formatDate(farm.updatedAt)}`;
+}
+
 async function saveObsidianGoal(event) {
   event.preventDefault();
   try {
@@ -6355,11 +6370,6 @@ function adminPlayerCardSignature(player) {
     player.username,
     player.uuid,
     player.id,
-    player.isOnline,
-    player.firstSeen,
-    player.lastSeen,
-    player.playtime,
-    player.totalMessages,
     Array.isArray(player.tags) ? player.tags : []
   ]);
 }
@@ -6375,17 +6385,17 @@ function adminPlayerCardMarkup(player) {
           <img class="admin-player-avatar" src="${accountHeadUrl(player.username, player.uuid)}" alt="" loading="lazy" decoding="async">
         </button>
         <div class="admin-player-card-main">
-          <div class="admin-player-card-title"><button class="admin-player-name-button" type="button" data-admin-player-action="view" data-player-key="${identityKey}">${username}</button><span class="pill ${player.isOnline ? 'online' : ''}">${player.isOnline ? 'online' : 'offline'}</span></div>
+          <div class="admin-player-card-title"><button class="admin-player-name-button" type="button" data-admin-player-action="view" data-player-key="${identityKey}">${username}</button><span class="pill ${player.isOnline ? 'online' : ''}" data-admin-player-status>${player.isOnline ? 'online' : 'offline'}</span></div>
           ${uuid
             ? `<code class="uuid-copy" role="button" tabindex="0" data-copy-uuid="${uuid}" title="Copy UUID" aria-label="Copy UUID ${uuid}">${uuid}</code>`
             : `<code title="Legacy profile ID ${escapeHtml(player.id)}">Legacy ID ${escapeHtml(player.id)}</code>`}
           <div class="admin-player-card-tags">${tags.length ? tags.map(tag => `<span class="admin-player-tag">${escapeHtml(tag)}</span>`).join('') : '<span class="muted">No tags</span>'}</div>
         </div>
         <dl class="admin-player-card-stats">
-          <div><dt>First seen</dt><dd>${player.firstSeen ? formatDate(player.firstSeen) : 'Unknown'}</dd></div>
-          <div><dt>Last seen</dt><dd>${player.lastSeen ? formatRecentDate(player.lastSeen) : 'Never'}</dd></div>
-          <div><dt>Playtime</dt><dd>${escapeHtml(player.playtime || '0m')}</dd></div>
-          <div><dt>Messages</dt><dd>${formatNumber(player.totalMessages)}</dd></div>
+          <div><dt>First seen</dt><dd data-admin-player-stat="first-seen">${player.firstSeen ? formatDate(player.firstSeen) : 'Unknown'}</dd></div>
+          <div><dt>Last seen</dt><dd data-admin-player-stat="last-seen">${player.lastSeen ? formatRecentDate(player.lastSeen) : 'Never'}</dd></div>
+          <div><dt>Playtime</dt><dd data-admin-player-stat="playtime">${escapeHtml(player.playtime || '0m')}</dd></div>
+          <div><dt>Messages</dt><dd data-admin-player-stat="messages">${formatNumber(player.totalMessages)}</dd></div>
         </dl>
         <details class="admin-player-card-menu">
           <summary aria-label="Actions for ${username}">&hellip;</summary>
@@ -6397,6 +6407,24 @@ function adminPlayerCardMarkup(player) {
           </div>
         </details>
       </article>`;
+}
+
+function updateAdminPlayerCard(card, player) {
+  const status = card.querySelector('[data-admin-player-status]');
+  if (status) {
+    status.classList.toggle('online', Boolean(player.isOnline));
+    status.textContent = player.isOnline ? 'online' : 'offline';
+  }
+  const values = {
+    'first-seen': player.firstSeen ? formatDate(player.firstSeen) : 'Unknown',
+    'last-seen': player.lastSeen ? formatRecentDate(player.lastSeen) : 'Never',
+    playtime: player.playtime || '0m',
+    messages: formatNumber(player.totalMessages)
+  };
+  Object.entries(values).forEach(([name, value]) => {
+    const field = card.querySelector(`[data-admin-player-stat="${name}"]`);
+    if (field && field.textContent !== String(value)) field.textContent = value;
+  });
 }
 
 function renderAdminPlayers(players = state.adminPlayers, { append = false, reconcile = false } = {}) {
@@ -6421,6 +6449,8 @@ function renderAdminPlayers(players = state.adminPlayers, { append = false, reco
         const replacement = template.content.firstElementChild;
         if (card) card.replaceWith(replacement);
         card = replacement;
+      } else {
+        updateAdminPlayerCard(card, player);
       }
       existingCards.delete(key);
       const cardAtIndex = list.children[index];
@@ -6516,11 +6546,14 @@ async function loadAdminPlayers({ query = $('#adminPlayersSearch')?.value || '',
       renderAdminPlayers(additions, { append: true });
     } else if (preserveScroll) {
       const refreshedPlayers = payload.players || [];
-      const refreshedKeys = new Set(refreshedPlayers.map(player => String(player.identityKey)));
-      state.adminPlayers = [
-        ...refreshedPlayers,
-        ...previousPlayers.filter(player => !refreshedKeys.has(String(player.identityKey)))
-      ];
+      const refreshedByKey = new Map(refreshedPlayers.map(player => [String(player.identityKey), player]));
+      const previousKeys = new Set(previousPlayers.map(player => String(player.identityKey)));
+      state.adminPlayers = previousPlayers.map(player =>
+        refreshedByKey.get(String(player.identityKey)) || player
+      );
+      refreshedPlayers.forEach(player => {
+        if (!previousKeys.has(String(player.identityKey))) state.adminPlayers.push(player);
+      });
       const liveScrollTop = scroller?.scrollTop || 0;
       renderAdminPlayers(state.adminPlayers, { reconcile: true });
       if (scroller && scroller.scrollTop !== liveScrollTop) scroller.scrollTop = liveScrollTop;
@@ -8512,12 +8545,19 @@ async function refreshLiveDashboard() {
   state.liveDashboardLoading = true;
   try {
     if (Date.now() - state.accountsRefreshedAt >= 5_000) loadAccounts().catch(() => {});
-    const payload = await fetchJson('/api/live-dashboard');
+    const obsidianLivePath = `/api/obsidian/live?scope=${encodeURIComponent(
+      activeAccountIsPrimary() && state.currentUser?.role === 'admin' ? state.obsidianStatsScope : 'personal'
+    )}`;
+    const [payload, liveObsidian] = await Promise.all([
+      fetchJson('/api/live-dashboard'),
+      state.activeTab === 'obsidian' ? fetchJson(obsidianLivePath).catch(() => null) : Promise.resolve(null)
+    ]);
     if (accountId !== state.activeAccountId) return;
     renderBotStats({ bot: payload.bot, observedAt: payload.observedAt });
     renderNearbySightings(payload.nearby || []);
     renderSupplies('#inventorySupplies', payload.supplies?.inventory);
     renderSupplies('#barrelSupplies', payload.supplies?.barrel, payload.supplies?.barrelError);
+    if (liveObsidian) renderLiveObsidian(liveObsidian);
   } catch {
     // SSE and the periodic full dashboard refresh remain as fallbacks.
   } finally {
