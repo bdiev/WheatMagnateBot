@@ -3221,6 +3221,14 @@ function enforceRateLimit(req, res, scope, subject, policy) {
   return false;
 }
 
+function adminReadRateLimitSubject(username, pathname) {
+  const routeFamily = String(pathname || '')
+    .split('?')[0]
+    .split('/')
+    .filter(Boolean)[2] || 'unknown';
+  return `${String(username || '').trim().toLowerCase()}:${routeFamily.toLowerCase().slice(0, 64)}`;
+}
+
 function safeTokenEqual(actual, expected) {
   const left = crypto.createHash('sha256').update(String(actual || '')).digest();
   const right = crypto.createHash('sha256').update(String(expected || '')).digest();
@@ -5434,7 +5442,8 @@ async function handleApi(req, res, url) {
     }
     const isAdminMutation = MUTATING_METHODS.has(req.method) && (url.pathname.startsWith('/api/admin/') || url.pathname === '/api/obsidian' || url.pathname === '/api/notifications/read');
     if (isAdminMutation && !enforceRateLimit(req, res, 'admin', currentUser.username, { limit: 60, windowMs: 60_000 })) return;
-    if (url.pathname.startsWith('/api/admin/') && !MUTATING_METHODS.has(req.method) && !enforceRateLimit(req, res, 'admin_read', currentUser.username, { limit: 180, windowMs: 60_000 })) return;
+    if (url.pathname.startsWith('/api/admin/') && !MUTATING_METHODS.has(req.method)
+        && !enforceRateLimit(req, res, 'admin_read', adminReadRateLimitSubject(currentUser.username, url.pathname), { limit: 180, windowMs: 60_000 })) return;
     if (url.pathname === '/api/chat/send' && !enforceRateLimit(req, res, 'chat_send', currentUser.username, { limit: 15, windowMs: 60_000 })) return;
     if (url.pathname === '/api/whisper/send' && !enforceRateLimit(req, res, 'whisper_send', currentUser.username, { limit: 20, windowMs: 60_000 })) return;
     if (url.pathname === '/api/whisper/claim' && !enforceRateLimit(req, res, 'whisper_claim', currentUser.username, { limit: 30, windowMs: 60_000 })) return;
@@ -6105,4 +6114,4 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown);
 }
 
-module.exports = { ADMIN_PLAYER_EDITABLE_FIELDS, adminPlayerIdentity, assertAdminUser, buildPlayerGameSessions, changeSitePassword, cleanAccountInput, csrfTokenForSessionHash, deleteAdminPlayer, freshStoredRuntimePayload, getAdminPlayers, getAdminUsers, getPlayerInfoCollectionProgress, hashPassword, normalizeAdminPlayerPatch, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, parsePlaytimeSeconds, patchAdminPlayer, playerProfileRuntimePresence, publicUser, registrationDefaults, requestHandler, resolveObsidianDebugLogPath, serializeObsidianDebugLogFallback, server, setAdminPlaytime, shouldRecordStaticSecurityEvent, sortSeenPlayers, startSiteServer, touchSiteSessionActivity, validateCredentials, validatePasswordChange, verifyPassword };
+module.exports = { ADMIN_PLAYER_EDITABLE_FIELDS, adminPlayerIdentity, adminReadRateLimitSubject, assertAdminUser, buildPlayerGameSessions, changeSitePassword, cleanAccountInput, csrfTokenForSessionHash, deleteAdminPlayer, freshStoredRuntimePayload, getAdminPlayers, getAdminUsers, getPlayerInfoCollectionProgress, hashPassword, normalizeAdminPlayerPatch, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, parsePlaytimeSeconds, patchAdminPlayer, playerProfileRuntimePresence, publicUser, registrationDefaults, requestHandler, resolveObsidianDebugLogPath, serializeObsidianDebugLogFallback, server, setAdminPlaytime, shouldRecordStaticSecurityEvent, sortSeenPlayers, startSiteServer, touchSiteSessionActivity, validateCredentials, validatePasswordChange, verifyPassword };

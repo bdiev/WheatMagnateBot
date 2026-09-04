@@ -83,6 +83,8 @@ function testUiFeedback() {
     'the whole nickname card must copy its command without a separate Copy label');
   assert.match(app, /player_info_updated[\s\S]*admin-player-info[\s\S]*loadAdminPlayers/,
     'Discord imports must refresh the admin command list without reloading the page');
+  assert.match(app, /eventPayload\.source !== 'bot_status'\) await loadAdminSystemLogs\(\)/,
+    'routine bot-status heartbeats must not reload the administrative system log every second');
   assert.match(styles, /\.admin-playtime-command-list[\s\S]*\.admin-playtime-command\.copied/,
     'the command list and copied state must be styled');
   assert.doesNotMatch(styles, /\.admin-player-data-notice/);

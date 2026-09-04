@@ -8657,7 +8657,7 @@ function handleRealtimeEvent(event) {
   } else if (type === 'admin_control_updated' && state.currentUser?.role === 'admin') {
     queueRealtimeRefresh('admin-control', async () => {
       await loadAdminControlState();
-      if (state.activeTab === 'admin') await loadAdminSystemLogs();
+      if (state.activeTab === 'admin' && eventPayload.source !== 'bot_status') await loadAdminSystemLogs();
       if (state.activeTab === 'timeline') await loadTimeline();
       if (state.activeTab === 'child-ai') await loadChildAiAdmin();
     }, 300);

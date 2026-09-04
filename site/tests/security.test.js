@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const path = require('node:path');
 const { RateLimiter, configuredOrigins, requestIsHttps, resolveStaticPath, securityHeaders, validateOrigin, verifyCsrfToken } = require('../security');
-const { assertAdminUser, changeSitePassword, csrfTokenForSessionHash, hashPassword, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, registrationDefaults, server, shouldRecordStaticSecurityEvent, validatePasswordChange, verifyPassword } = require('../server');
+const { adminReadRateLimitSubject, assertAdminUser, changeSitePassword, csrfTokenForSessionHash, hashPassword, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, registrationDefaults, server, shouldRecordStaticSecurityEvent, validatePasswordChange, verifyPassword } = require('../server');
 
 function request(method, headers = {}, encrypted = false) {
   return { method, headers, socket: { encrypted, remoteAddress: '127.0.0.1' } };
@@ -56,6 +56,16 @@ function testRateLimit() {
   assert.equal(limiter.consume('login:ip:user', { limit: 3, windowMs: 1000 }).firstExceeded, false, 'repeated rejected requests must not spam the audit log');
   now += 1001;
   assert.equal(limiter.consume('login:ip:user', { limit: 3, windowMs: 1000 }).allowed, true);
+}
+
+function testAdminReadRateLimitScopes() {
+  assert.equal(adminReadRateLimitSubject('Bdiev_', '/api/admin/players'), 'bdiev_:players');
+  assert.equal(adminReadRateLimitSubject('Bdiev_', '/api/admin/users'), 'bdiev_:users');
+  assert.equal(
+    adminReadRateLimitSubject('Bdiev_', '/api/admin/system-logs/42/debug'),
+    adminReadRateLimitSubject('bdiev_', '/api/admin/system-logs/99/debug'),
+    'dynamic resource IDs must not create rate-limit bypasses'
+  );
 }
 
 function testOriginValidation() {
@@ -222,6 +232,7 @@ async function testHttpBoundary() {
   testAdminNameCannotEscalate();
   testNavigationPreferencesAreNormalized();
   testRateLimit();
+  testAdminReadRateLimitScopes();
   testOriginValidation();
   testStaticTraversal();
   testStaticSecurityAuditDeduplication();
