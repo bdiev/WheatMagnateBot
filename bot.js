@@ -1115,7 +1115,9 @@ if (pool) {
 }
 const originalConsoleLog = console.log.bind(console);
 const originalConsoleError = console.error.bind(console);
-let persistBotConsoleLogs = false;
+// Console output already belongs to the container log. Database mirroring is
+// opt-in because it duplicates every line in two PostgreSQL tables.
+const persistBotConsoleLogs = String(process.env.PERSIST_BOT_CONSOLE_LOGS || '').toLowerCase() === 'true';
 
 function stringifyConsoleArg(value) {
   if (value instanceof Error) return value.stack || value.message;
@@ -2097,7 +2099,6 @@ async function initDatabase() {
       ON bot_commands (status, created_at)
     `);
     await ensureSystemLogTable();
-    persistBotConsoleLogs = true;
     await recordSystemLog({
       level: 'info',
       category: 'bot',

@@ -17,6 +17,7 @@ const { SseHub, handleSseRequest } = require('./sse');
 const { calculateAnalytics, calculateDowntime, calculateHourlyProduction } = require('./obsidian-analytics');
 const { eventTypeFromLog, newCorrelationId, recordOperationalEvent, severityFromLevel } = require('./operational-events');
 const { assertTimelineAccess, normalizeTimelineFilters, queryTimeline } = require('./incident-timeline');
+const { getLogRetentionConfig, pruneExpiredLogs } = require('./log-retention');
 const { EVENT_TYPES: PUSH_EVENT_TYPES, PUSH_TEST_TYPES, WebPushService } = require('./web-push');
 const { buildPlayerMilestones } = require('./player-milestones');
 const { KILL_AURA_MOBS, normalizeKillAuraTargets } = require('./kill-aura-catalog');
@@ -6070,12 +6071,22 @@ function startDatabaseEventPoller() {
 
 function startOperationalRetention() {
   if (!pool || operationalRetentionTimer) return;
+  const retentionConfig = getLogRetentionConfig();
   const run = async () => {
     const archived = await archiveOperationalEvents();
-    if (archived) await recordSystemLog({ level: 'audit', category: 'timeline_retention', message: `Archived ${archived} operational events.`, details: { archived } });
+    const pruned = await pruneExpiredLogs(pool, retentionConfig);
+    if (archived || pruned.total) await recordSystemLog({
+      level: 'audit',
+      category: 'timeline_retention',
+      message: `Archived ${archived} and pruned ${pruned.total} expired log records.`,
+      details: { archived, ...pruned }
+    });
   };
   run().catch(err => console.error('[Timeline] Retention failed:', err.message));
-  operationalRetentionTimer = setInterval(() => run().catch(err => console.error('[Timeline] Retention failed:', err.message)), 24 * 60 * 60 * 1000);
+  operationalRetentionTimer = setInterval(
+    () => run().catch(err => console.error('[Timeline] Retention failed:', err.message)),
+    retentionConfig.intervalMinutes * 60 * 1000
+  );
   operationalRetentionTimer.unref?.();
 }
 

@@ -119,7 +119,9 @@ let farmFailureStartedAt = null;
 let farmFailureCorrelationId = null;
 let farmRecoveryCheckPending = true;
 const activeFarmNotificationTypes = new Set();
-let farmDebugLoggingEnabled = true;
+// Packet-level farm tracing is intentionally opt-in. A continuously running
+// farm can produce millions of records when this is enabled.
+let farmDebugLoggingEnabled = context.debugLoggingEnabled === true;
 const protectionLeverController = createProtectionLeverController({
   debug: (event, details) => writeFarmDebug(event, details),
   // Farm copies can face any horizontal direction. Primary and managed bots
@@ -1824,13 +1826,17 @@ function writeFarmDebug(event, details = {}) {
   if (event === 'farm_click_trace' && FARM_SYSTEM_LOGGER) {
     const stage = String(details.stage || 'unknown');
     const action = String(details.action || 'interaction');
-    Promise.resolve(FARM_SYSTEM_LOGGER({
-      level:['failed', 'unconfirmed'].includes(stage) ? 'warn' : 'debug',
-      category:'obsidian_click',
-      actor:identity.username,
-      message:`Obsidian Farm click ${action}: ${stage}.`,
-      details:record
-    })).catch(() => {});
+    // Successful packet traces stay in the short-lived JSONL file. Persisting
+    // every before/sent/confirmed stage in PostgreSQL caused unbounded growth.
+    if (['failed', 'unconfirmed'].includes(stage)) {
+      Promise.resolve(FARM_SYSTEM_LOGGER({
+        level:'warn',
+        category:'obsidian_click',
+        actor:identity.username,
+        message:`Obsidian Farm click ${action}: ${stage}.`,
+        details:record
+      })).catch(() => {});
+    }
   }
   return record;
 }

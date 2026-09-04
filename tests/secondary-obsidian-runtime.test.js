@@ -130,6 +130,7 @@ async function main() {
     const secondary = new BotContext({ account:account(SECONDARY_ID, 'bdiev_') });
     secondary.modules = createModulesForBot(secondary, {
       dataRoot,
+      obsidianDebugLoggingEnabled:true,
       systemLogger: entry => { systemLogs.push(entry); }
     });
     const bot = farmBot('bdiev_');
@@ -333,11 +334,7 @@ async function main() {
       entry.details?.action === 'lava_placement' &&
       entry.details?.stage === 'sent'
     );
-    assert.ok(clickSystemLog, 'Temporary click traces are forwarded to the selected bot System Log');
-    assert.equal(clickSystemLog.level, 'debug');
-    assert.equal(clickSystemLog.actor, 'bdiev_');
-    assert.equal(clickSystemLog.details.botId, SECONDARY_ID);
-    assert.equal(clickSystemLog.details.username, 'bdiev_');
+    assert.equal(clickSystemLog, undefined, 'Successful packet traces are not duplicated in PostgreSQL');
 
     secondary.modules.obsidianFarm.resetConfig();
     assert.throws(() => secondary.modules.obsidianFarm.start(), /coordinates are not configured/i);

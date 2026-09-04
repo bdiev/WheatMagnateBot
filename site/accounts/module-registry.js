@@ -188,6 +188,7 @@ function createModulesForBot(context, {
   notify = null,
   systemLogger = null,
   obsidianState = null,
+  obsidianDebugLoggingEnabled = false,
   primaryFactories = {}
 } = {}) {
   if (!context?.accountId) throw new Error('Module registry requires a BotContext.');
@@ -199,6 +200,7 @@ function createModulesForBot(context, {
     isPrimary: context.isPrimary,
     configFile: path.join(accountRoot, 'obsidian-farm.json'),
     debugLogFile: path.join(accountRoot, 'obsidian-farm-debug.log'),
+    debugLoggingEnabled: obsidianDebugLoggingEnabled,
     systemLogger
   });
   if (obsidianState?.config) {

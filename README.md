@@ -79,6 +79,12 @@ DISCORD_CHAT_QUEUE_MAX_SIZE=20
 DISCORD_CHAT_MESSAGE_MAX_AGE_MS=15000
 DISCORD_CHAT_DUPLICATE_WINDOW_MS=10000
 DATABASE_URL=
+PERSIST_BOT_CONSOLE_LOGS=false
+VERBOSE_LOG_RETENTION_DAYS=7
+SYSTEM_LOG_RETENTION_DAYS=90
+OPERATIONAL_EVENT_ARCHIVE_RETENTION_DAYS=365
+LOG_RETENTION_BATCH_SIZE=10000
+LOG_RETENTION_INTERVAL_MINUTES=60
 MINECRAFT_USERNAME=
 MINECRAFT_AUTH=microsoft
 SITE_PORT=3080
@@ -132,7 +138,7 @@ The dashboard uses `HttpOnly`, `SameSite=Lax` session cookies, per-session CSRF 
 - Dashboard updates use authenticated Server-Sent Events with a slow polling fallback. The event protocol is documented in [`site/SSE_PROTOCOL.md`](site/SSE_PROTOCOL.md).
 - Opening a private Minecraft dialog on the site claims it for that site user. Any pending Discord `New whisper from Minecraft` claim prompt is deleted, and replies remain routed to the site while the dialog claim TTL is active.
 - The admin-only **Incident Timeline** aggregates operational events from system logs, notifications, bot commands, player transitions, nearby sightings, farm annotations, bot status and TPS. Events sharing one operation use a correlation ID; an event can be promoted to an incident with a ±10 minute context, ownership, cause, notes, resolution, and JSON/Markdown export. The model and API are documented in [`site/INCIDENT_TIMELINE.md`](site/INCIDENT_TIMELINE.md).
-- Normalized operational events older than `OPERATIONAL_EVENT_RETENTION_DAYS` (90 by default) are moved to `operational_events_archive` in bounded daily batches. Events linked to incidents are retained in the active table. Existing source logs are not removed, and legacy records remain visible through compatibility adapters.
+- Normalized operational events older than `OPERATIONAL_EVENT_RETENTION_DAYS` (90 by default) are moved to `operational_events_archive` in bounded batches. High-volume `bot_console` and `obsidian_click` records are kept for seven days by default, ordinary system logs for 90 days, and archived operational events for 365 days. Events linked to incidents remain protected. Packet-level Obsidian Farm tracing and console-to-database mirroring are disabled by default.
 - Growing Child stores its learning database locally, preserves it across schema upgrades, and exposes memory/state controls only to administrators. Its learning and privacy model is documented in [`features/growingChild/README.md`](features/growingChild/README.md).
 
 ## Obsidian farm analytics

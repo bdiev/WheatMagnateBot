@@ -19,6 +19,15 @@ async function main() {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'obsidian-debug-rotation-'));
   try {
     const baseLog = path.join(tempRoot, 'obsidian-farm-debug.log');
+    const disabledFarm = createObsidianFarm({
+      accountId:'debug-disabled-test',
+      username:'QuietBot',
+      configFile:path.join(tempRoot, 'disabled-config.json'),
+      debugLogFile:path.join(tempRoot, 'disabled.log')
+    });
+    assert.equal(disabledFarm.getDebugLoggingEnabled(), false, 'packet-level tracing is opt-in');
+    assert.equal(disabledFarm.__test.writeFarmDebug('cycle_retry'), null);
+
     const expiredDailyLog = path.join(tempRoot, 'obsidian-farm-debug-2026-08-09.log');
     const retainedDailyLog = path.join(tempRoot, 'obsidian-farm-debug-2026-08-10.log');
     fs.writeFileSync(expiredDailyLog, 'expired\n');
@@ -28,11 +37,14 @@ async function main() {
     fs.utimesSync(baseLog, oldTime, oldTime);
 
     const now = new Date('2026-08-16T12:00:00.000Z');
+    const systemLogs = [];
     const farm = createObsidianFarm({
       accountId:'debug-rotation-test',
       username:'DebugBot',
       configFile:path.join(tempRoot, 'config.json'),
       debugLogFile:baseLog,
+      debugLoggingEnabled:true,
+      systemLogger:entry => { systemLogs.push(entry); },
       now:() => now
     });
     const correlationId = '38b58368-3204-42bc-8136-a11e07a71433';
@@ -66,6 +78,13 @@ async function main() {
       'returned log IDs must match the persisted JSONL records'
     );
     assert.equal(farm.__test.constants.FARM_DEBUG_RETENTION_DAYS, 7);
+
+    farm.__test.writeFarmDebug('farm_click_trace', { action:'lava_placement', stage:'sent' });
+    farm.__test.writeFarmDebug('farm_click_trace', { action:'lava_placement', stage:'unconfirmed' });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(systemLogs.length, 1, 'only failed packet traces are persisted to the system log');
+    assert.equal(systemLogs[0].level, 'warn');
+    assert.equal(systemLogs[0].details.stage, 'unconfirmed');
 
     console.log('Obsidian debug log rotation tests passed.');
   } finally {
