@@ -95,10 +95,12 @@ const state = {
   adminControlRefreshedAt: 0,
   adminPlayers: [],
   adminPlayersLoading: false,
+  adminPlayersPendingLoad: null,
+  adminPlayersRetryTimer: null,
   adminPlayersRequestId: 0,
   adminPlayersSort: 'playtime',
   adminPlayersDirection: 'asc',
-  adminPlayersLimit: 6,
+  adminPlayersLimit: 12,
   adminPlayersOffset: 0,
   adminPlayersNextOffset: 0,
   adminPlayersHasMore: false,
@@ -1198,6 +1200,10 @@ async function fetchJson(path, { transientRetries = 0, signal = null } = {}) {
         }
         const error = new Error(payload.error || `HTTP ${response.status}`);
         error.status = response.status;
+        const retryAfterSeconds = Number.parseInt(response.headers.get('Retry-After'), 10);
+        if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+          error.retryAfterSeconds = retryAfterSeconds;
+        }
         throw error;
       }
       return payload;
@@ -6757,7 +6763,14 @@ function maybeLoadMoreAdminPlayers() {
 
 async function loadAdminPlayers({ query = $('#adminPlayersSearch')?.value || '', showLoading = true, offset = 0, append = false, preserveScroll = false } = {}) {
   if (state.currentUser?.role !== 'admin') return;
-  if (append && state.adminPlayersLoading) return;
+  const requestedLoad = { query, showLoading, offset, append, preserveScroll };
+  if (state.adminPlayersLoading || state.adminPlayersRetryTimer) {
+    // A burst of player_info_updated events used to create overlapping list
+    // queries. Keep only the newest full refresh; appended pages can be loaded
+    // normally after the active request finishes.
+    if (!append) state.adminPlayersPendingLoad = requestedLoad;
+    return;
+  }
   const list = $('#adminPlayersList');
   const scroller = $('#adminPlayersScroller');
   const refresh = $('#adminPlayersRefresh');
@@ -6767,6 +6780,7 @@ async function loadAdminPlayers({ query = $('#adminPlayersSearch')?.value || '',
   }
   const previousPlayers = preserveScroll && !append ? [...state.adminPlayers] : [];
   const requestId = ++state.adminPlayersRequestId;
+  let loaded = false;
   state.adminPlayersLoading = true;
   if (refresh) refresh.disabled = true;
   updateAdminPlayersScrollStatus();
@@ -6819,17 +6833,46 @@ async function loadAdminPlayers({ query = $('#adminPlayersSearch')?.value || '',
     state.adminPlayersNextOffset = preserveScroll && !append
       ? state.adminPlayers.length
       : state.adminPlayersOffset + (payload.players || []).length;
+    loaded = true;
+    setAdminPlayersNotice('');
     updateAdminPlayersScrollStatus();
   } catch (err) {
     if (requestId !== state.adminPlayersRequestId) return;
-    if (!append && list) list.innerHTML = `<div class="empty">Could not load players: ${escapeHtml(err.message)}</div>`;
-    setAdminPlayersNotice(`Could not load players: ${err.message}`, 'error');
+    if (err?.status === 429) {
+      const retryAfterSeconds = Math.min(120, Math.max(1, Number(err.retryAfterSeconds) || 10));
+      state.adminPlayersPendingLoad = {
+        query,
+        showLoading: state.adminPlayers.length === 0,
+        offset: 0,
+        append: false,
+        preserveScroll: state.adminPlayers.length > 0
+      };
+      state.adminPlayersRetryTimer = setTimeout(() => {
+        state.adminPlayersRetryTimer = null;
+        const retryLoad = state.adminPlayersPendingLoad;
+        state.adminPlayersPendingLoad = null;
+        if (retryLoad) loadAdminPlayers(retryLoad);
+      }, retryAfterSeconds * 1000);
+      if (!state.adminPlayers.length && list) {
+        list.innerHTML = '<div class="empty">Player list is temporarily busy. Retrying automatically...</div>';
+      }
+      setAdminPlayersNotice(`Player list is updating too quickly. Retrying in ${retryAfterSeconds} seconds.`, 'info');
+    } else {
+      if (!append && !state.adminPlayers.length && list) list.innerHTML = `<div class="empty">Could not load players: ${escapeHtml(err.message)}</div>`;
+      setAdminPlayersNotice(`Could not load players: ${err.message}`, 'error');
+    }
   } finally {
     if (requestId === state.adminPlayersRequestId) {
       state.adminPlayersLoading = false;
       if (refresh) refresh.disabled = false;
       updateAdminPlayersScrollStatus();
-      requestAnimationFrame(maybeLoadMoreAdminPlayers);
+      const pendingLoad = state.adminPlayersPendingLoad;
+      if (pendingLoad && !state.adminPlayersRetryTimer) {
+        state.adminPlayersPendingLoad = null;
+        requestAnimationFrame(() => loadAdminPlayers(pendingLoad));
+      } else if (loaded && !pendingLoad) {
+        requestAnimationFrame(maybeLoadMoreAdminPlayers);
+      }
     }
   }
 }
@@ -8885,7 +8928,7 @@ function handleRealtimeEvent(event) {
   else if (type === 'player_info_updated') {
     queueRealtimeRefresh('players-info', refreshPlayersFromEvent, 200);
     if (state.currentUser?.role === 'admin' && state.activeTab === 'admin') {
-      queueRealtimeRefresh('admin-player-info', () => loadAdminPlayers({ showLoading: false, preserveScroll: true }), 200);
+      queueRealtimeRefresh('admin-player-info', () => loadAdminPlayers({ showLoading: false, preserveScroll: true }), 2_000);
       loadAdminPlayerInfoCollection();
     }
     if (state.playerProfileUsername

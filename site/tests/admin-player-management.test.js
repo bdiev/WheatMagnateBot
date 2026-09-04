@@ -294,6 +294,16 @@ function testArchitectureAndUiContracts() {
   assert.match(appSource, /document\.addEventListener\('pointerdown', closeAdminPlayerMenus, true\)/, 'clicking or tapping outside a player menu must close it');
   assert.match(appSource, /menu\.contains\(event\.target\)[\s\S]*menu\.removeAttribute\('open'\)/, 'interactions inside the active player menu must not close it');
   assert.match(appSource, /new URLSearchParams\(\{[\s\S]*sort: state\.adminPlayersSort,[\s\S]*direction: state\.adminPlayersDirection,[\s\S]*limit: String\(state\.adminPlayersLimit\),[\s\S]*offset:/, 'sorting and pagination must happen on the server');
+  assert.match(appSource, /adminPlayersLimit:\s*12/,
+    'the initial player page must fill the scroller without many small requests');
+  assert.match(appSource, /state\.adminPlayersLoading \|\| state\.adminPlayersRetryTimer[\s\S]*state\.adminPlayersPendingLoad = requestedLoad/,
+    'overlapping player refreshes must be collapsed into the newest pending request');
+  assert.match(appSource, /response\.headers\.get\('Retry-After'\)[\s\S]*error\.retryAfterSeconds/,
+    'API errors must retain the server retry delay');
+  assert.match(appSource, /err\?\.status === 429[\s\S]*adminPlayersRetryTimer = setTimeout[\s\S]*Retrying in \$\{retryAfterSeconds\} seconds/,
+    'a rate-limited player list must retry automatically instead of remaining empty');
+  assert.match(appSource, /else if \(loaded && !pendingLoad\)[\s\S]*requestAnimationFrame\(maybeLoadMoreAdminPlayers\)/,
+    'failed pagination must not recursively issue more requests');
   assert.match(appSource, /function loadAdminPlayerInfoCollection[\s\S]*\/api\/admin\/player-info-collection/,
     'the expensive information summary must load independently from player cards');
   assert.doesNotMatch(appSource.match(/async function loadAdminPlayers\([\s\S]*?\n}\n\nfunction adminPlayerIdentityMarkup/)?.[0] || '', /includeInfoCollection/,
@@ -318,6 +328,8 @@ function testArchitectureAndUiContracts() {
   assert.match(appSource, /player_joined[\s\S]*player_left[\s\S]*loadAdminPlayers\(\{ showLoading: false, preserveScroll: true \}\)/, 'join and leave refreshes must preserve the admin player scroll position');
   assert.match(appSource, /type === 'player_info_updated'[\s\S]*loadAdminPlayerInfoCollection\(\)/,
     'imported player values must remove completed lookup cards without a page reload');
+  assert.match(appSource, /admin-player-info'[\s\S]*preserveScroll: true \}\), 2_000\)/,
+    'bursts of player updates must be coalesced before refreshing the admin list');
   assert.match(appSource, /adminPlayerInfoCollectionPending[\s\S]*refreshDelay = 750[\s\S]*adminPlayerInfoCollectionTimer/,
     'rapid player-information events must be coalesced without delaying lookup-card removal for a full polling interval');
   assert.match(appSource, /else if \(reconcile\)[\s\S]*existingCards[\s\S]*adminPlayerCardSignature[\s\S]*list\.insertBefore/, 'background refreshes must reconcile keyed cards instead of rebuilding the scrolling list');
