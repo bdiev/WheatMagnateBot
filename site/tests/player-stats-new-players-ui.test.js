@@ -45,6 +45,16 @@ assert.match(
 );
 assert.match(
   appSource,
+  /newPlayersFirstPageSize[\s\S]*function syncNewPlayers[\s\S]*state\.newPlayers\.slice\(previousFirstPageSize\)[\s\S]*state\.newPlayersFirstPageSize = firstPage\.length/,
+  'a refreshed first page must replace its stale cached rows while preserving pages loaded below it'
+);
+assert.match(
+  appSource,
+  /type === 'player_info_updated'[\s\S]*queueRealtimeRefresh\('players-info', refreshPlayersFromEvent, 200\)/,
+  'updated player information must immediately refresh Player Stats ordering'
+);
+assert.match(
+  appSource,
   /function maybeLoadMoreNewPlayers\(\)[\s\S]*distanceFromBottom <= 160[\s\S]*loadMoreNewPlayers\(\)/,
   'scrolling near the end of New Players must request the next page'
 );

@@ -118,8 +118,13 @@ assert.match(
 );
 assert.match(
   serverSource,
-  /requestedScope === 'all'[\s\S]*?farm\.sessionPerHour = rows\.reduce[\s\S]*?compactFarmState\(row\)\.sessionPerHour/,
-  'the lightweight All Bots rate remains a sum of independently calculated account rates'
+  /async function getLiveObsidianStats[\s\S]*?FROM obsidian_account_farm_state stats[\s\S]*?WHERE account\.is_default=FALSE(?! AND account\.deleted_at IS NULL)/,
+  'the lightweight All Bots total retains archived production just like the full statistics response'
+);
+assert.match(
+  serverSource,
+  /requestedScope === 'all'[\s\S]*?AS is_active[\s\S]*?farm\.sessionPerHour = rows[\s\S]*?filter\(row => row\.is_active\)[\s\S]*?compactFarmState\(row\)\.sessionPerHour/,
+  'the lightweight All Bots rate sums only independently calculated rates from active farm runtimes'
 );
 
 console.log('Obsidian statistics scope UI tests passed.');

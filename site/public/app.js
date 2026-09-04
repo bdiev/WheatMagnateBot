@@ -76,6 +76,7 @@ const state = {
   newPlayersLoading: false,
   newPlayersHasMore: false,
   newPlayersNextOffset: 0,
+  newPlayersFirstPageSize: 0,
   newPlayersAccountId: null,
   whisperSearchPlayers: [],
   playerProfileUsername: null,
@@ -5221,6 +5222,7 @@ function syncNewPlayers(firstPage = [], page = {}) {
     state.newPlayersLoading = false;
     state.newPlayersHasMore = false;
     state.newPlayersNextOffset = 0;
+    state.newPlayersFirstPageSize = 0;
     state.newPlayersAccountId = accountId;
     delete state.renderSignatures['#newPlayersList'];
   }
@@ -5230,11 +5232,17 @@ function syncNewPlayers(firstPage = [], page = {}) {
   const existingKeys = new Set(state.newPlayers.map(newPlayerIdentityKey));
   const firstPageOverlapsExisting = firstPage.some(player => existingKeys.has(newPlayerIdentityKey(player)));
   const firstKeys = new Set(firstPage.map(newPlayerIdentityKey));
+  const previousFirstPageSize = Math.min(
+    state.newPlayers.length,
+    Math.max(0, Number(state.newPlayersFirstPageSize) || 0)
+  );
+  const retainedTail = wasInitialized ? state.newPlayers.slice(previousFirstPageSize) : [];
   state.newPlayers = [
     ...firstPage,
-    ...state.newPlayers.filter(player => !firstKeys.has(newPlayerIdentityKey(player)))
+    ...retainedTail.filter(player => !firstKeys.has(newPlayerIdentityKey(player)))
   ];
   state.newPlayersInitialized = true;
+  state.newPlayersFirstPageSize = firstPage.length;
   state.newPlayersNextOffset = state.newPlayers.length;
   state.newPlayersHasMore = hadLoadedEverything && (!page.hasMore || firstPageOverlapsExisting)
     ? false
@@ -8628,6 +8636,7 @@ function handleRealtimeEvent(event) {
     }
   }
   else if (type === 'player_info_updated' && state.currentUser?.role === 'admin') {
+    queueRealtimeRefresh('players-info', refreshPlayersFromEvent, 200);
     if (state.activeTab === 'admin') {
       queueRealtimeRefresh('admin-player-info', () => loadAdminPlayers({ showLoading: false, preserveScroll: true }), 200);
     }

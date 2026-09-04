@@ -1550,19 +1550,44 @@ async function getLiveObsidianStats(currentUser, url) {
   let rows;
   if (requestedScope === 'all') {
     rows = (await pool.query(`
-      SELECT session_mined,total_mined,desired_enabled,session_started_at,
-             retired_pickaxes,retired_pickaxe_blocks,target_x,target_y,target_z,target_radius,updated_at
-      FROM obsidian_farm_state
-      WHERE id=1
+      SELECT stats.session_mined,stats.total_mined,stats.desired_enabled,stats.session_started_at,
+             stats.retired_pickaxes,stats.retired_pickaxe_blocks,
+             stats.target_x,stats.target_y,stats.target_z,stats.target_radius,stats.updated_at,
+             COALESCE(
+               runtime.status='connected'
+               AND runtime.current_task='obsidian'
+               AND runtime.updated_at>=NOW()-INTERVAL '15 seconds'
+               AND runtime.status_payload->>'connected'='true'
+               AND (
+                 runtime.status_payload#>>'{modules,obsidianFarm,enabled}'='true'
+                 OR runtime.status_payload#>>'{obsidian,enabled}'='true'
+               ),
+               FALSE
+             ) AS is_active
+      FROM obsidian_farm_state stats
+      LEFT JOIN bot_account_runtime_state runtime ON runtime.account_id=$1::uuid
+      WHERE stats.id=1
       UNION ALL
       SELECT stats.session_mined,stats.total_mined,stats.desired_enabled,stats.session_started_at,
              stats.retired_pickaxes,stats.retired_pickaxe_blocks,
              NULL::integer AS target_x,NULL::integer AS target_y,NULL::integer AS target_z,
-             NULL::integer AS target_radius,stats.updated_at
+             NULL::integer AS target_radius,stats.updated_at,
+             COALESCE(
+               runtime.status='connected'
+               AND runtime.current_task='obsidian'
+               AND runtime.updated_at>=NOW()-INTERVAL '15 seconds'
+               AND runtime.status_payload->>'connected'='true'
+               AND (
+                 runtime.status_payload#>>'{modules,obsidianFarm,enabled}'='true'
+                 OR runtime.status_payload#>>'{obsidian,enabled}'='true'
+               ),
+               FALSE
+             ) AS is_active
       FROM obsidian_account_farm_state stats
       JOIN bot_accounts account ON account.id=stats.account_id
-      WHERE account.is_default=FALSE AND account.deleted_at IS NULL
-    `)).rows;
+      LEFT JOIN bot_account_runtime_state runtime ON runtime.account_id=stats.account_id
+      WHERE account.is_default=FALSE
+    `, [DEFAULT_MINECRAFT_ACCOUNT_ID])).rows;
   } else if (scoped) {
     rows = (await pool.query(`
       SELECT session_mined,total_mined,desired_enabled,session_started_at,
@@ -1583,7 +1608,9 @@ async function getLiveObsidianStats(currentUser, url) {
 
   const farm = compactFarmState(combineFarmStateRows(rows));
   if (requestedScope === 'all') {
-    farm.sessionPerHour = rows.reduce((total, row) => total + compactFarmState(row).sessionPerHour, 0);
+    farm.sessionPerHour = rows
+      .filter(row => row.is_active)
+      .reduce((total, row) => total + compactFarmState(row).sessionPerHour, 0);
     farm.sessionPerMinute = Number((farm.sessionPerHour / 60).toFixed(1));
   }
   return {
