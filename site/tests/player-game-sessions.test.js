@@ -78,6 +78,14 @@ assert.match(appSource, /<section class="player-profile-grid">[\s\S]*?\$\{gameSe
   'Game sessions must render between the metric cards and Recent Chat');
 assert.match(stylesSource, /\.player-profile-session-list\.is-scrollable\s*\{[\s\S]*?max-height:\s*202px;[\s\S]*?overflow-y:\s*auto;/,
   'only three 62px session rows should be visible before older sessions scroll');
+assert.match(appSource, /data-player-profile-scroll="game-sessions"[\s\S]*?function capturePlayerProfileViewState[\s\S]*?scrollTop: area\.scrollTop[\s\S]*?function restorePlayerProfileViewState[\s\S]*?area\.scrollTop = saved\.scrollTop/,
+  'profile refreshes must preserve the nested Game sessions scroll position');
+assert.match(appSource, /function replacePlayerProfileContent[\s\S]*?capturePlayerProfileViewState\(content\)[\s\S]*?content\.innerHTML = renderPlayerProfile\(profile\)[\s\S]*?restorePlayerProfileViewState\(content, viewState\)/,
+  'profile content replacement must preserve the surrounding card and nested scroll state');
+assert.match(appSource, /function updatePlayerProfileSessionClock\(\)[\s\S]*?hasActiveTextSelectionWithin\(content\)[\s\S]*?return;/,
+  'live profile clocks must not mutate text while the user has a selection');
+assert.match(appSource, /async function loadPlayerProfile[\s\S]*?hasActiveTextSelectionWithin\(content\)[\s\S]*?player-profile-selection[\s\S]*?await fetchJson[\s\S]*?hasActiveTextSelectionWithin\(content\)[\s\S]*?player-profile-selection/,
+  'background profile refreshes must defer both before and after fetching while text is selected');
 assert.match(appSource, /data-current-session-start=[\s\S]*?function updatePlayerProfileSessionClock\(\)[\s\S]*?formatDurationMs\(Math\.max\(0, now - startedAt\)\)[\s\S]*?setInterval\(updatePlayerProfileSessionClock, 1_000\)/,
   'the active session duration must update every second while the profile is open');
 assert.match(appSource, /Last Message[\s\S]{0,300}data-profile-relative-time=[\s\S]*?function updatePlayerProfileSessionClock\(\)[\s\S]*?formatRecentDate\(relativeTime\.dataset\.profileRelativeTime\)[\s\S]*?setInterval\(updatePlayerProfileSessionClock, 1_000\)/,

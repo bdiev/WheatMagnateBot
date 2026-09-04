@@ -3081,7 +3081,7 @@ function renderPlayerProfile(profile) {
         </div>
         ${gameSessions.length > 3 ? '<span>Scroll for older</span>' : ''}
       </header>
-      <div class="player-profile-session-list${gameSessions.length > 3 ? ' is-scrollable' : ''}"${gameSessions.length > 3 ? ' tabindex="0" aria-label="Game sessions, newest first"' : ''}>
+      <div class="player-profile-session-list${gameSessions.length > 3 ? ' is-scrollable' : ''}" data-player-profile-scroll="game-sessions"${gameSessions.length > 3 ? ' tabindex="0" aria-label="Game sessions, newest first"' : ''}>
         ${gameSessions.length
           ? gameSessions.map(session => `
             <article class="player-profile-session${session.isCurrent ? ' is-current' : ''}">
@@ -3262,12 +3262,16 @@ function schedulePlayerProfileRefresh(username) {
 
 function updatePlayerProfileSessionClock() {
   const overlay = $('#playerProfileOverlay');
+  const content = $('#playerProfileContent');
   const clocks = document.querySelectorAll('[data-current-session-start]');
   const relativeTimes = document.querySelectorAll('[data-profile-relative-time]');
   if (overlay?.hidden || (!clocks.length && !relativeTimes.length)) {
     stopPlayerProfileSessionClock();
     return;
   }
+  // Replacing even one live timestamp can invalidate a selection whose range
+  // crosses that text node. The interval catches up after selection ends.
+  if (hasActiveTextSelectionWithin(content)) return;
   const now = Date.now();
   for (const clock of clocks) {
     const startedAt = new Date(clock.dataset.currentSessionStart).getTime();
@@ -3286,14 +3290,44 @@ function startPlayerProfileSessionClock() {
   }
 }
 
+function capturePlayerProfileViewState(content) {
+  const card = content?.closest('.player-profile-card');
+  const scrollAreas = [...(content?.querySelectorAll('[data-player-profile-scroll]') || [])];
+  return {
+    cardScrollTop: card?.scrollTop || 0,
+    scrollAreas: scrollAreas.map(area => ({
+      key: area.dataset.playerProfileScroll,
+      scrollTop: area.scrollTop,
+      scrollLeft: area.scrollLeft,
+      focused: document.activeElement === area
+    }))
+  };
+}
+
+function restorePlayerProfileViewState(content, viewState) {
+  if (!content || !viewState) return;
+  const card = content.closest('.player-profile-card');
+  for (const saved of viewState.scrollAreas) {
+    const area = [...content.querySelectorAll('[data-player-profile-scroll]')]
+      .find(candidate => candidate.dataset.playerProfileScroll === saved.key);
+    if (!area) continue;
+    if (saved.focused) area.focus({ preventScroll: true });
+    area.scrollTop = saved.scrollTop;
+    area.scrollLeft = saved.scrollLeft;
+  }
+  if (card) card.scrollTop = viewState.cardScrollTop;
+}
+
 function replacePlayerProfileContent(profile, { animate = false } = {}) {
   const content = $('#playerProfileContent');
   if (!content) return;
+  const viewState = capturePlayerProfileViewState(content);
   clearTimeout(state.playerProfileRevealTimer);
   state.playerProfileRevealTimer = null;
   content.classList.remove('is-loading', 'profile-data-enter');
   content.innerHTML = renderPlayerProfile(profile);
   applyPlayerProfileAccent(profile);
+  restorePlayerProfileViewState(content, viewState);
   startPlayerProfileSessionClock();
   if (!animate) return;
   void content.offsetWidth;
@@ -3308,6 +3342,11 @@ async function loadPlayerProfile(username, { showLoading = false } = {}) {
   const overlay = $('#playerProfileOverlay');
   const content = $('#playerProfileContent');
   if (!overlay || !content || !username) return;
+
+  if (!showLoading && hasActiveTextSelectionWithin(content)) {
+    queueRealtimeRefresh('player-profile-selection', () => loadPlayerProfile(state.playerProfileUsername), 750);
+    return;
+  }
 
   overlay.hidden = false;
   document.body.classList.add('profile-open');
@@ -3335,6 +3374,10 @@ async function loadPlayerProfile(username, { showLoading = false } = {}) {
     state.playerProfileLastPayload = profile;
     const signature = playerProfileSignature(profile);
     if (state.playerProfileSignature !== signature) {
+      if (!showLoading && hasActiveTextSelectionWithin(content)) {
+        queueRealtimeRefresh('player-profile-selection', () => loadPlayerProfile(state.playerProfileUsername), 750);
+        return;
+      }
       replacePlayerProfileContent(profile, { animate: content.classList.contains('is-loading') });
       state.playerProfileSignature = signature;
       state.playerProfileUsername = profile.username || username;
@@ -6566,6 +6609,10 @@ async function loadAdminPlayers({ query = $('#adminPlayersSearch')?.value || '',
   const list = $('#adminPlayersList');
   const scroller = $('#adminPlayersScroller');
   const refresh = $('#adminPlayersRefresh');
+  if (hasActiveTextSelectionWithin(list)) {
+    queueRealtimeRefresh('admin-player-selection', () => loadAdminPlayers({ query, showLoading, offset, append, preserveScroll }), 750);
+    return;
+  }
   const previousPlayers = preserveScroll && !append ? [...state.adminPlayers] : [];
   const requestId = ++state.adminPlayersRequestId;
   state.adminPlayersLoading = true;
@@ -6585,6 +6632,10 @@ async function loadAdminPlayers({ query = $('#adminPlayersSearch')?.value || '',
     }
     const payload = await fetchJson(`/api/admin/players?${params}`);
     if (requestId !== state.adminPlayersRequestId) return;
+    if (hasActiveTextSelectionWithin(list)) {
+      queueRealtimeRefresh('admin-player-selection', () => loadAdminPlayers({ query, showLoading, offset, append, preserveScroll }), 750);
+      return;
+    }
     state.adminPlayersSort = payload.sort || state.adminPlayersSort;
     state.adminPlayersDirection = payload.direction || state.adminPlayersDirection;
     if (!preserveScroll) state.adminPlayersLimit = Number(payload.limit) || state.adminPlayersLimit;
@@ -6778,6 +6829,7 @@ async function confirmAdminPlayerDelete() {
 async function handleAdminPlayerAction(event) {
   const button = event.target.closest('[data-admin-player-action]');
   if (!button) return;
+  if (hasActiveTextSelectionWithin(button.closest('.admin-player-card'))) return;
   button.closest('details')?.removeAttribute('open');
   const player = adminPlayerByIdentity(button.dataset.playerKey);
   if (!player) return;

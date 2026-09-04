@@ -336,6 +336,12 @@ function testArchitectureAndUiContracts() {
     'player nicknames must leave enough vertical space for underscores and glyph descenders');
   assert.match(stylesSource, /\.admin-player-name-button\s*\{[^}]*border-radius:0!important;/,
     'player nicknames must not be clipped by the global rounded button mask');
+  assert.match(stylesSource, /\.admin-player-name-button\s*\{[^}]*user-select:text;[^}]*-webkit-user-select:text;/,
+    'player nicknames must remain selectable despite also opening the profile on click');
+  assert.match(appSource, /async function loadAdminPlayers[\s\S]*?hasActiveTextSelectionWithin\(list\)[\s\S]*?admin-player-selection[\s\S]*?await fetchJson[\s\S]*?hasActiveTextSelectionWithin\(list\)[\s\S]*?admin-player-selection/,
+    'player-card refreshes must defer before and after fetching while card text is selected');
+  assert.match(appSource, /async function handleAdminPlayerAction[\s\S]*?hasActiveTextSelectionWithin\(button\.closest\('\.admin-player-card'\)\)[\s\S]*?return;/,
+    'drag-selecting a player nickname must not trigger the profile action on mouse release');
   assert.doesNotMatch(appSource.match(/async function confirmAdminPlayerDelete\(\)[\s\S]*?\n}/)?.[0] || '', /location\.reload/);
 }
 
