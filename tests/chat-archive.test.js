@@ -228,10 +228,10 @@ assert.match(appSource, /const step = total > 48 \? 6 : total > 24 \? 3 : total 
   'chart timestamps must use a readable label interval for shorter mobile series');
 assert.match(appSource, /if \(lastIndex - index < step\) return '';/,
   'the final chart timestamp must not overlap the preceding interval label');
-assert.match(appSource, /pointWidth: range === 'hours' \? 48 : 42/,
-  'hourly TPS points must leave additional horizontal room for timestamps');
-assert.match(appSource, /axisLabel: item => range === 'hours' \? String\(item\.label \|\| ''\)\.slice\(-5\) : item\.label/,
-  'hourly TPS axis labels must use compact times while tooltips retain the full date');
+assert.match(appSource, /fitWidth: true[\s\S]*axisLabel: item => tpsAxisLabel\(item, range, span\.milliseconds\)/,
+  'TPS history must fit every range into one responsive overview');
+assert.match(appSource, /function compactLineSeries[\s\S]*minValue: Math\.min[\s\S]*maxValue: Math\.max/,
+  'dense TPS history must preserve low and high values while reducing draw work');
 assert.match(appSource, /function chartAxisLabelFitsViewport[\s\S]*stickyAxisClearance = 64[\s\S]*visibleRight - edgeClearance/,
   'chart labels hidden behind the sticky axis or viewport edge must not be drawn');
 assert.match(appSource, /player-profile-message[\s\S]*chat-message-head[\s\S]*chat-message-name/,

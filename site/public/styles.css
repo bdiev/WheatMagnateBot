@@ -2960,7 +2960,7 @@ body.search-focus-active #logoutButton {
 .server-tps-panel {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   min-height: 0;
 }
 
@@ -2975,6 +2975,42 @@ body.search-focus-active #logoutButton {
 .server-tps-panel .chart-scroll,
 .player-unwhitelisted-chart-panel .chart-scroll {
   min-height: 0;
+}
+
+.server-tps-panel .chart-scroll {
+  overflow-x: hidden;
+}
+
+.server-tps-panel .chart {
+  min-width: 100%;
+  touch-action: manipulation;
+}
+
+.tps-chart-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  border-top: 1px solid var(--line);
+  padding: 9px 14px;
+  color: var(--muted);
+  background: var(--panel-soft);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.tps-chart-meta span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tps-chart-meta span:last-child {
+  flex: 0 0 auto;
+  opacity: .72;
 }
 
 .server-tps-panel .chart,
@@ -10514,6 +10550,7 @@ body.kill-aura-modal-open {
   .side-stack .panel-head { gap: 10px; }
   .chart-controls:not(.playtime-scope-controls) { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
   .chart-range-button { min-width: 0; min-height: 42px; padding-inline: 8px; touch-action: manipulation; }
+  .tps-chart-meta { align-items: flex-start; flex-direction: column; gap: 3px; padding-inline: 10px; }
   .chart-scroll {
     min-height: 250px;
     overscroll-behavior-x: contain;

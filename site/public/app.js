@@ -2214,7 +2214,9 @@ function prepareChartCanvas(canvas, data, options = {}) {
   // complete dataset and horizontal navigation through its history.
   const maxBackingWidth = mobile ? 8_192 : 12_288;
   const safeCanvasWidth = Math.max(2_048, Math.floor(maxBackingWidth / ratio));
-  const requestedWidth = (Array.isArray(data) ? data.length : 0) * pointWidth + 92;
+  const requestedWidth = options.fitWidth
+    ? (minWidth || 320)
+    : (Array.isArray(data) ? data.length : 0) * pointWidth + 92;
   const cssWidth = Math.min(safeCanvasWidth, Math.max(minWidth || 320, requestedWidth));
   const cssHeight = Math.max(1, Math.floor(canvas.getBoundingClientRect().height || canvas.height || 260));
   const pixelWidth = Math.floor(cssWidth * ratio);
@@ -2487,8 +2489,11 @@ function drawBarChart(canvas, data, options = {}) {
 
 function drawLineChart(canvas, data, options = {}) {
   if (!canvas) return;
-  const chartData = Array.isArray(data) ? data : [];
-  const { ctx, width, height } = prepareChartCanvas(canvas, chartData, { pointWidth: options.pointWidth || 42 });
+  const sourceData = Array.isArray(data) ? data : [];
+  const { ctx, width, height } = prepareChartCanvas(canvas, sourceData, {
+    pointWidth: options.pointWidth || 42,
+    fitWidth: options.fitWidth
+  });
 
   const text = getCssColor('--text');
   const muted = getCssColor('--muted');
@@ -2498,6 +2503,9 @@ function drawLineChart(canvas, data, options = {}) {
   const padding = { top: 24, right: 52, bottom: 44, left: 58 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
+  const chartData = options.fitWidth
+    ? compactLineSeries(sourceData, Math.max(80, Math.floor(chartWidth / 3)))
+    : sourceData;
   const numericValues = visibleChartValues(canvas, chartData, padding, chartWidth, 'line');
   const maxValue = Math.max(options.max || 0, ...numericValues, 1);
   renderStickyChartAxis(
@@ -2527,6 +2535,23 @@ function drawLineChart(canvas, data, options = {}) {
     ctx.fillText(formatTps((maxValue * i) / 4), padding.left - 10, y + 4);
   }
 
+  const sourceNumericValues = sourceData.map(item => Number(item.value)).filter(Number.isFinite);
+  const average = sourceNumericValues.reduce((sum, value) => sum + value, 0) / sourceNumericValues.length;
+  const averageY = padding.top + chartHeight - (Math.min(maxValue, Math.max(0, average)) / maxValue) * chartHeight;
+  ctx.save();
+  ctx.strokeStyle = muted;
+  ctx.globalAlpha = 0.72;
+  ctx.setLineDash([5, 6]);
+  ctx.beginPath();
+  ctx.moveTo(padding.left, averageY);
+  ctx.lineTo(padding.left + chartWidth, averageY);
+  ctx.stroke();
+  ctx.restore();
+  ctx.fillStyle = muted;
+  ctx.font = '10px system-ui, sans-serif';
+  ctx.textAlign = 'right';
+  ctx.fillText(`Avg ${formatTps(average)}`, padding.left + chartWidth - 4, Math.max(padding.top + 11, averageY - 6));
+
   const points = chartData
     .map((item, index) => {
       const value = Number(item.value);
@@ -2537,11 +2562,31 @@ function drawLineChart(canvas, data, options = {}) {
         x,
         y,
         value,
+        minValue: Number.isFinite(Number(item.minValue)) ? Number(item.minValue) : value,
+        maxValue: Number.isFinite(Number(item.maxValue)) ? Number(item.maxValue) : value,
         label: item.label,
         tooltip: options.tooltip ? options.tooltip(item) : `${item.label}: ${formatTps(value)}`
       };
     })
     .filter(Boolean);
+
+  if (points.some(point => point.minValue !== point.maxValue)) {
+    ctx.fillStyle = accent;
+    ctx.globalAlpha = 0.16;
+    ctx.beginPath();
+    points.forEach((point, index) => {
+      const y = padding.top + chartHeight - (Math.min(maxValue, Math.max(0, point.maxValue)) / maxValue) * chartHeight;
+      if (index === 0) ctx.moveTo(point.x, y);
+      else ctx.lineTo(point.x, y);
+    });
+    [...points].reverse().forEach(point => {
+      const y = padding.top + chartHeight - (Math.min(maxValue, Math.max(0, point.minValue)) / maxValue) * chartHeight;
+      ctx.lineTo(point.x, y);
+    });
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
 
   ctx.strokeStyle = accent;
   ctx.lineWidth = 2;
@@ -2552,18 +2597,28 @@ function drawLineChart(canvas, data, options = {}) {
   });
   ctx.stroke();
 
-  points.forEach(point => {
-    ctx.fillStyle = accent;
-    ctx.beginPath();
-    ctx.arc(point.x, point.y, 3.5, 0, Math.PI * 2);
-    ctx.fill();
-  });
+  if (points.length <= Math.max(24, Math.floor(chartWidth / 12))) {
+    points.forEach(point => {
+      ctx.fillStyle = accent;
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+  const pointSlotWidth = chartWidth / Math.max(1, points.length - 1);
   state.chartMeta[canvas.id] = {
-    hitboxes: points.map(point => ({
-      x: point.x - 12,
-      y: point.y - 18,
-      width: 24,
-      height: 36,
+    hitboxes: points.map((point, index) => ({
+      x: Math.max(padding.left, point.x - pointSlotWidth / 2),
+      y: padding.top,
+      width: Math.max(3, Math.min(pointSlotWidth, padding.left + chartWidth - Math.max(padding.left, point.x - pointSlotWidth / 2))),
+      height: chartHeight,
+      index,
+      highlight: {
+        x: point.x - Math.max(1.5, Math.min(5, pointSlotWidth / 2)),
+        y: padding.top,
+        width: Math.max(3, Math.min(10, pointSlotWidth)),
+        height: chartHeight
+      },
       tooltip: point.tooltip
     }))
   };
@@ -2622,7 +2677,12 @@ function aggregateSeries(data, range, reducer = 'sum') {
       key = String(key).slice(0, 7);
       label = key;
     }
-    if (!groups.has(key)) groups.set(key, { label, values: [], segments: new Map() });
+    if (!groups.has(key)) groups.set(key, { label, values: [], segments: new Map(), startBucket: null, endBucket: null });
+    if (!Number.isNaN(date.getTime())) {
+      const timestamp = date.toISOString();
+      if (!groups.get(key).startBucket || timestamp < groups.get(key).startBucket) groups.get(key).startBucket = timestamp;
+      if (!groups.get(key).endBucket || timestamp > groups.get(key).endBucket) groups.get(key).endBucket = timestamp;
+    }
     const value = Number(item.value);
     if (Number.isFinite(value)) groups.get(key).values.push(value);
     if (Array.isArray(item.segments)) {
@@ -2637,11 +2697,99 @@ function aggregateSeries(data, range, reducer = 'sum') {
   });
   return Array.from(groups.values()).map(group => ({
     label: group.label,
+    bucket: group.startBucket,
+    startBucket: group.startBucket,
+    endBucket: group.endBucket,
     value: reducer === 'avg'
       ? group.values.reduce((sum, value) => sum + value, 0) / Math.max(1, group.values.length)
       : group.values.reduce((sum, value) => sum + value, 0),
     segments: Array.from(group.segments.values())
   }));
+}
+
+function compactLineSeries(data, maxPoints) {
+  const items = Array.isArray(data) ? data : [];
+  const limit = Math.max(1, Math.floor(maxPoints) || 1);
+  const groupSize = Math.max(1, Math.ceil(items.length / limit));
+  const compacted = [];
+
+  for (let start = 0; start < items.length; start += groupSize) {
+    const group = items.slice(start, start + groupSize);
+    const values = group.map(item => Number(item.value)).filter(Number.isFinite);
+    if (!values.length) continue;
+    const first = group[0];
+    const last = group[group.length - 1];
+    const middle = group[Math.floor((group.length - 1) / 2)];
+    compacted.push({
+      ...middle,
+      value: values.reduce((sum, value) => sum + value, 0) / values.length,
+      minValue: Math.min(...values),
+      maxValue: Math.max(...values),
+      sampleCount: values.length,
+      startBucket: first.startBucket || first.bucket || null,
+      endBucket: last.endBucket || last.bucket || null,
+      fromLabel: first.label,
+      toLabel: last.label
+    });
+  }
+  return compacted;
+}
+
+function tpsSeriesSpan(data) {
+  const items = Array.isArray(data) ? data : [];
+  const first = items.find(item => item.startBucket || item.bucket);
+  const last = [...items].reverse().find(item => item.endBucket || item.bucket);
+  const start = new Date(first?.startBucket || first?.bucket || 0);
+  const end = new Date(last?.endBucket || last?.bucket || 0);
+  return {
+    start,
+    end,
+    milliseconds: Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) ? 0 : Math.max(0, end - start)
+  };
+}
+
+function tpsAxisLabel(item, range, spanMilliseconds) {
+  const date = new Date(item.bucket || item.startBucket || 0);
+  if (Number.isNaN(date.getTime())) return String(item.label || '');
+  let options;
+  if (range === 'months' || spanMilliseconds >= 366 * 86_400_000) {
+    options = { month: 'short', year: '2-digit' };
+  } else if (range === 'days' || spanMilliseconds >= 3 * 86_400_000) {
+    options = { month: 'short', day: 'numeric' };
+  } else {
+    options = { hour: '2-digit', minute: '2-digit' };
+  }
+  return new Intl.DateTimeFormat('en-US', { ...options, timeZone: state.accountTimezone }).format(date);
+}
+
+function tpsTooltip(item, range) {
+  const count = Math.max(1, Number(item.sampleCount) || 1);
+  const unit = range === 'months' ? 'monthly' : range === 'days' ? 'daily' : 'hourly';
+  const start = item.startBucket || item.bucket;
+  const end = item.endBucket || item.bucket;
+  if (count === 1 || !start || !end || start === end) {
+    return `${start ? formatFullDateTime(start) : item.label}\n${formatTps(item.value)} TPS`;
+  }
+  return `${formatFullDateTime(start)} – ${formatFullDateTime(end)}\nAverage ${formatTps(item.value)} TPS\nLow ${formatTps(item.minValue)} · High ${formatTps(item.maxValue)}\n${formatNumber(count)} ${unit} averages`;
+}
+
+function updateTpsChartCoverage(data, range) {
+  const coverage = $('#tpsChartCoverage');
+  if (!coverage) return;
+  const items = Array.isArray(data) ? data : [];
+  if (!items.length) {
+    coverage.textContent = 'No TPS history recorded yet';
+    return;
+  }
+  const span = tpsSeriesSpan(items);
+  const unit = range === 'months' ? 'monthly' : range === 'days' ? 'daily' : 'hourly';
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    year: 'numeric', month: 'short', day: 'numeric', timeZone: state.accountTimezone
+  });
+  const dates = span.milliseconds > 0
+    ? `${formatter.format(span.start)} – ${formatter.format(span.end)}`
+    : formatter.format(span.start);
+  coverage.textContent = `${formatNumber(items.length)} ${unit} averages · ${dates}`;
 }
 
 function obsidianChartTooltip(item) {
@@ -2728,14 +2876,18 @@ function drawChartById(chartId) {
       });
       break;
     }
-    case 'tpsHourlyChart':
-      drawLineChart($('#tpsHourlyChart'), aggregateSeries(state.charts.tpsHourly, range, 'avg'), {
+    case 'tpsHourlyChart': {
+      const tpsHistory = aggregateSeries(state.charts.tpsHourly, range, 'avg');
+      const span = tpsSeriesSpan(tpsHistory);
+      updateTpsChartCoverage(tpsHistory, range);
+      drawLineChart($('#tpsHourlyChart'), tpsHistory, {
         max: 20,
-        pointWidth: range === 'hours' ? 48 : 42,
-        axisLabel: item => range === 'hours' ? String(item.label || '').slice(-5) : item.label,
-        tooltip: item => `${item.label}: ${formatTps(item.value)} TPS`
+        fitWidth: true,
+        axisLabel: item => tpsAxisLabel(item, range, span.milliseconds),
+        tooltip: item => tpsTooltip(item, range)
       });
       break;
+    }
     case 'unwhitelistedHourlyChart':
       drawBarChart($('#unwhitelistedHourlyChart'), aggregateSeries(state.charts.unwhitelistedHourly, range), {
         tooltip: item => `${item.label}: ${formatNumber(item.value)} players`

@@ -876,14 +876,18 @@
           <section class="panel server-tps-panel">
             <div class="panel-head">
               <div>
-                <h2>TPS by Hour</h2>
-                <p>Average TPS by hour, day, or month.</p>
+                <h2>TPS History</h2>
+                <p>All recorded TPS history in one view.</p>
               </div>
               <div class="chart-controls" data-chart-controls="tpsHourlyChart" role="group" aria-label="TPS history range: hourly, daily, or monthly averages over full recorded history">
-                <button class="chart-range-button active" type="button" data-chart-range="hours">Hours</button>
-                <button class="chart-range-button" type="button" data-chart-range="days">Days</button>
-                <button class="chart-range-button" type="button" data-chart-range="months">Months</button>
+                <button class="chart-range-button active" type="button" data-chart-range="hours">Hourly</button>
+                <button class="chart-range-button" type="button" data-chart-range="days">Daily</button>
+                <button class="chart-range-button" type="button" data-chart-range="months">Monthly</button>
               </div>
+            </div>
+            <div class="tps-chart-meta">
+              <span id="tpsChartCoverage">Loading TPS history...</span>
+              <span>Hover or tap for details</span>
             </div>
             <div class="chart-scroll"><canvas id="tpsHourlyChart" class="chart tall" height="300"></canvas></div>
           </section>
