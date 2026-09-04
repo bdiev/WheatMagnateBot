@@ -27,6 +27,7 @@ Heartbeat comments do not trigger frontend events. Closed and aborted HTTP reque
 | `bot_status_updated` | `{ "observedAt": ISODate }` | Approved users | Refresh bot statistics |
 | `player_joined` | `{ "username": string }` | Approved users | Refresh player/server state |
 | `player_left` | `{ "username": string }` | Approved users | Refresh player/server state |
+| `player_info_updated` | `{ "updatedAt": ISODate }` | Approved users | Refresh player statistics and any open player profile |
 | `chat_message` | `{ "id": string, "createdAt": ISODate }` | Approved users | Refresh public chat |
 | `whisper_message` | `{ "id", "playerUsername", "direction", "createdAt" }` | Only the matching site user | Refresh private-message state |
 | `farm_status_updated` | `{ "updatedAt": ISODate }` | Approved users | Refresh obsidian farm statistics |

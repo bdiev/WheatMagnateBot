@@ -73,6 +73,11 @@ async function run() {
   routeHub.publish('operational_event_created', { id: '7' });
   assert(admin.res.body.length > beforeTimelineAdmin, 'timeline events must reach admins');
   assert.equal(alice.res.body.length, beforeTimelineUser, 'timeline events must not leak to ordinary users');
+  const beforePlayerInfoAdmin = admin.res.body.length;
+  const beforePlayerInfoAlice = alice.res.body.length;
+  routeHub.publish('player_info_updated', { updatedAt: new Date().toISOString() });
+  assert(admin.res.body.length > beforePlayerInfoAdmin, 'player information events must reach admins');
+  assert(alice.res.body.length > beforePlayerInfoAlice, 'player information events must reach approved users with public profile access');
   const beforeWhisperAlice = alice.res.body.length;
   const beforeWhisperBob = bob.res.body.length;
   routeHub.publish('whisper_message', { id: '6' }, { usernames: ['alice'] });

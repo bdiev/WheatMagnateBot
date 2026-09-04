@@ -8635,12 +8635,15 @@ function handleRealtimeEvent(event) {
       queueRealtimeRefresh('admin-players', () => loadAdminPlayers({ showLoading: false, preserveScroll: true }), 350);
     }
   }
-  else if (type === 'player_info_updated' && state.currentUser?.role === 'admin') {
+  else if (type === 'player_info_updated') {
     queueRealtimeRefresh('players-info', refreshPlayersFromEvent, 200);
-    if (state.activeTab === 'admin') {
+    if (state.currentUser?.role === 'admin' && state.activeTab === 'admin') {
       queueRealtimeRefresh('admin-player-info', () => loadAdminPlayers({ showLoading: false, preserveScroll: true }), 200);
     }
-    if (state.playerProfileUsername && String(state.playerProfileUsername).toLowerCase() === String(eventPayload.username || '').toLowerCase()) {
+    if (state.playerProfileUsername
+      && !$('#playerProfileOverlay')?.hidden
+      && (!eventPayload.username
+        || String(state.playerProfileUsername).toLowerCase() === String(eventPayload.username).toLowerCase())) {
       queueRealtimeRefresh('player-profile-info', () => loadPlayerProfile(state.playerProfileUsername), 100);
     }
   }

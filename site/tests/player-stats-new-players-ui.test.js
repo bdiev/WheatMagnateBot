@@ -55,6 +55,21 @@ assert.match(
 );
 assert.match(
   appSource,
+  /type === 'player_info_updated'[\s\S]*!eventPayload\.username[\s\S]*queueRealtimeRefresh\('player-profile-info',[\s\S]*loadPlayerProfile/,
+  'a global player-information event must refresh the currently open profile even when the event has no username'
+);
+assert.doesNotMatch(
+  appSource,
+  /type === 'player_info_updated' && state\.currentUser\?\.role === 'admin'/,
+  'approved non-admin users must also receive live updates for public player profiles'
+);
+assert.match(
+  serverSource,
+  /MAX\(updated_at\) FROM player_info_observation_state[\s\S]*playerInfoObservationAt[\s\S]*sseHub\.publish\('player_info_updated'/,
+  'completed Discord imports must advance the realtime player-information marker'
+);
+assert.match(
+  appSource,
   /function maybeLoadMoreNewPlayers\(\)[\s\S]*distanceFromBottom <= 160[\s\S]*loadMoreNewPlayers\(\)/,
   'scrolling near the end of New Players must request the next page'
 );

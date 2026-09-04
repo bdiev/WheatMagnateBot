@@ -5946,6 +5946,7 @@ async function pollDatabaseEvents() {
           (SELECT COALESCE(MAX(id),0) FROM notifications) AS notification_id,
           (SELECT COALESCE(MAX(id),0) FROM operational_events) AS operational_event_id,
           (SELECT MAX(updated_at) FROM player_playtime) AS player_info_at,
+          (SELECT MAX(updated_at) FROM player_info_observation_state) AS player_info_observation_at,
           (SELECT MAX(updated_at) FROM player_info_lookup_exclusions) AS player_info_exclusion_at,
           (SELECT CONCAT(
             COUNT(*) FILTER (WHERE registration_at IS NOT NULL), ':',
@@ -5969,6 +5970,7 @@ async function pollDatabaseEvents() {
       whisperId: String(row.whisper_id || 0), farmStatusAt: signature(row.farm_status_at),
       notificationId: String(row.notification_id || 0), operationalEventId: String(row.operational_event_id || 0), adminControlAt: signature(row.admin_control_at),
       playerInfoAt: signature(row.player_info_at),
+      playerInfoObservationAt: signature(row.player_info_observation_at),
       playerInfoExclusionAt: signature(row.player_info_exclusion_at),
       playerInfoActivity: String(row.player_info_activity || '0:0:0'),
       players: new Map((Array.isArray(row.online_players) ? row.online_players : []).map(username => [username.toLowerCase(), username]))
@@ -5995,9 +5997,15 @@ async function pollDatabaseEvents() {
       if (!next.players.has(key)) sseHub.publish('player_left', { username });
     }
     if (next.playerInfoAt !== previous.playerInfoAt
+      || next.playerInfoObservationAt !== previous.playerInfoObservationAt
       || next.playerInfoActivity !== previous.playerInfoActivity
       || next.playerInfoExclusionAt !== previous.playerInfoExclusionAt) {
-      sseHub.publish('player_info_updated', { updatedAt: next.playerInfoAt }, { roles: ['admin'] });
+      sseHub.publish('player_info_updated', {
+        updatedAt: [next.playerInfoAt, next.playerInfoObservationAt, next.playerInfoExclusionAt]
+          .filter(Boolean)
+          .sort()
+          .pop() || null
+      });
     }
     if (next.chatId !== previous.chatId) {
       const messages = await pool.query(`SELECT id::text, created_at FROM game_chat_messages WHERE is_visible = TRUE AND id>$1 ORDER BY id ASC LIMIT 100`, [previous.chatId]);

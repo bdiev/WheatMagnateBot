@@ -3198,11 +3198,11 @@ const discordPlaytimeImport = createDiscordPlaytimeImport({
   onDiagnostic: async event => {
     if (event.stage === 'pending') {
       console.log(`[PlayerInfo] Waiting for Discord ${event.metric} response for ${event.username}.`);
-      if (event.metric === 'joinDate') {
+      if (event.metric === 'joinDate' || event.metric === 'messages') {
         try {
-          await playerInfoObservationStore.requestRefresh('joinDate', event.username);
+          await playerInfoObservationStore.requestRefresh(event.metric, event.username);
         } catch (error) {
-          console.error(`[PlayerInfo] Could not prepare join-date refresh for ${event.username}:`, error?.message || error);
+          console.error(`[PlayerInfo] Could not prepare ${event.metric} refresh for ${event.username}:`, error?.message || error);
         }
       }
       scheduleDiscordPlayerInfoFetch(event);
