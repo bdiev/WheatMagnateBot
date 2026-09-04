@@ -37,14 +37,13 @@ async function main() {
     fs.utimesSync(baseLog, oldTime, oldTime);
 
     const now = new Date('2026-08-16T12:00:00.000Z');
-    const systemLogs = [];
     const farm = createObsidianFarm({
       accountId:'debug-rotation-test',
       username:'DebugBot',
       configFile:path.join(tempRoot, 'config.json'),
       debugLogFile:baseLog,
       debugLoggingEnabled:true,
-      systemLogger:entry => { systemLogs.push(entry); },
+      systemLogger:() => { throw new Error('packet traces must remain file-only'); },
       now:() => now
     });
     const correlationId = '38b58368-3204-42bc-8136-a11e07a71433';
@@ -82,9 +81,6 @@ async function main() {
     farm.__test.writeFarmDebug('farm_click_trace', { action:'lava_placement', stage:'sent' });
     farm.__test.writeFarmDebug('farm_click_trace', { action:'lava_placement', stage:'unconfirmed' });
     await new Promise(resolve => setImmediate(resolve));
-    assert.equal(systemLogs.length, 1, 'only failed packet traces are persisted to the system log');
-    assert.equal(systemLogs[0].level, 'warn');
-    assert.equal(systemLogs[0].details.stage, 'unconfirmed');
 
     console.log('Obsidian debug log rotation tests passed.');
   } finally {

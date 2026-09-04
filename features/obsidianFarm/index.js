@@ -1823,21 +1823,10 @@ function writeFarmDebug(event, details = {}) {
   fs.mkdir(path.dirname(dailyLogFile), { recursive: true }, () => {
     fs.appendFile(dailyLogFile, `${line}\n`, 'utf8', () => {});
   });
-  if (event === 'farm_click_trace' && FARM_SYSTEM_LOGGER) {
-    const stage = String(details.stage || 'unknown');
-    const action = String(details.action || 'interaction');
-    // Successful packet traces stay in the short-lived JSONL file. Persisting
-    // every before/sent/confirmed stage in PostgreSQL caused unbounded growth.
-    if (['failed', 'unconfirmed'].includes(stage)) {
-      Promise.resolve(FARM_SYSTEM_LOGGER({
-        level:'warn',
-        category:'obsidian_click',
-        actor:identity.username,
-        message:`Obsidian Farm click ${action}: ${stage}.`,
-        details:record
-      })).catch(() => {});
-    }
-  }
+  // Packet traces are intentionally file-only. Even failed/unconfirmed
+  // interactions can repeat many times per second during a server problem;
+  // persisting them would make PostgreSQL grow without bound. Farm failures
+  // still reach the notification and operational-event pipelines separately.
   return record;
 }
 
