@@ -81,6 +81,30 @@ function testScheduleMigrationIsSharedByBotAndSite() {
   );
   assert.equal(botZeroCleanup, siteZeroCleanup);
   assert.match(botZeroCleanup, /observed_message_count = NULL[\s\S]*observation\.metric = 'messages'/);
+  assert.match(
+    fs.readFileSync(path.join(root, 'bot.js'), 'utf8'),
+    /reconcileObservedMessages[\s\S]*observedCount < 0[\s\S]*observed_message_count = \$3::bigint/,
+    'a trusted canonical zero-message response must complete the missing messages metric'
+  );
+
+  const botConfirmedZeroRestore = fs.readFileSync(
+    path.join(root, 'database', 'migrations', '044_restore_confirmed_zero_player_messages.sql'),
+    'utf8'
+  );
+  const siteConfirmedZeroRestore = fs.readFileSync(
+    path.join(root, 'site', 'migrations', '044_restore_confirmed_zero_player_messages.sql'),
+    'utf8'
+  );
+  assert.equal(botConfirmedZeroRestore, siteConfirmedZeroRestore,
+    'bot and site must restore the same trustworthy zero-message observations');
+  assert.match(botConfirmedZeroRestore, /SET observed_message_count = 0/,
+    'confirmed archived zero totals must be restored');
+  assert.match(botConfirmedZeroRestore,
+    /LOWER\(response\.username\) = 'lolritterbot'[\s\S]*response\.message IN[\s\S]*activity\.username \|\| ': 0 messages'/,
+    'only exact-case zero responses from LolRiTTeRBot may be restored');
+  assert.match(botConfirmedZeroRestore,
+    /INSERT INTO player_info_observation_state[\s\S]*'messages'[\s\S]*imported = TRUE[\s\S]*refresh_requested_at = NULL/,
+    'restored zero totals must also close their one-time observation state');
 }
 
 function testRandomSenderUsesOnlyConnectedAccounts() {

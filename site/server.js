@@ -79,6 +79,7 @@ const minecraftIconCache = new MinecraftIconCache({
 });
 let requestItemCatalogPromise = null;
 const rateLimiter = new RateLimiter();
+const STATIC_SECURITY_AUDIT_WINDOW_MS = 10 * 60 * 1000;
 const rateLimiterTimer = setInterval(() => rateLimiter.prune(), 60_000);
 rateLimiterTimer.unref?.();
 
@@ -3104,6 +3105,22 @@ async function recordSecurityEvent(req, message, { actor = null, reason = null, 
   });
 }
 
+function shouldRecordStaticSecurityEvent(req, reason, limiter = rateLimiter, windowMs = STATIC_SECURITY_AUDIT_WINDOW_MS) {
+  const ip = clientIp(req, SITE_TRUST_PROXY);
+  return limiter.consume(`static-security-audit:${reason}:${ip}`, {
+    limit: 1,
+    windowMs: Math.max(1, Number(windowMs) || STATIC_SECURITY_AUDIT_WINDOW_MS)
+  }).allowed;
+}
+
+function recordStaticSecurityEvent(req, message, reason) {
+  if (!shouldRecordStaticSecurityEvent(req, reason)) return;
+  recordSecurityEvent(req, message, {
+    reason,
+    details: { similarRequestsDeduplicatedForSeconds: STATIC_SECURITY_AUDIT_WINDOW_MS / 1000 }
+  });
+}
+
 function enforceRateLimit(req, res, scope, subject, policy) {
   const ip = clientIp(req, SITE_TRUST_PROXY);
   const normalized = String(subject || '').trim().toLowerCase().slice(0, 128);
@@ -5653,7 +5670,7 @@ function serveStatic(req, res) {
     { mount: '/logos', root: LOGOS_DIR }, { mount: '/', root: PUBLIC_DIR, index: 'index.html' }
   ]);
   if (!resolved) {
-    recordSecurityEvent(req, 'Blocked unsafe static file request.', { reason: 'invalid_static_path' });
+    recordStaticSecurityEvent(req, 'Blocked unsafe static file request.', 'invalid_static_path');
     sendError(res, 403, 'Forbidden.');
     return;
   }
@@ -5662,7 +5679,7 @@ function serveStatic(req, res) {
     if (!realPathErr) {
       const realRoot = fs.realpathSync(resolved.root);
       if (realFilePath !== realRoot && !realFilePath.startsWith(`${realRoot}${path.sep}`)) {
-        recordSecurityEvent(req, 'Blocked static symlink outside allowed directory.', { reason: 'static_symlink_escape' });
+        recordStaticSecurityEvent(req, 'Blocked static symlink outside allowed directory.', 'static_symlink_escape');
         sendError(res, 403, 'Forbidden.');
         return;
       }
@@ -5989,4 +6006,4 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown);
 }
 
-module.exports = { ADMIN_PLAYER_EDITABLE_FIELDS, adminPlayerIdentity, assertAdminUser, buildPlayerGameSessions, changeSitePassword, cleanAccountInput, csrfTokenForSessionHash, deleteAdminPlayer, freshStoredRuntimePayload, getAdminPlayers, getAdminUsers, getPlayerInfoCollectionProgress, hashPassword, normalizeAdminPlayerPatch, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, parsePlaytimeSeconds, patchAdminPlayer, playerProfileRuntimePresence, publicUser, registrationDefaults, requestHandler, resolveObsidianDebugLogPath, serializeObsidianDebugLogFallback, server, setAdminPlaytime, sortSeenPlayers, startSiteServer, touchSiteSessionActivity, validateCredentials, validatePasswordChange, verifyPassword };
+module.exports = { ADMIN_PLAYER_EDITABLE_FIELDS, adminPlayerIdentity, assertAdminUser, buildPlayerGameSessions, changeSitePassword, cleanAccountInput, csrfTokenForSessionHash, deleteAdminPlayer, freshStoredRuntimePayload, getAdminPlayers, getAdminUsers, getPlayerInfoCollectionProgress, hashPassword, normalizeAdminPlayerPatch, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, parsePlaytimeSeconds, patchAdminPlayer, playerProfileRuntimePresence, publicUser, registrationDefaults, requestHandler, resolveObsidianDebugLogPath, serializeObsidianDebugLogFallback, server, setAdminPlaytime, shouldRecordStaticSecurityEvent, sortSeenPlayers, startSiteServer, touchSiteSessionActivity, validateCredentials, validatePasswordChange, verifyPassword };

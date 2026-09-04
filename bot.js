@@ -3462,7 +3462,7 @@ async function reconcileObservedJoinDate(targetUsername, observedDate) {
 }
 
 async function reconcileObservedMessages(targetUsername, observedCount) {
-  if (!pool || !targetUsername || !Number.isSafeInteger(observedCount) || observedCount <= 0) {
+  if (!pool || !targetUsername || !Number.isSafeInteger(observedCount) || observedCount < 0) {
     return { error:'Invalid observed message count.' };
   }
 

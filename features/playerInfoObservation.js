@@ -71,10 +71,7 @@ function parseMessagesResponse(message) {
   );
   if (!match) return null;
   const observedValue = Number(match[2].replace(/,/g, ''));
-  // A zero response is ambiguous: LolRiTTeRBot also returns it when the
-  // username casing does not match. Keep the lookup open so a correctly-cased
-  // retry can still provide a trustworthy value.
-  if (!Number.isSafeInteger(observedValue) || observedValue <= 0) return null;
+  if (!Number.isSafeInteger(observedValue) || observedValue < 0) return null;
   return { targetUsername: match[1], observedValue };
 }
 
@@ -260,6 +257,17 @@ function createPlayerInfoObservation({
     if (!pending) return false;
     if (now() - pending.createdAt > lookupTtlMs) {
       deleteLookup(type, targetKey, pending);
+      return false;
+    }
+
+    // LolRiTTeRBot can answer with zero for a case-mismatched nickname. A
+    // system-created lookup uses the canonical nickname we observed in the
+    // player packet, so zero is trustworthy only when that casing is echoed
+    // exactly. Human chat lookups stay excluded because their casing is not
+    // guaranteed to be canonical.
+    if (type === 'messages'
+      && candidate.observedValue === 0
+      && (pending.reason === 'chat' || candidate.targetUsername !== pending.targetUsername)) {
       return false;
     }
 

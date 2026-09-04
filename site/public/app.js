@@ -6349,20 +6349,28 @@ function adminPlayerByIdentity(identityKey) {
   return state.adminPlayers.find(player => String(player.identityKey) === String(identityKey)) || null;
 }
 
-function renderAdminPlayers(players = state.adminPlayers, { append = false } = {}) {
-  const list = $('#adminPlayersList');
-  if (!list) return;
-  if (!players.length) {
-    if (!append) list.innerHTML = '<div class="empty">No tracked Minecraft players found.</div>';
-    return;
-  }
-  const markup = players.map(player => {
-    const identityKey = escapeHtml(player.identityKey);
-    const username = escapeHtml(player.username);
-    const uuid = player.uuid ? escapeHtml(player.uuid) : '';
-    const tags = Array.isArray(player.tags) ? player.tags : [];
-    return `
-      <article class="admin-player-card" data-admin-player-key="${identityKey}">
+function adminPlayerCardSignature(player) {
+  return JSON.stringify([
+    player.identityKey,
+    player.username,
+    player.uuid,
+    player.id,
+    player.isOnline,
+    player.firstSeen,
+    player.lastSeen,
+    player.playtime,
+    player.totalMessages,
+    Array.isArray(player.tags) ? player.tags : []
+  ]);
+}
+
+function adminPlayerCardMarkup(player) {
+  const identityKey = escapeHtml(player.identityKey);
+  const username = escapeHtml(player.username);
+  const uuid = player.uuid ? escapeHtml(player.uuid) : '';
+  const tags = Array.isArray(player.tags) ? player.tags : [];
+  return `
+      <article class="admin-player-card" data-admin-player-key="${identityKey}" data-admin-player-signature="${escapeHtml(adminPlayerCardSignature(player))}">
         <button class="admin-player-avatar-button" type="button" data-admin-player-action="view" data-player-key="${identityKey}" aria-label="Open ${username} profile">
           <img class="admin-player-avatar" src="${accountHeadUrl(player.username, player.uuid)}" alt="" loading="lazy" decoding="async">
         </button>
@@ -6389,8 +6397,40 @@ function renderAdminPlayers(players = state.adminPlayers, { append = false } = {
           </div>
         </details>
       </article>`;
-  }).join('');
+}
+
+function renderAdminPlayers(players = state.adminPlayers, { append = false, reconcile = false } = {}) {
+  const list = $('#adminPlayersList');
+  if (!list) return;
+  if (!players.length) {
+    if (!append) list.innerHTML = '<div class="empty">No tracked Minecraft players found.</div>';
+    return;
+  }
+  const markup = players.map(adminPlayerCardMarkup).join('');
   if (append) list.insertAdjacentHTML('beforeend', markup);
+  else if (reconcile) {
+    const existingCards = new Map([...list.querySelectorAll(':scope > .admin-player-card')]
+      .map(card => [card.dataset.adminPlayerKey, card]));
+    const template = document.createElement('template');
+    players.forEach((player, index) => {
+      const key = String(player.identityKey);
+      const signature = adminPlayerCardSignature(player);
+      let card = existingCards.get(key);
+      if (!card || card.dataset.adminPlayerSignature !== signature) {
+        template.innerHTML = adminPlayerCardMarkup(player).trim();
+        const replacement = template.content.firstElementChild;
+        if (card) card.replaceWith(replacement);
+        card = replacement;
+      }
+      existingCards.delete(key);
+      const cardAtIndex = list.children[index];
+      if (cardAtIndex !== card) list.insertBefore(card, cardAtIndex || null);
+    });
+    existingCards.forEach(card => card.remove());
+    [...list.children].forEach(child => {
+      if (!child.matches('.admin-player-card')) child.remove();
+    });
+  }
   else list.innerHTML = markup;
 
   list.querySelectorAll('.admin-player-card-menu:not([data-menu-bound])').forEach(menu => {
@@ -6441,7 +6481,6 @@ async function loadAdminPlayers({ query = $('#adminPlayersSearch')?.value || '',
   const list = $('#adminPlayersList');
   const scroller = $('#adminPlayersScroller');
   const refresh = $('#adminPlayersRefresh');
-  const previousScrollTop = scroller?.scrollTop || 0;
   const previousPlayers = preserveScroll && !append ? [...state.adminPlayers] : [];
   const requestId = ++state.adminPlayersRequestId;
   state.adminPlayersLoading = true;
@@ -6482,13 +6521,9 @@ async function loadAdminPlayers({ query = $('#adminPlayersSearch')?.value || '',
         ...refreshedPlayers,
         ...previousPlayers.filter(player => !refreshedKeys.has(String(player.identityKey)))
       ];
-      renderAdminPlayers();
-      if (scroller) {
-        scroller.scrollTop = previousScrollTop;
-        requestAnimationFrame(() => {
-          if (requestId === state.adminPlayersRequestId) scroller.scrollTop = previousScrollTop;
-        });
-      }
+      const liveScrollTop = scroller?.scrollTop || 0;
+      renderAdminPlayers(state.adminPlayers, { reconcile: true });
+      if (scroller && scroller.scrollTop !== liveScrollTop) scroller.scrollTop = liveScrollTop;
     } else {
       state.adminPlayers = payload.players || [];
       renderAdminPlayers();

@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const path = require('node:path');
 const { RateLimiter, configuredOrigins, requestIsHttps, resolveStaticPath, securityHeaders, validateOrigin, verifyCsrfToken } = require('../security');
-const { assertAdminUser, changeSitePassword, csrfTokenForSessionHash, hashPassword, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, registrationDefaults, server, validatePasswordChange, verifyPassword } = require('../server');
+const { assertAdminUser, changeSitePassword, csrfTokenForSessionHash, hashPassword, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, registrationDefaults, server, shouldRecordStaticSecurityEvent, validatePasswordChange, verifyPassword } = require('../server');
 
 function request(method, headers = {}, encrypted = false) {
   return { method, headers, socket: { encrypted, remoteAddress: '127.0.0.1' } };
@@ -93,6 +93,27 @@ function testStaticTraversal() {
   assert.equal(resolveStaticPath('/.env', mounts), null);
   assert.equal(resolveStaticPath('/%00.txt', mounts), null);
   assert.equal(resolveStaticPath('/app.js', mounts).candidate, path.join(publicRoot, 'app.js'));
+}
+
+function testStaticSecurityAuditDeduplication() {
+  let now = 1_000;
+  const limiter = new RateLimiter({ now: () => now });
+  const firstScanner = request('GET');
+  firstScanner.socket.remoteAddress = '203.0.113.10';
+  const secondScanner = request('GET');
+  secondScanner.socket.remoteAddress = '203.0.113.11';
+
+  assert.equal(shouldRecordStaticSecurityEvent(firstScanner, 'invalid_static_path', limiter, 60_000), true,
+    'the first unsafe static request must remain auditable');
+  assert.equal(shouldRecordStaticSecurityEvent(firstScanner, 'invalid_static_path', limiter, 60_000), false,
+    'repeated probes from the same IP must not flood the audit log');
+  assert.equal(shouldRecordStaticSecurityEvent(firstScanner, 'static_symlink_escape', limiter, 60_000), true,
+    'different static security reasons must be audited independently');
+  assert.equal(shouldRecordStaticSecurityEvent(secondScanner, 'invalid_static_path', limiter, 60_000), true,
+    'a different source IP must retain its own audit entry');
+  now += 60_001;
+  assert.equal(shouldRecordStaticSecurityEvent(firstScanner, 'invalid_static_path', limiter, 60_000), true,
+    'the source must become auditable again after the deduplication window');
 }
 
 function testNormalAuthAndAdminRemainValid() {
@@ -186,6 +207,8 @@ async function testHttpBoundary() {
     assert.equal(requestPage.status, 200);
     assert.match(requestPage.body, /<title>Resource Requests — WheatMagnateBot<\/title>/);
     assert.equal((await httpRequest(port, '/%252e%252e/server.js')).status, 403);
+    assert.equal((await httpRequest(port, '/.git/config')).status, 403,
+      'audit deduplication must never allow a repeated unsafe static request');
     const crossOrigin = await httpRequest(port, '/api/auth/login', {
       method: 'POST', headers: { Origin: 'http://evil.example', 'Content-Type': 'application/json' }, body: '{}'
     });
@@ -201,6 +224,7 @@ async function testHttpBoundary() {
   testRateLimit();
   testOriginValidation();
   testStaticTraversal();
+  testStaticSecurityAuditDeduplication();
   testNormalAuthAndAdminRemainValid();
   testPasswordChangeValidation();
   await testPasswordChangeTransaction();

@@ -312,7 +312,10 @@ function testArchitectureAndUiContracts() {
   assert.match(appSource, /adminPlayersScroller'[\s\S]*addEventListener\('scroll', maybeLoadMoreAdminPlayers/, 'scrolling must progressively load the next server page');
   assert.match(appSource, /insertAdjacentHTML\('beforeend', markup\)/, 'new cards must append without rebuilding loaded cards');
   assert.match(appSource, /player_joined[\s\S]*player_left[\s\S]*loadAdminPlayers\(\{ showLoading: false, preserveScroll: true \}\)/, 'join and leave refreshes must preserve the admin player scroll position');
-  assert.match(appSource, /previousScrollTop[\s\S]*preserveScroll[\s\S]*requestAnimationFrame[\s\S]*scroller\.scrollTop = previousScrollTop/, 'background player refreshes must restore the scroll position after rendering');
+  assert.match(appSource, /else if \(reconcile\)[\s\S]*existingCards[\s\S]*adminPlayerCardSignature[\s\S]*list\.insertBefore/, 'background refreshes must reconcile keyed cards instead of rebuilding the scrolling list');
+  assert.match(appSource, /liveScrollTop = scroller\?\.scrollTop[\s\S]*renderAdminPlayers\(state\.adminPlayers, \{ reconcile: true \}\)[\s\S]*scroller\.scrollTop !== liveScrollTop/, 'background player refreshes must preserve the live scroll position captured after the request');
+  const adminPlayerLoaderSource = appSource.match(/async function loadAdminPlayers\([\s\S]*?\n}\n\nfunction adminPlayerIdentityMarkup/)?.[0] || '';
+  assert.doesNotMatch(adminPlayerLoaderSource, /previousScrollTop/, 'a completed background request must not restore a stale scroll position captured before the request');
   assert.match(stylesSource, /\.admin-players-scroller\s*\{[^}]*max-height:[^;]+;[^}]*overflow-y:auto;/, 'the player card area must stay compact and scroll internally');
   assert.match(stylesSource, /\.admin-player-info-progress\s*\{[^}]*max-width:100%[^}]*white-space:normal;/,
     'the information progress indicator must wrap safely on narrow screens');

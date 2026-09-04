@@ -92,10 +92,10 @@ function testActualResponseFormats() {
     parseMessagesResponse('bdiev_: 10,758 messages.'),
     { targetUsername: 'bdiev_', observedValue: 10_758 }
   );
-  assert.equal(
+  assert.deepEqual(
     parseMessagesResponse('deireide: 0 messages'),
-    null,
-    'zero must not be imported because a case-mismatched username produces the same response'
+    { targetUsername: 'deireide', observedValue: 0 },
+    'zero must be parsed so a canonical system lookup can confirm a new player'
   );
   assert.deepEqual(
     parsePlaytimeResponse('bdiev_: 77 Days, 9 Hours, 5 Minutes', parsePlaytime),
@@ -165,15 +165,35 @@ function testMessagesResponseOnlyComesFromLolritterbotAndAppliesOnce() {
   }], 'one command must import one response for that player');
 }
 
-function testZeroMessagesDoesNotConsumeThePendingLookup() {
+function testCaseMismatchedZeroMessagesDoesNotConsumeThePendingLookup() {
   const { tracker, updates } = createTracker();
-  tracker.observe('Requester', '!messages deireide');
+  tracker.requestLookup('messages', 'Deireide', 'automatic');
   tracker.observe('LolRiTTeRBot', 'deireide: 0 messages');
   assert.deepEqual(updates, []);
-  tracker.observe('LolRiTTeRBot', 'deireide: 42 messages');
+  tracker.observe('LolRiTTeRBot', 'Deireide: 42 messages');
   assert.deepEqual(updates, [{
-    type: 'messages', targetUsername: 'deireide', value: 42, source: 'lolritterbot'
+    type: 'messages', targetUsername: 'Deireide', value: 42, source: 'lolritterbot'
   }]);
+}
+
+function testCanonicalFirstJoinZeroMessagesConfirmsNewPlayer() {
+  const { tracker, updates, reasons, results } = createTracker();
+  tracker.requestLookup('messages', 'PsychopathDragon', 'first-join');
+  tracker.observe('ObbyMagnate', '!msgs PsychopathDragon');
+  assert.equal(tracker.observe('LolRiTTeRBot', 'PsychopathDragon: 0 messages'), true);
+  assert.deepEqual(updates, [{
+    type: 'messages', targetUsername: 'PsychopathDragon', value: 0, source: 'lolritterbot'
+  }]);
+  assert.deepEqual(reasons, ['first-join']);
+  assert.equal(results[0]?.observedValue, 0,
+    'the first-join gate must receive zero and stop probing a confirmed new player');
+}
+
+function testHumanChatZeroMessagesRemainsUntrusted() {
+  const { tracker, updates } = createTracker();
+  tracker.observe('Requester', '!messages PsychopathDragon');
+  assert.equal(tracker.observe('LolRiTTeRBot', 'PsychopathDragon: 0 messages'), false);
+  assert.deepEqual(updates, []);
 }
 
 function testMessagesAliasWithoutTargetUsesRequester() {
@@ -293,7 +313,9 @@ function testUntrustedSpeakersAndUnrequestedResponsesAreIgnored() {
 
 testActualResponseFormats();
 testMessagesResponseOnlyComesFromLolritterbotAndAppliesOnce();
-testZeroMessagesDoesNotConsumeThePendingLookup();
+testCaseMismatchedZeroMessagesDoesNotConsumeThePendingLookup();
+testCanonicalFirstJoinZeroMessagesConfirmsNewPlayer();
+testHumanChatZeroMessagesRemainsUntrusted();
 testMessagesAliasWithoutTargetUsesRequester();
 testPreferredPlaytimeWins();
 testFallbackWhenPreferredDoesNotAnswer();
