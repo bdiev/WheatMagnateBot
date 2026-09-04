@@ -103,6 +103,8 @@ const state = {
   adminPlayersNextOffset: 0,
   adminPlayersHasMore: false,
   adminPlayerSearchTimer: null,
+  adminPlayerInfoCollectionLoading: false,
+  adminPlayerInfoCollectionAttemptedAt: 0,
   adminPlayerEditTarget: null,
   adminPlayerDeleteTarget: null,
   requestCountLoading: false,
@@ -2032,6 +2034,7 @@ function setActiveTab(tab) {
   if (tab === 'admin') {
     loadAdminUsers();
     loadAdminPlayers();
+    loadAdminPlayerInfoCollection();
     loadAdminControlState();
     loadAdminSystemLogs();
   }
@@ -6368,6 +6371,28 @@ function renderAdminPlayerInfoCollection(progress) {
     : status.textContent;
 }
 
+async function loadAdminPlayerInfoCollection({ force = false } = {}) {
+  if (state.currentUser?.role !== 'admin' || state.adminPlayerInfoCollectionLoading) return;
+  const now = Date.now();
+  if (!force && now - state.adminPlayerInfoCollectionAttemptedAt < 60_000) return;
+  state.adminPlayerInfoCollectionAttemptedAt = now;
+  state.adminPlayerInfoCollectionLoading = true;
+  try {
+    renderAdminPlayerInfoCollection(await fetchJson('/api/admin/player-info-collection'));
+  } catch (error) {
+    if (error?.name === 'AbortError') return;
+    const status = $('#adminPlayerInfoCollection');
+    if (status) {
+      status.classList.remove('online', 'pending');
+      status.classList.add('info');
+      status.textContent = 'Information summary temporarily unavailable';
+      status.title = error.message || 'Could not load player information summary.';
+    }
+  } finally {
+    state.adminPlayerInfoCollectionLoading = false;
+  }
+}
+
 function adminPlayerByIdentity(identityKey) {
   return state.adminPlayers.find(player => String(player.identityKey) === String(identityKey)) || null;
 }
@@ -6533,9 +6558,6 @@ async function loadAdminPlayers({ query = $('#adminPlayersSearch')?.value || '',
       limit: String(state.adminPlayersLimit),
       offset: String(Math.max(0, offset))
     });
-    if (!append && Number(offset) === 0) {
-      params.set('includeInfoCollection', 'true');
-    }
     if (preserveScroll && !append) {
       params.set('limit', String(Math.min(24, Math.max(state.adminPlayersLimit, previousPlayers.length))));
     }
@@ -6546,7 +6568,6 @@ async function loadAdminPlayers({ query = $('#adminPlayersSearch')?.value || '',
     if (!preserveScroll) state.adminPlayersLimit = Number(payload.limit) || state.adminPlayersLimit;
     state.adminPlayersOffset = Number(payload.offset) || 0;
     state.adminPlayersHasMore = Boolean(payload.hasMore);
-    renderAdminPlayerInfoCollection(payload.infoCollection);
     if (append) {
       const knownKeys = new Set(state.adminPlayers.map(player => String(player.identityKey)));
       const additions = (payload.players || []).filter(player => !knownKeys.has(String(player.identityKey)));
@@ -8639,6 +8660,7 @@ function handleRealtimeEvent(event) {
     queueRealtimeRefresh('players-info', refreshPlayersFromEvent, 200);
     if (state.currentUser?.role === 'admin' && state.activeTab === 'admin') {
       queueRealtimeRefresh('admin-player-info', () => loadAdminPlayers({ showLoading: false, preserveScroll: true }), 200);
+      queueRealtimeRefresh('admin-player-info-collection', loadAdminPlayerInfoCollection, 1_000);
     }
     if (state.playerProfileUsername
       && !$('#playerProfileOverlay')?.hidden
@@ -8928,7 +8950,10 @@ document.addEventListener('pointerdown', event => {
   if (!event.target.closest('#accountSwitcher') && !insideMenu) setMobileAccountSwitcherOpen(false);
 });
 $('#adminUsersRefresh')?.addEventListener('click', loadAdminUsers);
-$('#adminPlayersRefresh')?.addEventListener('click', () => loadAdminPlayers());
+$('#adminPlayersRefresh')?.addEventListener('click', () => {
+  loadAdminPlayers();
+  loadAdminPlayerInfoCollection({ force: true });
+});
 $('#adminPlayersSort')?.addEventListener('change', event => {
   state.adminPlayersSort = event.target.value;
   loadAdminPlayers({ offset: 0 });

@@ -294,8 +294,12 @@ function testArchitectureAndUiContracts() {
   assert.match(appSource, /document\.addEventListener\('pointerdown', closeAdminPlayerMenus, true\)/, 'clicking or tapping outside a player menu must close it');
   assert.match(appSource, /menu\.contains\(event\.target\)[\s\S]*menu\.removeAttribute\('open'\)/, 'interactions inside the active player menu must not close it');
   assert.match(appSource, /new URLSearchParams\(\{[\s\S]*sort: state\.adminPlayersSort,[\s\S]*direction: state\.adminPlayersDirection,[\s\S]*limit: String\(state\.adminPlayersLimit\),[\s\S]*offset:/, 'sorting and pagination must happen on the server');
-  assert.match(appSource, /!append && Number\(offset\) === 0[\s\S]*includeInfoCollection/,
-    'background refreshes must update missing commands even while the player list is filtered');
+  assert.match(appSource, /function loadAdminPlayerInfoCollection[\s\S]*\/api\/admin\/player-info-collection/,
+    'the expensive information summary must load independently from player cards');
+  assert.doesNotMatch(appSource.match(/async function loadAdminPlayers\([\s\S]*?\n}\n\nfunction adminPlayerIdentityMarkup/)?.[0] || '', /includeInfoCollection/,
+    'a slow information summary must not make the player-card request fail');
+  assert.match(serverSource, /\/api\/admin\/player-info-collection[\s\S]*getPlayerInfoCollectionProgress/,
+    'the server must expose the information summary independently from the player list');
   assert.match(appSource, /function renderAdminPlayerInfoCollection[\s\S]*players still missing information[\s\S]*Missing values/,
     'the frontend must show the remaining player count and metric breakdown');
   assert.match(serverSource, /prefix:'!pt'[\s\S]*prefix:'!jd'[\s\S]*prefix:'!seen'[\s\S]*prefix:'!messages'/,
@@ -326,6 +330,8 @@ function testArchitectureAndUiContracts() {
   assert.match(stylesSource, /\.admin-player-card-main\s*\{[^}]*grid-column:2;[^}]*grid-row:1;/, 'the nickname must occupy a separate grid column from the avatar');
   assert.match(stylesSource, /\.admin-player-name-button\s*\{[^}]*line-height:1\.35;/,
     'player nicknames must leave enough vertical space for underscores and glyph descenders');
+  assert.match(stylesSource, /\.admin-player-name-button\s*\{[^}]*border-radius:0!important;/,
+    'player nicknames must not be clipped by the global rounded button mask');
   assert.doesNotMatch(appSource.match(/async function confirmAdminPlayerDelete\(\)[\s\S]*?\n}/)?.[0] || '', /location\.reload/);
 }
 

@@ -3938,8 +3938,12 @@ async function getPlayerInfoCollectionProgress(database = pool) {
       SELECT candidate.username,
              NOT EXISTS (
                SELECT 1 FROM player_playtime playtime
-               WHERE (candidate.player_uuid IS NOT NULL AND playtime.player_uuid = candidate.player_uuid)
-                  OR LOWER(playtime.username) = LOWER(candidate.username)
+               WHERE candidate.player_uuid IS NOT NULL
+                 AND playtime.player_uuid = candidate.player_uuid
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM player_playtime playtime
+               WHERE LOWER(playtime.username) = LOWER(candidate.username)
              ) AS missing_playtime,
              candidate.observed_message_count IS NULL AS missing_messages,
              (
@@ -5603,6 +5607,11 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/admin/players' && req.method === 'GET') {
       sendJson(res, 200, await getAdminPlayers(currentUser, url));
+      return;
+    }
+    if (url.pathname === '/api/admin/player-info-collection' && req.method === 'GET') {
+      assertAdminUser(currentUser);
+      sendJson(res, 200, await getPlayerInfoCollectionProgress());
       return;
     }
     const adminPlayerRoute = url.pathname.match(/^\/api\/admin\/players\/([^/]+)$/);
