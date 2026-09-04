@@ -105,6 +105,8 @@ const state = {
   adminPlayerSearchTimer: null,
   adminPlayerInfoCollectionLoading: false,
   adminPlayerInfoCollectionAttemptedAt: 0,
+  adminPlayerInfoCollectionPending: false,
+  adminPlayerInfoCollectionTimer: null,
   adminPlayerEditTarget: null,
   adminPlayerDeleteTarget: null,
   requestCountLoading: false,
@@ -6372,10 +6374,26 @@ function renderAdminPlayerInfoCollection(progress) {
 }
 
 async function loadAdminPlayerInfoCollection({ force = false } = {}) {
-  if (state.currentUser?.role !== 'admin' || state.adminPlayerInfoCollectionLoading) return;
+  if (state.currentUser?.role !== 'admin') return;
+  if (state.adminPlayerInfoCollectionLoading) {
+    state.adminPlayerInfoCollectionPending = true;
+    return;
+  }
   const now = Date.now();
-  if (!force && now - state.adminPlayerInfoCollectionAttemptedAt < 60_000) return;
+  const refreshDelay = 750 - (now - state.adminPlayerInfoCollectionAttemptedAt);
+  if (!force && refreshDelay > 0) {
+    if (!state.adminPlayerInfoCollectionTimer) {
+      state.adminPlayerInfoCollectionTimer = setTimeout(() => {
+        state.adminPlayerInfoCollectionTimer = null;
+        loadAdminPlayerInfoCollection();
+      }, refreshDelay);
+    }
+    return;
+  }
+  clearTimeout(state.adminPlayerInfoCollectionTimer);
+  state.adminPlayerInfoCollectionTimer = null;
   state.adminPlayerInfoCollectionAttemptedAt = now;
+  state.adminPlayerInfoCollectionPending = false;
   state.adminPlayerInfoCollectionLoading = true;
   try {
     renderAdminPlayerInfoCollection(await fetchJson('/api/admin/player-info-collection'));
@@ -6390,6 +6408,10 @@ async function loadAdminPlayerInfoCollection({ force = false } = {}) {
     }
   } finally {
     state.adminPlayerInfoCollectionLoading = false;
+    if (state.adminPlayerInfoCollectionPending) {
+      state.adminPlayerInfoCollectionPending = false;
+      loadAdminPlayerInfoCollection();
+    }
   }
 }
 
@@ -8660,7 +8682,7 @@ function handleRealtimeEvent(event) {
     queueRealtimeRefresh('players-info', refreshPlayersFromEvent, 200);
     if (state.currentUser?.role === 'admin' && state.activeTab === 'admin') {
       queueRealtimeRefresh('admin-player-info', () => loadAdminPlayers({ showLoading: false, preserveScroll: true }), 200);
-      queueRealtimeRefresh('admin-player-info-collection', loadAdminPlayerInfoCollection, 1_000);
+      loadAdminPlayerInfoCollection();
     }
     if (state.playerProfileUsername
       && !$('#playerProfileOverlay')?.hidden

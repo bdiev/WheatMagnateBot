@@ -316,6 +316,10 @@ function testArchitectureAndUiContracts() {
   assert.match(appSource, /adminPlayersScroller'[\s\S]*addEventListener\('scroll', maybeLoadMoreAdminPlayers/, 'scrolling must progressively load the next server page');
   assert.match(appSource, /insertAdjacentHTML\('beforeend', markup\)/, 'new cards must append without rebuilding loaded cards');
   assert.match(appSource, /player_joined[\s\S]*player_left[\s\S]*loadAdminPlayers\(\{ showLoading: false, preserveScroll: true \}\)/, 'join and leave refreshes must preserve the admin player scroll position');
+  assert.match(appSource, /type === 'player_info_updated'[\s\S]*loadAdminPlayerInfoCollection\(\)/,
+    'imported player values must remove completed lookup cards without a page reload');
+  assert.match(appSource, /adminPlayerInfoCollectionPending[\s\S]*refreshDelay = 750[\s\S]*adminPlayerInfoCollectionTimer/,
+    'rapid player-information events must be coalesced without delaying lookup-card removal for a full polling interval');
   assert.match(appSource, /else if \(reconcile\)[\s\S]*existingCards[\s\S]*adminPlayerCardSignature[\s\S]*list\.insertBefore/, 'background refreshes must reconcile keyed cards instead of rebuilding the scrolling list');
   assert.match(appSource, /function updateAdminPlayerCard[\s\S]*data-admin-player-status[\s\S]*data-admin-player-stat[\s\S]*field\.textContent !== String\(value\)/, 'live player values must update inside stable cards without reloading avatars or menus');
   assert.match(appSource, /refreshedByKey[\s\S]*previousPlayers\.map[\s\S]*refreshedPlayers\.forEach/, 'background player refreshes must retain the visible card order');
