@@ -35,6 +35,7 @@ const state = {
     obsidianDaily: [],
     obsidianHourly: [],
     tpsHourly: [],
+    tpsHistoryCache: null,
     unwhitelistedHourly: []
   },
   chartMeta: {},
@@ -205,6 +206,7 @@ const $$ = selector => Array.from(document.querySelectorAll(selector));
 const CHAT_HISTORY_LIMIT = 500;
 const CHILD_AI_MOBILE_STYLE_BATCH = 40;
 const NEW_PLAYERS_PAGE_SIZE = 24;
+const dateTimeFormatters = new Map();
 const ACCOUNT_COLOR_PALETTE = Object.freeze([
   '#f1c232', '#4b91e5', '#d26cf0', '#55c9ba', '#ef7373', '#f28c48',
   '#8c78e8', '#7cc242', '#e56aa6', '#41b6d7', '#b78b59', '#8dbb61'
@@ -621,14 +623,16 @@ function formatFullDateTime(value) {
   if (!value) return '-';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '-';
-  return new Intl.DateTimeFormat('en-US', {
+  const cacheKey = `full:${state.accountTimezone}`;
+  if (!dateTimeFormatters.has(cacheKey)) dateTimeFormatters.set(cacheKey, new Intl.DateTimeFormat('en-US', {
     year: 'numeric',
     month: 'short',
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
     timeZone: state.accountTimezone
-  }).format(date);
+  }));
+  return dateTimeFormatters.get(cacheKey).format(date);
 }
 
 function formatPlayerProfileChatTimestamp(value) {
@@ -2644,10 +2648,13 @@ function drawLineChart(canvas, data, options = {}) {
 }
 
 function chartDateParts(date) {
-  return Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+  const cacheKey = `chart-parts:${state.accountTimezone}`;
+  if (!dateTimeFormatters.has(cacheKey)) dateTimeFormatters.set(cacheKey, new Intl.DateTimeFormat('en-US', {
     timeZone: state.accountTimezone, year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', hourCycle: 'h23'
-  }).formatToParts(date).filter(part => part.type !== 'literal').map(part => [part.type, part.value]));
+  }));
+  return Object.fromEntries(dateTimeFormatters.get(cacheKey).formatToParts(date)
+    .filter(part => part.type !== 'literal').map(part => [part.type, part.value]));
 }
 
 function localizedChartItem(item) {
@@ -2742,6 +2749,21 @@ function compactLineSeries(data, maxPoints) {
   return compacted;
 }
 
+function getTpsHistory(range) {
+  const source = Array.isArray(state.charts.tpsHourly) ? state.charts.tpsHourly : [];
+  const timezone = state.accountTimezone;
+  let cache = state.charts.tpsHistoryCache;
+  if (!cache || cache.source !== source || cache.timezone !== timezone) {
+    cache = { source, timezone, ranges: {} };
+    state.charts.tpsHistoryCache = cache;
+  }
+  if (!cache.ranges[range]) {
+    const rangeSource = range === 'hours' ? source.slice(-168) : source;
+    cache.ranges[range] = aggregateSeries(rangeSource, range, 'avg');
+  }
+  return cache.ranges[range];
+}
+
 function tpsSeriesSpan(data) {
   const items = Array.isArray(data) ? data : [];
   const first = items.find(item => item.startBucket || item.bucket);
@@ -2766,7 +2788,11 @@ function tpsAxisLabel(item, range, spanMilliseconds) {
   } else {
     options = { hour: '2-digit', minute: '2-digit' };
   }
-  return new Intl.DateTimeFormat('en-US', { ...options, timeZone: state.accountTimezone }).format(date);
+  const cacheKey = `tps-axis:${range}:${spanMilliseconds >= 366 * 86_400_000 ? 'year' : spanMilliseconds >= 3 * 86_400_000 ? 'day' : 'time'}:${state.accountTimezone}`;
+  if (!dateTimeFormatters.has(cacheKey)) {
+    dateTimeFormatters.set(cacheKey, new Intl.DateTimeFormat('en-US', { ...options, timeZone: state.accountTimezone }));
+  }
+  return dateTimeFormatters.get(cacheKey).format(date);
 }
 
 function tpsTooltip(item, range) {
@@ -2790,9 +2816,11 @@ function updateTpsChartCoverage(data, range) {
   }
   const span = tpsSeriesSpan(items);
   const unit = range === 'months' ? 'monthly' : range === 'days' ? 'daily' : 'hourly';
-  const formatter = new Intl.DateTimeFormat('en-US', {
+  const cacheKey = `tps-coverage:${state.accountTimezone}`;
+  if (!dateTimeFormatters.has(cacheKey)) dateTimeFormatters.set(cacheKey, new Intl.DateTimeFormat('en-US', {
     year: 'numeric', month: 'short', day: 'numeric', timeZone: state.accountTimezone
-  });
+  }));
+  const formatter = dateTimeFormatters.get(cacheKey);
   const dates = span.milliseconds > 0
     ? `${formatter.format(span.start)} – ${formatter.format(span.end)}`
     : formatter.format(span.start);
@@ -2884,13 +2912,13 @@ function drawChartById(chartId) {
       break;
     }
     case 'tpsHourlyChart': {
-      const tpsHistory = aggregateSeries(state.charts.tpsHourly, range, 'avg');
+      const tpsHistory = getTpsHistory(range);
       const span = tpsSeriesSpan(tpsHistory);
       updateTpsChartCoverage(tpsHistory, range);
       drawLineChart($('#tpsHourlyChart'), tpsHistory, {
         max: 20,
-        fitWidth: true,
-        compact: range !== 'hours',
+        fitWidth: range !== 'hours',
+        compact: true,
         axisLabel: item => tpsAxisLabel(item, range, span.milliseconds),
         tooltip: item => tpsTooltip(item, range)
       });
@@ -6454,6 +6482,7 @@ function renderServerStats(payload) {
   $('#maxTps').textContent = formatTps(tps.max24h);
 
   state.charts.tpsHourly = payload.hourlyTps || [];
+  state.charts.tpsHistoryCache = null;
   redrawCharts();
 }
 

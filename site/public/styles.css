@@ -2978,7 +2978,7 @@ body.search-focus-active #logoutButton {
 }
 
 .server-tps-panel .chart-scroll {
-  overflow-x: hidden;
+  overflow-x: auto;
 }
 
 .server-tps-panel .chart {
