@@ -65,6 +65,7 @@ const appSource = fs.readFileSync(path.resolve(__dirname, '..', 'public', 'app.j
 const stylesSource = fs.readFileSync(path.resolve(__dirname, '..', 'public', 'styles.css'), 'utf8');
 const serverSource = fs.readFileSync(path.resolve(__dirname, '..', 'server.js'), 'utf8');
 const migrationSource = fs.readFileSync(path.resolve(__dirname, '..', 'migrations', '029_player_profile_session_indexes.sql'), 'utf8');
+const profileIndexMigrationSource = fs.readFileSync(path.resolve(__dirname, '..', 'migrations', '045_player_profile_lookup_indexes.sql'), 'utf8');
 
 assert.match(serverSource, /FROM operational_events[\s\S]*UNION ALL[\s\S]*FROM operational_events_archive[\s\S]*LIMIT 500/,
   'player profiles must load recent and archived join/leave transitions');
@@ -108,8 +109,14 @@ assert.match(stylesSource, /player-profile-skeleton-shimmer[\s\S]*?player-profil
   'loading placeholders and resolved profile data must both be animated');
 assert.match(serverSource, /sessionResourceKeys = aliases\.map[\s\S]*?LOWER\(resource_key\)=ANY\(\$1::text\[\]\)/,
   'session history must use its indexed resource key instead of scanning event JSON');
-assert.match(serverSource, /FROM bot_accounts account[\s\S]*LEFT JOIN bot_account_runtime_state runtime[\s\S]*LOWER\(account\.username\)=ANY\(\$1::text\[\]\)[\s\S]*playerProfileRuntimePresence\(botAccount\)/,
+assert.match(serverSource, /FROM bot_accounts account[\s\S]*LEFT JOIN bot_account_runtime_state runtime[\s\S]*LOWER\(account\.username\)=ANY\(\$3::text\[\]\)[\s\S]*playerProfileRuntimePresence\(botAccount\)/,
   'a bot player profile must merge the matching account runtime presence');
+assert.match(serverSource, /const \[profileResult, chatResult, recentChatResult, gameSessionEventsResult\] = await Promise\.all/,
+  'a player profile must stay within a small database connection budget');
+assert.match(serverSource, /SELECT id, message, created_at, is_visible[\s\S]*LIMIT \$4[\s\S]*UNION ALL[\s\S]*LIMIT \$4[\s\S]*recent_messages/,
+  'recent profile messages must use bounded UUID and legacy-name index scans');
+assert.match(profileIndexMigrationSource, /game_chat_messages_player_uuid_profile_idx[\s\S]*game_chat_messages_legacy_username_profile_idx[\s\S]*nearby_player_sightings_username_seen_idx/,
+  'player profile lookup indexes must cover chat and nearby history');
 assert.match(appSource, /function lastSeenProfileValue\(profile\)\s*\{\s*if \(profile\.isOnline\) return 'Online now';/,
   'an online profile must never present its previous Last Seen age as the current status');
 assert.match(appSource, /<span>Last Seen<\/span>[\s\S]*profile\.isOnline\s*\? '<strong>Online now<\/strong>'/,

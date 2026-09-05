@@ -3596,7 +3596,10 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
   ])];
   const sessionResourceKeys = aliases.map(alias => `player:${alias}`);
 
-  const [profileResult, chatResult, recentChatResult, nearbyResult, ignoredResult, namesResult, gameSessionEventsResult, accountRuntimeResult] = await Promise.all([
+  // Keep the profile request within a small connection budget. A single card
+  // used to fan out to eight concurrent pool clients, which could exhaust the
+  // default pg pool and make otherwise fast requests wait behind it.
+  const [profileResult, chatResult, recentChatResult, gameSessionEventsResult] = await Promise.all([
     pool.query(`
       WITH activity AS (
         SELECT id, username, player_uuid, last_seen, last_online, registration_at, observed_message_count, is_online,
@@ -3626,7 +3629,17 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
         TO_CHAR(pa.registration_at AT TIME ZONE 'UTC', 'MM/DD/YYYY HH24:MI:SS') AS registration_display,
         pt.tracking_since,
         COALESCE(pa.is_online, FALSE) AS is_online,
-        COALESCE(pt.total_seconds, 0) AS total_seconds
+        COALESCE(pt.total_seconds, 0) AS total_seconds,
+        COALESCE(ignored.is_ignored, FALSE) AS is_ignored,
+        nearby.distance AS nearby_distance,
+        nearby.last_seen AS nearby_last_seen,
+        COALESCE(names.name_history, '[]'::json) AS name_history,
+        bot.account_id AS bot_account_id,
+        bot.account_username AS bot_account_username,
+        bot.status AS bot_status,
+        bot.started_at AS bot_started_at,
+        bot.updated_at AS bot_updated_at,
+        bot.status_payload AS bot_status_payload
       FROM (SELECT 1) seed
       LEFT JOIN activity pa ON TRUE
       LEFT JOIN LATERAL (
@@ -3642,48 +3655,126 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
         WHERE ($2::uuid IS NOT NULL AND candidate.player_uuid = $2::uuid)
            OR (candidate.player_uuid IS NULL AND LOWER(candidate.username) = ANY($3::text[]))
       ) pt ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT TRUE AS is_ignored
+        FROM ignored_users
+        WHERE LOWER(username) = ANY($3::text[])
+        LIMIT 1
+      ) ignored ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT distance, last_seen
+        FROM nearby_player_sightings
+        WHERE LOWER(username) = ANY($3::text[])
+        ORDER BY last_seen DESC
+        LIMIT 1
+      ) nearby ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT JSON_AGG(
+          JSON_BUILD_OBJECT(
+            'username', pnh.username,
+            'firstSeen', pnh.first_seen,
+            'lastSeen', pnh.last_seen
+          ) ORDER BY pnh.last_seen DESC, pnh.first_seen DESC
+        ) AS name_history
+        FROM player_name_history pnh
+        WHERE pnh.player_uuid = $2::uuid
+      ) names ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT account.id AS account_id,
+               account.username AS account_username,
+               runtime.status,
+               runtime.started_at,
+               runtime.updated_at,
+               runtime.status_payload
+        FROM bot_accounts account
+        LEFT JOIN bot_account_runtime_state runtime ON runtime.account_id=account.id
+        WHERE account.deleted_at IS NULL
+          AND LOWER(account.username)=ANY($3::text[])
+        ORDER BY account.is_default DESC,account.sort_order,account.created_at,account.id
+        LIMIT 1
+      ) bot ON TRUE
     `, [currentUsername, playerUuid, aliases]),
     pool.query(`
       SELECT
-        COALESCE(SUM(message_count), 0)::bigint AS total,
-        COALESCE(SUM(message_count) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours'), 0)::bigint AS last_24h,
-        MAX(created_at) AS last_message_at
-      FROM game_chat_messages
-      WHERE ($1::uuid IS NOT NULL AND player_uuid = $1::uuid)
-         OR (player_uuid IS NULL AND LOWER(username) = ANY($2::text[]))
+        COALESCE(
+          (
+            SELECT observed_message_count
+            FROM player_activity
+            WHERE ($1::uuid IS NOT NULL AND player_uuid = $1::uuid)
+               OR ($1::uuid IS NULL AND LOWER(username) = ANY($2::text[]))
+            ORDER BY is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
+            LIMIT 1
+          ),
+          (
+            SELECT SUM(message_count)
+            FROM game_chat_messages
+            WHERE ($1::uuid IS NOT NULL AND player_uuid = $1::uuid)
+               OR (player_uuid IS NULL AND LOWER(username) = ANY($2::text[]))
+          ),
+          0
+        )::bigint AS total,
+        COALESCE((
+          SELECT SUM(message_count)
+          FROM game_chat_messages
+          WHERE (
+              ($1::uuid IS NOT NULL AND player_uuid = $1::uuid)
+              OR (player_uuid IS NULL AND LOWER(username) = ANY($2::text[]))
+            )
+            AND created_at >= NOW() - INTERVAL '24 hours'
+        ), 0)::bigint AS last_24h,
+        (
+          SELECT created_at
+          FROM (
+            (
+              SELECT created_at, id
+              FROM game_chat_messages
+              WHERE $1::uuid IS NOT NULL
+                AND player_uuid = $1::uuid
+              ORDER BY created_at DESC, id DESC
+              LIMIT 1
+            )
+            UNION ALL
+            (
+              SELECT created_at, id
+              FROM game_chat_messages
+              WHERE player_uuid IS NULL
+                AND LOWER(username) = ANY($2::text[])
+              ORDER BY created_at DESC, id DESC
+              LIMIT 1
+            )
+          ) latest_message
+          ORDER BY created_at DESC, id DESC
+          LIMIT 1
+        ) AS last_message_at
     `, [playerUuid, aliases]),
     pool.query(`
       SELECT id, message, created_at, is_visible
-      FROM game_chat_messages
-      WHERE (
-          ($1::uuid IS NOT NULL AND player_uuid = $1::uuid)
-          OR (player_uuid IS NULL AND LOWER(username) = ANY($2::text[]))
+      FROM (
+        (
+          SELECT id, message, created_at, is_visible
+          FROM game_chat_messages
+          WHERE $1::uuid IS NOT NULL
+            AND player_uuid = $1::uuid
+            AND message !~ '^Skipped [0-9]+ (message|messages) due to chat flooding\\.$'
+            AND ($3::bigint IS NULL OR id < $3::bigint)
+          ORDER BY created_at DESC, id DESC
+          LIMIT $4
         )
-        AND message !~ '^Skipped [0-9]+ (message|messages) due to chat flooding\\.$'
-        AND ($3::bigint IS NULL OR id < $3::bigint)
-      ORDER BY created_at DESC
+        UNION ALL
+        (
+          SELECT id, message, created_at, is_visible
+          FROM game_chat_messages
+          WHERE player_uuid IS NULL
+            AND LOWER(username) = ANY($2::text[])
+            AND message !~ '^Skipped [0-9]+ (message|messages) due to chat flooding\\.$'
+            AND ($3::bigint IS NULL OR id < $3::bigint)
+          ORDER BY created_at DESC, id DESC
+          LIMIT $4
+        )
+      ) recent_messages
+      ORDER BY created_at DESC, id DESC
       LIMIT $4
     `, [playerUuid, aliases, beforeMessageId, messageLimit]),
-    pool.query(`
-      SELECT distance, last_seen
-      FROM nearby_player_sightings
-      WHERE LOWER(username) = ANY($1::text[])
-      ORDER BY last_seen DESC
-      LIMIT 1
-    `, [aliases]),
-    pool.query(`
-      SELECT EXISTS (
-        SELECT 1
-        FROM ignored_users
-        WHERE LOWER(username) = ANY($1::text[])
-      ) AS is_ignored
-    `, [aliases]),
-    pool.query(`
-      SELECT username, first_seen, last_seen
-      FROM player_name_history
-      WHERE player_uuid = $1::uuid
-      ORDER BY last_seen DESC, first_seen DESC
-    `, [playerUuid]),
     pool.query(`
       SELECT event_type,occurred_at,
              (COUNT(*) FILTER (WHERE event_type='player_joined') OVER ())::bigint AS total_sessions
@@ -3702,24 +3793,25 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
       ) session_events
       ORDER BY occurred_at DESC,id DESC
       LIMIT 500
-    `, [sessionResourceKeys]),
-    pool.query(`
-      SELECT account.id,account.username,runtime.status,runtime.started_at,
-             runtime.updated_at,runtime.status_payload
-      FROM bot_accounts account
-      LEFT JOIN bot_account_runtime_state runtime ON runtime.account_id=account.id
-      WHERE account.deleted_at IS NULL
-        AND LOWER(account.username)=ANY($1::text[])
-      ORDER BY account.is_default DESC,account.sort_order,account.created_at,account.id
-      LIMIT 1
-    `, [aliases])
+    `, [sessionResourceKeys])
   ]);
 
   const profile = profileResult.rows[0] || { username };
   const chat = chatResult.rows[0] || {};
-  const nearby = nearbyResult.rows[0] || null;
+  const nearby = profile.nearby_last_seen == null
+    ? null
+    : { distance: profile.nearby_distance, last_seen: profile.nearby_last_seen };
   const seconds = toInt(profile.total_seconds);
-  const botAccount = accountRuntimeResult.rows[0] || null;
+  const botAccount = profile.bot_account_id == null
+    ? null
+    : {
+        id: profile.bot_account_id,
+        username: profile.bot_account_username,
+        status: profile.bot_status,
+        started_at: profile.bot_started_at,
+        updated_at: profile.bot_updated_at,
+        status_payload: profile.bot_status_payload
+      };
   const runtimePresence = playerProfileRuntimePresence(botAccount);
   const isOnline = Boolean(profile.is_online) || runtimePresence.isOnline;
   const trackingSince = runtimePresence.isOnline
@@ -3737,13 +3829,9 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
   return {
     username: profile.username || username,
     uuid: profile.player_uuid || null,
-    nameHistory: namesResult.rows.map(row => ({
-      username: row.username,
-      firstSeen: row.first_seen,
-      lastSeen: row.last_seen
-    })),
+    nameHistory: Array.isArray(profile.name_history) ? profile.name_history : [],
     isWhitelisted: Boolean(profile.is_whitelisted),
-    isIgnored: Boolean(ignoredResult.rows[0]?.is_ignored),
+    isIgnored: Boolean(profile.is_ignored),
     isBot: Boolean(botAccount) || (Array.isArray(profile.admin_tags) && profile.admin_tags.some(tag => String(tag).trim().toLowerCase() === 'bot')),
     isNewPlayer: isNewPlayerRegistration(profile.registration_at),
     isOnline,
