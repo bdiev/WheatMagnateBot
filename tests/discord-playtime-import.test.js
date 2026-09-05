@@ -251,6 +251,10 @@ function testBotIntegrationOrder() {
     'User not found responses must persistently remove a username from missing lookups');
   assert.match(botSource, /event\.metric === 'joinDate' \|\| event\.metric === 'messages'[\s\S]*playerInfoObservationStore\.requestRefresh\(event\.metric, event\.username\)/,
     'Discord !jd and !messages commands must permit replacement of previously imported values');
+  assert.match(botSource, /registration_at AT TIME ZONE 'UTC'\)::date[\s\S]*IS DISTINCT FROM \(\$3::timestamptz AT TIME ZONE 'UTC'\)::date/,
+    'an observed !jd timestamp must preserve the existing exact time when its UTC calendar date already matches');
+  assert.match(botSource, /unchanged: updated\.rowCount === 0[\s\S]*!result\.allowed \|\| Boolean\(result\.value\?\.unchanged\)/,
+    'a same-day !jd response must be reported as unchanged');
 }
 
 (async () => {

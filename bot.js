@@ -3418,44 +3418,63 @@ async function reconcileObservedJoinDate(targetUsername, observedDate) {
     const result = await playerInfoObservationStore.withPermission(
       'joinDate',
       safeUsername,
-      async (client, identity) => client.query(`
-        WITH updated_by_uuid AS (
-          UPDATE player_activity activity
-          SET registration_at = $3::timestamptz
-          WHERE $2::uuid IS NOT NULL
-            AND activity.player_uuid = $2::uuid
-            AND activity.registration_at IS DISTINCT FROM $3::timestamptz
-          RETURNING username
-        ), inserted AS (
-          INSERT INTO player_activity (username, player_uuid, registration_at)
-          SELECT $1::text, $2::uuid, $3::timestamptz
-          WHERE NOT EXISTS (
-            SELECT 1 FROM player_activity activity
-            WHERE ($2::uuid IS NOT NULL AND activity.player_uuid = $2::uuid)
-               OR ($2::uuid IS NULL AND LOWER(activity.username) = LOWER($1::text))
+      async (client, identity) => {
+        const updated = await client.query(`
+          WITH updated_by_uuid AS (
+            UPDATE player_activity activity
+            SET registration_at = $3::timestamptz
+            WHERE $2::uuid IS NOT NULL
+              AND activity.player_uuid = $2::uuid
+              AND (
+                activity.registration_at IS NULL
+                OR (activity.registration_at AT TIME ZONE 'UTC')::date
+                   IS DISTINCT FROM ($3::timestamptz AT TIME ZONE 'UTC')::date
+              )
+            RETURNING username
+          ), inserted AS (
+            INSERT INTO player_activity (username, player_uuid, registration_at)
+            SELECT $1::text, $2::uuid, $3::timestamptz
+            WHERE NOT EXISTS (
+              SELECT 1 FROM player_activity activity
+              WHERE ($2::uuid IS NOT NULL AND activity.player_uuid = $2::uuid)
+                 OR ($2::uuid IS NULL AND LOWER(activity.username) = LOWER($1::text))
+            )
+            ON CONFLICT (LOWER(username))
+            DO UPDATE SET player_uuid = COALESCE(EXCLUDED.player_uuid, player_activity.player_uuid),
+                          registration_at = EXCLUDED.registration_at
+            WHERE player_activity.registration_at IS NULL
+               OR (player_activity.registration_at AT TIME ZONE 'UTC')::date
+                  IS DISTINCT FROM (EXCLUDED.registration_at AT TIME ZONE 'UTC')::date
+            RETURNING username
+          ), updated_by_name AS (
+            UPDATE player_activity activity
+            SET registration_at = $3::timestamptz
+            WHERE $2::uuid IS NULL
+              AND LOWER(activity.username) = LOWER($1::text)
+              AND (
+                activity.registration_at IS NULL
+                OR (activity.registration_at AT TIME ZONE 'UTC')::date
+                   IS DISTINCT FROM ($3::timestamptz AT TIME ZONE 'UTC')::date
+              )
+            RETURNING username
           )
-          ON CONFLICT (LOWER(username))
-          DO UPDATE SET player_uuid = COALESCE(EXCLUDED.player_uuid, player_activity.player_uuid),
-                        registration_at = EXCLUDED.registration_at
-          WHERE player_activity.registration_at IS DISTINCT FROM EXCLUDED.registration_at
-          RETURNING username
-        ), updated_by_name AS (
-          UPDATE player_activity activity
-          SET registration_at = $3::timestamptz
-          WHERE $2::uuid IS NULL
-            AND LOWER(activity.username) = LOWER($1::text)
-            AND activity.registration_at IS DISTINCT FROM $3::timestamptz
-          RETURNING username
-        )
-        SELECT username FROM updated_by_uuid
-        UNION ALL SELECT username FROM inserted
-        UNION ALL SELECT username FROM updated_by_name
-      `, [identity.username, identity.playerUuid, observedDate])
+          SELECT username FROM updated_by_uuid
+          UNION ALL SELECT username FROM inserted
+          UNION ALL SELECT username FROM updated_by_name
+        `, [identity.username, identity.playerUuid, observedDate]);
+        return {
+          username: updated.rows[0]?.username || identity.username,
+          unchanged: updated.rowCount === 0
+        };
+      }
     );
-    if (result.allowed) {
-      console.log(`[JoinDate] ${result.reason === 'site-refresh' ? 'Refreshed' : 'Initially imported'} ${result.username} from observed !jd: ${observedDate.toISOString()}`);
+    if (result.allowed && !result.value?.unchanged) {
+      console.log(`[JoinDate] ${result.reason === 'site-refresh' ? 'Refreshed' : 'Initially imported'} ${result.value?.username || result.username} from observed !jd: ${observedDate.toISOString()}`);
     }
-    return { username:result.username || safeUsername,unchanged:!result.allowed };
+    return {
+      username:result.value?.username || result.username || safeUsername,
+      unchanged:!result.allowed || Boolean(result.value?.unchanged)
+    };
   } catch (err) {
     console.error('[JoinDate] Failed to reconcile observed !jd:', err.message);
     throw err;
