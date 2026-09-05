@@ -298,6 +298,10 @@ function testArchitectureAndUiContracts() {
     'the initial player page must fill the scroller without many small requests');
   assert.match(appSource, /state\.adminPlayersLoading \|\| state\.adminPlayersRetryTimer[\s\S]*state\.adminPlayersPendingLoad = requestedLoad/,
     'overlapping player refreshes must be collapsed into the newest pending request');
+  assert.match(appSource, /adminPlayersRefresh'\)\?\.addEventListener\('click',[\s\S]*loadAdminPlayers\(\{ showLoading: false, preserveScroll: true \}\)/,
+    'manual refresh must retain existing player cards and their scroll position while loading');
+  assert.match(appSource, /adminPlayersAppending:\s*false[\s\S]*const loadingMore = state\.adminPlayersLoading && state\.adminPlayersAppending/,
+    'the pagination status must not appear during a background refresh');
   assert.match(appSource, /response\.headers\.get\('Retry-After'\)[\s\S]*error\.retryAfterSeconds/,
     'API errors must retain the server retry delay');
   assert.match(appSource, /err\?\.status === 429[\s\S]*adminPlayersRetryTimer = setTimeout[\s\S]*Retrying in \$\{retryAfterSeconds\} seconds/,

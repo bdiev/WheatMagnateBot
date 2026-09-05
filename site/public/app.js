@@ -95,6 +95,7 @@ const state = {
   adminControlRefreshedAt: 0,
   adminPlayers: [],
   adminPlayersLoading: false,
+  adminPlayersAppending: false,
   adminPlayersPendingLoad: null,
   adminPlayersRetryTimer: null,
   adminPlayersRequestId: 0,
@@ -6744,7 +6745,7 @@ function renderAdminPlayers(players = state.adminPlayers, { append = false, reco
 function updateAdminPlayersScrollStatus() {
   const status = $('#adminPlayersScrollStatus');
   if (!status) return;
-  const loadingMore = state.adminPlayersLoading && state.adminPlayers.length > 0;
+  const loadingMore = state.adminPlayersLoading && state.adminPlayersAppending && state.adminPlayers.length > 0;
   status.hidden = !loadingMore && !state.adminPlayersHasMore;
   status.textContent = loadingMore ? 'Loading more players…' : 'Scroll to load more';
 }
@@ -6787,6 +6788,7 @@ async function loadAdminPlayers({ query = $('#adminPlayersSearch')?.value || '',
   const requestId = ++state.adminPlayersRequestId;
   let loaded = false;
   state.adminPlayersLoading = true;
+  state.adminPlayersAppending = append;
   if (refresh) refresh.disabled = true;
   updateAdminPlayersScrollStatus();
   try {
@@ -6869,6 +6871,7 @@ async function loadAdminPlayers({ query = $('#adminPlayersSearch')?.value || '',
   } finally {
     if (requestId === state.adminPlayersRequestId) {
       state.adminPlayersLoading = false;
+      state.adminPlayersAppending = false;
       if (refresh) refresh.disabled = false;
       updateAdminPlayersScrollStatus();
       const pendingLoad = state.adminPlayersPendingLoad;
@@ -9225,7 +9228,7 @@ document.addEventListener('pointerdown', event => {
 });
 $('#adminUsersRefresh')?.addEventListener('click', loadAdminUsers);
 $('#adminPlayersRefresh')?.addEventListener('click', () => {
-  loadAdminPlayers();
+  loadAdminPlayers({ showLoading: false, preserveScroll: true });
   loadAdminPlayerInfoCollection({ force: true });
 });
 $('#adminPlayersSort')?.addEventListener('change', event => {
