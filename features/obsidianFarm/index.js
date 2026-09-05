@@ -116,7 +116,6 @@ let worldInteractionQueue = Promise.resolve();
 const pickaxeBlocksMined = new Map();
 let farmCycleSequence = 0;
 let farmFailureStartedAt = null;
-let farmFailureCorrelationId = null;
 let farmRecoveryCheckPending = true;
 const activeFarmNotificationTypes = new Set();
 // Packet-level farm tracing is intentionally opt-in. A continuously running
@@ -1810,9 +1809,6 @@ function writeFarmDebug(event, details = {}) {
     username: identity.username,
     event,
     ...details,
-    // Unique per JSONL line. correlationId intentionally remains separate:
-    // it groups all records from one failure/recovery chain, while logId finds
-    // one exact record inside a downloaded debug file.
     logId: randomUUID()
   };
   const line = JSON.stringify(record);
@@ -2904,7 +2900,6 @@ async function persistentLoop(bot, notify) {
     cycleId,
     startedCyclesCompleted: farm.cyclesCompleted
   };
-  if (farmFailureCorrelationId) context.correlationId = farmFailureCorrelationId;
   writeFarmDebug('cycle_started', {
     ...context,
     config: farm.config ? { ...farm.config } : null,
@@ -2916,12 +2911,9 @@ async function persistentLoop(bot, notify) {
     // Refresh/barrel inspection cannot interleave with any part of a farm cycle.
     await withWorldInteractionLock(() => runCycle(bot, () => {}, context));
     farm.lastErrorMessage = null;
-    const recoveredCorrelationId = farmFailureCorrelationId;
     farmFailureStartedAt = null;
-    farmFailureCorrelationId = null;
     writeFarmDebug('cycle_completed', {
       ...context,
-      correlationId: recoveredCorrelationId,
       durationMs: Date.now() - cycleStartedAt,
       cyclesCompleted: farm.cyclesCompleted
     });
@@ -2943,8 +2935,7 @@ async function persistentLoop(bot, notify) {
         key: 'obsidian-farm',
         resolved: true,
         title,
-        message,
-        metadata: recoveredCorrelationId ? { correlationId: recoveredCorrelationId } : undefined
+        message
       });
     }
     farmRecoveryCheckPending = false;
@@ -2955,7 +2946,6 @@ async function persistentLoop(bot, notify) {
     farm.lastErrorMessage = err.message;
     if (err.code !== CAULDRON_RETRY_CODE) {
       farmFailureStartedAt ||= Date.now();
-      farmFailureCorrelationId ||= randomUUID();
     }
     const stalledSeconds = farmFailureStartedAt == null
       ? 0
@@ -2977,8 +2967,7 @@ async function persistentLoop(bot, notify) {
         error: err.message,
         errorCode: err.code || null,
         phase: farm.phase,
-        retryInMs: retryDelay,
-        correlationId: farmFailureCorrelationId
+        retryInMs: retryDelay
       }
     );
     const debugLogId = retryLogEntry?.logId || null;
@@ -2988,13 +2977,13 @@ async function persistentLoop(bot, notify) {
     } else if (err.code === LOW_PICKAXE_DURABILITY_CODE) {
       activeFarmNotificationTypes.add('low_pickaxe_durability');
       const percent = Number(err.message.match(/has\s+([\d.]+)%/i)?.[1]);
-      notify?.({ eventType: 'low_pickaxe_durability', key: 'obsidian-farm', title: 'Low pickaxe durability', message: err.message, metadata: { errorCode: err.code, percent, correlationId: farmFailureCorrelationId, debugLogId } });
+      notify?.({ eventType: 'low_pickaxe_durability', key: 'obsidian-farm', title: 'Low pickaxe durability', message: err.message, metadata: { errorCode: err.code, percent, debugLogId } });
     } else if (err.code === RESOURCE_EXHAUSTED_CODE && /pickaxe/i.test(err.message)) {
       activeFarmNotificationTypes.add('no_pickaxes');
-      notify?.({ eventType: 'no_pickaxes', key: 'obsidian-farm', title: 'No usable pickaxes', message: err.message, metadata: { errorCode: err.code, count: 0, correlationId: farmFailureCorrelationId, debugLogId } });
+      notify?.({ eventType: 'no_pickaxes', key: 'obsidian-farm', title: 'No usable pickaxes', message: err.message, metadata: { errorCode: err.code, count: 0, debugLogId } });
     } else {
       activeFarmNotificationTypes.add('farm_stalled');
-      notify?.({ eventType: 'farm_stalled', key: 'obsidian-farm', title: 'Obsidian farm stalled', message: err.message, metadata: { errorCode: err.code || null, phase: farm.phase, seconds: stalledSeconds, correlationId: farmFailureCorrelationId, debugLogId } });
+      notify?.({ eventType: 'farm_stalled', key: 'obsidian-farm', title: 'Obsidian farm stalled', message: err.message, metadata: { errorCode: err.code || null, phase: farm.phase, seconds: stalledSeconds, debugLogId } });
     }
   }
 
@@ -3157,7 +3146,6 @@ return {
         pickaxeBlocksMined,
         farmCycleSequence,
         farmFailureStartedAt,
-        farmFailureCorrelationId,
         activeFarmNotificationTypes,
         cauldronReachStats,
         cauldronFailures

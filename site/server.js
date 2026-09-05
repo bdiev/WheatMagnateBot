@@ -15,8 +15,6 @@ const { assertModuleAvailable } = require('./accounts/module-policy');
 const { runMigrations } = require('./migrations');
 const { SseHub, handleSseRequest } = require('./sse');
 const { calculateAnalytics, calculateDowntime, calculateHourlyProduction } = require('./obsidian-analytics');
-const { eventTypeFromLog, newCorrelationId, recordOperationalEvent, severityFromLevel } = require('./operational-events');
-const { assertTimelineAccess, normalizeTimelineFilters, queryTimeline } = require('./incident-timeline');
 const { getLogRetentionConfig, pruneExpiredLogs } = require('./log-retention');
 const { EVENT_TYPES: PUSH_EVENT_TYPES, PUSH_TEST_TYPES, WebPushService } = require('./web-push');
 const { buildPlayerMilestones } = require('./player-milestones');
@@ -67,7 +65,7 @@ let databaseEventTimer = null;
 let databaseEventPollRunning = false;
 let databaseEventState = null;
 let lastDatabaseEventErrorAt = 0;
-let operationalRetentionTimer = null;
+let logRetentionTimer = null;
 let liveDashboardCache = null;
 let liveDashboardCacheAt = 0;
 let liveDashboardRequest = null;
@@ -424,19 +422,10 @@ async function recordSystemLog({ level = 'info', category = 'site', actor = null
   const safeCategory = String(category || 'site').trim().slice(0, 64) || 'site';
   const safeActor = actor ? String(actor).trim().slice(0, 64) : null;
   try {
-    const inserted = await pool.query(`
+    await pool.query(`
       INSERT INTO site_system_logs (level, category, actor_username, message, details, account_id)
       VALUES ($1, $2, $3, $4, $5, COALESCE($6::uuid, '00000000-0000-4000-8000-000000000001'::uuid))
-      RETURNING id,created_at
     `, [safeLevel, safeCategory, safeActor, String(message).slice(0, 2000), details || null, accountId]);
-    const event = await recordOperationalEvent(pool, {
-      eventType: eventTypeFromLog(safeCategory, message), severity: severityFromLevel(safeLevel), source: 'system_log',
-      title: String(message).slice(0, 255), details: details || {}, actor: safeActor,
-      resourceKey: details?.username || details?.targetUsername || details?.commandId || null,
-      correlationId: details?.correlationId, sourceRecordType: 'site_system_logs', sourceRecordId: inserted.rows[0]?.id,
-      sensitive: ['security', 'admin_users', 'admin_data', 'command_bus', 'obsidian_analytics', 'notification_rules', 'incidents'].includes(safeCategory), occurredAt: inserted.rows[0]?.created_at
-    });
-    if (event) sseHub.publish('operational_event_created', { id: String(event.id), correlationId: event.correlation_id }, { roles: ['admin'] });
   } catch (err) {
     console.error('[SiteLog] Failed to write system log:', err.message);
   }
@@ -890,7 +879,6 @@ async function ensureOptionalTables() {
       status VARCHAR(20) NOT NULL DEFAULT 'pending',
       result JSONB,
       error TEXT,
-      correlation_id VARCHAR(64),
       account_id UUID NOT NULL DEFAULT '00000000-0000-4000-8000-000000000001' REFERENCES bot_accounts(id),
       locked_by VARCHAR(128),
       lease_expires_at TIMESTAMPTZ,
@@ -906,7 +894,6 @@ async function ensureOptionalTables() {
     ON bot_commands (status, created_at)
   `);
   await pool.query(`ALTER TABLE bot_commands
-    ADD COLUMN IF NOT EXISTS correlation_id VARCHAR(64),
     ADD COLUMN IF NOT EXISTS locked_by VARCHAR(128),
     ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0,
@@ -1422,24 +1409,16 @@ async function queueBotCommand(currentUser, commandType, payload = {}, { source 
     throw err;
   }
 
-  const correlationId = newCorrelationId();
   const result = await pool.query(`
-    INSERT INTO bot_commands (source, requested_by, command_type, payload, correlation_id, account_id, idempotency_key)
-    VALUES ($1, $2, $3, $4, $5,
-      COALESCE($6::uuid,(SELECT id FROM bot_accounts ORDER BY is_default DESC,sort_order LIMIT 1)),$7)
+    INSERT INTO bot_commands (source, requested_by, command_type, payload, account_id, idempotency_key)
+    VALUES ($1, $2, $3, $4,
+      COALESCE($5::uuid,(SELECT id FROM bot_accounts ORDER BY is_default DESC,sort_order LIMIT 1)),$6)
     ON CONFLICT (account_id,idempotency_key) WHERE idempotency_key IS NOT NULL
     DO UPDATE SET idempotency_key=EXCLUDED.idempotency_key
-    RETURNING id, source, requested_by, command_type, payload, status, created_at, correlation_id, account_id
-  `, [source, currentUser?.username || null, safeCommandType, payload || {}, correlationId, accountId, idempotencyKey]);
+    RETURNING id, source, requested_by, command_type, payload, status, created_at, account_id
+  `, [source, currentUser?.username || null, safeCommandType, payload || {}, accountId, idempotencyKey]);
 
   const row = result.rows[0];
-  const event = await recordOperationalEvent(pool, {
-    eventType: 'bot_command_queued', severity: 'info', source: 'bot_commands', title: `Queued bot command ${safeCommandType}`,
-    details: { commandId: String(row.id), commandType: safeCommandType }, actor: currentUser?.username,
-    resourceKey: `command:${row.id}`, correlationId, sourceRecordType: 'bot_commands', sourceRecordId: row.id,
-    sensitive: true, occurredAt: row.created_at
-  });
-  if (event) sseHub.publish('operational_event_created', { id: String(event.id), correlationId }, { roles: ['admin'] });
   return {
     queued: true,
     command: {
@@ -1449,7 +1428,6 @@ async function queueBotCommand(currentUser, commandType, payload = {}, { source 
       commandType: row.command_type,
       payload: row.payload,
       status: row.status,
-      correlationId: row.correlation_id,
       createdAt: row.created_at,
       accountId: row.account_id
     }
@@ -2224,17 +2202,9 @@ async function getPlayerStats() {
     `),
     pool.query(`
       WITH recorded_events AS (
-        SELECT e.occurred_at,
-               LOWER(COALESCE(NULLIF(e.details->>'username', ''), e.actor, REGEXP_REPLACE(e.resource_key, '^player:', ''))) AS username_key
-        FROM operational_events e
-        WHERE e.source = 'player_activity'
-          AND e.event_type = 'player_joined'
-        UNION ALL
-        SELECT e.occurred_at,
-               LOWER(COALESCE(NULLIF(e.details->>'username', ''), e.actor, REGEXP_REPLACE(e.resource_key, '^player:', ''))) AS username_key
-        FROM operational_events_archive e
-        WHERE e.source = 'player_activity'
-          AND e.event_type = 'player_joined'
+        SELECT occurred_at,LOWER(username) AS username_key
+        FROM player_session_events
+        WHERE event_type = 'player_joined'
       ),
       historical_events AS (
         SELECT occurred_at, username_key
@@ -3238,7 +3208,6 @@ function safeTokenEqual(actual, expected) {
 
 async function updateObsidianAnalytics(currentUser, body) {
   assertAdminUser(currentUser);
-  const correlationId = newCorrelationId();
   if (body.action === 'goal') {
     const name = String(body.name || '').trim().slice(0, 120);
     const target = Math.trunc(Number(body.targetTotal));
@@ -3246,27 +3215,27 @@ async function updateObsidianAnalytics(currentUser, body) {
     const baselineResult = await pool.query(`SELECT COALESCE(total_mined,0)::bigint AS total_mined FROM obsidian_farm_state WHERE id=1`);
     const baselineMined = toInt(baselineResult.rows[0]?.total_mined);
     await pool.query(`INSERT INTO obsidian_farm_goals(name,target_total,baseline_mined,created_by) VALUES($1,$2,$3,$4)`, [name, target, baselineMined, currentUser.id]);
-    await pool.query(`INSERT INTO obsidian_farm_annotations(event_type,title,details,correlation_id) VALUES('settings_changed','Production goal changed',$1::jsonb,$2)`, [JSON.stringify({ name, targetTotal: target, baselineMined, actor: currentUser.username, correlationId }), correlationId]);
-    await recordSystemLog({ level: 'audit', category: 'obsidian_analytics', actor: currentUser.username, message: `Created obsidian goal ${name}.`, details: { targetTotal: target, baselineMined, correlationId } });
+    await pool.query(`INSERT INTO obsidian_farm_annotations(event_type,title,details) VALUES('settings_changed','Production goal changed',$1::jsonb)`, [JSON.stringify({ name, targetTotal: target, baselineMined, actor: currentUser.username })]);
+    await recordSystemLog({ level: 'audit', category: 'obsidian_analytics', actor: currentUser.username, message: `Created obsidian goal ${name}.`, details: { targetTotal: target, baselineMined } });
   } else if (body.action === 'goal_state') {
     await pool.query(`UPDATE obsidian_farm_goals SET active=$1,updated_at=NOW() WHERE id=$2`, [Boolean(body.active), body.id]);
-    await pool.query(`INSERT INTO obsidian_farm_annotations(event_type,title,details,correlation_id) VALUES('settings_changed','Production goal state changed',$1::jsonb,$2)`, [JSON.stringify({ id: body.id, active: Boolean(body.active), actor: currentUser.username, correlationId }), correlationId]);
-    await recordSystemLog({ level: 'audit', category: 'obsidian_analytics', actor: currentUser.username, message: 'Changed obsidian goal state.', details: { id: body.id, active: Boolean(body.active), correlationId } });
+    await pool.query(`INSERT INTO obsidian_farm_annotations(event_type,title,details) VALUES('settings_changed','Production goal state changed',$1::jsonb)`, [JSON.stringify({ id: body.id, active: Boolean(body.active), actor: currentUser.username })]);
+    await recordSystemLog({ level: 'audit', category: 'obsidian_analytics', actor: currentUser.username, message: 'Changed obsidian goal state.', details: { id: body.id, active: Boolean(body.active) } });
   } else if (body.action === 'goal_delete') {
     const id = Number(body.id);
     if (!Number.isSafeInteger(id)) throw Object.assign(new Error('Invalid goal id.'), { statusCode: 400 });
     const deleted = await pool.query(`DELETE FROM obsidian_farm_goals WHERE id=$1 RETURNING id,name,target_total,active`, [id]);
     if (!deleted.rowCount) throw Object.assign(new Error('Production goal not found.'), { statusCode: 404 });
     const goal = deleted.rows[0];
-    await pool.query(`INSERT INTO obsidian_farm_annotations(event_type,title,details,correlation_id) VALUES('settings_changed','Production goal deleted',$1::jsonb,$2)`, [JSON.stringify({ id, name: goal.name, targetTotal: String(goal.target_total), actor: currentUser.username, correlationId }), correlationId]);
-    await recordSystemLog({ level: 'audit', category: 'obsidian_analytics', actor: currentUser.username, message: `Deleted obsidian goal ${goal.name}.`, details: { id, targetTotal: String(goal.target_total), wasActive: goal.active, correlationId } });
+    await pool.query(`INSERT INTO obsidian_farm_annotations(event_type,title,details) VALUES('settings_changed','Production goal deleted',$1::jsonb)`, [JSON.stringify({ id, name: goal.name, targetTotal: String(goal.target_total), actor: currentUser.username })]);
+    await recordSystemLog({ level: 'audit', category: 'obsidian_analytics', actor: currentUser.username, message: `Deleted obsidian goal ${goal.name}.`, details: { id, targetTotal: String(goal.target_total), wasActive: goal.active } });
   } else if (body.action === 'settings') {
     const timezone = await getAccountTimezone(currentUser.id);
     const hour = Math.max(0, Math.min(23, Math.trunc(Number(body.dailyReportHour))));
     await pool.query(`INSERT INTO obsidian_farm_analytics_settings(id,timezone,daily_report_enabled,daily_report_hour,updated_at)
       VALUES(1,$1,$2,$3,NOW()) ON CONFLICT(id) DO UPDATE SET timezone=EXCLUDED.timezone,daily_report_enabled=EXCLUDED.daily_report_enabled,daily_report_hour=EXCLUDED.daily_report_hour,updated_at=NOW()`, [timezone, Boolean(body.dailyReportEnabled), hour]);
-    await pool.query(`INSERT INTO obsidian_farm_annotations(event_type,title,details,correlation_id) VALUES('settings_changed','Analytics settings changed',$1::jsonb,$2)`, [JSON.stringify({ timezone, dailyReportHour: hour, actor: currentUser.username, correlationId }), correlationId]);
-    await recordSystemLog({ level: 'audit', category: 'obsidian_analytics', actor: currentUser.username, message: 'Updated obsidian analytics settings.', details: { timezone, dailyReportEnabled: Boolean(body.dailyReportEnabled), dailyReportHour: hour, correlationId } });
+    await pool.query(`INSERT INTO obsidian_farm_annotations(event_type,title,details) VALUES('settings_changed','Analytics settings changed',$1::jsonb)`, [JSON.stringify({ timezone, dailyReportHour: hour, actor: currentUser.username })]);
+    await recordSystemLog({ level: 'audit', category: 'obsidian_analytics', actor: currentUser.username, message: 'Updated obsidian analytics settings.', details: { timezone, dailyReportEnabled: Boolean(body.dailyReportEnabled), dailyReportHour: hour } });
   } else throw Object.assign(new Error('Unknown analytics action.'), { statusCode: 400 });
   return getObsidianStats(currentUser);
 }
@@ -3594,7 +3563,6 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
     currentUsername.toLowerCase(),
     ...((identity?.aliases || []).map(alias => String(alias).toLowerCase()))
   ])];
-  const sessionResourceKeys = aliases.map(alias => `player:${alias}`);
 
   // Keep the profile request within a small connection budget. A single card
   // used to fan out to eight concurrent pool clients, which could exhaust the
@@ -3780,20 +3748,13 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
              (COUNT(*) FILTER (WHERE event_type='player_joined') OVER ())::bigint AS total_sessions
       FROM (
         SELECT event_type,occurred_at,id
-        FROM operational_events
-        WHERE source='player_activity'
-          AND event_type IN ('player_joined','player_left')
-          AND LOWER(resource_key)=ANY($1::text[])
-        UNION ALL
-        SELECT event_type,occurred_at,id
-        FROM operational_events_archive
-        WHERE source='player_activity'
-          AND event_type IN ('player_joined','player_left')
-          AND LOWER(resource_key)=ANY($1::text[])
+        FROM player_session_events
+        WHERE event_type IN ('player_joined','player_left')
+          AND LOWER(username)=ANY($1::text[])
       ) session_events
       ORDER BY occurred_at DESC,id DESC
       LIMIT 500
-    `, [sessionResourceKeys])
+    `, [aliases])
   ]);
 
   const profile = profileResult.rows[0] || { username };
@@ -4335,7 +4296,7 @@ async function deleteAdminPlayer(currentUser, identifier, database = pool, audit
   await audit({
     level: 'audit', category: 'admin_players', actor: currentUser.username,
     message: `Admin ${currentUser.username} deleted player ${target.username}.`,
-    details: { playerId: String(target.id), playerUuid: target.player_uuid || null, deleted, preserved: ['game_chat_messages', 'whitelist', 'ignored_users', 'site_whisper_messages', 'operational_events'] }
+    details: { playerId: String(target.id), playerUuid: target.player_uuid || null, deleted, preserved: ['game_chat_messages', 'whitelist', 'ignored_users', 'site_whisper_messages', 'player_session_events'] }
   });
   return { ok: true, deletedPlayer: { id: String(target.id), username: target.username, uuid: target.player_uuid || null }, deleted };
 }
@@ -5220,7 +5181,7 @@ async function getPushSettings(currentUser) {
   };
 }
 
-const NAVIGATION_SECTION_ORDER = Object.freeze(['chat', 'bot', 'kill-aura', 'obsidian', 'server', 'players', 'settings', 'notifications', 'timeline', 'child-ai', 'admin']);
+const NAVIGATION_SECTION_ORDER = Object.freeze(['chat', 'bot', 'kill-aura', 'obsidian', 'server', 'players', 'settings', 'notifications', 'child-ai', 'admin']);
 
 function normalizeNavigationPreferences(input = {}) {
   const rawVisibility = input.visibility && typeof input.visibility === 'object' && !Array.isArray(input.visibility) ? input.visibility : {};
@@ -5330,8 +5291,6 @@ async function getNotificationRules(currentUser) {
   await pool.query(`CREATE TABLE IF NOT EXISTS nearby_player_sightings (
     username VARCHAR(255) PRIMARY KEY,last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),distance INTEGER NOT NULL CHECK(distance>=0))`);
   await pool.query(`CREATE INDEX IF NOT EXISTS nearby_player_sightings_last_seen_idx ON nearby_player_sightings(last_seen DESC)`);
-  await pool.query(`ALTER TABLE bot_commands ADD COLUMN IF NOT EXISTS correlation_id VARCHAR(64)`);
-  await pool.query(`CREATE INDEX IF NOT EXISTS bot_commands_correlation_idx ON bot_commands(correlation_id) WHERE correlation_id IS NOT NULL`);
   return { rules: result.rows.map(row => ({
     eventType: row.event_type, enabled: row.enabled, severity: row.severity,
     threshold: row.threshold, cooldownSeconds: row.cooldown_seconds,
@@ -5342,7 +5301,6 @@ async function getNotificationRules(currentUser) {
 
 async function updateNotificationRule(currentUser, body) {
   assertAdminUser(currentUser);
-  const correlationId = newCorrelationId();
   const eventType = String(body.eventType || '').trim();
   const severity = String(body.severity || '').trim();
   const cooldownSeconds = Number(body.cooldownSeconds);
@@ -5362,144 +5320,15 @@ async function updateNotificationRule(currentUser, body) {
   await recordSystemLog({
     level: 'audit', category: 'notification_rules', actor: currentUser.username,
     message: `Updated notification rule ${eventType}.`,
-    details: { eventType, enabled: Boolean(body.enabled), severity, threshold, cooldownSeconds, deliveryChannels: channels, correlationId }
+    details: { eventType, enabled: Boolean(body.enabled), severity, threshold, cooldownSeconds, deliveryChannels: channels }
   });
   if (['low_pickaxe_durability', 'no_pickaxes', 'low_food', 'farm_stalled', 'low_tps'].includes(eventType)) {
-    await pool.query(`INSERT INTO obsidian_farm_annotations(event_type,title,details,correlation_id) VALUES('settings_changed',$1,$2::jsonb,$3)`, [
+    await pool.query(`INSERT INTO obsidian_farm_annotations(event_type,title,details) VALUES('settings_changed',$1,$2::jsonb)`, [
       `Notification rule changed: ${eventType}`,
-      JSON.stringify({ actor: currentUser.username, enabled: Boolean(body.enabled), severity, threshold, cooldownSeconds, correlationId }), correlationId
+      JSON.stringify({ actor: currentUser.username, enabled: Boolean(body.enabled), severity, threshold, cooldownSeconds })
     ]);
   }
   return getNotificationRules(currentUser);
-}
-
-async function getOperationalTimeline(currentUser, url) {
-  assertTimelineAccess(currentUser);
-  const filters = normalizeTimelineFilters(url.searchParams);
-  const events = await queryTimeline(pool, filters);
-  return { events, filters: { ...filters, from: filters.from.toISOString(), to: filters.to.toISOString() } };
-}
-
-async function findTimelineEvent(currentUser, eventId, { windowMinutes = 10 } = {}) {
-  assertTimelineAccess(currentUser);
-  const idParams = new URLSearchParams({ eventId, period: '30d', limit: '1' });
-  idParams.set('from', new Date(Date.now() - 3650 * 86400000).toISOString());
-  idParams.set('to', new Date().toISOString());
-  const event = (await queryTimeline(pool, normalizeTimelineFilters(idParams)))[0];
-  if (!event) { const err = new Error('Operational event not found.'); err.statusCode = 404; throw err; }
-  const occurred = new Date(event.occurredAt).getTime();
-  const windowParams = new URLSearchParams({ from: new Date(occurred - windowMinutes * 60000).toISOString(), to: new Date(occurred + windowMinutes * 60000).toISOString(), limit: '250' });
-  const windowEvents = await queryTimeline(pool, normalizeTimelineFilters(windowParams));
-  const relatedParams = new URLSearchParams({ from: new Date(Date.now() - 3650 * 86400000).toISOString(), to: new Date().toISOString(), correlationId: event.correlationId, limit: '250' });
-  const related = (await queryTimeline(pool, normalizeTimelineFilters(relatedParams))).filter(item => ['bot_commands', 'notifications'].includes(item.source));
-  return { event, window: windowEvents.reverse(), related, windowMinutes };
-}
-
-async function materializeTimelineEvent(currentUser, eventId) {
-  const context = await findTimelineEvent(currentUser, eventId);
-  if (context.event.operationalId) return { rowId: context.event.operationalId, event: context.event };
-  const immutableSource = !['bot_status_snapshots', 'nearby_player_sightings', 'player_activity'].includes(context.event.sourceRecordType);
-  const row = await recordOperationalEvent(pool, {
-    eventType: context.event.eventType, severity: context.event.severity, source: context.event.source,
-    title: context.event.title, details: context.event.details, actor: context.event.actor,
-    resourceKey: context.event.resourceKey, correlationId: context.event.correlationId,
-    sourceRecordType: immutableSource ? context.event.sourceRecordType : null, sourceRecordId: immutableSource ? context.event.sourceRecordId : null,
-    sensitive: context.event.sensitive, occurredAt: context.event.occurredAt
-  });
-  if (!row) throw Object.assign(new Error('Could not materialize operational event.'), { statusCode: 500 });
-  if (context.event.archived && String(context.event.id).startsWith('archive:')) {
-    await pool.query(`DELETE FROM operational_events_archive WHERE id=$1`, [String(context.event.id).slice('archive:'.length)]);
-  }
-  return { rowId: String(row.id), event: { ...context.event, operationalId: String(row.id), id: `op:${row.id}` } };
-}
-
-function incidentPayload(row) {
-  return {
-    id: String(row.id), title: row.title, status: row.status, cause: row.cause || '', notes: row.notes || '',
-    resolution: row.resolution || '', assignedAdminId: row.assigned_admin_id == null ? null : String(row.assigned_admin_id),
-    assignedAdmin: row.assigned_admin_username || null, createdBy: row.created_by_username || null,
-    rootEventId: String(row.root_event_id), correlationId: row.correlation_id,
-    createdAt: row.created_at, updatedAt: row.updated_at, resolvedAt: row.resolved_at
-  };
-}
-
-async function getIncident(currentUser, id) {
-  assertTimelineAccess(currentUser);
-  const result = await pool.query(`
-    SELECT i.*,assigned.username assigned_admin_username,creator.username created_by_username
-    FROM incidents i LEFT JOIN site_users assigned ON assigned.id=i.assigned_admin_id
-    JOIN site_users creator ON creator.id=i.created_by WHERE i.id=$1
-  `, [id]);
-  if (!result.rowCount) { const err = new Error('Incident not found.'); err.statusCode = 404; throw err; }
-  const incident = incidentPayload(result.rows[0]);
-  const root = await pool.query(`SELECT occurred_at FROM operational_events WHERE id=$1`, [incident.rootEventId]);
-  const occurred = new Date(root.rows[0]?.occurred_at || result.rows[0].created_at).getTime();
-  const params = new URLSearchParams({ from: new Date(occurred - 600000).toISOString(), to: new Date(occurred + 600000).toISOString(), limit: '250' });
-  const events = await queryTimeline(pool, normalizeTimelineFilters(params));
-  const relatedParams = new URLSearchParams({ from: new Date(Date.now() - 3650 * 86400000).toISOString(), to: new Date().toISOString(), correlationId: incident.correlationId, limit: '250' });
-  const related = (await queryTimeline(pool, normalizeTimelineFilters(relatedParams))).filter(item => ['bot_commands', 'notifications'].includes(item.source));
-  const admins = await pool.query(`SELECT id::text,username FROM site_users WHERE role='admin' AND status='approved' ORDER BY LOWER(username)`);
-  return { incident, events: events.reverse(), related, admins: admins.rows };
-}
-
-async function createIncident(currentUser, body) {
-  assertTimelineAccess(currentUser);
-  const selected = await materializeTimelineEvent(currentUser, String(body.eventId || ''));
-  const title = String(body.title || selected.event.title || 'Operational incident').trim().slice(0, 255) || 'Operational incident';
-  const result = await pool.query(`
-    WITH created AS (
-      INSERT INTO incidents(title,created_by,assigned_admin_id,root_event_id,correlation_id)
-      VALUES($1,$2,$2,$3,$4) RETURNING *
-    ), linked AS (
-      INSERT INTO incident_events(incident_id,operational_event_id,relationship)
-      SELECT id,$3,'root' FROM created
-    ) SELECT * FROM created
-  `, [title, currentUser.id, selected.rowId, selected.event.correlationId]);
-  await pool.query(`INSERT INTO incident_events(incident_id,operational_event_id,relationship)
-    SELECT $1,id,'correlated' FROM operational_events WHERE correlation_id=$2 AND id<>$3
-    ON CONFLICT(incident_id,operational_event_id) DO NOTHING`, [result.rows[0].id, selected.event.correlationId, selected.rowId]);
-  await recordSystemLog({ level: 'audit', category: 'incidents', actor: currentUser.username, message: `Created incident #${result.rows[0].id}.`, details: { incidentId: String(result.rows[0].id), correlationId: selected.event.correlationId, rootEventId: selected.rowId } });
-  return getIncident(currentUser, result.rows[0].id);
-}
-
-async function updateIncident(currentUser, id, body) {
-  assertTimelineAccess(currentUser);
-  const status = String(body.status || '');
-  if (!['open', 'investigating', 'resolved', 'closed'].includes(status)) { const err = new Error('Invalid incident status.'); err.statusCode = 400; throw err; }
-  let assignedAdminId = body.assignedAdminId ? String(body.assignedAdminId) : null;
-  if (assignedAdminId) {
-    if (!/^\d+$/.test(assignedAdminId)) { const err = new Error('Assigned administrator is invalid.'); err.statusCode = 400; throw err; }
-    const admin = await pool.query(`SELECT 1 FROM site_users WHERE id=$1 AND role='admin' AND status='approved'`, [assignedAdminId]);
-    if (!admin.rowCount) { const err = new Error('Assigned administrator is invalid.'); err.statusCode = 400; throw err; }
-  }
-  const updated = await pool.query(`UPDATE incidents SET status=$2,cause=$3,notes=$4,resolution=$5,assigned_admin_id=$6,
-    resolved_at=CASE WHEN $2 IN ('resolved','closed') THEN COALESCE(resolved_at,NOW()) ELSE NULL END,updated_at=NOW() WHERE id=$1 RETURNING id,correlation_id`,
-  [id, status, String(body.cause || '').slice(0, 10000), String(body.notes || '').slice(0, 20000), String(body.resolution || '').slice(0, 10000), assignedAdminId]);
-  if (!updated.rowCount) { const err = new Error('Incident not found.'); err.statusCode = 404; throw err; }
-  await recordSystemLog({ level: 'audit', category: 'incidents', actor: currentUser.username, message: `Updated incident #${id}.`, details: { incidentId: String(id), status, assignedAdminId, correlationId: updated.rows[0].correlation_id } });
-  return getIncident(currentUser, id);
-}
-
-function incidentMarkdown(payload) {
-  const incident = payload.incident;
-  const clean = value => String(value || '').replace(/\r/g, '').trim() || '—';
-  const events = payload.events.map(event => `- ${new Date(event.occurredAt).toISOString()} · **${event.severity.toUpperCase()}** · ${event.title} (${event.source}, \`${event.correlationId}\`)`).join('\n');
-  const related = (payload.related || []).map(event => `- ${new Date(event.occurredAt).toISOString()} · ${event.title} (${event.source})`).join('\n');
-  return `# Incident #${incident.id}: ${incident.title}\n\n- Status: **${incident.status}**\n- Correlation ID: \`${incident.correlationId}\`\n- Assigned administrator: ${clean(incident.assignedAdmin)}\n- Created by: ${clean(incident.createdBy)}\n- Created: ${new Date(incident.createdAt).toISOString()}\n\n## Cause\n\n${clean(incident.cause)}\n\n## Notes\n\n${clean(incident.notes)}\n\n## Resolution\n\n${clean(incident.resolution)}\n\n## Timeline (10 minutes before and after)\n\n${events || 'No events in the incident window.'}\n\n## Related commands and notifications\n\n${related || 'No related commands or notifications.'}\n`;
-}
-
-async function archiveOperationalEvents() {
-  if (!pool) return 0;
-  const days = Math.min(3650, Math.max(7, Number(process.env.OPERATIONAL_EVENT_RETENTION_DAYS) || 90));
-  const result = await pool.query(`WITH candidates AS (
-      SELECT e.id FROM operational_events e WHERE e.occurred_at < NOW()-($1::int*INTERVAL '1 day')
-      AND NOT EXISTS(SELECT 1 FROM incident_events ie WHERE ie.operational_event_id=e.id) ORDER BY e.id LIMIT 5000
-    ), archived AS (
-      INSERT INTO operational_events_archive(id,event_type,severity,source,title,details,actor,resource_key,correlation_id,source_record_type,source_record_id,sensitive,occurred_at,created_at)
-      SELECT e.id,e.event_type,e.severity,e.source,e.title,e.details,e.actor,e.resource_key,e.correlation_id,e.source_record_type,e.source_record_id,e.sensitive,e.occurred_at,e.created_at
-      FROM operational_events e JOIN candidates c ON c.id=e.id ON CONFLICT(id) DO NOTHING RETURNING id
-    ) DELETE FROM operational_events e USING archived a WHERE e.id=a.id RETURNING e.id`, [days]);
-  return result.rowCount;
 }
 
 async function handleApi(req, res, url) {
@@ -5557,39 +5386,10 @@ async function handleApi(req, res, url) {
         return;
       }
     }
-    if (url.pathname === '/api/admin/operational-events' && req.method === 'GET') {
-      sendJson(res, 200, await getOperationalTimeline(currentUser, url)); return;
-    }
     if (url.pathname === '/api/accounts' || url.pathname.startsWith('/api/accounts/')) {
       const response = await handleAccountsApi(req, currentUser, url);
       sendJson(res, response.statusCode, response.payload);
       return;
-    }
-    if (url.pathname === '/api/admin/operational-events/context' && req.method === 'GET') {
-      sendJson(res, 200, await findTimelineEvent(currentUser, String(url.searchParams.get('id') || ''))); return;
-    }
-    if (url.pathname === '/api/admin/incidents' && req.method === 'POST') {
-      sendJson(res, 201, await createIncident(currentUser, await readJsonBody(req))); return;
-    }
-    if (url.pathname === '/api/admin/incidents' && req.method === 'GET') {
-      assertTimelineAccess(currentUser);
-      const incidents = await pool.query(`SELECT i.*,assigned.username assigned_admin_username,creator.username created_by_username
-        FROM incidents i LEFT JOIN site_users assigned ON assigned.id=i.assigned_admin_id JOIN site_users creator ON creator.id=i.created_by
-        ORDER BY i.updated_at DESC LIMIT 100`);
-      sendJson(res, 200, { incidents: incidents.rows.map(incidentPayload) }); return;
-    }
-    const incidentMatch = url.pathname.match(/^\/api\/admin\/incidents\/(\d+)(?:\/(export))?$/);
-    if (incidentMatch && req.method === 'GET') {
-      const payload = await getIncident(currentUser, incidentMatch[1]);
-      if (incidentMatch[2] === 'export') {
-        const format = url.searchParams.get('format') === 'markdown' ? 'markdown' : 'json';
-        if (format === 'markdown') sendDownload(res, `incident-${incidentMatch[1]}.md`, 'text/markdown; charset=utf-8', incidentMarkdown(payload));
-        else sendDownload(res, `incident-${incidentMatch[1]}.json`, 'application/json; charset=utf-8', JSON.stringify(payload, null, 2));
-      } else sendJson(res, 200, payload);
-      return;
-    }
-    if (incidentMatch && req.method === 'PUT' && !incidentMatch[2]) {
-      sendJson(res, 200, await updateIncident(currentUser, incidentMatch[1], await readJsonBody(req))); return;
     }
     if (url.pathname === '/api/admin/control-state' && req.method === 'GET') {
       sendJson(res, 200, await getAdminControlState(currentUser, url));
@@ -6051,7 +5851,6 @@ async function pollDatabaseEvents() {
             COALESCE((SELECT updated_at FROM obsidian_farm_analytics_settings WHERE id=1), '-infinity'::timestamptz)
           ) AS farm_status_at,
           (SELECT COALESCE(MAX(id),0) FROM notifications) AS notification_id,
-          (SELECT COALESCE(MAX(id),0) FROM operational_events) AS operational_event_id,
           (SELECT MAX(updated_at) FROM player_playtime) AS player_info_at,
           (SELECT MAX(updated_at) FROM player_info_observation_state) AS player_info_observation_at,
           (SELECT MAX(updated_at) FROM player_info_lookup_exclusions) AS player_info_exclusion_at,
@@ -6075,7 +5874,7 @@ async function pollDatabaseEvents() {
     const next = {
       botStatusAt: signature(row.bot_status_at), chatId: String(row.chat_id || 0),
       whisperId: String(row.whisper_id || 0), farmStatusAt: signature(row.farm_status_at),
-      notificationId: String(row.notification_id || 0), operationalEventId: String(row.operational_event_id || 0), adminControlAt: signature(row.admin_control_at),
+      notificationId: String(row.notification_id || 0), adminControlAt: signature(row.admin_control_at),
       playerInfoAt: signature(row.player_info_at),
       playerInfoObservationAt: signature(row.player_info_observation_at),
       playerInfoExclusionAt: signature(row.player_info_exclusion_at),
@@ -6133,9 +5932,6 @@ async function pollDatabaseEvents() {
     if (next.notificationId !== previous.notificationId) {
       sseHub.publish('notification_created', { id: next.notificationId }, { roles: ['admin'] });
     }
-    if (next.operationalEventId !== previous.operationalEventId) {
-      sseHub.publish('operational_event_created', { id: next.operationalEventId }, { roles: ['admin'] });
-    }
     if (next.adminControlAt !== previous.adminControlAt) {
       sseHub.publish('admin_control_updated', { source: 'admin', updatedAt: next.adminControlAt }, { roles: ['admin'] });
     }
@@ -6157,25 +5953,24 @@ function startDatabaseEventPoller() {
   databaseEventTimer.unref?.();
 }
 
-function startOperationalRetention() {
-  if (!pool || operationalRetentionTimer) return;
+function startLogRetention() {
+  if (!pool || logRetentionTimer) return;
   const retentionConfig = getLogRetentionConfig();
   const run = async () => {
-    const archived = await archiveOperationalEvents();
     const pruned = await pruneExpiredLogs(pool, retentionConfig);
-    if (archived || pruned.total) await recordSystemLog({
+    if (pruned.total) await recordSystemLog({
       level: 'audit',
-      category: 'timeline_retention',
-      message: `Archived ${archived} and pruned ${pruned.total} expired log records.`,
-      details: { archived, ...pruned }
+      category: 'log_retention',
+      message: `Pruned ${pruned.total} expired system log records.`,
+      details: pruned
     });
   };
-  run().catch(err => console.error('[Timeline] Retention failed:', err.message));
-  operationalRetentionTimer = setInterval(
-    () => run().catch(err => console.error('[Timeline] Retention failed:', err.message)),
+  run().catch(err => console.error('[LogRetention] Cleanup failed:', err.message));
+  logRetentionTimer = setInterval(
+    () => run().catch(err => console.error('[LogRetention] Cleanup failed:', err.message)),
     retentionConfig.intervalMinutes * 60 * 1000
   );
-  operationalRetentionTimer.unref?.();
+  logRetentionTimer.unref?.();
 }
 
 async function startSiteServer() {
@@ -6207,7 +6002,7 @@ async function startSiteServer() {
     });
     sseHub.start();
     startDatabaseEventPoller();
-    startOperationalRetention();
+    startLogRetention();
   }
 }
 
@@ -6217,8 +6012,8 @@ async function shutdown() {
   shuttingDown = true;
   if (databaseEventTimer) clearInterval(databaseEventTimer);
   databaseEventTimer = null;
-  if (operationalRetentionTimer) clearInterval(operationalRetentionTimer);
-  operationalRetentionTimer = null;
+  if (logRetentionTimer) clearInterval(logRetentionTimer);
+  logRetentionTimer = null;
   clearInterval(rateLimiterTimer);
   sseHub.stop();
   await new Promise(resolve => server.close(resolve));

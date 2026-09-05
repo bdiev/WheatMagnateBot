@@ -1,7 +1,6 @@
 'use strict';
 
 const { Pool } = require('pg');
-const { eventTypeFromLog, newCorrelationId, recordOperationalEvent, severityFromLevel } = require('../operational-events');
 
 function createDatabasePool(databaseUrl = process.env.DATABASE_URL) {
   if (!databaseUrl) {
@@ -342,11 +341,11 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
     try {
       const result = await executeUpdate();
       if (recordEvent && previousOnline !== Boolean(isOnline)) {
-        await recordOperationalEvent(pool, {
-          eventType: isOnline ? 'player_joined' : 'player_left', severity: 'info', source: 'player_activity',
-          title: `${username} ${isOnline ? 'joined' : 'left'} the server`, details: { username },
-          actor: username, resourceKey: `player:${String(username).toLowerCase()}`, correlationId: newCorrelationId(), occurredAt: timestamp
-        });
+        await pool.query(`
+          INSERT INTO player_session_events(username,event_type,occurred_at)
+          VALUES($1,$2,$3::timestamptz)
+          ON CONFLICT DO NOTHING
+        `, [username, isOnline ? 'player_joined' : 'player_left', timestamp]);
       }
       return { ...result, previousOnline, isOnline: Boolean(isOnline) };
     } catch (err) {
@@ -675,18 +674,10 @@ function createSystemLogRepository(pool) {
     const safeCategory = String(category || 'bot').trim().slice(0, 64) || 'bot';
     const safeActor = actor ? String(actor).trim().slice(0, 64) : null;
     try {
-      const inserted = await pool.query(`
+      await pool.query(`
         INSERT INTO site_system_logs (level, category, actor_username, message, details, account_id)
         VALUES ($1, $2, $3, $4, $5, COALESCE($6::uuid, '00000000-0000-4000-8000-000000000001'::uuid))
-        RETURNING id,created_at
       `, [safeLevel, safeCategory, safeActor, String(message).slice(0, 2000), details || null, accountId]);
-      await recordOperationalEvent(pool, {
-        eventType: eventTypeFromLog(safeCategory, message), severity: severityFromLevel(safeLevel), source: 'system_log',
-        title: String(message).slice(0, 255), details: details || {}, actor: safeActor,
-        resourceKey: details?.username || details?.targetUsername || details?.commandId || null,
-        correlationId: details?.correlationId, sourceRecordType: 'site_system_logs', sourceRecordId: inserted.rows[0]?.id,
-        sensitive: ['security', 'admin_users', 'admin_data', 'command_bus', 'obsidian_analytics', 'notification_rules', 'incidents'].includes(safeCategory), occurredAt: inserted.rows[0]?.created_at
-      });
       return true;
     } catch (err) {
       console.error('[SystemLog] Failed to write system log:', err.message);

@@ -18,8 +18,8 @@ assert.doesNotMatch(
 );
 assert.match(
   activityQuery,
-  /FROM operational_events e[\s\S]*FROM operational_events_archive e[\s\S]*historical_events/,
-  'not-whitelisted activity must include both active and archived player events'
+  /FROM player_session_events[\s\S]*historical_events/,
+  'not-whitelisted activity must use the dedicated player session history'
 );
 assert.match(
   activityQuery,

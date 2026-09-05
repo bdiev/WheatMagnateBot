@@ -73,7 +73,6 @@ const {
   syncManagedFarmState
 } = require('./database/obsidian-account-stats');
 const { NotificationService } = require('./notifications');
-const { newCorrelationId, recordOperationalEvent } = require('./operational-events');
 const {
   DAILY_OBSIDIAN_REPORT_QUERY,
   buildDailyObsidianReport,
@@ -2079,7 +2078,6 @@ async function initDatabase() {
         status VARCHAR(20) NOT NULL DEFAULT 'pending',
         result JSONB,
         error TEXT,
-        correlation_id VARCHAR(64),
         account_id UUID NOT NULL DEFAULT '00000000-0000-4000-8000-000000000001' REFERENCES bot_accounts(id),
         locked_by VARCHAR(128),
         lease_expires_at TIMESTAMPTZ,
@@ -2090,10 +2088,8 @@ async function initDatabase() {
         finished_at TIMESTAMPTZ
       )
     `);
-    await pool.query(`ALTER TABLE bot_commands ADD COLUMN IF NOT EXISTS correlation_id VARCHAR(64)`);
     await pool.query(`ALTER TABLE bot_commands ADD COLUMN IF NOT EXISTS account_id UUID NOT NULL DEFAULT '00000000-0000-4000-8000-000000000001' REFERENCES bot_accounts(id)`);
     await pool.query(`ALTER TABLE bot_commands ADD COLUMN IF NOT EXISTS locked_by VARCHAR(128), ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ, ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(128)`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS bot_commands_correlation_idx ON bot_commands(correlation_id) WHERE correlation_id IS NOT NULL`);
     await pool.query(`
       CREATE INDEX IF NOT EXISTS bot_commands_status_created_idx
       ON bot_commands (status, created_at)
@@ -3933,12 +3929,8 @@ async function persistObsidianMined() {
       const reached = await client.query(`UPDATE obsidian_farm_goals SET active=FALSE,reached_at=NOW(),updated_at=NOW()
         WHERE active=TRUE AND reached_at IS NULL AND ($1 - baseline_mined) >= target_total RETURNING id,name,target_total,baseline_mined`, [result.rows[0].total_mined]);
       for (const goal of reached.rows) {
-        const correlationId = newCorrelationId();
-        const annotation = await client.query(`INSERT INTO obsidian_farm_annotations(event_type,title,details,correlation_id) VALUES('goal_reached',$1,$2::jsonb,$3) RETURNING id,occurred_at`,
-          [`Goal reached: ${goal.name}`, JSON.stringify({ goalId: goal.id, targetTotal: String(goal.target_total), correlationId }), correlationId]);
-        await recordOperationalEvent(client, { eventType: 'goal_reached', severity: 'info', source: 'farm_annotations', title: `Goal reached: ${goal.name}`,
-          details: { goalId: goal.id, targetTotal: String(goal.target_total) }, resourceKey: `goal:${goal.id}`, correlationId,
-          sourceRecordType: 'obsidian_farm_annotations', sourceRecordId: annotation.rows[0]?.id, occurredAt: annotation.rows[0]?.occurred_at });
+        await client.query(`INSERT INTO obsidian_farm_annotations(event_type,title,details) VALUES('goal_reached',$1,$2::jsonb)`,
+          [`Goal reached: ${goal.name}`, JSON.stringify({ goalId: goal.id, targetTotal: String(goal.target_total) })]);
       }
     }
     await client.query('COMMIT');
@@ -5029,15 +5021,9 @@ function reportNotification(eventType, details = {}) {
   });
 }
 
-async function recordFarmAnnotation(eventType, title, details = {}, correlationId = null) {
+async function recordFarmAnnotation(eventType, title, details = {}) {
   if (!pool) return;
-  const id = correlationId || details.correlationId || newCorrelationId();
-  const result = await pool.query(`INSERT INTO obsidian_farm_annotations(event_type,title,details,correlation_id) VALUES($1,$2,$3::jsonb,$4) RETURNING id,occurred_at`, [eventType, title, JSON.stringify({ ...details, correlationId: id }), id]);
-  await recordOperationalEvent(pool, {
-    eventType, severity: /stall|player_detected/.test(eventType) ? 'warning' : 'info', source: 'farm_annotations', title,
-    details, resourceKey: 'obsidian_farm', correlationId: id, sourceRecordType: 'obsidian_farm_annotations',
-    sourceRecordId: result.rows[0]?.id, occurredAt: result.rows[0]?.occurred_at
-  });
+  await pool.query(`INSERT INTO obsidian_farm_annotations(event_type,title,details) VALUES($1,$2,$3::jsonb)`, [eventType, title, JSON.stringify(details)]);
 }
 
 function farmNotification(event) {
@@ -5055,8 +5041,7 @@ function farmNotification(event) {
     recordFarmAnnotation(
       becameResolved ? 'farm_resumed' : 'farm_stalled',
       becameResolved ? 'Farm resumed' : 'Farm stalled',
-      event.metadata || {},
-      result.notification.correlation_id || result.notification.metadata?.correlationId
+      event.metadata || {}
     ).catch(() => {});
   });
 }
@@ -6956,7 +6941,7 @@ async function processBotCommandsOnce() {
           error = NULL
       FROM next_commands
       WHERE commands.id = next_commands.id
-      RETURNING commands.id, commands.source, commands.requested_by, commands.command_type, commands.payload, commands.correlation_id,commands.account_id
+      RETURNING commands.id, commands.source, commands.requested_by, commands.command_type, commands.payload,commands.account_id
     `, [includeChat,DEFAULT_ACCOUNT_ID,COMMAND_WORKER_ID]);
     commands = result.rows;
   } catch (err) {
@@ -6990,7 +6975,7 @@ async function processBotCommandsOnce() {
         category: 'command_bus',
         actor: command.requested_by,
         message: `Completed bot command ${command.command_type} #${command.id}.`,
-        details: { commandId: String(command.id), source: command.source, correlationId: command.correlation_id, result: command.command_type === 'child_export_state' ? { exported: true, version: result?.state?.version } : (result || {}) }
+        details: { commandId: String(command.id), source: command.source, result: command.command_type === 'child_export_state' ? { exported: true, version: result?.state?.version } : (result || {}) }
       });
     } catch (err) {
       if (err instanceof DeferredBotCommandError) {
@@ -7011,7 +6996,7 @@ async function processBotCommandsOnce() {
           category: 'command_bus',
           actor: command.requested_by,
           message: `Deferred bot command ${command.command_type} #${command.id}.`,
-          details: { commandId: String(command.id), correlationId: command.correlation_id, reason: err.message, payloadPatch: err.payloadPatch || {} }
+          details: { commandId: String(command.id), reason: err.message, payloadPatch: err.payloadPatch || {} }
         });
         continue;
       }
@@ -7030,14 +7015,14 @@ async function processBotCommandsOnce() {
         category: 'command_bus',
         actor: command.requested_by,
         message: `Failed bot command ${command.command_type} #${command.id}.`,
-        details: { commandId: String(command.id), correlationId: command.correlation_id, error: err.message }
+        details: { commandId: String(command.id), error: err.message }
       });
       await reportNotification('command_failed', {
         key: `${command.command_type}:${command.id}`,
         transient: true,
         title: 'Bot command failed',
         message: `${command.command_type} #${command.id}: ${err.message}`,
-        metadata: { commandId: String(command.id), commandType: command.command_type, source: command.source, correlationId: command.correlation_id }
+        metadata: { commandId: String(command.id), commandType: command.command_type, source: command.source }
       });
     }
   }
@@ -8049,11 +8034,6 @@ async function recordNearbyPlayerSighting(username, distance) {
       DO UPDATE SET last_seen = NOW(),
                     distance = EXCLUDED.distance
     `, [username, Math.max(0, Math.round(Number(distance) || 0))]);
-    await recordOperationalEvent(pool, {
-      eventType: 'nearby_player_sighting', severity: 'info', source: 'nearby_sightings', title: `${username} detected near the bot`,
-      details: { username, distance: Math.max(0, Math.round(Number(distance) || 0)) }, actor: username,
-      resourceKey: `player:${key}`, correlationId: newCorrelationId(), sensitive: true
-    });
   } catch (err) {
     console.error('[DB] Failed to record nearby player sighting:', err.message);
   }
@@ -9177,7 +9157,6 @@ function createBot() {
     return;
   }
   const createdBot = bot;
-  const connectionCorrelationId = newCorrelationId();
   let fireEmergencyTriggered = false;
   let connectionFinalized = false;
   let reachedLogin = false;
@@ -9213,7 +9192,7 @@ function createBot() {
       reportNotification('bot_disconnected', {
         key: 'minecraft', title: 'Bot disconnected',
         message: buildDisconnectReason(reason, 'Connection lost'),
-        metadata: { reason: normalizedReason || null, correlationId: connectionCorrelationId }
+        metadata: { reason: normalizedReason || null }
       });
     } else {
       console.log('[Notification] bot_disconnected suppressed for intentional process shutdown.');
@@ -9275,7 +9254,7 @@ function createBot() {
     await recordSystemLog({
       level: 'info',
       category: 'minecraft',
-      message: `Minecraft login as ${bot?.username || 'unknown'}.`, details: { correlationId: connectionCorrelationId }
+      message: `Minecraft login as ${bot?.username || 'unknown'}.`
     });
     securityDisconnectTriggered = false;
     startTime = Date.now();
@@ -9307,33 +9286,33 @@ function createBot() {
       if (!suppressDefaultAuthCachePersist) authCacheStore.persist(DEFAULT_ACCOUNT_ID,config.profilesFolder).catch(error => console.error('[Accounts] Default auth-cache persistence failed:',error.message));
     },1000);
     reconnectAttemptTimes.length = 0;
-    recordFarmAnnotation('bot_reconnected', 'Bot reconnected', {}, connectionCorrelationId).catch(() => {});
+    recordFarmAnnotation('bot_reconnected', 'Bot reconnected').catch(() => {});
     reportNotification('bot_disconnected', {
       key: 'minecraft', resolved: true, title: 'Bot connection restored',
-      message: 'The Minecraft bot connected and spawned successfully.', metadata: { correlationId: connectionCorrelationId }
+      message: 'The Minecraft bot connected and spawned successfully.'
     }).then(result => {
       if (!result?.resolved) return;
       reportNotification('bot_reconnected', {
         key: 'minecraft', transient: true, title: 'Bot reconnected',
-        message: 'The Minecraft bot connected and spawned successfully.', metadata: { correlationId: connectionCorrelationId }
+        message: 'The Minecraft bot connected and spawned successfully.'
       });
     });
     reportNotification('bot_kicked', {
       key: 'minecraft', resolved: true, title: 'Kick recovered',
-      message: 'The bot reconnected after being kicked.', metadata: { correlationId: connectionCorrelationId }
+      message: 'The bot reconnected after being kicked.'
     });
     reportNotification('unauthorized_player_nearby', {
       key: 'minecraft', resolved: true, title: 'Safety alert cleared',
-      message: 'The bot reconnected after the nearby-player alert was handled.', metadata: { correlationId: connectionCorrelationId }
+      message: 'The bot reconnected after the nearby-player alert was handled.'
     });
     reportNotification('repeated_reconnects', {
       key: 'minecraft', resolved: true, title: 'Reconnect loop resolved',
-      message: 'The bot connected successfully.', metadata: { correlationId: connectionCorrelationId }
+      message: 'The bot connected successfully.'
     });
     await recordSystemLog({
       level: 'info',
       category: 'minecraft',
-      message: 'Minecraft bot spawned.', details: { correlationId: connectionCorrelationId }
+      message: 'Minecraft bot spawned.'
     });
     playerActivityJoinEventsReady = false;
     reconnectTimestamp = 0; // Reset reconnect countdown when bot spawns
@@ -9440,13 +9419,13 @@ function createBot() {
 
   bot.on('end', (reason) => {
     if (!suppressDefaultAuthCachePersist) authCacheStore.persist(DEFAULT_ACCOUNT_ID,config.profilesFolder).catch(error => console.error('[Accounts] Default auth-cache persistence failed:',error.message));
-    recordFarmAnnotation('bot_disconnected', 'Bot disconnected', { reason: normalizeStatusReason(reason) }, connectionCorrelationId).catch(() => {});
+    recordFarmAnnotation('bot_disconnected', 'Bot disconnected', { reason: normalizeStatusReason(reason) }).catch(() => {});
     const reasonStr = chatComponentToString(reason);
     recordSystemLog({
       level: 'warn',
       category: 'minecraft',
       message: 'Minecraft bot disconnected.',
-      details: { reason: reasonStr || null, correlationId: connectionCorrelationId }
+      details: { reason: reasonStr || null }
     }).catch(() => {});
     const observedOnlineAtDisconnect = lastObservedOnlinePlayerKeys;
     lastObservedOnlinePlayerKeys = null;
@@ -9477,7 +9456,7 @@ function createBot() {
       level: 'error',
       category: 'minecraft',
       message: 'Minecraft bot error.',
-      details: { error: err.message, correlationId: connectionCorrelationId }
+      details: { error: err.message }
     }).catch(() => {});
     if (!reachedLogin || !createdBot.entity) {
       finalizeConnectionLoss(err.message || 'Connection error');
@@ -9485,19 +9464,19 @@ function createBot() {
   });
 
   bot.on('kicked', (reason) => {
-    recordFarmAnnotation('bot_disconnected', 'Bot kicked', { reason: normalizeStatusReason(reason), kicked: true }, connectionCorrelationId).catch(() => {});
+    recordFarmAnnotation('bot_disconnected', 'Bot kicked', { reason: normalizeStatusReason(reason), kicked: true }).catch(() => {});
     const reasonText = chatComponentToString(reason);
     console.log(`[!] Kicked: ${reasonText}`);
     reportNotification('bot_kicked', {
       key: 'minecraft', title: 'Bot was kicked',
       message: reasonText || 'The Minecraft server kicked the bot.',
-      metadata: { reason: reasonText || null, correlationId: connectionCorrelationId }
+      metadata: { reason: reasonText || null }
     });
     recordSystemLog({
       level: 'warn',
       category: 'minecraft',
       message: 'Minecraft bot was kicked.',
-      details: { reason: reasonText || null, correlationId: connectionCorrelationId }
+      details: { reason: reasonText || null }
     }).catch(() => {});
     if (reasonText && reasonText.trim() !== '') {
       setDisconnectReason(reasonText);

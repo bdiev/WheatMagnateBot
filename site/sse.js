@@ -2,7 +2,7 @@
 
 const { EventEmitter } = require('node:events');
 
-const ADMIN_EVENTS = new Set(['notification_created', 'admin_control_updated', 'operational_event_created']);
+const ADMIN_EVENTS = new Set(['notification_created', 'admin_control_updated']);
 
 class SseHub extends EventEmitter {
   constructor({ maxConnectionsPerUser = 3, heartbeatMs = 25_000 } = {}) {

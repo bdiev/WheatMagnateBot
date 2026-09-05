@@ -64,11 +64,11 @@ assert.deepEqual(
 const appSource = fs.readFileSync(path.resolve(__dirname, '..', 'public', 'app.js'), 'utf8');
 const stylesSource = fs.readFileSync(path.resolve(__dirname, '..', 'public', 'styles.css'), 'utf8');
 const serverSource = fs.readFileSync(path.resolve(__dirname, '..', 'server.js'), 'utf8');
-const migrationSource = fs.readFileSync(path.resolve(__dirname, '..', 'migrations', '029_player_profile_session_indexes.sql'), 'utf8');
+const migrationSource = fs.readFileSync(path.resolve(__dirname, '..', 'migrations', '046_remove_incident_timeline.sql'), 'utf8');
 const profileIndexMigrationSource = fs.readFileSync(path.resolve(__dirname, '..', 'migrations', '045_player_profile_lookup_indexes.sql'), 'utf8');
 
-assert.match(serverSource, /FROM operational_events[\s\S]*UNION ALL[\s\S]*FROM operational_events_archive[\s\S]*LIMIT 500/,
-  'player profiles must load recent and archived join/leave transitions');
+assert.match(serverSource, /FROM player_session_events[\s\S]*event_type IN \('player_joined','player_left'\)[\s\S]*LIMIT 500/,
+  'player profiles must load the dedicated join/leave transition history');
 assert.match(serverSource, /COUNT\(\*\) FILTER \(WHERE event_type='player_joined'\) OVER \(\)[\s\S]*AS total_sessions/,
   'the profile API must count all recorded sessions before limiting the visible transition history');
 assert.match(serverSource, /const gameSessionCount = Math\.max\([\s\S]*total_sessions[\s\S]*gameSessions\.length[\s\S]*gameSessionCount,[\s\S]*gameSessions,/,
@@ -107,8 +107,8 @@ assert.match(appSource, /messageLimit=20[\s\S]*?replacePlayerProfileContent\(pro
   'initial profiles should load a smaller chat page and animate from the skeleton');
 assert.match(stylesSource, /player-profile-skeleton-shimmer[\s\S]*?player-profile-data-reveal/,
   'loading placeholders and resolved profile data must both be animated');
-assert.match(serverSource, /sessionResourceKeys = aliases\.map[\s\S]*?LOWER\(resource_key\)=ANY\(\$1::text\[\]\)/,
-  'session history must use its indexed resource key instead of scanning event JSON');
+assert.match(serverSource, /FROM player_session_events[\s\S]*?LOWER\(username\)=ANY\(\$1::text\[\]\)/,
+  'session history must use its indexed player identity');
 assert.match(serverSource, /FROM bot_accounts account[\s\S]*LEFT JOIN bot_account_runtime_state runtime[\s\S]*LOWER\(account\.username\)=ANY\(\$3::text\[\]\)[\s\S]*playerProfileRuntimePresence\(botAccount\)/,
   'a bot player profile must merge the matching account runtime presence');
 assert.match(serverSource, /const \[profileResult, chatResult, recentChatResult, gameSessionEventsResult\] = await Promise\.all/,
@@ -131,8 +131,10 @@ assert.match(appSource, /function seenPlayerStatusText\(player, now = Date\.now\
   'Seen search must show the elapsed duration of the current online session');
 assert.match(appSource, /function startSeenOnlineTimer\(\)[\s\S]*setInterval\(updateSeenOnlineDurations, 1_000\)/,
   'Seen online durations must update every second while search results are visible');
-assert.match(migrationSource, /operational_events_player_session_resource_idx[\s\S]*?operational_events_archive_player_session_resource_idx/,
-  'active and archived session events must both have profile lookup indexes');
+assert.match(migrationSource, /CREATE TABLE IF NOT EXISTS player_session_events[\s\S]*?player_session_events_player_time_idx/,
+  'player session history must have a dedicated profile lookup index');
+assert.match(migrationSource, /DROP TABLE IF EXISTS incident_events;[\s\S]*DROP TABLE IF EXISTS incidents;[\s\S]*DROP TABLE IF EXISTS operational_events_archive;[\s\S]*DROP TABLE IF EXISTS operational_events;/,
+  'the removal migration must delete the retired incident timeline storage');
 assert.doesNotMatch(appSource, /most recent recorded/,
   'the capped session-list size must not be presented as the total number of sessions');
 

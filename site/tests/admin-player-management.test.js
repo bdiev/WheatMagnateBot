@@ -104,7 +104,7 @@ async function testDeleteAndRelations() {
   assert.equal(database.player, null);
   assert.deepEqual(result.deleted, { playtime: 1, aliases: 2, nearbySightings: 1, profile: 1 });
   assert.deepEqual(audits[0].details.preserved, [
-    'game_chat_messages', 'whitelist', 'ignored_users', 'site_whisper_messages', 'operational_events'
+    'game_chat_messages', 'whitelist', 'ignored_users', 'site_whisper_messages', 'player_session_events'
   ]);
   const sql = database.statements.map(statement => statement.sql).join('\n');
   assert.match(sql, /DELETE FROM player_playtime/);

@@ -33,7 +33,6 @@ Heartbeat comments do not trigger frontend events. Closed and aborted HTTP reque
 | `farm_status_updated` | `{ "updatedAt": ISODate }` | Approved users | Refresh obsidian farm statistics |
 | `notification_created` | `{ "id": string }` | Administrators only | Refresh unread count and notification page |
 | `admin_control_updated` | `{ "source", "updatedAt" }` | Administrators only | Refresh admin controls/logs |
-| `operational_event_created` | `{ "id", "correlationId"? }` | Administrators only | Refresh Incident Timeline when open |
 | `navigation_settings_updated` | `{ "updatedAt": ISODate }` | Only the matching site user | Synchronize navigation visibility and order |
 | `account_settings_updated` | `{ "timezone": string }` | Only the matching site user | Apply the account timezone and refresh displayed dates/charts |
 

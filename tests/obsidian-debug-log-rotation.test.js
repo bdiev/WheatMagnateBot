@@ -46,9 +46,8 @@ async function main() {
       systemLogger:() => { throw new Error('packet traces must remain file-only'); },
       now:() => now
     });
-    const correlationId = '38b58368-3204-42bc-8136-a11e07a71433';
-    const firstRecord = farm.__test.writeFarmDebug('cycle_retry', { correlationId });
-    const secondRecord = farm.__test.writeFarmDebug('cycle_retry', { correlationId });
+    const firstRecord = farm.__test.writeFarmDebug('cycle_retry');
+    const secondRecord = farm.__test.writeFarmDebug('cycle_retry');
 
     assert.match(firstRecord.logId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
     assert.notEqual(firstRecord.logId, secondRecord.logId, 'every debug line must receive its own unique log ID');
@@ -70,7 +69,6 @@ async function main() {
     );
     const records = fs.readFileSync(currentLog, 'utf8').trim().split(/\r?\n/).map(JSON.parse);
     assert.ok(records.every(record => record.time === now.toISOString()));
-    assert.ok(records.every(record => record.correlationId === correlationId), 'correlation ID is searchable in JSONL');
     assert.deepEqual(
       new Set(records.map(record => record.logId)),
       new Set([firstRecord.logId, secondRecord.logId]),

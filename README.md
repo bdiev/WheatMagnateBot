@@ -82,7 +82,6 @@ DATABASE_URL=
 PERSIST_BOT_CONSOLE_LOGS=false
 VERBOSE_LOG_RETENTION_DAYS=7
 SYSTEM_LOG_RETENTION_DAYS=90
-OPERATIONAL_EVENT_ARCHIVE_RETENTION_DAYS=365
 LOG_RETENTION_BATCH_SIZE=10000
 LOG_RETENTION_INTERVAL_MINUTES=60
 MINECRAFT_USERNAME=
@@ -97,7 +96,6 @@ VAPID_PUBLIC_KEY=
 VAPID_PRIVATE_KEY=
 VAPID_SUBJECT=mailto:admin@example.com
 SSE_MAX_CONNECTIONS_PER_USER=3
-OPERATIONAL_EVENT_RETENTION_DAYS=90
 OBSIDIAN_ANALYTICS_TIMEZONE=Europe/Vilnius
 OBSIDIAN_DAILY_REPORT_ENABLED=true
 OBSIDIAN_DAILY_REPORT_HOUR=9
@@ -137,8 +135,7 @@ The dashboard uses `HttpOnly`, `SameSite=Lax` session cookies, per-session CSRF 
 - Active notification problems remain deduplicated by event and resource key. Repeated observations increment the occurrence count, while channel delivery follows the configured cooldown. Recovery creates a separate resolved notification.
 - Dashboard updates use authenticated Server-Sent Events with a slow polling fallback. The event protocol is documented in [`site/SSE_PROTOCOL.md`](site/SSE_PROTOCOL.md).
 - Opening a private Minecraft dialog on the site claims it for that site user. Any pending Discord `New whisper from Minecraft` claim prompt is deleted, and replies remain routed to the site while the dialog claim TTL is active.
-- The admin-only **Incident Timeline** aggregates operational events from system logs, notifications, bot commands, player transitions, nearby sightings, farm annotations, bot status and TPS. Events sharing one operation use a correlation ID; an event can be promoted to an incident with a ±10 minute context, ownership, cause, notes, resolution, and JSON/Markdown export. The model and API are documented in [`site/INCIDENT_TIMELINE.md`](site/INCIDENT_TIMELINE.md).
-- Normalized operational events older than `OPERATIONAL_EVENT_RETENTION_DAYS` (90 by default) are moved to `operational_events_archive` in bounded batches. High-volume `bot_console` and `obsidian_click` records are kept for seven days by default, ordinary system logs for 90 days, and archived operational events for 365 days. Events linked to incidents remain protected. Packet-level Obsidian Farm tracing and console-to-database mirroring are disabled by default.
+- High-volume `bot_console` and `obsidian_click` system logs are kept for seven days by default; ordinary system logs are kept for 90 days. Packet-level Obsidian Farm tracing and console-to-database mirroring are disabled by default.
 - Growing Child stores its learning database locally, preserves it across schema upgrades, and exposes memory/state controls only to administrators. Its learning and privacy model is documented in [`features/growingChild/README.md`](features/growingChild/README.md).
 
 ## Obsidian farm analytics

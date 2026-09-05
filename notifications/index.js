@@ -1,7 +1,5 @@
 'use strict';
 
-const { newCorrelationId, recordOperationalEvent } = require('../operational-events');
-
 const SEVERITIES = new Set(['info', 'warning', 'critical']);
 const CHANNELS = new Set(['discord', 'site', 'system_log']);
 const METRICS = {
@@ -32,18 +30,11 @@ class PostgresNotificationRepository {
 
   async createNotification(data) {
     const result = await this.pool.query(`
-      INSERT INTO notifications (event_type, dedup_key, severity, status, title, message, metadata, correlation_id, resolved_at)
-      VALUES ($1,$2,$3,$4::varchar,$5,$6,$7,$8,CASE WHEN $4::varchar='resolved' THEN NOW() ELSE NULL END)
+      INSERT INTO notifications (event_type, dedup_key, severity, status, title, message, metadata, resolved_at)
+      VALUES ($1,$2,$3,$4::varchar,$5,$6,$7,CASE WHEN $4::varchar='resolved' THEN NOW() ELSE NULL END)
       RETURNING *
-    `, [data.eventType, data.dedupKey, data.severity, data.status, data.title, data.message, data.metadata || {}, data.correlationId]);
-    const row = result.rows[0];
-    await recordOperationalEvent(this.pool, {
-      eventType: data.eventType, severity: data.severity, source: 'notifications', title: data.title,
-      details: { status: data.status, message: data.message, ...(data.metadata || {}) }, resourceKey: data.dedupKey,
-      correlationId: data.correlationId, sourceRecordType: 'notifications', sourceRecordId: row.id,
-      sensitive: data.eventType === 'unauthorized_player_nearby', occurredAt: row.created_at
-    });
-    return row;
+    `, [data.eventType, data.dedupKey, data.severity, data.status, data.title, data.message, data.metadata || {}]);
+    return result.rows[0];
   }
 
   async touchActive(id, data) {
@@ -80,7 +71,7 @@ class MemoryNotificationRepository {
   }
   async getRule(type) { return this.rules.get(type) || null; }
   async getActive(type, key) { return this.notifications.find(n => n.event_type === type && n.dedup_key === key && n.status === 'active') || null; }
-  async createNotification(d) { const n = { id: this.nextId++, event_type:d.eventType, dedup_key:d.dedupKey, severity:d.severity, status:d.status, title:d.title, message:d.message, metadata:d.metadata||{}, correlation_id:d.correlationId, occurrence_count:1, last_triggered_at:new Date(), created_at:new Date() }; this.notifications.push(n); return n; }
+  async createNotification(d) { const n = { id: this.nextId++, event_type:d.eventType, dedup_key:d.dedupKey, severity:d.severity, status:d.status, title:d.title, message:d.message, metadata:d.metadata||{}, occurrence_count:1, last_triggered_at:new Date(), created_at:new Date() }; this.notifications.push(n); return n; }
   async touchActive(id,d) { const n=this.notifications.find(x=>x.id===id); Object.assign(n,{message:d.message,metadata:d.metadata||{},severity:d.severity,last_triggered_at:new Date(),occurrence_count:n.occurrence_count+1}); return n; }
   async resolveActive(id) { const n=this.notifications.find(x=>x.id===id); n.status='resolved'; n.resolved_at=new Date(); }
   async markRuleTriggered(type) { const r=this.rules.get(type); if(r) r.last_triggered_at=new Date(); }
@@ -116,8 +107,6 @@ class NotificationService {
   async _report(eventType, event) {
     const rule = await this.repository.getRule(eventType);
     if (!rule || !rule.enabled) return { skipped: true, reason: 'disabled' };
-    event.correlationId = String(event.metadata?.correlationId || event.correlationId || newCorrelationId());
-    event.metadata = { ...(event.metadata || {}), correlationId: event.correlationId };
     const metric = METRICS[eventType];
     const thresholdValue = metric && rule.threshold ? Number(rule.threshold[metric[1]]) : NaN;
     const observedValue = metric ? Number(event.metadata?.[metric[0]]) : NaN;
@@ -132,16 +121,12 @@ class NotificationService {
     if (event.transient) {
       const notification = await this.repository.createNotification({
         eventType, dedupKey: String(event.key), severity: SEVERITIES.has(rule.severity) ? rule.severity : 'info',
-        status: 'resolved', title: event.title || eventType, message: event.message || eventType, metadata: event.metadata, correlationId: event.correlationId
+        status: 'resolved', title: event.title || eventType, message: event.message || eventType, metadata: event.metadata
       });
       await this._deliver(notification, rule, true);
       return { notification, transient: true };
     }
     const active = await this.repository.getActive(eventType, String(event.key));
-    if (active) {
-      event.correlationId = String(active.correlation_id || active.metadata?.correlationId || event.correlationId);
-      event.metadata = { ...(event.metadata || {}), correlationId: event.correlationId };
-    }
     if (event.resolved) {
       if (!active) return { skipped: true, reason: 'not_active' };
       await this.repository.resolveActive(active.id);
@@ -149,7 +134,7 @@ class NotificationService {
         eventType, dedupKey: String(event.key), severity: 'info', status: 'resolved',
         title: event.title || `${active.title} resolved`,
         message: event.message || `Resolved: ${active.message}`,
-        metadata: { ...event.metadata, resolvedNotificationId: active.id }, correlationId: event.correlationId
+        metadata: { ...event.metadata, resolvedNotificationId: active.id }
       });
       await this._deliver(notification, rule, true);
       return { notification, resolved: true };
@@ -167,7 +152,7 @@ class NotificationService {
 
     const notification = await this.repository.createNotification({
       eventType, dedupKey: String(event.key), severity, status: 'active',
-      title: event.title || eventType, message: event.message || eventType, metadata: event.metadata, correlationId: event.correlationId
+      title: event.title || eventType, message: event.message || eventType, metadata: event.metadata
     });
     await this._deliver(notification, rule, false);
     return { notification, deduplicated: false, delivered: true };
@@ -187,7 +172,6 @@ class NotificationService {
               eventType: notification.event_type,
               dedupKey: notification.dedup_key,
               status: notification.status,
-              correlationId: notification.correlation_id || notification.metadata?.correlationId,
               debugLogId: notification.metadata?.debugLogId || null
             }
           });
