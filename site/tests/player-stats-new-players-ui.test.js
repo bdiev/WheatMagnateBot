@@ -74,6 +74,21 @@ assert.match(
   'scrolling near the end of New Players must request the next page'
 );
 assert.match(
+  htmlSource,
+  /id="newPlayersList"[^>]*><\/div>\s*<div id="newPlayersLoadStatus"[^>]*class="new-players-load-status is-empty"/,
+  'the pagination status must live outside the scrolling player rows'
+);
+assert.match(
+  appSource,
+  /const status = \$\('#newPlayersLoadStatus'\);[\s\S]*status\.innerHTML = statusMarkup;[\s\S]*emptyState: players\.length \? null/,
+  'loading-state changes must update the fixed status slot without rebuilding existing player rows'
+);
+assert.match(
+  stylesSource,
+  /\.player-new-panel\s*\{[^}]*grid-template-rows:\s*auto minmax\(0, 1fr\) 46px;[^}]*\}[\s\S]*\.new-players-load-status\s*\{[^}]*height:\s*46px;/,
+  'the New Players card must reserve a stable pagination row'
+);
+assert.match(
   appSource,
   /function newPlayerRow[\s\S]*loading: 'lazy'/,
   'New Player avatars must not all load eagerly'

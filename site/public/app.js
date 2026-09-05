@@ -5386,13 +5386,21 @@ function newPlayerRow(player) {
 
 function renderNewPlayers({ resetScroll = false } = {}) {
   const list = $('#newPlayersList');
-  if (!list) return false;
+  const status = $('#newPlayersLoadStatus');
+  if (!list || !status) return false;
   const players = state.newPlayers;
-  const status = state.newPlayersLoading
-    ? '<div class="new-players-load-status" role="status"><span>Loading more profiles&hellip;</span></div>'
+  const statusMarkup = state.newPlayersLoading
+    ? '<span>Loading more profiles&hellip;</span>'
     : state.newPlayersHasMore
-      ? '<div class="new-players-load-status"><button class="ghost-button" type="button" data-new-players-more>Load more</button></div>'
+      ? '<button class="ghost-button" type="button" data-new-players-more>Load more</button>'
       : '';
+  const hasStatus = Boolean(statusMarkup);
+  status.innerHTML = statusMarkup;
+  status.classList.toggle('is-empty', !hasStatus);
+  status.setAttribute('aria-hidden', String(!hasStatus));
+  if (state.newPlayersLoading) list.setAttribute('aria-busy', 'true');
+  else list.removeAttribute('aria-busy');
+
   const signature = stableSignature({
     players: players.map(player => [
       player.username,
@@ -5401,18 +5409,15 @@ function renderNewPlayers({ resetScroll = false } = {}) {
       player.isOnline,
       player.isWhitelisted
     ]),
-    loading: state.newPlayersLoading,
-    hasMore: state.newPlayersHasMore
+    emptyState: players.length ? null : (state.newPlayersLoading ? 'loading' : 'empty')
   });
   if (state.renderSignatures['#newPlayersList'] === signature) return false;
 
   const scrollTop = resetScroll ? 0 : list.scrollTop;
-  if (state.newPlayersLoading) list.setAttribute('aria-busy', 'true');
-  else list.removeAttribute('aria-busy');
   list.innerHTML = players.length
-    ? `${players.map(newPlayerRow).join('')}${status}`
+    ? players.map(newPlayerRow).join('')
     : state.newPlayersLoading
-      ? status
+      ? ''
       : '<div class="empty">No tracked players yet.</div>';
   state.renderSignatures['#newPlayersList'] = signature;
   requestAnimationFrame(() => { list.scrollTop = resetScroll ? 0 : scrollTop; });

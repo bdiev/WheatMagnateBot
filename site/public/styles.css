@@ -2953,7 +2953,7 @@ body.search-focus-active #logoutButton {
   grid-column: 3;
   grid-row: 1;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) 46px;
   min-height: 0;
 }
 
@@ -3056,9 +3056,15 @@ body.search-focus-active #logoutButton {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 46px;
+  height: 46px;
+  padding: 4px 14px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.new-players-load-status.is-empty {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .new-players-load-status .ghost-button {
