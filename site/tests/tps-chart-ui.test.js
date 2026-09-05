@@ -15,8 +15,10 @@ assert.match(indexSource, /data-chart-range="hours">Hourly<[\s\S]*data-chart-ran
   'TPS range controls must name their aggregation clearly');
 assert.match(stylesSource, /\.server-tps-panel \.chart-scroll\s*\{[^}]*overflow-x:\s*hidden;/s,
   'TPS history must not hide most of the timeline behind horizontal scrolling');
-assert.match(appSource, /options\.fitWidth[\s\S]*compactLineSeries\(sourceData, Math\.max\(80, Math\.floor\(chartWidth \/ 3\)\)\)/,
+assert.match(appSource, /options\.fitWidth && options\.compact !== false[\s\S]*compactLineSeries\(sourceData, Math\.max\(80, Math\.floor\(chartWidth \/ 3\)\)\)/,
   'fit-width line charts must cap rendered points to the available pixels');
+assert.match(appSource, /case 'tpsHourlyChart':[\s\S]*compact: range !== 'hours'/,
+  'hourly TPS must keep one rendered point per hourly bucket');
 assert.match(appSource, /sampleCount: values\.length[\s\S]*Low \$\{formatTps\(item\.minValue\)\} · High \$\{formatTps\(item\.maxValue\)\}/,
   'grouped TPS points must retain their interval count and min/max detail');
 assert.match(appSource, /updateTpsChartCoverage\(tpsHistory, range\)/,

@@ -2510,7 +2510,7 @@ function drawLineChart(canvas, data, options = {}) {
   const padding = { top: 24, right: 52, bottom: 44, left: 58 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
-  const chartData = options.fitWidth
+  const chartData = options.fitWidth && options.compact !== false
     ? compactLineSeries(sourceData, Math.max(80, Math.floor(chartWidth / 3)))
     : sourceData;
   const numericValues = visibleChartValues(canvas, chartData, padding, chartWidth, 'line');
@@ -2890,6 +2890,7 @@ function drawChartById(chartId) {
       drawLineChart($('#tpsHourlyChart'), tpsHistory, {
         max: 20,
         fitWidth: true,
+        compact: range !== 'hours',
         axisLabel: item => tpsAxisLabel(item, range, span.milliseconds),
         tooltip: item => tpsTooltip(item, range)
       });
