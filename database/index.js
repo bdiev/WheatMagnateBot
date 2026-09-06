@@ -171,6 +171,11 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
               WHEN source.registration_at IS NULL THEN target.registration_at
               ELSE LEAST(target.registration_at,source.registration_at)
             END,
+            observed_message_count = COALESCE(target.observed_message_count, source.observed_message_count),
+            observed_message_count_at = CASE
+              WHEN target.observed_message_count IS NULL THEN source.observed_message_count_at
+              ELSE target.observed_message_count_at
+            END,
             is_online = COALESCE(target.is_online,FALSE) OR COALESCE(source.is_online,FALSE),
             admin_notes = COALESCE(NULLIF(target.admin_notes,''),source.admin_notes),
             pearl_hatch_x = COALESCE(target.pearl_hatch_x,source.pearl_hatch_x),

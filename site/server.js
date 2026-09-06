@@ -743,6 +743,7 @@ async function ensureOptionalTables() {
   await pool.query(`ALTER TABLE player_activity ALTER COLUMN last_online DROP DEFAULT`);
   await pool.query(`ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS registration_at TIMESTAMPTZ`);
   await pool.query(`ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS observed_message_count BIGINT CHECK (observed_message_count >= 0)`);
+  await pool.query(`ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS observed_message_count_at TIMESTAMPTZ`);
   await pool.query(`ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS admin_notes TEXT`);
   await pool.query(`ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS admin_tags TEXT[] NOT NULL DEFAULT '{}'::text[]`);
   await pool.query(`ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS pearl_hatch_x INTEGER`);
@@ -3570,7 +3571,7 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
   const [profileResult, chatResult, recentChatResult, gameSessionEventsResult] = await Promise.all([
     pool.query(`
       WITH activity AS (
-        SELECT id, username, player_uuid, last_seen, last_online, registration_at, observed_message_count, is_online,
+        SELECT id, username, player_uuid, last_seen, last_online, registration_at, is_online,
                admin_notes, admin_tags, pearl_hatch_x, pearl_hatch_y, pearl_hatch_z
         FROM player_activity
         WHERE ($2::uuid IS NOT NULL AND player_uuid = $2::uuid)
@@ -3593,7 +3594,6 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
         pa.last_seen,
         pa.last_online,
         pa.registration_at,
-        pa.observed_message_count,
         TO_CHAR(pa.registration_at AT TIME ZONE 'UTC', 'MM/DD/YYYY HH24:MI:SS') AS registration_display,
         pt.tracking_since,
         COALESCE(pa.is_online, FALSE) AS is_online,
@@ -3663,23 +3663,29 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
       ) bot ON TRUE
     `, [currentUsername, playerUuid, aliases]),
     pool.query(`
+      WITH message_baseline AS (
+        SELECT observed_message_count, observed_message_count_at
+        FROM player_activity
+        WHERE ($1::uuid IS NOT NULL AND player_uuid = $1::uuid)
+           OR ($1::uuid IS NULL AND LOWER(username) = ANY($2::text[]))
+        ORDER BY is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
+        LIMIT 1
+      )
       SELECT
-        COALESCE(
-          (
-            SELECT observed_message_count
-            FROM player_activity
-            WHERE ($1::uuid IS NOT NULL AND player_uuid = $1::uuid)
-               OR ($1::uuid IS NULL AND LOWER(username) = ANY($2::text[]))
-            ORDER BY is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
-            LIMIT 1
-          ),
-          (
+        (
+          COALESCE(baseline.observed_message_count, 0) +
+          COALESCE((
             SELECT SUM(message_count)
             FROM game_chat_messages
-            WHERE ($1::uuid IS NOT NULL AND player_uuid = $1::uuid)
-               OR (player_uuid IS NULL AND LOWER(username) = ANY($2::text[]))
-          ),
-          0
+            WHERE (
+                ($1::uuid IS NOT NULL AND player_uuid = $1::uuid)
+                OR (player_uuid IS NULL AND LOWER(username) = ANY($2::text[]))
+              )
+              AND (
+                baseline.observed_message_count IS NULL
+                OR created_at > baseline.observed_message_count_at
+              )
+          ), 0)
         )::bigint AS total,
         COALESCE((
           SELECT SUM(message_count)
@@ -3714,6 +3720,8 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
           ORDER BY created_at DESC, id DESC
           LIMIT 1
         ) AS last_message_at
+      FROM (SELECT 1) seed
+      LEFT JOIN message_baseline baseline ON TRUE
     `, [playerUuid, aliases]),
     pool.query(`
       SELECT id, message, created_at, is_visible
@@ -3806,9 +3814,7 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
     gameSessionCount,
     gameSessions,
     chat: {
-      totalMessages: profile.observed_message_count == null
-        ? toInt(chat.total)
-        : toInt(profile.observed_message_count),
+      totalMessages: toInt(chat.total),
       last24h: toInt(chat.last_24h),
       lastMessageAt: chat.last_message_at || null,
       recentMessages: recentChatResult.rows.map(row => ({

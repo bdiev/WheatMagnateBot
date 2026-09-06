@@ -51,8 +51,8 @@ assert.match(
 );
 assert.match(
   serverSource,
-  /pa\.observed_message_count[\s\S]*totalMessages:\s*profile\.observed_message_count == null[\s\S]*toInt\(profile\.observed_message_count\)/,
-  'the player profile must prefer the one-time observed !messages total when available'
+  /WITH message_baseline AS[\s\S]*COALESCE\(baseline\.observed_message_count, 0\) \+[\s\S]*SUM\(message_count\)[\s\S]*baseline\.observed_message_count IS NULL[\s\S]*created_at > baseline\.observed_message_count_at[\s\S]*totalMessages:\s*toInt\(chat\.total\)/,
+  'the player profile must add messages archived after the observed !messages baseline and use the full archive when no baseline exists'
 );
 assert.match(
   appSource,

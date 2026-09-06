@@ -1843,6 +1843,7 @@ async function initDatabase() {
     await pool.query('ALTER TABLE player_activity ALTER COLUMN last_online DROP DEFAULT');
     await pool.query('ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS registration_at TIMESTAMPTZ');
     await pool.query('ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS observed_message_count BIGINT CHECK (observed_message_count >= 0)');
+    await pool.query('ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS observed_message_count_at TIMESTAMPTZ');
     await pool.query('ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS admin_notes TEXT');
     await pool.query("ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS admin_tags TEXT[] NOT NULL DEFAULT '{}'::text[]");
     await pool.query('ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS pearl_hatch_x INTEGER');
@@ -3361,7 +3362,9 @@ async function reconcileObservedPlaytime(targetUsername, observedSeconds) {
           LIMIT 1
         `, [identity.username, identity.playerUuid]);
         const currentSeconds = Number(current.rows[0]?.effective_seconds || 0);
-        if (Math.abs(currentSeconds - safeSeconds) < 60) {
+        // Minute-rounded replies may match an existing timer closely, but a
+        // first observation (including zero) still needs a persisted PT row.
+        if (current.rows.length > 0 && Math.abs(currentSeconds - safeSeconds) < 60) {
           return { username: current.rows[0]?.username || identity.username, currentSeconds, unchanged: true };
         }
 
@@ -3492,13 +3495,14 @@ async function reconcileObservedMessages(targetUsername, observedCount) {
       async (client, identity) => client.query(`
         WITH updated_by_uuid AS (
           UPDATE player_activity activity
-          SET observed_message_count = $3::bigint
+          SET observed_message_count = $3::bigint,
+              observed_message_count_at = NOW()
           WHERE $2::uuid IS NOT NULL
             AND activity.player_uuid = $2::uuid
           RETURNING username
         ), inserted AS (
-          INSERT INTO player_activity (username, player_uuid, observed_message_count)
-          SELECT $1::text, $2::uuid, $3::bigint
+          INSERT INTO player_activity (username, player_uuid, observed_message_count, observed_message_count_at)
+          SELECT $1::text, $2::uuid, $3::bigint, NOW()
           WHERE NOT EXISTS (SELECT 1 FROM updated_by_uuid)
             AND NOT EXISTS (
               SELECT 1 FROM player_activity activity
@@ -3506,11 +3510,13 @@ async function reconcileObservedMessages(targetUsername, observedCount) {
             )
           ON CONFLICT (LOWER(username))
           DO UPDATE SET player_uuid = COALESCE(EXCLUDED.player_uuid, player_activity.player_uuid),
-                        observed_message_count = EXCLUDED.observed_message_count
+                        observed_message_count = EXCLUDED.observed_message_count,
+                        observed_message_count_at = EXCLUDED.observed_message_count_at
           RETURNING username
         ), updated_by_name AS (
           UPDATE player_activity activity
-          SET observed_message_count = $3::bigint
+          SET observed_message_count = $3::bigint,
+              observed_message_count_at = NOW()
           WHERE LOWER(activity.username) = LOWER($1::text)
             AND NOT EXISTS (SELECT 1 FROM updated_by_uuid)
           RETURNING username

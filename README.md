@@ -128,6 +128,7 @@ The dashboard uses `HttpOnly`, `SameSite=Lax` session cookies, per-session CSRF 
 
 ## Notes
 
+- Player-profile Chat Messages combines the last accepted `!messages` total with archived messages recorded after that observation, including hidden messages and flood-summary counts. Refreshing the server total replaces its timestamp as well, so earlier archive history is not added twice. Existing profiles recover their timestamp from matching archived replies where available, then from observation state, or start local counting at migration time if neither exists.
 - Node.js `22.13.0+` is expected.
 - Keep `data/` persistent for Minecraft auth/cache.
 - The web dashboard reads the same root `.env`.
