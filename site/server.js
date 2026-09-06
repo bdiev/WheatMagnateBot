@@ -730,6 +730,7 @@ async function ensureOptionalTables() {
       username VARCHAR(255) UNIQUE NOT NULL,
       last_seen TIMESTAMP,
       last_online TIMESTAMP,
+      online_since TIMESTAMPTZ,
       registration_at TIMESTAMPTZ,
       is_online BOOLEAN DEFAULT FALSE,
       admin_notes TEXT,
@@ -3346,6 +3347,7 @@ async function searchSeenPlayers(url) {
         ) AS is_whitelisted,
         pa.last_seen,
         pa.last_online,
+        pa.online_since,
         COALESCE(pa.is_online, FALSE) AS is_online,
         COALESCE(pt.total_seconds, 0) AS total_seconds
       FROM player_activity pa
@@ -3392,6 +3394,7 @@ async function searchSeenPlayers(url) {
         EXISTS (SELECT 1 FROM whitelist w WHERE LOWER(w.username) = LOWER(names.username)) AS is_whitelisted,
         pa.last_seen,
         pa.last_online,
+        pa.online_since,
         COALESCE(pa.is_online, FALSE) AS is_online,
         COALESCE(pt.total_seconds, 0) +
           CASE WHEN pt.tracking_since IS NULL THEN 0
@@ -3426,7 +3429,7 @@ async function searchSeenPlayers(url) {
     );
     const isOnline = Boolean(row.is_online) || runtimePresence.isOnline;
     const onlineSince = isOnline
-      ? (runtimePresence.isOnline ? runtimePresence.currentStartedAt || row.last_online : row.last_online)
+      ? (runtimePresence.isOnline ? runtimePresence.currentStartedAt || row.online_since : row.online_since)
       : null;
     return {
       username: row.username,

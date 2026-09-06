@@ -3791,7 +3791,7 @@ function clearSeenSearch({ collapse = false } = {}) {
 
 function seenPlayerStatusText(player, now = Date.now()) {
   if (!player?.isOnline) return player?.lastSeen ? formatAgo(player.lastSeen) : 'never seen';
-  const startedAt = new Date(player.onlineSince || player.lastOnline || 0).getTime();
+  const startedAt = new Date(player.onlineSince || 0).getTime();
   return Number.isFinite(startedAt) && startedAt > 0
     ? `online for ${formatDurationMs(Math.max(0, now - startedAt))}`
     : 'online now';
@@ -3816,7 +3816,7 @@ function stopSeenOnlineTimer() {
 
 function startSeenOnlineTimer() {
   stopSeenOnlineTimer();
-  if (!state.seenPlayers.some(player => player.isOnline && (player.onlineSince || player.lastOnline))) return;
+  if (!state.seenPlayers.some(player => player.isOnline && player.onlineSince)) return;
   updateSeenOnlineDurations();
   state.seenOnlineTimer = setInterval(updateSeenOnlineDurations, 1_000);
 }
@@ -3842,7 +3842,7 @@ function renderSeenSuggestions(players) {
   suggestions.innerHTML = state.seenPlayers.map((player, index) => `
     <button class="seen-option" type="button" data-index="${index}">
       ${playerIdentity(player.username, 24, { status: player.isOnline ? 'online' : 'offline' })}
-      <span class="muted"${player.isOnline && (player.onlineSince || player.lastOnline) ? ` data-seen-online-since="${escapeHtml(player.onlineSince || player.lastOnline)}"` : ''}>${escapeHtml(seenPlayerStatusText(player))}</span>
+      <span class="muted"${player.isOnline && player.onlineSince ? ` data-seen-online-since="${escapeHtml(player.onlineSince)}"` : ''}>${escapeHtml(seenPlayerStatusText(player))}</span>
     </button>
   `).join('');
   suggestions.hidden = false;

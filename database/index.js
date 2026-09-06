@@ -109,7 +109,7 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
     }
   }
 
-  async function updatePlayerActivity(username, isOnline, { recordEvent = true, uuid = null } = {}) {
+  async function updatePlayerActivity(username, isOnline, { recordEvent = true, uuid = null, resetSession = false } = {}) {
     if (!pool) return;
 
     username = String(username || '').trim();
@@ -166,6 +166,10 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
               WHEN source.last_online IS NULL THEN target.last_online
               ELSE GREATEST(target.last_online,source.last_online)
             END,
+            online_since = GREATEST(
+              CASE WHEN target.is_online THEN target.online_since END,
+              CASE WHEN source.is_online THEN source.online_since END
+            ),
             registration_at = CASE
               WHEN target.registration_at IS NULL THEN source.registration_at
               WHEN source.registration_at IS NULL THEN target.registration_at
@@ -271,6 +275,12 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
                   WHEN $3::boolean AND player_activity.is_online IS DISTINCT FROM TRUE THEN $2::timestamp
                   ELSE player_activity.last_online
                 END,
+                online_since = CASE
+                  WHEN $5::boolean THEN NULL
+                  WHEN player_activity.is_online IS TRUE THEN player_activity.online_since
+                  WHEN $3::boolean THEN $6::timestamptz
+                  ELSE NULL
+                END,
                 registration_at = COALESCE(player_activity.registration_at, NOW()),
                 is_online = TRUE
             WHERE id = (
@@ -283,15 +293,16 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
             )
             RETURNING id
           )
-          INSERT INTO player_activity (username, player_uuid, last_seen, last_online, registration_at, is_online)
+          INSERT INTO player_activity (username, player_uuid, last_seen, last_online, online_since, registration_at, is_online)
           SELECT $1, $4::uuid,
                  CASE WHEN $3::boolean THEN $2::timestamp ELSE NULL END,
                  CASE WHEN $3::boolean THEN $2::timestamp ELSE NULL END,
+                 CASE WHEN $3::boolean AND NOT $5::boolean THEN $6::timestamptz ELSE NULL END,
                  NOW(),
                  TRUE
           WHERE NOT EXISTS (SELECT 1 FROM updated)
           RETURNING id
-        `, [username, timestamp, recordEvent, normalizedUuid]);
+        `, [username, timestamp, recordEvent, normalizedUuid, resetSession, timestamp.toISOString()]);
         return { created: result.rowCount > 0 };
       } else {
         const result = await executor.query(`
@@ -304,7 +315,8 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
                   ELSE player_activity.last_seen
                 END,
                 registration_at = COALESCE(player_activity.registration_at, NOW()),
-                is_online = FALSE
+                is_online = FALSE,
+                online_since = NULL
             WHERE id = (
               SELECT id
               FROM player_activity

@@ -1830,6 +1830,7 @@ async function initDatabase() {
         username VARCHAR(255) UNIQUE NOT NULL,
         last_seen TIMESTAMP,
         last_online TIMESTAMP,
+        online_since TIMESTAMPTZ,
         registration_at TIMESTAMPTZ,
         is_online BOOLEAN DEFAULT FALSE,
         admin_notes TEXT,
@@ -9511,6 +9512,7 @@ function createBot() {
       lastObservedOnlinePlayerKeys.set(player.username.toLowerCase(), player.username);
       const activityResult = await updatePlayerActivity(player.username, true, {
         recordEvent: playerActivityJoinEventsReady,
+        resetSession: !playerActivityJoinEventsReady,
         uuid: player.uuid
       });
       if (activityResult?.created) playerInfoFirstJoinCheck?.enqueue(player.username);
