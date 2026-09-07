@@ -10354,7 +10354,17 @@ body.kill-aura-modal-open {
 .account-color-field input[type="color"] { grid-column:2; width:42px; min-width:42px; height:30px; min-height:30px; padding:3px; border-radius:9px; cursor:pointer; }
 .account-context-menu { position:fixed; z-index:1300; width:180px; display:grid; gap:4px; padding:8px; border:1px solid var(--line); border-radius:var(--button-radius); background:var(--panel); box-shadow:var(--shadow); }.account-context-menu button { width:100%; min-height:36px; padding:8px 11px; border:1px solid transparent; border-radius:calc(var(--button-radius) - 3px); text-align:left; background:transparent; color:var(--text); }.account-context-menu button:hover { border-color:var(--line); background:var(--panel-soft); }
 .account-form-row { display:grid; grid-template-columns:minmax(0,1fr) 120px; gap:12px; }.account-checkbox { display:flex!important; align-items:center; gap:9px; min-height:32px; color:var(--text); font-size:13px; font-weight:700; cursor:pointer; }.account-checkbox input { width:16px; height:16px; margin:0; accent-color:var(--accent); }
-.pearl-hatch-fields{border:1px solid var(--border);border-radius:10px;padding:12px;margin:0}.pearl-hatch-fields legend{padding:0 6px;font-weight:700}.pearl-hatch-coordinate-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.pearl-hatch-fields>small{display:block;margin-top:8px;color:var(--muted)}
+.pearl-hatch-fields { min-width:0; margin:0; padding:12px; border:1px solid var(--line); border-radius:14px; }
+.pearl-hatch-fields legend { padding:0 6px; color:var(--text); font-size:13px; font-weight:700; }
+.pearl-hatch-coordinate-row { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+.pearl-coordinate-field { min-width:0; gap:6px; padding:9px 10px; border:1px solid var(--line); border-radius:10px; background:var(--panel-soft); cursor:text; transition:border-color 160ms ease,box-shadow 160ms ease,background-color 160ms ease; }
+.pearl-coordinate-field > span { display:flex; align-items:center; gap:5px; color:var(--muted); font-size:10px; font-weight:700; line-height:1; }
+.pearl-coordinate-field > span::before { content:""; width:4px; height:4px; border-radius:50%; background:var(--accent); }
+.pearl-coordinate-field:hover { border-color:var(--muted); }
+.pearl-coordinate-field:focus-within { border-color:var(--accent); background:var(--panel); box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 14%,transparent); }
+.pearl-hatch-coordinate-row .pearl-coordinate-field input { min-width:0; height:26px; min-height:26px; padding:0; border:0; border-radius:0; background:transparent; box-shadow:none; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:16px; font-weight:500; line-height:1.4; font-variant-numeric:tabular-nums; appearance:textfield; -moz-appearance:textfield; }
+.pearl-coordinate-field input::-webkit-inner-spin-button,
+.pearl-coordinate-field input::-webkit-outer-spin-button { margin:0; -webkit-appearance:none; }
 .pearl-hatch-footer { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:10px; }
 .pearl-hatch-footer small { flex:1; min-width:0; color:var(--muted); font-size:12px; line-height:1.5; }
 .pearl-hatch-reset { display:inline-flex; flex:0 0 auto; align-items:center; justify-content:center; gap:5px; width:auto; min-width:0; min-height:36px; padding:7px 9px; border:1px solid var(--line); border-radius:9px; color:var(--muted); background:transparent; font-size:12px; white-space:nowrap; touch-action:manipulation; }
