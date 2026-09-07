@@ -5889,6 +5889,18 @@ body.search-focus-active #logoutButton {
 .admin-player-card-menu button:hover { border-color:var(--line); background:var(--panel-soft); }
 .admin-player-card-menu hr { width:100%; margin:3px 0; border:0; border-top:1px solid var(--line); }
 .admin-player-card-menu .danger-text { color:#ef7373; }
+.admin-player-actions-dialog { position:fixed; inset:auto 12px calc(12px + env(safe-area-inset-bottom,0px)); width:calc(100% - 24px); max-width:480px; max-height:calc(100dvh - 32px); margin:0 auto; padding:16px; overflow-y:auto; overscroll-behavior:contain; border:1px solid var(--line); border-radius:20px; color:var(--text); background:var(--panel); box-shadow:var(--shadow); }
+.admin-player-actions-dialog::backdrop { background:rgb(8 11 17 / .64); backdrop-filter:blur(5px); }
+body:has(.admin-player-actions-dialog[open]) { overflow:hidden; }
+.admin-player-actions-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px; }
+.admin-player-actions-heading h2 { margin:4px 0 0; font-size:18px; overflow-wrap:anywhere; }
+.admin-player-actions-heading .eyebrow { margin:0; }
+.admin-player-actions-heading > button { flex-shrink:0; width:44px; min-width:44px; min-height:44px; padding:0; font-size:26px; }
+.admin-player-actions-buttons { display:grid; gap:8px; }
+.admin-player-actions-buttons button { width:100%; min-height:48px; padding:12px 16px; border:1px solid var(--line); border-radius:12px; background:var(--panel-soft); text-align:left; touch-action:manipulation; }
+.admin-player-actions-buttons button:hover { border-color:var(--accent); }
+.admin-player-actions-buttons .danger-text { color:#ef7373; background:color-mix(in srgb,#ef7373 8%,var(--panel)); }
+.admin-player-actions-buttons hr { width:100%; margin:2px 0; border:0; border-top:1px solid var(--line); }
 .admin-player-edit-modal { width:min(600px,100%); }
 .account-field textarea { width:100%; min-height:130px; resize:vertical; border:1px solid var(--line); border-radius:var(--button-radius); padding:11px 13px; color:var(--text); background:var(--panel-soft); font:inherit; font-size:16px; line-height:1.45; outline:none; }
 .account-field textarea:focus { border-color:var(--accent); background:var(--panel); box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent); }
@@ -10342,6 +10354,12 @@ body.kill-aura-modal-open {
 .account-context-menu { position:fixed; z-index:1300; width:180px; display:grid; gap:4px; padding:8px; border:1px solid var(--line); border-radius:var(--button-radius); background:var(--panel); box-shadow:var(--shadow); }.account-context-menu button { width:100%; min-height:36px; padding:8px 11px; border:1px solid transparent; border-radius:calc(var(--button-radius) - 3px); text-align:left; background:transparent; color:var(--text); }.account-context-menu button:hover { border-color:var(--line); background:var(--panel-soft); }
 .account-form-row { display:grid; grid-template-columns:minmax(0,1fr) 120px; gap:12px; }.account-checkbox { display:flex!important; align-items:center; gap:9px; min-height:32px; color:var(--text); font-size:13px; font-weight:700; cursor:pointer; }.account-checkbox input { width:16px; height:16px; margin:0; accent-color:var(--accent); }
 .pearl-hatch-fields{border:1px solid var(--border);border-radius:10px;padding:12px;margin:0}.pearl-hatch-fields legend{padding:0 6px;font-weight:700}.pearl-hatch-coordinate-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.pearl-hatch-fields>small{display:block;margin-top:8px;color:var(--muted)}
+.pearl-hatch-footer { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; margin-top:12px; padding-top:12px; border-top:1px solid var(--line); }
+.pearl-hatch-footer small { flex:1 1 200px; color:var(--muted); font-size:12px; line-height:1.5; }
+.pearl-hatch-reset { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:44px; padding:9px 12px; border:1px solid color-mix(in srgb,var(--accent) 35%,var(--line)); color:var(--accent); background:color-mix(in srgb,var(--accent) 8%,var(--panel)); font-size:12px; white-space:nowrap; touch-action:manipulation; }
+.pearl-hatch-reset:hover { border-color:var(--accent); background:color-mix(in srgb,var(--accent) 15%,var(--panel)); }
+.pearl-hatch-reset:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+.pearl-hatch-reset svg { width:17px; height:17px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
 .account-auth-note { padding:11px 12px; border-left:3px solid var(--accent); border-radius:0 10px 10px 0; color:var(--muted); background:var(--panel-soft); font-size:12px; line-height:1.5; }.account-modal-actions { display:flex; justify-content:flex-end; gap:10px; padding-top:2px; }.account-modal-actions button { min-width:112px; }.account-modal-close { position:absolute; top:14px; right:14px; width:34px; min-width:34px; max-width:34px; height:34px; min-height:34px; max-height:34px; padding:0; border:1px solid var(--line); border-radius:50%; color:var(--muted); background:var(--panel-soft); font-size:22px; font-weight:500; }.account-modal-close:hover { color:var(--text); background:color-mix(in srgb,var(--accent) 14%,var(--panel-soft)); border-color:var(--accent); }
 @media (max-width:700px) {
   .realtime-status { display:none!important; }
@@ -10499,7 +10517,7 @@ body.kill-aura-modal-open {
   .admin-player-avatar-button { width:46px; min-width:46px!important; max-width:46px; height:46px; }
   .admin-player-avatar { width:46px; height:46px; }
   .admin-player-card-stats { grid-template-columns:repeat(2,minmax(0,1fr)); }
-  .admin-player-card-menu > div { position:fixed; z-index:1600; top:auto; right:12px; bottom:calc(12px + env(safe-area-inset-bottom,0px)); left:12px; width:auto; padding:10px; }
+  .admin-player-card-menu summary { width:44px; height:44px; touch-action:manipulation; }
   .admin-player-card-menu button { min-height:46px; }
   .player-profile-admin-metadata > div { grid-template-columns:1fr; gap:5px; }
 }

@@ -211,6 +211,13 @@
           <div id="playerProfileContent"></div>
         </article>
       </div>
+      <dialog id="adminPlayerActionsDialog" class="admin-player-actions-dialog" aria-labelledby="adminPlayerActionsTitle">
+        <div class="admin-player-actions-heading">
+          <div><p class="eyebrow">Player actions</p><h2 id="adminPlayerActionsTitle"></h2></div>
+          <button id="adminPlayerActionsClose" class="ghost-button" type="button" aria-label="Close player actions" autofocus>&times;</button>
+        </div>
+        <div id="adminPlayerActionsButtons" class="admin-player-actions-buttons"></div>
+      </dialog>
       <div id="adminPlayerEditModal" class="account-modal-overlay" hidden>
         <form id="adminPlayerEditForm" class="account-modal admin-player-edit-modal" role="dialog" aria-modal="true" aria-labelledby="adminPlayerEditTitle">
           <button id="adminPlayerEditClose" class="account-modal-close" type="button" aria-label="Close player editor">&times;</button>
@@ -228,7 +235,13 @@
               <label class="account-field">Y<input id="adminPlayerPearlHatchY" name="pearlHatchY" type="number" step="1" placeholder="Y"></label>
               <label class="account-field">Z<input id="adminPlayerPearlHatchZ" name="pearlHatchZ" type="number" step="1" placeholder="Z"></label>
             </div>
-            <small>Leave all three fields empty to disable Pearl Loader for this player.</small>
+            <div class="pearl-hatch-footer">
+              <small>Empty coordinates disable Pearl Loader for this player. Apply with Save changes.</small>
+              <button id="adminPlayerPearlHatchReset" class="ghost-button pearl-hatch-reset" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10a9 9 0 1 1 2.6 8.4M3 4v6h6"/></svg>
+                Reset coordinates
+              </button>
+            </div>
           </fieldset>
           <p class="account-auth-note">The bot maintains identity, activity, playtime, and stats.</p>
           <div class="account-modal-actions"><button id="adminPlayerEditCancel" class="ghost-button" type="button">Cancel</button><button id="adminPlayerEditSubmit" type="submit">Save changes</button></div>

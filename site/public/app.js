@@ -6752,6 +6752,15 @@ function renderAdminPlayers(players = state.adminPlayers, { append = false, reco
 
   list.querySelectorAll('.admin-player-card-menu:not([data-menu-bound])').forEach(menu => {
     menu.dataset.menuBound = 'true';
+    menu.querySelector('summary').addEventListener('click', event => {
+      if (!matchMedia('(max-width: 700px)').matches) return;
+      event.preventDefault();
+      menu.removeAttribute('open');
+      const dialog = $('#adminPlayerActionsDialog');
+      $('#adminPlayerActionsTitle').textContent = menu.closest('.admin-player-card').querySelector('.admin-player-name-button').textContent;
+      $('#adminPlayerActionsButtons').innerHTML = menu.querySelector(':scope > div').innerHTML;
+      dialog.showModal();
+    });
     menu.addEventListener('toggle', () => {
       if (menu.open) {
         list.querySelectorAll('.admin-player-card-menu[open]').forEach(otherMenu => {
@@ -6933,6 +6942,7 @@ async function openAdminPlayerEdit(identityKey) {
   const modal = $('#adminPlayerEditModal');
   const error = $('#adminPlayerEditError');
   state.adminPlayerEditTarget = { ...listPlayer };
+  delete $('#adminPlayerEditForm').dataset.hatchEdited;
   $('#adminPlayerEditIdentity').innerHTML = adminPlayerIdentityMarkup(listPlayer);
   renderAdminPlayerReadonly(listPlayer);
   $('#adminPlayerNotes').value = listPlayer.notes || '';
@@ -6949,13 +6959,21 @@ async function openAdminPlayerEdit(identityKey) {
     state.adminPlayerEditTarget = { ...listPlayer, notes: profile.adminNotes || '', tags: profile.adminTags || [], pearlHatch:profile.pearlHatch || null };
     $('#adminPlayerNotes').value = state.adminPlayerEditTarget.notes;
     $('#adminPlayerTags').value = state.adminPlayerEditTarget.tags.join(', ');
-    $('#adminPlayerPearlHatchX').value = state.adminPlayerEditTarget.pearlHatch?.x ?? '';
-    $('#adminPlayerPearlHatchY').value = state.adminPlayerEditTarget.pearlHatch?.y ?? '';
-    $('#adminPlayerPearlHatchZ').value = state.adminPlayerEditTarget.pearlHatch?.z ?? '';
+    if (!$('#adminPlayerEditForm').dataset.hatchEdited) {
+      $('#adminPlayerPearlHatchX').value = state.adminPlayerEditTarget.pearlHatch?.x ?? '';
+      $('#adminPlayerPearlHatchY').value = state.adminPlayerEditTarget.pearlHatch?.y ?? '';
+      $('#adminPlayerPearlHatchZ').value = state.adminPlayerEditTarget.pearlHatch?.z ?? '';
+    }
   } catch (err) {
     error.textContent = `Could not refresh player details: ${err.message}`;
     error.hidden = false;
   }
+}
+
+function resetAdminPlayerPearlHatch() {
+  for (const axis of ['X', 'Y', 'Z']) $('#adminPlayerPearlHatch' + axis).value = '';
+  $('#adminPlayerEditForm').dataset.hatchEdited = 'true';
+  $('#adminPlayerEditError').hidden = true;
 }
 
 function closeAdminPlayerEdit() {
@@ -7058,6 +7076,7 @@ async function handleAdminPlayerAction(event) {
   const button = event.target.closest('[data-admin-player-action]');
   if (!button) return;
   if (hasActiveTextSelectionWithin(button.closest('.admin-player-card'))) return;
+  if ($('#adminPlayerActionsDialog')?.open) $('#adminPlayerActionsDialog').close();
   button.closest('details')?.removeAttribute('open');
   const player = adminPlayerByIdentity(button.dataset.playerKey);
   if (!player) return;
@@ -9146,6 +9165,17 @@ $('#adminPlayersSearch')?.addEventListener('input', () => {
 $('#adminPlayersScroller')?.addEventListener('scroll', maybeLoadMoreAdminPlayers, { passive: true });
 $('#adminPlayersList')?.addEventListener('click', event => handleAdminPlayerAction(event).catch(err => setAdminPlayersNotice(err.message, 'error')));
 document.addEventListener('pointerdown', closeAdminPlayerMenus, true);
+$('#adminPlayerActionsButtons')?.addEventListener('click', event => handleAdminPlayerAction(event).catch(err => setAdminPlayersNotice(err.message, 'error')));
+$('#adminPlayerActionsClose')?.addEventListener('click', () => $('#adminPlayerActionsDialog').close());
+$('#adminPlayerActionsDialog')?.addEventListener('click', event => {
+  if (event.target === event.currentTarget) event.currentTarget.close();
+});
+$('#adminPlayerPearlHatchReset')?.addEventListener('click', resetAdminPlayerPearlHatch);
+for (const axis of ['X', 'Y', 'Z']) {
+  $('#adminPlayerPearlHatch' + axis)?.addEventListener('input', () => {
+    $('#adminPlayerEditForm').dataset.hatchEdited = 'true';
+  });
+}
 $('#adminPlayerEditForm')?.addEventListener('submit', saveAdminPlayer);
 $('#adminPlayerEditClose')?.addEventListener('click', closeAdminPlayerEdit);
 $('#adminPlayerEditCancel')?.addEventListener('click', closeAdminPlayerEdit);
