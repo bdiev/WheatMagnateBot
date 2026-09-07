@@ -226,6 +226,7 @@ let dashboardBrandScrollFrame = null;
 
 function updateDashboardBrandVisibility() {
   dashboardBrandScrollFrame = null;
+  if (document.documentElement.classList.contains('admin-player-actions-open')) return;
   const brand = $('.dashboard-brand');
   if (!brand) return;
 
@@ -6756,10 +6757,7 @@ function renderAdminPlayers(players = state.adminPlayers, { append = false, reco
       if (!matchMedia('(max-width: 700px)').matches) return;
       event.preventDefault();
       menu.removeAttribute('open');
-      const dialog = $('#adminPlayerActionsDialog');
-      $('#adminPlayerActionsTitle').textContent = menu.closest('.admin-player-card').querySelector('.admin-player-name-button').textContent;
-      $('#adminPlayerActionsButtons').innerHTML = menu.querySelector(':scope > div').innerHTML;
-      dialog.showModal();
+      openAdminPlayerActions(menu);
     });
     menu.addEventListener('toggle', () => {
       if (menu.open) {
@@ -6782,6 +6780,36 @@ function updateAdminPlayersScrollStatus() {
   const loadingMore = state.adminPlayersLoading && state.adminPlayersAppending && state.adminPlayers.length > 0;
   status.hidden = !loadingMore && !state.adminPlayersHasMore;
   status.textContent = loadingMore ? 'Loading more players…' : 'Scroll to load more';
+}
+
+let adminPlayerActionsScrollPosition = null;
+
+function openAdminPlayerActions(menu) {
+  const dialog = $('#adminPlayerActionsDialog');
+  if (!dialog || dialog.open) return;
+  $('#adminPlayerActionsTitle').textContent = menu.closest('.admin-player-card').querySelector('.admin-player-name-button').textContent;
+  $('#adminPlayerActionsButtons').innerHTML = menu.querySelector(':scope > div').innerHTML;
+  // Lock the page before native dialog autofocus. overflow:hidden on body alone
+  // still lets the document move on mobile Safari.
+  adminPlayerActionsScrollPosition = { left: window.scrollX, top: window.scrollY };
+  document.documentElement.style.setProperty('--admin-player-actions-scroll-top', `${-window.scrollY}px`);
+  document.documentElement.classList.add('admin-player-actions-open');
+  dialog.showModal();
+}
+
+function restoreAdminPlayerActionsScroll() {
+  if (!adminPlayerActionsScrollPosition) return;
+  const position = adminPlayerActionsScrollPosition;
+  adminPlayerActionsScrollPosition = null;
+  document.documentElement.classList.remove('admin-player-actions-open');
+  document.documentElement.style.removeProperty('--admin-player-actions-scroll-top');
+  window.scrollTo({ ...position, behavior: 'instant' });
+}
+
+function closeAdminPlayerActions() {
+  $('#adminPlayerActionsDialog')?.close();
+  // Restore synchronously so opening the player editor starts at the same place.
+  restoreAdminPlayerActionsScroll();
 }
 
 function closeAdminPlayerMenus(event) {
@@ -7076,7 +7104,7 @@ async function handleAdminPlayerAction(event) {
   const button = event.target.closest('[data-admin-player-action]');
   if (!button) return;
   if (hasActiveTextSelectionWithin(button.closest('.admin-player-card'))) return;
-  if ($('#adminPlayerActionsDialog')?.open) $('#adminPlayerActionsDialog').close();
+  if ($('#adminPlayerActionsDialog')?.open) closeAdminPlayerActions();
   button.closest('details')?.removeAttribute('open');
   const player = adminPlayerByIdentity(button.dataset.playerKey);
   if (!player) return;
@@ -9166,9 +9194,18 @@ $('#adminPlayersScroller')?.addEventListener('scroll', maybeLoadMoreAdminPlayers
 $('#adminPlayersList')?.addEventListener('click', event => handleAdminPlayerAction(event).catch(err => setAdminPlayersNotice(err.message, 'error')));
 document.addEventListener('pointerdown', closeAdminPlayerMenus, true);
 $('#adminPlayerActionsButtons')?.addEventListener('click', event => handleAdminPlayerAction(event).catch(err => setAdminPlayersNotice(err.message, 'error')));
-$('#adminPlayerActionsClose')?.addEventListener('click', () => $('#adminPlayerActionsDialog').close());
+$('#adminPlayerActionsClose')?.addEventListener('click', closeAdminPlayerActions);
+$('#adminPlayerActionsDialog')?.addEventListener('cancel', event => {
+  event.preventDefault();
+  closeAdminPlayerActions();
+});
+$('#adminPlayerActionsDialog')?.addEventListener('close', () => {
+  if (!$('#adminPlayerActionsDialog').open) restoreAdminPlayerActionsScroll();
+});
 $('#adminPlayerActionsDialog')?.addEventListener('click', event => {
-  if (event.target === event.currentTarget) event.currentTarget.close();
+  if (event.target !== event.currentTarget) return;
+  const rect = event.currentTarget.getBoundingClientRect();
+  if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) closeAdminPlayerActions();
 });
 $('#adminPlayerPearlHatchReset')?.addEventListener('click', resetAdminPlayerPearlHatch);
 for (const axis of ['X', 'Y', 'Z']) {
