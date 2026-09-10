@@ -20,6 +20,8 @@ const {
 } = require('./discord/server-status-visibility');
 const { DiscordChatForwardQueue, positiveInteger } = require('./discord/chat-forward-queue');
 const { formatDiscordBridgeMessage } = require('./discord/chat-message-format');
+const { createChatAvatarLoader } = require('./discord/chat-avatar');
+const loadChatAvatar = createChatAvatarLoader();
 const { NEW_PLAYER_WINDOW_DAYS } = require('./site/player-new-status');
 const { preparePlayerHeadEmojiImage } = require('./discord/player-head-image');
 const { createMinecraftBot } = require('./minecraft');
@@ -5763,7 +5765,11 @@ async function deliverGameChatMessageToDiscord({
     const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
     if (!channel?.isTextBased?.()) return false;
 
-    const avatarUrl = `https://minotar.net/helm/${username.toLowerCase()}/28`;
+    const avatar = !isSummary && !isSystemMessage
+      ? await loadChatAvatar(username, {
+          attachFiles: !channel.guild || Boolean(channel.permissionsFor(discordClient.user)?.has(PermissionsBitField.Flags.AttachFiles))
+        })
+      : {};
     const displayMessage = formatDiscordBridgeMessage(message, { allowDiscordInvites: isBotPlayer });
     const skippedCount = Math.max(1, Number.parseInt(summaryCount, 10) || 1);
     const skippedLabel = `${skippedCount} ${skippedCount === 1 ? 'message' : 'messages'} skipped`;
@@ -5793,10 +5799,12 @@ async function deliverGameChatMessageToDiscord({
             },
             description: displayMessage,
             color: isBotPlayer ? 10181046 : 3447003,
-            thumbnail: { url: avatarUrl },
+            ...(avatar.thumbnail ? { thumbnail: avatar.thumbnail } : {}),
             timestamp: new Date(createdAt)
           }]
     };
+
+    if (avatar.files) sendOptions.files = avatar.files;
 
     const isBridgeMessage = /^\[[^\]]+\]\s/.test(message);
     // Messages from Minecraft accounts carrying the admin `Bot` tag remain
