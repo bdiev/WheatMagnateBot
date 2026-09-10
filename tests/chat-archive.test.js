@@ -208,7 +208,7 @@ assert.match(appSource, /playerIdentity\(username, 28, \{ uuid: message\.playerU
   'chat avatars must use the recorded player UUID when available');
 assert.match(serverSource, /playerUuid: row\.player_uuid \|\| null/,
   'chat API must expose the recorded player UUID for stable skin resolution');
-assert.match(serverSource, /const cacheKey = `v3:\$\{avatarIdentity\.toLowerCase\(\)\}`/,
+assert.match(serverSource, /const cacheKey = `v4:\$\{avatarIdentity\.toLowerCase\(\)\}`/,
   'avatar cache must not reuse stale username-only placeholder entries');
 assert.match(appSource, /previousChatUsername = isActivity \|\| isNotice \? null : normalizedUsername/,
   'join, leave, flood, and server notices must end the current player message group');
@@ -250,8 +250,8 @@ assert.match(stylesSource, /\.chat-date-indicator\.visible\s*\{[^}]*opacity:\s*1
 assert.match(stylesSource, /\.chat-panel\.chat-search-open > \.panel-head > div:first-child\s*\{[^}]*opacity:\s*0;/s,
   'the chat heading must fade away while archive search expands');
 assert.ok(Number(indexSource.match(/styles\.css\?v=(\d+)/)?.[1]) >= 246, 'the updated mobile layout must use a fresh stylesheet URL');
-assert.ok(Number(indexSource.match(/app\.js\?v=(\d+)/)?.[1]) >= 254, 'the updated dashboard behavior must use a fresh script URL');
-assert.ok(Number(serviceWorkerSource.match(/CACHE_VERSION = '(\d+)'/)?.[1]) >= 271, 'the app shell cache must be replaced after dashboard behavior changes');
+assert.ok(Number(indexSource.match(/app\.js\?v=(\d+)/)?.[1]) >= 255, 'the updated dashboard behavior must use a fresh script URL');
+assert.ok(Number(serviceWorkerSource.match(/CACHE_VERSION = '(\d+)'/)?.[1]) >= 272, 'the app shell cache must be replaced after dashboard behavior changes');
 assert.match(serviceWorkerSource, /fallbackPath[\s\S]*?'\/request\.html'/, 'resource requests must have their own navigation fallback');
 assert.match(stylesSource, /\.chat-message\s*\{[^}]*flex:\s*0 0 auto;/s,
   'chat cards must retain their natural height inside the scrolling flex list');

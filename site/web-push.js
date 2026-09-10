@@ -215,7 +215,7 @@ function safePushPayload(notification, { resolved = false, test = false, detaile
     if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(accountId)) destinationParams.set('accountId', accountId);
   }
   const icon = notification.event_type === 'whisper_message' && detailed && whisperSender
-    ? `/api/minecraft-avatar?username=${encodeURIComponent(whisperSender)}&v=3`
+    ? `/api/minecraft-avatar?username=${encodeURIComponent(whisperSender)}&v=4`
     : '/items/Wheat.png';
   return {
     title: test ? 'WheatMagnateBot test' : highlightedEvent ? label : critical ? 'Critical bot alert' : resolved ? 'Issue resolved' : detailed ? label : 'WheatMagnateBot alert',

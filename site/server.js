@@ -291,14 +291,14 @@ async function sendMinecraftAvatar(res, url) {
   const compactUuid = String(url.searchParams.get('uuid') || '').replace(/-/g, '').trim().toLowerCase();
   if (compactUuid && !/^[0-9a-f]{32}$/.test(compactUuid)) { sendError(res,400,'Invalid Minecraft UUID.'); return; }
   const avatarIdentity = compactUuid || username;
-  const cacheKey = `v3:${avatarIdentity.toLowerCase()}`;
+  const cacheKey = `v4:${avatarIdentity.toLowerCase()}`;
   const cached = minecraftAvatarCache.get(cacheKey);
   if (cached && Date.now()-cached.storedAt < 6*60*60_000) {
     res.writeHead(200,{'Content-Type':'image/png','Cache-Control':'public, no-cache','Content-Length':cached.body.length}); res.end(cached.body); return;
   }
-  // Keep the same base face on both providers; MCHeads includes the outer
-  // head layer by default, while Minotar's avatar endpoint omits it.
-  const sources = [`https://minotar.net/avatar/${encodeURIComponent(avatarIdentity)}/64`,`https://mc-heads.net/avatar/${encodeURIComponent(avatarIdentity)}/64/nohelm`];
+  // Include the outer head layer on both providers. Minotar requires its
+  // helm endpoint; MCHeads includes that layer by default.
+  const sources = [`https://minotar.net/helm/${encodeURIComponent(avatarIdentity)}/64`,`https://mc-heads.net/avatar/${encodeURIComponent(avatarIdentity)}/64`];
   for (const source of sources) {
     try {
       const response = await fetch(source,{signal:AbortSignal.timeout(5_000),headers:{Accept:'image/png'}});
