@@ -64,7 +64,7 @@ async function run() {
   assert.match(detailedWhisperPayload, /SecretPlayer: secret whisper text/, 'explicit whisper detailed mode must include sender and text');
   assert.equal(
     detailedWhisper.icon,
-    '/api/minecraft-avatar?username=SecretPlayer&v=2',
+    '/api/minecraft-avatar?username=SecretPlayer&v=3',
     'detailed whisper pushes must request the sender Minecraft avatar'
   );
 
@@ -94,7 +94,7 @@ async function run() {
   const whisperTest = buildTestPushPayload('whisper', '42');
   assert.match(whisperTest.title, /^Test · New private message$/);
   assert.match(whisperTest.body, /Notch: This is a test Minecraft whisper\./);
-  assert.equal(whisperTest.icon, '/api/minecraft-avatar?username=Notch&v=2');
+  assert.equal(whisperTest.icon, '/api/minecraft-avatar?username=Notch&v=3');
   assert.equal(whisperTest.data.url, '/?push=settings');
   const obsidianTest = buildTestPushPayload('obsidian', '42');
   assert.match(obsidianTest.body, /WheatMagnate: 4\.3d/);

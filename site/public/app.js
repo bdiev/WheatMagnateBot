@@ -722,7 +722,7 @@ function playerHeadUrl(username, size = 32, { uuid = null } = {}) {
   const safeUsername = encodeURIComponent(String(username || 'Steve').trim() || 'Steve');
   const compactUuid = String(uuid || '').replaceAll('-', '').trim().toLowerCase();
   const uuidQuery = /^[0-9a-f]{32}$/.test(compactUuid) ? `&uuid=${encodeURIComponent(compactUuid)}` : '';
-  return `/api/minecraft-avatar?username=${safeUsername}${uuidQuery}&v=2`;
+  return `/api/minecraft-avatar?username=${safeUsername}${uuidQuery}&v=3`;
 }
 
 function playerProfileAccentKey(profile) {

@@ -291,12 +291,14 @@ async function sendMinecraftAvatar(res, url) {
   const compactUuid = String(url.searchParams.get('uuid') || '').replace(/-/g, '').trim().toLowerCase();
   if (compactUuid && !/^[0-9a-f]{32}$/.test(compactUuid)) { sendError(res,400,'Invalid Minecraft UUID.'); return; }
   const avatarIdentity = compactUuid || username;
-  const cacheKey = `v2:${avatarIdentity.toLowerCase()}`;
+  const cacheKey = `v3:${avatarIdentity.toLowerCase()}`;
   const cached = minecraftAvatarCache.get(cacheKey);
   if (cached && Date.now()-cached.storedAt < 6*60*60_000) {
-    res.writeHead(200,{'Content-Type':'image/png','Cache-Control':'public, max-age=21600','Content-Length':cached.body.length}); res.end(cached.body); return;
+    res.writeHead(200,{'Content-Type':'image/png','Cache-Control':'public, no-cache','Content-Length':cached.body.length}); res.end(cached.body); return;
   }
-  const sources = [`https://minotar.net/avatar/${encodeURIComponent(avatarIdentity)}/64`,`https://mc-heads.net/avatar/${encodeURIComponent(avatarIdentity)}/64`];
+  // Keep the same base face on both providers; MCHeads includes the outer
+  // head layer by default, while Minotar's avatar endpoint omits it.
+  const sources = [`https://minotar.net/avatar/${encodeURIComponent(avatarIdentity)}/64`,`https://mc-heads.net/avatar/${encodeURIComponent(avatarIdentity)}/64/nohelm`];
   for (const source of sources) {
     try {
       const response = await fetch(source,{signal:AbortSignal.timeout(5_000),headers:{Accept:'image/png'}});
@@ -305,7 +307,7 @@ async function sendMinecraftAvatar(res, url) {
       if (!body.length || body.length > 128*1024) continue;
       minecraftAvatarCache.set(cacheKey,{body,storedAt:Date.now()});
       if (minecraftAvatarCache.size > 200) minecraftAvatarCache.delete(minecraftAvatarCache.keys().next().value);
-      res.writeHead(200,{'Content-Type':'image/png','Cache-Control':'public, max-age=21600','Content-Length':body.length}); res.end(body); return;
+      res.writeHead(200,{'Content-Type':'image/png','Cache-Control':'public, no-cache','Content-Length':body.length}); res.end(body); return;
     } catch { /* Try the next avatar provider. */ }
   }
   sendError(res,502,'Minecraft avatar is temporarily unavailable.');
