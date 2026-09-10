@@ -95,6 +95,14 @@ function parseDiscordNullJoinDateResponse(message) {
   return null;
 }
 
+function parseDiscordNeverSeenResponse(message) {
+  for (const line of discordMessageText(message).split(/\r?\n/).map(cleanDiscordFormatting)) {
+    const match = line.match(/^I(?:['’]ve| have) never seen\s+([A-Za-z0-9_]{1,32})\s*[.!]?$/i);
+    if (match) return { targetUsername:match[1] };
+  }
+  return null;
+}
+
 function parseDiscordPlaytimeResponse(message, parsePlaytime) {
   for (const line of discordMessageText(message).split(/\r?\n/).map(value => value.trim()).filter(Boolean)) {
     const parsed = parsePlaytimeResponse(cleanDiscordFormatting(line), parsePlaytime);
@@ -242,14 +250,17 @@ function createDiscordPlaytimeImport({
     if (responseMessageId && processedResponses.has(responseMessageId)) return false;
 
     const nullJoinDate = parseDiscordNullJoinDateResponse(message);
-    if (isDiscordUserNotFound(message) || nullJoinDate) {
+    const neverSeen = parseDiscordNeverSeenResponse(message);
+    if (isDiscordUserNotFound(message) || nullJoinDate || neverSeen) {
+      const namedResponse = nullJoinDate || neverSeen;
+      const unavailableMetric = nullJoinDate ? 'joinDate' : 'lastSeen';
       const referencedMessageId = String(message.reference?.messageId || message.reference?.message_id || '');
       const responseChannelId = String(message.channelId || message.channel?.id || '');
       const candidates = [...pending.values()]
         .filter(item => !item.processing)
-        .filter(item => !nullJoinDate || (
-          item.metric === 'joinDate'
-          && item.username.toLowerCase() === nullJoinDate.targetUsername.toLowerCase()
+        .filter(item => !namedResponse || (
+          item.metric === unavailableMetric
+          && item.username.toLowerCase() === namedResponse.targetUsername.toLowerCase()
         ))
         .sort((first, second) => second.requestedAt - first.requestedAt || second.sequence - first.sequence);
       const request = candidates.find(item => referencedMessageId && String(item.requestMessageId || '') === referencedMessageId)
@@ -257,7 +268,7 @@ function createDiscordPlaytimeImport({
         || candidates[0];
       if (!request || typeof saveUnavailable !== 'function') {
         await onDiagnostic({
-          stage:nullJoinDate ? 'unmatched-null-join-date' : 'unmatched-not-found',
+          stage:nullJoinDate ? 'unmatched-null-join-date' : neverSeen ? 'unmatched-never-seen' : 'unmatched-not-found',
           messageId:message.id || null,
           pendingCount:pending.size
         });
@@ -266,6 +277,7 @@ function createDiscordPlaytimeImport({
 
       request.processing = true;
       try {
+        // "Never seen" is another named user-not-found response, not a timestamp.
         const result = await saveUnavailable(request.username, {
           reason:nullJoinDate ? 'join_date_null' : 'user_not_found',
           metric:request.metric
@@ -342,6 +354,7 @@ module.exports = {
   isDiscordApplicationMessage,
   isDiscordUserNotFound,
   isLookupChannel,
+  parseDiscordNeverSeenResponse,
   parseDiscordNullJoinDateResponse,
   parseDiscordPlaytimeCommand,
   parseDiscordMessageStatistics,

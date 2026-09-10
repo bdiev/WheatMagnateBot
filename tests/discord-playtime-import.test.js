@@ -11,6 +11,7 @@ const {
   isDiscordUserNotFound,
   isLookupChannel,
   isTrustedPlaytimeBot,
+  parseDiscordNeverSeenResponse,
   parseDiscordNullJoinDateResponse,
   parseDiscordPlaytimeCommand,
   parseDiscordMessageStatistics,
@@ -235,6 +236,56 @@ async function testPendingRequestImport() {
   assert.equal(coordinator.pending.size, 0);
 }
 
+async function testNeverSeenResponse() {
+  for (const content of ["I've never seen ChristianRi", 'I have never seen ChristianRi.', 'I’ve never seen **ChristianRi**!']) {
+    assert.deepEqual(parseDiscordNeverSeenResponse(message({ content })), { targetUsername:'ChristianRi' });
+  }
+  assert.deepEqual(
+    parseDiscordNeverSeenResponse(message({ embeds:[{ description:"I've never seen bdiev\\_" }] })),
+    { targetUsername:'bdiev_' }
+  );
+  for (const content of ['I saw ChristianRi 2 hours ago', "I've never seen ChristianRi before", "I've never seen"]) {
+    assert.equal(parseDiscordNeverSeenResponse(message({ content })), null);
+  }
+
+  const unavailable = [];
+  const notifications = [];
+  let failSave = true;
+  const coordinator = createDiscordPlaytimeImport({
+    channelId,
+    parsePlaytime,
+    saveMetric:async () => assert.fail('Never-seen replies must not invent a last-seen timestamp'),
+    saveUnavailable:async (username, details) => {
+      if (failSave) throw new Error('Database unavailable');
+      unavailable.push({ username,...details });
+      return { username };
+    },
+    onUnavailable:async result => notifications.push(result)
+  });
+  const response = message({ content:"I've never seen ChristianRi",bot:true,username:'LolRiTTeRBotAPP',id:'never-seen-reply' });
+  assert.equal(await coordinator.handle(response), false, 'unsolicited replies must not exclude a player');
+  await coordinator.handle(message({ content:'!jd ChristianRi',id:'christian-jd' }));
+  await coordinator.handle(message({ content:'!seen OtherPlayer',id:'other-seen' }));
+  assert.equal(await coordinator.handle(response), false, 'both the username and lastSeen metric must match');
+  await coordinator.handle(message({ content:'!seen ChristianRi',id:'christian-seen' }));
+  await coordinator.handle(message({ content:'!seen NewestPlayer',id:'newest-seen' }));
+  assert.equal(await coordinator.handle({ ...response,author:{ ...response.author,username:'UnrelatedBot' } }), false);
+  assert.equal(await coordinator.handle({ ...response,channelId:'wrong',channel:{ id:'wrong' } }), false);
+  await assert.rejects(coordinator.handle(response), /Database unavailable/);
+  assert.equal(coordinator.pending.get('lastSeen:christianri').processing, false, 'failed saves must be retryable');
+  assert.equal(coordinator.processedResponses.has(response.id), false);
+  failSave = false;
+  assert.equal(await coordinator.handle({ ...response,content:"I've never seen christianri" }), true);
+  assert.deepEqual(unavailable, [{ username:'ChristianRi',reason:'user_not_found',metric:'lastSeen' }]);
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0].username, 'ChristianRi');
+  assert.equal(notifications[0].sourceMessageId, response.id);
+  assert.deepEqual([...coordinator.pending.keys()], ['lastSeen:otherplayer', 'lastSeen:newestplayer'],
+    'only the named player must be removed, even when other requests are newer');
+  assert.equal(await coordinator.handle(response), false, 'repeated delivery must not save twice');
+  assert.equal(unavailable.length, 1);
+}
+
 function testBotIntegrationOrder() {
   const botSource = fs.readFileSync(path.resolve(__dirname, '..', 'bot.js'), 'utf8');
   const handler = botSource.match(/discordClient\.on\('messageCreate',[\s\S]+?const trimmedContent/)?.[0] || '';
@@ -260,6 +311,7 @@ function testBotIntegrationOrder() {
 (async () => {
   await testParsingAndTrust();
   await testPendingRequestImport();
+  await testNeverSeenResponse();
   testBotIntegrationOrder();
   console.log('Discord player information import tests passed.');
 })().catch(error => {
