@@ -10,8 +10,8 @@ function createChatAvatarLoader({ fetchImpl = fetch, now = Date.now, ttlMs = 6 *
     if (!/^[a-z0-9_]{1,16}$/i.test(name)) return {};
     const key = name.toLowerCase();
     const sources = [
-      `https://mc-heads.net/avatar/${key}/64.png`,
-      `https://minotar.net/helm/${key}/64.png`
+      `https://mc-heads.net/avatar/${key}/28.png`,
+      `https://minotar.net/helm/${key}/28.png`
     ];
     const remote = { thumbnail: { url: sources[0] } };
     if (!attachFiles) return remote;
@@ -28,7 +28,7 @@ function createChatAvatarLoader({ fetchImpl = fetch, now = Date.now, ttlMs = 6 *
           const input = Buffer.from(await response.arrayBuffer());
           if (!input.length || input.length > 256 * 1024) continue;
           buffer = await sharp(input, { failOn: 'error', limitInputPixels: 1024 * 1024 })
-            .resize(64, 64, { kernel: sharp.kernel.nearest }).png().toBuffer();
+            .resize(28, 28, { kernel: sharp.kernel.nearest }).png().toBuffer();
           break;
         } catch {
           // Retry the second provider; an avatar outage must not drop chat.
