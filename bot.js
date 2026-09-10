@@ -638,7 +638,7 @@ async function fetchPlayerHeadImage(username) {
 
   const fallbackUrls = [
     `https://mc-heads.net/avatar/${profile.id}/64`,
-    `https://minotar.net/avatar/${profile.id}/64`
+    `https://minotar.net/helm/${profile.id}/64`
   ];
   let lastError = namemcResult.error;
 
@@ -5763,7 +5763,7 @@ async function deliverGameChatMessageToDiscord({
     const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
     if (!channel?.isTextBased?.()) return false;
 
-    const avatarUrl = `https://minotar.net/avatar/${username.toLowerCase()}/28`;
+    const avatarUrl = `https://minotar.net/helm/${username.toLowerCase()}/28`;
     const displayMessage = formatDiscordBridgeMessage(message, { allowDiscordInvites: isBotPlayer });
     const skippedCount = Math.max(1, Number.parseInt(summaryCount, 10) || 1);
     const skippedLabel = `${skippedCount} ${skippedCount === 1 ? 'message' : 'messages'} skipped`;
