@@ -1,6 +1,9 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('node:fs');
+const path = require('node:path');
+const { PGlite } = require('@electric-sql/pglite');
 const {
   NotificationService,
   MemoryNotificationRepository,
@@ -12,6 +15,50 @@ function rule(overrides = {}) {
     event_type: 'low_tps', enabled: true, severity: 'warning', threshold: { tps: 15 },
     cooldown_seconds: 300, delivery_channels: ['site'], last_triggered_at: null, ...overrides
   };
+}
+
+async function verifyFarmAccountIsolation(repository) {
+  const deliveries = [];
+  const createService = () => new NotificationService({
+    repository,
+    discordSender: async (notification, options) => deliveries.push({ ...notification, ...options })
+  });
+  let service = createService();
+  const key = 'account-isolation-test';
+  const pearlId = '72280407-99d8-4695-b69c-9bd4c5ee4ca1';
+  const obbyId = '11111111-1111-4111-8111-111111111111';
+  const failure = (accountId, seconds = 180) => service.report('farm_stalled', {
+    key, title: 'Farm stalled', message: 'Still retrying', metadata: { accountId, seconds }
+  });
+  const recovery = accountId => service.report('farm_stalled', {
+    key, resolved: true, title: 'Farm recovered', message: 'Cycle completed', metadata: { accountId }
+  });
+  const [pearl, obby, primary] = await Promise.all([
+    failure(pearlId), failure(obbyId), failure(null)
+  ]);
+  assert.equal(new Set([pearl, obby, primary].map(result => result.notification.id)).size, 3,
+    'each account, including the legacy primary, must own a separate active alert');
+  assert.equal(deliveries.length, 3);
+  const obbyRecovery = await recovery(obbyId);
+  assert.equal(String(obbyRecovery.notification.metadata.resolvedNotificationId), String(obby.notification.id));
+  assert.ok(await repository.getActive('farm_stalled', key, pearlId), 'Obby recovery must leave Pearl stalled');
+  assert.ok(await repository.getActive('farm_stalled', key), 'Obby recovery must leave the primary stalled');
+
+  await Promise.all([failure(pearlId), failure(pearlId), failure(null)]);
+  assert.equal(deliveries.length, 4, 'other farms recovering must not cause repeated stall delivery');
+  service = createService();
+  const startupFailure = await failure(pearlId, 0);
+  assert.equal(startupFailure.reason, 'below_threshold');
+  assert.ok(await repository.getActive('farm_stalled', key, pearlId), 'a reset timer after redeploy must not resolve the persisted alert');
+  await failure(pearlId);
+  assert.equal(deliveries.length, 4, 'redeploy must preserve persisted alert deduplication and cooldown');
+
+  await recovery(null);
+  assert.ok(await repository.getActive('farm_stalled', key, pearlId), 'primary recovery must leave Pearl stalled');
+  await recovery(pearlId);
+  const repeatedRecovery = await recovery(pearlId);
+  assert.equal(repeatedRecovery.reason, 'not_active');
+  assert.equal(deliveries.length, 6, 'each farm must deliver exactly one recovery for its own alert');
 }
 
 async function run() {
@@ -65,10 +112,50 @@ async function run() {
     key: 'obsidian-farm', title: 'Farm stalled', message: 'Still retrying', metadata: { seconds: 180 }
   });
   assert.equal(stalledAgain.deduplicated, true, 'continued stalls must not create new transitions');
+  await farmService.report('farm_stalled', {
+    key: 'obsidian-farm', message: 'Retrying after redeploy', metadata: { seconds: 0 }
+  });
+  assert.equal(farmRepository.notifications[0].status, 'active', 'resetting the failure timer must not imply recovery');
+  assert.equal(farmRepository.notifications.length, 1, 'a short failure must not create a recovery notification');
   const farmRecovered = await farmService.report('farm_stalled', {
     key: 'obsidian-farm', resolved: true, title: 'Farm resumed', message: 'Cycle completed'
   });
   assert.equal(farmRecovered.resolved, true, 'a real active stall must create one recovery transition');
+
+  await verifyFarmAccountIsolation(new MemoryNotificationRepository([rule({
+    event_type: 'farm_stalled', threshold: { seconds: 120 }, cooldown_seconds: 600,
+    delivery_channels: ['discord', 'site']
+  })]));
+
+  const migrationName = '049_notification_account_scope.sql';
+  const migration = fs.readFileSync(path.join(__dirname, '../database/migrations', migrationName), 'utf8');
+  assert.equal(migration, fs.readFileSync(path.join(__dirname, '../site/migrations', migrationName), 'utf8'));
+  const db = new PGlite();
+  try {
+    await db.exec(fs.readFileSync(path.join(__dirname, '../database/migrations/001_notification_center.sql'), 'utf8'));
+    const persistedRepository = new PostgresNotificationRepository(db);
+    const legacy = await persistedRepository.createNotification({
+      eventType: 'farm_stalled', dedupKey: 'obsidian-farm', severity: 'critical', status: 'active',
+      title: 'PearlMagnate — Obsidian farm stalled', message: 'Server kept obsidian',
+      metadata: { accountId: '72280407-99d8-4695-b69c-9bd4c5ee4ca1' }
+    });
+    await persistedRepository.addDelivery(legacy.id, 'discord', 'sent');
+    const before = await db.query('SELECT * FROM notifications');
+    await db.exec(migration);
+    await db.exec(migration);
+    assert.deepEqual((await db.query('SELECT * FROM notifications')).rows, before.rows,
+      'migration must preserve persisted alerts without creating or resolving notifications');
+    assert.equal((await db.query('SELECT * FROM notification_deliveries')).rows.length, 1);
+    assert.equal(await persistedRepository.getActive('farm_stalled', 'obsidian-farm'), null,
+      'legacy managed alerts must no longer match the primary farm');
+    await assert.rejects(() => persistedRepository.createNotification({
+      eventType: 'farm_stalled', dedupKey: 'obsidian-farm', severity: 'critical', status: 'active',
+      title: 'Duplicate', message: 'Duplicate', metadata: legacy.metadata
+    }), /duplicate key/, 'the database must still prevent duplicate active alerts within one account');
+    await verifyFarmAccountIsolation(persistedRepository);
+  } finally {
+    await db.close();
+  }
 
   let pushCalls = 0;
   const pushRepository = new MemoryNotificationRepository([rule()]);

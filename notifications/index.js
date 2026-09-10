@@ -20,10 +20,10 @@ class PostgresNotificationRepository {
     return result.rows[0] || null;
   }
 
-  async getActive(eventType, dedupKey) {
+  async getActive(eventType, dedupKey, accountId = '') {
     const result = await this.pool.query(
-      "SELECT * FROM notifications WHERE event_type=$1 AND dedup_key=$2 AND status='active' LIMIT 1",
-      [eventType, dedupKey]
+      "SELECT * FROM notifications WHERE event_type=$1 AND dedup_key=$2 AND COALESCE(metadata->>'accountId', '')=$3 AND status='active' LIMIT 1",
+      [eventType, dedupKey, accountId]
     );
     return result.rows[0] || null;
   }
@@ -70,7 +70,7 @@ class MemoryNotificationRepository {
     this.nextId = 1;
   }
   async getRule(type) { return this.rules.get(type) || null; }
-  async getActive(type, key) { return this.notifications.find(n => n.event_type === type && n.dedup_key === key && n.status === 'active') || null; }
+  async getActive(type, key, accountId = '') { return this.notifications.find(n => n.event_type === type && n.dedup_key === key && String(n.metadata?.accountId || '') === accountId && n.status === 'active') || null; }
   async createNotification(d) { const n = { id: this.nextId++, event_type:d.eventType, dedup_key:d.dedupKey, severity:d.severity, status:d.status, title:d.title, message:d.message, metadata:d.metadata||{}, occurrence_count:1, last_triggered_at:new Date(), created_at:new Date() }; this.notifications.push(n); return n; }
   async touchActive(id,d) { const n=this.notifications.find(x=>x.id===id); Object.assign(n,{message:d.message,metadata:d.metadata||{},severity:d.severity,last_triggered_at:new Date(),occurrence_count:n.occurrence_count+1}); return n; }
   async resolveActive(id) { const n=this.notifications.find(x=>x.id===id); n.status='resolved'; n.resolved_at=new Date(); }
@@ -96,7 +96,7 @@ class NotificationService {
       if (this.systemLogger) await this.systemLogger({ level: 'error', category: 'notification', message: `${notification.title}: ${notification.message}`, details: metadata }).catch(() => {});
       return { notification, ephemeral: true };
     }
-    const lockKey = `${eventType}:${key}`;
+    const lockKey = JSON.stringify([eventType, String(key), String(metadata?.accountId || '')]);
     const previous = this.pending.get(lockKey) || Promise.resolve();
     const operation = previous.then(() => this._report(eventType, { key, title, message, metadata, resolved, transient }));
     const tracked = operation.catch(() => {});
@@ -116,7 +116,12 @@ class NotificationService {
         : metric[2] === 'lt' ? observedValue < thresholdValue
           : metric[2] === 'lte' ? observedValue <= thresholdValue
             : observedValue >= thresholdValue;
-      if (!breached) event.resolved = true;
+      if (!breached) {
+        // The stall duration starts over after a process restart. A short
+        // failure is still a failure; only a successful cycle can resolve it.
+        if (eventType === 'farm_stalled') return { skipped: true, reason: 'below_threshold' };
+        event.resolved = true;
+      }
     }
     if (event.transient) {
       const notification = await this.repository.createNotification({
@@ -126,7 +131,7 @@ class NotificationService {
       await this._deliver(notification, rule, true);
       return { notification, transient: true };
     }
-    const active = await this.repository.getActive(eventType, String(event.key));
+    const active = await this.repository.getActive(eventType, String(event.key), String(event.metadata?.accountId || ''));
     if (event.resolved) {
       if (!active) return { skipped: true, reason: 'not_active' };
       await this.repository.resolveActive(active.id);
