@@ -150,8 +150,8 @@ function createPearlLoaderFeature({
   navigationAttempts = 2,
   interactionSettleMs = 250,
   interactionTimeoutMs = 3_000,
-  interactionAttempts = 1,
-  navigationRange = 2,
+  interactionAttempts = 2,
+  navigationRange = 1,
   interactionReach = 4.5,
   goalFactory = (x, y, z, range, bot, reach) => new GoalCompositeAll([
     new GoalNear(x, y, z, range),

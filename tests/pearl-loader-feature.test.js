@@ -102,8 +102,8 @@ async function testCompleteCycle() {
   hatchVisible = false;
   assert.equal(bot.pathfinder.goal.isEnd(new Vec3(9,64,-20)),false,'an adjacent position behind a wall is invalid');
   hatchVisible = true;
-  assert.equal(bot.pathfinder.goal.isEnd(new Vec3(8,64,-20)),true,'a visible position two blocks away can bypass an obstacle');
-  assert.equal(bot.pathfinder.goal.isEnd(new Vec3(7,64,-20)),false,'a position beyond navigation range is invalid');
+  assert.equal(bot.pathfinder.goal.isEnd(new Vec3(8,64,-20)),false,
+    'the loader must not stop two blocks away where a server can reject a trapdoor click');
   assert.equal(movementsSeen[0].canDig,false,'pathfinder must never dig blocks');
   assert.equal(movementsSeen[0].allow1by1towers,false);
   assert.equal(await feature.handleLoaderWhisper(loaderAccount.id,'SomeoneElse','Yes'),false);
@@ -189,6 +189,47 @@ async function testDelayedTrapdoorUpdate() {
   assert.equal(feature.getStatus().stage,'waiting_visibility','a delayed block update must not fail the request');
   assert.equal(open,false);
   assert.equal(activations,1,'confirmation polling must not toggle the trapdoor twice');
+  feature.dispose();
+}
+
+async function testRejectedTrapdoorInteractionRetries() {
+  let open = true;
+  let activations = 0;
+  const bot = {
+    entity:{position:new Vec3(9,64,-20),eyeHeight:1.62},
+    entities:{pearl:{name:'ender_pearl',position:new Vec3(10.5,64.5,-19.5)}},
+    world:{},
+    pathfinder:{setMovements() {},async goto() {}},
+    async waitForChunksToLoad() {},
+    blockAt:() => ({name:'oak_trapdoor',position:new Vec3(10,64,-20),getProperties:() => ({open,facing:'south',half:'bottom'})}),
+    canSeeBlock:() => true,
+    async lookAt() {},
+    async activateBlock() {
+      activations += 1;
+      if (activations === 2) open = false;
+    },
+    chat() {}
+  };
+  const runtime = new EventEmitter();
+  runtime.bot = bot;
+  runtime.assignTask = () => {};
+  runtime.stop = async () => { runtime.bot = null; };
+  const feature = createPearlLoaderFeature({
+    pool:{query:async () => ({rows:[{username:'bdiev_',pearl_hatch_x:10,pearl_hatch_y:64,pearl_hatch_z:-20}]})},
+    getRegistry:() => ({load:async () => {},list:() => [loaderAccount]}),
+    getManager:() => ({get:() => runtime,recreate:async () => {}}),
+    movementsFactory:() => ({}),
+    navigationSettleMs:1,
+    interactionSettleMs:2,
+    interactionTimeoutMs:5,
+    readyTimeoutMs:1_000
+  });
+
+  await feature.handlePrimaryWhisper('bdiev_','Load');
+  assert.equal(await feature.handleLoaderWhisper(loaderAccount.id,'bdiev_','Yes'),true);
+  assert.equal(open,false,'a rejected first click must be retried and close the trapdoor');
+  assert.equal(activations,2);
+  assert.equal(feature.getStatus().stage,'waiting_visibility');
   feature.dispose();
 }
 
@@ -314,6 +355,7 @@ async function testLoaderRuntimeWhispers() {
   testTrapdoorInteractionFaces();
   await testCompleteCycle();
   await testDelayedTrapdoorUpdate();
+  await testRejectedTrapdoorInteractionRetries();
   await testNavigationTimeout();
   await testMissingEnderPearl();
   testEnderPearlRadius();
