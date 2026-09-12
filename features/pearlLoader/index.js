@@ -25,6 +25,42 @@ function trapdoorIsOpen(block) {
   return properties?.open === true || properties?.open === 'true';
 }
 
+function trapdoorInteraction(block, bot) {
+  const properties = typeof block?.getProperties === 'function' ? block.getProperties() : {};
+  const open = properties?.open === true || properties?.open === 'true';
+  const facing = String(properties?.facing || '').toLowerCase();
+  const half = String(properties?.half || 'bottom').toLowerCase();
+  const cursor = new Vec3(0.5, 0.5, 0.5);
+  let direction = new Vec3(0, half === 'top' ? -1 : 1, 0);
+
+  if (!open) {
+    cursor.y = half === 'top' ? 13 / 16 : 3 / 16;
+    return { direction, cursor, properties:{ open, facing, half } };
+  }
+
+  // An open trapdoor is a vertical 3/16-wide slab. Mineflayer otherwise
+  // clicks the top face at the centre of a full cube, which is not a point on
+  // that slab and is commonly rejected by servers with interaction checks.
+  const eye = bot?.entity?.position?.offset?.(0, bot.entity.eyeHeight || 1.62, 0);
+  if (facing === 'north' || facing === 'south') {
+    const min = facing === 'north' ? 13 / 16 : 0;
+    const max = facing === 'north' ? 1 : 3 / 16;
+    const slabCenter = (min + max) / 2;
+    const useNorthFace = eye ? eye.z < block.position.z + slabCenter : facing === 'north';
+    direction = new Vec3(0, 0, useNorthFace ? -1 : 1);
+    cursor.z = useNorthFace ? min : max;
+  } else if (facing === 'west' || facing === 'east') {
+    const min = facing === 'west' ? 13 / 16 : 0;
+    const max = facing === 'west' ? 1 : 3 / 16;
+    const slabCenter = (min + max) / 2;
+    const useWestFace = eye ? eye.x < block.position.x + slabCenter : facing === 'west';
+    direction = new Vec3(useWestFace ? -1 : 1, 0, 0);
+    cursor.x = useWestFace ? min : max;
+  }
+
+  return { direction, cursor, properties:{ open, facing, half } };
+}
+
 function isEnderPearlEntity(entity) {
   const name = String(entity?.name || '').toLowerCase().replace(/^minecraft:/, '');
   const displayName = String(entity?.displayName || '').toLowerCase();
@@ -66,6 +102,8 @@ function createPearlLoaderFeature({
   openDelayMs = 2_000,
   visibilityPollMs = 250,
   interactionSettleMs = 250,
+  interactionTimeoutMs = 3_000,
+  interactionAttempts = 2,
   navigationRange = 1,
   interactionReach = 4.5,
   goalFactory = (x, y, z, range, bot, reach) => new GoalCompositeAll([
@@ -176,7 +214,17 @@ function createPearlLoaderFeature({
   function canInteractWithHatch(bot, hatch, block) {
     if (!isAdjacentToHatch(bot, hatch)) return false;
     if (typeof bot?.canSeeBlock !== 'function') return false;
-    return Boolean(bot.canSeeBlock(block));
+    if (bot.canSeeBlock(block)) return true;
+
+    // canSeeBlock aims at the centre of the block. That point is empty space
+    // for an open trapdoor when viewed edge-on, so also test its real slab.
+    const eye = bot?.entity?.position?.offset?.(0, bot.entity.eyeHeight || 1.62, 0);
+    if (!eye || typeof bot?.world?.raycast !== 'function') return false;
+    const { cursor } = trapdoorInteraction(block, bot);
+    const target = block.position.plus(cursor);
+    const delta = target.minus(eye);
+    const hit = bot.world.raycast(eye, delta.normalize(), delta.norm() + 0.01);
+    return Boolean(hit?.position?.equals?.(block.position));
   }
 
   async function navigateToHatch(bot, hatch) {
@@ -204,16 +252,28 @@ function createPearlLoaderFeature({
     let block = await blockAtHatch(bot, hatch);
     if (!isTrapdoor(block)) throw new Error('The configured trapdoor is no longer available.');
     if (trapdoorIsOpen(block) === shouldOpen) return false;
-    if (!canInteractWithHatch(bot, hatch, block)) {
-      block = await navigateToHatch(bot, hatch);
+
+    const attempts = Math.max(1, Number(interactionAttempts) || 1);
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      if (!canInteractWithHatch(bot, hatch, block)) block = await navigateToHatch(bot, hatch);
+      const interaction = trapdoorInteraction(block, bot);
+      await bot.activateBlock(block, interaction.direction, interaction.cursor);
+
+      const deadline = Date.now() + Math.max(interactionSettleMs, interactionTimeoutMs);
+      do {
+        await new Promise(resolve => setTimer(resolve, interactionSettleMs));
+        block = await blockAtHatch(bot, hatch);
+        if (isTrapdoor(block) && trapdoorIsOpen(block) === shouldOpen) return true;
+      } while (Date.now() < deadline);
+
+      if (!isTrapdoor(block)) throw new Error('The configured trapdoor is no longer available.');
     }
-    await bot.activateBlock(block);
-    await new Promise(resolve => setTimer(resolve, interactionSettleMs));
-    block = await blockAtHatch(bot, hatch);
-    if (!isTrapdoor(block) || trapdoorIsOpen(block) !== shouldOpen) {
-      throw new Error(`Pearl Loader could not ${shouldOpen ? 'open' : 'close'} the trapdoor.`);
-    }
-    return true;
+
+    const properties = typeof block?.getProperties === 'function' ? block.getProperties() : {};
+    throw new Error(
+      `Pearl Loader could not ${shouldOpen ? 'open' : 'close'} the trapdoor after ${attempts} attempts ` +
+      `(facing=${properties?.facing || 'unknown'}, half=${properties?.half || 'unknown'}).`
+    );
   }
 
   function clearJobTimers(job) {
@@ -434,7 +494,7 @@ function createPearlLoaderFeature({
     activeJob = null;
   }
 
-  return { handlePrimaryWhisper, handleLoaderWhisper, isExpectedPlayer, getStatus, dispose, __test:{ isTrapdoor, trapdoorIsOpen, loadPlayerHatch } };
+  return { handlePrimaryWhisper, handleLoaderWhisper, isExpectedPlayer, getStatus, dispose, __test:{ isTrapdoor, trapdoorIsOpen, trapdoorInteraction, loadPlayerHatch } };
 }
 
 module.exports = {
@@ -446,5 +506,6 @@ module.exports = {
   isEnderPearlEntity,
   isTrapdoor,
   sendPrivateWhisper,
+  trapdoorInteraction,
   trapdoorIsOpen
 };

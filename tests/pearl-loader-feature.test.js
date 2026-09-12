@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { Vec3 } = require('vec3');
-const { createPearlLoaderFeature, hasEnderPearlNear } = require('../features/pearlLoader');
+const { createPearlLoaderFeature, hasEnderPearlNear, trapdoorInteraction } = require('../features/pearlLoader');
 const { createModulesForBot } = require('../site/accounts/module-registry');
 const { MinecraftBotRuntime } = require('../site/accounts/minecraft-bot-runtime');
 
@@ -74,7 +74,7 @@ async function testCompleteCycle() {
   assert.equal(registryLoads,1,'each Load request refreshes bot roles from the database');
   assert.equal(recreated,1,'an existing stopped runtime is recreated from the refreshed account settings');
   assert.equal(feature.getStatus().stage,'awaiting_yes');
-  assert.deepEqual(chats,['/w bdiev_ Ready?']);
+  assert.deepEqual(chats,['/w bdiev_ Type "/r yes" when you ready.']);
   assert.deepEqual(
     bot.pathfinder.goal.goals.map(goal => goal.constructor.name),
     ['GoalGetToBlock','GoalLookAtBlock'],
@@ -93,17 +93,76 @@ async function testCompleteCycle() {
   assert.equal(await feature.handleLoaderWhisper(loaderAccount.id,'bdiev_','YES'),true);
   assert.equal(open,false,'Yes closes an open trapdoor immediately');
   assert.deepEqual(chats,[
-    '/w bdiev_ Ready?',
+    '/w bdiev_ Type "/r yes" when you ready.',
     '/w bdiev_ Remember to throw a new ender pearl.'
   ],'the Loader reminds the visible player to throw a replacement pearl');
   assert.ok(chats.every(message => message.startsWith('/w bdiev_ ')),'Pearl Loader must never write feature messages to public chat');
-  await delay(20);
+  await delay(50);
   assert.equal(open,true,'the trapdoor opens after the configured delay once the player is visible');
   assert.deepEqual(feature.getStatus(),{active:false});
   assert.deepEqual(taskStates,['pearl_loader','idle']);
   assert.equal(stopped,1,'the Loader must disconnect after completing the request');
   assert.equal(runtime.stopReason,'Pearl Loader request complete');
   assert.deepEqual(primaryReplies,[]);
+  feature.dispose();
+}
+
+function testTrapdoorInteractionFaces() {
+  const position = new Vec3(10,64,-20);
+  const cases = [
+    ['north',new Vec3(10,64,-21),new Vec3(0,0,-1),new Vec3(0.5,0.5,13 / 16)],
+    ['south',new Vec3(10,64,-19),new Vec3(0,0,1),new Vec3(0.5,0.5,3 / 16)],
+    ['west',new Vec3(9,64,-20),new Vec3(-1,0,0),new Vec3(13 / 16,0.5,0.5)],
+    ['east',new Vec3(11,64,-20),new Vec3(1,0,0),new Vec3(3 / 16,0.5,0.5)]
+  ];
+  for (const [facing,botPosition,direction,cursor] of cases) {
+    const block = {position,getProperties:() => ({open:true,facing,half:'bottom'})};
+    const interaction = trapdoorInteraction(block,{entity:{position:botPosition,eyeHeight:1.62}});
+    assert.deepEqual(interaction.direction,direction,`${facing} trapdoor uses its visible vertical face`);
+    assert.deepEqual(interaction.cursor,cursor,`${facing} trapdoor click lands on its 3/16 slab`);
+  }
+
+  const closed = trapdoorInteraction({position,getProperties:() => ({open:false,facing:'north',half:'bottom'})},null);
+  assert.deepEqual(closed.direction,new Vec3(0,1,0));
+  assert.deepEqual(closed.cursor,new Vec3(0.5,3 / 16,0.5),'a closed bottom trapdoor is clicked on its top surface');
+}
+
+async function testDelayedTrapdoorUpdate() {
+  let open = true;
+  let activations = 0;
+  const bot = {
+    entity:{position:new Vec3(9,64,-20),eyeHeight:1.62},
+    entities:{pearl:{name:'ender_pearl',position:new Vec3(10.5,64.5,-19.5)}},
+    world:{},
+    pathfinder:{setMovements() {},async goto() {}},
+    async waitForChunksToLoad() {},
+    blockAt:() => ({name:'oak_trapdoor',position:new Vec3(10,64,-20),getProperties:() => ({open,facing:'west',half:'bottom'})}),
+    canSeeBlock:() => true,
+    async activateBlock() {
+      activations += 1;
+      setTimeout(() => { open = false; }, 30);
+    },
+    chat() {}
+  };
+  const runtime = new EventEmitter();
+  runtime.bot = bot;
+  runtime.assignTask = () => {};
+  runtime.stop = async () => { runtime.bot = null; };
+  const feature = createPearlLoaderFeature({
+    pool:{query:async () => ({rows:[{username:'bdiev_',pearl_hatch_x:10,pearl_hatch_y:64,pearl_hatch_z:-20}]})},
+    getRegistry:() => ({load:async () => {},list:() => [loaderAccount]}),
+    getManager:() => ({get:() => runtime,recreate:async () => {}}),
+    movementsFactory:() => ({}),
+    interactionSettleMs:5,
+    interactionTimeoutMs:100,
+    readyTimeoutMs:1_000
+  });
+
+  await feature.handlePrimaryWhisper('bdiev_','Load');
+  assert.equal(await feature.handleLoaderWhisper(loaderAccount.id,'bdiev_','Yes'),true);
+  assert.equal(feature.getStatus().stage,'waiting_visibility','a delayed block update must not fail the request');
+  assert.equal(open,false);
+  assert.equal(activations,1,'confirmation polling must not toggle the trapdoor twice');
   feature.dispose();
 }
 
@@ -186,7 +245,9 @@ async function testLoaderRuntimeWhispers() {
 }
 
 (async () => {
+  testTrapdoorInteractionFaces();
   await testCompleteCycle();
+  await testDelayedTrapdoorUpdate();
   await testMissingEnderPearl();
   testEnderPearlRadius();
   await testMissingCoordinates();
