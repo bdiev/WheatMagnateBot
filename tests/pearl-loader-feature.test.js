@@ -18,6 +18,7 @@ async function testCompleteCycle() {
   let open = true;
   const movementsSeen = [];
   const chats = [];
+  const eventOrder = [];
   const taskStates = [];
   let hatchVisible = true;
   const bot = {
@@ -33,7 +34,7 @@ async function testCompleteCycle() {
     },
     pathfinder:{
       setMovements(movements) { movementsSeen.push(movements); },
-      async goto(goal) { this.goal = goal; }
+      async goto(goal) { this.goal = goal; eventOrder.push('arrived'); }
     },
     async waitForChunksToLoad() {},
     blockAt(position) {
@@ -42,7 +43,7 @@ async function testCompleteCycle() {
     },
     canSeeBlock() { return true; },
     async activateBlock() { open = !open; },
-    chat(message) { chats.push(message); }
+    chat(message) { chats.push(message); eventOrder.push(`chat:${message}`); }
   };
   const runtime = new EventEmitter();
   runtime.bot = bot;
@@ -65,6 +66,7 @@ async function testCompleteCycle() {
     movementsFactory:() => ({}),
     openDelayMs:5,
     visibilityPollMs:5,
+    navigationSettleMs:1,
     interactionSettleMs:1,
     readyTimeoutMs:1_000,
     visibilityTimeoutMs:1_000
@@ -75,6 +77,10 @@ async function testCompleteCycle() {
   assert.equal(recreated,1,'an existing stopped runtime is recreated from the refreshed account settings');
   assert.equal(feature.getStatus().stage,'awaiting_yes');
   assert.deepEqual(chats,['/w bdiev_ Type "/r yes" when you ready.']);
+  assert.deepEqual(eventOrder.slice(0,2),[
+    'arrived',
+    'chat:/w bdiev_ Type "/r yes" when you ready.'
+  ],'the confirmation prompt must only be sent after navigation finishes');
   assert.deepEqual(
     bot.pathfinder.goal.goals.map(goal => goal.constructor.name),
     ['GoalGetToBlock','GoalLookAtBlock'],
@@ -153,6 +159,7 @@ async function testDelayedTrapdoorUpdate() {
     getRegistry:() => ({load:async () => {},list:() => [loaderAccount]}),
     getManager:() => ({get:() => runtime,recreate:async () => {}}),
     movementsFactory:() => ({}),
+    navigationSettleMs:1,
     interactionSettleMs:5,
     interactionTimeoutMs:100,
     readyTimeoutMs:1_000

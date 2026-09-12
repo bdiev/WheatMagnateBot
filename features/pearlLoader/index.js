@@ -101,6 +101,7 @@ function createPearlLoaderFeature({
   visibilityDistance = 32,
   openDelayMs = 2_000,
   visibilityPollMs = 250,
+  navigationSettleMs = 250,
   interactionSettleMs = 250,
   interactionTimeoutMs = 3_000,
   interactionAttempts = 2,
@@ -238,6 +239,10 @@ function createPearlLoaderFeature({
       bot,
       interactionReach
     ));
+    // goto resolving means the goal was reached, but allow the final movement
+    // packet to settle before telling the player that the loader is ready.
+    await new Promise(resolve => setTimer(resolve, navigationSettleMs));
+    bot.clearControlStates?.();
     const block = await blockAtHatch(bot, hatch);
     if (!isTrapdoor(block)) {
       throw new Error(`Configured block at ${hatch.x}, ${hatch.y}, ${hatch.z} is not a trapdoor.`);
