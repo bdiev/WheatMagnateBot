@@ -3,11 +3,17 @@
 const { pathfinder, Movements } = require('mineflayer-pathfinder');
 const { GoalCompositeAll, GoalNear, GoalLookAtBlock } = require('mineflayer-pathfinder').goals;
 const { Vec3 } = require('vec3');
+const { nextInteractionSequence } = require('../obsidianFarm/interaction-sequence');
 
 const PEARL_LOADER_ROLE = 'pearl_loader';
 const LOAD_COMMAND = /^load$/i;
 const YES_COMMAND = /^yes$/i;
 const PEARL_SEARCH_RADIUS = 2;
+const FACE_DIRECTIONS = [
+  new Vec3(0, -1, 0), new Vec3(0, 1, 0),
+  new Vec3(0, 0, -1), new Vec3(0, 0, 1),
+  new Vec3(-1, 0, 0), new Vec3(1, 0, 0)
+];
 
 function cleanWhisperText(value) {
   return String(value || '')
@@ -96,7 +102,7 @@ function sendBlockInteraction(bot, block, direction, cursor) {
   } else if (bot.supportFeature('blockPlaceHasInsideBlock')) {
     bot._client.write('block_place', {
       ...base,hand:0,cursorX:cursor.x,cursorY:cursor.y,cursorZ:cursor.z,
-      insideBlock:false,sequence:0,worldBorderHit:false
+      insideBlock:false,sequence:nextInteractionSequence(bot),worldBorderHit:false
     });
   } else {
     return false;
@@ -260,13 +266,14 @@ function createPearlLoaderFeature({
 
   function canInteractWithHatch(bot, hatch, block) {
     if (!isAdjacentToHatch(bot, hatch)) return false;
-    if (typeof bot?.canSeeBlock !== 'function') return false;
-    if (bot.canSeeBlock(block)) return true;
-
-    // canSeeBlock aims at the centre of the block. That point is empty space
-    // for an open trapdoor when viewed edge-on, so also test its real slab.
     const eye = bot?.entity?.position?.offset?.(0, bot.entity.eyeHeight || 1.62, 0);
-    if (!eye || typeof bot?.world?.raycast !== 'function') return false;
+    if (!eye || typeof bot?.world?.raycast !== 'function') {
+      return typeof bot?.canSeeBlock === 'function' && bot.canSeeBlock(block);
+    }
+
+    // Test the real thin slab instead of accepting canSeeBlock's full-cube
+    // centre fallback, which can report an open trapdoor as visible through
+    // empty space and leave the bot beside the wrong interaction face.
     const { cursor } = trapdoorInteraction(block, bot);
     const target = block.position.plus(cursor);
     const delta = target.minus(eye);
@@ -331,9 +338,32 @@ function createPearlLoaderFeature({
     let block = await blockAtHatch(bot, hatch);
     if (!isTrapdoor(block)) throw new Error('The configured trapdoor is no longer available.');
     if (!canInteractWithHatch(bot, hatch, block)) block = await navigateToHatch(bot, hatch);
-    const interaction = trapdoorInteraction(block, bot);
+    let interaction = trapdoorInteraction(block, bot);
     if (typeof bot?.lookAt !== 'function') throw new Error('Pearl Loader cannot aim at the trapdoor.');
+    bot.clearControlStates?.();
     await bot.lookAt(block.position.plus(interaction.cursor), false);
+
+    // Resolve the face and hit point from the trapdoor's real outline shape,
+    // just as the client does. This matters for a thin open trapdoor: its
+    // visible face is not at the centre of the full block cube.
+    const eye = bot?.entity?.position?.offset?.(0, bot.entity.eyeHeight || 1.62, 0);
+    const target = block.position.plus(interaction.cursor);
+    const delta = eye ? target.minus(eye) : null;
+    if (delta && typeof bot?.world?.raycast === 'function') {
+      const aimed = bot.world.raycast(eye, delta.normalize(), Math.min(interactionReach + 0.25, delta.norm() + 0.05));
+      if (!aimed?.position?.equals?.(block.position)) {
+        throw new Error('Pearl Loader could not aim directly at the configured trapdoor.');
+      }
+      if (Number.isInteger(aimed.face) && FACE_DIRECTIONS[aimed.face] && aimed.intersect?.minus) {
+        const hit = aimed.intersect.minus(block.position);
+        const clamp = value => Math.max(0.001, Math.min(0.999, Number(value)));
+        interaction = {
+          ...interaction,
+          direction:FACE_DIRECTIONS[aimed.face],
+          cursor:new Vec3(clamp(hit.x), clamp(hit.y), clamp(hit.z))
+        };
+      }
+    }
     return { block, interaction };
   }
 
@@ -344,6 +374,7 @@ function createPearlLoaderFeature({
     if (!sendBlockInteraction(bot, block, direction, cursor)) {
       await bot.activateBlock(block, direction, cursor);
     }
+    return aimed;
   }
 
   async function setHatchOpen(bot, hatch, shouldOpen) {
@@ -354,7 +385,7 @@ function createPearlLoaderFeature({
     const attempts = Math.max(1, Number(interactionAttempts) || 1);
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       if (!canInteractWithHatch(bot, hatch, block)) block = await navigateToHatch(bot, hatch);
-      await clickHatch(bot, hatch, block);
+      const aimed = await clickHatch(bot, hatch, block);
 
       const deadline = Date.now() + Math.max(interactionSettleMs, interactionTimeoutMs);
       do {
@@ -364,6 +395,18 @@ function createPearlLoaderFeature({
       } while (Date.now() < deadline);
 
       if (!isTrapdoor(block)) throw new Error('The configured trapdoor is no longer available.');
+      log('warn', 'Pearl Loader trapdoor interaction produced no state change.', {
+        hatch,
+        attempt,
+        attempts,
+        shouldOpen,
+        block:block.name,
+        botPosition:bot?.entity?.position || null,
+        direction:aimed.interaction.direction,
+        cursor:aimed.interaction.cursor,
+        yaw:bot?.entity?.yaw,
+        pitch:bot?.entity?.pitch
+      });
     }
 
     const properties = typeof block?.getProperties === 'function' ? block.getProperties() : {};

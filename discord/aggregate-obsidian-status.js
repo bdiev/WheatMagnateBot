@@ -27,7 +27,7 @@ function summarizeAggregateObsidianRows(rows = [], now = Date.now()) {
 
     // Archived accounts retain their mined totals but are no longer farms that
     // can be mining, recovering, or stopped in the live status summary.
-    if (archived) {К
+    if (archived) {
       summary.accountCount -= 1;
       continue;
     }

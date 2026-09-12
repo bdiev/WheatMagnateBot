@@ -116,6 +116,7 @@ async function testCompleteCycle() {
     'click'
   ],'Yes rechecks the aim and immediately sends exactly one trapdoor click');
   assert.equal(interactionPackets.length,1);
+  assert.equal(interactionPackets[0].packet.sequence,1,'modern interaction packets use a fresh sequence number');
   assert.deepEqual(chats,[
     '/w bdiev_ Type "/r yes" when you ready.',
     '/w bdiev_ Remember to throw a new ender pearl.'
@@ -195,6 +196,7 @@ async function testDelayedTrapdoorUpdate() {
 async function testRejectedTrapdoorInteractionRetries() {
   let open = true;
   let activations = 0;
+  const packets = [];
   const bot = {
     entity:{position:new Vec3(9,64,-20),eyeHeight:1.62},
     entities:{pearl:{name:'ender_pearl',position:new Vec3(10.5,64.5,-19.5)}},
@@ -204,10 +206,14 @@ async function testRejectedTrapdoorInteractionRetries() {
     blockAt:() => ({name:'oak_trapdoor',position:new Vec3(10,64,-20),getProperties:() => ({open,facing:'south',half:'bottom'})}),
     canSeeBlock:() => true,
     async lookAt() {},
-    async activateBlock() {
+    supportFeature:name => name === 'blockPlaceHasInsideBlock',
+    _client:{write(name,packet) {
+      packets.push({name,packet});
       activations += 1;
       if (activations === 2) open = false;
-    },
+    }},
+    swingArm() {},
+    async activateBlock() { throw new Error('raw interaction packet expected'); },
     chat() {}
   };
   const runtime = new EventEmitter();
@@ -229,6 +235,8 @@ async function testRejectedTrapdoorInteractionRetries() {
   assert.equal(await feature.handleLoaderWhisper(loaderAccount.id,'bdiev_','Yes'),true);
   assert.equal(open,false,'a rejected first click must be retried and close the trapdoor');
   assert.equal(activations,2);
+  assert.deepEqual(packets.map(item => item.packet.sequence),[1,2],
+    'retries must not reuse a server-rejected modern interaction sequence');
   assert.equal(feature.getStatus().stage,'waiting_visibility');
   feature.dispose();
 }
