@@ -2008,10 +2008,11 @@ function getObsidianDigHoldMs(attempt) {
 
 async function aimAtObsidianForMining(bot, block) {
   const center = block.position.offset(0.5, 0.5, 0.5);
-  // A forced Mineflayer look updates yaw/pitch for the next physics packet but
-  // resolves immediately. Let that packet leave before sending block_dig, or
-  // the server can still see the bot's reconnect yaw (often facing backward).
-  await bot.lookAt(center, true);
+  // Do not use force=true here. A forced look resolves after changing only
+  // Mineflayer's local yaw/pitch, so immediately after reconnect the server
+  // can still see the spawn yaw (often facing backward) when block_dig arrives.
+  // The normal look waits until the complete rotation has been sent.
+  await bot.lookAt(center, false);
   await sleep(OBSIDIAN_DIG_AIM_SETTLE_MS);
 
   const aimedBlock = typeof bot.blockAtCursor === 'function'

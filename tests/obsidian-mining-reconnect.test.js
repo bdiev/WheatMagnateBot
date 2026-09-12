@@ -66,7 +66,8 @@ async function main() {
       }
     };
     const aimed = await aimAtObsidianForMining(bot, target);
-    assert.equal(lookForce, true, 'mining explicitly turns to the target before its synchronization delay');
+    assert.equal(lookForce, false,
+      'mining waits for the full server-visible rotation instead of changing only local reconnect yaw');
     assert.ok(lookedAt.equals(target.position.offset(0.5, 0.5, 0.5)));
     assert.equal(aimed.face, 3);
 
