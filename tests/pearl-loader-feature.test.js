@@ -83,14 +83,15 @@ async function testCompleteCycle() {
   ],'the confirmation prompt must only be sent after navigation finishes');
   assert.deepEqual(
     bot.pathfinder.goal.goals.map(goal => goal.constructor.name),
-    ['GoalGetToBlock','GoalLookAtBlock'],
-    'navigation must require both adjacency and a visible trapdoor face'
+    ['GoalNear','GoalLookAtBlock'],
+    'navigation must require both proximity and a visible trapdoor face'
   );
   assert.equal(bot.pathfinder.goal.isEnd(new Vec3(9,64,-20)),true,'an adjacent visible position is valid');
   hatchVisible = false;
   assert.equal(bot.pathfinder.goal.isEnd(new Vec3(9,64,-20)),false,'an adjacent position behind a wall is invalid');
   hatchVisible = true;
-  assert.equal(bot.pathfinder.goal.isEnd(new Vec3(8,64,-20)),false,'a visible position two blocks away is invalid');
+  assert.equal(bot.pathfinder.goal.isEnd(new Vec3(8,64,-20)),true,'a visible position two blocks away can bypass an obstacle');
+  assert.equal(bot.pathfinder.goal.isEnd(new Vec3(7,64,-20)),false,'a position beyond navigation range is invalid');
   assert.equal(movementsSeen[0].canDig,false,'pathfinder must never dig blocks');
   assert.equal(movementsSeen[0].allow1by1towers,false);
   assert.equal(await feature.handleLoaderWhisper(loaderAccount.id,'SomeoneElse','Yes'),false);
@@ -171,6 +172,46 @@ async function testDelayedTrapdoorUpdate() {
   assert.equal(open,false);
   assert.equal(activations,1,'confirmation polling must not toggle the trapdoor twice');
   feature.dispose();
+}
+
+async function testNavigationTimeout() {
+  let pathStops = 0;
+  let runtimeStops = 0;
+  const chats = [];
+  const replies = [];
+  const bot = {
+    entity:{position:new Vec3(0,64,0),eyeHeight:1.62},
+    entities:{},
+    pathfinder:{
+      setMovements() {},
+      goto:() => new Promise(() => {}),
+      stop:() => { pathStops += 1; }
+    },
+    async waitForChunksToLoad() {},
+    clearControlStates() {},
+    chat:message => chats.push(message)
+  };
+  const runtime = new EventEmitter();
+  runtime.bot = bot;
+  runtime.assignTask = () => {};
+  runtime.stop = async () => { runtimeStops += 1; runtime.bot = null; };
+  const feature = createPearlLoaderFeature({
+    pool:{query:async () => ({rows:[{username:'Blocked',pearl_hatch_x:10,pearl_hatch_y:64,pearl_hatch_z:-20}]})},
+    getRegistry:() => ({load:async () => {},list:() => [loaderAccount]}),
+    getManager:() => ({get:() => runtime,recreate:async () => {}}),
+    sendPrimaryWhisper:async (username,message) => replies.push({username,message}),
+    movementsFactory:() => ({}),
+    navigationTimeoutMs:10,
+    navigationAttempts:2,
+    navigationSettleMs:1
+  });
+
+  await feature.handlePrimaryWhisper('Blocked','Load');
+  assert.equal(pathStops,2,'a stuck path is stopped after every bounded attempt');
+  assert.equal(runtimeStops,1,'the loader disconnects instead of remaining AFK after navigation failure');
+  assert.deepEqual(chats,[],'the ready prompt is never sent before reaching the hatch');
+  assert.match(replies[0].message,/could not approach the trapdoor/i);
+  assert.deepEqual(feature.getStatus(),{active:false});
 }
 
 async function testMissingEnderPearl() {
@@ -255,6 +296,7 @@ async function testLoaderRuntimeWhispers() {
   testTrapdoorInteractionFaces();
   await testCompleteCycle();
   await testDelayedTrapdoorUpdate();
+  await testNavigationTimeout();
   await testMissingEnderPearl();
   testEnderPearlRadius();
   await testMissingCoordinates();

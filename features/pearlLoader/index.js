@@ -1,7 +1,7 @@
 'use strict';
 
 const { pathfinder, Movements } = require('mineflayer-pathfinder');
-const { GoalCompositeAll, GoalGetToBlock, GoalLookAtBlock } = require('mineflayer-pathfinder').goals;
+const { GoalCompositeAll, GoalNear, GoalLookAtBlock } = require('mineflayer-pathfinder').goals;
 const { Vec3 } = require('vec3');
 
 const PEARL_LOADER_ROLE = 'pearl_loader';
@@ -102,13 +102,15 @@ function createPearlLoaderFeature({
   openDelayMs = 2_000,
   visibilityPollMs = 250,
   navigationSettleMs = 250,
+  navigationTimeoutMs = 20_000,
+  navigationAttempts = 2,
   interactionSettleMs = 250,
   interactionTimeoutMs = 3_000,
   interactionAttempts = 2,
-  navigationRange = 1,
+  navigationRange = 2,
   interactionReach = 4.5,
   goalFactory = (x, y, z, range, bot, reach) => new GoalCompositeAll([
-    new GoalGetToBlock(x, y, z),
+    new GoalNear(x, y, z, range),
     new GoalLookAtBlock(new Vec3(x, y, z), bot.world, { reach })
   ]),
   movementsFactory = bot => new Movements(bot),
@@ -209,7 +211,7 @@ function createPearlLoaderFeature({
     const dx = position.x - hatch.x;
     const dy = position.y - hatch.y;
     const dz = position.z - hatch.z;
-    return Math.abs(dx) + Math.abs(dy < 0 ? dy + 1 : dy) + Math.abs(dz) === navigationRange;
+    return (dx * dx + dy * dy + dz * dz) <= navigationRange * navigationRange;
   }
 
   function canInteractWithHatch(bot, hatch, block) {
@@ -231,14 +233,42 @@ function createPearlLoaderFeature({
   async function navigateToHatch(bot, hatch) {
     configureSafeMovement(bot);
     await bot.waitForChunksToLoad?.();
-    await bot.pathfinder.goto(goalFactory(
-      hatch.x,
-      hatch.y,
-      hatch.z,
-      navigationRange,
-      bot,
-      interactionReach
-    ));
+    const attempts = Math.max(1, Number(navigationAttempts) || 1);
+    let lastError = null;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      let timeout = null;
+      try {
+        const goal = goalFactory(hatch.x, hatch.y, hatch.z, navigationRange, bot, interactionReach);
+        const movement = bot.pathfinder.goto(goal);
+        const deadline = new Promise((resolve, reject) => {
+          timeout = setTimer(() => reject(timeoutError(
+            `Pearl Loader navigation timed out after ${navigationTimeoutMs} ms.`
+          )), navigationTimeoutMs);
+        });
+        await Promise.race([movement, deadline]);
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error;
+        bot.pathfinder.stop?.();
+        bot.clearControlStates?.();
+        log('warn', 'Pearl Loader navigation attempt failed.', {
+          hatch,
+          attempt,
+          attempts,
+          error:error?.message || String(error)
+        });
+        if (attempt < attempts) await new Promise(resolve => setTimer(resolve, navigationSettleMs));
+      } finally {
+        clearTimer(timeout);
+      }
+    }
+    if (lastError) {
+      throw new Error(
+        `Pearl Loader could not approach the trapdoor at ${hatch.x}, ${hatch.y}, ${hatch.z} ` +
+        `after ${attempts} attempts: ${lastError?.message || String(lastError)}`
+      );
+    }
     // goto resolving means the goal was reached, but allow the final movement
     // packet to settle before telling the player that the loader is ready.
     await new Promise(resolve => setTimer(resolve, navigationSettleMs));
