@@ -61,6 +61,50 @@ function trapdoorInteraction(block, bot) {
   return { direction, cursor, properties:{ open, facing, half } };
 }
 
+function vectorToDirection(direction) {
+  if (direction.y < 0) return 0;
+  if (direction.y > 0) return 1;
+  if (direction.z < 0) return 2;
+  if (direction.z > 0) return 3;
+  if (direction.x < 0) return 4;
+  if (direction.x > 0) return 5;
+  throw new Error(`Invalid block interaction direction: ${direction}`);
+}
+
+function sendBlockInteraction(bot, block, direction, cursor) {
+  if (typeof bot?._client?.write !== 'function' || typeof bot?.supportFeature !== 'function') return false;
+  const directionNumber = vectorToDirection(direction);
+  const base = { location:block.position,direction:directionNumber };
+
+  if (bot.supportFeature('blockPlaceHasHeldItem')) {
+    const Item = require('prismarine-item')(bot.registry);
+    bot._client.write('block_place', {
+      ...base,
+      heldItem:Item.toNotch(bot.heldItem),
+      cursorX:cursor.x * 16,
+      cursorY:cursor.y * 16,
+      cursorZ:cursor.z * 16
+    });
+  } else if (bot.supportFeature('blockPlaceHasHandAndIntCursor')) {
+    bot._client.write('block_place', {
+      ...base,hand:0,cursorX:cursor.x * 16,cursorY:cursor.y * 16,cursorZ:cursor.z * 16
+    });
+  } else if (bot.supportFeature('blockPlaceHasHandAndFloatCursor')) {
+    bot._client.write('block_place', {
+      ...base,hand:0,cursorX:cursor.x,cursorY:cursor.y,cursorZ:cursor.z
+    });
+  } else if (bot.supportFeature('blockPlaceHasInsideBlock')) {
+    bot._client.write('block_place', {
+      ...base,hand:0,cursorX:cursor.x,cursorY:cursor.y,cursorZ:cursor.z,
+      insideBlock:false,sequence:0,worldBorderHit:false
+    });
+  } else {
+    return false;
+  }
+  bot.swingArm?.();
+  return true;
+}
+
 function isEnderPearlEntity(entity) {
   const name = String(entity?.name || '').toLowerCase().replace(/^minecraft:/, '');
   const displayName = String(entity?.displayName || '').toLowerCase();
@@ -106,7 +150,7 @@ function createPearlLoaderFeature({
   navigationAttempts = 2,
   interactionSettleMs = 250,
   interactionTimeoutMs = 3_000,
-  interactionAttempts = 2,
+  interactionAttempts = 1,
   navigationRange = 2,
   interactionReach = 4.5,
   goalFactory = (x, y, z, range, bot, reach) => new GoalCompositeAll([
@@ -283,6 +327,25 @@ function createPearlLoaderFeature({
     return block;
   }
 
+  async function aimAtHatch(bot, hatch) {
+    let block = await blockAtHatch(bot, hatch);
+    if (!isTrapdoor(block)) throw new Error('The configured trapdoor is no longer available.');
+    if (!canInteractWithHatch(bot, hatch, block)) block = await navigateToHatch(bot, hatch);
+    const interaction = trapdoorInteraction(block, bot);
+    if (typeof bot?.lookAt !== 'function') throw new Error('Pearl Loader cannot aim at the trapdoor.');
+    await bot.lookAt(block.position.plus(interaction.cursor), false);
+    return { block, interaction };
+  }
+
+  async function clickHatch(bot, hatch, block = null) {
+    const aimed = await aimAtHatch(bot, hatch);
+    block = aimed.block || block;
+    const { direction, cursor } = aimed.interaction;
+    if (!sendBlockInteraction(bot, block, direction, cursor)) {
+      await bot.activateBlock(block, direction, cursor);
+    }
+  }
+
   async function setHatchOpen(bot, hatch, shouldOpen) {
     let block = await blockAtHatch(bot, hatch);
     if (!isTrapdoor(block)) throw new Error('The configured trapdoor is no longer available.');
@@ -291,8 +354,7 @@ function createPearlLoaderFeature({
     const attempts = Math.max(1, Number(interactionAttempts) || 1);
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       if (!canInteractWithHatch(bot, hatch, block)) block = await navigateToHatch(bot, hatch);
-      const interaction = trapdoorInteraction(block, bot);
-      await bot.activateBlock(block, interaction.direction, interaction.cursor);
+      await clickHatch(bot, hatch, block);
 
       const deadline = Date.now() + Math.max(interactionSettleMs, interactionTimeoutMs);
       do {
@@ -421,7 +483,8 @@ function createPearlLoaderFeature({
       runtime: null,
       readyTimer: null,
       visibilityTimer: null,
-      visibilityDeadlineTimer: null
+      visibilityDeadlineTimer: null,
+      aimPromise: null
     };
     activeJob = job;
     try {
@@ -470,8 +533,13 @@ function createPearlLoaderFeature({
         await finishMissingPearl(job);
         return;
       }
-      job.stage = 'awaiting_yes';
+      job.stage = 'aiming';
       sendPrivateWhisper(loaderBot, job.username, 'Type "/r yes" when you ready.');
+      job.aimPromise = aimAtHatch(loaderBot, hatch);
+      await job.aimPromise;
+      job.aimPromise = null;
+      if (activeJob !== job || job.stage !== 'aiming') return;
+      job.stage = 'awaiting_yes';
       job.readyTimer = setTimer(() => {
         failJob(job, timeoutError('The Ready? confirmation expired.'), { notify:false });
       }, readyTimeoutMs);
@@ -491,8 +559,13 @@ function createPearlLoaderFeature({
 
   async function handleLoaderWhisper(accountId, username, message) {
     const job = activeJob;
-    if (!job || job.accountId !== accountId || job.stage !== 'awaiting_yes') return false;
+    if (!job || job.accountId !== accountId || !['aiming','awaiting_yes'].includes(job.stage)) return false;
     if (String(username || '').toLowerCase() !== job.usernameKey || !YES_COMMAND.test(cleanWhisperText(message))) return false;
+    if (job.stage === 'aiming') {
+      try { await job.aimPromise; }
+      catch (error) { await failJob(job, error); return true; }
+      if (activeJob !== job) return true;
+    }
     clearTimer(job.readyTimer);
     job.readyTimer = null;
     job.stage = 'closing';

@@ -19,6 +19,7 @@ async function testCompleteCycle() {
   const movementsSeen = [];
   const chats = [];
   const eventOrder = [];
+  const interactionPackets = [];
   const taskStates = [];
   let hatchVisible = true;
   const bot = {
@@ -39,10 +40,20 @@ async function testCompleteCycle() {
     async waitForChunksToLoad() {},
     blockAt(position) {
       assert.deepEqual({x:position.x,y:position.y,z:position.z},{x:10,y:64,z:-20});
-      return { name:'oak_trapdoor',position:new Vec3(10,64,-20),getProperties:() => ({ open }) };
+      return { name:'oak_trapdoor',position:new Vec3(10,64,-20),getProperties:() => ({ open,facing:'west',half:'bottom' }) };
     },
     canSeeBlock() { return true; },
-    async activateBlock() { open = !open; },
+    async lookAt(target) { eventOrder.push(`look:${target.x},${target.y},${target.z}`); },
+    supportFeature(name) { return name === 'blockPlaceHasInsideBlock'; },
+    _client:{
+      write(name, packet) {
+        interactionPackets.push({name,packet});
+        eventOrder.push('click');
+        open = !open;
+      }
+    },
+    swingArm() {},
+    async activateBlock() { throw new Error('the production interaction must not re-aim at the empty block centre'); },
     chat(message) { chats.push(message); eventOrder.push(`chat:${message}`); }
   };
   const runtime = new EventEmitter();
@@ -77,10 +88,11 @@ async function testCompleteCycle() {
   assert.equal(recreated,1,'an existing stopped runtime is recreated from the refreshed account settings');
   assert.equal(feature.getStatus().stage,'awaiting_yes');
   assert.deepEqual(chats,['/w bdiev_ Type "/r yes" when you ready.']);
-  assert.deepEqual(eventOrder.slice(0,2),[
+  assert.deepEqual(eventOrder.slice(0,3),[
     'arrived',
-    'chat:/w bdiev_ Type "/r yes" when you ready.'
-  ],'the confirmation prompt must only be sent after navigation finishes');
+    'chat:/w bdiev_ Type "/r yes" when you ready.',
+    'look:10.8125,64.5,-19.5'
+  ],'the loader must arrive, send the prompt, and then aim at the actual trapdoor slab');
   assert.deepEqual(
     bot.pathfinder.goal.goals.map(goal => goal.constructor.name),
     ['GoalNear','GoalLookAtBlock'],
@@ -99,6 +111,11 @@ async function testCompleteCycle() {
   bot.entities.player={type:'player',username:'bdiev_',position:new Vec3(13,64,-20)};
   assert.equal(await feature.handleLoaderWhisper(loaderAccount.id,'bdiev_','YES'),true);
   assert.equal(open,false,'Yes closes an open trapdoor immediately');
+  assert.deepEqual(eventOrder.slice(3,5),[
+    'look:10.8125,64.5,-19.5',
+    'click'
+  ],'Yes rechecks the aim and immediately sends exactly one trapdoor click');
+  assert.equal(interactionPackets.length,1);
   assert.deepEqual(chats,[
     '/w bdiev_ Type "/r yes" when you ready.',
     '/w bdiev_ Remember to throw a new ender pearl.'
@@ -145,6 +162,7 @@ async function testDelayedTrapdoorUpdate() {
     async waitForChunksToLoad() {},
     blockAt:() => ({name:'oak_trapdoor',position:new Vec3(10,64,-20),getProperties:() => ({open,facing:'west',half:'bottom'})}),
     canSeeBlock:() => true,
+    async lookAt() {},
     async activateBlock() {
       activations += 1;
       setTimeout(() => { open = false; }, 30);
