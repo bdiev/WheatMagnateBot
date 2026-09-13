@@ -9,6 +9,7 @@ const PEARL_LOADER_ROLE = 'pearl_loader';
 const LOAD_COMMAND = /^load$/i;
 const YES_COMMAND = /^yes$/i;
 const PEARL_SEARCH_RADIUS = 2;
+const READY_TIMEOUT_MS = 2 * 60_000;
 const FACE_DIRECTIONS = [
   new Vec3(0, -1, 0), new Vec3(0, 1, 0),
   new Vec3(0, 0, -1), new Vec3(0, 0, 1),
@@ -180,7 +181,7 @@ function createPearlLoaderFeature({
   sendPrimaryWhisper,
   log = () => {},
   connectionTimeoutMs = 90_000,
-  readyTimeoutMs = 5 * 60_000,
+  readyTimeoutMs = READY_TIMEOUT_MS,
   visibilityTimeoutMs = 15 * 60_000,
   visibilityDistance = 32,
   openDelayMs = 2_000,
@@ -315,6 +316,15 @@ function createPearlLoaderFeature({
     return Boolean(hit?.position?.equals?.(block.position));
   }
 
+  function cancelNavigation(bot) {
+    // pathfinder.stop() only sets a flag that is consumed on a later physics
+    // tick. A retry started before that tick can therefore be stopped by the
+    // previous attempt. Clearing the goal resets the path synchronously.
+    if (typeof bot?.pathfinder?.setGoal === 'function') bot.pathfinder.setGoal(null);
+    else bot?.pathfinder?.stop?.();
+    bot?.clearControlStates?.();
+  }
+
   async function navigateToHatch(bot, hatch) {
     configureSafeMovement(bot);
     await bot.waitForChunksToLoad?.();
@@ -325,7 +335,7 @@ function createPearlLoaderFeature({
       try {
         let block = await blockAtHatch(bot, hatch);
         if (!isTrapdoor(block)) {
-          throw new Error(`Configured block at ${hatch.x}, ${hatch.y}, ${hatch.z} is not a trapdoor.`);
+          throw new Error('The configured Pearl Loader block is not a trapdoor.');
         }
         const goal = goalFactory(hatch.x, hatch.y, hatch.z, navigationRange, bot, interactionReach, block);
         const movement = bot.pathfinder.goto(goal);
@@ -341,7 +351,7 @@ function createPearlLoaderFeature({
         bot.clearControlStates?.();
         block = await blockAtHatch(bot, hatch);
         if (!isTrapdoor(block)) {
-          throw new Error(`Configured block at ${hatch.x}, ${hatch.y}, ${hatch.z} is not a trapdoor.`);
+          throw new Error('The configured Pearl Loader block is not a trapdoor.');
         }
         if (!canInteractWithHatch(bot, hatch, block)) {
           throw new Error('Pathfinder stopped before reaching an interactable side of the trapdoor.');
@@ -350,10 +360,8 @@ function createPearlLoaderFeature({
         return block;
       } catch (error) {
         lastError = error;
-        bot.pathfinder.stop?.();
-        bot.clearControlStates?.();
+        cancelNavigation(bot);
         log('warn', 'Pearl Loader navigation attempt failed.', {
-          hatch,
           attempt,
           attempts,
           error:error?.message || String(error)
@@ -365,8 +373,8 @@ function createPearlLoaderFeature({
     }
     if (lastError) {
       throw new Error(
-        `Pearl Loader could not approach the trapdoor at ${hatch.x}, ${hatch.y}, ${hatch.z} ` +
-        `after ${attempts} attempts: ${lastError?.message || String(lastError)}`
+        `Pearl Loader could not approach the trapdoor after ${attempts} attempts: ` +
+        `${lastError?.message || String(lastError)}`
       );
     }
     throw new Error('Pearl Loader navigation failed without an error.');
@@ -434,7 +442,6 @@ function createPearlLoaderFeature({
 
       if (!isTrapdoor(block)) throw new Error('The configured trapdoor is no longer available.');
       log('warn', 'Pearl Loader trapdoor interaction produced no state change.', {
-        hatch,
         attempt,
         attempts,
         shouldOpen,
@@ -491,8 +498,7 @@ function createPearlLoaderFeature({
     await job.runtime?.stop?.('Pearl Loader request complete').catch(() => {});
     log('info', `Pearl Loader completed the hatch cycle for ${job.username}.`, {
       username: job.username,
-      accountId: job.accountId,
-      hatch: job.hatch
+      accountId: job.accountId
     });
   }
 
@@ -505,7 +511,6 @@ function createPearlLoaderFeature({
     log('info', `Pearl Loader found no ender pearl for ${job.username}.`, {
       username:job.username,
       accountId:job.accountId,
-      hatch:job.hatch,
       radius:PEARL_SEARCH_RADIUS
     });
   }
@@ -616,16 +621,27 @@ function createPearlLoaderFeature({
       }
       job.stage = 'aiming';
       sendPrivateWhisper(loaderBot, job.username, 'Type "/r yes" when you ready.');
+      job.readyTimer = setTimer(() => {
+        if (activeJob !== job || !['aiming','awaiting_yes'].includes(job.stage)) return;
+        job.readyTimer = null;
+        try {
+          sendPrivateWhisper(job.runtime?.bot, job.username, 'I did not receive an answer, so I am leaving.');
+        } catch (error) {
+          log('warn', `Pearl Loader could not send the confirmation timeout message to ${job.username}.`, {
+            username:job.username,
+            accountId:job.accountId,
+            error:error?.message || String(error)
+          });
+        }
+        void failJob(job, timeoutError('The Ready? confirmation expired.'), { notify:false });
+      }, readyTimeoutMs);
+      job.readyTimer?.unref?.();
       job.aimPromise = aimAtHatch(loaderBot, hatch);
       await job.aimPromise;
       job.aimPromise = null;
       if (activeJob !== job || job.stage !== 'aiming') return;
       job.stage = 'awaiting_yes';
-      job.readyTimer = setTimer(() => {
-        failJob(job, timeoutError('The Ready? confirmation expired.'), { notify:false });
-      }, readyTimeoutMs);
-      job.readyTimer?.unref?.();
-      log('info', `Pearl Loader is ready for ${job.username}.`, { username:job.username,accountId:account.id,hatch });
+      log('info', `Pearl Loader is ready for ${job.username}.`, { username:job.username,accountId:account.id });
     } catch (error) {
       await failJob(job, error);
     }
@@ -642,13 +658,13 @@ function createPearlLoaderFeature({
     const job = activeJob;
     if (!job || job.accountId !== accountId || !['aiming','awaiting_yes'].includes(job.stage)) return false;
     if (String(username || '').toLowerCase() !== job.usernameKey || !YES_COMMAND.test(cleanWhisperText(message))) return false;
+    clearTimer(job.readyTimer);
+    job.readyTimer = null;
     if (job.stage === 'aiming') {
       try { await job.aimPromise; }
       catch (error) { await failJob(job, error); return true; }
       if (activeJob !== job) return true;
     }
-    clearTimer(job.readyTimer);
-    job.readyTimer = null;
     job.stage = 'closing';
     try {
       const loaderBot = job.runtime?.bot;
@@ -689,6 +705,7 @@ function createPearlLoaderFeature({
 module.exports = {
   PEARL_LOADER_ROLE,
   PEARL_SEARCH_RADIUS,
+  READY_TIMEOUT_MS,
   cleanWhisperText,
   createPearlLoaderFeature,
   GoalLookAtTrapdoor,

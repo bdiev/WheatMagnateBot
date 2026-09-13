@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { Vec3 } = require('vec3');
-const { createPearlLoaderFeature, GoalLookAtTrapdoor, hasEnderPearlNear, trapdoorInteraction } = require('../features/pearlLoader');
+const { createPearlLoaderFeature, GoalLookAtTrapdoor, hasEnderPearlNear, READY_TIMEOUT_MS, trapdoorInteraction } = require('../features/pearlLoader');
 const { createModulesForBot } = require('../site/accounts/module-registry');
 const { MinecraftBotRuntime } = require('../site/accounts/minecraft-bot-runtime');
 
@@ -263,6 +263,7 @@ async function testRejectedTrapdoorInteractionRetries() {
 
 async function testNavigationTimeout() {
   let pathStops = 0;
+  let goalClears = 0;
   let runtimeStops = 0;
   const chats = [];
   const replies = [];
@@ -271,6 +272,7 @@ async function testNavigationTimeout() {
     entities:{},
     pathfinder:{
       setMovements() {},
+      setGoal(goal) { assert.equal(goal,null); goalClears += 1; },
       goto:() => new Promise(() => {}),
       stop:() => { pathStops += 1; }
     },
@@ -284,7 +286,7 @@ async function testNavigationTimeout() {
   runtime.assignTask = () => {};
   runtime.stop = async () => { runtimeStops += 1; runtime.bot = null; };
   const feature = createPearlLoaderFeature({
-    pool:{query:async () => ({rows:[{username:'Blocked',pearl_hatch_x:10,pearl_hatch_y:64,pearl_hatch_z:-20}]})},
+    pool:{query:async () => ({rows:[{username:'Blocked',pearl_hatch_x:3404517,pearl_hatch_y:44,pearl_hatch_z:674964}]})},
     getRegistry:() => ({load:async () => {},list:() => [loaderAccount]}),
     getManager:() => ({get:() => runtime,recreate:async () => {}}),
     sendPrimaryWhisper:async (username,message) => replies.push({username,message}),
@@ -295,10 +297,12 @@ async function testNavigationTimeout() {
   });
 
   await feature.handlePrimaryWhisper('Blocked','Load');
-  assert.equal(pathStops,2,'a stuck path is stopped after every bounded attempt');
+  assert.equal(goalClears,2,'a stuck path is synchronously cleared after every bounded attempt');
+  assert.equal(pathStops,0,'an asynchronous stop must not leak into the following retry');
   assert.equal(runtimeStops,1,'the loader disconnects instead of remaining AFK after navigation failure');
   assert.deepEqual(chats,[],'the ready prompt is never sent before reaching the hatch');
   assert.match(replies[0].message,/could not approach the trapdoor/i);
+  assert.doesNotMatch(replies[0].message,/3404517|674964/,'navigation errors must not expose hatch coordinates');
   assert.deepEqual(feature.getStatus(),{active:false});
 }
 
@@ -372,6 +376,45 @@ async function testMissingEnderPearl() {
   assert.equal(runtime.stopReason,'Pearl Loader ender pearl is not set');
 }
 
+async function testReadyConfirmationTimeout() {
+  assert.equal(READY_TIMEOUT_MS, 120_000, 'the default Yes timeout must be two minutes');
+  const chats = [];
+  const taskStates = [];
+  const bot = {
+    entity:{position:new Vec3(9,64,-20),eyeHeight:1.62},
+    entities:{pearl:{name:'ender_pearl',position:new Vec3(10.5,64.5,-19.5)}},
+    world:{raycast:() => ({position:new Vec3(10,64,-20)})},
+    pathfinder:{setMovements() {},async goto() {}},
+    async waitForChunksToLoad() {},
+    blockAt:() => ({name:'oak_trapdoor',position:new Vec3(10,64,-20),getProperties:() => ({open:true,facing:'west',half:'bottom'})}),
+    canSeeBlock:() => true,
+    async lookAt() {},
+    chat:message => chats.push(message)
+  };
+  const runtime = new EventEmitter();
+  runtime.bot = bot;
+  runtime.assignTask = task => taskStates.push(task);
+  runtime.stop = async reason => { runtime.stopReason = reason; runtime.bot = null; };
+  const feature = createPearlLoaderFeature({
+    pool:{query:async () => ({rows:[{username:'bdiev_',pearl_hatch_x:10,pearl_hatch_y:64,pearl_hatch_z:-20}]})},
+    getRegistry:() => ({load:async () => {},list:() => [loaderAccount]}),
+    getManager:() => ({get:() => runtime,recreate:async () => {}}),
+    movementsFactory:() => ({}),
+    navigationSettleMs:1,
+    readyTimeoutMs:10
+  });
+
+  await feature.handlePrimaryWhisper('bdiev_','Load');
+  await delay(30);
+  assert.deepEqual(chats,[
+    '/w bdiev_ Type "/r yes" when you ready.',
+    '/w bdiev_ I did not receive an answer, so I am leaving.'
+  ]);
+  assert.deepEqual(feature.getStatus(),{active:false});
+  assert.deepEqual(taskStates,['pearl_loader','idle']);
+  assert.equal(runtime.stopReason,'Pearl Loader request ended');
+}
+
 function testEnderPearlRadius() {
   const hatch = {x:10,y:64,z:-20};
   const center = new Vec3(10.5,64.5,-19.5);
@@ -428,6 +471,7 @@ async function testLoaderRuntimeWhispers() {
   await testNavigationTimeout();
   await testFalseNavigationSuccessIsRejected();
   await testMissingEnderPearl();
+  await testReadyConfirmationTimeout();
   testEnderPearlRadius();
   await testMissingCoordinates();
   testRestrictedRuntimeModules();
