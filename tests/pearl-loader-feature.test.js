@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { Vec3 } = require('vec3');
-const { createPearlLoaderFeature, hasEnderPearlNear, trapdoorInteraction } = require('../features/pearlLoader');
+const { createPearlLoaderFeature, GoalLookAtTrapdoor, hasEnderPearlNear, trapdoorInteraction } = require('../features/pearlLoader');
 const { createModulesForBot } = require('../site/accounts/module-registry');
 const { MinecraftBotRuntime } = require('../site/accounts/minecraft-bot-runtime');
 
@@ -95,7 +95,7 @@ async function testCompleteCycle() {
   ],'the loader must arrive, send the prompt, and then aim at the actual trapdoor slab');
   assert.deepEqual(
     bot.pathfinder.goal.goals.map(goal => goal.constructor.name),
-    ['GoalNear','GoalLookAtBlock'],
+    ['GoalNear','GoalLookAtTrapdoor'],
     'navigation must require both proximity and a visible trapdoor face'
   );
   assert.equal(bot.pathfinder.goal.isEnd(new Vec3(9,64,-20)),true,'an adjacent visible position is valid');
@@ -150,6 +150,26 @@ function testTrapdoorInteractionFaces() {
   const closed = trapdoorInteraction({position,getProperties:() => ({open:false,facing:'north',half:'bottom'})},null);
   assert.deepEqual(closed.direction,new Vec3(0,1,0));
   assert.deepEqual(closed.cursor,new Vec3(0.5,3 / 16,0.5),'a closed bottom trapdoor is clicked on its top surface');
+}
+
+function testNavigationUsesRealTrapdoorShape() {
+  const block = {
+    name:'oak_trapdoor',
+    position:new Vec3(10,64,-20),
+    getProperties:() => ({open:true,facing:'west',half:'bottom'})
+  };
+  const fullBlockCentre = block.position.offset(0.5,0.5,0.5);
+  const world = {
+    raycast(start,direction,distance) {
+      const target = start.plus(direction.scaled(distance - 0.01));
+      // The containing block's centre is visible, while the real thin slab is
+      // behind an obstruction. The old GoalLookAtBlock accepted this spot.
+      return {position:target.distanceTo(fullBlockCentre) < 0.1 ? block.position : new Vec3(9,64,-20)};
+    }
+  };
+  const goal = new GoalLookAtTrapdoor(block,world,{reach:4.5});
+  assert.equal(goal.isEnd(new Vec3(9,64,-20)),false,
+    'navigation must not stop where only the empty centre of an open trapdoor block is visible');
 }
 
 async function testDelayedTrapdoorUpdate() {
@@ -255,6 +275,7 @@ async function testNavigationTimeout() {
       stop:() => { pathStops += 1; }
     },
     async waitForChunksToLoad() {},
+    blockAt:() => ({name:'oak_trapdoor',position:new Vec3(10,64,-20),getProperties:() => ({open:true,facing:'west',half:'bottom'})}),
     clearControlStates() {},
     chat:message => chats.push(message)
   };
@@ -278,6 +299,45 @@ async function testNavigationTimeout() {
   assert.equal(runtimeStops,1,'the loader disconnects instead of remaining AFK after navigation failure');
   assert.deepEqual(chats,[],'the ready prompt is never sent before reaching the hatch');
   assert.match(replies[0].message,/could not approach the trapdoor/i);
+  assert.deepEqual(feature.getStatus(),{active:false});
+}
+
+async function testFalseNavigationSuccessIsRejected() {
+  let gotos = 0;
+  let pathStops = 0;
+  const replies = [];
+  const block = {name:'oak_trapdoor',position:new Vec3(10,64,-20),getProperties:() => ({open:true,facing:'west',half:'bottom'})};
+  const bot = {
+    entity:{position:new Vec3(0,64,0),eyeHeight:1.62},
+    entities:{},
+    world:{raycast:() => ({position:block.position})},
+    pathfinder:{
+      setMovements() {},
+      async goto() { gotos += 1; },
+      stop() { pathStops += 1; }
+    },
+    async waitForChunksToLoad() {},
+    blockAt:() => block,
+    clearControlStates() {}
+  };
+  const runtime = new EventEmitter();
+  runtime.bot = bot;
+  runtime.assignTask = () => {};
+  runtime.stop = async () => { runtime.bot = null; };
+  const feature = createPearlLoaderFeature({
+    pool:{query:async () => ({rows:[{username:'StillFarAway',pearl_hatch_x:10,pearl_hatch_y:64,pearl_hatch_z:-20}]})},
+    getRegistry:() => ({load:async () => {},list:() => [loaderAccount]}),
+    getManager:() => ({get:() => runtime,recreate:async () => {}}),
+    sendPrimaryWhisper:async (username,message) => replies.push({username,message}),
+    movementsFactory:() => ({}),
+    navigationAttempts:2,
+    navigationSettleMs:1
+  });
+
+  await feature.handlePrimaryWhisper('StillFarAway','Load');
+  assert.equal(gotos,2,'a false successful goto must be retried');
+  assert.equal(pathStops,2);
+  assert.match(replies[0].message,/stopped before reaching an interactable side/i);
   assert.deepEqual(feature.getStatus(),{active:false});
 }
 
@@ -361,10 +421,12 @@ async function testLoaderRuntimeWhispers() {
 
 (async () => {
   testTrapdoorInteractionFaces();
+  testNavigationUsesRealTrapdoorShape();
   await testCompleteCycle();
   await testDelayedTrapdoorUpdate();
   await testRejectedTrapdoorInteractionRetries();
   await testNavigationTimeout();
+  await testFalseNavigationSuccessIsRejected();
   await testMissingEnderPearl();
   testEnderPearlRadius();
   await testMissingCoordinates();

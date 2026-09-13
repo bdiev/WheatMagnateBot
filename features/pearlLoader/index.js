@@ -1,7 +1,7 @@
 'use strict';
 
 const { pathfinder, Movements } = require('mineflayer-pathfinder');
-const { GoalCompositeAll, GoalNear, GoalLookAtBlock } = require('mineflayer-pathfinder').goals;
+const { Goal, GoalCompositeAll, GoalNear } = require('mineflayer-pathfinder').goals;
 const { Vec3 } = require('vec3');
 const { nextInteractionSequence } = require('../obsidianFarm/interaction-sequence');
 
@@ -65,6 +65,40 @@ function trapdoorInteraction(block, bot) {
   }
 
   return { direction, cursor, properties:{ open, facing, half } };
+}
+
+class GoalLookAtTrapdoor extends Goal {
+  constructor(block, world, { reach = 4.5, entityHeight = 1.62 } = {}) {
+    super();
+    this.block = block;
+    this.world = world;
+    this.reach = reach;
+    this.entityHeight = entityHeight;
+  }
+
+  heuristic(node) {
+    const dx = Math.abs(node.x - this.block.position.x);
+    const dy = node.y - this.block.position.y;
+    const dz = Math.abs(node.z - this.block.position.z);
+    return Math.abs(dx - dz) + Math.min(dx, dz) * Math.SQRT2 + Math.abs(dy);
+  }
+
+  isEnd(node) {
+    if (!this.world || typeof this.world.raycast !== 'function') return false;
+    // Pathfinder nodes are block coordinates; the player stands at the
+    // horizontal centre of that block. Aim at the real 3/16 trapdoor slab,
+    // not at the empty centre of its containing block.
+    const feet = new Vec3(node.x + 0.5, node.y, node.z + 0.5);
+    const eye = feet.offset(0, this.entityHeight, 0);
+    const interaction = trapdoorInteraction(this.block, {
+      entity:{ position:feet,eyeHeight:this.entityHeight }
+    });
+    const delta = this.block.position.plus(interaction.cursor).minus(eye);
+    const distance = delta.norm();
+    if (!Number.isFinite(distance) || distance <= 0 || distance > this.reach) return false;
+    const hit = this.world.raycast(eye, delta.normalize(), distance + 0.01);
+    return Boolean(hit?.position?.equals?.(this.block.position));
+  }
 }
 
 function vectorToDirection(direction) {
@@ -159,9 +193,9 @@ function createPearlLoaderFeature({
   interactionAttempts = 2,
   navigationRange = 1,
   interactionReach = 4.5,
-  goalFactory = (x, y, z, range, bot, reach) => new GoalCompositeAll([
+  goalFactory = (x, y, z, range, bot, reach, block) => new GoalCompositeAll([
     new GoalNear(x, y, z, range),
-    new GoalLookAtBlock(new Vec3(x, y, z), bot.world, { reach })
+    new GoalLookAtTrapdoor(block, bot.world, { reach })
   ]),
   movementsFactory = bot => new Movements(bot),
   setTimer = setTimeout,
@@ -289,7 +323,11 @@ function createPearlLoaderFeature({
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       let timeout = null;
       try {
-        const goal = goalFactory(hatch.x, hatch.y, hatch.z, navigationRange, bot, interactionReach);
+        let block = await blockAtHatch(bot, hatch);
+        if (!isTrapdoor(block)) {
+          throw new Error(`Configured block at ${hatch.x}, ${hatch.y}, ${hatch.z} is not a trapdoor.`);
+        }
+        const goal = goalFactory(hatch.x, hatch.y, hatch.z, navigationRange, bot, interactionReach, block);
         const movement = bot.pathfinder.goto(goal);
         const deadline = new Promise((resolve, reject) => {
           timeout = setTimer(() => reject(timeoutError(
@@ -297,8 +335,19 @@ function createPearlLoaderFeature({
           )), navigationTimeoutMs);
         });
         await Promise.race([movement, deadline]);
+        // An empty partial path can make mineflayer-pathfinder's goto helper
+        // resolve without the bot moving. Never accept that as arrival.
+        await new Promise(resolve => setTimer(resolve, navigationSettleMs));
+        bot.clearControlStates?.();
+        block = await blockAtHatch(bot, hatch);
+        if (!isTrapdoor(block)) {
+          throw new Error(`Configured block at ${hatch.x}, ${hatch.y}, ${hatch.z} is not a trapdoor.`);
+        }
+        if (!canInteractWithHatch(bot, hatch, block)) {
+          throw new Error('Pathfinder stopped before reaching an interactable side of the trapdoor.');
+        }
         lastError = null;
-        break;
+        return block;
       } catch (error) {
         lastError = error;
         bot.pathfinder.stop?.();
@@ -320,18 +369,7 @@ function createPearlLoaderFeature({
         `after ${attempts} attempts: ${lastError?.message || String(lastError)}`
       );
     }
-    // goto resolving means the goal was reached, but allow the final movement
-    // packet to settle before telling the player that the loader is ready.
-    await new Promise(resolve => setTimer(resolve, navigationSettleMs));
-    bot.clearControlStates?.();
-    const block = await blockAtHatch(bot, hatch);
-    if (!isTrapdoor(block)) {
-      throw new Error(`Configured block at ${hatch.x}, ${hatch.y}, ${hatch.z} is not a trapdoor.`);
-    }
-    if (!canInteractWithHatch(bot, hatch, block)) {
-      throw new Error('Pearl Loader could not reach a visible side of the trapdoor.');
-    }
-    return block;
+    throw new Error('Pearl Loader navigation failed without an error.');
   }
 
   async function aimAtHatch(bot, hatch) {
@@ -653,6 +691,7 @@ module.exports = {
   PEARL_SEARCH_RADIUS,
   cleanWhisperText,
   createPearlLoaderFeature,
+  GoalLookAtTrapdoor,
   hasEnderPearlNear,
   isEnderPearlEntity,
   isTrapdoor,
