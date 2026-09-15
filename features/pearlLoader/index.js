@@ -192,7 +192,7 @@ function createPearlLoaderFeature({
   interactionSettleMs = 250,
   interactionTimeoutMs = 3_000,
   interactionAttempts = 2,
-  navigationRange = 1,
+  navigationRange = 2.5,
   interactionReach = 4.5,
   goalFactory = (x, y, z, range, bot, reach, block) => new GoalCompositeAll([
     new GoalNear(x, y, z, range),
@@ -290,7 +290,7 @@ function createPearlLoaderFeature({
     return bot?.blockAt?.(new Vec3(hatch.x, hatch.y, hatch.z)) || null;
   }
 
-  function isAdjacentToHatch(bot, hatch) {
+  function isWithinNavigationRange(bot, hatch) {
     const position = bot?.entity?.position?.floored?.();
     if (!position) return false;
     const dx = position.x - hatch.x;
@@ -300,7 +300,7 @@ function createPearlLoaderFeature({
   }
 
   function canInteractWithHatch(bot, hatch, block) {
-    if (!isAdjacentToHatch(bot, hatch)) return false;
+    if (!isWithinNavigationRange(bot, hatch)) return false;
     const eye = bot?.entity?.position?.offset?.(0, bot.entity.eyeHeight || 1.62, 0);
     if (!eye || typeof bot?.world?.raycast !== 'function') {
       return typeof bot?.canSeeBlock === 'function' && bot.canSeeBlock(block);
@@ -313,7 +313,15 @@ function createPearlLoaderFeature({
     const target = block.position.plus(cursor);
     const delta = target.minus(eye);
     const hit = bot.world.raycast(eye, delta.normalize(), delta.norm() + 0.01);
-    return Boolean(hit?.position?.equals?.(block.position));
+    if (hit?.position?.equals?.(block.position)) return true;
+
+    // GoalLookAtTrapdoor already restricts pathfinder to a node with a clear
+    // ray to the real trapdoor shape. Once the bot stops, its exact position
+    // inside that node can differ from the node centre and make a ray aimed at
+    // the thin shape's boundary miss because of floating-point rounding. Do
+    // not reject an otherwise nearby, client-visible hatch on that local
+    // false negative; the server remains the authority for the actual click.
+    return typeof bot?.canSeeBlock === 'function' && bot.canSeeBlock(block);
   }
 
   function cancelNavigation(bot) {
@@ -397,10 +405,8 @@ function createPearlLoaderFeature({
     const delta = eye ? target.minus(eye) : null;
     if (delta && typeof bot?.world?.raycast === 'function') {
       const aimed = bot.world.raycast(eye, delta.normalize(), Math.min(interactionReach + 0.25, delta.norm() + 0.05));
-      if (!aimed?.position?.equals?.(block.position)) {
-        throw new Error('Pearl Loader could not aim directly at the configured trapdoor.');
-      }
-      if (Number.isInteger(aimed.face) && FACE_DIRECTIONS[aimed.face] && aimed.intersect?.minus) {
+      if (aimed?.position?.equals?.(block.position) &&
+          Number.isInteger(aimed.face) && FACE_DIRECTIONS[aimed.face] && aimed.intersect?.minus) {
         const hit = aimed.intersect.minus(block.position);
         const clamp = value => Math.max(0.001, Math.min(0.999, Number(value)));
         interaction = {

@@ -102,8 +102,10 @@ async function testCompleteCycle() {
   hatchVisible = false;
   assert.equal(bot.pathfinder.goal.isEnd(new Vec3(9,64,-20)),false,'an adjacent position behind a wall is invalid');
   hatchVisible = true;
-  assert.equal(bot.pathfinder.goal.isEnd(new Vec3(8,64,-20)),false,
-    'the loader must not stop two blocks away where a server can reject a trapdoor click');
+  assert.equal(bot.pathfinder.goal.isEnd(new Vec3(8,64,-20)),true,
+    'the loader may stop two blocks away when the trapdoor remains visible');
+  assert.equal(bot.pathfinder.goal.isEnd(new Vec3(7,64,-20)),false,
+    'the loader must not stop beyond the configured 2.5-block range');
   assert.equal(movementsSeen[0].canDig,false,'pathfinder must never dig blocks');
   assert.equal(movementsSeen[0].allow1by1towers,false);
   assert.equal(await feature.handleLoaderWhisper(loaderAccount.id,'SomeoneElse','Yes'),false);
@@ -345,6 +347,54 @@ async function testFalseNavigationSuccessIsRejected() {
   assert.deepEqual(feature.getStatus(),{active:false});
 }
 
+async function testTrapdoorRaycastBoundaryMissDoesNotBlockClick() {
+  let open = true;
+  let clicks = 0;
+  const chats = [];
+  const blockPosition = new Vec3(10,64,-20);
+  const obstructionPosition = new Vec3(9,64,-20);
+  const bot = {
+    entity:{position:new Vec3(8,64,-20),eyeHeight:1.62},
+    entities:{pearl:{name:'ender_pearl',position:new Vec3(10.5,64.5,-19.5)}},
+    world:{raycast:() => ({position:obstructionPosition})},
+    pathfinder:{setMovements() {},async goto() {}},
+    async waitForChunksToLoad() {},
+    blockAt:() => ({
+      name:'oak_trapdoor',position:blockPosition,
+      getProperties:() => ({open,facing:'west',half:'bottom'})
+    }),
+    canSeeBlock:() => true,
+    async lookAt() {},
+    supportFeature:name => name === 'blockPlaceHasInsideBlock',
+    _client:{write() { clicks += 1; open = false; }},
+    swingArm() {},
+    chat:message => chats.push(message)
+  };
+  const runtime = new EventEmitter();
+  runtime.bot = bot;
+  runtime.assignTask = () => {};
+  runtime.stop = async () => { runtime.bot = null; };
+  const feature = createPearlLoaderFeature({
+    pool:{query:async () => ({rows:[{username:'bdiev_',pearl_hatch_x:10,pearl_hatch_y:64,pearl_hatch_z:-20}]})},
+    getRegistry:() => ({load:async () => {},list:() => [loaderAccount]}),
+    getManager:() => ({get:() => runtime,recreate:async () => {}}),
+    movementsFactory:() => ({}),
+    navigationSettleMs:1,
+    interactionSettleMs:1,
+    interactionTimeoutMs:5,
+    readyTimeoutMs:1_000
+  });
+
+  await feature.handlePrimaryWhisper('bdiev_','Load');
+  assert.equal(feature.getStatus().stage,'awaiting_yes',
+    'a visible hatch within 2.5 blocks must survive a precise raycast boundary miss');
+  assert.deepEqual(chats,['/w bdiev_ Type "/r yes" when you ready.']);
+  assert.equal(await feature.handleLoaderWhisper(loaderAccount.id,'bdiev_','Yes'),true);
+  assert.equal(clicks,1,'the local boundary miss must not prevent the server-authoritative click');
+  assert.equal(open,false);
+  feature.dispose();
+}
+
 async function testMissingEnderPearl() {
   const chats = [];
   const bot = {
@@ -470,6 +520,7 @@ async function testLoaderRuntimeWhispers() {
   await testRejectedTrapdoorInteractionRetries();
   await testNavigationTimeout();
   await testFalseNavigationSuccessIsRejected();
+  await testTrapdoorRaycastBoundaryMissDoesNotBlockClick();
   await testMissingEnderPearl();
   await testReadyConfirmationTimeout();
   testEnderPearlRadius();
