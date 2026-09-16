@@ -1661,7 +1661,34 @@ body.search-focus-active #logoutButton {
   background: linear-gradient(180deg, #7fc7f2 0%, #bfe6ff 60%, #cdedb9 100%);
   box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.35), inset 0 -3px 0 rgba(20, 40, 20, 0.18), var(--shadow-sm);
   overflow: hidden;
-  transition: border-color 220ms ease, background 260ms ease, box-shadow 220ms ease, transform 100ms ease;
+  transition: border-color 220ms ease, box-shadow 220ms ease, transform 100ms ease;
+}
+
+.theme-switch::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-image:
+    radial-gradient(1.4px 1.4px at 11px 9px, rgba(255, 255, 255, 0.9) 95%, transparent),
+    radial-gradient(1.2px 1.2px at 23px 16px, rgba(255, 255, 255, 0.65) 95%, transparent),
+    radial-gradient(1.4px 1.4px at 51px 10px, rgba(255, 255, 255, 0.85) 95%, transparent),
+    radial-gradient(1px 1px at 63px 21px, rgba(255, 255, 255, 0.55) 95%, transparent),
+    radial-gradient(1px 1px at 40px 25px, rgba(255, 255, 255, 0.5) 95%, transparent),
+    linear-gradient(180deg, #0c0e1a 0%, #171c30 55%, #1c2436 100%);
+  opacity: 0;
+  transition: opacity 480ms ease;
+  pointer-events: none;
+}
+
+:root[data-theme="dark"] .theme-switch::before {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .theme-switch::before {
+    transition: none;
+  }
 }
 
 .theme-switch:hover {
@@ -1682,7 +1709,7 @@ body.search-focus-active #logoutButton {
 .theme-icon {
   position: absolute;
   z-index: 2;
-  top: 3px;
+  top: 2px;
   width: 34px;
   height: 34px;
   display: grid;
@@ -1728,7 +1755,7 @@ body.search-focus-active #logoutButton {
   position: absolute;
   z-index: 1;
   left: 3px;
-  top: 3px;
+  top: 2px;
   width: 34px;
   height: 34px;
   border: 2px solid rgba(20, 40, 20, 0.25);
@@ -1744,7 +1771,6 @@ body.search-focus-active #logoutButton {
 :root[data-theme="dark"] .theme-switch {
   border-color: #2a3040;
   color: #dbe3ef;
-  background: linear-gradient(180deg, #0c0e1a 0%, #171c30 55%, #1c2436 100%);
   box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.06), inset 0 -3px 0 rgba(0, 0, 0, 0.4), var(--shadow-sm);
 }
 
