@@ -101,7 +101,7 @@ assert.match(
 );
 assert.match(
   stylesSource,
-  /\.chat-activity-player:hover,\s*\.chat-activity-player:active\s*\{[^}]*color:\s*var\(--text\);[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;[^}]*text-decoration:\s*none;/s,
+  /\.chat-activity-player:hover,\s*\.chat-activity-player:active\s*\{[^}]*color:\s*inherit;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;[^}]*text-decoration:\s*none;/s,
   'clickable join and leave nicknames must explicitly neutralize the global button hover treatment'
 );
 assert.match(

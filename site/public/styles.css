@@ -49,6 +49,15 @@
   --font-pixel: "Minecraft Craftron", ui-monospace, "Courier New", monospace;
   --font-display: "MineCrafter Madpixel", var(--font-pixel), Inter, ui-sans-serif, system-ui, sans-serif;
   --font-body: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+  /* Fixed "in-game HUD" palette for the live chat log: it always reads like
+     the actual Minecraft chat overlay, independent of the site's own theme. */
+  --hud-bg: #100f0b;
+  --hud-bg-soft: #17160f;
+  --hud-line: rgba(255, 255, 255, 0.1);
+  --hud-text: #e9e9e1;
+  --hud-muted: rgba(233, 233, 225, 0.52);
+  --hud-shadow: rgba(0, 0, 0, 0.85);
 }
 
 @font-face {
@@ -3498,6 +3507,16 @@ body.search-focus-active #logoutButton {
   min-height: 0;
 }
 
+.chat-list-wrap::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 5;
+  height: 34px;
+  pointer-events: none;
+  background: linear-gradient(180deg, var(--hud-bg), transparent);
+}
+
 .requests-nav-link {
   display: flex;
   align-items: center;
@@ -3518,12 +3537,12 @@ body.search-focus-active #logoutButton {
   z-index: 8;
   max-width: calc(100% - 120px);
   transform: translateX(-50%);
-  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
-  border-radius: 999px;
+  border: 1px solid var(--hud-line);
+  border-radius: var(--card-radius);
   padding: 5px 11px;
-  color: var(--muted);
-  background: color-mix(in srgb, var(--panel) 86%, transparent);
-  box-shadow: 0 4px 14px color-mix(in srgb, #000 14%, transparent);
+  color: var(--hud-text);
+  background: color-mix(in srgb, var(--hud-bg-soft) 88%, transparent);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
   backdrop-filter: blur(10px);
   font-size: 11px;
   font-weight: 800;
@@ -3547,12 +3566,12 @@ body.search-focus-active #logoutButton {
   left: 14px;
   z-index: 9;
   max-width: calc(100% - 120px);
-  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line));
-  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--hud-line));
+  border-radius: var(--card-radius);
   padding: 5px 10px;
-  color: var(--muted);
-  background: color-mix(in srgb, var(--panel) 92%, transparent);
-  box-shadow: 0 4px 14px color-mix(in srgb, #000 12%, transparent);
+  color: var(--hud-text);
+  background: color-mix(in srgb, var(--hud-bg-soft) 92%, transparent);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
   backdrop-filter: blur(10px);
   font-size: 11px;
   font-weight: 750;
@@ -3565,14 +3584,14 @@ body.search-focus-active #logoutButton {
   gap: 0;
   height: 674px;
   overflow: auto;
-  padding: 10px 14px 14px;
+  padding: 14px 16px;
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--panel-soft) 28%, transparent), transparent 18%),
     repeating-linear-gradient(
       -45deg,
-      color-mix(in srgb, var(--line) 10%, transparent) 0 2px,
+      rgba(255, 255, 255, 0.025) 0 2px,
       transparent 2px 4px
-    );
+    ),
+    var(--hud-bg);
 }
 
 .chat-scroll-bottom {
@@ -3583,12 +3602,12 @@ body.search-focus-active #logoutButton {
   min-width: var(--button-height);
   height: var(--button-height);
   min-height: var(--button-height);
-  border: 2px solid var(--line);
+  border: 2px solid var(--hud-line);
   border-radius: var(--card-radius);
   padding: 0;
-  color: var(--text);
-  background: color-mix(in srgb, var(--panel) 90%, transparent);
-  box-shadow: var(--shadow-inset), var(--shadow-sm);
+  color: var(--hud-text);
+  background: color-mix(in srgb, var(--hud-bg-soft) 90%, transparent);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4), 3px 3px 0 rgba(0, 0, 0, 0.4);
   backdrop-filter: blur(8px);
   font-size: 20px;
   line-height: 1;
@@ -3616,9 +3635,9 @@ body.search-focus-active #logoutButton {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
-  border-top: 1px solid var(--line);
+  border-top: 2px solid var(--hud-line);
   padding: 12px 14px;
-  background: var(--panel-soft);
+  background: var(--hud-bg-soft);
 }
 
 .chat-reply-preview {
@@ -3626,9 +3645,9 @@ body.search-focus-active #logoutButton {
   grid-template-columns: minmax(0, 1fr) 34px;
   align-items: center;
   gap: 10px;
-  border-top: 1px solid var(--line);
+  border-top: 2px solid var(--hud-line);
   padding: 10px 14px;
-  background: color-mix(in srgb, var(--accent) 7%, var(--panel-soft));
+  background: var(--hud-bg-soft);
   opacity: 0;
   transform: translateY(8px);
   transition:
@@ -3653,14 +3672,14 @@ body.search-focus-active #logoutButton {
 
 .chat-reply-preview span {
   display: block;
-  color: var(--accent-strong);
+  color: var(--hud-text);
   font-size: 13px;
   font-weight: 900;
 }
 
 .chat-reply-preview p {
   margin-top: 2px;
-  color: var(--muted);
+  color: var(--hud-muted);
   font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3675,7 +3694,7 @@ body.search-focus-active #logoutButton {
   border: 0;
   border-radius: 3px;
   padding: 0;
-  color: var(--muted);
+  color: var(--hud-muted);
   background: transparent;
   font-size: 22px;
   line-height: 1;
@@ -3685,26 +3704,30 @@ body.search-focus-active #logoutButton {
 
 .chat-reply-preview button:hover,
 .chat-reply-preview button:focus-visible {
-  color: var(--text);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--hud-text);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
   transform: scale(1.06);
 }
 
 .chat-send-form input {
   min-width: 0;
   height: var(--button-height);
-  border: 2px solid var(--line);
+  border: 2px solid var(--hud-line);
   border-radius: var(--card-radius);
   padding: 0 14px;
-  color: var(--text);
-  background: color-mix(in srgb, var(--bg) 55%, var(--panel-soft));
-  box-shadow: inset 2px 2px 0 var(--bevel-dark), inset -1px -1px 0 var(--bevel-light);
+  color: var(--hud-text);
+  background: var(--hud-bg);
+  box-shadow: inset 0 2px 0 rgba(0, 0, 0, 0.5);
   outline: none;
+}
+
+.chat-send-form input::placeholder {
+  color: var(--hud-muted);
 }
 
 .chat-send-form input:focus {
   border-color: var(--gold);
-  box-shadow: inset 2px 2px 0 var(--bevel-dark), inset -1px -1px 0 var(--bevel-light), 0 0 0 3px color-mix(in srgb, var(--gold) 26%, transparent);
+  box-shadow: inset 0 2px 0 rgba(0, 0, 0, 0.5), 0 0 0 3px color-mix(in srgb, var(--gold) 30%, transparent);
 }
 
 .chat-message {
@@ -3714,10 +3737,11 @@ body.search-focus-active #logoutButton {
   gap: 10px;
   align-items: start;
   border: 0;
-  border-radius: 4px;
-  padding: 9px 7px;
+  border-left: 2px solid transparent;
+  border-radius: 2px;
+  padding: 6px 8px 6px 6px;
   background: transparent;
-  transition: background-color 180ms ease, box-shadow 180ms ease;
+  transition: background-color 140ms ease, border-color 140ms ease;
 }
 
 .chat-message:not(.chat-activity) + .chat-message:not(.chat-activity) {
@@ -3725,44 +3749,40 @@ body.search-focus-active #logoutButton {
 }
 
 .chat-message-continuation {
-  padding-top: 3px;
-  padding-bottom: 3px;
+  padding-top: 2px;
+  padding-bottom: 2px;
 }
 
 .chat-message:not(.chat-activity):not(.chat-message-continuation):not(:first-child) {
-  margin-top: 8px;
+  margin-top: 7px;
 }
 
 .chat-message-continuation + .chat-message:not(.chat-activity):not(.chat-message-continuation) {
-  margin-top: 10px;
+  margin-top: 9px;
 }
 
 .chat-message:not(.chat-activity):hover,
 .chat-message:not(.chat-activity):focus-within {
-  background: color-mix(in srgb, var(--panel-soft) 72%, transparent);
-  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 70%, transparent);
+  border-left-color: var(--accent);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .chat-message.chat-activity {
-  grid-template-columns: 8px minmax(0, max-content) max-content;
-  align-self: center;
-  justify-content: center;
+  grid-template-columns: minmax(0, max-content) max-content;
+  align-self: start;
+  justify-content: start;
   align-items: center;
   gap: 7px;
-  border: 1px solid var(--line-soft);
-  border-radius: var(--card-radius);
-  padding: 6px 12px;
-  color: var(--muted);
-  background: color-mix(in srgb, var(--panel-soft) 76%, transparent);
+  padding: 3px 8px 3px 6px;
 }
 
 .chat-message.chat-activity + .chat-message.chat-activity {
-  margin-top: 3px;
+  margin-top: 1px;
 }
 
 .chat-message.chat-activity + .chat-message:not(.chat-activity),
 .chat-message:not(.chat-activity) + .chat-message.chat-activity {
-  margin-top: 8px;
+  margin-top: 6px;
 }
 
 .chat-message.chat-activity .chat-text {
@@ -3771,15 +3791,7 @@ body.search-focus-active #logoutButton {
 }
 
 .chat-activity-mark {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--muted);
-}
-
-.chat-activity-join .chat-activity-mark {
-  background: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+  display: none;
 }
 
 .chat-activity-copy {
@@ -3787,11 +3799,13 @@ body.search-focus-active #logoutButton {
   min-width: 0;
   align-items: baseline;
   gap: 5px;
+  color: #ffd966;
   font-size: 12px;
+  text-shadow: 1px 1px 0 var(--hud-shadow);
 }
 
 .chat-activity-copy strong {
-  color: var(--text);
+  color: inherit;
   font-weight: 750;
 }
 
@@ -3802,7 +3816,7 @@ body.search-focus-active #logoutButton {
   border: 0;
   border-radius: 3px;
   padding: 0;
-  color: var(--text);
+  color: inherit;
   background: transparent;
   box-shadow: none;
   cursor: pointer;
@@ -3813,7 +3827,7 @@ body.search-focus-active #logoutButton {
 
 .chat-activity-player:hover,
 .chat-activity-player:active {
-  color: var(--text);
+  color: inherit;
   background: transparent;
   box-shadow: none;
   text-decoration: none;
@@ -3826,31 +3840,26 @@ body.search-focus-active #logoutButton {
 }
 
 .chat-message.chat-notice {
-  grid-template-columns: 9px minmax(0, 1fr) max-content;
-  align-items: center;
-  gap: 9px;
-  margin: 6px 0;
-  border: 1px solid color-mix(in srgb, var(--notice-accent) 24%, var(--line));
-  padding: 8px 11px;
-  color: var(--muted);
-  background: color-mix(in srgb, var(--notice-accent) 8%, var(--panel-soft));
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: baseline;
+  gap: 8px;
+  margin: 3px 0;
+  padding: 3px 8px 3px 6px;
+  color: var(--notice-accent);
+  background: transparent;
   box-shadow: none;
 }
 
 .chat-message.chat-notice-flood {
-  --notice-accent: #e89922;
+  --notice-accent: #ffaa55;
 }
 
 .chat-message.chat-notice-server {
-  --notice-accent: var(--accent);
+  --notice-accent: #7affb0;
 }
 
 .chat-notice-mark {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--notice-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--notice-accent) 16%, transparent);
+  display: none;
 }
 
 .chat-notice-copy {
@@ -3860,16 +3869,17 @@ body.search-focus-active #logoutButton {
   align-items: baseline;
   gap: 5px 8px;
   font-size: 12px;
+  text-shadow: 1px 1px 0 var(--hud-shadow);
 }
 
 .chat-notice-copy strong {
-  color: color-mix(in srgb, var(--notice-accent) 78%, var(--text));
+  color: var(--notice-accent);
   font-weight: 800;
 }
 
 .chat-message.chat-notice .chat-text {
   min-width: 0;
-  color: var(--text);
+  color: var(--hud-text);
   font-weight: 550;
 }
 
@@ -3880,18 +3890,17 @@ body.search-focus-active #logoutButton {
 @keyframes chatMessageIn {
   0% {
     opacity: 0;
-    transform: translateY(-12px) scale(0.985);
-    background: color-mix(in srgb, var(--accent) 18%, var(--panel-soft));
-    border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+    transform: translateX(-6px);
+    background: rgba(255, 255, 255, 0.12);
   }
   55% {
     opacity: 1;
-    transform: translateY(0) scale(1);
-    background: color-mix(in srgb, var(--accent) 12%, var(--panel-soft));
+    transform: translateX(0);
+    background: rgba(255, 255, 255, 0.08);
   }
   100% {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: translateX(0);
     background: transparent;
   }
 }
@@ -3921,12 +3930,12 @@ body.search-focus-active #logoutButton {
 
 .chat-message-name {
   min-width: 0;
-  color: var(--accent-strong);
+  color: #7ee787;
   font-size: 14px;
   font-weight: 850;
   overflow: hidden;
   text-overflow: ellipsis;
-  text-shadow: 1px 1px 0 color-mix(in srgb, var(--bg-strong) 65%, transparent);
+  text-shadow: 1px 1px 0 var(--hud-shadow);
   white-space: nowrap;
 }
 
@@ -3942,16 +3951,16 @@ body.search-focus-active #logoutButton {
 
 .chat-text {
   min-width: 0;
-  color: var(--text);
+  color: var(--hud-text);
   font-size: 14px;
   line-height: 1.42;
-  text-shadow: 1px 1px 0 color-mix(in srgb, var(--bg-strong) 40%, transparent);
+  text-shadow: 1px 1px 0 var(--hud-shadow);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
 .chat-link {
-  color: var(--accent-strong);
+  color: #ffd966;
   font-weight: 700;
   text-decoration: underline;
   text-decoration-thickness: 1px;
@@ -3961,14 +3970,14 @@ body.search-focus-active #logoutButton {
 
 .chat-link:hover,
 .chat-link:focus-visible {
-  color: var(--accent);
+  color: #ffe699;
   text-decoration-thickness: 2px;
 }
 
 .chat-time {
   min-width: 68px;
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--hud-muted);
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
   text-align: right;
   white-space: nowrap;
@@ -3998,7 +4007,7 @@ body.search-focus-active #logoutButton {
   border: 0;
   border-radius: 3px;
   padding: 0;
-  color: var(--muted);
+  color: var(--hud-muted);
   background: transparent;
   cursor: pointer;
   opacity: 0;
@@ -4021,8 +4030,8 @@ body.search-focus-active #logoutButton {
 .chat-reply-button:focus-visible {
   opacity: 1;
   transform: translateX(0) scale(1);
-  color: var(--text);
-  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+  color: var(--hud-text);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 .chat-reply-button:hover img,
@@ -4389,6 +4398,11 @@ body.search-focus-active #logoutButton {
 
 .player-identity.online::after {
   background: #55c85a;
+}
+
+.chat-list .player-identity.online::after,
+.chat-list .player-identity.offline::after {
+  border-color: var(--hud-bg);
 }
 
 .rank-index {
@@ -5059,9 +5073,9 @@ body.search-focus-active #logoutButton {
 }
 
 .chat-message.chat-context-target {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 14%, var(--panel-soft));
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
+  border-left-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 .chat-panel {
@@ -5942,23 +5956,28 @@ body.search-focus-active #logoutButton {
   }
 }
 
-.chat-message.chat-message-bot:not(.chat-activity),
 .player-profile-message.player-profile-message-bot {
   background: color-mix(in srgb, var(--bot-accent) 8%, transparent);
   box-shadow: inset 3px 0 0 color-mix(in srgb, var(--bot-accent) 82%, transparent);
 }
 
 .chat-message.chat-message-bot:not(.chat-activity):hover,
-.chat-message.chat-message-bot:not(.chat-activity):focus-within,
+.chat-message.chat-message-bot:not(.chat-activity):focus-within {
+  border-left-color: #c9a4ff;
+}
+
 .player-profile-message.player-profile-message-bot:hover,
 .player-profile-message.player-profile-message-bot:focus-visible {
   background: color-mix(in srgb, var(--bot-accent) 14%, var(--panel-soft));
   box-shadow: inset 3px 0 0 var(--bot-accent);
 }
 
-.chat-message-bot .chat-message-name,
 .player-profile-message-bot .chat-message-name {
   color: var(--bot-accent);
+}
+
+.chat-list .chat-message-bot .chat-message-name {
+  color: #c9a4ff;
 }
 
 .chat-message-bot .chat-message-head,
@@ -5989,6 +6008,12 @@ body.search-focus-active #logoutButton {
   font-weight: 900;
   letter-spacing: 0.08em;
   line-height: 1;
+}
+
+.chat-list .chat-bot-badge {
+  border-color: rgba(201, 164, 255, 0.5);
+  color: #c9a4ff;
+  background: rgba(201, 164, 255, 0.16);
 }
 
 .admin-players-panel { grid-column: 1 / -1; overflow:visible; }
@@ -6790,6 +6815,12 @@ body.modal-open { overflow:hidden; }
   letter-spacing: 0.04em;
   line-height: 1;
   white-space: nowrap;
+}
+
+.chat-list .chat-new-player-badge {
+  border-color: rgba(122, 255, 176, 0.5);
+  color: #7affb0;
+  background: rgba(122, 255, 176, 0.14);
 }
 
 .uuid-copy {
@@ -7634,6 +7665,10 @@ body.modal-open { overflow:hidden; }
   padding: 18px;
   color: var(--muted);
   transition: color 260ms ease;
+}
+
+.chat-list .empty {
+  color: var(--hud-muted);
 }
 
 @media (max-width: 1180px) {
@@ -10648,7 +10683,7 @@ body.kill-aura-modal-open {
     padding: 9px 2px;
   }
 .chat-message.chat-activity {
-    grid-template-columns: 7px minmax(0, max-content) max-content;
+    grid-template-columns: minmax(0, max-content) max-content;
     gap: 6px;
     min-height: 0;
     padding: 7px 8px;
@@ -10704,13 +10739,8 @@ body.kill-aura-modal-open {
   .player-profile-message-action { min-height: 44px; touch-action: manipulation; }
 }
 
-.chat-message.chat-activity.chat-message-bot {
-  background: color-mix(in srgb, var(--bot-accent) 10%, var(--panel-soft));
-}
-
-.chat-message.chat-activity.chat-message-bot .chat-activity-mark {
-  background: var(--bot-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--bot-accent) 14%, transparent);
+.chat-message.chat-activity.chat-message-bot .chat-activity-copy {
+  color: #c9a4ff;
 }
 
 @media (max-width:700px) {
@@ -10813,9 +10843,7 @@ body.kill-aura-modal-open {
 
   .chat-message.chat-activity {
     min-height: 0;
-    border-radius: 999px;
-    padding: 7px 8px;
-    background: color-mix(in srgb, var(--panel-soft) 76%, transparent);
+    padding: 5px 8px;
   }
 
   .chat-user .player-identity {

@@ -4441,6 +4441,14 @@ async function handleWhisperDeleteDialog() {
   }
 }
 
+const CHAT_NAME_COLORS = ['#ff6b6b', '#ffaa00', '#ffe066', '#6ee86e', '#55ffe0', '#6fa8ff', '#ff7aff', '#f2f2f2', '#c7c7c7', '#5cd6c0'];
+function chatNameColor(name) {
+  const str = String(name || '');
+  let hash = 0;
+  for (let i = 0; i < str.length; i += 1) hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
+  return CHAT_NAME_COLORS[hash % CHAT_NAME_COLORS.length];
+}
+
 function renderChatMessages(messages, { scrollMode = 'preserve' } = {}) {
   const list = $('#chatList');
   if (!list) return;
@@ -4528,7 +4536,7 @@ function renderChatMessages(messages, { scrollMode = 'preserve' } = {}) {
       : `<div class="chat-user">${isContinuation ? '' : playerIdentity(username, 28, { uuid: message.playerUuid })}</div>
          <div class="chat-message-body">
            ${isContinuation ? '' : `<div class="chat-message-head">
-             <span class="chat-message-name">${escapeHtml(username)}</span>
+             <span class="chat-message-name"${isBot ? '' : ` style="color:${chatNameColor(username)}"`}>${escapeHtml(username)}</span>
              ${isBot ? '<span class="chat-bot-badge">BOT</span>' : ''}
              ${isNewPlayer ? '<span class="chat-new-player-badge">New Player</span>' : ''}
            </div>`}
