@@ -4514,7 +4514,6 @@ function renderChatMessages(messages, { scrollMode = 'preserve' } = {}) {
          <div class="chat-activity-copy">
            <button class="chat-activity-player" type="button" data-player="${escapeHtml(username)}" title="Open player profile">${escapeHtml(username)}</button>
            ${isBot ? '<span class="chat-bot-badge">BOT</span>' : ''}
-           ${isNewPlayer ? '<span class="chat-new-player-badge">New Player</span>' : ''}
            <span class="chat-text"></span>
          </div>
          <time class="chat-time">${formatChatTime(message.createdAt)}</time>`
@@ -4530,7 +4529,6 @@ function renderChatMessages(messages, { scrollMode = 'preserve' } = {}) {
            ${isContinuation ? '' : `<div class="chat-message-head">
              <span class="chat-message-name">${escapeHtml(username)}</span>
              ${isBot ? '<span class="chat-bot-badge">BOT</span>' : ''}
-             ${isNewPlayer ? '<span class="chat-new-player-badge">New Player</span>' : ''}
            </div>`}
            <div class="chat-text"></div>
          </div>
