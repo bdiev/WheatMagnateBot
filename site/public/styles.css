@@ -4897,19 +4897,18 @@ body.search-focus-active #logoutButton {
 }
 
 .chat-hidden-badge {
-  border-radius: 999px;
+  border: 1px solid rgba(255, 170, 85, 0.5);
+  border-radius: 2px;
   padding: 2px 6px;
-  color: #b65c24;
-  background: color-mix(in srgb, #e58b4c 15%, transparent);
+  color: #ffaa55;
+  background: rgba(255, 170, 85, 0.14);
+  font-family: var(--font-pixel);
   font-size: 9px;
   font-weight: 900;
   letter-spacing: .06em;
   line-height: 1.2;
+  text-shadow: 1px 1px 0 var(--hud-shadow);
   text-transform: uppercase;
-}
-
-:root[data-theme="dark"] .chat-hidden-badge {
-  color: #ffad72;
 }
 
 .player-profile-load-more {
@@ -5937,10 +5936,11 @@ body.search-focus-active #logoutButton {
   align-items: center;
   min-height: 17px;
   border: 1px solid color-mix(in srgb, var(--bot-accent) 42%, transparent);
-  border-radius: 999px;
+  border-radius: 2px;
   padding: 1px 6px;
   color: var(--bot-accent);
   background: color-mix(in srgb, var(--bot-accent) 11%, var(--panel));
+  font-family: var(--font-pixel);
   font-size: 9px;
   font-weight: 900;
   letter-spacing: 0.08em;
@@ -5951,6 +5951,7 @@ body.search-focus-active #logoutButton {
   border-color: rgba(201, 164, 255, 0.5);
   color: #c9a4ff;
   background: rgba(201, 164, 255, 0.16);
+  text-shadow: 1px 1px 0 var(--hud-shadow);
 }
 
 .admin-players-panel { grid-column: 1 / -1; overflow:visible; }
@@ -6745,10 +6746,11 @@ body.modal-open { overflow:hidden; }
   align-items: center;
   min-height: 17px;
   border: 1px solid color-mix(in srgb, var(--new-player-accent) 48%, transparent);
-  border-radius: 999px;
+  border-radius: 2px;
   padding: 1px 6px;
   color: var(--new-player-accent);
   background: color-mix(in srgb, var(--new-player-accent) 11%, var(--panel));
+  font-family: var(--font-pixel);
   font-size: 9px;
   font-weight: 900;
   letter-spacing: 0.04em;
@@ -6760,6 +6762,7 @@ body.modal-open { overflow:hidden; }
   border-color: rgba(122, 255, 176, 0.5);
   color: #7affb0;
   background: rgba(122, 255, 176, 0.14);
+  text-shadow: 1px 1px 0 var(--hud-shadow);
 }
 
 .uuid-copy {
