@@ -3162,15 +3162,35 @@ function showChartTooltip(canvas, event, { pin = false } = {}) {
   if (tooltipChanged) tooltip.textContent = hit.tooltip;
   tooltip.hidden = false;
   clearTimeout(state.chartTooltipTimer);
-  state.chartTooltipPinned = Boolean(pin || event.pointerType === 'touch');
+  const isTouch = event.pointerType === 'touch';
+  state.chartTooltipPinned = Boolean(pin || isTouch);
   let tooltipWidth = Number(tooltip.dataset.measuredWidth);
   if (tooltipChanged || !Number.isFinite(tooltipWidth)) {
     tooltipWidth = Math.max(160, tooltip.offsetWidth || 0);
     tooltip.dataset.measuredWidth = String(tooltipWidth);
   }
-  const left = Math.min(window.innerWidth - tooltipWidth - 10, event.clientX + 12);
-  const top = Math.min(window.innerHeight - 46, event.clientY + 12);
-  tooltip.style.transform = `translate3d(${Math.max(10, left)}px, ${Math.max(10, top)}px, 0)`;
+  let tooltipHeight = Number(tooltip.dataset.measuredHeight);
+  if (tooltipChanged || !Number.isFinite(tooltipHeight)) {
+    tooltipHeight = Math.max(30, tooltip.offsetHeight || 0);
+    tooltip.dataset.measuredHeight = String(tooltipHeight);
+  }
+  let left;
+  let top;
+  if (isTouch) {
+    // A finger covers the point it touches (and everything just below/right
+    // of it), unlike a mouse cursor. Center the tooltip over the touch and
+    // put it above the fingertip; only drop it below when there isn't room.
+    left = event.clientX - tooltipWidth / 2;
+    const fingerClearance = 36;
+    top = event.clientY - tooltipHeight - fingerClearance;
+    if (top < 10) top = event.clientY + fingerClearance;
+  } else {
+    left = event.clientX + 12;
+    top = event.clientY + 12;
+  }
+  left = Math.max(10, Math.min(window.innerWidth - tooltipWidth - 10, left));
+  top = Math.max(10, Math.min(window.innerHeight - tooltipHeight - 10, top));
+  tooltip.style.transform = `translate3d(${left}px, ${top}px, 0)`;
   if (state.chartTooltipPinned) {
     state.chartTooltipTimer = setTimeout(hideChartTooltip, 3200);
   }
