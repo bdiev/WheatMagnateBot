@@ -245,6 +245,11 @@ img {
   100% { transform: rotate(360deg); }
 }
 
+@keyframes mc-list-in {
+  0% { opacity: 0; transform: translateY(-4px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .pixel-panel,
   .panel,
@@ -255,7 +260,12 @@ img {
   .theme-thumb,
   .uuid-copy.uuid-copy-confirmed,
   #killAuraToggleButton.danger-button,
-  #tab-kill-aura .aura-primary-button:not(:disabled):hover::after {
+  #tab-kill-aura .aura-primary-button:not(:disabled):hover::after,
+  .seen-suggestions,
+  .seen-option,
+  .empty::before,
+  #tab-admin .admin-playtime-command.copied,
+  .account-switcher.expanded .account-switcher-list {
     animation: none !important;
   }
 }
@@ -2566,6 +2576,7 @@ body.search-focus-active #logoutButton {
   padding: 8px;
   background: var(--panel);
   box-shadow: var(--shadow);
+  animation: mc-pop-in 200ms cubic-bezier(.2, .9, .2, 1) both;
 }
 
 .seen-suggestions,
@@ -2608,6 +2619,8 @@ body.search-focus-active #logoutButton {
   background: transparent;
   overflow: hidden;
   text-align: left;
+  transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
+  animation: mc-list-in 180ms ease-out backwards;
 }
 
 .seen-option > * {
@@ -2624,7 +2637,15 @@ body.search-focus-active #logoutButton {
   color: var(--text);
   border-color: var(--line);
   background: var(--panel-soft);
+  transform: translateX(3px);
 }
+
+.seen-option:nth-child(1) { animation-delay: 0ms; }
+.seen-option:nth-child(2) { animation-delay: 25ms; }
+.seen-option:nth-child(3) { animation-delay: 50ms; }
+.seen-option:nth-child(4) { animation-delay: 75ms; }
+.seen-option:nth-child(5) { animation-delay: 100ms; }
+.seen-option:nth-child(n+6) { animation-delay: 120ms; }
 
 .seen-empty {
   padding: 10px;
@@ -2928,6 +2949,7 @@ body.search-focus-active #logoutButton {
 #tab-admin .admin-playtime-command.copied {
   border-color: color-mix(in srgb, #48b978 70%, var(--line));
   background: color-mix(in srgb, #48b978 10%, var(--panel-soft));
+  animation: mc-press 220ms ease;
 }
 
 .admin-playtime-complete {
@@ -7699,6 +7721,7 @@ body.modal-open { overflow:hidden; }
   background-repeat: no-repeat;
   image-rendering: pixelated;
   opacity: 0.55;
+  animation: mc-float 2.8s ease-in-out infinite;
 }
 
 .chat-list .empty {
@@ -10673,7 +10696,7 @@ body.kill-aura-modal-open {
   .account-switcher:not(.expanded) .account-avatar:not(.active),
   .account-switcher:not(.expanded) .account-add { display:none; }
   .account-switcher.expanded { z-index:180; }
-  .account-switcher.expanded .account-switcher-list { position:absolute; top:-8px; left:-8px; width:max-content; min-width:58px; max-width:calc(100vw - 32px); height:auto; display:flex; flex-wrap:wrap; gap:8px; padding:8px; border:2px solid var(--line); border-radius:var(--button-radius); overflow:visible; background:var(--panel); box-shadow:var(--shadow); }
+  .account-switcher.expanded .account-switcher-list { position:absolute; top:-8px; left:-8px; width:max-content; min-width:58px; max-width:calc(100vw - 32px); height:auto; display:flex; flex-wrap:wrap; gap:8px; padding:8px; border:2px solid var(--line); border-radius:var(--button-radius); overflow:visible; background:var(--panel); box-shadow:var(--shadow); animation: mc-pop-in 200ms cubic-bezier(.2, .9, .2, 1) both; }
   .account-switcher .account-avatar[data-account-id] { touch-action:manipulation; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; }
   .account-form-row { grid-template-columns:1fr; }
   .account-modal-overlay { place-items:end center; padding:0; }
