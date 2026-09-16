@@ -1649,16 +1649,14 @@ body.search-focus-active #logoutButton {
 
 .theme-switch {
   position: relative;
-  display: inline-grid;
-  grid-template-columns: 1fr 1fr;
-  align-items: center;
+  display: inline-block;
   width: 74px;
   min-width: 74px;
   min-height: 0;
   height: var(--button-height);
   border: 2px solid #6b93c9;
   border-radius: var(--card-radius);
-  padding: 3px;
+  padding: 0;
   color: #334155;
   background: linear-gradient(180deg, #7fc7f2 0%, #bfe6ff 60%, #cdedb9 100%);
   box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.35), inset 0 -3px 0 rgba(20, 40, 20, 0.18), var(--shadow-sm);
@@ -1682,15 +1680,24 @@ body.search-focus-active #logoutButton {
 }
 
 .theme-icon {
-  position: relative;
+  position: absolute;
   z-index: 2;
+  top: 3px;
+  width: 34px;
+  height: 34px;
   display: grid;
   place-items: center;
-  width: 33px;
-  height: 34px;
   line-height: 1;
   pointer-events: none;
   transition: opacity 220ms ease;
+}
+
+.theme-icon.sun {
+  left: 3px;
+}
+
+.theme-icon.moon {
+  left: 37px;
 }
 
 .theme-icon::before {
