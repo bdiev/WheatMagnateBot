@@ -3566,7 +3566,13 @@ body.search-focus-active #logoutButton {
   height: 674px;
   overflow: auto;
   padding: 10px 14px 14px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--panel-soft) 28%, transparent), transparent 18%);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--panel-soft) 28%, transparent), transparent 18%),
+    repeating-linear-gradient(
+      -45deg,
+      color-mix(in srgb, var(--line) 10%, transparent) 0 2px,
+      transparent 2px 4px
+    );
 }
 
 .chat-scroll-bottom {
@@ -3578,11 +3584,11 @@ body.search-focus-active #logoutButton {
   height: var(--button-height);
   min-height: var(--button-height);
   border: 2px solid var(--line);
-  border-radius: 999px;
+  border-radius: var(--card-radius);
   padding: 0;
   color: var(--text);
   background: color-mix(in srgb, var(--panel) 90%, transparent);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-inset), var(--shadow-sm);
   backdrop-filter: blur(8px);
   font-size: 20px;
   line-height: 1;
@@ -3688,16 +3694,17 @@ body.search-focus-active #logoutButton {
   min-width: 0;
   height: var(--button-height);
   border: 2px solid var(--line);
-  border-radius: var(--button-radius);
+  border-radius: var(--card-radius);
   padding: 0 14px;
   color: var(--text);
-  background: var(--panel);
+  background: color-mix(in srgb, var(--bg) 55%, var(--panel-soft));
+  box-shadow: inset 2px 2px 0 var(--bevel-dark), inset -1px -1px 0 var(--bevel-light);
   outline: none;
 }
 
 .chat-send-form input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+  border-color: var(--gold);
+  box-shadow: inset 2px 2px 0 var(--bevel-dark), inset -1px -1px 0 var(--bevel-light), 0 0 0 3px color-mix(in srgb, var(--gold) 26%, transparent);
 }
 
 .chat-message {
@@ -3742,8 +3749,8 @@ body.search-focus-active #logoutButton {
   justify-content: center;
   align-items: center;
   gap: 7px;
-  border: 0;
-  border-radius: 999px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--card-radius);
   padding: 6px 12px;
   color: var(--muted);
   background: color-mix(in srgb, var(--panel-soft) 76%, transparent);
@@ -3919,7 +3926,18 @@ body.search-focus-active #logoutButton {
   font-weight: 850;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-shadow: 1px 1px 0 color-mix(in srgb, var(--bg-strong) 65%, transparent);
   white-space: nowrap;
+}
+
+.chat-message-name::before {
+  content: "<";
+  opacity: 0.6;
+}
+
+.chat-message-name::after {
+  content: ">";
+  opacity: 0.6;
 }
 
 .chat-text {
@@ -3927,6 +3945,7 @@ body.search-focus-active #logoutButton {
   color: var(--text);
   font-size: 14px;
   line-height: 1.42;
+  text-shadow: 1px 1px 0 color-mix(in srgb, var(--bg-strong) 40%, transparent);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -4451,9 +4470,10 @@ body.search-focus-active #logoutButton {
   height: 28px;
   image-rendering: pixelated;
   border: 2px solid var(--line);
-  border-radius: 4px;
+  border-radius: 2px;
   flex: 0 0 auto;
   background: var(--panel);
+  box-shadow: var(--shadow-inset);
   contain: paint;
   transform: translateZ(0);
   backface-visibility: hidden;
