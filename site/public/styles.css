@@ -4563,6 +4563,7 @@ body.search-focus-active #logoutButton {
   --accent: var(--player-accent-light);
   --accent-strong: var(--player-accent-light-strong);
   --player-accent-contrast: var(--player-accent-light-contrast);
+  --player-accent-contrast-shadow: var(--player-accent-light-contrast-shadow);
   border-color: color-mix(in srgb, var(--accent) 38%, var(--line));
 }
 
@@ -4570,6 +4571,7 @@ body.search-focus-active #logoutButton {
   --accent: var(--player-accent-dark);
   --accent-strong: var(--player-accent-dark-strong);
   --player-accent-contrast: var(--player-accent-dark-contrast);
+  --player-accent-contrast-shadow: var(--player-accent-dark-contrast-shadow);
 }
 
 .player-profile-card.profile-loading {
@@ -4793,16 +4795,16 @@ body.search-focus-active #logoutButton {
 
 .player-profile-actions > .player-profile-message-action:first-child {
   border-color: var(--accent-strong);
-  color: #fff;
+  color: var(--player-accent-contrast, #fff);
   background: var(--accent);
-  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.28);
+  text-shadow: 1px 1px 0 var(--player-accent-contrast-shadow, rgba(0, 0, 0, .28));
   box-shadow: none;
 }
 
 .player-profile-actions > .player-profile-message-action:first-child:hover,
 .player-profile-actions > .player-profile-message-action:first-child:focus-visible {
   border-color: var(--accent-strong);
-  color: #fff;
+  color: var(--player-accent-contrast, #fff);
   background: var(--accent);
   transform: none;
   box-shadow: none;

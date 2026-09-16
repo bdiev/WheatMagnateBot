@@ -110,7 +110,10 @@
     const luminance = (0.2126 * red) + (0.7152 * green) + (0.0722 * blue);
     const whiteContrast = 1.05 / (luminance + 0.05);
     const darkContrast = (luminance + 0.05) / 0.055;
-    return whiteContrast >= darkContrast ? '#ffffff' : '#0b0f14';
+    const isLight = whiteContrast >= darkContrast;
+    // The companion shadow always leans the opposite way from the text
+    // itself, so it reads as a drop shadow instead of a duplicate outline.
+    return { color: isLight ? '#ffffff' : '#0b0f14', shadow: isLight ? 'rgba(0, 0, 0, .3)' : 'rgba(255, 255, 255, .35)' };
   }
 
   function createPlayerAccentTheme(accent) {
@@ -118,13 +121,17 @@
     const saturation = clamp(Number(accent?.saturation) || 68, 58, 84);
     const lightAccent = 38;
     const darkAccent = 62;
+    const lightContrast = contrastColor(hue, saturation, lightAccent);
+    const darkContrast = contrastColor(hue, saturation, darkAccent);
     return {
       '--player-accent-light': `hsl(${hue.toFixed(1)} ${saturation}% ${lightAccent}%)`,
       '--player-accent-light-strong': `hsl(${hue.toFixed(1)} ${Math.max(52, saturation - 4)}% 27%)`,
-      '--player-accent-light-contrast': contrastColor(hue, saturation, lightAccent),
+      '--player-accent-light-contrast': lightContrast.color,
+      '--player-accent-light-contrast-shadow': lightContrast.shadow,
       '--player-accent-dark': `hsl(${hue.toFixed(1)} ${saturation}% ${darkAccent}%)`,
       '--player-accent-dark-strong': `hsl(${hue.toFixed(1)} ${Math.max(60, saturation)}% 74%)`,
-      '--player-accent-dark-contrast': contrastColor(hue, saturation, darkAccent)
+      '--player-accent-dark-contrast': darkContrast.color,
+      '--player-accent-dark-contrast-shadow': darkContrast.shadow
     };
   }
 

@@ -737,9 +737,11 @@ const PLAYER_ACCENT_PROPERTY_NAMES = [
     '--player-accent-light',
     '--player-accent-light-strong',
     '--player-accent-light-contrast',
+    '--player-accent-light-contrast-shadow',
     '--player-accent-dark',
     '--player-accent-dark-strong',
-    '--player-accent-dark-contrast'
+    '--player-accent-dark-contrast',
+    '--player-accent-dark-contrast-shadow'
 ];
 
 function setPlayerAccentProperties(element, theme = null) {
