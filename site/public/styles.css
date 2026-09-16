@@ -3801,16 +3801,6 @@ body.search-focus-active #logoutButton {
   font-weight: 750;
 }
 
-.chat-activity-copy .chat-bot-badge,
-.chat-activity-copy .chat-new-player-badge {
-  min-height: 0;
-  border-color: transparent;
-  padding: 0;
-  background: transparent;
-  font-size: 9px;
-  opacity: 0.85;
-}
-
 .chat-activity-player {
   display: inline;
   min-width: 0;
