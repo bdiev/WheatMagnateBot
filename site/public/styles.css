@@ -443,8 +443,12 @@ h1 {
   line-height: 1;
   transform: translateX(-2px);
   vertical-align: 0;
-  color: var(--accent);
+  color: #e0b03d;
   animation: mc-float 2.6s ease-in-out infinite;
+}
+
+:root[data-theme="dark"] .minedings-mark {
+  color: #f3c957;
 }
 
 h2 {
@@ -4073,14 +4077,14 @@ body.search-focus-active #logoutButton {
   height: 100%;
   margin-right: -58px;
   pointer-events: none;
-  background:
-    linear-gradient(90deg, var(--panel-soft) 74%, color-mix(in srgb, var(--panel-soft) 0%, transparent));
+  background: var(--panel-soft);
 }
 
 .chart-y-axis span {
   position: absolute;
   right: 10px;
   color: var(--muted);
+  font-family: ui-monospace, "Cascadia Code", "SFMono-Regular", "Courier New", monospace;
   font-size: 11px;
   line-height: 1;
   transform: translateY(-50%);

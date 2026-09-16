@@ -2319,9 +2319,68 @@ function drawChartAxisLabels(canvas, ctx, chartData, xForIndex, labelForItem, y)
 
 function drawNoData(ctx, width, height, muted) {
   ctx.fillStyle = muted;
-  ctx.font = '13px system-ui, sans-serif';
+  ctx.font = `13px ${CHART_TICK_FONT}`;
   ctx.textAlign = 'center';
   ctx.fillText('No chart data', width / 2, height / 2);
+}
+
+// Minecraft-style canvas chart primitives: blocky beveled bars, square pixel
+// markers and a monospace "terminal" tick font instead of smooth/soft charts.
+const CHART_TICK_FONT = 'ui-monospace, "Cascadia Code", "SFMono-Regular", "Courier New", monospace';
+
+function chartColorChannels(colorStr) {
+  const value = String(colorStr || '').trim();
+  const rgbMatch = value.match(/rgba?\(([^)]+)\)/i);
+  if (rgbMatch) {
+    const parts = rgbMatch[1].split(',').map(part => parseFloat(part.trim()));
+    return { r: parts[0] || 0, g: parts[1] || 0, b: parts[2] || 0 };
+  }
+  const hexMatch = value.match(/^#([0-9a-f]{6})$/i);
+  if (hexMatch) {
+    const int = parseInt(hexMatch[1], 16);
+    return { r: (int >> 16) & 255, g: (int >> 8) & 255, b: int & 255 };
+  }
+  return { r: 128, g: 128, b: 128 };
+}
+
+function shadeChartColor(colorStr, amount) {
+  const { r, g, b } = chartColorChannels(colorStr);
+  const mix = amount >= 0
+    ? channel => Math.round(channel + (255 - channel) * amount)
+    : channel => Math.round(channel * (1 + amount));
+  return `rgb(${mix(r)}, ${mix(g)}, ${mix(b)})`;
+}
+
+function drawPixelBlock(ctx, x, y, w, h, baseColor) {
+  if (h <= 0 || w <= 0) return;
+  const px = Math.round(x);
+  const py = Math.round(y);
+  const pw = Math.max(1, Math.round(w));
+  const ph = Math.max(1, Math.round(h));
+  const bevel = Math.max(1, Math.min(4, Math.round(Math.min(pw, ph) * 0.24)));
+  ctx.fillStyle = baseColor;
+  ctx.fillRect(px, py, pw, ph);
+  ctx.fillStyle = shadeChartColor(baseColor, 0.3);
+  ctx.fillRect(px, py, pw, bevel);
+  ctx.fillRect(px, py, bevel, ph);
+  ctx.fillStyle = shadeChartColor(baseColor, -0.32);
+  ctx.fillRect(px, py + ph - bevel, pw, bevel);
+  ctx.fillRect(px + pw - bevel, py, bevel, ph);
+  ctx.strokeStyle = shadeChartColor(baseColor, -0.5);
+  ctx.lineWidth = 1;
+  ctx.strokeRect(px + 0.5, py + 0.5, pw - 1, ph - 1);
+}
+
+function drawPixelGridLine(ctx, x1, y1, x2, y2, color) {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath();
+  ctx.moveTo(Math.round(x1) + 0.5, Math.round(y1) + 0.5);
+  ctx.lineTo(Math.round(x2) + 0.5, Math.round(y2) + 0.5);
+  ctx.stroke();
+  ctx.restore();
 }
 
 function renderStickyChartAxis(canvas, labels, padding, height) {
@@ -2409,26 +2468,23 @@ function drawBarChart(canvas, data, options = {}) {
     state.chartMeta[canvas.id] = { hitboxes: [] };
     return;
   }
-  ctx.strokeStyle = line;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(padding.left, padding.top);
-  ctx.lineTo(padding.left, padding.top + chartHeight);
-  ctx.lineTo(padding.left + chartWidth, padding.top + chartHeight);
-  ctx.stroke();
 
   for (let i = 0; i <= 4; i++) {
     const y = padding.top + chartHeight - (chartHeight * i) / 4;
-    ctx.strokeStyle = line;
-    ctx.beginPath();
-    ctx.moveTo(padding.left, y);
-    ctx.lineTo(padding.left + chartWidth, y);
-    ctx.stroke();
+    drawPixelGridLine(ctx, padding.left, y, padding.left + chartWidth, y, line);
     ctx.fillStyle = muted;
-    ctx.font = '11px system-ui, sans-serif';
+    ctx.font = `11px ${CHART_TICK_FONT}`;
     ctx.textAlign = 'right';
     ctx.fillText(formatNumber(Math.round((maxValue * i) / 4)), padding.left - 10, y + 4);
   }
+
+  ctx.strokeStyle = text;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(Math.round(padding.left) + 0.5, padding.top);
+  ctx.lineTo(Math.round(padding.left) + 0.5, padding.top + chartHeight);
+  ctx.lineTo(padding.left + chartWidth, Math.round(padding.top + chartHeight) + 0.5);
+  ctx.stroke();
 
   const slotWidth = chartData.length > 0 ? chartWidth / chartData.length : 0;
   const barWidth = chartData.length > 0 ? Math.max(6, Math.min(28, slotWidth * 0.72)) : 0;
@@ -2449,12 +2505,11 @@ function drawBarChart(canvas, data, options = {}) {
         if (!segmentValue) return;
         const segmentHeight = (segmentValue / maxValue) * chartHeight;
         segmentBottom -= segmentHeight;
-        ctx.fillStyle = /^#[0-9a-f]{6}$/i.test(String(segment.color || '')) ? segment.color : accent;
-        ctx.fillRect(x, segmentBottom, barWidth, Math.max(1, segmentHeight));
+        const segmentColor = /^#[0-9a-f]{6}$/i.test(String(segment.color || '')) ? segment.color : accent;
+        drawPixelBlock(ctx, x, segmentBottom, barWidth, Math.max(1, segmentHeight), segmentColor);
       });
     } else {
-      ctx.fillStyle = accent;
-      ctx.fillRect(x, y, barWidth, barHeight);
+      drawPixelBlock(ctx, x, y, barWidth, barHeight, accent);
     }
     hitboxes.push({
       x: slotX,
@@ -2470,19 +2525,18 @@ function drawBarChart(canvas, data, options = {}) {
   });
   clusteredChartAnnotations(options.annotations, chartData, padding.left, chartWidth).forEach(cluster => {
     const x = Math.max(padding.left + 3, Math.min(padding.left + chartWidth - 3, cluster.x));
-    ctx.save(); ctx.strokeStyle = annotationColor(cluster.annotation); ctx.globalAlpha = 0.82; ctx.lineWidth = cluster.items.length > 1 ? 2.5 : 2; ctx.setLineDash([3, 5]);
+    ctx.save(); ctx.strokeStyle = annotationColor(cluster.annotation); ctx.globalAlpha = 0.82; ctx.lineWidth = cluster.items.length > 1 ? 2.5 : 2; ctx.setLineDash([3, 3]);
     ctx.beginPath(); ctx.moveTo(x, padding.top); ctx.lineTo(x, padding.top + chartHeight); ctx.stroke(); ctx.restore();
     ctx.save();
     ctx.fillStyle = annotationColor(cluster.annotation);
-    ctx.beginPath();
-    ctx.arc(x, padding.top + 5, cluster.items.length > 1 ? 4.5 : 3.5, 0, Math.PI * 2);
-    ctx.fill();
+    const markerSize = cluster.items.length > 1 ? 9 : 7;
+    ctx.fillRect(Math.round(x - markerSize / 2), padding.top + 1, markerSize, markerSize);
     ctx.restore();
   });
   state.chartMeta[canvas.id] = { hitboxes };
 
   ctx.fillStyle = text;
-  ctx.font = '11px system-ui, sans-serif';
+  ctx.font = `11px ${CHART_TICK_FONT}`;
   ctx.textAlign = 'center';
   drawChartAxisLabels(
     canvas,
@@ -2531,16 +2585,20 @@ function drawLineChart(canvas, data, options = {}) {
   }
   for (let i = 0; i <= 4; i++) {
     const y = padding.top + chartHeight - (chartHeight * i) / 4;
-    ctx.strokeStyle = line;
-    ctx.beginPath();
-    ctx.moveTo(padding.left, y);
-    ctx.lineTo(padding.left + chartWidth, y);
-    ctx.stroke();
+    drawPixelGridLine(ctx, padding.left, y, padding.left + chartWidth, y, line);
     ctx.fillStyle = muted;
-    ctx.font = '11px system-ui, sans-serif';
+    ctx.font = `11px ${CHART_TICK_FONT}`;
     ctx.textAlign = 'right';
     ctx.fillText(formatTps((maxValue * i) / 4), padding.left - 10, y + 4);
   }
+
+  ctx.strokeStyle = text;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(Math.round(padding.left) + 0.5, padding.top);
+  ctx.lineTo(Math.round(padding.left) + 0.5, padding.top + chartHeight);
+  ctx.lineTo(padding.left + chartWidth, Math.round(padding.top + chartHeight) + 0.5);
+  ctx.stroke();
 
   const sourceNumericValues = sourceData.map(item => Number(item.value)).filter(Number.isFinite);
   const average = sourceNumericValues.reduce((sum, value) => sum + value, 0) / sourceNumericValues.length;
@@ -2548,14 +2606,14 @@ function drawLineChart(canvas, data, options = {}) {
   ctx.save();
   ctx.strokeStyle = muted;
   ctx.globalAlpha = 0.72;
-  ctx.setLineDash([5, 6]);
+  ctx.setLineDash([4, 4]);
   ctx.beginPath();
-  ctx.moveTo(padding.left, averageY);
-  ctx.lineTo(padding.left + chartWidth, averageY);
+  ctx.moveTo(padding.left, Math.round(averageY) + 0.5);
+  ctx.lineTo(padding.left + chartWidth, Math.round(averageY) + 0.5);
   ctx.stroke();
   ctx.restore();
   ctx.fillStyle = muted;
-  ctx.font = '10px system-ui, sans-serif';
+  ctx.font = `10px ${CHART_TICK_FONT}`;
   ctx.textAlign = 'right';
   ctx.fillText(`Avg ${formatTps(average)}`, padding.left + chartWidth - 4, Math.max(padding.top + 11, averageY - 6));
 
@@ -2596,20 +2654,25 @@ function drawLineChart(canvas, data, options = {}) {
   }
 
   ctx.strokeStyle = accent;
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 3;
+  ctx.lineJoin = 'miter';
   ctx.beginPath();
   points.forEach((point, index) => {
-    if (index === 0) ctx.moveTo(point.x, point.y);
-    else ctx.lineTo(point.x, point.y);
+    if (index === 0) {
+      ctx.moveTo(point.x, point.y);
+      return;
+    }
+    const prev = points[index - 1];
+    const midX = prev.x + (point.x - prev.x) / 2;
+    ctx.lineTo(midX, prev.y);
+    ctx.lineTo(midX, point.y);
+    ctx.lineTo(point.x, point.y);
   });
   ctx.stroke();
 
   if (points.length <= Math.max(24, Math.floor(chartWidth / 12))) {
     points.forEach(point => {
-      ctx.fillStyle = accent;
-      ctx.beginPath();
-      ctx.arc(point.x, point.y, 3.5, 0, Math.PI * 2);
-      ctx.fill();
+      drawPixelBlock(ctx, point.x - 4, point.y - 4, 8, 8, accent);
     });
   }
   const pointSlotWidth = chartWidth / Math.max(1, points.length - 1);
@@ -2631,7 +2694,7 @@ function drawLineChart(canvas, data, options = {}) {
   };
 
   ctx.fillStyle = text;
-  ctx.font = '11px system-ui, sans-serif';
+  ctx.font = `11px ${CHART_TICK_FONT}`;
   ctx.textAlign = 'center';
   drawChartAxisLabels(
     canvas,
