@@ -236,8 +236,8 @@ img {
 }
 
 @keyframes mc-pulse-glow {
-  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); }
-  50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 0%, transparent); }
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--pulse-color, var(--accent)) 55%, transparent); }
+  50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--pulse-color, var(--accent)) 0%, transparent); }
 }
 
 @keyframes mc-spin-step {
@@ -249,9 +249,14 @@ img {
   .pixel-panel,
   .panel,
   .stat,
+  .tab-panel.active,
   button,
   .theme-switch,
-  .theme-thumb {
+  .theme-thumb,
+  .uuid-copy.uuid-copy-confirmed,
+  #killAuraToggleButton.danger-button,
+  .player-profile-actions > .player-profile-message-action:first-child:hover::after,
+  #tab-kill-aura .aura-primary-button:not(:disabled):hover::after {
     animation: none !important;
   }
 }
@@ -2653,6 +2658,7 @@ body.search-focus-active #logoutButton {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 16px;
   align-items: start;
+  animation: mc-pop-in 260ms cubic-bezier(.2, .9, .2, 1) both;
 }
 
 #tab-admin.tab-panel.active {
@@ -4787,11 +4793,23 @@ body.search-focus-active #logoutButton {
 }
 
 .player-profile-actions > .player-profile-message-action:first-child {
+  position: relative;
+  overflow: hidden;
   border-color: var(--accent-strong);
   color: #fff;
   background: var(--accent);
   text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.28);
   box-shadow: var(--shadow-inset), var(--shadow-sm);
+}
+
+.player-profile-actions > .player-profile-message-action:first-child::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(115deg, transparent 40%, rgba(255, 255, 255, .55) 50%, transparent 60%);
+  background-size: 250% 100%;
+  background-position: -140% 0;
+  pointer-events: none;
 }
 
 .player-profile-actions > .player-profile-message-action:first-child:hover,
@@ -4801,6 +4819,10 @@ body.search-focus-active #logoutButton {
   background: var(--accent-strong);
   transform: translate(-1px, -1px);
   box-shadow: var(--shadow-inset), 4px 4px 0 rgba(0, 0, 0, 0.22);
+}
+
+.player-profile-actions > .player-profile-message-action:first-child:hover::after {
+  animation: mc-shimmer 900ms ease;
 }
 
 .player-profile-grid {
@@ -4876,11 +4898,7 @@ body.search-focus-active #logoutButton {
 }
 
 .player-profile-refresh-button.is-refreshing svg {
-  animation: player-profile-refresh-spin 650ms linear infinite;
-}
-
-@keyframes player-profile-refresh-spin {
-  to { transform: rotate(360deg); }
+  animation: mc-spin-step 750ms steps(8, end) infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -6848,6 +6866,7 @@ body.modal-open { overflow:hidden; }
 .uuid-copy.uuid-copy-confirmed {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  animation: mc-press 220ms ease;
 }
 
 .copy-toast {
@@ -7098,8 +7117,8 @@ body.modal-open { overflow:hidden; }
   height: 14px;
   border: 2px solid currentColor;
   border-right-color: transparent;
-  border-radius: 50%;
-  animation: timezoneSaveSpin 650ms linear infinite;
+  border-radius: 1px;
+  animation: mc-spin-step 750ms steps(8, end) infinite;
 }
 
 #accountTimezoneSave.save-success {
@@ -7109,10 +7128,6 @@ body.modal-open { overflow:hidden; }
 
 #accountTimezoneSave.save-error {
   background: #9b2f2f;
-}
-
-@keyframes timezoneSaveSpin {
-  to { transform: rotate(360deg); }
 }
 
 @keyframes timezoneSaveSuccess {
@@ -9203,10 +9218,33 @@ body.modal-open { overflow:hidden; }
 }
 
 #tab-kill-aura .aura-primary-button {
+  position: relative;
+  overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--aura-accent) 76%, #fff);
   color: #201804;
   background: linear-gradient(180deg, #f2ca59, #dba52c);
   box-shadow: 0 8px 18px color-mix(in srgb, #c99019 24%, transparent);
+}
+
+#tab-kill-aura .aura-primary-button:not(:disabled)::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(115deg, transparent 40%, rgba(255, 255, 255, .65) 50%, transparent 60%);
+  background-size: 250% 100%;
+  background-position: -140% 0;
+  pointer-events: none;
+}
+
+#tab-kill-aura .aura-primary-button:not(:disabled):hover::after {
+  animation: mc-shimmer 900ms ease;
+}
+
+/* Kill Aura is live and swinging - the toggle glows red like a charged
+   weapon until it's switched off again. */
+#killAuraToggleButton.danger-button {
+  --pulse-color: var(--danger);
+  animation: mc-pulse-glow 1.6s ease-in-out infinite;
 }
 
 #tab-kill-aura .aura-primary-button:hover {

@@ -50,6 +50,9 @@ const state = {
   chartRedrawGeneration: 0,
   chartScrollRedrawFrames: {},
   chartAnimations: {},
+  chartGrowthAnimations: {},
+  chartProgress: {},
+  chartGrownOnce: new Set(),
   chartHover: {},
   seenPlayers: [],
   whisperPlayers: [],
@@ -2060,7 +2063,13 @@ function setActiveTab(tab) {
     resetPlaytimeLeaderboardScroll($('#playtimeLeaderboard'), state.playtimeLeaderboardScope);
   }
   requestAnimationFrame(updateCarousels);
-  redrawCharts();
+  const tabChartId = Object.keys(CHART_TAB_BY_ID).find(id => CHART_TAB_BY_ID[id] === tab);
+  if (tabChartId && !state.chartGrownOnce.has(tabChartId)) {
+    state.chartGrownOnce.add(tabChartId);
+    animateChartGrowth(tabChartId);
+  } else {
+    redrawCharts();
+  }
   watchPanelSkeletons($(`.tab-panel[data-panel="${tab}"]`));
 }
 
@@ -2266,7 +2275,7 @@ function animateChart(chartId, duration = 220) {
   const canvas = document.getElementById(chartId);
   if (!canvas) return;
   state.chartAnimations[chartId]?.cancel?.();
-  drawChartById(chartId);
+  animateChartGrowth(chartId);
   const surface = canvas.closest('.chart-scroll') || canvas;
 
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || typeof surface.animate !== 'function') {
@@ -2285,6 +2294,39 @@ function animateChart(chartId, duration = 220) {
   animation.finished.catch(() => {}).finally(() => {
     if (state.chartAnimations[chartId] === animation) delete state.chartAnimations[chartId];
   });
+}
+
+// Bars grow up from the baseline and lines sweep in left-to-right instead of
+// snapping straight to their final shape - see the `growth` reads in
+// drawBarChart()/drawLineChart(). Hitboxes always use the final geometry so
+// hovering works immediately even mid-animation.
+function animateChartGrowth(chartId, duration = 420) {
+  const canvas = document.getElementById(chartId);
+  if (!canvas) return;
+  state.chartGrowthAnimations[chartId]?.cancel?.();
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    delete state.chartProgress[chartId];
+    drawChartById(chartId);
+    return;
+  }
+  const ease = t => 1 - Math.pow(1 - t, 3);
+  const start = performance.now();
+  const entry = { cancelled: false };
+  const step = now => {
+    if (entry.cancelled) return;
+    const t = Math.min(1, (now - start) / duration);
+    state.chartProgress[chartId] = ease(t);
+    drawChartById(chartId);
+    if (t < 1) {
+      requestAnimationFrame(step);
+    } else {
+      delete state.chartProgress[chartId];
+      if (state.chartGrowthAnimations[chartId] === entry) delete state.chartGrowthAnimations[chartId];
+    }
+  };
+  entry.cancel = () => { entry.cancelled = true; delete state.chartProgress[chartId]; };
+  state.chartGrowthAnimations[chartId] = entry;
+  requestAnimationFrame(step);
 }
 
 function shortChartLabel(label, index, total) {
@@ -2469,6 +2511,7 @@ function drawBarChart(canvas, data, options = {}) {
   const line = getCssColor('--line');
   const accent = getCssColor('--accent');
   const panelSoft = getCssColor('--panel-soft');
+  const growth = Math.min(1, Math.max(0, options.progress ?? state.chartProgress[canvas.id] ?? 1));
   const padding = { top: 24, right: 52, bottom: 44, left: 58 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
@@ -2526,10 +2569,12 @@ function drawBarChart(canvas, data, options = {}) {
         const segmentHeight = (segmentValue / maxValue) * chartHeight;
         segmentBottom -= segmentHeight;
         const segmentColor = /^#[0-9a-f]{6}$/i.test(String(segment.color || '')) ? segment.color : accent;
-        drawPixelBlock(ctx, x, segmentBottom, barWidth, Math.max(1, segmentHeight), segmentColor);
+        const drawnHeight = Math.max(growth > 0 ? 1 : 0, segmentHeight * growth);
+        drawPixelBlock(ctx, x, segmentBottom + segmentHeight - drawnHeight, barWidth, drawnHeight, segmentColor);
       });
     } else {
-      drawPixelBlock(ctx, x, y, barWidth, barHeight, accent);
+      const drawnHeight = Math.max(growth > 0 ? 1 : 0, barHeight * growth);
+      drawPixelBlock(ctx, x, y + barHeight - drawnHeight, barWidth, drawnHeight, accent);
     }
     hitboxes.push({
       x: slotX,
@@ -2581,6 +2626,7 @@ function drawLineChart(canvas, data, options = {}) {
   const line = getCssColor('--line');
   const accent = getCssColor('--accent');
   const panelSoft = getCssColor('--panel-soft');
+  const growth = Math.min(1, Math.max(0, options.progress ?? state.chartProgress[canvas.id] ?? 1));
   const padding = { top: 24, right: 52, bottom: 44, left: 58 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
@@ -2655,6 +2701,11 @@ function drawLineChart(canvas, data, options = {}) {
     })
     .filter(Boolean);
 
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(padding.left, padding.top - 6, chartWidth * growth, chartHeight + 12);
+  ctx.clip();
+
   if (points.some(point => point.minValue !== point.maxValue)) {
     ctx.fillStyle = accent;
     ctx.globalAlpha = 0.16;
@@ -2695,6 +2746,7 @@ function drawLineChart(canvas, data, options = {}) {
       drawPixelBlock(ctx, point.x - 4, point.y - 4, 8, 8, accent);
     });
   }
+  ctx.restore();
   const pointSlotWidth = chartWidth / Math.max(1, points.length - 1);
   state.chartMeta[canvas.id] = {
     hitboxes: points.map((point, index) => ({
