@@ -23,7 +23,7 @@ const { isValidKillAuraRange, normalizeKillAuraRange } = require('./kill-aura-ra
 const { createResourceRequestService } = require('./resource-requests');
 const { normalizeGreenChatMessage } = require('./chat-message-normalization');
 const { NEW_PLAYER_WINDOW_DAYS, isNewPlayerRegistration } = require('./player-new-status');
-const { minecraftAvatarSources } = require('./minecraft-avatar');
+const { minecraftAvatarSources, renderOfficialMinecraftAvatar } = require('./minecraft-avatar');
 const { MinecraftIconCache, minecraftIconEtag } = require('./minecraft-icon-cache');
 const {
   MUTATING_METHODS, RateLimiter, clientIp, configuredOrigins, requestIsHttps,
@@ -319,6 +319,16 @@ async function sendMinecraftAvatar(res, url) {
       res.writeHead(200,{'Content-Type':'image/png','Cache-Control':'public, no-cache','Content-Length':body.length}); res.end(body); return;
     } catch { /* Try the next avatar provider/model. */ }
   }
+  try {
+    const body = await renderOfficialMinecraftAvatar({
+      username,
+      uuid: compactUuid,
+      signal: AbortSignal.timeout(8_000)
+    });
+    minecraftAvatarCache.set(cacheKey,{body,storedAt:Date.now()});
+    if (minecraftAvatarCache.size > 200) minecraftAvatarCache.delete(minecraftAvatarCache.keys().next().value);
+    res.writeHead(200,{'Content-Type':'image/png','Cache-Control':'public, no-cache','Content-Length':body.length}); res.end(body); return;
+  } catch { /* The official profile or skin service is temporarily unavailable. */ }
   sendError(res,502,'Minecraft avatar is temporarily unavailable.');
 }
 

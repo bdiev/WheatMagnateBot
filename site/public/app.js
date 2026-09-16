@@ -1693,8 +1693,6 @@ function setNavMenuOpen(open) {
   menu.classList.toggle('open', isOpen);
   document.body.classList.toggle('nav-focus-active', isOpen);
   toggle.setAttribute('aria-expanded', String(isOpen));
-  $('#mobileHotbarMore')?.setAttribute('aria-expanded', String(isOpen));
-  $('#mobileHotbar')?.classList.toggle('nav-open', isOpen);
 }
 
 function toggleNavMenu() {
@@ -1785,7 +1783,7 @@ function queueNavigationSettingsSave() {
 function applyNavigationOrder() {
   const panel = $('#navMenuPanel');
   if (!panel) return;
-  const buttons = new Map($$('#navMenuPanel .tab-button[data-tab]').map(button => [button.dataset.tab, button]));
+  const buttons = new Map($$('.tab-button[data-tab]').map(button => [button.dataset.tab, button]));
   loadNavigationOrder().forEach(tab => {
     const button = buttons.get(tab);
     if (button) panel.append(button);
@@ -9174,7 +9172,6 @@ $('#authPassword').addEventListener('input', event => updatePasswordStrength('#a
 $('#authModeToggle').addEventListener('click', () => transitionAuthMode(state.authMode === 'login' ? 'register' : 'login'));
 $('#authBootstrapToggle').addEventListener('click', () => transitionAuthMode('bootstrap'));
 $('#navMenuToggle')?.addEventListener('click', toggleNavMenu);
-$('#mobileHotbarMore')?.addEventListener('click', toggleNavMenu);
 $('#logoutButton')?.addEventListener('click', handleLogout);
 $('#accountModalClose')?.addEventListener('click', () => setAccountModalOpen(false));
 $('#accountModalCancel')?.addEventListener('click', () => setAccountModalOpen(false));

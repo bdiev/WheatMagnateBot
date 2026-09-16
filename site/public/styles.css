@@ -699,93 +699,6 @@ body.profile-open {
   transform: translateY(0) scale(1);
 }
 
-/* --- Mobile hotbar --------------------------------------------------- */
-/* A persistent bottom nav styled like a Minecraft inventory hotbar.
-   Reuses the same .tab-button[data-tab] elements/logic as the dropdown
-   menu (click routing, active state, hidden/order sync) - see
-   applyNavigationOrder()/applyNavigationVisibility() in app.js. */
-.mobile-hotbar {
-  display: none;
-}
-
-@media (max-width: 700px) {
-  .nav-menu-toggle {
-    display: none;
-  }
-
-  .mobile-hotbar {
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 150;
-    display: flex;
-    gap: 3px;
-    padding: 4px calc(4px + env(safe-area-inset-left, 0px)) calc(4px + env(safe-area-inset-bottom, 0px)) calc(4px + env(safe-area-inset-right, 0px));
-    border-top: 3px solid var(--line);
-    background: var(--hud-bg-soft);
-    box-shadow: 0 -6px 0 rgba(0, 0, 0, 0.18);
-  }
-
-  .hotbar-slot {
-    flex: 1 1 0;
-    min-width: 0;
-    width: auto;
-    min-height: 50px;
-    padding: 0;
-    border: 2px solid var(--hud-line);
-    border-radius: 2px;
-    background: rgba(255, 255, 255, 0.04);
-    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
-  }
-
-  .hotbar-slot:hover {
-    transform: none;
-    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
-  }
-
-  .hotbar-slot.active {
-    border-color: var(--gold);
-    background: color-mix(in srgb, var(--gold) 18%, rgba(255, 255, 255, 0.04));
-    box-shadow: inset 0 0 0 2px var(--gold);
-  }
-
-  .hotbar-icon {
-    width: 26px;
-    height: 26px;
-    object-fit: contain;
-    image-rendering: pixelated;
-    filter: drop-shadow(1px 1px 0 rgba(0, 0, 0, 0.6));
-  }
-
-  .mobile-hotbar.nav-open .hotbar-more {
-    border-color: var(--gold);
-    box-shadow: inset 0 0 0 2px var(--gold);
-  }
-
-  #navMenuPanel {
-    position: fixed;
-    left: 8px;
-    right: 8px;
-    top: auto;
-    bottom: calc(62px + env(safe-area-inset-bottom, 0px));
-    width: auto;
-    max-height: 60vh;
-    overflow-y: auto;
-    border-radius: var(--card-radius);
-    transform: translateY(10px) scale(0.98);
-  }
-
-  .nav-menu.open #navMenuPanel {
-    transform: translateY(0) scale(1);
-  }
-
-  body {
-    padding-bottom: calc(58px + env(safe-area-inset-bottom, 0px));
-  }
-
-}
-
 .muted,
 .panel-head p,
 .stat small {
@@ -9046,7 +8959,7 @@ body.modal-open { overflow:hidden; }
     z-index: 80;
     top: auto;
     right: 10px;
-    bottom: calc(68px + env(safe-area-inset-bottom));
+    bottom: calc(10px + env(safe-area-inset-bottom));
     left: 10px;
     width: auto;
     max-height: min(72vh, 620px);
@@ -11310,14 +11223,3 @@ body.kill-aura-modal-open {
   }
 }
 
-/* Clear the fixed mobile hotbar: nudge other bottom-anchored floating UI up
-   above it so nothing sits underneath the nav bar. */
-@media (max-width: 700px) {
-  .copy-toast {
-    bottom: calc(70px + env(safe-area-inset-bottom, 0px));
-  }
-
-  .admin-player-actions-dialog {
-    inset: auto 12px calc(70px + env(safe-area-inset-bottom, 0px));
-  }
-}
