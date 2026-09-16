@@ -839,7 +839,7 @@ function playerIdentity(username, size = 28, { status = null, uuid = null, loadi
   const statusLabel = status === 'online' ? 'Online' : status === 'offline' ? 'Offline' : '';
   return `
     <span class="player-identity${statusClass}" role="button" tabindex="0" data-player="${safeUsername}" title="Open player profile"${statusLabel ? ` aria-label="${safeName}: ${statusLabel}"` : ''}>
-      <img class="player-head" src="${playerHeadUrl(username, size, { uuid })}" alt="" loading="${loading === 'lazy' ? 'lazy' : 'eager'}" decoding="async" width="${size}" height="${size}">
+      <img class="player-head" src="${playerHeadUrl(username, size, { uuid })}" alt="" loading="${loading === 'lazy' ? 'lazy' : 'eager'}" decoding="async" width="${size}" height="${size}" onerror="this.style.visibility='hidden'">
       <span>${safeName}</span>
     </span>
   `;
@@ -1693,6 +1693,8 @@ function setNavMenuOpen(open) {
   menu.classList.toggle('open', isOpen);
   document.body.classList.toggle('nav-focus-active', isOpen);
   toggle.setAttribute('aria-expanded', String(isOpen));
+  $('#mobileHotbarMore')?.setAttribute('aria-expanded', String(isOpen));
+  $('#mobileHotbar')?.classList.toggle('nav-open', isOpen);
 }
 
 function toggleNavMenu() {
@@ -1783,7 +1785,7 @@ function queueNavigationSettingsSave() {
 function applyNavigationOrder() {
   const panel = $('#navMenuPanel');
   if (!panel) return;
-  const buttons = new Map($$('.tab-button[data-tab]').map(button => [button.dataset.tab, button]));
+  const buttons = new Map($$('#navMenuPanel .tab-button[data-tab]').map(button => [button.dataset.tab, button]));
   loadNavigationOrder().forEach(tab => {
     const button = buttons.get(tab);
     if (button) panel.append(button);
@@ -2061,6 +2063,26 @@ function setActiveTab(tab) {
   }
   requestAnimationFrame(updateCarousels);
   redrawCharts();
+  watchPanelSkeletons($(`.tab-panel[data-panel="${tab}"]`));
+}
+
+let panelSkeletonObserver = null;
+
+// Stat/detail values render "-" until their data request resolves. Rather
+// than instrumenting every tab's separate load function, watch the active
+// panel for its placeholder text disappearing and shimmer it meanwhile.
+function scanPanelSkeletons(panel) {
+  panel.querySelectorAll('.stat strong, .detail-list strong').forEach(el => {
+    el.classList.toggle('is-loading-value', el.textContent.trim() === '-');
+  });
+}
+
+function watchPanelSkeletons(panel) {
+  panelSkeletonObserver?.disconnect();
+  if (!panel) return;
+  scanPanelSkeletons(panel);
+  panelSkeletonObserver = new MutationObserver(() => scanPanelSkeletons(panel));
+  panelSkeletonObserver.observe(panel, { subtree: true, childList: true, characterData: true });
 }
 
 function carouselItems(carousel) {
@@ -3346,7 +3368,7 @@ function renderPlayerProfile(profile) {
   return `
     <header class="player-profile-head">
       <span class="player-profile-avatar-wrap" data-status="${profile.isOnline ? 'online' : 'offline'}" aria-label="${profile.isOnline ? 'Online' : 'Offline'}">
-        <img class="player-profile-avatar" src="${playerHeadUrl(profile.username, 96, { uuid: profile.uuid })}" alt="" loading="lazy">
+        <img class="player-profile-avatar" src="${playerHeadUrl(profile.username, 96, { uuid: profile.uuid })}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">
       </span>
       <div>
         <div class="player-profile-identity">
@@ -6730,7 +6752,7 @@ function adminPlayerCardMarkup(player) {
   return `
       <article class="admin-player-card" data-admin-player-key="${identityKey}" data-admin-player-signature="${escapeHtml(adminPlayerCardSignature(player))}">
         <button class="admin-player-avatar-button" type="button" data-admin-player-action="view" data-player-key="${identityKey}" aria-label="Open ${username} profile">
-          <img class="admin-player-avatar" src="${accountHeadUrl(player.username, player.uuid)}" alt="" loading="lazy" decoding="async">
+          <img class="admin-player-avatar" src="${accountHeadUrl(player.username, player.uuid)}" alt="" loading="lazy" decoding="async" onerror="this.style.visibility='hidden'">
         </button>
         <div class="admin-player-card-main">
           <div class="admin-player-card-title"><button class="admin-player-name-button" type="button" data-admin-player-action="view" data-player-key="${identityKey}">${username}</button><span class="pill ${player.isOnline ? 'online' : ''}" data-admin-player-status>${player.isOnline ? 'online' : 'offline'}</span></div>
@@ -9152,6 +9174,7 @@ $('#authPassword').addEventListener('input', event => updatePasswordStrength('#a
 $('#authModeToggle').addEventListener('click', () => transitionAuthMode(state.authMode === 'login' ? 'register' : 'login'));
 $('#authBootstrapToggle').addEventListener('click', () => transitionAuthMode('bootstrap'));
 $('#navMenuToggle')?.addEventListener('click', toggleNavMenu);
+$('#mobileHotbarMore')?.addEventListener('click', toggleNavMenu);
 $('#logoutButton')?.addEventListener('click', handleLogout);
 $('#accountModalClose')?.addEventListener('click', () => setAccountModalOpen(false));
 $('#accountModalCancel')?.addEventListener('click', () => setAccountModalOpen(false));

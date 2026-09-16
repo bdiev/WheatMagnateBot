@@ -285,6 +285,13 @@ function displayGameChatMessage(value) {
   return normalizeGreenChatMessage(value);
 }
 
+// A PNG this small can only be a near-solid fill (some avatar providers
+// return a blank/black square instead of a real render for bot-style
+// accounts that never authenticated with Mojang). Real face renders with
+// skin tone, eyes and hair detail never compress this far, so skip it and
+// let the caller fall through to the next provider/model instead.
+const MIN_PLAUSIBLE_AVATAR_BYTES = 250;
+
 async function sendMinecraftAvatar(res, url) {
   const username = String(url.searchParams.get('username') || '').trim();
   if (!/^[A-Za-z0-9_]{1,16}$/.test(username)) { sendError(res,400,'Invalid Minecraft username.'); return; }
@@ -296,19 +303,25 @@ async function sendMinecraftAvatar(res, url) {
   if (cached && Date.now()-cached.storedAt < 6*60*60_000) {
     res.writeHead(200,{'Content-Type':'image/png','Cache-Control':'public, no-cache','Content-Length':cached.body.length}); res.end(cached.body); return;
   }
-  // Include the outer head layer on both providers. Minotar requires its
-  // helm endpoint; MCHeads includes that layer by default.
-  const sources = [`https://minotar.net/helm/${encodeURIComponent(avatarIdentity)}/64`,`https://mc-heads.net/avatar/${encodeURIComponent(avatarIdentity)}/64`];
+  // Include the outer head layer on both providers, and ask MCHeads for both
+  // skin models: a bot-style identity with no real Mojang skin can render
+  // as a blank square under one model and fine under the other.
+  const sources = [
+    `https://minotar.net/helm/${encodeURIComponent(avatarIdentity)}/64`,
+    `https://mc-heads.net/avatar/${encodeURIComponent(avatarIdentity)}/64`,
+    `https://mc-heads.net/avatar/${encodeURIComponent(avatarIdentity)}/64/wide`,
+    `https://mc-heads.net/avatar/${encodeURIComponent(avatarIdentity)}/64/slim`
+  ];
   for (const source of sources) {
     try {
       const response = await fetch(source,{signal:AbortSignal.timeout(5_000),headers:{Accept:'image/png'}});
       if (!response.ok) continue;
       const body = Buffer.from(await response.arrayBuffer());
-      if (!body.length || body.length > 128*1024) continue;
+      if (body.length < MIN_PLAUSIBLE_AVATAR_BYTES || body.length > 128*1024) continue;
       minecraftAvatarCache.set(cacheKey,{body,storedAt:Date.now()});
       if (minecraftAvatarCache.size > 200) minecraftAvatarCache.delete(minecraftAvatarCache.keys().next().value);
       res.writeHead(200,{'Content-Type':'image/png','Cache-Control':'public, no-cache','Content-Length':body.length}); res.end(body); return;
-    } catch { /* Try the next avatar provider. */ }
+    } catch { /* Try the next avatar provider/model. */ }
   }
   sendError(res,502,'Minecraft avatar is temporarily unavailable.');
 }
