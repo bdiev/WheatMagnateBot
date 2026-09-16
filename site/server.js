@@ -23,6 +23,7 @@ const { isValidKillAuraRange, normalizeKillAuraRange } = require('./kill-aura-ra
 const { createResourceRequestService } = require('./resource-requests');
 const { normalizeGreenChatMessage } = require('./chat-message-normalization');
 const { NEW_PLAYER_WINDOW_DAYS, isNewPlayerRegistration } = require('./player-new-status');
+const { minecraftAvatarSources } = require('./minecraft-avatar');
 const { MinecraftIconCache, minecraftIconEtag } = require('./minecraft-icon-cache');
 const {
   MUTATING_METHODS, RateLimiter, clientIp, configuredOrigins, requestIsHttps,
@@ -306,12 +307,7 @@ async function sendMinecraftAvatar(res, url) {
   // Include the outer head layer on both providers, and ask MCHeads for both
   // skin models: a bot-style identity with no real Mojang skin can render
   // as a blank square under one model and fine under the other.
-  const sources = [
-    `https://minotar.net/helm/${encodeURIComponent(avatarIdentity)}/64`,
-    `https://mc-heads.net/avatar/${encodeURIComponent(avatarIdentity)}/64`,
-    `https://mc-heads.net/avatar/${encodeURIComponent(avatarIdentity)}/64/wide`,
-    `https://mc-heads.net/avatar/${encodeURIComponent(avatarIdentity)}/64/slim`
-  ];
+  const sources = minecraftAvatarSources(avatarIdentity);
   for (const source of sources) {
     try {
       const response = await fetch(source,{signal:AbortSignal.timeout(5_000),headers:{Accept:'image/png'}});
