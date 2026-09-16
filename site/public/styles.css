@@ -1842,6 +1842,12 @@ body.search-focus-active #logoutButton {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.topbar-actions .seen-search-toggle,
+.topbar-actions .seen-search-box {
+  grid-column: 1;
+  grid-row: 1;
+}
+
 .seen-search-toggle {
   position: relative;
   width: var(--button-height);
@@ -1854,7 +1860,7 @@ body.search-focus-active #logoutButton {
   color: var(--text);
   background: var(--panel);
   box-shadow: var(--shadow);
-  transition: background-color 220ms ease, border-color 220ms ease, transform 180ms ease, box-shadow 220ms ease;
+  transition: background-color 220ms ease, border-color 220ms ease, transform 180ms ease, box-shadow 220ms ease, opacity 180ms ease, visibility 0s linear;
 }
 
 .seen-search-toggle:hover {
@@ -1868,7 +1874,11 @@ body.search-focus-active #logoutButton {
 }
 
 .seen-search.open .seen-search-toggle {
-  display: none;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: scale(0.35) rotate(-16deg);
+  transition: opacity 180ms ease, transform 200ms cubic-bezier(0.34, 1.2, 0.64, 1), visibility 0s linear 180ms, background-color 220ms ease, border-color 220ms ease, box-shadow 220ms ease;
 }
 
 .search-icon {
@@ -2479,6 +2489,7 @@ body.search-focus-active #logoutButton {
   .whisper-form,
   .seen-search,
   .seen-search-box,
+  .seen-search-toggle,
   .rolling-number-active {
     transition: none;
   }
@@ -2516,6 +2527,11 @@ body.search-focus-active #logoutButton {
   overflow: visible;
   transform: scaleX(1) scaleY(1);
   pointer-events: auto;
+}
+
+.seen-search.open .seen-search-box:focus-within {
+  border-color: var(--accent-strong);
+  box-shadow: var(--shadow), 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .seen-search-box label {
