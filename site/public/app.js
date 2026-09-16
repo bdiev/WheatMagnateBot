@@ -3619,7 +3619,11 @@ function capturePlayerProfileViewState(content) {
       scrollTop: area.scrollTop,
       scrollLeft: area.scrollLeft,
       focused: document.activeElement === area
-    }))
+    })),
+    // The periodic refresh (schedulePlayerProfileRefresh) rebuilds this whole
+    // panel from scratch, which would otherwise silently snap any open
+    // <details> (e.g. Name history) shut a second or two after the click.
+    nameHistoryOpen: Boolean(content?.querySelector('.player-name-history')?.open)
   };
 }
 
@@ -3633,6 +3637,10 @@ function restorePlayerProfileViewState(content, viewState) {
     if (saved.focused) area.focus({ preventScroll: true });
     area.scrollTop = saved.scrollTop;
     area.scrollLeft = saved.scrollLeft;
+  }
+  if (viewState.nameHistoryOpen) {
+    const details = content.querySelector('.player-name-history');
+    if (details) details.open = true;
   }
   if (card) card.scrollTop = viewState.cardScrollTop;
 }
