@@ -11,7 +11,9 @@ const { createChatAvatarLoader } = require('../discord/chat-avatar');
 async function run() {
   const png = await sharp({ create: {
     width: 8, height: 8, channels: 4, background: { r: 30, g: 80, b: 150, alpha: 1 }
-  } }).png().toBuffer();
+  } }).composite([{ input: await sharp({ create: {
+    width: 1, height: 1, channels: 4, background: { r: 220, g: 180, b: 40, alpha: 1 }
+  } }).png().toBuffer(), left: 0, top: 0 }]).png().toBuffer();
   const urls = [];
   let time = 0;
   let unavailable = false;
@@ -38,9 +40,9 @@ async function run() {
   time = 101;
   unavailable = true;
   assert.deepEqual(await load('ObbyMagnate'), first, 'provider failure must preserve the last working avatar');
-  assert.equal(urls.length, 4);
+  assert.equal(urls.length, 5, 'a provider outage must try the official Mojang fallback too');
   await load('ObbyMagnate');
-  assert.equal(urls.length, 4, 'failed refreshes must have a retry cooldown');
+  assert.equal(urls.length, 5, 'failed refreshes must have a retry cooldown');
   const coldFailure = await load('PearlMagnate');
   assert.equal(coldFailure.files, undefined);
   assert.equal(coldFailure.thumbnail.url, 'https://mc-heads.net/avatar/pearlmagnate/28.png');
@@ -50,6 +52,50 @@ async function run() {
   assert.equal(noPermission.thumbnail.url, 'https://mc-heads.net/avatar/obbymagnate/28.png');
   assert.equal(urls.length, callsBeforePermissionCheck, 'channels without upload permission must not fetch attachments');
   assert.deepEqual(await load('../bad name'), {});
+
+  const blackPng = await sharp({ create: {
+    width: 28, height: 28, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 1 }
+  } }).png().toBuffer();
+  const skinPixels = Buffer.alloc(64 * 64 * 4);
+  for (let y = 8; y < 16; y += 1) {
+    for (let x = 8; x < 16; x += 1) {
+      const color = x < 12 ? [255, 0, 0, 255] : [0, 255, 0, 255];
+      skinPixels.set(color, (y * 64 + x) * 4);
+    }
+  }
+  const skin = await sharp(skinPixels, { raw: { width: 64, height: 64, channels: 4 } }).png().toBuffer();
+  const texturePayload = Buffer.from(JSON.stringify({
+    textures: { SKIN: { url: 'https://textures.minecraft.net/texture/moooomoooo-test' } }
+  })).toString('base64');
+  const moooomooooUrls = [];
+  const loadBlackAvatar = createChatAvatarLoader({
+    fetchImpl: async url => {
+      moooomooooUrls.push(String(url));
+      if (String(url).includes('api.mojang.com')) {
+        return new Response(JSON.stringify({ id: 'ddac152907294791aa72d82960ed8580' }), {
+          headers: { 'content-type': 'application/json' }
+        });
+      }
+      if (String(url).includes('sessionserver.mojang.com')) {
+        return new Response(JSON.stringify({ properties: [{ name: 'textures', value: texturePayload }] }), {
+          headers: { 'content-type': 'application/json' }
+        });
+      }
+      if (String(url).includes('textures.minecraft.net')) {
+        return new Response(skin, { headers: { 'content-type': 'image/png' } });
+      }
+      return new Response(blackPng, { headers: { 'content-type': 'image/png' } });
+    }
+  });
+  const recoveredAvatar = await loadBlackAvatar('moooomoooo');
+  assert.ok(recoveredAvatar.files, 'a black provider image must fall back to the official 2D skin');
+  const recoveredPixels = await sharp(recoveredAvatar.files[0].attachment).ensureAlpha().raw().toBuffer();
+  const recoveredColors = new Set();
+  for (let offset = 0; offset < recoveredPixels.length; offset += 4) {
+    recoveredColors.add(recoveredPixels.subarray(offset, offset + 3).toString('hex'));
+  }
+  assert.ok(recoveredColors.size > 1, 'the Discord avatar must retain visible face detail');
+  assert.ok(moooomooooUrls.some(url => url.includes('sessionserver.mojang.com')));
 
   unavailable = false;
   time = 112;

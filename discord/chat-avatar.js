@@ -1,6 +1,18 @@
 'use strict';
 
 const sharp = require('sharp');
+const { renderOfficialMinecraftAvatar } = require('../site/minecraft-avatar');
+
+async function hasVisibleDetail(png) {
+  const pixels = await sharp(png).ensureAlpha().raw().toBuffer();
+  const colors = new Set();
+  for (let offset = 0; offset < pixels.length; offset += 4) {
+    if (pixels[offset + 3] === 0) continue;
+    colors.add(pixels.subarray(offset, offset + 3).toString('hex'));
+    if (colors.size > 1) return true;
+  }
+  return false;
+}
 
 function createChatAvatarLoader({ fetchImpl = fetch, now = Date.now, ttlMs = 6 * 60 * 60_000, retryMs = 60_000, maxEntries = 512 } = {}) {
   const cache = new Map();
@@ -27,11 +39,28 @@ function createChatAvatarLoader({ fetchImpl = fetch, now = Date.now, ttlMs = 6 *
           if (!response.ok || !/^image\/png\b/i.test(response.headers.get('content-type') || '')) continue;
           const input = Buffer.from(await response.arrayBuffer());
           if (!input.length || input.length > 256 * 1024) continue;
-          buffer = await sharp(input, { failOn: 'error', limitInputPixels: 1024 * 1024 })
+          const rendered = await sharp(input, { failOn: 'error', limitInputPixels: 1024 * 1024 })
             .resize(28, 28, { kernel: sharp.kernel.nearest }).png().toBuffer();
+          if (!await hasVisibleDetail(rendered)) continue;
+          buffer = rendered;
           break;
         } catch {
           // Retry the second provider; an avatar outage must not drop chat.
+        }
+      }
+      if (!buffer) {
+        try {
+          const officialAvatar = await renderOfficialMinecraftAvatar({
+            username: name,
+            fetchImpl,
+            signal: AbortSignal.timeout(5_000)
+          });
+          buffer = await sharp(officialAvatar)
+            .resize(28, 28, { kernel: sharp.kernel.nearest })
+            .png()
+            .toBuffer();
+        } catch {
+          // Keep the remote thumbnail fallback if Mojang is unavailable too.
         }
       }
       entry = { buffer: buffer || entry?.buffer || null, expiresAt: now() + (buffer ? ttlMs : retryMs) };
@@ -49,4 +78,4 @@ function createChatAvatarLoader({ fetchImpl = fetch, now = Date.now, ttlMs = 6 *
   };
 }
 
-module.exports = { createChatAvatarLoader };
+module.exports = { createChatAvatarLoader, hasVisibleDetail };
