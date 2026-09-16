@@ -27,7 +27,7 @@
 }
 
 .request-nav-link {
-  border: 1px solid var(--line);
+  border: 2px solid var(--line);
 }
 
 .account-sign-in {
@@ -72,7 +72,7 @@
 
 .account-chip {
   min-height: var(--button-height);
-  border: 1px solid var(--line);
+  border: 2px solid var(--line);
   border-radius: var(--button-radius);
   padding: 4px 10px 4px 5px;
   color: var(--muted);
@@ -85,13 +85,13 @@
 .account-avatar {
   width: 32px;
   height: 32px;
-  border-radius: 9px;
+  border-radius: 4px;
   object-fit: cover;
   background: var(--panel-soft);
 }
 
 .text-button {
-  border: 1px solid var(--line);
+  border: 2px solid var(--line);
   color: var(--text);
   background: var(--panel);
 }
@@ -175,7 +175,7 @@
 .request-message {
   margin-bottom: 16px;
   border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--line));
-  border-radius: 8px;
+  border-radius: 3px;
   padding: 12px 14px;
   color: var(--text);
   background: color-mix(in srgb, var(--accent) 9%, var(--panel));
@@ -216,7 +216,7 @@
 .request-item-builder {
   min-width: 0;
   margin: 0;
-  border: 1px solid var(--line);
+  border: 2px solid var(--line);
   border-radius: var(--button-radius);
   padding: 14px;
   background: color-mix(in srgb, var(--accent) 5%, var(--panel-soft));
@@ -278,7 +278,7 @@
   display: grid;
   gap: 4px;
   max-height: 286px;
-  border: 1px solid var(--line);
+  border: 2px solid var(--line);
   border-radius: var(--button-radius);
   padding: 6px;
   overflow-y: auto;
@@ -339,7 +339,7 @@
 .admin-form textarea,
 .request-admin-controls select {
   width: 100%;
-  border: 1px solid var(--line);
+  border: 2px solid var(--line);
   border-radius: var(--button-radius);
   padding: 11px 12px;
   color: var(--text);
@@ -394,8 +394,8 @@
 
 .request-card,
 .admin-request {
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  border: 2px solid var(--line);
+  border-radius: 3px;
   padding: 14px;
   background: var(--panel-soft);
 }
@@ -418,7 +418,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  border: 1px solid var(--line);
+  border: 2px solid var(--line);
   border-radius: 999px;
   padding: 5px 8px;
   color: var(--muted);
@@ -467,7 +467,7 @@
 .delivery-result {
   margin-top: 12px;
   border-left: 3px solid var(--accent);
-  border-radius: 5px;
+  border-radius: 4px;
   padding: 10px 12px;
   background: color-mix(in srgb, var(--accent) 8%, var(--panel));
 }
@@ -486,7 +486,7 @@
 
 .empty-state {
   border: 1px dashed var(--line);
-  border-radius: 8px;
+  border-radius: 3px;
   padding: 26px 14px;
   color: var(--muted);
   text-align: center;
@@ -534,7 +534,7 @@
 .requester-line img {
   width: 28px;
   height: 28px;
-  border-radius: 8px;
+  border-radius: 3px;
 }
 
 .requester-line strong {
@@ -562,7 +562,7 @@
   min-width: 0;
   margin: 0;
   border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--line));
-  border-radius: 10px;
+  border-radius: 4px;
   padding: 13px;
   background: color-mix(in srgb, var(--accent) 5%, var(--panel-soft));
 }
@@ -577,7 +577,7 @@
 .admin-coordinate-picker select {
   width: 100%;
   height: var(--button-height);
-  border: 1px solid var(--line);
+  border: 2px solid var(--line);
   border-radius: var(--button-radius);
   padding: 0 11px;
   color: var(--text);
@@ -638,7 +638,7 @@
 .small-action {
   min-height: 36px;
   min-width: 0;
-  border: 1px solid var(--line);
+  border: 2px solid var(--line);
   padding: 0 11px;
   color: var(--text);
   background: var(--panel);
@@ -904,12 +904,12 @@
 .request-intro {
   position: relative;
   margin-bottom: 20px;
-  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line));
-  border-radius: 16px;
+  border: 2px solid color-mix(in srgb, var(--accent) 38%, var(--line));
+  border-radius: var(--card-radius);
   overflow: hidden;
   background:
     linear-gradient(120deg, color-mix(in srgb, var(--accent) 8%, var(--panel)) 0%, var(--panel) 54%, color-mix(in srgb, var(--accent) 4%, var(--panel)) 100%);
-  box-shadow: 0 22px 60px color-mix(in srgb, var(--text) 8%, transparent);
+  box-shadow: var(--shadow-inset), var(--shadow);
 }
 
 .request-intro::before {
@@ -919,11 +919,8 @@
   right: -70px;
   width: 300px;
   height: 300px;
-  border: 1px solid color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 2px dashed color-mix(in srgb, var(--accent) 20%, transparent);
   border-radius: 50%;
-  box-shadow:
-    0 0 0 34px color-mix(in srgb, var(--accent) 3%, transparent),
-    0 0 0 68px color-mix(in srgb, var(--accent) 2%, transparent);
   pointer-events: none;
 }
 
@@ -979,7 +976,7 @@
 
 .request-intro-copy code {
   border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--line));
-  border-radius: 5px;
+  border-radius: 4px;
   padding: 2px 6px;
   background: color-mix(in srgb, var(--accent) 8%, var(--panel-soft));
 }
@@ -989,12 +986,11 @@
   display: grid;
   justify-items: stretch;
   gap: 14px;
-  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line));
-  border-radius: 13px;
+  border: 2px solid color-mix(in srgb, var(--accent) 38%, var(--line));
+  border-radius: var(--card-radius);
   padding: 20px;
-  background: color-mix(in srgb, var(--panel) 86%, transparent);
-  box-shadow: 0 16px 32px color-mix(in srgb, var(--text) 8%, transparent);
-  backdrop-filter: blur(14px);
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  box-shadow: var(--shadow-inset), var(--shadow-sm);
 }
 
 .request-intro-action > div:not(.request-hero-package) {
@@ -1091,7 +1087,7 @@
   height: 38px;
   place-items: center;
   border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
-  border-radius: 10px;
+  border-radius: 4px;
   background: color-mix(in srgb, var(--accent) 7%, var(--panel));
 }
 
@@ -1122,7 +1118,7 @@
 .request-admin-panel,
 .request-login-panel {
   border-color: var(--line);
-  border-radius: 13px;
+  border-radius: 4px;
   box-shadow: 0 14px 34px color-mix(in srgb, var(--text) 5%, transparent);
 }
 
@@ -1175,7 +1171,7 @@
 .request-form input,
 .request-form textarea,
 .request-item-composer select {
-  border-radius: 9px;
+  border-radius: 4px;
   background: color-mix(in srgb, var(--panel-soft) 82%, var(--panel));
 }
 
@@ -1186,7 +1182,7 @@
 
 .request-item-builder {
   border-color: color-mix(in srgb, var(--accent) 24%, var(--line));
-  border-radius: 11px;
+  border-radius: 4px;
   padding: 18px;
   background:
     linear-gradient(135deg, color-mix(in srgb, var(--accent) 7%, var(--panel-soft)), var(--panel-soft));
@@ -1267,7 +1263,7 @@
 
 .request-card {
   position: relative;
-  border-radius: 10px;
+  border-radius: 4px;
   padding: 16px;
   overflow: hidden;
   background: color-mix(in srgb, var(--panel-soft) 82%, var(--panel));
@@ -1301,7 +1297,7 @@
 .delivery-result {
   border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--line));
   border-left: 3px solid var(--accent);
-  border-radius: 8px;
+  border-radius: 3px;
   padding: 12px 13px;
   background: color-mix(in srgb, var(--accent) 9%, var(--panel));
 }
@@ -1315,7 +1311,7 @@
   display: grid;
   min-height: 170px;
   place-items: center;
-  border-radius: 10px;
+  border-radius: 4px;
   padding: 26px;
   background: color-mix(in srgb, var(--panel-soft) 76%, transparent);
   line-height: 1.55;
@@ -1388,7 +1384,7 @@
   }
 
   .request-intro {
-    border-radius: 13px;
+    border-radius: 4px;
   }
 
   .request-intro-body {
@@ -1541,7 +1537,7 @@
   flex: 0 0 auto;
   width: 48px;
   height: 48px;
-  border-radius: 9px;
+  border-radius: 4px;
   object-fit: cover;
   background: var(--panel-soft);
 }
@@ -1611,7 +1607,7 @@ body.request-modal-open {
   max-height: min(86vh, 760px);
   margin: auto;
   border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line));
-  border-radius: 16px;
+  border-radius: 4px;
   padding: 0;
   overflow: hidden;
   color: var(--text);
@@ -1657,8 +1653,8 @@ body.request-modal-open {
   min-width: 40px;
   height: 40px;
   min-height: 40px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  border: 2px solid var(--line);
+  border-radius: 4px;
   padding: 0;
   color: var(--text);
   background: var(--panel);
@@ -1743,7 +1739,7 @@ body.request-modal-open {
   .admin-request-modal {
     width: calc(100% - 20px);
     max-height: calc(100dvh - 20px);
-    border-radius: 13px;
+    border-radius: 4px;
   }
 
   .admin-request-modal-head {
