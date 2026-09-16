@@ -1690,37 +1690,31 @@ body.search-focus-active #logoutButton {
   height: 34px;
   line-height: 1;
   pointer-events: none;
-  transition: color 220ms ease, opacity 220ms ease, transform 260ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: opacity 220ms ease;
 }
 
-.theme-icon img {
-  width: 22px;
-  height: 22px;
-  object-fit: contain;
-  image-rendering: pixelated;
+.theme-icon::before {
+  content: "";
+  width: 13px;
+  height: 13px;
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.5);
 }
 
-.theme-icon.sun img {
-  width: 34px;
-  height: 34px;
-  transform: translateX(0);
+.theme-icon.sun::before {
+  background: #f2c14e;
 }
 
-.theme-icon.moon img {
-  width: 16px;
-  height: 16px;
+.theme-icon.moon::before {
+  background: #b9c4d6;
 }
 
 .theme-icon.sun {
-  color: #d97706;
   opacity: 1;
-  transform: rotate(0deg);
 }
 
 .theme-icon.moon {
-  color: #64748b;
-  opacity: 0.58;
-  transform: rotate(-8deg);
+  opacity: 0.5;
 }
 
 .theme-thumb {
@@ -1738,16 +1732,6 @@ body.search-focus-active #logoutButton {
     transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1),
     background 220ms ease,
     box-shadow 220ms ease;
-}
-
-.theme-thumb::after {
-  content: "";
-  position: absolute;
-  inset: 6px;
-  border-radius: 1px;
-  background: rgba(255, 200, 60, 0.5);
-  opacity: 0.75;
-  transition: opacity 220ms ease, transform 260ms ease;
 }
 
 :root[data-theme="dark"] .theme-switch {
@@ -1769,21 +1753,12 @@ body.search-focus-active #logoutButton {
   box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.3), 0 3px 0 rgba(0, 0, 0, 0.42);
 }
 
-:root[data-theme="dark"] .theme-switch .theme-thumb::after {
-  opacity: 0;
-  transform: scale(0.5);
-}
-
 :root[data-theme="dark"] .theme-icon.sun {
-  color: #64748b;
-  opacity: 0.5;
-  transform: rotate(20deg);
+  opacity: 0.4;
 }
 
 :root[data-theme="dark"] .theme-icon.moon {
-  color: #dbeafe;
   opacity: 1;
-  transform: rotate(0deg);
 }
 
 .tab-button.active {

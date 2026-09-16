@@ -3671,10 +3671,22 @@ function replacePlayerProfileContent(profile, { animate = false } = {}) {
   const content = $('#playerProfileContent');
   if (!content) return;
   const viewState = capturePlayerProfileViewState(content);
+  // The periodic background refresh (schedulePlayerProfileRefresh) rebuilds
+  // this whole panel every 1.5-8s even when only a live timestamp elsewhere
+  // changed. Rebuilding the header from scratch forces the browser to
+  // redecode the avatar image and repaint the action buttons every time,
+  // which shows up as a visible flicker on phones. Keep the previous header
+  // element in place when its markup didn't actually change.
+  const previousHead = content.querySelector('.player-profile-head');
+  const previousHeadHtml = previousHead?.outerHTML || null;
   clearTimeout(state.playerProfileRevealTimer);
   state.playerProfileRevealTimer = null;
   content.classList.remove('is-loading', 'profile-data-enter');
   content.innerHTML = renderPlayerProfile(profile);
+  const nextHead = content.querySelector('.player-profile-head');
+  if (previousHead && nextHead && previousHeadHtml === nextHead.outerHTML) {
+    nextHead.replaceWith(previousHead);
+  }
   applyPlayerProfileAccent(profile);
   restorePlayerProfileViewState(content, viewState);
   startPlayerProfileSessionClock();
