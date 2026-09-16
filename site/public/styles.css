@@ -3799,14 +3799,23 @@ body.search-focus-active #logoutButton {
   min-width: 0;
   align-items: baseline;
   gap: 5px;
-  color: #ffd966;
-  font-size: 12px;
-  text-shadow: 1px 1px 0 var(--hud-shadow);
+  color: rgba(220, 200, 150, 0.62);
+  font-size: 11px;
 }
 
 .chat-activity-copy strong {
   color: inherit;
   font-weight: 750;
+}
+
+.chat-activity-copy .chat-bot-badge,
+.chat-activity-copy .chat-new-player-badge {
+  min-height: 0;
+  border-color: transparent;
+  padding: 0;
+  background: transparent;
+  font-size: 9px;
+  opacity: 0.85;
 }
 
 .chat-activity-player {
@@ -10664,7 +10673,7 @@ body.kill-aura-modal-open {
 }
 
 .chat-message.chat-activity.chat-message-bot .chat-activity-copy {
-  color: #c9a4ff;
+  color: rgba(201, 164, 255, 0.62);
 }
 
 @media (max-width:700px) {
