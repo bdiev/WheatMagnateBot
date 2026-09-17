@@ -3147,6 +3147,88 @@ body.search-focus-active #logoutButton {
   }
 }
 
+/* Obsidian Farm counters: a Minecraft/Hypixel-style odometer where only the
+   digits that actually changed spin through a short run of values before
+   landing, instead of the whole string re-rendering every frame. */
+.mc-number {
+  display: inline-block;
+  font-family: var(--font-pixel);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.5px;
+  text-shadow: 1.5px 1.5px 0 rgba(0, 0, 0, 0.55);
+}
+
+.stat strong.mc-number {
+  display: block;
+}
+
+.mc-number-prefix,
+.mc-number-suffix {
+  display: inline;
+}
+
+.mc-number-digits {
+  display: inline-block;
+}
+
+.mc-digit {
+  display: inline-block;
+  min-width: 0.62em;
+  text-align: center;
+  transform-origin: 50% 65%;
+  will-change: transform;
+}
+
+.mc-digit-spin {
+  color: var(--gold);
+  animation: mc-digit-tick 110ms steps(2, end) infinite;
+}
+
+.mc-digit-landed {
+  animation: mc-digit-land 260ms cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+
+.mc-number-impact {
+  animation: mc-number-impact 320ms steps(6, end);
+}
+
+@keyframes mc-digit-tick {
+  0% { transform: translateY(0) scale(1); filter: brightness(1); }
+  50% { transform: translateY(-3px) scale(1.08); filter: brightness(1.7); }
+  100% { transform: translateY(0) scale(1); filter: brightness(1); }
+}
+
+@keyframes mc-digit-land {
+  0% {
+    color: var(--gold);
+    transform: scale(1.5);
+    text-shadow: 0 0 6px color-mix(in srgb, var(--gold) 65%, transparent), 1.5px 1.5px 0 rgba(0, 0, 0, 0.55);
+  }
+  60% {
+    color: var(--gold);
+    transform: scale(0.92);
+  }
+  100% {
+    color: inherit;
+    transform: scale(1);
+    text-shadow: 1.5px 1.5px 0 rgba(0, 0, 0, 0.55);
+  }
+}
+
+@keyframes mc-number-impact {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.09); text-shadow: 0 0 10px color-mix(in srgb, var(--gold) 45%, transparent), 1.5px 1.5px 0 rgba(0, 0, 0, 0.55); }
+  100% { transform: scale(1); text-shadow: 1.5px 1.5px 0 rgba(0, 0, 0, 0.55); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mc-digit-spin,
+  .mc-digit-landed,
+  .mc-number-impact {
+    animation: none;
+  }
+}
+
 .content-grid,
 .split-grid {
   display: contents;

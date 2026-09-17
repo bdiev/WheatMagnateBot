@@ -40,6 +40,7 @@ const state = {
   },
   chartMeta: {},
   rollingNumbers: {},
+  obsidianDigitNumbers: {},
   seenSearchTimer: null,
   seenOnlineTimer: null,
   whisperSearchTimer: null,
@@ -577,6 +578,155 @@ function setRollingNumber(selector, value, {
     value: to,
     frame: requestAnimationFrame(tick)
   };
+}
+
+// Aligns two strings from their right edge so digits that shift left when a
+// number grows a column (999 -> 1,000) are still compared against the digit
+// that visually occupies the same place value, not the same string index.
+function diffDigitsFromRight(oldChars, newChars) {
+  const offset = newChars.length - oldChars.length;
+  return newChars.map((char, index) => {
+    const oldIndex = index - offset;
+    const oldChar = oldIndex >= 0 && oldIndex < oldChars.length ? oldChars[oldIndex] : null;
+    return { char, changed: oldChar !== char };
+  });
+}
+
+// Minecraft/Hypixel-style counter: each digit that changes spins through a
+// short run of intermediate digits like a mechanical odometer wheel before
+// landing on the real value, staggered left-to-right, with a gold "impact"
+// flash on the digits that actually moved. Non-digit characters (thousands
+// separators) just swap instantly. Used only for the Obsidian Farm stat tiles.
+function setObsidianDigitNumber(selector, value, {
+  prefix = '',
+  suffix = '',
+  decimals = 0,
+  spinTicks = 5,
+  tickMs = 55,
+  staggerMs = 35
+} = {}) {
+  const element = $(selector);
+  if (!element) return;
+  const numericValue = Number(value);
+  const previous = state.obsidianDigitNumbers[selector];
+
+  const clearPendingTimers = () => {
+    (previous?.timers || []).forEach(id => clearTimeout(id));
+  };
+
+  if (!Number.isFinite(numericValue)) {
+    clearPendingTimers();
+    element.textContent = `${prefix}-${suffix}`;
+    element.classList.remove('mc-number', 'mc-number-impact');
+    delete state.obsidianDigitNumbers[selector];
+    return;
+  }
+
+  const digitsText = formatNumber(numericValue.toFixed(decimals));
+  const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+  // First paint for this element, or its structure was reset: render the
+  // target instantly with no spin so the tile never opens on a rolling blur.
+  if (!previous || element.dataset.mcBuilt !== '1') {
+    clearPendingTimers();
+    element.classList.add('mc-number');
+    element.innerHTML = '';
+    if (prefix) element.appendChild(Object.assign(document.createElement('span'), { className: 'mc-number-prefix', textContent: prefix }));
+    const digitsHost = document.createElement('span');
+    digitsHost.className = 'mc-number-digits';
+    Array.from(digitsText).forEach(char => {
+      const cell = document.createElement('span');
+      cell.className = 'mc-digit';
+      cell.textContent = char;
+      digitsHost.appendChild(cell);
+    });
+    element.appendChild(digitsHost);
+    if (suffix) element.appendChild(Object.assign(document.createElement('span'), { className: 'mc-number-suffix', textContent: suffix }));
+    element.dataset.mcBuilt = '1';
+    state.obsidianDigitNumbers[selector] = { value: numericValue, text: digitsText, timers: [] };
+    return;
+  }
+
+  if (previous.value === numericValue) return;
+
+  clearPendingTimers();
+  const digitsHost = element.querySelector('.mc-number-digits');
+  if (!digitsHost) {
+    delete element.dataset.mcBuilt;
+    setObsidianDigitNumber(selector, value, { prefix, suffix, decimals, spinTicks, tickMs, staggerMs });
+    return;
+  }
+
+  const oldChars = Array.from(previous.text || digitsHost.textContent);
+  const newChars = Array.from(digitsText);
+  const diff = diffDigitsFromRight(oldChars, newChars);
+
+  // Rebuild digit cells to match the new length before animating; cells
+  // whose character is unchanged are left untouched visually.
+  const cells = newChars.map((char, index) => {
+    let cell = digitsHost.children[index];
+    if (!cell) {
+      cell = document.createElement('span');
+      cell.className = 'mc-digit';
+      digitsHost.appendChild(cell);
+    }
+    return cell;
+  });
+  while (digitsHost.children.length > newChars.length) {
+    digitsHost.removeChild(digitsHost.lastElementChild);
+  }
+
+  const timers = [];
+  const changedDigitCount = diff.filter(entry => entry.changed && /\d/.test(entry.char)).length;
+  let staggerIndex = 0;
+
+  diff.forEach((entry, index) => {
+    const cell = cells[index];
+    if (!entry.changed) {
+      cell.textContent = entry.char;
+      cell.classList.remove('mc-digit-spin', 'mc-digit-landed');
+      return;
+    }
+    if (!/\d/.test(entry.char) || reduceMotion) {
+      cell.textContent = entry.char;
+      cell.classList.remove('mc-digit-spin', 'mc-digit-landed');
+      return;
+    }
+
+    const targetDigit = Number(entry.char);
+    const startDigit = Math.floor(Math.random() * 10);
+    const delay = staggerIndex * staggerMs;
+    staggerIndex += 1;
+    cell.classList.remove('mc-digit-landed');
+    cell.classList.add('mc-digit-spin');
+
+    for (let tick = 0; tick < spinTicks; tick += 1) {
+      const isLast = tick === spinTicks - 1;
+      const digit = isLast ? targetDigit : (startDigit + tick) % 10;
+      const timer = setTimeout(() => {
+        cell.textContent = String(digit);
+        if (isLast) {
+          cell.classList.remove('mc-digit-spin');
+          cell.classList.add('mc-digit-landed');
+          const landedTimer = setTimeout(() => cell.classList.remove('mc-digit-landed'), 260);
+          timers.push(landedTimer);
+        }
+      }, delay + tick * tickMs);
+      timers.push(timer);
+    }
+  });
+
+  if (changedDigitCount > 0 && !reduceMotion) {
+    element.classList.remove('mc-number-impact');
+    // Force a reflow so retriggering the class restarts the CSS animation
+    // when two updates land close together.
+    void element.offsetWidth;
+    element.classList.add('mc-number-impact');
+    const impactTimer = setTimeout(() => element.classList.remove('mc-number-impact'), 320);
+    timers.push(impactTimer);
+  }
+
+  state.obsidianDigitNumbers[selector] = { value: numericValue, text: digitsText, timers };
 }
 
 function formatTps(value) {
@@ -6043,12 +6193,12 @@ function renderObsidian(payload) {
       ? (farm.running === false ? 'Waiting to resume' : 'Enabled')
       : 'Disabled';
   $('#farmUpdated').textContent = `last update: ${formatDate(farm.updatedAt)}`;
-  setRollingNumber('#obsidianTotal', farm.totalMined);
-  setRollingNumber('#obsidianToday', farm.todayMined);
+  setObsidianDigitNumber('#obsidianTotal', farm.totalMined);
+  setObsidianDigitNumber('#obsidianToday', farm.todayMined);
   $('#obsidianTodayTimezone').textContent = `${payload.settings?.timezone || 'Europe/Vilnius'} calendar day`;
-  setRollingNumber('#sessionRate', farm.sessionPerHour, { suffix: '/h' });
-  setRollingNumber('#pickaxeAverage', farm.blocksPerPickaxe);
-  setRollingNumber('#retiredPickaxes', farm.retiredPickaxes, { prefix: 'retired pickaxes: ' });
+  setObsidianDigitNumber('#sessionRate', farm.sessionPerHour, { suffix: '/h' });
+  setObsidianDigitNumber('#pickaxeAverage', farm.blocksPerPickaxe);
+  setObsidianDigitNumber('#retiredPickaxes', farm.retiredPickaxes, { prefix: 'retired pickaxes: ' });
 
   const analytics = payload.analytics || {};
   const efficiency = analytics.efficiency || {};
@@ -6101,14 +6251,24 @@ function renderObsidian(payload) {
   }).join('') || '<span>No annotations yet</span>';
   annotationsElement.scrollLeft = 0;
 
-  $('#farmDetails').innerHTML = `
-    <div><span>Last 7 days</span><strong id="farmLast7Days">- blocks</strong></div>
-    <div><span>Retired pickaxe blocks</span><strong id="farmRetiredPickaxeBlocks">-</strong></div>
-    <div><span>Barrel last opened</span><strong>${formatDate(payload.supplies?.observedAt)}</strong></div>
-    <div><span>Refill around</span><strong>${escapeHtml(estimateSupplyRefill(payload))}</strong></div>
-  `;
-  setRollingNumber('#farmLast7Days', farm.last7Days, { suffix: ' blocks' });
-  setRollingNumber('#farmRetiredPickaxeBlocks', farm.retiredPickaxeBlocks);
+  // Build the shell once; rebuilding it on every payload would tear down the
+  // number elements the digit-roll animation depends on, forcing every
+  // update to snap instantly instead of spinning.
+  const farmDetailsContainer = $('#farmDetails');
+  if (farmDetailsContainer && !farmDetailsContainer.querySelector('#farmLast7Days')) {
+    farmDetailsContainer.innerHTML = `
+      <div><span>Last 7 days</span><strong id="farmLast7Days">- blocks</strong></div>
+      <div><span>Retired pickaxe blocks</span><strong id="farmRetiredPickaxeBlocks">-</strong></div>
+      <div><span>Barrel last opened</span><strong id="farmBarrelLastOpened">-</strong></div>
+      <div><span>Refill around</span><strong id="farmRefillEstimate">-</strong></div>
+    `;
+  }
+  const barrelLastOpenedElement = $('#farmBarrelLastOpened');
+  if (barrelLastOpenedElement) barrelLastOpenedElement.textContent = formatDate(payload.supplies?.observedAt);
+  const refillEstimateElement = $('#farmRefillEstimate');
+  if (refillEstimateElement) refillEstimateElement.textContent = estimateSupplyRefill(payload);
+  setObsidianDigitNumber('#farmLast7Days', farm.last7Days, { suffix: ' blocks' });
+  setObsidianDigitNumber('#farmRetiredPickaxeBlocks', farm.retiredPickaxeBlocks);
 
   renderSupplies('#inventorySupplies', payload.supplies?.inventory);
   renderSupplies('#barrelSupplies', payload.supplies?.barrel, payload.supplies?.barrelError);
@@ -6127,10 +6287,10 @@ function renderLiveObsidian(payload) {
   if (renderedScope !== activeScope) return;
   const farm = payload?.farm;
   if (!farm) return;
-  setRollingNumber('#obsidianTotal', farm.totalMined);
-  setRollingNumber('#sessionRate', farm.sessionPerHour, { suffix: '/h' });
-  setRollingNumber('#pickaxeAverage', farm.blocksPerPickaxe);
-  setRollingNumber('#retiredPickaxes', farm.retiredPickaxes, { prefix: 'retired pickaxes: ' });
+  setObsidianDigitNumber('#obsidianTotal', farm.totalMined);
+  setObsidianDigitNumber('#sessionRate', farm.sessionPerHour, { suffix: '/h' });
+  setObsidianDigitNumber('#pickaxeAverage', farm.blocksPerPickaxe);
+  setObsidianDigitNumber('#retiredPickaxes', farm.retiredPickaxes, { prefix: 'retired pickaxes: ' });
   $('#farmUpdated').textContent = `last update: ${formatDate(farm.updatedAt)}`;
 }
 

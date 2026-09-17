@@ -113,7 +113,7 @@ assert.match(
 );
 assert.match(
   appSource,
-  /function renderLiveObsidian[\s\S]*?setRollingNumber\('#obsidianTotal'[\s\S]*?setRollingNumber\('#sessionRate'[\s\S]*?state\.activeTab === 'obsidian' \? fetchJson\(obsidianLivePath\)/,
+  /function renderLiveObsidian[\s\S]*?setObsidianDigitNumber\('#obsidianTotal'[\s\S]*?setObsidianDigitNumber\('#sessionRate'[\s\S]*?state\.activeTab === 'obsidian' \? fetchJson\(obsidianLivePath\)/,
   'visible Obsidian headline statistics use the one-second live polling cycle'
 );
 assert.match(
