@@ -80,6 +80,14 @@
   font-display: swap;
 }
 
+/* Used only for the player card nickname (--font-display is used everywhere
+   else in the UI). */
+@font-face {
+  font-family: "Minecraft Rus";
+  src: url("/fonts/MinecraftRus.ttf") format("truetype");
+  font-display: swap;
+}
+
 :root[data-theme="dark"] {
   color-scheme: dark;
   /* "Deepslate cave" — torch-lit stone and emerald glow at night */
@@ -4766,6 +4774,10 @@ body.search-focus-active #logoutButton {
     var(--panel-soft);
 }
 
+.player-profile-head > div {
+  min-width: 0;
+}
+
 .player-profile-avatar-wrap {
   position: relative;
   display: block;
@@ -4827,7 +4839,12 @@ body.search-focus-active #logoutButton {
 
 .player-profile-head h2 {
   margin: 0;
-  font-family: var(--font-display);
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "Minecraft Rus", var(--font-display);
   font-weight: 400;
   font-size: 26px;
   line-height: 1.2;
@@ -6896,6 +6913,7 @@ body.modal-open { overflow:hidden; }
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .player-profile-meta {
@@ -10543,10 +10561,17 @@ body.kill-aura-modal-open {
     border-radius: 4px;
   }
 
+  /* A short username sits beside the avatar like before. A long one no
+     longer fights it for space: flex-wrap drops the whole name block onto
+     its own full-width row underneath, styled as a little nameplate, so it
+     always has the entire card width to breathe in instead of a squeezed
+     column or a shrunk-to-fit font. */
   .player-profile-head {
-    grid-template-columns: 72px minmax(0, 1fr);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
     column-gap: 13px;
-    row-gap: 0;
+    row-gap: 10px;
     padding: 18px 58px 0 16px;
   }
 
@@ -10561,23 +10586,38 @@ body.kill-aura-modal-open {
     height: 72px;
   }
 
+  .player-profile-avatar-wrap {
+    flex: 0 0 auto;
+  }
+
   .player-profile-avatar-wrap::after {
     width: 15px;
     height: 15px;
   }
 
   .player-profile-head h2 {
+    width: 100%;
+    min-width: 0;
     max-width: 100%;
-    font-size: clamp(23px, 7vw, 30px);
+    font-size: clamp(17px, 6.5vw, 28px);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
+  .player-profile-head > div:not(.player-profile-actions) {
+    flex: 1 1 190px;
+    min-width: 190px;
+  }
+
   .player-profile-identity {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     justify-items: start;
     gap: 7px;
+    padding: 6px 0 6px 10px;
+    border-left: 3px solid var(--accent);
+    background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 14%, transparent), transparent 85%);
   }
 
   .player-profile-meta {
@@ -10614,10 +10654,10 @@ body.kill-aura-modal-open {
   .player-profile-actions {
     display: grid;
     width: auto;
-    grid-column: 1 / -1;
+    flex: 1 1 100%;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 7px;
-    margin: 14px -58px 0 -16px;
+    margin: 0 -58px 0 -16px;
     padding: 10px 58px 12px 16px;
   }
 

@@ -3786,6 +3786,25 @@ function restorePlayerProfileViewState(content, viewState) {
   if (card) card.scrollTop = viewState.cardScrollTop;
 }
 
+// Long usernames (up to 16 Minecraft chars) must stay on one line rather
+// than wrap mid-word. CSS/flex-wrap handles most of the layout by moving the
+// name onto its own full-width row when needed; this shrinks the font just
+// enough to keep the whole name visible in whatever space that leaves,
+// falling back to the ellipsis clip only once it hits the readable floor.
+function fitPlayerProfileName() {
+  const name = document.getElementById('playerProfileName');
+  if (!name || !name.isConnected) return;
+  name.style.fontSize = '';
+  const maxFontSize = parseFloat(getComputedStyle(name).fontSize);
+  if (!Number.isFinite(maxFontSize) || maxFontSize <= 0) return;
+  const minFontSize = 12;
+  let fontSize = maxFontSize;
+  while (fontSize > minFontSize && name.scrollWidth > name.clientWidth + 1) {
+    fontSize -= 1;
+    name.style.fontSize = `${fontSize}px`;
+  }
+}
+
 function replacePlayerProfileContent(profile, { animate = false } = {}) {
   const content = $('#playerProfileContent');
   if (!content) return;
@@ -3809,6 +3828,11 @@ function replacePlayerProfileContent(profile, { animate = false } = {}) {
   applyPlayerProfileAccent(profile);
   restorePlayerProfileViewState(content, viewState);
   startPlayerProfileSessionClock();
+  fitPlayerProfileName();
+  // The nickname font loads with font-display: swap, so the name is first
+  // measured in a fallback font; re-measure once the real font swaps in,
+  // since its character widths differ enough to change the fit.
+  document.fonts?.ready?.then(fitPlayerProfileName).catch(() => {});
   if (!animate) return;
   void content.offsetWidth;
   content.classList.add('profile-data-enter');
@@ -9672,6 +9696,7 @@ function scheduleViewportRedraw({ force = false } = {}) {
       viewportRedrawFrame = null;
       redrawCharts();
       updateCarousels();
+      fitPlayerProfileName();
     });
   }, 140);
 }
