@@ -3175,7 +3175,7 @@ body.search-focus-active #logoutButton {
   display: inline-block;
   min-width: 0.62em;
   text-align: center;
-  transform-origin: 50% 65%;
+  transform-origin: 50% 100%;
   will-change: transform;
 }
 
@@ -3185,28 +3185,24 @@ body.search-focus-active #logoutButton {
 }
 
 .mc-digit-landed {
-  animation: mc-digit-land 260ms cubic-bezier(0.2, 1.4, 0.4, 1);
+  animation: mc-digit-land 220ms ease-out;
 }
 
 .mc-number-impact {
-  animation: mc-number-impact 320ms steps(6, end);
+  animation: mc-number-impact 320ms ease-out;
 }
 
 @keyframes mc-digit-tick {
-  0% { transform: translateY(0) scale(1); filter: brightness(1); }
-  50% { transform: translateY(-3px) scale(1.08); filter: brightness(1.7); }
-  100% { transform: translateY(0) scale(1); filter: brightness(1); }
+  0% { filter: brightness(1); }
+  50% { filter: brightness(1.5); }
+  100% { filter: brightness(1); }
 }
 
 @keyframes mc-digit-land {
   0% {
     color: var(--gold);
-    transform: scale(1.5);
-    text-shadow: 0 0 6px color-mix(in srgb, var(--gold) 65%, transparent), 1.5px 1.5px 0 rgba(0, 0, 0, 0.55);
-  }
-  60% {
-    color: var(--gold);
-    transform: scale(0.92);
+    transform: scale(1.16);
+    text-shadow: 0 0 4px color-mix(in srgb, var(--gold) 55%, transparent), 1.5px 1.5px 0 rgba(0, 0, 0, 0.55);
   }
   100% {
     color: inherit;
@@ -3216,9 +3212,8 @@ body.search-focus-active #logoutButton {
 }
 
 @keyframes mc-number-impact {
-  0% { transform: scale(1); }
-  35% { transform: scale(1.09); text-shadow: 0 0 10px color-mix(in srgb, var(--gold) 45%, transparent), 1.5px 1.5px 0 rgba(0, 0, 0, 0.55); }
-  100% { transform: scale(1); text-shadow: 1.5px 1.5px 0 rgba(0, 0, 0, 0.55); }
+  0% { text-shadow: 0 0 8px color-mix(in srgb, var(--gold) 40%, transparent), 1.5px 1.5px 0 rgba(0, 0, 0, 0.55); }
+  100% { text-shadow: 1.5px 1.5px 0 rgba(0, 0, 0, 0.55); }
 }
 
 @media (prefers-reduced-motion: reduce) {
