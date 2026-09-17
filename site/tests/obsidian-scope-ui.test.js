@@ -116,6 +116,15 @@ assert.match(
   /function renderLiveObsidian[\s\S]*?setObsidianDigitNumber\('#obsidianTotal'[\s\S]*?setObsidianDigitNumber\('#sessionRate'[\s\S]*?state\.activeTab === 'obsidian' \? fetchJson\(obsidianLivePath\)/,
   'visible Obsidian headline statistics use the one-second live polling cycle'
 );
+const digitCounterSource = appSource.slice(
+  appSource.indexOf('function setObsidianDigitNumber'),
+  appSource.indexOf('function formatTps')
+);
+assert.doesNotMatch(
+  digitCounterSource,
+  /Math\.random|spinTicks|slot-machine/,
+  'Obsidian counters must display the real value without random intermediate digits'
+);
 assert.match(
   serverSource,
   /async function getLiveObsidianStats[\s\S]*?FROM obsidian_account_farm_state stats[\s\S]*?WHERE account\.is_default=FALSE(?! AND account\.deleted_at IS NULL)/,

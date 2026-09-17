@@ -592,18 +592,14 @@ function diffDigitsFromRight(oldChars, newChars) {
   });
 }
 
-// Minecraft/Hypixel-style counter: each digit that changes spins through a
-// short run of intermediate digits like a mechanical odometer wheel before
-// landing on the real value, staggered left-to-right, with a gold "impact"
-// flash on the digits that actually moved. Non-digit characters (thousands
-// separators) just swap instantly. Used only for the Obsidian Farm stat tiles.
+// Minecraft/Hypixel-style counter: changed digits are updated directly to the
+// real value and receive a brief gold "impact" flash. Showing intermediate
+// digits here makes monotonically increasing farm totals look like they are
+// randomly jumping, even though the persisted value is correct.
 function setObsidianDigitNumber(selector, value, {
   prefix = '',
   suffix = '',
-  decimals = 0,
-  spinTicks = 4,
-  tickMs = 70,
-  staggerMs = 40
+  decimals = 0
 } = {}) {
   const element = $(selector);
   if (!element) return;
@@ -653,7 +649,7 @@ function setObsidianDigitNumber(selector, value, {
   const digitsHost = element.querySelector('.mc-number-digits');
   if (!digitsHost) {
     delete element.dataset.mcBuilt;
-    setObsidianDigitNumber(selector, value, { prefix, suffix, decimals, spinTicks, tickMs, staggerMs });
+    setObsidianDigitNumber(selector, value, { prefix, suffix, decimals });
     return;
   }
 
@@ -678,51 +674,15 @@ function setObsidianDigitNumber(selector, value, {
 
   const timers = [];
   const changedDigitCount = diff.filter(entry => entry.changed && /\d/.test(entry.char)).length;
-  let staggerIndex = 0;
 
   diff.forEach((entry, index) => {
     const cell = cells[index];
-    if (!entry.changed) {
-      cell.textContent = entry.char;
-      cell.classList.remove('mc-digit-spin', 'mc-digit-landed');
-      return;
-    }
-    if (!/\d/.test(entry.char) || reduceMotion) {
-      cell.textContent = entry.char;
-      cell.classList.remove('mc-digit-spin', 'mc-digit-landed');
-      return;
-    }
-
-    // Random, non-sequential flicker (not startDigit, startDigit+1, +2, ...)
-    // so it reads as a slot-machine shuffle rather than visibly counting up
-    // from some low number to the target every time.
-    const targetDigit = Number(entry.char);
-    const delay = staggerIndex * staggerMs;
-    staggerIndex += 1;
-    cell.classList.remove('mc-digit-landed');
-    cell.classList.add('mc-digit-spin');
-
-    let previousShown = -1;
-    for (let tick = 0; tick < spinTicks; tick += 1) {
-      const isLast = tick === spinTicks - 1;
-      let digit = targetDigit;
-      if (!isLast) {
-        do {
-          digit = Math.floor(Math.random() * 10);
-        } while (digit === previousShown || digit === targetDigit);
-      }
-      previousShown = digit;
-      const timer = setTimeout(() => {
-        cell.textContent = String(digit);
-        if (isLast) {
-          cell.classList.remove('mc-digit-spin');
-          cell.classList.add('mc-digit-landed');
-          const landedTimer = setTimeout(() => cell.classList.remove('mc-digit-landed'), 260);
-          timers.push(landedTimer);
-        }
-      }, delay + tick * tickMs);
-      timers.push(timer);
-    }
+    cell.textContent = entry.char;
+    cell.classList.remove('mc-digit-spin', 'mc-digit-landed');
+    if (!entry.changed || !/\d/.test(entry.char) || reduceMotion) return;
+    cell.classList.add('mc-digit-landed');
+    const landedTimer = setTimeout(() => cell.classList.remove('mc-digit-landed'), 260);
+    timers.push(landedTimer);
   });
 
   if (changedDigitCount > 0 && !reduceMotion) {
