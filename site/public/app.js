@@ -601,9 +601,9 @@ function setObsidianDigitNumber(selector, value, {
   prefix = '',
   suffix = '',
   decimals = 0,
-  spinTicks = 5,
-  tickMs = 55,
-  staggerMs = 35
+  spinTicks = 4,
+  tickMs = 70,
+  staggerMs = 40
 } = {}) {
   const element = $(selector);
   if (!element) return;
@@ -693,16 +693,25 @@ function setObsidianDigitNumber(selector, value, {
       return;
     }
 
+    // Random, non-sequential flicker (not startDigit, startDigit+1, +2, ...)
+    // so it reads as a slot-machine shuffle rather than visibly counting up
+    // from some low number to the target every time.
     const targetDigit = Number(entry.char);
-    const startDigit = Math.floor(Math.random() * 10);
     const delay = staggerIndex * staggerMs;
     staggerIndex += 1;
     cell.classList.remove('mc-digit-landed');
     cell.classList.add('mc-digit-spin');
 
+    let previousShown = -1;
     for (let tick = 0; tick < spinTicks; tick += 1) {
       const isLast = tick === spinTicks - 1;
-      const digit = isLast ? targetDigit : (startDigit + tick) % 10;
+      let digit = targetDigit;
+      if (!isLast) {
+        do {
+          digit = Math.floor(Math.random() * 10);
+        } while (digit === previousShown || digit === targetDigit);
+      }
+      previousShown = digit;
       const timer = setTimeout(() => {
         cell.textContent = String(digit);
         if (isLast) {
