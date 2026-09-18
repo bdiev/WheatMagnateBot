@@ -78,6 +78,7 @@ const state = {
   playtimeLeaderboardSort: 'playtime',
   playtimeLeaderboardDirection: 'desc',
   playtimeLeaderboards: { global: [], whitelisted: [] },
+  playtimeLeaderboardVisibleCount: 24,
   playerStatsLoading: false,
   playerStatsLoadedAt: 0,
   playerStatsAccountId: null,
@@ -3568,7 +3569,7 @@ function renderPlayerProfile(profile) {
       <span class="player-profile-avatar-wrap" data-status="${profile.isOnline ? 'online' : 'offline'}" aria-label="${profile.isOnline ? 'Online' : 'Offline'}">
         <img class="player-profile-avatar" src="${playerHeadUrl(profile.username, 96, { uuid: profile.uuid })}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">
       </span>
-      <div>
+      <div class="player-profile-summary">
         <div class="player-profile-identity">
           <h2 id="playerProfileName">${escapeHtml(profile.username)}</h2>
           <div class="player-profile-badges">
@@ -3668,6 +3669,21 @@ function renderPlayerProfile(profile) {
         : ''}
     </section>
   `;
+}
+
+function fitPlayerProfileName() {
+  const name = $('#playerProfileName');
+  if (!name) return;
+  name.style.removeProperty('font-size');
+  if (!window.matchMedia?.('(max-width: 700px)').matches) return;
+
+  const availableWidth = name.clientWidth;
+  const naturalWidth = name.scrollWidth;
+  if (!availableWidth || naturalWidth <= availableWidth) return;
+
+  const defaultSize = Number.parseFloat(getComputedStyle(name).fontSize) || 18;
+  const fittedSize = Math.max(8, Math.floor(defaultSize * availableWidth / naturalWidth * 0.98));
+  name.style.fontSize = `${fittedSize}px`;
 }
 
 function playerProfileSignature(profile) {
@@ -3809,12 +3825,14 @@ function replacePlayerProfileContent(profile, { animate = false } = {}) {
   state.playerProfileRevealTimer = null;
   content.classList.remove('is-loading', 'profile-data-enter');
   content.innerHTML = renderPlayerProfile(profile);
+  fitPlayerProfileName();
   const nextHead = content.querySelector('.player-profile-head');
   if (previousHead && nextHead && previousHeadHtml === nextHead.outerHTML) {
     nextHead.replaceWith(previousHead);
   }
   applyPlayerProfileAccent(profile);
   restorePlayerProfileViewState(content, viewState);
+  requestAnimationFrame(fitPlayerProfileName);
   startPlayerProfileSessionClock();
   if (!animate) return;
   void content.offsetWidth;
@@ -5673,12 +5691,42 @@ function resetPlaytimeLeaderboardScroll(list, scope) {
   });
 }
 
+const MOBILE_LEADERBOARD_BATCH_SIZE = 24;
+
+function resetPlaytimeLeaderboardBatch() {
+  state.playtimeLeaderboardVisibleCount = MOBILE_LEADERBOARD_BATCH_SIZE;
+}
+
+function maybeLoadMorePlaytimeLeaderboard() {
+  const list = $('#playtimeLeaderboard');
+  if (!list || !window.matchMedia?.('(max-width: 700px)').matches) return;
+  if (list.scrollHeight - list.scrollTop - list.clientHeight > 120) return;
+
+  const scope = state.playtimeLeaderboardScope === 'whitelisted' ? 'whitelisted' : 'global';
+  const total = scope === 'global'
+    ? Math.min(100, state.playtimeLeaderboards.global.length)
+    : state.playtimeLeaderboards.whitelisted.length;
+  if (state.playtimeLeaderboardVisibleCount >= total) return;
+
+  const previousScrollTop = list.scrollTop;
+  state.playtimeLeaderboardVisibleCount = Math.min(
+    total,
+    state.playtimeLeaderboardVisibleCount + MOBILE_LEADERBOARD_BATCH_SIZE
+  );
+  renderPlaytimeLeaderboard({ force: true });
+  list.scrollTop = previousScrollTop;
+}
+
 function renderPlaytimeLeaderboard({ resetScroll = false, force = false } = {}) {
   const scope = state.playtimeLeaderboardScope === 'whitelisted' ? 'whitelisted' : 'global';
   const sort = ['messages', 'joindate'].includes(state.playtimeLeaderboardSort) ? state.playtimeLeaderboardSort : 'playtime';
   const direction = state.playtimeLeaderboardDirection === 'asc' ? 'asc' : 'desc';
   const sortedLeaderboard = sortPlaytimeLeaderboardEntries(state.playtimeLeaderboards[scope] || [], sort, direction);
-  const leaderboard = scope === 'global' ? sortedLeaderboard.slice(0, 100) : sortedLeaderboard;
+  const scopedLeaderboard = scope === 'global' ? sortedLeaderboard.slice(0, 100) : sortedLeaderboard;
+  const isMobile = window.matchMedia?.('(max-width: 700px)').matches;
+  const leaderboard = isMobile
+    ? scopedLeaderboard.slice(0, state.playtimeLeaderboardVisibleCount)
+    : scopedLeaderboard;
   const list = $('#playtimeLeaderboard');
 
   updatePlaytimeLeaderboardScopeControls(scope);
@@ -5699,7 +5747,7 @@ function renderPlaytimeLeaderboard({ resetScroll = false, force = false } = {}) 
       <div class="rank-item leaderboard-item">
         <span class="rank-index">${index + 1}</span>
         <span class="leaderboard-player">
-          ${playerIdentity(player.username, 28, { status: player.isOnline ? 'online' : 'offline' })}
+          ${playerIdentity(player.username, 28, { status: player.isOnline ? 'online' : 'offline', loading: 'lazy' })}
         </span>
         <strong>${escapeHtml(playtimeLeaderboardStatValue(player, sort))}</strong>
       </div>
@@ -5744,6 +5792,7 @@ function setPlaytimeLeaderboardScope(scope) {
   const nextScope = scope === 'whitelisted' ? 'whitelisted' : 'global';
   if (state.playtimeLeaderboardScope === nextScope) return;
   state.playtimeLeaderboardScope = nextScope;
+  resetPlaytimeLeaderboardBatch();
   updatePlaytimeLeaderboardScopeControls(nextScope, { animateButton: true });
   animatePlaytimeLeaderboardChange();
 }
@@ -5752,6 +5801,7 @@ function setPlaytimeLeaderboardSort(sort) {
   const nextSort = ['messages', 'joindate'].includes(sort) ? sort : 'playtime';
   if (state.playtimeLeaderboardSort === nextSort) return;
   state.playtimeLeaderboardSort = nextSort;
+  resetPlaytimeLeaderboardBatch();
   updatePlaytimeLeaderboardSortControls(nextSort, state.playtimeLeaderboardDirection, { animateButton: true });
   animatePlaytimeLeaderboardChange();
 }
@@ -5760,6 +5810,7 @@ function setPlaytimeLeaderboardDirection(direction) {
   const nextDirection = direction === 'asc' ? 'asc' : 'desc';
   if (state.playtimeLeaderboardDirection === nextDirection) return;
   state.playtimeLeaderboardDirection = nextDirection;
+  resetPlaytimeLeaderboardBatch();
   updatePlaytimeLeaderboardSortControls(state.playtimeLeaderboardSort, nextDirection);
   animatePlaytimeLeaderboardChange();
 }
@@ -5915,6 +5966,7 @@ function renderPlayerStats(payload = {}, nearbyPlayers = null) {
       ? leaderboardSources.whitelisted
       : Array.isArray(payload.playtimeLeaderboard) ? payload.playtimeLeaderboard : []
   };
+  resetPlaytimeLeaderboardBatch();
   renderPlaytimeLeaderboard();
 
   if (Array.isArray(nearbyPlayers)) renderNearbySightings(nearbyPlayers);
@@ -9697,6 +9749,7 @@ $('#playtimeLeaderboardSort')?.addEventListener('click', event => {
   if (button) setPlaytimeLeaderboardSort(button.dataset.playtimeSort);
 });
 $('#playtimeLeaderboardDirection')?.addEventListener('click', togglePlaytimeLeaderboardDirection);
+$('#playtimeLeaderboard')?.addEventListener('scroll', maybeLoadMorePlaytimeLeaderboard, { passive: true });
 $('#newPlayersList')?.addEventListener('scroll', maybeLoadMoreNewPlayers, { passive: true });
 $('#newPlayersList')?.addEventListener('click', event => {
   if (event.target.closest('[data-new-players-more]')) loadMoreNewPlayers();
@@ -9797,6 +9850,7 @@ function scheduleViewportRedraw({ force = false } = {}) {
       viewportRedrawFrame = null;
       redrawCharts();
       updateCarousels();
+      fitPlayerProfileName();
     });
   }, 140);
 }

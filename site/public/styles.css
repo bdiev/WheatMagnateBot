@@ -10546,6 +10546,11 @@ body.kill-aura-modal-open {
 
 /* Player profile has its own mobile composition instead of shrinking desktop. */
 @media (max-width: 700px) {
+  .rank-item.leaderboard-item {
+    content-visibility: auto;
+    contain-intrinsic-size: 48px;
+  }
+
   .player-profile-overlay {
     place-items: start center;
     padding: max(8px, env(safe-area-inset-top)) 8px max(8px, env(safe-area-inset-bottom));
@@ -10641,17 +10646,26 @@ body.kill-aura-modal-open {
   }
 
   .player-profile-head h2 {
+    width: 100%;
     max-width: 100%;
-    font-size: clamp(23px, 7vw, 30px);
-    overflow: hidden;
-    text-overflow: ellipsis;
+    font-size: clamp(18px, 6vw, 28px);
+    line-height: 1.12;
+    overflow: visible;
+    text-overflow: clip;
     white-space: nowrap;
   }
 
   .player-profile-identity {
     display: grid;
+    width: 100%;
+    min-width: 0;
     justify-items: start;
     gap: 7px;
+  }
+
+  .player-profile-summary {
+    width: 100%;
+    min-width: 0;
   }
 
   .player-profile-meta {
