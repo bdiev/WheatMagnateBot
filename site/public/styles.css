@@ -8018,9 +8018,15 @@ body.modal-open { overflow:hidden; }
   }
 
   .player-nearby-panel,
-  .player-new-panel,
-  .player-leaderboard-panel {
+  .player-new-panel {
     max-height: 460px;
+  }
+
+  .player-leaderboard-panel {
+    /* This card grew a second control row (sort + direction) on top of the
+       scope toggle, so it needs more of a height budget than the other
+       mobile leaderboard cards to still show a useful number of rows. */
+    max-height: 780px;
   }
 
   .player-leaderboard-panel .panel-head {
@@ -8047,9 +8053,12 @@ body.modal-open { overflow:hidden; }
   }
 
   .player-nearby-panel .rank-list,
-  .player-new-panel .rank-list,
-  .player-leaderboard-panel .leaderboard-list {
+  .player-new-panel .rank-list {
     max-height: 360px;
+  }
+
+  .player-leaderboard-panel .leaderboard-list {
+    max-height: 500px;
   }
 
   .topbar {
