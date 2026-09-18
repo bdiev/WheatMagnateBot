@@ -43,6 +43,11 @@ async function run() {
         'CurrentName', '11111111-1111-4111-8111-111111111111',
         '2020-02-03T04:05:06Z', NOW(), TRUE, 123400, '2026-01-01T00:00:00Z'
       );
+      INSERT INTO player_activity (username, registration_at, last_seen, is_online)
+      VALUES ('Dot5', '2015-01-01T00:00:00Z', NOW() - INTERVAL '1 day', FALSE);
+      INSERT INTO player_activity (username, registration_at, last_seen, is_online)
+      SELECT 'Player' || value, '2021-01-01T00:00:00Z'::timestamptz + value * INTERVAL '1 day', NOW(), FALSE
+      FROM generate_series(1, 105) value;
       INSERT INTO player_name_history (username, player_uuid)
       VALUES ('OldName', '11111111-1111-4111-8111-111111111111');
       INSERT INTO player_playtime (username, player_uuid, total_seconds, tracking_since, updated_at) VALUES
@@ -61,13 +66,17 @@ async function run() {
     )?.[0];
     assert.ok(functionSource, 'getPlayerStats source must be available');
     const queries = [...functionSource.matchAll(/pool\.query\(`([\s\S]*?)`\)/g)].map(match => match[1]);
-    assert.ok(queries.length >= 3, 'leaderboard SQL queries must be discoverable');
+    assert.ok(queries.length >= 2, 'leaderboard SQL queries must be discoverable');
 
     const globalRows = (await db.query(queries[0])).rows;
-    const whitelistRows = (await db.query(queries[2])).rows;
-    assert.equal(globalRows.length, 1, 'renamed UUID players must not be duplicated in the global leaderboard');
+    const whitelistRows = globalRows.filter(row => row.is_whitelisted);
+    assert.equal(globalRows.length, 107, 'the server must return every identity instead of a preselected top 100');
+    assert.equal(globalRows.filter(row => row.username === 'CurrentName').length, 1);
 
-    for (const [scope, row] of [['global', globalRows[0]], ['whitelisted', whitelistRows[0]]]) {
+    for (const [scope, row] of [
+      ['global', globalRows.find(candidate => candidate.username === 'CurrentName')],
+      ['whitelisted', whitelistRows[0]]
+    ]) {
       assert.equal(row.username, 'CurrentName', `${scope} leaderboard must use the current player name`);
       assert.equal(Number(row.total_seconds), 1200, `${scope} playtime must include UUID and legacy-name rows`);
       assert.equal(Number(row.total_messages), 123407, `${scope} messages must match the profile baseline calculation`);
@@ -77,6 +86,11 @@ async function run() {
         `${scope} join date must resolve through the player's UUID identity`
       );
     }
+    assert.equal(
+      new Date(globalRows.find(row => row.username === 'Dot5').registration_at).toISOString(),
+      '2015-01-01T00:00:00.000Z',
+      'the global join-date source must include the oldest player even without a playtime row'
+    );
 
     console.log('Player leaderboard metric tests passed.');
   } finally {

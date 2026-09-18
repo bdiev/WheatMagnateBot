@@ -11,43 +11,36 @@ const indexSource = fs.readFileSync(path.join(publicDirectory, 'index.html'), 'u
 const appSource = fs.readFileSync(path.join(publicDirectory, 'app.js'), 'utf8');
 const stylesSource = fs.readFileSync(path.join(publicDirectory, 'styles.css'), 'utf8');
 
-assert.match(
-  serverSource,
-  /WITH ranked_playtime AS[\s\S]*playtime_players AS[\s\S]*ORDER BY own_total_seconds DESC[\s\S]*LIMIT 500/,
-  'the server-wide leaderboard must rank and bound candidates by their own total before the expensive alias resolution runs'
-);
-assert.match(
-  serverSource,
-  /resolved_players AS[\s\S]*ORDER BY total_seconds DESC, pt\.source_username_key[\s\S]*LIMIT 100/,
-  'the server-wide leaderboard must be capped to the top 100 in SQL'
-);
+const getPlayerStatsSource = serverSource.match(
+  /async function getPlayerStats\(\) \{[\s\S]*?\n\}(?=\r?\n\r?\nfunction obsidianChartBucketKey)/
+)?.[0] || '';
+const leaderboardQuery = [...getPlayerStatsSource.matchAll(/pool\.query\(`([\s\S]*?)`\)/g)][0]?.[1] || '';
+assert.match(leaderboardQuery, /FROM identities identity[\s\S]*ORDER BY total_seconds DESC/, 'the server must return every resolved player identity');
+assert.doesNotMatch(leaderboardQuery, /\bLIMIT\s+(?:100|500)\b/, 'the server must not discard players before the selected metric is sorted');
+assert.doesNotMatch(leaderboardQuery, /JOIN LATERAL/, 'leaderboard totals must not rescan metric tables once per player');
 assert.match(serverSource, /playtimeLeaderboards:\s*\{\s*global:/, 'player stats must expose a global leaderboard');
-assert.match(serverSource, /whitelisted:\s*whitelistLeaderboardResult\.rows/, 'player stats must expose the whitelist leaderboard separately');
+assert.match(serverSource, /whitelisted:\s*whitelistedLeaderboardRows/, 'the shared metric query must expose the whitelist leaderboard separately');
 assert.match(
-  serverSource,
-  /observed_message_count[\s\S]*SUM\(new_messages\.message_count\) FILTER[\s\S]*new_messages\.created_at > pa\.observed_message_count_at/,
+  leaderboardQuery,
+  /message_deltas AS[\s\S]*message\.created_at > identity\.observed_message_count_at/,
   'leaderboard message totals must use the observed server count plus messages archived afterward'
 );
 assert.match(
-  serverSource,
-  /player_aliases AS[\s\S]*ARRAY\([\s\S]*player_name_history history[\s\S]*LOWER\(candidate\.username\) = ANY\(aliases\.username_keys\)/,
-  'alias lookups must use a pre-computed username array instead of a per-row OR/EXISTS table scan'
+  leaderboardQuery,
+  /alias_owners AS[\s\S]*mapped_playtime AS[\s\S]*playtime_totals AS[\s\S]*mapped_messages AS/,
+  'aliases and metric totals must be resolved with set-based aggregation'
 );
 assert.match(
-  serverSource,
-  /resolved_players AS[\s\S]*player_name_history alias[\s\S]*players AS[\s\S]*DISTINCT ON \(identity_key\)/,
+  leaderboardQuery,
+  /uuid_identities AS[\s\S]*legacy_identities AS[\s\S]*identities AS/,
   'global leaderboard rows must resolve UUID identities and collapse historical names'
-);
-assert.match(
-  serverSource,
-  /SELECT SUM\([\s\S]*candidate\.total_seconds[\s\S]*candidate\.tracking_since[\s\S]*FROM player_playtime candidate/,
-  'leaderboard playtime must combine UUID and legacy-name records like the player profile'
 );
 assert.match(indexSource, /data-playtime-scope="global"[^>]*aria-pressed="true"[^>]*>Global</, 'Global must be the default leaderboard tab');
 assert.match(indexSource, /data-playtime-scope="whitelisted"[^>]*>Whitelisted</, 'the leaderboard must provide a Whitelisted tab');
 assert.match(indexSource, /id="playtimeLeaderboardScope"[^>]*data-active-scope="global"/, 'the segmented control indicator must start on Global');
 assert.match(appSource, /playtimeLeaderboardScope:\s*'global'/, 'the leaderboard must default to the server-wide scope');
-assert.match(appSource, /leaderboardSources\.global\) \? leaderboardSources\.global\.slice\(0, 100\)/, 'the client must defensively cap Global to 100 players');
+assert.match(appSource, /global:\s*Array\.isArray\(leaderboardSources\.global\) \? leaderboardSources\.global : \[\]/, 'the client must retain every Global player for sorting');
+assert.match(appSource, /sortPlaytimeLeaderboardEntries[\s\S]*scope === 'global' \? sortedLeaderboard\.slice\(0, 100\)/, 'the client must select the visible top 100 only after sorting the full metric set');
 assert.match(appSource, /function setPlaytimeLeaderboardScope\(scope\)/, 'the leaderboard tabs must switch without reloading the dashboard');
 assert.match(appSource, /classList\.add\('is-leaving'\)[\s\S]*classList\.add\('is-entering'\)[\s\S]*160/, 'the old list must leave before the new list enters');
 assert.match(appSource, /setAttribute\('aria-busy', 'true'\)[\s\S]*removeAttribute\('aria-busy'\)/, 'the animated list swap must expose its busy state');

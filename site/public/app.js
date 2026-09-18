@@ -5672,7 +5672,8 @@ function renderPlaytimeLeaderboard({ resetScroll = false, force = false } = {}) 
   const scope = state.playtimeLeaderboardScope === 'whitelisted' ? 'whitelisted' : 'global';
   const sort = ['messages', 'joindate'].includes(state.playtimeLeaderboardSort) ? state.playtimeLeaderboardSort : 'playtime';
   const direction = state.playtimeLeaderboardDirection === 'asc' ? 'asc' : 'desc';
-  const leaderboard = sortPlaytimeLeaderboardEntries(state.playtimeLeaderboards[scope] || [], sort, direction);
+  const sortedLeaderboard = sortPlaytimeLeaderboardEntries(state.playtimeLeaderboards[scope] || [], sort, direction);
+  const leaderboard = scope === 'global' ? sortedLeaderboard.slice(0, 100) : sortedLeaderboard;
   const list = $('#playtimeLeaderboard');
 
   updatePlaytimeLeaderboardScopeControls(scope);
@@ -5904,7 +5905,7 @@ function renderPlayerStats(payload = {}, nearbyPlayers = []) {
 
   const leaderboardSources = payload.playtimeLeaderboards || {};
   state.playtimeLeaderboards = {
-    global: Array.isArray(leaderboardSources.global) ? leaderboardSources.global.slice(0, 100) : [],
+    global: Array.isArray(leaderboardSources.global) ? leaderboardSources.global : [],
     whitelisted: Array.isArray(leaderboardSources.whitelisted)
       ? leaderboardSources.whitelisted
       : Array.isArray(payload.playtimeLeaderboard) ? payload.playtimeLeaderboard : []

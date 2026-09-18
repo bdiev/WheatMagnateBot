@@ -2105,7 +2105,6 @@ async function getPlayerStats() {
   const [
     globalLeaderboardResult,
     playersResult,
-    whitelistLeaderboardResult,
     activityTotalsResult,
     onlineUnwhitelistedResult,
     hourlyUnwhitelistedResult,
@@ -2113,139 +2112,151 @@ async function getPlayerStats() {
     newPlayersResult
   ] = await Promise.all([
     pool.query(`
-      WITH ranked_playtime AS (
-        SELECT DISTINCT ON (LOWER(username))
-          LOWER(username) AS username_key,
-          username,
-          player_uuid,
-          COALESCE(total_seconds, 0) +
-            CASE WHEN tracking_since IS NULL THEN 0
-                 ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - tracking_since)))::BIGINT)
-            END AS own_total_seconds
+      WITH alias_candidates AS (
+        SELECT LOWER(username) AS username_key, player_uuid, 1 AS priority
+        FROM player_activity
+        WHERE player_uuid IS NOT NULL
+        UNION ALL
+        SELECT LOWER(username), player_uuid, 2
+        FROM player_name_history
+        WHERE player_uuid IS NOT NULL
+        UNION ALL
+        SELECT LOWER(username), player_uuid, 3
         FROM player_playtime
+        WHERE player_uuid IS NOT NULL
+      ), alias_owners AS (
+        SELECT DISTINCT ON (username_key) username_key, player_uuid
+        FROM alias_candidates
+        ORDER BY username_key, priority
+      ), uuid_activity AS (
+        SELECT DISTINCT ON (player_uuid)
+          player_uuid, username, registration_at, last_seen, is_online,
+          observed_message_count, observed_message_count_at
+        FROM player_activity
+        WHERE player_uuid IS NOT NULL
+        ORDER BY player_uuid, is_online DESC,
+                 COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
+      ), uuid_playtime_names AS (
+        SELECT DISTINCT ON (player_uuid) player_uuid, username
+        FROM player_playtime
+        WHERE player_uuid IS NOT NULL
+        ORDER BY player_uuid, updated_at DESC NULLS LAST
+      ), uuid_keys AS (
+        SELECT player_uuid FROM uuid_activity
+        UNION
+        SELECT player_uuid FROM uuid_playtime_names
+      ), uuid_identities AS (
+        SELECT
+          'uuid:' || keys.player_uuid::text AS identity_key,
+          COALESCE(activity.username, playtime.username) AS username,
+          keys.player_uuid,
+          activity.registration_at,
+          activity.last_seen,
+          COALESCE(activity.is_online, FALSE) AS is_online,
+          activity.observed_message_count,
+          activity.observed_message_count_at
+        FROM uuid_keys keys
+        LEFT JOIN uuid_activity activity USING (player_uuid)
+        LEFT JOIN uuid_playtime_names playtime USING (player_uuid)
+      ), legacy_names AS (
+        SELECT LOWER(username) AS username_key FROM player_activity WHERE player_uuid IS NULL
+        UNION
+        SELECT LOWER(username) FROM player_playtime WHERE player_uuid IS NULL
+      ), legacy_activity AS (
+        SELECT DISTINCT ON (LOWER(username))
+          LOWER(username) AS username_key, username, registration_at, last_seen,
+          is_online, observed_message_count, observed_message_count_at
+        FROM player_activity
+        WHERE player_uuid IS NULL
+        ORDER BY LOWER(username), is_online DESC,
+                 COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
+      ), legacy_playtime_names AS (
+        SELECT DISTINCT ON (LOWER(username)) LOWER(username) AS username_key, username
+        FROM player_playtime
+        WHERE player_uuid IS NULL
         ORDER BY LOWER(username), updated_at DESC NULLS LAST
-      ), playtime_players AS (
-        -- Rank by each row's own total first so the expensive alias
-        -- resolution below only runs for players who could plausibly land
-        -- in the top 100, instead of every player ever tracked.
-        SELECT username_key, username, player_uuid
-        FROM ranked_playtime
-        ORDER BY own_total_seconds DESC
-        LIMIT 500
-      ), resolved_players AS (
+      ), legacy_identities AS (
         SELECT
-          pt.username_key AS source_username_key,
-          COALESCE(pa.username, pt.username) AS username,
-          COALESCE(pa.player_uuid, pt.player_uuid) AS player_uuid,
-          COALESCE(COALESCE(pa.player_uuid, pt.player_uuid)::text, pt.username_key) AS identity_key,
-          pa.registration_at,
-          pa.last_seen,
-          pa.is_online,
-          pa.observed_message_count,
-          pa.observed_message_count_at
-        FROM playtime_players pt
-        LEFT JOIN LATERAL (
-          SELECT candidate.username,
-                 candidate.player_uuid,
-                 candidate.registration_at,
-                 candidate.last_seen,
-                 candidate.last_online,
-                 candidate.is_online,
-                 candidate.observed_message_count,
-                 candidate.observed_message_count_at
-          FROM player_activity candidate
-          WHERE (pt.player_uuid IS NOT NULL AND candidate.player_uuid = pt.player_uuid)
-             OR LOWER(candidate.username) = pt.username_key
-             OR EXISTS (
-               SELECT 1
-               FROM player_name_history alias
-               WHERE alias.player_uuid = candidate.player_uuid
-                 AND LOWER(alias.username) = pt.username_key
-             )
-          ORDER BY candidate.is_online DESC,
-                   COALESCE(candidate.last_seen, candidate.last_online) DESC NULLS LAST,
-                   candidate.id DESC
-          LIMIT 1
-        ) pa ON TRUE
-      ), players AS (
-        SELECT DISTINCT ON (identity_key) *
-        FROM resolved_players
-        ORDER BY identity_key,
-                 (LOWER(username) = source_username_key) DESC,
-                 is_online DESC,
-                 last_seen DESC NULLS LAST
-      ), player_aliases AS (
-        -- Every username that could belong to this identity (its own name
-        -- plus any legacy names), pre-computed once so the totals below can
-        -- use a plain indexed equality/ANY() lookup instead of a per-row
-        -- OR/EXISTS scan of the whole playtime or chat history tables.
+          'name:' || names.username_key AS identity_key,
+          COALESCE(activity.username, playtime.username, names.username_key) AS username,
+          NULL::uuid AS player_uuid,
+          activity.registration_at,
+          activity.last_seen,
+          COALESCE(activity.is_online, FALSE) AS is_online,
+          activity.observed_message_count,
+          activity.observed_message_count_at
+        FROM legacy_names names
+        LEFT JOIN alias_owners owner USING (username_key)
+        LEFT JOIN legacy_activity activity USING (username_key)
+        LEFT JOIN legacy_playtime_names playtime USING (username_key)
+        WHERE owner.player_uuid IS NULL
+      ), identities AS (
+        SELECT * FROM uuid_identities
+        UNION ALL
+        SELECT * FROM legacy_identities
+      ), identity_aliases AS (
+        SELECT identity_key, LOWER(username) AS username_key FROM identities
+        UNION
+        SELECT 'uuid:' || owner.player_uuid::text, owner.username_key
+        FROM alias_owners owner
+        JOIN identities identity ON identity.identity_key = 'uuid:' || owner.player_uuid::text
+      ), mapped_playtime AS (
         SELECT
-          p.identity_key,
-          ARRAY(
-            SELECT DISTINCT alias_key
-            FROM (
-              SELECT p.source_username_key AS alias_key
-              UNION ALL
-              SELECT LOWER(p.username)
-              UNION ALL
-              SELECT LOWER(history.username)
-              FROM player_name_history history
-              WHERE history.player_uuid = p.player_uuid
-            ) aliases
-          ) AS username_keys
-        FROM players p
+          CASE
+            WHEN entry.player_uuid IS NOT NULL THEN 'uuid:' || entry.player_uuid::text
+            WHEN owner.player_uuid IS NOT NULL THEN 'uuid:' || owner.player_uuid::text
+            ELSE 'name:' || LOWER(entry.username)
+          END AS identity_key,
+          COALESCE(entry.total_seconds, 0) +
+            CASE WHEN entry.tracking_since IS NULL THEN 0
+                 ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - entry.tracking_since)))::bigint)
+            END AS effective_seconds
+        FROM player_playtime entry
+        LEFT JOIN alias_owners owner
+          ON entry.player_uuid IS NULL AND owner.username_key = LOWER(entry.username)
+      ), playtime_totals AS (
+        SELECT identity_key, SUM(effective_seconds)::bigint AS total_seconds
+        FROM mapped_playtime
+        GROUP BY identity_key
+      ), mapped_messages AS (
+        SELECT
+          CASE
+            WHEN message.player_uuid IS NOT NULL THEN 'uuid:' || message.player_uuid::text
+            WHEN owner.player_uuid IS NOT NULL THEN 'uuid:' || owner.player_uuid::text
+            ELSE 'name:' || LOWER(message.username)
+          END AS identity_key,
+          message.message_count,
+          message.created_at
+        FROM game_chat_messages message
+        LEFT JOIN alias_owners owner
+          ON message.player_uuid IS NULL AND owner.username_key = LOWER(message.username)
+      ), message_deltas AS (
+        SELECT message.identity_key, SUM(message.message_count)::bigint AS total_messages
+        FROM mapped_messages message
+        JOIN identities identity USING (identity_key)
+        WHERE identity.observed_message_count IS NULL
+           OR message.created_at > identity.observed_message_count_at
+        GROUP BY message.identity_key
+      ), whitelist_flags AS (
+        SELECT alias.identity_key, TRUE AS is_whitelisted
+        FROM identity_aliases alias
+        JOIN whitelist entry ON LOWER(entry.username) = alias.username_key
+        GROUP BY alias.identity_key
       )
       SELECT
-        pt.username,
-        COALESCE(pt.is_online, FALSE) AS is_online,
-        pt.last_seen,
-        pt.registration_at,
+        identity.username,
+        identity.is_online,
+        identity.last_seen,
+        identity.registration_at,
         COALESCE(playtime.total_seconds, 0)::bigint AS total_seconds,
-        COALESCE(chat.total_messages, pt.observed_message_count, 0)::bigint AS total_messages
-      FROM players pt
-      JOIN player_aliases aliases ON aliases.identity_key = pt.identity_key
-      LEFT JOIN LATERAL (
-        SELECT SUM(effective_seconds)::bigint AS total_seconds
-        FROM (
-          SELECT COALESCE(candidate.total_seconds, 0) +
-                 CASE WHEN candidate.tracking_since IS NULL THEN 0
-                      ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - candidate.tracking_since)))::BIGINT)
-                 END AS effective_seconds
-          FROM player_playtime candidate
-          WHERE pt.player_uuid IS NOT NULL AND candidate.player_uuid = pt.player_uuid
-
-          UNION ALL
-
-          SELECT COALESCE(candidate.total_seconds, 0) +
-                 CASE WHEN candidate.tracking_since IS NULL THEN 0
-                      ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - candidate.tracking_since)))::BIGINT)
-                 END AS effective_seconds
-          FROM player_playtime candidate
-          WHERE candidate.player_uuid IS NULL AND LOWER(candidate.username) = ANY(aliases.username_keys)
-        ) combined
-      ) playtime ON TRUE
-      LEFT JOIN LATERAL (
-        SELECT (
-          COALESCE(pt.observed_message_count, 0) +
-          COALESCE(SUM(new_messages.message_count) FILTER (
-            WHERE pt.observed_message_count IS NULL
-               OR new_messages.created_at > pt.observed_message_count_at
-          ), 0)
-        )::bigint AS total_messages
-        FROM (
-          SELECT message.message_count, message.created_at
-          FROM game_chat_messages message
-          WHERE pt.player_uuid IS NOT NULL AND message.player_uuid = pt.player_uuid
-
-          UNION ALL
-
-          SELECT message.message_count, message.created_at
-          FROM game_chat_messages message
-          WHERE message.player_uuid IS NULL AND LOWER(message.username) = ANY(aliases.username_keys)
-        ) new_messages
-      ) chat ON TRUE
-      ORDER BY total_seconds DESC, pt.source_username_key
-      LIMIT 100
+        (COALESCE(identity.observed_message_count, 0) +
+          COALESCE(messages.total_messages, 0))::bigint AS total_messages,
+        COALESCE(flags.is_whitelisted, FALSE) AS is_whitelisted
+      FROM identities identity
+      LEFT JOIN playtime_totals playtime USING (identity_key)
+      LEFT JOIN message_deltas messages USING (identity_key)
+      LEFT JOIN whitelist_flags flags USING (identity_key)
+      ORDER BY total_seconds DESC, LOWER(identity.username)
     `),
     pool.query(`
       WITH whitelist_players AS (
@@ -2268,100 +2279,6 @@ async function getPlayerStats() {
         COUNT(*) FILTER (WHERE COALESCE(pa.is_online, FALSE) = FALSE)::int AS offline
       FROM whitelist_players w
       LEFT JOIN activity pa ON pa.username_key = w.username_key
-    `),
-    pool.query(`
-      WITH whitelist_players AS (
-        SELECT DISTINCT ON (LOWER(username))
-          LOWER(username) AS username_key,
-          username
-        FROM whitelist
-        ORDER BY LOWER(username), id
-      )
-      SELECT
-        w.username,
-        COALESCE(pa.is_online, FALSE) AS is_online,
-        pa.last_seen,
-        pa.registration_at,
-        COALESCE(playtime.total_seconds, 0)::bigint AS total_seconds,
-        COALESCE(chat.total_messages, pa.observed_message_count, 0)::bigint AS total_messages
-      FROM whitelist_players w
-      LEFT JOIN LATERAL (
-        SELECT candidate.player_uuid,
-               candidate.registration_at,
-               candidate.last_seen,
-               candidate.is_online,
-               candidate.observed_message_count,
-               candidate.observed_message_count_at
-        FROM player_activity candidate
-        WHERE LOWER(candidate.username) = w.username_key
-           OR EXISTS (
-             SELECT 1
-             FROM player_name_history alias
-             WHERE alias.player_uuid = candidate.player_uuid
-               AND LOWER(alias.username) = w.username_key
-           )
-        ORDER BY candidate.is_online DESC,
-                 COALESCE(candidate.last_seen, candidate.last_online) DESC NULLS LAST,
-                 candidate.id DESC
-        LIMIT 1
-      ) pa ON TRUE
-      LEFT JOIN LATERAL (
-        -- Every username that could belong to this identity (its own name
-        -- plus any legacy names), pre-computed once so the totals below can
-        -- use a plain indexed equality/ANY() lookup instead of a per-row
-        -- OR/EXISTS scan of the whole playtime or chat history tables.
-        SELECT ARRAY(
-          SELECT DISTINCT alias_key
-          FROM (
-            SELECT w.username_key AS alias_key
-            UNION ALL
-            SELECT LOWER(history.username)
-            FROM player_name_history history
-            WHERE pa.player_uuid IS NOT NULL AND history.player_uuid = pa.player_uuid
-          ) aliases
-        ) AS username_keys
-      ) aliases ON TRUE
-      LEFT JOIN LATERAL (
-        SELECT SUM(effective_seconds)::bigint AS total_seconds
-        FROM (
-          SELECT COALESCE(candidate.total_seconds, 0) +
-                 CASE WHEN candidate.tracking_since IS NULL THEN 0
-                      ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - candidate.tracking_since)))::BIGINT)
-                 END AS effective_seconds
-          FROM player_playtime candidate
-          WHERE pa.player_uuid IS NOT NULL AND candidate.player_uuid = pa.player_uuid
-
-          UNION ALL
-
-          SELECT COALESCE(candidate.total_seconds, 0) +
-                 CASE WHEN candidate.tracking_since IS NULL THEN 0
-                      ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - candidate.tracking_since)))::BIGINT)
-                 END AS effective_seconds
-          FROM player_playtime candidate
-          WHERE candidate.player_uuid IS NULL AND LOWER(candidate.username) = ANY(aliases.username_keys)
-        ) combined
-      ) playtime ON TRUE
-      LEFT JOIN LATERAL (
-        SELECT (
-          COALESCE(pa.observed_message_count, 0) +
-          COALESCE(SUM(new_messages.message_count) FILTER (
-            WHERE pa.observed_message_count IS NULL
-               OR new_messages.created_at > pa.observed_message_count_at
-          ), 0)
-        )::bigint AS total_messages
-        FROM (
-          SELECT message.message_count, message.created_at
-          FROM game_chat_messages message
-          WHERE pa.player_uuid IS NOT NULL AND message.player_uuid = pa.player_uuid
-
-          UNION ALL
-
-          SELECT message.message_count, message.created_at
-          FROM game_chat_messages message
-          WHERE message.player_uuid IS NULL AND LOWER(message.username) = ANY(aliases.username_keys)
-        ) new_messages
-      ) chat ON TRUE
-      ORDER BY total_seconds DESC, w.username_key
     `),
     pool.query(`
       SELECT
@@ -2460,6 +2377,20 @@ async function getPlayerStats() {
   const totals = playersResult.rows[0] || {};
   const activityTotals = activityTotalsResult.rows[0] || {};
   const onlineUnwhitelisted = onlineUnwhitelistedResult.rows[0] || {};
+  const leaderboardRows = globalLeaderboardResult.rows.map(row => {
+    const seconds = toInt(row.total_seconds);
+    return {
+      username: row.username,
+      isOnline: Boolean(row.is_online),
+      isWhitelisted: Boolean(row.is_whitelisted),
+      lastSeen: row.last_seen,
+      joinDate: row.registration_at,
+      totalSeconds: seconds,
+      playtime: formatSeconds(seconds),
+      messageCount: toInt(row.total_messages)
+    };
+  });
+  const whitelistedLeaderboardRows = leaderboardRows.filter(row => row.isWhitelisted);
 
   return {
     players: {
@@ -2471,43 +2402,10 @@ async function getPlayerStats() {
       seen7d: toInt(activityTotals.seen_7d)
     },
     playtimeLeaderboards: {
-      global: globalLeaderboardResult.rows.map(row => {
-        const seconds = toInt(row.total_seconds);
-        return {
-          username: row.username,
-          isOnline: Boolean(row.is_online),
-          lastSeen: row.last_seen,
-          joinDate: row.registration_at,
-          totalSeconds: seconds,
-          playtime: formatSeconds(seconds),
-          messageCount: toInt(row.total_messages)
-        };
-      }),
-      whitelisted: whitelistLeaderboardResult.rows.map(row => {
-        const seconds = toInt(row.total_seconds);
-        return {
-          username: row.username,
-          isOnline: Boolean(row.is_online),
-          lastSeen: row.last_seen,
-          joinDate: row.registration_at,
-          totalSeconds: seconds,
-          playtime: formatSeconds(seconds),
-          messageCount: toInt(row.total_messages)
-        };
-      })
+      global: leaderboardRows,
+      whitelisted: whitelistedLeaderboardRows
     },
-    playtimeLeaderboard: whitelistLeaderboardResult.rows.map(row => {
-      const seconds = toInt(row.total_seconds);
-      return {
-        username: row.username,
-        isOnline: Boolean(row.is_online),
-        lastSeen: row.last_seen,
-        joinDate: row.registration_at,
-        totalSeconds: seconds,
-        playtime: formatSeconds(seconds),
-        messageCount: toInt(row.total_messages)
-      };
-    }),
+    playtimeLeaderboard: whitelistedLeaderboardRows,
     hourlyUnwhitelisted: hourlyUnwhitelistedResult.rows.map(row => ({
       label: row.label,
       bucket: row.bucket,
