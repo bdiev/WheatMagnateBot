@@ -3308,7 +3308,7 @@ body.search-focus-active #logoutButton {
   grid-column: 1 / span 2;
   grid-row: 2;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   height: 100%;
   min-height: 0;
   overflow: hidden;
@@ -3640,7 +3640,7 @@ body.search-focus-active #logoutButton {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-top: 10px;
+  padding: 10px 14px 0;
   flex-wrap: wrap;
 }
 
