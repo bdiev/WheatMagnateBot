@@ -2113,13 +2113,25 @@ async function getPlayerStats() {
     newPlayersResult
   ] = await Promise.all([
     pool.query(`
-      WITH playtime_players AS (
+      WITH ranked_playtime AS (
         SELECT DISTINCT ON (LOWER(username))
           LOWER(username) AS username_key,
           username,
-          player_uuid
+          player_uuid,
+          COALESCE(total_seconds, 0) +
+            CASE WHEN tracking_since IS NULL THEN 0
+                 ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - tracking_since)))::BIGINT)
+            END AS own_total_seconds
         FROM player_playtime
         ORDER BY LOWER(username), updated_at DESC NULLS LAST
+      ), playtime_players AS (
+        -- Rank by each row's own total first so the expensive alias
+        -- resolution below only runs for players who could plausibly land
+        -- in the top 100, instead of every player ever tracked.
+        SELECT username_key, username, player_uuid
+        FROM ranked_playtime
+        ORDER BY own_total_seconds DESC
+        LIMIT 500
       ), resolved_players AS (
         SELECT
           pt.username_key AS source_username_key,
@@ -2162,6 +2174,26 @@ async function getPlayerStats() {
                  (LOWER(username) = source_username_key) DESC,
                  is_online DESC,
                  last_seen DESC NULLS LAST
+      ), player_aliases AS (
+        -- Every username that could belong to this identity (its own name
+        -- plus any legacy names), pre-computed once so the totals below can
+        -- use a plain indexed equality/ANY() lookup instead of a per-row
+        -- OR/EXISTS scan of the whole playtime or chat history tables.
+        SELECT
+          p.identity_key,
+          ARRAY(
+            SELECT DISTINCT alias_key
+            FROM (
+              SELECT p.source_username_key AS alias_key
+              UNION ALL
+              SELECT LOWER(p.username)
+              UNION ALL
+              SELECT LOWER(history.username)
+              FROM player_name_history history
+              WHERE history.player_uuid = p.player_uuid
+            ) aliases
+          ) AS username_keys
+        FROM players p
       )
       SELECT
         pt.username,
@@ -2171,44 +2203,46 @@ async function getPlayerStats() {
         COALESCE(playtime.total_seconds, 0)::bigint AS total_seconds,
         COALESCE(chat.total_messages, pt.observed_message_count, 0)::bigint AS total_messages
       FROM players pt
+      JOIN player_aliases aliases ON aliases.identity_key = pt.identity_key
       LEFT JOIN LATERAL (
-        SELECT SUM(
-          COALESCE(candidate.total_seconds, 0) +
-          CASE WHEN candidate.tracking_since IS NULL THEN 0
-               ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - candidate.tracking_since)))::BIGINT)
-          END
-        )::bigint AS total_seconds
-        FROM player_playtime candidate
-        WHERE (pt.player_uuid IS NOT NULL AND candidate.player_uuid = pt.player_uuid)
-           OR (candidate.player_uuid IS NULL AND (
-             LOWER(candidate.username) IN (pt.source_username_key, LOWER(pt.username))
-             OR EXISTS (
-               SELECT 1
-               FROM player_name_history alias
-               WHERE alias.player_uuid = pt.player_uuid
-                 AND LOWER(alias.username) = LOWER(candidate.username)
-             )
-           ))
+        SELECT SUM(effective_seconds)::bigint AS total_seconds
+        FROM (
+          SELECT COALESCE(candidate.total_seconds, 0) +
+                 CASE WHEN candidate.tracking_since IS NULL THEN 0
+                      ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - candidate.tracking_since)))::BIGINT)
+                 END AS effective_seconds
+          FROM player_playtime candidate
+          WHERE pt.player_uuid IS NOT NULL AND candidate.player_uuid = pt.player_uuid
+
+          UNION ALL
+
+          SELECT COALESCE(candidate.total_seconds, 0) +
+                 CASE WHEN candidate.tracking_since IS NULL THEN 0
+                      ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - candidate.tracking_since)))::BIGINT)
+                 END AS effective_seconds
+          FROM player_playtime candidate
+          WHERE candidate.player_uuid IS NULL AND LOWER(candidate.username) = ANY(aliases.username_keys)
+        ) combined
       ) playtime ON TRUE
       LEFT JOIN LATERAL (
         SELECT (
           COALESCE(pt.observed_message_count, 0) +
-          COALESCE(SUM(message.message_count) FILTER (
+          COALESCE(SUM(new_messages.message_count) FILTER (
             WHERE pt.observed_message_count IS NULL
-               OR message.created_at > pt.observed_message_count_at
+               OR new_messages.created_at > pt.observed_message_count_at
           ), 0)
         )::bigint AS total_messages
-        FROM game_chat_messages message
-        WHERE (pt.player_uuid IS NOT NULL AND message.player_uuid = pt.player_uuid)
-           OR (message.player_uuid IS NULL AND (
-             LOWER(message.username) IN (pt.source_username_key, LOWER(pt.username))
-             OR EXISTS (
-               SELECT 1
-               FROM player_name_history alias
-               WHERE alias.player_uuid = pt.player_uuid
-                 AND LOWER(alias.username) = LOWER(message.username)
-             )
-           ))
+        FROM (
+          SELECT message.message_count, message.created_at
+          FROM game_chat_messages message
+          WHERE pt.player_uuid IS NOT NULL AND message.player_uuid = pt.player_uuid
+
+          UNION ALL
+
+          SELECT message.message_count, message.created_at
+          FROM game_chat_messages message
+          WHERE message.player_uuid IS NULL AND LOWER(message.username) = ANY(aliases.username_keys)
+        ) new_messages
       ) chat ON TRUE
       ORDER BY total_seconds DESC, pt.source_username_key
       LIMIT 100
@@ -2272,43 +2306,60 @@ async function getPlayerStats() {
         LIMIT 1
       ) pa ON TRUE
       LEFT JOIN LATERAL (
-        SELECT SUM(
-          COALESCE(candidate.total_seconds, 0) +
-          CASE WHEN candidate.tracking_since IS NULL THEN 0
-               ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - candidate.tracking_since)))::BIGINT)
-          END
-        )::bigint AS total_seconds
-        FROM player_playtime candidate
-        WHERE (pa.player_uuid IS NOT NULL AND candidate.player_uuid = pa.player_uuid)
-           OR (candidate.player_uuid IS NULL AND (
-             LOWER(candidate.username) = w.username_key
-             OR EXISTS (
-               SELECT 1
-               FROM player_name_history alias
-               WHERE alias.player_uuid = pa.player_uuid
-                 AND LOWER(alias.username) = LOWER(candidate.username)
-             )
-           ))
+        -- Every username that could belong to this identity (its own name
+        -- plus any legacy names), pre-computed once so the totals below can
+        -- use a plain indexed equality/ANY() lookup instead of a per-row
+        -- OR/EXISTS scan of the whole playtime or chat history tables.
+        SELECT ARRAY(
+          SELECT DISTINCT alias_key
+          FROM (
+            SELECT w.username_key AS alias_key
+            UNION ALL
+            SELECT LOWER(history.username)
+            FROM player_name_history history
+            WHERE pa.player_uuid IS NOT NULL AND history.player_uuid = pa.player_uuid
+          ) aliases
+        ) AS username_keys
+      ) aliases ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT SUM(effective_seconds)::bigint AS total_seconds
+        FROM (
+          SELECT COALESCE(candidate.total_seconds, 0) +
+                 CASE WHEN candidate.tracking_since IS NULL THEN 0
+                      ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - candidate.tracking_since)))::BIGINT)
+                 END AS effective_seconds
+          FROM player_playtime candidate
+          WHERE pa.player_uuid IS NOT NULL AND candidate.player_uuid = pa.player_uuid
+
+          UNION ALL
+
+          SELECT COALESCE(candidate.total_seconds, 0) +
+                 CASE WHEN candidate.tracking_since IS NULL THEN 0
+                      ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - candidate.tracking_since)))::BIGINT)
+                 END AS effective_seconds
+          FROM player_playtime candidate
+          WHERE candidate.player_uuid IS NULL AND LOWER(candidate.username) = ANY(aliases.username_keys)
+        ) combined
       ) playtime ON TRUE
       LEFT JOIN LATERAL (
         SELECT (
           COALESCE(pa.observed_message_count, 0) +
-          COALESCE(SUM(message.message_count) FILTER (
+          COALESCE(SUM(new_messages.message_count) FILTER (
             WHERE pa.observed_message_count IS NULL
-               OR message.created_at > pa.observed_message_count_at
+               OR new_messages.created_at > pa.observed_message_count_at
           ), 0)
         )::bigint AS total_messages
-        FROM game_chat_messages message
-        WHERE (pa.player_uuid IS NOT NULL AND message.player_uuid = pa.player_uuid)
-           OR (message.player_uuid IS NULL AND (
-             LOWER(message.username) = w.username_key
-             OR EXISTS (
-               SELECT 1
-               FROM player_name_history alias
-               WHERE alias.player_uuid = pa.player_uuid
-                 AND LOWER(alias.username) = LOWER(message.username)
-             )
-           ))
+        FROM (
+          SELECT message.message_count, message.created_at
+          FROM game_chat_messages message
+          WHERE pa.player_uuid IS NOT NULL AND message.player_uuid = pa.player_uuid
+
+          UNION ALL
+
+          SELECT message.message_count, message.created_at
+          FROM game_chat_messages message
+          WHERE message.player_uuid IS NULL AND LOWER(message.username) = ANY(aliases.username_keys)
+        ) new_messages
       ) chat ON TRUE
       ORDER BY total_seconds DESC, w.username_key
     `),

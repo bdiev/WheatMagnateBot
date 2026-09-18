@@ -13,15 +13,25 @@ const stylesSource = fs.readFileSync(path.join(publicDirectory, 'styles.css'), '
 
 assert.match(
   serverSource,
-  /WITH playtime_players AS[\s\S]*ORDER BY total_seconds DESC, pt\.source_username_key[\s\S]*LIMIT 100/,
+  /WITH ranked_playtime AS[\s\S]*playtime_players AS[\s\S]*ORDER BY own_total_seconds DESC[\s\S]*LIMIT 500/,
+  'the server-wide leaderboard must rank and bound candidates by their own total before the expensive alias resolution runs'
+);
+assert.match(
+  serverSource,
+  /resolved_players AS[\s\S]*ORDER BY total_seconds DESC, pt\.source_username_key[\s\S]*LIMIT 100/,
   'the server-wide leaderboard must be capped to the top 100 in SQL'
 );
 assert.match(serverSource, /playtimeLeaderboards:\s*\{\s*global:/, 'player stats must expose a global leaderboard');
 assert.match(serverSource, /whitelisted:\s*whitelistLeaderboardResult\.rows/, 'player stats must expose the whitelist leaderboard separately');
 assert.match(
   serverSource,
-  /observed_message_count[\s\S]*SUM\(message\.message_count\) FILTER[\s\S]*message\.created_at > pa\.observed_message_count_at/,
+  /observed_message_count[\s\S]*SUM\(new_messages\.message_count\) FILTER[\s\S]*new_messages\.created_at > pa\.observed_message_count_at/,
   'leaderboard message totals must use the observed server count plus messages archived afterward'
+);
+assert.match(
+  serverSource,
+  /player_aliases AS[\s\S]*ARRAY\([\s\S]*player_name_history history[\s\S]*LOWER\(candidate\.username\) = ANY\(aliases\.username_keys\)/,
+  'alias lookups must use a pre-computed username array instead of a per-row OR/EXISTS table scan'
 );
 assert.match(
   serverSource,
