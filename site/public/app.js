@@ -75,6 +75,8 @@ const state = {
   playerProfileAccentCache: new Map(),
   whisperAccentCache: new Map(),
   playtimeLeaderboardScope: 'global',
+  playtimeLeaderboardSort: 'playtime',
+  playtimeLeaderboardDirection: 'desc',
   playtimeLeaderboards: { global: [], whitelisted: [] },
   newPlayers: [],
   newPlayersInitialized: false,
@@ -5465,6 +5467,56 @@ function updatePlaytimeLeaderboardScopeControls(scope, { animateButton = false }
   });
 }
 
+function updatePlaytimeLeaderboardSortControls(sort, direction, { animateButton = false } = {}) {
+  const controls = $('#playtimeLeaderboardSort');
+  if (controls) controls.dataset.activeSort = sort;
+  $$('#playtimeLeaderboardSort [data-playtime-sort]').forEach(button => {
+    const active = button.dataset.playtimeSort === sort;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+    if (active && animateButton) {
+      button.classList.remove('pressed');
+      void button.offsetWidth;
+      button.classList.add('pressed');
+    }
+  });
+
+  const directionButton = $('#playtimeLeaderboardDirection');
+  if (directionButton) {
+    const isAscending = direction === 'asc';
+    directionButton.dataset.direction = direction;
+    directionButton.setAttribute('aria-pressed', String(isAscending));
+    directionButton.setAttribute('aria-label', isAscending ? 'Sort lowest to highest' : 'Sort highest to lowest');
+    directionButton.title = isAscending ? 'Lowest to highest' : 'Highest to lowest';
+    const icon = directionButton.querySelector('.leaderboard-direction-icon');
+    if (icon) icon.textContent = isAscending ? '↑' : '↓';
+  }
+}
+
+function comparePlaytimeLeaderboardEntries(a, b, sort, direction) {
+  const dir = direction === 'asc' ? 1 : -1;
+  if (sort === 'messages') return dir * ((a.messageCount || 0) - (b.messageCount || 0));
+  if (sort === 'joindate') {
+    const aTime = a.joinDate ? new Date(a.joinDate).getTime() : null;
+    const bTime = b.joinDate ? new Date(b.joinDate).getTime() : null;
+    if (aTime == null && bTime == null) return 0;
+    if (aTime == null) return 1;
+    if (bTime == null) return -1;
+    return dir * (aTime - bTime);
+  }
+  return dir * ((a.totalSeconds || 0) - (b.totalSeconds || 0));
+}
+
+function sortPlaytimeLeaderboardEntries(entries, sort, direction) {
+  return [...entries].sort((a, b) => comparePlaytimeLeaderboardEntries(a, b, sort, direction));
+}
+
+function playtimeLeaderboardStatValue(player, sort) {
+  if (sort === 'messages') return `${formatNumber(player.messageCount || 0)} msgs`;
+  if (sort === 'joindate') return player.joinDate ? formatRegistrationAge(player.joinDate) : 'Unknown';
+  return player.playtime;
+}
+
 function setInventoryMoveHint(message, { error = false } = {}) {
   const hint = $('#botInventoryHint');
   if (!hint) return;
@@ -5618,17 +5670,21 @@ function resetPlaytimeLeaderboardScroll(list, scope) {
 
 function renderPlaytimeLeaderboard({ resetScroll = false, force = false } = {}) {
   const scope = state.playtimeLeaderboardScope === 'whitelisted' ? 'whitelisted' : 'global';
-  const leaderboard = state.playtimeLeaderboards[scope] || [];
+  const sort = ['messages', 'joindate'].includes(state.playtimeLeaderboardSort) ? state.playtimeLeaderboardSort : 'playtime';
+  const direction = state.playtimeLeaderboardDirection === 'asc' ? 'asc' : 'desc';
+  const leaderboard = sortPlaytimeLeaderboardEntries(state.playtimeLeaderboards[scope] || [], sort, direction);
   const list = $('#playtimeLeaderboard');
 
   updatePlaytimeLeaderboardScopeControls(scope);
+  updatePlaytimeLeaderboardSortControls(sort, direction);
   if (list?.classList.contains('is-leaving') && !force) return;
 
   const description = $('#playtimeLeaderboardDescription');
   if (description) {
-    description.textContent = scope === 'global'
-      ? 'Top 100 server-wide playtime totals.'
-      : 'Playtime totals for players in the whitelist database.';
+    const scopeText = scope === 'global' ? 'Top 100 server-wide' : 'Whitelisted';
+    const sortText = sort === 'messages' ? 'message counts' : sort === 'joindate' ? 'join dates' : 'playtime totals';
+    const directionText = direction === 'asc' ? 'lowest to highest' : 'highest to lowest';
+    description.textContent = `${scopeText} players, sorted by ${sortText} (${directionText}).`;
   }
 
   const isFirstRender = Boolean(list && list.dataset.leaderboardRendered !== 'true');
@@ -5639,11 +5695,11 @@ function renderPlaytimeLeaderboard({ resetScroll = false, force = false } = {}) 
         <span class="leaderboard-player">
           ${playerIdentity(player.username, 28, { status: player.isOnline ? 'online' : 'offline' })}
         </span>
-        <strong>${escapeHtml(player.playtime)}</strong>
+        <strong>${escapeHtml(playtimeLeaderboardStatValue(player, sort))}</strong>
       </div>
     `).join('')
-    : `<div class="empty">No ${scope === 'global' ? 'global' : 'whitelist'} playtime data found.</div>`,
-    [scope, ...leaderboard.map(player => [player.username, player.isOnline, player.playtime])]
+    : `<div class="empty">No ${scope === 'global' ? 'global' : 'whitelist'} data found.</div>`,
+    [scope, sort, direction, ...leaderboard.map(player => [player.username, player.isOnline, player.playtime, player.messageCount, player.joinDate])]
   );
 
   if (didRender && list) list.dataset.leaderboardRendered = 'true';
@@ -5652,12 +5708,7 @@ function renderPlaytimeLeaderboard({ resetScroll = false, force = false } = {}) 
   }
 }
 
-function setPlaytimeLeaderboardScope(scope) {
-  const nextScope = scope === 'whitelisted' ? 'whitelisted' : 'global';
-  if (state.playtimeLeaderboardScope === nextScope) return;
-  state.playtimeLeaderboardScope = nextScope;
-  updatePlaytimeLeaderboardScopeControls(nextScope, { animateButton: true });
-
+function animatePlaytimeLeaderboardChange() {
   const list = $('#playtimeLeaderboard');
   const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
   if (!list || reducedMotion) {
@@ -5681,6 +5732,34 @@ function setPlaytimeLeaderboardScope(scope) {
       list.removeAttribute('aria-busy');
     }, 320);
   }, 160);
+}
+
+function setPlaytimeLeaderboardScope(scope) {
+  const nextScope = scope === 'whitelisted' ? 'whitelisted' : 'global';
+  if (state.playtimeLeaderboardScope === nextScope) return;
+  state.playtimeLeaderboardScope = nextScope;
+  updatePlaytimeLeaderboardScopeControls(nextScope, { animateButton: true });
+  animatePlaytimeLeaderboardChange();
+}
+
+function setPlaytimeLeaderboardSort(sort) {
+  const nextSort = ['messages', 'joindate'].includes(sort) ? sort : 'playtime';
+  if (state.playtimeLeaderboardSort === nextSort) return;
+  state.playtimeLeaderboardSort = nextSort;
+  updatePlaytimeLeaderboardSortControls(nextSort, state.playtimeLeaderboardDirection, { animateButton: true });
+  animatePlaytimeLeaderboardChange();
+}
+
+function setPlaytimeLeaderboardDirection(direction) {
+  const nextDirection = direction === 'asc' ? 'asc' : 'desc';
+  if (state.playtimeLeaderboardDirection === nextDirection) return;
+  state.playtimeLeaderboardDirection = nextDirection;
+  updatePlaytimeLeaderboardSortControls(state.playtimeLeaderboardSort, nextDirection);
+  animatePlaytimeLeaderboardChange();
+}
+
+function togglePlaytimeLeaderboardDirection() {
+  setPlaytimeLeaderboardDirection(state.playtimeLeaderboardDirection === 'asc' ? 'desc' : 'asc');
 }
 
 function newPlayerIdentityKey(player) {
@@ -9572,6 +9651,11 @@ $('#playtimeLeaderboardScope')?.addEventListener('click', event => {
   const button = event.target.closest('[data-playtime-scope]');
   if (button) setPlaytimeLeaderboardScope(button.dataset.playtimeScope);
 });
+$('#playtimeLeaderboardSort')?.addEventListener('click', event => {
+  const button = event.target.closest('[data-playtime-sort]');
+  if (button) setPlaytimeLeaderboardSort(button.dataset.playtimeSort);
+});
+$('#playtimeLeaderboardDirection')?.addEventListener('click', togglePlaytimeLeaderboardDirection);
 $('#newPlayersList')?.addEventListener('scroll', maybeLoadMoreNewPlayers, { passive: true });
 $('#newPlayersList')?.addEventListener('click', event => {
   if (event.target.closest('[data-new-players-more]')) loadMoreNewPlayers();

@@ -2116,6 +2116,8 @@ async function getPlayerStats() {
       WITH activity AS (
         SELECT DISTINCT ON (LOWER(username))
           LOWER(username) AS username_key,
+          player_uuid,
+          registration_at,
           last_seen,
           is_online
         FROM player_activity
@@ -2131,14 +2133,30 @@ async function getPlayerStats() {
             END AS total_seconds
         FROM player_playtime
         ORDER BY LOWER(username), updated_at DESC NULLS LAST
+      ),
+      chat_counts_uuid AS (
+        SELECT player_uuid, SUM(message_count)::bigint AS total_messages
+        FROM game_chat_messages
+        WHERE player_uuid IS NOT NULL
+        GROUP BY player_uuid
+      ),
+      chat_counts_name AS (
+        SELECT LOWER(username) AS username_key, SUM(message_count)::bigint AS total_messages
+        FROM game_chat_messages
+        WHERE player_uuid IS NULL
+        GROUP BY LOWER(username)
       )
       SELECT
         pt.username,
         COALESCE(pa.is_online, FALSE) AS is_online,
         pa.last_seen,
-        pt.total_seconds
+        pa.registration_at,
+        pt.total_seconds,
+        COALESCE(chat_uuid.total_messages, chat_name.total_messages, 0)::int AS total_messages
       FROM playtime pt
       LEFT JOIN activity pa ON pa.username_key = pt.username_key
+      LEFT JOIN chat_counts_uuid chat_uuid ON pa.player_uuid IS NOT NULL AND chat_uuid.player_uuid = pa.player_uuid
+      LEFT JOIN chat_counts_name chat_name ON pa.player_uuid IS NULL AND chat_name.username_key = pt.username_key
       ORDER BY pt.total_seconds DESC, pt.username_key
       LIMIT 100
     `),
@@ -2175,6 +2193,8 @@ async function getPlayerStats() {
       activity AS (
         SELECT DISTINCT ON (LOWER(username))
           LOWER(username) AS username_key,
+          player_uuid,
+          registration_at,
           last_seen,
           is_online
         FROM player_activity
@@ -2187,18 +2207,34 @@ async function getPlayerStats() {
           MIN(tracking_since) FILTER (WHERE tracking_since IS NOT NULL) AS tracking_since
         FROM player_playtime
         GROUP BY LOWER(username)
+      ),
+      chat_counts_uuid AS (
+        SELECT player_uuid, SUM(message_count)::bigint AS total_messages
+        FROM game_chat_messages
+        WHERE player_uuid IS NOT NULL
+        GROUP BY player_uuid
+      ),
+      chat_counts_name AS (
+        SELECT LOWER(username) AS username_key, SUM(message_count)::bigint AS total_messages
+        FROM game_chat_messages
+        WHERE player_uuid IS NULL
+        GROUP BY LOWER(username)
       )
       SELECT
         w.username,
         COALESCE(pa.is_online, FALSE) AS is_online,
         pa.last_seen,
+        pa.registration_at,
         COALESCE(pt.total_seconds, 0) +
           CASE WHEN pt.tracking_since IS NULL THEN 0
                ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - pt.tracking_since)))::BIGINT)
-          END AS total_seconds
+          END AS total_seconds,
+        COALESCE(chat_uuid.total_messages, chat_name.total_messages, 0)::int AS total_messages
       FROM whitelist_players w
       LEFT JOIN activity pa ON pa.username_key = w.username_key
       LEFT JOIN playtime pt ON pt.username_key = w.username_key
+      LEFT JOIN chat_counts_uuid chat_uuid ON pa.player_uuid IS NOT NULL AND chat_uuid.player_uuid = pa.player_uuid
+      LEFT JOIN chat_counts_name chat_name ON pa.player_uuid IS NULL AND chat_name.username_key = w.username_key
       ORDER BY total_seconds DESC, w.username_key
     `),
     pool.query(`
@@ -2315,8 +2351,10 @@ async function getPlayerStats() {
           username: row.username,
           isOnline: Boolean(row.is_online),
           lastSeen: row.last_seen,
+          joinDate: row.registration_at,
           totalSeconds: seconds,
-          playtime: formatSeconds(seconds)
+          playtime: formatSeconds(seconds),
+          messageCount: toInt(row.total_messages)
         };
       }),
       whitelisted: whitelistLeaderboardResult.rows.map(row => {
@@ -2325,8 +2363,10 @@ async function getPlayerStats() {
           username: row.username,
           isOnline: Boolean(row.is_online),
           lastSeen: row.last_seen,
+          joinDate: row.registration_at,
           totalSeconds: seconds,
-          playtime: formatSeconds(seconds)
+          playtime: formatSeconds(seconds),
+          messageCount: toInt(row.total_messages)
         };
       })
     },
@@ -2336,8 +2376,10 @@ async function getPlayerStats() {
         username: row.username,
         isOnline: Boolean(row.is_online),
         lastSeen: row.last_seen,
+        joinDate: row.registration_at,
         totalSeconds: seconds,
-        playtime: formatSeconds(seconds)
+        playtime: formatSeconds(seconds),
+        messageCount: toInt(row.total_messages)
       };
     }),
     hourlyUnwhitelisted: hourlyUnwhitelistedResult.rows.map(row => ({

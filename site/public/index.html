@@ -959,13 +959,23 @@
           <section class="panel player-leaderboard-panel">
             <div class="panel-head">
               <div>
-                <h2>Playtime Leaderboard</h2>
+                <h2>Player Leaderboard</h2>
                 <p id="playtimeLeaderboardDescription">Top 100 server-wide playtime totals.</p>
               </div>
-              <div id="playtimeLeaderboardScope" class="chart-controls playtime-scope-controls" data-active-scope="global" role="group" aria-label="Playtime leaderboard source">
+              <div id="playtimeLeaderboardScope" class="chart-controls playtime-scope-controls" data-active-scope="global" role="group" aria-label="Leaderboard source">
                 <button class="chart-range-button active" type="button" data-playtime-scope="global" aria-pressed="true">Global</button>
                 <button class="chart-range-button" type="button" data-playtime-scope="whitelisted" aria-pressed="false">Whitelisted</button>
               </div>
+            </div>
+            <div class="leaderboard-sort-row">
+              <div id="playtimeLeaderboardSort" class="chart-controls playtime-sort-controls" data-active-sort="playtime" role="group" aria-label="Sort leaderboard by">
+                <button class="chart-range-button active" type="button" data-playtime-sort="playtime" aria-pressed="true">Playtime</button>
+                <button class="chart-range-button" type="button" data-playtime-sort="messages" aria-pressed="false">Messages</button>
+                <button class="chart-range-button" type="button" data-playtime-sort="joindate" aria-pressed="false">Join Date</button>
+              </div>
+              <button id="playtimeLeaderboardDirection" class="leaderboard-direction-button" type="button" data-direction="desc" aria-pressed="false" aria-label="Sort highest to lowest" title="Highest to lowest">
+                <span class="leaderboard-direction-icon" aria-hidden="true">&#8595;</span>
+              </button>
             </div>
             <div id="playtimeLeaderboard" class="rank-list leaderboard-list" aria-live="polite"></div>
           </section>

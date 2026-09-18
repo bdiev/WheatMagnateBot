@@ -3635,6 +3635,54 @@ body.search-focus-active #logoutButton {
   }
 }
 
+.leaderboard-sort-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.playtime-sort-controls {
+  flex: 1 1 auto;
+}
+
+.leaderboard-direction-button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-width: 38px;
+  min-height: 34px;
+  border: 2px solid var(--line);
+  border-radius: var(--button-radius);
+  padding: 0 12px;
+  color: var(--muted);
+  background: var(--panel-soft);
+  font-size: 15px;
+  font-weight: 800;
+  transition: color 180ms ease, background-color 180ms ease, transform 150ms ease, border-color 180ms ease;
+}
+
+.leaderboard-direction-button:hover {
+  color: var(--text);
+  background: var(--panel);
+  transform: translateY(-1px);
+}
+
+.leaderboard-direction-button[data-direction="asc"] {
+  color: #fff;
+  background: var(--accent);
+  border-color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .leaderboard-direction-button {
+    transition: none !important;
+  }
+}
+
 #tab-admin.tab-panel.active,
 #tab-admin .panel-flow-grid,
 #tab-admin .section-grid,
@@ -7987,6 +8035,15 @@ body.modal-open { overflow:hidden; }
 
   .playtime-scope-controls .chart-range-button {
     flex: 1 1 50%;
+  }
+
+  .leaderboard-sort-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .leaderboard-direction-button {
+    width: 100%;
   }
 
   .player-nearby-panel .rank-list,
