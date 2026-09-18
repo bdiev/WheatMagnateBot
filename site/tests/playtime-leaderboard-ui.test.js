@@ -14,12 +14,19 @@ const stylesSource = fs.readFileSync(path.join(publicDirectory, 'styles.css'), '
 const getPlayerStatsSource = serverSource.match(
   /async function getPlayerStats\(\) \{[\s\S]*?\n\}(?=\r?\n\r?\nfunction obsidianChartBucketKey)/
 )?.[0] || '';
-const leaderboardQuery = [...getPlayerStatsSource.matchAll(/pool\.query\(`([\s\S]*?)`\)/g)][0]?.[1] || '';
+const leaderboardQuery = [...getPlayerStatsSource.matchAll(/database\.query\(`([\s\S]*?)`\)/g)][0]?.[1] || '';
 assert.match(leaderboardQuery, /FROM identities identity[\s\S]*ORDER BY total_seconds DESC/, 'the server must return every resolved player identity');
 assert.doesNotMatch(leaderboardQuery, /\bLIMIT\s+(?:100|500)\b/, 'the server must not discard players before the selected metric is sorted');
 assert.doesNotMatch(leaderboardQuery, /JOIN LATERAL/, 'leaderboard totals must not rescan metric tables once per player');
 assert.match(serverSource, /playtimeLeaderboards:\s*\{\s*global:/, 'player stats must expose a global leaderboard');
 assert.match(serverSource, /whitelisted:\s*whitelistedLeaderboardRows/, 'the shared metric query must expose the whitelist leaderboard separately');
+assert.match(getPlayerStatsSource, /const client = await pool\.connect\(\)[\s\S]*queryQueue[\s\S]*client\.release\(\)/, 'player statistics must use only one pooled database connection');
+assert.match(serverSource, /PLAYER_STATS_CACHE_TTL_MS[\s\S]*playerStatsCachePromise[\s\S]*getCachedPlayerStats/, 'concurrent player-stat requests must share a short-lived cache');
+const getServerStatsSource = serverSource.match(
+  /async function getServerStats\(\) \{[\s\S]*?\n\}(?=\r?\n\r?\nasync function searchSeenPlayers)/
+)?.[0] || '';
+assert.doesNotMatch(getServerStatsSource, /getPlayerStats|getCachedPlayerStats/, 'general server statistics must not wait for the leaderboard query');
+assert.match(serverSource, /url\.pathname === '\/api\/player-stats'[\s\S]*getCachedPlayerStats/, 'player statistics must have an independent cached endpoint');
 assert.match(
   leaderboardQuery,
   /message_deltas AS[\s\S]*message\.created_at > identity\.observed_message_count_at/,
@@ -41,6 +48,8 @@ assert.match(indexSource, /id="playtimeLeaderboardScope"[^>]*data-active-scope="
 assert.match(appSource, /playtimeLeaderboardScope:\s*'global'/, 'the leaderboard must default to the server-wide scope');
 assert.match(appSource, /global:\s*Array\.isArray\(leaderboardSources\.global\) \? leaderboardSources\.global : \[\]/, 'the client must retain every Global player for sorting');
 assert.match(appSource, /sortPlaytimeLeaderboardEntries[\s\S]*scope === 'global' \? sortedLeaderboard\.slice\(0, 100\)/, 'the client must select the visible top 100 only after sorting the full metric set');
+assert.match(appSource, /tab === 'players'[\s\S]*loadPlayerStats\(\)/, 'the expensive player metrics must load lazily when Players is opened');
+assert.match(appSource, /state\.activeTab === 'players'[\s\S]*sectionLoads\.push\(loadPlayerStats\(\)\)/, 'full synchronization must skip player metrics outside the Players tab');
 assert.match(appSource, /function setPlaytimeLeaderboardScope\(scope\)/, 'the leaderboard tabs must switch without reloading the dashboard');
 assert.match(appSource, /classList\.add\('is-leaving'\)[\s\S]*classList\.add\('is-entering'\)[\s\S]*160/, 'the old list must leave before the new list enters');
 assert.match(appSource, /setAttribute\('aria-busy', 'true'\)[\s\S]*removeAttribute\('aria-busy'\)/, 'the animated list swap must expose its busy state');

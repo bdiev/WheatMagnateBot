@@ -65,7 +65,7 @@ async function run() {
       /async function getPlayerStats\(\) \{[\s\S]*?\n\}(?=\r?\n\r?\nfunction obsidianChartBucketKey)/
     )?.[0];
     assert.ok(functionSource, 'getPlayerStats source must be available');
-    const queries = [...functionSource.matchAll(/pool\.query\(`([\s\S]*?)`\)/g)].map(match => match[1]);
+    const queries = [...functionSource.matchAll(/database\.query\(`([\s\S]*?)`\)/g)].map(match => match[1]);
     assert.ok(queries.length >= 2, 'leaderboard SQL queries must be discoverable');
 
     const globalRows = (await db.query(queries[0])).rows;

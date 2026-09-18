@@ -2053,6 +2053,10 @@ async function getBotStats() {
 }
 
 const NEW_PLAYERS_PAGE_LIMIT = 24;
+const PLAYER_STATS_CACHE_TTL_MS = 60_000;
+let playerStatsCacheValue = null;
+let playerStatsCacheExpiresAt = 0;
+let playerStatsCachePromise = null;
 
 function publicNewPlayer(row) {
   return {
@@ -2101,7 +2105,17 @@ async function getNewPlayersPage(url = null, database = pool) {
 
 async function getPlayerStats() {
   assertDatabase();
+  const client = await pool.connect();
+  let queryQueue = Promise.resolve();
+  const database = {
+    query(sql, params = []) {
+      const result = queryQueue.then(() => client.query(sql, params));
+      queryQueue = result.then(() => undefined, () => undefined);
+      return result;
+    }
+  };
 
+  try {
   const [
     globalLeaderboardResult,
     playersResult,
@@ -2111,7 +2125,7 @@ async function getPlayerStats() {
     milestoneResult,
     newPlayersResult
   ] = await Promise.all([
-    pool.query(`
+    database.query(`
       WITH alias_candidates AS (
         SELECT LOWER(username) AS username_key, player_uuid, 1 AS priority
         FROM player_activity
@@ -2258,7 +2272,7 @@ async function getPlayerStats() {
       LEFT JOIN whitelist_flags flags USING (identity_key)
       ORDER BY total_seconds DESC, LOWER(identity.username)
     `),
-    pool.query(`
+    database.query(`
       WITH whitelist_players AS (
         SELECT DISTINCT ON (LOWER(username))
           LOWER(username) AS username_key,
@@ -2280,13 +2294,13 @@ async function getPlayerStats() {
       FROM whitelist_players w
       LEFT JOIN activity pa ON pa.username_key = w.username_key
     `),
-    pool.query(`
+    database.query(`
       SELECT
         COUNT(DISTINCT LOWER(username)) FILTER (WHERE last_seen >= NOW() - INTERVAL '24 hours')::int AS seen_24h,
         COUNT(DISTINCT LOWER(username)) FILTER (WHERE last_seen >= NOW() - INTERVAL '7 days')::int AS seen_7d
       FROM player_activity
     `),
-    pool.query(`
+    database.query(`
       WITH activity AS (
         SELECT DISTINCT ON (LOWER(username))
           LOWER(username) AS username_key,
@@ -2302,7 +2316,7 @@ async function getPlayerStats() {
           SELECT 1 FROM whitelist w WHERE LOWER(w.username) = pa.username_key
         )
     `),
-    pool.query(`
+    database.query(`
       WITH recorded_events AS (
         SELECT occurred_at,LOWER(username) AS username_key
         FROM player_session_events
@@ -2350,7 +2364,7 @@ async function getPlayerStats() {
       FROM all_buckets
       ORDER BY bucket
     `),
-    pool.query(`
+    database.query(`
       WITH whitelist_players AS (
         SELECT DISTINCT ON (LOWER(username))
           LOWER(username) AS username_key,
@@ -2371,7 +2385,7 @@ async function getPlayerStats() {
       JOIN activity ON activity.username_key = w.username_key
       WHERE activity.registration_at IS NOT NULL
     `),
-    getNewPlayersPage()
+    getNewPlayersPage(null, database)
   ]);
 
   const totals = playersResult.rows[0] || {};
@@ -2420,6 +2434,29 @@ async function getPlayerStats() {
       hasMore: newPlayersResult.hasMore
     }
   };
+  } finally {
+    await queryQueue;
+    client.release();
+  }
+}
+
+async function getCachedPlayerStats({ force = false } = {}) {
+  const now = Date.now();
+  if (!force && playerStatsCacheValue && now < playerStatsCacheExpiresAt) {
+    return playerStatsCacheValue;
+  }
+  if (playerStatsCachePromise) return playerStatsCachePromise;
+
+  playerStatsCachePromise = getPlayerStats()
+    .then(value => {
+      playerStatsCacheValue = value;
+      playerStatsCacheExpiresAt = Date.now() + PLAYER_STATS_CACHE_TTL_MS;
+      return value;
+    })
+    .finally(() => {
+      playerStatsCachePromise = null;
+    });
+  return playerStatsCachePromise;
 }
 
 function obsidianChartBucketKey(value) {
@@ -3342,7 +3379,7 @@ async function exportObsidianCsv(res, url) {
 async function getServerStats() {
   assertDatabase();
 
-  const [tpsSummaryResult, hourlyTpsResult, nearbyResult, playerStats] = await Promise.all([
+  const [tpsSummaryResult, hourlyTpsResult, nearbyResult] = await Promise.all([
     pool.query(`
       SELECT
         (SELECT tps FROM bot_tps_samples ORDER BY sampled_at DESC LIMIT 1) AS latest,
@@ -3366,8 +3403,7 @@ async function getServerStats() {
       SELECT username, distance, last_seen
       FROM nearby_player_sightings
       ORDER BY last_seen DESC
-    `),
-    getPlayerStats()
+    `)
   ]);
 
   const tpsRow = tpsSummaryResult.rows[0] || {};
@@ -3389,8 +3425,7 @@ async function getServerStats() {
       username: row.username,
       distance: toInt(row.distance),
       lastSeen: row.last_seen
-    })),
-    playerStats
+    }))
   };
 }
 
@@ -5721,8 +5756,17 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/server-stats') {
       const scoped = await scopedAccountRuntime(url,currentUser);
-      if (scoped) { sendJson(res,200,{playerStats:{players:{online:0,total:0,onlineUnwhitelisted:0,seen24h:0,seen7d:0},playtimeLeaderboards:{global:[],whitelisted:[]},playtimeLeaderboard:[],milestones:[],newPlayers:[],newPlayersPage:{limit:NEW_PLAYERS_PAGE_LIMIT,offset:0,nextOffset:0,hasMore:false}},nearby:scoped.bot.nearbyPlayers || [],tps:{latest:null,latestAt:scoped.observedAt,min24h:null,max24h:null},hourlyTps:[]}); return; }
+      if (scoped) { sendJson(res,200,{nearby:scoped.bot.nearbyPlayers || [],tps:{latest:null,latestAt:scoped.observedAt,min24h:null,max24h:null},hourlyTps:[]}); return; }
       sendJson(res, 200, await getServerStats());
+      return;
+    }
+    if (url.pathname === '/api/player-stats') {
+      const scoped = await scopedAccountRuntime(url,currentUser);
+      if (scoped) {
+        sendJson(res, 200, { players:{online:0,total:0,onlineUnwhitelisted:0,seen24h:0,seen7d:0},playtimeLeaderboards:{global:[],whitelisted:[]},playtimeLeaderboard:[],milestones:[],newPlayers:[],newPlayersPage:{limit:NEW_PLAYERS_PAGE_LIMIT,offset:0,nextOffset:0,hasMore:false} });
+        return;
+      }
+      sendJson(res, 200, await getCachedPlayerStats({ force: url.searchParams.get('fresh') === '1' }));
       return;
     }
     if (url.pathname === '/api/new-players' && req.method === 'GET') {

@@ -78,6 +78,10 @@ const state = {
   playtimeLeaderboardSort: 'playtime',
   playtimeLeaderboardDirection: 'desc',
   playtimeLeaderboards: { global: [], whitelisted: [] },
+  playerStatsLoading: false,
+  playerStatsLoadedAt: 0,
+  playerStatsAccountId: null,
+  playerStatsPromise: null,
   newPlayers: [],
   newPlayersInitialized: false,
   newPlayersLoading: false,
@@ -2184,6 +2188,7 @@ function setActiveTab(tab) {
   if (tab === 'chat') ensureInitialChatScroll();
   if (tab === 'players') {
     resetPlaytimeLeaderboardScroll($('#playtimeLeaderboard'), state.playtimeLeaderboardScope);
+    loadPlayerStats().catch(error => setBanner(`Could not load player statistics: ${error.message}`));
   }
   requestAnimationFrame(updateCarousels);
   const tabChartId = Object.keys(CHART_TAB_BY_ID).find(id => CHART_TAB_BY_ID[id] === tab);
@@ -5895,7 +5900,7 @@ function maybeLoadMoreNewPlayers() {
   if (distanceFromBottom <= 160) loadMoreNewPlayers();
 }
 
-function renderPlayerStats(payload = {}, nearbyPlayers = []) {
+function renderPlayerStats(payload = {}, nearbyPlayers = null) {
   $('#onlinePlayers').textContent = formatNumber(payload.players?.online);
   $('#totalPlayers').textContent = `of ${formatNumber(payload.players?.total)} whitelisted`;
   $('#onlineUnwhitelistedPlayers').textContent = formatNumber(payload.players?.onlineUnwhitelisted);
@@ -5912,7 +5917,7 @@ function renderPlayerStats(payload = {}, nearbyPlayers = []) {
   };
   renderPlaytimeLeaderboard();
 
-  renderNearbySightings(nearbyPlayers);
+  if (Array.isArray(nearbyPlayers)) renderNearbySightings(nearbyPlayers);
 
   syncNewPlayers(
     Array.isArray(payload.newPlayers) ? payload.newPlayers : [],
@@ -6852,7 +6857,8 @@ async function handleTooltipDrop(button) {
 }
 
 function renderServerStats(payload) {
-  renderPlayerStats(payload.playerStats || {}, payload.nearby || []);
+  if (payload.playerStats) renderPlayerStats(payload.playerStats, payload.nearby || []);
+  else if (Array.isArray(payload.nearby)) renderNearbySightings(payload.nearby);
 
   const tps = payload.tps || {};
   $('#latestTps').textContent = formatTps(tps.latest);
@@ -9179,6 +9185,33 @@ async function refreshKillAuraFromEvent() {
   renderKillAura(await fetchJson('/api/kill-aura'));
 }
 
+async function loadPlayerStats({ force = false } = {}) {
+  if (!state.currentUser || document.visibilityState === 'hidden') return false;
+  const accountId = state.activeAccountId;
+  const isFresh = state.playerStatsAccountId === accountId
+    && Date.now() - state.playerStatsLoadedAt < 30_000;
+  if (!force && isFresh) return true;
+  if (state.playerStatsPromise) return state.playerStatsPromise;
+
+  state.playerStatsLoading = true;
+  const request = fetchJson(`/api/player-stats${force ? '?fresh=1' : ''}`, {
+    signal: state.accountAbortController?.signal || null
+  }).then(payload => {
+    if (accountId !== state.activeAccountId) return false;
+    renderPlayerStats(payload);
+    state.playerStatsLoadedAt = Date.now();
+    state.playerStatsAccountId = accountId;
+    return true;
+  }).finally(() => {
+    if (state.playerStatsPromise === request) {
+      state.playerStatsLoading = false;
+      state.playerStatsPromise = null;
+    }
+  });
+  state.playerStatsPromise = request;
+  return request;
+}
+
 async function refreshLiveDashboard() {
   if (!state.currentUser || state.liveDashboardLoading || document.visibilityState === 'hidden') return;
   const accountId = state.activeAccountId;
@@ -9225,7 +9258,11 @@ function hasActiveTextSelectionWithin(container) {
 }
 
 async function refreshPlayersFromEvent() {
-  renderServerStats(await fetchJson('/api/server-stats'));
+  const serverRequest = fetchJson('/api/server-stats').then(renderServerStats);
+  const playerRequest = state.activeTab === 'players'
+    ? loadPlayerStats()
+    : Promise.resolve();
+  await Promise.all([serverRequest, playerRequest]);
 }
 
 function scheduleRealtimeChartRefresh() {
@@ -9390,6 +9427,9 @@ async function loadAll({ force = false, switchGeneration = state.accountSwitchGe
         }),
         fetchJson('/api/server-stats', { signal }).then(renderIfCurrent(renderServerStats))
       ];
+      if (state.activeTab === 'players') {
+        sectionLoads.push(loadPlayerStats());
+      }
       const results = await Promise.allSettled(sectionLoads);
       if (!isCurrentSync()) return false;
       const failed = results.find(result => result.status === 'rejected');
