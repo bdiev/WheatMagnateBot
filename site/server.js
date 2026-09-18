@@ -2058,6 +2058,34 @@ let playerStatsCacheValue = null;
 let playerStatsCacheExpiresAt = 0;
 let playerStatsCachePromise = null;
 
+async function loadPersistedPlayerStatsCache() {
+  if (!pool) return false;
+  const result = await pool.query(`
+    SELECT payload, generated_at
+    FROM site_player_stats_cache
+    WHERE id = 1
+  `);
+  const row = result.rows[0];
+  if (!row?.payload || typeof row.payload !== 'object') return false;
+  const generatedAt = new Date(row.generated_at).getTime();
+  playerStatsCacheValue = row.payload;
+  playerStatsCacheExpiresAt = Number.isFinite(generatedAt)
+    ? generatedAt + PLAYER_STATS_CACHE_TTL_MS
+    : 0;
+  return true;
+}
+
+async function persistPlayerStatsCache(value) {
+  if (!pool || !value) return;
+  await pool.query(`
+    INSERT INTO site_player_stats_cache (id, payload, generated_at)
+    VALUES (1, $1::jsonb, NOW())
+    ON CONFLICT (id) DO UPDATE
+    SET payload = EXCLUDED.payload,
+        generated_at = EXCLUDED.generated_at
+  `, [JSON.stringify(value)]);
+}
+
 function publicNewPlayer(row) {
   return {
     username: row.username,
@@ -2440,23 +2468,37 @@ async function getPlayerStats() {
   }
 }
 
-async function getCachedPlayerStats({ force = false } = {}) {
-  const now = Date.now();
-  if (!force && playerStatsCacheValue && now < playerStatsCacheExpiresAt) {
-    return playerStatsCacheValue;
-  }
+function refreshPlayerStatsCache() {
   if (playerStatsCachePromise) return playerStatsCachePromise;
 
   playerStatsCachePromise = getPlayerStats()
     .then(value => {
       playerStatsCacheValue = value;
       playerStatsCacheExpiresAt = Date.now() + PLAYER_STATS_CACHE_TTL_MS;
+      persistPlayerStatsCache(value).catch(error => {
+        console.error('[Site] Could not persist Player Stats cache:', error.message);
+      });
       return value;
     })
     .finally(() => {
       playerStatsCachePromise = null;
     });
   return playerStatsCachePromise;
+}
+
+async function getCachedPlayerStats({ force = false } = {}) {
+  if (force) return refreshPlayerStatsCache();
+
+  if (playerStatsCacheValue) {
+    if (Date.now() >= playerStatsCacheExpiresAt) {
+      refreshPlayerStatsCache().catch(error => {
+        console.error('[Site] Could not refresh Player Stats cache:', error.message);
+      });
+    }
+    return playerStatsCacheValue;
+  }
+
+  return refreshPlayerStatsCache();
 }
 
 function obsidianChartBucketKey(value) {
@@ -6132,6 +6174,10 @@ async function startSiteServer() {
     if (ADMIN_BOOTSTRAP_TOKEN && !BOOTSTRAP_TOKEN_CONFIGURED) console.warn('[Site] ADMIN_BOOTSTRAP_TOKEN is ignored because it is shorter than 32 characters.');
     await ensureOptionalTables();
     await bootstrapAdminFromEnvironment();
+    await loadPersistedPlayerStatsCache();
+    getCachedPlayerStats().catch(error => {
+      console.error('[Site] Could not warm Player Stats cache:', error.message);
+    });
   } catch (err) {
     console.error('[Site] Failed to initialize database tables:', err.message);
   } finally {
