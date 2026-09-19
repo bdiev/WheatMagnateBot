@@ -4073,8 +4073,10 @@ body.search-focus-active #logoutButton {
 }
 
 .chat-activity-player:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  outline: 0;
+  color: inherit;
+  background: transparent;
+  box-shadow: none;
 }
 
 @media (hover: none) and (pointer: coarse) {
@@ -4082,12 +4084,6 @@ body.search-focus-active #logoutButton {
     -webkit-tap-highlight-color: transparent;
   }
 
-  .chat-activity-player:focus,
-  .chat-activity-player:focus-visible {
-    outline: 0;
-    background: transparent;
-    box-shadow: none;
-  }
 }
 
 .chat-message.chat-notice {
@@ -7247,6 +7243,22 @@ body.modal-open { overflow:hidden; }
 .analytics-alert { padding: 10px 12px; border: 2px solid var(--line); border-radius: 4px; background: var(--panel-soft); }
 .analytics-alert.warning { border-color: color-mix(in srgb, #f0ad4e 45%, var(--line)); }
 .analytics-alert.critical { border-color: color-mix(in srgb, #ef5350 55%, var(--line)); }
+
+/* Keep analytics labels in the body face, but render their values with the
+   same Minecraft counter face used by Retired pickaxe blocks. */
+#farmDetails > div > strong,
+#obsidianEfficiency > div > strong,
+#obsidianForecast > div > strong,
+#obsidianComparisons > div > strong,
+#obsidianSettingsSummary > div > strong,
+#obsidianGoals .goal-target,
+#obsidianAnalyticsSettings input[type="number"],
+#obsidianAnomalies .analytics-alert {
+  font-family: var(--font-pixel);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.25px;
+}
+
 .chart-annotations { display: flex; gap: 8px; overflow-x: auto; padding: 8px 4px 2px; color: var(--muted); font-size: 12px; scrollbar-width: none; -ms-overflow-style: none; }
 .chart-annotations::-webkit-scrollbar { display: none; }
 .chart-annotations span { --annotation-color: var(--annotation-default); display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; padding: 4px 8px; border: 1px solid color-mix(in srgb, var(--annotation-color) 58%, var(--line)); border-radius: 2px; color: color-mix(in srgb, var(--annotation-color) 82%, var(--text)); background: color-mix(in srgb, var(--annotation-color) 11%, var(--panel)); }

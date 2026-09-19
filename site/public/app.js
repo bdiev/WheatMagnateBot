@@ -4865,7 +4865,7 @@ function renderChatMessages(messages, { scrollMode = 'preserve' } = {}) {
     article.innerHTML = isActivity
       ? `<span class="chat-activity-mark" aria-hidden="true"></span>
          <div class="chat-activity-copy">
-           <button class="chat-activity-player" type="button" data-player="${escapeHtml(username)}" title="Open player profile">${escapeHtml(username)}</button>
+           <button class="chat-activity-player" type="button" data-player="${escapeHtml(username)}" aria-label="Open ${escapeHtml(username)} player profile">${escapeHtml(username)}</button>
            <span class="chat-text"></span>
          </div>
          <time class="chat-time">${formatChatTime(message.createdAt)}</time>`

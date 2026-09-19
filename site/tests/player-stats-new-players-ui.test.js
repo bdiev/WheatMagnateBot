@@ -24,6 +24,16 @@ assert.match(
   'join and leave activity nicknames must open the standard player profile'
 );
 assert.match(
+  appSource,
+  /chat-activity-player[^>]*aria-label="Open \$\{escapeHtml\(username\)\} player profile"/,
+  'activity player buttons must keep an accessible label without a visible tooltip'
+);
+assert.doesNotMatch(
+  appSource,
+  /chat-activity-player[^>]*title="Open player profile"/,
+  'activity player buttons must not show the native profile tooltip'
+);
+assert.match(
   htmlSource,
   /player-new-panel[\s\S]*<h2>New Players<\/h2>[\s\S]*id="newPlayersList"/,
   'Player Stats must contain a New Players card'
@@ -106,8 +116,13 @@ assert.match(
 );
 assert.match(
   stylesSource,
-  /@media \(hover: none\) and \(pointer: coarse\)\s*\{[\s\S]*?\.chat-activity-player\s*\{[^}]*-webkit-tap-highlight-color:\s*transparent;[\s\S]*?\.chat-activity-player:focus,[\s\S]*?\.chat-activity-player:focus-visible\s*\{[^}]*outline:\s*0;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;/s,
-  'touching an activity nickname must not leave a focus or tap highlight'
+  /\.chat-activity-player:focus-visible\s*\{[^}]*outline:\s*0;[^}]*color:\s*inherit;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;/s,
+  'focused activity nicknames must not receive a visible box highlight'
+);
+assert.match(
+  stylesSource,
+  /@media \(hover: none\) and \(pointer: coarse\)\s*\{[\s\S]*?\.chat-activity-player\s*\{[^}]*-webkit-tap-highlight-color:\s*transparent;/s,
+  'touching an activity nickname must not show the platform tap highlight'
 );
 assert.match(
   stylesSource,
