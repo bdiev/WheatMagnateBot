@@ -40,13 +40,13 @@ assert.match(
 );
 assert.match(
   appSource,
-  /function fitPlayerProfileName\(\)[\s\S]*?naturalWidth <= availableWidth[\s\S]*?defaultSize \* availableWidth \/ naturalWidth/,
-  'long mobile player names must scale down to their available width'
+  /function fitPlayerProfileName\(\)[\s\S]*?closeRect\.left - nameRect\.left - 10[\s\S]*?naturalWidth <= availableWidth[\s\S]*?defaultSize \* availableWidth \/ naturalWidth/,
+  'long mobile player names must scale down before reaching the close button'
 );
 assert.match(
   appSource,
-  /requestAnimationFrame\(fitPlayerProfileName\);/,
-  'the player name must be fitted after the profile is rendered'
+  /requestAnimationFrame\(fitPlayerProfileName\);[\s\S]*?document\.fonts\?\.ready\?\.then/,
+  'the player name must be fitted after rendering and after its font loads'
 );
 assert.match(
   stylesSource,
@@ -55,8 +55,8 @@ assert.match(
 );
 assert.match(
   stylesSource,
-  /@media \(max-width: 700px\) \{[\s\S]*?\.player-profile-head h2 \{[\s\S]*?text-overflow: clip;[\s\S]*?white-space: nowrap;/,
-  'long player names must remain on one line without an ellipsis'
+  /@media \(max-width: 700px\) \{[\s\S]*?\.player-profile-head h2 \{[\s\S]*?overflow: hidden;[\s\S]*?text-overflow: clip;[\s\S]*?white-space: nowrap;/,
+  'long player names must remain on one clipped-safe line while fitting'
 );
 assert.match(
   stylesSource,

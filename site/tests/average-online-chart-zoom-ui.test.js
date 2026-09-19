@@ -30,5 +30,10 @@ assert.match(
   /\.chart-zoom-reset\s*\{[^}]*flex:\s*0 0 52px;[^}]*width:\s*52px;[^}]*min-width:\s*52px;[^}]*max-width:\s*52px;/s,
   'changing the zoom percentage must not resize or reflow the chart header'
 );
+assert.match(
+  stylesSource,
+  /\.chart-controls:not\(\.playtime-scope-controls\)[^}]*grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\);[^}]*\}[\s\S]*?\.chart-zoom-controls \.chart-zoom-reset\s*\{[^}]*width:\s*100%;[^}]*min-width:\s*0;[^}]*max-width:\s*none;/,
+  'mobile zoom controls must use three equally sized buttons'
+);
 
 console.log('Average online chart zoom UI tests passed.');

@@ -11,6 +11,10 @@ assert.match(mobileStyles, /\.farm-details-panel \.detail-list\s*\{[^}]*grid-aut
   'mobile farm details must use compact content-height rows');
 assert.match(mobileStyles, /\.farm-details-panel \.detail-list div\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);[^}]*min-height:\s*0;/s,
   'mobile farm detail labels and values must receive the full card width');
+assert.match(mobileStyles, /\.farm-details-panel \.detail-list div > span,[\s\S]*\.farm-details-panel \.detail-list div > strong\s*\{/,
+  'full-width mobile sizing must apply only to direct row content');
+assert.doesNotMatch(mobileStyles, /\.farm-details-panel \.detail-list span,/,
+  'mobile sizing must not stretch individual animated digit spans');
 assert.match(mobileStyles, /\.farm-details-panel \.detail-list strong\.mc-number,[\s\S]*\.farm-details-panel \.mc-number-digits\s*\{[^}]*white-space:\s*nowrap;/s,
   'animated farm digits must stay on one horizontal line');
 assert.match(mobileStyles, /overflow-wrap:\s*normal;[\s\S]*word-break:\s*normal;/,

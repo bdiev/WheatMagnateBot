@@ -3757,7 +3757,13 @@ function fitPlayerProfileName() {
   name.style.removeProperty('font-size');
   if (!window.matchMedia?.('(max-width: 700px)').matches) return;
 
-  const availableWidth = name.clientWidth;
+  const closeButton = $('#playerProfileClose');
+  const nameRect = name.getBoundingClientRect();
+  const closeRect = closeButton?.getBoundingClientRect();
+  const closeSafeWidth = closeRect && closeRect.left > nameRect.left
+    ? Math.max(0, closeRect.left - nameRect.left - 10)
+    : name.clientWidth;
+  const availableWidth = Math.min(name.clientWidth, closeSafeWidth);
   const naturalWidth = name.scrollWidth;
   if (!availableWidth || naturalWidth <= availableWidth) return;
 
@@ -3913,6 +3919,9 @@ function replacePlayerProfileContent(profile, { animate = false } = {}) {
   applyPlayerProfileAccent(profile);
   restorePlayerProfileViewState(content, viewState);
   requestAnimationFrame(fitPlayerProfileName);
+  document.fonts?.ready?.then(() => {
+    if (!$('#playerProfileOverlay')?.hidden) fitPlayerProfileName();
+  });
   startPlayerProfileSessionClock();
   if (!animate) return;
   void content.offsetWidth;

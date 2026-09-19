@@ -8676,8 +8676,8 @@ body.modal-open { overflow:hidden; }
     min-height: 0;
   }
 
-  .detail-list span,
-  .detail-list strong {
+  .detail-list div > span,
+  .detail-list div > strong {
     justify-self: start;
     width: 100%;
     min-width: 0;
@@ -8688,7 +8688,7 @@ body.modal-open { overflow:hidden; }
   }
 
   .chat-time,
-  .detail-list strong {
+  .detail-list div > strong {
     text-align: left;
   }
 }
@@ -8708,8 +8708,8 @@ body.modal-open { overflow:hidden; }
     padding: 9px 10px;
   }
 
-  .farm-details-panel .detail-list span,
-  .farm-details-panel .detail-list strong {
+  .farm-details-panel .detail-list div > span,
+  .farm-details-panel .detail-list div > strong {
     justify-self: stretch;
     width: 100%;
     min-width: 0;
@@ -10722,7 +10722,7 @@ body.kill-aura-modal-open {
     max-width: 100%;
     font-size: clamp(18px, 6vw, 28px);
     line-height: 1.12;
-    overflow: visible;
+    overflow: hidden;
     text-overflow: clip;
     white-space: nowrap;
   }
@@ -11042,6 +11042,7 @@ body.kill-aura-modal-open {
   .side-stack .panel-head { gap: 10px; }
   .chart-controls:not(.playtime-scope-controls) { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
   .chart-range-button { min-width: 0; min-height: 42px; padding-inline: 8px; touch-action: manipulation; }
+  .chart-zoom-controls .chart-zoom-reset { width: 100%; min-width: 0; max-width: none; }
   .tps-chart-meta { align-items: flex-start; flex-direction: column; gap: 3px; padding-inline: 10px; }
   .chart-scroll {
     min-height: 250px;
