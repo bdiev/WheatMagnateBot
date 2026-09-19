@@ -30,6 +30,8 @@ assert.match(htmlSource, /id="playerSkinsOverlay"[\s\S]*skinview3d\.bundle\.js[\
 assert.match(serverSource, /mount: '\/vendor\/skinview3d'[\s\S]*SKINVIEW3D_BUNDLES_DIR/, 'the pinned local renderer bundle must be served by the site');
 assert.match(viewerSource, /new skinview3d\.SkinViewer[\s\S]*enableControls: true/, 'skinview3d controls must allow free model rotation');
 assert.match(viewerSource, /new skinview3d\.WalkingAnimation[\s\S]*walkingAnimation\.speed = 1/, 'the model must use the natural walking animation pace');
+assert.match(viewerSource, /onAnimationPointerUp[\s\S]*toggleAnimation\(\)[\s\S]*walkingAnimation\.paused = !this\.walkingAnimation\.paused/, 'a click without dragging must pause or resume the animation');
+assert.match(appSource, /skinvieweranimationchange[\s\S]*Animation paused · Click to resume/, 'the skin viewer must explain its current animation state');
 assert.match(viewerSource, /loadCape\(capeUrl, \{ backEquipment:'elytra' \}\)/, 'official cape textures must use skinview3d elytra geometry and UV mapping');
 assert.doesNotMatch(viewerSource, /drawPixelFace|wingWorldPoints|runPhase/, 'the old pixel-grid renderer must not remain in the adapter');
 

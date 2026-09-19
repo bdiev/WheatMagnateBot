@@ -12,6 +12,7 @@
       this.canvas = canvas;
       this.disposed = false;
       this.loadRequestId = 0;
+      this.animationPointer = null;
 
       const bounds = canvas.getBoundingClientRect();
       this.walkingAnimation = new skinview3d.WalkingAnimation();
@@ -38,6 +39,28 @@
         ? new ResizeObserver(() => this.resize())
         : null;
       this.resizeObserver?.observe(canvas);
+
+      this.onAnimationPointerDown = event => {
+        if (event.button !== 0) return;
+        this.animationPointer = { id:event.pointerId, x:event.clientX, y:event.clientY, moved:false };
+      };
+      this.onAnimationPointerMove = event => {
+        if (!this.animationPointer || this.animationPointer.id !== event.pointerId) return;
+        if (Math.hypot(event.clientX - this.animationPointer.x, event.clientY - this.animationPointer.y) > 6) {
+          this.animationPointer.moved = true;
+        }
+      };
+      this.onAnimationPointerUp = event => {
+        if (!this.animationPointer || this.animationPointer.id !== event.pointerId) return;
+        const shouldToggle = !this.animationPointer.moved;
+        this.animationPointer = null;
+        if (shouldToggle) this.toggleAnimation();
+      };
+      this.onAnimationPointerCancel = () => { this.animationPointer = null; };
+      canvas.addEventListener('pointerdown', this.onAnimationPointerDown);
+      canvas.addEventListener('pointermove', this.onAnimationPointerMove);
+      canvas.addEventListener('pointerup', this.onAnimationPointerUp);
+      canvas.addEventListener('pointercancel', this.onAnimationPointerCancel);
     }
 
     resize() {
@@ -82,11 +105,24 @@
       this.viewer.zoom = 0.94;
     }
 
+    toggleAnimation() {
+      if (this.disposed) return;
+      this.walkingAnimation.paused = !this.walkingAnimation.paused;
+      this.canvas.dataset.animationPaused = String(this.walkingAnimation.paused);
+      this.canvas.dispatchEvent(new CustomEvent('skinvieweranimationchange', {
+        detail:{ paused:this.walkingAnimation.paused }
+      }));
+    }
+
     destroy() {
       if (this.disposed) return;
       this.disposed = true;
       this.loadRequestId += 1;
       this.resizeObserver?.disconnect();
+      this.canvas.removeEventListener('pointerdown', this.onAnimationPointerDown);
+      this.canvas.removeEventListener('pointermove', this.onAnimationPointerMove);
+      this.canvas.removeEventListener('pointerup', this.onAnimationPointerUp);
+      this.canvas.removeEventListener('pointercancel', this.onAnimationPointerCancel);
       this.viewer.dispose();
     }
   }

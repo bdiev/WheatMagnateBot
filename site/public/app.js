@@ -4066,9 +4066,9 @@ function renderPlayerSkins(payload) {
   }
   content.innerHTML = `
     <section class="player-skin-stage">
-      <canvas id="playerSkinCanvas" width="520" height="520" tabindex="0" aria-label="Rotatable 3D skin model. Drag to rotate, scroll to zoom, or use arrow keys."></canvas>
+      <canvas id="playerSkinCanvas" width="520" height="520" tabindex="0" aria-label="Rotatable animated 3D skin model. Click to pause or resume, drag to rotate, and scroll to zoom."></canvas>
       <div class="player-skin-stage-tools">
-        <span><strong>Drag to rotate</strong><small id="playerSkinObserved"></small></span>
+        <span><strong id="playerSkinInteractionHint">Drag to rotate · Click to pause</strong><small id="playerSkinObserved"></small></span>
         <button id="playerSkinReset" class="ghost-button" type="button">Reset view</button>
       </div>
     </section>
@@ -4088,6 +4088,12 @@ function renderPlayerSkins(payload) {
   state.playerSkinViewer = new globalThis.MinecraftSkinViewer(canvas);
   canvas.addEventListener('skinviewerload', () => canvas.classList.remove('is-loading'));
   canvas.addEventListener('skinviewererror', () => canvas.classList.remove('is-loading'));
+  canvas.addEventListener('skinvieweranimationchange', event => {
+    const paused = event.detail?.paused === true;
+    $('#playerSkinInteractionHint').textContent = paused
+      ? 'Animation paused · Click to resume'
+      : 'Drag to rotate · Click to pause';
+  });
   content.querySelectorAll('[data-player-skin-hash]').forEach((button,index) => {
     const skin = skins[index];
     drawSkinThumbnail(button.querySelector('canvas'),skin.textureUrl);
