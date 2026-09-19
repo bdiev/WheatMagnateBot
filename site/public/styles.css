@@ -8694,6 +8694,35 @@ body.modal-open { overflow:hidden; }
 }
 
 @media (max-width: 760px) {
+  .farm-details-panel .detail-list {
+    align-content: start;
+    grid-auto-rows: auto;
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .farm-details-panel .detail-list div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+    min-height: 0;
+    padding: 9px 10px;
+  }
+
+  .farm-details-panel .detail-list span,
+  .farm-details-panel .detail-list strong {
+    justify-self: stretch;
+    width: 100%;
+    min-width: 0;
+    text-align: left;
+    overflow-wrap: normal;
+    word-break: normal;
+  }
+
+  .farm-details-panel .detail-list strong.mc-number,
+  .farm-details-panel .mc-number-digits {
+    white-space: nowrap;
+  }
+
   .collapsible-section > summary {
     min-height: 58px;
     gap: 10px;
