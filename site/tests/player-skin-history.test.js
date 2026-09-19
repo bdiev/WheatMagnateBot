@@ -19,6 +19,8 @@ assert.match(serverSource, /ON CONFLICT\(player_uuid,texture_hash\)[\s\S]*last_s
 assert.match(serverSource, /\/api\/player-skins/, 'the authenticated skin-history endpoint must exist');
 assert.match(serverSource, /textures\.minecraft\.net/, 'raw skin proxying must be restricted to the official texture host');
 assert.match(appSource, /data-player-skins[\s\S]*openPlayerSkins/, 'the profile avatar must open the skin wardrobe');
+assert.match(appSource, /openPlayerSkins\(username\)[\s\S]*fetchJson\(`\/api\/player-skins\?username=/, 'the skin wardrobe must use the dashboard JSON request helper');
+assert.doesNotMatch(appSource, /\bgetJson\(/, 'the skin wardrobe must not call an undefined request helper');
 assert.match(appSource, /data-player-skin-hash/, 'saved skins must be selectable');
 assert.match(htmlSource, /id="playerSkinsOverlay"[\s\S]*minecraft-skin-viewer\.js/, 'the skin dialog and local renderer must be loaded');
 assert.match(viewerSource, /pointerdown[\s\S]*pointermove[\s\S]*ArrowLeft/, 'the model must support pointer and keyboard rotation');

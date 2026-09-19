@@ -4107,7 +4107,7 @@ async function openPlayerSkins(username) {
   overlay.hidden = false;
   $('#playerSkinsClose')?.focus();
   try {
-    const payload = await getJson(`/api/player-skins?username=${encodeURIComponent(username)}`);
+    const payload = await fetchJson(`/api/player-skins?username=${encodeURIComponent(username)}`);
     if (requestId !== state.playerSkinsRequestId || overlay.hidden) return;
     renderPlayerSkins(payload);
   } catch (err) {
