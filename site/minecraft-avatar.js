@@ -18,7 +18,7 @@ async function fetchOk(fetchImpl, url, signal, accept) {
   return response;
 }
 
-async function renderOfficialMinecraftAvatar({ username, uuid, fetchImpl = fetch, signal } = {}) {
+async function resolveOfficialMinecraftSkin({ username, uuid, fetchImpl = fetch, signal, includeBody = false } = {}) {
   let compactUuid = String(uuid || '').replace(/-/g, '').trim().toLowerCase();
   if (!compactUuid) {
     const profileResponse = await fetchOk(
@@ -41,12 +41,33 @@ async function renderOfficialMinecraftAvatar({ username, uuid, fetchImpl = fetch
   const session = await sessionResponse.json();
   const encodedTextures = session?.properties?.find(property => property?.name === 'textures')?.value;
   const textures = JSON.parse(Buffer.from(String(encodedTextures || ''), 'base64').toString('utf8'));
-  const skinUrl = new URL(textures?.textures?.SKIN?.url);
+  const skin = textures?.textures?.SKIN;
+  const skinUrl = new URL(skin?.url);
   if (skinUrl.hostname !== 'textures.minecraft.net') throw new Error('Minecraft profile returned an invalid skin URL.');
   skinUrl.protocol = 'https:';
+  const textureHash = skinUrl.pathname.split('/').filter(Boolean).at(-1)?.toLowerCase();
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(textureHash || '')) throw new Error('Minecraft profile returned an invalid skin hash.');
+
+  const result = {
+    uuid: compactUuid,
+    textureHash,
+    textureUrl: skinUrl.href,
+    model: skin?.metadata?.model === 'slim' ? 'slim' : 'classic'
+  };
+  if (!includeBody) return result;
 
   const skinResponse = await fetchOk(fetchImpl, skinUrl.href, signal, 'image/png');
-  const skin = Buffer.from(await skinResponse.arrayBuffer());
+  const body = Buffer.from(await skinResponse.arrayBuffer());
+  const metadata = await sharp(body).metadata();
+  if ((metadata.width || 0) < 64 || ![32, 64].includes(metadata.height || 0) || metadata.width !== 64) {
+    throw new Error('Minecraft skin has invalid dimensions.');
+  }
+  return { ...result, body };
+}
+
+async function renderOfficialMinecraftAvatar({ username, uuid, fetchImpl = fetch, signal } = {}) {
+  const resolvedSkin = await resolveOfficialMinecraftSkin({ username, uuid, fetchImpl, signal, includeBody: true });
+  const skin = resolvedSkin.body;
   const metadata = await sharp(skin).metadata();
   if ((metadata.width || 0) < 48 || (metadata.height || 0) < 16) throw new Error('Minecraft skin has invalid dimensions.');
 
@@ -72,4 +93,4 @@ async function renderOfficialMinecraftAvatar({ username, uuid, fetchImpl = fetch
     .toBuffer();
 }
 
-module.exports = { minecraftAvatarSources, renderOfficialMinecraftAvatar };
+module.exports = { minecraftAvatarSources, renderOfficialMinecraftAvatar, resolveOfficialMinecraftSkin };

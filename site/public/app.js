@@ -73,6 +73,8 @@ const state = {
   playerProfileRefreshTimers: [],
   playerProfileMessageRefreshes: new Set(),
   playerProfileAccentCache: new Map(),
+  playerSkinViewer: null,
+  playerSkinsRequestId: 0,
   whisperAccentCache: new Map(),
   playtimeLeaderboardScope: 'global',
   playtimeLeaderboardSort: 'playtime',
@@ -3652,9 +3654,9 @@ function renderPlayerProfile(profile) {
     </section>`;
   return `
     <header class="player-profile-head">
-      <span class="player-profile-avatar-wrap" data-status="${profile.isOnline ? 'online' : 'offline'}" aria-label="${profile.isOnline ? 'Online' : 'Offline'}">
+      <button class="player-profile-avatar-wrap" type="button" data-player-skins="${escapeHtml(profileUsername)}" data-status="${profile.isOnline ? 'online' : 'offline'}" aria-label="View ${escapeHtml(profileUsername)} skin history (${profile.isOnline ? 'online' : 'offline'})" title="View and rotate player skins">
         <img class="player-profile-avatar" src="${playerHeadUrl(profile.username, 96, { uuid: profile.uuid })}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">
-      </span>
+      </button>
       <div class="player-profile-summary">
         <div class="player-profile-identity">
           <h2 id="playerProfileName">${escapeHtml(profile.username)}</h2>
@@ -4003,6 +4005,7 @@ async function openPlayerProfile(username) {
 function closePlayerProfile() {
   const overlay = $('#playerProfileOverlay');
   if (!overlay) return;
+  closePlayerSkins();
   overlay.hidden = true;
   setPlayerProfileLoading(false);
   stopPlayerProfileSessionClock();
@@ -4017,8 +4020,110 @@ function closePlayerProfile() {
   state.playerProfileLastPayload = null;
 }
 
+function closePlayerSkins() {
+  const overlay = $('#playerSkinsOverlay');
+  if (!overlay || overlay.hidden) return;
+  overlay.hidden = true;
+  state.playerSkinsRequestId += 1;
+  state.playerSkinViewer?.destroy();
+  state.playerSkinViewer = null;
+}
+
+function drawSkinThumbnail(canvas, textureUrl) {
+  const image = new Image();
+  image.decoding = 'async';
+  image.onload = () => {
+    const context = canvas.getContext('2d');
+    context.clearRect(0,0,canvas.width,canvas.height);
+    context.imageSmoothingEnabled = false;
+    context.drawImage(image,8,8,8,8,0,0,canvas.width,canvas.height);
+    context.drawImage(image,40,8,8,8,0,0,canvas.width,canvas.height);
+  };
+  image.src = textureUrl;
+}
+
+function selectPlayerSkin(skin, button = null) {
+  const canvas = $('#playerSkinCanvas');
+  if (!canvas || !skin) return;
+  document.querySelectorAll('[data-player-skin-hash]').forEach(item => {
+    const selected = item === button || (!button && item.dataset.playerSkinHash === skin.hash);
+    item.classList.toggle('is-selected', selected);
+    item.setAttribute('aria-pressed', String(selected));
+  });
+  $('#playerSkinObserved').textContent = skin.firstSeen
+    ? `Observed ${formatDate(skin.firstSeen)}${skin.lastSeen && skin.lastSeen !== skin.firstSeen ? ` – ${formatDate(skin.lastSeen)}` : ''}`
+    : 'Current skin';
+  canvas.classList.add('is-loading');
+  state.playerSkinViewer.load(skin.textureUrl, skin.model);
+}
+
+function renderPlayerSkins(payload) {
+  const content = $('#playerSkinsContent');
+  const skins = Array.isArray(payload.skins) ? payload.skins : [];
+  if (!skins.length) {
+    content.innerHTML = `<div class="player-skins-empty"><strong>No skin captured yet</strong><p>${payload.refreshFailed ? 'The Minecraft skin service is temporarily unavailable. Try again later.' : 'This player does not currently have an official skin available.'}</p></div>`;
+    return;
+  }
+  content.innerHTML = `
+    <section class="player-skin-stage">
+      <canvas id="playerSkinCanvas" width="520" height="520" tabindex="0" aria-label="Rotatable 3D skin model. Drag to rotate, scroll to zoom, or use arrow keys."></canvas>
+      <div class="player-skin-stage-tools">
+        <span><strong>Drag to rotate</strong><small id="playerSkinObserved"></small></span>
+        <button id="playerSkinReset" class="ghost-button" type="button">Reset view</button>
+      </div>
+    </section>
+    <section class="player-skin-wardrobe" aria-label="Saved skins">
+      <header><h3>Skin history</h3><span>${formatNumber(skins.length)} ${skins.length === 1 ? 'skin' : 'skins'}</span></header>
+      <div class="player-skin-list">
+        ${skins.map((skin,index) => `
+          <button type="button" data-player-skin-hash="${escapeHtml(skin.hash)}" aria-pressed="${index === 0}" class="player-skin-choice${index === 0 ? ' is-selected' : ''}" title="Observed ${escapeHtml(formatDate(skin.firstSeen))}">
+            <canvas width="48" height="48" aria-hidden="true"></canvas>
+            <span>${index === 0 ? 'Current' : escapeHtml(formatDate(skin.firstSeen))}</span>
+          </button>`).join('')}
+      </div>
+      <p>${payload.refreshFailed ? 'Showing saved skins; the current Mojang skin could not be checked.' : 'New skins are saved automatically whenever this window is opened.'}</p>
+    </section>`;
+  const canvas = $('#playerSkinCanvas');
+  state.playerSkinViewer?.destroy();
+  state.playerSkinViewer = new globalThis.MinecraftSkinViewer(canvas);
+  canvas.addEventListener('skinviewerload', () => canvas.classList.remove('is-loading'));
+  canvas.addEventListener('skinviewererror', () => canvas.classList.remove('is-loading'));
+  content.querySelectorAll('[data-player-skin-hash]').forEach((button,index) => {
+    const skin = skins[index];
+    drawSkinThumbnail(button.querySelector('canvas'),skin.textureUrl);
+    button.addEventListener('click', () => selectPlayerSkin(skin,button));
+  });
+  $('#playerSkinReset').addEventListener('click', () => state.playerSkinViewer?.reset());
+  selectPlayerSkin(skins[0],content.querySelector('[data-player-skin-hash]'));
+}
+
+async function openPlayerSkins(username) {
+  const overlay = $('#playerSkinsOverlay');
+  const content = $('#playerSkinsContent');
+  if (!overlay || !content || !globalThis.MinecraftSkinViewer) return;
+  const requestId = ++state.playerSkinsRequestId;
+  $('#playerSkinsTitle').textContent = `${username}'s skins`;
+  content.innerHTML = '<div class="player-skins-loading" role="status"><span></span><strong>Loading skin wardrobe…</strong></div>';
+  overlay.hidden = false;
+  $('#playerSkinsClose')?.focus();
+  try {
+    const payload = await getJson(`/api/player-skins?username=${encodeURIComponent(username)}`);
+    if (requestId !== state.playerSkinsRequestId || overlay.hidden) return;
+    renderPlayerSkins(payload);
+  } catch (err) {
+    if (requestId !== state.playerSkinsRequestId || overlay.hidden) return;
+    content.innerHTML = `<div class="player-skins-empty"><strong>Could not load skins</strong><p>${escapeHtml(err.message)}</p></div>`;
+  }
+}
+
 async function handlePlayerProfileClick(event) {
   if (event.target.closest('.chat-link')) return;
+  const skinsButton = event.target.closest('[data-player-skins]');
+  if (skinsButton) {
+    event.preventDefault();
+    await openPlayerSkins(skinsButton.dataset.playerSkins);
+    return;
+  }
   const chatMessage = event.target.closest('[data-chat-message-id]');
   if (chatMessage) {
     event.preventDefault();
@@ -10124,6 +10229,10 @@ document.addEventListener('error', event => {
   image.remove();
 }, true);
 document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !$('#playerSkinsOverlay')?.hidden) {
+    closePlayerSkins();
+    return;
+  }
   if (event.key === 'Escape' && !$('#adminPlayerDeleteModal')?.hidden) {
     closeAdminPlayerDelete();
     return;
@@ -10189,6 +10298,10 @@ document.addEventListener('keydown', event => {
 $('#playerProfileClose').addEventListener('click', closePlayerProfile);
 $('#playerProfileOverlay').addEventListener('click', event => {
   if (event.target.id === 'playerProfileOverlay') closePlayerProfile();
+});
+$('#playerSkinsClose').addEventListener('click', closePlayerSkins);
+$('#playerSkinsOverlay').addEventListener('click', event => {
+  if (event.target.id === 'playerSkinsOverlay') closePlayerSkins();
 });
 
 updateNavLabel('chat');

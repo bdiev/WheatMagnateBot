@@ -4875,6 +4875,24 @@ body.search-focus-active #logoutButton {
   display: block;
   width: 72px;
   height: 72px;
+  min-width: 72px;
+  min-height: 72px;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  box-shadow: none;
+  cursor: zoom-in;
+}
+
+.player-profile-avatar-wrap:hover,
+.player-profile-avatar-wrap:focus-visible {
+  transform: translateY(-2px);
+}
+
+.player-profile-avatar-wrap:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 48%, transparent);
+  outline-offset: 4px;
 }
 
 .player-profile-avatar-wrap::after {
@@ -4916,6 +4934,105 @@ body.search-focus-active #logoutButton {
   border-radius: 2px;
   background: var(--panel);
   box-shadow: var(--shadow-inset), 4px 4px 0 color-mix(in srgb, var(--accent) 28%, rgba(0, 0, 0, 0.3));
+}
+
+.player-skins-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 240;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(8,7,5,.76);
+  backdrop-filter: blur(7px);
+  animation: overlayIn 160ms ease;
+}
+
+.player-skins-dialog {
+  position: relative;
+  width: min(760px,100%);
+  max-height: min(760px,calc(100dvh - 48px));
+  overflow: auto;
+  border: 3px solid color-mix(in srgb,var(--accent) 38%,var(--line));
+  border-radius: var(--card-radius);
+  background: var(--panel);
+  box-shadow: var(--shadow-inset),8px 8px 0 rgba(0,0,0,.42);
+  animation: profileCardIn 180ms cubic-bezier(.2,.9,.2,1);
+}
+
+.player-skins-head {
+  min-height: 76px;
+  padding: 15px 64px 14px 18px;
+  border-bottom: 2px solid var(--line);
+  background: linear-gradient(120deg,color-mix(in srgb,var(--accent) 12%,transparent),transparent 52%),var(--panel-soft);
+}
+
+.player-skins-head p,
+.player-skins-head h2 { margin:0; }
+.player-skins-head h2 { color:var(--accent-strong); font-family:"Minecraft Rus",var(--font-display); font-size:24px; font-weight:400; }
+.player-skins-content { display:grid; grid-template-columns:minmax(280px,1fr) minmax(220px,.72fr); min-height:480px; }
+
+.player-skin-stage {
+  display:grid;
+  grid-template-rows:minmax(0,1fr) auto;
+  min-width:0;
+  min-height:480px;
+  border-right:2px solid var(--line);
+  background:
+    linear-gradient(45deg,color-mix(in srgb,var(--line) 35%,transparent) 25%,transparent 25%) 0 0/24px 24px,
+    linear-gradient(45deg,transparent 75%,color-mix(in srgb,var(--line) 35%,transparent) 75%) 0 0/24px 24px,
+    linear-gradient(45deg,transparent 75%,color-mix(in srgb,var(--line) 35%,transparent) 75%) 12px 12px/24px 24px,
+    linear-gradient(45deg,color-mix(in srgb,var(--line) 35%,transparent) 25%,var(--panel-soft) 25%) 12px 12px/24px 24px;
+}
+
+#playerSkinCanvas {
+  display:block;
+  width:100%;
+  height:100%;
+  min-height:390px;
+  outline:0;
+  cursor:grab;
+  touch-action:none;
+  opacity:1;
+  transition:opacity 120ms ease;
+}
+#playerSkinCanvas.is-dragging { cursor:grabbing; }
+#playerSkinCanvas.is-loading { opacity:.34; }
+#playerSkinCanvas:focus-visible { box-shadow:inset 0 0 0 3px color-mix(in srgb,var(--accent) 52%,transparent); }
+
+.player-skin-stage-tools { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:11px 12px; border-top:2px solid var(--line); background:color-mix(in srgb,var(--panel) 92%,transparent); }
+.player-skin-stage-tools > span { display:grid; gap:2px; }
+.player-skin-stage-tools strong { font-size:12px; }
+.player-skin-stage-tools small { color:var(--muted); font-size:9px; }
+.player-skin-stage-tools button { min-height:34px; padding:7px 10px; font-size:10px; }
+
+.player-skin-wardrobe { display:grid; align-content:start; min-width:0; }
+.player-skin-wardrobe > header { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:14px; border-bottom:2px solid var(--line); }
+.player-skin-wardrobe h3 { margin:0; font-size:14px; }
+.player-skin-wardrobe header span { color:var(--muted); font-size:10px; }
+.player-skin-wardrobe > p { margin:0; padding:12px 14px; border-top:1px solid var(--line); color:var(--muted); font-size:10px; line-height:1.45; }
+.player-skin-list { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; max-height:374px; overflow:auto; padding:12px; }
+.player-skin-choice { display:grid; place-items:center; gap:6px; min-width:0; padding:8px 4px 7px; border:2px solid var(--line); border-radius:4px; color:var(--muted); background:var(--panel-soft); box-shadow:none; }
+.player-skin-choice:hover { border-color:color-mix(in srgb,var(--accent) 45%,var(--line)); color:var(--text); }
+.player-skin-choice.is-selected { border-color:var(--accent); color:var(--accent-strong); background:color-mix(in srgb,var(--accent) 10%,var(--panel-soft)); box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 22%,transparent); }
+.player-skin-choice canvas { width:48px; height:48px; border:1px solid color-mix(in srgb,var(--line) 70%,transparent); image-rendering:pixelated; background:color-mix(in srgb,var(--panel) 82%,transparent); }
+.player-skin-choice span { width:100%; overflow:hidden; font-size:9px; text-overflow:ellipsis; white-space:nowrap; }
+.player-skins-loading,.player-skins-empty { display:grid; grid-column:1/-1; place-content:center; justify-items:center; gap:10px; min-height:420px; padding:30px; color:var(--muted); text-align:center; }
+.player-skins-loading span { width:30px; height:30px; border:3px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:mc-spin-step 750ms steps(8,end) infinite; }
+.player-skins-empty strong { color:var(--text); }
+.player-skins-empty p { max-width:420px; margin:0; font-size:12px; line-height:1.5; }
+
+@media (max-width:700px) {
+  .player-skins-overlay { padding:10px; }
+  .player-skins-dialog { max-height:calc(100dvh - 20px); }
+  .player-skins-content { grid-template-columns:1fr; }
+  .player-skin-stage { min-height:390px; border-right:0; border-bottom:2px solid var(--line); }
+  #playerSkinCanvas { min-height:310px; }
+  .player-skin-list { grid-template-columns:repeat(4,minmax(0,1fr)); max-height:190px; }
+}
+
+@media (max-width:420px) {
+  .player-skin-list { grid-template-columns:repeat(3,minmax(0,1fr)); }
 }
 
 @keyframes player-offline-pulse {
@@ -8372,6 +8489,8 @@ body.modal-open { overflow:hidden; }
   .player-profile-avatar-wrap {
     width: 64px;
     height: 64px;
+    min-width: 64px;
+    min-height: 64px;
   }
 
   .player-profile-avatar-wrap::after {

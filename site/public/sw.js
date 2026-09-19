@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = '200';
+const CACHE_VERSION = '201';
 const CACHE_NAME = `wheatmagnatebot-v${CACHE_VERSION}`;
 const APP_SHELL = [
   '/',
@@ -12,6 +12,7 @@ const APP_SHELL = [
   '/pwa-update.js',
   '/page-transitions.js',
   '/player-accent.js',
+  '/minecraft-skin-viewer.js',
   '/styles.css',
   '/theme-init.js',
   '/app.js',

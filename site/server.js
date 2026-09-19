@@ -23,7 +23,7 @@ const { isValidKillAuraRange, normalizeKillAuraRange } = require('./kill-aura-ra
 const { createResourceRequestService } = require('./resource-requests');
 const { normalizeGreenChatMessage } = require('./chat-message-normalization');
 const { NEW_PLAYER_WINDOW_DAYS, isNewPlayerRegistration } = require('./player-new-status');
-const { minecraftAvatarSources, renderOfficialMinecraftAvatar } = require('./minecraft-avatar');
+const { minecraftAvatarSources, renderOfficialMinecraftAvatar, resolveOfficialMinecraftSkin } = require('./minecraft-avatar');
 const { MinecraftIconCache, minecraftIconEtag } = require('./minecraft-icon-cache');
 const {
   MUTATING_METHODS, RateLimiter, clientIp, configuredOrigins, requestIsHttps,
@@ -73,6 +73,7 @@ let liveDashboardRequest = null;
 let accountRegistry = null;
 let resourceRequestService = null;
 const minecraftAvatarCache = new Map();
+const minecraftSkinCache = new Map();
 const minecraftIconCache = new MinecraftIconCache({
   cacheDir: MINECRAFT_ICON_CACHE_DIR,
   apiKey: process.env.MINECRAFT_ASSET_API_KEY
@@ -330,6 +331,97 @@ async function sendMinecraftAvatar(res, url) {
     res.writeHead(200,{'Content-Type':'image/png','Cache-Control':'public, no-cache','Content-Length':body.length}); res.end(body); return;
   } catch { /* The official profile or skin service is temporarily unavailable. */ }
   sendError(res,502,'Minecraft avatar is temporarily unavailable.');
+}
+
+async function resolveStoredPlayerIdentity(username) {
+  const result = await pool.query(`
+    SELECT pa.username,pa.player_uuid
+    FROM player_activity pa
+    WHERE LOWER(pa.username)=LOWER($1)
+       OR EXISTS (
+         SELECT 1 FROM player_name_history pnh
+         WHERE pnh.player_uuid=pa.player_uuid AND LOWER(pnh.username)=LOWER($1)
+       )
+    ORDER BY CASE WHEN LOWER(pa.username)=LOWER($1) THEN 0 ELSE 1 END,
+             pa.is_online DESC,COALESCE(pa.last_seen,pa.last_online) DESC NULLS LAST,pa.id DESC
+    LIMIT 1
+  `, [username]);
+  return result.rows[0] || null;
+}
+
+async function getPlayerSkins(url) {
+  const requestedUsername = String(url.searchParams.get('username') || '').trim();
+  if (!/^[A-Za-z0-9_]{1,16}$/.test(requestedUsername)) {
+    throw Object.assign(new Error('Invalid Minecraft username.'), { statusCode:400 });
+  }
+  const identity = await resolveStoredPlayerIdentity(requestedUsername);
+  if (!identity?.player_uuid) throw Object.assign(new Error('Player has no known Minecraft UUID.'), { statusCode:404 });
+
+  let refreshFailed = false;
+  try {
+    const current = await resolveOfficialMinecraftSkin({
+      username: identity.username,
+      uuid: identity.player_uuid,
+      signal: AbortSignal.timeout(8_000)
+    });
+    await pool.query(`
+      INSERT INTO player_skin_history(player_uuid,texture_hash,texture_url,model)
+      VALUES($1::uuid,$2,$3,$4)
+      ON CONFLICT(player_uuid,texture_hash) DO UPDATE SET
+        texture_url=EXCLUDED.texture_url,model=EXCLUDED.model,last_seen=NOW()
+    `, [identity.player_uuid, current.textureHash, current.textureUrl, current.model]);
+  } catch {
+    refreshFailed = true;
+  }
+
+  const result = await pool.query(`
+    SELECT texture_hash,model,first_seen,last_seen
+    FROM player_skin_history
+    WHERE player_uuid=$1::uuid
+    ORDER BY last_seen DESC,id DESC
+    LIMIT 100
+  `, [identity.player_uuid]);
+  return {
+    username: identity.username,
+    uuid: identity.player_uuid,
+    refreshFailed,
+    skins: result.rows.map(row => ({
+      hash: row.texture_hash,
+      model: row.model === 'slim' ? 'slim' : 'classic',
+      firstSeen: row.first_seen,
+      lastSeen: row.last_seen,
+      textureUrl: `/api/minecraft-skin/${encodeURIComponent(row.texture_hash)}.png`
+    }))
+  };
+}
+
+async function sendMinecraftSkin(req, res, textureHash) {
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(textureHash)) { sendError(res,404,'Minecraft skin not found.'); return; }
+  const cached = minecraftSkinCache.get(textureHash);
+  if (cached && Date.now()-cached.storedAt < 6*60*60_000) {
+    res.writeHead(200,{'Content-Type':'image/png','Cache-Control':'private, max-age=21600','Content-Length':cached.body.length});
+    res.end(req.method === 'HEAD' ? undefined : cached.body);
+    return;
+  }
+  const result = await pool.query(`
+    SELECT texture_url FROM player_skin_history
+    WHERE texture_hash=$1 ORDER BY last_seen DESC LIMIT 1
+  `, [textureHash]);
+  if (!result.rowCount) { sendError(res,404,'Minecraft skin not found.'); return; }
+  let textureUrl;
+  try {
+    textureUrl = new URL(result.rows[0].texture_url);
+    if (textureUrl.protocol !== 'https:' || textureUrl.hostname !== 'textures.minecraft.net') throw new Error('invalid');
+  } catch { sendError(res,404,'Minecraft skin not found.'); return; }
+  const response = await fetch(textureUrl,{signal:AbortSignal.timeout(8_000),headers:{Accept:'image/png'}});
+  if (!response.ok) { sendError(res,502,'Minecraft skin is temporarily unavailable.'); return; }
+  const body = Buffer.from(await response.arrayBuffer());
+  const hasPngSignature = body.length >= 8 && body.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]));
+  if (!hasPngSignature || body.length > 256*1024) { sendError(res,502,'Minecraft skin is invalid.'); return; }
+  minecraftSkinCache.set(textureHash,{body,storedAt:Date.now()});
+  if (minecraftSkinCache.size > 200) minecraftSkinCache.delete(minecraftSkinCache.keys().next().value);
+  res.writeHead(200,{'Content-Type':'image/png','Cache-Control':'private, max-age=21600','Content-Length':body.length,'X-Content-Type-Options':'nosniff'});
+  res.end(req.method === 'HEAD' ? undefined : body);
 }
 
 async function sendMinecraftIcon(req, res, type, id) {
@@ -5564,6 +5656,17 @@ async function handleApi(req, res, url) {
     currentUser = await getCurrentUser(req);
     if (!currentUser) {
       sendError(res, 401, 'Login required.');
+      return;
+    }
+    if (url.pathname === '/api/player-skins' && req.method === 'GET') {
+      if (!enforceRateLimit(req, res, 'player_skins', currentUser.username, { limit: 60, windowMs: 60_000 })) return;
+      sendJson(res, 200, await getPlayerSkins(url));
+      return;
+    }
+    const minecraftSkinRoute = url.pathname.match(/^\/api\/minecraft-skin\/([A-Za-z0-9_-]{1,128})\.png$/);
+    if (minecraftSkinRoute && ['GET', 'HEAD'].includes(req.method)) {
+      if (!enforceRateLimit(req, res, 'minecraft_skin', currentUser.username, { limit: 300, windowMs: 60_000 })) return;
+      await sendMinecraftSkin(req, res, minecraftSkinRoute[1]);
       return;
     }
     const isAdminMutation = MUTATING_METHODS.has(req.method) && (url.pathname.startsWith('/api/admin/') || url.pathname === '/api/obsidian' || url.pathname === '/api/notifications/read');
