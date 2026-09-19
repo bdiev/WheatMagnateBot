@@ -3409,6 +3409,10 @@ function handleChartZoomClick(event) {
   if (viewport) {
     const targetLeft = centerFraction * viewport.scrollWidth - viewport.clientWidth / 2;
     viewport.scrollLeft = Math.max(0, Math.min(viewport.scrollWidth - viewport.clientWidth, targetLeft));
+    // The first draw resizes the canvas. Repaint once more after restoring the
+    // viewport center so the visible-value Y scale and axis labels match the
+    // newly visible portion even when assigning scrollLeft emits no event.
+    scheduleChartViewportRedraw(viewport);
   }
 }
 
