@@ -5171,6 +5171,11 @@ function renderBotStats(payload) {
   const bot = payload.bot || null;
   syncFarmLaunchFailureToast(bot);
   const connected = Boolean(bot?.connected);
+  const livePlayerCount = connected && Number.isFinite(Number(bot?.playerCount))
+    ? Number(bot.playerCount)
+    : null;
+  $('#onlinePlayers').textContent = livePlayerCount == null ? '-' : formatNumber(livePlayerCount);
+  $('#totalPlayers').textContent = connected ? 'live server total' : 'server unavailable';
   const displayedStatus = !connected && bot?.status === 'connected' ? 'stopped' : bot?.status || 'unknown';
   $('#botConnectionState').textContent = displayedStatus;
   $('#botStatusUpdated').textContent = `updated: ${formatDate(payload.observedAt || bot?.observedAt)}`;
@@ -6032,11 +6037,9 @@ function maybeLoadMoreNewPlayers() {
 }
 
 function renderPlayerStats(payload = {}, nearbyPlayers = null) {
-  $('#onlinePlayers').textContent = formatNumber(payload.players?.online);
-  $('#totalPlayers').textContent = `of ${formatNumber(payload.players?.total)} whitelisted`;
-  $('#onlineUnwhitelistedPlayers').textContent = formatNumber(payload.players?.onlineUnwhitelisted);
-  $('#seen24h').textContent = formatNumber(payload.players?.seen24h);
-  $('#seen7d').textContent = formatNumber(payload.players?.seen7d);
+  $('#uniquePlayersToday').textContent = formatNumber(payload.players?.seenToday);
+  $('#uniquePlayersWeek').textContent = formatNumber(payload.players?.seenWeek);
+  $('#uniquePlayersMonth').textContent = formatNumber(payload.players?.seenMonth);
   state.charts.hourlyAverageOnline = payload.hourlyAverageOnline || [];
 
   const leaderboardSources = payload.playtimeLeaderboards || {};

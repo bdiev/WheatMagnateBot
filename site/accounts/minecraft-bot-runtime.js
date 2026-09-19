@@ -623,6 +623,7 @@ class MinecraftBotRuntime extends BotContext {
       connected:Boolean(this.bot?.entity),status:this.status,task:this.task,lastError:this.lastError,startedAt:this.startedAt,
       uptimeMs:this.startedAt ? Date.now()-this.startedAt.getTime() : 0,health:this.bot?.health ?? null,food:this.bot?.food ?? null,
       ping:this.bot?.player?.ping ?? null,dimension:this.bot?.game?.dimension || null,gameMode:this.bot?.game?.gameMode || null,
+      playerCount:this.bot?.entity ? Object.keys(this.bot?.players || {}).length : null,
       xpLevel:this.bot?.experience?.level ?? null,inventory:items.map(compactInventoryItem),armor,armorCount:armor.length,
       heldItem:compactInventoryItem(this.bot?.heldItem),
       position:this.bot?.entity?.position ? {

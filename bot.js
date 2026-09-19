@@ -8818,6 +8818,7 @@ function getBotStatusSnapshot() {
     ping: connected ? (bot.player?.ping ?? null) : null,
     gameMode: connected ? (bot.game?.gameMode || null) : null,
     dimension: connected ? (bot.game?.dimension || null) : null,
+    playerCount: connected ? Object.keys(bot.players || {}).length : null,
     position,
     heldItem: connected && bot.heldItem
       ? compactInventoryItem(bot.heldItem)

@@ -2067,6 +2067,10 @@ async function loadPersistedPlayerStatsCache() {
   `);
   const row = result.rows[0];
   if (!row?.payload || typeof row.payload !== 'object') return false;
+  const cachedPlayers = row.payload.players;
+  if (!cachedPlayers || !['seenToday', 'seenWeek', 'seenMonth'].every(key => Number.isFinite(Number(cachedPlayers[key])))) {
+    return false;
+  }
   const generatedAt = new Date(row.generated_at).getTime();
   playerStatsCacheValue = row.payload;
   playerStatsCacheExpiresAt = Number.isFinite(generatedAt)
@@ -2148,7 +2152,6 @@ async function getPlayerStats() {
     globalLeaderboardResult,
     playersResult,
     activityTotalsResult,
-    onlineUnwhitelistedResult,
     hourlyAverageOnlineResult,
     milestoneResult,
     newPlayersResult
@@ -2324,25 +2327,25 @@ async function getPlayerStats() {
     `),
     database.query(`
       SELECT
-        COUNT(DISTINCT LOWER(username)) FILTER (WHERE last_seen >= NOW() - INTERVAL '24 hours')::int AS seen_24h,
-        COUNT(DISTINCT LOWER(username)) FILTER (WHERE last_seen >= NOW() - INTERVAL '7 days')::int AS seen_7d
+        COUNT(DISTINCT LOWER(username)) FILTER (
+          WHERE last_seen AT TIME ZONE settings.timezone
+            >= date_trunc('day', NOW() AT TIME ZONE settings.timezone)
+        )::int AS seen_today,
+        COUNT(DISTINCT LOWER(username)) FILTER (
+          WHERE last_seen AT TIME ZONE settings.timezone
+            >= date_trunc('week', NOW() AT TIME ZONE settings.timezone)
+        )::int AS seen_week,
+        COUNT(DISTINCT LOWER(username)) FILTER (
+          WHERE last_seen AT TIME ZONE settings.timezone
+            >= date_trunc('month', NOW() AT TIME ZONE settings.timezone)
+        )::int AS seen_month
       FROM player_activity
-    `),
-    database.query(`
-      WITH activity AS (
-        SELECT DISTINCT ON (LOWER(username))
-          LOWER(username) AS username_key,
-          username,
-          is_online
-        FROM player_activity
-        ORDER BY LOWER(username), is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
-      )
-      SELECT COUNT(*)::int AS total
-      FROM activity pa
-      WHERE pa.is_online = TRUE
-        AND NOT EXISTS (
-          SELECT 1 FROM whitelist w WHERE LOWER(w.username) = pa.username_key
-        )
+      CROSS JOIN LATERAL (
+        SELECT COALESCE(
+          (SELECT timezone FROM obsidian_farm_analytics_settings WHERE id = 1),
+          'Europe/Vilnius'
+        ) AS timezone
+      ) settings
     `),
     database.query(`
       WITH ordered_events AS (
@@ -2442,7 +2445,6 @@ async function getPlayerStats() {
 
   const totals = playersResult.rows[0] || {};
   const activityTotals = activityTotalsResult.rows[0] || {};
-  const onlineUnwhitelisted = onlineUnwhitelistedResult.rows[0] || {};
   const leaderboardRows = globalLeaderboardResult.rows.map(row => {
     const seconds = toInt(row.total_seconds);
     return {
@@ -2463,9 +2465,9 @@ async function getPlayerStats() {
       total: toInt(totals.total),
       online: toInt(totals.online),
       offline: toInt(totals.offline),
-      onlineUnwhitelisted: toInt(onlineUnwhitelisted.total),
-      seen24h: toInt(activityTotals.seen_24h),
-      seen7d: toInt(activityTotals.seen_7d)
+      seenToday: toInt(activityTotals.seen_today),
+      seenWeek: toInt(activityTotals.seen_week),
+      seenMonth: toInt(activityTotals.seen_month)
     },
     playtimeLeaderboards: {
       global: leaderboardRows,
@@ -5830,7 +5832,7 @@ async function handleApi(req, res, url) {
     if (url.pathname === '/api/player-stats') {
       const scoped = await scopedAccountRuntime(url,currentUser);
       if (scoped) {
-        sendJson(res, 200, { players:{online:0,total:0,onlineUnwhitelisted:0,seen24h:0,seen7d:0},playtimeLeaderboards:{global:[],whitelisted:[]},playtimeLeaderboard:[],milestones:[],newPlayers:[],newPlayersPage:{limit:NEW_PLAYERS_PAGE_LIMIT,offset:0,nextOffset:0,hasMore:false} });
+        sendJson(res, 200, { players:{online:0,total:0,seenToday:0,seenWeek:0,seenMonth:0},playtimeLeaderboards:{global:[],whitelisted:[]},playtimeLeaderboard:[],milestones:[],newPlayers:[],newPlayersPage:{limit:NEW_PLAYERS_PAGE_LIMIT,offset:0,nextOffset:0,hasMore:false} });
         return;
       }
       sendJson(res, 200, await getCachedPlayerStats({ force: url.searchParams.get('fresh') === '1' }));
