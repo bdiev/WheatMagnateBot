@@ -2380,10 +2380,18 @@ function prepareChartCanvas(canvas, data, options = {}) {
   // complete dataset and horizontal navigation through its history.
   const maxBackingWidth = mobile ? 8_192 : 12_288;
   const safeCanvasWidth = Math.max(2_048, Math.floor(maxBackingWidth / ratio));
+  const zoom = Number(options.zoom);
+  const maxZoom = Number(options.maxZoom);
+  // Reserve backing-store headroom for zooming in. Without a zoom-aware cap,
+  // a long hourly series reaches safeCanvasWidth at every zoom level, making
+  // zoom out appear to do nothing.
+  const canvasWidthLimit = Number.isFinite(zoom) && zoom > 0 && Number.isFinite(maxZoom) && maxZoom >= zoom
+    ? Math.max(320, Math.floor(safeCanvasWidth * zoom / maxZoom))
+    : safeCanvasWidth;
   const requestedWidth = options.fitWidth
     ? (minWidth || 320)
     : (Array.isArray(data) ? data.length : 0) * pointWidth + 92;
-  const cssWidth = Math.min(safeCanvasWidth, Math.max(minWidth || 320, requestedWidth));
+  const cssWidth = Math.max(minWidth || 320, Math.min(canvasWidthLimit, requestedWidth));
   const cssHeight = Math.max(1, Math.floor(canvas.getBoundingClientRect().height || canvas.height || 260));
   const pixelWidth = Math.floor(cssWidth * ratio);
   const pixelHeight = Math.floor(cssHeight * ratio);
@@ -3200,12 +3208,16 @@ function drawChartById(chartId) {
       });
       break;
     }
-    case 'averageOnlineChart':
+    case 'averageOnlineChart': {
+      const zoom = getChartZoom('averageOnlineChart');
       drawBarChart($('#averageOnlineChart'), aggregateSeries(state.charts.hourlyAverageOnline, range, 'avg'), {
-        pointWidth: 44 * getChartZoom('averageOnlineChart'),
+        pointWidth: 44 * zoom,
+        zoom,
+        maxZoom: CHART_ZOOM_MAX,
         tooltip: item => `${item.label}: ${formatNumber(Math.ceil(item.value))} players on average`
       });
       break;
+    }
     default:
       break;
   }
