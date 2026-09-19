@@ -4366,6 +4366,40 @@ body.search-focus-active #logoutButton {
   background: var(--panel-soft);
 }
 
+.chart-head-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.chart-zoom-controls {
+  flex: 0 0 auto;
+}
+
+.chart-zoom-button {
+  min-width: 30px;
+  padding: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.chart-zoom-reset {
+  min-width: 48px;
+  padding: 0 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-zoom-button:disabled {
+  color: var(--muted);
+  opacity: 0.4;
+  cursor: default;
+  transform: none;
+  background: transparent;
+}
+
 .chart-range-button {
   min-width: 0;
   min-height: 30px;
@@ -8137,6 +8171,12 @@ body.modal-open { overflow:hidden; }
 
   .panel-head {
     flex-direction: column;
+  }
+
+  .chart-head-controls {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .chart-controls {

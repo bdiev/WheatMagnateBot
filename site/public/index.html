@@ -937,10 +937,17 @@
                 <h2>Average Server Online</h2>
                 <p>Average online across all players.</p>
               </div>
-              <div class="chart-controls" data-chart-controls="averageOnlineChart" role="group" aria-label="Average server online range: full history by hour, day, or month; includes whitelisted and non-whitelisted players">
-                <button class="chart-range-button active" type="button" data-chart-range="hours">Hours</button>
-                <button class="chart-range-button" type="button" data-chart-range="days">Days</button>
-                <button class="chart-range-button" type="button" data-chart-range="months">Months</button>
+              <div class="chart-head-controls">
+                <div class="chart-controls" data-chart-controls="averageOnlineChart" role="group" aria-label="Average server online range: full history by hour, day, or month; includes whitelisted and non-whitelisted players">
+                  <button class="chart-range-button active" type="button" data-chart-range="hours">Hours</button>
+                  <button class="chart-range-button" type="button" data-chart-range="days">Days</button>
+                  <button class="chart-range-button" type="button" data-chart-range="months">Months</button>
+                </div>
+                <div class="chart-controls chart-zoom-controls" data-chart-controls="averageOnlineChart" data-chart-zoom-group role="group" aria-label="Average server online zoom">
+                  <button class="chart-range-button chart-zoom-button" type="button" data-chart-zoom="out" title="Zoom out" aria-label="Zoom out">&minus;</button>
+                  <button class="chart-range-button chart-zoom-reset" type="button" data-chart-zoom="reset" title="Reset zoom">100%</button>
+                  <button class="chart-range-button chart-zoom-button" type="button" data-chart-zoom="in" title="Zoom in" aria-label="Zoom in">+</button>
+                </div>
               </div>
             </div>
             <div class="chart-scroll"><canvas id="averageOnlineChart" class="chart" height="260"></canvas></div>

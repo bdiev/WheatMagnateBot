@@ -202,6 +202,7 @@ const state = {
     averageOnlineChart: 'hours'
   },
   chartScrollInitialized: {},
+  chartZoom: {},
   chatDateIndicatorFrame: null,
   chatDateIndicatorShowPending: false,
   chatDateIndicatorHideTimer: null,
@@ -3107,6 +3108,14 @@ function getChartRange(id) {
   return state.chartRanges[id] || 'hours';
 }
 
+const CHART_ZOOM_MIN = 0.5;
+const CHART_ZOOM_MAX = 2.5;
+const CHART_ZOOM_STEP = 1.25;
+
+function getChartZoom(id) {
+  return state.chartZoom[id] || 1;
+}
+
 const CHART_TAB_BY_ID = Object.freeze({
   chatHourlyChart: 'chat',
   killAuraKillsChart: 'kill-aura',
@@ -3193,6 +3202,7 @@ function drawChartById(chartId) {
     }
     case 'averageOnlineChart':
       drawBarChart($('#averageOnlineChart'), aggregateSeries(state.charts.hourlyAverageOnline, range, 'avg'), {
+        pointWidth: 44 * getChartZoom('averageOnlineChart'),
         tooltip: item => `${item.label}: ${formatNumber(item.value)} players on average`
       });
       break;
@@ -3365,6 +3375,53 @@ function handleChartRangeClick(event) {
   void button.offsetWidth;
   button.classList.add('pressed');
   animateChart(chartId);
+}
+
+function handleChartZoomClick(event) {
+  const button = event.target.closest('[data-chart-zoom]');
+  if (!button) return;
+  const controls = button.closest('[data-chart-controls]');
+  const chartId = controls?.dataset.chartControls;
+  if (!chartId) return;
+  const action = button.dataset.chartZoom;
+  const currentZoom = getChartZoom(chartId);
+  const nextZoom = action === 'in'
+    ? Math.min(CHART_ZOOM_MAX, currentZoom * CHART_ZOOM_STEP)
+    : action === 'out'
+      ? Math.max(CHART_ZOOM_MIN, currentZoom / CHART_ZOOM_STEP)
+      : 1;
+  if (nextZoom === currentZoom) return;
+
+  const canvas = document.getElementById(chartId);
+  const viewport = canvas?.closest('.chart-scroll');
+  const centerFraction = viewport && viewport.scrollWidth > 0
+    ? (viewport.scrollLeft + viewport.clientWidth / 2) / viewport.scrollWidth
+    : 0.5;
+
+  state.chartZoom[chartId] = nextZoom;
+  state.chartScrollInitialized[chartId] = true;
+  button.classList.remove('pressed');
+  void button.offsetWidth;
+  button.classList.add('pressed');
+  drawChartById(chartId);
+  updateChartZoomControls(chartId);
+
+  if (viewport) {
+    const targetLeft = centerFraction * viewport.scrollWidth - viewport.clientWidth / 2;
+    viewport.scrollLeft = Math.max(0, Math.min(viewport.scrollWidth - viewport.clientWidth, targetLeft));
+  }
+}
+
+function updateChartZoomControls(chartId) {
+  const controls = document.querySelector(`[data-chart-controls="${chartId}"][data-chart-zoom-group]`);
+  if (!controls) return;
+  const zoom = getChartZoom(chartId);
+  const zoomOutButton = controls.querySelector('[data-chart-zoom="out"]');
+  const zoomInButton = controls.querySelector('[data-chart-zoom="in"]');
+  if (zoomOutButton) zoomOutButton.disabled = zoom <= CHART_ZOOM_MIN + 0.001;
+  if (zoomInButton) zoomInButton.disabled = zoom >= CHART_ZOOM_MAX - 0.001;
+  const resetButton = controls.querySelector('[data-chart-zoom="reset"]');
+  if (resetButton) resetButton.textContent = `${Math.round(zoom * 100)}%`;
 }
 
 function daysInMonth(year, monthIndex) {
@@ -9833,7 +9890,10 @@ $('#chatList')?.addEventListener('pointerup', handleChatPlayerPointerEnd);
 $('#chatList')?.addEventListener('pointercancel', handleChatPlayerPointerEnd);
 $('#chatList')?.addEventListener('click', handleChatReplyClick);
 $('#gameChatReplyCancel')?.addEventListener('click', clearGameChatReply);
-$$('.chart-controls').forEach(controls => controls.addEventListener('click', handleChartRangeClick));
+$$('.chart-controls').forEach(controls => {
+  controls.addEventListener('click', handleChartRangeClick);
+  controls.addEventListener('click', handleChartZoomClick);
+});
 $$('.chart-scroll').forEach(scroll => {
   scroll.addEventListener('scroll', scheduleChartViewportRedraw, { passive: true });
 });
