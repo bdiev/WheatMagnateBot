@@ -29,7 +29,7 @@ assert.match(appSource, /data-player-skin-hash/, 'saved skins must be selectable
 assert.match(htmlSource, /id="playerSkinsOverlay"[\s\S]*skinview3d\.bundle\.js[\s\S]*minecraft-skin-viewer\.js/, 'the skin dialog and renderer bundle must be loaded in dependency order');
 assert.match(serverSource, /mount: '\/vendor\/skinview3d'[\s\S]*SKINVIEW3D_BUNDLES_DIR/, 'the pinned local renderer bundle must be served by the site');
 assert.match(viewerSource, /new skinview3d\.SkinViewer[\s\S]*enableControls: true/, 'skinview3d controls must allow free model rotation');
-assert.match(viewerSource, /new skinview3d\.RunningAnimation[\s\S]*runningAnimation\.speed/, 'the model must use the library running animation');
+assert.match(viewerSource, /new skinview3d\.WalkingAnimation[\s\S]*walkingAnimation\.speed = 1/, 'the model must use the natural walking animation pace');
 assert.match(viewerSource, /loadCape\(capeUrl, \{ backEquipment:'elytra' \}\)/, 'official cape textures must use skinview3d elytra geometry and UV mapping');
 assert.doesNotMatch(viewerSource, /drawPixelFace|wingWorldPoints|runPhase/, 'the old pixel-grid renderer must not remain in the adapter');
 

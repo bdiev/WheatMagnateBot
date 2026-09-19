@@ -4979,10 +4979,9 @@ body.search-focus-active #logoutButton {
   min-height:480px;
   border-right:2px solid var(--line);
   background:
-    linear-gradient(45deg,color-mix(in srgb,var(--line) 35%,transparent) 25%,transparent 25%) 0 0/24px 24px,
-    linear-gradient(45deg,transparent 75%,color-mix(in srgb,var(--line) 35%,transparent) 75%) 0 0/24px 24px,
-    linear-gradient(45deg,transparent 75%,color-mix(in srgb,var(--line) 35%,transparent) 75%) 12px 12px/24px 24px,
-    linear-gradient(45deg,color-mix(in srgb,var(--line) 35%,transparent) 25%,var(--panel-soft) 25%) 12px 12px/24px 24px;
+    linear-gradient(rgba(9,12,14,.24),rgba(9,12,14,.34)),
+    url('/backgrounds/player-skin-cherry-grove.png') center/cover no-repeat,
+    var(--panel-soft);
 }
 
 #playerSkinCanvas {

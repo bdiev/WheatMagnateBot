@@ -5,7 +5,7 @@
 
   class MinecraftSkinViewer {
     constructor(canvas) {
-      if (!skinview3d?.SkinViewer || !skinview3d?.RunningAnimation) {
+      if (!skinview3d?.SkinViewer || !skinview3d?.WalkingAnimation) {
         throw new Error('The skinview3d renderer is unavailable.');
       }
 
@@ -14,8 +14,8 @@
       this.loadRequestId = 0;
 
       const bounds = canvas.getBoundingClientRect();
-      this.runningAnimation = new skinview3d.RunningAnimation();
-      this.runningAnimation.speed = 0.2875;
+      this.walkingAnimation = new skinview3d.WalkingAnimation();
+      this.walkingAnimation.speed = 1;
 
       this.viewer = new skinview3d.SkinViewer({
         canvas,
@@ -25,7 +25,7 @@
         fov: 50,
         zoom: 0.94,
         enableControls: true,
-        animation: this.runningAnimation
+        animation: this.walkingAnimation
       });
 
       this.viewer.controls.enableRotate = true;

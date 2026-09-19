@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = '203';
+const CACHE_VERSION = '205';
 const CACHE_NAME = `wheatmagnatebot-v${CACHE_VERSION}`;
 const APP_SHELL = [
   '/',
@@ -18,6 +18,7 @@ const APP_SHELL = [
   '/theme-init.js',
   '/app.js',
   '/manifest.webmanifest',
+  '/backgrounds/player-skin-cherry-grove.png',
   '/items/Wheat.png',
   '/items/Writable_Book.png',
   '/items/Icon_Search.png',
