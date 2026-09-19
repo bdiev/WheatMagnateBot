@@ -106,6 +106,11 @@ assert.match(
 );
 assert.match(
   stylesSource,
+  /@media \(hover: none\) and \(pointer: coarse\)\s*\{[\s\S]*?\.chat-activity-player\s*\{[^}]*-webkit-tap-highlight-color:\s*transparent;[\s\S]*?\.chat-activity-player:focus,[\s\S]*?\.chat-activity-player:focus-visible\s*\{[^}]*outline:\s*0;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;/s,
+  'touching an activity nickname must not leave a focus or tap highlight'
+);
+assert.match(
+  stylesSource,
   /\.chat-message \.player-identity\[role="button"\]:hover,\s*\.chat-message \.player-identity\[role="button"\]:active\s*\{[^}]*color:\s*inherit;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;/s,
   'player identity controls inside chat messages must remain visually unchanged on hover'
 );

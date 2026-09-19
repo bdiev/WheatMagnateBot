@@ -4077,6 +4077,19 @@ body.search-focus-active #logoutButton {
   outline-offset: 2px;
 }
 
+@media (hover: none) and (pointer: coarse) {
+  .chat-activity-player {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .chat-activity-player:focus,
+  .chat-activity-player:focus-visible {
+    outline: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+}
+
 .chat-message.chat-notice {
   grid-template-columns: minmax(0, 1fr) max-content;
   align-items: baseline;
