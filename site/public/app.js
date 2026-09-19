@@ -74,6 +74,8 @@ const state = {
   playerProfileMessageRefreshes: new Set(),
   playerProfileAccentCache: new Map(),
   playerSkinViewer: null,
+  playerSelectedSkin: null,
+  playerSelectedCape: null,
   playerSkinsRequestId: 0,
   whisperAccentCache: new Map(),
   playtimeLeaderboardScope: 'global',
@@ -4027,6 +4029,8 @@ function closePlayerSkins() {
   state.playerSkinsRequestId += 1;
   state.playerSkinViewer?.destroy();
   state.playerSkinViewer = null;
+  state.playerSelectedSkin = null;
+  state.playerSelectedCape = null;
 }
 
 function drawSkinThumbnail(canvas, textureUrl) {
@@ -4042,24 +4046,64 @@ function drawSkinThumbnail(canvas, textureUrl) {
   image.src = textureUrl;
 }
 
-function selectPlayerSkin(skin, button = null) {
+function drawCapeThumbnail(canvas, textureUrl) {
+  const image = new Image();
+  image.decoding = 'async';
+  image.onload = () => {
+    const context = canvas.getContext('2d');
+    const sourceX = image.naturalWidth / 64;
+    const sourceY = image.naturalHeight / 32;
+    const width = canvas.width * .56;
+    const height = canvas.height * .82;
+    context.clearRect(0,0,canvas.width,canvas.height);
+    context.imageSmoothingEnabled = false;
+    context.drawImage(
+      image,
+      sourceX,sourceY,sourceX * 10,sourceY * 16,
+      (canvas.width - width) / 2,(canvas.height - height) / 2,width,height
+    );
+  };
+  image.src = textureUrl;
+}
+
+function loadPlayerSkinSelection() {
   const canvas = $('#playerSkinCanvas');
-  if (!canvas || !skin) return;
+  const skin = state.playerSelectedSkin;
+  if (!canvas || !skin || !state.playerSkinViewer) return;
+  const cape = state.playerSelectedCape;
+  $('#playerSkinObserved').textContent = skin.firstSeen
+    ? `Observed ${formatDate(skin.firstSeen)}${skin.lastSeen && skin.lastSeen !== skin.firstSeen ? ` – ${formatDate(skin.lastSeen)}` : ''} · ${cape ? 'selected cape elytra' : 'skin only'}`
+    : 'Current skin';
+  canvas.classList.add('is-loading');
+  state.playerSkinViewer.load(skin.textureUrl,skin.model,cape?.textureUrl || null);
+}
+
+function selectPlayerSkin(skin, button = null) {
+  if (!skin) return;
+  state.playerSelectedSkin = skin;
   document.querySelectorAll('[data-player-skin-hash]').forEach(item => {
     const selected = item === button || (!button && item.dataset.playerSkinHash === skin.hash);
     item.classList.toggle('is-selected', selected);
     item.setAttribute('aria-pressed', String(selected));
   });
-  $('#playerSkinObserved').textContent = skin.firstSeen
-    ? `Observed ${formatDate(skin.firstSeen)}${skin.lastSeen && skin.lastSeen !== skin.firstSeen ? ` – ${formatDate(skin.lastSeen)}` : ''} · ${skin.capeUrl ? 'official cape elytra' : 'skin only'}`
-    : 'Current skin';
-  canvas.classList.add('is-loading');
-  state.playerSkinViewer.load(skin.textureUrl, skin.model, skin.capeUrl);
+  loadPlayerSkinSelection();
+}
+
+function selectPlayerCape(cape, button = null) {
+  state.playerSelectedCape = cape;
+  document.querySelectorAll('[data-player-cape-hash]').forEach(item => {
+    const capeHash = cape?.hash || '';
+    const selected = item === button || (!button && item.dataset.playerCapeHash === capeHash);
+    item.classList.toggle('is-selected', selected);
+    item.setAttribute('aria-pressed', String(selected));
+  });
+  loadPlayerSkinSelection();
 }
 
 function renderPlayerSkins(payload) {
   const content = $('#playerSkinsContent');
   const skins = Array.isArray(payload.skins) ? payload.skins : [];
+  const capes = Array.isArray(payload.capes) ? payload.capes : [];
   if (!skins.length) {
     content.innerHTML = `<div class="player-skins-empty"><strong>No skin captured yet</strong><p>${payload.refreshFailed ? 'The Minecraft skin service is temporarily unavailable. Try again later.' : 'This player does not currently have an official skin available.'}</p></div>`;
     return;
@@ -4082,6 +4126,24 @@ function renderPlayerSkins(payload) {
           </button>`).join('')}
       </div>
       <p>${payload.refreshFailed ? 'Showing saved skins; the current Mojang skin could not be checked.' : 'New skins are saved automatically whenever this window is opened.'}</p>
+      <section class="player-cape-wardrobe" aria-label="Saved capes">
+        <header><h3>Cape history</h3><span>${formatNumber(capes.length)} ${capes.length === 1 ? 'cape' : 'capes'}</span></header>
+        <div class="player-cape-list">
+          <button type="button" data-player-cape-hash="" aria-pressed="${!payload.currentCapeHash}" class="player-cape-choice${payload.currentCapeHash ? '' : ' is-selected'}" title="Show the skin without elytra">
+            <span class="player-cape-none" aria-hidden="true">×</span>
+            <span>No cape</span>
+          </button>
+          ${capes.map(cape => {
+            const current = cape.hash === payload.currentCapeHash;
+            return `
+              <button type="button" data-player-cape-hash="${escapeHtml(cape.hash)}" aria-pressed="${current}" class="player-cape-choice${current ? ' is-selected' : ''}" title="Observed ${escapeHtml(formatDate(cape.firstSeen))}">
+                <canvas width="48" height="48" aria-hidden="true"></canvas>
+                <span>${current ? 'Current' : escapeHtml(formatDate(cape.firstSeen))}</span>
+              </button>`;
+          }).join('')}
+        </div>
+        <p>${capes.length ? 'Select a saved cape to preview it as elytra.' : 'No official cape has been observed for this player yet.'}</p>
+      </section>
     </section>`;
   const canvas = $('#playerSkinCanvas');
   state.playerSkinViewer?.destroy();
@@ -4099,7 +4161,13 @@ function renderPlayerSkins(payload) {
     drawSkinThumbnail(button.querySelector('canvas'),skin.textureUrl);
     button.addEventListener('click', () => selectPlayerSkin(skin,button));
   });
+  content.querySelectorAll('[data-player-cape-hash]').forEach(button => {
+    const cape = capes.find(item => item.hash === button.dataset.playerCapeHash) || null;
+    if (cape) drawCapeThumbnail(button.querySelector('canvas'),cape.textureUrl);
+    button.addEventListener('click', () => selectPlayerCape(cape,button));
+  });
   $('#playerSkinReset').addEventListener('click', () => state.playerSkinViewer?.reset());
+  state.playerSelectedCape = capes.find(cape => cape.hash === payload.currentCapeHash) || null;
   selectPlayerSkin(skins[0],content.querySelector('[data-player-skin-hash]'));
 }
 

@@ -359,6 +359,7 @@ async function getPlayerSkins(url) {
   if (!identity?.player_uuid) throw Object.assign(new Error('Player has no known Minecraft UUID.'), { statusCode:404 });
 
   let refreshFailed = false;
+  let currentCapeHash = null;
   try {
     const current = await resolveOfficialMinecraftSkin({
       username: identity.username,
@@ -372,28 +373,53 @@ async function getPlayerSkins(url) {
         texture_url=EXCLUDED.texture_url,model=EXCLUDED.model,
         cape_hash=EXCLUDED.cape_hash,cape_url=EXCLUDED.cape_url,last_seen=NOW()
     `, [identity.player_uuid, current.textureHash, current.textureUrl, current.model, current.capeHash, current.capeUrl]);
+    currentCapeHash = current.capeHash;
+    if (current.capeHash && current.capeUrl) {
+      await pool.query(`
+        INSERT INTO player_cape_history(player_uuid,cape_hash,cape_url)
+        VALUES($1::uuid,$2,$3)
+        ON CONFLICT(player_uuid,cape_hash) DO UPDATE SET
+          cape_url=EXCLUDED.cape_url,last_seen=NOW()
+      `, [identity.player_uuid, current.capeHash, current.capeUrl]);
+    }
   } catch {
     refreshFailed = true;
   }
 
-  const result = await pool.query(`
-    SELECT texture_hash,model,cape_hash,first_seen,last_seen
-    FROM player_skin_history
-    WHERE player_uuid=$1::uuid
-    ORDER BY last_seen DESC,id DESC
-    LIMIT 100
-  `, [identity.player_uuid]);
+  const [skinResult, capeResult] = await Promise.all([
+    pool.query(`
+      SELECT texture_hash,model,cape_hash,first_seen,last_seen
+      FROM player_skin_history
+      WHERE player_uuid=$1::uuid
+      ORDER BY last_seen DESC,id DESC
+      LIMIT 100
+    `, [identity.player_uuid]),
+    pool.query(`
+      SELECT cape_hash,first_seen,last_seen
+      FROM player_cape_history
+      WHERE player_uuid=$1::uuid
+      ORDER BY last_seen DESC,id DESC
+      LIMIT 100
+    `, [identity.player_uuid])
+  ]);
   return {
     username: identity.username,
     uuid: identity.player_uuid,
     refreshFailed,
-    skins: result.rows.map(row => ({
+    currentCapeHash: refreshFailed ? (skinResult.rows[0]?.cape_hash || null) : currentCapeHash,
+    skins: skinResult.rows.map(row => ({
       hash: row.texture_hash,
       model: row.model === 'slim' ? 'slim' : 'classic',
       firstSeen: row.first_seen,
       lastSeen: row.last_seen,
       textureUrl: `/api/minecraft-skin/${encodeURIComponent(row.texture_hash)}.png`,
       capeUrl: row.cape_hash ? `/api/minecraft-cape/${encodeURIComponent(row.cape_hash)}.png` : null
+    })),
+    capes: capeResult.rows.map(row => ({
+      hash: row.cape_hash,
+      firstSeen: row.first_seen,
+      lastSeen: row.last_seen,
+      textureUrl: `/api/minecraft-cape/${encodeURIComponent(row.cape_hash)}.png`
     }))
   };
 }
@@ -437,8 +463,8 @@ async function sendMinecraftCape(req, res, capeHash) {
     return;
   }
   const result = await pool.query(`
-    SELECT cape_url FROM player_skin_history
-    WHERE cape_hash=$1 AND cape_url IS NOT NULL ORDER BY last_seen DESC LIMIT 1
+    SELECT cape_url FROM player_cape_history
+    WHERE cape_hash=$1 ORDER BY last_seen DESC LIMIT 1
   `, [capeHash]);
   if (!result.rowCount) { sendError(res,404,'Minecraft cape not found.'); return; }
   let capeUrl;

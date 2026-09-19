@@ -5005,17 +5005,27 @@ body.search-focus-active #logoutButton {
 .player-skin-stage-tools small { color:var(--muted); font-size:9px; }
 .player-skin-stage-tools button { min-height:34px; padding:7px 10px; font-size:10px; }
 
-.player-skin-wardrobe { display:grid; align-content:start; min-width:0; }
+.player-skin-wardrobe { display:flex; flex-direction:column; min-width:0; }
 .player-skin-wardrobe > header { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:14px; border-bottom:2px solid var(--line); }
 .player-skin-wardrobe h3 { margin:0; font-size:14px; }
 .player-skin-wardrobe header span { color:var(--muted); font-size:10px; }
 .player-skin-wardrobe > p { margin:0; padding:12px 14px; border-top:1px solid var(--line); color:var(--muted); font-size:10px; line-height:1.45; }
-.player-skin-list { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; max-height:374px; overflow:auto; padding:12px; }
+.player-skin-list { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; max-height:250px; overflow:auto; padding:12px; }
 .player-skin-choice { display:grid; place-items:center; gap:6px; min-width:0; padding:8px 4px 7px; border:2px solid var(--line); border-radius:4px; color:var(--muted); background:var(--panel-soft); box-shadow:none; }
 .player-skin-choice:hover { border-color:color-mix(in srgb,var(--accent) 45%,var(--line)); color:var(--text); }
 .player-skin-choice.is-selected { border-color:var(--accent); color:var(--accent-strong); background:color-mix(in srgb,var(--accent) 10%,var(--panel-soft)); box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 22%,transparent); }
 .player-skin-choice canvas { width:48px; height:48px; border:1px solid color-mix(in srgb,var(--line) 70%,transparent); image-rendering:pixelated; background:color-mix(in srgb,var(--panel) 82%,transparent); }
 .player-skin-choice span { width:100%; overflow:hidden; font-size:9px; text-overflow:ellipsis; white-space:nowrap; }
+.player-cape-wardrobe { margin-top:auto; border-top:2px solid var(--line); background:color-mix(in srgb,var(--panel) 96%,transparent); }
+.player-cape-wardrobe > header { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; border-bottom:1px solid var(--line); }
+.player-cape-wardrobe > p { margin:0; padding:9px 14px; border-top:1px solid var(--line); color:var(--muted); font-size:9px; line-height:1.4; }
+.player-cape-list { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; max-height:164px; overflow:auto; padding:10px 12px; }
+.player-cape-choice { display:grid; place-items:center; gap:4px; min-width:0; padding:6px 3px; border:2px solid var(--line); border-radius:4px; color:var(--muted); background:var(--panel-soft); box-shadow:none; }
+.player-cape-choice:hover { border-color:color-mix(in srgb,var(--accent) 45%,var(--line)); color:var(--text); }
+.player-cape-choice.is-selected { border-color:var(--accent); color:var(--accent-strong); background:color-mix(in srgb,var(--accent) 10%,var(--panel-soft)); box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 22%,transparent); }
+.player-cape-choice canvas,.player-cape-none { width:42px; height:42px; image-rendering:pixelated; }
+.player-cape-none { display:grid; place-items:center; border:1px dashed color-mix(in srgb,var(--line) 85%,transparent); color:var(--muted); font-size:24px; }
+.player-cape-choice > span:last-child { width:100%; overflow:hidden; font-size:8px; text-align:center; text-overflow:ellipsis; white-space:nowrap; }
 .player-skins-loading,.player-skins-empty { display:grid; grid-column:1/-1; place-content:center; justify-items:center; gap:10px; min-height:420px; padding:30px; color:var(--muted); text-align:center; }
 .player-skins-loading span { width:30px; height:30px; border:3px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:mc-spin-step 750ms steps(8,end) infinite; }
 .player-skins-empty strong { color:var(--text); }
@@ -5028,10 +5038,12 @@ body.search-focus-active #logoutButton {
   .player-skin-stage { min-height:390px; border-right:0; border-bottom:2px solid var(--line); }
   #playerSkinCanvas { min-height:310px; }
   .player-skin-list { grid-template-columns:repeat(4,minmax(0,1fr)); max-height:190px; }
+  .player-cape-list { grid-template-columns:repeat(5,minmax(0,1fr)); }
 }
 
 @media (max-width:420px) {
   .player-skin-list { grid-template-columns:repeat(3,minmax(0,1fr)); }
+  .player-cape-list { grid-template-columns:repeat(4,minmax(0,1fr)); }
 }
 
 @keyframes player-offline-pulse {
