@@ -36,7 +36,7 @@ const state = {
     obsidianHourly: [],
     tpsHourly: [],
     tpsHistoryCache: null,
-    unwhitelistedHourly: []
+    hourlyAverageOnline: []
   },
   chartMeta: {},
   rollingNumbers: {},
@@ -199,7 +199,7 @@ const state = {
     killAuraKillsChart: 'hours',
     obsidianDailyChart: 'days',
     tpsHourlyChart: 'hours',
-    unwhitelistedHourlyChart: 'hours'
+    averageOnlineChart: 'hours'
   },
   chartScrollInitialized: {},
   chatDateIndicatorFrame: null,
@@ -2951,14 +2951,18 @@ function aggregateSeries(data, range, reducer = 'sum') {
       key = String(key).slice(0, 7);
       label = key;
     }
-    if (!groups.has(key)) groups.set(key, { label, values: [], segments: new Map(), startBucket: null, endBucket: null });
+    if (!groups.has(key)) groups.set(key, { label, values: [], weightedValues: [], segments: new Map(), startBucket: null, endBucket: null });
     if (!Number.isNaN(date.getTime())) {
       const timestamp = date.toISOString();
       if (!groups.get(key).startBucket || timestamp < groups.get(key).startBucket) groups.get(key).startBucket = timestamp;
       if (!groups.get(key).endBucket || timestamp > groups.get(key).endBucket) groups.get(key).endBucket = timestamp;
     }
     const value = Number(item.value);
-    if (Number.isFinite(value)) groups.get(key).values.push(value);
+    if (Number.isFinite(value)) {
+      groups.get(key).values.push(value);
+      const weight = Number(item.weight);
+      if (Number.isFinite(weight) && weight > 0) groups.get(key).weightedValues.push({ value, weight });
+    }
     if (Array.isArray(item.segments)) {
       item.segments.forEach(segment => {
         const accountId = String(segment.accountId || segment.name || '');
@@ -2975,7 +2979,10 @@ function aggregateSeries(data, range, reducer = 'sum') {
     startBucket: group.startBucket,
     endBucket: group.endBucket,
     value: reducer === 'avg'
-      ? group.values.reduce((sum, value) => sum + value, 0) / Math.max(1, group.values.length)
+      ? group.weightedValues.length === group.values.length && group.weightedValues.length > 0
+        ? group.weightedValues.reduce((sum, item) => sum + item.value * item.weight, 0)
+          / group.weightedValues.reduce((sum, item) => sum + item.weight, 0)
+        : group.values.reduce((sum, value) => sum + value, 0) / Math.max(1, group.values.length)
       : group.values.reduce((sum, value) => sum + value, 0),
     segments: Array.from(group.segments.values())
   }));
@@ -3105,7 +3112,7 @@ const CHART_TAB_BY_ID = Object.freeze({
   killAuraKillsChart: 'kill-aura',
   obsidianDailyChart: 'obsidian',
   tpsHourlyChart: 'server',
-  unwhitelistedHourlyChart: 'players'
+  averageOnlineChart: 'players'
 });
 
 function chartIsActive(chartId) {
@@ -3184,9 +3191,9 @@ function drawChartById(chartId) {
       });
       break;
     }
-    case 'unwhitelistedHourlyChart':
-      drawBarChart($('#unwhitelistedHourlyChart'), aggregateSeries(state.charts.unwhitelistedHourly, range), {
-        tooltip: item => `${item.label}: ${formatNumber(item.value)} players`
+    case 'averageOnlineChart':
+      drawBarChart($('#averageOnlineChart'), aggregateSeries(state.charts.hourlyAverageOnline, range, 'avg'), {
+        tooltip: item => `${item.label}: ${formatNumber(item.value)} players on average`
       });
       break;
     default:
@@ -5957,7 +5964,7 @@ function renderPlayerStats(payload = {}, nearbyPlayers = null) {
   $('#onlineUnwhitelistedPlayers').textContent = formatNumber(payload.players?.onlineUnwhitelisted);
   $('#seen24h').textContent = formatNumber(payload.players?.seen24h);
   $('#seen7d').textContent = formatNumber(payload.players?.seen7d);
-  state.charts.unwhitelistedHourly = payload.hourlyUnwhitelisted || [];
+  state.charts.hourlyAverageOnline = payload.hourlyAverageOnline || [];
 
   const leaderboardSources = payload.playtimeLeaderboards || {};
   state.playtimeLeaderboards = {

@@ -3296,7 +3296,7 @@ body.search-focus-active #logoutButton {
   min-width: 0;
 }
 
-.player-unwhitelisted-chart-panel {
+.player-average-online-chart-panel {
   grid-column: 1;
   grid-row: 1;
   display: grid;
@@ -3346,7 +3346,7 @@ body.search-focus-active #logoutButton {
 }
 
 .server-tps-panel .chart-scroll,
-.player-unwhitelisted-chart-panel .chart-scroll {
+.player-average-online-chart-panel .chart-scroll {
   min-height: 0;
 }
 
@@ -3387,7 +3387,7 @@ body.search-focus-active #logoutButton {
 }
 
 .server-tps-panel .chart,
-.player-unwhitelisted-chart-panel .chart {
+.player-average-online-chart-panel .chart {
   height: 100%;
 }
 
@@ -7904,7 +7904,7 @@ body.modal-open { overflow:hidden; }
     height: auto;
   }
 
-  .player-unwhitelisted-chart-panel,
+  .player-average-online-chart-panel,
   .player-milestones-panel,
   .player-leaderboard-panel,
   .player-new-panel,
@@ -7913,7 +7913,7 @@ body.modal-open { overflow:hidden; }
     grid-row: auto;
   }
 
-  .player-unwhitelisted-chart-panel {
+  .player-average-online-chart-panel {
     min-height: 320px;
     order: 2;
   }
@@ -7933,7 +7933,7 @@ body.modal-open { overflow:hidden; }
     max-height: 420px;
   }
 
-  .player-unwhitelisted-chart-panel {
+  .player-average-online-chart-panel {
     order: 3;
   }
 
@@ -7993,11 +7993,11 @@ body.modal-open { overflow:hidden; }
     gap: 12px;
   }
 
-  .player-unwhitelisted-chart-panel {
+  .player-average-online-chart-panel {
     min-height: 280px;
   }
 
-  .player-unwhitelisted-chart-panel .chart {
+  .player-average-online-chart-panel .chart {
     height: 210px;
   }
 

@@ -931,19 +931,19 @@
         </section>
 
         <section class="player-layout">
-          <section class="panel player-unwhitelisted-chart-panel">
+          <section class="panel player-average-online-chart-panel">
             <div class="panel-head">
               <div>
-                <h2>Not Whitelisted Activity</h2>
-                <p>Full history; this hour shows players online now.</p>
+                <h2>Average Server Online</h2>
+                <p>Average online across all players.</p>
               </div>
-              <div class="chart-controls" data-chart-controls="unwhitelistedHourlyChart" role="group" aria-label="Unwhitelisted player range: full history by hour, day, or month; current hour shows players online now">
+              <div class="chart-controls" data-chart-controls="averageOnlineChart" role="group" aria-label="Average server online range: full history by hour, day, or month; includes whitelisted and non-whitelisted players">
                 <button class="chart-range-button active" type="button" data-chart-range="hours">Hours</button>
                 <button class="chart-range-button" type="button" data-chart-range="days">Days</button>
                 <button class="chart-range-button" type="button" data-chart-range="months">Months</button>
               </div>
             </div>
-            <div class="chart-scroll"><canvas id="unwhitelistedHourlyChart" class="chart" height="260"></canvas></div>
+            <div class="chart-scroll"><canvas id="averageOnlineChart" class="chart" height="260"></canvas></div>
           </section>
 
           <section class="panel player-milestones-panel">

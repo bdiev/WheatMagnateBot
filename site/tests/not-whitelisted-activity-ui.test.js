@@ -9,32 +9,42 @@ const publicDirectory = path.join(siteDirectory, 'public');
 const serverSource = fs.readFileSync(path.join(siteDirectory, 'server.js'), 'utf8');
 const indexSource = fs.readFileSync(path.join(publicDirectory, 'index.html'), 'utf8');
 const appSource = fs.readFileSync(path.join(publicDirectory, 'app.js'), 'utf8');
-const activityQuery = serverSource.match(/WITH recorded_events AS \([\s\S]*?ORDER BY bucket/)?.[0] || '';
+const activityQuery = serverSource.match(/WITH ordered_events AS \([\s\S]*?ORDER BY bucket/)?.[0] || '';
 
 assert.doesNotMatch(
   activityQuery,
-  /date_trunc\('hour', NOW\(\) - INTERVAL '167 hours'\)/,
-  'not-whitelisted activity must not be limited to the latest seven days'
+  /FROM whitelist/,
+  'average server online must include both whitelisted and non-whitelisted players'
 );
 assert.match(
   activityQuery,
-  /FROM player_session_events[\s\S]*historical_events/,
-  'not-whitelisted activity must use the dedicated player session history'
+  /FROM player_session_events[\s\S]*event_type = 'player_joined'/,
+  'average server online must use the dedicated player session history'
 );
 assert.match(
   activityQuery,
-  /SELECT pa\.last_seen, LOWER\(pa\.username\)[\s\S]*NOT EXISTS \([\s\S]*FROM recorded_events/,
-  'players recorded before event history was introduced must remain visible'
+  /COALESCE\(bucket_totals\.online_seconds, 0\)[\s\S]*NULLIF\(EXTRACT\(EPOCH/,
+  'hourly values must average concurrent online time over each bucket'
+);
+assert.match(
+  activityQuery,
+  /generate_series\([\s\S]*first_occurred_at[\s\S]*LEFT JOIN bucket_totals/,
+  'hours with no online players must remain in the series as zeroes'
 );
 assert.match(
   indexSource,
-  /Full history; this hour shows players online now\./,
-  'the chart description must state its full-history scope'
+  /<h2>Average Server Online<\/h2>[\s\S]*Average online across all players\./,
+  'the card must describe the combined average-online metric'
 );
 assert.match(
   appSource,
-  /aggregateSeries\(state\.charts\.unwhitelistedHourly, range\)/,
-  'all chart modes must aggregate the complete server series'
+  /aggregateSeries\(state\.charts\.hourlyAverageOnline, range, 'avg'\)/,
+  'daily and monthly chart modes must average the hourly server series'
+);
+assert.match(
+  appSource,
+  /group\.weightedValues\.reduce\([\s\S]*item\.value \* item\.weight/,
+  'partial current hours must be weighted by their recorded duration'
 );
 assert.match(
   appSource,
@@ -42,4 +52,4 @@ assert.match(
   'chart date labels must be measured and de-duplicated before drawing on narrow viewports'
 );
 
-console.log('Not-whitelisted activity UI tests passed.');
+console.log('Average server online UI tests passed.');

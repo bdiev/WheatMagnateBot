@@ -27,7 +27,7 @@ for (const [chartId, expectedDescription, accessibleRange] of [
   ['killAuraKillsChart', 'Kills by hour, day, or month.', 'hours show 7 days, days show 90 days, and months show full history'],
   ['obsidianDailyChart', 'Blocks mined by hour, day, or month.', 'hours show 7 days, days show 90 days, and months aggregate those 90 days'],
   ['tpsHourlyChart', 'Hourly TPS for 7 days; daily and monthly history.', 'hours show 7 days; days and months show full history'],
-  ['unwhitelistedHourlyChart', 'Full history; this hour shows players online now.', 'full history by hour, day, or month; current hour shows players online now']
+  ['averageOnlineChart', 'Average online across all players.', 'full history by hour, day, or month; includes whitelisted and non-whitelisted players']
 ]) {
   assert.ok(indexSource.includes(`<p>${expectedDescription}</p>`), `${chartId} must use concise, accurate visible copy`);
   assert.match(

@@ -2149,7 +2149,7 @@ async function getPlayerStats() {
     playersResult,
     activityTotalsResult,
     onlineUnwhitelistedResult,
-    hourlyUnwhitelistedResult,
+    hourlyAverageOnlineResult,
     milestoneResult,
     newPlayersResult
   ] = await Promise.all([
@@ -2345,52 +2345,76 @@ async function getPlayerStats() {
         )
     `),
     database.query(`
-      WITH recorded_events AS (
-        SELECT occurred_at,LOWER(username) AS username_key
+      WITH ordered_events AS (
+        SELECT
+          LOWER(username) AS username_key,
+          event_type,
+          occurred_at,
+          LEAD(occurred_at) OVER (
+            PARTITION BY LOWER(username)
+            ORDER BY occurred_at, id
+          ) AS next_occurred_at
         FROM player_session_events
+        WHERE occurred_at <= NOW()
+          AND LOWER(username) <> ''
+      ),
+      sessions AS (
+        SELECT
+          occurred_at AS started_at,
+          COALESCE(next_occurred_at, NOW()) AS ended_at
+        FROM ordered_events
         WHERE event_type = 'player_joined'
       ),
-      historical_events AS (
-        SELECT occurred_at, username_key
-        FROM recorded_events
-        WHERE username_key IS NOT NULL AND username_key <> ''
-        UNION ALL
-        SELECT pa.last_seen, LOWER(pa.username)
-        FROM player_activity pa
-        WHERE pa.last_seen IS NOT NULL
-          AND NOT EXISTS (
-            SELECT 1 FROM recorded_events e WHERE e.username_key = LOWER(pa.username)
-          )
+      event_bounds AS (
+        SELECT MIN(occurred_at) AS first_occurred_at
+        FROM ordered_events
       ),
-      historical_buckets AS (
-        SELECT date_trunc('hour', event.occurred_at) AS bucket,
-               COUNT(DISTINCT event.username_key)::int AS total
-        FROM historical_events event
-        WHERE event.occurred_at < date_trunc('hour', NOW())
-          AND NOT EXISTS (
-            SELECT 1 FROM whitelist w WHERE LOWER(w.username) = event.username_key
-          )
-        GROUP BY date_trunc('hour', event.occurred_at)
+      buckets AS (
+        SELECT bucket
+        FROM event_bounds
+        CROSS JOIN LATERAL generate_series(
+          date_trunc('hour', first_occurred_at),
+          date_trunc('hour', NOW()),
+          INTERVAL '1 hour'
+        ) AS bucket_series(bucket)
+        WHERE first_occurred_at IS NOT NULL
       ),
-      current_activity AS (
-        SELECT date_trunc('hour', NOW()) AS bucket,
-               COUNT(DISTINCT LOWER(pa.username))::int AS total
-        FROM player_activity pa
-        WHERE pa.is_online = TRUE
-          AND NOT EXISTS (
-            SELECT 1 FROM whitelist w WHERE LOWER(w.username) = LOWER(pa.username)
-          )
+      bucket_overlaps AS (
+        SELECT
+          bucket,
+          EXTRACT(EPOCH FROM (
+            LEAST(session.ended_at, bucket + INTERVAL '1 hour', NOW())
+            - GREATEST(session.started_at, bucket)
+          )) AS online_seconds
+        FROM sessions session
+        CROSS JOIN LATERAL generate_series(
+          date_trunc('hour', session.started_at),
+          date_trunc('hour', LEAST(session.ended_at, NOW())),
+          INTERVAL '1 hour'
+        ) AS bucket_series(bucket)
+        WHERE session.ended_at > session.started_at
+          AND LEAST(session.ended_at, bucket + INTERVAL '1 hour', NOW())
+              > GREATEST(session.started_at, bucket)
       ),
-      all_buckets AS (
-        SELECT bucket, total FROM historical_buckets
-        UNION ALL
-        SELECT bucket, total FROM current_activity
+      bucket_totals AS (
+        SELECT bucket, SUM(online_seconds) AS online_seconds
+        FROM bucket_overlaps
+        GROUP BY bucket
       )
-      SELECT TO_CHAR(bucket, 'YYYY-MM-DD HH24:00') AS label,
-             bucket,
-             total
-      FROM all_buckets
-      ORDER BY bucket
+      SELECT
+        TO_CHAR(buckets.bucket, 'YYYY-MM-DD HH24:00') AS label,
+        buckets.bucket,
+        COALESCE(bucket_totals.online_seconds, 0)
+          / NULLIF(EXTRACT(EPOCH FROM (
+              LEAST(buckets.bucket + INTERVAL '1 hour', NOW()) - buckets.bucket
+            )), 0)
+          AS average_online,
+        EXTRACT(EPOCH FROM (
+          LEAST(buckets.bucket + INTERVAL '1 hour', NOW()) - buckets.bucket
+        )) AS sample_seconds
+      FROM buckets
+      LEFT JOIN bucket_totals USING (bucket)
+      ORDER BY buckets.bucket
     `),
     database.query(`
       WITH whitelist_players AS (
@@ -2448,10 +2472,11 @@ async function getPlayerStats() {
       whitelisted: whitelistedLeaderboardRows
     },
     playtimeLeaderboard: whitelistedLeaderboardRows,
-    hourlyUnwhitelisted: hourlyUnwhitelistedResult.rows.map(row => ({
+    hourlyAverageOnline: hourlyAverageOnlineResult.rows.map(row => ({
       label: row.label,
       bucket: row.bucket,
-      value: toInt(row.total)
+      value: Number(Number(row.average_online || 0).toFixed(2)),
+      weight: Number(row.sample_seconds || 0)
     })),
     milestones: buildPlayerMilestones(milestoneResult.rows),
     newPlayers: newPlayersResult.players,
