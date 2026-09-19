@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const appSource = fs.readFileSync(path.resolve(__dirname, '..', 'public', 'app.js'), 'utf8');
+const stylesSource = fs.readFileSync(path.resolve(__dirname, '..', 'public', 'styles.css'), 'utf8');
 
 const zoomHandler = appSource.match(/function handleChartZoomClick\(event\) \{[\s\S]*?\n\}/)?.[0] || '';
 const averageOnlineCase = appSource.match(/case 'averageOnlineChart': \{[\s\S]*?\n    \}/)?.[0] || '';
@@ -23,6 +24,11 @@ assert.match(
   averageOnlineCase,
   /pointWidth: 44 \* zoom,[\s\S]*zoom,[\s\S]*maxZoom: CHART_ZOOM_MAX/,
   'the average-online chart must pass its zoom level to canvas sizing'
+);
+assert.match(
+  stylesSource,
+  /\.chart-zoom-reset\s*\{[^}]*flex:\s*0 0 52px;[^}]*width:\s*52px;[^}]*min-width:\s*52px;[^}]*max-width:\s*52px;/s,
+  'changing the zoom percentage must not resize or reflow the chart header'
 );
 
 console.log('Average online chart zoom UI tests passed.');

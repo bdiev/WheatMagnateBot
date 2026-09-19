@@ -4387,7 +4387,10 @@ body.search-focus-active #logoutButton {
 }
 
 .chart-zoom-reset {
-  min-width: 48px;
+  flex: 0 0 52px;
+  width: 52px;
+  min-width: 52px;
+  max-width: 52px;
   padding: 0 6px;
   font-variant-numeric: tabular-nums;
 }
