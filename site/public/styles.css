@@ -4067,7 +4067,7 @@ body.search-focus-active #logoutButton {
 .chat-activity-player:active {
   color: inherit;
   background: transparent;
-  box-shadow: none;
+  box-shadow: none !important;
   text-decoration: none;
   transform: none;
 }
@@ -4076,7 +4076,7 @@ body.search-focus-active #logoutButton {
   outline: 0;
   color: inherit;
   background: transparent;
-  box-shadow: none;
+  box-shadow: none !important;
 }
 
 @media (hover: none) and (pointer: coarse) {

@@ -111,12 +111,12 @@ assert.match(
 );
 assert.match(
   stylesSource,
-  /\.chat-activity-player:hover,\s*\.chat-activity-player:active\s*\{[^}]*color:\s*inherit;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;[^}]*text-decoration:\s*none;/s,
-  'clickable join and leave nicknames must explicitly neutralize the global button hover treatment'
+  /\.chat-activity-player:hover,\s*\.chat-activity-player:active\s*\{[^}]*color:\s*inherit;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none\s*!important;[^}]*text-decoration:\s*none;/s,
+  'clickable join and leave nicknames must override the higher-specificity dark-theme button shadow'
 );
 assert.match(
   stylesSource,
-  /\.chat-activity-player:focus-visible\s*\{[^}]*outline:\s*0;[^}]*color:\s*inherit;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;/s,
+  /\.chat-activity-player:focus-visible\s*\{[^}]*outline:\s*0;[^}]*color:\s*inherit;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none\s*!important;/s,
   'focused activity nicknames must not receive a visible box highlight'
 );
 assert.match(
