@@ -453,6 +453,10 @@ async function recordSystemLog({ level = 'info', category = 'site', actor = null
 }
 
 function toInt(value, fallback = 0) {
+  // Number(null) is 0 (finite), so a missing query param would silently
+  // coerce to 0 instead of falling back - collapsing e.g. a default page
+  // size of 250 down to Math.max(1, 0) = 1. Treat "absent" as absent.
+  if (value === null || value === undefined || value === '') return fallback;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
