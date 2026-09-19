@@ -2623,7 +2623,8 @@ body.search-focus-active #logoutButton {
 .whisper-players,
 .whisper-messages,
 .supply-list,
-.supply-items {
+.supply-items,
+.notification-list {
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
@@ -2636,7 +2637,8 @@ body.search-focus-active #logoutButton {
 .whisper-players::-webkit-scrollbar,
 .whisper-messages::-webkit-scrollbar,
 .supply-list::-webkit-scrollbar,
-.supply-items::-webkit-scrollbar {
+.supply-items::-webkit-scrollbar,
+.notification-list::-webkit-scrollbar {
   width: 0;
   height: 0;
 }
@@ -7610,8 +7612,12 @@ body.modal-open { overflow:hidden; }
 
 .notification-list {
   display: grid;
+  align-content: start;
+  grid-auto-rows: max-content;
   gap: 8px;
+  max-height: 420px;
   padding: 12px 18px 18px;
+  overflow-y: auto;
 }
 
 .notification-card {
@@ -7736,6 +7742,10 @@ body.modal-open { overflow:hidden; }
   .notification-filters select,
   .notification-filters button {
     width: 100%;
+  }
+
+  .notification-list {
+    max-height: 320px;
   }
 
   .notification-rule-fields {
