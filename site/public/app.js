@@ -1834,7 +1834,13 @@ function toggleNavMenu() {
 function updateNavLabel(tab) {
   const activeButton = $(`.tab-button[data-tab="${tab}"]`);
   const label = $('.nav-menu-label');
-  if (activeButton && label) label.textContent = activeButton.textContent.trim();
+  if (!activeButton || !label) return;
+  // textContent would also pick up the unread-count badge's digits (e.g. a
+  // "5" span inside the button), producing an unstyled "Notifications 5"
+  // instead of the plain tab name. Strip badge nodes before reading it.
+  const clone = activeButton.cloneNode(true);
+  clone.querySelectorAll('.notification-badge').forEach(badge => badge.remove());
+  label.textContent = clone.textContent.trim();
 }
 
 function navigationVisibilityStorageKey() {

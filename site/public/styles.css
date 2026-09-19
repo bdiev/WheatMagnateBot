@@ -7717,6 +7717,21 @@ body.modal-open { overflow:hidden; }
   .notification-rules { grid-template-columns: 1fr; }
 }
 
+@media (max-width: 760px) {
+  /* .admin-log-tools normally lays out 2 controls in a grid; this panel
+     reuses the class for 5 (3 selects, a checkbox, and a button), which
+     leaves the button stranded alone in a narrow column. Stack them instead. */
+  .notification-filters.admin-log-tools {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .notification-filters > label {
+    width: 100%;
+  }
+}
+
 @media (max-width: 700px) {
   .notification-filters select,
   .notification-filters button {
