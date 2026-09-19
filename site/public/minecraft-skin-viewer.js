@@ -15,7 +15,7 @@
 
       const bounds = canvas.getBoundingClientRect();
       this.runningAnimation = new skinview3d.RunningAnimation();
-      this.runningAnimation.speed = 1.15;
+      this.runningAnimation.speed = 0.2875;
 
       this.viewer = new skinview3d.SkinViewer({
         canvas,
