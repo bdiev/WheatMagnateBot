@@ -6402,7 +6402,7 @@ function renderObsidian(payload) {
   $('#obsidianTodayTimezone').textContent = `${payload.settings?.timezone || 'Europe/Vilnius'} calendar day`;
   setObsidianDigitNumber('#sessionRate', farm.sessionPerHour, { suffix: '/h' });
   setObsidianDigitNumber('#pickaxeAverage', farm.blocksPerPickaxe);
-  setObsidianDigitNumber('#retiredPickaxes', farm.retiredPickaxes, { prefix: 'retired pickaxes: ' });
+  $('#retiredPickaxes').textContent = `retired pickaxes: ${formatNumber(farm.retiredPickaxes)}`;
 
   const analytics = payload.analytics || {};
   const efficiency = analytics.efficiency || {};
@@ -6494,7 +6494,7 @@ function renderLiveObsidian(payload) {
   setObsidianDigitNumber('#obsidianTotal', farm.totalMined);
   setObsidianDigitNumber('#sessionRate', farm.sessionPerHour, { suffix: '/h' });
   setObsidianDigitNumber('#pickaxeAverage', farm.blocksPerPickaxe);
-  setObsidianDigitNumber('#retiredPickaxes', farm.retiredPickaxes, { prefix: 'retired pickaxes: ' });
+  $('#retiredPickaxes').textContent = `retired pickaxes: ${formatNumber(farm.retiredPickaxes)}`;
   $('#farmUpdated').textContent = `last update: ${formatDate(farm.updatedAt)}`;
 }
 
