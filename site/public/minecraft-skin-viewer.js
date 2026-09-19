@@ -3,6 +3,24 @@
 (function registerMinecraftSkinViewer(global) {
   const skinview3d = global.skinview3d;
 
+  class WalkingAnimationWithElytra extends (skinview3d?.WalkingAnimation || Object) {
+    animate(player) {
+      super.animate(player);
+      if (!player.elytra?.visible) return;
+
+      // skinview3d's WalkingAnimation only sways the cape; mirror that sway
+      // onto the elytra (plus a little wing flutter) so it moves with the
+      // body instead of looking glued on.
+      const t = this.progress * 8;
+      const basicElytraRotationX = Math.PI * 0.06;
+      player.elytra.rotation.x = Math.sin(t / 1.5) * 0.06 + basicElytraRotationX;
+
+      const wingFlutter = Math.sin(t / 1.5) * 0.05;
+      player.elytra.leftWing.rotation.z = 0.2617994 + wingFlutter;
+      player.elytra.updateRightWing();
+    }
+  }
+
   class MinecraftSkinViewer {
     constructor(canvas) {
       if (!skinview3d?.SkinViewer || !skinview3d?.WalkingAnimation) {
@@ -15,7 +33,7 @@
       this.animationPointer = null;
 
       const bounds = canvas.getBoundingClientRect();
-      this.walkingAnimation = new skinview3d.WalkingAnimation();
+      this.walkingAnimation = new WalkingAnimationWithElytra();
       this.walkingAnimation.speed = 1;
 
       this.viewer = new skinview3d.SkinViewer({
