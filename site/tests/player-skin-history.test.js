@@ -26,11 +26,12 @@ assert.match(appSource, /data-player-skins[\s\S]*openPlayerSkins/, 'the profile 
 assert.match(appSource, /openPlayerSkins\(username\)[\s\S]*fetchJson\(`\/api\/player-skins\?username=/, 'the skin wardrobe must use the dashboard JSON request helper');
 assert.doesNotMatch(appSource, /\bgetJson\(/, 'the skin wardrobe must not call an undefined request helper');
 assert.match(appSource, /data-player-skin-hash/, 'saved skins must be selectable');
-assert.match(htmlSource, /id="playerSkinsOverlay"[\s\S]*minecraft-skin-viewer\.js/, 'the skin dialog and local renderer must be loaded');
-assert.match(viewerSource, /pointerdown[\s\S]*pointermove[\s\S]*ArrowLeft/, 'the model must support pointer and keyboard rotation');
-assert.match(viewerSource, /requestAnimationFrame\(tick\)[\s\S]*runPhase/, 'the model must animate a running cycle');
-assert.match(viewerSource, /wingWorldPoints[\s\S]*texture:this\.capePixels/, 'the model must render elytra with an available cape texture');
-assert.match(viewerSource, /function drawPixelFace[\s\S]*facePoint[\s\S]*ctx\.fill\(\)/, 'faces must render as overlapping texture pixels without diagonal triangle seams');
+assert.match(htmlSource, /id="playerSkinsOverlay"[\s\S]*skinview3d\.bundle\.js[\s\S]*minecraft-skin-viewer\.js/, 'the skin dialog and renderer bundle must be loaded in dependency order');
+assert.match(serverSource, /mount: '\/vendor\/skinview3d'[\s\S]*SKINVIEW3D_BUNDLES_DIR/, 'the pinned local renderer bundle must be served by the site');
+assert.match(viewerSource, /new skinview3d\.SkinViewer[\s\S]*enableControls: true/, 'skinview3d controls must allow free model rotation');
+assert.match(viewerSource, /new skinview3d\.RunningAnimation[\s\S]*runningAnimation\.speed/, 'the model must use the library running animation');
+assert.match(viewerSource, /loadCape\(capeUrl, \{ backEquipment:'elytra' \}\)/, 'official cape textures must use skinview3d elytra geometry and UV mapping');
+assert.doesNotMatch(viewerSource, /drawPixelFace|wingWorldPoints|runPhase/, 'the old pixel-grid renderer must not remain in the adapter');
 
 (async () => {
   const uuid = '1234567890abcdef1234567890abcdef';

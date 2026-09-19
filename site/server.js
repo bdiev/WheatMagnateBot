@@ -36,6 +36,7 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const ITEMS_DIR = path.join(__dirname, 'items');
 const FOOD_DIR = path.join(__dirname, 'food');
 const LOGOS_DIR = path.join(__dirname, 'logos');
+const SKINVIEW3D_BUNDLES_DIR = path.join(__dirname, 'node_modules', 'skinview3d', 'bundles');
 const MINECRAFT_ICON_CACHE_DIR = path.join(__dirname, 'data', 'minecraft-icons');
 const DATABASE_URL = process.env.DATABASE_URL;
 const SITE_ADMIN_USERNAME = String(process.env.SITE_ADMIN_USERNAME || '').trim();
@@ -6019,7 +6020,9 @@ function serveStatic(req, res) {
   const staticUrl = /^\/request\/?(?:\?|$)/.test(String(req.url || '')) ? '/request.html' : req.url;
   const resolved = resolveStaticPath(staticUrl, [
     { mount: '/items', root: ITEMS_DIR }, { mount: '/food', root: FOOD_DIR },
-    { mount: '/logos', root: LOGOS_DIR }, { mount: '/', root: PUBLIC_DIR, index: 'index.html' }
+    { mount: '/logos', root: LOGOS_DIR },
+    { mount: '/vendor/skinview3d', root: SKINVIEW3D_BUNDLES_DIR },
+    { mount: '/', root: PUBLIC_DIR, index: 'index.html' }
   ]);
   if (!resolved) {
     recordStaticSecurityEvent(req, 'Blocked unsafe static file request.', 'invalid_static_path');
