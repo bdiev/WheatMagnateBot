@@ -3203,7 +3203,7 @@ function drawChartById(chartId) {
     case 'averageOnlineChart':
       drawBarChart($('#averageOnlineChart'), aggregateSeries(state.charts.hourlyAverageOnline, range, 'avg'), {
         pointWidth: 44 * getChartZoom('averageOnlineChart'),
-        tooltip: item => `${item.label}: ${formatNumber(item.value)} players on average`
+        tooltip: item => `${item.label}: ${formatNumber(Math.ceil(item.value))} players on average`
       });
       break;
     default:
