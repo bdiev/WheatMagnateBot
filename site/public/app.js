@@ -4051,10 +4051,10 @@ function selectPlayerSkin(skin, button = null) {
     item.setAttribute('aria-pressed', String(selected));
   });
   $('#playerSkinObserved').textContent = skin.firstSeen
-    ? `Observed ${formatDate(skin.firstSeen)}${skin.lastSeen && skin.lastSeen !== skin.firstSeen ? ` – ${formatDate(skin.lastSeen)}` : ''}`
+    ? `Observed ${formatDate(skin.firstSeen)}${skin.lastSeen && skin.lastSeen !== skin.firstSeen ? ` – ${formatDate(skin.lastSeen)}` : ''} · ${skin.capeUrl ? 'cape-textured elytra' : 'standard elytra'}`
     : 'Current skin';
   canvas.classList.add('is-loading');
-  state.playerSkinViewer.load(skin.textureUrl, skin.model);
+  state.playerSkinViewer.load(skin.textureUrl, skin.model, skin.capeUrl);
 }
 
 function renderPlayerSkins(payload) {

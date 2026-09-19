@@ -48,11 +48,24 @@ async function resolveOfficialMinecraftSkin({ username, uuid, fetchImpl = fetch,
   const textureHash = skinUrl.pathname.split('/').filter(Boolean).at(-1)?.toLowerCase();
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(textureHash || '')) throw new Error('Minecraft profile returned an invalid skin hash.');
 
+  let capeHash = null;
+  let capeUrl = null;
+  if (textures?.textures?.CAPE?.url) {
+    const resolvedCapeUrl = new URL(textures.textures.CAPE.url);
+    if (resolvedCapeUrl.hostname !== 'textures.minecraft.net') throw new Error('Minecraft profile returned an invalid cape URL.');
+    resolvedCapeUrl.protocol = 'https:';
+    capeHash = resolvedCapeUrl.pathname.split('/').filter(Boolean).at(-1)?.toLowerCase() || null;
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(capeHash || '')) throw new Error('Minecraft profile returned an invalid cape hash.');
+    capeUrl = resolvedCapeUrl.href;
+  }
+
   const result = {
     uuid: compactUuid,
     textureHash,
     textureUrl: skinUrl.href,
-    model: skin?.metadata?.model === 'slim' ? 'slim' : 'classic'
+    model: skin?.metadata?.model === 'slim' ? 'slim' : 'classic',
+    capeHash,
+    capeUrl
   };
   if (!includeBody) return result;
 

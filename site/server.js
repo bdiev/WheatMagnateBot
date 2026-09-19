@@ -365,17 +365,18 @@ async function getPlayerSkins(url) {
       signal: AbortSignal.timeout(8_000)
     });
     await pool.query(`
-      INSERT INTO player_skin_history(player_uuid,texture_hash,texture_url,model)
-      VALUES($1::uuid,$2,$3,$4)
+      INSERT INTO player_skin_history(player_uuid,texture_hash,texture_url,model,cape_hash,cape_url)
+      VALUES($1::uuid,$2,$3,$4,$5,$6)
       ON CONFLICT(player_uuid,texture_hash) DO UPDATE SET
-        texture_url=EXCLUDED.texture_url,model=EXCLUDED.model,last_seen=NOW()
-    `, [identity.player_uuid, current.textureHash, current.textureUrl, current.model]);
+        texture_url=EXCLUDED.texture_url,model=EXCLUDED.model,
+        cape_hash=EXCLUDED.cape_hash,cape_url=EXCLUDED.cape_url,last_seen=NOW()
+    `, [identity.player_uuid, current.textureHash, current.textureUrl, current.model, current.capeHash, current.capeUrl]);
   } catch {
     refreshFailed = true;
   }
 
   const result = await pool.query(`
-    SELECT texture_hash,model,first_seen,last_seen
+    SELECT texture_hash,model,cape_hash,first_seen,last_seen
     FROM player_skin_history
     WHERE player_uuid=$1::uuid
     ORDER BY last_seen DESC,id DESC
@@ -390,7 +391,8 @@ async function getPlayerSkins(url) {
       model: row.model === 'slim' ? 'slim' : 'classic',
       firstSeen: row.first_seen,
       lastSeen: row.last_seen,
-      textureUrl: `/api/minecraft-skin/${encodeURIComponent(row.texture_hash)}.png`
+      textureUrl: `/api/minecraft-skin/${encodeURIComponent(row.texture_hash)}.png`,
+      capeUrl: row.cape_hash ? `/api/minecraft-cape/${encodeURIComponent(row.cape_hash)}.png` : null
     }))
   };
 }
@@ -419,6 +421,36 @@ async function sendMinecraftSkin(req, res, textureHash) {
   const hasPngSignature = body.length >= 8 && body.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]));
   if (!hasPngSignature || body.length > 256*1024) { sendError(res,502,'Minecraft skin is invalid.'); return; }
   minecraftSkinCache.set(textureHash,{body,storedAt:Date.now()});
+  if (minecraftSkinCache.size > 200) minecraftSkinCache.delete(minecraftSkinCache.keys().next().value);
+  res.writeHead(200,{'Content-Type':'image/png','Cache-Control':'private, max-age=21600','Content-Length':body.length,'X-Content-Type-Options':'nosniff'});
+  res.end(req.method === 'HEAD' ? undefined : body);
+}
+
+async function sendMinecraftCape(req, res, capeHash) {
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(capeHash)) { sendError(res,404,'Minecraft cape not found.'); return; }
+  const cacheKey = `cape:${capeHash}`;
+  const cached = minecraftSkinCache.get(cacheKey);
+  if (cached && Date.now()-cached.storedAt < 6*60*60_000) {
+    res.writeHead(200,{'Content-Type':'image/png','Cache-Control':'private, max-age=21600','Content-Length':cached.body.length});
+    res.end(req.method === 'HEAD' ? undefined : cached.body);
+    return;
+  }
+  const result = await pool.query(`
+    SELECT cape_url FROM player_skin_history
+    WHERE cape_hash=$1 AND cape_url IS NOT NULL ORDER BY last_seen DESC LIMIT 1
+  `, [capeHash]);
+  if (!result.rowCount) { sendError(res,404,'Minecraft cape not found.'); return; }
+  let capeUrl;
+  try {
+    capeUrl = new URL(result.rows[0].cape_url);
+    if (capeUrl.protocol !== 'https:' || capeUrl.hostname !== 'textures.minecraft.net') throw new Error('invalid');
+  } catch { sendError(res,404,'Minecraft cape not found.'); return; }
+  const response = await fetch(capeUrl,{signal:AbortSignal.timeout(8_000),headers:{Accept:'image/png'}});
+  if (!response.ok) { sendError(res,502,'Minecraft cape is temporarily unavailable.'); return; }
+  const body = Buffer.from(await response.arrayBuffer());
+  const hasPngSignature = body.length >= 8 && body.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]));
+  if (!hasPngSignature || body.length > 256*1024) { sendError(res,502,'Minecraft cape is invalid.'); return; }
+  minecraftSkinCache.set(cacheKey,{body,storedAt:Date.now()});
   if (minecraftSkinCache.size > 200) minecraftSkinCache.delete(minecraftSkinCache.keys().next().value);
   res.writeHead(200,{'Content-Type':'image/png','Cache-Control':'private, max-age=21600','Content-Length':body.length,'X-Content-Type-Options':'nosniff'});
   res.end(req.method === 'HEAD' ? undefined : body);
@@ -5667,6 +5699,12 @@ async function handleApi(req, res, url) {
     if (minecraftSkinRoute && ['GET', 'HEAD'].includes(req.method)) {
       if (!enforceRateLimit(req, res, 'minecraft_skin', currentUser.username, { limit: 300, windowMs: 60_000 })) return;
       await sendMinecraftSkin(req, res, minecraftSkinRoute[1]);
+      return;
+    }
+    const minecraftCapeRoute = url.pathname.match(/^\/api\/minecraft-cape\/([A-Za-z0-9_-]{1,128})\.png$/);
+    if (minecraftCapeRoute && ['GET', 'HEAD'].includes(req.method)) {
+      if (!enforceRateLimit(req, res, 'minecraft_cape', currentUser.username, { limit: 300, windowMs: 60_000 })) return;
+      await sendMinecraftCape(req, res, minecraftCapeRoute[1]);
       return;
     }
     const isAdminMutation = MUTATING_METHODS.has(req.method) && (url.pathname.startsWith('/api/admin/') || url.pathname === '/api/obsidian' || url.pathname === '/api/notifications/read');

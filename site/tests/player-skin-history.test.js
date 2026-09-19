@@ -8,22 +8,29 @@ const { resolveOfficialMinecraftSkin } = require('../minecraft-avatar');
 const root = path.resolve(__dirname, '..', '..');
 const siteMigration = fs.readFileSync(path.join(root, 'site/migrations/052_player_skin_history.sql'), 'utf8');
 const botMigration = fs.readFileSync(path.join(root, 'database/migrations/052_player_skin_history.sql'), 'utf8');
+const siteCapeMigration = fs.readFileSync(path.join(root, 'site/migrations/053_player_skin_capes.sql'), 'utf8');
+const botCapeMigration = fs.readFileSync(path.join(root, 'database/migrations/053_player_skin_capes.sql'), 'utf8');
 const serverSource = fs.readFileSync(path.join(root, 'site/server.js'), 'utf8');
 const appSource = fs.readFileSync(path.join(root, 'site/public/app.js'), 'utf8');
 const htmlSource = fs.readFileSync(path.join(root, 'site/public/index.html'), 'utf8');
 const viewerSource = fs.readFileSync(path.join(root, 'site/public/minecraft-skin-viewer.js'), 'utf8');
 
 assert.equal(siteMigration, botMigration, 'bot and site must apply the same skin-history schema');
+assert.equal(siteCapeMigration, botCapeMigration, 'bot and site must apply the same cape-history schema');
 assert.match(siteMigration, /UNIQUE \(player_uuid, texture_hash\)/, 'a player skin must be stored only once');
 assert.match(serverSource, /ON CONFLICT\(player_uuid,texture_hash\)[\s\S]*last_seen=NOW\(\)/, 're-observed skins must update their last-seen time');
 assert.match(serverSource, /\/api\/player-skins/, 'the authenticated skin-history endpoint must exist');
 assert.match(serverSource, /textures\.minecraft\.net/, 'raw skin proxying must be restricted to the official texture host');
+assert.match(serverSource, /\/api\/minecraft-cape\//, 'official cape textures must be available to the elytra renderer');
 assert.match(appSource, /data-player-skins[\s\S]*openPlayerSkins/, 'the profile avatar must open the skin wardrobe');
 assert.match(appSource, /openPlayerSkins\(username\)[\s\S]*fetchJson\(`\/api\/player-skins\?username=/, 'the skin wardrobe must use the dashboard JSON request helper');
 assert.doesNotMatch(appSource, /\bgetJson\(/, 'the skin wardrobe must not call an undefined request helper');
 assert.match(appSource, /data-player-skin-hash/, 'saved skins must be selectable');
 assert.match(htmlSource, /id="playerSkinsOverlay"[\s\S]*minecraft-skin-viewer\.js/, 'the skin dialog and local renderer must be loaded');
 assert.match(viewerSource, /pointerdown[\s\S]*pointermove[\s\S]*ArrowLeft/, 'the model must support pointer and keyboard rotation');
+assert.match(viewerSource, /requestAnimationFrame\(tick\)[\s\S]*runPhase/, 'the model must animate a running cycle');
+assert.match(viewerSource, /wingWorldPoints[\s\S]*texture:this\.capePixels/, 'the model must render elytra with an available cape texture');
+assert.match(viewerSource, /function drawPixelFace[\s\S]*facePoint[\s\S]*ctx\.fill\(\)/, 'faces must render as overlapping texture pixels without diagonal triangle seams');
 
 (async () => {
   const uuid = '1234567890abcdef1234567890abcdef';
@@ -42,7 +49,9 @@ assert.match(viewerSource, /pointerdown[\s\S]*pointermove[\s\S]*ArrowLeft/, 'the
     uuid,
     textureHash:hash,
     textureUrl:`https://textures.minecraft.net/texture/${hash}`,
-    model:'slim'
+    model:'slim',
+    capeHash:null,
+    capeUrl:null
   });
   console.log('Player skin history tests passed.');
 })().catch(error => {
