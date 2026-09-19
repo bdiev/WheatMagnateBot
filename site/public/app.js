@@ -4138,11 +4138,11 @@ function renderPlayerSkins(payload) {
             return `
               <button type="button" data-player-cape-hash="${escapeHtml(cape.hash)}" aria-pressed="${current}" class="player-cape-choice${current ? ' is-selected' : ''}" title="Observed ${escapeHtml(formatDate(cape.firstSeen))}">
                 <canvas width="48" height="48" aria-hidden="true"></canvas>
-                <span>${current ? 'Current' : escapeHtml(formatDate(cape.firstSeen))}</span>
+                <span>${escapeHtml(cape.name || (current ? 'Current' : formatDate(cape.firstSeen)))}</span>
               </button>`;
           }).join('')}
         </div>
-        <p>${capes.length ? 'Select a saved cape to preview it as elytra.' : 'No official cape has been observed for this player yet.'}</p>
+        <p>${capes.length ? 'NameMC capes and locally observed capes are saved here for elytra preview.' : 'No official cape has been found for this player yet.'}</p>
       </section>
     </section>`;
   const canvas = $('#playerSkinCanvas');

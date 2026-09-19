@@ -24,6 +24,7 @@ const { createResourceRequestService } = require('./resource-requests');
 const { normalizeGreenChatMessage } = require('./chat-message-normalization');
 const { NEW_PLAYER_WINDOW_DAYS, isNewPlayerRegistration } = require('./player-new-status');
 const { minecraftAvatarSources, renderOfficialMinecraftAvatar, resolveOfficialMinecraftSkin } = require('./minecraft-avatar');
+const { fetchNameMcCapeTexture, resolveNameMcCapes } = require('./namemc-capes');
 const { MinecraftIconCache, minecraftIconEtag } = require('./minecraft-icon-cache');
 const {
   MUTATING_METHODS, RateLimiter, clientIp, configuredOrigins, requestIsHttps,
@@ -382,6 +383,31 @@ async function getPlayerSkins(url) {
           cape_url=EXCLUDED.cape_url,last_seen=NOW()
       `, [identity.player_uuid, current.capeHash, current.capeUrl]);
     }
+    try {
+      const nameMc = await resolveNameMcCapes({
+        username:identity.username,
+        currentCapeUrl:current.capeUrl
+      });
+      if (nameMc.capes.length) {
+        await pool.query(`
+          INSERT INTO player_cape_history(player_uuid,cape_hash,cape_url,cape_name,cape_source)
+          SELECT $1::uuid,item.cape_hash,
+                 'https://s.namemc.com/i/' || item.cape_hash || '.js',
+                 item.cape_name,'namemc'
+          FROM UNNEST($2::text[],$3::text[]) AS item(cape_hash,cape_name)
+          ON CONFLICT(player_uuid,cape_hash) DO UPDATE SET
+            cape_url=EXCLUDED.cape_url,cape_name=EXCLUDED.cape_name,
+            cape_source=EXCLUDED.cape_source,last_seen=NOW()
+        `, [
+          identity.player_uuid,
+          nameMc.capes.map(cape => cape.hash),
+          nameMc.capes.map(cape => cape.name)
+        ]);
+      }
+      if (nameMc.currentCapeHash) currentCapeHash = nameMc.currentCapeHash;
+    } catch (error) {
+      console.warn(`[Site] Could not import NameMC capes for ${identity.username}: ${error.message}`);
+    }
   } catch {
     refreshFailed = true;
   }
@@ -395,18 +421,27 @@ async function getPlayerSkins(url) {
       LIMIT 100
     `, [identity.player_uuid]),
     pool.query(`
-      SELECT cape_hash,first_seen,last_seen
+      SELECT cape_hash,cape_name,cape_source,first_seen,last_seen
       FROM player_cape_history
       WHERE player_uuid=$1::uuid
       ORDER BY last_seen DESC,id DESC
       LIMIT 100
     `, [identity.player_uuid])
   ]);
+  const resolvedCurrentCapeHash = refreshFailed ? (skinResult.rows[0]?.cape_hash || null) : currentCapeHash;
+  const nameMcCapeRows = capeResult.rows.filter(row => row.cape_source === 'namemc');
+  const displayCapeRows = nameMcCapeRows.length
+    ? [
+        ...nameMcCapeRows,
+        ...capeResult.rows.filter(row => row.cape_source !== 'namemc' && row.cape_hash === resolvedCurrentCapeHash)
+      ]
+    : capeResult.rows;
+  displayCapeRows.sort((first,second) => Number(second.cape_hash === resolvedCurrentCapeHash) - Number(first.cape_hash === resolvedCurrentCapeHash));
   return {
     username: identity.username,
     uuid: identity.player_uuid,
     refreshFailed,
-    currentCapeHash: refreshFailed ? (skinResult.rows[0]?.cape_hash || null) : currentCapeHash,
+    currentCapeHash:resolvedCurrentCapeHash,
     skins: skinResult.rows.map(row => ({
       hash: row.texture_hash,
       model: row.model === 'slim' ? 'slim' : 'classic',
@@ -415,8 +450,10 @@ async function getPlayerSkins(url) {
       textureUrl: `/api/minecraft-skin/${encodeURIComponent(row.texture_hash)}.png`,
       capeUrl: row.cape_hash ? `/api/minecraft-cape/${encodeURIComponent(row.cape_hash)}.png` : null
     })),
-    capes: capeResult.rows.map(row => ({
+    capes: displayCapeRows.map(row => ({
       hash: row.cape_hash,
+      name: row.cape_name || null,
+      source: row.cape_source,
       firstSeen: row.first_seen,
       lastSeen: row.last_seen,
       textureUrl: `/api/minecraft-cape/${encodeURIComponent(row.cape_hash)}.png`
@@ -463,10 +500,20 @@ async function sendMinecraftCape(req, res, capeHash) {
     return;
   }
   const result = await pool.query(`
-    SELECT cape_url FROM player_cape_history
+    SELECT cape_url,cape_source FROM player_cape_history
     WHERE cape_hash=$1 ORDER BY last_seen DESC LIMIT 1
   `, [capeHash]);
   if (!result.rowCount) { sendError(res,404,'Minecraft cape not found.'); return; }
+  if (result.rows[0].cape_source === 'namemc') {
+    try {
+      const cape = await fetchNameMcCapeTexture(capeHash);
+      res.writeHead(200,{'Content-Type':'image/png','Cache-Control':'private, max-age=86400','Content-Length':cape.body.length,'X-Content-Type-Options':'nosniff'});
+      res.end(req.method === 'HEAD' ? undefined : cape.body);
+    } catch {
+      sendError(res,502,'NameMC cape is temporarily unavailable.');
+    }
+    return;
+  }
   let capeUrl;
   try {
     capeUrl = new URL(result.rows[0].cape_url);
