@@ -77,6 +77,7 @@ const state = {
   playerSelectedSkin: null,
   playerSelectedCape: null,
   playerSkinsRequestId: 0,
+  playerSkinBackgroundIndex: -1,
   whisperAccentCache: new Map(),
   playtimeLeaderboardScope: 'global',
   playtimeLeaderboardSort: 'playtime',
@@ -216,6 +217,9 @@ const state = {
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => Array.from(document.querySelectorAll(selector));
+const PLAYER_SKIN_BACKGROUNDS = Object.freeze(
+  Array.from({ length:8 }, (_,index) => `/backgrounds/player-skin-scene-${String(index + 1).padStart(2,'0')}.webp`)
+);
 const CHAT_HISTORY_LIMIT = 500;
 const CHILD_AI_MOBILE_STYLE_BATCH = 40;
 const NEW_PLAYERS_PAGE_SIZE = 24;
@@ -4033,6 +4037,21 @@ function closePlayerSkins() {
   state.playerSelectedCape = null;
 }
 
+function preparePlayerSkinBackground(overlay) {
+  if (!overlay || !PLAYER_SKIN_BACKGROUNDS.length) return;
+  let index = Math.floor(Math.random() * PLAYER_SKIN_BACKGROUNDS.length);
+  if (PLAYER_SKIN_BACKGROUNDS.length > 1 && index === state.playerSkinBackgroundIndex) {
+    index = (index + 1) % PLAYER_SKIN_BACKGROUNDS.length;
+  }
+  state.playerSkinBackgroundIndex = index;
+  const backgroundUrl = PLAYER_SKIN_BACKGROUNDS[index];
+  const preload = new Image();
+  preload.decoding = 'async';
+  preload.fetchPriority = 'high';
+  preload.src = backgroundUrl;
+  overlay.style.setProperty('--player-skin-background', `url("${backgroundUrl}")`);
+}
+
 function drawSkinThumbnail(canvas, textureUrl) {
   const image = new Image();
   image.decoding = 'async';
@@ -4176,6 +4195,7 @@ async function openPlayerSkins(username) {
   const content = $('#playerSkinsContent');
   if (!overlay || !content || !globalThis.MinecraftSkinViewer) return;
   const requestId = ++state.playerSkinsRequestId;
+  preparePlayerSkinBackground(overlay);
   $('#playerSkinsTitle').textContent = `${username}'s skins`;
   content.innerHTML = `
     <section class="player-skins-skeleton-stage" aria-hidden="true">

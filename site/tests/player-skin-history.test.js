@@ -19,6 +19,7 @@ const serverSource = fs.readFileSync(path.join(root, 'site/server.js'), 'utf8');
 const appSource = fs.readFileSync(path.join(root, 'site/public/app.js'), 'utf8');
 const htmlSource = fs.readFileSync(path.join(root, 'site/public/index.html'), 'utf8');
 const viewerSource = fs.readFileSync(path.join(root, 'site/public/minecraft-skin-viewer.js'), 'utf8');
+const stylesSource = fs.readFileSync(path.join(root, 'site/public/styles.css'), 'utf8');
 
 assert.equal(siteMigration, botMigration, 'bot and site must apply the same skin-history schema');
 assert.equal(siteCapeMigration, botCapeMigration, 'bot and site must apply the same cape-history schema');
@@ -41,6 +42,8 @@ assert.match(appSource, /data-player-skin-hash/, 'saved skins must be selectable
 assert.match(appSource, /Cape history[\s\S]*data-player-cape-hash[\s\S]*selectPlayerCape/, 'saved capes must be rendered in a selectable wardrobe');
 assert.match(appSource, /cape\.name \|\| \(current/, 'NameMC cape names must be shown in the wardrobe');
 assert.match(appSource, /player-skins-skeleton-stage[\s\S]*Loading skin wardrobe/, 'the skin wardrobe must render a structural loading skeleton');
+assert.match(appSource, /PLAYER_SKIN_BACKGROUNDS[\s\S]*preparePlayerSkinBackground\(overlay\)[\s\S]*player-skins-skeleton-stage/, 'a rotating scene background must begin loading before the wardrobe skeleton is rendered');
+assert.match(stylesSource, /player-skin-stage::before,[\s\S]*player-skins-skeleton-stage::before[\s\S]*filter:blur\(3px\)/, 'the viewer and its skeleton must share the blurred scene background');
 assert.match(htmlSource, /id="playerSkinsOverlay"[\s\S]*skinview3d\.bundle\.js[\s\S]*minecraft-skin-viewer\.js/, 'the skin dialog and renderer bundle must be loaded in dependency order');
 assert.match(serverSource, /mount: '\/vendor\/skinview3d'[\s\S]*SKINVIEW3D_BUNDLES_DIR/, 'the pinned local renderer bundle must be served by the site');
 assert.match(viewerSource, /new skinview3d\.SkinViewer[\s\S]*enableControls: true/, 'skinview3d controls must allow free model rotation');

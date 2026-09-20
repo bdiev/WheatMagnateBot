@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = '208';
+const CACHE_VERSION = '209';
 const CACHE_NAME = `wheatmagnatebot-v${CACHE_VERSION}`;
 const APP_SHELL = [
   '/',
@@ -18,7 +18,14 @@ const APP_SHELL = [
   '/theme-init.js',
   '/app.js',
   '/manifest.webmanifest',
-  '/backgrounds/player-skin-cherry-grove.png',
+  '/backgrounds/player-skin-scene-01.webp',
+  '/backgrounds/player-skin-scene-02.webp',
+  '/backgrounds/player-skin-scene-03.webp',
+  '/backgrounds/player-skin-scene-04.webp',
+  '/backgrounds/player-skin-scene-05.webp',
+  '/backgrounds/player-skin-scene-06.webp',
+  '/backgrounds/player-skin-scene-07.webp',
+  '/backgrounds/player-skin-scene-08.webp',
   '/items/Wheat.png',
   '/items/Writable_Book.png',
   '/items/Icon_Search.png',

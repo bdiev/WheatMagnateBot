@@ -4973,16 +4973,35 @@ body.search-focus-active #logoutButton {
 .player-skins-content { display:grid; grid-template-columns:minmax(280px,1fr) minmax(220px,.72fr); min-height:480px; }
 
 .player-skin-stage {
+  position:relative;
+  isolation:isolate;
   display:grid;
   grid-template-rows:minmax(0,1fr) auto;
   min-width:0;
   min-height:480px;
+  overflow:hidden;
   border-right:2px solid var(--line);
-  background:
-    linear-gradient(rgba(9,12,14,.24),rgba(9,12,14,.34)),
-    url('/backgrounds/player-skin-cherry-grove.png') center/cover no-repeat,
-    var(--panel-soft);
+  background:var(--panel-soft);
 }
+
+.player-skin-stage::before,
+.player-skins-skeleton-stage::before {
+  content:"";
+  position:absolute;
+  z-index:0;
+  inset:-10px;
+  background-image:
+    linear-gradient(rgba(9,12,14,.22),rgba(9,12,14,.34)),
+    var(--player-skin-background);
+  background-position:center;
+  background-size:cover;
+  filter:blur(3px);
+  transform:scale(1.035);
+}
+
+#playerSkinCanvas,
+.player-skin-stage-tools,
+.player-skins-skeleton-stage > * { position:relative; z-index:1; }
 
 #playerSkinCanvas {
   display:block;
@@ -5031,10 +5050,13 @@ body.search-focus-active #logoutButton {
 .player-skins-empty p { max-width:420px; margin:0; font-size:12px; line-height:1.5; }
 
 .player-skins-skeleton-stage {
+  position:relative;
+  isolation:isolate;
   display:grid;
   grid-template-rows:minmax(0,1fr) auto;
   min-width:0;
   min-height:480px;
+  overflow:hidden;
   border-right:2px solid var(--line);
   background:color-mix(in srgb,var(--panel-soft) 88%,var(--panel));
 }
