@@ -33,6 +33,16 @@ assert.match(
 );
 assert.match(
   serverSource,
+  /function invalidatePlayerStatsCache\(\)[\s\S]*playerStatsCacheGeneration \+= 1;[\s\S]*playerStatsCacheValue = null;[\s\S]*player_info_updated/,
+  'player information changes must invalidate the cached leaderboard before notifying clients'
+);
+assert.match(
+  serverSource,
+  /if \(force\) \{[\s\S]*await playerStatsCachePromise\.catch[\s\S]*return refreshPlayerStatsCache\(\);/,
+  'a forced refresh must wait out an older in-flight cache build before reading current player data'
+);
+assert.match(
+  serverSource,
   /await loadPersistedPlayerStatsCache\(\);[\s\S]*getCachedPlayerStats\(\)\.catch/,
   'the Player Stats cache must be warmed during site startup'
 );

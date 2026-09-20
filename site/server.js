@@ -2223,6 +2223,13 @@ const PLAYER_STATS_CACHE_TTL_MS = 60_000;
 let playerStatsCacheValue = null;
 let playerStatsCacheExpiresAt = 0;
 let playerStatsCachePromise = null;
+let playerStatsCacheGeneration = 0;
+
+function invalidatePlayerStatsCache() {
+  playerStatsCacheGeneration += 1;
+  playerStatsCacheValue = null;
+  playerStatsCacheExpiresAt = 0;
+}
 
 async function loadPersistedPlayerStatsCache() {
   if (!pool) return false;
@@ -2664,8 +2671,10 @@ async function getPlayerStats() {
 function refreshPlayerStatsCache() {
   if (playerStatsCachePromise) return playerStatsCachePromise;
 
+  const generation = playerStatsCacheGeneration;
   playerStatsCachePromise = getPlayerStats()
     .then(value => {
+      if (generation !== playerStatsCacheGeneration) return value;
       playerStatsCacheValue = value;
       playerStatsCacheExpiresAt = Date.now() + PLAYER_STATS_CACHE_TTL_MS;
       persistPlayerStatsCache(value).catch(error => {
@@ -2680,7 +2689,10 @@ function refreshPlayerStatsCache() {
 }
 
 async function getCachedPlayerStats({ force = false } = {}) {
-  if (force) return refreshPlayerStatsCache();
+  if (force) {
+    if (playerStatsCachePromise) await playerStatsCachePromise.catch(() => {});
+    return refreshPlayerStatsCache();
+  }
 
   if (playerStatsCacheValue) {
     if (Date.now() >= playerStatsCacheExpiresAt) {
@@ -6300,6 +6312,7 @@ async function pollDatabaseEvents() {
       || next.playerInfoObservationAt !== previous.playerInfoObservationAt
       || next.playerInfoActivity !== previous.playerInfoActivity
       || next.playerInfoExclusionAt !== previous.playerInfoExclusionAt) {
+      invalidatePlayerStatsCache();
       sseHub.publish('player_info_updated', {
         updatedAt: [next.playerInfoAt, next.playerInfoObservationAt, next.playerInfoExclusionAt]
           .filter(Boolean)

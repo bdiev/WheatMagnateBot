@@ -50,6 +50,16 @@ assert.match(appSource, /global:\s*Array\.isArray\(leaderboardSources\.global\) 
 assert.match(appSource, /sortPlaytimeLeaderboardEntries[\s\S]*scope === 'global' \? sortedLeaderboard\.slice\(0, 100\)/, 'the client must select the visible top 100 only after sorting the full metric set');
 assert.match(appSource, /tab === 'players'[\s\S]*loadPlayerStats\(\)/, 'the expensive player metrics must load lazily when Players is opened');
 assert.match(appSource, /state\.activeTab === 'players'[\s\S]*sectionLoads\.push\(loadPlayerStats\(\)\)/, 'full synchronization must skip player metrics outside the Players tab');
+assert.match(
+  appSource,
+  /type === 'player_info_updated'[\s\S]*state\.playerStatsLoadedAt = 0;[\s\S]*refreshPlayersFromEvent\(\{ forcePlayerStats: true \}\)/,
+  'player information events must invalidate local data and bypass the freshness window when refreshing the leaderboard'
+);
+assert.match(
+  appSource,
+  /if \(state\.playerStatsPromise\) \{[\s\S]*state\.playerStatsPromise\.finally\(\(\) => loadPlayerStats\(\{ force: true \}\)\)/,
+  'a player information event received during an older request must queue a fresh leaderboard request'
+);
 assert.match(appSource, /function setPlaytimeLeaderboardScope\(scope\)/, 'the leaderboard tabs must switch without reloading the dashboard');
 assert.match(appSource, /classList\.add\('is-leaving'\)[\s\S]*classList\.add\('is-entering'\)[\s\S]*160/, 'the old list must leave before the new list enters');
 assert.match(appSource, /setAttribute\('aria-busy', 'true'\)[\s\S]*removeAttribute\('aria-busy'\)/, 'the animated list swap must expose its busy state');

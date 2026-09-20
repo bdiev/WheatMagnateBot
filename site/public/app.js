@@ -9556,7 +9556,10 @@ async function loadPlayerStats({ force = false } = {}) {
   const isFresh = state.playerStatsAccountId === accountId
     && Date.now() - state.playerStatsLoadedAt < 30_000;
   if (!force && isFresh) return true;
-  if (state.playerStatsPromise) return state.playerStatsPromise;
+  if (state.playerStatsPromise) {
+    if (!force) return state.playerStatsPromise;
+    return state.playerStatsPromise.finally(() => loadPlayerStats({ force: true }));
+  }
 
   state.playerStatsLoading = true;
   const request = fetchJson(`/api/player-stats${force ? '?fresh=1' : ''}`, {
@@ -9622,10 +9625,10 @@ function hasActiveTextSelectionWithin(container) {
   return [selection.anchorNode, selection.focusNode].some(node => node && container.contains(node));
 }
 
-async function refreshPlayersFromEvent() {
+async function refreshPlayersFromEvent({ forcePlayerStats = false } = {}) {
   const serverRequest = fetchJson('/api/server-stats').then(renderServerStats);
   const playerRequest = state.activeTab === 'players'
-    ? loadPlayerStats()
+    ? loadPlayerStats({ force: forcePlayerStats })
     : Promise.resolve();
   await Promise.all([serverRequest, playerRequest]);
 }
@@ -9669,7 +9672,8 @@ function handleRealtimeEvent(event) {
     }
   }
   else if (type === 'player_info_updated') {
-    queueRealtimeRefresh('players-info', refreshPlayersFromEvent, 200);
+    state.playerStatsLoadedAt = 0;
+    queueRealtimeRefresh('players-info', () => refreshPlayersFromEvent({ forcePlayerStats: true }), 200);
     if (state.currentUser?.role === 'admin' && state.activeTab === 'admin') {
       queueRealtimeRefresh('admin-player-info', () => loadAdminPlayers({ showLoading: false, preserveScroll: true }), 2_000);
       loadAdminPlayerInfoCollection();
