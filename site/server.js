@@ -76,6 +76,7 @@ let accountRegistry = null;
 let resourceRequestService = null;
 const minecraftAvatarCache = new Map();
 const minecraftSkinCache = new Map();
+const playerSkinRefreshes = new Map();
 const minecraftIconCache = new MinecraftIconCache({
   cacheDir: MINECRAFT_ICON_CACHE_DIR,
   apiKey: process.env.MINECRAFT_ASSET_API_KEY
@@ -351,45 +352,36 @@ async function resolveStoredPlayerIdentity(username) {
   return result.rows[0] || null;
 }
 
-async function getPlayerSkins(url) {
-  const requestedUsername = String(url.searchParams.get('username') || '').trim();
-  if (!/^[A-Za-z0-9_]{1,16}$/.test(requestedUsername)) {
-    throw Object.assign(new Error('Invalid Minecraft username.'), { statusCode:400 });
-  }
-  const identity = await resolveStoredPlayerIdentity(requestedUsername);
-  if (!identity?.player_uuid) throw Object.assign(new Error('Player has no known Minecraft UUID.'), { statusCode:404 });
-
-  let refreshFailed = false;
+async function refreshPlayerSkinHistory(identity) {
   let currentCapeHash = null;
-  try {
-    const current = await resolveOfficialMinecraftSkin({
-      username: identity.username,
-      uuid: identity.player_uuid,
-      signal: AbortSignal.timeout(8_000)
-    });
-    await pool.query(`
+  const current = await resolveOfficialMinecraftSkin({
+    username: identity.username,
+    uuid: identity.player_uuid,
+    signal: AbortSignal.timeout(8_000)
+  });
+  await pool.query(`
       INSERT INTO player_skin_history(player_uuid,texture_hash,texture_url,model,cape_hash,cape_url)
       VALUES($1::uuid,$2,$3,$4,$5,$6)
       ON CONFLICT(player_uuid,texture_hash) DO UPDATE SET
         texture_url=EXCLUDED.texture_url,model=EXCLUDED.model,
         cape_hash=EXCLUDED.cape_hash,cape_url=EXCLUDED.cape_url,last_seen=NOW()
-    `, [identity.player_uuid, current.textureHash, current.textureUrl, current.model, current.capeHash, current.capeUrl]);
-    currentCapeHash = current.capeHash;
-    if (current.capeHash && current.capeUrl) {
-      await pool.query(`
+  `, [identity.player_uuid, current.textureHash, current.textureUrl, current.model, current.capeHash, current.capeUrl]);
+  currentCapeHash = current.capeHash;
+  if (current.capeHash && current.capeUrl) {
+    await pool.query(`
         INSERT INTO player_cape_history(player_uuid,cape_hash,cape_url)
         VALUES($1::uuid,$2,$3)
         ON CONFLICT(player_uuid,cape_hash) DO UPDATE SET
           cape_url=EXCLUDED.cape_url,last_seen=NOW()
-      `, [identity.player_uuid, current.capeHash, current.capeUrl]);
-    }
-    try {
-      const nameMc = await resolveNameMcCapes({
-        username:identity.username,
-        currentCapeUrl:current.capeUrl
-      });
-      if (nameMc.capes.length) {
-        await pool.query(`
+    `, [identity.player_uuid, current.capeHash, current.capeUrl]);
+  }
+  try {
+    const nameMc = await resolveNameMcCapes({
+      username:identity.username,
+      currentCapeUrl:current.capeUrl
+    });
+    if (nameMc.capes.length) {
+      await pool.query(`
           INSERT INTO player_cape_history(player_uuid,cape_hash,cape_url,cape_name,cape_source)
           SELECT $1::uuid,item.cape_hash,
                  'https://s.namemc.com/i/' || item.cape_hash || '.js',
@@ -398,20 +390,31 @@ async function getPlayerSkins(url) {
           ON CONFLICT(player_uuid,cape_hash) DO UPDATE SET
             cape_url=EXCLUDED.cape_url,cape_name=EXCLUDED.cape_name,
             cape_source=EXCLUDED.cape_source,last_seen=NOW()
-        `, [
-          identity.player_uuid,
-          nameMc.capes.map(cape => cape.hash),
-          nameMc.capes.map(cape => cape.name)
-        ]);
-      }
-      if (nameMc.currentCapeHash) currentCapeHash = nameMc.currentCapeHash;
-    } catch (error) {
-      console.warn(`[Site] Could not import NameMC capes for ${identity.username}: ${error.message}`);
+      `, [
+        identity.player_uuid,
+        nameMc.capes.map(cape => cape.hash),
+        nameMc.capes.map(cape => cape.name)
+      ]);
     }
-  } catch {
-    refreshFailed = true;
+    if (nameMc.currentCapeHash) currentCapeHash = nameMc.currentCapeHash;
+  } catch (error) {
+    console.warn(`[Site] Could not import NameMC capes for ${identity.username}: ${error.message}`);
   }
+  return currentCapeHash;
+}
 
+function refreshPlayerSkinHistoryOnce(identity) {
+  const key = String(identity.player_uuid).toLowerCase();
+  const activeRefresh = playerSkinRefreshes.get(key);
+  if (activeRefresh) return activeRefresh;
+  const refresh = refreshPlayerSkinHistory(identity).finally(() => {
+    if (playerSkinRefreshes.get(key) === refresh) playerSkinRefreshes.delete(key);
+  });
+  playerSkinRefreshes.set(key,refresh);
+  return refresh;
+}
+
+async function readPlayerSkinHistory(identity, { refreshFailed = false, currentCapeHash } = {}) {
   const [skinResult, capeResult] = await Promise.all([
     pool.query(`
       SELECT texture_hash,model,cape_hash,first_seen,last_seen
@@ -428,7 +431,9 @@ async function getPlayerSkins(url) {
       LIMIT 100
     `, [identity.player_uuid])
   ]);
-  const resolvedCurrentCapeHash = refreshFailed ? (skinResult.rows[0]?.cape_hash || null) : currentCapeHash;
+  const resolvedCurrentCapeHash = currentCapeHash === undefined
+    ? (skinResult.rows[0]?.cape_hash || null)
+    : currentCapeHash;
   const nameMcCapeRows = capeResult.rows.filter(row => row.cape_source === 'namemc');
   const displayCapeRows = nameMcCapeRows.length
     ? [
@@ -459,6 +464,32 @@ async function getPlayerSkins(url) {
       textureUrl: `/api/minecraft-cape/${encodeURIComponent(row.cape_hash)}.png`
     }))
   };
+}
+
+async function getPlayerSkins(url) {
+  const requestedUsername = String(url.searchParams.get('username') || '').trim();
+  if (!/^[A-Za-z0-9_]{1,16}$/.test(requestedUsername)) {
+    throw Object.assign(new Error('Invalid Minecraft username.'), { statusCode:400 });
+  }
+  const identity = await resolveStoredPlayerIdentity(requestedUsername);
+  if (!identity?.player_uuid) throw Object.assign(new Error('Player has no known Minecraft UUID.'), { statusCode:404 });
+
+  const stored = await readPlayerSkinHistory(identity);
+  if (stored.skins.length) {
+    refreshPlayerSkinHistoryOnce(identity).catch(error => {
+      console.warn(`[Site] Could not refresh skins for ${identity.username}: ${error.message}`);
+    });
+    return stored;
+  }
+
+  let currentCapeHash = null;
+  let refreshFailed = false;
+  try {
+    currentCapeHash = await refreshPlayerSkinHistoryOnce(identity);
+  } catch {
+    refreshFailed = true;
+  }
+  return readPlayerSkinHistory(identity,{ refreshFailed,currentCapeHash });
 }
 
 async function sendMinecraftSkin(req, res, textureHash) {

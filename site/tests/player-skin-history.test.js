@@ -29,6 +29,8 @@ assert.match(siteCapeHistoryMigration, /UNIQUE \(player_uuid, cape_hash\)[\s\S]*
 assert.match(serverSource, /ON CONFLICT\(player_uuid,texture_hash\)[\s\S]*last_seen=NOW\(\)/, 're-observed skins must update their last-seen time');
 assert.match(serverSource, /ON CONFLICT\(player_uuid,cape_hash\)[\s\S]*cape_url=EXCLUDED\.cape_url,last_seen=NOW\(\)/, 're-observed capes must update their last-seen time');
 assert.match(serverSource, /resolveNameMcCapes[\s\S]*cape_source=EXCLUDED\.cape_source/, 'all NameMC profile capes must be imported with their metadata');
+assert.match(serverSource, /stored\.skins\.length[\s\S]*refreshPlayerSkinHistoryOnce\(identity\)[\s\S]*return stored/, 'saved skin history must be returned before the external refresh finishes');
+assert.match(serverSource, /playerSkinRefreshes\.get[\s\S]*playerSkinRefreshes\.set/, 'concurrent external skin refreshes must be deduplicated');
 assert.match(serverSource, /\/api\/player-skins/, 'the authenticated skin-history endpoint must exist');
 assert.match(serverSource, /textures\.minecraft\.net/, 'raw skin proxying must be restricted to the official texture host');
 assert.match(serverSource, /\/api\/minecraft-cape\//, 'official cape textures must be available to the elytra renderer');
@@ -38,10 +40,11 @@ assert.doesNotMatch(appSource, /\bgetJson\(/, 'the skin wardrobe must not call a
 assert.match(appSource, /data-player-skin-hash/, 'saved skins must be selectable');
 assert.match(appSource, /Cape history[\s\S]*data-player-cape-hash[\s\S]*selectPlayerCape/, 'saved capes must be rendered in a selectable wardrobe');
 assert.match(appSource, /cape\.name \|\| \(current/, 'NameMC cape names must be shown in the wardrobe');
+assert.match(appSource, /player-skins-skeleton-stage[\s\S]*Loading skin wardrobe/, 'the skin wardrobe must render a structural loading skeleton');
 assert.match(htmlSource, /id="playerSkinsOverlay"[\s\S]*skinview3d\.bundle\.js[\s\S]*minecraft-skin-viewer\.js/, 'the skin dialog and renderer bundle must be loaded in dependency order');
 assert.match(serverSource, /mount: '\/vendor\/skinview3d'[\s\S]*SKINVIEW3D_BUNDLES_DIR/, 'the pinned local renderer bundle must be served by the site');
 assert.match(viewerSource, /new skinview3d\.SkinViewer[\s\S]*enableControls: true/, 'skinview3d controls must allow free model rotation');
-assert.match(viewerSource, /new skinview3d\.WalkingAnimation[\s\S]*walkingAnimation\.speed = 1/, 'the model must use the natural walking animation pace');
+assert.match(viewerSource, /new (?:skinview3d\.WalkingAnimation|WalkingAnimationWithElytra)[\s\S]*walkingAnimation\.speed = 1/, 'the model must use the natural walking animation pace');
 assert.match(viewerSource, /onAnimationPointerUp[\s\S]*toggleAnimation\(\)[\s\S]*walkingAnimation\.paused = !this\.walkingAnimation\.paused/, 'a click without dragging must pause or resume the animation');
 assert.match(appSource, /skinvieweranimationchange[\s\S]*Animation paused · Click to resume/, 'the skin viewer must explain its current animation state');
 assert.match(viewerSource, /loadCape\(capeUrl, \{ backEquipment:'elytra' \}\)/, 'official cape textures must use skinview3d elytra geometry and UV mapping');

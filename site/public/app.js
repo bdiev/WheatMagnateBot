@@ -4177,7 +4177,23 @@ async function openPlayerSkins(username) {
   if (!overlay || !content || !globalThis.MinecraftSkinViewer) return;
   const requestId = ++state.playerSkinsRequestId;
   $('#playerSkinsTitle').textContent = `${username}'s skins`;
-  content.innerHTML = '<div class="player-skins-loading" role="status"><span></span><strong>Loading skin wardrobe…</strong></div>';
+  content.innerHTML = `
+    <section class="player-skins-skeleton-stage" aria-hidden="true">
+      <span class="player-skins-skeleton-model"></span>
+      <footer><span></span><span></span></footer>
+    </section>
+    <section class="player-skins-skeleton-wardrobe" aria-hidden="true">
+      <header><span></span><span></span></header>
+      <div class="player-skins-skeleton-grid">
+        ${Array.from({ length:6 }, () => '<span></span>').join('')}
+      </div>
+      <p></p>
+      <header><span></span><span></span></header>
+      <div class="player-skins-skeleton-grid capes">
+        ${Array.from({ length:4 }, () => '<span></span>').join('')}
+      </div>
+    </section>
+    <span class="visually-hidden" role="status">Loading skin wardrobe...</span>`;
   overlay.hidden = false;
   $('#playerSkinsClose')?.focus();
   try {

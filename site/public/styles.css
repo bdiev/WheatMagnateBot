@@ -5026,19 +5026,70 @@ body.search-focus-active #logoutButton {
 .player-cape-choice canvas,.player-cape-none { width:42px; height:42px; image-rendering:pixelated; }
 .player-cape-none { display:grid; place-items:center; border:1px dashed color-mix(in srgb,var(--line) 85%,transparent); color:var(--muted); font-size:24px; }
 .player-cape-choice > span:last-child { width:100%; overflow:hidden; font-size:8px; text-align:center; text-overflow:ellipsis; white-space:nowrap; }
-.player-skins-loading,.player-skins-empty { display:grid; grid-column:1/-1; place-content:center; justify-items:center; gap:10px; min-height:420px; padding:30px; color:var(--muted); text-align:center; }
-.player-skins-loading span { width:30px; height:30px; border:3px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:mc-spin-step 750ms steps(8,end) infinite; }
+.player-skins-empty { display:grid; grid-column:1/-1; place-content:center; justify-items:center; gap:10px; min-height:420px; padding:30px; color:var(--muted); text-align:center; }
 .player-skins-empty strong { color:var(--text); }
 .player-skins-empty p { max-width:420px; margin:0; font-size:12px; line-height:1.5; }
+
+.player-skins-skeleton-stage {
+  display:grid;
+  grid-template-rows:minmax(0,1fr) auto;
+  min-width:0;
+  min-height:480px;
+  border-right:2px solid var(--line);
+  background:color-mix(in srgb,var(--panel-soft) 88%,var(--panel));
+}
+.player-skins-skeleton-model { width:112px; height:270px; align-self:center; justify-self:center; border-radius:8px; }
+.player-skins-skeleton-stage footer { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:15px 12px; border-top:2px solid var(--line); }
+.player-skins-skeleton-stage footer span:first-child { width:min(55%,170px); height:12px; }
+.player-skins-skeleton-stage footer span:last-child { width:76px; height:30px; }
+.player-skins-skeleton-wardrobe { display:flex; flex-direction:column; min-width:0; }
+.player-skins-skeleton-wardrobe header { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:16px 14px; border-bottom:2px solid var(--line); }
+.player-skins-skeleton-wardrobe header span:first-child { width:92px; height:14px; }
+.player-skins-skeleton-wardrobe header span:last-child { width:44px; height:10px; }
+.player-skins-skeleton-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; padding:12px; }
+.player-skins-skeleton-grid > span { height:76px; border:2px solid var(--line); border-radius:4px; }
+.player-skins-skeleton-wardrobe > p { height:38px; margin:auto 14px 12px; }
+.player-skins-skeleton-grid.capes { grid-template-columns:repeat(4,minmax(0,1fr)); }
+.player-skins-skeleton-grid.capes > span { height:66px; }
+.player-skins-skeleton-model,
+.player-skins-skeleton-stage footer span,
+.player-skins-skeleton-wardrobe header span,
+.player-skins-skeleton-grid > span,
+.player-skins-skeleton-wardrobe > p {
+  position:relative;
+  overflow:hidden;
+  background:color-mix(in srgb,var(--muted) 13%,var(--panel));
+}
+.player-skins-skeleton-model::after,
+.player-skins-skeleton-stage footer span::after,
+.player-skins-skeleton-wardrobe header span::after,
+.player-skins-skeleton-grid > span::after,
+.player-skins-skeleton-wardrobe > p::after {
+  content:"";
+  position:absolute;
+  inset:0;
+  background:linear-gradient(100deg,transparent 15%,color-mix(in srgb,#fff 32%,transparent) 48%,transparent 82%);
+  transform:translateX(-120%);
+  animation:player-profile-skeleton-shimmer 1.35s ease-in-out infinite;
+}
 
 @media (max-width:700px) {
   .player-skins-overlay { padding:10px; }
   .player-skins-dialog { max-height:calc(100dvh - 20px); }
   .player-skins-content { grid-template-columns:1fr; }
   .player-skin-stage { min-height:390px; border-right:0; border-bottom:2px solid var(--line); }
+  .player-skins-skeleton-stage { min-height:390px; border-right:0; border-bottom:2px solid var(--line); }
   #playerSkinCanvas { min-height:310px; }
   .player-skin-list { grid-template-columns:repeat(4,minmax(0,1fr)); max-height:190px; }
   .player-cape-list { grid-template-columns:repeat(5,minmax(0,1fr)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .player-skins-skeleton-model::after,
+  .player-skins-skeleton-stage footer span::after,
+  .player-skins-skeleton-wardrobe header span::after,
+  .player-skins-skeleton-grid > span::after,
+  .player-skins-skeleton-wardrobe > p::after { animation:none; }
 }
 
 @media (max-width:420px) {
