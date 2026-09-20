@@ -6597,14 +6597,14 @@ html.admin-player-actions-open body { position:fixed; top:var(--admin-player-act
 .admin-player-edit-readonly dt { color:var(--muted); font-size:10px; font-weight:800; text-transform:uppercase; }
 .admin-player-edit-readonly dd { overflow:hidden; margin:4px 0 0; font-size:13px; font-weight:800; text-overflow:ellipsis; white-space:nowrap; }
 .admin-player-delete-modal { width:min(500px,100%); }
-.player-profile-admin-metadata { display:flex; width:fit-content; max-width:calc(100% - 28px); align-items:center; flex-wrap:wrap; gap:7px 16px; margin:0 14px 16px; padding:9px 12px; border:2px dashed color-mix(in srgb, var(--gold) 45%, var(--line)); border-radius:var(--card-radius); background:color-mix(in srgb, var(--gold) 6%, var(--panel-soft)); }
+.player-profile-admin-metadata { display:flex; align-items:baseline; flex-wrap:wrap; gap:7px 16px; margin:0 14px 16px; padding:9px 12px; border:2px dashed color-mix(in srgb, var(--gold) 45%, var(--line)); border-radius:var(--card-radius); background:color-mix(in srgb, var(--gold) 6%, var(--panel-soft)); }
 .player-profile-admin-metadata h3,.player-profile-admin-metadata p { margin:0; }
-.player-profile-admin-metadata h3 { font-family:var(--font-display); font-weight:400; color:var(--gold-text); font-size:15px; }
-.player-profile-admin-metadata > div { display:flex; min-width:0; align-items:center; gap:6px; }
+.player-profile-admin-metadata h3 { color:var(--gold-text); font-family:var(--font-body); font-size:12px; font-weight:800; line-height:1.4; letter-spacing:.04em; text-transform:uppercase; }
+.player-profile-admin-metadata > div { display:flex; min-width:0; align-items:baseline; gap:6px; }
 .player-profile-admin-metadata > div:last-child { flex:0 1 auto; }
-.player-profile-admin-metadata > div > span { color:var(--muted); font-size:12px; font-weight:800; text-transform:uppercase; }
-.player-profile-admin-metadata strong { display:flex; gap:5px; flex-wrap:wrap; }
-.player-profile-admin-metadata p { white-space:pre-wrap; overflow-wrap:anywhere; }
+.player-profile-admin-metadata > div > span { color:var(--muted); font-size:12px; font-weight:800; line-height:1.4; text-transform:uppercase; }
+.player-profile-admin-metadata strong { display:flex; gap:5px; flex-wrap:wrap; line-height:1.4; }
+.player-profile-admin-metadata p { line-height:1.4; white-space:pre-wrap; overflow-wrap:anywhere; }
 .visually-hidden { position:absolute!important; width:1px!important; height:1px!important; padding:0!important; margin:-1px!important; overflow:hidden!important; clip:rect(0,0,0,0)!important; white-space:nowrap!important; border:0!important; }
 body.modal-open { overflow:hidden; }
 
