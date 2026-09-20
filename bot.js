@@ -1172,6 +1172,14 @@ const gameChatDiscordForwardQueue = new DiscordChatForwardQueue({
   summaryDelayMs: DISCORD_CHAT_FLOOD_SUMMARY_DELAY_MS,
   minSendIntervalMs: DISCORD_CHAT_MIN_SEND_INTERVAL_MS,
   send: deliverGameChatMessageToDiscord,
+  // Anti-flood only controls the public Discord/site feed. Keep every
+  // suppressed player message in the player's private profile history.
+  onSuppressed: ({ username, message }) => {
+    if (isMinecraftSystemUsername(username)) return;
+    recordGameChatMessage(username, message, { visible: false }).catch(error => {
+      console.error('[Discord Chat Queue] Failed to archive suppressed message:', error?.message || error);
+    });
+  },
   onError: error => console.error('[Discord Chat Queue]', error?.message || error)
 });
 
@@ -5758,10 +5766,11 @@ async function deliverGameChatMessageToDiscord({
   if (isSummary && isSystemMessage) return true;
 
   try {
-    // A flood summary contributes the number of suppressed messages to chat
-    // statistics and is also kept as a visible system notice in the site chat.
+    // Suppressed messages are archived individually by onSuppressed. Keep the
+    // summary as a visible operational notice without counting it as another
+    // player message.
     await recordGameChatMessage(username, message, {
-      messageCount: isSummary ? summaryCount : 1,
+      messageCount: isSummary ? 0 : 1,
       visible: true
     });
 
@@ -5858,7 +5867,10 @@ async function recordGameChatMessage(username, message, { messageCount = 1, visi
     .trim();
 
   if (!safeUsername || !cleanMessage || cleanMessage.startsWith('/msg ')) return;
-  const safeMessageCount = Math.max(1, Number.parseInt(messageCount, 10) || 1);
+  const parsedMessageCount = Number.parseInt(messageCount, 10);
+  const safeMessageCount = Number.isFinite(parsedMessageCount)
+    ? Math.max(0, parsedMessageCount)
+    : 1;
 
   try {
     const onlinePlayer = Object.values(bot?.players || {}).find(player =>

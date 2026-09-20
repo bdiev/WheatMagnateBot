@@ -19,6 +19,8 @@ const floodNoticeMigration = fs.readFileSync(path.join(root, 'database', 'migrat
 const siteFloodNoticeMigration = fs.readFileSync(path.join(root, 'site', 'migrations', '032_restore_flood_notices.sql'), 'utf8');
 const serverFloodCleanupMigration = fs.readFileSync(path.join(root, 'database', 'migrations', '033_hide_server_flood_summaries.sql'), 'utf8');
 const siteServerFloodCleanupMigration = fs.readFileSync(path.join(root, 'site', 'migrations', '033_hide_server_flood_summaries.sql'), 'utf8');
+const suppressedArchiveMigration = fs.readFileSync(path.join(root, 'database', 'migrations', '056_archive_suppressed_flood_messages.sql'), 'utf8');
+const siteSuppressedArchiveMigration = fs.readFileSync(path.join(root, 'site', 'migrations', '056_archive_suppressed_flood_messages.sql'), 'utf8');
 
 assert.equal(floodStatsMigration, siteFloodStatsMigration,
   'the bot and site must install identical flood-statistics metadata');
@@ -32,6 +34,10 @@ assert.equal(serverFloodCleanupMigration, siteServerFloodCleanupMigration,
   'the bot and site must install identical server-summary cleanup metadata');
 assert.match(serverFloodCleanupMigration, /SET is_visible = FALSE[\s\S]*LOWER\(username\) IN \('server', 'console'\)[\s\S]*Skipped \[0-9\]\+/,
   'legacy SERVER flood summaries must be hidden from the site archive');
+assert.equal(suppressedArchiveMigration, siteSuppressedArchiveMigration,
+  'the bot and site must install identical suppressed-message archive metadata');
+assert.match(suppressedArchiveMigration, /CHECK \(message_count >= 0\)/,
+  'flood notices must support zero statistical weight after individual messages are archived');
 
 assert.doesNotMatch(
   botSource,
@@ -101,8 +107,13 @@ assert.doesNotMatch(
 );
 assert.match(
   botSource,
-  /async function deliverGameChatMessageToDiscord[\s\S]*recordGameChatMessage\(username, message, \{[\s\S]*messageCount: isSummary \? summaryCount : 1,[\s\S]*visible: true[\s\S]*!DISCORD_CHAT_CHANNEL_ID[\s\S]*return true;/,
-  'flood summaries must contribute their skipped count and remain visible to the site chat'
+  /async function deliverGameChatMessageToDiscord[\s\S]*recordGameChatMessage\(username, message, \{[\s\S]*messageCount: isSummary \? 0 : 1,[\s\S]*visible: true[\s\S]*!DISCORD_CHAT_CHANNEL_ID[\s\S]*return true;/,
+  'flood summaries must remain visible without double-counting individually archived messages'
+);
+assert.match(
+  botSource,
+  /onSuppressed: \(\{ username, message \}\) => \{[\s\S]*isMinecraftSystemUsername\(username\)[\s\S]*recordGameChatMessage\(username, message, \{ visible: false \}\)/,
+  'every player message suppressed by anti-flood must remain readable in the player profile'
 );
 assert.match(
   botSource,
