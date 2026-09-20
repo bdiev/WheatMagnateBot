@@ -36,6 +36,8 @@ assert.match(historySource, /ON CONFLICT\(player_uuid,cape_hash\)[\s\S]*cape_url
 assert.match(historySource, /resolveNameMcCapes[\s\S]*cape_source=EXCLUDED\.cape_source/, 'all NameMC profile capes must be imported with their metadata');
 assert.match(botSource, /createPlayerSkinHistoryService\(\{ pool,forceCapeRefresh:true \}\)/, 'every join refresh must bypass the NameMC profile cache');
 assert.match(serverSource, /stored\.skins\.length[\s\S]*playerSkinHistory\.refreshOnce\(identity\)[\s\S]*return stored/, 'saved skin history must be returned before the external refresh finishes');
+assert.match(serverSource, /const displayCapeRows = \[\.\.\.capeResult\.rows\]/, 'the wardrobe must show the complete saved Mojang and NameMC cape history');
+assert.doesNotMatch(serverSource, /nameMcCapeRows\.length[\s\S]*cape_source !== 'namemc'/, 'NameMC imports must not hide older Mojang cape observations');
 assert.match(historySource, /activeRefreshes\.get[\s\S]*activeRefreshes\.set/, 'concurrent external skin refreshes must be deduplicated');
 assert.match(botSource, /bot\.on\('playerJoined'[\s\S]*schedulePlayerSkinHistoryRefresh\(player\)/, 'the primary bot must refresh skin history after every player join');
 assert.match(runtimeSource, /bot\.on\?\.\('playerJoined'[\s\S]*this\.emit\('player-joined'/, 'managed Minecraft runtimes must forward player join events');

@@ -2590,6 +2590,16 @@ body.search-focus-active #logoutButton {
   transform: rotate(90deg);
 }
 
+.seen-search-box > .seen-search-close {
+  animation: none;
+  transition: none;
+}
+
+.seen-search-box > .seen-search-close:hover,
+.seen-search-box > .seen-search-close:active {
+  transform: none;
+}
+
 #whisperCloseDialog:hover {
   transform: none;
 }

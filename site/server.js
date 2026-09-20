@@ -373,13 +373,7 @@ async function readPlayerSkinHistory(identity, { refreshFailed = false, currentC
   const resolvedCurrentCapeHash = currentCapeHash === undefined
     ? (skinResult.rows[0]?.cape_hash || null)
     : currentCapeHash;
-  const nameMcCapeRows = capeResult.rows.filter(row => row.cape_source === 'namemc');
-  const displayCapeRows = nameMcCapeRows.length
-    ? [
-        ...nameMcCapeRows,
-        ...capeResult.rows.filter(row => row.cape_source !== 'namemc' && row.cape_hash === resolvedCurrentCapeHash)
-      ]
-    : capeResult.rows;
+  const displayCapeRows = [...capeResult.rows];
   displayCapeRows.sort((first,second) => Number(second.cape_hash === resolvedCurrentCapeHash) - Number(first.cape_hash === resolvedCurrentCapeHash));
   return {
     username: identity.username,

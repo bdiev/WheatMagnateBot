@@ -19,7 +19,7 @@ assert.match(pwaUpdateSource, /register\('\/sw\.js', \{ updateViaCache: 'none' \
 assert.match(pwaUpdateSource, /controllerchange[\s\S]*hadController[\s\S]*window\.location\.reload\(\)/, 'an activated update must reload an existing PWA exactly once');
 assert.match(pwaUpdateSource, /visibilitychange[\s\S]*visibilityState === 'visible'[\s\S]*checkForUpdate\(\)/, 'a resumed PWA must check for updates');
 assert.match(indexSource, /page-transitions\.js\?v=1/, 'the dashboard must load shared page transitions');
-assert.match(indexSource, /styles\.css\?v=248/, 'the dashboard must load the current shared styles');
+assert.match(indexSource, /styles\.css\?v=254/, 'the dashboard must load the current shared styles');
 assert.match(requestHtmlSource, /styles\.css\?v=248/, 'the request page must load the current shared transition styles');
 assert.match(requestHtmlSource, /page-transitions\.js\?v=1/, 'the request page must load shared page transitions');
 assert.match(requestHtmlSource, /id="loginPrompt"[^>]*hidden/, 'the request login state must not flash before the session loads');
@@ -49,6 +49,8 @@ assert.match(appSource, /const targetTop = rect\.top;[\s\S]*--seen-search-target
 assert.match(stylesSource, /top:\s*var\(--seen-search-target-top/, 'Seen search must use its measured row position');
 assert.match(stylesSource, /body\.search-focus-active #accountSwitcher[\s\S]*max-width:\s*0;[\s\S]*opacity:\s*0;/, 'profile and add-account controls must disappear while Seen search is focused');
 assert.doesNotMatch(stylesSource, /seen-search-(?:mobile-)?center-in/, 'Seen search must not fly diagonally from the old toggle position');
+assert.match(stylesSource, /\.seen-search-box > \.seen-search-close\s*\{[^}]*animation:\s*none;[^}]*transition:\s*none;/s, 'the nickname search close button must not animate');
+assert.match(stylesSource, /\.seen-search-box > \.seen-search-close:hover,[\s\S]*\.seen-search-box > \.seen-search-close:active\s*\{[^}]*transform:\s*none;/, 'the nickname search close button must not rotate');
 assert.match(appSource, /transformOriginX[\s\S]*--seen-search-transform-origin-x/, 'Seen search must measure the toggle as its horizontal expansion origin');
 assert.match(appSource, /collapsedScale = targetWidth > 0[\s\S]*--seen-search-collapsed-scale/, 'Seen search must begin at exactly the pressed toggle width');
 assert.match(stylesSource, /\.seen-search-box\s*\{[^}]*transform:\s*scaleX\(var\(--seen-search-collapsed-scale,[^)]+\)\)[^}]*transform-origin:\s*var\(--seen-search-transform-origin-x,[^)]+\) center;/s, 'Seen search must visually expand from the pressed toggle');
