@@ -371,6 +371,13 @@ class MinecraftBotRuntime extends BotContext {
       bot.on?.('chat', (username, message) => {
         this.emit('chat', { accountId:this.account.id,username,message });
       });
+      bot.on?.('playerJoined', player => {
+        this.emit('player-joined', {
+          accountId:this.account.id,
+          username:player?.username || null,
+          uuid:player?.uuid || null
+        });
+      });
       if (this.isPrimary || this.account.role === 'pearl_loader') {
         bot.on?.('whisper',(username,message) => this.emit('whisper',{accountId:this.account.id,username,message}));
       }

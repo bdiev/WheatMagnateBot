@@ -23,8 +23,9 @@ const { isValidKillAuraRange, normalizeKillAuraRange } = require('./kill-aura-ra
 const { createResourceRequestService } = require('./resource-requests');
 const { normalizeGreenChatMessage } = require('./chat-message-normalization');
 const { NEW_PLAYER_WINDOW_DAYS, isNewPlayerRegistration } = require('./player-new-status');
-const { minecraftAvatarSources, renderOfficialMinecraftAvatar, resolveOfficialMinecraftSkin } = require('./minecraft-avatar');
-const { fetchNameMcCapeTexture, resolveNameMcCapes } = require('./namemc-capes');
+const { minecraftAvatarSources, renderOfficialMinecraftAvatar } = require('./minecraft-avatar');
+const { fetchNameMcCapeTexture } = require('./namemc-capes');
+const { createPlayerSkinHistoryService } = require('./player-skin-history');
 const { MinecraftIconCache, minecraftIconEtag } = require('./minecraft-icon-cache');
 const {
   MUTATING_METHODS, RateLimiter, clientIp, configuredOrigins, requestIsHttps,
@@ -76,7 +77,7 @@ let accountRegistry = null;
 let resourceRequestService = null;
 const minecraftAvatarCache = new Map();
 const minecraftSkinCache = new Map();
-const playerSkinRefreshes = new Map();
+const playerSkinHistory = createPlayerSkinHistoryService({ pool });
 const minecraftIconCache = new MinecraftIconCache({
   cacheDir: MINECRAFT_ICON_CACHE_DIR,
   apiKey: process.env.MINECRAFT_ASSET_API_KEY
@@ -352,68 +353,6 @@ async function resolveStoredPlayerIdentity(username) {
   return result.rows[0] || null;
 }
 
-async function refreshPlayerSkinHistory(identity) {
-  let currentCapeHash = null;
-  const current = await resolveOfficialMinecraftSkin({
-    username: identity.username,
-    uuid: identity.player_uuid,
-    signal: AbortSignal.timeout(8_000)
-  });
-  await pool.query(`
-      INSERT INTO player_skin_history(player_uuid,texture_hash,texture_url,model,cape_hash,cape_url)
-      VALUES($1::uuid,$2,$3,$4,$5,$6)
-      ON CONFLICT(player_uuid,texture_hash) DO UPDATE SET
-        texture_url=EXCLUDED.texture_url,model=EXCLUDED.model,
-        cape_hash=EXCLUDED.cape_hash,cape_url=EXCLUDED.cape_url,last_seen=NOW()
-  `, [identity.player_uuid, current.textureHash, current.textureUrl, current.model, current.capeHash, current.capeUrl]);
-  currentCapeHash = current.capeHash;
-  if (current.capeHash && current.capeUrl) {
-    await pool.query(`
-        INSERT INTO player_cape_history(player_uuid,cape_hash,cape_url)
-        VALUES($1::uuid,$2,$3)
-        ON CONFLICT(player_uuid,cape_hash) DO UPDATE SET
-          cape_url=EXCLUDED.cape_url,last_seen=NOW()
-    `, [identity.player_uuid, current.capeHash, current.capeUrl]);
-  }
-  try {
-    const nameMc = await resolveNameMcCapes({
-      username:identity.username,
-      currentCapeUrl:current.capeUrl
-    });
-    if (nameMc.capes.length) {
-      await pool.query(`
-          INSERT INTO player_cape_history(player_uuid,cape_hash,cape_url,cape_name,cape_source)
-          SELECT $1::uuid,item.cape_hash,
-                 'https://s.namemc.com/i/' || item.cape_hash || '.js',
-                 item.cape_name,'namemc'
-          FROM UNNEST($2::text[],$3::text[]) AS item(cape_hash,cape_name)
-          ON CONFLICT(player_uuid,cape_hash) DO UPDATE SET
-            cape_url=EXCLUDED.cape_url,cape_name=EXCLUDED.cape_name,
-            cape_source=EXCLUDED.cape_source,last_seen=NOW()
-      `, [
-        identity.player_uuid,
-        nameMc.capes.map(cape => cape.hash),
-        nameMc.capes.map(cape => cape.name)
-      ]);
-    }
-    if (nameMc.currentCapeHash) currentCapeHash = nameMc.currentCapeHash;
-  } catch (error) {
-    console.warn(`[Site] Could not import NameMC capes for ${identity.username}: ${error.message}`);
-  }
-  return currentCapeHash;
-}
-
-function refreshPlayerSkinHistoryOnce(identity) {
-  const key = String(identity.player_uuid).toLowerCase();
-  const activeRefresh = playerSkinRefreshes.get(key);
-  if (activeRefresh) return activeRefresh;
-  const refresh = refreshPlayerSkinHistory(identity).finally(() => {
-    if (playerSkinRefreshes.get(key) === refresh) playerSkinRefreshes.delete(key);
-  });
-  playerSkinRefreshes.set(key,refresh);
-  return refresh;
-}
-
 async function readPlayerSkinHistory(identity, { refreshFailed = false, currentCapeHash } = {}) {
   const [skinResult, capeResult] = await Promise.all([
     pool.query(`
@@ -476,7 +415,7 @@ async function getPlayerSkins(url) {
 
   const stored = await readPlayerSkinHistory(identity);
   if (stored.skins.length) {
-    refreshPlayerSkinHistoryOnce(identity).catch(error => {
+    playerSkinHistory.refreshOnce(identity).catch(error => {
       console.warn(`[Site] Could not refresh skins for ${identity.username}: ${error.message}`);
     });
     return stored;
@@ -485,7 +424,7 @@ async function getPlayerSkins(url) {
   let currentCapeHash = null;
   let refreshFailed = false;
   try {
-    currentCapeHash = await refreshPlayerSkinHistoryOnce(identity);
+    currentCapeHash = await playerSkinHistory.refreshOnce(identity);
   } catch {
     refreshFailed = true;
   }

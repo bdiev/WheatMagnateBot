@@ -23,6 +23,7 @@ const { formatDiscordBridgeMessage } = require('./discord/chat-message-format');
 const { createChatAvatarLoader } = require('./discord/chat-avatar');
 const loadChatAvatar = createChatAvatarLoader();
 const { NEW_PLAYER_WINDOW_DAYS } = require('./site/player-new-status');
+const { createPlayerSkinHistoryService } = require('./site/player-skin-history');
 const { preparePlayerHeadEmojiImage } = require('./discord/player-head-image');
 const { createMinecraftBot } = require('./minecraft');
 const {
@@ -558,6 +559,16 @@ function dashedMinecraftUuid(value) {
   return `${compact.slice(0, 8)}-${compact.slice(8, 12)}-${compact.slice(12, 16)}-${compact.slice(16, 20)}-${compact.slice(20)}`;
 }
 
+function schedulePlayerSkinHistoryRefresh(player, source = 'minecraft join') {
+  const username = String(player?.username || '').trim();
+  const playerUuid = dashedMinecraftUuid(player?.uuid);
+  if (!username || !playerUuid) return false;
+  playerSkinHistory.refreshOnce({ username,player_uuid:playerUuid }).catch(error => {
+    console.warn(`[PlayerSkinHistory] ${source}: could not refresh ${username}: ${error.message}`);
+  });
+  return true;
+}
+
 async function backfillExistingPlayerProfiles() {
   if (!pool) return;
   const result = await pool.query(`
@@ -1039,6 +1050,7 @@ async function ensureDMDeleteButton(message) {
 
 // Database connection
 let pool = createDatabasePool();
+const playerSkinHistory = createPlayerSkinHistoryService({ pool,forceCapeRefresh:true });
 const SERVER_STATUS_HIDDEN_REFRESH_MS = 5_000;
 let serverStatusHiddenIndex = createServerStatusHiddenIndex();
 let serverStatusHiddenRefreshedAt = 0;
@@ -6681,6 +6693,11 @@ async function initializeMultiAccountManager() {
       runtime.on('chat', event => {
         playerInfoObservation.observe(event.username, event.message);
       });
+      runtime.on('player-joined', player => {
+        if (String(player.username || '').toLowerCase() !== String(account.username || '').toLowerCase()) {
+          schedulePlayerSkinHistoryRefresh(player,`${account.displayName} join`);
+        }
+      });
       runtime.on('whisper', async whisper => {
         if (account.role === PEARL_LOADER_ROLE && await pearlLoaderFeature?.handleLoaderWhisper(account.id, whisper.username, whisper.message)) return;
         const key = `${account.id}:${String(whisper.username || '').toLowerCase()}`;
@@ -9526,6 +9543,7 @@ function createBot() {
       });
       if (activityResult?.created) playerInfoFirstJoinCheck?.enqueue(player.username);
       playerInfoFirstJoinCheck?.playerJoined(player.username);
+      schedulePlayerSkinHistoryRefresh(player);
       await scheduleQueuedSiteWhispersForPlayer(player.username);
     }
     if (player.username) {

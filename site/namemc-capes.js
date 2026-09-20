@@ -65,11 +65,11 @@ async function fetchNameMcCapeTexture(capeHash, { fetchImpl = fetch } = {}) {
   return result;
 }
 
-async function fetchNameMcProfileCapes(username, { fetchImpl = fetch } = {}) {
+async function fetchNameMcProfileCapes(username, { fetchImpl = fetch, forceRefresh = false } = {}) {
   if (!/^[A-Za-z0-9_]{1,16}$/.test(username)) throw new Error('Invalid Minecraft username.');
   const cacheKey = username.toLowerCase();
   const cached = profileCache.get(cacheKey);
-  if (cached && Date.now() - cached.storedAt < PROFILE_CACHE_TTL) return cached.capes;
+  if (!forceRefresh && cached && Date.now() - cached.storedAt < PROFILE_CACHE_TTL) return cached.capes;
   const response = await fetchImpl(`https://r.jina.ai/http://namemc.com/profile/${encodeURIComponent(username)}`, {
     signal:AbortSignal.timeout(12_000),
     headers:{ Accept:'text/plain', 'User-Agent':'WheatMagnateBot/1.0' }
@@ -83,8 +83,8 @@ async function fetchNameMcProfileCapes(username, { fetchImpl = fetch } = {}) {
   return capes;
 }
 
-async function resolveNameMcCapes({ username, currentCapeUrl = null, fetchImpl = fetch }) {
-  const capes = await fetchNameMcProfileCapes(username,{ fetchImpl });
+async function resolveNameMcCapes({ username, currentCapeUrl = null, fetchImpl = fetch, forceRefresh = false }) {
+  const capes = await fetchNameMcProfileCapes(username,{ fetchImpl,forceRefresh });
   if (!capes.length || !currentCapeUrl) return { capes, currentCapeHash:null };
 
   let currentUrl;

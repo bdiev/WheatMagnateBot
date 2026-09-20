@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { resolveOfficialMinecraftSkin } = require('../minecraft-avatar');
 const { decodeNameMcCapeScript, parseNameMcCapes } = require('../namemc-capes');
+const { createPlayerSkinHistoryService } = require('../player-skin-history');
 
 const root = path.resolve(__dirname, '..', '..');
 const siteMigration = fs.readFileSync(path.join(root, 'site/migrations/052_player_skin_history.sql'), 'utf8');
@@ -16,6 +17,9 @@ const botCapeHistoryMigration = fs.readFileSync(path.join(root, 'database/migrat
 const siteCapeMetadataMigration = fs.readFileSync(path.join(root, 'site/migrations/055_player_cape_metadata.sql'), 'utf8');
 const botCapeMetadataMigration = fs.readFileSync(path.join(root, 'database/migrations/055_player_cape_metadata.sql'), 'utf8');
 const serverSource = fs.readFileSync(path.join(root, 'site/server.js'), 'utf8');
+const historySource = fs.readFileSync(path.join(root, 'site/player-skin-history.js'), 'utf8');
+const botSource = fs.readFileSync(path.join(root, 'bot.js'), 'utf8');
+const runtimeSource = fs.readFileSync(path.join(root, 'site/accounts/minecraft-bot-runtime.js'), 'utf8');
 const appSource = fs.readFileSync(path.join(root, 'site/public/app.js'), 'utf8');
 const htmlSource = fs.readFileSync(path.join(root, 'site/public/index.html'), 'utf8');
 const viewerSource = fs.readFileSync(path.join(root, 'site/public/minecraft-skin-viewer.js'), 'utf8');
@@ -27,11 +31,15 @@ assert.equal(siteCapeHistoryMigration, botCapeHistoryMigration, 'bot and site mu
 assert.equal(siteCapeMetadataMigration, botCapeMetadataMigration, 'bot and site must apply the same cape metadata schema');
 assert.match(siteMigration, /UNIQUE \(player_uuid, texture_hash\)/, 'a player skin must be stored only once');
 assert.match(siteCapeHistoryMigration, /UNIQUE \(player_uuid, cape_hash\)[\s\S]*INSERT INTO player_cape_history/, 'cape history must be unique and backfilled from saved skins');
-assert.match(serverSource, /ON CONFLICT\(player_uuid,texture_hash\)[\s\S]*last_seen=NOW\(\)/, 're-observed skins must update their last-seen time');
-assert.match(serverSource, /ON CONFLICT\(player_uuid,cape_hash\)[\s\S]*cape_url=EXCLUDED\.cape_url,last_seen=NOW\(\)/, 're-observed capes must update their last-seen time');
-assert.match(serverSource, /resolveNameMcCapes[\s\S]*cape_source=EXCLUDED\.cape_source/, 'all NameMC profile capes must be imported with their metadata');
-assert.match(serverSource, /stored\.skins\.length[\s\S]*refreshPlayerSkinHistoryOnce\(identity\)[\s\S]*return stored/, 'saved skin history must be returned before the external refresh finishes');
-assert.match(serverSource, /playerSkinRefreshes\.get[\s\S]*playerSkinRefreshes\.set/, 'concurrent external skin refreshes must be deduplicated');
+assert.match(historySource, /ON CONFLICT\(player_uuid,texture_hash\)[\s\S]*last_seen=NOW\(\)/, 're-observed skins must update their last-seen time');
+assert.match(historySource, /ON CONFLICT\(player_uuid,cape_hash\)[\s\S]*cape_url=EXCLUDED\.cape_url,last_seen=NOW\(\)/, 're-observed capes must update their last-seen time');
+assert.match(historySource, /resolveNameMcCapes[\s\S]*cape_source=EXCLUDED\.cape_source/, 'all NameMC profile capes must be imported with their metadata');
+assert.match(botSource, /createPlayerSkinHistoryService\(\{ pool,forceCapeRefresh:true \}\)/, 'every join refresh must bypass the NameMC profile cache');
+assert.match(serverSource, /stored\.skins\.length[\s\S]*playerSkinHistory\.refreshOnce\(identity\)[\s\S]*return stored/, 'saved skin history must be returned before the external refresh finishes');
+assert.match(historySource, /activeRefreshes\.get[\s\S]*activeRefreshes\.set/, 'concurrent external skin refreshes must be deduplicated');
+assert.match(botSource, /bot\.on\('playerJoined'[\s\S]*schedulePlayerSkinHistoryRefresh\(player\)/, 'the primary bot must refresh skin history after every player join');
+assert.match(runtimeSource, /bot\.on\?\.\('playerJoined'[\s\S]*this\.emit\('player-joined'/, 'managed Minecraft runtimes must forward player join events');
+assert.match(botSource, /runtime\.on\('player-joined'[\s\S]*schedulePlayerSkinHistoryRefresh\(player/, 'managed accounts must refresh skin history from forwarded join events');
 assert.match(serverSource, /\/api\/player-skins/, 'the authenticated skin-history endpoint must exist');
 assert.match(serverSource, /textures\.minecraft\.net/, 'raw skin proxying must be restricted to the official texture host');
 assert.match(serverSource, /\/api\/minecraft-cape\//, 'official cape textures must be available to the elytra renderer');
@@ -91,6 +99,42 @@ assert.deepEqual(
     capeHash:null,
     capeUrl:null
   });
+
+  const statements = [];
+  let skinCalls = 0;
+  let capeRequest = null;
+  let releaseSkin;
+  const skinGate = new Promise(resolve => { releaseSkin = resolve; });
+  const service = createPlayerSkinHistoryService({
+    pool:{ query:async (sql,params) => { statements.push({ sql,params }); return { rows:[],rowCount:1 }; } },
+    forceCapeRefresh:true,
+    resolveSkin:async () => {
+      skinCalls += 1;
+      await skinGate;
+      return {
+        textureHash:'skin-hash',textureUrl:'https://textures.minecraft.net/texture/skin-hash',model:'classic',
+        capeHash:'mojang-cape',capeUrl:'https://textures.minecraft.net/texture/mojang-cape'
+      };
+    },
+    resolveCapes:async options => {
+      capeRequest = options;
+      return {
+        capes:[{ hash:'1234567890abcdef',name:'Test Cape' }],
+        currentCapeHash:'1234567890abcdef'
+      };
+    }
+  });
+  const identity = { username:'TestPlayer',player_uuid:'12345678-90ab-cdef-1234-567890abcdef' };
+  const firstRefresh = service.refreshOnce(identity);
+  const duplicateRefresh = service.refreshOnce(identity);
+  assert.equal(firstRefresh,duplicateRefresh,'simultaneous join observers must share one skin refresh');
+  releaseSkin();
+  assert.equal(await firstRefresh,'1234567890abcdef');
+  assert.equal(skinCalls,1,'a deduplicated join must call Mojang once');
+  assert.equal(capeRequest.forceRefresh,true,'join refreshes must bypass the cached NameMC profile');
+  assert.equal(statements.length,3,'skin, official cape, and NameMC cape history must all be persisted');
+  assert.match(statements[0].sql,/INSERT INTO player_skin_history/);
+  assert.match(statements[2].sql,/cape_source/);
   console.log('Player skin history tests passed.');
 })().catch(error => {
   console.error(error);
