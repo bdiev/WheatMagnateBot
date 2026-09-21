@@ -172,8 +172,8 @@ assert.match(
 );
 assert.match(
   botSource,
-  /async function reconcileObservedLastSeen[\s\S]*INSERT INTO player_activity \(username,player_uuid,last_seen,is_online\)[\s\S]*WHERE player_activity\.last_seen IS NULL/,
-  'observed !seen responses may create a profile or fill an empty Last Seen value, but must never overwrite one'
+  /async function reconcileObservedLastSeen[\s\S]*ensureMinecraftProfileIdentity\(safeUsername, \{ source:'!seen import' \}\)[\s\S]*INSERT INTO player_activity \(username,player_uuid,last_seen,is_online\)[\s\S]*WHERE player_activity\.last_seen IS NULL/,
+  'observed !seen responses must attach a resolved UUID while preserving the non-overwriting Last Seen import'
 );
 assert.match(
   serverSource,

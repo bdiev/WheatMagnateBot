@@ -26,6 +26,8 @@ const { NEW_PLAYER_WINDOW_DAYS, isNewPlayerRegistration } = require('./player-ne
 const { minecraftAvatarSources, renderOfficialMinecraftAvatar } = require('./minecraft-avatar');
 const { fetchNameMcCapeTexture } = require('./namemc-capes');
 const { createPlayerSkinHistoryService } = require('./player-skin-history');
+const { createPlayerActivityRepository } = require('../database');
+const { dashedMinecraftUuid,resolveMinecraftProfile } = require('../minecraft/profile-identity');
 const { MinecraftIconCache, minecraftIconEtag } = require('./minecraft-icon-cache');
 const {
   MUTATING_METHODS, RateLimiter, clientIp, configuredOrigins, requestIsHttps,
@@ -59,6 +61,7 @@ const SUPPORTED_TIMEZONES = Object.freeze([...new Set([
 const pool = DATABASE_URL
   ? new Pool({ connectionString: DATABASE_URL })
   : null;
+const { updatePlayerActivity: updateSitePlayerActivity } = createPlayerActivityRepository({ pool });
 const webPushService = new WebPushService({ pool });
 const sseHub = new SseHub({
   maxConnectionsPerUser: Number(process.env.SSE_MAX_CONNECTIONS_PER_USER) || 3,
@@ -83,6 +86,41 @@ const minecraftIconCache = new MinecraftIconCache({
   apiKey: process.env.MINECRAFT_ASSET_API_KEY
 });
 let requestItemCatalogPromise = null;
+
+async function ensureSiteMinecraftProfileIdentity(username, source) {
+  if (!pool || !/^[A-Za-z0-9_]{1,16}$/.test(String(username || '').trim())) return null;
+  try {
+    const existing = await pool.query(`
+      SELECT username,player_uuid
+      FROM player_activity activity
+      WHERE player_uuid IS NOT NULL
+        AND (
+          LOWER(activity.username)=LOWER($1)
+          OR EXISTS (
+            SELECT 1 FROM player_name_history history
+            WHERE history.player_uuid=activity.player_uuid
+              AND LOWER(history.username)=LOWER($1)
+          )
+        )
+      LIMIT 1
+    `, [username]);
+    if (existing.rows[0]?.player_uuid) {
+      return {
+        username:existing.rows[0].username,
+        uuid:String(existing.rows[0].player_uuid).toLowerCase()
+      };
+    }
+
+    const profile = await resolveMinecraftProfile(username);
+    const uuid = dashedMinecraftUuid(profile?.id);
+    if (!uuid) return null;
+    await updateSitePlayerActivity(profile.name, false, { recordEvent:false,uuid });
+    return { username:profile.name,uuid };
+  } catch (error) {
+    console.warn(`[PlayerProfiles] ${source}: could not resolve ${username}: ${error.message}`);
+    return null;
+  }
+}
 const rateLimiter = new RateLimiter();
 const STATIC_SECURITY_AUDIT_WINDOW_MS = 10 * 60 * 1000;
 const rateLimiterTimer = setInterval(() => rateLimiter.prune(), 60_000);
@@ -5198,6 +5236,8 @@ async function setAdminPlaytime(currentUser, body, database = pool, audit = reco
     throw err;
   }
 
+  if (database === pool) await ensureSiteMinecraftProfileIdentity(username, 'admin playtime update');
+
   const result = await database.query(`
     WITH identity AS (
       SELECT pa.username, pa.player_uuid
@@ -5272,6 +5312,8 @@ async function setAdminRegistrationDate(currentUser, body) {
     err.statusCode = 400;
     throw err;
   }
+
+  await ensureSiteMinecraftProfileIdentity(username, 'admin registration-date update');
 
   const result = await pool.query(`
     WITH updated AS (

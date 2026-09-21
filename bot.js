@@ -26,6 +26,7 @@ const { NEW_PLAYER_WINDOW_DAYS } = require('./site/player-new-status');
 const { createPlayerSkinHistoryService } = require('./site/player-skin-history');
 const { preparePlayerHeadEmojiImage } = require('./discord/player-head-image');
 const { createMinecraftBot } = require('./minecraft');
+const { dashedMinecraftUuid,resolveMinecraftProfile } = require('./minecraft/profile-identity');
 const {
   MAX_FARM_PING_MS,
   FARM_HIGH_PING_GRACE_MS,
@@ -538,25 +539,65 @@ async function fetchPlayerHeadImageBuffer(imageUrl, source) {
   return { imageBuffer };
 }
 
-async function resolveMinecraftProfile(username) {
-  const response = await fetch(`https://api.mojang.com/users/profiles/minecraft/${encodeURIComponent(username)}`, {
-    signal: AbortSignal.timeout(15_000)
-  });
-  if (response.status === 204 || response.status === 404) return null;
-  if (!response.ok) throw new Error(`Mojang API returned HTTP ${response.status}`);
+const minecraftProfileIdentityRequests = new Map();
 
-  const profile = await response.json();
-  const id = String(profile?.id || '').trim();
-  const name = String(profile?.name || username).trim();
-  if (!/^[0-9a-f]{32}$/i.test(id)) return null;
+async function ensureMinecraftProfileIdentity(username, { source = 'player creation' } = {}) {
+  const safeUsername = String(username || '').trim();
+  if (!/^[A-Za-z0-9_]{1,16}$/.test(safeUsername) || !pool) return null;
 
-  return { id, name };
-}
+  const key = safeUsername.toLowerCase();
+  if (minecraftProfileIdentityRequests.has(key)) {
+    return minecraftProfileIdentityRequests.get(key);
+  }
 
-function dashedMinecraftUuid(value) {
-  const compact = String(value || '').replace(/-/g, '').toLowerCase();
-  if (!/^[0-9a-f]{32}$/.test(compact)) return null;
-  return `${compact.slice(0, 8)}-${compact.slice(8, 12)}-${compact.slice(12, 16)}-${compact.slice(16, 20)}-${compact.slice(20)}`;
+  const request = (async () => {
+    try {
+      const existing = await pool.query(`
+        SELECT activity.username,activity.player_uuid
+        FROM player_activity activity
+        WHERE activity.player_uuid IS NOT NULL
+          AND (
+            LOWER(activity.username)=LOWER($1)
+            OR EXISTS (
+              SELECT 1 FROM player_name_history history
+              WHERE history.player_uuid=activity.player_uuid
+                AND LOWER(history.username)=LOWER($1)
+            )
+          )
+        LIMIT 1
+      `, [safeUsername]);
+      if (existing.rows[0]?.player_uuid) {
+        return {
+          username:existing.rows[0].username,
+          uuid:String(existing.rows[0].player_uuid).toLowerCase()
+        };
+      }
+
+      const onlineUuid = getOnlinePlayerUuid(safeUsername);
+      const profile = onlineUuid
+        ? { id:onlineUuid,name:safeUsername }
+        : await resolveMinecraftProfile(safeUsername);
+      const uuid = dashedMinecraftUuid(profile?.id);
+      if (!uuid) return null;
+
+      const canonicalUsername = profile?.name || safeUsername;
+      await updatePlayerActivity(canonicalUsername, false, {
+        recordEvent:false,
+        uuid
+      });
+      return { username:canonicalUsername,uuid };
+    } catch (error) {
+      console.warn(`[PlayerProfiles] ${source}: could not resolve ${safeUsername}: ${error.message}`);
+      return null;
+    }
+  })();
+
+  minecraftProfileIdentityRequests.set(key, request);
+  try {
+    return await request;
+  } finally {
+    minecraftProfileIdentityRequests.delete(key);
+  }
 }
 
 function schedulePlayerSkinHistoryRefresh(player, source = 'minecraft join') {
@@ -570,7 +611,9 @@ function schedulePlayerSkinHistoryRefresh(player, source = 'minecraft join') {
 }
 
 async function backfillExistingPlayerProfiles() {
-  if (!pool) return;
+  if (!pool || backfillExistingPlayerProfiles.running) return;
+  backfillExistingPlayerProfiles.running = true;
+  try {
   const result = await pool.query(`
     SELECT DISTINCT ON (LOWER(username)) username
     FROM (
@@ -639,6 +682,9 @@ async function backfillExistingPlayerProfiles() {
     `[PlayerProfiles] Backfill complete: ${stats.updated} updated, ${stats.notFound} not found, ` +
     `${stats.errors} errors, ${stats.rateLimited} rate-limit retries (${result.rowCount} candidates).`
   );
+  } finally {
+    backfillExistingPlayerProfiles.running = false;
+  }
 }
 
 async function fetchPlayerHeadImage(username) {
@@ -1677,6 +1723,7 @@ const {
 
 async function addUsernameToWhitelist(targetUsername, addedBy = 'system') {
   const result = await addUsernameToWhitelistRepository(targetUsername, addedBy);
+  await ensureMinecraftProfileIdentity(targetUsername, { source:'whitelist add' });
   if (result.changed) {
     const key = normalizePlayerHeadUsername(targetUsername);
     // A re-added player must receive a fresh emoji even if a previous Discord
@@ -2208,6 +2255,12 @@ async function initDatabase() {
     backfillExistingPlayerProfiles().catch(err => {
       console.warn('[PlayerProfiles] Background profile update failed:', err.message);
     });
+    const playerProfileBackfillTimer = setInterval(() => {
+      backfillExistingPlayerProfiles().catch(err => {
+        console.warn('[PlayerProfiles] Scheduled profile update failed:', err.message);
+      });
+    }, 6 * 60 * 60 * 1000);
+    playerProfileBackfillTimer.unref?.();
 
     console.log('[DB] 📖 Loading ignored users from database...');
     ignoredChatUsernames = await loadIgnoredChatUsernames();
@@ -3126,6 +3179,7 @@ const {
   setPlayerPlaytime
 } = createPlaytimeFeature({
   pool,
+  ensurePlayerIdentity: username => ensureMinecraftProfileIdentity(username, { source:'playtime update' }),
   getOnlinePlayerUsernames,
   getPlayerHeadEmoji,
   statusEmojis: STATUS_EMOJIS,
@@ -3369,6 +3423,7 @@ async function reconcileObservedPlaytime(targetUsername, observedSeconds) {
   if (!safeUsername) return;
 
   try {
+    await ensureMinecraftProfileIdentity(safeUsername, { source:'!pt import' });
     const result = await playerInfoObservationStore.withPermission(
       'playtime',
       safeUsername,
@@ -3437,6 +3492,7 @@ async function reconcileObservedJoinDate(targetUsername, observedDate) {
   if (!safeUsername) return { error:'Invalid Minecraft username.' };
 
   try {
+    await ensureMinecraftProfileIdentity(safeUsername, { source:'!jd import' });
     const result = await playerInfoObservationStore.withPermission(
       'joinDate',
       safeUsername,
@@ -3512,6 +3568,7 @@ async function reconcileObservedMessages(targetUsername, observedCount) {
   if (!safeUsername) return { error:'Invalid Minecraft username.' };
 
   try {
+    await ensureMinecraftProfileIdentity(safeUsername, { source:'!messages import' });
     const result = await playerInfoObservationStore.withPermission(
       'messages',
       safeUsername,
@@ -3568,6 +3625,8 @@ async function reconcileObservedLastSeen(targetUsername, observedDate) {
   if (!safeUsername) return { error:'Invalid Minecraft username.' };
 
   try {
+    await ensureMinecraftProfileIdentity(safeUsername, { source:'!seen import' });
+
     const result = await pool.query(`
       WITH identity AS (
         SELECT activity.username,activity.player_uuid

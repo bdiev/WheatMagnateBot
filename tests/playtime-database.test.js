@@ -25,6 +25,7 @@ async function run() {
   const errors = [];
   const reconcile = vm.runInNewContext(`(${reconcileSource})`, {
     pool, playerInfoObservationStore: store, formatPlaytime: feature.formatPlaytime,
+    ensureMinecraftProfileIdentity: async () => null,
     console: { log() {}, error: (...args) => errors.push(args) }
   });
   const row = async name => (await query(`

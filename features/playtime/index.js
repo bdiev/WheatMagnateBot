@@ -4,6 +4,7 @@ const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
 function createPlaytimeFeature({
   pool,
+  ensurePlayerIdentity = async () => null,
   getOnlinePlayerUsernames,
   getPlayerHeadEmoji,
   statusEmojis,
@@ -306,6 +307,8 @@ function createPlaytimeFeature({
 
   async function setPlayerPlaytime(username, totalSeconds) {
     if (!pool) return { error: 'Database not configured' };
+
+    await ensurePlayerIdentity(username);
 
     return enqueuePlaytimeWrite(async () => {
     try {

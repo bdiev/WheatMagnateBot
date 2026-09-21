@@ -81,6 +81,7 @@ async function createHarness() {
   const pool = { query, connect: async () => client };
   const store = createPlayerInfoObservationStore({ pool });
   const reconcile = vm.runInNewContext(`(${reconcileSource})`, {
+    ensureMinecraftProfileIdentity: async () => null,
     pool,
     playerInfoObservationStore: store,
     console: { log() {}, error: console.error },
