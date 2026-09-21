@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { dashedMinecraftUuid,resolveMinecraftProfile } = require('../minecraft/profile-identity');
+const siteProfileIdentity = require('../site/player-profile-identity');
 
 (async () => {
   const profile = await resolveMinecraftProfile('gerald0mc', {
@@ -26,6 +27,10 @@ const { dashedMinecraftUuid,resolveMinecraftProfile } = require('../minecraft/pr
     '6714531a-1c69-438e-b7d6-d6d41ca6838b'
   );
   assert.equal(await resolveMinecraftProfile('not a player'), null);
+  assert.equal(
+    siteProfileIdentity.dashedMinecraftUuid(profile.id),
+    '6714531a-1c69-438e-b7d6-d6d41ca6838b'
+  );
 
   const botSource = fs.readFileSync(path.join(__dirname, '..', 'bot.js'), 'utf8');
   for (const source of ['whitelist add', 'playtime update', '!pt import', '!jd import', '!messages import', '!seen import']) {

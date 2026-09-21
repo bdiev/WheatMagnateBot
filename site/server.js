@@ -26,8 +26,7 @@ const { NEW_PLAYER_WINDOW_DAYS, isNewPlayerRegistration } = require('./player-ne
 const { minecraftAvatarSources, renderOfficialMinecraftAvatar } = require('./minecraft-avatar');
 const { fetchNameMcCapeTexture } = require('./namemc-capes');
 const { createPlayerSkinHistoryService } = require('./player-skin-history');
-const { createPlayerActivityRepository } = require('../database');
-const { dashedMinecraftUuid,resolveMinecraftProfile } = require('../minecraft/profile-identity');
+const { dashedMinecraftUuid,resolveMinecraftProfile } = require('./player-profile-identity');
 const { MinecraftIconCache, minecraftIconEtag } = require('./minecraft-icon-cache');
 const {
   MUTATING_METHODS, RateLimiter, clientIp, configuredOrigins, requestIsHttps,
@@ -61,7 +60,6 @@ const SUPPORTED_TIMEZONES = Object.freeze([...new Set([
 const pool = DATABASE_URL
   ? new Pool({ connectionString: DATABASE_URL })
   : null;
-const { updatePlayerActivity: updateSitePlayerActivity } = createPlayerActivityRepository({ pool });
 const webPushService = new WebPushService({ pool });
 const sseHub = new SseHub({
   maxConnectionsPerUser: Number(process.env.SSE_MAX_CONNECTIONS_PER_USER) || 3,
@@ -114,7 +112,42 @@ async function ensureSiteMinecraftProfileIdentity(username, source) {
     const profile = await resolveMinecraftProfile(username);
     const uuid = dashedMinecraftUuid(profile?.id);
     if (!uuid) return null;
-    await updateSitePlayerActivity(profile.name, false, { recordEvent:false,uuid });
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`
+        INSERT INTO player_name_history(player_uuid,username,first_seen,last_seen)
+        VALUES($1::uuid,$2,NOW(),NOW())
+        ON CONFLICT(player_uuid,(LOWER(username)))
+        DO UPDATE SET username=EXCLUDED.username,last_seen=NOW()
+      `, [uuid,profile.name]);
+      await client.query(`
+        INSERT INTO player_activity(username,player_uuid,registration_at,is_online)
+        VALUES($1,$2::uuid,NOW(),FALSE)
+        ON CONFLICT(LOWER(username))
+        DO UPDATE SET username=EXCLUDED.username,
+                      player_uuid=COALESCE(player_activity.player_uuid,EXCLUDED.player_uuid)
+      `, [profile.name,uuid]);
+      await client.query(`
+        UPDATE player_playtime
+        SET username=$1,player_uuid=$2::uuid,updated_at=NOW()
+        WHERE player_uuid IS NULL AND LOWER(username)=LOWER($1)
+          AND NOT EXISTS (
+            SELECT 1 FROM player_playtime owned WHERE owned.player_uuid=$2::uuid
+          )
+      `, [profile.name,uuid]);
+      await client.query(`
+        UPDATE game_chat_messages
+        SET player_uuid=$2::uuid
+        WHERE player_uuid IS NULL AND LOWER(username)=LOWER($1)
+      `, [profile.name,uuid]);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
     return { username:profile.name,uuid };
   } catch (error) {
     console.warn(`[PlayerProfiles] ${source}: could not resolve ${username}: ${error.message}`);
