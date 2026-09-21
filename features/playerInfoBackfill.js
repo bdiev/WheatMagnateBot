@@ -123,9 +123,25 @@ async function loadMissingPlayerInfo(pool) {
     ), missing AS (
       SELECT candidate.username,
              NOT EXISTS (
-               SELECT 1 FROM player_playtime playtime
-               WHERE (candidate.player_uuid IS NOT NULL AND playtime.player_uuid = candidate.player_uuid)
-                  OR LOWER(playtime.username) = LOWER(candidate.username)
+               SELECT 1
+               FROM player_info_observation_state observation
+               WHERE observation.metric = 'playtime'
+                 AND observation.imported = TRUE
+                 AND (
+                   observation.identity_key = 'name:' || LOWER(candidate.username)
+                   OR (
+                     candidate.player_uuid IS NOT NULL
+                     AND observation.identity_key = 'uuid:' || LOWER(candidate.player_uuid::text)
+                   )
+                   OR (
+                     candidate.player_uuid IS NOT NULL
+                     AND EXISTS (
+                       SELECT 1 FROM player_name_history history
+                       WHERE history.player_uuid = candidate.player_uuid
+                         AND observation.identity_key = 'name:' || LOWER(history.username)
+                     )
+                   )
+                 )
              ) AS missing_playtime,
              candidate.observed_message_count IS NULL AS missing_messages,
              (

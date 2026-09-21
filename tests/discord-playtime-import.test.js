@@ -291,7 +291,7 @@ function testBotIntegrationOrder() {
   const handler = botSource.match(/discordClient\.on\('messageCreate',[\s\S]+?const trimmedContent/)?.[0] || '';
   assert.match(handler, /discordPlaytimeImport\.handle\(message\)[\s\S]*message\.author\.bot/,
     'lookup replies must be handled before the general bot-message guard');
-  assert.match(botSource, /saveMetric:[\s\S]*setPlayerPlaytime[\s\S]*reconcileObservedJoinDate[\s\S]*reconcileObservedLastSeen[\s\S]*reconcileObservedMessages/,
+  assert.match(botSource, /saveMetric:[\s\S]*reconcileObservedPlaytime[\s\S]*reconcileObservedJoinDate[\s\S]*reconcileObservedLastSeen[\s\S]*reconcileObservedMessages/,
     'all four Discord response types must be persisted by their matching handler');
   assert.equal(DEFAULT_PLAYTIME_LOOKUP_CHANNEL_ID, channelId, 'the requested lookup channel must be the default');
   assert.match(botSource, /discordClient\.on\('messageUpdate'[\s\S]*discordPlaytimeImport\.handle\(message\)/,

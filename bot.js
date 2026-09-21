@@ -3263,7 +3263,7 @@ const discordPlaytimeImport = createDiscordPlaytimeImport({
   botName: PLAYTIME_LOOKUP_DISCORD_BOT_NAME,
   parsePlaytime,
   saveMetric: async (metric, username, observedValue) => {
-    if (metric === 'playtime') return setPlayerPlaytime(username, observedValue);
+    if (metric === 'playtime') return reconcileObservedPlaytime(username, observedValue);
     if (metric === 'joinDate') return reconcileObservedJoinDate(username, observedValue);
     if (metric === 'lastSeen') return reconcileObservedLastSeen(username, observedValue);
     if (metric === 'messages') return reconcileObservedMessages(username, observedValue);
@@ -3273,7 +3273,7 @@ const discordPlaytimeImport = createDiscordPlaytimeImport({
   onDiagnostic: async event => {
     if (event.stage === 'pending') {
       console.log(`[PlayerInfo] Waiting for Discord ${event.metric} response for ${event.username}.`);
-      if (event.metric === 'joinDate' || event.metric === 'messages') {
+      if (event.metric === 'playtime' || event.metric === 'joinDate' || event.metric === 'messages') {
         try {
           await playerInfoObservationStore.requestRefresh(event.metric, event.username);
         } catch (error) {
@@ -3474,12 +3474,19 @@ async function reconcileObservedPlaytime(targetUsername, observedSeconds) {
         return { username: updated.rows[0]?.username || identity.username, currentSeconds, unchanged: false };
       }
     );
-    if (!result.allowed || result.value?.unchanged) return;
+    if (!result.allowed || result.value?.unchanged) {
+      return {
+        username:result.value?.username || result.username || safeUsername,
+        unchanged:true
+      };
+    }
     console.log(
       `[Playtime] ${result.reason === 'site-refresh' ? 'Refreshed' : 'Initially imported'} ${result.value.username} from observed !pt: ${formatPlaytime(result.value.currentSeconds)} -> ${formatPlaytime(safeSeconds)}`
     );
+    return { username:result.value.username,unchanged:false };
   } catch (err) {
     console.error('[Playtime] Failed to reconcile observed !pt:', err.message);
+    return { error:err.message };
   }
 }
 
