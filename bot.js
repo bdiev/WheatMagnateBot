@@ -3124,6 +3124,12 @@ async function syncPlayerActivityOnlineState() {
     const observedUsernames = getOnlinePlayerUsernames();
     const hasAnyObservedPlayers = observedUsernames.length > 0;
     const hasObservedSelf = botUsername && observedUsernames.some(username => username.toLowerCase() === botUsername);
+    // lastObservedOnlinePlayerKeys is only ever populated in-process, so it is
+    // lost whenever the process restarts (crash, OOM kill, redeploy without a
+    // clean SIGTERM). Treat a null value as "unknown history" and reconcile
+    // against the database directly, otherwise players who were online right
+    // before an ungraceful restart stay stuck is_online=TRUE forever.
+    const isFirstSyncSinceProcessStart = !lastObservedOnlinePlayerKeys;
     if (!hasAnyObservedPlayers && lastObservedOnlinePlayerKeys) {
       console.warn('[PlayerActivity] Skipping offline sync because Mineflayer returned an empty player snapshot.');
       return;
@@ -3157,6 +3163,10 @@ async function syncPlayerActivityOnlineState() {
       }));
     }
 
+    if (isFirstSyncSinceProcessStart && hasAnyObservedPlayers) {
+      await reconcileStaleOnlinePlayers(onlineKeys);
+    }
+
     if (onlineUsernames.length > 0 || hasObservedSelf || lastObservedOnlinePlayerKeys) {
       lastObservedOnlinePlayerKeys = onlineByKey;
     }
@@ -3164,6 +3174,29 @@ async function syncPlayerActivityOnlineState() {
     console.error('[PlayerActivity] Failed to synchronize online state:', err.message);
   } finally {
     playerActivitySyncRunning = false;
+  }
+}
+
+// Corrects player_activity rows left is_online=TRUE by an ungraceful restart
+// (crash/OOM/force-kill) that never reached the bot 'end' handler's offline
+// flush. Only runs once, on the first successful sync after process start.
+async function reconcileStaleOnlinePlayers(onlineKeys) {
+  if (!pool) return;
+  try {
+    const staleResult = await pool.query(
+      'SELECT username FROM player_activity WHERE is_online = TRUE'
+    );
+    const staleUsernames = staleResult.rows
+      .map(row => row.username)
+      .filter(username => username && !onlineKeys.has(username.toLowerCase()));
+    if (!staleUsernames.length) return;
+    console.warn(`[PlayerActivity] Clearing ${staleUsernames.length} stale online record(s) left by an ungraceful restart:`, staleUsernames.join(', '));
+    await Promise.all(staleUsernames.map(async username => {
+      await updatePlayerActivity(username, false, { recordEvent: true });
+      playerInfoFirstJoinCheck?.playerLeft(username);
+    }));
+  } catch (err) {
+    console.error('[PlayerActivity] Failed to reconcile stale online records:', err.message);
   }
 }
 
