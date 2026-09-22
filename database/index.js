@@ -170,6 +170,7 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
               CASE WHEN target.is_online THEN target.online_since END,
               CASE WHEN source.is_online THEN source.online_since END
             ),
+            presence_observed_at = GREATEST(target.presence_observed_at,source.presence_observed_at),
             registration_at = CASE
               WHEN target.registration_at IS NULL THEN source.registration_at
               WHEN source.registration_at IS NULL THEN target.registration_at
@@ -281,6 +282,7 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
                   WHEN $3::boolean THEN $6::timestamptz
                   ELSE NULL
                 END,
+                presence_observed_at = $2::timestamptz,
                 registration_at = COALESCE(player_activity.registration_at, NOW()),
                 is_online = TRUE
             WHERE id = (
@@ -293,11 +295,12 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
             )
             RETURNING id
           )
-          INSERT INTO player_activity (username, player_uuid, last_seen, last_online, online_since, registration_at, is_online)
+          INSERT INTO player_activity (username, player_uuid, last_seen, last_online, online_since, presence_observed_at, registration_at, is_online)
           SELECT $1, $4::uuid,
                  CASE WHEN $3::boolean THEN $2::timestamp ELSE NULL END,
                  CASE WHEN $3::boolean THEN $2::timestamp ELSE NULL END,
                  CASE WHEN $3::boolean AND NOT $5::boolean THEN $6::timestamptz ELSE NULL END,
+                 $2::timestamptz,
                  NOW(),
                  TRUE
           WHERE NOT EXISTS (SELECT 1 FROM updated)
@@ -314,6 +317,7 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
                   WHEN $3::boolean AND player_activity.is_online IS DISTINCT FROM FALSE THEN $2::timestamp
                   ELSE player_activity.last_seen
                 END,
+                presence_observed_at = $2::timestamptz,
                 registration_at = COALESCE(player_activity.registration_at, NOW()),
                 is_online = FALSE,
                 online_since = NULL
@@ -327,8 +331,8 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
             )
             RETURNING id
           )
-          INSERT INTO player_activity (username, player_uuid, last_seen, registration_at, is_online)
-          SELECT $1, $4::uuid, CASE WHEN $3::boolean THEN $2::timestamp ELSE NULL END, NOW(), FALSE
+          INSERT INTO player_activity (username, player_uuid, last_seen, presence_observed_at, registration_at, is_online)
+          SELECT $1, $4::uuid, CASE WHEN $3::boolean THEN $2::timestamp ELSE NULL END, $2::timestamptz, NOW(), FALSE
           WHERE NOT EXISTS (SELECT 1 FROM updated)
           RETURNING id
         `, [username, timestamp, recordEvent, normalizedUuid]);
@@ -369,6 +373,7 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
       if (err?.code === '42703') {
         try {
           await pool.query('ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS registration_at TIMESTAMPTZ');
+          await pool.query('ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS presence_observed_at TIMESTAMPTZ');
           const result = await executeUpdate();
           return { ...result, previousOnline, isOnline: Boolean(isOnline) };
         } catch (retryErr) {

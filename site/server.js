@@ -66,11 +66,14 @@ const sseHub = new SseHub({
   heartbeatMs: Number(process.env.SSE_HEARTBEAT_MS) || 25_000
 });
 const LIVE_DASHBOARD_CACHE_MS = Math.max(250, Number(process.env.LIVE_DASHBOARD_CACHE_MS) || 1_000);
+const PLAYER_PRESENCE_TIMEOUT_MS = Math.max(15_000, Number(process.env.PLAYER_PRESENCE_TIMEOUT_MS) || 30_000);
+const PLAYER_PRESENCE_SWEEP_MS = Math.max(5_000, Math.min(PLAYER_PRESENCE_TIMEOUT_MS, 15_000));
 let databaseEventTimer = null;
 let databaseEventPollRunning = false;
 let databaseEventState = null;
 let lastDatabaseEventErrorAt = 0;
 let logRetentionTimer = null;
+let playerPresenceTimer = null;
 let liveDashboardCache = null;
 let liveDashboardCacheAt = 0;
 let liveDashboardRequest = null;
@@ -989,6 +992,7 @@ async function ensureOptionalTables() {
       last_seen TIMESTAMP,
       last_online TIMESTAMP,
       online_since TIMESTAMPTZ,
+      presence_observed_at TIMESTAMPTZ,
       registration_at TIMESTAMPTZ,
       is_online BOOLEAN DEFAULT FALSE,
       admin_notes TEXT,
@@ -1001,6 +1005,7 @@ async function ensureOptionalTables() {
   await pool.query(`ALTER TABLE player_activity ALTER COLUMN last_seen DROP DEFAULT`);
   await pool.query(`ALTER TABLE player_activity ALTER COLUMN last_online DROP DEFAULT`);
   await pool.query(`ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS registration_at TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS presence_observed_at TIMESTAMPTZ`);
   await pool.query(`ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS observed_message_count BIGINT CHECK (observed_message_count >= 0)`);
   await pool.query(`ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS observed_message_count_at TIMESTAMPTZ`);
   await pool.query(`ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS admin_notes TEXT`);
@@ -4014,7 +4019,7 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
   const [profileResult, chatResult, recentChatResult, gameSessionEventsResult] = await Promise.all([
     pool.query(`
       WITH activity AS (
-        SELECT id, username, player_uuid, last_seen, last_online, registration_at, is_online,
+        SELECT id, username, player_uuid, last_seen, last_online, online_since, registration_at, is_online,
                admin_notes, admin_tags, pearl_hatch_x, pearl_hatch_y, pearl_hatch_z
         FROM player_activity
         WHERE ($2::uuid IS NOT NULL AND player_uuid = $2::uuid)
@@ -4036,6 +4041,7 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
         ) AS is_whitelisted,
         pa.last_seen,
         pa.last_online,
+        pa.online_since,
         pa.registration_at,
         TO_CHAR(pa.registration_at AT TIME ZONE 'UTC', 'MM/DD/YYYY HH24:MI:SS') AS registration_display,
         pt.tracking_since,
@@ -4226,12 +4232,12 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
       };
   const runtimePresence = playerProfileRuntimePresence(botAccount);
   const isOnline = Boolean(profile.is_online) || runtimePresence.isOnline;
-  const trackingSince = runtimePresence.isOnline
-    ? runtimePresence.currentStartedAt || profile.tracking_since
-    : profile.tracking_since;
+  const currentSessionStartedAt = runtimePresence.isOnline
+    ? runtimePresence.currentStartedAt || profile.online_since
+    : profile.online_since;
   const gameSessions = buildPlayerGameSessions(gameSessionEventsResult.rows, {
     isOnline,
-    currentStartedAt: trackingSince || profile.last_online
+    currentStartedAt: currentSessionStartedAt
   });
   const gameSessionCount = Math.max(
     toInt(gameSessionEventsResult.rows[0]?.total_sessions),
@@ -4247,7 +4253,8 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
     isBot: Boolean(botAccount) || (Array.isArray(profile.admin_tags) && profile.admin_tags.some(tag => String(tag).trim().toLowerCase() === 'bot')),
     isNewPlayer: isNewPlayerRegistration(profile.registration_at),
     isOnline,
-    trackingSince: trackingSince || null,
+    trackingSince: profile.tracking_since || null,
+    onlineSince: currentSessionStartedAt || null,
     lastSeen: profile.last_seen || null,
     lastOnline: profile.last_online || null,
     registrationAt: profile.registration_at || null,
@@ -6455,6 +6462,71 @@ function startLogRetention() {
   logRetentionTimer.unref?.();
 }
 
+async function expireStalePlayerPresence(database = pool, timeoutMs = PLAYER_PRESENCE_TIMEOUT_MS) {
+  if (!database) return [];
+  const safeTimeoutMs = Math.max(1_000, Number(timeoutMs) || PLAYER_PRESENCE_TIMEOUT_MS);
+  const result = await database.query(`
+    WITH expired AS (
+      UPDATE player_activity
+      SET is_online=FALSE,
+          online_since=NULL,
+          last_seen=CASE
+            WHEN presence_observed_at IS NULL THEN last_seen
+            ELSE GREATEST(COALESCE(last_seen,presence_observed_at),presence_observed_at)
+          END
+      WHERE is_online=TRUE
+        AND (
+          presence_observed_at IS NULL
+          OR presence_observed_at < NOW() - ($1::double precision * INTERVAL '1 millisecond')
+        )
+      RETURNING username,player_uuid,presence_observed_at
+    ), expired_events AS (
+      INSERT INTO player_session_events(username,event_type,occurred_at)
+      SELECT username,'player_left',COALESCE(presence_observed_at,NOW())
+      FROM expired
+      ON CONFLICT DO NOTHING
+      RETURNING username
+    ), stopped_playtime AS (
+      UPDATE player_playtime playtime
+      SET total_seconds=playtime.total_seconds + GREATEST(
+            0,
+            FLOOR(EXTRACT(EPOCH FROM (
+              LEAST(NOW(),COALESCE(expired.presence_observed_at,NOW())) - playtime.tracking_since
+            )))::bigint
+          ),
+          tracking_since=NULL,
+          updated_at=NOW()
+      FROM expired
+      WHERE playtime.tracking_since IS NOT NULL
+        AND (
+          (playtime.player_uuid IS NOT NULL AND playtime.player_uuid=expired.player_uuid)
+          OR (playtime.player_uuid IS NULL AND LOWER(playtime.username)=LOWER(expired.username))
+        )
+      RETURNING playtime.username
+    )
+    SELECT username FROM expired ORDER BY LOWER(username)
+  `, [safeTimeoutMs]);
+  return result.rows.map(row => row.username);
+}
+
+function startPlayerPresenceExpiry() {
+  if (!pool || playerPresenceTimer) return;
+  const run = async () => {
+    const expired = await expireStalePlayerPresence();
+    if (expired.length) {
+      console.warn(`[PlayerActivity] Expired ${expired.length} stale presence lease(s):`, expired.join(', '));
+      liveDashboardCache = null;
+      liveDashboardCacheAt = 0;
+    }
+  };
+  run().catch(err => console.error('[PlayerActivity] Presence expiry failed:', err.message));
+  playerPresenceTimer = setInterval(
+    () => run().catch(err => console.error('[PlayerActivity] Presence expiry failed:', err.message)),
+    PLAYER_PRESENCE_SWEEP_MS
+  );
+  playerPresenceTimer.unref?.();
+}
+
 async function startSiteServer() {
   // Bind the HTTP port before migrations. Another service replica can hold a
   // migration advisory lock during a deploy; waiting for it with a closed port
@@ -6473,6 +6545,7 @@ async function startSiteServer() {
   try {
     if (ADMIN_BOOTSTRAP_TOKEN && !BOOTSTRAP_TOKEN_CONFIGURED) console.warn('[Site] ADMIN_BOOTSTRAP_TOKEN is ignored because it is shorter than 32 characters.');
     await ensureOptionalTables();
+    await expireStalePlayerPresence();
     await bootstrapAdminFromEnvironment();
     await loadPersistedPlayerStatsCache();
     getCachedPlayerStats().catch(error => {
@@ -6489,6 +6562,7 @@ async function startSiteServer() {
     sseHub.start();
     startDatabaseEventPoller();
     startLogRetention();
+    startPlayerPresenceExpiry();
   }
 }
 
@@ -6500,6 +6574,8 @@ async function shutdown() {
   databaseEventTimer = null;
   if (logRetentionTimer) clearInterval(logRetentionTimer);
   logRetentionTimer = null;
+  if (playerPresenceTimer) clearInterval(playerPresenceTimer);
+  playerPresenceTimer = null;
   clearInterval(rateLimiterTimer);
   sseHub.stop();
   await new Promise(resolve => server.close(resolve));
@@ -6513,4 +6589,4 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown);
 }
 
-module.exports = { ADMIN_PLAYER_EDITABLE_FIELDS, adminPlayerIdentity, adminReadRateLimitSubject, assertAdminUser, buildPlayerGameSessions, changeSitePassword, cleanAccountInput, csrfTokenForSessionHash, deleteAdminPlayer, freshStoredRuntimePayload, getAdminPlayers, getAdminUsers, getPlayerInfoCollectionProgress, hashPassword, normalizeAdminPlayerPatch, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, parsePlaytimeSeconds, patchAdminPlayer, playerProfileRuntimePresence, publicUser, registrationDefaults, requestHandler, resolveObsidianDebugLogPath, serializeObsidianDebugLogFallback, server, setAdminPlaytime, shouldRecordStaticSecurityEvent, sortSeenPlayers, startSiteServer, touchSiteSessionActivity, validateCredentials, validatePasswordChange, verifyPassword };
+module.exports = { ADMIN_PLAYER_EDITABLE_FIELDS, adminPlayerIdentity, adminReadRateLimitSubject, assertAdminUser, buildPlayerGameSessions, changeSitePassword, cleanAccountInput, csrfTokenForSessionHash, deleteAdminPlayer, expireStalePlayerPresence, freshStoredRuntimePayload, getAdminPlayers, getAdminUsers, getPlayerInfoCollectionProgress, hashPassword, normalizeAdminPlayerPatch, normalizeNavigationPreferences, normalizePlayerInfoRefreshRequest, parsePlaytimeSeconds, patchAdminPlayer, playerProfileRuntimePresence, publicUser, registrationDefaults, requestHandler, resolveObsidianDebugLogPath, serializeObsidianDebugLogFallback, server, setAdminPlaytime, shouldRecordStaticSecurityEvent, sortSeenPlayers, startSiteServer, touchSiteSessionActivity, validateCredentials, validatePasswordChange, verifyPassword };

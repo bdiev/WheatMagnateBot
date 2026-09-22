@@ -6,12 +6,15 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { PGlite } = require('@electric-sql/pglite');
 const { createPlayerActivityRepository } = require('../database');
+const { expireStalePlayerPresence } = require('../site/server');
 
 async function run() {
   const db = new PGlite();
   const root = path.resolve(__dirname, '..');
   const migration = fs.readFileSync(path.join(root, 'database/migrations/048_player_current_online_since.sql'), 'utf8');
+  const presenceMigration = fs.readFileSync(path.join(root, 'database/migrations/057_player_presence_lease.sql'), 'utf8');
   assert.equal(migration, fs.readFileSync(path.join(root, 'site/migrations/048_player_current_online_since.sql'), 'utf8'));
+  assert.equal(presenceMigration, fs.readFileSync(path.join(root, 'site/migrations/057_player_presence_lease.sql'), 'utf8'));
   try {
     await db.exec(`
       CREATE TABLE player_activity (
@@ -21,7 +24,7 @@ async function run() {
       CREATE TABLE player_session_events (username TEXT, event_type TEXT, occurred_at TIMESTAMPTZ);
       CREATE TABLE whitelist (username TEXT);
       CREATE TABLE player_name_history (username TEXT, player_uuid UUID);
-      CREATE TABLE player_playtime (username TEXT, player_uuid UUID, total_seconds BIGINT, tracking_since TIMESTAMPTZ);
+      CREATE TABLE player_playtime (username TEXT, player_uuid UUID, total_seconds BIGINT, tracking_since TIMESTAMPTZ, updated_at TIMESTAMPTZ);
       CREATE TABLE bot_accounts (id UUID, username TEXT, deleted_at TIMESTAMPTZ);
       CREATE TABLE bot_account_runtime_state (
         account_id UUID, status TEXT, started_at TIMESTAMPTZ, updated_at TIMESTAMPTZ, status_payload JSONB
@@ -31,6 +34,8 @@ async function run() {
     `);
     await db.exec(migration);
     await db.exec(migration);
+    await db.exec(presenceMigration);
+    await db.exec(presenceMigration);
     const pool = { query: (sql, params = []) => db.query(sql, params) };
     const repository = createPlayerActivityRepository({ pool });
     const activity = async () => (await db.query('SELECT * FROM player_activity')).rows[0];
@@ -70,6 +75,35 @@ async function run() {
     await repository.updatePlayerActivity('herobrineslord', false, { recordEvent: false });
     assert.equal((await activity()).online_since, null, 'disconnect must invalidate the session start');
     assert.equal((await lookup()).onlineSince, null);
+
+    const botSource = fs.readFileSync(path.join(root, 'bot.js'), 'utf8');
+    assert.match(botSource, /let playerActivityReconciliationPending = true;/,
+      'database reconciliation must not be inferred from an incremental player list');
+    assert.match(botSource, /playerActivityReconciliationPending = true;[\s\S]*if \(bot !== createdBot \|\| !createdBot\.entity\) return;/,
+      'every reconnect must require a settled snapshot and reject stale startup callbacks');
+    assert.match(botSource, /if \(!playerActivityJoinEventsReady\) return;[\s\S]*syncPlayerActivityOnlineState/,
+      'the periodic synchronizer must wait for the settled startup snapshot');
+
+    await db.exec(`
+      UPDATE player_activity
+      SET is_online=TRUE,
+          online_since=NOW()-INTERVAL '3 minutes',
+          presence_observed_at=NOW()-INTERVAL '2 minutes';
+      INSERT INTO player_playtime(username,player_uuid,total_seconds,tracking_since)
+      VALUES('herobrineslord','11111111-1111-4111-8111-111111111111',100,NOW()-INTERVAL '3 minutes');
+    `);
+    assert.deepEqual(await expireStalePlayerPresence(pool, 30_000), ['herobrineslord']);
+    const expiredActivity = await activity();
+    assert.equal(expiredActivity.is_online, false, 'an expired observation lease must force the player offline');
+    assert.equal(expiredActivity.online_since, null);
+    const stoppedPlaytime = (await db.query('SELECT total_seconds,tracking_since FROM player_playtime')).rows[0];
+    assert.equal(stoppedPlaytime.tracking_since, null, 'an expired lease must stop its playtime clock');
+    assert.ok(Number(stoppedPlaytime.total_seconds) >= 159 && Number(stoppedPlaytime.total_seconds) <= 161,
+      'playtime must stop at the final observation rather than at lease cleanup time');
+
+    await db.exec(`UPDATE player_activity SET is_online=TRUE,presence_observed_at=NOW(),online_since=NOW()`);
+    assert.deepEqual(await expireStalePlayerPresence(pool, 30_000), []);
+    assert.equal((await activity()).is_online, true, 'a fresh observation lease must remain online');
 
     const appSource = fs.readFileSync(path.join(root, 'site/public/app.js'), 'utf8');
     const statusSource = appSource.match(/function seenPlayerStatusText\(player, now = Date.now\(\)\) \{[\s\S]*?\n\}/)?.[0];

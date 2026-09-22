@@ -127,6 +127,8 @@ assert.match(serverSource, /activeRuntimeUsernames[\s\S]*CASE WHEN is_online OR 
   'fresh bot runtime presence must participate in Seen sorting before the result limit');
 assert.match(serverSource, /const onlineSince = isOnline[\s\S]*runtimePresence\.currentStartedAt \|\| row\.online_since[\s\S]*onlineSince,/,
   'Seen search must expose the beginning of the current online session');
+assert.match(serverSource, /const currentSessionStartedAt = runtimePresence\.isOnline[\s\S]*runtimePresence\.currentStartedAt \|\| profile\.online_since[\s\S]*currentStartedAt: currentSessionStartedAt/,
+  'player profiles must build the active session from confirmed presence rather than a playtime checkpoint');
 assert.match(appSource, /function seenPlayerStatusText\(player, now = Date\.now\(\)\)[\s\S]*online for \$\{formatDurationMs\(Math\.max\(0, now - startedAt\)\)\}[\s\S]*data-seen-online-since/,
   'Seen search must show the elapsed duration of the current online session');
 assert.match(appSource, /function startSeenOnlineTimer\(\)[\s\S]*setInterval\(updateSeenOnlineDurations, 1_000\)/,

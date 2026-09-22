@@ -40,6 +40,8 @@ async function createHarness() {
       player_uuid UUID,
       last_seen TIMESTAMPTZ,
       last_online TIMESTAMPTZ,
+      online_since TIMESTAMPTZ,
+      presence_observed_at TIMESTAMPTZ,
       registration_at TIMESTAMPTZ,
       is_online BOOLEAN NOT NULL DEFAULT FALSE,
       observed_message_count BIGINT CHECK (observed_message_count >= 0),

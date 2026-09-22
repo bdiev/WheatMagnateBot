@@ -581,7 +581,7 @@ async function ensureMinecraftProfileIdentity(username, { source = 'player creat
       if (!uuid) return null;
 
       const canonicalUsername = profile?.name || safeUsername;
-      await updatePlayerActivity(canonicalUsername, false, {
+      await updatePlayerActivity(canonicalUsername, Boolean(onlineUuid), {
         recordEvent:false,
         uuid
       });
@@ -663,7 +663,10 @@ async function backfillExistingPlayerProfiles() {
               DO UPDATE SET player_uuid=COALESCE(player_activity.player_uuid,EXCLUDED.player_uuid)`, [profile.name, uuid]);
           }
           await client.query('COMMIT');
-          await updatePlayerActivity(profile.name, false, { recordEvent: false, uuid });
+          const isObservedOnline = getOnlinePlayerUsernames().some(username =>
+            username.toLowerCase() === String(profile.name || '').toLowerCase()
+          );
+          await updatePlayerActivity(profile.name, isObservedOnline, { recordEvent: false, uuid });
           stats.updated += 1;
         } catch (err) {
           await client.query('ROLLBACK').catch(() => {});
@@ -1313,6 +1316,10 @@ let playerActivitySyncInterval = null;
 let playerActivitySyncRunning = false;
 let lastObservedOnlinePlayerKeys = null;
 let playerActivityJoinEventsReady = false;
+// Kept separately from the in-memory player snapshot. Initial playerJoined
+// packets populate that snapshot before it is complete, so it cannot prove
+// that persisted presence from a previous process has been reconciled.
+let playerActivityReconciliationPending = true;
 let botStatusSnapshotInterval = null;
 let wheatMagnatePlaytimeDisplay = 'N/A';
 let wheatMagnatePlaytimeCacheAt = 0;
@@ -1900,6 +1907,7 @@ async function initDatabase() {
         last_seen TIMESTAMP,
         last_online TIMESTAMP,
         online_since TIMESTAMPTZ,
+        presence_observed_at TIMESTAMPTZ,
         registration_at TIMESTAMPTZ,
         is_online BOOLEAN DEFAULT FALSE,
         admin_notes TEXT,
@@ -1912,6 +1920,7 @@ async function initDatabase() {
     await pool.query('ALTER TABLE player_activity ALTER COLUMN last_seen DROP DEFAULT');
     await pool.query('ALTER TABLE player_activity ALTER COLUMN last_online DROP DEFAULT');
     await pool.query('ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS registration_at TIMESTAMPTZ');
+    await pool.query('ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS presence_observed_at TIMESTAMPTZ');
     await pool.query('ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS observed_message_count BIGINT CHECK (observed_message_count >= 0)');
     await pool.query('ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS observed_message_count_at TIMESTAMPTZ');
     await pool.query('ALTER TABLE player_activity ADD COLUMN IF NOT EXISTS admin_notes TEXT');
@@ -3124,12 +3133,6 @@ async function syncPlayerActivityOnlineState() {
     const observedUsernames = getOnlinePlayerUsernames();
     const hasAnyObservedPlayers = observedUsernames.length > 0;
     const hasObservedSelf = botUsername && observedUsernames.some(username => username.toLowerCase() === botUsername);
-    // lastObservedOnlinePlayerKeys is only ever populated in-process, so it is
-    // lost whenever the process restarts (crash, OOM kill, redeploy without a
-    // clean SIGTERM). Treat a null value as "unknown history" and reconcile
-    // against the database directly, otherwise players who were online right
-    // before an ungraceful restart stay stuck is_online=TRUE forever.
-    const isFirstSyncSinceProcessStart = !lastObservedOnlinePlayerKeys;
     if (!hasAnyObservedPlayers && lastObservedOnlinePlayerKeys) {
       console.warn('[PlayerActivity] Skipping offline sync because Mineflayer returned an empty player snapshot.');
       return;
@@ -3163,8 +3166,11 @@ async function syncPlayerActivityOnlineState() {
       }));
     }
 
-    if (isFirstSyncSinceProcessStart && hasAnyObservedPlayers) {
-      await reconcileStaleOnlinePlayers(onlineKeys);
+    // Only a settled post-spawn snapshot may invalidate persisted presence.
+    // Startup playerJoined packets are incremental and used to set
+    // lastObservedOnlinePlayerKeys, which previously skipped this repair.
+    if (playerActivityReconciliationPending && playerActivityJoinEventsReady && hasObservedSelf) {
+      playerActivityReconciliationPending = !(await reconcileStaleOnlinePlayers(onlineKeys));
     }
 
     if (onlineUsernames.length > 0 || hasObservedSelf || lastObservedOnlinePlayerKeys) {
@@ -3181,7 +3187,7 @@ async function syncPlayerActivityOnlineState() {
 // (crash/OOM/force-kill) that never reached the bot 'end' handler's offline
 // flush. Only runs once, on the first successful sync after process start.
 async function reconcileStaleOnlinePlayers(onlineKeys) {
-  if (!pool) return;
+  if (!pool) return false;
   try {
     const staleResult = await pool.query(
       'SELECT username FROM player_activity WHERE is_online = TRUE'
@@ -3189,14 +3195,17 @@ async function reconcileStaleOnlinePlayers(onlineKeys) {
     const staleUsernames = staleResult.rows
       .map(row => row.username)
       .filter(username => username && !onlineKeys.has(username.toLowerCase()));
-    if (!staleUsernames.length) return;
+    if (!staleUsernames.length) return true;
     console.warn(`[PlayerActivity] Clearing ${staleUsernames.length} stale online record(s) left by an ungraceful restart:`, staleUsernames.join(', '));
-    await Promise.all(staleUsernames.map(async username => {
-      await updatePlayerActivity(username, false, { recordEvent: true });
+    const results = await Promise.all(staleUsernames.map(async username => {
+      const result = await updatePlayerActivity(username, false, { recordEvent: true });
       playerInfoFirstJoinCheck?.playerLeft(username);
+      return result;
     }));
+    return results.every(result => result?.isOnline === false);
   } catch (err) {
     console.error('[PlayerActivity] Failed to reconcile stale online records:', err.message);
+    return false;
   }
 }
 
@@ -9459,6 +9468,7 @@ function createBot() {
       message: 'Minecraft bot spawned.'
     });
     playerActivityJoinEventsReady = false;
+    playerActivityReconciliationPending = true;
     reconnectTimestamp = 0; // Reset reconnect countdown when bot spawns
     clearIntervals();
     startFoodMonitor();
@@ -9482,17 +9492,22 @@ function createBot() {
 
     // Keep website online/offline state aligned with Mineflayer's current player list.
     setTimeout(async () => {
+      // A short-lived connection may end before this delayed callback. Never
+      // let its stale startup task authorize or reconcile a replacement bot.
+      if (bot !== createdBot || !createdBot.entity) return;
       try {
+        // Mark the snapshot as settled before synchronizing so the first
+        // authoritative pass also repairs rows left by a dead process.
+        playerActivityJoinEventsReady = true;
         await syncPlayerActivityOnlineState();
         await syncWhitelistPlaytime();
       } catch (err) {
         console.error('[PlayerActivity] Initial sync after spawn failed:', err.message);
-      } finally {
-        playerActivityJoinEventsReady = true;
       }
     }, 3000);
 
     playerActivitySyncInterval = setInterval(() => {
+      if (!playerActivityJoinEventsReady) return;
       syncPlayerActivityOnlineState().catch(err => {
         console.error('[PlayerActivity] Sync interval failed:', err.message);
       });
