@@ -5410,11 +5410,127 @@ body.search-focus-active #logoutButton {
   padding: 0 14px 16px;
 }
 
-.player-profile-activity,
-.player-profile-ping-history {
+.player-profile-activity {
   display: grid;
   gap: 10px;
   padding: 0 14px 16px;
+}
+
+.player-profile-activity > summary {
+  justify-content: flex-start;
+  cursor: pointer;
+  list-style: none;
+}
+
+.player-profile-activity > summary::-webkit-details-marker {
+  display: none;
+}
+
+.player-profile-activity > summary h3::after {
+  color: var(--accent-strong);
+  content: '\25B8';
+  font-family: sans-serif;
+  font-size: 14px;
+  transition: transform 160ms ease;
+}
+
+.player-profile-activity[open] > summary h3::after {
+  transform: rotate(90deg);
+}
+
+.player-profile-activity > summary:hover h3,
+.player-profile-activity > summary:focus-visible h3 {
+  color: var(--accent-strong);
+}
+
+.player-profile-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.player-profile-name-row h2 {
+  min-width: 0;
+}
+
+.player-ping-details {
+  flex: 0 0 auto;
+}
+
+.player-ping-details > summary {
+  border-radius: 3px;
+  padding: 1px 3px;
+  cursor: pointer;
+  font-family: var(--font-pixel);
+  font-size: 12px;
+  font-weight: 900;
+  list-style: none;
+  white-space: nowrap;
+}
+
+.player-ping-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.player-ping-details > summary:hover,
+.player-ping-details > summary:focus-visible,
+.player-ping-details[open] > summary {
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+}
+
+.player-profile-summary {
+  position: relative;
+}
+
+/* Anchored to the summary (not the badge) so the popover never runs past the
+   right edge when a long name pushes the badge to the side. */
+.player-ping-popover {
+  position: absolute;
+  left: 0;
+  z-index: 12;
+  display: grid;
+  gap: 8px;
+  width: min(300px, 100%);
+  margin-top: 6px;
+  border: 2px solid var(--line);
+  border-radius: var(--button-radius);
+  padding: 10px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.player-ping-popover dl {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+}
+
+.player-ping-popover dl > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.player-ping-popover dt {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.player-ping-popover dd {
+  margin: 0;
+  font-weight: 900;
+  text-align: right;
+}
+
+.player-ping-popover small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .player-ping-value[data-ping-quality="good"] { color: var(--accent-strong); }
@@ -5505,7 +5621,7 @@ body.search-focus-active #logoutButton {
   display: flex;
   align-items: flex-end;
   gap: 3px;
-  height: 64px;
+  height: 44px;
   border-bottom: 2px solid var(--line);
 }
 
@@ -6016,7 +6132,6 @@ body.search-focus-active #logoutButton {
 #playerProfileContent.profile-data-enter > .player-profile-grid,
 #playerProfileContent.profile-data-enter > .player-profile-sessions,
 #playerProfileContent.profile-data-enter > .player-profile-activity,
-#playerProfileContent.profile-data-enter > .player-profile-ping-history,
 #playerProfileContent.profile-data-enter > .player-profile-admin-metadata,
 #playerProfileContent.profile-data-enter > .player-profile-chat {
   animation: player-profile-data-reveal 480ms cubic-bezier(.16, 1, .3, 1) both;
@@ -6024,8 +6139,7 @@ body.search-focus-active #logoutButton {
 
 #playerProfileContent.profile-data-enter > .player-profile-grid { animation-delay: 45ms; }
 #playerProfileContent.profile-data-enter > .player-profile-sessions { animation-delay: 90ms; }
-#playerProfileContent.profile-data-enter > .player-profile-activity,
-#playerProfileContent.profile-data-enter > .player-profile-ping-history { animation-delay: 105ms; }
+#playerProfileContent.profile-data-enter > .player-profile-activity { animation-delay: 105ms; }
 #playerProfileContent.profile-data-enter > .player-profile-admin-metadata { animation-delay: 120ms; }
 #playerProfileContent.profile-data-enter > .player-profile-chat { animation-delay: 145ms; }
 
@@ -8758,8 +8872,7 @@ body.modal-open { overflow:hidden; }
     padding: 9px 10px;
   }
 
-  .player-profile-activity,
-  .player-profile-ping-history {
+  .player-profile-activity {
     padding: 0 10px 12px;
   }
 

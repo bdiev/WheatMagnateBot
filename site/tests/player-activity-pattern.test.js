@@ -68,8 +68,9 @@ assert.equal(buildPlayerGameSessions(manyEvents, { limit: Infinity }).length, 15
 
 const appSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
 assert.match(appSource, /renderPlayerActivityPattern\(profile\.activityPattern\)/);
-assert.match(appSource, /renderPlayerPingCards\(profile\)/);
-assert.match(appSource, /renderPlayerPingHistory\(profile\.ping\)/);
+assert.match(appSource, /<h2 id="playerProfileName">[^\n]*\r?\n\s*\$\{renderPlayerPingBadge\(profile\)\}/, 'the ping badge must sit next to the name');
+assert.match(appSource, /<details class="player-profile-activity">/, 'the activity pattern must be collapsible');
+assert.match(appSource, /activityPatternOpen[\s\S]*pingDetailsOpen|pingDetailsOpen[\s\S]*activityPatternOpen/, 'open panels must survive background refreshes');
 
 const serverSource = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
 assert.match(serverSource, /timeZone: await getAccountTimezone\(currentUser\.id\)/, 'the profile must use the viewer account timezone');

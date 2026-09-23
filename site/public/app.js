@@ -3591,34 +3591,37 @@ function formatStreakDays(days) {
   return `${formatNumber(count)} ${count === 1 ? 'day' : 'days'}`;
 }
 
-function renderPlayerPingCards(profile) {
-  const ping = profile.ping || {};
-  const isFresh = profile.isOnline && ping.lastAt && Date.now() - new Date(ping.lastAt).getTime() < PLAYER_PING_FRESH_MS;
-  const range = ping.min7d == null || ping.max7d == null ? '-' : `${formatNumber(ping.min7d)}–${formatNumber(ping.max7d)} ms`;
-  return `
-      <div${ping.lastAt ? ` title="Sampled ${escapeHtml(formatDate(ping.lastAt))}"` : ''}><span>${isFresh ? 'Ping' : 'Last Ping'}</span><strong class="player-ping-value" data-ping-quality="${playerPingQuality(ping.last)}">${formatPing(ping.last)}</strong></div>
-      <div><span>Avg Ping 24h</span><strong class="player-ping-value" data-ping-quality="${playerPingQuality(ping.avg24h)}">${formatPing(ping.avg24h)}</strong></div>
-      <div><span>Avg Ping 7d</span><strong class="player-ping-value" data-ping-quality="${playerPingQuality(ping.avg7d)}">${formatPing(ping.avg7d)}</strong></div>
-      <div title="Lowest and highest sampled ping over the last 7 days"><span>Ping Range 7d</span><strong>${range}</strong></div>`;
-}
-
-function renderPlayerPingHistory(ping = {}) {
+function renderPlayerPingBars(ping) {
   const days = Array.isArray(ping.daily) ? ping.daily.filter(day => day?.avg != null) : [];
   if (days.length < 2) return '';
   const maxPing = Math.max(...days.map(day => Number(day.max) || Number(day.avg) || 0), 1);
   return `
-    <section class="player-profile-ping-history">
-      <header class="player-profile-section-head">
-        <div>
-          <h3>Ping history</h3>
-          <small>Daily average, last ${formatNumber(days.length)} days with samples${ping.avgAllTime != null ? ` · all-time ${formatPing(ping.avgAllTime)}` : ''}</small>
+        <div class="player-ping-bars" role="img" aria-label="Daily average ping for the last ${days.length} days">
+          ${days.map(day => `
+            <span class="player-ping-bar" data-ping-quality="${playerPingQuality(day.avg)}" style="--ping-height:${Math.max(4, Math.round(Number(day.avg) / maxPing * 100))}%" title="${escapeHtml(day.day)}: avg ${escapeHtml(formatPing(day.avg))}, ${escapeHtml(formatPing(day.min))}–${escapeHtml(formatPing(day.max))}"></span>`).join('')}
         </div>
-      </header>
-      <div class="player-ping-bars" role="img" aria-label="Daily average ping for the last ${days.length} days">
-        ${days.map(day => `
-          <span class="player-ping-bar" data-ping-quality="${playerPingQuality(day.avg)}" style="--ping-height:${Math.max(4, Math.round(Number(day.avg) / maxPing * 100))}%" title="${escapeHtml(day.day)}: avg ${escapeHtml(formatPing(day.avg))}, ${escapeHtml(formatPing(day.min))}–${escapeHtml(formatPing(day.max))}"></span>`).join('')}
-      </div>
-    </section>`;
+        <small>Daily average, last ${formatNumber(days.length)} days with samples</small>`;
+}
+
+function renderPlayerPingBadge(profile) {
+  const ping = profile.ping || {};
+  if (ping.last == null) return '';
+  const isFresh = profile.isOnline && ping.lastAt && Date.now() - new Date(ping.lastAt).getTime() < PLAYER_PING_FRESH_MS;
+  const range = ping.min7d == null || ping.max7d == null ? '-' : `${formatNumber(ping.min7d)}–${formatNumber(ping.max7d)} ms`;
+  return `
+          <details class="player-ping-details">
+            <summary class="player-ping-value" data-ping-quality="${playerPingQuality(ping.last)}" title="${isFresh ? 'Current ping' : 'Last sampled ping'}" aria-label="${isFresh ? 'Ping' : 'Last ping'} ${escapeHtml(formatPing(ping.last))}, show ping details">[${formatNumber(ping.last)}ms]</summary>
+            <div class="player-ping-popover">
+              <dl>
+                <div><dt>${isFresh ? 'Ping now' : 'Last ping'}</dt><dd>${formatPing(ping.last)}${ping.lastAt ? ` <small>${escapeHtml(formatDate(ping.lastAt))}</small>` : ''}</dd></div>
+                <div><dt>Avg 24h</dt><dd class="player-ping-value" data-ping-quality="${playerPingQuality(ping.avg24h)}">${formatPing(ping.avg24h)}</dd></div>
+                <div><dt>Avg 7d</dt><dd class="player-ping-value" data-ping-quality="${playerPingQuality(ping.avg7d)}">${formatPing(ping.avg7d)}</dd></div>
+                <div><dt>Range 7d</dt><dd>${range}</dd></div>
+                <div><dt>All-time avg</dt><dd>${formatPing(ping.avgAllTime)}</dd></div>
+              </dl>
+              ${renderPlayerPingBars(ping)}
+            </div>
+          </details>`;
 }
 
 function renderPlayerActivityPattern(pattern) {
@@ -3629,13 +3632,13 @@ function renderPlayerActivityPattern(pattern) {
     : '-';
   const longest = pattern.longestSession;
   return `
-    <section class="player-profile-activity">
-      <header class="player-profile-section-head">
+    <details class="player-profile-activity">
+      <summary class="player-profile-section-head">
         <div>
           <h3>Activity pattern</h3>
-          <small>Sessions observed by the bot · ${escapeHtml(pattern.timeZone)}</small>
+          <small>Peak ${escapeHtml(peak)} · sessions observed by the bot · ${escapeHtml(pattern.timeZone)}</small>
         </div>
-      </header>
+      </summary>
       <div class="player-activity-stats">
         <div><span>Avg Session</span><strong>${pattern.completedSessionCount ? escapeHtml(formatDurationMs(pattern.averageSessionSeconds * 1000)) : '-'}</strong></div>
         <div${longest ? ` title="Started ${escapeHtml(formatDate(longest.startedAt))}${longest.isCurrent ? ' (still online)' : ''}"` : ''}><span>Longest Session</span><strong>${longest ? escapeHtml(formatDurationMs(longest.durationSeconds * 1000)) : '-'}</strong></div>
@@ -3654,7 +3657,7 @@ function renderPlayerActivityPattern(pattern) {
       <div class="player-activity-legend" aria-hidden="true">
         <small>Less</small>${[0, 1, 2, 3, 4].map(level => `<span class="player-activity-cell" data-heat="${level}"></span>`).join('')}<small>More</small>
       </div>
-    </section>`;
+    </details>`;
 }
 
 function renderPlayerProfile(profile) {
@@ -3754,7 +3757,10 @@ function renderPlayerProfile(profile) {
       </button>
       <div class="player-profile-summary">
         <div class="player-profile-identity">
-          <h2 id="playerProfileName">${escapeHtml(profile.username)}</h2>
+          <div class="player-profile-name-row">
+            <h2 id="playerProfileName">${escapeHtml(profile.username)}</h2>
+            ${renderPlayerPingBadge(profile)}
+          </div>
           <div class="player-profile-badges">
             <span class="pill">${profile.isWhitelisted ? 'whitelisted' : 'not whitelisted'}</span>
             ${profile.isIgnored ? '<span class="pill ignored">ignored</span>' : ''}
@@ -3827,11 +3833,9 @@ function renderPlayerProfile(profile) {
       <div><span>Last Message</span><strong${profile.chat?.lastMessageAt ? ` data-profile-relative-time="${escapeHtml(profile.chat.lastMessageAt)}"` : ''}>${profile.chat?.lastMessageAt ? formatRecentDate(profile.chat.lastMessageAt) : 'None'}</strong></div>
       <div><span>Nearby</span><strong>${nearby ? `${formatNumber(nearby.distance)} blocks` : 'No sighting'}</strong></div>
       <div><span>Nearby Seen</span><strong>${nearby?.lastSeen ? formatDate(nearby.lastSeen) : '-'}</strong></div>
-      ${renderPlayerPingCards(profile)}
     </section>
     ${gameSessionsSection}
     ${renderPlayerActivityPattern(profile.activityPattern)}
-    ${renderPlayerPingHistory(profile.ping)}
     ${adminMetadata}
     <section class="player-profile-chat">
       <h3>Recent Chat</h3>
@@ -3866,8 +3870,11 @@ function fitPlayerProfileName() {
   const closeButton = $('#playerProfileClose');
   const nameRect = name.getBoundingClientRect();
   const closeRect = closeButton?.getBoundingClientRect();
+  // The ping badge sits on the same line, so the name must leave room for it.
+  const pingBadge = name.parentElement?.querySelector('.player-ping-details > summary');
+  const pingBadgeWidth = pingBadge ? pingBadge.getBoundingClientRect().width + 8 : 0;
   const closeSafeWidth = closeRect && closeRect.left > nameRect.left
-    ? Math.max(0, closeRect.left - nameRect.left - 10)
+    ? Math.max(0, closeRect.left - nameRect.left - 10 - pingBadgeWidth)
     : name.clientWidth;
   const availableWidth = Math.min(name.clientWidth, closeSafeWidth);
   const naturalWidth = name.scrollWidth;
@@ -3986,7 +3993,9 @@ function capturePlayerProfileViewState(content) {
     // The periodic refresh (schedulePlayerProfileRefresh) rebuilds this whole
     // panel from scratch, which would otherwise silently snap any open
     // <details> (e.g. Name history) shut a second or two after the click.
-    nameHistoryOpen: Boolean(content?.querySelector('.player-name-history')?.open)
+    nameHistoryOpen: Boolean(content?.querySelector('.player-name-history')?.open),
+    pingDetailsOpen: Boolean(content?.querySelector('.player-ping-details')?.open),
+    activityPatternOpen: Boolean(content?.querySelector('.player-profile-activity')?.open)
   };
 }
 
@@ -4001,8 +4010,12 @@ function restorePlayerProfileViewState(content, viewState) {
     area.scrollTop = saved.scrollTop;
     area.scrollLeft = saved.scrollLeft;
   }
-  if (viewState.nameHistoryOpen) {
-    const details = content.querySelector('.player-name-history');
+  for (const [selector, open] of [
+    ['.player-name-history', viewState.nameHistoryOpen],
+    ['.player-ping-details', viewState.pingDetailsOpen],
+    ['.player-profile-activity', viewState.activityPatternOpen]
+  ]) {
+    const details = open ? content.querySelector(selector) : null;
     if (details) details.open = true;
   }
   if (card) card.scrollTop = viewState.cardScrollTop;
