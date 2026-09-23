@@ -4839,16 +4839,16 @@ body.search-focus-active #logoutButton {
   top: 12px;
   right: 12px;
   z-index: 2;
-  width: var(--button-height);
-  min-width: var(--button-height);
-  height: var(--button-height);
-  min-height: var(--button-height);
-  border: 2px solid var(--line);
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  min-height: 34px;
+  border: 1px solid color-mix(in srgb, var(--muted) 52%, var(--line));
   border-radius: var(--card-radius);
   padding: 0;
   color: var(--muted);
   background: var(--panel-soft);
-  box-shadow: var(--shadow-sm);
+  box-shadow: none;
 }
 
 .player-profile-close:hover {
@@ -4858,8 +4858,8 @@ body.search-focus-active #logoutButton {
 }
 
 .player-profile-close-icon {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   fill: none;
   stroke: currentColor;
   stroke-width: 2;
@@ -4893,6 +4893,10 @@ body.search-focus-active #logoutButton {
   background: transparent;
   box-shadow: none;
   cursor: zoom-in;
+  isolation: isolate;
+  contain: layout paint;
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 .player-profile-avatar-wrap:hover,
@@ -4915,28 +4919,17 @@ body.search-focus-active #logoutButton {
   border: 3px solid var(--panel-soft);
   border-radius: 2px;
   background: var(--danger);
-  animation: player-offline-pulse 2.4s ease-in-out infinite;
-  transform-origin: center;
-  will-change: transform, box-shadow;
+  z-index: 2;
 }
 
 .player-profile-avatar-wrap[data-status="online"]::after {
   background: #55c85a;
-  animation: player-online-pulse 1.8s ease-in-out infinite;
-}
-
-@keyframes player-online-pulse {
-  0%, 100% {
-    box-shadow: 0 0 0 0 rgba(85, 200, 90, 0.55);
-    transform: scale(1);
-  }
-  50% {
-    box-shadow: 0 0 0 7px rgba(85, 200, 90, 0);
-    transform: scale(1.12);
-  }
 }
 
 .player-profile-avatar {
+  display: block;
+  position: relative;
+  z-index: 1;
   width: 72px;
   height: 72px;
   image-rendering: pixelated;
@@ -4944,6 +4937,8 @@ body.search-focus-active #logoutButton {
   border-radius: 2px;
   background: var(--panel);
   box-shadow: var(--shadow-inset), 4px 4px 0 color-mix(in srgb, var(--accent) 28%, rgba(0, 0, 0, 0.3));
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 .player-skins-overlay {
@@ -5129,17 +5124,6 @@ body.search-focus-active #logoutButton {
   .player-cape-list { grid-template-columns:repeat(4,minmax(0,1fr)); }
 }
 
-@keyframes player-offline-pulse {
-  0%, 100% {
-    box-shadow: 0 0 0 0 rgba(216, 67, 67, 0.46);
-    transform: scale(1);
-  }
-  50% {
-    box-shadow: 0 0 0 6px rgba(216, 67, 67, 0);
-    transform: scale(1.09);
-  }
-}
-
 .player-profile-head h2 {
   margin: 0;
   font-family: "Minecraft Rus", var(--font-display);
@@ -5152,6 +5136,7 @@ body.search-focus-active #logoutButton {
 
 .player-profile-badges {
   display: flex;
+  align-items: center;
   gap: 8px;
   flex-wrap: wrap;
 }
@@ -5466,8 +5451,7 @@ body.search-focus-active #logoutButton {
 
 .player-profile-name-row {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: baseline;
   min-width: 0;
   max-width: 100%;
 }
@@ -5484,13 +5468,13 @@ body.search-focus-active #logoutButton {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  min-height: 26px;
-  border: 1px solid color-mix(in srgb, currentColor 42%, var(--line));
-  border-radius: 4px;
-  padding: 3px 7px 3px 6px;
+  min-height: 27px;
+  border: 1px solid color-mix(in srgb, currentColor 32%, var(--line));
+  border-radius: 2px;
+  padding: 3px 7px;
   cursor: pointer;
-  background: color-mix(in srgb, currentColor 9%, var(--panel-soft));
-  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 10%, transparent);
+  background: color-mix(in srgb, currentColor 6%, var(--panel));
+  box-shadow: none;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 13px;
   font-weight: 900;
@@ -5548,12 +5532,13 @@ body.search-focus-active #logoutButton {
    right edge when a long name pushes the badge to the side. */
 .player-ping-popover {
   position: absolute;
+  top: calc(100% + 8px);
   left: 0;
   z-index: 12;
   display: grid;
   gap: 8px;
   width: min(300px, 100%);
-  margin-top: 6px;
+  margin-top: 0;
   border: 2px solid var(--line);
   border-radius: var(--button-radius);
   padding: 10px;
@@ -11294,10 +11279,10 @@ body.kill-aura-modal-open {
   .player-profile-close {
     top: 12px;
     right: 12px;
-    width: 38px;
-    min-width: 38px;
-    height: 38px;
-    min-height: 38px;
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
+    min-height: 34px;
     border-radius: 4px;
   }
 

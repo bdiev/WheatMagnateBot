@@ -3768,15 +3768,15 @@ function renderPlayerProfile(profile) {
   return `
     <header class="player-profile-head">
       <button class="player-profile-avatar-wrap" type="button" data-player-skins="${escapeHtml(profileUsername)}" data-status="${profile.isOnline ? 'online' : 'offline'}" aria-label="View ${escapeHtml(profileUsername)} skin history (${profile.isOnline ? 'online' : 'offline'})" title="View and rotate player skins">
-        <img class="player-profile-avatar" src="${playerHeadUrl(profile.username, 96, { uuid: profile.uuid })}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">
+        <img class="player-profile-avatar" src="${playerHeadUrl(profile.username, 96, { uuid: profile.uuid })}" alt="" loading="eager" onerror="this.style.visibility='hidden'">
       </button>
       <div class="player-profile-summary">
         <div class="player-profile-identity">
           <div class="player-profile-name-row">
             <h2 id="playerProfileName">${escapeHtml(profile.username)}</h2>
-            ${renderPlayerPingBadge(profile)}
           </div>
           <div class="player-profile-badges">
+            ${renderPlayerPingBadge(profile)}
             <span class="pill">${profile.isWhitelisted ? 'whitelisted' : 'not whitelisted'}</span>
             ${profile.isIgnored ? '<span class="pill ignored">ignored</span>' : ''}
           </div>
@@ -3885,11 +3885,8 @@ function fitPlayerProfileName() {
   const closeButton = $('#playerProfileClose');
   const nameRect = name.getBoundingClientRect();
   const closeRect = closeButton?.getBoundingClientRect();
-  // The ping badge sits on the same line, so the name must leave room for it.
-  const pingBadge = name.parentElement?.querySelector('.player-ping-details > summary');
-  const pingBadgeWidth = pingBadge ? pingBadge.getBoundingClientRect().width + 8 : 0;
   const closeSafeWidth = closeRect && closeRect.left > nameRect.left
-    ? Math.max(0, closeRect.left - nameRect.left - 10 - pingBadgeWidth)
+    ? Math.max(0, closeRect.left - nameRect.left - 10)
     : name.clientWidth;
   const availableWidth = Math.min(name.clientWidth, closeSafeWidth);
   const naturalWidth = name.scrollWidth;
