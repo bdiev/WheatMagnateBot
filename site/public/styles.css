@@ -5650,21 +5650,30 @@ body.search-focus-active #logoutButton {
 
 button.player-activity-cell {
   cursor: pointer;
-  transition: transform 100ms ease, box-shadow 100ms ease, filter 100ms ease;
+  text-shadow: none;
+  transition: filter 100ms ease, outline-color 100ms ease;
 }
 
 button.player-activity-cell:hover,
 button.player-activity-cell:focus-visible {
   z-index: 1;
-  outline: none;
+  outline: 2px solid var(--accent-strong);
+  outline-offset: -1px;
   filter: brightness(1.16);
-  transform: scale(1.35);
-  box-shadow: 0 0 0 2px var(--panel), 0 0 0 3px var(--accent-strong);
+  transform: none;
+  box-shadow: none;
 }
 
-button.player-activity-cell.is-selected {
+button.player-activity-cell.is-selected,
+button.player-activity-cell.is-selected:hover,
+button.player-activity-cell.is-selected:focus-visible,
+button.player-activity-cell.is-selected:active:not(:disabled) {
   z-index: 1;
-  box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent-strong);
+  outline: 2px solid var(--text);
+  outline-offset: -2px;
+  filter: brightness(1.16);
+  transform: none;
+  box-shadow: none;
 }
 
 .player-activity-cell[data-heat="1"] { background: color-mix(in srgb, var(--accent) 30%, var(--panel-soft)); }
@@ -11436,22 +11445,43 @@ body.kill-aura-modal-open {
   }
 
   .player-profile-activity {
+    gap: 6px;
     padding: 6px 8px 10px;
   }
 
-  .player-profile-activity > summary small {
-    max-width: 190px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  .player-profile-activity > summary {
+    min-height: 34px;
+    gap: 8px;
+  }
+
+  .player-profile-activity > summary > div > small,
+  .player-activity-peak small {
+    display: none;
+  }
+
+  .player-activity-peak strong {
+    font-size: 11px;
   }
 
   .player-activity-stats {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px;
   }
 
   .player-activity-stats div {
-    padding: 6px;
+    border-width: 1px;
+    padding: 5px 6px;
+    box-shadow: none;
+  }
+
+  .player-activity-stats span {
+    font-size: 8px;
+    letter-spacing: .025em;
+  }
+
+  .player-activity-stats strong {
+    margin-top: 1px;
+    font-size: 11px;
   }
 
   .player-activity-heatmap {
@@ -11460,21 +11490,38 @@ body.kill-aura-modal-open {
   }
 
   .player-activity-footer {
-    align-items: flex-start;
+    min-height: 24px;
+    align-items: center;
   }
 
   .player-activity-selection {
-    display: grid;
-    grid-template-columns: auto auto;
-    gap: 2px 5px;
+    display: flex;
+    width: 100%;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 2px 1px 0;
   }
 
+  .player-activity-selection span {
+    display: none;
+  }
+
+  .player-activity-selection strong,
   .player-activity-selection small {
-    grid-column: 1 / -1;
+    color: var(--text);
+    font-size: 11px;
+    font-weight: 800;
   }
 
   .player-activity-legend {
-    padding-top: 3px;
+    display: none;
+  }
+
+  button.player-activity-cell:hover,
+  button.player-activity-cell:focus-visible {
+    transform: none;
+    box-shadow: none;
   }
 
   .player-profile-session {

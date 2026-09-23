@@ -81,6 +81,8 @@ assert.match(stylesSource, /\.player-activity-stats\s*\{[^}]*grid-template-colum
 assert.match(stylesSource, /\.player-activity-cell\s*\{[^}]*min-width:\s*0;/s, 'interactive cells must override the global button width');
 assert.match(stylesSource, /\.player-ping-details\s*>\s*summary\s*\{[^}]*font-family:\s*ui-monospace/s, 'ping digits must not use the hard-to-read pixel font');
 assert.match(stylesSource, /\.player-profile-avatar-wrap\s*\{[^}]*contain:\s*layout paint;[^}]*backface-visibility:\s*hidden;/s, 'the avatar must remain on a stable paint layer when ping details open');
+assert.match(stylesSource, /button\.player-activity-cell\.is-selected[\s\S]*box-shadow:\s*none;/, 'selected heatmap cells must not inherit the global button shadow');
+assert.match(stylesSource, /@media \(max-width: 700px\)[\s\S]*\.player-profile-activity > summary > div > small[\s\S]*display:\s*none;[\s\S]*\.player-activity-legend\s*\{\s*display:\s*none;/, 'mobile activity details must hide redundant labels and legend');
 
 const serverSource = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
 assert.match(serverSource, /timeZone: await getAccountTimezone\(currentUser\.id\)/, 'the profile must use the viewer account timezone');
