@@ -4473,7 +4473,7 @@ function renderSeenSuggestions(players) {
 
   suggestions.innerHTML = state.seenPlayers.map((player, index) => `
     <button class="seen-option" type="button" data-index="${index}">
-      ${playerIdentity(player.username, 24, { status: player.isOnline ? 'online' : 'offline' })}
+      ${playerIdentity(player.username, 24, { status: player.isOnline ? 'online' : 'offline', uuid: player.uuid })}
       <span class="muted"${player.isOnline && player.onlineSince ? ` data-seen-online-since="${escapeHtml(player.onlineSince)}"` : ''}>${escapeHtml(seenPlayerStatusText(player))}</span>
     </button>
   `).join('');

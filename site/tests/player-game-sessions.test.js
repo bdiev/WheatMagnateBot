@@ -127,6 +127,10 @@ assert.match(serverSource, /activeRuntimeUsernames[\s\S]*CASE WHEN is_online OR 
   'fresh bot runtime presence must participate in Seen sorting before the result limit');
 assert.match(serverSource, /const onlineSince = isOnline[\s\S]*runtimePresence\.currentStartedAt \|\| row\.online_since[\s\S]*onlineSince,/,
   'Seen search must expose the beginning of the current online session');
+assert.match(serverSource, /async function searchSeenPlayers[\s\S]*pa\.player_uuid::text AS uuid[\s\S]*uuid: row\.uuid \|\| null/,
+  'Seen search must return the stable player UUID used by the avatar proxy');
+assert.match(appSource, /function renderSeenSuggestions[\s\S]*playerIdentity\(player\.username, 24, \{ status: player\.isOnline \? 'online' : 'offline', uuid: player\.uuid \}\)/,
+  'Seen search avatars must use the same UUID-aware identity as player profiles');
 assert.match(serverSource, /const currentSessionStartedAt = runtimePresence\.isOnline[\s\S]*runtimePresence\.currentStartedAt \|\| profile\.online_since[\s\S]*currentStartedAt: currentSessionStartedAt/,
   'player profiles must build the active session from confirmed presence rather than a playtime checkpoint');
 assert.match(appSource, /function seenPlayerStatusText\(player, now = Date\.now\(\)\)[\s\S]*online for \$\{formatDurationMs\(Math\.max\(0, now - startedAt\)\)\}[\s\S]*data-seen-online-since/,

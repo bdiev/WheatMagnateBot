@@ -3781,6 +3781,7 @@ async function searchSeenPlayers(url) {
     WITH uuid_matches AS (
       SELECT
         pa.username,
+        pa.player_uuid::text AS uuid,
         EXISTS (
           SELECT 1 FROM whitelist w
           WHERE LOWER(w.username) = LOWER(pa.username)
@@ -3836,6 +3837,7 @@ async function searchSeenPlayers(url) {
     ), legacy_matches AS (
       SELECT DISTINCT ON (LOWER(names.username))
         names.username,
+        NULL::text AS uuid,
         EXISTS (SELECT 1 FROM whitelist w WHERE LOWER(w.username) = LOWER(names.username)) AS is_whitelisted,
         pa.last_seen,
         pa.last_online,
@@ -3878,6 +3880,7 @@ async function searchSeenPlayers(url) {
       : null;
     return {
       username: row.username,
+      uuid: row.uuid || null,
       isWhitelisted: Boolean(row.is_whitelisted),
       isOnline,
       onlineSince,
