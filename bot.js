@@ -45,6 +45,7 @@ const {
   createSystemLogRepository
 } = require('./database');
 const { createPlaytimeFeature } = require('./features/playtime');
+const { createPlayerPingFeature } = require('./features/playerPing');
 const { createPlayerInfoObservation } = require('./features/playerInfoObservation');
 const { createPlayerInfoObservationStore } = require('./features/playerInfoObservationStore');
 const { createPlayerInfoFirstJoinCheck } = require('./features/playerInfoFirstJoinCheck');
@@ -3226,6 +3227,29 @@ const {
   getPlayerHeadEmoji,
   statusEmojis: STATUS_EMOJIS,
   uiButtonEmojis: { ...UI_BUTTON_EMOJIS, search: STATUS_BUTTON_EMOJIS.seen }
+});
+
+function getOnlinePlayerPings() {
+  if (!bot) return [];
+  const players = Object.values(bot.players || {}).map(player => ({
+    username: player?.username,
+    uuid: dashedMinecraftUuid(player?.uuid),
+    ping: player?.ping
+  }));
+  for (const [key, player] of Object.entries(bot.tablist?.players || {})) {
+    players.push({
+      username: player?.username || player?.profile?.name,
+      uuid: dashedMinecraftUuid(player?.uuid || player?.profile?.id || key),
+      ping: player?.ping
+    });
+  }
+  return players;
+}
+
+const playerPing = createPlayerPingFeature({
+  pool,
+  getPlayers: getOnlinePlayerPings,
+  getBotUsername: () => bot?.username || null
 });
 
 const discordPlayerInfoFetchTimers = new Map();
@@ -9517,6 +9541,8 @@ function createBot() {
       syncWhitelistPlaytime().catch(err => console.error('[Playtime] Sync interval failed:', err.message));
     }, 30_000);
 
+    playerPing.start();
+
     // Start TPS from TAB monitor
     tpsTabInterval = setInterval(() => {
       let found = false;
@@ -10018,6 +10044,7 @@ function clearIntervals() {
     clearInterval(playtimeSyncInterval);
     playtimeSyncInterval = null;
   }
+  playerPing.stop();
   if (playerActivitySyncInterval) {
     clearInterval(playerActivitySyncInterval);
     playerActivitySyncInterval = null;

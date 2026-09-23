@@ -5410,6 +5410,117 @@ body.search-focus-active #logoutButton {
   padding: 0 14px 16px;
 }
 
+.player-profile-activity,
+.player-profile-ping-history {
+  display: grid;
+  gap: 10px;
+  padding: 0 14px 16px;
+}
+
+.player-ping-value[data-ping-quality="good"] { color: var(--accent-strong); }
+.player-ping-value[data-ping-quality="fair"] { color: var(--warn); }
+.player-ping-value[data-ping-quality="poor"] { color: var(--danger); }
+
+.player-activity-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.player-activity-stats div {
+  min-width: 0;
+  border: 2px solid var(--line);
+  border-radius: var(--card-radius);
+  padding: 8px 10px;
+  background: var(--panel-soft);
+  box-shadow: var(--shadow-inset);
+}
+
+.player-activity-stats span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.player-activity-stats strong {
+  display: block;
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.player-activity-heatmap {
+  display: grid;
+  grid-template-columns: 30px repeat(24, minmax(0, 1fr));
+  gap: 2px;
+  align-items: center;
+}
+
+.player-activity-hour,
+.player-activity-day,
+.player-activity-legend small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.player-activity-hour {
+  overflow: visible;
+  white-space: nowrap;
+}
+
+.player-activity-cell {
+  display: block;
+  aspect-ratio: 1;
+  min-height: 8px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--line) 22%, var(--panel-soft));
+}
+
+.player-activity-cell[data-heat="1"] { background: color-mix(in srgb, var(--accent) 30%, var(--panel-soft)); }
+.player-activity-cell[data-heat="2"] { background: color-mix(in srgb, var(--accent) 55%, var(--panel-soft)); }
+.player-activity-cell[data-heat="3"] { background: color-mix(in srgb, var(--accent) 78%, var(--panel-soft)); }
+.player-activity-cell[data-heat="4"] { background: var(--accent-strong); }
+
+.player-activity-legend {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+}
+
+.player-activity-legend .player-activity-cell {
+  width: 11px;
+  min-height: 11px;
+}
+
+.player-activity-legend small:first-child { margin-right: 3px; }
+.player-activity-legend small:last-child { margin-left: 3px; }
+
+.player-ping-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 64px;
+  border-bottom: 2px solid var(--line);
+}
+
+.player-ping-bar {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 18px;
+  height: var(--ping-height);
+  border-radius: 2px 2px 0 0;
+  background: var(--accent);
+}
+
+.player-ping-bar[data-ping-quality="fair"] { background: var(--warn); }
+.player-ping-bar[data-ping-quality="poor"] { background: var(--danger); }
+
 .player-profile-section-head {
   display: flex;
   align-items: end;
@@ -5904,6 +6015,8 @@ body.search-focus-active #logoutButton {
 #playerProfileContent.profile-data-enter > .player-profile-head,
 #playerProfileContent.profile-data-enter > .player-profile-grid,
 #playerProfileContent.profile-data-enter > .player-profile-sessions,
+#playerProfileContent.profile-data-enter > .player-profile-activity,
+#playerProfileContent.profile-data-enter > .player-profile-ping-history,
 #playerProfileContent.profile-data-enter > .player-profile-admin-metadata,
 #playerProfileContent.profile-data-enter > .player-profile-chat {
   animation: player-profile-data-reveal 480ms cubic-bezier(.16, 1, .3, 1) both;
@@ -5911,6 +6024,8 @@ body.search-focus-active #logoutButton {
 
 #playerProfileContent.profile-data-enter > .player-profile-grid { animation-delay: 45ms; }
 #playerProfileContent.profile-data-enter > .player-profile-sessions { animation-delay: 90ms; }
+#playerProfileContent.profile-data-enter > .player-profile-activity,
+#playerProfileContent.profile-data-enter > .player-profile-ping-history { animation-delay: 105ms; }
 #playerProfileContent.profile-data-enter > .player-profile-admin-metadata { animation-delay: 120ms; }
 #playerProfileContent.profile-data-enter > .player-profile-chat { animation-delay: 145ms; }
 
@@ -8641,6 +8756,20 @@ body.modal-open { overflow:hidden; }
   .player-profile-grid div {
     min-height: 62px;
     padding: 9px 10px;
+  }
+
+  .player-profile-activity,
+  .player-profile-ping-history {
+    padding: 0 10px 12px;
+  }
+
+  .player-activity-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .player-activity-heatmap {
+    grid-template-columns: 26px repeat(24, minmax(0, 1fr));
+    gap: 1px;
   }
 
   .player-profile-grid strong,

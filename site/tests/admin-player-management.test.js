@@ -278,7 +278,7 @@ function testArchitectureAndUiContracts() {
     'fresh databases must allow null join-date exclusions');
   assert.match(databaseLookupExclusionReasons, /DROP CONSTRAINT IF EXISTS player_info_lookup_exclusions_reason_check[\s\S]*reason IN \('user_not_found', 'join_date_null'\)/,
     'existing databases must expand the exclusion-reason constraint');
-  assert.match(serverSource, /getPlayerProfile\(url, \{ includeAdminFields = false \}/, 'the existing player GET must be reused');
+  assert.match(serverSource, /getPlayerProfile\(url, \{ includeAdminFields = false[,} ]/, 'the existing player GET must be reused');
   assert.match(serverSource, /MINECRAFT_UUID_PATTERN[\s\S]*type: 'uuid'/, 'UUID must remain the primary admin identity');
   assert.match(serverSource, /preserved: \['game_chat_messages'/, 'shared history preservation must be explicit and auditable');
   assert.match(databaseSource, /admin_notes = COALESCE[\s\S]*admin_tags = ARRAY/, 'UUID reconciliation must preserve admin-managed metadata');

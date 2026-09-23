@@ -67,7 +67,7 @@ const serverSource = fs.readFileSync(path.resolve(__dirname, '..', 'server.js'),
 const migrationSource = fs.readFileSync(path.resolve(__dirname, '..', 'migrations', '046_remove_incident_timeline.sql'), 'utf8');
 const profileIndexMigrationSource = fs.readFileSync(path.resolve(__dirname, '..', 'migrations', '045_player_profile_lookup_indexes.sql'), 'utf8');
 
-assert.match(serverSource, /FROM player_session_events[\s\S]*event_type IN \('player_joined','player_left'\)[\s\S]*LIMIT 500/,
+assert.match(serverSource, /FROM player_session_events[\s\S]*event_type IN \('player_joined','player_left'\)[\s\S]*LIMIT 20000/,
   'player profiles must load the dedicated join/leave transition history');
 assert.match(serverSource, /COUNT\(\*\) FILTER \(WHERE event_type='player_joined'\) OVER \(\)[\s\S]*AS total_sessions/,
   'the profile API must count all recorded sessions before limiting the visible transition history');

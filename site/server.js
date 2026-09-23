@@ -18,6 +18,7 @@ const { calculateAnalytics, calculateDowntime, calculateHourlyProduction } = req
 const { getLogRetentionConfig, pruneExpiredLogs } = require('./log-retention');
 const { EVENT_TYPES: PUSH_EVENT_TYPES, PUSH_TEST_TYPES, WebPushService } = require('./web-push');
 const { buildPlayerMilestones } = require('./player-milestones');
+const { buildPlayerActivityPattern, resolveTimeZone } = require('./player-activity-pattern');
 const { KILL_AURA_MOBS, normalizeKillAuraTargets } = require('./kill-aura-catalog');
 const { isValidKillAuraRange, normalizeKillAuraRange } = require('./kill-aura-range');
 const { createResourceRequestService } = require('./resource-requests');
@@ -3910,7 +3911,7 @@ function sortSeenPlayers(players = []) {
   });
 }
 
-function buildPlayerGameSessions(events = [], { isOnline = false, currentStartedAt = null, now = new Date() } = {}) {
+function buildPlayerGameSessions(events = [], { isOnline = false, currentStartedAt = null, now = new Date(), limit = 100 } = {}) {
   const transitions = events
     .map(event => ({
       type: event.event_type,
@@ -3952,7 +3953,7 @@ function buildPlayerGameSessions(events = [], { isOnline = false, currentStarted
 
   return sessions
     .sort((first, second) => new Date(second.startedAt) - new Date(first.startedAt))
-    .slice(0, 100);
+    .slice(0, limit);
 }
 
 function playerProfileRuntimePresence(runtime = null, now = Date.now()) {
@@ -3967,7 +3968,7 @@ function playerProfileRuntimePresence(runtime = null, now = Date.now()) {
   };
 }
 
-async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
+async function getPlayerProfile(url, { includeAdminFields = false, timeZone = 'UTC' } = {}) {
   assertDatabase();
 
   const username = String(url.searchParams.get('username') || '').trim();
@@ -4019,11 +4020,12 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
   // Keep the profile request within a small connection budget. A single card
   // used to fan out to eight concurrent pool clients, which could exhaust the
   // default pg pool and make otherwise fast requests wait behind it.
+  const profileTimeZone = resolveTimeZone(timeZone);
   const [profileResult, chatResult, recentChatResult, gameSessionEventsResult] = await Promise.all([
     pool.query(`
       WITH activity AS (
         SELECT id, username, player_uuid, last_seen, last_online, online_since, registration_at, is_online,
-               admin_notes, admin_tags, pearl_hatch_x, pearl_hatch_y, pearl_hatch_z
+               admin_notes, admin_tags, pearl_hatch_x, pearl_hatch_y, pearl_hatch_z, last_ping_ms, last_ping_at
         FROM player_activity
         WHERE ($2::uuid IS NOT NULL AND player_uuid = $2::uuid)
            OR ($2::uuid IS NULL AND LOWER(username) = ANY($3::text[]))
@@ -4053,6 +4055,15 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
         COALESCE(ignored.is_ignored, FALSE) AS is_ignored,
         nearby.distance AS nearby_distance,
         nearby.last_seen AS nearby_last_seen,
+        pa.last_ping_ms,
+        pa.last_ping_at,
+        ping.avg_24h AS ping_avg_24h,
+        ping.avg_7d AS ping_avg_7d,
+        ping.min_7d AS ping_min_7d,
+        ping.max_7d AS ping_max_7d,
+        ping.avg_all AS ping_avg_all,
+        ping.sample_count AS ping_sample_count,
+        COALESCE(ping_daily.days, '[]'::json) AS ping_daily,
         COALESCE(names.name_history, '[]'::json) AS name_history,
         bot.account_id AS bot_account_id,
         bot.account_username AS bot_account_username,
@@ -4089,6 +4100,35 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
         LIMIT 1
       ) nearby ON TRUE
       LEFT JOIN LATERAL (
+        SELECT
+          ROUND(SUM(ping_sum) FILTER (WHERE hour_start >= NOW() - INTERVAL '24 hours')::numeric
+            / NULLIF(SUM(sample_count) FILTER (WHERE hour_start >= NOW() - INTERVAL '24 hours'), 0))::int AS avg_24h,
+          ROUND(SUM(ping_sum) FILTER (WHERE hour_start >= NOW() - INTERVAL '7 days')::numeric
+            / NULLIF(SUM(sample_count) FILTER (WHERE hour_start >= NOW() - INTERVAL '7 days'), 0))::int AS avg_7d,
+          MIN(ping_min) FILTER (WHERE hour_start >= NOW() - INTERVAL '7 days') AS min_7d,
+          MAX(ping_max) FILTER (WHERE hour_start >= NOW() - INTERVAL '7 days') AS max_7d,
+          ROUND(SUM(ping_sum)::numeric / NULLIF(SUM(sample_count), 0))::int AS avg_all,
+          COALESCE(SUM(sample_count), 0)::bigint AS sample_count
+        FROM player_ping_hourly
+        WHERE username_key = ANY($3::text[])
+           OR ($2::uuid IS NOT NULL AND player_uuid = $2::uuid)
+      ) ping ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT JSON_AGG(JSON_BUILD_OBJECT(
+                 'day', day, 'avg', avg_ping, 'min', min_ping, 'max', max_ping
+               ) ORDER BY day) AS days
+        FROM (
+          SELECT TO_CHAR(date_trunc('day', hour_start AT TIME ZONE $4::text), 'YYYY-MM-DD') AS day,
+                 ROUND(SUM(ping_sum)::numeric / NULLIF(SUM(sample_count), 0))::int AS avg_ping,
+                 MIN(ping_min) AS min_ping,
+                 MAX(ping_max) AS max_ping
+          FROM player_ping_hourly
+          WHERE (username_key = ANY($3::text[]) OR ($2::uuid IS NOT NULL AND player_uuid = $2::uuid))
+            AND hour_start >= NOW() - INTERVAL '30 days'
+          GROUP BY 1
+        ) daily
+      ) ping_daily ON TRUE
+      LEFT JOIN LATERAL (
         SELECT JSON_AGG(
           JSON_BUILD_OBJECT(
             'username', pnh.username,
@@ -4113,7 +4153,7 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
         ORDER BY account.is_default DESC,account.sort_order,account.created_at,account.id
         LIMIT 1
       ) bot ON TRUE
-    `, [currentUsername, playerUuid, aliases]),
+    `, [currentUsername, playerUuid, aliases, profileTimeZone]),
     pool.query(`
       WITH message_baseline AS (
         SELECT observed_message_count, observed_message_count_at
@@ -4213,7 +4253,7 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
           AND LOWER(username)=ANY($1::text[])
       ) session_events
       ORDER BY occurred_at DESC,id DESC
-      LIMIT 500
+      LIMIT 20000
     `, [aliases])
   ]);
 
@@ -4238,10 +4278,14 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
   const currentSessionStartedAt = runtimePresence.isOnline
     ? runtimePresence.currentStartedAt || profile.online_since
     : profile.online_since;
-  const gameSessions = buildPlayerGameSessions(gameSessionEventsResult.rows, {
+  const allGameSessions = buildPlayerGameSessions(gameSessionEventsResult.rows, {
     isOnline,
-    currentStartedAt: currentSessionStartedAt
+    currentStartedAt: currentSessionStartedAt,
+    limit: Infinity
   });
+  const gameSessions = allGameSessions.slice(0, 100);
+  const activityPattern = buildPlayerActivityPattern(allGameSessions, { timeZone: profileTimeZone });
+  const nullableInt = value => value == null ? null : toInt(value);
   const gameSessionCount = Math.max(
     toInt(gameSessionEventsResult.rows[0]?.total_sessions),
     gameSessions.length
@@ -4266,6 +4310,18 @@ async function getPlayerProfile(url, { includeAdminFields = false } = {}) {
     playtime: formatSeconds(seconds),
     gameSessionCount,
     gameSessions,
+    activityPattern,
+    ping: {
+      last: nullableInt(profile.last_ping_ms),
+      lastAt: profile.last_ping_at || null,
+      avg24h: nullableInt(profile.ping_avg_24h),
+      avg7d: nullableInt(profile.ping_avg_7d),
+      min7d: nullableInt(profile.ping_min_7d),
+      max7d: nullableInt(profile.ping_max_7d),
+      avgAllTime: nullableInt(profile.ping_avg_all),
+      sampleCount: toInt(profile.ping_sample_count),
+      daily: Array.isArray(profile.ping_daily) ? profile.ping_daily : []
+    },
     chat: {
       totalMessages: toInt(chat.total),
       last24h: toInt(chat.last_24h),
@@ -6132,7 +6188,10 @@ async function handleApi(req, res, url) {
       return;
     }
     if (url.pathname === '/api/player') {
-      sendJson(res, 200, await getPlayerProfile(url, { includeAdminFields: currentUser.role === 'admin' }));
+      sendJson(res, 200, await getPlayerProfile(url, {
+        includeAdminFields: currentUser.role === 'admin',
+        timeZone: await getAccountTimezone(currentUser.id)
+      }));
       return;
     }
     sendError(res, 404, 'API route not found.');

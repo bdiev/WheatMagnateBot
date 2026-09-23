@@ -3568,6 +3568,95 @@ function renderPlayerProfileSkeleton() {
     <span class="visually-hidden" role="status">Loading player profile...</span>`;
 }
 
+const PLAYER_ACTIVITY_WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const PLAYER_PING_FRESH_MS = 3 * 60 * 1000;
+
+function formatPing(value) {
+  return value == null ? '-' : `${formatNumber(value)} ms`;
+}
+
+function playerPingQuality(value) {
+  if (value == null) return '';
+  if (value < 80) return 'good';
+  if (value < 180) return 'fair';
+  return 'poor';
+}
+
+function formatActivityHour(hour) {
+  return `${String(hour).padStart(2, '0')}:00`;
+}
+
+function formatStreakDays(days) {
+  const count = Number(days) || 0;
+  return `${formatNumber(count)} ${count === 1 ? 'day' : 'days'}`;
+}
+
+function renderPlayerPingCards(profile) {
+  const ping = profile.ping || {};
+  const isFresh = profile.isOnline && ping.lastAt && Date.now() - new Date(ping.lastAt).getTime() < PLAYER_PING_FRESH_MS;
+  const range = ping.min7d == null || ping.max7d == null ? '-' : `${formatNumber(ping.min7d)}–${formatNumber(ping.max7d)} ms`;
+  return `
+      <div${ping.lastAt ? ` title="Sampled ${escapeHtml(formatDate(ping.lastAt))}"` : ''}><span>${isFresh ? 'Ping' : 'Last Ping'}</span><strong class="player-ping-value" data-ping-quality="${playerPingQuality(ping.last)}">${formatPing(ping.last)}</strong></div>
+      <div><span>Avg Ping 24h</span><strong class="player-ping-value" data-ping-quality="${playerPingQuality(ping.avg24h)}">${formatPing(ping.avg24h)}</strong></div>
+      <div><span>Avg Ping 7d</span><strong class="player-ping-value" data-ping-quality="${playerPingQuality(ping.avg7d)}">${formatPing(ping.avg7d)}</strong></div>
+      <div title="Lowest and highest sampled ping over the last 7 days"><span>Ping Range 7d</span><strong>${range}</strong></div>`;
+}
+
+function renderPlayerPingHistory(ping = {}) {
+  const days = Array.isArray(ping.daily) ? ping.daily.filter(day => day?.avg != null) : [];
+  if (days.length < 2) return '';
+  const maxPing = Math.max(...days.map(day => Number(day.max) || Number(day.avg) || 0), 1);
+  return `
+    <section class="player-profile-ping-history">
+      <header class="player-profile-section-head">
+        <div>
+          <h3>Ping history</h3>
+          <small>Daily average, last ${formatNumber(days.length)} days with samples${ping.avgAllTime != null ? ` · all-time ${formatPing(ping.avgAllTime)}` : ''}</small>
+        </div>
+      </header>
+      <div class="player-ping-bars" role="img" aria-label="Daily average ping for the last ${days.length} days">
+        ${days.map(day => `
+          <span class="player-ping-bar" data-ping-quality="${playerPingQuality(day.avg)}" style="--ping-height:${Math.max(4, Math.round(Number(day.avg) / maxPing * 100))}%" title="${escapeHtml(day.day)}: avg ${escapeHtml(formatPing(day.avg))}, ${escapeHtml(formatPing(day.min))}–${escapeHtml(formatPing(day.max))}"></span>`).join('')}
+      </div>
+    </section>`;
+}
+
+function renderPlayerActivityPattern(pattern) {
+  if (!pattern || !pattern.maxCellSeconds) return '';
+  const heatLevel = seconds => seconds <= 0 ? 0 : Math.min(4, Math.max(1, Math.ceil(seconds / pattern.maxCellSeconds * 4)));
+  const peak = pattern.peak
+    ? `${PLAYER_ACTIVITY_WEEKDAYS[pattern.peak.weekday]} ${formatActivityHour(pattern.peak.hour)}`
+    : '-';
+  const longest = pattern.longestSession;
+  return `
+    <section class="player-profile-activity">
+      <header class="player-profile-section-head">
+        <div>
+          <h3>Activity pattern</h3>
+          <small>Sessions observed by the bot · ${escapeHtml(pattern.timeZone)}</small>
+        </div>
+      </header>
+      <div class="player-activity-stats">
+        <div><span>Avg Session</span><strong>${pattern.completedSessionCount ? escapeHtml(formatDurationMs(pattern.averageSessionSeconds * 1000)) : '-'}</strong></div>
+        <div${longest ? ` title="Started ${escapeHtml(formatDate(longest.startedAt))}${longest.isCurrent ? ' (still online)' : ''}"` : ''}><span>Longest Session</span><strong>${longest ? escapeHtml(formatDurationMs(longest.durationSeconds * 1000)) : '-'}</strong></div>
+        <div><span>Current Streak</span><strong>${formatStreakDays(pattern.currentStreakDays)}</strong></div>
+        <div><span>Best Streak</span><strong>${formatStreakDays(pattern.longestStreakDays)}</strong></div>
+        <div><span>Active Days</span><strong>${formatNumber(pattern.activeDays)}</strong></div>
+        <div><span>Peak Time</span><strong>${escapeHtml(peak)}</strong></div>
+      </div>
+      <div class="player-activity-heatmap" role="img" aria-label="Online time by weekday and hour. Busiest: ${escapeHtml(peak)}.">
+        <span class="player-activity-corner" aria-hidden="true"></span>
+        ${Array.from({ length: 24 }, (_, hour) => `<span class="player-activity-hour" aria-hidden="true">${hour % 6 === 0 ? String(hour).padStart(2, '0') : ''}</span>`).join('')}
+        ${pattern.heatmap.map((row, weekday) => `
+          <span class="player-activity-day">${PLAYER_ACTIVITY_WEEKDAYS[weekday]}</span>
+          ${row.map((seconds, hour) => `<span class="player-activity-cell" data-heat="${heatLevel(seconds)}" title="${PLAYER_ACTIVITY_WEEKDAYS[weekday]} ${formatActivityHour(hour)}: ${escapeHtml(seconds > 0 ? formatDurationMs(seconds * 1000) : 'no activity')}"></span>`).join('')}`).join('')}
+      </div>
+      <div class="player-activity-legend" aria-hidden="true">
+        <small>Less</small>${[0, 1, 2, 3, 4].map(level => `<span class="player-activity-cell" data-heat="${level}"></span>`).join('')}<small>More</small>
+      </div>
+    </section>`;
+}
+
 function renderPlayerProfile(profile) {
   const recentMessages = profile.chat?.recentMessages || [];
   const gameSessions = Array.isArray(profile.gameSessions) ? profile.gameSessions : [];
@@ -3738,8 +3827,11 @@ function renderPlayerProfile(profile) {
       <div><span>Last Message</span><strong${profile.chat?.lastMessageAt ? ` data-profile-relative-time="${escapeHtml(profile.chat.lastMessageAt)}"` : ''}>${profile.chat?.lastMessageAt ? formatRecentDate(profile.chat.lastMessageAt) : 'None'}</strong></div>
       <div><span>Nearby</span><strong>${nearby ? `${formatNumber(nearby.distance)} blocks` : 'No sighting'}</strong></div>
       <div><span>Nearby Seen</span><strong>${nearby?.lastSeen ? formatDate(nearby.lastSeen) : '-'}</strong></div>
+      ${renderPlayerPingCards(profile)}
     </section>
     ${gameSessionsSection}
+    ${renderPlayerActivityPattern(profile.activityPattern)}
+    ${renderPlayerPingHistory(profile.ping)}
     ${adminMetadata}
     <section class="player-profile-chat">
       <h3>Recent Chat</h3>
@@ -3812,6 +3904,13 @@ function playerProfileSignature(profile) {
     profile.chat?.lastMessageAt,
     profile.nearby?.distance,
     profile.nearby?.lastSeen,
+    profile.ping,
+    // The live session grows every refresh; only re-render the pattern when a
+    // completed session or a new active day changes it.
+    profile.activityPattern?.completedSessionCount,
+    profile.activityPattern?.activeDays,
+    profile.activityPattern?.currentStreakDays,
+    profile.activityPattern?.timeZone,
     profile.adminNotes,
     profile.adminTags,
     profile.chat?.hasMoreMessages,
