@@ -3610,7 +3610,10 @@ function renderPlayerPingBadge(profile) {
   const range = ping.min7d == null || ping.max7d == null ? '-' : `${formatNumber(ping.min7d)}–${formatNumber(ping.max7d)} ms`;
   return `
           <details class="player-ping-details">
-            <summary class="player-ping-value" data-ping-quality="${playerPingQuality(ping.last)}" title="${isFresh ? 'Current ping' : 'Last sampled ping'}" aria-label="${isFresh ? 'Ping' : 'Last ping'} ${escapeHtml(formatPing(ping.last))}, show ping details">[${formatNumber(ping.last)}ms]</summary>
+            <summary class="player-ping-value" data-ping-quality="${playerPingQuality(ping.last)}" data-ping-fresh="${isFresh}" title="${isFresh ? 'Current ping' : 'Last sampled ping'}" aria-label="${isFresh ? 'Ping' : 'Last ping'} ${escapeHtml(formatPing(ping.last))}, show ping details">
+              <span class="player-ping-signal" aria-hidden="true"><i></i><i></i><i></i></span>
+              <span class="player-ping-number">${formatNumber(ping.last)}</span><span class="player-ping-unit">ms</span>
+            </summary>
             <div class="player-ping-popover">
               <dl>
                 <div><dt>${isFresh ? 'Ping now' : 'Last ping'}</dt><dd>${formatPing(ping.last)}${ping.lastAt ? ` <small>${escapeHtml(formatDate(ping.lastAt))}</small>` : ''}</dd></div>
@@ -3631,31 +3634,43 @@ function renderPlayerActivityPattern(pattern) {
     ? `${PLAYER_ACTIVITY_WEEKDAYS[pattern.peak.weekday]} ${formatActivityHour(pattern.peak.hour)}`
     : '-';
   const longest = pattern.longestSession;
+  const peakSeconds = pattern.peak ? Number(pattern.heatmap?.[pattern.peak.weekday]?.[pattern.peak.hour]) || 0 : 0;
   return `
     <details class="player-profile-activity">
       <summary class="player-profile-section-head">
         <div>
           <h3>Activity pattern</h3>
-          <small>Peak ${escapeHtml(peak)} · sessions observed by the bot · ${escapeHtml(pattern.timeZone)}</small>
+          <small>Sessions observed by the bot · ${escapeHtml(pattern.timeZone)}</small>
         </div>
+        <span class="player-activity-peak"><small>Peak</small><strong>${escapeHtml(peak)}</strong></span>
       </summary>
       <div class="player-activity-stats">
-        <div><span>Avg Session</span><strong>${pattern.completedSessionCount ? escapeHtml(formatDurationMs(pattern.averageSessionSeconds * 1000)) : '-'}</strong></div>
-        <div${longest ? ` title="Started ${escapeHtml(formatDate(longest.startedAt))}${longest.isCurrent ? ' (still online)' : ''}"` : ''}><span>Longest Session</span><strong>${longest ? escapeHtml(formatDurationMs(longest.durationSeconds * 1000)) : '-'}</strong></div>
-        <div><span>Current Streak</span><strong>${formatStreakDays(pattern.currentStreakDays)}</strong></div>
-        <div><span>Best Streak</span><strong>${formatStreakDays(pattern.longestStreakDays)}</strong></div>
-        <div><span>Active Days</span><strong>${formatNumber(pattern.activeDays)}</strong></div>
-        <div><span>Peak Time</span><strong>${escapeHtml(peak)}</strong></div>
+        <div><span>Avg session</span><strong>${pattern.completedSessionCount ? escapeHtml(formatDurationMs(pattern.averageSessionSeconds * 1000)) : '-'}</strong></div>
+        <div${longest ? ` title="Started ${escapeHtml(formatDate(longest.startedAt))}${longest.isCurrent ? ' (still online)' : ''}"` : ''}><span>Longest</span><strong>${longest ? escapeHtml(formatDurationMs(longest.durationSeconds * 1000)) : '-'}</strong></div>
+        <div><span>Streak</span><strong>${formatStreakDays(pattern.currentStreakDays)}</strong></div>
+        <div><span>Best</span><strong>${formatStreakDays(pattern.longestStreakDays)}</strong></div>
+        <div><span>Active days</span><strong>${formatNumber(pattern.activeDays)}</strong></div>
+        <div><span>Sessions</span><strong>${formatNumber(pattern.completedSessionCount)}</strong></div>
       </div>
-      <div class="player-activity-heatmap" role="img" aria-label="Online time by weekday and hour. Busiest: ${escapeHtml(peak)}.">
+      <div class="player-activity-heatmap" role="group" aria-label="Online time by weekday and hour. Busiest: ${escapeHtml(peak)}.">
         <span class="player-activity-corner" aria-hidden="true"></span>
         ${Array.from({ length: 24 }, (_, hour) => `<span class="player-activity-hour" aria-hidden="true">${hour % 6 === 0 ? String(hour).padStart(2, '0') : ''}</span>`).join('')}
         ${pattern.heatmap.map((row, weekday) => `
           <span class="player-activity-day">${PLAYER_ACTIVITY_WEEKDAYS[weekday]}</span>
-          ${row.map((seconds, hour) => `<span class="player-activity-cell" data-heat="${heatLevel(seconds)}" title="${PLAYER_ACTIVITY_WEEKDAYS[weekday]} ${formatActivityHour(hour)}: ${escapeHtml(seconds > 0 ? formatDurationMs(seconds * 1000) : 'no activity')}"></span>`).join('')}`).join('')}
+          ${row.map((seconds, hour) => {
+            const duration = seconds > 0 ? formatDurationMs(seconds * 1000) : 'No activity';
+            const label = `${PLAYER_ACTIVITY_WEEKDAYS[weekday]} ${formatActivityHour(hour)} · ${duration}`;
+            const isFirstCell = weekday === 0 && hour === 0;
+            return `<button class="player-activity-cell" type="button" data-heat="${heatLevel(seconds)}" data-activity-cell data-activity-label="${escapeHtml(label)}" aria-label="${escapeHtml(label)}" aria-pressed="false" tabindex="${isFirstCell ? '0' : '-1'}" title="${escapeHtml(label)}"></button>`;
+          }).join('')}`).join('')}
       </div>
-      <div class="player-activity-legend" aria-hidden="true">
-        <small>Less</small>${[0, 1, 2, 3, 4].map(level => `<span class="player-activity-cell" data-heat="${level}"></span>`).join('')}<small>More</small>
+      <div class="player-activity-footer">
+        <div class="player-activity-selection" data-activity-selection aria-live="polite">
+          <span>Most active</span><strong>${escapeHtml(peak)}</strong><small>${escapeHtml(peakSeconds > 0 ? formatDurationMs(peakSeconds * 1000) : 'No activity')}</small>
+        </div>
+        <div class="player-activity-legend" aria-hidden="true">
+          <small>Less</small>${[0, 1, 2, 3, 4].map(level => `<span class="player-activity-cell" data-heat="${level}"></span>`).join('')}<small>More</small>
+        </div>
       </div>
     </details>`;
 }
@@ -3995,7 +4010,8 @@ function capturePlayerProfileViewState(content) {
     // <details> (e.g. Name history) shut a second or two after the click.
     nameHistoryOpen: Boolean(content?.querySelector('.player-name-history')?.open),
     pingDetailsOpen: Boolean(content?.querySelector('.player-ping-details')?.open),
-    activityPatternOpen: Boolean(content?.querySelector('.player-profile-activity')?.open)
+    activityPatternOpen: Boolean(content?.querySelector('.player-profile-activity')?.open),
+    activityCellLabel: content?.querySelector('[data-activity-cell].is-selected')?.dataset.activityLabel || null
   };
 }
 
@@ -4017,6 +4033,11 @@ function restorePlayerProfileViewState(content, viewState) {
   ]) {
     const details = open ? content.querySelector(selector) : null;
     if (details) details.open = true;
+  }
+  if (viewState.activityCellLabel) {
+    const selectedCell = [...content.querySelectorAll('[data-activity-cell]')]
+      .find(cell => cell.dataset.activityLabel === viewState.activityCellLabel);
+    if (selectedCell) selectPlayerActivityCell(selectedCell);
   }
   if (card) card.scrollTop = viewState.cardScrollTop;
 }
@@ -4340,6 +4361,12 @@ async function openPlayerSkins(username) {
 
 async function handlePlayerProfileClick(event) {
   if (event.target.closest('.chat-link')) return;
+  const activityCell = event.target.closest('[data-activity-cell]');
+  if (activityCell) {
+    event.preventDefault();
+    selectPlayerActivityCell(activityCell);
+    return;
+  }
   const skinsButton = event.target.closest('[data-player-skins]');
   if (skinsButton) {
     event.preventDefault();
@@ -4475,6 +4502,20 @@ async function handlePlayerProfileClick(event) {
     return;
   }
   state.playerProfileSignature = playerProfileSignature(profile);
+}
+
+function selectPlayerActivityCell(cell) {
+  const activity = cell?.closest('.player-profile-activity');
+  const selection = activity?.querySelector('[data-activity-selection]');
+  if (!activity || !selection) return;
+  activity.querySelectorAll('[data-activity-cell]').forEach(candidate => {
+    const selected = candidate === cell;
+    candidate.classList.toggle('is-selected', selected);
+    candidate.setAttribute('aria-pressed', String(selected));
+    candidate.tabIndex = selected ? 0 : -1;
+  });
+  const [period = '', duration = ''] = String(cell.dataset.activityLabel || '').split(' · ');
+  selection.innerHTML = `<span>Selected</span><strong>${escapeHtml(period)}</strong><small>${escapeHtml(duration)}</small>`;
 }
 
 function openWhisperFromProfile(username) {
@@ -7388,6 +7429,20 @@ function linkifyChatMessage(value) {
 }
 
 async function handlePlayerProfileKeydown(event) {
+  const activityCell = event.target.closest('[data-activity-cell]');
+  if (activityCell && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+    event.preventDefault();
+    const cells = [...activityCell.closest('.player-activity-heatmap').querySelectorAll('[data-activity-cell]')];
+    const currentIndex = cells.indexOf(activityCell);
+    const offset = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : event.key === 'ArrowUp' ? -24 : 24;
+    const nextCell = cells[currentIndex + offset];
+    if (!nextCell) return;
+    activityCell.tabIndex = -1;
+    nextCell.tabIndex = 0;
+    nextCell.focus({ preventScroll: true });
+    selectPlayerActivityCell(nextCell);
+    return;
+  }
   if (event.key !== 'Enter' && event.key !== ' ') return;
   if (event.target.closest('.chat-link')) return;
   const chatMessage = event.target.closest('[data-chat-message-id]');

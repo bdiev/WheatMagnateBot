@@ -67,10 +67,19 @@ assert.equal(buildPlayerGameSessions(manyEvents).length, 100, 'the session list 
 assert.equal(buildPlayerGameSessions(manyEvents, { limit: Infinity }).length, 150, 'the pattern must see every session');
 
 const appSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
+const stylesSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'styles.css'), 'utf8');
 assert.match(appSource, /renderPlayerActivityPattern\(profile\.activityPattern\)/);
 assert.match(appSource, /<h2 id="playerProfileName">[^\n]*\r?\n\s*\$\{renderPlayerPingBadge\(profile\)\}/, 'the ping badge must sit next to the name');
 assert.match(appSource, /<details class="player-profile-activity">/, 'the activity pattern must be collapsible');
+assert.match(appSource, /data-activity-cell/, 'heatmap cells must be interactive');
+assert.match(appSource, /data-activity-selection aria-live="polite"/, 'the selected heatmap period must be announced');
+assert.match(appSource, /'ArrowLeft'.*'ArrowRight'.*'ArrowUp'.*'ArrowDown'/, 'heatmap cells must support arrow-key navigation');
+assert.match(appSource, /activityCellLabel:[\s\S]*selectPlayerActivityCell\(selectedCell\)/, 'the selected cell must survive background refreshes');
+assert.match(appSource, /player-ping-number/, 'ping digits must use a dedicated readable style');
 assert.match(appSource, /activityPatternOpen[\s\S]*pingDetailsOpen|pingDetailsOpen[\s\S]*activityPatternOpen/, 'open panels must survive background refreshes');
+assert.match(stylesSource, /\.player-activity-stats\s*\{[^}]*grid-template-columns:\s*repeat\(6,/s, 'desktop activity stats must fit in one compact row');
+assert.match(stylesSource, /\.player-activity-cell\s*\{[^}]*min-width:\s*0;/s, 'interactive cells must override the global button width');
+assert.match(stylesSource, /\.player-ping-details\s*>\s*summary\s*\{[^}]*font-family:\s*ui-monospace/s, 'ping digits must not use the hard-to-read pixel font');
 
 const serverSource = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
 assert.match(serverSource, /timeZone: await getAccountTimezone\(currentUser\.id\)/, 'the profile must use the viewer account timezone');

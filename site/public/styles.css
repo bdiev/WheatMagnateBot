@@ -5412,12 +5412,12 @@ body.search-focus-active #logoutButton {
 
 .player-profile-activity {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   padding: 0 14px 16px;
 }
 
 .player-profile-activity > summary {
-  justify-content: flex-start;
+  align-items: center;
   cursor: pointer;
   list-style: none;
 }
@@ -5436,6 +5436,27 @@ body.search-focus-active #logoutButton {
 
 .player-profile-activity[open] > summary h3::after {
   transform: rotate(90deg);
+}
+
+.player-activity-peak {
+  display: grid;
+  align-items: baseline;
+  gap: 3px;
+  text-align: right;
+}
+
+.player-activity-peak small {
+  margin: 0;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.player-activity-peak strong {
+  color: var(--text);
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .player-profile-activity > summary:hover h3,
@@ -5460,15 +5481,54 @@ body.search-focus-active #logoutButton {
 }
 
 .player-ping-details > summary {
-  border-radius: 3px;
-  padding: 1px 3px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 26px;
+  border: 1px solid color-mix(in srgb, currentColor 42%, var(--line));
+  border-radius: 4px;
+  padding: 3px 7px 3px 6px;
   cursor: pointer;
-  font-family: var(--font-pixel);
-  font-size: 12px;
+  background: color-mix(in srgb, currentColor 9%, var(--panel-soft));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 10%, transparent);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 13px;
   font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
   list-style: none;
   white-space: nowrap;
 }
+
+.player-ping-number { color: var(--text); }
+
+.player-ping-unit {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.player-ping-signal {
+  display: inline-flex;
+  align-items: end;
+  gap: 1px;
+  width: 12px;
+  height: 11px;
+}
+
+.player-ping-signal i {
+  display: block;
+  width: 3px;
+  border-radius: 1px;
+  background: currentColor;
+}
+
+.player-ping-signal i:nth-child(1) { height: 4px; }
+.player-ping-signal i:nth-child(2) { height: 7px; }
+.player-ping-signal i:nth-child(3) { height: 10px; }
+.player-ping-value[data-ping-quality="fair"] .player-ping-signal i:nth-child(3),
+.player-ping-value[data-ping-quality="poor"] .player-ping-signal i:nth-child(n + 2) { opacity: .22; }
+.player-ping-value[data-ping-fresh="false"] .player-ping-signal { opacity: .58; }
 
 .player-ping-details > summary::-webkit-details-marker {
   display: none;
@@ -5539,15 +5599,15 @@ body.search-focus-active #logoutButton {
 
 .player-activity-stats {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 5px;
 }
 
 .player-activity-stats div {
   min-width: 0;
   border: 2px solid var(--line);
   border-radius: var(--card-radius);
-  padding: 8px 10px;
+  padding: 6px 8px;
   background: var(--panel-soft);
   box-shadow: var(--shadow-inset);
 }
@@ -5555,14 +5615,15 @@ body.search-focus-active #logoutButton {
 .player-activity-stats span {
   display: block;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 9px;
   font-weight: 900;
   text-transform: uppercase;
 }
 
 .player-activity-stats strong {
   display: block;
-  margin-top: 4px;
+  margin-top: 2px;
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5591,10 +5652,34 @@ body.search-focus-active #logoutButton {
 
 .player-activity-cell {
   display: block;
+  width: 100%;
+  min-width: 0;
   aspect-ratio: 1;
   min-height: 8px;
+  border: 0;
   border-radius: 2px;
+  padding: 0;
   background: color-mix(in srgb, var(--line) 22%, var(--panel-soft));
+  box-shadow: none;
+}
+
+button.player-activity-cell {
+  cursor: pointer;
+  transition: transform 100ms ease, box-shadow 100ms ease, filter 100ms ease;
+}
+
+button.player-activity-cell:hover,
+button.player-activity-cell:focus-visible {
+  z-index: 1;
+  outline: none;
+  filter: brightness(1.16);
+  transform: scale(1.35);
+  box-shadow: 0 0 0 2px var(--panel), 0 0 0 3px var(--accent-strong);
+}
+
+button.player-activity-cell.is-selected {
+  z-index: 1;
+  box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent-strong);
 }
 
 .player-activity-cell[data-heat="1"] { background: color-mix(in srgb, var(--accent) 30%, var(--panel-soft)); }
@@ -5607,6 +5692,37 @@ body.search-focus-active #logoutButton {
   align-items: center;
   justify-content: flex-end;
   gap: 3px;
+}
+
+.player-activity-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 28px;
+}
+
+.player-activity-selection {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.player-activity-selection span,
+.player-activity-selection small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.player-activity-selection span {
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.player-activity-selection strong {
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .player-activity-legend .player-activity-cell {
@@ -8877,7 +8993,7 @@ body.modal-open { overflow:hidden; }
   }
 
   .player-activity-stats {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .player-activity-heatmap {
@@ -11334,6 +11450,48 @@ body.kill-aura-modal-open {
     font-size: 17px;
   }
 
+  .player-profile-activity {
+    padding: 6px 8px 10px;
+  }
+
+  .player-profile-activity > summary small {
+    max-width: 190px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .player-activity-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .player-activity-stats div {
+    padding: 6px;
+  }
+
+  .player-activity-heatmap {
+    grid-template-columns: 24px repeat(24, minmax(0, 1fr));
+    gap: 1px;
+  }
+
+  .player-activity-footer {
+    align-items: flex-start;
+  }
+
+  .player-activity-selection {
+    display: grid;
+    grid-template-columns: auto auto;
+    gap: 2px 5px;
+  }
+
+  .player-activity-selection small {
+    grid-column: 1 / -1;
+  }
+
+  .player-activity-legend {
+    padding-top: 3px;
+  }
+
   .player-profile-session {
     grid-template-columns: 9px minmax(0, 1fr) auto;
     gap: 8px;
@@ -12033,4 +12191,3 @@ body.kill-aura-modal-open {
     transition: none !important;
   }
 }
-
