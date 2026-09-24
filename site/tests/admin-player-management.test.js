@@ -330,8 +330,10 @@ function testArchitectureAndUiContracts() {
   assert.match(appSource, /adminPlayersScroller'[\s\S]*addEventListener\('scroll', maybeLoadMoreAdminPlayers/, 'scrolling must progressively load the next server page');
   assert.match(appSource, /insertAdjacentHTML\('beforeend', markup\)/, 'new cards must append without rebuilding loaded cards');
   assert.match(appSource, /player_joined[\s\S]*player_left[\s\S]*loadAdminPlayers\(\{ showLoading: false, preserveScroll: true \}\)/, 'join and leave refreshes must preserve the admin player scroll position');
-  assert.match(appSource, /type === 'player_info_updated'[\s\S]*loadAdminPlayerInfoCollection\(\)/,
-    'imported player values must remove completed lookup cards without a page reload');
+  assert.match(appSource, /type === 'player_info_updated'[\s\S]*admin-player-info-collection'[\s\S]*loadAdminPlayerInfoCollection\(\{ force: true \}\)/,
+    'imported player values must force completed lookup cards to disappear without a page reload');
+  assert.match(appSource, /if \(tab === 'admin'\)[\s\S]*loadAdminPlayerInfoCollection\(\{ force: true \}\)/,
+    'opening Admin must bypass a stale throttled information summary');
   assert.match(appSource, /admin-player-info'[\s\S]*preserveScroll: true \}\), 2_000\)/,
     'bursts of player updates must be coalesced before refreshing the admin list');
   assert.match(appSource, /adminPlayerInfoCollectionPending[\s\S]*refreshDelay = 750[\s\S]*adminPlayerInfoCollectionTimer/,

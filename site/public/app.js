@@ -2192,7 +2192,7 @@ function setActiveTab(tab) {
   if (tab === 'admin') {
     loadAdminUsers();
     loadAdminPlayers();
-    loadAdminPlayerInfoCollection();
+    loadAdminPlayerInfoCollection({ force: true });
     loadAdminControlState();
     loadAdminSystemLogs();
   }
@@ -9845,9 +9845,15 @@ function handleRealtimeEvent(event) {
   else if (type === 'player_info_updated') {
     state.playerStatsLoadedAt = 0;
     queueRealtimeRefresh('players-info', () => refreshPlayersFromEvent({ forcePlayerStats: true }), 200);
-    if (state.currentUser?.role === 'admin' && state.activeTab === 'admin') {
-      queueRealtimeRefresh('admin-player-info', () => loadAdminPlayers({ showLoading: false, preserveScroll: true }), 2_000);
-      loadAdminPlayerInfoCollection();
+    if (state.currentUser?.role === 'admin') {
+      queueRealtimeRefresh(
+        'admin-player-info-collection',
+        () => loadAdminPlayerInfoCollection({ force: true }),
+        250
+      );
+      if (state.activeTab === 'admin') {
+        queueRealtimeRefresh('admin-player-info', () => loadAdminPlayers({ showLoading: false, preserveScroll: true }), 2_000);
+      }
     }
     if (state.playerProfileUsername
       && !$('#playerProfileOverlay')?.hidden
