@@ -4955,10 +4955,42 @@ body.search-focus-active #logoutButton {
   border-radius: 2px;
   background: var(--danger);
   z-index: 2;
+  animation: player-offline-pulse 2.4s ease-in-out infinite;
+  transform-origin: center;
+  will-change: transform;
 }
 
 .player-profile-avatar-wrap[data-status="online"]::after {
   background: #55c85a;
+  animation: player-online-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes player-online-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(85, 200, 90, 0.55);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 0 7px rgba(85, 200, 90, 0);
+    transform: scale(1.12);
+  }
+}
+
+@keyframes player-offline-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(216, 67, 67, 0.46);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(216, 67, 67, 0);
+    transform: scale(1.09);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .player-profile-avatar-wrap::after {
+    animation: none;
+  }
 }
 
 .player-profile-avatar {
