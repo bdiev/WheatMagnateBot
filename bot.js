@@ -3728,7 +3728,24 @@ async function reconcileObservedLastSeen(targetUsername, observedDate) {
       FROM target
       ON CONFLICT (LOWER(username))
       DO UPDATE SET player_uuid=COALESCE(player_activity.player_uuid,EXCLUDED.player_uuid),
-                    last_seen=EXCLUDED.last_seen
+                    last_seen=EXCLUDED.last_seen,
+                    registration_at=CASE
+                      WHEN player_activity.registration_at > EXCLUDED.last_seen
+                       AND NOT EXISTS (
+                         SELECT 1 FROM player_info_observation_state observation
+                         WHERE observation.metric='joinDate'
+                           AND observation.imported=TRUE
+                           AND (
+                             observation.identity_key='name:' || LOWER(player_activity.username)
+                             OR (
+                               player_activity.player_uuid IS NOT NULL
+                               AND observation.identity_key='uuid:' || LOWER(player_activity.player_uuid::text)
+                             )
+                           )
+                       )
+                      THEN NULL
+                      ELSE player_activity.registration_at
+                    END
       WHERE player_activity.last_seen IS NULL
       RETURNING username,last_seen
     `, [safeUsername, observedDate]);

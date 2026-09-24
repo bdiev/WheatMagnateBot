@@ -59,6 +59,25 @@ function testScheduleMigrationIsSharedByBotAndSite() {
   assert.equal(botMigration, siteMigration);
   assert.match(botMigration, /player_info_backfill_schedule[\s\S]*next_run_at TIMESTAMPTZ/);
 
+  const botImpossibleJoinDateCleanup = fs.readFileSync(
+    path.join(root, 'database', 'migrations', '059_clear_impossible_join_dates.sql'),
+    'utf8'
+  );
+  const siteImpossibleJoinDateCleanup = fs.readFileSync(
+    path.join(root, 'site', 'migrations', '059_clear_impossible_join_dates.sql'),
+    'utf8'
+  );
+  assert.equal(botImpossibleJoinDateCleanup, siteImpossibleJoinDateCleanup,
+    'bot and site must repair the same impossible synthetic join dates');
+  assert.match(botImpossibleJoinDateCleanup,
+    /registration_at > activity\.last_seen[\s\S]*observation\.metric = 'joinDate'[\s\S]*observation\.imported = TRUE/,
+    'cleanup must remove a join date later than last seen unless !jd actually confirmed it');
+  assert.match(
+    fs.readFileSync(path.join(root, 'bot.js'), 'utf8'),
+    /reconcileObservedLastSeen[\s\S]*registration_at=CASE[\s\S]*registration_at > EXCLUDED\.last_seen[\s\S]*THEN NULL/,
+    'a historical !seen import must immediately discard a synthetic current join date'
+  );
+
   const botMessagesMigration = fs.readFileSync(
     path.join(root, 'database', 'migrations', '036_player_message_observation.sql'),
     'utf8'
@@ -233,8 +252,8 @@ async function testDatabaseQueryUsesAllPlayerSourcesAndUuidIdentity() {
     'locally tracked playtime must remain missing until a !pt response is confirmed');
   assert.match(query, /observation\.identity_key = 'uuid:' \|\| LOWER\(candidate\.player_uuid::text\)/,
     'confirmed PT must follow the UUID identity across nickname changes');
-  assert.match(query, /candidate\.registration_at IS NULL\s+OR candidate\.registration_at = candidate\.last_seen/,
-    'registration dates copied from last seen must be rechecked');
+  assert.match(query, /candidate\.registration_at IS NULL\s+OR \(\s*candidate\.last_seen IS NOT NULL\s+AND candidate\.registration_at >= candidate\.last_seen/,
+    'registration dates copied from or later than last seen must be rechecked');
   assert.match(query, /WHERE lookup_available\s+AND \(missing_playtime OR missing_messages OR missing_join_date OR missing_last_seen\)/);
   assert.match(query, /FROM player_info_lookup_exclusions exclusion/,
     'players rejected by the lookup source must not be scheduled again');

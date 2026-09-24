@@ -146,7 +146,10 @@ async function loadMissingPlayerInfo(pool) {
              candidate.observed_message_count IS NULL AS missing_messages,
              (
                candidate.registration_at IS NULL
-               OR candidate.registration_at = candidate.last_seen
+               OR (
+                 candidate.last_seen IS NOT NULL
+                 AND candidate.registration_at >= candidate.last_seen
+               )
              ) AS missing_join_date,
              candidate.last_seen IS NULL AS missing_last_seen,
              NOT EXISTS (
