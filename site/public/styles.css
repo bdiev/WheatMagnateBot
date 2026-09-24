@@ -3142,9 +3142,21 @@ body.search-focus-active #logoutButton {
   line-height: 1.1;
 }
 
+.stat-value-row {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+
+.stat-value-row strong {
+  margin-right: 0;
+}
+
 .stat-trend {
-  display: block;
-  margin: -1px 0 5px;
+  display: inline-block;
+  flex: 0 0 auto;
+  margin: 0;
   color: var(--muted);
   font-size: 11px;
   font-weight: 800;

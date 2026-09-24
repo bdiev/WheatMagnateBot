@@ -8,6 +8,7 @@ const siteDirectory = path.resolve(__dirname, '..');
 const serverSource = fs.readFileSync(path.join(siteDirectory, 'server.js'), 'utf8');
 const appSource = fs.readFileSync(path.join(siteDirectory, 'public', 'app.js'), 'utf8');
 const indexSource = fs.readFileSync(path.join(siteDirectory, 'public', 'index.html'), 'utf8');
+const stylesSource = fs.readFileSync(path.join(siteDirectory, 'public', 'styles.css'), 'utf8');
 
 assert.match(serverSource, /COUNT\(DISTINCT LOWER\(username\)\)[\s\S]*AS seen_today[\s\S]*AS seen_week[\s\S]*AS seen_month/,
   'player statistics must count unique case-insensitive names for all three calendar periods');
@@ -28,6 +29,10 @@ assert.match(appSource, /function renderPeriodTrend[\s\S]*seenPreviousDay[\s\S]*
 for (const trendId of ['uniquePlayersTodayTrend', 'uniquePlayersWeekTrend', 'uniquePlayersMonthTrend']) {
   assert.ok(indexSource.includes(`id="${trendId}"`), `player statistics must expose trend element: ${trendId}`);
 }
+assert.match(indexSource, /class="stat-value-row">\s*<span id="uniquePlayersTodayTrend"[\s\S]*?<strong id="uniquePlayersToday"/,
+  'the period trend must appear to the left of its primary value');
+assert.match(stylesSource, /\.stat-value-row\s*\{[^}]*display:\s*flex;[^}]*align-items:\s*baseline;/s,
+  'the period trend and primary value must share one baseline');
 for (const copy of [
   'Unique Players Today',
   'unique players since midnight',

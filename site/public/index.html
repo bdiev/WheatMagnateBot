@@ -13,7 +13,7 @@
     <link rel="icon" type="image/png" href="/items/Wheat.png">
     <link rel="apple-touch-icon" href="/items/Wheat.png">
     <script src="/theme-init.js?v=136"></script>
-  <link rel="stylesheet" href="/styles.css?v=255">
+  <link rel="stylesheet" href="/styles.css?v=256">
     <script src="/pwa-update.js" defer></script>
     <script src="/page-transitions.js?v=1" defer></script>
   </head>
@@ -926,20 +926,26 @@
           </article>
           <article class="stat">
             <span class="stat-label">Unique Players Today</span>
-            <strong id="uniquePlayersToday">-</strong>
-            <span id="uniquePlayersTodayTrend" class="stat-trend" hidden></span>
+            <div class="stat-value-row">
+              <span id="uniquePlayersTodayTrend" class="stat-trend" hidden></span>
+              <strong id="uniquePlayersToday">-</strong>
+            </div>
             <small>unique players since midnight</small>
           </article>
           <article class="stat">
             <span class="stat-label">Unique Players This Week</span>
-            <strong id="uniquePlayersWeek">-</strong>
-            <span id="uniquePlayersWeekTrend" class="stat-trend" hidden></span>
+            <div class="stat-value-row">
+              <span id="uniquePlayersWeekTrend" class="stat-trend" hidden></span>
+              <strong id="uniquePlayersWeek">-</strong>
+            </div>
             <small>unique players since Monday</small>
           </article>
           <article class="stat">
             <span class="stat-label">Unique Players This Month</span>
-            <strong id="uniquePlayersMonth">-</strong>
-            <span id="uniquePlayersMonthTrend" class="stat-trend" hidden></span>
+            <div class="stat-value-row">
+              <span id="uniquePlayersMonthTrend" class="stat-trend" hidden></span>
+              <strong id="uniquePlayersMonth">-</strong>
+            </div>
             <small>unique players since month start</small>
           </article>
         </section>
