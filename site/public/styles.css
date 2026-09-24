@@ -4955,34 +4955,35 @@ body.search-focus-active #logoutButton {
   border-radius: 2px;
   background: var(--danger);
   z-index: 2;
-  animation: player-offline-pulse 2.4s ease-in-out infinite;
+  animation: player-offline-pulse 1.4s ease-in-out infinite alternate;
   transform-origin: center;
   will-change: transform;
 }
 
 .player-profile-avatar-wrap[data-status="online"]::after {
   background: #55c85a;
-  animation: player-online-pulse 1.8s ease-in-out infinite;
+  animation: player-online-pulse 1.2s ease-in-out infinite alternate;
 }
 
+/* Breathing: glow and size grow together on the inhale and ease back on the exhale. */
 @keyframes player-online-pulse {
-  0%, 100% {
-    box-shadow: 0 0 0 0 rgba(85, 200, 90, 0.55);
+  from {
+    box-shadow: 0 0 0 0 rgba(85, 200, 90, 0);
     transform: scale(1);
   }
-  50% {
-    box-shadow: 0 0 0 7px rgba(85, 200, 90, 0);
+  to {
+    box-shadow: 0 0 6px 2px rgba(85, 200, 90, 0.6);
     transform: scale(1.12);
   }
 }
 
 @keyframes player-offline-pulse {
-  0%, 100% {
-    box-shadow: 0 0 0 0 rgba(216, 67, 67, 0.46);
+  from {
+    box-shadow: 0 0 0 0 rgba(216, 67, 67, 0);
     transform: scale(1);
   }
-  50% {
-    box-shadow: 0 0 0 6px rgba(216, 67, 67, 0);
+  to {
+    box-shadow: 0 0 5px 2px rgba(216, 67, 67, 0.5);
     transform: scale(1.09);
   }
 }
