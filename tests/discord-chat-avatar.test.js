@@ -28,28 +28,28 @@ async function run() {
     }
   });
   const first = await load('ObbyMagnate');
-  assert.equal(urls.length, 2, 'invalid image responses must fall back to the second provider');
-  assert.equal(urls[1], 'https://minotar.net/helm/obbymagnate/28.png');
+  assert.equal(urls.length, 3, 'an unavailable official skin must fall back through the avatar providers');
+  assert.equal(urls[2], 'https://minotar.net/helm/obbymagnate/28.png');
   assert.equal(first.thumbnail.url, `attachment://${first.files[0].name}`);
   const avatarMetadata = await sharp(first.files[0].attachment).metadata();
   assert.equal(avatarMetadata.width, 28);
   assert.equal(avatarMetadata.height, 28);
   assert.deepEqual(await load('obbymagnate'), first, 'cache lookup must ignore username casing');
-  assert.equal(urls.length, 2, 'repeated messages must reuse the downloaded PNG');
+  assert.equal(urls.length, 3, 'repeated messages must reuse the downloaded PNG');
 
   time = 101;
   unavailable = true;
   assert.deepEqual(await load('ObbyMagnate'), first, 'provider failure must preserve the last working avatar');
-  assert.equal(urls.length, 5, 'a provider outage must try the official Mojang fallback too');
+  assert.equal(urls.length, 6, 'a refresh must try Mojang and both fallback providers');
   await load('ObbyMagnate');
-  assert.equal(urls.length, 5, 'failed refreshes must have a retry cooldown');
+  assert.equal(urls.length, 6, 'failed refreshes must have a retry cooldown');
   const coldFailure = await load('PearlMagnate');
   assert.equal(coldFailure.files, undefined);
-  assert.equal(coldFailure.thumbnail.url, 'https://mc-heads.net/avatar/pearlmagnate/28.png');
+  assert.equal(coldFailure.thumbnail.url, 'https://render.namemc.com/skin/2d/face.png?skin=PearlMagnate&scale=4');
   const callsBeforePermissionCheck = urls.length;
   const noPermission = await load('ObbyMagnate', { attachFiles: false });
   assert.equal(noPermission.files, undefined);
-  assert.equal(noPermission.thumbnail.url, 'https://mc-heads.net/avatar/obbymagnate/28.png');
+  assert.equal(noPermission.thumbnail.url, 'https://render.namemc.com/skin/2d/face.png?skin=ObbyMagnate&scale=4');
   assert.equal(urls.length, callsBeforePermissionCheck, 'channels without upload permission must not fetch attachments');
   assert.deepEqual(await load('../bad name'), {});
 
@@ -88,7 +88,7 @@ async function run() {
     }
   });
   const recoveredAvatar = await loadBlackAvatar('moooomoooo');
-  assert.ok(recoveredAvatar.files, 'a black provider image must fall back to the official 2D skin');
+  assert.ok(recoveredAvatar.files, 'the official 2D skin must be used before third-party renderers');
   const recoveredPixels = await sharp(recoveredAvatar.files[0].attachment).ensureAlpha().raw().toBuffer();
   const recoveredColors = new Set();
   for (let offset = 0; offset < recoveredPixels.length; offset += 4) {
@@ -96,6 +96,8 @@ async function run() {
   }
   assert.ok(recoveredColors.size > 1, 'the Discord avatar must retain visible face detail');
   assert.ok(moooomooooUrls.some(url => url.includes('sessionserver.mojang.com')));
+  assert.ok(!moooomooooUrls.some(url => url.includes('mc-heads.net') || url.includes('minotar.net')),
+    'working Mojang skin data must bypass stale third-party avatar caches');
 
   unavailable = false;
   time = 112;
@@ -103,7 +105,7 @@ async function run() {
   await load('WheatMagnate');
   const beforeEvicted = urls.length;
   await load('ObbyMagnate');
-  assert.equal(urls.length, beforeEvicted + 2, 'the bounded cache must evict old entries');
+  assert.equal(urls.length, beforeEvicted + 3, 'the bounded cache must evict old entries');
 
   // Exercise the actual chat sender without connecting to Discord or Minecraft.
   const source = fs.readFileSync(path.join(__dirname, '../bot.js'), 'utf8');
@@ -141,7 +143,7 @@ async function run() {
   canAttach = false;
   await context.deliver({ username: 'ObbyMagnate', message: 'Hello again', allowMentions: false });
   assert.equal(sent[3].files, undefined);
-  assert.equal(sent[3].embeds[0].thumbnail.url, 'https://mc-heads.net/avatar/obbymagnate/28.png');
+  assert.equal(sent[3].embeds[0].thumbnail.url, 'https://render.namemc.com/skin/2d/face.png?skin=ObbyMagnate&scale=4');
   console.log('Discord chat avatar tests passed.');
 }
 

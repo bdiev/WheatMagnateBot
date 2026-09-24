@@ -25,13 +25,30 @@ function createChatAvatarLoader({ fetchImpl = fetch, now = Date.now, ttlMs = 6 *
       `https://mc-heads.net/avatar/${key}/28.png`,
       `https://minotar.net/helm/${key}/28.png`
     ];
-    const remote = { thumbnail: { url: sources[0] } };
+    const remote = {
+      thumbnail: {
+        url: `https://render.namemc.com/skin/2d/face.png?skin=${encodeURIComponent(name)}&scale=4`
+      }
+    };
     if (!attachFiles) return remote;
 
     let entry = cache.get(key);
     if (!entry || entry.expiresAt <= now()) {
       let buffer = null;
-      for (const url of sources) {
+      try {
+        const officialAvatar = await renderOfficialMinecraftAvatar({
+          username: name,
+          fetchImpl,
+          signal: AbortSignal.timeout(5_000)
+        });
+        buffer = await sharp(officialAvatar)
+          .resize(28, 28, { kernel: sharp.kernel.nearest })
+          .png()
+          .toBuffer();
+      } catch {
+        // A third-party renderer is still useful during a Mojang API outage.
+      }
+      for (const url of buffer ? [] : sources) {
         try {
           const response = await fetchImpl(url, {
             signal: AbortSignal.timeout(1500), headers: { Accept: 'image/png' }
@@ -46,21 +63,6 @@ function createChatAvatarLoader({ fetchImpl = fetch, now = Date.now, ttlMs = 6 *
           break;
         } catch {
           // Retry the second provider; an avatar outage must not drop chat.
-        }
-      }
-      if (!buffer) {
-        try {
-          const officialAvatar = await renderOfficialMinecraftAvatar({
-            username: name,
-            fetchImpl,
-            signal: AbortSignal.timeout(5_000)
-          });
-          buffer = await sharp(officialAvatar)
-            .resize(28, 28, { kernel: sharp.kernel.nearest })
-            .png()
-            .toBuffer();
-        } catch {
-          // Keep the remote thumbnail fallback if Mojang is unavailable too.
         }
       }
       entry = { buffer: buffer || entry?.buffer || null, expiresAt: now() + (buffer ? ttlMs : retryMs) };
