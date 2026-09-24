@@ -61,6 +61,22 @@ async function testParsingAndTrust() {
     [{ metric:'joinDate',targetUsername:'AlexFart',observedValue:new Date('2019-09-20T22:11:49.000Z') }],
     'bold Discord usernames in !jd embeds must be parsed'
   );
+  assert.deepEqual(
+    parseDiscordPlayerInfoResponses(
+      message({ bot:true,username:'LolRiTTeRBot',embeds:[{ description:'034: 01/08/2024 21:19:44' }] }),
+      parsePlaytime
+    ),
+    [{ metric:'joinDate',targetUsername:'034',observedValue:new Date('2024-01-08T21:19:44.000Z') }],
+    'numeric Minecraft usernames in current LolRiTTeRBot !jd replies must be parsed'
+  );
+  assert.deepEqual(
+    parseDiscordPlayerInfoResponses(
+      message({ bot:true,username:'LolRiTTeRBot',embeds:[{ description:'2h2p: 07/17/2026 20:30:55' }] }),
+      parsePlaytime
+    ),
+    [{ metric:'joinDate',targetUsername:'2h2p',observedValue:new Date('2026-07-17T20:30:55.000Z') }],
+    'alphanumeric Minecraft usernames in current LolRiTTeRBot !jd replies must be parsed'
+  );
   const messageStatisticsEmbed = message({
     bot:true,
     username:'LolRiTTeRBot',

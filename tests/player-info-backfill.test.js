@@ -254,6 +254,10 @@ async function testDatabaseQueryUsesAllPlayerSourcesAndUuidIdentity() {
     'confirmed PT must follow the UUID identity across nickname changes');
   assert.match(query, /candidate\.registration_at IS NULL\s+OR \(\s*candidate\.last_seen IS NOT NULL\s+AND candidate\.registration_at >= candidate\.last_seen/,
     'registration dates copied from or later than last seen must be rechecked');
+  assert.match(query, /observation\.metric = 'joinDate'[\s\S]*observation\.imported = TRUE[\s\S]*AS missing_join_date/,
+    'a successfully imported !jd response must close the join-date task');
+  assert.match(query, /observation\.identity_key = 'uuid:' \|\| LOWER\(candidate\.player_uuid::text\)[\s\S]*player_name_history history/,
+    'a confirmed join date must follow UUID and name-history identity changes');
   assert.match(query, /WHERE lookup_available\s+AND \(missing_playtime OR missing_messages OR missing_join_date OR missing_last_seen\)/);
   assert.match(query, /FROM player_info_lookup_exclusions exclusion/,
     'players rejected by the lookup source must not be scheduled again');

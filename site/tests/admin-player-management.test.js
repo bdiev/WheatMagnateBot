@@ -251,6 +251,8 @@ async function testPlayerInfoCollectionProgress() {
     'a player must remain pending while any collected metric is missing');
   assert.match(statement, /candidate\.registration_at IS NULL[\s\S]*candidate\.registration_at >= candidate\.last_seen/,
     'a registration timestamp equal to or later than last seen must require a fresh !jd lookup');
+  assert.match(statement, /observation\.metric = 'joinDate'[\s\S]*observation\.imported = TRUE[\s\S]*AS missing_join_date/,
+    'a successfully imported !jd response must remove its lookup card');
   assert.match(statement, /JSONB_AGG\(JSONB_BUILD_OBJECT\([\s\S]*'playtime'[\s\S]*'messages'[\s\S]*'joinDate'[\s\S]*'lastSeen'[\s\S]*LIMIT 100/,
     'the admin response must include every missing metric for a bounded player list');
 }
