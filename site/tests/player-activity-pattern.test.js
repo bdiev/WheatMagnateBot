@@ -80,8 +80,10 @@ assert.match(appSource, /activityPatternOpen[\s\S]*pingDetailsOpen|pingDetailsOp
 assert.match(stylesSource, /\.player-activity-stats\s*\{[^}]*grid-template-columns:\s*repeat\(6,/s, 'desktop activity stats must fit in one compact row');
 assert.match(stylesSource, /\.player-activity-cell\s*\{[^}]*min-width:\s*0;/s, 'interactive cells must override the global button width');
 assert.match(stylesSource, /\.player-ping-details\s*>\s*summary\s*\{[^}]*font-family:\s*ui-monospace/s, 'ping digits must not use the hard-to-read pixel font');
-assert.match(stylesSource, /\.player-profile-avatar-wrap\s*\{[^}]*contain:\s*layout paint;[^}]*backface-visibility:\s*hidden;/s, 'the avatar must remain on a stable paint layer when ping details open');
-assert.match(stylesSource, /\.player-profile-avatar-wrap\[data-status="online"\]::after\s*\{[^}]*animation:\s*player-online-pulse/s, 'the profile online status marker must keep breathing');
+assert.match(stylesSource, /\.player-profile-avatar-wrap\s*\{[^}]*contain:\s*layout;[^}]*backface-visibility:\s*hidden;/s, 'the avatar must keep stable layout containment without clipping its status halo');
+assert.match(stylesSource, /\.player-profile-avatar-wrap::before\s*\{[^}]*animation:\s*player-status-halo[^}]*will-change:\s*transform, opacity;/s, 'the profile status halo must animate only compositor-friendly properties');
+assert.match(stylesSource, /\.player-profile-avatar-wrap::after\s*\{[^}]*background:\s*var\(--player-status-color\);[^}]*box-shadow:/s, 'the solid profile status marker must stay visually stable');
+assert.match(stylesSource, /\.player-profile-avatar-wrap\[data-status="online"\]\s*\{[^}]*--player-status-color:\s*#55c85a;/s, 'online profiles must switch the shared status animation to green');
 assert.match(stylesSource, /button\.player-activity-cell\.is-selected[\s\S]*box-shadow:\s*none;/, 'selected heatmap cells must not inherit the global button shadow');
 assert.match(stylesSource, /@media \(max-width: 700px\)[\s\S]*\.player-profile-activity > summary > div > small[\s\S]*display:\s*none;[\s\S]*\.player-activity-legend\s*\{\s*display:\s*none;/, 'mobile activity details must hide redundant labels and legend');
 
