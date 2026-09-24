@@ -15,10 +15,19 @@ assert.match(serverSource, /date_trunc\('day',[\s\S]*date_trunc\('week',[\s\S]*d
   'today, week, and month counts must use calendar boundaries');
 assert.match(serverSource, /AT TIME ZONE settings\.timezone[\s\S]*obsidian_farm_analytics_settings/,
   'calendar boundaries must follow the configured account timezone');
-assert.match(serverSource, /\['seenToday', 'seenWeek', 'seenMonth'\]\.every/,
+assert.match(serverSource, /'seenToday',[\s\S]*'seenPreviousDay',[\s\S]*'seenPreviousWeek',[\s\S]*'seenPreviousMonth'/,
   'persisted player-stat caches from the previous card schema must be ignored');
 assert.match(appSource, /#uniquePlayersToday[\s\S]*players\?\.seenToday[\s\S]*#uniquePlayersWeek[\s\S]*players\?\.seenWeek[\s\S]*#uniquePlayersMonth[\s\S]*players\?\.seenMonth/,
   'the player cards must render each unique-player period');
+assert.match(serverSource, /AS seen_previous_day[\s\S]*AS seen_previous_week[\s\S]*AS seen_previous_month/,
+  'player statistics must include each previous calendar period');
+assert.match(serverSource, /FROM player_session_events[\s\S]*event_type = 'player_joined'/,
+  'previous-period comparisons must use preserved session history');
+assert.match(appSource, /function renderPeriodTrend[\s\S]*seenPreviousDay[\s\S]*seenPreviousWeek[\s\S]*seenPreviousMonth/,
+  'the player cards must render discreet percentage trends');
+for (const trendId of ['uniquePlayersTodayTrend', 'uniquePlayersWeekTrend', 'uniquePlayersMonthTrend']) {
+  assert.ok(indexSource.includes(`id="${trendId}"`), `player statistics must expose trend element: ${trendId}`);
+}
 for (const copy of [
   'Unique Players Today',
   'unique players since midnight',

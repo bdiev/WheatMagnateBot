@@ -3142,6 +3142,29 @@ body.search-focus-active #logoutButton {
   line-height: 1.1;
 }
 
+.stat-trend {
+  display: block;
+  margin: -1px 0 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  opacity: 0.82;
+}
+
+.stat-trend[data-direction="up"] {
+  color: var(--accent-strong);
+}
+
+.stat-trend[data-direction="down"] {
+  color: var(--danger);
+}
+
+.stat-trend[hidden] {
+  display: none;
+}
+
 .rolling-number {
   display: inline-block;
   font-variant-numeric: tabular-nums;

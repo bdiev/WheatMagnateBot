@@ -528,6 +528,34 @@ function formatNumber(value) {
   return Number.isFinite(number) ? new Intl.NumberFormat('en-US').format(number) : '-';
 }
 
+function renderPeriodTrend(selector, currentValue, previousValue, previousPeriodLabel) {
+  const element = $(selector);
+  if (!element) return;
+  const current = Number(currentValue);
+  const previous = Number(previousValue);
+  if (!Number.isFinite(current) || !Number.isFinite(previous)) {
+    element.hidden = true;
+    return;
+  }
+
+  let direction = 'flat';
+  let copy = '→ 0%';
+  if (previous === 0 && current > 0) {
+    direction = 'up';
+    copy = '↑ New';
+  } else if (previous > 0 && current !== previous) {
+    const percent = Math.round(Math.abs(((current - previous) / previous) * 100));
+    direction = current > previous ? 'up' : 'down';
+    copy = `${direction === 'up' ? '↑' : '↓'} ${formatNumber(percent)}%`;
+  }
+
+  element.hidden = false;
+  element.dataset.direction = direction;
+  element.textContent = copy;
+  element.title = `${copy} vs ${previousPeriodLabel} (${formatNumber(previous)} players)`;
+  element.setAttribute('aria-label', element.title);
+}
+
 function setRollingNumber(selector, value, {
   prefix = '',
   suffix = '',
@@ -6427,6 +6455,9 @@ function renderPlayerStats(payload = {}, nearbyPlayers = null) {
   $('#uniquePlayersToday').textContent = formatNumber(payload.players?.seenToday);
   $('#uniquePlayersWeek').textContent = formatNumber(payload.players?.seenWeek);
   $('#uniquePlayersMonth').textContent = formatNumber(payload.players?.seenMonth);
+  renderPeriodTrend('#uniquePlayersTodayTrend', payload.players?.seenToday, payload.players?.seenPreviousDay, 'yesterday');
+  renderPeriodTrend('#uniquePlayersWeekTrend', payload.players?.seenWeek, payload.players?.seenPreviousWeek, 'last week');
+  renderPeriodTrend('#uniquePlayersMonthTrend', payload.players?.seenMonth, payload.players?.seenPreviousMonth, 'last month');
   state.charts.hourlyAverageOnline = payload.hourlyAverageOnline || [];
 
   const leaderboardSources = payload.playtimeLeaderboards || {};

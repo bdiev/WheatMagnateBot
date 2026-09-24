@@ -2321,7 +2321,14 @@ async function loadPersistedPlayerStatsCache() {
   const row = result.rows[0];
   if (!row?.payload || typeof row.payload !== 'object') return false;
   const cachedPlayers = row.payload.players;
-  if (!cachedPlayers || !['seenToday', 'seenWeek', 'seenMonth'].every(key => Number.isFinite(Number(cachedPlayers[key])))) {
+  if (!cachedPlayers || ![
+    'seenToday',
+    'seenWeek',
+    'seenMonth',
+    'seenPreviousDay',
+    'seenPreviousWeek',
+    'seenPreviousMonth'
+  ].every(key => Number.isFinite(Number(cachedPlayers[key])))) {
     return false;
   }
   const generatedAt = new Date(row.generated_at).getTime();
@@ -2579,6 +2586,39 @@ async function getPlayerStats() {
       LEFT JOIN activity pa ON pa.username_key = w.username_key
     `),
     database.query(`
+      WITH settings AS (
+        SELECT COALESCE(
+          (SELECT timezone FROM obsidian_farm_analytics_settings WHERE id = 1),
+          'Europe/Vilnius'
+        ) AS timezone
+      ), ordered_events AS (
+        SELECT
+          LOWER(username) AS username_key,
+          event_type,
+          occurred_at AT TIME ZONE settings.timezone AS occurred_at,
+          LEAD(occurred_at AT TIME ZONE settings.timezone) OVER (
+            PARTITION BY LOWER(username)
+            ORDER BY occurred_at, id
+          ) AS next_occurred_at
+        FROM player_session_events
+        CROSS JOIN settings
+        WHERE occurred_at <= NOW()
+          AND LOWER(username) <> ''
+      ), sessions AS (
+        SELECT
+          username_key,
+          occurred_at AS started_at,
+          COALESCE(next_occurred_at, NOW() AT TIME ZONE settings.timezone) AS ended_at
+        FROM ordered_events
+        CROSS JOIN settings
+        WHERE event_type = 'player_joined'
+      ), boundaries AS (
+        SELECT
+          date_trunc('day', NOW() AT TIME ZONE timezone) AS day_start,
+          date_trunc('week', NOW() AT TIME ZONE timezone) AS week_start,
+          date_trunc('month', NOW() AT TIME ZONE timezone) AS month_start
+        FROM settings
+      )
       SELECT
         COUNT(DISTINCT LOWER(username)) FILTER (
           WHERE last_seen AT TIME ZONE settings.timezone
@@ -2591,14 +2631,27 @@ async function getPlayerStats() {
         COUNT(DISTINCT LOWER(username)) FILTER (
           WHERE last_seen AT TIME ZONE settings.timezone
             >= date_trunc('month', NOW() AT TIME ZONE settings.timezone)
-        )::int AS seen_month
+        )::int AS seen_month,
+        (
+          SELECT COUNT(DISTINCT username_key)::int
+          FROM sessions, boundaries
+          WHERE started_at < boundaries.day_start
+            AND ended_at > boundaries.day_start - INTERVAL '1 day'
+        ) AS seen_previous_day,
+        (
+          SELECT COUNT(DISTINCT username_key)::int
+          FROM sessions, boundaries
+          WHERE started_at < boundaries.week_start
+            AND ended_at > boundaries.week_start - INTERVAL '1 week'
+        ) AS seen_previous_week,
+        (
+          SELECT COUNT(DISTINCT username_key)::int
+          FROM sessions, boundaries
+          WHERE started_at < boundaries.month_start
+            AND ended_at > boundaries.month_start - INTERVAL '1 month'
+        ) AS seen_previous_month
       FROM player_activity
-      CROSS JOIN LATERAL (
-        SELECT COALESCE(
-          (SELECT timezone FROM obsidian_farm_analytics_settings WHERE id = 1),
-          'Europe/Vilnius'
-        ) AS timezone
-      ) settings
+      CROSS JOIN settings
     `),
     database.query(`
       WITH ordered_events AS (
@@ -2720,7 +2773,10 @@ async function getPlayerStats() {
       offline: toInt(totals.offline),
       seenToday: toInt(activityTotals.seen_today),
       seenWeek: toInt(activityTotals.seen_week),
-      seenMonth: toInt(activityTotals.seen_month)
+      seenMonth: toInt(activityTotals.seen_month),
+      seenPreviousDay: toInt(activityTotals.seen_previous_day),
+      seenPreviousWeek: toInt(activityTotals.seen_previous_week),
+      seenPreviousMonth: toInt(activityTotals.seen_previous_month)
     },
     playtimeLeaderboards: {
       global: leaderboardRows,
@@ -6195,7 +6251,7 @@ async function handleApi(req, res, url) {
     if (url.pathname === '/api/player-stats') {
       const scoped = await scopedAccountRuntime(url,currentUser);
       if (scoped) {
-        sendJson(res, 200, { players:{online:0,total:0,seenToday:0,seenWeek:0,seenMonth:0},playtimeLeaderboards:{global:[],whitelisted:[]},playtimeLeaderboard:[],milestones:[],newPlayers:[],newPlayersPage:{limit:NEW_PLAYERS_PAGE_LIMIT,offset:0,nextOffset:0,hasMore:false} });
+        sendJson(res, 200, { players:{online:0,total:0,seenToday:0,seenWeek:0,seenMonth:0,seenPreviousDay:0,seenPreviousWeek:0,seenPreviousMonth:0},playtimeLeaderboards:{global:[],whitelisted:[]},playtimeLeaderboard:[],milestones:[],newPlayers:[],newPlayersPage:{limit:NEW_PLAYERS_PAGE_LIMIT,offset:0,nextOffset:0,hasMore:false} });
         return;
       }
       sendJson(res, 200, await getCachedPlayerStats({ force: url.searchParams.get('fresh') === '1' }));
