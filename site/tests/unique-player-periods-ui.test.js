@@ -29,8 +29,8 @@ assert.match(appSource, /function renderPeriodTrend[\s\S]*seenPreviousDay[\s\S]*
 for (const trendId of ['uniquePlayersTodayTrend', 'uniquePlayersWeekTrend', 'uniquePlayersMonthTrend']) {
   assert.ok(indexSource.includes(`id="${trendId}"`), `player statistics must expose trend element: ${trendId}`);
 }
-assert.match(indexSource, /class="stat-value-row">\s*<span id="uniquePlayersTodayTrend"[\s\S]*?<strong id="uniquePlayersToday"/,
-  'the period trend must appear to the left of its primary value');
+assert.match(indexSource, /class="stat-value-row">\s*<strong id="uniquePlayersToday"[\s\S]*?<span id="uniquePlayersTodayTrend"/,
+  'the period trend must appear to the right of its primary value');
 assert.match(stylesSource, /\.stat-value-row\s*\{[^}]*display:\s*flex;[^}]*align-items:\s*baseline;/s,
   'the period trend and primary value must share one baseline');
 for (const copy of [
