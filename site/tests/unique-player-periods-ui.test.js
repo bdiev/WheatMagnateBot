@@ -26,6 +26,10 @@ assert.match(serverSource, /FROM player_session_events[\s\S]*event_type = 'playe
   'previous-period comparisons must use preserved session history');
 assert.match(appSource, /function renderPeriodTrend[\s\S]*seenPreviousDay[\s\S]*seenPreviousWeek[\s\S]*seenPreviousMonth/,
   'the player cards must render discreet percentage trends');
+assert.match(serverSource, /joinedPlayers[\s\S]*leftPlayers[\s\S]*invalidatePlayerStatsCache\(\)[\s\S]*publish\('player_joined'/,
+  'presence changes must invalidate player statistics before their live events are published');
+assert.match(appSource, /type === 'player_joined' \|\| type === 'player_left'[\s\S]*playerStatsLoadedAt = 0[\s\S]*refreshPlayersFromEvent\(\{ forcePlayerStats: true \}\)/,
+  'presence events must bypass both client and server caches for real-time player cards');
 for (const trendId of ['uniquePlayersTodayTrend', 'uniquePlayersWeekTrend', 'uniquePlayersMonthTrend']) {
   assert.ok(indexSource.includes(`id="${trendId}"`), `player statistics must expose trend element: ${trendId}`);
 }

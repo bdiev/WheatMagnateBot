@@ -6529,12 +6529,15 @@ async function pollDatabaseEvents() {
       sseHub.publish('bot_status_updated', { observedAt: next.botStatusAt });
       sseHub.publish('admin_control_updated', { source: 'bot_status', updatedAt: next.botStatusAt }, { roles: ['admin'] });
     }
-    for (const [key, username] of next.players) {
-      if (!previous.players.has(key)) sseHub.publish('player_joined', { username });
-    }
-    for (const [key, username] of previous.players) {
-      if (!next.players.has(key)) sseHub.publish('player_left', { username });
-    }
+    const joinedPlayers = [...next.players]
+      .filter(([key]) => !previous.players.has(key))
+      .map(([, username]) => username);
+    const leftPlayers = [...previous.players]
+      .filter(([key]) => !next.players.has(key))
+      .map(([, username]) => username);
+    if (joinedPlayers.length || leftPlayers.length) invalidatePlayerStatsCache();
+    for (const username of joinedPlayers) sseHub.publish('player_joined', { username });
+    for (const username of leftPlayers) sseHub.publish('player_left', { username });
     if (next.playerInfoAt !== previous.playerInfoAt
       || next.playerInfoObservationAt !== previous.playerInfoObservationAt
       || next.playerInfoActivity !== previous.playerInfoActivity

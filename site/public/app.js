@@ -9864,7 +9864,8 @@ function handleRealtimeEvent(event) {
   }
   else if (type === 'farm_status_updated') queueRealtimeRefresh('farm', refreshFarmFromEvent);
   else if (type === 'player_joined' || type === 'player_left') {
-    queueRealtimeRefresh('players', refreshPlayersFromEvent);
+    state.playerStatsLoadedAt = 0;
+    queueRealtimeRefresh('players', () => refreshPlayersFromEvent({ forcePlayerStats: true }));
     queueRealtimeRefresh('chat-activity', refreshChatFromEvent, 30);
     if (state.playerProfileUsername && String(state.playerProfileUsername).toLowerCase() === String(eventPayload.username || '').toLowerCase()) {
       queueRealtimeRefresh('player-profile-activity', () => loadPlayerProfile(state.playerProfileUsername), 100);
