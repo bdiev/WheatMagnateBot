@@ -219,8 +219,8 @@ assert.match(appSource, /playerIdentity\(username, 28, \{ uuid: message\.playerU
   'chat avatars must use the recorded player UUID when available');
 assert.match(serverSource, /playerUuid: row\.player_uuid \|\| null/,
   'chat API must expose the recorded player UUID for stable skin resolution');
-assert.match(serverSource, /const cacheKey = `v4:\$\{avatarIdentity\.toLowerCase\(\)\}`/,
-  'avatar cache must not reuse stale username-only placeholder entries');
+assert.match(serverSource, /const cacheKey = `v5:\$\{avatarIdentity\.toLowerCase\(\)\}:\$\{textureHash \|\| 'unknown'\}`/,
+  'avatar cache must not reuse an image after the player skin texture changes');
 assert.match(appSource, /previousChatUsername = isActivity \|\| isNotice \? null : normalizedUsername/,
   'join, leave, flood, and server notices must end the current player message group');
 assert.match(stylesSource, /\.chat-message\.chat-activity\s*\{[^}]*grid-template-columns:\s*7px minmax\(0, max-content\) max-content;/s,

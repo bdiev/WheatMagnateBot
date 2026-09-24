@@ -378,15 +378,36 @@ async function sendMinecraftAvatar(res, url) {
   if (!/^[A-Za-z0-9_]{1,16}$/.test(username)) { sendError(res,400,'Invalid Minecraft username.'); return; }
   const compactUuid = String(url.searchParams.get('uuid') || '').replace(/-/g, '').trim().toLowerCase();
   if (compactUuid && !/^[0-9a-f]{32}$/.test(compactUuid)) { sendError(res,400,'Invalid Minecraft UUID.'); return; }
+  let textureHash = String(url.searchParams.get('skin') || '').trim().toLowerCase();
+  if (textureHash && !/^[a-z0-9_-]{1,128}$/.test(textureHash)) { sendError(res,400,'Invalid Minecraft skin hash.'); return; }
+  if (!textureHash && compactUuid && pool) {
+    try {
+      const currentSkin = await pool.query(`
+        SELECT texture_hash FROM player_skin_history
+        WHERE player_uuid=$1::uuid
+        ORDER BY last_seen DESC,id DESC LIMIT 1
+      `, [compactUuid]);
+      textureHash = String(currentSkin.rows[0]?.texture_hash || '').toLowerCase();
+    } catch { /* Avatar delivery can continue while stored skin history is unavailable. */ }
+  }
   const avatarIdentity = compactUuid || username;
-  const cacheKey = `v4:${avatarIdentity.toLowerCase()}`;
+  const cacheKey = `v5:${avatarIdentity.toLowerCase()}:${textureHash || 'unknown'}`;
   const cached = minecraftAvatarCache.get(cacheKey);
   if (cached && Date.now()-cached.storedAt < 6*60*60_000) {
     res.writeHead(200,{'Content-Type':'image/png','Cache-Control':'public, no-cache','Content-Length':cached.body.length}); res.end(cached.body); return;
   }
-  // Include the outer head layer on both providers, and ask MCHeads for both
-  // skin models: a bot-style identity with no real Mojang skin can render
-  // as a blank square under one model and fine under the other.
+  try {
+    const body = await renderOfficialMinecraftAvatar({
+      username,
+      uuid: compactUuid,
+      signal: AbortSignal.timeout(8_000)
+    });
+    minecraftAvatarCache.set(cacheKey,{body,storedAt:Date.now()});
+    if (minecraftAvatarCache.size > 200) minecraftAvatarCache.delete(minecraftAvatarCache.keys().next().value);
+    res.writeHead(200,{'Content-Type':'image/png','Cache-Control':'public, no-cache','Content-Length':body.length}); res.end(body); return;
+  } catch { /* The official profile or skin service is temporarily unavailable. */ }
+  // Include the outer head layer on both fallback providers, and ask MCHeads
+  // for both skin models when the official Mojang services are unavailable.
   const sources = minecraftAvatarSources(avatarIdentity);
   for (const source of sources) {
     try {
@@ -399,16 +420,6 @@ async function sendMinecraftAvatar(res, url) {
       res.writeHead(200,{'Content-Type':'image/png','Cache-Control':'public, no-cache','Content-Length':body.length}); res.end(body); return;
     } catch { /* Try the next avatar provider/model. */ }
   }
-  try {
-    const body = await renderOfficialMinecraftAvatar({
-      username,
-      uuid: compactUuid,
-      signal: AbortSignal.timeout(8_000)
-    });
-    minecraftAvatarCache.set(cacheKey,{body,storedAt:Date.now()});
-    if (minecraftAvatarCache.size > 200) minecraftAvatarCache.delete(minecraftAvatarCache.keys().next().value);
-    res.writeHead(200,{'Content-Type':'image/png','Cache-Control':'public, no-cache','Content-Length':body.length}); res.end(body); return;
-  } catch { /* The official profile or skin service is temporarily unavailable. */ }
   sendError(res,502,'Minecraft avatar is temporarily unavailable.');
 }
 
@@ -481,14 +492,6 @@ async function getPlayerSkins(url) {
   }
   const identity = await resolveStoredPlayerIdentity(requestedUsername);
   if (!identity?.player_uuid) throw Object.assign(new Error('Player has no known Minecraft UUID.'), { statusCode:404 });
-
-  const stored = await readPlayerSkinHistory(identity);
-  if (stored.skins.length) {
-    playerSkinHistory.refreshOnce(identity).catch(error => {
-      console.warn(`[Site] Could not refresh skins for ${identity.username}: ${error.message}`);
-    });
-    return stored;
-  }
 
   let currentCapeHash = null;
   let refreshFailed = false;

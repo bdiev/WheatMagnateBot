@@ -35,7 +35,9 @@ assert.match(historySource, /ON CONFLICT\(player_uuid,texture_hash\)[\s\S]*last_
 assert.match(historySource, /ON CONFLICT\(player_uuid,cape_hash\)[\s\S]*cape_url=EXCLUDED\.cape_url,last_seen=NOW\(\)/, 're-observed capes must update their last-seen time');
 assert.match(historySource, /resolveNameMcCapes[\s\S]*cape_source=EXCLUDED\.cape_source/, 'all NameMC profile capes must be imported with their metadata');
 assert.match(botSource, /createPlayerSkinHistoryService\(\{ pool,forceCapeRefresh:true \}\)/, 'every join refresh must bypass the NameMC profile cache');
-assert.match(serverSource, /stored\.skins\.length[\s\S]*playerSkinHistory\.refreshOnce\(identity\)[\s\S]*return stored/, 'saved skin history must be returned before the external refresh finishes');
+assert.match(serverSource, /currentCapeHash = await playerSkinHistory\.refreshOnce\(identity\)[\s\S]*return readPlayerSkinHistory\(identity/, 'the wardrobe must refresh the current skin before returning saved history');
+assert.match(serverSource, /textureHash[\s\S]*const cacheKey = `v5:\$\{avatarIdentity\.toLowerCase\(\)\}:\$\{textureHash \|\| 'unknown'\}`/, 'avatar caching must be versioned by the current skin texture');
+assert.match(serverSource, /renderOfficialMinecraftAvatar[\s\S]*const sources = minecraftAvatarSources/, 'site avatars must prefer the official Mojang texture over third-party renderers');
 assert.match(serverSource, /const displayCapeRows = \[\.\.\.capeResult\.rows\]/, 'the wardrobe must show the complete saved Mojang and NameMC cape history');
 assert.doesNotMatch(serverSource, /nameMcCapeRows\.length[\s\S]*cape_source !== 'namemc'/, 'NameMC imports must not hide older Mojang cape observations');
 assert.match(historySource, /activeRefreshes\.get[\s\S]*activeRefreshes\.set/, 'concurrent external skin refreshes must be deduplicated');
@@ -46,6 +48,7 @@ assert.match(serverSource, /\/api\/player-skins/, 'the authenticated skin-histor
 assert.match(serverSource, /textures\.minecraft\.net/, 'raw skin proxying must be restricted to the official texture host');
 assert.match(serverSource, /\/api\/minecraft-cape\//, 'official cape textures must be available to the elytra renderer');
 assert.match(appSource, /data-player-skins[\s\S]*openPlayerSkins/, 'the profile avatar must open the skin wardrobe');
+assert.match(appSource, /profileAvatar\.src = playerHeadUrl\(payload\.username,96,\{ uuid:payload\.uuid,skinHash:skins\[0\]\.hash \}\)/, 'loading current skin history must refresh the visible profile avatar');
 assert.match(appSource, /openPlayerSkins\(username\)[\s\S]*fetchJson\(`\/api\/player-skins\?username=/, 'the skin wardrobe must use the dashboard JSON request helper');
 assert.doesNotMatch(appSource, /\bgetJson\(/, 'the skin wardrobe must not call an undefined request helper');
 assert.match(appSource, /data-player-skin-hash/, 'saved skins must be selectable');

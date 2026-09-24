@@ -856,11 +856,13 @@ async function copyUuid(target) {
   showCopyToast('UUID copied');
 }
 
-function playerHeadUrl(username, size = 32, { uuid = null } = {}) {
+function playerHeadUrl(username, size = 32, { uuid = null, skinHash = null } = {}) {
   const safeUsername = encodeURIComponent(String(username || 'Steve').trim() || 'Steve');
   const compactUuid = String(uuid || '').replaceAll('-', '').trim().toLowerCase();
   const uuidQuery = /^[0-9a-f]{32}$/.test(compactUuid) ? `&uuid=${encodeURIComponent(compactUuid)}` : '';
-  return `/api/minecraft-avatar?username=${safeUsername}${uuidQuery}&v=4`;
+  const normalizedSkinHash = String(skinHash || '').trim().toLowerCase();
+  const skinQuery = /^[a-z0-9_-]{1,128}$/.test(normalizedSkinHash) ? `&skin=${encodeURIComponent(normalizedSkinHash)}` : '';
+  return `/api/minecraft-avatar?username=${safeUsername}${uuidQuery}${skinQuery}&v=5`;
 }
 
 function playerProfileAccentKey(profile) {
@@ -4256,6 +4258,11 @@ function renderPlayerSkins(payload) {
   if (!skins.length) {
     content.innerHTML = `<div class="player-skins-empty"><strong>No skin captured yet</strong><p>${payload.refreshFailed ? 'The Minecraft skin service is temporarily unavailable. Try again later.' : 'This player does not currently have an official skin available.'}</p></div>`;
     return;
+  }
+  const profileAvatar = $('#playerProfileContent')?.querySelector('.player-profile-avatar');
+  if (profileAvatar && String(state.playerProfileUsername || '').toLowerCase() === String(payload.username || '').toLowerCase()) {
+    profileAvatar.src = playerHeadUrl(payload.username,96,{ uuid:payload.uuid,skinHash:skins[0].hash });
+    profileAvatar.style.visibility = '';
   }
   content.innerHTML = `
     <section class="player-skin-stage">
