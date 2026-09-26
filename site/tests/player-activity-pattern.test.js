@@ -74,7 +74,7 @@ assert.match(appSource, /<details class="player-profile-activity">/, 'the activi
 assert.match(appSource, /data-activity-cell/, 'heatmap cells must be interactive');
 assert.match(appSource, /data-activity-selection aria-live="polite"/, 'the selected heatmap period must be announced');
 assert.match(appSource, /'ArrowLeft'.*'ArrowRight'.*'ArrowUp'.*'ArrowDown'/, 'heatmap cells must support arrow-key navigation');
-assert.match(appSource, /activityCellLabel:[\s\S]*selectPlayerActivityCell\(selectedCell\)/, 'the selected cell must survive background refreshes');
+assert.match(appSource, /activityCellKey:[\s\S]*dataset\.activityKey === viewState\.activityCellKey[\s\S]*selectPlayerActivityCell\(selectedCell\)/, 'the selected cell must survive background refreshes');
 assert.match(appSource, /player-ping-number/, 'ping digits must use a dedicated readable style');
 assert.match(appSource, /activityPatternOpen[\s\S]*pingDetailsOpen|pingDetailsOpen[\s\S]*activityPatternOpen/, 'open panels must survive background refreshes');
 assert.match(stylesSource, /\.player-activity-stats\s*\{[^}]*grid-template-columns:\s*repeat\(6,/s, 'desktop activity stats must fit in one compact row');

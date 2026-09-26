@@ -3694,7 +3694,7 @@ function renderPlayerActivityPattern(pattern) {
             const duration = seconds > 0 ? formatDurationMs(seconds * 1000) : 'No activity';
             const label = `${PLAYER_ACTIVITY_WEEKDAYS[weekday]} ${formatActivityHour(hour)} · ${duration}`;
             const isFirstCell = weekday === 0 && hour === 0;
-            return `<button class="player-activity-cell" type="button" data-heat="${heatLevel(seconds)}" data-activity-cell data-activity-label="${escapeHtml(label)}" aria-label="${escapeHtml(label)}" aria-pressed="false" tabindex="${isFirstCell ? '0' : '-1'}" title="${escapeHtml(label)}"></button>`;
+            return `<button class="player-activity-cell" type="button" data-heat="${heatLevel(seconds)}" data-activity-cell data-activity-key="${weekday}:${hour}" data-activity-label="${escapeHtml(label)}" aria-label="${escapeHtml(label)}" aria-pressed="false" tabindex="${isFirstCell ? '0' : '-1'}" title="${escapeHtml(label)}"></button>`;
           }).join('')}`).join('')}
       </div>
       <div class="player-activity-footer">
@@ -4041,7 +4041,9 @@ function capturePlayerProfileViewState(content) {
     nameHistoryOpen: Boolean(content?.querySelector('.player-name-history')?.open),
     pingDetailsOpen: Boolean(content?.querySelector('.player-ping-details')?.open),
     activityPatternOpen: Boolean(content?.querySelector('.player-profile-activity')?.open),
-    activityCellLabel: content?.querySelector('[data-activity-cell].is-selected')?.dataset.activityLabel || null
+    // Durations grow while the player is online, so remember the cell by its
+    // weekday/hour instead of its label or the selection resets on refresh.
+    activityCellKey: content?.querySelector('[data-activity-cell].is-selected')?.dataset.activityKey || null
   };
 }
 
@@ -4064,9 +4066,9 @@ function restorePlayerProfileViewState(content, viewState) {
     const details = open ? content.querySelector(selector) : null;
     if (details) details.open = true;
   }
-  if (viewState.activityCellLabel) {
+  if (viewState.activityCellKey) {
     const selectedCell = [...content.querySelectorAll('[data-activity-cell]')]
-      .find(cell => cell.dataset.activityLabel === viewState.activityCellLabel);
+      .find(cell => cell.dataset.activityKey === viewState.activityCellKey);
     if (selectedCell) selectPlayerActivityCell(selectedCell);
   }
   if (card) card.scrollTop = viewState.cardScrollTop;
