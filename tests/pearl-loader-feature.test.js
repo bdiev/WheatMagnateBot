@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { Vec3 } = require('vec3');
-const { createPearlLoaderFeature, GoalLookAtTrapdoor, hasEnderPearlNear, PEARL_RELOAD_REMINDERS, pickPearlReloadReminder, READY_TIMEOUT_MS, trapdoorInteraction } = require('../features/pearlLoader');
+const { createPearlLoaderFeature, GoalLookAtTrapdoor, hasEnderPearlNear, PEARL_RELOAD_REMINDERS, pickPearlReloadReminder, READY_TIMEOUT_MS, trapdoorInteraction, YES_COMMAND } = require('../features/pearlLoader');
 const { createModulesForBot } = require('../site/accounts/module-registry');
 const { MinecraftBotRuntime } = require('../site/accounts/minecraft-bot-runtime');
 
@@ -207,7 +207,7 @@ async function testDelayedTrapdoorUpdate() {
   });
 
   await feature.handlePrimaryWhisper('bdiev_','Load');
-  assert.equal(await feature.handleLoaderWhisper(loaderAccount.id,'bdiev_','Yes'),true);
+  assert.equal(await feature.handleLoaderWhisper(loaderAccount.id,'bdiev_','Yep'),true);
   assert.equal(feature.getStatus().stage,'waiting_visibility','a delayed block update must not fail the request');
   assert.equal(open,false);
   assert.equal(activations,1,'confirmation polling must not toggle the trapdoor twice');
@@ -253,7 +253,7 @@ async function testRejectedTrapdoorInteractionRetries() {
   });
 
   await feature.handlePrimaryWhisper('bdiev_','Load');
-  assert.equal(await feature.handleLoaderWhisper(loaderAccount.id,'bdiev_','Yes'),true);
+  assert.equal(await feature.handleLoaderWhisper(loaderAccount.id,'bdiev_','ya'),true);
   assert.equal(open,false,'a rejected first click must be retried and close the trapdoor');
   assert.equal(activations,2);
   assert.deepEqual(packets.map(item => item.packet.sequence),[1,2],
@@ -388,7 +388,7 @@ async function testTrapdoorRaycastBoundaryMissDoesNotBlockClick() {
   assert.equal(feature.getStatus().stage,'awaiting_yes',
     'a visible hatch within 2.5 blocks must survive a precise raycast boundary miss');
   assert.deepEqual(chats,['/w bdiev_ Type "/r yes" when you ready.']);
-  assert.equal(await feature.handleLoaderWhisper(loaderAccount.id,'bdiev_','Yes'),true);
+  assert.equal(await feature.handleLoaderWhisper(loaderAccount.id,'bdiev_','Yea!'),true);
   assert.equal(clicks,1,'the local boundary miss must not prevent the server-authoritative click');
   assert.equal(open,false);
   feature.dispose();
@@ -498,6 +498,15 @@ function testRestrictedRuntimeModules() {
   assert.equal(modules.killAura.getStatus().enabled,false);
 }
 
+function testYesConfirmationWords() {
+  for (const word of ['yes','YES','Yea','ya','Yep','yep!','yes.']) {
+    assert.ok(YES_COMMAND.test(word),`"${word}" confirms the Pearl Loader`);
+  }
+  for (const word of ['no','nope','yes please','y','yeap','yess']) {
+    assert.ok(!YES_COMMAND.test(word),`"${word}" does not confirm the Pearl Loader`);
+  }
+}
+
 function testPearlReloadReminders() {
   assert.ok(PEARL_RELOAD_REMINDERS.length >= 10,'the Loader has a varied set of reload reminders');
   assert.equal(new Set(PEARL_RELOAD_REMINDERS).size,PEARL_RELOAD_REMINDERS.length,'reload reminders are unique');
@@ -540,6 +549,7 @@ async function testLoaderRuntimeWhispers() {
   testEnderPearlRadius();
   await testMissingCoordinates();
   testRestrictedRuntimeModules();
+  testYesConfirmationWords();
   testPearlReloadReminders();
   await testLoaderRuntimeWhispers();
   console.log('Pearl Loader feature tests passed.');

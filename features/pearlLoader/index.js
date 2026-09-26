@@ -7,7 +7,7 @@ const { nextInteractionSequence } = require('../obsidianFarm/interaction-sequenc
 
 const PEARL_LOADER_ROLE = 'pearl_loader';
 const LOAD_COMMAND = /^load$/i;
-const YES_COMMAND = /^yes$/i;
+const YES_COMMAND = /^(?:yes|yea|ya|yep)[.!]*$/i;
 const PEARL_SEARCH_RADIUS = 2;
 const READY_TIMEOUT_MS = 2 * 60_000;
 const PEARL_RELOAD_REMINDERS = Object.freeze([
@@ -741,6 +741,7 @@ module.exports = {
   PEARL_RELOAD_REMINDERS,
   PEARL_SEARCH_RADIUS,
   READY_TIMEOUT_MS,
+  YES_COMMAND,
   cleanWhisperText,
   createPearlLoaderFeature,
   GoalLookAtTrapdoor,
