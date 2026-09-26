@@ -76,10 +76,14 @@ assert.match(appSource, /data-activity-selection aria-live="polite"/, 'the selec
 assert.match(appSource, /'ArrowLeft'.*'ArrowRight'.*'ArrowUp'.*'ArrowDown'/, 'heatmap cells must support arrow-key navigation');
 assert.match(appSource, /activityCellKey:[\s\S]*dataset\.activityKey === viewState\.activityCellKey[\s\S]*selectPlayerActivityCell\(selectedCell\)/, 'the selected cell must survive background refreshes');
 assert.match(appSource, /player-ping-number/, 'ping digits must use a dedicated readable style');
+assert.match(appSource, /const PLAYER_PING_CHART_DAYS = 14;[\s\S]*player-ping-bar is-empty/, 'the ping chart must keep a fixed day window with empty slots for missing days');
+assert.match(appSource, /class="player-ping-stats"/, 'ping averages must render as compact stat tiles');
+assert.match(appSource, /querySelectorAll\('\.player-ping-details\[open\]'\)[\s\S]*details\.open = false/, 'tapping outside must close the ping popover');
 assert.match(appSource, /activityPatternOpen[\s\S]*pingDetailsOpen|pingDetailsOpen[\s\S]*activityPatternOpen/, 'open panels must survive background refreshes');
 assert.match(stylesSource, /\.player-activity-stats\s*\{[^}]*grid-template-columns:\s*repeat\(6,/s, 'desktop activity stats must fit in one compact row');
 assert.match(stylesSource, /\.player-activity-cell\s*\{[^}]*min-width:\s*0;/s, 'interactive cells must override the global button width');
 assert.match(stylesSource, /\.player-ping-details\s*>\s*summary\s*\{[^}]*font-family:\s*ui-monospace/s, 'ping digits must not use the hard-to-read pixel font');
+assert.match(stylesSource, /\.player-ping-bars\s*\{[^}]*grid-auto-columns:\s*minmax\(0, 1fr\);/s, 'ping bars must span the full popover width');
 assert.match(stylesSource, /\.player-profile-avatar-wrap\s*\{[^}]*contain:\s*layout;[^}]*backface-visibility:\s*hidden;/s, 'the avatar must keep stable layout containment without clipping its status halo');
 assert.match(stylesSource, /\.player-profile-avatar-wrap::before\s*\{[^}]*animation:\s*player-status-halo[^}]*will-change:\s*transform, opacity;/s, 'the profile status halo must animate only compositor-friendly properties');
 assert.match(stylesSource, /\.player-profile-avatar-wrap::after\s*\{[^}]*background:\s*var\(--player-status-color\);[^}]*box-shadow:/s, 'the solid profile status marker must stay visually stable');

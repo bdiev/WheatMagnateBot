@@ -3626,36 +3626,87 @@ function formatStreakDays(days) {
   return `${formatNumber(count)} ${count === 1 ? 'day' : 'days'}`;
 }
 
+const PLAYER_PING_CHART_DAYS = 14;
+const PLAYER_PING_QUALITY_LABELS = { good: 'Good', fair: 'Fair', poor: 'Poor' };
+
+function playerPingDayKey(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function formatPlayerPingDay(key) {
+  const [year, month, day] = String(key).split('-').map(Number);
+  return new Date(year, month - 1, day).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+// A fixed calendar window keeps gaps visible: days without samples stay as
+// empty slots instead of silently collapsing the chart.
 function renderPlayerPingBars(ping) {
-  const days = Array.isArray(ping.daily) ? ping.daily.filter(day => day?.avg != null) : [];
-  if (days.length < 2) return '';
-  const maxPing = Math.max(...days.map(day => Number(day.max) || Number(day.avg) || 0), 1);
+  const byDay = new Map((Array.isArray(ping.daily) ? ping.daily : [])
+    .filter(day => day?.day && day.avg != null)
+    .map(day => [day.day, day]));
+  if (!byDay.size) return '';
+  const days = [];
+  const cursor = new Date();
+  cursor.setHours(12, 0, 0, 0);
+  cursor.setDate(cursor.getDate() - (PLAYER_PING_CHART_DAYS - 1));
+  for (let index = 0; index < PLAYER_PING_CHART_DAYS; index += 1) {
+    const key = playerPingDayKey(cursor);
+    days.push({ key, sample: byDay.get(key) || null });
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  const sampled = days.filter(day => day.sample);
+  if (!sampled.length) return '';
+  // Scale against at least the "fair" threshold so a stable 30 ms week doesn't
+  // render as full-height bars.
+  const scale = Math.max(100, ...sampled.map(day => Number(day.sample.avg) || 0));
   return `
-        <div class="player-ping-bars" role="img" aria-label="Daily average ping for the last ${days.length} days">
-          ${days.map(day => `
-            <span class="player-ping-bar" data-ping-quality="${playerPingQuality(day.avg)}" style="--ping-height:${Math.max(4, Math.round(Number(day.avg) / maxPing * 100))}%" title="${escapeHtml(day.day)}: avg ${escapeHtml(formatPing(day.avg))}, ${escapeHtml(formatPing(day.min))}–${escapeHtml(formatPing(day.max))}"></span>`).join('')}
-        </div>
-        <small>Daily average, last ${formatNumber(days.length)} days with samples</small>`;
+            <figure class="player-ping-chart">
+              <div class="player-ping-bars" role="img" aria-label="Daily average ping, last ${PLAYER_PING_CHART_DAYS} days, ${formatNumber(sampled.length)} with samples">
+                ${days.map(({ key, sample }) => sample
+                  ? `<span class="player-ping-bar" data-ping-quality="${playerPingQuality(sample.avg)}" style="--ping-height:${Math.max(8, Math.round(Number(sample.avg) / scale * 100))}%" title="${escapeHtml(formatPlayerPingDay(key))}: avg ${escapeHtml(formatPing(sample.avg))} · ${escapeHtml(formatPing(sample.min))}–${escapeHtml(formatPing(sample.max))}"></span>`
+                  : `<span class="player-ping-bar is-empty" title="${escapeHtml(formatPlayerPingDay(key))}: no samples"></span>`).join('')}
+              </div>
+              <figcaption class="player-ping-axis">
+                <small>${escapeHtml(formatPlayerPingDay(days[0].key))}</small>
+                <small>Daily avg · ${formatNumber(sampled.length)}/${PLAYER_PING_CHART_DAYS} days</small>
+                <small>Today</small>
+              </figcaption>
+            </figure>`;
+}
+
+function renderPlayerPingStat(label, value, quality = '') {
+  return `<div><dt>${label}</dt><dd${quality ? ` data-ping-quality="${quality}"` : ''}>${value}</dd></div>`;
 }
 
 function renderPlayerPingBadge(profile) {
   const ping = profile.ping || {};
   if (ping.last == null) return '';
   const isFresh = profile.isOnline && ping.lastAt && Date.now() - new Date(ping.lastAt).getTime() < PLAYER_PING_FRESH_MS;
+  const quality = playerPingQuality(ping.last);
   const range = ping.min7d == null || ping.max7d == null ? '-' : `${formatNumber(ping.min7d)}–${formatNumber(ping.max7d)} ms`;
+  const sampledAt = ping.lastAt
+    ? `<small title="${escapeHtml(formatDate(ping.lastAt))}">${isFresh ? 'Live' : 'Sampled'} · ${escapeHtml(formatRecentDate(ping.lastAt))}</small>`
+    : '';
   return `
           <details class="player-ping-details">
-            <summary class="player-ping-value" data-ping-quality="${playerPingQuality(ping.last)}" data-ping-fresh="${isFresh}" title="${isFresh ? 'Current ping' : 'Last sampled ping'}" aria-label="${isFresh ? 'Ping' : 'Last ping'} ${escapeHtml(formatPing(ping.last))}, show ping details">
+            <summary class="player-ping-value" data-ping-quality="${quality}" data-ping-fresh="${isFresh}" title="${isFresh ? 'Current ping' : 'Last sampled ping'}" aria-label="${isFresh ? 'Ping' : 'Last ping'} ${escapeHtml(formatPing(ping.last))}, show ping details">
               <span class="player-ping-signal" aria-hidden="true"><i></i><i></i><i></i></span>
               <span class="player-ping-number">${formatNumber(ping.last)}</span><span class="player-ping-unit">ms</span>
             </summary>
             <div class="player-ping-popover">
-              <dl>
-                <div><dt>${isFresh ? 'Ping now' : 'Last ping'}</dt><dd>${formatPing(ping.last)}${ping.lastAt ? ` <small>${escapeHtml(formatDate(ping.lastAt))}</small>` : ''}</dd></div>
-                <div><dt>Avg 24h</dt><dd class="player-ping-value" data-ping-quality="${playerPingQuality(ping.avg24h)}">${formatPing(ping.avg24h)}</dd></div>
-                <div><dt>Avg 7d</dt><dd class="player-ping-value" data-ping-quality="${playerPingQuality(ping.avg7d)}">${formatPing(ping.avg7d)}</dd></div>
-                <div><dt>Range 7d</dt><dd>${range}</dd></div>
-                <div><dt>All-time avg</dt><dd>${formatPing(ping.avgAllTime)}</dd></div>
+              <header class="player-ping-head">
+                <div>
+                  <span class="player-ping-eyebrow">${isFresh ? 'Ping now' : 'Last ping'}</span>
+                  <strong data-ping-quality="${quality}">${formatNumber(ping.last)}<span>ms</span></strong>
+                  ${sampledAt}
+                </div>
+                <span class="player-ping-quality" data-ping-quality="${quality}" data-ping-fresh="${isFresh}">${PLAYER_PING_QUALITY_LABELS[quality] || '-'}</span>
+              </header>
+              <dl class="player-ping-stats">
+                ${renderPlayerPingStat('Avg 24h', formatPing(ping.avg24h), playerPingQuality(ping.avg24h))}
+                ${renderPlayerPingStat('Avg 7d', formatPing(ping.avg7d), playerPingQuality(ping.avg7d))}
+                ${renderPlayerPingStat('Range 7d', range)}
+                ${renderPlayerPingStat('All-time', formatPing(ping.avgAllTime), playerPingQuality(ping.avgAllTime))}
               </dl>
               ${renderPlayerPingBars(ping)}
             </div>
@@ -10291,6 +10342,11 @@ $('#adminPlayersSearch')?.addEventListener('input', () => {
 $('#adminPlayersScroller')?.addEventListener('scroll', maybeLoadMoreAdminPlayers, { passive: true });
 $('#adminPlayersList')?.addEventListener('click', event => handleAdminPlayerAction(event).catch(err => setAdminPlayersNotice(err.message, 'error')));
 document.addEventListener('pointerdown', closeAdminPlayerMenus, true);
+document.addEventListener('pointerdown', event => {
+  for (const details of document.querySelectorAll('.player-ping-details[open]')) {
+    if (!details.contains(event.target)) details.open = false;
+  }
+}, true);
 $('#adminPlayerActionsButtons')?.addEventListener('click', event => handleAdminPlayerAction(event).catch(err => setAdminPlayersNotice(err.message, 'error')));
 $('#adminPlayerActionsClose')?.addEventListener('click', closeAdminPlayerActions);
 $('#adminPlayerActionsDialog')?.addEventListener('cancel', event => {

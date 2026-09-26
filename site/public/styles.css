@@ -5707,47 +5707,121 @@ body.search-focus-active #logoutButton {
   left: 0;
   z-index: 12;
   display: grid;
-  gap: 8px;
-  width: min(300px, 100%);
+  gap: 10px;
+  width: min(320px, 100%);
   margin-top: 0;
   border: 2px solid var(--line);
   border-radius: var(--button-radius);
-  padding: 10px;
+  padding: 12px;
   background: var(--panel);
   box-shadow: var(--shadow);
+  font-family: inherit;
+  white-space: normal;
 }
 
-.player-ping-popover dl {
-  display: grid;
-  gap: 5px;
-  margin: 0;
-}
-
-.player-ping-popover dl > div {
+.player-ping-head {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
 }
 
-.player-ping-popover dt {
+.player-ping-head > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.player-ping-eyebrow,
+.player-ping-stats dt {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 900;
+  letter-spacing: .06em;
   text-transform: uppercase;
 }
 
-.player-ping-popover dd {
-  margin: 0;
+.player-ping-head strong {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 26px;
   font-weight: 900;
-  text-align: right;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.05;
 }
 
-.player-ping-popover small {
+.player-ping-head strong > span {
   color: var(--muted);
-  font-size: 10px;
-  font-weight: 700;
+  font-size: 12px;
 }
+
+.player-ping-head small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.player-ping-quality {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, currentColor 40%, var(--line));
+  border-radius: 2px;
+  padding: 3px 8px;
+  color: var(--muted);
+  background: color-mix(in srgb, currentColor 10%, var(--panel));
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.player-ping-quality[data-ping-fresh="false"] {
+  opacity: .72;
+}
+
+.player-ping-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+}
+
+.player-ping-stats > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 7px 9px;
+  background: var(--panel-soft);
+}
+
+.player-ping-stats dd {
+  overflow: hidden;
+  margin: 0;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 14px;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.player-ping-head strong[data-ping-quality="good"],
+.player-ping-stats dd[data-ping-quality="good"],
+.player-ping-quality[data-ping-quality="good"] { color: var(--accent-strong); }
+.player-ping-head strong[data-ping-quality="fair"],
+.player-ping-stats dd[data-ping-quality="fair"],
+.player-ping-quality[data-ping-quality="fair"] { color: var(--warn); }
+.player-ping-head strong[data-ping-quality="poor"],
+.player-ping-stats dd[data-ping-quality="poor"],
+.player-ping-quality[data-ping-quality="poor"] { color: var(--danger); }
 
 .player-ping-value[data-ping-quality="good"] { color: var(--accent-strong); }
 .player-ping-value[data-ping-quality="fair"] { color: var(--warn); }
@@ -5898,25 +5972,49 @@ button.player-activity-cell.is-selected:active:not(:disabled) {
 .player-activity-legend small:first-child { margin-right: 3px; }
 .player-activity-legend small:last-child { margin-left: 3px; }
 
+.player-ping-chart {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+}
+
 .player-ping-bars {
-  display: flex;
-  align-items: flex-end;
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  align-items: end;
   gap: 3px;
-  height: 44px;
+  height: 48px;
   border-bottom: 2px solid var(--line);
 }
 
 .player-ping-bar {
-  flex: 1 1 0;
   min-width: 0;
-  max-width: 18px;
   height: var(--ping-height);
   border-radius: 2px 2px 0 0;
   background: var(--accent);
 }
 
+.player-ping-bar.is-empty {
+  height: 3px;
+  background: color-mix(in srgb, var(--muted) 28%, transparent);
+}
+
 .player-ping-bar[data-ping-quality="fair"] { background: var(--warn); }
 .player-ping-bar[data-ping-quality="poor"] { background: var(--danger); }
+
+.player-ping-axis {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.player-ping-axis small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
 
 .player-profile-section-head {
   display: flex;
