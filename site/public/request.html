@@ -8,65 +8,61 @@
     <meta name="theme-color" content="#f1c232">
     <link rel="icon" type="image/png" href="/items/Wheat.png">
     <script src="/theme-init.js?v=136"></script>
-    <link rel="stylesheet" href="/styles.css?v=248">
-    <link rel="stylesheet" href="/request.css?v=19">
+    <link rel="stylesheet" href="/styles.css?v=267">
+    <link rel="stylesheet" href="/request.css?v=20">
     <script src="/pwa-update.js" defer></script>
     <script src="/page-transitions.js?v=1" defer></script>
-    <script src="/request.js?v=9" defer></script>
+    <script src="/request.js?v=10" defer></script>
   </head>
   <body class="request-page">
     <main class="shell request-shell">
       <header class="topbar request-topbar">
-        <div>
+        <div class="dashboard-brand">
           <p class="eyebrow">Resource Requests</p>
           <h1>WheatMagnateBot <span class="minedings-mark" aria-hidden="true">W</span></h1>
         </div>
         <div class="topbar-actions">
           <a class="ghost-button request-nav-link" href="/">Dashboard</a>
+          <div id="accountArea" class="account-area"></div>
           <button id="themeToggle" class="theme-switch" type="button" aria-label="Switch to dark theme" aria-pressed="false">
             <span class="theme-icon sun" aria-hidden="true"></span>
             <span class="theme-icon moon" aria-hidden="true"></span>
             <span class="theme-thumb" aria-hidden="true"></span>
           </button>
-          <div id="accountArea" class="account-area"></div>
         </div>
       </header>
 
-      <section class="request-intro">
+      <section class="panel request-intro">
+        <div class="panel-head">
+          <div>
+            <h2>Resources delivered where you need them</h2>
+            <p>Build an order from the Minecraft catalog and follow it from request to delivery. When it is ready, the bot privately sends the coordinates through <code>/w</code>.</p>
+          </div>
+          <span class="request-availability"><i aria-hidden="true"></i> Delivery queue open</span>
+        </div>
         <div class="request-intro-body">
-          <div class="request-intro-copy-wrap">
-            <span class="request-availability"><i aria-hidden="true"></i> Delivery queue open</span>
-            <p class="eyebrow">Minecraft resource courier</p>
-            <h2 class="request-intro-title">Resources delivered where you need them</h2>
-            <p class="muted request-intro-copy">Build an order from the Minecraft catalog and follow it from request to delivery. When it is ready, the bot privately sends the coordinates through <code>/w</code>.</p>
+          <div class="request-steps" aria-label="How it works">
+            <article class="request-step">
+              <span class="request-step-number">01</span>
+              <div><strong>Build your order</strong><small>Choose items and quantities.</small></div>
+            </article>
+            <article class="request-step">
+              <span class="request-step-number">02</span>
+              <div><strong>We deliver it</strong><small>Track progress on this page.</small></div>
+            </article>
+            <article class="request-step">
+              <span class="request-step-number">03</span>
+              <div><strong>Get coordinates</strong><small>Receive a private in-game whisper.</small></div>
+            </article>
           </div>
           <div class="request-intro-action" aria-label="Request access">
-            <div class="request-hero-package" aria-hidden="true">
-              <span class="request-package-ring"></span>
-              <img src="/items/Chest.png" alt="">
-              <img src="/items/Compass.png" alt="">
-            </div>
-            <div>
-              <span class="request-action-label">Private order portal</span>
+            <img class="request-panel-icon" src="/items/Chest.png" alt="">
+            <div class="request-intro-action-copy">
               <strong>Your requests stay tied to your Discord account.</strong>
+              <small id="authHint">Sign in once to create and track deliveries.</small>
             </div>
             <a id="heroAction" class="request-primary-link" href="/api/request/auth/start">Sign in with Discord</a>
-            <small id="authHint">Sign in once to create and track deliveries.</small>
           </div>
-        </div>
-        <div class="request-steps" aria-label="How it works">
-          <article class="request-step">
-            <span class="request-step-number">01</span>
-            <div><strong>Build your order</strong><small>Choose items and quantities.</small></div>
-          </article>
-          <article class="request-step">
-            <span class="request-step-number">02</span>
-            <div><strong>We deliver it</strong><small>Track progress on this page.</small></div>
-          </article>
-          <article class="request-step">
-            <span class="request-step-number">03</span>
-            <div><strong>Get coordinates</strong><small>Receive a private in-game whisper.</small></div>
-          </article>
         </div>
       </section>
 
@@ -75,7 +71,7 @@
       <section id="requesterApp" class="request-portal-grid" hidden>
         <article class="panel request-form-panel">
           <div class="panel-head">
-            <div><span class="request-section-kicker">Order builder</span><h2>New Request</h2><p>Choose resources, set quantities, and send the order.</p></div>
+            <div><h2>New Request</h2><p>Choose resources, set quantities, and send the order.</p></div>
             <img class="request-panel-icon" src="/items/Chest.png" alt="">
           </div>
           <form id="requestForm" class="request-form">
@@ -123,7 +119,7 @@
 
         <section class="panel request-history-panel">
           <div class="panel-head">
-            <div><span class="request-section-kicker">Delivery timeline</span><h2>Your Requests</h2><p>Order history and current delivery status.</p></div>
+            <div><h2>Your Requests</h2><p>Order history and current delivery status.</p></div>
             <div class="request-history-tools"><span id="requestHistoryCount" class="request-history-count">No requests</span><button id="refreshRequests" class="ghost-button request-icon-button" type="button" aria-label="Refresh">↻</button></div>
           </div>
           <div id="requestList" class="request-list"></div>
@@ -153,7 +149,7 @@
       <section id="loginPrompt" class="panel request-login-panel" hidden>
         <div class="panel-head">
           <div><h2>Sign in to submit a request</h2><p>Authentication keeps your order history private.</p></div>
-          <img class="request-title-icon" src="/items/Ender_Chest.png" alt="">
+          <img class="request-panel-icon" src="/items/Ender_Chest.png" alt="">
         </div>
         <div class="request-login-body">
           <p class="muted">The site only receives your basic Discord profile: ID, display name, and avatar.</p>
@@ -161,15 +157,11 @@
         </div>
       </section>
 
-      <footer class="request-footer">
-        <span>WheatMagnateBot</span>
-        <span>Resource delivery</span>
-      </footer>
     </main>
 
     <dialog id="adminRequestModal" class="admin-request-modal" aria-labelledby="adminRequestModalTitle">
       <header class="admin-request-modal-head">
-        <div><span class="request-section-kicker">Request management</span><h2 id="adminRequestModalTitle">Request details</h2></div>
+        <div><p class="eyebrow">Request management</p><h2 id="adminRequestModalTitle">Request details</h2></div>
         <button id="adminRequestModalClose" class="request-modal-close" type="button" data-admin-modal-close aria-label="Close request details">×</button>
       </header>
       <div id="adminRequestModalContent" class="admin-request-details request-modal-details"></div>

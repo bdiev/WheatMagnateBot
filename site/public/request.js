@@ -32,6 +32,10 @@ function toggleTheme() {
   applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
 }
 
+function updateTopbarStuck() {
+  $('.request-topbar')?.classList.toggle('topbar-stuck', window.scrollY > 20);
+}
+
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]);
 }
@@ -199,13 +203,13 @@ function renderAccount() {
     const avatar = session.requester.avatarUrl
       ? `<img src="${escapeHtml(session.requester.avatarUrl)}" alt="">`
       : '<span class="account-avatar"></span>';
-    $('#accountArea').innerHTML = `<div class="account-chip">${avatar}<span>${escapeHtml(session.requester.displayName)}</span></div><button id="requestLogout" class="text-button" type="button">Log out</button>`;
+    $('#accountArea').innerHTML = `<div class="account-chip">${avatar}<span>${escapeHtml(session.requester.displayName)}</span></div><button id="requestLogout" class="ghost-button" type="button">Log out</button>`;
     $('#requestLogout').addEventListener('click', logout);
   } else if (session?.admin) {
     $('#accountArea').innerHTML = `<div class="account-chip"><span>Administrator: ${escapeHtml(session.admin.username)}</span></div>`;
   } else {
     $('#accountArea').innerHTML = `
-      <a class="request-nav-link account-sign-in" href="/api/request/auth/start">
+      <a class="ghost-button request-nav-link account-sign-in" href="/api/request/auth/start">
         <svg class="discord-icon" viewBox="0 0 24 24" aria-hidden="true">
           <path fill="currentColor" d="M19.54 5.34A17.3 17.3 0 0 0 15.3 4c-.2.36-.44.84-.6 1.22a16.1 16.1 0 0 0-4.72 0A12 12 0 0 0 9.36 4c-1.5.26-2.92.72-4.24 1.34C2.44 9.3 1.72 13.16 2.08 16.96a17.1 17.1 0 0 0 5.2 2.62c.42-.56.8-1.16 1.12-1.78-.62-.24-1.22-.52-1.78-.86l.44-.34c3.44 1.58 7.18 1.58 10.58 0l.46.34c-.58.34-1.18.62-1.8.86.32.62.7 1.22 1.12 1.78a17 17 0 0 0 5.2-2.62c.44-4.4-.74-8.22-3.08-11.62ZM8.86 14.66c-1.04 0-1.9-.96-1.9-2.14s.84-2.14 1.9-2.14c1.06 0 1.92.98 1.9 2.14 0 1.18-.84 2.14-1.9 2.14Zm6.98 0c-1.04 0-1.9-.96-1.9-2.14s.84-2.14 1.9-2.14c1.06 0 1.92.98 1.9 2.14 0 1.18-.84 2.14-1.9 2.14Z"/>
         </svg>
@@ -289,7 +293,7 @@ function adminRequestCard(request) {
     </button>
     <div class="admin-request-details" hidden>
       <div class="admin-request-order">
-        <span class="request-section-kicker">Order details</span>
+        <p class="eyebrow">Order details</p>
         <p class="request-resources">${escapeHtml(request.resources)}</p>
         <div class="request-meta"><span>Discord: ${escapeHtml(requester.displayName || requester.discordUsername || 'Unknown')}</span>${request.notifiedAt ? `<span>Sent ${escapeHtml(formatDate(request.notifiedAt))}</span>` : ''}</div>
       </div>
@@ -477,6 +481,8 @@ document.addEventListener('pointerdown', event => {
   if (!event.target.closest('.request-item-search')) hideItemSuggestions();
 });
 $('#themeToggle').addEventListener('click', toggleTheme);
+window.addEventListener('scroll', updateTopbarStuck, { passive: true });
+updateTopbarStuck();
 $('#refreshRequests').addEventListener('click', () => loadRequests().catch(error => showMessage(error.message, true)));
 $('#refreshAdmin').addEventListener('click', () => loadAdminRequests().catch(error => showMessage(error.message, true)));
 $('#adminStatusFilter').addEventListener('change', () => loadAdminRequests().catch(error => showMessage(error.message, true)));
