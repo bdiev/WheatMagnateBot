@@ -3402,7 +3402,8 @@ body.search-focus-active #logoutButton {
   overflow: hidden;
 }
 
-.player-chart-loading .chart {
+.player-chart-loading .chart,
+.player-chart-loading .chart-y-axis {
   opacity: 0;
 }
 

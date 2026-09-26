@@ -28,4 +28,20 @@ assert.match(appSource, /function renderNearbySightings[\s\S]*remove\('player-li
 assert.match(stylesSource, /\.player-chart-skeleton[\s\S]*\.player-row-skeleton[\s\S]*skeleton-value-shimmer/,
   'chart and list skeletons must share a visible shimmer treatment');
 
+for (const chartId of ['chatHourlyChart', 'killAuraKillsChart', 'obsidianDailyChart', 'tpsHourlyChart']) {
+  assert.match(
+    indexSource,
+    new RegExp(`class="chart-scroll player-chart-loading" aria-busy="true"><div class="player-chart-skeleton"[^>]*>(?:<span></span>){8}</div><canvas id="${chartId}"`),
+    `${chartId} must render a structural skeleton until its data arrives`
+  );
+  assert.match(appSource, new RegExp(`setChartLoading\\('${chartId}', false\\);[\\s\\S]*?redrawCharts\\(\\)`),
+    `${chartId} must leave its loading state before redrawing with real data`);
+}
+assert.match(appSource, /function setChartLoading\(chartId, loading\)[\s\S]*?closest\('\.chart-scroll'\)[\s\S]*?toggle\('player-chart-loading', loading\)/,
+  'chart loading states must toggle the shared skeleton class on the chart container');
+assert.match(appSource, /async function selectAccount[\s\S]*?\['killAuraKillsChart', 'obsidianDailyChart', 'tpsHourlyChart'\]\.forEach\(chartId => setChartLoading\(chartId, true\)\)/,
+  'switching accounts must show chart skeletons until the new account data arrives');
+assert.match(stylesSource, /\.player-chart-loading \.chart,\s*\.player-chart-loading \.chart-y-axis\s*\{[^}]*opacity:\s*0;/,
+  'the sticky chart axis must stay hidden behind the skeleton');
+
 console.log('Player Stats loading UI tests passed.');

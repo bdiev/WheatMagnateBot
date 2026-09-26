@@ -1521,6 +1521,8 @@ async function selectAccount(accountId) {
   state.killAuraTargetsDirty = false;
   resetKillAuraRangeEditor();
   state.obsidianCoordinateEditorOpen = false;
+  ['killAuraKillsChart', 'obsidianDailyChart', 'tpsHourlyChart'].forEach(chartId => setChartLoading(chartId, true));
+  if (!state.chatContextMessageId && !state.chatSearchQuery) setChartLoading('chatHourlyChart', true);
   closeWhisperDialog();
   state.whisperPlayers = [];
   state.whisperMessagesSignature = '';
@@ -3205,6 +3207,16 @@ function releaseInactiveChartCanvases() {
     state.chartAnimations[chartId]?.cancel?.();
     delete state.chartAnimations[chartId];
   });
+}
+
+// Chart canvases stay hidden behind a bar skeleton until their first series
+// for the active account arrives, so an empty axis never flashes as "no data".
+function setChartLoading(chartId, loading) {
+  const shell = document.getElementById(chartId)?.closest('.chart-scroll');
+  if (!shell) return;
+  shell.classList.toggle('player-chart-loading', loading);
+  if (loading) shell.setAttribute('aria-busy', 'true');
+  else shell.removeAttribute('aria-busy');
 }
 
 function drawChartById(chartId) {
@@ -5459,7 +5471,10 @@ function renderChat(payload, { mode = 'replace', scrollMode = null } = {}) {
   if (Array.isArray(payload.hourly)) state.charts.chatHourly = payload.hourly;
   if (Array.isArray(payload.daily)) state.charts.chatDaily = payload.daily;
   if (Array.isArray(payload.monthly)) state.charts.chatMonthly = payload.monthly;
-  if (payload.hourly || payload.daily || payload.monthly) redrawCharts();
+  if (payload.hourly || payload.daily || payload.monthly) {
+    setChartLoading('chatHourlyChart', false);
+    redrawCharts();
+  }
 }
 
 function renderLiveChat(payload) {
@@ -5870,6 +5885,7 @@ function renderKillAura(payload = {}) {
   state.charts.killAuraHourly = payload.killHistory?.hourly || [];
   state.charts.killAuraDaily = payload.killHistory?.daily || [];
   state.charts.killAuraMonthly = payload.killHistory?.monthly || [];
+  setChartLoading('killAuraKillsChart', false);
   const aura = payload.state || {};
   if (!state.killAuraRangeDirty && !state.killAuraRangeSaving) {
     renderKillAuraRangeControl(aura.attackRange, { status: 'Saved · applies immediately.' });
@@ -6975,6 +6991,7 @@ function renderObsidian(payload) {
   state.charts.obsidianDaily = payload.daily || [];
   state.charts.obsidianAccounts = chartAccounts;
   state.charts.obsidianAnnotations = payload.annotations || [];
+  setChartLoading('obsidianDailyChart', false);
   redrawCharts();
 }
 
@@ -7513,6 +7530,7 @@ function renderServerStats(payload) {
 
   state.charts.tpsHourly = payload.hourlyTps || [];
   state.charts.tpsHistoryCache = null;
+  setChartLoading('tpsHourlyChart', false);
   redrawCharts();
 }
 
