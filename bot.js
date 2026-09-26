@@ -35,6 +35,7 @@ const {
   createFarmPingMonitor
 } = require('./features/obsidianFarm/ping-protection');
 const { moveInventorySlot } = require('./minecraft/inventory-slot-move');
+const { parseTpsText, looksLikePlayerLine, createTpsTracker } = require('./minecraft/tps-tracker');
 const {
   createDatabasePool,
   logDatabaseStatus,
@@ -1258,9 +1259,14 @@ const obsidianStatsUpdaters = new Map(); // channelId -> { messageId, timer, sup
 let latestObsidianStatsSupplies = null;
 let obsidianStatsWatchdogInterval = null;
 let channelCleanerInterval = null;
-let tpsHistory = [];
-let realTps = null;
-let lastTickTime = 0;
+const tpsTracker = createTpsTracker();
+const TPS_CHAT_REQUEST_INTERVAL_MS = 60_000;
+const TPS_CHAT_RESPONSE_WINDOW_MS = 5_000;
+const TPS_CHAT_MAX_UNANSWERED = 3;
+let tpsChatResponseDeadline = 0;
+let lastTpsChatRequestAt = 0;
+let unansweredTpsChatRequests = 0;
+let lastTpsStatusDisplay = null;
 let lastTpsSampleAt = 0;
 const nearbyPlayerSightingWriteAt = new Map();
 let mineflayerStarted = false;
@@ -8145,17 +8151,83 @@ function getCanonicalWhitelistUsername(username) {
 }
 
 function getCurrentTpsDisplay() {
-  return realTps !== null
-    ? realTps.toFixed(1)
-    : tpsHistory.length > 0
-      ? (tpsHistory.reduce((a, b) => a + b, 0) / tpsHistory.length).toFixed(1)
-      : 'Calculating...';
+  const tps = getCurrentTpsNumber();
+  return tps === null ? 'Calculating...' : tps.toFixed(1);
 }
 
 function getCurrentTpsNumber() {
-  if (realTps !== null && Number.isFinite(realTps)) return realTps;
-  if (tpsHistory.length === 0) return null;
-  return tpsHistory.reduce((a, b) => a + b, 0) / tpsHistory.length;
+  if (!bot || !bot.entity) return null;
+  return tpsTracker.getTps();
+}
+
+function resetTpsTracking() {
+  tpsTracker.reset();
+  tpsChatResponseDeadline = 0;
+  lastTpsChatRequestAt = 0;
+  unansweredTpsChatRequests = 0;
+  lastTpsStatusDisplay = null;
+}
+
+function reportCurrentTps(tps) {
+  recordTpsSample().catch(() => {});
+  reportNotification('low_tps', {
+    key: 'minecraft', title: 'Low server TPS',
+    message: `Server TPS is ${tps.toFixed(1)}.`, metadata: { tps }
+  });
+}
+
+function refreshTpsStatusIfChanged() {
+  const display = getCurrentTpsDisplay();
+  if (display === lastTpsStatusDisplay) return;
+  lastTpsStatusDisplay = display;
+  if (statusMessage) updateStatusMessage();
+}
+
+function pollServerTps() {
+  if (!bot || !bot.entity) return;
+  let text = '';
+  if (bot.tablist?.header) text += chatComponentToString(bot.tablist.header) + ' ';
+  if (bot.tablist?.footer) text += chatComponentToString(bot.tablist.footer);
+  const tabTps = tpsTracker.setReported(parseTpsText(text), 'tab');
+  if (tabTps !== null) {
+    reportCurrentTps(tabTps);
+  } else if (!tpsTracker.hasFreshReported()) {
+    const measured = tpsTracker.getMeasuredTps();
+    if (measured !== null) reportCurrentTps(measured);
+    requestTpsViaChat();
+  }
+  refreshTpsStatusIfChanged();
+}
+
+// /tps is only a fallback: rate-limited, and abandoned for the session when the
+// server never answers in a recognizable format.
+function requestTpsViaChat() {
+  const now = Date.now();
+  if (unansweredTpsChatRequests >= TPS_CHAT_MAX_UNANSWERED) return;
+  if (now - lastTpsChatRequestAt < TPS_CHAT_REQUEST_INTERVAL_MS) return;
+  if (tpsChatResponseDeadline > 0) {
+    tpsChatResponseDeadline = 0;
+    unansweredTpsChatRequests += 1;
+    if (unansweredTpsChatRequests >= TPS_CHAT_MAX_UNANSWERED) {
+      console.log('[TPS] /tps is not answered in a known format; using world-age measurement only.');
+      return;
+    }
+  }
+  if (!sendMinecraftChat('/tps')) return;
+  lastTpsChatRequestAt = now;
+  tpsChatResponseDeadline = now + TPS_CHAT_RESPONSE_WINDOW_MS;
+}
+
+// Chat is only trusted for TPS right after our own /tps and never for player lines.
+function handleTpsChatResponse(text) {
+  if (!tpsChatResponseDeadline || Date.now() > tpsChatResponseDeadline) return;
+  if (looksLikePlayerLine(text)) return;
+  const tps = tpsTracker.setReported(parseTpsText(text), 'chat');
+  if (tps === null) return;
+  tpsChatResponseDeadline = 0;
+  unansweredTpsChatRequests = 0;
+  reportCurrentTps(tps);
+  refreshTpsStatusIfChanged();
 }
 
 function getBotPingDisplay() {
@@ -8164,7 +8236,7 @@ function getBotPingDisplay() {
 }
 
 async function recordTpsSample(force = false) {
-  if (!pool) return;
+  if (!pool || !bot || !bot.entity) return;
   const tps = getCurrentTpsNumber();
   if (!Number.isFinite(tps)) return;
   const now = Date.now();
@@ -9326,7 +9398,7 @@ function createBot() {
     return;
   }
 
-  lastTickTime = 0; // Reset TPS tracking for new bot
+  resetTpsTracking(); // Reset TPS tracking for new bot
   recordSystemLog({
     level: 'info',
     category: 'minecraft',
@@ -9435,6 +9507,7 @@ function createBot() {
 
   bot.on('time', () => {
     if (bot !== createdBot) return;
+    tpsTracker.observeWorldAge(createdBot.time?.age);
     gameTimePushMonitor.observe(createdBot.time?.time, {
       daylightCycle: createdBot.time?.doDaylightCycle !== false
     });
@@ -9560,34 +9633,9 @@ function createBot() {
 
     playerPing.start();
 
-    // Start TPS from TAB monitor
-    tpsTabInterval = setInterval(() => {
-      let found = false;
-      if (bot && bot.tablist) {
-        let text = '';
-        if (bot.tablist.header) {
-          text += chatComponentToString(bot.tablist.header) + ' ';
-        }
-        if (bot.tablist.footer) {
-          text += chatComponentToString(bot.tablist.footer);
-        }
-        const tpsMatch = text.match(/(\d+\.?\d*)\s*tps/i);
-        if (tpsMatch) {
-          realTps = parseFloat(tpsMatch[1]);
-          recordTpsSample().catch(() => {});
-          reportNotification('low_tps', {
-            key: 'minecraft', title: 'Low server TPS',
-            message: `Server TPS is ${realTps.toFixed(1)}.`, metadata: { tps: realTps }
-          });
-          found = true;
-          // Update status immediately when TPS changes
-          if (statusMessage) updateStatusMessage();
-        }
-      }
-      if (!found && bot && bot.chat) {
-        sendMinecraftChat('/tps');
-      }
-    }, 10000); // Check every 10 seconds
+    // TPS: TAB header/footer first, /tps reply as fallback, world-age measurement otherwise
+    if (tpsTabInterval) clearInterval(tpsTabInterval);
+    tpsTabInterval = setInterval(pollServerTps, 10000);
 
     // Reuse or create single persistent status message after spawn
     if (DISCORD_CHANNEL_ID && discordClient && discordClient.isReady()) {
@@ -9604,22 +9652,11 @@ function createBot() {
     }
   });
 
-  bot.on('physicsTick', () => {
-    checkBotFireState();
-    const now = Date.now();
-    if (lastTickTime > 0) {
-      const delta = now - lastTickTime;
-      if (delta > 0) {
-        const tps = 1000 / delta;
-        tpsHistory.push(tps);
-        if (tpsHistory.length > 20) tpsHistory.shift();
-      }
-    }
-    lastTickTime = now;
-  });
+  bot.on('physicsTick', checkBotFireState);
 
 
   bot.on('end', (reason) => {
+    resetTpsTracking();
     if (!suppressDefaultAuthCachePersist) authCacheStore.persist(DEFAULT_ACCOUNT_ID,config.profilesFolder).catch(error => console.error('[Accounts] Default auth-cache persistence failed:',error.message));
     recordFarmAnnotation('bot_disconnected', 'Bot disconnected', { reason: normalizeStatusReason(reason) }).catch(() => {});
     const reasonStr = chatComponentToString(reason);
@@ -9987,16 +10024,6 @@ function createBot() {
 
   bot.on('message', (message, position, senderUuid) => {
     const text = chatComponentToString(message);
-    const tpsMatch = text.match(/(\d+\.?\d*)\s*tps/i);
-    if (tpsMatch) {
-      realTps = parseFloat(tpsMatch[1]);
-      recordTpsSample().catch(() => {});
-      reportNotification('low_tps', {
-        key: 'minecraft', title: 'Low server TPS',
-        message: `Server TPS is ${realTps.toFixed(1)}.`, metadata: { tps: realTps }
-      });
-    }
-
     if (isPrivateMinecraftChatComponent(message, {
       recipientUsernames: bot?.username ? [bot.username] : []
     })) {
@@ -10009,6 +10036,8 @@ function createBot() {
           senderUsername: getOnlinePlayerUsernameByUuid(senderUuid),
           position
     });
+    const hasPlayerSender = Boolean(senderUuid) && !/^0{8}-?0{4}-?0{4}-?0{4}-?0{12}$/.test(String(senderUuid));
+    if (!componentChat.isGreenChat && !hasPlayerSender) handleTpsChatResponse(text);
     if (componentChat.isGreenChat) {
       handledGreenChatComponents.mark(message);
       if (componentChat.isPlayerChat) {
