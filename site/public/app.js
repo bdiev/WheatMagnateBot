@@ -101,6 +101,7 @@ const state = {
   playerProfileUsername: null,
   playerProfileSignature: '',
   chatContextMessageId: null,
+  chatContextRequest: 0,
   chatSearchQuery: '',
   chatMessages: [],
   chatHasMore: false,
@@ -7048,19 +7049,71 @@ async function loadMorePlayerMessages(button) {
 
 async function openChatContext(messageId) {
   if (!/^\d+$/.test(String(messageId || ''))) return;
+  const request = ++state.chatContextRequest;
   const payload = await fetchJson(`/api/chat?around=${encodeURIComponent(messageId)}&limit=200`);
+  // A newer jump (or a return to live chat) superseded this one while loading.
+  if (request !== state.chatContextRequest) return;
   state.chatSearchQuery = '';
   state.chatContextMessageId = String(messageId);
+  // The context jump is this tab's initial position. Without this, opening the
+  // chat tab for the first time queues delayed scroll-to-bottom passes that
+  // land after the jump and leave the target ~100 messages above the viewport.
+  state.chatInitialScrollDone = true;
   setChatArchiveStatus('');
   closePlayerProfile({ restoreSeenSearch: false });
   setActiveTab('chat');
   renderChat(payload);
   const returnButton = $('#chatReturnLive');
   if (returnButton) returnButton.hidden = false;
+  anchorChatContextTarget(String(messageId), request);
+}
+
+function centerChatContextTarget(messageId) {
+  const list = $('#chatList');
+  const target = list?.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`);
+  if (!list || !target) return false;
+  const listRect = list.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+  list.scrollTop += targetRect.top - listRect.top - Math.max(0, (list.clientHeight - targetRect.height) / 2);
+  return true;
+}
+
+// Keep the jumped-to message centred while the freshly rendered list settles
+// (row entrance, avatar images, tab layout) and stop as soon as the user
+// scrolls on their own.
+function anchorChatContextTarget(messageId, request) {
+  const list = $('#chatList');
+  if (!list) return;
+  const stillAnchored = () => request === state.chatContextRequest && state.chatContextMessageId === messageId;
+  const release = () => {
+    clearTimeout(releaseTimer);
+    list.removeEventListener('load', recenter, true);
+    ['wheel', 'touchstart', 'pointerdown', 'keydown'].forEach(type => list.removeEventListener(type, release));
+  };
+  const recenter = () => {
+    if (!stillAnchored()) {
+      release();
+      return;
+    }
+    centerChatContextTarget(messageId);
+  };
+  const releaseTimer = setTimeout(release, 1_500);
+  list.addEventListener('load', recenter, true);
+  ['wheel', 'touchstart', 'pointerdown', 'keydown'].forEach(type => list.addEventListener(type, release, { passive: true }));
+
   requestAnimationFrame(() => {
-    const target = $(`#chatList [data-message-id="${CSS.escape(String(messageId))}"]`);
-    target?.classList.add('chat-context-target');
-    target?.scrollIntoView({ block: 'center' });
+    if (!stillAnchored()) return;
+    const target = list.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`);
+    if (!target) {
+      release();
+      setChatArchiveStatus('This message is no longer in the chat archive.');
+      return;
+    }
+    target.classList.add('chat-context-target');
+    list.scrollIntoView({ block: 'nearest' });
+    centerChatContextTarget(messageId);
+    requestAnimationFrame(recenter);
+    setTimeout(recenter, 120);
   });
 }
 
@@ -7113,6 +7166,7 @@ async function loadOlderChatMessages() {
 }
 
 async function returnToLiveChat() {
+  state.chatContextRequest += 1;
   state.chatContextMessageId = null;
   state.chatSearchQuery = '';
   setChatArchiveStatus('');
@@ -7133,6 +7187,7 @@ async function searchGameChat(event) {
     await returnToLiveChat();
     return;
   }
+  state.chatContextRequest += 1;
   state.chatContextMessageId = null;
   state.chatSearchQuery = query;
   setChatArchiveStatus('');
