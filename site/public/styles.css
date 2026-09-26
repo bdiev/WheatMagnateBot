@@ -3397,6 +3397,109 @@ body.search-focus-active #logoutButton {
   min-height: 0;
 }
 
+.player-chart-loading {
+  position: relative;
+  overflow: hidden;
+}
+
+.player-chart-loading .chart {
+  opacity: 0;
+}
+
+.player-chart-skeleton {
+  position: absolute;
+  z-index: 1;
+  inset: 20px 22px 24px 34px;
+  display: flex;
+  align-items: end;
+  gap: clamp(8px, 3vw, 18px);
+  border-bottom: 2px solid color-mix(in srgb, var(--muted) 16%, var(--line));
+  pointer-events: none;
+}
+
+.player-chart-skeleton span {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 8px;
+  overflow: hidden;
+  border-radius: 3px 3px 0 0;
+  background: color-mix(in srgb, var(--muted) 15%, var(--panel-soft));
+}
+
+.player-chart-skeleton span:nth-child(1) { height: 24%; }
+.player-chart-skeleton span:nth-child(2) { height: 42%; }
+.player-chart-skeleton span:nth-child(3) { height: 34%; }
+.player-chart-skeleton span:nth-child(4) { height: 68%; }
+.player-chart-skeleton span:nth-child(5) { height: 52%; }
+.player-chart-skeleton span:nth-child(6) { height: 78%; }
+.player-chart-skeleton span:nth-child(7) { height: 61%; }
+.player-chart-skeleton span:nth-child(8) { height: 88%; }
+
+.player-chart-skeleton span::after,
+.player-row-skeleton > span::after,
+.player-milestone-skeleton .player-skeleton-line::after {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 25%, transparent), transparent);
+  content: '';
+  animation: skeleton-value-shimmer 1.2s ease-in-out infinite;
+}
+
+.player-list-loading {
+  overflow: hidden !important;
+  pointer-events: none;
+}
+
+.player-row-skeleton {
+  display: grid;
+  grid-template-columns: 24px 30px minmax(70px, 1fr) minmax(54px, .32fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 51px;
+  border-bottom: 1px solid var(--line);
+  padding: 10px 14px;
+}
+
+.player-row-skeleton.compact {
+  grid-template-columns: 30px minmax(70px, 1fr) minmax(48px, .38fr);
+}
+
+.player-row-skeleton > span,
+.player-milestone-skeleton .player-skeleton-line {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--muted) 16%, var(--panel-soft));
+}
+
+.player-skeleton-rank { width: 18px; height: 13px; }
+.player-skeleton-avatar { width: 28px; height: 28px; border-radius: 3px !important; }
+.player-skeleton-line { width: 100%; height: 12px; }
+.player-skeleton-line.wide { width: min(100%, 180px); }
+.player-skeleton-line.medium { width: min(76%, 120px); }
+.player-skeleton-line.short { width: min(58%, 76px); justify-self: end; }
+
+.player-milestone-skeleton {
+  pointer-events: none;
+}
+
+.player-milestone-skeleton .player-skeleton-line {
+  height: 13px;
+}
+
+.player-milestone-skeleton .player-skeleton-line.wide {
+  height: 23px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .player-chart-skeleton span::after,
+  .player-row-skeleton > span::after,
+  .player-milestone-skeleton .player-skeleton-line::after {
+    animation: none;
+  }
+}
+
 .server-tps-panel .chart-scroll {
   overflow-x: auto;
 }

@@ -2307,7 +2307,9 @@ let playerStatsCacheGeneration = 0;
 
 function invalidatePlayerStatsCache() {
   playerStatsCacheGeneration += 1;
-  playerStatsCacheValue = null;
+  // Keep the last completed snapshot available while the expensive aggregate
+  // is rebuilt. Presence events can arrive frequently, and dropping the value
+  // here made the next visit to Player Stats block on every query again.
   playerStatsCacheExpiresAt = 0;
 }
 

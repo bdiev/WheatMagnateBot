@@ -6459,6 +6459,9 @@ function renderPlayerStats(payload = {}, nearbyPlayers = null) {
   renderPeriodTrend('#uniquePlayersWeekTrend', payload.players?.seenWeek, payload.players?.seenPreviousWeek, 'last week');
   renderPeriodTrend('#uniquePlayersMonthTrend', payload.players?.seenMonth, payload.players?.seenPreviousMonth, 'last month');
   state.charts.hourlyAverageOnline = payload.hourlyAverageOnline || [];
+  const chartShell = $('#averageOnlineChartShell');
+  chartShell?.classList.remove('player-chart-loading');
+  chartShell?.removeAttribute('aria-busy');
 
   const leaderboardSources = payload.playtimeLeaderboards || {};
   state.playtimeLeaderboards = {
@@ -6501,6 +6504,12 @@ function renderPlayerStats(payload = {}, nearbyPlayers = null) {
       milestone.isRound
     ])
   );
+  for (const selector of ['#playerMilestones', '#playtimeLeaderboard', '#newPlayersList']) {
+    const element = $(selector);
+    element?.classList.remove('player-list-loading');
+    element?.removeAttribute('aria-busy');
+  }
+  if (state.activeTab === 'players') requestAnimationFrame(redrawCharts);
 }
 
 function renderNearbySightings(nearbyPlayers = []) {
@@ -6516,6 +6525,9 @@ function renderNearbySightings(nearbyPlayers = []) {
     : '<div class="empty">No nearby sightings yet.</div>',
     nearby.map(player => [player.username, player.distance, player.lastSeen])
   );
+  const list = $('#nearbyList');
+  list?.classList.remove('player-list-loading');
+  list?.removeAttribute('aria-busy');
 
 }
 

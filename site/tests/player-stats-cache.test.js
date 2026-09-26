@@ -33,8 +33,13 @@ assert.match(
 );
 assert.match(
   serverSource,
-  /function invalidatePlayerStatsCache\(\)[\s\S]*playerStatsCacheGeneration \+= 1;[\s\S]*playerStatsCacheValue = null;[\s\S]*player_info_updated/,
-  'player information changes must invalidate the cached leaderboard before notifying clients'
+  /function invalidatePlayerStatsCache\(\)[\s\S]*playerStatsCacheGeneration \+= 1;[\s\S]*playerStatsCacheExpiresAt = 0;[\s\S]*player_info_updated/,
+  'player information changes must expire the cached leaderboard before notifying clients'
+);
+assert.doesNotMatch(
+  serverSource.match(/function invalidatePlayerStatsCache\(\) \{[\s\S]*?\n\}/)?.[0] || '',
+  /playerStatsCacheValue = null/,
+  'cache invalidation must retain the last snapshot so Player Stats never blocks on a rebuild'
 );
 assert.match(
   serverSource,
