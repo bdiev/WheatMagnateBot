@@ -45,5 +45,7 @@ assert.match(stylesSource, /\.player-chart-loading \.chart,\s*\.player-chart-loa
   'the sticky chart axis must stay hidden behind the skeleton');
 assert.match(stylesSource, /\.chart-scroll:not\(\.player-chart-loading\) > \.player-chart-skeleton\s*\{[^}]*display:\s*none;/,
   'loaded charts that fit their width (TPS) must not stay covered by the skeleton');
+assert.match(stylesSource, /\.stat strong\.is-loading-value\s*\{[^}]*display:\s*block;[^}]*flex:\s*0 0 auto;[^}]*width:\s*min\(100%, 4\.2em\);[^}]*height:\s*1\.1em;/,
+  'stat value skeletons must keep a number-sized bar in plain and trend cards instead of spanning or collapsing');
 
 console.log('Player Stats loading UI tests passed.');

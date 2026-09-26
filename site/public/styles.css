@@ -6555,6 +6555,18 @@ button.player-activity-cell.is-selected:active:not(:disabled) {
   animation: skeleton-value-shimmer 1.2s ease-in-out infinite;
 }
 
+/* `.stat strong` is a full-width block (and a shrinkable flex item inside
+   .stat-value-row), which beat the generic rule above: the skeleton spanned
+   the whole card or collapsed to the width of the hidden "-". Give stat values
+   a fixed number-sized bar at the real line height so cards don't jump. */
+.stat strong.is-loading-value {
+  display: block;
+  flex: 0 0 auto;
+  width: min(100%, 4.2em);
+  min-width: 0;
+  height: 1.1em;
+}
+
 @keyframes skeleton-value-shimmer {
   0% { transform: translateX(-100%); }
   100% { transform: translateX(100%); }
