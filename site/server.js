@@ -2301,6 +2301,9 @@ async function getBotStats() {
 
 const NEW_PLAYERS_PAGE_LIMIT = 24;
 const PLAYER_STATS_CACHE_TTL_MS = 60_000;
+// Bump when the meaning of cached Player Stats values changes, so a snapshot
+// persisted by an older build is never shown after a deploy.
+const PLAYER_STATS_CACHE_SCHEMA = 2;
 let playerStatsCacheValue = null;
 let playerStatsCacheExpiresAt = 0;
 let playerStatsCachePromise = null;
@@ -2324,7 +2327,7 @@ async function loadPersistedPlayerStatsCache() {
   const row = result.rows[0];
   if (!row?.payload || typeof row.payload !== 'object') return false;
   const cachedPlayers = row.payload.players;
-  if (!cachedPlayers || ![
+  if (!cachedPlayers || cachedPlayers.cacheSchema !== PLAYER_STATS_CACHE_SCHEMA || ![
     'seenToday',
     'seenWeek',
     'seenMonth',
@@ -2630,11 +2633,36 @@ async function getPlayerStats() {
           AND occurred_at >= (bounds.month_start - INTERVAL '2 months') AT TIME ZONE bounds.timezone
           AND LOWER(username) <> ''
         WINDOW player_events AS (PARTITION BY LOWER(username) ORDER BY occurred_at, id)
+      ), presence AS (
+        SELECT
+          LOWER(username) AS username_key,
+          BOOL_OR(is_online) AS is_online,
+          MAX(presence_observed_at) AS observed_at
+        FROM player_activity
+        WHERE LOWER(username) <> ''
+        GROUP BY LOWER(username)
       ), sessions AS (
-        SELECT username_key, occurred_at AS started_at, COALESCE(next_occurred_at, bounds.now_local) AS ended_at
+        SELECT
+          ordered_events.username_key,
+          ordered_events.occurred_at AS started_at,
+          COALESCE(
+            ordered_events.next_occurred_at,
+            -- A join without a later event is only still running for a player
+            -- who is online now. Older bot disconnects marked players offline
+            -- without a leave event; end those sessions at the last presence
+            -- observation instead of stretching them to the current moment.
+            CASE
+              WHEN presence.is_online THEN bounds.now_local
+              ELSE GREATEST(
+                ordered_events.occurred_at,
+                LEAST(bounds.now_local, COALESCE(presence.observed_at AT TIME ZONE bounds.timezone, ordered_events.occurred_at))
+              )
+            END
+          ) AS ended_at
         FROM ordered_events
         CROSS JOIN bounds
-        WHERE event_type = 'player_joined'
+        LEFT JOIN presence ON presence.username_key = ordered_events.username_key
+        WHERE ordered_events.event_type = 'player_joined'
         UNION ALL
         -- Players already online when the bot (re)connects get no join event.
         -- Their later leave still proves they were on the server at that time.
@@ -2786,6 +2814,7 @@ async function getPlayerStats() {
 
   return {
     players: {
+      cacheSchema: PLAYER_STATS_CACHE_SCHEMA,
       total: toInt(totals.total),
       online: toInt(totals.online),
       offline: toInt(totals.offline),

@@ -54,4 +54,12 @@ for (const copy of [
 assert.doesNotMatch(indexSource, /Online Players Not Whitelisted|players active in 24 hours|players active in 7 days/,
   'the old whitelist and rolling-period cards must be removed');
 
+assert.match(serverSource, /WHEN presence\.is_online THEN bounds\.now_local[\s\S]*?COALESCE\(presence\.observed_at AT TIME ZONE bounds\.timezone, ordered_events\.occurred_at\)/,
+  'a join without a later event may only run to now for players who are online now');
+assert.match(serverSource, /const PLAYER_STATS_CACHE_SCHEMA = \d+;[\s\S]*?cachedPlayers\.cacheSchema !== PLAYER_STATS_CACHE_SCHEMA[\s\S]*?cacheSchema: PLAYER_STATS_CACHE_SCHEMA/,
+  'Player Stats snapshots persisted by an older build must not be shown after a deploy');
+const botSource = fs.readFileSync(path.join(siteDirectory, '..', 'bot.js'), 'utf8');
+assert.match(botSource, /observedOnlineAtDisconnect\.values\(\)\]\.map\(username =>\s*updatePlayerActivity\(username, false, \{ recordEvent: true \}\)/,
+  'a bot disconnect must close the observed sessions with leave events');
+
 console.log('Unique player period UI tests passed.');

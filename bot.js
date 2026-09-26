@@ -9670,8 +9670,11 @@ function createBot() {
     lastObservedOnlinePlayerKeys = null;
     playerActivityJoinEventsReady = false;
     if (observedOnlineAtDisconnect?.size) {
+      // Close each observed session at the disconnect. Without a leave event the
+      // session history keeps the player "online" until their next event, which
+      // inflated unique-player periods and online history.
       Promise.all([...observedOnlineAtDisconnect.values()].map(username =>
-        updatePlayerActivity(username, false, { recordEvent: false })
+        updatePlayerActivity(username, false, { recordEvent: true })
       ))
         .catch(err => console.error('[PlayerActivity] Disconnect offline flush failed:', err.message));
     }
