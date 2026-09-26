@@ -5837,7 +5837,7 @@ function renderKillAura(payload = {}) {
     : 'target: none';
   const detailTarget = $('#killAuraDetailTarget');
   if (detailTarget) detailTarget.textContent = target
-    ? `${formatMobLabel(targetLabel)}${target.distance == null ? '' : ` В· ${target.distance} blocks`}`
+    ? `${formatMobLabel(targetLabel)}${target.distance == null ? '' : ` · ${target.distance} blocks`}`
     : 'None';
 
   const toggle = $('#killAuraToggleButton');
