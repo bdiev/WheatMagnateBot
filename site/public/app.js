@@ -9999,6 +9999,13 @@ async function loadAll({ force = false, switchGeneration = state.accountSwitchGe
   state.fullSyncLoading = true;
   const syncPromise = (async () => {
     try {
+      // Player info imports usually land while the admin is in Discord and this
+      // page is hidden, so those events were skipped. Refresh the lookup cards
+      // right away instead of waiting for the next unrelated player update.
+      if (state.currentUser?.role === 'admin' && state.activeTab === 'admin') {
+        loadAdminPlayerInfoCollection({ force: true });
+        loadAdminPlayers({ showLoading: false, preserveScroll: true });
+      }
       // Render each dashboard section as soon as its own request completes. A slow
       // analytics query or the icon manifest must not hold the whole first screen.
       const sectionLoads = [
