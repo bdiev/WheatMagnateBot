@@ -4553,9 +4553,12 @@ async function getPlayerInfoCollectionProgress(database = pool) {
       FROM player_playtime playtime
       WHERE NOT EXISTS (
         SELECT 1 FROM player_activity activity
-        WHERE (playtime.player_uuid IS NOT NULL AND activity.player_uuid = playtime.player_uuid)
-           OR LOWER(activity.username) = LOWER(playtime.username)
+        WHERE playtime.player_uuid IS NOT NULL AND activity.player_uuid = playtime.player_uuid
       )
+        AND NOT EXISTS (
+          SELECT 1 FROM player_activity activity
+          WHERE LOWER(activity.username) = LOWER(playtime.username)
+        )
         AND NOT EXISTS (
           SELECT 1 FROM whitelist whitelist_player
           WHERE LOWER(whitelist_player.username) = LOWER(playtime.username)
@@ -4572,26 +4575,36 @@ async function getPlayerInfoCollectionProgress(database = pool) {
                WHERE LOWER(playtime.username) = LOWER(candidate.username)
              ) AS missing_playtime,
              candidate.observed_message_count IS NULL AS missing_messages,
+             -- Separate EXISTS probes let each lookup use the (metric, identity_key)
+             -- primary key; one OR-ed probe scanned the table for every player.
              NOT EXISTS (
                SELECT 1
                FROM player_info_observation_state observation
                WHERE observation.metric = 'joinDate'
                  AND observation.imported = TRUE
-                 AND (
-                   observation.identity_key = 'name:' || LOWER(candidate.username)
-                   OR (
-                     candidate.player_uuid IS NOT NULL
-                     AND observation.identity_key = 'uuid:' || LOWER(candidate.player_uuid::text)
-                   )
-                   OR (
-                     candidate.player_uuid IS NOT NULL
-                     AND EXISTS (
-                       SELECT 1 FROM player_name_history history
-                       WHERE history.player_uuid = candidate.player_uuid
-                         AND observation.identity_key = 'name:' || LOWER(history.username)
-                     )
-                   )
-                 )
+                 AND observation.identity_key = 'name:' || LOWER(candidate.username)
+             )
+             AND NOT (
+               candidate.player_uuid IS NOT NULL
+               AND EXISTS (
+                 SELECT 1
+                 FROM player_info_observation_state observation
+                 WHERE observation.metric = 'joinDate'
+                   AND observation.imported = TRUE
+                   AND observation.identity_key = 'uuid:' || LOWER(candidate.player_uuid::text)
+               )
+             )
+             AND NOT (
+               candidate.player_uuid IS NOT NULL
+               AND EXISTS (
+                 SELECT 1
+                 FROM player_name_history history
+                 JOIN player_info_observation_state observation
+                   ON observation.metric = 'joinDate'
+                  AND observation.imported = TRUE
+                  AND observation.identity_key = 'name:' || LOWER(history.username)
+                 WHERE history.player_uuid = candidate.player_uuid
+               )
              )
              AND (
                candidate.registration_at IS NULL
@@ -4664,6 +4677,45 @@ async function getPlayerInfoCollectionProgress(database = pool) {
         command:`${item.prefix} ${player.username}`
       })))
   };
+}
+
+// The summary query touches every tracked player, so opening Player Data used to
+// wait for it each time. Serve the last result until player information changes;
+// invalidation starts the rebuild immediately so the next request joins it.
+const PLAYER_INFO_COLLECTION_CACHE_TTL_MS = 60_000;
+let playerInfoCollectionCacheValue = null;
+let playerInfoCollectionCacheAt = 0;
+let playerInfoCollectionCachePromise = null;
+let playerInfoCollectionCacheGeneration = 0;
+
+function getCachedPlayerInfoCollectionProgress() {
+  const generation = playerInfoCollectionCacheGeneration;
+  if (playerInfoCollectionCacheValue
+    && playerInfoCollectionCacheAt > 0
+    && Date.now() - playerInfoCollectionCacheAt < PLAYER_INFO_COLLECTION_CACHE_TTL_MS) {
+    return Promise.resolve(playerInfoCollectionCacheValue);
+  }
+  if (playerInfoCollectionCachePromise?.generation === generation) return playerInfoCollectionCachePromise;
+  const promise = getPlayerInfoCollectionProgress()
+    .then(value => {
+      if (generation === playerInfoCollectionCacheGeneration) {
+        playerInfoCollectionCacheValue = value;
+        playerInfoCollectionCacheAt = Date.now();
+      }
+      return value;
+    })
+    .finally(() => {
+      if (playerInfoCollectionCachePromise === promise) playerInfoCollectionCachePromise = null;
+    });
+  promise.generation = generation;
+  playerInfoCollectionCachePromise = promise;
+  return promise;
+}
+
+function invalidatePlayerInfoCollectionCache() {
+  playerInfoCollectionCacheGeneration += 1;
+  playerInfoCollectionCacheAt = 0;
+  if (pool) getCachedPlayerInfoCollectionProgress().catch(() => {});
 }
 
 async function getAdminPlayers(currentUser, url, database = pool) {
@@ -4770,7 +4822,7 @@ async function getAdminPlayers(currentUser, url, database = pool) {
     ORDER BY ${resultOrder}
   `, [search, limit + 1, offset]);
   const infoCollection = includeInfoCollection
-    ? await getPlayerInfoCollectionProgress(database)
+    ? await (database === pool ? getCachedPlayerInfoCollectionProgress() : getPlayerInfoCollectionProgress(database))
     : null;
   const hasMore = result.rows.length > limit;
   return {
@@ -6121,7 +6173,7 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/admin/player-info-collection' && req.method === 'GET') {
       assertAdminUser(currentUser);
-      sendJson(res, 200, await getPlayerInfoCollectionProgress());
+      sendJson(res, 200, await getCachedPlayerInfoCollectionProgress());
       return;
     }
     const adminPlayerRoute = url.pathname.match(/^\/api\/admin\/players\/([^/]+)$/);
@@ -6129,8 +6181,11 @@ async function handleApi(req, res, url) {
       let identifier;
       try { identifier = decodeURIComponent(adminPlayerRoute[1]); }
       catch { sendError(res, 404, 'Player not found.'); return; }
-      if (req.method === 'PATCH') sendJson(res, 200, await patchAdminPlayer(currentUser, identifier, await readJsonBody(req)));
-      else sendJson(res, 200, await deleteAdminPlayer(currentUser, identifier));
+      const result = req.method === 'PATCH'
+        ? await patchAdminPlayer(currentUser, identifier, await readJsonBody(req))
+        : await deleteAdminPlayer(currentUser, identifier);
+      invalidatePlayerInfoCollectionCache();
+      sendJson(res, 200, result);
       return;
     }
     if (url.pathname === '/api/players') {
@@ -6537,7 +6592,10 @@ async function pollDatabaseEvents() {
     const leftPlayers = [...previous.players]
       .filter(([key]) => !next.players.has(key))
       .map(([, username]) => username);
-    if (joinedPlayers.length || leftPlayers.length) invalidatePlayerStatsCache();
+    if (joinedPlayers.length || leftPlayers.length) {
+      invalidatePlayerStatsCache();
+      invalidatePlayerInfoCollectionCache();
+    }
     for (const username of joinedPlayers) sseHub.publish('player_joined', { username });
     for (const username of leftPlayers) sseHub.publish('player_left', { username });
     if (next.playerInfoAt !== previous.playerInfoAt
@@ -6545,6 +6603,7 @@ async function pollDatabaseEvents() {
       || next.playerInfoActivity !== previous.playerInfoActivity
       || next.playerInfoExclusionAt !== previous.playerInfoExclusionAt) {
       invalidatePlayerStatsCache();
+      invalidatePlayerInfoCollectionCache();
       sseHub.publish('player_info_updated', {
         updatedAt: [next.playerInfoAt, next.playerInfoObservationAt, next.playerInfoExclusionAt]
           .filter(Boolean)

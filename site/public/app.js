@@ -129,6 +129,7 @@ const state = {
   adminPlayerInfoCollectionTimer: null,
   adminPlayerInfoAwaitingCommands: new Map(),
   adminPlayerInfoAwaitTimer: null,
+  adminPlayerInfoCollectionRendered: false,
   adminPlayerEditTarget: null,
   adminPlayerDeleteTarget: null,
   requestCountLoading: false,
@@ -7571,6 +7572,7 @@ async function copyAdminPlaytimeCommand(button) {
 // connection was dropped by the mobile browser, so poll briefly after a copy
 // until the copied command leaves the list instead of relying on that event.
 const ADMIN_PLAYER_INFO_AWAIT_MS = 3 * 60 * 1000;
+const ADMIN_PLAYER_INFO_CACHE_KEY = 'wheatmagnate.adminPlayerInfoCollection';
 
 function watchAdminPlayerInfoCommand(command) {
   state.adminPlayerInfoAwaitingCommands.set(command.toLowerCase(), Date.now());
@@ -7636,8 +7638,19 @@ async function loadAdminPlayerInfoCollection({ force = false } = {}) {
   state.adminPlayerInfoCollectionAttemptedAt = now;
   state.adminPlayerInfoCollectionPending = false;
   state.adminPlayerInfoCollectionLoading = true;
+  if (!state.adminPlayerInfoCollectionRendered) {
+    // Show the last known commands at once instead of "Loading missing commands…";
+    // the fresh response replaces them as soon as it arrives.
+    try {
+      const cached = JSON.parse(localStorage.getItem(ADMIN_PLAYER_INFO_CACHE_KEY) || 'null');
+      if (cached && typeof cached === 'object') renderAdminPlayerInfoCollection(cached);
+    } catch { /* storage is only a convenience */ }
+  }
   try {
-    renderAdminPlayerInfoCollection(await fetchJson('/api/admin/player-info-collection'));
+    const progress = await fetchJson('/api/admin/player-info-collection');
+    renderAdminPlayerInfoCollection(progress);
+    state.adminPlayerInfoCollectionRendered = true;
+    try { localStorage.setItem(ADMIN_PLAYER_INFO_CACHE_KEY, JSON.stringify(progress)); } catch { /* ignore */ }
   } catch (error) {
     if (error?.name === 'AbortError') return;
     const status = $('#adminPlayerInfoCollection');
