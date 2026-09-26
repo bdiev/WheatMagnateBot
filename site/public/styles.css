@@ -12394,3 +12394,82 @@ body.kill-aura-modal-open {
     transition: none !important;
   }
 }
+
+/* Small-screen header and chat: keep the brand on one line and give messages the full row. */
+@media (max-width: 700px) {
+  .topbar h1 {
+    font-size: clamp(20px, 7.4vw, 26px);
+    white-space: nowrap;
+  }
+
+  /* Time and reply sit beside the name, so the message text gets the full row. */
+  .chat-message:not(.chat-activity):not(.chat-notice):not(.chat-message-continuation) .chat-message-body {
+    grid-column: 2 / -1;
+    grid-row: 1;
+  }
+
+  .chat-message:not(.chat-activity):not(.chat-notice):not(.chat-message-continuation) .chat-meta {
+    position: relative;
+    z-index: 1;
+    grid-column: 3;
+    grid-row: 1;
+    align-self: start;
+    height: 20px;
+    align-items: center;
+  }
+
+  .chat-message:not(.chat-activity):not(.chat-notice):not(.chat-message-continuation) .chat-message-head {
+    padding-right: 86px;
+  }
+
+  .chat-meta .chat-time {
+    min-width: 0;
+  }
+
+  .chat-meta .chat-reply-button {
+    width: 30px;
+    min-width: 30px;
+    height: 30px;
+    min-height: 30px;
+  }
+
+  /* Chat totals fit in a single row instead of three full-height cards. */
+  #tab-chat > .stats-grid.three {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  #tab-chat > .stats-grid.three .stat {
+    grid-column: auto;
+    min-height: 0;
+    padding: 10px;
+  }
+
+  #tab-chat > .stats-grid.three .stat-label {
+    display: block;
+    font-size: 11px;
+    line-height: 1.2;
+  }
+
+  #tab-chat > .stats-grid.three .stat strong {
+    margin-top: 6px;
+    font-size: clamp(15px, 4.8vw, 22px);
+    overflow-wrap: anywhere;
+  }
+
+  #tab-chat > .stats-grid.three .stat small {
+    display: block;
+    margin-top: 4px;
+    font-size: 10px;
+    line-height: 1.25;
+  }
+}
+
+@media (max-width: 380px) {
+  .topbar-actions #logoutButton {
+    padding-inline: 8px;
+    font-size: 14px;
+  }
+}
