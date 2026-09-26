@@ -97,7 +97,7 @@ assert.match(appSource, /function formatDate\(value\)[\s\S]*?timeZone:\s*state\.
   'completed session timestamps must use the timezone selected in account settings');
 assert.match(appSource, /state\.accountTimezone = String\(payload\.timezone \|\| timezone\)[\s\S]*?replacePlayerProfileContent\(state\.playerProfileLastPayload\)/,
   'changing the account timezone must immediately re-render an open player profile');
-assert.match(appSource, /function closePlayerProfile\(\)[\s\S]*?stopPlayerProfileSessionClock\(\)/,
+assert.match(appSource, /function closePlayerProfile\([^)]*\)[\s\S]*?stopPlayerProfileSessionClock\(\)/,
   'closing the profile must stop its session clock');
 assert.match(appSource, /type === 'player_joined' \|\| type === 'player_left'[\s\S]*?player-profile-activity[\s\S]*?loadPlayerProfile/,
   'join and leave events must refresh an open matching profile');

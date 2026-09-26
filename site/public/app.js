@@ -73,6 +73,8 @@ const state = {
   playerProfileRefreshTimers: [],
   playerProfileMessageRefreshes: new Set(),
   playerProfileAccentCache: new Map(),
+  playerProfileSeenSearchReturn: null,
+  playerProfileSeenSearchRestoreTimer: null,
   playerSkinViewer: null,
   playerSelectedSkin: null,
   playerSelectedCape: null,
@@ -4163,7 +4165,10 @@ async function loadPlayerProfile(username, { showLoading = false } = {}) {
   }
 }
 
-async function openPlayerProfile(username) {
+async function openPlayerProfile(username, { returnToSeenSearch = null } = {}) {
+  clearTimeout(state.playerProfileSeenSearchRestoreTimer);
+  state.playerProfileSeenSearchRestoreTimer = null;
+  state.playerProfileSeenSearchReturn = returnToSeenSearch;
   clearPlayerProfileRefreshTimers();
   setPlayerProfileAccent();
   state.playerProfileSignature = '';
@@ -4173,9 +4178,11 @@ async function openPlayerProfile(username) {
   await loadPlayerProfile(username, { showLoading: true });
 }
 
-function closePlayerProfile() {
+function closePlayerProfile({ restoreSeenSearch = true } = {}) {
   const overlay = $('#playerProfileOverlay');
   if (!overlay) return;
+  const seenSearchReturn = restoreSeenSearch ? state.playerProfileSeenSearchReturn : null;
+  state.playerProfileSeenSearchReturn = null;
   closePlayerSkins();
   overlay.hidden = true;
   setPlayerProfileLoading(false);
@@ -4189,6 +4196,19 @@ function closePlayerProfile() {
   state.playerProfileRegistrationDateMode = false;
   state.playerProfileLastSeenDateMode = false;
   state.playerProfileLastPayload = null;
+  if (seenSearchReturn) {
+    // Close-button clicks still bubble to the document handler, which closes
+    // popovers clicked from outside. Restore on the next task so that handler
+    // cannot immediately discard the search we are returning to.
+    state.playerProfileSeenSearchRestoreTimer = setTimeout(() => {
+      state.playerProfileSeenSearchRestoreTimer = null;
+      const input = $('#seenSearchInput');
+      if (input) input.value = seenSearchReturn.query;
+      renderSeenSuggestions(seenSearchReturn.players);
+      setSeenSearchOpen(true);
+      runSeenSearch(seenSearchReturn.query);
+    }, 0);
+  }
 }
 
 function closePlayerSkins() {
@@ -4556,7 +4576,7 @@ function selectPlayerActivityCell(cell) {
 }
 
 function openWhisperFromProfile(username) {
-  closePlayerProfile();
+  closePlayerProfile({ restoreSeenSearch: false });
   setWhisperOpen(true);
   openWhisperDialog(username).catch(err => setBanner(`Could not open dialog: ${err.message}`));
 }
@@ -4704,11 +4724,14 @@ function handleSeenSuggestionClick(event) {
   if (!option) return;
   const player = state.seenPlayers[Number(option.dataset.index)];
   if (!player) return;
-  $('#seenSearchInput').value = player.username;
-  $('#seenSearchInput').blur();
-  $('#seenSuggestions').hidden = true;
-  clearSeenSearch({ collapse: true });
-  openPlayerProfile(player.username);
+  const input = $('#seenSearchInput');
+  const returnToSeenSearch = {
+    query: input?.value || '',
+    players: [...state.seenPlayers]
+  };
+  input?.blur();
+  setSeenSearchOpen(false);
+  openPlayerProfile(player.username, { returnToSeenSearch });
   setTimeout(() => window.scrollTo(window.scrollX, window.scrollY), 80);
 }
 
@@ -6960,7 +6983,7 @@ async function openChatContext(messageId) {
   state.chatSearchQuery = '';
   state.chatContextMessageId = String(messageId);
   setChatArchiveStatus('');
-  closePlayerProfile();
+  closePlayerProfile({ restoreSeenSearch: false });
   setActiveTab('chat');
   renderChat(payload);
   const returnButton = $('#chatReturnLive');
@@ -10467,7 +10490,7 @@ window.addEventListener('pageshow', event => {
     clearSeenSearch({ collapse: true });
     setWhisperOpen(false);
     setMobileAccountSwitcherOpen(false);
-    closePlayerProfile();
+    closePlayerProfile({ restoreSeenSearch: false });
   }
   ensureActiveTabAvailable();
   scheduleViewportRedraw({ force: true });
