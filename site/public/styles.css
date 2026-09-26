@@ -12442,7 +12442,10 @@ body.kill-aura-modal-open {
   }
 
   #tab-chat > .stats-grid.three .stat {
+    display: grid;
     grid-column: auto;
+    grid-template-rows: 2.4em auto 2.5em;
+    align-content: start;
     min-height: 0;
     padding: 10px;
   }
@@ -12454,13 +12457,16 @@ body.kill-aura-modal-open {
   }
 
   #tab-chat > .stats-grid.three .stat strong {
-    margin-top: 6px;
+    align-self: start;
+    margin: 6px 0 0;
     font-size: clamp(15px, 4.8vw, 22px);
+    line-height: 1.1;
     overflow-wrap: anywhere;
   }
 
   #tab-chat > .stats-grid.three .stat small {
     display: block;
+    align-self: start;
     margin-top: 4px;
     font-size: 10px;
     line-height: 1.25;
