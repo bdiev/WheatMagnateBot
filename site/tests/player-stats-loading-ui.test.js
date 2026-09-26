@@ -43,5 +43,7 @@ assert.match(appSource, /async function selectAccount[\s\S]*?\['killAuraKillsCha
   'switching accounts must show chart skeletons until the new account data arrives');
 assert.match(stylesSource, /\.player-chart-loading \.chart,\s*\.player-chart-loading \.chart-y-axis\s*\{[^}]*opacity:\s*0;/,
   'the sticky chart axis must stay hidden behind the skeleton');
+assert.match(stylesSource, /\.chart-scroll:not\(\.player-chart-loading\) > \.player-chart-skeleton\s*\{[^}]*display:\s*none;/,
+  'loaded charts that fit their width (TPS) must not stay covered by the skeleton');
 
 console.log('Player Stats loading UI tests passed.');

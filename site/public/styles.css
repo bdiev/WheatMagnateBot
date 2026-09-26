@@ -3418,6 +3418,12 @@ body.search-focus-active #logoutButton {
   pointer-events: none;
 }
 
+/* The skeleton stays in the markup so account switches can show it again;
+   outside the loading state it must not cover a chart that fits its width. */
+.chart-scroll:not(.player-chart-loading) > .player-chart-skeleton {
+  display: none;
+}
+
 .player-chart-skeleton span {
   position: relative;
   flex: 1 1 0;
