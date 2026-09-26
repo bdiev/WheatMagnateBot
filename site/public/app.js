@@ -136,6 +136,7 @@ const state = {
   adminPlayerDeleteTarget: null,
   requestCountLoading: false,
   adminLogsLoading: false,
+  adminLogsReloadQueued: false,
   childAiLoading: false,
   childAiPlayerStyles: [],
   childAiStyleVisibleLimit: 40,
@@ -8343,7 +8344,8 @@ function renderAdminSystemLogs(logs = []) {
     else state.adminOpenLogDetails.delete(details.dataset.logId);
   });
   if (!logs.length) {
-    list.innerHTML = '<div class="empty">No system log entries yet.</div>';
+    const filtered = ($('#adminLogType')?.value || 'all') !== 'all' || ($('#adminLogLevel')?.value || 'all') !== 'all';
+    list.innerHTML = `<div class="empty">${filtered ? 'No log entries match these filters.' : 'No system log entries yet.'}</div>`;
     state.adminOpenLogDetails.clear();
     state.renderSignatures['#adminSystemLogs'] = renderSignature;
     return;
@@ -8398,17 +8400,23 @@ function renderAdminSystemLogs(logs = []) {
 
 async function loadAdminSystemLogs() {
   if (state.currentUser?.role !== 'admin') return;
-  if (state.adminLogsLoading) return;
+  // A filter change during a request must not be dropped: reload once it settles.
+  if (state.adminLogsLoading) {
+    state.adminLogsReloadQueued = true;
+    return;
+  }
   const list = $('#adminSystemLogs');
   if (hasActiveTextSelectionWithin(list)) {
     queueRealtimeRefresh('admin-log-selection', loadAdminSystemLogs, 750);
     return;
   }
   const level = $('#adminLogLevel')?.value || 'all';
+  const type = $('#adminLogType')?.value || 'all';
   state.adminLogsLoading = true;
   try {
     if (list && !list.children.length) list.innerHTML = '<div class="empty">Loading system log...</div>';
-    const payload = await fetchJson(`/api/admin/system-logs?limit=160&level=${encodeURIComponent(level)}`);
+    const payload = await fetchJson(`/api/admin/system-logs?limit=160&level=${encodeURIComponent(level)}&type=${encodeURIComponent(type)}`);
+    if (level !== ($('#adminLogLevel')?.value || 'all') || type !== ($('#adminLogType')?.value || 'all')) return;
     if (hasActiveTextSelectionWithin(list)) {
       queueRealtimeRefresh('admin-log-selection', loadAdminSystemLogs, 750);
       return;
@@ -8421,6 +8429,10 @@ async function loadAdminSystemLogs() {
     }
   } finally {
     state.adminLogsLoading = false;
+    if (state.adminLogsReloadQueued) {
+      state.adminLogsReloadQueued = false;
+      loadAdminSystemLogs();
+    }
   }
 }
 
@@ -10377,6 +10389,7 @@ $('#adminPlayerDeleteConfirm')?.addEventListener('click', confirmAdminPlayerDele
 $('#adminPlayerDeleteModal')?.addEventListener('click', event => { if (event.target.id === 'adminPlayerDeleteModal') closeAdminPlayerDelete(); });
 $('#adminLogsRefresh')?.addEventListener('click', loadAdminSystemLogs);
 $('#adminLogLevel')?.addEventListener('change', loadAdminSystemLogs);
+$('#adminLogType')?.addEventListener('change', loadAdminSystemLogs);
 $('#childAiRefresh')?.addEventListener('click', loadChildAiAdmin);
 $('#childAiMemories')?.addEventListener('click', handleChildAiMemoryAction);
 $('#childAiExampleForm')?.addEventListener('submit', addChildAiExample);

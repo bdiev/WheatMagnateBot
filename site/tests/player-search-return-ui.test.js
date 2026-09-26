@@ -30,7 +30,7 @@ assert.match(
   /function openWhisperFromProfile[\s\S]*?closePlayerProfile\(\{ restoreSeenSearch: false \}\)/,
   'leaving a profile for a private-message dialog must not reopen Seen search'
 );
-assert.match(indexSource, /<script src="\/app\.js\?v=274" defer><\/script>/,
+assert.match(indexSource, /<script src="\/app\.js\?v=275" defer><\/script>/,
   'the application asset version must expose the search-return behavior immediately');
 
 console.log('Player search return UI tests passed.');

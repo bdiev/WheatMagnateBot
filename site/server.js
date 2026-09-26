@@ -16,6 +16,7 @@ const { runMigrations } = require('./migrations');
 const { SseHub, handleSseRequest } = require('./sse');
 const { calculateAnalytics, calculateDowntime, calculateHourlyProduction } = require('./obsidian-analytics');
 const { getLogRetentionConfig, pruneExpiredLogs } = require('./log-retention');
+const { resolveSystemLogType, listSystemLogTypes } = require('./system-log-types');
 const { EVENT_TYPES: PUSH_EVENT_TYPES, PUSH_TEST_TYPES, WebPushService } = require('./web-push');
 const { buildPlayerMilestones } = require('./player-milestones');
 const { buildPlayerActivityPattern, resolveTimeZone } = require('./player-activity-pattern');
@@ -5612,39 +5613,32 @@ async function getAdminSystemLogs(currentUser, url) {
   const level = String(url.searchParams.get('level') || 'all').toLowerCase();
   const allowedLevels = new Set(['debug', 'info', 'warn', 'error', 'audit']);
   const useLevelFilter = allowedLevels.has(level);
+  const logType = resolveSystemLogType(url.searchParams.get('type'));
 
-  const logsQuery = useLevelFilter
+  const logsQuery = pool.query(`
+    SELECT id::text, level, category, actor_username, message, details, created_at, account_id
+    FROM site_system_logs
+    WHERE account_id = $1::uuid
+      AND ($2::text IS NULL OR level = $2)
+      AND ${logType.logCondition}
+      AND NOT (
+        category = 'bot_console'
+        AND (message LIKE '[PlayerJoined]%' OR message LIKE '[PlayerLeft]%')
+      )
+    ORDER BY created_at DESC
+    LIMIT $3
+  `, [accountId, useLevelFilter ? level : null, limit]);
+
+  const commandsQuery = logType.commandCondition
     ? pool.query(`
-        SELECT id::text, level, category, actor_username, message, details, created_at, account_id
-        FROM site_system_logs
+        SELECT id::text, source, requested_by, command_type, payload, status, error, created_at, finished_at, account_id
+        FROM bot_commands
         WHERE account_id = $1::uuid
-          AND level = $2
-          AND NOT (
-            category = 'bot_console'
-            AND (message LIKE '[PlayerJoined]%' OR message LIKE '[PlayerLeft]%')
-          )
-        ORDER BY created_at DESC
-        LIMIT $3
-      `, [accountId, level, limit])
-    : pool.query(`
-        SELECT id::text, level, category, actor_username, message, details, created_at, account_id
-        FROM site_system_logs
-        WHERE account_id = $1::uuid
-          AND NOT (
-          category = 'bot_console'
-          AND (message LIKE '[PlayerJoined]%' OR message LIKE '[PlayerLeft]%')
-        )
+          AND ${logType.commandCondition}
         ORDER BY created_at DESC
         LIMIT $2
-      `, [accountId, limit]);
-
-  const commandsQuery = pool.query(`
-    SELECT id::text, source, requested_by, command_type, payload, status, error, created_at, finished_at, account_id
-    FROM bot_commands
-    WHERE account_id = $1::uuid
-    ORDER BY created_at DESC
-    LIMIT $2
-  `, [accountId, limit]);
+      `, [accountId, limit])
+    : Promise.resolve({ rows: [] });
 
   const [logsResult, commandsResult] = await Promise.all([logsQuery, commandsQuery]);
   const logs = logsResult.rows.map(row => ({
@@ -5681,6 +5675,8 @@ async function getAdminSystemLogs(currentUser, url) {
 
   return {
     accountId,
+    type: logType.id,
+    types: listSystemLogTypes(),
     logs: [...logs, ...commands]
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
       .slice(0, limit)

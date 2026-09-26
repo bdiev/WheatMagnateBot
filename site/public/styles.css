@@ -12455,6 +12455,10 @@ body.kill-aura-modal-open {
     gap: 8px;
   }
 
+  .admin-log-tools #adminLogType {
+    grid-column: 1 / -1;
+  }
+
   .admin-log-tools select,
   .admin-log-tools button {
     width: 100%;
