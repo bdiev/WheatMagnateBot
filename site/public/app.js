@@ -127,6 +127,8 @@ const state = {
   adminPlayerInfoCollectionAttemptedAt: 0,
   adminPlayerInfoCollectionPending: false,
   adminPlayerInfoCollectionTimer: null,
+  adminPlayerInfoAwaitingCommands: new Map(),
+  adminPlayerInfoAwaitTimer: null,
   adminPlayerEditTarget: null,
   adminPlayerDeleteTarget: null,
   requestCountLoading: false,
@@ -7519,6 +7521,16 @@ function renderAdminPlaytimeCommands(progress) {
     .filter(item => /^!(?:pt|jd|seen|messages) [A-Za-z0-9_]{1,32}$/i.test(item.command));
 
   count.textContent = formatNumber(missingCount);
+  const listedCommands = new Set(commands.map(item => item.command.toLowerCase()));
+  let resolvedCommand = false;
+  for (const command of state.adminPlayerInfoAwaitingCommands.keys()) {
+    if (listedCommands.has(command)) continue;
+    state.adminPlayerInfoAwaitingCommands.delete(command);
+    resolvedCommand = true;
+  }
+  if (resolvedCommand && state.activeTab === 'admin') {
+    loadAdminPlayers({ showLoading: false, preserveScroll: true });
+  }
   if (!missingCount) {
     list.innerHTML = '<div class="admin-playtime-complete">All tracked player information is complete.</div>';
     return;
@@ -7545,6 +7557,7 @@ async function copyAdminPlaytimeCommand(button) {
     await writeClipboardText(command);
     window.clearTimeout(button.copyResetTimer);
     button.classList.add('copied');
+    watchAdminPlayerInfoCommand(command);
     showCopyToast(`${command} copied. Paste it into the Discord lookup channel.`);
     button.copyResetTimer = window.setTimeout(() => {
       button.classList.remove('copied');
@@ -7552,6 +7565,33 @@ async function copyAdminPlaytimeCommand(button) {
   } catch (error) {
     showCopyToast(error.message || 'Could not copy the command.');
   }
+}
+
+// The Discord import event usually fires while this page is hidden or its SSE
+// connection was dropped by the mobile browser, so poll briefly after a copy
+// until the copied command leaves the list instead of relying on that event.
+const ADMIN_PLAYER_INFO_AWAIT_MS = 3 * 60 * 1000;
+
+function watchAdminPlayerInfoCommand(command) {
+  state.adminPlayerInfoAwaitingCommands.set(command.toLowerCase(), Date.now());
+  scheduleAdminPlayerInfoAwaitPoll();
+}
+
+function scheduleAdminPlayerInfoAwaitPoll(delay = 1_500) {
+  clearTimeout(state.adminPlayerInfoAwaitTimer);
+  state.adminPlayerInfoAwaitTimer = null;
+  const cutoff = Date.now() - ADMIN_PLAYER_INFO_AWAIT_MS;
+  for (const [command, copiedAt] of state.adminPlayerInfoAwaitingCommands) {
+    if (copiedAt < cutoff) state.adminPlayerInfoAwaitingCommands.delete(command);
+  }
+  if (!state.adminPlayerInfoAwaitingCommands.size || state.currentUser?.role !== 'admin') return;
+  state.adminPlayerInfoAwaitTimer = setTimeout(async () => {
+    state.adminPlayerInfoAwaitTimer = null;
+    if (document.visibilityState !== 'hidden') {
+      await loadAdminPlayerInfoCollection({ force: true });
+    }
+    scheduleAdminPlayerInfoAwaitPoll();
+  }, delay);
 }
 
 function renderAdminPlayerInfoCollection(progress) {
@@ -10421,6 +10461,7 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
     ensureActiveTabAvailable();
     scheduleViewportRedraw({ force: true });
+    if (state.adminPlayerInfoAwaitingCommands.size) scheduleAdminPlayerInfoAwaitPoll(0);
     if (state.currentUser && state.sseNeedsFullSync) {
       state.sseNeedsFullSync = false;
       loadAll().catch(() => { state.sseNeedsFullSync = true; });
