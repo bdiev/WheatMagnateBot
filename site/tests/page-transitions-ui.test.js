@@ -19,7 +19,7 @@ assert.match(pwaUpdateSource, /register\('\/sw\.js', \{ updateViaCache: 'none' \
 assert.match(pwaUpdateSource, /controllerchange[\s\S]*hadController[\s\S]*window\.location\.reload\(\)/, 'an activated update must reload an existing PWA exactly once');
 assert.match(pwaUpdateSource, /visibilitychange[\s\S]*visibilityState === 'visible'[\s\S]*checkForUpdate\(\)/, 'a resumed PWA must check for updates');
 assert.match(indexSource, /page-transitions\.js\?v=1/, 'the dashboard must load shared page transitions');
-assert.match(indexSource, /styles\.css\?v=260/, 'the dashboard must load the current shared styles');
+assert.match(indexSource, /styles\.css\?v=261/, 'the dashboard must load the current shared styles');
 assert.match(requestHtmlSource, /styles\.css\?v=248/, 'the request page must load the current shared transition styles');
 assert.match(requestHtmlSource, /page-transitions\.js\?v=1/, 'the request page must load shared page transitions');
 assert.match(requestHtmlSource, /id="loginPrompt"[^>]*hidden/, 'the request login state must not flash before the session loads');
@@ -63,8 +63,8 @@ assert.match(appSource, /visibilityState === 'hidden'[\s\S]*state\.sseNeedsFullS
 assert.match(stylesSource, /@media \(max-width:700px\)[\s\S]*\.topbar::before,[\s\S]*-webkit-backdrop-filter:\s*none !important;/, 'mobile fixed layers must avoid expensive WebKit backdrop textures');
 assert.match(
   stylesSource,
-  /#tab-chat > \.stats-grid\.three \.stat\s*\{[^}]*display:\s*grid;[^}]*grid-template-rows:\s*2\.4em auto 2\.5em;/s,
-  'mobile chat summary cards must reserve identical rows for their labels, values, and captions'
+  /#tab-chat > \.stats-grid\.three \.stat\s*\{[^}]*display:\s*grid;[^}]*grid-template-rows:\s*27px 25px minmax\(24px, 1fr\);[^}]*aspect-ratio:\s*1 \/ 1;/s,
+  'mobile chat summary cards must use identical compact square layouts'
 );
 
 console.log('Page transition UI tests passed.');
