@@ -6552,9 +6552,9 @@ function renderPlayerStats(payload = {}, nearbyPlayers = null) {
   $('#uniquePlayersToday').textContent = formatNumber(payload.players?.seenToday);
   $('#uniquePlayersWeek').textContent = formatNumber(payload.players?.seenWeek);
   $('#uniquePlayersMonth').textContent = formatNumber(payload.players?.seenMonth);
-  renderPeriodTrend('#uniquePlayersTodayTrend', payload.players?.seenToday, payload.players?.seenPreviousDay, 'yesterday');
-  renderPeriodTrend('#uniquePlayersWeekTrend', payload.players?.seenWeek, payload.players?.seenPreviousWeek, 'last week');
-  renderPeriodTrend('#uniquePlayersMonthTrend', payload.players?.seenMonth, payload.players?.seenPreviousMonth, 'last month');
+  renderPeriodTrend('#uniquePlayersTodayTrend', payload.players?.seenToday, payload.players?.seenPreviousDay, 'yesterday at this time');
+  renderPeriodTrend('#uniquePlayersWeekTrend', payload.players?.seenWeek, payload.players?.seenPreviousWeek, 'the same point last week');
+  renderPeriodTrend('#uniquePlayersMonthTrend', payload.players?.seenMonth, payload.players?.seenPreviousMonth, 'the same point last month');
   state.charts.hourlyAverageOnline = payload.hourlyAverageOnline || [];
   const chartShell = $('#averageOnlineChartShell');
   chartShell?.classList.remove('player-chart-loading');

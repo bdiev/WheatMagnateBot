@@ -2588,73 +2588,88 @@ async function getPlayerStats() {
       FROM whitelist_players w
       LEFT JOIN activity pa ON pa.username_key = w.username_key
     `),
+    // Unique players per calendar period. Current and previous periods share
+    // one source (session history plus players online right now) so the trend
+    // compares like with like, and each previous period is cut at the same
+    // elapsed point ("yesterday by this time"), not compared as a full period.
+    // Session events are TIMESTAMPTZ, so the local calendar is exact; the naive
+    // player_activity.last_seen column is not used here.
     database.query(`
       WITH settings AS (
         SELECT COALESCE(
           (SELECT timezone FROM obsidian_farm_analytics_settings WHERE id = 1),
           'Europe/Vilnius'
         ) AS timezone
-      ), ordered_events AS (
+      ), bounds AS (
         SELECT
-          LOWER(username) AS username_key,
-          event_type,
-          occurred_at AT TIME ZONE settings.timezone AS occurred_at,
-          LEAD(occurred_at AT TIME ZONE settings.timezone) OVER (
-            PARTITION BY LOWER(username)
-            ORDER BY occurred_at, id
-          ) AS next_occurred_at
-        FROM player_session_events
-        CROSS JOIN settings
-        WHERE occurred_at <= NOW()
-          AND LOWER(username) <> ''
-      ), sessions AS (
-        SELECT
-          username_key,
-          occurred_at AS started_at,
-          COALESCE(next_occurred_at, NOW() AT TIME ZONE settings.timezone) AS ended_at
-        FROM ordered_events
-        CROSS JOIN settings
-        WHERE event_type = 'player_joined'
-      ), boundaries AS (
-        SELECT
+          timezone,
+          NOW() AT TIME ZONE timezone AS now_local,
           date_trunc('day', NOW() AT TIME ZONE timezone) AS day_start,
           date_trunc('week', NOW() AT TIME ZONE timezone) AS week_start,
           date_trunc('month', NOW() AT TIME ZONE timezone) AS month_start
         FROM settings
+      ), windows AS (
+        SELECT period, current_start, previous_start,
+          LEAST(current_start, previous_start + (now_local - current_start)) AS previous_end
+        FROM bounds
+        CROSS JOIN LATERAL (VALUES
+          ('day', day_start, day_start - INTERVAL '1 day'),
+          ('week', week_start, week_start - INTERVAL '1 week'),
+          ('month', month_start, month_start - INTERVAL '1 month')
+        ) period_windows(period, current_start, previous_start)
+      ), ordered_events AS (
+        SELECT
+          LOWER(username) AS username_key,
+          event_type,
+          occurred_at AT TIME ZONE bounds.timezone AS occurred_at,
+          LAG(event_type) OVER player_events AS previous_event_type,
+          LEAD(occurred_at AT TIME ZONE bounds.timezone) OVER player_events AS next_occurred_at
+        FROM player_session_events
+        CROSS JOIN bounds
+        WHERE occurred_at <= NOW()
+          AND occurred_at >= (bounds.month_start - INTERVAL '2 months') AT TIME ZONE bounds.timezone
+          AND LOWER(username) <> ''
+        WINDOW player_events AS (PARTITION BY LOWER(username) ORDER BY occurred_at, id)
+      ), sessions AS (
+        SELECT username_key, occurred_at AS started_at, COALESCE(next_occurred_at, bounds.now_local) AS ended_at
+        FROM ordered_events
+        CROSS JOIN bounds
+        WHERE event_type = 'player_joined'
+        UNION ALL
+        -- Players already online when the bot (re)connects get no join event.
+        -- Their later leave still proves they were on the server at that time.
+        SELECT username_key, occurred_at, occurred_at
+        FROM ordered_events
+        WHERE event_type = 'player_left'
+          AND previous_event_type IS DISTINCT FROM 'player_joined'
+      ), online_now AS (
+        SELECT DISTINCT LOWER(username) AS username_key
+        FROM player_activity
+        WHERE is_online = TRUE
+          AND LOWER(username) <> ''
+      ), seen AS (
+        SELECT windows.period, 'current' AS slot, sessions.username_key
+        FROM sessions
+        JOIN windows ON sessions.ended_at >= windows.current_start
+        UNION ALL
+        SELECT windows.period, 'current', online_now.username_key
+        FROM online_now
+        CROSS JOIN windows
+        UNION ALL
+        SELECT windows.period, 'previous', sessions.username_key
+        FROM sessions
+        JOIN windows
+          ON sessions.started_at <= windows.previous_end
+         AND sessions.ended_at >= windows.previous_start
       )
       SELECT
-        COUNT(DISTINCT LOWER(username)) FILTER (
-          WHERE last_seen AT TIME ZONE settings.timezone
-            >= date_trunc('day', NOW() AT TIME ZONE settings.timezone)
-        )::int AS seen_today,
-        COUNT(DISTINCT LOWER(username)) FILTER (
-          WHERE last_seen AT TIME ZONE settings.timezone
-            >= date_trunc('week', NOW() AT TIME ZONE settings.timezone)
-        )::int AS seen_week,
-        COUNT(DISTINCT LOWER(username)) FILTER (
-          WHERE last_seen AT TIME ZONE settings.timezone
-            >= date_trunc('month', NOW() AT TIME ZONE settings.timezone)
-        )::int AS seen_month,
-        (
-          SELECT COUNT(DISTINCT username_key)::int
-          FROM sessions, boundaries
-          WHERE started_at < boundaries.day_start
-            AND ended_at > boundaries.day_start - INTERVAL '1 day'
-        ) AS seen_previous_day,
-        (
-          SELECT COUNT(DISTINCT username_key)::int
-          FROM sessions, boundaries
-          WHERE started_at < boundaries.week_start
-            AND ended_at > boundaries.week_start - INTERVAL '1 week'
-        ) AS seen_previous_week,
-        (
-          SELECT COUNT(DISTINCT username_key)::int
-          FROM sessions, boundaries
-          WHERE started_at < boundaries.month_start
-            AND ended_at > boundaries.month_start - INTERVAL '1 month'
-        ) AS seen_previous_month
-      FROM player_activity
-      CROSS JOIN settings
+        COUNT(DISTINCT username_key) FILTER (WHERE period = 'day' AND slot = 'current')::int AS seen_today,
+        COUNT(DISTINCT username_key) FILTER (WHERE period = 'week' AND slot = 'current')::int AS seen_week,
+        COUNT(DISTINCT username_key) FILTER (WHERE period = 'month' AND slot = 'current')::int AS seen_month,
+        COUNT(DISTINCT username_key) FILTER (WHERE period = 'day' AND slot = 'previous')::int AS seen_previous_day,
+        COUNT(DISTINCT username_key) FILTER (WHERE period = 'week' AND slot = 'previous')::int AS seen_previous_week,
+        COUNT(DISTINCT username_key) FILTER (WHERE period = 'month' AND slot = 'previous')::int AS seen_previous_month
+      FROM seen
     `),
     database.query(`
       WITH ordered_events AS (

@@ -10,12 +10,14 @@ const appSource = fs.readFileSync(path.join(siteDirectory, 'public', 'app.js'), 
 const indexSource = fs.readFileSync(path.join(siteDirectory, 'public', 'index.html'), 'utf8');
 const stylesSource = fs.readFileSync(path.join(siteDirectory, 'public', 'styles.css'), 'utf8');
 
-assert.match(serverSource, /COUNT\(DISTINCT LOWER\(username\)\)[\s\S]*AS seen_today[\s\S]*AS seen_week[\s\S]*AS seen_month/,
+assert.match(serverSource, /COUNT\(DISTINCT username_key\)[^\n]*AS seen_today[\s\S]*AS seen_week[\s\S]*AS seen_month/,
   'player statistics must count unique case-insensitive names for all three calendar periods');
 assert.match(serverSource, /date_trunc\('day',[\s\S]*date_trunc\('week',[\s\S]*date_trunc\('month'/,
   'today, week, and month counts must use calendar boundaries');
-assert.match(serverSource, /AT TIME ZONE settings\.timezone[\s\S]*obsidian_farm_analytics_settings/,
+assert.match(serverSource, /obsidian_farm_analytics_settings[\s\S]*?date_trunc\('day', NOW\(\) AT TIME ZONE timezone\)/,
   'calendar boundaries must follow the configured account timezone');
+assert.match(serverSource, /LEAST\(current_start, previous_start \+ \(now_local - current_start\)\) AS previous_end/,
+  'previous periods must be cut at the same elapsed point as the current period');
 assert.match(serverSource, /'seenToday',[\s\S]*'seenPreviousDay',[\s\S]*'seenPreviousWeek',[\s\S]*'seenPreviousMonth'/,
   'persisted player-stat caches from the previous card schema must be ignored');
 assert.match(appSource, /#uniquePlayersToday[\s\S]*players\?\.seenToday[\s\S]*#uniquePlayersWeek[\s\S]*players\?\.seenWeek[\s\S]*#uniquePlayersMonth[\s\S]*players\?\.seenMonth/,
@@ -24,6 +26,8 @@ assert.match(serverSource, /AS seen_previous_day[\s\S]*AS seen_previous_week[\s\
   'player statistics must include each previous calendar period');
 assert.match(serverSource, /FROM player_session_events[\s\S]*event_type = 'player_joined'/,
   'previous-period comparisons must use preserved session history');
+assert.match(appSource, /seenPreviousDay, 'yesterday at this time'[\s\S]*seenPreviousWeek, 'the same point last week'[\s\S]*seenPreviousMonth, 'the same point last month'/,
+  'trend tooltips must describe the like-for-like comparison window');
 assert.match(appSource, /function renderPeriodTrend[\s\S]*seenPreviousDay[\s\S]*seenPreviousWeek[\s\S]*seenPreviousMonth/,
   'the player cards must render discreet percentage trends');
 assert.match(serverSource, /joinedPlayers[\s\S]*leftPlayers[\s\S]*invalidatePlayerStatsCache\(\)[\s\S]*publish\('player_joined'/,
