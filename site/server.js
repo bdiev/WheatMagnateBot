@@ -5618,7 +5618,7 @@ async function getAdminSystemLogs(currentUser, url) {
   const logsQuery = pool.query(`
     SELECT id::text, level, category, actor_username, message, details, created_at, account_id
     FROM site_system_logs
-    WHERE account_id = $1::uuid
+    WHERE ($4::boolean OR account_id = $1::uuid)
       AND ($2::text IS NULL OR level = $2)
       AND ${logType.logCondition}
       AND NOT (
@@ -5627,17 +5627,17 @@ async function getAdminSystemLogs(currentUser, url) {
       )
     ORDER BY created_at DESC
     LIMIT $3
-  `, [accountId, useLevelFilter ? level : null, limit]);
+  `, [accountId, useLevelFilter ? level : null, limit, logType.accountScope === 'global']);
 
   const commandsQuery = logType.commandCondition
     ? pool.query(`
         SELECT id::text, source, requested_by, command_type, payload, status, error, created_at, finished_at, account_id
         FROM bot_commands
-        WHERE account_id = $1::uuid
+        WHERE ($3::boolean OR account_id = $1::uuid)
           AND ${logType.commandCondition}
         ORDER BY created_at DESC
         LIMIT $2
-      `, [accountId, limit])
+      `, [accountId, limit, logType.accountScope === 'global'])
     : Promise.resolve({ rows: [] });
 
   const [logsResult, commandsResult] = await Promise.all([logsQuery, commandsQuery]);

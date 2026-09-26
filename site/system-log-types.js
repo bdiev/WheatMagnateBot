@@ -7,6 +7,11 @@
 const OBSIDIAN_NOTIFICATIONS = "'farm_stalled','low_pickaxe_durability','no_pickaxes','daily_obsidian_report'";
 const CONNECTION_NOTIFICATIONS = "'bot_disconnected','bot_reconnected','bot_kicked','repeated_reconnects'";
 
+// Types with accountScope 'global' ignore the selected account: Pearl Loader
+// requests are logged by the primary bot, while the loader bot's own
+// connection events are logged under its separate account.
+const PEARL_LOADER_ACCOUNTS = "SELECT id FROM bot_accounts WHERE role = 'pearl_loader'";
+
 const SYSTEM_LOG_TYPES = Object.freeze([
   {
     id: 'obsidian',
@@ -18,6 +23,18 @@ const SYSTEM_LOG_TYPES = Object.freeze([
       OR (category = 'command_bus' AND message ~* 'obsidian')
     )`,
     commandCondition: "command_type LIKE 'obsidian%'"
+  },
+  {
+    id: 'pearl_loader',
+    label: 'Pearl Loader',
+    accountScope: 'global',
+    logCondition: `(
+      category = 'pearl_loader'
+      OR (category IN ('minecraft', 'minecraft_runtime') AND account_id IN (${PEARL_LOADER_ACCOUNTS}))
+      OR (category = 'bot_console' AND message ~* 'pearl loader')
+      OR (category IN ('accounts', 'admin_data') AND message ~* 'pearl')
+    )`,
+    commandCondition: "(command_type LIKE 'pearl%' OR account_id IN (" + PEARL_LOADER_ACCOUNTS + '))'
   },
   {
     id: 'connection',
@@ -64,8 +81,8 @@ function resolveSystemLogType(value) {
   const id = String(value || 'all').trim().toLowerCase();
   const type = SYSTEM_LOG_TYPE_BY_ID.get(id);
   return type
-    ? { id: type.id, logCondition: type.logCondition, commandCondition: type.commandCondition }
-    : { id: 'all', logCondition: 'TRUE', commandCondition: 'TRUE' };
+    ? { id: type.id, accountScope: type.accountScope || 'account', logCondition: type.logCondition, commandCondition: type.commandCondition }
+    : { id: 'all', accountScope: 'account', logCondition: 'TRUE', commandCondition: 'TRUE' };
 }
 
 function listSystemLogTypes() {

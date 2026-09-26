@@ -7,7 +7,7 @@ const { SYSTEM_LOG_TYPES, resolveSystemLogType, listSystemLogTypes } = require('
 
 assert.deepEqual(
   listSystemLogTypes().map(type => type.id),
-  ['all', 'obsidian', 'connection', 'notifications', 'commands', 'admin', 'console']
+  ['all', 'obsidian', 'pearl_loader', 'connection', 'notifications', 'commands', 'admin', 'console']
 );
 
 const all = resolveSystemLogType(undefined);
@@ -26,6 +26,13 @@ assert.match(obsidian.logCondition, /'obsidian', 'obsidian_click', 'obsidian_ana
 assert.match(obsidian.logCondition, /'farm_stalled'/);
 assert.match(obsidian.logCondition, /message ~\* '\^\\\[obsidian'/, 'console lines tagged [Obsidian...] belong to the farm');
 assert.match(obsidian.commandCondition, /LIKE 'obsidian%'/);
+
+const pearl = resolveSystemLogType('pearl_loader');
+assert.equal(pearl.accountScope, 'global', 'Pearl Loader spans the primary bot and the loader account');
+assert.match(pearl.logCondition, /category = 'pearl_loader'/);
+assert.match(pearl.logCondition, /role = 'pearl_loader'/, 'the loader bot connection events must be included');
+assert.equal(resolveSystemLogType('obsidian').accountScope, 'account');
+assert.equal(resolveSystemLogType('all').accountScope, 'account');
 
 const connection = resolveSystemLogType('connection');
 assert.match(connection.logCondition, /'minecraft', 'minecraft_runtime'/);
@@ -46,6 +53,7 @@ const indexSource = fs.readFileSync(path.join(siteRoot, 'public', 'index.html'),
 
 assert.match(serverSource, /const logType = resolveSystemLogType\(url\.searchParams\.get\('type'\)\);/);
 assert.match(serverSource, /AND \$\{logType\.logCondition\}/);
+assert.match(serverSource, /WHERE \(\$4::boolean OR account_id = \$1::uuid\)[\s\S]*logType\.accountScope === 'global'/);
 assert.match(serverSource, /logType\.commandCondition\s*\?\s*pool\.query/);
 
 for (const { id } of listSystemLogTypes()) {
