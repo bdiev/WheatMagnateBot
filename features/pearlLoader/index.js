@@ -7,7 +7,16 @@ const { nextInteractionSequence } = require('../obsidianFarm/interaction-sequenc
 
 const PEARL_LOADER_ROLE = 'pearl_loader';
 const LOAD_COMMAND = /^load$/i;
-const YES_COMMAND = /^(?:yes|yea|ya|yep)[.!]*$/i;
+const READY_CONFIRMATIONS = Object.freeze([
+  'yes', 'y', 'ye', 'yea', 'yeah', 'yeh', 'yah', 'ya', 'yep', 'yup', 'yas', 'yessir', 'yes sir',
+  'yes please', 'yeah sure', 'yep sure', 'ok', 'okay', 'okey', 'k', 'kk', 'ok go', 'sure', 'sure thing',
+  'of course', 'ofc', 'absolutely', 'definitely', 'certainly', 'affirmative', 'alright', 'all right',
+  'aight', 'ready', 'rdy', 'im ready', 'i am ready', 'ready now', 'go', 'go go', 'go ahead', 'lets go',
+  'do it', 'lets do it', 'send it', 'sounds good', 'bet', 'fine', 'cool', 'roger', 'roger that',
+  'confirm', 'confirmed', 'please', 'pls', 'plz',
+  'да', 'ага', 'угу', 'ок', 'окей', 'го', 'гоу', 'давай', 'да давай', 'погнали', 'готов', 'готова',
+  'конечно', 'так', 'так точно', 'поехали'
+]);
 const PEARL_SEARCH_RADIUS = 2;
 const READY_TIMEOUT_MS = 2 * 60_000;
 const PEARL_RELOAD_REMINDERS = Object.freeze([
@@ -28,6 +37,20 @@ const PEARL_RELOAD_REMINDERS = Object.freeze([
   'Nice to see you! Please refill your pearl before you head off.',
   'One pearl used, one to go - toss a new one in when you can.',
   'Good luck on your journey! Your stasis chamber misses its pearl already.'
+]);
+const READY_PROMPTS = Object.freeze([
+  "Type \"/r yes\" when you're ready.",
+  "I'm at your pearl! Reply \"/r yes\" when you're ready to go.",
+  "Your pearl is ready to load. Send \"/r yes\" whenever you are.",
+  "All set on my side! Type \"/r yes\" and I'll pull you through.",
+  "Standing by at your stasis chamber. Just \"/r yes\" when ready.",
+  "Ready when you are! Reply \"/r ok\" to teleport.",
+  "Hey there! Say \"/r go\" once you're ready to be pulled.",
+  "Found your pearl. Type \"/r yes\" to start the teleport.",
+  "Everything looks good here. \"/r ready\" whenever you want to come over.",
+  "Waiting at your pearl. Answer \"/r yes\" (or ok, sure, go) to teleport.",
+  "Hi! Your ride is ready - just \"/r yep\" when you are.",
+  "Pearl located and ready. Reply \"/r sure\" and I'll open the trapdoor."
 ]);
 const FACE_DIRECTIONS = [
   new Vec3(0, -1, 0), new Vec3(0, 1, 0),
@@ -184,13 +207,35 @@ function timeoutError(message, statusCode = 504) {
   return Object.assign(new Error(message), { statusCode });
 }
 
-let lastPearlReloadReminder = null;
+function createVariedPicker(messages) {
+  let last = null;
+  return function pick(random = Math.random) {
+    const choices = messages.filter(message => message !== last);
+    const index = Math.min(choices.length - 1, Math.max(0, Math.floor(random() * choices.length)));
+    last = choices[index];
+    return last;
+  };
+}
 
-function pickPearlReloadReminder(random = Math.random) {
-  const choices = PEARL_RELOAD_REMINDERS.filter(message => message !== lastPearlReloadReminder);
-  const index = Math.min(choices.length - 1, Math.max(0, Math.floor(random() * choices.length)));
-  lastPearlReloadReminder = choices[index];
-  return lastPearlReloadReminder;
+const pickPearlReloadReminder = createVariedPicker(PEARL_RELOAD_REMINDERS);
+const pickReadyPrompt = createVariedPicker(READY_PROMPTS);
+
+// Lowercases, drops apostrophes, turns punctuation and emoji into spaces and
+// collapses stretched letters, so "Yesss!!", "let's go" and "OK :)" all match.
+function normalizeConfirmation(value) {
+  return cleanWhisperText(value).toLowerCase()
+    .replace(/['\u2019`]/g, '')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+    .replace(/(\p{L})\1+/gu, '$1');
+}
+
+const NORMALIZED_READY_CONFIRMATIONS = new Set(READY_CONFIRMATIONS.map(normalizeConfirmation));
+
+function isReadyConfirmation(message) {
+  const text = cleanWhisperText(message);
+  if (/^\++$/.test(text)) return true;
+  return NORMALIZED_READY_CONFIRMATIONS.has(normalizeConfirmation(text));
 }
 
 function sendPrivateWhisper(bot, username, message) {
@@ -654,7 +699,7 @@ function createPearlLoaderFeature({
         return;
       }
       job.stage = 'aiming';
-      sendPrivateWhisper(loaderBot, job.username, 'Type "/r yes" when you ready.');
+      sendPrivateWhisper(loaderBot, job.username, pickReadyPrompt());
       job.readyTimer = setTimer(() => {
         if (activeJob !== job || !['aiming','awaiting_yes'].includes(job.stage)) return;
         job.readyTimer = null;
@@ -691,7 +736,7 @@ function createPearlLoaderFeature({
   async function handleLoaderWhisper(accountId, username, message) {
     const job = activeJob;
     if (!job || job.accountId !== accountId || !['aiming','awaiting_yes'].includes(job.stage)) return false;
-    if (String(username || '').toLowerCase() !== job.usernameKey || !YES_COMMAND.test(cleanWhisperText(message))) return false;
+    if (String(username || '').toLowerCase() !== job.usernameKey || !isReadyConfirmation(message)) return false;
     clearTimer(job.readyTimer);
     job.readyTimer = null;
     if (job.stage === 'aiming') {
@@ -740,15 +785,18 @@ module.exports = {
   PEARL_LOADER_ROLE,
   PEARL_RELOAD_REMINDERS,
   PEARL_SEARCH_RADIUS,
+  READY_CONFIRMATIONS,
+  READY_PROMPTS,
   READY_TIMEOUT_MS,
-  YES_COMMAND,
   cleanWhisperText,
   createPearlLoaderFeature,
   GoalLookAtTrapdoor,
   hasEnderPearlNear,
   isEnderPearlEntity,
+  isReadyConfirmation,
   isTrapdoor,
   pickPearlReloadReminder,
+  pickReadyPrompt,
   sendPrivateWhisper,
   trapdoorInteraction,
   trapdoorIsOpen

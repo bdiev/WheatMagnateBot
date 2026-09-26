@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { Vec3 } = require('vec3');
-const { createPearlLoaderFeature, GoalLookAtTrapdoor, hasEnderPearlNear, PEARL_RELOAD_REMINDERS, pickPearlReloadReminder, READY_TIMEOUT_MS, trapdoorInteraction, YES_COMMAND } = require('../features/pearlLoader');
+const { createPearlLoaderFeature, GoalLookAtTrapdoor, hasEnderPearlNear, isReadyConfirmation, PEARL_RELOAD_REMINDERS, pickPearlReloadReminder, pickReadyPrompt, READY_PROMPTS, READY_TIMEOUT_MS, trapdoorInteraction } = require('../features/pearlLoader');
 const { createModulesForBot } = require('../site/accounts/module-registry');
 const { MinecraftBotRuntime } = require('../site/accounts/minecraft-bot-runtime');
 
@@ -11,6 +11,16 @@ const loaderAccount = {
   id:'00000000-0000-4000-8000-000000000002',
   username:'PearlBot',displayName:'Pearl Bot',role:'pearl_loader',isDefault:false
 };
+
+const READY_PROMPT = '<ready prompt>';
+
+// Ready prompts are picked at random, so tests compare them by placeholder.
+function withReadyPrompt(messages) {
+  return messages.map(message => {
+    const prompt = READY_PROMPTS.find(candidate => message.endsWith(` ${candidate}`));
+    return prompt ? message.slice(0, -prompt.length) + READY_PROMPT : message;
+  });
+}
 
 function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
@@ -87,10 +97,10 @@ async function testCompleteCycle() {
   assert.equal(registryLoads,1,'each Load request refreshes bot roles from the database');
   assert.equal(recreated,1,'an existing stopped runtime is recreated from the refreshed account settings');
   assert.equal(feature.getStatus().stage,'awaiting_yes');
-  assert.deepEqual(chats,['/w bdiev_ Type "/r yes" when you ready.']);
-  assert.deepEqual(eventOrder.slice(0,3),[
+  assert.deepEqual(withReadyPrompt(chats),[`/w bdiev_ ${READY_PROMPT}`]);
+  assert.deepEqual(withReadyPrompt(eventOrder.slice(0,3)),[
     'arrived',
-    'chat:/w bdiev_ Type "/r yes" when you ready.',
+    `chat:/w bdiev_ ${READY_PROMPT}`,
     'look:10.8125,64.5,-19.5'
   ],'the loader must arrive, send the prompt, and then aim at the actual trapdoor slab');
   assert.deepEqual(
@@ -120,7 +130,7 @@ async function testCompleteCycle() {
   assert.equal(interactionPackets.length,1);
   assert.equal(interactionPackets[0].packet.sequence,1,'modern interaction packets use a fresh sequence number');
   assert.equal(chats.length,2,'the Loader sends the ready prompt and one reload reminder');
-  assert.equal(chats[0],'/w bdiev_ Type "/r yes" when you ready.');
+  assert.equal(withReadyPrompt(chats)[0],`/w bdiev_ ${READY_PROMPT}`);
   assert.ok(PEARL_RELOAD_REMINDERS.some(message => chats[1] === `/w bdiev_ ${message}`),'the Loader reminds the visible player to throw a replacement pearl');
   assert.ok(chats.every(message => message.startsWith('/w bdiev_ ')),'Pearl Loader must never write feature messages to public chat');
   await delay(50);
@@ -387,7 +397,7 @@ async function testTrapdoorRaycastBoundaryMissDoesNotBlockClick() {
   await feature.handlePrimaryWhisper('bdiev_','Load');
   assert.equal(feature.getStatus().stage,'awaiting_yes',
     'a visible hatch within 2.5 blocks must survive a precise raycast boundary miss');
-  assert.deepEqual(chats,['/w bdiev_ Type "/r yes" when you ready.']);
+  assert.deepEqual(withReadyPrompt(chats),[`/w bdiev_ ${READY_PROMPT}`]);
   assert.equal(await feature.handleLoaderWhisper(loaderAccount.id,'bdiev_','Yea!'),true);
   assert.equal(clicks,1,'the local boundary miss must not prevent the server-authoritative click');
   assert.equal(open,false);
@@ -455,8 +465,8 @@ async function testReadyConfirmationTimeout() {
 
   await feature.handlePrimaryWhisper('bdiev_','Load');
   await delay(30);
-  assert.deepEqual(chats,[
-    '/w bdiev_ Type "/r yes" when you ready.',
+  assert.deepEqual(withReadyPrompt(chats),[
+    `/w bdiev_ ${READY_PROMPT}`,
     '/w bdiev_ I did not receive an answer, so I am leaving.'
   ]);
   assert.deepEqual(feature.getStatus(),{active:false});
@@ -499,11 +509,31 @@ function testRestrictedRuntimeModules() {
 }
 
 function testYesConfirmationWords() {
-  for (const word of ['yes','YES','Yea','ya','Yep','yep!','yes.']) {
-    assert.ok(YES_COMMAND.test(word),`"${word}" confirms the Pearl Loader`);
+  for (const word of ['yes','YES','Yea','ya','Yep','yep!','yes.','Yeah','yup','Yesss!!','ok','OK :)','okay','k','sure','Sure thing',
+    'of course','ready','Ready!','im ready',"I'm ready",'go','GO GO','lets go',"Let's go!",'do it','yes, please','+','++',
+    'Да','ага','ок','го','давай','Погнали!','готов']) {
+    assert.ok(isReadyConfirmation(word),`"${word}" confirms the Pearl Loader`);
   }
-  for (const word of ['no','nope','yes please','y','yeap','yess']) {
-    assert.ok(!YES_COMMAND.test(word),`"${word}" does not confirm the Pearl Loader`);
+  for (const word of ['no','nope','not yet','wait','later','yes but wait','nah','нет','стоп','','   ','-','?']) {
+    assert.ok(!isReadyConfirmation(word),`"${word}" does not confirm the Pearl Loader`);
+  }
+}
+
+function testReadyPrompts() {
+  assert.ok(READY_PROMPTS.length >= 10,'the Loader has a varied set of ready prompts');
+  assert.equal(new Set(READY_PROMPTS).size,READY_PROMPTS.length,'ready prompts are unique');
+  for (const message of READY_PROMPTS) {
+    assert.ok(/^[ -~]+$/.test(message),`prompt is plain ASCII: ${message}`);
+    assert.ok(`/w ${'x'.repeat(16)} ${message}`.length <= 256,`prompt fits a chat message: ${message}`);
+    const suggested = message.match(/"\/r ([^"]+)"/);
+    assert.ok(suggested,`prompt tells the player what to reply: ${message}`);
+    assert.ok(isReadyConfirmation(suggested[1]),`the suggested reply is accepted: ${message}`);
+  }
+  let previous = pickReadyPrompt(() => 0);
+  for (let i = 0; i < 50; i++) {
+    const next = pickReadyPrompt(() => 0);
+    assert.notEqual(next,previous,'the same ready prompt is never sent twice in a row');
+    previous = next;
   }
 }
 
@@ -550,6 +580,7 @@ async function testLoaderRuntimeWhispers() {
   await testMissingCoordinates();
   testRestrictedRuntimeModules();
   testYesConfirmationWords();
+  testReadyPrompts();
   testPearlReloadReminders();
   await testLoaderRuntimeWhispers();
   console.log('Pearl Loader feature tests passed.');
