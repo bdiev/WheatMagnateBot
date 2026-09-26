@@ -12438,8 +12438,6 @@ body.kill-aura-modal-open {
     display: grid;
     grid-column: 1 / -1;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    justify-self: center;
-    width: min(100%, 328px);
     gap: 8px;
   }
 

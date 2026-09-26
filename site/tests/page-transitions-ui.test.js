@@ -19,7 +19,7 @@ assert.match(pwaUpdateSource, /register\('\/sw\.js', \{ updateViaCache: 'none' \
 assert.match(pwaUpdateSource, /controllerchange[\s\S]*hadController[\s\S]*window\.location\.reload\(\)/, 'an activated update must reload an existing PWA exactly once');
 assert.match(pwaUpdateSource, /visibilitychange[\s\S]*visibilityState === 'visible'[\s\S]*checkForUpdate\(\)/, 'a resumed PWA must check for updates');
 assert.match(indexSource, /page-transitions\.js\?v=1/, 'the dashboard must load shared page transitions');
-assert.match(indexSource, /styles\.css\?v=262/, 'the dashboard must load the current shared styles');
+assert.match(indexSource, /styles\.css\?v=263/, 'the dashboard must load the current shared styles');
 assert.match(requestHtmlSource, /styles\.css\?v=248/, 'the request page must load the current shared transition styles');
 assert.match(requestHtmlSource, /page-transitions\.js\?v=1/, 'the request page must load shared page transitions');
 assert.match(requestHtmlSource, /id="loginPrompt"[^>]*hidden/, 'the request login state must not flash before the session loads');
@@ -66,5 +66,7 @@ assert.match(
   /#tab-chat > \.stats-grid\.three \.stat\s*\{[^}]*display:\s*grid;[^}]*grid-template-rows:\s*26px 23px 24px;[^}]*align-content:\s*center;[^}]*aspect-ratio:\s*1 \/ 1;/s,
   'mobile chat summary cards must use dense, identical square layouts'
 );
+const mobileChatStatsGrid = stylesSource.match(/#tab-chat > \.stats-grid\.three\s*\{[^}]*\}/)?.[0] || '';
+assert.doesNotMatch(mobileChatStatsGrid, /(?:max-)?width\s*:/, 'mobile chat summary cards must fill the available row without side gutters');
 
 console.log('Page transition UI tests passed.');
