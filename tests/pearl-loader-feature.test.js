@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { Vec3 } = require('vec3');
-const { createPearlLoaderFeature, GoalLookAtTrapdoor, hasEnderPearlNear, READY_TIMEOUT_MS, trapdoorInteraction } = require('../features/pearlLoader');
+const { createPearlLoaderFeature, GoalLookAtTrapdoor, hasEnderPearlNear, PEARL_RELOAD_REMINDERS, pickPearlReloadReminder, READY_TIMEOUT_MS, trapdoorInteraction } = require('../features/pearlLoader');
 const { createModulesForBot } = require('../site/accounts/module-registry');
 const { MinecraftBotRuntime } = require('../site/accounts/minecraft-bot-runtime');
 
@@ -119,10 +119,9 @@ async function testCompleteCycle() {
   ],'Yes rechecks the aim and immediately sends exactly one trapdoor click');
   assert.equal(interactionPackets.length,1);
   assert.equal(interactionPackets[0].packet.sequence,1,'modern interaction packets use a fresh sequence number');
-  assert.deepEqual(chats,[
-    '/w bdiev_ Type "/r yes" when you ready.',
-    '/w bdiev_ Remember to throw a new ender pearl.'
-  ],'the Loader reminds the visible player to throw a replacement pearl');
+  assert.equal(chats.length,2,'the Loader sends the ready prompt and one reload reminder');
+  assert.equal(chats[0],'/w bdiev_ Type "/r yes" when you ready.');
+  assert.ok(PEARL_RELOAD_REMINDERS.some(message => chats[1] === `/w bdiev_ ${message}`),'the Loader reminds the visible player to throw a replacement pearl');
   assert.ok(chats.every(message => message.startsWith('/w bdiev_ ')),'Pearl Loader must never write feature messages to public chat');
   await delay(50);
   assert.equal(open,true,'the trapdoor opens after the configured delay once the player is visible');
@@ -499,6 +498,21 @@ function testRestrictedRuntimeModules() {
   assert.equal(modules.killAura.getStatus().enabled,false);
 }
 
+function testPearlReloadReminders() {
+  assert.ok(PEARL_RELOAD_REMINDERS.length >= 10,'the Loader has a varied set of reload reminders');
+  assert.equal(new Set(PEARL_RELOAD_REMINDERS).size,PEARL_RELOAD_REMINDERS.length,'reload reminders are unique');
+  for (const message of PEARL_RELOAD_REMINDERS) {
+    assert.ok(/^[ -~]+$/.test(message),`reminder is plain ASCII: ${message}`);
+    assert.ok(`/w ${'x'.repeat(16)} ${message}`.length <= 256,`reminder fits a chat message: ${message}`);
+  }
+  let previous = pickPearlReloadReminder(() => 0);
+  for (let i = 0; i < 50; i++) {
+    const next = pickPearlReloadReminder(() => 0);
+    assert.notEqual(next,previous,'the same reminder is never sent twice in a row');
+    previous = next;
+  }
+}
+
 async function testLoaderRuntimeWhispers() {
   const bot = new EventEmitter();
   bot.pathfinder = {};
@@ -526,6 +540,7 @@ async function testLoaderRuntimeWhispers() {
   testEnderPearlRadius();
   await testMissingCoordinates();
   testRestrictedRuntimeModules();
+  testPearlReloadReminders();
   await testLoaderRuntimeWhispers();
   console.log('Pearl Loader feature tests passed.');
 })().catch(error => { console.error(error); process.exitCode=1; });

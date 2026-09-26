@@ -10,6 +10,25 @@ const LOAD_COMMAND = /^load$/i;
 const YES_COMMAND = /^yes$/i;
 const PEARL_SEARCH_RADIUS = 2;
 const READY_TIMEOUT_MS = 2 * 60_000;
+const PEARL_RELOAD_REMINDERS = Object.freeze([
+  'Remember to throw a new ender pearl.',
+  "Safe travels! Don't forget to throw a fresh pearl for next time.",
+  "Pearl delivered! Toss a new one in so it's ready when you need it.",
+  'Welcome back! A new pearl in the chamber keeps your way home open.',
+  'All done! Please throw a new pearl so I can bring you back again.',
+  'Have a great trip! Leave a fresh pearl behind for your future self.',
+  "Teleport complete :) Throw in a new pearl whenever you're ready.",
+  "Glad to help! Just drop a new pearl in and you're all set for next time.",
+  'Hope you land somewhere nice! Remember to reload your pearl.',
+  'Your pearl did its job! Give it a successor - throw a new one in.',
+  'Enjoy your adventure! A new pearl now saves a long walk later.',
+  "Always happy to pull you through! Don't forget a replacement pearl.",
+  'Stay safe out there! Keep a fresh pearl waiting for you here.',
+  "Whoosh! You're through. Throw a new pearl so the next trip is just as easy.",
+  'Nice to see you! Please refill your pearl before you head off.',
+  'One pearl used, one to go - toss a new one in when you can.',
+  'Good luck on your journey! Your stasis chamber misses its pearl already.'
+]);
 const FACE_DIRECTIONS = [
   new Vec3(0, -1, 0), new Vec3(0, 1, 0),
   new Vec3(0, 0, -1), new Vec3(0, 0, 1),
@@ -163,6 +182,15 @@ function hasEnderPearlNear(bot, hatch, radius = PEARL_SEARCH_RADIUS) {
 
 function timeoutError(message, statusCode = 504) {
   return Object.assign(new Error(message), { statusCode });
+}
+
+let lastPearlReloadReminder = null;
+
+function pickPearlReloadReminder(random = Math.random) {
+  const choices = PEARL_RELOAD_REMINDERS.filter(message => message !== lastPearlReloadReminder);
+  const index = Math.min(choices.length - 1, Math.max(0, Math.floor(random() * choices.length)));
+  lastPearlReloadReminder = choices[index];
+  return lastPearlReloadReminder;
 }
 
 function sendPrivateWhisper(bot, username, message) {
@@ -538,7 +566,7 @@ function createPearlLoaderFeature({
       clearTimer(job.visibilityTimer);
       job.visibilityTimer = null;
       job.stage = 'opening';
-      sendPrivateWhisper(bot, job.username, 'Remember to throw a new ender pearl.');
+      sendPrivateWhisper(bot, job.username, pickPearlReloadReminder());
       const timer = setTimer(() => {
         setHatchOpen(bot, job.hatch, true)
           .then(() => finishJob(job))
@@ -710,6 +738,7 @@ function createPearlLoaderFeature({
 
 module.exports = {
   PEARL_LOADER_ROLE,
+  PEARL_RELOAD_REMINDERS,
   PEARL_SEARCH_RADIUS,
   READY_TIMEOUT_MS,
   cleanWhisperText,
@@ -718,6 +747,7 @@ module.exports = {
   hasEnderPearlNear,
   isEnderPearlEntity,
   isTrapdoor,
+  pickPearlReloadReminder,
   sendPrivateWhisper,
   trapdoorInteraction,
   trapdoorIsOpen
