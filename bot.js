@@ -3021,7 +3021,9 @@ async function dropItemToNearestPlayer(item) {
   let targetUsername = null;
 
   try {
-    farm.suspend();
+    // Wait for an in-flight farm cycle to reach a safe boundary so it cannot
+    // re-equip items or turn the bot while the stack is being dropped.
+    await farm.suspend();
     if (followStatus.enabled) followFeature.stop();
     await sleep(350);
 
@@ -3040,7 +3042,19 @@ async function dropItemToNearestPlayer(item) {
       if (followTarget) {
         followFeature.start(bot, followTarget);
       } else if (farmWasEnabled || farmWasDesired) {
-        farm.resume(bot, farmNotification);
+        // Resume through the normal path (protection lever OFF check and
+        // supply preflight), and never while the farm is paused for high ping
+        // or inside the scheduled-restart preparation window.
+        const { hour, minute } = getKyivDateParts();
+        if (
+          obsidianStats.desiredEnabled &&
+          !primaryFarmPausedForHighPing &&
+          !isRestartPreparationWindow({ hour, minute })
+        ) {
+          ensureObsidianFarmRunning(bot).catch(err => {
+            console.error('[Obsidian] Farm resume after item drop failed:', err.message);
+          });
+        }
       }
     }
   }
@@ -5104,8 +5118,11 @@ farm.configureRuntime({
   onPickaxeRetired: recordPickaxeRetired,
   onSuppliesChanged: updateObsidianStatsSupplies,
   onFatalStop: async (err) => {
-    await setProtectionLeverState(true);
+    // Clear the resume intent first: the watchdog would otherwise restart the
+    // farm while the lever is still being switched ON.
     await setObsidianFarmDesiredEnabled(false);
+    await setProtectionLeverState(true).catch(() => false);
+    updateStatusMessage().catch(() => {});
     await sendOwnerDM(
       'Obsidian farm stopped',
       `Reason: ${err.message}\nSession: ${formatCompactCount(obsidianStats.sessionMined)}\nAll time: ${formatCompactCount(obsidianStats.totalMined)}`,
@@ -5356,7 +5373,9 @@ function disconnectForNonWhitelistedPlayer(entity, distance) {
 }
 
 async function setProtectionLeverState(powered) {
-  return primaryProtectionLever.setState(bot, powered);
+  // Share the farm's world-interaction lock so a lever click never interleaves
+  // with a cycle that is still pouring lava, opening the barrel or mining.
+  return farm.runExclusive(() => primaryProtectionLever.setState(bot, powered));
 }
 
 async function ensureObsidianFarmRunning(createdBot, { freshSession = false } = {}) {
@@ -13184,7 +13203,8 @@ async function preparePrimaryBotForShutdown() {
 
   clearIntervals();
   followFeature.stop();
-  farm.suspend();
+  // Let an in-flight cycle reach a safe boundary before the lever click below.
+  const farmIdle = farm.suspend();
 
   // The loop is physically paused for the old process, but its durable intent
   // remains enabled. Serialize it behind final mining writes so the new
@@ -13197,6 +13217,7 @@ async function preparePrimaryBotForShutdown() {
   let leverProtected = null;
   if (shouldProtectFarm) {
     try {
+      await farmIdle;
       leverProtected = Boolean(await primaryProtectionLever.setState(currentBot, true));
       if (!leverProtected) {
         console.error(`[Shutdown] Primary Obsidian Farm protection was not confirmed: ${primaryProtectionLever.getLastFailure?.() || 'unknown reason'}.`);

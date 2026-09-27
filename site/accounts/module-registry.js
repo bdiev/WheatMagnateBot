@@ -122,7 +122,17 @@ function ownObsidianFarm(context, farm, settingsFile, notify = null, initialStat
     setCauldronRadius: radius => farm.setCauldronRadius(radius),
     cycleCauldronRadius: () => farm.cycleCauldronRadius(),
     resetConfig: () => farm.resetConfig(),
-    configureRuntime: hooks => farm.configureRuntime(hooks),
+    configureRuntime: (hooks = {}) => farm.configureRuntime({
+      ...hooks,
+      // A fatal stop must not be undone by auto-resume: clear the intent
+      // before anything else, then protect the farm like a manual stop.
+      onFatalStop: async error => {
+        desiredEnabled = false;
+        try { persist(); } catch {}
+        await farm.setProtectionLeverState(context.bot, true).catch(() => false);
+        if (typeof hooks.onFatalStop === 'function') await hooks.onFatalStop(error);
+      }
+    }),
     validateStart: () => farm.validateStart(context.bot),
     setProtectionLeverState: (powered, targetBot = context.bot) => farm.setProtectionLeverState(targetBot, powered),
     prepareStart: (targetBot = context.bot, ...args) => farm.prepareStart(targetBot, ...args),

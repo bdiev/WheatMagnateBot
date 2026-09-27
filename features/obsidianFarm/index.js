@@ -76,9 +76,19 @@ const PLACEMENT_RECHECK_DELAY_MS = 750;
 const LOW_PICKAXE_DURABILITY_CODE = 'LOW_PICKAXE_DURABILITY';
 const RESOURCE_EXHAUSTED_CODE = 'RESOURCE_EXHAUSTED';
 const PLACEMENT_RECHECK_CODE = 'PLACEMENT_STATE_RECHECK';
+// The bucket was used but the server never showed lava at the exact target.
+// Retrying could pour a second bucket somewhere unexpected, so the farm stops.
+const PLACEMENT_UNCONFIRMED_CODE = 'PLACEMENT_UNCONFIRMED';
 const CAULDRON_RETRY_CODE = 'CAULDRON_RETRY';
+const FARM_STOPPED_CODE = 'FARM_STOPPED';
+// Cauldron retries are routine, but a farm that cannot fill a bucket for this
+// long is stalled and must reach the notification pipeline.
+const CAULDRON_STALL_NOTIFY_MS = 60_000;
+// suspend() waits at most this long for an in-flight cycle to reach a safe
+// phase boundary before callers may use the bot for something else.
+const SUSPEND_DRAIN_TIMEOUT_MS = 15_000;
 const SUPPLY_BARREL_RADIUS = 5;
-const BARREL_OPEN_TIMEOUT_MS = 8_000;
+const BARREL_OPEN_ATTEMPT_TIMEOUT_MS = 2_500;
 const FOOD_ITEM_PARTS = [
   'bread',
   'apple',
@@ -115,6 +125,10 @@ const runtime = {
 let worldInteractionQueue = Promise.resolve();
 const pickaxeBlocksMined = new Map();
 let farmCycleSequence = 0;
+// Incremented by every start/resume/suspend/stop. A loop only reschedules
+// itself while its generation is current, so a cycle still in flight during a
+// quick suspend→resume can never leave a second loop chain behind.
+let loopGeneration = 0;
 let farmFailureStartedAt = null;
 let farmRecoveryCheckPending = true;
 const activeFarmNotificationTypes = new Set();
@@ -448,7 +462,7 @@ async function openContainerWithTimeout(bot, block, rayInteraction = {}) {
       cursor:strategy.cursorPos.toString()
     });
     try {
-      const container = await openContainerAttempt(bot, block, strategy, 2_500);
+      const container = await openContainerAttempt(bot, block, strategy, BARREL_OPEN_ATTEMPT_TIMEOUT_MS);
       writeFarmDebug('supply_barrel_interaction_confirmed', {
         strategy:strategy.name,
         barrel:block.position.toString()
@@ -458,7 +472,8 @@ async function openContainerWithTimeout(bot, block, rayInteraction = {}) {
       errors.push(`${strategy.name}: ${error.message}`);
     }
   }
-  throw new Error(`Supply barrel did not open within ${BARREL_OPEN_TIMEOUT_MS / 1000} seconds (${errors.join('; ')})`);
+  const totalSeconds = (strategies.length * BARREL_OPEN_ATTEMPT_TIMEOUT_MS) / 1000;
+  throw new Error(`Supply barrel did not open within ${totalSeconds} seconds (${errors.join('; ')})`);
 }
 
 async function aimAtInteractionBlock(bot, block, label) {
@@ -852,9 +867,19 @@ function getKnownBlockAt(bot, pos, label) {
   return block;
 }
 
+// Flowing lava hardens into cobblestone, not obsidian, so only a source block
+// counts as "lava at the target". Unknown levels are treated as a source to
+// keep the previous behaviour when the block state is unavailable.
+function isLavaSource(block) {
+  if (block?.name !== 'lava') return false;
+  const level = block.getProperties?.()?.level ?? block.metadata;
+  const numericLevel = Number(level);
+  return level == null || !Number.isFinite(numericLevel) || numericLevel === 0;
+}
+
 function didLavaPlacementLikelySucceed(bot, x, y, z) {
   const targetBlock = bot.blockAt(new Vec3(x, y, z));
-  return targetBlock?.name === 'lava' || targetBlock?.name === 'obsidian';
+  return isLavaSource(targetBlock) || targetBlock?.name === 'obsidian';
 }
 
 function getFaceCursor(face) {
@@ -879,6 +904,23 @@ function createPlacementSafetyError(message) {
   const err = new Error(message);
   err.code = PLACEMENT_RECHECK_CODE;
   return err;
+}
+
+function createFarmStoppedError() {
+  const err = new Error('farm_stopped');
+  err.code = FARM_STOPPED_CODE;
+  return err;
+}
+
+// Called between cycle phases so suspend()/stop() take effect at the next safe
+// boundary instead of after the whole cycle (e.g. never pour lava after the
+// operator or the restart guard paused the farm). Direct phase calls without a
+// loop generation (tests, tools) are not affected.
+function assertCycleActive(context = {}) {
+  if (context.generation === undefined) return;
+  if (!farm.enabled || context.generation !== loopGeneration) {
+    throw createFarmStoppedError();
+  }
 }
 
 async function waitForHeldItem(bot, itemName, timeoutMs = 2_000) {
@@ -1397,6 +1439,33 @@ async function withdrawPickaxeFromExactSlot(bot, container, pickaxe) {
   }
 }
 
+async function depositPickaxeFromExactSlot(bot, container, wornPickaxe) {
+  const sourceSlot = getContainerInventorySlot(bot, container, wornPickaxe);
+  const sourceBefore = container.slots[sourceSlot];
+  if (!isSlotPickaxe(bot, sourceBefore, wornPickaxe.type, false)) {
+    throw new Error(`Worn pickaxe slot ${wornPickaxe.slot} changed before deposit.`);
+  }
+
+  // Shift-click the exact inventory slot. container.deposit() searches by
+  // type/NBT and, on versions without a Damage NBT tag, can pick a healthy
+  // pickaxe of the same type instead of the worn one.
+  await bot.clickWindow(sourceSlot, 0, 1);
+
+  const moved = await waitForInventorySupply(
+    bot,
+    () => {
+      const sourceAfter = container.slots[sourceSlot];
+      return !sourceAfter || sourceAfter.type !== sourceBefore.type;
+    },
+    2_000
+  );
+  if (!moved) {
+    throw new Error(
+      `Server did not move the worn pickaxe from inventory slot ${wornPickaxe.slot} into the barrel (is it full?).`
+    );
+  }
+}
+
 async function waitForInventorySupply(bot, predicate, timeoutMs = 2_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -1528,12 +1597,7 @@ async function ensureFarmSupplies(bot, context = {}) {
       const tracking = pickaxeBlocksMined.get(trackingKey);
       const blocksMined = tracking?.blocks || 0;
       if (lowPickaxe !== swappedLowPickaxe) {
-        await container.deposit(
-          lowPickaxe.type,
-          lowPickaxe.metadata,
-          lowPickaxe.count,
-          lowPickaxe.nbt
-        );
+        await depositPickaxeFromExactSlot(bot, container, lowPickaxe);
       }
       pickaxeBlocksMined.delete(trackingKey);
       await runtime.onPickaxeRetired({
@@ -1756,6 +1820,7 @@ function getFarmDebugRetentionCutoff(date = FARM_DEBUG_NOW()) {
 
 let farmDebugCleanupDateKey = null;
 let farmDebugCleanupPromise = Promise.resolve();
+let farmDebugWriteQueue = Promise.resolve();
 
 function cleanupFarmDebugLogs(date = FARM_DEBUG_NOW()) {
   const cleanupDateKey = getFarmDebugDateKey(date);
@@ -1816,9 +1881,12 @@ function writeFarmDebug(event, details = {}) {
   // Debug logging must not block the time-sensitive farming loop, especially
   // when the project directory is synced by OneDrive.
   cleanupFarmDebugLogs(now);
-  fs.mkdir(path.dirname(dailyLogFile), { recursive: true }, () => {
-    fs.appendFile(dailyLogFile, `${line}\n`, 'utf8', () => {});
-  });
+  // Chain writes so records land in the file in the order they were created;
+  // independent appendFile calls can complete out of order.
+  farmDebugWriteQueue = farmDebugWriteQueue
+    .then(() => fs.promises.mkdir(path.dirname(dailyLogFile), { recursive: true }))
+    .then(() => fs.promises.appendFile(dailyLogFile, `${line}\n`, 'utf8'))
+    .catch(() => {});
   // Packet traces are intentionally file-only. Even failed/unconfirmed
   // interactions can repeat many times per second during a server problem;
   // persisting them would make PostgreSQL grow without bound. Farm failures
@@ -2211,7 +2279,7 @@ async function digBlockWithTimeout(bot, block, attempt, context = {}) {
 /**
  * Find lava cauldron blocks, ordered from nearest to farthest so the first
  * interaction is the cheapest and most likely to be within server reach.
- * Handles both 1.17+ (lava_cauldron block) and old cauldron with metadata ≥ 3.
+ * Only 1.17+ lava_cauldron blocks can hold lava.
  */
 function findLavaCauldrons(bot, maxDistance, options = {}) {
   const positions = [];
@@ -2226,16 +2294,8 @@ function findLavaCauldrons(bot, maxDistance, options = {}) {
     }));
   }
 
-  // Legacy: cauldron block with data value 3 (full of liquid — assumed lava in context)
-  const legacyId = bot.registry.blocksByName['cauldron']?.id;
-  if (legacyId != null) {
-    positions.push(...bot.findBlocks({
-      matching: b => b.type === legacyId && b.metadata === 3,
-      maxDistance,
-      count: 64,
-      useExtraInfo: true
-    }));
-  }
+  // Before 1.17 a cauldron can only hold water, so a full legacy cauldron is
+  // never a lava source and is deliberately not matched here.
 
   const unique = new Map();
   for (const pos of positions) unique.set(pos.toString(), pos);
@@ -2315,10 +2375,10 @@ async function fillBucket(bot, context = {}) {
 
   for (const position of cauldronPositions) {
     for (let attempt = 1; attempt <= CAULDRON_FILL_ATTEMPTS_PER_BLOCK; attempt++) {
+      assertCycleActive(context);
       const cauldron = bot.blockAt(position);
-      const isModernLavaCauldron = cauldron?.name === 'lava_cauldron';
-      const isLegacyLavaCauldron = cauldron?.name === 'cauldron' && cauldron.metadata === 3;
-      if (!isModernLavaCauldron && !isLegacyLavaCauldron) {
+      const isLavaCauldron = cauldron?.name === 'lava_cauldron';
+      if (!isLavaCauldron) {
         failures.push(`${position}:became_${cauldron?.name || 'unknown'}`);
         rememberCauldronFailure(position, `became_${cauldron?.name || 'unknown'}`);
         writeFarmDebug('cauldron_skipped', {
@@ -2523,6 +2583,9 @@ async function pourLava(bot, targetPos, context = {}) {
     clickDistance: Number(ref.clickDistance.toFixed(3))
   });
 
+  // Last safe point before the bucket is used: a paused farm must not pour.
+  assertCycleActive(context);
+
   // Sneak prevents activation of the anchor. There is one verified use-item
   // action and deliberately no retry or second anchor after packet send.
   let placementError = null;
@@ -2583,9 +2646,11 @@ async function pourLava(bot, targetPos, context = {}) {
       heldItem: bot.heldItem?.name || null,
       waitedMs: LAVA_PLACEMENT_CONFIRM_TIMEOUT_MS
     });
-    throw createPlacementSafetyError(
+    const err = new Error(
       `Server did not confirm lava at exact target (${x}, ${y}, ${z}); farm stopped without retry.`
     );
+    err.code = PLACEMENT_UNCONFIRMED_CODE;
+    throw err;
   }
 
   await sleep(INTERACT_SETTLE_MS);
@@ -2622,7 +2687,8 @@ async function waitForObsidian(bot, targetPos, context = {}) {
   const deadline = Date.now() + OBSIDIAN_TIMEOUT_MS;
   let nextProgressAt = Date.now() + 5_000;
   while (Date.now() < deadline) {
-    if (!farm.enabled) {
+    const stale = context.generation !== undefined && context.generation !== loopGeneration;
+    if (!farm.enabled || stale) {
       writeFarmDebug('obsidian_wait_stopped', {
         ...context,
         target: targetPos.toString(),
@@ -2638,6 +2704,19 @@ async function waitForObsidian(bot, targetPos, context = {}) {
         durationMs: Date.now() - startedAt
       });
       return new Vec3(x, y, z);
+    }
+    if (block && block.name !== 'lava') {
+      // Lava was confirmed at the target, so anything else (cobblestone,
+      // stone, air after it flowed away) can no longer become obsidian.
+      writeFarmDebug('obsidian_wait_target_changed', {
+        ...context,
+        target: targetPos.toString(),
+        durationMs: Date.now() - startedAt,
+        currentBlock: block.name
+      });
+      throw new Error(
+        `Lava at (${x}, ${y}, ${z}) became ${block.name} instead of obsidian. Check the water next to the target.`
+      );
     }
     if (Date.now() >= nextProgressAt) {
       writeFarmDebug('obsidian_wait_progress', {
@@ -2805,7 +2884,9 @@ async function runCycle(bot, notify, context = {}) {
     ...context,
     action: 'ensure_supplies'
   });
+  assertCycleActive(context);
   await ensureFarmSupplies(bot, context);
+  assertCycleActive(context);
 
   if (!farm.config) throw new Error('Farm not configured — no target coordinates');
 
@@ -2829,6 +2910,7 @@ async function runCycle(bot, notify, context = {}) {
       target: targetPos.toString()
     });
     await mineObsidian(bot, targetPos, { ...context, reason: 'clear_existing_obsidian' });
+    assertCycleActive(context);
     targetBlock = getKnownBlockAt(bot, targetPos, 'obsidian farm target after mining');
     writeFarmDebug('cycle_target_rechecked', {
       ...context,
@@ -2844,8 +2926,10 @@ async function runCycle(bot, notify, context = {}) {
     );
   }
 
-  // If lava is already at target, skip fill/pour and only wait for conversion.
-  if (targetBlock?.name !== 'lava') {
+  // If source lava is already at target, skip fill/pour and only wait for
+  // conversion. Flowing lava would harden into cobblestone, so it is replaced
+  // with a fresh source like any other replaceable block.
+  if (!isLavaSource(targetBlock)) {
     if (!hasLavaBucket) {
       writeFarmDebug('cycle_action_start', {
         ...context,
@@ -2859,6 +2943,7 @@ async function runCycle(bot, notify, context = {}) {
         inventory: getInventoryDebugSummary(bot)
       });
     }
+    assertCycleActive(context);
     writeFarmDebug('cycle_action_start', {
       ...context,
       action: 'pour_lava',
@@ -2880,7 +2965,8 @@ async function runCycle(bot, notify, context = {}) {
   });
   const obsidianPos = await waitForObsidian(bot, targetPos, context);
   if (!obsidianPos) {
-    if (!farm.enabled) return;
+    assertCycleActive(context);
+    if (!farm.enabled) throw createFarmStoppedError();
     throw new Error('Lava did not convert to obsidian within 90s. Continuing to search and retry.');
   }
 
@@ -2889,16 +2975,22 @@ async function runCycle(bot, notify, context = {}) {
     action: 'mine_obsidian',
     target: obsidianPos.toString()
   });
+  assertCycleActive(context);
   await mineObsidian(bot, obsidianPos, context);
 }
 
-async function persistentLoop(bot, notify) {
-  if (!farm.enabled) return;
+function isLoopCurrent(generation) {
+  return farm.enabled && generation === loopGeneration;
+}
+
+async function persistentLoop(bot, notify, generation = loopGeneration) {
+  if (!isLoopCurrent(generation)) return;
   let retryDelay = CYCLE_PAUSE_MS;
   const cycleStartedAt = Date.now();
   const cycleId = ++farmCycleSequence;
   const context = {
     cycleId,
+    generation,
     startedCyclesCompleted: farm.cyclesCompleted
   };
   writeFarmDebug('cycle_started', {
@@ -2911,6 +3003,9 @@ async function persistentLoop(bot, notify) {
   try {
     // Refresh/barrel inspection cannot interleave with any part of a farm cycle.
     await withWorldInteractionLock(() => runCycle(bot, () => {}, context));
+    // A cycle that finished after suspend()/stop() belongs to a stale loop:
+    // it must neither resolve alerts nor schedule another cycle.
+    if (!isLoopCurrent(generation)) return;
     farm.lastErrorMessage = null;
     farmFailureStartedAt = null;
     writeFarmDebug('cycle_completed', {
@@ -2942,12 +3037,14 @@ async function persistentLoop(bot, notify) {
     farmRecoveryCheckPending = false;
     activeFarmNotificationTypes.clear();
   } catch (err) {
-    if (!farm.enabled) return;
+    if (!isLoopCurrent(generation) || err.code === FARM_STOPPED_CODE) return;
 
     farm.lastErrorMessage = err.message;
-    if (err.code !== CAULDRON_RETRY_CODE) {
-      farmFailureStartedAt ||= Date.now();
+    if (err.code === PLACEMENT_UNCONFIRMED_CODE) {
+      fatalStop(err, context);
+      return;
     }
+    farmFailureStartedAt ||= Date.now();
     const stalledSeconds = farmFailureStartedAt == null
       ? 0
       : Math.max(0, Math.round((Date.now() - farmFailureStartedAt) / 1000));
@@ -2973,8 +3070,12 @@ async function persistentLoop(bot, notify) {
     );
     const debugLogId = retryLogEntry?.logId || null;
     if (err.code === CAULDRON_RETRY_CODE) {
-      // A dry/temporarily rejected cauldron is routine. Retry quickly without
-      // turning the short refill wait into a farm-stalled notification.
+      // A dry/temporarily rejected cauldron is routine. Retry quickly and only
+      // report a stall once filling has kept failing for a whole minute.
+      if (stalledSeconds * 1000 >= CAULDRON_STALL_NOTIFY_MS) {
+        activeFarmNotificationTypes.add('farm_stalled');
+        notify?.({ eventType: 'farm_stalled', key: 'obsidian-farm', title: 'Obsidian farm stalled', message: err.message, metadata: { errorCode: err.code, phase: farm.phase, seconds: stalledSeconds, debugLogId } });
+      }
     } else if (err.code === LOW_PICKAXE_DURABILITY_CODE) {
       activeFarmNotificationTypes.add('low_pickaxe_durability');
       const percent = Number(err.message.match(/has\s+([\d.]+)%/i)?.[1]);
@@ -2988,15 +3089,58 @@ async function persistentLoop(bot, notify) {
     }
   }
 
-  if (farm.enabled) {
-    farm.loopHandle = setTimeout(() => persistentLoop(bot, notify), retryDelay);
+  if (isLoopCurrent(generation)) {
+    farm.loopHandle = setTimeout(() => persistentLoop(bot, notify, generation), retryDelay);
   }
+}
+
+function fatalStop(err, context = {}) {
+  writeFarmDebug('farm_fatal_stop', {
+    ...context,
+    error: err.message,
+    errorCode: err.code || null,
+    phase: farm.phase
+  });
+  haltLoop();
+  farm.lastErrorMessage = err.message;
+  Promise.resolve()
+    .then(() => runtime.onFatalStop(err))
+    .catch(hookError => {
+      writeFarmDebug('fatal_stop_hook_failed', { ...context, error: hookError?.message || String(hookError) });
+    });
+}
+
+function haltLoop() {
+  farm.enabled = false;
+  loopGeneration++;
+  setFarmPhase('idle');
+  if (farm.loopHandle) {
+    clearTimeout(farm.loopHandle);
+    farm.loopHandle = null;
+  }
+}
+
+/**
+ * Resolve once the world-interaction queue is idle, i.e. an in-flight cycle
+ * has reached its next safe phase boundary after suspend()/stop(). Never
+ * rejects; gives up after SUSPEND_DRAIN_TIMEOUT_MS so a hung Mineflayer call
+ * cannot block callers forever.
+ */
+function whenIdle(timeoutMs = SUSPEND_DRAIN_TIMEOUT_MS) {
+  let timer = null;
+  return Promise.race([
+    worldInteractionQueue.then(() => true),
+    new Promise(resolve => {
+      timer = setTimeout(() => resolve(false), timeoutMs);
+      timer.unref?.();
+    })
+  ]).finally(() => clearTimeout(timer));
 }
 
 /**
  * Start the farm.
  * @param {object} bot      - mineflayer bot instance
- * @param {Function} notify - fn(message, color) to send Discord notifications
+ * @param {Function} notify - fn(event) receiving farm notification events
  */
 function start(bot, notify) {
   if (farm.enabled) {
@@ -3009,13 +3153,14 @@ function start(bot, notify) {
   farm.cyclesCompleted = 0;
   farm.lastErrorMessage = null;
   farmRecoveryCheckPending = true;
+  const generation = ++loopGeneration;
   const sequenceBeforeStart = farmCycleSequence;
   writeFarmDebug('farm_started', {
     config: { ...farm.config },
     botPosition: getBotDebugPosition(bot),
     inventory: getInventoryDebugSummary(bot)
   });
-  persistentLoop(bot, notify);
+  persistentLoop(bot, notify, generation);
   const status = getStatus();
   if (!status.enabled || farmCycleSequence <= sequenceBeforeStart) {
     farm.enabled = false;
@@ -3052,13 +3197,14 @@ function resume(bot, notify) {
   validateStart(bot);
   farm.enabled = true;
   farm.lastErrorMessage = null;
+  const generation = ++loopGeneration;
   const sequenceBeforeResume = farmCycleSequence;
   writeFarmDebug('farm_resumed', {
     config: { ...farm.config },
     botPosition: getBotDebugPosition(bot),
     inventory: getInventoryDebugSummary(bot)
   });
-  persistentLoop(bot, notify);
+  persistentLoop(bot, notify, generation);
   const status = getStatus();
   if (!status.enabled || farmCycleSequence <= sequenceBeforeResume) {
     farm.enabled = false;
@@ -3067,34 +3213,31 @@ function resume(bot, notify) {
   return status;
 }
 
+/**
+ * Pause the loop. The returned promise resolves once an in-flight cycle has
+ * reached its next safe phase boundary, so callers that are about to use the
+ * bot (lever, item drop, follow) can await it.
+ */
 function suspend() {
   writeFarmDebug('farm_suspended', {
     phase: farm.phase,
     cyclesCompleted: farm.cyclesCompleted
   });
-  farm.enabled = false;
-  setFarmPhase('idle');
-  if (farm.loopHandle) {
-    clearTimeout(farm.loopHandle);
-    farm.loopHandle = null;
-  }
+  haltLoop();
+  return whenIdle();
 }
 
 /**
- * Stop the farm.
- * @param {Function|null} notify - pass null to stop silently
+ * Stop the farm. Same as suspend(); the argument is accepted for backward
+ * compatibility and ignored (callers send their own notifications).
  */
-function stop(notify) {
+function stop(_notify) {
   writeFarmDebug('farm_stopped', {
     phase: farm.phase,
     cyclesCompleted: farm.cyclesCompleted
   });
-  farm.enabled = false;
-  setFarmPhase('idle');
-  if (farm.loopHandle) {
-    clearTimeout(farm.loopHandle);
-    farm.loopHandle = null;
-  }
+  haltLoop();
+  return whenIdle();
 }
 
 cleanupFarmDebugLogs();
@@ -3112,6 +3255,8 @@ return {
   configureRuntime,
   prepareStart,
   inspectSupplies,
+  whenIdle,
+  runExclusive: withWorldInteractionLock,
   getStatus,
   getDetailedStatus,
   getDebugLoggingEnabled,
@@ -3133,6 +3278,8 @@ return {
     cleanupFarmDebugLogs,
     writeFarmDebug,
     swapPickaxesInExactSlots,
+    depositPickaxeFromExactSlot,
+    waitForObsidian,
     findLavaPlacementAnchor,
     findLavaCauldrons,
     getCauldronFailure,
