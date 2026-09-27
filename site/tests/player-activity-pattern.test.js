@@ -50,6 +50,44 @@ assert.equal(midnightSession.heatmap[0][23], 1800);
 assert.equal(midnightSession.heatmap[1][0], 1800);
 assert.equal(midnightSession.activeDays, 2, 'a session crossing midnight counts both local days');
 
+assert.equal(pattern.heatmapDays[0][22], 1, 'each cell counts the distinct local days it was active');
+assert.deepEqual(pattern.weekdayCounts, [1, 1, 1, 0, 0, 0, 0], 'weekday occurrences run from the first observed day to today');
+
+const regular = buildPlayerActivityPattern([
+  { startedAt: '2026-09-07T20:00:00.000Z', endedAt: '2026-09-07T20:30:00.000Z' },
+  { startedAt: '2026-09-07T20:40:00.000Z', endedAt: '2026-09-07T20:50:00.000Z' },
+  { startedAt: '2026-09-21T20:10:00.000Z', endedAt: '2026-09-21T20:20:00.000Z' }
+], { timeZone: 'UTC', now });
+assert.equal(regular.heatmapDays[0][20], 2, 'two sessions in the same hour of one day count that day once');
+assert.equal(regular.weekdayCounts[0], 3, 'Mondays Sep 7, 14 and 21 were observed');
+
+const overlapping = buildPlayerActivityPattern([
+  { startedAt: '2026-09-22T10:00:00.000Z', endedAt: '2026-09-22T11:00:00.000Z', isCurrent: false },
+  { startedAt: '2026-09-22T10:30:00.000Z', endedAt: '2026-09-22T11:30:00.000Z', isCurrent: false }
+], { timeZone: 'UTC', now });
+assert.equal(overlapping.heatmap[1][10], 3600, 'overlapping records must not count the same minutes twice');
+assert.equal(overlapping.heatmap[1][11], 1800);
+
+// Europe/Vilnius switched from UTC+3 to UTC+2 at 04:00 local on 2026-10-25,
+// so 03:00 local happens twice.
+const dstFallback = buildPlayerActivityPattern([
+  { startedAt: '2026-10-24T23:00:00.000Z', endedAt: '2026-10-25T03:00:00.000Z' }
+], { timeZone: 'Europe/Vilnius', now: new Date('2026-10-26T00:00:00.000Z') });
+assert.equal(dstFallback.heatmap[6][2], 3600);
+assert.equal(dstFallback.heatmap[6][3], 7200, 'the repeated DST hour holds both real hours');
+assert.equal(dstFallback.heatmap[6][4], 3600);
+const kathmandu = buildPlayerActivityPattern([
+  { startedAt: '2026-09-22T10:00:00.000Z', endedAt: '2026-09-22T11:00:00.000Z' }
+], { timeZone: 'Asia/Kathmandu', now });
+assert.equal(kathmandu.heatmap[1][15], 900, 'UTC+5:45 must split slices on local hour marks');
+assert.equal(kathmandu.heatmap[1][16], 2700);
+
+const staleLiveStart = buildPlayerGameSessions([
+  { event_type: 'player_joined', occurred_at: '2026-09-23T08:00:00.000Z' },
+  { event_type: 'player_left', occurred_at: '2026-09-23T10:00:00.000Z' }
+], { isOnline: true, currentStartedAt: '2026-09-23T09:00:00.000Z', now });
+assert.equal(staleLiveStart[0].startedAt, '2026-09-23T10:00:00.000Z', 'a live session cannot start before the last recorded leave');
+
 const empty = buildPlayerActivityPattern([], { timeZone: 'Not/AZone', now });
 assert.equal(empty.timeZone, 'UTC', 'an invalid timezone must fall back to UTC');
 assert.equal(empty.maxCellSeconds, 0);
@@ -73,7 +111,10 @@ assert.match(appSource, /<div class="player-profile-badges">\s*\$\{renderPlayerP
 assert.match(appSource, /<details class="player-profile-activity">/, 'the activity pattern must be collapsible');
 assert.match(appSource, /data-activity-cell/, 'heatmap cells must be interactive');
 assert.match(appSource, /data-activity-selection aria-live="polite"/, 'the selected heatmap period must be announced');
-assert.match(appSource, /'ArrowLeft'.*'ArrowRight'.*'ArrowUp'.*'ArrowDown'/, 'heatmap cells must support arrow-key navigation');
+assert.match(appSource, /'ArrowLeft'.*'ArrowRight'.*'ArrowUp'.*'ArrowDown'.*'Home'.*'End'/, 'heatmap cells must support arrow, Home and End navigation');
+assert.match(appSource, /Math\.ceil\(Math\.sqrt\(seconds \/ pattern\.maxCellSeconds\) \* 4\)/, 'heat levels must use a square-root scale');
+assert.match(appSource, /of \$\{formatNumber\(Math\.max\(days, weeks\)\)\} \$\{PLAYER_ACTIVITY_WEEKDAY_NAMES\[weekday\]\}/, 'cells must say how many of the observed weekdays were active');
+assert.match(appSource, /Sessions observed by the bot\$\{since \?/, 'the section must say since when sessions are observed');
 assert.match(appSource, /activityCellKey:[\s\S]*dataset\.activityKey === viewState\.activityCellKey[\s\S]*selectPlayerActivityCell\(selectedCell\)/, 'the selected cell must survive background refreshes');
 assert.match(appSource, /player-ping-number/, 'ping digits must use a dedicated readable style');
 assert.match(appSource, /const PLAYER_PING_CHART_DAYS = 14;[\s\S]*player-ping-bar is-empty/, 'the ping chart must keep a fixed day window with empty slots for missing days');

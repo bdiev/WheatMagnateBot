@@ -3618,6 +3618,7 @@ function renderPlayerProfileSkeleton() {
 }
 
 const PLAYER_ACTIVITY_WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const PLAYER_ACTIVITY_WEEKDAY_NAMES = ['Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays', 'Sundays'];
 const PLAYER_PING_FRESH_MS = 3 * 60 * 1000;
 
 function formatPing(value) {
@@ -3633,6 +3634,32 @@ function playerPingQuality(value) {
 
 function formatActivityHour(hour) {
   return `${String(hour).padStart(2, '0')}:00`;
+}
+
+function formatActivityHourRange(hour) {
+  return `${formatActivityHour(hour)}–${formatActivityHour((hour + 1) % 24)}`;
+}
+
+function formatActivitySince(value, timeZone) {
+  const date = new Date(value);
+  if (!value || Number.isNaN(date.getTime())) return '';
+  const cacheKey = `activity-since:${timeZone}`;
+  if (!dateTimeFormatters.has(cacheKey)) dateTimeFormatters.set(cacheKey, new Intl.DateTimeFormat('en-US', {
+    year: 'numeric', month: 'short', day: 'numeric', timeZone
+  }));
+  return dateTimeFormatters.get(cacheKey).format(date);
+}
+
+// "Online on 3 of 8 Mondays": how regular the hour is, which a raw total
+// hides when one long session dominates the cell.
+function playerActivityCellSummary(pattern, weekday, hour) {
+  const seconds = Number(pattern.heatmap?.[weekday]?.[hour]) || 0;
+  if (seconds <= 0) return 'No activity';
+  const days = Number(pattern.heatmapDays?.[weekday]?.[hour]) || 0;
+  const weeks = Number(pattern.weekdayCounts?.[weekday]) || 0;
+  const total = `${formatDurationMs(seconds * 1000)} total`;
+  if (!days || !weeks) return total;
+  return `${total} · ${formatNumber(days)} of ${formatNumber(Math.max(days, weeks))} ${PLAYER_ACTIVITY_WEEKDAY_NAMES[weekday]}`;
 }
 
 function formatStreakDays(days) {
@@ -3729,18 +3756,20 @@ function renderPlayerPingBadge(profile) {
 
 function renderPlayerActivityPattern(pattern) {
   if (!pattern || !pattern.maxCellSeconds) return '';
-  const heatLevel = seconds => seconds <= 0 ? 0 : Math.min(4, Math.max(1, Math.ceil(seconds / pattern.maxCellSeconds * 4)));
+  // A square-root scale keeps ordinary hours visible next to one marathon
+  // session instead of flattening them all into the palest shade.
+  const heatLevel = seconds => seconds <= 0 ? 0 : Math.min(4, Math.max(1, Math.ceil(Math.sqrt(seconds / pattern.maxCellSeconds) * 4)));
   const peak = pattern.peak
-    ? `${PLAYER_ACTIVITY_WEEKDAYS[pattern.peak.weekday]} ${formatActivityHour(pattern.peak.hour)}`
+    ? `${PLAYER_ACTIVITY_WEEKDAYS[pattern.peak.weekday]} ${formatActivityHourRange(pattern.peak.hour)}`
     : '-';
   const longest = pattern.longestSession;
-  const peakSeconds = pattern.peak ? Number(pattern.heatmap?.[pattern.peak.weekday]?.[pattern.peak.hour]) || 0 : 0;
+  const since = formatActivitySince(pattern.firstObservedAt, pattern.timeZone);
   return `
     <details class="player-profile-activity">
       <summary class="player-profile-section-head">
         <div>
           <h3>Activity pattern</h3>
-          <small>Sessions observed by the bot · ${escapeHtml(pattern.timeZone)}</small>
+          <small>Sessions observed by the bot${since ? ` since ${escapeHtml(since)}` : ''} · ${escapeHtml(pattern.timeZone)}</small>
         </div>
         <span class="player-activity-peak"><small>Peak</small><strong>${escapeHtml(peak)}</strong></span>
       </summary>
@@ -3758,15 +3787,14 @@ function renderPlayerActivityPattern(pattern) {
         ${pattern.heatmap.map((row, weekday) => `
           <span class="player-activity-day">${PLAYER_ACTIVITY_WEEKDAYS[weekday]}</span>
           ${row.map((seconds, hour) => {
-            const duration = seconds > 0 ? formatDurationMs(seconds * 1000) : 'No activity';
-            const label = `${PLAYER_ACTIVITY_WEEKDAYS[weekday]} ${formatActivityHour(hour)} · ${duration}`;
+            const label = `${PLAYER_ACTIVITY_WEEKDAYS[weekday]} ${formatActivityHourRange(hour)} · ${playerActivityCellSummary(pattern, weekday, hour)}`;
             const isFirstCell = weekday === 0 && hour === 0;
             return `<button class="player-activity-cell" type="button" data-heat="${heatLevel(seconds)}" data-activity-cell data-activity-key="${weekday}:${hour}" data-activity-label="${escapeHtml(label)}" aria-label="${escapeHtml(label)}" aria-pressed="false" tabindex="${isFirstCell ? '0' : '-1'}" title="${escapeHtml(label)}"></button>`;
           }).join('')}`).join('')}
       </div>
       <div class="player-activity-footer">
         <div class="player-activity-selection" data-activity-selection aria-live="polite">
-          <span>Most active</span><strong>${escapeHtml(peak)}</strong><small>${escapeHtml(peakSeconds > 0 ? formatDurationMs(peakSeconds * 1000) : 'No activity')}</small>
+          <span>Most active</span><strong>${escapeHtml(peak)}</strong><small>${escapeHtml(pattern.peak ? playerActivityCellSummary(pattern, pattern.peak.weekday, pattern.peak.hour) : 'No activity')}</small>
         </div>
         <div class="player-activity-legend" aria-hidden="true">
           <small>Less</small>${[0, 1, 2, 3, 4].map(level => `<span class="player-activity-cell" data-heat="${level}"></span>`).join('')}<small>More</small>
@@ -4636,8 +4664,8 @@ function selectPlayerActivityCell(cell) {
     candidate.setAttribute('aria-pressed', String(selected));
     candidate.tabIndex = selected ? 0 : -1;
   });
-  const [period = '', duration = ''] = String(cell.dataset.activityLabel || '').split(' · ');
-  selection.innerHTML = `<span>Selected</span><strong>${escapeHtml(period)}</strong><small>${escapeHtml(duration)}</small>`;
+  const [period = '', ...details] = String(cell.dataset.activityLabel || '').split(' · ');
+  selection.innerHTML = `<span>Selected</span><strong>${escapeHtml(period)}</strong><small>${escapeHtml(details.join(' · '))}</small>`;
 }
 
 function openWhisperFromProfile(username) {
@@ -7630,12 +7658,20 @@ function linkifyChatMessage(value) {
 
 async function handlePlayerProfileKeydown(event) {
   const activityCell = event.target.closest('[data-activity-cell]');
-  if (activityCell && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+  if (activityCell && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
     event.preventDefault();
     const cells = [...activityCell.closest('.player-activity-heatmap').querySelectorAll('[data-activity-cell]')];
     const currentIndex = cells.indexOf(activityCell);
-    const offset = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : event.key === 'ArrowUp' ? -24 : 24;
-    const nextCell = cells[currentIndex + offset];
+    const rowStart = currentIndex - currentIndex % 24;
+    const nextIndex = {
+      ArrowLeft: currentIndex - 1,
+      ArrowRight: currentIndex + 1,
+      ArrowUp: currentIndex - 24,
+      ArrowDown: currentIndex + 24,
+      Home: rowStart,
+      End: rowStart + 23
+    }[event.key];
+    const nextCell = cells[nextIndex];
     if (!nextCell) return;
     activityCell.tabIndex = -1;
     nextCell.tabIndex = 0;

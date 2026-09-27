@@ -4027,6 +4027,7 @@ function buildPlayerGameSessions(events = [], { isOnline = false, currentStarted
     .sort((first, second) => first.at - second.at);
   const sessions = [];
   let startedAt = null;
+  let lastEndedAt = null;
 
   for (const transition of transitions) {
     if (transition.type === 'player_joined') {
@@ -4040,12 +4041,16 @@ function buildPlayerGameSessions(events = [], { isOnline = false, currentStarted
       durationSeconds: Math.max(0, Math.floor((transition.at - startedAt) / 1000)),
       isCurrent: false
     });
+    lastEndedAt = transition.at;
     startedAt = null;
   }
 
   if (isOnline) {
     const fallbackStart = new Date(currentStartedAt || 0);
-    const activeStart = startedAt || (Number.isFinite(fallbackStart.getTime()) && fallbackStart.getTime() > 0 ? fallbackStart : null);
+    let activeStart = startedAt || (Number.isFinite(fallbackStart.getTime()) && fallbackStart.getTime() > 0 ? fallbackStart : null);
+    // A stale online_since (or the bot's own start time) can predate the last
+    // recorded leave; the live session cannot begin before that leave.
+    if (activeStart && lastEndedAt && activeStart < lastEndedAt) activeStart = lastEndedAt;
     const currentTime = new Date(now);
     if (activeStart && Number.isFinite(currentTime.getTime()) && currentTime >= activeStart) {
       sessions.push({

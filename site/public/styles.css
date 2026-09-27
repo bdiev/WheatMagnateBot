@@ -5971,6 +5971,13 @@ button.player-activity-cell.is-selected:active:not(:disabled) {
   white-space: nowrap;
 }
 
+.player-activity-selection small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .player-activity-legend .player-activity-cell {
   width: 11px;
   min-height: 11px;
