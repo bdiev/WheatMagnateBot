@@ -3163,6 +3163,13 @@ async function syncPlayerActivityOnlineState() {
       .filter(username => username.toLowerCase() !== botUsername);
     const onlineByKey = new Map(onlineUsernames.map(username => [username.toLowerCase(), username]));
     const onlineKeys = new Set(onlineByKey.keys());
+    // Joins and leaves keep arriving while the writes below are awaited. Judge
+    // departures against the players observed when this sync started, and
+    // re-check the live list before writing one, so a stale snapshot never
+    // logs a false leave over a fresh join.
+    const syncBot = bot;
+    const previouslyObserved = lastObservedOnlinePlayerKeys ? new Map(lastObservedOnlinePlayerKeys) : null;
+    const liveOnlineKeys = () => new Set(getOnlinePlayerUsernames().map(username => username.toLowerCase()));
 
     const activityUpdates = await Promise.all(onlineUsernames.map(async username => ({
       username,
@@ -3175,13 +3182,17 @@ async function syncPlayerActivityOnlineState() {
       if (result?.created) playerInfoFirstJoinCheck?.enqueue(username);
       playerInfoFirstJoinCheck?.playerJoined(username);
     });
+    // The connection ended or was replaced meanwhile; its end handler owns
+    // the offline flush and the next connection builds its own snapshot.
+    if (bot !== syncBot) return;
 
-    if (lastObservedOnlinePlayerKeys) {
+    if (previouslyObserved) {
       // Iterate keys, not [key, value] entries: entries never matched, so a
       // missed playerLeft (or a stale online write racing it) was never healed.
-      const leftUsernames = [...lastObservedOnlinePlayerKeys.keys()]
-        .filter(key => !onlineKeys.has(key))
-        .map(key => lastObservedOnlinePlayerKeys.get(key))
+      const stillOnline = liveOnlineKeys();
+      const leftUsernames = [...previouslyObserved.keys()]
+        .filter(key => !onlineKeys.has(key) && !stillOnline.has(key))
+        .map(key => previouslyObserved.get(key))
         .filter(Boolean);
       await Promise.all(leftUsernames.map(async username => {
         await updatePlayerActivity(username, false, { recordEvent: true });
@@ -3193,7 +3204,7 @@ async function syncPlayerActivityOnlineState() {
     // Startup playerJoined packets are incremental and used to set
     // lastObservedOnlinePlayerKeys, which previously skipped this repair.
     if (playerActivityReconciliationPending && playerActivityJoinEventsReady && hasObservedSelf) {
-      playerActivityReconciliationPending = !(await reconcileStaleOnlinePlayers(onlineKeys));
+      playerActivityReconciliationPending = !(await reconcileStaleOnlinePlayers(new Set([...onlineKeys, ...liveOnlineKeys()])));
     }
 
     if (onlineUsernames.length > 0 || hasObservedSelf || lastObservedOnlinePlayerKeys) {
@@ -13281,7 +13292,7 @@ async function shutdownAllAccounts(signal) {
       ? withTimeout(multiBotManager.prepareForShutdown({ timeoutMs: 7_500 }), 8_000, 'Managed Obsidian Farm shutdown preparation timed out')
       : Promise.resolve([]),
     withTimeout(
-      syncWhitelistPlaytime([], { allowEmptySnapshot: true }),
+      syncWhitelistPlaytime([], { allowEmptySnapshot: true, final: true }),
       5_000,
       'Final playtime flush timed out'
     )

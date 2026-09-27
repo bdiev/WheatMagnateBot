@@ -12,6 +12,7 @@ function createPlaytimeFeature({
 }) {
   let playtimeWriteQueue = Promise.resolve();
   let pendingSync = null;
+  let closed = false;
 
   function enqueuePlaytimeWrite(task) {
     const run = playtimeWriteQueue.then(task, task);
@@ -21,9 +22,12 @@ function createPlaytimeFeature({
 
   async function syncWhitelistPlaytime(
     onlineUsernames = getOnlinePlayerUsernames(),
-    { allowEmptySnapshot = false } = {}
+    { allowEmptySnapshot = false, final = false } = {}
   ) {
     if (!pool) return;
+    // After the shutdown flush nothing may restart a timer: the process exits
+    // before any later checkpoint could stop it again.
+    if (closed) return { skipped: true, reason: 'closed' };
 
     const onlineByKey = new Map();
     for (const rawUsername of Array.isArray(onlineUsernames) ? onlineUsernames : []) {
@@ -41,11 +45,17 @@ function createPlaytimeFeature({
     // queue only needs the newest one. Joining a server fires playerJoined for
     // each listed player; without coalescing that queued one full sync per
     // player and delayed later leave/disconnect stamps behind the backlog.
-    if (pendingSync) {
+    // A waiting flush (empty snapshot) is never replaced by a live snapshot:
+    // it must stop every timer at the disconnect, so later snapshots queue
+    // behind it instead.
+    const isFlush = normalizedOnlineUsernames.length === 0;
+    if (final) closed = true;
+    if (pendingSync && (isFlush || !pendingSync.isFlush)) {
       pendingSync.usernames = normalizedOnlineUsernames;
+      pendingSync.isFlush = isFlush;
       return pendingSync.promise;
     }
-    const request = { usernames: normalizedOnlineUsernames };
+    const request = { usernames: normalizedOnlineUsernames, isFlush };
     pendingSync = request;
     request.promise = enqueuePlaytimeWrite(() => {
       if (pendingSync === request) pendingSync = null;

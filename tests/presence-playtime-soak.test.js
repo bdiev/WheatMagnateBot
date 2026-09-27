@@ -13,9 +13,9 @@
 // right after spawn), crashes (process killed mid-transaction), graceful
 // redeploys and the daily server restart.
 //
-//   npm run test:soak         12 virtual hours, seed 1, plus mutation runs
+//   npm run test:soak         12 virtual hours + a 2 h storm, seed 1, plus mutation runs
 //   npm run test:soak:long    7 virtual days on three seeds
-//   node tests/presence-playtime-soak.test.js --hours=48 --seeds=4,5 --players=12 --no-mutation
+//   node tests/presence-playtime-soak.test.js --hours=48 --seeds=4,5 --players=12 --storm-hours=4 --no-mutation
 // Environment variables SOAK_HOURS, SOAK_SEEDS, SOAK_PLAYERS and
 // SOAK_MUTATION=0 work too; SOAK_DEBUG=1 prints the event timeline before the
 // first failure and SOAK_TRACE=<username> adds that player's presence writes.
@@ -47,6 +47,17 @@ const SHUTDOWN_FLUSH_TIMEOUT_MS = 5_000;
 const TRANSITION_SLACK_S = 8;
 // A crash loses at most the time since the last 30 s checkpoint.
 const CRASH_SLACK_S = 32;
+
+// Two traffic profiles. "soak" is a plausible day: long sessions, an
+// incident every ~45 min, rare latency spikes. "storm" is adversarial: an
+// incident every few minutes, nearly every kick lands while the login player
+// list is still being written, short sessions and frequent spikes, so narrow
+// races happen on every run instead of by luck.
+const PROFILES = {
+  soak: { writeTriggeredKickChance: 0.3, spikeChance: 0.03, incidentMeanMin: 45, earlyKickChance: 0.4, offlineMeanMin: 90, sessionMeanMin: 70, shortSessionChance: 0.12 },
+  storm: { writeTriggeredKickChance: 0.7, spikeChance: 0.1, incidentMeanMin: 4, earlyKickChance: 0.9, offlineMeanMin: 6, sessionMeanMin: 5, shortSessionChance: 0.3 }
+};
+const STORM_HOURS = Number(ARGS['storm-hours'] ?? process.env.SOAK_STORM_HOURS) || 2;
 
 // ---------------------------------------------------------------- source ---
 
@@ -91,8 +102,8 @@ function bootstrapDdl() {
 
 // The graceful shutdown path is not lifted (it drives the whole process), so
 // pin the order the simulation replays.
-assert.match(BOT_SOURCE, /shouldReconnect = false;[\s\S]*?withTimeout\(\s*syncWhitelistPlaytime\(\[\], \{ allowEmptySnapshot: true \}\),\s*5_000/,
-  'redeploy must flush playtime with a 5 s deadline');
+assert.match(BOT_SOURCE, /shouldReconnect = false;[\s\S]*?withTimeout\(\s*syncWhitelistPlaytime\(\[\], \{ allowEmptySnapshot: true, final: true \}\),\s*5_000/,
+  'redeploy must flush playtime with a 5 s deadline and close it');
 assert.match(BOT_SOURCE, /const RECONNECT_INTERVAL_MS = 15_000;/);
 
 const LIFTED = {
@@ -198,14 +209,14 @@ function createScheduler(clock) {
 // every statement pays simulated network latency first, so independent flows
 // still interleave between statements. A killed process never resumes: its
 // timers are cancelled and an open transaction is rolled back.
-function createDatabaseServer(db, scheduler, clock, random) {
+function createDatabaseServer(db, scheduler, clock, random, profile) {
   let holder = null;
   const waiters = [];
 
   // Pool checkout and standalone statements see pool waits and network
   // spikes; statements inside an open transaction reuse a warm connection.
   // (The model serializes transactions, so lock time must stay realistic.)
-  const latency = () => (random.chance(0.03) ? random.between(200, 3000) : random.between(1, 25));
+  const latency = () => (random.chance(profile.spikeChance) ? random.between(200, 3000) : random.between(1, 25));
   const transactionLatency = () => random.between(0.3, 3);
 
   async function execute(sql, params = []) {
@@ -372,7 +383,7 @@ function overlapSeconds(first, second) {
 
 // ------------------------------------------------------------ simulation ---
 
-async function simulate({ seed, hours, mutation = null, log = () => {} }) {
+async function simulate({ seed, hours, profile = PROFILES.soak, mutation = null, log = () => {} }) {
   const lifted = mutation ? mutation.apply({ ...LIFTED }) : LIFTED;
   const clock = { now: START_MS };
   const RealDate = global.Date;
@@ -387,13 +398,13 @@ async function simulate({ seed, hours, mutation = null, log = () => {} }) {
   const random = createRandom(seed);
   const scheduler = createScheduler(clock);
   const db = new PGlite();
-  const server = createDatabaseServer(db, scheduler, clock, random);
+  const server = createDatabaseServer(db, scheduler, clock, random, profile);
   const endAt = START_MS + hours * 3600_000;
 
   const errors = [];
   const originalConsole = { log: console.log, warn: console.warn, error: console.error };
   const failures = [];
-  const stats = { crashes: 0, redeploys: 0, kicks: 0, earlyKicks: 0, restarts: 0, spawns: 0, joins: 0, leaves: 0, checks: 0 };
+  const stats = { staleSyncs: 0, crashes: 0, redeploys: 0, kicks: 0, earlyKicks: 0, restarts: 0, spawns: 0, joins: 0, leaves: 0, checks: 0 };
 
   const players = Array.from({ length: PLAYER_COUNT }, (_, index) => ({
     index,
@@ -409,6 +420,7 @@ async function simulate({ seed, hours, mutation = null, log = () => {} }) {
   let lastWorldChange = START_MS;
   let lastObservingChange = START_MS;
   let currentProcess = null;
+  let ending = false;
   let processSerial = 0;
 
   // A check that fails records the scenario and keeps going, so one run can
@@ -473,10 +485,20 @@ async function simulate({ seed, hours, mutation = null, log = () => {} }) {
         const traced = process.env.SOAK_TRACE && String(username).toLowerCase() === process.env.SOAK_TRACE.toLowerCase();
         if (traced) note(`  p${owner.id} update ${username} ${isOnline ? 'online' : 'offline'} ${JSON.stringify(options)} start`);
         const result = await repository.updatePlayerActivity(username, isOnline, options);
+        // Adversarial kick: drop the connection the moment the k-th login
+        // join write lands, while that handler has not synchronized yet.
+        if (isOnline && options.resetSession && processState.kickAfterJoinWrites > 0 && --processState.kickAfterJoinWrites === 0) {
+          scheduler.after(0, () => disconnect('Kicked during the login join writes'), owner);
+        }
         if (traced) note(`  p${owner.id} update ${username} ${isOnline ? 'online' : 'offline'} done`);
         return result;
       },
-      syncWhitelistPlaytime: playtime.syncWhitelistPlaytime,
+      syncWhitelistPlaytime: (...args) => {
+        // A non-empty snapshot written while no connection exists is the
+        // stale-handler race the connection guard prevents.
+        if (context.bot === null && Array.isArray(args[0]) && args[0].length) stats.staleSyncs += 1;
+        return playtime.syncWhitelistPlaytime(...args);
+      },
       dashedMinecraftUuid: value => String(value || '').toLowerCase() || null,
       schedulePlayerSkinHistoryRefresh() {},
       scheduleQueuedSiteWhispersForPlayer: () => scheduler.sleep(random.between(0, 40), owner),
@@ -534,7 +556,14 @@ async function simulate({ seed, hours, mutation = null, log = () => {} }) {
         return;
       }
       const loginMs = random.between(800, 4000);
-      scheduler.after(loginMs, () => {
+      scheduler.after(loginMs, async () => {
+        if (!owner.alive) return;
+        if (!serverUp) { scheduler.after(RECONNECT_MS, connect, owner); return; }
+        // Every stop path (disconnect flush, redeploy flush, startup reset
+        // after a crash) has run by now, so a running timer here is time
+        // counted while the bot could not see anyone.
+        const running = await server.inspect('SELECT username FROM player_playtime WHERE tracking_since IS NOT NULL');
+        if (running.rows.length) fail(`PT timers run for ${running.rows.map(row => row.username).join(', ')} while the bot reconnects`);
         if (!owner.alive) return;
         if (!serverUp) { scheduler.after(RECONNECT_MS, connect, owner); return; }
         const createdBot = { username: botName, entity: { id: 1 }, players: {}, tablist: { players: {} } };
@@ -571,13 +600,20 @@ async function simulate({ seed, hours, mutation = null, log = () => {} }) {
         if (processState.earlyKick) {
           processState.earlyKick = false;
           stats.earlyKicks += 1;
-          scheduler.after(random.between(20, 3500), () => disconnect('Kicked right after spawn'), owner);
+          const loginPlayers = players.filter(player => player.online.isOpen()).length;
+          if (loginPlayers && random.chance(profile.writeTriggeredKickChance)) {
+            processState.kickAfterJoinWrites = random.int(1, loginPlayers);
+          } else {
+            const kickDelay = random.chance(0.7) ? random.between(5, 400) : random.between(400, 3500);
+            scheduler.after(kickDelay, () => disconnect('Kicked right after spawn'), owner);
+          }
         }
       }, owner);
     }
 
     // The Minecraft connection ends (kick, network loss, server restart).
     function disconnect(reason = 'Connection lost') {
+      processState.kickAfterJoinWrites = 0;
       const createdBot = processState.connection;
       if (!createdBot || context.bot !== createdBot || !owner.alive) return false;
       processState.connection = null;
@@ -624,7 +660,7 @@ async function simulate({ seed, hours, mutation = null, log = () => {} }) {
       processState.stopping = true;
       context.shouldReconnect = false;
       const flush = Promise.race([
-        playtime.syncWhitelistPlaytime([], { allowEmptySnapshot: true }),
+        playtime.syncWhitelistPlaytime([], { allowEmptySnapshot: true, final: true }),
         scheduler.sleep(SHUTDOWN_FLUSH_TIMEOUT_MS, owner)
       ]);
       return flush.then(() => {
@@ -652,7 +688,7 @@ async function simulate({ seed, hours, mutation = null, log = () => {} }) {
   function schedulePlayer(player, first = false) {
     const offlineMs = first && random.chance(0.5)
       ? random.between(0, 60_000)
-      : random.chance(0.1) ? random.between(2_000, 20_000) : random.exp(90 * 60_000) + 60_000;
+      : random.chance(0.1) ? random.between(2_000, 20_000) : random.exp(profile.offlineMeanMin * 60_000) + 60_000;
     scheduler.after(offlineMs, () => joinPlayer(player));
   }
 
@@ -665,7 +701,7 @@ async function simulate({ seed, hours, mutation = null, log = () => {} }) {
     note(`join ${player.username}`);
     if (observing.isOpen()) player.transitions += 1;
     currentProcess?.playerJoined(player);
-    const sessionMs = random.chance(0.12) ? random.between(1_500, 25_000) : random.exp(70 * 60_000) + 30_000;
+    const sessionMs = random.chance(profile.shortSessionChance) ? random.between(1_500, 25_000) : random.exp(profile.sessionMeanMin * 60_000) + 30_000;
     player.leaveTimer = scheduler.after(sessionMs, () => leavePlayer(player));
   }
 
@@ -706,24 +742,24 @@ async function simulate({ seed, hours, mutation = null, log = () => {} }) {
   }
 
   function scheduleIncident() {
-    scheduler.after(random.exp(45 * 60_000) + 60_000, async () => {
+    scheduler.after(random.exp(profile.incidentMeanMin * 60_000) + 60_000, async () => {
       const roll = random.next();
       const process = currentProcess;
       if (process && process.owner.alive && !process.stopping) {
         if (roll < 0.35) {
           stats.kicks += 1;
           markObservedTransitions();
-          if (random.chance(0.4)) process.earlyKick = true;
+          if (random.chance(profile.earlyKickChance)) process.earlyKick = true;
           process.disconnect('Kicked');
         } else if (roll < 0.65) {
           markObservedTransitions();
           await process.crash();
-          scheduler.after(random.between(5_000, 90_000), () => { currentProcess = startProcess(); });
+          scheduler.after(random.between(5_000, 90_000), () => { if (!ending) currentProcess = startProcess(); });
         } else if (roll < 0.9) {
           markObservedTransitions();
           const replacementDelay = random.between(10_000, 120_000);
           process.redeploy();
-          scheduler.after(replacementDelay, () => { currentProcess = startProcess(); });
+          scheduler.after(replacementDelay, () => { if (!ending) currentProcess = startProcess(); });
         } else {
           // Next connection gets kicked right after spawn, while the login
           // player list is still being written.
@@ -765,7 +801,11 @@ async function simulate({ seed, hours, mutation = null, log = () => {} }) {
 
     const offlineFor = observing.isOpen() ? 0 : now - lastObservingChange;
     if (offlineFor >= 60_000) {
-      const tracking = [...rows.values()].filter(row => row.tracking_since);
+      // Player timers stop with their presence lease (30 s + 15 s sweep);
+      // lease-less rows such as the bot's own stop once their checkpoints go
+      // stale (120 s + sweep).
+      const tracking = [...rows.values()]
+        .filter(row => row.tracking_since && (offlineFor >= 150_000 || row.key !== botName.toLowerCase()));
       if (tracking.length) fail(`bot offline ${Math.round(offlineFor / 1000)}s but PT timers run for ${tracking.map(row => row.key).join(', ')}`);
       const online = await server.inspect('SELECT username FROM player_activity WHERE is_online = TRUE');
       if (online.rows.length) fail(`bot offline ${Math.round(offlineFor / 1000)}s but ${online.rows.map(row => row.username).join(', ')} still shown online`);
@@ -809,12 +849,16 @@ async function simulate({ seed, hours, mutation = null, log = () => {} }) {
     }
 
     // Final graceful shutdown, then compare the books.
+    ending = true;
     const last = currentProcess;
     if (last?.owner.alive) {
       markObservedTransitions();
       last.redeploy();
     }
-    await scheduler.runUntil(clock.now + 30_000);
+    // No replacement starts now. Whatever the last process left behind
+    // (a crash, a flush that missed its deadline) must be cleaned up by the
+    // site: player leases within 45 s, lease-less rows within 135 s.
+    await scheduler.runUntil(clock.now + 200_000);
     const rows = await playtimeRows();
     const summary = [];
     let totalExpected = 0;
@@ -872,7 +916,7 @@ const MUTATIONS = [
     detects: /online list .* differs/,
     apply: lifted => ({
       ...lifted,
-      syncPlayerActivityOnlineState: replaceOnce(lifted.syncPlayerActivityOnlineState, '[...lastObservedOnlinePlayerKeys.keys()]', '[...lastObservedOnlinePlayerKeys]')
+      syncPlayerActivityOnlineState: replaceOnce(lifted.syncPlayerActivityOnlineState, '[...previouslyObserved.keys()]', '[...previouslyObserved]')
     })
   }
 ];
@@ -880,10 +924,14 @@ const MUTATIONS = [
 async function main() {
   const startedAt = Date.now();
   let failed = false;
-  for (const seed of SEEDS) {
-    const result = await simulate({ seed, hours: HOURS, log: line => { if (HOURS > 24) console.log(line); } });
+  const runs = [
+    ...SEEDS.map(seed => ({ seed, hours: HOURS, profileName: 'soak' })),
+    ...SEEDS.map(seed => ({ seed, hours: STORM_HOURS, profileName: 'storm' }))
+  ];
+  for (const { seed, hours, profileName } of ARGS['mutations-only'] ? [] : runs) {
+    const result = await simulate({ seed, hours, profile: PROFILES[profileName], log: line => { if (hours > 24) console.log(line); } });
     const { stats, summary } = result;
-    console.log(`seed ${seed}: ${HOURS}h virtual · spawns ${stats.spawns} · kicks ${stats.kicks} (early ${stats.earlyKicks}) · crashes ${stats.crashes} · redeploys ${stats.redeploys} · server restarts ${stats.restarts} · joins ${stats.joins} · checks ${stats.checks}`);
+    console.log(`${profileName} seed ${seed}: ${hours}h virtual · spawns ${stats.spawns} · kicks ${stats.kicks} (early ${stats.earlyKicks}) · crashes ${stats.crashes} · redeploys ${stats.redeploys} · server restarts ${stats.restarts} · joins ${stats.joins} · checks ${stats.checks}`);
     console.log(`  playtime: expected ${Math.round(result.totalExpected)}s, tracked ${Math.round(result.totalTracked)}s, drift ${(result.totalTracked - result.totalExpected).toFixed(0)}s`);
     for (const row of summary) console.log(`  ${row.player}: observed ${row.expected}s · PT ${row.tracked}s (${row.drift >= 0 ? '+' : ''}${row.drift}s) · sessions ${row.sessions}s`);
     for (const failure of result.failures.slice(0, 25)) console.error(`  FAIL ${failure}`);
@@ -896,10 +944,12 @@ async function main() {
     // Put each pre-fix bug back into the lifted bot code: the harness must
     // notice it, or its green result above would mean nothing.
     for (const mutation of MUTATIONS) {
-      const mutated = await simulate({ seed: SEEDS[0], hours: HOURS, mutation });
-      const caught = mutated.failures.some(failure => mutation.detects.test(failure));
-      console.log(`mutation (${mutation.name}): ${caught ? `caught, ${mutated.failures.length} failure(s)` : 'NOT caught'}`);
-      if (!caught) failed = true;
+      for (const seed of SEEDS) {
+        const mutated = await simulate({ seed, hours: STORM_HOURS, profile: PROFILES.storm, mutation });
+        const caught = mutated.failures.filter(failure => mutation.detects.test(failure)).length;
+        console.log(`mutation (${mutation.name}) seed ${seed}: ${caught ? `caught, ${caught} failure(s)` : 'NOT caught'} · stale syncs ${mutated.stats.staleSyncs}`);
+        if (!caught) failed = true;
+      }
     }
   }
 

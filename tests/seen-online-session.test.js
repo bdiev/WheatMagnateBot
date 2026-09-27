@@ -101,6 +101,19 @@ async function run() {
     assert.ok(Number(stoppedPlaytime.total_seconds) >= 159 && Number(stoppedPlaytime.total_seconds) <= 161,
       'playtime must stop at the final observation rather than at lease cleanup time');
 
+    await db.exec(`
+      INSERT INTO player_playtime(username,total_seconds,tracking_since,updated_at)
+      VALUES('WheatMagnate',500,NOW()-INTERVAL '10 minutes',NOW()-INTERVAL '9 minutes 30 seconds'),
+            ('LivePlayer',10,NOW()-INTERVAL '20 seconds',NOW()-INTERVAL '10 seconds');
+    `);
+    await expireStalePlayerPresence(pool, 30_000);
+    const orphan = (await db.query("SELECT total_seconds,tracking_since FROM player_playtime WHERE username='WheatMagnate'")).rows[0];
+    assert.equal(orphan.tracking_since, null, 'a timer without a presence lease must stop once its checkpoints stop');
+    assert.equal(Number(orphan.total_seconds), 530, 'an orphaned timer must stop at its last checkpoint');
+    const live = (await db.query("SELECT total_seconds,tracking_since FROM player_playtime WHERE username='LivePlayer'")).rows[0];
+    assert.ok(live.tracking_since, 'a recently checkpointed timer must keep running');
+    assert.equal(Number(live.total_seconds), 10);
+
     await db.exec(`UPDATE player_activity SET is_online=TRUE,presence_observed_at=NOW(),online_since=NOW()`);
     assert.deepEqual(await expireStalePlayerPresence(pool, 30_000), []);
     assert.equal((await activity()).is_online, true, 'a fresh observation lease must remain online');

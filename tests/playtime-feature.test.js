@@ -160,6 +160,53 @@ async function run() {
   await steadyFeature.syncWhitelistPlaytime(['Alpha', 'Beta']);
   assert.deepStrictEqual(steadySnapshots, ['Beta'], 'players whose timer carried over must not be written again');
 
+  // A waiting disconnect flush must still stop every timer: a live snapshot
+  // that arrives behind it queues after it instead of replacing it.
+  const orderedSnapshots = [];
+  let releaseOrderedSync;
+  const orderedGate = new Promise(resolve => { releaseOrderedSync = resolve; });
+  let orderedConnections = 0;
+  const orderedFeature = createPlaytimeFeature({
+    pool: {
+      async connect() {
+        orderedConnections += 1;
+        const connection = orderedConnections;
+        return {
+          async query(sql, params = []) {
+            if (connection === 1 && /BEGIN/.test(sql)) await orderedGate;
+            if (/WITH elapsed AS/.test(sql)) orderedSnapshots.push(params[0]);
+            return { rows: [] };
+          },
+          release() {}
+        };
+      }
+    },
+    getOnlinePlayerUsernames: () => [],
+    getPlayerHeadEmoji: () => '',
+    statusEmojis: { playtime: '' },
+    uiButtonEmojis: { slowFalling: 'sync', search: 'search' }
+  });
+  const orderedInFlight = orderedFeature.syncWhitelistPlaytime(['Alpha']);
+  await new Promise(resolve => setImmediate(resolve));
+  const orderedFlush = orderedFeature.syncWhitelistPlaytime([], { allowEmptySnapshot:true });
+  const orderedLive = orderedFeature.syncWhitelistPlaytime(['Beta']);
+  releaseOrderedSync();
+  await Promise.all([orderedInFlight, orderedFlush, orderedLive]);
+  assert.deepStrictEqual(orderedSnapshots, [['alpha'], [], ['beta']], 'a live snapshot must not swallow a waiting flush');
+
+  const finalQueries = [];
+  const finalFeature = createPlaytimeFeature({
+    pool: { async connect() { return { async query(sql) { finalQueries.push(String(sql)); return { rows: [] }; }, release() {} }; } },
+    getOnlinePlayerUsernames: () => [],
+    getPlayerHeadEmoji: () => '',
+    statusEmojis: { playtime: '' },
+    uiButtonEmojis: { slowFalling: 'sync', search: 'search' }
+  });
+  await finalFeature.syncWhitelistPlaytime([], { allowEmptySnapshot:true, final:true });
+  const afterFinal = await finalFeature.syncWhitelistPlaytime(['Alpha']);
+  assert.deepStrictEqual(afterFinal, { skipped:true, reason:'closed' }, 'nothing may restart PT timers after the shutdown flush');
+  assert.equal(finalQueries.filter(sql => /WITH elapsed AS/.test(sql)).length, 1);
+
   const botSource = fs.readFileSync(path.resolve(__dirname, '..', 'bot.js'), 'utf8');
   assert.match(botSource, /bot\.on\('playerJoined'[\s\S]*?if \(player\.username && bot === createdBot\) \{[\s\S]*?syncWhitelistPlaytime\(onlineUsernames\)/,
     'a join handler that outlives its connection must not restart PT timers after the disconnect flush');
@@ -168,7 +215,7 @@ async function run() {
   assert.match(botSource, /playtime_non_whitelist_search_modal[\s\S]*playtime_search_query/, 'the search button must open a nickname modal');
   assert.match(botSource, /searchNonWhitelistPlaytime\(query, 25\)/, 'the modal must run the non-whitelist playtime search');
   assert.match(botSource, /buildNonWhitelistPlaytimeSearchEmbed\(query, result\)/, 'search results must render in the playtime message');
-  assert.match(botSource, /preparePrimaryBotForShutdown\(\)[\s\S]*?syncWhitelistPlaytime\(\[\], \{ allowEmptySnapshot: true \}\)[\s\S]*?safelyCloseMinecraftBot\(bot, 'Process shutdown'\)[\s\S]*?pool\?\.end/,
+  assert.match(botSource, /preparePrimaryBotForShutdown\(\)[\s\S]*?syncWhitelistPlaytime\(\[\], \{ allowEmptySnapshot: true, final: true \}\)[\s\S]*?safelyCloseMinecraftBot\(bot, 'Process shutdown'\)[\s\S]*?pool\?\.end/,
     'redeploy shutdown must stop farm work, flush PT, disconnect Minecraft, and only then close the database');
   assert.match(botSource, /preparePrimaryBotForShutdown\(\)[\s\S]*?resumeAfterRedeploy[\s\S]*?obsidianStats\.desiredEnabled = true;[\s\S]*?setObsidianFarmDesiredEnabled\(true\)[\s\S]*?primaryProtectionLever\.setState\(currentBot, true\)/,
     'redeploy shutdown must protect the primary farm while preserving its resume intent');

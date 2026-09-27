@@ -69,6 +69,8 @@ const sseHub = new SseHub({
 });
 const LIVE_DASHBOARD_CACHE_MS = Math.max(250, Number(process.env.LIVE_DASHBOARD_CACHE_MS) || 1_000);
 const PLAYER_PRESENCE_TIMEOUT_MS = Math.max(15_000, Number(process.env.PLAYER_PRESENCE_TIMEOUT_MS) || 30_000);
+// Four missed 30 s playtime checkpoints mean no live bot owns the timer.
+const PLAYTIME_CHECKPOINT_STALE_MS = 120_000;
 const PLAYER_PRESENCE_SWEEP_MS = Math.max(5_000, Math.min(PLAYER_PRESENCE_TIMEOUT_MS, 15_000));
 let databaseEventTimer = null;
 let databaseEventPollRunning = false;
@@ -6760,6 +6762,19 @@ async function expireStalePlayerPresence(database = pool, timeoutMs = PLAYER_PRE
     )
     SELECT username FROM expired ORDER BY LOWER(username)
   `, [safeTimeoutMs]);
+  // A live bot checkpoints every running PT timer (updated_at) at least every
+  // 30 s. Rows without a presence lease (the bot's own account, TAB-only
+  // names) never reach the lease expiry above, so a crashed process would
+  // leave them ticking until the next start. Stop them at their last
+  // checkpoint, exactly as that next start would.
+  await database.query(`
+    UPDATE player_playtime
+    SET total_seconds=total_seconds + GREATEST(0,FLOOR(EXTRACT(EPOCH FROM (updated_at - tracking_since)))::bigint),
+        tracking_since=NULL,
+        updated_at=NOW()
+    WHERE tracking_since IS NOT NULL
+      AND updated_at < NOW() - ($1::double precision * INTERVAL '1 millisecond')
+  `, [PLAYTIME_CHECKPOINT_STALE_MS]);
   return result.rows.map(row => row.username);
 }
 
