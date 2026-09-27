@@ -3177,7 +3177,9 @@ async function syncPlayerActivityOnlineState() {
     });
 
     if (lastObservedOnlinePlayerKeys) {
-      const leftUsernames = [...lastObservedOnlinePlayerKeys]
+      // Iterate keys, not [key, value] entries: entries never matched, so a
+      // missed playerLeft (or a stale online write racing it) was never healed.
+      const leftUsernames = [...lastObservedOnlinePlayerKeys.keys()]
         .filter(key => !onlineKeys.has(key))
         .map(key => lastObservedOnlinePlayerKeys.get(key))
         .filter(Boolean);
