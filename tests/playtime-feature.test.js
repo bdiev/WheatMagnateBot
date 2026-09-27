@@ -96,7 +96,74 @@ async function run() {
   assert.deepStrictEqual(finalized, { synchronized:true, onlineCount:0 });
   assert.equal(syncConnections, 2, 'an explicit disconnect must still finalize every active timer');
 
+  // A burst of join events (the whole TAB list on connect) must not queue one
+  // full sync per player: only the newest waiting snapshot is written.
+  const burstSnapshots = [];
+  let releaseFirstSync;
+  const firstSyncGate = new Promise(resolve => { releaseFirstSync = resolve; });
+  let burstConnections = 0;
+  const burstFeature = createPlaytimeFeature({
+    pool: {
+      async connect() {
+        burstConnections += 1;
+        const connection = burstConnections;
+        return {
+          async query(sql, params = []) {
+            if (connection === 1 && /BEGIN/.test(sql)) await firstSyncGate;
+            if (/WITH elapsed AS/.test(sql)) {
+              burstSnapshots.push(params[0]);
+              return { rows: [{ username_key: 'alpha', still_tracking: true }] };
+            }
+            if (/INSERT INTO player_playtime/.test(sql)) burstSnapshots.push(`upsert:${params[0]}`);
+            return { rows: [] };
+          },
+          release() {}
+        };
+      }
+    },
+    getOnlinePlayerUsernames: () => [],
+    getPlayerHeadEmoji: () => '',
+    statusEmojis: { playtime: '' },
+    uiButtonEmojis: { slowFalling: 'sync', search: 'search' }
+  });
+  const inFlight = burstFeature.syncWhitelistPlaytime(['Alpha']);
+  await new Promise(resolve => setImmediate(resolve));
+  const queued = [
+    burstFeature.syncWhitelistPlaytime(['Alpha', 'Beta']),
+    burstFeature.syncWhitelistPlaytime(['Alpha', 'Beta', 'Gamma']),
+    burstFeature.syncWhitelistPlaytime([], { allowEmptySnapshot:true })
+  ];
+  releaseFirstSync();
+  await Promise.all([inFlight, ...queued]);
+  assert.equal(burstConnections, 2, 'three waiting snapshots must collapse into one transaction');
+  assert.deepStrictEqual(burstSnapshots, [['alpha'], []], 'the newest waiting snapshot (the disconnect flush) must win');
+
+  const steadySnapshots = [];
+  const steadyFeature = createPlaytimeFeature({
+    pool: {
+      async connect() {
+        return {
+          async query(sql, params = []) {
+            if (/WITH elapsed AS/.test(sql)) return { rows: [{ username_key: 'alpha', still_tracking: true }, { username_key: 'gone', still_tracking: false }] };
+            if (/INSERT INTO player_playtime/.test(sql)) steadySnapshots.push(params[0]);
+            return { rows: [] };
+          },
+          release() {}
+        };
+      }
+    },
+    getOnlinePlayerUsernames: () => [],
+    getPlayerHeadEmoji: () => '',
+    statusEmojis: { playtime: '' },
+    uiButtonEmojis: { slowFalling: 'sync', search: 'search' }
+  });
+  await steadyFeature.syncWhitelistPlaytime(['Alpha', 'Beta']);
+  assert.deepStrictEqual(steadySnapshots, ['Beta'], 'players whose timer carried over must not be written again');
+
   const botSource = fs.readFileSync(path.resolve(__dirname, '..', 'bot.js'), 'utf8');
+  assert.match(botSource, /bot\.on\('playerJoined'[\s\S]*?if \(player\.username && bot === createdBot\) \{[\s\S]*?syncWhitelistPlaytime\(onlineUsernames\)/,
+    'a join handler that outlives its connection must not restart PT timers after the disconnect flush');
+  assert.match(botSource, /bot\.on\('playerLeft'[\s\S]*?if \(player\.username && bot === createdBot\) \{[\s\S]*?syncWhitelistPlaytime\(onlineUsernames\)/);
   const nixpacksSource = fs.readFileSync(path.resolve(__dirname, '..', 'nixpacks.toml'), 'utf8');
   assert.match(botSource, /playtime_non_whitelist_search_modal[\s\S]*playtime_search_query/, 'the search button must open a nickname modal');
   assert.match(botSource, /searchNonWhitelistPlaytime\(query, 25\)/, 'the modal must run the non-whitelist playtime search');

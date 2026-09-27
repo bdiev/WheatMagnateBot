@@ -11,6 +11,7 @@ function createPlaytimeFeature({
   uiButtonEmojis
 }) {
   let playtimeWriteQueue = Promise.resolve();
+  let pendingSync = null;
 
   function enqueuePlaytimeWrite(task) {
     const run = playtimeWriteQueue.then(task, task);
@@ -31,13 +32,30 @@ function createPlaytimeFeature({
       if (!onlineByKey.has(username.toLowerCase())) onlineByKey.set(username.toLowerCase(), username);
     }
     const normalizedOnlineUsernames = [...onlineByKey.values()];
-    const onlineUsernameKeys = [...onlineByKey.keys()];
     if (!normalizedOnlineUsernames.length && !allowEmptySnapshot) {
       console.warn('[Playtime] Skipping an empty online-player snapshot.');
       return { skipped: true, reason: 'empty-snapshot' };
     }
 
-    return enqueuePlaytimeWrite(async () => {
+    // Every snapshot is the full online list, so a sync still waiting in the
+    // queue only needs the newest one. Joining a server fires playerJoined for
+    // each listed player; without coalescing that queued one full sync per
+    // player and delayed later leave/disconnect stamps behind the backlog.
+    if (pendingSync) {
+      pendingSync.usernames = normalizedOnlineUsernames;
+      return pendingSync.promise;
+    }
+    const request = { usernames: normalizedOnlineUsernames };
+    pendingSync = request;
+    request.promise = enqueuePlaytimeWrite(() => {
+      if (pendingSync === request) pendingSync = null;
+      return writePlaytimeSnapshot(request.usernames);
+    });
+    return request.promise;
+  }
+
+  async function writePlaytimeSnapshot(normalizedOnlineUsernames) {
+    const onlineUsernameKeys = normalizedOnlineUsernames.map(username => username.toLowerCase());
     let client = null;
     try {
       client = await pool.connect();
@@ -46,7 +64,7 @@ function createPlaytimeFeature({
       // the next checkpoint. This makes repeated checkpoints equivalent to
       // flooring once at the end of the whole session instead of losing a
       // fraction of a second every 30 seconds.
-      await client.query(`
+      const checkpoint = await client.query(`
         WITH elapsed AS (
           SELECT username,
                  GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - tracking_since)))::BIGINT) AS whole_seconds,
@@ -64,9 +82,15 @@ function createPlaytimeFeature({
             updated_at = NOW()
         FROM elapsed
         WHERE pt.username = elapsed.username
+        RETURNING LOWER(pt.username) AS username_key, pt.tracking_since IS NOT NULL AS still_tracking
       `, [onlineUsernameKeys]);
+      // Players whose timer just carried over need no second write.
+      const stillTracking = new Set((checkpoint?.rows || [])
+        .filter(row => row.still_tracking)
+        .map(row => row.username_key));
 
       for (const username of normalizedOnlineUsernames) {
+        if (stillTracking.has(username.toLowerCase())) continue;
         await client.query(`
           WITH identity AS (
             SELECT pa.player_uuid
@@ -107,7 +131,6 @@ function createPlaytimeFeature({
     } finally {
       if (client) client.release();
     }
-    });
   }
 
   async function getWhitelistPlaytime() {

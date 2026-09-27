@@ -9801,7 +9801,9 @@ function createBot() {
       schedulePlayerSkinHistoryRefresh(player);
       await scheduleQueuedSiteWhispersForPlayer(player.username);
     }
-    if (player.username) {
+    // The awaits above can outlive this connection. A snapshot taken after the
+    // disconnect flush would restart timers and count the offline gap as PT.
+    if (player.username && bot === createdBot) {
       const onlineUsernames = getOnlinePlayerUsernames();
       if (!onlineUsernames.some(username => username.toLowerCase() === player.username.toLowerCase())) {
         onlineUsernames.push(player.username);
@@ -9816,7 +9818,7 @@ function createBot() {
       await updatePlayerActivity(player.username, false, { uuid: player.uuid });
       playerInfoFirstJoinCheck?.playerLeft(player.username);
     }
-    if (player.username) {
+    if (player.username && bot === createdBot) {
       const onlineUsernames = getOnlinePlayerUsernames().filter(
         username => username.toLowerCase() !== player.username.toLowerCase()
       );
