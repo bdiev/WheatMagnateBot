@@ -36,12 +36,17 @@ class BotManager {
   withConnectionSlot(connect) {
     const queued = this.connectionQueue.catch(() => {}).then(async () => {
       const jitterMs = this.startJitterMs ? Math.floor(this.random() * (this.startJitterMs + 1)) : 0;
-      while (this.lastStartAt) {
-        const waitMs = this.startDelayMs - (Date.now() - this.lastStartAt);
+      // The jitter is part of the required gap and is re-measured after every
+      // wait, so a connection noted elsewhere (noteExternalConnectionStart)
+      // while this slot was sleeping still pushes this start back.
+      while (true) {
+        const waitMs = this.lastStartAt
+          ? this.startDelayMs + jitterMs - (Date.now() - this.lastStartAt)
+          : jitterMs;
         if (waitMs <= 0) break;
         await new Promise(resolve => setTimeout(resolve, waitMs));
+        if (!this.lastStartAt) break;
       }
-      if (jitterMs) await new Promise(resolve => setTimeout(resolve, jitterMs));
       this.lastStartAt = Date.now();
       return connect();
     });

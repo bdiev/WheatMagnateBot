@@ -2,6 +2,7 @@
 
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
+const fs = require('node:fs');
 const path = require('node:path');
 const { AccountRegistry } = require('../site/accounts/account-registry');
 const { ActiveAccountContext } = require('../site/accounts/active-account-context');
@@ -121,6 +122,20 @@ async function main(){
   await Promise.all([staggerManager.start(first.id),staggerManager.start(second.id)]);
   assert.ok(staggerStarts[1]-staggerStarts[0]>=25,'parallel starts are serialized with the configured handshake interval');
   await staggerManager.shutdown();
+
+  // A primary connection noted while a queued slot is waiting (or sleeping its
+  // jitter) must push that slot back by the full interval again.
+  const externalGapManager=new BotManager({registry,startDelayMs:60,startJitterMs:20,random:()=>1,runtimeFactory:()=>null});
+  externalGapManager.noteExternalConnectionStart();
+  const slotStartedAt=externalGapManager.withConnectionSlot(async()=>Date.now());
+  await new Promise(resolve=>setTimeout(resolve,70));
+  const externalStartedAt=Date.now();
+  externalGapManager.noteExternalConnectionStart(externalStartedAt);
+  assert.ok(await slotStartedAt-externalStartedAt>=75,'a queued slot keeps the full interval plus jitter after an external primary start');
+
+  // The primary account queues through the same slot once the manager exists.
+  const primarySource=fs.readFileSync(path.join(__dirname,'..','bot.js'),'utf8');
+  assert.match(primarySource,/function createBot\(\) \{[\s\S]*?if \(multiBotManager && !primaryConnectionSlotGranted\) \{[\s\S]*?multiBotManager\.withConnectionSlot\(/,'primary reconnects wait for the shared connection slot');
 
   const shutdownOrder=[];
   const shutdownManager=new BotManager({

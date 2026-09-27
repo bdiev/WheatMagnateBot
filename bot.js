@@ -5192,6 +5192,9 @@ let lastDisconnectReason = null;
 let lastOfflineReason = null;
 let reconnectCountdownInterval = null;
 let reconnectTimer = null;
+// Primary reconnects queue behind managed-account handshakes (see createBot).
+let primaryConnectionQueued = false;
+let primaryConnectionSlotGranted = false;
 let resumeTimer = null;
 let securityDisconnectTriggered = false;
 
@@ -9414,6 +9417,30 @@ function createBot() {
   // could otherwise clear the new global reference and leave an orphaned socket.
   if (bot) {
     console.log('[Bot] Connection attempt skipped: a bot instance already exists.');
+    return;
+  }
+
+  // Once managed accounts exist, the primary account waits for the same
+  // connection slot so no two accounts start a handshake within
+  // BOT_START_DELAY_MS of each other (servers silently drop bursts, which
+  // surfaces as connect ETIMEDOUT). Before the manager exists (first boot)
+  // the primary connects immediately and secondaries wait for it instead.
+  if (multiBotManager && !primaryConnectionSlotGranted) {
+    if (primaryConnectionQueued) return;
+    primaryConnectionQueued = true;
+    reconnectTimestamp = 0;
+    multiBotManager.withConnectionSlot(() => {
+      primaryConnectionQueued = false;
+      primaryConnectionSlotGranted = true;
+      try {
+        createBot();
+      } finally {
+        primaryConnectionSlotGranted = false;
+      }
+    }).catch(error => {
+      primaryConnectionQueued = false;
+      console.error('[Bot] Queued primary connection failed:', error?.message || error);
+    });
     return;
   }
 

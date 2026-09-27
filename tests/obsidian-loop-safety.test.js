@@ -78,16 +78,17 @@ async function testSuspendResumeDoesNotDuplicateLoop(tempDir) {
   assert.strictEqual(handle, null, 'stop clears the only loop timer');
 }
 
-async function testUnconfirmedPlacementStopsFarm(tempDir) {
+async function testUnconfirmedPlacementKeepsFarming(tempDir) {
   const farm = createFarm(tempDir);
   const fatalErrors = [];
   farm.configureRuntime({ onFatalStop: async err => { fatalErrors.push(err); } });
   const notifications = [];
+  let targetBlock = { name: 'air', position: TARGET, boundingBox: 'empty' };
 
   const bot = createBot({
     inventoryItems: [pickaxe, bread, { name: 'lava_bucket', slot: 38, count: 1 }],
     blockAt: position => {
-      if (position.equals(TARGET)) return { name: 'air', position: TARGET, boundingBox: 'empty' };
+      if (position.equals(TARGET)) return targetBlock;
       if (position.equals(ANCHOR)) {
         return { name: 'smooth_stone', position: ANCHOR, boundingBox: 'block', type: 1 };
       }
@@ -96,19 +97,23 @@ async function testUnconfirmedPlacementStopsFarm(tempDir) {
   });
 
   farm.start(bot, event => notifications.push(event));
-  // The server never shows lava: placement confirmation waits 5 seconds.
+  // The server does not show lava in time: placement confirmation waits 5 s.
   const deadline = Date.now() + 8_000;
-  while (Date.now() < deadline && fatalErrors.length === 0) await sleep(100);
+  while (Date.now() < deadline && notifications.length === 0) await sleep(100);
 
-  assert.strictEqual(bot.activateItemCalls, 1, 'the bucket is used exactly once');
-  assert.strictEqual(fatalErrors.length, 1, 'onFatalStop receives the placement error');
-  assert.match(fatalErrors[0].message, /did not confirm lava/);
-  assert.strictEqual(farm.getStatus().enabled, false, 'the farm stops instead of retrying');
-  assert.strictEqual(farm.__test.getIsolationState().loopHandle, null);
+  assert.strictEqual(bot.activateItemCalls, 1, 'the bucket is used once per verified attempt');
+  assert.strictEqual(fatalErrors.length, 0, 'an unconfirmed placement never stops the farm');
+  assert.strictEqual(farm.getStatus().enabled, true, 'the farm keeps running and retries');
+  assert.match(notifications[0].message, /did not confirm lava[\s\S]*retrying/);
 
-  await sleep(1_000);
-  assert.strictEqual(bot.activateItemCalls, 1, 'no second bucket use after the fatal stop');
-  assert.strictEqual(notifications.length, 0);
+  // The lava shows up late: the retry must wait for obsidian, not pour again.
+  targetBlock = { name: 'lava', position: TARGET, boundingBox: 'empty', metadata: 0 };
+  await sleep(1_500);
+  assert.strictEqual(bot.activateItemCalls, 1, 'late lava is waited on instead of pouring a second bucket');
+  assert.strictEqual(farm.getStatus().phase, 'waiting');
+  assert.strictEqual(fatalErrors.length, 0);
+
+  await farm.stop();
 }
 
 async function testWornPickaxeDepositUsesExactSlot(tempDir) {
@@ -145,7 +150,7 @@ async function run() {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wheatmagnate-loop-safety-'));
   try {
     await testSuspendResumeDoesNotDuplicateLoop(tempDir);
-    await testUnconfirmedPlacementStopsFarm(tempDir);
+    await testUnconfirmedPlacementKeepsFarming(tempDir);
     await testWornPickaxeDepositUsesExactSlot(tempDir);
     console.log('Obsidian loop safety tests passed.');
   } finally {

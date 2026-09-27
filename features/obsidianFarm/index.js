@@ -76,9 +76,6 @@ const PLACEMENT_RECHECK_DELAY_MS = 750;
 const LOW_PICKAXE_DURABILITY_CODE = 'LOW_PICKAXE_DURABILITY';
 const RESOURCE_EXHAUSTED_CODE = 'RESOURCE_EXHAUSTED';
 const PLACEMENT_RECHECK_CODE = 'PLACEMENT_STATE_RECHECK';
-// The bucket was used but the server never showed lava at the exact target.
-// Retrying could pour a second bucket somewhere unexpected, so the farm stops.
-const PLACEMENT_UNCONFIRMED_CODE = 'PLACEMENT_UNCONFIRMED';
 const CAULDRON_RETRY_CODE = 'CAULDRON_RETRY';
 const FARM_STOPPED_CODE = 'FARM_STOPPED';
 // Cauldron retries are routine, but a farm that cannot fill a bucket for this
@@ -2646,11 +2643,12 @@ async function pourLava(bot, targetPos, context = {}) {
       heldItem: bot.heldItem?.name || null,
       waitedMs: LAVA_PLACEMENT_CONFIRM_TIMEOUT_MS
     });
-    const err = new Error(
-      `Server did not confirm lava at exact target (${x}, ${y}, ${z}); farm stopped without retry.`
+    // The farm keeps running: the next cycle re-reads the target, so lava that
+    // arrives late is simply waited on, and an unused lava bucket is poured
+    // again only after the same verified anchor and aim checks.
+    throw createPlacementSafetyError(
+      `Server did not confirm lava at exact target (${x}, ${y}, ${z}) within ${LAVA_PLACEMENT_CONFIRM_TIMEOUT_MS / 1000}s; rechecking the target and retrying.`
     );
-    err.code = PLACEMENT_UNCONFIRMED_CODE;
-    throw err;
   }
 
   await sleep(INTERACT_SETTLE_MS);
@@ -3040,10 +3038,6 @@ async function persistentLoop(bot, notify, generation = loopGeneration) {
     if (!isLoopCurrent(generation) || err.code === FARM_STOPPED_CODE) return;
 
     farm.lastErrorMessage = err.message;
-    if (err.code === PLACEMENT_UNCONFIRMED_CODE) {
-      fatalStop(err, context);
-      return;
-    }
     farmFailureStartedAt ||= Date.now();
     const stalledSeconds = farmFailureStartedAt == null
       ? 0
@@ -3092,22 +3086,6 @@ async function persistentLoop(bot, notify, generation = loopGeneration) {
   if (isLoopCurrent(generation)) {
     farm.loopHandle = setTimeout(() => persistentLoop(bot, notify, generation), retryDelay);
   }
-}
-
-function fatalStop(err, context = {}) {
-  writeFarmDebug('farm_fatal_stop', {
-    ...context,
-    error: err.message,
-    errorCode: err.code || null,
-    phase: farm.phase
-  });
-  haltLoop();
-  farm.lastErrorMessage = err.message;
-  Promise.resolve()
-    .then(() => runtime.onFatalStop(err))
-    .catch(hookError => {
-      writeFarmDebug('fatal_stop_hook_failed', { ...context, error: hookError?.message || String(hookError) });
-    });
 }
 
 function haltLoop() {
