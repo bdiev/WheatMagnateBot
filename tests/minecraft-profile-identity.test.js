@@ -33,7 +33,13 @@ const siteProfileIdentity = require('../site/player-profile-identity');
   );
 
   const botSource = fs.readFileSync(path.join(__dirname, '..', 'bot.js'), 'utf8');
-  for (const source of ['whitelist add', 'playtime update', '!pt import', '!jd import', '!messages import', '!seen import']) {
+  // Whitelist add resolves the current owner of the name (online UUID, then
+  // Mojang) instead of the name history, which could name a former owner.
+  const whitelistResolver = botSource.match(/async function resolveWhitelistIdentity\(username\) \{[\s\S]*?\n\}/)?.[0] || '';
+  assert.match(whitelistResolver, /getOnlinePlayerUuid\(username\)[\s\S]*resolveMinecraftProfile\(username\)/);
+  assert.doesNotMatch(whitelistResolver, /player_name_history/);
+  assert.match(botSource, /resolvePlayerIdentity: resolveWhitelistIdentity/);
+  for (const source of ['playtime update', '!pt import', '!jd import', '!messages import', '!seen import']) {
     assert.match(
       botSource,
       new RegExp(`ensureMinecraftProfileIdentity\\([^\\n]+source:'${source.replace(/[!]/g, '\\!')}'`),

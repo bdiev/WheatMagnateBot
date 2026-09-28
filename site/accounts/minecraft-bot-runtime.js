@@ -110,7 +110,11 @@ class MinecraftBotRuntime extends BotContext {
     const bot = this.bot;
     if (!bot?.entity?.position) return [];
     return Object.values(bot.entities || {}).filter(entity => entity?.type === 'player' && entity.username && entity.username !== bot.username && entity.position)
-      .map(entity => ({username:entity.username,distance:Number(this.bot.entity.position.distanceTo(entity.position).toFixed(1))}))
+      .map(entity => ({
+        username:entity.username,
+        uuid:entity.uuid || bot.players?.[entity.username]?.uuid || null,
+        distance:Number(this.bot.entity.position.distanceTo(entity.position).toFixed(1))
+      }))
       .sort((a,b) => a.distance-b.distance);
   }
 
@@ -169,7 +173,7 @@ class MinecraftBotRuntime extends BotContext {
       this.lastMonitorStatusAt = Date.now();
       this.emit('status',this.getStatus());
     }
-    const threat = this.nearbySnapshot.find(player => player.distance <= this.dangerRadius && !this.isWhitelisted(player.username));
+    const threat = this.nearbySnapshot.find(player => player.distance <= this.dangerRadius && !this.isWhitelisted(player.username, player.uuid));
     if (threat) {
       this.lastThreat = {...threat,detectedAt:new Date().toISOString()};
       this.lastError = `Non-whitelisted player nearby: ${threat.username} (${threat.distance} blocks)`;

@@ -7,6 +7,7 @@ const vm = require('node:vm');
 const { PGlite } = require('@electric-sql/pglite');
 const { createPlayerActivityRepository } = require('../database');
 const { expireStalePlayerPresence } = require('../site/server');
+const { whitelistMatchSql } = require('../site/whitelist-identity');
 
 async function run() {
   const db = new PGlite();
@@ -22,7 +23,7 @@ async function run() {
         last_seen TIMESTAMPTZ, last_online TIMESTAMPTZ, registration_at TIMESTAMPTZ
       );
       CREATE TABLE player_session_events (username TEXT, event_type TEXT, occurred_at TIMESTAMPTZ);
-      CREATE TABLE whitelist (username TEXT);
+      CREATE TABLE whitelist (username TEXT, player_uuid UUID);
       CREATE TABLE player_name_history (username TEXT, player_uuid UUID);
       CREATE TABLE player_playtime (username TEXT, player_uuid UUID, total_seconds BIGINT, tracking_since TIMESTAMPTZ, updated_at TIMESTAMPTZ);
       CREATE TABLE bot_accounts (id UUID, username TEXT, deleted_at TIMESTAMPTZ);
@@ -56,7 +57,7 @@ async function run() {
     const searchSource = serverSource.match(/async function searchSeenPlayers\(url\) \{[\s\S]*?\n\}/)?.[0];
     assert.ok(searchSource);
     const search = vm.runInNewContext(`(${searchSource})`, {
-      pool, assertDatabase() {}, toInt: Number, formatSeconds: String,
+      pool, assertDatabase() {}, toInt: Number, formatSeconds: String, whitelistMatchSql,
       playerProfileRuntimePresence: () => ({ isOnline: false, currentStartedAt: null }),
       sortSeenPlayers: players => players
     });

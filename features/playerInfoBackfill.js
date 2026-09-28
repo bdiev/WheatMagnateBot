@@ -93,14 +93,15 @@ async function loadMissingPlayerInfo(pool) {
       UNION ALL
 
       SELECT whitelist_player.username,
-             NULL::uuid AS player_uuid,
+             whitelist_player.player_uuid,
              NULL::timestamptz AS registration_at,
              NULL::timestamptz AS last_seen,
              NULL::bigint AS observed_message_count
       FROM whitelist whitelist_player
       WHERE NOT EXISTS (
         SELECT 1 FROM player_activity activity
-        WHERE LOWER(activity.username) = LOWER(whitelist_player.username)
+        WHERE (whitelist_player.player_uuid IS NOT NULL AND activity.player_uuid = whitelist_player.player_uuid)
+           OR LOWER(activity.username) = LOWER(whitelist_player.username)
       )
 
       UNION ALL

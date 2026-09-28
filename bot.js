@@ -71,6 +71,7 @@ const {
 const { GrowingChildAI } = require('./features/growingChild');
 const { sanitizePublicPhrase } = require('./features/growingChild/safety');
 const { runMigrations } = require('./database/migrations');
+const { normalizeWhitelistUuid, whitelistMatchSql, isWhitelistedIdentity } = require('./database/whitelist-identity');
 const {
   loadManagedFarmStates,
   recordManagedObsidianMined,
@@ -622,7 +623,8 @@ async function backfillExistingPlayerProfiles() {
       SELECT username FROM player_activity WHERE player_uuid IS NULL
       UNION ALL
       SELECT w.username FROM whitelist w
-      WHERE NOT EXISTS (SELECT 1 FROM player_activity pa WHERE LOWER(pa.username)=LOWER(w.username) AND pa.player_uuid IS NOT NULL)
+      WHERE w.player_uuid IS NULL
+        AND NOT EXISTS (SELECT 1 FROM player_activity pa WHERE LOWER(pa.username)=LOWER(w.username) AND pa.player_uuid IS NOT NULL)
       UNION ALL
       SELECT pt.username FROM player_playtime pt
       WHERE NOT EXISTS (SELECT 1 FROM player_activity pa WHERE LOWER(pa.username)=LOWER(pt.username) AND pa.player_uuid IS NOT NULL)
@@ -849,6 +851,11 @@ async function reconcileWhitelistedPlayerHeadEmojis() {
   if (playerHeadEmojiSyncPromise) return playerHeadEmojiSyncPromise;
 
   playerHeadEmojiSyncPromise = (async () => {
+    // Pick up renames of whitelisted players observed since the last load.
+    if (pool) {
+      const entries = await loadWhitelistFromDB();
+      if (entries.length) setWhitelistMemory(entries);
+    }
     const whitelistByKey = new Map(
       ignoredUsernames.map(username => [normalizePlayerHeadUsername(username), String(username).trim()])
     );
@@ -1720,35 +1727,84 @@ async function whitelistAlertPlayerAndReconnect(playerName, requestedBy) {
   return { ...result, reconnectMode };
 }
 
+// Current names of whitelisted players, for display and player-head emojis.
+// Membership checks go through isWhitelistedPlayer, which matches by UUID.
 const ignoredUsernames = loadWhitelist();
+let whitelistEntries = ignoredUsernames.map(username => ({ username, uuid: null }));
+
+function setWhitelistMemory(entries) {
+  whitelistEntries = (entries || [])
+    .map(entry => typeof entry === 'string'
+      ? { username: entry.trim(), uuid: null }
+      : { username: String(entry?.username || '').trim(), uuid: normalizeWhitelistUuid(entry?.uuid) })
+    .filter(entry => entry.username);
+  ignoredUsernames.length = 0;
+  ignoredUsernames.push(...whitelistEntries.map(entry => entry.username));
+}
+
+function isWhitelistedPlayer(username, uuid = getOnlinePlayerUuid(username)) {
+  return isWhitelistedIdentity(whitelistEntries, username, uuid);
+}
+
+// Resolves who a name belongs to right now: the player online under it, then
+// Mojang, then the last player observed under it. Name history is not used, as
+// a former owner of the name is exactly who must not be whitelisted.
+async function resolveWhitelistIdentity(username) {
+  const onlineUuid = getOnlinePlayerUuid(username);
+  if (onlineUuid) {
+    await updatePlayerActivity(username, true, { recordEvent:false, uuid:onlineUuid }).catch(() => {});
+    return { username, uuid:onlineUuid };
+  }
+  try {
+    const profile = await resolveMinecraftProfile(username);
+    const uuid = dashedMinecraftUuid(profile?.id);
+    if (uuid) {
+      const canonicalUsername = profile?.name || username;
+      await updatePlayerActivity(canonicalUsername, false, { recordEvent:false, uuid }).catch(err => {
+        console.warn(`[Whitelist] Could not record the profile of ${canonicalUsername}:`, err.message);
+      });
+      return { username:canonicalUsername, uuid };
+    }
+  } catch (err) {
+    console.warn(`[Whitelist] Mojang lookup failed for ${username}:`, err.message);
+  }
+  if (!pool) return null;
+  const observed = await pool.query(`
+    SELECT username, player_uuid FROM player_activity
+    WHERE LOWER(username) = LOWER($1) AND player_uuid IS NOT NULL
+    LIMIT 1
+  `, [username]);
+  const row = observed.rows[0];
+  return row ? { username:row.username, uuid:row.player_uuid } : null;
+}
+
 const {
   loadWhitelistFromDB,
   migrateWhitelistToDB,
-  addUsernameToWhitelist: addUsernameToWhitelistRepository
+  addUsernameToWhitelist: addUsernameToWhitelistRepository,
+  removeUsernameFromWhitelistDB
 } = createWhitelistRepository({
   pool,
   loadWhitelistFile: loadWhitelist,
   appendWhitelistFile: username => fs.appendFileSync('whitelist.txt', `${username}\n`),
-  updateWhitelistMemory: whitelist => {
-    ignoredUsernames.length = 0;
-    ignoredUsernames.push(...whitelist);
-  }
+  updateWhitelistMemory: setWhitelistMemory,
+  resolvePlayerIdentity: resolveWhitelistIdentity
 });
 
 async function addUsernameToWhitelist(targetUsername, addedBy = 'system') {
   const result = await addUsernameToWhitelistRepository(targetUsername, addedBy);
-  await ensureMinecraftProfileIdentity(targetUsername, { source:'whitelist add' });
   if (result.changed) {
-    const key = normalizePlayerHeadUsername(targetUsername);
+    const headUsername = result.username || targetUsername;
+    const key = normalizePlayerHeadUsername(headUsername);
     // A re-added player must receive a fresh emoji even if a previous Discord
     // deletion was delayed or the new skin happens to have the same pixels.
     failedPlayerHeadEmojiImports.delete(key);
     PLAYER_HEAD_SKIN_HASHES.delete(key);
     savePlayerHeadSkinHashes();
     try {
-      await synchronizePlayerHeadEmoji(targetUsername, { forceRecreate: true });
+      await synchronizePlayerHeadEmoji(headUsername, { forceRecreate: true });
     } catch (err) {
-      console.warn(`[PlayerHeads] Whitelist add succeeded, but the emoji for ${targetUsername} will be retried:`, err.message);
+      console.warn(`[PlayerHeads] Whitelist add succeeded, but the emoji for ${headUsername} will be retried:`, err.message);
     }
   }
   updateStatusMessage().catch(() => {});
@@ -1761,11 +1817,7 @@ async function removeUsernameFromWhitelist(targetUsername) {
 
   let changed = false;
   if (pool) {
-    const result = await pool.query(
-      'DELETE FROM whitelist WHERE LOWER(username) = LOWER($1)',
-      [safeUsername]
-    );
-    changed = result.rowCount > 0;
+    changed = (await removeUsernameFromWhitelistDB(safeUsername)).changed;
   }
 
   const fileWhitelist = loadWhitelist();
@@ -1777,11 +1829,8 @@ async function removeUsernameFromWhitelist(targetUsername) {
     changed = true;
   }
 
-  const newWhitelist = pool
-    ? await loadWhitelistFromDB()
-    : newFileWhitelist;
-  ignoredUsernames.length = 0;
-  ignoredUsernames.push(...newWhitelist);
+  setWhitelistMemory(pool ? await loadWhitelistFromDB() : newFileWhitelist);
+  const newWhitelist = [...ignoredUsernames];
 
   try {
     await deletePlayerHeadEmoji(safeUsername);
@@ -1902,7 +1951,8 @@ async function initDatabase() {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS whitelist (
         id SERIAL PRIMARY KEY,
-        username VARCHAR(255) UNIQUE NOT NULL,
+        username VARCHAR(255) NOT NULL,
+        player_uuid UUID,
         added_by VARCHAR(255),
         added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
@@ -1984,13 +2034,23 @@ async function initDatabase() {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
+    // Whitelist entries are keyed by player UUID (see migration 061); names are
+    // unique only among entries that are not bound to a UUID yet.
+    await pool.query('ALTER TABLE whitelist ADD COLUMN IF NOT EXISTS player_uuid UUID');
+    await pool.query('ALTER TABLE whitelist DROP CONSTRAINT IF EXISTS whitelist_username_key');
+    await pool.query('DROP INDEX IF EXISTS whitelist_username_lower_idx');
     await pool.query(`
       DELETE FROM whitelist newer
       USING whitelist older
-      WHERE LOWER(newer.username) = LOWER(older.username)
+      WHERE newer.player_uuid IS NULL
+        AND older.player_uuid IS NULL
+        AND LOWER(newer.username) = LOWER(older.username)
         AND newer.id > older.id
     `);
-    await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS whitelist_username_lower_idx ON whitelist (LOWER(username))');
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS whitelist_player_uuid_unique_idx
+      ON whitelist (player_uuid) WHERE player_uuid IS NOT NULL`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS whitelist_legacy_username_lower_idx
+      ON whitelist (LOWER(username)) WHERE player_uuid IS NULL`);
     await pool.query(`
       CREATE TEMP TABLE deduplicated_player_playtime ON COMMIT DROP AS
       SELECT
@@ -2290,8 +2350,7 @@ async function initDatabase() {
       message: 'PostgreSQL is available again.'
     });
     if (Array.isArray(wl) && wl.length > 0) {
-      ignoredUsernames.length = 0;
-      ignoredUsernames.push(...wl);
+      setWhitelistMemory(wl);
       console.log(`[DB] 📖 Loaded ${wl.length} whitelist entries.`);
     } else {
       console.log('[DB] 📖 No whitelist entries found in database.');
@@ -2812,8 +2871,7 @@ if (DISCORD_BOT_TOKEN) {
     // Reload whitelist after migration
     const wl = await loadWhitelistFromDB();
     if (Array.isArray(wl)) {
-      ignoredUsernames.length = 0;
-      ignoredUsernames.push(...wl);
+      setWhitelistMemory(wl);
     }
     reconcileWhitelistedPlayerHeadEmojis().catch(err => {
       console.error('[PlayerHeads] Initial skin synchronization failed:', err.message);
@@ -3068,13 +3126,11 @@ function getOnlineWhitelistUsernames() {
   if (!bot || !bot.players) return [];
   const usernames = Object.values(bot.players)
     .map(player => player.username)
-    .filter(username => username && ignoredUsernames.some(
-      whitelisted => whitelisted.toLowerCase() === username.toLowerCase()
-    ));
+    .filter(username => username && isWhitelistedPlayer(username));
   if (
     bot.username &&
     bot.entity &&
-    ignoredUsernames.some(username => username.toLowerCase() === bot.username.toLowerCase()) &&
+    isWhitelistedPlayer(bot.username, bot.player?.uuid || null) &&
     !usernames.some(username => username.toLowerCase() === bot.username.toLowerCase())
   ) {
     usernames.push(bot.username);
@@ -6601,9 +6657,7 @@ async function executeBotCommand(command) {
   if (type === 'whitelist_add') {
     const username = String(payload.username || '').trim();
     if (!username) throw new Error('Username is required.');
-    const { whitelist, changed } = await addUsernameToWhitelist(username, requestedBy);
-    ignoredUsernames.length = 0;
-    ignoredUsernames.push(...whitelist);
+    const { changed } = await addUsernameToWhitelist(username, requestedBy);
     return { username, changed };
   }
 
@@ -6826,8 +6880,8 @@ async function initializeMultiAccountManager() {
         account,
         authCacheRoot: MINECRAFT_PROFILES_FOLDER,
         authCacheStore,
-        isWhitelisted: username =>
-          ignoredUsernames.some(item => item.toLowerCase() === String(username).toLowerCase()) ||
+        isWhitelisted: (username, uuid = null) =>
+          isWhitelistedIdentity(whitelistEntries, username, uuid) ||
           (account.role === PEARL_LOADER_ROLE && pearlLoaderFeature?.isExpectedPlayer(account.id, username)),
         dangerRadius: runtimeSettings.dangerRadius,
         moduleOptions: {
@@ -7618,7 +7672,7 @@ function classifyGeminiError(err) {
 
 async function handleWmCommand(username, question) {
   const usernameKey = username.toLowerCase();
-  if (!ignoredUsernames.some(name => name.toLowerCase() === usernameKey)) {
+  if (!isWhitelistedPlayer(username)) {
     await sendPrivateMinecraftMessage(username, 'NONONO MrFish!!! This command available only to whitelisted players.');
     return;
   }
@@ -7815,25 +7869,16 @@ async function sendScheduledPlayerMilestones(slot) {
 
   try {
     const result = await pool.query(`
-      WITH whitelist_players AS (
-        SELECT DISTINCT ON (LOWER(username))
-          LOWER(username) AS username_key,
-          username
-        FROM whitelist
-        ORDER BY LOWER(username), id
-      ),
-      activity AS (
-        SELECT DISTINCT ON (LOWER(username))
-          LOWER(username) AS username_key,
-          registration_at
-        FROM player_activity
-        WHERE registration_at IS NOT NULL
-        ORDER BY LOWER(username), registration_at ASC NULLS LAST, id
-      )
       SELECT w.username, activity.registration_at
-      FROM whitelist_players w
-      JOIN activity ON activity.username_key = w.username_key
-      WHERE activity.registration_at IS NOT NULL
+      FROM whitelist w
+      JOIN LATERAL (
+        SELECT candidate.registration_at
+        FROM player_activity candidate
+        WHERE candidate.registration_at IS NOT NULL
+          AND ${whitelistMatchSql('w', 'candidate.username', 'candidate.player_uuid')}
+        ORDER BY candidate.registration_at ASC, candidate.id
+        LIMIT 1
+      ) activity ON TRUE
     `);
     const milestoneDate = new Date(`${slot.dateKey}T00:00:00.000Z`);
     const milestones = buildPlayerMilestones(result.rows, { daysAhead: 0, limit: 100, now: milestoneDate });
@@ -8004,8 +8049,9 @@ function formatPageList(items, page, emptyText) {
 async function getWhitelistEntriesForUI() {
   if (pool) {
     try {
-      const res = await pool.query('SELECT username FROM whitelist ORDER BY username ASC');
-      return res.rows.map(r => r.username);
+      const entries = await loadWhitelistFromDB();
+      if (entries.length) setWhitelistMemory(entries);
+      return entries.map(entry => entry.username).sort((a, b) => a.localeCompare(b));
     } catch (dbErr) {
       console.error('[DB] Failed to fetch whitelist for UI, falling back to file:', dbErr.message);
     }
@@ -8190,7 +8236,13 @@ function getCanonicalWhitelistUsername(username) {
   const normalized = String(username || '').toLowerCase().replace(/_+$/, '');
   if (!normalized) return null;
 
-  const whitelistMatches = ignoredUsernames
+  const uuid = getOnlinePlayerUuid(username);
+  if (uuid && whitelistEntries.some(entry => entry.uuid === uuid)) {
+    return canonicalPlayerNames.get(normalized) || String(username);
+  }
+  const whitelistMatches = whitelistEntries
+    .filter(entry => !(entry.uuid && uuid))
+    .map(entry => entry.username)
     .filter(name => name.toLowerCase().replace(/_+$/, '') === normalized);
   if (whitelistMatches.length === 0) return null;
 
@@ -8621,12 +8673,8 @@ function buildOnlinePlayersMessage() {
     .map(player => player.username)
     .filter(Boolean))]
     .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
-  const whitelistOnline = allOnlinePlayers.filter(username =>
-    ignoredUsernames.some(name => name.toLowerCase() === username.toLowerCase())
-  );
-  const otherPlayers = allOnlinePlayers.filter(username =>
-    !ignoredUsernames.some(name => name.toLowerCase() === username.toLowerCase())
-  );
+  const whitelistOnline = allOnlinePlayers.filter(username => isWhitelistedPlayer(username));
+  const otherPlayers = allOnlinePlayers.filter(username => !isWhitelistedPlayer(username));
   const whitelistCount = whitelistOnline.length;
   const otherCount = otherPlayers.length;
   const totalCount = allOnlinePlayers.length;
@@ -10257,7 +10305,7 @@ function startNearbyPlayerScanner() {
         recordNearbyPlayerSighting(entity.username, distance).catch(() => {});
       }
       if (!runtimeSettings.whitelistMode) continue;
-      if (ignoredUsernames.some(name => name.toLowerCase() === entity.username.toLowerCase())) continue; // Ignore whitelisted players (case-insensitive)
+      if (isWhitelistedPlayer(entity.username, entity.uuid || getOnlinePlayerUuid(entity.username))) continue; // Ignore whitelisted players
       // Non-whitelisted player
       if (distance <= runtimeSettings.dangerRadius) {
         disconnectForNonWhitelistedPlayer(entity, distance);
@@ -11284,7 +11332,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         const deletePage = Number.parseInt(match[2], 10);
         const entries = await getWhitelistEntriesForUI();
         const allOnlinePlayers = bot ? Object.values(bot.players || {}).map(p => p.username) : [];
-        const addCandidates = allOnlinePlayers.filter(u => !entries.some(n => n.toLowerCase() === u.toLowerCase()));
+        const addCandidates = allOnlinePlayers.filter(u => !isWhitelistedPlayer(u));
 
         await interaction.editReply(
           buildWhitelistManagementView(entries, addCandidates, '', 3447003, addPage, deletePage)
@@ -11424,7 +11472,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         try {
           const entries = await getWhitelistEntriesForUI();
           const allOnlinePlayers = bot ? Object.values(bot.players || {}).map(p => p.username) : [];
-          const addCandidates = allOnlinePlayers.filter(u => !entries.some(n => n.toLowerCase() === u.toLowerCase()));
+          const addCandidates = allOnlinePlayers.filter(u => !isWhitelistedPlayer(u));
 
           await interaction.update(
             buildWhitelistManagementView(entries, addCandidates, '', 3447003, 0, 0)
@@ -12552,7 +12600,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
           // Update the message
           const allOnlinePlayers = bot ? Object.values(bot.players || {}).map(p => p.username) : [];
-          const addCandidates = allOnlinePlayers.filter(u => !whitelist.some(n => n.toLowerCase() === u.toLowerCase()));
+          const addCandidates = allOnlinePlayers.filter(u => !isWhitelistedPlayer(u));
 
           await interaction.editReply(
             buildWhitelistManagementView(whitelist, addCandidates, `${STATUS_EMOJIS.connected} Removed ${selectedUsername} from whitelist.`, 65280)
@@ -12635,7 +12683,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         const { whitelist, changed } = await addUsernameToWhitelist(selectedUsername, interaction.user.tag);
 
         const allOnlinePlayers = bot ? Object.values(bot.players || {}).map(p => p.username) : [];
-        const addCandidates = allOnlinePlayers.filter(u => !whitelist.some(n => n.toLowerCase() === u.toLowerCase()));
+        const addCandidates = allOnlinePlayers.filter(u => !isWhitelistedPlayer(u));
 
         await interaction.editReply(
           buildWhitelistManagementView(

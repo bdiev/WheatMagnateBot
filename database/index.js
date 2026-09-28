@@ -1,6 +1,11 @@
 'use strict';
 
 const { Pool } = require('pg');
+const {
+  normalizeWhitelistUuid,
+  whitelistMatchSql,
+  SYNC_WHITELIST_IDENTITIES_SQL
+} = require('./whitelist-identity');
 
 function createDatabasePool(databaseUrl = process.env.DATABASE_URL) {
   if (!databaseUrl) {
@@ -361,6 +366,13 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
 
     try {
       const result = await executeUpdate();
+      if (normalizedUuid) {
+        // A renamed member keeps their whitelist entry; mirror the new name.
+        await pool.query(`
+          UPDATE whitelist SET username = $2
+          WHERE player_uuid = $1::uuid AND username IS DISTINCT FROM $2
+        `, [normalizedUuid, username]).catch(() => {});
+      }
       if (recordEvent && previousOnline !== Boolean(isOnline)) {
         await pool.query(`
           INSERT INTO player_session_events(username,event_type,occurred_at)
@@ -385,6 +397,23 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
     }
   }
 
+  function getObservedOnlinePlayers() {
+    const names = new Set();
+    const uuids = new Set();
+    const bot = getBot();
+    for (const player of Object.values(bot?.players || {})) {
+      if (player?.username) names.add(player.username.toLowerCase());
+      const uuid = normalizeWhitelistUuid(player?.uuid);
+      if (uuid) uuids.add(uuid);
+    }
+    return {
+      has: row => {
+        const uuid = normalizeWhitelistUuid(row.player_uuid);
+        return uuid ? uuids.has(uuid) : names.has(String(row.username || '').toLowerCase());
+      }
+    };
+  }
+
   async function getWhitelistActivity() {
     if (!pool) {
       return { error: 'Database not configured' };
@@ -392,37 +421,25 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
 
     try {
       const result = await pool.query(`
-        WITH activity AS (
-          SELECT DISTINCT ON (LOWER(username))
-            LOWER(username) AS username_key,
-            last_seen,
-            last_online,
-            is_online
-          FROM player_activity
-          ORDER BY LOWER(username), is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
-        )
-        SELECT w.username, pa.last_seen, pa.last_online, pa.is_online
+        SELECT COALESCE(pa.username, w.username) AS username,
+               COALESCE(w.player_uuid, pa.player_uuid) AS player_uuid,
+               pa.last_seen, pa.last_online, pa.is_online
         FROM whitelist w
-        LEFT JOIN activity pa ON LOWER(w.username) = pa.username_key
-        ORDER BY
-          CASE WHEN pa.is_online = TRUE THEN 0 ELSE 1 END,
-          CASE WHEN pa.is_online = TRUE THEN LOWER(w.username) END ASC,
-          CASE WHEN pa.is_online = FALSE OR pa.is_online IS NULL THEN pa.last_seen END DESC NULLS LAST
+        LEFT JOIN LATERAL (
+          SELECT activity.username, activity.player_uuid, activity.last_seen,
+                 activity.last_online, activity.is_online
+          FROM player_activity activity
+          WHERE ${whitelistMatchSql('w', 'activity.username', 'activity.player_uuid')}
+          ORDER BY activity.is_online DESC,
+                   COALESCE(activity.last_seen, activity.last_online) DESC NULLS LAST, activity.id DESC
+          LIMIT 1
+        ) pa ON TRUE
       `);
 
-      const bot = getBot();
-      const actualOnlinePlayers = new Set();
-      if (bot && bot.players) {
-        for (const player of Object.values(bot.players)) {
-          if (player.username) {
-            actualOnlinePlayers.add(player.username.toLowerCase());
-          }
-        }
-      }
-
+      const onlinePlayers = getObservedOnlinePlayers();
       const players = result.rows.map(row => ({
         ...row,
-        is_online: actualOnlinePlayers.has(row.username.toLowerCase())
+        is_online: onlinePlayers.has(row)
       }));
 
       players.sort((a, b) => {
@@ -459,19 +476,20 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
           SELECT DISTINCT ON (LOWER(username))
             LOWER(username) AS username_key,
             username,
+            player_uuid,
             last_seen,
             last_online,
             is_online
           FROM player_activity
           ORDER BY LOWER(username), is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
         )
-        SELECT pa.username, pa.last_seen, pa.last_online, pa.is_online
+        SELECT pa.username, pa.player_uuid, pa.last_seen, pa.last_online, pa.is_online
         FROM activity pa
         WHERE LOWER(pa.username) LIKE LOWER($1)
           AND NOT EXISTS (
             SELECT 1
             FROM whitelist w
-            WHERE LOWER(w.username) = LOWER(pa.username)
+            WHERE ${whitelistMatchSql('w', 'pa.username', 'pa.player_uuid')}
           )
         ORDER BY
           CASE WHEN pa.is_online = TRUE THEN 0 ELSE 1 END,
@@ -480,20 +498,11 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
         LIMIT $2
       `, [`%${search}%`, limit]);
 
-      const bot = getBot();
-      const actualOnlinePlayers = new Set();
-      if (bot && bot.players) {
-        for (const player of Object.values(bot.players)) {
-          if (player.username) {
-            actualOnlinePlayers.add(player.username.toLowerCase());
-          }
-        }
-      }
-
+      const onlinePlayers = getObservedOnlinePlayers();
       return {
         players: result.rows.map(row => ({
           ...row,
-          is_online: actualOnlinePlayers.has(row.username.toLowerCase())
+          is_online: onlinePlayers.has(row)
         }))
       };
     } catch (err) {
@@ -513,16 +522,35 @@ function createWhitelistRepository({
   pool,
   loadWhitelistFile,
   appendWhitelistFile,
-  updateWhitelistMemory
+  updateWhitelistMemory,
+  resolvePlayerIdentity = async () => null
 }) {
+  async function syncWhitelistIdentities() {
+    for (const statement of SYNC_WHITELIST_IDENTITIES_SQL) {
+      await pool.query(statement);
+    }
+  }
+
+  // Returns [{ username, uuid }]. Unbound entries are bound to the UUID
+  // observed under their name first, and bound entries show the current name.
   async function loadWhitelistFromDB() {
     if (!pool) {
       console.log('[DB] Cannot load whitelist: database pool not available');
       return [];
     }
     try {
-      const res = await pool.query('SELECT username FROM whitelist');
-      return res.rows.map(row => row.username);
+      await syncWhitelistIdentities().catch(err => {
+        console.warn('[DB] Could not bind whitelist entries to player UUIDs:', err.message);
+      });
+      const res = await pool.query(`
+        SELECT username, player_uuid
+        FROM whitelist
+        ORDER BY LOWER(username), id
+      `);
+      return res.rows.map(row => ({
+        username: row.username,
+        uuid: normalizeWhitelistUuid(row.player_uuid)
+      }));
     } catch (err) {
       console.error('[DB] Failed to load whitelist:', err.message);
       return [];
@@ -534,15 +562,75 @@ function createWhitelistRepository({
     try {
       const fileWhitelist = loadWhitelistFile();
       for (const username of fileWhitelist) {
-        await pool.query(
-          'INSERT INTO whitelist (username, added_by) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-          [username, 'migration']
-        );
+        // Skip names already listed, and former names of bound members: the
+        // file still holds the name a member had when they were added, and
+        // re-importing it would admit whoever took that name afterwards.
+        await pool.query(`
+          INSERT INTO whitelist (username, added_by)
+          SELECT $1::varchar, $2::varchar
+          WHERE NOT EXISTS (
+            SELECT 1 FROM whitelist entry
+            WHERE LOWER(entry.username) = LOWER($1)
+               OR EXISTS (
+                 SELECT 1 FROM player_name_history history
+                 WHERE history.player_uuid = entry.player_uuid
+                   AND LOWER(history.username) = LOWER($1)
+               )
+          )
+          ON CONFLICT DO NOTHING
+        `, [username, 'migration']);
       }
       console.log('[DB] Whitelist migrated to database');
     } catch (err) {
       console.error('[DB] Failed to migrate whitelist:', err.message);
     }
+  }
+
+  async function addEntryToDatabase(requestedUsername, addedBy) {
+    const identity = await Promise.resolve(resolvePlayerIdentity(requestedUsername)).catch(err => {
+      console.warn(`[Whitelist Add] Could not resolve ${requestedUsername}:`, err.message);
+      return null;
+    });
+    const uuid = normalizeWhitelistUuid(identity?.uuid);
+    const username = String(identity?.username || requestedUsername).trim();
+
+    if (!uuid) {
+      // Without a UUID the entry stays name-only until the player is observed.
+      const inserted = await pool.query(`
+        INSERT INTO whitelist (username, added_by)
+        SELECT $1::varchar, $2::varchar
+        WHERE NOT EXISTS (SELECT 1 FROM whitelist WHERE LOWER(username) = LOWER($1))
+        ON CONFLICT DO NOTHING
+      `, [username, addedBy]);
+      return { changed: inserted.rowCount > 0, username, uuid: null };
+    }
+
+    const bound = await pool.query(`
+      UPDATE whitelist SET username = $2
+      WHERE player_uuid = $1::uuid
+      RETURNING id
+    `, [uuid, username]);
+    if (bound.rowCount) return { changed: false, username, uuid };
+
+    // A name-only entry for this name now belongs to the resolved player.
+    const claimed = await pool.query(`
+      UPDATE whitelist SET player_uuid = $1::uuid, username = $2
+      WHERE id = (
+        SELECT id FROM whitelist
+        WHERE player_uuid IS NULL AND LOWER(username) IN (LOWER($2), LOWER($3))
+        ORDER BY id
+        LIMIT 1
+      )
+      RETURNING id
+    `, [uuid, username, requestedUsername]);
+    if (claimed.rowCount) return { changed: false, username, uuid };
+
+    const inserted = await pool.query(`
+      INSERT INTO whitelist (username, player_uuid, added_by)
+      VALUES ($1, $2::uuid, $3)
+      ON CONFLICT DO NOTHING
+    `, [username, uuid, addedBy]);
+    return { changed: inserted.rowCount > 0, username, uuid };
   }
 
   async function addUsernameToWhitelist(targetUsername, addedBy = 'system') {
@@ -553,16 +641,16 @@ function createWhitelistRepository({
 
     if (pool) {
       try {
-        const insertResult = await pool.query(
-          'INSERT INTO whitelist (username, added_by) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-          [safeUsername, addedBy]
-        );
-        const newWhitelist = await loadWhitelistFromDB();
-        updateWhitelistMemory(newWhitelist);
+        const { changed, username, uuid } = await addEntryToDatabase(safeUsername, addedBy);
+        const entries = await loadWhitelistFromDB();
+        updateWhitelistMemory(entries);
         return {
-          whitelist: newWhitelist,
+          whitelist: entries.map(entry => entry.username),
+          entries,
+          username,
+          uuid,
           source: 'database',
-          changed: insertResult.rowCount > 0
+          changed
         };
       } catch (dbErr) {
         console.error('[Whitelist Add] DB error:', dbErr.message);
@@ -576,18 +664,37 @@ function createWhitelistRepository({
     }
 
     const newWhitelist = loadWhitelistFile();
-    updateWhitelistMemory(newWhitelist);
+    const entries = newWhitelist.map(username => ({ username, uuid: null }));
+    updateWhitelistMemory(entries);
     return {
       whitelist: newWhitelist,
+      entries,
+      username: safeUsername,
+      uuid: null,
       source: 'file',
       changed: !alreadyListed
     };
   }
 
+  // Removes the entry shown under this name. Names are refreshed first so a
+  // stale name left behind by a rename cannot remove someone else's entry.
+  async function removeUsernameFromWhitelistDB(targetUsername) {
+    if (!pool) return { changed: false };
+    await syncWhitelistIdentities().catch(err => {
+      console.warn('[DB] Could not bind whitelist entries to player UUIDs:', err.message);
+    });
+    const result = await pool.query(
+      'DELETE FROM whitelist WHERE LOWER(username) = LOWER($1)',
+      [targetUsername]
+    );
+    return { changed: result.rowCount > 0 };
+  }
+
   return {
     loadWhitelistFromDB,
     migrateWhitelistToDB,
-    addUsernameToWhitelist
+    addUsernameToWhitelist,
+    removeUsernameFromWhitelistDB
   };
 }
 

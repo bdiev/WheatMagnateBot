@@ -18,12 +18,12 @@ assert.match(
 );
 assert.match(
   botSource,
-  /async function addUsernameToWhitelist[\s\S]*result\.changed[\s\S]*synchronizePlayerHeadEmoji\(targetUsername, \{ forceRecreate: true \}\)/,
+  /async function addUsernameToWhitelist[\s\S]*result\.changed[\s\S]*synchronizePlayerHeadEmoji\(headUsername, \{ forceRecreate: true \}\)/,
   'a newly or re-added whitelist player must receive a fresh emoji'
 );
 assert.match(
   botSource,
-  /async function removeUsernameFromWhitelist[\s\S]*DELETE FROM whitelist WHERE LOWER\(username\) = LOWER\(\$1\)[\s\S]*await deletePlayerHeadEmoji\(safeUsername\)/,
+  /async function removeUsernameFromWhitelist[\s\S]*await removeUsernameFromWhitelistDB\(safeUsername\)[\s\S]*await deletePlayerHeadEmoji\(safeUsername\)/,
   'whitelist removal must also delete the player emoji'
 );
 assert.match(

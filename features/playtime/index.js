@@ -1,6 +1,7 @@
 'use strict';
 
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { whitelistMatchSql } = require('../../database/whitelist-identity');
 
 function createPlaytimeFeature({
   pool,
@@ -151,7 +152,7 @@ function createPlaytimeFeature({
         WITH matched AS (
           SELECT
             COALESCE(pa.username, w.username) AS username,
-            COALESCE(pa.player_uuid::text, LOWER(w.username)) AS identity_key,
+            COALESCE(w.player_uuid::text, pa.player_uuid::text, LOWER(w.username)) AS identity_key,
             COALESCE(pt.total_seconds, 0) +
               CASE WHEN pt.tracking_since IS NULL THEN 0
                    ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - pt.tracking_since)))::BIGINT)
@@ -161,19 +162,19 @@ function createPlaytimeFeature({
             SELECT candidate.username, candidate.player_uuid
             FROM player_activity candidate
             WHERE candidate.player_uuid IS NOT NULL
-              AND (
-                LOWER(candidate.username) = LOWER(w.username)
-                OR EXISTS (
-                  SELECT 1 FROM player_name_history pnh
-                  WHERE pnh.player_uuid = candidate.player_uuid
-                    AND LOWER(pnh.username) = LOWER(w.username)
-                )
-              )
+              AND ${whitelistMatchSql('w', 'candidate.username', 'candidate.player_uuid')}
             LIMIT 1
           ) pa ON TRUE
           LEFT JOIN player_playtime pt
-            ON (pa.player_uuid IS NOT NULL AND pt.player_uuid = pa.player_uuid)
-            OR (pa.player_uuid IS NULL AND pt.player_uuid IS NULL AND LOWER(pt.username) = LOWER(w.username))
+            ON (
+              COALESCE(w.player_uuid, pa.player_uuid) IS NOT NULL
+              AND pt.player_uuid = COALESCE(w.player_uuid, pa.player_uuid)
+            )
+            OR (
+              COALESCE(w.player_uuid, pa.player_uuid) IS NULL
+              AND pt.player_uuid IS NULL
+              AND LOWER(pt.username) = LOWER(w.username)
+            )
         ), deduplicated AS (
           SELECT DISTINCT ON (identity_key) username, identity_key, total_seconds
           FROM matched
@@ -216,15 +217,7 @@ function createPlaytimeFeature({
           AND NOT EXISTS (
             SELECT 1
             FROM whitelist w
-            WHERE LOWER(w.username) = LOWER(COALESCE(pa.username, pt.username))
-               OR (
-                 pt.player_uuid IS NOT NULL
-                 AND EXISTS (
-                   SELECT 1 FROM player_name_history whitelisted_name
-                   WHERE whitelisted_name.player_uuid = pt.player_uuid
-                     AND LOWER(whitelisted_name.username) = LOWER(w.username)
-                 )
-               )
+            WHERE ${whitelistMatchSql('w', 'COALESCE(pa.username, pt.username)', 'pt.player_uuid')}
           )
         ORDER BY total_seconds DESC, LOWER(COALESCE(pa.username, pt.username))
         LIMIT $2

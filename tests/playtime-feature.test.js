@@ -48,7 +48,7 @@ async function run() {
   assert.deepStrictEqual(setResult, { username: 'OldPlayerName' });
   assert.match(
     queries[0].sql,
-    /pt\.player_uuid = pa\.player_uuid/,
+    /pt\.player_uuid = COALESCE\(w\.player_uuid, pa\.player_uuid\)/,
     'whitelist playtime must join the profile by UUID'
   );
   assert.match(queries[1].sql, /player_name_history searched_name/, 'old nicknames must find the current UUID-owned playtime row');

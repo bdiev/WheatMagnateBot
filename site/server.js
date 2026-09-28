@@ -29,6 +29,7 @@ const { minecraftAvatarSources, renderOfficialMinecraftAvatar } = require('./min
 const { fetchNameMcCapeTexture } = require('./namemc-capes');
 const { createPlayerSkinHistoryService } = require('./player-skin-history');
 const { dashedMinecraftUuid,resolveMinecraftProfile } = require('./player-profile-identity');
+const { whitelistMatchSql } = require('./whitelist-identity');
 const { MinecraftIconCache, minecraftIconEtag } = require('./minecraft-icon-cache');
 const {
   MUTATING_METHODS, RateLimiter, clientIp, configuredOrigins, requestIsHttps,
@@ -907,6 +908,29 @@ function normalizeSupplySnapshot(row) {
   };
 }
 
+// The activity row a whitelist entry `w` refers to (see whitelist-identity.js).
+const WHITELIST_ACTIVITY_LATERAL_SQL = `
+  SELECT activity.username, activity.player_uuid, activity.is_online
+  FROM player_activity activity
+  WHERE ${whitelistMatchSql('w', 'activity.username', 'activity.player_uuid')}
+  ORDER BY activity.is_online DESC,
+           COALESCE(activity.last_seen, activity.last_online) DESC NULLS LAST, activity.id DESC
+  LIMIT 1
+`;
+
+// Whitelist entries are keyed by player UUID (see migration 061). A fresh
+// database creates the table after migrations run, so the column and indexes
+// are also ensured here.
+async function ensureWhitelistIdentitySchema(database) {
+  await database.query('ALTER TABLE whitelist ADD COLUMN IF NOT EXISTS player_uuid UUID');
+  await database.query('ALTER TABLE whitelist DROP CONSTRAINT IF EXISTS whitelist_username_key');
+  await database.query('DROP INDEX IF EXISTS whitelist_username_lower_idx');
+  await database.query(`CREATE UNIQUE INDEX IF NOT EXISTS whitelist_player_uuid_unique_idx
+    ON whitelist (player_uuid) WHERE player_uuid IS NOT NULL`);
+  await database.query(`CREATE UNIQUE INDEX IF NOT EXISTS whitelist_legacy_username_lower_idx
+    ON whitelist (LOWER(username)) WHERE player_uuid IS NULL`);
+}
+
 async function ensureOptionalTables() {
   if (!pool) return;
   await runMigrations(pool);
@@ -987,11 +1011,13 @@ async function ensureOptionalTables() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS whitelist (
       id SERIAL PRIMARY KEY,
-      username VARCHAR(255) UNIQUE NOT NULL,
+      username VARCHAR(255) NOT NULL,
+      player_uuid UUID,
       added_by VARCHAR(255),
       added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
   `);
+  await ensureWhitelistIdentitySchema(pool);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS player_activity (
       id SERIAL PRIMARY KEY,
@@ -1239,25 +1265,11 @@ async function getSummary() {
     chat
   ] = await Promise.all([
     pool.query(`
-      WITH whitelist_players AS (
-        SELECT DISTINCT ON (LOWER(username))
-          LOWER(username) AS username_key,
-          username
-        FROM whitelist
-        ORDER BY LOWER(username), id
-      ),
-      activity AS (
-      SELECT DISTINCT ON (LOWER(username))
-        LOWER(username) AS username_key,
-        is_online
-      FROM player_activity
-        ORDER BY LOWER(username), is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
-      )
       SELECT
         COUNT(*)::int AS total,
         COUNT(*) FILTER (WHERE pa.is_online = TRUE)::int AS online
-      FROM whitelist_players w
-      LEFT JOIN activity pa ON pa.username_key = w.username_key
+      FROM whitelist w
+      LEFT JOIN LATERAL (${WHITELIST_ACTIVITY_LATERAL_SQL}) pa ON TRUE
     `),
     pool.query(`
       SELECT session_mined, total_mined, desired_enabled, session_started_at,
@@ -1333,32 +1345,20 @@ async function getPlayers() {
   assertDatabase();
 
   const result = await pool.query(`
-    WITH whitelist_players AS (
-      SELECT DISTINCT ON (LOWER(username))
-        username
-      FROM whitelist
-      ORDER BY LOWER(username), id
-    ), matched AS (
+    WITH matched AS (
       SELECT
         COALESCE(pa.username, w.username) AS username,
-        COALESCE(pa.player_uuid::text, LOWER(w.username)) AS identity_key,
+        COALESCE(w.player_uuid::text, pa.player_uuid::text, LOWER(w.username)) AS identity_key,
         pa.last_seen,
         pa.last_online,
         COALESCE(pa.is_online, FALSE) AS is_online,
         COALESCE(pt.total_seconds, 0) AS total_seconds
-      FROM whitelist_players w
+      FROM whitelist w
       LEFT JOIN LATERAL (
         SELECT candidate.*
         FROM player_activity candidate
         WHERE candidate.player_uuid IS NOT NULL
-          AND (
-            LOWER(candidate.username) = LOWER(w.username)
-            OR EXISTS (
-              SELECT 1 FROM player_name_history pnh
-              WHERE pnh.player_uuid = candidate.player_uuid
-                AND LOWER(pnh.username) = LOWER(w.username)
-            )
-          )
+          AND ${whitelistMatchSql('w', 'candidate.username', 'candidate.player_uuid')}
         LIMIT 1
       ) pa ON TRUE
       LEFT JOIN LATERAL (
@@ -1997,6 +1997,7 @@ async function getWhisperOnlinePlayers(currentUser, url) {
       SELECT DISTINCT ON (LOWER(username))
         LOWER(username) AS username_key,
         username,
+        player_uuid,
         last_seen,
         last_online,
         is_online
@@ -2009,7 +2010,7 @@ async function getWhisperOnlinePlayers(currentUser, url) {
       pa.last_online,
       COALESCE(pa.is_online, FALSE) AS is_online,
       EXISTS (
-        SELECT 1 FROM whitelist w WHERE LOWER(w.username) = LOWER(names.username)
+        SELECT 1 FROM whitelist w WHERE ${whitelistMatchSql('w', 'names.username', 'pa.player_uuid')}
       ) AS is_whitelisted,
       dialogs.last_message_at,
       COALESCE(dialogs.message_count, 0)::int AS message_count,
@@ -2386,7 +2387,8 @@ async function getNewPlayersPage(url = null, database = pool) {
     )
     SELECT identities.username, identities.player_uuid, identities.registration_at, identities.is_online,
            EXISTS (
-             SELECT 1 FROM whitelist w WHERE LOWER(w.username) = LOWER(identities.username)
+             SELECT 1 FROM whitelist w
+             WHERE ${whitelistMatchSql('w', 'identities.username', 'identities.player_uuid')}
            ) AS is_whitelisted
     FROM identities
     ORDER BY identities.registration_at DESC, LOWER(identities.username)
@@ -2551,10 +2553,12 @@ async function getPlayerStats() {
            OR message.created_at > identity.observed_message_count_at
         GROUP BY message.identity_key
       ), whitelist_flags AS (
-        SELECT alias.identity_key, TRUE AS is_whitelisted
-        FROM identity_aliases alias
-        JOIN whitelist entry ON LOWER(entry.username) = alias.username_key
-        GROUP BY alias.identity_key
+        SELECT identity.identity_key, TRUE AS is_whitelisted
+        FROM identities identity
+        WHERE EXISTS (
+          SELECT 1 FROM whitelist entry
+          WHERE ${whitelistMatchSql('entry', 'identity.username', 'identity.player_uuid')}
+        )
       )
       SELECT
         identity.username,
@@ -2572,26 +2576,12 @@ async function getPlayerStats() {
       ORDER BY total_seconds DESC, LOWER(identity.username)
     `),
     database.query(`
-      WITH whitelist_players AS (
-        SELECT DISTINCT ON (LOWER(username))
-          LOWER(username) AS username_key,
-          username
-        FROM whitelist
-        ORDER BY LOWER(username), id
-      ),
-      activity AS (
-        SELECT DISTINCT ON (LOWER(username))
-          LOWER(username) AS username_key,
-          is_online
-        FROM player_activity
-        ORDER BY LOWER(username), is_online DESC, COALESCE(last_seen, last_online) DESC NULLS LAST, id DESC
-      )
       SELECT
         COUNT(*)::int AS total,
         COUNT(*) FILTER (WHERE pa.is_online = TRUE)::int AS online,
         COUNT(*) FILTER (WHERE COALESCE(pa.is_online, FALSE) = FALSE)::int AS offline
-      FROM whitelist_players w
-      LEFT JOIN activity pa ON pa.username_key = w.username_key
+      FROM whitelist w
+      LEFT JOIN LATERAL (${WHITELIST_ACTIVITY_LATERAL_SQL}) pa ON TRUE
     `),
     // Unique players per calendar period. Current and previous periods share
     // one source (session history plus players online right now) so the trend
@@ -2774,25 +2764,16 @@ async function getPlayerStats() {
       ORDER BY buckets.bucket
     `),
     database.query(`
-      WITH whitelist_players AS (
-        SELECT DISTINCT ON (LOWER(username))
-          LOWER(username) AS username_key,
-          username
-        FROM whitelist
-        ORDER BY LOWER(username), id
-      ),
-      activity AS (
-        SELECT DISTINCT ON (LOWER(username))
-          LOWER(username) AS username_key,
-          registration_at
-        FROM player_activity
-        WHERE registration_at IS NOT NULL
-        ORDER BY LOWER(username), registration_at ASC NULLS LAST, id
-      )
-      SELECT w.username, activity.registration_at
-      FROM whitelist_players w
-      JOIN activity ON activity.username_key = w.username_key
-      WHERE activity.registration_at IS NOT NULL
+      SELECT COALESCE(activity.username, w.username) AS username, activity.registration_at
+      FROM whitelist w
+      JOIN LATERAL (
+        SELECT candidate.username, candidate.registration_at
+        FROM player_activity candidate
+        WHERE candidate.registration_at IS NOT NULL
+          AND ${whitelistMatchSql('w', 'candidate.username', 'candidate.player_uuid')}
+        ORDER BY candidate.registration_at ASC, candidate.id
+        LIMIT 1
+      ) activity ON TRUE
     `),
     getNewPlayersPage(null, database)
   ]);
@@ -3893,12 +3874,7 @@ async function searchSeenPlayers(url) {
         pa.player_uuid::text AS uuid,
         EXISTS (
           SELECT 1 FROM whitelist w
-          WHERE LOWER(w.username) = LOWER(pa.username)
-             OR EXISTS (
-               SELECT 1 FROM player_name_history whitelisted_name
-               WHERE whitelisted_name.player_uuid = pa.player_uuid
-                 AND LOWER(whitelisted_name.username) = LOWER(w.username)
-             )
+          WHERE ${whitelistMatchSql('w', 'pa.username', 'pa.player_uuid')}
         ) AS is_whitelisted,
         pa.last_seen,
         pa.last_online,
@@ -3927,7 +3903,8 @@ async function searchSeenPlayers(url) {
         )
     ), legacy_names AS (
       SELECT w.username FROM whitelist w
-      WHERE NOT EXISTS (
+      WHERE w.player_uuid IS NULL
+        AND NOT EXISTS (
         SELECT 1 FROM player_activity resolved
         WHERE resolved.player_uuid IS NOT NULL
           AND (
@@ -3947,7 +3924,9 @@ async function searchSeenPlayers(url) {
       SELECT DISTINCT ON (LOWER(names.username))
         names.username,
         NULL::text AS uuid,
-        EXISTS (SELECT 1 FROM whitelist w WHERE LOWER(w.username) = LOWER(names.username)) AS is_whitelisted,
+        EXISTS (
+          SELECT 1 FROM whitelist w WHERE ${whitelistMatchSql('w', 'names.username', 'NULL::uuid')}
+        ) AS is_whitelisted,
         pa.last_seen,
         pa.last_online,
         pa.online_since,
@@ -4155,7 +4134,9 @@ async function getPlayerProfile(url, { includeAdminFields = false, timeZone = 'U
         pa.pearl_hatch_y,
         pa.pearl_hatch_z,
         EXISTS (
-          SELECT 1 FROM whitelist w WHERE LOWER(w.username) = ANY($3::text[])
+          SELECT 1 FROM whitelist w
+          WHERE ($2::uuid IS NOT NULL AND ${whitelistMatchSql('w', '$1::text', '$2::uuid')})
+             OR ($2::uuid IS NULL AND LOWER(w.username) = ANY($3::text[]))
         ) AS is_whitelisted,
         pa.last_seen,
         pa.last_online,
@@ -4585,14 +4566,15 @@ async function getPlayerInfoCollectionProgress(database = pool) {
       UNION ALL
 
       SELECT whitelist_player.username,
-             NULL::uuid AS player_uuid,
+             whitelist_player.player_uuid,
              NULL::timestamptz AS registration_at,
              NULL::timestamptz AS last_seen,
              NULL::bigint AS observed_message_count
       FROM whitelist whitelist_player
       WHERE NOT EXISTS (
         SELECT 1 FROM player_activity activity
-        WHERE LOWER(activity.username) = LOWER(whitelist_player.username)
+        WHERE (whitelist_player.player_uuid IS NOT NULL AND activity.player_uuid = whitelist_player.player_uuid)
+           OR LOWER(activity.username) = LOWER(whitelist_player.username)
       )
 
       UNION ALL
@@ -5751,7 +5733,13 @@ async function getAdminControlState(currentUser, url) {
     scoped
       ? Promise.resolve({ rows:[{ status:scoped.bot, observed_at:scoped.observedAt }] })
       : pool.query('SELECT status, observed_at FROM bot_status_snapshots WHERE id = 1'),
-    pool.query('SELECT username FROM whitelist ORDER BY LOWER(username) ASC'),
+    pool.query(`
+      SELECT COALESCE(activity.username, w.username) AS username
+      FROM whitelist w
+      LEFT JOIN player_activity activity
+        ON w.player_uuid IS NOT NULL AND activity.player_uuid = w.player_uuid
+      ORDER BY LOWER(COALESCE(activity.username, w.username)) ASC
+    `),
     pool.query('SELECT username FROM ignored_users ORDER BY LOWER(username) ASC'),
     scoped ? Promise.resolve({ rows:(scoped.bot.nearbyPlayers || []).map(player => ({ username:player.username })) }) : pool.query(`
       SELECT username

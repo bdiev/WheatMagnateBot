@@ -63,8 +63,11 @@ async function run() {
   assert.deepEqual(queries[playtimeInsertIndex].params.slice(0, 3), ['Jeff_Bezos_MC', uuid, '150']);
   assert.ok(chatReassignmentIndex > playtimeInsertIndex, 'legacy chat messages must be attached to the UUID');
   assert.equal(statements[0], 'BEGIN');
-  assert.equal(statements.at(-2), 'COMMIT');
-  assert.equal(statements.at(-1), 'RELEASE');
+  const releaseIndex = statements.indexOf('RELEASE');
+  assert.equal(statements[releaseIndex - 1], 'COMMIT');
+  const whitelistRenameIndex = statements.findIndex(sql => /UPDATE whitelist SET username = \$2/.test(sql));
+  assert.ok(whitelistRenameIndex > releaseIndex, 'a whitelist entry bound to the UUID must follow the current nickname');
+  assert.deepEqual(queries[whitelistRenameIndex].params, [uuid, 'Jeff_Bezos_MC']);
 
   const root = path.resolve(__dirname, '..');
   const databaseMigration = fs.readFileSync(path.join(root, 'database', 'migrations', '020_player_uuid_identity.sql'), 'utf8');

@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { PGlite } = require('@electric-sql/pglite');
+const { whitelistMatchSql } = require('../whitelist-identity');
 
 async function run() {
   const db = new PGlite();
@@ -34,7 +35,7 @@ async function run() {
         message_count INTEGER,
         created_at TIMESTAMPTZ
       );
-      CREATE TABLE whitelist (id SERIAL PRIMARY KEY, username TEXT);
+      CREATE TABLE whitelist (id SERIAL PRIMARY KEY, username TEXT, player_uuid UUID);
 
       INSERT INTO player_activity (
         username, player_uuid, registration_at, last_seen, is_online,
@@ -65,7 +66,13 @@ async function run() {
       /async function getPlayerStats\(\) \{[\s\S]*?\n\}(?=\r?\n\r?\nfunction obsidianChartBucketKey)/
     )?.[0];
     assert.ok(functionSource, 'getPlayerStats source must be available');
-    const queries = [...functionSource.matchAll(/database\.query\(`([\s\S]*?)`\)/g)].map(match => match[1]);
+    const renderSql = (template, scope) => new Function(...Object.keys(scope), `return \`${template}\`;`)(...Object.values(scope));
+    const lateralTemplate = serverSource.match(/const WHITELIST_ACTIVITY_LATERAL_SQL = `([\s\S]*?)`;/)?.[1];
+    assert.ok(lateralTemplate, 'the whitelist activity lateral must be available');
+    const sqlScope = { whitelistMatchSql };
+    sqlScope.WHITELIST_ACTIVITY_LATERAL_SQL = renderSql(lateralTemplate, sqlScope);
+    const queries = [...functionSource.matchAll(/database\.query\(`([\s\S]*?)`\)/g)]
+      .map(match => renderSql(match[1], sqlScope));
     assert.ok(queries.length >= 2, 'leaderboard SQL queries must be discoverable');
 
     const globalRows = (await db.query(queries[0])).rows;
