@@ -131,6 +131,7 @@ const state = {
   adminPlayerInfoCollectionPending: false,
   adminPlayerInfoCollectionTimer: null,
   adminPlayerInfoAwaitingCommands: new Map(),
+  liveNearbyPlayers: [],
   adminPlayerInfoAwaitTimer: null,
   adminPlayerInfoCollectionRendered: false,
   adminPlayerEditTarget: null,
@@ -5710,6 +5711,7 @@ function renderBotStats(payload) {
   const bot = payload.bot || null;
   syncFarmLaunchFailureToast(bot);
   const connected = Boolean(bot?.connected);
+  state.liveNearbyPlayers = connected && Array.isArray(bot?.nearbyPlayers) ? bot.nearbyPlayers : [];
   const livePlayerCount = connected && Number.isFinite(Number(bot?.playerCount))
     ? Number(bot.playerCount)
     : null;
@@ -6637,8 +6639,32 @@ function renderPlayerStats(payload = {}, nearbyPlayers = null) {
   if (state.activeTab === 'players') requestAnimationFrame(redrawCharts);
 }
 
+// Players the bot can see right now come first, nearest first; everyone who has
+// left its view follows, most recently seen first.
+function sortNearbySightings(nearbyPlayers) {
+  const live = new Map();
+  for (const player of state.liveNearbyPlayers || []) {
+    const key = String(player?.username || '').toLowerCase();
+    if (key && Number.isFinite(Number(player.distance))) live.set(key, Number(player.distance));
+  }
+  const seen = new Set();
+  const active = [];
+  const past = [];
+  for (const player of nearbyPlayers || []) {
+    const key = String(player?.username || '').toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    if (live.has(key)) active.push({ ...player, distance: live.get(key) });
+    else past.push(player);
+  }
+  const timeOf = player => new Date(player.lastSeen).getTime() || 0;
+  active.sort((a, b) => a.distance - b.distance || timeOf(b) - timeOf(a));
+  past.sort((a, b) => timeOf(b) - timeOf(a));
+  return [...active, ...past];
+}
+
 function renderNearbySightings(nearbyPlayers = []) {
-  const nearby = nearbyPlayers || [];
+  const nearby = sortNearbySightings(nearbyPlayers);
   renderStable('#nearbyList', nearby.length
     ? nearby.map(player => `
       <div class="rank-item activity-item">
