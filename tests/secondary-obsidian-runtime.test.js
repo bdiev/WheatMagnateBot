@@ -156,11 +156,11 @@ async function main() {
     queuedBot.pathfinder = { setGoal() {}, stop() {} };
     await queuedContext.notifySpawn();
 
-    secondary.modules.obsidianFarm.configure(3404567, 39, 674998, { maxCauldronDist:5 });
+    secondary.modules.obsidianFarm.configure(1000, 64, -2000, { maxCauldronDist:5 });
     const storedConfig = JSON.parse(fs.readFileSync(path.join(dataRoot, SECONDARY_ID, 'obsidian-farm.json'), 'utf8'));
-    assert.deepEqual(storedConfig, { x:3404567, y:39, z:674998, maxCauldronDist:5 });
+    assert.deepEqual(storedConfig, { x:1000, y:64, z:-2000, maxCauldronDist:5 });
 
-    const configuredTarget = new Vec3(3404567, 39, 674998);
+    const configuredTarget = new Vec3(1000, 64, -2000);
     const placementFace = new Vec3(-1, 0, 0);
     const placementAnchor = {
       name:'smooth_stone', type:3, boundingBox:'block',
@@ -249,7 +249,7 @@ async function main() {
 
     const primary = new BotContext({ account:account('00000000-0000-4000-8000-000000000001', 'WheatMagnate', true) });
     primary.modules = createModulesForBot(primary, { dataRoot });
-    primary.modules.obsidianFarm.configure(3404567, 39, 674998, { maxCauldronDist:5 });
+    primary.modules.obsidianFarm.configure(1000, 64, -2000, { maxCauldronDist:5 });
     let primaryItemActivations = 0;
     placementInteraction = null;
     bot.activateItem = () => { primaryItemActivations += 1; };
@@ -417,7 +417,7 @@ async function main() {
     await reconnectRuntime.start();
     reconnectBots[0].emit('spawn');
     await nextTurn();
-    reconnectRuntime.configureObsidian(3404567, 39, 674998, { maxCauldronDist:5 });
+    reconnectRuntime.configureObsidian(1000, 64, -2000, { maxCauldronDist:5 });
     await reconnectRuntime.setObsidianEnabled(true);
     assert.equal(reconnectRuntime.task, 'obsidian');
     assert.equal(reconnectRuntime.obsidianFarm.getStatus().desiredEnabled, true);
@@ -486,7 +486,7 @@ async function main() {
         dataRoot:path.join(dataRoot, 'fresh-redeploy'),
         obsidianState:{
           desiredEnabled:true,
-          config:{ x:3404567, y:39, z:674998, maxCauldronDist:5 }
+          config:{ x:1000, y:64, z:-2000, maxCauldronDist:5 }
         }
       },
       botFactory:() => {
@@ -498,7 +498,7 @@ async function main() {
     assert.equal(redeployRuntime.obsidianFarm.getStatus().desiredEnabled, true, 'database state restores auto-resume on a fresh deploy');
     assert.deepEqual(
       redeployRuntime.obsidianFarm.getStatus().config,
-      { x:3404567, y:39, z:674998, maxCauldronDist:5 },
+      { x:1000, y:64, z:-2000, maxCauldronDist:5 },
       'database state restores managed farm coordinates on a fresh deploy'
     );
     await redeployRuntime.start();

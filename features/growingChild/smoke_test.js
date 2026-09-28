@@ -39,7 +39,7 @@ try {
     authorName: 'Tester',
     channelId: 'test',
     channelName: 'Test',
-    text: 'hello obsidian farm needs more rockets x3402889 68 -672222',
+    text: 'hello obsidian farm needs more rockets x1234567 64 -7654321',
     addressed: true
   });
   emotions.update({ newWords: result.newWords, addressed: true });
@@ -59,10 +59,10 @@ try {
   )) {
     throw new Error(`Generator copied learned chat: ${phrase}`);
   }
-  if (known.has('x3402889') || known.has('68') || known.has('672222')) {
+  if (known.has('x1234567') || known.has('64') || known.has('7654321')) {
     throw new Error('Coordinate-like tokens entered the vocabulary.');
   }
-  if (sanitizePublicPhrase('hello 3402889 farm') !== null) {
+  if (sanitizePublicPhrase('hello 1234567 farm') !== null) {
     throw new Error('Coordinate safety filter accepted digits.');
   }
   if (sanitizePublicPhrase('/msg hello') !== null) {

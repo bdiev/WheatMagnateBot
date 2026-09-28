@@ -193,11 +193,6 @@ const OBSIDIAN_FARM_DEBUG_LOG_FILE = path.resolve('obsidian_farm_debug.log');
 const OBSIDIAN_STATS_UPDATE_INTERVAL_MS = 30_000;
 const OBSIDIAN_STATS_WATCHDOG_INTERVAL_MS = 5 * 60_000;
 const DISCORD_ATTACHMENT_SAFE_LIMIT_BYTES = 24 * 1024 * 1024;
-const LEGACY_OBSIDIAN_TARGET = Object.freeze({
-  x: 3402889,
-  y: 68,
-  z: 672222
-});
 
 console.log(
   `[Gemini] ${GEMINI_API_KEY ? 'Configured' : 'Disabled: GEMINI_API_KEY is missing'}; ` +
@@ -2270,25 +2265,6 @@ async function initDatabase() {
       VALUES (1)
       ON CONFLICT (id) DO NOTHING
     `);
-    // Compatibility migration: previous deployments used these coordinates
-    // from code and did not persist them. Preserve an already enabled farm
-    // once, while a user reset still leaves all target columns NULL.
-    await pool.query(`
-      UPDATE obsidian_farm_state
-      SET target_x = $1,
-          target_y = $2,
-          target_z = $3,
-          updated_at = NOW()
-      WHERE id = 1
-        AND desired_enabled = TRUE
-        AND target_x IS NULL
-        AND target_y IS NULL
-        AND target_z IS NULL
-    `, [
-      LEGACY_OBSIDIAN_TARGET.x,
-      LEGACY_OBSIDIAN_TARGET.y,
-      LEGACY_OBSIDIAN_TARGET.z
-    ]);
     const farmStateResult = await pool.query(`
       SELECT session_mined, total_mined, retired_pickaxes, retired_pickaxe_blocks,
              desired_enabled, session_started_at, target_x, target_y, target_z, target_radius
@@ -10788,19 +10764,19 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         const xInput = new TextInputBuilder()
           .setCustomId('farm_x')
           .setLabel('Target X')
-          .setPlaceholder('3402889')
+          .setPlaceholder('X')
           .setStyle(TextInputStyle.Short)
           .setRequired(true);
         const yInput = new TextInputBuilder()
           .setCustomId('farm_y')
           .setLabel('Target Y')
-          .setPlaceholder('68')
+          .setPlaceholder('Y')
           .setStyle(TextInputStyle.Short)
           .setRequired(true);
         const zInput = new TextInputBuilder()
           .setCustomId('farm_z')
           .setLabel('Target Z')
-          .setPlaceholder('672222')
+          .setPlaceholder('Z')
           .setStyle(TextInputStyle.Short)
           .setRequired(true);
 

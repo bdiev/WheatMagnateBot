@@ -67,13 +67,13 @@ async function main() {
   queries.length = 0;
   await syncManagedFarmState(pool, accountId, {
     desiredEnabled:true,
-    config:{ x:3404567, y:39, z:674998, maxCauldronDist:5 }
+    config:{ x:1000, y:64, z:-2000, maxCauldronDist:5 }
   });
   assert.match(queries[1].sql, /WHEN EXCLUDED\.desired_enabled AND NOT obsidian_account_farm_state\.desired_enabled THEN 0/,
     'a new managed farming session resets only that account session counter');
   assert.deepEqual(
     queries[1].params.slice(2),
-    [true, 3404567, 39, 674998, 5],
+    [true, 1000, 64, -2000, 5],
     'managed farm coordinates are persisted with the desired state'
   );
 
@@ -83,12 +83,12 @@ async function main() {
       desired_enabled:true,
       target_x:null,target_y:null,target_z:null,target_radius:null,
       runtime_desired_enabled:true,
-      status_payload:{ modules:{ obsidianFarm:{ config:{ x:3404567,y:39,z:674998,maxCauldronDist:5 } } } }
+      status_payload:{ modules:{ obsidianFarm:{ config:{ x:1000,y:64,z:-2000,maxCauldronDist:5 } } } }
     }] })
   });
   assert.deepEqual(loaded.get(accountId), {
     desiredEnabled:true,
-    config:{ x:3404567, y:39, z:674998, maxCauldronDist:5 }
+    config:{ x:1000, y:64, z:-2000, maxCauldronDist:5 }
   }, 'redeploy hydration falls back to the last runtime snapshot during migration');
 
   await assert.rejects(() => recordManagedObsidianMined(pool, 'not-a-uuid'), /valid Minecraft account ID/);
