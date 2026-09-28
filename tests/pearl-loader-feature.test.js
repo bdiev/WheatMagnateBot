@@ -53,7 +53,11 @@ async function testCompleteCycle() {
       return { name:'oak_trapdoor',position:new Vec3(10,64,-20),getProperties:() => ({ open,facing:'west',half:'bottom' }) };
     },
     canSeeBlock() { return true; },
-    async lookAt(target) { eventOrder.push(`look:${target.x},${target.y},${target.z}`); },
+    async lookAt(target, force) {
+      assert.equal(force,true,'the loader turns at once instead of easing towards the trapdoor');
+      eventOrder.push(`look:${target.x},${target.y},${target.z}`);
+    },
+    async waitForTicks(ticks) { eventOrder.push(`ticks:${ticks}`); },
     supportFeature(name) { return name === 'blockPlaceHasInsideBlock'; },
     _client:{
       write(name, packet) {
@@ -99,7 +103,6 @@ async function testCompleteCycle() {
     getManager:() => manager,
     sendPrimaryWhisper:async (username,message) => primaryReplies.push({username,message}),
     movementsFactory:() => ({}),
-    openDelayMs:5,
     visibilityPollMs:5,
     navigationSettleMs:1,
     interactionSettleMs:1,
@@ -137,10 +140,12 @@ async function testCompleteCycle() {
   bot.entities.player={type:'player',username:'bdiev_',position:new Vec3(13,64,-20)};
   assert.equal(await feature.handleLoaderWhisper(loaderAccount.id,'bdiev_','YES'),true);
   assert.equal(open,false,'Yes closes an open trapdoor immediately');
-  assert.deepEqual(eventOrder.slice(3,5),[
+  assert.deepEqual(eventOrder.slice(3,7),[
+    'ticks:2',
     'look:10.8125,64.5,-19.5',
+    'ticks:2',
     'click'
-  ],'Yes rechecks the aim and immediately sends exactly one trapdoor click');
+  ],'Yes rechecks the aim, lets the rotation reach the server, then sends exactly one trapdoor click');
   assert.equal(interactionPackets.length,1);
   assert.equal(interactionPackets[0].packet.sequence,1,'modern interaction packets use a fresh sequence number');
   assert.equal(chats.length,2,'the Loader sends the ready prompt and one reload reminder');

@@ -258,14 +258,13 @@ function createPearlLoaderFeature({
   readyTimeoutMs = READY_TIMEOUT_MS,
   visibilityTimeoutMs = 15 * 60_000,
   visibilityDistance = 32,
-  openDelayMs = 2_000,
   visibilityPollMs = 250,
   navigationSettleMs = 250,
   navigationTimeoutMs = 20_000,
   navigationAttempts = 2,
   interactionSettleMs = 250,
-  interactionTimeoutMs = 3_000,
-  interactionAttempts = 2,
+  interactionTimeoutMs = 1_500,
+  interactionAttempts = 3,
   navigationRange = 2.5,
   interactionReach = 4.5,
   goalFactory = (x, y, z, range, bot, reach, block) => new GoalCompositeAll([
@@ -291,7 +290,8 @@ function createPearlLoaderFeature({
   function note(job, level, message, details = {}) {
     if (!job) return;
     if (job.timeline.length >= MAX_TIMELINE_ENTRIES) job.timeline.shift();
-    job.timeline.push({ at:new Date().toISOString(), level, message, ...details });
+    const known = Object.fromEntries(Object.entries(details || {}).filter(([, value]) => value != null));
+    job.timeline.push({ at:new Date().toISOString(), level, message, ...known });
   }
 
   function noteCurrent(level, message, details) {
@@ -501,7 +501,11 @@ function createPearlLoaderFeature({
     let interaction = trapdoorInteraction(block, bot);
     if (typeof bot?.lookAt !== 'function') throw new Error('Pearl Loader cannot aim at the trapdoor.');
     bot.clearControlStates?.();
-    await bot.lookAt(block.position.plus(interaction.cursor), false);
+    // Turn at once and let the rotation reach the server before any click.
+    // A smooth lookAt resolves as soon as the yaw arrives, while the pitch can
+    // still be catching up, so the click would be judged on an old rotation.
+    await bot.lookAt(block.position.plus(interaction.cursor), true);
+    if (typeof bot.waitForTicks === 'function') await bot.waitForTicks(2).catch(() => {});
 
     // Resolve the face and hit point from the trapdoor's real outline shape,
     // just as the client does. This matters for a thin open trapdoor: its
@@ -644,13 +648,9 @@ function createPearlLoaderFeature({
       job.stage = 'opening';
       note(job, 'info', 'Player entered view; opening the trapdoor.');
       sendPrivateWhisper(bot, job.username, pickPearlReloadReminder());
-      const timer = setTimer(() => {
-        setHatchOpen(bot, job.hatch, true)
-          .then(() => finishJob(job))
-          .catch(error => failJob(job, error));
-      }, openDelayMs);
-      timer?.unref?.();
-      job.visibilityTimer = timer;
+      setHatchOpen(bot, job.hatch, true)
+        .then(() => finishJob(job))
+        .catch(error => failJob(job, error));
     };
     job.visibilityTimer = setInterval(check, visibilityPollMs);
     job.visibilityTimer?.unref?.();
