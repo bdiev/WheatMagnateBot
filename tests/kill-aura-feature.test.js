@@ -78,6 +78,33 @@ assert.deepEqual(playerAura.getStatus().targets, ['player'], 'players can be sel
 playerAura.setEnabled(false);
 playerAura.detachBot();
 
+const protectedChecks = [];
+const guardedAura = createKillAuraFeature({
+  isProtectedPlayer: (username, uuid) => {
+    protectedChecks.push([username, uuid]);
+    return ['friend', 'myalt'].includes(username.toLowerCase()) || uuid === 'uuid-renamed-friend';
+  }
+});
+bot.players = { NewName: { username:'NewName', uuid:'uuid-renamed-friend' } };
+guardedAura.setTargets(['player']);
+guardedAura.attachBot(bot);
+const player = (id, username, extra = {}) => ({ id, type:'player', username, position:{ distanceTo:() => 2 }, ...extra });
+assert.equal(guardedAura.__test.isSelectedEntity(player(20, 'Friend')), false, 'whitelisted players are never targeted');
+assert.equal(guardedAura.__test.isSelectedEntity(player(21, 'MyAlt')), false, 'accounts run by this process are never targeted');
+assert.equal(guardedAura.__test.isSelectedEntity(player(22, 'NewName')), false, 'the protected check receives the UUID from the player list');
+assert.deepEqual(protectedChecks.at(-1), ['NewName', 'uuid-renamed-friend']);
+assert.equal(guardedAura.__test.isSelectedEntity(player(23, 'Stranger', { uuid:'uuid-stranger' })), true, 'other players stay eligible');
+assert.equal(guardedAura.__test.isSelectedEntity(player(24, undefined)), false, 'a player whose name is unknown cannot be checked and is skipped');
+const failingCheckAura = createKillAuraFeature({ isProtectedPlayer: () => { throw new Error('boom'); } });
+failingCheckAura.setTargets(['player']);
+assert.equal(
+  failingCheckAura.__test.isSelectedEntity(player(25, 'Stranger')),
+  false,
+  'Kill Aura never targets players when the protected check fails'
+);
+guardedAura.detachBot();
+delete bot.players;
+
 const rangedAura = createKillAuraFeature({ attackRange: 1.4 });
 bot.entity.position.distanceTo = position => position.distance;
 bot.entities = {

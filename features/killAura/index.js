@@ -169,6 +169,9 @@ function stopMovement(bot) {
 function createKillAuraFeature({
   attackRange = DEFAULT_KILL_AURA_RANGE,
   criticalsEnabled = false,
+  // (username, uuid) => true for players Kill Aura must never hit: the
+  // whitelist and every account this process runs.
+  isProtectedPlayer = () => false,
   onKill = () => {},
   onStatus = () => {}
 } = {}) {
@@ -219,7 +222,15 @@ function createKillAuraFeature({
     if (!entity?.position || entity === state.bot?.entity) return false;
     if (entity.type === 'player') {
       if (!state.targets.has('player')) return false;
-      return !entity.username || entity.username.toLowerCase() !== String(state.bot?.username || '').toLowerCase();
+      // A player whose name is not known yet cannot be checked, so it is not a target.
+      if (!entity.username) return false;
+      if (entity.username.toLowerCase() === String(state.bot?.username || '').toLowerCase()) return false;
+      const uuid = entity.uuid || state.bot?.players?.[entity.username]?.uuid || null;
+      try {
+        return !isProtectedPlayer(entity.username, uuid);
+      } catch {
+        return false;
+      }
     }
     const name = entityMobName(entity);
     return Boolean(name && state.targets.has(name));

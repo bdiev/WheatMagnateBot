@@ -19,6 +19,7 @@ const READY_CONFIRMATIONS = Object.freeze([
 ]);
 const PEARL_SEARCH_RADIUS = 2;
 const READY_TIMEOUT_MS = 2 * 60_000;
+const MAX_TIMELINE_ENTRIES = 100;
 const PEARL_RELOAD_REMINDERS = Object.freeze([
   'Remember to throw a new ender pearl.',
   "Safe travels! Don't forget to throw a fresh pearl for next time.",
@@ -281,6 +282,38 @@ function createPearlLoaderFeature({
   }
 
   let activeJob = null;
+  // The request whose single summary log is still being written. It outlives
+  // activeJob while the loader disconnects so that stop is part of the story.
+  let reportingJob = null;
+
+  // Each request writes one system log when it ends; everything that happened
+  // on the way (steps, retries, runtime status changes) goes into its details.
+  function note(job, level, message, details = {}) {
+    if (!job) return;
+    if (job.timeline.length >= MAX_TIMELINE_ENTRIES) job.timeline.shift();
+    job.timeline.push({ at:new Date().toISOString(), level, message, ...details });
+  }
+
+  function noteCurrent(level, message, details) {
+    if (reportingJob) note(reportingJob, level, message, details);
+    else log(level, message, details);
+  }
+
+  function writeJobLog(job, level, message, details = {}) {
+    if (reportingJob === job) reportingJob = null;
+    const finishedAt = new Date();
+    const warnings = job.timeline.filter(entry => entry.level === 'warn' || entry.level === 'error').length;
+    log(level === 'info' && warnings ? 'warn' : level, message, {
+      username:job.username,
+      accountId:job.accountId,
+      hatch:job.hatch ? { x:job.hatch.x, y:job.hatch.y, z:job.hatch.z } : null,
+      ...details,
+      startedAt:job.startedAt,
+      finishedAt:finishedAt.toISOString(),
+      durationMs:finishedAt.getTime() - new Date(job.startedAt).getTime(),
+      timeline:job.timeline
+    });
+  }
 
   const tellPrimary = async (username, message) => {
     if (typeof sendPrimaryWhisper === 'function') await sendPrimaryWhisper(username, message);
@@ -442,7 +475,7 @@ function createPearlLoaderFeature({
       } catch (error) {
         lastError = error;
         cancelNavigation(bot);
-        log('warn', 'Pearl Loader navigation attempt failed.', {
+        noteCurrent('warn', 'Navigation attempt failed.', {
           attempt,
           attempts,
           error:error?.message || String(error)
@@ -520,7 +553,7 @@ function createPearlLoaderFeature({
       } while (Date.now() < deadline);
 
       if (!isTrapdoor(block)) throw new Error('The configured trapdoor is no longer available.');
-      log('warn', 'Pearl Loader trapdoor interaction produced no state change.', {
+      noteCurrent('warn', 'Trapdoor interaction produced no state change.', {
         attempt,
         attempts,
         shouldOpen,
@@ -559,10 +592,10 @@ function createPearlLoaderFeature({
     clearJobTimers(job);
     job.runtime?.assignTask?.('idle');
     activeJob = null;
+    note(job, 'error', 'Request failed.', { stage:job.stage, error:error?.message || String(error) });
     await job.runtime?.stop?.('Pearl Loader request ended').catch(() => {});
-    log('error', `Pearl Loader request for ${job.username} failed.`, {
-      username: job.username,
-      accountId: job.accountId,
+    writeJobLog(job, 'error', `Pearl Loader request for ${job.username} failed.`, {
+      outcome:'failed',
       stage: job.stage,
       error: error?.message || String(error)
     });
@@ -574,11 +607,9 @@ function createPearlLoaderFeature({
     clearJobTimers(job);
     job.runtime?.assignTask?.('idle');
     activeJob = null;
+    note(job, 'info', 'Trapdoor opened; hatch cycle complete.');
     await job.runtime?.stop?.('Pearl Loader request complete').catch(() => {});
-    log('info', `Pearl Loader completed the hatch cycle for ${job.username}.`, {
-      username: job.username,
-      accountId: job.accountId
-    });
+    writeJobLog(job, 'info', `Pearl Loader completed the hatch cycle for ${job.username}.`, { outcome:'completed' });
   }
 
   async function finishMissingPearl(job) {
@@ -586,10 +617,10 @@ function createPearlLoaderFeature({
     clearJobTimers(job);
     job.runtime?.assignTask?.('idle');
     activeJob = null;
+    note(job, 'info', 'No ender pearl found near the hatch.', { radius:PEARL_SEARCH_RADIUS });
     await job.runtime?.stop?.('Pearl Loader ender pearl is not set').catch(() => {});
-    log('info', `Pearl Loader found no ender pearl for ${job.username}.`, {
-      username:job.username,
-      accountId:job.accountId,
+    writeJobLog(job, 'info', `Pearl Loader found no ender pearl for ${job.username}.`, {
+      outcome:'no_pearl',
       radius:PEARL_SEARCH_RADIUS
     });
   }
@@ -611,6 +642,7 @@ function createPearlLoaderFeature({
       clearTimer(job.visibilityTimer);
       job.visibilityTimer = null;
       job.stage = 'opening';
+      note(job, 'info', 'Player entered view; opening the trapdoor.');
       sendPrivateWhisper(bot, job.username, pickPearlReloadReminder());
       const timer = setTimer(() => {
         setHatchOpen(bot, job.hatch, true)
@@ -645,6 +677,8 @@ function createPearlLoaderFeature({
       accountId: null,
       hatch: null,
       stage: 'lookup',
+      startedAt: new Date().toISOString(),
+      timeline: [],
       runtime: null,
       readyTimer: null,
       visibilityTimer: null,
@@ -673,6 +707,8 @@ function createPearlLoaderFeature({
         hatch,
         stage:'connecting'
       });
+      reportingJob = job;
+      note(job, 'info', 'Load requested; connecting the loader.');
       if (manager.get(account.id)) await manager.recreate(account.id);
       else await manager.start(account.id);
       const runtime = manager.get(account.id);
@@ -690,6 +726,7 @@ function createPearlLoaderFeature({
       runtime.once?.('end', job.onRuntimeEnd);
       runtime.on?.('status', job.onRuntimeStatus);
       job.stage = 'navigating';
+      note(job, 'info', 'Loader connected; walking to the hatch.');
       await navigateToHatch(loaderBot, hatch);
       if (activeJob !== job || runtime.bot !== loaderBot) throw new Error('Pearl Loader connection changed while navigating.');
       job.stage = 'checking_pearl';
@@ -706,9 +743,7 @@ function createPearlLoaderFeature({
         try {
           sendPrivateWhisper(job.runtime?.bot, job.username, 'I did not receive an answer, so I am leaving.');
         } catch (error) {
-          log('warn', `Pearl Loader could not send the confirmation timeout message to ${job.username}.`, {
-            username:job.username,
-            accountId:job.accountId,
+          note(job, 'warn', 'Could not send the confirmation timeout message.', {
             error:error?.message || String(error)
           });
         }
@@ -720,7 +755,7 @@ function createPearlLoaderFeature({
       job.aimPromise = null;
       if (activeJob !== job || job.stage !== 'aiming') return;
       job.stage = 'awaiting_yes';
-      log('info', `Pearl Loader is ready for ${job.username}.`, { username:job.username,accountId:account.id });
+      note(job, 'info', 'Aimed at the trapdoor; waiting for the player to confirm.');
     } catch (error) {
       await failJob(job, error);
     }
@@ -745,16 +780,27 @@ function createPearlLoaderFeature({
       if (activeJob !== job) return true;
     }
     job.stage = 'closing';
+    note(job, 'info', 'Player confirmed; closing the trapdoor.');
     try {
       const loaderBot = job.runtime?.bot;
       if (!loaderBot?.entity) throw new Error('Pearl Loader disconnected before confirmation.');
       await setHatchOpen(loaderBot, job.hatch, false);
       if (activeJob !== job) return true;
       job.stage = 'waiting_visibility';
+      note(job, 'info', 'Trapdoor closed; waiting for the player to come into view.');
       monitorForPlayer(job);
     } catch (error) {
       await failJob(job, error);
     }
+    return true;
+  }
+
+  // Lets the loader account's runtime logs join the running request's summary
+  // instead of becoming separate system logs. Returns false when no request
+  // is running on that account, so the caller logs the event itself.
+  function recordRuntimeEvent(accountId, level, message, details = {}) {
+    if (!reportingJob || reportingJob.accountId !== accountId) return false;
+    note(reportingJob, level, message, details);
     return true;
   }
 
@@ -776,9 +822,10 @@ function createPearlLoaderFeature({
   function dispose() {
     clearJobTimers(activeJob);
     activeJob = null;
+    reportingJob = null;
   }
 
-  return { handlePrimaryWhisper, handleLoaderWhisper, isExpectedPlayer, getStatus, dispose, __test:{ isTrapdoor, trapdoorIsOpen, trapdoorInteraction, loadPlayerHatch } };
+  return { handlePrimaryWhisper, handleLoaderWhisper, recordRuntimeEvent, isExpectedPlayer, getStatus, dispose, __test:{ isTrapdoor, trapdoorIsOpen, trapdoorInteraction, loadPlayerHatch } };
 }
 
 module.exports = {

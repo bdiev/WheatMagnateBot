@@ -1288,6 +1288,7 @@ let growingChild = null;
 let growingChildSnapshotTimer = null;
 const followFeature = createFollowFeature();
 const killAura = createKillAuraFeature({
+  isProtectedPlayer: isKillAuraProtectedPlayer,
   onKill: ({ mobName }) => recordKillAuraKill(DEFAULT_ACCOUNT_ID, mobName)
     .catch(error => console.error('[Kill Aura] Failed to persist kill:', error.message)),
   onStatus: () => writeBotStatusSnapshot().catch(() => {})
@@ -1739,6 +1740,17 @@ function setWhitelistMemory(entries) {
 
 function isWhitelistedPlayer(username, uuid = getOnlinePlayerUuid(username)) {
   return isWhitelistedIdentity(whitelistEntries, username, uuid);
+}
+
+// Kill Aura must never hit the whitelist or any account this process runs,
+// even when the account itself is not whitelisted.
+function isKillAuraProtectedPlayer(username, uuid = null) {
+  const nameKey = String(username || '').trim().toLowerCase();
+  if (!nameKey) return true;
+  if (isWhitelistedPlayer(username, uuid || getOnlinePlayerUuid(username))) return true;
+  if (nameKey === String(bot?.username || '').toLowerCase()) return true;
+  return (multiAccountRegistry?.list() || [])
+    .some(account => String(account.username || '').trim().toLowerCase() === nameKey);
 }
 
 // Resolves who a name belongs to right now: the player online under it, then
@@ -6875,6 +6887,7 @@ async function initializeMultiAccountManager() {
         killAuraFactory: () => createKillAuraFeature({
           attackRange: killAuraStates.get(account.id)?.attackRange,
           criticalsEnabled: killAuraStates.get(account.id)?.criticalsEnabled,
+          isProtectedPlayer: isKillAuraProtectedPlayer,
           onKill: ({ mobName }) => recordKillAuraKill(account.id, mobName)
             .catch(error => console.error(`[Kill Aura] Failed to persist kill for ${account.displayName}:`, error.message)),
           onStatus: () => {
@@ -6918,11 +6931,16 @@ async function initializeMultiAccountManager() {
         const signature = `${status.status}:${status.task}:${status.lastError || ''}`;
         if (signature === lastLoggedRuntimeState) return;
         lastLoggedRuntimeState = signature;
+        const level = status.status === 'error' ? 'error' : status.lastError ? 'warn' : 'info';
+        const message = `${account.displayName}: ${status.status} (${status.task}).`;
+        const details = { status: status.status, task: status.task, error: status.lastError || null };
+        // A Pearl Loader request writes one summary log that already carries these.
+        if (pearlLoaderFeature?.recordRuntimeEvent(account.id, level, message, details)) return;
         recordSystemLog({
-          level: status.status === 'error' ? 'error' : status.lastError ? 'warn' : 'info',
+          level,
           category: 'minecraft_runtime',
-          message: `${account.displayName}: ${status.status} (${status.task}).`,
-          details: { status: status.status, task: status.task, error: status.lastError || null },
+          message,
+          details,
           accountId: account.id
         }).catch(() => {});
       });
@@ -6976,6 +6994,7 @@ async function initializeMultiAccountManager() {
       runtime.on('end', reason => {
         const normalizedReason = normalizeStatusReason(reason) || 'Connection closed';
         persistManagedRuntimeStatus(runtime.getStatus()).catch(() => {});
+        if (pearlLoaderFeature?.recordRuntimeEvent(account.id, 'warn', `${account.displayName}: Minecraft connection ended.`, { reason: normalizedReason })) return;
         recordSystemLog({
           level: 'warn',
           category: 'minecraft_runtime',

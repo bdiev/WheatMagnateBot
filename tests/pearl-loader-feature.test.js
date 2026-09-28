@@ -70,16 +70,30 @@ async function testCompleteCycle() {
   runtime.bot = bot;
   runtime.assignTask = task => taskStates.push(task);
   let stopped = 0;
-  runtime.stop = async reason => { stopped += 1; runtime.stopReason = reason; runtime.bot = null; };
+  const logs = [];
+  let feature = null;
+  runtime.stop = async reason => {
+    stopped += 1;
+    runtime.stopReason = reason;
+    runtime.bot = null;
+    assert.equal(feature.recordRuntimeEvent(loaderAccount.id,'info','2kk4: stopped (idle).',{ status:'stopped' }),true,
+      'the stop status of the loader joins the request summary');
+  };
   let recreated = 0;
   const manager = {
     async start(id) { assert.equal(id,loaderAccount.id); },
-    async recreate(id) { assert.equal(id,loaderAccount.id); recreated += 1; },
+    async recreate(id) {
+      assert.equal(id,loaderAccount.id);
+      recreated += 1;
+      assert.equal(feature.recordRuntimeEvent(loaderAccount.id,'info','2kk4: connecting (idle).',{ status:'connecting' }),true,
+        'runtime status changes during a request join its summary instead of becoming separate logs');
+    },
     get:() => runtime
   };
   let registryLoads = 0;
   const primaryReplies = [];
-  const feature = createPearlLoaderFeature({
+  feature = createPearlLoaderFeature({
+    log:(level,message,details) => logs.push({ level,message,details }),
     pool:{ query:async () => ({rows:[{username:'bdiev_',pearl_hatch_x:10,pearl_hatch_y:64,pearl_hatch_z:-20}]}) },
     getRegistry:() => ({load:async () => { registryLoads += 1; },list:() => [loaderAccount]}),
     getManager:() => manager,
@@ -140,6 +154,20 @@ async function testCompleteCycle() {
   assert.equal(stopped,1,'the Loader must disconnect after completing the request');
   assert.equal(runtime.stopReason,'Pearl Loader request complete');
   assert.deepEqual(primaryReplies,[]);
+  assert.equal(logs.length,1,'a whole Pearl Loader request writes exactly one system log');
+  assert.equal(logs[0].level,'info');
+  assert.equal(logs[0].message,'Pearl Loader completed the hatch cycle for bdiev_.');
+  assert.equal(logs[0].details.outcome,'completed');
+  assert.deepEqual(logs[0].details.hatch,{ x:10,y:64,z:-20 });
+  assert.ok(Number.isFinite(logs[0].details.durationMs));
+  const timeline = logs[0].details.timeline.map(entry => entry.message);
+  assert.equal(timeline[0],'Load requested; connecting the loader.');
+  assert.ok(timeline.includes('2kk4: connecting (idle).'));
+  assert.ok(timeline.includes('Aimed at the trapdoor; waiting for the player to confirm.'));
+  assert.ok(timeline.includes('Player confirmed; closing the trapdoor.'));
+  assert.equal(timeline.at(-1),'2kk4: stopped (idle).','the summary is written after the loader disconnects');
+  assert.equal(feature.recordRuntimeEvent(loaderAccount.id,'info','2kk4: connecting (idle).'),false,
+    'runtime events outside a request are logged by the caller as usual');
   feature.dispose();
 }
 
