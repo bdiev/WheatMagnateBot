@@ -7695,6 +7695,15 @@ function setAdminPlayersNotice(message = '', kind = 'success') {
   notice.hidden = !message;
 }
 
+// The list is re-fetched every 1.5s while a copied command is awaited, so only
+// replace its buttons when the markup changes: swapping them between pointerdown
+// and pointerup makes the browser drop the click and the copy never happens.
+function setAdminPlaytimeCommandsHtml(list, html) {
+  if (list.renderedHtml === html) return;
+  list.renderedHtml = html;
+  list.innerHTML = html;
+}
+
 function renderAdminPlaytimeCommands(progress) {
   const list = $('#adminPlaytimeCommands');
   const count = $('#adminPlaytimeMissingCount');
@@ -7719,22 +7728,23 @@ function renderAdminPlaytimeCommands(progress) {
     loadAdminPlayers({ showLoading: false, preserveScroll: true });
   }
   if (!missingCount) {
-    list.innerHTML = '<div class="admin-playtime-complete">All tracked player information is complete.</div>';
+    setAdminPlaytimeCommandsHtml(list, '<div class="admin-playtime-complete">All tracked player information is complete.</div>');
     return;
   }
   if (!commands.length) {
-    list.innerHTML = '<div class="empty">No copyable playtime commands are available.</div>';
+    setAdminPlaytimeCommandsHtml(list, '<div class="empty">No copyable playtime commands are available.</div>');
     return;
   }
 
-  list.innerHTML = commands.map(({ metric,username,command }) => `
+  let html = commands.map(({ metric,username,command }) => `
     <button class="admin-playtime-command" type="button" data-player-info-metric="${escapeHtml(metric)}" data-copy-playtime-command="${escapeHtml(command)}" aria-label="Copy ${escapeHtml(command)}" title="Copy ${escapeHtml(command)}">
       <strong>${escapeHtml(username)}</strong>
       <code>${escapeHtml(command.split(' ')[0])}</code>
     </button>`).join('');
   if (missingCount > commands.length) {
-    list.insertAdjacentHTML('beforeend', `<div class="admin-playtime-list-note">Showing the first ${formatNumber(commands.length)} of ${formatNumber(missingCount)} commands.</div>`);
+    html += `<div class="admin-playtime-list-note">Showing the first ${formatNumber(commands.length)} of ${formatNumber(missingCount)} commands.</div>`;
   }
+  setAdminPlaytimeCommandsHtml(list, html);
 }
 
 async function copyAdminPlaytimeCommand(button) {
