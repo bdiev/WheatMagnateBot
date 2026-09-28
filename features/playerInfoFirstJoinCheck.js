@@ -66,6 +66,7 @@ function createPlayerInfoFirstJoinCheck({
   now = () => Date.now(),
   random = Math.random,
   onLog = message => console.log(message),
+  onBelowThreshold = () => {},
   onError = error => console.error('[PlayerInfo] First-join check failed:', error?.message || error)
 } = {}) {
   const safeInitialDelayMinMs = milliseconds(
@@ -284,6 +285,17 @@ function createPlayerInfoFirstJoinCheck({
       job.queuedAt,
       { observedAgeMs: initialObservation.observedAgeMs }
     )) {
+      try {
+        onBelowThreshold({
+          metric,
+          targetUsername: job.username,
+          observedValue: initialObservation.observedValue,
+          observedAgeMs: initialObservation.observedAgeMs,
+          firstObservedAt: new Date(job.queuedAt)
+        });
+      } catch (error) {
+        onError(error);
+      }
       finish(job, `[PlayerInfo] Stopped first-join check for ${job.username}: ${metric} is below the minimum threshold.`);
       return true;
     }

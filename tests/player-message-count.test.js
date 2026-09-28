@@ -174,6 +174,23 @@ async function testArchiveFallbacks(harness) {
     'a player with no profile or messages has a zero total');
 }
 
+async function testNewAccountArchiveBaseline(harness) {
+  const { reset, player, chat, total, reconcile, baseline } = harness;
+  await reset();
+  await player('BrandNewAccount', PLAYER_UUID);
+  await chat('BrandNewAccount', { uuid: PLAYER_UUID, count: 3, offsetMs: 1 });
+  await reconcile('BrandNewAccount', 0, {
+    observedAt: new Date(CUTOFF),
+    source: 'new-account archive baseline'
+  });
+  const saved = await baseline('BrandNewAccount');
+  assert.equal(saved.count, '0', 'a confirmed new account must persist a zero server baseline');
+  assert.equal(new Date(saved.cutoff).toISOString(), CUTOFF,
+    'the baseline cutoff must be the first observation time, not the later !jd response time');
+  assert.equal(await total(PLAYER_UUID, ['BrandNewAccount']), 3,
+    'messages archived since the first observed join must remain in the profile total');
+}
+
 async function testImportsAndRefresh(harness) {
   const { reset, query, player, chat, total, baseline, reconcile, store } = harness;
   await reset();
@@ -274,6 +291,7 @@ async function run() {
   try {
     await testReportedCounterAndIdentity(harness);
     await testArchiveFallbacks(harness);
+    await testNewAccountArchiveBaseline(harness);
     await testImportsAndRefresh(harness);
     await testNameOnlyAndNewZeroPlayer(harness);
     await testIdentityMergeKeepsBaselinePair(harness);

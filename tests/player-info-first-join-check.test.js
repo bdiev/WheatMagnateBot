@@ -56,7 +56,7 @@ function createClock() {
   };
 }
 
-function createCheck({ random = () => 0 } = {}) {
+function createCheck({ random = () => 0, onBelowThreshold = () => {} } = {}) {
   const clock = createClock();
   const sent = [];
   const prepared = [];
@@ -84,6 +84,7 @@ function createCheck({ random = () => 0 } = {}) {
     clearTimer: clock.clearTimer,
     now: clock.now,
     random,
+    onBelowThreshold,
     onLog: message => logs.push(message),
     onError: error => { throw error; }
   });
@@ -205,7 +206,11 @@ async function testFirstSessionMessagesDoNotInflateMessageGate() {
 }
 
 async function testWaitingDoesNotInflateJoinDateGate() {
-  const { check, clock, sent } = createCheck({ random: () => 0.999 });
+  const belowThreshold = [];
+  const { check, clock, sent } = createCheck({
+    random: () => 0.999,
+    onBelowThreshold: observation => belowThreshold.push(observation)
+  });
   check.enqueue('BrandNewAccount');
   await clock.advance(60 * 60 * 1000);
   check.playerLeft('BrandNewAccount');
@@ -220,6 +225,11 @@ async function testWaitingDoesNotInflateJoinDateGate() {
   });
   assert.equal(check.getStatus().pendingPlayers, 0,
     'account age must be evaluated at the first observed join rather than after the player leaves');
+  assert.equal(belowThreshold.length, 1);
+  assert.equal(belowThreshold[0].metric, 'joinDate');
+  assert.equal(belowThreshold[0].targetUsername, 'BrandNewAccount');
+  assert.equal(belowThreshold[0].firstObservedAt.getTime(), 1_000_000,
+    'a confirmed new account must expose the first observation time for an archive-backed message baseline');
 }
 
 async function testConcurrentPlayersShareOneCommandCooldown() {

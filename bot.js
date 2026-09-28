@@ -3665,13 +3665,17 @@ async function reconcileObservedJoinDate(targetUsername, observedDate) {
   }
 }
 
-async function reconcileObservedMessages(targetUsername, observedCount) {
+async function reconcileObservedMessages(targetUsername, observedCount, { observedAt = null, source = '!messages' } = {}) {
   if (!pool || !targetUsername || !Number.isSafeInteger(observedCount) || observedCount < 0) {
     return { error:'Invalid observed message count.' };
   }
 
   const safeUsername = String(targetUsername || '').replace(/[^A-Za-z0-9_]/g, '').trim().slice(0, 32);
   if (!safeUsername) return { error:'Invalid Minecraft username.' };
+  const safeObservedAt = observedAt == null ? null : new Date(observedAt);
+  if (safeObservedAt && !Number.isFinite(safeObservedAt.getTime())) {
+    return { error:'Invalid message observation time.' };
+  }
 
   try {
     await ensureMinecraftProfileIdentity(safeUsername, { source:'!messages import' });
@@ -3682,13 +3686,13 @@ async function reconcileObservedMessages(targetUsername, observedCount) {
         WITH updated_by_uuid AS (
           UPDATE player_activity activity
           SET observed_message_count = $3::bigint,
-              observed_message_count_at = NOW()
+              observed_message_count_at = COALESCE($4::timestamptz, NOW())
           WHERE $2::uuid IS NOT NULL
             AND activity.player_uuid = $2::uuid
           RETURNING username
         ), inserted AS (
           INSERT INTO player_activity (username, player_uuid, observed_message_count, observed_message_count_at)
-          SELECT $1::text, $2::uuid, $3::bigint, NOW()
+          SELECT $1::text, $2::uuid, $3::bigint, COALESCE($4::timestamptz, NOW())
           WHERE NOT EXISTS (SELECT 1 FROM updated_by_uuid)
             AND NOT EXISTS (
               SELECT 1 FROM player_activity activity
@@ -3702,7 +3706,7 @@ async function reconcileObservedMessages(targetUsername, observedCount) {
         ), updated_by_name AS (
           UPDATE player_activity activity
           SET observed_message_count = $3::bigint,
-              observed_message_count_at = NOW()
+              observed_message_count_at = COALESCE($4::timestamptz, NOW())
           WHERE LOWER(activity.username) = LOWER($1::text)
             AND NOT EXISTS (SELECT 1 FROM updated_by_uuid)
           RETURNING username
@@ -3710,10 +3714,10 @@ async function reconcileObservedMessages(targetUsername, observedCount) {
         SELECT username FROM updated_by_uuid
         UNION ALL SELECT username FROM inserted
         UNION ALL SELECT username FROM updated_by_name
-      `, [identity.username, identity.playerUuid, observedCount])
+      `, [identity.username, identity.playerUuid, observedCount, safeObservedAt])
     );
     if (result.allowed) {
-      console.log(`[Messages] ${result.reason === 'site-refresh' ? 'Refreshed' : 'Initially imported'} ${result.username} from observed !messages: ${observedCount}`);
+      console.log(`[Messages] ${result.reason === 'site-refresh' ? 'Refreshed' : 'Initially imported'} ${result.username} from ${source}: ${observedCount}`);
     }
     return { username:result.username || safeUsername,unchanged:!result.allowed };
   } catch (err) {
@@ -3903,6 +3907,15 @@ playerInfoFirstJoinCheck = createPlayerInfoFirstJoinCheck({
   prepareLookup: async ({ metric, username }) => {
     await playerInfoObservationStore.requestRefresh(metric, username);
     return playerInfoObservation.requestLookup(metric, username, 'first-join');
+  },
+  onBelowThreshold: ({ metric, targetUsername, firstObservedAt }) => {
+    if (metric !== 'joinDate') return;
+    enqueueObservedPlayerInfoWrite(
+      () => reconcileObservedMessages(targetUsername, 0, {
+        observedAt: firstObservedAt,
+        source: 'new-account archive baseline'
+      })
+    ).catch(() => {});
   },
   sendCommand: (command, _item, sender) => sendPlayerInfoBackfillCommand(command, sender)
 });
