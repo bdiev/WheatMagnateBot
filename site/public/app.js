@@ -6654,7 +6654,7 @@ function sortNearbySightings(nearbyPlayers) {
     const key = String(player?.username || '').toLowerCase();
     if (!key || seen.has(key)) continue;
     seen.add(key);
-    if (live.has(key)) active.push({ ...player, distance: live.get(key) });
+    if (live.has(key)) active.push({ ...player, distance: live.get(key), active: true });
     else past.push(player);
   }
   const timeOf = player => new Date(player.lastSeen).getTime() || 0;
@@ -6670,11 +6670,11 @@ function renderNearbySightings(nearbyPlayers = []) {
       <div class="rank-item activity-item">
         ${playerIdentity(player.username, 28)}
         <strong>${formatNumber(player.distance)} blocks</strong>
-        <span class="muted">${formatAgo(player.lastSeen)}</span>
+        <span class="muted">${player.active ? '' : formatAgo(player.lastSeen)}</span>
       </div>
     `).join('')
     : '<div class="empty">No nearby sightings yet.</div>',
-    nearby.map(player => [player.username, player.distance, player.lastSeen])
+    nearby.map(player => [player.username, player.distance, player.active ? null : player.lastSeen])
   );
   const list = $('#nearbyList');
   list?.classList.remove('player-list-loading');
