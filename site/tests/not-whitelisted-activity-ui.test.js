@@ -38,7 +38,7 @@ assert.match(
 );
 assert.match(
   appSource,
-  /aggregateSeries\(state\.charts\.hourlyAverageOnline, range, 'avg'\)/,
+  /: state\.charts\.hourlyAverageOnline;\s*drawBarChart\(\$\('#averageOnlineChart'\), aggregateSeries\(history, range, 'avg'\)/,
   'daily and monthly chart modes must average the hourly server series'
 );
 assert.match(
