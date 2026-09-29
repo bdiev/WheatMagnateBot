@@ -2614,6 +2614,8 @@ function drawPixelBlock(ctx, x, y, w, h, baseColor) {
   const bevel = Math.max(1, Math.min(4, Math.round(Math.min(pw, ph) * 0.24)));
   ctx.fillStyle = baseColor;
   ctx.fillRect(px, py, pw, ph);
+  // Too thin for a bevel and outline: they would cover the whole bar.
+  if (pw < 4) return;
   ctx.fillStyle = shadeChartColor(baseColor, 0.3);
   ctx.fillRect(px, py, pw, bevel);
   ctx.fillRect(px, py, bevel, ph);
@@ -2742,7 +2744,9 @@ function drawBarChart(canvas, data, options = {}) {
   ctx.stroke();
 
   const slotWidth = chartData.length > 0 ? chartWidth / chartData.length : 0;
-  const barWidth = chartData.length > 0 ? Math.max(6, Math.min(28, slotWidth * 0.72)) : 0;
+  // Always leave a visible gap between neighbours: a fixed minimum width made
+  // bars overlap once a long series was squeezed into narrow slots.
+  const barWidth = chartData.length > 0 ? Math.max(1, Math.min(28, slotWidth * 0.72, slotWidth - 2)) : 0;
   const hitboxes = [];
 
   chartData.forEach((item, index) => {
