@@ -8780,6 +8780,13 @@ function renderAdminControlState(payload = {}) {
   const settings = payload.settings || {};
   const bot = payload.bot || {};
   setRollingNumber('#adminDatabasePlayers', payload.playerTotals?.allTime);
+  setRollingNumber('#adminPearlLoads', payload.pearlLoads?.completed);
+  const pearlLoadsDetail = $('#adminPearlLoadsDetail');
+  if (pearlLoadsDetail) {
+    const loads = payload.pearlLoads;
+    pearlLoadsDetail.textContent = loads ? `${formatNumber(loads.today)} today · ${formatNumber(loads.total)} requests` : 'all time';
+    pearlLoadsDetail.title = loads ? `${formatNumber(loads.total - loads.completed)} requests ended without a load` : '';
+  }
 
   const obsidianButton = $('#obsidianToggleButton');
   if (obsidianButton) {

@@ -2804,7 +2804,7 @@ body.search-focus-active #logoutButton {
 
 .admin-hero-stats {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 9px;
 }
 
@@ -12256,7 +12256,7 @@ body.kill-aura-modal-open {
   }
 
   .admin-hero-stats {
-    grid-template-columns: repeat(5, minmax(110px, 1fr));
+    grid-template-columns: repeat(6, minmax(110px, 1fr));
   }
 
   .admin-users-list {

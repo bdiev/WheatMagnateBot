@@ -96,9 +96,13 @@ async function testCompleteCycle() {
   };
   let registryLoads = 0;
   const primaryReplies = [];
+  const recordedRequests = [];
   feature = createPearlLoaderFeature({
     log:(level,message,details) => logs.push({ level,message,details }),
-    pool:{ query:async () => ({rows:[{username:'bdiev_',pearl_hatch_x:10,pearl_hatch_y:64,pearl_hatch_z:-20}]}) },
+    pool:{ query:async (sql,params) => {
+      if (/INSERT INTO pearl_loader_requests/.test(sql)) recordedRequests.push(params);
+      return {rows:[{username:'bdiev_',pearl_hatch_x:10,pearl_hatch_y:64,pearl_hatch_z:-20}]};
+    } },
     getRegistry:() => ({load:async () => { registryLoads += 1; },list:() => [loaderAccount]}),
     getManager:() => manager,
     sendPrimaryWhisper:async (username,message) => primaryReplies.push({username,message}),
@@ -165,6 +169,9 @@ async function testCompleteCycle() {
   assert.equal(logs[0].details.outcome,'completed');
   assert.deepEqual(logs[0].details.hatch,{ x:10,y:64,z:-20 });
   assert.ok(Number.isFinite(logs[0].details.durationMs));
+  await delay(0);
+  assert.equal(recordedRequests.length,1,'each finished request is counted for the Control center');
+  assert.deepEqual(recordedRequests[0].slice(0,3),['bdiev_',loaderAccount.id,'completed']);
   const timeline = logs[0].details.timeline.map(entry => entry.message);
   assert.equal(timeline[0],'Load requested; connecting the loader.');
   assert.ok(timeline.includes('2kk4: connecting (idle).'));

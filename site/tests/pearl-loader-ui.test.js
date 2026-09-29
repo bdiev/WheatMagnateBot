@@ -22,4 +22,11 @@ assert.match(server,/Pearl Loader can connect only in response to a player Load 
 assert.match(bot,/accounts[\s\S]*\.filter\(item => item\.enabled && !item\.isDefault\)[\s\S]*\.filter\(item => item\.role !== PEARL_LOADER_ROLE\)/,
   'Pearl Loader must not auto-start with managed accounts');
 assert.match(botMigration,/UNIQUE INDEX[\s\S]*role = 'pearl_loader'/i);
+const counterMigration = fs.readFileSync(path.join(root,'database','migrations','062_pearl_loader_requests.sql'),'utf8');
+assert.equal(counterMigration,fs.readFileSync(path.join(root,'site','migrations','062_pearl_loader_requests.sql'),'utf8'),
+  'the bot and site must install the same Pearl Loader counter schema');
+assert.match(html,/class="admin-hero-stats"[\s\S]*Pearl loads[\s\S]*id="adminPearlLoads"[\s\S]*id="adminPearlLoadsDetail"/,
+  'Control center shows the Pearl Loader counter card');
+assert.match(server,/FROM pearl_loader_requests[\s\S]*pearlLoads:/,'admin control state reports Pearl Loader counts');
+assert.match(app,/setRollingNumber\('#adminPearlLoads', payload\.pearlLoads\?\.completed\)/);
 console.log('Pearl Loader admin UI tests passed.');

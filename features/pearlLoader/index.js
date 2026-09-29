@@ -313,6 +313,22 @@ function createPearlLoaderFeature({
       durationMs:finishedAt.getTime() - new Date(job.startedAt).getTime(),
       timeline:job.timeline
     });
+    if (details.outcome) recordRequest(job, details.outcome, finishedAt);
+  }
+
+  // Counted separately from the system log, which expires under retention.
+  function recordRequest(job, outcome, finishedAt) {
+    Promise.resolve().then(() => pool.query(`
+      INSERT INTO pearl_loader_requests (username,account_id,outcome,started_at,finished_at,duration_ms)
+      VALUES ($1,$2,$3,$4,$5,$6)
+    `, [
+      String(job.username || '?').slice(0, 32),
+      job.accountId || null,
+      outcome,
+      job.startedAt,
+      finishedAt.toISOString(),
+      finishedAt.getTime() - new Date(job.startedAt).getTime()
+    ])).catch(error => console.error('[PearlLoader] Could not record the request:', error.message));
   }
 
   const tellPrimary = async (username, message) => {

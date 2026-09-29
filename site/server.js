@@ -5727,7 +5727,8 @@ async function getAdminControlState(currentUser, url) {
     ignoredResult,
     onlineResult,
     playerTotalsResult,
-    farmStateResult
+    farmStateResult,
+    pearlLoadsResult
   ] = await Promise.all([
     pool.query('SELECT key, value FROM admin_settings'),
     scoped
@@ -5752,7 +5753,14 @@ async function getAdminControlState(currentUser, url) {
       SELECT target_x, target_y, target_z, target_radius
       FROM obsidian_farm_state
       WHERE id = 1
-    `)
+    `),
+    // The table arrives with a migration; the port opens before migrations run.
+    pool.query(`
+      SELECT COUNT(*) FILTER (WHERE outcome = 'completed')::int AS completed,
+             COUNT(*) FILTER (WHERE outcome = 'completed' AND finished_at >= date_trunc('day', NOW()))::int AS today,
+             COUNT(*)::int AS total
+      FROM pearl_loader_requests
+    `).catch(() => ({ rows:[] }))
   ]);
 
   const settings = {};
@@ -5791,6 +5799,11 @@ async function getAdminControlState(currentUser, url) {
     playerTotals: {
       allTime: toInt(playerTotalsResult.rows[0]?.total)
     },
+    pearlLoads: pearlLoadsResult.rows[0] ? {
+      completed: toInt(pearlLoadsResult.rows[0].completed),
+      today: toInt(pearlLoadsResult.rows[0].today),
+      total: toInt(pearlLoadsResult.rows[0].total)
+    } : null,
     whitelistAddCandidates: onlinePlayers.filter(username =>
       !whitelist.some(entry => entry.toLowerCase() === username.toLowerCase())
     ),
