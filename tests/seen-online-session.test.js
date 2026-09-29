@@ -67,9 +67,25 @@ async function run() {
     await db.exec("UPDATE player_activity SET player_uuid='11111111-1111-4111-8111-111111111111'");
     assert.equal(+new Date((await lookup()).onlineSince), +new Date(joined.online_since));
 
+    const joinedEventsBeforeReconnect = Number((await db.query(
+      "SELECT COUNT(*) AS total FROM player_session_events WHERE event_type='player_joined'"
+    )).rows[0].total);
+    const leftEventsBeforeReconnect = Number((await db.query(
+      "SELECT COUNT(*) AS total FROM player_session_events WHERE event_type='player_left'"
+    )).rows[0].total);
     await repository.updatePlayerActivity('herobrineslord', true, { recordEvent: false, resetSession: true });
     assert.equal((await activity()).online_since, null, 'initial TAB after reconnect must invalidate an unverified persisted session');
     assert.equal((await lookup()).onlineSince, null, 'Seen must not fall back to the old last_online');
+    const joinedEventsAfterReconnect = Number((await db.query(
+      "SELECT COUNT(*) AS total FROM player_session_events WHERE event_type='player_joined'"
+    )).rows[0].total);
+    assert.equal(joinedEventsAfterReconnect, joinedEventsBeforeReconnect + 1,
+      'the initial TAB snapshot must start an observed average-online interval');
+    const leftEventsAfterReconnect = Number((await db.query(
+      "SELECT COUNT(*) AS total FROM player_session_events WHERE event_type='player_left'"
+    )).rows[0].total);
+    assert.equal(leftEventsAfterReconnect, leftEventsBeforeReconnect + 1,
+      'a stale session must close at its last presence observation before the reconnect interval starts');
     await repository.updatePlayerActivity('herobrineslord', false);
     await repository.updatePlayerActivity('herobrineslord', true);
     assert.ok((await activity()).online_since, 'the next observed join must restart the timer');

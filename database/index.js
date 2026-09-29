@@ -135,12 +135,14 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
       if (!existingIdentity.rows[0]) return;
     }
     let previousOnline = null;
-    if (recordEvent) {
-      const previous = await pool.query(`SELECT is_online FROM player_activity
+    let previousPresenceObservedAt = null;
+    if (recordEvent || resetSession) {
+      const previous = await pool.query(`SELECT is_online,presence_observed_at FROM player_activity
         WHERE ($2::uuid IS NOT NULL AND player_uuid=$2::uuid) OR LOWER(username)=LOWER($1)
         ORDER BY is_online DESC, COALESCE(last_seen,last_online) DESC NULLS LAST,id DESC LIMIT 1`,
       [username, normalizedUuid]).catch(() => ({ rows: [] }));
       previousOnline = previous.rows[0]?.is_online;
+      previousPresenceObservedAt = previous.rows[0]?.presence_observed_at || null;
     }
     const reconcileUuidAndUsernameRows = async executor => {
       if (!normalizedUuid) return;
@@ -373,7 +375,21 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
           WHERE player_uuid = $1::uuid AND username IS DISTINCT FROM $2
         `, [normalizedUuid, username]).catch(() => {});
       }
-      if (recordEvent && previousOnline !== Boolean(isOnline)) {
+      // The initial TAB snapshot after a reconnect is not a confirmed game
+      // join, so it must not start the player's live "online since" timer.
+      // It is still the beginning of an observed presence interval, however,
+      // and the average-online history needs that boundary in order to count
+      // players who were already connected when the bot arrived.
+      if (Boolean(isOnline) && resetSession && previousOnline === true && previousPresenceObservedAt) {
+        await pool.query(`
+          INSERT INTO player_session_events(username,event_type,occurred_at)
+          VALUES($1,'player_left',LEAST($2::timestamptz,$3::timestamptz))
+          ON CONFLICT DO NOTHING
+        `, [username, previousPresenceObservedAt, timestamp]);
+      }
+      const shouldRecordSessionBoundary = (recordEvent && previousOnline !== Boolean(isOnline))
+        || (Boolean(isOnline) && resetSession);
+      if (shouldRecordSessionBoundary) {
         await pool.query(`
           INSERT INTO player_session_events(username,event_type,occurred_at)
           VALUES($1,$2,$3::timestamptz)

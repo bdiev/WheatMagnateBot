@@ -2705,12 +2705,31 @@ async function getPlayerStats() {
         WHERE occurred_at <= NOW()
           AND LOWER(username) <> ''
       ),
+      presence AS (
+        SELECT
+          LOWER(username) AS username_key,
+          BOOL_OR(is_online) AS is_online,
+          MAX(presence_observed_at) AS observed_at
+        FROM player_activity
+        WHERE LOWER(username) <> ''
+        GROUP BY LOWER(username)
+      ),
       sessions AS (
         SELECT
-          occurred_at AS started_at,
-          COALESCE(next_occurred_at, NOW()) AS ended_at
-        FROM ordered_events
-        WHERE event_type = 'player_joined'
+          event.occurred_at AS started_at,
+          COALESCE(
+            event.next_occurred_at,
+            CASE
+              WHEN presence.is_online THEN NOW()
+              ELSE GREATEST(
+                event.occurred_at,
+                LEAST(NOW(), COALESCE(presence.observed_at, event.occurred_at))
+              )
+            END
+          ) AS ended_at
+        FROM ordered_events event
+        LEFT JOIN presence USING (username_key)
+        WHERE event.event_type = 'player_joined'
       ),
       event_bounds AS (
         SELECT MIN(occurred_at) AS first_occurred_at

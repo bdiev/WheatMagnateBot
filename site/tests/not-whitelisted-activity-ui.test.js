@@ -28,6 +28,11 @@ assert.match(
 );
 assert.match(
   activityQuery,
+  /FROM player_activity[\s\S]*presence\.is_online[\s\S]*presence\.observed_at/,
+  'an unmatched join must stop at its last presence observation unless the player is still online'
+);
+assert.match(
+  activityQuery,
   /generate_series\([\s\S]*first_occurred_at[\s\S]*LEFT JOIN bucket_totals/,
   'hours with no online players must remain in the series as zeroes'
 );
@@ -45,6 +50,16 @@ assert.match(
   appSource,
   /group\.weightedValues\.reduce\([\s\S]*item\.value \* item\.weight/,
   'partial current hours must be weighted by their recorded duration'
+);
+assert.match(
+  appSource,
+  /case 'averageOnlineChart':[\s\S]*scaleToVisible: false[\s\S]*formatNumber\(item\.value\)/,
+  'hourly average online must keep a stable scale and show its fractional value'
+);
+assert.doesNotMatch(
+  appSource,
+  /Math\.ceil\(item\.value\).*players on average/,
+  'average-online tooltips must not round every fractional average upward'
 );
 assert.match(
   appSource,

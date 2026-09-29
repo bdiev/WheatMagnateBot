@@ -2710,7 +2710,9 @@ function drawBarChart(canvas, data, options = {}) {
   const padding = { top: 24, right: 52, bottom: 44, left: 58 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
-  const values = visibleChartValues(canvas, chartData, padding, chartWidth, 'bar');
+  const values = options.scaleToVisible === false
+    ? chartData.map(item => Number(item.value)).filter(Number.isFinite)
+    : visibleChartValues(canvas, chartData, padding, chartWidth, 'bar');
   const maxValue = Math.max(options.max || 0, ...values, 1);
   renderStickyChartAxis(
     canvas,
@@ -3298,7 +3300,10 @@ function drawChartById(chartId) {
         pointWidth: 44 * zoom,
         zoom,
         maxZoom: CHART_ZOOM_MAX,
-        tooltip: item => `${item.label}: ${formatNumber(Math.ceil(item.value))} players on average`
+        // Keep one scale across the whole seven-day series. Re-scaling to the
+        // visible bars made their heights jump while scrolling or redrawing.
+        scaleToVisible: false,
+        tooltip: item => `${item.label}: ${formatNumber(item.value)} players on average`
       });
       break;
     }

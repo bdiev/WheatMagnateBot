@@ -1,0 +1,70 @@
+'use strict';
+
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { PGlite } = require('@electric-sql/pglite');
+
+const serverSource = fs.readFileSync(path.resolve(__dirname, '../server.js'), 'utf8');
+const averageOnlineSql = [...serverSource.matchAll(/database\.query\(`([\s\S]*?)`\)/g)]
+  .map(match => match[1])
+  .find(sql => sql.includes('AS average_online'));
+
+assert.ok(averageOnlineSql, 'the average-online SQL must be discoverable');
+
+async function run() {
+  const db = new PGlite();
+  try {
+    await db.exec(`
+      SET TimeZone = 'UTC';
+      CREATE TABLE player_session_events (
+        id BIGSERIAL PRIMARY KEY,
+        username TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        occurred_at TIMESTAMPTZ NOT NULL
+      );
+      CREATE TABLE player_activity (
+        id BIGSERIAL PRIMARY KEY,
+        username TEXT NOT NULL,
+        is_online BOOLEAN NOT NULL,
+        presence_observed_at TIMESTAMPTZ
+      );
+
+      -- A normal completed one-hour session.
+      INSERT INTO player_session_events(username,event_type,occurred_at) VALUES
+        ('Closed','player_joined',NOW()-INTERVAL '90 minutes'),
+        ('Closed','player_left',NOW()-INTERVAL '30 minutes');
+
+      -- A missed leave must stop at the final presence observation, not NOW().
+      INSERT INTO player_session_events(username,event_type,occurred_at) VALUES
+        ('Ghost','player_joined',NOW()-INTERVAL '150 minutes');
+      INSERT INTO player_activity(username,is_online,presence_observed_at) VALUES
+        ('Ghost',FALSE,NOW()-INTERVAL '120 minutes');
+
+      -- A genuinely online player keeps contributing through the present.
+      INSERT INTO player_session_events(username,event_type,occurred_at) VALUES
+        ('Live','player_joined',NOW()-INTERVAL '45 minutes');
+      INSERT INTO player_activity(username,is_online,presence_observed_at) VALUES
+        ('Live',TRUE,NOW());
+    `);
+
+    const rows = (await db.query(averageOnlineSql)).rows;
+    const totalOnlineSeconds = rows.reduce(
+      (total, row) => total + Number(row.average_online || 0) * Number(row.sample_seconds || 0),
+      0
+    );
+    assert.ok(Math.abs(totalOnlineSeconds - 8100) < 5,
+      `expected 2.25 observed player-hours, received ${totalOnlineSeconds} seconds`);
+    assert.ok(rows.some(row => Number(row.average_online) > 1),
+      'overlapping player sessions must be represented as concurrent average online');
+
+    console.log('Average server online query tests passed.');
+  } finally {
+    await db.close();
+  }
+}
+
+run().catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});
