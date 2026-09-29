@@ -2306,7 +2306,7 @@ const NEW_PLAYERS_PAGE_LIMIT = 24;
 const PLAYER_STATS_CACHE_TTL_MS = 60_000;
 // Bump when the meaning of cached Player Stats values changes, so a snapshot
 // persisted by an older build is never shown after a deploy.
-const PLAYER_STATS_CACHE_SCHEMA = 3;
+const PLAYER_STATS_CACHE_SCHEMA = 4;
 let playerStatsCacheValue = null;
 let playerStatsCacheExpiresAt = 0;
 let playerStatsCachePromise = null;
@@ -2739,8 +2739,12 @@ async function getPlayerStats() {
         WHERE event.event_type = 'player_joined'
       ),
       event_bounds AS (
-        SELECT MIN(occurred_at) AS first_occurred_at
-        FROM ordered_events
+        SELECT MIN(first_occurred_at) AS first_occurred_at
+        FROM (
+          SELECT MIN(occurred_at) AS first_occurred_at FROM ordered_events
+          UNION ALL
+          SELECT MIN(bucket) FROM server_online_hourly
+        ) bounds
       ),
       buckets AS (
         SELECT bucket
@@ -2773,20 +2777,32 @@ async function getPlayerStats() {
         SELECT bucket, SUM(online_seconds) AS online_seconds
         FROM bucket_overlaps
         GROUP BY bucket
+      ), sampled_online AS (
+        SELECT bucket,
+               player_sum::numeric / NULLIF(sample_count,0) AS average_online,
+               sample_count::numeric AS sample_weight
+        FROM server_online_hourly
+        WHERE sample_count > 0
       )
       SELECT
         TO_CHAR(buckets.bucket, 'YYYY-MM-DD HH24:00') AS label,
         buckets.bucket,
-        COALESCE(bucket_totals.online_seconds, 0)
-          / NULLIF(EXTRACT(EPOCH FROM (
-              LEAST(buckets.bucket + INTERVAL '1 hour', NOW()) - buckets.bucket
-            )), 0)
-          AS average_online,
-        EXTRACT(EPOCH FROM (
-          LEAST(buckets.bucket + INTERVAL '1 hour', NOW()) - buckets.bucket
-        )) AS sample_seconds
+        COALESCE(
+          sampled_online.average_online,
+          COALESCE(bucket_totals.online_seconds, 0)
+            / NULLIF(EXTRACT(EPOCH FROM (
+                LEAST(buckets.bucket + INTERVAL '1 hour', NOW()) - buckets.bucket
+              )), 0)
+        ) AS average_online,
+        COALESCE(
+          sampled_online.sample_weight,
+          EXTRACT(EPOCH FROM (
+            LEAST(buckets.bucket + INTERVAL '1 hour', NOW()) - buckets.bucket
+          ))
+        ) AS sample_seconds
       FROM buckets
       LEFT JOIN bucket_totals USING (bucket)
+      LEFT JOIN sampled_online USING (bucket)
       ORDER BY buckets.bucket
     `, [PLAYER_PRESENCE_TIMEOUT_MS]),
     database.query(`

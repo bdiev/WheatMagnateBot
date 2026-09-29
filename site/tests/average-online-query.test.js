@@ -29,6 +29,11 @@ async function run() {
         is_online BOOLEAN NOT NULL,
         presence_observed_at TIMESTAMPTZ
       );
+      CREATE TABLE server_online_hourly (
+        bucket TIMESTAMPTZ PRIMARY KEY,
+        sample_count BIGINT NOT NULL,
+        player_sum BIGINT NOT NULL
+      );
 
       -- A normal completed one-hour session.
       INSERT INTO player_session_events(username,event_type,occurred_at) VALUES
@@ -57,6 +62,19 @@ async function run() {
       `expected 2.25 observed player-hours, received ${totalOnlineSeconds} seconds`);
     assert.ok(rows.some(row => Number(row.average_online) > 1),
       'overlapping player sessions must be represented as concurrent average online');
+
+    await db.query(`
+      INSERT INTO server_online_hourly(bucket,sample_count,player_sum)
+      VALUES(date_trunc('hour',NOW()),10,320)
+    `);
+    const sampledRows = (await db.query(averageOnlineSql, [30_000])).rows;
+    const sampledCurrentHour = sampledRows.find(row =>
+      new Date(row.bucket).getTime() === new Date().setMinutes(0, 0, 0)
+    );
+    assert.equal(Number(sampledCurrentHour.average_online), 32,
+      'direct TAB samples must override incomplete reconstructed sessions');
+    assert.equal(Number(sampledCurrentHour.sample_seconds), 10,
+      'the direct sample count must weight daily and monthly aggregation');
 
     console.log('Average server online query tests passed.');
   } finally {

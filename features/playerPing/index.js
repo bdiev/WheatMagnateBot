@@ -26,6 +26,12 @@ function normalizePingSamples(players = [], { excludeUsername = null } = {}) {
   return [...samplesByKey.values()];
 }
 
+function normalizeServerOnlineCount(players = []) {
+  return new Set((Array.isArray(players) ? players : [])
+    .map(player => String(player?.username || '').trim().toLowerCase())
+    .filter(username => MINECRAFT_USERNAME_PATTERN.test(username))).size;
+}
+
 function createPlayerPingFeature({
   pool,
   getPlayers,
@@ -48,11 +54,23 @@ function createPlayerPingFeature({
 
   async function sample() {
     if (!pool || running) return { skipped: true };
-    const samples = normalizePingSamples(getPlayers(), { excludeUsername: getBotUsername() });
-    if (!samples.length) return { recorded: 0 };
+    const players = getPlayers();
+    const samples = normalizePingSamples(players, { excludeUsername: getBotUsername() });
+    const serverOnline = normalizeServerOnlineCount(players);
     running = true;
     const sampledAt = now();
     try {
+      if (serverOnline > 0) {
+        await pool.query(`
+          INSERT INTO server_online_hourly(bucket,sample_count,player_sum,updated_at)
+          VALUES(date_trunc('hour',$1::timestamptz),1,$2,NOW())
+          ON CONFLICT(bucket) DO UPDATE SET
+            sample_count=server_online_hourly.sample_count+1,
+            player_sum=server_online_hourly.player_sum+EXCLUDED.player_sum,
+            updated_at=NOW()
+        `, [sampledAt.toISOString(), serverOnline]);
+      }
+      if (!samples.length) return { recorded: 0 };
       const params = [
         samples.map(sample => sample.key),
         samples.map(sample => sample.ping),
@@ -104,5 +122,6 @@ module.exports = {
   MAX_VALID_PING_MS,
   PING_SAMPLE_INTERVAL_MS,
   createPlayerPingFeature,
-  normalizePingSamples
+  normalizePingSamples,
+  normalizeServerOnlineCount
 };

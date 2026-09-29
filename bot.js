@@ -9747,6 +9747,7 @@ function createBot() {
     }, 30_000);
 
     playerPing.start();
+    playerPing.sample().catch(err => console.error('[PlayerPing] Initial sample failed:', err.message));
 
     // TPS: TAB header/footer first, /tps reply as fallback, world-age measurement otherwise
     if (tpsTabInterval) clearInterval(tpsTabInterval);

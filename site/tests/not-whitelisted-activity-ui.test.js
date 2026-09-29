@@ -19,7 +19,12 @@ assert.doesNotMatch(
 assert.match(
   activityQuery,
   /FROM player_session_events[\s\S]*event_type = 'player_joined'/,
-  'average server online must use the dedicated player session history'
+  'average server online must retain player session history as a legacy fallback'
+);
+assert.match(
+  activityQuery,
+  /sampled_online AS \([\s\S]*FROM server_online_hourly[\s\S]*COALESCE\([\s\S]*sampled_online\.average_online/,
+  'direct TAB-list samples must be the authoritative average-online source'
 );
 assert.match(
   activityQuery,
