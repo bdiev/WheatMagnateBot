@@ -2710,8 +2710,9 @@ function drawBarChart(canvas, data, options = {}) {
   const padding = { top: 24, right: 52, bottom: 44, left: 58 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
+  const scaleData = Array.isArray(options.scaleData) ? options.scaleData : chartData;
   const values = options.scaleToVisible === false
-    ? chartData.map(item => Number(item.value)).filter(Number.isFinite)
+    ? scaleData.map(item => Number(item.value)).filter(Number.isFinite)
     : visibleChartValues(canvas, chartData, padding, chartWidth, 'bar');
   const maxValue = Math.max(options.max || 0, ...values, 1);
   renderStickyChartAxis(
@@ -2994,6 +2995,44 @@ function localizedChartItem(item) {
   if (Number.isNaN(date.getTime())) return item;
   const parts = chartDateParts(date);
   return { ...item, label: `${parts.month}-${parts.day} ${parts.hour}:00` };
+}
+
+const AVERAGE_ONLINE_VISIBLE_HOURS = 24;
+
+function virtualChartWindow(canvas, data, visiblePoints) {
+  const items = Array.isArray(data) ? data : [];
+  const viewport = canvas?.closest('.chart-scroll');
+  if (!viewport || viewport.clientWidth <= 0) return items;
+  if (items.length <= visiblePoints) {
+    disableVirtualChart(canvas);
+    return items;
+  }
+
+  viewport.classList.add('chart-virtualized');
+  let spacer = viewport.querySelector('.chart-virtual-spacer');
+  if (!spacer) {
+    spacer = document.createElement('div');
+    spacer.className = 'chart-virtual-spacer';
+    spacer.setAttribute('aria-hidden', 'true');
+    viewport.append(spacer);
+  }
+
+  const totalWidth = Math.ceil((items.length / visiblePoints) * viewport.clientWidth);
+  spacer.style.width = `${totalWidth}px`;
+  const maxScroll = Math.max(0, totalWidth - viewport.clientWidth);
+  if (!state.chartScrollInitialized[canvas.id]) viewport.scrollLeft = maxScroll;
+  const maxStart = items.length - visiblePoints;
+  const start = maxScroll > 0
+    ? Math.max(0, Math.min(maxStart, Math.round((viewport.scrollLeft / maxScroll) * maxStart)))
+    : maxStart;
+  return items.slice(start, start + visiblePoints);
+}
+
+function disableVirtualChart(canvas) {
+  const viewport = canvas?.closest('.chart-scroll');
+  if (!viewport) return;
+  viewport.classList.remove('chart-virtualized');
+  viewport.querySelector('.chart-virtual-spacer')?.remove();
 }
 
 function aggregateSeries(data, range, reducer = 'sum') {
@@ -3281,14 +3320,22 @@ function drawChartById(chartId) {
     }
     case 'averageOnlineChart': {
       const zoom = getChartZoom('averageOnlineChart');
-      const history = state.charts.hourlyAverageOnline;
-      drawBarChart($('#averageOnlineChart'), aggregateSeries(history, range, 'avg'), {
+      const canvas = $('#averageOnlineChart');
+      const completeHistory = state.charts.hourlyAverageOnline;
+      const visibleHours = Math.max(1, Math.round(AVERAGE_ONLINE_VISIBLE_HOURS / zoom));
+      const history = range === 'hours'
+        ? virtualChartWindow(canvas, completeHistory, visibleHours)
+        : completeHistory;
+      if (range !== 'hours') disableVirtualChart(canvas);
+      drawBarChart(canvas, aggregateSeries(history, range, 'avg'), {
+        fitWidth: range === 'hours',
         pointWidth: 44 * zoom,
         zoom,
         maxZoom: CHART_ZOOM_MAX,
         // Keep one scale across the whole hourly history. Re-scaling to the
         // visible bars made their heights jump while scrolling or redrawing.
         scaleToVisible: false,
+        scaleData: range === 'hours' ? completeHistory : null,
         tooltip: item => `${item.label}: ${formatNumber(Math.round(item.value))} players on average`
       });
       break;
@@ -3366,11 +3413,12 @@ function setChartHoverHighlight(canvas, hit) {
   }
 
   const box = hit.highlight;
-  const geometry = `${hit.index}:${box.x}:${box.y}:${box.width}:${box.height}`;
+  const virtualOffset = viewport.classList.contains('chart-virtualized') ? viewport.scrollLeft : 0;
+  const geometry = `${virtualOffset}:${hit.index}:${box.x}:${box.y}:${box.width}:${box.height}`;
   if (highlight.dataset.geometry !== geometry) {
     highlight.style.width = `${Math.max(1, box.width)}px`;
     highlight.style.height = `${Math.max(1, box.height)}px`;
-    highlight.style.transform = `translate3d(${canvas.offsetLeft + box.x}px, ${canvas.offsetTop + box.y}px, 0)`;
+    highlight.style.transform = `translate3d(${virtualOffset + canvas.offsetLeft + box.x}px, ${canvas.offsetTop + box.y}px, 0)`;
     highlight.dataset.geometry = geometry;
   }
   highlight.hidden = false;

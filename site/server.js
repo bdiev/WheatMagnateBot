@@ -2306,7 +2306,7 @@ const NEW_PLAYERS_PAGE_LIMIT = 24;
 const PLAYER_STATS_CACHE_TTL_MS = 60_000;
 // Bump when the meaning of cached Player Stats values changes, so a snapshot
 // persisted by an older build is never shown after a deploy.
-const PLAYER_STATS_CACHE_SCHEMA = 2;
+const PLAYER_STATS_CACHE_SCHEMA = 3;
 let playerStatsCacheValue = null;
 let playerStatsCacheExpiresAt = 0;
 let playerStatsCachePromise = null;
@@ -2628,7 +2628,10 @@ async function getPlayerStats() {
       ), presence AS (
         SELECT
           LOWER(username) AS username_key,
-          BOOL_OR(is_online) AS is_online,
+          BOOL_OR(
+            is_online = TRUE
+            AND presence_observed_at >= NOW() - ($1::double precision * INTERVAL '1 millisecond')
+          ) AS is_online,
           MAX(presence_observed_at) AS observed_at
         FROM player_activity
         WHERE LOWER(username) <> ''
@@ -2666,6 +2669,7 @@ async function getPlayerStats() {
         SELECT DISTINCT LOWER(username) AS username_key
         FROM player_activity
         WHERE is_online = TRUE
+          AND presence_observed_at >= NOW() - ($1::double precision * INTERVAL '1 millisecond')
           AND LOWER(username) <> ''
       ), seen AS (
         SELECT windows.period, 'current' AS slot, sessions.username_key
@@ -2690,7 +2694,7 @@ async function getPlayerStats() {
         COUNT(DISTINCT username_key) FILTER (WHERE period = 'week' AND slot = 'previous')::int AS seen_previous_week,
         COUNT(DISTINCT username_key) FILTER (WHERE period = 'month' AND slot = 'previous')::int AS seen_previous_month
       FROM seen
-    `),
+    `, [PLAYER_PRESENCE_TIMEOUT_MS]),
     database.query(`
       WITH ordered_events AS (
         SELECT
@@ -2708,7 +2712,10 @@ async function getPlayerStats() {
       presence AS (
         SELECT
           LOWER(username) AS username_key,
-          BOOL_OR(is_online) AS is_online,
+          BOOL_OR(
+            is_online = TRUE
+            AND presence_observed_at >= NOW() - ($1::double precision * INTERVAL '1 millisecond')
+          ) AS is_online,
           MAX(presence_observed_at) AS observed_at
         FROM player_activity
         WHERE LOWER(username) <> ''
@@ -2781,7 +2788,7 @@ async function getPlayerStats() {
       FROM buckets
       LEFT JOIN bucket_totals USING (bucket)
       ORDER BY buckets.bucket
-    `),
+    `, [PLAYER_PRESENCE_TIMEOUT_MS]),
     database.query(`
       SELECT COALESCE(activity.username, w.username) AS username, activity.registration_at
       FROM whitelist w

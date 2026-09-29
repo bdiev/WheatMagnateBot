@@ -43,8 +43,8 @@ assert.match(
 );
 assert.match(
   appSource,
-  /const history = state\.charts\.hourlyAverageOnline;\s*drawBarChart\(\$\('#averageOnlineChart'\), aggregateSeries\(history, range, 'avg'\)/,
-  'every chart mode must use the complete hourly server series, with daily and monthly averages aggregated from it'
+  /const completeHistory = state\.charts\.hourlyAverageOnline;[\s\S]*: completeHistory;[\s\S]*drawBarChart\(canvas, aggregateSeries\(history, range, 'avg'\)/,
+  'every chart mode must retain the complete hourly server series, with daily and monthly averages aggregated from it'
 );
 assert.match(
   appSource,

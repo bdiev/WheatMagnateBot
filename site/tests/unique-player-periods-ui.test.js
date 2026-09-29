@@ -58,6 +58,8 @@ assert.match(serverSource, /WHEN presence\.is_online THEN bounds\.now_local[\s\S
   'a join without a later event may only run to now for players who are online now');
 assert.match(serverSource, /const PLAYER_STATS_CACHE_SCHEMA = \d+;[\s\S]*?cachedPlayers\.cacheSchema !== PLAYER_STATS_CACHE_SCHEMA[\s\S]*?cacheSchema: PLAYER_STATS_CACHE_SCHEMA/,
   'Player Stats snapshots persisted by an older build must not be shown after a deploy');
+assert.match(serverSource, /online_now AS \([\s\S]*presence_observed_at >= NOW\(\) - \(\$1::double precision \* INTERVAL '1 millisecond'\)/,
+  'current unique-player counts must ignore expired online-presence leases before the cleanup sweep runs');
 const botSource = fs.readFileSync(path.join(siteDirectory, '..', 'bot.js'), 'utf8');
 assert.match(botSource, /observedOnlineAtDisconnect\.values\(\)\]\.map\(username =>\s*updatePlayerActivity\(username, false, \{ recordEvent: true \}\)/,
   'a bot disconnect must close the observed sessions with leave events');

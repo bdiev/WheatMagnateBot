@@ -6,7 +6,7 @@ const path = require('node:path');
 const { PGlite } = require('@electric-sql/pglite');
 
 const serverSource = fs.readFileSync(path.resolve(__dirname, '../server.js'), 'utf8');
-const periodSql = [...serverSource.matchAll(/database\.query\(`([\s\S]*?)`\)/g)]
+const periodSql = [...serverSource.matchAll(/database\.query\(`([\s\S]*?)`(?:,\s*\[[^\]]*\])?\)/g)]
   .map(match => match[1])
   .find(sql => sql.includes('AS seen_today'));
 assert.ok(periodSql, 'the unique-player period SQL must be discoverable');
@@ -51,7 +51,10 @@ async function run() {
         ('Reconnected', 'player_left', ${at(`${DAY_START} + ${ELAPSED} * 0.5`)});
 
       -- Online now according to the presence lease, without any events.
-      INSERT INTO player_activity (username, is_online) VALUES ('OnlineNow', TRUE), ('OfflineRow', FALSE);
+      INSERT INTO player_activity (username, is_online, presence_observed_at) VALUES
+        ('OnlineNow', TRUE, NOW()),
+        ('OfflineRow', FALSE, NOW()),
+        ('StaleOnline', TRUE, NOW() - INTERVAL '2 minutes');
 
       -- Joined three days ago; an old bot disconnect marked them offline
       -- without a leave event. Must not be stretched into today.
@@ -75,10 +78,10 @@ async function run() {
         ('YesterdayLate', 'player_left', ${at(`${DAY_START} - INTERVAL '1 day' + ${ELAPSED} + (INTERVAL '1 day' - ${ELAPSED}) * 0.6`)});
     `);
 
-    const [row] = (await db.query(periodSql)).rows;
+    const [row] = (await db.query(periodSql, [30_000])).rows;
 
     assert.equal(row.seen_today, 4,
-      'today must count players seen since local midnight, sessions reaching past midnight, leaves without a recorded join, and players online now, but not stale joins of offline players (Ghost, Unobserved)');
+      'today must count players seen since local midnight, sessions reaching past midnight, leaves without a recorded join, and players with a fresh online lease, but not stale joins or expired online rows (Ghost, Unobserved, StaleOnline)');
     assert.equal(row.seen_previous_day, 1,
       'yesterday must be cut at the same elapsed time as today, not compared as a full day');
     assert.ok(row.seen_week >= row.seen_today, 'the week includes today');

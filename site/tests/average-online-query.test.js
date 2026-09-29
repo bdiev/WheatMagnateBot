@@ -6,7 +6,7 @@ const path = require('node:path');
 const { PGlite } = require('@electric-sql/pglite');
 
 const serverSource = fs.readFileSync(path.resolve(__dirname, '../server.js'), 'utf8');
-const averageOnlineSql = [...serverSource.matchAll(/database\.query\(`([\s\S]*?)`\)/g)]
+const averageOnlineSql = [...serverSource.matchAll(/database\.query\(`([\s\S]*?)`(?:,\s*\[[^\]]*\])?\)/g)]
   .map(match => match[1])
   .find(sql => sql.includes('AS average_online'));
 
@@ -39,7 +39,7 @@ async function run() {
       INSERT INTO player_session_events(username,event_type,occurred_at) VALUES
         ('Ghost','player_joined',NOW()-INTERVAL '150 minutes');
       INSERT INTO player_activity(username,is_online,presence_observed_at) VALUES
-        ('Ghost',FALSE,NOW()-INTERVAL '120 minutes');
+        ('Ghost',TRUE,NOW()-INTERVAL '120 minutes');
 
       -- A genuinely online player keeps contributing through the present.
       INSERT INTO player_session_events(username,event_type,occurred_at) VALUES
@@ -48,7 +48,7 @@ async function run() {
         ('Live',TRUE,NOW());
     `);
 
-    const rows = (await db.query(averageOnlineSql)).rows;
+    const rows = (await db.query(averageOnlineSql, [30_000])).rows;
     const totalOnlineSeconds = rows.reduce(
       (total, row) => total + Number(row.average_online || 0) * Number(row.sample_seconds || 0),
       0

@@ -22,8 +22,18 @@ assert.match(
 );
 assert.match(
   averageOnlineCase,
-  /pointWidth: 44 \* zoom,[\s\S]*zoom,[\s\S]*maxZoom: CHART_ZOOM_MAX/,
+  /fitWidth: range === 'hours',[\s\S]*pointWidth: 44 \* zoom,[\s\S]*zoom,[\s\S]*maxZoom: CHART_ZOOM_MAX/,
   'the average-online chart must pass its zoom level to canvas sizing'
+);
+assert.match(
+  appSource,
+  /AVERAGE_ONLINE_VISIBLE_HOURS = 24[\s\S]*virtualChartWindow\(canvas, completeHistory, visibleHours\)[\s\S]*scaleData: range === 'hours' \? completeHistory/,
+  'the hourly viewport must show one day while retaining the full history and its stable scale'
+);
+assert.match(
+  stylesSource,
+  /\.chart-scroll\.chart-virtualized > canvas\.chart[\s\S]*position:\s*sticky;[\s\S]*\.chart-virtual-spacer/,
+  'the virtual hourly timeline must keep a viewport-sized canvas over its full-history scroll track'
 );
 assert.match(
   stylesSource,

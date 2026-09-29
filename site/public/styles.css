@@ -4494,6 +4494,20 @@ body.search-focus-active #logoutButton {
   background: var(--panel-soft);
 }
 
+.chart-scroll.chart-virtualized > canvas.chart {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+}
+
+.chart-virtual-spacer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 1px;
+  pointer-events: none;
+}
+
 .chart-y-axis {
   position: sticky;
   left: 0;
