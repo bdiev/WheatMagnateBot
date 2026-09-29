@@ -2996,18 +2996,6 @@ function localizedChartItem(item) {
   return { ...item, label: `${parts.month}-${parts.day} ${parts.hour}:00` };
 }
 
-const AVERAGE_ONLINE_HOURS_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
-
-// Keeps only the items within windowMs of the newest bucket, so an hourly view
-// shows a readable recent stretch instead of squeezing the whole history.
-function lastChartWindow(data, windowMs) {
-  const items = Array.isArray(data) ? data : [];
-  const times = items.map(item => new Date(item?.bucket).getTime());
-  const latest = Math.max(...times.filter(Number.isFinite));
-  if (!Number.isFinite(latest)) return items;
-  return items.filter((item, index) => !Number.isFinite(times[index]) || times[index] > latest - windowMs);
-}
-
 function aggregateSeries(data, range, reducer = 'sum') {
   const items = Array.isArray(data) ? data : [];
   if (range === 'hours') return items.map(localizedChartItem);
@@ -3293,17 +3281,15 @@ function drawChartById(chartId) {
     }
     case 'averageOnlineChart': {
       const zoom = getChartZoom('averageOnlineChart');
-      const history = range === 'hours'
-        ? lastChartWindow(state.charts.hourlyAverageOnline, AVERAGE_ONLINE_HOURS_WINDOW_MS)
-        : state.charts.hourlyAverageOnline;
+      const history = state.charts.hourlyAverageOnline;
       drawBarChart($('#averageOnlineChart'), aggregateSeries(history, range, 'avg'), {
         pointWidth: 44 * zoom,
         zoom,
         maxZoom: CHART_ZOOM_MAX,
-        // Keep one scale across the whole seven-day series. Re-scaling to the
+        // Keep one scale across the whole hourly history. Re-scaling to the
         // visible bars made their heights jump while scrolling or redrawing.
         scaleToVisible: false,
-        tooltip: item => `${item.label}: ${formatNumber(item.value)} players on average`
+        tooltip: item => `${item.label}: ${formatNumber(Math.round(item.value))} players on average`
       });
       break;
     }

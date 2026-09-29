@@ -43,8 +43,8 @@ assert.match(
 );
 assert.match(
   appSource,
-  /: state\.charts\.hourlyAverageOnline;\s*drawBarChart\(\$\('#averageOnlineChart'\), aggregateSeries\(history, range, 'avg'\)/,
-  'daily and monthly chart modes must average the hourly server series'
+  /const history = state\.charts\.hourlyAverageOnline;\s*drawBarChart\(\$\('#averageOnlineChart'\), aggregateSeries\(history, range, 'avg'\)/,
+  'every chart mode must use the complete hourly server series, with daily and monthly averages aggregated from it'
 );
 assert.match(
   appSource,
@@ -53,8 +53,13 @@ assert.match(
 );
 assert.match(
   appSource,
-  /case 'averageOnlineChart':[\s\S]*scaleToVisible: false[\s\S]*formatNumber\(item\.value\)/,
-  'hourly average online must keep a stable scale and show its fractional value'
+  /case 'averageOnlineChart':[\s\S]*scaleToVisible: false[\s\S]*formatNumber\(Math\.round\(item\.value\)\)/,
+  'hourly average online must keep a stable scale and display the nearest whole player'
+);
+assert.doesNotMatch(
+  appSource,
+  /AVERAGE_ONLINE_HOURS_WINDOW_MS|lastChartWindow\(state\.charts\.hourlyAverageOnline/,
+  'hourly average online must retain its complete history'
 );
 assert.doesNotMatch(
   appSource,
