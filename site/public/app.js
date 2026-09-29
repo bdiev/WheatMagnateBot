@@ -55,6 +55,7 @@ const state = {
   chartProgress: {},
   chartGrownOnce: new Set(),
   chartHover: {},
+  chartPointer: null,
   seenPlayers: [],
   whisperPlayers: [],
   whisperTarget: null,
@@ -3304,6 +3305,18 @@ function drawChartById(chartId) {
     default:
       break;
   }
+  refreshChartHover(chartId);
+}
+
+// A redraw (data refresh, grow animation, scroll or zoom) replaces the
+// hitboxes under a pointer that has not moved. Re-resolve the tooltip against
+// the new geometry so it never describes a bar from an earlier draw.
+function refreshChartHover(chartId) {
+  const pointer = state.chartPointer;
+  const tooltip = $('#chartTooltip');
+  if (!pointer || pointer.chartId !== chartId || !tooltip || tooltip.hidden) return;
+  const canvas = document.getElementById(chartId);
+  if (canvas) showChartTooltip(canvas, pointer, { refresh: true });
 }
 
 function redrawCharts() {
@@ -3372,10 +3385,16 @@ function setChartHoverHighlight(canvas, hit) {
   highlight.hidden = false;
 }
 
-function showChartTooltip(canvas, event, { pin = false } = {}) {
+function showChartTooltip(canvas, event, { pin = false, refresh = false } = {}) {
   const tooltip = $('#chartTooltip');
   const meta = state.chartMeta[canvas.id];
   if (!tooltip || !meta) return;
+  state.chartPointer = {
+    chartId: canvas.id,
+    clientX: event.clientX,
+    clientY: event.clientY,
+    pointerType: event.pointerType
+  };
 
   const rect = canvas.getBoundingClientRect();
   const x = event.clientX - rect.left;
@@ -3394,7 +3413,7 @@ function showChartTooltip(canvas, event, { pin = false } = {}) {
 
   if (!hit) {
     canvas.style.cursor = '';
-    if (!state.chartTooltipPinned) tooltip.hidden = true;
+    if (!state.chartTooltipPinned || refresh) hideChartTooltip();
     return;
   }
 
@@ -3402,9 +3421,11 @@ function showChartTooltip(canvas, event, { pin = false } = {}) {
   const tooltipChanged = tooltip.textContent !== hit.tooltip;
   if (tooltipChanged) tooltip.textContent = hit.tooltip;
   tooltip.hidden = false;
-  clearTimeout(state.chartTooltipTimer);
   const isTouch = event.pointerType === 'touch';
-  state.chartTooltipPinned = Boolean(pin || isTouch);
+  if (!refresh) {
+    clearTimeout(state.chartTooltipTimer);
+    state.chartTooltipPinned = Boolean(pin || isTouch);
+  }
   let tooltipWidth = Number(tooltip.dataset.measuredWidth);
   if (tooltipChanged || !Number.isFinite(tooltipWidth)) {
     tooltipWidth = Math.max(160, tooltip.offsetWidth || 0);
@@ -3432,7 +3453,7 @@ function showChartTooltip(canvas, event, { pin = false } = {}) {
   left = Math.max(10, Math.min(window.innerWidth - tooltipWidth - 10, left));
   top = Math.max(10, Math.min(window.innerHeight - tooltipHeight - 10, top));
   tooltip.style.transform = `translate3d(${left}px, ${top}px, 0)`;
-  if (state.chartTooltipPinned) {
+  if (state.chartTooltipPinned && !refresh) {
     state.chartTooltipTimer = setTimeout(hideChartTooltip, 3200);
   }
 }
@@ -3441,6 +3462,7 @@ function hideChartTooltip() {
   const tooltip = $('#chartTooltip');
   clearTimeout(state.chartTooltipTimer);
   state.chartTooltipPinned = false;
+  state.chartPointer = null;
   if (tooltip) tooltip.hidden = true;
 }
 
