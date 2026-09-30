@@ -6744,13 +6744,28 @@ function startDatabaseEventPoller() {
 function startLogRetention() {
   if (!pool || logRetentionTimer) return;
   const retentionConfig = getLogRetentionConfig();
+  // Expired rows appear every hour, so an audit entry per run is pure noise:
+  // log the first run after startup, then one summary per summaryHours.
+  const summaryMs = retentionConfig.summaryHours * 60 * 60 * 1000;
+  let pending = { total: 0, systemLogs: 0, batches: 0, runs: 0, since: new Date().toISOString() };
+  let lastSummaryAt = 0;
   const run = async () => {
     const pruned = await pruneExpiredLogs(pool, retentionConfig);
-    if (pruned.total) await recordSystemLog({
+    pending.total += pruned.total;
+    pending.systemLogs += pruned.systemLogs;
+    pending.batches += pruned.batches || 0;
+    pending.runs += 1;
+    if (!pending.total || Date.now() - lastSummaryAt < summaryMs) return;
+    const summary = pending;
+    lastSummaryAt = Date.now();
+    pending = { total: 0, systemLogs: 0, batches: 0, runs: 0, since: new Date().toISOString() };
+    await recordSystemLog({
       level: 'audit',
       category: 'log_retention',
-      message: `Pruned ${pruned.total} expired system log records.`,
-      details: pruned
+      message: summary.runs > 1
+        ? `Pruned ${summary.total} expired system log records in ${summary.runs} cleanup runs.`
+        : `Pruned ${summary.total} expired system log records.`,
+      details: { ...summary, until: new Date().toISOString() }
     });
   };
   run().catch(err => console.error('[LogRetention] Cleanup failed:', err.message));

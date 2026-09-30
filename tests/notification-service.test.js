@@ -184,6 +184,27 @@ async function run() {
     'notification system logs must expose the exact Obsidian debug record ID'
   );
 
+  let reminderNow = new Date();
+  const reminderLogs = [];
+  const reminderDiscord = [];
+  const reminderService = new NotificationService({
+    repository: new MemoryNotificationRepository([rule({ cooldown_seconds: 60, delivery_channels: ['discord', 'system_log'] })]),
+    discordSender: async notification => reminderDiscord.push(notification),
+    systemLogger: async entry => { reminderLogs.push(entry); return true; },
+    now: () => reminderNow
+  });
+  await reminderService.report('low_tps', { key: 'reminder', metadata: { tps: 10 } });
+  reminderNow = new Date(Date.now() + 10 * 60 * 1000);
+  const reminder = await reminderService.report('low_tps', { key: 'reminder', metadata: { tps: 9 } });
+  assert.equal(reminder.delivered, true, 'reminders must still be delivered after cooldown');
+  assert.equal(reminderDiscord.length, 2, 'Discord must still receive reminders for an active issue');
+  assert.equal(reminderLogs.length, 1, 'reminders for an active issue must not repeat in the System Log');
+  await reminderService.report('low_tps', { key: 'reminder', resolved: true });
+  assert.equal(reminderLogs.length, 2, 'resolution must still be written to the System Log');
+  await reminderService.report('low_tps', { key: 'quiet', transient: true, systemLog: false });
+  assert.equal(reminderLogs.length, 2, 'systemLog: false must skip only the System Log channel');
+  assert.equal(reminderDiscord.length, 4);
+
   const postgresQueries = [];
   const postgresRepository = new PostgresNotificationRepository({
     async query(sql, params) {

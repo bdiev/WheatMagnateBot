@@ -7407,6 +7407,40 @@ body.modal-open { overflow:hidden; }
   transform: translateY(-1px);
 }
 
+.admin-log-repeat-count {
+  border-radius: 999px;
+  padding: 1px 8px;
+  color: var(--accent-strong);
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.admin-log-cycle {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+
+.admin-log-group-entries {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.admin-log-group-entries .admin-log-entry {
+  border-width: 1px 1px 1px 3px;
+  padding: 8px 10px;
+  background: var(--panel);
+}
+
+.admin-log-group-entries .admin-log-entry:hover {
+  transform: none;
+}
+
 .admin-log-details summary {
   cursor: pointer;
   color: var(--muted);

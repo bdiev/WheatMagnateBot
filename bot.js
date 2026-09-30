@@ -9687,8 +9687,9 @@ function createBot() {
       message: 'The Minecraft bot connected and spawned successfully.'
     }).then(result => {
       if (!result?.resolved) return;
+      // The resolved bot_disconnected entry above already logs this recovery.
       reportNotification('bot_reconnected', {
-        key: 'minecraft', transient: true, title: 'Bot reconnected',
+        key: 'minecraft', transient: true, systemLog: false, title: 'Bot reconnected',
         message: 'The Minecraft bot connected and spawned successfully.'
       });
     });

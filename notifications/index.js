@@ -88,7 +88,7 @@ class NotificationService {
     this.pending = new Map();
   }
 
-  async report(eventType, { key = 'default', title, message, metadata = {}, resolved = false, transient = false } = {}) {
+  async report(eventType, { key = 'default', title, message, metadata = {}, resolved = false, transient = false, systemLog = true } = {}) {
     if (!this.repository) {
       if (eventType !== 'database_unavailable' || resolved) return { skipped: true, reason: 'repository_unavailable' };
       const notification = { id: null, event_type: eventType, dedup_key: String(key), severity: 'critical', status: 'active', title: title || 'Database unavailable', message: message || 'PostgreSQL is not configured.', metadata };
@@ -98,7 +98,7 @@ class NotificationService {
     }
     const lockKey = JSON.stringify([eventType, String(key), String(metadata?.accountId || '')]);
     const previous = this.pending.get(lockKey) || Promise.resolve();
-    const operation = previous.then(() => this._report(eventType, { key, title, message, metadata, resolved, transient }));
+    const operation = previous.then(() => this._report(eventType, { key, title, message, metadata, resolved, transient, systemLog }));
     const tracked = operation.catch(() => {});
     this.pending.set(lockKey, tracked);
     try { return await operation; } finally { if (this.pending.get(lockKey) === tracked) this.pending.delete(lockKey); }
@@ -128,7 +128,7 @@ class NotificationService {
         eventType, dedupKey: String(event.key), severity: SEVERITIES.has(rule.severity) ? rule.severity : 'info',
         status: 'resolved', title: event.title || eventType, message: event.message || eventType, metadata: event.metadata
       });
-      await this._deliver(notification, rule, true);
+      await this._deliver(notification, rule, true, { systemLog: event.systemLog !== false });
       return { notification, transient: true };
     }
     const active = await this.repository.getActive(eventType, String(event.key), String(event.metadata?.accountId || ''));
@@ -151,7 +151,9 @@ class NotificationService {
       const cooldownMs = Math.max(0, Number(rule.cooldown_seconds) || 0) * 1000;
       const last = rule.last_triggered_at ? new Date(rule.last_triggered_at).getTime() : 0;
       if (this.now().getTime() - last < cooldownMs) return { notification: touched, deduplicated: true, delivered: false };
-      await this._deliver(touched, rule, false);
+      // Reminders for an issue that is still active go to Discord/push again,
+      // but the System Log already holds the original transition.
+      await this._deliver(touched, rule, false, { systemLog: false });
       return { notification: touched, deduplicated: true, delivered: true };
     }
 
@@ -163,8 +165,9 @@ class NotificationService {
     return { notification, deduplicated: false, delivered: true };
   }
 
-  async _deliver(notification, rule, resolved) {
-    const channels = (rule.delivery_channels || []).filter(channel => CHANNELS.has(channel));
+  async _deliver(notification, rule, resolved, { systemLog = true } = {}) {
+    const channels = (rule.delivery_channels || [])
+      .filter(channel => CHANNELS.has(channel) && (systemLog || channel !== 'system_log'));
     for (const channel of channels) {
       try {
         if (channel === 'discord' && this.discordSender) await this.discordSender(notification, { resolved });

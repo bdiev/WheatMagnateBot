@@ -8549,6 +8549,105 @@ function renderObsidianDebugLogDownload(entry) {
   ><span aria-hidden="true">&#8595;</span> Download logs</a>`;
 }
 
+function renderAdminSystemLogEntry(entry) {
+  const logId = String(entry.id || '');
+  const level = escapeHtml(entry.level || 'info');
+  const category = escapeHtml(entry.category || entry.kind || 'system');
+  const actor = entry.actor ? `<span class="admin-log-actor">${escapeHtml(entry.actor)}</span>` : '';
+  const kind = escapeHtml(entry.kind || 'system');
+  const details = renderLogDetails(entry.details);
+  const debugLogDownload = renderObsidianDebugLogDownload(entry);
+  const debugLogId = String(entry?.details?.debugLogId || '').trim();
+  const debugLogReference = debugLogId
+    ? `<p class="admin-debug-log-id">Debug Log ID: <code>${escapeHtml(debugLogId)}</code></p>`
+    : '';
+  const detailsOpen = logId && state.adminOpenLogDetails.has(logId) ? ' open' : '';
+  const detailsId = logId ? ` data-log-id="${escapeHtml(logId)}"` : '';
+  return `
+    <article class="admin-log-entry ${level}" data-kind="${kind}">
+      <div class="admin-log-content">
+        <div class="admin-log-main">
+          <span class="admin-log-time">${formatDate(entry.createdAt)}</span>
+          <span class="pill ${level}">${level}</span>
+          <span class="admin-log-category">${category}</span>
+          ${actor}
+          <span class="admin-log-record-id">ID ${escapeHtml(logId)}</span>
+        </div>
+        <p>${escapeHtml(entry.message || '')}</p>
+        ${debugLogReference}
+        ${details ? `<details class="admin-log-details"${detailsId}${detailsOpen}><summary>Details</summary>${details}</details>` : ''}
+      </div>
+      ${debugLogDownload}
+    </article>
+  `;
+}
+
+const SYSTEM_LOG_REPEAT_MAX_PERIOD = 3;
+const SYSTEM_LOG_LEVEL_RANK = { debug: 0, info: 1, audit: 2, warn: 3, error: 4 };
+
+function systemLogRepeatSignature(entry) {
+  return [entry?.kind, entry?.level, entry?.category, entry?.actor, entry?.message].join('\u0001');
+}
+
+// Collapses consecutive repeats of one entry, or of a short cycle such as
+// "disconnected -> starting connection" during a reconnect loop.
+function groupRepeatedSystemLogs(logs = []) {
+  const signatures = logs.map(systemLogRepeatSignature);
+  const groups = [];
+  let index = 0;
+  while (index < logs.length) {
+    let best = { period: 1, repeats: 1 };
+    for (let period = 1; period <= SYSTEM_LOG_REPEAT_MAX_PERIOD && index + period * 2 <= logs.length; period += 1) {
+      let repeats = 1;
+      while (
+        index + (repeats + 1) * period <= logs.length &&
+        signatures.slice(index + repeats * period, index + (repeats + 1) * period)
+          .every((signature, offset) => signature === signatures[index + offset])
+      ) repeats += 1;
+      // Shorter cycles win ties, so a run of one message is never shown as a pair.
+      if (repeats >= 2 && repeats * period > best.repeats * best.period) best = { period, repeats };
+    }
+    const size = best.period * best.repeats;
+    groups.push({ entries: logs.slice(index, index + size), period: best.period, repeats: best.repeats });
+    index += size;
+  }
+  return groups;
+}
+
+function renderAdminSystemLogGroup(group) {
+  if (group.repeats < 2) return renderAdminSystemLogEntry(group.entries[0]);
+  const pattern = group.entries.slice(0, group.period);
+  const newest = group.entries[0];
+  const oldest = group.entries[group.entries.length - 1];
+  const level = escapeHtml(pattern.reduce((top, entry) => (
+    (SYSTEM_LOG_LEVEL_RANK[entry.level] ?? 1) > (SYSTEM_LOG_LEVEL_RANK[top] ?? 1) ? entry.level : top
+  ), pattern[0].level || 'info'));
+  const categories = [...new Set(pattern.map(entry => entry.category || entry.kind || 'system'))];
+  const groupId = `group-${String(oldest.id || '')}`;
+  const detailsOpen = state.adminOpenLogDetails.has(groupId) ? ' open' : '';
+  return `
+    <article class="admin-log-entry admin-log-group ${level}" data-kind="${escapeHtml(newest.kind || 'system')}">
+      <div class="admin-log-content">
+        <div class="admin-log-main">
+          <span class="admin-log-time">${formatDate(oldest.createdAt)} – ${formatDate(newest.createdAt)}</span>
+          <span class="pill ${level}">${level}</span>
+          <span class="admin-log-category">${escapeHtml(categories.join(', '))}</span>
+          <span class="admin-log-repeat-count" title="${group.entries.length} entries">&times;${group.repeats}</span>
+        </div>
+        ${group.period > 1
+          ? `<p>Repeated cycle of ${group.period} events:</p><ul class="admin-log-cycle">${pattern.map(entry => (
+            `<li><span class="pill ${escapeHtml(entry.level || 'info')}">${escapeHtml(entry.level || 'info')}</span> ${escapeHtml(entry.message || '')}</li>`
+          )).join('')}</ul>`
+          : `<p>${escapeHtml(newest.message || '')}</p>`}
+        <details class="admin-log-details admin-log-group-details" data-log-id="${escapeHtml(groupId)}"${detailsOpen}>
+          <summary>Show all ${group.entries.length} entries</summary>
+          <div class="admin-log-group-entries">${group.entries.map(renderAdminSystemLogEntry).join('')}</div>
+        </details>
+      </div>
+    </article>
+  `;
+}
+
 function renderAdminSystemLogs(logs = []) {
   const list = $('#adminSystemLogs');
   if (!list) return;
@@ -8577,42 +8676,12 @@ function renderAdminSystemLogs(logs = []) {
   }
 
   const visibleIds = new Set(logs.map(entry => String(entry.id || '')).filter(Boolean));
+  logs.forEach(entry => { if (entry.id) visibleIds.add(`group-${entry.id}`); });
   state.adminOpenLogDetails.forEach(id => {
     if (!visibleIds.has(id)) state.adminOpenLogDetails.delete(id);
   });
 
-  list.innerHTML = logs.map(entry => {
-    const logId = String(entry.id || '');
-    const level = escapeHtml(entry.level || 'info');
-    const category = escapeHtml(entry.category || entry.kind || 'system');
-    const actor = entry.actor ? `<span class="admin-log-actor">${escapeHtml(entry.actor)}</span>` : '';
-    const kind = escapeHtml(entry.kind || 'system');
-    const details = renderLogDetails(entry.details);
-    const debugLogDownload = renderObsidianDebugLogDownload(entry);
-    const debugLogId = String(entry?.details?.debugLogId || '').trim();
-    const debugLogReference = debugLogId
-      ? `<p class="admin-debug-log-id">Debug Log ID: <code>${escapeHtml(debugLogId)}</code></p>`
-      : '';
-    const detailsOpen = logId && state.adminOpenLogDetails.has(logId) ? ' open' : '';
-    const detailsId = logId ? ` data-log-id="${escapeHtml(logId)}"` : '';
-    return `
-      <article class="admin-log-entry ${level}" data-kind="${kind}">
-        <div class="admin-log-content">
-          <div class="admin-log-main">
-            <span class="admin-log-time">${formatDate(entry.createdAt)}</span>
-            <span class="pill ${level}">${level}</span>
-            <span class="admin-log-category">${category}</span>
-            ${actor}
-            <span class="admin-log-record-id">ID ${escapeHtml(logId)}</span>
-          </div>
-          <p>${escapeHtml(entry.message || '')}</p>
-          ${debugLogReference}
-          ${details ? `<details class="admin-log-details"${detailsId}${detailsOpen}><summary>Details</summary>${details}</details>` : ''}
-        </div>
-        ${debugLogDownload}
-      </article>
-    `;
-  }).join('');
+  list.innerHTML = groupRepeatedSystemLogs(logs).map(renderAdminSystemLogGroup).join('');
   state.renderSignatures['#adminSystemLogs'] = renderSignature;
 
   list.querySelectorAll('.admin-log-details[data-log-id]').forEach(details => {
