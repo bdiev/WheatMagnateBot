@@ -156,6 +156,11 @@ const WM_CHAT_CHUNK_LENGTH = 190;
 const MINECRAFT_PRIVATE_MESSAGE_LENGTH = 180;
 const RECONNECT_INTERVAL_MS = 15_000;
 const MINECRAFT_CONNECT_TIMEOUT_MS = 20_000;
+const MINECRAFT_KEEP_ALIVE_TIMEOUT_MS = positiveInteger(
+  process.env.MINECRAFT_KEEP_ALIVE_TIMEOUT_MS,
+  60_000,
+  { min: 30_000 }
+);
 const SHUTDOWN_FARM_SETTLE_MS = 3_000;
 const MINECRAFT_PROFILES_FOLDER = path.resolve(process.env.MINECRAFT_PROFILES_FOLDER || path.join('data', 'auth-cache'));
 const DEFAULT_ACCOUNT_ID = '00000000-0000-4000-8000-000000000001';
@@ -1582,6 +1587,9 @@ const config = {
   auth: process.env.MINECRAFT_AUTH || 'microsoft',
   version: false, // Auto-detect version
   closeTimeout: MINECRAFT_CONNECT_TIMEOUT_MS,
+  // minecraft-protocol defaults to 30 seconds. A temporarily overloaded
+  // server/proxy can miss that window even though the connection recovers.
+  checkTimeoutInterval: MINECRAFT_KEEP_ALIVE_TIMEOUT_MS,
   profilesFolder: path.join(MINECRAFT_PROFILES_FOLDER,DEFAULT_ACCOUNT_ID),
   session: loadedSession
 };
@@ -6895,7 +6903,11 @@ async function initializeMultiAccountManager() {
           }
         }),
         botFactory: options => {
-          return createMinecraftBot({ ...options, closeTimeout: MINECRAFT_CONNECT_TIMEOUT_MS });
+          return createMinecraftBot({
+            ...options,
+            closeTimeout: MINECRAFT_CONNECT_TIMEOUT_MS,
+            checkTimeoutInterval: MINECRAFT_KEEP_ALIVE_TIMEOUT_MS
+          });
         }
       });
       // Shutdown waits for this queue after the runtime has published its
@@ -9541,6 +9553,7 @@ function createBot() {
   let fireEmergencyTriggered = false;
   let connectionFinalized = false;
   let reachedLogin = false;
+  let lastConnectionError = null;
   const connectionWatchdog = setTimeout(() => {
     if (connectionFinalized || createdBot.entity) return;
     console.log('[x] Minecraft connection attempt timed out before spawn.');
@@ -9776,11 +9789,14 @@ function createBot() {
     if (!suppressDefaultAuthCachePersist) authCacheStore.persist(DEFAULT_ACCOUNT_ID,config.profilesFolder).catch(error => console.error('[Accounts] Default auth-cache persistence failed:',error.message));
     recordFarmAnnotation('bot_disconnected', 'Bot disconnected', { reason: normalizeStatusReason(reason) }).catch(() => {});
     const reasonStr = chatComponentToString(reason);
+    const disconnectReason = reasonStr === 'keepAliveError' && lastConnectionError
+      ? `Keep-alive timeout: ${lastConnectionError}`
+      : reasonStr;
     recordSystemLog({
       level: 'warn',
       category: 'minecraft',
       message: 'Minecraft bot disconnected.',
-      details: { reason: reasonStr || null }
+      details: { reason: disconnectReason || null }
     }).catch(() => {});
     const observedOnlineAtDisconnect = lastObservedOnlinePlayerKeys;
     lastObservedOnlinePlayerKeys = null;
@@ -9805,10 +9821,11 @@ function createBot() {
     const isRestartTime = hour === 9 && minute >= 0 && minute <= 30;
 
     const fallback = isRestartTime ? 'Server restart/reload in progress' : 'Connection lost';
-    finalizeConnectionLoss(reasonStr && reasonStr !== 'socketClosed' ? reasonStr : fallback);
+    finalizeConnectionLoss(disconnectReason && disconnectReason !== 'socketClosed' ? disconnectReason : fallback);
   });
 
   bot.on('error', (err) => {
+    lastConnectionError = err.message || String(err);
     console.log(`[x] Error: ${err.message}`);
     recordSystemLog({
       level: 'error',
