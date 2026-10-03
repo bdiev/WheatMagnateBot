@@ -19,7 +19,7 @@ const {
   isServerStatusIdentityHidden
 } = require('./discord/server-status-visibility');
 const { DiscordChatForwardQueue, positiveInteger } = require('./discord/chat-forward-queue');
-const { formatDiscordBridgeMessage } = require('./discord/chat-message-format');
+const { formatDiscordBridgeMessage, getChatPlayerColor } = require('./discord/chat-message-format');
 const { createChatAvatarLoader } = require('./discord/chat-avatar');
 const loadChatAvatar = createChatAvatarLoader();
 const { NEW_PLAYER_WINDOW_DAYS } = require('./site/player-new-status');
@@ -6113,16 +6113,17 @@ async function deliverGameChatMessageToDiscord({
             timestamp: new Date(createdAt)
           }
         : {
+            // Compact layout: a small head beside the name and no footer
+            // timestamp, since the Discord message already carries its time.
             author: {
               name: [username, isBotPlayer ? 'BOT' : '', isNewPlayer ? 'New Player' : '']
                 .filter(Boolean)
                 .join(' • '),
-              url: `https://namemc.com/profile/${encodeURIComponent(username)}`
+              url: `https://namemc.com/profile/${encodeURIComponent(username)}`,
+              ...(avatar.thumbnail?.url ? { icon_url: avatar.thumbnail.url } : {})
             },
             description: displayMessage,
-            color: isBotPlayer ? 10181046 : 3447003,
-            ...(avatar.thumbnail ? { thumbnail: avatar.thumbnail } : {}),
-            timestamp: new Date(createdAt)
+            color: getChatPlayerColor(username, { isBot: isBotPlayer })
           }]
     };
 

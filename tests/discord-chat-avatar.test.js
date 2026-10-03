@@ -7,6 +7,7 @@ const vm = require('node:vm');
 const sharp = require('sharp');
 const { PermissionsBitField } = require('discord.js');
 const { createChatAvatarLoader } = require('../discord/chat-avatar');
+const { getChatPlayerColor, CHAT_BOT_COLOR } = require('../discord/chat-message-format');
 
 async function run() {
   const png = await sharp({ create: {
@@ -128,11 +129,15 @@ async function run() {
     discordClient: { isReady: () => true, user: {}, channels: { fetch: async () => channel } },
     resolvePlayerChatTags: async () => ({ isBot: false, isNewPlayer: false }),
     formatDiscordBridgeMessage: message => message,
+    getChatPlayerColor,
     loadChatAvatar: async (name, options) => { loaded.push({ name, ...options }); return load(name, options); }
   });
   vm.runInContext(`${sender}\nthis.deliver = deliverGameChatMessageToDiscord;`, context);
   assert.equal(await context.deliver({ username: 'ObbyMagnate', message: 'Hello', allowMentions: false }), true);
-  assert.equal(sent[0].embeds[0].thumbnail.url, `attachment://${sent[0].files[0].name}`);
+  assert.equal(sent[0].embeds[0].author.icon_url, `attachment://${sent[0].files[0].name}`, 'the head sits beside the name');
+  assert.equal(sent[0].embeds[0].thumbnail, undefined, 'compact chat has no large thumbnail');
+  assert.equal(sent[0].embeds[0].timestamp, undefined, 'compact chat relies on the Discord message time');
+  assert.equal(sent[0].embeds[0].color, getChatPlayerColor('obbymagnate'), 'each player keeps a stable colour regardless of case');
   assert.ok(Buffer.isBuffer(sent[0].files[0].attachment));
   assert.equal(sent[0].embeds[0].description, 'Hello');
   await context.deliver({ username: 'Server', message: 'Announcement', allowMentions: false });
@@ -143,7 +148,8 @@ async function run() {
   canAttach = false;
   await context.deliver({ username: 'ObbyMagnate', message: 'Hello again', allowMentions: false });
   assert.equal(sent[3].files, undefined);
-  assert.equal(sent[3].embeds[0].thumbnail.url, 'https://render.namemc.com/skin/2d/face.png?skin=ObbyMagnate&scale=4');
+  assert.equal(sent[3].embeds[0].author.icon_url, 'https://render.namemc.com/skin/2d/face.png?skin=ObbyMagnate&scale=4');
+  assert.equal(getChatPlayerColor('ObbyMagnate', { isBot: true }), CHAT_BOT_COLOR, 'bot accounts share a neutral colour');
   console.log('Discord chat avatar tests passed.');
 }
 
