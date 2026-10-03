@@ -167,6 +167,16 @@ const DEFAULT_ACCOUNT_ID = '00000000-0000-4000-8000-000000000001';
 const COMMAND_WORKER_ID = `legacy:${process.pid}:${require('node:crypto').randomUUID()}`;
 const BOT_COMMAND_EXECUTION_TIMEOUT_MS = 40_000;
 let botCommandWorkerRunning = false;
+// Leases last 45 s, so expired ones only need to be released every few
+// seconds; the claim query itself still runs on every one-second tick.
+const COMMAND_LEASE_RECOVERY_INTERVAL_MS = 15_000;
+const commandLeaseRecoveryAt = new Map();
+function commandLeaseRecoveryDue(scope) {
+  const now = Date.now();
+  if (now - (commandLeaseRecoveryAt.get(scope) || 0) < COMMAND_LEASE_RECOVERY_INTERVAL_MS) return false;
+  commandLeaseRecoveryAt.set(scope, now);
+  return true;
+}
 const MAX_BOT_ACCOUNTS = Math.max(1, Number(process.env.MAX_BOT_ACCOUNTS) || 8);
 const MAX_CONCURRENT_BOTS = Math.max(1, Number(process.env.MAX_CONCURRENT_BOTS) || 3);
 const configuredBotStartDelayMs = Number(process.env.BOT_START_DELAY_MS);
@@ -1330,6 +1340,11 @@ let playtimeSyncInterval = null;
 let playerActivitySyncInterval = null;
 let playerActivitySyncRunning = false;
 let lastObservedOnlinePlayerKeys = null;
+// Each online write is a full identity transaction (~8 queries). The site's
+// presence lease lasts 30 s, so refreshing every player every second only
+// burned CPU; joins, UUID changes and new snapshots are still written at once.
+const PLAYER_ACTIVITY_HEARTBEAT_MS = 10_000;
+const playerActivityHeartbeats = new Map(); // lowercase username -> { at, uuid }
 let playerActivityJoinEventsReady = false;
 // Kept separately from the in-memory player snapshot. Initial playerJoined
 // packets populate that snapshot before it is complete, so it cannot prove
@@ -3223,13 +3238,28 @@ async function syncPlayerActivityOnlineState() {
     const previouslyObserved = lastObservedOnlinePlayerKeys ? new Map(lastObservedOnlinePlayerKeys) : null;
     const liveOnlineKeys = () => new Set(getOnlinePlayerUsernames().map(username => username.toLowerCase()));
 
-    const activityUpdates = await Promise.all(onlineUsernames.map(async username => ({
-      username,
-      result: await updatePlayerActivity(username, true, {
-        recordEvent: false,
-        uuid: getOnlinePlayerUuid(username)
-      })
-    })));
+    const heartbeatAt = Date.now();
+    for (const key of playerActivityHeartbeats.keys()) {
+      if (!onlineKeys.has(key)) playerActivityHeartbeats.delete(key);
+    }
+    const dueUsernames = onlineUsernames.filter(username => {
+      const key = username.toLowerCase();
+      const previous = playerActivityHeartbeats.get(key);
+      return !previous
+        || !previouslyObserved?.has(key)
+        || previous.uuid !== (getOnlinePlayerUuid(username) || null)
+        || heartbeatAt - previous.at >= PLAYER_ACTIVITY_HEARTBEAT_MS;
+    });
+    const activityUpdates = await Promise.all(dueUsernames.map(async username => {
+      const uuid = getOnlinePlayerUuid(username) || null;
+      const result = await updatePlayerActivity(username, true, { recordEvent: false, uuid });
+      if (result) playerActivityHeartbeats.set(username.toLowerCase(), { at: heartbeatAt, uuid });
+      return { username, result };
+    }));
+    const updatedKeys = new Set(dueUsernames.map(username => username.toLowerCase()));
+    for (const username of onlineUsernames) {
+      if (!updatedKeys.has(username.toLowerCase())) playerInfoFirstJoinCheck?.playerJoined(username);
+    }
     activityUpdates.forEach(({ username, result }) => {
       if (result?.created) playerInfoFirstJoinCheck?.enqueue(username);
       playerInfoFirstJoinCheck?.playerJoined(username);
@@ -4952,8 +4982,17 @@ async function refreshObsidianSupplySnapshotForSite() {
   }
 }
 
+// The site refresh runs every 2 s, and each write bumps updated_at, which
+// makes every open browser reload the farm panel. Unchanged supplies only
+// need an occasional keep-alive write.
+const OBSIDIAN_SUPPLY_SNAPSHOT_KEEPALIVE_MS = 60_000;
+let lastSavedObsidianSupplySnapshot = { json: null, at: 0 };
+
 async function saveObsidianSupplySnapshot(supplies) {
   if (!pool || !supplies) return;
+  const suppliesJson = JSON.stringify(supplies);
+  if (suppliesJson === lastSavedObsidianSupplySnapshot.json
+    && Date.now() - lastSavedObsidianSupplySnapshot.at < OBSIDIAN_SUPPLY_SNAPSHOT_KEEPALIVE_MS) return;
   try {
     await pool.query(`
       INSERT INTO obsidian_farm_supply_snapshot (id, supplies, observed_at, updated_at)
@@ -4963,7 +5002,7 @@ async function saveObsidianSupplySnapshot(supplies) {
                     observed_at = COALESCE(EXCLUDED.observed_at, obsidian_farm_supply_snapshot.observed_at),
                     updated_at = NOW()
     `, [
-      JSON.stringify(supplies),
+      suppliesJson,
       supplies.observedAt ? new Date(supplies.observedAt) : null
     ]);
     await pool.query(`
@@ -4974,7 +5013,8 @@ async function saveObsidianSupplySnapshot(supplies) {
         SELECT 1 FROM obsidian_farm_supply_history
         WHERE observed_at = $2::timestamptz
       )
-    `, [JSON.stringify(supplies), supplies.observedAt ? new Date(supplies.observedAt) : null]);
+    `, [suppliesJson, supplies.observedAt ? new Date(supplies.observedAt) : null]);
+    lastSavedObsidianSupplySnapshot = { json: suppliesJson, at: Date.now() };
   } catch (err) {
     console.error('[DB] Failed to save obsidian supply snapshot:', err.message);
   }
@@ -7185,8 +7225,10 @@ async function executeManagedAccountCommand(command) {
 
 async function processManagedAccountCommands() {
   if (!pool || !multiBotManager) return;
-  await pool.query(`UPDATE bot_commands SET status='pending',locked_by=NULL,lease_expires_at=NULL,started_at=NULL
-    WHERE account_id<>$1::uuid AND status='processing' AND lease_expires_at<NOW()`, [DEFAULT_ACCOUNT_ID]);
+  if (commandLeaseRecoveryDue('managed')) {
+    await pool.query(`UPDATE bot_commands SET status='pending',locked_by=NULL,lease_expires_at=NULL,started_at=NULL
+      WHERE account_id<>$1::uuid AND status='processing' AND lease_expires_at<NOW()`, [DEFAULT_ACCOUNT_ID]);
+  }
   const claimed = await pool.query(`WITH next AS (
       SELECT id FROM bot_commands WHERE account_id<>$1::uuid AND status='pending' ORDER BY created_at LIMIT 10 FOR UPDATE SKIP LOCKED
     ) UPDATE bot_commands c SET status='processing',started_at=NOW(),locked_by=$2,lease_expires_at=NOW()+INTERVAL '45 seconds',attempt_count=c.attempt_count+1
@@ -7217,8 +7259,10 @@ async function processBotCommandsOnce() {
   let commands = [];
   try {
     const includeChat = Boolean(bot && typeof bot.chat === 'function');
-    await pool.query(`UPDATE bot_commands SET status='pending',locked_by=NULL,lease_expires_at=NULL,started_at=NULL
-      WHERE account_id=$1::uuid AND status='processing' AND lease_expires_at<NOW()`, [DEFAULT_ACCOUNT_ID]);
+    if (commandLeaseRecoveryDue('default')) {
+      await pool.query(`UPDATE bot_commands SET status='pending',locked_by=NULL,lease_expires_at=NULL,started_at=NULL
+        WHERE account_id=$1::uuid AND status='processing' AND lease_expires_at<NOW()`, [DEFAULT_ACCOUNT_ID]);
+    }
     const result = await pool.query(`
       WITH next_commands AS (
         SELECT id

@@ -77,6 +77,13 @@ let databaseEventTimer = null;
 let databaseEventPollRunning = false;
 let databaseEventState = null;
 let lastDatabaseEventErrorAt = 0;
+// With nobody connected over SSE the markers only keep server caches fresh,
+// so they are polled far less often. The player_activity counters scan the
+// whole table and change rarely, so they are refreshed on a slower cadence.
+const DATABASE_EVENT_IDLE_POLL_MS = 5_000;
+const PLAYER_INFO_ACTIVITY_POLL_MS = 10_000;
+let lastDatabaseEventPollAt = 0;
+let playerInfoActivityMarker = { value: null, at: 0 };
 let logRetentionTimer = null;
 let playerPresenceTimer = null;
 let liveDashboardCache = null;
@@ -6616,8 +6623,21 @@ function signature(value) {
 
 async function pollDatabaseEvents() {
   if (!pool || databaseEventPollRunning) return;
+  if (sseHub.connectionCount === 0 && Date.now() - lastDatabaseEventPollAt < DATABASE_EVENT_IDLE_POLL_MS) return;
   databaseEventPollRunning = true;
+  lastDatabaseEventPollAt = Date.now();
   try {
+    if (playerInfoActivityMarker.value === null || Date.now() - playerInfoActivityMarker.at >= PLAYER_INFO_ACTIVITY_POLL_MS) {
+      const activityResult = await pool.query(`
+        SELECT CONCAT(
+          COUNT(*) FILTER (WHERE registration_at IS NOT NULL), ':',
+          COUNT(*) FILTER (WHERE last_seen IS NOT NULL), ':',
+          COUNT(*) FILTER (WHERE observed_message_count IS NOT NULL)
+        ) AS player_info_activity
+        FROM player_activity
+      `);
+      playerInfoActivityMarker = { value: String(activityResult.rows[0]?.player_info_activity || '0:0:0'), at: Date.now() };
+    }
     const markersResult = await pool.query(`
         SELECT
           (SELECT observed_at FROM bot_status_snapshots WHERE id=1) AS bot_status_at,
@@ -6634,11 +6654,6 @@ async function pollDatabaseEvents() {
           (SELECT MAX(updated_at) FROM player_playtime) AS player_info_at,
           (SELECT MAX(updated_at) FROM player_info_observation_state) AS player_info_observation_at,
           (SELECT MAX(updated_at) FROM player_info_lookup_exclusions) AS player_info_exclusion_at,
-          (SELECT CONCAT(
-            COUNT(*) FILTER (WHERE registration_at IS NOT NULL), ':',
-            COUNT(*) FILTER (WHERE last_seen IS NOT NULL), ':',
-            COUNT(*) FILTER (WHERE observed_message_count IS NOT NULL)
-          ) FROM player_activity) AS player_info_activity,
           GREATEST(
             COALESCE((SELECT MAX(updated_at) FROM admin_settings), '-infinity'::timestamptz),
             COALESCE((SELECT MAX(COALESCE(finished_at,started_at,created_at)) FROM bot_commands), '-infinity'::timestamptz),
@@ -6658,7 +6673,7 @@ async function pollDatabaseEvents() {
       playerInfoAt: signature(row.player_info_at),
       playerInfoObservationAt: signature(row.player_info_observation_at),
       playerInfoExclusionAt: signature(row.player_info_exclusion_at),
-      playerInfoActivity: String(row.player_info_activity || '0:0:0'),
+      playerInfoActivity: playerInfoActivityMarker.value,
       players: new Map((Array.isArray(row.online_players) ? row.online_players : []).map(username => [username.toLowerCase(), username]))
     };
     if (!databaseEventState) {
@@ -6736,7 +6751,7 @@ async function pollDatabaseEvents() {
 function startDatabaseEventPoller() {
   if (!pool || databaseEventTimer) return;
   pollDatabaseEvents();
-  const intervalMs = Math.min(10_000, Math.max(100, Number(process.env.SSE_DATABASE_POLL_MS) || 250));
+  const intervalMs = Math.min(10_000, Math.max(100, Number(process.env.SSE_DATABASE_POLL_MS) || 1_000));
   databaseEventTimer = setInterval(pollDatabaseEvents, intervalMs);
   databaseEventTimer.unref?.();
 }

@@ -478,6 +478,8 @@ async function simulate({ seed, hours, profile = PROFILES.soak, mutation = null,
       playerActivityJoinEventsReady: false,
       playerActivityReconciliationPending: true,
       playerActivitySyncRunning: false,
+      PLAYER_ACTIVITY_HEARTBEAT_MS: mutation?.heartbeatMs ?? 10_000,
+      playerActivityHeartbeats: new Map(),
       playerActivitySyncInterval: null,
       playtimeSyncInterval: null,
       playerInfoFirstJoinCheck: null,
@@ -914,6 +916,10 @@ const MUTATIONS = [
   {
     name: 'presence sync iterating map entries instead of keys',
     detects: /online list .* differs/,
+    // The bug only shows when a stale online write races a leave. Refreshing
+    // every player on every sync maximizes those races, so the harness still
+    // proves it notices the missing repair with the throttled heartbeat.
+    heartbeatMs: 0,
     apply: lifted => ({
       ...lifted,
       syncPlayerActivityOnlineState: replaceOnce(lifted.syncPlayerActivityOnlineState, '[...previouslyObserved.keys()]', '[...previouslyObserved]')
