@@ -1334,7 +1334,6 @@ let whisperFooterUpdateIntervals = new Map(); // channelId -> interval handle fo
 let whisperDeleteTimestamps = new Map(); // channelId -> timestamp when channel will be deleted
 let customDialogTTL = new Map(); // channelId -> custom TTL in ms (user-configured)
 const temporaryInteractionMessages = new Map(); // messageId -> { interval, timeout, deadline }
-const seenActivityUpdateIntervals = new Map();
 const growingChildPlainMessageIds = new Set();
 let recentWhispers = new Map(); // key: `WHISPER:username:message` -> timestamp, to mark whispers and suppress chat forwarding
 let pendingChatTimers = new Map(); // normalized message key -> Set<timeout handle>
@@ -1453,12 +1452,21 @@ function getTemporaryMessageFooter(messageId) {
   return { text: `Closes in ${formatCountdown(state.deadline - Date.now())}` };
 }
 
-function stopSeenActivityUpdates(messageId) {
-  const interval = seenActivityUpdateIntervals.get(messageId);
-  if (interval) {
-    clearInterval(interval);
-    seenActivityUpdateIntervals.delete(messageId);
-  }
+// Keeps the "Closes in" countdown on a temporary reply that was just re-rendered.
+function withTemporaryFooter(payload, messageId) {
+  const countdown = getTemporaryMessageFooter(messageId);
+  const embed = payload.embeds?.[0];
+  if (!countdown || !embed) return payload;
+  embed.footer = { text: embed.footer?.text ? `${embed.footer.text} • ${countdown.text}` : countdown.text };
+  return payload;
+}
+
+function stopTemporaryInteractionMessage(messageId) {
+  const state = temporaryInteractionMessages.get(messageId);
+  if (!state) return;
+  clearInterval(state.interval);
+  clearTimeout(state.timeout);
+  temporaryInteractionMessages.delete(messageId);
 }
 
 async function startTemporaryInteractionMessage(interaction, ttlMs = 2 * 60 * 1000) {
@@ -1476,7 +1484,6 @@ async function startTemporaryInteractionMessage(interaction, ttlMs = 2 * 60 * 10
   }
 
   const deadline = Date.now() + ttlMs;
-  const originalFooter = message.embeds?.[0]?.footer?.text || '';
 
   const updateCountdown = async () => {
     const remaining = deadline - Date.now();
@@ -1487,9 +1494,9 @@ async function startTemporaryInteractionMessage(interaction, ttlMs = 2 * 60 * 10
       const embeds = current.embeds.map((embed, index) => {
         const data = embed.toJSON();
         if (index === 0) {
-          const prefix = originalFooter && !originalFooter.startsWith('Closes in ')
-            ? `${originalFooter} • `
-            : '';
+          // Re-read the footer each tick: paged views change it between ticks.
+          const baseFooter = String(data.footer?.text || '').replace(/(?:^| • )Closes in .*$/, '');
+          const prefix = baseFooter ? `${baseFooter} • ` : '';
           data.footer = { text: `${prefix}Closes in ${formatCountdown(remaining)}` };
         }
         return data;
@@ -1517,6 +1524,29 @@ async function startTemporaryInteractionMessage(interaction, ttlMs = 2 * 60 * 10
 
 function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Discord users may only whisper the player they picked. A leading
+// "/msg <player>" or "/r" typed out of habit is dropped, and whatever is left
+// is always sent as whisper text, never as a command of its own.
+function buildPlayerWhisperCommands(username, rawText) {
+  const name = String(username || '');
+  if (!/^[A-Za-z0-9_]{1,16}$/.test(name)) return [];
+  const habitPrefix = new RegExp(`^/(?:(?:msg|tell|w|whisper)\\s+${escapeRegExp(name)}|r)(?:\\s+|$)`, 'i');
+  const maxTextLength = 256 - `/msg ${name} `.length;
+  return String(rawText || '')
+    .split('\n')
+    .map(line => line.trim().replace(habitPrefix, '').trim().slice(0, maxTextLength))
+    .filter(Boolean)
+    .map(text => ({ text, command: `/msg ${name} ${text}` }));
+}
+
+function markOutboundWhisper(username, text) {
+  const normalized = String(text || '')
+    .replace(/§[0-9a-fk-or]/gi, '')
+    .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
+    .trim();
+  if (normalized) outboundWhispers.set(`OUTBOUND:${username.toLowerCase()}:${normalized}`, Date.now());
 }
 
 const {
@@ -3356,9 +3386,9 @@ const {
   searchNonWhitelistPlaytime,
   parsePlaytime,
   formatPlaytime,
-  formatPlaytimeLeaderboard,
   buildPlaytimeComponents,
   buildWhitelistPlaytimeMessage,
+  normalizePlaytimePeriod,
   setPlayerPlaytime
 } = createPlaytimeFeature({
   pool,
@@ -8862,13 +8892,10 @@ function chunkInlineCodeUsernameList(usernames, maxLength = 1000) {
   return chunks.length > 0 ? chunks : [formatInlineCodeUsernameList(usernames)];
 }
 
-function buildRosterFields(title, usernames, { empty = 'None online', withHeads = false, inlineCodeList = false } = {}) {
-  const lines = usernames && usernames.length > 0
-    ? (inlineCodeList
-        ? chunkInlineCodeUsernameList(usernames)
-        : usernames.map(username => withHeads
-            ? formatPlayerHeadName(username, 'bold')
-            : `\`${String(username || 'Unknown')}\``))
+function buildRosterFields(title, entries, { empty = 'None online', inlineCodeList = false } = {}) {
+  // Entries are ready-made lines unless they are plain names for an inline-code list.
+  const lines = entries && entries.length > 0
+    ? (inlineCodeList ? chunkInlineCodeUsernameList(entries) : entries)
     : [empty];
   const fields = [];
   let value = '';
@@ -8887,7 +8914,35 @@ function buildRosterFields(title, usernames, { empty = 'None online', withHeads 
   return fields;
 }
 
-function buildOnlinePlayersMessage() {
+function getPlayerPingMs(username) {
+  const ping = bot?.players?.[username]?.ping;
+  return Number.isFinite(ping) && ping > 0 ? Math.round(ping) : null;
+}
+
+function toDiscordRelativeTime(value) {
+  const ms = value ? new Date(value).getTime() : NaN;
+  return Number.isFinite(ms) ? `<t:${Math.floor(ms / 1000)}:R>` : null;
+}
+
+async function getOnlineSinceByUsername(usernames) {
+  const result = new Map();
+  if (!pool || usernames.length === 0) return result;
+  try {
+    const { rows } = await pool.query(`
+      SELECT LOWER(username) AS username_key, online_since
+      FROM player_activity
+      WHERE is_online = TRUE
+        AND online_since IS NOT NULL
+        AND LOWER(username) = ANY($1::text[])
+    `, [usernames.map(username => username.toLowerCase())]);
+    for (const row of rows) result.set(row.username_key, row.online_since);
+  } catch (err) {
+    console.error('[Discord] Failed to load online-since times:', err.message);
+  }
+  return result;
+}
+
+async function buildOnlinePlayersMessage() {
   const allOnlinePlayers = [...new Set(Object.values(bot?.players || {})
     .map(player => player.username)
     .filter(Boolean))]
@@ -8897,15 +8952,28 @@ function buildOnlinePlayersMessage() {
   const whitelistCount = whitelistOnline.length;
   const otherCount = otherPlayers.length;
   const totalCount = allOnlinePlayers.length;
+  const onlineSince = await getOnlineSinceByUsername(whitelistOnline);
   const summary = totalCount > 0
     ? `${STATUS_EMOJIS.players} **${totalCount} online**  |  ${STATUS_EMOJIS.whitelist} **${whitelistCount} whitelist**  |  ${STATUS_EMOJIS.nearby} **${otherCount} others**`
     : `${STATUS_EMOJIS.players} No players online right now.`;
+  const whitelistLines = whitelistOnline.map(username => {
+    const ping = getPlayerPingMs(username);
+    const since = toDiscordRelativeTime(onlineSince.get(username.toLowerCase()));
+    return [
+      formatPlayerHeadName(username, 'bold'),
+      ping == null ? null : `${ping} ms`,
+      since ? `joined ${since}` : null
+    ].filter(Boolean).join(' · ');
+  });
+  const otherEntries = otherPlayers.map(username => {
+    const ping = getPlayerPingMs(username);
+    return ping == null ? username : `${username} ${ping}ms`;
+  });
   const fields = [
-    ...buildRosterFields(`${STATUS_EMOJIS.whitelist} Whitelist (${whitelistCount})`, whitelistOnline, {
-      empty: 'No whitelist players online.',
-      withHeads: true
+    ...buildRosterFields(`${STATUS_EMOJIS.whitelist} Whitelist (${whitelistCount})`, whitelistLines, {
+      empty: 'No whitelist players online.'
     }),
-    ...buildRosterFields(`${STATUS_EMOJIS.players} Others (${otherCount})`, otherPlayers, {
+    ...buildRosterFields(`${STATUS_EMOJIS.players} Others (${otherCount})`, otherEntries, {
       empty: 'No other players online.',
       inlineCodeList: true
     })
@@ -8927,6 +8995,15 @@ function buildOnlinePlayersMessage() {
       )
     );
   }
+  components.push(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('playerlist_refresh')
+        .setLabel('Refresh')
+        .setEmoji(UI_BUTTON_EMOJIS.slowFalling)
+        .setStyle(ButtonStyle.Secondary)
+    )
+  );
 
   return {
     embeds: [{
@@ -9205,40 +9282,136 @@ function buildFollowManagementPayload(message = '', color = 3447003) {
   };
 }
 
-function formatSeenTimestamp(timestamp) {
-  if (!timestamp) return 'Never seen';
-  const diffSecs = Math.max(0, Math.floor((Date.now() - new Date(timestamp).getTime()) / 1000));
-  if (diffSecs < 60) return `${diffSecs}s ago`;
-  const diffMins = Math.floor(diffSecs / 60);
-  if (diffMins < 60) return `${diffMins}m ${diffSecs % 60}s ago`;
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${diffHours}h ${diffMins % 60}m ago`;
-  const diffDays = Math.floor(diffHours / 24);
-  return `${diffDays}d ${diffHours % 24}h ago`;
-}
-
-function createSeenActivityComponents(messageId) {
-  const buttons = [
-    new ButtonBuilder()
-      .setCustomId('seen_non_whitelist_search')
-      .setLabel('Search non-whitelist')
-      .setEmoji(STATUS_BUTTON_EMOJIS.seen)
-      .setStyle(ButtonStyle.Secondary)
-  ];
-
-  if (messageId) {
-    buttons.push(
-      new ButtonBuilder()
-        .setCustomId(`remove_${messageId}`)
-        .setLabel('Remove')
-        .setStyle(ButtonStyle.Danger)
-    );
+async function buildMentionKeywordsPayload(discordUserId, notice = '') {
+  const result = await getUserMentionKeywords(discordUserId);
+  if (!result.success) {
+    return {
+      embeds: [{
+        title: '❌ Error',
+        description: `Failed to load keywords: ${result.error}`,
+        color: 16711680,
+        timestamp: new Date()
+      }],
+      components: []
+    };
   }
 
-  return [
-    new ActionRowBuilder()
-      .addComponents(...buttons)
+  const keywords = result.keywords || [];
+  const description = keywords.length > 0
+    ? `**Your current mention keywords:**\n${keywords.map(k => `• \`${k}\``).join('\n')}\n\nYou will be mentioned in Discord when these words appear in game chat.`
+    : 'You have no mention keywords set.\n\nAdd keywords to get mentioned when they appear in game chat.';
+  const components = [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('add_mention_keyword')
+        .setLabel('➕ Add Keyword')
+        .setStyle(ButtonStyle.Success)
+    )
   ];
+  if (keywords.length > 0) {
+    components.push(new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId('remove_mention_keyword_select')
+        .setPlaceholder('Select keyword to remove')
+        .addOptions(keywords.slice(0, 25).map(keyword =>
+          new StringSelectMenuOptionBuilder().setLabel(keyword).setValue(keyword)
+        ))
+    ));
+  }
+
+  return {
+    embeds: [{
+      title: `${STATUS_EMOJIS.mentions} Mention Keywords`,
+      description: notice ? `${notice}\n\n${description}` : description,
+      color: notice ? 65280 : 3447003,
+      timestamp: new Date()
+    }],
+    components
+  };
+}
+
+function createSeenActivityComponents({ showBack = false } = {}) {
+  const buttons = showBack
+    ? [
+        new ButtonBuilder()
+          .setCustomId('seen_back')
+          .setLabel('Back to whitelist')
+          .setEmoji(STATUS_BUTTON_EMOJIS.seen)
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('seen_non_whitelist_search')
+          .setLabel('Search again')
+          .setStyle(ButtonStyle.Secondary)
+      ]
+    : [
+        new ButtonBuilder()
+          .setCustomId('seen_non_whitelist_search')
+          .setLabel('Search non-whitelist')
+          .setEmoji(STATUS_BUTTON_EMOJIS.seen)
+          .setStyle(ButtonStyle.Secondary)
+      ];
+  buttons.push(
+    new ButtonBuilder()
+      .setCustomId('seen_remove')
+      .setLabel('Remove')
+      .setStyle(ButtonStyle.Danger)
+  );
+  return [new ActionRowBuilder().addComponents(...buttons)];
+}
+
+function joinLinesWithinLimit(lines, limit = 4000) {
+  const kept = [];
+  let length = 0;
+  for (const line of lines) {
+    if (length + line.length + 1 > limit - 40) {
+      kept.push(`...and ${lines.length - kept.length} more`);
+      break;
+    }
+    kept.push(line);
+    length += line.length + 1;
+  }
+  return kept.join('\n');
+}
+
+// Relative times are Discord timestamps, so the client keeps them current and
+// the message never has to be edited just to tick the clock.
+async function buildSeenActivityMessage() {
+  const title = `${STATUS_EMOJIS.seen} Whitelist Activity`;
+  const activityData = await getWhitelistActivity();
+  if (activityData.error) {
+    return {
+      embeds: [{ title, description: `❌ Error: ${activityData.error}`, color: 16711680, timestamp: new Date() }],
+      components: createSeenActivityComponents()
+    };
+  }
+
+  const players = activityData.players || [];
+  const onlineLines = [];
+  const offlineLines = [];
+  for (const player of players) {
+    const name = formatPlayerHeadName(player.username, 'bold');
+    if (player.is_online) {
+      const since = toDiscordRelativeTime(player.online_since);
+      onlineLines.push(since ? `${name} · joined ${since}` : `${name} · online`);
+    } else {
+      offlineLines.push(`${name} · ${toDiscordRelativeTime(player.last_seen) || 'never seen'}`);
+    }
+  }
+  const lines = [
+    ...(onlineLines.length ? [`**Online (${onlineLines.length})**`, ...onlineLines] : []),
+    ...(onlineLines.length && offlineLines.length ? [''] : []),
+    ...(offlineLines.length ? [`**Offline (${offlineLines.length})**`, ...offlineLines] : [])
+  ];
+
+  return {
+    embeds: [{
+      title: `${title} · ${players.length} players`,
+      description: lines.length ? joinLinesWithinLimit(lines) : 'No whitelist players found.',
+      color: 3447003,
+      timestamp: new Date()
+    }],
+    components: createSeenActivityComponents()
+  };
 }
 
 function buildNonWhitelistSeenSearchEmbed(query, result) {
@@ -9249,7 +9422,7 @@ function buildNonWhitelistSeenSearchEmbed(query, result) {
       ? `No non-whitelist players found for \`${query}\`.`
       : players
           .map(player => {
-            const status = player.is_online ? 'Online' : formatSeenTimestamp(player.last_seen);
+            const status = player.is_online ? 'Online' : (toDiscordRelativeTime(player.last_seen) || 'Never seen');
             return `${formatPlayerHeadName(player.username, 'bold')} - ${status}`;
           })
           .join('\n');
@@ -11658,55 +11831,25 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           await startTemporaryInteractionMessage(interaction);
           return;
         }
-        await interaction.editReply(buildOnlinePlayersMessage());
+        await interaction.editReply(await buildOnlinePlayersMessage());
         await startTemporaryInteractionMessage(interaction);
+        return;
+      } else if (interaction.customId === 'playerlist_refresh') {
+        await interaction.deferUpdate();
+        if (!bot) return;
+        await interaction.editReply(withTemporaryFooter(await buildOnlinePlayersMessage(), interaction.message.id));
         return;
       } else if (interaction.customId === 'playtime_button') {
         await interaction.deferReply();
-        const playtimeData = await getWhitelistPlaytime();
-        if (playtimeData.error) {
-          await interaction.editReply({
-            embeds: [{
-              title: 'Whitelist Playtime',
-              description: `Error: ${playtimeData.error}`,
-              color: 16711680,
-              timestamp: new Date()
-            }]
-          });
-          await startTemporaryInteractionMessage(interaction);
-          return;
-        }
-
-        const players = playtimeData.players || [];
-        const description = formatPlaytimeLeaderboard(players);
-
-        await interaction.editReply({
-          embeds: [{
-            title: `${STATUS_EMOJIS.playtime} Whitelist Playtime · ${players.length} players`,
-            description,
-            color: 3447003,
-            timestamp: new Date(),
-            footer: { text: 'Press Refresh to update this table' }
-          }],
-          components: [
-            new ActionRowBuilder().addComponents(
-              new ButtonBuilder()
-                .setCustomId('playtime_refresh_button')
-                .setLabel('Refresh')
-                .setEmoji(UI_BUTTON_EMOJIS.slowFalling)
-                .setStyle(ButtonStyle.Secondary),
-              new ButtonBuilder()
-                .setCustomId('playtime_non_whitelist_search')
-                .setLabel('Search non-whitelist')
-                .setEmoji(STATUS_BUTTON_EMOJIS.seen)
-                .setStyle(ButtonStyle.Secondary)
-            )
-          ]
-        }); 
-        await startTemporaryInteractionMessage(interaction);
-      } else if (interaction.customId === 'playtime_refresh_button') {
-        await interaction.deferUpdate();
         await interaction.editReply(await buildWhitelistPlaytimeMessage());
+        await startTemporaryInteractionMessage(interaction);
+      } else if (interaction.customId.startsWith('playtime_period_') || interaction.customId.startsWith('playtime_page_')) {
+        const [, kind, period, page] = interaction.customId.split('_');
+        await interaction.deferUpdate();
+        await interaction.editReply(withTemporaryFooter(await buildWhitelistPlaytimeMessage({
+          period: normalizePlaytimePeriod(period),
+          page: kind === 'page' ? Number(page) : 0
+        }), interaction.message.id));
       } else if (interaction.customId === 'playtime_non_whitelist_search') {
         const modal = new ModalBuilder()
           .setCustomId('playtime_non_whitelist_search_modal')
@@ -11882,221 +12025,21 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         await interaction.update(buildChatSettingsPayload());
       } else if (interaction.customId === 'seen_button') {
         await interaction.deferReply();
-        
-        const activityData = await getWhitelistActivity();
-        
-        if (activityData.error) {
-          await interaction.editReply({
-            embeds: [{
-              title: `${STATUS_EMOJIS.seen} Player Activity`,
-              description: `❌ Error: ${activityData.error}`,
-              color: 16711680,
-              timestamp: new Date()
-            }]
-          });
-          await startTemporaryInteractionMessage(interaction);
-          return;
-        }
-        
-        if (!activityData.players || activityData.players.length === 0) {
-          await interaction.editReply({
-            embeds: [{
-              title: `${STATUS_EMOJIS.seen} Player Activity`,
-              description: 'No whitelist players found.',
-              color: 3447003,
-              timestamp: new Date()
-            }]
-          });
-          await startTemporaryInteractionMessage(interaction);
-          return;
-        }
-        
-        // Format the player activity information
-        const formatTimeDiff = (timestamp) => {
-          if (!timestamp) return 'Never seen';
-          const now = new Date();
-          const lastSeen = new Date(timestamp);
-          const diffMs = now - lastSeen;
-          const diffSecs = Math.floor(diffMs / 1000);
-          const diffMins = Math.floor(diffSecs / 60);
-          const diffHours = Math.floor(diffMins / 60);
-          const diffDays = Math.floor(diffHours / 24);
-          
-          if (diffSecs < 60) return `${diffSecs}s ago`;
-          if (diffMins < 60) return `${diffMins}m ${diffSecs % 60}s ago`;
-          if (diffHours < 24) return `${diffHours}h ${diffMins % 60}m ago`;
-          return `${diffDays}d ${diffHours % 24}h ago`;
-        };
-        
-        const onlinePlayers = [];
-        const offlinePlayers = [];
-        
-        for (const player of activityData.players) {
-          const timeStr = formatTimeDiff(player.last_seen);
-          const entry = `${formatPlayerHeadName(player.username, 'bold')} - ${timeStr}`;
-
-          if (player.is_online) {
-            onlinePlayers.push(entry);
-          } else if (player.last_seen) {
-            offlinePlayers.push(entry);
-          } else {
-            offlinePlayers.push(`${formatPlayerHeadName(player.username, 'bold')} - Never seen`);
-          }
-        }
-        
-        const description = [
-          onlinePlayers.length > 0 ? '**Online:**\n' + onlinePlayers.join('\n') : '',
-          offlinePlayers.length > 0 ? '\n**Offline:**\n' + offlinePlayers.join('\n') : ''
-        ].filter(s => s).join('\n') || 'No activity data available.';
-        
-        // First send the reply without the Remove button to obtain the message ID
-        await interaction.editReply({
-          embeds: [{
-            title: `${STATUS_EMOJIS.seen} Whitelist Activity (${activityData.players.length} players)`,
-            description,
-            color: 3447003,
-            timestamp: new Date()
-          }],
-          components: createSeenActivityComponents()
-        });
-
-        // Fetch the sent reply to get its ID, then add the Remove button bound to that ID
-        const activityMessage = await interaction.fetchReply();
-        await activityMessage.edit({
-          embeds: [{
-            title: `${STATUS_EMOJIS.seen} Whitelist Activity (${activityData.players.length} players)`,
-            description,
-            color: 3447003,
-            timestamp: new Date()
-          }],
-          components: createSeenActivityComponents(activityMessage.id)
-        });
-        
-        // Refresh activity data every 10 seconds.
-        const updateInterval = setInterval(async () => {
-          try {
-            const updatedData = await getWhitelistActivity();
-            if (updatedData.error || !updatedData.players) {
-              clearInterval(updateInterval);
-              return;
-            }
-            
-            const onlinePlayersUpdated = [];
-            const offlinePlayersUpdated = [];
-            
-            for (const player of updatedData.players) {
-              const timeStr = formatTimeDiff(player.last_seen);
-              const entry = `${formatPlayerHeadName(player.username, 'bold')} - ${timeStr}`;
-
-              if (player.is_online) {
-                onlinePlayersUpdated.push(entry);
-              } else if (player.last_seen) {
-                offlinePlayersUpdated.push(entry);
-              } else {
-                offlinePlayersUpdated.push(`${formatPlayerHeadName(player.username, 'bold')} - Never seen`);
-              }
-            }
-            
-            const updatedDescription = [
-              onlinePlayersUpdated.length > 0 ? '**Online:**\n' + onlinePlayersUpdated.join('\n') : '',
-              offlinePlayersUpdated.length > 0 ? '\n**Offline:**\n' + offlinePlayersUpdated.join('\n') : ''
-            ].filter(s => s).join('\n') || 'No activity data available.';
-            const countdownFooter = getTemporaryMessageFooter(activityMessage.id);
-
-            await activityMessage.edit({
-              embeds: [{
-                title: `${STATUS_EMOJIS.seen} Whitelist Activity (${updatedData.players.length} players)`,
-                description: updatedDescription,
-                color: 3447003,
-                timestamp: new Date(),
-                ...(countdownFooter ? { footer: countdownFooter } : {})
-              }],
-              components: createSeenActivityComponents(activityMessage.id)
-            });
-          } catch (err) {
-            // If the message was deleted or is unknown, stop the interval quietly
-            const msg = (err && err.message) ? err.message : '';
-            if (err.code === 10008 || msg.includes('Unknown Message')) {
-              clearInterval(updateInterval);
-              seenActivityUpdateIntervals.delete(activityMessage.id);
-            } else {
-              clearInterval(updateInterval);
-              seenActivityUpdateIntervals.delete(activityMessage.id);
-            }
-          }
-        }, 10_000);
-        seenActivityUpdateIntervals.set(activityMessage.id, updateInterval);
-
+        await interaction.editReply(await buildSeenActivityMessage());
         await startTemporaryInteractionMessage(interaction);
-
-        // The temporary message itself is deleted after 2 minutes.
-        setTimeout(() => {
-          clearInterval(updateInterval);
-          seenActivityUpdateIntervals.delete(activityMessage.id);
-        }, 2 * 60 * 1000);
+      } else if (interaction.customId === 'seen_back') {
+        await interaction.deferUpdate();
+        await interaction.editReply(withTemporaryFooter(await buildSeenActivityMessage(), interaction.message.id));
+      } else if (interaction.customId === 'seen_remove') {
+        stopTemporaryInteractionMessage(interaction.message.id);
+        await interaction.deferUpdate();
+        await interaction.message.delete().catch(err => {
+          console.error('[Discord] Failed to delete Seen message:', err.message);
+        });
       } else if (interaction.customId === 'mentions_button') {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         
-        const result = await getUserMentionKeywords(interaction.user.id);
-        
-        if (!result.success) {
-          await interaction.editReply({
-            embeds: [{
-              title: '❌ Error',
-              description: `Failed to load keywords: ${result.error}`,
-              color: 16711680,
-              timestamp: new Date()
-            }]
-          });
-          await startTemporaryInteractionMessage(interaction);
-          return;
-        }
-
-        const keywords = result.keywords || [];
-        const description = keywords.length > 0
-          ? `**Your current mention keywords:**\n${keywords.map(k => `• \`${k}\``).join('\n')}\n\nYou will be mentioned in Discord when these words appear in game chat.`
-          : 'You have no mention keywords set.\n\nAdd keywords to get mentioned when they appear in game chat.';
-
-        const components = [
-          new ActionRowBuilder()
-            .addComponents(
-              new ButtonBuilder()
-                .setCustomId('add_mention_keyword')
-                .setLabel('➕ Add Keyword')
-                .setStyle(ButtonStyle.Success),
-              new ButtonBuilder()
-                .setCustomId('remove_mention_keyword_button')
-                .setLabel('➖ Remove Keyword')
-                .setStyle(ButtonStyle.Danger)
-                .setDisabled(keywords.length === 0)
-            )
-        ];
-
-        // Add remove option if there are keywords
-        if (keywords.length > 0) {
-          const removeOptions = keywords.slice(0, 25).map(keyword =>
-            new StringSelectMenuOptionBuilder()
-              .setLabel(keyword)
-              .setValue(keyword)
-          );
-          
-          const selectMenu = new StringSelectMenuBuilder()
-            .setCustomId('remove_mention_keyword_select')
-            .setPlaceholder('Select keyword to remove')
-            .addOptions(removeOptions);
-          
-          components.push(new ActionRowBuilder().addComponents(selectMenu));
-        }
-
-        await interaction.editReply({
-          embeds: [{
-            title: `${STATUS_EMOJIS.mentions} Mention Keywords`,
-            description,
-            color: 3447003,
-            timestamp: new Date()
-          }],
-          components
-        });
+        await interaction.editReply(await buildMentionKeywordsPayload(interaction.user.id));
         await startTemporaryInteractionMessage(interaction);
       } else if (interaction.customId.startsWith('reply_')) {
         const parts = interaction.customId.split('_');
@@ -12109,32 +12052,16 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         const messageInput = new TextInputBuilder()
           .setCustomId('reply_message')
           .setLabel('Message')
+          .setPlaceholder(`Whisper to ${username}`)
           .setStyle(TextInputStyle.Paragraph)
-          .setValue('/r ')
+          .setMaxLength(1000)
           .setRequired(true);
 
         const actionRow = new ActionRowBuilder().addComponents(messageInput);
         modal.addComponents(actionRow);
 
         await interaction.showModal(modal);
-      } else if (interaction.customId === 'remove_mention_keyword_button') {
-        const modal = new ModalBuilder()
-          .setCustomId('remove_keyword_modal')
-          .setTitle('Remove Mention Keyword');
-
-        const keywordInput = new TextInputBuilder()
-          .setCustomId('keyword_remove_input')
-          .setLabel('Keyword to Remove')
-          .setPlaceholder('Enter keyword to remove')
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true);
-
-        const actionRow = new ActionRowBuilder().addComponents(keywordInput);
-        modal.addComponents(actionRow);
-
-        await interaction.showModal(modal);
       } else if (interaction.customId === 'seen_non_whitelist_search') {
-        stopSeenActivityUpdates(interaction.message?.id);
         const modal = new ModalBuilder()
           .setCustomId('seen_non_whitelist_search_modal')
           .setTitle('Search non-whitelist seen');
@@ -12151,7 +12078,6 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       } else if (interaction.customId.startsWith('remove_')) {
         const messageId = interaction.customId.split('_')[1];
         try {
-          stopSeenActivityUpdates(messageId);
           const message = await interaction.channel.messages.fetch(messageId);
           await message.delete();
           // If it was an auth message, untrack and drop exclusion
@@ -12205,10 +12131,10 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       try {
         await interaction.deferUpdate();
         const result = await searchNonWhitelistPlaytime(query, 25);
-        const payload = {
+        const payload = withTemporaryFooter({
           embeds: [buildNonWhitelistPlaytimeSearchEmbed(query, result)],
-          components: buildPlaytimeComponents()
-        };
+          components: buildPlaytimeComponents({ showBack: true })
+        }, interaction.message?.id);
         if (interaction.message) await interaction.message.edit(payload);
         else await interaction.editReply(payload);
       } catch (err) {
@@ -12219,7 +12145,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             color: 16711680,
             timestamp: new Date()
           }],
-          components: buildPlaytimeComponents()
+          components: buildPlaytimeComponents({ showBack: true })
         };
         if (interaction.message && interaction.deferred) {
           await interaction.message.edit(errorPayload).catch(() => {});
@@ -12229,14 +12155,13 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       }
     } else if (interaction.isModalSubmit() && interaction.customId === 'seen_non_whitelist_search_modal') {
       const query = interaction.fields.getTextInputValue('seen_search_query').trim();
-      stopSeenActivityUpdates(interaction.message?.id);
       try {
         await interaction.deferUpdate();
         const result = await searchNonWhitelistActivity(query, 25);
-        const payload = {
+        const payload = withTemporaryFooter({
           embeds: [buildNonWhitelistSeenSearchEmbed(query, result)],
-          components: interaction.message?.id ? createSeenActivityComponents(interaction.message.id) : []
-        };
+          components: createSeenActivityComponents({ showBack: true })
+        }, interaction.message?.id);
         if (interaction.message) {
           await interaction.message.edit(payload);
         }
@@ -12248,7 +12173,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
             color: 16711680,
             timestamp: new Date()
           }],
-          components: interaction.message?.id ? createSeenActivityComponents(interaction.message.id) : []
+          components: createSeenActivityComponents({ showBack: true })
         };
         if (interaction.message && interaction.deferred) {
           await interaction.message.edit(errorPayload).catch(() => {});
@@ -12298,49 +12223,6 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       } else {
         await interaction.editReply(`❌ Failed to add keyword: ${result.error}`);
       }
-    } else if (interaction.isModalSubmit() && interaction.customId === 'remove_keyword_modal') {
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-      
-      const keyword = interaction.fields.getTextInputValue('keyword_remove_input').trim().toLowerCase();
-      
-      if (!keyword) {
-        await interaction.editReply('❌ Keyword cannot be empty.');
-        return;
-      }
-
-      const result = await removeMentionKeyword(interaction.user.id, keyword);
-      
-      if (result.success) {
-        if (result.removed) {
-          await interaction.editReply({
-            embeds: [{
-              title: `${STATUS_EMOJIS.connected} Keyword Removed`,
-              description: `You will no longer be mentioned for "\`${keyword}\`".`,
-              color: 65280,
-              timestamp: new Date()
-            }]
-          });
-          setTimeout(async () => {
-            try {
-              await interaction.deleteReply();
-            } catch (e) {
-              try {
-                await interaction.editReply({
-                  embeds: [{
-                    description: `${STATUS_EMOJIS.connected} Keyword removed (hidden).`,
-                    color: 65280,
-                    timestamp: new Date()
-                  }]
-                });
-              } catch {}
-            }
-          }, 2 * 60 * 1000);
-        } else {
-          await interaction.editReply(`Keyword "\`${keyword}\`" was not in your list.`);
-        }
-      } else {
-        await interaction.editReply(`❌ Failed to remove keyword: ${result.error}`);
-      }
     } else if (interaction.isModalSubmit() && interaction.customId === 'say_modal') {
       // FIX: ephemeral flags
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -12387,40 +12269,19 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const encodedUsername = interaction.customId.split('_')[2];
       const username = b64decode(encodedUsername);
-      const replyMessage = interaction.fields.getTextInputValue('reply_message');
-      console.log(`[Reply] Processing reply for ${username}, message: ${replyMessage}, has conversation: ${whisperConversations.has(username)}`);
-      if (replyMessage && bot) {
-        let command;
-        if (replyMessage.startsWith('/')) {
-          command = replyMessage;
-          console.log(`[Reply] Sent command "${command}" by ${interaction.user.tag}`);
-        } else {
-          command = `/msg ${username} ${replyMessage}`;
-          console.log(`[Reply] Sent /msg ${username} ${replyMessage} by ${interaction.user.tag}`);
+      const whispers = buildPlayerWhisperCommands(username, interaction.fields.getTextInputValue('reply_message'));
+      if (whispers.length > 0 && bot) {
+        for (const whisper of whispers) {
+          sendMinecraftChat(whisper.command);
+          // Mark outbound whisper to suppress any unexpected public echo
+          markOutboundWhisper(username, whisper.text);
         }
-        sendMinecraftChat(command);
-
-        // Mark outbound whisper to suppress any unexpected public echo
-        let outText = replyMessage;
-        if (replyMessage.startsWith('/r ')) {
-          outText = replyMessage.slice(3).trim();
-        }
-        const normalizedOut = outText
-          .replace(/§[0-9a-fk-or]/gi, '')
-          .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
-          .trim();
-        if (normalizedOut) {
-          const outKey = `OUTBOUND:${username.toLowerCase()}:${normalizedOut}`;
-          outboundWhispers.set(outKey, Date.now());
-        }
+        console.log(`[Reply] Whispered ${username} (${whispers.length} line(s)) by ${interaction.user.tag}`);
 
         // Update the conversation message
         const now = new Date();
         const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-        let displayMessage = replyMessage;
-        if (replyMessage.startsWith('/r ')) {
-          displayMessage = replyMessage.slice(3).trim();
-        }
+        const displayMessage = whispers.map(whisper => whisper.text).join('\n');
         const replyEntry = `[${timeStr}] ➡️ ${bot.username}: ${displayMessage}`;
 
         if (whisperConversations.has(username)) {
@@ -12454,11 +12315,6 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           // Create new conversation
           try {
             const channel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
-            let displayMessage = replyMessage;
-            if (replyMessage.startsWith('/r ')) {
-              displayMessage = replyMessage.slice(3).trim();
-            }
-            const replyEntry = `[${timeStr}] ➡️ ${bot.username}: ${displayMessage}`;
             const sentMessage = await channel.send({
               embeds: [{
                 title: `Conversation with ${username}`,
@@ -12499,31 +12355,21 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
     } else if (interaction.isModalSubmit() && interaction.customId.startsWith('message_modal_')) {
       const encodedUsername = interaction.customId.split('_')[2];
       const selectedUsername = b64decode(encodedUsername);
-      const messageText = interaction.fields.getTextInputValue('message_text');
-      if (messageText && bot) {
-        let command;
-        let displayMessage = messageText;
-        if (messageText.startsWith('/msg ')) {
-          displayMessage = messageText.replace(`/msg ${selectedUsername} `, '');
+      const whispers = buildPlayerWhisperCommands(selectedUsername, interaction.fields.getTextInputValue('message_text'));
+      if (!bot || whispers.length === 0) {
+        await interaction.reply({
+          content: bot ? 'Message is empty.' : 'Bot is offline, message not sent.',
+          flags: MessageFlags.Ephemeral
+        });
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 5000);
+      } else {
+        for (const whisper of whispers) {
+          sendMinecraftChat(whisper.command);
+          // Mark outbound whisper(s) to suppress any unexpected public echoes
+          markOutboundWhisper(selectedUsername, whisper.text);
         }
-        if (messageText.startsWith('/')) {
-          command = messageText;
-          console.log(`[Message] Sent command "${command}" by ${interaction.user.tag}`);
-        } else {
-          command = `/msg ${selectedUsername} ${messageText}`;
-          console.log(`[Message] Sent /msg ${selectedUsername} ${messageText} by ${interaction.user.tag}`);
-        }
-        sendMinecraftChat(command);
-
-        // Mark outbound whisper(s) to suppress any unexpected public echoes
-        const normalized = displayMessage
-          .replace(/§[0-9a-fk-or]/gi, '')
-          .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
-          .trim();
-        if (normalized) {
-          const outKey = `OUTBOUND:${selectedUsername.toLowerCase()}:${normalized}`;
-          outboundWhispers.set(outKey, Date.now());
-        }
+        console.log(`[Message] Whispered ${selectedUsername} (${whispers.length} line(s)) by ${interaction.user.tag}`);
+        const displayMessage = whispers.map(whisper => whisper.text).join('\n');
 
         // Ensure private channel per user+target
         const whisperChannel = await getOrCreateWhisperChannel(interaction.user.id, interaction.user.tag, selectedUsername);
@@ -12578,8 +12424,9 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       const messageInput = new TextInputBuilder()
         .setCustomId('message_text')
         .setLabel('Message')
+        .setPlaceholder(`Whisper to ${selectedUsername}`)
         .setStyle(TextInputStyle.Paragraph)
-        .setValue(`/msg ${selectedUsername} `)
+        .setMaxLength(1000)
         .setRequired(true);
 
       const actionRow = new ActionRowBuilder().addComponents(messageInput);
@@ -12634,48 +12481,10 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       const result = await removeMentionKeyword(interaction.user.id, keyword);
       
       if (result.success && result.removed) {
-        // Refresh the mention keywords list
-        const updatedResult = await getUserMentionKeywords(interaction.user.id);
-        const keywords = updatedResult.keywords || [];
-        
-        const description = keywords.length > 0
-          ? `**Your current mention keywords:**\n${keywords.map(k => `• \`${k}\``).join('\n')}\n\nYou will be mentioned in Discord when these words appear in game chat.`
-          : 'You have no mention keywords set.\n\nAdd keywords to get mentioned when they appear in game chat.';
-
-        const components = [
-          new ActionRowBuilder()
-            .addComponents(
-              new ButtonBuilder()
-                .setCustomId('add_mention_keyword')
-                .setLabel('➕ Add Keyword')
-                .setStyle(ButtonStyle.Success)
-            )
-        ];
-
-        if (keywords.length > 0) {
-          const removeOptions = keywords.slice(0, 25).map(kw =>
-            new StringSelectMenuOptionBuilder()
-              .setLabel(kw)
-              .setValue(kw)
-          );
-          
-          const selectMenu = new StringSelectMenuBuilder()
-            .setCustomId('remove_mention_keyword_select')
-            .setPlaceholder('Select keyword to remove')
-            .addOptions(removeOptions);
-          
-          components.push(new ActionRowBuilder().addComponents(selectMenu));
-        }
-
-        await interaction.editReply({
-          embeds: [{
-            title: `${STATUS_EMOJIS.mentions} Mention Keywords`,
-            description: `${STATUS_EMOJIS.connected} Removed keyword "\`${keyword}\`"\n\n${description}`,
-            color: 65280,
-            timestamp: new Date()
-          }],
-          components
-        });
+        await interaction.editReply(withTemporaryFooter(
+          await buildMentionKeywordsPayload(interaction.user.id, `${STATUS_EMOJIS.connected} Removed keyword "\`${keyword}\`"`),
+          interaction.message.id
+        ));
       } else {
         await interaction.editReply({
           embeds: [{
@@ -12930,44 +12739,25 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           return;
         }
 
-        const raw = message.content.trim();
-        if (!raw) return;
+        // Each line becomes its own /msg; a leading /msg <user> typed by hand is dropped.
+        const whispers = buildPlayerWhisperCommands(mcUsername, message.content);
+        if (whispers.length === 0) return;
 
-        // Remove a leading /msg <user> if user typed it manually
-        const prefix = new RegExp(`^/msg\s+${mcUsername}\s+`, 'i');
-        let clean = raw.replace(prefix, '');
-        
-        // Handle multiline messages - send each line as separate /msg
-        const lines = clean.split('\n').map(line => line.trim()).filter(line => line.length > 0);
-        if (lines.length === 0) return;
-
-        for (const line of lines) {
-          // Minecraft chat has a 256 character limit per message
-          const truncated = line.substring(0, 240);
-          const command = `/msg ${mcUsername} ${truncated}`;
-          
+        for (const whisper of whispers) {
           try {
-            sendMinecraftChat(command);
-            console.log(`[Whisper Relay] Sent to ${mcUsername}: ${truncated} (by ${message.author.tag})`);
+            sendMinecraftChat(whisper.command);
+            console.log(`[Whisper Relay] Sent to ${mcUsername}: ${whisper.text} (by ${message.author.tag})`);
           } catch (e) {
             console.error('[Whisper Relay] Failed to send message:', e.message);
           }
-
           // Mark outbound whisper to suppress any unexpected public echo
-          const normalizedLine = truncated
-            .replace(/§[0-9a-fk-or]/gi, '')
-            .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F]/g, '')
-            .trim();
-          if (normalizedLine) {
-            const outKey = `OUTBOUND:${mcUsername.toLowerCase()}:${normalizedLine}`;
-            outboundWhispers.set(outKey, Date.now());
-          }
+          markOutboundWhisper(mcUsername, whisper.text);
         }
 
         try {
           await sendWhisperEmbed(message.channel, {
             senderLabel: message.author.username,
-            body: clean
+            body: whispers.map(whisper => whisper.text).join('\n')
           });
           scheduleWhisperCleanup(message.channel.id);
         } catch (e) {

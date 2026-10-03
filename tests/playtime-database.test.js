@@ -52,6 +52,7 @@ async function run() {
         refresh_requested_at TIMESTAMPTZ, updated_at TIMESTAMPTZ, PRIMARY KEY (metric, identity_key)
       );
     `);
+    await db.exec(fs.readFileSync(path.join(__dirname, '../database/migrations/065_player_playtime_daily.sql'), 'utf8'));
 
     await reconcile('ShortSession', 45);
     assert.equal((await row('ShortSession'))?.total, 45, 'the first PT under one minute must be stored');
@@ -109,6 +110,24 @@ async function run() {
     assert.equal((await row('CurrentName')).total, 2000, 'Discord/manual imports must reset the active baseline too');
     assert.equal((await query('SELECT COUNT(*)::int AS n FROM player_playtime WHERE player_uuid=$1', [uuid])).rows[0].n, 1);
     assert.deepEqual(errors, [], 'imports must not conceal database errors');
+
+    const daily = (await query('SELECT identity_key, seconds::int AS seconds FROM player_playtime_daily ORDER BY identity_key')).rows;
+    assert.deepEqual(daily, [
+      { identity_key: 'anotherplayer', seconds: 3600 },
+      { identity_key: uuid, seconds: 15 },
+      { identity_key: 'shortsession', seconds: 81 }
+    ], 'only tracked checkpoints credit the daily slices; imports and refreshes do not');
+    await db.exec(`
+      CREATE TABLE whitelist (id SERIAL PRIMARY KEY, username TEXT, player_uuid UUID);
+      INSERT INTO whitelist (username, player_uuid) VALUES ('CurrentName', '${uuid}'), ('ShortSession', NULL);
+    `);
+    const leaderboard = await feature.getWhitelistPlaytime();
+    assert.equal(leaderboard.error, undefined, leaderboard.error);
+    assert.deepEqual(leaderboard.players.map(player => [player.username, Number(player.week_seconds), Number(player.month_seconds)]), [
+      ['ShortSession', 81, 81],
+      ['CurrentName', 15, 15]
+    ], 'the leaderboard joins daily slices by UUID or by name');
+    assert.ok(leaderboard.historySince);
     console.log('Playtime database tests passed.');
   } finally {
     await db.close();

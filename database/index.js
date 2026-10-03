@@ -439,11 +439,11 @@ function createPlayerActivityRepository({ pool, ignoredFallback = [], getBot = (
       const result = await pool.query(`
         SELECT COALESCE(pa.username, w.username) AS username,
                COALESCE(w.player_uuid, pa.player_uuid) AS player_uuid,
-               pa.last_seen, pa.last_online, pa.is_online
+               pa.last_seen, pa.last_online, pa.is_online, pa.online_since
         FROM whitelist w
         LEFT JOIN LATERAL (
           SELECT activity.username, activity.player_uuid, activity.last_seen,
-                 activity.last_online, activity.is_online
+                 activity.last_online, activity.is_online, activity.online_since
           FROM player_activity activity
           WHERE ${whitelistMatchSql('w', 'activity.username', 'activity.player_uuid')}
           ORDER BY activity.is_online DESC,
