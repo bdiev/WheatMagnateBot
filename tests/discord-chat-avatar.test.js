@@ -7,6 +7,7 @@ const vm = require('node:vm');
 const sharp = require('sharp');
 const { PermissionsBitField } = require('discord.js');
 const { createChatAvatarLoader } = require('../discord/chat-avatar');
+const { createFloodSummaryPublisher, FLOOD_SUMMARY_COLOR } = require('../discord/flood-summary');
 const { getChatPlayerColor, CHAT_BOT_COLOR, CHAT_NEW_PLAYER_COLOR, CHAT_PLAYER_COLOR, CHAT_WHITELISTED_COLOR } = require('../discord/chat-message-format');
 
 async function run() {
@@ -138,6 +139,7 @@ async function run() {
     formatDiscordBridgeMessage: message => message,
     getChatPlayerColor,
     isWhitelistedPlayer: name => name === 'WhitelistedFriend',
+    publishFloodSummary: createFloodSummaryPublisher(),
     loadChatAvatar: async (name, options) => { loaded.push({ name, ...options }); return load(name, options); }
   });
   vm.runInContext(`${sender}\nthis.deliver = deliverGameChatMessageToDiscord;`, context);
@@ -153,6 +155,10 @@ async function run() {
   assert.equal(loaded.length, 1, 'server messages and flood summaries must not request player avatars');
   assert.equal(sent[1].files, undefined);
   assert.equal(sent[2].files, undefined);
+  assert.equal(sent[2].embeds[0].author.icon_url, 'https://render.namemc.com/skin/2d/face.png?skin=ObbyMagnate&scale=4',
+    'a flood summary shows the head beside the name without downloading it');
+  assert.equal(sent[2].embeds[0].color, FLOOD_SUMMARY_COLOR);
+  assert.equal(sent[2].embeds[0].title, undefined, 'a flood summary is compact');
   canAttach = false;
   await context.deliver({ username: 'ObbyMagnate', message: 'Hello again', allowMentions: false });
   assert.equal(sent[3].files, undefined);
