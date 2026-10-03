@@ -12,7 +12,7 @@ const {
   isDiscordApplicationMessage,
   isTrustedPlaytimeBot
 } = require('./discord/playtime-import');
-const { summarizeAggregateObsidianRows } = require('./discord/aggregate-obsidian-status');
+const { summarizeAggregateObsidianRows, getTpsIndicator } = require('./discord/aggregate-obsidian-status');
 const {
   SERVER_STATUS_HIDDEN_TAG_KEYS,
   createServerStatusHiddenIndex,
@@ -1398,6 +1398,7 @@ async function persistRuntimeSetting(key) {
 const geminiModelBackoffUntil = new Map(); // model -> unix ms
 let lastBotPublicChatPhrase = null;
 let lastBotPublicChatEmoji = null;
+let lastBotPublicChatAt = null;
 let botChatStatusEmojiQueue = [];
 loadLastBotPublicChatStatus();
 const excludedMessageIds = [];
@@ -1582,7 +1583,8 @@ async function ensureStatusMessage() {
           title: getServerStatusTitle(),
           description: `${getStatusDescription()}\n\n${getLastBotPublicChatStatusLine()}`,
           color: bot?.entity ? 65280 : 16711680,
-          timestamp: new Date()
+          timestamp: new Date(),
+          footer: getServerStatusFooter()
         }],
         components: createStatusButtons()
       });
@@ -4326,7 +4328,7 @@ function formatCompactCount(value) {
     return `${thousands >= 10 ? Math.floor(thousands) : Math.floor(thousands * 10) / 10}k`;
   }
   const millions = count / 1_000_000;
-  return `${millions >= 10 ? Math.floor(millions) : Math.floor(millions * 10) / 10}m`;
+  return `${millions >= 10 ? Math.floor(millions) : Math.floor(millions * 10) / 10}M`;
 }
 
 function formatFullCount(value) {
@@ -5870,6 +5872,8 @@ function loadLastBotPublicChatStatus() {
       lastBotPublicChatEmoji = typeof parsed.emoji === 'string' && parsed.emoji.trim()
         ? parsed.emoji
         : null;
+      const saidAt = Date.parse(parsed.saidAt || '');
+      lastBotPublicChatAt = Number.isFinite(saidAt) ? saidAt : null;
       if (Array.isArray(parsed.emojiQueue)) {
         botChatStatusEmojiQueue = [...new Set(parsed.emojiQueue
           .map(emoji => String(emoji || '').trim())
@@ -5889,6 +5893,7 @@ function saveLastBotPublicChatStatus() {
     fs.writeFileSync(BOT_PUBLIC_CHAT_STATUS_FILE, JSON.stringify({
       phrase: lastBotPublicChatPhrase,
       emoji: lastBotPublicChatEmoji,
+      saidAt: lastBotPublicChatAt ? new Date(lastBotPublicChatAt).toISOString() : null,
       emojiQueue: botChatStatusEmojiQueue,
       updatedAt: new Date().toISOString()
     }, null, 2));
@@ -5902,6 +5907,7 @@ function rememberBotPublicChatPhrase(message) {
   if (!phrase || phrase.startsWith('/') || phrase.startsWith('!')) return;
   lastBotPublicChatPhrase = phrase.slice(0, 180);
   lastBotPublicChatEmoji = pickNextBotStatusEmoji();
+  lastBotPublicChatAt = Date.now();
   saveLastBotPublicChatStatus();
   updateStatusMessage().catch(() => {});
 }
@@ -8525,12 +8531,31 @@ function getLastBotPublicChatStatusLine() {
   const phrase = lastBotPublicChatPhrase
     ? escapeStatusInlineCodeText(lastBotPublicChatPhrase)
     : 'No bot chat yet';
-  return `${lastBotPublicChatEmoji || STATUS_EMOJIS.axolotlBucket} > \`${phrase}\``;
+  const said = lastBotPublicChatAt ? ` <t:${Math.floor(lastBotPublicChatAt / 1000)}:R>` : '';
+  return `${lastBotPublicChatEmoji || STATUS_EMOJIS.axolotlBucket} Last chat${said}: \`${phrase}\``;
+}
+
+function formatStatusSpan(milliseconds) {
+  const totalMinutes = Math.max(0, Math.floor(milliseconds / 60_000));
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+}
+
+function formatObsidianFarmReasonList(farms, state) {
+  return farms
+    .filter(entry => entry.state === state)
+    .map(entry => `**${escapeStatusDescriptionText(entry.name)}** (${escapeStatusDescriptionText(entry.reason)})`)
+    .join(', ');
 }
 
 function getObsidianStatusLines() {
   const localFarm = farm.getStatus();
   const status = aggregateObsidianStatus || summarizeAggregateObsidianRows([{
+    username: bot?.username || ADMIN_PANEL_BOT_NAME,
     sessionMined: obsidianStats.sessionMined,
     totalMined: obsidianStats.totalMined,
     desiredEnabled: obsidianStats.desiredEnabled,
@@ -8541,14 +8566,32 @@ function getObsidianStatusLines() {
   const perHour = Math.round(status.ratePerHour);
   const perMonth = perHour * 24 * 30;
 
+  const sessionSpan = status.sessionStartedAt
+    ? ` (${formatStatusSpan(Date.now() - status.sessionStartedAt)})`
+    : '';
   const lines = [
-    `${FARM_EMOJIS.netheritePickaxe} Session: **${formatFullCount(status.sessionMined)}** · All time: **${formatFullCount(status.totalMined)}**`
+    `${FARM_EMOJIS.netheritePickaxe} Session: **${formatFullCount(status.sessionMined)}**${sessionSpan} · All time: **${formatFullCount(status.totalMined)}**`
   ];
-  const rate = status.miningCount > 0 && !status.rateReady
-    ? '**Calculating...**'
-    : `**${formatCompactCount(perHour)}/h** · **${formatCompactCount(perMonth)}/m**`;
-  lines.push(`${STATUS_EMOJIS.playtime} Combined average: ${rate}`);
+  if (status.miningCount > 0 && !status.rateReady) {
+    lines.push(`${FARM_EMOJIS.diamondPickaxe} Rate: **Calculating...**`);
+  } else {
+    const now = status.recentRateReady
+      ? `**${formatCompactCount(Math.round(status.recentRatePerHour))}/h** now · `
+      : '';
+    lines.push(`${FARM_EMOJIS.diamondPickaxe} Rate: ${now}**${formatCompactCount(perHour)}/h** avg · **~${formatCompactCount(perMonth)}/30d**`);
+  }
   lines.push(`${FARM_EMOJIS.obsidian} Farms: **${status.miningCount} mining · ${status.recoveringCount} recovering · ${status.stoppedCount} stopped**`);
+
+  const miningFarms = (status.farms || []).filter(entry => entry.state === 'mining');
+  if (miningFarms.length > 1) {
+    lines.push(miningFarms
+      .map(entry => `${escapeStatusDescriptionText(entry.name)} **${entry.rateReady ? `${formatCompactCount(Math.round(entry.ratePerHour))}/h` : '...'}**`)
+      .join(' · '));
+  }
+  const recovering = formatObsidianFarmReasonList(status.farms || [], 'recovering');
+  if (recovering) lines.push(`${STATUS_EMOJIS.update} Recovering: ${recovering}`);
+  const stopped = formatObsidianFarmReasonList(status.farms || [], 'stopped');
+  if (stopped) lines.push(`${STATUS_EMOJIS.pause} Stopped: ${stopped}`);
   return lines;
 }
 
@@ -8557,21 +8600,33 @@ async function refreshAggregateObsidianStatus({ force = false } = {}) {
   if (!force && aggregateObsidianStatus && Date.now() - aggregateObsidianStatusRefreshedAt < 2_000) return aggregateObsidianStatus;
   if (aggregateObsidianStatusRefresh) return aggregateObsidianStatusRefresh;
   aggregateObsidianStatusRefresh = pool.query(`
-    WITH farm_states AS (
-      SELECT account.id AS account_id,account.enabled AS account_enabled,
+    WITH recent_window AS (
+      SELECT date_trunc('hour', NOW()) - INTERVAL '1 hour' AS started_at
+    ),
+    farm_states AS (
+      SELECT account.id AS account_id,account.username,account.display_name,account.sort_order,account.is_default,
+             account.enabled AS account_enabled,
              (account.deleted_at IS NOT NULL) AS account_archived,
-             farm.session_mined,farm.total_mined,farm.desired_enabled,farm.session_started_at,farm.updated_at
+             farm.session_mined,farm.total_mined,farm.desired_enabled,farm.session_started_at,farm.updated_at,
+             (SELECT COALESCE(SUM(hourly.mined),0) FROM obsidian_farm_hourly hourly, recent_window
+              WHERE hourly.bucket>=recent_window.started_at) AS recent_mined
       FROM bot_accounts account
       JOIN obsidian_farm_state farm ON farm.id=1
       WHERE account.is_default=TRUE
       UNION ALL
-      SELECT account.id,account.enabled,(account.deleted_at IS NOT NULL),
-             farm.session_mined,farm.total_mined,farm.desired_enabled,farm.session_started_at,farm.updated_at
+      SELECT account.id,account.username,account.display_name,account.sort_order,account.is_default,
+             account.enabled,(account.deleted_at IS NOT NULL),
+             farm.session_mined,farm.total_mined,farm.desired_enabled,farm.session_started_at,farm.updated_at,
+             (SELECT COALESCE(SUM(hourly.mined),0) FROM obsidian_account_farm_hourly hourly, recent_window
+              WHERE hourly.account_id=account.id AND hourly.bucket>=recent_window.started_at)
       FROM obsidian_account_farm_state farm
       JOIN bot_accounts account ON account.id=farm.account_id
       WHERE account.is_default=FALSE
     )
     SELECT farm_states.*,
+           runtime.status AS runtime_status,
+           runtime.last_error AS runtime_last_error,
+           EXTRACT(EPOCH FROM NOW() - recent_window.started_at) * 1000 AS recent_window_ms,
            COALESCE(
              runtime.status='connected'
              AND runtime.current_task='obsidian'
@@ -8580,7 +8635,9 @@ async function refreshAggregateObsidianStatus({ force = false } = {}) {
              FALSE
            ) AS is_mining
     FROM farm_states
+    CROSS JOIN recent_window
     LEFT JOIN bot_account_runtime_state runtime ON runtime.account_id=farm_states.account_id
+    ORDER BY farm_states.is_default DESC,farm_states.sort_order NULLS LAST,farm_states.username
   `).then(result => {
     aggregateObsidianStatus = summarizeAggregateObsidianRows(result.rows);
     aggregateObsidianStatusRefreshedAt = Date.now();
@@ -8635,28 +8692,42 @@ function getStatusDescription() {
     whitelistOnline.map(username => formatPlayerHeadName(username))
   );
   const botUptime = formatDurationShort(Math.max(0, Date.now() - startTime));
-  const health = Math.round(bot.health * 2) / 2;
-  const food = Math.round(bot.food * 2) / 2;
+  const tpsIndicator = getTpsIndicator(getCurrentTpsNumber());
+  const nearbyLine = `${STATUS_EMOJIS.nearby} Nearby: ${formatCompactInlineList(nearbyNames)}`;
 
   return [
     '**Server**',
-    `${STATUS_EMOJIS.connected} Connected to \`${config.host}\``,
-    `${STATUS_EMOJIS.players} Players: **${playerCount}** · ${STATUS_EMOJIS.tps} TPS: **${avgTps}** · ${STATUS_EMOJIS.serverPing} Ping: **${getBotPingDisplay()}**`,
-    `${STATUS_EMOJIS.nearby} Nearby: ${formatCompactInlineList(nearbyNames)}`,
+    `${STATUS_EMOJIS.players} Players: **${playerCount}** · ${STATUS_EMOJIS.tps} TPS: **${avgTps}**${tpsIndicator ? ` ${tpsIndicator}` : ''} · ${STATUS_EMOJIS.serverPing} Ping: **${getBotPingDisplay()}**`,
+    nearbyNames.length > 0 ? nearbyLine : `-# ${nearbyLine}`,
     `${STATUS_EMOJIS.whitelist} Whitelist online: ${whitelistOnlineDisplay}`,
     '',
     '**Bot**',
     `${getPlayerHeadEmoji(ADMIN_PANEL_BOT_NAME)} **${bot.username}** · ${STATUS_EMOJIS.playtime} Uptime: **${botUptime}** · Playtime: **${wheatMagnatePlaytimeDisplay}**`,
-    `${STATUS_EMOJIS.health} Health: **${health}/20** · ${STATUS_EMOJIS.food} Food: **${food}/20**`,
+    ...getBotVitalsStatusLines(),
     '',
     '**Obsidian Farm**',
     ...getObsidianStatusLines()
   ].join('\n');
 }
 
+// Full health and food carry no information, so the line only appears once
+// either value drops.
+function getBotVitalsStatusLines() {
+  const health = Math.round(bot.health * 2) / 2;
+  const food = Math.round(bot.food * 2) / 2;
+  if (health >= 20 && food >= 20) return [];
+  const healthText = health <= 10 ? `**${health}/20** ⚠️` : `**${health}/20**`;
+  const foodText = food <= 10 ? `**${food}/20** ⚠️` : `**${food}/20**`;
+  return [`${STATUS_EMOJIS.health} Health: ${healthText} · ${STATUS_EMOJIS.food} Food: ${foodText}`];
+}
+
+function getServerStatusFooter() {
+  return { text: `${config.host} · Last updated` };
+}
+
 function getServerStatusTitle() {
   return bot?.entity
-    ? 'Server Status'
+    ? `${STATUS_EMOJIS.connected} Server Status`
     : `${STATUS_EMOJIS.serverUnreachable} Server Status`;
 }
 
@@ -9500,9 +9571,7 @@ async function updateStatusMessage() {
         description,
         color: bot?.entity ? 65280 : 16711680,
         timestamp: new Date(),
-        footer: {
-          text: 'Last updated'
-        }
+        footer: getServerStatusFooter()
       }],
       components: createStatusButtons()
     });
