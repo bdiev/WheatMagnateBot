@@ -1290,6 +1290,14 @@ let lastTpsChatRequestAt = 0;
 let unansweredTpsChatRequests = 0;
 let lastTpsStatusDisplay = null;
 let lastTpsSampleAt = 0;
+let tpsSampleInterval = null;
+const DAILY_TPS_CACHE_MS = 5 * 60_000;
+let dailyTpsAveragesCache = null;
+// Content of the last admin panel edit, so the 10-second refresh can skip
+// edits that would not change anything.
+let adminPanelLastSignature = null;
+let adminPanelLastEditAt = 0;
+const ADMIN_PANEL_MAX_SKIP_MS = 60_000;
 const nearbyPlayerSightingWriteAt = new Map();
 let mineflayerStarted = false;
 let startTime = Date.now();
@@ -1778,12 +1786,10 @@ function isKillAuraProtectedPlayer(username, uuid = null) {
   const nameKey = String(username || '').trim().toLowerCase();
   if (!nameKey) return true;
   if (isWhitelistedPlayer(username, uuid || getOnlinePlayerUuid(username))) return true;
-  if (nameKey === String(bot?.username || '').toLowerCase()) return true;
-  return (multiAccountRegistry?.list() || [])
-    .some(account => String(account.username || '').trim().toLowerCase() === nameKey);
+  return isOwnBotUsername(username);
 }
 
-// Resolves who a name belongs to right now: the player online under it, then
+//Resolves who a name belongs to right now: the player online under it, then
 // Mojang, then the last player observed under it. Name history is not used, as
 // a former owner of the name is exactly who must not be whitelisted.
 async function resolveWhitelistIdentity(username) {
@@ -2937,8 +2943,17 @@ if (DISCORD_BOT_TOKEN) {
       console.log('[Discord] Status update interval started');
     }
     if (!adminPanelUpdateInterval) {
-      adminPanelUpdateInterval = setInterval(updateAdminPanel, 10_000);
+      adminPanelUpdateInterval = setInterval(() => {
+        updateAdminPanel({ force: false }).catch(() => {});
+      }, 10_000);
       console.log('[Discord] Admin panel update interval started');
+    }
+    // TPS history must not depend on the admin panel being open on its main
+    // view, or the 7-day averages get gaps.
+    if (!tpsSampleInterval) {
+      tpsSampleInterval = setInterval(() => {
+        recordTpsSample().catch(() => {});
+      }, 60_000);
     }
     if (!siteGameChatOutboxInterval) {
       siteGameChatOutboxInterval = setInterval(() => {
@@ -5775,7 +5790,7 @@ function messageHasAnyComponentCustomId(message, customIds) {
 function isExistingAdminPanelMessage(message) {
   if (message.author?.id !== discordClient.user?.id) return false;
   const title = String(message.embeds?.[0]?.title || '');
-  if (title === 'Admin Panel') return true;
+  if (title.startsWith('Admin Panel')) return true;
 
   return messageHasAnyComponentCustomId(message, [
     'pause_resume_button',
@@ -5833,21 +5848,36 @@ async function ensureAdminPanelDM() {
   }
 }
 
-async function updateAdminPanel() {
+// Interaction handlers call this right after another view replaced the
+// message, so only the periodic refresh may skip an unchanged edit.
+async function updateAdminPanel({ force = true } = {}) {
   if (!DISCORD_OWNER_ID || !discordClient || !discordClient.isReady()) return;
-  if (adminPanelView !== 'main') return;
+  if (adminPanelView !== 'main') {
+    adminPanelLastSignature = null;
+    return;
+  }
   if (!adminPanelMessage) {
     await ensureAdminPanelDM();
     if (!adminPanelMessage) return;
   }
 
   try {
-    await adminPanelMessage.edit({
-      embeds: [await buildAdminPanelEmbed()],
-      components: createAdminPanelButtons()
-    });
-    recordTpsSample().catch(() => {});
+    const embed = await buildAdminPanelEmbed();
+    const components = createAdminPanelButtons();
+    const signature = JSON.stringify([
+      { ...embed, timestamp: undefined },
+      components.map(row => row.toJSON())
+    ]);
+    if (!force
+      && signature === adminPanelLastSignature
+      && Date.now() - adminPanelLastEditAt < ADMIN_PANEL_MAX_SKIP_MS) {
+      return;
+    }
+    await adminPanelMessage.edit({ embeds: [embed], components });
+    adminPanelLastSignature = signature;
+    adminPanelLastEditAt = Date.now();
   } catch (e) {
+    adminPanelLastSignature = null;
     if (e.code === 10008 || e.message.includes('Unknown Message')) {
       adminPanelMessage = null;
       await ensureAdminPanelDM();
@@ -8413,7 +8443,14 @@ async function recordTpsSample(force = false) {
 
 async function getDailyTpsAverages(days = 7) {
   if (!pool) return [];
+  // Daily averages drift slowly, so the admin panel's 10-second refresh reuses
+  // one result for a few minutes instead of re-aggregating a week of samples.
+  if (dailyTpsAveragesCache && dailyTpsAveragesCache.days === days
+    && Date.now() - dailyTpsAveragesCache.loadedAt < DAILY_TPS_CACHE_MS) {
+    return dailyTpsAveragesCache.rows;
+  }
   try {
+    // Range bounds on sampled_at keep the join on the sampled_at index.
     const result = await pool.query(`
       WITH dates AS (
         SELECT generate_series(
@@ -8426,14 +8463,17 @@ async function getDailyTpsAverages(days = 7) {
              ROUND(AVG(samples.tps)::numeric, 1) AS avg_tps
       FROM dates
       LEFT JOIN bot_tps_samples samples
-        ON (samples.sampled_at AT TIME ZONE 'Europe/Kyiv')::date = dates.sample_date
+        ON samples.sampled_at >= (dates.sample_date::timestamp AT TIME ZONE 'Europe/Kyiv')
+       AND samples.sampled_at < ((dates.sample_date + 1)::timestamp AT TIME ZONE 'Europe/Kyiv')
       GROUP BY dates.sample_date
       ORDER BY dates.sample_date DESC
     `, [days]);
-    return result.rows.map(row => ({
+    const rows = result.rows.map(row => ({
       label: row.label,
       avgTps: row.avg_tps == null ? null : Number(row.avg_tps)
     }));
+    dailyTpsAveragesCache = { days, rows, loadedAt: Date.now() };
+    return rows;
   } catch (err) {
     console.error('[DB] Failed to load TPS averages:', err.message);
     return [];
@@ -8462,22 +8502,40 @@ async function recordNearbyPlayerSighting(username, distance) {
   }
 }
 
+function isOwnBotUsername(username) {
+  const nameKey = String(username || '').trim().toLowerCase();
+  if (!nameKey) return false;
+  if (nameKey === String(bot?.username || '').toLowerCase()) return true;
+  return (multiAccountRegistry?.list() || [])
+    .some(account => String(account.username || '').trim().toLowerCase() === nameKey);
+}
+
 async function getRecentNearbyPlayerSightings(limit = 5) {
   if (!pool) return [];
   try {
+    // Our own farm accounts stand next to the bot all day; skip them (and
+    // players hidden from Server Status) so real visitors stay in the list.
+    const ownUsernames = [
+      bot?.username,
+      ...(multiAccountRegistry?.list() || []).map(account => account.username)
+    ].filter(Boolean).map(name => String(name).trim().toLowerCase());
     const result = await pool.query(`
       SELECT username,
              distance,
-             EXTRACT(EPOCH FROM (NOW() - last_seen))::BIGINT AS seconds_ago
+             EXTRACT(EPOCH FROM last_seen)::BIGINT AS last_seen_unix
       FROM nearby_player_sightings
+      WHERE LOWER(username) <> ALL($2::text[])
       ORDER BY last_seen DESC
       LIMIT $1
-    `, [limit]);
-    return result.rows.map(row => ({
-      username: row.username,
-      distance: Number(row.distance) || 0,
-      secondsAgo: Number(row.seconds_ago) || 0
-    }));
+    `, [limit * 4, ownUsernames]);
+    return result.rows
+      .filter(row => !isOwnBotUsername(row.username) && !isServerStatusPlayerHidden(row.username))
+      .slice(0, limit)
+      .map(row => ({
+        username: row.username,
+        distance: Number(row.distance) || 0,
+        lastSeenUnix: Number(row.last_seen_unix) || 0
+      }));
   } catch (err) {
     console.error('[DB] Failed to load nearby player sightings:', err.message);
     return [];
@@ -9103,17 +9161,6 @@ function buildFollowManagementPayload(message = '', color = 3447003) {
   };
 }
 
-function formatRelativeShort(secondsAgo) {
-  const seconds = Math.max(0, Number(secondsAgo) || 0);
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ${minutes % 60}m ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ${hours % 24}h ago`;
-}
-
 function formatSeenTimestamp(timestamp) {
   if (!timestamp) return 'Never seen';
   const diffSecs = Math.max(0, Math.floor((Date.now() - new Date(timestamp).getTime()) / 1000));
@@ -9201,8 +9248,30 @@ function formatDailyTpsAverages(rows) {
 function formatNearbySightings(rows) {
   if (!rows || rows.length === 0) return 'No recent nearby players.';
   return rows
-    .map(row => `${formatPlayerHeadName(row.username, 'bold')} - ${row.distance} blocks - ${formatRelativeShort(row.secondsAgo)}`)
+    .map(row => `${formatPlayerHeadName(row.username, 'bold')} - ${row.distance} blocks - <t:${row.lastSeenUnix}:R>`)
     .join('\n');
+}
+
+function getAdminPanelObsidianState() {
+  const farmStatus = farm.getStatus();
+  if (primaryFarmPausedForHighPing) return `${STATUS_EMOJIS.pause} Paused: high ping`;
+  if (farmStatus.enabled) {
+    const sessionHours = obsidianStats.sessionStartedAt
+      ? (Date.now() - new Date(obsidianStats.sessionStartedAt).getTime()) / 3_600_000
+      : 0;
+    // Under ~5 minutes the hourly rate is mostly noise.
+    const rate = sessionHours >= 1 / 12
+      ? ` · **${formatObsidianRate(obsidianStats.sessionMined / sessionHours)}/h**`
+      : '';
+    return `Mining${rate}`;
+  }
+  if (obsidianStats.desiredEnabled) {
+    const reason = farmStatus.lastErrorMessage
+      ? `: ${escapeStatusDescriptionText(String(farmStatus.lastErrorMessage).slice(0, 80))}`
+      : '';
+    return `${STATUS_EMOJIS.update} Recovering${reason}`;
+  }
+  return `${STATUS_EMOJIS.pause} Stopped`;
 }
 
 function getAdminPanelStatusSnapshot() {
@@ -9230,7 +9299,8 @@ function getAdminPanelStatusSnapshot() {
     food: `${Math.round(bot.food * 2) / 2}/20`,
     health: `${Math.round(bot.health * 2) / 2}/20`,
     followTarget: followFeature.getStatus().targetUsername || 'None',
-    obsidianMined: `${formatCompactCount(obsidianStats.sessionMined)}/${formatCompactCount(obsidianStats.totalMined)}`
+    obsidianMined: `**${formatCompactCount(obsidianStats.sessionMined)}** session · **${formatCompactCount(obsidianStats.totalMined)}** total`,
+    obsidianState: getAdminPanelObsidianState()
   };
 }
 
@@ -9362,6 +9432,12 @@ async function startBotStatusSnapshotWriter() {
   }, 1_000);
 }
 
+// A Discord timestamp ticks on its own, so the panel text stays unchanged
+// between refreshes and unchanged edits can be skipped.
+function formatAdminPanelConnectedSince() {
+  return `<t:${Math.floor(startTime / 1000)}:R>`;
+}
+
 async function buildAdminPanelEmbed() {
   await refreshWheatMagnatePlaytimeDisplay();
   await refreshServerStatusHiddenPlayers();
@@ -9379,7 +9455,7 @@ async function buildAdminPanelEmbed() {
             `${STATUS_EMOJIS.players} Online: **${status.playerCount}**`,
             `${STATUS_EMOJIS.tps} TPS: **${status.tps}**`,
             `${STATUS_EMOJIS.serverPinging} Ping: **${getBotPingDisplay()}**`,
-            `${STATUS_EMOJIS.playtime} Uptime: **${formatDurationShort(Date.now() - startTime)}**`
+            `${STATUS_EMOJIS.playtime} Connected: ${formatAdminPanelConnectedSince()}`
           ].join('\n'),
           inline: false
         },
@@ -9389,7 +9465,8 @@ async function buildAdminPanelEmbed() {
             `${STATUS_EMOJIS.health} Health: **${status.health}**`,
             `${STATUS_EMOJIS.food} Food: **${status.food}**`,
             `${STATUS_EMOJIS.nearby} Following: **${status.followTarget}**`,
-            `${FARM_EMOJIS.netheritePickaxe} Obsidian: **${status.obsidianMined}**`
+            `${FARM_EMOJIS.netheritePickaxe} Obsidian: ${status.obsidianMined}`,
+            `${FARM_EMOJIS.diamondPickaxe} Farm: ${status.obsidianState}`
           ].join('\n'),
           inline: true
         },
@@ -9423,7 +9500,7 @@ async function buildAdminPanelEmbed() {
           value: [
             `${STATUS_EMOJIS.serverPing} Bot **${ADMIN_PANEL_BOT_NAME}** connected to **play.oldfag.org**`,
             `${STATUS_EMOJIS.serverPinging} Ping: **${getBotPingDisplay()}**`,
-            `${STATUS_EMOJIS.playtime} Uptime: **${formatDurationShort(Date.now() - startTime)}**`
+            `${STATUS_EMOJIS.playtime} Connected: ${formatAdminPanelConnectedSince()}`
           ].join('\n'),
           inline: false
         },
