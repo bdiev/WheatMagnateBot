@@ -209,6 +209,9 @@ const REQUESTED_PLAYER_HEAD_EMOJI_REDRAWS = Object.freeze([
 const OBSIDIAN_STATS_MESSAGES_FILE = path.resolve('data', 'obsidian_stats_messages.json');
 const OBSIDIAN_FARM_DEBUG_LOG_FILE = path.resolve('obsidian_farm_debug.log');
 const OBSIDIAN_STATS_UPDATE_INTERVAL_MS = 30_000;
+// Unchanged statistics are still re-sent this often, so the footer time
+// shows the panel is alive.
+const OBSIDIAN_STATS_MAX_SKIP_MS = 5 * 60_000;
 const OBSIDIAN_STATS_WATCHDOG_INTERVAL_MS = 5 * 60_000;
 const DISCORD_ATTACHMENT_SAFE_LIMIT_BYTES = 24 * 1024 * 1024;
 
@@ -4313,8 +4316,16 @@ function recordPickaxeRetired({ name = 'pickaxe', blocksMined = 0, countInAverag
     });
 }
 
+const OBSIDIAN_DAILY_STATS_CACHE_MS = 60_000;
+let obsidianDailyStatsCache = null;
+
 async function getObsidianDailyStats(days = 7) {
   if (!pool) return [];
+  // Every open statistics panel refreshes on its own timer; share one query.
+  if (obsidianDailyStatsCache && obsidianDailyStatsCache.days === days
+    && Date.now() - obsidianDailyStatsCache.loadedAt < OBSIDIAN_DAILY_STATS_CACHE_MS) {
+    return obsidianDailyStatsCache.rows;
+  }
   try {
     const result = await pool.query(`
       WITH dates AS (
@@ -4330,10 +4341,12 @@ async function getObsidianDailyStats(days = 7) {
       LEFT JOIN obsidian_farm_daily stats USING (farm_date)
       ORDER BY dates.farm_date DESC
     `, [days]);
-    return result.rows.map(row => ({
+    const rows = result.rows.map(row => ({
       date: row.farm_date,
       mined: Number(row.mined) || 0
     }));
+    obsidianDailyStatsCache = { days, rows, loadedAt: Date.now() };
+    return rows;
   } catch (err) {
     console.error('[DB] Failed to load daily obsidian statistics:', err.message);
     return [];
@@ -4513,7 +4526,7 @@ async function buildObsidianStatsEmbed(cachedSupplies = null) {
       },
       {
         name: `${STATUS_EMOJIS.playtime} Session`,
-        value: `Duration: **${formatDurationShort(sessionMs)}**\nRate: **${perMinute.toFixed(1)}/min** (${formatCompactCount(Math.round(perHour))}/h)\nPickaxe avg: **${blocksPerPickaxe == null ? 'No data' : `${formatCompactCount(Math.round(blocksPerPickaxe))} blocks`}**`,
+        value: `Started: ${sessionStartedAt ? `<t:${Math.floor(sessionStartedAt.getTime() / 1000)}:R>` : '**Not started**'}\nRate:**${perMinute.toFixed(1)}/min** (${formatCompactCount(Math.round(perHour))}/h)\nPickaxe avg: **${blocksPerPickaxe == null ? 'No data' : `${formatCompactCount(Math.round(blocksPerPickaxe))} blocks`}**`,
         inline: true
       },
       {
@@ -4596,8 +4609,7 @@ async function buildDetailedObsidianStatsEmbed(cachedSupplies = null) {
         name: `${FARM_EMOJIS.obsidian} Session totals`,
         value: [
           `Started: ${sessionStartedAt ? `<t:${Math.floor(sessionStartedAt.getTime() / 1000)}:R>` : '**Not started**'}`,
-          `Duration: **${formatDurationShort(sessionMs)}**`,
-          `Mined: **${obsidianStats.sessionMined.toLocaleString('en-US')}**`,
+          `Mined:**${obsidianStats.sessionMined.toLocaleString('en-US')}**`,
           `Rate: **${Math.round(perHour).toLocaleString('en-US')}/h**`,
           `All time: **${obsidianStats.totalMined.toLocaleString('en-US')}**`
         ].join('\n'),
@@ -4903,16 +4915,27 @@ async function buildObsidianStatsUpdaterEmbed(updater) {
 
 async function updateObsidianStatsUpdater(channelId, updater) {
   if (updater.updating || obsidianStatsUpdaters.get(channelId) !== updater) return;
+  // The logs view shares this message; redrawing statistics would replace it.
+  if (updater.view === 'logs') return;
   updater.updating = true;
   try {
     await withObsidianStatsTimeout((async () => {
+      const embed = await buildObsidianStatsUpdaterEmbed(updater);
+      const components = createObsidianStatsComponents(updater.view);
+      const signature = JSON.stringify([
+        { ...embed, timestamp: undefined },
+        components.map(row => row.toJSON())
+      ]);
+      if (signature === updater.lastSignature
+        && Date.now() - (updater.lastEditAt || 0) < OBSIDIAN_STATS_MAX_SKIP_MS) {
+        return;
+      }
       const channel = await discordClient.channels.fetch(channelId);
       if (!channel?.messages) throw new Error('Statistics channel is unavailable');
       const message = await channel.messages.fetch(updater.messageId);
-      await message.edit({
-        embeds: [await buildObsidianStatsUpdaterEmbed(updater)],
-        components: createObsidianStatsComponents(updater.view)
-      });
+      await message.edit({ embeds: [embed], components });
+      updater.lastSignature = signature;
+      updater.lastEditAt = Date.now();
     })());
     updater.consecutiveFailures = 0;
   } catch (err) {
@@ -5801,6 +5824,8 @@ function isExistingAdminPanelMessage(message) {
     'admin_panel_back',
     'ofstats_toggle_farm',
     'ofstats_detailed',
+    'ofstats_summary',
+    'ofstats_radius_toggle',
     'ofstats_reset_coordinates',
     'ofstats_logs_menu',
     'ofstats_logs_back',
@@ -8147,6 +8172,10 @@ async function getWhitelistEntriesForUI() {
   return loadWhitelist();
 }
 
+function getWhitelistAddCandidates() {
+  return getSortedOnlinePlayerNamesExceptBot().filter(username => !isWhitelistedPlayer(username));
+}
+
 function buildWhitelistManagementView(entries, addCandidates, notice = '', color = 3447003, addPage = 0, deletePage = 0) {
   const safeAddPage = clampSelectPage(addPage, addCandidates);
   const safeDeletePage = clampSelectPage(deletePage, entries);
@@ -9053,10 +9082,20 @@ function createAdminSettingsSelects() {
   ];
 }
 
-function buildChatSettingsPayload() {
-  const allOnlinePlayers = bot ? Object.values(bot.players || {}).map(p => p.username) : [];
+function getSortedOnlinePlayerNamesExceptBot() {
+  const selfKey = String(bot?.username || '').toLowerCase();
+  return Object.values(bot?.players || {})
+    .map(player => player?.username)
+    .filter(username => username && username.toLowerCase() !== selfKey)
+    .sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' }));
+}
+
+function buildChatSettingsPayload(notice = '') {
+  const allOnlinePlayers = getSortedOnlinePlayerNamesExceptBot();
   const playersToIgnore = allOnlinePlayers.filter(username => !ignoredChatUsernames.includes(username.toLowerCase()));
-  const playersToUnignore = ignoredChatUsernames.filter(username => allOnlinePlayers.some(p => p.toLowerCase() === username));
+  const playersToUnignore = ignoredChatUsernames
+    .filter(username => allOnlinePlayers.some(p => p.toLowerCase() === username))
+    .sort((a, b) => a.localeCompare(b));
 
   const ignoreOptions = playersToIgnore.map(username => {
     return new StringSelectMenuOptionBuilder()
@@ -9094,11 +9133,16 @@ function buildChatSettingsPayload() {
     embeds: [{
       title: 'Chat Settings',
       description: [
+        ...(notice ? [notice, ''] : []),
         `Whitelist mode: **${runtimeSettings.whitelistMode ? 'On' : 'Off'}**`,
         `Danger radius: **${runtimeSettings.dangerRadius} blocks**`,
         `Message cooldown: **${Math.round(runtimeSettings.messageCooldownMs / 1000)}s**`,
         `Ignored chat users: **${ignoredChatUsernames.length}**`,
-        bot ? 'Manage ignored online players below.' : 'Minecraft bot is offline. Online ignore menus are unavailable.'
+        bot
+          ? (playersToIgnore.length > 25
+            ? `Manage ignored online players below (first 25 of ${playersToIgnore.length}, A–Z).`
+            : 'Manage ignored online players below.')
+          : 'Minecraft bot is offline. Online ignore menus are unavailable.'
       ].join('\n'),
       color: 3447003,
       timestamp: new Date()
@@ -9595,7 +9639,7 @@ function buildAdminChildPayload() {
   return {
     embeds: [buildGrowingChildStatusEmbed(
       growingChild.getStatus(),
-      `Gemini: ${runtimeSettings.geminiEnabled ? 'On' : 'Off'} В· Public chat: ${runtimeSettings.childPublicSpeech ? 'On' : 'Off'}`
+      `Gemini: ${runtimeSettings.geminiEnabled ? 'On' : 'Off'} · Public chat: ${runtimeSettings.childPublicSpeech ? 'On' : 'Off'}`
     )],
     components: createChildAdminComponents()
   };
@@ -10576,6 +10620,14 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
   discordClient.on('interactionCreate', async (interaction) => {
     // Interaction logs reduced to minimize noise
 
+    // A button handler is about to redraw this message, so the auto-updater
+    // must not assume the message still shows its last edit.
+    if (interaction.message?.id) {
+      const statsUpdater = obsidianStatsUpdaters.get(interaction.channelId);
+      if (statsUpdater?.messageId === interaction.message.id) statsUpdater.lastSignature = null;
+      if (adminPanelMessage?.id === interaction.message.id) adminPanelLastSignature = null;
+    }
+
     if (interaction.isChatInputCommand() && interaction.commandName === 'panel') {
       if (interaction.user.id !== DISCORD_OWNER_ID) {
         await interaction.reply({
@@ -10854,6 +10906,11 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         return;
       }
 
+      const logsUpdater = obsidianStatsUpdaters.get(interaction.channelId);
+      if (logsUpdater && logsUpdater.messageId === interaction.message.id) {
+        logsUpdater.view = 'logs';
+        saveObsidianStatsUpdaters();
+      }
       await interaction.update({
         embeds: [buildObsidianLogsEmbed()],
         components: createObsidianLogsComponents()
@@ -11545,8 +11602,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         const addPage = Number.parseInt(match[1], 10);
         const deletePage = Number.parseInt(match[2], 10);
         const entries = await getWhitelistEntriesForUI();
-        const allOnlinePlayers = bot ? Object.values(bot.players || {}).map(p => p.username) : [];
-        const addCandidates = allOnlinePlayers.filter(u => !isWhitelistedPlayer(u));
+        const addCandidates = getWhitelistAddCandidates();
 
         await interaction.editReply(
           buildWhitelistManagementView(entries, addCandidates, '', 3447003, addPage, deletePage)
@@ -11685,8 +11741,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         adminPanelView = 'whitelist';
         try {
           const entries = await getWhitelistEntriesForUI();
-          const allOnlinePlayers = bot ? Object.values(bot.players || {}).map(p => p.username) : [];
-          const addCandidates = allOnlinePlayers.filter(u => !isWhitelistedPlayer(u));
+          const addCandidates = getWhitelistAddCandidates();
 
           await interaction.update(
             buildWhitelistManagementView(entries, addCandidates, '', 3447003, 0, 0)
@@ -11713,16 +11768,17 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
                 color: 16711680,
                 timestamp: new Date()
               }],
-              ephemeral: true
+              flags: MessageFlags.Ephemeral
             });
             await startTemporaryInteractionMessage(interaction);
           } catch {}
           return;
         }
         adminPanelView = 'drop';
-        if (!bot) {
+        if (!bot?.entity) {
           await interaction.update({
             embeds: [{
+              title: 'Drop Item',
               description: 'Bot is offline.',
               color: 16711680,
               timestamp: new Date()
@@ -11735,6 +11791,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         if (inventory.length === 0) {
           await interaction.update({
             embeds: [{
+              title: 'Drop Item',
               description: 'Inventory is empty.',
               color: 3447003,
               timestamp: new Date()
@@ -11762,7 +11819,9 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         await interaction.update({
           embeds: [{
             title: 'Drop Item',
-            description: 'Select an item from inventory to drop.',
+            description: inventory.length > 25
+              ? `Select an item from inventory to drop.\nShowing the first **25** of **${inventory.length}** stacks.`
+              : 'Select an item from inventory to drop.',
             color: 3447003,
             timestamp: new Date()
           }],
@@ -11809,7 +11868,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
                 color: 16711680,
                 timestamp: new Date()
               }],
-              ephemeral: true
+              flags: MessageFlags.Ephemeral
             });
             
             await startTemporaryInteractionMessage(interaction);
@@ -12646,51 +12705,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         await pool.query('INSERT INTO ignored_users (username, added_by) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING', [selectedUsername.toLowerCase(), interaction.user.tag]);
         ignoredChatUsernames = await loadIgnoredChatUsernames();
         console.log(`[Ignore] Added ${selectedUsername} to ignore list by ${interaction.user.tag}`);
-        await interaction.editReply(buildChatSettingsPayload());
-        return;
-
-        // Update the message with new lists
-        const allOnlinePlayers = Object.values(bot.players || {}).map(p => p.username);
-        const playersToIgnore = allOnlinePlayers.filter(username => !ignoredChatUsernames.includes(username.toLowerCase()));
-        const playersToUnignore = ignoredChatUsernames.filter(username => allOnlinePlayers.some(p => p.toLowerCase() === username));
-
-        const ignoreOptions = playersToIgnore.map(username => {
-          return new StringSelectMenuOptionBuilder()
-            .setLabel(username)
-            .setValue(b64encode(username));
-        });
-        const unignoreOptions = playersToUnignore.map(username => {
-          return new StringSelectMenuOptionBuilder()
-            .setLabel(username)
-            .setValue(b64encode(username));
-        });
-
-        const ignoreMenu = new StringSelectMenuBuilder()
-          .setCustomId('ignore_select')
-          .setPlaceholder('Select player to ignore')
-          .addOptions(ignoreOptions.slice(0, 25));
-        const unignoreMenu = new StringSelectMenuBuilder()
-          .setCustomId('unignore_select')
-          .setPlaceholder('Select player to unignore')
-          .addOptions(unignoreOptions.slice(0, 25));
-
-        const components = [];
-        if (ignoreOptions.length > 0) {
-          components.push(new ActionRowBuilder().addComponents(ignoreMenu));
-        }
-        if (unignoreOptions.length > 0) {
-          components.push(new ActionRowBuilder().addComponents(unignoreMenu));
-        }
-
-        await interaction.editReply({
-          embeds: [{
-            title: 'Chat Settings',
-            description: `${STATUS_EMOJIS.connected} Added ${selectedUsername} to ignore list.\n\nManage ignored players for chat messages.`,
-            color: 65280,
-            timestamp: new Date()
-          }],
-          components
-        });
+        await interaction.editReply(buildChatSettingsPayload(`${STATUS_EMOJIS.connected} Ignoring **${selectedUsername}** in chat.`));
       } catch (err) {
         console.error('[Ignore] Error:', err.message);
         await interaction.editReply({
@@ -12722,60 +12737,9 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         if (result.rowCount > 0) {
           ignoredChatUsernames = await loadIgnoredChatUsernames();
           console.log(`[Unignore] Removed ${selectedUsername} from ignore list by ${interaction.user.tag}`);
-          await interaction.editReply(buildChatSettingsPayload());
-          return;
-
-          // Update the message with new lists
-          const allOnlinePlayers = Object.values(bot.players || {}).map(p => p.username);
-          const playersToIgnore = allOnlinePlayers.filter(username => !ignoredChatUsernames.includes(username.toLowerCase()));
-          const playersToUnignore = ignoredChatUsernames.filter(username => allOnlinePlayers.some(p => p.toLowerCase() === username));
-
-          const ignoreOptions = playersToIgnore.map(username => {
-            return new StringSelectMenuOptionBuilder()
-              .setLabel(username)
-              .setValue(b64encode(username));
-          });
-          const unignoreOptions = playersToUnignore.map(username => {
-            return new StringSelectMenuOptionBuilder()
-              .setLabel(username)
-              .setValue(b64encode(username));
-          });
-
-          const ignoreMenu = new StringSelectMenuBuilder()
-            .setCustomId('ignore_select')
-            .setPlaceholder('Select player to ignore')
-            .addOptions(ignoreOptions.slice(0, 25));
-          const unignoreMenu = new StringSelectMenuBuilder()
-            .setCustomId('unignore_select')
-            .setPlaceholder('Select player to unignore')
-            .addOptions(unignoreOptions.slice(0, 25));
-
-          const components = [];
-          if (ignoreOptions.length > 0) {
-            components.push(new ActionRowBuilder().addComponents(ignoreMenu));
-          }
-          if (unignoreOptions.length > 0) {
-            components.push(new ActionRowBuilder().addComponents(unignoreMenu));
-          }
-
-          await interaction.editReply({
-            embeds: [{
-              title: 'Chat Settings',
-              description: `${STATUS_EMOJIS.connected} Removed ${selectedUsername} from ignore list.\n\nManage ignored players for chat messages.`,
-              color: 65280,
-              timestamp: new Date()
-            }],
-            components
-          });
+          await interaction.editReply(buildChatSettingsPayload(`${STATUS_EMOJIS.connected} No longer ignoring **${selectedUsername}**.`));
         } else {
-          await interaction.editReply({
-            embeds: [{
-              description: `${selectedUsername} is not in ignore list.`,
-              color: 16776960,
-              timestamp: new Date()
-            }],
-            components: createAdminBackComponents()
-          });
+          await interaction.editReply(buildChatSettingsPayload(`**${selectedUsername}** is not in the ignore list.`));
         }
       } catch (err) {
         console.error('[Unignore] Error:', err.message);
@@ -12813,8 +12777,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           }
 
           // Update the message
-          const allOnlinePlayers = bot ? Object.values(bot.players || {}).map(p => p.username) : [];
-          const addCandidates = allOnlinePlayers.filter(u => !isWhitelistedPlayer(u));
+          const addCandidates = getWhitelistAddCandidates();
 
           await interaction.editReply(
             buildWhitelistManagementView(whitelist, addCandidates, `${STATUS_EMOJIS.connected} Removed ${selectedUsername} from whitelist.`, 65280)
@@ -12896,8 +12859,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
       try {
         const { whitelist, changed } = await addUsernameToWhitelist(selectedUsername, interaction.user.tag);
 
-        const allOnlinePlayers = bot ? Object.values(bot.players || {}).map(p => p.username) : [];
-        const addCandidates = allOnlinePlayers.filter(u => !isWhitelistedPlayer(u));
+        const addCandidates = getWhitelistAddCandidates();
 
         await interaction.editReply(
           buildWhitelistManagementView(
