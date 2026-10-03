@@ -19,6 +19,12 @@ assert.match(styles, /\.whisper-panel\.account-scope-hidden\s*\{[\s\S]*?flex-bas
   'the dialogs slot must animate closed without leaving the flex gap behind');
 assert.match(styles, /body\.account-switcher-open \.topbar\s*\{\s*z-index:\s*180;\s*\}[\s\S]*?\.account-switcher-backdrop\s*\{[^}]*z-index:\s*150;/,
   'the expanded phone account menu stays above its blurred backdrop');
+assert.match(styles, /body\.account-switcher-open\s*\{\s*overflow:\s*clip;\s*\}/,
+  'opening the phone account switcher must lock scrolling without breaking the sticky header');
+assert.doesNotMatch(styles, /body\.account-switcher-open\s*\{[^}]*overflow:\s*hidden;/,
+  'the phone account switcher must not turn the body into a scroll container');
+assert.match(styles, /\.account-switcher-backdrop\s*\{[^}]*touch-action:\s*none;[^}]*overscroll-behavior:\s*contain;/,
+  'the account switcher backdrop blocks touch scrolling while the menu is open');
 
 assert.match(source, /const switchGeneration = \+\+state\.accountSwitchGeneration;[\s\S]*?loadAll\(\{ force:true, switchGeneration \}\)/,
   'every account selection must force a new full synchronization');
