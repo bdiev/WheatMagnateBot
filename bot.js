@@ -20,6 +20,7 @@ const {
 } = require('./discord/server-status-visibility');
 const { DiscordChatForwardQueue, positiveInteger } = require('./discord/chat-forward-queue');
 const { formatDiscordBridgeMessage, getChatPlayerColor } = require('./discord/chat-message-format');
+const { createFloodSummaryPublisher } = require('./discord/flood-summary');
 const { createChatAvatarLoader } = require('./discord/chat-avatar');
 const loadChatAvatar = createChatAvatarLoader();
 const { NEW_PLAYER_WINDOW_DAYS } = require('./site/player-new-status');
@@ -127,6 +128,8 @@ const DISCORD_CHAT_QUEUE_MAX_SIZE = positiveInteger(process.env.DISCORD_CHAT_QUE
 const DISCORD_CHAT_MESSAGE_MAX_AGE_MS = positiveInteger(process.env.DISCORD_CHAT_MESSAGE_MAX_AGE_MS, 15_000);
 const DISCORD_CHAT_DUPLICATE_WINDOW_MS = positiveInteger(process.env.DISCORD_CHAT_DUPLICATE_WINDOW_MS, 10_000, { min: 0 });
 const DISCORD_CHAT_FLOOD_SUMMARY_DELAY_MS = positiveInteger(process.env.DISCORD_CHAT_FLOOD_SUMMARY_DELAY_MS, 5_000);
+const DISCORD_CHAT_FLOOD_SUMMARY_EDIT_WINDOW_MS = positiveInteger(process.env.DISCORD_CHAT_FLOOD_SUMMARY_EDIT_WINDOW_MS, 60_000, { min: 0 });
+const DISCORD_CHAT_FLOOD_MIN_DUPLICATE_SUMMARY = positiveInteger(process.env.DISCORD_CHAT_FLOOD_MIN_DUPLICATE_SUMMARY, 3);
 const DISCORD_CHAT_MIN_SEND_INTERVAL_MS = positiveInteger(process.env.DISCORD_CHAT_MIN_SEND_INTERVAL_MS, 250, { min: 0 });
 const IGNORED_CHAT_USERNAMES = process.env.IGNORED_CHAT_USERNAMES ? process.env.IGNORED_CHAT_USERNAMES.split(',').map(u => u.trim().toLowerCase()) : [];
 const GEMINI_API_KEY = String(process.env.GEMINI_API_KEY || '').trim();
@@ -1238,6 +1241,7 @@ const gameChatDiscordForwardQueue = new DiscordChatForwardQueue({
   maxAgeMs: DISCORD_CHAT_MESSAGE_MAX_AGE_MS,
   duplicateWindowMs: DISCORD_CHAT_DUPLICATE_WINDOW_MS,
   summaryDelayMs: DISCORD_CHAT_FLOOD_SUMMARY_DELAY_MS,
+  minDuplicateSummaryCount: DISCORD_CHAT_FLOOD_MIN_DUPLICATE_SUMMARY,
   minSendIntervalMs: DISCORD_CHAT_MIN_SEND_INTERVAL_MS,
   send: deliverGameChatMessageToDiscord,
   // Anti-flood only controls the public Discord/site feed. Keep every
@@ -1250,6 +1254,7 @@ const gameChatDiscordForwardQueue = new DiscordChatForwardQueue({
   },
   onError: error => console.error('[Discord Chat Queue]', error?.message || error)
 });
+const publishFloodSummary = createFloodSummaryPublisher({ editWindowMs: DISCORD_CHAT_FLOOD_SUMMARY_EDIT_WINDOW_MS });
 
 let loadedSession = null;
 if (process.env.MINECRAFT_SESSION) {
@@ -6059,7 +6064,8 @@ async function deliverGameChatMessageToDiscord({
   allowMentions = true,
   createdAt = Date.now(),
   isSummary = false,
-  summaryCount = 0
+  summaryCount = 0,
+  summaryReasons = null
 }) {
   const isSystemMessage = isMinecraftSystemUsername(username);
   // Server announcements bypass player anti-flood. A stale or legacy queue
@@ -6086,26 +6092,19 @@ async function deliverGameChatMessageToDiscord({
     const isNewPlayer = playerTags.isNewPlayer;
     const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
     if (!channel?.isTextBased?.()) return false;
+    if (isSummary) {
+      return await publishFloodSummary(channel, { username, createdAt, summaryCount, summaryReasons });
+    }
 
-    const avatar = !isSummary && !isSystemMessage
+    const avatar = !isSystemMessage
       ? await loadChatAvatar(username, {
           attachFiles: !channel.guild || Boolean(channel.permissionsFor(discordClient.user)?.has(PermissionsBitField.Flags.AttachFiles))
         })
       : {};
     const displayMessage = formatDiscordBridgeMessage(message, { allowDiscordInvites: isBotPlayer });
-    const skippedCount = Math.max(1, Number.parseInt(summaryCount, 10) || 1);
-    const skippedLabel = `${skippedCount} ${skippedCount === 1 ? 'message' : 'messages'} skipped`;
 
     const sendOptions = {
-      embeds: [isSummary
-        ? {
-            title: '🛡️ Flood protection activated',
-            description: `**${username}** sent messages too quickly.`,
-            color: 16753920,
-            footer: { text: skippedLabel },
-            timestamp: new Date(createdAt)
-          }
-        : isSystemMessage
+      embeds: [isSystemMessage
         ? {
             title: 'Server message',
             description: displayMessage,

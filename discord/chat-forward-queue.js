@@ -15,6 +15,19 @@ function normalizeFloodMessage(value) {
     .toLowerCase();
 }
 
+// Suppression reasons grouped into what the flood summary tells viewers.
+// Only `rate` means the player sent too much; `stale` is a delivery backlog.
+const SUMMARY_REASON_BY_SUPPRESSION = {
+  'duplicate-message': 'duplicate',
+  'queue-capacity': 'rate',
+  'queue-fairness': 'rate',
+  stale: 'stale'
+};
+
+function emptySummaryReasons() {
+  return { duplicate: 0, rate: 0, stale: 0 };
+}
+
 class DiscordChatForwardQueue {
   constructor({
     send,
@@ -22,6 +35,7 @@ class DiscordChatForwardQueue {
     maxAgeMs = 15_000,
     duplicateWindowMs = 10_000,
     summaryDelayMs = 5_000,
+    minDuplicateSummaryCount = 3,
     minSendIntervalMs = 250,
     now = () => Date.now(),
     setTimer = setTimeout,
@@ -36,6 +50,7 @@ class DiscordChatForwardQueue {
     this.maxAgeMs = positiveInteger(maxAgeMs, 15_000);
     this.duplicateWindowMs = positiveInteger(duplicateWindowMs, 10_000, { min: 0 });
     this.summaryDelayMs = positiveInteger(summaryDelayMs, 5_000);
+    this.minDuplicateSummaryCount = positiveInteger(minDuplicateSummaryCount, 3);
     this.minSendIntervalMs = positiveInteger(minSendIntervalMs, 250, { min: 0 });
     this.now = now;
     this.setTimer = setTimer;
@@ -76,7 +91,7 @@ class DiscordChatForwardQueue {
       this._notifySuppressed({ username: safeUsername, message, source, reason: 'duplicate-message' });
       // System messages retain duplicate collapsing, but a duplicate is not a
       // server flood and must not generate a flood-protection summary.
-      if (!bypassFlood) this._recordSuppressed(safeUsername, 1);
+      if (!bypassFlood) this._recordSuppressed(safeUsername, 'duplicate-message');
       return Promise.resolve(true);
     }
 
@@ -95,7 +110,7 @@ class DiscordChatForwardQueue {
     if (queued) return queued;
 
     this._notifySuppressed({ username: safeUsername, message, source, reason: 'queue-capacity' });
-    if (!bypassFlood) this._recordSuppressed(safeUsername, 1);
+    if (!bypassFlood) this._recordSuppressed(safeUsername, 'queue-capacity');
     return Promise.resolve(true);
   }
 
@@ -107,7 +122,7 @@ class DiscordChatForwardQueue {
     const key = username.toLowerCase();
     let state = this.userStates.get(key);
     if (!state) {
-      state = { username, recentMessages: new Map(), suppressed: 0, summaryTimer: null };
+      state = { username, recentMessages: new Map(), suppressed: emptySummaryReasons(), summaryTimer: null };
       this.userStates.set(key, state);
     } else {
       state.username = username;
@@ -115,9 +130,16 @@ class DiscordChatForwardQueue {
     return state;
   }
 
-  _recordSuppressed(username, count) {
+  _recordSuppressed(username, reason) {
+    const key = SUMMARY_REASON_BY_SUPPRESSION[reason] || 'rate';
+    this._addSuppressed(username, { [key]: 1 });
+  }
+
+  _addSuppressed(username, reasons) {
     const state = this._getUserState(username);
-    state.suppressed += count;
+    for (const key of Object.keys(state.suppressed)) {
+      state.suppressed[key] += Math.max(0, Number(reasons?.[key]) || 0);
+    }
     if (state.summaryTimer) this.clearTimer(state.summaryTimer);
     state.summaryTimer = this.setTimer(() => {
       state.summaryTimer = null;
@@ -135,10 +157,15 @@ class DiscordChatForwardQueue {
   }
 
   _flushSummary(state) {
-    const count = state.suppressed;
+    const reasons = state.suppressed;
+    const count = reasons.duplicate + reasons.rate + reasons.stale;
     if (!count) return;
 
-    state.suppressed = 0;
+    state.suppressed = emptySummaryReasons();
+    // A few repeated lines are quieter dropped than announced; each one is
+    // still archived individually through onSuppressed.
+    if (count === reasons.duplicate && count < this.minDuplicateSummaryCount) return;
+
     const message = `Skipped ${count} ${count === 1 ? 'message' : 'messages'} due to chat flooding.`;
     const queued = this._tryQueue({
       safeUsername: state.username,
@@ -147,10 +174,11 @@ class DiscordChatForwardQueue {
       createdAt: this.now(),
       source: 'discord-flood-summary',
       isSummary: true,
-      summaryCount: count
+      summaryCount: count,
+      summaryReasons: reasons
     });
 
-    if (!queued) this._recordSuppressed(state.username, count);
+    if (!queued) this._addSuppressed(state.username, reasons);
   }
 
   _tryQueue(item) {
@@ -197,7 +225,7 @@ class DiscordChatForwardQueue {
       source: evicted.source,
       reason: 'queue-fairness'
     });
-    if (!evicted.bypassFloodProtection) this._recordSuppressed(evicted.safeUsername, 1);
+    if (!evicted.bypassFloodProtection) this._recordSuppressed(evicted.safeUsername, 'queue-fairness');
     evicted.resolve(true);
     return true;
   }
@@ -219,8 +247,8 @@ class DiscordChatForwardQueue {
             source: item.source,
             reason: 'stale'
           });
-          if (item.isSummary) this._recordSuppressed(item.safeUsername, item.summaryCount || 0);
-          else if (!item.bypassFloodProtection) this._recordSuppressed(item.safeUsername, 1);
+          if (item.isSummary) this._addSuppressed(item.safeUsername, item.summaryReasons);
+          else if (!item.bypassFloodProtection) this._recordSuppressed(item.safeUsername, 'stale');
           item.resolve(true);
           continue;
         }
@@ -234,7 +262,8 @@ class DiscordChatForwardQueue {
             createdAt: item.createdAt,
             source: item.source,
             isSummary: item.isSummary,
-            summaryCount: item.summaryCount
+            summaryCount: item.summaryCount,
+            summaryReasons: item.summaryReasons
           })));
         } catch (error) {
           this.onError(error);

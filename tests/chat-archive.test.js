@@ -94,10 +94,10 @@ assert.match(botSource, /if \(allowMentions && !isBridgeMessage && !isBotPlayer 
   'Minecraft bots and server notices must never trigger mention keywords');
 assert.doesNotMatch(botSource, /Automated player/,
   'tagged bot messages must not add an Automated player caption');
-assert.match(botSource, /title: '🛡️ Flood protection activated'/,
-  'flood summaries must be visually distinct system notices');
-assert.match(botSource, /footer: \{ text: skippedLabel \}/,
-  'flood summaries must show the number of skipped messages in the footer');
+assert.match(botSource, /if \(isSummary\) \{\s*return await publishFloodSummary\(channel, \{ username, createdAt, summaryCount, summaryReasons \}\);/,
+  'flood summaries must go through the compact, edit-in-place summary publisher');
+assert.doesNotMatch(botSource, /Flood protection activated/,
+  'the old large flood-summary title must not remain');
 assert.doesNotMatch(botSource, /Discord bridge flood protection/,
   'the old verbose flood footer must not remain');
 assert.doesNotMatch(

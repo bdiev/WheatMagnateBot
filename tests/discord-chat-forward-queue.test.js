@@ -3,6 +3,12 @@
 const assert = require('node:assert/strict');
 const { DiscordChatForwardQueue } = require('../discord/chat-forward-queue');
 const { formatDiscordBridgeMessage } = require('../discord/chat-message-format');
+const {
+  buildFloodSummaryEmbed,
+  createFloodSummaryPublisher,
+  formatFloodSummaryDescription,
+  normalizeFloodSummaryReasons
+} = require('../discord/flood-summary');
 
 const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
@@ -305,8 +311,94 @@ async function testFloodCannotDisplaceAnotherPlayer() {
   assert.equal(delivered.includes('Spammer:spam four'), false);
 }
 
+async function testSummaryReasonsAndDuplicateThreshold() {
+  const delivered = [];
+  const suppressed = [];
+  const forwarder = new DiscordChatForwardQueue({
+    duplicateWindowMs: 10_000,
+    summaryDelayMs: 10,
+    minSendIntervalMs: 0,
+    send: async item => {
+      delivered.push(item);
+      return true;
+    },
+    onSuppressed: event => suppressed.push(event)
+  });
+
+  const createdAt = Date.now();
+  await Promise.all(Array.from({ length: 3 }, () =>
+    forwarder.enqueue({ username: 'Quiet', message: 'oops', createdAt })
+  ));
+  await wait(30);
+  assert.deepEqual(delivered.map(item => item.message), ['oops'],
+    'two repeated lines must be dropped without a public summary');
+  assert.equal(suppressed.length, 2, 'below-threshold duplicates are still archived');
+
+  delivered.length = 0;
+  await Promise.all(Array.from({ length: 4 }, () =>
+    forwarder.enqueue({ username: 'Loud', message: 'spam', createdAt })
+  ));
+  await wait(30);
+  assert.equal(delivered.length, 2);
+  assert.equal(delivered[1].isSummary, true);
+  assert.equal(delivered[1].summaryCount, 3);
+  assert.deepEqual(delivered[1].summaryReasons, { duplicate: 3, rate: 0, stale: 0 });
+}
+
+async function testFloodSummaryEmbedAndEditInPlace() {
+  const reasons = normalizeFloodSummaryReasons({ duplicate: 3, rate: 2 });
+  assert.equal(formatFloodSummaryDescription(reasons),
+    '🛡️ **5 messages skipped** — repeated the same message ×3, sent too fast ×2');
+  assert.equal(formatFloodSummaryDescription(normalizeFloodSummaryReasons({ stale: 1 })),
+    '🛡️ **1 message skipped** — chat backlog');
+  assert.deepEqual(normalizeFloodSummaryReasons(undefined, 4), { duplicate: 0, rate: 4, stale: 0 },
+    'legacy totals without reasons count as a rate flood');
+  const embed = buildFloodSummaryEmbed({ username: 'Spammer', reasons, createdAt: 0 });
+  assert.equal(embed.author.name, 'Spammer');
+  assert.equal(embed.title, undefined);
+
+  let currentTime = 0;
+  const posts = [];
+  const channel = {
+    id: 'chat',
+    send: async options => {
+      const message = {
+        options,
+        deleted: false,
+        edit: async next => {
+          if (message.deleted) throw new Error('Unknown Message');
+          message.options = next;
+        }
+      };
+      posts.push(message);
+      return message;
+    }
+  };
+  const publish = createFloodSummaryPublisher({ editWindowMs: 60_000, now: () => currentTime });
+  await publish(channel, { username: 'Spammer', summaryReasons: { rate: 2 } });
+  currentTime = 30_000;
+  await publish(channel, { username: 'spammer', summaryReasons: { duplicate: 3 } });
+  assert.equal(posts.length, 1, 'a repeat flood within the window must edit the earlier summary');
+  assert.match(posts[0].options.embeds[0].description, /\*\*5 messages skipped\*\*/);
+
+  await publish(channel, { username: 'Other', summaryReasons: { rate: 1 } });
+  assert.equal(posts.length, 2, 'each player gets their own summary');
+
+  currentTime = 91_000;
+  await publish(channel, { username: 'Spammer', summaryReasons: { rate: 1 } });
+  assert.equal(posts.length, 3, 'a flood after the window must post a new summary');
+
+  posts[2].deleted = true;
+  currentTime = 92_000;
+  await publish(channel, { username: 'Spammer', summaryReasons: { rate: 1 } });
+  assert.equal(posts.length, 4, 'a deleted summary must be replaced by a new post');
+  assert.match(posts[3].options.embeds[0].description, /\*\*1 message skipped\*\*/);
+}
+
 (async () => {
   testDiscordInviteFormatting();
+  await testSummaryReasonsAndDuplicateThreshold();
+  await testFloodSummaryEmbedAndEditInPlace();
   await testSerialDelivery();
   await testDistinctMessagesAreNeverTreatedAsFlood();
   await testSameMillisecondDuplicatesAreSuppressed();
