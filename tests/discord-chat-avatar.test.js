@@ -7,7 +7,7 @@ const vm = require('node:vm');
 const sharp = require('sharp');
 const { PermissionsBitField } = require('discord.js');
 const { createChatAvatarLoader } = require('../discord/chat-avatar');
-const { getChatPlayerColor, CHAT_BOT_COLOR } = require('../discord/chat-message-format');
+const { getChatPlayerColor, CHAT_BOT_COLOR, CHAT_NEW_PLAYER_COLOR, CHAT_PLAYER_COLOR } = require('../discord/chat-message-format');
 
 async function run() {
   const png = await sharp({ create: {
@@ -30,11 +30,18 @@ async function run() {
   });
   const first = await load('ObbyMagnate');
   assert.equal(urls.length, 3, 'an unavailable official skin must fall back through the avatar providers');
-  assert.equal(urls[2], 'https://minotar.net/helm/obbymagnate/28.png');
+  assert.equal(urls[2], 'https://minotar.net/helm/obbymagnate/40.png');
   assert.equal(first.thumbnail.url, `attachment://${first.files[0].name}`);
   const avatarMetadata = await sharp(first.files[0].attachment).metadata();
-  assert.equal(avatarMetadata.width, 28);
-  assert.equal(avatarMetadata.height, 28);
+  assert.equal(avatarMetadata.width, 64);
+  assert.equal(avatarMetadata.height, 64);
+  const avatarPixels = await sharp(first.files[0].attachment).ensureAlpha().raw().toBuffer();
+  const alphaAt = (x, y) => avatarPixels[(y * 64 + x) * 4 + 3];
+  assert.equal(alphaAt(0, 0), 0, 'the corners are transparent padding');
+  assert.equal(alphaAt(11, 32), 0, 'the padding is 12 px on each side');
+  assert.equal(alphaAt(12, 12), 255, 'the head starts inside the padding');
+  assert.equal(alphaAt(51, 51), 255, 'the head is 40 px wide');
+  assert.ok(Math.hypot(51.5 - 32, 51.5 - 32) < 32, 'the head corners fit inside the circular Discord crop');
   assert.deepEqual(await load('obbymagnate'), first, 'cache lookup must ignore username casing');
   assert.equal(urls.length, 3, 'repeated messages must reuse the downloaded PNG');
 
@@ -137,7 +144,7 @@ async function run() {
   assert.equal(sent[0].embeds[0].author.icon_url, `attachment://${sent[0].files[0].name}`, 'the head sits beside the name');
   assert.equal(sent[0].embeds[0].thumbnail, undefined, 'compact chat has no large thumbnail');
   assert.equal(sent[0].embeds[0].timestamp, undefined, 'compact chat relies on the Discord message time');
-  assert.equal(sent[0].embeds[0].color, getChatPlayerColor('obbymagnate'), 'each player keeps a stable colour regardless of case');
+  assert.equal(sent[0].embeds[0].color, CHAT_PLAYER_COLOR, 'a regular player is green');
   assert.ok(Buffer.isBuffer(sent[0].files[0].attachment));
   assert.equal(sent[0].embeds[0].description, 'Hello');
   await context.deliver({ username: 'Server', message: 'Announcement', allowMentions: false });
@@ -149,7 +156,10 @@ async function run() {
   await context.deliver({ username: 'ObbyMagnate', message: 'Hello again', allowMentions: false });
   assert.equal(sent[3].files, undefined);
   assert.equal(sent[3].embeds[0].author.icon_url, 'https://render.namemc.com/skin/2d/face.png?skin=ObbyMagnate&scale=4');
-  assert.equal(getChatPlayerColor('ObbyMagnate', { isBot: true }), CHAT_BOT_COLOR, 'bot accounts share a neutral colour');
+  assert.equal(CHAT_PLAYER_COLOR, 0x2ECC71);
+  assert.equal(getChatPlayerColor({ isBot: true }), 0x9B59B6, 'bot accounts are purple');
+  assert.equal(getChatPlayerColor({ isBot: true, isNewPlayer: true }), CHAT_BOT_COLOR, 'the bot colour wins over the new player colour');
+  assert.equal(getChatPlayerColor({ isNewPlayer: true }), CHAT_NEW_PLAYER_COLOR, 'new players are yellow');
   console.log('Discord chat avatar tests passed.');
 }
 

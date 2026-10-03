@@ -39,25 +39,22 @@ function formatDiscordBridgeMessage(message, { allowDiscordInvites = false } = {
     .replace(/\]/g, '\\]');
 }
 
-// Muted hues that stay readable on both Discord themes. Each player keeps the
-// same colour, so a conversation can be followed by the embed edge alone.
-const CHAT_PLAYER_COLORS = [
-  0x5865F2, 0x3BA55D, 0xFAA61A, 0xED4245, 0xEB459E, 0x1ABC9C,
-  0xE67E22, 0x9B59B6, 0x3498DB, 0xF1C40F, 0x2ECC71, 0xE91E63
-];
-const CHAT_BOT_COLOR = 0x95A5A6;
+// Embed edge colours by player status, so a bot or a newcomer stands out in
+// the chat channel at a glance.
+const CHAT_PLAYER_COLOR = 0x2ECC71;
+const CHAT_NEW_PLAYER_COLOR = 0xF1C40F;
+const CHAT_BOT_COLOR = 0x9B59B6;
 
-function getChatPlayerColor(username, { isBot = false } = {}) {
+function getChatPlayerColor({ isBot = false, isNewPlayer = false } = {}) {
   if (isBot) return CHAT_BOT_COLOR;
-  const key = String(username || '').toLowerCase();
-  let hash = 0;
-  for (const char of key) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
-  return CHAT_PLAYER_COLORS[hash % CHAT_PLAYER_COLORS.length];
+  if (isNewPlayer) return CHAT_NEW_PLAYER_COLOR;
+  return CHAT_PLAYER_COLOR;
 }
 
 module.exports = {
   CHAT_BOT_COLOR,
-  CHAT_PLAYER_COLORS,
+  CHAT_NEW_PLAYER_COLOR,
+  CHAT_PLAYER_COLOR,
   getChatPlayerColor,
   flattenMarkdownLinks,
   formatDiscordBridgeMessage,

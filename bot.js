@@ -6123,7 +6123,7 @@ async function deliverGameChatMessageToDiscord({
               ...(avatar.thumbnail?.url ? { icon_url: avatar.thumbnail.url } : {})
             },
             description: displayMessage,
-            color: getChatPlayerColor(username, { isBot: isBotPlayer })
+            color: getChatPlayerColor({ isBot: isBotPlayer, isNewPlayer })
           }]
     };
 

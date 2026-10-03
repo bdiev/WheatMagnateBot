@@ -14,6 +14,21 @@ async function hasVisibleDetail(png) {
   return false;
 }
 
+// Discord crops embed author icons to a circle. Keeping the head inside the
+// circle's inscribed square (40 px of a 64 px canvas, with transparent
+// padding) shows it as a full square head instead of a clipped disc.
+const AVATAR_HEAD_SIZE = 40;
+const AVATAR_CANVAS_SIZE = 64;
+
+function padAvatarForCircleCrop(input) {
+  const padding = (AVATAR_CANVAS_SIZE - AVATAR_HEAD_SIZE) / 2;
+  return sharp(input)
+    .resize(AVATAR_HEAD_SIZE, AVATAR_HEAD_SIZE, { kernel: sharp.kernel.nearest })
+    .extend({ top: padding, bottom: padding, left: padding, right: padding, background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .png()
+    .toBuffer();
+}
+
 function createChatAvatarLoader({ fetchImpl = fetch, now = Date.now, ttlMs = 6 * 60 * 60_000, retryMs = 60_000, maxEntries = 512 } = {}) {
   const cache = new Map();
 
@@ -22,8 +37,8 @@ function createChatAvatarLoader({ fetchImpl = fetch, now = Date.now, ttlMs = 6 *
     if (!/^[a-z0-9_]{1,16}$/i.test(name)) return {};
     const key = name.toLowerCase();
     const sources = [
-      `https://mc-heads.net/avatar/${key}/28.png`,
-      `https://minotar.net/helm/${key}/28.png`
+      `https://mc-heads.net/avatar/${key}/${AVATAR_HEAD_SIZE}.png`,
+      `https://minotar.net/helm/${key}/${AVATAR_HEAD_SIZE}.png`
     ];
     const remote = {
       thumbnail: {
@@ -41,10 +56,7 @@ function createChatAvatarLoader({ fetchImpl = fetch, now = Date.now, ttlMs = 6 *
           fetchImpl,
           signal: AbortSignal.timeout(5_000)
         });
-        buffer = await sharp(officialAvatar)
-          .resize(28, 28, { kernel: sharp.kernel.nearest })
-          .png()
-          .toBuffer();
+        buffer = await padAvatarForCircleCrop(officialAvatar);
       } catch {
         // A third-party renderer is still useful during a Mojang API outage.
       }
@@ -56,8 +68,9 @@ function createChatAvatarLoader({ fetchImpl = fetch, now = Date.now, ttlMs = 6 *
           if (!response.ok || !/^image\/png\b/i.test(response.headers.get('content-type') || '')) continue;
           const input = Buffer.from(await response.arrayBuffer());
           if (!input.length || input.length > 256 * 1024) continue;
-          const rendered = await sharp(input, { failOn: 'error', limitInputPixels: 1024 * 1024 })
-            .resize(28, 28, { kernel: sharp.kernel.nearest }).png().toBuffer();
+          const rendered = await padAvatarForCircleCrop(
+            await sharp(input, { failOn: 'error', limitInputPixels: 1024 * 1024 }).png().toBuffer()
+          );
           if (!await hasVisibleDetail(rendered)) continue;
           buffer = rendered;
           break;
@@ -80,4 +93,4 @@ function createChatAvatarLoader({ fetchImpl = fetch, now = Date.now, ttlMs = 6 *
   };
 }
 
-module.exports = { createChatAvatarLoader, hasVisibleDetail };
+module.exports = { createChatAvatarLoader, hasVisibleDetail, padAvatarForCircleCrop };
