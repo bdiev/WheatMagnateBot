@@ -6113,8 +6113,8 @@ async function deliverGameChatMessageToDiscord({
             timestamp: new Date(createdAt)
           }
         : {
-            // Compact layout: a small head beside the name and no footer
-            // timestamp, since the Discord message already carries its time.
+            // Compact layout: a small head beside the name. The embed
+            // timestamp is rendered by Discord in each viewer's own time zone.
             author: {
               name: [username, isBotPlayer ? 'BOT' : '', isNewPlayer ? 'New Player' : '']
                 .filter(Boolean)
@@ -6123,7 +6123,8 @@ async function deliverGameChatMessageToDiscord({
               ...(avatar.thumbnail?.url ? { icon_url: avatar.thumbnail.url } : {})
             },
             description: displayMessage,
-            color: getChatPlayerColor({ isBot: isBotPlayer, isNewPlayer })
+            color: getChatPlayerColor({ isBot: isBotPlayer, isWhitelisted: isWhitelistedPlayer(username), isNewPlayer }),
+            timestamp: new Date(createdAt)
           }]
     };
 

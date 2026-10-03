@@ -41,12 +41,14 @@ function formatDiscordBridgeMessage(message, { allowDiscordInvites = false } = {
 
 // Embed edge colours by player status, so a bot or a newcomer stands out in
 // the chat channel at a glance.
-const CHAT_PLAYER_COLOR = 0x2ECC71;
+const CHAT_PLAYER_COLOR = 0x3498DB;
+const CHAT_WHITELISTED_COLOR = 0x2ECC71;
 const CHAT_NEW_PLAYER_COLOR = 0xF1C40F;
 const CHAT_BOT_COLOR = 0x9B59B6;
 
-function getChatPlayerColor({ isBot = false, isNewPlayer = false } = {}) {
+function getChatPlayerColor({ isBot = false, isWhitelisted = false, isNewPlayer = false } = {}) {
   if (isBot) return CHAT_BOT_COLOR;
+  if (isWhitelisted) return CHAT_WHITELISTED_COLOR;
   if (isNewPlayer) return CHAT_NEW_PLAYER_COLOR;
   return CHAT_PLAYER_COLOR;
 }
@@ -55,6 +57,7 @@ module.exports = {
   CHAT_BOT_COLOR,
   CHAT_NEW_PLAYER_COLOR,
   CHAT_PLAYER_COLOR,
+  CHAT_WHITELISTED_COLOR,
   getChatPlayerColor,
   flattenMarkdownLinks,
   formatDiscordBridgeMessage,

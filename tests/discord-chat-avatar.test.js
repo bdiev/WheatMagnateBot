@@ -7,7 +7,7 @@ const vm = require('node:vm');
 const sharp = require('sharp');
 const { PermissionsBitField } = require('discord.js');
 const { createChatAvatarLoader } = require('../discord/chat-avatar');
-const { getChatPlayerColor, CHAT_BOT_COLOR, CHAT_NEW_PLAYER_COLOR, CHAT_PLAYER_COLOR } = require('../discord/chat-message-format');
+const { getChatPlayerColor, CHAT_BOT_COLOR, CHAT_NEW_PLAYER_COLOR, CHAT_PLAYER_COLOR, CHAT_WHITELISTED_COLOR } = require('../discord/chat-message-format');
 
 async function run() {
   const png = await sharp({ create: {
@@ -137,14 +137,15 @@ async function run() {
     resolvePlayerChatTags: async () => ({ isBot: false, isNewPlayer: false }),
     formatDiscordBridgeMessage: message => message,
     getChatPlayerColor,
+    isWhitelistedPlayer: name => name === 'WhitelistedFriend',
     loadChatAvatar: async (name, options) => { loaded.push({ name, ...options }); return load(name, options); }
   });
   vm.runInContext(`${sender}\nthis.deliver = deliverGameChatMessageToDiscord;`, context);
   assert.equal(await context.deliver({ username: 'ObbyMagnate', message: 'Hello', allowMentions: false }), true);
   assert.equal(sent[0].embeds[0].author.icon_url, `attachment://${sent[0].files[0].name}`, 'the head sits beside the name');
   assert.equal(sent[0].embeds[0].thumbnail, undefined, 'compact chat has no large thumbnail');
-  assert.equal(sent[0].embeds[0].timestamp, undefined, 'compact chat relies on the Discord message time');
-  assert.equal(sent[0].embeds[0].color, CHAT_PLAYER_COLOR, 'a regular player is green');
+  assert.ok(Number.isFinite(sent[0].embeds[0].timestamp?.getTime?.()),'the embed timestamp is shown in each viewer local time');
+  assert.equal(sent[0].embeds[0].color, CHAT_PLAYER_COLOR, 'a regular player is blue');
   assert.ok(Buffer.isBuffer(sent[0].files[0].attachment));
   assert.equal(sent[0].embeds[0].description, 'Hello');
   await context.deliver({ username: 'Server', message: 'Announcement', allowMentions: false });
@@ -156,7 +157,12 @@ async function run() {
   await context.deliver({ username: 'ObbyMagnate', message: 'Hello again', allowMentions: false });
   assert.equal(sent[3].files, undefined);
   assert.equal(sent[3].embeds[0].author.icon_url, 'https://render.namemc.com/skin/2d/face.png?skin=ObbyMagnate&scale=4');
-  assert.equal(CHAT_PLAYER_COLOR, 0x2ECC71);
+  assert.equal(CHAT_PLAYER_COLOR, 0x3498DB);
+  assert.equal(CHAT_WHITELISTED_COLOR, 0x2ECC71);
+  await context.deliver({ username: 'WhitelistedFriend', message: 'Hi', allowMentions: false });
+  assert.equal(sent.at(-1).embeds[0].color, CHAT_WHITELISTED_COLOR, 'a whitelisted player is green');
+  assert.equal(getChatPlayerColor({ isWhitelisted: true, isNewPlayer: true }), CHAT_WHITELISTED_COLOR, 'whitelist wins over the new player colour');
+  assert.equal(getChatPlayerColor({ isBot: true, isWhitelisted: true }), CHAT_BOT_COLOR, 'the bot colour wins over whitelist');
   assert.equal(getChatPlayerColor({ isBot: true }), 0x9B59B6, 'bot accounts are purple');
   assert.equal(getChatPlayerColor({ isBot: true, isNewPlayer: true }), CHAT_BOT_COLOR, 'the bot colour wins over the new player colour');
   assert.equal(getChatPlayerColor({ isNewPlayer: true }), CHAT_NEW_PLAYER_COLOR, 'new players are yellow');
