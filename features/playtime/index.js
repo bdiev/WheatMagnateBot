@@ -93,8 +93,11 @@ function createPlaytimeFeature({
             updated_at = NOW()
         FROM elapsed
         WHERE pt.username = elapsed.username
-        RETURNING LOWER(pt.username) AS username_key, pt.tracking_since IS NOT NULL AS still_tracking
+        RETURNING LOWER(pt.username) AS username_key, pt.tracking_since IS NOT NULL AS still_tracking,
+                  COALESCE(pt.player_uuid::text, LOWER(pt.username)) AS identity_key,
+                  elapsed.whole_seconds
       `, [onlineUsernameKeys]);
+      const creditedRows = (checkpoint?.rows || []).filter(row => Number(row.whole_seconds) > 0);
       // Players whose timer just carried over need no second write.
       const stillTracking = new Set((checkpoint?.rows || [])
         .filter(row => row.still_tracking)
@@ -135,12 +138,31 @@ function createPlaytimeFeature({
         `, [username]);
       }
       await client.query('COMMIT');
+      await recordDailyPlaytime(creditedRows);
       return { synchronized: true, onlineCount: normalizedOnlineUsernames.length };
     } catch (err) {
       if (client) await client.query('ROLLBACK').catch(() => {});
       console.error('[Playtime] Failed to synchronize:', err.message);
     } finally {
       if (client) client.release();
+    }
+  }
+
+  // Daily slices are a best-effort side record: the all-time total above is
+  // already committed, so a failure here never loses counted playtime.
+  async function recordDailyPlaytime(rows) {
+    if (!rows.length) return;
+    try {
+      await pool.query(`
+        INSERT INTO player_playtime_daily (identity_key, day, seconds)
+        SELECT credited.identity_key, (NOW() AT TIME ZONE 'UTC')::date, SUM(credited.seconds)
+        FROM UNNEST($1::text[], $2::bigint[]) AS credited(identity_key, seconds)
+        GROUP BY credited.identity_key
+        ON CONFLICT (identity_key, day)
+        DO UPDATE SET seconds = player_playtime_daily.seconds + EXCLUDED.seconds
+      `, [rows.map(row => row.identity_key), rows.map(row => Number(row.whole_seconds))]);
+    } catch (err) {
+      console.error('[Playtime] Failed to record daily playtime:', err.message);
     }
   }
 
@@ -153,10 +175,13 @@ function createPlaytimeFeature({
           SELECT
             COALESCE(pa.username, w.username) AS username,
             COALESCE(w.player_uuid::text, pa.player_uuid::text, LOWER(w.username)) AS identity_key,
-            COALESCE(pt.total_seconds, 0) +
-              CASE WHEN pt.tracking_since IS NULL THEN 0
-                   ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - pt.tracking_since)))::BIGINT)
-              END AS total_seconds
+            CASE WHEN pt.username IS NULL THEN NULL
+                 ELSE COALESCE(pt.player_uuid::text, LOWER(pt.username))
+            END AS daily_key,
+            COALESCE(pt.total_seconds, 0) AS stored_seconds,
+            CASE WHEN pt.tracking_since IS NULL THEN 0
+                 ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - pt.tracking_since)))::BIGINT)
+            END AS live_seconds
           FROM whitelist w
           LEFT JOIN LATERAL (
             SELECT candidate.username, candidate.player_uuid
@@ -176,15 +201,30 @@ function createPlaytimeFeature({
               AND LOWER(pt.username) = LOWER(w.username)
             )
         ), deduplicated AS (
-          SELECT DISTINCT ON (identity_key) username, identity_key, total_seconds
+          SELECT DISTINCT ON (identity_key)
+            username, identity_key, daily_key, live_seconds,
+            stored_seconds + live_seconds AS total_seconds
           FROM matched
-          ORDER BY identity_key, total_seconds DESC
+          ORDER BY identity_key, stored_seconds + live_seconds DESC
         )
-        SELECT username, total_seconds
-        FROM deduplicated
-        ORDER BY total_seconds DESC, LOWER(username)
+        SELECT d.username, d.total_seconds,
+               COALESCE(recent.week_seconds, 0) + d.live_seconds AS week_seconds,
+               COALESCE(recent.month_seconds, 0) + d.live_seconds AS month_seconds,
+               (SELECT MIN(day) FROM player_playtime_daily) AS history_since
+        FROM deduplicated d
+        LEFT JOIN LATERAL (
+          SELECT SUM(daily.seconds) FILTER (WHERE daily.day > (NOW() AT TIME ZONE 'UTC')::date - 7) AS week_seconds,
+                 SUM(daily.seconds) AS month_seconds
+          FROM player_playtime_daily daily
+          WHERE daily.identity_key = d.daily_key
+            AND daily.day > (NOW() AT TIME ZONE 'UTC')::date - 30
+        ) recent ON TRUE
+        ORDER BY d.total_seconds DESC, LOWER(d.username)
       `);
-      return { players: result.rows };
+      return {
+        players: result.rows.map(({ history_since: _historySince, ...player }) => player),
+        historySince: result.rows[0]?.history_since || null
+      };
     } catch (err) {
       return { error: err.message };
     }
@@ -270,64 +310,128 @@ function createPlaytimeFeature({
     return parts.join(' ');
   }
 
-  function formatPlaytimeLeaderboard(players) {
-    const visiblePlayers = players.slice(0, 50);
-    const rankWidth = Math.max(1, String(visiblePlayers.length).length);
-    const lines = visiblePlayers.map((player, index) => {
-      const rank = String(index + 1).padStart(rankWidth, '0');
-      return `\`${rank}.\` ${getPlayerHeadEmoji(player.username)} **${player.username}** - \`${formatPlaytime(player.total_seconds)}\``;
+  const PLAYTIME_PAGE_SIZE = 20;
+  const PLAYTIME_PERIODS = {
+    all: { label: 'All time', valueKey: 'total_seconds', days: null },
+    '30d': { label: '30 days', valueKey: 'month_seconds', days: 30 },
+    '7d': { label: '7 days', valueKey: 'week_seconds', days: 7 }
+  };
+
+  function normalizePlaytimePeriod(period) {
+    return Object.hasOwn(PLAYTIME_PERIODS, period) ? period : 'all';
+  }
+
+  function formatPlaytimeLeaderboard(players, { offset = 0, valueKey = 'total_seconds', showWeekDelta = false, onlineKeys = new Set() } = {}) {
+    const rankWidth = Math.max(2, String(offset + players.length).length);
+    const lines = players.map((player, index) => {
+      const rank = String(offset + index + 1).padStart(rankWidth, '0');
+      const online = onlineKeys.has(String(player.username).toLowerCase()) ? ' 🟢' : '';
+      const weekSeconds = Number(player.week_seconds) || 0;
+      const delta = showWeekDelta && weekSeconds >= 60 ? ` · +${formatPlaytime(weekSeconds)} 7d` : '';
+      return `\`${rank}.\` ${getPlayerHeadEmoji(player.username)} **${player.username}**${online} - \`${formatPlaytime(player[valueKey])}\`${delta}`;
     });
-    if (players.length > visiblePlayers.length) {
-      lines.push(`...and ${players.length - visiblePlayers.length} more`);
-    }
     return lines.length > 0 ? lines.join('\n') : 'No whitelist players found.';
   }
 
-  function buildPlaytimeComponents() {
+  function buildPlaytimeComponents({ period = 'all', page = 0, totalPages = 1, showBack = false } = {}) {
     const searchButton = new ButtonBuilder()
       .setCustomId('playtime_non_whitelist_search')
-      .setLabel('Search non-whitelist')
+      .setLabel(showBack ? 'Search again' : 'Search non-whitelist')
       .setStyle(ButtonStyle.Secondary);
     if (uiButtonEmojis.search) searchButton.setEmoji(uiButtonEmojis.search);
 
-    return [
-      new ActionRowBuilder().addComponents(
+    if (showBack) {
+      return [
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId('playtime_period_all')
+            .setLabel('Back to whitelist')
+            .setStyle(ButtonStyle.Secondary),
+          searchButton
+        )
+      ];
+    }
+
+    const periodRow = new ActionRowBuilder().addComponents(
+      ...Object.entries(PLAYTIME_PERIODS).map(([key, { label }]) => new ButtonBuilder()
+        .setCustomId(`playtime_period_${key}`)
+        .setLabel(label)
+        .setStyle(key === period ? ButtonStyle.Primary : ButtonStyle.Secondary)
+        .setDisabled(key === period))
+    );
+    const navigationRow = new ActionRowBuilder();
+    if (totalPages > 1) {
+      navigationRow.addComponents(
         new ButtonBuilder()
-          .setCustomId('playtime_refresh_button')
-          .setLabel('Refresh')
-          .setEmoji(uiButtonEmojis.slowFalling)
-          .setStyle(ButtonStyle.Secondary),
-        searchButton
-      )
-    ];
+          .setCustomId(`playtime_page_${period}_${Math.max(0, page - 1)}`)
+          .setLabel('◀ Prev')
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(page <= 0),
+        new ButtonBuilder()
+          .setCustomId(`playtime_page_${period}_${Math.min(totalPages - 1, page + 1)}`)
+          .setLabel('Next ▶')
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(page >= totalPages - 1)
+      );
+    }
+    navigationRow.addComponents(searchButton);
+    return [periodRow, navigationRow];
   }
 
-  async function buildWhitelistPlaytimeMessage() {
+  async function buildWhitelistPlaytimeMessage({ period = 'all', page = 0 } = {}) {
     const playtimeData = await getWhitelistPlaytime();
     if (playtimeData.error) {
       return {
         embeds: [{
-          title: 'Whitelist Playtime',
+          title: `${statusEmojis.playtime} Whitelist Playtime`,
           description: `Error: ${playtimeData.error}`,
           color: 16711680,
           timestamp: new Date()
         }],
-        components: []
+        components: buildPlaytimeComponents({ showBack: true })
       };
     }
 
-    const players = playtimeData.players || [];
-    const description = formatPlaytimeLeaderboard(players);
+    const selectedPeriod = normalizePlaytimePeriod(period);
+    const { label, valueKey, days } = PLAYTIME_PERIODS[selectedPeriod];
+    const allPlayers = playtimeData.players || [];
+    const players = days
+      ? allPlayers
+        .filter(player => Number(player[valueKey]) > 0)
+        .sort((a, b) => Number(b[valueKey]) - Number(a[valueKey]) || a.username.localeCompare(b.username))
+      : allPlayers;
+    const totalPages = Math.max(1, Math.ceil(players.length / PLAYTIME_PAGE_SIZE));
+    const currentPage = Math.min(Math.max(0, Number(page) || 0), totalPages - 1);
+    const offset = currentPage * PLAYTIME_PAGE_SIZE;
+    const onlineKeys = new Set(getOnlinePlayerUsernames().map(username => String(username).toLowerCase()));
+    const historyStart = playtimeData.historySince ? new Date(playtimeData.historySince) : null;
+
+    // Daily slices only exist since the table was added; say so while a
+    // period reaches further back than the recorded history.
+    const footerParts = [];
+    if (totalPages > 1) footerParts.push(`Page ${currentPage + 1}/${totalPages}`);
+    if (days && (!historyStart || Date.now() - historyStart.getTime() < days * 86_400_000)) {
+      footerParts.push(historyStart
+        ? `Daily history since ${historyStart.toISOString().slice(0, 10)}`
+        : 'Daily history starts now');
+    }
 
     return {
       embeds: [{
-        title: `${statusEmojis.playtime} Whitelist Playtime · ${players.length} players`,
-        description,
+        title: `${statusEmojis.playtime} Whitelist Playtime · ${label} · ${players.length} players`,
+        description: players.length > 0
+          ? formatPlaytimeLeaderboard(players.slice(offset, offset + PLAYTIME_PAGE_SIZE), {
+            offset,
+            valueKey,
+            showWeekDelta: !days && Boolean(historyStart),
+            onlineKeys
+          })
+          : `No whitelist playtime in the last ${label}.`,
         color: 3447003,
         timestamp: new Date(),
-        footer: { text: 'Press Refresh to update this table' }
+        ...(footerParts.length ? { footer: { text: footerParts.join(' · ') } } : {})
       }],
-      components: buildPlaytimeComponents()
+      components: buildPlaytimeComponents({ period: selectedPeriod, page: currentPage, totalPages })
     };
   }
 
@@ -394,6 +498,7 @@ function createPlaytimeFeature({
     formatPlaytimeLeaderboard,
     buildPlaytimeComponents,
     buildWhitelistPlaytimeMessage,
+    normalizePlaytimePeriod,
     setPlayerPlaytime
   };
 }

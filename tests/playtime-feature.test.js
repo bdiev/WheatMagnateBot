@@ -30,7 +30,8 @@ async function run() {
   const result = await feature.getWhitelistPlaytime();
   const searchResult = await feature.searchNonWhitelistPlaytime('vis', 100);
   const setResult = await feature.setPlayerPlaytime('OldPlayerName', 42);
-  const componentIds = feature.buildPlaytimeComponents()[0].components.map(component => component.data.custom_id);
+  const componentIds = feature.buildPlaytimeComponents().map(row => row.components.map(component => component.data.custom_id));
+  const searchComponentIds = feature.buildPlaytimeComponents({ showBack: true })[0].components.map(component => component.data.custom_id);
 
   assert.equal(
     feature.parsePlaytime('20 days 15 hours 19 minutes 30 seconds. [329/50368]'),
@@ -56,7 +57,73 @@ async function run() {
   assert.deepStrictEqual(queries[1].params, ['%vis%', 25], 'search must use a parameterized query and cap results at 25');
   assert.match(queries[2].sql, /player_name_history pnh/, 'setting PT by an old nickname must resolve its UUID');
   assert.match(queries[2].sql, /WHERE pt\.player_uuid = \(SELECT player_uuid FROM identity\)/);
-  assert.deepStrictEqual(componentIds, ['playtime_refresh_button', 'playtime_non_whitelist_search']);
+  assert.deepStrictEqual(componentIds, [
+    ['playtime_period_all', 'playtime_period_30d', 'playtime_period_7d'],
+    ['playtime_non_whitelist_search']
+  ]);
+  assert.deepStrictEqual(searchComponentIds, ['playtime_period_all', 'playtime_non_whitelist_search'],
+    'search results must offer a way back to the whitelist table');
+
+  const leaderboardRows = Array.from({ length: 45 }, (_, index) => ({
+    username: `Player${String(index).padStart(2, '0')}`,
+    total_seconds: 100_000 - index,
+    week_seconds: index === 44 ? 7_200 : 0,
+    month_seconds: index % 2 === 0 ? 3_600 + index : 0,
+    history_since: new Date(Date.now() - 3 * 86_400_000)
+  }));
+  const leaderboardFeature = createPlaytimeFeature({
+    pool: { async query() { return { rows: leaderboardRows }; } },
+    getOnlinePlayerUsernames: () => ['player01'],
+    getPlayerHeadEmoji: () => '',
+    statusEmojis: { playtime: '' },
+    uiButtonEmojis: { slowFalling: 'sync', search: 'search' }
+  });
+  const firstPage = await leaderboardFeature.buildWhitelistPlaytimeMessage();
+  assert.equal(firstPage.embeds[0].description.split('\n').length, 20, 'pages hold 20 players instead of cutting the list at 50');
+  assert.match(firstPage.embeds[0].description, /\*\*Player01\*\* 🟢/, 'online players are marked');
+  assert.equal(firstPage.embeds[0].footer.text, 'Page 1/3');
+  assert.deepStrictEqual(firstPage.components[1].components.map(component => component.data.custom_id),
+    ['playtime_page_all_0', 'playtime_page_all_1', 'playtime_non_whitelist_search']);
+  const lastPage = await leaderboardFeature.buildWhitelistPlaytimeMessage({ period: 'all', page: 99 });
+  assert.match(lastPage.embeds[0].description, /^`41\.`/, 'an out-of-range page clamps to the last page');
+  assert.match(lastPage.embeds[0].description, /Player44\*\* - `1d 3h 45m` · \+2h 0m 7d/, 'all-time rows show the weekly gain');
+  const monthView = await leaderboardFeature.buildWhitelistPlaytimeMessage({ period: '30d' });
+  assert.match(monthView.embeds[0].title, /30 days · 23 players/, 'period views list only players with playtime in that period');
+  assert.match(monthView.embeds[0].description, /^`01\.` {2}\*\*Player44\*\* - `1h 0m`/, 'period views rank by period playtime');
+  assert.match(monthView.embeds[0].footer.text, /Daily history since/, 'periods longer than the recorded history say so');
+  assert.equal(leaderboardFeature.normalizePlaytimePeriod('bogus'), 'all');
+
+  const dailyQueries = [];
+  const dailyFeature = createPlaytimeFeature({
+    pool: {
+      async connect() {
+        return {
+          async query(sql) {
+            if (/WITH elapsed AS/.test(sql)) {
+              return { rows: [
+                { username_key: 'alpha', still_tracking: true, identity_key: 'uuid-a', whole_seconds: '30' },
+                { username_key: 'gone', still_tracking: false, identity_key: 'gone', whole_seconds: '0' }
+              ] };
+            }
+            return { rows: [] };
+          },
+          release() {}
+        };
+      },
+      async query(sql, params) {
+        dailyQueries.push({ sql: String(sql), params });
+        return { rows: [] };
+      }
+    },
+    getOnlinePlayerUsernames: () => [],
+    getPlayerHeadEmoji: () => '',
+    statusEmojis: { playtime: '' },
+    uiButtonEmojis: { slowFalling: 'sync', search: 'search' }
+  });
+  await dailyFeature.syncWhitelistPlaytime(['Alpha']);
+  assert.equal(dailyQueries.length, 1);
+  assert.match(dailyQueries[0].sql, /INSERT INTO player_playtime_daily/);
+  assert.deepStrictEqual(dailyQueries[0].params, [['uuid-a'], [30]], 'only credited seconds are added to the daily slice');
 
   const syncQueries = [];
   let syncConnections = 0;
