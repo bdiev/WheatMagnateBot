@@ -8691,18 +8691,15 @@ function getStatusDescription() {
   const nearbyNames = nearbyPlayers
     .map(player => getCanonicalWhitelistUsername(player.username) || player.username)
     .map(username => formatPlayerHeadName(username));
-  const whitelistOnlineDisplay = formatCompactInlineList(
-    whitelistOnline.map(username => formatPlayerHeadName(username))
-  );
+  const whitelistOnlineNames = whitelistOnline.map(username => formatPlayerHeadName(username));
   const botUptime = formatDurationShort(Math.max(0, Date.now() - startTime));
   const tpsIndicator = getTpsIndicator(getCurrentTpsNumber());
-  const nearbyLine = `${STATUS_EMOJIS.nearby} Nearby: ${formatCompactInlineList(nearbyNames)}`;
 
   return [
     '**Server**',
     `${STATUS_EMOJIS.players} Players: **${playerCount}** · ${STATUS_EMOJIS.tps} TPS: **${avgTps}**${tpsIndicator ? ` ${tpsIndicator}` : ''} · ${STATUS_EMOJIS.serverPing} Ping: **${getBotPingDisplay()}**`,
-    nearbyNames.length > 0 ? nearbyLine : `-# ${nearbyLine}`,
-    `${STATUS_EMOJIS.whitelist} Whitelist online: ${whitelistOnlineDisplay}`,
+    ...formatStatusPlayerList(`${STATUS_EMOJIS.nearby} Nearby`, nearbyNames),
+    ...formatStatusPlayerList(`${STATUS_EMOJIS.whitelist} Whitelist online`, whitelistOnlineNames),
     '',
     '**Bot**',
     `${getPlayerHeadEmoji(ADMIN_PANEL_BOT_NAME)} **${bot.username}** · ${STATUS_EMOJIS.playtime} Uptime: **${botUptime}** · Playtime: **${wheatMagnatePlaytimeDisplay}**`,
@@ -8710,6 +8707,16 @@ function getStatusDescription() {
     '',
     ...getObsidianStatusLines()
   ].join('\n');
+}
+
+// Discord wraps right after a custom emoji image even across a no-break
+// space, so each player gets a line of its own to keep the head beside the name.
+function formatStatusPlayerList(label, entries, maxVisible = 10) {
+  if (entries.length === 0) return [`-# ${label}: None`];
+  const visible = entries.slice(0, maxVisible).map(entry => ` ${entry}`);
+  const remaining = entries.length - maxVisible;
+  if (remaining > 0) visible.push(` +${remaining} more`);
+  return [`${label} · **${entries.length}**`, ...visible];
 }
 
 // Full health and food carry no information, so the line only appears once
