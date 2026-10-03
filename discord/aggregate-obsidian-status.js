@@ -65,6 +65,7 @@ function summarizeAggregateObsidianRows(rows = [], now = Date.now()) {
 
     const farm = {
       name: getFarmName(row),
+      username: String(row.username ?? '').trim() || null,
       state: mining ? 'mining' : recovering ? 'recovering' : 'stopped',
       ratePerHour: 0,
       rateReady: false,

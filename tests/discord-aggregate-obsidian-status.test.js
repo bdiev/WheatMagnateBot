@@ -58,6 +58,7 @@ const detailed = summarizeAggregateObsidianRows([
   { username:'Alt3',desired_enabled:true,account_enabled:false,is_mining:false },
   { username:'Alt4',desired_enabled:false,account_enabled:true,is_mining:false }
 ], now);
+assert.equal(detailed.farms[1].username, 'Alt1', 'farm keeps its Minecraft username for the head emoji');
 assert.deepEqual(detailed.farms.map(farm => [farm.name, farm.state]), [
   ['WheatMagnate', 'mining'], ['Alt One', 'mining'], ['Alt2', 'recovering'], ['Alt3', 'stopped'], ['Alt4', 'stopped']
 ], 'farms are listed by name with their live state');
@@ -77,8 +78,9 @@ assert.equal(getTpsIndicator(null), '', 'no indicator while TPS is still calcula
 const botSource = fs.readFileSync(path.resolve(__dirname, '..', 'bot.js'), 'utf8');
 const statusBlock = botSource.match(/function getObsidianStatusLines\(\)[\s\S]*?async function refreshAggregateObsidianStatus/)?.[0] || '';
 assert.doesNotMatch(statusBlock, /Phase:/, 'Server Status no longer presents one bot phase as a combined farm phase');
-assert.match(statusBlock, /Rate:[\s\S]*?\/h\*\* avg[\s\S]*?\/30d[\s\S]*?Farms:/, 'Server Status presents aggregate rate and farm counts');
-assert.match(statusBlock, /Recovering:[\s\S]*?Stopped:/, 'Server Status names recovering and stopped farms');
+assert.match(statusBlock, /\*\*Obsidian Farm\*\* · [\s\S]*?mining[\s\S]*?\/h\*\* avg[\s\S]*?per 30d[\s\S]*?formatObsidianFarmLine/, 'Server Status presents farm counts, aggregate rate and one line per farm');
+assert.match(botSource, /function formatObsidianFarmLine[\s\S]*?getPlayerHeadEmoji[\s\S]*?entry\.reason/, 'each farm line shows the bot head and a stop reason');
+assert.match(botSource, /WHERE account\.is_default=FALSE\s+AND account\.role IS DISTINCT FROM 'pearl_loader'/, 'the Pearl Loader account is not listed as an Obsidian farm');
 assert.match(botSource, /refreshAggregateObsidianStatus[\s\S]*?obsidian_farm_state[\s\S]*?UNION ALL[\s\S]*?obsidian_account_farm_state/,
   'Server Status loads primary and managed farm totals in one aggregate');
 assert.match(botSource, /account\.deleted_at IS NOT NULL[\s\S]*?WHERE account\.is_default=FALSE(?! AND account\.deleted_at IS NULL)/,

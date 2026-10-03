@@ -8545,11 +8545,19 @@ function formatStatusSpan(milliseconds) {
   return `${minutes}m`;
 }
 
-function formatObsidianFarmReasonList(farms, state) {
-  return farms
-    .filter(entry => entry.state === state)
-    .map(entry => `**${escapeStatusDescriptionText(entry.name)}** (${escapeStatusDescriptionText(entry.reason)})`)
-    .join(', ');
+function formatObsidianRate(value) {
+  const rate = Math.max(0, Math.round(Number(value) || 0));
+  if (rate >= 1000 && rate < 10_000) return `${(rate / 1000).toFixed(1)}k`;
+  return formatCompactCount(rate);
+}
+
+function formatObsidianFarmLine(entry) {
+  const name = `${getPlayerHeadEmoji(entry.username || entry.name)} ${escapeStatusDescriptionText(entry.name)}`;
+  if (entry.state === 'mining') {
+    return `${name} · **${entry.rateReady ? `${formatObsidianRate(entry.ratePerHour)}/h` : '...'}**`;
+  }
+  const icon = entry.state === 'recovering' ? STATUS_EMOJIS.update : STATUS_EMOJIS.pause;
+  return `${name} · ${icon} ${escapeStatusDescriptionText(entry.reason)}`;
 }
 
 function getObsidianStatusLines() {
@@ -8566,32 +8574,28 @@ function getObsidianStatusLines() {
   const perHour = Math.round(status.ratePerHour);
   const perMonth = perHour * 24 * 30;
 
+  const counts = [`${status.miningCount} mining`];
+  if (status.recoveringCount > 0) counts.push(`${status.recoveringCount} recovering`);
+  if (status.stoppedCount > 0) counts.push(`${status.stoppedCount} stopped`);
   const sessionSpan = status.sessionStartedAt
     ? ` (${formatStatusSpan(Date.now() - status.sessionStartedAt)})`
     : '';
   const lines = [
-    `${FARM_EMOJIS.netheritePickaxe} Session: **${formatFullCount(status.sessionMined)}**${sessionSpan} · All time: **${formatFullCount(status.totalMined)}**`
+    `**Obsidian Farm** · ${counts.join(' · ')}`,
+    `${FARM_EMOJIS.netheritePickaxe} Session **${formatFullCount(status.sessionMined)}**${sessionSpan} · All time **${formatFullCount(status.totalMined)}**`
   ];
   if (status.miningCount > 0 && !status.rateReady) {
-    lines.push(`${FARM_EMOJIS.diamondPickaxe} Rate: **Calculating...**`);
+    lines.push(`${FARM_EMOJIS.diamondPickaxe} Rate **Calculating...**`);
   } else {
     const now = status.recentRateReady
-      ? `**${formatCompactCount(Math.round(status.recentRatePerHour))}/h** now · `
+      ? `**${formatObsidianRate(status.recentRatePerHour)}/h** now · `
       : '';
-    lines.push(`${FARM_EMOJIS.diamondPickaxe} Rate: ${now}**${formatCompactCount(perHour)}/h** avg · **~${formatCompactCount(perMonth)}/30d**`);
+    lines.push(`${FARM_EMOJIS.diamondPickaxe} ${now}**${formatObsidianRate(perHour)}/h** avg · **~${formatCompactCount(perMonth)}** per 30d`);
   }
-  lines.push(`${FARM_EMOJIS.obsidian} Farms: **${status.miningCount} mining · ${status.recoveringCount} recovering · ${status.stoppedCount} stopped**`);
-
-  const miningFarms = (status.farms || []).filter(entry => entry.state === 'mining');
-  if (miningFarms.length > 1) {
-    lines.push(miningFarms
-      .map(entry => `${escapeStatusDescriptionText(entry.name)} **${entry.rateReady ? `${formatCompactCount(Math.round(entry.ratePerHour))}/h` : '...'}**`)
-      .join(' · '));
-  }
-  const recovering = formatObsidianFarmReasonList(status.farms || [], 'recovering');
-  if (recovering) lines.push(`${STATUS_EMOJIS.update} Recovering: ${recovering}`);
-  const stopped = formatObsidianFarmReasonList(status.farms || [], 'stopped');
-  if (stopped) lines.push(`${STATUS_EMOJIS.pause} Stopped: ${stopped}`);
+  const order = { mining: 0, recovering: 1, stopped: 2 };
+  lines.push(...[...(status.farms || [])]
+    .sort((left, right) => order[left.state] - order[right.state])
+    .map(formatObsidianFarmLine));
   return lines;
 }
 
@@ -8622,6 +8626,7 @@ async function refreshAggregateObsidianStatus({ force = false } = {}) {
       FROM obsidian_account_farm_state farm
       JOIN bot_accounts account ON account.id=farm.account_id
       WHERE account.is_default=FALSE
+        AND account.role IS DISTINCT FROM 'pearl_loader'
     )
     SELECT farm_states.*,
            runtime.status AS runtime_status,
@@ -8660,7 +8665,6 @@ function getStatusDescription() {
         lastDisconnectReason ? `${STATUS_EMOJIS.pause} ${lastDisconnectReason}` : `${STATUS_EMOJIS.pause} Bot paused`,
         getWheatMagnateStatusLine(),
         '',
-        '**Obsidian Farm**',
         ...getObsidianStatusLines()
       ].join('\n');
     }
@@ -8669,7 +8673,6 @@ function getStatusDescription() {
         `${STATUS_EMOJIS.update} Primary bot is trying to reconnect.`,
         getWheatMagnateStatusLine(),
         '',
-        '**Obsidian Farm**',
         ...getObsidianStatusLines()
       ].join('\n');
     }
@@ -8705,7 +8708,6 @@ function getStatusDescription() {
     `${getPlayerHeadEmoji(ADMIN_PANEL_BOT_NAME)} **${bot.username}** · ${STATUS_EMOJIS.playtime} Uptime: **${botUptime}** · Playtime: **${wheatMagnatePlaytimeDisplay}**`,
     ...getBotVitalsStatusLines(),
     '',
-    '**Obsidian Farm**',
     ...getObsidianStatusLines()
   ].join('\n');
 }
