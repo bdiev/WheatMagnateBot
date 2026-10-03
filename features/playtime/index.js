@@ -321,14 +321,12 @@ function createPlaytimeFeature({
     return Object.hasOwn(PLAYTIME_PERIODS, period) ? period : 'all';
   }
 
-  function formatPlaytimeLeaderboard(players, { offset = 0, valueKey = 'total_seconds', showWeekDelta = false, onlineKeys = new Set() } = {}) {
+  function formatPlaytimeLeaderboard(players, { offset = 0, valueKey = 'total_seconds', onlineKeys = new Set() } = {}) {
     const rankWidth = Math.max(2, String(offset + players.length).length);
     const lines = players.map((player, index) => {
       const rank = String(offset + index + 1).padStart(rankWidth, '0');
       const online = onlineKeys.has(String(player.username).toLowerCase()) ? ' 🟢' : '';
-      const weekSeconds = Number(player.week_seconds) || 0;
-      const delta = showWeekDelta && weekSeconds >= 60 ? ` · +${formatPlaytime(weekSeconds)} 7d` : '';
-      return `\`${rank}.\` ${getPlayerHeadEmoji(player.username)} **${player.username}**${online} - \`${formatPlaytime(player[valueKey])}\`${delta}`;
+      return `\`${rank}.\` ${getPlayerHeadEmoji(player.username)} **${player.username}**${online} - \`${formatPlaytime(player[valueKey])}\``;
     });
     return lines.length > 0 ? lines.join('\n') : 'No whitelist players found.';
   }
@@ -423,7 +421,6 @@ function createPlaytimeFeature({
           ? formatPlaytimeLeaderboard(players.slice(offset, offset + PLAYTIME_PAGE_SIZE), {
             offset,
             valueKey,
-            showWeekDelta: !days && Boolean(historyStart),
             onlineKeys
           })
           : `No whitelist playtime in the last ${label}.`,

@@ -1541,6 +1541,10 @@ function buildPlayerWhisperCommands(username, rawText) {
     .map(text => ({ text, command: `/msg ${name} ${text}` }));
 }
 
+function isGameCommandText(text) {
+  return /^[/!]/.test(String(text || '').trim());
+}
+
 function markOutboundWhisper(username, text) {
   const normalized = String(text || '')
     .replace(/§[0-9a-fk-or]/gi, '')
@@ -12782,8 +12786,22 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         let username = message.author.username;
         // Escape @ symbols with zero-width space to prevent mentions
         username = username.replace(/@/g, '@\u200B');
+        // Raw / and ! lines run as the bot itself, so only the owner may send them.
+        if (isGameCommandText(text) && message.author.id !== DISCORD_OWNER_ID) {
+          console.warn(`[Chat] Blocked game command "${text}" from ${message.author.tag}`);
+          await message.delete().catch(() => {});
+          const notice = await message.channel.send({
+            embeds: [{
+              description: `❌ <@${message.author.id}>, only the owner can send game commands (\`/\` or \`!\`) from Discord. Your message was not sent.`,
+              color: 16711680
+            }],
+            allowedMentions: { users: [message.author.id] }
+          }).catch(() => null);
+          if (notice) setTimeout(() => notice.delete().catch(() => {}), 15_000);
+          return;
+        }
         const replyUsername = await getReplyMinecraftUsername(message);
-        const gameText = replyUsername && !text.startsWith('/') && !text.startsWith('!')
+        const gameText = replyUsername && !isGameCommandText(text)
           ? `${replyUsername} ${text}`
           : text;
         // Don't add username prefix for commands (starting with / or !)

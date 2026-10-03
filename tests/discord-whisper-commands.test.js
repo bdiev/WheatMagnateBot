@@ -38,4 +38,15 @@ for (const handler of ['message_modal_', 'reply_modal_']) {
   assert.doesNotMatch(body, /startsWith\('\/'\)/, `${handler} must not forward raw slash commands`);
 }
 
+const isGameCommandText = vm.runInNewContext(`${extractFunction('isGameCommandText')} isGameCommandText;`);
+assert.equal(isGameCommandText('/tpa Alex'), true);
+assert.equal(isGameCommandText('  !pt'), true);
+assert.equal(isGameCommandText('hello /tpa'), false);
+
+const chatStart = botSource.indexOf('// Handle chat channel messages');
+const chatBody = botSource.slice(chatStart, botSource.indexOf("if (message.channel.id !== DISCORD_CHANNEL_ID) return;", chatStart));
+const ownerCheck = chatBody.indexOf('isGameCommandText(text) && message.author.id !== DISCORD_OWNER_ID');
+assert.ok(ownerCheck > 0, 'the chat bridge must refuse / and ! lines from anyone but the owner');
+assert.ok(ownerCheck < chatBody.indexOf('sendMinecraftChat('), 'the owner check must run before anything reaches the game');
+
 console.log('discord whisper command tests passed');

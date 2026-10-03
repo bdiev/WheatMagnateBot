@@ -86,7 +86,7 @@ async function run() {
     ['playtime_page_all_0', 'playtime_page_all_1', 'playtime_non_whitelist_search']);
   const lastPage = await leaderboardFeature.buildWhitelistPlaytimeMessage({ period: 'all', page: 99 });
   assert.match(lastPage.embeds[0].description, /^`41\.`/, 'an out-of-range page clamps to the last page');
-  assert.match(lastPage.embeds[0].description, /Player44\*\* - `1d 3h 45m` · \+2h 0m 7d/, 'all-time rows show the weekly gain');
+  assert.match(lastPage.embeds[0].description, /Player44\*\* - `1d 3h 45m`$/, 'all-time rows show only the total, without a weekly gain');
   const monthView = await leaderboardFeature.buildWhitelistPlaytimeMessage({ period: '30d' });
   assert.match(monthView.embeds[0].title, /30 days · 23 players/, 'period views list only players with playtime in that period');
   assert.match(monthView.embeds[0].description, /^`01\.` {2}\*\*Player44\*\* - `1h 0m`/, 'period views rank by period playtime');
