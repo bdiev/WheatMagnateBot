@@ -223,7 +223,7 @@ assert.match(serverSource, /playerUuid: row\.player_uuid \|\| null/,
   'chat API must expose the recorded player UUID for stable skin resolution');
 assert.match(serverSource, /const cacheKey = `v5:\$\{avatarIdentity\.toLowerCase\(\)\}:\$\{textureHash \|\| 'unknown'\}`/,
   'avatar cache must not reuse an image after the player skin texture changes');
-assert.match(appSource, /previousChatUsername = isActivity \|\| isNotice \? null : normalizedUsername/,
+assert.match(appSource, /function chatMessageUsernameKey\(message\) \{\s*if \(message\.type === 'activity' \|\| message\.type === 'flood' \|\| message\.type === 'server'\) return null;[\s\S]*?previousChatUsername = chatMessageUsernameKey\(message\)/,
   'join, leave, flood, and server notices must end the current player message group');
 assert.match(stylesSource, /\.chat-message\.chat-activity\s*\{[^}]*grid-template-columns:\s*minmax\(0, max-content\) max-content;/s,
   'mobile join and leave events must use their own compact status-row layout');

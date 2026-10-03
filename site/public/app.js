@@ -1126,8 +1126,23 @@ function updateChatDateIndicator({ show = false } = {}) {
     const indicator = $('#chatDateIndicator');
     if (!list || !indicator) return;
     const visibleTop = list.scrollTop + 8;
-    const message = Array.from(list.querySelectorAll('.chat-message[data-created-at]'))
-      .find(item => item.offsetTop + item.offsetHeight >= visibleTop);
+    // Rows are in vertical order, so a binary search reads a handful of
+    // offsets per scroll frame instead of measuring every message.
+    const rows = list.children;
+    let low = 0;
+    let high = rows.length - 1;
+    let message = null;
+    while (low <= high) {
+      const middle = (low + high) >> 1;
+      const row = rows[middle];
+      if (row.offsetTop + row.offsetHeight >= visibleTop) {
+        message = row;
+        high = middle - 1;
+      } else {
+        low = middle + 1;
+      }
+    }
+    if (message && !message.matches('.chat-message[data-created-at]')) message = null;
     const label = message ? chatDateLabel(message.dataset.createdAt) : '';
     if (!label) {
       indicator.classList.remove('visible');
@@ -5396,116 +5411,173 @@ async function handleWhisperDeleteDialog() {
   }
 }
 
+function chatMessageUsernameKey(message) {
+  if (message.type === 'activity' || message.type === 'flood' || message.type === 'server') return null;
+  return String(message.username || 'Minecraft').trim().toLocaleLowerCase();
+}
+
+function createChatMessageElement(message, previousChatUsername, { isNew = false } = {}) {
+  const id = String(message.id);
+  const isActivity = message.type === 'activity';
+  const isFloodNotice = message.type === 'flood';
+  const isServerNotice = message.type === 'server';
+  const isNotice = isFloodNotice || isServerNotice;
+  const isBot = Boolean(message.isBot);
+  const isNewPlayer = Boolean(message.isNewPlayer);
+  const username = String(message.username || 'Minecraft');
+  const normalizedUsername = username.trim().toLocaleLowerCase();
+  const isContinuation = !isActivity
+    && !isNotice
+    && previousChatUsername !== null
+    && normalizedUsername === previousChatUsername;
+  const article = document.createElement('article');
+  article.dataset.messageId = id;
+  article.dataset.createdAt = String(message.createdAt || '');
+  if (state.chatSearchQuery && !isActivity) article.dataset.openChatContext = id;
+  const activityKind = isActivity && message.event === 'join' ? 'join' : 'leave';
+  article.className = `chat-message${isActivity ? ` chat-activity chat-activity-${activityKind}` : ''}${isNotice ? ` chat-notice chat-notice-${message.type}` : ''}${isBot ? ' chat-message-bot' : ''}${isNewPlayer ? ' chat-message-new-player' : ''}${isContinuation ? ' chat-message-continuation' : ''}${isNew ? ' new-message' : ''}`;
+  article.classList.toggle('reply-active', !isActivity && !isNotice && state.chatReplyActiveMessageId === id);
+  const text = isActivity
+    ? (message.event === 'join' ? 'joined the game' : 'left the game')
+    : String(message.message || '');
+  article.innerHTML = isActivity
+    ? `<span class="chat-activity-mark" aria-hidden="true"></span>
+       <div class="chat-activity-copy">
+         <button class="chat-activity-player" type="button" data-player="${escapeHtml(username)}" aria-label="Open ${escapeHtml(username)} player profile">${escapeHtml(username)}</button>
+         <span class="chat-text"></span>
+       </div>
+       <time class="chat-time">${formatChatTime(message.createdAt)}</time>`
+    : isNotice
+    ? `<span class="chat-notice-mark" aria-hidden="true"></span>
+       <div class="chat-notice-copy">
+         <strong>${isFloodNotice ? 'Flood protection' : 'SERVER'}</strong>
+         <span class="chat-text"></span>
+       </div>
+       <time class="chat-time">${formatChatTime(message.createdAt)}</time>`
+    : `<div class="chat-user">${isContinuation ? '' : playerIdentity(username, 28, { uuid: message.playerUuid })}</div>
+       <div class="chat-message-body">
+         ${isContinuation ? '' : `<div class="chat-message-head">
+           <span class="chat-message-name">${escapeHtml(username)}</span>
+           ${isBot ? '<span class="chat-bot-badge">BOT</span>' : ''}
+         </div>`}
+         <div class="chat-text"></div>
+       </div>
+       <div class="chat-meta">
+         <button class="chat-reply-button" type="button" aria-label="Reply to ${escapeHtml(username)}" title="Reply"><img src="/logos/reply.png" alt="" aria-hidden="true"></button>
+         <time class="chat-time">${formatChatTime(message.createdAt)}</time>
+       </div>`;
+  const chatText = article.querySelector('.chat-text');
+  if (isActivity) chatText.textContent = text;
+  else if (isFloodNotice) chatText.textContent = `${username}: ${text}`;
+  else if (isServerNotice) chatText.textContent = text;
+  else chatText.innerHTML = linkifyChatMessage(text);
+  const replyButton = article.querySelector('.chat-reply-button');
+  if (replyButton) {
+    replyButton.dataset.chatReply = username;
+    replyButton.dataset.chatReplyText = text;
+  }
+  return article;
+}
+
+// Describes how the rendered rows can become the next list without rebuilding
+// all of them: rows trimmed from the top plus rows appended at the bottom, or
+// a block of older rows prepended. Anything else needs a full rebuild.
+function planChatListUpdate(previousIds, nextIds) {
+  if (!previousIds.length || !nextIds.length) return null;
+  const headIndex = previousIds.indexOf(nextIds[0]);
+  if (headIndex >= 0) {
+    const kept = previousIds.length - headIndex;
+    if (kept <= nextIds.length) {
+      let matches = true;
+      for (let index = 0; index < kept; index++) {
+        if (previousIds[headIndex + index] !== nextIds[index]) { matches = false; break; }
+      }
+      if (matches) return { type: 'append', trim: headIndex, appendFrom: kept };
+    }
+  }
+  const prependCount = nextIds.length - previousIds.length;
+  if (prependCount > 0) {
+    for (let index = 0; index < previousIds.length; index++) {
+      if (previousIds[index] !== nextIds[prependCount + index]) return null;
+    }
+    return { type: 'prepend', count: prependCount };
+  }
+  return null;
+}
+
 function renderChatMessages(messages, { scrollMode = 'preserve' } = {}) {
   const list = $('#chatList');
   if (!list) return;
   const safeMessages = Array.isArray(messages) ? messages.filter(message => message?.id != null) : [];
-  const listSignature = stableSignature([
-    state.chatSearchQuery,
-    ...safeMessages.map(message => [
-      message.id,
-      message.type,
-      message.username,
-      message.playerUuid,
-      message.message,
-      message.messageCount,
-      message.event,
-      message.isBot,
-      message.isNewPlayer,
-      message.createdAt
-    ])
-  ]);
+  // Search results and the live chat are different lists; a reset signature
+  // (timezone or account change) forces every timestamp to be rebuilt.
+  const renderKey = `query:${state.chatSearchQuery}`;
+  const nextIds = safeMessages.map(message => String(message.id));
 
   if (!safeMessages.length) {
-    if (state.renderSignatures['#chatList'] === listSignature) return;
-    if (list.dataset.empty !== 'true') {
-      list.innerHTML = state.chatSearchQuery
-        ? `<div class="empty">No archived messages contain “${escapeHtml(state.chatSearchQuery)}”.</div>`
-        : '<div class="empty">No chat messages yet. New messages will appear after the bot records them.</div>';
-      list.dataset.empty = 'true';
-    }
-    state.renderSignatures['#chatList'] = listSignature;
+    const emptySignature = `${renderKey}:empty`;
+    if (state.renderSignatures['#chatList'] === emptySignature) return;
+    list.innerHTML = state.chatSearchQuery
+      ? `<div class="empty">No archived messages contain “${escapeHtml(state.chatSearchQuery)}”.</div>`
+      : '<div class="empty">No chat messages yet. New messages will appear after the bot records them.</div>';
+    list.dataset.empty = 'true';
+    state.chatRenderedIds = [];
+    state.renderSignatures['#chatList'] = emptySignature;
     return;
   }
 
-  if (state.renderSignatures['#chatList'] === listSignature) return;
-  state.renderSignatures['#chatList'] = listSignature;
+  const canUpdateInPlace = state.renderSignatures['#chatList'] === renderKey && list.dataset.empty !== 'true';
+  const plan = canUpdateInPlace ? planChatListUpdate(state.chatRenderedIds || [], nextIds) : null;
+  if (plan?.type === 'append' && plan.trim === 0 && plan.appendFrom === nextIds.length) return;
 
   const distanceFromBottom = list.scrollHeight - list.clientHeight - list.scrollTop;
   const keepBottom = distanceFromBottom < 48;
   const previousScrollTop = list.scrollTop;
   const previousScrollHeight = list.scrollHeight;
   const previousIds = state.chatMessageIds;
-  const fragment = document.createDocumentFragment();
 
-  let previousChatUsername = null;
-  safeMessages.forEach(message => {
-    const id = String(message.id);
-    const isActivity = message.type === 'activity';
-    const isFloodNotice = message.type === 'flood';
-    const isServerNotice = message.type === 'server';
-    const isNotice = isFloodNotice || isServerNotice;
-    const isBot = Boolean(message.isBot);
-    const isNewPlayer = Boolean(message.isNewPlayer);
-    const isNew = state.chatInitialized && !previousIds.has(id);
-    const username = String(message.username || 'Minecraft');
-    const normalizedUsername = username.trim().toLocaleLowerCase();
-    const isContinuation = !isActivity
-      && !isNotice
-      && previousChatUsername !== null
-      && normalizedUsername === previousChatUsername;
-    const article = document.createElement('article');
-    article.dataset.messageId = id;
-    article.dataset.createdAt = String(message.createdAt || '');
-    if (state.chatSearchQuery && !isActivity) article.dataset.openChatContext = id;
-    const activityKind = isActivity && message.event === 'join' ? 'join' : 'leave';
-    article.className = `chat-message${isActivity ? ` chat-activity chat-activity-${activityKind}` : ''}${isNotice ? ` chat-notice chat-notice-${message.type}` : ''}${isBot ? ' chat-message-bot' : ''}${isNewPlayer ? ' chat-message-new-player' : ''}${isContinuation ? ' chat-message-continuation' : ''}${isNew ? ' new-message' : ''}`;
-    article.classList.toggle('reply-active', !isActivity && !isNotice && state.chatReplyActiveMessageId === id);
-    const text = isActivity
-      ? (message.event === 'join' ? 'joined the game' : 'left the game')
-      : String(message.message || '');
-    article.innerHTML = isActivity
-      ? `<span class="chat-activity-mark" aria-hidden="true"></span>
-         <div class="chat-activity-copy">
-           <button class="chat-activity-player" type="button" data-player="${escapeHtml(username)}" aria-label="Open ${escapeHtml(username)} player profile">${escapeHtml(username)}</button>
-           <span class="chat-text"></span>
-         </div>
-         <time class="chat-time">${formatChatTime(message.createdAt)}</time>`
-      : isNotice
-      ? `<span class="chat-notice-mark" aria-hidden="true"></span>
-         <div class="chat-notice-copy">
-           <strong>${isFloodNotice ? 'Flood protection' : 'SERVER'}</strong>
-           <span class="chat-text"></span>
-         </div>
-         <time class="chat-time">${formatChatTime(message.createdAt)}</time>`
-      : `<div class="chat-user">${isContinuation ? '' : playerIdentity(username, 28, { uuid: message.playerUuid })}</div>
-         <div class="chat-message-body">
-           ${isContinuation ? '' : `<div class="chat-message-head">
-             <span class="chat-message-name">${escapeHtml(username)}</span>
-             ${isBot ? '<span class="chat-bot-badge">BOT</span>' : ''}
-           </div>`}
-           <div class="chat-text"></div>
-         </div>
-         <div class="chat-meta">
-           <button class="chat-reply-button" type="button" aria-label="Reply to ${escapeHtml(username)}" title="Reply"><img src="/logos/reply.png" alt="" aria-hidden="true"></button>
-           <time class="chat-time">${formatChatTime(message.createdAt)}</time>
-         </div>`;
-    const chatText = article.querySelector('.chat-text');
-    if (isActivity) chatText.textContent = text;
-    else if (isFloodNotice) chatText.textContent = `${username}: ${text}`;
-    else if (isServerNotice) chatText.textContent = text;
-    else chatText.innerHTML = linkifyChatMessage(text);
-    const replyButton = article.querySelector('.chat-reply-button');
-    if (replyButton) {
-      replyButton.dataset.chatReply = username;
-      replyButton.dataset.chatReplyText = text;
+  if (plan?.type === 'append') {
+    for (let index = 0; index < plan.trim; index++) list.firstElementChild?.remove();
+    const fragment = document.createDocumentFragment();
+    let previousChatUsername = plan.appendFrom > 0 ? chatMessageUsernameKey(safeMessages[plan.appendFrom - 1]) : null;
+    for (let index = plan.appendFrom; index < safeMessages.length; index++) {
+      const message = safeMessages[index];
+      fragment.append(createChatMessageElement(message, previousChatUsername, {
+        isNew: state.chatInitialized && !previousIds.has(String(message.id))
+      }));
+      previousChatUsername = chatMessageUsernameKey(message);
     }
-    fragment.append(article);
-    previousChatUsername = isActivity || isNotice ? null : normalizedUsername;
-  });
-
-  delete list.dataset.empty;
-  list.replaceChildren(fragment);
+    list.append(fragment);
+    // A trimmed top can leave a continuation row without its avatar and name.
+    const firstRow = list.firstElementChild;
+    if (plan.trim > 0 && firstRow?.classList.contains('chat-message-continuation')) {
+      firstRow.replaceWith(createChatMessageElement(safeMessages[0], null));
+    }
+  } else if (plan?.type === 'prepend') {
+    const fragment = document.createDocumentFragment();
+    let previousChatUsername = null;
+    for (let index = 0; index < plan.count; index++) {
+      fragment.append(createChatMessageElement(safeMessages[index], previousChatUsername));
+      previousChatUsername = chatMessageUsernameKey(safeMessages[index]);
+    }
+    const formerFirstRow = list.firstElementChild;
+    list.insertBefore(fragment, formerFirstRow);
+    // The former first row may now continue the last prepended message.
+    formerFirstRow?.replaceWith(createChatMessageElement(safeMessages[plan.count], previousChatUsername));
+  } else {
+    const fragment = document.createDocumentFragment();
+    let previousChatUsername = null;
+    safeMessages.forEach(message => {
+      fragment.append(createChatMessageElement(message, previousChatUsername, {
+        isNew: state.chatInitialized && !previousIds.has(String(message.id))
+      }));
+      previousChatUsername = chatMessageUsernameKey(message);
+    });
+    delete list.dataset.empty;
+    list.replaceChildren(fragment);
+  }
+  state.chatRenderedIds = nextIds;
+  state.renderSignatures['#chatList'] = renderKey;
 
   requestAnimationFrame(() => {
     if (scrollMode === 'prepend') {
@@ -5541,11 +5613,20 @@ function renderChat(payload, { mode = 'replace', scrollMode = null } = {}) {
   }
 
   const incomingMessages = Array.isArray(payload.messages) ? payload.messages : [];
-  const messages = mode === 'prepend'
+  let messages = mode === 'prepend'
     ? mergeChatMessagePages(incomingMessages, state.chatMessages)
     : mode === 'mergeLatest'
       ? mergeChatMessagePages(state.chatMessages, incomingMessages)
       : incomingMessages;
+  // Live messages would otherwise grow the list forever. While the reader
+  // follows the bottom, drop the oldest rows; scrolling up reloads them.
+  const list = $('#chatList');
+  const followsBottom = list && list.scrollHeight - list.clientHeight - list.scrollTop < 48;
+  let trimmedOlderMessages = false;
+  if (mode === 'mergeLatest' && followsBottom && messages.length > CHAT_HISTORY_LIMIT) {
+    messages = messages.slice(-CHAT_HISTORY_LIMIT);
+    trimmedOlderMessages = true;
+  }
   if (mode === 'replace') {
     state.chatSearchQuery = String(payload.searchQuery || '');
   }
@@ -5560,6 +5641,9 @@ function renderChat(payload, { mode = 'replace', scrollMode = null } = {}) {
   if (mode !== 'mergeLatest') {
     state.chatHasMore = Boolean(payload.hasMore);
     state.chatNextBeforeId = payload.nextBeforeId == null ? null : String(payload.nextBeforeId);
+  } else if (trimmedOlderMessages) {
+    state.chatHasMore = true;
+    state.chatNextBeforeId = String(messages[0].id);
   }
   state.chatInitialized = true;
 
@@ -10169,22 +10253,54 @@ function queueRealtimeRefresh(key, callback, delay = 180) {
   }, delay);
 }
 
+// Each new game message used to refetch 500 messages plus every chat chart
+// and leaderboard, then rebuild the whole list. Live updates now fetch only the
+// newer messages; the summary (totals, top chatters, charts) refreshes at most
+// once per CHAT_SUMMARY_REFRESH_MS.
+const CHAT_SUMMARY_REFRESH_MS = 60_000;
+
 async function refreshChatFromEvent() {
   if (state.chatContextMessageId || state.chatSearchQuery) return;
-  if (state.liveChatLoading) return;
+  if (state.liveChatLoading) {
+    state.liveChatRefreshPending = true;
+    return;
+  }
   state.liveChatLoading = true;
   try {
-    renderLiveChat(await fetchJson(`/api/chat?limit=${CHAT_HISTORY_LIMIT}`));
-    if (state.playerProfileUsername && !$('#playerProfileOverlay')?.hidden) {
+    const canFetchDelta = state.chatInitialized
+      && /^\d+$/.test(String(state.chatLatestId || ''))
+      && Date.now() - (state.chatSummaryRefreshedAt || 0) < CHAT_SUMMARY_REFRESH_MS;
+    let payload = canFetchDelta
+      ? await fetchJson(`/api/chat?after=${state.chatLatestId}&limit=100`)
+      : null;
+    if (!payload || payload.hasGap) {
+      payload = await fetchJson(`/api/chat?limit=${CHAT_HISTORY_LIMIT}`);
+      state.chatSummaryRefreshedAt = Date.now();
+    }
+    if (state.chatContextMessageId || state.chatSearchQuery) return;
+    renderLiveChat(payload);
+    const profileUsername = String(state.playerProfileUsername || '').toLowerCase();
+    const profileHasNewMessages = profileUsername && (payload.messages || [])
+      .some(message => String(message.username || '').toLowerCase() === profileUsername);
+    if (profileHasNewMessages && !$('#playerProfileOverlay')?.hidden) {
       await loadPlayerProfile(state.playerProfileUsername);
     }
   } finally {
     state.liveChatLoading = false;
+    if (state.liveChatRefreshPending) {
+      state.liveChatRefreshPending = false;
+      queueRealtimeRefresh('chat', refreshChatFromEvent, 30);
+    }
   }
 }
 
 async function checkChatVersion() {
   if (!state.currentUser || document.visibilityState === 'hidden' || state.liveChatLoading || state.chatContextMessageId || state.chatSearchQuery) return;
+  // An open SSE stream already announces every message; poll only as a slow
+  // safety net then, and at full speed while it is disconnected.
+  const sseOpen = state.eventSource?.readyState === EventSource.OPEN;
+  if (sseOpen && Date.now() - (state.chatVersionCheckedAt || 0) < 5_000) return;
+  state.chatVersionCheckedAt = Date.now();
   try {
     const payload = await fetchJson('/api/chat/version');
     const latestId = String(payload.latestId ?? '0');

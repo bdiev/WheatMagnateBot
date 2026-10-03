@@ -1417,6 +1417,9 @@ async function getChat(url) {
     ? url.searchParams.get('before')
     : null;
   const searchQuery = String(url.searchParams.get('q') || '').trim().slice(0, 100);
+  const afterId = !aroundId && !beforeId && !searchQuery && /^\d+$/.test(url.searchParams.get('after') || '')
+    ? url.searchParams.get('after')
+    : null;
   const pageLimit = aroundId ? limit : limit + 1;
   const botTagColumn = `EXISTS (
     SELECT 1
@@ -1515,6 +1518,31 @@ async function getChat(url) {
         .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
     };
   };
+
+  // Live updates only need the messages newer than the client's latest one.
+  // hasGap tells the client it fell too far behind and must reload in full.
+  if (afterId) {
+    const result = await pool.query(`
+      SELECT id, username, player_uuid, message, message_count, created_at, ${botTagColumn}, ${newPlayerTagColumn}
+      FROM game_chat_messages
+      WHERE is_visible = TRUE
+        AND NOT (
+          LOWER(username) IN ('server', 'console')
+          AND message ~ '^Skipped [0-9]+ (message|messages) due to chat flooding\\.$'
+        )
+        AND id > $2::bigint
+      ORDER BY id ASC
+      LIMIT $1
+    `, [limit + 1, afterId]);
+    const rows = result.rows.slice(0, limit);
+    return {
+      latestId: rows.length ? String(rows[rows.length - 1].id) : afterId,
+      searchQuery: null,
+      messages: rows.map(mapChatRow)
+        .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
+      hasGap: result.rows.length > limit
+    };
+  }
 
   // Older archive/search pages only need message rows. Avoid recalculating all
   // charts and leaderboards on every upward-scroll request.
