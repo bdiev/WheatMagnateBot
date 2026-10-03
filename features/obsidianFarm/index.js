@@ -53,6 +53,7 @@ const FARM_CONFIG_FILE = path.resolve(context.configFile || 'obsidian_farm_confi
 const FARM_DEBUG_LOG_FILE = path.resolve(context.debugLogFile || 'obsidian_farm_debug.log');
 const FARM_DEBUG_RETENTION_DAYS = 7;
 const FARM_DEBUG_NOW = typeof context.now === 'function' ? context.now : () => new Date();
+const FARM_CLOCK_MS = typeof context.nowMs === 'function' ? context.nowMs : () => Date.now();
 const FARM_SYSTEM_LOGGER = typeof context.systemLogger === 'function'
   ? context.systemLogger
   : null;
@@ -86,6 +87,13 @@ const CAULDRON_STALL_NOTIFY_MS = 60_000;
 const SUSPEND_DRAIN_TIMEOUT_MS = 15_000;
 const SUPPLY_BARREL_RADIUS = 5;
 const BARREL_OPEN_ATTEMPT_TIMEOUT_MS = 2_500;
+const SUPPLY_BARREL_TARGET = { action: 'supply_barrel', label: 'Supply barrel' };
+const OBSIDIAN_HOPPER_TARGET = { action: 'obsidian_hopper', label: 'Obsidian hopper' };
+// One stack per visit: a hopper holds five stacks and only drains 2.5 items/s
+// (a stack every ~26 s), so a backlog of several stacks is unloaded one stack
+// per interval instead of overfilling the hopper in one go.
+const OBSIDIAN_DEPOSIT_STACK = 64;
+const OBSIDIAN_DEPOSIT_INTERVAL_MS = 30_000;
 const FOOD_ITEM_PARTS = [
   'bread',
   'apple',
@@ -122,6 +130,7 @@ const runtime = {
 let worldInteractionQueue = Promise.resolve();
 const pickaxeBlocksMined = new Map();
 let farmCycleSequence = 0;
+let lastObsidianDepositAt = 0;
 // Incremented by every start/resume/suspend/stop. A loop only reschedules
 // itself while its generation is current, so a cycle still in flight during a
 // quick suspend→resume can never leave a second loop chain behind.
@@ -384,14 +393,14 @@ async function activateBlockPrecisely(bot, block, interaction) {
   });
 }
 
-async function openContainerAttempt(bot, block, interaction, timeoutMs) {
+async function openContainerAttempt(bot, block, interaction, timeoutMs, target = SUPPLY_BARREL_TARGET) {
   let abandoned = false;
   let onWindowOpen = null;
   const opening = new Promise((resolve, reject) => {
     onWindowOpen = window => resolve(window);
     bot.once('windowOpen', onWindowOpen);
     Promise.resolve()
-      .then(() => activateBlockPrecisely(bot, block, { ...interaction, action:'supply_barrel' }))
+      .then(() => activateBlockPrecisely(bot, block, { ...interaction, action:target.action }))
       .catch(reject);
   });
   opening.then(container => {
@@ -403,9 +412,9 @@ async function openContainerAttempt(bot, block, interaction, timeoutMs) {
     const container = await withTimeout(
       opening,
       timeoutMs,
-      `Supply barrel did not open using ${interaction.name}`
+      `${target.label} did not open using ${interaction.name}`
     );
-    writeFarmClickDebug(bot, 'supply_barrel', 'confirmed', {
+    writeFarmClickDebug(bot, target.action, 'confirmed', {
       strategy:interaction.name,
       block:block?.name || null,
       blockPosition:block?.position?.toString?.() || null
@@ -414,7 +423,7 @@ async function openContainerAttempt(bot, block, interaction, timeoutMs) {
   } catch (error) {
     abandoned = true;
     if (onWindowOpen) bot.removeListener('windowOpen', onWindowOpen);
-    writeFarmClickDebug(bot, 'supply_barrel', 'unconfirmed', {
+    writeFarmClickDebug(bot, target.action, 'unconfirmed', {
       strategy:interaction.name,
       block:block?.name || null,
       blockPosition:block?.position?.toString?.() || null,
@@ -424,7 +433,7 @@ async function openContainerAttempt(bot, block, interaction, timeoutMs) {
   }
 }
 
-async function openContainerWithTimeout(bot, block, rayInteraction = {}) {
+async function openContainerWithTimeout(bot, block, rayInteraction = {}, target = SUPPLY_BARREL_TARGET) {
   if (bot.currentWindow) {
     try { bot.closeWindow?.(bot.currentWindow); } catch {}
     await sleep(100);
@@ -452,15 +461,15 @@ async function openContainerWithTimeout(bot, block, rayInteraction = {}) {
   ];
   const errors = [];
   for (const strategy of strategies) {
-    writeFarmDebug('supply_barrel_interaction_attempt', {
+    writeFarmDebug(`${target.action}_interaction_attempt`, {
       strategy:strategy.name,
       barrel:block.position.toString(),
       direction:strategy.direction.toString(),
       cursor:strategy.cursorPos.toString()
     });
     try {
-      const container = await openContainerAttempt(bot, block, strategy, BARREL_OPEN_ATTEMPT_TIMEOUT_MS);
-      writeFarmDebug('supply_barrel_interaction_confirmed', {
+      const container = await openContainerAttempt(bot, block, strategy, BARREL_OPEN_ATTEMPT_TIMEOUT_MS, target);
+      writeFarmDebug(`${target.action}_interaction_confirmed`, {
         strategy:strategy.name,
         barrel:block.position.toString()
       });
@@ -470,7 +479,7 @@ async function openContainerWithTimeout(bot, block, rayInteraction = {}) {
     }
   }
   const totalSeconds = (strategies.length * BARREL_OPEN_ATTEMPT_TIMEOUT_MS) / 1000;
-  throw new Error(`Supply barrel did not open within ${totalSeconds} seconds (${errors.join('; ')})`);
+  throw new Error(`${target.label} did not open within ${totalSeconds} seconds (${errors.join('; ')})`);
 }
 
 async function aimAtInteractionBlock(bot, block, label) {
@@ -743,6 +752,86 @@ function findReachableSupplyBarrel(bot) {
     return bot.entity.position.distanceTo(clickPoint) <= MAX_INTERACT_DISTANCE;
   });
   return position ? bot.blockAt(position) : null;
+}
+
+function findReachableObsidianHopper(bot) {
+  if (!bot?.entity) return null;
+  const hopperId = bot.registry.blocksByName.hopper?.id;
+  if (hopperId == null) return null;
+
+  const positions = bot.findBlocks({
+    matching: hopperId,
+    maxDistance: SUPPLY_BARREL_RADIUS,
+    count: 16
+  });
+  const position = positions.find(candidate => {
+    const clickPoint = candidate.offset(0.5, 0.5, 0.5);
+    return bot.entity.position.distanceTo(clickPoint) <= MAX_INTERACT_DISTANCE;
+  });
+  return position ? bot.blockAt(position) : null;
+}
+
+function countInventoryObsidian(bot) {
+  return (bot.inventory?.items() || [])
+    .filter(item => item.name === 'obsidian')
+    .reduce((total, item) => total + item.count, 0);
+}
+
+// Unloads one stack of mined obsidian into the nearby hopper once a full stack
+// has accumulated, at most once per interval. It never fails the cycle: a
+// missing or full hopper only delays the next attempt.
+async function depositObsidianToHopper(bot, context = {}) {
+  const obsidianBefore = countInventoryObsidian(bot);
+  if (obsidianBefore < OBSIDIAN_DEPOSIT_STACK) return;
+  if (FARM_CLOCK_MS() - lastObsidianDepositAt < OBSIDIAN_DEPOSIT_INTERVAL_MS) return;
+  lastObsidianDepositAt = FARM_CLOCK_MS();
+
+  const hopper = findReachableObsidianHopper(bot);
+  if (!hopper) {
+    writeFarmDebug('obsidian_deposit_skipped', {
+      ...context,
+      reason: 'hopper_not_found',
+      obsidian: obsidianBefore
+    });
+    return;
+  }
+
+  let container = null;
+  try {
+    setFarmPhase('depositing', { hopper: hopper.position.toString(), obsidian: obsidianBefore });
+    await prepareSafeBarrelHand(bot);
+    stopAllMovement(bot);
+    const interaction = await aimAtInteractionBlock(bot, hopper, OBSIDIAN_HOPPER_TARGET.label);
+    container = await openContainerWithTimeout(bot, hopper, interaction, OBSIDIAN_HOPPER_TARGET);
+    const stack = bot.inventory.items()
+      .filter(item => item.name === 'obsidian')
+      .sort((first, second) => second.count - first.count)[0];
+    if (!stack) return;
+    const sourceSlot = getContainerInventorySlot(bot, container, stack);
+    await bot.clickWindow(sourceSlot, 0, 1);
+    await waitForInventorySupply(bot, () => {
+      const sourceAfter = container.slots[sourceSlot];
+      return !sourceAfter || sourceAfter.type !== stack.type || sourceAfter.count < stack.count;
+    }, 2_000);
+    const obsidianAfter = countInventoryObsidian(bot);
+    writeFarmDebug(obsidianAfter < obsidianBefore ? 'obsidian_deposited' : 'obsidian_deposit_hopper_full', {
+      ...context,
+      hopper: hopper.position.toString(),
+      moved: Math.max(0, obsidianBefore - obsidianAfter),
+      remaining: obsidianAfter
+    });
+  } catch (err) {
+    writeFarmDebug('obsidian_deposit_failed', {
+      ...context,
+      hopper: hopper.position.toString(),
+      error: err.message,
+      obsidian: obsidianBefore
+    });
+  } finally {
+    if (container) {
+      try { container.close(); } catch (_) {}
+    }
+  }
 }
 
 async function prepareSafeBarrelHand(bot) {
@@ -2975,6 +3064,8 @@ async function runCycle(bot, notify, context = {}) {
   });
   assertCycleActive(context);
   await mineObsidian(bot, obsidianPos, context);
+  assertCycleActive(context);
+  await depositObsidianToHopper(bot, context);
 }
 
 function isLoopCurrent(generation) {
@@ -3257,6 +3348,7 @@ return {
     writeFarmDebug,
     swapPickaxesInExactSlots,
     depositPickaxeFromExactSlot,
+    depositObsidianToHopper,
     waitForObsidian,
     findLavaPlacementAnchor,
     findLavaCauldrons,

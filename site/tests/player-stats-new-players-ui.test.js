@@ -60,7 +60,7 @@ assert.match(
 );
 assert.match(
   appSource,
-  /type === 'player_info_updated'[\s\S]*queueRealtimeRefresh\('players-info', refreshPlayersFromEvent, 200\)/,
+  /type === 'player_info_updated'[\s\S]*queueRealtimeRefresh\('players-info', \(\) => refreshPlayersFromEvent\(\{ forcePlayerStats: true \}\), 200\)/,
   'updated player information must immediately refresh Player Stats ordering'
 );
 assert.match(
@@ -85,7 +85,7 @@ assert.match(
 );
 assert.match(
   htmlSource,
-  /id="newPlayersList"[^>]*><\/div>\s*<div id="newPlayersLoadStatus"[^>]*class="new-players-load-status is-empty"/,
+  /id="newPlayersList"[^>]*>(?:\s*<div class="player-row-skeleton[^"]*"[^>]*>.*?<\/div>)*\s*<\/div>\s*<div id="newPlayersLoadStatus"[^>]*class="new-players-load-status is-empty"/,
   'the pagination status must live outside the scrolling player rows'
 );
 assert.match(

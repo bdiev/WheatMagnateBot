@@ -71,11 +71,12 @@ async function run() {
     assert.ok(lateralTemplate, 'the whitelist activity lateral must be available');
     const sqlScope = { whitelistMatchSql };
     sqlScope.WHITELIST_ACTIVITY_LATERAL_SQL = renderSql(lateralTemplate, sqlScope);
-    const queries = [...functionSource.matchAll(/database\.query\(`([\s\S]*?)`\)/g)]
-      .map(match => renderSql(match[1], sqlScope));
-    assert.ok(queries.length >= 2, 'leaderboard SQL queries must be discoverable');
+    // Some queries pass parameters, so a template ends with either `) or `, [...].
+    const queryTemplates = [...functionSource.matchAll(/database\.query\(`([\s\S]*?)`\s*[,)]/g)]
+      .map(match => match[1]);
+    assert.ok(queryTemplates.length >= 2, 'leaderboard SQL queries must be discoverable');
 
-    const globalRows = (await db.query(queries[0])).rows;
+    const globalRows = (await db.query(renderSql(queryTemplates[0], sqlScope))).rows;
     const whitelistRows = globalRows.filter(row => row.is_whitelisted);
     assert.equal(globalRows.length, 107, 'the server must return every identity instead of a preselected top 100');
     assert.equal(globalRows.filter(row => row.username === 'CurrentName').length, 1);

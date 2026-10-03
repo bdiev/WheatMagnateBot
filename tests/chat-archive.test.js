@@ -84,8 +84,8 @@ assert.match(serverSource, /INTERVAL '\$\{NEW_PLAYER_WINDOW_DAYS\} days'[\s\S]*i
   'chat API must expose the two-week new-player classification to the dashboard');
 assert.match(appSource, /chat-message-bot[\s\S]*chat-bot-badge/,
   'bot chat messages must render with a dedicated class and badge');
-assert.match(appSource, /message\.isNewPlayer[\s\S]*chat-new-player-badge">New Player/,
-  'new players must receive a visible badge in regular and activity chat rows');
+assert.match(appSource, /const isNewPlayer = Boolean\(message\.isNewPlayer\);[\s\S]*\$\{isNewPlayer \? ' chat-message-new-player' : ''\}/,
+  'new players must be marked on regular and activity chat rows');
 assert.match(stylesSource, /\.chat-message\.chat-message-bot:not\(\.chat-activity\)[\s\S]*--bot-accent/,
   'bot chat messages must have a distinct visual treatment');
 assert.match(botSource, /resolvePlayerChatTags\(username\)[\s\S]*isNewPlayer \? 'New Player'[\s\S]*\.join\(' • '\)/,
@@ -205,7 +205,9 @@ assert.match(appSource, /function renderLiveChat\([\s\S]*mode: state\.chatInitia
 assert.match(appSource, /setChatArchiveSearchOpen/, 'archive search must use a compact expandable control');
 assert.match(appSource, /updateChatDateIndicator/, 'the chat must show the date of the currently visible messages');
 assert.match(appSource, /state\.charts\.chatMonthly/, 'the month chart must use archive-wide monthly statistics');
-assert.match(stylesSource, /\.player-profile-message p\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere;/s,
+assert.match(appSource, /<time class="chat-time"[\s\S]*?<div class="chat-text">\$\{linkifyChatMessage\(message\.message\)\}<\/div>/,
+  'player profile messages must render their text in the shared chat text block');
+assert.match(stylesSource, /\.chat-text\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere;/s,
   'long player messages must wrap without overlapping their timestamp');
 assert.match(stylesSource, /Mobile composition for the permanent chat archive and player history/,
   'chat archive and player history must have a dedicated mobile composition');
@@ -223,7 +225,7 @@ assert.match(serverSource, /const cacheKey = `v5:\$\{avatarIdentity\.toLowerCase
   'avatar cache must not reuse an image after the player skin texture changes');
 assert.match(appSource, /previousChatUsername = isActivity \|\| isNotice \? null : normalizedUsername/,
   'join, leave, flood, and server notices must end the current player message group');
-assert.match(stylesSource, /\.chat-message\.chat-activity\s*\{[^}]*grid-template-columns:\s*7px minmax\(0, max-content\) max-content;/s,
+assert.match(stylesSource, /\.chat-message\.chat-activity\s*\{[^}]*grid-template-columns:\s*minmax\(0, max-content\) max-content;/s,
   'mobile join and leave events must use their own compact status-row layout');
 assert.match(appSource, /chat-activity-\$\{activityKind\}/,
   'join and leave events must expose distinct visual states');
@@ -252,7 +254,7 @@ assert.match(
   /function formatFullDateTime\(value\)[\s\S]*year: 'numeric'[\s\S]*timeZone: state\.accountTimezone[\s\S]*formatPlayerProfileChatTimestamp\(message\.createdAt\)/,
   'Recent Chat must show each message date and time in the selected account timezone'
 );
-assert.match(stylesSource, /Profile history mirrors chat rows[\s\S]*player-profile-message:hover,[\s\S]*player-profile-message:focus-visible/,
+assert.match(stylesSource, /Profile history mirrors the live chat HUD[\s\S]*player-profile-message:hover,[\s\S]*player-profile-message:focus-visible/,
   'player profile messages must share the chat hover treatment');
 assert.match(appSource, /updateChatDateIndicator\(\{ show: true \}\)/,
   'the date indicator must be revealed by chat scrolling');

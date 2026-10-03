@@ -91,17 +91,17 @@ assert.match(
 );
 assert.match(
   stylesSource,
-  /\.player-profile-head\s*\{[^}]*grid-template-columns:\s*72px minmax\(0, 1fr\);[^}]*padding:\s*18px 64px 0 18px;[^}]*background:\s*[^}]*var\(--panel\);/s,
+  /\.player-profile-head\s*\{[^}]*grid-template-columns:\s*72px minmax\(0, 1fr\);[^}]*padding:\s*18px 64px 0 18px;[^}]*background:\s*[^}]*var\(--panel-soft\);/s,
   'the profile header must use the compact square-avatar composition'
 );
 assert.match(
   stylesSource,
-  /\.player-profile-actions\s*\{[^}]*grid-column:\s*1 \/ -1;[^}]*margin:\s*16px -64px 0 -18px;[^}]*border-top:\s*1px solid var\(--line\);/s,
+  /\.player-profile-actions\s*\{[^}]*grid-column:\s*1 \/ -1;[^}]*margin:\s*16px -64px 0 -18px;[^}]*border-top:\s*2px solid var\(--line\);/s,
   'profile actions must live in a full-width footer toolbar'
 );
 assert.match(
   stylesSource,
-  /\.player-profile-actions > \.player-profile-message-action:first-child\s*\{[^}]*border-color:\s*var\(--accent\);[^}]*color:\s*var\(--player-accent-contrast, var\(--panel\)\);[^}]*background:\s*var\(--accent\);/s,
+  /\.player-profile-actions > \.player-profile-message-action:first-child\s*\{[^}]*border-color:\s*var\(--accent-strong\);[^}]*color:\s*var\(--player-accent-contrast, #fff\);[^}]*background:\s*var\(--accent\);/s,
   'the primary message action must use the current player accent with accessible text'
 );
 assert.match(
@@ -121,8 +121,8 @@ assert.match(
 );
 assert.match(
   stylesSource,
-  /\.player-profile-whitelist-action\.is-remove\s*\{[^}]*color:\s*var\(--muted\);[^}]*background:\s*transparent;/s,
-  'the remove-from-whitelist state must retain the neutral ghost-button color'
+  /\.player-profile-whitelist-action\.is-remove\s*\{\s*color:\s*var\(--text\);\s*\}/,
+  'the remove-from-whitelist state must stay neutral until hovered'
 );
 assert.match(
   indexSource,
@@ -131,8 +131,8 @@ assert.match(
 );
 assert.match(
   stylesSource,
-  /\.player-profile-close\s*\{[^}]*border:\s*1px solid transparent;[^}]*background:\s*transparent;/s,
-  'the player profile close control must use the minimal ghost treatment'
+  /\.player-profile-close\s*\{[^}]*border:\s*1px solid color-mix\(in srgb, var\(--muted\) 52%, var\(--line\)\);[^}]*color:\s*var\(--muted\);[^}]*background:\s*var\(--panel-soft\);/s,
+  'the player profile close control must use the outlined muted button treatment'
 );
 
 console.log('Player profile whitelist UI tests passed.');

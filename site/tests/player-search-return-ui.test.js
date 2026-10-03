@@ -30,7 +30,9 @@ assert.match(
   /function openWhisperFromProfile[\s\S]*?closePlayerProfile\(\{ restoreSeenSearch: false \}\)/,
   'leaving a profile for a private-message dialog must not reopen Seen search'
 );
-assert.match(indexSource, /<script src="\/app\.js\?v=280" defer><\/script>/,
+// Later releases keep bumping the version; anything from 280 on ships this behavior.
+const appAssetVersion = Number(indexSource.match(/<script src="\/app\.js\?v=(\d+)" defer><\/script>/)?.[1]);
+assert.ok(appAssetVersion >= 280,
   'the application asset version must expose the search-return behavior immediately');
 
 console.log('Player search return UI tests passed.');
