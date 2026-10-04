@@ -2,7 +2,7 @@
 
 const assert = require('node:assert/strict');
 const { DiscordChatForwardQueue } = require('../discord/chat-forward-queue');
-const { formatDiscordBridgeMessage } = require('../discord/chat-message-format');
+const { buildDiscordToGameEmbed, CHAT_FROM_DISCORD_COLOR, formatDiscordBridgeMessage } = require('../discord/chat-message-format');
 const {
   buildFloodSummaryEmbed,
   createFloodSummaryPublisher,
@@ -395,8 +395,30 @@ async function testFloodSummaryEmbedAndEditInPlace() {
   assert.match(posts[3].options.embeds[0].description, /\*\*1 message skipped\*\*/);
 }
 
+function testDiscordToGameEmbed() {
+  const chat = buildDiscordToGameEmbed({
+    senderName: 'deireide',
+    senderIconUrl: 'https://cdn.example/avatar.png',
+    text: 'Resonite check *s-chat*',
+    botName: 'WheatMagnate',
+    botIconUrl: 'https://cdn.example/bot.png'
+  });
+  assert.equal(chat.author.name, 'deireide • Discord');
+  assert.equal(chat.author.icon_url, 'https://cdn.example/avatar.png');
+  assert.equal(chat.description, 'Resonite check \\*s-chat\\*', 'chat text is shown plainly with markdown escaped');
+  assert.equal(chat.color, CHAT_FROM_DISCORD_COLOR);
+  assert.equal(chat.footer.text, 'Sent to game chat via WheatMagnate');
+  assert.equal(chat.footer.icon_url, 'https://cdn.example/bot.png');
+
+  const command = buildDiscordToGameEmbed({ senderName: 'owner', text: '/home `base`', isCommand: true, botName: 'WheatMagnate' });
+  assert.equal(command.description, '`/home ˋbaseˋ`', 'commands stay in one code span');
+  assert.equal(command.footer.text, 'Command run as WheatMagnate');
+  assert.equal(command.author.icon_url, undefined);
+}
+
 (async () => {
   testDiscordInviteFormatting();
+  testDiscordToGameEmbed();
   await testSummaryReasonsAndDuplicateThreshold();
   await testFloodSummaryEmbedAndEditInPlace();
   await testSerialDelivery();

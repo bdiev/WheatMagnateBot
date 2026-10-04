@@ -53,8 +53,38 @@ function getChatPlayerColor({ isBot = false, isWhitelisted = false, isNewPlayer 
   return CHAT_PLAYER_COLOR;
 }
 
+// Discord blurple marks lines that came from Discord rather than from a player.
+const CHAT_FROM_DISCORD_COLOR = 0x5865F2;
+
+// Confirmation for a line a Discord user sent into game chat, laid out like
+// the relayed player messages: sender in the author line, the plain text as
+// the body. Commands keep a code span since they run as the bot itself.
+function buildDiscordToGameEmbed({ senderName, senderIconUrl, text, isCommand = false, botName, botIconUrl }) {
+  const body = String(text || '');
+  const footerText = isCommand
+    ? `Command run as ${botName || 'the bot'}`
+    : `Sent to game chat${botName ? ` via ${botName}` : ''}`;
+  return {
+    author: {
+      name: `${senderName} • Discord`,
+      ...(senderIconUrl ? { icon_url: senderIconUrl } : {})
+    },
+    description: isCommand
+      ? `\`${body.replace(/`/g, 'ˋ')}\``
+      : formatDiscordBridgeMessage(body),
+    color: CHAT_FROM_DISCORD_COLOR,
+    footer: {
+      text: footerText,
+      ...(botIconUrl ? { icon_url: botIconUrl } : {})
+    },
+    timestamp: new Date()
+  };
+}
+
 module.exports = {
   CHAT_BOT_COLOR,
+  CHAT_FROM_DISCORD_COLOR,
+  buildDiscordToGameEmbed,
   CHAT_NEW_PLAYER_COLOR,
   CHAT_PLAYER_COLOR,
   CHAT_WHITELISTED_COLOR,

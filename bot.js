@@ -19,7 +19,7 @@ const {
   isServerStatusIdentityHidden
 } = require('./discord/server-status-visibility');
 const { DiscordChatForwardQueue, positiveInteger } = require('./discord/chat-forward-queue');
-const { formatDiscordBridgeMessage, getChatPlayerColor } = require('./discord/chat-message-format');
+const { buildDiscordToGameEmbed, formatDiscordBridgeMessage, getChatPlayerColor } = require('./discord/chat-message-format');
 const { createFloodSummaryPublisher } = require('./discord/flood-summary');
 const { createChatAvatarLoader } = require('./discord/chat-avatar');
 const loadChatAvatar = createChatAvatarLoader();
@@ -12288,14 +12288,15 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
           const statusChannel = await discordClient.channels.fetch(DISCORD_CHANNEL_ID);
           if (statusChannel && statusChannel.isTextBased()) {
             await statusChannel.send({
-              embeds: [{
-                description: `${STATUS_EMOJIS.connected} **${interaction.user.username}** sent:\n\`${message}\``,
-                color: 65280,
-                timestamp: new Date(),
-                footer: {
-                  text: 'Sent to game chat'
-                }
-              }]
+              embeds: [buildDiscordToGameEmbed({
+                senderName: interaction.user.username,
+                senderIconUrl: interaction.user.displayAvatarURL({ size: 64 }),
+                text: message,
+                isCommand: isGameCommandText(message),
+                botName: bot.username,
+                botIconUrl: discordClient.user?.displayAvatarURL({ size: 64 })
+              })],
+              allowedMentions: { parse: [] }
             });
           }
         } catch (e) {
@@ -12865,19 +12866,16 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         
         // Send confirmation showing what was sent to game
         try {
-          let sentText = gameText;
-          if (!gameText.startsWith('/') && !gameText.startsWith('!')) {
-            sentText = `[${username}] ${gameText}`;
-          }
           await message.channel.send({
-            embeds: [{
-              description: `${STATUS_EMOJIS.connected} **${message.author.username}** sent:\n\`${sentText}\``,
-              color: 65280,
-              timestamp: new Date(),
-              footer: {
-                text: 'Sent to game chat'
-              }
-            }]
+            embeds: [buildDiscordToGameEmbed({
+              senderName: message.author.username,
+              senderIconUrl: message.author.displayAvatarURL({ size: 64 }),
+              text: gameText,
+              isCommand: isGameCommandText(gameText),
+              botName: bot?.username,
+              botIconUrl: discordClient.user?.displayAvatarURL({ size: 64 })
+            })],
+            allowedMentions: { parse: [] }
           });
         } catch (e) {
           console.error('[Chat] Failed to send confirmation:', e.message);
