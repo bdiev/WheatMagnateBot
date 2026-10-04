@@ -4159,7 +4159,7 @@ async function clearObsidianFarmCoordinates() {
   `);
 }
 
-async function startConfiguredObsidianFarm() {
+async function startConfiguredObsidianFarm({ waitForStartMs = 5_000 } = {}) {
   const config = farm.getStatus().config;
   if (!config) throw new Error('Farm coordinates are not configured.');
   if (!bot?.entity) {
@@ -4185,7 +4185,7 @@ async function startConfiguredObsidianFarm() {
 
   // Give an immediately available lever a chance to start the loop while still
   // acknowledging the site command well inside its command-bus lease.
-  const startupDeadline = Date.now() + 5_000;
+  const startupDeadline = Date.now() + waitForStartMs;
   while (
     Date.now() < startupDeadline &&
     bot === startingBot &&
@@ -4202,6 +4202,20 @@ async function startConfiguredObsidianFarm() {
   };
 }
 
+function protectLeverAfterControlStop() {
+  setProtectionLeverState(true)
+    .catch(err => { console.error('[Obsidian] Protection lever after stop failed:', err.message); return false; })
+    .then(protectedState => {
+      if (protectedState) return;
+      recordSystemLog({
+        level: 'warn',
+        category: 'obsidian',
+        message: 'Obsidian Farm stopped, but the protection lever could not be switched ON.',
+        details: { source: 'admin_control' }
+      }).catch(() => {});
+    });
+}
+
 async function toggleObsidianFarmFromControl(requestedEnabled = null) {
   const farmStatus = farm.getStatus();
   const currentlyEnabled = farmStatus.enabled || obsidianStats.desiredEnabled;
@@ -4213,11 +4227,14 @@ async function toggleObsidianFarmFromControl(requestedEnabled = null) {
     // Disable auto-resume first so a slow lever response cannot restart the
     // farm while the stop command is still being processed.
     await setObsidianFarmDesiredEnabled(false);
-    const leverProtected = await setProtectionLeverState(true).catch(() => false);
-    await recordFarmAnnotation('pause', 'Farm paused', { source: 'admin_control' }).catch(() => {});
+    // The lever waits for the current cycle to reach a safe boundary (a whole
+    // obsidian break), so acknowledge the stop now and protect in background.
+    protectLeverAfterControlStop();
+    await withTimeout(writeBotStatusSnapshot(), 5_000, 'Bot status snapshot timed out').catch(() => {});
+    recordFarmAnnotation('pause', 'Farm paused', { source: 'admin_control' }).catch(() => {});
     return {
       enabled: false,
-      leverProtected,
+      leverProtection: 'pending',
       sessionMined: obsidianStats.sessionMined
     };
   }
@@ -4238,8 +4255,10 @@ async function toggleObsidianFarmFromControl(requestedEnabled = null) {
       selectedMobs: killAura.getStatus().targets
     });
   }
-  const result = await startConfiguredObsidianFarm();
-  await recordFarmAnnotation('resume', 'Farm resumed', { source: 'admin_control' }).catch(() => {});
+  // The start keeps retrying in background; the site only needs the new intent.
+  const result = await startConfiguredObsidianFarm({ waitForStartMs: 0 });
+  await withTimeout(writeBotStatusSnapshot(), 5_000, 'Bot status snapshot timed out').catch(() => {});
+  recordFarmAnnotation('resume', 'Farm resumed', { source: 'admin_control' }).catch(() => {});
   return {
     enabled: true,
     started: result.started,
@@ -7256,8 +7275,25 @@ async function executeManagedAccountCommand(command) {
         syncManagedFarmState(pool, command.account_id, runtime.obsidianFarm.getStatus()),
         persistManagedRuntimeStatus(runtime.getStatus())
       ]);
+      // The lever waits for the current cycle's safe boundary; acknowledge the
+      // stop now and record the protection outcome when it arrives.
+      operation
+        .then(result => {
+          persistManagedRuntimeStatus(runtime.getStatus()).catch(() => {});
+          if (result?.leverProtected) return;
+          recordSystemLog({
+            level: 'warn',
+            category: 'obsidian',
+            message: 'Obsidian Farm stopped, but the protection lever could not be switched ON.',
+            details: { accountId: command.account_id, error: runtime.lastError || null, source: 'admin_control' }
+          }).catch(() => {});
+        })
+        .catch(error => console.error(`[Accounts] Farm stop failed for ${command.account_id}:`, error.message));
+      return { ...runtime.obsidianFarm.getStatus(), leverProtection: 'pending' };
     }
-    return operation;
+    const status = await operation;
+    await persistManagedRuntimeStatus(runtime.getStatus()).catch(() => {});
+    return status;
   }
   if (type === 'kill_aura_targets') {
     const targets = normalizeKillAuraTargets(payload.targets);

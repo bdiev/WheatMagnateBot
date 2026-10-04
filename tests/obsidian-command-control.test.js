@@ -7,7 +7,7 @@ const path = require('node:path');
 const botSource = fs.readFileSync(path.resolve(__dirname, '..', 'bot.js'), 'utf8');
 const serverSource = fs.readFileSync(path.resolve(__dirname, '..', 'site', 'server.js'), 'utf8');
 const startFunction = botSource.match(
-  /async function startConfiguredObsidianFarm\(\) \{[\s\S]*?\n\}/
+  /async function startConfiguredObsidianFarm\([^)]*\) \{[\s\S]*?\n\}/
 )?.[0] || '';
 
 assert.match(
@@ -57,5 +57,24 @@ assert.match(
   /commandType === 'obsidian_toggle'[\s\S]*?typeof payload\.enabled !== 'boolean'[\s\S]*?delete payload\.enabled/,
   'the command API validates an explicit Obsidian farm state'
 );
+
+const toggleFunction = botSource.match(
+  /async function toggleObsidianFarmFromControl\([^)]*\) \{[\s\S]*?\n\}/
+)?.[0] || '';
+assert.match(toggleFunction, /protectLeverAfterControlStop\(\);/, 'Stop Farm protects the lever in background');
+assert.doesNotMatch(toggleFunction, /await setProtectionLeverState/, 'Stop Farm must not wait for the lever click');
+assert.match(
+  toggleFunction,
+  /startConfiguredObsidianFarm\(\{ waitForStartMs: 0 \}\)/,
+  'Start Farm from the site acknowledges without waiting for the first cycle'
+);
+assert.match(
+  botSource,
+  /type === 'obsidian_toggle'[\s\S]*?return \{ \.\.\.runtime\.obsidianFarm\.getStatus\(\), leverProtection: 'pending' \}/,
+  'managed Stop Farm returns before the lever click finishes'
+);
+const appSource = fs.readFileSync(path.resolve(__dirname, '..', 'site', 'public', 'app.js'), 'utf8');
+const commandHandler = appSource.match(/async function handleAdminBotCommand\(event\) \{[\s\S]*?\n\}/)?.[0] || '';
+assert.doesNotMatch(commandHandler, /await (?:Promise\.all\(\[)?loadAll\(/, 'bot control buttons must not wait for a full dashboard reload');
 
 console.log('Obsidian command control tests passed.');

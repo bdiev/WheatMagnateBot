@@ -6,7 +6,7 @@ const path = require('node:path');
 
 const botSource = fs.readFileSync(path.resolve(__dirname, '..', 'bot.js'), 'utf8');
 const startFunction = botSource.match(
-  /async function startConfiguredObsidianFarm\(\) \{[\s\S]*?\n\}/
+  /async function startConfiguredObsidianFarm\([^)]*\) \{[\s\S]*?\n\}/
 )?.[0] || '';
 
 assert.match(

@@ -9241,8 +9241,21 @@ async function handleAdminBotCommand(event) {
       state.obsidianCoordinateEditorOpen = true;
       clearObsidianCoordinateEditor();
     }
-    await Promise.all([loadAll(), loadAdminControlState({ force: true })]);
-    await loadAdminSystemLogs();
+    if (commandType === 'obsidian_toggle' && state.adminControlState?.bot) {
+      // Show the confirmed farm intent at once; the refreshes below follow.
+      const enabled = body.payload.enabled;
+      const bot = state.adminControlState.bot;
+      bot.obsidian = { ...(bot.obsidian || {}), desiredEnabled: enabled, ...(enabled ? {} : { enabled: false }) };
+      if (!enabled && bot.task === 'obsidian') bot.task = 'idle';
+      // Drop a control-state response requested before the command finished.
+      state.adminControlToken = null;
+      state.adminControlLoading = false;
+      renderAdminControlState(state.adminControlState);
+    }
+    // Release the button as soon as the bot has confirmed the command; the full
+    // dashboard reload is slow and does not affect this control.
+    loadAdminControlState({ force: true }).catch(() => {});
+    Promise.all([loadAll(), loadAdminSystemLogs()]).catch(() => {});
     scheduleAdminControlRefresh();
     if (submitsKillAuraTargets) {
       setTimeout(() => {
