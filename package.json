@@ -23,19 +23,19 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "discord.js": "^14.26.4",
-    "dotenv": "^17.4.2",
-    "minecraft-data": "^3.111.0",
-    "mineflayer": "^4.37.1",
+    "discord.js": "^14.27.0",
+    "dotenv": "^18.0.5",
+    "minecraft-data": "^3.117.0",
+    "mineflayer": "^4.39.0",
     "mineflayer-pathfinder": "^2.4.5",
-    "pg": "^8.22.0",
+    "pg": "^8.23.1",
     "prismarine-auth": "^3.1.1",
-    "sharp": "^0.34.5",
+    "sharp": "^0.35.5",
     "vec3": "^0.2.0",
     "web-push": "^3.6.7"
   },
   "overrides": {
-    "undici": "6.27.0"
+    "undici": "6.29.0"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8"
