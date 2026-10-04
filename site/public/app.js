@@ -152,6 +152,7 @@ const state = {
   navigationPreferences: null,
   navigationSettingsLoading: null,
   navigationSavePromise: Promise.resolve(),
+  navigationRevision: 0,
   timezones: [],
   accountTimezone: 'Europe/Vilnius',
   accountSettingsLoading: null,
@@ -1453,8 +1454,8 @@ function applyAccountTabScope(account) {
   const restricted = Boolean(account && !account.isDefault);
   const allowed = new Set(['chat','bot','kill-aura','obsidian','admin']);
   $$('.tab-button[data-tab]').forEach(button => button.classList.toggle('account-tab-restricted',restricted && !allowed.has(button.dataset.tab)));
-  const childTab = $('.tab-button[data-tab="child-ai"]');
-  if (childTab) childTab.hidden = restricted || state.currentUser?.role !== 'admin';
+  // Role and the user's Navigation choices decide which tabs are shown.
+  applyNavigationVisibility();
   $$('[data-primary-only]').forEach(element => { element.hidden = restricted; });
   const whisperPanel = $('#whisperPanel');
   if (restricted) setWhisperOpen(false);
@@ -1950,6 +1951,11 @@ async function loadNavigationSettings({ migrateLocal = false } = {}) {
   if (!state.currentUser) return;
   if (state.navigationSettingsLoading) return state.navigationSettingsLoading;
   state.navigationSettingsLoading = (async () => {
+    // Let queued saves land first, and drop a response that predates a local
+    // change: otherwise the echo of an earlier save re-shows a section that
+    // was just unchecked. The newer save's own update event reloads again.
+    await state.navigationSavePromise;
+    const revision = state.navigationRevision;
     const localVisibility = loadNavigationVisibility();
     const localOrder = loadNavigationOrder();
     let payload = await fetchJson('/api/settings/navigation');
@@ -1957,6 +1963,7 @@ async function loadNavigationSettings({ migrateLocal = false } = {}) {
     if (migrateLocal && !payload.exists && hasLocalSettings) {
       payload = await putJson('/api/settings/navigation', { visibility: localVisibility, order: localOrder });
     }
+    if (revision !== state.navigationRevision) return;
     cacheNavigationPreferences(payload.visibility, payload.order);
     applyNavigationOrder();
     applyNavigationVisibility();
@@ -1971,6 +1978,7 @@ async function loadNavigationSettings({ migrateLocal = false } = {}) {
 
 function queueNavigationSettingsSave() {
   if (!state.currentUser || !state.navigationPreferences) return;
+  state.navigationRevision += 1;
   const snapshot = {
     visibility: { ...state.navigationPreferences.visibility },
     order: [...state.navigationPreferences.order]
