@@ -464,7 +464,14 @@ async function main() {
     runtimeNow = new Date('2026-08-14T06:05:00.000Z'); // 09:05 in Kyiv, after server reconnect
     await reconnectRuntime.restart();
     assert.equal(reconnectBots.length, 3);
+    const postRestartBlockAtCursor = reconnectBots[2].blockAtCursor;
+    reconnectBots[2].blockAtCursor = () => null;
     reconnectBots[2].emit('spawn');
+    await waitFor(() => /line of sight/i.test(reconnectRuntime.getStatus().lastError || ''), 3_000);
+    assert.equal(reconnectRuntime.obsidianFarm.getStatus().enabled, false, 'first post-restart lever attempt fails');
+    reconnectBots[2].blockAtCursor = postRestartBlockAtCursor;
+    await new Promise(resolve => setTimeout(resolve, 60));
+    await reconnectRuntime.runAfkChecks();
     await waitFor(() => reconnectRuntime.obsidianFarm.getStatus().enabled);
     assert.equal(reconnectBots[2].leverActions, 1, 'reconnected secondary switches protection OFF before resuming');
     assert.equal(reconnectRuntime.obsidianFarm.getStatus().desiredEnabled, true, 'reconnected secondary retains farm intent');

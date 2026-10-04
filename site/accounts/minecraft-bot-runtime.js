@@ -73,6 +73,10 @@ class MinecraftBotRuntime extends BotContext {
     this.now = typeof now === 'function' ? now : () => new Date();
     this.restartProtectionDateKey = null;
     this.restartProtectionPromise = null;
+    // Kyiv date of a spawn inside the post-restart startup window. Such a
+    // connection already sees the restarted server, so failed farm resumes
+    // keep retrying instead of waiting for the restart window to end.
+    this.postRestartSpawnDateKey = null;
     this.farmPausedForHighPing = false;
     this.farmPingMonitor = createFarmPingMonitor();
     this.connectionGate = connect => connect();
@@ -84,6 +88,10 @@ class MinecraftBotRuntime extends BotContext {
     this.obsidianFarm = this.modules.obsidianFarm;
     this.killAura = this.modules.killAura;
     this.follow = this.modules.follow;
+  }
+
+  canResumeFarmAt(dateParts) {
+    return !isRestartPreparationWindow(dateParts) || this.postRestartSpawnDateKey === dateParts.dateKey;
   }
 
   clearRuntimeIntervals() { for (const timer of this.intervals) clearInterval(timer); this.intervals.clear(); }
@@ -209,7 +217,7 @@ class MinecraftBotRuntime extends BotContext {
       if (this.farmPausedForHighPing) {
         if (!pingState.recoveryConfirmed) return;
         const recoveryDateParts = getServerRestartDateParts(this.now());
-        if (isRestartPreparationWindow(recoveryDateParts)) return;
+        if (!this.canResumeFarmAt(recoveryDateParts)) return;
         this.farmPausedForHighPing = false;
         if (/Obsidian Farm paused: ping/i.test(this.lastError || '')) this.lastError = null;
         this.nextObsidianResumeAt = 0;
@@ -226,7 +234,7 @@ class MinecraftBotRuntime extends BotContext {
       farmStatus?.desiredEnabled &&
       !farmStatus.enabled &&
       this.task !== 'paused' &&
-      !isRestartPreparationWindow(restartDateParts) &&
+      this.canResumeFarmAt(restartDateParts) &&
       Date.now() >= this.nextObsidianResumeAt
     ) {
       this.retryDesiredObsidian(bot);
@@ -337,6 +345,9 @@ class MinecraftBotRuntime extends BotContext {
         }
         this.lastError = null;
         const restartDateParts = getServerRestartDateParts(this.now());
+        this.postRestartSpawnDateKey = isPostRestartStartupWindow(restartDateParts)
+          ? restartDateParts.dateKey
+          : null;
         if (
           this.obsidianFarm?.getStatus?.().desiredEnabled &&
           isPostRestartStartupWindow(restartDateParts)
