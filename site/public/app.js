@@ -6368,7 +6368,8 @@ async function loadAreaExplorerFinds() {
   list.setAttribute('aria-busy', 'true');
   const query = areaExplorerScopeParams({ kind: ae.kind, name: areaExplorerMarkerFilter(), q: ae.q, limit: AREA_EXPLORER_PAGE_SIZE, offset: ae.offset });
   try {
-    const data = await fetchJson(`/api/area-explorer/finds?${query}`);
+    // The list of the site's item pictures comes first, so each find gets its own icon
+    const [data] = await Promise.all([fetchJson(`/api/area-explorer/finds?${query}`), ensureItemIcons().catch(() => null)]);
     if (ae.findsRequestId !== requestId) return;
     ae.total = data.total;
     list.innerHTML = data.finds.length
@@ -6389,8 +6390,35 @@ function areaExplorerFindTitle(find) {
   return find.name;
 }
 
+// Each find shows its own item: the Elytra, the Enchanted Book, the Pale Oak Sign; a marker the
+// item that stands for what it marks. The kind's icon when there's none.
+const AREA_EXPLORER_KIND_ICONS = Object.freeze({ '': 'filled_map', BASE: 'crafting_table', MARKER: 'ender_eye', ITEM: 'chest', SIGN: 'oak_sign' });
+const AREA_EXPLORER_MARKER_ICONS = Object.freeze({
+  'End Portal': 'ender_eye', 'Nether Portal': 'obsidian', Spawner: 'spawner', 'Trial Chamber': 'trial_key',
+  'Ancient City': 'echo_shard', 'End City': 'purpur_block', 'End Gateway': 'ender_pearl', 'Shulker Box': 'shulker_box'
+});
+
+/** The site's own picture of an item, else the cached one from the icon service. */
+function areaExplorerIconUrl(key) {
+  return state.itemIcons[key] || minecraftIconUrl('item', key);
+}
+
+function areaExplorerFindIcon(find) {
+  const fallback = state.itemIcons[AREA_EXPLORER_KIND_ICONS[find.kind]] || '/items/Chest.png';
+  let key = AREA_EXPLORER_KIND_ICONS[find.kind];
+  // A wall sign is the same item as the standing one
+  if (find.kind === 'ITEM' || find.kind === 'SIGN') key = normalizeItemIconKey(find.name).replace('_wall_', '_');
+  else if (find.kind === 'MARKER') key = AREA_EXPLORER_MARKER_ICONS[find.name] || normalizeItemIconKey(find.name);
+  return { src: areaExplorerIconUrl(key) || fallback, fallback };
+}
+
+/** "3h 12m ago" for the last month, the date after that. */
+function areaExplorerFoundAgo(foundAt) {
+  const age = Date.now() - new Date(foundAt).getTime();
+  return age >= 0 && age < 30 * 86_400_000 ? `${formatDurationMs(age)} ago` : formatFullDateTime(foundAt);
+}
+
 function renderAreaExplorerFind(find, { selected = false } = {}) {
-  const icons = { BASE: 'Crafting_Table', MARKER: 'Compass', ITEM: 'Chest', SIGN: 'Oak_Sign' };
   let body = '';
   if (find.kind === 'SIGN') {
     const sides = [find.details, find.label].filter(Boolean);
@@ -6399,18 +6427,23 @@ function renderAreaExplorerFind(find, { selected = false } = {}) {
     body = `<p class="area-explorer-details">${escapeHtml(find.details)}</p>`;
   }
   const coords = `${find.x} ${find.y} ${find.z}`;
+  const icon = areaExplorerFindIcon(find);
+  // The name alone; an item's count goes on its icon, as in an inventory, and its custom name beside it
+  const name = escapeHtml(find.name);
+  const label = find.kind === 'ITEM' && find.label ? ` <span class="area-explorer-find-label">“${escapeHtml(find.label)}”</span>` : '';
+  const count = find.kind === 'ITEM' && find.count > 1 ? `<span class="area-explorer-find-count">${formatNumber(find.count)}</span>` : '';
   return `<li class="area-explorer-find kind-${find.kind.toLowerCase()}" data-find-id="${escapeHtml(find.id)}" data-find-at="${find.x},${find.z}">
-    <span class="area-explorer-find-icon" aria-hidden="true"><img src="/items/${icons[find.kind] || 'Map'}.png" alt="" loading="lazy" width="28" height="28"></span>
+    <span class="area-explorer-find-icon" aria-hidden="true"><img src="${escapeHtml(icon.src)}" data-fallback="${escapeHtml(icon.fallback)}" alt="" loading="lazy" decoding="async" width="32" height="32">${count}</span>
     <div class="area-explorer-find-main">
       <div class="area-explorer-find-heading">
-      ${selected ? `<strong>${escapeHtml(areaExplorerFindTitle(find))}</strong>` : `<button class="area-explorer-find-title" type="button" data-area-select aria-label="Show ${escapeHtml(areaExplorerFindTitle(find))} on map">${escapeHtml(areaExplorerFindTitle(find))}</button>`}
-        <span class="area-explorer-kind">${AREA_EXPLORER_KIND_LABELS[find.kind] || escapeHtml(find.kind)}</span>
+      ${selected ? `<strong class="area-explorer-find-name">${name}${label}</strong>` : `<button class="area-explorer-find-title area-explorer-find-name" type="button" data-area-select aria-label="Show ${escapeHtml(areaExplorerFindTitle(find))} on map">${name}${label}</button>`}
       </div>
       ${body}
-    </div>
-    <div class="area-explorer-find-meta">
-      <button class="ghost-button area-explorer-coords" type="button" data-copy-coords="${escapeHtml(coords)}" title="Copy coordinates" aria-label="Copy coordinates: X ${find.x}, Y ${find.y}, Z ${find.z}"><span><span class="area-explorer-axis">X</span> ${find.x}</span><span><span class="area-explorer-axis">Y</span> ${find.y}</span><span><span class="area-explorer-axis">Z</span> ${find.z}</span><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></svg></button>
-      <time datetime="${escapeHtml(find.foundAt)}" title="Found at">${escapeHtml(formatFullDateTime(find.foundAt))}</time>
+      <div class="area-explorer-find-meta">
+        <span class="area-explorer-kind">${AREA_EXPLORER_KIND_LABELS[find.kind] || escapeHtml(find.kind)}</span>
+        <button class="ghost-button area-explorer-coords" type="button" data-copy-coords="${escapeHtml(coords)}" title="Copy coordinates" aria-label="Copy coordinates: X ${find.x}, Y ${find.y}, Z ${find.z}"><span><span class="area-explorer-axis">X</span> ${find.x}</span><span><span class="area-explorer-axis">Y</span> ${find.y}</span><span><span class="area-explorer-axis">Z</span> ${find.z}</span><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></svg></button>
+        <time datetime="${escapeHtml(find.foundAt)}" title="Found ${escapeHtml(formatFullDateTime(find.foundAt))}">${escapeHtml(areaExplorerFoundAgo(find.foundAt))}</time>
+      </div>
     </div>
   </li>`;
 }
@@ -7044,6 +7077,12 @@ async function loadAreaExplorerTokens() {
 function setupAreaExplorer() {
   const ae = areaExplorerState();
   if (!ae.liveTimer) ae.liveTimer = setInterval(loadAreaExplorerLive, 1000);
+  // An item with no picture anywhere shows its kind's icon instead (errors don't bubble: caught on the way down)
+  $('#tab-area-explorer').addEventListener('error', event => {
+    const image = event.target;
+    if (image.tagName !== 'IMG' || !image.dataset.fallback || image.getAttribute('src') === image.dataset.fallback) return;
+    image.src = image.dataset.fallback;
+  }, true);
   const reloadScope = () => Promise.all([loadAreaExplorerFinds(), loadAreaExplorerMap()])
     .catch(error => setBanner(`Could not load Area Explorer finds: ${error.message}`));
   const changeScope = scope => {

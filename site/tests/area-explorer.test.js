@@ -226,7 +226,12 @@ function testWiring() {
   assert.match(indexSource, /data-tab="area-explorer"/);
   assert.match(indexSource, /id="tab-area-explorer"/);
   assert.match(appSource, /'area_explorer_updated'/, 'the page listens for live updates');
-  assert.match(indexSource, /data-area-kind="MARKER"[^>]*>Markers <span data-area-count="MARKER">/, 'markers have a filter of their own');
+  assert.match(indexSource, /data-area-kind="MARKER"[^>]*><img src="\/items\/Ender_Eye\.png"[^>]*><span class="area-explorer-kind-tab-label">Markers<\/span> <span class="area-explorer-kind-tab-count" data-area-count="MARKER">/, 'markers have a filter of their own, with its icon');
+  // Each find shows its own item: the book is a book, the shulker a shulker
+  assert.match(appSource, /if \(find\.kind === 'ITEM' \|\| find\.kind === 'SIGN'\) key = normalizeItemIconKey\(find\.name\)/);
+  assert.match(appSource, /'End Portal': 'ender_eye'/, 'a marker shows the item that stands for it');
+  assert.match(appSource, /data-fallback="\$\{escapeHtml\(icon\.fallback\)\}"/, 'an icon that fails falls back to its kind');
+  assert.match(appSource, /class="area-explorer-find-count"/, 'a stack shows its size on the icon');
   assert.match(indexSource, /id="areaExplorerMarkerName"/, 'and a pick of what they mark');
   assert.match(appSource, /MARKER: 'Marker'/);
   assert.match(appSource, /name: areaExplorerMarkerFilter\(\)/, 'the pick narrows the list and the map');
