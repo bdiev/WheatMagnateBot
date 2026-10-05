@@ -9,7 +9,7 @@
     "test:pearl-loader": "node tests/pearl-loader-feature.test.js",
     "test:game-time": "node tests/game-time-push.test.js",
     "test:profile-identity": "node tests/minecraft-profile-identity.test.js",
-    "posttest": "node tests/player-message-count.test.js && node tests/player-message-count-migration.test.js && node tests/playtime-database.test.js && node tests/playtime-daily-backfill.test.js && node tests/seen-online-session.test.js && node site/tests/average-online-query.test.js && node site/tests/average-online-chart-zoom-ui.test.js && node site/tests/live-player-count-ui.test.js && node site/tests/unique-player-periods-ui.test.js && node site/tests/unique-player-periods.test.js && node site/tests/farm-details-mobile-ui.test.js && node site/tests/obsidian-retired-pickaxes-font-ui.test.js && node site/tests/player-skin-history.test.js",
+    "posttest": "node tests/player-message-count.test.js && node tests/player-message-count-migration.test.js && node tests/playtime-database.test.js && node tests/playtime-daily-backfill.test.js && node tests/seen-online-session.test.js && node site/tests/average-online-query.test.js && node site/tests/average-online-chart-zoom-ui.test.js && node site/tests/live-player-count-ui.test.js && node site/tests/unique-player-periods-ui.test.js && node site/tests/unique-player-periods.test.js && node site/tests/farm-details-mobile-ui.test.js && node site/tests/obsidian-retired-pickaxes-font-ui.test.js && node site/tests/player-skin-history.test.js && node site/tests/area-explorer.test.js",
     "test:log-retention": "node site/tests/log-retention.test.js",
     "test:soak": "node tests/presence-playtime-soak.test.js",
     "test:soak:long": "node tests/presence-playtime-soak.test.js --hours=168 --seeds=1,2,3",

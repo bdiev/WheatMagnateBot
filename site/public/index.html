@@ -13,7 +13,7 @@
     <link rel="icon" type="image/png" href="/items/Wheat.png">
     <link rel="apple-touch-icon" href="/items/Wheat.png">
     <script src="/theme-init.js?v=136"></script>
-  <link rel="stylesheet" href="/styles.css?v=270">
+  <link rel="stylesheet" href="/styles.css?v=271">
     <script src="/pwa-update.js" defer></script>
     <script src="/page-transitions.js?v=1" defer></script>
   </head>
@@ -115,6 +115,7 @@
               <button class="tab-button" type="button" data-tab="obsidian" role="menuitem">Obsidian Farm</button>
               <button class="tab-button" type="button" data-tab="server" role="menuitem">Server Stats</button>
               <button class="tab-button" type="button" data-tab="players" role="menuitem">Player Stats</button>
+              <button class="tab-button" type="button" data-tab="area-explorer" role="menuitem">Area Explorer</button>
               <a class="tab-button requests-nav-link admin-only" href="/request" role="menuitem" hidden>Requests <span id="requestsBadge" class="notification-badge" hidden>0</span></a>
               <button class="tab-button" type="button" data-tab="settings" role="menuitem">Settings</button>
               <button class="tab-button notification-nav-button admin-only" type="button" data-tab="notifications" role="menuitem" hidden>Notifications <span id="notificationBadge" class="notification-badge" hidden>0</span></button>
@@ -1057,6 +1058,76 @@
         </section>
       </section>
 
+      <section id="tab-area-explorer" class="tab-panel" data-panel="area-explorer">
+        <section class="area-explorer-layout">
+          <section class="panel area-explorer-status-panel">
+            <div class="panel-head">
+              <div>
+                <h2>Live Run</h2>
+                <p>The mod's current run, updated every 30 seconds.</p>
+              </div>
+            </div>
+            <div id="areaExplorerStatus" class="area-explorer-status-list" aria-live="polite">
+              <p class="area-explorer-empty">Loading...</p>
+            </div>
+          </section>
+
+          <section class="panel area-explorer-finds-panel">
+            <div class="panel-head area-explorer-finds-head">
+              <div>
+                <h2>Finds</h2>
+                <p id="areaExplorerScopeSummary">Bases, signs and loot from every run, nothing twice.</p>
+              </div>
+              <label class="area-explorer-scope">Server / dimension
+                <select id="areaExplorerScope" aria-label="Server and dimension"></select>
+              </label>
+            </div>
+            <div class="area-explorer-toolbar">
+              <div class="chart-controls" role="group" aria-label="Kind of find">
+                <button class="chart-range-button active" type="button" data-area-kind="" aria-pressed="true">All <span data-area-count="all"></span></button>
+                <button class="chart-range-button" type="button" data-area-kind="BASE" aria-pressed="false">Bases <span data-area-count="BASE"></span></button>
+                <button class="chart-range-button" type="button" data-area-kind="ITEM" aria-pressed="false">Loot <span data-area-count="ITEM"></span></button>
+                <button class="chart-range-button" type="button" data-area-kind="SIGN" aria-pressed="false">Signs <span data-area-count="SIGN"></span></button>
+              </div>
+              <input id="areaExplorerSearch" type="search" maxlength="100" autocomplete="off" placeholder="Search names and sign text..." aria-label="Search finds">
+            </div>
+            <div class="area-explorer-map-wrap">
+              <canvas id="areaExplorerMap" class="area-explorer-map" height="420" aria-label="Map of the finds: drag to move, wheel or pinch to zoom, click a point for details"></canvas>
+              <div class="area-explorer-map-legend" aria-hidden="true">
+                <span class="legend-base">Base</span><span class="legend-item">Loot</span><span class="legend-sign">Sign</span><span class="legend-player">Explorer</span>
+              </div>
+              <button id="areaExplorerMapReset" class="ghost-button area-explorer-map-reset" type="button">Fit all</button>
+            </div>
+            <div id="areaExplorerSelected" class="area-explorer-selected" hidden></div>
+            <ol id="areaExplorerFinds" class="area-explorer-finds" aria-live="polite"></ol>
+            <div class="area-explorer-pager">
+              <button id="areaExplorerPrev" class="ghost-button" type="button" disabled>Previous</button>
+              <span id="areaExplorerPage">-</span>
+              <button id="areaExplorerNext" class="ghost-button" type="button" disabled>Next</button>
+            </div>
+          </section>
+
+          <section class="panel area-explorer-tokens-panel admin-only" hidden>
+            <div class="panel-head">
+              <div>
+                <h2>Mod Tokens</h2>
+                <p>One token per PC running the mod; revoke to cut it off.</p>
+              </div>
+            </div>
+            <form id="areaExplorerTokenForm" class="area-explorer-token-form">
+              <input id="areaExplorerTokenName" type="text" maxlength="64" placeholder="Token name, e.g. Gaming PC" aria-label="Token name" required>
+              <button type="submit">Create token</button>
+            </form>
+            <div id="areaExplorerNewToken" class="area-explorer-new-token" hidden>
+              <p>Copy it now - it is not shown again.</p>
+              <code id="areaExplorerNewTokenValue"></code>
+              <button id="areaExplorerCopyToken" class="ghost-button" type="button">Copy</button>
+            </div>
+            <ul id="areaExplorerTokens" class="area-explorer-tokens"></ul>
+          </section>
+        </section>
+      </section>
+
       <section id="tab-notifications" class="tab-panel admin-only" data-panel="notifications" hidden>
         <section class="panel notification-overview-panel">
           <div class="panel-head notification-head">
@@ -1486,6 +1557,6 @@
     <script src="/player-accent.js?v=1" defer></script>
     <script src="/vendor/skinview3d/skinview3d.bundle.js?v=3.4.1" defer></script>
     <script src="/minecraft-skin-viewer.js?v=6" defer></script>
-    <script src="/app.js?v=288" defer></script>
+    <script src="/app.js?v=289" defer></script>
   </body>
 </html>

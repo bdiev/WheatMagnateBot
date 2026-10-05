@@ -23,6 +23,7 @@ const { buildPlayerActivityPattern, resolveTimeZone } = require('./player-activi
 const { KILL_AURA_MOBS, normalizeKillAuraTargets } = require('./kill-aura-catalog');
 const { isValidKillAuraRange, normalizeKillAuraRange } = require('./kill-aura-range');
 const { createResourceRequestService } = require('./resource-requests');
+const { createAreaExplorerService } = require('./area-explorer');
 const { normalizeGreenChatMessage } = require('./chat-message-normalization');
 const { NEW_PLAYER_WINDOW_DAYS, isNewPlayerRegistration } = require('./player-new-status');
 const { minecraftAvatarSources, renderOfficialMinecraftAvatar } = require('./minecraft-avatar');
@@ -91,6 +92,7 @@ let liveDashboardCacheAt = 0;
 let liveDashboardRequest = null;
 let accountRegistry = null;
 let resourceRequestService = null;
+let areaExplorerService = null;
 const minecraftAvatarCache = new Map();
 const minecraftSkinCache = new Map();
 const playerSkinHistory = createPlayerSkinHistoryService({ pool });
@@ -5962,7 +5964,7 @@ async function getPushSettings(currentUser) {
   };
 }
 
-const NAVIGATION_SECTION_ORDER = Object.freeze(['chat', 'bot', 'kill-aura', 'obsidian', 'server', 'players', 'settings', 'notifications', 'child-ai', 'admin']);
+const NAVIGATION_SECTION_ORDER = Object.freeze(['chat', 'bot', 'kill-aura', 'obsidian', 'server', 'players', 'area-explorer', 'settings', 'notifications', 'child-ai', 'admin']);
 
 function normalizeNavigationPreferences(input = {}) {
   const rawVisibility = input.visibility && typeof input.visibility === 'object' && !Array.isArray(input.visibility) ? input.visibility : {};
@@ -6112,6 +6114,16 @@ async function updateNotificationRule(currentUser, body) {
   return getNotificationRules(currentUser);
 }
 
+function getAreaExplorerService() {
+  if (!areaExplorerService) {
+    areaExplorerService = createAreaExplorerService({
+      pool, hashToken, readJsonBody, sendJson, sendError, enforceRateLimit, recordSystemLog,
+      publish: (type, payload) => sseHub.publish(type, payload)
+    });
+  }
+  return areaExplorerService;
+}
+
 async function handleApi(req, res, url) {
   let currentUser = null;
   try {
@@ -6174,6 +6186,13 @@ async function handleApi(req, res, url) {
     if (url.pathname === '/api/settings/navigation' && req.method === 'PUT' &&
         !enforceRateLimit(req, res, 'navigation_settings', currentUser.username, { limit: 60, windowMs: 60_000 })) return;
 
+    if (url.pathname.startsWith('/api/area-explorer/') || url.pathname.startsWith('/api/admin/area-explorer/')) {
+      if (!pool) { sendError(res, 503, 'Area Explorer needs the database.'); return; }
+      const response = await getAreaExplorerService().handleApi(req, currentUser, url, { assertAdmin: assertAdminUser, readBody: request => readJsonBody(request) });
+      if (response) { sendJson(res, response.statusCode, response.payload); return; }
+      sendError(res, 404, 'Area Explorer route not found.');
+      return;
+    }
     if (url.pathname === '/api/admin/users') {
       if (req.method === 'GET') {
         sendJson(res, 200, await getAdminUsers(currentUser));
@@ -6562,6 +6581,17 @@ async function requestHandler(req, res) {
   }
   let url;
   try { url = new URL(req.url, 'http://localhost'); } catch { sendError(res, 400, 'Invalid request URL.'); return; }
+  // The mod sends finds with its own API token, not from a browser: no Origin, no session, no CSRF token
+  if (url.pathname === '/api/area-explorer/ingest') {
+    try {
+      if (!pool) { sendError(res, 503, 'Area Explorer needs the database.'); return; }
+      await getAreaExplorerService().handleIngest(req, res);
+    } catch (err) {
+      const safe = publicError(err);
+      if (!res.headersSent) sendError(res, safe.statusCode, safe.message);
+    }
+    return;
+  }
   if (MUTATING_METHODS.has(req.method)) {
     const origin = validateOrigin(req, { trustProxy: SITE_TRUST_PROXY, allowedOrigins: SITE_ALLOWED_ORIGINS });
     if (!origin.ok) {

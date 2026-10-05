@@ -245,12 +245,13 @@ const NAV_SECTION_INFO = Object.freeze({
   obsidian: ['Obsidian Farm', 'Farm controls and analytics'],
   server: ['Server Stats', 'TPS and server activity'],
   players: ['Player Stats', 'Profiles and activity'],
+  'area-explorer': ['Area Explorer', 'Bases, loot and signs the explorer mod found'],
   settings: ['Settings', 'Timezone, security and navigation'],
   notifications: ['Notifications', 'Alerts and notification rules'],
   'child-ai': ['Child AI', 'Learning and memory administration'],
   admin: ['Admin', 'Administrative controls']
 });
-const NAV_DEFAULT_ORDER = Object.freeze(['chat', 'bot', 'kill-aura', 'obsidian', 'server', 'players', 'settings', 'notifications', 'child-ai', 'admin']);
+const NAV_DEFAULT_ORDER = Object.freeze(['chat', 'bot', 'kill-aura', 'obsidian', 'server', 'players', 'area-explorer', 'settings', 'notifications', 'child-ai', 'admin']);
 let dashboardBrandLastScrollY = Math.max(0, window.scrollY);
 let dashboardBrandScrollFrame = null;
 
@@ -1452,7 +1453,7 @@ function randomUniqueAccountColor() {
 
 function applyAccountTabScope(account) {
   const restricted = Boolean(account && !account.isDefault);
-  const allowed = new Set(['chat','bot','kill-aura','obsidian','admin']);
+  const allowed = new Set(['chat','bot','kill-aura','obsidian','area-explorer','admin']);
   $$('.tab-button[data-tab]').forEach(button => button.classList.toggle('account-tab-restricted',restricted && !allowed.has(button.dataset.tab)));
   // Role and the user's Navigation choices decide which tabs are shown.
   applyNavigationVisibility();
@@ -2265,6 +2266,7 @@ function setActiveTab(tab) {
   }
   if (tab === 'child-ai') loadChildAiAdmin();
   if (tab === 'kill-aura') loadKillAura();
+  if (tab === 'area-explorer') loadAreaExplorer().catch(error => setBanner(`Could not load Area Explorer: ${error.message}`));
   if (tab === 'chat') ensureInitialChatScroll();
   if (tab === 'players') {
     resetPlaytimeLeaderboardScroll($('#playtimeLeaderboard'), state.playtimeLeaderboardScope);
@@ -6157,6 +6159,473 @@ function renderKillAura(payload = {}) {
     killed.map(mob => [mob.id, mob.kills])
   );
   redrawCharts();
+}
+
+// Area Explorer: finds the OnFocus mod uploads (bases, signs, loot) and its live run
+
+const AREA_EXPLORER_PAGE_SIZE = 50;
+const AREA_EXPLORER_KIND_LABELS = Object.freeze({ BASE: 'Base', ITEM: 'Loot', SIGN: 'Sign' });
+const AREA_EXPLORER_PHASES = Object.freeze({
+  SCAN: 'Reading the map', SWEEP: 'Sweeping', SETTLE: 'Letting the map catch up', CLEANUP: 'Cleaning up gaps',
+  SPIRAL: 'Spiralling out', IDLE: 'Stopped'
+});
+
+function areaExplorerState() {
+  if (!state.areaExplorer) {
+    state.areaExplorer = {
+      scope: '', kind: '', q: '', offset: 0, total: 0, summary: null, points: [], pointsScope: null,
+      view: null, selectedId: null, searchTimer: null, mapBound: false, loadedAt: 0
+    };
+  }
+  return state.areaExplorer;
+}
+
+function areaExplorerScopeParams(extra = {}) {
+  const ae = areaExplorerState();
+  const [server = '', dimension = ''] = ae.scope.split('|');
+  const params = new URLSearchParams();
+  if (server) params.set('server', server);
+  if (dimension) params.set('dimension', dimension);
+  for (const [key, value] of Object.entries(extra)) if (value !== '' && value !== null && value !== undefined) params.set(key, value);
+  return params.toString();
+}
+
+function prettyDimension(id) {
+  return String(id || '').split('_').filter(Boolean).map(word => word[0].toUpperCase() + word.slice(1)).join(' ');
+}
+
+async function loadAreaExplorer({ findsToo = true } = {}) {
+  if (!state.currentUser) return;
+  const ae = areaExplorerState();
+  ae.summary = await fetchJson('/api/area-explorer/summary');
+  ae.loadedAt = Date.now();
+  renderAreaExplorerScopes();
+  renderAreaExplorerStatus();
+  const work = [loadAreaExplorerMap()];
+  if (findsToo) work.push(loadAreaExplorerFinds());
+  if (state.currentUser.role === 'admin') work.push(loadAreaExplorerTokens());
+  await Promise.all(work);
+}
+
+function renderAreaExplorerScopes() {
+  const ae = areaExplorerState();
+  const select = $('#areaExplorerScope');
+  const scopes = ae.summary?.scopes || [];
+  // The live run's scope first when nothing is picked yet: that's what's being explored
+  const live = (ae.summary?.statuses || []).find(status => status.online);
+  if (!ae.scope && scopes.length) {
+    const preferred = live && scopes.find(scope => scope.server === live.server && scope.dimension === live.dimension);
+    const pick = preferred || scopes.reduce((best, scope) => (scope.bases + scope.signs + scope.items > best.bases + best.signs + best.items ? scope : best));
+    ae.scope = `${pick.server}|${pick.dimension}`;
+  }
+  select.innerHTML = scopes.length
+    ? scopes.map(scope => {
+      const value = `${scope.server}|${scope.dimension}`;
+      return `<option value="${escapeHtml(value)}"${value === ae.scope ? ' selected' : ''}>${escapeHtml(scope.server)} · ${escapeHtml(prettyDimension(scope.dimension))}</option>`;
+    }).join('')
+    : '<option value="">No finds yet</option>';
+  select.disabled = !scopes.length;
+
+  const scope = scopes.find(item => `${item.server}|${item.dimension}` === ae.scope);
+  const counts = { all: scope ? scope.bases + scope.signs + scope.items : 0, BASE: scope?.bases || 0, ITEM: scope?.items || 0, SIGN: scope?.signs || 0 };
+  $$('[data-area-count]').forEach(element => { element.textContent = `(${formatNumber(counts[element.dataset.areaCount])})`; });
+  $('#areaExplorerScopeSummary').textContent = scope
+    ? `${formatNumber(scope.bases)} bases · ${formatNumber(scope.items)} loot · ${formatNumber(scope.signs)} signs, every run`
+    : 'Nothing uploaded by the mod yet.';
+}
+
+function renderAreaExplorerStatus() {
+  const ae = areaExplorerState();
+  const container = $('#areaExplorerStatus');
+  const statuses = ae.summary?.statuses || [];
+  if (!statuses.length) {
+    container.innerHTML = '<p class="area-explorer-empty">No mod has reported in yet.</p>';
+    return;
+  }
+  container.innerHTML = statuses.map(status => {
+    const percent = status.percent === null ? null : Math.round(status.percent * 10) / 10;
+    const phase = status.paused ? 'Paused' : (AREA_EXPLORER_PHASES[status.phase] || status.phase);
+    const runState = status.online ? (status.paused ? 'paused' : 'online') : 'offline';
+    const found = status.runFinds
+      ? `${formatNumber(status.runFinds.bases)} bases · ${formatNumber(status.runFinds.items)} loot · ${formatNumber(status.runFinds.signs)} signs this run`
+      : '';
+    return `<article class="area-explorer-run is-${runState}">
+      <header>
+        <span class="area-explorer-dot" aria-hidden="true"></span>
+        <strong>${escapeHtml(status.player || status.tokenName || 'Explorer')}</strong>
+        <span class="area-explorer-run-where">${escapeHtml(status.server || '-')} · ${escapeHtml(prettyDimension(status.dimension))}</span>
+        <span class="area-explorer-run-state">${status.online ? escapeHtml(phase) : 'Offline'}</span>
+      </header>
+      ${percent === null ? '' : `<div class="area-explorer-progress" role="progressbar" aria-label="Explored" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><span style="width:${percent}%"></span></div>`}
+      <dl>
+        ${percent === null ? '' : `<div><dt>Explored</dt><dd>${percent}%</dd></div>`}
+        ${status.etaSeconds === null || !status.online ? '' : `<div><dt>Time left</dt><dd>${escapeHtml(formatDurationMs(status.etaSeconds * 1000))}</dd></div>`}
+        ${status.x === null ? '' : `<div><dt>Position</dt><dd>X ${status.x} · Z ${status.z}</dd></div>`}
+        <div><dt>Last report</dt><dd>${escapeHtml(formatDurationMs(Date.now() - new Date(status.updatedAt).getTime()))} ago</dd></div>
+      </dl>
+      ${found ? `<p class="area-explorer-run-finds">${escapeHtml(found)}</p>` : ''}
+    </article>`;
+  }).join('');
+}
+
+async function loadAreaExplorerFinds() {
+  const ae = areaExplorerState();
+  const list = $('#areaExplorerFinds');
+  if (!ae.scope) {
+    list.innerHTML = '';
+    ae.total = 0;
+    renderAreaExplorerPager();
+    return;
+  }
+  list.setAttribute('aria-busy', 'true');
+  const data = await fetchJson(`/api/area-explorer/finds?${areaExplorerScopeParams({ kind: ae.kind, q: ae.q, limit: AREA_EXPLORER_PAGE_SIZE, offset: ae.offset })}`);
+  ae.total = data.total;
+  list.removeAttribute('aria-busy');
+  list.innerHTML = data.finds.length
+    ? data.finds.map(renderAreaExplorerFind).join('')
+    : `<li class="area-explorer-empty">${ae.q ? 'Nothing matches the search.' : 'No finds of this kind yet.'}</li>`;
+  renderAreaExplorerPager();
+}
+
+function areaExplorerFindTitle(find) {
+  if (find.kind === 'ITEM') return `${find.name} ×${find.count}${find.label ? ` "${find.label}"` : ''}`;
+  return find.name;
+}
+
+function renderAreaExplorerFind(find) {
+  let body = '';
+  if (find.kind === 'SIGN') {
+    const sides = [find.details, find.label].filter(Boolean);
+    body = sides.map((side, index) => `<pre class="area-explorer-sign${index ? ' is-back' : ''}">${escapeHtml(side)}</pre>`).join('');
+  } else if (find.details) {
+    body = `<p class="area-explorer-details">${escapeHtml(find.details)}</p>`;
+  }
+  const coords = `${find.x} ${find.y} ${find.z}`;
+  return `<li class="area-explorer-find kind-${find.kind.toLowerCase()}" data-find-id="${escapeHtml(find.id)}">
+    <span class="area-explorer-kind">${AREA_EXPLORER_KIND_LABELS[find.kind] || escapeHtml(find.kind)}</span>
+    <div class="area-explorer-find-main">
+      <strong>${escapeHtml(areaExplorerFindTitle(find))}</strong>
+      ${body}
+    </div>
+    <div class="area-explorer-find-meta">
+      <button class="area-explorer-coords" type="button" data-copy-coords="${escapeHtml(coords)}" title="Copy coordinates">X ${find.x} Y ${find.y} Z ${find.z}</button>
+      <time datetime="${escapeHtml(find.foundAt)}">${escapeHtml(formatFullDateTime(find.foundAt))}</time>
+    </div>
+  </li>`;
+}
+
+function renderAreaExplorerPager() {
+  const ae = areaExplorerState();
+  const page = Math.floor(ae.offset / AREA_EXPLORER_PAGE_SIZE) + 1;
+  const pages = Math.max(1, Math.ceil(ae.total / AREA_EXPLORER_PAGE_SIZE));
+  $('#areaExplorerPage').textContent = ae.total ? `Page ${page} of ${pages} · ${formatNumber(ae.total)} finds` : '-';
+  $('#areaExplorerPrev').disabled = ae.offset <= 0;
+  $('#areaExplorerNext').disabled = ae.offset + AREA_EXPLORER_PAGE_SIZE >= ae.total;
+}
+
+// The map: every find of the scope as a dot, the explorer and its area on top
+
+async function loadAreaExplorerMap() {
+  const ae = areaExplorerState();
+  bindAreaExplorerMap();
+  if (!ae.scope) {
+    ae.points = [];
+    drawAreaExplorerMap();
+    return;
+  }
+  const data = await fetchJson(`/api/area-explorer/map?${areaExplorerScopeParams({ kind: ae.kind })}`);
+  const scopeKey = `${ae.scope}|${ae.kind}`;
+  ae.points = data.points.map(([id, kind, x, z]) => ({ id, kind, x, z }));
+  if (ae.pointsScope !== scopeKey || !ae.view) fitAreaExplorerMap();
+  ae.pointsScope = scopeKey;
+  drawAreaExplorerMap();
+}
+
+function areaExplorerLiveStatus() {
+  const ae = areaExplorerState();
+  const [server, dimension] = ae.scope.split('|');
+  return (ae.summary?.statuses || []).find(status => status.server === server && status.dimension === dimension && status.x !== null) || null;
+}
+
+function fitAreaExplorerMap() {
+  const ae = areaExplorerState();
+  const canvas = $('#areaExplorerMap');
+  const xs = ae.points.map(point => point.x), zs = ae.points.map(point => point.z);
+  const live = areaExplorerLiveStatus();
+  if (live) { xs.push(live.x); zs.push(live.z); }
+  if (!xs.length) {
+    ae.view = { cx: 0, cz: 0, scale: 0.05 };
+    return;
+  }
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (let i = 0; i < xs.length; i++) {
+    minX = Math.min(minX, xs[i]); maxX = Math.max(maxX, xs[i]);
+    minZ = Math.min(minZ, zs[i]); maxZ = Math.max(maxZ, zs[i]);
+  }
+  const width = canvas.clientWidth || 600, height = canvas.clientHeight || 420;
+  const scale = Math.min((width - 40) / Math.max(maxX - minX, 64), (height - 40) / Math.max(maxZ - minZ, 64));
+  ae.view = { cx: (minX + maxX) / 2, cz: (minZ + maxZ) / 2, scale };
+}
+
+function areaExplorerToScreen(view, canvas, x, z) {
+  return [canvas.clientWidth / 2 + (x - view.cx) * view.scale, canvas.clientHeight / 2 + (z - view.cz) * view.scale];
+}
+
+function drawAreaExplorerMap() {
+  const ae = areaExplorerState();
+  const canvas = $('#areaExplorerMap');
+  if (!canvas || !canvas.clientWidth) return;
+  const ratio = window.devicePixelRatio || 1;
+  canvas.width = Math.round(canvas.clientWidth * ratio);
+  canvas.height = Math.round(canvas.clientHeight * ratio);
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  const styles = getComputedStyle(canvas);
+  const color = name => styles.getPropertyValue(name).trim();
+  const width = canvas.clientWidth, height = canvas.clientHeight;
+  ctx.fillStyle = color('--area-map-bg');
+  ctx.fillRect(0, 0, width, height);
+  const view = ae.view || { cx: 0, cz: 0, scale: 0.05 };
+
+  // A grid line every 1,000 blocks, or 10,000 zoomed out; the axes stronger
+  const step = view.scale * 1000 >= 40 ? 1000 : 10000;
+  const left = view.cx - width / 2 / view.scale, top = view.cz - height / 2 / view.scale;
+  ctx.lineWidth = 1;
+  for (let x = Math.ceil(left / step) * step; x < left + width / view.scale; x += step) {
+    const [sx] = areaExplorerToScreen(view, canvas, x, 0);
+    ctx.strokeStyle = x === 0 ? color('--area-map-axis') : color('--area-map-grid');
+    ctx.beginPath(); ctx.moveTo(Math.round(sx) + 0.5, 0); ctx.lineTo(Math.round(sx) + 0.5, height); ctx.stroke();
+  }
+  for (let z = Math.ceil(top / step) * step; z < top + height / view.scale; z += step) {
+    const [, sz] = areaExplorerToScreen(view, canvas, 0, z);
+    ctx.strokeStyle = z === 0 ? color('--area-map-axis') : color('--area-map-grid');
+    ctx.beginPath(); ctx.moveTo(0, Math.round(sz) + 0.5); ctx.lineTo(width, Math.round(sz) + 0.5); ctx.stroke();
+  }
+
+  const live = areaExplorerLiveStatus();
+  if (live?.area && live.online) {
+    const [x1, z1] = areaExplorerToScreen(view, canvas, live.area.minX, live.area.minZ);
+    const [x2, z2] = areaExplorerToScreen(view, canvas, live.area.maxX, live.area.maxZ);
+    ctx.fillStyle = color('--area-map-area');
+    ctx.fillRect(x1, z1, x2 - x1, z2 - z1);
+  }
+
+  // Signs under loot under bases: the rarer, the higher
+  const order = { SIGN: 0, ITEM: 1, BASE: 2 };
+  const colors = { SIGN: color('--area-sign'), ITEM: color('--area-loot'), BASE: color('--area-base') };
+  const sorted = [...ae.points].sort((a, b) => order[a.kind] - order[b.kind]);
+  for (const point of sorted) {
+    const [sx, sz] = areaExplorerToScreen(view, canvas, point.x, point.z);
+    if (sx < -6 || sz < -6 || sx > width + 6 || sz > height + 6) continue;
+    const size = point.kind === 'BASE' ? 4.5 : point.kind === 'ITEM' ? 3.5 : 2.5;
+    ctx.fillStyle = colors[point.kind];
+    ctx.beginPath(); ctx.arc(sx, sz, size, 0, Math.PI * 2); ctx.fill();
+    if (point.id === ae.selectedId) {
+      ctx.strokeStyle = color('--text'); ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(sx, sz, size + 4, 0, Math.PI * 2); ctx.stroke();
+    }
+  }
+
+  if (live) {
+    const [sx, sz] = areaExplorerToScreen(view, canvas, live.x, live.z);
+    ctx.fillStyle = color('--area-player');
+    ctx.strokeStyle = color('--area-map-bg');
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(sx, sz - 8); ctx.lineTo(sx + 7, sz + 6); ctx.lineTo(sx - 7, sz + 6); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+  }
+
+  ctx.fillStyle = color('--muted');
+  ctx.font = '12px sans-serif';
+  ctx.fillText(`Grid: ${step.toLocaleString('en-US')} blocks`, 10, height - 10);
+}
+
+function bindAreaExplorerMap() {
+  const ae = areaExplorerState();
+  if (ae.mapBound) return;
+  const canvas = $('#areaExplorerMap');
+  if (!canvas) return;
+  ae.mapBound = true;
+  const pointers = new Map();
+  let dragged = false, pinchDistance = 0;
+
+  const zoomAt = (factor, sx, sz) => {
+    const view = ae.view;
+    const x = view.cx + (sx - canvas.clientWidth / 2) / view.scale;
+    const z = view.cz + (sz - canvas.clientHeight / 2) / view.scale;
+    view.scale = Math.min(Math.max(view.scale * factor, 0.0005), 8);
+    view.cx = x - (sx - canvas.clientWidth / 2) / view.scale;
+    view.cz = z - (sz - canvas.clientHeight / 2) / view.scale;
+    drawAreaExplorerMap();
+  };
+
+  canvas.addEventListener('wheel', event => {
+    if (!ae.view) return;
+    event.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    zoomAt(Math.exp(-event.deltaY * 0.0015), event.clientX - rect.left, event.clientY - rect.top);
+  }, { passive: false });
+
+  canvas.addEventListener('pointerdown', event => {
+    canvas.setPointerCapture(event.pointerId);
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    dragged = false;
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      pinchDistance = Math.hypot(a.x - b.x, a.y - b.y);
+    }
+  });
+  canvas.addEventListener('pointermove', event => {
+    const last = pointers.get(event.pointerId);
+    if (!last || !ae.view) return;
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      const distance = Math.hypot(a.x - b.x, a.y - b.y);
+      const rect = canvas.getBoundingClientRect();
+      if (pinchDistance) zoomAt(distance / pinchDistance, (a.x + b.x) / 2 - rect.left, (a.y + b.y) / 2 - rect.top);
+      pinchDistance = distance;
+      dragged = true;
+      return;
+    }
+    const dx = event.clientX - last.x, dy = event.clientY - last.y;
+    if (Math.abs(dx) + Math.abs(dy) > 2) dragged = true;
+    ae.view.cx -= dx / ae.view.scale;
+    ae.view.cz -= dy / ae.view.scale;
+    drawAreaExplorerMap();
+  });
+  const release = event => {
+    pointers.delete(event.pointerId);
+    pinchDistance = 0;
+  };
+  canvas.addEventListener('pointerup', event => {
+    const wasGesture = dragged || pointers.size > 1;
+    release(event);
+    if (wasGesture || !ae.view) return;
+    const rect = canvas.getBoundingClientRect();
+    const sx = event.clientX - rect.left, sz = event.clientY - rect.top;
+    let best = null, bestDistance = 10;
+    for (const point of ae.points) {
+      const [px, pz] = areaExplorerToScreen(ae.view, canvas, point.x, point.z);
+      const distance = Math.hypot(px - sx, pz - sz);
+      if (distance < bestDistance) { best = point; bestDistance = distance; }
+    }
+    selectAreaExplorerFind(best?.id || null).catch(error => setBanner(error.message));
+  });
+  canvas.addEventListener('pointercancel', release);
+  window.addEventListener('resize', () => { if (state.activeTab === 'area-explorer') drawAreaExplorerMap(); });
+}
+
+async function selectAreaExplorerFind(id) {
+  const ae = areaExplorerState();
+  const box = $('#areaExplorerSelected');
+  ae.selectedId = id;
+  drawAreaExplorerMap();
+  if (!id) {
+    box.hidden = true;
+    return;
+  }
+  const { find } = await fetchJson(`/api/area-explorer/finds/${encodeURIComponent(id)}`);
+  if (ae.selectedId !== id) return;
+  box.innerHTML = `<ol class="area-explorer-finds">${renderAreaExplorerFind(find)}</ol>`;
+  box.hidden = false;
+}
+
+// Tokens for the mod (administrators)
+
+async function loadAreaExplorerTokens() {
+  const { tokens } = await fetchJson('/api/admin/area-explorer/tokens');
+  const list = $('#areaExplorerTokens');
+  list.innerHTML = tokens.length
+    ? tokens.map(token => `<li class="${token.revokedAt ? 'is-revoked' : ''}">
+        <div><strong>${escapeHtml(token.name)}</strong> <code>…${escapeHtml(token.hint)}</code></div>
+        <small>${token.revokedAt ? `Revoked ${escapeHtml(formatFullDateTime(token.revokedAt))}` : token.lastUsedAt ? `Last upload ${escapeHtml(formatFullDateTime(token.lastUsedAt))}` : 'Not used yet'}</small>
+        ${token.revokedAt ? '' : `<button class="ghost-button" type="button" data-revoke-area-token="${escapeHtml(token.id)}">Revoke</button>`}
+      </li>`).join('')
+    : '<li class="area-explorer-empty">No tokens yet.</li>';
+}
+
+function setupAreaExplorer() {
+  const ae = areaExplorerState();
+  const reloadScope = () => Promise.all([loadAreaExplorerFinds(), loadAreaExplorerMap()])
+    .catch(error => setBanner(`Could not load Area Explorer finds: ${error.message}`));
+  $('#areaExplorerScope')?.addEventListener('change', event => {
+    ae.scope = event.target.value;
+    ae.offset = 0;
+    ae.selectedId = null;
+    $('#areaExplorerSelected').hidden = true;
+    renderAreaExplorerScopes();
+    reloadScope();
+  });
+  $$('[data-area-kind]').forEach(button => button.addEventListener('click', () => {
+    ae.kind = button.dataset.areaKind;
+    ae.offset = 0;
+    $$('[data-area-kind]').forEach(other => {
+      other.classList.toggle('active', other === button);
+      other.setAttribute('aria-pressed', String(other === button));
+    });
+    reloadScope();
+  }));
+  $('#areaExplorerSearch')?.addEventListener('input', event => {
+    clearTimeout(ae.searchTimer);
+    ae.searchTimer = setTimeout(() => {
+      ae.q = event.target.value.trim();
+      ae.offset = 0;
+      loadAreaExplorerFinds().catch(error => setBanner(`Could not search Area Explorer finds: ${error.message}`));
+    }, 300);
+  });
+  $('#areaExplorerPrev')?.addEventListener('click', () => {
+    ae.offset = Math.max(0, ae.offset - AREA_EXPLORER_PAGE_SIZE);
+    loadAreaExplorerFinds().catch(error => setBanner(error.message));
+  });
+  $('#areaExplorerNext')?.addEventListener('click', () => {
+    ae.offset += AREA_EXPLORER_PAGE_SIZE;
+    loadAreaExplorerFinds().catch(error => setBanner(error.message));
+  });
+  $('#areaExplorerMapReset')?.addEventListener('click', () => {
+    fitAreaExplorerMap();
+    drawAreaExplorerMap();
+  });
+  $('#tab-area-explorer')?.addEventListener('click', async event => {
+    const coords = event.target.closest('[data-copy-coords]');
+    if (coords) {
+      try {
+        await writeClipboardText(coords.dataset.copyCoords);
+        coords.classList.add('copied');
+        setTimeout(() => coords.classList.remove('copied'), 1200);
+      } catch { /* the coordinates stay on screen to copy by hand */ }
+      return;
+    }
+    const revoke = event.target.closest('[data-revoke-area-token]');
+    if (revoke && confirm('Revoke this token? The mod using it stops uploading.')) {
+      try {
+        await deleteJson(`/api/admin/area-explorer/tokens/${encodeURIComponent(revoke.dataset.revokeAreaToken)}`);
+        await loadAreaExplorer({ findsToo: false });
+      } catch (error) { setBanner(`Could not revoke the token: ${error.message}`); }
+    }
+  });
+  $('#areaExplorerTokenForm')?.addEventListener('submit', async event => {
+    event.preventDefault();
+    const input = $('#areaExplorerTokenName');
+    try {
+      const { token } = await postJson('/api/admin/area-explorer/tokens', { name: input.value });
+      input.value = '';
+      $('#areaExplorerNewTokenValue').textContent = token;
+      $('#areaExplorerNewToken').hidden = false;
+      await loadAreaExplorerTokens();
+    } catch (error) { setBanner(`Could not create the token: ${error.message}`); }
+  });
+  $('#areaExplorerCopyToken')?.addEventListener('click', () => {
+    writeClipboardText($('#areaExplorerNewTokenValue').textContent).catch(() => {});
+  });
+}
+
+function refreshAreaExplorerFromEvent() {
+  if (state.activeTab !== 'area-explorer') {
+    areaExplorerState().loadedAt = 0;
+    return Promise.resolve();
+  }
+  return loadAreaExplorer();
 }
 
 async function loadKillAura() {
@@ -10454,6 +10923,7 @@ function handleRealtimeEvent(event) {
     scheduleRealtimeChartRefresh();
   }
   else if (type === 'farm_status_updated') queueRealtimeRefresh('farm', refreshFarmFromEvent);
+  else if (type === 'area_explorer_updated') queueRealtimeRefresh('area-explorer', refreshAreaExplorerFromEvent, 2000);
   else if (type === 'player_joined' || type === 'player_left') {
     state.playerStatsLoadedAt = 0;
     queueRealtimeRefresh('players', () => refreshPlayersFromEvent({ forcePlayerStats: true }));
@@ -10532,7 +11002,7 @@ function startRealtimeUpdates() {
   const eventTypes = [
     'bot_status_updated', 'player_joined', 'player_left', 'player_info_updated', 'chat_message',
     'whisper_message', 'farm_status_updated', 'notification_created', 'admin_control_updated',
-    'navigation_settings_updated', 'account_settings_updated', 'resource_request_updated'
+    'navigation_settings_updated', 'account_settings_updated', 'resource_request_updated', 'area_explorer_updated'
   ];
   eventTypes.forEach(type => source.addEventListener(type, handleRealtimeEvent));
   source.onopen = () => {
@@ -11232,6 +11702,7 @@ $('#playerSkinsOverlay').addEventListener('click', event => {
   if (event.target.id === 'playerSkinsOverlay') closePlayerSkins();
 });
 
+setupAreaExplorer();
 updateNavLabel('chat');
 initializeDashboardBrandVisibility();
 initLoopingCarousels();

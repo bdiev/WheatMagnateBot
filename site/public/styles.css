@@ -12663,3 +12663,361 @@ body.kill-aura-modal-open {
     font-size: 14px;
   }
 }
+
+/* Area Explorer: the OnFocus explorer mod's finds and live run */
+:root {
+  --area-base: #c98a12;
+  --area-loot: #1f8fa8;
+  --area-sign: #8a7a55;
+  --area-player: #7a4fd6;
+  --area-map-bg: #e9e1c2;
+  --area-map-grid: rgba(108, 97, 68, 0.18);
+  --area-map-axis: rgba(108, 97, 68, 0.5);
+  --area-map-area: rgba(92, 155, 52, 0.14);
+}
+
+:root[data-theme="dark"] {
+  --area-base: #f0b33c;
+  --area-loot: #49c6e0;
+  --area-sign: #a39c86;
+  --area-player: #b18cff;
+  --area-map-bg: #17191c;
+  --area-map-grid: rgba(154, 159, 143, 0.14);
+  --area-map-axis: rgba(154, 159, 143, 0.42);
+  --area-map-area: rgba(92, 200, 120, 0.12);
+}
+
+.area-explorer-layout {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(0, 2.4fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.area-explorer-status-panel,
+.area-explorer-tokens-panel {
+  grid-column: 1;
+}
+
+.area-explorer-finds-panel {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  min-width: 0;
+}
+
+.area-explorer-empty {
+  padding: 16px 18px;
+  color: var(--muted);
+  list-style: none;
+}
+
+.area-explorer-status-list {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.area-explorer-run {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 2px solid var(--line-soft);
+  border-radius: var(--card-radius);
+  background: var(--panel-soft);
+}
+
+.area-explorer-run header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.area-explorer-run-where,
+.area-explorer-run-finds,
+.area-explorer-run dt {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.area-explorer-run-state {
+  margin-left: auto;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.area-explorer-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.area-explorer-run.is-online .area-explorer-dot { background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+.area-explorer-run.is-paused .area-explorer-dot { background: var(--warn); }
+.area-explorer-run.is-offline { opacity: 0.75; }
+
+.area-explorer-progress {
+  height: 10px;
+  border: 2px solid var(--line);
+  border-radius: 2px;
+  background: var(--panel);
+  overflow: hidden;
+}
+
+.area-explorer-progress span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 400ms ease;
+}
+
+.area-explorer-run dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.area-explorer-run dd {
+  margin: 2px 0 0;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.area-explorer-finds-head {
+  flex-wrap: wrap;
+}
+
+.area-explorer-scope {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+  min-width: min(260px, 100%);
+}
+
+.area-explorer-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 18px;
+  border-bottom: 2px solid var(--line-soft);
+}
+
+.area-explorer-toolbar input[type="search"] {
+  flex: 1 1 220px;
+  min-width: 0;
+  height: var(--button-height);
+}
+
+.area-explorer-toolbar [data-area-count] {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.area-explorer-map-wrap {
+  position: relative;
+  border-bottom: 2px solid var(--line-soft);
+}
+
+.area-explorer-map {
+  display: block;
+  width: 100%;
+  height: 420px;
+  cursor: grab;
+  touch-action: none;
+}
+
+.area-explorer-map:active { cursor: grabbing; }
+
+.area-explorer-map-legend {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: var(--card-radius);
+  background: color-mix(in srgb, var(--panel) 85%, transparent);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.area-explorer-map-legend span::before {
+  content: "";
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 5px;
+  border-radius: 50%;
+  vertical-align: -1px;
+}
+
+.area-explorer-map-legend .legend-base::before { background: var(--area-base); }
+.area-explorer-map-legend .legend-item::before { background: var(--area-loot); }
+.area-explorer-map-legend .legend-sign::before { background: var(--area-sign); }
+.area-explorer-map-legend .legend-player::before { background: var(--area-player); border-radius: 0; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+
+.area-explorer-map-reset {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  min-width: 0;
+}
+
+.area-explorer-selected {
+  border-bottom: 2px solid var(--line-soft);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.area-explorer-finds {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.area-explorer-find {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.area-explorer-kind {
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+  color: #fff;
+  background: var(--area-sign);
+}
+
+.area-explorer-find.kind-base .area-explorer-kind { background: var(--area-base); color: #1c1305; }
+.area-explorer-find.kind-item .area-explorer-kind { background: var(--area-loot); color: #04161b; }
+
+.area-explorer-find-main {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.area-explorer-details {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.area-explorer-sign {
+  margin: 0;
+  padding: 6px 10px;
+  border: 2px solid color-mix(in srgb, var(--area-base) 45%, var(--line));
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--area-base) 10%, var(--panel));
+  font: inherit;
+  font-size: 14px;
+  white-space: pre-wrap;
+}
+
+.area-explorer-sign.is-back::before {
+  content: "Back";
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.area-explorer-find-meta {
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: right;
+}
+
+.area-explorer-coords {
+  min-width: 0;
+  height: auto;
+  min-height: 0;
+  padding: 3px 8px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.area-explorer-coords.copied::after {
+  content: " ✓";
+}
+
+.area-explorer-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 18px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.area-explorer-token-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 14px;
+}
+
+.area-explorer-token-form input {
+  flex: 1 1 180px;
+  min-width: 0;
+  height: var(--button-height);
+}
+
+.area-explorer-new-token {
+  display: grid;
+  gap: 6px;
+  margin: 0 14px 14px;
+  padding: 10px;
+  border: 2px dashed var(--warn);
+  border-radius: var(--card-radius);
+}
+
+.area-explorer-new-token code {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.area-explorer-tokens {
+  margin: 0;
+  padding: 0 14px 14px;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.area-explorer-tokens li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  align-items: center;
+}
+
+.area-explorer-tokens li small { grid-column: 1; color: var(--muted); }
+.area-explorer-tokens li button { grid-column: 2; grid-row: 1 / span 2; min-width: 0; }
+.area-explorer-tokens li.is-revoked { opacity: 0.6; }
+
+@media (max-width: 900px) {
+  .area-explorer-layout { grid-template-columns: minmax(0, 1fr); }
+  .area-explorer-status-panel,
+  .area-explorer-tokens-panel,
+  .area-explorer-finds-panel { grid-column: 1; grid-row: auto; }
+  .area-explorer-map { height: 320px; }
+  .area-explorer-find { grid-template-columns: 48px minmax(0, 1fr); padding: 12px 14px; }
+  .area-explorer-find-meta { grid-column: 2; justify-items: start; text-align: left; }
+}
