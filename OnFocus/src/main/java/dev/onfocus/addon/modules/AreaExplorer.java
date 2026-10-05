@@ -753,6 +753,7 @@ public class AreaExplorer extends Module {
     /** Archives whose earlier finds were queued for the site this session, by archive and site. */
     private static final Set<String> SITE_BACKFILLED = new HashSet<>();
     private int archiveTicks;
+    private long lastLiveSiteNanos;
 
     private static final String BASE_PREFIX = "Base #";
     private boolean warnedNoMinimap;
@@ -2631,16 +2632,24 @@ public class AreaExplorer extends Module {
         String site = siteTarget();
         if (site == null) return;
         String token = siteToken.get().trim();
-        JsonObject status = mc.world != null && mc.player != null ? siteStatus() : null;
+        syncLiveSite();
         SiteSync.Scope scope = mc.world != null ? archiveSpot().scope() : null;
         FILES.execute(() -> {
-            if (status != null) SITE.setStatus(scope, status);
             SITE.flush(site, token, problem -> {
                 FILE_LOG.warn("Site: " + problem);
                 mc.execute(() -> warning("Site: %s", problem));
             });
         });
         syncMap(site, token, scope);
+    }
+
+    private void syncLiveSite() {
+        String site = siteTarget();
+        if (site == null || mc.world == null || mc.player == null) return;
+        SITE.sendLiveStatus(site, siteToken.get().trim(), archiveSpot().scope(), siteStatus(), problem -> {
+            FILE_LOG.warn("Site: " + problem);
+            mc.execute(() -> warning("Site: %s", problem));
+        });
     }
 
     /** Keeps Xaero's map of this server going to the site: every dimension it has a map of. */
@@ -2675,6 +2684,7 @@ public class AreaExplorer extends Module {
         status.addProperty("x", (int) Math.floor(mc.player.getX()));
         status.addProperty("y", (int) Math.floor(mc.player.getY()));
         status.addProperty("z", (int) Math.floor(mc.player.getZ()));
+        status.addProperty("yaw", mc.player.getYaw());
         if (area != null && phase != Phase.SPIRAL && phase != Phase.IDLE) {
             status.addProperty("percent", explored.size() * 100.0 / area.total());
             JsonObject box = new JsonObject();
@@ -2910,6 +2920,10 @@ public class AreaExplorer extends Module {
         if (watching) checkStall(start);
         tickWork = null;
         tickModule();
+        if (phase != Phase.IDLE && start - lastLiveSiteNanos >= 1_000_000_000L) {
+            lastLiveSiteNanos = start;
+            syncLiveSite();
+        }
 
         long took = System.nanoTime() - start;
         if (watching && took >= SLOW_TICK_NANOS) {

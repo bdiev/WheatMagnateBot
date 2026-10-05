@@ -27,6 +27,7 @@ function fixture() {
     return nodes.get(selector);
   };
   const context = vm.createContext({
+    state: { activeTab: 'area-explorer', currentUser: {} }, document: { visibilityState: 'visible' },
     areaExplorerState: () => ae, $: node, AREA_EXPLORER_PAGE_SIZE: 50,
     AREA_EXPLORER_KIND_ORDER: { SIGN: 0, ITEM: 1, MARKER: 2, BASE: 3 },
     areaExplorerScopeParams: params => JSON.stringify({ scope: ae.scope, ...params }),
@@ -34,10 +35,11 @@ function fixture() {
     renderAreaExplorerFind: find => find.name,
     renderAreaExplorerPager() {}, bindAreaExplorerMap() {}, fitAreaExplorerMap() {}, queueAreaExplorerMapDraw() {},
     loadXaeroRegionMap: async () => {}, escapeHtml: String,
+    renderAreaExplorerStatus() {},
     saveAreaExplorerSetting(key, value) { context.savedSetting = { key, value }; },
     fetchJson: url => new Promise((resolve, reject) => requests.push({ url, resolve, reject }))
   });
-  for (const name of ['loadAreaExplorerFinds', 'loadAreaExplorerMap', 'setAreaExplorerFindsVisible', 'selectAreaExplorerFind']) vm.runInContext(functionSource(name), context);
+  for (const name of ['loadAreaExplorerFinds', 'loadAreaExplorerMap', 'setAreaExplorerFindsVisible', 'selectAreaExplorerFind', 'areaExplorerHeading', 'areaExplorerLiveStatus', 'recordAreaExplorerTrail', 'areaExplorerTrail', 'applyAreaExplorerLiveStatus', 'loadAreaExplorerLive']) vm.runInContext(functionSource(name), context);
   return { ae, node, requests, context };
 }
 
@@ -116,10 +118,41 @@ async function testMarkerVisibility() {
   assert.equal(node('#areaExplorerToggleFinds').attributes['aria-pressed'], 'false');
 }
 
+async function testLiveTelemetry() {
+  const { ae, requests, context } = fixture();
+  const live = { tokenId: '1', server: 'test', dimension: 'overworld', online: true, x: 0, z: 0, yaw: 0, updatedAt: '2026-10-05T12:00:01Z' };
+  context.recordAreaExplorerTrail(live, 1000);
+  context.recordAreaExplorerTrail({ ...live, x: 20 }, 2000);
+  assert.equal(context.areaExplorerTrail(live, 2500).length, 2);
+  assert.equal(context.areaExplorerTrail(live, 5000).length, 0, 'the trail expires without new reports');
+  context.recordAreaExplorerTrail({ ...live, x: 2000 }, 2500);
+  assert.equal(ae.trail.samples.length, 1, 'teleports never draw a line across the map');
+  context.recordAreaExplorerTrail({ ...live, dimension: 'the_nether' }, 2600);
+  assert.equal(context.areaExplorerTrail(live, 2700).length, 0, 'trails never cross dimensions');
+  context.recordAreaExplorerTrail({ ...live, online: false }, 2800);
+  assert.equal(ae.trail, null);
+  assert.equal(Math.round(Math.cos(context.areaExplorerHeading(0))), -1, 'yaw zero points south');
+  assert.equal(Math.round(Math.sin(context.areaExplorerHeading(90))), -1, 'yaw 90 points west');
+  assert.equal(context.areaExplorerHeading(null), 0, 'old mods retain the default orientation');
+  context.applyAreaExplorerLiveStatus(live);
+  context.applyAreaExplorerLiveStatus({ ...live, x: 99, updatedAt: '2026-10-05T12:00:00Z' });
+  assert.equal(ae.summary.statuses[0].x, 0, 'old telemetry cannot move the player backwards');
+  const pending = context.loadAreaExplorerLive();
+  await context.loadAreaExplorerLive();
+  assert.equal(requests.length, 1, 'slow polling must not accumulate requests');
+  requests[0].resolve({ statuses: [{ ...live, x: 25, updatedAt: '2026-10-05T12:00:02Z' }] });
+  await pending;
+  assert.equal(ae.summary.statuses[0].x, 25);
+  context.state.eventSource = { readyState: 1 };
+  await context.loadAreaExplorerLive();
+  assert.equal(requests.length, 1, 'healthy live SSE avoids redundant polling');
+}
+
 (async () => {
   await testFindsRaceAndScroll();
   await testMapRace();
   await testSelectionRace();
   await testMarkerVisibility();
+  await testLiveTelemetry();
   console.log('Area Explorer UI behavior tests passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

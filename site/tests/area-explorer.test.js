@@ -55,6 +55,9 @@ function testNormalization() {
   assert.equal(status.percent, 100);
   assert.equal(status.etaSeconds, null);
   assert.equal(status.paused, false, 'only a real true pauses');
+  assert.equal(normalizeStatus({ yaw: -450 }).yaw, 270);
+  assert.equal(normalizeStatus({ yaw: null }).yaw, null);
+  assert.equal(normalizeStatus({ yaw: 'invalid' }).yaw, null);
   assert.equal(status.area, null, 'an area needs all four sides');
 
   assert.equal(bearerToken({ headers: { authorization: 'Bearer aex_0123456789abcdef' } }), 'aex_0123456789abcdef');
@@ -74,6 +77,7 @@ async function testIngestAndQueries() {
   try {
     await db.exec(migrationSql);
     await db.exec(statusYMigrationSql);
+    await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/072_area_explorer_yaw.sql'), 'utf8'));
     const published = [];
     const logs = [];
     const service = createAreaExplorerService({
@@ -111,7 +115,7 @@ async function testIngestAndQueries() {
         { kind: 'BASE', x: 1100, y: 40, z: 1000, foundAt: NOW, name: 'Base #3', details: 'score 25' },
         { kind: 'NOPE', x: 0, y: 0, z: 0, foundAt: NOW, name: 'x' }
       ],
-      status: { player: 'Steve', phase: 'SWEEP', mode: 'Area', percent: 12.5, etaSeconds: 3600, x: 10, y: -40, z: 20, runFinds: { bases: 2, signs: 1, items: 1 } }
+      status: { player: 'Steve', phase: 'SWEEP', mode: 'Area', percent: 12.5, etaSeconds: 3600, x: 10, y: -40, z: 20, yaw: -90, runFinds: { bases: 2, signs: 1, items: 1 } }
     };
     const first = await service.ingest(token, batch, NOW);
     assert.deepEqual(first, { received: 7, accepted: 6, added: 4, duplicates: 2 },
@@ -129,6 +133,13 @@ async function testIngestAndQueries() {
     assert.equal(summary.scopes.length, 2);
     assert.equal(summary.statuses.length, 1);
     assert.equal(summary.statuses[0].player, 'Steve');
+    assert.equal(summary.statuses[0].yaw, 270);
+    assert.equal(published[0].payload.liveStatus.yaw, 270);
+    assert.equal(published[0].payload.liveStatus.x, 10);
+    const liveResponse = await service.handleApi({ method: 'GET' }, admin, new URL('http://x/api/area-explorer/live'), {});
+    assert.equal(liveResponse.statusCode, 200);
+    assert.equal(liveResponse.payload.statuses[0].yaw, 270);
+    assert.equal(liveResponse.payload.scopes, undefined, 'live polling does not count or reload finds');
     assert.equal(summary.statuses[0].tokenName, 'Gaming PC');
     assert.equal(summary.statuses[0].runFinds.bases, 2);
     assert.deepEqual([summary.statuses[0].x, summary.statuses[0].y, summary.statuses[0].z], [10, -40, 20], 'the explorer\'s height comes with its position');
@@ -176,6 +187,7 @@ async function testMarkers() {
       VALUES ('a', 'overworld', 'MARKER', 0, 0, 0, NOW(), 'End Portal', 'k')`), /check/i);
     await db.exec(markersMigrationSql);
     await db.exec(statusYMigrationSql);
+    await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/072_area_explorer_yaw.sql'), 'utf8'));
     const service = createAreaExplorerService({
       pool: poolFor(db), hashToken, readJsonBody: async () => ({}), sendJson() {}, sendError() {}, enforceRateLimit: () => true
     });

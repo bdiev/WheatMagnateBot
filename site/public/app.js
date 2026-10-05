@@ -6238,11 +6238,16 @@ async function loadAreaExplorer({ full = true } = {}) {
   if (!state.currentUser) return;
   const ae = areaExplorerState();
   const [summary, mapScopes] = await Promise.all([fetchJson('/api/area-explorer/summary'), fetchJson('/api/area-explorer/map/scopes')]);
+  summary.statuses = summary.statuses.map(status => {
+    const current = ae.summary?.statuses.find(item => item.tokenId === status.tokenId);
+    return current && new Date(current.updatedAt) > new Date(status.updatedAt) ? current : status;
+  });
   ae.summary = summary;
   ae.mapScopes = mapScopes.scopes;
   ae.loadedAt = Date.now();
   renderAreaExplorerScopes();
   renderAreaExplorerStatus();
+  recordAreaExplorerTrail(areaExplorerLiveStatus());
   const work = [];
   if (full || ae.findsDirty || ae.pointsScope !== ae.scope) {
     ae.findsDirty = false;
@@ -6264,6 +6269,11 @@ function areaExplorerScopes() {
   for (const map of ae.mapScopes) {
     if (!scopes.some(scope => scope.server === map.server && scope.dimension === map.dimension)) {
       scopes.push({ server: map.server, dimension: map.dimension, bases: 0, signs: 0, items: 0, markers: 0, markerNames: [], lastFoundAt: null });
+    }
+  }
+  for (const status of ae.summary?.statuses || []) {
+    if (status.server && status.dimension && !scopes.some(scope => scope.server === status.server && scope.dimension === status.dimension)) {
+      scopes.push({ server: status.server, dimension: status.dimension, bases: 0, signs: 0, items: 0, markers: 0, markerNames: [] });
     }
   }
   return scopes;
@@ -6447,6 +6457,57 @@ function areaExplorerLiveStatus() {
   return (ae.summary?.statuses || []).find(status => status.server === server && status.dimension === dimension && status.x !== null) || null;
 }
 
+function areaExplorerHeading(yaw) {
+  return Number.isFinite(yaw) ? (yaw + 180) * Math.PI / 180 : 0;
+}
+
+function recordAreaExplorerTrail(live, now = Date.now()) {
+  const ae = areaExplorerState();
+  if (!live?.online || !Number.isFinite(live.x) || !Number.isFinite(live.z)) { ae.trail = null; return; }
+  const key = `${live.tokenId}|${live.server}|${live.dimension}`;
+  if (ae.trail?.key !== key) ae.trail = { key, samples: [] };
+  const samples = ae.trail.samples;
+  const last = samples.at(-1);
+  if (last && (now - last.at > 2500 || Math.hypot(live.x - last.x, live.z - last.z) > 512)) samples.length = 0;
+  if (!last || last.x !== live.x || last.z !== live.z || !samples.length) samples.push({ x: live.x, z: live.z, at: now });
+  ae.trail.samples = samples.filter(point => now - point.at < 3000).slice(-10);
+}
+
+function areaExplorerTrail(live, now = Date.now()) {
+  const trail = areaExplorerState().trail;
+  if (!live?.online || trail?.key !== `${live.tokenId}|${live.server}|${live.dimension}`) return [];
+  return trail.samples.filter(point => now - point.at < 3000);
+}
+
+function applyAreaExplorerLiveStatus(live) {
+  const ae = areaExplorerState();
+  ae.summary ||= { scopes: [], statuses: [] };
+  const index = ae.summary.statuses.findIndex(status => status.tokenId === live.tokenId);
+  const previous = ae.summary.statuses[index];
+  if (previous && new Date(previous.updatedAt) > new Date(live.updatedAt)) return;
+  const status = { ...previous, ...live, tokenName: live.tokenName || previous?.tokenName };
+  if (index < 0) ae.summary.statuses.push(status);
+  else ae.summary.statuses[index] = status;
+  ae.liveReceivedAt = Date.now();
+  if (state.activeTab !== 'area-explorer' || document.visibilityState === 'hidden') return;
+  recordAreaExplorerTrail(areaExplorerLiveStatus());
+  renderAreaExplorerStatus();
+  queueAreaExplorerMapDraw();
+}
+
+async function loadAreaExplorerLive() {
+  const ae = areaExplorerState();
+  if (!state.currentUser || state.activeTab !== 'area-explorer' || document.visibilityState === 'hidden' || ae.liveLoading) return;
+  if (state.eventSource?.readyState === 1 && Date.now() - (ae.liveReceivedAt || 0) < 2500) return;
+  ae.liveLoading = true;
+  try {
+    const { statuses } = await fetchJson('/api/area-explorer/live');
+    for (const status of statuses) applyAreaExplorerLiveStatus(status);
+    if (!statuses.length && ae.summary) { ae.summary.statuses = []; ae.trail = null; renderAreaExplorerStatus(); queueAreaExplorerMapDraw(); }
+  } catch { /* The next second retries without replacing the last known position. */ }
+  finally { ae.liveLoading = false; }
+}
+
 function areaExplorerInTerritory(x, z) {
   const half = areaExplorerState().extent / 2;
   return x >= -half && x < half && z >= -half && z < half;
@@ -6625,12 +6686,33 @@ function drawAreaExplorerMap() {
   }
 
   if (live) {
+    const now = Date.now();
+    const trail = areaExplorerTrail(live, now);
+    ctx.save();
+    ctx.strokeStyle = colors.player;
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    for (let i = 1; i < trail.length; i++) {
+      ctx.globalAlpha = 0.65 * Math.max(0, 1 - (now - trail[i - 1].at) / 3000);
+      const [ax, az] = areaExplorerToScreen(view, canvas, trail[i - 1].x, trail[i - 1].z);
+      const [bx, bz] = areaExplorerToScreen(view, canvas, trail[i].x, trail[i].z);
+      ctx.beginPath(); ctx.moveTo(ax, az); ctx.lineTo(bx, bz); ctx.stroke();
+    }
+    ctx.restore();
+    if (trail.length > 1 && !ae.trailTimer && state.activeTab === 'area-explorer' && document.visibilityState !== 'hidden') {
+      ae.trailTimer = setTimeout(() => { ae.trailTimer = null; queueAreaExplorerMapDraw(); }, 50);
+    }
     const [sx, sz] = areaExplorerToScreen(view, canvas, live.x, live.z);
+    ctx.save();
+    ctx.translate(sx, sz);
+    // Minecraft yaw: 0 = south (+Z), 90 = west (-X), 180 = north (-Z).
+    ctx.rotate(areaExplorerHeading(live.yaw));
     ctx.fillStyle = colors.player;
     ctx.strokeStyle = colors.bg;
     ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(sx, sz - 8); ctx.lineTo(sx + 7, sz + 6); ctx.lineTo(sx - 7, sz + 6); ctx.closePath();
+    ctx.beginPath(); ctx.moveTo(0, -10); ctx.lineTo(7, 7); ctx.lineTo(0, 3); ctx.lineTo(-7, 7); ctx.closePath();
     ctx.fill(); ctx.stroke();
+    ctx.restore();
   }
   ctx.restore();
 
@@ -6961,6 +7043,7 @@ async function loadAreaExplorerTokens() {
 
 function setupAreaExplorer() {
   const ae = areaExplorerState();
+  if (!ae.liveTimer) ae.liveTimer = setInterval(loadAreaExplorerLive, 1000);
   const reloadScope = () => Promise.all([loadAreaExplorerFinds(), loadAreaExplorerMap()])
     .catch(error => setBanner(`Could not load Area Explorer finds: ${error.message}`));
   const changeScope = scope => {
@@ -11412,7 +11495,8 @@ function handleRealtimeEvent(event) {
     if (eventPayload.mapTiles) applyXaeroRegionMapUpdate(eventPayload.mapTiles);
     else {
       noteAreaExplorerUpdate(eventPayload);
-      queueRealtimeRefresh('area-explorer', refreshAreaExplorerFromEvent, 2000);
+      if (eventPayload.liveStatus) applyAreaExplorerLiveStatus(eventPayload.liveStatus);
+      if (eventPayload.added || eventPayload.tokenRevoked || !eventPayload.liveStatus) queueRealtimeRefresh('area-explorer', refreshAreaExplorerFromEvent, 180);
     }
   }
   else if (type === 'player_joined' || type === 'player_left') {

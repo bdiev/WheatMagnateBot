@@ -53,3 +53,7 @@ SSE_DATABASE_POLL_MS=250
 ```
 
 Limits apply per site process and authenticated user ID. Database changes are detected every 250 ms by default using one shared marker query and broadcast through the single shared hub.
+
+## Area Explorer live telemetry
+
+`area_explorer_updated` includes `liveStatus` after a status upload: the authorized run snapshot with X/Y/Z, Minecraft yaw in degrees and the database timestamp. The mod sends a live snapshot once per second independently of its find batches. The browser applies it directly instead of querying the summary or map points per position update. `added` and `tokenRevoked` still trigger a normal section refresh. If live SSE data is absent for 2.5 seconds, the visible Area Explorer polls the lightweight `GET /api/area-explorer/live` endpoint once per second, with at most one request in flight. The map keeps a local three-second fading trail; offline runs, scope changes, large jumps and long gaps break it.

@@ -20,6 +20,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Sends Area Explorer's finds and run status to the WheatMagnateBot site
@@ -30,7 +32,7 @@ import java.util.function.Consumer;
  * is harmless. The all-finds file is sent once per site ({@link #backfill}): how far it got is kept
  * next to the file, and only the finds added after that go next time.
  * <p>
- * Not thread-safe: Area Explorer only uses it on its file thread.
+ * Find queues are confined to the file thread; live status has an independent, coalesced async sender.
  */
 public final class SiteSync {
     /** Finds per request; the site takes up to 1000. */
@@ -48,6 +50,51 @@ public final class SiteSync {
     private JsonObject status;
     private Scope statusScope;
     private String lastProblem;
+    private final AtomicBoolean liveInFlight = new AtomicBoolean();
+    private volatile String lastLiveProblem;
+    private record LiveUpload(String site, String token, Scope scope, JsonObject status, Consumer<String> problem) {}
+    private final AtomicReference<LiveUpload> latestLive = new AtomicReference<>();
+
+    /** Independent of archive uploads: at most one live request, never a queue of old positions. */
+    public void sendLiveStatus(String site, String token, Scope scope, JsonObject live, Consumer<String> problem) {
+        latestLive.set(new LiveUpload(site, token, scope, live, problem));
+        flushLiveStatus();
+    }
+
+    private void flushLiveStatus() {
+        if (latestLive.get() == null || !liveInFlight.compareAndSet(false, true)) return;
+        LiveUpload next = latestLive.getAndSet(null);
+        if (next == null) { liveInFlight.set(false); return; }
+        String site = next.site(), token = next.token();
+        Scope scope = next.scope();
+        JsonObject live = next.status();
+        Consumer<String> problem = next.problem();
+        try {
+            HttpRequest request = HttpRequest.newBuilder(URI.create(site.replaceAll("/+$", "") + "/api/area-explorer/ingest"))
+                .timeout(Duration.ofSeconds(5))
+                .header("Authorization", "Bearer " + token)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body(scope, new JsonArray(), live).toString(), StandardCharsets.UTF_8))
+                .build();
+            http.sendAsync(request, HttpResponse.BodyHandlers.discarding()).whenComplete((response, error) -> {
+                try {
+                    String message = error != null ? "live position upload failed, retrying"
+                        : response.statusCode() / 100 == 2 ? null : "live position upload returned " + response.statusCode();
+                    if (message != null && !message.equals(lastLiveProblem)) problem.accept(message);
+                    lastLiveProblem = message;
+                } finally {
+                    liveInFlight.set(false);
+                    flushLiveStatus();
+                }
+            });
+        } catch (IllegalArgumentException e) {
+            liveInFlight.set(false);
+            String message = "site-url isn't a valid address";
+            if (!message.equals(lastLiveProblem)) problem.accept(message);
+            lastLiveProblem = message;
+            flushLiveStatus();
+        }
+    }
 
     private record Mark(Path file, String site, int count) {}
 

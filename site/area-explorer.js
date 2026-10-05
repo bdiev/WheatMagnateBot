@@ -73,6 +73,7 @@ function normalizeStatus(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const percent = Number(raw.percent);
   const eta = Number(raw.etaSeconds);
+  const yaw = raw.yaw === null || raw.yaw === undefined || raw.yaw === '' ? NaN : Number(raw.yaw);
   const area = raw.area && typeof raw.area === 'object' ? {
     minX: normalizeInteger(raw.area.minX, MAX_COORDINATE),
     minZ: normalizeInteger(raw.area.minZ, MAX_COORDINATE),
@@ -94,6 +95,7 @@ function normalizeStatus(raw) {
     x: normalizeInteger(raw.x, MAX_COORDINATE),
     y: normalizeInteger(raw.y, MAX_Y),
     z: normalizeInteger(raw.z, MAX_COORDINATE),
+    yaw: Number.isFinite(yaw) ? ((yaw % 360) + 360) % 360 : null,
     area: area && Object.values(area).every(value => value !== null) ? area : null,
     runFinds
   };
@@ -133,6 +135,7 @@ function publicStatus(row, now = Date.now()) {
     y: row.y ?? null,
     z: row.z,
     area: row.area || null,
+    yaw: row.yaw === null || row.yaw === undefined ? null : Number(row.yaw),
     runFinds: row.run_finds || null,
     updatedAt: row.updated_at,
     online: row.phase !== 'IDLE' && now - updatedAt.getTime() <= ONLINE_WINDOW_MS
@@ -196,10 +199,13 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     const status = normalizeStatus(body.status);
 
     let added = 0;
+    let liveStatus = null;
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`area-explorer:${server}:${dimension}`]);
+      if (finds.some(find => find.kind === 'BASE')) {
+        await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`area-explorer:${server}:${dimension}`]);
+      }
       for (const find of finds.filter(f => f.kind === 'BASE')) {
         const near = await client.query(
           `SELECT 1 FROM area_explorer_finds
@@ -213,7 +219,7 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
       }
       const others = finds.filter(f => f.kind !== 'BASE');
       if (others.length) added += (await insertFinds(client, server, dimension, others, token.id)).length;
-      if (status) await upsertStatus(client, token.id, server, dimension, status);
+      if (status) liveStatus = await upsertStatus(client, token.id, server, dimension, status);
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
@@ -221,7 +227,7 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     } finally {
       client.release();
     }
-    if (added > 0 || status) publish('area_explorer_updated', { server, dimension, added, status: Boolean(status) });
+    if (added > 0 || status) publish('area_explorer_updated', { server, dimension, added, status: Boolean(status), ...(liveStatus ? { liveStatus } : {}) });
     return { received: rawFinds.length, accepted: finds.length, added, duplicates: finds.length - added };
   }
 
@@ -253,16 +259,24 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
   }
 
   async function upsertStatus(client, tokenId, server, dimension, status) {
-    await client.query(
-      `INSERT INTO area_explorer_status (token_id, server, dimension, player, phase, mode, paused, percent, eta_seconds, x, y, z, area, run_finds, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
+    const result = await client.query(
+      `INSERT INTO area_explorer_status (token_id, server, dimension, player, phase, mode, paused, percent, eta_seconds, x, y, z, area, run_finds, yaw, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW())
        ON CONFLICT (token_id) DO UPDATE SET
          server = EXCLUDED.server, dimension = EXCLUDED.dimension, player = EXCLUDED.player, phase = EXCLUDED.phase,
          mode = EXCLUDED.mode, paused = EXCLUDED.paused, percent = EXCLUDED.percent, eta_seconds = EXCLUDED.eta_seconds,
-         x = EXCLUDED.x, y = EXCLUDED.y, z = EXCLUDED.z, area = EXCLUDED.area, run_finds = EXCLUDED.run_finds, updated_at = NOW()`,
+         x = EXCLUDED.x, y = EXCLUDED.y, z = EXCLUDED.z, area = EXCLUDED.area, run_finds = EXCLUDED.run_finds, yaw = EXCLUDED.yaw, updated_at = NOW()
+       RETURNING *`,
       [tokenId, server, dimension, status.player, status.phase, status.mode, status.paused, status.percent, status.etaSeconds,
-        status.x, status.y, status.z, status.area ? JSON.stringify(status.area) : null, status.runFinds ? JSON.stringify(status.runFinds) : null]
+        status.x, status.y, status.z, status.area ? JSON.stringify(status.area) : null, status.runFinds ? JSON.stringify(status.runFinds) : null, status.yaw]
     );
+    return publicStatus(result.rows[0]);
+  }
+
+  async function getLive() {
+    const result = await pool.query(`SELECT s.*, t.name AS token_name FROM area_explorer_status s
+      JOIN area_explorer_tokens t ON t.id = s.token_id WHERE t.revoked_at IS NULL ORDER BY s.updated_at DESC`);
+    return { statuses: result.rows.map(row => publicStatus(row)) };
   }
 
   /** POST /api/area-explorer/ingest - from the mod, with its token instead of a session. */
@@ -390,6 +404,7 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
   async function handleApi(req, currentUser, url, { assertAdmin, readBody }) {
     const path = url.pathname;
     if (path === '/api/area-explorer/summary' && req.method === 'GET') return { statusCode: 200, payload: await getSummary() };
+    if (path === '/api/area-explorer/live' && req.method === 'GET') return { statusCode: 200, payload: await getLive() };
     if (path === '/api/area-explorer/finds' && req.method === 'GET') return { statusCode: 200, payload: await getFinds(url) };
     if (path === '/api/area-explorer/map' && req.method === 'GET') return { statusCode: 200, payload: await getMapPoints(url) };
     const findMatch = path.match(/^\/api\/area-explorer\/finds\/([^/]+)$/);
