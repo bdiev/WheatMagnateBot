@@ -11,10 +11,10 @@
 const sharp = require('sharp');
 
 const REGION_PX = 512;
-// The map covers at most 100,000 x 100,000 blocks around 0, 0; the dashboard shows 30k, 50k or all of it
-const MAX_DISTANCE = 50_000;
-// Level 8: a tile is 256 regions, 131,072 blocks a side - the whole map in four tiles
-const MAX_LEVEL = 8;
+// The map covers at most 100,000 blocks from 0, 0 each way; the dashboard shows ±30k, ±50k or all of it
+const MAX_DISTANCE = 100_000;
+// Level 9: a tile is 512 regions, 262,144 blocks a side - the whole map in four tiles
+const MAX_LEVEL = 9;
 const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 const DEFAULT_MAX_BYTES = 8 * 1024 * 1024 * 1024;
 const SIZE_CHECK_INTERVAL_MS = 10 * 60_000;
@@ -47,7 +47,7 @@ function parseRegionCoordinate(value) {
   return tileInRange(0, number) ? number : null;
 }
 
-/** Whether a tile of the level, along one axis, reaches into the map's 100k x 100k square. */
+/** Whether a tile of the level, along one axis, reaches into the map's square, ±100k around 0, 0. */
 function tileInRange(level, coordinate) {
   const blocks = REGION_PX * 2 ** level;
   return coordinate * blocks < MAX_DISTANCE && (coordinate + 1) * blocks > -MAX_DISTANCE;

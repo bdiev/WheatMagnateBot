@@ -6170,8 +6170,9 @@ const AREA_EXPLORER_PHASES = Object.freeze({
   SCAN: 'Reading the map', SWEEP: 'Sweeping', SETTLE: 'Letting the map catch up', CLEANUP: 'Cleaning up gaps',
   SPIRAL: 'Spiralling out', IDLE: 'Stopped'
 });
-// The map shows a square territory around 0, 0, and nothing past it: its tiles, finds and runs
-const AREA_EXPLORER_EXTENTS = Object.freeze([30_000, 50_000, 100_000]);
+// The map shows a square territory around 0, 0, and nothing past it: its tiles, finds and runs.
+// Picked by its radius: ±30k is -30,000 to 30,000 each way. ae.extent is the side, twice that.
+const AREA_EXPLORER_RADII = Object.freeze([30_000, 50_000, 100_000]);
 // Signs under loot under markers under bases: the rarer, the higher
 const AREA_EXPLORER_KIND_ORDER = Object.freeze({ SIGN: 0, ITEM: 1, MARKER: 2, BASE: 3 });
 const AREA_EXPLORER_MAX_SCALE = 16;
@@ -6199,8 +6200,8 @@ function saveAreaExplorerSetting(key, value) {
 }
 
 function readAreaExplorerExtent() {
-  const saved = Number(readAreaExplorerSetting('areaExplorerExtent', ''));
-  return AREA_EXPLORER_EXTENTS.includes(saved) ? saved : AREA_EXPLORER_EXTENTS[0];
+  const saved = Number(readAreaExplorerSetting('areaExplorerRadius', ''));
+  return 2 * (AREA_EXPLORER_RADII.includes(saved) ? saved : AREA_EXPLORER_RADII[0]);
 }
 
 function areaExplorerScopeParams(extra = {}) {
@@ -6495,8 +6496,8 @@ function zoomAreaExplorerMap(factor, sx, sz) {
 
 function renderAreaExplorerExtent() {
   const ae = areaExplorerState();
-  $$('[data-area-extent]').forEach(button => {
-    const active = Number(button.dataset.areaExtent) === ae.extent;
+  $$('[data-area-radius]').forEach(button => {
+    const active = 2 * Number(button.dataset.areaRadius) === ae.extent;
     button.classList.toggle('active', active);
     button.setAttribute('aria-pressed', String(active));
   });
@@ -6956,9 +6957,9 @@ function setupAreaExplorer() {
     queueAreaExplorerMapDraw();
   });
   renderAreaExplorerExtent();
-  $$('[data-area-extent]').forEach(button => button.addEventListener('click', () => {
-    ae.extent = Number(button.dataset.areaExtent);
-    saveAreaExplorerSetting('areaExplorerExtent', ae.extent);
+  $$('[data-area-radius]').forEach(button => button.addEventListener('click', () => {
+    ae.extent = 2 * Number(button.dataset.areaRadius);
+    saveAreaExplorerSetting('areaExplorerRadius', button.dataset.areaRadius);
     renderAreaExplorerExtent();
     fitAreaExplorerMap();
     queueAreaExplorerMapDraw();

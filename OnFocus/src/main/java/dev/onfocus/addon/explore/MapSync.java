@@ -33,7 +33,7 @@ import java.util.regex.Pattern;
  * region, read from Xaero's texture cache ({@link XaeroCacheFile}).
  * <p>
  * The site says which regions it has and when each was drawn, so only newer ones go: the whole map
- * the first time - every dimension, what was explored before too, within 50,000 blocks of 0, 0 - then what changes as it gets
+ * the first time - every dimension, what was explored before too, within 100,000 blocks of 0, 0 - then what changes as it gets
  * drawn. The most recently drawn regions go first, so the area being explored shows up within a
  * minute or two even while older ones are still on the way.
  * <p>
@@ -42,8 +42,8 @@ import java.util.regex.Pattern;
 public final class MapSync {
     private static final Duration TIMEOUT = Duration.ofSeconds(30);
     private static final Pattern REGION_FILE = Pattern.compile("^(-?\\d+)_(-?\\d+)\\.xwmc$");
-    /** The site keeps the map up to this many blocks from 0, 0 each way: 100k x 100k. */
-    private static final int MAX_DISTANCE = 50_000;
+    /** The site keeps the map up to this many blocks from 0, 0 each way: ±100k. */
+    private static final int MAX_DISTANCE = 100_000;
     /** How often the cache folders are listed again, for regions redrawn since. */
     private static final long RESCAN_MS = 60_000;
     /** Between looks at the folders once everything is sent: listing tens of thousands of files isn't free. */
@@ -275,7 +275,7 @@ public final class MapSync {
         return regions;
     }
 
-    /** Whether a region, along one axis, reaches into the site's 100k x 100k square around 0, 0. */
+    /** Whether a region, along one axis, reaches into the site's square, ±100k around 0, 0. */
     static boolean inRange(int region) {
         long from = (long) region * XaeroCacheFile.SIZE;
         return from < MAX_DISTANCE && from + XaeroCacheFile.SIZE > -MAX_DISTANCE;

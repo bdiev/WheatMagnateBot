@@ -102,12 +102,12 @@ async function testService() {
     const small = await sharp({ create: { width: 64, height: 64, channels: 4, background: '#000' } }).png().toBuffer();
     await assert.rejects(service.handleModRequest(request('PUT', small, auth), recordingResponse(), modUrl(0, 0)), /512 x 512/);
     await assert.rejects(service.handleModRequest(request('PUT', png, auth), recordingResponse(), modUrl(0, 0, 5)), /modified/);
-    // Only the 100k x 100k square around 0, 0: region 97 reaches into it (to X 49,664), 98 doesn't
-    await assert.rejects(service.handleModRequest(request('PUT', png, auth), recordingResponse(), modUrl(98, 0)), /within 50000 blocks/);
-    await assert.rejects(service.handleModRequest(request('PUT', png, auth), recordingResponse(), modUrl(0, -99)), /within 50000 blocks/);
-    assert.equal(tileInRange(0, 97), true);
-    assert.equal(tileInRange(0, -98), true);
-    assert.equal(tileInRange(0, -99), false);
+    // Only ±100k around 0, 0: region 195 reaches into it (to X 99,840), 196 doesn't
+    await assert.rejects(service.handleModRequest(request('PUT', png, auth), recordingResponse(), modUrl(196, 0)), /within 100000 blocks/);
+    await assert.rejects(service.handleModRequest(request('PUT', png, auth), recordingResponse(), modUrl(0, -197)), /within 100000 blocks/);
+    assert.equal(tileInRange(0, 195), true);
+    assert.equal(tileInRange(0, -196), true);
+    assert.equal(tileInRange(0, -197), false);
     assert.equal(tileInRange(MAX_LEVEL, -1), true, 'the top level is four tiles');
     assert.equal(tileInRange(MAX_LEVEL, 1), false);
 
@@ -136,7 +136,7 @@ async function testService() {
     await service.handleRequest(request('GET'), res, new URL('http://localhost/api/area-explorer/map/tiles/0/50/50.webp?server=oldfrog.org&dimension=overworld'));
     assert.equal(res.statusCode, 404);
     res = recordingResponse();
-    await service.handleRequest(request('GET'), res, new URL('http://localhost/api/area-explorer/map/tiles/2/40/0.webp?server=oldfrog.org&dimension=overworld'));
+    await service.handleRequest(request('GET'), res, new URL('http://localhost/api/area-explorer/map/tiles/2/60/0.webp?server=oldfrog.org&dimension=overworld'));
     assert.equal(res.statusCode, 404, 'a tile past the square is not even looked up');
     assert.match(res.headers['Cache-Control'], /max-age=86400/);
 
@@ -175,10 +175,11 @@ function testWiring() {
   assert.match(serverSource, /if \(pool\) getXaeroRegionMapService\(\)\.start\(\);/);
   assert.match(appSource, /\/api\/area-explorer\/map\/tiles\/\$\{level\}\/\$\{x\}\/\$\{z\}\.webp/);
   assert.match(appSource, /drawXaeroRegionMap\(ctx, canvas, view, ratio\);/);
-  // The territory: 30k, 50k or 100k blocks a side around 0, 0, and no more
-  assert.match(appSource, /const AREA_EXPLORER_EXTENTS = Object\.freeze\(\[30_000, 50_000, 100_000\]\);/);
-  assert.deepEqual([...indexSource.matchAll(/data-area-extent="(\d+)"/g)].map(match => Number(match[1])), [30_000, 50_000, 100_000]);
-  assert.equal(MAX_DISTANCE * 2, 100_000, 'the site keeps no more than the largest territory');
+  // The territory: ±30k, ±50k or ±100k around 0, 0 - from -30,000 to 30,000 each way - and no more
+  assert.match(appSource, /const AREA_EXPLORER_RADII = Object\.freeze\(\[30_000, 50_000, 100_000\]\);/);
+  assert.deepEqual([...indexSource.matchAll(/data-area-radius="(\d+)"/g)].map(match => Number(match[1])), [30_000, 50_000, 100_000]);
+  assert.match(appSource, /ae\.extent = 2 \* Number\(button\.dataset\.areaRadius\)/, 'the square is twice the radius a side');
+  assert.equal(MAX_DISTANCE, 100_000, 'the site keeps no more than the largest territory');
   assert.match(appSource, /const half = areaExplorerState\(\)\.extent \/ 2;\s+const left = Math\.max\(-half/, 'tiles are only asked for inside the territory');
 }
 
