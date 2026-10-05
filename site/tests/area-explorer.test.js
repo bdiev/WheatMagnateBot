@@ -9,6 +9,7 @@ const {
   bearerToken,
   createAreaExplorerService,
   dedupeKey,
+  lootValue,
   normalizeFind,
   normalizeStatus,
   publicStatus
@@ -17,6 +18,7 @@ const {
 const migrationSql = fs.readFileSync(path.join(__dirname, '..', 'migrations', '067_area_explorer.sql'), 'utf8');
 const markersMigrationSql = fs.readFileSync(path.join(__dirname, '..', 'migrations', '070_area_explorer_markers.sql'), 'utf8');
 const statusYMigrationSql = fs.readFileSync(path.join(__dirname, '..', 'migrations', '071_area_explorer_status_y.sql'), 'utf8');
+const pickedUpMigrationSql = fs.readFileSync(path.join(__dirname, '..', 'migrations', '072_area_explorer_picked_up.sql'), 'utf8');
 const indexSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
 const appSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
 const serverSource = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
@@ -64,6 +66,14 @@ function testNormalization() {
   assert.equal(bearerToken({ headers: { authorization: 'Basic abc' } }), '');
 }
 
+function testLootValue() {
+  assert.ok(lootValue('Elytra') > lootValue('Netherite Chestplate'));
+  assert.ok(lootValue('Netherite Chestplate') > lootValue('Diamond Chestplate'));
+  assert.equal(lootValue('Red Shulker Box'), lootValue('Shulker Box'), 'every colour of shulker box alike');
+  assert.ok(lootValue('Written Book') > 0 && lootValue('Map') > 0 && lootValue('Enchanted Book') > 0);
+  assert.equal(lootValue('Cobblestone'), 0, 'not worth listing');
+}
+
 function testStatusOnline() {
   const row = { token_id: 1, phase: 'SWEEP', updated_at: new Date(NOW - 30_000), percent: '42.5' };
   assert.equal(publicStatus(row, NOW).online, true);
@@ -77,6 +87,7 @@ async function testIngestAndQueries() {
   try {
     await db.exec(migrationSql);
     await db.exec(statusYMigrationSql);
+    await db.exec(pickedUpMigrationSql);
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/072_area_explorer_yaw.sql'), 'utf8'));
     const published = [];
     const logs = [];
@@ -167,8 +178,30 @@ async function testIngestAndQueries() {
     assert.equal(nearest.finds[0].name, 'Base #3', 'the closest to the spot first');
     assert.equal(nearest.finds.at(-1).name, 'Oak Sign');
     const summaryScope = (await service.getSummary()).scopes.find(scope => scope.dimension === 'overworld');
-    assert.deepEqual(summaryScope.itemNames, [{ name: 'Elytra', count: 1, items: 1 }], 'the loot found most');
+    assert.deepEqual(summaryScope.valuableItems, [{ name: 'Elytra', count: 1, items: 1, value: 95 }], 'the most valuable loot');
     assert.ok(summaryScope.latest?.name, 'and the latest find');
+
+    // Loot picked up in game comes off the site, and the mod sending it again doesn't bring it back
+    const elytra = byName.finds.find(find => find.name === 'Elytra');
+    const sign = byName.finds.find(find => find.name === 'Oak Sign');
+    const asAdmin = { assertAdmin() {}, readBody: async () => ({}) };
+    await assert.rejects(service.handleApi({ method: 'DELETE' }, { username: 'viewer', role: 'user' },
+      new URL(`http://x/api/area-explorer/finds/${elytra.id}`),
+      { assertAdmin() { throw Object.assign(new Error('Admin access required.'), { statusCode: 403 }); }, readBody: async () => ({}) }),
+    /Admin access required/, 'only administrators take loot off');
+    const removed = await service.handleApi({ method: 'DELETE' }, admin, new URL(`http://x/api/area-explorer/finds/${elytra.id}`), asAdmin);
+    assert.equal(removed.payload.removed.name, 'Elytra');
+    assert.ok(published.some(event => event.payload.removed === elytra.id), 'open pages hear of it');
+    assert.equal((await service.getFinds(url('dimension=overworld'))).total, 3);
+    assert.equal((await service.getMapPoints(new URL('http://x/api/area-explorer/map?dimension=overworld'))).points.length, 3);
+    await assert.rejects(service.getFind(elytra.id), /not found/);
+    const afterPickup = (await service.getSummary()).scopes.find(scope => scope.dimension === 'overworld');
+    assert.equal(afterPickup.items, 0);
+    assert.deepEqual(afterPickup.valuableItems, []);
+    const sentAgain = await service.ingest(token, { server: 'oldfrog.org', dimension: 'overworld', finds: [batch.finds[2]] }, NOW);
+    assert.equal(sentAgain.added, 0, 'the mod sending it again does not bring it back');
+    await assert.rejects(service.removeFind(admin, elytra.id), /picked up already/);
+    await assert.rejects(service.removeFind(admin, sign.id), /picked up already/, 'only loot is picked up');
 
     const routed = await service.handleApi({ method: 'GET' }, { username: 'viewer', role: 'user' },
       new URL('http://x/api/area-explorer/summary'), { assertAdmin() { throw new Error('not for viewers'); }, readBody: async () => ({}) });
@@ -197,6 +230,7 @@ async function testMarkers() {
       VALUES ('a', 'overworld', 'MARKER', 0, 0, 0, NOW(), 'End Portal', 'k')`), /check/i);
     await db.exec(markersMigrationSql);
     await db.exec(statusYMigrationSql);
+    await db.exec(pickedUpMigrationSql);
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/072_area_explorer_yaw.sql'), 'utf8'));
     const service = createAreaExplorerService({
       pool: poolFor(db), hashToken, readJsonBody: async () => ({}), sendJson() {}, sendError() {}, enforceRateLimit: () => true
@@ -238,10 +272,22 @@ function testWiring() {
   assert.match(appSource, /'area_explorer_updated'/, 'the page listens for live updates');
   assert.match(indexSource, /data-area-kind="MARKER"[^>]*><img src="\/items\/Ender_Eye\.png"[^>]*><span class="area-explorer-kind-tab-label">Markers<\/span> <span class="area-explorer-kind-tab-count" data-area-count="MARKER">/, 'markers have a filter of their own, with its icon');
   // Each find shows its own item: the book is a book, the shulker a shulker
-  assert.match(appSource, /if \(find\.kind === 'ITEM' \|\| find\.kind === 'SIGN'\) key = normalizeItemIconKey\(find\.name\)/);
+  assert.match(appSource, /if \(find\.kind === 'ITEM' \|\| find\.kind === 'SIGN'\) \{\s+key = normalizeItemIconKey\(find\.name\)/);
+  assert.match(appSource, /map: 'filled_map', book_and_quill: 'writable_book'/, 'a filled map and a book and quill show as themselves');
   assert.match(appSource, /'End Portal': 'ender_eye'/, 'a marker shows the item that stands for it');
   assert.match(appSource, /data-fallback="\$\{escapeHtml\(icon\.fallback\)\}"/, 'an icon that fails falls back to its kind');
   assert.match(appSource, /class="area-explorer-find-count"/, 'a stack shows its size on the icon');
+  // The map across the whole width; the run, highlights and tokens in one column beside the finds
+  const side = indexSource.slice(indexSource.indexOf('<div class="area-explorer-side">'), indexSource.indexOf('<section class="panel area-explorer-finds-panel">'));
+  for (const panel of ['area-explorer-status-panel', 'area-explorer-highlights-panel', 'area-explorer-tokens-panel']) {
+    assert.ok(side.includes(panel), `${panel} is in the side column`);
+  }
+  // The most valuable loot in the highlights; loot picked up in game taken off by an administrator
+  assert.match(appSource, /Most valuable<\/span>/);
+  assert.match(appSource, /scope\.valuableItems\.map\(/);
+  assert.match(appSource, /const pickup = find\.kind === 'ITEM' && state\.currentUser\?\.role === 'admin'/, 'only loot, only for administrators');
+  assert.match(appSource, /await deleteJson\(`\/api\/area-explorer\/finds\/\$\{encodeURIComponent\(id\)\}`\);/);
+  assert.match(appSource, /if \(payload\.added \|\| payload\.removed\) ae\.findsDirty = true;/, 'other open pages drop it too');
   // Highlights and the list's order
   for (const id of ['areaExplorerHighlights', 'areaExplorerSort']) {
     assert.ok(indexSource.includes(`id="${id}"`), `${id} is on the page`);
@@ -265,6 +311,7 @@ function testWiring() {
 (async () => {
   testNormalization();
   testStatusOnline();
+  testLootValue();
   await testIngestAndQueries();
   await testMarkers();
   testWiring();

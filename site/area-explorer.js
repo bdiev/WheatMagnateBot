@@ -18,6 +18,25 @@ const MAX_PAGE_SIZE = 200;
 const MAX_MAP_POINTS = 20_000;
 const TOP_LOOT_NAMES = 8;
 
+// What loot is worth, by the name the game gives it: the higher, the more it's worth going back for
+const LOOT_VALUES = Object.freeze({
+  'Dragon Egg': 100, Elytra: 95, 'Nether Star': 90, Beacon: 88, 'Heavy Core': 86, Mace: 85,
+  'Netherite Block': 84, 'Netherite Chestplate': 82, 'Netherite Leggings': 81, 'Netherite Helmet': 80, 'Netherite Boots': 80,
+  'Netherite Sword': 79, 'Netherite Pickaxe': 79, 'Netherite Axe': 78, 'Netherite Shovel': 74, 'Netherite Hoe': 72,
+  'Totem of Undying': 77, 'Enchanted Golden Apple': 76, 'Netherite Ingot': 73, 'Netherite Upgrade': 70,
+  'Trident': 68, 'Dragon Head': 66, 'Written Book': 64, Map: 62, 'Enchanted Book': 60, 'Diamond Block': 58,
+  'Ancient Debris': 56, 'Netherite Scrap': 55, 'End Crystal': 52, 'Book and Quill': 50, 'Ender Chest': 45,
+  'Diamond Chestplate': 42, 'Diamond Leggings': 41, 'Diamond Helmet': 40, 'Diamond Boots': 40, 'Diamond Sword': 39,
+  'Diamond Pickaxe': 39, 'Diamond Axe': 38, 'Diamond Shovel': 34, 'Diamond Hoe': 32, Diamond: 30,
+  'Golden Apple': 25, 'Experience Bottle': 20
+});
+
+/** How much a kind of loot is worth; shulker boxes of every colour alike. 0: not worth listing. */
+function lootValue(name) {
+  if (/Shulker Box$/.test(name)) return 75;
+  return LOOT_VALUES[name] || 0;
+}
+
 function stripControl(value, { keepNewlines = false } = {}) {
   const pattern = keepNewlines ? /[\u0000-\u0009\u000B-\u001F\u007F]/g : /[\u0000-\u001F\u007F]/g;
   return String(value ?? '').replace(/\r\n?/g, '\n').replace(pattern, '');
@@ -297,26 +316,25 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
   }
 
   async function getSummary() {
+    // Loot picked up in game is left out of everything
     const [counts, statuses, markerNames, itemNames, latest] = await Promise.all([
       pool.query(`SELECT server, dimension, kind, COUNT(*)::int AS count, MAX(found_at) AS last_found_at
-                  FROM area_explorer_finds GROUP BY server, dimension, kind ORDER BY server, dimension, kind`),
+                  FROM area_explorer_finds WHERE removed_at IS NULL GROUP BY server, dimension, kind ORDER BY server, dimension, kind`),
       pool.query(`SELECT s.*, t.name AS token_name FROM area_explorer_status s
                   JOIN area_explorer_tokens t ON t.id = s.token_id
                   WHERE t.revoked_at IS NULL ORDER BY s.updated_at DESC`),
       pool.query(`SELECT server, dimension, name, COUNT(*)::int AS count FROM area_explorer_finds
-                  WHERE kind = 'MARKER' GROUP BY server, dimension, name ORDER BY count DESC, name`),
-      // The loot found most, by how many piles of it: the top few per scope
-      pool.query(`SELECT server, dimension, name, count, items FROM (
-                    SELECT server, dimension, name, COUNT(*)::int AS count, SUM(item_count)::int AS items,
-                           ROW_NUMBER() OVER (PARTITION BY server, dimension ORDER BY COUNT(*) DESC, name) AS rank
-                    FROM area_explorer_finds WHERE kind = 'ITEM' GROUP BY server, dimension, name
-                  ) ranked WHERE rank <= ${TOP_LOOT_NAMES} ORDER BY server, dimension, rank`),
-      pool.query(`SELECT DISTINCT ON (server, dimension) * FROM area_explorer_finds ORDER BY server, dimension, found_at DESC, id DESC`)
+                  WHERE kind = 'MARKER' AND removed_at IS NULL GROUP BY server, dimension, name ORDER BY count DESC, name`),
+      // Every kind of loot with how much of it: the most valuable are picked from these below
+      pool.query(`SELECT server, dimension, name, COUNT(*)::int AS count, SUM(item_count)::int AS items
+                  FROM area_explorer_finds WHERE kind = 'ITEM' AND removed_at IS NULL GROUP BY server, dimension, name`),
+      pool.query(`SELECT DISTINCT ON (server, dimension) * FROM area_explorer_finds WHERE removed_at IS NULL
+                  ORDER BY server, dimension, found_at DESC, id DESC`)
     ]);
     const scopes = new Map();
     for (const row of counts.rows) {
       const key = `${row.server}\u0000${row.dimension}`;
-      if (!scopes.has(key)) scopes.set(key, { server: row.server, dimension: row.dimension, bases: 0, signs: 0, items: 0, markers: 0, markerNames: [], itemNames: [], latest: null, lastFoundAt: null });
+      if (!scopes.has(key)) scopes.set(key, { server: row.server, dimension: row.dimension, bases: 0, signs: 0, items: 0, markers: 0, markerNames: [], valuableItems: [], latest: null, lastFoundAt: null });
       const scope = scopes.get(key);
       scope[{ BASE: 'bases', SIGN: 'signs', ITEM: 'items', MARKER: 'markers' }[row.kind]] = row.count;
       if (!scope.lastFoundAt || new Date(row.last_found_at) > new Date(scope.lastFoundAt)) scope.lastFoundAt = row.last_found_at;
@@ -325,8 +343,16 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     for (const row of markerNames.rows) {
       scopes.get(`${row.server}\u0000${row.dimension}`)?.markerNames.push({ name: row.name, count: row.count });
     }
+    // The most valuable loot: Elytra, netherite gear, shulker boxes, maps, written books... the
+    // dearest first, then the one found most; anything not on the list doesn't make it
     for (const row of itemNames.rows) {
-      scopes.get(`${row.server}\u0000${row.dimension}`)?.itemNames.push({ name: row.name, count: row.count, items: row.items });
+      const value = lootValue(row.name);
+      if (value > 0) scopes.get(`${row.server}\u0000${row.dimension}`)?.valuableItems.push({ name: row.name, count: row.count, items: row.items, value });
+    }
+    for (const scope of scopes.values()) {
+      scope.valuableItems = scope.valuableItems
+        .sort((a, b) => b.value - a.value || b.count - a.count || a.name.localeCompare(b.name))
+        .slice(0, TOP_LOOT_NAMES);
     }
     for (const row of latest.rows) {
       const scope = scopes.get(`${row.server}\u0000${row.dimension}`);
@@ -340,6 +366,7 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     const dimension = normalizeScopeName(url.searchParams.get('dimension'), 64);
     if (server) { params.push(server); where.push(`server = $${params.length}`); }
     if (dimension) { params.push(dimension); where.push(`dimension = $${params.length}`); }
+    where.push('removed_at IS NULL');
     const kind = String(url.searchParams.get('kind') || '').toUpperCase();
     if (KINDS.includes(kind)) { params.push(kind); where.push(`kind = $${params.length}`); }
     // One kind of marker: "End Portal"
@@ -390,9 +417,29 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
 
   async function getFind(id) {
     if (!/^\d{1,18}$/.test(id)) throw httpError(400, 'Invalid find id.');
-    const row = (await pool.query('SELECT * FROM area_explorer_finds WHERE id = $1', [id])).rows[0];
+    const row = (await pool.query('SELECT * FROM area_explorer_finds WHERE id = $1 AND removed_at IS NULL', [id])).rows[0];
     if (!row) throw httpError(404, 'Find not found.');
     return { find: publicFind(row) };
+  }
+
+  /**
+   * Takes a find of loot off the site once it's been picked up in game. It stays in the table,
+   * marked, so the mod sending it again (it's in its all-finds file for good) doesn't bring it back.
+   */
+  async function removeFind(currentUser, id) {
+    if (!/^\d{1,18}$/.test(id)) throw httpError(400, 'Invalid find id.');
+    const row = (await pool.query(
+      `UPDATE area_explorer_finds SET removed_at = NOW(), removed_by = $2
+       WHERE id = $1 AND kind = 'ITEM' AND removed_at IS NULL RETURNING *`,
+      [id, currentUser.username]
+    )).rows[0];
+    if (!row) throw httpError(404, 'No loot like that on the site (picked up already?).');
+    await recordSystemLog({
+      category: 'area_explorer', actor: currentUser.username,
+      message: `Loot picked up: ${row.name} ×${row.item_count} at ${row.x} ${row.y} ${row.z} (${row.server}, ${row.dimension}).`
+    });
+    publish('area_explorer_updated', { server: row.server, dimension: row.dimension, removed: String(row.id) });
+    return { removed: publicFind(row) };
   }
 
   async function listTokens() {
@@ -436,6 +483,11 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     if (path === '/api/area-explorer/map' && req.method === 'GET') return { statusCode: 200, payload: await getMapPoints(url) };
     const findMatch = path.match(/^\/api\/area-explorer\/finds\/([^/]+)$/);
     if (findMatch && req.method === 'GET') return { statusCode: 200, payload: await getFind(findMatch[1]) };
+    // Loot picked up in game: administrators take it off the site
+    if (findMatch && req.method === 'DELETE') {
+      assertAdmin(currentUser);
+      return { statusCode: 200, payload: await removeFind(currentUser, findMatch[1]) };
+    }
     if (path === '/api/admin/area-explorer/tokens') {
       assertAdmin(currentUser);
       if (req.method === 'GET') return { statusCode: 200, payload: await listTokens() };
@@ -449,7 +501,7 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     return null;
   }
 
-  return { authenticate, ingest, handleIngest, handleApi, getSummary, getFinds, getMapPoints, listTokens, createToken, revokeToken };
+  return { authenticate, ingest, handleIngest, handleApi, getSummary, getFinds, getMapPoints, getFind, removeFind, listTokens, createToken, revokeToken };
 }
 
 module.exports = {
@@ -461,6 +513,7 @@ module.exports = {
   createAreaExplorerService,
   dedupeKey,
   generateToken,
+  lootValue,
   normalizeFind,
   normalizeStatus,
   publicFind,

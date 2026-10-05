@@ -12696,14 +12696,16 @@ body.kill-aura-modal-open {
   display: grid;
   grid-template-columns: minmax(0, 2.4fr) minmax(300px, 1fr);
   grid-template-areas:
-    "map status"
-    "finds highlights"
-    "finds tokens";
+    "map map"
+    "finds side";
   gap: 16px;
   align-items: start;
 }
 
-.area-explorer-layout > .panel { min-width: 0; }
+.area-explorer-layout > .panel,
+.area-explorer-side > .panel { min-width: 0; }
+/* The run, highlights and tokens stacked right under each other, whatever the finds' height */
+.area-explorer-side { grid-area: side; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .area-explorer-map-panel { grid-area: map; }
 .area-explorer-status-panel { grid-area: status; }
 .area-explorer-finds-panel { grid-area: finds; }
@@ -12781,6 +12783,22 @@ body.kill-aura-modal-open {
 .area-explorer-find-distance { color: var(--text); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .area-explorer-find-meta .area-explorer-find-distance { margin-left: auto; }
 .area-explorer-find-meta .area-explorer-find-distance + time { margin-left: 0; }
+/* Loot picked up in game: a small button to take it off the site */
+.area-explorer-pickup {
+  min-width: 0;
+  height: auto;
+  min-height: 28px;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  transform: none;
+}
+.area-explorer-pickup:hover { border-color: var(--danger); color: var(--danger); background: transparent; transform: none; }
+.area-explorer-pickup:disabled { opacity: 0.5; }
 
 .area-explorer-empty {
   margin: 0;
@@ -13398,6 +13416,8 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
     grid-template-areas: "map" "status" "highlights" "finds" "tokens";
     gap: 12px;
   }
+  /* One column: the side panels take their own places in it, the tokens after the finds */
+  .area-explorer-side { display: contents; }
 }
 
 /* Phones */

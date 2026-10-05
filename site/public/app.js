@@ -6351,9 +6351,10 @@ function renderAreaExplorerHighlights(scope) {
       ${scope.markerNames.map(item => chip({ kind: 'MARKER', name: item.name }, `data-area-filter-kind="MARKER" data-area-filter-name="${escapeHtml(item.name)}"`, item.count)).join('')}
     </div></div>`);
   }
-  if (scope?.itemNames?.length) {
-    sections.push(`<div class="area-explorer-highlight-group"><span class="area-explorer-highlight-label">Loot found most</span><div class="area-explorer-highlight-chips">
-      ${scope.itemNames.map(item => chip({ kind: 'ITEM', name: item.name }, `data-area-filter-kind="ITEM" data-area-filter-q="${escapeHtml(item.name)}"`, item.count)).join('')}
+  // The dearest loot first: Elytra, netherite, shulker boxes, maps, written books...
+  if (scope?.valuableItems?.length) {
+    sections.push(`<div class="area-explorer-highlight-group"><span class="area-explorer-highlight-label">Most valuable</span><div class="area-explorer-highlight-chips">
+      ${scope.valuableItems.map(item => chip({ kind: 'ITEM', name: item.name }, `data-area-filter-kind="ITEM" data-area-filter-q="${escapeHtml(item.name)}"`, item.count)).join('')}
     </div></div>`);
   }
   container.innerHTML = sections.length ? sections.join('') : '<p class="area-explorer-empty">Nothing found here yet.</p>';
@@ -6456,6 +6457,9 @@ const AREA_EXPLORER_MARKER_ICONS = Object.freeze({
   'Ancient City': 'echo_shard', 'End City': 'purpur_block', 'End Gateway': 'ender_pearl', 'Shulker Box': 'shulker_box'
 });
 
+// Items the game names unlike their id: a filled map is just "Map", a writable book "Book and Quill"
+const AREA_EXPLORER_ITEM_ICONS = Object.freeze({ map: 'filled_map', book_and_quill: 'writable_book' });
+
 /** The site's own picture of an item, else the cached one from the icon service. */
 function areaExplorerIconUrl(key) {
   return state.itemIcons[key] || minecraftIconUrl('item', key);
@@ -6465,7 +6469,10 @@ function areaExplorerFindIcon(find) {
   const fallback = state.itemIcons[AREA_EXPLORER_KIND_ICONS[find.kind]] || '/items/Chest.png';
   let key = AREA_EXPLORER_KIND_ICONS[find.kind];
   // A wall sign is the same item as the standing one
-  if (find.kind === 'ITEM' || find.kind === 'SIGN') key = normalizeItemIconKey(find.name).replace('_wall_', '_');
+  if (find.kind === 'ITEM' || find.kind === 'SIGN') {
+    key = normalizeItemIconKey(find.name).replace('_wall_', '_');
+    key = AREA_EXPLORER_ITEM_ICONS[key] || key;
+  }
   else if (find.kind === 'MARKER') key = AREA_EXPLORER_MARKER_ICONS[find.name] || normalizeItemIconKey(find.name);
   return { src: areaExplorerIconUrl(key) || fallback, fallback };
 }
@@ -6494,6 +6501,10 @@ function renderAreaExplorerFind(find, { selected = false } = {}) {
   const view = areaExplorerState().sort === 'nearest' ? areaExplorerState().view : null;
   const away = view ? Math.round(Math.hypot(find.x - view.cx, find.z - view.cz)) : null;
   const distance = away === null ? '' : `<span class="area-explorer-find-distance">${away >= 1000 ? `${(away / 1000).toFixed(1)}k` : away} blocks away</span>`;
+  // Loot that's been picked up in game comes off the site (administrators)
+  const pickup = find.kind === 'ITEM' && state.currentUser?.role === 'admin'
+    ? `<button class="ghost-button area-explorer-pickup" type="button" data-area-pickup="${escapeHtml(find.id)}" data-area-pickup-name="${escapeHtml(areaExplorerFindTitle(find))}" title="Picked up in game: take it off the site">Picked up</button>`
+    : '';
   return `<li class="area-explorer-find kind-${find.kind.toLowerCase()}" data-find-id="${escapeHtml(find.id)}" data-find-at="${find.x},${find.z}">
     <span class="area-explorer-find-icon" aria-hidden="true"><img src="${escapeHtml(icon.src)}" data-fallback="${escapeHtml(icon.fallback)}" alt="" loading="lazy" decoding="async" width="32" height="32">${count}</span>
     <div class="area-explorer-find-main">
@@ -6505,6 +6516,7 @@ function renderAreaExplorerFind(find, { selected = false } = {}) {
         <span class="area-explorer-kind">${AREA_EXPLORER_KIND_LABELS[find.kind] || escapeHtml(find.kind)}</span>
         <button class="ghost-button area-explorer-coords" type="button" data-copy-coords="${escapeHtml(coords)}" title="Copy coordinates" aria-label="Copy coordinates: X ${find.x}, Y ${find.y}, Z ${find.z}"><span><span class="area-explorer-axis">X</span> ${find.x}</span><span><span class="area-explorer-axis">Y</span> ${find.y}</span><span><span class="area-explorer-axis">Z</span> ${find.z}</span><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></svg></button>
         ${distance}<time datetime="${escapeHtml(find.foundAt)}" title="Found ${escapeHtml(formatFullDateTime(find.foundAt))}">${escapeHtml(areaExplorerFoundAgo(find.foundAt))}</time>
+        ${pickup}
       </div>
     </div>
   </li>`;
@@ -7282,6 +7294,26 @@ function setupAreaExplorer() {
       selectAreaExplorerFind(null);
       return;
     }
+    // Loot picked up in game: off the list, the map and the highlights
+    const pickup = event.target.closest('[data-area-pickup]');
+    if (pickup) {
+      const id = pickup.dataset.areaPickup;
+      if (!confirm(`Take ${pickup.dataset.areaPickupName} off the site? Do this once it's been picked up in game.`)) return;
+      pickup.disabled = true;
+      try {
+        await deleteJson(`/api/area-explorer/finds/${encodeURIComponent(id)}`);
+        $$(`#tab-area-explorer [data-find-id="${CSS.escape(id)}"]`).forEach(item => item.remove());
+        if (ae.selectedId === id) selectAreaExplorerFind(null);
+        ae.points = ae.points.filter(point => point.id !== id);
+        queueAreaExplorerMapDraw();
+        ae.findsDirty = true;
+        await loadAreaExplorer({ full: false });
+      } catch (error) {
+        pickup.disabled = false;
+        setBanner(`Could not take the loot off: ${error.message}`);
+      }
+      return;
+    }
     const focus = event.target.closest('[data-area-focus]');
     if (focus) {
       const [x, z] = focus.dataset.areaFocus.split(',').map(Number);
@@ -7328,7 +7360,7 @@ function setupAreaExplorer() {
 /** A live update from the mod: only what it changed is loaded again. */
 function noteAreaExplorerUpdate(payload) {
   const ae = areaExplorerState();
-  if (payload.added) ae.findsDirty = true;
+  if (payload.added || payload.removed) ae.findsDirty = true;
   if (payload.tokenRevoked) ae.tokensDirty = true;
 }
 
