@@ -16,6 +16,7 @@ const ONLINE_WINDOW_MS = 90_000;
 const TOKEN_PREFIX = 'aex_';
 const MAX_PAGE_SIZE = 200;
 const MAX_MAP_POINTS = 20_000;
+const TOP_LOOT_NAMES = 8;
 
 function stripControl(value, { keepNewlines = false } = {}) {
   const pattern = keepNewlines ? /[\u0000-\u0009\u000B-\u001F\u007F]/g : /[\u0000-\u001F\u007F]/g;
@@ -296,19 +297,26 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
   }
 
   async function getSummary() {
-    const [counts, statuses, markerNames] = await Promise.all([
+    const [counts, statuses, markerNames, itemNames, latest] = await Promise.all([
       pool.query(`SELECT server, dimension, kind, COUNT(*)::int AS count, MAX(found_at) AS last_found_at
                   FROM area_explorer_finds GROUP BY server, dimension, kind ORDER BY server, dimension, kind`),
       pool.query(`SELECT s.*, t.name AS token_name FROM area_explorer_status s
                   JOIN area_explorer_tokens t ON t.id = s.token_id
                   WHERE t.revoked_at IS NULL ORDER BY s.updated_at DESC`),
       pool.query(`SELECT server, dimension, name, COUNT(*)::int AS count FROM area_explorer_finds
-                  WHERE kind = 'MARKER' GROUP BY server, dimension, name ORDER BY count DESC, name`)
+                  WHERE kind = 'MARKER' GROUP BY server, dimension, name ORDER BY count DESC, name`),
+      // The loot found most, by how many piles of it: the top few per scope
+      pool.query(`SELECT server, dimension, name, count, items FROM (
+                    SELECT server, dimension, name, COUNT(*)::int AS count, SUM(item_count)::int AS items,
+                           ROW_NUMBER() OVER (PARTITION BY server, dimension ORDER BY COUNT(*) DESC, name) AS rank
+                    FROM area_explorer_finds WHERE kind = 'ITEM' GROUP BY server, dimension, name
+                  ) ranked WHERE rank <= ${TOP_LOOT_NAMES} ORDER BY server, dimension, rank`),
+      pool.query(`SELECT DISTINCT ON (server, dimension) * FROM area_explorer_finds ORDER BY server, dimension, found_at DESC, id DESC`)
     ]);
     const scopes = new Map();
     for (const row of counts.rows) {
       const key = `${row.server}\u0000${row.dimension}`;
-      if (!scopes.has(key)) scopes.set(key, { server: row.server, dimension: row.dimension, bases: 0, signs: 0, items: 0, markers: 0, markerNames: [], lastFoundAt: null });
+      if (!scopes.has(key)) scopes.set(key, { server: row.server, dimension: row.dimension, bases: 0, signs: 0, items: 0, markers: 0, markerNames: [], itemNames: [], latest: null, lastFoundAt: null });
       const scope = scopes.get(key);
       scope[{ BASE: 'bases', SIGN: 'signs', ITEM: 'items', MARKER: 'markers' }[row.kind]] = row.count;
       if (!scope.lastFoundAt || new Date(row.last_found_at) > new Date(scope.lastFoundAt)) scope.lastFoundAt = row.last_found_at;
@@ -316,6 +324,13 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     // What the markers mark, most first: End Portal 12, Shulker Box 5...
     for (const row of markerNames.rows) {
       scopes.get(`${row.server}\u0000${row.dimension}`)?.markerNames.push({ name: row.name, count: row.count });
+    }
+    for (const row of itemNames.rows) {
+      scopes.get(`${row.server}\u0000${row.dimension}`)?.itemNames.push({ name: row.name, count: row.count, items: row.items });
+    }
+    for (const row of latest.rows) {
+      const scope = scopes.get(`${row.server}\u0000${row.dimension}`);
+      if (scope) scope.latest = publicFind(row);
     }
     return { scopes: [...scopes.values()], statuses: statuses.rows.map(row => publicStatus(row)) };
   }
@@ -344,21 +359,33 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get('limit'), 10) || 50, 1), MAX_PAGE_SIZE);
     const offset = Math.min(Math.max(Number.parseInt(url.searchParams.get('offset'), 10) || 0, 0), 1_000_000);
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    // Newest first, by name, or nearest a spot (the middle of the map in view)
+    const sort = url.searchParams.get('sort');
+    const nearX = normalizeInteger(url.searchParams.get('nearX'), MAX_COORDINATE);
+    const nearZ = normalizeInteger(url.searchParams.get('nearZ'), MAX_COORDINATE);
+    let orderSql = 'ORDER BY found_at DESC, id DESC';
+    const orderParams = [...params];
+    if (sort === 'name') orderSql = 'ORDER BY name, found_at DESC, id DESC';
+    else if (sort === 'nearest' && nearX !== null && nearZ !== null) {
+      orderParams.push(nearX, nearZ);
+      const ax = `$${orderParams.length - 1}`, az = `$${orderParams.length}`;
+      orderSql = `ORDER BY (x - ${ax}::bigint) * (x - ${ax}::bigint) + (z - ${az}::bigint) * (z - ${az}::bigint), id DESC`;
+    }
     const [rows, total] = await Promise.all([
-      pool.query(`SELECT * FROM area_explorer_finds ${whereSql} ORDER BY found_at DESC, id DESC LIMIT ${limit} OFFSET ${offset}`, params),
+      pool.query(`SELECT * FROM area_explorer_finds ${whereSql} ${orderSql} LIMIT ${limit} OFFSET ${offset}`, orderParams),
       pool.query(`SELECT COUNT(*)::int AS total FROM area_explorer_finds ${whereSql}`, params)
     ]);
     return { finds: rows.rows.map(publicFind), total: total.rows[0]?.total || 0, limit, offset };
   }
 
-  /** Every find of the scope as a point for the map: [id, kind, x, z]. */
+  /** Every find of the scope as a point for the map: [id, kind, x, z, name], the name for a hover. */
   async function getMapPoints(url) {
     const params = [];
     const where = [];
     scopeFilter(url, params, where);
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-    const rows = await pool.query(`SELECT id, kind, x, z FROM area_explorer_finds ${whereSql} ORDER BY found_at DESC LIMIT ${MAX_MAP_POINTS}`, params);
-    return { points: rows.rows.map(row => [String(row.id), row.kind, row.x, row.z]), truncated: rows.rows.length >= MAX_MAP_POINTS };
+    const rows = await pool.query(`SELECT id, kind, x, z, name FROM area_explorer_finds ${whereSql} ORDER BY found_at DESC LIMIT ${MAX_MAP_POINTS}`, params);
+    return { points: rows.rows.map(row => [String(row.id), row.kind, row.x, row.z, row.name]), truncated: rows.rows.length >= MAX_MAP_POINTS };
   }
 
   async function getFind(id) {

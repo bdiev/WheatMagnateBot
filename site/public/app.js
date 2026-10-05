@@ -6176,6 +6176,8 @@ const AREA_EXPLORER_RADII = Object.freeze([30_000, 50_000, 100_000]);
 // Signs under loot under markers under bases: the rarer, the higher
 const AREA_EXPLORER_KIND_ORDER = Object.freeze({ SIGN: 0, ITEM: 1, MARKER: 2, BASE: 3 });
 const AREA_EXPLORER_MAX_SCALE = 16;
+// Finds closer than this on screen, in pixels, are drawn as one bubble
+const AREA_EXPLORER_CLUSTER_PX = 40;
 
 function areaExplorerState() {
   if (!state.areaExplorer) {
@@ -6186,6 +6188,9 @@ function areaExplorerState() {
       findsDirty: false, tokensDirty: true,
       showXaero: readAreaExplorerSetting('areaExplorerShowXaero', 'true') !== 'false',
       showFinds: readAreaExplorerSetting('areaExplorerShowFinds', 'true') !== 'false',
+      sort: ['newest', 'nearest', 'name'].includes(readAreaExplorerSetting('areaExplorerSort', 'newest')) ? readAreaExplorerSetting('areaExplorerSort', 'newest') : 'newest',
+      // What the last frame drew where, for clicks and hovers: single finds and clusters of them
+      drawn: [],
       extent: readAreaExplorerExtent()
     };
   }
@@ -6237,7 +6242,11 @@ function areaExplorerFindCount(scope) {
 async function loadAreaExplorer({ full = true } = {}) {
   if (!state.currentUser) return;
   const ae = areaExplorerState();
-  const [summary, mapScopes] = await Promise.all([fetchJson('/api/area-explorer/summary'), fetchJson('/api/area-explorer/map/scopes')]);
+  const [summary, mapScopes] = await Promise.all([
+    fetchJson('/api/area-explorer/summary'), fetchJson('/api/area-explorer/map/scopes'),
+    // The site's item pictures, for the finds' and highlights' icons
+    ensureItemIcons().catch(() => null)
+  ]);
   summary.statuses = summary.statuses.map(status => {
     const current = ae.summary?.statuses.find(item => item.tokenId === status.tokenId);
     return current && new Date(current.updatedAt) > new Date(status.updatedAt) ? current : status;
@@ -6300,10 +6309,83 @@ function renderAreaExplorerScopes() {
     ? `${formatNumber(counts.all)} finds over every run`
     : 'Nothing uploaded by the mod yet.';
   renderAreaExplorerMarkerNames(scope);
+  renderAreaExplorerDimensions(scopes);
+  renderAreaExplorerHighlights(scope);
   const [server, dimension] = ae.scope.split('|');
   const toggle = $('#areaExplorerShowXaero');
   toggle.closest('label').hidden = !ae.mapScopes.some(item => item.server === server && item.dimension === dimension);
   toggle.checked = ae.showXaero;
+}
+
+const AREA_EXPLORER_DIMENSIONS = Object.freeze([
+  ['overworld', 'Overworld', 'grass_block'], ['the_nether', 'Nether', 'netherrack'], ['the_end', 'End', 'end_stone']
+]);
+
+/** The dimensions of this server there's anything of, to switch between; hidden with just one. */
+function renderAreaExplorerDimensions(scopes) {
+  const ae = areaExplorerState();
+  const container = $('#areaExplorerDimensions');
+  const [server] = ae.scope.split('|');
+  const known = new Map(AREA_EXPLORER_DIMENSIONS.map(([id, label, icon], index) => [id, { label, icon, index }]));
+  const here = scopes.filter(scope => scope.server === server)
+    .sort((a, b) => (known.get(a.dimension)?.index ?? 9) - (known.get(b.dimension)?.index ?? 9) || a.dimension.localeCompare(b.dimension));
+  container.hidden = here.length < 2;
+  container.innerHTML = here.map(scope => {
+    const value = `${scope.server}|${scope.dimension}`;
+    const info = known.get(scope.dimension) || { label: prettyDimension(scope.dimension), icon: 'map' };
+    const active = value === ae.scope;
+    return `<button class="area-explorer-dimension${active ? ' active' : ''}" type="button" data-area-dimension="${escapeHtml(value)}" aria-pressed="${active}" title="${escapeHtml(prettyDimension(scope.dimension))}">
+      <img src="${escapeHtml(areaExplorerIconUrl(info.icon) || '/items/Map.png')}" alt="" width="20" height="20">
+      <span>${escapeHtml(info.label)}</span>
+    </button>`;
+  }).join('');
+}
+
+/**
+ * What stands out in this scope: how much is mapped, the latest find, what the markers mark and
+ * the loot found most. Each one lists its finds (and the latest shows on the map) when tapped.
+ */
+function renderAreaExplorerHighlights(scope) {
+  const ae = areaExplorerState();
+  const container = $('#areaExplorerHighlights');
+  if (!container) return;
+  const [server, dimension] = ae.scope.split('|');
+  const regions = ae.mapScopes.find(item => item.server === server && item.dimension === dimension)?.regions || 0;
+  const chip = (find, attributes, count) => {
+    const icon = areaExplorerFindIcon(find);
+    return `<button class="area-explorer-highlight-chip kind-${find.kind.toLowerCase()}" type="button" ${attributes}>
+      <img src="${escapeHtml(icon.src)}" data-fallback="${escapeHtml(icon.fallback)}" alt="" width="24" height="24" loading="lazy">
+      <span class="area-explorer-highlight-name">${escapeHtml(find.name)}</span>
+      <span class="area-explorer-highlight-count">${formatNumber(count)}</span>
+    </button>`;
+  };
+  const sections = [];
+  if (regions) {
+    const km2 = regions * XAERO_REGION_PX * XAERO_REGION_PX / 1e6;
+    sections.push(`<div class="area-explorer-highlight-row">
+      <img src="/items/Filled_Map.png" alt="" width="24" height="24">
+      <div><span class="area-explorer-highlight-label">Mapped</span><strong>${formatNumber(regions)} regions · ≈${formatNumber(Math.round(km2))} km²</strong></div>
+    </div>`);
+  }
+  if (scope?.latest) {
+    const latest = scope.latest;
+    const icon = areaExplorerFindIcon(latest);
+    sections.push(`<button class="area-explorer-highlight-row is-button" type="button" data-area-focus="${latest.x},${latest.z}" data-area-select-find="${escapeHtml(latest.id)}">
+      <img src="${escapeHtml(icon.src)}" data-fallback="${escapeHtml(icon.fallback)}" alt="" width="24" height="24">
+      <div><span class="area-explorer-highlight-label">Latest find · ${escapeHtml(areaExplorerFoundAgo(latest.foundAt))}</span><strong>${escapeHtml(latest.name)}</strong></div>
+    </button>`);
+  }
+  if (scope?.markerNames?.length) {
+    sections.push(`<div class="area-explorer-highlight-group"><span class="area-explorer-highlight-label">Markers</span><div class="area-explorer-highlight-chips">
+      ${scope.markerNames.map(item => chip({ kind: 'MARKER', name: item.name }, `data-area-filter-kind="MARKER" data-area-filter-name="${escapeHtml(item.name)}"`, item.count)).join('')}
+    </div></div>`);
+  }
+  if (scope?.itemNames?.length) {
+    sections.push(`<div class="area-explorer-highlight-group"><span class="area-explorer-highlight-label">Loot found most</span><div class="area-explorer-highlight-chips">
+      ${scope.itemNames.map(item => chip({ kind: 'ITEM', name: item.name }, `data-area-filter-kind="ITEM" data-area-filter-q="${escapeHtml(item.name)}"`, item.count)).join('')}
+    </div></div>`);
+  }
+  container.innerHTML = sections.length ? sections.join('') : '<p class="area-explorer-empty">Nothing found here yet.</p>';
 }
 
 /** With Markers picked: which of them to show - End Portals, Shulker Boxes... - most found first. */
@@ -6366,7 +6448,12 @@ async function loadAreaExplorerFinds() {
     return;
   }
   list.setAttribute('aria-busy', 'true');
-  const query = areaExplorerScopeParams({ kind: ae.kind, name: areaExplorerMarkerFilter(), q: ae.q, limit: AREA_EXPLORER_PAGE_SIZE, offset: ae.offset });
+  // "Nearest" is nearest the middle of the map in view, rounded so a nudge doesn't reload the list
+  const near = ae.sort === 'nearest' && ae.view ? { nearX: Math.round(ae.view.cx / 64) * 64, nearZ: Math.round(ae.view.cz / 64) * 64 } : {};
+  const query = areaExplorerScopeParams({
+    kind: ae.kind, name: areaExplorerMarkerFilter(), q: ae.q, sort: ae.sort === 'newest' ? '' : ae.sort, ...near,
+    limit: AREA_EXPLORER_PAGE_SIZE, offset: ae.offset
+  });
   try {
     // The list of the site's item pictures comes first, so each find gets its own icon
     const [data] = await Promise.all([fetchJson(`/api/area-explorer/finds?${query}`), ensureItemIcons().catch(() => null)]);
@@ -6432,6 +6519,10 @@ function renderAreaExplorerFind(find, { selected = false } = {}) {
   const name = escapeHtml(find.name);
   const label = find.kind === 'ITEM' && find.label ? ` <span class="area-explorer-find-label">“${escapeHtml(find.label)}”</span>` : '';
   const count = find.kind === 'ITEM' && find.count > 1 ? `<span class="area-explorer-find-count">${formatNumber(find.count)}</span>` : '';
+  // Sorted by nearness: how far each is from the middle of the map
+  const view = areaExplorerState().sort === 'nearest' ? areaExplorerState().view : null;
+  const away = view ? Math.round(Math.hypot(find.x - view.cx, find.z - view.cz)) : null;
+  const distance = away === null ? '' : `<span class="area-explorer-find-distance">${away >= 1000 ? `${(away / 1000).toFixed(1)}k` : away} blocks away</span>`;
   return `<li class="area-explorer-find kind-${find.kind.toLowerCase()}" data-find-id="${escapeHtml(find.id)}" data-find-at="${find.x},${find.z}">
     <span class="area-explorer-find-icon" aria-hidden="true"><img src="${escapeHtml(icon.src)}" data-fallback="${escapeHtml(icon.fallback)}" alt="" loading="lazy" decoding="async" width="32" height="32">${count}</span>
     <div class="area-explorer-find-main">
@@ -6442,7 +6533,7 @@ function renderAreaExplorerFind(find, { selected = false } = {}) {
       <div class="area-explorer-find-meta">
         <span class="area-explorer-kind">${AREA_EXPLORER_KIND_LABELS[find.kind] || escapeHtml(find.kind)}</span>
         <button class="ghost-button area-explorer-coords" type="button" data-copy-coords="${escapeHtml(coords)}" title="Copy coordinates" aria-label="Copy coordinates: X ${find.x}, Y ${find.y}, Z ${find.z}"><span><span class="area-explorer-axis">X</span> ${find.x}</span><span><span class="area-explorer-axis">Y</span> ${find.y}</span><span><span class="area-explorer-axis">Z</span> ${find.z}</span><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></svg></button>
-        <time datetime="${escapeHtml(find.foundAt)}" title="Found ${escapeHtml(formatFullDateTime(find.foundAt))}">${escapeHtml(areaExplorerFoundAgo(find.foundAt))}</time>
+        ${distance}<time datetime="${escapeHtml(find.foundAt)}" title="Found ${escapeHtml(formatFullDateTime(find.foundAt))}">${escapeHtml(areaExplorerFoundAgo(find.foundAt))}</time>
       </div>
     </div>
   </li>`;
@@ -6476,10 +6567,10 @@ async function loadAreaExplorerMap() {
   if (ae.scope !== scope || ae.mapRequestId !== requestId) return;
   // Sorted once, so each frame just draws them in order
   ae.points = data.points
-    .map(([id, kind, x, z]) => ({ id, kind, x, z }))
+    .map(([id, kind, x, z, name = '']) => ({ id, kind, x, z, name }))
     .sort((a, b) => AREA_EXPLORER_KIND_ORDER[a.kind] - AREA_EXPLORER_KIND_ORDER[b.kind]);
-  // A new server or dimension shows its whole territory; another kind of find keeps the view
-  if (ae.pointsScope !== scope || !ae.view) fitAreaExplorerMap();
+  // A new server or dimension opens on what's been found and mapped there; another kind of find keeps the view
+  if (ae.pointsScope !== scope || !ae.view) fitAreaExplorerToData();
   ae.pointsScope = scope;
   queueAreaExplorerMapDraw();
 }
@@ -6568,6 +6659,39 @@ function fitAreaExplorerMap() {
   clampAreaExplorerView();
 }
 
+/**
+ * Fits what's there - the finds, the mapped regions and the explorer inside the territory, with a
+ * margin - or the whole territory with nothing yet. The farthest 2% each way are left out, so a
+ * few stray finds don't shrink everything else to a speck.
+ */
+function fitAreaExplorerToData() {
+  const ae = areaExplorerState();
+  const canvas = $('#areaExplorerMap');
+  const xs = [], zs = [];
+  const add = (x, z) => { if (areaExplorerInTerritory(x, z)) { xs.push(x); zs.push(z); } };
+  for (const point of ae.points) add(point.x, point.z);
+  if (ae.regionMap?.scope === ae.scope) {
+    for (const key of ae.regionMap.levels[0]) {
+      const [rx, rz] = key.split(',').map(Number);
+      add(rx * XAERO_REGION_PX + XAERO_REGION_PX / 2, rz * XAERO_REGION_PX + XAERO_REGION_PX / 2);
+    }
+  }
+  const live = areaExplorerLiveStatus();
+  if (live) add(live.x, live.z);
+  if (!xs.length) {
+    fitAreaExplorerMap();
+    return;
+  }
+  xs.sort((a, b) => a - b);
+  zs.sort((a, b) => a - b);
+  const cut = Math.floor(xs.length * 0.02);
+  const minX = xs[cut], maxX = xs[xs.length - 1 - cut], minZ = zs[cut], maxZ = zs[zs.length - 1 - cut];
+  const width = canvas?.clientWidth || 600, height = canvas?.clientHeight || 420;
+  const spanX = Math.max(maxX - minX, 1024) * 1.15, spanZ = Math.max(maxZ - minZ, 1024) * 1.15;
+  ae.view = { cx: (minX + maxX) / 2, cz: (minZ + maxZ) / 2, scale: Math.min(width / spanX, height / spanZ) };
+  clampAreaExplorerView();
+}
+
 /** Centres the map on a spot, zoomed in close enough to see around it. */
 function focusAreaExplorerMap(x, z) {
   const ae = areaExplorerState();
@@ -6575,6 +6699,7 @@ function focusAreaExplorerMap(x, z) {
   ae.view = { cx: x, cz: z, scale: Math.max(ae.view.scale, 0.6) };
   clampAreaExplorerView();
   queueAreaExplorerMapDraw();
+  noteAreaExplorerViewMoved();
   const wrap = $('#areaExplorerMapWrap');
   const rect = wrap.getBoundingClientRect();
   if (!wrap.classList.contains('is-fullscreen') && (rect.top < 0 || rect.top > window.innerHeight * 0.5)) {
@@ -6596,6 +6721,18 @@ function zoomAreaExplorerMap(factor, sx, sz) {
   view.cz = z - (sz - canvas.clientHeight / 2) / view.scale;
   clampAreaExplorerView();
   queueAreaExplorerMapDraw();
+  noteAreaExplorerViewMoved();
+}
+
+/** Sorted by nearness, the list follows the map: loaded again once it stops moving. */
+function noteAreaExplorerViewMoved() {
+  const ae = areaExplorerState();
+  if (ae.sort !== 'nearest') return;
+  clearTimeout(ae.nearestTimer);
+  ae.nearestTimer = setTimeout(() => {
+    ae.offset = 0;
+    loadAreaExplorerFinds().catch(() => { /* the next move tries again */ });
+  }, 700);
 }
 
 function renderAreaExplorerExtent() {
@@ -6621,7 +6758,7 @@ function areaExplorerColors(canvas) {
   ae.colorsTheme = theme;
   ae.colors = {
     bg: color('--area-map-bg'), grid: color('--area-map-grid'), axis: color('--area-map-axis'), area: color('--area-map-area'),
-    player: color('--area-player'), text: color('--text'), muted: color('--muted'),
+    player: color('--area-player'), text: color('--text'), muted: color('--muted'), font: styles.fontFamily || 'sans-serif',
     SIGN: color('--area-sign'), ITEM: color('--area-loot'), MARKER: color('--area-marker'), BASE: color('--area-base')
   };
   return ae.colors;
@@ -6698,20 +6835,69 @@ function drawAreaExplorerMap() {
     ctx.fillRect(x1, z1, x2 - x1, z2 - z1);
   }
 
+  // Finds close together on screen are drawn as one bubble with how many there are, in the colour
+  // of the rarest kind among them, so thousands of signs don't bury the bases and markers.
+  // Zoomed in, they come apart. ae.drawn keeps what went where, for clicks and hovers.
   let selected = null;
-  for (const point of ae.points) {
-    if (!ae.showFinds) break;
-    const sx = width / 2 + (point.x - view.cx) * view.scale, sz = height / 2 + (point.z - view.cz) * view.scale;
-    if (sx < -6 || sz < -6 || sx > width + 6 || sz > height + 6 || !areaExplorerInTerritory(point.x, point.z)) continue;
-    const size = point.kind === 'BASE' || point.kind === 'MARKER' ? 4.5 : point.kind === 'ITEM' ? 3.5 : 2.5;
-    ctx.fillStyle = colors[point.kind];
-    ctx.beginPath();
-    // Markers are diamonds, the rest dots
-    if (point.kind === 'MARKER') { ctx.moveTo(sx, sz - size); ctx.lineTo(sx + size, sz); ctx.lineTo(sx, sz + size); ctx.lineTo(sx - size, sz); ctx.closePath(); }
-    else ctx.arc(sx, sz, size, 0, Math.PI * 2);
-    ctx.fill();
-    if (point.id === ae.selectedId) selected = { sx, sz, size };
+  const drawn = [];
+  if (ae.showFinds) {
+    const groups = new Map();
+    const cell = AREA_EXPLORER_CLUSTER_PX;
+    for (const point of ae.points) {
+      const sx = width / 2 + (point.x - view.cx) * view.scale, sz = height / 2 + (point.z - view.cz) * view.scale;
+      if (sx < -6 || sz < -6 || sx > width + 6 || sz > height + 6 || !areaExplorerInTerritory(point.x, point.z)) continue;
+      const key = `${Math.floor(sx / cell)},${Math.floor(sz / cell)}`;
+      let group = groups.get(key);
+      if (!group) groups.set(key, group = { points: [], sx: 0, sz: 0, top: point });
+      group.points.push(point);
+      group.sx += sx;
+      group.sz += sz;
+      if (AREA_EXPLORER_KIND_ORDER[point.kind] > AREA_EXPLORER_KIND_ORDER[group.top.kind]) group.top = point;
+    }
+    // Bubbles of rarer kinds last, on top
+    const ordered = [...groups.values()].sort((a, b) => AREA_EXPLORER_KIND_ORDER[a.top.kind] - AREA_EXPLORER_KIND_ORDER[b.top.kind]);
+    ctx.font = `700 11px ${colors.font}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const group of ordered) {
+      const count = group.points.length;
+      if (count === 1) {
+        const point = group.points[0];
+        const sx = group.sx, sz = group.sz;
+        const size = point.kind === 'BASE' || point.kind === 'MARKER' ? 4.5 : point.kind === 'ITEM' ? 3.5 : 2.5;
+        ctx.fillStyle = colors[point.kind];
+        ctx.beginPath();
+        // Markers are diamonds, the rest dots
+        if (point.kind === 'MARKER') { ctx.moveTo(sx, sz - size); ctx.lineTo(sx + size, sz); ctx.lineTo(sx, sz + size); ctx.lineTo(sx - size, sz); ctx.closePath(); }
+        else ctx.arc(sx, sz, size, 0, Math.PI * 2);
+        ctx.fill();
+        drawn.push({ sx, sz, r: size + 2, point });
+        if (point.id === ae.selectedId) selected = { sx, sz, size };
+        continue;
+      }
+      const sx = group.sx / count, sz = group.sz / count;
+      const r = Math.min(16, 8 + Math.log2(count) * 1.5);
+      ctx.globalAlpha = 0.88;
+      ctx.fillStyle = colors[group.top.kind];
+      ctx.beginPath(); ctx.arc(sx, sz, r, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = colors.bg;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      const label = count >= 1000 ? `${(count / 1000).toFixed(count >= 10_000 ? 0 : 1)}k` : String(count);
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
+      ctx.strokeText(label, sx, sz + 0.5);
+      ctx.fillStyle = '#fff';
+      ctx.fillText(label, sx, sz + 0.5);
+      drawn.push({ sx, sz, r, points: group.points });
+      const picked = group.points.find(point => point.id === ae.selectedId);
+      if (picked) selected = { sx, sz, size: r - 3 };
+    }
+    ctx.textAlign = 'start';
+    ctx.textBaseline = 'alphabetic';
   }
+  ae.drawn = drawn;
   if (selected) {
     ctx.strokeStyle = colors.text;
     ctx.lineWidth = 2;
@@ -6916,12 +7102,26 @@ function bindAreaExplorerMap() {
     const rect = canvas.getBoundingClientRect();
     return [event.clientX - rect.left, event.clientY - rect.top];
   };
+  /** What was drawn under a spot on the canvas: a find or a bubble of them, the closest within reach. */
+  const targetAt = (sx, sz, reach) => {
+    let best = null, bestDistance = Infinity;
+    for (const target of ae.drawn) {
+      const distance = Math.hypot(target.sx - sx, target.sz - sz);
+      if (distance <= target.r + reach && distance < bestDistance) { best = target; bestDistance = distance; }
+    }
+    return best;
+  };
   const showCoordinates = (sx, sz) => {
     if (!ae.view) return;
     const x = ae.view.cx + (sx - canvas.clientWidth / 2) / ae.view.scale;
     const z = ae.view.cz + (sz - canvas.clientHeight / 2) / ae.view.scale;
-    cursor.textContent = `X ${Math.floor(x)} · Z ${Math.floor(z)}`;
+    // What's under the pointer, beside where it is
+    const target = ae.showFinds ? targetAt(sx, sz, 4) : null;
+    const under = target?.point ? ` · ${target.point.name || AREA_EXPLORER_KIND_LABELS[target.point.kind]}`
+      : target ? ` · ${formatNumber(target.points.length)} finds` : '';
+    cursor.textContent = `X ${Math.floor(x)} · Z ${Math.floor(z)}${under}`;
     cursor.hidden = false;
+    canvas.classList.toggle('is-over-find', Boolean(target));
   };
 
   canvas.addEventListener('wheel', event => {
@@ -6964,6 +7164,7 @@ function bindAreaExplorerMap() {
     ae.view.cz -= dy / ae.view.scale;
     clampAreaExplorerView();
     queueAreaExplorerMapDraw();
+    noteAreaExplorerViewMoved();
   });
   const release = event => {
     pointers.delete(event.pointerId);
@@ -6978,14 +7179,13 @@ function bindAreaExplorerMap() {
     // A tap shows where it landed: there is no hovering on a phone
     if (event.pointerType !== 'mouse') showCoordinates(sx, sz);
     if (!ae.showFinds) return;
-    let best = null, bestDistance = event.pointerType === 'mouse' ? 10 : 20;
-    for (const point of ae.points) {
-      if (!areaExplorerInTerritory(point.x, point.z)) continue;
-      const [px, pz] = areaExplorerToScreen(ae.view, canvas, point.x, point.z);
-      const distance = Math.hypot(px - sx, pz - sz);
-      if (distance < bestDistance) { best = point; bestDistance = distance; }
+    const target = targetAt(sx, sz, event.pointerType === 'mouse' ? 4 : 12);
+    // A bubble opens up: zoomed in on it until its finds come apart
+    if (target?.points) {
+      zoomAreaExplorerMap(3, target.sx, target.sz);
+      return;
     }
-    selectAreaExplorerFind(best?.id || null).catch(error => setBanner(error.message));
+    selectAreaExplorerFind(target?.point.id || null).catch(error => setBanner(error.message));
   });
   canvas.addEventListener('pointercancel', release);
   canvas.addEventListener('lostpointercapture', release);
@@ -7105,6 +7305,40 @@ function setupAreaExplorer() {
     renderAreaExplorerScopes();
     reloadScope();
   }));
+  const setKind = kind => {
+    ae.kind = kind;
+    $$('[data-area-kind]').forEach(other => {
+      const active = other.dataset.areaKind === kind;
+      other.classList.toggle('active', active);
+      other.setAttribute('aria-pressed', String(active));
+    });
+  };
+  // Another dimension of the server
+  $('#areaExplorerDimensions').addEventListener('click', event => {
+    const button = event.target.closest('[data-area-dimension]');
+    if (button && button.dataset.areaDimension !== ae.scope) changeScope(button.dataset.areaDimension);
+  });
+  // A highlight lists its finds: a kind of marker, or a loot item by name
+  $('#areaExplorerHighlights').addEventListener('click', event => {
+    const chip = event.target.closest('[data-area-filter-kind]');
+    if (!chip) return;
+    setKind(chip.dataset.areaFilterKind);
+    ae.markerName = chip.dataset.areaFilterName || '';
+    ae.q = chip.dataset.areaFilterQ || '';
+    $('#areaExplorerSearch').value = ae.q;
+    ae.offset = 0;
+    ae.selectedId = null;
+    $('#areaExplorerSelected').hidden = true;
+    renderAreaExplorerScopes();
+    reloadScope().then(() => $('.area-explorer-finds-panel').scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  });
+  $('#areaExplorerSort').value = ae.sort;
+  $('#areaExplorerSort').addEventListener('change', event => {
+    ae.sort = event.target.value;
+    saveAreaExplorerSetting('areaExplorerSort', ae.sort);
+    ae.offset = 0;
+    loadAreaExplorerFinds().catch(error => setBanner(error.message));
+  });
   $('#areaExplorerMarkerName').addEventListener('change', event => {
     ae.markerName = event.target.value;
     ae.offset = 0;
@@ -7184,6 +7418,7 @@ function setupAreaExplorer() {
         await changeScope(focus.dataset.areaFocusScope);
       }
       focusAreaExplorerMap(x, z);
+      if (focus.dataset.areaSelectFind) selectAreaExplorerFind(focus.dataset.areaSelectFind).catch(error => setBanner(error.message));
       return;
     }
     // A find in the list: shown on the map, unless it's the one on the map already

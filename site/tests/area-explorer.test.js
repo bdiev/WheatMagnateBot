@@ -158,7 +158,17 @@ async function testIngestAndQueries() {
 
     const map = await service.getMapPoints(new URL('http://x/api/area-explorer/map?dimension=overworld'));
     assert.equal(map.points.length, 4);
-    assert.equal(map.points.every(point => point.length === 4), true);
+    assert.equal(map.points.every(point => point.length === 5 && typeof point[4] === 'string'), true, 'a point carries its name for the hover');
+
+    // Sorting: by name, and nearest a spot
+    const byName = await service.getFinds(url('dimension=overworld&sort=name'));
+    assert.deepEqual(byName.finds.map(find => find.name), ['Base #1', 'Base #3', 'Elytra', 'Oak Sign']);
+    const nearest = await service.getFinds(url('dimension=overworld&sort=nearest&nearX=1090&nearZ=1000'));
+    assert.equal(nearest.finds[0].name, 'Base #3', 'the closest to the spot first');
+    assert.equal(nearest.finds.at(-1).name, 'Oak Sign');
+    const summaryScope = (await service.getSummary()).scopes.find(scope => scope.dimension === 'overworld');
+    assert.deepEqual(summaryScope.itemNames, [{ name: 'Elytra', count: 1, items: 1 }], 'the loot found most');
+    assert.ok(summaryScope.latest?.name, 'and the latest find');
 
     const routed = await service.handleApi({ method: 'GET' }, { username: 'viewer', role: 'user' },
       new URL('http://x/api/area-explorer/summary'), { assertAdmin() { throw new Error('not for viewers'); }, readBody: async () => ({}) });
@@ -211,7 +221,7 @@ async function testMarkers() {
     assert.deepEqual(shulkers.finds.map(find => [find.name, find.x]).sort(), [['Shulker Box', 5], ['Shulker Box', 900]]);
     assert.equal((await service.getFinds(url('name=Shulker%20Box'))).total, 5, 'the name only narrows markers');
     const points = await service.getMapPoints(new URL('http://x/api/area-explorer/map?kind=MARKER&name=End%20Portal'));
-    assert.deepEqual(points.points.map(point => point.slice(1)), [['MARKER', 100, 200]]);
+    assert.deepEqual(points.points.map(point => point.slice(1)), [['MARKER', 100, 200, 'End Portal']]);
   } finally {
     await db.close();
   }
@@ -232,6 +242,15 @@ function testWiring() {
   assert.match(appSource, /'End Portal': 'ender_eye'/, 'a marker shows the item that stands for it');
   assert.match(appSource, /data-fallback="\$\{escapeHtml\(icon\.fallback\)\}"/, 'an icon that fails falls back to its kind');
   assert.match(appSource, /class="area-explorer-find-count"/, 'a stack shows its size on the icon');
+  // The page as a whole: dimensions, highlights, order, bubbles of finds, a view fitted to the data
+  for (const id of ['areaExplorerDimensions', 'areaExplorerHighlights', 'areaExplorerSort']) {
+    assert.ok(indexSource.includes(`id="${id}"`), `${id} is on the page`);
+  }
+  assert.match(appSource, /if \(ae\.pointsScope !== scope \|\| !ae\.view\) fitAreaExplorerToData\(\);/, 'a scope opens on its data, not the empty territory');
+  assert.match(appSource, /const AREA_EXPLORER_CLUSTER_PX = \d+;/, 'finds close on screen are drawn as one bubble');
+  assert.match(appSource, /if \(target\?\.points\) \{\s+zoomAreaExplorerMap\(3, target\.sx, target\.sz\);/, 'a bubble zooms in when clicked');
+  assert.match(appSource, /data-area-filter-kind="MARKER" data-area-filter-name=/, 'a marker highlight lists that kind of marker');
+  assert.match(appSource, /sort: ae\.sort === 'newest' \? '' : ae\.sort, \.\.\.near/, 'the list asks for its order');
   assert.match(indexSource, /id="areaExplorerMarkerName"/, 'and a pick of what they mark');
   assert.match(appSource, /MARKER: 'Marker'/);
   assert.match(appSource, /name: areaExplorerMarkerFilter\(\)/, 'the pick narrows the list and the map');
