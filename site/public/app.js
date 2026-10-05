@@ -6185,6 +6185,7 @@ function areaExplorerState() {
       tiles: new Map(), drawQueued: false, regionMap: null, regionMapEpoch: 0, colors: null, colorsTheme: null,
       findsDirty: false, tokensDirty: true,
       showXaero: readAreaExplorerSetting('areaExplorerShowXaero', 'true') !== 'false',
+      showFinds: readAreaExplorerSetting('areaExplorerShowFinds', 'true') !== 'false',
       extent: readAreaExplorerExtent()
     };
   }
@@ -6270,22 +6271,15 @@ function areaExplorerScopes() {
 
 function renderAreaExplorerScopes() {
   const ae = areaExplorerState();
-  const select = $('#areaExplorerScope');
   const scopes = areaExplorerScopes();
   // The live run's scope first when nothing is picked yet: that's what's being explored
   const live = (ae.summary?.statuses || []).find(status => status.online);
-  if (!ae.scope && scopes.length) {
+  if (scopes.length && !scopes.some(scope => `${scope.server}|${scope.dimension}` === ae.scope)) {
     const preferred = live && scopes.find(scope => scope.server === live.server && scope.dimension === live.dimension);
     const pick = preferred || scopes.reduce((best, scope) => (areaExplorerFindCount(scope) > areaExplorerFindCount(best) ? scope : best));
     ae.scope = `${pick.server}|${pick.dimension}`;
   }
-  select.innerHTML = scopes.length
-    ? scopes.map(scope => {
-      const value = `${scope.server}|${scope.dimension}`;
-      return `<option value="${escapeHtml(value)}"${value === ae.scope ? ' selected' : ''}>${escapeHtml(scope.server)} · ${escapeHtml(prettyDimension(scope.dimension))}</option>`;
-    }).join('')
-    : '<option value="">No finds yet</option>';
-  select.disabled = !scopes.length;
+  if (!scopes.length) ae.scope = '';
 
   const scope = scopes.find(item => `${item.server}|${item.dimension}` === ae.scope);
   const counts = {
@@ -6386,6 +6380,7 @@ function areaExplorerFindTitle(find) {
 }
 
 function renderAreaExplorerFind(find, { selected = false } = {}) {
+  const icons = { BASE: 'Crafting_Table', MARKER: 'Compass', ITEM: 'Chest', SIGN: 'Oak_Sign' };
   let body = '';
   if (find.kind === 'SIGN') {
     const sides = [find.details, find.label].filter(Boolean);
@@ -6395,14 +6390,17 @@ function renderAreaExplorerFind(find, { selected = false } = {}) {
   }
   const coords = `${find.x} ${find.y} ${find.z}`;
   return `<li class="area-explorer-find kind-${find.kind.toLowerCase()}" data-find-id="${escapeHtml(find.id)}" data-find-at="${find.x},${find.z}">
-    <span class="area-explorer-kind">${AREA_EXPLORER_KIND_LABELS[find.kind] || escapeHtml(find.kind)}</span>
+    <span class="area-explorer-find-icon" aria-hidden="true"><img src="/items/${icons[find.kind] || 'Map'}.png" alt="" loading="lazy" width="28" height="28"></span>
     <div class="area-explorer-find-main">
+      <div class="area-explorer-find-heading">
       ${selected ? `<strong>${escapeHtml(areaExplorerFindTitle(find))}</strong>` : `<button class="area-explorer-find-title" type="button" data-area-select aria-label="Show ${escapeHtml(areaExplorerFindTitle(find))} on map">${escapeHtml(areaExplorerFindTitle(find))}</button>`}
+        <span class="area-explorer-kind">${AREA_EXPLORER_KIND_LABELS[find.kind] || escapeHtml(find.kind)}</span>
+      </div>
       ${body}
     </div>
     <div class="area-explorer-find-meta">
-      <button class="ghost-button area-explorer-coords" type="button" data-copy-coords="${escapeHtml(coords)}" title="Copy coordinates">X ${find.x} Y ${find.y} Z ${find.z}</button>
-      <time datetime="${escapeHtml(find.foundAt)}">${escapeHtml(formatFullDateTime(find.foundAt))}</time>
+      <button class="ghost-button area-explorer-coords" type="button" data-copy-coords="${escapeHtml(coords)}" title="Copy coordinates" aria-label="Copy coordinates: X ${find.x}, Y ${find.y}, Z ${find.z}"><span><span class="area-explorer-axis">X</span> ${find.x}</span><span><span class="area-explorer-axis">Y</span> ${find.y}</span><span><span class="area-explorer-axis">Z</span> ${find.z}</span><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></svg></button>
+      <time datetime="${escapeHtml(find.foundAt)}" title="Found at">${escapeHtml(formatFullDateTime(find.foundAt))}</time>
     </div>
   </li>`;
 }
@@ -6608,6 +6606,7 @@ function drawAreaExplorerMap() {
 
   let selected = null;
   for (const point of ae.points) {
+    if (!ae.showFinds) break;
     const sx = width / 2 + (point.x - view.cx) * view.scale, sz = height / 2 + (point.z - view.cz) * view.scale;
     if (sx < -6 || sz < -6 || sx > width + 6 || sz > height + 6 || !areaExplorerInTerritory(point.x, point.z)) continue;
     const size = point.kind === 'BASE' || point.kind === 'MARKER' ? 4.5 : point.kind === 'ITEM' ? 3.5 : 2.5;
@@ -6863,6 +6862,7 @@ function bindAreaExplorerMap() {
     const [sx, sz] = local(event);
     // A tap shows where it landed: there is no hovering on a phone
     if (event.pointerType !== 'mouse') showCoordinates(sx, sz);
+    if (!ae.showFinds) return;
     let best = null, bestDistance = event.pointerType === 'mouse' ? 10 : 20;
     for (const point of ae.points) {
       if (!areaExplorerInTerritory(point.x, point.z)) continue;
@@ -6909,8 +6909,26 @@ function setAreaExplorerFullscreen(on) {
   queueAreaExplorerMapDraw();
 }
 
+function setAreaExplorerFindsVisible(show) {
+  const ae = areaExplorerState();
+  ae.showFinds = show;
+  saveAreaExplorerSetting('areaExplorerShowFinds', show);
+  const button = $('#areaExplorerToggleFinds');
+  button.setAttribute('aria-pressed', String(!show));
+  button.setAttribute('aria-label', show ? 'Hide map markers' : 'Show map markers');
+  button.title = show ? 'Hide map markers' : 'Show map markers';
+  $('#areaExplorerMapWrap').classList.toggle('is-hiding-finds', !show);
+  if (!show) {
+    ae.selectedId = null;
+    ae.selectedRequestId = (ae.selectedRequestId || 0) + 1;
+    $('#areaExplorerSelected').hidden = true;
+  }
+  queueAreaExplorerMapDraw();
+}
+
 async function selectAreaExplorerFind(id) {
   const ae = areaExplorerState();
+  if (id && !ae.showFinds) setAreaExplorerFindsVisible(true);
   const box = $('#areaExplorerSelected');
   const requestId = ae.selectedRequestId = (ae.selectedRequestId || 0) + 1;
   ae.selectedId = id;
@@ -6953,7 +6971,6 @@ function setupAreaExplorer() {
     renderAreaExplorerScopes();
     return reloadScope();
   };
-  $('#areaExplorerScope').addEventListener('change', event => changeScope(event.target.value));
   $$('[data-area-kind]').forEach(button => button.addEventListener('click', () => {
     ae.kind = button.dataset.areaKind;
     ae.offset = 0;
@@ -6991,6 +7008,8 @@ function setupAreaExplorer() {
   $('#areaExplorerNext').addEventListener('click', () => turnPage(AREA_EXPLORER_PAGE_SIZE));
 
   // The map's own controls
+  setAreaExplorerFindsVisible(ae.showFinds);
+  $('#areaExplorerToggleFinds').addEventListener('click', () => setAreaExplorerFindsVisible(!ae.showFinds));
   $('#areaExplorerTouchMode').addEventListener('click', event => {
     const on = $('#areaExplorerMap').classList.toggle('is-interactive');
     event.currentTarget.setAttribute('aria-pressed', String(on));

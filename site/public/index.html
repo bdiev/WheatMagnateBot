@@ -1066,10 +1066,6 @@
                 <h2>Explored Map</h2>
                 <p id="areaExplorerScopeSummary">Bases, markers, loot and signs from every run.</p>
               </div>
-              <label class="area-explorer-scope">
-                <span>Server / dimension</span>
-                <select id="areaExplorerScope" aria-label="Server and dimension"></select>
-              </label>
             </div>
             <div class="area-explorer-map-bar">
               <div class="chart-controls area-explorer-extent" role="group" aria-label="How far from 0, 0">
@@ -1086,6 +1082,9 @@
                 <span class="legend-base">Base</span><span class="legend-marker">Marker</span><span class="legend-item">Loot</span><span class="legend-sign">Sign</span><span class="legend-player">Explorer</span>
               </div>
               <div class="area-explorer-map-buttons" role="group" aria-label="Map view">
+                <button id="areaExplorerToggleFinds" class="area-explorer-map-button" type="button" aria-label="Hide map markers" title="Hide map markers" aria-pressed="false">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/><path class="area-explorer-eye-slash" d="m3 3 18 18"/></svg>
+                </button>
                 <button id="areaExplorerZoomIn" class="area-explorer-map-button" type="button" aria-label="Zoom in" title="Zoom in">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
                 </button>

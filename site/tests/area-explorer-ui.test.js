@@ -7,18 +7,20 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '../public/app.js'), 'utf8');
 function functionSource(name) {
-  const start = source.indexOf(`async function ${name}(`);
+  const asyncStart = source.indexOf(`async function ${name}(`);
+  const start = asyncStart >= 0 ? asyncStart : source.indexOf(`function ${name}(`);
   const next = source.indexOf('\nfunction ', start + 1);
   const nextAsync = source.indexOf('\nasync function ', start + 1);
   return source.slice(start, Math.min(...[next, nextAsync].filter(index => index >= 0)));
 }
 function fixture() {
-  const ae = { scope: 'test|overworld', kind: '', markerName: '', q: '', offset: 0, total: 0, points: [], view: {}, pointsScope: 'test|overworld' };
+  const ae = { scope: 'test|overworld', kind: '', markerName: '', q: '', offset: 0, total: 0, points: [], view: {}, pointsScope: 'test|overworld', showFinds: true };
   const nodes = new Map();
   const requests = [];
   const node = selector => {
     if (!nodes.has(selector)) nodes.set(selector, {
       innerHTML: '', hidden: false, scrollTop: 150, attributes: {},
+      classList: { toggle() {} },
       setAttribute(key, value) { this.attributes[key] = value; },
       removeAttribute(key) { delete this.attributes[key]; }
     });
@@ -32,9 +34,10 @@ function fixture() {
     renderAreaExplorerFind: find => find.name,
     renderAreaExplorerPager() {}, bindAreaExplorerMap() {}, fitAreaExplorerMap() {}, queueAreaExplorerMapDraw() {},
     loadXaeroRegionMap: async () => {}, escapeHtml: String,
+    saveAreaExplorerSetting(key, value) { context.savedSetting = { key, value }; },
     fetchJson: url => new Promise((resolve, reject) => requests.push({ url, resolve, reject }))
   });
-  for (const name of ['loadAreaExplorerFinds', 'loadAreaExplorerMap', 'selectAreaExplorerFind']) vm.runInContext(functionSource(name), context);
+  for (const name of ['loadAreaExplorerFinds', 'loadAreaExplorerMap', 'setAreaExplorerFindsVisible', 'selectAreaExplorerFind']) vm.runInContext(functionSource(name), context);
   return { ae, node, requests, context };
 }
 
@@ -94,9 +97,29 @@ async function testSelectionRace() {
   assert.ok(!node('#areaExplorerSelected').innerHTML.includes('Old details'));
 }
 
+async function testMarkerVisibility() {
+  const { ae, node, requests, context } = fixture();
+  const selection = context.selectAreaExplorerFind('base');
+  context.setAreaExplorerFindsVisible(false);
+  assert.equal(ae.showFinds, false);
+  assert.equal(ae.selectedId, null);
+  assert.equal(node('#areaExplorerToggleFinds').attributes['aria-label'], 'Show map markers');
+  assert.equal(context.savedSetting.value, false);
+  requests[0].resolve({ find: { name: 'Hidden base' } });
+  await selection;
+  assert.equal(node('#areaExplorerSelected').hidden, true, 'hiding markers cancels pending details');
+  const focus = context.selectAreaExplorerFind('base');
+  assert.equal(ae.showFinds, true, 'choosing a find from the list shows its map marker again');
+  requests[1].resolve({ find: { name: 'Focused base' } });
+  await focus;
+  assert.equal(node('#areaExplorerSelected').hidden, false);
+  assert.equal(node('#areaExplorerToggleFinds').attributes['aria-pressed'], 'false');
+}
+
 (async () => {
   await testFindsRaceAndScroll();
   await testMapRace();
   await testSelectionRace();
+  await testMarkerVisibility();
   console.log('Area Explorer UI behavior tests passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });
