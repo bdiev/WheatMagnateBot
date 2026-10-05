@@ -15,6 +15,7 @@ const {
 } = require('../area-explorer');
 
 const migrationSql = fs.readFileSync(path.join(__dirname, '..', 'migrations', '067_area_explorer.sql'), 'utf8');
+const markersMigrationSql = fs.readFileSync(path.join(__dirname, '..', 'migrations', '070_area_explorer_markers.sql'), 'utf8');
 const indexSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
 const appSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
 const serverSource = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
@@ -163,6 +164,43 @@ async function testIngestAndQueries() {
   }
 }
 
+async function testMarkers() {
+  const db = new PGlite();
+  try {
+    await db.exec(migrationSql);
+    // A database from before markers: their kind is added to the check
+    await assert.rejects(db.query(`INSERT INTO area_explorer_finds (server, dimension, kind, x, y, z, found_at, name, dedupe_key)
+      VALUES ('a', 'overworld', 'MARKER', 0, 0, 0, NOW(), 'End Portal', 'k')`), /check/i);
+    await db.exec(markersMigrationSql);
+    const service = createAreaExplorerService({
+      pool: poolFor(db), hashToken, readJsonBody: async () => ({}), sendJson() {}, sendError() {}, enforceRateLimit: () => true
+    });
+    const token = (await db.query(`INSERT INTO area_explorer_tokens (name, token_hash, token_hint) VALUES ('PC', 'h', 'h') RETURNING id, name`)).rows[0];
+    const marker = (name, x, z) => ({ kind: 'MARKER', x, y: 30, z, foundAt: NOW, name });
+    const result = await service.ingest(token, {
+      server: 'oldfrog.org', dimension: 'overworld',
+      finds: [marker('End Portal', 100, 200), marker('End Portal', 100, 200), marker('Shulker Box', 5, 5), marker('Shulker Box', 900, 5), marker('Spawner', 0, 0),
+        { kind: 'SIGN', x: 1, y: 64, z: 1, foundAt: NOW, name: 'Oak Sign', details: 'hi' }]
+    }, NOW);
+    assert.deepEqual([result.added, result.duplicates], [5, 1], 'a marker is one per block and name');
+
+    const overworld = (await service.getSummary()).scopes[0];
+    assert.equal(overworld.markers, 4);
+    assert.deepEqual(overworld.markerNames, [{ name: 'Shulker Box', count: 2 }, { name: 'End Portal', count: 1 }, { name: 'Spawner', count: 1 }],
+      'what the markers mark, most first');
+
+    const url = query => new URL(`http://x/api/area-explorer/finds?${query}`);
+    assert.equal((await service.getFinds(url('kind=MARKER'))).total, 4);
+    const shulkers = await service.getFinds(url('kind=marker&name=Shulker%20Box'));
+    assert.deepEqual(shulkers.finds.map(find => [find.name, find.x]).sort(), [['Shulker Box', 5], ['Shulker Box', 900]]);
+    assert.equal((await service.getFinds(url('name=Shulker%20Box'))).total, 5, 'the name only narrows markers');
+    const points = await service.getMapPoints(new URL('http://x/api/area-explorer/map?kind=MARKER&name=End%20Portal'));
+    assert.deepEqual(points.points.map(point => point.slice(1)), [['MARKER', 100, 200]]);
+  } finally {
+    await db.close();
+  }
+}
+
 function testWiring() {
   assert.match(serverSource, /url\.pathname === '\/api\/area-explorer\/ingest'/, 'the ingest route is served');
   const ingestAt = serverSource.indexOf("url.pathname === '/api/area-explorer/ingest'");
@@ -172,12 +210,17 @@ function testWiring() {
   assert.match(indexSource, /data-tab="area-explorer"/);
   assert.match(indexSource, /id="tab-area-explorer"/);
   assert.match(appSource, /'area_explorer_updated'/, 'the page listens for live updates');
+  assert.match(indexSource, /data-area-kind="MARKER"[^>]*>Markers <span data-area-count="MARKER">/, 'markers have a filter of their own');
+  assert.match(indexSource, /id="areaExplorerMarkerName"/, 'and a pick of what they mark');
+  assert.match(appSource, /MARKER: 'Marker'/);
+  assert.match(appSource, /name: areaExplorerMarkerFilter\(\)/, 'the pick narrows the list and the map');
 }
 
 (async () => {
   testNormalization();
   testStatusOnline();
   await testIngestAndQueries();
+  await testMarkers();
   testWiring();
   console.log('area-explorer tests passed');
 })().catch(error => {

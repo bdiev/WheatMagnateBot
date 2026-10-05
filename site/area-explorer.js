@@ -1,12 +1,12 @@
 'use strict';
 
 // Area Explorer (the OnFocus Meteor addon's explorer module) on the dashboard: the mod uploads
-// what it finds - bases, signs, items on the ground - and its live run status with an API token;
+// what it finds - bases, signs, items on the ground, markers (End Portals, Shulker Boxes...) - and its live run status with an API token;
 // signed-in users browse the finds and watch the run.
 
 const crypto = require('node:crypto');
 
-const KINDS = Object.freeze(['BASE', 'SIGN', 'ITEM']);
+const KINDS = Object.freeze(['BASE', 'SIGN', 'ITEM', 'MARKER']);
 const SAME_BASE_DISTANCE = 64;
 const MAX_FINDS_PER_BATCH = 1000;
 const MAX_INGEST_BYTES = 2 * 1024 * 1024;
@@ -62,9 +62,10 @@ function normalizeFind(raw, now = Date.now()) {
   };
 }
 
-/** What makes two finds the same: a sign's block; an item's block, kind, count and name. Bases are told apart by distance. */
+/** What makes two finds the same: a sign's block; an item's block, kind, count and name; a marker's block and what it marks. Bases are told apart by distance. */
 function dedupeKey(find) {
   const at = `${find.kind}:${find.x}:${find.y}:${find.z}`;
+  if (find.kind === 'MARKER') return `${at}:${find.name}`;
   return find.kind === 'ITEM' ? `${at}:${find.name}:${find.count}:${find.label}` : at;
 }
 
@@ -279,20 +280,26 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
   }
 
   async function getSummary() {
-    const [counts, statuses] = await Promise.all([
+    const [counts, statuses, markerNames] = await Promise.all([
       pool.query(`SELECT server, dimension, kind, COUNT(*)::int AS count, MAX(found_at) AS last_found_at
                   FROM area_explorer_finds GROUP BY server, dimension, kind ORDER BY server, dimension, kind`),
       pool.query(`SELECT s.*, t.name AS token_name FROM area_explorer_status s
                   JOIN area_explorer_tokens t ON t.id = s.token_id
-                  WHERE t.revoked_at IS NULL ORDER BY s.updated_at DESC`)
+                  WHERE t.revoked_at IS NULL ORDER BY s.updated_at DESC`),
+      pool.query(`SELECT server, dimension, name, COUNT(*)::int AS count FROM area_explorer_finds
+                  WHERE kind = 'MARKER' GROUP BY server, dimension, name ORDER BY count DESC, name`)
     ]);
     const scopes = new Map();
     for (const row of counts.rows) {
       const key = `${row.server}\u0000${row.dimension}`;
-      if (!scopes.has(key)) scopes.set(key, { server: row.server, dimension: row.dimension, bases: 0, signs: 0, items: 0, lastFoundAt: null });
+      if (!scopes.has(key)) scopes.set(key, { server: row.server, dimension: row.dimension, bases: 0, signs: 0, items: 0, markers: 0, markerNames: [], lastFoundAt: null });
       const scope = scopes.get(key);
-      scope[row.kind === 'BASE' ? 'bases' : row.kind === 'SIGN' ? 'signs' : 'items'] = row.count;
+      scope[{ BASE: 'bases', SIGN: 'signs', ITEM: 'items', MARKER: 'markers' }[row.kind]] = row.count;
       if (!scope.lastFoundAt || new Date(row.last_found_at) > new Date(scope.lastFoundAt)) scope.lastFoundAt = row.last_found_at;
+    }
+    // What the markers mark, most first: End Portal 12, Shulker Box 5...
+    for (const row of markerNames.rows) {
+      scopes.get(`${row.server}\u0000${row.dimension}`)?.markerNames.push({ name: row.name, count: row.count });
     }
     return { scopes: [...scopes.values()], statuses: statuses.rows.map(row => publicStatus(row)) };
   }
@@ -304,6 +311,9 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     if (dimension) { params.push(dimension); where.push(`dimension = $${params.length}`); }
     const kind = String(url.searchParams.get('kind') || '').toUpperCase();
     if (KINDS.includes(kind)) { params.push(kind); where.push(`kind = $${params.length}`); }
+    // One kind of marker: "End Portal"
+    const name = normalizeText(url.searchParams.get('name'), 128);
+    if (kind === 'MARKER' && name) { params.push(name); where.push(`name = $${params.length}`); }
   }
 
   async function getFinds(url) {

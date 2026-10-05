@@ -12669,6 +12669,7 @@ body.kill-aura-modal-open {
   --area-base: #c98a12;
   --area-loot: #1f8fa8;
   --area-sign: #8a7a55;
+  --area-marker: #c3365a;
   --area-player: #7a4fd6;
   --area-map-bg: #e9e1c2;
   --area-map-grid: rgba(108, 97, 68, 0.18);
@@ -12680,6 +12681,7 @@ body.kill-aura-modal-open {
   --area-base: #f0b33c;
   --area-loot: #49c6e0;
   --area-sign: #a39c86;
+  --area-marker: #ff6f8e;
   --area-player: #b18cff;
   --area-map-bg: #17191c;
   --area-map-grid: rgba(154, 159, 143, 0.14);
@@ -12859,6 +12861,7 @@ body.kill-aura-modal-open {
 
 .area-explorer-map-legend .legend-base::before { background: var(--area-base); }
 .area-explorer-map-legend .legend-item::before { background: var(--area-loot); }
+.area-explorer-map-legend .legend-marker::before { background: var(--area-marker); border-radius: 2px; transform: rotate(45deg) scale(0.85); }
 .area-explorer-map-legend .legend-sign::before { background: var(--area-sign); }
 .area-explorer-map-legend .legend-player::before { background: var(--area-player); border-radius: 0; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
 
@@ -12901,6 +12904,10 @@ body.kill-aura-modal-open {
 
 .area-explorer-find.kind-base .area-explorer-kind { background: var(--area-base); color: #1c1305; }
 .area-explorer-find.kind-item .area-explorer-kind { background: var(--area-loot); color: #04161b; }
+.area-explorer-find.kind-marker .area-explorer-kind { background: var(--area-marker); color: #fff; }
+
+.area-explorer-marker-name select { min-width: 0; height: var(--button-height); }
+.area-explorer-marker-name[hidden] { display: none; }
 
 .area-explorer-find-main {
   display: grid;
@@ -13017,8 +13024,18 @@ body.kill-aura-modal-open {
   top: 8px;
   right: 8px;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: 8px;
+  max-width: calc(100% - 16px);
+}
+
+.area-explorer-extent .chart-range-button { white-space: nowrap; }
+
+@media (max-width: 900px) {
+  /* Under the legend, not over it */
+  .area-explorer-map-tools { top: 44px; }
 }
 
 .area-explorer-map-tools .area-explorer-map-reset { position: static; }

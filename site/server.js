@@ -25,6 +25,7 @@ const { isValidKillAuraRange, normalizeKillAuraRange } = require('./kill-aura-ra
 const { createResourceRequestService } = require('./resource-requests');
 const { createAreaExplorerService } = require('./area-explorer');
 const { createXaeroMapService } = require('./xaero-map');
+const { createXaeroRegionMapService } = require('./xaero-region-map');
 const { normalizeGreenChatMessage } = require('./chat-message-normalization');
 const { NEW_PLAYER_WINDOW_DAYS, isNewPlayerRegistration } = require('./player-new-status');
 const { minecraftAvatarSources, renderOfficialMinecraftAvatar } = require('./minecraft-avatar');
@@ -95,6 +96,7 @@ let accountRegistry = null;
 let resourceRequestService = null;
 let areaExplorerService = null;
 let xaeroMapService = null;
+let xaeroRegionMapService = null;
 const minecraftAvatarCache = new Map();
 const minecraftSkinCache = new Map();
 const playerSkinHistory = createPlayerSkinHistoryService({ pool });
@@ -6136,6 +6138,17 @@ function getXaeroMapService() {
   return xaeroMapService;
 }
 
+function getXaeroRegionMapService() {
+  if (!xaeroRegionMapService) {
+    xaeroRegionMapService = createXaeroRegionMapService({
+      pool, sendJson, sendError, enforceRateLimit, recordSystemLog,
+      authenticate: req => getAreaExplorerService().authenticate(req),
+      publish: (type, payload) => sseHub.publish(type, payload)
+    });
+  }
+  return xaeroRegionMapService;
+}
+
 async function handleApi(req, res, url) {
   let currentUser = null;
   try {
@@ -6200,6 +6213,7 @@ async function handleApi(req, res, url) {
 
     if (url.pathname.startsWith('/api/area-explorer/') || url.pathname.startsWith('/api/admin/area-explorer/')) {
       if (!pool) { sendError(res, 503, 'Area Explorer needs the database.'); return; }
+      if (await getXaeroRegionMapService().handleRequest(req, res, url)) return;
       if (await getXaeroMapService().handleRequest(req, res, currentUser, url, { assertAdmin: assertAdminUser, readBody: request => readJsonBody(request), sendJson })) return;
       const response = await getAreaExplorerService().handleApi(req, currentUser, url, { assertAdmin: assertAdminUser, readBody: request => readJsonBody(request) });
       if (response) { sendJson(res, response.statusCode, response.payload); return; }
@@ -6605,6 +6619,17 @@ async function requestHandler(req, res) {
     }
     return;
   }
+  // The mod's map regions: the same API token, no browser either
+  if (url.pathname.startsWith('/api/area-explorer/mod/')) {
+    try {
+      if (!pool) { sendError(res, 503, 'Area Explorer needs the database.'); return; }
+      if (!await getXaeroRegionMapService().handleModRequest(req, res, url)) sendError(res, 404, 'Area Explorer route not found.');
+    } catch (err) {
+      const safe = publicError(err);
+      if (!res.headersSent) sendError(res, safe.statusCode, safe.message);
+    }
+    return;
+  }
   if (MUTATING_METHODS.has(req.method)) {
     const origin = validateOrigin(req, { trustProxy: SITE_TRUST_PROXY, allowedOrigins: SITE_ALLOWED_ORIGINS });
     if (!origin.ok) {
@@ -6976,6 +7001,7 @@ async function startSiteServer() {
     startDatabaseEventPoller();
     startLogRetention();
     startPlayerPresenceExpiry();
+    if (pool) getXaeroRegionMapService().start();
   }
 }
 
@@ -6990,6 +7016,7 @@ async function shutdown() {
   if (playerPresenceTimer) clearInterval(playerPresenceTimer);
   playerPresenceTimer = null;
   clearInterval(rateLimiterTimer);
+  xaeroRegionMapService?.stop();
   sseHub.stop();
   await new Promise(resolve => server.close(resolve));
   if (pool) await pool.end().catch(() => {});

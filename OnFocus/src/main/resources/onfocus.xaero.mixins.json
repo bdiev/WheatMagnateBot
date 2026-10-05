@@ -1,0 +1,11 @@
+{
+  "required": false,
+  "package": "dev.onfocus.addon.mixin.xaero",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "GuiMapMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

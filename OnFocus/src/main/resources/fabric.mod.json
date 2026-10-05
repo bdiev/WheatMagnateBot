@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "onfocus",
+  "version": "${version}",
+  "name": "OnFocus",
+  "description": "Keeps Minecraft acting as if the window is always focused, even after alt+tabbing away.",
+  "authors": [
+    "smiletv2013"
+  ],
+  "environment": "client",
+  "entrypoints": {
+    "meteor": [
+      "dev.onfocus.addon.OnFocusAddon"
+    ]
+  },
+  "mixins": [
+    "onfocus.mixins.json",
+    "onfocus.baritone.mixins.json",
+    "onfocus.xaero.mixins.json"
+  ],
+  "custom": {
+    "meteor-client:color": "80,190,255"
+  },
+  "depends": {
+    "java": ">=21",
+    "minecraft": "${minecraft_version}",
+    "meteor-client": "*"
+  }
+}

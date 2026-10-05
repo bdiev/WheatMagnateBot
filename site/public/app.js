@@ -6164,7 +6164,17 @@ function renderKillAura(payload = {}) {
 // Area Explorer: finds the OnFocus mod uploads (bases, signs, loot) and its live run
 
 const AREA_EXPLORER_PAGE_SIZE = 50;
-const AREA_EXPLORER_KIND_LABELS = Object.freeze({ BASE: 'Base', ITEM: 'Loot', SIGN: 'Sign' });
+const AREA_EXPLORER_KIND_LABELS = Object.freeze({ BASE: 'Base', ITEM: 'Loot', SIGN: 'Sign', MARKER: 'Marker' });
+
+/** The kind of marker picked, only while Markers are shown. */
+function areaExplorerMarkerFilter() {
+  const ae = areaExplorerState();
+  return ae.kind === 'MARKER' ? ae.markerName : '';
+}
+
+function areaExplorerFindCount(scope) {
+  return scope.bases + scope.signs + scope.items + (scope.markers || 0);
+}
 const AREA_EXPLORER_PHASES = Object.freeze({
   SCAN: 'Reading the map', SWEEP: 'Sweeping', SETTLE: 'Letting the map catch up', CLEANUP: 'Cleaning up gaps',
   SPIRAL: 'Spiralling out', IDLE: 'Stopped'
@@ -6173,10 +6183,11 @@ const AREA_EXPLORER_PHASES = Object.freeze({
 function areaExplorerState() {
   if (!state.areaExplorer) {
     state.areaExplorer = {
-      scope: '', kind: '', q: '', offset: 0, total: 0, summary: null, points: [], pointsScope: null,
+      scope: '', kind: '', markerName: '', q: '', offset: 0, total: 0, summary: null, points: [], pointsScope: null,
       view: null, selectedId: null, searchTimer: null, mapBound: false, loadedAt: 0,
       layers: [], tiles: new Map(), drawQueued: false, alignLayerId: null, uploading: false,
-      showXaero: readAreaExplorerShowXaero()
+      mapScopes: [], regionMap: null, regionMapLoading: null,
+      showXaero: readAreaExplorerShowXaero(), extent: readAreaExplorerExtent()
     };
   }
   return state.areaExplorer;
@@ -6203,9 +6214,12 @@ function prettyDimension(id) {
 async function loadAreaExplorer({ findsToo = true } = {}) {
   if (!state.currentUser) return;
   const ae = areaExplorerState();
-  const [summary, layers] = await Promise.all([fetchJson('/api/area-explorer/summary'), fetchJson('/api/area-explorer/layers')]);
+  const [summary, layers, mapScopes] = await Promise.all([
+    fetchJson('/api/area-explorer/summary'), fetchJson('/api/area-explorer/layers'), fetchJson('/api/area-explorer/map/scopes')
+  ]);
   ae.summary = summary;
   ae.layers = layers.layers;
+  ae.mapScopes = mapScopes.scopes;
   ae.loadedAt = Date.now();
   renderAreaExplorerScopes();
   renderAreaExplorerStatus();
@@ -6220,9 +6234,9 @@ async function loadAreaExplorer({ findsToo = true } = {}) {
 function areaExplorerScopes() {
   const ae = areaExplorerState();
   const scopes = [...(ae.summary?.scopes || [])];
-  for (const layer of ae.layers) {
+  for (const layer of [...ae.layers, ...ae.mapScopes]) {
     if (!scopes.some(scope => scope.server === layer.server && scope.dimension === layer.dimension)) {
-      scopes.push({ server: layer.server, dimension: layer.dimension, bases: 0, signs: 0, items: 0, lastFoundAt: null });
+      scopes.push({ server: layer.server, dimension: layer.dimension, bases: 0, signs: 0, items: 0, markers: 0, markerNames: [], lastFoundAt: null });
     }
   }
   return scopes;
@@ -6236,7 +6250,7 @@ function renderAreaExplorerScopes() {
   const live = (ae.summary?.statuses || []).find(status => status.online);
   if (!ae.scope && scopes.length) {
     const preferred = live && scopes.find(scope => scope.server === live.server && scope.dimension === live.dimension);
-    const pick = preferred || scopes.reduce((best, scope) => (scope.bases + scope.signs + scope.items > best.bases + best.signs + best.items ? scope : best));
+    const pick = preferred || scopes.reduce((best, scope) => (areaExplorerFindCount(scope) > areaExplorerFindCount(best) ? scope : best));
     ae.scope = `${pick.server}|${pick.dimension}`;
   }
   select.innerHTML = scopes.length
@@ -6248,16 +6262,34 @@ function renderAreaExplorerScopes() {
   select.disabled = !scopes.length;
 
   const scope = scopes.find(item => `${item.server}|${item.dimension}` === ae.scope);
-  const counts = { all: scope ? scope.bases + scope.signs + scope.items : 0, BASE: scope?.bases || 0, ITEM: scope?.items || 0, SIGN: scope?.signs || 0 };
+  const counts = {
+    all: scope ? areaExplorerFindCount(scope) : 0, BASE: scope?.bases || 0, MARKER: scope?.markers || 0, ITEM: scope?.items || 0, SIGN: scope?.signs || 0
+  };
   $$('[data-area-count]').forEach(element => { element.textContent = `(${formatNumber(counts[element.dataset.areaCount])})`; });
   $('#areaExplorerScopeSummary').textContent = scope
-    ? `${formatNumber(scope.bases)} bases · ${formatNumber(scope.items)} loot · ${formatNumber(scope.signs)} signs, every run`
+    ? `${formatNumber(scope.bases)} bases · ${formatNumber(scope.markers || 0)} markers · ${formatNumber(scope.items)} loot · ${formatNumber(scope.signs)} signs, every run`
     : 'Nothing uploaded by the mod yet.';
+  renderAreaExplorerMarkerNames(scope);
   const toggle = $('#areaExplorerShowXaero');
   if (toggle) {
-    toggle.closest('label').hidden = !areaExplorerScopeLayers().length;
+    const [server, dimension] = ae.scope.split('|');
+    const hasLiveMap = ae.mapScopes.some(item => item.server === server && item.dimension === dimension);
+    toggle.closest('label').hidden = !areaExplorerScopeLayers().length && !hasLiveMap;
     toggle.checked = ae.showXaero;
   }
+}
+
+/** With Markers picked: which of them to show - End Portals, Shulker Boxes... - most found first. */
+function renderAreaExplorerMarkerNames(scope) {
+  const ae = areaExplorerState();
+  const select = $('#areaExplorerMarkerName');
+  if (!select) return;
+  const names = scope?.markerNames || [];
+  if (ae.markerName && !names.some(item => item.name === ae.markerName)) ae.markerName = '';
+  select.closest('label').hidden = ae.kind !== 'MARKER';
+  select.innerHTML = [`<option value="">All markers (${formatNumber(scope?.markers || 0)})</option>`]
+    .concat(names.map(item => `<option value="${escapeHtml(item.name)}"${item.name === ae.markerName ? ' selected' : ''}>${escapeHtml(item.name)} (${formatNumber(item.count)})</option>`))
+    .join('');
 }
 
 /** The Xaero map layers of the picked server and dimension, oldest first: newer ones draw on top. */
@@ -6311,7 +6343,7 @@ async function loadAreaExplorerFinds() {
     return;
   }
   list.setAttribute('aria-busy', 'true');
-  const data = await fetchJson(`/api/area-explorer/finds?${areaExplorerScopeParams({ kind: ae.kind, q: ae.q, limit: AREA_EXPLORER_PAGE_SIZE, offset: ae.offset })}`);
+  const data = await fetchJson(`/api/area-explorer/finds?${areaExplorerScopeParams({ kind: ae.kind, name: areaExplorerMarkerFilter(), q: ae.q, limit: AREA_EXPLORER_PAGE_SIZE, offset: ae.offset })}`);
   ae.total = data.total;
   list.removeAttribute('aria-busy');
   list.innerHTML = data.finds.length
@@ -6366,8 +6398,12 @@ async function loadAreaExplorerMap() {
     drawAreaExplorerMap();
     return;
   }
-  const data = await fetchJson(`/api/area-explorer/map?${areaExplorerScopeParams({ kind: ae.kind })}`);
-  const scopeKey = `${ae.scope}|${ae.kind}`;
+  const [data] = await Promise.all([
+    fetchJson(`/api/area-explorer/map?${areaExplorerScopeParams({ kind: ae.kind, name: areaExplorerMarkerFilter() })}`),
+    loadXaeroRegionMap()
+  ]);
+  // A new server or dimension shows its whole territory; another kind of find keeps the view
+  const scopeKey = ae.scope;
   ae.points = data.points.map(([id, kind, x, z]) => ({ id, kind, x, z }));
   if (ae.pointsScope !== scopeKey || !ae.view) fitAreaExplorerMap();
   ae.pointsScope = scopeKey;
@@ -6380,30 +6416,51 @@ function areaExplorerLiveStatus() {
   return (ae.summary?.statuses || []).find(status => status.server === server && status.dimension === dimension && status.x !== null) || null;
 }
 
+// The map shows a square territory around 0, 0, and nothing past it: its tiles, finds and runs
+const AREA_EXPLORER_EXTENTS = Object.freeze([30_000, 50_000, 100_000]);
+
+function readAreaExplorerExtent() {
+  try {
+    const saved = Number(localStorage.getItem('areaExplorerExtent'));
+    if (AREA_EXPLORER_EXTENTS.includes(saved)) return saved;
+  } catch { /* the default then */ }
+  return AREA_EXPLORER_EXTENTS[0];
+}
+
+function areaExplorerInTerritory(x, z) {
+  const half = areaExplorerState().extent / 2;
+  return x >= -half && x < half && z >= -half && z < half;
+}
+
+/** The territory fits the canvas at the furthest zoom, and the view never leaves it. */
+function clampAreaExplorerView() {
+  const ae = areaExplorerState();
+  const canvas = $('#areaExplorerMap');
+  if (!ae.view || !canvas) return;
+  const width = canvas.clientWidth || 600, height = canvas.clientHeight || 420;
+  const half = ae.extent / 2;
+  ae.view.scale = Math.min(Math.max(ae.view.scale, Math.min(width, height) / ae.extent), 16);
+  const clamp = (center, visibleHalf) => (visibleHalf >= half ? 0 : Math.min(Math.max(center, -half + visibleHalf), half - visibleHalf));
+  ae.view.cx = clamp(ae.view.cx, width / 2 / ae.view.scale);
+  ae.view.cz = clamp(ae.view.cz, height / 2 / ae.view.scale);
+}
+
+/** The whole territory in view. */
 function fitAreaExplorerMap() {
   const ae = areaExplorerState();
   const canvas = $('#areaExplorerMap');
-  const xs = ae.points.map(point => point.x), zs = ae.points.map(point => point.z);
-  const live = areaExplorerLiveStatus();
-  if (live) { xs.push(live.x); zs.push(live.z); }
-  if (ae.showXaero) {
-    for (const layer of areaExplorerScopeLayers()) {
-      xs.push(layer.originX, layer.originX + layer.width * layer.blocksPerPixel);
-      zs.push(layer.originZ, layer.originZ + layer.height * layer.blocksPerPixel);
-    }
-  }
-  if (!xs.length) {
-    ae.view = { cx: 0, cz: 0, scale: 0.05 };
-    return;
-  }
-  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
-  for (let i = 0; i < xs.length; i++) {
-    minX = Math.min(minX, xs[i]); maxX = Math.max(maxX, xs[i]);
-    minZ = Math.min(minZ, zs[i]); maxZ = Math.max(maxZ, zs[i]);
-  }
-  const width = canvas.clientWidth || 600, height = canvas.clientHeight || 420;
-  const scale = Math.min((width - 40) / Math.max(maxX - minX, 64), (height - 40) / Math.max(maxZ - minZ, 64));
-  ae.view = { cx: (minX + maxX) / 2, cz: (minZ + maxZ) / 2, scale };
+  const width = canvas?.clientWidth || 600, height = canvas?.clientHeight || 420;
+  ae.view = { cx: 0, cz: 0, scale: Math.min(width, height) / ae.extent };
+  clampAreaExplorerView();
+}
+
+function renderAreaExplorerExtent() {
+  const ae = areaExplorerState();
+  $$('[data-area-extent]').forEach(button => {
+    const active = Number(button.dataset.areaExtent) === ae.extent;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
 }
 
 function areaExplorerToScreen(view, canvas, x, z) {
@@ -6425,7 +6482,18 @@ function drawAreaExplorerMap() {
   ctx.fillStyle = color('--area-map-bg');
   ctx.fillRect(0, 0, width, height);
   const view = ae.view || { cx: 0, cz: 0, scale: 0.05 };
-  if (ae.showXaero) drawXaeroMapLayers(ctx, canvas, view, ratio);
+  // Everything is drawn inside the territory only
+  const half = ae.extent / 2;
+  const [tx1, tz1] = areaExplorerToScreen(view, canvas, -half, -half);
+  const [tx2, tz2] = areaExplorerToScreen(view, canvas, half, half);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(tx1, tz1, tx2 - tx1, tz2 - tz1);
+  ctx.clip();
+  if (ae.showXaero) {
+    drawXaeroRegionMap(ctx, canvas, view, ratio);
+    drawXaeroMapLayers(ctx, canvas, view, ratio);
+  }
 
   // A grid line every 1,000 blocks, or 10,000 zoomed out; the axes stronger
   const step = view.scale * 1000 >= 40 ? 1000 : 10000;
@@ -6451,15 +6519,19 @@ function drawAreaExplorerMap() {
   }
 
   // Signs under loot under bases: the rarer, the higher
-  const order = { SIGN: 0, ITEM: 1, BASE: 2 };
-  const colors = { SIGN: color('--area-sign'), ITEM: color('--area-loot'), BASE: color('--area-base') };
-  const sorted = [...ae.points].sort((a, b) => order[a.kind] - order[b.kind]);
+  const order = { SIGN: 0, ITEM: 1, MARKER: 2, BASE: 3 };
+  const colors = { SIGN: color('--area-sign'), ITEM: color('--area-loot'), MARKER: color('--area-marker'), BASE: color('--area-base') };
+  const sorted = ae.points.filter(point => areaExplorerInTerritory(point.x, point.z)).sort((a, b) => order[a.kind] - order[b.kind]);
   for (const point of sorted) {
     const [sx, sz] = areaExplorerToScreen(view, canvas, point.x, point.z);
     if (sx < -6 || sz < -6 || sx > width + 6 || sz > height + 6) continue;
-    const size = point.kind === 'BASE' ? 4.5 : point.kind === 'ITEM' ? 3.5 : 2.5;
+    const size = point.kind === 'BASE' ? 4.5 : point.kind === 'MARKER' ? 4.5 : point.kind === 'ITEM' ? 3.5 : 2.5;
     ctx.fillStyle = colors[point.kind];
-    ctx.beginPath(); ctx.arc(sx, sz, size, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath();
+    // Markers are diamonds, like Xaero draws its waypoints apart from the rest
+    if (point.kind === 'MARKER') { ctx.moveTo(sx, sz - size); ctx.lineTo(sx + size, sz); ctx.lineTo(sx, sz + size); ctx.lineTo(sx - size, sz); ctx.closePath(); }
+    else ctx.arc(sx, sz, size, 0, Math.PI * 2);
+    ctx.fill();
     if (point.id === ae.selectedId) {
       ctx.strokeStyle = color('--text'); ctx.lineWidth = 2;
       ctx.beginPath(); ctx.arc(sx, sz, size + 4, 0, Math.PI * 2); ctx.stroke();
@@ -6474,6 +6546,12 @@ function drawAreaExplorerMap() {
     ctx.beginPath(); ctx.moveTo(sx, sz - 8); ctx.lineTo(sx + 7, sz + 6); ctx.lineTo(sx - 7, sz + 6); ctx.closePath();
     ctx.fill(); ctx.stroke();
   }
+  ctx.restore();
+
+  // The territory's edge
+  ctx.strokeStyle = color('--area-map-axis');
+  ctx.lineWidth = 1;
+  ctx.strokeRect(Math.round(tx1) + 0.5, Math.round(tz1) + 0.5, Math.round(tx2 - tx1), Math.round(tz2 - tz1));
 
   ctx.fillStyle = color('--muted');
   ctx.font = '12px sans-serif';
@@ -6497,14 +6575,29 @@ const XAERO_TILE_CACHE_LIMIT = 900;
 const XAERO_FALLBACK_LEVELS = 5;
 
 /** The tile from the cache, asking the server for it the first time; null until it has loaded. */
-function xaeroMapTile(layer, z, x, y, { request = true } = {}) {
+function xaeroMapTile(layer, z, x, y, options) {
+  return cachedMapImage(`${layer.id}/${z}/${y}/${x}`, `/api/area-explorer/layers/${encodeURIComponent(layer.id)}/tiles/${z}/${y}/${x}.webp`, options);
+}
+
+/**
+ * An image of the map from the cache, loading it the first time; null until it has. A stale one
+ * (redrawn on the server) stays on screen while its new version loads.
+ */
+function cachedMapImage(key, url, { request = true } = {}) {
   const ae = areaExplorerState();
-  const key = `${layer.id}/${z}/${y}/${x}`;
   let entry = ae.tiles.get(key);
   if (entry) {
     // Most recently used last, so the oldest go first when the cache is full
     ae.tiles.delete(key);
     ae.tiles.set(key, entry);
+    if (entry.stale && request && !entry.reloading) {
+      entry.reloading = true;
+      const fresh = new Image();
+      fresh.decoding = 'async';
+      fresh.onload = () => { Object.assign(entry, { image: fresh, status: 'ready', stale: false, reloading: false }); queueAreaExplorerMapDraw(); };
+      fresh.onerror = () => { Object.assign(entry, { status: 'missing', stale: false, reloading: false }); queueAreaExplorerMapDraw(); };
+      fresh.src = url;
+    }
     return entry.status === 'ready' ? entry.image : null;
   }
   if (!request) return null;
@@ -6513,7 +6606,7 @@ function xaeroMapTile(layer, z, x, y, { request = true } = {}) {
   entry = { image, status: 'loading' };
   image.onload = () => { entry.status = 'ready'; queueAreaExplorerMapDraw(); };
   image.onerror = () => { entry.status = 'missing'; };
-  image.src = `/api/area-explorer/layers/${encodeURIComponent(layer.id)}/tiles/${z}/${y}/${x}.webp`;
+  image.src = url;
   ae.tiles.set(key, entry);
   while (ae.tiles.size > XAERO_TILE_CACHE_LIMIT) {
     const oldest = ae.tiles.keys().next().value;
@@ -6524,10 +6617,120 @@ function xaeroMapTile(layer, z, x, y, { request = true } = {}) {
   return null;
 }
 
+// The live map the OnFocus mod sends: tiles anchored to the world, level 0 being Xaero's 512-block
+// regions at a pixel a block, each level up covering twice as much a side at the same 512 px
+
+const XAERO_REGION_PX = 512;
+
+/** The live map's index for the picked scope: which tiles exist on each level, and its bounds. */
+async function loadXaeroRegionMap() {
+  const ae = areaExplorerState();
+  const scope = ae.scope;
+  const [server, dimension] = scope.split('|');
+  if (!ae.mapScopes.some(item => item.server === server && item.dimension === dimension)) {
+    ae.regionMap = null;
+    return;
+  }
+  if (ae.regionMap?.scope === scope) return;
+  const index = await fetchJson(`/api/area-explorer/map/index?${areaExplorerScopeParams()}`);
+  if (ae.scope !== scope) return;
+  const regionMap = { scope, maxLevel: index.maxLevel, levels: [], bounds: null, versions: new Map() };
+  for (let level = 0; level <= index.maxLevel; level++) regionMap.levels.push(new Set());
+  for (let i = 0; i < index.regions.length; i += 2) addXaeroRegion(regionMap, index.regions[i], index.regions[i + 1]);
+  ae.regionMap = regionMap;
+}
+
+function addXaeroRegion(regionMap, x, z) {
+  for (let level = 0; level <= regionMap.maxLevel; level++) regionMap.levels[level].add(`${x >> level},${z >> level}`);
+  const bounds = regionMap.bounds;
+  if (!bounds) regionMap.bounds = { minX: x, maxX: x, minZ: z, maxZ: z };
+  else Object.assign(bounds, { minX: Math.min(bounds.minX, x), maxX: Math.max(bounds.maxX, x), minZ: Math.min(bounds.minZ, z), maxZ: Math.max(bounds.maxZ, z) });
+}
+
+function xaeroRegionTile(regionMap, level, x, z, options) {
+  const version = regionMap.versions.get(`${level},${x},${z}`) || 0;
+  const [server, dimension] = regionMap.scope.split('|');
+  const params = new URLSearchParams({ server, dimension });
+  if (version) params.set('v', String(version));
+  const epoch = areaExplorerState().regionMapEpoch;
+  if (epoch) params.set('e', String(epoch));
+  return cachedMapImage(`map|${regionMap.scope}|${level},${x},${z}`, `/api/area-explorer/map/tiles/${level}/${x}/${z}.webp?${params}`, options);
+}
+
+/** Tiles the mod's uploads changed: new regions join the index, cached ones load again. */
+function applyXaeroRegionMapUpdate(update) {
+  const ae = areaExplorerState();
+  const scope = `${update.server}|${update.dimension}`;
+  if (!ae.mapScopes.some(item => `${item.server}|${item.dimension}` === scope)) {
+    // A scope's first region: the picker learns of it on the next full refresh
+    queueRealtimeRefresh('area-explorer', refreshAreaExplorerFromEvent, 2000);
+    return;
+  }
+  const regionMap = ae.regionMap?.scope === scope ? ae.regionMap : null;
+  if (!regionMap) return;
+  if (update.all) {
+    ae.regionMap = null;
+    ae.regionMapEpoch = (ae.regionMapEpoch || 0) + 1;
+    for (const [key, entry] of ae.tiles) if (key.startsWith(`map|${scope}|`)) entry.stale = true;
+    if (state.activeTab === 'area-explorer') loadXaeroRegionMap().then(queueAreaExplorerMapDraw).catch(() => {});
+    return;
+  }
+  for (const [level, x, z] of update.tiles) {
+    if (level === 0) addXaeroRegion(regionMap, x, z);
+    const versionKey = `${level},${x},${z}`;
+    regionMap.versions.set(versionKey, (regionMap.versions.get(versionKey) || 0) + 1);
+    // Loaded again under its new address, the old picture showing until then
+    const cached = ae.tiles.get(`map|${scope}|${versionKey}`);
+    if (cached?.status === 'ready') cached.stale = true;
+    else if (cached) ae.tiles.delete(`map|${scope}|${versionKey}`);
+  }
+  if (state.activeTab === 'area-explorer') queueAreaExplorerMapDraw();
+}
+
+function drawXaeroRegionMap(ctx, canvas, view, ratio) {
+  const ae = areaExplorerState();
+  const regionMap = ae.regionMap;
+  if (!regionMap || regionMap.scope !== ae.scope) return;
+  const width = canvas.clientWidth, height = canvas.clientHeight;
+  // What's in view of the territory: no tile past it is asked for
+  const half = areaExplorerState().extent / 2;
+  const left = Math.max(-half, view.cx - width / 2 / view.scale), top = Math.max(-half, view.cz - height / 2 / view.scale);
+  const right = Math.min(half - 1, view.cx + width / 2 / view.scale), bottom = Math.min(half - 1, view.cz + height / 2 / view.scale);
+  // The level whose pixels are at least one screen pixel
+  const blockOnScreen = view.scale * ratio;
+  const level = Math.min(regionMap.maxLevel, Math.max(0, Math.floor(Math.log2(1 / blockOnScreen))));
+  const tileBlocks = XAERO_REGION_PX * 2 ** level;
+  const existing = regionMap.levels[level];
+  ctx.imageSmoothingEnabled = blockOnScreen * 2 ** level < 1;
+  for (let z = Math.floor(top / tileBlocks); z <= Math.floor(bottom / tileBlocks); z++) {
+    for (let x = Math.floor(left / tileBlocks); x <= Math.floor(right / tileBlocks); x++) {
+      if (!existing.has(`${x},${z}`)) continue;
+      const [sx, sz] = areaExplorerToScreen(view, canvas, x * tileBlocks, z * tileBlocks);
+      const [ex, ez] = areaExplorerToScreen(view, canvas, (x + 1) * tileBlocks, (z + 1) * tileBlocks);
+      const dx = Math.floor(sx), dy = Math.floor(sz), dw = Math.ceil(ex) - dx, dh = Math.ceil(ez) - dy;
+      const image = xaeroRegionTile(regionMap, level, x, z);
+      if (image) {
+        ctx.drawImage(image, dx, dy, dw, dh);
+        continue;
+      }
+      for (let up = 1; up <= XAERO_FALLBACK_LEVELS && level + up <= regionMap.maxLevel; up++) {
+        const parent = xaeroRegionTile(regionMap, level + up, x >> up, z >> up, { request: false });
+        if (!parent) continue;
+        const piece = XAERO_REGION_PX / 2 ** up;
+        ctx.drawImage(parent, (x - ((x >> up) << up)) * piece, (z - ((z >> up) << up)) * piece, piece, piece, dx, dy, dw, dh);
+        break;
+      }
+    }
+  }
+  ctx.imageSmoothingEnabled = true;
+}
+
 function drawXaeroMapLayers(ctx, canvas, view, ratio) {
   const width = canvas.clientWidth, height = canvas.clientHeight;
-  const left = view.cx - width / 2 / view.scale, top = view.cz - height / 2 / view.scale;
-  const right = left + width / view.scale, bottom = top + height / view.scale;
+  // What's in view of the territory: no tile past it is asked for
+  const half = areaExplorerState().extent / 2;
+  const left = Math.max(-half, view.cx - width / 2 / view.scale), top = Math.max(-half, view.cz - height / 2 / view.scale);
+  const right = Math.min(half - 1, view.cx + width / 2 / view.scale), bottom = Math.min(half - 1, view.cz + height / 2 / view.scale);
   for (const layer of areaExplorerScopeLayers()) {
     const size = layer.tileSize;
     // The level whose pixels are at least one screen pixel: sharp, and no more tiles than needed
@@ -6584,6 +6787,7 @@ function bindAreaExplorerMap() {
     view.scale = Math.min(Math.max(view.scale * factor, 0.0005), 16);
     view.cx = x - (sx - canvas.clientWidth / 2) / view.scale;
     view.cz = z - (sz - canvas.clientHeight / 2) / view.scale;
+    clampAreaExplorerView();
     drawAreaExplorerMap();
   };
 
@@ -6634,6 +6838,7 @@ function bindAreaExplorerMap() {
     if (Math.abs(dx) + Math.abs(dy) > 2) dragged = true;
     ae.view.cx -= dx / ae.view.scale;
     ae.view.cz -= dy / ae.view.scale;
+    clampAreaExplorerView();
     drawAreaExplorerMap();
   });
   const release = event => {
@@ -6652,6 +6857,7 @@ function bindAreaExplorerMap() {
     const sx = event.clientX - rect.left, sz = event.clientY - rect.top;
     let best = null, bestDistance = 10;
     for (const point of ae.points) {
+      if (!areaExplorerInTerritory(point.x, point.z)) continue;
       const [px, pz] = areaExplorerToScreen(ae.view, canvas, point.x, point.z);
       const distance = Math.hypot(px - sx, pz - sz);
       if (distance < bestDistance) { best = point; bestDistance = distance; }
@@ -6659,7 +6865,11 @@ function bindAreaExplorerMap() {
     selectAreaExplorerFind(best?.id || null).catch(error => setBanner(error.message));
   });
   canvas.addEventListener('pointercancel', release);
-  window.addEventListener('resize', () => { if (state.activeTab === 'area-explorer') drawAreaExplorerMap(); });
+  window.addEventListener('resize', () => {
+    if (state.activeTab !== 'area-explorer') return;
+    clampAreaExplorerView();
+    drawAreaExplorerMap();
+  });
 }
 
 async function selectAreaExplorerFind(id) {
@@ -6887,8 +7097,14 @@ function setupAreaExplorer() {
       other.classList.toggle('active', other === button);
       other.setAttribute('aria-pressed', String(other === button));
     });
+    renderAreaExplorerScopes();
     reloadScope();
   }));
+  $('#areaExplorerMarkerName')?.addEventListener('change', event => {
+    ae.markerName = event.target.value;
+    ae.offset = 0;
+    reloadScope();
+  });
   $('#areaExplorerSearch')?.addEventListener('input', event => {
     clearTimeout(ae.searchTimer);
     ae.searchTimer = setTimeout(() => {
@@ -6909,6 +7125,14 @@ function setupAreaExplorer() {
     fitAreaExplorerMap();
     drawAreaExplorerMap();
   });
+  renderAreaExplorerExtent();
+  $$('[data-area-extent]').forEach(button => button.addEventListener('click', () => {
+    ae.extent = Number(button.dataset.areaExtent);
+    try { localStorage.setItem('areaExplorerExtent', String(ae.extent)); } catch { /* this visit only */ }
+    renderAreaExplorerExtent();
+    fitAreaExplorerMap();
+    drawAreaExplorerMap();
+  }));
   $('#tab-area-explorer')?.addEventListener('click', async event => {
     const coords = event.target.closest('[data-copy-coords]');
     if (coords) {
@@ -11246,7 +11470,11 @@ function handleRealtimeEvent(event) {
     scheduleRealtimeChartRefresh();
   }
   else if (type === 'farm_status_updated') queueRealtimeRefresh('farm', refreshFarmFromEvent);
-  else if (type === 'area_explorer_updated') queueRealtimeRefresh('area-explorer', refreshAreaExplorerFromEvent, 2000);
+  else if (type === 'area_explorer_updated') {
+    // The live map's tiles are refreshed in place; a full reload is for finds, runs and layers
+    if (eventPayload.mapTiles) applyXaeroRegionMapUpdate(eventPayload.mapTiles);
+    else queueRealtimeRefresh('area-explorer', refreshAreaExplorerFromEvent, 2000);
+  }
   else if (type === 'player_joined' || type === 'player_left') {
     state.playerStatsLoadedAt = 0;
     queueRealtimeRefresh('players', () => refreshPlayersFromEvent({ forcePlayerStats: true }));

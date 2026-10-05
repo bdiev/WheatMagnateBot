@@ -134,7 +134,7 @@ function testWiring() {
   }
   assert.match(indexSource, /class="panel xaero-map-panel admin-only" hidden/, 'only administrators upload maps');
   assert.match(appSource, /\/api\/area-explorer\/layers\/\$\{encodeURIComponent\(layer\.id\)\}\/tiles\/\$\{z\}\/\$\{y\}\/\$\{x\}\.webp/);
-  assert.match(appSource, /if \(ae\.showXaero\) drawXaeroMapLayers\(ctx, canvas, view, ratio\);/, 'the map is drawn under the grid and the finds');
+  assert.match(appSource, /if \(ae\.showXaero\) \{\s+drawXaeroRegionMap\(ctx, canvas, view, ratio\);\s+drawXaeroMapLayers\(ctx, canvas, view, ratio\);/, 'the maps are drawn under the grid and the finds, uploaded layers over the live map');
   assert.match(appSource, /setupXaeroMap\(\);/);
 }
 

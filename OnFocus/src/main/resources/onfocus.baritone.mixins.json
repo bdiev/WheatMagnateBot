@@ -1,0 +1,13 @@
+{
+  "required": false,
+  "package": "dev.onfocus.addon.mixin.baritone",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "ElytraProcessAccessor",
+    "ElytraBehaviorAccessor",
+    "ElytraPathManagerAccessor"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
