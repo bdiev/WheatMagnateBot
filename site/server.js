@@ -24,6 +24,7 @@ const { KILL_AURA_MOBS, normalizeKillAuraTargets } = require('./kill-aura-catalo
 const { isValidKillAuraRange, normalizeKillAuraRange } = require('./kill-aura-range');
 const { createResourceRequestService } = require('./resource-requests');
 const { createAreaExplorerService } = require('./area-explorer');
+const { createXaeroMapService } = require('./xaero-map');
 const { normalizeGreenChatMessage } = require('./chat-message-normalization');
 const { NEW_PLAYER_WINDOW_DAYS, isNewPlayerRegistration } = require('./player-new-status');
 const { minecraftAvatarSources, renderOfficialMinecraftAvatar } = require('./minecraft-avatar');
@@ -93,6 +94,7 @@ let liveDashboardRequest = null;
 let accountRegistry = null;
 let resourceRequestService = null;
 let areaExplorerService = null;
+let xaeroMapService = null;
 const minecraftAvatarCache = new Map();
 const minecraftSkinCache = new Map();
 const playerSkinHistory = createPlayerSkinHistoryService({ pool });
@@ -6124,6 +6126,16 @@ function getAreaExplorerService() {
   return areaExplorerService;
 }
 
+function getXaeroMapService() {
+  if (!xaeroMapService) {
+    xaeroMapService = createXaeroMapService({
+      pool, recordSystemLog,
+      publish: (type, payload) => sseHub.publish(type, payload)
+    });
+  }
+  return xaeroMapService;
+}
+
 async function handleApi(req, res, url) {
   let currentUser = null;
   try {
@@ -6188,6 +6200,7 @@ async function handleApi(req, res, url) {
 
     if (url.pathname.startsWith('/api/area-explorer/') || url.pathname.startsWith('/api/admin/area-explorer/')) {
       if (!pool) { sendError(res, 503, 'Area Explorer needs the database.'); return; }
+      if (await getXaeroMapService().handleRequest(req, res, currentUser, url, { assertAdmin: assertAdminUser, readBody: request => readJsonBody(request), sendJson })) return;
       const response = await getAreaExplorerService().handleApi(req, currentUser, url, { assertAdmin: assertAdminUser, readBody: request => readJsonBody(request) });
       if (response) { sendJson(res, response.statusCode, response.payload); return; }
       sendError(res, 404, 'Area Explorer route not found.');

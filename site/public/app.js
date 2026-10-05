@@ -6174,10 +6174,16 @@ function areaExplorerState() {
   if (!state.areaExplorer) {
     state.areaExplorer = {
       scope: '', kind: '', q: '', offset: 0, total: 0, summary: null, points: [], pointsScope: null,
-      view: null, selectedId: null, searchTimer: null, mapBound: false, loadedAt: 0
+      view: null, selectedId: null, searchTimer: null, mapBound: false, loadedAt: 0,
+      layers: [], tiles: new Map(), drawQueued: false, alignLayerId: null, uploading: false,
+      showXaero: readAreaExplorerShowXaero()
     };
   }
   return state.areaExplorer;
+}
+
+function readAreaExplorerShowXaero() {
+  try { return localStorage.getItem('areaExplorerShowXaero') !== 'false'; } catch { return true; }
 }
 
 function areaExplorerScopeParams(extra = {}) {
@@ -6197,20 +6203,35 @@ function prettyDimension(id) {
 async function loadAreaExplorer({ findsToo = true } = {}) {
   if (!state.currentUser) return;
   const ae = areaExplorerState();
-  ae.summary = await fetchJson('/api/area-explorer/summary');
+  const [summary, layers] = await Promise.all([fetchJson('/api/area-explorer/summary'), fetchJson('/api/area-explorer/layers')]);
+  ae.summary = summary;
+  ae.layers = layers.layers;
   ae.loadedAt = Date.now();
   renderAreaExplorerScopes();
   renderAreaExplorerStatus();
+  renderXaeroMapLayers();
   const work = [loadAreaExplorerMap()];
   if (findsToo) work.push(loadAreaExplorerFinds());
   if (state.currentUser.role === 'admin') work.push(loadAreaExplorerTokens());
   await Promise.all(work);
 }
 
+/** Every server/dimension with finds, plus those with only a Xaero map so far. */
+function areaExplorerScopes() {
+  const ae = areaExplorerState();
+  const scopes = [...(ae.summary?.scopes || [])];
+  for (const layer of ae.layers) {
+    if (!scopes.some(scope => scope.server === layer.server && scope.dimension === layer.dimension)) {
+      scopes.push({ server: layer.server, dimension: layer.dimension, bases: 0, signs: 0, items: 0, lastFoundAt: null });
+    }
+  }
+  return scopes;
+}
+
 function renderAreaExplorerScopes() {
   const ae = areaExplorerState();
   const select = $('#areaExplorerScope');
-  const scopes = ae.summary?.scopes || [];
+  const scopes = areaExplorerScopes();
   // The live run's scope first when nothing is picked yet: that's what's being explored
   const live = (ae.summary?.statuses || []).find(status => status.online);
   if (!ae.scope && scopes.length) {
@@ -6232,6 +6253,18 @@ function renderAreaExplorerScopes() {
   $('#areaExplorerScopeSummary').textContent = scope
     ? `${formatNumber(scope.bases)} bases · ${formatNumber(scope.items)} loot · ${formatNumber(scope.signs)} signs, every run`
     : 'Nothing uploaded by the mod yet.';
+  const toggle = $('#areaExplorerShowXaero');
+  if (toggle) {
+    toggle.closest('label').hidden = !areaExplorerScopeLayers().length;
+    toggle.checked = ae.showXaero;
+  }
+}
+
+/** The Xaero map layers of the picked server and dimension, oldest first: newer ones draw on top. */
+function areaExplorerScopeLayers() {
+  const ae = areaExplorerState();
+  const [server, dimension] = ae.scope.split('|');
+  return ae.layers.filter(layer => layer.server === server && layer.dimension === dimension);
 }
 
 function renderAreaExplorerStatus() {
@@ -6353,6 +6386,12 @@ function fitAreaExplorerMap() {
   const xs = ae.points.map(point => point.x), zs = ae.points.map(point => point.z);
   const live = areaExplorerLiveStatus();
   if (live) { xs.push(live.x); zs.push(live.z); }
+  if (ae.showXaero) {
+    for (const layer of areaExplorerScopeLayers()) {
+      xs.push(layer.originX, layer.originX + layer.width * layer.blocksPerPixel);
+      zs.push(layer.originZ, layer.originZ + layer.height * layer.blocksPerPixel);
+    }
+  }
   if (!xs.length) {
     ae.view = { cx: 0, cz: 0, scale: 0.05 };
     return;
@@ -6386,6 +6425,7 @@ function drawAreaExplorerMap() {
   ctx.fillStyle = color('--area-map-bg');
   ctx.fillRect(0, 0, width, height);
   const view = ae.view || { cx: 0, cz: 0, scale: 0.05 };
+  if (ae.showXaero) drawXaeroMapLayers(ctx, canvas, view, ratio);
 
   // A grid line every 1,000 blocks, or 10,000 zoomed out; the axes stronger
   const step = view.scale * 1000 >= 40 ? 1000 : 10000;
@@ -6440,6 +6480,94 @@ function drawAreaExplorerMap() {
   ctx.fillText(`Grid: ${step.toLocaleString('en-US')} blocks`, 10, height - 10);
 }
 
+function queueAreaExplorerMapDraw() {
+  const ae = areaExplorerState();
+  if (ae.drawQueued) return;
+  ae.drawQueued = true;
+  requestAnimationFrame(() => {
+    ae.drawQueued = false;
+    if (state.activeTab === 'area-explorer') drawAreaExplorerMap();
+  });
+}
+
+// Xaero's World Map under the finds: each layer is a Google-layout pyramid of 256 px tiles,
+// level maxZoom at the export's own resolution, each level above it half as detailed
+
+const XAERO_TILE_CACHE_LIMIT = 900;
+const XAERO_FALLBACK_LEVELS = 5;
+
+/** The tile from the cache, asking the server for it the first time; null until it has loaded. */
+function xaeroMapTile(layer, z, x, y, { request = true } = {}) {
+  const ae = areaExplorerState();
+  const key = `${layer.id}/${z}/${y}/${x}`;
+  let entry = ae.tiles.get(key);
+  if (entry) {
+    // Most recently used last, so the oldest go first when the cache is full
+    ae.tiles.delete(key);
+    ae.tiles.set(key, entry);
+    return entry.status === 'ready' ? entry.image : null;
+  }
+  if (!request) return null;
+  const image = new Image();
+  image.decoding = 'async';
+  entry = { image, status: 'loading' };
+  image.onload = () => { entry.status = 'ready'; queueAreaExplorerMapDraw(); };
+  image.onerror = () => { entry.status = 'missing'; };
+  image.src = `/api/area-explorer/layers/${encodeURIComponent(layer.id)}/tiles/${z}/${y}/${x}.webp`;
+  ae.tiles.set(key, entry);
+  while (ae.tiles.size > XAERO_TILE_CACHE_LIMIT) {
+    const oldest = ae.tiles.keys().next().value;
+    const stale = ae.tiles.get(oldest);
+    if (stale.status === 'loading') stale.image.src = '';
+    ae.tiles.delete(oldest);
+  }
+  return null;
+}
+
+function drawXaeroMapLayers(ctx, canvas, view, ratio) {
+  const width = canvas.clientWidth, height = canvas.clientHeight;
+  const left = view.cx - width / 2 / view.scale, top = view.cz - height / 2 / view.scale;
+  const right = left + width / view.scale, bottom = top + height / view.scale;
+  for (const layer of areaExplorerScopeLayers()) {
+    const size = layer.tileSize;
+    // The level whose pixels are at least one screen pixel: sharp, and no more tiles than needed
+    const imagePixelOnScreen = layer.blocksPerPixel * view.scale * ratio;
+    const coarser = Math.max(0, Math.floor(Math.log2(1 / imagePixelOnScreen)));
+    const level = Math.max(0, layer.maxZoom - coarser);
+    const factor = 2 ** (layer.maxZoom - level);
+    const tileBlocks = size * factor * layer.blocksPerPixel;
+    const columns = Math.ceil(layer.width / (size * factor)), rows = Math.ceil(layer.height / (size * factor));
+    const x0 = Math.max(0, Math.floor((left - layer.originX) / tileBlocks));
+    const x1 = Math.min(columns - 1, Math.floor((right - layer.originX) / tileBlocks));
+    const y0 = Math.max(0, Math.floor((top - layer.originZ) / tileBlocks));
+    const y1 = Math.min(rows - 1, Math.floor((bottom - layer.originZ) / tileBlocks));
+    // Blocky when a map pixel covers several screen pixels, smooth when zoomed out past the top level
+    ctx.imageSmoothingEnabled = imagePixelOnScreen * factor < 1;
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const [sx, sz] = areaExplorerToScreen(view, canvas, layer.originX + x * tileBlocks, layer.originZ + y * tileBlocks);
+        const [ex, ez] = areaExplorerToScreen(view, canvas, layer.originX + (x + 1) * tileBlocks, layer.originZ + (y + 1) * tileBlocks);
+        // Whole pixels, so neighbouring tiles meet without a seam
+        const dx = Math.floor(sx), dy = Math.floor(sz), dw = Math.ceil(ex) - dx, dh = Math.ceil(ez) - dy;
+        const image = xaeroMapTile(layer, level, x, y);
+        if (image) {
+          ctx.drawImage(image, dx, dy, dw, dh);
+          continue;
+        }
+        // Until it loads, a stretched piece of a coarser tile that already has
+        for (let up = 1; up <= XAERO_FALLBACK_LEVELS && level - up >= 0; up++) {
+          const parent = xaeroMapTile(layer, level - up, x >> up, y >> up, { request: false });
+          if (!parent) continue;
+          const piece = size / 2 ** up;
+          ctx.drawImage(parent, (x - ((x >> up) << up)) * piece, (y - ((y >> up) << up)) * piece, piece, piece, dx, dy, dw, dh);
+          break;
+        }
+      }
+    }
+  }
+  ctx.imageSmoothingEnabled = true;
+}
+
 function bindAreaExplorerMap() {
   const ae = areaExplorerState();
   if (ae.mapBound) return;
@@ -6453,7 +6581,7 @@ function bindAreaExplorerMap() {
     const view = ae.view;
     const x = view.cx + (sx - canvas.clientWidth / 2) / view.scale;
     const z = view.cz + (sz - canvas.clientHeight / 2) / view.scale;
-    view.scale = Math.min(Math.max(view.scale * factor, 0.0005), 8);
+    view.scale = Math.min(Math.max(view.scale * factor, 0.0005), 16);
     view.cx = x - (sx - canvas.clientWidth / 2) / view.scale;
     view.cz = z - (sz - canvas.clientHeight / 2) / view.scale;
     drawAreaExplorerMap();
@@ -6475,7 +6603,21 @@ function bindAreaExplorerMap() {
       pinchDistance = Math.hypot(a.x - b.x, a.y - b.y);
     }
   });
+  const toWorld = event => {
+    const rect = canvas.getBoundingClientRect();
+    return [
+      ae.view.cx + (event.clientX - rect.left - canvas.clientWidth / 2) / ae.view.scale,
+      ae.view.cz + (event.clientY - rect.top - canvas.clientHeight / 2) / ae.view.scale
+    ];
+  };
+  const cursor = $('#areaExplorerCursor');
+  canvas.addEventListener('pointerleave', () => { if (cursor) cursor.hidden = true; });
   canvas.addEventListener('pointermove', event => {
+    if (cursor && ae.view) {
+      const [x, z] = toWorld(event);
+      cursor.textContent = `X ${Math.floor(x)} · Z ${Math.floor(z)}`;
+      cursor.hidden = false;
+    }
     const last = pointers.get(event.pointerId);
     if (!last || !ae.view) return;
     pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
@@ -6502,6 +6644,10 @@ function bindAreaExplorerMap() {
     const wasGesture = dragged || pointers.size > 1;
     release(event);
     if (wasGesture || !ae.view) return;
+    if (ae.alignLayerId) {
+      alignXaeroMapLayer(...toWorld(event)).catch(error => setBanner(`Could not move the map: ${error.message}`));
+      return;
+    }
     const rect = canvas.getBoundingClientRect();
     const sx = event.clientX - rect.left, sz = event.clientY - rect.top;
     let best = null, bestDistance = 10;
@@ -6531,6 +6677,181 @@ async function selectAreaExplorerFind(id) {
   box.hidden = false;
 }
 
+// Xaero map uploads (administrators)
+
+function formatXaeroBytes(bytes) {
+  return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+function renderXaeroMapLayers() {
+  const ae = areaExplorerState();
+  const list = $('#xaeroMapLayers');
+  if (!list) return;
+  const [server, dimension] = ae.scope.split('|');
+  if (server && !$('#xaeroMapServer').value) $('#xaeroMapServer').value = server;
+  if (dimension && !$('#xaeroMapDimension').value) $('#xaeroMapDimension').value = dimension;
+  $('#xaeroMapServers').innerHTML = areaExplorerScopes()
+    .map(scope => scope.server).filter((value, index, all) => all.indexOf(value) === index)
+    .map(value => `<option value="${escapeHtml(value)}"></option>`).join('');
+  list.innerHTML = ae.layers.length
+    ? ae.layers.map(layer => {
+      const aligning = ae.alignLayerId === layer.id;
+      return `<li data-xaero-layer="${escapeHtml(layer.id)}"${aligning ? ' class="is-aligning"' : ''}>
+        <div class="xaero-map-layer-head">
+          <strong>${escapeHtml(layer.name)}</strong>
+          <small>${escapeHtml(layer.server)} · ${escapeHtml(prettyDimension(layer.dimension))} · ${formatNumber(layer.width)} × ${formatNumber(layer.height)} px · ${formatNumber(layer.tileCount)} tiles · ${escapeHtml(formatXaeroBytes(layer.bytes))}</small>
+        </div>
+        <div class="xaero-map-layer-fields">
+          <label>X <input type="number" step="any" data-xaero-field="originX" value="${layer.originX}"></label>
+          <label>Z <input type="number" step="any" data-xaero-field="originZ" value="${layer.originZ}"></label>
+          <label>Blocks / px <input type="number" step="any" min="0.0625" max="64" data-xaero-field="blocksPerPixel" value="${layer.blocksPerPixel}"></label>
+        </div>
+        <div class="xaero-map-layer-actions">
+          <button class="ghost-button" type="button" data-xaero-save="${escapeHtml(layer.id)}">Save</button>
+          <button class="ghost-button" type="button" data-xaero-align="${escapeHtml(layer.id)}" aria-pressed="${aligning}">${aligning ? 'Cancel align' : 'Align by click'}</button>
+          <button class="ghost-button danger" type="button" data-xaero-delete="${escapeHtml(layer.id)}">Delete</button>
+        </div>
+      </li>`;
+    }).join('')
+    : '<li class="area-explorer-empty">No Xaero map uploaded yet.</li>';
+  const hint = $('#areaExplorerAlignHint');
+  if (hint) hint.hidden = !ae.alignLayerId;
+}
+
+/** Sends the PNG as the request body, reporting progress; the new layer. */
+function sendXaeroMapUpload(file, params, onProgress, retryInvalidCsrf = true) {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open('POST', `/api/admin/area-explorer/layers?${params}`);
+    request.setRequestHeader('Content-Type', 'image/png');
+    if (state.csrfToken) request.setRequestHeader('X-CSRF-Token', state.csrfToken);
+    request.upload.addEventListener('progress', event => { if (event.lengthComputable) onProgress(event.loaded / event.total); });
+    request.addEventListener('load', () => {
+      let payload = {};
+      try { payload = JSON.parse(request.responseText || '{}'); } catch { /* not JSON: an error page */ }
+      if (retryInvalidCsrf && request.status === 403 && payload.error === 'Invalid CSRF token.') {
+        refreshCsrfToken().then(() => sendXaeroMapUpload(file, params, onProgress, false)).then(resolve, reject);
+        return;
+      }
+      if (request.status < 200 || request.status >= 300) reject(new Error(payload.error || `HTTP ${request.status}`));
+      else resolve(payload.layer);
+    });
+    request.addEventListener('error', () => reject(new Error('The upload was interrupted.')));
+    request.send(file);
+  });
+}
+
+async function uploadXaeroMap(form) {
+  const ae = areaExplorerState();
+  const file = $('#xaeroMapFile').files[0];
+  const status = $('#xaeroMapUploadStatus');
+  if (!file || ae.uploading) return;
+  const params = new URLSearchParams({
+    server: $('#xaeroMapServer').value.trim(),
+    dimension: $('#xaeroMapDimension').value.trim(),
+    name: $('#xaeroMapName').value.trim() || file.name.replace(/\.png$/i, ''),
+    x: $('#xaeroMapX').value,
+    z: $('#xaeroMapZ').value,
+    blocksPerPixel: $('#xaeroMapScale').value || '1'
+  });
+  ae.uploading = true;
+  form.querySelector('button[type="submit"]').disabled = true;
+  status.hidden = false;
+  try {
+    const layer = await sendXaeroMapUpload(file, params, share => {
+      status.textContent = share < 1 ? `Uploading... ${Math.round(share * 100)}%` : 'Cutting the map into tiles...';
+    });
+    status.textContent = `Uploaded: ${formatNumber(layer.tileCount)} tiles.`;
+    form.reset();
+    $('#xaeroMapScale').value = '1';
+    ae.layers = [...ae.layers.filter(item => item.id !== layer.id), layer];
+    const scope = `${layer.server}|${layer.dimension}`;
+    if (ae.scope !== scope) {
+      ae.scope = scope;
+      ae.offset = 0;
+      await Promise.all([loadAreaExplorerFinds(), loadAreaExplorerMap()]);
+    }
+    renderAreaExplorerScopes();
+    renderXaeroMapLayers();
+    fitAreaExplorerMap();
+    drawAreaExplorerMap();
+  } catch (error) {
+    status.textContent = `Upload failed: ${error.message}`;
+  } finally {
+    ae.uploading = false;
+    form.querySelector('button[type="submit"]').disabled = false;
+  }
+}
+
+async function saveXaeroMapLayer(id, changes) {
+  const ae = areaExplorerState();
+  const { layer } = await patchJson(`/api/admin/area-explorer/layers/${encodeURIComponent(id)}`, changes);
+  ae.layers = ae.layers.map(item => (item.id === layer.id ? layer : item));
+  renderXaeroMapLayers();
+  drawAreaExplorerMap();
+}
+
+/** Align mode: the spot clicked on the map is where the layer puts it now; the real one is asked for. */
+async function alignXaeroMapLayer(x, z) {
+  const ae = areaExplorerState();
+  const layer = ae.layers.find(item => item.id === ae.alignLayerId);
+  if (!layer) return;
+  const hereX = Math.floor(x), hereZ = Math.floor(z);
+  const answer = prompt(`Real coordinates of the spot you clicked (the map puts it at X ${hereX} Z ${hereZ}). Enter X and Z:`, `${hereX} ${hereZ}`);
+  if (answer === null) return;
+  const numbers = (answer.match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
+  if (numbers.length < 2) throw new Error('Enter two numbers: X and Z.');
+  // "X Y Z" as F3 shows it works too
+  const [realX, realZ] = numbers.length >= 3 ? [numbers[0], numbers[2]] : numbers;
+  ae.alignLayerId = null;
+  await saveXaeroMapLayer(layer.id, { originX: layer.originX + Math.floor(realX) - hereX, originZ: layer.originZ + Math.floor(realZ) - hereZ });
+}
+
+function setupXaeroMap() {
+  const ae = areaExplorerState();
+  $('#areaExplorerShowXaero')?.addEventListener('change', event => {
+    ae.showXaero = event.target.checked;
+    try { localStorage.setItem('areaExplorerShowXaero', String(ae.showXaero)); } catch { /* remembered for this visit only */ }
+    drawAreaExplorerMap();
+  });
+  $('#xaeroMapForm')?.addEventListener('submit', event => {
+    event.preventDefault();
+    uploadXaeroMap(event.currentTarget);
+  });
+  $('#xaeroMapLayers')?.addEventListener('click', async event => {
+    const item = event.target.closest('[data-xaero-layer]');
+    if (!item) return;
+    const id = item.dataset.xaeroLayer;
+    const layer = ae.layers.find(entry => entry.id === id);
+    if (!layer) return;
+    try {
+      if (event.target.closest('[data-xaero-save]')) {
+        const changes = {};
+        item.querySelectorAll('[data-xaero-field]').forEach(input => { changes[input.dataset.xaeroField] = input.value; });
+        await saveXaeroMapLayer(id, changes);
+      } else if (event.target.closest('[data-xaero-align]')) {
+        ae.alignLayerId = ae.alignLayerId === id ? null : id;
+        const scope = `${layer.server}|${layer.dimension}`;
+        if (ae.alignLayerId && ae.scope !== scope) {
+          ae.scope = scope;
+          ae.offset = 0;
+          renderAreaExplorerScopes();
+          await Promise.all([loadAreaExplorerFinds(), loadAreaExplorerMap()]);
+        }
+        renderXaeroMapLayers();
+        if (ae.alignLayerId) $('#areaExplorerMap')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } else if (event.target.closest('[data-xaero-delete]') && confirm(`Delete the map "${layer.name}"? Its tiles are removed for good.`)) {
+        await deleteJson(`/api/admin/area-explorer/layers/${encodeURIComponent(id)}`);
+        ae.layers = ae.layers.filter(entry => entry.id !== id);
+        if (ae.alignLayerId === id) ae.alignLayerId = null;
+        renderAreaExplorerScopes();
+        renderXaeroMapLayers();
+        drawAreaExplorerMap();
+      }
+    } catch (error) { setBanner(`Could not change the map: ${error.message}`); }
+  });
+}
+
 // Tokens for the mod (administrators)
 
 async function loadAreaExplorerTokens() {
@@ -6553,8 +6874,10 @@ function setupAreaExplorer() {
     ae.scope = event.target.value;
     ae.offset = 0;
     ae.selectedId = null;
+    ae.alignLayerId = null;
     $('#areaExplorerSelected').hidden = true;
     renderAreaExplorerScopes();
+    renderXaeroMapLayers();
     reloadScope();
   });
   $$('[data-area-kind]').forEach(button => button.addEventListener('click', () => {
@@ -11703,6 +12026,7 @@ $('#playerSkinsOverlay').addEventListener('click', event => {
 });
 
 setupAreaExplorer();
+setupXaeroMap();
 updateNavLabel('chat');
 initializeDashboardBrandVisibility();
 initLoopingCarousels();

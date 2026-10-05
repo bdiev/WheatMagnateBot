@@ -12702,7 +12702,7 @@ body.kill-aura-modal-open {
 
 .area-explorer-finds-panel {
   grid-column: 2;
-  grid-row: 1 / span 2;
+  grid-row: 1 / span 3;
   min-width: 0;
 }
 
@@ -12826,7 +12826,7 @@ body.kill-aura-modal-open {
 .area-explorer-map {
   display: block;
   width: 100%;
-  height: 420px;
+  height: 560px;
   cursor: grab;
   touch-action: none;
 }
@@ -13012,11 +13012,130 @@ body.kill-aura-modal-open {
 .area-explorer-tokens li button { grid-column: 2; grid-row: 1 / span 2; min-width: 0; }
 .area-explorer-tokens li.is-revoked { opacity: 0.6; }
 
+.area-explorer-map-tools {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.area-explorer-map-tools .area-explorer-map-reset { position: static; }
+
+.area-explorer-map-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: var(--card-radius);
+  background: color-mix(in srgb, var(--panel) 85%, transparent);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.area-explorer-map-toggle[hidden] { display: none; }
+
+.area-explorer-map-cursor {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  padding: 4px 8px;
+  border-radius: var(--card-radius);
+  background: color-mix(in srgb, var(--panel) 85%, transparent);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.area-explorer-align-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  max-width: calc(100% - 180px);
+  margin: 0;
+  padding: 6px 12px;
+  transform: translateX(-50%);
+  border: 2px dashed var(--warn);
+  border-radius: var(--card-radius);
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  font-size: 13px;
+  text-align: center;
+  pointer-events: none;
+}
+
+.area-explorer-align-hint[hidden] { display: none; }
+
+.xaero-map-panel { grid-column: 1; min-width: 0; }
+
+.xaero-map-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 14px;
+}
+
+.xaero-map-form label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.xaero-map-form input { min-width: 0; height: var(--button-height); }
+.xaero-map-form input[type="file"] { height: auto; padding: 6px 0; }
+.xaero-map-form .xaero-map-file,
+.xaero-map-form button { grid-column: 1 / -1; }
+
+.xaero-map-status {
+  margin: 0 14px 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.xaero-map-status[hidden] { display: none; }
+
+.xaero-map-layers {
+  margin: 0;
+  padding: 0 14px 14px;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+
+.xaero-map-layers li[data-xaero-layer] {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 2px solid var(--line-soft);
+  border-radius: var(--card-radius);
+}
+
+.xaero-map-layers li.is-aligning { border-color: var(--warn); border-style: dashed; }
+.xaero-map-layer-head { display: grid; gap: 2px; min-width: 0; }
+.xaero-map-layer-head strong { overflow-wrap: anywhere; }
+.xaero-map-layer-head small { color: var(--muted); }
+
+.xaero-map-layer-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.xaero-map-layer-fields label { display: grid; gap: 2px; color: var(--muted); font-size: 12px; }
+.xaero-map-layer-fields input { min-width: 0; height: var(--button-height); }
+.xaero-map-layer-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.xaero-map-layer-actions button { min-width: 0; }
+.xaero-map-layer-actions .danger { color: var(--danger); }
+
 @media (max-width: 900px) {
   .area-explorer-layout { grid-template-columns: minmax(0, 1fr); }
   .area-explorer-status-panel,
   .area-explorer-tokens-panel,
+  .xaero-map-panel,
   .area-explorer-finds-panel { grid-column: 1; grid-row: auto; }
+  .area-explorer-align-hint { max-width: calc(100% - 20px); bottom: 40px; }
   .area-explorer-map { height: 320px; }
   .area-explorer-find { grid-template-columns: 48px minmax(0, 1fr); padding: 12px 14px; }
   .area-explorer-find-meta { grid-column: 2; justify-items: start; text-align: left; }
