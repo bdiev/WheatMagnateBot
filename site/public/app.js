@@ -6176,8 +6176,6 @@ const AREA_EXPLORER_RADII = Object.freeze([30_000, 50_000, 100_000]);
 // Signs under loot under markers under bases: the rarer, the higher
 const AREA_EXPLORER_KIND_ORDER = Object.freeze({ SIGN: 0, ITEM: 1, MARKER: 2, BASE: 3 });
 const AREA_EXPLORER_MAX_SCALE = 16;
-// Finds closer than this on screen, in pixels, are drawn as one bubble
-const AREA_EXPLORER_CLUSTER_PX = 40;
 
 function areaExplorerState() {
   if (!state.areaExplorer) {
@@ -6189,8 +6187,6 @@ function areaExplorerState() {
       showXaero: readAreaExplorerSetting('areaExplorerShowXaero', 'true') !== 'false',
       showFinds: readAreaExplorerSetting('areaExplorerShowFinds', 'true') !== 'false',
       sort: ['newest', 'nearest', 'name'].includes(readAreaExplorerSetting('areaExplorerSort', 'newest')) ? readAreaExplorerSetting('areaExplorerSort', 'newest') : 'newest',
-      // What the last frame drew where, for clicks and hovers: single finds and clusters of them
-      drawn: [],
       extent: readAreaExplorerExtent()
     };
   }
@@ -6309,36 +6305,11 @@ function renderAreaExplorerScopes() {
     ? `${formatNumber(counts.all)} finds over every run`
     : 'Nothing uploaded by the mod yet.';
   renderAreaExplorerMarkerNames(scope);
-  renderAreaExplorerDimensions(scopes);
   renderAreaExplorerHighlights(scope);
   const [server, dimension] = ae.scope.split('|');
   const toggle = $('#areaExplorerShowXaero');
   toggle.closest('label').hidden = !ae.mapScopes.some(item => item.server === server && item.dimension === dimension);
   toggle.checked = ae.showXaero;
-}
-
-const AREA_EXPLORER_DIMENSIONS = Object.freeze([
-  ['overworld', 'Overworld', 'grass_block'], ['the_nether', 'Nether', 'netherrack'], ['the_end', 'End', 'end_stone']
-]);
-
-/** The dimensions of this server there's anything of, to switch between; hidden with just one. */
-function renderAreaExplorerDimensions(scopes) {
-  const ae = areaExplorerState();
-  const container = $('#areaExplorerDimensions');
-  const [server] = ae.scope.split('|');
-  const known = new Map(AREA_EXPLORER_DIMENSIONS.map(([id, label, icon], index) => [id, { label, icon, index }]));
-  const here = scopes.filter(scope => scope.server === server)
-    .sort((a, b) => (known.get(a.dimension)?.index ?? 9) - (known.get(b.dimension)?.index ?? 9) || a.dimension.localeCompare(b.dimension));
-  container.hidden = here.length < 2;
-  container.innerHTML = here.map(scope => {
-    const value = `${scope.server}|${scope.dimension}`;
-    const info = known.get(scope.dimension) || { label: prettyDimension(scope.dimension), icon: 'map' };
-    const active = value === ae.scope;
-    return `<button class="area-explorer-dimension${active ? ' active' : ''}" type="button" data-area-dimension="${escapeHtml(value)}" aria-pressed="${active}" title="${escapeHtml(prettyDimension(scope.dimension))}">
-      <img src="${escapeHtml(areaExplorerIconUrl(info.icon) || '/items/Map.png')}" alt="" width="20" height="20">
-      <span>${escapeHtml(info.label)}</span>
-    </button>`;
-  }).join('');
 }
 
 /**
@@ -6567,10 +6538,10 @@ async function loadAreaExplorerMap() {
   if (ae.scope !== scope || ae.mapRequestId !== requestId) return;
   // Sorted once, so each frame just draws them in order
   ae.points = data.points
-    .map(([id, kind, x, z, name = '']) => ({ id, kind, x, z, name }))
+    .map(([id, kind, x, z]) => ({ id, kind, x, z }))
     .sort((a, b) => AREA_EXPLORER_KIND_ORDER[a.kind] - AREA_EXPLORER_KIND_ORDER[b.kind]);
-  // A new server or dimension opens on what's been found and mapped there; another kind of find keeps the view
-  if (ae.pointsScope !== scope || !ae.view) fitAreaExplorerToData();
+  // A new server or dimension shows its whole territory; another kind of find keeps the view
+  if (ae.pointsScope !== scope || !ae.view) fitAreaExplorerMap();
   ae.pointsScope = scope;
   queueAreaExplorerMapDraw();
 }
@@ -6659,39 +6630,6 @@ function fitAreaExplorerMap() {
   clampAreaExplorerView();
 }
 
-/**
- * Fits what's there - the finds, the mapped regions and the explorer inside the territory, with a
- * margin - or the whole territory with nothing yet. The farthest 2% each way are left out, so a
- * few stray finds don't shrink everything else to a speck.
- */
-function fitAreaExplorerToData() {
-  const ae = areaExplorerState();
-  const canvas = $('#areaExplorerMap');
-  const xs = [], zs = [];
-  const add = (x, z) => { if (areaExplorerInTerritory(x, z)) { xs.push(x); zs.push(z); } };
-  for (const point of ae.points) add(point.x, point.z);
-  if (ae.regionMap?.scope === ae.scope) {
-    for (const key of ae.regionMap.levels[0]) {
-      const [rx, rz] = key.split(',').map(Number);
-      add(rx * XAERO_REGION_PX + XAERO_REGION_PX / 2, rz * XAERO_REGION_PX + XAERO_REGION_PX / 2);
-    }
-  }
-  const live = areaExplorerLiveStatus();
-  if (live) add(live.x, live.z);
-  if (!xs.length) {
-    fitAreaExplorerMap();
-    return;
-  }
-  xs.sort((a, b) => a - b);
-  zs.sort((a, b) => a - b);
-  const cut = Math.floor(xs.length * 0.02);
-  const minX = xs[cut], maxX = xs[xs.length - 1 - cut], minZ = zs[cut], maxZ = zs[zs.length - 1 - cut];
-  const width = canvas?.clientWidth || 600, height = canvas?.clientHeight || 420;
-  const spanX = Math.max(maxX - minX, 1024) * 1.15, spanZ = Math.max(maxZ - minZ, 1024) * 1.15;
-  ae.view = { cx: (minX + maxX) / 2, cz: (minZ + maxZ) / 2, scale: Math.min(width / spanX, height / spanZ) };
-  clampAreaExplorerView();
-}
-
 /** Centres the map on a spot, zoomed in close enough to see around it. */
 function focusAreaExplorerMap(x, z) {
   const ae = areaExplorerState();
@@ -6758,7 +6696,7 @@ function areaExplorerColors(canvas) {
   ae.colorsTheme = theme;
   ae.colors = {
     bg: color('--area-map-bg'), grid: color('--area-map-grid'), axis: color('--area-map-axis'), area: color('--area-map-area'),
-    player: color('--area-player'), text: color('--text'), muted: color('--muted'), font: styles.fontFamily || 'sans-serif',
+    player: color('--area-player'), text: color('--text'), muted: color('--muted'),
     SIGN: color('--area-sign'), ITEM: color('--area-loot'), MARKER: color('--area-marker'), BASE: color('--area-base')
   };
   return ae.colors;
@@ -6835,69 +6773,20 @@ function drawAreaExplorerMap() {
     ctx.fillRect(x1, z1, x2 - x1, z2 - z1);
   }
 
-  // Finds close together on screen are drawn as one bubble with how many there are, in the colour
-  // of the rarest kind among them, so thousands of signs don't bury the bases and markers.
-  // Zoomed in, they come apart. ae.drawn keeps what went where, for clicks and hovers.
   let selected = null;
-  const drawn = [];
-  if (ae.showFinds) {
-    const groups = new Map();
-    const cell = AREA_EXPLORER_CLUSTER_PX;
-    for (const point of ae.points) {
-      const sx = width / 2 + (point.x - view.cx) * view.scale, sz = height / 2 + (point.z - view.cz) * view.scale;
-      if (sx < -6 || sz < -6 || sx > width + 6 || sz > height + 6 || !areaExplorerInTerritory(point.x, point.z)) continue;
-      const key = `${Math.floor(sx / cell)},${Math.floor(sz / cell)}`;
-      let group = groups.get(key);
-      if (!group) groups.set(key, group = { points: [], sx: 0, sz: 0, top: point });
-      group.points.push(point);
-      group.sx += sx;
-      group.sz += sz;
-      if (AREA_EXPLORER_KIND_ORDER[point.kind] > AREA_EXPLORER_KIND_ORDER[group.top.kind]) group.top = point;
-    }
-    // Bubbles of rarer kinds last, on top
-    const ordered = [...groups.values()].sort((a, b) => AREA_EXPLORER_KIND_ORDER[a.top.kind] - AREA_EXPLORER_KIND_ORDER[b.top.kind]);
-    ctx.font = `700 11px ${colors.font}`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    for (const group of ordered) {
-      const count = group.points.length;
-      if (count === 1) {
-        const point = group.points[0];
-        const sx = group.sx, sz = group.sz;
-        const size = point.kind === 'BASE' || point.kind === 'MARKER' ? 4.5 : point.kind === 'ITEM' ? 3.5 : 2.5;
-        ctx.fillStyle = colors[point.kind];
-        ctx.beginPath();
-        // Markers are diamonds, the rest dots
-        if (point.kind === 'MARKER') { ctx.moveTo(sx, sz - size); ctx.lineTo(sx + size, sz); ctx.lineTo(sx, sz + size); ctx.lineTo(sx - size, sz); ctx.closePath(); }
-        else ctx.arc(sx, sz, size, 0, Math.PI * 2);
-        ctx.fill();
-        drawn.push({ sx, sz, r: size + 2, point });
-        if (point.id === ae.selectedId) selected = { sx, sz, size };
-        continue;
-      }
-      const sx = group.sx / count, sz = group.sz / count;
-      const r = Math.min(16, 8 + Math.log2(count) * 1.5);
-      ctx.globalAlpha = 0.88;
-      ctx.fillStyle = colors[group.top.kind];
-      ctx.beginPath(); ctx.arc(sx, sz, r, 0, Math.PI * 2); ctx.fill();
-      ctx.globalAlpha = 1;
-      ctx.strokeStyle = colors.bg;
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      const label = count >= 1000 ? `${(count / 1000).toFixed(count >= 10_000 ? 0 : 1)}k` : String(count);
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
-      ctx.strokeText(label, sx, sz + 0.5);
-      ctx.fillStyle = '#fff';
-      ctx.fillText(label, sx, sz + 0.5);
-      drawn.push({ sx, sz, r, points: group.points });
-      const picked = group.points.find(point => point.id === ae.selectedId);
-      if (picked) selected = { sx, sz, size: r - 3 };
-    }
-    ctx.textAlign = 'start';
-    ctx.textBaseline = 'alphabetic';
+  for (const point of ae.points) {
+    if (!ae.showFinds) break;
+    const sx = width / 2 + (point.x - view.cx) * view.scale, sz = height / 2 + (point.z - view.cz) * view.scale;
+    if (sx < -6 || sz < -6 || sx > width + 6 || sz > height + 6 || !areaExplorerInTerritory(point.x, point.z)) continue;
+    const size = point.kind === 'BASE' || point.kind === 'MARKER' ? 4.5 : point.kind === 'ITEM' ? 3.5 : 2.5;
+    ctx.fillStyle = colors[point.kind];
+    ctx.beginPath();
+    // Markers are diamonds, the rest dots
+    if (point.kind === 'MARKER') { ctx.moveTo(sx, sz - size); ctx.lineTo(sx + size, sz); ctx.lineTo(sx, sz + size); ctx.lineTo(sx - size, sz); ctx.closePath(); }
+    else ctx.arc(sx, sz, size, 0, Math.PI * 2);
+    ctx.fill();
+    if (point.id === ae.selectedId) selected = { sx, sz, size };
   }
-  ae.drawn = drawn;
   if (selected) {
     ctx.strokeStyle = colors.text;
     ctx.lineWidth = 2;
@@ -7102,26 +6991,12 @@ function bindAreaExplorerMap() {
     const rect = canvas.getBoundingClientRect();
     return [event.clientX - rect.left, event.clientY - rect.top];
   };
-  /** What was drawn under a spot on the canvas: a find or a bubble of them, the closest within reach. */
-  const targetAt = (sx, sz, reach) => {
-    let best = null, bestDistance = Infinity;
-    for (const target of ae.drawn) {
-      const distance = Math.hypot(target.sx - sx, target.sz - sz);
-      if (distance <= target.r + reach && distance < bestDistance) { best = target; bestDistance = distance; }
-    }
-    return best;
-  };
   const showCoordinates = (sx, sz) => {
     if (!ae.view) return;
     const x = ae.view.cx + (sx - canvas.clientWidth / 2) / ae.view.scale;
     const z = ae.view.cz + (sz - canvas.clientHeight / 2) / ae.view.scale;
-    // What's under the pointer, beside where it is
-    const target = ae.showFinds ? targetAt(sx, sz, 4) : null;
-    const under = target?.point ? ` · ${target.point.name || AREA_EXPLORER_KIND_LABELS[target.point.kind]}`
-      : target ? ` · ${formatNumber(target.points.length)} finds` : '';
-    cursor.textContent = `X ${Math.floor(x)} · Z ${Math.floor(z)}${under}`;
+    cursor.textContent = `X ${Math.floor(x)} · Z ${Math.floor(z)}`;
     cursor.hidden = false;
-    canvas.classList.toggle('is-over-find', Boolean(target));
   };
 
   canvas.addEventListener('wheel', event => {
@@ -7179,13 +7054,14 @@ function bindAreaExplorerMap() {
     // A tap shows where it landed: there is no hovering on a phone
     if (event.pointerType !== 'mouse') showCoordinates(sx, sz);
     if (!ae.showFinds) return;
-    const target = targetAt(sx, sz, event.pointerType === 'mouse' ? 4 : 12);
-    // A bubble opens up: zoomed in on it until its finds come apart
-    if (target?.points) {
-      zoomAreaExplorerMap(3, target.sx, target.sz);
-      return;
+    let best = null, bestDistance = event.pointerType === 'mouse' ? 10 : 20;
+    for (const point of ae.points) {
+      if (!areaExplorerInTerritory(point.x, point.z)) continue;
+      const [px, pz] = areaExplorerToScreen(ae.view, canvas, point.x, point.z);
+      const distance = Math.hypot(px - sx, pz - sz);
+      if (distance < bestDistance) { best = point; bestDistance = distance; }
     }
-    selectAreaExplorerFind(target?.point.id || null).catch(error => setBanner(error.message));
+    selectAreaExplorerFind(best?.id || null).catch(error => setBanner(error.message));
   });
   canvas.addEventListener('pointercancel', release);
   canvas.addEventListener('lostpointercapture', release);
@@ -7313,11 +7189,6 @@ function setupAreaExplorer() {
       other.setAttribute('aria-pressed', String(active));
     });
   };
-  // Another dimension of the server
-  $('#areaExplorerDimensions').addEventListener('click', event => {
-    const button = event.target.closest('[data-area-dimension]');
-    if (button && button.dataset.areaDimension !== ae.scope) changeScope(button.dataset.areaDimension);
-  });
   // A highlight lists its finds: a kind of marker, or a loot item by name
   $('#areaExplorerHighlights').addEventListener('click', event => {
     const chip = event.target.closest('[data-area-filter-kind]');

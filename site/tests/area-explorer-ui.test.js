@@ -33,7 +33,7 @@ function fixture() {
     areaExplorerScopeParams: params => JSON.stringify({ scope: ae.scope, ...params }),
     areaExplorerMarkerFilter: () => ae.markerName,
     renderAreaExplorerFind: find => find.name,
-    renderAreaExplorerPager() {}, bindAreaExplorerMap() {}, fitAreaExplorerMap() {}, fitAreaExplorerToData() {}, queueAreaExplorerMapDraw() {},
+    renderAreaExplorerPager() {}, bindAreaExplorerMap() {}, fitAreaExplorerMap() {}, queueAreaExplorerMapDraw() {},
     ensureItemIcons: async () => ({}),
     loadXaeroRegionMap: async () => {}, escapeHtml: String,
     renderAreaExplorerStatus() {},

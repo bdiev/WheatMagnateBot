@@ -242,13 +242,10 @@ function testWiring() {
   assert.match(appSource, /'End Portal': 'ender_eye'/, 'a marker shows the item that stands for it');
   assert.match(appSource, /data-fallback="\$\{escapeHtml\(icon\.fallback\)\}"/, 'an icon that fails falls back to its kind');
   assert.match(appSource, /class="area-explorer-find-count"/, 'a stack shows its size on the icon');
-  // The page as a whole: dimensions, highlights, order, bubbles of finds, a view fitted to the data
-  for (const id of ['areaExplorerDimensions', 'areaExplorerHighlights', 'areaExplorerSort']) {
+  // Highlights and the list's order
+  for (const id of ['areaExplorerHighlights', 'areaExplorerSort']) {
     assert.ok(indexSource.includes(`id="${id}"`), `${id} is on the page`);
   }
-  assert.match(appSource, /if \(ae\.pointsScope !== scope \|\| !ae\.view\) fitAreaExplorerToData\(\);/, 'a scope opens on its data, not the empty territory');
-  assert.match(appSource, /const AREA_EXPLORER_CLUSTER_PX = \d+;/, 'finds close on screen are drawn as one bubble');
-  assert.match(appSource, /if \(target\?\.points\) \{\s+zoomAreaExplorerMap\(3, target\.sx, target\.sz\);/, 'a bubble zooms in when clicked');
   assert.match(appSource, /data-area-filter-kind="MARKER" data-area-filter-name=/, 'a marker highlight lists that kind of marker');
   assert.match(appSource, /sort: ae\.sort === 'newest' \? '' : ae\.sort, \.\.\.near/, 'the list asks for its order');
   assert.match(indexSource, /id="areaExplorerMarkerName"/, 'and a pick of what they mark');
