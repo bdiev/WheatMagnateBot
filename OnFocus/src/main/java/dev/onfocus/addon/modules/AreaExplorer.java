@@ -2673,6 +2673,7 @@ public class AreaExplorer extends Module {
         status.addProperty("mode", mode.get().name());
         status.addProperty("paused", paused);
         status.addProperty("x", (int) Math.floor(mc.player.getX()));
+        status.addProperty("y", (int) Math.floor(mc.player.getY()));
         status.addProperty("z", (int) Math.floor(mc.player.getZ()));
         if (area != null && phase != Phase.SPIRAL && phase != Phase.IDLE) {
             status.addProperty("percent", explored.size() * 100.0 / area.total());

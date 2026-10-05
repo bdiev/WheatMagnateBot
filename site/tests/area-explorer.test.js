@@ -16,6 +16,7 @@ const {
 
 const migrationSql = fs.readFileSync(path.join(__dirname, '..', 'migrations', '067_area_explorer.sql'), 'utf8');
 const markersMigrationSql = fs.readFileSync(path.join(__dirname, '..', 'migrations', '070_area_explorer_markers.sql'), 'utf8');
+const statusYMigrationSql = fs.readFileSync(path.join(__dirname, '..', 'migrations', '071_area_explorer_status_y.sql'), 'utf8');
 const indexSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
 const appSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
 const serverSource = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
@@ -72,6 +73,7 @@ async function testIngestAndQueries() {
   const db = new PGlite();
   try {
     await db.exec(migrationSql);
+    await db.exec(statusYMigrationSql);
     const published = [];
     const logs = [];
     const service = createAreaExplorerService({
@@ -109,7 +111,7 @@ async function testIngestAndQueries() {
         { kind: 'BASE', x: 1100, y: 40, z: 1000, foundAt: NOW, name: 'Base #3', details: 'score 25' },
         { kind: 'NOPE', x: 0, y: 0, z: 0, foundAt: NOW, name: 'x' }
       ],
-      status: { player: 'Steve', phase: 'SWEEP', mode: 'Area', percent: 12.5, etaSeconds: 3600, x: 10, z: 20, runFinds: { bases: 2, signs: 1, items: 1 } }
+      status: { player: 'Steve', phase: 'SWEEP', mode: 'Area', percent: 12.5, etaSeconds: 3600, x: 10, y: -40, z: 20, runFinds: { bases: 2, signs: 1, items: 1 } }
     };
     const first = await service.ingest(token, batch, NOW);
     assert.deepEqual(first, { received: 7, accepted: 6, added: 4, duplicates: 2 },
@@ -129,6 +131,7 @@ async function testIngestAndQueries() {
     assert.equal(summary.statuses[0].player, 'Steve');
     assert.equal(summary.statuses[0].tokenName, 'Gaming PC');
     assert.equal(summary.statuses[0].runFinds.bases, 2);
+    assert.deepEqual([summary.statuses[0].x, summary.statuses[0].y, summary.statuses[0].z], [10, -40, 20], 'the explorer\'s height comes with its position');
 
     const url = query => new URL(`http://x/api/area-explorer/finds?${query}`);
     const searched = await service.getFinds(url('server=oldfrog.org&dimension=overworld&q=SPAWN'));
@@ -172,6 +175,7 @@ async function testMarkers() {
     await assert.rejects(db.query(`INSERT INTO area_explorer_finds (server, dimension, kind, x, y, z, found_at, name, dedupe_key)
       VALUES ('a', 'overworld', 'MARKER', 0, 0, 0, NOW(), 'End Portal', 'k')`), /check/i);
     await db.exec(markersMigrationSql);
+    await db.exec(statusYMigrationSql);
     const service = createAreaExplorerService({
       pool: poolFor(db), hashToken, readJsonBody: async () => ({}), sendJson() {}, sendError() {}, enforceRateLimit: () => true
     });
@@ -214,6 +218,15 @@ function testWiring() {
   assert.match(indexSource, /id="areaExplorerMarkerName"/, 'and a pick of what they mark');
   assert.match(appSource, /MARKER: 'Marker'/);
   assert.match(appSource, /name: areaExplorerMarkerFilter\(\)/, 'the pick narrows the list and the map');
+  // The page: no hand-uploaded PNGs any more, the run's height shown, a map that works on a phone
+  assert.doesNotMatch(indexSource, /xaeroMap|xaero-map-panel/, 'the Xaero PNG upload is gone');
+  assert.doesNotMatch(appSource, /\/api\/area-explorer\/layers|setupXaeroMap/);
+  assert.match(appSource, /` · Y \$\{status\.y\}`/, 'the run shows its Y between X and Z');
+  for (const id of ['areaExplorerZoomIn', 'areaExplorerZoomOut', 'areaExplorerMapReset', 'areaExplorerFullscreen', 'areaExplorerSelected']) {
+    assert.ok(indexSource.includes(`id="${id}"`), `${id} is on the map`);
+  }
+  assert.match(appSource, /if \(canvas\.width !== backingWidth \|\| canvas\.height !== backingHeight\)/, 'the canvas is only reallocated when its size changes');
+  assert.match(appSource, /if \(full \|\| ae\.findsDirty \|\| ae\.pointsScope !== ae\.scope\)/, 'a status update does not reload every map point');
 }
 
 (async () => {

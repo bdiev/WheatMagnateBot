@@ -13,7 +13,7 @@
     <link rel="icon" type="image/png" href="/items/Wheat.png">
     <link rel="apple-touch-icon" href="/items/Wheat.png">
     <script src="/theme-init.js?v=136"></script>
-  <link rel="stylesheet" href="/styles.css?v=274">
+  <link rel="stylesheet" href="/styles.css?v=275">
     <script src="/pwa-update.js" defer></script>
     <script src="/page-transitions.js?v=1" defer></script>
   </head>
@@ -1060,6 +1060,52 @@
 
       <section id="tab-area-explorer" class="tab-panel" data-panel="area-explorer">
         <section class="area-explorer-layout">
+          <section class="panel area-explorer-map-panel">
+            <div class="panel-head area-explorer-map-head">
+              <div>
+                <h2>Explored Map</h2>
+                <p id="areaExplorerScopeSummary">Bases, markers, loot and signs from every run.</p>
+              </div>
+              <label class="area-explorer-scope">
+                <span>Server / dimension</span>
+                <select id="areaExplorerScope" aria-label="Server and dimension"></select>
+              </label>
+            </div>
+            <div class="area-explorer-map-bar">
+              <div class="chart-controls area-explorer-extent" role="group" aria-label="Territory around 0, 0">
+                <button class="chart-range-button" type="button" data-area-extent="30000" aria-pressed="false" title="30,000 × 30,000 blocks">30k<span class="area-explorer-extent-tail"> × 30k</span></button>
+                <button class="chart-range-button" type="button" data-area-extent="50000" aria-pressed="false" title="50,000 × 50,000 blocks">50k<span class="area-explorer-extent-tail"> × 50k</span></button>
+                <button class="chart-range-button" type="button" data-area-extent="100000" aria-pressed="false" title="100,000 × 100,000 blocks">100k<span class="area-explorer-extent-tail"> × 100k</span></button>
+              </div>
+              <label class="area-explorer-map-toggle" hidden><input id="areaExplorerShowXaero" type="checkbox" checked> Xaero map</label>
+            </div>
+            <div id="areaExplorerMapWrap" class="area-explorer-map-wrap">
+              <canvas id="areaExplorerMap" class="area-explorer-map" aria-label="Map of the finds: drag to move, wheel or pinch to zoom, tap a point for details"></canvas>
+              <div class="area-explorer-map-legend" aria-hidden="true">
+                <span class="legend-base">Base</span><span class="legend-marker">Marker</span><span class="legend-item">Loot</span><span class="legend-sign">Sign</span><span class="legend-player">Explorer</span>
+              </div>
+              <div class="area-explorer-map-buttons" role="group" aria-label="Map view">
+                <button id="areaExplorerZoomIn" class="area-explorer-map-button" type="button" aria-label="Zoom in" title="Zoom in">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                </button>
+                <button id="areaExplorerZoomOut" class="area-explorer-map-button" type="button" aria-label="Zoom out" title="Zoom out">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg>
+                </button>
+                <button id="areaExplorerMapReset" class="area-explorer-map-button" type="button" aria-label="Whole territory" title="Whole territory">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="1"/><path d="M12 9v6M9 12h6"/></svg>
+                </button>
+                <button id="areaExplorerFullscreen" class="area-explorer-map-button" type="button" aria-label="Full screen" title="Full screen" aria-pressed="false">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg>
+                </button>
+              </div>
+              <div class="area-explorer-map-status">
+                <span id="areaExplorerGrid"></span>
+                <span id="areaExplorerCursor" class="area-explorer-map-cursor" hidden></span>
+              </div>
+              <div id="areaExplorerSelected" class="area-explorer-selected" hidden></div>
+            </div>
+          </section>
+
           <section class="panel area-explorer-status-panel">
             <div class="panel-head">
               <div>
@@ -1073,93 +1119,33 @@
           </section>
 
           <section class="panel area-explorer-finds-panel">
-            <div class="panel-head area-explorer-finds-head">
+            <div class="panel-head">
               <div>
                 <h2>Finds</h2>
-                <p id="areaExplorerScopeSummary">Bases, signs and loot from every run, nothing twice.</p>
+                <p>Tap one to see it on the map.</p>
               </div>
-              <label class="area-explorer-scope">Server / dimension
-                <select id="areaExplorerScope" aria-label="Server and dimension"></select>
-              </label>
             </div>
             <div class="area-explorer-toolbar">
-              <div class="chart-controls" role="group" aria-label="Kind of find">
+              <div class="chart-controls area-explorer-kinds" role="group" aria-label="Kind of find">
                 <button class="chart-range-button active" type="button" data-area-kind="" aria-pressed="true">All <span data-area-count="all"></span></button>
                 <button class="chart-range-button" type="button" data-area-kind="BASE" aria-pressed="false">Bases <span data-area-count="BASE"></span></button>
                 <button class="chart-range-button" type="button" data-area-kind="MARKER" aria-pressed="false">Markers <span data-area-count="MARKER"></span></button>
                 <button class="chart-range-button" type="button" data-area-kind="ITEM" aria-pressed="false">Loot <span data-area-count="ITEM"></span></button>
                 <button class="chart-range-button" type="button" data-area-kind="SIGN" aria-pressed="false">Signs <span data-area-count="SIGN"></span></button>
               </div>
-              <label class="area-explorer-marker-name" hidden>
-                <select id="areaExplorerMarkerName" aria-label="What the markers mark"></select>
-              </label>
-              <input id="areaExplorerSearch" type="search" maxlength="100" autocomplete="off" placeholder="Search names and sign text..." aria-label="Search finds">
-            </div>
-            <div class="area-explorer-map-wrap">
-              <canvas id="areaExplorerMap" class="area-explorer-map" height="420" aria-label="Map of the finds: drag to move, wheel or pinch to zoom, click a point for details"></canvas>
-              <div class="area-explorer-map-legend" aria-hidden="true">
-                <span class="legend-base">Base</span><span class="legend-marker">Marker</span><span class="legend-item">Loot</span><span class="legend-sign">Sign</span><span class="legend-player">Explorer</span>
+              <div class="area-explorer-filters">
+                <label class="area-explorer-marker-name" hidden>
+                  <select id="areaExplorerMarkerName" aria-label="What the markers mark"></select>
+                </label>
+                <input id="areaExplorerSearch" type="search" maxlength="100" autocomplete="off" placeholder="Search names and sign text..." aria-label="Search finds">
               </div>
-              <div class="area-explorer-map-tools">
-                <div class="chart-controls area-explorer-extent" role="group" aria-label="Territory around 0, 0">
-                  <button class="chart-range-button" type="button" data-area-extent="30000" aria-pressed="false">30k × 30k</button>
-                  <button class="chart-range-button" type="button" data-area-extent="50000" aria-pressed="false">50k × 50k</button>
-                  <button class="chart-range-button" type="button" data-area-extent="100000" aria-pressed="false">100k × 100k</button>
-                </div>
-                <label class="area-explorer-map-toggle" hidden><input id="areaExplorerShowXaero" type="checkbox" checked> Xaero map</label>
-                <button id="areaExplorerMapReset" class="ghost-button area-explorer-map-reset" type="button">Whole area</button>
-              </div>
-              <span id="areaExplorerCursor" class="area-explorer-map-cursor" hidden></span>
-              <p id="areaExplorerAlignHint" class="area-explorer-align-hint" hidden>Click a spot whose real coordinates you know.</p>
             </div>
-            <div id="areaExplorerSelected" class="area-explorer-selected" hidden></div>
             <ol id="areaExplorerFinds" class="area-explorer-finds" aria-live="polite"></ol>
             <div class="area-explorer-pager">
               <button id="areaExplorerPrev" class="ghost-button" type="button" disabled>Previous</button>
               <span id="areaExplorerPage">-</span>
               <button id="areaExplorerNext" class="ghost-button" type="button" disabled>Next</button>
             </div>
-          </section>
-
-          <section class="panel xaero-map-panel admin-only" hidden>
-            <div class="panel-head">
-              <div>
-                <h2>Xaero Map</h2>
-                <p>The PNG from Xaero's Export button, drawn under the finds.</p>
-              </div>
-            </div>
-            <form id="xaeroMapForm" class="xaero-map-form">
-              <label class="xaero-map-file">PNG export
-                <input id="xaeroMapFile" type="file" accept="image/png,.png" required>
-              </label>
-              <label>Server
-                <input id="xaeroMapServer" type="text" maxlength="128" list="xaeroMapServers" autocomplete="off" required>
-                <datalist id="xaeroMapServers"></datalist>
-              </label>
-              <label>Dimension
-                <input id="xaeroMapDimension" type="text" maxlength="64" list="xaeroMapDimensions" autocomplete="off" required>
-                <datalist id="xaeroMapDimensions">
-                  <option value="overworld"></option>
-                  <option value="the_nether"></option>
-                  <option value="the_end"></option>
-                </datalist>
-              </label>
-              <label>Name
-                <input id="xaeroMapName" type="text" maxlength="80" placeholder="File name if empty" autocomplete="off">
-              </label>
-              <label title="World X of the image's top-left pixel">Top-left X
-                <input id="xaeroMapX" type="number" step="any" value="0" required>
-              </label>
-              <label title="World Z of the image's top-left pixel">Top-left Z
-                <input id="xaeroMapZ" type="number" step="any" value="0" required>
-              </label>
-              <label title="1 if the export is one pixel per block">Blocks / px
-                <input id="xaeroMapScale" type="number" step="any" min="0.0625" max="64" value="1" required>
-              </label>
-              <button type="submit">Upload</button>
-            </form>
-            <p id="xaeroMapUploadStatus" class="xaero-map-status" aria-live="polite" hidden></p>
-            <ul id="xaeroMapLayers" class="xaero-map-layers"></ul>
           </section>
 
           <section class="panel area-explorer-tokens-panel admin-only" hidden>
@@ -1612,6 +1598,6 @@
     <script src="/player-accent.js?v=1" defer></script>
     <script src="/vendor/skinview3d/skinview3d.bundle.js?v=3.4.1" defer></script>
     <script src="/minecraft-skin-viewer.js?v=6" defer></script>
-    <script src="/app.js?v=293" defer></script>
+    <script src="/app.js?v=294" defer></script>
   </body>
 </html>

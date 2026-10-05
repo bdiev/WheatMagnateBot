@@ -92,6 +92,7 @@ function normalizeStatus(raw) {
     percent: Number.isFinite(percent) ? Math.min(Math.max(percent, 0), 100) : null,
     etaSeconds: Number.isFinite(eta) && eta >= 0 ? Math.min(Math.round(eta), 10 * 365 * 86_400) : null,
     x: normalizeInteger(raw.x, MAX_COORDINATE),
+    y: normalizeInteger(raw.y, MAX_Y),
     z: normalizeInteger(raw.z, MAX_COORDINATE),
     area: area && Object.values(area).every(value => value !== null) ? area : null,
     runFinds
@@ -129,6 +130,7 @@ function publicStatus(row, now = Date.now()) {
     percent: row.percent === null || row.percent === undefined ? null : Number(row.percent),
     etaSeconds: row.eta_seconds,
     x: row.x,
+    y: row.y ?? null,
     z: row.z,
     area: row.area || null,
     runFinds: row.run_finds || null,
@@ -252,14 +254,14 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
 
   async function upsertStatus(client, tokenId, server, dimension, status) {
     await client.query(
-      `INSERT INTO area_explorer_status (token_id, server, dimension, player, phase, mode, paused, percent, eta_seconds, x, z, area, run_finds, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
+      `INSERT INTO area_explorer_status (token_id, server, dimension, player, phase, mode, paused, percent, eta_seconds, x, y, z, area, run_finds, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
        ON CONFLICT (token_id) DO UPDATE SET
          server = EXCLUDED.server, dimension = EXCLUDED.dimension, player = EXCLUDED.player, phase = EXCLUDED.phase,
          mode = EXCLUDED.mode, paused = EXCLUDED.paused, percent = EXCLUDED.percent, eta_seconds = EXCLUDED.eta_seconds,
-         x = EXCLUDED.x, z = EXCLUDED.z, area = EXCLUDED.area, run_finds = EXCLUDED.run_finds, updated_at = NOW()`,
+         x = EXCLUDED.x, y = EXCLUDED.y, z = EXCLUDED.z, area = EXCLUDED.area, run_finds = EXCLUDED.run_finds, updated_at = NOW()`,
       [tokenId, server, dimension, status.player, status.phase, status.mode, status.paused, status.percent, status.etaSeconds,
-        status.x, status.z, status.area ? JSON.stringify(status.area) : null, status.runFinds ? JSON.stringify(status.runFinds) : null]
+        status.x, status.y, status.z, status.area ? JSON.stringify(status.area) : null, status.runFinds ? JSON.stringify(status.runFinds) : null]
     );
   }
 
