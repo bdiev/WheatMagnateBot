@@ -1078,9 +1078,10 @@
                 <button class="chart-range-button" type="button" data-area-radius="100000" aria-pressed="false" title="From -100,000 to 100,000 each way">±100k<span class="area-explorer-extent-tail"> blocks</span></button>
               </div>
               <label class="area-explorer-map-toggle" hidden><input id="areaExplorerShowXaero" type="checkbox" checked> Xaero map</label>
+              <button id="areaExplorerTouchMode" class="ghost-button area-explorer-touch-mode" type="button" aria-pressed="false" aria-controls="areaExplorerMap">Move map</button>
             </div>
             <div id="areaExplorerMapWrap" class="area-explorer-map-wrap">
-              <canvas id="areaExplorerMap" class="area-explorer-map" aria-label="Map of the finds: drag to move, wheel or pinch to zoom, tap a point for details"></canvas>
+              <canvas id="areaExplorerMap" class="area-explorer-map" tabindex="0" aria-describedby="areaExplorerMapHint" aria-label="Map of the finds: drag to move, wheel or pinch to zoom, tap a point for details"></canvas>
               <div class="area-explorer-map-legend" aria-hidden="true">
                 <span class="legend-base">Base</span><span class="legend-marker">Marker</span><span class="legend-item">Loot</span><span class="legend-sign">Sign</span><span class="legend-player">Explorer</span>
               </div>
@@ -1104,6 +1105,7 @@
               </div>
               <div id="areaExplorerSelected" class="area-explorer-selected" hidden></div>
             </div>
+            <div id="areaExplorerMapHint" class="area-explorer-map-hint"><p class="area-explorer-desktop-hint">Drag to explore · Scroll to zoom · Click a find for details</p><p class="area-explorer-mobile-hint">Move map: drag and pinch. Done moving: scroll the page.</p></div>
           </section>
 
           <section class="panel area-explorer-status-panel">

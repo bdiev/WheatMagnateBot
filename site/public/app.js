@@ -6353,20 +6353,31 @@ function renderAreaExplorerStatus() {
 async function loadAreaExplorerFinds() {
   const ae = areaExplorerState();
   const list = $('#areaExplorerFinds');
+  const requestId = ae.findsRequestId = (ae.findsRequestId || 0) + 1;
   if (!ae.scope) {
     list.innerHTML = '';
+    list.removeAttribute('aria-busy');
     ae.total = 0;
     renderAreaExplorerPager();
     return;
   }
   list.setAttribute('aria-busy', 'true');
-  const data = await fetchJson(`/api/area-explorer/finds?${areaExplorerScopeParams({ kind: ae.kind, name: areaExplorerMarkerFilter(), q: ae.q, limit: AREA_EXPLORER_PAGE_SIZE, offset: ae.offset })}`);
-  ae.total = data.total;
-  list.removeAttribute('aria-busy');
-  list.innerHTML = data.finds.length
-    ? data.finds.map(find => renderAreaExplorerFind(find)).join('')
-    : `<li class="area-explorer-empty">${ae.q ? 'Nothing matches the search.' : 'No finds of this kind yet.'}</li>`;
-  renderAreaExplorerPager();
+  const query = areaExplorerScopeParams({ kind: ae.kind, name: areaExplorerMarkerFilter(), q: ae.q, limit: AREA_EXPLORER_PAGE_SIZE, offset: ae.offset });
+  try {
+    const data = await fetchJson(`/api/area-explorer/finds?${query}`);
+    if (ae.findsRequestId !== requestId) return;
+    ae.total = data.total;
+    list.innerHTML = data.finds.length
+      ? data.finds.map(find => renderAreaExplorerFind(find)).join('')
+      : `<li class="area-explorer-empty">${ae.q ? 'Nothing matches the search.' : 'No finds of this kind yet.'}</li>`;
+    if (ae.renderedFindsQuery !== query) list.scrollTop = 0;
+    ae.renderedFindsQuery = query;
+    renderAreaExplorerPager();
+  } catch (error) {
+    if (ae.findsRequestId === requestId) throw error;
+  } finally {
+    if (ae.findsRequestId === requestId) list.removeAttribute('aria-busy');
+  }
 }
 
 function areaExplorerFindTitle(find) {
@@ -6374,7 +6385,7 @@ function areaExplorerFindTitle(find) {
   return find.name;
 }
 
-function renderAreaExplorerFind(find) {
+function renderAreaExplorerFind(find, { selected = false } = {}) {
   let body = '';
   if (find.kind === 'SIGN') {
     const sides = [find.details, find.label].filter(Boolean);
@@ -6386,11 +6397,11 @@ function renderAreaExplorerFind(find) {
   return `<li class="area-explorer-find kind-${find.kind.toLowerCase()}" data-find-id="${escapeHtml(find.id)}" data-find-at="${find.x},${find.z}">
     <span class="area-explorer-kind">${AREA_EXPLORER_KIND_LABELS[find.kind] || escapeHtml(find.kind)}</span>
     <div class="area-explorer-find-main">
-      <strong>${escapeHtml(areaExplorerFindTitle(find))}</strong>
+      ${selected ? `<strong>${escapeHtml(areaExplorerFindTitle(find))}</strong>` : `<button class="area-explorer-find-title" type="button" data-area-select aria-label="Show ${escapeHtml(areaExplorerFindTitle(find))} on map">${escapeHtml(areaExplorerFindTitle(find))}</button>`}
       ${body}
     </div>
     <div class="area-explorer-find-meta">
-      <button class="area-explorer-coords" type="button" data-copy-coords="${escapeHtml(coords)}" title="Copy coordinates">X ${find.x} Y ${find.y} Z ${find.z}</button>
+      <button class="ghost-button area-explorer-coords" type="button" data-copy-coords="${escapeHtml(coords)}" title="Copy coordinates">X ${find.x} Y ${find.y} Z ${find.z}</button>
       <time datetime="${escapeHtml(find.foundAt)}">${escapeHtml(formatFullDateTime(find.foundAt))}</time>
     </div>
   </li>`;
@@ -6409,6 +6420,7 @@ function renderAreaExplorerPager() {
 
 async function loadAreaExplorerMap() {
   const ae = areaExplorerState();
+  const requestId = ae.mapRequestId = (ae.mapRequestId || 0) + 1;
   bindAreaExplorerMap();
   if (!ae.scope) {
     ae.points = [];
@@ -6420,7 +6432,7 @@ async function loadAreaExplorerMap() {
     fetchJson(`/api/area-explorer/map?${areaExplorerScopeParams({ kind: ae.kind, name: areaExplorerMarkerFilter() })}`),
     loadXaeroRegionMap()
   ]);
-  if (ae.scope !== scope) return;
+  if (ae.scope !== scope || ae.mapRequestId !== requestId) return;
   // Sorted once, so each frame just draws them in order
   ae.points = data.points
     .map(([id, kind, x, z]) => ({ id, kind, x, z }))
@@ -6805,9 +6817,11 @@ function bindAreaExplorerMap() {
   }, { passive: false });
 
   canvas.addEventListener('pointerdown', event => {
-    canvas.setPointerCapture(event.pointerId);
-    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    dragged = false;
+    if (event.button !== 0) return;
+    const canMove = event.pointerType === 'mouse' || canvas.classList.contains('is-interactive') || $('#areaExplorerMapWrap').classList.contains('is-fullscreen');
+    if (canMove) canvas.setPointerCapture(event.pointerId);
+    if (!pointers.size) dragged = false;
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY, startX: event.clientX, startY: event.clientY, canMove });
     if (pointers.size === 2) {
       const [a, b] = [...pointers.values()];
       pinchDistance = Math.hypot(a.x - b.x, a.y - b.y);
@@ -6818,7 +6832,9 @@ function bindAreaExplorerMap() {
     if (event.pointerType === 'mouse') showCoordinates(...local(event));
     const last = pointers.get(event.pointerId);
     if (!last || !ae.view) return;
-    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    pointers.set(event.pointerId, { ...last, x: event.clientX, y: event.clientY });
+    if (Math.hypot(event.clientX - last.startX, event.clientY - last.startY) > 6) dragged = true;
+    if (!last.canMove) return;
     if (pointers.size === 2) {
       const [a, b] = [...pointers.values()];
       const distance = Math.hypot(a.x - b.x, a.y - b.y);
@@ -6840,6 +6856,7 @@ function bindAreaExplorerMap() {
     pinchDistance = 0;
   };
   canvas.addEventListener('pointerup', event => {
+    if (!pointers.has(event.pointerId)) return;
     const wasGesture = dragged || pointers.size > 1;
     release(event);
     if (wasGesture || !ae.view) return;
@@ -6856,6 +6873,21 @@ function bindAreaExplorerMap() {
     selectAreaExplorerFind(best?.id || null).catch(error => setBanner(error.message));
   });
   canvas.addEventListener('pointercancel', release);
+  canvas.addEventListener('lostpointercapture', release);
+  canvas.addEventListener('keydown', event => {
+    if (!ae.view) return;
+    if (event.key === '+' || event.key === '=') zoomAreaExplorerMap(2);
+    else if (event.key === '-') zoomAreaExplorerMap(0.5);
+    else if (event.key === 'Home') { fitAreaExplorerMap(); queueAreaExplorerMapDraw(); }
+    else if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+      const step = 60 / ae.view.scale;
+      ae.view.cx += event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0;
+      ae.view.cz += event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0;
+      clampAreaExplorerView();
+      queueAreaExplorerMapDraw();
+    } else return;
+    event.preventDefault();
+  });
 
   const onResize = () => {
     clampAreaExplorerView();
@@ -6873,21 +6905,25 @@ function setAreaExplorerFullscreen(on) {
   button.setAttribute('aria-pressed', String(on));
   button.setAttribute('aria-label', on ? 'Leave full screen' : 'Full screen');
   button.title = on ? 'Leave full screen' : 'Full screen';
+  (on ? $('#areaExplorerMap') : button).focus({ preventScroll: true });
+  queueAreaExplorerMapDraw();
 }
 
 async function selectAreaExplorerFind(id) {
   const ae = areaExplorerState();
   const box = $('#areaExplorerSelected');
+  const requestId = ae.selectedRequestId = (ae.selectedRequestId || 0) + 1;
   ae.selectedId = id;
+  box.hidden = true;
   queueAreaExplorerMapDraw();
   if (!id) {
     box.hidden = true;
     return;
   }
   const { find } = await fetchJson(`/api/area-explorer/finds/${encodeURIComponent(id)}`);
-  if (ae.selectedId !== id) return;
+  if (ae.selectedId !== id || ae.selectedRequestId !== requestId) return;
   box.innerHTML = `<button class="area-explorer-selected-close" type="button" data-area-close-selected aria-label="Close">×</button>
-    <ol class="area-explorer-finds">${renderAreaExplorerFind(find)}</ol>`;
+    <ol class="area-explorer-finds">${renderAreaExplorerFind(find, { selected: true })}</ol>`;
   box.hidden = false;
 }
 
@@ -6921,6 +6957,8 @@ function setupAreaExplorer() {
   $$('[data-area-kind]').forEach(button => button.addEventListener('click', () => {
     ae.kind = button.dataset.areaKind;
     ae.offset = 0;
+    ae.selectedId = null;
+    $('#areaExplorerSelected').hidden = true;
     $$('[data-area-kind]').forEach(other => {
       other.classList.toggle('active', other === button);
       other.setAttribute('aria-pressed', String(other === button));
@@ -6931,6 +6969,8 @@ function setupAreaExplorer() {
   $('#areaExplorerMarkerName').addEventListener('change', event => {
     ae.markerName = event.target.value;
     ae.offset = 0;
+    ae.selectedId = null;
+    $('#areaExplorerSelected').hidden = true;
     reloadScope();
   });
   $('#areaExplorerSearch').addEventListener('input', event => {
@@ -6951,6 +6991,11 @@ function setupAreaExplorer() {
   $('#areaExplorerNext').addEventListener('click', () => turnPage(AREA_EXPLORER_PAGE_SIZE));
 
   // The map's own controls
+  $('#areaExplorerTouchMode').addEventListener('click', event => {
+    const on = $('#areaExplorerMap').classList.toggle('is-interactive');
+    event.currentTarget.setAttribute('aria-pressed', String(on));
+    event.currentTarget.textContent = on ? 'Done moving' : 'Move map';
+  });
   $('#areaExplorerShowXaero').addEventListener('change', event => {
     ae.showXaero = event.target.checked;
     saveAreaExplorerSetting('areaExplorerShowXaero', ae.showXaero);
@@ -7002,7 +7047,7 @@ function setupAreaExplorer() {
     }
     // A find in the list: shown on the map, unless it's the one on the map already
     const find = event.target.closest('.area-explorer-finds-panel [data-find-at]');
-    if (find && !event.target.closest('button, a, pre')) {
+    if (find && (event.target.closest('[data-area-select]') || !event.target.closest('button, a, pre'))) {
       const [x, z] = find.dataset.findAt.split(',').map(Number);
       focusAreaExplorerMap(x, z);
       selectAreaExplorerFind(find.dataset.findId).catch(error => setBanner(error.message));

@@ -12690,20 +12690,19 @@ body.kill-aura-modal-open {
   --area-map-area: rgba(92, 200, 120, 0.12);
 }
 
-/* The map across the top; the finds beside the run and the tokens under it */
+/* Keep the live run beside the map, with a bounded list below. */
 .area-explorer-layout {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: minmax(0, 1.7fr) minmax(280px, 1fr);
+  grid-template-columns: minmax(0, 2.4fr) minmax(300px, 1fr);
   grid-template-areas:
-    "map map"
-    "finds status"
+    "map status"
     "finds tokens";
   gap: 16px;
   align-items: start;
 }
 
-.area-explorer-layout > .panel { grid-column: auto; min-width: 0; }
+.area-explorer-layout > .panel { min-width: 0; }
 .area-explorer-map-panel { grid-area: map; }
 .area-explorer-status-panel { grid-area: status; }
 .area-explorer-finds-panel { grid-area: finds; }
@@ -12720,6 +12719,8 @@ body.kill-aura-modal-open {
 
 .area-explorer-map-head { flex-wrap: wrap; align-items: center; }
 .area-explorer-map-head > div { min-width: 0; }
+.area-explorer-layout .panel-head p { margin-bottom: 0; }
+.area-explorer-layout .panel-head h2 { font-size: 20px; }
 
 .area-explorer-scope {
   display: grid;
@@ -12762,7 +12763,7 @@ body.kill-aura-modal-open {
 .area-explorer-map {
   display: block;
   width: 100%;
-  height: clamp(420px, 68vh, 780px);
+  height: clamp(340px, 52svh, 580px);
   cursor: grab;
   touch-action: none;
   user-select: none;
@@ -12770,6 +12771,11 @@ body.kill-aura-modal-open {
 }
 
 .area-explorer-map:active { cursor: grabbing; }
+.area-explorer-map:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px; }
+.area-explorer-touch-mode, .area-explorer-mobile-hint { display: none; }
+.area-explorer-map-hint { margin: 0; padding: 10px 18px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 12px; }
+.area-explorer-map-hint p { margin: 0; }
+.area-explorer-touch-mode[aria-pressed="true"] { background: var(--accent); color: var(--bg-strong); }
 
 .area-explorer-map-wrap.is-fullscreen {
   position: fixed;
@@ -12779,6 +12785,11 @@ body.kill-aura-modal-open {
 
 .area-explorer-map-wrap.is-fullscreen .area-explorer-map { height: 100vh; height: 100dvh; }
 body.area-explorer-fullscreen { overflow: hidden; }
+/* Animated ancestors must not trap the fixed map inside its card. */
+body.area-explorer-fullscreen #tab-area-explorer,
+body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transform: none; overflow: visible; }
+.is-fullscreen .area-explorer-map-buttons { top: max(10px, env(safe-area-inset-top)); right: max(10px, env(safe-area-inset-right)); }
+.is-fullscreen .area-explorer-map-status { bottom: max(10px, env(safe-area-inset-bottom)); }
 
 .area-explorer-map-legend {
   position: absolute;
@@ -12857,6 +12868,7 @@ body.area-explorer-fullscreen { overflow: hidden; }
   flex-wrap: wrap;
   gap: 6px;
   pointer-events: none;
+  max-width: calc(100% - 20px);
 }
 
 .area-explorer-map-status span {
@@ -12988,7 +13000,9 @@ body.area-explorer-fullscreen { overflow: hidden; }
   margin: 2px 0 0;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
 }
+.area-explorer-run header strong, .area-explorer-run-where, .area-explorer-tokens li > div { min-width: 0; overflow-wrap: anywhere; }
 
 .area-explorer-run-position { grid-column: 1 / -1; }
 .area-explorer-run-focus { justify-self: start; min-width: 0; }
@@ -13045,6 +13059,10 @@ body.area-explorer-fullscreen { overflow: hidden; }
   padding: 0;
   list-style: none;
 }
+.area-explorer-finds-panel > .area-explorer-finds { max-height: min(65svh, 720px); overflow-y: auto; scrollbar-gutter: stable; }
+.area-explorer-finds[aria-busy="true"] { opacity: 0.55; }
+.area-explorer-find-title { display: block; width: 100%; min-width: 0; min-height: 32px; height: auto; padding: 0; border: 0; background: transparent; box-shadow: none; color: var(--text); font: inherit; font-weight: 700; text-align: left; overflow-wrap: anywhere; }
+.area-explorer-find-title:hover { color: var(--accent-strong); background: transparent; box-shadow: none; }
 
 .area-explorer-find {
   display: grid;
@@ -13125,7 +13143,7 @@ body.area-explorer-fullscreen { overflow: hidden; }
   white-space: nowrap;
 }
 
-.area-explorer-coords.copied::after { content: " ✓"; }
+.area-explorer-coords.copied { color: var(--accent-strong); }
 
 .area-explorer-pager {
   display: flex;
@@ -13138,6 +13156,7 @@ body.area-explorer-fullscreen { overflow: hidden; }
 }
 
 .area-explorer-pager button { min-width: 0; }
+.area-explorer-pager span { text-align: center; font-variant-numeric: tabular-nums; }
 
 /* Mod tokens */
 
@@ -13200,6 +13219,7 @@ body.area-explorer-fullscreen { overflow: hidden; }
 
 /* Phones */
 @media (max-width: 640px) {
+  body:has(#tab-area-explorer.active) { min-width: 0; }
   .area-explorer-layout { gap: 10px; }
   .area-explorer-map-head,
   .area-explorer-status-panel .panel-head,
@@ -13208,17 +13228,25 @@ body.area-explorer-fullscreen { overflow: hidden; }
   .area-explorer-scope { min-width: 100%; }
   .area-explorer-map-bar { padding: 8px 14px; }
   .area-explorer-extent-tail { display: none; }
-  .area-explorer-map { height: 62vh; height: 62svh; min-height: 300px; }
+  .area-explorer-map { height: clamp(280px, 48svh, 420px); min-height: 0; }
   .area-explorer-map-legend { top: 8px; left: 8px; gap: 2px 8px; padding: 4px 8px; font-size: 11px; }
   .area-explorer-map-buttons { top: 8px; right: 8px; }
-  .area-explorer-map-button { width: 40px; height: 40px; }
+  .area-explorer-map-button { width: 44px; height: 44px; }
   .area-explorer-map-status { left: 8px; bottom: 8px; }
-  .area-explorer-selected { bottom: 40px; max-height: 55%; }
+  .area-explorer-selected { bottom: 52px; max-height: 55%; }
+  .area-explorer-selected-close { width: 44px; height: 44px; }
+  .area-explorer-selected .area-explorer-find { padding-right: 56px; }
   .area-explorer-status-list { padding: 10px; }
   .area-explorer-toolbar { padding: 10px 14px; }
   .area-explorer-toolbar .area-explorer-kinds { flex-wrap: nowrap; overflow-x: auto; justify-self: stretch; }
-  .area-explorer-kinds .chart-range-button { min-height: 38px; }
-  .area-explorer-map-bar .area-explorer-extent { width: 100%; }
+  .area-explorer-kinds .chart-range-button { min-height: 44px; }
+  .area-explorer-map-bar .area-explorer-extent { width: 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .area-explorer-extent .chart-range-button { min-height: 44px; }
+  .area-explorer-filters input, .area-explorer-scope select, .area-explorer-marker-name select, .area-explorer-token-form input { font-size: 16px; }
+  .area-explorer-coords { min-height: 44px; white-space: normal; text-align: left; }
+  .area-explorer-map-hint { padding: 10px 14px; }
+  .area-explorer-pager { gap: 6px; }
+  .area-explorer-pager button { padding-inline: 10px; }
   .area-explorer-filters input[type="search"],
   .area-explorer-marker-name { flex: 1 1 100%; }
   .area-explorer-find {
@@ -13236,4 +13264,14 @@ body.area-explorer-fullscreen { overflow: hidden; }
     text-align: left;
   }
   .area-explorer-pager { padding: 10px 14px; font-size: 13px; }
+}
+
+@media (pointer: coarse), (max-width: 640px) {
+  .area-explorer-map { touch-action: pan-y pinch-zoom; }
+  .area-explorer-map.is-interactive, .is-fullscreen .area-explorer-map { touch-action: none; }
+  .area-explorer-touch-mode, .area-explorer-mobile-hint { display: block; }
+  .area-explorer-desktop-hint { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .area-explorer-progress span, .area-explorer-find { transition: none; }
 }
