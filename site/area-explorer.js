@@ -406,10 +406,18 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     return publicStatus(result.rows[0]);
   }
 
+  /**
+   * The runs, and the newest find and run log event (their ids): a page that isn't getting the live
+   * stream (phones drop it) polls this and reloads the finds or the log once either moves on.
+   */
   async function getLive() {
-    const result = await pool.query(`SELECT s.*, t.name AS token_name FROM area_explorer_status s
-      JOIN area_explorer_tokens t ON t.id = s.token_id WHERE t.revoked_at IS NULL ORDER BY s.updated_at DESC`);
-    return { statuses: result.rows.map(row => publicStatus(row)) };
+    const [result, versions] = await Promise.all([
+      pool.query(`SELECT s.*, t.name AS token_name FROM area_explorer_status s
+        JOIN area_explorer_tokens t ON t.id = s.token_id WHERE t.revoked_at IS NULL ORDER BY s.updated_at DESC`),
+      pool.query(`SELECT (SELECT COALESCE(MAX(id), 0) FROM area_explorer_finds)::text AS finds,
+        (SELECT COALESCE(MAX(id), 0) FROM area_explorer_events)::text AS events`)
+    ]);
+    return { statuses: result.rows.map(row => publicStatus(row)), versions: versions.rows[0] };
   }
 
   /** POST /api/area-explorer/ingest - from the mod, with its token instead of a session. */

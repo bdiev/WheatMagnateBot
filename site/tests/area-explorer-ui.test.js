@@ -38,9 +38,12 @@ function fixture() {
     loadXaeroRegionMap: async () => {}, escapeHtml: String,
     renderAreaExplorerStatus() {},
     saveAreaExplorerSetting(key, value) { context.savedSetting = { key, value }; },
+    formatNumber: String, AREA_EXPLORER_LOG_PAGE: 50,
+    queueRealtimeRefresh(key) { context.refreshed = (context.refreshed || []).concat(key); },
+    refreshAreaExplorerFromEvent() {}, applyAreaExplorerEvents() {},
     fetchJson: url => new Promise((resolve, reject) => requests.push({ url, resolve, reject }))
   });
-  for (const name of ['loadAreaExplorerFinds', 'loadAreaExplorerMap', 'setAreaExplorerFindsVisible', 'selectAreaExplorerFind', 'areaExplorerHeading', 'areaExplorerLiveStatus', 'recordAreaExplorerTrail', 'areaExplorerTrail', 'applyAreaExplorerLiveStatus', 'loadAreaExplorerLive']) vm.runInContext(functionSource(name), context);
+  for (const name of ['loadAreaExplorerFinds', 'loadAreaExplorerMap', 'setAreaExplorerFindsVisible', 'selectAreaExplorerFind', 'areaExplorerHeading', 'areaExplorerLiveStatus', 'recordAreaExplorerTrail', 'areaExplorerTrail', 'applyAreaExplorerLiveStatus', 'loadAreaExplorerLive', 'noteAreaExplorerVersions', 'areaExplorerListAnchor', 'areaExplorerListIds', 'markAreaExplorerNewFinds', 'setAreaExplorerNewFinds']) vm.runInContext(functionSource(name), context);
   return { ae, node, requests, context };
 }
 
@@ -147,6 +150,61 @@ async function testLiveTelemetry() {
   context.state.eventSource = { readyState: 1 };
   await context.loadAreaExplorerLive();
   assert.equal(requests.length, 1, 'healthy live SSE avoids redundant polling');
+
+  // Without the live stream, the poll's newest find id tells when the finds and highlights are stale
+  context.noteAreaExplorerVersions({ finds: '10', events: '3' });
+  assert.equal(context.refreshed, undefined, 'the first versions seen are only remembered');
+  context.noteAreaExplorerVersions({ finds: '10', events: '3' });
+  assert.equal(context.refreshed, undefined);
+  context.noteAreaExplorerVersions({ finds: '12', events: '3' });
+  assert.deepEqual(context.refreshed, ['area-explorer'], 'a newer find reloads the section');
+  assert.equal(ae.findsDirty, true);
+}
+
+/** Fake list items at given heights, for the reading position tests. */
+function fakeList(ids, scrollTop) {
+  const list = {
+    scrollTop,
+    getBoundingClientRect: () => ({ top: 100 }),
+    querySelectorAll: () => list.items
+  };
+  list.setIds = next => {
+    list.items = next.map((id, index) => ({
+      dataset: { findId: id }, classes: [],
+      classList: { add(name) { this.owner.classes.push(name); } },
+      // 50 px each, the list scrolled by scrollTop
+      getBoundingClientRect: () => ({ top: 100 + index * 50 - list.scrollTop, bottom: 150 + index * 50 - list.scrollTop })
+    }));
+    for (const item of list.items) item.classList.owner = item;
+  };
+  list.setIds(ids);
+  return list;
+}
+
+function testReadingPositionKept() {
+  const { ae, node, context } = fixture();
+  ae.newFindsAbove = 0;
+  // Scrolled so find "c" is at the top of the list
+  const list = fakeList(['a', 'b', 'c', 'd'], 100);
+  const anchor = context.areaExplorerListAnchor(list);
+  assert.equal(anchor.id, 'c');
+  assert.equal(anchor.offset, 0);
+  const shown = context.areaExplorerListIds(list);
+  list.setIds(['new1', 'new2', 'a', 'b', 'c', 'd']);
+  context.markAreaExplorerNewFinds(list, shown, anchor);
+  assert.equal(list.scrollTop, 200, 'two new finds above: scrolled down by their height, "c" stays at the top');
+  assert.equal(ae.newFindsAbove, 2);
+  assert.equal(node('#areaExplorerNewFinds').hidden, false, 'and a button says how many');
+  assert.deepEqual(list.items.filter(item => item.classes.includes('is-new')).map(item => item.dataset.findId), ['new1', 'new2']);
+
+  // At the very top the newest simply show up there
+  const top = fakeList(['a', 'b'], 0);
+  assert.equal(context.areaExplorerListAnchor(top), null);
+  const before = context.areaExplorerListIds(top);
+  top.setIds(['new', 'a', 'b']);
+  context.markAreaExplorerNewFinds(top, before, null);
+  assert.equal(top.scrollTop, 0);
+  assert.equal(ae.newFindsAbove, 0);
 }
 
 (async () => {
@@ -155,5 +213,6 @@ async function testLiveTelemetry() {
   await testSelectionRace();
   await testMarkerVisibility();
   await testLiveTelemetry();
+  testReadingPositionKept();
   console.log('Area Explorer UI behavior tests passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

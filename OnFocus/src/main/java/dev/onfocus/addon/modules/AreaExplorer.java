@@ -183,7 +183,9 @@ import java.util.function.Predicate;
  * back on the server, totem pops, cleanup passes, done, and every warning - goes to the site's run log.
  * <p>
  * Kicked or dropped from a server, it reconnects ({@code auto-reconnect}) and, once back where it
- * stopped, carries on with the same route and the same sign file. It runs in the main menu for
+ * stopped, carries on with the same route and the same sign file. Back in the same dimension but far
+ * from that spot (the server put it back where it last had it, or it respawned), it carries on from
+ * there after a short wait - or at once with the bind. It runs in the main menu for
  * that: Meteor would otherwise turn it off on leaving. With {@code leave-on-finish} it leaves the
  * server when done.
  */
@@ -683,6 +685,9 @@ public class AreaExplorer extends Module {
     private static final double MAX_REJOIN_DISTANCE = 1024;
     /** Ticks back in place before steering again: chunks arrive, the elytra module gets going. */
     private static final int REJOIN_SETTLE_TICKS = 60;
+    /** Back in the run's dimension but far from where we were dropped: carry on from there after this long. */
+    private static final int REJOIN_ELSEWHERE_TICKS = 20 * 20;
+    private int elsewhereTicks;
 
     /** Dropped from the server and waiting to get back; everything else is kept as it was. */
     private boolean reconnecting;
@@ -763,6 +768,9 @@ public class AreaExplorer extends Module {
     private static final Set<String> SITE_BACKFILLED = new HashSet<>();
     private int archiveTicks;
     private long lastLiveSiteNanos;
+    /** A find for the site is waiting: it goes this many ticks on, not with the half-minute sync - the page shows it in seconds. */
+    private static final int SITE_FIND_DELAY_TICKS = 3 * 20;
+    private int siteFindTicks;
     /** Where the site's run log goes while off the server: the scope last seen in a world. */
     private SiteSync.Scope lastSiteScope;
     /** How the run ended went to the site's log already (done, gave up...): turning off doesn't add "stopped". */
@@ -939,6 +947,12 @@ public class AreaExplorer extends Module {
             return;
         }
 
+        // Waiting to be back where we were dropped: a new area starts from here
+        if (reconnecting) {
+            reconnecting = false;
+            reconnectServer = null;
+            rescanOnReturn = false;
+        }
         rescan = again;
         area = new Area(Math.min(x1, x2), Math.min(z1, z2), Math.max(x1, x2), Math.max(z1, z2));
         areaDimension = dimension;
@@ -1002,6 +1016,10 @@ public class AreaExplorer extends Module {
     }
 
     private void setPaused(boolean pause) {
+        if (reconnecting) {
+            carryOnHere();
+            return;
+        }
         if (pause == paused) return;
         paused = pause;
         if (paused) {
@@ -1143,6 +1161,7 @@ public class AreaExplorer extends Module {
         foundFileDirty = false;
         foundFileTicks = 0;
         archiveTicks = 0;
+        siteFindTicks = 0;
         pendingSweep = null;
         signFile = null;
         fileHeader = null;
@@ -2631,6 +2650,7 @@ public class AreaExplorer extends Module {
     /** Writes the run's file if it has new finds, and the all-finds file every so often. */
     private void tickFindFiles() {
         if (foundFileDirty && ++foundFileTicks >= FOUND_FILE_INTERVAL_TICKS) flushFoundFile();
+        if (siteFindTicks > 0 && --siteFindTicks == 0) flushSiteFinds();
         if (++archiveTicks >= ARCHIVE_INTERVAL_TICKS) {
             archiveTicks = 0;
             // In case Xaero's waypoints weren't there yet when the run started
@@ -2715,6 +2735,19 @@ public class AreaExplorer extends Module {
             // Only what's new: the site would skip the rest anyway
             if (archive.add(find) && toSite) SITE.add(scope, find);
         });
+        // A few seconds' wait gathers the finds of the same chunks into one request
+        if (toSite && siteFindTicks == 0) siteFindTicks = SITE_FIND_DELAY_TICKS;
+    }
+
+    /** Sends the finds waiting for the site (on the files thread, after the ones just archived). */
+    private void flushSiteFinds() {
+        String site = siteTarget();
+        if (site == null) return;
+        String token = siteToken.get().trim();
+        FILES.execute(() -> SITE.flush(site, token, problem -> {
+            FILE_LOG.warn("Site: " + problem);
+            mc.execute(() -> warning("Site: %s", problem));
+        }));
     }
 
     /** The site's address with site-sync on and set up, else null. */
@@ -2887,7 +2920,7 @@ public class AreaExplorer extends Module {
     private void onGameLeft(GameLeftEvent event) {
         if (phase == Phase.IDLE) return;
         if (reconnecting) {
-            rejoinTicks = 0; // dropped again before getting back (a queue?): keep waiting
+            rejoinTicks = elsewhereTicks = 0; // dropped again before getting back (a queue?): keep waiting
             return;
         }
         ServerInfo server = mc.getCurrentServerEntry();
@@ -2909,7 +2942,7 @@ public class AreaExplorer extends Module {
         leftZ = mc.player.getZ();
         reconnectTicks = 0;
         reconnectTries = 0;
-        rejoinTicks = 0;
+        rejoinTicks = elsewhereTicks = 0;
         warnedElsewhere = false;
         if (holdForward.get()) mc.options.forwardKey.setPressed(false);
         if (phase == Phase.SWEEP) endStrip(false); // what's flown of it so far counts
@@ -2925,7 +2958,7 @@ public class AreaExplorer extends Module {
     /** Off the server: reconnects after a kick, then waits to be back where we stopped before carrying on. */
     private void tickReconnect() {
         if (mc.world == null || mc.player == null) {
-            rejoinTicks = 0;
+            rejoinTicks = elsewhereTicks = 0;
             Screen screen = mc.currentScreen;
             // Left by hand, or backed out of the disconnect screen / a connect attempt
             if (screen instanceof TitleScreen || screen instanceof MultiplayerScreen) {
@@ -2981,17 +3014,41 @@ public class AreaExplorer extends Module {
             return;
         }
         if (mc.currentScreen instanceof DownloadingTerrainScreen) return;
-        if (!mc.world.getRegistryKey().equals(leftDimension)
-            || Math.hypot(mc.player.getX() - leftX, mc.player.getZ() - leftZ) > MAX_REJOIN_DISTANCE) {
+        boolean sameDimension = mc.world.getRegistryKey().equals(leftDimension);
+        double away = Math.hypot(mc.player.getX() - leftX, mc.player.getZ() - leftZ);
+        if (!sameDimension || away > MAX_REJOIN_DISTANCE) {
             rejoinTicks = 0;
             if (!warnedElsewhere) {
-                info("Back on the server, but not where exploring stopped (a queue?) - carrying on once you're back there.");
-                siteEvent("info", "rejoin", "Back on the server, but not where exploring stopped (a queue?) - waiting to get back there");
+                String text = sameDimension
+                    ? "Back on the server, but %.0f blocks from where exploring stopped - carrying on from here in %d s, or press the bind to now.".formatted(away, REJOIN_ELSEWHERE_TICKS / 20)
+                    : "Back on the server in another dimension (a queue?) - carrying on once you're back in %s.".formatted(FindsArchive.prettyName(leftDimension.getValue().getPath()));
+                info("%s", text);
+                siteEvent("info", "rejoin", text);
             }
             warnedElsewhere = true;
+            // Same dimension, far off: put back where the server last had us, or respawned. Waiting
+            // for a spot we won't get back to by ourselves would wait for ever; the route is planned again from here.
+            if (sameDimension && ++elsewhereTicks >= REJOIN_ELSEWHERE_TICKS) {
+                log("Still %.0f blocks from where exploring stopped after %d s - carrying on from here", away, REJOIN_ELSEWHERE_TICKS / 20);
+                resumeAfterReconnect();
+            }
             return;
         }
+        elsewhereTicks = 0;
         if (++rejoinTicks >= REJOIN_SETTLE_TICKS) resumeAfterReconnect();
+    }
+
+    /** The bind pressed while waiting to be back where we were dropped: carries on from here right away. */
+    private void carryOnHere() {
+        if (mc.world == null || mc.player == null) return;
+        if (!mc.world.getRegistryKey().equals(leftDimension)) {
+            warning("The run is in %s - go back there first.", FindsArchive.prettyName(leftDimension.getValue().getPath()));
+            return;
+        }
+        log("Carrying on from %.0f, %.0f by hand, %.0f blocks from where exploring stopped", mc.player.getX(), mc.player.getZ(),
+            Math.hypot(mc.player.getX() - leftX, mc.player.getZ() - leftZ));
+        paused = false;
+        resumeAfterReconnect();
     }
 
     /** The reconnect screen's lines: when, why, and where the run stands. */

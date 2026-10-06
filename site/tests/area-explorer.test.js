@@ -90,6 +90,7 @@ async function testIngestAndQueries() {
     await db.exec(statusYMigrationSql);
     await db.exec(pickedUpMigrationSql);
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/072_area_explorer_yaw.sql'), 'utf8'));
+    await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/073_area_explorer_events.sql'), 'utf8'));
     const published = [];
     const logs = [];
     const service = createAreaExplorerService({
@@ -152,6 +153,8 @@ async function testIngestAndQueries() {
     assert.equal(liveResponse.statusCode, 200);
     assert.equal(liveResponse.payload.statuses[0].yaw, 270);
     assert.equal(liveResponse.payload.scopes, undefined, 'live polling does not count or reload finds');
+    assert.match(liveResponse.payload.versions.finds, /^\d+$/, 'but it says how far the finds have got, for pages without the live stream');
+    assert.ok(Number(liveResponse.payload.versions.finds) > 0);
     assert.equal(summary.statuses[0].tokenName, 'Gaming PC');
     assert.equal(summary.statuses[0].runFinds.bases, 2);
     assert.deepEqual([summary.statuses[0].x, summary.statuses[0].y, summary.statuses[0].z], [10, -40, 20], 'the explorer\'s height comes with its position');

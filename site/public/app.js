@@ -6183,7 +6183,7 @@ function areaExplorerState() {
       scope: '', kind: '', markerName: '', q: '', offset: 0, total: 0, summary: null, mapScopes: [],
       points: [], pointsScope: null, view: null, selectedId: null, searchTimer: null, mapBound: false, loadedAt: 0,
       tiles: new Map(), drawQueued: false, regionMap: null, regionMapEpoch: 0, colors: null, colorsTheme: null,
-      findsDirty: false, tokensDirty: true,
+      findsDirty: false, tokensDirty: true, newFindsAbove: 0, versions: null,
       logFilter: '', logEvents: [], logHasMore: false, logServer: null, logRequestId: 0,
       showXaero: readAreaExplorerSetting('areaExplorerShowXaero', 'true') !== 'false',
       showFinds: readAreaExplorerSetting('areaExplorerShowFinds', 'true') !== 'false',
@@ -6548,10 +6548,19 @@ async function loadAreaExplorerFinds() {
     const [data] = await Promise.all([fetchJson(`/api/area-explorer/finds?${query}`), ensureItemIcons().catch(() => null)]);
     if (ae.findsRequestId !== requestId) return;
     ae.total = data.total;
+    // The same list again with newer finds in it: what's being read stays where it is
+    const refresh = ae.renderedFindsQuery === query;
+    const anchor = refresh ? areaExplorerListAnchor(list) : null;
+    const shown = refresh ? areaExplorerListIds(list) : null;
     list.innerHTML = data.finds.length
       ? data.finds.map(find => renderAreaExplorerFind(find)).join('')
       : `<li class="area-explorer-empty">${ae.q ? 'Nothing matches the search.' : 'No finds of this kind yet.'}</li>`;
-    if (ae.renderedFindsQuery !== query) list.scrollTop = 0;
+    if (!refresh) {
+      list.scrollTop = 0;
+      setAreaExplorerNewFinds(0);
+    } else {
+      markAreaExplorerNewFinds(list, shown, anchor);
+    }
     ae.renderedFindsQuery = query;
     renderAreaExplorerPager();
   } catch (error) {
@@ -6559,6 +6568,51 @@ async function loadAreaExplorerFinds() {
   } finally {
     if (ae.findsRequestId === requestId) list.removeAttribute('aria-busy');
   }
+}
+
+/** The first find showing at the top of the scrolled list, and how far down it sits; null at the very top. */
+function areaExplorerListAnchor(list) {
+  if (!list.querySelectorAll || list.scrollTop <= 4) return null;
+  const top = list.getBoundingClientRect().top;
+  for (const item of list.querySelectorAll('[data-find-id]')) {
+    const rect = item.getBoundingClientRect();
+    if (rect.bottom > top + 1) return { id: item.dataset.findId, offset: rect.top - top };
+  }
+  return null;
+}
+
+function areaExplorerListIds(list) {
+  return list.querySelectorAll ? new Set([...list.querySelectorAll('[data-find-id]')].map(item => item.dataset.findId)) : null;
+}
+
+/**
+ * After a live reload: the finds that weren't there before light up, and the list is scrolled
+ * back so the one that was at the top still is - new ones above it are counted on a button instead
+ * of pushing what's being read away.
+ */
+function markAreaExplorerNewFinds(list, shown, anchor) {
+  if (!shown || !list.querySelectorAll) return;
+  const items = [...list.querySelectorAll('[data-find-id]')];
+  let above = 0;
+  let reachedAnchor = !anchor;
+  for (const item of items) {
+    if (anchor && item.dataset.findId === anchor.id) reachedAnchor = true;
+    if (shown.has(item.dataset.findId)) continue;
+    item.classList.add('is-new');
+    if (!reachedAnchor) above++;
+  }
+  const kept = anchor && items.find(item => item.dataset.findId === anchor.id);
+  if (kept) list.scrollTop += kept.getBoundingClientRect().top - list.getBoundingClientRect().top - anchor.offset;
+  setAreaExplorerNewFinds(anchor ? areaExplorerState().newFindsAbove + above : 0);
+}
+
+function setAreaExplorerNewFinds(count) {
+  const ae = areaExplorerState();
+  ae.newFindsAbove = count;
+  const button = $('#areaExplorerNewFinds');
+  if (!button) return;
+  button.hidden = count <= 0;
+  button.textContent = `↑ ${formatNumber(count)} new ${count === 1 ? 'find' : 'finds'}`;
 }
 
 function areaExplorerFindTitle(find) {
@@ -6603,8 +6657,11 @@ function areaExplorerFoundAgo(foundAt) {
 function renderAreaExplorerFind(find, { selected = false } = {}) {
   let body = '';
   if (find.kind === 'SIGN') {
-    const sides = [find.details, find.label].filter(Boolean);
-    body = sides.map((side, index) => `<pre class="area-explorer-sign${index ? ' is-back' : ''}">${escapeHtml(side)}</pre>`).join('');
+    // The front, then the back; the same text on both sides shown once
+    const front = find.details || '', back = find.label || '';
+    const sides = front && back.trim() === front.trim() ? [[front, 'both']] : [[front, ''], [back, 'back']].filter(([text]) => text);
+    // The text in a span of its own: cut short to a few lines, the box's padding can't let the next one peek out
+    body = sides.map(([text, side]) => `<pre class="area-explorer-sign${side ? ` is-${side}` : ''}"><span class="area-explorer-sign-text">${escapeHtml(text)}</span></pre>`).join('');
   } else if (find.details) {
     body = `<p class="area-explorer-details">${escapeHtml(find.details)}</p>`;
   }
@@ -6725,11 +6782,34 @@ async function loadAreaExplorerLive() {
   if (state.eventSource?.readyState === 1 && Date.now() - (ae.liveReceivedAt || 0) < 2500) return;
   ae.liveLoading = true;
   try {
-    const { statuses } = await fetchJson('/api/area-explorer/live');
+    const { statuses, versions } = await fetchJson('/api/area-explorer/live');
     for (const status of statuses) applyAreaExplorerLiveStatus(status);
+    noteAreaExplorerVersions(versions);
     if (!statuses.length && ae.summary) { ae.summary.statuses = []; ae.trail = null; renderAreaExplorerStatus(); queueAreaExplorerMapDraw(); }
   } catch { /* The next second retries without replacing the last known position. */ }
   finally { ae.liveLoading = false; }
+}
+
+/**
+ * Without the live stream (a phone drops it in the background, some networks hold it back) the
+ * poll's newest find and event ids tell when the finds, highlights or the log have something new.
+ */
+function noteAreaExplorerVersions(versions) {
+  if (!versions) return;
+  const ae = areaExplorerState();
+  const previous = ae.versions;
+  ae.versions = versions;
+  if (!previous) return;
+  if (versions.finds !== previous.finds) {
+    ae.findsDirty = true;
+    queueRealtimeRefresh('area-explorer', refreshAreaExplorerFromEvent, 180);
+  }
+  if (versions.events !== previous.events && ae.logServer !== null) {
+    const params = new URLSearchParams({ limit: String(AREA_EXPLORER_LOG_PAGE) });
+    if (ae.logServer) params.set('server', ae.logServer);
+    if (ae.logFilter) params.set('filter', ae.logFilter);
+    fetchJson(`/api/area-explorer/events?${params}`).then(data => applyAreaExplorerEvents(data.events)).catch(() => {});
+  }
 }
 
 function areaExplorerInTerritory(x, z) {
@@ -7388,6 +7468,14 @@ function setupAreaExplorer() {
     });
     loadAreaExplorerLog().catch(error => setBanner(`Could not load the run log: ${error.message}`));
   }));
+  $('#areaExplorerNewFinds').addEventListener('click', () => {
+    $('#areaExplorerFinds').scrollTo({ top: 0, behavior: 'smooth' });
+    setAreaExplorerNewFinds(0);
+  });
+  // Scrolled up to them by hand: nothing left to point at
+  $('#areaExplorerFinds').addEventListener('scroll', event => {
+    if (ae.newFindsAbove && event.currentTarget.scrollTop <= 4) setAreaExplorerNewFinds(0);
+  }, { passive: true });
   $('#areaExplorerLogMore').addEventListener('click', () => {
     loadAreaExplorerLog({ older: true }).catch(error => setBanner(`Could not load older events: ${error.message}`));
   });

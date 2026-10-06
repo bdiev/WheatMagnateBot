@@ -12775,7 +12775,7 @@ body.kill-aura-modal-open {
 /* Finds: the order, a long sign kept to a few lines in the list (whole on the map's card) */
 .area-explorer-sort { flex: 0 1 230px; min-width: 0; }
 .area-explorer-sort select { width: 100%; min-width: 0; height: var(--button-height); }
-.area-explorer-finds-panel .area-explorer-sign {
+.area-explorer-finds-panel .area-explorer-sign-text {
   display: -webkit-box;
   -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
@@ -13328,7 +13328,7 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
   list-style: none;
 }
 /* Each find as an inventory slot holding its own item, its name, then kind, place and time */
-.area-explorer-finds-panel > .area-explorer-finds {
+.area-explorer-finds-wrap > .area-explorer-finds {
   display: grid;
   gap: 8px;
   padding: 12px;
@@ -13436,7 +13436,37 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
   white-space: pre-wrap;
   cursor: text;
 }
-.area-explorer-sign.is-back::before { content: "Back"; display: block; color: var(--muted); font-size: 11px; text-transform: uppercase; }
+.area-explorer-sign.is-back::before,
+.area-explorer-sign.is-both::before { content: "Back"; display: block; color: var(--muted); font-size: 11px; text-transform: uppercase; }
+.area-explorer-sign.is-both::before { content: "Both sides"; }
+
+/* New finds while the list is scrolled: counted on a button over its top, lit up for a moment */
+.area-explorer-finds-wrap { position: relative; }
+.area-explorer-new-finds {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  z-index: 2;
+  min-width: 0;
+  min-height: 0;
+  height: auto;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  transform: translateX(-50%);
+  box-shadow: var(--shadow-sm);
+}
+.area-explorer-new-finds:hover { transform: translateX(-50%); }
+.area-explorer-new-finds[hidden] { display: none; }
+.area-explorer-find.is-new { animation: area-explorer-new-find 2.4s ease-out; }
+@keyframes area-explorer-new-find {
+  from { background: color-mix(in srgb, var(--find-color) 24%, var(--panel-soft)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .area-explorer-find.is-new { animation: none; }
+}
 .area-explorer-find-meta {
   display: flex;
   flex-wrap: wrap;
@@ -13580,13 +13610,64 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
   .area-explorer-filters input[type="search"],
   .area-explorer-marker-name { flex: 1 1 100%; }
   .area-explorer-find { grid-template-columns: 40px minmax(0, 1fr); gap: 10px; padding: 10px; }
-  .area-explorer-finds-panel > .area-explorer-finds { padding: 8px; gap: 6px; }
+  .area-explorer-finds-wrap > .area-explorer-finds { padding: 8px; gap: 6px; }
   .area-explorer-find-icon { width: 40px; height: 40px; }
   .area-explorer-find-icon img { width: 28px; height: 28px; }
   .area-explorer-find-name, .area-explorer-find-title { font-size: 15px; }
   .area-explorer-sign { padding: 8px 10px; }
   .area-explorer-find-meta { gap: 2px 10px; }
   .area-explorer-pager { padding: 10px 14px; font-size: 13px; }
+}
+
+/* Phones, second pass: less chrome around the content */
+@media (max-width: 640px) {
+  /* Panel heads: the title only - the hint lines are for the desktop; the map keeps its count */
+  .area-explorer-layout .panel-head p:not(#areaExplorerScopeSummary) { display: none; }
+  .area-explorer-layout .panel-head h2 { font-size: 17px; }
+  #areaExplorerScopeSummary { font-size: 13px; }
+  .area-explorer-log-panel .panel-head,
+  .area-explorer-highlights-panel .panel-head { padding: 10px 14px; }
+  .area-explorer-map-head { padding-block: 10px; }
+
+  /* The extent and Move map on one row */
+  .area-explorer-map-bar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+  .area-explorer-map-bar .area-explorer-extent { width: auto; }
+  .area-explorer-extent .chart-range-button { min-height: 40px; padding-inline: 4px; }
+  .area-explorer-touch-mode { min-height: 40px; padding: 6px 12px; font-size: 14px; white-space: nowrap; }
+  .area-explorer-map-hint { padding: 8px 14px; font-size: 12px; }
+
+  /* The find picked on the map: a compact sheet along the map's foot */
+  .area-explorer-selected { left: 8px; right: 8px; bottom: 8px; width: auto; max-height: 52%; transform: none; }
+  .area-explorer-map-wrap:has(.area-explorer-selected:not([hidden])) .area-explorer-map-status { display: none; }
+  .area-explorer-selected .area-explorer-find { grid-template-columns: 36px minmax(0, 1fr); gap: 10px; padding: 10px 10px 10px 12px; }
+  .area-explorer-selected .area-explorer-find-icon { width: 36px; height: 36px; }
+  .area-explorer-selected .area-explorer-find-icon img { width: 24px; height: 24px; }
+  .area-explorer-selected .area-explorer-find-heading { display: flex; align-items: center; min-height: 36px; padding-right: 40px; }
+  .area-explorer-selected .area-explorer-find-main { gap: 6px; }
+  .area-explorer-selected-close { top: 4px; right: 4px; width: 40px; height: 40px; }
+  .area-explorer-selected .area-explorer-sign-text {
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  /* Sign text a size down everywhere: four lines take a third of the height */
+  .area-explorer-sign { padding: 6px 8px; font-size: 13px; line-height: 1.35; }
+
+  /* The live run: tighter, the facts two to a row */
+  .area-explorer-run { gap: 8px; padding: 10px; }
+  .area-explorer-run dl { gap: 6px 12px; }
+  .area-explorer-run dt { font-size: 12px; }
+  .area-explorer-run-finds { font-size: 13px; }
+  .area-explorer-run-focus { min-height: 36px; padding: 4px 12px; }
+
+  /* Finds: the search and the order side by side */
+  .area-explorer-filters { flex-wrap: nowrap; }
+  .area-explorer-filters input[type="search"] { flex: 1 1 0; min-width: 0; }
+  .area-explorer-sort { flex: 0 0 132px; }
+  .area-explorer-filters:has(.area-explorer-marker-name:not([hidden])) { flex-wrap: wrap; }
+  .area-explorer-toolbar { gap: 8px; }
+  .area-explorer-finds-wrap > .area-explorer-finds { max-height: 70svh; }
 }
 
 @media (pointer: coarse), (max-width: 640px) {
