@@ -2037,8 +2037,10 @@ public class AreaExplorer extends Module {
     }
 
     /**
-     * The ground loaded within the swath of the player counts as flown over: on entering each chunk,
-     * and every second for chunks that came in late.
+     * The ground loaded around the player counts as flown over: on entering each chunk, and every
+     * second for chunks that came in late. As far as the server sends, not just the planned swath -
+     * it often sends a little more, and that ground got seen too. The server unloads what falls out
+     * of its range, so only what's around the player now is loaded.
      */
     private void markCoverage() {
         if (coverage == null) return;
@@ -2047,7 +2049,7 @@ public class AreaExplorer extends Module {
         lastCoverageChunk = p.toLong();
         coverageCheckTicks = 0;
         var chunks = mc.world.getChunkManager();
-        coverage.markAround(p.x, p.z, reach, chunks::isChunkLoaded);
+        coverage.markAround(p.x, p.z, MAX_MEASURED_RADIUS, chunks::isChunkLoaded);
     }
 
     /** Picks up chunks around the player that the map has drawn by now. */
