@@ -13795,6 +13795,5 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
 [aria-pressed="true"] .area-explorer-eye-slash { display: block; }
 .is-hiding-finds .area-explorer-map-legend span:not(.legend-player):not(.legend-flown) { display: none; }
 
-/* The map's Night button: shown where there's a night view, lit while it's on */
-.area-explorer-night[hidden] { display: none; }
-.area-explorer-night.active { border-color: var(--accent); color: var(--text); background: color-mix(in srgb, var(--accent) 18%, transparent); }
+/* The map's Night button: only where there's a night view */
+.area-explorer-map-button.area-explorer-night[hidden] { display: none; }

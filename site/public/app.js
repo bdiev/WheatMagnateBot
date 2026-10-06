@@ -7447,7 +7447,7 @@ function renderAreaExplorerNightButton() {
   const [server, dimension] = ae.scope.split('|');
   button.hidden = !ae.mapScopes.some(item => item.server === server && item.dimension === dimension && item.night);
   button.setAttribute('aria-pressed', String(Boolean(ae.night)));
-  button.classList.toggle('active', Boolean(ae.night));
+  button.title = ae.night ? 'Day view' : "Night view, as Xaero's World Map shows it";
 }
 
 function addXaeroRegion(regionMap, x, z) {

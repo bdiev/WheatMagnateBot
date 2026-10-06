@@ -54,6 +54,11 @@ public final class MapSync {
     private static final long IDLE_MS = 20_000;
     private static final long RETRY_MS = 30_000;
     private static final long FULL_MS = 10 * 60_000;
+    /**
+     * What the site has is asked again this often: it may have changed under us - restarted with a
+     * new version, or another PC sending the same map - and a list kept for good would hide that.
+     */
+    private static final long INDEX_REFRESH_MS = 10 * 60_000;
     /** Progress is said in chat after this many regions of a big backlog. */
     private static final int PROGRESS_EVERY = 2_000;
 
@@ -70,6 +75,7 @@ public final class MapSync {
     /** What the site has, by "server dimension": region "x,z" to when it was drawn. */
     private final Map<String, Map<String, Long>> onSite = new HashMap<>();
     private String onSiteFor;
+    private long onSiteAt;
     private String lastProblem;
 
     /** Starts sending, or carries on with these settings. */
@@ -91,10 +97,11 @@ public final class MapSync {
         while (true) {
             Config current = config;
             if (current == null) return;
-            if (!current.site().equals(onSiteFor)) {
-                // Another site: what it has is still to be asked
+            if (!current.site().equals(onSiteFor) || System.currentTimeMillis() - onSiteAt > INDEX_REFRESH_MS) {
+                // Another site, or a while since it was asked: what it has is to be asked (again)
                 onSite.clear();
                 onSiteFor = current.site();
+                onSiteAt = System.currentTimeMillis();
             }
             long pause = IDLE_MS;
             try {
