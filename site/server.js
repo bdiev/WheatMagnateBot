@@ -34,6 +34,8 @@ const { dashedMinecraftUuid,resolveMinecraftProfile } = require('./player-profil
 const { whitelistMatchSql } = require('./whitelist-identity');
 const { ignoredIdentityMatchSql } = require('./ignored-identity');
 const { MinecraftIconCache, minecraftIconEtag } = require('./minecraft-icon-cache');
+// Generated from minecraft-data (1.21.4): items whose English name doesn't make their id
+const ITEM_NAME_IDS = Object.freeze(require('./item-name-ids.json'));
 const {
   MUTATING_METHODS, RateLimiter, clientIp, configuredOrigins, requestIsHttps,
   resolveStaticPath, securityHeaders, trustProxyEnabled, validateOrigin, validHost, verifyCsrfToken
@@ -846,7 +848,8 @@ async function getItemIcons() {
   await addIconsFromDirectory(ITEMS_DIR, '/items');
   await addIconsFromDirectory(FOOD_DIR, '/food');
 
-  return { icons };
+  // Item names as the game shows them whose id is something else: "Ward Armor Trim" is ward_armor_trim_smithing_template
+  return { icons, names: ITEM_NAME_IDS };
 }
 
 async function getRequestItemCatalog() {
@@ -6161,7 +6164,13 @@ async function handleApi(req, res, url) {
       let iconId;
       try { iconId = decodeURIComponent(minecraftIconRoute[2]); }
       catch { sendError(res, 400, 'Invalid Minecraft icon identifier.'); return; }
-      await sendMinecraftIcon(req, res, minecraftIconRoute[1], iconId);
+      try {
+        await sendMinecraftIcon(req, res, minecraftIconRoute[1], iconId);
+      } catch (err) {
+        // An item with no picture: the page shows a fallback - nothing for the system log
+        if (Number(err.statusCode) !== 404) throw err;
+        if (!res.headersSent) sendError(res, 404, err.message);
+      }
       return;
     }
     if (url.pathname.startsWith('/api/auth/')) {

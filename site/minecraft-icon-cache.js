@@ -7,6 +7,8 @@ const path = require('node:path');
 const DEFAULT_BASE_URL = 'https://mc-api.bisai.dev';
 const DEFAULT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024;
+/** How long an icon the provider doesn't have is answered as missing without asking again. */
+const DEFAULT_MISSING_TTL_MS = 6 * 60 * 60 * 1000;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const TYPE_PATHS = Object.freeze({
   mob: id => `/v1/mobs/${encodeURIComponent(id)}/image.png`,
@@ -33,6 +35,7 @@ class MinecraftIconCache {
     ttlMs = DEFAULT_TTL_MS,
     maxBytes = DEFAULT_MAX_BYTES,
     timeoutMs = 8_000,
+    missingTtlMs = DEFAULT_MISSING_TTL_MS,
     now = () => Date.now()
   } = {}) {
     if (!cacheDir) throw new Error('Minecraft icon cache directory is required.');
@@ -46,6 +49,9 @@ class MinecraftIconCache {
     this.timeoutMs = Math.max(1_000, Number(timeoutMs) || 8_000);
     this.now = now;
     this.pending = new Map();
+    this.missingTtlMs = Math.max(0, Number(missingTtlMs) || 0);
+    /** "type:id" of icons the provider said it doesn't have, to when that's believed. */
+    this.missing = new Map();
   }
 
   resolve(type, rawId) {
@@ -90,7 +96,8 @@ class MinecraftIconCache {
     }
     if (!response.ok) {
       const statusCode = response.status === 404 ? 404 : 502;
-      throw Object.assign(new Error(response.status === 404 ? 'Minecraft icon was not found.' : 'Minecraft icon provider returned an error.'), { statusCode });
+      if (statusCode === 404) throw notFound();
+      throw Object.assign(new Error('Minecraft icon provider returned an error.'), { statusCode });
     }
     const contentLength = Number(response.headers?.get?.('content-length'));
     if (Number.isFinite(contentLength) && contentLength > this.maxBytes) {
@@ -115,9 +122,13 @@ class MinecraftIconCache {
     if (cached?.fresh) return { ...cached, cacheStatus: 'HIT' };
 
     const cacheKey = `${resolved.type}:${resolved.id}`;
+    const missingUntil = this.missing.get(cacheKey);
+    if (!cached && missingUntil > this.now()) throw notFound();
+    if (missingUntil !== undefined && missingUntil <= this.now()) this.missing.delete(cacheKey);
     if (!this.pending.has(cacheKey)) {
       this.pending.set(cacheKey, this.download(resolved)
         .catch(error => {
+          if (error.statusCode === 404 && this.missingTtlMs > 0) this.missing.set(cacheKey, this.now() + this.missingTtlMs);
           if (cached) return { ...cached, cacheStatus: 'STALE' };
           throw error;
         })
@@ -127,12 +138,17 @@ class MinecraftIconCache {
   }
 }
 
+function notFound() {
+  return Object.assign(new Error('Minecraft icon was not found.'), { statusCode: 404 });
+}
+
 function minecraftIconEtag(body) {
   return `"${crypto.createHash('sha256').update(body).digest('base64url').slice(0, 20)}"`;
 }
 
 module.exports = {
   DEFAULT_MAX_BYTES,
+  DEFAULT_MISSING_TTL_MS,
   DEFAULT_TTL_MS,
   MinecraftIconCache,
   minecraftIconEtag,

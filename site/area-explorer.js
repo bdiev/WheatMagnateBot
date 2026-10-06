@@ -17,6 +17,8 @@ const TOKEN_PREFIX = 'aex_';
 const MAX_PAGE_SIZE = 200;
 const MAX_MAP_POINTS = 20_000;
 const TOP_LOOT_NAMES = 8;
+// Markers of structures that stay where they are: they never come off the site
+const PERMANENT_MARKERS = Object.freeze(['End Portal', 'End Gateway', 'End City', 'Ancient City', 'Trial Chamber']);
 const EVENT_LEVELS = Object.freeze(['info', 'success', 'warn', 'error']);
 const MAX_EVENTS_PER_BATCH = 200;
 const MAX_EVENT_PAGE = 200;
@@ -552,10 +554,12 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     if (!/^\d{1,18}$/.test(id)) throw httpError(400, 'Invalid find id.');
     const row = (await pool.query(
       `UPDATE area_explorer_finds SET removed_at = NOW(), removed_by = $2
-       WHERE id = $1 AND kind IN ('ITEM', 'MARKER') AND removed_at IS NULL RETURNING *`,
-      [id, currentUser.username]
+       WHERE id = $1 AND removed_at IS NULL
+         AND (kind = 'ITEM' OR (kind = 'MARKER' AND name <> ALL($3::text[])))
+       RETURNING *`,
+      [id, currentUser.username, PERMANENT_MARKERS]
     )).rows[0];
-    if (!row) throw httpError(404, 'No loot or marker like that on the site (removed already?).');
+    if (!row) throw httpError(404, 'No loot or removable marker like that on the site (removed already?).');
     const what = row.kind === 'ITEM' ? `Loot picked up: ${row.name} ×${row.item_count}` : `Marker removed: ${row.name}`;
     await recordSystemLog({
       category: 'area_explorer', actor: currentUser.username,
@@ -631,6 +635,7 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
 module.exports = {
   CONNECTION_EVENT_TYPES,
   KINDS,
+  PERMANENT_MARKERS,
   SAME_BASE_DISTANCE,
   MAX_FINDS_PER_BATCH,
   TOKEN_PREFIX,

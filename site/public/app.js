@@ -183,6 +183,7 @@ const state = {
   inventoryMovePending: false,
   inventoryDragConsumedUntil: 0,
   itemIcons: {},
+  itemNameIds: {},
   itemIconsLoading: null,
   chatReply: null,
   chatReplyActiveMessageId: null,
@@ -1043,8 +1044,14 @@ function localItemIconUrl(item) {
   return state.itemIcons[iconKey] || LOCAL_ITEM_ICONS[iconKey] || '';
 }
 
+/** An item's id from its name as the game shows it: "Ward Armor Trim" is ward_armor_trim_smithing_template, "Map" filled_map. */
+function itemIdForName(value) {
+  const key = normalizeItemIconKey(value);
+  return state.itemNameIds[key] || key;
+}
+
 function minecraftIconUrl(type, value) {
-  const iconKey = normalizeItemIconKey(value);
+  const iconKey = type === 'item' ? itemIdForName(value) : normalizeItemIconKey(value);
   if (!['mob', 'item'].includes(type) || !/^[a-z0-9_]{1,80}$/.test(iconKey)) return '';
   return `/api/minecraft-icon/${type}/${encodeURIComponent(iconKey)}.png`;
 }
@@ -6174,6 +6181,8 @@ const AREA_EXPLORER_PHASES = Object.freeze({
 // Picked by its radius: ±30k is -30,000 to 30,000 each way. ae.extent is the side, twice that.
 const AREA_EXPLORER_RADII = Object.freeze([30_000, 50_000, 100_000]);
 // Signs under loot under markers under bases: the rarer, the higher
+// Markers of structures that stay where they are: no Remove (the site refuses it too)
+const AREA_EXPLORER_PERMANENT_MARKERS = Object.freeze(['End Portal', 'End Gateway', 'End City', 'Ancient City', 'Trial Chamber']);
 const AREA_EXPLORER_KIND_ORDER = Object.freeze({ SIGN: 0, ITEM: 1, MARKER: 2, BASE: 3 });
 const AREA_EXPLORER_MAX_SCALE = 16;
 
@@ -6624,7 +6633,6 @@ const AREA_EXPLORER_MARKER_ICONS = Object.freeze({
 });
 
 // Items the game names unlike their id: a filled map is just "Map", a writable book "Book and Quill"
-const AREA_EXPLORER_ITEM_ICONS = Object.freeze({ map: 'filled_map', book_and_quill: 'writable_book' });
 
 /** The site's own picture of an item, else the cached one from the icon service. */
 function areaExplorerIconUrl(key) {
@@ -6636,8 +6644,7 @@ function areaExplorerFindIcon(find) {
   let key = AREA_EXPLORER_KIND_ICONS[find.kind];
   // A wall sign is the same item as the standing one
   if (find.kind === 'ITEM' || find.kind === 'SIGN') {
-    key = normalizeItemIconKey(find.name).replace('_wall_', '_');
-    key = AREA_EXPLORER_ITEM_ICONS[key] || key;
+    key = itemIdForName(normalizeItemIconKey(find.name).replace('_wall_', '_'));
   }
   else if (find.kind === 'MARKER') key = AREA_EXPLORER_MARKER_ICONS[find.name] || normalizeItemIconKey(find.name);
   return { src: areaExplorerIconUrl(key) || fallback, fallback };
@@ -6671,7 +6678,7 @@ function renderAreaExplorerFind(find, { selected = false } = {}) {
   const away = view ? Math.round(Math.hypot(find.x - view.cx, find.z - view.cz)) : null;
   const distance = away === null ? '' : `<span class="area-explorer-find-distance">${away >= 1000 ? `${(away / 1000).toFixed(1)}k` : away} blocks away</span>`;
   // Loot picked up in game, or a marker that's wrong or gone, comes off the site (administrators)
-  const removable = find.kind === 'ITEM' || find.kind === 'MARKER';
+  const removable = find.kind === 'ITEM' || (find.kind === 'MARKER' && !AREA_EXPLORER_PERMANENT_MARKERS.includes(find.name));
   const pickup = removable && state.currentUser?.role === 'admin'
     ? `<button class="ghost-button area-explorer-pickup" type="button" data-area-pickup="${escapeHtml(find.id)}" data-area-pickup-kind="${find.kind}" data-area-pickup-name="${escapeHtml(areaExplorerFindTitle(find))}" title="${find.kind === 'ITEM' ? 'Picked up in game: take it off the site' : 'Wrong or no longer there: take it off the site'}">${find.kind === 'ITEM' ? 'Picked up' : 'Remove'}</button>`
     : '';
@@ -12086,6 +12093,7 @@ async function ensureItemIcons() {
     state.itemIconsLoading = fetchJson('/api/item-icons')
       .then(payload => {
         state.itemIcons = payload?.icons && typeof payload.icons === 'object' ? payload.icons : {};
+        state.itemNameIds = payload?.names && typeof payload.names === 'object' ? payload.names : {};
         return state.itemIcons;
       })
       .finally(() => {

@@ -78,7 +78,41 @@ async function run() {
   }
 }
 
+/** An icon the provider doesn't have is remembered as missing for a while: no request per page view. */
+async function missingIcons() {
+  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wm-minecraft-icons-'));
+  try {
+    let time = 1_000_000;
+    let asked = 0;
+    const cache = new MinecraftIconCache({
+      cacheDir, now: () => time, missingTtlMs: 60_000,
+      fetchImpl: async () => { asked++; return { ok: false, status: 404, headers: { get: () => null } }; }
+    });
+    await assert.rejects(cache.get('item', 'ward_armor_trim'), error => error.statusCode === 404);
+    await assert.rejects(cache.get('item', 'ward_armor_trim'), error => error.statusCode === 404);
+    assert.equal(asked, 1, 'the second time is answered from memory');
+    time += 61_000;
+    await assert.rejects(cache.get('item', 'ward_armor_trim'), error => error.statusCode === 404);
+    assert.equal(asked, 2, 'and asked again once that has run out');
+  } finally {
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  }
+}
+
+/** Names the game shows whose ids are something else, from minecraft-data. */
+function itemNameIds() {
+  const names = require('../item-name-ids.json');
+  assert.equal(names.ward_armor_trim, 'ward_armor_trim_smithing_template');
+  assert.equal(names.netherite_upgrade, 'netherite_upgrade_smithing_template');
+  assert.equal(names.map, 'filled_map');
+  assert.equal(names.book_and_quill, 'writable_book');
+  assert.equal(names.eye_of_ender, 'ender_eye');
+  assert.equal(names.elytra, undefined, 'only names that differ from the id');
+}
+
 run()
+  .then(missingIcons)
+  .then(itemNameIds)
   .then(() => console.log('Minecraft icon cache tests passed.'))
   .catch(error => {
     console.error(error);

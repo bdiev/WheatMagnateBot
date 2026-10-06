@@ -271,6 +271,8 @@ async function testMarkers() {
     const again = await service.ingest(token, { server: 'oldfrog.org', dimension: 'overworld', finds: [marker('Shulker Box', 5, 5)] }, NOW);
     assert.equal(again.added, 0, 'sent again by the mod: stays off');
     assert.equal((await service.getFinds(url('kind=MARKER&name=Shulker%20Box'))).total, 1);
+    const portal = (await service.getFinds(url('kind=MARKER&name=End%20Portal'))).finds[0];
+    await assert.rejects(service.removeFind({ username: 'admin' }, portal.id), /removable marker/, 'an End Portal stays');
   } finally {
     await db.close();
   }
@@ -287,8 +289,8 @@ function testWiring() {
   assert.match(appSource, /'area_explorer_updated'/, 'the page listens for live updates');
   assert.match(indexSource, /data-area-kind="MARKER"[^>]*><img src="\/items\/Ender_Eye\.png"[^>]*><span class="area-explorer-kind-tab-label">Markers<\/span> <span class="area-explorer-kind-tab-count" data-area-count="MARKER">/, 'markers have a filter of their own, with its icon');
   // Each find shows its own item: the book is a book, the shulker a shulker
-  assert.match(appSource, /if \(find\.kind === 'ITEM' \|\| find\.kind === 'SIGN'\) \{\s+key = normalizeItemIconKey\(find\.name\)/);
-  assert.match(appSource, /map: 'filled_map', book_and_quill: 'writable_book'/, 'a filled map and a book and quill show as themselves');
+  assert.match(appSource, /if \(find\.kind === 'ITEM' \|\| find\.kind === 'SIGN'\) \{\s+key = itemIdForName\(normalizeItemIconKey\(find\.name\)/);
+  assert.match(appSource, /return state\.itemNameIds\[key\] \|\| key;/, 'names the game shows are turned into item ids: a map is a filled map, a trim its smithing template');
   assert.match(appSource, /'End Portal': 'ender_eye'/, 'a marker shows the item that stands for it');
   assert.match(appSource, /data-fallback="\$\{escapeHtml\(icon\.fallback\)\}"/, 'an icon that fails falls back to its kind');
   assert.match(appSource, /class="area-explorer-find-count"/, 'a stack shows its size on the icon');
@@ -300,7 +302,9 @@ function testWiring() {
   // The most valuable loot in the highlights; loot picked up in game taken off by an administrator
   assert.match(appSource, /Most valuable<\/span>/);
   assert.match(appSource, /scope\.valuableItems\.map\(/);
-  assert.match(appSource, /const removable = find\.kind === 'ITEM' \|\| find\.kind === 'MARKER';/, 'loot and markers');
+  assert.match(appSource, /const removable = find\.kind === 'ITEM' \|\| \(find\.kind === 'MARKER' && !AREA_EXPLORER_PERMANENT_MARKERS\.includes\(find\.name\)\);/, 'loot and markers, not signs or lasting structures');
+  const { PERMANENT_MARKERS } = require('../area-explorer');
+  assert.ok(appSource.includes(`const AREA_EXPLORER_PERMANENT_MARKERS = Object.freeze(${JSON.stringify(PERMANENT_MARKERS).replace(/"/g, "'").replace(/,/g, ', ')});`), 'the page and the site agree on them');
   assert.match(appSource, /const pickup = removable && state\.currentUser\?\.role === 'admin'/, 'only for administrators');
   assert.match(appSource, /await deleteJson\(`\/api\/area-explorer\/finds\/\$\{encodeURIComponent\(id\)\}`\);/);
   assert.match(appSource, /if \(payload\.added \|\| payload\.removed\) ae\.findsDirty = true;/, 'other open pages drop it too');
