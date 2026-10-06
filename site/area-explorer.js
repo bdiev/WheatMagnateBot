@@ -544,20 +544,22 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
   }
 
   /**
-   * Takes a find of loot off the site once it's been picked up in game. It stays in the table,
-   * marked, so the mod sending it again (it's in its all-finds file for good) doesn't bring it back.
+   * Takes loot off the site once it's been picked up in game, or a marker that's wrong or no longer
+   * there (a shulker box taken, a portal broken). It stays in the table, marked, so the mod sending
+   * it again (it's in its all-finds file for good) doesn't bring it back.
    */
   async function removeFind(currentUser, id) {
     if (!/^\d{1,18}$/.test(id)) throw httpError(400, 'Invalid find id.');
     const row = (await pool.query(
       `UPDATE area_explorer_finds SET removed_at = NOW(), removed_by = $2
-       WHERE id = $1 AND kind = 'ITEM' AND removed_at IS NULL RETURNING *`,
+       WHERE id = $1 AND kind IN ('ITEM', 'MARKER') AND removed_at IS NULL RETURNING *`,
       [id, currentUser.username]
     )).rows[0];
-    if (!row) throw httpError(404, 'No loot like that on the site (picked up already?).');
+    if (!row) throw httpError(404, 'No loot or marker like that on the site (removed already?).');
+    const what = row.kind === 'ITEM' ? `Loot picked up: ${row.name} ×${row.item_count}` : `Marker removed: ${row.name}`;
     await recordSystemLog({
       category: 'area_explorer', actor: currentUser.username,
-      message: `Loot picked up: ${row.name} ×${row.item_count} at ${row.x} ${row.y} ${row.z} (${row.server}, ${row.dimension}).`
+      message: `${what} at ${row.x} ${row.y} ${row.z} (${row.server}, ${row.dimension}).`
     });
     publish('area_explorer_updated', { server: row.server, dimension: row.dimension, removed: String(row.id) });
     return { removed: publicFind(row) };

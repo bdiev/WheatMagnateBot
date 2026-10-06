@@ -204,8 +204,8 @@ async function testIngestAndQueries() {
     assert.deepEqual(afterPickup.valuableItems, []);
     const sentAgain = await service.ingest(token, { server: 'oldfrog.org', dimension: 'overworld', finds: [batch.finds[2]] }, NOW);
     assert.equal(sentAgain.added, 0, 'the mod sending it again does not bring it back');
-    await assert.rejects(service.removeFind(admin, elytra.id), /picked up already/);
-    await assert.rejects(service.removeFind(admin, sign.id), /picked up already/, 'only loot is picked up');
+    await assert.rejects(service.removeFind(admin, elytra.id), /removed already/);
+    await assert.rejects(service.removeFind(admin, sign.id), /removed already/, 'signs are not taken off');
 
     const routed = await service.handleApi({ method: 'GET' }, { username: 'viewer', role: 'user' },
       new URL('http://x/api/area-explorer/summary'), { assertAdmin() { throw new Error('not for viewers'); }, readBody: async () => ({}) });
@@ -260,6 +260,17 @@ async function testMarkers() {
     assert.equal((await service.getFinds(url('name=Shulker%20Box'))).total, 5, 'the name only narrows markers');
     const points = await service.getMapPoints(new URL('http://x/api/area-explorer/map?kind=MARKER&name=End%20Portal'));
     assert.deepEqual(points.points.map(point => point.slice(1)), [['MARKER', 100, 200, 'End Portal']]);
+
+    // A marker that's wrong or gone comes off the site, and the mod finding it again doesn't bring it back
+    const gone = shulkers.finds.find(find => find.x === 5);
+    const removed = await service.removeFind({ username: 'admin' }, gone.id);
+    assert.equal(removed.removed.kind, 'MARKER');
+    const afterRemoval = (await service.getSummary()).scopes[0];
+    assert.equal(afterRemoval.markers, 3);
+    assert.deepEqual(afterRemoval.markerNames.find(item => item.name === 'Shulker Box'), { name: 'Shulker Box', count: 1 });
+    const again = await service.ingest(token, { server: 'oldfrog.org', dimension: 'overworld', finds: [marker('Shulker Box', 5, 5)] }, NOW);
+    assert.equal(again.added, 0, 'sent again by the mod: stays off');
+    assert.equal((await service.getFinds(url('kind=MARKER&name=Shulker%20Box'))).total, 1);
   } finally {
     await db.close();
   }
@@ -289,7 +300,8 @@ function testWiring() {
   // The most valuable loot in the highlights; loot picked up in game taken off by an administrator
   assert.match(appSource, /Most valuable<\/span>/);
   assert.match(appSource, /scope\.valuableItems\.map\(/);
-  assert.match(appSource, /const pickup = find\.kind === 'ITEM' && state\.currentUser\?\.role === 'admin'/, 'only loot, only for administrators');
+  assert.match(appSource, /const removable = find\.kind === 'ITEM' \|\| find\.kind === 'MARKER';/, 'loot and markers');
+  assert.match(appSource, /const pickup = removable && state\.currentUser\?\.role === 'admin'/, 'only for administrators');
   assert.match(appSource, /await deleteJson\(`\/api\/area-explorer\/finds\/\$\{encodeURIComponent\(id\)\}`\);/);
   assert.match(appSource, /if \(payload\.added \|\| payload\.removed\) ae\.findsDirty = true;/, 'other open pages drop it too');
   // Highlights and the list's order

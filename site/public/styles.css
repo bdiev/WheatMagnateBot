@@ -12953,16 +12953,6 @@ body.kill-aura-modal-open {
 
 .area-explorer-extent .chart-range-button { white-space: nowrap; }
 
-.area-explorer-map-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.area-explorer-map-toggle[hidden] { display: none; }
-
 .area-explorer-map-wrap {
   position: relative;
   overflow: hidden;

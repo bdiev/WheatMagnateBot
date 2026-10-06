@@ -6185,7 +6185,6 @@ function areaExplorerState() {
       tiles: new Map(), drawQueued: false, regionMap: null, regionMapEpoch: 0, colors: null, colorsTheme: null,
       findsDirty: false, tokensDirty: true, newFindsAbove: 0, versions: null,
       logFilter: '', logEvents: [], logHasMore: false, logServer: null, logRequestId: 0,
-      showXaero: readAreaExplorerSetting('areaExplorerShowXaero', 'true') !== 'false',
       showFinds: readAreaExplorerSetting('areaExplorerShowFinds', 'true') !== 'false',
       sort: ['newest', 'nearest', 'name'].includes(readAreaExplorerSetting('areaExplorerSort', 'newest')) ? readAreaExplorerSetting('areaExplorerSort', 'newest') : 'newest',
       extent: readAreaExplorerExtent()
@@ -6421,10 +6420,6 @@ function renderAreaExplorerScopes() {
     : 'Nothing uploaded by the mod yet.';
   renderAreaExplorerMarkerNames(scope);
   renderAreaExplorerHighlights(scope);
-  const [server, dimension] = ae.scope.split('|');
-  const toggle = $('#areaExplorerShowXaero');
-  toggle.closest('label').hidden = !ae.mapScopes.some(item => item.server === server && item.dimension === dimension);
-  toggle.checked = ae.showXaero;
 }
 
 /**
@@ -6675,9 +6670,10 @@ function renderAreaExplorerFind(find, { selected = false } = {}) {
   const view = areaExplorerState().sort === 'nearest' ? areaExplorerState().view : null;
   const away = view ? Math.round(Math.hypot(find.x - view.cx, find.z - view.cz)) : null;
   const distance = away === null ? '' : `<span class="area-explorer-find-distance">${away >= 1000 ? `${(away / 1000).toFixed(1)}k` : away} blocks away</span>`;
-  // Loot that's been picked up in game comes off the site (administrators)
-  const pickup = find.kind === 'ITEM' && state.currentUser?.role === 'admin'
-    ? `<button class="ghost-button area-explorer-pickup" type="button" data-area-pickup="${escapeHtml(find.id)}" data-area-pickup-name="${escapeHtml(areaExplorerFindTitle(find))}" title="Picked up in game: take it off the site">Picked up</button>`
+  // Loot picked up in game, or a marker that's wrong or gone, comes off the site (administrators)
+  const removable = find.kind === 'ITEM' || find.kind === 'MARKER';
+  const pickup = removable && state.currentUser?.role === 'admin'
+    ? `<button class="ghost-button area-explorer-pickup" type="button" data-area-pickup="${escapeHtml(find.id)}" data-area-pickup-kind="${find.kind}" data-area-pickup-name="${escapeHtml(areaExplorerFindTitle(find))}" title="${find.kind === 'ITEM' ? 'Picked up in game: take it off the site' : 'Wrong or no longer there: take it off the site'}">${find.kind === 'ITEM' ? 'Picked up' : 'Remove'}</button>`
     : '';
   return `<li class="area-explorer-find kind-${find.kind.toLowerCase()}" data-find-id="${escapeHtml(find.id)}" data-find-at="${find.x},${find.z}">
     <span class="area-explorer-find-icon" aria-hidden="true"><img src="${escapeHtml(icon.src)}" data-fallback="${escapeHtml(icon.fallback)}" alt="" loading="lazy" decoding="async" width="32" height="32">${count}</span>
@@ -6948,7 +6944,7 @@ function drawAreaExplorerMap() {
   ctx.beginPath();
   ctx.rect(tx1, tz1, tx2 - tx1, tz2 - tz1);
   ctx.clip();
-  if (ae.showXaero) drawXaeroRegionMap(ctx, canvas, view, ratio);
+  drawXaeroRegionMap(ctx, canvas, view, ratio);
 
   // A grid line every 1,000 blocks, or 10,000 zoomed out; the axes stronger
   const step = view.scale * 1000 >= 40 ? 1000 : 10000;
@@ -7454,11 +7450,6 @@ function setupAreaExplorer() {
     event.currentTarget.setAttribute('aria-pressed', String(on));
     event.currentTarget.textContent = on ? 'Done moving' : 'Move map';
   });
-  $('#areaExplorerShowXaero').addEventListener('change', event => {
-    ae.showXaero = event.target.checked;
-    saveAreaExplorerSetting('areaExplorerShowXaero', ae.showXaero);
-    queueAreaExplorerMapDraw();
-  });
   renderAreaExplorerExtent();
   $$('[data-area-log-filter]').forEach(button => button.addEventListener('click', () => {
     ae.logFilter = button.dataset.areaLogFilter;
@@ -7517,7 +7508,9 @@ function setupAreaExplorer() {
     const pickup = event.target.closest('[data-area-pickup]');
     if (pickup) {
       const id = pickup.dataset.areaPickup;
-      if (!confirm(`Take ${pickup.dataset.areaPickupName} off the site? Do this once it's been picked up in game.`)) return;
+      const loot = pickup.dataset.areaPickupKind !== 'MARKER';
+      if (!confirm(loot ? `Take ${pickup.dataset.areaPickupName} off the site? Do this once it's been picked up in game.`
+        : `Remove the ${pickup.dataset.areaPickupName} marker from the site? The mod finding it again won't bring it back.`)) return;
       pickup.disabled = true;
       try {
         await deleteJson(`/api/area-explorer/finds/${encodeURIComponent(id)}`);
@@ -7529,7 +7522,7 @@ function setupAreaExplorer() {
         await loadAreaExplorer({ full: false });
       } catch (error) {
         pickup.disabled = false;
-        setBanner(`Could not take the loot off: ${error.message}`);
+        setBanner(`Could not take ${loot ? 'the loot' : 'the marker'} off: ${error.message}`);
       }
       return;
     }
