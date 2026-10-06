@@ -58,6 +58,14 @@ function normalizeText(value, maxLength, options) {
   return stripControl(value, options).trim().slice(0, maxLength);
 }
 
+/**
+ * A find's name without the § colour codes a resource pack or a server's translations may put in it
+ * ("Golden Apple §f(§f§f)") and the empty brackets they leave - the mods before this sent them.
+ */
+function cleanFindName(value) {
+  return String(value ?? '').replace(/§.?/g, '').replace(/\(\s*\)|\[\s*\]/g, '').replace(/\s+/g, ' ').trim();
+}
+
 function normalizeScopeName(value, maxLength) {
   return normalizeText(value, maxLength).toLowerCase();
 }
@@ -84,7 +92,7 @@ function normalizeFind(raw, now = Date.now()) {
   const y = normalizeInteger(raw.y, MAX_Y);
   const z = normalizeInteger(raw.z, MAX_COORDINATE);
   const foundAt = normalizeFoundAt(raw.foundAt, now);
-  const name = normalizeText(raw.name, 128);
+  const name = normalizeText(cleanFindName(raw.name), 128);
   if (x === null || y === null || z === null || !foundAt || !name) return null;
   const count = kind === 'ITEM' ? Math.min(Math.max(normalizeInteger(raw.count, 1_000_000) ?? 1, 1), 1_000_000) : 0;
   return {
@@ -685,6 +693,7 @@ module.exports = {
   MAX_FINDS_PER_BATCH,
   TOKEN_PREFIX,
   bearerToken,
+  cleanFindName,
   createAreaExplorerService,
   dedupeKey,
   generateToken,

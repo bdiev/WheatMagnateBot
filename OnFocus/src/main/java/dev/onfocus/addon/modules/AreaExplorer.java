@@ -21,6 +21,7 @@ import dev.onfocus.addon.xaero.XaeroMappedChunkScan;
 import dev.onfocus.addon.xaero.XaeroWaypoints;
 import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
+import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
@@ -29,6 +30,8 @@ import it.unimi.dsi.fastutil.longs.LongSet;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.meteor.KeyEvent;
+import meteordevelopment.meteorclient.events.entity.player.BreakBlockEvent;
+import meteordevelopment.meteorclient.events.entity.player.PlaceBlockEvent;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.gui.GuiTheme;
 import meteordevelopment.meteorclient.gui.widgets.WWidget;
@@ -172,6 +175,10 @@ import java.util.function.Predicate;
  * <p>
  * With {@code all-finds-file}, everything found on every run is kept in one file per server and
  * dimension, with no find twice ({@link FindsArchive}).
+ * <p>
+ * The player's own doing isn't a find: blocks they place during a run (their ender chest, a shulker
+ * box) are never marked or scored for a base, and items that drop where they break something are
+ * not loot.
  * <p>
  * Signs (either mode): with {@code save-signs}, the text of every sign in the chunks loaded while
  * exploring is written to a file per run under {@code .minecraft/onfocus/signs/<server>/}. With
@@ -805,6 +812,19 @@ public class AreaExplorer extends Module {
     /** Item entities already marked this run (or seen near a marker of their kind). */
     private final Set<UUID> markedItems = new HashSet<>();
 
+    /**
+     * Blocks the player placed during the run - their ender chest, a shulker box to sort loot into:
+     * never marked, nor scored for a base, even when the chunk is scanned again later.
+     */
+    private final LongOpenHashSet playerPlaced = new LongOpenHashSet();
+    /** Blocks the player broke lately, to when: what drops there is theirs, not loot. */
+    private final Long2LongOpenHashMap playerBroken = new Long2LongOpenHashMap();
+    /** Items that dropped where the player broke something. */
+    private final Set<UUID> playerDrops = new HashSet<>();
+    /** How long, and how near a block the player broke, a new item on the ground counts as its drop. */
+    private static final long PLAYER_DROP_MILLIS = 60_000;
+    private static final double PLAYER_DROP_RADIUS = 3;
+
     /** Base clues seen while exploring, by chunk: rescanning a chunk replaces its blocks, its entities stay. */
     private final Long2ObjectOpenHashMap<BaseClues.Chunk> baseChunks = new Long2ObjectOpenHashMap<>();
     /** Entities already scored; the server keeps an entity's UUID across chunk reloads. */
@@ -1183,6 +1203,9 @@ public class AreaExplorer extends Module {
         baseCandidates.clear();
         scoredEntities.clear();
         markedItems.clear();
+        playerPlaced.clear();
+        playerBroken.clear();
+        playerDrops.clear();
         if (mc.world != null) markLootPiles(true);
         lootPiles.clear();
         baseEntityCheckTicks = 0;
@@ -1951,6 +1974,38 @@ public class AreaExplorer extends Module {
         leaveServer();
     }
 
+    /** A block the player places during a run is theirs (Meteor's place event: by hand or a module of theirs). */
+    @EventHandler
+    private void onPlaceBlock(PlaceBlockEvent event) {
+        if (phase == Phase.IDLE || event.blockPos == null) return;
+        playerPlaced.add(event.blockPos.asLong());
+    }
+
+    /** What drops where the player breaks a block is theirs for a while. */
+    @EventHandler
+    private void onBreakBlock(BreakBlockEvent event) {
+        if (phase == Phase.IDLE || event.blockPos == null) return;
+        long key = event.blockPos.asLong();
+        playerPlaced.remove(key);
+        playerBroken.put(key, System.currentTimeMillis());
+    }
+
+    /** True for an item that dropped where the player broke something lately; remembered after. */
+    private boolean isPlayerDrop(Entity item) {
+        if (playerDrops.contains(item.getUuid())) return true;
+        if (playerBroken.isEmpty()) return false;
+        long now = System.currentTimeMillis();
+        playerBroken.values().removeIf(at -> now - at > PLAYER_DROP_MILLIS);
+        for (long key : playerBroken.keySet()) {
+            BlockPos broken = BlockPos.fromLong(key);
+            if (item.squaredDistanceTo(broken.getX() + 0.5, broken.getY() + 0.5, broken.getZ() + 0.5) <= PLAYER_DROP_RADIUS * PLAYER_DROP_RADIUS) {
+                playerDrops.add(item.getUuid());
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** The player's totem popping: something is attacking. Comes on the network thread. */
     @EventHandler
     private void onPacket(PacketEvent.Receive event) {
@@ -2154,6 +2209,8 @@ public class AreaExplorer extends Module {
             for (int y = 0; y < 16; y++) {
                 for (int z = 0; z < 16; z++) {
                     for (int x = 0; x < 16; x++) {
+                        // The player's own blocks: their ender chest, their shulker box
+                        if (!playerPlaced.isEmpty() && playerPlaced.contains(BlockPos.asLong(baseX + x, baseY + y, baseZ + z))) continue;
                         BlockState state = section.getBlockState(x, y, z);
                         String name = wanted.get(state.getBlock());
                         if (name != null) found.putIfAbsent(name, new BlockPos(baseX + x, baseY + y, baseZ + z));
@@ -2397,13 +2454,13 @@ public class AreaExplorer extends Module {
         StringBuilder name = new StringBuilder(LOOT_PREFIX);
         for (int i = 0; i < kinds.size() && i < LOOT_NAMED_KINDS; i++) {
             if (i > 0) name.append(", ");
-            name.append(kinds.get(i).getKey().getName().getString());
+            name.append(itemName(kinds.get(i).getKey()));
             if (kinds.get(i).getValue() > 1) name.append(" ×").append(kinds.get(i).getValue());
         }
         if (kinds.size() > LOOT_NAMED_KINDS) name.append(" +").append(kinds.size() - LOOT_NAMED_KINDS);
 
         BlockPos pos = pile.best;
-        addMarker(ITEMS_GROUP, name.toString(), initials(kinds.getFirst().getKey().getName().getString()), "square", itemsColor.get(), pos);
+        addMarker(ITEMS_GROUP, name.toString(), initials(itemName(kinds.getFirst().getKey())), "square", itemsColor.get(), pos);
         if (announce) report("Marked (highlight)%s(default) on the ground at (highlight)%d, %d, %d(default).", name, pos.getX(), pos.getY(), pos.getZ());
         return true;
     }
@@ -2420,7 +2477,7 @@ public class AreaExplorer extends Module {
     public boolean lootMarkersFromFile(java.util.function.Consumer<LootImport> done) {
         // Names as the file has them: the client's names of the items
         Map<String, Item> byName = new HashMap<>();
-        for (Item item : Registries.ITEM) byName.putIfAbsent(item.getName().getString(), item);
+        for (Item item : Registries.ITEM) byName.putIfAbsent(itemName(item), item);
         return withArchive(archive -> {
             List<FindsArchive.Find> items = archive.finds(FindsArchive.Kind.ITEM);
             mc.execute(() -> {
@@ -2428,7 +2485,8 @@ public class AreaExplorer extends Module {
                 List<LootPile> piles = new ArrayList<>();
                 int unknown = 0;
                 for (FindsArchive.Find f : items) {
-                    Item item = byName.get(f.name());
+                    // Older finds may still have the colour codes some packs put in names
+                    Item item = byName.get(cleanName(f.name()));
                     if (item == null) {
                         unknown++;
                         continue;
@@ -2485,7 +2543,7 @@ public class AreaExplorer extends Module {
         if (!toXaero()) return -1;
         String from = markerListName.get().trim().isEmpty() ? "Area Explorer" : markerListName.get().trim();
         Map<String, XaeroWaypoints.Target> byName = new HashMap<>();
-        for (Item item : savedItemKinds.get()) byName.put(item.getName().getString(), new XaeroWaypoints.Target(ITEMS_GROUP, itemsColor.get().getPacked()));
+        for (Item item : savedItemKinds.get()) byName.put(itemName(item), new XaeroWaypoints.Target(ITEMS_GROUP, itemsColor.get().getPacked()));
         for (Block block : customMarkerBlocks.get()) byName.put(block.getName().getString(), new XaeroWaypoints.Target(CUSTOM_GROUP, customColor.get().getPacked()));
         for (Marker marker : Marker.values()) byName.put(marker.title, new XaeroWaypoints.Target(marker.group, markerColors.get(marker).get().getPacked()));
         XaeroWaypoints.Target bases = new XaeroWaypoints.Target(BASES_GROUP, basesColor.get().getPacked());
@@ -2627,7 +2685,7 @@ public class AreaExplorer extends Module {
 
         int before = foundItems.size();
         for (Entity entity : mc.world.getEntities()) {
-            if (!(entity instanceof ItemEntity itemEntity)) continue;
+            if (!(entity instanceof ItemEntity itemEntity) || isPlayerDrop(entity)) continue;
             ItemStack stack = itemEntity.getStack();
             if (stack.isEmpty() || !kinds.contains(stack.getItem())) continue;
 
@@ -2636,18 +2694,35 @@ public class AreaExplorer extends Module {
             if (!save || !savedItems.add(entity.getUuid())) continue;
 
             // Diamond ×12 "Renamed one"
-            String what = stack.getItem().getName().getString() + " ×" + stack.getCount();
+            String what = itemName(stack.getItem()) + " ×" + stack.getCount();
             if (stack.contains(DataComponentTypes.CUSTOM_NAME)) what += " \"" + Formatting.strip(stack.getName().getString()) + "\"";
             foundItems.add(new FoundItem(stack.getItem(), pos, what, LocalTime.now()));
             itemCounts.merge(stack.getItem(), stack.getCount(), Integer::sum);
             String label = stack.contains(DataComponentTypes.CUSTOM_NAME) ? Formatting.strip(stack.getName().getString()) : "";
             archiveFind(new FindsArchive.Find(FindsArchive.Kind.ITEM, pos.getX(), pos.getY(), pos.getZ(), LocalDateTime.now(),
-                stack.getItem().getName().getString(), stack.getCount(), label, ""));
+                itemName(stack.getItem()), stack.getCount(), label, ""));
 
             if (itemsInChat.get()) info("Item at (highlight)%d, %d, %d(default): %s", pos.getX(), pos.getY(), pos.getZ(), what);
         }
         if (foundItems.size() > before) foundFileDirty = true;
         if (mark) markLootPiles(false);
+    }
+
+    /** An item's name as the game shows it, clean: see {@link #cleanName}. */
+    private static String itemName(Item item) {
+        return cleanName(item.getName().getString());
+    }
+
+    /**
+     * A name without the § colour codes a resource pack or the server's translations may put in it
+     * ("Golden Apple §f(§f§f)"), and without the empty brackets those leave: the site matches names
+     * to item pictures and values, and the files stay readable.
+     */
+    static String cleanName(String name) {
+        String clean = Formatting.strip(name);
+        if (clean == null) return "";
+        clean = clean.replaceAll("§.?", "").replaceAll("\\(\\s*\\)|\\[\\s*\\]", "");
+        return clean.replaceAll("\\s+", " ").strip();
     }
 
     /** The sign's non-blank lines, one per line, or empty. */
@@ -2999,7 +3074,7 @@ public class AreaExplorer extends Module {
     /** Writes every all-finds file with anything new (on the files thread): ones of other dimensions too, and with no world. */
     private void flushArchive() {
         List<String> order = new ArrayList<>();
-        for (Item item : savedItemKinds.get()) order.add(item.getName().getString());
+        for (Item item : savedItemKinds.get()) order.add(itemName(item));
         FILES.execute(() -> {
             for (FindsArchive archive : ARCHIVES.values()) {
                 archive.setItemOrder(order);
@@ -3709,6 +3784,7 @@ public class AreaExplorer extends Module {
         tag.putInt("active-ticks", activeTicks);
         tag.putDouble("flight-distance", flightDistance);
         tag.put("finds", findsTag());
+        tag.putLongArray("player-placed", playerPlaced.toLongArray());
 
         try {
             Files.createDirectories(file.getParent());
@@ -3741,6 +3817,8 @@ public class AreaExplorer extends Module {
         }
 
         restoreFinds(tag.getCompound("finds"));
+        playerPlaced.clear();
+        for (long key : tag.getLongArray("player-placed")) playerPlaced.add(key);
         // Taken by resetFlightState, so the run's average speed is there for the first estimate
         restoredActiveTicks = tag.getInt("active-ticks");
         restoredFlightDistance = tag.getDouble("flight-distance");

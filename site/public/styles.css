@@ -12712,6 +12712,19 @@ body.kill-aura-modal-open {
 .area-explorer-status-panel { grid-area: status; }
 .area-explorer-log-panel { grid-area: log; }
 .area-explorer-finds-panel { grid-area: finds; }
+/* Beside the side column the finds end where it does: the panel adds nothing to the row's height
+   (size containment) and fills it, the list scrolling inside - never shorter than a useful list */
+@media (min-width: 981px) {
+  .area-explorer-layout > .area-explorer-finds-panel {
+    contain: size;
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
+    min-height: 640px;
+  }
+  .area-explorer-layout > .area-explorer-finds-panel > .area-explorer-finds-wrap { display: flex; flex: 1 1 auto; min-height: 0; }
+  .area-explorer-finds-panel > .area-explorer-finds-wrap > .area-explorer-finds { flex: 1 1 auto; min-height: 0; max-height: none; }
+}
 .area-explorer-tokens-panel { grid-area: tokens; }
 
 /* Highlights: how much is mapped, the latest find, the markers and the loot found most */
@@ -13564,7 +13577,7 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
 @media (max-width: 980px) {
   .area-explorer-layout {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "map" "status" "log" "highlights" "finds" "tokens";
+    grid-template-areas: "map" "status" "highlights" "log" "finds" "tokens";
     gap: 12px;
   }
   /* One column: the side panels take their own places in it, the tokens after the finds */

@@ -7,6 +7,7 @@ const path = require('node:path');
 const { PGlite } = require('@electric-sql/pglite');
 const {
   bearerToken,
+  cleanFindName,
   createAreaExplorerService,
   dedupeKey,
   lootValue,
@@ -344,6 +345,32 @@ function testEventNormalization() {
   assert.equal(normalizeEvent({ id: 'a1b2c3d4-0000', at: NOW + 3 * 86_400_000, message: 'x' }, NOW), null);
 }
 
+async function testCleanNames() {
+  assert.equal(cleanFindName('Golden Apple §f(§f§f)'), 'Golden Apple');
+  assert.equal(cleanFindName('§6Elytra'), 'Elytra');
+  assert.equal(cleanFindName('Diamond'), 'Diamond');
+  assert.equal(normalizeFind({ kind: 'ITEM', x: 1, y: 2, z: 3, foundAt: NOW, name: 'Golden Apple §f(§f§f)', count: 2 }, NOW).name, 'Golden Apple');
+
+  // Finds stored before: cleaned by the migration, and one that's the same as a clean find dropped
+  const db = new PGlite();
+  try {
+    for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '072_area_explorer_picked_up.sql']) {
+      await db.exec(fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8'));
+    }
+    const insert = (name, x, key) => db.query(`INSERT INTO area_explorer_finds (server, dimension, kind, x, y, z, found_at, name, item_count, label, dedupe_key)
+      VALUES ('s', 'overworld', 'ITEM', $1, 64, 0, NOW(), $2, 1, '', $3)`, [x, name, key]);
+    await insert('Golden Apple §f(§f§f)', 1, 'ITEM:1:64:0:Golden Apple §f(§f§f):1:');
+    await insert('Golden Apple §f(§f§f)', 2, 'ITEM:2:64:0:Golden Apple §f(§f§f):1:');
+    await insert('Golden Apple', 2, 'ITEM:2:64:0:Golden Apple:1:');
+    await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/075_area_explorer_clean_names.sql'), 'utf8'));
+    const rows = (await db.query('SELECT x, name, dedupe_key FROM area_explorer_finds ORDER BY x')).rows;
+    assert.deepEqual(rows.map(row => [row.x, row.name, row.dedupe_key]),
+      [[1, 'Golden Apple', 'ITEM:1:64:0:Golden Apple:1:'], [2, 'Golden Apple', 'ITEM:2:64:0:Golden Apple:1:']]);
+  } finally {
+    await db.close();
+  }
+}
+
 async function testCoverage() {
   // 10 x 3 cells: 30 bits in 4 bytes
   const grid = { version: 3, cell: 2, minCX: -10, minCZ: 5, cols: 10, rows: 3, bits: Buffer.from([0b00000111, 0, 0, 0]).toString('base64') };
@@ -457,6 +484,7 @@ function testRunLogWiring() {
   await testMarkers();
   await testRunLog();
   await testCoverage();
+  await testCleanNames();
   testWiring();
   testRunLogWiring();
   console.log('area-explorer tests passed');

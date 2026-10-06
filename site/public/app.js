@@ -1046,7 +1046,8 @@ function localItemIconUrl(item) {
 
 /** An item's id from its name as the game shows it: "Ward Armor Trim" is ward_armor_trim_smithing_template, "Map" filled_map. */
 function itemIdForName(value) {
-  const key = normalizeItemIconKey(value);
+  // Without colour codes some packs put in names: "Golden Apple §f(§f§f)"
+  const key = normalizeItemIconKey(String(value || '').replace(/§.?/g, '').replace(/\(\s*\)|\[\s*\]/g, '').trim());
   return state.itemNameIds[key] || key;
 }
 
