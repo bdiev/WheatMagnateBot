@@ -151,6 +151,12 @@ import java.util.function.Predicate;
  * rows beside it; spots where the map drew less at speed are left for the cleanup. Whenever it
  * changes, the rest of the sweep is re-planned at the new width right away.
  * <p>
+ * Rescan ("Rescan" in the map's right-click menu) flies the whole area again in strips, drawn on the
+ * map or not, for what changed since: items on the ground, signs, markers and bases are looked for as
+ * on any run, and Xaero redraws the chunks it passes. The map says nothing about what's been flown
+ * then, so a chunk is done once it's been loaded within the swath width of the player; the cleanup
+ * picks up the rest, and the width isn't measured.
+ * <p>
  * Spiral mode needs no area and no map: it spirals outwards from wherever the module is turned
  * on, in square rings spaced like the strips, until stopped or a set radius.
  * <p>
@@ -172,6 +178,9 @@ import java.util.function.Predicate;
  * <p>
  * The module's keybind pauses and resumes instead of turning it off (turning it off from the
  * GUI keeps the area, so enabling it again carries on where it stopped).
+ * <p>
+ * With {@code site-sync}, what happens to the run - started, paused, kicked and why, reconnect attempts,
+ * back on the server, totem pops, cleanup passes, done, and every warning - goes to the site's run log.
  * <p>
  * Kicked or dropped from a server, it reconnects ({@code auto-reconnect}) and, once back where it
  * stopped, carries on with the same route and the same sign file. It runs in the main menu for
@@ -754,6 +763,14 @@ public class AreaExplorer extends Module {
     private static final Set<String> SITE_BACKFILLED = new HashSet<>();
     private int archiveTicks;
     private long lastLiveSiteNanos;
+    /** Where the site's run log goes while off the server: the scope last seen in a world. */
+    private SiteSync.Scope lastSiteScope;
+    /** How the run ended went to the site's log already (done, gave up...): turning off doesn't add "stopped". */
+    private boolean stopLogged;
+    /** A saved run is being carried on, for the start line of the log. */
+    private boolean carryingOn;
+    /** When we were dropped, for how long it took to get back. */
+    private long leftAtMillis;
 
     private static final String BASE_PREFIX = "Base #";
     private boolean warnedNoMinimap;
@@ -790,6 +807,10 @@ public class AreaExplorer extends Module {
     // Selected area, and the chunks of it known to be explored: drawn on the map with Xaero, sent by the server without
     private Area area;
     private RegistryKey<World> areaDimension;
+    /** Flying the whole area again (the map's "Rescan"): explored means loaded this run, not drawn on the map. */
+    private boolean rescan;
+    private long lastRescannedChunk = Long.MIN_VALUE;
+    private int rescanCheckTicks;
     private final LongSet explored = new LongOpenHashSet();
     /** Reused for every plan: see {@link #planGrid}. */
     private ChunkGrid planGrid;
@@ -896,6 +917,7 @@ public class AreaExplorer extends Module {
             }
             forgetSession();
             area = null;
+            rescan = false;
             info("Saved run forgotten - it starts afresh next time.");
         };
         return forget;
@@ -903,11 +925,21 @@ public class AreaExplorer extends Module {
 
     /** Called from the world map's "Explore" option. Starts (or restarts) exploring the given chunk rectangle. */
     public void explore(int x1, int z1, int x2, int z2, RegistryKey<World> dimension) {
+        select(x1, z1, x2, z2, dimension, false);
+    }
+
+    /** Called from the world map's "Rescan" option: flies the whole rectangle again, mapped or not. */
+    public void rescan(int x1, int z1, int x2, int z2, RegistryKey<World> dimension) {
+        select(x1, z1, x2, z2, dimension, true);
+    }
+
+    private void select(int x1, int z1, int x2, int z2, RegistryKey<World> dimension, boolean again) {
         if (mc.world != null && dimension != null && !dimension.equals(mc.world.getRegistryKey())) {
             error("The selection is in (highlight)%s(default), but you are in (highlight)%s(default).", dimension.getValue(), mc.world.getRegistryKey().getValue());
             return;
         }
 
+        rescan = again;
         area = new Area(Math.min(x1, x2), Math.min(z1, z2), Math.max(x1, x2), Math.max(z1, z2));
         areaDimension = dimension;
         if (mode.get() != Mode.Area) mode.set(Mode.Area);
@@ -977,6 +1009,7 @@ public class AreaExplorer extends Module {
             if (phase == Phase.SWEEP) endStrip(false); // what's flown of it so far counts
             if (phase == Phase.SPIRAL) info("Paused - press the bind again to continue the spiral.");
             else info("Paused at (highlight)%d%%(default) - press the bind again to continue.", percent());
+            siteEvent("info", "pause", phase == Phase.SPIRAL ? "Paused the spiral" : "Paused at %d%%".formatted(percent()));
             // Quitting the game now leaves it to carry on next time
             saveSession();
         } else {
@@ -986,6 +1019,7 @@ public class AreaExplorer extends Module {
             if (phase == Phase.SWEEP) planSweep();
             else follower.restartLeg(mc.player.getX(), mc.player.getZ());
             info("Resuming - %s", timeLeftText());
+            siteEvent("info", "resume", "Resumed - " + timeLeftText());
         }
     }
 
@@ -1013,13 +1047,18 @@ public class AreaExplorer extends Module {
     @Override
     public void warning(String message, Object... args) {
         super.warning(message, args);
-        FILE_LOG.warn(message.formatted(args));
+        String text = message.formatted(args);
+        FILE_LOG.warn(text);
+        // Not the site's own problems: they'd go round in circles while it can't be reached
+        if (!text.startsWith("Site:")) siteEvent("warn", "warning", text);
     }
 
     @Override
     public void error(String message, Object... args) {
         super.error(message, args);
-        FILE_LOG.warn(message.formatted(args));
+        String text = message.formatted(args);
+        FILE_LOG.warn(text);
+        if (!text.startsWith("Site:")) siteEvent("error", "error", text);
     }
 
     @Override
@@ -1029,6 +1068,7 @@ public class AreaExplorer extends Module {
             return;
         }
         paused = false;
+        stopLogged = false;
         boolean fresh = freshStart;
         freshStart = false;
         if (!fresh && resumeSession()) {
@@ -1058,6 +1098,11 @@ public class AreaExplorer extends Module {
 
     @Override
     public void onDeactivate() {
+        if (phase != Phase.IDLE && !stopLogged) {
+            siteEvent("info", "stop", phase == Phase.SPIRAL ? "Stopped the spiral %s out - turning it on carries on".formatted(formatBlocks(spiralExtent() * 16))
+                : area == null ? "Stopped" : "Stopped at %d%% - the run is saved, turning it on carries on".formatted(percent()));
+        }
+        stopLogged = true;
         // Stopped before done: turning it on again carries on, even after a restart. Done runs forget it right after.
         saveSession();
         if (phase != Phase.IDLE && activeTicks >= MIN_FLIGHT_SECONDS * 20) lastFlightSpeed = flightDistance * 20 / activeTicks;
@@ -1130,11 +1175,26 @@ public class AreaExplorer extends Module {
             return eta < 0 ? info : info + " ~" + formatDuration(eta);
         }
         if (area == null) return null;
+        String info = infoText();
+        return rescan ? "Rescan " + info : info;
+    }
+
+    private String infoText() {
         if (paused) return "Paused %d%%".formatted(percent());
         if (phase == Phase.SCAN) return "Reading map";
         if (phase == Phase.SETTLE) return "%d%% checking".formatted(percent());
         int eta = etaSeconds();
         return eta < 0 ? "%d%%".formatted(percent()) : "%d%% ~%s".formatted(percent(), formatDuration(eta));
+    }
+
+    /** Explored is what's drawn on Xaero's map: with it installed, and not on a rescan. */
+    private boolean readsMap() {
+        return xaero && !rescan;
+    }
+
+    /** A rescan always flies strips: the loops follow the edge of blank map, and there's none. */
+    private boolean contour() {
+        return pattern.get() == Pattern.Contour && !rescan;
     }
 
     private int percent() {
@@ -1158,8 +1218,12 @@ public class AreaExplorer extends Module {
         lastFlownChunk = Long.MIN_VALUE;
         contourOpen = -1;
         idleLoops = 0;
+        lastRescannedChunk = Long.MIN_VALUE;
+        rescanCheckTicks = 0;
 
-        if (!xaero) {
+        if (rescan) {
+            markRescanned();
+        } else if (!xaero) {
             // Without the map, what the server has sent around us is explored
             ChunkPos p = mc.player.getChunkPos();
             for (int cx = Math.max(area.minCX(), p.x - radius); cx <= Math.min(area.maxCX(), p.x + radius); cx++) {
@@ -1174,7 +1238,11 @@ public class AreaExplorer extends Module {
             restoredExplored = null;
         }
 
-        if (xaero && useXaeroMap.get()) {
+        String verb = rescan ? (carryingOn ? "Carrying on rescanning" : "Started rescanning") : (carryingOn ? "Carrying on exploring" : "Started exploring");
+        siteEvent("info", "start", "%s a %dx%d chunk area (X %d to %d, Z %d to %d)".formatted(verb, area.width(), area.depth(),
+            area.minCX() * 16, area.maxCX() * 16 + 15, area.minCZ() * 16, area.maxCZ() * 16 + 15));
+
+        if (readsMap() && useXaeroMap.get()) {
             scan = newScan();
             phase = Phase.SCAN;
             phaseTicks = 0;
@@ -1271,16 +1339,21 @@ public class AreaExplorer extends Module {
 
     private void beginSweep() {
         phase = Phase.SWEEP;
-        report("Exploring (highlight)%dx%d(default) chunks, view distance (highlight)%d(default), strip spacing (highlight)%d(default). (highlight)%d%%(default) %s.",
-            area.width(), area.depth(), radius, spacing(), percent(),
-            scan != null ? "explored so far - the rest of the World Map is read in flight, the route and time shrink as it comes in" : "already explored");
+        if (rescan) {
+            report("Rescanning (highlight)%dx%d(default) chunks in strips, view distance (highlight)%d(default), strip spacing (highlight)%d(default): items, signs and markers are looked for again and the map is redrawn.",
+                area.width(), area.depth(), radius, spacing());
+        } else {
+            report("Exploring (highlight)%dx%d(default) chunks, view distance (highlight)%d(default), strip spacing (highlight)%d(default). (highlight)%d%%(default) %s.",
+                area.width(), area.depth(), radius, spacing(), percent(),
+                scan != null ? "explored so far - the rest of the World Map is read in flight, the route and time shrink as it comes in" : "already explored");
+        }
         planSweep();
         if (phase == Phase.SWEEP) reportEstimate();
     }
 
     /** Plans the sweep over everything still blank, from where the player is, counting flown strips as done. */
     private void planSweep() {
-        if (pattern.get() == Pattern.Contour) {
+        if (contour()) {
             planLoop();
             return;
         }
@@ -1308,7 +1381,7 @@ public class AreaExplorer extends Module {
      * strip. The old route is followed meanwhile: the new one is in a tick or two later.
      */
     private void planSweepInBackground() {
-        if (pattern.get() == Pattern.Contour) {
+        if (contour()) {
             planLoop();
             return;
         }
@@ -1394,7 +1467,7 @@ public class AreaExplorer extends Module {
             }
             return;
         }
-        if (pattern.get() == Pattern.Contour) {
+        if (contour()) {
             tickLoop();
             return;
         }
@@ -1422,7 +1495,7 @@ public class AreaExplorer extends Module {
             if (follower.current().sweep()) beginStrip();
         }
 
-        if (onStrip && xaero && ++measureTicks >= MEASURE_INTERVAL_TICKS) {
+        if (onStrip && readsMap() && ++measureTicks >= MEASURE_INTERVAL_TICKS) {
             measureTicks = 0;
             measureStrip();
         }
@@ -1483,7 +1556,7 @@ public class AreaExplorer extends Module {
     /** The same from the given spot - where we were dropped, while off the server. */
     private double sweepBlocksLeft(double x, double z) {
         double blocks = follower.remainingDistance(x, z);
-        if (phase == Phase.SWEEP && pattern.get() == Pattern.Contour && contourOpen > 0) {
+        if (phase == Phase.SWEEP && contour() && contourOpen > 0) {
             // Covering blank ground takes about its size over the strip spacing in flight
             blocks = Math.max(blocks, contourOpen / (double) spacing() * 16);
         }
@@ -1502,12 +1575,12 @@ public class AreaExplorer extends Module {
         stripPath.clear();
         stripNumber++;
         stripStartTicks = activeTicks;
-        stripMeasureNote = xaero ? "not measured" : "no map to measure on";
+        stripMeasureNote = readsMap() ? "not measured" : rescan ? "not measured on a rescan" : "no map to measure on";
 
         // The side with more blank ground is the one this strip's width shows on
         stripSide = 0;
         stripPre.clear();
-        if (!xaero) {
+        if (!readsMap()) {
             logStripStart();
             return;
         }
@@ -1696,8 +1769,8 @@ public class AreaExplorer extends Module {
         follower.update(mc.player.getX(), mc.player.getZ(), arriveBlocks());
         phaseTicks++;
         if (scan == null) {
-            if (phaseTicks < (xaero ? SETTLE_TICKS : SETTLE_TICKS_NO_MAP)) return;
-            if (!xaero) {
+            if (phaseTicks < (readsMap() ? SETTLE_TICKS : SETTLE_TICKS_NO_MAP)) return;
+            if (!readsMap()) {
                 planCleanup();
                 return;
             }
@@ -1735,9 +1808,11 @@ public class AreaExplorer extends Module {
             follower.remainingDistance(mc.player.getX(), mc.player.getZ()), took / 1_000_000);
 
         int eta = etaSeconds();
-        report("%s: (highlight)%d(default) chunks still blank, picking them up at (highlight)%d(default) spots%s.",
+        String text = "%s: (highlight)%d(default) chunks still blank, picking them up at (highlight)%d(default) spots%s.".formatted(
             cleanupPass == 1 ? "Sweep done" : "Cleanup pass " + cleanupPass, missing, spots.size(),
             eta < 0 ? "" : ", about (highlight)%s(default)".formatted(formatDuration(eta)));
+        report("%s", text);
+        siteEvent("info", "phase", text);
     }
 
     private void tickCleanup() {
@@ -1763,9 +1838,13 @@ public class AreaExplorer extends Module {
     private void finish() {
         long missing = area.total() - explored.size();
         String took = formatDuration(activeTicks / 20);
-        if (missing <= 0) report("Area fully explored in (highlight)%s(default).", took);
-        else report("Done in (highlight)%s(default), (highlight)%d(default) chunks could not be loaded.", took, missing);
+        String text = missing <= 0 ? "Area fully %s in (highlight)%s(default).".formatted(rescan ? "rescanned" : "explored", took)
+            : "Done in (highlight)%s(default), (highlight)%d(default) chunks could not be loaded.".formatted(took, missing);
+        report("%s", text);
+        siteEvent("success", "finish", text + " Found: " + foundSummary() + ".");
+        stopLogged = true;
         area = null;
+        rescan = false;
         turnOff();
         forgetSession();
         leaveServer();
@@ -1787,6 +1866,8 @@ public class AreaExplorer extends Module {
         String why = "Totem popped at %d, %d, %d with %.0f health left - left the server and won't reconnect."
             .formatted(pos.getX(), pos.getY(), pos.getZ(), mc.player.getHealth());
         FILE_LOG.warn(why);
+        siteEvent("error", "totem", why);
+        stopLogged = true;
         turnOff();
         if (mc.world == null) return;
         mc.world.disconnect();
@@ -1798,6 +1879,7 @@ public class AreaExplorer extends Module {
     private void leaveServer() {
         if (!leaveOnFinish.get() || mc.world == null || mc.isInSingleplayer()) return;
         log("Leaving the server");
+        siteEvent("info", "leave", "Left the server (leave-on-finish)");
         // After this tick: other listeners of it still expect a world
         mc.send(() -> {
             if (mc.world == null) return;
@@ -1855,7 +1937,7 @@ public class AreaExplorer extends Module {
 
     /** Picks up chunks around the player that the map has drawn by now. */
     private void checkMapAroundPlayer() {
-        if (!xaero || ++mapCheckTicks < MAP_CHECK_INTERVAL_TICKS) return;
+        if (!readsMap() || ++mapCheckTicks < MAP_CHECK_INTERVAL_TICKS) return;
         mapCheckTicks = 0;
         ChunkPos p = mc.player.getChunkPos();
         int r = radius + MAP_CHECK_EXTRA;
@@ -1863,6 +1945,24 @@ public class AreaExplorer extends Module {
             for (int cz = Math.max(area.minCZ(), p.z - r); cz <= Math.min(area.maxCZ(), p.z + r); cz++) {
                 long key = ChunkPos.toLong(cx, cz);
                 if (!explored.contains(key) && XaeroMappedChunkScan.mapState(cx, cz) == XaeroMappedChunkScan.MAPPED) addExplored(key);
+            }
+        }
+    }
+
+    /**
+     * Rescan: the loaded chunks within the swath width of the player are done - scanned on arrival,
+     * and near enough for Xaero to redraw. Checked on entering a chunk, and every so often for ones
+     * that came in late.
+     */
+    private void markRescanned() {
+        ChunkPos p = mc.player.getChunkPos();
+        if (p.toLong() == lastRescannedChunk && ++rescanCheckTicks < MAP_CHECK_INTERVAL_TICKS) return;
+        lastRescannedChunk = p.toLong();
+        rescanCheckTicks = 0;
+        var cm = mc.world.getChunkManager();
+        for (int cx = Math.max(area.minCX(), p.x - reach); cx <= Math.min(area.maxCX(), p.x + reach); cx++) {
+            for (int cz = Math.max(area.minCZ(), p.z - reach); cz <= Math.min(area.maxCZ(), p.z + reach); cz++) {
+                if (cm.isChunkLoaded(cx, cz)) addExplored(ChunkPos.toLong(cx, cz));
             }
         }
     }
@@ -2652,6 +2752,42 @@ public class AreaExplorer extends Module {
         });
     }
 
+    /** The site scope of the server and dimension we're in, remembered for when we're off the server. */
+    private SiteSync.Scope siteScope() {
+        if (mc.world != null && (mc.getCurrentServerEntry() != null || mc.isInSingleplayer())) lastSiteScope = archiveSpot().scope();
+        return lastSiteScope;
+    }
+
+    /**
+     * A line in the site's run log (with site-sync on): level info / success / warn / error, a kind
+     * (start, disconnect, rejoin...) and what happened, with where the player is - or was dropped.
+     * Sent right away, on the files thread; kept for later if the site can't be reached.
+     */
+    private void siteEvent(String level, String type, String message) {
+        String site = siteTarget();
+        SiteSync.Scope scope = site == null ? null : siteScope();
+        if (scope == null) return;
+        Integer x = null, y = null, z = null;
+        if (mc.player != null && mc.world != null) {
+            x = (int) Math.floor(mc.player.getX());
+            y = (int) Math.floor(mc.player.getY());
+            z = (int) Math.floor(mc.player.getZ());
+        } else if (reconnecting) {
+            x = (int) Math.floor(leftX);
+            z = (int) Math.floor(leftZ);
+        }
+        String text = message.replace("(highlight)", "").replace("(default)", "").strip();
+        JsonObject event = SiteSync.event(System.currentTimeMillis(), level, type, text, mc.getSession().getUsername(), x, y, z);
+        String token = siteToken.get().trim();
+        FILES.execute(() -> {
+            SITE.addEvent(scope, event);
+            SITE.flushEvents(site, token, problem -> {
+                FILE_LOG.warn("Site: " + problem);
+                mc.execute(() -> warning("Site: %s", problem));
+            });
+        });
+    }
+
     /** Keeps Xaero's map of this server going to the site: every dimension it has a map of. */
     private void syncMap(String site, String token, SiteSync.Scope scope) {
         if (!mapSync.get() || !xaero || scope == null) {
@@ -2679,7 +2815,7 @@ public class AreaExplorer extends Module {
         JsonObject status = new JsonObject();
         status.addProperty("player", mc.getSession().getUsername());
         status.addProperty("phase", phase.name());
-        status.addProperty("mode", mode.get().name());
+        status.addProperty("mode", rescan && phase != Phase.SPIRAL ? "Rescan" : mode.get().name());
         status.addProperty("paused", paused);
         status.addProperty("x", (int) Math.floor(mc.player.getX()));
         status.addProperty("y", (int) Math.floor(mc.player.getY()));
@@ -2755,11 +2891,15 @@ public class AreaExplorer extends Module {
             return;
         }
         ServerInfo server = mc.getCurrentServerEntry();
+        siteScope(); // remembered for the log while we're off
         if (!autoReconnect.get() || server == null || mc.player == null) {
+            siteEvent("warn", "disconnect", "Left the server - auto-reconnect is off, stopped" + (area != null && phase != Phase.SPIRAL ? " at %d%%".formatted(percent()) : ""));
+            stopLogged = true;
             // The area stays selected, so turning it back on after rejoining carries on
             turnOff();
             return;
         }
+        leftAtMillis = System.currentTimeMillis();
 
         // A kick and leaving by hand only tell apart by the next screen: tickReconnect sorts it out
         reconnecting = true;
@@ -2790,6 +2930,8 @@ public class AreaExplorer extends Module {
             // Left by hand, or backed out of the disconnect screen / a connect attempt
             if (screen instanceof TitleScreen || screen instanceof MultiplayerScreen) {
                 log("Left the server - stopped exploring");
+                siteEvent("info", "stop", "Left the server by hand while reconnecting - stopped exploring");
+                stopLogged = true;
                 turnOff();
                 return;
             }
@@ -2798,10 +2940,15 @@ public class AreaExplorer extends Module {
             if (screen instanceof DisconnectedScreen) {
                 reconnectReason = disconnectReason(screen).replace('\n', ' ').strip();
                 log("Disconnect screen: \"%s\"", reconnectReason);
+                String reason = reconnectReason.isEmpty() ? "no reason given" : reconnectReason;
+                if (reconnectTries == 0) siteEvent("error", "disconnect", "Disconnected from %s: %s - %s".formatted(reconnectServer.address, reason, runProgressText()));
+                else siteEvent("warn", "reconnect", "Reconnect attempt %d failed: %s".formatted(reconnectTries, reason));
                 reconnectTicks = 0;
                 if (reconnectAttempts.get() > 0 && reconnectTries >= reconnectAttempts.get()) {
                     String why = "Couldn't reconnect in %d attempts - stopped exploring. Last reason: %s".formatted(reconnectTries, reconnectReason);
                     log(why);
+                    siteEvent("error", "reconnect", why);
+                    stopLogged = true;
                     turnOff();
                     mc.setScreen(new NoticeScreen(() -> mc.setScreen(new MultiplayerScreen(new TitleScreen())),
                         Text.literal("Area Explorer"), Text.literal(why)));
@@ -2828,6 +2975,7 @@ public class AreaExplorer extends Module {
 
         ServerInfo server = mc.getCurrentServerEntry();
         if (server == null || !server.address.equalsIgnoreCase(reconnectServer.address)) {
+            stopLogged = true; // the warning goes to the log
             warning("Joined another server - stopped exploring.");
             turnOff();
             return;
@@ -2836,7 +2984,10 @@ public class AreaExplorer extends Module {
         if (!mc.world.getRegistryKey().equals(leftDimension)
             || Math.hypot(mc.player.getX() - leftX, mc.player.getZ() - leftZ) > MAX_REJOIN_DISTANCE) {
             rejoinTicks = 0;
-            if (!warnedElsewhere) info("Back on the server, but not where exploring stopped (a queue?) - carrying on once you're back there.");
+            if (!warnedElsewhere) {
+                info("Back on the server, but not where exploring stopped (a queue?) - carrying on once you're back there.");
+                siteEvent("info", "rejoin", "Back on the server, but not where exploring stopped (a queue?) - waiting to get back there");
+            }
             warnedElsewhere = true;
             return;
         }
@@ -2905,6 +3056,9 @@ public class AreaExplorer extends Module {
         }
         rescanOnReturn = false;
         String back = "Back on the server after (highlight)%d(default) reconnect attempt%s - ".formatted(reconnectTries, reconnectTries == 1 ? "" : "s");
+        String offline = leftAtMillis > 0 ? formatDuration((int) ((System.currentTimeMillis() - leftAtMillis) / 1000)) : "?";
+        siteEvent("success", "rejoin", "Back on the server after %d reconnect attempt%s, %s offline - %s".formatted(reconnectTries,
+            reconnectTries == 1 ? "" : "s", offline, paused ? "still paused" : "carrying on"));
         // As an argument: the text has % in it
         info("%s", paused ? back + "still paused, press the bind to carry on." : back + timeLeftText());
         // Chunks that came in before we were back in place were skipped
@@ -2959,7 +3113,8 @@ public class AreaExplorer extends Module {
             return;
         }
 
-        checkMapAroundPlayer();
+        if (rescan) markRescanned();
+        else checkMapAroundPlayer();
         if (explored.size() >= area.total()) {
             finish();
             return;
@@ -3129,6 +3284,7 @@ public class AreaExplorer extends Module {
     // Spiral
 
     private void startSpiral() {
+        rescan = false;
         resetFlightState();
         phase = Phase.SPIRAL;
         spiralCX = legCX = mc.player.getChunkPos().x;
@@ -3141,6 +3297,8 @@ public class AreaExplorer extends Module {
             spiralMaxRadius.get() > 0 ? ", up to (highlight)%s(default)".formatted(formatBlocks(spiralMaxRadius.get())) : "");
         int eta = spiralEtaSeconds();
         if (eta >= 0) report("Estimated time: (highlight)~%s(default).", formatDuration(eta));
+        siteEvent("info", "start", "Started a spiral from %d, %d%s".formatted(spiralCX << 4, spiralCZ << 4,
+            spiralMaxRadius.get() > 0 ? ", up to " + formatBlocks(spiralMaxRadius.get()) : ""));
 
         nextSpiralLeg();
     }
@@ -3151,6 +3309,8 @@ public class AreaExplorer extends Module {
         int maxChunks = spiralMaxRadius.get() > 0 ? Math.max(1, spiralMaxRadius.get() >> 4) : Integer.MAX_VALUE;
         if (spiralExtent() + step > maxChunks) {
             report("Spiral reached (highlight)%s(default) in (highlight)%s(default).", formatBlocks(spiralMaxRadius.get()), formatDuration(activeTicks / 20));
+            siteEvent("success", "finish", "Spiral reached %s in %s. Found: %s.".formatted(formatBlocks(spiralMaxRadius.get()), formatDuration(activeTicks / 20), foundSummary()));
+            stopLogged = true;
             turnOff();
             forgetSession();
             leaveServer();
@@ -3212,7 +3372,10 @@ public class AreaExplorer extends Module {
         int percent = percent();
         if (percent >= nextProgressReport && nextProgressReport < 100) {
             int eta = etaSeconds();
-            report("(highlight)%d%%(default) explored%s.", percent, eta < 0 ? "" : ", about (highlight)%s(default) left in this pass".formatted(formatDuration(eta)));
+            String text = "(highlight)%d%%(default) %s%s.".formatted(percent, rescan ? "rescanned" : "explored",
+                eta < 0 ? "" : ", about (highlight)%s(default) left in this pass".formatted(formatDuration(eta)));
+            report("%s", text);
+            siteEvent("info", "progress", text);
             while (nextProgressReport <= percent) nextProgressReport += 25;
         }
     }
@@ -3357,8 +3520,9 @@ public class AreaExplorer extends Module {
             a.putInt("max-x", area.maxCX());
             a.putInt("max-z", area.maxCZ());
             tag.put("area", a);
+            tag.putBoolean("rescan", rescan);
             // With the map, reading it again tells what's explored
-            if (!xaero) tag.putLongArray("explored", explored.toLongArray());
+            if (!readsMap()) tag.putLongArray("explored", explored.toLongArray());
         }
         tag.putInt("active-ticks", activeTicks);
         tag.putDouble("flight-distance", flightDistance);
@@ -3415,14 +3579,21 @@ public class AreaExplorer extends Module {
             follower.setRoute(List.of(new Point(blockCentre(legCX), blockCentre(legCZ), true)), mc.player.getX(), mc.player.getZ());
             info("Carrying on with the saved spiral around (highlight)%d, %d(default), (highlight)%s(default) out so far - %s",
                 spiralCX << 4, spiralCZ << 4, formatBlocks(spiralExtent() * 16), timeLeftText());
+            siteEvent("info", "start", "Carrying on with the spiral around %d, %d, %s out so far".formatted(spiralCX << 4, spiralCZ << 4, formatBlocks(spiralExtent() * 16)));
         } else {
             if (mode.get() != Mode.Area) mode.set(Mode.Area);
             NbtCompound a = tag.getCompound("area");
             area = new Area(a.getInt("min-x"), a.getInt("min-z"), a.getInt("max-x"), a.getInt("max-z"));
             areaDimension = mc.world.getRegistryKey();
+            rescan = tag.getBoolean("rescan");
             if (tag.contains("explored")) restoredExplored = tag.getLongArray("explored");
-            info("Carrying on with the saved (highlight)%dx%d(default) chunk area.", area.width(), area.depth());
-            start();
+            info("Carrying on with the saved (highlight)%dx%d(default) chunk area%s.", area.width(), area.depth(), rescan ? " rescan" : "");
+            carryingOn = true;
+            try {
+                start();
+            } finally {
+                carryingOn = false;
+            }
             // Without the map the sweep is planned right away, and its estimate shown; with it, once the map's read
             if (phase == Phase.SCAN) info("Reading the World Map first - time left shows once the route is planned.");
         }

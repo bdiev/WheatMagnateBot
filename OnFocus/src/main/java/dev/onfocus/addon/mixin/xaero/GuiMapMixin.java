@@ -26,7 +26,7 @@ import xaero.map.gui.dropdown.rightclick.RightClickOption;
 import java.util.ArrayList;
 
 /**
- * Adds "Explore" to the world map's right-click menu while a chunk area is selected, and keeps the
+ * Adds "Explore" and "Rescan" to the world map's right-click menu while a chunk area is selected, and keeps the
  * area {@link AreaExplorer} is working on highlighted on the map.
  */
 @Mixin(value = GuiMap.class, remap = false)
@@ -41,11 +41,13 @@ public abstract class GuiMapMixin {
         if (selection == null) return;
 
         ArrayList<RightClickOption> options = cir.getReturnValue();
-        options.add(new ExploreRightClickOption(
-            options.size(), (IRightClickableElement) this,
-            selection.getLeft(), selection.getTop(), selection.getRight(), selection.getBottom(),
-            rightClickDim
-        ));
+        for (boolean rescan : new boolean[]{false, true}) {
+            options.add(new ExploreRightClickOption(
+                options.size(), (IRightClickableElement) this,
+                selection.getLeft(), selection.getTop(), selection.getRight(), selection.getBottom(),
+                rightClickDim, rescan
+            ));
+        }
     }
 
     /** Drawn just before the hovered-chunk highlight (the first one), in the same map space, so the hover stays on top. */

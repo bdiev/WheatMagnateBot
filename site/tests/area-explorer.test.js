@@ -10,6 +10,7 @@ const {
   createAreaExplorerService,
   dedupeKey,
   lootValue,
+  normalizeEvent,
   normalizeFind,
   normalizeStatus,
   publicStatus
@@ -308,13 +309,91 @@ function testWiring() {
   assert.match(appSource, /if \(full \|\| ae\.findsDirty \|\| ae\.pointsScope !== ae\.scope\)/, 'a status update does not reload every map point');
 }
 
+function testEventNormalization() {
+  const event = normalizeEvent({ id: 'a1b2c3d4-0000', at: NOW, level: 'ERROR', type: 'Disconnect!', message: ' Kicked\u0007 for flying ', player: 'Steve', x: 10, z: -5 }, NOW);
+  assert.equal(event.level, 'error', 'levels in lower case');
+  assert.equal(normalizeEvent({ id: 'a1b2c3d4-0000', at: NOW, level: 'fatal', message: 'x' }, NOW).level, 'info', 'an unknown level is info');
+  assert.equal(normalizeEvent({ id: 'a1b2c3d4-0000', at: NOW, level: 'error', message: 'x' }, NOW).level, 'error');
+  assert.equal(event.type, 'disconnect');
+  assert.equal(event.message, 'Kicked for flying');
+  assert.equal(event.y, null, 'no Y given');
+  assert.equal(normalizeEvent({ id: 'short', at: NOW, message: 'x' }, NOW), null, 'the id keeps a resend from being stored twice');
+  assert.equal(normalizeEvent({ id: 'a1b2c3d4-0000', at: NOW, message: '' }, NOW), null);
+  assert.equal(normalizeEvent({ id: 'a1b2c3d4-0000', at: NOW + 3 * 86_400_000, message: 'x' }, NOW), null);
+}
+
+async function testRunLog() {
+  const db = new PGlite();
+  try {
+    await db.exec(migrationSql);
+    await db.exec(statusYMigrationSql);
+    await db.exec(pickedUpMigrationSql);
+    await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/072_area_explorer_yaw.sql'), 'utf8'));
+    await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/073_area_explorer_events.sql'), 'utf8'));
+    const published = [];
+    const service = createAreaExplorerService({
+      pool: poolFor(db), hashToken, readJsonBody: async () => ({}), sendJson() {}, sendError() {},
+      enforceRateLimit: () => true, publish: (type, payload) => published.push({ type, payload }), recordSystemLog: async () => {}
+    });
+    const created = await service.createToken({ username: 'admin', role: 'admin' }, { name: 'Gaming PC' });
+    const token = await service.authenticate({ headers: { authorization: `Bearer ${created.token}` } });
+    const events = [
+      { id: 'event-0001', at: NOW - 3000, level: 'info', type: 'start', message: 'Started exploring a 10x10 chunk area', player: 'Steve', x: 1, y: 200, z: 2 },
+      { id: 'event-0002', at: NOW - 2000, level: 'error', type: 'disconnect', message: 'Disconnected from oldfrog.org: Timed out', player: 'Steve', x: 100, z: 200 },
+      { id: 'event-0003', at: NOW - 1000, level: 'success', type: 'rejoin', message: 'Back on the server after 1 reconnect attempt, 15s offline', player: 'Steve' },
+      { id: 'event-0004', at: NOW, level: 'warn', type: 'warning', message: "You're not flying", player: 'Steve' }
+    ];
+    const result = await service.ingest(token, { server: 'OldFrog.org', dimension: 'overworld', finds: [], events }, NOW);
+    assert.equal(result.events, 4);
+    const update = published.at(-1).payload;
+    assert.equal(update.events.length, 4, 'the page gets the events in the live update');
+    assert.equal(update.events[0].tokenName, 'Gaming PC');
+    assert.equal(update.status, false, 'events alone are not a status update');
+
+    const again = await service.ingest(token, { server: 'oldfrog.org', dimension: 'overworld', events: events.slice(0, 2) }, NOW);
+    assert.equal(again.events, 0, 'a batch sent again is not stored twice');
+    await service.ingest(token, { server: 'other.net', dimension: 'the_nether', events: [{ id: 'event-0005', at: NOW, level: 'info', type: 'start', message: 'Elsewhere' }] }, NOW);
+
+    const all = await service.getEvents(new URL('http://x/api/area-explorer/events'));
+    assert.deepEqual(all.events.map(e => e.message.slice(0, 9)), ['Elsewhere', "You're no", 'Back on t', 'Disconnec', 'Started e'], 'newest first');
+    const one = await service.getEvents(new URL('http://x/api/area-explorer/events?server=OldFrog.org'));
+    assert.equal(one.events.length, 4, 'one server');
+    assert.equal(one.events[3].y, 200);
+    const problems = await service.getEvents(new URL('http://x/api/area-explorer/events?filter=problems&server=oldfrog.org'));
+    assert.deepEqual(problems.events.map(e => e.level), ['warn', 'error']);
+    const connection = await service.getEvents(new URL('http://x/api/area-explorer/events?filter=connection'));
+    assert.deepEqual(connection.events.map(e => e.type), ['rejoin', 'disconnect']);
+
+    const page = await service.getEvents(new URL('http://x/api/area-explorer/events?server=oldfrog.org&limit=2'));
+    assert.equal(page.hasMore, true);
+    const last = page.events[1];
+    const older = await service.getEvents(new URL(`http://x/api/area-explorer/events?server=oldfrog.org&limit=2&before=${encodeURIComponent(`${new Date(last.occurredAt).toISOString()}|${last.id}`)}`));
+    assert.deepEqual(older.events.map(e => e.type), ['disconnect', 'start'], 'paging back carries on after the last one shown');
+    assert.equal(older.hasMore, false);
+
+    await assert.rejects(service.ingest(token, { server: 'a', dimension: 'b', events: Array.from({ length: 201 }, () => ({})) }, NOW), /At most 200 events/);
+  } finally {
+    await db.close();
+  }
+}
+
+function testRunLogWiring() {
+  for (const id of ['areaExplorerLog', 'areaExplorerLogMore']) assert.ok(indexSource.includes(`id="${id}"`), `${id} is on the page`);
+  assert.match(indexSource, /data-area-log-filter="problems"/);
+  assert.match(appSource, /\/api\/area-explorer\/events\?/, 'the page loads the log');
+  assert.match(appSource, /if \(eventPayload\.events\) applyAreaExplorerEvents\(eventPayload\.events\)/, 'live events go straight into the log');
+}
+
 (async () => {
   testNormalization();
+  testEventNormalization();
   testStatusOnline();
   testLootValue();
   await testIngestAndQueries();
   await testMarkers();
+  await testRunLog();
   testWiring();
+  testRunLogWiring();
   console.log('area-explorer tests passed');
 })().catch(error => {
   console.error(error);

@@ -32,11 +32,18 @@ import java.util.concurrent.atomic.AtomicReference;
  * is harmless. The all-finds file is sent once per site ({@link #backfill}): how far it got is kept
  * next to the file, and only the finds added after that go next time.
  * <p>
- * Find queues are confined to the file thread; live status has an independent, coalesced async sender.
+ * Run log events ({@link #addEvent}) - started, kicked and why, reconnected... - wait in a queue of
+ * their own and go as soon as they're added, ahead of the finds; the site keeps none twice (each has an id).
+ * <p>
+ * Find and event queues are confined to the file thread; live status has an independent, coalesced async sender.
  */
 public final class SiteSync {
     /** Finds per request; the site takes up to 1000. */
     private static final int BATCH = 500;
+    /** Events per request; the site takes up to 200. */
+    private static final int EVENT_BATCH = 100;
+    /** Events kept waiting at most while the site can't be reached: the oldest go first. */
+    private static final int MAX_EVENTS = 2_000;
     /** Finds kept waiting at most, per server and dimension, while the site can't be reached. */
     private static final int MAX_QUEUED = 50_000;
     private static final Duration TIMEOUT = Duration.ofSeconds(20);
@@ -45,6 +52,8 @@ public final class SiteSync {
 
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
     private final Map<Scope, ArrayDeque<JsonObject>> queues = new LinkedHashMap<>();
+    private record Event(Scope scope, JsonObject json) {}
+    private final ArrayDeque<Event> events = new ArrayDeque<>();
     /** The all-finds file sent up to here (its finds' count) once the queue is empty: where to write that. */
     private final Map<Scope, Mark> marks = new HashMap<>();
     private JsonObject status;
@@ -104,6 +113,52 @@ public final class SiteSync {
         queue.addLast(toJson(find));
     }
 
+    /** A line for the site's run log; see {@link #event} for what it holds. */
+    public void addEvent(Scope scope, JsonObject event) {
+        if (events.size() >= MAX_EVENTS) events.pollFirst();
+        events.addLast(new Event(scope, event));
+    }
+
+    /** A run log event: when, how bad (info, success, warn, error), what kind, what happened, who and where (x, y, z may be null). */
+    public static JsonObject event(long at, String level, String type, String message, String player, Integer x, Integer y, Integer z) {
+        JsonObject json = new JsonObject();
+        json.addProperty("id", java.util.UUID.randomUUID().toString());
+        json.addProperty("at", at);
+        json.addProperty("level", level);
+        json.addProperty("type", type);
+        json.addProperty("message", message);
+        json.addProperty("player", player);
+        if (x != null && z != null) {
+            json.addProperty("x", x);
+            if (y != null) json.addProperty("y", y);
+            json.addProperty("z", z);
+        }
+        return json;
+    }
+
+    /** Sends the waiting events, in order; false if the site didn't take them (they stay queued). */
+    public boolean flushEvents(String site, String token, Consumer<String> problem) {
+        String endpoint = site.replaceAll("/+$", "") + "/api/area-explorer/ingest";
+        while (!events.isEmpty()) {
+            // A batch is one server and dimension: the events in a row that share them
+            Scope scope = events.peekFirst().scope();
+            List<Event> taken = new ArrayList<>();
+            while (!events.isEmpty() && taken.size() < EVENT_BATCH && events.peekFirst().scope().equals(scope)) taken.add(events.pollFirst());
+            JsonArray batch = new JsonArray();
+            for (Event event : taken) batch.add(event.json());
+            JsonObject body = body(scope, new JsonArray(), null);
+            body.add("events", batch);
+            Result result = post(endpoint, token, body);
+            if (result.retry()) {
+                for (int i = taken.size() - 1; i >= 0; i--) events.addFirst(taken.get(i));
+                report(problem, result.message());
+                return false;
+            }
+            if (result.kind() == Result.Kind.REJECTED) report(problem, "the site refused some run log events (bad data?) - skipped them");
+        }
+        return true;
+    }
+
     public void setStatus(Scope scope, JsonObject status) {
         this.statusScope = scope;
         this.status = status;
@@ -136,6 +191,7 @@ public final class SiteSync {
      * batch stays queued. {@code problem} hears of a new kind of failure once, not every half minute.
      */
     public void flush(String site, String token, Consumer<String> problem) {
+        if (!flushEvents(site, token, problem)) return;
         String endpoint = site.replaceAll("/+$", "") + "/api/area-explorer/ingest";
         boolean statusSent = status == null;
         for (Map.Entry<Scope, ArrayDeque<JsonObject>> entry : new ArrayList<>(queues.entrySet())) {

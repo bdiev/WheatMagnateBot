@@ -12708,6 +12708,7 @@ body.kill-aura-modal-open {
 .area-explorer-side { grid-area: side; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .area-explorer-map-panel { grid-area: map; }
 .area-explorer-status-panel { grid-area: status; }
+.area-explorer-log-panel { grid-area: log; }
 .area-explorer-finds-panel { grid-area: finds; }
 .area-explorer-tokens-panel { grid-area: tokens; }
 
@@ -12806,6 +12807,68 @@ body.kill-aura-modal-open {
   color: var(--muted);
   list-style: none;
 }
+
+/* Run log: one line per event, its kind's colour down the side */
+.area-explorer-log-filters { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 14px 10px; }
+.area-explorer-log {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0 14px 14px;
+  list-style: none;
+  max-height: 420px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.area-explorer-log-entry {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 10px;
+  align-items: baseline;
+  padding: 8px 10px;
+  border: 1px solid var(--line-soft);
+  border-left: 4px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+.area-explorer-log-entry.level-success { border-left-color: var(--accent); }
+.area-explorer-log-entry.level-warn { border-left-color: var(--warn); }
+.area-explorer-log-entry.level-error { border-left-color: var(--danger); }
+.area-explorer-log-type {
+  grid-row: 1;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.area-explorer-log-entry.level-success .area-explorer-log-type { color: var(--accent-strong); }
+.area-explorer-log-entry.level-warn .area-explorer-log-type { color: var(--gold-text); }
+.area-explorer-log-entry.level-error .area-explorer-log-type { color: var(--danger); }
+.area-explorer-log-message { grid-row: 1; margin: 0; overflow-wrap: anywhere; }
+.area-explorer-log-meta {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 10px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.area-explorer-log-coords {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline dotted;
+  cursor: pointer;
+}
+.area-explorer-log-coords:hover { color: var(--text); background: none; transform: none; }
+.area-explorer-log-more { display: flex; justify-content: center; padding: 0 14px 14px; }
+.area-explorer-log-more:has(> [hidden]) { display: none; }
 
 /* Map panel */
 
@@ -13413,7 +13476,7 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
 @media (max-width: 980px) {
   .area-explorer-layout {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "map" "status" "highlights" "finds" "tokens";
+    grid-template-areas: "map" "status" "log" "highlights" "finds" "tokens";
     gap: 12px;
   }
   /* One column: the side panels take their own places in it, the tokens after the finds */
@@ -13426,6 +13489,7 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
   .area-explorer-layout { gap: 10px; }
   .area-explorer-map-head,
   .area-explorer-status-panel .panel-head,
+  .area-explorer-log-panel .panel-head,
   .area-explorer-finds-panel .panel-head,
   .area-explorer-tokens-panel .panel-head { padding: 12px 14px; }
   .area-explorer-map-bar { padding: 8px 14px; }

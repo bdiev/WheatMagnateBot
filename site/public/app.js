@@ -6184,6 +6184,7 @@ function areaExplorerState() {
       points: [], pointsScope: null, view: null, selectedId: null, searchTimer: null, mapBound: false, loadedAt: 0,
       tiles: new Map(), drawQueued: false, regionMap: null, regionMapEpoch: 0, colors: null, colorsTheme: null,
       findsDirty: false, tokensDirty: true,
+      logFilter: '', logEvents: [], logHasMore: false, logServer: null, logRequestId: 0,
       showXaero: readAreaExplorerSetting('areaExplorerShowXaero', 'true') !== 'false',
       showFinds: readAreaExplorerSetting('areaExplorerShowFinds', 'true') !== 'false',
       sort: ['newest', 'nearest', 'name'].includes(readAreaExplorerSetting('areaExplorerSort', 'newest')) ? readAreaExplorerSetting('areaExplorerSort', 'newest') : 'newest',
@@ -6264,7 +6265,100 @@ async function loadAreaExplorer({ full = true } = {}) {
     ae.tokensDirty = false;
     work.push(loadAreaExplorerTokens());
   }
+  if (full || ae.logServer !== areaExplorerLogServer()) work.push(loadAreaExplorerLog());
   await Promise.all(work);
+}
+
+// Run log: what happened to the mod's runs, newest first
+
+const AREA_EXPLORER_LOG_PAGE = 50;
+const AREA_EXPLORER_LOG_KEEP = 500;
+const AREA_EXPLORER_LOG_TYPES = Object.freeze({
+  start: 'Start', stop: 'Stopped', pause: 'Paused', resume: 'Resumed', phase: 'Phase', progress: 'Progress',
+  finish: 'Done', disconnect: 'Kicked', reconnect: 'Reconnect', rejoin: 'Back', totem: 'Totem', leave: 'Left',
+  warning: 'Warning', error: 'Error'
+});
+const AREA_EXPLORER_LOG_CONNECTION = Object.freeze(['disconnect', 'reconnect', 'rejoin', 'totem', 'leave']);
+
+/** The log follows the server picked above (every dimension of it), or shows all servers. */
+function areaExplorerLogServer() {
+  return areaExplorerState().scope.split('|')[0] || '';
+}
+
+function areaExplorerLogMatches(event) {
+  const ae = areaExplorerState();
+  if (ae.logServer && event.server !== ae.logServer) return false;
+  if (ae.logFilter === 'problems') return event.level === 'warn' || event.level === 'error';
+  if (ae.logFilter === 'connection') return AREA_EXPLORER_LOG_CONNECTION.includes(event.type);
+  return true;
+}
+
+async function loadAreaExplorerLog({ older = false } = {}) {
+  const ae = areaExplorerState();
+  const requestId = ++ae.logRequestId;
+  const server = areaExplorerLogServer();
+  const params = new URLSearchParams({ limit: String(AREA_EXPLORER_LOG_PAGE) });
+  if (server) params.set('server', server);
+  if (ae.logFilter) params.set('filter', ae.logFilter);
+  const last = older ? ae.logEvents[ae.logEvents.length - 1] : null;
+  if (last) params.set('before', `${new Date(last.occurredAt).toISOString()}|${last.id}`);
+  const list = $('#areaExplorerLog');
+  list.setAttribute('aria-busy', 'true');
+  try {
+    const data = await fetchJson(`/api/area-explorer/events?${params}`);
+    if (ae.logRequestId !== requestId) return;
+    ae.logServer = server;
+    ae.logEvents = older ? [...ae.logEvents, ...data.events] : data.events;
+    ae.logHasMore = data.hasMore;
+    renderAreaExplorerLog();
+  } finally {
+    if (ae.logRequestId === requestId) list.removeAttribute('aria-busy');
+  }
+}
+
+/** New events from the mod, straight from the live update: added on top if the log shows them. */
+function applyAreaExplorerEvents(events) {
+  const ae = areaExplorerState();
+  if (ae.logServer === null) return;
+  const known = new Set(ae.logEvents.map(event => event.id));
+  const fresh = events.filter(event => !known.has(event.id) && areaExplorerLogMatches(event));
+  if (!fresh.length) return;
+  ae.logEvents = [...fresh, ...ae.logEvents]
+    .sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt) || Number(b.id) - Number(a.id))
+    .slice(0, AREA_EXPLORER_LOG_KEEP);
+  renderAreaExplorerLog();
+}
+
+function areaExplorerLogDay(value) {
+  return new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: state.accountTimezone }).format(new Date(value));
+}
+
+function renderAreaExplorerLog() {
+  const ae = areaExplorerState();
+  const list = $('#areaExplorerLog');
+  $('#areaExplorerLogMore').hidden = !ae.logHasMore;
+  if (!ae.logEvents.length) {
+    list.innerHTML = `<li class="area-explorer-empty">${ae.logFilter ? 'Nothing of this kind yet.' : 'No events yet - they show up once a mod with site-sync runs.'}</li>`;
+    return;
+  }
+  const today = areaExplorerLogDay(Date.now());
+  list.innerHTML = ae.logEvents.map(event => {
+    const time = areaExplorerLogDay(event.occurredAt) === today ? formatTime(event.occurredAt) : formatFullDateTime(event.occurredAt);
+    const where = event.x === null || event.x === undefined || event.z === null || event.z === undefined ? ''
+      : `<button class="area-explorer-log-coords" type="button" data-area-focus="${event.x},${event.z}" data-area-focus-scope="${escapeHtml(`${event.server}|${event.dimension}`)}" title="Show on map">X ${event.x}${event.y === null || event.y === undefined ? '' : ` · Y ${event.y}`} · Z ${event.z}</button>`;
+    const meta = [
+      `<time datetime="${escapeHtml(new Date(event.occurredAt).toISOString())}" title="${escapeHtml(formatFullDateTime(event.occurredAt))}">${escapeHtml(time)}</time>`,
+      event.player || event.tokenName ? `<span>${escapeHtml(event.player || event.tokenName)}</span>` : '',
+      ae.logServer ? '' : `<span>${escapeHtml(event.server)}</span>`,
+      `<span>${escapeHtml(prettyDimension(event.dimension))}</span>`,
+      where
+    ].filter(Boolean).join('');
+    return `<li class="area-explorer-log-entry level-${escapeHtml(event.level)}">
+      <span class="area-explorer-log-type">${escapeHtml(AREA_EXPLORER_LOG_TYPES[event.type] || event.type)}</span>
+      <p class="area-explorer-log-message">${escapeHtml(event.message)}</p>
+      <p class="area-explorer-log-meta">${meta}</p>
+    </li>`;
+  }).join('');
 }
 
 /** Every server/dimension with finds, plus those with only a Xaero map so far. */
@@ -6382,7 +6476,9 @@ function renderAreaExplorerStatus() {
   }
   container.innerHTML = statuses.map(status => {
     const percent = status.percent === null ? null : Math.round(status.percent * 10) / 10;
-    const phase = status.paused ? 'Paused' : (AREA_EXPLORER_PHASES[status.phase] || status.phase);
+    const rescan = status.mode === 'Rescan';
+    const phaseName = status.paused ? 'Paused' : (AREA_EXPLORER_PHASES[status.phase] || status.phase);
+    const phase = rescan ? `Rescan · ${phaseName}` : phaseName;
     const runState = status.online ? (status.paused ? 'paused' : 'online') : 'offline';
     const found = status.runFinds
       ? `${formatNumber(status.runFinds.bases)} bases · ${formatNumber(status.runFinds.items)} loot · ${formatNumber(status.runFinds.signs)} signs this run`
@@ -6397,7 +6493,7 @@ function renderAreaExplorerStatus() {
       </header>
       ${percent === null ? '' : `<div class="area-explorer-progress" role="progressbar" aria-label="Explored" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><span style="width:${percent}%"></span></div>`}
       <dl>
-        ${percent === null ? '' : `<div><dt>Explored</dt><dd>${percent}%</dd></div>`}
+        ${percent === null ? '' : `<div><dt>${rescan ? 'Rescanned' : 'Explored'}</dt><dd>${percent}%</dd></div>`}
         ${status.etaSeconds === null || !status.online ? '' : `<div><dt>Time left</dt><dd>${escapeHtml(formatDurationMs(status.etaSeconds * 1000))}</dd></div>`}
         ${position ? `<div class="area-explorer-run-position"><dt>Position</dt><dd>${escapeHtml(position)}</dd></div>` : ''}
         <div><dt>Last report</dt><dd>${escapeHtml(formatDurationMs(Date.now() - new Date(status.updatedAt).getTime()))} ago</dd></div>
@@ -7176,6 +7272,9 @@ function setupAreaExplorer() {
   const changeScope = scope => {
     ae.scope = scope;
     ae.offset = 0;
+    if (ae.logServer !== null && ae.logServer !== areaExplorerLogServer()) {
+      loadAreaExplorerLog().catch(error => setBanner(`Could not load the run log: ${error.message}`));
+    }
     ae.selectedId = null;
     $('#areaExplorerSelected').hidden = true;
     renderAreaExplorerScopes();
@@ -7260,6 +7359,17 @@ function setupAreaExplorer() {
     queueAreaExplorerMapDraw();
   });
   renderAreaExplorerExtent();
+  $$('[data-area-log-filter]').forEach(button => button.addEventListener('click', () => {
+    ae.logFilter = button.dataset.areaLogFilter;
+    $$('[data-area-log-filter]').forEach(other => {
+      other.classList.toggle('active', other === button);
+      other.setAttribute('aria-pressed', String(other === button));
+    });
+    loadAreaExplorerLog().catch(error => setBanner(`Could not load the run log: ${error.message}`));
+  }));
+  $('#areaExplorerLogMore').addEventListener('click', () => {
+    loadAreaExplorerLog({ older: true }).catch(error => setBanner(`Could not load older events: ${error.message}`));
+  });
   $$('[data-area-radius]').forEach(button => button.addEventListener('click', () => {
     ae.extent = 2 * Number(button.dataset.areaRadius);
     saveAreaExplorerSetting('areaExplorerRadius', button.dataset.areaRadius);
@@ -11673,7 +11783,10 @@ function handleRealtimeEvent(event) {
     else {
       noteAreaExplorerUpdate(eventPayload);
       if (eventPayload.liveStatus) applyAreaExplorerLiveStatus(eventPayload.liveStatus);
-      if (eventPayload.added || eventPayload.tokenRevoked || !eventPayload.liveStatus) queueRealtimeRefresh('area-explorer', refreshAreaExplorerFromEvent, 180);
+      if (eventPayload.events) applyAreaExplorerEvents(eventPayload.events);
+      // Run log events alone come in the update itself: nothing else to load for them
+      const onlyEvents = eventPayload.events && !eventPayload.added && !eventPayload.status;
+      if (eventPayload.added || eventPayload.tokenRevoked || (!eventPayload.liveStatus && !onlyEvents)) queueRealtimeRefresh('area-explorer', refreshAreaExplorerFromEvent, 180);
     }
   }
   else if (type === 'player_joined' || type === 'player_left') {

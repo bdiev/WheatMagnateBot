@@ -17,6 +17,13 @@ const TOKEN_PREFIX = 'aex_';
 const MAX_PAGE_SIZE = 200;
 const MAX_MAP_POINTS = 20_000;
 const TOP_LOOT_NAMES = 8;
+const EVENT_LEVELS = Object.freeze(['info', 'success', 'warn', 'error']);
+const MAX_EVENTS_PER_BATCH = 200;
+const MAX_EVENT_PAGE = 200;
+// What the log's "Connection" filter shows: losing and getting back the server
+const CONNECTION_EVENT_TYPES = Object.freeze(['disconnect', 'reconnect', 'rejoin', 'totem', 'leave']);
+const EVENT_RETENTION_DAYS = 90;
+const EVENT_PRUNE_INTERVAL_MS = 60 * 60_000;
 
 // What loot is worth, by the name the game gives it: the higher, the more it's worth going back for
 const LOOT_VALUES = Object.freeze({
@@ -121,6 +128,44 @@ function normalizeStatus(raw) {
   };
 }
 
+/** A run log event as the mod sends it, checked and trimmed; null if it isn't one. */
+function normalizeEvent(raw, now = Date.now()) {
+  if (!raw || typeof raw !== 'object') return null;
+  const key = String(raw.id ?? '');
+  if (!/^[A-Za-z0-9-]{8,64}$/.test(key)) return null;
+  const occurredAt = normalizeFoundAt(raw.at, now);
+  const message = normalizeText(raw.message, 500);
+  if (!occurredAt || !message) return null;
+  const level = String(raw.level || '').toLowerCase();
+  const type = normalizeText(raw.type, 24).toLowerCase().replace(/[^a-z_-]/g, '') || 'note';
+  const coordinate = (value, limit) => value === null || value === undefined ? null : normalizeInteger(value, limit);
+  return {
+    key, occurredAt, message, type,
+    level: EVENT_LEVELS.includes(level) ? level : 'info',
+    player: normalizeText(raw.player, 16),
+    x: coordinate(raw.x, MAX_COORDINATE),
+    y: coordinate(raw.y, MAX_Y),
+    z: coordinate(raw.z, MAX_COORDINATE)
+  };
+}
+
+function publicEvent(row, tokenName = row.token_name) {
+  return {
+    id: String(row.id),
+    server: row.server,
+    dimension: row.dimension,
+    player: row.player,
+    level: row.level,
+    type: row.type,
+    message: row.message,
+    x: row.x,
+    y: row.y,
+    z: row.z,
+    occurredAt: row.occurred_at,
+    tokenName: tokenName || null
+  };
+}
+
 function publicFind(row) {
   return {
     id: String(row.id),
@@ -217,9 +262,13 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     if (rawFinds.length > MAX_FINDS_PER_BATCH) throw httpError(413, `At most ${MAX_FINDS_PER_BATCH} finds per request.`);
     const finds = rawFinds.map(raw => normalizeFind(raw, now)).filter(Boolean);
     const status = normalizeStatus(body.status);
+    const rawEvents = Array.isArray(body.events) ? body.events : [];
+    if (rawEvents.length > MAX_EVENTS_PER_BATCH) throw httpError(413, `At most ${MAX_EVENTS_PER_BATCH} events per request.`);
+    const events = rawEvents.map(raw => normalizeEvent(raw, now)).filter(Boolean);
 
     let added = 0;
     let liveStatus = null;
+    let newEvents = [];
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -240,6 +289,7 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
       const others = finds.filter(f => f.kind !== 'BASE');
       if (others.length) added += (await insertFinds(client, server, dimension, others, token.id)).length;
       if (status) liveStatus = await upsertStatus(client, token.id, server, dimension, status);
+      if (events.length) newEvents = await insertEvents(client, server, dimension, events, token.id);
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
@@ -247,8 +297,71 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     } finally {
       client.release();
     }
-    if (added > 0 || status) publish('area_explorer_updated', { server, dimension, added, status: Boolean(status), ...(liveStatus ? { liveStatus } : {}) });
-    return { received: rawFinds.length, accepted: finds.length, added, duplicates: finds.length - added };
+    if (added > 0 || status || newEvents.length) {
+      publish('area_explorer_updated', {
+        server, dimension, added, status: Boolean(status),
+        ...(liveStatus ? { liveStatus } : {}),
+        ...(newEvents.length ? { events: newEvents.map(row => publicEvent(row, token.name)) } : {})
+      });
+    }
+    if (newEvents.length) pruneEvents(now);
+    return {
+      received: rawFinds.length, accepted: finds.length, added, duplicates: finds.length - added,
+      ...(rawEvents.length ? { events: newEvents.length } : {})
+    };
+  }
+
+  /** The run log's events, skipping ones sent before (same mod, same id); oldest first. */
+  async function insertEvents(client, server, dimension, events, tokenId) {
+    const result = await client.query(
+      `INSERT INTO area_explorer_events (token_id, event_key, server, dimension, player, level, type, message, x, y, z, occurred_at)
+       SELECT $1, e.event_key, $2, $3, e.player, e.level, e.type, e.message, e.x, e.y, e.z, e.occurred_at
+       FROM unnest($4::text[], $5::text[], $6::text[], $7::text[], $8::text[], $9::int[], $10::int[], $11::int[], $12::timestamptz[])
+         AS e(event_key, player, level, type, message, x, y, z, occurred_at)
+       ON CONFLICT (token_id, event_key) DO NOTHING
+       RETURNING *`,
+      [tokenId, server, dimension, events.map(e => e.key), events.map(e => e.player), events.map(e => e.level),
+        events.map(e => e.type), events.map(e => e.message), events.map(e => e.x), events.map(e => e.y), events.map(e => e.z),
+        events.map(e => e.occurredAt.toISOString())]
+    );
+    return result.rows.sort((a, b) => new Date(a.occurred_at) - new Date(b.occurred_at) || Number(a.id) - Number(b.id));
+  }
+
+  let lastPrune = 0;
+  /** The log keeps the last 90 days; checked at most once an hour, in the background. */
+  function pruneEvents(now = Date.now()) {
+    if (now - lastPrune < EVENT_PRUNE_INTERVAL_MS) return;
+    lastPrune = now;
+    pool.query('DELETE FROM area_explorer_events WHERE occurred_at < NOW() - make_interval(days => $1)', [EVENT_RETENTION_DAYS])
+      .catch(error => console.error('[Area Explorer] Pruning the run log failed:', error.message));
+  }
+
+  /**
+   * The run log, newest first: of one server or all, everything / problems (warnings and errors) /
+   * connection (kicks, reconnects, totem pops). before=<time>|<id> pages back.
+   */
+  async function getEvents(url) {
+    const params = [];
+    const where = [];
+    const server = normalizeScopeName(url.searchParams.get('server'), 128);
+    if (server) { params.push(server); where.push(`e.server = $${params.length}`); }
+    const filter = url.searchParams.get('filter');
+    if (filter === 'problems') where.push(`e.level IN ('warn', 'error')`);
+    else if (filter === 'connection') { params.push(CONNECTION_EVENT_TYPES); where.push(`e.type = ANY($${params.length}::text[])`); }
+    const before = String(url.searchParams.get('before') || '').match(/^([^|]{10,40})\|(\d{1,18})$/);
+    if (before && Number.isFinite(Date.parse(before[1]))) {
+      params.push(new Date(before[1]).toISOString(), before[2]);
+      where.push(`(e.occurred_at, e.id) < ($${params.length - 1}::timestamptz, $${params.length}::bigint)`);
+    }
+    const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get('limit'), 10) || 50, 1), MAX_EVENT_PAGE);
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const rows = await pool.query(
+      `SELECT e.*, t.name AS token_name FROM area_explorer_events e
+       LEFT JOIN area_explorer_tokens t ON t.id = e.token_id
+       ${whereSql} ORDER BY e.occurred_at DESC, e.id DESC LIMIT ${limit + 1}`,
+      params
+    );
+    return { events: rows.rows.slice(0, limit).map(row => publicEvent(row)), hasMore: rows.rows.length > limit };
   }
 
   async function insertFinds(client, server, dimension, finds, tokenId) {
@@ -481,6 +594,7 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     if (path === '/api/area-explorer/live' && req.method === 'GET') return { statusCode: 200, payload: await getLive() };
     if (path === '/api/area-explorer/finds' && req.method === 'GET') return { statusCode: 200, payload: await getFinds(url) };
     if (path === '/api/area-explorer/map' && req.method === 'GET') return { statusCode: 200, payload: await getMapPoints(url) };
+    if (path === '/api/area-explorer/events' && req.method === 'GET') return { statusCode: 200, payload: await getEvents(url) };
     const findMatch = path.match(/^\/api\/area-explorer\/finds\/([^/]+)$/);
     if (findMatch && req.method === 'GET') return { statusCode: 200, payload: await getFind(findMatch[1]) };
     // Loot picked up in game: administrators take it off the site
@@ -501,10 +615,11 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     return null;
   }
 
-  return { authenticate, ingest, handleIngest, handleApi, getSummary, getFinds, getMapPoints, getFind, removeFind, listTokens, createToken, revokeToken };
+  return { authenticate, ingest, handleIngest, handleApi, getSummary, getEvents, getFinds, getMapPoints, getFind, removeFind, listTokens, createToken, revokeToken };
 }
 
 module.exports = {
+  CONNECTION_EVENT_TYPES,
   KINDS,
   SAME_BASE_DISTANCE,
   MAX_FINDS_PER_BATCH,
@@ -514,8 +629,10 @@ module.exports = {
   dedupeKey,
   generateToken,
   lootValue,
+  normalizeEvent,
   normalizeFind,
   normalizeStatus,
+  publicEvent,
   publicFind,
   publicStatus
 };
