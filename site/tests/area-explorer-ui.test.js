@@ -33,7 +33,7 @@ function fixture() {
     areaExplorerScopeParams: params => JSON.stringify({ scope: ae.scope, ...params }),
     areaExplorerMarkerFilter: () => ae.markerName,
     renderAreaExplorerFind: find => find.name,
-    renderAreaExplorerPager() {}, bindAreaExplorerMap() {}, fitAreaExplorerMap() {}, queueAreaExplorerMapDraw() {},
+    revealAreaExplorerFind() {}, renderAreaExplorerPager() {}, bindAreaExplorerMap() {}, fitAreaExplorerMap() {}, queueAreaExplorerMapDraw() {},
     ensureItemIcons: async () => ({}),
     loadXaeroRegionMap: async () => {}, escapeHtml: String,
     renderAreaExplorerStatus() {},
@@ -207,6 +207,145 @@ function testReadingPositionKept() {
   assert.equal(ae.newFindsAbove, 0);
 }
 
+function gestureFixture({ interactive = true } = {}) {
+  const ae = { view: { cx: 0, cz: 0, scale: 1 }, showFinds: true, points: [] };
+  const listeners = new Map(), timers = new Map();
+  let nextTimer = 0;
+  const canvas = {
+    clientWidth: 400, clientHeight: 400,
+    classList: { contains: () => interactive },
+    getBoundingClientRect: () => ({ left: 0, top: 0 }),
+    setPointerCapture() {},
+    addEventListener: (name, listener) => listeners.set(name, listener)
+  };
+  const nodes = {
+    '#areaExplorerMap': canvas,
+    '#areaExplorerCursor': { hidden: true },
+    '#areaExplorerMapWrap': { classList: { contains: () => false } },
+    '#areaExplorerMenu': { hidden: true }
+  };
+  const context = vm.createContext({
+    areaExplorerState: () => ae, $: selector => nodes[selector],
+    state: { activeTab: 'area-explorer' },
+    document: { addEventListener() {} }, window: { addEventListener() {} },
+    setTimeout: callback => { const id = ++nextTimer; timers.set(id, callback); return id; },
+    clearTimeout: id => timers.delete(id),
+    AREA_EXPLORER_MAX_SCALE: 16,
+    clampAreaExplorerView() {}, queueAreaExplorerMapDraw() {}, noteAreaExplorerViewMoved() {},
+    openAreaExplorerMenu(x, z) { context.menuAt = [x, z]; }, closeAreaExplorerMenu() {},
+    selectAreaExplorerFind: async id => { context.selections = (context.selections || []).concat(id); },
+    areaExplorerInTerritory: () => true, areaExplorerToScreen: () => [200, 200],
+    setBanner: message => { throw new Error(message); }
+  });
+  vm.runInContext(functionSource('zoomAreaExplorerMap'), context);
+  vm.runInContext(functionSource('bindAreaExplorerMap'), context);
+  context.bindAreaExplorerMap();
+  const send = (type, id, x, y = 200) => listeners.get(type)({
+    pointerId: id, pointerType: 'touch', button: 0, clientX: x, clientY: y
+  });
+  const hold = () => { for (const callback of [...timers.values()]) callback(); timers.clear(); };
+  return { ae, context, timers, send, hold };
+}
+
+function testTouchGestures() {
+  let f = gestureFixture({ interactive: false });
+  f.send('pointerdown', 1, 200);
+  assert.equal(f.timers.size, 0, 'page scrolling mode must not arm map long presses');
+  f.send('pointermove', 1, 230);
+  f.send('pointerup', 1, 230);
+  assert.equal(f.ae.view.cx, 0, 'scrolling the page does not pan the map');
+  assert.equal(f.context.selections, undefined, 'a page swipe must not select a find');
+
+  f = gestureFixture();
+  f.send('pointerdown', 1, 200);
+  f.hold();
+  assert.deepEqual(f.context.menuAt, [200, 200], 'holding opens actions at the touched point');
+  f.send('pointerup', 1, 200);
+  assert.equal(f.context.selections, undefined, 'releasing a hold must not select a marker or close the menu');
+
+  f = gestureFixture();
+  f.send('pointerdown', 1, 200);
+  f.send('pointermove', 1, 220);
+  assert.equal(f.timers.size, 0, 'dragging cancels the hold timer');
+  f.send('pointerup', 1, 220);
+  f.hold();
+  assert.equal(f.context.menuAt, undefined);
+  assert.equal(f.ae.view.cx, -20);
+
+  f = gestureFixture();
+  f.send('pointerdown', 1, 100);
+  f.send('pointerdown', 2, 300);
+  assert.equal(f.timers.size, 0, 'a second finger cancels the hold timer');
+  f.send('pointermove', 1, 120);
+  f.send('pointermove', 2, 320);
+  assert.ok(Math.abs(f.ae.view.cx + 20) < 0.001, 'two fingers moving together pan by their midpoint');
+  assert.ok(Math.abs(f.ae.view.scale - 1) < 0.001, 'parallel movement preserves zoom');
+  f.send('pointermove', 2, 420);
+  assert.ok(f.ae.view.scale > 1, 'spreading fingers zooms in');
+  f.send('pointerup', 2, 420);
+  f.send('pointerup', 1, 120);
+  assert.equal(f.context.selections, undefined, 'ending a pinch never selects the point underneath');
+
+  f = gestureFixture();
+  f.send('pointerdown', 1, 200);
+  f.send('pointercancel', 1, 200);
+  f.hold();
+  f.send('pointerup', 1, 200);
+  assert.equal(f.context.menuAt, undefined, 'cancelled touches never open a delayed menu');
+  assert.equal(f.context.selections, undefined);
+  f.send('pointerdown', 2, 200);
+  f.send('pointerup', 2, 200);
+  assert.equal(f.context.selections.length, 1, 'a normal tap still works after cancellation');
+}
+
+function testFullscreenEscapePriority() {
+  const nodes = new Map(), handlers = [];
+  const ae = { liveTimer: 1, showFinds: true };
+  const node = selector => {
+    if (!nodes.has(selector)) nodes.set(selector, {
+      hidden: false, value: '', addEventListener() {}, classList: { contains: () => true }
+    });
+    return nodes.get(selector);
+  };
+  const context = vm.createContext({
+    areaExplorerState: () => ae, $: node, $$: () => [],
+    document: { addEventListener: (name, handler) => { if (name === 'keydown') handlers.push(handler); } },
+    setAreaExplorerFindsVisible() {}, renderAreaExplorerExtent() {},
+    setAreaExplorerFullscreen: on => { context.fullscreen = on; }
+  });
+  vm.runInContext(functionSource('setupAreaExplorer'), context);
+  context.setupAreaExplorer();
+  handlers[0]({ key: 'Escape' });
+  assert.equal(context.fullscreen, undefined, 'Escape first closes a menu without leaving full screen');
+  node('#areaExplorerMenu').hidden = true;
+  ae.areaSelection = { picking: true };
+  handlers[0]({ key: 'Escape' });
+  assert.equal(context.fullscreen, undefined, 'Escape clears the area selection before leaving full screen');
+  ae.areaSelection = null;
+  handlers[0]({ key: 'Escape' });
+  assert.equal(context.fullscreen, false, 'Escape leaves full screen once overlays have been dismissed');
+}
+
+function testMarkerAboveDetails() {
+  const ae = { view: { cx: 0, cz: 0, scale: 1 } };
+  const canvas = { clientWidth: 400, clientHeight: 400, getBoundingClientRect: () => ({ top: 60 }) };
+  let sheetTop = 240;
+  const sheet = { hidden: false, getBoundingClientRect: () => ({ top: sheetTop }) };
+  const context = vm.createContext({
+    areaExplorerState: () => ae, $: selector => selector === '#areaExplorerMap' ? canvas : sheet,
+    clampAreaExplorerView() {}, queueAreaExplorerMapDraw() {}, noteAreaExplorerViewMoved() {}
+  });
+  vm.runInContext(functionSource('areaExplorerToScreen'), context);
+  vm.runInContext(functionSource('revealAreaExplorerFind'), context);
+  context.revealAreaExplorerFind({ x: 0, z: 0 });
+  const [, y] = context.areaExplorerToScreen(ae.view, canvas, 0, 0);
+  assert.ok(y >= 64 && y < sheetTop - 60 - 24, 'selected point is visible between the legend and its sheet');
+  const previousCentre = ae.view.cz;
+  sheetTop = 400;
+  context.revealAreaExplorerFind({ x: 0, z: 0 });
+  assert.equal(ae.view.cz, previousCentre, 'opening details does not move a marker that is already visible');
+}
+
 (async () => {
   await testFindsRaceAndScroll();
   await testMapRace();
@@ -214,5 +353,8 @@ function testReadingPositionKept() {
   await testMarkerVisibility();
   await testLiveTelemetry();
   testReadingPositionKept();
+  testTouchGestures();
+  testFullscreenEscapePriority();
+  testMarkerAboveDetails();
   console.log('Area Explorer UI behavior tests passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

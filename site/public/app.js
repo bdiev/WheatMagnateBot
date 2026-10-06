@@ -7070,7 +7070,7 @@ function openAreaExplorerMenu(sx, sz) {
       items.push({ label: 'Clear selection', run: () => { ae.areaSelection = null; queueAreaExplorerMapDraw(); } });
     } else {
       items.push({ separator: true });
-      items.push({ label: 'Select an area from here', run: () => { ae.areaSelection = { x1: x, z1: z, x2: x, z2: z, picking: true }; queueAreaExplorerMapDraw(); showAreaExplorerNote('Click the opposite corner'); } });
+      items.push({ label: 'Select an area from here', run: () => { ae.areaSelection = { x1: x, z1: z, x2: x, z2: z, picking: true }; queueAreaExplorerMapDraw(); showAreaExplorerNote('Tap or click the opposite corner'); } });
       if (selection) items.push({ label: 'Clear selection', run: () => { ae.areaSelection = null; queueAreaExplorerMapDraw(); } });
     }
   }
@@ -7082,6 +7082,7 @@ function openAreaExplorerMenu(sx, sz) {
     items[Number(button.dataset.menuIndex)].run();
   }));
   menu.hidden = false;
+  $('#areaExplorerMapActions').setAttribute('aria-expanded', 'true');
   // Kept inside the map
   const wrap = $('#areaExplorerMapWrap');
   const left = Math.max(4, Math.min(sx, wrap.clientWidth - menu.offsetWidth - 4));
@@ -7094,6 +7095,7 @@ function openAreaExplorerMenu(sx, sz) {
 function closeAreaExplorerMenu() {
   const menu = $('#areaExplorerMenu');
   if (menu && !menu.hidden) menu.hidden = true;
+  $('#areaExplorerMapActions')?.setAttribute('aria-expanded', 'false');
 }
 
 /** A short word over the map: copied, sent, or what went wrong. */
@@ -7412,7 +7414,8 @@ function bindAreaExplorerMap() {
   if (!canvas) return;
   ae.mapBound = true;
   const pointers = new Map();
-  let dragged = false, pinchDistance = 0;
+  let dragged = false, pinchDistance = 0, pinchCentre = null, holdTimer = null;
+  const cancelHold = () => { clearTimeout(holdTimer); holdTimer = null; };
   const cursor = $('#areaExplorerCursor');
   const local = event => {
     const rect = canvas.getBoundingClientRect();
@@ -7430,15 +7433,24 @@ function bindAreaExplorerMap() {
   canvas.addEventListener('contextmenu', event => {
     if (!ae.view) return;
     event.preventDefault();
+    cancelHold();
+    dragged = true;
     openAreaExplorerMenu(...local(event));
   });
   document.addEventListener('keydown', event => {
     if (event.key !== 'Escape' || state.activeTab !== 'area-explorer') return;
-    if (!$('#areaExplorerMenu').hidden) closeAreaExplorerMenu();
-    else if (ae.areaSelection) { ae.areaSelection = null; queueAreaExplorerMapDraw(); }
+    if (!$('#areaExplorerMenu').hidden) {
+      closeAreaExplorerMenu();
+      $('#areaExplorerMapActions').focus({ preventScroll: true });
+      event.preventDefault();
+    } else if (ae.areaSelection) {
+      ae.areaSelection = null;
+      queueAreaExplorerMapDraw();
+      event.preventDefault();
+    }
   });
   document.addEventListener('pointerdown', event => {
-    if (!event.target.closest('#areaExplorerMenu')) closeAreaExplorerMenu();
+    if (!event.target.closest('#areaExplorerMenu, #areaExplorerMapActions')) closeAreaExplorerMenu();
   }, true);
 
   canvas.addEventListener('wheel', event => {
@@ -7449,6 +7461,7 @@ function bindAreaExplorerMap() {
 
   canvas.addEventListener('pointerdown', event => {
     if (event.button !== 0) return;
+    cancelHold();
     const canMove = event.pointerType === 'mouse' || canvas.classList.contains('is-interactive') || $('#areaExplorerMapWrap').classList.contains('is-fullscreen');
     if (canMove) canvas.setPointerCapture(event.pointerId);
     if (!pointers.size) dragged = false;
@@ -7456,6 +7469,14 @@ function bindAreaExplorerMap() {
     if (pointers.size === 2) {
       const [a, b] = [...pointers.values()];
       pinchDistance = Math.hypot(a.x - b.x, a.y - b.y);
+      pinchCentre = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      dragged = true;
+    } else if (pointers.size === 1 && canMove && ae.view && event.pointerType !== 'mouse') {
+      holdTimer = setTimeout(() => {
+        dragged = true;
+        showCoordinates(...local(event));
+        openAreaExplorerMenu(...local(event));
+      }, 550);
     }
   });
   canvas.addEventListener('pointerleave', event => { if (event.pointerType === 'mouse') cursor.hidden = true; });
@@ -7471,13 +7492,22 @@ function bindAreaExplorerMap() {
     const last = pointers.get(event.pointerId);
     if (!last || !ae.view) return;
     pointers.set(event.pointerId, { ...last, x: event.clientX, y: event.clientY });
-    if (Math.hypot(event.clientX - last.startX, event.clientY - last.startY) > 6) dragged = true;
+    if (Math.hypot(event.clientX - last.startX, event.clientY - last.startY) > 6) {
+      dragged = true;
+      cancelHold();
+    }
     if (!last.canMove) return;
     if (pointers.size === 2) {
       const [a, b] = [...pointers.values()];
       const distance = Math.hypot(a.x - b.x, a.y - b.y);
       const rect = canvas.getBoundingClientRect();
-      if (pinchDistance) zoomAreaExplorerMap(distance / pinchDistance, (a.x + b.x) / 2 - rect.left, (a.y + b.y) / 2 - rect.top);
+      const centre = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      if (pinchCentre) {
+        ae.view.cx -= (centre.x - pinchCentre.x) / ae.view.scale;
+        ae.view.cz -= (centre.y - pinchCentre.y) / ae.view.scale;
+      }
+      if (pinchDistance) zoomAreaExplorerMap(distance / pinchDistance, centre.x - rect.left, centre.y - rect.top);
+      pinchCentre = centre;
       pinchDistance = distance;
       dragged = true;
       return;
@@ -7491,8 +7521,10 @@ function bindAreaExplorerMap() {
     noteAreaExplorerViewMoved();
   });
   const release = event => {
+    cancelHold();
     pointers.delete(event.pointerId);
     pinchDistance = 0;
+    pinchCentre = null;
   };
   canvas.addEventListener('pointerup', event => {
     if (!pointers.has(event.pointerId)) return;
@@ -7520,7 +7552,7 @@ function bindAreaExplorerMap() {
     }
     selectAreaExplorerFind(best?.id || null).catch(error => setBanner(error.message));
   });
-  canvas.addEventListener('pointercancel', release);
+  canvas.addEventListener('pointercancel', event => { dragged = true; release(event); });
   canvas.addEventListener('lostpointercapture', release);
   canvas.addEventListener('keydown', event => {
     if (!ae.view) return;
@@ -7539,6 +7571,8 @@ function bindAreaExplorerMap() {
 
   const onResize = () => {
     clampAreaExplorerView();
+    const selected = ae.points.find(point => point.id === ae.selectedId);
+    if (selected) revealAreaExplorerFind(selected);
     queueAreaExplorerMapDraw();
   };
   if ('ResizeObserver' in window) new ResizeObserver(onResize).observe(canvas);
@@ -7546,6 +7580,7 @@ function bindAreaExplorerMap() {
 }
 
 function setAreaExplorerFullscreen(on) {
+  closeAreaExplorerMenu();
   const wrap = $('#areaExplorerMapWrap');
   wrap.classList.toggle('is-fullscreen', on);
   document.body.classList.toggle('area-explorer-fullscreen', on);
@@ -7574,6 +7609,23 @@ function setAreaExplorerFindsVisible(show) {
   queueAreaExplorerMapDraw();
 }
 
+/** Keep the selected marker above its details sheet, including after a rotation. */
+function revealAreaExplorerFind(find) {
+  const ae = areaExplorerState();
+  const canvas = $('#areaExplorerMap');
+  const sheet = $('#areaExplorerSelected');
+  if (!ae.view || sheet.hidden) return;
+  const bottom = sheet.getBoundingClientRect().top - canvas.getBoundingClientRect().top - 24;
+  const top = 64; // Leave room for the legend.
+  if (bottom <= top) return;
+  const [, y] = areaExplorerToScreen(ae.view, canvas, find.x, find.z);
+  if (y >= top && y <= bottom) return;
+  ae.view.cz += (y - (top + bottom) / 2) / ae.view.scale;
+  clampAreaExplorerView();
+  queueAreaExplorerMapDraw();
+  noteAreaExplorerViewMoved();
+}
+
 async function selectAreaExplorerFind(id) {
   const ae = areaExplorerState();
   if (id && !ae.showFinds) setAreaExplorerFindsVisible(true);
@@ -7591,6 +7643,7 @@ async function selectAreaExplorerFind(id) {
   box.innerHTML = `<button class="area-explorer-selected-close" type="button" data-area-close-selected aria-label="Close">×</button>
     <ol class="area-explorer-finds">${renderAreaExplorerFind(find, { selected: true })}</ol>`;
   box.hidden = false;
+  revealAreaExplorerFind(find);
 }
 
 // Tokens for the mod (administrators)
@@ -7626,9 +7679,17 @@ function setupAreaExplorer() {
     }
     ae.selectedId = null;
     $('#areaExplorerSelected').hidden = true;
+    ae.areaSelection = null;
+    ae.view = null;
+    closeAreaExplorerMenu();
     renderAreaExplorerScopes();
+    fitAreaExplorerMap();
     return reloadScope();
   };
+  $$('[data-area-jump]').forEach(button => button.addEventListener('click', () => {
+    const target = document.getElementById(button.dataset.areaJump);
+    target?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' });
+  }));
   $$('[data-area-kind]').forEach(button => button.addEventListener('click', () => {
     ae.kind = button.dataset.areaKind;
     ae.offset = 0;
@@ -7696,11 +7757,19 @@ function setupAreaExplorer() {
 
   // The map's own controls
   setAreaExplorerFindsVisible(ae.showFinds);
+  $('#areaExplorerMapActions').addEventListener('click', () => {
+    if (!$('#areaExplorerMenu').hidden) { closeAreaExplorerMenu(); return; }
+    const canvas = $('#areaExplorerMap');
+    if (ae.view) openAreaExplorerMenu(canvas.clientWidth / 2, canvas.clientHeight / 2);
+  });
   $('#areaExplorerToggleFinds').addEventListener('click', () => setAreaExplorerFindsVisible(!ae.showFinds));
   $('#areaExplorerTouchMode').addEventListener('click', event => {
     const on = $('#areaExplorerMap').classList.toggle('is-interactive');
     event.currentTarget.setAttribute('aria-pressed', String(on));
     event.currentTarget.textContent = on ? 'Done moving' : 'Move map';
+    $('.area-explorer-mobile-hint').textContent = on
+      ? 'Drag or pinch. Hold for actions. Done moving to scroll.'
+      : 'Scroll page or tap finds. Tap Move map to drag and pinch.';
   });
   renderAreaExplorerExtent();
   $$('[data-area-log-filter]').forEach(button => button.addEventListener('click', () => {
@@ -7739,7 +7808,18 @@ function setupAreaExplorer() {
     setAreaExplorerFullscreen(!$('#areaExplorerMapWrap').classList.contains('is-fullscreen'));
   });
   document.addEventListener('keydown', event => {
-    if (event.key === 'Escape' && $('#areaExplorerMapWrap')?.classList.contains('is-fullscreen')) setAreaExplorerFullscreen(false);
+    const wrap = $('#areaExplorerMapWrap');
+    if (!wrap?.classList.contains('is-fullscreen') || event.defaultPrevented) return;
+    if (event.key === 'Escape') {
+      if (!$('#areaExplorerMenu').hidden || ae.areaSelection) return;
+      setAreaExplorerFullscreen(false);
+    }
+    if (event.key === 'Tab') {
+      const controls = [...wrap.querySelectorAll('canvas, button:not(:disabled)')].filter(element => element.getClientRects().length);
+      const first = controls[0], last = controls.at(-1);
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    }
   });
 
   $('#tab-area-explorer').addEventListener('click', async event => {
