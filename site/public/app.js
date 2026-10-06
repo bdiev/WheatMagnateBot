@@ -6192,7 +6192,7 @@ function areaExplorerState() {
     state.areaExplorer = {
       scope: '', kind: '', markerName: '', q: '', offset: 0, total: 0, summary: null, mapScopes: [],
       points: [], pointsScope: null, view: null, selectedId: null, searchTimer: null, mapBound: false, loadedAt: 0,
-      tiles: new Map(), drawQueued: false, regionMap: null, regionMapEpoch: 0, colors: null, colorsTheme: null,
+      tiles: new Map(), drawQueued: false, regionMaps: new Map(), dusk: null, duskLayer: null, regionMapEpoch: 0, colors: null, colorsTheme: null,
       findsDirty: false, tokensDirty: true, newFindsAbove: 0, versions: null,
       night: readAreaExplorerSetting('areaExplorerNight', 'false') === 'true',
       // Flown-over grids by token: { version, coverage, image } - fetched when a run's version moves on
@@ -7411,25 +7411,25 @@ function cachedMapImage(key, url, { request = true } = {}) {
   return null;
 }
 
-/** The map's index for the picked scope: which tiles exist on each level. */
+/**
+ * The map's index for the picked scope: which tiles exist on each level - by day, and the night
+ * view too where there is one, both kept so the switch between them can fade from one to the other.
+ */
 async function loadXaeroRegionMap() {
   const ae = areaExplorerState();
   const scope = ae.scope;
   const [server, dimension] = scope.split('|');
-  if (!ae.mapScopes.some(item => item.server === server && item.dimension === dimension)) {
-    ae.regionMap = null;
-    return;
-  }
+  const map = ae.mapScopes.find(item => item.server === server && item.dimension === dimension);
   renderAreaExplorerNightButton();
-  // By day or at night: the night view's tiles are a dimension of their own
-  const mapScope = `${server}|${areaExplorerMapDimension(server, dimension)}`;
-  if (ae.regionMap?.scope === mapScope) return;
-  const index = await fetchJson(`/api/area-explorer/map/index?${new URLSearchParams({ server, dimension: mapScope.split('|')[1] })}`);
-  if (ae.scope !== scope) return;
-  const regionMap = { scope: mapScope, maxLevel: index.maxLevel, levels: [], versions: new Map() };
-  for (let level = 0; level <= index.maxLevel; level++) regionMap.levels.push(new Set());
-  for (let i = 0; i < index.regions.length; i += 2) addXaeroRegion(regionMap, index.regions[i], index.regions[i + 1]);
-  ae.regionMap = regionMap;
+  if (!map) return;
+  const wanted = [scope, ...(map.night ? [`${server}|${dimension}@night`] : [])];
+  await Promise.all(wanted.filter(mapScope => !ae.regionMaps.has(mapScope)).map(async mapScope => {
+    const index = await fetchJson(`/api/area-explorer/map/index?${new URLSearchParams({ server, dimension: mapScope.split('|')[1] })}`);
+    const regionMap = { scope: mapScope, maxLevel: index.maxLevel, levels: [], versions: new Map() };
+    for (let level = 0; level <= index.maxLevel; level++) regionMap.levels.push(new Set());
+    for (let i = 0; i < index.regions.length; i += 2) addXaeroRegion(regionMap, index.regions[i], index.regions[i + 1]);
+    ae.regionMaps.set(mapScope, regionMap);
+  }));
 }
 
 /** The map's dimension as tiles are kept: the overworld's night view is "overworld@night". */
@@ -7475,10 +7475,10 @@ function applyXaeroRegionMapUpdate(update) {
     queueRealtimeRefresh('area-explorer', refreshAreaExplorerFromEvent, 2000);
     return;
   }
-  const regionMap = ae.regionMap?.scope === scope ? ae.regionMap : null;
+  const regionMap = ae.regionMaps.get(scope);
   if (!regionMap) return;
   if (update.all) {
-    ae.regionMap = null;
+    ae.regionMaps.delete(scope);
     ae.regionMapEpoch += 1;
     for (const [key, entry] of ae.tiles) if (key.startsWith(`map|${scope}|`)) entry.stale = true;
     if (state.activeTab === 'area-explorer') loadXaeroRegionMap().then(queueAreaExplorerMapDraw).catch(() => {});
@@ -7496,12 +7496,72 @@ function applyXaeroRegionMapUpdate(update) {
   if (state.activeTab === 'area-explorer') queueAreaExplorerMapDraw();
 }
 
+/** How long dusk (or dawn) takes on the map, ms. */
+const AREA_EXPLORER_DUSK_MS = 1600;
+// Night as Xaero draws it: unlit ground at 37.5%, a touch of blue in the dark
+const AREA_EXPLORER_NIGHT_DARKNESS = 0.625;
+const AREA_EXPLORER_NIGHT_TINT = '4, 8, 28';
+
+function easeInOut(t) {
+  const x = Math.min(1, Math.max(0, t));
+  return x * x * (3 - 2 * x);
+}
+
+/** 0 by day, 1 at night, and the way between while it's changing. */
+function areaExplorerNightFactor() {
+  const ae = areaExplorerState();
+  const dusk = ae.dusk;
+  if (dusk) {
+    const progress = (performance.now() - dusk.start) / dusk.duration;
+    if (progress < 1) return dusk.from + (dusk.to - dusk.from) * progress;
+    ae.dusk = null;
+  }
+  return ae.night ? 1 : 0;
+}
+
+/** Night on or off: dusk or dawn over the map, from wherever it is now (a click halfway turns it back). */
+function setAreaExplorerNight(night) {
+  const ae = areaExplorerState();
+  const from = areaExplorerNightFactor();
+  ae.night = night;
+  const to = night ? 1 : 0;
+  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  ae.dusk = reduced || from === to ? null : { from, to, start: performance.now(), duration: AREA_EXPLORER_DUSK_MS * Math.abs(to - from) };
+  queueAreaExplorerMapDraw();
+}
+
+/** A tile, or until it loads a stretched piece of a coarser one already in; true if anything was drawn. */
+function drawXaeroTile(ctx, regionMap, level, x, z, dx, dy, dw, dh) {
+  if (!regionMap?.levels[level]?.has(`${x},${z}`)) return false;
+  const image = xaeroRegionTile(regionMap, level, x, z);
+  if (image) {
+    ctx.drawImage(image, dx, dy, dw, dh);
+    return true;
+  }
+  for (let up = 1; up <= XAERO_FALLBACK_LEVELS && level + up <= regionMap.maxLevel; up++) {
+    const parent = xaeroRegionTile(regionMap, level + up, x >> up, z >> up, { request: false });
+    if (!parent) continue;
+    const piece = XAERO_REGION_PX / 2 ** up;
+    ctx.drawImage(parent, (x - ((x >> up) << up)) * piece, (z - ((z >> up) << up)) * piece, piece, piece, dx, dy, dw, dh);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Xaero's map under the finds. By day the day tiles; at night the night ones (lit by torches, lava
+ * and the like); in between, dusk: the ground darkens towards night first, then the lights come on
+ * - at dawn they go off first. Where a region has no night view yet, the darkened day one stands in.
+ */
 function drawXaeroRegionMap(ctx, canvas, view, ratio) {
   const ae = areaExplorerState();
-  const regionMap = ae.regionMap;
-  // The map loaded for what's shown: the scope's own, or its night view ("overworld@night")
   const [server, dimension] = ae.scope.split('|');
-  if (!regionMap || regionMap.scope !== `${server}|${areaExplorerMapDimension(server, dimension)}`) return;
+  const dayMap = ae.regionMaps.get(ae.scope);
+  const nightMap = ae.regionMaps.get(`${server}|${dimension}@night`);
+  if (!dayMap && !nightMap) return;
+  const n = nightMap ? areaExplorerNightFactor() : 0;
+  const darkness = easeInOut(n / 0.8);
+  const lights = easeInOut((n - 0.45) / 0.55);
   const width = canvas.clientWidth, height = canvas.clientHeight;
   // What's in view of the territory: no tile past it is asked for
   const half = areaExplorerState().extent / 2;
@@ -7509,33 +7569,74 @@ function drawXaeroRegionMap(ctx, canvas, view, ratio) {
   const right = Math.min(half - 1, view.cx + width / 2 / view.scale), bottom = Math.min(half - 1, view.cz + height / 2 / view.scale);
   // The level whose pixels are at least one screen pixel
   const blockOnScreen = view.scale * ratio;
-  const level = Math.min(regionMap.maxLevel, Math.max(0, Math.floor(Math.log2(1 / blockOnScreen))));
+  const maxLevel = (dayMap || nightMap).maxLevel;
+  const level = Math.min(maxLevel, Math.max(0, Math.floor(Math.log2(1 / blockOnScreen))));
   const tileBlocks = XAERO_REGION_PX * 2 ** level;
-  const existing = regionMap.levels[level];
-  ctx.imageSmoothingEnabled = blockOnScreen * 2 ** level < 1;
+
+  // Any night at all: drawn on a layer of its own, so the dark falls only on drawn ground, not the map around it
+  const dusky = darkness > 0 || lights > 0;
+  let target = ctx;
+  if (dusky) {
+    ae.duskLayer ||= document.createElement('canvas');
+    const layer = ae.duskLayer;
+    if (layer.width !== canvas.width || layer.height !== canvas.height) {
+      layer.width = canvas.width;
+      layer.height = canvas.height;
+    }
+    target = layer.getContext('2d');
+    target.setTransform(1, 0, 0, 1, 0, 0);
+    target.clearRect(0, 0, layer.width, layer.height);
+    target.setTransform(ctx.getTransform());
+  }
+  target.imageSmoothingEnabled = blockOnScreen * 2 ** level < 1;
+
+  const tiles = [];
   for (let z = Math.floor(top / tileBlocks); z <= Math.floor(bottom / tileBlocks); z++) {
     for (let x = Math.floor(left / tileBlocks); x <= Math.floor(right / tileBlocks); x++) {
-      if (!existing.has(`${x},${z}`)) continue;
       const [sx, sz] = areaExplorerToScreen(view, canvas, x * tileBlocks, z * tileBlocks);
       const [ex, ez] = areaExplorerToScreen(view, canvas, (x + 1) * tileBlocks, (z + 1) * tileBlocks);
       // Whole pixels, so neighbouring tiles meet without a seam
-      const dx = Math.floor(sx), dy = Math.floor(sz), dw = Math.ceil(ex) - dx, dh = Math.ceil(ez) - dy;
-      const image = xaeroRegionTile(regionMap, level, x, z);
-      if (image) {
-        ctx.drawImage(image, dx, dy, dw, dh);
-        continue;
-      }
-      // Until it loads, a stretched piece of a coarser tile that already has
-      for (let up = 1; up <= XAERO_FALLBACK_LEVELS && level + up <= regionMap.maxLevel; up++) {
-        const parent = xaeroRegionTile(regionMap, level + up, x >> up, z >> up, { request: false });
-        if (!parent) continue;
-        const piece = XAERO_REGION_PX / 2 ** up;
-        ctx.drawImage(parent, (x - ((x >> up) << up)) * piece, (z - ((z >> up) << up)) * piece, piece, piece, dx, dy, dw, dh);
-        break;
-      }
+      const dx = Math.floor(sx), dy = Math.floor(sz);
+      tiles.push([x, z, dx, dy, Math.ceil(ex) - dx, Math.ceil(ez) - dy]);
     }
   }
+  // The day picture - all of it by day, under the night where that isn't fully in yet
+  const nightDone = new Set();
+  for (const [x, z, dx, dy, dw, dh] of tiles) {
+    if (lights >= 1 && drawXaeroTile(target, nightMap, level, x, z, dx, dy, dw, dh)) {
+      nightDone.add(`${x},${z}`);
+      continue;
+    }
+    drawXaeroTile(target, dayMap, level, x, z, dx, dy, dw, dh);
+  }
+  if (dusky) {
+    // Evening falls on the drawn ground only (source-atop: where the layer has pixels)
+    if (darkness > 0) {
+      target.save();
+      target.setTransform(1, 0, 0, 1, 0, 0);
+      target.globalCompositeOperation = 'source-atop';
+      target.fillStyle = `rgba(${AREA_EXPLORER_NIGHT_TINT}, ${AREA_EXPLORER_NIGHT_DARKNESS * darkness})`;
+      target.fillRect(0, 0, target.canvas.width, target.canvas.height);
+      target.restore();
+    }
+    // Then the lights come on: the night view over the darkened day
+    if (lights > 0 && lights < 1) {
+      target.globalAlpha = lights;
+      for (const [x, z, dx, dy, dw, dh] of tiles) drawXaeroTile(target, nightMap, level, x, z, dx, dy, dw, dh);
+      target.globalAlpha = 1;
+    }
+    // The night tiles drawn whole above went under the dark: drawn again on top
+    if (lights >= 1 && nightDone.size) {
+      for (const [x, z, dx, dy, dw, dh] of tiles) if (nightDone.has(`${x},${z}`)) drawXaeroTile(target, nightMap, level, x, z, dx, dy, dw, dh);
+    }
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(target.canvas, 0, 0);
+    ctx.restore();
+  }
   ctx.imageSmoothingEnabled = true;
+  // Dusk is moving: the next frame
+  if (ae.dusk) queueAreaExplorerMapDraw();
 }
 
 function bindAreaExplorerMap() {
@@ -7906,10 +8007,10 @@ function setupAreaExplorer() {
     loadAreaExplorerLog().catch(error => setBanner(`Could not load the run log: ${error.message}`));
   }));
   $('#areaExplorerNight').addEventListener('click', () => {
-    ae.night = !ae.night;
+    setAreaExplorerNight(!ae.night);
     saveAreaExplorerSetting('areaExplorerNight', ae.night);
-    ae.regionMap = null;
     renderAreaExplorerNightButton();
+    // Both views are normally in already; if not, dusk starts as soon as they are
     loadXaeroRegionMap().then(queueAreaExplorerMapDraw).catch(error => setBanner(error.message));
   });
   $('#areaExplorerNewFinds').addEventListener('click', () => {

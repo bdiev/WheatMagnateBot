@@ -538,7 +538,11 @@ async function testRunLog() {
 
 function testNightWiring() {
   // The night view's tiles are loaded as "<dimension>@night": drawing must take that map, not only the scope's own
-  assert.match(appSource, /regionMap\.scope !== `\$\{server\}\|\$\{areaExplorerMapDimension\(server, dimension\)\}`/);
+  assert.match(appSource, /const nightMap = ae\.regionMaps\.get\(`\$\{server\}\|\$\{dimension\}@night`\);/);
+  // Dusk and dawn: the ground darkens first, the lights come on after
+  assert.match(appSource, /const darkness = easeInOut\(n \/ 0\.8\);/);
+  assert.match(appSource, /const lights = easeInOut\(\(n - 0\.45\) \/ 0\.55\);/);
+  assert.match(appSource, /globalCompositeOperation = 'source-atop'/, 'the dark falls on drawn ground only');
   assert.match(indexSource, /class="area-explorer-map-button area-explorer-night"/, 'Night is one of the map buttons');
 }
 
