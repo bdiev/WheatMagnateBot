@@ -6817,120 +6817,30 @@ function renderAreaExplorerPager() {
 
 // The map: the Xaero map, every find of the scope, the explorer and its area on top
 
-/**
- * The finds of the part of the map in view, with a margin around it so a small move needs nothing
- * new: one by one where there are few enough, counted in cells a few pixels wide where there are
- * more - every find is on the map however many there are. {@code force}: load again even if what's
- * held covers the view (new finds, another filter).
- */
-async function loadAreaExplorerMap({ force = true } = {}) {
+async function loadAreaExplorerMap() {
   const ae = areaExplorerState();
+  const requestId = ae.mapRequestId = (ae.mapRequestId || 0) + 1;
   bindAreaExplorerMap();
   if (!ae.scope) {
     ae.points = [];
-    ae.cells = null;
-    ae.mapQuery = null;
     queueAreaExplorerMapDraw();
     return;
   }
   const scope = ae.scope;
-  // A new server or dimension shows its whole territory; another kind of find keeps the view
-  if (ae.pointsScope !== scope || !ae.view) fitAreaExplorerMap();
-  const scopeChanged = ae.pointsScope !== scope;
-  ae.pointsScope = scope;
-  const want = areaExplorerMapWindow();
-  const filter = areaExplorerScopeParams();
-  if (!force && !scopeChanged && areaExplorerMapCovers(ae.mapQuery, want, filter)) return;
-  const requestId = ae.mapRequestId = (ae.mapRequestId || 0) + 1;
-  const query = new URLSearchParams(filter);
-  for (const key of ['minX', 'minZ', 'maxX', 'maxZ', 'cell']) query.set(key, String(want[key]));
+  // Every find of the scope, however many: the map draws them all
   const [data] = await Promise.all([
-    fetchJson(`/api/area-explorer/map?${query}`),
-    force || scopeChanged ? loadXaeroRegionMap() : null
+    fetchJson(`/api/area-explorer/map?${areaExplorerScopeParams()}`),
+    loadXaeroRegionMap()
   ]);
   if (ae.scope !== scope || ae.mapRequestId !== requestId) return;
-  ae.mapQuery = { ...want, filter, mode: data.mode, cell: data.mode === 'cells' ? data.cell : want.cell };
-  if (data.mode === 'cells') {
-    // A cell's finds by kind, drawn in the colour of the one that matters most there
-    const cells = new Map();
-    for (const [cx, cz, kind, count] of data.cells) {
-      const key = `${cx},${cz}`;
-      if (!cells.has(key)) cells.set(key, { cx, cz, counts: {} });
-      cells.get(key).counts[kind] = count;
-    }
-    ae.cells = { size: data.cell, list: [...cells.values()] };
-    ae.points = [];
-  } else {
-    // Sorted once, so each frame just draws them in order
-    ae.points = data.points
-      .map(([id, kind, x, z]) => ({ id, kind, x, z }))
-      .sort((a, b) => AREA_EXPLORER_KIND_ORDER[a.kind] - AREA_EXPLORER_KIND_ORDER[b.kind]);
-    ae.cells = null;
-  }
+  // Sorted once, so each frame just draws them in order
+  ae.points = data.points
+    .map(([id, kind, x, z]) => ({ id, kind, x, z }))
+    .sort((a, b) => AREA_EXPLORER_KIND_ORDER[a.kind] - AREA_EXPLORER_KIND_ORDER[b.kind]);
+  // A new server or dimension shows its whole territory; another kind of find keeps the view
+  if (ae.pointsScope !== scope || !ae.view) fitAreaExplorerMap();
+  ae.pointsScope = scope;
   queueAreaExplorerMapDraw();
-}
-
-/** The view and half as much again each way, in blocks, and the cell (a power of two, about 5 pixels) finds are counted in. */
-function areaExplorerMapWindow() {
-  const ae = areaExplorerState();
-  const canvas = $('#areaExplorerMap');
-  const width = canvas?.clientWidth || 600, height = canvas?.clientHeight || 420;
-  const halfX = width / ae.view.scale, halfZ = height / ae.view.scale; // 1.5 views across: half a view of margin each side
-  const cell = 2 ** Math.max(0, Math.ceil(Math.log2(5 / ae.view.scale)));
-  return {
-    minX: Math.floor(ae.view.cx - halfX), maxX: Math.ceil(ae.view.cx + halfX),
-    minZ: Math.floor(ae.view.cz - halfZ), maxZ: Math.ceil(ae.view.cz + halfZ), cell
-  };
-}
-
-/** What's held still does for this view: same filter, the view inside it, and (counted) cells no coarser than the view wants. */
-function areaExplorerMapCovers(held, want, filter) {
-  if (!held || held.filter !== filter) return false;
-  const inside = want.minX >= held.minX && want.maxX <= held.maxX && want.minZ >= held.minZ && want.maxZ <= held.maxZ;
-  if (!inside) return false;
-  // Finds one by one are good at any zoom; counted cells only while they're small enough on screen
-  return held.mode === 'points' || held.cell <= want.cell * 2;
-}
-
-/** After a move or zoom, the finds for the new view once it settles. */
-function scheduleAreaExplorerMapLoad() {
-  const ae = areaExplorerState();
-  if (!ae.view || !ae.scope) return;
-  if (areaExplorerMapCovers(ae.mapQuery, areaExplorerMapWindow(), areaExplorerScopeParams())) return;
-  clearTimeout(ae.mapLoadTimer);
-  ae.mapLoadTimer = setTimeout(() => loadAreaExplorerMap({ force: false }).catch(() => { /* the next move tries again */ }), 250);
-}
-
-// Which kind a cell is drawn as: the one that matters most among those in it
-const AREA_EXPLORER_CELL_KIND_ORDER = Object.freeze(['BASE', 'MARKER', 'ITEM', 'SIGN']);
-
-function drawAreaExplorerCells(ctx, view, width, height, colors) {
-  const ae = areaExplorerState();
-  if (!ae.cells || !ae.showFinds) return;
-  const kinds = (ae.visibleKinds || Object.keys(AREA_EXPLORER_KIND_LABELS));
-  const size = ae.cells.size, px = Math.max(2, size * view.scale);
-  ctx.save();
-  for (const cell of ae.cells.list) {
-    const sx = width / 2 + (cell.cx * size - view.cx) * view.scale, sz = height / 2 + (cell.cz * size - view.cz) * view.scale;
-    if (sx > width || sz > height || sx + px < 0 || sz + px < 0) continue;
-    let total = 0, shown = null;
-    for (const kind of AREA_EXPLORER_CELL_KIND_ORDER) {
-      if (!kinds.includes(kind) || !cell.counts[kind]) continue;
-      total += cell.counts[kind];
-      shown ||= kind;
-    }
-    if (!shown) continue;
-    // A single find faint, a crowd solid
-    ctx.globalAlpha = Math.min(1, 0.45 + Math.log10(total + 1) / 3);
-    ctx.fillStyle = colors[shown];
-    ctx.fillRect(sx, sz, px, px);
-  }
-  ctx.restore();
-}
-
-function areaExplorerHasCells() {
-  const ae = areaExplorerState();
-  return Boolean(ae.cells) && !ae.points.length;
 }
 
 function areaExplorerLiveStatus() {
@@ -7395,8 +7305,6 @@ function drawAreaExplorerMap() {
   const flownLegend = $('#areaExplorerFlownLegend');
   if (flownLegend && flownLegend.hidden === flownShown) flownLegend.hidden = !flownShown;
 
-  drawAreaExplorerCells(ctx, view, width, height, colors);
-  scheduleAreaExplorerMapLoad();
   let selected = null;
   for (const point of ae.points) {
     if (!ae.showFinds) break;
@@ -7412,11 +7320,6 @@ function drawAreaExplorerMap() {
     if (point.kind === 'SIGN') { ctx.strokeStyle = colors.signOutline; ctx.lineWidth = 1.5; ctx.stroke(); }
     ctx.fill();
     if (point.id === ae.selectedId) selected = { sx, sz, size };
-  }
-  // The picked find, ringed even when it's only counted in a cell at this zoom
-  if (!selected && ae.selectedPoint && ae.selectedId) {
-    const [sx, sz] = areaExplorerToScreen(view, canvas, ae.selectedPoint.x, ae.selectedPoint.z);
-    selected = { sx, sz, size: 4 };
   }
   if (selected) {
     ctx.strokeStyle = colors.text;
@@ -7739,11 +7642,6 @@ function bindAreaExplorerMap() {
       return;
     }
     if (!ae.showFinds) return;
-    // Finds counted in cells at this zoom: a click zooms in on them until they come one by one
-    if (areaExplorerHasCells()) {
-      zoomAreaExplorerMap(4, sx, sz);
-      return;
-    }
     let best = null, bestDistance = event.pointerType === 'mouse' ? 10 : 20;
     for (const point of ae.points) {
       if (!isAreaExplorerPointVisible(point) || !areaExplorerInTerritory(point.x, point.z)) continue;
@@ -7847,7 +7745,6 @@ async function selectAreaExplorerFind(id) {
   }
   const { find } = await fetchJson(`/api/area-explorer/finds/${encodeURIComponent(id)}`);
   if (ae.selectedId !== id || ae.selectedRequestId !== requestId) return;
-  ae.selectedPoint = { x: find.x, z: find.z };
   box.innerHTML = `<button class="area-explorer-selected-close" type="button" data-area-close-selected aria-label="Close">×</button>
     <ol class="area-explorer-finds">${renderAreaExplorerFind(find, { selected: true })}</ol>`;
   box.hidden = false;

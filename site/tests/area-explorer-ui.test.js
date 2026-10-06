@@ -44,7 +44,7 @@ function fixture() {
     refreshAreaExplorerFromEvent() {}, applyAreaExplorerEvents() {},
     fetchJson: url => new Promise((resolve, reject) => requests.push({ url, resolve, reject }))
   });
-  for (const name of ['renderAreaExplorerMarkerVisibility', 'isAreaExplorerPointVisible', 'setAreaExplorerMarkerKind', 'loadAreaExplorerFinds', 'loadAreaExplorerMap', 'setAreaExplorerFindsVisible', 'selectAreaExplorerFind', 'areaExplorerHeading', 'areaExplorerLiveStatus', 'recordAreaExplorerTrail', 'areaExplorerTrail', 'applyAreaExplorerLiveStatus', 'loadAreaExplorerLive', 'noteAreaExplorerVersions', 'areaExplorerListAnchor', 'areaExplorerListIds', 'markAreaExplorerNewFinds', 'setAreaExplorerNewFinds', 'areaExplorerMapWindow', 'areaExplorerMapCovers']) vm.runInContext(functionSource(name), context);
+  for (const name of ['renderAreaExplorerMarkerVisibility', 'isAreaExplorerPointVisible', 'setAreaExplorerMarkerKind', 'loadAreaExplorerFinds', 'loadAreaExplorerMap', 'setAreaExplorerFindsVisible', 'selectAreaExplorerFind', 'areaExplorerHeading', 'areaExplorerLiveStatus', 'recordAreaExplorerTrail', 'areaExplorerTrail', 'applyAreaExplorerLiveStatus', 'loadAreaExplorerLive', 'noteAreaExplorerVersions', 'areaExplorerListAnchor', 'areaExplorerListIds', 'markAreaExplorerNewFinds', 'setAreaExplorerNewFinds']) vm.runInContext(functionSource(name), context);
   return { ae, node, requests, context };
 }
 
@@ -81,7 +81,6 @@ async function testFindsRaceAndScroll() {
 
 async function testMapRace() {
   const { ae, requests, context } = fixture();
-  ae.view = { cx: 0, cz: 0, scale: 0.01 };
   const first = context.loadAreaExplorerMap();
   ae.kind = 'BASE';
   const second = context.loadAreaExplorerMap();
@@ -90,27 +89,6 @@ async function testMapRace() {
   requests[0].resolve({ points: [['old', 'SIGN', 1, 2]] });
   await first;
   assert.equal(ae.points[0].id, 'new', 'map filters must also discard late responses');
-  // It asks for the part in view (and a margin), and the size of the cells crowds are counted in
-  const asked = new URLSearchParams(requests[1].url.split('?')[1]);
-  assert.ok(Number(asked.get('minX')) < 0 && Number(asked.get('maxX')) > 0, 'the view around its middle');
-  assert.equal(Math.log2(Number(asked.get('cell'))) % 1, 0, 'cells a power of two blocks, so they line up from one load to the next');
-
-  // Too many to come one by one: counted in cells, every find in one
-  const crowded = context.loadAreaExplorerMap();
-  requests[2].resolve({ mode: 'cells', cell: 512, cells: [[1, 2, 'SIGN', 900], [1, 2, 'BASE', 1], [3, 4, 'ITEM', 7]] });
-  await crowded;
-  assert.equal(ae.points.length, 0);
-  assert.equal(ae.cells.size, 512);
-  assert.equal(ae.cells.list.length, 2, 'one cell, however many kinds in it');
-  assert.equal(ae.cells.list[0].counts.SIGN + ae.cells.list[0].counts.BASE, 901);
-
-  // What's held covers a smaller view of the same filter; not a bigger one, nor finer cells than it has
-  const held = { minX: -100, maxX: 100, minZ: -100, maxZ: 100, filter: 'f', mode: 'cells', cell: 8 };
-  assert.equal(context.areaExplorerMapCovers(held, { minX: -50, maxX: 50, minZ: -50, maxZ: 50, cell: 4 }, 'f'), true);
-  assert.equal(context.areaExplorerMapCovers(held, { minX: -150, maxX: 50, minZ: -50, maxZ: 50, cell: 4 }, 'f'), false, 'moved out of it');
-  assert.equal(context.areaExplorerMapCovers(held, { minX: -50, maxX: 50, minZ: -50, maxZ: 50, cell: 1 }, 'f'), false, 'zoomed in past its cells');
-  assert.equal(context.areaExplorerMapCovers({ ...held, mode: 'points' }, { minX: -50, maxX: 50, minZ: -50, maxZ: 50, cell: 1 }, 'f'), true, 'finds one by one do at any zoom');
-  assert.equal(context.areaExplorerMapCovers(held, { minX: -50, maxX: 50, minZ: -50, maxZ: 50, cell: 4 }, 'other'), false, 'another filter');
 }
 
 async function testSelectionRace() {
@@ -258,7 +236,7 @@ function gestureFixture({ interactive = true } = {}) {
     openAreaExplorerMenu(x, z) { context.menuAt = [x, z]; }, closeAreaExplorerMenu() {},
     selectAreaExplorerFind: async id => { context.selections = (context.selections || []).concat(id); },
     areaExplorerInTerritory: () => true, areaExplorerToScreen: () => [200, 200],
-    isAreaExplorerPointVisible: () => true, areaExplorerHasCells: () => false,
+    isAreaExplorerPointVisible: () => true,
     setBanner: message => { throw new Error(message); }
   });
   vm.runInContext(functionSource('zoomAreaExplorerMap'), context);

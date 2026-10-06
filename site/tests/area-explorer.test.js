@@ -177,7 +177,6 @@ async function testIngestAndQueries() {
 
     const map = await service.getMapPoints(new URL('http://x/api/area-explorer/map?dimension=overworld'));
     assert.equal(map.points.length, 4);
-    assert.equal(map.mode, 'points');
     assert.equal(map.points.every(point => point.length === 4), true, 'a point is just [id, kind, x, z]');
     const inView = await service.getMapPoints(new URL('http://x/api/area-explorer/map?dimension=overworld&minX=-10&minZ=-10&maxX=10&maxZ=10'));
     assert.deepEqual(inView.points.map(point => [point[2], point[3]]).sort(), [[1, 1], [5, 5]], 'only the part of the map in view');
@@ -350,7 +349,7 @@ function testEventNormalization() {
   assert.equal(normalizeEvent({ id: 'a1b2c3d4-0000', at: NOW + 3 * 86_400_000, message: 'x' }, NOW), null);
 }
 
-/** However many finds there are, the map gets all of them: counted in cells past what it takes one by one. */
+/** However many finds there are, the map gets every one of them as a point. */
 async function testMapCrowds() {
   const db = new PGlite();
   try {
@@ -363,14 +362,9 @@ async function testMapCrowds() {
     await db.exec(`INSERT INTO area_explorer_finds (server, dimension, kind, x, y, z, found_at, name, dedupe_key)
       VALUES ('s', 'overworld', 'BASE', 0, 64, 0, NOW(), 'Base #1', 'BASE:0')`);
     const service = createAreaExplorerService({ pool: poolFor(db), hashToken, readJsonBody: async () => ({}), sendJson() {}, sendError() {}, enforceRateLimit: () => true });
-    const all = await service.getMapPoints(new URL('http://x/api/area-explorer/map?server=s&dimension=overworld&minX=-60000&minZ=-60000&maxX=60000&maxZ=60000&cell=256'));
-    assert.equal(all.mode, 'cells', 'too many to send one by one');
-    assert.equal(all.cells.reduce((sum, cell) => sum + cell[3], 0), 25_001, 'every find counted in a cell, none left out');
-    assert.ok(all.cell >= 256, 'cells no smaller than asked for');
-    assert.ok(all.cells.some(cell => cell[2] === 'BASE'), 'the base too');
-    const close = await service.getMapPoints(new URL('http://x/api/area-explorer/map?server=s&dimension=overworld&minX=-200&minZ=-10&maxX=200&maxZ=800&cell=1'));
-    assert.equal(close.mode, 'points', 'zoomed in: one by one');
-    assert.equal(close.points.length, 102, '101 signs (both edges count) and the base');
+    const all = await service.getMapPoints(new URL('http://x/api/area-explorer/map?server=s&dimension=overworld'));
+    assert.equal(all.points.length, 25_001, 'every find, no cap');
+    assert.ok(all.points.some(point => point[1] === 'BASE'), 'the base too');
   } finally {
     await db.close();
   }
