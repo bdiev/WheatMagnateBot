@@ -11,8 +11,8 @@ import java.util.List;
  * The ground of an area flown over this run, for showing where the explorer has been: on Xaero's
  * World Map and on the site. A grid of square cells of whole chunks over the area - as many chunks
  * a side as keeps the grid to about {@link #MAX_CELLS} cells, so it stays small enough to send to
- * the site every few seconds however big the area is. A cell counts once its middle has been within
- * the swath of the player.
+ * the site every few seconds however big the area is. A cell counts once its middle chunk has been
+ * loaded within the swath of the player - what the server really sent, not what the strip spacing assumes.
  */
 public final class Coverage {
     /** Cells in the grid at most, about: 100,000 bits are 12.5 KB. */
@@ -49,8 +49,11 @@ public final class Coverage {
         return version;
     }
 
-    /** The cells whose middle is within {@code reach} chunks (a square) of chunk (cx, cz). True if any were new. */
-    public boolean markAround(int cx, int cz, int reach) {
+    /**
+     * The cells whose middle chunk is within {@code reach} chunks (a square) of chunk (cx, cz) and
+     * {@code loaded}. True if any were new.
+     */
+    public boolean markAround(int cx, int cz, int reach, CoveragePlanner.ChunkTest loaded) {
         int minCol = Math.max(0, Math.floorDiv(cx - reach - area.minCX(), cell));
         int maxCol = Math.min(cols - 1, Math.floorDiv(cx + reach - area.minCX(), cell));
         int minRow = Math.max(0, Math.floorDiv(cz - reach - area.minCZ(), cell));
@@ -63,7 +66,7 @@ public final class Coverage {
                 int midX = area.minCX() + col * cell + cell / 2;
                 if (Math.abs(midX - cx) > reach) continue;
                 int index = row * cols + col;
-                if (bits.get(index)) continue;
+                if (bits.get(index) || !loaded.test(midX, midZ)) continue;
                 bits.set(index);
                 changed = true;
             }

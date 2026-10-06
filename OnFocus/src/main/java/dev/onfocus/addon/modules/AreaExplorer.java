@@ -156,7 +156,7 @@ import java.util.function.Predicate;
  * map or not, for what changed since: items on the ground, signs, markers and bases are looked for as
  * on any run, and Xaero redraws the chunks it passes. The map says nothing about what's been flown
  * then, so a chunk is done once it's been loaded within the swath width of the player; the cleanup
- * picks up the rest, and the width isn't measured.
+ * picks up the rest. The width is measured from the chunks loaded across the strip in flight.
  * <p>
  * Spiral mode needs no area and no map: it spirals outwards from wherever the module is turned
  * on, in square rings spaced like the strips, until stopped or a set radius.
@@ -841,6 +841,7 @@ public class AreaExplorer extends Module {
     private Coverage coverage;
     private long[] restoredCoverage;
     private long lastCoverageChunk = Long.MIN_VALUE;
+    private int coverageCheckTicks;
     /** The coverage version last sent to the site, and when: sent on change, and again every so often in case one got lost. */
     private int coverageSentVersion = -1;
     private long coverageSentNanos;
@@ -1284,6 +1285,7 @@ public class AreaExplorer extends Module {
         restoredCoverage = null;
         lastCoverageChunk = Long.MIN_VALUE;
         coverageSentVersion = -1;
+        loadedSamples.clear();
 
         if (rescan) {
             markRescanned();
@@ -1562,6 +1564,9 @@ public class AreaExplorer extends Module {
         if (onStrip && readsMap() && ++measureTicks >= MEASURE_INTERVAL_TICKS) {
             measureTicks = 0;
             measureStrip();
+        } else if (onStrip && rescan && ++measureTicks >= LOADED_SAMPLE_TICKS) {
+            measureTicks = 0;
+            sampleLoadedReach();
         }
     }
 
@@ -1639,7 +1644,7 @@ public class AreaExplorer extends Module {
         stripPath.clear();
         stripNumber++;
         stripStartTicks = activeTicks;
-        stripMeasureNote = readsMap() ? "not measured" : rescan ? "not measured on a rescan" : "no map to measure on";
+        stripMeasureNote = readsMap() ? "not measured" : rescan ? "measured from the chunks loaded" : "no map to measure on";
 
         // The side with more blank ground is the one this strip's width shows on
         stripSide = 0;
@@ -1698,6 +1703,38 @@ public class AreaExplorer extends Module {
             Math.abs(stripEndU - stripStartU) + 1, seconds, seconds > 0 ? flown * 16 / seconds : 0, stripMeasureNote);
     }
 
+
+    /** Rescan: how often the loaded width across the strip is sampled, and how many samples make a width. */
+    private static final int LOADED_SAMPLE_TICKS = 20, LOADED_SAMPLES = 15;
+    private final IntArrayList loadedSamples = new IntArrayList();
+
+    /**
+     * Rescan: the map can't tell how wide a strip loads (it's all drawn already), so the chunks
+     * loaded across the strip are counted instead - on the side loading less - and the median of
+     * the last samples becomes the swath. The server sends fewer chunks to a player flying past, and
+     * may cut its view distance under load: a width learned on another day would leave gaps.
+     */
+    private void sampleLoadedReach() {
+        ChunkPos p = mc.player.getChunkPos();
+        var chunks = mc.world.getChunkManager();
+        int plus = 0, minus = 0;
+        while (plus < MAX_MEASURED_RADIUS && (stripAlongX ? chunks.isChunkLoaded(p.x, p.z + plus + 1) : chunks.isChunkLoaded(p.x + plus + 1, p.z))) plus++;
+        while (minus < MAX_MEASURED_RADIUS && (stripAlongX ? chunks.isChunkLoaded(p.x, p.z - minus - 1) : chunks.isChunkLoaded(p.x - minus - 1, p.z))) minus++;
+        loadedSamples.add(Math.min(plus, minus));
+        if (loadedSamples.size() < LOADED_SAMPLES) return;
+        IntArrayList sorted = new IntArrayList(loadedSamples);
+        sorted.sort(null);
+        int loaded = sorted.getInt(sorted.size() / 2);
+        loadedSamples.clear();
+        // Xaero leaves the outermost loaded ring undrawn: a strip redraws one less
+        int measured = Math.max(1, xaero ? loaded - 1 : loaded);
+        stripMeasureNote = "loaded %d each side, swath %d".formatted(loaded, measured);
+        if (measured == reach) return;
+        log("Rescan: %d chunks load each side of the strip in flight, swath %d -> %d, re-planning the rest", loaded, reach, measured);
+        reach = measured;
+        endStrip(false);
+        planSweep();
+    }
 
     /**
      * Measures how wide the part of the current strip flown so far got drawn (the map has had a few
@@ -1999,13 +2036,18 @@ public class AreaExplorer extends Module {
         points.add(new Point(blockCentre(bendX), blockCentre(bendZ), false));
     }
 
-    /** The ground within the swath of the player counts as flown over, on entering each chunk. */
+    /**
+     * The ground loaded within the swath of the player counts as flown over: on entering each chunk,
+     * and every second for chunks that came in late.
+     */
     private void markCoverage() {
         if (coverage == null) return;
         ChunkPos p = mc.player.getChunkPos();
-        if (p.toLong() == lastCoverageChunk) return;
+        if (p.toLong() == lastCoverageChunk && ++coverageCheckTicks < 20) return;
         lastCoverageChunk = p.toLong();
-        coverage.markAround(p.x, p.z, reach);
+        coverageCheckTicks = 0;
+        var chunks = mc.world.getChunkManager();
+        coverage.markAround(p.x, p.z, reach, chunks::isChunkLoaded);
     }
 
     /** Picks up chunks around the player that the map has drawn by now. */
