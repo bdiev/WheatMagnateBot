@@ -117,7 +117,7 @@ assert.match(
 );
 assert.match(
   botSource,
-  /const isIgnoredPlayer = !isSelfMessage[\s\S]*setTimeout\(async \(\) => \{[\s\S]*if \(isIgnoredPlayer\) \{[\s\S]*recordGameChatMessage\(safeUsername, cleanMessage, \{ visible: false \}\);[\s\S]*return;[\s\S]*sendGameChatMessageToDiscord/,
+  /const isIgnoredPlayer = !isSelfMessage[\s\S]*setTimeout\(async \(\) => \{[\s\S]*if \(isIgnoredPlayer[\s\S]*?\) \{[\s\S]*recordGameChatMessage\(safeUsername, cleanMessage, \{ visible: false \}\);[\s\S]*return;[\s\S]*sendGameChatMessageToDiscord/,
   'ignored player messages must be archived as hidden rows without entering the Discord delivery queue'
 );
 assert.match(botSource, /const isSystemMessage = isMinecraftSystemUsername\(username\);[\s\S]*if \(isSummary && isSystemMessage\) return true;[\s\S]*recordGameChatMessage/,

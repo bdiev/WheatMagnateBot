@@ -32,6 +32,7 @@ const { fetchNameMcCapeTexture } = require('./namemc-capes');
 const { createPlayerSkinHistoryService } = require('./player-skin-history');
 const { dashedMinecraftUuid,resolveMinecraftProfile } = require('./player-profile-identity');
 const { whitelistMatchSql } = require('./whitelist-identity');
+const { ignoredIdentityMatchSql } = require('./ignored-identity');
 const { MinecraftIconCache, minecraftIconEtag } = require('./minecraft-icon-cache');
 const {
   MUTATING_METHODS, RateLimiter, clientIp, configuredOrigins, requestIsHttps,
@@ -1014,11 +1015,14 @@ async function ensureOptionalTables() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS ignored_users (
       id SERIAL PRIMARY KEY,
-      username VARCHAR(255) UNIQUE NOT NULL,
+      username VARCHAR(255) NOT NULL,
+      player_uuid UUID,
       added_by VARCHAR(255),
       added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
   `);
+    await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS ignored_users_player_uuid_unique_idx ON ignored_users (player_uuid) WHERE player_uuid IS NOT NULL');
+    await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS ignored_users_legacy_username_lower_idx ON ignored_users (LOWER(username)) WHERE player_uuid IS NULL');
   await pool.query(`
     CREATE TABLE IF NOT EXISTS whitelist (
       id SERIAL PRIMARY KEY,
@@ -4263,8 +4267,8 @@ async function getPlayerProfile(url, { includeAdminFields = false, timeZone = 'U
       ) pt ON TRUE
       LEFT JOIN LATERAL (
         SELECT TRUE AS is_ignored
-        FROM ignored_users
-        WHERE LOWER(username) = ANY($3::text[])
+        FROM ignored_users entry
+        WHERE ${ignoredIdentityMatchSql('entry', '$1::text', '$2::uuid')}
         LIMIT 1
       ) ignored ON TRUE
       LEFT JOIN LATERAL (
@@ -5822,7 +5826,10 @@ async function getAdminControlState(currentUser, url) {
         ON w.player_uuid IS NOT NULL AND activity.player_uuid = w.player_uuid
       ORDER BY LOWER(COALESCE(activity.username, w.username)) ASC
     `),
-    pool.query('SELECT username FROM ignored_users ORDER BY LOWER(username) ASC'),
+    pool.query(`SELECT COALESCE(activity.username, entry.username) AS username
+      FROM ignored_users entry
+      LEFT JOIN player_activity activity ON activity.player_uuid=entry.player_uuid
+      ORDER BY LOWER(COALESCE(activity.username, entry.username)) ASC`),
     scoped ? Promise.resolve({ rows:(scoped.bot.nearbyPlayers || []).map(player => ({ username:player.username })) }) : pool.query(`
       SELECT username
       FROM player_activity

@@ -72,6 +72,8 @@ const {
 const { GrowingChildAI } = require('./features/growingChild');
 const { sanitizePublicPhrase } = require('./features/growingChild/safety');
 const { runMigrations } = require('./database/migrations');
+const { createIgnoredUsersRepository } = require('./database/ignored-users');
+const { isIgnoredIdentity, normalizeIgnoredUuid } = require('./database/ignored-identity');
 const { normalizeWhitelistUuid, whitelistMatchSql, isWhitelistedIdentity } = require('./database/whitelist-identity');
 const {
   loadManagedFarmStates,
@@ -1145,7 +1147,6 @@ const {
   getUserMentionKeywords
 } = createMentionKeywordRepository(pool);
 const {
-  loadIgnoredChatUsernames,
   updatePlayerActivity,
   getWhitelistActivity,
   searchNonWhitelistActivity
@@ -1923,7 +1924,31 @@ async function removeUsernameFromWhitelist(targetUsername) {
   return { username: safeUsername, whitelist: newWhitelist, changed };
 }
 
-let ignoredChatUsernames = IGNORED_CHAT_USERNAMES; // Fallback
+let ignoredChatUsernames = IGNORED_CHAT_USERNAMES; // Display names only.
+let ignoredChatEntries = IGNORED_CHAT_USERNAMES.map(username => ({ username, uuid: null }));
+const { loadIgnoredChatUsernames, addIgnoredPlayer, removeIgnoredPlayer } = createIgnoredUsersRepository({
+  pool,
+  fallback: IGNORED_CHAT_USERNAMES,
+  resolveIdentity: resolveWhitelistIdentity,
+  updateMemory: entries => { ignoredChatEntries = entries; }
+});
+
+function isIgnoredChatPlayer(username, uuid = getOnlinePlayerUuid(username)) {
+  const normalizedUuid = normalizeIgnoredUuid(uuid);
+  const ignored = isIgnoredIdentity(ignoredChatEntries, username, normalizedUuid);
+  if (ignored && normalizedUuid) {
+    const legacy = ignoredChatEntries.find(entry => !entry.uuid &&
+      entry.username.toLowerCase() === String(username).toLowerCase());
+    if (legacy) {
+      legacy.uuid = normalizedUuid;
+      if (pool) pool.query(`UPDATE ignored_users SET player_uuid=$2::uuid
+        WHERE player_uuid IS NULL AND LOWER(username)=LOWER($1)
+          AND NOT EXISTS (SELECT 1 FROM ignored_users WHERE player_uuid=$2::uuid)`,
+      [username, normalizedUuid]).catch(err => console.error('[Ignore] Failed to bind UUID:', err.message));
+    }
+  }
+  return ignored;
+}
 
 async function loadKillAuraStateForAccount(accountId) {
   if (!pool) return { desiredEnabled: false, selectedMobs: [], attackRange: 3, criticalsEnabled: false };
@@ -2023,11 +2048,14 @@ async function initDatabase() {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS ignored_users (
         id SERIAL PRIMARY KEY,
-        username VARCHAR(255) UNIQUE NOT NULL,
+        username VARCHAR(255) NOT NULL,
+        player_uuid UUID,
         added_by VARCHAR(255),
         added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS ignored_users_player_uuid_unique_idx ON ignored_users (player_uuid) WHERE player_uuid IS NOT NULL');
+    await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS ignored_users_legacy_username_lower_idx ON ignored_users (LOWER(username)) WHERE player_uuid IS NULL');
     await pool.query(`
       CREATE TABLE IF NOT EXISTS whitelist (
         id SERIAL PRIMARY KEY,
@@ -6823,10 +6851,7 @@ async function executeBotCommand(command) {
     const username = String(payload.username || '').trim();
     if (!username) throw new Error('Username is required.');
     if (!pool) throw new Error('Database not configured.');
-    await pool.query(
-      'INSERT INTO ignored_users (username, added_by) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING',
-      [username.toLowerCase(), requestedBy]
-    );
+    await addIgnoredPlayer(username, requestedBy);
     ignoredChatUsernames = await loadIgnoredChatUsernames();
     return { username };
   }
@@ -6835,7 +6860,7 @@ async function executeBotCommand(command) {
     const username = String(payload.username || '').trim();
     if (!username) throw new Error('Username is required.');
     if (!pool) throw new Error('Database not configured.');
-    await pool.query('DELETE FROM ignored_users WHERE username = $1', [username.toLowerCase()]);
+    await removeIgnoredPlayer(username);
     ignoredChatUsernames = await loadIgnoredChatUsernames();
     return { username };
   }
@@ -7557,7 +7582,7 @@ function settlePendingGameChatDelivery(key, delivered) {
   for (const resolve of state.resolvers) resolve(state.delivered);
 }
 
-function scheduleGameChatForward(username, message, source = 'chat', { waitForDelivery = false } = {}) {
+function scheduleGameChatForward(username, message, source = 'chat', { waitForDelivery = false, senderUuid = null } = {}) {
   const cleanMessage = cleanMinecraftChatMessage(message);
   if (!cleanMessage || cleanMessage.startsWith('/msg ')) return false;
 
@@ -7583,7 +7608,7 @@ function scheduleGameChatForward(username, message, source = 'chat', { waitForDe
     return false;
   }
 
-  const isIgnoredPlayer = !isSelfMessage && ignoredChatUsernames.includes(safeUsername.toLowerCase());
+  const isIgnoredPlayer = !isSelfMessage && isIgnoredChatPlayer(safeUsername, senderUuid || getOnlinePlayerUuid(safeUsername));
 
   const whisperKey = `WHISPER:${safeUsername}:${cleanMessage}`;
   const whisperLowerKey = `WHISPER:${safeUsername.toLowerCase()}:${cleanMessage}`;
@@ -7614,7 +7639,7 @@ function scheduleGameChatForward(username, message, source = 'chat', { waitForDe
         return;
       }
       recentlyForwardedGameChat.set(pendingKey, { source, timestamp: Date.now() });
-      if (isIgnoredPlayer) {
+      if (isIgnoredPlayer || (!isSelfMessage && isIgnoredChatPlayer(safeUsername, senderUuid || getOnlinePlayerUuid(safeUsername)))) {
         await recordGameChatMessage(safeUsername, cleanMessage, { visible: false });
         delivered = true;
         return;
@@ -9209,9 +9234,9 @@ function getSortedOnlinePlayerNamesExceptBot() {
 
 function buildChatSettingsPayload(notice = '') {
   const allOnlinePlayers = getSortedOnlinePlayerNamesExceptBot();
-  const playersToIgnore = allOnlinePlayers.filter(username => !ignoredChatUsernames.includes(username.toLowerCase()));
-  const playersToUnignore = ignoredChatUsernames
-    .filter(username => allOnlinePlayers.some(p => p.toLowerCase() === username))
+  const playersToIgnore = allOnlinePlayers.filter(username => !isIgnoredChatPlayer(username));
+  const playersToUnignore = allOnlinePlayers
+    .filter(username => isIgnoredChatPlayer(username))
     .sort((a, b) => a.localeCompare(b));
 
   const ignoreOptions = playersToIgnore.map(username => {
@@ -10504,7 +10529,7 @@ function createBot() {
         }
         (async () => {
           try {
-            await pool.query('INSERT INTO ignored_users (username, added_by) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING', [targetUsername.toLowerCase(), username]);
+            await addIgnoredPlayer(targetUsername, username);
             // Reload ignored
             ignoredChatUsernames = await loadIgnoredChatUsernames();
             console.log(`[Command] Added ${targetUsername} to ignore list by ${username}`);
@@ -10527,7 +10552,7 @@ function createBot() {
         }
         (async () => {
           try {
-            const result = await pool.query('DELETE FROM ignored_users WHERE username = $1', [targetUsername.toLowerCase()]);
+            const result = await removeIgnoredPlayer(targetUsername);
             if (result.rowCount > 0) {
               // Reload ignored
               ignoredChatUsernames = await loadIgnoredChatUsernames();
@@ -10548,7 +10573,7 @@ function createBot() {
     // Do NOT infer deaths from chat messages. We only notify on the bot's own death
     // via the dedicated bot death event handler.
 
-    scheduleGameChatForward(username, message, source);
+    scheduleGameChatForward(username, message, source, { senderUuid: context?.senderUuid });
   };
 
   bot.on('chat', handleMinecraftPlayerChat);
@@ -10565,9 +10590,7 @@ function createBot() {
     debugLog(`[Whisper] Cleaned: "${cleanedWhisper}"`);
 
     const whisperUsernameKey = String(username || '').toLowerCase();
-    if (ignoredChatUsernames.some(ignoredUsername =>
-      String(ignoredUsername || '').toLowerCase() === whisperUsernameKey
-    )) {
+    if (isIgnoredChatPlayer(username)) {
       siteWhisperTargets.delete(whisperUsernameKey);
       debugLog(`[Whisper] Suppressed private message from ignored player ${username}.`);
       return;
@@ -10642,7 +10665,7 @@ function createBot() {
           componentChat.message,
           message?.translate,
           null,
-          { source: 'mineflayer-message-greenchat', trustedEnvelope: true }
+          { source: 'mineflayer-message-greenchat', trustedEnvelope: true, senderUuid }
         ).catch(error => console.error('[Chat] Failed to process GreenChat:', error.message));
       }
       // Never pass an unmatched green component to the permissive text parser:
@@ -12552,7 +12575,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         return;
       }
       try {
-        await pool.query('INSERT INTO ignored_users (username, added_by) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING', [selectedUsername.toLowerCase(), interaction.user.tag]);
+        await addIgnoredPlayer(selectedUsername, interaction.user.tag);
         ignoredChatUsernames = await loadIgnoredChatUsernames();
         console.log(`[Ignore] Added ${selectedUsername} to ignore list by ${interaction.user.tag}`);
         await interaction.editReply(buildChatSettingsPayload(`${STATUS_EMOJIS.connected} Ignoring **${selectedUsername}** in chat.`));
@@ -12583,7 +12606,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         return;
       }
       try {
-        const result = await pool.query('DELETE FROM ignored_users WHERE username = $1', [selectedUsername.toLowerCase()]);
+        const result = await removeIgnoredPlayer(selectedUsername);
         if (result.rowCount > 0) {
           ignoredChatUsernames = await loadIgnoredChatUsernames();
           console.log(`[Unignore] Removed ${selectedUsername} from ignore list by ${interaction.user.tag}`);
@@ -13043,7 +13066,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         return;
       }
       try {
-        await pool.query('INSERT INTO ignored_users (username, added_by) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING', [targetUsername.toLowerCase(), message.author.tag]);
+        await addIgnoredPlayer(targetUsername, message.author.tag);
         // Reload ignored
         ignoredChatUsernames = await loadIgnoredChatUsernames();
         console.log(`[Command] Added ${targetUsername} to ignore list by ${message.author.tag}`);
@@ -13063,7 +13086,7 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
         return;
       }
       try {
-        const result = await pool.query('DELETE FROM ignored_users WHERE username = $1', [targetUsername.toLowerCase()]);
+        const result = await removeIgnoredPlayer(targetUsername);
         if (result.rowCount > 0) {
           // Reload ignored
           ignoredChatUsernames = await loadIgnoredChatUsernames();
