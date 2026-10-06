@@ -536,6 +536,12 @@ async function testRunLog() {
   }
 }
 
+function testNightWiring() {
+  // The night view's tiles are loaded as "<dimension>@night": drawing must take that map, not only the scope's own
+  assert.match(appSource, /regionMap\.scope !== `\$\{server\}\|\$\{areaExplorerMapDimension\(server, dimension\)\}`/);
+  assert.match(indexSource, /class="area-explorer-map-button area-explorer-night"/, 'Night is one of the map buttons');
+}
+
 function testRunLogWiring() {
   for (const id of ['areaExplorerLog', 'areaExplorerLogMore']) assert.ok(indexSource.includes(`id="${id}"`), `${id} is on the page`);
   assert.match(indexSource, /data-area-log-filter="problems"/);
@@ -557,6 +563,7 @@ function testRunLogWiring() {
   await testMapCrowds();
   testWiring();
   testRunLogWiring();
+  testNightWiring();
   console.log('area-explorer tests passed');
 })().catch(error => {
   console.error(error);

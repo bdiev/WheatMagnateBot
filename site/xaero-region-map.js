@@ -244,8 +244,10 @@ function createXaeroRegionMapService({
   }
 
   /**
-   * Rebuilds settled dirty tiles, the lowest level first so a tile is built from fresh children;
-   * true if there may be more to do right away.
+   * Rebuilds settled dirty tiles, the longest waiting first - every level gets its turn while
+   * regions keep coming, so the zoomed-out map fills in as they do instead of after the last one.
+   * A tile built before a child of it is rebuilt again: the child marks it dirty once more.
+   * True if there may be more to do right away.
    */
   async function processDirty({ settleMs = DIRTY_SETTLE_MS } = {}) {
     // Taken off the list first: an upload under a tile while it's being rebuilt marks it again
@@ -253,7 +255,7 @@ function createXaeroRegionMapService({
       `DELETE FROM area_explorer_region_dirty WHERE (server, dimension, level, x, z) IN (
          SELECT server, dimension, level, x, z FROM area_explorer_region_dirty
          WHERE dirty_at <= NOW() - make_interval(secs => $1 / 1000.0)
-         ORDER BY level, dirty_at LIMIT $2
+         ORDER BY dirty_at, level LIMIT $2
        ) RETURNING server, dimension, level, x, z`,
       [settleMs, WORKER_BATCH]
     )).rows;

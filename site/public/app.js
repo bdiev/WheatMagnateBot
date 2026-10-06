@@ -7499,7 +7499,9 @@ function applyXaeroRegionMapUpdate(update) {
 function drawXaeroRegionMap(ctx, canvas, view, ratio) {
   const ae = areaExplorerState();
   const regionMap = ae.regionMap;
-  if (!regionMap || regionMap.scope !== ae.scope) return;
+  // The map loaded for what's shown: the scope's own, or its night view ("overworld@night")
+  const [server, dimension] = ae.scope.split('|');
+  if (!regionMap || regionMap.scope !== `${server}|${areaExplorerMapDimension(server, dimension)}`) return;
   const width = canvas.clientWidth, height = canvas.clientHeight;
   // What's in view of the territory: no tile past it is asked for
   const half = areaExplorerState().extent / 2;
