@@ -12723,7 +12723,8 @@ body.kill-aura-modal-open {
     min-height: 640px;
   }
   .area-explorer-layout > .area-explorer-finds-panel > .area-explorer-finds-wrap { display: flex; flex: 1 1 auto; min-height: 0; }
-  .area-explorer-finds-panel > .area-explorer-finds-wrap > .area-explorer-finds { flex: 1 1 auto; min-height: 0; max-height: none; }
+  /* align-content: a few finds keep their own height instead of sharing out the whole list */
+  .area-explorer-finds-panel > .area-explorer-finds-wrap > .area-explorer-finds { flex: 1 1 auto; min-height: 0; max-height: none; align-content: start; }
 }
 .area-explorer-tokens-panel { grid-area: tokens; }
 
