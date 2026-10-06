@@ -12808,67 +12808,131 @@ body.kill-aura-modal-open {
   list-style: none;
 }
 
-/* Run log: one line per event, its kind's colour down the side */
-.area-explorer-log-filters { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 14px 10px; }
-.area-explorer-log {
+/* Run log: a timeline - each event in an inventory slot with its item, joined by a rail, days apart */
+.area-explorer-log-panel {
+  --log-info: var(--muted);
+  --log-success: var(--accent);
+  --log-warn: var(--warn);
+  --log-error: var(--danger);
+}
+.area-explorer-log-filters {
   display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
+  padding: 0 14px 12px;
+}
+.area-explorer-log-filters .chart-range-button { min-width: 0; min-height: 34px; padding: 4px 8px; font-size: 13px; }
+.area-explorer-log {
   margin: 0;
-  padding: 0 14px 14px;
+  padding: 0 14px 12px;
   list-style: none;
-  max-height: 420px;
+  max-height: 460px;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
-.area-explorer-log-entry {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 2px 10px;
-  align-items: baseline;
-  padding: 8px 10px;
-  border: 1px solid var(--line-soft);
-  border-left: 4px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel-soft);
-}
-.area-explorer-log-entry.level-success { border-left-color: var(--accent); }
-.area-explorer-log-entry.level-warn { border-left-color: var(--warn); }
-.area-explorer-log-entry.level-error { border-left-color: var(--danger); }
-.area-explorer-log-type {
-  grid-row: 1;
-  font-size: 12px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+/* Today / Yesterday / Mon, Oct 5: a label on a line, kept in view while its events scroll by */
+.area-explorer-log-day {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0 6px;
+  background: var(--panel);
   color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
-.area-explorer-log-entry.level-success .area-explorer-log-type { color: var(--accent-strong); }
-.area-explorer-log-entry.level-warn .area-explorer-log-type { color: var(--gold-text); }
-.area-explorer-log-entry.level-error .area-explorer-log-type { color: var(--danger); }
-.area-explorer-log-message { grid-row: 1; margin: 0; overflow-wrap: anywhere; }
+.area-explorer-log-day::after { content: ""; flex: 1; height: 1px; background: var(--line-soft); }
+.area-explorer-log-entry {
+  --log-color: var(--log-info);
+  position: relative;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 12px;
+  padding: 0 0 14px;
+}
+.area-explorer-log-entry.level-success { --log-color: var(--log-success); }
+.area-explorer-log-entry.level-warn { --log-color: var(--log-warn); }
+.area-explorer-log-entry.level-error { --log-color: var(--log-error); }
+/* The rail from one slot down to the next */
+.area-explorer-log-entry:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  top: 38px;
+  bottom: 2px;
+  left: 17px;
+  width: 2px;
+  background: var(--line-soft);
+  opacity: 0.6;
+}
+.area-explorer-log-entry:has(+ .area-explorer-log-day)::before { display: none; }
+.area-explorer-log-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 2px solid color-mix(in srgb, var(--log-color) 70%, var(--line));
+  background: color-mix(in srgb, var(--log-color) 12%, var(--panel-soft));
+  box-shadow: inset 2px 2px 0 var(--bevel-dark), inset -2px -2px 0 var(--bevel-light);
+}
+.area-explorer-log-icon img { width: 24px; height: 24px; image-rendering: pixelated; object-fit: contain; }
+.area-explorer-log-body { display: grid; gap: 3px; min-width: 0; padding-top: 1px; }
+.area-explorer-log-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.area-explorer-log-type {
+  color: var(--log-color);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.area-explorer-log-entry.level-info .area-explorer-log-type { color: var(--muted); }
+.area-explorer-log-head time { flex: none; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.area-explorer-log-message { margin: 0; font-size: 14px; line-height: 1.4; overflow-wrap: anywhere; }
+.area-explorer-log-entry.level-error .area-explorer-log-message { font-weight: 600; }
 .area-explorer-log-meta {
-  grid-column: 2;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 2px 10px;
-  margin: 0;
-  font-size: 12px;
+  gap: 4px 6px;
   color: var(--muted);
+  font-size: 12px;
 }
+.area-explorer-log-dot { opacity: 0.6; }
+/* Where it happened: a chip that shows the spot on the map */
 .area-explorer-log-coords {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   min-height: 0;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
+  margin-left: auto;
+  padding: 1px 7px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
   font: inherit;
-  text-decoration: underline dotted;
+  font-variant-numeric: tabular-nums;
+  box-shadow: none;
   cursor: pointer;
 }
-.area-explorer-log-coords:hover { color: var(--text); background: none; transform: none; }
+.area-explorer-log-coords::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+.area-explorer-log-coords:hover,
+.area-explorer-log-coords:focus-visible { border-color: var(--accent); color: var(--text); background: transparent; transform: none; }
 .area-explorer-log-more { display: flex; justify-content: center; padding: 0 14px 14px; }
 .area-explorer-log-more:has(> [hidden]) { display: none; }
+.area-explorer-log-more .ghost-button { width: 100%; }
 
 /* Map panel */
 

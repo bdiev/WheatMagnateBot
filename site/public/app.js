@@ -6278,7 +6278,13 @@ const AREA_EXPLORER_LOG_TYPES = Object.freeze({
   finish: 'Done', disconnect: 'Kicked', reconnect: 'Reconnect', rejoin: 'Back', totem: 'Totem', leave: 'Left',
   warning: 'Warning', error: 'Error'
 });
-const AREA_EXPLORER_LOG_CONNECTION = Object.freeze(['disconnect', 'reconnect', 'rejoin', 'totem', 'leave']);
+// The item shown in each event's slot (the site's /items pictures)
+const AREA_EXPLORER_LOG_ICONS = Object.freeze({
+  start: 'Elytra', stop: 'Lever', pause: 'Clock', resume: 'Firework_Rocket', phase: 'Compass', progress: 'Filled_Map',
+  finish: 'Nether_Star', disconnect: 'Tnt', reconnect: 'Ender_Pearl', rejoin: 'Oak_Door', totem: 'Totem_Of_Undying',
+  leave: 'Oak_Door', warning: 'Bell', error: 'Redstone_Torch'
+});
+const AREA_EXPLORER_LOG_CONNECTION =Object.freeze(['disconnect', 'reconnect', 'rejoin', 'totem', 'leave']);
 
 /** The log follows the server picked above (every dimension of it), or shows all servers. */
 function areaExplorerLogServer() {
@@ -6342,21 +6348,36 @@ function renderAreaExplorerLog() {
     return;
   }
   const today = areaExplorerLogDay(Date.now());
+  const yesterday = areaExplorerLogDay(Date.now() - 86_400_000);
+  let lastDay = null;
   list.innerHTML = ae.logEvents.map(event => {
-    const time = areaExplorerLogDay(event.occurredAt) === today ? formatTime(event.occurredAt) : formatFullDateTime(event.occurredAt);
+    // A heading wherever the day changes: Today, Yesterday, then the date
+    const day = areaExplorerLogDay(event.occurredAt);
+    let heading = '';
+    if (day !== lastDay) {
+      lastDay = day;
+      const label = day === today ? 'Today' : day === yesterday ? 'Yesterday'
+        : new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: state.accountTimezone }).format(new Date(event.occurredAt));
+      heading = `<li class="area-explorer-log-day" aria-hidden="true"><span>${escapeHtml(label)}</span></li>`;
+    }
     const where = event.x === null || event.x === undefined || event.z === null || event.z === undefined ? ''
-      : `<button class="area-explorer-log-coords" type="button" data-area-focus="${event.x},${event.z}" data-area-focus-scope="${escapeHtml(`${event.server}|${event.dimension}`)}" title="Show on map">X ${event.x}${event.y === null || event.y === undefined ? '' : ` · Y ${event.y}`} · Z ${event.z}</button>`;
+      : `<button class="area-explorer-log-coords" type="button" data-area-focus="${event.x},${event.z}" data-area-focus-scope="${escapeHtml(`${event.server}|${event.dimension}`)}" title="Show on map">${event.x} ${event.y ?? '~'} ${event.z}</button>`;
     const meta = [
-      `<time datetime="${escapeHtml(new Date(event.occurredAt).toISOString())}" title="${escapeHtml(formatFullDateTime(event.occurredAt))}">${escapeHtml(time)}</time>`,
       event.player || event.tokenName ? `<span>${escapeHtml(event.player || event.tokenName)}</span>` : '',
       ae.logServer ? '' : `<span>${escapeHtml(event.server)}</span>`,
-      `<span>${escapeHtml(prettyDimension(event.dimension))}</span>`,
-      where
-    ].filter(Boolean).join('');
-    return `<li class="area-explorer-log-entry level-${escapeHtml(event.level)}">
-      <span class="area-explorer-log-type">${escapeHtml(AREA_EXPLORER_LOG_TYPES[event.type] || event.type)}</span>
-      <p class="area-explorer-log-message">${escapeHtml(event.message)}</p>
-      <p class="area-explorer-log-meta">${meta}</p>
+      `<span>${escapeHtml(prettyDimension(event.dimension))}</span>`
+    ].filter(Boolean).join('<span class="area-explorer-log-dot" aria-hidden="true">·</span>');
+    const icon = AREA_EXPLORER_LOG_ICONS[event.type] || AREA_EXPLORER_LOG_ICONS[event.level === 'error' ? 'error' : 'warning'];
+    return `${heading}<li class="area-explorer-log-entry level-${escapeHtml(event.level)}">
+      <span class="area-explorer-log-icon" aria-hidden="true"><img src="/items/${icon}.png" alt="" width="24" height="24" loading="lazy"></span>
+      <div class="area-explorer-log-body">
+        <div class="area-explorer-log-head">
+          <span class="area-explorer-log-type">${escapeHtml(AREA_EXPLORER_LOG_TYPES[event.type] || event.type)}</span>
+          <time datetime="${escapeHtml(new Date(event.occurredAt).toISOString())}" title="${escapeHtml(formatFullDateTime(event.occurredAt))}">${escapeHtml(formatTime(event.occurredAt))}</time>
+        </div>
+        <p class="area-explorer-log-message">${escapeHtml(event.message)}</p>
+        <div class="area-explorer-log-meta">${meta}${where}</div>
+      </div>
     </li>`;
   }).join('');
 }
