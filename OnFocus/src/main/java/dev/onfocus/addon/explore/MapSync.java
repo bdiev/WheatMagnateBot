@@ -37,6 +37,10 @@ import java.util.regex.Pattern;
  * drawn. The most recently drawn regions go first, so the area being explored shows up within a
  * minute or two even while older ones are still on the way.
  * <p>
+ * The overworld goes twice: as by day, and as Xaero shows it at night - dark but for torches, lava
+ * and the like, worked out from the light Xaero keeps in its cache - so the site can show either.
+ * Regions sent before the night view was are sent again for it, from the cache: nothing to fly.
+ * <p>
  * Runs on a thread of its own; {@link #update} and {@link #stop} may be called from any thread.
  */
 public final class MapSync {
@@ -114,15 +118,15 @@ public final class MapSync {
         List<Region> due = new ArrayList<>();
         Map<Region, Target> targetOf = new HashMap<>();
         for (Target target : current.targets()) {
-            Map<String, Long> known = onSite.get(key(target));
-            if (known == null) {
-                known = fetchIndex(current, target);
+            for (boolean night : hasNight(target) ? new boolean[]{false, true} : new boolean[]{false}) {
+                String key = night ? nightKey(target) : key(target);
+                if (onSite.containsKey(key)) continue;
+                Map<String, Long> known = fetchIndex(current, target, night);
                 if (known == null) return RETRY_MS;
-                onSite.put(key(target), known);
+                onSite.put(key, known);
             }
             for (Region region : list(target.folder())) {
-                Long sent = known.get(region.x() + "," + region.z());
-                if (sent != null && sent >= region.modified()) continue;
+                if (!isDue(target, region)) continue;
                 due.add(region);
                 targetOf.put(region, target);
             }
@@ -144,8 +148,7 @@ public final class MapSync {
                 if (sendNewlyDrawn(current, targets, since) < 0) return RETRY_MS;
             }
             Target target = targetOf.get(region);
-            Long have = onSite.get(key(target)).get(region.x() + "," + region.z());
-            if (have != null && have >= region.modified()) continue; // went with the newly drawn ones
+            if (!isDue(target, region)) continue; // went with the newly drawn ones
             long wait = send(current, target, region);
             if (wait > 0) return wait;
             sent++;
@@ -160,11 +163,9 @@ public final class MapSync {
     private int sendNewlyDrawn(Config current, List<Target> targets, long since) throws InterruptedException {
         int sent = 0;
         for (Target target : targets) {
-            Map<String, Long> known = onSite.get(key(target));
             for (Region region : list(target.folder())) {
                 if (region.modified() < since) continue;
-                Long have = known.get(region.x() + "," + region.z());
-                if (have != null && have >= region.modified()) continue;
+                if (!isDue(target, region)) continue;
                 if (send(current, target, region) > 0) return -1;
                 sent++;
             }
@@ -172,17 +173,37 @@ public final class MapSync {
         return sent;
     }
 
-    /** Sends one region; 0 when done with it (sent, or skipped for good), else how long to wait first. */
+    /** The dimension with a night: the overworld. The Nether and the End look the same all the time. */
+    private static boolean hasNight(Target target) {
+        return "overworld".equals(target.dimension());
+    }
+
+    private static String nightKey(Target target) {
+        return key(target) + "@night";
+    }
+
+    /** The site lacks this drawing of the region, by day or (in the overworld) at night. */
+    private boolean isDue(Target target, Region region) {
+        return stale(onSite.get(key(target)), region) || hasNight(target) && stale(onSite.get(nightKey(target)), region);
+    }
+
+    private static boolean stale(Map<String, Long> known, Region region) {
+        Long have = known == null ? null : known.get(region.x() + "," + region.z());
+        return have == null || have < region.modified();
+    }
+
+    /** Sends one region, by day and at night as the site lacks them; 0 when done with it (sent, or skipped for good), else how long to wait first. */
     private long send(Config current, Target target, Region region) throws InterruptedException {
-        Map<String, Long> known = onSite.get(key(target));
-        byte[] png;
+        Map<String, Long> day = onSite.get(key(target));
+        Map<String, Long> night = hasNight(target) ? onSite.get(nightKey(target)) : null;
+        XaeroCacheFile.Pixels pixels;
         try {
-            int[] pixels = XaeroCacheFile.read(region.file());
+            pixels = XaeroCacheFile.read(region.file());
             if (pixels == null) {
-                known.put(region.x() + "," + region.z(), region.modified());
+                day.put(region.x() + "," + region.z(), region.modified());
+                if (night != null) night.put(region.x() + "," + region.z(), region.modified());
                 return 0;
             }
-            png = encodePng(pixels);
         } catch (IOException e) {
             if (e.getMessage() != null && e.getMessage().startsWith("unsupported cache format")) {
                 report(current, "Xaero's map cache is in a format this version doesn't read (" + e.getMessage() + ") - update OnFocus");
@@ -191,9 +212,24 @@ public final class MapSync {
             // Most likely being written by Xaero right now: the next look tries it again
             return 0;
         }
+        try {
+            if (stale(day, region)) {
+                long wait = put(current, target, region, encodePng(pixels.day()), false, day);
+                if (wait > 0) return wait;
+            }
+            if (night != null && stale(night, region)) return put(current, target, region, encodePng(pixels.night()), true, night);
+            return 0;
+        } catch (IOException e) {
+            report(current, "couldn't make a picture of a map region (" + e.getMessage() + ")");
+            return RETRY_MS;
+        }
+    }
 
+    /** One drawing of a region to the site; 0 when done with it, else how long to wait first. */
+    private long put(Config current, Target target, Region region, byte[] png, boolean night, Map<String, Long> known) throws InterruptedException {
         String url = current.site() + "/api/area-explorer/mod/map/regions/" + region.x() + "/" + region.z()
-            + "?server=" + encode(target.server()) + "&dimension=" + encode(target.dimension()) + "&modified=" + region.modified();
+            + "?server=" + encode(target.server()) + "&dimension=" + encode(target.dimension()) + "&modified=" + region.modified()
+            + (night ? "&layer=night" : "");
         try {
             HttpResponse<String> response = http.send(HttpRequest.newBuilder(URI.create(url))
                 .timeout(TIMEOUT)
@@ -227,9 +263,10 @@ public final class MapSync {
         }
     }
 
-    /** What the site has of a dimension; null if it couldn't be asked. */
-    private Map<String, Long> fetchIndex(Config current, Target target) throws InterruptedException {
-        String url = current.site() + "/api/area-explorer/mod/map/regions?server=" + encode(target.server()) + "&dimension=" + encode(target.dimension());
+    /** What the site has of a dimension, by day or at night; null if it couldn't be asked. */
+    private Map<String, Long> fetchIndex(Config current, Target target, boolean night) throws InterruptedException {
+        String url = current.site() + "/api/area-explorer/mod/map/regions?server=" + encode(target.server()) + "&dimension=" + encode(target.dimension())
+            + (night ? "&layer=night" : "");
         try {
             HttpResponse<String> response = http.send(HttpRequest.newBuilder(URI.create(url))
                 .timeout(TIMEOUT)

@@ -121,6 +121,15 @@ async function testService() {
     assert.deepEqual(regions, [-3, 2]);
     assert.equal(maxLevel, MAX_LEVEL);
     assert.deepEqual((await service.mapScopes()).scopes.map(scope => [scope.server, scope.dimension, scope.regions]), [['oldfrog.org', 'overworld', 1]]);
+    assert.equal((await service.mapScopes()).scopes[0].night, false);
+
+    // The night view: kept as a dimension of its own, listed as the overworld's night
+    await service.putRegion({ server: 'oldfrog.org', dimension: 'overworld@night' }, -3, 2, DRAWN, await regionPng());
+    const withNight = (await service.mapScopes()).scopes;
+    assert.deepEqual(withNight.map(scope => [scope.dimension, scope.night]), [['overworld', true]], 'not a dimension of its own in the list');
+    assert.deepEqual((await service.mapIndex({ server: 'oldfrog.org', dimension: 'overworld@night' })).regions, [-3, 2]);
+    await db.query(`DELETE FROM area_explorer_region_tiles WHERE dimension = 'overworld@night'`);
+    await db.query(`DELETE FROM area_explorer_region_dirty WHERE dimension = 'overworld@night'`);
 
     const tileUrl = new URL('http://localhost/api/area-explorer/map/tiles/1/-2/1.webp?server=oldfrog.org&dimension=overworld');
     res = recordingResponse();
@@ -150,7 +159,7 @@ async function testService() {
     await service.handleModRequest(request('PUT', await regionPng({ fill: false }), auth), res, modUrl(-3, 2, DRAWN + 1000));
     assert.deepEqual(JSON.parse(res.body), { stored: false });
     while (await service.processDirty({ settleMs: 0 }) || (await db.query('SELECT 1 FROM area_explorer_region_dirty')).rows.length) { /* keep going */ }
-    assert.equal((await db.query('SELECT COUNT(*)::int AS count FROM area_explorer_region_tiles')).rows[0].count, 0);
+    assert.equal((await db.query(`SELECT COUNT(*)::int AS count FROM area_explorer_region_tiles WHERE dimension = 'overworld'`)).rows[0].count, 0);
 
     // Full storage refuses new regions
     const tight = createXaeroRegionMapService({

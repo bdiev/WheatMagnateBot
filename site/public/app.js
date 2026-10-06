@@ -6194,6 +6194,7 @@ function areaExplorerState() {
       points: [], pointsScope: null, view: null, selectedId: null, searchTimer: null, mapBound: false, loadedAt: 0,
       tiles: new Map(), drawQueued: false, regionMap: null, regionMapEpoch: 0, colors: null, colorsTheme: null,
       findsDirty: false, tokensDirty: true, newFindsAbove: 0, versions: null,
+      night: readAreaExplorerSetting('areaExplorerNight', 'false') === 'true',
       // Flown-over grids by token: { version, coverage, image } - fetched when a run's version moves on
       coverage: new Map(),
       // The area picked on the map for a mod to explore: block corners, still being dragged out while picking
@@ -7419,13 +7420,34 @@ async function loadXaeroRegionMap() {
     ae.regionMap = null;
     return;
   }
-  if (ae.regionMap?.scope === scope) return;
-  const index = await fetchJson(`/api/area-explorer/map/index?${areaExplorerScopeParams()}`);
+  renderAreaExplorerNightButton();
+  // By day or at night: the night view's tiles are a dimension of their own
+  const mapScope = `${server}|${areaExplorerMapDimension(server, dimension)}`;
+  if (ae.regionMap?.scope === mapScope) return;
+  const index = await fetchJson(`/api/area-explorer/map/index?${new URLSearchParams({ server, dimension: mapScope.split('|')[1] })}`);
   if (ae.scope !== scope) return;
-  const regionMap = { scope, maxLevel: index.maxLevel, levels: [], versions: new Map() };
+  const regionMap = { scope: mapScope, maxLevel: index.maxLevel, levels: [], versions: new Map() };
   for (let level = 0; level <= index.maxLevel; level++) regionMap.levels.push(new Set());
   for (let i = 0; i < index.regions.length; i += 2) addXaeroRegion(regionMap, index.regions[i], index.regions[i + 1]);
   ae.regionMap = regionMap;
+}
+
+/** The map's dimension as tiles are kept: the overworld's night view is "overworld@night". */
+function areaExplorerMapDimension(server, dimension) {
+  const ae = areaExplorerState();
+  const map = ae.mapScopes.find(item => item.server === server && item.dimension === dimension);
+  return ae.night && map?.night ? `${dimension}@night` : dimension;
+}
+
+/** The Night button: only where there's a night view, pressed while it's shown. */
+function renderAreaExplorerNightButton() {
+  const ae = areaExplorerState();
+  const button = $('#areaExplorerNight');
+  if (!button) return;
+  const [server, dimension] = ae.scope.split('|');
+  button.hidden = !ae.mapScopes.some(item => item.server === server && item.dimension === dimension && item.night);
+  button.setAttribute('aria-pressed', String(Boolean(ae.night)));
+  button.classList.toggle('active', Boolean(ae.night));
 }
 
 function addXaeroRegion(regionMap, x, z) {
@@ -7446,7 +7468,9 @@ function xaeroRegionTile(regionMap, level, x, z, options) {
 function applyXaeroRegionMapUpdate(update) {
   const ae = areaExplorerState();
   const scope = `${update.server}|${update.dimension}`;
-  if (!ae.mapScopes.some(item => `${item.server}|${item.dimension}` === scope)) {
+  // The night view's tiles belong to the dimension they're the night of
+  const base = `${update.server}|${update.dimension.replace(/@night$/, '')}`;
+  if (!ae.mapScopes.some(item => `${item.server}|${item.dimension}` === base && (base === scope || item.night))) {
     // A scope's first region: the picker learns of it on the next refresh
     queueRealtimeRefresh('area-explorer', refreshAreaExplorerFromEvent, 2000);
     return;
@@ -7879,6 +7903,13 @@ function setupAreaExplorer() {
     });
     loadAreaExplorerLog().catch(error => setBanner(`Could not load the run log: ${error.message}`));
   }));
+  $('#areaExplorerNight').addEventListener('click', () => {
+    ae.night = !ae.night;
+    saveAreaExplorerSetting('areaExplorerNight', ae.night);
+    ae.regionMap = null;
+    renderAreaExplorerNightButton();
+    loadXaeroRegionMap().then(queueAreaExplorerMapDraw).catch(error => setBanner(error.message));
+  });
   $('#areaExplorerNewFinds').addEventListener('click', () => {
     $('#areaExplorerFinds').scrollTo({ top: 0, behavior: 'smooth' });
     setAreaExplorerNewFinds(0);

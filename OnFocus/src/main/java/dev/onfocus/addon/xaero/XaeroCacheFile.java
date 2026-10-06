@@ -16,11 +16,20 @@ import java.util.zip.ZipInputStream;
  * 64 x 64-pixel tile chunk is kept as it goes to the GPU - {@code GL_BGRA} packed as
  * {@code GL_UNSIGNED_INT_8_8_8_8}, so bytes light, red, green, blue - followed by heights and
  * biomes, which are skipped. Free of Minecraft and Xaero classes, so it can run on any thread.
+ * <p>
+ * The light byte gives the region as Xaero's World Map shows it at night too: its map shader
+ * ({@code xaerolib map.fsh}) draws each pixel as {@code rgb * max(light, brightness)}, brightness
+ * being 0.375 in the overworld at midnight.
  */
 public final class XaeroCacheFile {
     private XaeroCacheFile() {}
 
     public static final int SIZE = 512;
+    /** Xaero's brightness in the overworld at midnight: its ambient 0.375 with no sky light. */
+    public static final float NIGHT_BRIGHTNESS = 0.375f;
+
+    /** A region's pixels as ARGB, row by row, undrawn ones 0: by day, and at night lit by torches, lava and the like. */
+    public record Pixels(int[] day, int[] night) {}
     private static final int SUPPORTED_VERSION = (1 << 16) | 24;
     private static final int TILE = 64;
     private static final int TEXTURE_BYTES = TILE * TILE * 4;
@@ -30,12 +39,11 @@ public final class XaeroCacheFile {
     private static final int END = 255;
 
     /**
-     * The region's pixels as ARGB, row by row, undrawn ones 0; null if no tile chunk in it has a
-     * texture this can read.
+     * The region's pixels, by day and at night; null if no tile chunk in it has a texture this can read.
      *
      * @throws IOException unreadable, or a cache format other than the one this knows
      */
-    public static int[] read(File file) throws IOException {
+    public static Pixels read(File file) throws IOException {
         try (ZipInputStream zip = new ZipInputStream(new BufferedInputStream(new FileInputStream(file), 1 << 16));
              DataInputStream in = new DataInputStream(zip)) {
             if (zip.getNextEntry() == null) throw new IOException("empty cache file");
@@ -53,6 +61,7 @@ public final class XaeroCacheFile {
             for (int i = 0; i < biomes; i++) if (in.readUnsignedByte() != END) in.readUTF();
 
             int[] pixels = new int[SIZE * SIZE];
+            int[] night = new int[SIZE * SIZE];
             boolean any = false;
             byte[] texture = new byte[TEXTURE_BYTES];
             while (true) {
@@ -69,9 +78,9 @@ public final class XaeroCacheFile {
                 in.readBoolean(); // has light
                 in.skipNBytes(8L * HEIGHT_LONGS * 2); // heights, top heights
                 skipBiomeIndexStorage(in);
-                if (readable) any |= copyTexture(texture, pixels, tileX * TILE, tileZ * TILE);
+                if (readable) any |= copyTexture(texture, pixels, night, tileX * TILE, tileZ * TILE);
             }
-            return any ? pixels : null;
+            return any ? new Pixels(pixels, night) : null;
         }
     }
 
@@ -83,7 +92,7 @@ public final class XaeroCacheFile {
         if (in.readUnsignedByte() == 1) in.skipNBytes(8L * BIOME_LONGS);
     }
 
-    private static boolean copyTexture(byte[] texture, int[] pixels, int left, int top) {
+    private static boolean copyTexture(byte[] texture, int[] pixels, int[] night, int left, int top) {
         boolean any = false;
         for (int y = 0; y < TILE; y++) {
             for (int x = 0; x < TILE; x++) {
@@ -91,7 +100,10 @@ public final class XaeroCacheFile {
                 int r = texture[i + 1] & 0xFF, g = texture[i + 2] & 0xFF, b = texture[i + 3] & 0xFF;
                 // Undrawn pixels are all zero; the first byte is light for the night view, not alpha
                 if ((r | g | b) == 0) continue;
-                pixels[(top + y) * SIZE + left + x] = 0xFF000000 | r << 16 | g << 8 | b;
+                int at = (top + y) * SIZE + left + x;
+                pixels[at] = 0xFF000000 | r << 16 | g << 8 | b;
+                float lit = Math.max((texture[i] & 0xFF) / 255f, NIGHT_BRIGHTNESS);
+                night[at] = 0xFF000000 | Math.round(r * lit) << 16 | Math.round(g * lit) << 8 | Math.round(b * lit);
                 any = true;
             }
         }

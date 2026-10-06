@@ -7,6 +7,10 @@
 // regions a side shrunk to 512 px, so it is built from the four level k-1 tiles under it. Uploads
 // mark the tile above dirty; a background worker rebuilds dirty tiles a level at a time, which in
 // turn marks the tile above theirs, until the top.
+//
+// The overworld comes twice: by day, and as Xaero shows it at night (the mod works it out from the
+// light Xaero keeps). The night one is kept as a dimension of its own, "overworld@night", so it
+// has its own tiles and index; the dashboard's list shows it as the overworld's night view.
 
 const sharp = require('sharp');
 
@@ -25,6 +29,7 @@ const WORKER_IDLE_MS = 5_000;
 const PUBLISH_INTERVAL_MS = 5_000;
 const MAX_PUBLISHED_TILES = 400;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const NIGHT_SUFFIX = '@night';
 
 function httpError(statusCode, message) {
   return Object.assign(new Error(message), { statusCode });
@@ -316,13 +321,20 @@ function createXaeroRegionMapService({
     return { regionSize: REGION_PX, maxLevel: MAX_LEVEL, maxDistance: MAX_DISTANCE, regions };
   }
 
-  /** Every scope with a live map, for the dashboard's server/dimension picker. */
+  /** Every scope with a live map, for the dashboard's server/dimension picker; night: it has the night view too. */
   async function mapScopes() {
     const rows = await pool.query(
       `SELECT server, dimension, COUNT(*)::int AS regions, MAX(updated_at) AS updated_at
        FROM area_explorer_region_tiles WHERE level = 0 GROUP BY server, dimension ORDER BY server, dimension`
     );
-    return { scopes: rows.rows.map(row => ({ server: row.server, dimension: row.dimension, regions: row.regions, updatedAt: row.updated_at })) };
+    const nights = new Set(rows.rows.filter(row => row.dimension.endsWith(NIGHT_SUFFIX))
+      .map(row => `${row.server}\u0000${row.dimension.slice(0, -NIGHT_SUFFIX.length)}`));
+    return {
+      scopes: rows.rows.filter(row => !row.dimension.endsWith(NIGHT_SUFFIX)).map(row => ({
+        server: row.server, dimension: row.dimension, regions: row.regions, updatedAt: row.updated_at,
+        night: nights.has(`${row.server}\u0000${row.dimension}`)
+      }))
+    };
   }
 
   async function sendTile(req, res, scope, level, x, z) {
@@ -361,6 +373,8 @@ function createXaeroRegionMapService({
     }
     if (!enforceRateLimit(req, res, 'area_explorer_map', `token:${token.id}`, { limit: 1200, windowMs: 60_000 })) return true;
     const scope = scopeFrom(url);
+    // The night view: a dimension of its own here
+    if (url.searchParams.get('layer') === 'night' && !scope.dimension.endsWith(NIGHT_SUFFIX)) scope.dimension += NIGHT_SUFFIX;
     if (indexRoute) {
       if (req.method !== 'GET') { sendError(res, 405, 'Use GET.'); return true; }
       sendJson(res, 200, await regionIndex(scope));
@@ -418,5 +432,6 @@ module.exports = {
   tileInRange,
   MAX_DISTANCE,
   MAX_LEVEL,
+  NIGHT_SUFFIX,
   REGION_PX
 };
