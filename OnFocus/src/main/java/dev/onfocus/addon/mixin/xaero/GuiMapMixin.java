@@ -2,6 +2,7 @@ package dev.onfocus.addon.mixin.xaero;
 
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
+import dev.onfocus.addon.explore.Coverage;
 import dev.onfocus.addon.explore.CoveragePlanner.Area;
 import dev.onfocus.addon.modules.AreaExplorer;
 import dev.onfocus.addon.xaero.ExploreRightClickOption;
@@ -27,7 +28,8 @@ import java.util.ArrayList;
 
 /**
  * Adds "Explore" and "Rescan" to the world map's right-click menu while a chunk area is selected, and keeps the
- * area {@link AreaExplorer} is working on highlighted on the map.
+ * area {@link AreaExplorer} is working on highlighted on the map, with the ground it has flown over
+ * this run in a colour of its own.
  */
 @Mixin(value = GuiMap.class, remap = false)
 public abstract class GuiMapMixin {
@@ -65,6 +67,17 @@ public abstract class GuiMapMixin {
                 area.minCX() << 4, (area.maxCX() + 1) << 4, area.minCZ() << 4, (area.maxCZ() + 1) << 4,
                 c.r / 255f, c.g / 255f, c.b / 255f, Math.min(1f, c.a / 255f * 2.5f),
                 c.r / 255f, c.g / 255f, c.b / 255f, c.a / 255f);
+        }
+        Coverage flown = explorer.mapCoverage(shown);
+        if (flown != null) {
+            SettingColor c = explorer.flownColor();
+            var matrix = matrices.peek().getPositionMatrix();
+            // Rectangles of chunks, filled without borders: strips side by side read as one patch
+            for (int[] r : flown.rectangles()) {
+                MapRenderHelper.fillIntoExistingBuffer(matrix, buffer,
+                    (r[0] << 4) - cameraX, (r[1] << 4) - cameraZ, ((r[2] + 1) << 4) - cameraX, ((r[3] + 1) << 4) - cameraZ,
+                    c.r / 255f, c.g / 255f, c.b / 255f, c.a / 255f);
+            }
         }
         original.call(matrices, buffer, cameraX, cameraZ, left, right, top, bottom, r1, g1, b1, a1, r2, g2, b2, a2);
     }

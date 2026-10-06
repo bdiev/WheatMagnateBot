@@ -7,6 +7,7 @@ import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.block.ShulkerBoxBlock;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.boss.WitherEntity;
 import net.minecraft.entity.decoration.ArmorStandEntity;
 import net.minecraft.entity.decoration.EndCrystalEntity;
 import net.minecraft.entity.decoration.ItemFrameEntity;
@@ -176,6 +177,8 @@ public final class BaseClues {
         if (entity instanceof TameableEntity tameable && tameable.isTamed()) return Clue.TAMED;
         if (entity instanceof AbstractHorseEntity horse && horse.isTame()) return Clue.TAMED;
         if (entity instanceof VillagerEntity) return overworld ? Clue.VILLAGER : Clue.VILLAGER_AWAY;
+        // Named withers are spawned and left anywhere, often far from any base: they say nothing
+        if (entity instanceof WitherEntity) return null;
         if (entity instanceof MobEntity && entity.hasCustomName()) return Clue.NAMED_MOB;
         return null;
     }

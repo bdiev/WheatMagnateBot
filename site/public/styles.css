@@ -12675,6 +12675,7 @@ body.kill-aura-modal-open {
   --area-map-grid: rgba(108, 97, 68, 0.18);
   --area-map-axis: rgba(108, 97, 68, 0.5);
   --area-map-area: rgba(92, 155, 52, 0.14);
+  --area-map-flown: rgba(226, 140, 20, 0.34);
   --area-overlay: color-mix(in srgb, var(--panel) 88%, transparent);
 }
 
@@ -12688,6 +12689,7 @@ body.kill-aura-modal-open {
   --area-map-grid: rgba(154, 159, 143, 0.14);
   --area-map-axis: rgba(154, 159, 143, 0.42);
   --area-map-area: rgba(92, 200, 120, 0.12);
+  --area-map-flown: rgba(255, 170, 40, 0.3);
 }
 
 /* Keep the live run beside the map, with a bounded list below. */
@@ -13022,6 +13024,8 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
 .area-explorer-map-legend .legend-marker::before { background: var(--area-marker); border-radius: 2px; transform: rotate(45deg) scale(0.85); }
 .area-explorer-map-legend .legend-sign::before { background: var(--area-sign); }
 .area-explorer-map-legend .legend-player::before { background: var(--area-player); border-radius: 0; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.area-explorer-map-legend .legend-flown::before { background: var(--area-map-flown); border: 1px solid color-mix(in srgb, var(--area-map-flown) 100%, transparent); border-radius: 2px; }
+.area-explorer-map-legend .legend-flown[hidden] { display: none; }
 
 .area-explorer-map-buttons {
   position: absolute;
@@ -13672,4 +13676,4 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
 
 .area-explorer-eye-slash { display: none; }
 [aria-pressed="true"] .area-explorer-eye-slash { display: block; }
-.is-hiding-finds .area-explorer-map-legend span:not(.legend-player) { display: none; }
+.is-hiding-finds .area-explorer-map-legend span:not(.legend-player):not(.legend-flown) { display: none; }

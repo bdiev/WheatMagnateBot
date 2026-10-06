@@ -6193,6 +6193,8 @@ function areaExplorerState() {
       points: [], pointsScope: null, view: null, selectedId: null, searchTimer: null, mapBound: false, loadedAt: 0,
       tiles: new Map(), drawQueued: false, regionMap: null, regionMapEpoch: 0, colors: null, colorsTheme: null,
       findsDirty: false, tokensDirty: true, newFindsAbove: 0, versions: null,
+      // Flown-over grids by token: { version, coverage, image } - fetched when a run's version moves on
+      coverage: new Map(),
       logFilter: '', logEvents: [], logHasMore: false, logServer: null, logRequestId: 0,
       showFinds: readAreaExplorerSetting('areaExplorerShowFinds', 'true') !== 'false',
       sort: ['newest', 'nearest', 'name'].includes(readAreaExplorerSetting('areaExplorerSort', 'newest')) ? readAreaExplorerSetting('areaExplorerSort', 'newest') : 'newest',
@@ -6914,6 +6916,81 @@ function areaExplorerColors(canvas) {
   return ae.colors;
 }
 
+/**
+ * The ground the run has flown over, over its area: the mod's grid of cells as a tiny image, one
+ * pixel a cell, stretched over the area without smoothing. True if drawn. A newer grid than the one
+ * held is fetched, and drawn once it's in.
+ */
+function drawAreaExplorerCoverage(ctx, canvas, view, live, [x1, z1, x2, z2]) {
+  if (live.coverageVersion === null || live.coverageVersion === undefined) return false;
+  const ae = areaExplorerState();
+  const held = ae.coverage.get(live.tokenId);
+  const retryLater = held?.failedAt && Date.now() - held.failedAt < 10_000;
+  if ((!held || held.version !== live.coverageVersion) && !held?.loading && !retryLater) loadAreaExplorerCoverage(live.tokenId);
+  if (!held?.image) return false;
+  const grid = held.coverage;
+  const [gx1, gz1] = areaExplorerToScreen(view, canvas, grid.minCX * 16, grid.minCZ * 16);
+  const [gx2, gz2] = areaExplorerToScreen(view, canvas, (grid.minCX + grid.cols * grid.cell) * 16, (grid.minCZ + grid.rows * grid.cell) * 16);
+  ctx.save();
+  // The last cells may run past the area's edge: kept inside it
+  ctx.beginPath();
+  ctx.rect(x1, z1, x2 - x1, z2 - z1);
+  ctx.clip();
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(held.image, gx1, gz1, gx2 - gx1, gz2 - gz1);
+  ctx.restore();
+  return true;
+}
+
+async function loadAreaExplorerCoverage(tokenId) {
+  const ae = areaExplorerState();
+  const held = ae.coverage.get(tokenId) || {};
+  held.loading = true;
+  held.failedAt = 0;
+  ae.coverage.set(tokenId, held);
+  try {
+    const { coverage } = await fetchJson(`/api/area-explorer/coverage?token=${encodeURIComponent(tokenId)}`);
+    if (!coverage) {
+      // Gone already (the run ended): not asked for again straight away
+      ae.coverage.set(tokenId, { loading: false, failedAt: Date.now() });
+      return;
+    }
+    // Bit i of the grid (row by row) is bit i % 8 of byte i / 8
+    const bytes = Uint8Array.from(atob(coverage.bits), char => char.charCodeAt(0));
+    const image = document.createElement('canvas');
+    image.width = coverage.cols;
+    image.height = coverage.rows;
+    const g = image.getContext('2d');
+    const pixels = g.createImageData(coverage.cols, coverage.rows);
+    const [r, gr, b, a] = areaExplorerFlownColor(image);
+    for (let i = 0; i < coverage.cols * coverage.rows; i++) {
+      if (!(bytes[i >> 3] & (1 << (i & 7)))) continue;
+      pixels.data.set([r, gr, b, a], i * 4);
+    }
+    g.putImageData(pixels, 0, 0);
+    ae.coverage.set(tokenId, { version: coverage.version, coverage, image, loading: false, failedAt: 0 });
+    queueAreaExplorerMapDraw();
+  } catch {
+    // The last grid stays on the map; tried again in a few seconds
+    held.loading = false;
+    held.failedAt = Date.now();
+  }
+}
+
+/** The theme's flown colour as RGBA bytes, from --area-map-flown. */
+function areaExplorerFlownColor(element) {
+  const probe = element.getContext('2d');
+  probe.fillStyle = '#000';
+  probe.fillStyle = getComputedStyle($('#areaExplorerMap')).getPropertyValue('--area-map-flown').trim() || 'rgba(230, 150, 30, 0.32)';
+  const match = String(probe.fillStyle).match(/rgba?\(([^)]+)\)/);
+  if (match) {
+    const [r, g, b, a = '1'] = match[1].split(',').map(part => part.trim());
+    return [Number(r), Number(g), Number(b), Math.round(Number(a) * 255)];
+  }
+  const hex = String(probe.fillStyle).replace('#', '');
+  return [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16), 255];
+}
+
 function queueAreaExplorerMapDraw() {
   const ae = areaExplorerState();
   if (ae.drawQueued) return;
@@ -6978,12 +7055,16 @@ function drawAreaExplorerMap() {
   ctx.stroke();
 
   const live = areaExplorerLiveStatus();
+  let flownShown = false;
   if (live?.area && live.online) {
     const [x1, z1] = areaExplorerToScreen(view, canvas, live.area.minX, live.area.minZ);
     const [x2, z2] = areaExplorerToScreen(view, canvas, live.area.maxX, live.area.maxZ);
     ctx.fillStyle = colors.area;
     ctx.fillRect(x1, z1, x2 - x1, z2 - z1);
+    flownShown = drawAreaExplorerCoverage(ctx, canvas, view, live, [x1, z1, x2, z2]);
   }
+  const flownLegend = $('#areaExplorerFlownLegend');
+  if (flownLegend && flownLegend.hidden === flownShown) flownLegend.hidden = !flownShown;
 
   let selected = null;
   for (const point of ae.points) {

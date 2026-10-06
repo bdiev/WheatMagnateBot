@@ -17,6 +17,9 @@ const TOKEN_PREFIX = 'aex_';
 const MAX_PAGE_SIZE = 200;
 const MAX_MAP_POINTS = 20_000;
 const TOP_LOOT_NAMES = 8;
+// The flown-over grid: cells a side at most, and cells in all
+const MAX_COVERAGE_SIDE = 2000;
+const MAX_COVERAGE_CELLS = 250_000;
 // Markers of structures that stay where they are: they never come off the site
 const PERMANENT_MARKERS = Object.freeze(['End Portal', 'End Gateway', 'End City', 'Ancient City', 'Trial Chamber']);
 const EVENT_LEVELS = Object.freeze(['info', 'success', 'warn', 'error']);
@@ -98,6 +101,26 @@ function dedupeKey(find) {
   return find.kind === 'ITEM' ? `${at}:${find.name}:${find.count}:${find.label}` : at;
 }
 
+/**
+ * The flown-over grid as the mod sends it, checked: undefined when it didn't send one (keep the
+ * last), null when it's no good.
+ */
+function normalizeCoverage(raw) {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== 'object') return null;
+  const cell = normalizeInteger(raw.cell, 4096);
+  const cols = normalizeInteger(raw.cols, MAX_COVERAGE_SIDE);
+  const rows = normalizeInteger(raw.rows, MAX_COVERAGE_SIDE);
+  const minCX = normalizeInteger(raw.minCX, MAX_COORDINATE / 16);
+  const minCZ = normalizeInteger(raw.minCZ, MAX_COORDINATE / 16);
+  const version = normalizeInteger(raw.version, 2 ** 31 - 1);
+  const bits = typeof raw.bits === 'string' ? raw.bits : '';
+  if ([cell, cols, rows, minCX, minCZ, version].some(value => value === null) || cell < 1 || cols < 1 || rows < 1) return null;
+  if (cols * rows > MAX_COVERAGE_CELLS || !/^[A-Za-z0-9+/]*={0,2}$/.test(bits)) return null;
+  if (Buffer.from(bits, 'base64').length !== Math.ceil((cols * rows) / 8)) return null;
+  return { version, cell, minCX, minCZ, cols, rows, bits };
+}
+
 function normalizeStatus(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const percent = Number(raw.percent);
@@ -126,7 +149,8 @@ function normalizeStatus(raw) {
     z: normalizeInteger(raw.z, MAX_COORDINATE),
     yaw: Number.isFinite(yaw) ? ((yaw % 360) + 360) % 360 : null,
     area: area && Object.values(area).every(value => value !== null) ? area : null,
-    runFinds
+    runFinds,
+    coverage: normalizeCoverage(raw.coverage)
   };
 }
 
@@ -204,6 +228,8 @@ function publicStatus(row, now = Date.now()) {
     area: row.area || null,
     yaw: row.yaw === null || row.yaw === undefined ? null : Number(row.yaw),
     runFinds: row.run_finds || null,
+    // The cells themselves are fetched on their own when this changes: not sent every second
+    coverageVersion: row.coverage?.version ?? null,
     updatedAt: row.updated_at,
     online: row.phase !== 'IDLE' && now - updatedAt.getTime() <= ONLINE_WINDOW_MS
   };
@@ -394,16 +420,23 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
   }
 
   async function upsertStatus(client, tokenId, server, dimension, status) {
+    // The flown-over grid: a new one replaces it; none sent keeps the last while the run goes on,
+    // and a run that's ended (or has no area) has none
+    const runEnded = status.phase === 'IDLE' || !status.area;
+    const replaceCoverage = runEnded || status.coverage !== undefined;
+    const coverage = runEnded || !status.coverage ? null : JSON.stringify(status.coverage);
     const result = await client.query(
-      `INSERT INTO area_explorer_status (token_id, server, dimension, player, phase, mode, paused, percent, eta_seconds, x, y, z, area, run_finds, yaw, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW())
+      `INSERT INTO area_explorer_status (token_id, server, dimension, player, phase, mode, paused, percent, eta_seconds, x, y, z, area, run_finds, yaw, coverage, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
        ON CONFLICT (token_id) DO UPDATE SET
          server = EXCLUDED.server, dimension = EXCLUDED.dimension, player = EXCLUDED.player, phase = EXCLUDED.phase,
          mode = EXCLUDED.mode, paused = EXCLUDED.paused, percent = EXCLUDED.percent, eta_seconds = EXCLUDED.eta_seconds,
-         x = EXCLUDED.x, y = EXCLUDED.y, z = EXCLUDED.z, area = EXCLUDED.area, run_finds = EXCLUDED.run_finds, yaw = EXCLUDED.yaw, updated_at = NOW()
+         x = EXCLUDED.x, y = EXCLUDED.y, z = EXCLUDED.z, area = EXCLUDED.area, run_finds = EXCLUDED.run_finds, yaw = EXCLUDED.yaw,
+         coverage = CASE WHEN $17::boolean THEN EXCLUDED.coverage ELSE area_explorer_status.coverage END, updated_at = NOW()
        RETURNING *`,
       [tokenId, server, dimension, status.player, status.phase, status.mode, status.paused, status.percent, status.etaSeconds,
-        status.x, status.y, status.z, status.area ? JSON.stringify(status.area) : null, status.runFinds ? JSON.stringify(status.runFinds) : null, status.yaw]
+        status.x, status.y, status.z, status.area ? JSON.stringify(status.area) : null, status.runFinds ? JSON.stringify(status.runFinds) : null, status.yaw,
+        coverage, replaceCoverage]
     );
     return publicStatus(result.rows[0]);
   }
@@ -420,6 +453,17 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
         (SELECT COALESCE(MAX(id), 0) FROM area_explorer_events)::text AS events`)
     ]);
     return { statuses: result.rows.map(row => publicStatus(row)), versions: versions.rows[0] };
+  }
+
+  /** The ground a run has flown over: the grid the mod last sent, for the map. */
+  async function getCoverage(url) {
+    const tokenId = String(url.searchParams.get('token') || '');
+    if (!/^\d{1,18}$/.test(tokenId)) throw httpError(400, 'Invalid token id.');
+    const row = (await pool.query(
+      `SELECT s.coverage, s.server, s.dimension FROM area_explorer_status s
+       JOIN area_explorer_tokens t ON t.id = s.token_id WHERE s.token_id = $1 AND t.revoked_at IS NULL`, [tokenId]
+    )).rows[0];
+    return { coverage: row?.coverage || null, server: row?.server || null, dimension: row?.dimension || null };
   }
 
   /** POST /api/area-explorer/ingest - from the mod, with its token instead of a session. */
@@ -609,6 +653,7 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     if (path === '/api/area-explorer/finds' && req.method === 'GET') return { statusCode: 200, payload: await getFinds(url) };
     if (path === '/api/area-explorer/map' && req.method === 'GET') return { statusCode: 200, payload: await getMapPoints(url) };
     if (path === '/api/area-explorer/events' && req.method === 'GET') return { statusCode: 200, payload: await getEvents(url) };
+    if (path === '/api/area-explorer/coverage' && req.method === 'GET') return { statusCode: 200, payload: await getCoverage(url) };
     const findMatch = path.match(/^\/api\/area-explorer\/finds\/([^/]+)$/);
     if (findMatch && req.method === 'GET') return { statusCode: 200, payload: await getFind(findMatch[1]) };
     // Loot picked up in game: administrators take it off the site
@@ -629,7 +674,7 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     return null;
   }
 
-  return { authenticate, ingest, handleIngest, handleApi, getSummary, getEvents, getFinds, getMapPoints, getFind, removeFind, listTokens, createToken, revokeToken };
+  return { authenticate, ingest, handleIngest, handleApi, getSummary, getEvents, getCoverage, getFinds, getMapPoints, getFind, removeFind, listTokens, createToken, revokeToken };
 }
 
 module.exports = {
@@ -644,6 +689,7 @@ module.exports = {
   dedupeKey,
   generateToken,
   lootValue,
+  normalizeCoverage,
   normalizeEvent,
   normalizeFind,
   normalizeStatus,

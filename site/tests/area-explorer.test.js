@@ -10,6 +10,7 @@ const {
   createAreaExplorerService,
   dedupeKey,
   lootValue,
+  normalizeCoverage,
   normalizeEvent,
   normalizeFind,
   normalizeStatus,
@@ -90,6 +91,7 @@ async function testIngestAndQueries() {
     await db.exec(statusYMigrationSql);
     await db.exec(pickedUpMigrationSql);
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/072_area_explorer_yaw.sql'), 'utf8'));
+    await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/074_area_explorer_coverage.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/073_area_explorer_events.sql'), 'utf8'));
     const published = [];
     const logs = [];
@@ -236,6 +238,7 @@ async function testMarkers() {
     await db.exec(statusYMigrationSql);
     await db.exec(pickedUpMigrationSql);
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/072_area_explorer_yaw.sql'), 'utf8'));
+    await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/074_area_explorer_coverage.sql'), 'utf8'));
     const service = createAreaExplorerService({
       pool: poolFor(db), hashToken, readJsonBody: async () => ({}), sendJson() {}, sendError() {}, enforceRateLimit: () => true
     });
@@ -341,6 +344,47 @@ function testEventNormalization() {
   assert.equal(normalizeEvent({ id: 'a1b2c3d4-0000', at: NOW + 3 * 86_400_000, message: 'x' }, NOW), null);
 }
 
+async function testCoverage() {
+  // 10 x 3 cells: 30 bits in 4 bytes
+  const grid = { version: 3, cell: 2, minCX: -10, minCZ: 5, cols: 10, rows: 3, bits: Buffer.from([0b00000111, 0, 0, 0]).toString('base64') };
+  assert.deepEqual(normalizeCoverage(grid), grid);
+  assert.equal(normalizeCoverage(undefined), undefined, 'none sent: keep the last');
+  assert.equal(normalizeCoverage({ ...grid, bits: Buffer.from([1]).toString('base64') }), null, 'the bits must fit the grid');
+  assert.equal(normalizeCoverage({ ...grid, cols: 5000 }), null);
+
+  const db = new PGlite();
+  try {
+    for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '071_area_explorer_status_y.sql', '072_area_explorer_picked_up.sql',
+      '072_area_explorer_yaw.sql', '073_area_explorer_events.sql', '074_area_explorer_coverage.sql']) {
+      await db.exec(fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8'));
+    }
+    const published = [];
+    const service = createAreaExplorerService({
+      pool: poolFor(db), hashToken, readJsonBody: async () => ({}), sendJson() {}, sendError() {},
+      enforceRateLimit: () => true, publish: (type, payload) => published.push(payload), recordSystemLog: async () => {}
+    });
+    const created = await service.createToken({ username: 'admin', role: 'admin' }, { name: 'PC' });
+    const token = await service.authenticate({ headers: { authorization: `Bearer ${created.token}` } });
+    const area = { minX: -160, minZ: 80, maxX: 159, maxZ: 175 };
+    const status = extra => ({ server: 'oldfrog.org', dimension: 'overworld', status: { player: 'Steve', phase: 'SWEEP', x: 0, z: 0, area, ...extra } });
+    const coverageUrl = new URL(`http://x/api/area-explorer/coverage?token=${token.id}`);
+
+    await service.ingest(token, status({ coverage: grid }), NOW);
+    assert.equal(published.at(-1).liveStatus.coverageVersion, 3, 'the live status says which grid there is');
+    assert.equal(published.at(-1).liveStatus.coverage, undefined, 'not the cells: they are fetched on their own');
+    assert.deepEqual((await service.getCoverage(coverageUrl)).coverage, grid);
+
+    await service.ingest(token, status({ coverageVersion: 3 }), NOW);
+    assert.deepEqual((await service.getCoverage(coverageUrl)).coverage, grid, 'a status without the grid keeps it');
+
+    await service.ingest(token, status({ phase: 'IDLE', area: undefined }), NOW);
+    assert.equal((await service.getCoverage(coverageUrl)).coverage, null, 'the run over, the colour goes');
+    assert.equal(published.at(-1).liveStatus.coverageVersion, null);
+  } finally {
+    await db.close();
+  }
+}
+
 async function testRunLog() {
   const db = new PGlite();
   try {
@@ -348,6 +392,7 @@ async function testRunLog() {
     await db.exec(statusYMigrationSql);
     await db.exec(pickedUpMigrationSql);
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/072_area_explorer_yaw.sql'), 'utf8'));
+    await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/074_area_explorer_coverage.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/073_area_explorer_events.sql'), 'utf8'));
     const published = [];
     const service = createAreaExplorerService({
@@ -411,6 +456,7 @@ function testRunLogWiring() {
   await testIngestAndQueries();
   await testMarkers();
   await testRunLog();
+  await testCoverage();
   testWiring();
   testRunLogWiring();
   console.log('area-explorer tests passed');

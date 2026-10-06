@@ -6,6 +6,7 @@ import dev.onfocus.addon.OnFocusAddon;
 import dev.onfocus.addon.explore.BaseClues;
 import dev.onfocus.addon.explore.ChunkGrid;
 import dev.onfocus.addon.explore.ContourPlanner;
+import dev.onfocus.addon.explore.Coverage;
 import dev.onfocus.addon.explore.CoveragePlanner;
 import dev.onfocus.addon.explore.CoveragePlanner.Area;
 import dev.onfocus.addon.explore.CoveragePlanner.Segment;
@@ -178,6 +179,9 @@ import java.util.function.Predicate;
  * <p>
  * The module's keybind pauses and resumes instead of turning it off (turning it off from the
  * GUI keeps the area, so enabling it again carries on where it stopped).
+ * <p>
+ * Flown ground ({@code show-flown}): the part of the area the explorer has flown over this run is
+ * coloured on Xaero's World Map and, with {@code site-sync}, on the site's map, until the run ends.
  * <p>
  * With {@code site-sync}, what happens to the run - started, paused, kicked and why, reconnect attempts,
  * back on the server, totem pops, cleanup passes, done, and every warning - goes to the site's run log.
@@ -359,6 +363,22 @@ public class AreaExplorer extends Module {
         .description("Fill colour of the area on the World Map.")
         .defaultValue(new SettingColor(80, 200, 255, 60))
         .visible(() -> mode.get() == Mode.Area && showOnMap.get())
+        .build()
+    );
+
+    private final Setting<Boolean> showFlown = sgGeneral.add(new BoolSetting.Builder()
+        .name("show-flown")
+        .description("Colours the part of the area already flown over this run on Xaero's World Map (and the site's map with site-sync). Gone once the run ends.")
+        .defaultValue(true)
+        .visible(() -> mode.get() == Mode.Area)
+        .build()
+    );
+
+    private final Setting<SettingColor> flownColor = sgGeneral.add(new ColorSetting.Builder()
+        .name("flown-color")
+        .description("Colour of the ground already flown over on the World Map.")
+        .defaultValue(new SettingColor(255, 170, 40, 70))
+        .visible(() -> mode.get() == Mode.Area && showFlown.get())
         .build()
     );
 
@@ -817,6 +837,14 @@ public class AreaExplorer extends Module {
     private RegistryKey<World> areaDimension;
     /** Flying the whole area again (the map's "Rescan"): explored means loaded this run, not drawn on the map. */
     private boolean rescan;
+    /** The area's ground flown over this run, for the map and the site; null with no area run going. */
+    private Coverage coverage;
+    private long[] restoredCoverage;
+    private long lastCoverageChunk = Long.MIN_VALUE;
+    /** The coverage version last sent to the site, and when: sent on change, and again every so often in case one got lost. */
+    private int coverageSentVersion = -1;
+    private long coverageSentNanos;
+    private static final long COVERAGE_SITE_MIN_NANOS = 5_000_000_000L, COVERAGE_SITE_RESEND_NANOS = 30_000_000_000L;
     private long lastRescannedChunk = Long.MIN_VALUE;
     private int rescanCheckTicks;
     private final LongSet explored = new LongOpenHashSet();
@@ -980,6 +1008,17 @@ public class AreaExplorer extends Module {
         return mapColor.get();
     }
 
+    /** The ground flown over this run to colour on the World Map while it shows the given dimension, or null. */
+    public Coverage mapCoverage(RegistryKey<World> dimension) {
+        if (!isActive() || !showFlown.get() || coverage == null || phase == Phase.IDLE || phase == Phase.SPIRAL) return null;
+        if (areaDimension != null && dimension != null && !areaDimension.equals(dimension)) return null;
+        return coverage;
+    }
+
+    public SettingColor flownColor() {
+        return flownColor.get();
+    }
+
     /** The keybind (pressed with no screen open) pauses / resumes; the GUI still turns it off. */
     @Override
     public void toggle() {
@@ -1132,6 +1171,7 @@ public class AreaExplorer extends Module {
         MAP.stop();
         explored.clear();
         exploredGrid = null;
+        coverage = null;
         follower.clear();
         flownStrips.clear();
         stripPre.clear();
@@ -1239,6 +1279,11 @@ public class AreaExplorer extends Module {
         idleLoops = 0;
         lastRescannedChunk = Long.MIN_VALUE;
         rescanCheckTicks = 0;
+        coverage = new Coverage(area);
+        if (restoredCoverage != null) coverage.restore(restoredCoverage);
+        restoredCoverage = null;
+        lastCoverageChunk = Long.MIN_VALUE;
+        coverageSentVersion = -1;
 
         if (rescan) {
             markRescanned();
@@ -1952,6 +1997,15 @@ public class AreaExplorer extends Module {
         int bendX = xFirst <= zFirst ? toX : fromX;
         int bendZ = xFirst <= zFirst ? fromZ : toZ;
         points.add(new Point(blockCentre(bendX), blockCentre(bendZ), false));
+    }
+
+    /** The ground within the swath of the player counts as flown over, on entering each chunk. */
+    private void markCoverage() {
+        if (coverage == null) return;
+        ChunkPos p = mc.player.getChunkPos();
+        if (p.toLong() == lastCoverageChunk) return;
+        lastCoverageChunk = p.toLong();
+        coverage.markAround(p.x, p.z, reach);
     }
 
     /** Picks up chunks around the player that the map has drawn by now. */
@@ -2862,6 +2916,7 @@ public class AreaExplorer extends Module {
             box.addProperty("maxX", area.maxCX() * 16 + 15);
             box.addProperty("maxZ", area.maxCZ() * 16 + 15);
             status.add("area", box);
+            if (coverage != null && showFlown.get()) addCoverage(status);
         }
         int eta = phase == Phase.IDLE ? -1 : etaSeconds();
         if (eta >= 0) status.addProperty("etaSeconds", eta);
@@ -2871,6 +2926,30 @@ public class AreaExplorer extends Module {
         found.addProperty("items", savedItems.size());
         status.add("runFinds", found);
         return status;
+    }
+
+    /**
+     * The flown cells for the site's map: when they've changed (at most every 5 s) and every half
+     * minute anyway, as a live status can be dropped for a newer one before it goes. Its version alone otherwise.
+     */
+    private void addCoverage(JsonObject status) {
+        long now = System.nanoTime();
+        boolean changed = coverage.version() != coverageSentVersion && now - coverageSentNanos >= COVERAGE_SITE_MIN_NANOS;
+        if (!changed && now - coverageSentNanos < COVERAGE_SITE_RESEND_NANOS) {
+            status.addProperty("coverageVersion", coverageSentVersion);
+            return;
+        }
+        coverageSentVersion = coverage.version();
+        coverageSentNanos = now;
+        JsonObject grid = new JsonObject();
+        grid.addProperty("version", coverage.version());
+        grid.addProperty("cell", coverage.cell());
+        grid.addProperty("minCX", coverage.area().minCX());
+        grid.addProperty("minCZ", coverage.area().minCZ());
+        grid.addProperty("cols", coverage.cols());
+        grid.addProperty("rows", coverage.rows());
+        grid.addProperty("bits", coverage.encode());
+        status.add("coverage", grid);
     }
 
     /** Writes every all-finds file with anything new (on the files thread): ones of other dimensions too, and with no world. */
@@ -3181,6 +3260,7 @@ public class AreaExplorer extends Module {
             return;
         }
         if (paused) return;
+        markCoverage();
 
         switch (phase) {
             case SWEEP -> tickSweep();
@@ -3580,6 +3660,7 @@ public class AreaExplorer extends Module {
             tag.putBoolean("rescan", rescan);
             // With the map, reading it again tells what's explored
             if (!readsMap()) tag.putLongArray("explored", explored.toLongArray());
+            if (coverage != null) tag.putLongArray("coverage", coverage.toLongArray());
         }
         tag.putInt("active-ticks", activeTicks);
         tag.putDouble("flight-distance", flightDistance);
@@ -3644,6 +3725,7 @@ public class AreaExplorer extends Module {
             areaDimension = mc.world.getRegistryKey();
             rescan = tag.getBoolean("rescan");
             if (tag.contains("explored")) restoredExplored = tag.getLongArray("explored");
+            restoredCoverage = tag.contains("coverage") ? tag.getLongArray("coverage") : null;
             info("Carrying on with the saved (highlight)%dx%d(default) chunk area%s.", area.width(), area.depth(), rescan ? " rescan" : "");
             carryingOn = true;
             try {
