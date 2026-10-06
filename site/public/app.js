@@ -7600,7 +7600,6 @@ function bindAreaExplorerMap() {
 
   canvas.addEventListener('wheel', event => {
     if (!ae.view) return;
-    if (!$('#areaExplorerMapWrap').classList.contains('is-fullscreen') && !event.ctrlKey && !event.metaKey) return;
     event.preventDefault();
     zoomAreaExplorerMap(Math.exp(-event.deltaY * 0.0015), ...local(event));
   }, { passive: false });

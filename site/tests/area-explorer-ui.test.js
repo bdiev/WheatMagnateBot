@@ -371,10 +371,10 @@ function testEmbeddedTouch() {
   assert.equal(f.context.selections, undefined, 'touch gesture completion cannot select a marker');
   const wheel = { deltaY: -100, clientX: 200, clientY: 200, preventDefault: () => { prevented++; } };
   const before = prevented;
+  const scaleBeforeWheel = f.ae.view.scale;
   f.listeners.get('wheel')(wheel);
-  assert.equal(prevented, before, 'ordinary wheel scrolling is not trapped by the embedded map');
-  f.listeners.get('wheel')({ ...wheel, ctrlKey: true });
-  assert.equal(prevented, before + 1, 'Ctrl+wheel zooms the embedded map');
+  assert.equal(prevented, before + 1, 'ordinary wheel zooms the embedded map without Ctrl');
+  assert.ok(f.ae.view.scale > scaleBeforeWheel, 'wheel scrolling increases map zoom');
 }
 
 function testEyeClickAndHold() {
