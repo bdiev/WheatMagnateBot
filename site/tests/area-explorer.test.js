@@ -177,7 +177,10 @@ async function testIngestAndQueries() {
 
     const map = await service.getMapPoints(new URL('http://x/api/area-explorer/map?dimension=overworld'));
     assert.equal(map.points.length, 4);
-    assert.equal(map.points.every(point => point.length === 5 && typeof point[4] === 'string'), true, 'a point carries its name for the hover');
+    assert.equal(map.mode, 'points');
+    assert.equal(map.points.every(point => point.length === 4), true, 'a point is just [id, kind, x, z]');
+    const inView = await service.getMapPoints(new URL('http://x/api/area-explorer/map?dimension=overworld&minX=-10&minZ=-10&maxX=10&maxZ=10'));
+    assert.deepEqual(inView.points.map(point => [point[2], point[3]]).sort(), [[1, 1], [5, 5]], 'only the part of the map in view');
 
     // Sorting: by name, and nearest a spot
     const byName = await service.getFinds(url('dimension=overworld&sort=name'));
@@ -265,7 +268,7 @@ async function testMarkers() {
     assert.deepEqual(shulkers.finds.map(find => [find.name, find.x]).sort(), [['Shulker Box', 5], ['Shulker Box', 900]]);
     assert.equal((await service.getFinds(url('name=Shulker%20Box'))).total, 5, 'the name only narrows markers');
     const points = await service.getMapPoints(new URL('http://x/api/area-explorer/map?kind=MARKER&name=End%20Portal'));
-    assert.deepEqual(points.points.map(point => point.slice(1)), [['MARKER', 100, 200, 'End Portal']]);
+    assert.deepEqual(points.points.map(point => point.slice(1)), [['MARKER', 100, 200]]);
 
     // A marker that's wrong or gone comes off the site, and the mod finding it again doesn't bring it back
     const gone = shulkers.finds.find(find => find.x === 5);
@@ -345,6 +348,32 @@ function testEventNormalization() {
   assert.equal(normalizeEvent({ id: 'short', at: NOW, message: 'x' }, NOW), null, 'the id keeps a resend from being stored twice');
   assert.equal(normalizeEvent({ id: 'a1b2c3d4-0000', at: NOW, message: '' }, NOW), null);
   assert.equal(normalizeEvent({ id: 'a1b2c3d4-0000', at: NOW + 3 * 86_400_000, message: 'x' }, NOW), null);
+}
+
+/** However many finds there are, the map gets all of them: counted in cells past what it takes one by one. */
+async function testMapCrowds() {
+  const db = new PGlite();
+  try {
+    for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '072_area_explorer_picked_up.sql', '077_area_explorer_finds_xz.sql']) {
+      await db.exec(fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8'));
+    }
+    // 25,000 signs over 100,000 blocks, and a base
+    await db.exec(`INSERT INTO area_explorer_finds (server, dimension, kind, x, y, z, found_at, name, dedupe_key)
+      SELECT 's', 'overworld', 'SIGN', (i * 4) - 50000, 64, (i % 100) * 7, NOW(), 'Oak Sign', 'SIGN:' || i FROM generate_series(1, 25000) AS i`);
+    await db.exec(`INSERT INTO area_explorer_finds (server, dimension, kind, x, y, z, found_at, name, dedupe_key)
+      VALUES ('s', 'overworld', 'BASE', 0, 64, 0, NOW(), 'Base #1', 'BASE:0')`);
+    const service = createAreaExplorerService({ pool: poolFor(db), hashToken, readJsonBody: async () => ({}), sendJson() {}, sendError() {}, enforceRateLimit: () => true });
+    const all = await service.getMapPoints(new URL('http://x/api/area-explorer/map?server=s&dimension=overworld&minX=-60000&minZ=-60000&maxX=60000&maxZ=60000&cell=256'));
+    assert.equal(all.mode, 'cells', 'too many to send one by one');
+    assert.equal(all.cells.reduce((sum, cell) => sum + cell[3], 0), 25_001, 'every find counted in a cell, none left out');
+    assert.ok(all.cell >= 256, 'cells no smaller than asked for');
+    assert.ok(all.cells.some(cell => cell[2] === 'BASE'), 'the base too');
+    const close = await service.getMapPoints(new URL('http://x/api/area-explorer/map?server=s&dimension=overworld&minX=-200&minZ=-10&maxX=200&maxZ=800&cell=1'));
+    assert.equal(close.mode, 'points', 'zoomed in: one by one');
+    assert.equal(close.points.length, 102, '101 signs (both edges count) and the base');
+  } finally {
+    await db.close();
+  }
 }
 
 async function testCommands() {
@@ -531,6 +560,7 @@ function testRunLogWiring() {
   await testCoverage();
   await testCleanNames();
   await testCommands();
+  await testMapCrowds();
   testWiring();
   testRunLogWiring();
   console.log('area-explorer tests passed');

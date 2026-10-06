@@ -39,12 +39,12 @@ function fixture() {
     loadXaeroRegionMap: async () => {}, escapeHtml: String,
     renderAreaExplorerStatus() {},
     saveAreaExplorerSetting(key, value) { context.savedSetting = { key, value }; },
-    formatNumber: String, AREA_EXPLORER_LOG_PAGE: 50,
+    formatNumber: String, AREA_EXPLORER_LOG_PAGE: 50, URLSearchParams,
     queueRealtimeRefresh(key) { context.refreshed = (context.refreshed || []).concat(key); },
     refreshAreaExplorerFromEvent() {}, applyAreaExplorerEvents() {},
     fetchJson: url => new Promise((resolve, reject) => requests.push({ url, resolve, reject }))
   });
-  for (const name of ['renderAreaExplorerMarkerVisibility', 'isAreaExplorerPointVisible', 'setAreaExplorerMarkerKind', 'loadAreaExplorerFinds', 'loadAreaExplorerMap', 'setAreaExplorerFindsVisible', 'selectAreaExplorerFind', 'areaExplorerHeading', 'areaExplorerLiveStatus', 'recordAreaExplorerTrail', 'areaExplorerTrail', 'applyAreaExplorerLiveStatus', 'loadAreaExplorerLive', 'noteAreaExplorerVersions', 'areaExplorerListAnchor', 'areaExplorerListIds', 'markAreaExplorerNewFinds', 'setAreaExplorerNewFinds']) vm.runInContext(functionSource(name), context);
+  for (const name of ['renderAreaExplorerMarkerVisibility', 'isAreaExplorerPointVisible', 'setAreaExplorerMarkerKind', 'loadAreaExplorerFinds', 'loadAreaExplorerMap', 'setAreaExplorerFindsVisible', 'selectAreaExplorerFind', 'areaExplorerHeading', 'areaExplorerLiveStatus', 'recordAreaExplorerTrail', 'areaExplorerTrail', 'applyAreaExplorerLiveStatus', 'loadAreaExplorerLive', 'noteAreaExplorerVersions', 'areaExplorerListAnchor', 'areaExplorerListIds', 'markAreaExplorerNewFinds', 'setAreaExplorerNewFinds', 'areaExplorerMapWindow', 'areaExplorerMapCovers']) vm.runInContext(functionSource(name), context);
   return { ae, node, requests, context };
 }
 
@@ -81,6 +81,7 @@ async function testFindsRaceAndScroll() {
 
 async function testMapRace() {
   const { ae, requests, context } = fixture();
+  ae.view = { cx: 0, cz: 0, scale: 0.01 };
   const first = context.loadAreaExplorerMap();
   ae.kind = 'BASE';
   const second = context.loadAreaExplorerMap();
@@ -89,6 +90,27 @@ async function testMapRace() {
   requests[0].resolve({ points: [['old', 'SIGN', 1, 2]] });
   await first;
   assert.equal(ae.points[0].id, 'new', 'map filters must also discard late responses');
+  // It asks for the part in view (and a margin), and the size of the cells crowds are counted in
+  const asked = new URLSearchParams(requests[1].url.split('?')[1]);
+  assert.ok(Number(asked.get('minX')) < 0 && Number(asked.get('maxX')) > 0, 'the view around its middle');
+  assert.equal(Math.log2(Number(asked.get('cell'))) % 1, 0, 'cells a power of two blocks, so they line up from one load to the next');
+
+  // Too many to come one by one: counted in cells, every find in one
+  const crowded = context.loadAreaExplorerMap();
+  requests[2].resolve({ mode: 'cells', cell: 512, cells: [[1, 2, 'SIGN', 900], [1, 2, 'BASE', 1], [3, 4, 'ITEM', 7]] });
+  await crowded;
+  assert.equal(ae.points.length, 0);
+  assert.equal(ae.cells.size, 512);
+  assert.equal(ae.cells.list.length, 2, 'one cell, however many kinds in it');
+  assert.equal(ae.cells.list[0].counts.SIGN + ae.cells.list[0].counts.BASE, 901);
+
+  // What's held covers a smaller view of the same filter; not a bigger one, nor finer cells than it has
+  const held = { minX: -100, maxX: 100, minZ: -100, maxZ: 100, filter: 'f', mode: 'cells', cell: 8 };
+  assert.equal(context.areaExplorerMapCovers(held, { minX: -50, maxX: 50, minZ: -50, maxZ: 50, cell: 4 }, 'f'), true);
+  assert.equal(context.areaExplorerMapCovers(held, { minX: -150, maxX: 50, minZ: -50, maxZ: 50, cell: 4 }, 'f'), false, 'moved out of it');
+  assert.equal(context.areaExplorerMapCovers(held, { minX: -50, maxX: 50, minZ: -50, maxZ: 50, cell: 1 }, 'f'), false, 'zoomed in past its cells');
+  assert.equal(context.areaExplorerMapCovers({ ...held, mode: 'points' }, { minX: -50, maxX: 50, minZ: -50, maxZ: 50, cell: 1 }, 'f'), true, 'finds one by one do at any zoom');
+  assert.equal(context.areaExplorerMapCovers(held, { minX: -50, maxX: 50, minZ: -50, maxZ: 50, cell: 4 }, 'other'), false, 'another filter');
 }
 
 async function testSelectionRace() {
@@ -236,11 +258,10 @@ function gestureFixture({ interactive = true } = {}) {
     openAreaExplorerMenu(x, z) { context.menuAt = [x, z]; }, closeAreaExplorerMenu() {},
     selectAreaExplorerFind: async id => { context.selections = (context.selections || []).concat(id); },
     areaExplorerInTerritory: () => true, areaExplorerToScreen: () => [200, 200],
-    isAreaExplorerPointVisible: () => true,
+    isAreaExplorerPointVisible: () => true, areaExplorerHasCells: () => false,
     setBanner: message => { throw new Error(message); }
   });
   vm.runInContext(functionSource('zoomAreaExplorerMap'), context);
-  vm.runInContext(functionSource('bindAreaExplorerEmbeddedTouch'), context);
   vm.runInContext(functionSource('bindAreaExplorerMap'), context);
   context.bindAreaExplorerMap();
   const send = (type, id, x, y = 200) => listeners.get(type)({
@@ -253,11 +274,12 @@ function gestureFixture({ interactive = true } = {}) {
 function testTouchGestures() {
   let f = gestureFixture({ interactive: false });
   f.send('pointerdown', 1, 200);
-  assert.equal(f.timers.size, 0, 'page scrolling mode must not arm map long presses');
+  assert.equal(f.timers.size, 1, 'embedded map supports holding for actions');
   f.send('pointermove', 1, 230);
   f.send('pointerup', 1, 230);
-  assert.equal(f.ae.view.cx, 0, 'scrolling the page does not pan the map');
-  assert.equal(f.context.selections, undefined, 'a page swipe must not select a find');
+  assert.equal(f.ae.view.cx, -30, 'one finger pans the embedded map');
+  assert.equal(f.ae.view.scale, 1, 'one finger never changes the map zoom');
+  assert.equal(f.context.selections, undefined, 'a map swipe must not select a find');
 
   f = gestureFixture();
   f.send('pointerdown', 1, 200);
@@ -281,7 +303,7 @@ function testTouchGestures() {
   assert.equal(f.timers.size, 0, 'a second finger cancels the hold timer');
   f.send('pointermove', 1, 120);
   f.send('pointermove', 2, 320);
-  assert.ok(Math.abs(f.ae.view.cx + 20) < 0.001, 'two fingers moving together pan by their midpoint');
+  assert.ok(Math.abs(f.ae.view.cx) < 0.001, 'two fingers moving together do not pan the map');
   assert.ok(Math.abs(f.ae.view.scale - 1) < 0.001, 'parallel movement preserves zoom');
   f.send('pointermove', 2, 420);
   assert.ok(f.ae.view.scale > 1, 'spreading fingers zooms in');
@@ -353,21 +375,16 @@ function testMarkerAboveDetails() {
 function testEmbeddedTouch() {
   const f = gestureFixture({ interactive: false });
   let prevented = 0;
-  const touches = (a, b) => [a, b].filter(x => x !== undefined).map(clientX => ({ clientX, clientY: 200 }));
-  const touch = (type, list) => f.listeners.get(type)({ touches: list, preventDefault: () => { prevented++; } });
-  touch('touchstart', touches(100));
-  touch('touchmove', touches(120));
-  assert.equal(prevented, 0, 'one finger keeps native page scrolling');
-  assert.equal(f.ae.view.cx, 0);
   f.send('pointerdown', 1, 100);
-  touch('touchstart', touches(100, 300));
-  touch('touchmove', touches(120, 320));
-  assert.equal(prevented, 2, 'two fingers reserve the gesture for the map');
-  assert.equal(f.ae.view.cx, -20, 'embedded map pans without a Move map mode');
-  touch('touchmove', touches(100, 400));
+  f.send('pointerdown', 2, 300);
+  f.send('pointermove', 2, 400);
   assert.equal(f.ae.view.scale, 1.5, 'embedded map pinch changes map zoom');
-  touch('touchend', []);
-  f.send('pointerup', 1, 100);
+  f.send('pointerup', 2, 400);
+  const afterPinch = f.ae.view.cx;
+  f.send('pointermove', 1, 130);
+  assert.equal(f.ae.view.cx, afterPinch - 20, 'remaining finger resumes panning at the current zoom');
+  assert.equal(f.ae.view.scale, 1.5, 'resuming a one-finger drag does not zoom');
+  f.send('pointerup', 1, 130);
   assert.equal(f.context.selections, undefined, 'touch gesture completion cannot select a marker');
   const wheel = { deltaY: -100, clientX: 200, clientY: 200, preventDefault: () => { prevented++; } };
   const before = prevented;

@@ -15,7 +15,11 @@ const MAX_Y = 4096;
 const ONLINE_WINDOW_MS = 90_000;
 const TOKEN_PREFIX = 'aex_';
 const MAX_PAGE_SIZE = 200;
+// The map asks for the area in view. Up to this many finds there come one by one; more, and they come
+// counted in square cells a few screen pixels wide - none left out, however many there are
 const MAX_MAP_POINTS = 20_000;
+// Cells a side of the view at most: the map's cell size is raised to keep to it
+const MAX_MAP_CELLS_SIDE = 600;
 const TOP_LOOT_NAMES = 8;
 // Commands from the site's map to a mod: what they can be, how big an area, how long they wait to be picked up
 const COMMAND_KINDS = Object.freeze(['EXPLORE', 'RESCAN']);
@@ -650,14 +654,39 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     return { finds: rows.rows.map(publicFind), total: total.rows[0]?.total || 0, limit, offset };
   }
 
-  /** Every find of the scope as a point for the map: [id, kind, x, z, name], the name for a hover. */
+  /**
+   * The finds of the scope in the part of the map in view (minX, minZ, maxX, maxZ - all of it
+   * without): each one as [id, kind, x, z] while there are up to {@link MAX_MAP_POINTS}; past that
+   * counted in square cells of {@code cell} blocks, [cellX, cellZ, kind, count], so the map shows
+   * every find however many there are, and splits the cells into finds as it zooms in.
+   */
   async function getMapPoints(url) {
     const params = [];
     const where = [];
     scopeFilter(url, params, where);
+    // A missing one is no bound at all, not 0
+    const bounds = ['minX', 'minZ', 'maxX', 'maxZ'].map(key => (url.searchParams.has(key) ? normalizeInteger(url.searchParams.get(key), MAX_COORDINATE) : null));
+    const [minX, minZ, maxX, maxZ] = bounds;
+    if (bounds.every(value => value !== null)) {
+      params.push(Math.min(minX, maxX), Math.max(minX, maxX), Math.min(minZ, maxZ), Math.max(minZ, maxZ));
+      where.push(`x BETWEEN $${params.length - 3} AND $${params.length - 2} AND z BETWEEN $${params.length - 1} AND $${params.length}`);
+    }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-    const rows = await pool.query(`SELECT id, kind, x, z, name FROM area_explorer_finds ${whereSql} ORDER BY found_at DESC LIMIT ${MAX_MAP_POINTS}`, params);
-    return { points: rows.rows.map(row => [String(row.id), row.kind, row.x, row.z, row.name]), truncated: rows.rows.length >= MAX_MAP_POINTS };
+    const rows = await pool.query(`SELECT id, kind, x, z FROM area_explorer_finds ${whereSql} LIMIT ${MAX_MAP_POINTS + 1}`, params);
+    if (rows.rows.length <= MAX_MAP_POINTS) {
+      return { mode: 'points', points: rows.rows.map(row => [String(row.id), row.kind, row.x, row.z]) };
+    }
+    // Too many to send one by one: counted by cell and kind
+    const span = bounds.every(value => value !== null) ? Math.max(Math.abs(maxX - minX), Math.abs(maxZ - minZ)) : 2 * MAX_COORDINATE;
+    let cell = Math.min(Math.max(normalizeInteger(url.searchParams.get('cell'), 1 << 20) || 16, 1), 1 << 20);
+    cell = Math.max(cell, Math.ceil(span / MAX_MAP_CELLS_SIDE));
+    params.push(cell);
+    const cells = await pool.query(
+      `SELECT floor(x::float8 / $${params.length})::int AS cx, floor(z::float8 / $${params.length})::int AS cz, kind, COUNT(*)::int AS n
+       FROM area_explorer_finds ${whereSql} GROUP BY 1, 2, 3`,
+      params
+    );
+    return { mode: 'cells', cell, cells: cells.rows.map(row => [row.cx, row.cz, row.kind, row.n]) };
   }
 
   async function getFind(id) {

@@ -214,6 +214,20 @@ function sendJson(res, statusCode, payload) {
   res.end(body);
 }
 
+/** sendJson, gzipped (in the background) for a browser that takes it when the answer is big. */
+async function sendJsonCompressed(req, res, statusCode, payload) {
+  const body = JSON.stringify(payload);
+  const headers = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
+  if (body.length < 32 * 1024 || !/gzip/.test(String(req.headers['accept-encoding'] || ''))) {
+    res.writeHead(statusCode, headers);
+    res.end(body);
+    return;
+  }
+  const zipped = await new Promise((resolve, reject) => zlib.gzip(body, (error, result) => (error ? reject(error) : resolve(result))));
+  res.writeHead(statusCode, { ...headers, 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding', 'Content-Length': zipped.length });
+  res.end(zipped);
+}
+
 function sendCsv(res, filename, rows) {
   const escape = value => `"${String(value ?? '').replace(/"/g, '""')}"`;
   const body = rows.map(row => row.map(escape).join(',')).join('\n');
@@ -6219,7 +6233,8 @@ async function handleApi(req, res, url) {
       if (!pool) { sendError(res, 503, 'Area Explorer needs the database.'); return; }
       if (await getXaeroRegionMapService().handleRequest(req, res, url)) return;
       const response = await getAreaExplorerService().handleApi(req, currentUser, url, { assertAdmin: assertAdminUser, readBody: request => readJsonBody(request) });
-      if (response) { sendJson(res, response.statusCode, response.payload); return; }
+      // Gzipped when big: the map's points run to megabytes as the finds pile up
+      if (response) { await sendJsonCompressed(req, res, response.statusCode, response.payload); return; }
       sendError(res, 404, 'Area Explorer route not found.');
       return;
     }

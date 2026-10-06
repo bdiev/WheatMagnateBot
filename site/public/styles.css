@@ -13782,7 +13782,7 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
 }
 
 @media (pointer: coarse), (max-width: 640px) {
-  .area-explorer-map { touch-action: pan-y; }
+  .area-explorer-map { touch-action: none; }
   .is-fullscreen .area-explorer-map { touch-action: none; }
   .area-explorer-mobile-hint { display: block; }
   .area-explorer-desktop-hint { display: none; }
