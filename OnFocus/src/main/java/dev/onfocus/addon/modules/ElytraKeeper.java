@@ -15,6 +15,7 @@ import net.minecraft.enchantment.Enchantments;
 import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
+import net.minecraft.nbt.NbtCompound;
 import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket;
 import net.minecraft.sound.SoundCategory;
 import net.minecraft.sound.SoundEvents;
@@ -23,6 +24,10 @@ import net.minecraft.sound.SoundEvents;
  * Keeps you in the air on long elytra flights: a worn-out elytra is swapped for a spare from the
  * inventory, gliding that stops mid-air is reopened the way a jump press would, and you get warned
  * before the last elytra runs out. Area Explorer turns it on by itself while exploring.
+ * <p>
+ * How long the elytras last is learned in flight: the formula (a durability point a second, Unbreaking
+ * stretching it) is checked against how fast they really wear - elytra fly modes, Mending in flight
+ * and the like change that a lot - and its estimate corrected by what was measured.
  */
 public class ElytraKeeper extends Module {
     private static final int SWAP_COOLDOWN_TICKS = 10;
@@ -64,6 +69,22 @@ public class ElytraKeeper extends Module {
         .build()
     );
 
+    /** Flight measured before the wear is trusted, and kept at most: older flights count less after that. */
+    private static final int WEAR_MIN_TICKS = 10 * 60 * 20;
+    private static final long WEAR_MAX_TICKS = 4 * 60 * 60 * 20L;
+    /** A change in durability bigger than this isn't wear: an elytra swapped in, picked up, repaired. */
+    private static final int WEAR_MAX_STEP = 5;
+    /** Below this many blocks a tick across the ground the player isn't flying (5 blocks/s). */
+    private static final double FLYING_SPEED = 0.25;
+
+    /** Ticks flown, and the seconds of flight the formula gives the durability used meanwhile. Saved with the module. */
+    private long wearFlightTicks;
+    private double wearFormulaSeconds;
+    private int wearRemaining = -1;
+    /** Where the player was last tick, for telling flying from standing. */
+    private double prevX = Double.NaN, prevZ;
+    private boolean announcedWear;
+
     private int swapCooldown;
     private int ticksSinceGlide = Integer.MAX_VALUE;
     private int redeployCooldown;
@@ -89,6 +110,7 @@ public class ElytraKeeper extends Module {
         else if (ticksSinceGlide != Integer.MAX_VALUE) ticksSinceGlide++;
 
         ItemStack chest = mc.player.getEquippedStack(EquipmentSlot.CHEST);
+        tickWear(chest);
         if (autoSwap.get() && chest.isOf(Items.ELYTRA)) {
             if (swapCooldown > 0) swapCooldown--;
             else if (remaining(chest) <= swapAt.get()) swapElytra();
@@ -99,7 +121,60 @@ public class ElytraKeeper extends Module {
         if (redeploy.get() && !Modules.get().get(ElytraControl.class).isActive()) tickRedeploy();
     }
 
-    /** Rough flight time left across the worn elytra and all spares, or -1 if none is worn. */
+    /**
+     * The worn elytra's durability against time in the air: a point lost counts as the seconds the
+     * formula gives it (Unbreaking N: N + 1), one regained by Mending takes them back.
+     */
+    private void tickWear(ItemStack chest) {
+        if (!chest.isOf(Items.ELYTRA)) {
+            wearRemaining = -1;
+            prevX = Double.NaN;
+            return;
+        }
+        int remaining = remaining(chest);
+        int used = wearRemaining < 0 ? 0 : wearRemaining - remaining;
+        if (Math.abs(used) <= WEAR_MAX_STEP) wearFormulaSeconds += used * (Utils.getEnchantmentLevel(chest, Enchantments.UNBREAKING) + 1);
+        wearRemaining = remaining;
+
+        double moved = Double.isNaN(prevX) ? 0 : Math.hypot(mc.player.getX() - prevX, mc.player.getZ() - prevZ);
+        prevX = mc.player.getX();
+        prevZ = mc.player.getZ();
+        boolean flying = !mc.player.isOnGround() && !mc.player.isTouchingWater() && !mc.player.hasVehicle() && moved >= FLYING_SPEED && moved < 10;
+        if (!flying) return;
+        wearFlightTicks++;
+        if (wearFlightTicks >= WEAR_MAX_TICKS) {
+            // Halved: the last few hours of flight count, an old fly mode fades out
+            wearFlightTicks /= 2;
+            wearFormulaSeconds /= 2;
+        }
+        if (!announcedWear && wearLearned()) {
+            announcedWear = true;
+            OnFocusAddon.LOG.info("[ElytraKeeper] Elytra wear learned over {} min of flight: {}", wearFlightTicks / 1200, wearText());
+        }
+    }
+
+    /** True once enough flight has been measured to trust it over the formula. */
+    public boolean wearLearned() {
+        return wearFlightTicks >= WEAR_MIN_TICKS;
+    }
+
+    /** Real flight time for each second the formula gives, or 0 with the elytras hardly wearing at all; 1 until learned. */
+    private double wearFactor() {
+        if (!wearLearned()) return 1;
+        if (wearFormulaSeconds <= 1) return 0;
+        return wearFlightTicks / 20.0 / wearFormulaSeconds;
+    }
+
+    /** "x2.3 the formula" for the log. */
+    public String wearText() {
+        double factor = wearFactor();
+        return factor == 0 ? "they hardly wear at all" : "they last %.1fx what the formula says".formatted(factor);
+    }
+
+    /**
+     * Rough flight time left across the worn elytra and all spares, corrected by the wear learned in
+     * flight; -1 if none is worn, {@link Integer#MAX_VALUE} if they've hardly worn at all.
+     */
     public int flightSecondsLeft() {
         if (mc.player == null) return -1;
         ItemStack chest = mc.player.getEquippedStack(EquipmentSlot.CHEST);
@@ -113,7 +188,26 @@ public class ElytraKeeper extends Module {
                 if (isSpare(stack)) seconds += elytraSeconds(stack, swapAt.get());
             }
         }
-        return seconds;
+        double factor = wearFactor();
+        if (factor == 0) return Integer.MAX_VALUE;
+        return (int) Math.min(Integer.MAX_VALUE - 1, Math.round(seconds * factor));
+    }
+
+    @Override
+    public NbtCompound toTag() {
+        NbtCompound tag = super.toTag();
+        if (tag == null) return null;
+        tag.putLong("wear-flight-ticks", wearFlightTicks);
+        tag.putDouble("wear-formula-seconds", wearFormulaSeconds);
+        return tag;
+    }
+
+    @Override
+    public ElytraKeeper fromTag(NbtCompound tag) {
+        wearFlightTicks = tag.getLong("wear-flight-ticks");
+        wearFormulaSeconds = tag.getDouble("wear-formula-seconds");
+        super.fromTag(tag);
+        return this;
     }
 
     /** 1 durability per second of gliding; Unbreaking N skips the loss with chance N/(N+1). */

@@ -1,5 +1,7 @@
 package dev.onfocus.addon.modules;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import dev.onfocus.addon.ModuleLog;
 import dev.onfocus.addon.OnFocusAddon;
@@ -13,6 +15,8 @@ import dev.onfocus.addon.explore.CoveragePlanner.Segment;
 import dev.onfocus.addon.explore.FindsArchive;
 import dev.onfocus.addon.explore.MapSync;
 import dev.onfocus.addon.explore.SiteSync;
+import dev.onfocus.addon.explore.Territories;
+import dev.onfocus.addon.explore.Territories.Territory;
 import dev.onfocus.addon.explore.WaypointFollower;
 import dev.onfocus.addon.explore.WaypointFollower.Point;
 import dev.onfocus.addon.settings.OrderedItemListSetting;
@@ -35,7 +39,11 @@ import meteordevelopment.meteorclient.events.entity.player.PlaceBlockEvent;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.gui.GuiTheme;
 import meteordevelopment.meteorclient.gui.widgets.WWidget;
+import meteordevelopment.meteorclient.gui.widgets.containers.WTable;
+import meteordevelopment.meteorclient.gui.widgets.containers.WVerticalList;
 import meteordevelopment.meteorclient.gui.widgets.pressable.WButton;
+import meteordevelopment.meteorclient.gui.widgets.pressable.WCheckbox;
+import meteordevelopment.meteorclient.gui.widgets.pressable.WMinus;
 import meteordevelopment.meteorclient.events.world.ChunkDataEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
@@ -190,6 +198,14 @@ import java.util.function.Predicate;
  * Flown ground ({@code show-flown}): the part of the area the explorer has flown over this run is
  * coloured on Xaero's World Map and, with {@code site-sync}, on the site's map, until the run ends.
  * <p>
+ * Scanned territories: every Area run's ground flown over is kept per server ({@link Territories}),
+ * and listed in the module's settings, each shown on Xaero's World Map or hidden. Runs from before
+ * that are rebuilt, roughly, from the finds file: the ground around every find was loaded.
+ * <p>
+ * Site commands ({@code site-commands}): an administrator can pick an area on the site's map and
+ * send the mod off to explore or rescan it - the same as Xaero's Explore / Rescan. The mod picks
+ * them up with its status uploads, and checks in every few seconds while it's off too.
+ * <p>
  * With {@code site-sync}, what happens to the run - started, paused, kicked and why, reconnect attempts,
  * back on the server, totem pops, cleanup passes, done, and every warning - goes to the site's run log.
  * <p>
@@ -224,6 +240,12 @@ public class AreaExplorer extends Module {
     private static final double TURN_LEAD_SECONDS = 0.4;
     private static final double SPEED_SMOOTHING = 0.05;
     private static final double MIN_KNOWN_SPEED = 3; // blocks/s
+    /**
+     * Ticks after starting (or getting back on the server) before checking the player is flying: by
+     * their speed, not the gliding flag - some elytra fly modes keep that off while flying.
+     */
+    private static final int FLIGHT_CHECK_TICKS = 5 * 20;
+    private int flightCheckTicks;
     /** Flight a run needs behind it before its average speed is trusted for estimates. */
     private static final int RUN_SPEED_MIN_TICKS = 20 * 20;
     /** Flights shorter than this don't update the remembered speed. */
@@ -386,6 +408,21 @@ public class AreaExplorer extends Module {
         .description("Colour of the ground already flown over on the World Map.")
         .defaultValue(new SettingColor(255, 170, 40, 70))
         .visible(() -> mode.get() == Mode.Area && showFlown.get())
+        .build()
+    );
+
+    private final Setting<Boolean> showTerritories = sgGeneral.add(new BoolSetting.Builder()
+        .name("show-territories")
+        .description("Colours the ground scanned on earlier runs on Xaero's World Map - the territories ticked in the list below.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<SettingColor> territoryColor = sgGeneral.add(new ColorSetting.Builder()
+        .name("territory-color")
+        .description("Colour of the scanned territories on the World Map.")
+        .defaultValue(new SettingColor(90, 220, 120, 55))
+        .visible(showTerritories::get)
         .build()
     );
 
@@ -659,6 +696,14 @@ public class AreaExplorer extends Module {
         .build()
     );
 
+    private final Setting<Boolean> siteCommands = sgSite.add(new BoolSetting.Builder()
+        .name("site-commands")
+        .description("Lets an administrator on the site pick an area on its map and send you off to explore or rescan it. The mod checks in every few seconds for that, even while it's off.")
+        .defaultValue(true)
+        .visible(siteSync::get)
+        .build()
+    );
+
     private final Setting<Boolean> mapSync = sgSite.add(new BoolSetting.Builder()
         .name("map-sync")
         .description("Also sends Xaero's World Map of this server to the site - every dimension, what was explored before too, then each region again as it gets drawn - so the site shows it. Needs Xaero's World Map.")
@@ -859,6 +904,10 @@ public class AreaExplorer extends Module {
     private boolean rescan;
     /** The area's ground flown over this run, for the map and the site; null with no area run going. */
     private Coverage coverage;
+    /** The run's territory, kept as it goes: a new one for each area picked. */
+    private String territoryId;
+    /** Chunks around a find taken as scanned when rebuilding earlier runs from the finds: the player was that near at least. */
+    private static final int FIND_SCANNED_REACH = 4;
     private long[] restoredCoverage;
     private long lastCoverageChunk = Long.MIN_VALUE;
     private int coverageCheckTicks;
@@ -947,8 +996,21 @@ public class AreaExplorer extends Module {
         MeteorClient.EVENT_BUS.subscribe(new OffBindListener());
     }
 
+    /** How often the mod checks in with the site for commands while it's off. */
+    private static final int OFF_CHECK_IN_TICKS = 3 * 20;
+    private int offCheckInTicks;
+
     /** Meteor only runs the pause keybind's action while the module is on: this one carries on with a saved run when it's off. */
     private class OffBindListener {
+        /** Off, on a server, with site commands on: an idle status every few seconds, so an area sent from the site reaches us. */
+        @EventHandler
+        private void onTick(TickEvent.Post event) {
+            if (isActive() || mc.world == null || mc.player == null || mc.getCurrentServerEntry() == null) return;
+            if (!siteCommands.get() || siteTarget() == null || ++offCheckInTicks < OFF_CHECK_IN_TICKS) return;
+            offCheckInTicks = 0;
+            syncLiveSite();
+        }
+
         @EventHandler
         private void onKey(KeyEvent event) {
             if (event.action != KeyAction.Release || isActive() || mc.world == null || mc.currentScreen != null) return;
@@ -962,7 +1024,8 @@ public class AreaExplorer extends Module {
 
     @Override
     public WWidget getWidget(GuiTheme theme) {
-        WButton forget = theme.button("Forget saved run");
+        WVerticalList list = theme.verticalList();
+        WButton forget = list.add(theme.button("Forget saved run")).widget();
         forget.action = () -> {
             if (isActive()) {
                 warning("Turn the module off first - it saves the run again when turned off.");
@@ -977,7 +1040,113 @@ public class AreaExplorer extends Module {
             rescan = false;
             info("Saved run forgotten - it starts afresh next time.");
         };
-        return forget;
+
+        list.add(theme.horizontalSeparator("Scanned territories")).expandX();
+        WTable table = list.add(theme.table()).expandX().widget();
+        fillTerritories(theme, table);
+        WButton rebuild = list.add(theme.button("Rebuild earlier runs from the finds file (this dimension)")).expandX().widget();
+        rebuild.action = () -> {
+            if (!rebuildFindsTerritory(() -> fillTerritories(theme, table))) warning("Join the server and turn on all-finds-file first.");
+        };
+        return list;
+    }
+
+    /** A row per territory of this server: shown on the map or not, what and where, and a button to delete it. */
+    private void fillTerritories(GuiTheme theme, WTable table) {
+        table.clear();
+        Territories territories = territories();
+        if (territories == null) {
+            table.add(theme.label("Join a server to see its territories."));
+            return;
+        }
+        List<Territory> all = territories.all();
+        if (all.isEmpty()) {
+            table.add(theme.label("None yet - every Area run is kept here."));
+            return;
+        }
+        for (Territory t : all) {
+            WCheckbox shown = table.add(theme.checkbox(t.visible)).widget();
+            shown.action = () -> territories.setVisible(t, shown.checked);
+            table.add(theme.label(t.title())).expandCellX();
+            table.add(theme.label(FindsArchive.prettyName(t.dimension) + " · " + t.where()));
+            WMinus delete = table.add(theme.minus()).widget();
+            delete.action = () -> {
+                territories.delete(t);
+                fillTerritories(theme, table);
+            };
+            table.row();
+        }
+    }
+
+    /** This server's territories, or null off any server. */
+    private Territories territories() {
+        String key = sessionKey();
+        if (key == null) return null;
+        Path dir = FabricLoader.getInstance().getGameDir().resolve("onfocus").resolve("area-explorer").resolve("territories").resolve(fileSafe(key));
+        return Territories.of(dir, problem -> FILE_LOG.warn(problem));
+    }
+
+    /** The run's ground so far, as its territory: on every save of the run and when it's done. */
+    private void saveRunTerritory() {
+        if (coverage == null || area == null || territoryId == null) return;
+        Territories territories = territories();
+        RegistryKey<World> dimension = areaDimension != null ? areaDimension : mc.world != null ? mc.world.getRegistryKey() : leftDimension;
+        if (territories == null || dimension == null) return;
+        territories.put(territoryId, fileSafe(dimension.getValue().getPath()), rescan ? Territories.Kind.RESCAN : Territories.Kind.RUN, area, coverage);
+    }
+
+    /**
+     * Earlier runs, from before territories were kept, rebuilt from the all-finds file of this
+     * dimension: the chunks around every find were loaded, so scanned. Rough - ground with nothing on
+     * it leaves no trace - but it shows where the runs went. Read on the files thread; false without
+     * the file.
+     */
+    private boolean rebuildFindsTerritory(Runnable done) {
+        if (mc.world == null) return false;
+        String dimension = fileSafe(mc.world.getRegistryKey().getValue().getPath());
+        return withArchive(archive -> {
+            List<FindsArchive.Find> finds = archive.all();
+            if (finds.isEmpty()) {
+                mc.execute(() -> info("No finds in this dimension to rebuild from."));
+                return;
+            }
+            int minX = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+            for (FindsArchive.Find f : finds) {
+                minX = Math.min(minX, f.x() >> 4);
+                minZ = Math.min(minZ, f.z() >> 4);
+                maxX = Math.max(maxX, f.x() >> 4);
+                maxZ = Math.max(maxZ, f.z() >> 4);
+            }
+            Area bounds = new Area(minX - FIND_SCANNED_REACH, minZ - FIND_SCANNED_REACH, maxX + FIND_SCANNED_REACH, maxZ + FIND_SCANNED_REACH);
+            Coverage grid = new Coverage(bounds);
+            for (FindsArchive.Find f : finds) {
+                grid.markChunk(f.x() >> 4, f.z() >> 4);
+                grid.markAround(f.x() >> 4, f.z() >> 4, FIND_SCANNED_REACH, (cx, cz) -> true);
+            }
+            mc.execute(() -> {
+                Territories territories = territories();
+                if (territories == null) return;
+                territories.put("finds-" + dimension, dimension, Territories.Kind.FINDS, bounds, grid);
+                info("Rebuilt the earlier runs of %s from (highlight)%d(default) finds: (highlight)%d%%(default) of %dx%d chunks.",
+                    FindsArchive.prettyName(dimension), finds.size(), Math.round(grid.coveredShare() * 100), bounds.width(), bounds.depth());
+                done.run();
+            });
+        });
+    }
+
+    /** The ticked territories to colour on the World Map while it shows the given dimension; the run going on is coloured as flown instead. */
+    public List<Coverage> mapTerritories(RegistryKey<World> dimension) {
+        if (!showTerritories.get() || dimension == null) return List.of();
+        Territories territories = territories();
+        if (territories == null) return List.of();
+        String except = mapCoverage(dimension) != null && territoryId != null ? territoryId : "";
+        List<Coverage> grids = new ArrayList<>();
+        for (Territory t : territories.visible(fileSafe(dimension.getValue().getPath()), except)) grids.add(t.coverage);
+        return grids;
+    }
+
+    public SettingColor territoryColor() {
+        return territoryColor.get();
     }
 
     /** Called from the world map's "Explore" option. Starts (or restarts) exploring the given chunk rectangle. */
@@ -1003,6 +1172,7 @@ public class AreaExplorer extends Module {
             rescanOnReturn = false;
         }
         rescan = again;
+        territoryId = null;
         area = new Area(Math.min(x1, x2), Math.min(z1, z2), Math.max(x1, x2), Math.max(z1, z2));
         areaDimension = dimension;
         if (mode.get() != Mode.Area) mode.set(Mode.Area);
@@ -1305,6 +1475,7 @@ public class AreaExplorer extends Module {
         rescanCheckTicks = 0;
         coverage = new Coverage(area);
         if (restoredCoverage != null) coverage.restore(restoredCoverage);
+        if (territoryId == null) territoryId = "run-" + System.currentTimeMillis();
         restoredCoverage = null;
         lastCoverageChunk = Long.MIN_VALUE;
         coverageSentVersion = -1;
@@ -1373,7 +1544,7 @@ public class AreaExplorer extends Module {
                 startedKeeper = true;
             }
         }
-        if (!mc.player.isGliding()) warning("You're not flying - take off and start your elytra fly module.");
+        flightCheckTicks = FLIGHT_CHECK_TICKS;
     }
 
     private XaeroMappedChunkScan newScan() {
@@ -1967,6 +2138,8 @@ public class AreaExplorer extends Module {
         report("%s", text);
         siteEvent("success", "finish", text + " Found: " + foundSummary() + ".");
         stopLogged = true;
+        saveRunTerritory();
+        territoryId = null;
         area = null;
         rescan = false;
         turnOff();
@@ -2955,7 +3128,38 @@ public class AreaExplorer extends Module {
         SITE.sendLiveStatus(site, siteToken.get().trim(), archiveSpot().scope(), siteStatus(), problem -> {
             FILE_LOG.warn("Site: " + problem);
             mc.execute(() -> warning("Site: %s", problem));
-        });
+        }, commands -> mc.execute(() -> {
+            for (JsonElement command : commands) {
+                if (command.isJsonObject()) siteCommand(command.getAsJsonObject());
+            }
+        }));
+    }
+
+    /**
+     * An area sent from the site's map: explored or rescanned as if picked on Xaero's World Map -
+     * if it's this server and the dimension the player is in.
+     */
+    private void siteCommand(JsonObject command) {
+        if (mc.world == null || mc.player == null) return;
+        String kind = command.has("kind") ? command.get("kind").getAsString() : "";
+        String by = command.has("by") ? command.get("by").getAsString() : "the site";
+        String what = "RESCAN".equals(kind) ? "rescan" : "explore";
+        if (!siteCommands.get()) {
+            warning("%s asked from the site to %s an area, but site-commands is off.", by, what);
+            return;
+        }
+        SiteSync.Scope here = archiveSpot().scope();
+        String server = command.get("server").getAsString(), dimension = command.get("dimension").getAsString();
+        if (!here.server().equalsIgnoreCase(server) || !here.dimension().equals(dimension)) {
+            warning("%s asked from the site to %s an area in %s on %s - you're in %s on %s.", by, what,
+                FindsArchive.prettyName(dimension), server, FindsArchive.prettyName(here.dimension()), here.server());
+            return;
+        }
+        int x1 = command.get("minCX").getAsInt(), z1 = command.get("minCZ").getAsInt(), x2 = command.get("maxCX").getAsInt(), z2 = command.get("maxCZ").getAsInt();
+        info("(highlight)%s(default) sent you from the site to %s (highlight)%dx%d(default) chunks at X %d..%d, Z %d..%d.", by, what,
+            x2 - x1 + 1, z2 - z1 + 1, x1 * 16, x2 * 16 + 15, z1 * 16, z2 * 16 + 15);
+        if ("RESCAN".equals(kind)) rescan(x1, z1, x2, z2, mc.world.getRegistryKey());
+        else explore(x1, z1, x2, z2, mc.world.getRegistryKey());
     }
 
     /** The site scope of the server and dimension we're in, remembered for when we're off the server. */
@@ -3319,7 +3523,7 @@ public class AreaExplorer extends Module {
         // Chunks that came in before we were back in place were skipped
         scanLoadedChunksForMarkers();
         scanLoadedChunksForSigns();
-        if (!mc.player.isGliding()) warning("You're not flying - take off and start your elytra fly module.");
+        flightCheckTicks = FLIGHT_CHECK_TICKS;
     }
 
     @EventHandler
@@ -3352,6 +3556,7 @@ public class AreaExplorer extends Module {
 
         tickStats();
         tickEstimate();
+        checkFlying();
         scanItems();
         scanBaseEntities();
         confirmBaseCandidates();
@@ -3388,6 +3593,13 @@ public class AreaExplorer extends Module {
             default -> {}
         }
         if (phase != Phase.IDLE) steer();
+    }
+
+    /** A few seconds in: still standing about is worth a word - moving at flying speed isn't, gliding flag or not. */
+    private void checkFlying() {
+        if (flightCheckTicks <= 0 || paused || phase == Phase.SCAN) return;
+        if (--flightCheckTicks > 0) return;
+        if (!mc.player.isGliding() && speed < MIN_KNOWN_SPEED) warning("You're not flying - take off and start your elytra fly module.");
     }
 
     // Debug log: what the module costs and how well it does, for tuning it
@@ -3694,9 +3906,17 @@ public class AreaExplorer extends Module {
         report("Sweep route: (highlight)%s(default), about (highlight)%s(default) at (highlight)%d(default) blocks/s, plus a short cleanup.",
             formatBlocks((int) blocks), formatDuration(eta), Math.round(speed));
 
-        int elytraSeconds = Modules.get().get(ElytraKeeper.class).flightSecondsLeft();
+        ElytraKeeper keeper = Modules.get().get(ElytraKeeper.class);
+        int elytraSeconds = keeper.flightSecondsLeft();
         if (elytraSeconds >= 0 && elytraSeconds < eta && !Modules.get().get(ElytraControl.class).savesDurability()) {
-            warning("Your elytras only last about (highlight)%s(default) - not enough for the whole area.", formatDuration(elytraSeconds));
+            // Measured: how they've really worn in flight; otherwise the formula, which elytra fly modes can be far off
+            if (keeper.wearLearned()) {
+                warning("Your elytras last about (highlight)%s(default) by how they've worn in flight (%s) - not enough for the whole area.",
+                    formatDuration(elytraSeconds), keeper.wearText());
+            } else {
+                warning("Your elytras last about (highlight)%s(default) by the formula (1 durability a second) - not enough for the whole area. The real figure is learned after 10 minutes of flight.",
+                    formatDuration(elytraSeconds));
+            }
         }
     }
 
@@ -3780,6 +4000,8 @@ public class AreaExplorer extends Module {
             // With the map, reading it again tells what's explored
             if (!readsMap()) tag.putLongArray("explored", explored.toLongArray());
             if (coverage != null) tag.putLongArray("coverage", coverage.toLongArray());
+            if (territoryId != null) tag.putString("territory-id", territoryId);
+            saveRunTerritory();
         }
         tag.putInt("active-ticks", activeTicks);
         tag.putDouble("flight-distance", flightDistance);
@@ -3846,6 +4068,7 @@ public class AreaExplorer extends Module {
             area = new Area(a.getInt("min-x"), a.getInt("min-z"), a.getInt("max-x"), a.getInt("max-z"));
             areaDimension = mc.world.getRegistryKey();
             rescan = tag.getBoolean("rescan");
+            territoryId = tag.contains("territory-id") ? tag.getString("territory-id") : null;
             if (tag.contains("explored")) restoredExplored = tag.getLongArray("explored");
             restoredCoverage = tag.contains("coverage") ? tag.getLongArray("coverage") : null;
             info("Carrying on with the saved (highlight)%dx%d(default) chunk area%s.", area.width(), area.depth(), rescan ? " rescan" : "");

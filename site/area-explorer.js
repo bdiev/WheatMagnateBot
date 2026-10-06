@@ -17,6 +17,10 @@ const TOKEN_PREFIX = 'aex_';
 const MAX_PAGE_SIZE = 200;
 const MAX_MAP_POINTS = 20_000;
 const TOP_LOOT_NAMES = 8;
+// Commands from the site's map to a mod: what they can be, how big an area, how long they wait to be picked up
+const COMMAND_KINDS = Object.freeze(['EXPLORE', 'RESCAN']);
+const MAX_COMMAND_SIDE_CHUNKS = 8192;
+const COMMAND_TTL_MINUTES = 10;
 // The flown-over grid: cells a side at most, and cells in all
 const MAX_COVERAGE_SIDE = 2000;
 const MAX_COVERAGE_CELLS = 250_000;
@@ -341,10 +345,76 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
       });
     }
     if (newEvents.length) pruneEvents(now);
+    // A status upload is the mod checking in: it gets the commands waiting for it, once
+    const commands = status ? await takeCommands(token.id) : [];
     return {
       received: rawFinds.length, accepted: finds.length, added, duplicates: finds.length - added,
-      ...(rawEvents.length ? { events: newEvents.length } : {})
+      ...(rawEvents.length ? { events: newEvents.length } : {}),
+      ...(commands.length ? { commands } : {})
     };
+  }
+
+  /** The mod's commands not picked up yet and not stale, marked as delivered. */
+  async function takeCommands(tokenId) {
+    const rows = (await pool.query(
+      `UPDATE area_explorer_commands SET delivered_at = NOW()
+       WHERE token_id = $1 AND delivered_at IS NULL AND cancelled_at IS NULL
+         AND created_at > NOW() - make_interval(mins => $2)
+       RETURNING *`,
+      [tokenId, COMMAND_TTL_MINUTES]
+    )).rows;
+    return rows.sort((a, b) => Number(a.id) - Number(b.id)).map(row => ({
+      id: String(row.id), kind: row.kind, server: row.server, dimension: row.dimension,
+      minCX: row.min_cx, minCZ: row.min_cz, maxCX: row.max_cx, maxCZ: row.max_cz, by: row.created_by || ''
+    }));
+  }
+
+  /**
+   * An administrator sends a mod to explore or rescan a rectangle picked on the map (block
+   * coordinates, made chunks here). Replaces the mod's command still waiting, if any.
+   */
+  async function createCommand(currentUser, body) {
+    const kind = String(body?.kind || '').toUpperCase();
+    if (!COMMAND_KINDS.includes(kind)) throw httpError(400, 'Explore or rescan?');
+    const tokenId = String(body?.tokenId || '');
+    if (!/^\d{1,18}$/.test(tokenId)) throw httpError(400, 'Which mod?');
+    const server = normalizeScopeName(body?.server, 128);
+    const dimension = normalizeScopeName(body?.dimension, 64);
+    if (!server || !dimension) throw httpError(400, 'server and dimension are required.');
+    const coords = ['minX', 'minZ', 'maxX', 'maxZ'].map(key => normalizeInteger(body?.[key], MAX_COORDINATE));
+    if (coords.some(value => value === null)) throw httpError(400, 'The area is outside the world.');
+    const [x1, z1, x2, z2] = coords;
+    const minCX = Math.floor(Math.min(x1, x2) / 16), maxCX = Math.floor(Math.max(x1, x2) / 16);
+    const minCZ = Math.floor(Math.min(z1, z2) / 16), maxCZ = Math.floor(Math.max(z1, z2) / 16);
+    if (maxCX - minCX + 1 > MAX_COMMAND_SIDE_CHUNKS || maxCZ - minCZ + 1 > MAX_COMMAND_SIDE_CHUNKS) {
+      throw httpError(400, `At most ${MAX_COMMAND_SIDE_CHUNKS} chunks a side.`);
+    }
+    const token = (await pool.query('SELECT id, name FROM area_explorer_tokens WHERE id = $1 AND revoked_at IS NULL', [tokenId])).rows[0];
+    if (!token) throw httpError(404, 'That mod token is gone.');
+    const client = await pool.connect();
+    let row;
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        'UPDATE area_explorer_commands SET cancelled_at = NOW() WHERE token_id = $1 AND delivered_at IS NULL AND cancelled_at IS NULL', [tokenId]);
+      row = (await client.query(
+        `INSERT INTO area_explorer_commands (token_id, kind, server, dimension, min_cx, min_cz, max_cx, max_cz, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+        [tokenId, kind, server, dimension, minCX, minCZ, maxCX, maxCZ, currentUser.username]
+      )).rows[0];
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+    const size = `${maxCX - minCX + 1}x${maxCZ - minCZ + 1} chunks`;
+    await recordSystemLog({
+      category: 'area_explorer', actor: currentUser.username,
+      message: `Sent "${token.name}" to ${kind === 'RESCAN' ? 'rescan' : 'explore'} ${size} at X ${minCX * 16}..${maxCX * 16 + 15}, Z ${minCZ * 16}..${maxCZ * 16 + 15} (${server}, ${dimension}).`
+    });
+    return { command: { id: String(row.id), kind, tokenId, size, minCX, minCZ, maxCX, maxCZ } };
   }
 
   /** The run log's events, skipping ones sent before (same mod, same id); oldest first. */
@@ -662,6 +732,11 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     if (path === '/api/area-explorer/map' && req.method === 'GET') return { statusCode: 200, payload: await getMapPoints(url) };
     if (path === '/api/area-explorer/events' && req.method === 'GET') return { statusCode: 200, payload: await getEvents(url) };
     if (path === '/api/area-explorer/coverage' && req.method === 'GET') return { statusCode: 200, payload: await getCoverage(url) };
+    // Sending a mod off to explore: administrators only - it flies someone's game
+    if (path === '/api/area-explorer/commands' && req.method === 'POST') {
+      assertAdmin(currentUser);
+      return { statusCode: 201, payload: await createCommand(currentUser, await readBody(req)) };
+    }
     const findMatch = path.match(/^\/api\/area-explorer\/finds\/([^/]+)$/);
     if (findMatch && req.method === 'GET') return { statusCode: 200, payload: await getFind(findMatch[1]) };
     // Loot picked up in game: administrators take it off the site
@@ -682,7 +757,7 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     return null;
   }
 
-  return { authenticate, ingest, handleIngest, handleApi, getSummary, getEvents, getCoverage, getFinds, getMapPoints, getFind, removeFind, listTokens, createToken, revokeToken };
+  return { authenticate, ingest, handleIngest, handleApi, getSummary, getEvents, getCoverage, createCommand, getFinds, getMapPoints, getFind, removeFind, listTokens, createToken, revokeToken };
 }
 
 module.exports = {

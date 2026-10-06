@@ -6196,6 +6196,8 @@ function areaExplorerState() {
       findsDirty: false, tokensDirty: true, newFindsAbove: 0, versions: null,
       // Flown-over grids by token: { version, coverage, image } - fetched when a run's version moves on
       coverage: new Map(),
+      // The area picked on the map for a mod to explore: block corners, still being dragged out while picking
+      areaSelection: null,
       logFilter: '', logEvents: [], logHasMore: false, logServer: null, logRequestId: 0,
       showFinds: readAreaExplorerSetting('areaExplorerShowFinds', 'true') !== 'false',
       sort: ['newest', 'nearest', 'name'].includes(readAreaExplorerSetting('areaExplorerSort', 'newest')) ? readAreaExplorerSetting('areaExplorerSort', 'newest') : 'newest',
@@ -6507,7 +6509,8 @@ function renderAreaExplorerStatus() {
     const rescan = status.mode === 'Rescan';
     const phaseName = status.paused ? 'Paused' : (AREA_EXPLORER_PHASES[status.phase] || status.phase);
     const phase = rescan ? `Rescan · ${phaseName}` : phaseName;
-    const runState = status.online ? (status.paused ? 'paused' : 'online') : 'offline';
+    const checkingIn = Date.now() - new Date(status.updatedAt).getTime() < 20_000;
+    const runState = status.online ? (status.paused ? 'paused' : 'online') : checkingIn ? 'ready' : 'offline';
     const found = status.runFinds
       ? `${formatNumber(status.runFinds.bases)} bases · ${formatNumber(status.runFinds.items)} loot · ${formatNumber(status.runFinds.signs)} signs this run`
       : '';
@@ -6516,7 +6519,7 @@ function renderAreaExplorerStatus() {
       <header>
         <span class="area-explorer-dot" aria-hidden="true"></span>
         <strong>${escapeHtml(status.player || status.tokenName || 'Explorer')}</strong>
-        <span class="area-explorer-run-state">${status.online ? escapeHtml(phase) : 'Offline'}</span>
+        <span class="area-explorer-run-state">${status.online ? escapeHtml(phase) : checkingIn ? 'Ready - not exploring' : 'Offline'}</span>
         <span class="area-explorer-run-where">${escapeHtml(status.server || '-')} · ${escapeHtml(prettyDimension(status.dimension))}</span>
       </header>
       ${percent === null ? '' : `<div class="area-explorer-progress" role="progressbar" aria-label="Explored" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><span style="width:${percent}%"></span></div>`}
@@ -6992,6 +6995,135 @@ function areaExplorerFlownColor(element) {
   return [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16), 255];
 }
 
+/** Screen point to block coordinates. */
+function areaExplorerFromScreen(canvas, sx, sz) {
+  const view = areaExplorerState().view;
+  return [Math.floor(view.cx + (sx - canvas.clientWidth / 2) / view.scale), Math.floor(view.cz + (sz - canvas.clientHeight / 2) / view.scale)];
+}
+
+/** The picked area out to whole chunks, as the mod takes it: [minX, minZ, maxX, maxZ] in blocks, and its size in chunks. */
+function areaExplorerSelectionBox(selection) {
+  const minCX = Math.floor(Math.min(selection.x1, selection.x2) / 16), maxCX = Math.floor(Math.max(selection.x1, selection.x2) / 16);
+  const minCZ = Math.floor(Math.min(selection.z1, selection.z2) / 16), maxCZ = Math.floor(Math.max(selection.z1, selection.z2) / 16);
+  return { minX: minCX * 16, minZ: minCZ * 16, maxX: maxCX * 16 + 15, maxZ: maxCZ * 16 + 15, width: maxCX - minCX + 1, depth: maxCZ - minCZ + 1 };
+}
+
+function drawAreaExplorerSelection(ctx, canvas, view) {
+  const selection = areaExplorerState().areaSelection;
+  if (!selection) return;
+  const box = areaExplorerSelectionBox(selection);
+  const [x1, z1] = areaExplorerToScreen(view, canvas, box.minX, box.minZ);
+  const [x2, z2] = areaExplorerToScreen(view, canvas, box.maxX + 1, box.maxZ + 1);
+  const accent = getComputedStyle(canvas).getPropertyValue('--accent').trim() || '#6bc94a';
+  ctx.save();
+  ctx.fillStyle = accent;
+  ctx.globalAlpha = 0.14;
+  ctx.fillRect(x1, z1, x2 - x1, z2 - z1);
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6, 4]);
+  ctx.strokeRect(Math.round(x1) + 0.5, Math.round(z1) + 0.5, Math.round(x2 - x1), Math.round(z2 - z1));
+  ctx.setLineDash([]);
+  ctx.font = '600 12px Inter, system-ui, sans-serif';
+  const label = `${box.width} × ${box.depth} chunks`;
+  const width = ctx.measureText(label).width + 12;
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+  ctx.fillRect(x1, z1 - 20, width, 18);
+  ctx.fillStyle = '#fff';
+  ctx.fillText(label, x1 + 6, z1 - 7);
+  ctx.restore();
+}
+
+/** A mod that's checking in on this server and dimension now (running or idle), to send an area to. */
+function areaExplorerReachableMod() {
+  const ae = areaExplorerState();
+  const [server, dimension] = ae.scope.split('|');
+  return (ae.summary?.statuses || []).find(status => status.server === server && status.dimension === dimension
+    && Date.now() - new Date(status.updatedAt).getTime() < 20_000) || null;
+}
+
+/**
+ * The map's right-click menu: copy the spot's coordinates; for administrators, pick an area and
+ * send the mod there to explore or rescan it - as the Explore and Rescan options on Xaero's map.
+ */
+function openAreaExplorerMenu(sx, sz) {
+  const ae = areaExplorerState();
+  const canvas = $('#areaExplorerMap');
+  const menu = $('#areaExplorerMenu');
+  const [x, z] = areaExplorerFromScreen(canvas, sx, sz);
+  const items = [
+    { label: `Copy coordinates (${x} ${z})`, run: () => copyAreaExplorerText(`${x} ${z}`, 'Coordinates copied') },
+    { label: 'Copy Baritone #goto', run: () => copyAreaExplorerText(`#goto ${x} ${z}`, 'Baritone command copied') }
+  ];
+  if (state.currentUser?.role === 'admin') {
+    const selection = ae.areaSelection;
+    const box = selection && !selection.picking ? areaExplorerSelectionBox(selection) : null;
+    const inside = box && x >= box.minX && x <= box.maxX && z >= box.minZ && z <= box.maxZ;
+    if (inside) {
+      const mod = areaExplorerReachableMod();
+      const why = mod ? '' : 'No mod checking in on this server and dimension';
+      const to = mod ? ` - ${mod.player || mod.tokenName}` : '';
+      items.push({ separator: true });
+      items.push({ label: `Explore ${box.width} × ${box.depth} chunks${to}`, disabled: !mod, title: why, run: () => sendAreaExplorerCommand('EXPLORE', mod, box) });
+      items.push({ label: `Rescan ${box.width} × ${box.depth} chunks${to}`, disabled: !mod, title: why, run: () => sendAreaExplorerCommand('RESCAN', mod, box) });
+      items.push({ label: 'Clear selection', run: () => { ae.areaSelection = null; queueAreaExplorerMapDraw(); } });
+    } else {
+      items.push({ separator: true });
+      items.push({ label: 'Select an area from here', run: () => { ae.areaSelection = { x1: x, z1: z, x2: x, z2: z, picking: true }; queueAreaExplorerMapDraw(); showAreaExplorerNote('Click the opposite corner'); } });
+      if (selection) items.push({ label: 'Clear selection', run: () => { ae.areaSelection = null; queueAreaExplorerMapDraw(); } });
+    }
+  }
+  menu.innerHTML = items.map((item, index) => item.separator
+    ? '<hr class="area-explorer-menu-separator">'
+    : `<button type="button" role="menuitem" data-menu-index="${index}"${item.disabled ? ' disabled' : ''}${item.title ? ` title="${escapeHtml(item.title)}"` : ''}>${escapeHtml(item.label)}</button>`).join('');
+  menu.querySelectorAll('[data-menu-index]').forEach(button => button.addEventListener('click', () => {
+    closeAreaExplorerMenu();
+    items[Number(button.dataset.menuIndex)].run();
+  }));
+  menu.hidden = false;
+  // Kept inside the map
+  const wrap = $('#areaExplorerMapWrap');
+  const left = Math.max(4, Math.min(sx, wrap.clientWidth - menu.offsetWidth - 4));
+  const top = Math.max(4, Math.min(sz, wrap.clientHeight - menu.offsetHeight - 4));
+  menu.style.left = `${left + canvas.offsetLeft}px`;
+  menu.style.top = `${top + canvas.offsetTop}px`;
+  menu.querySelector('button:not([disabled])')?.focus();
+}
+
+function closeAreaExplorerMenu() {
+  const menu = $('#areaExplorerMenu');
+  if (menu && !menu.hidden) menu.hidden = true;
+}
+
+/** A short word over the map: copied, sent, or what went wrong. */
+function showAreaExplorerNote(text) {
+  const note = $('#areaExplorerMapNote');
+  note.textContent = text;
+  note.hidden = false;
+  clearTimeout(showAreaExplorerNote.timer);
+  showAreaExplorerNote.timer = setTimeout(() => { note.hidden = true; }, 4000);
+}
+
+function copyAreaExplorerText(text, done) {
+  writeClipboardText(text).then(() => showAreaExplorerNote(`${done}: ${text}`)).catch(() => showAreaExplorerNote(`Copy by hand: ${text}`));
+}
+
+async function sendAreaExplorerCommand(kind, mod, box) {
+  const ae = areaExplorerState();
+  try {
+    const { command } = await postJson('/api/area-explorer/commands', {
+      kind, tokenId: mod.tokenId, server: mod.server, dimension: mod.dimension,
+      minX: box.minX, minZ: box.minZ, maxX: box.maxX, maxZ: box.maxZ
+    });
+    ae.areaSelection = null;
+    queueAreaExplorerMapDraw();
+    showAreaExplorerNote(`Sent ${mod.player || mod.tokenName} to ${kind === 'RESCAN' ? 'rescan' : 'explore'} ${command.size} - it starts within seconds`);
+  } catch (error) {
+    showAreaExplorerNote(`Could not send it: ${error.message}`);
+  }
+}
+
 function queueAreaExplorerMapDraw() {
   const ae = areaExplorerState();
   if (ae.drawQueued) return;
@@ -7064,6 +7196,7 @@ function drawAreaExplorerMap() {
     ctx.fillRect(x1, z1, x2 - x1, z2 - z1);
     flownShown = drawAreaExplorerCoverage(ctx, canvas, view, live, [x1, z1, x2, z2]);
   }
+  drawAreaExplorerSelection(ctx, canvas, view);
   const flownLegend = $('#areaExplorerFlownLegend');
   if (flownLegend && flownLegend.hidden === flownShown) flownLegend.hidden = !flownShown;
 
@@ -7293,6 +7426,21 @@ function bindAreaExplorerMap() {
     cursor.hidden = false;
   };
 
+  // Right click (a long press on a phone): what can be done here
+  canvas.addEventListener('contextmenu', event => {
+    if (!ae.view) return;
+    event.preventDefault();
+    openAreaExplorerMenu(...local(event));
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || state.activeTab !== 'area-explorer') return;
+    if (!$('#areaExplorerMenu').hidden) closeAreaExplorerMenu();
+    else if (ae.areaSelection) { ae.areaSelection = null; queueAreaExplorerMapDraw(); }
+  });
+  document.addEventListener('pointerdown', event => {
+    if (!event.target.closest('#areaExplorerMenu')) closeAreaExplorerMenu();
+  }, true);
+
   canvas.addEventListener('wheel', event => {
     if (!ae.view) return;
     event.preventDefault();
@@ -7313,6 +7461,13 @@ function bindAreaExplorerMap() {
   canvas.addEventListener('pointerleave', event => { if (event.pointerType === 'mouse') cursor.hidden = true; });
   canvas.addEventListener('pointermove', event => {
     if (event.pointerType === 'mouse') showCoordinates(...local(event));
+    // Picking an area: the far corner follows the mouse
+    if (ae.areaSelection?.picking && event.pointerType === 'mouse' && ae.view) {
+      const [x, z] = areaExplorerFromScreen(canvas, ...local(event));
+      ae.areaSelection.x2 = x;
+      ae.areaSelection.z2 = z;
+      queueAreaExplorerMapDraw();
+    }
     const last = pointers.get(event.pointerId);
     if (!last || !ae.view) return;
     pointers.set(event.pointerId, { ...last, x: event.clientX, y: event.clientY });
@@ -7347,6 +7502,14 @@ function bindAreaExplorerMap() {
     const [sx, sz] = local(event);
     // A tap shows where it landed: there is no hovering on a phone
     if (event.pointerType !== 'mouse') showCoordinates(sx, sz);
+    // Picking an area: this click is its far corner, and what to do with it comes up right there
+    if (ae.areaSelection?.picking) {
+      const [x, z] = areaExplorerFromScreen(canvas, sx, sz);
+      Object.assign(ae.areaSelection, { x2: x, z2: z, picking: false });
+      queueAreaExplorerMapDraw();
+      openAreaExplorerMenu(sx, sz);
+      return;
+    }
     if (!ae.showFinds) return;
     let best = null, bestDistance = event.pointerType === 'mouse' ? 10 : 20;
     for (const point of ae.points) {

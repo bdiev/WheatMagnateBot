@@ -12,6 +12,7 @@ import net.minecraft.client.render.VertexConsumer;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.world.World;
+import org.joml.Matrix4f;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
@@ -68,17 +69,20 @@ public abstract class GuiMapMixin {
                 c.r / 255f, c.g / 255f, c.b / 255f, Math.min(1f, c.a / 255f * 2.5f),
                 c.r / 255f, c.g / 255f, c.b / 255f, c.a / 255f);
         }
+        var matrix = matrices.peek().getPositionMatrix();
+        // Ground scanned on earlier runs, under this run's
+        for (Coverage territory : explorer.mapTerritories(shown)) fill(matrix, buffer, cameraX, cameraZ, territory, explorer.territoryColor());
         Coverage flown = explorer.mapCoverage(shown);
-        if (flown != null) {
-            SettingColor c = explorer.flownColor();
-            var matrix = matrices.peek().getPositionMatrix();
-            // Rectangles of chunks, filled without borders: strips side by side read as one patch
-            for (int[] r : flown.rectangles()) {
-                MapRenderHelper.fillIntoExistingBuffer(matrix, buffer,
-                    (r[0] << 4) - cameraX, (r[1] << 4) - cameraZ, ((r[2] + 1) << 4) - cameraX, ((r[3] + 1) << 4) - cameraZ,
-                    c.r / 255f, c.g / 255f, c.b / 255f, c.a / 255f);
-            }
-        }
+        if (flown != null) fill(matrix, buffer, cameraX, cameraZ, flown, explorer.flownColor());
         original.call(matrices, buffer, cameraX, cameraZ, left, right, top, bottom, r1, g1, b1, a1, r2, g2, b2, a2);
+    }
+
+    /** Rectangles of chunks, filled without borders: strips side by side read as one patch. */
+    private static void fill(Matrix4f matrix, VertexConsumer buffer, int cameraX, int cameraZ, Coverage coverage, SettingColor c) {
+        for (int[] r : coverage.rectangles()) {
+            MapRenderHelper.fillIntoExistingBuffer(matrix, buffer,
+                (r[0] << 4) - cameraX, (r[1] << 4) - cameraZ, ((r[2] + 1) << 4) - cameraX, ((r[3] + 1) << 4) - cameraZ,
+                c.r / 255f, c.g / 255f, c.b / 255f, c.a / 255f);
+        }
     }
 }

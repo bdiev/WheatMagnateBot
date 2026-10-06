@@ -75,6 +75,21 @@ public final class Coverage {
         return changed;
     }
 
+    /** The cell holding chunk (cx, cz), whether its middle is near or not: a find there means it was loaded. */
+    public boolean markChunk(int cx, int cz) {
+        if (!area.contains(cx, cz)) return false;
+        int index = Math.floorDiv(cz - area.minCZ(), cell) * cols + Math.floorDiv(cx - area.minCX(), cell);
+        if (bits.get(index)) return false;
+        bits.set(index);
+        version++;
+        return true;
+    }
+
+    /** Share of the grid covered, 0..1. */
+    public double coveredShare() {
+        return bits.cardinality() / (double) (cols * rows);
+    }
+
     /**
      * The covered ground as rectangles of chunks {minCX, minCZ, maxCX, maxCZ}: each row's runs of
      * covered cells, joined with the rows below while they run the same - a strip is one rectangle.

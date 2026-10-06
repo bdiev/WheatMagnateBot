@@ -93,6 +93,7 @@ async function testIngestAndQueries() {
     await db.exec(pickedUpMigrationSql);
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/072_area_explorer_yaw.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/074_area_explorer_coverage.sql'), 'utf8'));
+    await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/076_area_explorer_commands.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/073_area_explorer_events.sql'), 'utf8'));
     const published = [];
     const logs = [];
@@ -240,6 +241,7 @@ async function testMarkers() {
     await db.exec(pickedUpMigrationSql);
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/072_area_explorer_yaw.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/074_area_explorer_coverage.sql'), 'utf8'));
+    await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/076_area_explorer_commands.sql'), 'utf8'));
     const service = createAreaExplorerService({
       pool: poolFor(db), hashToken, readJsonBody: async () => ({}), sendJson() {}, sendError() {}, enforceRateLimit: () => true
     });
@@ -345,6 +347,48 @@ function testEventNormalization() {
   assert.equal(normalizeEvent({ id: 'a1b2c3d4-0000', at: NOW + 3 * 86_400_000, message: 'x' }, NOW), null);
 }
 
+async function testCommands() {
+  const db = new PGlite();
+  try {
+    for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '071_area_explorer_status_y.sql', '072_area_explorer_picked_up.sql',
+      '072_area_explorer_yaw.sql', '073_area_explorer_events.sql', '074_area_explorer_coverage.sql', '076_area_explorer_commands.sql']) {
+      await db.exec(fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8'));
+    }
+    const logs = [];
+    const service = createAreaExplorerService({
+      pool: poolFor(db), hashToken, readJsonBody: async () => ({}), sendJson() {}, sendError() {},
+      enforceRateLimit: () => true, publish() {}, recordSystemLog: async entry => logs.push(entry)
+    });
+    const admin = { username: 'admin', role: 'admin' };
+    const created = await service.createToken(admin, { name: 'PC' });
+    const token = await service.authenticate({ headers: { authorization: `Bearer ${created.token}` } });
+    const area = { kind: 'explore', tokenId: token.id, server: 'OldFrog.org', dimension: 'overworld', minX: 100, minZ: -40, maxX: -20, maxZ: 70 };
+
+    await service.createCommand(admin, area);
+    const { command } = await service.createCommand(admin, { ...area, kind: 'RESCAN' });
+    assert.equal(command.size, '9x8 chunks', 'blocks out to whole chunks, corners in any order');
+    assert.match(logs.at(-1).message, /Sent "PC" to rescan 9x8 chunks/);
+
+    const status = { player: 'Steve', phase: 'IDLE', x: 0, z: 0 };
+    const answer = await service.ingest(token, { server: 'oldfrog.org', dimension: 'overworld', status }, NOW);
+    assert.equal(answer.commands.length, 1, 'a newer command replaces the one still waiting');
+    assert.deepEqual([answer.commands[0].kind, answer.commands[0].minCX, answer.commands[0].maxCX, answer.commands[0].minCZ, answer.commands[0].maxCZ, answer.commands[0].by],
+      ['RESCAN', -2, 6, -3, 4, 'admin']);
+    const again = await service.ingest(token, { server: 'oldfrog.org', dimension: 'overworld', status }, NOW);
+    assert.equal(again.commands, undefined, 'picked up once');
+
+    const viewer = { username: 'viewer', role: 'user' };
+    await assert.rejects(service.handleApi({ method: 'POST' }, viewer, new URL('http://x/api/area-explorer/commands'), {
+      assertAdmin(user) { if (user.role !== 'admin') throw Object.assign(new Error('Admin access required.'), { statusCode: 403 }); },
+      readBody: async () => area
+    }), /Admin access required/, 'only administrators send a mod off');
+    await assert.rejects(service.createCommand(admin, { ...area, maxX: 200_000 }), /chunks a side/);
+    await assert.rejects(service.createCommand(admin, { ...area, kind: 'DIG' }), /Explore or rescan/);
+  } finally {
+    await db.close();
+  }
+}
+
 async function testCleanNames() {
   assert.equal(cleanFindName('Golden Apple §f(§f§f)'), 'Golden Apple');
   assert.equal(cleanFindName('§6Elytra'), 'Elytra');
@@ -382,7 +426,7 @@ async function testCoverage() {
   const db = new PGlite();
   try {
     for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '071_area_explorer_status_y.sql', '072_area_explorer_picked_up.sql',
-      '072_area_explorer_yaw.sql', '073_area_explorer_events.sql', '074_area_explorer_coverage.sql']) {
+      '072_area_explorer_yaw.sql', '073_area_explorer_events.sql', '074_area_explorer_coverage.sql', '076_area_explorer_commands.sql']) {
       await db.exec(fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8'));
     }
     const published = [];
@@ -420,6 +464,7 @@ async function testRunLog() {
     await db.exec(pickedUpMigrationSql);
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/072_area_explorer_yaw.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/074_area_explorer_coverage.sql'), 'utf8'));
+    await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/076_area_explorer_commands.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/073_area_explorer_events.sql'), 'utf8'));
     const published = [];
     const service = createAreaExplorerService({
@@ -485,6 +530,7 @@ function testRunLogWiring() {
   await testRunLog();
   await testCoverage();
   await testCleanNames();
+  await testCommands();
   testWiring();
   testRunLogWiring();
   console.log('area-explorer tests passed');

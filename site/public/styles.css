@@ -13116,6 +13116,56 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
 }
 
 .area-explorer-selected[hidden] { display: none; }
+
+/* The map's right-click menu */
+.area-explorer-menu {
+  position: absolute;
+  z-index: 6;
+  display: grid;
+  min-width: 220px;
+  max-width: min(360px, calc(100% - 8px));
+  padding: 4px;
+  border: 2px solid var(--line);
+  border-radius: var(--card-radius);
+  background: var(--panel);
+  box-shadow: var(--shadow-sm);
+}
+.area-explorer-menu[hidden] { display: none; }
+.area-explorer-menu button {
+  justify-content: flex-start;
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+}
+.area-explorer-menu button:hover:not([disabled]),
+.area-explorer-menu button:focus-visible { background: var(--panel-soft); transform: none; }
+.area-explorer-menu button[disabled] { color: var(--muted); cursor: not-allowed; }
+.area-explorer-menu-separator { margin: 4px 6px; border: 0; border-top: 1px solid var(--line-soft); }
+
+/* A short word over the map: copied, sent */
+.area-explorer-map-note {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  z-index: 5;
+  max-width: calc(100% - 120px);
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.area-explorer-map-note[hidden] { display: none; }
 .area-explorer-selected .area-explorer-find { border: 0; padding: 14px; cursor: default; }
 .area-explorer-selected .area-explorer-find-heading { padding-right: 34px; }
 
@@ -13191,6 +13241,8 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
 .area-explorer-run.is-online .area-explorer-dot { background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
 .area-explorer-run.is-paused .area-explorer-dot { background: var(--warn); }
 .area-explorer-run.is-offline { opacity: 0.75; }
+/* Idle, but checking in: an area can be sent to it from the map */
+.area-explorer-run.is-ready .area-explorer-dot { background: color-mix(in srgb, var(--accent) 55%, var(--muted)); }
 
 .area-explorer-progress {
   height: 10px;

@@ -2,6 +2,7 @@ package dev.onfocus.addon.explore;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 import java.io.IOException;
 import java.net.URI;
@@ -61,12 +62,16 @@ public final class SiteSync {
     private String lastProblem;
     private final AtomicBoolean liveInFlight = new AtomicBoolean();
     private volatile String lastLiveProblem;
-    private record LiveUpload(String site, String token, Scope scope, JsonObject status, Consumer<String> problem) {}
+    private record LiveUpload(String site, String token, Scope scope, JsonObject status, Consumer<String> problem, Consumer<JsonArray> commands) {}
     private final AtomicReference<LiveUpload> latestLive = new AtomicReference<>();
 
-    /** Independent of archive uploads: at most one live request, never a queue of old positions. */
-    public void sendLiveStatus(String site, String token, Scope scope, JsonObject live, Consumer<String> problem) {
-        latestLive.set(new LiveUpload(site, token, scope, live, problem));
+    /**
+     * Independent of archive uploads: at most one live request, never a queue of old positions.
+     * {@code commands} gets what the site's map sent this mod (explore / rescan an area), on the
+     * HTTP thread, when the answer has any.
+     */
+    public void sendLiveStatus(String site, String token, Scope scope, JsonObject live, Consumer<String> problem, Consumer<JsonArray> commands) {
+        latestLive.set(new LiveUpload(site, token, scope, live, problem, commands));
         flushLiveStatus();
     }
 
@@ -85,12 +90,13 @@ public final class SiteSync {
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body(scope, new JsonArray(), live).toString(), StandardCharsets.UTF_8))
                 .build();
-            http.sendAsync(request, HttpResponse.BodyHandlers.discarding()).whenComplete((response, error) -> {
+            http.sendAsync(request, HttpResponse.BodyHandlers.ofString()).whenComplete((response, error) -> {
                 try {
                     String message = error != null ? "live position upload failed, retrying"
                         : response.statusCode() / 100 == 2 ? null : "live position upload returned " + response.statusCode();
                     if (message != null && !message.equals(lastLiveProblem)) problem.accept(message);
                     lastLiveProblem = message;
+                    if (message == null) readCommands(response.body(), next.commands());
                 } finally {
                     liveInFlight.set(false);
                     flushLiveStatus();
@@ -102,6 +108,17 @@ public final class SiteSync {
             if (!message.equals(lastLiveProblem)) problem.accept(message);
             lastLiveProblem = message;
             flushLiveStatus();
+        }
+    }
+
+    /** The commands in a status upload's answer, if any. */
+    private static void readCommands(String body, Consumer<JsonArray> commands) {
+        if (commands == null || body == null || !body.contains("\"commands\"")) return;
+        try {
+            JsonObject answer = JsonParser.parseString(body).getAsJsonObject();
+            if (answer.has("commands") && answer.get("commands").isJsonArray()) commands.accept(answer.getAsJsonArray("commands"));
+        } catch (RuntimeException ignored) {
+            // Not an answer to read: nothing sent
         }
     }
 
