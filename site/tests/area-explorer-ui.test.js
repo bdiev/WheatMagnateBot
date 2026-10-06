@@ -28,7 +28,8 @@ function fixture() {
   };
   const context = vm.createContext({
     state: { activeTab: 'area-explorer', currentUser: {} }, document: { visibilityState: 'visible' },
-    areaExplorerState: () => ae, $: node, AREA_EXPLORER_PAGE_SIZE: 50,
+    areaExplorerState: () => ae, $: node, $$: () => [], AREA_EXPLORER_PAGE_SIZE: 50,
+    AREA_EXPLORER_KIND_LABELS: { BASE: 'Base', MARKER: 'Marker', ITEM: 'Loot', SIGN: 'Sign' },
     AREA_EXPLORER_KIND_ORDER: { SIGN: 0, ITEM: 1, MARKER: 2, BASE: 3 },
     areaExplorerScopeParams: params => JSON.stringify({ scope: ae.scope, ...params }),
     areaExplorerMarkerFilter: () => ae.markerName,
@@ -43,7 +44,7 @@ function fixture() {
     refreshAreaExplorerFromEvent() {}, applyAreaExplorerEvents() {},
     fetchJson: url => new Promise((resolve, reject) => requests.push({ url, resolve, reject }))
   });
-  for (const name of ['loadAreaExplorerFinds', 'loadAreaExplorerMap', 'setAreaExplorerFindsVisible', 'selectAreaExplorerFind', 'areaExplorerHeading', 'areaExplorerLiveStatus', 'recordAreaExplorerTrail', 'areaExplorerTrail', 'applyAreaExplorerLiveStatus', 'loadAreaExplorerLive', 'noteAreaExplorerVersions', 'areaExplorerListAnchor', 'areaExplorerListIds', 'markAreaExplorerNewFinds', 'setAreaExplorerNewFinds']) vm.runInContext(functionSource(name), context);
+  for (const name of ['renderAreaExplorerMarkerVisibility', 'isAreaExplorerPointVisible', 'setAreaExplorerMarkerKind', 'loadAreaExplorerFinds', 'loadAreaExplorerMap', 'setAreaExplorerFindsVisible', 'selectAreaExplorerFind', 'areaExplorerHeading', 'areaExplorerLiveStatus', 'recordAreaExplorerTrail', 'areaExplorerTrail', 'applyAreaExplorerLiveStatus', 'loadAreaExplorerLive', 'noteAreaExplorerVersions', 'areaExplorerListAnchor', 'areaExplorerListIds', 'markAreaExplorerNewFinds', 'setAreaExplorerNewFinds']) vm.runInContext(functionSource(name), context);
   return { ae, node, requests, context };
 }
 
@@ -221,7 +222,7 @@ function gestureFixture({ interactive = true } = {}) {
   const nodes = {
     '#areaExplorerMap': canvas,
     '#areaExplorerCursor': { hidden: true },
-    '#areaExplorerMapWrap': { classList: { contains: () => false } },
+    '#areaExplorerMapWrap': { classList: { contains: () => interactive } },
     '#areaExplorerMenu': { hidden: true }
   };
   const context = vm.createContext({
@@ -235,16 +236,18 @@ function gestureFixture({ interactive = true } = {}) {
     openAreaExplorerMenu(x, z) { context.menuAt = [x, z]; }, closeAreaExplorerMenu() {},
     selectAreaExplorerFind: async id => { context.selections = (context.selections || []).concat(id); },
     areaExplorerInTerritory: () => true, areaExplorerToScreen: () => [200, 200],
+    isAreaExplorerPointVisible: () => true,
     setBanner: message => { throw new Error(message); }
   });
   vm.runInContext(functionSource('zoomAreaExplorerMap'), context);
+  vm.runInContext(functionSource('bindAreaExplorerEmbeddedTouch'), context);
   vm.runInContext(functionSource('bindAreaExplorerMap'), context);
   context.bindAreaExplorerMap();
   const send = (type, id, x, y = 200) => listeners.get(type)({
     pointerId: id, pointerType: 'touch', button: 0, clientX: x, clientY: y
   });
   const hold = () => { for (const callback of [...timers.values()]) callback(); timers.clear(); };
-  return { ae, context, timers, send, hold };
+  return { ae, context, timers, send, hold, listeners };
 }
 
 function testTouchGestures() {
@@ -310,7 +313,7 @@ function testFullscreenEscapePriority() {
   const context = vm.createContext({
     areaExplorerState: () => ae, $: node, $$: () => [],
     document: { addEventListener: (name, handler) => { if (name === 'keydown') handlers.push(handler); } },
-    setAreaExplorerFindsVisible() {}, renderAreaExplorerExtent() {},
+    setAreaExplorerFindsVisible() {}, renderAreaExplorerExtent() {}, bindAreaExplorerVisibility() {}, focusAreaExplorerPlayer() {},
     setAreaExplorerFullscreen: on => { context.fullscreen = on; }
   });
   vm.runInContext(functionSource('setupAreaExplorer'), context);
@@ -318,6 +321,7 @@ function testFullscreenEscapePriority() {
   handlers[0]({ key: 'Escape' });
   assert.equal(context.fullscreen, undefined, 'Escape first closes a menu without leaving full screen');
   node('#areaExplorerMenu').hidden = true;
+  node('#areaExplorerMarkerFilters').hidden = true;
   ae.areaSelection = { picking: true };
   handlers[0]({ key: 'Escape' });
   assert.equal(context.fullscreen, undefined, 'Escape clears the area selection before leaving full screen');
@@ -346,6 +350,104 @@ function testMarkerAboveDetails() {
   assert.equal(ae.view.cz, previousCentre, 'opening details does not move a marker that is already visible');
 }
 
+function testEmbeddedTouch() {
+  const f = gestureFixture({ interactive: false });
+  let prevented = 0;
+  const touches = (a, b) => [a, b].filter(x => x !== undefined).map(clientX => ({ clientX, clientY: 200 }));
+  const touch = (type, list) => f.listeners.get(type)({ touches: list, preventDefault: () => { prevented++; } });
+  touch('touchstart', touches(100));
+  touch('touchmove', touches(120));
+  assert.equal(prevented, 0, 'one finger keeps native page scrolling');
+  assert.equal(f.ae.view.cx, 0);
+  f.send('pointerdown', 1, 100);
+  touch('touchstart', touches(100, 300));
+  touch('touchmove', touches(120, 320));
+  assert.equal(prevented, 2, 'two fingers reserve the gesture for the map');
+  assert.equal(f.ae.view.cx, -20, 'embedded map pans without a Move map mode');
+  touch('touchmove', touches(100, 400));
+  assert.equal(f.ae.view.scale, 1.5, 'embedded map pinch changes map zoom');
+  touch('touchend', []);
+  f.send('pointerup', 1, 100);
+  assert.equal(f.context.selections, undefined, 'touch gesture completion cannot select a marker');
+  const wheel = { deltaY: -100, clientX: 200, clientY: 200, preventDefault: () => { prevented++; } };
+  const before = prevented;
+  f.listeners.get('wheel')(wheel);
+  assert.equal(prevented, before, 'ordinary wheel scrolling is not trapped by the embedded map');
+  f.listeners.get('wheel')({ ...wheel, ctrlKey: true });
+  assert.equal(prevented, before + 1, 'Ctrl+wheel zooms the embedded map');
+}
+
+function testEyeClickAndHold() {
+  const handlers = new Map(), timers = new Map();
+  let nextTimer = 0;
+  const ae = { showFinds: true };
+  const eye = { setPointerCapture() {}, setAttribute() {}, addEventListener: (name, fn) => handlers.set(name, fn) };
+  const filters = { hidden: true, addEventListener() {}, querySelector: () => ({ focus() {}, addEventListener() {} }) };
+  const context = vm.createContext({
+    $: selector => selector === '#areaExplorerToggleFinds' ? eye : filters,
+    areaExplorerState: () => ae, document: { addEventListener() {} },
+    closeAreaExplorerMenu() {}, renderAreaExplorerMarkerVisibility() {},
+    closeAreaExplorerMarkerFilters: () => { filters.hidden = true; },
+    setAreaExplorerFindsVisible: show => { ae.showFinds = show; },
+    setTimeout: fn => { timers.set(++nextTimer, fn); return nextTimer; }, clearTimeout: id => timers.delete(id)
+  });
+  vm.runInContext(functionSource('bindAreaExplorerVisibility'), context);
+  context.bindAreaExplorerVisibility();
+  const press = () => handlers.get('pointerdown')({ button: 0, pointerId: 1, clientX: 100, clientY: 100 });
+  press(); handlers.get('pointerup')(); handlers.get('click')();
+  assert.equal(ae.showFinds, false, 'short click hides markers');
+  assert.equal(filters.hidden, true);
+  press(); handlers.get('pointerup')(); handlers.get('click')();
+  assert.equal(ae.showFinds, true, 'next short click restores markers');
+  press(); for (const fn of [...timers.values()]) fn();
+  handlers.get('pointerup')(); handlers.get('click')();
+  assert.equal(filters.hidden, false, 'hold opens the marker type selector');
+  assert.equal(ae.showFinds, true, 'the click after releasing a hold must not hide markers');
+  filters.hidden = true;
+  press(); handlers.get('pointercancel')();
+  for (const fn of [...timers.values()]) fn();
+  assert.equal(filters.hidden, true, 'cancelled holds never open the filter selector');
+}
+
+function testMarkerTypes() {
+  const { ae, context } = fixture();
+  ae.visibleKinds = ['BASE', 'SIGN'];
+  const sign = { id: 'sign', kind: 'SIGN' };
+  const base = { id: 'base', kind: 'BASE' };
+  assert.equal(context.isAreaExplorerPointVisible(sign), true);
+  context.setAreaExplorerMarkerKind('SIGN', false);
+  assert.equal(context.isAreaExplorerPointVisible(sign), false, 'disabled types are excluded from map drawing and hit testing');
+  assert.equal(context.isAreaExplorerPointVisible(base), true);
+  context.setAreaExplorerFindsVisible(false);
+  context.setAreaExplorerFindsVisible(true);
+  assert.deepEqual([...ae.visibleKinds], ['BASE'], 'quick hide/show preserves the chosen types');
+  context.setAreaExplorerMarkerKind('BASE', false);
+  assert.equal(ae.showFinds, false, 'disabling the final type also hides the eye');
+  context.setAreaExplorerFindsVisible(true);
+  assert.equal(ae.visibleKinds.length, 4, 'showing an empty selection restores all types');
+}
+
+function testLocatePlayer() {
+  let live = { x: 123, z: -456, online: true };
+  const context = vm.createContext({
+    areaExplorerLiveStatus: () => live,
+    selectAreaExplorerFind: id => { context.selected = id; },
+    focusAreaExplorerMap: (x, z) => { context.focused = [x, z]; },
+    showAreaExplorerNote: text => { context.note = text; },
+    areaExplorerFoundAgo: () => '5m ago'
+  });
+  vm.runInContext(functionSource('focusAreaExplorerPlayer'), context);
+  context.focusAreaExplorerPlayer();
+  assert.deepEqual(context.focused, [123, -456]);
+  assert.equal(context.selected, null, 'locating the player closes the selected find sheet');
+  live = { ...live, online: false };
+  context.focusAreaExplorerPlayer();
+  assert.match(context.note, /Last reported position/);
+  live = null; context.focused = null;
+  context.focusAreaExplorerPlayer();
+  assert.equal(context.focused, null, 'unknown positions cannot move the map');
+}
+
 (async () => {
   await testFindsRaceAndScroll();
   await testMapRace();
@@ -356,5 +458,9 @@ function testMarkerAboveDetails() {
   testTouchGestures();
   testFullscreenEscapePriority();
   testMarkerAboveDetails();
+  testEmbeddedTouch();
+  testEyeClickAndHold();
+  testMarkerTypes();
+  testLocatePlayer();
   console.log('Area Explorer UI behavior tests passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });
