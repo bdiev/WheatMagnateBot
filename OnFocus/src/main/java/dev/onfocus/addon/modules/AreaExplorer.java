@@ -3682,8 +3682,9 @@ public class AreaExplorer extends Module {
         scanBaseEntities();
         confirmBaseCandidates();
         tickFindFiles();
-        // In case the game goes down without turning the module off first
-        if (!paused && ++sessionSaveTicks >= SESSION_SAVE_INTERVAL_TICKS) {
+        // In case the game goes down without turning the module off first; paused too, as the ground
+        // flown by hand still counts
+        if (++sessionSaveTicks >= SESSION_SAVE_INTERVAL_TICKS) {
             sessionSaveTicks = 0;
             saveSession();
         }
@@ -3704,8 +3705,9 @@ public class AreaExplorer extends Module {
             tickScan();
             return;
         }
-        if (paused) return;
+        // Paused and flying by hand, the ground flown is coloured too: it's rescanned (or drawn) as well
         markCoverage();
+        if (paused) return;
 
         switch (phase) {
             case SWEEP -> tickSweep();
