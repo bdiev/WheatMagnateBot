@@ -107,10 +107,10 @@ function normalizeFind(raw, now = Date.now()) {
   };
 }
 
-/** What makes two finds the same: a sign's block; an item's block, kind, count and name; a marker's block and what it marks. Bases are told apart by distance. */
+/** What makes two finds the same: a sign's block; an item's block, kind, count and name; a marker's block and what it marks (and a named pet's name). Bases are told apart by distance. */
 function dedupeKey(find) {
   const at = `${find.kind}:${find.x}:${find.y}:${find.z}`;
-  if (find.kind === 'MARKER') return `${at}:${find.name}`;
+  if (find.kind === 'MARKER') return find.label ? `${at}:${find.name}:${find.label}` : `${at}:${find.name}`;
   return find.kind === 'ITEM' ? `${at}:${find.name}:${find.count}:${find.label}` : at;
 }
 

@@ -6917,7 +6917,8 @@ function setAreaExplorerNewFinds(count) {
 
 function areaExplorerFindTitle(find) {
   if (find.kind === 'ITEM') return `${find.name} ×${find.count}${find.label ? ` "${find.label}"` : ''}`;
-  return find.name;
+  // A named pet: Named Cat "Whiskers"
+  return find.kind === 'MARKER' && find.label ? `${find.name} "${find.label}"` : find.name;
 }
 
 // Each find shows its own item: the Elytra, the Enchanted Book, the Pale Oak Sign; a marker the
@@ -6925,7 +6926,8 @@ function areaExplorerFindTitle(find) {
 const AREA_EXPLORER_KIND_ICONS = Object.freeze({ '': 'filled_map', BASE: 'crafting_table', MARKER: 'ender_eye', ITEM: 'chest', SIGN: 'oak_sign' });
 const AREA_EXPLORER_MARKER_ICONS = Object.freeze({
   'End Portal': 'ender_eye', 'Nether Portal': 'obsidian', Spawner: 'spawner', 'Trial Chamber': 'trial_key',
-  'Ancient City': 'echo_shard', 'End City': 'purpur_block', 'End Gateway': 'ender_pearl', 'Shulker Box': 'shulker_box'
+  'Ancient City': 'echo_shard', 'End City': 'purpur_block', 'End Gateway': 'ender_pearl', 'Shulker Box': 'shulker_box',
+  'Named Cat': 'cat_spawn_egg', 'Named Dog': 'wolf_spawn_egg'
 });
 
 // Items the game names unlike their id: a filled map is just "Map", a writable book "Book and Quill"
@@ -6965,9 +6967,9 @@ function renderAreaExplorerFind(find, { selected = false, showScope = false } = 
   }
   const coords = `${find.x} ${find.y} ${find.z}`;
   const icon = areaExplorerFindIcon(find);
-  // The name alone; an item's count goes on its icon, as in an inventory, and its custom name beside it
+  // The name alone; an item's count goes on its icon, as in an inventory, and its custom name (or a pet's) beside it
   const name = escapeHtml(find.name);
-  const label = find.kind === 'ITEM' && find.label ? ` <span class="area-explorer-find-label">“${escapeHtml(find.label)}”</span>` : '';
+  const label = (find.kind === 'ITEM' || find.kind === 'MARKER') && find.label ? ` <span class="area-explorer-find-label">“${escapeHtml(find.label)}”</span>` : '';
   const count = find.kind === 'ITEM' && find.count > 1 ? `<span class="area-explorer-find-count">${formatNumber(find.count)}</span>` : '';
   // Sorted by nearness: how far each is from the middle of the map
   const view = areaExplorerState().sort === 'nearest' ? areaExplorerState().view : null;

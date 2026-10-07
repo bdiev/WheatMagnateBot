@@ -38,9 +38,9 @@ public final class FindsArchive {
 
     /**
      * One find. {@code name}: the base's ("Base #47"), the sign's block ("Oak Sign"), the item's
-     * ("Elytra") or what a marker marks ("End Portal", "Shulker Box", a custom block's name). For a
+     * ("Elytra") or what a marker marks ("End Portal", "Shulker Box", "Named Cat", a custom block's name). For a
      * base, {@code details} is what it was scored on; for a sign, {@code details} is the front text
-     * and {@code label} the back; for an item, {@code label} is its custom name.
+     * and {@code label} the back; for an item or a named pet, {@code label} is its custom name.
      */
     public record Find(Kind kind, int x, int y, int z, LocalDateTime found, String name, int count, String label, String details) {
         public Find {
@@ -142,7 +142,8 @@ public final class FindsArchive {
 
     private static String key(Find find) {
         String at = find.kind() + " " + find.x() + " " + find.y() + " " + find.z();
-        if (find.kind() == Kind.MARKER) return at + " " + find.name();
+        // A named pet's marker: two pets at one block are two finds
+        if (find.kind() == Kind.MARKER) return at + " " + find.name() + (find.label().isEmpty() ? "" : " " + find.label());
         return find.kind() == Kind.ITEM ? at + " " + find.name() + " " + find.count() + " " + find.label() : at;
     }
 
@@ -171,6 +172,7 @@ public final class FindsArchive {
 
     private static final Pattern ENTRY = Pattern.compile("^#\\d+\\s+X (-?\\d+)\\s+Y (-?\\d+)\\s+Z (-?\\d+)\\s+(.*) · (\\d\\d:\\d\\d:\\d\\d)$");
     private static final Pattern ITEM = Pattern.compile("^(.*?) ×(\\d+)(?: \"(.*)\")?$");
+    private static final Pattern NAMED_MARKER = Pattern.compile("^(Named [^\"]+) \"(.*)\"$");
     private static final Pattern STARTED = Pattern.compile("Started:\\s+(\\d\\d\\.\\d\\d\\.\\d{4} \\d\\d:\\d\\d)");
 
     /**
@@ -234,7 +236,13 @@ public final class FindsArchive {
                     if (item.matches()) out.add(new Find(Kind.ITEM, x, y, z, found, item.group(1), Integer.parseInt(item.group(2)), item.group(3), ""));
                     else out.add(new Find(Kind.ITEM, x, y, z, found, what, 1, "", ""));
                 }
-                case MARKER -> out.add(new Find(Kind.MARKER, x, y, z, found, what, 0, "", ""));
+                case MARKER -> {
+                    // A named pet's: Named Cat "Whiskers", what it is on the line under it
+                    Matcher pet = NAMED_MARKER.matcher(what);
+                    String details = i + 1 < lines.size() && lines.get(i + 1).startsWith(INDENT) ? lines.get(i + 1).strip() : "";
+                    if (pet.matches()) out.add(new Find(Kind.MARKER, x, y, z, found, pet.group(1), 0, pet.group(2), details));
+                    else out.add(new Find(Kind.MARKER, x, y, z, found, what, 0, "", ""));
+                }
             }
         }
         return out;
@@ -271,7 +279,10 @@ public final class FindsArchive {
         StringBuilder sb = new StringBuilder(header(baseList.size(), signs.size(), items.size(), markers.size()));
         sb.append(sectionTitle("MARKERS", markers.size()));
         int m = 0;
-        for (Find f : markers) sb.append(entryLine(++m, f, f.name()));
+        for (Find f : markers) {
+            sb.append(entryLine(++m, f, f.label().isEmpty() ? f.name() : f.name() + " \"" + f.label() + "\""));
+            if (!f.details().isEmpty()) sb.append(INDENT).append(f.details()).append('\n');
+        }
         if (!markers.isEmpty()) sb.append('\n');
         sb.append(sectionTitle("BASES", baseList.size()));
         int n = 0;

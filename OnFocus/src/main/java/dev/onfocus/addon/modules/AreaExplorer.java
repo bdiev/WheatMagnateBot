@@ -52,6 +52,8 @@ import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.systems.waypoints.Waypoint;
 import meteordevelopment.meteorclient.systems.waypoints.Waypoints;
 import meteordevelopment.meteorclient.utils.misc.Keybind;
+import meteordevelopment.meteorclient.utils.network.Http;
+import meteordevelopment.meteorclient.utils.network.MeteorExecutor;
 import meteordevelopment.meteorclient.utils.misc.input.KeyAction;
 import meteordevelopment.meteorclient.utils.player.PlayerUtils;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
@@ -73,6 +75,7 @@ import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.TitleScreen;
 import net.minecraft.client.gui.screen.multiplayer.ConnectScreen;
 import net.minecraft.client.gui.screen.multiplayer.MultiplayerScreen;
+import net.minecraft.client.network.PlayerListEntry;
 import net.minecraft.client.network.ServerAddress;
 import net.minecraft.client.network.ServerInfo;
 import net.minecraft.block.enums.ChestType;
@@ -81,6 +84,10 @@ import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityStatuses;
 import net.minecraft.network.packet.s2c.play.EntityStatusS2CPacket;
 import net.minecraft.entity.ItemEntity;
+import net.minecraft.entity.passive.CatEntity;
+import net.minecraft.entity.passive.TameableEntity;
+import net.minecraft.entity.passive.WolfEntity;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
@@ -131,6 +138,7 @@ import java.util.UUID;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Predicate;
@@ -179,7 +187,8 @@ import java.util.function.Predicate;
  * {@code group-sets}, a Xaero waypoint set of its own (else they all go to {@code marker-list}).
  * Bases are scored on what players leave behind ({@link BaseClues}): blocks of the loaded chunks and
  * entities polled around the player, scored together within {@code base-radius}. With {@code mark-items},
- * items of the picked kinds lying on the ground nearby are marked too, one marker per pile.
+ * items of the picked kinds lying on the ground nearby are marked too, one marker per pile. With
+ * {@code mark-pets}, cats and dogs someone has named get a marker each, named after the pet and its owner.
  * <p>
  * With {@code all-finds-file}, everything found on every run is kept in one file per server and
  * dimension, with no find twice ({@link FindsArchive}).
@@ -496,7 +505,7 @@ public class AreaExplorer extends Module {
         }
     }
 
-    private static final String BASES_GROUP = "Bases", ITEMS_GROUP = "Items on the ground", CUSTOM_GROUP = "Custom Blocks";
+    private static final String BASES_GROUP = "Bases", ITEMS_GROUP = "Items on the ground", PETS_GROUP = "Named Pets", CUSTOM_GROUP = "Custom Blocks";
 
     private final Setting<Boolean> autoMarkers = sgMarkers.add(new BoolSetting.Builder()
         .name("auto-markers")
@@ -577,6 +586,17 @@ public class AreaExplorer extends Module {
 
     private final Setting<SettingColor> itemsColor = sgMarkers.add(colorSetting("items-color", ITEMS_GROUP,
         new SettingColor(85, 255, 255), () -> autoMarkers.get() && markItems.get()));
+
+    private final Setting<Boolean> markPets = sgMarkers.add(new BoolSetting.Builder()
+        .name("mark-pets")
+        .description("Marks cats and dogs someone has named, one marker per pet, with whose it is like Meteor's Entity Owner tells: \"Cat: Whiskers (Steve)\", \"Dog: Rex\".")
+        .defaultValue(true)
+        .visible(autoMarkers::get)
+        .build()
+    );
+
+    private final Setting<SettingColor> petsColor = sgMarkers.add(colorSetting("pets-color", PETS_GROUP,
+        new SettingColor(255, 85, 85), () -> autoMarkers.get() && markPets.get()));
 
     private final Setting<Integer> markerSpacing = sgMarkers.add(new IntSetting.Builder()
         .name("marker-spacing")
@@ -862,6 +882,9 @@ public class AreaExplorer extends Module {
     private boolean warnedNoMinimap;
     /** Item entities already marked this run (or seen near a marker of their kind). */
     private final Set<UUID> markedItems = new HashSet<>();
+    /** Named pets already marked this run (or seen near their marker). */
+    private final Set<UUID> markedPets = new HashSet<>();
+    private int petCheckTicks;
 
     /**
      * Blocks the player placed during the run - their ender chest, a shulker box to sort loot into:
@@ -1379,6 +1402,8 @@ public class AreaExplorer extends Module {
         baseCandidates.clear();
         scoredEntities.clear();
         markedItems.clear();
+        markedPets.clear();
+        petCheckTicks = 0;
         playerPlaced.clear();
         playerBroken.clear();
         playerDrops.clear();
@@ -2728,9 +2753,11 @@ public class AreaExplorer extends Module {
         XaeroWaypoints.Target bases = new XaeroWaypoints.Target(BASES_GROUP, basesColor.get().getPacked());
         XaeroWaypoints.Target loot = new XaeroWaypoints.Target(ITEMS_GROUP, itemsColor.get().getPacked());
         XaeroWaypoints.Target custom = new XaeroWaypoints.Target(CUSTOM_GROUP, customColor.get().getPacked());
+        XaeroWaypoints.Target pets = new XaeroWaypoints.Target(PETS_GROUP, petsColor.get().getPacked());
         return XaeroWaypoints.regroup(from, name -> {
             if (name.startsWith(BASE_PREFIX)) return bases;
             if (name.startsWith(LOOT_PREFIX)) return loot;
+            if (name.startsWith(CAT_PREFIX) || name.startsWith(DOG_PREFIX)) return pets;
             return byName.getOrDefault(name, custom);
         });
     }
@@ -2885,6 +2912,87 @@ public class AreaExplorer extends Module {
         }
         if (foundItems.size() > before) foundFileDirty = true;
         if (mark) markLootPiles(false);
+    }
+
+    // Named pets
+
+    private static final String CAT_PREFIX = "Cat: ", DOG_PREFIX = "Dog: ";
+    /** A pet within this many blocks of a marker with its name is the one marked: it walked a little since. */
+    private static final int PET_SPACING = 48;
+
+    private boolean markingPets() {
+        return autoMarkers.get() && markPets.get();
+    }
+
+    /**
+     * Marks the cats and dogs someone has named around the player, one marker per pet, named after it
+     * and its owner. Entities don't come with the chunk, so they're polled, like the items. A pet whose
+     * owner's name is still being looked up is marked on a later scan, once it's known.
+     */
+    private void scanPets() {
+        if (!markingPets() || ++petCheckTicks < ITEM_CHECK_INTERVAL_TICKS) return;
+        petCheckTicks = 0;
+        for (Entity entity : mc.world.getEntities()) {
+            String kind = entity instanceof CatEntity ? "Cat" : entity instanceof WolfEntity ? "Dog" : null;
+            if (kind == null || !entity.hasCustomName() || markedPets.contains(entity.getUuid())) continue;
+            TameableEntity pet = (TameableEntity) entity;
+            UUID ownerId = pet.getOwnerUuid();
+            String owner = ownerId == null ? "" : ownerName(ownerId);
+            if (owner == null) continue;
+            markedPets.add(entity.getUuid());
+            String petName = cleanName(Formatting.strip(entity.getCustomName().getString())).trim();
+            if (!petName.isEmpty()) placePetMarker(kind, petName, owner, pet);
+        }
+    }
+
+    /** Owners' names by UUID; "" when Mojang doesn't know it (a cracked server's player). Kept for the session. */
+    private static final Map<UUID, String> OWNER_NAMES = new ConcurrentHashMap<>();
+    private static final Set<UUID> OWNER_LOOKUPS = ConcurrentHashMap.newKeySet();
+
+    private static class ProfileResponse {
+        public String name;
+    }
+
+    /**
+     * The owner's nickname as Meteor's Entity Owner finds it: the player nearby or in the tab list,
+     * else asked of Mojang by UUID, off the game thread. Null while that's under way, "" if unknown.
+     */
+    private String ownerName(UUID uuid) {
+        PlayerEntity player = mc.world.getPlayerByUuid(uuid);
+        if (player != null) return player.getName().getString();
+        PlayerListEntry entry = mc.getNetworkHandler() == null ? null : mc.getNetworkHandler().getPlayerListEntry(uuid);
+        if (entry != null) return entry.getProfile().getName();
+        String known = OWNER_NAMES.get(uuid);
+        if (known != null) return known;
+        if (OWNER_LOOKUPS.add(uuid)) {
+            MeteorExecutor.execute(() -> {
+                String name = "";
+                try {
+                    ProfileResponse res = Http.get("https://sessionserver.mojang.com/session/minecraft/profile/" + uuid.toString().replace("-", ""))
+                        .sendJson(ProfileResponse.class);
+                    if (res != null && res.name != null) name = res.name;
+                } catch (RuntimeException ignored) {
+                }
+                OWNER_NAMES.put(uuid, name);
+                OWNER_LOOKUPS.remove(uuid);
+            });
+        }
+        return null;
+    }
+
+    private void placePetMarker(String kind, String petName, String owner, TameableEntity pet) {
+        String name = kind + ": " + petName + (owner.isEmpty() ? "" : " (" + owner + ")");
+        BlockPos pos = pet.getBlockPos();
+        for (XaeroWaypoints.Spot spot : existingMarkers()) {
+            if (spot.name().equals(name) && near(spot, pos, PET_SPACING)) return;
+        }
+        addMarker(PETS_GROUP, name, kind.substring(0, 1), "circle", petsColor.get(), pos);
+        String details = !pet.isTamed() ? "not tamed"
+            : (owner.isEmpty() ? "tamed, owner unknown" : "tamed by " + owner) + (pet.isInSittingPose() ? ", sitting" : "");
+        report("Marked (highlight)%s(default) (%s) at (highlight)%d, %d, %d(default).", name, details, pos.getX(), pos.getY(), pos.getZ());
+        // Into the all-finds file too, and so to the site: "Named Cat", with the pet's name for its label
+        archiveFind(new FindsArchive.Find(FindsArchive.Kind.MARKER, pos.getX(), pos.getY(), pos.getZ(), LocalDateTime.now(),
+            "Named " + kind, 0, petName, details));
     }
 
     /** An item's name as the game shows it, clean: see {@link #cleanName}. */
@@ -3570,6 +3678,7 @@ public class AreaExplorer extends Module {
         tickEstimate();
         checkFlying();
         scanItems();
+        scanPets();
         scanBaseEntities();
         confirmBaseCandidates();
         tickFindFiles();

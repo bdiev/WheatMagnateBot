@@ -48,6 +48,10 @@ function testNormalization() {
   const item = normalizeFind({ kind: 'ITEM', x: 1, y: 2, z: 3, foundAt: '2026-10-05T10:00:00Z', name: 'Elytra', count: 0 }, NOW);
   assert.equal(item.count, 1, 'an item counts at least one');
   assert.equal(dedupeKey(item), 'ITEM:1:2:3:Elytra:1:');
+  const cat = normalizeFind({ kind: 'MARKER', x: 5, y: 64, z: 6, foundAt: NOW, name: 'Named Cat', label: 'Whiskers', details: 'tamed, sitting' }, NOW);
+  assert.equal(cat.label, 'Whiskers', "a named pet keeps its name");
+  assert.equal(dedupeKey(cat), 'MARKER:5:64:6:Named Cat:Whiskers', 'two pets at one block are two finds');
+  assert.equal(dedupeKey({ ...cat, label: '' }), 'MARKER:5:64:6:Named Cat', 'other markers keep their keys');
 
   assert.equal(normalizeFind({ kind: 'CHEST', x: 1, y: 2, z: 3, foundAt: NOW, name: 'x' }, NOW), null);
   assert.equal(normalizeFind({ kind: 'SIGN', x: 1.5, y: 2, z: 3, foundAt: NOW, name: 'x' }, NOW), null, 'coordinates are whole blocks');
@@ -324,6 +328,8 @@ function testWiring() {
   assert.match(appSource, /sort: ae\.sort === 'newest' \? '' : ae\.sort, \.\.\.near/, 'the list asks for its order');
   assert.match(indexSource, /id="areaExplorerMarkerName"/, 'and a pick of what they mark');
   assert.match(appSource, /MARKER: 'Marker'/);
+  assert.match(appSource, /'Named Cat': 'cat_spawn_egg', 'Named Dog': 'wolf_spawn_egg'/, 'named pets show their spawn eggs');
+  assert.match(appSource, /return find\.kind === 'MARKER' && find\.label \? `\$\{find\.name\} "\$\{find\.label\}"` : find\.name;/, "a pet's name goes in its title");
   assert.match(appSource, /name: areaExplorerMarkerFilter\(\)/, 'the pick narrows the list and the map');
   // The page: no hand-uploaded PNGs any more, the run's height shown, a map that works on a phone
   assert.doesNotMatch(indexSource, /xaeroMap|xaero-map-panel/, 'the Xaero PNG upload is gone');
