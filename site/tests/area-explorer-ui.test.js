@@ -267,6 +267,7 @@ function gestureFixture({ interactive = true } = {}) {
     setBanner: message => { throw new Error(message); }
   });
   vm.runInContext(functionSource('zoomAreaExplorerMap'), context);
+  vm.runInContext(functionSource('areaExplorerHitAt'), context);
   vm.runInContext(functionSource('bindAreaExplorerMap'), context);
   context.bindAreaExplorerMap();
   const send = (type, id, x, y = 200) => listeners.get(type)({
@@ -511,6 +512,72 @@ function testMenuHeight() {
   assert.match(menu, /`#goto \$\{x\} \$\{AREA_EXPLORER_MENU_Y\} \$\{z\}`/);
 }
 
+function testClusters() {
+  const ae = { showFinds: true, visibleKinds: ['BASE', 'END_PORTAL', 'MARKER', 'ITEM', 'SIGN'], selectedId: null, nearby: null, extent: 1e9, points: [] };
+  const context = vm.createContext({
+    Math, Map, Object, areaExplorerState: () => ae, AREA_EXPLORER_DEFAULT_LAYERS: ['END_PORTAL'],
+    AREA_EXPLORER_KIND_ORDER: { SIGN: 0, ITEM: 1, MARKER: 2, BASE: 3 },
+    areaExplorerInTerritory: () => true,
+    isAreaExplorerPointNearby: point => !!ae.nearby && Math.hypot(point.x - ae.nearby.x, point.z - ae.nearby.z) <= 100
+  });
+  vm.runInContext(source.match(/const AREA_EXPLORER_CLUSTER_PX = \d+;/)[0].replace('const', 'var'), context);
+  vm.runInContext(source.match(/const AREA_EXPLORER_CLUSTER_MAX_SCALE = [\d.]+;/)[0].replace('const', 'var'), context);
+  for (const name of ['areaExplorerPointLayer', 'isAreaExplorerPointVisible', 'areaExplorerPointSize', 'areaExplorerVisiblePoints', 'areaExplorerClusterCell',
+    'areaExplorerClusters', 'areaExplorerClusterRadius', 'formatAreaExplorerClusterCount', 'drawAreaExplorerPoints', 'areaExplorerHitAt']) vm.runInContext(functionSource(name), context);
+
+  assert.equal(context.areaExplorerClusterCell(1), 0, 'close in, every find on its own');
+  assert.equal(context.areaExplorerClusterCell(0.5), 128, 'cells a power of two, at least the cluster size on screen');
+  assert.equal(context.areaExplorerClusterCell(0.4), context.areaExplorerClusterCell(0.36), 'a small zoom keeps the same clusters');
+
+  ae.points = [
+    { id: 'a', kind: 'SIGN', x: 10, z: 10 }, { id: 'b', kind: 'SIGN', x: 20, z: 30 }, { id: 'c', kind: 'BASE', x: 30, z: 20 },
+    { id: 'far', kind: 'ITEM', x: 5000, z: 5000 }
+  ];
+  let visible = context.areaExplorerVisiblePoints();
+  const { singles, clusters } = context.areaExplorerClusters(visible, 128);
+  assert.deepEqual([...singles.map(point => point.id)], ['far'], 'a find alone in its cell stays a find');
+  assert.equal(clusters.length, 1);
+  assert.equal(clusters[0].count, 3);
+  assert.equal(clusters[0].kind, 'SIGN', 'coloured as most of it');
+  assert.deepEqual([clusters[0].x, clusters[0].z], [20, 20], 'at the middle of its finds');
+  assert.equal(context.areaExplorerClusters(visible, 128), context.areaExplorerClusters(visible, 128), 'worked out once a level');
+  assert.equal(context.areaExplorerVisiblePoints(), visible, 'kept while nothing changes');
+  assert.equal(context.formatAreaExplorerClusterCount(1234), '1.2k');
+  assert.equal(context.formatAreaExplorerClusterCount(45_678), '46k');
+
+  // The picked find never hides in a cluster
+  ae.selectedId = 'a';
+  visible = context.areaExplorerVisiblePoints();
+  assert.deepEqual([...visible.alone.map(point => point.id)], ['a']);
+  assert.equal(context.areaExplorerClusters(visible, 128).clusters[0].count, 2);
+  ae.selectedId = null;
+
+  // Drawn and hit: a click on a cluster finds the cluster, on a lone find the find
+  const calls = { fill: 0, text: 0 };
+  const ctx = new Proxy({}, { get: (target, name) => name in target ? target[name] : name === 'fill' ? () => { calls.fill += 1; } : name === 'fillText' ? () => { calls.text += 1; } : () => {}, set: (target, name, value) => { target[name] = value; return true; } });
+  const colors = { SIGN: '#1', ITEM: '#2', MARKER: '#3', BASE: '#4', bg: '#0', text: '#f', signOutline: '#5' };
+  const view = { cx: 0, cz: 0, scale: 0.05 };
+  context.drawAreaExplorerPoints(ctx, view, colors, 800, 600);
+  assert.ok(context.areaExplorerHitAt(400 + 20 * 0.05, 300 + 20 * 0.05, 10).cluster, 'the cluster is under the click');
+  assert.equal(context.areaExplorerHitAt(400 + 5000 * 0.05, 300 + 5000 * 0.05, 10).point.id, 'far');
+  assert.equal(context.areaExplorerHitAt(10, 10, 10), null);
+
+  // 77,000 finds zoomed out: a few hundred clusters to draw, not 77,000 dots, and fast once worked out
+  ae.points = Array.from({ length: 77_000 }, (unused, i) => ({ id: String(i), kind: ['SIGN', 'ITEM', 'MARKER', 'BASE'][i % 4], x: (i * 7919) % 200_000 - 100_000, z: (i * 104_729) % 200_000 - 100_000 }));
+  calls.fill = 0; calls.text = 0;
+  const far = { cx: 0, cz: 0, scale: 0.004 };
+  context.drawAreaExplorerPoints(ctx, far, colors, 800, 600);
+  assert.ok(calls.text > 0 && calls.text < 1500, `clusters drawn instead of every find (${calls.text})`);
+  const started = performance.now();
+  for (let frame = 0; frame < 20; frame++) context.drawAreaExplorerPoints(ctx, { ...far, cx: frame * 100 }, colors, 800, 600);
+  const perFrame = (performance.now() - started) / 20;
+  assert.ok(perFrame < 25, `panning redraws quickly (${perFrame.toFixed(1)} ms a frame)`);
+  // Close in: single finds, one fill a kind rather than one a find
+  calls.fill = 0;
+  context.drawAreaExplorerPoints(ctx, { cx: 0, cz: 0, scale: 2 }, colors, 800, 600);
+  assert.ok(calls.fill <= 8, `finds batched by kind (${calls.fill} fills)`);
+}
+
 (async () => {
   await testFindsRaceAndScroll();
   await testMapRace();
@@ -530,5 +597,6 @@ function testMenuHeight() {
   testCountsKeepUp();
   testPlayerSigns();
   testMenuHeight();
+  testClusters();
   console.log('Area Explorer UI behavior tests passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });
