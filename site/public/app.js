@@ -6373,11 +6373,15 @@ function areaExplorerFindCount(scope) {
 async function loadAreaExplorer({ full = true } = {}) {
   if (!state.currentUser) return;
   const ae = areaExplorerState();
+  // Refreshes can overlap while the mod uploads: an older answer never replaces a newer one
+  const requestId = (ae.summaryRequestId || 0) + 1;
+  ae.summaryRequestId = requestId;
   const [summary, mapScopes] = await Promise.all([
     fetchJson('/api/area-explorer/summary'), fetchJson('/api/area-explorer/map/scopes'),
     // The site's item pictures, for the finds' and highlights' icons
     ensureItemIcons().catch(() => null)
   ]);
+  if (ae.summaryRequestId !== requestId) return;
   summary.statuses = summary.statuses.map(status => {
     const current = ae.summary?.statuses.find(item => item.tokenId === status.tokenId);
     return current && new Date(current.updatedAt) > new Date(status.updatedAt) ? current : status;
@@ -6936,7 +6940,7 @@ function noteAreaExplorerVersions(versions) {
   if (!previous) return;
   if (versions.finds !== previous.finds) {
     ae.findsDirty = true;
-    queueRealtimeRefresh('area-explorer', refreshAreaExplorerFromEvent, 180);
+    queueAreaExplorerRefresh(180);
   }
   if (versions.events !== previous.events && ae.logServer !== null) {
     const params = new URLSearchParams({ limit: String(AREA_EXPLORER_LOG_PAGE) });
@@ -7526,7 +7530,7 @@ function applyXaeroRegionMapUpdate(update) {
   const base = `${update.server}|${update.dimension.replace(/@night$/, '')}`;
   if (!ae.mapScopes.some(item => `${item.server}|${item.dimension}` === base && (base === scope || item.night))) {
     // A scope's first region: the picker learns of it on the next refresh
-    queueRealtimeRefresh('area-explorer', refreshAreaExplorerFromEvent, 2000);
+    queueAreaExplorerRefresh(2000);
     return;
   }
   const regionMap = ae.regionMaps.get(scope);
@@ -8191,6 +8195,16 @@ function noteAreaExplorerUpdate(payload) {
   const ae = areaExplorerState();
   if (payload.added || payload.removed) ae.findsDirty = true;
   if (payload.tokenRevoked) ae.tokensDirty = true;
+}
+
+/**
+ * A refresh already on its way is not pushed back by the next update: while the mod keeps uploading
+ * (finds, map tiles) the counts still move every moment instead of waiting for it to go quiet.
+ */
+function queueAreaExplorerRefresh(delay) {
+  if (state.realtimeRefreshTimers['area-explorer'] && (state.areaExplorerRefreshDue || 0) <= Date.now() + delay) return;
+  state.areaExplorerRefreshDue = Date.now() + delay;
+  queueRealtimeRefresh('area-explorer', refreshAreaExplorerFromEvent, delay);
 }
 
 function refreshAreaExplorerFromEvent() {
@@ -12505,7 +12519,7 @@ function handleRealtimeEvent(event) {
       if (eventPayload.events) applyAreaExplorerEvents(eventPayload.events);
       // Run log events alone come in the update itself: nothing else to load for them
       const onlyEvents = eventPayload.events && !eventPayload.added && !eventPayload.status;
-      if (eventPayload.added || eventPayload.tokenRevoked || (!eventPayload.liveStatus && !onlyEvents)) queueRealtimeRefresh('area-explorer', refreshAreaExplorerFromEvent, 180);
+      if (eventPayload.added || eventPayload.tokenRevoked || (!eventPayload.liveStatus && !onlyEvents)) queueAreaExplorerRefresh(180);
     }
   }
   else if (type === 'player_joined' || type === 'player_left') {
@@ -12659,6 +12673,10 @@ async function loadAll({ force = false, switchGeneration = state.accountSwitchGe
       ];
       if (state.activeTab === 'players') {
         sectionLoads.push(loadPlayerStats());
+      }
+      // Back from the background or a dropped stream: the finds' counts catch up too
+      if (state.activeTab === 'area-explorer') {
+        sectionLoads.push(loadAreaExplorer({ full: false }).catch(() => {}));
       }
       const results = await Promise.allSettled(sectionLoads);
       if (!isCurrentSync()) return false;

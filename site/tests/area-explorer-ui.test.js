@@ -27,7 +27,7 @@ function fixture() {
     return nodes.get(selector);
   };
   const context = vm.createContext({
-    state: { activeTab: 'area-explorer', currentUser: {} }, document: { visibilityState: 'visible' },
+    state: { activeTab: 'area-explorer', currentUser: {}, realtimeRefreshTimers: {} }, document: { visibilityState: 'visible' },
     areaExplorerState: () => ae, $: node, $$: () => [], AREA_EXPLORER_PAGE_SIZE: 50,
     AREA_EXPLORER_KIND_LABELS: { BASE: 'Base', MARKER: 'Marker', ITEM: 'Loot', SIGN: 'Sign' },
     AREA_EXPLORER_KIND_ORDER: { SIGN: 0, ITEM: 1, MARKER: 2, BASE: 3 },
@@ -45,7 +45,7 @@ function fixture() {
     refreshAreaExplorerFromEvent() {}, applyAreaExplorerEvents() {},
     fetchJson: url => new Promise((resolve, reject) => requests.push({ url, resolve, reject }))
   });
-  for (const name of ['renderAreaExplorerMarkerVisibility', 'areaExplorerPointLayer', 'isAreaExplorerPointNearby', 'isAreaExplorerPointVisible', 'setAreaExplorerMarkerKind', 'loadAreaExplorerFinds', 'loadAreaExplorerMap', 'setAreaExplorerFindsVisible', 'selectAreaExplorerFind', 'areaExplorerHeading', 'areaExplorerLiveStatus', 'recordAreaExplorerTrail', 'areaExplorerTrail', 'applyAreaExplorerLiveStatus', 'loadAreaExplorerLive', 'noteAreaExplorerVersions', 'areaExplorerListAnchor', 'areaExplorerListIds', 'markAreaExplorerNewFinds', 'setAreaExplorerNewFinds']) vm.runInContext(functionSource(name), context);
+  for (const name of ['renderAreaExplorerMarkerVisibility', 'areaExplorerPointLayer', 'isAreaExplorerPointNearby', 'isAreaExplorerPointVisible', 'setAreaExplorerMarkerKind', 'loadAreaExplorerFinds', 'loadAreaExplorerMap', 'setAreaExplorerFindsVisible', 'selectAreaExplorerFind', 'areaExplorerHeading', 'areaExplorerLiveStatus', 'recordAreaExplorerTrail', 'areaExplorerTrail', 'applyAreaExplorerLiveStatus', 'loadAreaExplorerLive', 'noteAreaExplorerVersions', 'queueAreaExplorerRefresh', 'areaExplorerListAnchor', 'areaExplorerListIds', 'markAreaExplorerNewFinds', 'setAreaExplorerNewFinds']) vm.runInContext(functionSource(name), context);
   return { ae, node, requests, context };
 }
 
@@ -470,6 +470,21 @@ function testLocatePlayer() {
   assert.equal(context.focused, null, 'unknown positions cannot move the map');
 }
 
+function testCountsKeepUp() {
+  // Steady uploads must not keep pushing the refresh back, so the finds count moves while the mod runs
+  const queued = [];
+  const context = vm.createContext({ Date, state: { realtimeRefreshTimers: {} }, refreshAreaExplorerFromEvent() {} });
+  context.queueRealtimeRefresh = (key, callback, delay) => { queued.push(delay); context.state.realtimeRefreshTimers[key] = 1; };
+  vm.runInContext(functionSource('queueAreaExplorerRefresh'), context);
+  context.queueAreaExplorerRefresh(180);
+  context.queueAreaExplorerRefresh(180);
+  context.queueAreaExplorerRefresh(2000);
+  assert.deepEqual(queued, [180], 'a refresh on its way is not postponed');
+  // Back from the background (or a reconnect): the full sync brings the counts up to date too
+  assert.match(functionSource('loadAll'), /activeTab === 'area-explorer'[\s\S]*?loadAreaExplorer\(\{ full: false \}\)/);
+  assert.match(functionSource('loadAreaExplorer'), /summaryRequestId !== requestId\) return/, 'an older summary never replaces a newer one');
+}
+
 (async () => {
   await testFindsRaceAndScroll();
   await testMapRace();
@@ -486,5 +501,6 @@ function testLocatePlayer() {
   testEyeClickAndHold();
   testMarkerTypes();
   testLocatePlayer();
+  testCountsKeepUp();
   console.log('Area Explorer UI behavior tests passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });
