@@ -19,8 +19,10 @@ function fixture() {
   const requests = [];
   const node = selector => {
     if (!nodes.has(selector)) nodes.set(selector, {
-      innerHTML: '', hidden: false, scrollTop: 150, attributes: {},
-      classList: { toggle() {} },
+      innerHTML: '', hidden: false, scrollTop: 150, attributes: {}, classes: new Set(),
+      get classList() { const classes = this.classes; return { toggle() {}, add: name => classes.add(name), remove: name => classes.delete(name), contains: name => classes.has(name) }; },
+      // Enough of a DOM for the finds list: what its markup holds
+      querySelector(selector) { return this.innerHTML.includes(`class="${selector.slice(1)}`) ? {} : null; },
       setAttribute(key, value) { this.attributes[key] = value; },
       removeAttribute(key) { delete this.attributes[key]; }
     });
@@ -43,7 +45,9 @@ function fixture() {
     formatNumber: String, AREA_EXPLORER_LOG_PAGE: 50, URLSearchParams,
     queueRealtimeRefresh(key) { context.refreshed = (context.refreshed || []).concat(key); },
     refreshAreaExplorerFromEvent() {}, applyAreaExplorerEvents() {},
-    fetchJson: url => new Promise((resolve, reject) => requests.push({ url, resolve, reject }))
+    fetchJson: url => new Promise((resolve, reject) => requests.push({ url, resolve, reject })),
+    AREA_EXPLORER_SKELETON_DELAY_MS: 180, renderAreaExplorerFindsSkeleton: () => '<li class="area-explorer-skeleton"></li>',
+    timers: [], setTimeout(fn, ms) { context.timers.push({ fn, ms }); return context.timers.length; }, clearTimeout(id) { if (id) context.timers[id - 1].fn = () => {}; }
   });
   for (const name of ['renderAreaExplorerMarkerVisibility', 'areaExplorerPointLayer', 'isAreaExplorerPointNearby', 'isAreaExplorerPointVisible', 'setAreaExplorerMarkerKind', 'loadAreaExplorerFinds', 'loadAreaExplorerMap', 'setAreaExplorerFindsVisible', 'selectAreaExplorerFind', 'areaExplorerHeading', 'areaExplorerLiveStatus', 'recordAreaExplorerTrail', 'areaExplorerTrail', 'applyAreaExplorerLiveStatus', 'loadAreaExplorerLive', 'noteAreaExplorerVersions', 'queueAreaExplorerRefresh', 'areaExplorerListAnchor', 'areaExplorerListIds', 'markAreaExplorerNewFinds', 'setAreaExplorerNewFinds']) vm.runInContext(functionSource(name), context);
   return { ae, node, requests, context };
@@ -483,7 +487,9 @@ function testCountsKeepUp() {
   assert.deepEqual(queued, [180], 'a refresh on its way is not postponed');
   // Back from the background (or a reconnect): the full sync brings the counts up to date too
   assert.match(functionSource('loadAll'), /activeTab === 'area-explorer'[\s\S]*?loadAreaExplorer\(\{ full: false \}\)/);
-  assert.match(functionSource('loadAreaExplorer'), /summaryRequestId !== requestId\) return/, 'an older summary never replaces a newer one');
+  assert.match(functionSource('loadAreaExplorerData'), /summaryRequestId !== requestId\) return/, 'an older summary never replaces a newer one');
+  // The first load shows every panel's skeleton, and a failed one doesn't leave them shimmering
+  assert.match(functionSource('loadAreaExplorer'), /if \(full && !ae\.everLoaded\) showAreaExplorerSkeletons\(\);[\s\S]*?if \(!ae\.everLoaded\) clearAreaExplorerSkeletons\(\);/);
 }
 
 function testPlayerSigns() {
@@ -514,7 +520,7 @@ function testPlayerSigns() {
   assert.equal(context.highlightPlayerSignName('<span class="area-explorer-find-name">Steve</span>', 'Steve'), '<span class="area-explorer-find-name">Steve</span>',
     'only the sign text is marked');
   // Picked from the list, the sign opens in the Area Explorer once its scope is loaded
-  assert.match(functionSource('loadAreaExplorer'), /pending\.scope === ae\.scope[\s\S]*?focusAreaExplorerMap\(pending\.x, pending\.z\)/);
+  assert.match(functionSource('loadAreaExplorerData'), /pending\.scope === ae\.scope[\s\S]*?focusAreaExplorerMap\(pending\.x, pending\.z\)/);
 }
 
 function testMenuHeight() {
@@ -590,7 +596,54 @@ function testClusters() {
   assert.match(source, /drawAreaExplorerPointsLayer\(ctx, view, colors, width, height, ratio\);/);
 }
 
+async function testLoadingSkeletons() {
+  const { ae, node, requests, context } = fixture();
+  const list = node('#areaExplorerFinds');
+  // Nothing shown yet: the skeleton at once
+  const first = context.loadAreaExplorerFinds();
+  assert.equal(list.innerHTML, '<li class="area-explorer-skeleton"></li>', 'an empty list shows its skeleton straight away');
+  requests[0].resolve({ total: 1, finds: [{ name: 'Base #1' }] });
+  await first;
+  assert.equal(list.innerHTML, 'Base #1');
+
+  // Finds showing: another list waits a moment before its skeleton, so a quick answer doesn't flash
+  list.innerHTML = '<li class="area-explorer-find">Base #1</li>';
+  ae.kind = 'SIGN';
+  const second = context.loadAreaExplorerFinds();
+  assert.equal(context.timers.at(-1).ms, 180);
+  assert.match(list.innerHTML, /Base #1/, 'what was there stays for now');
+  context.timers.at(-1).fn();
+  assert.match(list.innerHTML, /area-explorer-skeleton/, 'then the skeleton, if the answer is slow');
+  requests[1].reject(new Error('down'));
+  await assert.rejects(second, /down/);
+  assert.match(list.innerHTML, /Could not load the finds/, 'a failed load never leaves the skeleton shimmering');
+
+  // The same list refreshed keeps what it shows
+  list.innerHTML = 'Signs';
+  ae.renderedFindsQuery = context.areaExplorerScopeParams({ kind: 'SIGN', name: '', q: '', sort: undefined, limit: 50, offset: 0 });
+  const timersBefore = context.timers.length;
+  const third = context.loadAreaExplorerFinds();
+  assert.equal(context.timers.length, timersBefore, 'no skeleton for a refresh');
+  assert.equal(list.innerHTML, 'Signs');
+  requests[2].resolve({ total: 0, finds: [] });
+  await third;
+
+  // The map: its skeleton while another scope's finds come in, gone once they're in or failed
+  const wrap = node('#areaExplorerMapWrap');
+  ae.scope = 'test|the_nether';
+  const map = context.loadAreaExplorerMap();
+  assert.ok(wrap.classes.has('is-loading'), "another scope's map loads under its skeleton");
+  requests[3].resolve({ points: [] });
+  await map;
+  assert.ok(!wrap.classes.has('is-loading'));
+  const again = context.loadAreaExplorerMap();
+  assert.ok(!wrap.classes.has('is-loading'), 'the same scope reloads with no skeleton');
+  requests[4].resolve({ points: [] });
+  await again;
+}
+
 (async () => {
+  await testLoadingSkeletons();
   await testFindsRaceAndScroll();
   await testMapRace();
   await testSelectionRace();

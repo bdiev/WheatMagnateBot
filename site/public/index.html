@@ -13,7 +13,7 @@
     <link rel="icon" type="image/png" href="/items/Wheat.png">
     <link rel="apple-touch-icon" href="/items/Wheat.png">
     <script src="/theme-init.js?v=136"></script>
-  <link rel="stylesheet" href="/styles.css?v=297">
+  <link rel="stylesheet" href="/styles.css?v=298">
     <script src="/pwa-update.js" defer></script>
     <script src="/page-transitions.js?v=1" defer></script>
   </head>
@@ -1093,6 +1093,9 @@
             </div>
             <div id="areaExplorerMapWrap" class="area-explorer-map-wrap">
               <canvas id="areaExplorerMap" class="area-explorer-map" tabindex="0" aria-describedby="areaExplorerMapHint" aria-label="Map of the finds: drag to move, wheel or pinch to zoom, tap a point for details"></canvas>
+              <div class="area-explorer-map-skeleton" aria-hidden="true">
+                <span class="area-explorer-map-skeleton-label"><img src="/items/Compass.png" alt="" width="24" height="24">Loading the map...</span>
+              </div>
               <div class="area-explorer-map-legend" aria-hidden="true">
                 <span class="legend-base">Base</span><span class="legend-marker">Marker</span><span class="legend-item">Loot</span><span class="legend-sign">Sign</span><span class="legend-player">Explorer</span><span id="areaExplorerFlownLegend" class="legend-flown" hidden>Flown</span>
               </div>
@@ -1149,9 +1152,7 @@
                   <p>Live position and heading, updated every second.</p>
                 </div>
               </div>
-              <div id="areaExplorerStatus" class="area-explorer-status-list" aria-live="polite">
-                <p class="area-explorer-empty">Loading...</p>
-              </div>
+              <div id="areaExplorerStatus" class="area-explorer-status-list" aria-live="polite"></div>
             </section>
 
             <section class="panel area-explorer-highlights-panel">
@@ -1161,9 +1162,7 @@
                   <p>What stands out here; tap one to list it.</p>
                 </div>
               </div>
-              <div id="areaExplorerHighlights" class="area-explorer-highlights">
-                <p class="area-explorer-empty">Loading...</p>
-              </div>
+              <div id="areaExplorerHighlights" class="area-explorer-highlights"></div>
             </section>
 
             <section id="areaExplorerLogPanel" class="panel area-explorer-log-panel">
@@ -1178,9 +1177,7 @@
                 <button class="chart-range-button" type="button" data-area-log-filter="problems" aria-pressed="false">Problems</button>
                 <button class="chart-range-button" type="button" data-area-log-filter="connection" aria-pressed="false">Connection</button>
               </div>
-              <ol id="areaExplorerLog" class="area-explorer-log" aria-live="polite">
-                <li class="area-explorer-empty">Loading...</li>
-              </ol>
+              <ol id="areaExplorerLog" class="area-explorer-log" aria-live="polite"></ol>
               <div class="area-explorer-log-more">
                 <button id="areaExplorerLogMore" class="ghost-button" type="button" hidden>Show older</button>
               </div>
@@ -1678,6 +1675,6 @@
     <script src="/player-accent.js?v=1" defer></script>
     <script src="/vendor/skinview3d/skinview3d.bundle.js?v=3.4.1" defer></script>
     <script src="/minecraft-skin-viewer.js?v=6" defer></script>
-    <script src="/app.js?v=335" defer></script>
+    <script src="/app.js?v=336" defer></script>
   </body>
 </html>

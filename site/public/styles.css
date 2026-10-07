@@ -13869,3 +13869,130 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
 
 /* The map's Night button: only where there's a night view */
 .area-explorer-map-button.area-explorer-night[hidden] { display: none; }
+
+/* Area Explorer loading skeletons: each panel shaped like what's coming, shimmering until it's in */
+.area-explorer-skeleton { pointer-events: none; }
+.area-explorer-skeleton-bar {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  flex: none;
+  height: 10px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--muted) 16%, var(--panel-soft));
+}
+.area-explorer-skeleton-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 25%, transparent), transparent);
+  animation: skeleton-value-shimmer 1.2s ease-in-out infinite;
+}
+.area-explorer-skeleton-bar.is-dot { width: 10px; height: 10px; border-radius: 50%; }
+.area-explorer-skeleton-bar.is-slot { width: 32px; height: 32px; border: 2px solid var(--line-soft); }
+.area-explorer-skeleton-bar.is-icon { width: 48px; height: 48px; border: 2px solid var(--line); }
+.area-explorer-skeleton-bar.is-chip { height: 32px; border: 2px solid var(--line-soft); }
+.area-explorer-skeleton-bar.is-count { display: inline-block; width: 34px; height: 14px; vertical-align: middle; }
+.area-explorer-skeleton-bar.is-progress { width: 100%; height: 10px; border: 2px solid var(--line); }
+.area-explorer-skeleton-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+
+/* Live run: a run card */
+.area-explorer-skeleton-run {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 2px solid var(--line-soft);
+  border-radius: var(--card-radius);
+  background: var(--panel-soft);
+}
+.area-explorer-skeleton-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.area-explorer-skeleton-stats > div { display: grid; gap: 6px; }
+
+/* Highlights: rows, then a group of chips */
+.area-explorer-skeleton-highlights { display: grid; gap: 14px; }
+.area-explorer-skeleton-highlight {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 2px solid var(--line-soft);
+  border-radius: 2px;
+  background: var(--panel-soft);
+}
+.area-explorer-skeleton-highlight > div,
+.area-explorer-skeleton-group { display: grid; gap: 6px; min-width: 0; }
+.area-explorer-skeleton-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* Run log: a day heading, then events on their rail */
+.area-explorer-skeleton-day { padding: 8px 0 10px; }
+.area-explorer-skeleton-log {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 12px;
+  padding: 0 0 14px;
+}
+.area-explorer-skeleton-log .is-slot { width: 36px; height: 36px; }
+.area-explorer-skeleton-log > div { display: grid; gap: 7px; min-width: 0; padding-top: 2px; }
+
+/* Finds: cards like the real ones */
+.area-explorer-skeleton-find {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding: 10px 12px;
+  border: 2px solid var(--line);
+  border-left: 4px solid var(--line);
+  border-radius: 2px;
+  background: var(--panel);
+  box-shadow: var(--shadow-inset);
+}
+.area-explorer-skeleton-find > div { display: grid; gap: 8px; min-width: 0; }
+/* The list dims while it reloads; not its skeleton */
+.area-explorer-finds[aria-busy="true"]:has(.area-explorer-skeleton) { opacity: 1; }
+
+/* The map: a shimmer over it, and a note, until the scope's finds and regions are in */
+.area-explorer-map-skeleton {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: none;
+  place-items: center;
+  overflow: hidden;
+  pointer-events: none;
+  background:
+    linear-gradient(color-mix(in srgb, var(--line-soft) 55%, transparent) 1px, transparent 1px) 0 0 / 48px 48px,
+    linear-gradient(90deg, color-mix(in srgb, var(--line-soft) 55%, transparent) 1px, transparent 1px) 0 0 / 48px 48px,
+    color-mix(in srgb, var(--muted) 10%, var(--area-map-bg));
+}
+.area-explorer-map-wrap.is-loading > .area-explorer-map-skeleton { display: grid; }
+.area-explorer-map-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 14%, transparent), transparent);
+  animation: skeleton-value-shimmer 1.6s ease-in-out infinite;
+}
+.area-explorer-map-skeleton-label {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 2px solid var(--line);
+  border-radius: 2px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 13px;
+  box-shadow: var(--shadow-inset);
+}
+.area-explorer-map-skeleton-label img { image-rendering: pixelated; animation: area-explorer-compass 2.4s steps(8) infinite; }
+@keyframes area-explorer-compass { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .area-explorer-skeleton-bar::after,
+  .area-explorer-map-skeleton::after,
+  .area-explorer-map-skeleton-label img { animation: none; }
+}

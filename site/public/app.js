@@ -6328,6 +6328,8 @@ function renderKillAura(payload = {}) {
 // Xaero map it sends. The map is on top; the finds, the run and the mod's tokens under it.
 
 const AREA_EXPLORER_PAGE_SIZE = 50;
+/** A list already showing waits this long before its skeleton replaces it: a quick answer doesn't flash. */
+const AREA_EXPLORER_SKELETON_DELAY_MS = 180;
 const AREA_EXPLORER_KIND_LABELS = Object.freeze({ BASE: 'Base', ITEM: 'Loot', SIGN: 'Sign', MARKER: 'Marker' });
 const AREA_EXPLORER_PHASES = Object.freeze({
   SCAN: 'Reading the map', SWEEP: 'Sweeping', SETTLE: 'Letting the map catch up', CLEANUP: 'Cleaning up gaps',
@@ -6525,8 +6527,96 @@ function areaExplorerFindCount(scope) {
  * when the mod sent new ones and the tokens when one was revoked - not thousands of map points
  * every half minute the mod reports where it is.
  */
+// Loading skeletons: each panel shaped like what's coming, shimmering, until its data is in
+
+/** A shimmering block; {@code className} sizes it. */
+function areaExplorerSkeletonBar(className = '', style = '') {
+  return `<span class="area-explorer-skeleton-bar${className ? ` ${className}` : ''}"${style ? ` style="${style}"` : ''}></span>`;
+}
+
+/** A run card: the dot, the player and state, where, the progress bar and its numbers. */
+function renderAreaExplorerStatusSkeleton() {
+  const bar = areaExplorerSkeletonBar;
+  return `<div class="area-explorer-skeleton area-explorer-skeleton-run" aria-hidden="true">
+    <div class="area-explorer-skeleton-row">${bar('is-dot')}${bar('', 'width:38%;height:14px')}${bar('', 'width:22%;margin-left:auto')}</div>
+    ${bar('', 'width:56%;margin-left:18px')}
+    ${bar('is-progress')}
+    <div class="area-explorer-skeleton-stats">${[0, 1, 2].map(() => `<div>${bar('', 'width:70%')}${bar('', 'width:46%;height:14px')}</div>`).join('')}</div>
+  </div>`;
+}
+
+/** The mapped area and latest find rows, then a group of chips. */
+function renderAreaExplorerHighlightsSkeleton() {
+  const bar = areaExplorerSkeletonBar;
+  const row = width => `<div class="area-explorer-skeleton-highlight">${bar('is-slot')}<div>${bar('', 'width:34%')}${bar('', `width:${width}%;height:14px`)}</div></div>`;
+  return `<div class="area-explorer-skeleton area-explorer-skeleton-highlights" aria-hidden="true">
+    ${row(72)}${row(54)}
+    <div class="area-explorer-skeleton-group">${bar('', 'width:72px')}<div class="area-explorer-skeleton-chips">${[88, 112, 74, 96, 120].map(width => bar('is-chip', `width:${width}px`)).join('')}</div></div>
+  </div>`;
+}
+
+/** A day heading, then events: the item slot, type and time, the message, who and where. */
+function renderAreaExplorerLogSkeleton() {
+  const bar = areaExplorerSkeletonBar;
+  return `<li class="area-explorer-skeleton area-explorer-skeleton-day" aria-hidden="true">${bar('', 'width:64px')}</li>
+    ${[78, 92, 64, 84].map(width => `<li class="area-explorer-skeleton area-explorer-skeleton-log" aria-hidden="true">
+      ${bar('is-slot')}
+      <div>
+        <div class="area-explorer-skeleton-row">${bar('', 'width:64px;height:12px')}${bar('', 'width:44px;margin-left:auto')}</div>
+        ${bar('', `width:${width}%`)}
+        ${bar('', 'width:48%')}
+      </div>
+    </li>`).join('')}`;
+}
+
+/** Find cards: the item slot, the name, a line of details, then kind, coordinates and time. */
+function renderAreaExplorerFindsSkeleton() {
+  const bar = areaExplorerSkeletonBar;
+  return [[44, 70], [58, 52], [36, 0], [50, 64], [40, 0], [62, 46]].map(([name, details]) => `<li class="area-explorer-skeleton area-explorer-skeleton-find" aria-hidden="true">
+    ${bar('is-icon')}
+    <div>
+      ${bar('', `width:${name}%;height:15px`)}
+      ${details ? bar('', `width:${details}%`) : ''}
+      <div class="area-explorer-skeleton-row">${bar('', 'width:56px;height:18px')}${bar('', 'width:min(42%,170px);height:18px')}${bar('', 'width:48px;margin-left:auto')}</div>
+    </div>
+  </li>`).join('');
+}
+
+/** Everything still to come shows its skeleton: on the page's first load, before any answer. */
+function showAreaExplorerSkeletons() {
+  $('#areaExplorerStatus').innerHTML = renderAreaExplorerStatusSkeleton();
+  $('#areaExplorerHighlights').innerHTML = renderAreaExplorerHighlightsSkeleton();
+  $('#areaExplorerLog').innerHTML = renderAreaExplorerLogSkeleton();
+  $('#areaExplorerFinds').innerHTML = renderAreaExplorerFindsSkeleton();
+  $$('[data-area-count]').forEach(element => { element.innerHTML = areaExplorerSkeletonBar('is-count'); });
+  $('#areaExplorerMapWrap').classList.add('is-loading');
+}
+
+/** The first load failed: the skeletons left say so instead of shimmering on. */
+function clearAreaExplorerSkeletons() {
+  $('#areaExplorerMapWrap')?.classList.remove('is-loading');
+  $$('[data-area-count] .area-explorer-skeleton-bar').forEach(element => element.remove());
+  for (const container of [$('#areaExplorerStatus'), $('#areaExplorerHighlights'), $('#areaExplorerLog'), $('#areaExplorerFinds')]) {
+    if (!container?.querySelector('.area-explorer-skeleton')) continue;
+    container.querySelectorAll('.area-explorer-skeleton').forEach(element => element.remove());
+    if (!container.children.length) container.innerHTML = container.matches('ol') ? '<li class="area-explorer-empty">Could not load.</li>' : '<p class="area-explorer-empty">Could not load.</p>';
+  }
+}
+
 async function loadAreaExplorer({ full = true } = {}) {
   if (!state.currentUser) return;
+  const ae = areaExplorerState();
+  if (full && !ae.everLoaded) showAreaExplorerSkeletons();
+  try {
+    await loadAreaExplorerData(full);
+    ae.everLoaded = true;
+  } catch (error) {
+    if (!ae.everLoaded) clearAreaExplorerSkeletons();
+    throw error;
+  }
+}
+
+async function loadAreaExplorerData(full) {
   const ae = areaExplorerState();
   // Refreshes can overlap while the mod uploads: an older answer never replaces a newer one
   const requestId = (ae.summaryRequestId || 0) + 1;
@@ -6843,6 +6933,14 @@ async function loadAreaExplorerFinds() {
     kind: ae.kind, name: areaExplorerMarkerFilter(), q: ae.q, sort: ae.sort === 'newest' ? '' : ae.sort, ...near,
     limit: AREA_EXPLORER_PAGE_SIZE, offset: ae.offset
   });
+  // Another list on its way (another kind, page, search...): its skeleton, unless it's in at once.
+  // A refresh of the same list keeps what's there.
+  let skeletonTimer = null;
+  if (ae.renderedFindsQuery !== query) {
+    const showSkeleton = () => { if (ae.findsRequestId === requestId) list.innerHTML = renderAreaExplorerFindsSkeleton(); };
+    if (list.querySelector('.area-explorer-find')) skeletonTimer = setTimeout(showSkeleton, AREA_EXPLORER_SKELETON_DELAY_MS);
+    else showSkeleton();
+  }
   try {
     // The list of the site's item pictures comes first, so each find gets its own icon
     const [data] = await Promise.all([fetchJson(`/api/area-explorer/finds?${query}`), ensureItemIcons().catch(() => null)]);
@@ -6864,8 +6962,11 @@ async function loadAreaExplorerFinds() {
     ae.renderedFindsQuery = query;
     renderAreaExplorerPager();
   } catch (error) {
-    if (ae.findsRequestId === requestId) throw error;
+    if (ae.findsRequestId !== requestId) return;
+    if (list.querySelector('.area-explorer-skeleton')) list.innerHTML = '<li class="area-explorer-empty">Could not load the finds.</li>';
+    throw error;
   } finally {
+    clearTimeout(skeletonTimer);
     if (ae.findsRequestId === requestId) list.removeAttribute('aria-busy');
   }
 }
@@ -7018,17 +7119,26 @@ async function loadAreaExplorerMap() {
   const ae = areaExplorerState();
   const requestId = ae.mapRequestId = (ae.mapRequestId || 0) + 1;
   bindAreaExplorerMap();
+  const wrap = $('#areaExplorerMapWrap');
   if (!ae.scope) {
+    wrap.classList.remove('is-loading');
     ae.points = [];
     queueAreaExplorerMapDraw();
     return;
   }
   const scope = ae.scope;
-  // Every find of the scope, however many: the map draws them all
-  const [data] = await Promise.all([
-    fetchJson(`/api/area-explorer/map?${areaExplorerScopeParams()}`),
-    loadXaeroRegionMap()
-  ]);
+  // Another server or dimension: the map's skeleton until its finds and regions are in
+  if (ae.pointsScope !== scope) wrap.classList.add('is-loading');
+  let data;
+  try {
+    // Every find of the scope, however many: the map draws them all
+    [data] = await Promise.all([
+      fetchJson(`/api/area-explorer/map?${areaExplorerScopeParams()}`),
+      loadXaeroRegionMap()
+    ]);
+  } finally {
+    if (ae.mapRequestId === requestId) wrap.classList.remove('is-loading');
+  }
   if (ae.scope !== scope || ae.mapRequestId !== requestId) return;
   // Sorted once, so each frame just draws them in order
   ae.points = data.points
