@@ -4640,8 +4640,8 @@ function renderPlayerSignsButton(username) {
   const known = playerSignCount(username);
   const label = known ? `Show ${formatNumber(known.total)} sign${known.total === 1 ? '' : 's'} with ${username}` : `Show signs with ${username}`;
   return `<button class="player-profile-value-button player-profile-signs-button" type="button" data-player-signs="${escapeHtml(username)}" aria-haspopup="dialog" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">${known
-    ? `<span data-player-signs-count>${formatNumber(known.total)}</span>`
-    : '<span class="is-loading-value" data-player-signs-count>-</span>'}</button>`;
+    ? `<em data-player-signs-count>${formatNumber(known.total)}</em>`
+    : '<em class="is-loading-value" data-player-signs-count>-</em>'}</button>`;
 }
 
 function setPlayerSignCount(username, total) {

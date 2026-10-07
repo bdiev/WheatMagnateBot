@@ -492,11 +492,12 @@ function testPlayerSigns() {
   // The button is the count of signs, still opening them; a shimmer until the count is in
   const counts = vm.createContext({ state: {}, escapeHtml: String, formatNumber: value => value.toLocaleString('en-US'), Date });
   for (const name of ['playerSignCount', 'renderPlayerSignsButton']) vm.runInContext(functionSource(name), counts);
-  assert.match(counts.renderPlayerSignsButton('Steve'), /data-player-signs="Steve"[^>]*><span class="is-loading-value" data-player-signs-count>-<\/span><\/button>/);
+  assert.match(counts.renderPlayerSignsButton('Steve'), /data-player-signs="Steve"[^>]*><em class="is-loading-value" data-player-signs-count>-<\/em><\/button>/);
   counts.state.playerSignCounts = new Map([['steve', { total: 1234, at: Date.now() }]]);
   const button = counts.renderPlayerSignsButton('Steve');
   assert.match(button, /data-player-signs="Steve"/);
-  assert.match(button, /<span data-player-signs-count>1,234<\/span><\/button>/);
+  assert.match(button, /<em data-player-signs-count>1,234<\/em><\/button>/);
+  assert.doesNotMatch(button, /<span/, 'no span: the grid styles those as the card label');
   assert.match(button, /aria-label="Show 1,234 signs with Steve"/);
   assert.match(functionSource('ensurePlayerSignCount'), /signs\?player=\$\{encodeURIComponent\(username\)\}&count=1/);
   assert.match(functionSource('ensurePlayerSignCount'), /PLAYER_SIGN_COUNT_TTL_MS/, 'not fetched on every profile redraw');
