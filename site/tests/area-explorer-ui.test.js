@@ -485,6 +485,23 @@ function testCountsKeepUp() {
   assert.match(functionSource('loadAreaExplorer'), /summaryRequestId !== requestId\) return/, 'an older summary never replaces a newer one');
 }
 
+function testPlayerSigns() {
+  // The profile's Signs button opens the list of signs with the player's name on them
+  assert.match(source, /data-player-signs="\$\{escapeHtml\(profileUsername\)\}"/, 'the profile has a Signs button');
+  assert.doesNotMatch(source, /<span>Nearby Seen<\/span>/, 'it replaces Nearby Seen');
+  assert.match(functionSource('openPlayerSigns'), /\/api\/area-explorer\/signs\?player=\$\{encodeURIComponent\(username\)\}/);
+  const context = vm.createContext({});
+  vm.runInContext(functionSource('highlightPlayerSignName'), context);
+  const sign = text => `<pre class="area-explorer-sign"><span class="area-explorer-sign-text">${text}</span></pre>`;
+  assert.equal(context.highlightPlayerSignName(sign('Base of steve&#39;s Steven'), 'Steve'), sign('Base of <mark>steve</mark>&#39;s Steven'),
+    'the name as a word, any case');
+  assert.equal(context.highlightPlayerSignName(sign('say &quot;hi&quot;'), 'quot'), sign('say &quot;hi&quot;'), 'entities are left alone');
+  assert.equal(context.highlightPlayerSignName('<span class="area-explorer-find-name">Steve</span>', 'Steve'), '<span class="area-explorer-find-name">Steve</span>',
+    'only the sign text is marked');
+  // Picked from the list, the sign opens in the Area Explorer once its scope is loaded
+  assert.match(functionSource('loadAreaExplorer'), /pending\.scope === ae\.scope[\s\S]*?focusAreaExplorerMap\(pending\.x, pending\.z\)/);
+}
+
 (async () => {
   await testFindsRaceAndScroll();
   await testMapRace();
@@ -502,5 +519,6 @@ function testCountsKeepUp() {
   testMarkerTypes();
   testLocatePlayer();
   testCountsKeepUp();
+  testPlayerSigns();
   console.log('Area Explorer UI behavior tests passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

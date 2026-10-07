@@ -5169,6 +5169,15 @@ body.search-focus-active #logoutButton {
 .player-skins-head h2 { color:var(--accent-strong); font-family:"Minecraft Rus",var(--font-display); font-size:24px; font-weight:400; }
 .player-skins-content { display:grid; grid-template-columns:minmax(280px,1fr) minmax(220px,.72fr); min-height:480px; }
 
+/* Signs with the player's name: the Area Explorer's own sign cards, the name lit up on them */
+.player-signs-dialog { width:min(640px,100%); }
+.player-signs-content { padding:12px; background:color-mix(in srgb,var(--bg) 45%,var(--panel)); }
+.player-signs-list { display:grid; gap:8px; }
+.player-signs-list mark { padding:0 2px; color:inherit; background:color-mix(in srgb,var(--accent) 34%,transparent); }
+.player-signs-empty { padding:36px 16px; color:var(--muted); text-align:center; }
+.player-signs-empty strong { display:block; margin-bottom:6px; color:var(--text); }
+.player-signs-empty p { margin:0; }
+
 .player-skin-stage {
   position:relative;
   isolation:isolate;

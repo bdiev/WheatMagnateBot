@@ -15,6 +15,8 @@ const MAX_Y = 4096;
 const ONLINE_WINDOW_MS = 90_000;
 const TOKEN_PREFIX = 'aex_';
 const MAX_PAGE_SIZE = 200;
+// A Java name, or a Bedrock one through Geyser/Floodgate (".Name", "*Name")
+const PLAYER_NAME_PATTERN = /^[.*]?[A-Za-z0-9_]{1,32}$/;
 const TOP_LOOT_NAMES = 8;
 // Commands from the site's map to a mod: what they can be, how big an area, how long they wait to be picked up
 const COMMAND_KINDS = Object.freeze(['EXPLORE', 'RESCAN']);
@@ -670,6 +672,23 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     return { points: rows.rows.map(row => (row.kind === 'MARKER' ? [String(row.id), row.kind, row.x, row.z, row.name] : [String(row.id), row.kind, row.x, row.z])) };
   }
 
+  /**
+   * The signs a player's name is written on, newest first: the name as a word of its own, any case,
+   * so "Steve" finds "steve's base" but not "Steven". Both sides of the sign are read.
+   */
+  async function getPlayerSigns(url) {
+    const player = String(url.searchParams.get('player') || '').trim();
+    if (!PLAYER_NAME_PATTERN.test(player)) throw httpError(400, 'Invalid player name.');
+    const pattern = `(^|[^A-Za-z0-9_])${player.replace(/[.*]/g, '\\$&')}($|[^A-Za-z0-9_])`;
+    const rows = (await pool.query(
+      `SELECT *, COUNT(*) OVER()::int AS total FROM area_explorer_finds
+       WHERE kind = 'SIGN' AND removed_at IS NULL AND (details ~* $1 OR label ~* $1)
+       ORDER BY found_at DESC, id DESC LIMIT $2`,
+      [pattern, MAX_PAGE_SIZE]
+    )).rows;
+    return { signs: rows.map(row => publicFind(row)), total: rows[0]?.total || 0 };
+  }
+
   async function getFind(id) {
     if (!/^\d{1,18}$/.test(id)) throw httpError(400, 'Invalid find id.');
     const row = (await pool.query('SELECT * FROM area_explorer_finds WHERE id = $1 AND removed_at IS NULL', [id])).rows[0];
@@ -742,6 +761,7 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     if (path === '/api/area-explorer/map' && req.method === 'GET') return { statusCode: 200, payload: await getMapPoints(url) };
     if (path === '/api/area-explorer/events' && req.method === 'GET') return { statusCode: 200, payload: await getEvents(url) };
     if (path === '/api/area-explorer/coverage' && req.method === 'GET') return { statusCode: 200, payload: await getCoverage(url) };
+    if (path === '/api/area-explorer/signs' && req.method === 'GET') return { statusCode: 200, payload: await getPlayerSigns(url) };
     // Sending a mod off to explore: administrators only - it flies someone's game
     if (path === '/api/area-explorer/commands' && req.method === 'POST') {
       assertAdmin(currentUser);
@@ -767,7 +787,7 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     return null;
   }
 
-  return { authenticate, ingest, handleIngest, handleApi, getSummary, getEvents, getCoverage, createCommand, getFinds, getMapPoints, getFind, removeFind, listTokens, createToken, revokeToken };
+  return { authenticate, ingest, handleIngest, handleApi, getSummary, getEvents, getCoverage, createCommand, getFinds, getMapPoints, getFind, getPlayerSigns, removeFind, listTokens, createToken, revokeToken };
 }
 
 module.exports = {

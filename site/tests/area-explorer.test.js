@@ -553,6 +553,36 @@ function testRunLogWiring() {
   assert.match(appSource, /if \(eventPayload\.events\) applyAreaExplorerEvents\(eventPayload\.events\)/, 'live events go straight into the log');
 }
 
+async function testPlayerSigns() {
+  const db = new PGlite();
+  try {
+    for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '072_area_explorer_picked_up.sql']) {
+      await db.exec(fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8'));
+    }
+    const sign = (i, details, label = '', kind = 'SIGN', removed = false) => db.query(
+      `INSERT INTO area_explorer_finds (server, dimension, kind, x, y, z, found_at, name, details, label, dedupe_key, removed_at)
+       VALUES ('s', 'overworld', $1, $2::int, 64, 0, NOW() - make_interval(mins => $2::int), 'Oak Sign', $3, $4, $1 || $2::int, $5)`,
+      [kind, i, details, label, removed ? new Date() : null]
+    );
+    await sign(1, 'Base of\nSteve');
+    await sign(2, 'nothing here', "steve's farm");
+    await sign(3, 'Steven was here');
+    await sign(4, 'xSteve_ walls');
+    await sign(5, 'Steve', '', 'ITEM');
+    await sign(6, 'Steve', '', 'SIGN', true);
+    await sign(7, '.Steve on bedrock');
+    const service = createAreaExplorerService({ pool: poolFor(db), hashToken, readJsonBody: async () => ({}), sendJson() {}, sendError() {}, enforceRateLimit: () => true });
+    const result = await service.getPlayerSigns(new URL('http://x/api/area-explorer/signs?player=Steve'));
+    assert.deepEqual(result.signs.map(find => find.x), [1, 2, 7], 'the name as a word, any case, either side, newest first');
+    assert.equal(result.total, 3);
+    const bedrock = await service.getPlayerSigns(new URL('http://x/api/area-explorer/signs?player=.Steve'));
+    assert.deepEqual(bedrock.signs.map(find => find.x), [7], 'the dot is a dot, not any character');
+    await assert.rejects(service.getPlayerSigns(new URL('http://x/api/area-explorer/signs?player=a%27%20OR%201')), /Invalid player name/);
+  } finally {
+    await db.close();
+  }
+}
+
 (async () => {
   testNormalization();
   testEventNormalization();
@@ -565,6 +595,7 @@ function testRunLogWiring() {
   await testCleanNames();
   await testCommands();
   await testMapCrowds();
+  await testPlayerSigns();
   testWiring();
   testRunLogWiring();
   testNightWiring();

@@ -4089,7 +4089,10 @@ function renderPlayerProfile(profile) {
       <div><span>Messages 24h</span><strong>${formatNumber(profile.chat?.last24h)}</strong></div>
       <div><span>Last Message</span><strong${profile.chat?.lastMessageAt ? ` data-profile-relative-time="${escapeHtml(profile.chat.lastMessageAt)}"` : ''}>${profile.chat?.lastMessageAt ? formatRecentDate(profile.chat.lastMessageAt) : 'None'}</strong></div>
       <div><span>Nearby</span><strong>${nearby ? `${formatNumber(nearby.distance)} blocks` : 'No sighting'}</strong></div>
-      <div><span>Nearby Seen</span><strong>${nearby?.lastSeen ? formatDate(nearby.lastSeen) : '-'}</strong></div>
+      <div>
+        <span>Signs</span>
+        <button class="player-profile-value-button" type="button" data-player-signs="${escapeHtml(profileUsername)}" aria-haspopup="dialog" title="Signs with ${escapeHtml(profileUsername)} written on them">Show signs</button>
+      </div>
     </section>
     ${gameSessionsSection}
     ${renderPlayerActivityPattern(profile.activityPattern)}
@@ -4164,7 +4167,6 @@ function playerProfileSignature(profile) {
     profile.chat?.last24h,
     profile.chat?.lastMessageAt,
     profile.nearby?.distance,
-    profile.nearby?.lastSeen,
     profile.ping,
     // The live session grows every refresh; only re-render the pattern when a
     // completed session or a new active day changes it.
@@ -4391,6 +4393,7 @@ function closePlayerProfile({ restoreSeenSearch = true } = {}) {
   const seenSearchReturn = restoreSeenSearch ? state.playerProfileSeenSearchReturn : null;
   state.playerProfileSeenSearchReturn = null;
   closePlayerSkins();
+  closePlayerSigns();
   overlay.hidden = true;
   setPlayerProfileLoading(false);
   stopPlayerProfileSessionClock();
@@ -4623,12 +4626,104 @@ async function openPlayerSkins(username) {
   }
 }
 
+// Signs with the player's name on them: what the Area Explorer mod read, from any server and dimension
+
+function closePlayerSigns() {
+  const overlay = $('#playerSignsOverlay');
+  if (!overlay || overlay.hidden) return;
+  overlay.hidden = true;
+  state.playerSignsRequestId = (state.playerSignsRequestId || 0) + 1;
+  state.playerSigns = [];
+}
+
+/** The name lit up wherever it's written on the sign (the text is escaped already: entities are left alone). */
+function highlightPlayerSignName(html, username) {
+  const name = username.replace(/[.*]/g, '\\$&');
+  const word = new RegExp(`(^|[^A-Za-z0-9_&#])(${name})(?=$|[^A-Za-z0-9_])`, 'gim');
+  return html.replace(/(<span class="area-explorer-sign-text">)([\s\S]*?)(<\/span>)/g,
+    (match, open, text, close) => `${open}${text.replace(word, '$1<mark>$2</mark>')}${close}`);
+}
+
+function renderPlayerSigns(username, { signs, total }) {
+  const content = $('#playerSignsContent');
+  state.playerSigns = signs;
+  $('#playerSignsCount').textContent = total
+    ? `${formatNumber(total)} sign${total === 1 ? '' : 's'}${total > signs.length ? `, newest ${formatNumber(signs.length)} shown` : ''}`
+    : 'No signs';
+  content.innerHTML = signs.length
+    ? `<ol class="area-explorer-finds player-signs-list">${signs.map(find => highlightPlayerSignName(renderAreaExplorerFind(find, { showScope: true }), username)).join('')}</ol>`
+    : `<div class="player-signs-empty"><strong>No signs yet</strong><p>No sign the Area Explorer mod has read has ${escapeHtml(username)} written on it.</p></div>`;
+}
+
+async function openPlayerSigns(username) {
+  const overlay = $('#playerSignsOverlay');
+  const content = $('#playerSignsContent');
+  if (!overlay || !content) return;
+  const requestId = state.playerSignsRequestId = (state.playerSignsRequestId || 0) + 1;
+  $('#playerSignsTitle').textContent = `Signs with ${username}`;
+  $('#playerSignsCount').textContent = 'Searching...';
+  content.innerHTML = '<div class="player-signs-empty" role="status">Reading the signs...</div>';
+  overlay.hidden = false;
+  $('#playerSignsClose')?.focus();
+  try {
+    const payload = await fetchJson(`/api/area-explorer/signs?player=${encodeURIComponent(username)}`);
+    if (requestId !== state.playerSignsRequestId || overlay.hidden) return;
+    renderPlayerSigns(username, payload);
+  } catch (err) {
+    if (requestId !== state.playerSignsRequestId || overlay.hidden) return;
+    $('#playerSignsCount').textContent = '';
+    content.innerHTML = `<div class="player-signs-empty"><strong>Could not load signs</strong><p>${escapeHtml(err.message)}</p></div>`;
+  }
+}
+
+/** A sign picked from the list: the Area Explorer opens on its server and dimension, centred on it. */
+function showPlayerSignOnMap(find) {
+  closePlayerSigns();
+  closePlayerProfile({ restoreSeenSearch: false });
+  const ae = areaExplorerState();
+  const scope = `${find.server}|${find.dimension}`;
+  if (ae.scope !== scope) {
+    ae.scope = scope;
+    ae.offset = 0;
+    ae.view = null;
+    ae.nearby = null;
+    ae.areaSelection = null;
+  }
+  ae.pendingFocus = { scope, x: find.x, z: find.z, id: find.id };
+  if (state.activeTab === 'area-explorer') loadAreaExplorer().catch(error => setBanner(`Could not load Area Explorer: ${error.message}`));
+  else setActiveTab('area-explorer');
+  // The tab may be closed to this account: nothing to focus later then
+  if (state.activeTab !== 'area-explorer') ae.pendingFocus = null;
+}
+
+async function handlePlayerSignsClick(event) {
+  const coords = event.target.closest('[data-copy-coords]');
+  if (coords) {
+    try {
+      await writeClipboardText(coords.dataset.copyCoords);
+      coords.classList.add('copied');
+      setTimeout(() => coords.classList.remove('copied'), 1200);
+    } catch { /* the coordinates stay on screen to copy by hand */ }
+    return;
+  }
+  const item = event.target.closest('[data-find-id]');
+  if (!item || !(event.target.closest('[data-area-select]') || !event.target.closest('button, a, pre'))) return;
+  const find = (state.playerSigns || []).find(sign => sign.id === item.dataset.findId);
+  if (find) showPlayerSignOnMap(find);
+}
+
 async function handlePlayerProfileClick(event) {
   if (event.target.closest('.chat-link')) return;
   const activityCell = event.target.closest('[data-activity-cell]');
   if (activityCell) {
     event.preventDefault();
     selectPlayerActivityCell(activityCell);
+    return;
+  }
+  const signsButton = event.target.closest('[data-player-signs]');
+  if (signsButton) {
+    event.preventDefault();
+    await openPlayerSigns(signsButton.dataset.playerSigns);
     return;
   }
   const skinsButton = event.target.closest('[data-player-skins]');
@@ -6405,6 +6500,13 @@ async function loadAreaExplorer({ full = true } = {}) {
   }
   if (full || ae.logServer !== areaExplorerLogServer()) work.push(loadAreaExplorerLog());
   await Promise.all(work);
+  // A sign opened from a player's profile: shown once its scope is loaded
+  const pending = ae.pendingFocus;
+  if (pending && pending.scope === ae.scope) {
+    ae.pendingFocus = null;
+    focusAreaExplorerMap(pending.x, pending.z);
+    selectAreaExplorerFind(pending.id).catch(error => setBanner(error.message));
+  }
 }
 
 // Run log: what happened to the mod's runs, newest first
@@ -6790,7 +6892,7 @@ function areaExplorerFoundAgo(foundAt) {
   return age >= 0 && age < 30 * 86_400_000 ? `${formatDurationMs(age)} ago` : formatFullDateTime(foundAt);
 }
 
-function renderAreaExplorerFind(find, { selected = false } = {}) {
+function renderAreaExplorerFind(find, { selected = false, showScope = false } = {}) {
   let body = '';
   if (find.kind === 'SIGN') {
     // The front, then the back; the same text on both sides shown once
@@ -6824,7 +6926,7 @@ function renderAreaExplorerFind(find, { selected = false } = {}) {
       </div>
       ${body}
       <div class="area-explorer-find-meta">
-        <span class="area-explorer-kind">${AREA_EXPLORER_KIND_LABELS[find.kind] || escapeHtml(find.kind)}</span>
+        <span class="area-explorer-kind">${showScope ? `${escapeHtml(find.server)} · ${escapeHtml(prettyDimension(find.dimension))}` : AREA_EXPLORER_KIND_LABELS[find.kind] || escapeHtml(find.kind)}</span>
         <button class="ghost-button area-explorer-coords" type="button" data-copy-coords="${escapeHtml(coords)}" title="Copy coordinates" aria-label="Copy coordinates: X ${find.x}, Y ${find.y}, Z ${find.z}"><span><span class="area-explorer-axis">X</span> ${find.x}</span><span><span class="area-explorer-axis">Y</span> ${find.y}</span><span><span class="area-explorer-axis">Z</span> ${find.z}</span><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></svg></button>
         ${distance}<time datetime="${escapeHtml(find.foundAt)}" title="Found ${escapeHtml(formatFullDateTime(find.foundAt))}">${escapeHtml(areaExplorerFoundAgo(find.foundAt))}</time>
         ${pickup}
@@ -13230,6 +13332,10 @@ document.addEventListener('error', event => {
   image.remove();
 }, true);
 document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !$('#playerSignsOverlay')?.hidden) {
+    closePlayerSigns();
+    return;
+  }
   if (event.key === 'Escape' && !$('#playerSkinsOverlay')?.hidden) {
     closePlayerSkins();
     return;
@@ -13301,6 +13407,11 @@ $('#playerProfileOverlay').addEventListener('click', event => {
   if (event.target.id === 'playerProfileOverlay') closePlayerProfile();
 });
 $('#playerSkinsClose').addEventListener('click', closePlayerSkins);
+$('#playerSignsClose').addEventListener('click', closePlayerSigns);
+$('#playerSignsContent').addEventListener('click', handlePlayerSignsClick);
+$('#playerSignsOverlay').addEventListener('click', event => {
+  if (event.target.id === 'playerSignsOverlay') closePlayerSigns();
+});
 $('#playerSkinsOverlay').addEventListener('click', event => {
   if (event.target.id === 'playerSkinsOverlay') closePlayerSkins();
 });
