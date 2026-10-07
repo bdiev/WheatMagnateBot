@@ -19,7 +19,7 @@ import java.util.List;
  * explored and the next plan's line lies further in - fitted to how far the map really got drawn.
  * <p>
  * Small explored specks inside blank ground are ignored, or every one of them would get a loop of
- * its own. Blank strips too thin for any loop are left for the cleanup.
+ * its own. Nearby narrow corridors are flown along their centre line instead of circling one edge.
  * <p>
  * Pure logic, chunk coordinates; a chunk's number stands for its centre.
  */
@@ -27,12 +27,12 @@ public final class ContourPlanner {
     /** Loops shorter than this (chunks) are flown as a single spot at their middle - too tight to circle. */
     private static final double MIN_LOOP_LENGTH = 6;
     /** How far (chunks) a simplified loop may stray from the exact line. */
-    private static final double SIMPLIFY_TOLERANCE = 0.75;
+    private static final double SIMPLIFY_TOLERANCE = 0.25;
 
     private ContourPlanner() {
     }
 
-    /** A loop to fly, chunk coordinates {x, z}, starting near the player and back at its start; or one point; or empty if none is left. */
+    /** A contour loop or open corridor centre line, chunk coordinates {x, z}; empty if none is left. */
     public static List<double[]> nextLoop(Area area, int reach, int overlap, ChunkTest explored, double fromX, double fromZ) {
         int w = area.width(), h = area.depth();
         int spacing = CoveragePlanner.spacing(reach, overlap);
@@ -47,7 +47,8 @@ public final class ContourPlanner {
         float[] dist = distances(wall, w, h);
 
         List<List<double[]>> loops = isoLoops(dist, w, h, level);
-        if (loops.isEmpty()) return List.of();
+        List<double[]> corridor = NarrowCorridorPlanner.nearest(area, reach, explored, fromX, fromZ);
+        if (loops.isEmpty()) return simplifyOpen(corridor, SIMPLIFY_TOLERANCE);
 
         // The loop with a point nearest the player, started at that point
         double px = fromX - area.minCX(), pz = fromZ - area.minCZ();
@@ -64,6 +65,13 @@ public final class ContourPlanner {
                 }
             }
         }
+
+        // A centre line is slightly farther from the player than its edge contour. Prefer it
+        // within one reach so narrow corridors do not keep getting an off-centre perimeter pass.
+        double corridorDistance = Double.POSITIVE_INFINITY;
+        for (double[] point : corridor) corridorDistance = Math.min(corridorDistance,
+            Math.hypot(point[0] - fromX, point[1] - fromZ));
+        if (corridorDistance <= bestDist + reach) return simplifyOpen(corridor, SIMPLIFY_TOLERANCE);
 
         List<double[]> loop = new ArrayList<>(best.size() + 1);
         for (int i = 0; i < best.size(); i++) loop.add(best.get((bestStart + i) % best.size()));
@@ -262,7 +270,17 @@ public final class ContourPlanner {
         return new double[]{x / line.size(), z / line.size()};
     }
 
-    /** Douglas-Peucker: drops points closer than {@code tolerance} to the line through their neighbours. */
+    private static List<double[]> simplifyOpen(List<double[]> line, double tolerance) {
+        if (line.size() < 3) return line;
+        boolean[] keep = new boolean[line.size()];
+        keep[0] = keep[line.size() - 1] = true;
+        simplify(line, 0, line.size() - 1, tolerance, keep);
+        List<double[]> out = new ArrayList<>();
+        for (int i = 0; i < line.size(); i++) if (keep[i]) out.add(line.get(i));
+        return out;
+    }
+
+    /** Douglas-Peucker: drops points closer than {@code tolerance} to the segment through their neighbours. */
     private static List<double[]> simplify(List<double[]> line, double tolerance) {
         boolean[] keep = new boolean[line.size()];
         keep[0] = keep[line.size() - 1] = true;
@@ -294,7 +312,9 @@ public final class ContourPlanner {
         double worstDist = tolerance;
         for (int i = from + 1; i < to; i++) {
             double[] p = line.get(i);
-            double d = len < 1e-9 ? Math.hypot(p[0] - a[0], p[1] - a[1]) : Math.abs(dx * (a[1] - p[1]) - dz * (a[0] - p[0])) / len;
+            double projection = len < 1e-9 ? 0 : Math.max(0, Math.min(1,
+                ((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / (len * len)));
+            double d = Math.hypot(p[0] - a[0] - projection * dx, p[1] - a[1] - projection * dz);
             if (d > worstDist) {
                 worstDist = d;
                 worst = i;

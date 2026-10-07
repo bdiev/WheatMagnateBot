@@ -70,6 +70,10 @@ public final class ChunkGrid implements ChunkTest {
         if (area.contains(cx, cz)) bits.set(index(cx, cz));
     }
 
+    public void remove(int cx, int cz) {
+        if (area.contains(cx, cz)) bits.clear(index(cx, cz));
+    }
+
     /** Adds packed {@link ChunkPos} keys. */
     public void addAll(LongIterable keys) {
         for (LongIterator it = keys.iterator(); it.hasNext(); ) {

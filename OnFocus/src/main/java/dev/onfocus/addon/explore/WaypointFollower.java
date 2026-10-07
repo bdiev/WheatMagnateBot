@@ -14,6 +14,14 @@ public class WaypointFollower {
     /** A point to fly through, in block coordinates. {@code sweep}: the leg ending here runs along a strip. */
     public record Point(double x, double z, boolean sweep) {}
 
+    /** Tighten contour arrivals without making targets smaller than the flight's turning circle. */
+    public static double contourArrivalDistance(double configured, double speed, double rotationStep, int reach) {
+        double perTick = speed / 20;
+        double angle = Math.toRadians(Math.max(0.1, Math.min(180, rotationStep)));
+        double turningRadius = perTick / (2 * Math.sin(angle / 2));
+        return Math.max(turningRadius + perTick, Math.min(configured, Math.max(4, reach * 4.0)));
+    }
+
     private final List<Point> route = new ArrayList<>();
     private int index;
     // Where the current leg started, to tell when the point has been flown past

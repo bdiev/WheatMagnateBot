@@ -44,6 +44,7 @@ public final class FindsArchive {
      */
     public record Find(Kind kind, int x, int y, int z, LocalDateTime found, String name, int count, String label, String details) {
         public Find {
+            name = FindNames.clean(name);
             label = label == null ? "" : label;
             details = details == null ? "" : details;
         }

@@ -9,6 +9,14 @@
 The current file and backups `.jsonl.1`, `.jsonl.2`, `.jsonl.3` retain up to 32 MiB total.
 Keep all four files when investigating a run, plus `area-explorer.log` for existing warnings,
 map-reader summaries and timing logs. Disabling the setting stops new trace records.
+
+Remaining-time estimates use live missing counts. After 30 active seconds, sweep ETA uses
+confirmed coverage per wall-clock second over the latest 180 active seconds. Pauses, reconnects,
+and map imports are excluded; cleanup starts a separate rate window and also considers its actual
+remaining route. Before sufficient samples exist, route distance and flight speed provide a
+preliminary estimate. No ETA is published during map reads or after the rate window stalls.
+Diagnostic records expose `coverageChunksPerMinute` once a rate window is available. Estimates
+describe active work; future pauses and additional cleanup passes are not scheduled completion times.
 File writing uses a dedicated background worker with a bounded 256-record queue. If the
 queue fills or a record exceeds 64 KiB, a subsequent write reports `diagnostics-dropped`.
 A write failure is reported once in the regular module log.
@@ -24,9 +32,20 @@ server address are included intentionally for correlating a trace with a map scr
 - `flight-start`: settings and initial reach.
 - `flight-position`: actual movement, speed, yaw and target every 20 client ticks.
 - `route`: reason, point count, first 128 points and last point; coordinates are in blocks.
+  In Contour mode, `corridor-centre` identifies an open centre line through a narrow blank strip;
+  `contour-loop` identifies a perimeter loop. Corridors up to `2 * reach + 1` chunks wide use
+  the midpoint of each blank cross-section, including half-chunk centres for even widths.
 - `waypoint-reached`: reached point, distance, tolerance and proximity/endpoint-plane reason.
 - `cleanup-skip`: target skipped because its footprint is already explored.
+- `covered-leg-skip`: a contour/corridor leg skipped after its remaining swath (plus one chunk
+  of clearance) is confirmed explored. Unknown and deferred chunks do not authorize skipping.
+  Checks run once per active second, with a 2 ms budget between legs and at most 32 skips.
+- `deferred-release`: unconfirmed chunks returned to planning after their map-drawing grace period
+  (100 active ticks for blank map state, 600 for unknown state). Repeated loading does not extend
+  the grace period. Mapped chunks are confirmed instead.
 - `loaded-width`: sorted width samples, current two-sided width and selected reach.
+  `measuredReach` uses the lower decile; `acceptedReach` records the result after requiring three
+  consecutive measurement windows before widening. Narrower measurements apply immediately.
 - `mapped-width`, `reach-change`: Xaero width evidence and replanning trigger.
 - `contour-stop`: no loop or no coverage progress.
 - `settle-start`, `settle-target`, `settle-map-read`: map wait, target and completion/timeout.

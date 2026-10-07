@@ -436,6 +436,31 @@ function testEyeClickAndHold() {
   assert.equal(filters.hidden, true, 'cancelled holds never open the filter selector');
 }
 
+function testLootIcons() {
+  const context = vm.createContext({
+    state: { itemIcons: {}, itemNameIds: { map: 'filled_map', book_and_quill: 'writable_book' } },
+    AREA_EXPLORER_KIND_ICONS: { ITEM: 'chest', SIGN: 'oak_sign', MARKER: 'ender_eye' },
+    AREA_EXPLORER_MARKER_ICONS: {}, AREA_EXPLORER_MARKER_MOBS: {}
+  });
+  for (const name of ['normalizeItemIconKey', 'itemIdForName', 'minecraftIconUrl', 'areaExplorerIconUrl', 'areaExplorerFindIcon']) {
+    vm.runInContext(functionSource(name), context);
+  }
+  for (const name of ['Golden Apple', 'Golden Apple (\uEFF4\uEFF4)', '\u00a76Golden Apple \u00a7f(\u00a7f\uEFF4\u00a7f\uEFF4)',
+    'Golden Apple [\u{F0001}]', 'Golden Apple (\u{100001})']) {
+    const icon = context.areaExplorerFindIcon({ kind: 'ITEM', name });
+    assert.equal(icon.src, '/api/minecraft-icon/item/golden_apple.png', 'resource-pack badges must not select the chest fallback');
+  }
+  assert.equal(context.areaExplorerFindIcon({ kind: 'ITEM', name: 'Enchanted Golden Apple (\uEFF4)' }).src,
+    '/api/minecraft-icon/item/enchanted_golden_apple.png', 'enchanted apples must retain their own icon');
+  assert.equal(context.areaExplorerFindIcon({ kind: 'ITEM', name: 'Map (\uEFF4)' }).src,
+    '/api/minecraft-icon/item/filled_map.png', 'cleaned names must still resolve item aliases');
+  assert.equal(context.areaExplorerFindIcon({ kind: 'SIGN', name: 'Pale Oak Wall Sign' }).src,
+    '/api/minecraft-icon/item/pale_oak_sign.png', 'wall signs must retain their standing sign icon');
+  context.state.itemIcons.golden_apple = '/items/Golden_Apple.png';
+  assert.equal(context.areaExplorerFindIcon({ kind: 'ITEM', name: 'Golden Apple (\uEFF4\uEFF4)' }).src,
+    '/items/Golden_Apple.png', 'decorated names must use local item icons when available');
+}
+
 function testMarkerTypes() {
   const { ae, context } = fixture();
   ae.visibleKinds = ['BASE', 'SIGN'];
@@ -658,6 +683,7 @@ async function testLoadingSkeletons() {
   testEmbeddedTouch();
   testEyeClickAndHold();
   testMarkerTypes();
+  testLootIcons();
   testLocatePlayer();
   testCountsKeepUp();
   testPlayerSigns();

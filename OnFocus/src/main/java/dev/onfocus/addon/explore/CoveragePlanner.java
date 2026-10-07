@@ -94,6 +94,35 @@ public final class CoveragePlanner {
         return Math.max(0, reach - overlap);
     }
 
+    /** Guaranteed cleanup footprint after allowing for the maximum waypoint arrival offset. */
+    public static int cleanupRadius(int reach, double arrivalBlocks) {
+        return Math.max(0, reach - (int) Math.ceil(arrivalBlocks / 16.0));
+    }
+
+    /** Conservative supercover of a flight leg's swath; provisional loading never counts here. */
+    public static boolean hasOpenAlong(Area area, int reach, ChunkTest explored,
+                                       double x1, double z1, double x2, double z2) {
+        int steps = Math.max(1, (int) Math.ceil(Math.max(Math.abs(x2 - x1), Math.abs(z2 - z1)) * 2));
+        int previousX = (int) Math.floor(x1 + 0.5), previousZ = (int) Math.floor(z1 + 0.5);
+        for (int i = 0; i <= steps; i++) {
+            double t = i / (double) steps;
+            int x = (int) Math.floor(x1 + (x2 - x1) * t + 0.5);
+            int z = (int) Math.floor(z1 + (z2 - z1) * t + 0.5);
+            if (i > 0 && x == previousX && z == previousZ) continue;
+            // Include both corner-adjacent chunks, so a diagonal cannot skip a small gap.
+            for (int cx = Math.max(area.minCX(), Math.min(previousX, x) - reach);
+                 cx <= Math.min(area.maxCX(), Math.max(previousX, x) + reach); cx++) {
+                for (int cz = Math.max(area.minCZ(), Math.min(previousZ, z) - reach);
+                     cz <= Math.min(area.maxCZ(), Math.max(previousZ, z) + reach); cz++) {
+                    if (!explored.test(cx, cz)) return true;
+                }
+            }
+            previousX = x;
+            previousZ = z;
+        }
+        return false;
+    }
+
     /** Total length of flying the route from (fromX, fromZ), transit included. */
     public static double routeLength(List<Segment> route, double fromX, double fromZ) {
         double length = 0, x = fromX, z = fromZ;

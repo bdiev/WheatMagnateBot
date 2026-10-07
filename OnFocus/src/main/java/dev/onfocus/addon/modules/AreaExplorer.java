@@ -7,6 +7,10 @@ import dev.onfocus.addon.ModuleLog;
 import dev.onfocus.addon.OnFocusAddon;
 import dev.onfocus.addon.explore.BaseClues;
 import dev.onfocus.addon.explore.ChunkGrid;
+import dev.onfocus.addon.explore.DeferredChunks;
+import dev.onfocus.addon.explore.ReachStability;
+import dev.onfocus.addon.explore.ProgressEta;
+import dev.onfocus.addon.explore.FindNames;
 import dev.onfocus.addon.explore.ContourPlanner;
 import dev.onfocus.addon.explore.Coverage;
 import dev.onfocus.addon.explore.CoveragePlanner;
@@ -1011,7 +1015,7 @@ public class AreaExplorer extends Module {
 
     private final WaypointFollower follower = new WaypointFollower();
     /** Chunks actually loaded within reach along the flight path, pending the map drawing them. */
-    private ChunkGrid flownOver;
+    private DeferredChunks flownOver;
     private long lastFlownChunk = Long.MIN_VALUE;
     /** Contour pattern: blank chunks left when the current loop was planned, for the time estimate and to notice a loop that changed nothing. */
     private long contourOpen = -1;
@@ -1049,6 +1053,7 @@ public class AreaExplorer extends Module {
     private double lastX, lastZ;
     private double flightDistance;
     private int activeTicks;
+    private final ProgressEta coverageEta = new ProgressEta();
     private int nextProgressReport;
 
     public AreaExplorer() {
@@ -1384,6 +1389,8 @@ public class AreaExplorer extends Module {
         data.addProperty("cleanupPass", cleanupPass);
         data.addProperty("cleanupRadius", cleanupRadius);
         data.addProperty("explored", explored.size());
+        double observedRate = coverageEta.chunksPerSecond();
+        if (observedRate >= 0) data.addProperty("coverageChunksPerMinute", observedRate * 60);
         if (area != null) {
             data.addProperty("areaMinCX", area.minCX());
             data.addProperty("areaMinCZ", area.minCZ());
@@ -1399,7 +1406,7 @@ public class AreaExplorer extends Module {
             data.addProperty("speed", speed);
             data.addProperty("velocityX", mc.player.getVelocity().x);
             data.addProperty("velocityZ", mc.player.getVelocity().z);
-            data.addProperty("arriveBlocks", phase == Phase.CLEANUP ? cleanupArriveBlocks() : arriveBlocks());
+            data.addProperty("arriveBlocks", phase == Phase.CLEANUP ? cleanupArriveBlocks() : phase == Phase.SWEEP && contour() ? contourArriveBlocks() : arriveBlocks());
             data.addProperty("remainingBlocks", follower.remainingDistance(mc.player.getX(), mc.player.getZ()));
         }
         if (mc.world != null) data.addProperty("dimension", mc.world.getRegistryKey().getValue().toString());
@@ -1729,7 +1736,7 @@ public class AreaExplorer extends Module {
         onStrip = false;
         explored.clear();
         exploredGrid = null;
-        flownOver = new ChunkGrid(area);
+        flownOver = new DeferredChunks(area);
         lastFlownChunk = Long.MIN_VALUE;
         contourOpen = -1;
         idleLoops = 0;
@@ -1792,6 +1799,9 @@ public class AreaExplorer extends Module {
         restoredFlightDistance = 0;
         restoredActiveTicks = 0;
         mapCheckTicks = 0;
+        loadedSamples.clear();
+        loadedReachStability.reset();
+        coverageEta.reset();
         nextProgressReport = 25;
 
         radius = viewDistance.get() > 0 ? viewDistance.get() : measureRadius();
@@ -1988,7 +1998,7 @@ public class AreaExplorer extends Module {
             exploredGrid.addAll(explored);
         }
         planGrid.setTo(exploredGrid);
-        if (withFlownOver && flownOver != null) planGrid.addAll(flownOver);
+        if (withFlownOver && flownOver != null) planGrid.addAll(flownOver.grid());
         return planGrid;
     }
 
@@ -2006,7 +2016,7 @@ public class AreaExplorer extends Module {
             if (phase == Phase.SWEEP) {
                 int eta = etaSeconds();
                 report("World Map read in full: (highlight)%d%%(default) explored%s.", percent(),
-                    eta < 0 ? "" : ", about (highlight)%s(default) left plus a short cleanup".formatted(formatDuration(eta)));
+                    eta < 0 ? "" : ", about (highlight)%s(default) left plus cleanup".formatted(formatDuration(eta)));
             }
             return;
         }
@@ -2050,7 +2060,7 @@ public class AreaExplorer extends Module {
 
     // Contour pattern
 
-    /** Plans the next loop round the blank ground nearest the player. Nothing left for a loop: on to the cleanup. */
+    /** Plans a nearby contour or narrow corridor centre line. No route left: on to the cleanup. */
     private void planLoop() {
         long started = System.nanoTime();
         ChunkGrid done = planGrid(true);
@@ -2076,11 +2086,14 @@ public class AreaExplorer extends Module {
         List<Point> points = new ArrayList<>(loop.size());
         for (int i = 0; i < loop.size(); i++) points.add(new Point(loop.get(i)[0] * 16 + 8, loop.get(i)[1] * 16 + 8, i > 0));
         follower.setRoute(points, mc.player.getX(), mc.player.getZ());
-        diagnosticRoute(points, "contour-loop");
+        boolean corridor = points.size() > 1 && (points.getFirst().x() != points.getLast().x()
+            || points.getFirst().z() != points.getLast().z());
+        diagnosticRoute(points, corridor ? "corridor-centre" : "contour-loop");
         onStrip = false;
         long took = System.nanoTime() - started;
         notePlan("planning a loop", took);
-        log("Loop planned: %d points, %.0f blocks, %d chunks blank, in %d ms", points.size(), follower.remainingDistance(mc.player.getX(), mc.player.getZ()), open, took / 1_000_000);
+        log("%s planned: %d points, %.0f blocks, %d chunks blank, in %d ms", corridor ? "Corridor centre line" : "Loop",
+            points.size(), follower.remainingDistance(mc.player.getX(), mc.player.getZ()), open, took / 1_000_000);
     }
 
     private void tickLoop() {
@@ -2091,21 +2104,36 @@ public class AreaExplorer extends Module {
             sampleLoadedReach(Math.abs(velocity.x) >= Math.abs(velocity.z));
         }
         markFlownOver();
-        updateFollower(arriveBlocks());
+        updateFollower(contourArriveBlocks());
+        if (activeTicks % MAP_CHECK_INTERVAL_TICKS == 0 && !follower.isDone()) {
+            ChunkGrid confirmed = planGrid(false);
+            long skipStarted = System.nanoTime();
+            // Keep an extra chunk of clearance for small flight deviations. Only confirmed map
+            // coverage can remove a leg; recently loaded or unknown chunks cannot.
+            for (int skipped = 0; skipped < 32 && !follower.isDone()
+                && System.nanoTime() - skipStarted < 2_000_000; skipped++) {
+                Point target = follower.current();
+                if (CoveragePlanner.hasOpenAlong(area, reach + 1, confirmed, playerChunkX(), playerChunkZ(),
+                    (target.x() - 8) / 16, (target.z() - 8) / 16)) break;
+                diagnostic("covered-leg-skip", "remaining leg swath already confirmed explored");
+                follower.skip(mc.player.getX(), mc.player.getZ());
+            }
+        }
         // Once round, plan the next loop from what is explored now: it lands just inside this one
         if (follower.isDone()) planLoop();
     }
 
     /** Only loaded chunks along the actual path are deferred while the map catches up. */
     private void markFlownOver() {
+        if (!readsMap()) return;
         ChunkPos p = mc.player.getChunkPos();
         if (p.toLong() == lastFlownChunk && activeTicks % MAP_CHECK_INTERVAL_TICKS != 0) return;
         lastFlownChunk = p.toLong();
-        if (flownOver == null) flownOver = new ChunkGrid(area);
+        if (flownOver == null) flownOver = new DeferredChunks(area);
         var chunks = mc.world.getChunkManager();
         for (int cx = Math.max(area.minCX(), p.x - reach); cx <= Math.min(area.maxCX(), p.x + reach); cx++) {
             for (int cz = Math.max(area.minCZ(), p.z - reach); cz <= Math.min(area.maxCZ(), p.z + reach); cz++) {
-                if (chunks.isChunkLoaded(cx, cz)) flownOver.add(cx, cz);
+                if (chunks.isChunkLoaded(cx, cz)) flownOver.add(cx, cz, activeTicks);
             }
         }
     }
@@ -2118,9 +2146,9 @@ public class AreaExplorer extends Module {
     /** The same from the given spot - where we were dropped, while off the server. */
     private double sweepBlocksLeft(double x, double z) {
         double blocks = follower.remainingDistance(x, z);
-        if (phase == Phase.SWEEP && contour() && contourOpen > 0) {
-            // Covering blank ground takes about its size over the strip spacing in flight
-            blocks = Math.max(blocks, contourOpen / (double) spacing() * 16);
+        if (phase == Phase.SWEEP && contour() && area != null) {
+            // Use current missing coverage, not the count frozen when the loop was planned.
+            blocks = Math.max(blocks, Math.max(0, area.total() - explored.size()) / (double) spacing() * 16);
         }
         return blocks;
     }
@@ -2199,11 +2227,12 @@ public class AreaExplorer extends Module {
     /** Rescan: how often the loaded width across the strip is sampled, and how many samples make a width. */
     private static final int LOADED_SAMPLE_TICKS = 20, LOADED_SAMPLES = 15;
     private final IntArrayList loadedSamples = new IntArrayList();
+    private final ReachStability loadedReachStability = new ReachStability();
 
     /**
      * Rescan and contours: without a measurable straight strip on blank map, the chunks
-     * loaded across the strip are counted instead - on the side loading less - and the median of
-     * the last samples becomes the swath. The server sends fewer chunks to a player flying past, and
+     * loaded across the strip are counted instead - on the side loading less - and the lower decile of
+     * the last samples becomes the swath. Widening needs three stable windows. The server sends fewer chunks to a player flying past, and
      * may cut its view distance under load: a width learned on another day would leave gaps.
      */
     private void sampleLoadedReach() {
@@ -2220,22 +2249,26 @@ public class AreaExplorer extends Module {
         if (loadedSamples.size() < LOADED_SAMPLES) return;
         IntArrayList sorted = new IntArrayList(loadedSamples);
         sorted.sort(null);
-        int loaded = sorted.getInt(sorted.size() / 2);
+        // Use the lower decile: alternating loaded rings must not inflate coverage.
+        int loaded = sorted.getInt(sorted.size() / 10);
         loadedSamples.clear();
         // Xaero leaves the outermost loaded ring undrawn: a strip redraws one less
         int measured = Math.max(1, xaero ? loaded - 1 : loaded);
+        int accepted = loadedReachStability.update(reach, measured);
         if (diagnosticLogging.get()) {
             JsonObject data = diagnosticEvent("loaded-width");
             data.addProperty("alongX", alongX);
             data.addProperty("currentPlus", plus);
             data.addProperty("currentMinus", minus);
             data.addProperty("measuredReach", measured);
+            data.addProperty("acceptedReach", accepted);
             JsonArray samples = new JsonArray();
             for (int i = 0; i < sorted.size(); i++) samples.add(sorted.getInt(i));
             data.add("sortedSamples", samples);
             diagnostics.log(data);
         }
         stripMeasureNote = "loaded %d each side, swath %d".formatted(loaded, measured);
+        measured = accepted;
         if (measured == reach) return;
         log("Loaded width in flight: %d chunks each side, swath %d -> %d", loaded, reach, measured);
         applyReach(measured);
@@ -2407,8 +2440,7 @@ public class AreaExplorer extends Module {
         cleanupPass++;
 
         // Spots are passed within the arrive distance, so each one covers that much less
-        int slack = (int) Math.ceil(cleanupArriveBlocks() / 16);
-        cleanupRadius = Math.max(0, reach - 1 - slack);
+        cleanupRadius = CoveragePlanner.cleanupRadius(reach, cleanupArriveBlocks());
         spotCheckTicks = 0;
         long started = System.nanoTime();
         ChunkGrid done = planGrid(false);
@@ -2608,6 +2640,17 @@ public class AreaExplorer extends Module {
     private void checkMapAroundPlayer() {
         if (!readsMap() || ++mapCheckTicks < MAP_CHECK_INTERVAL_TICKS) return;
         mapCheckTicks = 0;
+        if (flownOver != null) {
+            int released = flownOver.reconcile(activeTicks, (cx, cz) -> {
+                if (explored.contains(ChunkPos.toLong(cx, cz))) return DeferredChunks.State.MAPPED;
+                return switch (XaeroMappedChunkScan.mapState(cx, cz)) {
+                    case XaeroMappedChunkScan.MAPPED -> DeferredChunks.State.MAPPED;
+                    case XaeroMappedChunkScan.NOT_MAPPED -> DeferredChunks.State.BLANK;
+                    default -> DeferredChunks.State.UNKNOWN;
+                };
+            }, this::addExplored);
+            if (released > 0) diagnostic("deferred-release", "returned " + released + " unconfirmed chunks to planning");
+        }
         ChunkPos p = mc.player.getChunkPos();
         int r = radius + MAP_CHECK_EXTRA;
         for (int cx = Math.max(area.minCX(), p.x - r); cx <= Math.min(area.maxCX(), p.x + r); cx++) {
@@ -3379,10 +3422,7 @@ public class AreaExplorer extends Module {
      * to item pictures and values, and the files stay readable.
      */
     static String cleanName(String name) {
-        String clean = Formatting.strip(name);
-        if (clean == null) return "";
-        clean = clean.replaceAll("§.?", "").replaceAll("\\(\\s*\\)|\\[\\s*\\]", "");
-        return clean.replaceAll("\\s+", " ").strip();
+        return FindNames.clean(name);
     }
 
     /** The sign's non-blank lines, one per line, or empty. */
@@ -3979,9 +4019,10 @@ public class AreaExplorer extends Module {
         }
         if (area == null) return "";
         String progress = "%d%% of the %dx%d chunk area explored".formatted(percent(), area.width(), area.depth());
-        if ((phase != Phase.SWEEP && phase != Phase.CLEANUP) || speed < MIN_KNOWN_SPEED) return progress;
-        return progress + ", about %s left%s".formatted(formatDuration((int) Math.ceil(sweepBlocksLeft(leftX, leftZ) / speed)),
-            phase == Phase.SWEEP ? " plus a short cleanup" : "");
+        int eta = etaSeconds(speed, leftX, leftZ);
+        if (eta < 0) return progress;
+        return progress + ", about %s left%s".formatted(formatDuration(eta),
+            phase == Phase.SWEEP ? " plus cleanup" : "");
     }
 
     private void resumeAfterReconnect() {
@@ -4046,6 +4087,9 @@ public class AreaExplorer extends Module {
     }
 
     private void tickModule() {
+        coverageEta.observe(System.nanoTime(), explored.size(), !paused && !reconnecting
+            && mc.player != null && mc.world != null && scan == null
+            && (phase == Phase.SWEEP || phase == Phase.CLEANUP), phase.ordinal());
         if (phase == Phase.IDLE) return;
         if (reconnecting) {
             tickReconnect();
@@ -4244,6 +4288,11 @@ public class AreaExplorer extends Module {
         return Math.max(arriveDistance.get(), speed * TURN_LEAD_SECONDS);
     }
 
+    /** Keep contour turns inside the measured swath even at high speed. */
+    private double contourArriveBlocks() {
+        return WaypointFollower.contourArrivalDistance(arriveBlocks(), speed, rotationSpeed.get(), reach);
+    }
+
     /** Cleanup must pass close enough to load its target even when turn lead grows at speed. */
     private double cleanupArriveBlocks() {
         return Math.min(arriveBlocks(), Math.max(4, reach * 8.0));
@@ -4383,14 +4432,28 @@ public class AreaExplorer extends Module {
         return expectedSpeed();
     }
 
-    /** Seconds until the current route is flown, or -1 if unknown. */
+    /** Remaining active work, calibrated by recent confirmed coverage; -1 if unknown. */
     private int etaSeconds() {
         return etaSeconds(expectedSpeed());
     }
 
     private int etaSeconds(double speed) {
-        if (speed < MIN_KNOWN_SPEED || (phase != Phase.SWEEP && phase != Phase.CLEANUP)) return -1;
-        return (int) Math.ceil(sweepBlocksLeft() / speed);
+        return etaSeconds(speed, mc.player == null ? leftX : mc.player.getX(),
+            mc.player == null ? leftZ : mc.player.getZ());
+    }
+
+    private int etaSeconds(double speed, double x, double z) {
+        if (phase == Phase.SPIRAL) return spiralEtaSeconds(speed);
+        if (area == null || scan != null || (phase != Phase.SWEEP && phase != Phase.CLEANUP)) return -1;
+        long missing = Math.max(0, area.total() - explored.size());
+        if (missing == 0) return 0;
+        if (coverageEta.chunksPerSecond() == 0) return -1;
+        int measured = coverageEta.secondsLeft(missing);
+        if (phase == Phase.SWEEP && measured >= 0) return measured;
+        if (speed < MIN_KNOWN_SPEED) return measured;
+        int route = (int) Math.min(Integer.MAX_VALUE, Math.ceil(sweepBlocksLeft(x, z) / speed));
+        // Cleanup includes the actual spot route; its slower observed coverage can extend it.
+        return measured >= 0 ? Math.max(route, measured) : route;
     }
 
     /** "about 1h 20m left, 64% explored" for the chat on resuming, or what's keeping the estimate back. */
@@ -4402,16 +4465,20 @@ public class AreaExplorer extends Module {
             if (eta < 0) return "time left shows once you're flying.";
             return "about (highlight)%s(default) left to (highlight)%s(default) out.".formatted(formatDuration(eta), formatBlocks(spiralMaxRadius.get()));
         }
-        if (phase == Phase.SCAN) return "reading the World Map first - time left shows once the route is planned.";
+        if (phase == Phase.SCAN || scan != null) return "reading the World Map - time left shows once the map read finishes.";
         if (phase == Phase.SETTLE) return "(highlight)%d%%(default) explored, checking the map for gaps - the cleanup time shows next.".formatted(percent());
         int eta = etaSeconds(speed);
-        if (eta < 0) return "(highlight)%d%%(default) explored - time left shows once you're flying.".formatted(percent());
-        String rest = phase == Phase.SWEEP ? " plus a short cleanup"
+        if (eta < 0) return "(highlight)%d%%(default) explored - waiting for enough flight and coverage progress to estimate time left.".formatted(percent());
+        String rest = phase == Phase.SWEEP ? " plus cleanup"
             : cleanupPass < cleanupPasses.get() ? " for this cleanup pass" : "";
         return "about (highlight)%s(default) left%s, (highlight)%d%%(default) explored.".formatted(formatDuration(eta), rest, percent());
     }
 
     private void reportEstimate() {
+        if (scan != null) {
+            report("Reading the World Map - time estimate will show once the map read finishes.");
+            return;
+        }
         double blocks = sweepBlocksLeft();
         double speed = estimateSpeed();
         int eta = etaSeconds(speed);
@@ -4419,7 +4486,7 @@ public class AreaExplorer extends Module {
             report("Sweep route: (highlight)%s(default) - time estimate will show up once you're flying.", formatBlocks((int) blocks));
             return;
         }
-        report("Sweep route: (highlight)%s(default), about (highlight)%s(default) at (highlight)%d(default) blocks/s, plus a short cleanup.",
+        report("Sweep route: (highlight)%s(default), about (highlight)%s(default) at (highlight)%d(default) blocks/s, plus cleanup.",
             formatBlocks((int) blocks), formatDuration(eta), Math.round(speed));
 
         ElytraKeeper keeper = Modules.get().get(ElytraKeeper.class);

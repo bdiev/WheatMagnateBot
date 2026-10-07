@@ -1047,7 +1047,11 @@ function localItemIconUrl(item) {
 /** An item's id from its name as the game shows it: "Ward Armor Trim" is ward_armor_trim_smithing_template, "Map" filled_map. */
 function itemIdForName(value) {
   // Without colour codes some packs put in names: "Golden Apple §f(§f§f)"
-  const key = normalizeItemIconKey(String(value || '').replace(/§.?/g, '').replace(/\(\s*\)|\[\s*\]/g, '').trim());
+  const key = normalizeItemIconKey(String(value || '')
+    .replace(/§.?/g, '')
+    // Resource-pack badges use private-use glyphs, not part of the vanilla item name.
+    .replace(/[\uE000-\uF8FF\u{F0000}-\u{FFFFD}\u{100000}-\u{10FFFD}]/gu, '')
+    .replace(/\(\s*\)|\[\s*\]/g, '').trim());
   return state.itemNameIds[key] || key;
 }
 
@@ -7057,7 +7061,7 @@ function areaExplorerFindIcon(find) {
   let key = AREA_EXPLORER_KIND_ICONS[find.kind];
   // A wall sign is the same item as the standing one
   if (find.kind === 'ITEM' || find.kind === 'SIGN') {
-    key = itemIdForName(normalizeItemIconKey(find.name).replace('_wall_', '_'));
+    key = itemIdForName(find.name).replace('_wall_', '_');
   }
   else if (find.kind === 'MARKER') key = AREA_EXPLORER_MARKER_ICONS[find.name] || normalizeItemIconKey(find.name);
   return { src: areaExplorerIconUrl(key) || fallback, fallback };

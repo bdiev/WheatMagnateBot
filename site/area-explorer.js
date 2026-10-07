@@ -74,7 +74,8 @@ function normalizeText(value, maxLength, options) {
  * ("Golden Apple §f(§f§f)") and the empty brackets they leave - the mods before this sent them.
  */
 function cleanFindName(value) {
-  return String(value ?? '').replace(/§.?/g, '').replace(/\(\s*\)|\[\s*\]/g, '').replace(/\s+/g, ' ').trim();
+  return String(value ?? '').replace(/§.?/g, '').replace(/\p{Co}/gu, '')
+    .replace(/\(\s*\)|\[\s*\]/g, '').replace(/\s+/g, ' ').trim();
 }
 
 function normalizeScopeName(value, maxLength) {
@@ -231,7 +232,7 @@ function publicFind(row) {
     y: row.y,
     z: row.z,
     foundAt: row.found_at,
-    name: row.name,
+    name: cleanFindName(row.name),
     count: row.item_count,
     label: row.label,
     details: row.details

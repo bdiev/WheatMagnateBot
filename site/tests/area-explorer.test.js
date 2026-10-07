@@ -327,7 +327,7 @@ function testWiring() {
   assert.match(appSource, /item\.name === 'End Portal'\s+\? 'data-area-filter-kind="END_PORTAL"'/, 'the End Portal highlight opens their tab');
   assert.match(appSource, /const names = \(scope\?\.markerNames \|\| \[\]\)\.filter\(item => item\.name !== 'End Portal'\);/, 'the markers picker leaves them out');
   // Each find shows its own item: the book is a book, the shulker a shulker
-  assert.match(appSource, /if \(find\.kind === 'ITEM' \|\| find\.kind === 'SIGN'\) \{\s+key = itemIdForName\(normalizeItemIconKey\(find\.name\)/);
+  assert.match(appSource, /if \(find\.kind === 'ITEM' \|\| find\.kind === 'SIGN'\) \{\s+key = itemIdForName\(find\.name\)/);
   assert.match(appSource, /return state\.itemNameIds\[key\] \|\| key;/, 'names the game shows are turned into item ids: a map is a filled map, a trim its smithing template');
   assert.match(appSource, /'End Portal': 'ender_eye'/, 'a marker shows the item that stands for it');
   assert.match(appSource, /data-fallback="\$\{escapeHtml\(icon\.fallback\)\}"/, 'an icon that fails falls back to its kind');
@@ -447,6 +447,11 @@ async function testCommands() {
 }
 
 async function testCleanNames() {
+  for (const decorated of ['Golden Apple (\uEFF4\uEFF4)', 'Golden Apple [\u{F0001}]',
+    'Golden Apple (\u{100001})']) assert.equal(cleanFindName(decorated), 'Golden Apple');
+  assert.equal(cleanFindName('Golden Apple (rare)'), 'Golden Apple (rare)', 'readable parenthetical text must remain');
+  assert.equal(normalizeFind({ kind: 'ITEM', x: 1, y: 2, z: 3, foundAt: NOW,
+    name: 'Golden Apple (\uEFF4\uEFF4)', count: 2 }, NOW).name, 'Golden Apple');
   assert.equal(cleanFindName('Golden Apple §f(§f§f)'), 'Golden Apple');
   assert.equal(cleanFindName('§6Elytra'), 'Elytra');
   assert.equal(cleanFindName('Diamond'), 'Diamond');
@@ -467,6 +472,21 @@ async function testCleanNames() {
     const rows = (await db.query('SELECT x, name, dedupe_key FROM area_explorer_finds ORDER BY x')).rows;
     assert.deepEqual(rows.map(row => [row.x, row.name, row.dedupe_key]),
       [[1, 'Golden Apple', 'ITEM:1:64:0:Golden Apple:1:'], [2, 'Golden Apple', 'ITEM:2:64:0:Golden Apple:1:']]);
+    await insert('Golden Apple (\uEFF4\uEFF4)', 3, 'ITEM:3:64:0:Golden Apple (\uEFF4\uEFF4):1:');
+    await insert('Golden Apple [\uE000]', 3, 'ITEM:3:64:0:Golden Apple [\uE000]:1:');
+    await insert('Golden Apple', 3, 'ITEM:3:64:0:Golden Apple:1:');
+    await insert('Golden Apple (\u{F0001})', 4, 'ITEM:4:64:0:Golden Apple (\u{F0001}):1:');
+    await insert('Golden Apple (\u{100001})', 5, 'ITEM:5:64:0:Golden Apple (\u{100001}):1:');
+    await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/079_area_explorer_name_glyphs.sql'), 'utf8'));
+    const cleaned = (await db.query('SELECT x, name, dedupe_key FROM area_explorer_finds ORDER BY x')).rows;
+    assert.equal(cleaned.length, 5, 'colliding decorated and clean names must preserve exactly one find');
+    for (const row of cleaned) {
+      assert.equal(row.name, 'Golden Apple');
+      assert.equal(row.dedupe_key, `ITEM:${row.x}:64:0:Golden Apple:1:`);
+    }
+    await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/079_area_explorer_name_glyphs.sql'), 'utf8'));
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM area_explorer_finds')).rows[0].n, 5,
+      'cleaning existing names must be idempotent');
   } finally {
     await db.close();
   }
