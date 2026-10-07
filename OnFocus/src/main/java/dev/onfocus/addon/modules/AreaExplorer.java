@@ -88,6 +88,7 @@ import net.minecraft.entity.passive.CatEntity;
 import net.minecraft.entity.passive.TameableEntity;
 import net.minecraft.entity.passive.WolfEntity;
 import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.entity.projectile.thrown.EnderPearlEntity;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
@@ -106,6 +107,7 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.util.math.ChunkSectionPos;
 import net.minecraft.util.math.MathHelper;
+import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
 import net.minecraft.world.chunk.ChunkSection;
 import net.minecraft.world.chunk.WorldChunk;
@@ -130,6 +132,7 @@ import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -188,7 +191,8 @@ import java.util.function.Predicate;
  * Bases are scored on what players leave behind ({@link BaseClues}): blocks of the loaded chunks and
  * entities polled around the player, scored together within {@code base-radius}. With {@code mark-items},
  * items of the picked kinds lying on the ground nearby are marked too, one marker per pile. With
- * {@code mark-pets}, cats and dogs someone has named get a marker each, named after the pet and its owner.
+ * {@code mark-pets}, cats and dogs someone has named get a marker each, named after the pet and its owner;
+ * with {@code mark-pearls}, thrown ender pearls lying still (a stasis chamber's) get one per bunch.
  * <p>
  * With {@code all-finds-file}, everything found on every run is kept in one file per server and
  * dimension, with no find twice ({@link FindsArchive}).
@@ -505,7 +509,7 @@ public class AreaExplorer extends Module {
         }
     }
 
-    private static final String BASES_GROUP = "Bases", ITEMS_GROUP = "Items on the ground", PETS_GROUP = "Named Pets", CUSTOM_GROUP = "Custom Blocks";
+    private static final String BASES_GROUP = "Bases", ITEMS_GROUP = "Items on the ground", PETS_GROUP = "Named Pets", PEARLS_GROUP = "Thrown Pearls", CUSTOM_GROUP = "Custom Blocks";
 
     private final Setting<Boolean> autoMarkers = sgMarkers.add(new BoolSetting.Builder()
         .name("auto-markers")
@@ -597,6 +601,17 @@ public class AreaExplorer extends Module {
 
     private final Setting<SettingColor> petsColor = sgMarkers.add(colorSetting("pets-color", PETS_GROUP,
         new SettingColor(255, 85, 85), () -> autoMarkers.get() && markPets.get()));
+
+    private final Setting<Boolean> markPearls = sgMarkers.add(new BoolSetting.Builder()
+        .name("mark-pearls")
+        .description("Marks thrown ender pearls lying still - a stasis chamber's - one marker per bunch, with who threw them when the game knows: \"Pearls ×3 (Steve)\". Pearls flying past aren't marked.")
+        .defaultValue(true)
+        .visible(autoMarkers::get)
+        .build()
+    );
+
+    private final Setting<SettingColor> pearlsColor = sgMarkers.add(colorSetting("pearls-color", PEARLS_GROUP,
+        new SettingColor(0, 170, 170), () -> autoMarkers.get() && markPearls.get()));
 
     private final Setting<Integer> markerSpacing = sgMarkers.add(new IntSetting.Builder()
         .name("marker-spacing")
@@ -885,6 +900,10 @@ public class AreaExplorer extends Module {
     /** Named pets already marked this run (or seen near their marker). */
     private final Set<UUID> markedPets = new HashSet<>();
     private int petCheckTicks;
+    /** Thrown pearls already marked this run (or seen near their marker). */
+    private final Set<UUID> markedPearls = new HashSet<>();
+    /** Where each pearl not marked yet was on the last scan: one still there since is lying still, not flying. */
+    private final Map<UUID, Vec3d> pearlsSeen = new HashMap<>();
 
     /**
      * Blocks the player placed during the run - their ender chest, a shulker box to sort loot into:
@@ -1404,6 +1423,8 @@ public class AreaExplorer extends Module {
         markedItems.clear();
         markedPets.clear();
         petCheckTicks = 0;
+        markedPearls.clear();
+        pearlsSeen.clear();
         playerPlaced.clear();
         playerBroken.clear();
         playerDrops.clear();
@@ -2754,10 +2775,12 @@ public class AreaExplorer extends Module {
         XaeroWaypoints.Target loot = new XaeroWaypoints.Target(ITEMS_GROUP, itemsColor.get().getPacked());
         XaeroWaypoints.Target custom = new XaeroWaypoints.Target(CUSTOM_GROUP, customColor.get().getPacked());
         XaeroWaypoints.Target pets = new XaeroWaypoints.Target(PETS_GROUP, petsColor.get().getPacked());
+        XaeroWaypoints.Target pearls = new XaeroWaypoints.Target(PEARLS_GROUP, pearlsColor.get().getPacked());
         return XaeroWaypoints.regroup(from, name -> {
             if (name.startsWith(BASE_PREFIX)) return bases;
             if (name.startsWith(LOOT_PREFIX)) return loot;
             if (name.startsWith(CAT_PREFIX) || name.startsWith(DOG_PREFIX)) return pets;
+            if (name.startsWith(PEARL_PREFIX)) return pearls;
             return byName.getOrDefault(name, custom);
         });
     }
@@ -2930,8 +2953,10 @@ public class AreaExplorer extends Module {
      * owner's name is still being looked up is marked on a later scan, once it's known.
      */
     private void scanPets() {
-        if (!markingPets() || ++petCheckTicks < ITEM_CHECK_INTERVAL_TICKS) return;
+        if ((!markingPets() && !markingPearls()) || ++petCheckTicks < ITEM_CHECK_INTERVAL_TICKS) return;
         petCheckTicks = 0;
+        if (markingPearls()) scanPearls();
+        if (!markingPets()) return;
         for (Entity entity : mc.world.getEntities()) {
             String kind = entity instanceof CatEntity ? "Cat" : entity instanceof WolfEntity ? "Dog" : null;
             if (kind == null || !entity.hasCustomName() || markedPets.contains(entity.getUuid())) continue;
@@ -2993,6 +3018,79 @@ public class AreaExplorer extends Module {
         // Into the all-finds file too, and so to the site: "Named Cat", with the pet's name for its label
         archiveFind(new FindsArchive.Find(FindsArchive.Kind.MARKER, pos.getX(), pos.getY(), pos.getZ(), LocalDateTime.now(),
             "Named " + kind, 0, petName, details));
+    }
+
+    // Thrown pearls
+
+    private static final String PEARL_PREFIX = "Pearl";
+    /** Pearls this close together are one bunch, one marker: a stasis chamber's row. */
+    private static final int PEARL_BUNCH_RADIUS = 16;
+    /** A pearl moved less than this since the last scan is lying still. */
+    private static final double PEARL_STILL_DISTANCE = 1;
+
+    private boolean markingPearls() {
+        return autoMarkers.get() && markPearls.get();
+    }
+
+    private record StillPearl(BlockPos pos, String thrower, boolean inWater) {}
+
+    /**
+     * Marks the thrown ender pearls around the player that lie still - a stasis chamber's - a marker per
+     * bunch. One seen at about the same spot a scan ago is still; one flying past isn't marked. Who threw
+     * it the game only knows when they were near as it was thrown, as for Meteor's own nametags.
+     */
+    private void scanPearls() {
+        Map<UUID, Vec3d> seen = new HashMap<>();
+        List<StillPearl> still = new ArrayList<>();
+        for (Entity entity : mc.world.getEntities()) {
+            if (!(entity instanceof EnderPearlEntity pearl) || markedPearls.contains(entity.getUuid())) continue;
+            Vec3d at = entity.getPos(), before = pearlsSeen.get(entity.getUuid());
+            if (before == null || before.squaredDistanceTo(at) > PEARL_STILL_DISTANCE * PEARL_STILL_DISTANCE) {
+                seen.put(entity.getUuid(), at);
+                continue;
+            }
+            markedPearls.add(entity.getUuid());
+            String thrower = pearl.getOwner() instanceof PlayerEntity player ? player.getName().getString() : "";
+            still.add(new StillPearl(entity.getBlockPos(), thrower, entity.isTouchingWater()));
+        }
+        // Pearls gone from view are forgotten: one back later is looked at afresh
+        pearlsSeen.clear();
+        pearlsSeen.putAll(seen);
+
+        List<List<StillPearl>> bunches = new ArrayList<>();
+        for (StillPearl pearl : still) {
+            List<StillPearl> bunch = null;
+            for (List<StillPearl> b : bunches) {
+                if (b.getFirst().pos().isWithinDistance(pearl.pos(), PEARL_BUNCH_RADIUS)) bunch = b;
+            }
+            if (bunch == null) bunches.add(bunch = new ArrayList<>());
+            bunch.add(pearl);
+        }
+        bunches.forEach(this::placePearlMarker);
+    }
+
+    private void placePearlMarker(List<StillPearl> bunch) {
+        BlockPos pos = bunch.getFirst().pos();
+        for (XaeroWaypoints.Spot spot : existingMarkers()) {
+            if (spot.name().startsWith(PEARL_PREFIX) && near(spot, pos, 2L * PEARL_BUNCH_RADIUS)) return;
+        }
+        Set<String> throwers = new LinkedHashSet<>();
+        boolean inWater = false;
+        for (StillPearl pearl : bunch) {
+            if (!pearl.thrower().isEmpty()) throwers.add(pearl.thrower());
+            inWater |= pearl.inWater();
+        }
+        String who = String.join(", ", throwers);
+        // Pearls ×3 (Steve)
+        String name = (bunch.size() == 1 ? PEARL_PREFIX : PEARL_PREFIX + "s ×" + bunch.size()) + (who.isEmpty() ? "" : " (" + who + ")");
+        addMarker(PEARLS_GROUP, name, "EP", "circle", pearlsColor.get(), pos);
+        String details = (bunch.size() == 1 ? "1 pearl" : bunch.size() + " pearls")
+            + (inWater ? ", in water - a stasis chamber" : "")
+            + (who.isEmpty() ? ", thrower unknown" : ", thrown by " + who);
+        report("Marked (highlight)%s(default) at (highlight)%d, %d, %d(default): %s.", name, pos.getX(), pos.getY(), pos.getZ(), details);
+        // Into the all-finds file too, and so to the site
+        archiveFind(new FindsArchive.Find(FindsArchive.Kind.MARKER, pos.getX(), pos.getY(), pos.getZ(), LocalDateTime.now(),
+            "Thrown Pearl", 0, "", details));
     }
 
     /** An item's name as the game shows it, clean: see {@link #cleanName}. */

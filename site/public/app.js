@@ -6927,7 +6927,7 @@ const AREA_EXPLORER_KIND_ICONS = Object.freeze({ '': 'filled_map', BASE: 'crafti
 const AREA_EXPLORER_MARKER_ICONS = Object.freeze({
   'End Portal': 'ender_eye', 'Nether Portal': 'obsidian', Spawner: 'spawner', 'Trial Chamber': 'trial_key',
   'Ancient City': 'echo_shard', 'End City': 'purpur_block', 'End Gateway': 'ender_pearl', 'Shulker Box': 'shulker_box',
-  'Named Cat': 'cat_spawn_egg', 'Named Dog': 'wolf_spawn_egg'
+  'Named Cat': 'cat_spawn_egg', 'Named Dog': 'wolf_spawn_egg', 'Thrown Pearl': 'ender_pearl'
 });
 
 // Items the game names unlike their id: a filled map is just "Map", a writable book "Book and Quill"
