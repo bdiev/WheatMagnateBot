@@ -7409,17 +7409,24 @@ async function sendAreaExplorerCommand(kind, mod, box) {
   }
 }
 
-// Zoomed out, finds close together on screen are drawn as one cluster with their count: tens of
-// thousands of dots each frame made the page crawl. The grid is anchored to the world and its cells
-// double in size a zoom level at a time, so clusters stay put while panning and are worked out once
-// per level, not every frame.
+// Zoomed out, finds of a kind close together on screen are drawn as one mark of that kind, a little
+// bigger the more it holds: tens of thousands of dots each frame made the page crawl. A cluster
+// looks like the finds it holds (the same colour and shape, a faint ring round it) so the map stays
+// readable under it. The grid is anchored to the world and its cells double in size a zoom level at
+// a time, so clusters stay put while panning and are worked out once per level, not every frame.
 
-const AREA_EXPLORER_CLUSTER_PX = 44;
+const AREA_EXPLORER_CLUSTER_PX = 16;
 // Closer in than this (pixels a block) every find shows on its own
 const AREA_EXPLORER_CLUSTER_MAX_SCALE = 1;
 
 function areaExplorerPointSize(kind) {
   return kind === 'BASE' || kind === 'MARKER' ? 4.5 : kind === 'ITEM' ? 3.5 : 3.25;
+}
+
+/** A cluster's size: its kind's, growing a little with how many it holds (at most 1.6 times). */
+function areaExplorerMarkSize(kind, count) {
+  const size = areaExplorerPointSize(kind);
+  return count > 1 ? size * Math.min(1.6, 1.15 + Math.log10(count) * 0.18) : size;
 }
 
 /**
@@ -7447,101 +7454,82 @@ function areaExplorerClusterCell(scale) {
   return 2 ** Math.ceil(Math.log2(AREA_EXPLORER_CLUSTER_PX / scale));
 }
 
-/** The finds grouped into world cells of this size: a cell of one is that find, more a cluster at their middle. */
+/**
+ * The finds grouped by kind into world cells of this size, in the kinds' drawing order: a group of
+ * one is that find, more a cluster at their middle.
+ */
 function areaExplorerClusters(visible, cell) {
   const cached = visible.levels.get(cell);
   if (cached) return cached;
   const cells = new Map();
   for (const point of visible.clustered) {
-    const key = Math.floor(point.x / cell) * 4_194_304 + Math.floor(point.z / cell);
+    const key = AREA_EXPLORER_KIND_ORDER[point.kind] * 2e13 + Math.floor(point.x / cell) * 4_194_304 + Math.floor(point.z / cell);
     const group = cells.get(key);
-    if (!group) { cells.set(key, { point, x: point.x, z: point.z, count: 1, kinds: null }); continue; }
-    if (!group.kinds) group.kinds = { [group.point.kind]: 1 };
-    group.kinds[point.kind] = (group.kinds[point.kind] || 0) + 1;
-    group.x += point.x; group.z += point.z; group.count += 1;
+    if (!group) cells.set(key, { kind: point.kind, point, x: point.x, z: point.z, count: 1 });
+    else { group.x += point.x; group.z += point.z; group.count += 1; }
   }
-  const singles = [], clusters = [];
+  const marks = [];
   for (const group of cells.values()) {
-    if (group.count === 1) { singles.push(group.point); continue; }
-    // Coloured as the kind most of it is
-    const kind = Object.entries(group.kinds).sort((a, b) => b[1] - a[1] || AREA_EXPLORER_KIND_ORDER[b[0]] - AREA_EXPLORER_KIND_ORDER[a[0]])[0][0];
-    clusters.push({ x: group.x / group.count, z: group.z / group.count, count: group.count, kind });
+    marks.push(group.count === 1
+      ? { kind: group.kind, x: group.x, z: group.z, count: 1, point: group.point }
+      : { kind: group.kind, x: group.x / group.count, z: group.z / group.count, count: group.count });
   }
-  // Drawn in the kinds' order, as the finds are sorted
-  singles.sort((a, b) => AREA_EXPLORER_KIND_ORDER[a.kind] - AREA_EXPLORER_KIND_ORDER[b.kind]);
-  const result = { singles, clusters };
-  visible.levels.set(cell, result);
-  return result;
-}
-
-function areaExplorerClusterRadius(count) {
-  return Math.min(22, 9 + Math.log10(count) * 5);
-}
-
-function formatAreaExplorerClusterCount(count) {
-  if (count < 1000) return String(count);
-  return count < 10_000 ? `${(count / 1000).toFixed(1).replace(/\.0$/, '')}k` : `${Math.round(count / 1000)}k`;
+  marks.sort((a, b) => AREA_EXPLORER_KIND_ORDER[a.kind] - AREA_EXPLORER_KIND_ORDER[b.kind]);
+  visible.levels.set(cell, marks);
+  return marks;
 }
 
 /**
- * The finds in view: clusters zoomed out, single finds batched into one path a kind (a fill per
- * kind instead of per find). What was drawn where is kept for taps and clicks.
+ * The finds in view, clustered zoomed out, batched into one path a kind (a fill per kind instead of
+ * per find). What was drawn where is kept for taps and clicks.
  */
 function drawAreaExplorerPoints(ctx, view, colors, width, height) {
   const ae = areaExplorerState();
   const visible = areaExplorerVisiblePoints();
   const cell = areaExplorerClusterCell(view.scale);
-  const { singles, clusters } = cell ? areaExplorerClusters(visible, cell) : { singles: visible.clustered, clusters: [] };
+  const marks = cell ? areaExplorerClusters(visible, cell) : visible.clustered;
   const hits = [];
   const toScreen = (x, z) => [width / 2 + (x - view.cx) * view.scale, height / 2 + (z - view.cz) * view.scale];
-  const inView = (sx, sz, margin) => sx >= -margin && sz >= -margin && sx <= width + margin && sz <= height + margin;
 
-  const drawSingles = points => {
-    let kind = null, size = 0;
+  const drawMarks = list => {
+    let kind = null;
+    const rings = [];
     const flush = () => {
       if (!kind) return;
       ctx.fillStyle = colors[kind];
       ctx.fill();
       if (kind === 'SIGN') { ctx.strokeStyle = colors.signOutline; ctx.lineWidth = 1.5; ctx.stroke(); }
+      // A faint ring round each cluster: more than one find there
+      if (rings.length) {
+        ctx.save();
+        ctx.globalAlpha = 0.45;
+        ctx.strokeStyle = colors[kind];
+        ctx.lineWidth = 1.25;
+        ctx.beginPath();
+        for (const [sx, sz, size] of rings) { ctx.moveTo(sx + size + 2.5, sz); ctx.arc(sx, sz, size + 2.5, 0, Math.PI * 2); }
+        ctx.stroke();
+        ctx.restore();
+        rings.length = 0;
+      }
     };
-    for (const point of points) {
-      const [sx, sz] = toScreen(point.x, point.z);
-      if (!inView(sx, sz, 6)) continue;
-      if (point.kind !== kind) { flush(); kind = point.kind; size = areaExplorerPointSize(kind); ctx.beginPath(); }
+    for (const mark of list) {
+      const [sx, sz] = toScreen(mark.x, mark.z);
+      if (sx < -10 || sz < -10 || sx > width + 10 || sz > height + 10) continue;
+      if (mark.kind !== kind) { flush(); kind = mark.kind; ctx.beginPath(); }
+      const count = mark.count || 1;
+      const size = areaExplorerMarkSize(kind, count);
       // Markers are diamonds, the rest dots
       if (kind === 'MARKER') { ctx.moveTo(sx, sz - size); ctx.lineTo(sx + size, sz); ctx.lineTo(sx, sz + size); ctx.lineTo(sx - size, sz); ctx.closePath(); }
       else { ctx.moveTo(sx + size, sz); ctx.arc(sx, sz, size, 0, Math.PI * 2); }
-      hits.push({ sx, sz, radius: size, point });
+      if (count > 1) rings.push([sx, sz, size]);
+      hits.push({ sx, sz, radius: size, mark });
     }
     flush();
   };
-  drawSingles(singles);
-
-  if (clusters.length) {
-    ctx.save();
-    ctx.font = '700 11px Inter, system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    for (const cluster of clusters) {
-      const [sx, sz] = toScreen(cluster.x, cluster.z);
-      const radius = areaExplorerClusterRadius(cluster.count);
-      if (!inView(sx, sz, radius)) continue;
-      ctx.globalAlpha = 0.9;
-      ctx.fillStyle = colors[cluster.kind];
-      ctx.beginPath(); ctx.arc(sx, sz, radius, 0, Math.PI * 2); ctx.fill();
-      ctx.globalAlpha = 1;
-      ctx.strokeStyle = colors.bg;
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      ctx.fillStyle = '#fff';
-      ctx.fillText(formatAreaExplorerClusterCount(cluster.count), sx, sz + 0.5);
-      hits.push({ sx, sz, radius, cluster });
-    }
-    ctx.restore();
-  }
+  drawMarks(marks);
 
   // The picked find and those around the menu's spot: always on their own, on top
-  drawSingles([...visible.alone].sort((a, b) => AREA_EXPLORER_KIND_ORDER[a.kind] - AREA_EXPLORER_KIND_ORDER[b.kind]));
+  drawMarks([...visible.alone].sort((a, b) => AREA_EXPLORER_KIND_ORDER[a.kind] - AREA_EXPLORER_KIND_ORDER[b.kind]));
   const selected = visible.alone.find(point => point.id === ae.selectedId);
   if (selected) {
     const [sx, sz] = toScreen(selected.x, selected.z);
@@ -7552,17 +7540,18 @@ function drawAreaExplorerPoints(ctx, view, colors, width, height) {
   ae.drawnHits = hits;
 }
 
-/** What's under a tap or click: the nearest find, else a cluster it lands on. */
+/** What's under a tap or click: the nearest find or cluster within reach (the last drawn wins a tie). */
 function areaExplorerHitAt(sx, sz, reach) {
-  let best = null, bestDistance = reach;
-  let cluster = null;
+  let best = null, bestDistance = Infinity;
   for (const hit of areaExplorerState().drawnHits || []) {
     const distance = Math.hypot(hit.sx - sx, hit.sz - sz);
-    if (hit.cluster) { if (distance <= hit.radius + 4 && (!cluster || distance < cluster.distance)) cluster = { hit, distance }; }
-    else if (distance < bestDistance) { best = hit; bestDistance = distance; }
+    if (distance <= Math.max(reach, hit.radius + 3) && distance <= bestDistance) { best = hit; bestDistance = distance; }
   }
-  if (best) return { point: best.point };
-  return cluster ? { cluster: cluster.hit.cluster } : null;
+  if (!best) return null;
+  const { mark } = best;
+  // A find drawn on its own is the find itself; a cluster, the spot to zoom in on
+  if (!mark.count || mark.count === 1) return { point: mark.point || mark };
+  return { cluster: mark };
 }
 
 function queueAreaExplorerMapDraw() {
