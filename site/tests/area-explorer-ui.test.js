@@ -31,7 +31,7 @@ function fixture() {
     areaExplorerState: () => ae, $: node, $$: () => [], AREA_EXPLORER_PAGE_SIZE: 50,
     AREA_EXPLORER_KIND_LABELS: { BASE: 'Base', MARKER: 'Marker', ITEM: 'Loot', SIGN: 'Sign' },
     AREA_EXPLORER_KIND_ORDER: { SIGN: 0, ITEM: 1, MARKER: 2, BASE: 3 },
-    AREA_EXPLORER_MAP_LAYERS: ['BASE', 'END_PORTAL', 'MARKER', 'ITEM', 'SIGN'], AREA_EXPLORER_DEFAULT_LAYERS: ['END_PORTAL'],
+    AREA_EXPLORER_MAP_LAYERS: ['BASE', 'END_PORTAL', 'MARKER', 'ITEM', 'SIGN'], AREA_EXPLORER_DEFAULT_LAYERS: ['END_PORTAL'], AREA_EXPLORER_NEARBY_RADIUS: 100,
     areaExplorerScopeParams: params => JSON.stringify({ scope: ae.scope, ...params }),
     areaExplorerMarkerFilter: () => ae.markerName,
     renderAreaExplorerFind: find => find.name,
@@ -45,7 +45,7 @@ function fixture() {
     refreshAreaExplorerFromEvent() {}, applyAreaExplorerEvents() {},
     fetchJson: url => new Promise((resolve, reject) => requests.push({ url, resolve, reject }))
   });
-  for (const name of ['renderAreaExplorerMarkerVisibility', 'areaExplorerPointLayer', 'isAreaExplorerPointVisible', 'setAreaExplorerMarkerKind', 'loadAreaExplorerFinds', 'loadAreaExplorerMap', 'setAreaExplorerFindsVisible', 'selectAreaExplorerFind', 'areaExplorerHeading', 'areaExplorerLiveStatus', 'recordAreaExplorerTrail', 'areaExplorerTrail', 'applyAreaExplorerLiveStatus', 'loadAreaExplorerLive', 'noteAreaExplorerVersions', 'areaExplorerListAnchor', 'areaExplorerListIds', 'markAreaExplorerNewFinds', 'setAreaExplorerNewFinds']) vm.runInContext(functionSource(name), context);
+  for (const name of ['renderAreaExplorerMarkerVisibility', 'areaExplorerPointLayer', 'isAreaExplorerPointNearby', 'isAreaExplorerPointVisible', 'setAreaExplorerMarkerKind', 'loadAreaExplorerFinds', 'loadAreaExplorerMap', 'setAreaExplorerFindsVisible', 'selectAreaExplorerFind', 'areaExplorerHeading', 'areaExplorerLiveStatus', 'recordAreaExplorerTrail', 'areaExplorerTrail', 'applyAreaExplorerLiveStatus', 'loadAreaExplorerLive', 'noteAreaExplorerVersions', 'areaExplorerListAnchor', 'areaExplorerListIds', 'markAreaExplorerNewFinds', 'setAreaExplorerNewFinds']) vm.runInContext(functionSource(name), context);
   return { ae, node, requests, context };
 }
 
@@ -137,6 +137,17 @@ function testEndPortalLayer() {
   assert.equal(context.isAreaExplorerPointVisible(spawner), true);
   ae.selectedId = 'b';
   assert.equal(context.isAreaExplorerPointVisible({ id: 'b', kind: 'BASE' }), true, 'the picked find shows with its box off');
+}
+
+function testNearbyMarkers() {
+  const { ae, context } = fixture();
+  ae.showFinds = false;
+  const near = { id: 'n', kind: 'SIGN', x: 160, z: 280 }, far = { id: 'f', kind: 'SIGN', x: 200, z: 300 };
+  ae.nearby = { x: 100, z: 200 };
+  assert.equal(context.isAreaExplorerPointVisible(near), true, 'a find within 100 blocks shows, markers hidden or not');
+  assert.equal(context.isAreaExplorerPointVisible(far), false, 'one further off does not');
+  ae.nearby = null;
+  assert.equal(context.isAreaExplorerPointVisible(near), false);
 }
 
 async function testLiveTelemetry() {
@@ -465,6 +476,7 @@ function testLocatePlayer() {
   await testSelectionRace();
   await testMarkerVisibility();
   testEndPortalLayer();
+  testNearbyMarkers();
   await testLiveTelemetry();
   testReadingPositionKept();
   testTouchGestures();

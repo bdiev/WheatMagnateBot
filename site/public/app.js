@@ -6189,6 +6189,8 @@ const AREA_EXPLORER_KIND_ORDER = Object.freeze({ SIGN: 0, ITEM: 1, MARKER: 2, BA
 // Only End Portals are on to begin with; a find picked from the list shows by itself whatever they say.
 const AREA_EXPLORER_MAP_LAYERS = Object.freeze(['BASE', 'END_PORTAL', 'MARKER', 'ITEM', 'SIGN']);
 const AREA_EXPLORER_DEFAULT_LAYERS = Object.freeze(['END_PORTAL']);
+// The right-click menu's "Show markers within 100 blocks": every find that close to the spot, whatever the checkboxes say
+const AREA_EXPLORER_NEARBY_RADIUS = 100;
 const AREA_EXPLORER_MAX_SCALE = 16;
 
 function areaExplorerState() {
@@ -6203,6 +6205,8 @@ function areaExplorerState() {
       coverage: new Map(),
       // The area picked on the map for a mod to explore: block corners, still being dragged out while picking
       areaSelection: null,
+      // The spot picked with "Show markers within 100 blocks": { x, z }, or null
+      nearby: null,
       logFilter: '', logEvents: [], logHasMore: false, logServer: null, logRequestId: 0,
       showFinds: readAreaExplorerSetting('areaExplorerShowFinds', 'true') !== 'false',
       visibleKinds: readAreaExplorerMarkerKinds(),
@@ -6227,10 +6231,18 @@ function areaExplorerPointLayer(point) {
   return point.kind === 'MARKER' && point.name === 'End Portal' ? 'END_PORTAL' : point.kind;
 }
 
-/** The find picked from the list or the map always shows, even with its checkbox off or markers hidden. */
+function isAreaExplorerPointNearby(point) {
+  const nearby = areaExplorerState().nearby;
+  return !!nearby && Math.hypot(point.x - nearby.x, point.z - nearby.z) <= AREA_EXPLORER_NEARBY_RADIUS;
+}
+
+/**
+ * The find picked from the list or the map, and those around the spot picked from the menu,
+ * always show, even with their checkbox off or markers hidden.
+ */
 function isAreaExplorerPointVisible(point) {
   const ae = areaExplorerState();
-  if (point.id === ae.selectedId) return true;
+  if (point.id === ae.selectedId || isAreaExplorerPointNearby(point)) return true;
   return ae.showFinds && (ae.visibleKinds || AREA_EXPLORER_DEFAULT_LAYERS).includes(areaExplorerPointLayer(point));
 }
 
@@ -7121,6 +7133,35 @@ function areaExplorerSelectionBox(selection) {
   return { minX: minCX * 16, minZ: minCZ * 16, maxX: maxCX * 16 + 15, maxZ: maxCZ * 16 + 15, width: maxCX - minCX + 1, depth: maxCZ - minCZ + 1 };
 }
 
+/** The ring around the spot picked with "Show markers within 100 blocks". */
+function drawAreaExplorerNearby(ctx, canvas, view) {
+  const nearby = areaExplorerState().nearby;
+  if (!nearby) return;
+  const [x, z] = areaExplorerToScreen(view, canvas, nearby.x + 0.5, nearby.z + 0.5);
+  const radius = AREA_EXPLORER_NEARBY_RADIUS * view.scale;
+  const accent = getComputedStyle(canvas).getPropertyValue('--accent').trim() || '#6bc94a';
+  ctx.save();
+  ctx.fillStyle = accent;
+  ctx.globalAlpha = 0.1;
+  ctx.beginPath(); ctx.arc(x, z, radius, 0, Math.PI * 2); ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6, 4]);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** Shows every find within 100 blocks of the spot, or (null) stops. */
+function setAreaExplorerNearby(spot) {
+  const ae = areaExplorerState();
+  ae.nearby = spot;
+  queueAreaExplorerMapDraw();
+  if (!spot) return;
+  const count = ae.points.filter(point => isAreaExplorerPointNearby(point) && areaExplorerInTerritory(point.x, point.z)).length;
+  showAreaExplorerNote(count ? `${formatNumber(count)} find${count === 1 ? '' : 's'} within ${AREA_EXPLORER_NEARBY_RADIUS} blocks` : `Nothing found within ${AREA_EXPLORER_NEARBY_RADIUS} blocks`);
+}
+
 function drawAreaExplorerSelection(ctx, canvas, view) {
   const selection = areaExplorerState().areaSelection;
   if (!selection) return;
@@ -7168,8 +7209,11 @@ function openAreaExplorerMenu(sx, sz) {
   const [x, z] = areaExplorerFromScreen(canvas, sx, sz);
   const items = [
     { label: `Copy coordinates (${x} ${z})`, run: () => copyAreaExplorerText(`${x} ${z}`, 'Coordinates copied') },
-    { label: 'Copy Baritone #goto', run: () => copyAreaExplorerText(`#goto ${x} ${z}`, 'Baritone command copied') }
+    { label: 'Copy Baritone #goto', run: () => copyAreaExplorerText(`#goto ${x} ${z}`, 'Baritone command copied') },
+    { separator: true },
+    { label: `Show markers within ${AREA_EXPLORER_NEARBY_RADIUS} blocks`, run: () => setAreaExplorerNearby({ x, z }) }
   ];
+  if (ae.nearby) items.push({ label: `Hide markers around ${ae.nearby.x} ${ae.nearby.z}`, run: () => setAreaExplorerNearby(null) });
   if (state.currentUser?.role === 'admin') {
     const selection = ae.areaSelection;
     const box = selection && !selection.picking ? areaExplorerSelectionBox(selection) : null;
@@ -7313,6 +7357,7 @@ function drawAreaExplorerMap() {
     flownShown = drawAreaExplorerCoverage(ctx, canvas, view, live, [x1, z1, x2, z2]);
   }
   drawAreaExplorerSelection(ctx, canvas, view);
+  drawAreaExplorerNearby(ctx, canvas, view);
   const flownLegend = $('#areaExplorerFlownLegend');
   if (flownLegend && flownLegend.hidden === flownShown) flownLegend.hidden = !flownShown;
 
@@ -7919,6 +7964,7 @@ function setupAreaExplorer() {
     ae.selectedId = null;
     $('#areaExplorerSelected').hidden = true;
     ae.areaSelection = null;
+    ae.nearby = null;
     ae.view = null;
     closeAreaExplorerMenu();
     renderAreaExplorerScopes();
