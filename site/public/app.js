@@ -7409,127 +7409,101 @@ async function sendAreaExplorerCommand(kind, mod, box) {
   }
 }
 
-// Zoomed out, finds of a kind close together on screen are drawn as one mark of that kind, a little
-// bigger the more it holds: tens of thousands of dots each frame made the page crawl. A cluster
-// looks like the finds it holds (the same colour and shape, a faint ring round it) so the map stays
-// readable under it. The grid is anchored to the world and its cells double in size a zoom level at
-// a time, so clusters stay put while panning and are worked out once per level, not every frame.
+// Zoomed out, finds of a kind that would land on the same few pixels are drawn once: tens of
+// thousands of dots each frame made the page crawl, yet the map looks just as it did. The grid is
+// anchored to the world and its cells double in size a zoom level at a time, so it's worked out once
+// per level, not every frame; and the drawn finds are kept as a picture until the view changes, so
+// the live run's trail redrawing the map doesn't redraw them.
 
-const AREA_EXPLORER_CLUSTER_PX = 16;
-// Closer in than this (pixels a block) every find shows on its own
-const AREA_EXPLORER_CLUSTER_MAX_SCALE = 1;
+const AREA_EXPLORER_MERGE_PX = 3;
+// Closer in than this (pixels a block) every find is drawn
+const AREA_EXPLORER_MERGE_MAX_SCALE = 1;
 
 function areaExplorerPointSize(kind) {
   return kind === 'BASE' || kind === 'MARKER' ? 4.5 : kind === 'ITEM' ? 3.5 : 3.25;
 }
 
-/** A cluster's size: its kind's, growing a little with how many it holds (at most 1.6 times). */
-function areaExplorerMarkSize(kind, count) {
-  const size = areaExplorerPointSize(kind);
-  return count > 1 ? size * Math.min(1.6, 1.15 + Math.log10(count) * 0.18) : size;
+/** Far out the finds shrink a little (to 0.6 of their size), so the map shows between them. */
+function areaExplorerPointZoomFactor(scale) {
+  return Math.min(1, Math.max(0.6, 0.55 + scale * 8));
 }
 
 /**
- * The finds the map shows, split into those that may join a cluster and those always drawn on
- * their own (the one picked, those around the spot picked from the menu). Kept until the finds,
- * the checkboxes, the pick or the territory change.
+ * The finds the map shows, split into those that may be merged and those always drawn on their own
+ * (the one picked, those around the spot picked from the menu). Kept until the finds, the
+ * checkboxes, the pick or the territory change.
  */
 function areaExplorerVisiblePoints() {
   const ae = areaExplorerState();
   const key = [(ae.visibleKinds || AREA_EXPLORER_DEFAULT_LAYERS).join(), ae.showFinds, ae.selectedId, ae.nearby?.x, ae.nearby?.z, ae.extent].join('|');
   const cache = ae.visibleCache;
   if (cache && cache.points === ae.points && cache.key === key) return cache;
-  const clustered = [], alone = [];
+  const merged = [], alone = [];
   for (const point of ae.points) {
     if (!isAreaExplorerPointVisible(point) || !areaExplorerInTerritory(point.x, point.z)) continue;
-    (point.id === ae.selectedId || isAreaExplorerPointNearby(point) ? alone : clustered).push(point);
+    (point.id === ae.selectedId || isAreaExplorerPointNearby(point) ? alone : merged).push(point);
   }
-  ae.visibleCache = { points: ae.points, key, clustered, alone, levels: new Map() };
+  ae.visibleCache = { points: ae.points, key, merged, alone, levels: new Map() };
   return ae.visibleCache;
 }
 
-/** The world-cell size (a power of two, in blocks) clusters use at this zoom; 0 when not clustering. */
-function areaExplorerClusterCell(scale) {
-  if (scale >= AREA_EXPLORER_CLUSTER_MAX_SCALE) return 0;
-  return 2 ** Math.ceil(Math.log2(AREA_EXPLORER_CLUSTER_PX / scale));
+/** The world-cell size (a power of two, in blocks) finds are merged in at this zoom; 0 when every find is drawn. */
+function areaExplorerMergeCell(scale) {
+  if (scale >= AREA_EXPLORER_MERGE_MAX_SCALE) return 0;
+  return 2 ** Math.ceil(Math.log2(AREA_EXPLORER_MERGE_PX / scale));
 }
 
-/**
- * The finds grouped by kind into world cells of this size, in the kinds' drawing order: a group of
- * one is that find, more a cluster at their middle.
- */
-function areaExplorerClusters(visible, cell) {
+/** One find of each kind a cell (the first, in the finds' drawing order): those are what gets drawn. */
+function areaExplorerMergedPoints(visible, cell) {
   const cached = visible.levels.get(cell);
   if (cached) return cached;
-  const cells = new Map();
-  for (const point of visible.clustered) {
+  const seen = new Set();
+  const points = [];
+  for (const point of visible.merged) {
     const key = AREA_EXPLORER_KIND_ORDER[point.kind] * 2e13 + Math.floor(point.x / cell) * 4_194_304 + Math.floor(point.z / cell);
-    const group = cells.get(key);
-    if (!group) cells.set(key, { kind: point.kind, point, x: point.x, z: point.z, count: 1 });
-    else { group.x += point.x; group.z += point.z; group.count += 1; }
+    if (seen.has(key)) continue;
+    seen.add(key);
+    points.push(point);
   }
-  const marks = [];
-  for (const group of cells.values()) {
-    marks.push(group.count === 1
-      ? { kind: group.kind, x: group.x, z: group.z, count: 1, point: group.point }
-      : { kind: group.kind, x: group.x / group.count, z: group.z / group.count, count: group.count });
-  }
-  marks.sort((a, b) => AREA_EXPLORER_KIND_ORDER[a.kind] - AREA_EXPLORER_KIND_ORDER[b.kind]);
-  visible.levels.set(cell, marks);
-  return marks;
+  visible.levels.set(cell, points);
+  return points;
 }
 
 /**
- * The finds in view, clustered zoomed out, batched into one path a kind (a fill per kind instead of
- * per find). What was drawn where is kept for taps and clicks.
+ * The finds in view, batched into one path a kind (a fill per kind instead of per find). What was
+ * drawn where is kept for taps and clicks.
  */
 function drawAreaExplorerPoints(ctx, view, colors, width, height) {
   const ae = areaExplorerState();
   const visible = areaExplorerVisiblePoints();
-  const cell = areaExplorerClusterCell(view.scale);
-  const marks = cell ? areaExplorerClusters(visible, cell) : visible.clustered;
+  const cell = areaExplorerMergeCell(view.scale);
+  const factor = areaExplorerPointZoomFactor(view.scale);
   const hits = [];
   const toScreen = (x, z) => [width / 2 + (x - view.cx) * view.scale, height / 2 + (z - view.cz) * view.scale];
 
-  const drawMarks = list => {
-    let kind = null;
-    const rings = [];
+  const drawPoints = (points, scaled) => {
+    let kind = null, size = 0;
     const flush = () => {
       if (!kind) return;
       ctx.fillStyle = colors[kind];
       ctx.fill();
-      if (kind === 'SIGN') { ctx.strokeStyle = colors.signOutline; ctx.lineWidth = 1.5; ctx.stroke(); }
-      // A faint ring round each cluster: more than one find there
-      if (rings.length) {
-        ctx.save();
-        ctx.globalAlpha = 0.45;
-        ctx.strokeStyle = colors[kind];
-        ctx.lineWidth = 1.25;
-        ctx.beginPath();
-        for (const [sx, sz, size] of rings) { ctx.moveTo(sx + size + 2.5, sz); ctx.arc(sx, sz, size + 2.5, 0, Math.PI * 2); }
-        ctx.stroke();
-        ctx.restore();
-        rings.length = 0;
-      }
+      if (kind === 'SIGN') { ctx.strokeStyle = colors.signOutline; ctx.lineWidth = 1.5 * (scaled ? factor : 1); ctx.stroke(); }
     };
-    for (const mark of list) {
-      const [sx, sz] = toScreen(mark.x, mark.z);
-      if (sx < -10 || sz < -10 || sx > width + 10 || sz > height + 10) continue;
-      if (mark.kind !== kind) { flush(); kind = mark.kind; ctx.beginPath(); }
-      const count = mark.count || 1;
-      const size = areaExplorerMarkSize(kind, count);
+    for (const point of points) {
+      const [sx, sz] = toScreen(point.x, point.z);
+      if (sx < -6 || sz < -6 || sx > width + 6 || sz > height + 6) continue;
+      if (point.kind !== kind) { flush(); kind = point.kind; size = areaExplorerPointSize(kind) * (scaled ? factor : 1); ctx.beginPath(); }
       // Markers are diamonds, the rest dots
       if (kind === 'MARKER') { ctx.moveTo(sx, sz - size); ctx.lineTo(sx + size, sz); ctx.lineTo(sx, sz + size); ctx.lineTo(sx - size, sz); ctx.closePath(); }
       else { ctx.moveTo(sx + size, sz); ctx.arc(sx, sz, size, 0, Math.PI * 2); }
-      if (count > 1) rings.push([sx, sz, size]);
-      hits.push({ sx, sz, radius: size, mark });
+      hits.push({ sx, sz, point });
     }
     flush();
   };
-  drawMarks(marks);
+  drawPoints(cell ? areaExplorerMergedPoints(visible, cell) : visible.merged, true);
 
-  // The picked find and those around the menu's spot: always on their own, on top
-  drawMarks([...visible.alone].sort((a, b) => AREA_EXPLORER_KIND_ORDER[a.kind] - AREA_EXPLORER_KIND_ORDER[b.kind]));
+  // The picked find and those around the menu's spot: always drawn, full size, on top
+  drawPoints([...visible.alone].sort((a, b) => AREA_EXPLORER_KIND_ORDER[a.kind] - AREA_EXPLORER_KIND_ORDER[b.kind]), false);
   const selected = visible.alone.find(point => point.id === ae.selectedId);
   if (selected) {
     const [sx, sz] = toScreen(selected.x, selected.z);
@@ -7540,18 +7514,38 @@ function drawAreaExplorerPoints(ctx, view, colors, width, height) {
   ae.drawnHits = hits;
 }
 
-/** What's under a tap or click: the nearest find or cluster within reach (the last drawn wins a tie). */
+/** The finds drawn once into a picture of their own, and that picture reused until the view or the finds change. */
+function drawAreaExplorerPointsLayer(ctx, view, colors, width, height, ratio) {
+  const ae = areaExplorerState();
+  const visible = areaExplorerVisiblePoints();
+  const key = [view.cx, view.cz, view.scale, width, height, ratio, ae.colorsTheme].join('|');
+  let layer = ae.pointsLayer;
+  if (!layer) layer = ae.pointsLayer = { canvas: document.createElement('canvas'), key: null, visible: null };
+  if (layer.key !== key || layer.visible !== visible) {
+    const backingWidth = Math.round(width * ratio), backingHeight = Math.round(height * ratio);
+    if (layer.canvas.width !== backingWidth || layer.canvas.height !== backingHeight) {
+      layer.canvas.width = backingWidth;
+      layer.canvas.height = backingHeight;
+    }
+    const layerCtx = layer.canvas.getContext('2d');
+    layerCtx.setTransform(1, 0, 0, 1, 0, 0);
+    layerCtx.clearRect(0, 0, backingWidth, backingHeight);
+    layerCtx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    drawAreaExplorerPoints(layerCtx, view, colors, width, height);
+    layer.key = key;
+    layer.visible = visible;
+  }
+  ctx.drawImage(layer.canvas, 0, 0, width, height);
+}
+
+/** What's under a tap or click: the nearest find drawn within reach. */
 function areaExplorerHitAt(sx, sz, reach) {
-  let best = null, bestDistance = Infinity;
+  let best = null, bestDistance = reach;
   for (const hit of areaExplorerState().drawnHits || []) {
     const distance = Math.hypot(hit.sx - sx, hit.sz - sz);
-    if (distance <= Math.max(reach, hit.radius + 3) && distance <= bestDistance) { best = hit; bestDistance = distance; }
+    if (distance <= bestDistance) { best = hit; bestDistance = distance; }
   }
-  if (!best) return null;
-  const { mark } = best;
-  // A find drawn on its own is the find itself; a cluster, the spot to zoom in on
-  if (!mark.count || mark.count === 1) return { point: mark.point || mark };
-  return { cluster: mark };
+  return best ? best.point : null;
 }
 
 function queueAreaExplorerMapDraw() {
@@ -7631,7 +7625,7 @@ function drawAreaExplorerMap() {
   const flownLegend = $('#areaExplorerFlownLegend');
   if (flownLegend && flownLegend.hidden === flownShown) flownLegend.hidden = !flownShown;
 
-  drawAreaExplorerPoints(ctx, view, colors, width, height);
+  drawAreaExplorerPointsLayer(ctx, view, colors, width, height, ratio);
 
   if (live) {
     const now = Date.now();
@@ -8074,15 +8068,7 @@ function bindAreaExplorerMap() {
       return;
     }
     const hit = areaExplorerHitAt(sx, sz, event.pointerType === 'mouse' ? 10 : 20);
-    // A cluster opens up: zoomed in on it, until its finds show on their own
-    if (hit?.cluster) {
-      ae.view = { cx: hit.cluster.x, cz: hit.cluster.z, scale: Math.min(ae.view.scale * 4, AREA_EXPLORER_MAX_SCALE) };
-      clampAreaExplorerView();
-      queueAreaExplorerMapDraw();
-      noteAreaExplorerViewMoved();
-      return;
-    }
-    selectAreaExplorerFind(hit?.point.id || null).catch(error => setBanner(error.message));
+    selectAreaExplorerFind(hit?.id || null).catch(error => setBanner(error.message));
   });
   canvas.addEventListener('pointercancel', event => { dragged = true; release(event); });
   canvas.addEventListener('lostpointercapture', release);

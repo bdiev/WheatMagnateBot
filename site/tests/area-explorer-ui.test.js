@@ -515,72 +515,66 @@ function testMenuHeight() {
 function testClusters() {
   const ae = { showFinds: true, visibleKinds: ['BASE', 'END_PORTAL', 'MARKER', 'ITEM', 'SIGN'], selectedId: null, nearby: null, extent: 1e9, points: [] };
   const context = vm.createContext({
-    Math, Map, Object, areaExplorerState: () => ae, AREA_EXPLORER_DEFAULT_LAYERS: ['END_PORTAL'],
+    Math, Map, Set, Object, areaExplorerState: () => ae, AREA_EXPLORER_DEFAULT_LAYERS: ['END_PORTAL'],
     AREA_EXPLORER_KIND_ORDER: { SIGN: 0, ITEM: 1, MARKER: 2, BASE: 3 },
     areaExplorerInTerritory: () => true,
     isAreaExplorerPointNearby: point => !!ae.nearby && Math.hypot(point.x - ae.nearby.x, point.z - ae.nearby.z) <= 100
   });
-  vm.runInContext(source.match(/const AREA_EXPLORER_CLUSTER_PX = \d+;/)[0].replace('const', 'var'), context);
-  vm.runInContext(source.match(/const AREA_EXPLORER_CLUSTER_MAX_SCALE = [\d.]+;/)[0].replace('const', 'var'), context);
-  for (const name of ['areaExplorerPointLayer', 'isAreaExplorerPointVisible', 'areaExplorerPointSize', 'areaExplorerMarkSize', 'areaExplorerVisiblePoints',
-    'areaExplorerClusterCell', 'areaExplorerClusters', 'drawAreaExplorerPoints', 'areaExplorerHitAt']) vm.runInContext(functionSource(name), context);
+  vm.runInContext(source.match(/const AREA_EXPLORER_MERGE_PX = \d+;/)[0].replace('const', 'var'), context);
+  vm.runInContext(source.match(/const AREA_EXPLORER_MERGE_MAX_SCALE = [\d.]+;/)[0].replace('const', 'var'), context);
+  for (const name of ['areaExplorerPointLayer', 'isAreaExplorerPointVisible', 'areaExplorerPointSize', 'areaExplorerPointZoomFactor', 'areaExplorerVisiblePoints',
+    'areaExplorerMergeCell', 'areaExplorerMergedPoints', 'drawAreaExplorerPoints', 'areaExplorerHitAt']) vm.runInContext(functionSource(name), context);
 
-  assert.equal(context.areaExplorerClusterCell(1), 0, 'close in, every find on its own');
-  assert.equal(context.areaExplorerClusterCell(0.5), 32, 'cells a power of two, at least the cluster size on screen');
-  assert.equal(context.areaExplorerClusterCell(0.4), context.areaExplorerClusterCell(0.36), 'a small zoom keeps the same clusters');
-  // A cluster looks like its finds: their size, a little bigger the more it holds, never a bubble
-  assert.equal(context.areaExplorerMarkSize('SIGN', 1), context.areaExplorerPointSize('SIGN'));
-  assert.ok(context.areaExplorerMarkSize('SIGN', 10) > context.areaExplorerMarkSize('SIGN', 2));
-  assert.ok(context.areaExplorerMarkSize('BASE', 100_000) <= context.areaExplorerPointSize('BASE') * 1.6);
-  assert.doesNotMatch(functionSource('drawAreaExplorerPoints'), /fillText/, 'no numbers over the map');
+  assert.equal(context.areaExplorerMergeCell(1), 0, 'close in, every find is drawn');
+  assert.equal(context.areaExplorerMergeCell(0.05), 64, 'cells a power of two, a few pixels across');
+  assert.equal(context.areaExplorerMergeCell(0.04), context.areaExplorerMergeCell(0.035), 'a small zoom keeps the same cells');
+  assert.equal(context.areaExplorerPointZoomFactor(1), 1, 'full size close in');
+  assert.equal(context.areaExplorerPointZoomFactor(0.001), 0.6, 'a little smaller far out, never tiny');
+  // The finds look as they always did: no bubbles, rings or numbers over the map
+  assert.doesNotMatch(functionSource('drawAreaExplorerPoints'), /fillText|globalAlpha/);
 
   ae.points = [
     { id: 'a', kind: 'SIGN', x: 10, z: 10 }, { id: 'b', kind: 'SIGN', x: 20, z: 30 }, { id: 'c', kind: 'BASE', x: 30, z: 20 },
     { id: 'far', kind: 'ITEM', x: 5000, z: 5000 }
   ];
   let visible = context.areaExplorerVisiblePoints();
-  const marks = context.areaExplorerClusters(visible, 128);
-  assert.deepEqual([...marks.map(mark => `${mark.kind}:${mark.count}`)], ['SIGN:2', 'ITEM:1', 'BASE:1'], 'each kind clusters on its own, in drawing order');
-  assert.equal(marks.find(mark => mark.kind === 'ITEM').point.id, 'far', 'a find alone stays that find');
-  assert.equal(marks.find(mark => mark.kind === 'BASE').point.id, 'c');
-  assert.deepEqual([marks[0].x, marks[0].z], [15, 20], 'at the middle of its finds');
-  assert.equal(context.areaExplorerClusters(visible, 128), context.areaExplorerClusters(visible, 128), 'worked out once a level');
+  const drawn = context.areaExplorerMergedPoints(visible, 128);
+  assert.deepEqual([...drawn.map(point => point.id)], ['a', 'c', 'far'], 'one find of a kind a cell, every kind kept');
+  assert.equal(context.areaExplorerMergedPoints(visible, 128), drawn, 'worked out once a level');
   assert.equal(context.areaExplorerVisiblePoints(), visible, 'kept while nothing changes');
 
-  // The picked find never hides in a cluster
+  // The picked find is always drawn
   ae.selectedId = 'a';
   visible = context.areaExplorerVisiblePoints();
   assert.deepEqual([...visible.alone.map(point => point.id)], ['a']);
-  assert.equal(context.areaExplorerClusters(visible, 128)[0].point.id, 'b');
+  assert.equal(context.areaExplorerMergedPoints(visible, 128)[0].id, 'b', 'the next sign stands for the cell');
   ae.selectedId = null;
 
-  // Drawn and hit: a click on a cluster finds the cluster, on a lone find the find
-  const calls = { fill: 0, arc: 0 };
-  const ctx = new Proxy({}, { get: (target, name) => name in target ? target[name] : name === 'fill' ? () => { calls.fill += 1; } : name === 'arc' ? () => { calls.arc += 1; } : () => {}, set: (target, name, value) => { target[name] = value; return true; } });
+  // Drawn and hit
+  const calls = { fill: 0 };
+  const ctx = new Proxy({}, { get: (target, name) => name in target ? target[name] : name === 'fill' ? () => { calls.fill += 1; } : () => {}, set: (target, name, value) => { target[name] = value; return true; } });
   const colors = { SIGN: '#1', ITEM: '#2', MARKER: '#3', BASE: '#4', bg: '#0', text: '#f', signOutline: '#5' };
-  const view = { cx: 0, cz: 0, scale: 0.05 };
-  context.drawAreaExplorerPoints(ctx, view, colors, 800, 600);
-  assert.ok(context.areaExplorerHitAt(400 + 15 * 0.05, 300 + 20 * 0.05, 10).cluster, 'the cluster is under the click');
-  assert.equal(context.areaExplorerHitAt(400 + 5000 * 0.05, 300 + 5000 * 0.05, 10).point.id, 'far');
+  context.drawAreaExplorerPoints(ctx, { cx: 0, cz: 0, scale: 0.05 }, colors, 800, 600);
+  assert.equal(context.areaExplorerHitAt(400 + 5000 * 0.05, 300 + 5000 * 0.05, 10).id, 'far');
   assert.equal(context.areaExplorerHitAt(10, 10, 10), null);
   context.drawAreaExplorerPoints(ctx, { cx: 0, cz: 0, scale: 2 }, colors, 800, 600);
-  assert.equal(context.areaExplorerHitAt(400 + 30 * 2, 300 + 20 * 2, 10).point.id, 'c', 'close in, a find is the find');
+  assert.equal(context.areaExplorerHitAt(400 + 30 * 2, 300 + 20 * 2, 10).id, 'c');
 
-  // 77,000 finds zoomed out: a few thousand marks at most, not 77,000 dots, and fast once worked out
-  ae.points = Array.from({ length: 77_000 }, (unused, i) => ({ id: String(i), kind: ['SIGN', 'ITEM', 'MARKER', 'BASE'][i % 4], x: (i * 7919) % 200_000 - 100_000, z: (i * 104_729) % 200_000 - 100_000 }));
+  // 77,000 finds crowded round a base, zoomed out: a few thousand drawn, not 77,000, and fast once worked out
+  ae.points = Array.from({ length: 77_000 }, (unused, i) => ({ id: String(i), kind: ['SIGN', 'ITEM', 'MARKER', 'BASE'][i % 4], x: (i * 7919) % 30_000 - 15_000, z: (i * 104_729) % 30_000 - 15_000 }))
+    .sort((a, b) => context.AREA_EXPLORER_KIND_ORDER[a.kind] - context.AREA_EXPLORER_KIND_ORDER[b.kind]); // as the page sorts them
   const far = { cx: 0, cz: 0, scale: 0.004 };
   context.drawAreaExplorerPoints(ctx, far, colors, 800, 600);
-  assert.ok(ae.drawnHits.length < 12_000, `clustered instead of every find (${ae.drawnHits.length} marks)`);
+  assert.ok(ae.drawnHits.length < 10_000, `merged instead of every find (${ae.drawnHits.length} drawn)`);
   calls.fill = 0;
   const started = performance.now();
   for (let frame = 0; frame < 20; frame++) context.drawAreaExplorerPoints(ctx, { ...far, cx: frame * 100 }, colors, 800, 600);
   const perFrame = (performance.now() - started) / 20;
   assert.ok(perFrame < 25, `panning redraws quickly (${perFrame.toFixed(1)} ms a frame)`);
   assert.ok(calls.fill <= 20 * 4, `one fill a kind (${calls.fill / 20} a frame)`);
-  // Close in: single finds, one fill a kind rather than one a find
-  calls.fill = 0;
-  context.drawAreaExplorerPoints(ctx, { cx: 0, cz: 0, scale: 2 }, colors, 800, 600);
-  assert.ok(calls.fill <= 8, `finds batched by kind (${calls.fill} fills)`);
+  // The drawn finds are a picture reused while the view stays: the live trail's redraws skip them
+  assert.match(functionSource('drawAreaExplorerPointsLayer'), /if \(layer\.key !== key \|\| layer\.visible !== visible\)/);
+  assert.match(source, /drawAreaExplorerPointsLayer\(ctx, view, colors, width, height, ratio\);/);
 }
 
 (async () => {
