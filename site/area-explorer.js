@@ -650,8 +650,9 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
   }
 
   /**
-   * Every find of the scope as a point for the map, [id, kind, x, z] - all of them, however many
-   * (answers this big go gzipped). minX, minZ, maxX, maxZ narrow it to an area if given.
+   * Every find of the scope as a point for the map, [id, kind, x, z], with a marker's name after
+   * them, [id, kind, x, z, name], so End Portals get a checkbox of their own - all of them,
+   * however many (answers this big go gzipped). minX, minZ, maxX, maxZ narrow it to an area if given.
    */
   async function getMapPoints(url) {
     const params = [];
@@ -665,8 +666,8 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
       where.push(`x BETWEEN $${params.length - 3} AND $${params.length - 2} AND z BETWEEN $${params.length - 1} AND $${params.length}`);
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-    const rows = await pool.query(`SELECT id, kind, x, z FROM area_explorer_finds ${whereSql}`, params);
-    return { points: rows.rows.map(row => [String(row.id), row.kind, row.x, row.z]) };
+    const rows = await pool.query(`SELECT id, kind, x, z, CASE WHEN kind = 'MARKER' THEN name END AS name FROM area_explorer_finds ${whereSql}`, params);
+    return { points: rows.rows.map(row => (row.kind === 'MARKER' ? [String(row.id), row.kind, row.x, row.z, row.name] : [String(row.id), row.kind, row.x, row.z])) };
   }
 
   async function getFind(id) {

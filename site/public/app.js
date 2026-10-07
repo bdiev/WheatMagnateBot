@@ -6185,6 +6185,10 @@ const AREA_EXPLORER_RADII = Object.freeze([30_000, 50_000, 100_000]);
 // Markers of structures that stay where they are: no Remove (the site refuses it too)
 const AREA_EXPLORER_PERMANENT_MARKERS = Object.freeze(['End Portal', 'End Gateway', 'End City', 'Ancient City', 'Trial Chamber']);
 const AREA_EXPLORER_KIND_ORDER = Object.freeze({ SIGN: 0, ITEM: 1, MARKER: 2, BASE: 3 });
+// What the map's marker checkboxes switch: the kinds, with End Portals apart from the other markers.
+// Only End Portals are on to begin with; a find picked from the list shows by itself whatever they say.
+const AREA_EXPLORER_MAP_LAYERS = Object.freeze(['BASE', 'END_PORTAL', 'MARKER', 'ITEM', 'SIGN']);
+const AREA_EXPLORER_DEFAULT_LAYERS = Object.freeze(['END_PORTAL']);
 const AREA_EXPLORER_MAX_SCALE = 16;
 
 function areaExplorerState() {
@@ -6211,37 +6215,43 @@ function areaExplorerState() {
 
 function readAreaExplorerMarkerKinds() {
   try {
-    const kinds = JSON.parse(readAreaExplorerSetting('areaExplorerMarkerKinds', 'null'));
-    if (Array.isArray(kinds)) return Object.keys(AREA_EXPLORER_KIND_LABELS).filter(kind => kinds.includes(kind));
+    // Saved under a new name since End Portals got their own checkbox: everyone starts from End Portals only
+    const kinds = JSON.parse(readAreaExplorerSetting('areaExplorerMapLayers', 'null'));
+    if (Array.isArray(kinds)) return AREA_EXPLORER_MAP_LAYERS.filter(kind => kinds.includes(kind));
   } catch { /* Ignore malformed saved preferences. */ }
-  return Object.keys(AREA_EXPLORER_KIND_LABELS);
+  return [...AREA_EXPLORER_DEFAULT_LAYERS];
 }
 
+/** The checkbox a point is under: its kind, or END_PORTAL for an End Portal marker. */
+function areaExplorerPointLayer(point) {
+  return point.kind === 'MARKER' && point.name === 'End Portal' ? 'END_PORTAL' : point.kind;
+}
+
+/** The find picked from the list or the map always shows, even with its checkbox off or markers hidden. */
 function isAreaExplorerPointVisible(point) {
   const ae = areaExplorerState();
-  return ae.showFinds && (ae.visibleKinds || Object.keys(AREA_EXPLORER_KIND_LABELS)).includes(point.kind);
+  if (point.id === ae.selectedId) return true;
+  return ae.showFinds && (ae.visibleKinds || AREA_EXPLORER_DEFAULT_LAYERS).includes(areaExplorerPointLayer(point));
 }
 
 function renderAreaExplorerMarkerVisibility() {
   const ae = areaExplorerState();
-  const kinds = ae.visibleKinds || Object.keys(AREA_EXPLORER_KIND_LABELS);
+  const kinds = ae.visibleKinds || AREA_EXPLORER_DEFAULT_LAYERS;
   $$('[data-area-visible-kind]').forEach(input => { input.checked = kinds.includes(input.dataset.areaVisibleKind); });
-  for (const [kind, name] of Object.entries({ BASE: 'base', MARKER: 'marker', ITEM: 'item', SIGN: 'sign' })) {
+  for (const [name, layers] of Object.entries({ base: ['BASE'], marker: ['END_PORTAL', 'MARKER'], item: ['ITEM'], sign: ['SIGN'] })) {
     const legend = $(`.area-explorer-map-legend .legend-${name}`);
-    if (legend) legend.hidden = !ae.showFinds || !kinds.includes(kind);
+    if (legend) legend.hidden = !ae.showFinds || !layers.some(layer => kinds.includes(layer));
   }
 }
 
 function setAreaExplorerMarkerKind(kind, visible) {
   const ae = areaExplorerState();
-  const kinds = new Set(ae.visibleKinds || Object.keys(AREA_EXPLORER_KIND_LABELS));
+  const kinds = new Set(ae.visibleKinds || AREA_EXPLORER_DEFAULT_LAYERS);
   if (visible) kinds.add(kind);
   else kinds.delete(kind);
-  ae.visibleKinds = Object.keys(AREA_EXPLORER_KIND_LABELS).filter(item => kinds.has(item));
-  saveAreaExplorerSetting('areaExplorerMarkerKinds', JSON.stringify(ae.visibleKinds));
+  ae.visibleKinds = AREA_EXPLORER_MAP_LAYERS.filter(item => kinds.has(item));
+  saveAreaExplorerSetting('areaExplorerMapLayers', JSON.stringify(ae.visibleKinds));
   setAreaExplorerFindsVisible(ae.visibleKinds.length > 0);
-  const selected = ae.points.find(point => point.id === ae.selectedId);
-  if (selected && !isAreaExplorerPointVisible(selected)) selectAreaExplorerFind(null);
 }
 
 function closeAreaExplorerMarkerFilters({ restoreFocus = false } = {}) {
@@ -6836,7 +6846,7 @@ async function loadAreaExplorerMap() {
   if (ae.scope !== scope || ae.mapRequestId !== requestId) return;
   // Sorted once, so each frame just draws them in order
   ae.points = data.points
-    .map(([id, kind, x, z]) => ({ id, kind, x, z }))
+    .map(([id, kind, x, z, name]) => ({ id, kind, x, z, name }))
     .sort((a, b) => AREA_EXPLORER_KIND_ORDER[a.kind] - AREA_EXPLORER_KIND_ORDER[b.kind]);
   // A new server or dimension shows its whole territory; another kind of find keeps the view
   if (ae.pointsScope !== scope || !ae.view) fitAreaExplorerMap();
@@ -7308,7 +7318,6 @@ function drawAreaExplorerMap() {
 
   let selected = null;
   for (const point of ae.points) {
-    if (!ae.showFinds) break;
     if (!isAreaExplorerPointVisible(point)) continue;
     const sx = width / 2 + (point.x - view.cx) * view.scale, sz = height / 2 + (point.z - view.cz) * view.scale;
     if (sx < -6 || sz < -6 || sx > width + 6 || sz > height + 6 || !areaExplorerInTerritory(point.x, point.z)) continue;
@@ -7768,7 +7777,6 @@ function bindAreaExplorerMap() {
       openAreaExplorerMenu(sx, sz);
       return;
     }
-    if (!ae.showFinds) return;
     let best = null, bestDistance = event.pointerType === 'mouse' ? 10 : 20;
     for (const point of ae.points) {
       if (!isAreaExplorerPointVisible(point) || !areaExplorerInTerritory(point.x, point.z)) continue;
@@ -7822,8 +7830,8 @@ function setAreaExplorerFullscreen(on) {
 function setAreaExplorerFindsVisible(show) {
   const ae = areaExplorerState();
   if (show && ae.visibleKinds?.length === 0) {
-    ae.visibleKinds = Object.keys(AREA_EXPLORER_KIND_LABELS);
-    saveAreaExplorerSetting('areaExplorerMarkerKinds', JSON.stringify(ae.visibleKinds));
+    ae.visibleKinds = [...AREA_EXPLORER_MAP_LAYERS];
+    saveAreaExplorerSetting('areaExplorerMapLayers', JSON.stringify(ae.visibleKinds));
   }
   ae.showFinds = show;
   saveAreaExplorerSetting('areaExplorerShowFinds', show);
@@ -7860,7 +7868,6 @@ function revealAreaExplorerFind(find) {
 
 async function selectAreaExplorerFind(id) {
   const ae = areaExplorerState();
-  if (id && !ae.showFinds) setAreaExplorerFindsVisible(true);
   const box = $('#areaExplorerSelected');
   const requestId = ae.selectedRequestId = (ae.selectedRequestId || 0) + 1;
   ae.selectedId = id;
@@ -7875,7 +7882,6 @@ async function selectAreaExplorerFind(id) {
   box.innerHTML = `<button class="area-explorer-selected-close" type="button" data-area-close-selected aria-label="Close">×</button>
     <ol class="area-explorer-finds">${renderAreaExplorerFind(find, { selected: true })}</ol>`;
   box.hidden = false;
-  if (ae.visibleKinds && !ae.visibleKinds.includes(find.kind)) setAreaExplorerMarkerKind(find.kind, true);
   revealAreaExplorerFind(find);
 }
 

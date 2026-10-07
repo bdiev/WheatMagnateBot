@@ -267,7 +267,7 @@ async function testMarkers() {
     assert.deepEqual(shulkers.finds.map(find => [find.name, find.x]).sort(), [['Shulker Box', 5], ['Shulker Box', 900]]);
     assert.equal((await service.getFinds(url('name=Shulker%20Box'))).total, 5, 'the name only narrows markers');
     const points = await service.getMapPoints(new URL('http://x/api/area-explorer/map?kind=MARKER&name=End%20Portal'));
-    assert.deepEqual(points.points.map(point => point.slice(1)), [['MARKER', 100, 200]]);
+    assert.deepEqual(points.points.map(point => point.slice(1)), [['MARKER', 100, 200, 'End Portal']], "a marker's point carries its name");
 
     // A marker that's wrong or gone comes off the site, and the mod finding it again doesn't bring it back
     const gone = shulkers.finds.find(find => find.x === 5);

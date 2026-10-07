@@ -31,6 +31,7 @@ function fixture() {
     areaExplorerState: () => ae, $: node, $$: () => [], AREA_EXPLORER_PAGE_SIZE: 50,
     AREA_EXPLORER_KIND_LABELS: { BASE: 'Base', MARKER: 'Marker', ITEM: 'Loot', SIGN: 'Sign' },
     AREA_EXPLORER_KIND_ORDER: { SIGN: 0, ITEM: 1, MARKER: 2, BASE: 3 },
+    AREA_EXPLORER_MAP_LAYERS: ['BASE', 'END_PORTAL', 'MARKER', 'ITEM', 'SIGN'], AREA_EXPLORER_DEFAULT_LAYERS: ['END_PORTAL'],
     areaExplorerScopeParams: params => JSON.stringify({ scope: ae.scope, ...params }),
     areaExplorerMarkerFilter: () => ae.markerName,
     renderAreaExplorerFind: find => find.name,
@@ -44,7 +45,7 @@ function fixture() {
     refreshAreaExplorerFromEvent() {}, applyAreaExplorerEvents() {},
     fetchJson: url => new Promise((resolve, reject) => requests.push({ url, resolve, reject }))
   });
-  for (const name of ['renderAreaExplorerMarkerVisibility', 'isAreaExplorerPointVisible', 'setAreaExplorerMarkerKind', 'loadAreaExplorerFinds', 'loadAreaExplorerMap', 'setAreaExplorerFindsVisible', 'selectAreaExplorerFind', 'areaExplorerHeading', 'areaExplorerLiveStatus', 'recordAreaExplorerTrail', 'areaExplorerTrail', 'applyAreaExplorerLiveStatus', 'loadAreaExplorerLive', 'noteAreaExplorerVersions', 'areaExplorerListAnchor', 'areaExplorerListIds', 'markAreaExplorerNewFinds', 'setAreaExplorerNewFinds']) vm.runInContext(functionSource(name), context);
+  for (const name of ['renderAreaExplorerMarkerVisibility', 'areaExplorerPointLayer', 'isAreaExplorerPointVisible', 'setAreaExplorerMarkerKind', 'loadAreaExplorerFinds', 'loadAreaExplorerMap', 'setAreaExplorerFindsVisible', 'selectAreaExplorerFind', 'areaExplorerHeading', 'areaExplorerLiveStatus', 'recordAreaExplorerTrail', 'areaExplorerTrail', 'applyAreaExplorerLiveStatus', 'loadAreaExplorerLive', 'noteAreaExplorerVersions', 'areaExplorerListAnchor', 'areaExplorerListIds', 'markAreaExplorerNewFinds', 'setAreaExplorerNewFinds']) vm.runInContext(functionSource(name), context);
   return { ae, node, requests, context };
 }
 
@@ -116,11 +117,26 @@ async function testMarkerVisibility() {
   await selection;
   assert.equal(node('#areaExplorerSelected').hidden, true, 'hiding markers cancels pending details');
   const focus = context.selectAreaExplorerFind('base');
-  assert.equal(ae.showFinds, true, 'choosing a find from the list shows its map marker again');
-  requests[1].resolve({ find: { name: 'Focused base' } });
+  assert.equal(ae.showFinds, false, 'choosing a find from the list leaves the other markers hidden');
+  assert.equal(context.isAreaExplorerPointVisible({ id: 'base', kind: 'BASE' }), true, 'but shows the chosen one');
+  assert.equal(context.isAreaExplorerPointVisible({ id: 'other', kind: 'BASE' }), false);
+  requests[1].resolve({ find: { name: 'Focused base', kind: 'BASE' } });
   await focus;
   assert.equal(node('#areaExplorerSelected').hidden, false);
-  assert.equal(node('#areaExplorerToggleFinds').attributes['aria-pressed'], 'false');
+  assert.equal(ae.visibleKinds, undefined, 'the checkboxes stay as they were');
+}
+
+function testEndPortalLayer() {
+  const { ae, context } = fixture();
+  const portal = { id: 'p', kind: 'MARKER', name: 'End Portal' }, spawner = { id: 's', kind: 'MARKER', name: 'Spawner' };
+  assert.equal(context.isAreaExplorerPointVisible(portal), true, 'End Portals show by default');
+  assert.equal(context.isAreaExplorerPointVisible(spawner), false, 'other markers do not');
+  assert.equal(context.isAreaExplorerPointVisible({ id: 'b', kind: 'BASE' }), false, 'nor bases');
+  context.setAreaExplorerMarkerKind('MARKER', true);
+  assert.deepEqual([...ae.visibleKinds], ['END_PORTAL', 'MARKER']);
+  assert.equal(context.isAreaExplorerPointVisible(spawner), true);
+  ae.selectedId = 'b';
+  assert.equal(context.isAreaExplorerPointVisible({ id: 'b', kind: 'BASE' }), true, 'the picked find shows with its box off');
 }
 
 async function testLiveTelemetry() {
@@ -419,7 +435,7 @@ function testMarkerTypes() {
   context.setAreaExplorerMarkerKind('BASE', false);
   assert.equal(ae.showFinds, false, 'disabling the final type also hides the eye');
   context.setAreaExplorerFindsVisible(true);
-  assert.equal(ae.visibleKinds.length, 4, 'showing an empty selection restores all types');
+  assert.equal(ae.visibleKinds.length, 5, 'showing an empty selection restores all types');
 }
 
 function testLocatePlayer() {
@@ -448,6 +464,7 @@ function testLocatePlayer() {
   await testMapRace();
   await testSelectionRace();
   await testMarkerVisibility();
+  testEndPortalLayer();
   await testLiveTelemetry();
   testReadingPositionKept();
   testTouchGestures();
