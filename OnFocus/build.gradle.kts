@@ -79,6 +79,23 @@ java {
     }
 }
 
+val explorerRegressionTest = tasks.register<JavaExec>("explorerRegressionTest") {
+    group = "verification"
+    description = "Checks explorer waypoint handling and coverage of patchy areas."
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("dev.onfocus.addon.explore.ExplorerRegressionTest")
+    dependsOn(tasks.testClasses)
+}
+
+tasks.check {
+    dependsOn(explorerRegressionTest)
+}
+
+tasks.test {
+    // The dependency-free main-based suite above is executed by check through JavaExec.
+    failOnNoDiscoveredTests = false
+}
+
 tasks {
     processResources {
         val propertyMap = mapOf(

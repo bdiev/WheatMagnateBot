@@ -6518,6 +6518,11 @@ function areaExplorerMarkerFilter() {
   return ae.kind === 'MARKER' ? ae.markerName : '';
 }
 
+/** How many End Portals the scope has: they're counted among the markers, but have a tab of their own. */
+function areaExplorerEndPortalCount(scope) {
+  return scope?.markerNames?.find(item => item.name === 'End Portal')?.count || 0;
+}
+
 function areaExplorerFindCount(scope) {
   return scope.bases + scope.signs + scope.items + (scope.markers || 0);
 }
@@ -6803,7 +6808,8 @@ function renderAreaExplorerScopes() {
 
   const scope = scopes.find(item => `${item.server}|${item.dimension}` === ae.scope);
   const counts = {
-    all: scope ? areaExplorerFindCount(scope) : 0, BASE: scope?.bases || 0, MARKER: scope?.markers || 0, ITEM: scope?.items || 0, SIGN: scope?.signs || 0
+    all: scope ? areaExplorerFindCount(scope) : 0, BASE: scope?.bases || 0, END_PORTAL: areaExplorerEndPortalCount(scope),
+    MARKER: (scope?.markers || 0) - areaExplorerEndPortalCount(scope), ITEM: scope?.items || 0, SIGN: scope?.signs || 0
   };
   $$('[data-area-count]').forEach(element => { element.textContent = formatNumber(counts[element.dataset.areaCount]); });
   $('#areaExplorerScopeSummary').textContent = scope
@@ -6849,7 +6855,9 @@ function renderAreaExplorerHighlights(scope) {
   }
   if (scope?.markerNames?.length) {
     sections.push(`<div class="area-explorer-highlight-group"><span class="area-explorer-highlight-label">Markers</span><div class="area-explorer-highlight-chips">
-      ${scope.markerNames.map(item => chip({ kind: 'MARKER', name: item.name }, `data-area-filter-kind="MARKER" data-area-filter-name="${escapeHtml(item.name)}"`, item.count)).join('')}
+      ${scope.markerNames.map(item => chip({ kind: 'MARKER', name: item.name }, item.name === 'End Portal'
+        ? 'data-area-filter-kind="END_PORTAL"'
+        : `data-area-filter-kind="MARKER" data-area-filter-name="${escapeHtml(item.name)}"`, item.count)).join('')}
     </div></div>`);
   }
   // The dearest loot first: Elytra, netherite, shulker boxes, maps, written books...
@@ -6861,14 +6869,14 @@ function renderAreaExplorerHighlights(scope) {
   container.innerHTML = sections.length ? sections.join('') : '<p class="area-explorer-empty">Nothing found here yet.</p>';
 }
 
-/** With Markers picked: which of them to show - End Portals, Shulker Boxes... - most found first. */
+/** With Markers picked: which of them to show - Shulker Boxes, Spawners... - most found first. End Portals have their own tab. */
 function renderAreaExplorerMarkerNames(scope) {
   const ae = areaExplorerState();
   const select = $('#areaExplorerMarkerName');
-  const names = scope?.markerNames || [];
+  const names = (scope?.markerNames || []).filter(item => item.name !== 'End Portal');
   if (ae.markerName && !names.some(item => item.name === ae.markerName)) ae.markerName = '';
   select.closest('label').hidden = ae.kind !== 'MARKER';
-  select.innerHTML = [`<option value="">All markers (${formatNumber(scope?.markers || 0)})</option>`]
+  select.innerHTML = [`<option value="">All markers (${formatNumber((scope?.markers || 0) - areaExplorerEndPortalCount(scope))})</option>`]
     .concat(names.map(item => `<option value="${escapeHtml(item.name)}"${item.name === ae.markerName ? ' selected' : ''}>${escapeHtml(item.name)} (${formatNumber(item.count)})</option>`))
     .join('');
 }

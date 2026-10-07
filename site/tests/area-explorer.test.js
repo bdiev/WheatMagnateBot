@@ -21,7 +21,8 @@ const {
 const migrationSql = fs.readFileSync(path.join(__dirname, '..', 'migrations', '067_area_explorer.sql'), 'utf8');
 const markersMigrationSql = fs.readFileSync(path.join(__dirname, '..', 'migrations', '070_area_explorer_markers.sql'), 'utf8');
 const statusYMigrationSql = fs.readFileSync(path.join(__dirname, '..', 'migrations', '071_area_explorer_status_y.sql'), 'utf8');
-const pickedUpMigrationSql = fs.readFileSync(path.join(__dirname, '..', 'migrations', '072_area_explorer_picked_up.sql'), 'utf8');
+const samePetMigrationSql = fs.readFileSync(path.join(__dirname, '..', 'migrations', '078_area_explorer_same_pet.sql'), 'utf8');
+const pickedUpMigrationSql =fs.readFileSync(path.join(__dirname, '..', 'migrations', '072_area_explorer_picked_up.sql'), 'utf8');
 const indexSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
 const appSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
 const serverSource = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
@@ -266,7 +267,10 @@ async function testMarkers() {
       'what the markers mark, most first');
 
     const url = query => new URL(`http://x/api/area-explorer/finds?${query}`);
-    assert.equal((await service.getFinds(url('kind=MARKER'))).total, 4);
+    assert.equal((await service.getFinds(url('kind=MARKER'))).total, 3, 'the Markers tab leaves End Portals to their own');
+    const portals = await service.getFinds(url('kind=END_PORTAL'));
+    assert.deepEqual(portals.finds.map(find => [find.name, find.x]), [['End Portal', 100]], 'End Portals have a tab of their own');
+    assert.equal((await service.getFinds(url('kind=MARKER&name=End%20Portal'))).total, 1, 'and can still be asked for by name');
     const shulkers = await service.getFinds(url('kind=marker&name=Shulker%20Box'));
     assert.deepEqual(shulkers.finds.map(find => [find.name, find.x]).sort(), [['Shulker Box', 5], ['Shulker Box', 900]]);
     assert.equal((await service.getFinds(url('name=Shulker%20Box'))).total, 5, 'the name only narrows markers');
@@ -285,6 +289,25 @@ async function testMarkers() {
     assert.equal((await service.getFinds(url('kind=MARKER&name=Shulker%20Box'))).total, 1);
     const portal = (await service.getFinds(url('kind=MARKER&name=End%20Portal'))).finds[0];
     await assert.rejects(service.removeFind({ username: 'admin' }, portal.id), /removable marker/, 'an End Portal stays');
+
+    // A named pet is one find: sent again a little off, or with its name spaced or cased otherwise, it isn't another
+    const pet = (label, x, z, name = 'Named Dog') => ({ kind: 'MARKER', x, y: 40, z, foundAt: NOW, name, label, details: 'tamed by DumbBalls, sitting' });
+    const pets = await service.ingest(token, {
+      server: 'oldfrog.org', dimension: 'overworld',
+      finds: [pet('Slave', -25336, -24176), pet('DogBall', -25334, -24175), pet('Slave', -25336, -24176), pet('slave ', -25330, -24170),
+        pet('Slave', -25000, -24176), pet('Slave', -25336, -24176, 'Named Cat')]
+    }, NOW);
+    assert.equal(pets.added, 4, 'two dogs, the same name far away, and a cat of that name');
+    const petsAgain = await service.ingest(token, { server: 'oldfrog.org', dimension: 'overworld', finds: [pet('DogBall', -25334, -24175)] }, NOW);
+    assert.equal(petsAgain.added, 0, 'sent again in a later batch: still one');
+    assert.equal((await service.getFinds(url('kind=MARKER&name=Named%20Dog'))).total, 3);
+
+    // The copies already in go, the first of each kept
+    await db.query(`INSERT INTO area_explorer_finds (server, dimension, kind, x, y, z, found_at, name, label, dedupe_key)
+      VALUES ('oldfrog.org', 'overworld', 'MARKER', -25336, 40, -24176, NOW(), 'Named Dog', 'Slave​', 'copy')`);
+    assert.equal((await service.getFinds(url('kind=MARKER&name=Named%20Dog'))).total, 4);
+    await db.exec(samePetMigrationSql);
+    assert.equal((await service.getFinds(url('kind=MARKER&name=Named%20Dog'))).total, 3, 'the copy is dropped');
   } finally {
     await db.close();
   }
@@ -299,7 +322,10 @@ function testWiring() {
   assert.match(indexSource, /data-tab="area-explorer"/);
   assert.match(indexSource, /id="tab-area-explorer"/);
   assert.match(appSource, /'area_explorer_updated'/, 'the page listens for live updates');
-  assert.match(indexSource, /data-area-kind="MARKER"[^>]*><img src="\/items\/Ender_Eye\.png"[^>]*><span class="area-explorer-kind-tab-label">Markers<\/span> <span class="area-explorer-kind-tab-count" data-area-count="MARKER">/, 'markers have a filter of their own, with its icon');
+  assert.match(indexSource, /data-area-kind="MARKER"[^>]*><img src="\/items\/White_Banner\.png"[^>]*><span class="area-explorer-kind-tab-label">Markers<\/span> <span class="area-explorer-kind-tab-count" data-area-count="MARKER">/, 'markers have a filter of their own, with its icon');
+  assert.match(indexSource, /data-area-kind="END_PORTAL"[^>]*><img src="\/items\/Ender_Eye\.png"[^>]*><span class="area-explorer-kind-tab-label">End Portals<\/span> <span class="area-explorer-kind-tab-count" data-area-count="END_PORTAL">/, 'End Portals have a tab of their own');
+  assert.match(appSource, /item\.name === 'End Portal'\s+\? 'data-area-filter-kind="END_PORTAL"'/, 'the End Portal highlight opens their tab');
+  assert.match(appSource, /const names = \(scope\?\.markerNames \|\| \[\]\)\.filter\(item => item\.name !== 'End Portal'\);/, 'the markers picker leaves them out');
   // Each find shows its own item: the book is a book, the shulker a shulker
   assert.match(appSource, /if \(find\.kind === 'ITEM' \|\| find\.kind === 'SIGN'\) \{\s+key = itemIdForName\(normalizeItemIconKey\(find\.name\)/);
   assert.match(appSource, /return state\.itemNameIds\[key\] \|\| key;/, 'names the game shows are turned into item ids: a map is a filled map, a trim its smithing template');

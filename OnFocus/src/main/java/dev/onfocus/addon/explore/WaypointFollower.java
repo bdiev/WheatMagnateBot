@@ -41,6 +41,14 @@ public class WaypointFollower {
         return index >= route.size();
     }
 
+    public int pointIndex() {
+        return index;
+    }
+
+    public int pointCount() {
+        return route.size();
+    }
+
     public Point current() {
         return isDone() ? null : route.get(index);
     }
@@ -65,7 +73,13 @@ public class WaypointFollower {
         Point target = route.get(index);
         double rx = target.x() - x, rz = target.z() - z;
         boolean close = rx * rx + rz * rz <= arriveDistance * arriveDistance;
-        boolean passed = (target.x() - fromX) * rx + (target.z() - fromZ) * rz <= 0;
+        double dx = target.x() - fromX, dz = target.z() - fromZ;
+        double legSquared = dx * dx + dz * dz;
+        double cross = dx * rz - dz * rx;
+        // Crossing the endpoint's plane far off to the side does not cover the waypoint.
+        // A zero-length leg has no direction: it must be reached by distance alone.
+        boolean passed = legSquared > 0 && dx * rx + dz * rz <= 0
+            && cross * cross <= arriveDistance * arriveDistance * legSquared;
         if (!close && !passed) return null;
 
         skip(x, z);

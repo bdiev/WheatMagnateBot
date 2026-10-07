@@ -13407,7 +13407,7 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
 /* The kinds of find as inventory tiles: the kind's item, its name and how many there are */
 .area-explorer-kinds {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 8px;
   scrollbar-width: none;
 }

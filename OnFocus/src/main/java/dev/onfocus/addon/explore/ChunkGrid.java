@@ -7,6 +7,8 @@ import it.unimi.dsi.fastutil.longs.LongIterator;
 import net.minecraft.util.math.ChunkPos;
 
 import java.util.BitSet;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * A set of chunks of one area as a flat bit grid, for the planners. They test every chunk of the
@@ -43,6 +45,21 @@ public final class ChunkGrid implements ChunkTest {
         ChunkGrid copy = new ChunkGrid(area);
         copy.bits.or(bits);
         return copy;
+    }
+
+    /** Merges another grid without iterating through every covered chunk. */
+    public void addAll(ChunkGrid other) {
+        if (!area.equals(other.area)) throw new IllegalArgumentException("Cannot merge different areas");
+        bits.or(other.bits);
+    }
+
+    /** Bounded exact gap coordinates for diagnostics, without scanning every covered chunk. */
+    public List<int[]> uncoveredSamples(int limit) {
+        List<int[]> samples = new ArrayList<>();
+        for (int bit = bits.nextClearBit(0); bit < area.total() && samples.size() < limit; bit = bits.nextClearBit(bit + 1)) {
+            samples.add(new int[]{area.minCX() + bit / depth, area.minCZ() + bit % depth});
+        }
+        return samples;
     }
 
     private int index(int cx, int cz) {

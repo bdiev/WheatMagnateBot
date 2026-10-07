@@ -8,6 +8,12 @@ const crypto = require('node:crypto');
 
 const KINDS = Object.freeze(['BASE', 'SIGN', 'ITEM', 'MARKER']);
 const SAME_BASE_DISTANCE = 64;
+/** A named pet sent again within this many blocks of where it was is the same pet (the mod's waypoints go by this too). */
+const SAME_PET_DISTANCE = 48;
+/** The marker with a tab of its own; the Markers tab is the rest. */
+const END_PORTAL = 'End Portal';
+// A pet's name as compared: no case, spaces or invisible characters
+const PET_LABEL_SQL = "lower(regexp_replace(label, '[[:space:]\\u00a0\\u200b-\\u200f\\ufeff]', '', 'g'))";
 const MAX_FINDS_PER_BATCH = 1000;
 const MAX_INGEST_BYTES = 2 * 1024 * 1024;
 const MAX_COORDINATE = 30_000_000;
@@ -112,6 +118,16 @@ function dedupeKey(find) {
   const at = `${find.kind}:${find.x}:${find.y}:${find.z}`;
   if (find.kind === 'MARKER') return find.label ? `${at}:${find.name}:${find.label}` : `${at}:${find.name}`;
   return find.kind === 'ITEM' ? `${at}:${find.name}:${find.count}:${find.label}` : at;
+}
+
+/** A marker with a name of its own: a named pet ("Named Dog" "Rex"). */
+function isNamedPet(find) {
+  return find.kind === 'MARKER' && !!find.label;
+}
+
+/** A pet's name as compared, as PET_LABEL_SQL has it. */
+function petLabelKey(label) {
+  return String(label || '').replace(/[\s\u00a0\u200b-\u200f\ufeff]/g, '').toLowerCase();
 }
 
 /**
@@ -313,7 +329,7 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      if (finds.some(find => find.kind === 'BASE')) {
+      if (finds.some(find => find.kind === 'BASE' || isNamedPet(find))) {
         await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`area-explorer:${server}:${dimension}`]);
       }
       for (const find of finds.filter(f => f.kind === 'BASE')) {
@@ -327,7 +343,20 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
         if (near.rows.length) continue;
         added += (await insertFinds(client, server, dimension, [find], token.id)).length;
       }
-      const others = finds.filter(f => f.kind !== 'BASE');
+      // A named pet is checked against the ones in, one by one: the same pet a little off, or its name
+      // sent a little differently, isn't another
+      for (const find of finds.filter(isNamedPet)) {
+        const same = await client.query(
+          `SELECT 1 FROM area_explorer_finds
+           WHERE server = $1 AND dimension = $2 AND kind = 'MARKER' AND name = $3 AND ${PET_LABEL_SQL} = $4
+             AND (x - $5::bigint) * (x - $5::bigint) + (z - $6::bigint) * (z - $6::bigint) <= $7::bigint
+           LIMIT 1`,
+          [server, dimension, find.name, petLabelKey(find.label), find.x, find.z, SAME_PET_DISTANCE * SAME_PET_DISTANCE]
+        );
+        if (same.rows.length) continue;
+        added += (await insertFinds(client, server, dimension, [find], token.id)).length;
+      }
+      const others = finds.filter(f => f.kind !== 'BASE' && !isNamedPet(f));
       if (others.length) added += (await insertFinds(client, server, dimension, others, token.id)).length;
       if (status) liveStatus = await upsertStatus(client, token.id, server, dimension, status);
       if (events.length) newEvents = await insertEvents(client, server, dimension, events, token.id);
@@ -614,10 +643,17 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     if (dimension) { params.push(dimension); where.push(`dimension = $${params.length}`); }
     where.push('removed_at IS NULL');
     const kind = String(url.searchParams.get('kind') || '').toUpperCase();
-    if (KINDS.includes(kind)) { params.push(kind); where.push(`kind = $${params.length}`); }
-    // One kind of marker: "End Portal"
     const name = normalizeText(url.searchParams.get('name'), 128);
+    // End Portals have a tab of their own: the markers' is the rest, unless one kind of them is asked for
+    if (kind === 'END_PORTAL') {
+      params.push(END_PORTAL);
+      where.push(`kind = 'MARKER' AND name = $${params.length}`);
+      return;
+    }
+    if (KINDS.includes(kind)) { params.push(kind); where.push(`kind = $${params.length}`); }
+    // One kind of marker: "Shulker Box"
     if (kind === 'MARKER' && name) { params.push(name); where.push(`name = $${params.length}`); }
+    else if (kind === 'MARKER') { params.push(END_PORTAL); where.push(`name <> $${params.length}`); }
   }
 
   async function getFinds(url) {
