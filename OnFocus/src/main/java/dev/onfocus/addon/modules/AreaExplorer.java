@@ -772,6 +772,12 @@ public class AreaExplorer extends Module {
     private boolean warnedElsewhere;
     /** What the last disconnect screen said, for ours. */
     private String reconnectReason = "";
+    /**
+     * Failed attempts go to the site's events only now and then: a server restart fails a dozen or
+     * more in a row, and each on its own says nothing new. The first is sent, then one every this long.
+     */
+    private static final long RECONNECT_REPORT_INTERVAL_MS = 10 * 60_000L;
+    private long reconnectReportedAt;
 
     /**
      * The run stopped before it was done (paused and the game closed, turned off, dropped from the
@@ -3377,7 +3383,13 @@ public class AreaExplorer extends Module {
                 log("Disconnect screen: \"%s\"", reconnectReason);
                 String reason = reconnectReason.isEmpty() ? "no reason given" : reconnectReason;
                 if (reconnectTries == 0) siteEvent("error", "disconnect", "Disconnected from %s: %s - %s".formatted(reconnectServer.address, reason, runProgressText()));
-                else siteEvent("warn", "reconnect", "Reconnect attempt %d failed: %s".formatted(reconnectTries, reason));
+                else if (reconnectTries == 1 || System.currentTimeMillis() - reconnectReportedAt >= RECONNECT_REPORT_INTERVAL_MS) {
+                    reconnectReportedAt = System.currentTimeMillis();
+                    siteEvent("warn", "reconnect", reconnectTries == 1
+                        ? "Reconnect attempt 1 failed: %s - still trying, next update in %s".formatted(reason, formatDuration((int) (RECONNECT_REPORT_INTERVAL_MS / 1000)))
+                        : "Still reconnecting: %d attempts failed, %s offline. Last reason: %s".formatted(reconnectTries,
+                            formatDuration((int) ((System.currentTimeMillis() - leftAtMillis) / 1000)), reason));
+                }
                 reconnectTicks = 0;
                 if (reconnectAttempts.get() > 0 && reconnectTries >= reconnectAttempts.get()) {
                     String why = "Couldn't reconnect in %d attempts - stopped exploring. Last reason: %s".formatted(reconnectTries, reconnectReason);
