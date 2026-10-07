@@ -680,6 +680,15 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     const player = String(url.searchParams.get('player') || '').trim();
     if (!PLAYER_NAME_PATTERN.test(player)) throw httpError(400, 'Invalid player name.');
     const pattern = `(^|[^A-Za-z0-9_])${player.replace(/[.*]/g, '\\$&')}($|[^A-Za-z0-9_])`;
+    // Just how many, for the profile's Signs button
+    if (url.searchParams.get('count') === '1') {
+      const { total } = (await pool.query(
+        `SELECT COUNT(*)::int AS total FROM area_explorer_finds
+         WHERE kind = 'SIGN' AND removed_at IS NULL AND (details ~* $1 OR label ~* $1)`,
+        [pattern]
+      )).rows[0];
+      return { total };
+    }
     const rows = (await pool.query(
       `SELECT *, COUNT(*) OVER()::int AS total FROM area_explorer_finds
        WHERE kind = 'SIGN' AND removed_at IS NULL AND (details ~* $1 OR label ~* $1)

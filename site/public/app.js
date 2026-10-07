@@ -4091,7 +4091,7 @@ function renderPlayerProfile(profile) {
       <div><span>Nearby</span><strong>${nearby ? `${formatNumber(nearby.distance)} blocks` : 'No sighting'}</strong></div>
       <div>
         <span>Signs</span>
-        <button class="player-profile-value-button" type="button" data-player-signs="${escapeHtml(profileUsername)}" aria-haspopup="dialog" title="Signs with ${escapeHtml(profileUsername)} written on them">Show signs</button>
+        ${renderPlayerSignsButton(profileUsername)}
       </div>
     </section>
     ${gameSessionsSection}
@@ -4301,6 +4301,7 @@ function replacePlayerProfileContent(profile, { animate = false } = {}) {
   state.playerProfileRevealTimer = null;
   content.classList.remove('is-loading', 'profile-data-enter');
   content.innerHTML = renderPlayerProfile(profile);
+  ensurePlayerSignCount(profile.username);
   fitPlayerProfileName();
   const nextHead = content.querySelector('.player-profile-head');
   if (previousHead && nextHead && previousHeadHtml === nextHead.outerHTML) {
@@ -4628,6 +4629,48 @@ async function openPlayerSkins(username) {
 
 // Signs with the player's name on them: what the Area Explorer mod read, from any server and dimension
 
+const PLAYER_SIGN_COUNT_TTL_MS = 60_000;
+
+function playerSignCount(username) {
+  return state.playerSignCounts?.get(String(username).toLowerCase()) || null;
+}
+
+/** The profile's Signs value: how many, a button opening them; a shimmer until the count is in. */
+function renderPlayerSignsButton(username) {
+  const known = playerSignCount(username);
+  const label = known ? `Show ${formatNumber(known.total)} sign${known.total === 1 ? '' : 's'} with ${username}` : `Show signs with ${username}`;
+  return `<button class="player-profile-value-button player-profile-signs-button" type="button" data-player-signs="${escapeHtml(username)}" aria-haspopup="dialog" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">${known
+    ? `<span data-player-signs-count>${formatNumber(known.total)}</span>`
+    : '<span class="is-loading-value" data-player-signs-count>-</span>'}</button>`;
+}
+
+function setPlayerSignCount(username, total) {
+  state.playerSignCounts ||= new Map();
+  state.playerSignCounts.set(String(username).toLowerCase(), { total, at: Date.now() });
+  const button = $('#playerProfileContent')?.querySelector(`[data-player-signs="${CSS.escape(username)}"]`);
+  if (button) button.outerHTML = renderPlayerSignsButton(username);
+}
+
+/** Fetched once a minute at most per player: the profile redraws every few seconds. */
+async function ensurePlayerSignCount(username) {
+  const known = playerSignCount(username);
+  if (!username || (known && Date.now() - known.at < PLAYER_SIGN_COUNT_TTL_MS)) return;
+  state.playerSignCountLoading ||= new Set();
+  const key = String(username).toLowerCase();
+  if (state.playerSignCountLoading.has(key)) return;
+  state.playerSignCountLoading.add(key);
+  try {
+    const { total } = await fetchJson(`/api/area-explorer/signs?player=${encodeURIComponent(username)}&count=1`);
+    setPlayerSignCount(username, total);
+  } catch {
+    // Without the count the button still opens the list
+    const button = $('#playerProfileContent')?.querySelector(`[data-player-signs="${CSS.escape(username)}"] [data-player-signs-count]`);
+    if (button && !known) { button.classList.remove('is-loading-value'); button.textContent = 'Show'; }
+  } finally {
+    state.playerSignCountLoading.delete(key);
+  }
+}
+
 function closePlayerSigns() {
   const overlay = $('#playerSignsOverlay');
   if (!overlay || overlay.hidden) return;
@@ -4685,6 +4728,7 @@ async function openPlayerSigns(username) {
     const payload = await fetchJson(`/api/area-explorer/signs?player=${encodeURIComponent(username)}`);
     if (requestId !== state.playerSignsRequestId || overlay.hidden) return;
     renderPlayerSigns(username, payload);
+    setPlayerSignCount(username, payload.total);
   } catch (err) {
     if (requestId !== state.playerSignsRequestId || overlay.hidden) return;
     $('#playerSignsCount').textContent = '';

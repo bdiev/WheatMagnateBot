@@ -488,7 +488,19 @@ function testCountsKeepUp() {
 
 function testPlayerSigns() {
   // The profile's Signs button opens the list of signs with the player's name on them
-  assert.match(source, /data-player-signs="\$\{escapeHtml\(profileUsername\)\}"/, 'the profile has a Signs button');
+  assert.match(functionSource('renderPlayerProfile'), /\$\{renderPlayerSignsButton\(profileUsername\)\}/, 'the profile has a Signs button');
+  // The button is the count of signs, still opening them; a shimmer until the count is in
+  const counts = vm.createContext({ state: {}, escapeHtml: String, formatNumber: value => value.toLocaleString('en-US'), Date });
+  for (const name of ['playerSignCount', 'renderPlayerSignsButton']) vm.runInContext(functionSource(name), counts);
+  assert.match(counts.renderPlayerSignsButton('Steve'), /data-player-signs="Steve"[^>]*><span class="is-loading-value" data-player-signs-count>-<\/span><\/button>/);
+  counts.state.playerSignCounts = new Map([['steve', { total: 1234, at: Date.now() }]]);
+  const button = counts.renderPlayerSignsButton('Steve');
+  assert.match(button, /data-player-signs="Steve"/);
+  assert.match(button, /<span data-player-signs-count>1,234<\/span><\/button>/);
+  assert.match(button, /aria-label="Show 1,234 signs with Steve"/);
+  assert.match(functionSource('ensurePlayerSignCount'), /signs\?player=\$\{encodeURIComponent\(username\)\}&count=1/);
+  assert.match(functionSource('ensurePlayerSignCount'), /PLAYER_SIGN_COUNT_TTL_MS/, 'not fetched on every profile redraw');
+  assert.match(functionSource('replacePlayerProfileContent'), /ensurePlayerSignCount\(profile\.username\)/);
   assert.doesNotMatch(source, /<span>Nearby Seen<\/span>/, 'it replaces Nearby Seen');
   assert.match(functionSource('openPlayerSigns'), /content\.innerHTML = renderPlayerSignsSkeleton\(\)/, 'a skeleton while the signs load');
   assert.match(functionSource('openPlayerSigns'), /\/api\/area-explorer\/signs\?player=\$\{encodeURIComponent\(username\)\}/);

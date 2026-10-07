@@ -575,6 +575,7 @@ async function testPlayerSigns() {
     const result = await service.getPlayerSigns(new URL('http://x/api/area-explorer/signs?player=Steve'));
     assert.deepEqual(result.signs.map(find => find.x), [1, 2, 7], 'the name as a word, any case, either side, newest first');
     assert.equal(result.total, 3);
+    assert.deepEqual(await service.getPlayerSigns(new URL('http://x/api/area-explorer/signs?player=steve&count=1')), { total: 3 }, 'just the count, for the profile');
     const bedrock = await service.getPlayerSigns(new URL('http://x/api/area-explorer/signs?player=.Steve'));
     assert.deepEqual(bedrock.signs.map(find => find.x), [7], 'the dot is a dot, not any character');
     await assert.rejects(service.getPlayerSigns(new URL('http://x/api/area-explorer/signs?player=a%27%20OR%201')), /Invalid player name/);
