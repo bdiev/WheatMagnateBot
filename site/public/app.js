@@ -4655,14 +4655,30 @@ function renderPlayerSigns(username, { signs, total }) {
     : `<div class="player-signs-empty"><strong>No signs yet</strong><p>No sign the Area Explorer mod has read has ${escapeHtml(username)} written on it.</p></div>`;
 }
 
+/** Sign cards to come, shaped like the real ones: the slot, the name, a few lines of text, the meta row. */
+function renderPlayerSignsSkeleton() {
+  const lines = [[78, 54, 66], [62, 84], [90, 48, 70, 36]];
+  return `<ol class="area-explorer-finds player-signs-list player-signs-skeleton" aria-hidden="true">
+    ${lines.concat(lines.slice(0, 1)).map(widths => `<li class="player-signs-skeleton-card">
+      <span class="player-signs-skeleton-icon"></span>
+      <div class="player-signs-skeleton-main">
+        <span class="player-signs-skeleton-name"></span>
+        <div class="player-signs-skeleton-sign">${widths.map(width => `<span style="width:${width}%"></span>`).join('')}</div>
+        <div class="player-signs-skeleton-meta"><span></span><span></span><span></span></div>
+      </div>
+    </li>`).join('')}
+  </ol>
+  <span class="visually-hidden" role="status">Loading signs...</span>`;
+}
+
 async function openPlayerSigns(username) {
   const overlay = $('#playerSignsOverlay');
   const content = $('#playerSignsContent');
   if (!overlay || !content) return;
   const requestId = state.playerSignsRequestId = (state.playerSignsRequestId || 0) + 1;
   $('#playerSignsTitle').textContent = `Signs with ${username}`;
-  $('#playerSignsCount').textContent = 'Searching...';
-  content.innerHTML = '<div class="player-signs-empty" role="status">Reading the signs...</div>';
+  $('#playerSignsCount').innerHTML = '<span class="player-signs-skeleton-count" aria-hidden="true"></span>';
+  content.innerHTML = renderPlayerSignsSkeleton();
   overlay.hidden = false;
   $('#playerSignsClose')?.focus();
   try {
@@ -7303,6 +7319,9 @@ function areaExplorerReachableMod() {
     && Date.now() - new Date(status.updatedAt).getTime() < 20_000) || null;
 }
 
+// The map has no height: the right-click menu's spot is given at the height the elytra flies, over the build limit
+const AREA_EXPLORER_MENU_Y = 325;
+
 /**
  * The map's right-click menu: copy the spot's coordinates; for administrators, pick an area and
  * send the mod there to explore or rescan it - as the Explore and Rescan options on Xaero's map.
@@ -7314,8 +7333,8 @@ function openAreaExplorerMenu(sx, sz) {
   const menu = $('#areaExplorerMenu');
   const [x, z] = areaExplorerFromScreen(canvas, sx, sz);
   const items = [
-    { label: `Copy coordinates (${x} ${z})`, run: () => copyAreaExplorerText(`${x} ${z}`, 'Coordinates copied') },
-    { label: 'Copy Baritone #goto', run: () => copyAreaExplorerText(`#goto ${x} ${z}`, 'Baritone command copied') },
+    { label: `Copy coordinates (${x} ${AREA_EXPLORER_MENU_Y} ${z})`, run: () => copyAreaExplorerText(`${x} ${AREA_EXPLORER_MENU_Y} ${z}`, 'Coordinates copied') },
+    { label: 'Copy Baritone #goto', run: () => copyAreaExplorerText(`#goto ${x} ${AREA_EXPLORER_MENU_Y} ${z}`, 'Baritone command copied') },
     { separator: true },
     { label: `Show markers within ${AREA_EXPLORER_NEARBY_RADIUS} blocks`, run: () => setAreaExplorerNearby({ x, z }) }
   ];

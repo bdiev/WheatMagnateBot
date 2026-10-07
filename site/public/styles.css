@@ -5178,6 +5178,62 @@ body.search-focus-active #logoutButton {
 .player-signs-empty strong { display:block; margin-bottom:6px; color:var(--text); }
 .player-signs-empty p { margin:0; }
 
+/* While the signs load: cards shaped like the real ones, shimmering */
+.player-signs-skeleton { pointer-events:none; }
+.player-signs-skeleton-card {
+  display:grid;
+  grid-template-columns:48px minmax(0,1fr);
+  gap:12px;
+  align-items:start;
+  padding:10px 12px;
+  border:2px solid var(--line);
+  border-left:4px solid color-mix(in srgb,var(--area-sign) 45%,var(--line));
+  border-radius:2px;
+  background:var(--panel);
+  box-shadow:var(--shadow-inset);
+}
+.player-signs-skeleton-main { display:grid; gap:8px; min-width:0; }
+.player-signs-skeleton-icon { width:48px; height:48px; border:2px solid var(--line); }
+.player-signs-skeleton-name { width:min(46%,150px); height:14px; }
+.player-signs-skeleton-sign { display:grid; gap:7px; padding:10px 12px; border:2px solid color-mix(in srgb,var(--area-sign) 30%,var(--line)); }
+.player-signs-skeleton-sign span { height:11px; }
+.player-signs-skeleton-meta { display:flex; align-items:center; gap:10px; }
+.player-signs-skeleton-meta span { height:20px; }
+.player-signs-skeleton-meta span:nth-child(1) { width:min(32%,130px); }
+.player-signs-skeleton-meta span:nth-child(2) { width:min(38%,150px); }
+.player-signs-skeleton-meta span:nth-child(3) { width:52px; height:10px; margin-left:auto; }
+.player-signs-skeleton-count { display:inline-block; width:70px; height:10px; vertical-align:middle; }
+.player-signs-skeleton-icon,
+.player-signs-skeleton-name,
+.player-signs-skeleton-sign span,
+.player-signs-skeleton-meta span,
+.player-signs-skeleton-count {
+  position:relative;
+  display:block;
+  overflow:hidden;
+  border-radius:2px;
+  background:color-mix(in srgb,var(--muted) 16%,var(--panel-soft));
+}
+.player-signs-skeleton-count { display:inline-block; }
+.player-signs-skeleton-icon::after,
+.player-signs-skeleton-name::after,
+.player-signs-skeleton-sign span::after,
+.player-signs-skeleton-meta span::after,
+.player-signs-skeleton-count::after {
+  content:"";
+  position:absolute;
+  inset:0;
+  background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--accent) 25%,transparent),transparent);
+  animation:skeleton-value-shimmer 1.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .player-signs-skeleton-icon::after,
+  .player-signs-skeleton-name::after,
+  .player-signs-skeleton-sign span::after,
+  .player-signs-skeleton-meta span::after,
+  .player-signs-skeleton-count::after { animation:none; }
+}
+
 .player-skin-stage {
   position:relative;
   isolation:isolate;

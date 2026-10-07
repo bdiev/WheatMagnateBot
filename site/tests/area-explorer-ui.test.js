@@ -489,6 +489,7 @@ function testPlayerSigns() {
   // The profile's Signs button opens the list of signs with the player's name on them
   assert.match(source, /data-player-signs="\$\{escapeHtml\(profileUsername\)\}"/, 'the profile has a Signs button');
   assert.doesNotMatch(source, /<span>Nearby Seen<\/span>/, 'it replaces Nearby Seen');
+  assert.match(functionSource('openPlayerSigns'), /content\.innerHTML = renderPlayerSignsSkeleton\(\)/, 'a skeleton while the signs load');
   assert.match(functionSource('openPlayerSigns'), /\/api\/area-explorer\/signs\?player=\$\{encodeURIComponent\(username\)\}/);
   const context = vm.createContext({});
   vm.runInContext(functionSource('highlightPlayerSignName'), context);
@@ -500,6 +501,14 @@ function testPlayerSigns() {
     'only the sign text is marked');
   // Picked from the list, the sign opens in the Area Explorer once its scope is loaded
   assert.match(functionSource('loadAreaExplorer'), /pending\.scope === ae\.scope[\s\S]*?focusAreaExplorerMap\(pending\.x, pending\.z\)/);
+}
+
+function testMenuHeight() {
+  // The right-click menu gives the spot with a fixed Y, in the copied coordinates and the Baritone command
+  assert.match(source, /const AREA_EXPLORER_MENU_Y = 325;/);
+  const menu = functionSource('openAreaExplorerMenu');
+  assert.match(menu, /Copy coordinates \(\$\{x\} \$\{AREA_EXPLORER_MENU_Y\} \$\{z\}\)/);
+  assert.match(menu, /`#goto \$\{x\} \$\{AREA_EXPLORER_MENU_Y\} \$\{z\}`/);
 }
 
 (async () => {
@@ -520,5 +529,6 @@ function testPlayerSigns() {
   testLocatePlayer();
   testCountsKeepUp();
   testPlayerSigns();
+  testMenuHeight();
   console.log('Area Explorer UI behavior tests passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });
