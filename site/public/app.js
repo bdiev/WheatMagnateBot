@@ -6927,7 +6927,11 @@ const AREA_EXPLORER_KIND_ICONS = Object.freeze({ '': 'filled_map', BASE: 'crafti
 const AREA_EXPLORER_MARKER_ICONS = Object.freeze({
   'End Portal': 'ender_eye', 'Nether Portal': 'obsidian', Spawner: 'spawner', 'Trial Chamber': 'trial_key',
   'Ancient City': 'echo_shard', 'End City': 'purpur_block', 'End Gateway': 'ender_pearl', 'Shulker Box': 'shulker_box',
-  'Named Cat': 'cat_spawn_egg', 'Named Dog': 'wolf_spawn_egg', 'Thrown Pearl': 'ender_pearl'
+  'Thrown Pearl': 'ender_pearl'
+});
+// A named pet shows its own face, from the icon service's mobs; what it's fed when that's missing
+const AREA_EXPLORER_MARKER_MOBS = Object.freeze({
+  'Named Cat': { mob: 'cat', fallback: '/items/Cod.png' }, 'Named Dog': { mob: 'wolf', fallback: '/items/Bone.png' }
 });
 
 // Items the game names unlike their id: a filled map is just "Map", a writable book "Book and Quill"
@@ -6938,6 +6942,8 @@ function areaExplorerIconUrl(key) {
 }
 
 function areaExplorerFindIcon(find) {
+  const pet = find.kind === 'MARKER' ? AREA_EXPLORER_MARKER_MOBS[find.name] : null;
+  if (pet) return { src: minecraftIconUrl('mob', pet.mob) || pet.fallback, fallback: pet.fallback };
   const fallback = state.itemIcons[AREA_EXPLORER_KIND_ICONS[find.kind]] || '/items/Chest.png';
   let key = AREA_EXPLORER_KIND_ICONS[find.kind];
   // A wall sign is the same item as the standing one

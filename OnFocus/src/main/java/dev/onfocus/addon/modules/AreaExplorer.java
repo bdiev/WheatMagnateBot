@@ -474,10 +474,10 @@ public class AreaExplorer extends Module {
 
     /**
      * What the auto markers look for: the waypoint name, the group it goes in, its look, and the blocks
-     * that give it away. Default colours are Xaero's own, a different one per group: Xaero only has 16.
+     * that give it away. An End Portal is its frame or the portal itself: some have had the frame broken off. Default colours are Xaero's own, a different one per group: Xaero only has 16.
      */
     private enum Marker {
-        END_PORTAL("End Portal", "End Portals", "diamond", new SettingColor(85, 255, 85), true, b -> b == Blocks.END_PORTAL_FRAME),
+        END_PORTAL("End Portal", "End Portals", "diamond", new SettingColor(85, 255, 85), true, b -> b == Blocks.END_PORTAL_FRAME || b == Blocks.END_PORTAL),
         NETHER_PORTAL("Nether Portal", "Nether Portals", "circle", new SettingColor(170, 0, 170), false, b -> b == Blocks.NETHER_PORTAL),
         SPAWNER("Spawner", "Spawners", "skull", new SettingColor(255, 0, 0), false, b -> b == Blocks.SPAWNER),
         TRIAL_CHAMBER("Trial Chamber", "Trial Chambers", "triangle", new SettingColor(255, 170, 0), false, b -> b == Blocks.TRIAL_SPAWNER || b == Blocks.VAULT),
@@ -1191,6 +1191,31 @@ public class AreaExplorer extends Module {
         List<Coverage> grids = new ArrayList<>();
         for (Territory t : territories.visible(fileSafe(dimension.getValue().getPath()), except)) grids.add(t.coverage);
         return grids;
+    }
+
+    /** What {@link #mapTerritoryRectangles} worked out last, and from which grids at which versions. */
+    private List<int[]> territoryRects = List.of();
+    private List<Object> territoryRectsKey = List.of();
+
+    /**
+     * The ground of the ticked territories as rectangles of chunks that don't overlap: territories
+     * scanned over each other show in one even colour, not darker where they meet. Worked out again
+     * only when the territories or their ground change.
+     */
+    public List<int[]> mapTerritoryRectangles(RegistryKey<World> dimension) {
+        List<Coverage> grids = mapTerritories(dimension);
+        List<Object> key = new ArrayList<>(grids.size() * 2);
+        for (Coverage grid : grids) {
+            key.add(grid);
+            key.add(grid.version());
+        }
+        if (!key.equals(territoryRectsKey)) {
+            List<int[]> rects = new ArrayList<>();
+            for (Coverage grid : grids) rects.addAll(grid.rectangles());
+            territoryRects = Coverage.union(rects);
+            territoryRectsKey = key;
+        }
+        return territoryRects;
     }
 
     public SettingColor territoryColor() {
@@ -2370,10 +2395,13 @@ public class AreaExplorer extends Module {
     private Map<Block, String> markerBlocks() {
         Map<Block, String> wanted = new HashMap<>();
         if (!autoMarkers.get()) return wanted;
+        boolean end = mc.world != null && mc.world.getRegistryKey() == World.END;
         for (Block block : customMarkerBlocks.get()) wanted.put(block, block.getName().getString());
         for (Marker marker : Marker.values()) {
             if (!markerToggles.get(marker).get()) continue;
             for (Block block : Registries.BLOCK) {
+                // The End's own exit portal is no stronghold
+                if (block == Blocks.END_PORTAL && end) continue;
                 if (marker.blocks.test(block)) wanted.put(block, marker.title);
             }
         }

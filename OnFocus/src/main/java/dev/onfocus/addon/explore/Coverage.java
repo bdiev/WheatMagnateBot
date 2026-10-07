@@ -129,6 +129,47 @@ public final class Coverage {
         return runs;
     }
 
+    /**
+     * The ground under any of the rectangles {minCX, minCZ, maxCX, maxCZ}, as rectangles that don't
+     * overlap: drawn see-through, overlapping ones would show darker where they meet. Cut into columns
+     * at every edge, each column's spans joined, and side-by-side columns with the same spans joined back.
+     */
+    public static List<int[]> union(List<int[]> rects) {
+        if (rects.size() <= 1) return rects;
+        int[] xs = rects.stream().flatMapToInt(r -> java.util.stream.IntStream.of(r[0], r[2] + 1)).distinct().sorted().toArray();
+        List<int[]> sorted = new ArrayList<>(rects);
+        sorted.sort(java.util.Comparator.comparingInt(r -> r[1]));
+        List<int[]> out = new ArrayList<>();
+        // Rectangles of the last column still open to the right, by their spans
+        List<int[]> open = new ArrayList<>();
+        List<int[]> openSpans = new ArrayList<>();
+        for (int i = 0; i + 1 < xs.length; i++) {
+            int x0 = xs[i], x1 = xs[i + 1] - 1;
+            List<int[]> spans = new ArrayList<>();
+            for (int[] r : sorted) {
+                if (r[0] > x0 || r[2] < x1) continue;
+                int[] last = spans.isEmpty() ? null : spans.getLast();
+                if (last != null && r[1] <= last[1] + 1) last[1] = Math.max(last[1], r[3]);
+                else spans.add(new int[]{r[1], r[3]});
+            }
+            List<int[]> nextOpen = new ArrayList<>(), nextSpans = new ArrayList<>();
+            for (int[] span : spans) {
+                int[] carried = null;
+                for (int j = 0; j < openSpans.size(); j++) {
+                    int[] o = openSpans.get(j);
+                    if (o[0] == span[0] && o[1] == span[1] && open.get(j)[2] == x0 - 1) carried = open.get(j);
+                }
+                if (carried != null) carried[2] = x1;
+                else out.add(carried = new int[]{x0, span[0], x1, span[1]});
+                nextOpen.add(carried);
+                nextSpans.add(span);
+            }
+            open = nextOpen;
+            openSpans = nextSpans;
+        }
+        return out;
+    }
+
     private int[] toChunks(int startCol, int endCol, int startRow, int endRow) {
         return new int[]{
             area.minCX() + startCol * cell, area.minCZ() + startRow * cell,
