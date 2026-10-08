@@ -1367,6 +1367,11 @@ let playerActivityJoinEventsReady = false;
 // that persisted presence from a previous process has been reconciled.
 let playerActivityReconciliationPending = true;
 let botStatusSnapshotInterval = null;
+// The snapshot is checked every second but written only when it changed, plus a
+// heartbeat: every write makes the site push a refresh to each open tab.
+const BOT_STATUS_SNAPSHOT_HEARTBEAT_MS = 15_000;
+let lastBotStatusSnapshotKey = null;
+let lastBotStatusSnapshotWriteAt = 0;
 let wheatMagnatePlaytimeDisplay = 'N/A';
 let wheatMagnatePlaytimeCacheAt = 0;
 const DANGER_RADIUS_OPTIONS = [100, 200, 300, 500, 1000];
@@ -9676,9 +9681,18 @@ function getBotStatusSnapshot() {
   };
 }
 
-async function writeBotStatusSnapshot() {
+// What the snapshot says, without the fields that tick on their own every second.
+function botStatusSnapshotKey(snapshot) {
+  const { uptimeMs, reconnectInMs, ping, observedAt, ...rest } = snapshot;
+  return JSON.stringify({ ...rest, reconnecting: reconnectInMs != null });
+}
+
+async function writeBotStatusSnapshot({ force = false } = {}) {
   if (!pool) return;
   const snapshot = getBotStatusSnapshot();
+  const key = botStatusSnapshotKey(snapshot);
+  if (!force && key === lastBotStatusSnapshotKey
+    && Date.now() - lastBotStatusSnapshotWriteAt < BOT_STATUS_SNAPSHOT_HEARTBEAT_MS) return;
   try {
     await pool.query(`
       INSERT INTO bot_status_snapshots (id, status, observed_at)
@@ -9701,6 +9715,8 @@ async function writeBotStatusSnapshot() {
       bot?.entity ? new Date(startTime) : null,
       snapshot
     ]);
+    lastBotStatusSnapshotKey = key;
+    lastBotStatusSnapshotWriteAt = Date.now();
   } catch (err) {
     console.error('[Bot Status] Failed to write snapshot:', err.message);
   }
@@ -9708,7 +9724,7 @@ async function writeBotStatusSnapshot() {
 
 async function startBotStatusSnapshotWriter() {
   if (botStatusSnapshotInterval) clearInterval(botStatusSnapshotInterval);
-  await writeBotStatusSnapshot();
+  await writeBotStatusSnapshot({ force: true });
   botStatusSnapshotInterval = setInterval(() => {
     writeBotStatusSnapshot().catch(() => {});
   }, 1_000);

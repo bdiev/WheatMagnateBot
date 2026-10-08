@@ -54,7 +54,8 @@ server address are included intentionally for correlating a trace with a map scr
   (100 active ticks for blank map state, 600 for unknown state). Repeated loading does not extend
   the grace period. Mapped chunks are confirmed instead.
 - `withheld-skip`: rescan only. Chunks well inside the swath that the server kept not sending,
-  with a neighbour loaded, for 600 active ticks in total, are planned around for the rest of the
+  with a neighbour loaded, for 600 active ticks in total, or that three strips planned over
+  them were flown to the end without (the strip's swath and a swath past each end), are planned around for the rest of the
   run (sweep, cleanup and the settle target). One that arrives later counts as rescanned as usual.
 - `loaded-width`: sorted width samples, current two-sided width and selected reach.
   `measuredReach` uses the lower decile; `acceptedReach` records the result after requiring three

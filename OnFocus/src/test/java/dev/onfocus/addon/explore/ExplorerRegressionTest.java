@@ -134,6 +134,13 @@ public final class ExplorerRegressionTest {
         withheld.loaded(5, 5);
         require(!withheld.missed(5, 5, step), "Arriving must reset the wait");
         require(!withheld.missed(20, 20, WithheldChunks.GIVE_UP_TICKS), "Chunks outside the area are never tracked");
+        for (int i = 1; i < WithheldChunks.GIVE_UP_STRIPS; i++) {
+            require(!withheld.missedStrip(7, -7), "One strip ending without a chunk may be a lag");
+        }
+        require(withheld.missedStrip(7, -7) && withheld.test(7, -7),
+            "Strips that keep ending without a chunk must stop the sweep planning them again and again");
+        withheld.loaded(7, -7);
+        require(!withheld.test(7, -7) && !withheld.missedStrip(7, -7), "A chunk that came must start its strikes over");
     }
 
     private static void deferredCoverage() {

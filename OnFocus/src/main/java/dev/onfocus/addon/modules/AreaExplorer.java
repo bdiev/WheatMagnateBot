@@ -2249,6 +2249,35 @@ public class AreaExplorer extends Module {
         int flown = Math.abs(to - stripStartU) + 1;
         log("Strip %d %s: %d of %d chunks in %.0f s (%.0f blocks/s), %s", stripNumber, complete ? "done" : "cut short", flown,
             Math.abs(stripEndU - stripStartU) + 1, seconds, seconds > 0 ? flown * 16 / seconds : 0, stripMeasureNote);
+        if (complete) strikeUnsentAlongStrip();
+    }
+
+    /**
+     * Rescan: the chunks the finished strip was planned to cover that still didn't come get a strike.
+     * The planner counts a strip's ends as covering a swath further on, so those count too.
+     */
+    private void strikeUnsentAlongStrip() {
+        if (!rescan || withheld == null || area == null) return;
+        int lo = Math.min(stripStartU, stripEndU) - reach, hi = Math.max(stripStartU, stripEndU) + reach;
+        int gaveUp = 0;
+        var cm = mc.world.getChunkManager();
+        for (int u = lo; u <= hi; u++) {
+            for (int v = stripV - reach; v <= stripV + reach; v++) {
+                int cx = stripAlongX ? u : v, cz = stripAlongX ? v : u;
+                if (!area.contains(cx, cz) || explored.contains(ChunkPos.toLong(cx, cz))) continue;
+                // Came in since the last check: counted as rescanned on the next one
+                if (cm.isChunkLoaded(cx, cz)) continue;
+                if (withheld.missedStrip(cx, cz)) gaveUp++;
+            }
+        }
+        if (gaveUp > 0) logWithheld(gaveUp, "after %d strips over them".formatted(WithheldChunks.GIVE_UP_STRIPS));
+    }
+
+    private void logWithheld(int gaveUp, String how) {
+        ChunkPos p = mc.player.getChunkPos();
+        log("The server hasn't sent %d chunk%s near %d, %d %s - skipping %s (%d in all)", gaveUp, gaveUp == 1 ? "" : "s",
+            p.x * 16 + 8, p.z * 16 + 8, how, gaveUp == 1 ? "it" : "them", withheld.size());
+        diagnostic("withheld-skip", "gave up on " + gaveUp + " chunks the server doesn't send, " + how);
     }
 
 
@@ -2788,12 +2817,7 @@ public class AreaExplorer extends Module {
                 if (withheld.missed(cx, cz, waited)) gaveUp++;
             }
         }
-        if (gaveUp > 0) {
-            log("The server hasn't sent %d chunk%s near %d, %d in %d s in reach while sending the ones around - skipping %s (%d in all)",
-                gaveUp, gaveUp == 1 ? "" : "s", p.x * 16 + 8, p.z * 16 + 8, WithheldChunks.GIVE_UP_TICKS / 20,
-                gaveUp == 1 ? "it" : "them", withheld.size());
-            diagnostic("withheld-skip", "gave up on " + gaveUp + " chunks the server doesn't send");
-        }
+        if (gaveUp > 0) logWithheld(gaveUp, "in %d s in reach while sending the ones around".formatted(WithheldChunks.GIVE_UP_TICKS / 20));
     }
 
     // Auto markers
