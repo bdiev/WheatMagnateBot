@@ -149,8 +149,11 @@ import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Predicate;
 
 /**
@@ -897,6 +900,22 @@ public class AreaExplorer extends Module {
     private static final int ARCHIVE_INTERVAL_TICKS = 30 * 20;
     /** Uploads to the site; only used on {@link #FILES}, like the archives. */
     private static final SiteSync SITE = new SiteSync();
+    /**
+     * Writes and deletes of the saved run, in order: a run with a lot of finds is megabytes of
+     * gzipped NBT, which held the game up for a second on every save. Its own thread, so a slow
+     * upload on {@link #FILES} doesn't hold a save (or a read waiting for one) up.
+     */
+    private static final ExecutorService SESSION_FILES = Executors.newSingleThreadExecutor(r -> {
+        Thread thread = new Thread(r, "Area Explorer saved run");
+        thread.setDaemon(true);
+        return thread;
+    });
+    /** The last write or delete queued on {@link #SESSION_FILES}: the ones before it are done when it is. */
+    private static CompletableFuture<Void> sessionFileWork = CompletableFuture.completedFuture(null);
+    static {
+        // The files thread is a daemon: a save queued just before the game closes still gets written
+        Runtime.getRuntime().addShutdownHook(new Thread(AreaExplorer::awaitSessionFiles, "Area Explorer saved run on exit"));
+    }
     /** Sends Xaero's map to the site, on a thread of its own. */
     private static final MapSync MAP = new MapSync();
     /** Archives whose earlier finds were queued for the site this session, by archive and site. */
@@ -3627,38 +3646,48 @@ public class AreaExplorer extends Module {
     /** Writes the whole file again: heading, the bases, the signs, the items on the ground under them, and the footer if given. */
     private void writeFoundFile(String footer) {
         if (signWriteFailed) return;
-        try {
-            if (signFile == null) {
-                var server = mc.getCurrentServerEntry();
-                String where = server != null ? server.address : "singleplayer";
-                String dimension = mc.world.getRegistryKey().getValue().getPath();
-                Path dir = FabricLoader.getInstance().getGameDir().resolve("onfocus").resolve("signs").resolve(fileSafe(where));
-                Files.createDirectories(dir);
-                fileBaseName = LocalDateTime.now().format(SIGN_FILE_TIME) + "_" + fileSafe(dimension) + ".txt";
-                signFile = dir.resolve(itemCountPrefix() + fileBaseName);
-                fileHeader = signFileHeader(server != null ? server.address : "Singleplayer");
-                report("Saving finds to (highlight)%s(default).", signFile);
-            } else {
-                // The name tells what items it holds, so it changes as they're found
-                Path renamed = signFile.resolveSibling(itemCountPrefix() + fileBaseName);
-                if (!renamed.equals(signFile)) {
-                    if (Files.exists(signFile)) Files.move(signFile, renamed, StandardCopyOption.REPLACE_EXISTING);
-                    signFile = renamed;
-                }
+        Path renameFrom = null;
+        if (signFile == null) {
+            var server = mc.getCurrentServerEntry();
+            String where = server != null ? server.address : "singleplayer";
+            String dimension = mc.world.getRegistryKey().getValue().getPath();
+            Path dir = FabricLoader.getInstance().getGameDir().resolve("onfocus").resolve("signs").resolve(fileSafe(where));
+            fileBaseName = LocalDateTime.now().format(SIGN_FILE_TIME) + "_" + fileSafe(dimension) + ".txt";
+            signFile = dir.resolve(itemCountPrefix() + fileBaseName);
+            fileHeader = signFileHeader(server != null ? server.address : "Singleplayer");
+            report("Saving finds to (highlight)%s(default).", signFile);
+        } else {
+            // The name tells what items it holds, so it changes as they're found
+            Path renamed = signFile.resolveSibling(itemCountPrefix() + fileBaseName);
+            if (!renamed.equals(signFile)) {
+                renameFrom = signFile;
+                signFile = renamed;
             }
-            StringBuilder text = new StringBuilder(fileHeader);
-            if (basesFound > 0) text.append(FindsArchive.sectionTitle("BASES", basesFound)).append(baseLog);
-            if (saveSigns.get() || !savedSigns.isEmpty()) text.append(FindsArchive.sectionTitle("SIGNS", savedSigns.size())).append(signLog);
-            // Each sign ends with a blank line already, so the items' title sits apart from them
-            if (saveItems.get() || !savedItems.isEmpty()) text.append(FindsArchive.sectionTitle("ITEMS ON THE GROUND", savedItems.size())).append(itemLog()).append('\n');
-            if (footer != null) text.append(footer);
-            Files.writeString(signFile, text, StandardCharsets.UTF_8, StandardOpenOption.CREATE,
-                StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
-        } catch (IOException e) {
-            signWriteFailed = true;
-            error("Couldn't write the sign file: %s", e.getMessage());
-            FILE_LOG.error("Writing signs failed", e);
         }
+        StringBuilder text = new StringBuilder(fileHeader);
+        if (basesFound > 0) text.append(FindsArchive.sectionTitle("BASES", basesFound)).append(baseLog);
+        if (saveSigns.get() || !savedSigns.isEmpty()) text.append(FindsArchive.sectionTitle("SIGNS", savedSigns.size())).append(signLog);
+        // Each sign ends with a blank line already, so the items' title sits apart from them
+        if (saveItems.get() || !savedItems.isEmpty()) text.append(FindsArchive.sectionTitle("ITEMS ON THE GROUND", savedItems.size())).append(itemLog()).append('\n');
+        if (footer != null) text.append(footer);
+        // Megabytes with a lot of signs: written off the game thread, in order with the rest of the files
+        Path file = signFile, from = renameFrom;
+        String content = text.toString();
+        FILES.execute(() -> {
+            try {
+                Files.createDirectories(file.getParent());
+                if (from != null && Files.exists(from)) Files.move(from, file, StandardCopyOption.REPLACE_EXISTING);
+                Files.writeString(file, content, StandardCharsets.UTF_8, StandardOpenOption.CREATE,
+                    StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
+            } catch (IOException e) {
+                FILE_LOG.error("Writing signs failed", e);
+                mc.execute(() -> {
+                    if (signWriteFailed) return;
+                    signWriteFailed = true;
+                    error("Couldn't write the sign file: %s", e.getMessage());
+                });
+            }
+        });
     }
 
     /** Writes the run's file if it has new finds, and the all-finds file every so often. */
@@ -4679,16 +4708,42 @@ public class AreaExplorer extends Module {
 
     private boolean hasSession() {
         Path file = sessionFile();
-        return file != null && Files.exists(file);
+        if (file == null) return false;
+        awaitSessionFiles();
+        return Files.exists(file);
     }
 
     private void forgetSession() {
         Path file = sessionFile();
         if (file == null) return;
+        // After any save still being written, or that would bring it back
+        onSessionFiles(() -> {
+            try {
+                Files.deleteIfExists(file);
+            } catch (IOException e) {
+                FILE_LOG.error("Deleting the saved run failed", e);
+            }
+        });
+    }
+
+    private static synchronized void onSessionFiles(Runnable task) {
+        sessionFileWork = CompletableFuture.runAsync(task, SESSION_FILES);
+    }
+
+    /** Waits for the saved run's writes queued so far, before it's read. Only blocks right after a save. */
+    private static void awaitSessionFiles() {
+        CompletableFuture<Void> last;
+        synchronized (AreaExplorer.class) {
+            last = sessionFileWork;
+        }
         try {
-            Files.deleteIfExists(file);
-        } catch (IOException e) {
-            FILE_LOG.error("Deleting the saved run failed", e);
+            last.get(30, TimeUnit.SECONDS);
+        } catch (ExecutionException e) {
+            FILE_LOG.error("Saving the run failed", e.getCause());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (TimeoutException | CancellationException e) {
+            FILE_LOG.warn("Gave up waiting for the run to be saved");
         }
     }
 
@@ -4738,20 +4793,23 @@ public class AreaExplorer extends Module {
         tag.put("finds", findsTag());
         tag.putLongArray("player-placed", playerPlaced.toLongArray());
 
-        try {
-            Files.createDirectories(file.getParent());
-            Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
-            NbtIo.writeCompressed(tag, tmp);
-            Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
-        } catch (IOException e) {
-            FILE_LOG.error("Saving the run failed", e);
-        }
+        // The tag holds copies only, so it's written off the game thread while the run goes on
+        onSessionFiles(() -> {
+            try {
+                Files.createDirectories(file.getParent());
+                Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
+                NbtIo.writeCompressed(tag, tmp);
+                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
+            } catch (IOException e) {
+                FILE_LOG.error("Saving the run failed", e);
+            }
+        });
     }
 
     /** Carries on with the run saved for this server, if there is one: true if it took over (turning the module off if it can't). */
     private boolean resumeSession() {
+        if (!hasSession()) return false;
         Path file = sessionFile();
-        if (file == null || !Files.exists(file)) return false;
         NbtCompound tag;
         try {
             tag = NbtIo.readCompressed(file, NbtSizeTracker.ofUnlimitedBytes());
