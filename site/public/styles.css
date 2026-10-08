@@ -13217,6 +13217,8 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
 .area-explorer-map-status span[hidden],
 .area-explorer-map-status span:empty { display: none; }
 .area-explorer-map-cursor { font-weight: 700; }
+/* Explored share: its tooltip tells the chunks */
+.area-explorer-map-status .area-explorer-map-explored { font-weight: 700; pointer-events: auto; cursor: default; }
 
 /* The find picked on the map, over the map's foot */
 .area-explorer-selected {

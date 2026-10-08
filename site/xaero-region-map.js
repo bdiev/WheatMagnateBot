@@ -30,6 +30,20 @@ const PUBLISH_INTERVAL_MS = 5_000;
 const MAX_PUBLISHED_TILES = 400;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const NIGHT_SUFFIX = '@night';
+// A region is 32 chunks a side; its drawn ones are kept as 1024 bits
+const REGION_CHUNKS = REGION_PX / 16;
+const CHUNK_MASK_BYTES = REGION_CHUNKS * REGION_CHUNKS / 8;
+// The dashboard's territories, ±30k, ±50k and all of it: how much of each is explored
+const TERRITORY_RADII = Object.freeze([30_000, 50_000, 100_000]);
+// Regions stored before chunk masks were kept get theirs worked out this many at a time
+const MASK_BATCH = 32;
+// Explored counts are kept this long, unless an upload in the scope changes them first
+const EXPLORED_CACHE_MS = 60_000;
+const BIT_COUNTS = Uint8Array.from({ length: 256 }, (_, n) => {
+  let count = 0;
+  for (let v = n; v; v >>= 1) count += v & 1;
+  return count;
+});
 
 function httpError(statusCode, message) {
   return Object.assign(new Error(message), { statusCode });
@@ -91,6 +105,64 @@ function readBody(req, maxBytes) {
 }
 
 /** A region's PNG as a level-0 tile: lossless WebP, null when it has no drawn pixel at all. */
+/** The chunks with anything drawn in them, from a region's pixels (alpha last): see CHUNK_MASK_BYTES. */
+function chunkMaskFromPixels(pixels, channels = 4) {
+  const mask = Buffer.alloc(CHUNK_MASK_BYTES);
+  for (let cz = 0; cz < REGION_CHUNKS; cz++) {
+    for (let cx = 0; cx < REGION_CHUNKS; cx++) {
+      let drawn = false;
+      for (let y = cz * 16; y < cz * 16 + 16 && !drawn; y++) {
+        let at = (y * REGION_PX + cx * 16) * channels + channels - 1;
+        for (let x = 0; x < 16; x++, at += channels) {
+          if (pixels[at] !== 0) { drawn = true; break; }
+        }
+      }
+      if (drawn) {
+        const bit = cz * REGION_CHUNKS + cx;
+        mask[bit >> 3] |= 1 << (bit & 7);
+      }
+    }
+  }
+  return mask;
+}
+
+async function chunkMaskFromImage(image) {
+  const { data, info } = await sharp(image).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  return chunkMaskFromPixels(data, info.channels);
+}
+
+/**
+ * Chunks of the stored regions ({x, z, mask}) inside each territory: { radius: chunks }. A
+ * territory ±r covers chunks -r/16 up to r/16 - 1 each way.
+ */
+function countExploredChunks(regions, radii = TERRITORY_RADII) {
+  const explored = Object.fromEntries(radii.map(radius => [radius, 0]));
+  for (const { x, z, mask } of regions) {
+    if (!mask) continue;
+    const minCX = x * REGION_CHUNKS, minCZ = z * REGION_CHUNKS;
+    let whole = null;
+    for (const radius of radii) {
+      const half = radius / 16;
+      if (minCX >= -half && minCZ >= -half && minCX + REGION_CHUNKS <= half && minCZ + REGION_CHUNKS <= half) {
+        if (whole === null) {
+          whole = 0;
+          for (const byte of mask) whole += BIT_COUNTS[byte];
+        }
+        explored[radius] += whole;
+        continue;
+      }
+      // On the edge: only the chunks inside count
+      for (let cz = Math.max(0, -half - minCZ); cz < Math.min(REGION_CHUNKS, half - minCZ); cz++) {
+        for (let cx = Math.max(0, -half - minCX); cx < Math.min(REGION_CHUNKS, half - minCX); cx++) {
+          const bit = cz * REGION_CHUNKS + cx;
+          if (mask[bit >> 3] & (1 << (bit & 7))) explored[radius]++;
+        }
+      }
+    }
+  }
+  return explored;
+}
+
 async function regionTileFromPng(png) {
   if (png.length < PNG_SIGNATURE.length || !png.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) {
     throw httpError(400, 'The region must be a PNG.');
@@ -103,9 +175,12 @@ async function regionTileFromPng(png) {
   } catch (error) {
     throw error.statusCode ? error : httpError(400, 'The region PNG could not be read.');
   }
-  const { channels } = await image.stats();
-  if (channels[3].max === 0) return null;
-  return image.webp({ lossless: true, effort: 4 }).toBuffer();
+  const { data, info } = await image.raw().toBuffer({ resolveWithObject: true });
+  const mask = chunkMaskFromPixels(data, info.channels);
+  if (mask.every(byte => byte === 0)) return null;
+  const tile = await sharp(data, { raw: { width: REGION_PX, height: REGION_PX, channels: info.channels } })
+    .webp({ lossless: true, effort: 4 }).toBuffer();
+  return { tile, mask };
 }
 
 /**
@@ -137,6 +212,8 @@ function createXaeroRegionMapService({
   let stopped = false;
   const pendingPublish = new Map();
   let publishTimer = null;
+  // Explored chunk counts by scope: { at, value }
+  const exploredCache = new Map();
 
   async function storageBytes() {
     if (storedBytes === null || now() - storedBytesCheckedAt > SIZE_CHECK_INTERVAL_MS) {
@@ -200,16 +277,18 @@ function createXaeroRegionMapService({
     if (!existing && await storageBytes() >= maxBytes) {
       throw httpError(507, 'The map storage limit (XAERO_MAP_MAX_BYTES) is reached; new regions are refused.');
     }
-    const tile = await regionTileFromPng(png);
+    const drawn = await regionTileFromPng(png);
+    const tile = drawn?.tile;
+    exploredCache.delete(`${scope.server}\u0000${scope.dimension}`);
     if (!tile) {
       if (existing) await pool.query('DELETE FROM area_explorer_region_tiles WHERE server = $1 AND dimension = $2 AND level = 0 AND x = $3 AND z = $4', [scope.server, scope.dimension, x, z]);
     } else {
       await pool.query(
-        `INSERT INTO area_explorer_region_tiles (server, dimension, level, x, z, data, source_modified_at, updated_at)
-         VALUES ($1, $2, 0, $3, $4, $5, to_timestamp($6 / 1000.0), NOW())
+        `INSERT INTO area_explorer_region_tiles (server, dimension, level, x, z, data, chunk_mask, source_modified_at, updated_at)
+         VALUES ($1, $2, 0, $3, $4, $5, $6, to_timestamp($7 / 1000.0), NOW())
          ON CONFLICT (server, dimension, level, x, z)
-         DO UPDATE SET data = EXCLUDED.data, source_modified_at = EXCLUDED.source_modified_at, updated_at = NOW()`,
-        [scope.server, scope.dimension, x, z, tile, modifiedMs]
+         DO UPDATE SET data = EXCLUDED.data, chunk_mask = EXCLUDED.chunk_mask, source_modified_at = EXCLUDED.source_modified_at, updated_at = NOW()`,
+        [scope.server, scope.dimension, x, z, tile, drawn.mask, modifiedMs]
       );
       if (storedBytes !== null) storedBytes += tile.length;
     }
@@ -271,6 +350,47 @@ function createXaeroRegionMapService({
     return rows.length === WORKER_BATCH;
   }
 
+  /** Works out the chunk masks of regions stored before they were kept, a batch at a time. True if there may be more. */
+  async function fillChunkMasks({ limit = MASK_BATCH } = {}) {
+    const rows = (await pool.query(
+      `SELECT server, dimension, x, z, data FROM area_explorer_region_tiles
+       WHERE level = 0 AND chunk_mask IS NULL LIMIT $1`,
+      [limit]
+    )).rows;
+    for (const row of rows) {
+      const mask = await chunkMaskFromImage(Buffer.from(row.data));
+      // Unless an upload replaced the region meanwhile: that one came with its own mask
+      await pool.query(
+        `UPDATE area_explorer_region_tiles SET chunk_mask = $6
+         WHERE server = $1 AND dimension = $2 AND level = 0 AND x = $3 AND z = $4 AND chunk_mask IS NULL AND data = $5`,
+        [row.server, row.dimension, row.x, row.z, row.data, mask]
+      );
+      exploredCache.delete(`${row.server}\u0000${row.dimension}`);
+    }
+    return rows.length === limit;
+  }
+
+  /**
+   * How much of each territory the map has: { chunks: { radius: explored }, totals: { radius: all },
+   * pending: regions whose chunks aren't worked out yet, left out of the counts }.
+   */
+  async function exploredChunks(scope) {
+    const key = `${scope.server}\u0000${scope.dimension}`;
+    const cached = exploredCache.get(key);
+    if (cached && now() - cached.at < EXPLORED_CACHE_MS) return cached.value;
+    const rows = (await pool.query(
+      'SELECT x, z, chunk_mask FROM area_explorer_region_tiles WHERE server = $1 AND dimension = $2 AND level = 0',
+      [scope.server, scope.dimension]
+    )).rows;
+    const value = {
+      chunks: countExploredChunks(rows.map(row => ({ x: row.x, z: row.z, mask: row.chunk_mask && Buffer.from(row.chunk_mask) }))),
+      totals: Object.fromEntries(TERRITORY_RADII.map(radius => [radius, (radius / 8) ** 2])),
+      pending: rows.filter(row => !row.chunk_mask).length
+    };
+    exploredCache.set(key, { at: now(), value });
+    return value;
+  }
+
   function scheduleWorker(delayMs) {
     if (stopped || workerRunning || workerTimer) return;
     workerTimer = setTimeout(runWorker, delayMs);
@@ -284,6 +404,7 @@ function createXaeroRegionMapService({
     let failed = false;
     try {
       more = await processDirty();
+      if (!more) more = await fillChunkMasks();
     } catch (error) {
       failed = true;
       await recordSystemLog({ level: 'warn', category: 'area_explorer', message: `Xaero map tile rebuild failed: ${error.message}` });
@@ -401,6 +522,10 @@ function createXaeroRegionMapService({
       sendJson(res, 200, await mapScopes());
       return true;
     }
+    if (url.pathname === '/api/area-explorer/map/explored' && req.method === 'GET') {
+      sendJson(res, 200, await exploredChunks(scopeFrom(url)));
+      return true;
+    }
     if (url.pathname === '/api/area-explorer/map/index' && req.method === 'GET') {
       sendJson(res, 200, await mapIndex(scopeFrom(url)));
       return true;
@@ -422,12 +547,14 @@ function createXaeroRegionMapService({
 
   return {
     handleModRequest, handleRequest, start, stop,
-    putRegion, processDirty, regionIndex, mapIndex, mapScopes, flushPublish
+    putRegion, processDirty, fillChunkMasks, exploredChunks, regionIndex, mapIndex, mapScopes, flushPublish
   };
 }
 
 module.exports = {
   createXaeroRegionMapService,
+  chunkMaskFromPixels,
+  countExploredChunks,
   parentOf,
   parentTileFromChildren,
   regionTileFromPng,
@@ -435,5 +562,6 @@ module.exports = {
   MAX_DISTANCE,
   MAX_LEVEL,
   NIGHT_SUFFIX,
-  REGION_PX
+  REGION_PX,
+  TERRITORY_RADII
 };

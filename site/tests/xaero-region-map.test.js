@@ -6,9 +6,10 @@ const path = require('node:path');
 const { Readable } = require('node:stream');
 const sharp = require('sharp');
 const { PGlite } = require('@electric-sql/pglite');
-const { createXaeroRegionMapService, parentOf, parentTileFromChildren, tileInRange, MAX_DISTANCE, MAX_LEVEL, REGION_PX } = require('../xaero-region-map');
+const { createXaeroRegionMapService, chunkMaskFromPixels, countExploredChunks, parentOf, parentTileFromChildren, tileInRange, MAX_DISTANCE, MAX_LEVEL, REGION_PX } = require('../xaero-region-map');
 
-const migrationSql = fs.readFileSync(path.join(__dirname, '..', 'migrations', '069_area_explorer_region_map.sql'), 'utf8');
+const migrationSql = ['069_area_explorer_region_map.sql', '080_area_explorer_region_chunk_mask.sql']
+  .map(name => fs.readFileSync(path.join(__dirname, '..', 'migrations', name), 'utf8')).join('\n');
 const serverSource = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
 const appSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
 const indexSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
@@ -47,6 +48,26 @@ async function regionPng({ fill = true } = {}) {
 function testHelpers() {
   assert.deepEqual(parentOf(0, 5, -3), { level: 1, x: 2, z: -2 }, 'negative regions round down, like Xaero');
   assert.deepEqual(parentOf(3, -1, 0), { level: 4, x: -1, z: 0 });
+}
+
+function testExploredCounts() {
+  // One pixel drawn in chunk (3, 1) of the region, one in chunk (31, 31)
+  const pixels = Buffer.alloc(REGION_PX * REGION_PX * 4);
+  pixels[((1 * 16 + 5) * REGION_PX + 3 * 16 + 7) * 4 + 3] = 255;
+  pixels[((REGION_PX - 1) * REGION_PX + REGION_PX - 1) * 4 + 3] = 255;
+  const mask = chunkMaskFromPixels(pixels);
+  assert.equal(mask.length, 128, '1024 chunks, a bit each');
+  const bit = index => (mask[index >> 3] >> (index & 7)) & 1;
+  assert.equal(bit(1 * 32 + 3), 1, 'a chunk with anything drawn counts');
+  assert.equal(bit(1023), 1);
+  assert.equal(bit(0), 0);
+
+  const full = Buffer.alloc(128, 0xff);
+  // ±30k is chunks -1875 to 1874: region 58 (chunks 1856 to 1887) has 19 columns inside, region 59 none
+  assert.deepEqual(countExploredChunks([{ x: 58, z: 0, mask: full }]), { 30000: 19 * 32, 50000: 1024, 100000: 1024 });
+  assert.deepEqual(countExploredChunks([{ x: 59, z: 0, mask: full }]), { 30000: 0, 50000: 1024, 100000: 1024 });
+  assert.deepEqual(countExploredChunks([{ x: -59, z: -59, mask: full }]), { 30000: 19 * 19, 50000: 1024, 100000: 1024 }, 'the negative edges too');
+  assert.deepEqual(countExploredChunks([{ x: 0, z: 0, mask }, { x: 1, z: 0, mask: null }]), { 30000: 2, 50000: 2, 100000: 2 }, 'a region not worked out yet adds nothing');
 }
 
 async function testParentShrinks() {
@@ -117,6 +138,23 @@ async function testService() {
     assert.equal(levels.length, MAX_LEVEL + 1, 'a tile on every level up to the top');
     assert.deepEqual(levels.slice(0, 3).map(row => [row.level, row.x, row.z]), [[0, -3, 2], [1, -2, 1], [2, -1, 0]]);
 
+    // Explored: the top-left quarter drawn is 16 x 16 chunks, well inside ±30k
+    const scope = { server: 'oldfrog.org', dimension: 'overworld' };
+    res = recordingResponse();
+    assert.equal(await service.handleRequest(request('GET'), res, new URL('http://localhost/api/area-explorer/map/explored?server=oldfrog.org&dimension=overworld')), true);
+    assert.deepEqual(JSON.parse(res.body), {
+      chunks: { 30000: 256, 50000: 256, 100000: 256 },
+      totals: { 30000: 3750 ** 2, 50000: 6250 ** 2, 100000: 12500 ** 2 },
+      pending: 0
+    });
+    // A region stored before masks were kept: left out, then worked out in the background
+    await db.query('UPDATE area_explorer_region_tiles SET chunk_mask = NULL WHERE level = 0');
+    const fresh = createXaeroRegionMapService({ pool: poolFor(db), authenticate: async () => null, enforceRateLimit: () => true, sendJson, sendError() {} });
+    assert.deepEqual(await fresh.exploredChunks(scope), { chunks: { 30000: 0, 50000: 0, 100000: 0 }, totals: { 30000: 3750 ** 2, 50000: 6250 ** 2, 100000: 12500 ** 2 }, pending: 1 });
+    assert.equal(await fresh.fillChunkMasks(), false, 'all done in one batch');
+    assert.equal((await fresh.exploredChunks(scope)).chunks[30000], 256, 'the same chunks as from the upload');
+    fresh.stop();
+
     const { regions, maxLevel } = await service.mapIndex({ server: 'oldfrog.org', dimension: 'overworld' });
     assert.deepEqual(regions, [-3, 2]);
     assert.equal(maxLevel, MAX_LEVEL);
@@ -184,6 +222,8 @@ function testWiring() {
   assert.match(serverSource, /if \(pool\) getXaeroRegionMapService\(\)\.start\(\);/);
   assert.match(appSource, /\/api\/area-explorer\/map\/tiles\/\$\{level\}\/\$\{x\}\/\$\{z\}\.webp/);
   assert.match(appSource, /drawXaeroRegionMap\(ctx, canvas, view, ratio\);/);
+  assert.match(indexSource, /<span id="areaExplorerGrid"><\/span>\s+<span id="areaExplorerExplored"/, 'the explored share sits by the grid');
+  assert.match(appSource, /\/api\/area-explorer\/map\/explored\?/);
   // The territory: ±30k, ±50k or ±100k around 0, 0 - from -30,000 to 30,000 each way - and no more
   assert.match(appSource, /const AREA_EXPLORER_RADII = Object\.freeze\(\[30_000, 50_000, 100_000\]\);/);
   assert.deepEqual([...indexSource.matchAll(/data-area-radius="(\d+)"/g)].map(match => Number(match[1])), [30_000, 50_000, 100_000]);
@@ -194,6 +234,7 @@ function testWiring() {
 
 (async () => {
   testHelpers();
+  testExploredCounts();
   await testParentShrinks();
   await testService();
   testWiring();

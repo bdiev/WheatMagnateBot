@@ -7864,6 +7864,58 @@ function drawAreaExplorerMap() {
   ctx.lineWidth = 1;
   ctx.strokeRect(Math.round(tx1) + 0.5, Math.round(tz1) + 0.5, Math.round(tx2 - tx1), Math.round(tz2 - tz1));
   $('#areaExplorerGrid').textContent = `Grid ${step.toLocaleString('en-US')} blocks`;
+  renderAreaExplorerExplored();
+}
+
+/** "Explored 58.3%": how much of the territory picked (±30k, ±50k, all) the map has drawn. */
+function renderAreaExplorerExplored() {
+  const ae = areaExplorerState();
+  const label = $('#areaExplorerExplored');
+  if (!label) return;
+  const radius = ae.extent / 2;
+  const explored = ae.explored?.scope === ae.scope ? ae.explored : null;
+  const chunks = explored?.chunks?.[radius], total = explored?.totals?.[radius];
+  label.hidden = !Number.isFinite(chunks) || !total;
+  if (label.hidden) return;
+  label.textContent = `Explored ${formatAreaExplorerPercent(chunks / total * 100)}`;
+  label.title = `${chunks.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} chunks drawn on the map`
+    + (explored.pending ? ` - ${explored.pending.toLocaleString('en-US')} older regions still being counted` : '');
+}
+
+/** A share of the map: one decimal, a sliver above none never shown as 0, nor short of all as 100. */
+function formatAreaExplorerPercent(percent) {
+  if (percent <= 0) return '0%';
+  if (percent < 0.1) return '<0.1%';
+  if (percent >= 100) return '100%';
+  return `${Math.min(99.9, Math.round(percent * 10) / 10).toFixed(1).replace(/\.0$/, '')}%`;
+}
+
+/** The explored shares of the picked scope's map, for the status line. */
+async function loadAreaExplorerExplored() {
+  const ae = areaExplorerState();
+  const scope = ae.scope;
+  const [server, dimension] = scope.split('|');
+  if (!ae.mapScopes.some(item => item.server === server && item.dimension === dimension)) {
+    ae.explored = null;
+    renderAreaExplorerExplored();
+    return;
+  }
+  const explored = await fetchJson(`/api/area-explorer/map/explored?${new URLSearchParams({ server, dimension })}`);
+  if (ae.scope !== scope) return;
+  ae.explored = { scope, ...explored };
+  renderAreaExplorerExplored();
+}
+
+// While the mod sends regions, the share is fetched again at most this often
+const AREA_EXPLORER_EXPLORED_REFRESH_MS = 10_000;
+
+function queueAreaExplorerExploredRefresh() {
+  const ae = areaExplorerState();
+  if (ae.exploredTimer) return;
+  ae.exploredTimer = setTimeout(() => {
+    ae.exploredTimer = null;
+    if (state.activeTab === 'area-explorer') loadAreaExplorerExplored().catch(() => {});
+  }, AREA_EXPLORER_EXPLORED_REFRESH_MS);
 }
 
 // The Xaero map the OnFocus mod sends: tiles anchored to the world, level 0 being Xaero's 512-block
@@ -7921,7 +7973,12 @@ async function loadXaeroRegionMap() {
   const [server, dimension] = scope.split('|');
   const map = ae.mapScopes.find(item => item.server === server && item.dimension === dimension);
   renderAreaExplorerNightButton();
-  if (!map) return;
+  if (!map) {
+    ae.explored = null;
+    renderAreaExplorerExplored();
+    return;
+  }
+  loadAreaExplorerExplored().catch(() => {});
   const wanted = [scope, ...(map.night ? [`${server}|${dimension}@night`] : [])];
   await Promise.all(wanted.filter(mapScope => !ae.regionMaps.has(mapScope)).map(async mapScope => {
     const index = await fetchJson(`/api/area-explorer/map/index?${new URLSearchParams({ server, dimension: mapScope.split('|')[1] })}`);
@@ -7984,6 +8041,8 @@ function applyXaeroRegionMapUpdate(update) {
     if (state.activeTab === 'area-explorer') loadXaeroRegionMap().then(queueAreaExplorerMapDraw).catch(() => {});
     return;
   }
+  // New regions by day: the explored share has moved
+  if (scope === ae.scope && update.tiles.some(([level]) => level === 0)) queueAreaExplorerExploredRefresh();
   for (const [level, x, z] of update.tiles) {
     if (level === 0) addXaeroRegion(regionMap, x, z);
     const versionKey = `${level},${x},${z}`;
