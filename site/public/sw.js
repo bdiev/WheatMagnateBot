@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = '340';
+const CACHE_VERSION = '341';
 const CACHE_NAME = `wheatmagnatebot-v${CACHE_VERSION}`;
 const APP_SHELL = [
   '/',
