@@ -21,6 +21,7 @@ public final class ExplorerRegressionTest {
         deferredCoverage();
         withheldChunks();
         reachStability();
+        pendingReach();
         freshChunks();
         patchyCoverage();
         narrowCorridors();
@@ -30,7 +31,7 @@ public final class ExplorerRegressionTest {
         steadyEta();
         findNames();
         diagnosticsFiles();
-        System.out.println("Explorer regressions passed (deferred coverage, reach stability, fresh chunks, narrow corridors, route efficiency, ETA, waypoints and 240 patchy coverage scenarios).");
+        System.out.println("Explorer regressions passed (deferred coverage, reach stability, mid-strip widths, fresh chunks, narrow corridors, route efficiency, ETA, waypoints and 240 patchy coverage scenarios).");
     }
 
     private static void diagnosticsFiles() throws Exception {
@@ -190,6 +191,28 @@ public final class ExplorerRegressionTest {
         require(!fresh.isFresh(99L), "A chunk never seen arriving is not fresh");
         for (int t = 0; t < FreshChunks.FRESH_TICKS * 2; t++) fresh.tick();
         require(fresh.size() == 0, "Old arrivals must be dropped, not kept for the whole run");
+    }
+
+    private static void pendingReach() {
+        // As traced: swath 3, a window just after the turn onto a strip read 1, then 2, then 3 again
+        ReachStability stability = new ReachStability();
+        PendingReach pending = new PendingReach();
+        int reach = 3;
+        int accepted = stability.update(pending.target(reach), 1);
+        require(pending.offer(reach, 1, accepted) && pending.width() == 1, "A narrower width mid-strip must wait for the strip's end");
+        accepted = stability.update(pending.target(reach), 2);
+        require(!pending.offer(reach, 2, accepted) && pending.width() == 1, "A narrower width waiting must not widen on one window");
+        accepted = stability.update(pending.target(reach), 3);
+        pending.offer(reach, 3, accepted);
+        require(pending.width() == 0 && pending.take(reach) == 3, "Back at the strip's width, what waited was a blip");
+
+        // A real change still reaches the next strip
+        stability.reset();
+        for (int i = 0; i < 3; i++) pending.offer(reach, 6, stability.update(pending.target(reach), 6));
+        require(pending.width() == 6, "Three stable wider windows must widen the next strip");
+        require(!pending.offer(reach, 6, stability.update(pending.target(reach), 6)), "The same width waiting is not logged again");
+        require(pending.take(reach) == 6 && pending.width() == 0, "The next strip takes the width that waited");
+        require(pending.take(6) == 6, "Nothing waits after it's taken");
     }
 
     private static void reachStability() {

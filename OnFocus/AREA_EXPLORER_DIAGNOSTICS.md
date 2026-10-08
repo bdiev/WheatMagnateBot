@@ -60,6 +60,12 @@ server address are included intentionally for correlating a trace with a map scr
 - `loaded-width`: sorted width samples, current two-sided width and selected reach.
   `measuredReach` uses the lower decile; `acceptedReach` records the result after requiring three
   consecutive measurement windows before widening. Narrower measurements apply immediately.
+  In rescans no samples are taken for the first 5 s of a strip, while the rows across it still
+  arrive after the move from the previous strip.
+- `reach-pending`: rescan only. A width measured in the middle of a strip waits for its end: the
+  strip is flown on and the next plan uses the new width (`reach-change` then says "measured on the
+  strip before"). Re-planning at once turned back off the strip, leaving its rest for later. A later
+  window back at the strip's width drops the waiting one as a blip.
 - `mapped-width`, `reach-change`: Xaero width evidence and replanning trigger.
 - `contour-stop`: no loop or no coverage progress.
 - `settle-start`, `settle-target`, `settle-map-read`: map wait, target and completion/timeout.

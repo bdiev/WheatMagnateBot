@@ -10,6 +10,7 @@ import dev.onfocus.addon.explore.ChunkGrid;
 import dev.onfocus.addon.explore.DeferredChunks;
 import dev.onfocus.addon.explore.WithheldChunks;
 import dev.onfocus.addon.explore.FreshChunks;
+import dev.onfocus.addon.explore.PendingReach;
 import dev.onfocus.addon.explore.ReachStability;
 import dev.onfocus.addon.explore.ProgressEta;
 import dev.onfocus.addon.explore.SteadyEta;
@@ -1040,6 +1041,8 @@ public class AreaExplorer extends Module {
 
     private int radius; // server view distance, in chunks
     private int reach;  // chunks to each side of a strip that actually get explored
+    /** Rescan: a swath width measured in the middle of a strip, taken on once it's flown to the end. */
+    private final PendingReach pendingReach = new PendingReach();
 
     private final WaypointFollower follower = new WaypointFollower();
     /** Chunks actually loaded within reach along the flight path, pending the map drawing them. */
@@ -1859,6 +1862,7 @@ public class AreaExplorer extends Module {
         radius = viewDistance.get() > 0 ? viewDistance.get() : measureRadius();
         // Xaero leaves the outermost loaded ring undrawn; the real value gets measured in flight
         reach = xaero ? Math.max(1, radius - 1) : radius;
+        pendingReach.clear();
         Integer learned = learnedReach.get(reachKey());
         if (xaero && learned != null && learned != reach) {
             log("Using swath width %d learned in flight instead of %d from the view distance", learned, reach);
@@ -1965,6 +1969,7 @@ public class AreaExplorer extends Module {
             planLoop();
             return;
         }
+        takePendingReach();
         planGeneration++;
         pendingSweep = null;
         long started = System.nanoTime();
@@ -1993,6 +1998,7 @@ public class AreaExplorer extends Module {
             planLoop();
             return;
         }
+        takePendingReach();
         long started = System.nanoTime();
         ChunkGrid done = planGrid(true).copy();
         int generation = ++planGeneration;
@@ -2107,7 +2113,8 @@ public class AreaExplorer extends Module {
             measureStrip();
         } else if (onStrip && rescan && ++measureTicks >= LOADED_SAMPLE_TICKS) {
             measureTicks = 0;
-            sampleLoadedReach();
+            // Just turned onto the strip from one a spacing away: the far rows across it are still coming
+            if (activeTicks - stripStartTicks >= LOADED_SETTLE_TICKS) sampleLoadedReach();
         }
     }
 
@@ -2308,6 +2315,8 @@ public class AreaExplorer extends Module {
 
     /** Rescan: how often the loaded width across the strip is sampled, and how many samples make a width. */
     private static final int LOADED_SAMPLE_TICKS = 20, LOADED_SAMPLES = 15;
+    /** Rescan: not sampled for the first seconds of a strip, while the server still sends the rows across it. */
+    private static final int LOADED_SETTLE_TICKS = 100;
     private final IntArrayList loadedSamples = new IntArrayList();
     private final ReachStability loadedReachStability = new ReachStability();
     /** When the chunks around came, so ones left from an earlier strip don't count as loaded across this one. */
@@ -2338,7 +2347,8 @@ public class AreaExplorer extends Module {
         loadedSamples.clear();
         // Xaero leaves the outermost loaded ring undrawn: a strip redraws one less
         int measured = Math.max(1, xaero ? loaded - 1 : loaded);
-        int accepted = loadedReachStability.update(reach, measured);
+        // Against the width already waiting for the next strip, so it isn't measured all over again
+        int accepted = loadedReachStability.update(pendingReach.target(reach), measured);
         if (diagnosticLogging.get()) {
             JsonObject data = diagnosticEvent("loaded-width");
             data.addProperty("alongX", alongX);
@@ -2352,10 +2362,28 @@ public class AreaExplorer extends Module {
             diagnostics.log(data);
         }
         stripMeasureNote = "loaded %d each side, swath %d".formatted(loaded, measured);
-        measured = accepted;
+        if (onStrip && !contour()) {
+            // Flown to its end first: re-planning now would turn back off it
+            if (pendingReach.offer(reach, measured, accepted)) {
+                log("Loaded width in flight: %d chunks each side, swath %d -> %d from the next strip, flying this one to its end",
+                    loaded, reach, accepted);
+                diagnostic("reach-pending", "old=" + reach + ", new=" + accepted + ", from the next strip");
+            }
+            learnedReach.put(reachKey(), pendingReach.target(reach));
+            return;
+        }
+        if (accepted == reach) return;
+        log("Loaded width in flight: %d chunks each side, swath %d -> %d", loaded, reach, accepted);
+        applyReach(accepted);
+    }
+
+    /** Takes on the width measured in the middle of the strip just ended, before planning the next. */
+    private void takePendingReach() {
+        int measured = pendingReach.take(reach);
         if (measured == reach) return;
-        log("Loaded width in flight: %d chunks each side, swath %d -> %d", loaded, reach, measured);
-        applyReach(measured);
+        diagnostic("reach-change", "old=" + reach + ", new=" + measured + ", measured on the strip before");
+        log("Swath width %d -> %d chunks, planning the sweep for it", reach, measured);
+        reach = measured;
     }
 
     /** Loaded and sent lately: one kept from a strip flown earlier says nothing of how far the server sends now. */
