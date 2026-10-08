@@ -7080,7 +7080,7 @@ function renderAreaExplorerFind(find, { selected = false, showScope = false } = 
     const front = find.details || '', back = find.label || '';
     const sides = front && back.trim() === front.trim() ? [[front, 'both']] : [[front, ''], [back, 'back']].filter(([text]) => text);
     // The text in a span of its own: cut short to a few lines, the box's padding can't let the next one peek out
-    body = sides.map(([text, side]) => `<pre class="area-explorer-sign${side ? ` is-${side}` : ''}"><span class="area-explorer-sign-text">${escapeHtml(text)}</span></pre>`).join('');
+    body = `<div class="area-explorer-signs">${sides.map(([text, side]) => `<pre class="area-explorer-sign${side ? ` is-${side}` : ''}"><span class="area-explorer-sign-text">${escapeHtml(text)}</span></pre>`).join('')}</div>`;
   } else if (find.details) {
     body = `<p class="area-explorer-details">${escapeHtml(find.details)}</p>`;
   }
@@ -8367,6 +8367,7 @@ async function selectAreaExplorerFind(id, { focusStep = 0 } = {}) {
   }
   box.hidden = true;
   delete box.dataset.nearbyKey;
+  box.classList.remove('is-paging');
   if (!id) return;
   if (index >= 0) {
     // One gone from the site since leaves its page saying so, not the rest unshown
@@ -8380,6 +8381,7 @@ async function selectAreaExplorerFind(id, { focusStep = 0 } = {}) {
         ? renderAreaExplorerFind(find, { selected: true })
         : '<li class="area-explorer-empty">No longer on the site.</li>'}</ol>`).join('')}</div>`;
     box.dataset.nearbyKey = nearby.join();
+    box.classList.add('is-paging');
     box.hidden = false;
     showAreaExplorerNearbyPage(box, index, focusStep);
     revealAreaExplorerFind(ae.nearbyFinds[index]);

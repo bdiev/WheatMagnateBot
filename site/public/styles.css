@@ -13354,6 +13354,11 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
 .area-explorer-selected-stack > .area-explorer-finds.is-active { visibility: visible; animation: area-explorer-page-in 160ms ease; }
 .area-explorer-selected .area-explorer-selected-stack .area-explorer-find-heading { padding-right: 0; }
 @keyframes area-explorer-page-in { from { opacity: 0; } }
+/* Paging: every card fits without scrolling - more of the map's height, a sign's two sides side by side, tighter spacing */
+.area-explorer-selected.is-paging { max-height: calc(100% - 96px); }
+.area-explorer-selected.is-paging .area-explorer-find { padding: 10px 14px 12px; }
+.area-explorer-selected.is-paging .area-explorer-signs { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 6px; }
+.area-explorer-selected.is-paging .area-explorer-sign { padding: 6px 10px; font-size: 14px; line-height: 1.4; }
 @media (prefers-reduced-motion: reduce) {
   .area-explorer-selected-stack > .area-explorer-finds.is-active { animation: none; }
   .area-explorer-pager-dots i { transition: none; }
@@ -13675,6 +13680,7 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
   white-space: nowrap;
 }
 .area-explorer-details { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.area-explorer-signs { display: grid; gap: 6px; }
 .area-explorer-sign {
   margin: 0;
   padding: 8px 12px;
@@ -13897,6 +13903,8 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
   .area-explorer-selected .area-explorer-find-main { gap: 6px; }
   .area-explorer-selected-close { top: 4px; right: 4px; width: 44px; height: 44px; }
   .area-explorer-selected .area-explorer-sign-text { display: block; -webkit-line-clamp: unset; overflow: visible; }
+  .area-explorer-selected.is-paging { max-height: calc(100% - 140px); }
+  .area-explorer-selected.is-paging .area-explorer-sign { padding: 5px 8px; font-size: 13px; line-height: 1.35; }
   .area-explorer-menu { left: 8px !important; right: 8px; width: auto; min-width: 0; max-width: none; }
   .area-explorer-menu button { min-height: 44px; font-size: 14px; }
   .area-explorer-map-hint { padding: 10px 14px; font-size: 12px; }
