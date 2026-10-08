@@ -19,7 +19,7 @@ function fixture() {
   const requests = [];
   const node = selector => {
     if (!nodes.has(selector)) nodes.set(selector, {
-      innerHTML: '', hidden: false, scrollTop: 150, attributes: {}, classes: new Set(),
+      innerHTML: '', hidden: false, scrollTop: 150, attributes: {}, dataset: {}, classes: new Set(),
       get classList() { const classes = this.classes; return { toggle() {}, add: name => classes.add(name), remove: name => classes.delete(name), contains: name => classes.has(name) }; },
       // Enough of a DOM for the finds list: what its markup holds
       querySelector(selector) { return this.innerHTML.includes(`class="${selector.slice(1)}`) ? {} : null; },
@@ -37,7 +37,7 @@ function fixture() {
     areaExplorerScopeParams: params => JSON.stringify({ scope: ae.scope, ...params }),
     areaExplorerMarkerFilter: () => ae.markerName,
     renderAreaExplorerFind: find => find.name,
-    revealAreaExplorerFind() {}, renderAreaExplorerPager() {}, areaExplorerInTerritory: () => true, showAreaExplorerNote(text) { context.note = text; }, bindAreaExplorerMap() {}, fitAreaExplorerMap() {}, queueAreaExplorerMapDraw() {},
+    revealAreaExplorerFind() {}, renderAreaExplorerPager() {}, areaExplorerInTerritory: () => true, AREA_EXPLORER_NEARBY_DOTS: 12, showAreaExplorerNote(text) { context.note = text; }, bindAreaExplorerMap() {}, fitAreaExplorerMap() {}, queueAreaExplorerMapDraw() {},
     ensureItemIcons: async () => ({}),
     loadXaeroRegionMap: async () => {}, escapeHtml: String,
     renderAreaExplorerStatus() {},
@@ -49,7 +49,7 @@ function fixture() {
     AREA_EXPLORER_SKELETON_DELAY_MS: 180, renderAreaExplorerFindsSkeleton: () => '<li class="area-explorer-skeleton"></li>',
     timers: [], setTimeout(fn, ms) { context.timers.push({ fn, ms }); return context.timers.length; }, clearTimeout(id) { if (id) context.timers[id - 1].fn = () => {}; }
   });
-  for (const name of ['renderAreaExplorerMarkerVisibility', 'areaExplorerPointLayer', 'isAreaExplorerPointNearby', 'isAreaExplorerPointVisible', 'setAreaExplorerMarkerKind', 'loadAreaExplorerFinds', 'loadAreaExplorerMap', 'setAreaExplorerFindsVisible', 'selectAreaExplorerFind', 'areaExplorerHeading', 'areaExplorerLiveStatus', 'recordAreaExplorerTrail', 'areaExplorerTrail', 'applyAreaExplorerLiveStatus', 'loadAreaExplorerLive', 'noteAreaExplorerVersions', 'queueAreaExplorerRefresh', 'areaExplorerListAnchor', 'areaExplorerListIds', 'markAreaExplorerNewFinds', 'setAreaExplorerNewFinds', 'setAreaExplorerNearby', 'areaExplorerNearbyIds', 'stepAreaExplorerNearby']) vm.runInContext(functionSource(name), context);
+  for (const name of ['renderAreaExplorerMarkerVisibility', 'areaExplorerPointLayer', 'isAreaExplorerPointNearby', 'isAreaExplorerPointVisible', 'setAreaExplorerMarkerKind', 'loadAreaExplorerFinds', 'loadAreaExplorerMap', 'setAreaExplorerFindsVisible', 'selectAreaExplorerFind', 'areaExplorerHeading', 'areaExplorerLiveStatus', 'recordAreaExplorerTrail', 'areaExplorerTrail', 'applyAreaExplorerLiveStatus', 'loadAreaExplorerLive', 'noteAreaExplorerVersions', 'queueAreaExplorerRefresh', 'areaExplorerListAnchor', 'areaExplorerListIds', 'markAreaExplorerNewFinds', 'setAreaExplorerNewFinds', 'setAreaExplorerNearby', 'areaExplorerNearbyIds', 'stepAreaExplorerNearby', 'renderAreaExplorerNearbyPager', 'showAreaExplorerNearbyPage']) vm.runInContext(functionSource(name), context);
   return { ae, node, requests, context };
 }
 
@@ -166,13 +166,26 @@ async function testNearbyPaging() {
   assert.deepEqual([...ae.nearbyIds], ['near', 'mid', 'far'], 'the finds in the circle, nearest first');
   assert.equal(context.note, '3 finds within 100 blocks');
   assert.equal(ae.selectedId, 'near', 'the nearest opens');
-  requests.shift().resolve({ find: { id: 'near', name: 'near', x: 110, z: 200 } });
-  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(requests.length, 3, 'every find round the spot is fetched at once');
   const box = node('#areaExplorerSelected');
+  const pages = [0, 1, 2].map(i => ({ dataset: { nearbyPage: String(i) }, classes: new Set(), get classList() { const c = this.classes; return { toggle: (n, on) => on ? c.add(n) : c.delete(n) }; } }));
+  const count = { innerHTML: '' };
+  box.querySelectorAll = selector => selector === '[data-nearby-page]' ? pages : [];
+  box.querySelector = selector => selector === '[data-nearby-count]' ? count : null;
+  for (const request of requests.splice(0)) {
+    const id = decodeURIComponent(request.url.split('/').pop());
+    if (id === 'far') request.reject(new Error('gone'));
+    else request.resolve({ find: { id, name: id, x: 0, z: 0 } });
+  }
+  await new Promise(resolve => setImmediate(resolve));
   assert.match(box.innerHTML, /data-area-nearby-step="-1"/);
-  assert.match(box.innerHTML, /1 \/ 3 within 100 blocks/);
+  assert.equal((box.innerHTML.match(/data-nearby-page=/g) || []).length, 3, 'all pages laid out, so the sheet keeps one size');
+  assert.match(box.innerHTML, /No longer on the site/, 'a find gone since says so on its page');
   context.stepAreaExplorerNearby(-1);
   assert.equal(ae.selectedId, 'far', 'back from the first goes round to the last');
+  assert.equal(requests.length, 0, 'paging fetches nothing more');
+  assert.deepEqual(pages.map(page => page.classes.has('is-active')), [false, false, true], 'only the page paged to shows');
+  assert.match(count.innerHTML, /<strong>3<\/strong> of 3/);
   context.stepAreaExplorerNearby(1);
   assert.equal(ae.selectedId, 'near');
   context.setAreaExplorerNearby(null);

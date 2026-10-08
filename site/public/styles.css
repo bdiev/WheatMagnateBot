@@ -13284,26 +13284,79 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
   pointer-events: none;
 }
 .area-explorer-map-note[hidden] { display: none; }
-/* Paging through the finds around a spot: ‹ 2 / 7 within 100 blocks › */
+/* Paging through the finds around a spot: ‹ 2 of 7 › with dots */
 .area-explorer-selected-pager {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 44px 0 10px;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 600;
+  padding: 6px 44px 6px 6px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--panel);
 }
-.area-explorer-selected-pager span { flex: 1; text-align: center; font-variant-numeric: tabular-nums; }
-.area-explorer-selected-pager button {
-  width: 36px;
+.area-explorer-pager-arrow {
+  width: 32px;
   min-width: 0;
   height: 32px;
   min-height: 0;
   padding: 0;
-  border-radius: var(--button-radius);
-  font-size: 22px;
-  line-height: 1;
+  border: 2px solid var(--line);
+  color: var(--text);
+  background: var(--panel-soft);
+  box-shadow: none;
+  text-shadow: none;
+}
+.area-explorer-pager-arrow:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 18%, var(--panel));
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
+  box-shadow: none;
+  transform: none;
+}
+.area-explorer-pager-arrow svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.area-explorer-pager-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.area-explorer-pager-count {
+  color: var(--text);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.area-explorer-pager-count small { color: var(--muted); font-size: 12px; font-weight: 600; }
+.area-explorer-pager-dots { display: flex; gap: 4px; }
+.area-explorer-pager-dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--line);
+  transition: width 160ms ease, background-color 160ms ease;
+}
+.area-explorer-pager-dots i.is-active { width: 16px; background: var(--accent); }
+/* Every page in one cell: the sheet is as tall as the tallest and doesn't jump while paging */
+.area-explorer-selected-stack { display: grid; }
+.area-explorer-selected-stack > .area-explorer-finds { grid-area: 1 / 1; margin: 0; visibility: hidden; }
+.area-explorer-selected-stack > .area-explorer-finds.is-active { visibility: visible; animation: area-explorer-page-in 160ms ease; }
+.area-explorer-selected .area-explorer-selected-stack .area-explorer-find-heading { padding-right: 0; }
+@keyframes area-explorer-page-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .area-explorer-selected-stack > .area-explorer-finds.is-active { animation: none; }
+  .area-explorer-pager-dots i { transition: none; }
 }
 .area-explorer-selected .area-explorer-find { border: 0; padding: 14px; cursor: default; }
 .area-explorer-selected .area-explorer-find-heading { padding-right: 34px; }
@@ -13312,7 +13365,7 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
   position: absolute;
   top: 6px;
   right: 6px;
-  z-index: 1;
+  z-index: 2; /* over the paging bar */
   width: 32px;
   min-width: 0;
   height: 32px;

@@ -8356,29 +8356,68 @@ async function selectAreaExplorerFind(id, { focusStep = 0 } = {}) {
   const box = $('#areaExplorerSelected');
   const requestId = ae.selectedRequestId = (ae.selectedRequestId || 0) + 1;
   ae.selectedId = id;
-  box.hidden = true;
   queueAreaExplorerMapDraw();
-  if (!id) {
-    box.hidden = true;
+  const nearby = id && ae.nearby ? ae.nearbyIds || [] : [];
+  const index = nearby.length > 1 ? nearby.indexOf(id) : -1;
+  // Paging round a spot: all its finds are in the sheet already, one shown
+  if (index >= 0 && !box.hidden && box.dataset.nearbyKey === nearby.join()) {
+    showAreaExplorerNearbyPage(box, index, focusStep);
+    revealAreaExplorerFind(ae.nearbyFinds[index]);
+    return;
+  }
+  box.hidden = true;
+  delete box.dataset.nearbyKey;
+  if (!id) return;
+  if (index >= 0) {
+    // One gone from the site since leaves its page saying so, not the rest unshown
+    const finds = await Promise.all(nearby.map(nearbyId => fetchJson(`/api/area-explorer/finds/${encodeURIComponent(nearbyId)}`)
+      .then(data => data.find, () => null)));
+    if (ae.selectedId !== id || ae.selectedRequestId !== requestId) return;
+    ae.nearbyFinds = finds.map((find, i) => find || ae.points.find(point => point.id === nearby[i]));
+    box.innerHTML = `<button class="area-explorer-selected-close" type="button" data-area-close-selected aria-label="Close">×</button>
+      ${renderAreaExplorerNearbyPager(nearby.length)}
+      <div class="area-explorer-selected-stack">${finds.map((find, i) => `<ol class="area-explorer-finds" data-nearby-page="${i}">${find
+        ? renderAreaExplorerFind(find, { selected: true })
+        : '<li class="area-explorer-empty">No longer on the site.</li>'}</ol>`).join('')}</div>`;
+    box.dataset.nearbyKey = nearby.join();
+    box.hidden = false;
+    showAreaExplorerNearbyPage(box, index, focusStep);
+    revealAreaExplorerFind(ae.nearbyFinds[index]);
     return;
   }
   const { find } = await fetchJson(`/api/area-explorer/finds/${encodeURIComponent(id)}`);
   if (ae.selectedId !== id || ae.selectedRequestId !== requestId) return;
-  const nearby = ae.nearby ? ae.nearbyIds || [] : [];
-  const index = nearby.indexOf(id);
-  const pager = nearby.length > 1 && index >= 0
-    ? `<div class="area-explorer-selected-pager">
-        <button type="button" data-area-nearby-step="-1" aria-label="Previous find" title="Previous find (←)">‹</button>
-        <span>${formatNumber(index + 1)} / ${formatNumber(nearby.length)} within ${AREA_EXPLORER_NEARBY_RADIUS} blocks</span>
-        <button type="button" data-area-nearby-step="1" aria-label="Next find" title="Next find (→)">›</button>
-      </div>`
-    : '';
   box.innerHTML = `<button class="area-explorer-selected-close" type="button" data-area-close-selected aria-label="Close">×</button>
-    ${pager}<ol class="area-explorer-finds">${renderAreaExplorerFind(find, { selected: true })}</ol>`;
+    <ol class="area-explorer-finds">${renderAreaExplorerFind(find, { selected: true })}</ol>`;
   box.hidden = false;
+  revealAreaExplorerFind(find);
+}
+
+// Dots for a handful of finds; past that the count says it
+const AREA_EXPLORER_NEARBY_DOTS = 12;
+
+function renderAreaExplorerNearbyPager(count) {
+  const arrow = (step, label, path) => `<button class="area-explorer-pager-arrow" type="button" data-area-nearby-step="${step}" aria-label="${label}" title="${label} (${step < 0 ? '←' : '→'})">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="${path}"/></svg></button>`;
+  const dots = count <= AREA_EXPLORER_NEARBY_DOTS ? `<span class="area-explorer-pager-dots" aria-hidden="true">${'<i></i>'.repeat(count)}</span>` : '';
+  return `<div class="area-explorer-selected-pager">
+      ${arrow(-1, 'Previous find', 'm15 18-6-6 6-6')}
+      <div class="area-explorer-pager-info">
+        <span class="area-explorer-pager-count" data-nearby-count aria-live="polite"></span>
+        ${dots}
+      </div>
+      ${arrow(1, 'Next find', 'm9 18 6-6-6-6')}
+    </div>`;
+}
+
+/** Shows page index of the finds round a spot. All stay laid out underneath, so the sheet keeps the tallest one's size. */
+function showAreaExplorerNearbyPage(box, index, focusStep) {
+  box.querySelectorAll('[data-nearby-page]').forEach(page => page.classList.toggle('is-active', Number(page.dataset.nearbyPage) === index));
+  box.querySelectorAll('.area-explorer-pager-dots i').forEach((dot, i) => dot.classList.toggle('is-active', i === index));
+  const count = box.querySelector('[data-nearby-count]');
+  if (count) count.innerHTML = `<strong>${formatNumber(index + 1)}</strong> of ${formatNumber(areaExplorerState().nearbyIds.length)} <small>· within ${AREA_EXPLORER_NEARBY_RADIUS} blocks</small>`;
   // Paging on with the keyboard or the arrows keeps the arrow in focus
   if (focusStep) box.querySelector(`[data-area-nearby-step="${focusStep}"]`)?.focus({ preventScroll: true });
-  revealAreaExplorerFind(find);
 }
 
 // Tokens for the mod (administrators)
