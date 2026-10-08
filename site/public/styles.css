@@ -13359,6 +13359,20 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
 .area-explorer-selected.is-paging .area-explorer-find { padding: 10px 14px 12px; }
 .area-explorer-selected.is-paging .area-explorer-signs { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 6px; }
 .area-explorer-selected.is-paging .area-explorer-sign { padding: 6px 10px; font-size: 14px; line-height: 1.4; }
+/* A shorter card fills the sheet the tallest one sets, its place and time kept along the foot: no empty strip under it */
+.area-explorer-selected.is-paging .area-explorer-selected-stack > .area-explorer-finds { display: flex; }
+.area-explorer-selected.is-paging .area-explorer-selected-stack .area-explorer-find { flex: 1; align-items: stretch; box-shadow: none; }
+.area-explorer-selected.is-paging .area-explorer-selected-stack .area-explorer-find-icon { align-self: start; }
+.area-explorer-selected.is-paging .area-explorer-selected-stack .area-explorer-find-main { display: flex; flex-direction: column; }
+.area-explorer-selected.is-paging .area-explorer-selected-stack .area-explorer-find-meta { margin-top: auto; }
+/* Close sits in the paging bar, as the arrows look */
+.area-explorer-selected.is-paging .area-explorer-selected-close {
+  top: 6px;
+  right: 6px;
+  border: 2px solid var(--line);
+  color: var(--text);
+  background: var(--panel-soft);
+}
 @media (prefers-reduced-motion: reduce) {
   .area-explorer-selected-stack > .area-explorer-finds.is-active { animation: none; }
   .area-explorer-pager-dots i { transition: none; }
@@ -13905,6 +13919,10 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
   .area-explorer-selected .area-explorer-sign-text { display: block; -webkit-line-clamp: unset; overflow: visible; }
   .area-explorer-selected.is-paging { max-height: calc(100% - 140px); }
   .area-explorer-selected.is-paging .area-explorer-sign { padding: 5px 8px; font-size: 13px; line-height: 1.35; }
+  .area-explorer-selected-pager { padding: 6px 58px 6px 6px; }
+  .area-explorer-pager-arrow,
+  .area-explorer-selected.is-paging .area-explorer-selected-close { width: 44px; height: 44px; }
+  .area-explorer-selected.is-paging .area-explorer-selected-stack .area-explorer-find-heading { min-height: 36px; }
   .area-explorer-menu { left: 8px !important; right: 8px; width: auto; min-width: 0; max-width: none; }
   .area-explorer-menu button { min-height: 44px; font-size: 14px; }
   .area-explorer-map-hint { padding: 10px 14px; font-size: 12px; }
