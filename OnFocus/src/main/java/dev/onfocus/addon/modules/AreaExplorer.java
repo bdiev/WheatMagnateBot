@@ -9,6 +9,7 @@ import dev.onfocus.addon.explore.BaseClues;
 import dev.onfocus.addon.explore.ChunkGrid;
 import dev.onfocus.addon.explore.DeferredChunks;
 import dev.onfocus.addon.explore.WithheldChunks;
+import dev.onfocus.addon.explore.FreshChunks;
 import dev.onfocus.addon.explore.ReachStability;
 import dev.onfocus.addon.explore.ProgressEta;
 import dev.onfocus.addon.explore.SteadyEta;
@@ -1387,6 +1388,9 @@ public class AreaExplorer extends Module {
         } else {
             lastX = mc.player.getX();
             lastZ = mc.player.getZ();
+            // The chunks around came while paused, maybe long ago: they're in reach all the same
+            seedFreshChunks();
+            loadedSamples.clear();
             // We may be anywhere now: the sweep is planned again from here, other routes just carry on
             if (phase == Phase.SWEEP) planSweep();
             else follower.restartLeg(mc.player.getX(), mc.player.getZ());
@@ -1788,6 +1792,7 @@ public class AreaExplorer extends Module {
         lastCoverageChunk = Long.MIN_VALUE;
         coverageSentVersion = -1;
         loadedSamples.clear();
+        seedFreshChunks();
 
         if (rescan) {
             markRescanned();
@@ -1839,6 +1844,7 @@ public class AreaExplorer extends Module {
         restoredActiveTicks = 0;
         mapCheckTicks = 0;
         loadedSamples.clear();
+        seedFreshChunks();
         loadedReachStability.reset();
         coverageEta.reset();
         shownEta.reset();
@@ -2304,6 +2310,8 @@ public class AreaExplorer extends Module {
     private static final int LOADED_SAMPLE_TICKS = 20, LOADED_SAMPLES = 15;
     private final IntArrayList loadedSamples = new IntArrayList();
     private final ReachStability loadedReachStability = new ReachStability();
+    /** When the chunks around came, so ones left from an earlier strip don't count as loaded across this one. */
+    private final FreshChunks freshChunks = new FreshChunks();
 
     /**
      * Rescan and contours: without a measurable straight strip on blank map, the chunks
@@ -2319,8 +2327,8 @@ public class AreaExplorer extends Module {
         ChunkPos p = mc.player.getChunkPos();
         var chunks = mc.world.getChunkManager();
         int plus = 0, minus = 0;
-        while (plus < MAX_MEASURED_RADIUS && (alongX ? chunks.isChunkLoaded(p.x, p.z + plus + 1) : chunks.isChunkLoaded(p.x + plus + 1, p.z))) plus++;
-        while (minus < MAX_MEASURED_RADIUS && (alongX ? chunks.isChunkLoaded(p.x, p.z - minus - 1) : chunks.isChunkLoaded(p.x - minus - 1, p.z))) minus++;
+        while (plus < MAX_MEASURED_RADIUS && (alongX ? freshLoaded(p.x, p.z + plus + 1) : freshLoaded(p.x + plus + 1, p.z))) plus++;
+        while (minus < MAX_MEASURED_RADIUS && (alongX ? freshLoaded(p.x, p.z - minus - 1) : freshLoaded(p.x - minus - 1, p.z))) minus++;
         loadedSamples.add(Math.min(plus, minus));
         if (loadedSamples.size() < LOADED_SAMPLES) return;
         IntArrayList sorted = new IntArrayList(loadedSamples);
@@ -2348,6 +2356,24 @@ public class AreaExplorer extends Module {
         if (measured == reach) return;
         log("Loaded width in flight: %d chunks each side, swath %d -> %d", loaded, reach, measured);
         applyReach(measured);
+    }
+
+    /** Loaded and sent lately: one kept from a strip flown earlier says nothing of how far the server sends now. */
+    private boolean freshLoaded(int cx, int cz) {
+        return mc.world.getChunkManager().isChunkLoaded(cx, cz) && freshChunks.isFresh(ChunkPos.toLong(cx, cz));
+    }
+
+    /** Counts the chunks loaded around now as just sent: on starting or resuming, before any came while watching. */
+    private void seedFreshChunks() {
+        freshChunks.clear();
+        if (mc.player == null || mc.world == null) return;
+        ChunkPos p = mc.player.getChunkPos();
+        var chunks = mc.world.getChunkManager();
+        for (int dx = -MAX_MEASURED_RADIUS; dx <= MAX_MEASURED_RADIUS; dx++) {
+            for (int dz = -MAX_MEASURED_RADIUS; dz <= MAX_MEASURED_RADIUS; dz++) {
+                if (chunks.isChunkLoaded(p.x + dx, p.z + dz)) freshChunks.arrived(ChunkPos.toLong(p.x + dx, p.z + dz));
+            }
+        }
     }
 
     /**
@@ -3998,6 +4024,7 @@ public class AreaExplorer extends Module {
     private void onChunkData(ChunkDataEvent event) {
         // Possibly a queue or lobby: the chunks around the spot are scanned on getting back there
         if (reconnecting) return;
+        freshChunks.arrived(event.chunk().getPos().toLong());
         if (phase != Phase.IDLE) diagnosticChunks++;
         long started = System.nanoTime();
         if (phase != Phase.IDLE && autoMarkers.get()) {
@@ -4239,6 +4266,7 @@ public class AreaExplorer extends Module {
         boolean watching = phase != Phase.IDLE && !reconnecting && mc.world != null;
         if (watching) checkStall(start);
         tickWork = null;
+        freshChunks.tick();
         tickModule();
         if (before != phase || wasReconnecting != reconnecting || wasPaused != paused) {
             diagnostic("state-change", "from=" + before + ", reconnecting=" + wasReconnecting + ", paused=" + wasPaused);

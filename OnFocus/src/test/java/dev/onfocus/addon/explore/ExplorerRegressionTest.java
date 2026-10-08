@@ -21,6 +21,7 @@ public final class ExplorerRegressionTest {
         deferredCoverage();
         withheldChunks();
         reachStability();
+        freshChunks();
         patchyCoverage();
         narrowCorridors();
         routeEfficiency();
@@ -29,7 +30,7 @@ public final class ExplorerRegressionTest {
         steadyEta();
         findNames();
         diagnosticsFiles();
-        System.out.println("Explorer regressions passed (deferred coverage, reach stability, narrow corridors, route efficiency, ETA, waypoints and 240 patchy coverage scenarios).");
+        System.out.println("Explorer regressions passed (deferred coverage, reach stability, fresh chunks, narrow corridors, route efficiency, ETA, waypoints and 240 patchy coverage scenarios).");
     }
 
     private static void diagnosticsFiles() throws Exception {
@@ -175,6 +176,20 @@ public final class ExplorerRegressionTest {
         planned.clear();
         planned.addAll(deferred.grid());
         require(!planned.test(-2, -3), "Released gaps must be visible to the next plan");
+    }
+
+    private static void freshChunks() {
+        FreshChunks fresh = new FreshChunks();
+        long previousStrip = 7L, beside = 3L;
+        fresh.arrived(previousStrip);
+        for (int t = 0; t < 30 * 20; t++) fresh.tick(); // flying the next strip for half a minute
+        fresh.arrived(beside);
+        for (int t = 0; t < 20; t++) fresh.tick(); // sent a second before it's abeam
+        require(fresh.isFresh(beside), "A chunk the server just sent must count across the strip");
+        require(!fresh.isFresh(previousStrip), "A chunk kept from the strip before must not widen the swath");
+        require(!fresh.isFresh(99L), "A chunk never seen arriving is not fresh");
+        for (int t = 0; t < FreshChunks.FRESH_TICKS * 2; t++) fresh.tick();
+        require(fresh.size() == 0, "Old arrivals must be dropped, not kept for the whole run");
     }
 
     private static void reachStability() {
