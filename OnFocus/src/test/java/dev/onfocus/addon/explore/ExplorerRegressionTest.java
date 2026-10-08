@@ -26,6 +26,7 @@ public final class ExplorerRegressionTest {
         patchyCoverage();
         centeredSweep();
         nearbySweepEntry();
+        coveredSweepEntry();
         narrowCorridors();
         routeEfficiency();
         largeCleanup();
@@ -109,6 +110,9 @@ public final class ExplorerRegressionTest {
         planned.clear();
         require(mapped.test(-20, -10) && flown.test(30, 40), "Clearing a snapshot mutated its sources");
         require(!mapped.test(-21, -10), "Chunks outside the selected area must stay uncovered");
+        require(mapped.hasOpenRect(-20, -10, -19, -10), "An open rectangle edge must keep a task");
+        require(!mapped.hasOpenRect(-21, -11, -20, -10), "Covered rectangles must clip to the selected area");
+        require(!mapped.hasOpenRect(31, 41, 32, 42), "Rectangles outside the selected area contain no work");
         ChunkGrid gaps = new ChunkGrid(new Area(-2, -3, 2, 3));
         gaps.addRect(-2, -3, 2, 3);
         require(gaps.uncoveredSamples(10).isEmpty(), "A full grid must have no gap samples");
@@ -537,6 +541,38 @@ public final class ExplorerRegressionTest {
         require(CoveragePlanner.routeLength(route, -1800, -1800) < 70000,
             "Large cleanup ordering must preserve short neighbouring-row transits");
         System.out.println("Large cleanup regression: 67,047 spots in " + millis + " ms.");
+    }
+
+    private static void coveredSweepEntry() {
+        for (boolean alongX : new boolean[]{true, false}) {
+            Area area = alongX ? new Area(-100, -30, 100, 30) : new Area(-30, -100, 30, 100);
+            ChunkGrid covered = new ChunkGrid(area);
+            // Two pockets share a strip but its middle is already done. Another real pocket
+            // is closer than either end: entering the covered middle must not win selection.
+            CoveragePlanner.ChunkTest done = (x, z) -> {
+                int u = alongX ? x : z, v = alongX ? z : x;
+                return !(Math.abs(u) == 10 && v == 0 || u == 0 && v == 4);
+            };
+            for (int x = area.minCX(); x <= area.maxCX(); x++)
+                for (int z = area.minCZ(); z <= area.maxCZ(); z++)
+                    if (done.test(x, z)) covered.add(x, z);
+            List<Segment> route = CoveragePlanner.sweep(area, 3, 0, covered, 0, 0);
+            Segment first = route.getFirst();
+            require(CoveragePlanner.hasOpenAlong(area, 3, covered,
+                    first.x1(), first.z1(), first.x1(), first.z1()),
+                "Nearest sweep entry must actually cover missing chunks, not a covered gap between pockets");
+            require((alongX ? first.x1() : first.z1()) == 0 && (alongX ? first.z1() : first.x1()) == 4,
+                "A nearby real pocket must precede a projection into a covered strip gap");
+            assertCovered(area, covered, route, 3);
+            // Once the task loads on approach, the same predicate used by tickSweep must
+            // release its stale destination without pretending that a different hole is done.
+            covered.addRect(first.x1() - 3, first.z1() - 3, first.x1() + 3, first.z1() + 3);
+            require(!covered.hasOpenRect(Math.min(first.x1(), first.x2()) - 3,
+                    Math.min(first.z1(), first.z2()) - 3, Math.max(first.x1(), first.x2()) + 3,
+                    Math.max(first.z1(), first.z2()) + 3),
+                "Fully loaded sweep task must permit replanning before waypoint arrival");
+            assertCovered(area, covered, CoveragePlanner.sweep(area, 3, 0, covered, 0, 0), 3);
+        }
     }
 
     private static void nearbySweepEntry() {

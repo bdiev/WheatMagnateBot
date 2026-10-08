@@ -95,4 +95,15 @@ public final class ChunkGrid implements ChunkTest {
     public boolean test(int cx, int cz) {
         return area.contains(cx, cz) && bits.get(index(cx, cz));
     }
+
+    /** Any uncovered chunk in a rectangle, using bit runs instead of checking each footprint cell. */
+    public boolean hasOpenRect(int x1, int z1, int x2, int z2) {
+        int fromX = Math.max(area.minCX(), Math.min(x1, x2)), toX = Math.min(area.maxCX(), Math.max(x1, x2));
+        int fromZ = Math.max(area.minCZ(), Math.min(z1, z2)), toZ = Math.min(area.maxCZ(), Math.max(z1, z2));
+        if (fromZ > toZ) return false;
+        for (int x = fromX; x <= toX; x++) {
+            if (bits.nextClearBit(index(x, fromZ)) <= index(x, toZ)) return true;
+        }
+        return false;
+    }
 }

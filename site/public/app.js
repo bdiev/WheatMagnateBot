@@ -6366,8 +6366,8 @@ function areaExplorerState() {
       coverage: new Map(),
       // The area picked on the map for a mod to explore: block corners, still being dragged out while picking
       areaSelection: null,
-      // The spot picked with "Show markers within 100 blocks": { x, z }, or null
-      nearby: null,
+      // The spot picked with "Show markers within 100 blocks": { x, z }, or null; and its finds, nearest first, to page through
+      nearby: null, nearbyIds: [],
       logFilter: '', logEvents: [], logHasMore: false, logServer: null, logRequestId: 0,
       showFinds: readAreaExplorerSetting('areaExplorerShowFinds', 'true') !== 'false',
       visibleKinds: readAreaExplorerMarkerKinds(),
@@ -7448,14 +7448,41 @@ function drawAreaExplorerNearby(ctx, canvas, view) {
   ctx.restore();
 }
 
-/** Shows every find within 100 blocks of the spot, or (null) stops. */
+/**
+ * Shows every find within 100 blocks of the spot, or (null) stops. The nearest opens in the details
+ * sheet, whose arrows page through the rest, nearest first.
+ */
 function setAreaExplorerNearby(spot) {
   const ae = areaExplorerState();
+  const paged = ae.nearbyIds || [];
   ae.nearby = spot;
+  ae.nearbyIds = spot ? areaExplorerNearbyIds(spot) : [];
   queueAreaExplorerMapDraw();
-  if (!spot) return;
-  const count = ae.points.filter(point => isAreaExplorerPointNearby(point) && areaExplorerInTerritory(point.x, point.z)).length;
+  if (!spot) {
+    if (paged.includes(ae.selectedId)) selectAreaExplorerFind(null);
+    return;
+  }
+  const count = ae.nearbyIds.length;
   showAreaExplorerNote(count ? `${formatNumber(count)} find${count === 1 ? '' : 's'} within ${AREA_EXPLORER_NEARBY_RADIUS} blocks` : `Nothing found within ${AREA_EXPLORER_NEARBY_RADIUS} blocks`);
+  selectAreaExplorerFind(count ? ae.nearbyIds[0] : null);
+}
+
+/** The finds within 100 blocks of the spot, nearest first. */
+function areaExplorerNearbyIds(spot) {
+  const distance = point => Math.hypot(point.x - spot.x, point.z - spot.z);
+  return areaExplorerState().points
+    .filter(point => distance(point) <= AREA_EXPLORER_NEARBY_RADIUS && areaExplorerInTerritory(point.x, point.z))
+    .sort((a, b) => distance(a) - distance(b))
+    .map(point => point.id);
+}
+
+/** The details sheet's arrows: the next (1) or previous (-1) find around the spot, going round at the ends. */
+function stepAreaExplorerNearby(delta) {
+  const ae = areaExplorerState();
+  const ids = ae.nearbyIds || [];
+  const index = ids.indexOf(ae.selectedId);
+  if (!ae.nearby || ids.length < 2 || index < 0) return;
+  selectAreaExplorerFind(ids[(index + delta + ids.length) % ids.length], { focusStep: delta });
 }
 
 function drawAreaExplorerSelection(ctx, canvas, view) {
@@ -8324,7 +8351,7 @@ function revealAreaExplorerFind(find) {
   noteAreaExplorerViewMoved();
 }
 
-async function selectAreaExplorerFind(id) {
+async function selectAreaExplorerFind(id, { focusStep = 0 } = {}) {
   const ae = areaExplorerState();
   const box = $('#areaExplorerSelected');
   const requestId = ae.selectedRequestId = (ae.selectedRequestId || 0) + 1;
@@ -8337,9 +8364,20 @@ async function selectAreaExplorerFind(id) {
   }
   const { find } = await fetchJson(`/api/area-explorer/finds/${encodeURIComponent(id)}`);
   if (ae.selectedId !== id || ae.selectedRequestId !== requestId) return;
+  const nearby = ae.nearby ? ae.nearbyIds || [] : [];
+  const index = nearby.indexOf(id);
+  const pager = nearby.length > 1 && index >= 0
+    ? `<div class="area-explorer-selected-pager">
+        <button type="button" data-area-nearby-step="-1" aria-label="Previous find" title="Previous find (←)">‹</button>
+        <span>${formatNumber(index + 1)} / ${formatNumber(nearby.length)} within ${AREA_EXPLORER_NEARBY_RADIUS} blocks</span>
+        <button type="button" data-area-nearby-step="1" aria-label="Next find" title="Next find (→)">›</button>
+      </div>`
+    : '';
   box.innerHTML = `<button class="area-explorer-selected-close" type="button" data-area-close-selected aria-label="Close">×</button>
-    <ol class="area-explorer-finds">${renderAreaExplorerFind(find, { selected: true })}</ol>`;
+    ${pager}<ol class="area-explorer-finds">${renderAreaExplorerFind(find, { selected: true })}</ol>`;
   box.hidden = false;
+  // Paging on with the keyboard or the arrows keeps the arrow in focus
+  if (focusStep) box.querySelector(`[data-area-nearby-step="${focusStep}"]`)?.focus({ preventScroll: true });
   revealAreaExplorerFind(find);
 }
 
@@ -8520,6 +8558,12 @@ function setupAreaExplorer() {
     }
   });
 
+  $('#areaExplorerSelected').addEventListener('keydown', event => {
+    if ((event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') || event.target.matches('input, textarea, select')) return;
+    if (!ae.nearby || !(ae.nearbyIds || []).includes(ae.selectedId)) return;
+    event.preventDefault();
+    stepAreaExplorerNearby(event.key === 'ArrowLeft' ? -1 : 1);
+  });
   $('#tab-area-explorer').addEventListener('click', async event => {
     const coords = event.target.closest('[data-copy-coords]');
     if (coords) {
@@ -8532,6 +8576,11 @@ function setupAreaExplorer() {
     }
     if (event.target.closest('[data-area-close-selected]')) {
       selectAreaExplorerFind(null);
+      return;
+    }
+    const step = event.target.closest('[data-area-nearby-step]');
+    if (step) {
+      stepAreaExplorerNearby(Number(step.dataset.areaNearbyStep));
       return;
     }
     // Loot picked up in game: off the list, the map and the highlights

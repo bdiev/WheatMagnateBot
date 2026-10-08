@@ -37,7 +37,7 @@ function fixture() {
     areaExplorerScopeParams: params => JSON.stringify({ scope: ae.scope, ...params }),
     areaExplorerMarkerFilter: () => ae.markerName,
     renderAreaExplorerFind: find => find.name,
-    revealAreaExplorerFind() {}, renderAreaExplorerPager() {}, bindAreaExplorerMap() {}, fitAreaExplorerMap() {}, queueAreaExplorerMapDraw() {},
+    revealAreaExplorerFind() {}, renderAreaExplorerPager() {}, areaExplorerInTerritory: () => true, showAreaExplorerNote(text) { context.note = text; }, bindAreaExplorerMap() {}, fitAreaExplorerMap() {}, queueAreaExplorerMapDraw() {},
     ensureItemIcons: async () => ({}),
     loadXaeroRegionMap: async () => {}, escapeHtml: String,
     renderAreaExplorerStatus() {},
@@ -49,7 +49,7 @@ function fixture() {
     AREA_EXPLORER_SKELETON_DELAY_MS: 180, renderAreaExplorerFindsSkeleton: () => '<li class="area-explorer-skeleton"></li>',
     timers: [], setTimeout(fn, ms) { context.timers.push({ fn, ms }); return context.timers.length; }, clearTimeout(id) { if (id) context.timers[id - 1].fn = () => {}; }
   });
-  for (const name of ['renderAreaExplorerMarkerVisibility', 'areaExplorerPointLayer', 'isAreaExplorerPointNearby', 'isAreaExplorerPointVisible', 'setAreaExplorerMarkerKind', 'loadAreaExplorerFinds', 'loadAreaExplorerMap', 'setAreaExplorerFindsVisible', 'selectAreaExplorerFind', 'areaExplorerHeading', 'areaExplorerLiveStatus', 'recordAreaExplorerTrail', 'areaExplorerTrail', 'applyAreaExplorerLiveStatus', 'loadAreaExplorerLive', 'noteAreaExplorerVersions', 'queueAreaExplorerRefresh', 'areaExplorerListAnchor', 'areaExplorerListIds', 'markAreaExplorerNewFinds', 'setAreaExplorerNewFinds']) vm.runInContext(functionSource(name), context);
+  for (const name of ['renderAreaExplorerMarkerVisibility', 'areaExplorerPointLayer', 'isAreaExplorerPointNearby', 'isAreaExplorerPointVisible', 'setAreaExplorerMarkerKind', 'loadAreaExplorerFinds', 'loadAreaExplorerMap', 'setAreaExplorerFindsVisible', 'selectAreaExplorerFind', 'areaExplorerHeading', 'areaExplorerLiveStatus', 'recordAreaExplorerTrail', 'areaExplorerTrail', 'applyAreaExplorerLiveStatus', 'loadAreaExplorerLive', 'noteAreaExplorerVersions', 'queueAreaExplorerRefresh', 'areaExplorerListAnchor', 'areaExplorerListIds', 'markAreaExplorerNewFinds', 'setAreaExplorerNewFinds', 'setAreaExplorerNearby', 'areaExplorerNearbyIds', 'stepAreaExplorerNearby']) vm.runInContext(functionSource(name), context);
   return { ae, node, requests, context };
 }
 
@@ -152,6 +152,32 @@ function testNearbyMarkers() {
   assert.equal(context.isAreaExplorerPointVisible(far), false, 'one further off does not');
   ae.nearby = null;
   assert.equal(context.isAreaExplorerPointVisible(near), false);
+}
+
+async function testNearbyPaging() {
+  const { ae, node, requests, context } = fixture();
+  ae.points = [
+    { id: 'mid', kind: 'SIGN', x: 140, z: 200 },
+    { id: 'near', kind: 'SIGN', x: 110, z: 200 },
+    { id: 'far', kind: 'MARKER', x: 100, z: 290 },
+    { id: 'out', kind: 'SIGN', x: 300, z: 200 }
+  ];
+  context.setAreaExplorerNearby({ x: 100, z: 200 });
+  assert.deepEqual([...ae.nearbyIds], ['near', 'mid', 'far'], 'the finds in the circle, nearest first');
+  assert.equal(context.note, '3 finds within 100 blocks');
+  assert.equal(ae.selectedId, 'near', 'the nearest opens');
+  requests.shift().resolve({ find: { id: 'near', name: 'near', x: 110, z: 200 } });
+  await new Promise(resolve => setImmediate(resolve));
+  const box = node('#areaExplorerSelected');
+  assert.match(box.innerHTML, /data-area-nearby-step="-1"/);
+  assert.match(box.innerHTML, /1 \/ 3 within 100 blocks/);
+  context.stepAreaExplorerNearby(-1);
+  assert.equal(ae.selectedId, 'far', 'back from the first goes round to the last');
+  context.stepAreaExplorerNearby(1);
+  assert.equal(ae.selectedId, 'near');
+  context.setAreaExplorerNearby(null);
+  assert.equal(ae.selectedId, null, 'hiding the circle closes the find paged to');
+  assert.deepEqual([...ae.nearbyIds], []);
 }
 
 async function testLiveTelemetry() {
@@ -675,6 +701,7 @@ async function testLoadingSkeletons() {
   await testMarkerVisibility();
   testEndPortalLayer();
   testNearbyMarkers();
+  await testNearbyPaging();
   await testLiveTelemetry();
   testReadingPositionKept();
   testTouchGestures();

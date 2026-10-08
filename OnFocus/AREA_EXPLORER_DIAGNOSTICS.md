@@ -50,6 +50,9 @@ server address are included intentionally for correlating a trace with a map scr
 - `covered-leg-skip`: a contour/corridor leg skipped after its remaining swath (plus one chunk
   of clearance) is confirmed explored. Unknown and deferred chunks do not authorize skipping.
   Checks run once per active second, with a 2 ms budget between legs and at most 32 skips.
+- `covered-sweep-replan`: in Rescan, the first actual strip or spot has become fully covered
+  while approaching or flying it. Checked once per active second using confirmed coverage;
+  the route is rebuilt from the current position instead of finishing the obsolete task.
 - `deferred-release`: unconfirmed chunks returned to planning after their map-drawing grace period
   (100 active ticks for blank map state, 600 for unknown state). Repeated loading does not extend
   the grace period. Mapped chunks are confirmed instead.
@@ -69,6 +72,8 @@ server address are included intentionally for correlating a trace with a map scr
 - `mapped-width`, `reach-change`: Xaero width evidence and replanning trigger.
 - `contour-stop`: no loop or no coverage progress.
 - `settle-start`, `settle-target`, `settle-map-read`: map wait, target and completion/timeout.
+  Once the settle target is reached, the flight circles back to it whenever it leaves the arrive
+  distance, so the wait and the map read don't carry it straight out of the area on the last heading.
 - `state-change`, `deactivate`, `finish`: transitions and final reason.
 - `snapshot`: local chunk state every 100 client ticks; sampled area every 600 ticks and
   at cleanup, settle, contour-stop, finish and deactivation boundaries.

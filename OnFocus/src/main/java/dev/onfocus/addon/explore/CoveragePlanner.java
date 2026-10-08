@@ -203,7 +203,7 @@ public final class CoveragePlanner {
         }
         // Enter the nearest strip at its projection instead of flying to a distant end or
         // choosing farther work just because its endpoint is closer than this strip's ends.
-        splitNearestAtStart(route, fromX, fromZ);
+        splitNearestAtStart(route, fromX, fromZ, area, reach, explored);
         return nearestFirst(route, fromX, fromZ, explored);
     }
 
@@ -235,19 +235,22 @@ public final class CoveragePlanner {
      * Both halves stay in the plan; nearest-neighbour ordering starts one of them at the split
      * point, so the first approach is to nearby work rather than a distant endpoint.
      */
-    private static void splitNearestAtStart(List<Segment> route, double fromX, double fromZ) {
+    private static void splitNearestAtStart(List<Segment> route, double fromX, double fromZ,
+                                           Area area, int reach, ChunkTest explored) {
         int bestIndex = -1, splitX = 0, splitZ = 0;
         double bestDistance = Double.MAX_VALUE;
         for (int i = 0; i < route.size(); i++) {
             Segment s = route.get(i);
             int x, z;
-            if (s.z1() == s.z2()) {
-                x = (int) Math.round(clamp(fromX, Math.min(s.x1(), s.x2()), Math.max(s.x1(), s.x2())));
-                z = s.z1();
-            } else {
-                x = s.x1();
-                z = (int) Math.round(clamp(fromZ, Math.min(s.z1(), s.z2()), Math.max(s.z1(), s.z2())));
-            }
+            boolean alongX = s.z1() == s.z2();
+            int lo = alongX ? Math.min(s.x1(), s.x2()) : Math.min(s.z1(), s.z2());
+            int hi = alongX ? Math.max(s.x1(), s.x2()) : Math.max(s.z1(), s.z2());
+            int v = alongX ? s.z1() : s.x1();
+            int projection = (int) Math.round(clamp(alongX ? fromX : fromZ, lo, hi));
+            int entry = nearestOpenEntry(area, reach, explored, alongX, lo, hi, v, projection);
+            if (entry == Integer.MIN_VALUE) continue;
+            x = alongX ? entry : v;
+            z = alongX ? v : entry;
             double distance = dist(fromX, fromZ, x, z);
             if (distance < bestDistance) {
                 bestDistance = distance;
@@ -265,6 +268,34 @@ public final class CoveragePlanner {
 
         route.set(bestIndex, new Segment(splitX, splitZ, s.x1(), s.z1()));
         route.add(new Segment(splitX, splitZ, s.x2(), s.z2()));
+    }
+
+    /** A projection in a covered gap between two open pockets is not useful work. */
+    private static int nearestOpenEntry(Area area, int reach, ChunkTest explored, boolean alongX,
+                                        int lo, int hi, int v, int projection) {
+        int best = Integer.MIN_VALUE, distance = Integer.MAX_VALUE;
+        // Each open cross-section makes centres within reach useful, including trimmed ends.
+        // Scanning rows once keeps this linear in strip length rather than footprint area per point.
+        for (int u = lo - reach; u <= hi + reach; u++) {
+            boolean open = false;
+            for (int row = v - reach; row <= v + reach; row++) {
+                int x = alongX ? u : row, z = alongX ? row : u;
+                if (area.contains(x, z) && !explored.test(x, z)) {
+                    open = true;
+                    break;
+                }
+            }
+            if (!open) continue;
+            int candidate = Math.max(lo, Math.min(hi, Math.max(u - reach, Math.min(u + reach, projection))));
+            if (Math.abs(candidate - u) > reach) continue;
+            int d = Math.abs(candidate - projection);
+            if (d < distance) {
+                distance = d;
+                best = candidate;
+                if (d == 0) return best;
+            }
+        }
+        return best;
     }
 
     /**

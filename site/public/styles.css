@@ -13284,6 +13284,27 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
   pointer-events: none;
 }
 .area-explorer-map-note[hidden] { display: none; }
+/* Paging through the finds around a spot: ‹ 2 / 7 within 100 blocks › */
+.area-explorer-selected-pager {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 44px 0 10px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+.area-explorer-selected-pager span { flex: 1; text-align: center; font-variant-numeric: tabular-nums; }
+.area-explorer-selected-pager button {
+  width: 36px;
+  min-width: 0;
+  height: 32px;
+  min-height: 0;
+  padding: 0;
+  border-radius: var(--button-radius);
+  font-size: 22px;
+  line-height: 1;
+}
 .area-explorer-selected .area-explorer-find { border: 0; padding: 14px; cursor: default; }
 .area-explorer-selected .area-explorer-find-heading { padding-right: 34px; }
 

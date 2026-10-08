@@ -1018,6 +1018,8 @@ public class AreaExplorer extends Module {
      * turn: ordering the strips takes up to 15 ms. Null with none under way.
      */
     private CompletableFuture<PlannedSweep> pendingSweep;
+    /** First task in the strip route, including its approach waypoint. */
+    private Segment sweepHead;
     private CompletableFuture<PlannedCleanup> pendingCleanup;
     private List<Segment> cleanupPlan = List.of();
     private int cleanupIndex;
@@ -1027,7 +1029,7 @@ public class AreaExplorer extends Module {
     /** Bumped by every plan: a background one finishing after another plan was made is dropped. */
     private int planGeneration;
 
-    private record PlannedSweep(int generation, List<Segment> plan, ChunkGrid done, long prepareNanos, long planNanos) {}
+    private record PlannedSweep(int generation, List<Segment> plan, long prepareNanos, long planNanos) {}
 
     private static final ExecutorService PLANNER = Executors.newSingleThreadExecutor(r -> {
         Thread thread = new Thread(r, "Area Explorer planner");
@@ -1981,7 +1983,7 @@ public class AreaExplorer extends Module {
             return;
         }
         long sweepDone = System.nanoTime();
-        setRoute(plan, done, CoveragePlanner.ORDERED_AHEAD);
+        setRoute(plan);
         long took = System.nanoTime() - started;
         notePlan("planning the sweep", took);
         log("Sweep planned: %d strips, %.0f blocks, in %d ms (grid %d, strips %d, route %d)", plan.size(),
@@ -2009,7 +2011,7 @@ public class AreaExplorer extends Module {
         pendingSweep = CompletableFuture.supplyAsync(() -> {
             long planStarted = System.nanoTime();
             List<Segment> plan = CoveragePlanner.sweep(planArea, planReach, planOverlap, done, fromX, fromZ);
-            return new PlannedSweep(generation, plan, done, prepareNanos, System.nanoTime() - planStarted);
+            return new PlannedSweep(generation, plan, prepareNanos, System.nanoTime() - planStarted);
         }, PLANNER);
     }
 
@@ -2036,7 +2038,7 @@ public class AreaExplorer extends Module {
             return false;
         }
         long started = System.nanoTime();
-        setRoute(planned.plan(), planned.done(), CoveragePlanner.ORDERED_AHEAD);
+        setRoute(planned.plan());
         long onTick = planned.prepareNanos() + System.nanoTime() - started;
         notePlan("planning the sweep", onTick);
         log("Sweep planned: %d strips, %.0f blocks, in %d ms in the background, %d ms on the game thread", planned.plan().size(),
@@ -2084,7 +2086,20 @@ public class AreaExplorer extends Module {
             return;
         }
         markFlownOver();
-        if (awaitPlannedSweep()) return;
+        if (awaitPlannedSweep() || phase != Phase.SWEEP) return;
+
+        if (rescan && sweepHead != null && activeTicks % MAP_CHECK_INTERVAL_TICKS == 0
+            && !planGrid(false).hasOpenRect(Math.min(sweepHead.x1(), sweepHead.x2()) - reach,
+                Math.min(sweepHead.z1(), sweepHead.z2()) - reach,
+                Math.max(sweepHead.x1(), sweepHead.x2()) + reach,
+                Math.max(sweepHead.z1(), sweepHead.z2()) + reach)) {
+            // Approaching a strip or a leftover spot can load all of it before we arrive.
+            // Re-plan from here instead of finishing its obsolete transit or sweep leg.
+            diagnostic("covered-sweep-replan", "first strip task already confirmed covered");
+            endStrip(false);
+            planSweepInBackground();
+            return;
+        }
 
         if (onStrip) {
             ChunkPos p = mc.player.getChunkPos();
@@ -2544,7 +2559,9 @@ public class AreaExplorer extends Module {
             applyPlannedCleanup();
             return;
         }
-        updateFollower(arriveBlocks());
+        double arrive = arriveBlocks();
+        updateFollower(arrive);
+        holdAtSettlePoint(arrive);
         phaseTicks++;
         if (scan == null) {
             if (phaseTicks < (readsMap() ? SETTLE_TICKS : SETTLE_TICKS_NO_MAP)) return;
@@ -2562,6 +2579,23 @@ public class AreaExplorer extends Module {
         scan.cancel();
         scan = null;
         planCleanup();
+    }
+
+    /**
+     * The wait and the map read take seconds, and the elytra keeps flying the last heading: past the
+     * settle point it once went some 600 blocks straight out of the area. Circle back to it instead,
+     * once out of the arrive distance, so it isn't "reached" again on every tick.
+     */
+    private void holdAtSettlePoint(double arrive) {
+        if (!follower.isDone()) return;
+        Point hold = follower.previous();
+        if (hold == null) {
+            // Nothing flown to yet (a restored run): hold where we are, kept inside the area
+            hold = new Point(blockCentre(clampX(chunk(mc.player.getX()))), blockCentre(clampZ(chunk(mc.player.getZ()))), false);
+        } else if (Math.hypot(hold.x() - mc.player.getX(), hold.z() - mc.player.getZ()) <= arrive) {
+            return;
+        }
+        follower.setRoute(List.of(hold), mc.player.getX(), mc.player.getZ());
     }
 
     private void planCleanup() {
@@ -2641,7 +2675,7 @@ public class AreaExplorer extends Module {
             cleanupPlan.get(i).x1() - cleanupPlan.get(i - 1).x1(),
             cleanupPlan.get(i).z1() - cleanupPlan.get(i - 1).z1()) * 16;
         cleanupTailBlocks = Math.max(0, cleanupTailBlocks);
-        setRoute(cleanupPlan.subList(cleanupIndex, end), planGrid(false), 0);
+        setRoute(cleanupPlan.subList(cleanupIndex, end));
         cleanupIndex = end;
     }
 
@@ -2772,50 +2806,17 @@ public class AreaExplorer extends Module {
 
     // Shared
 
-    /**
-     * @param done what the plan was made with as done: transit legs keep off it where they can
-     * @param bendAhead legs given a bend round mapped ground, from the start - a sweep is planned again after every strip, so only its first legs get flown
-     */
-    private void setRoute(List<Segment> plan, ChunkGrid done, int bendAhead) {
+    /** Installs direct legs to each task, without intermediate detours around covered ground. */
+    private void setRoute(List<Segment> plan) {
+        sweepHead = phase == Phase.SWEEP && !plan.isEmpty() ? plan.getFirst() : null;
         List<Point> points = new ArrayList<>();
-        ChunkPos playerChunk = mc.player.getChunkPos();
-        int fromX = playerChunk.x, fromZ = playerChunk.z;
-        // Outside the area counts as mapped: nothing to pick up there
-        CoveragePlanner.ChunkTest mapped = (cx, cz) -> !area.contains(cx, cz) || done.test(cx, cz);
-        for (int i = 0; i < plan.size(); i++) {
-            Segment s = plan.get(i);
-            if (i < bendAhead) addBlankTransitBend(points, fromX, fromZ, s.x1(), s.z1(), mapped);
+        for (Segment s : plan) {
             points.add(new Point(blockCentre(s.x1()), blockCentre(s.z1()), false));
             if (!s.isSpot()) points.add(new Point(blockCentre(s.x2()), blockCentre(s.z2()), true));
-            fromX = s.x2();
-            fromZ = s.z2();
         }
         follower.setRoute(points, mc.player.getX(), mc.player.getZ());
         diagnosticRoute(points, "sweep-or-cleanup");
         onStrip = false;
-    }
-
-    /**
-     * A direct diagonal between two useful pieces can cut across a large mapped island. Try both
-     * axis-aligned alternatives and add their corner as a transit waypoint when either one is
-     * cheaper after mapped chunks are penalised. This is intentionally only one bend: it keeps
-     * steering smooth and cannot explode in memory even for very large selected areas.
-     */
-    private void addBlankTransitBend(List<Point> points, int fromX, int fromZ, int toX, int toZ, CoveragePlanner.ChunkTest mapped) {
-        if (fromX == toX || fromZ == toZ) return;
-
-        double direct = CoveragePlanner.transitCost(fromX, fromZ, toX, toZ, mapped);
-
-        double xFirst = CoveragePlanner.transitCost(fromX, fromZ, toX, fromZ, mapped)
-            + CoveragePlanner.transitCost(toX, fromZ, toX, toZ, mapped);
-        double zFirst = CoveragePlanner.transitCost(fromX, fromZ, fromX, toZ, mapped)
-            + CoveragePlanner.transitCost(fromX, toZ, toX, toZ, mapped);
-        double best = Math.min(xFirst, zFirst);
-        if (best + 1e-6 >= direct) return;
-
-        int bendX = xFirst <= zFirst ? toX : fromX;
-        int bendZ = xFirst <= zFirst ? fromZ : toZ;
-        points.add(new Point(blockCentre(bendX), blockCentre(bendZ), false));
     }
 
     /**
