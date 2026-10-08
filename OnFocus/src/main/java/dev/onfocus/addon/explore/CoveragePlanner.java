@@ -14,9 +14,11 @@ import java.util.Map;
  * sweep is a set of parallel strips ("lawnmower") along the longer side of the area, spaced so that
  * neighbouring swaths overlap a little. Each strip answers for a band of rows, and is only flown where
  * those rows still have unexplored chunks. Bands start at the first row still open after the last
- * one, so ground explored before is skipped instead of cut through by a fixed grid, and each piece
+ * one, starting from the open edge nearest the player, so ground explored before is skipped
+ * instead of cut through by a fixed grid, and each piece
  * of a strip runs down the middle of the rows still open beside it rather than along the edge of
- * explored ground, where half its swath would be wasted. The piece nearest the player always comes
+ * explored ground, where half its swath would be wasted. Strips can be entered at their nearest
+ * point, even outside the current loading radius. The piece nearest the player always comes
  * first; the rest are ordered after it by 2-opt (which also flips pieces around) to cut the transit
  * between them. The explorer plans again after every strip, so it keeps heading for the nearest
  * blank ground rather than following an old long-range order.
@@ -145,16 +147,20 @@ public final class CoveragePlanner {
         int spacing = spacing(reach, overlap), margin = margin(reach, overlap);
         int splitGap = SPLIT_GAP_SPACINGS * spacing;
         int shiftTolerance = Math.max(1, reach / 2);
-        List<int[]> bands = bands(alongX, uMin, uMax, vMin, vMax, spacing, explored);
-
-        // Start at the corner nearest the player
+        // Anchor full bands at the nearby open edge. Always anchoring at vMin leaves a thin
+        // remainder next to a player approaching from vMax, wasting most of that strip's swath.
+        // Use the remaining ground's bounds: after a strip, the selected area's edge is stale.
+        while (vMin <= vMax && !rowHasOpen(alongX, vMin, uMin, uMax, explored)) vMin++;
+        while (vMin <= vMax && !rowHasOpen(alongX, vMax, uMin, uMax, explored)) vMax--;
+        if (vMin > vMax) return new ArrayList<>();
         double pu = alongX ? fromX : fromZ, pv = alongX ? fromZ : fromX;
         boolean vAscending = Math.abs(pv - vMin) <= Math.abs(pv - vMax);
         boolean uAscending = Math.abs(pu - uMin) <= Math.abs(pu - uMax);
+        List<int[]> bands = bands(alongX, uMin, uMax, vMin, vMax, spacing, explored, vAscending);
 
         List<Segment> route = new ArrayList<>();
         for (int k = 0; k < bands.size(); k++) {
-            int[] band = bands.get(vAscending ? k : bands.size() - 1 - k);
+            int[] band = bands.get(k);
 
             // Pieces of the strip: {first u, last u, lowest open row, highest open row, ends trimmed (bit 0 start, bit 1 end)}
             List<int[]> pieces = new ArrayList<>();
@@ -195,9 +201,9 @@ public final class CoveragePlanner {
             }
             uAscending = !uAscending;
         }
-        // If the player is already inside the swath of a strip, start opening it right here
-        // instead of treating the flight to one of its distant ends as empty transit.
-        splitNearestAtStart(route, fromX, fromZ, reach);
+        // Enter the nearest strip at its projection instead of flying to a distant end or
+        // choosing farther work just because its endpoint is closer than this strip's ends.
+        splitNearestAtStart(route, fromX, fromZ);
         return nearestFirst(route, fromX, fromZ, explored);
     }
 
@@ -225,11 +231,11 @@ public final class CoveragePlanner {
     public static final int ORDERED_AHEAD = 48;
 
     /**
-     * Splits the closest strip at the player's projection when the player is already close enough
-     * for that strip to load their current ground. Both halves stay in the plan; nearest-neighbour
-     * ordering starts one of them at the split point, so useful coverage begins immediately.
+     * Splits the closest strip at the player's projection, regardless of the loading radius.
+     * Both halves stay in the plan; nearest-neighbour ordering starts one of them at the split
+     * point, so the first approach is to nearby work rather than a distant endpoint.
      */
-    private static void splitNearestAtStart(List<Segment> route, double fromX, double fromZ, int reach) {
+    private static void splitNearestAtStart(List<Segment> route, double fromX, double fromZ) {
         int bestIndex = -1, splitX = 0, splitZ = 0;
         double bestDistance = Double.MAX_VALUE;
         for (int i = 0; i < route.size(); i++) {
@@ -250,7 +256,7 @@ public final class CoveragePlanner {
                 splitZ = z;
             }
         }
-        if (bestIndex < 0 || bestDistance > reach + 0.5) return;
+        if (bestIndex < 0) return;
 
         Segment s = route.get(bestIndex);
         boolean atStart = splitX == s.x1() && splitZ == s.z1();
@@ -327,20 +333,22 @@ public final class CoveragePlanner {
     }
 
     /**
-     * Bands of rows, {first, last}, each at most {@code spacing} wide, every one starting at the first
-     * row after the last band that still has an unexplored chunk anywhere along it.
+     * Bands of rows, {lowest, highest}, each at most {@code spacing} wide, built from the nearby
+     * open edge in the chosen direction. Covered rows between bands are skipped.
      */
-    static List<int[]> bands(boolean alongX, int uMin, int uMax, int vMin, int vMax, int spacing, ChunkTest explored) {
+    private static List<int[]> bands(boolean alongX, int uMin, int uMax, int vMin, int vMax, int spacing,
+                                     ChunkTest explored, boolean ascending) {
         List<int[]> bands = new ArrayList<>();
-        int v = vMin;
-        while (v <= vMax) {
+        int direction = ascending ? 1 : -1;
+        int v = ascending ? vMin : vMax;
+        while (v >= vMin && v <= vMax) {
             if (!rowHasOpen(alongX, v, uMin, uMax, explored)) {
-                v++;
+                v += direction;
                 continue;
             }
-            int to = Math.min(vMax, v + spacing - 1);
-            bands.add(new int[]{v, to});
-            v = to + 1;
+            int to = ascending ? Math.min(vMax, v + spacing - 1) : Math.max(vMin, v - spacing + 1);
+            bands.add(new int[]{Math.min(v, to), Math.max(v, to)});
+            v = to + direction;
         }
         return bands;
     }

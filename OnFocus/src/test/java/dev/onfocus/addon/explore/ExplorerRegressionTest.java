@@ -24,6 +24,8 @@ public final class ExplorerRegressionTest {
         pendingReach();
         freshChunks();
         patchyCoverage();
+        centeredSweep();
+        nearbySweepEntry();
         narrowCorridors();
         routeEfficiency();
         largeCleanup();
@@ -535,6 +537,70 @@ public final class ExplorerRegressionTest {
         require(CoveragePlanner.routeLength(route, -1800, -1800) < 70000,
             "Large cleanup ordering must preserve short neighbouring-row transits");
         System.out.println("Large cleanup regression: 67,047 spots in " + millis + " ms.");
+    }
+
+    private static void nearbySweepEntry() {
+        for (boolean alongX : new boolean[]{true, false}) {
+            Area area = alongX ? new Area(-200, -50, 200, 50) : new Area(-50, -200, 50, 200);
+            ChunkGrid covered = new ChunkGrid(area);
+            for (int x = area.minCX(); x <= area.maxCX(); x++) {
+                for (int z = area.minCZ(); z <= area.maxCZ(); z++) {
+                    int u = alongX ? x : z, v = alongX ? z : x;
+                    boolean nearbyStrip = Math.abs(u) <= 80 && Math.abs(v) == 10;
+                    boolean distantSpot = u == 40 && v == 0;
+                    if (!nearbyStrip && !distantSpot) covered.add(x, z);
+                }
+            }
+            List<Segment> route = CoveragePlanner.sweep(area, 3, 0, covered, 0, 0);
+            Segment first = route.getFirst();
+            require((alongX ? first.x1() : first.z1()) == 0
+                    && Math.abs(alongX ? first.z1() : first.x1()) == 10,
+                "Enter a nearby strip at its middle instead of choosing a distant spot or strip endpoint");
+            require(route.stream().filter(s -> Math.abs(alongX ? s.z1() : s.x1()) == 10).count() == 3,
+                "Entering a nearby strip in the middle must preserve both halves and the other strip");
+            assertCovered(area, covered, route, 3);
+        }
+    }
+
+    private static void centeredSweep() {
+        for (boolean alongX : new boolean[]{true, false}) {
+            for (boolean ascending : new boolean[]{true, false}) {
+                for (int overlap : new int[]{0, 2}) {
+                    Area area = alongX ? new Area(-80, -30, 80, 30) : new Area(-30, -80, 30, 80);
+                    ChunkGrid covered = new ChunkGrid(area);
+                    int low = -27, high = -5, reach = 3;
+                    for (int v = -30; v <= 30; v++) {
+                        if (v >= low && v <= high) continue;
+                        if (alongX) covered.addRect(-80, v, 80, v);
+                        else covered.addRect(v, -80, v, 80);
+                    }
+                    double u = -80, v = ascending ? low - 1 : high + 1;
+                    int spacing = CoveragePlanner.spacing(reach, overlap);
+                    while (high - low + 1 >= spacing) {
+                        List<Segment> route = CoveragePlanner.sweep(area, reach, overlap, covered,
+                            alongX ? u : v, alongX ? v : u);
+                        assertCovered(area, covered, route, reach);
+                        Segment first = route.getFirst();
+                        int centre = alongX ? first.z1() : first.x1();
+                        int expected = ascending ? Math.floorDiv(2 * low + spacing - 1, 2)
+                            : Math.floorDiv(2 * high - spacing + 1, 2);
+                        require(centre == expected,
+                            "Sweep must centre a full band from the nearby open edge, including after replanning: expected "
+                                + expected + ", got " + centre);
+                        require(centre > low && centre < high,
+                            "A wide remaining area must load new ground on both sides of the strip");
+                        covered.addRect(Math.min(first.x1(), first.x2()) - reach, Math.min(first.z1(), first.z2()) - reach,
+                            Math.max(first.x1(), first.x2()) + reach, Math.max(first.z1(), first.z2()) + reach);
+                        u = alongX ? first.x2() : first.z2();
+                        v = centre;
+                        if (ascending) low = centre + reach + 1;
+                        else high = centre - reach - 1;
+                    }
+                    assertCovered(area, covered, CoveragePlanner.sweep(area, reach, overlap, covered,
+                        alongX ? u : v, alongX ? v : u), reach);
+                }
+            }
+        }
     }
 
     private static void patchyCoverage() {
