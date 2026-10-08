@@ -289,8 +289,41 @@ public final class CoveragePlanner {
             int x = Math.floorDiv(box[0] + box[2], 2), z = Math.floorDiv(box[1] + box[3], 2);
             spots.add(new Segment(x, z, x, z));
         }
-        // Always the nearest spot next, like the sweep
+        // Exact nearest-neighbour is quadratic: 67k gaps used to block the game for 42 seconds.
+        // Large cleanups use sorted alternating rows, keeping every spot in O(n log n).
+        if (spots.size() > 512) return orderedCleanup(spots, area, cell, fromX, fromZ);
         return nearestNeighbour(spots, fromX, fromZ);
+    }
+
+    private static List<Segment> orderedCleanup(List<Segment> spots, Area area, int cell, double fromX, double fromZ) {
+        List<Segment> best = null;
+        double bestDistance = Double.POSITIVE_INFINITY;
+        for (boolean alongX : new boolean[]{true, false}) {
+            List<Segment> sorted = new ArrayList<>(spots);
+            java.util.function.ToIntFunction<Segment> row = s -> Math.floorDiv(
+                alongX ? s.z1() - area.minCZ() : s.x1() - area.minCX(), cell);
+            sorted.sort(java.util.Comparator.comparingInt(row)
+                .thenComparingInt(s -> alongX ? s.x1() : s.z1()));
+            List<Segment> snake = new ArrayList<>(spots.size());
+            boolean reverse = false;
+            for (int start = 0; start < sorted.size(); ) {
+                int end = start + 1;
+                while (end < sorted.size() && row.applyAsInt(sorted.get(end)) == row.applyAsInt(sorted.get(start))) end++;
+                if (reverse) for (int i = end - 1; i >= start; i--) snake.add(sorted.get(i));
+                else snake.addAll(sorted.subList(start, end));
+                reverse = !reverse;
+                start = end;
+            }
+            for (int direction = 0; direction < 2; direction++) {
+                if (direction == 1) java.util.Collections.reverse(snake);
+                double distance = routeLength(snake, fromX, fromZ);
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    best = new ArrayList<>(snake);
+                }
+            }
+        }
+        return best;
     }
 
     /**

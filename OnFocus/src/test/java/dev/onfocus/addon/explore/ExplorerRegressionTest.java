@@ -19,11 +19,14 @@ public final class ExplorerRegressionTest {
         waypointArrival();
         coverageGrid();
         deferredCoverage();
+        withheldChunks();
         reachStability();
         patchyCoverage();
         narrowCorridors();
         routeEfficiency();
+        largeCleanup();
         progressEta();
+        steadyEta();
         findNames();
         diagnosticsFiles();
         System.out.println("Explorer regressions passed (deferred coverage, reach stability, narrow corridors, route efficiency, ETA, waypoints and 240 patchy coverage scenarios).");
@@ -110,6 +113,27 @@ public final class ExplorerRegressionTest {
         List<int[]> samples = gaps.uncoveredSamples(2);
         require(samples.size() == 2 && samples.getFirst()[0] == -2 && samples.getFirst()[1] == -2,
             "Gap samples must honor the limit and decode negative coordinates correctly");
+    }
+
+    private static void withheldChunks() {
+        Area area = new Area(-10, -10, 10, 10);
+        WithheldChunks withheld = new WithheldChunks(area);
+        int step = 20;
+        for (int t = step; t < WithheldChunks.GIVE_UP_TICKS; t += step) {
+            require(!withheld.missed(-3, 4, step), "A chunk must get its full wait before being given up on");
+        }
+        require(withheld.missed(-3, 4, step) && withheld.test(-3, 4) && withheld.size() == 1,
+            "A chunk the server keeps not sending must leave planning instead of drawing the sweep back forever");
+        require(!withheld.missed(-3, 4, step) && withheld.size() == 1, "A given-up chunk must be counted once");
+        ChunkGrid planned = new ChunkGrid(area);
+        planned.addAll(withheld.grid());
+        require(planned.test(-3, 4) && !planned.test(-2, 4), "Only the withheld chunk may be planned around");
+        withheld.loaded(-3, 4);
+        require(!withheld.test(-3, 4) && withheld.size() == 0, "A chunk sent after all must return to planning");
+        withheld.missed(5, 5, WithheldChunks.GIVE_UP_TICKS - step);
+        withheld.loaded(5, 5);
+        require(!withheld.missed(5, 5, step), "Arriving must reset the wait");
+        require(!withheld.missed(20, 20, WithheldChunks.GIVE_UP_TICKS), "Chunks outside the area are never tracked");
     }
 
     private static void deferredCoverage() {
@@ -213,12 +237,15 @@ public final class ExplorerRegressionTest {
                 }
                 assertCorridorCovered(area, mapped, route, 2);
 
-                // Starting inside a strip must retain both ends after route simplification.
+                // Starting inside a strip enters locally; subsequent plans cover the other half.
                 route = ContourPlanner.nextLoop(area, 2, 2, mapped,
                     alongZ ? centre : 5, alongZ ? 5 : centre);
+                require(Math.hypot(route.getFirst()[0] - (alongZ ? centre : 5),
+                    route.getFirst()[1] - (alongZ ? 5 : centre)) < 1e-9,
+                    "Starting inside a corridor must not send the player to a distant endpoint");
                 for (double[] point : route) require(Math.abs((alongZ ? point[0] : point[1]) - centre) < 1e-9,
                     "Efficient entry selection must preserve corridor centering when starting inside");
-                assertCorridorCovered(area, mapped, route, 2);
+                finishContourPlans(area, mapped, 2, alongZ ? centre : 5, alongZ ? 5 : centre);
             }
         }
 
@@ -248,6 +275,14 @@ public final class ExplorerRegressionTest {
         List<double[]> separatedRoute = ContourPlanner.nextLoop(area, 2, 2, separated, -7, -10);
         for (double[] point : separatedRoute) require(Math.abs(point[0] + 7) < 1e-9,
             "Mapped islands must keep adjacent corridor centre lines separate");
+
+        CoveragePlanner.ChunkTest smallGap = (x, z) -> !(x == 0 && z == 0)
+            && !(x == 15 && z >= -10 && z <= 20);
+        List<double[]> nearby = ContourPlanner.nextLoop(area, 2, 2, smallGap, 1, 0);
+        require(nearby.size() == 1 && nearby.getFirst()[0] == 0 && nearby.getFirst()[1] == 0,
+            "A nearby isolated gap must be visited before a distant corridor");
+        nearby = ContourPlanner.nextLoop(area, 2, 2, (x, z) -> x != 0 || z != 0, 1, 0);
+        require(nearby.size() == 1, "Contour must retain the last isolated gap for planning");
     }
 
     private static void assertCorridorCovered(Area area, CoveragePlanner.ChunkTest mapped,
@@ -310,14 +345,41 @@ public final class ExplorerRegressionTest {
         CoveragePlanner.ChunkTest mapped = (x, z) -> z < 0 || z > 60 || Math.abs(x - zigzagCentre(z)) > 1;
         double fromX = zigzagCentre(30), fromZ = 30;
         List<double[]> route = NarrowCorridorPlanner.nearest(winding, 2, mapped, fromX, fromZ);
-        require(!route.isEmpty() && (route.getFirst()[1] == 0 || route.getFirst()[1] == 60),
-            "Winding corridors should enter at the cheaper endpoint to avoid flying a section twice");
-        double distance = Math.hypot(route.getFirst()[0] - fromX, route.getFirst()[1] - fromZ);
-        for (int i = 1; i < route.size(); i++) distance += Math.hypot(route.get(i)[0] - route.get(i - 1)[0],
-            route.get(i)[1] - route.get(i - 1)[1]);
-        double oldDistance = 90 * Math.sqrt(2); // centre entry: 30 slices to an end, then all 60
-        require(distance < oldDistance - 5, "Endpoint selection must reduce total travel, including approach");
-        assertCorridorCovered(winding, mapped, route, 2);
+        require(!route.isEmpty() && route.getFirst()[0] == fromX && route.getFirst()[1] == fromZ,
+            "Winding corridors must start at nearby work rather than a distant endpoint");
+        for (int i = 1; i < route.size(); i++) require(route.get(i)[1] <= route.get(i - 1)[1],
+            "A corridor plan must not reverse over its freshly covered half");
+        double distance = finishContourPlans(winding, mapped, 2, fromX, fromZ);
+        require(distance < 90 * Math.sqrt(2),
+            "Replanning both halves must reduce travel compared with retracing the full corridor");
+    }
+
+    private static double finishContourPlans(Area area, CoveragePlanner.ChunkTest mapped, int reach,
+                                             double x, double z) {
+        ChunkGrid covered = new ChunkGrid(area);
+        for (int cx = area.minCX(); cx <= area.maxCX(); cx++)
+            for (int cz = area.minCZ(); cz <= area.maxCZ(); cz++)
+                if (mapped.test(cx, cz)) covered.add(cx, cz);
+        double distance = 0;
+        for (int pass = 0; pass < 20 && ContourPlanner.openCells(area, covered) > 0; pass++) {
+            List<double[]> route = ContourPlanner.nextLoop(area, reach, 2, covered, x, z);
+            require(!route.isEmpty(), "Replanning lost an unvisited corridor half or small gap");
+            for (double[] point : route) {
+                double leg = Math.hypot(point[0] - x, point[1] - z);
+                distance += leg;
+                int steps = Math.max(1, (int) Math.ceil(leg * 8));
+                for (int i = 0; i <= steps; i++) {
+                    double t = i / (double) steps;
+                    int cx = (int) Math.floor(x + (point[0] - x) * t + .5);
+                    int cz = (int) Math.floor(z + (point[1] - z) * t + .5);
+                    covered.addRect(cx - reach, cz - reach, cx + reach, cz + reach);
+                }
+                x = point[0];
+                z = point[1];
+            }
+        }
+        require(ContourPlanner.openCells(area, covered) == 0, "Repeated local plans must cover every gap");
+        return distance;
     }
 
     private static int zigzagCentre(int z) {
@@ -361,6 +423,38 @@ public final class ExplorerRegressionTest {
         require(eta.secondsLeft(600) == 60, "Recent speed must replace older throughput after the rolling window");
     }
 
+    private static void steadyEta() {
+        SteadyEta eta = new SteadyEta();
+        long second = 1_000_000_000L;
+        require(eta.secondsLeft() == -1, "No estimate before one is fed");
+        eta.observe(0, 1200, true, 1);
+        require(eta.secondsLeft() == 1200, "The first estimate shows as it is");
+        for (int t = 1; t <= 60; t++) eta.observe(t * second, 1200 - t, true, 1);
+        require(eta.secondsLeft() == 1140, "A steady estimate counts down by the second");
+
+        // One noisy reading of 2 hours must not throw a 19-minute estimate to 2 hours.
+        eta.observe(61 * second, 7200, true, 1);
+        require(eta.secondsLeft() < 1300, "A single jump must barely move the shown time");
+        for (int t = 62; t <= 120; t++) eta.observe(t * second, 1200 - t, true, 1);
+        require(Math.abs(eta.secondsLeft() - 1080) < 60, "Back on track, the shown time returns to the estimate");
+
+        // A real change is followed within a few settle times, not ignored.
+        for (int t = 121; t <= 720; t++) eta.observe(t * second, 3600, true, 1);
+        require(Math.abs(eta.secondsLeft() - 3600) < 300, "A lasting new estimate is reached over a few minutes");
+
+        int before = eta.secondsLeft();
+        eta.observe(721 * second, -1, false, 1);
+        eta.observe(5000 * second, -1, false, 1);
+        require(eta.secondsLeft() == before, "Paused time must not count down");
+        eta.observe(5001 * second, -1, true, 1);
+        eta.observe(5011 * second, -1, true, 1);
+        require(eta.secondsLeft() == before - 10, "Without a fresh estimate the shown time keeps counting down");
+        eta.observe(5012 * second, 0, true, 1);
+        require(eta.secondsLeft() == 0, "A finished area shows no time left at once");
+        eta.observe(5013 * second, 500, true, 2);
+        require(eta.secondsLeft() == 500, "A new phase starts from its own estimate");
+    }
+
     private static void findNames() {
         for (String badge : new String[]{"\uEFF4\uEFF4", new String(Character.toChars(0xF0001)),
             new String(Character.toChars(0x100001))}) {
@@ -375,6 +469,27 @@ public final class ExplorerRegressionTest {
             "Golden Apple (\uEFF4)", 1, "Custom label", "Details");
         require(find.name().equals("Golden Apple") && find.label().equals("Custom label")
             && find.details().equals("Details"), "Imported archive names must be cleaned without changing other fields");
+    }
+
+    private static void largeCleanup() {
+        // Same scale as the reported freeze: exactly 67,047 uncovered chunks at radius zero.
+        Area area = new Area(-1875, -1875, -1615, -1619);
+        CoveragePlanner.ChunkTest explored = (x, z) -> x == area.minCX() && z < area.minCZ() + 30;
+        long started = System.nanoTime();
+        List<Segment> route = CoveragePlanner.cleanup(area, 0, explored, -1800, -1800);
+        long millis = (System.nanoTime() - started) / 1_000_000;
+        require(route.size() == 67047, "Large cleanup must retain every missing chunk");
+        java.util.Set<Long> visited = new java.util.HashSet<>();
+        for (Segment spot : route) {
+            require(spot.isSpot() && area.contains(spot.x1(), spot.z1()) && !explored.test(spot.x1(), spot.z1()),
+                "Large cleanup must contain only missing spots in the selected area");
+            require(visited.add((spot.x1() & 0xffffffffL) | ((long) spot.z1() << 32)),
+                "Large cleanup must not repeat spots");
+        }
+        require(millis < 5000, "Large cleanup regressed to the quadratic planner that froze the game");
+        require(CoveragePlanner.routeLength(route, -1800, -1800) < 70000,
+            "Large cleanup ordering must preserve short neighbouring-row transits");
+        System.out.println("Large cleanup regression: 67,047 spots in " + millis + " ms.");
     }
 
     private static void patchyCoverage() {

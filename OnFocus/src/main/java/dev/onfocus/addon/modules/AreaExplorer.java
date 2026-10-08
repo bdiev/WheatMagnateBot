@@ -8,8 +8,10 @@ import dev.onfocus.addon.OnFocusAddon;
 import dev.onfocus.addon.explore.BaseClues;
 import dev.onfocus.addon.explore.ChunkGrid;
 import dev.onfocus.addon.explore.DeferredChunks;
+import dev.onfocus.addon.explore.WithheldChunks;
 import dev.onfocus.addon.explore.ReachStability;
 import dev.onfocus.addon.explore.ProgressEta;
+import dev.onfocus.addon.explore.SteadyEta;
 import dev.onfocus.addon.explore.FindNames;
 import dev.onfocus.addon.explore.ContourPlanner;
 import dev.onfocus.addon.explore.Coverage;
@@ -984,7 +986,7 @@ public class AreaExplorer extends Module {
     private long coverageSentNanos;
     private static final long COVERAGE_SITE_MIN_NANOS = 5_000_000_000L, COVERAGE_SITE_RESEND_NANOS = 30_000_000_000L;
     private long lastRescannedChunk = Long.MIN_VALUE;
-    private int rescanCheckTicks;
+    private int rescanCheckTicks, lastRescanCheckTick;
     private final LongSet explored = new LongOpenHashSet();
     /** Reused for every plan: see {@link #planGrid}. */
     private ChunkGrid planGrid;
@@ -995,6 +997,12 @@ public class AreaExplorer extends Module {
      * turn: ordering the strips takes up to 15 ms. Null with none under way.
      */
     private CompletableFuture<PlannedSweep> pendingSweep;
+    private CompletableFuture<PlannedCleanup> pendingCleanup;
+    private List<Segment> cleanupPlan = List.of();
+    private int cleanupIndex;
+    private double cleanupTailBlocks;
+    private static final int CLEANUP_BATCH_SIZE = 256;
+    private record PlannedCleanup(int generation, List<Segment> spots, double tailBlocks, long nanos) {}
     /** Bumped by every plan: a background one finishing after another plan was made is dropped. */
     private int planGeneration;
 
@@ -1017,6 +1025,8 @@ public class AreaExplorer extends Module {
     /** Chunks actually loaded within reach along the flight path, pending the map drawing them. */
     private DeferredChunks flownOver;
     private long lastFlownChunk = Long.MIN_VALUE;
+    /** Rescan: chunks the server won't send though we fly right by them, planned around. */
+    private WithheldChunks withheld;
     /** Contour pattern: blank chunks left when the current loop was planned, for the time estimate and to notice a loop that changed nothing. */
     private long contourOpen = -1;
     private int idleLoops;
@@ -1035,7 +1045,6 @@ public class AreaExplorer extends Module {
     private String stripMeasureNote = "", swathStats = "";
     /** Chunks around each cleanup spot that passing it loads. */
     private int cleanupRadius;
-    private int spotCheckTicks;
 
     private boolean paused;
     private boolean forcingToggle, suppressToggleMsg;
@@ -1054,6 +1063,8 @@ public class AreaExplorer extends Module {
     private double flightDistance;
     private int activeTicks;
     private final ProgressEta coverageEta = new ProgressEta();
+    /** What the HUD, the site and the chat show: the raw estimate, steadied. */
+    private final SteadyEta shownEta = new SteadyEta();
     private int nextProgressReport;
 
     public AreaExplorer() {
@@ -1635,6 +1646,7 @@ public class AreaExplorer extends Module {
         stripPath.clear();
         onStrip = false;
         flownOver = null;
+        withheld = null;
         baseChunks.clear();
         baseCandidates.clear();
         scoredEntities.clear();
@@ -1667,6 +1679,12 @@ public class AreaExplorer extends Module {
         archiveTicks = 0;
         siteFindTicks = 0;
         pendingSweep = null;
+        if (pendingCleanup != null) pendingCleanup.cancel(false);
+        pendingCleanup = null;
+        cleanupPlan = List.of();
+        cleanupIndex = 0;
+        cleanupTailBlocks = 0;
+        planGeneration++;
         signFile = null;
         fileHeader = null;
         signLog.setLength(0);
@@ -1742,6 +1760,8 @@ public class AreaExplorer extends Module {
         idleLoops = 0;
         lastRescannedChunk = Long.MIN_VALUE;
         rescanCheckTicks = 0;
+        withheld = new WithheldChunks(area);
+        lastRescanCheckTick = activeTicks;
         coverage = new Coverage(area);
         if (restoredCoverage != null) coverage.restore(restoredCoverage);
         if (territoryId == null) territoryId = "run-" + System.currentTimeMillis();
@@ -1802,6 +1822,13 @@ public class AreaExplorer extends Module {
         loadedSamples.clear();
         loadedReachStability.reset();
         coverageEta.reset();
+        shownEta.reset();
+        if (pendingCleanup != null) pendingCleanup.cancel(false);
+        pendingCleanup = null;
+        cleanupPlan = List.of();
+        cleanupIndex = 0;
+        cleanupTailBlocks = 0;
+        planGeneration++;
         nextProgressReport = 25;
 
         radius = viewDistance.get() > 0 ? viewDistance.get() : measureRadius();
@@ -1998,6 +2025,7 @@ public class AreaExplorer extends Module {
             exploredGrid.addAll(explored);
         }
         planGrid.setTo(exploredGrid);
+        if (withheld != null) planGrid.addAll(withheld.grid());
         if (withFlownOver && flownOver != null) planGrid.addAll(flownOver.grid());
         return planGrid;
     }
@@ -2145,7 +2173,7 @@ public class AreaExplorer extends Module {
 
     /** The same from the given spot - where we were dropped, while off the server. */
     private double sweepBlocksLeft(double x, double z) {
-        double blocks = follower.remainingDistance(x, z);
+        double blocks = follower.remainingDistance(x, z) + (phase == Phase.CLEANUP ? cleanupTailBlocks : 0);
         if (phase == Phase.SWEEP && contour() && area != null) {
             // Use current missing coverage, not the count frozen when the loop was planned.
             blocks = Math.max(blocks, Math.max(0, area.total() - explored.size()) / (double) spacing() * 16);
@@ -2396,7 +2424,7 @@ public class AreaExplorer extends Module {
         long bestDist = Long.MAX_VALUE;
         for (int cx = area.minCX(); cx <= area.maxCX(); cx++) {
             for (int cz = area.minCZ(); cz <= area.maxCZ(); cz++) {
-                if (explored.contains(ChunkPos.toLong(cx, cz))) continue;
+                if (explored.contains(ChunkPos.toLong(cx, cz)) || isWithheld(cx, cz)) continue;
                 long d = (long) (cx - p.x) * (cx - p.x) + (long) (cz - p.z) * (cz - p.z);
                 if (d < bestDist) {
                     bestDist = d;
@@ -2410,6 +2438,10 @@ public class AreaExplorer extends Module {
     }
 
     private void tickSettle() {
+        if (pendingCleanup != null) {
+            applyPlannedCleanup();
+            return;
+        }
         updateFollower(arriveBlocks());
         phaseTicks++;
         if (scan == null) {
@@ -2433,7 +2465,8 @@ public class AreaExplorer extends Module {
     private void planCleanup() {
         diagnosticSnapshot("before-cleanup", true);
         long missing = area.total() - explored.size();
-        if (missing <= 0 || cleanupPass >= cleanupPasses.get()) {
+        // The ones the server won't send aren't worth another pass
+        if (missing - (withheld != null ? withheld.size() : 0) <= 0 || cleanupPass >= cleanupPasses.get()) {
             finish();
             return;
         }
@@ -2441,46 +2474,109 @@ public class AreaExplorer extends Module {
 
         // Spots are passed within the arrive distance, so each one covers that much less
         cleanupRadius = CoveragePlanner.cleanupRadius(reach, cleanupArriveBlocks());
-        spotCheckTicks = 0;
         long started = System.nanoTime();
-        ChunkGrid done = planGrid(false);
-        List<Segment> spots = CoveragePlanner.cleanup(area, cleanupRadius, done, playerChunkX(), playerChunkZ());
+        ChunkGrid done = planGrid(false).copy();
+        int generation = ++planGeneration;
+        Area planArea = area;
+        int planRadius = cleanupRadius;
+        double fromX = playerChunkX(), fromZ = playerChunkZ();
+        pendingCleanup = CompletableFuture.supplyAsync(() -> {
+            long planStarted = System.nanoTime();
+            List<Segment> spots = CoveragePlanner.cleanup(planArea, planRadius, done, fromX, fromZ);
+            double tail = 0;
+            for (int i = 1; i < spots.size(); i++) tail += Math.hypot(
+                spots.get(i).x1() - spots.get(i - 1).x1(), spots.get(i).z1() - spots.get(i - 1).z1()) * 16;
+            return new PlannedCleanup(generation, spots, tail, System.nanoTime() - planStarted);
+        }, PLANNER);
+        phase = Phase.SETTLE;
+        diagnostic("cleanup-plan-start", "background cleanup planning");
+        notePlan("preparing cleanup snapshot", System.nanoTime() - started);
+    }
+
+    private void applyPlannedCleanup() {
+        if (!pendingCleanup.isDone()) return;
+        CompletableFuture<PlannedCleanup> future = pendingCleanup;
+        pendingCleanup = null;
+        PlannedCleanup planned;
+        try {
+            planned = future.join();
+        } catch (CompletionException | CancellationException e) {
+            FILE_LOG.error("Planning the cleanup in the background failed", e);
+            cleanupPass--; // retry preparation without consuming a completed pass
+            phaseTicks = 0;
+            return;
+        }
+        if (planned.generation() != planGeneration) return;
+        long started = System.nanoTime();
+        cleanupPlan = planned.spots();
+        cleanupIndex = 0;
+        cleanupTailBlocks = planned.tailBlocks();
+        if (cleanupPlan.isEmpty()) {
+            startSettle();
+            return;
+        }
         phase = Phase.CLEANUP;
-        setRoute(spots, done, Integer.MAX_VALUE);
-        long took = System.nanoTime() - started;
-        notePlan("planning the cleanup", took);
-        log("Cleanup pass %d planned: %d spots, radius %d, %.0f blocks, in %d ms", cleanupPass, spots.size(), cleanupRadius,
-            follower.remainingDistance(mc.player.getX(), mc.player.getZ()), took / 1_000_000);
+        installCleanupBatch();
+        notePlan("installing cleanup batch", System.nanoTime() - started);
+        long missing = area.total() - explored.size();
+        log("Cleanup pass %d planned: %d spots, radius %d, %.0f blocks, in %d ms in the background",
+            cleanupPass, cleanupPlan.size(), cleanupRadius, sweepBlocksLeft(), planned.nanos() / 1_000_000);
+        diagnostic("cleanup-plan-ready", "background plan ready; bounded waypoint batches");
 
         int eta = etaSeconds();
         String text = "%s: (highlight)%d(default) chunks still blank, picking them up at (highlight)%d(default) spots%s.".formatted(
-            cleanupPass == 1 ? "Sweep done" : "Cleanup pass " + cleanupPass, missing, spots.size(),
+            cleanupPass == 1 ? "Sweep done" : "Cleanup pass " + cleanupPass, missing, cleanupPlan.size(),
             eta < 0 ? "" : ", about (highlight)%s(default)".formatted(formatDuration(eta)));
         report("%s", text);
         siteEvent("info", "phase", text);
     }
 
+    private void installCleanupBatch() {
+        int end = Math.min(cleanupPlan.size(), cleanupIndex + CLEANUP_BATCH_SIZE);
+        // The uninstalled tail starts at the final point of this batch. The joining leg is
+        // transferred into follower.remainingDistance when the next batch is installed.
+        for (int i = Math.max(1, cleanupIndex); i < end; i++) cleanupTailBlocks -= Math.hypot(
+            cleanupPlan.get(i).x1() - cleanupPlan.get(i - 1).x1(),
+            cleanupPlan.get(i).z1() - cleanupPlan.get(i - 1).z1()) * 16;
+        cleanupTailBlocks = Math.max(0, cleanupTailBlocks);
+        setRoute(cleanupPlan.subList(cleanupIndex, end), planGrid(false), 0);
+        cleanupIndex = end;
+    }
+
     private void tickCleanup() {
         updateFollower(cleanupArriveBlocks());
-        // Spots whose chunks got drawn on the way (flying past nearby) aren't worth the detour
-        if (++spotCheckTicks >= MAP_CHECK_INTERVAL_TICKS) {
-            spotCheckTicks = 0;
-            while (!follower.isDone() && !spotHasOpen(follower.current())) {
-                diagnostic("cleanup-skip", "target footprint already explored");
-                follower.skip(mc.player.getX(), mc.player.getZ());
+        // Check before steering on every tick: at 64 blocks/s a one-second delay can
+        // send us several chunks back towards a spot that the map has already filled.
+        // Bound both the number of skips and the work between checks on the game thread.
+        long skipStarted = System.nanoTime();
+        for (int skipped = 0; skipped < 32 && !follower.isDone()
+            && System.nanoTime() - skipStarted < 2_000_000; skipped++) {
+            if (spotHasOpen(follower.current())) break;
+            diagnostic("cleanup-skip", "target footprint already explored");
+            follower.skip(mc.player.getX(), mc.player.getZ());
+        }
+        if (follower.isDone()) {
+            if (cleanupIndex < cleanupPlan.size()) installCleanupBatch();
+            else {
+                cleanupPlan = List.of();
+                cleanupTailBlocks = 0;
+                startSettle();
             }
         }
-        if (follower.isDone()) startSettle();
     }
 
     private boolean spotHasOpen(Point spot) {
         int x = chunk(spot.x()), z = chunk(spot.z());
         for (int cx = Math.max(area.minCX(), x - cleanupRadius); cx <= Math.min(area.maxCX(), x + cleanupRadius); cx++) {
             for (int cz = Math.max(area.minCZ(), z - cleanupRadius); cz <= Math.min(area.maxCZ(), z + cleanupRadius); cz++) {
-                if (!explored.contains(ChunkPos.toLong(cx, cz))) return true;
+                if (!explored.contains(ChunkPos.toLong(cx, cz)) && !isWithheld(cx, cz)) return true;
             }
         }
         return false;
+    }
+
+    private boolean isWithheld(int cx, int cz) {
+        return withheld != null && withheld.test(cx, cz);
     }
 
     private void finish() {
@@ -2664,18 +2760,39 @@ public class AreaExplorer extends Module {
     /**
      * Rescan: the loaded chunks within the swath width of the player are done - scanned on arrival,
      * and near enough for Xaero to redraw. Checked on entering a chunk, and every so often for ones
-     * that came in late.
+     * that came in late. One well inside the swath that the server keeps not sending while its
+     * neighbours came is given up on: the sweep used to fly back at it strip after strip, for good.
      */
     private void markRescanned() {
         ChunkPos p = mc.player.getChunkPos();
         if (p.toLong() == lastRescannedChunk && ++rescanCheckTicks < MAP_CHECK_INTERVAL_TICKS) return;
         lastRescannedChunk = p.toLong();
         rescanCheckTicks = 0;
+        // Paused or off the server in between doesn't count as waiting for the chunks
+        int waited = MathHelper.clamp(activeTicks - lastRescanCheckTick, 0, MAP_CHECK_INTERVAL_TICKS);
+        lastRescanCheckTick = activeTicks;
+        boolean counting = withheld != null && !paused && (phase == Phase.SWEEP || phase == Phase.CLEANUP || phase == Phase.SETTLE);
+        int gaveUp = 0;
         var cm = mc.world.getChunkManager();
         for (int cx = Math.max(area.minCX(), p.x - reach); cx <= Math.min(area.maxCX(), p.x + reach); cx++) {
             for (int cz = Math.max(area.minCZ(), p.z - reach); cz <= Math.min(area.maxCZ(), p.z + reach); cz++) {
-                if (cm.isChunkLoaded(cx, cz)) addExplored(ChunkPos.toLong(cx, cz));
+                if (cm.isChunkLoaded(cx, cz)) {
+                    addExplored(ChunkPos.toLong(cx, cz));
+                    if (withheld != null) withheld.loaded(cx, cz);
+                    continue;
+                }
+                // The swath's edge comes in last in flight; and with nothing around loaded either, it's lag
+                if (!counting || Math.max(Math.abs(cx - p.x), Math.abs(cz - p.z)) >= reach) continue;
+                if (!cm.isChunkLoaded(cx - 1, cz) && !cm.isChunkLoaded(cx + 1, cz)
+                    && !cm.isChunkLoaded(cx, cz - 1) && !cm.isChunkLoaded(cx, cz + 1)) continue;
+                if (withheld.missed(cx, cz, waited)) gaveUp++;
             }
+        }
+        if (gaveUp > 0) {
+            log("The server hasn't sent %d chunk%s near %d, %d in %d s in reach while sending the ones around - skipping %s (%d in all)",
+                gaveUp, gaveUp == 1 ? "" : "s", p.x * 16 + 8, p.z * 16 + 8, WithheldChunks.GIVE_UP_TICKS / 20,
+                gaveUp == 1 ? "it" : "them", withheld.size());
+            diagnostic("withheld-skip", "gave up on " + gaveUp + " chunks the server doesn't send");
         }
     }
 
@@ -4090,6 +4207,8 @@ public class AreaExplorer extends Module {
         coverageEta.observe(System.nanoTime(), explored.size(), !paused && !reconnecting
             && mc.player != null && mc.world != null && scan == null
             && (phase == Phase.SWEEP || phase == Phase.CLEANUP), phase.ordinal());
+        boolean flying = !paused && !reconnecting && mc.player != null && mc.world != null && scan == null;
+        shownEta.observe(System.nanoTime(), flying ? etaSeconds(estimateSpeed()) : -1, flying, phase.ordinal());
         if (phase == Phase.IDLE) return;
         if (reconnecting) {
             tickReconnect();
@@ -4432,9 +4551,10 @@ public class AreaExplorer extends Module {
         return expectedSpeed();
     }
 
-    /** Remaining active work, calibrated by recent confirmed coverage; -1 if unknown. */
+    /** Remaining active work as shown: steadied so it counts down instead of jumping; -1 if unknown. */
     private int etaSeconds() {
-        return etaSeconds(expectedSpeed());
+        int steady = shownEta.secondsLeft();
+        return steady >= 0 || mc.player == null ? steady : etaSeconds(estimateSpeed());
     }
 
     private int etaSeconds(double speed) {
@@ -4449,9 +4569,12 @@ public class AreaExplorer extends Module {
         if (missing == 0) return 0;
         if (coverageEta.chunksPerSecond() == 0) return -1;
         int measured = coverageEta.secondsLeft(missing);
-        if (phase == Phase.SWEEP && measured >= 0) return measured;
+        // Loops are replanned as they go, so their route says little: go by coverage. A planned
+        // sweep knows its route, and coverage per minute swings with every turn and covered leg.
+        if (phase == Phase.SWEEP && contour() && measured >= 0) return measured;
         if (speed < MIN_KNOWN_SPEED) return measured;
         int route = (int) Math.min(Integer.MAX_VALUE, Math.ceil(sweepBlocksLeft(x, z) / speed));
+        if (phase == Phase.SWEEP) return route;
         // Cleanup includes the actual spot route; its slower observed coverage can extend it.
         return measured >= 0 ? Math.max(route, measured) : route;
     }

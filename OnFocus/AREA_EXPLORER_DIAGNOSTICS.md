@@ -35,14 +35,27 @@ server address are included intentionally for correlating a trace with a map scr
   In Contour mode, `corridor-centre` identifies an open centre line through a narrow blank strip;
   `contour-loop` identifies a perimeter loop. Corridors up to `2 * reach + 1` chunks wide use
   the midpoint of each blank cross-section, including half-chunk centres for even widths.
+  Entry stays at the nearest centre-line point. When entering in the middle, only one side
+  is flown before replanning against fresh coverage; the route does not retrace that side.
+  One-slice gaps also participate in nearby target selection instead of waiting for cleanup.
+  A single-point route is reported as `contour-loop` and can represent an isolated gap.
 - `waypoint-reached`: reached point, distance, tolerance and proximity/endpoint-plane reason.
-- `cleanup-skip`: target skipped because its footprint is already explored.
+- `cleanup-skip`: target skipped because its footprint is already confirmed explored.
+  Checks run every active tick before steering, with at most 32 skips and a 2 ms budget
+  between targets, so map updates can cancel unnecessary turns without an unbounded loop.
+- `cleanup-plan-start`, `cleanup-plan-ready`: cleanup is prepared from an immutable coverage
+  snapshot on the planner worker while the client stays in SETTLE. Large plans use sorted
+  alternating rows instead of quadratic nearest-neighbour ordering. Only 256 waypoints are
+  installed at a time; ETA includes the uninstalled tail. Stopped/replaced runs discard old plans.
 - `covered-leg-skip`: a contour/corridor leg skipped after its remaining swath (plus one chunk
   of clearance) is confirmed explored. Unknown and deferred chunks do not authorize skipping.
   Checks run once per active second, with a 2 ms budget between legs and at most 32 skips.
 - `deferred-release`: unconfirmed chunks returned to planning after their map-drawing grace period
   (100 active ticks for blank map state, 600 for unknown state). Repeated loading does not extend
   the grace period. Mapped chunks are confirmed instead.
+- `withheld-skip`: rescan only. Chunks well inside the swath that the server kept not sending,
+  with a neighbour loaded, for 600 active ticks in total, are planned around for the rest of the
+  run (sweep, cleanup and the settle target). One that arrives later counts as rescanned as usual.
 - `loaded-width`: sorted width samples, current two-sided width and selected reach.
   `measuredReach` uses the lower decile; `acceptedReach` records the result after requiring three
   consecutive measurement windows before widening. Narrower measurements apply immediately.

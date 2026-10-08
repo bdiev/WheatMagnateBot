@@ -20,8 +20,6 @@ public final class NarrowCorridorPlanner {
         int start = 0;
         double distance = Double.POSITIVE_INFINITY;
         for (List<double[]> path : paths) {
-            // Isolated spots belong to the cleanup; a corridor must have a direction.
-            if (path.size() < 2) continue;
             for (int i = 0; i < path.size(); i++) {
                 double[] p = path.get(i);
                 double d = Math.hypot(p[0] - fromX, p[1] - fromZ);
@@ -34,27 +32,23 @@ public final class NarrowCorridorPlanner {
         }
         if (best == null) return List.of();
 
-        // Compare complete travel distance, not just the distance to the nearest point. Going
-        // straight to an endpoint can avoid a long repeated section of a winding corridor.
+        // Enter at the nearest point, just as the contour/corridor comparison assumes.
+        // Moving the entry to a distant endpoint after choosing this path would ignore
+        // nearby work and turn useful coverage into a long transit over mapped ground.
         double length = 0, toStart = 0;
         for (int i = 1; i < best.size(); i++) {
             double leg = distance(best.get(i - 1), best.get(i));
             length += leg;
             if (i <= start) toStart += leg;
         }
-        double viaMiddle = distance + length + Math.min(toStart, length - toStart);
-        double viaStart = Math.hypot(best.getFirst()[0] - fromX, best.getFirst()[1] - fromZ) + length;
-        double viaEnd = Math.hypot(best.getLast()[0] - fromX, best.getLast()[1] - fromZ) + length;
-        if (Math.min(viaStart, viaEnd) <= viaMiddle) start = viaStart <= viaEnd ? 0 : best.size() - 1;
 
-        // Never close the path with a straight chord across mapped ground.
+        // Fly one side only, then let the caller replan against fresh coverage. Returning
+        // along this same centre line would fly the newly mapped half a second time.
         List<double[]> route = new ArrayList<>();
-        if (start == 0 || start != best.size() - 1 && toStart <= length - toStart) {
+        if (start != 0 && (start == best.size() - 1 || toStart <= length - toStart)) {
             for (int i = start; i >= 0; i--) route.add(best.get(i));
-            for (int i = 1; i < best.size(); i++) route.add(best.get(i));
         } else {
             for (int i = start; i < best.size(); i++) route.add(best.get(i));
-            for (int i = best.size() - 2; i >= 0; i--) route.add(best.get(i));
         }
         return route;
     }
@@ -94,7 +88,6 @@ public final class NarrowCorridorPlanner {
                 // Stop at forks rather than joining unrelated centre lines through mapped ground.
                 if (parents == 1 && !fork) {
                     path = parent.path();
-                    if (path.size() == 1) paths.add(path);
                     // Cross the slice boundary inside their shared blank interval, including at
                     // sudden width changes where a direct centre-to-centre chord cuts mapped ground.
                     double join = (Math.max(parent.lo(), run.lo()) + Math.min(parent.hi(), run.hi())) / 2.0;
@@ -102,6 +95,9 @@ public final class NarrowCorridorPlanner {
                 }
                 else {
                     path = run.path();
+                    // Keep one-slice gaps too: deferring them until cleanup forces a return
+                    // flight even when the player is already beside them.
+                    paths.add(path);
                 }
                 double centre = (run.lo() + run.hi()) / 2.0;
                 path.add(alongZ ? new double[]{centre, u} : new double[]{u, centre});
