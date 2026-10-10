@@ -18,6 +18,8 @@ public final class ExplorerRegressionTest {
     public static void main(String[] args) throws Exception {
         waypointArrival();
         coverageGrid();
+        sectorTraversal();
+        sectorRouting();
         deferredCoverage();
         withheldChunks();
         reachStability();
@@ -31,6 +33,8 @@ public final class ExplorerRegressionTest {
         routeEfficiency();
         largeCleanup();
         progressEta();
+        sectorProgressEta();
+        sectorReachAndEta();
         steadyEta();
         findNames();
         diagnosticsFiles();
@@ -474,6 +478,150 @@ public final class ExplorerRegressionTest {
         require(eta.secondsLeft(600) == 60, "Recent speed must replace older throughput after the rolling window");
     }
 
+    private static void sectorRouting() {
+        Random random = new Random(1495358);
+        for (int width : new int[]{1, 3, 5, 8, 10, 11, 19, 30, 31}) {
+            for (int depth : new int[]{1, 4, 9, 10, 11, 19, 30}) {
+                Area sector = new Area(-31, -17, -32 + width, -18 + depth);
+                Area inner = SectorPlanner.flightArea(sector);
+                ChunkGrid mapped = new ChunkGrid(sector);
+                for (int x = sector.minCX(); x <= sector.maxCX(); x++) {
+                    for (int z = sector.minCZ(); z <= sector.maxCZ(); z++) {
+                        if (random.nextInt(4) == 0) mapped.add(x, z);
+                    }
+                }
+                List<Segment> route = SectorPlanner.sweep(sector, mapped, sector.maxCX() + 8, sector.minCZ() - 8);
+                for (Segment leg : route) {
+                    require(inner.contains(leg.x1(), leg.z1()) && inner.contains(leg.x2(), leg.z2()),
+                        "Sector sweep must stay inset from every edge, including clipped sectors");
+                }
+                assertCovered(sector, mapped, route, 2);
+                List<Segment> cleanup = SectorPlanner.cleanup(sector, mapped, 0, 0);
+                for (Segment spot : cleanup) {
+                    require(inner.contains(spot.x1(), spot.z1()), "Cleanup must use the same inset flight area");
+                }
+                assertCovered(sector, mapped, cleanup, 2);
+            }
+        }
+        for (int reach = 1; reach <= 7; reach++) {
+            for (int width : new int[]{1, 6, 13, 30, 47}) {
+                for (int depth : new int[]{2, 15, 30}) {
+                    Area sector = new Area(100, -40, 99 + width, -41 + depth);
+                    Area inner = SectorPlanner.flightArea(sector, reach);
+                    ChunkGrid mapped = new ChunkGrid(sector);
+                    for (int x = sector.minCX(); x <= sector.maxCX(); x++) {
+                        for (int z = sector.minCZ(); z <= sector.maxCZ(); z++) if (random.nextInt(3) == 0) mapped.add(x, z);
+                    }
+                    for (Area next : new Area[]{null, new Area(sector.maxCX() + 1, sector.minCZ(), sector.maxCX() + 30, sector.maxCZ())}) {
+                        List<Segment> route = SectorPlanner.sweep(sector, reach, mapped, sector.minCX() - 5, sector.maxCZ() + 3, next);
+                        for (Segment leg : route) require(inner.contains(leg.x1(), leg.z1()) && inner.contains(leg.x2(), leg.z2()),
+                            "Wider swaths must keep the route inset by their own reach");
+                        assertCovered(sector, mapped, route, reach);
+                        assertCovered(sector, mapped, SectorPlanner.cleanup(sector, reach, mapped, 0, 0, next), reach);
+                    }
+                }
+            }
+        }
+        Area square = new Area(0, 0, 29, 29);
+        ChunkGrid blank = new ChunkGrid(square);
+        List<Segment> route = SectorPlanner.sweep(square, blank, -10, -10);
+        require(route.getFirst().x1() == 2 && route.getFirst().z1() == 2, "Start at the nearest inset corner");
+        assertCovered(square, blank, route, 2);
+        require(CoveragePlanner.routeLength(route, 2, 2) <= 176,
+            "An empty 30x30 sector must take the snake when it beats perimeter plus core: " + CoveragePlanner.routeLength(route, 2, 2));
+        require(CoveragePlanner.routeLength(route, 2, 2)
+            < CoveragePlanner.routeLength(CoveragePlanner.sweep(square, 2, 2, blank, 2, 2), 2, 2),
+            "The sector route must improve on the old overlapped sector route");
+        List<Segment> wide = SectorPlanner.sweep(square, 4, blank, -10, -10, null);
+        assertCovered(square, blank, wide, 4);
+        require(CoveragePlanner.routeLength(wide, 4, 4) < CoveragePlanner.routeLength(route, 2, 2) * 0.7,
+            "A swath of four must need far fewer strips than the fallback of two");
+        require(SectorPlanner.fittedSize(30, 2) == 30 && SectorPlanner.fittedSize(32, 2) == 30
+            && SectorPlanner.fittedSize(33, 2) == 35 && SectorPlanner.fittedSize(30, 4) == 27 && SectorPlanner.fittedSize(5, 2) == 10,
+            "Fitted sector sizes must be whole numbers of strips, at least eight chunks");
+        require(SectorPlanner.sweep(square, (x, z) -> true, 0, 0).isEmpty(), "Completed sectors need no flight");
+        for (Area next : List.of(new Area(30, 0, 59, 29), new Area(-30, 0, -1, 29),
+            new Area(0, 30, 29, 59), new Area(0, -30, 29, -1))) {
+            List<Segment> handoff = SectorPlanner.sweep(square, blank, 2, 14, next);
+            Segment end = handoff.getLast();
+            Segment expectedExit = SectorPlanner.exitPoint(square, next, end.x2(), end.z2());
+            require(end.x2() == expectedExit.x1() && end.z2() == expectedExit.z1(),
+                "Every route must finish at the inset side shared with its next neighbour");
+            assertCovered(square, blank, handoff, 2);
+            List<Segment> cleanupHandoff = SectorPlanner.cleanup(square, blank, 2, 14, next);
+            assertCovered(square, blank, cleanupHandoff, 2);
+        }
+        Area east = new Area(30, 0, 59, 29);
+        List<Segment> entry = SectorPlanner.sweep(east, new ChunkGrid(east), 27, 14);
+        require(entry.getFirst().x1() == 32, "Enter the next sector on the side facing the player");
+        require(CoveragePlanner.routeLength(entry, 27, 14) <= 185 + 13,
+            "Entry may start at a strip end only while the whole route stays shorter: " + CoveragePlanner.routeLength(entry, 27, 14));
+
+        require(SectorPlanner.boundMovement(99, 5, 0, 100) == 1, "Movement must stop at the positive boundary");
+        require(SectorPlanner.boundMovement(1, -5, 0, 100) == -1, "Movement must stop at the negative boundary");
+        require(SectorPlanner.boundMovement(-20, -5, 0, 100) == 0, "Approaching from outside must not move further away");
+        require(SectorPlanner.boundMovement(-20, 5, 0, 100) == 5, "Entry must allow ordinary movement, without teleporting");
+        require(SectorPlanner.boundMovement(120, -5, 0, 100) == -5, "Entry from the positive side must work");
+        WaypointFollower follower = new WaypointFollower();
+        follower.setRoute(List.of(new Point(40, 40, true)), 8, 40);
+        require(follower.update(8, 40, SectorPlanner.ARRIVAL_BLOCKS) == null,
+            "A two-chunk leg must not count as reached immediately from its start");
+        require(follower.update(35, 40, SectorPlanner.ARRIVAL_BLOCKS) != null,
+            "Tighter arrivals must still let the flight advance near the target");
+    }
+
+    private static void sectorProgressEta() {
+        ProgressEta eta = new ProgressEta();
+        long second = 1_000_000_000L;
+        long covered = 0;
+        eta.observe(0, covered, true, 1, true);
+        // Four short sectors: 6 seconds of coverage followed by 6 of checks and 3 of cleanup.
+        // No individual phase reaches the normal thirty-second learning threshold.
+        for (int t = 1; t <= 60; t++) {
+            int step = (t - 1) % 15;
+            int phase = step < 6 ? 1 : step < 12 ? 2 : 3;
+            if (step < 6) covered += 20;
+            eta.observe(t * second, covered, true, phase, true);
+        }
+        require(covered == 480 && eta.secondsLeft(480) == 60,
+            "Sector ETA must survive short phase changes and include checking time in throughput");
+        eta.observe(61 * second, covered, false, 2, true);
+        eta.observe(1000 * second, covered + 100000, false, 2, true);
+        eta.observe(1001 * second, covered + 100000, true, 1, true);
+        require(eta.secondsLeft(480) == 60, "Sector pauses and bulk imports must not alter the learned rate");
+    }
+
+    private static void sectorReachAndEta() {
+        SectorReach reach = new SectorReach();
+        reach.start(7, 0);
+        require(reach.current() == 6, "Auto swath starts one chunk inside the expected width");
+        require(reach.swept(true) && reach.current() == SectorReach.MIN, "Gaps after a sector's own route fall back to the minimum");
+        require(!reach.swept(false) && !reach.swept(false) && reach.swept(false) && reach.current() == 3,
+            "Three gap-free sectors widen the swath by one chunk");
+        for (int i = 0; i < 30; i++) reach.swept(false);
+        require(reach.current() == 5 && reach.ceiling() == 5, "Widening stops one chunk short of the width that left gaps");
+        reach.start(1, 0);
+        require(reach.current() == SectorReach.MIN, "The minimum holds even when the view distance looks tiny");
+        reach.start(9, 3);
+        require(reach.current() == 3 && !reach.swept(true) && reach.current() == 3, "A fixed swath is never changed");
+        reach.restore(6, 4, 0);
+        require(reach.current() == 4 && reach.ceiling() == 6, "A saved run keeps its learned swath");
+
+        SectorEta eta = new SectorEta();
+        eta.finished(100, 900);
+        eta.finished(0, 0);
+        eta.finished(40, 0);
+        require(eta.secondsLeft(new long[]{900}) == -1, "No estimate before three worked sectors; crossings are not work");
+        eta.finished(60, 500);
+        eta.finished(140, 1300);
+        // 10 s per sector plus 0.1 s per chunk
+        require(Math.abs(eta.secondsLeft(new long[]{900, 0, 450}) - (100 + 55)) < 1e-6,
+            "Remaining sectors are estimated from the fitted fixed and per-chunk parts");
+        SectorEta flat = new SectorEta();
+        for (int i = 0; i < 3; i++) flat.finished(90, 900);
+        require(Math.abs(flat.secondsLeft(new long[]{300}) - 30) < 1e-6, "Equal sectors fall back to the plain per-chunk rate");
+    }
+
     private static void steadyEta() {
         SteadyEta eta = new SteadyEta();
         long second = 1_000_000_000L;
@@ -573,6 +721,135 @@ public final class ExplorerRegressionTest {
                 "Fully loaded sweep task must permit replanning before waypoint arrival");
             assertCovered(area, covered, CoveragePlanner.sweep(area, 3, 0, covered, 0, 0), 3);
         }
+    }
+
+    private static void sectorTraversal() {
+        Area area = new Area(-1490, -350, 4, 7); // 1495 x 358, including negative coordinates
+        SectorTraversal traversal = new SectorTraversal(area, 30, -10, -10);
+        require(traversal.total() == 600, "Large selection must produce 600 clipped sectors");
+        require(traversal.current().contains(-10, -10), "First sector must be nearest the player");
+        ChunkGrid confirmed = new ChunkGrid(area);
+        require(!traversal.advance(confirmed), "Unexplored sector must not advance");
+        Area first = traversal.current();
+        // Completing all but one chunk must still block progress.
+        for (int x = first.minCX(); x <= first.maxCX(); x++) {
+            for (int z = first.minCZ(); z <= first.maxCZ(); z++) confirmed.add(x, z);
+        }
+        confirmed.remove(first.minCX(), first.minCZ());
+        require(traversal.missing(confirmed) == 1 && !traversal.advance(confirmed),
+            "One unconfirmed chunk must keep the current sector active");
+        confirmed.add(first.minCX(), first.minCZ());
+        Area next = traversal.next(confirmed, first.minCX(), first.minCZ());
+        Segment exit = SectorPlanner.exitPoint(first, next, first.minCX(), first.minCZ());
+        require(traversal.advance(confirmed, exit.x1(), exit.z1()), "Confirmed sector must advance at the shared exit");
+        require(adjacent(first, traversal.current()), "The next sector must share a side");
+        SectorTraversal restored = new SectorTraversal(area, traversal.size(), traversal.currentIndex(), traversal.completed(), 10000, 10000);
+        require(restored.current().equals(traversal.current()), "Restore must keep the current sector regardless of player position");
+        require(java.util.Arrays.equals(restored.completed(), traversal.completed()),
+            "Restore must preserve completed sector identities after dynamic neighbour choices");
+        Area active = traversal.current();
+        List<Segment> sweep = CoveragePlanner.sweep(active, 4, 2, confirmed, first.minCX(), first.minCZ());
+        require(!sweep.isEmpty(), "Next unexplored sector must have work");
+        for (Segment leg : sweep) {
+            require(active.contains(leg.x1(), leg.z1()) && active.contains(leg.x2(), leg.z2()),
+                "Sweep targets must stay in the active sector even with a global coverage grid");
+        }
+        assertCovered(active, confirmed, sweep, 4);
+        List<Segment> cleanup = CoveragePlanner.cleanup(active, 3, confirmed, first.minCX(), first.minCZ());
+        for (Segment spot : cleanup) require(active.contains(spot.x1(), spot.z1()), "Cleanup must stay in the active sector");
+        assertCovered(active, confirmed, cleanup, 3);
+
+        for (boolean worldGrid : new boolean[]{false, true}) {
+            ChunkGrid partition = new ChunkGrid(area);
+            SectorTraversal all = new SectorTraversal(area, 30, worldGrid, area.minCX(), area.minCZ());
+            long total = 0;
+            int transitions = 0, jumps = 0;
+            while (all.current() != null) {
+                Area sector = all.current();
+                require(sector.width() <= 30 && sector.depth() <= 30, "Edge sectors must be clipped");
+                if (worldGrid) require(Math.floorMod(sector.minCX(), 30) == 0 || sector.minCX() == area.minCX(),
+                    "World grid sectors must start on multiples of the size");
+                for (int x = sector.minCX(); x <= sector.maxCX(); x++) {
+                    for (int z = sector.minCZ(); z <= sector.maxCZ(); z++) {
+                        require(area.contains(x, z), "Sectors must stay within the selection");
+                        if (!partition.test(x, z)) { partition.add(x, z); total++; }
+                    }
+                }
+                Area neighbour = all.next(partition, sector.minCX(), sector.minCZ());
+                Segment handoff = neighbour == null ? new Segment(sector.minCX(), sector.minCZ(), sector.minCX(), sector.minCZ())
+                    : SectorPlanner.exitPoint(sector, neighbour, sector.minCX(), sector.minCZ());
+                require(all.advance(partition, handoff.x1(), handoff.z1()), "Fully covered sector must advance at its exit");
+                if (all.current() != null && !adjacent(sector, all.current())) jumps++;
+                require(++transitions < 600 * 8, "Neighbour traversal must not loop forever");
+            }
+            require(total == area.total() && all.visited() == all.total(), "Traversal must include every selected chunk");
+            require(jumps == 0, "Warnsdorff order must leave no stranded sectors on a blank selection: " + jumps + " jumps");
+            require(!all.advance((x, z) -> true), "Finished traversal must stay finished");
+        }
+        SectorTraversal world = new SectorTraversal(new Area(-1490, -350, 4, 7), 30, true, 0, 0);
+        require(world.total() == 51 * 13 && world.sector(world.indexOf(-1490, -350)).equals(new Area(-1490, -350, -1471, -331)),
+            "World grid edges sit on multiples of the size, clipped to the selection");
+        require(world.indexOf(-1471, -331) == world.indexOf(-1490, -350) && world.indexOf(-1470, -331) != world.indexOf(-1490, -350)
+            && world.indexOf(5, 0) == -1, "Chunk lookup must follow the world grid");
+
+        SectorTraversal tiny = new SectorTraversal(new Area(-2, -3, 2, 3), 30, 0, 0);
+        require(tiny.total() == 1 && tiny.current().total() == 35, "Selections smaller than a sector must work");
+        require(tiny.advance((x, z) -> true) && tiny.current() == null, "Incidental coverage must skip a finished sector");
+
+        Area islands = new Area(0, 0, 89, 29);
+        ChunkGrid islandCoverage = new ChunkGrid(islands);
+        islandCoverage.addRect(0, 0, 59, 29);
+        SectorTraversal bridge = new SectorTraversal(islands, 30, 2, 2);
+        require(bridge.next(islandCoverage, 2, 2).minCX() == 60 && !bridge.nextIsAdjacent(),
+            "With no open neighbour, head for the nearest open sector over finished ground");
+        require(bridge.advance(islandCoverage, 2, 2) && bridge.current().minCX() == 60 && !bridge.transit(),
+            "A jump over mapped ground needs no shared exit and no transit sector");
+        require(bridge.state(1) == SectorTraversal.State.COMPLETED, "Mapped sectors seen while choosing count as finished");
+
+        Area strip = new Area(0, 0, 119, 29);
+        ChunkGrid stripCoverage = new ChunkGrid(strip);
+        SectorTraversal deferring = new SectorTraversal(strip, 30, true, 2, 2);
+        require(deferring.defer(stripCoverage, 2, 2) && deferring.currentIndex() == 1 && deferring.state(0) == SectorTraversal.State.DEFERRED,
+            "An unfinished sector must be deferred and the run carry on next door");
+        for (int i = 1; i < 4; i++) {
+            Area done = deferring.current();
+            stripCoverage.addRect(done.minCX(), done.minCZ(), done.maxCX(), done.maxCZ());
+            require(deferring.advance(stripCoverage, done.maxCX() - 2, 2), "Finished sectors advance past the deferred one");
+        }
+        require(deferring.currentIndex() == 0 && deferring.retrying(), "Deferred sectors are retried once everything else is done");
+        require(!deferring.defer(stripCoverage, 2, 2) && deferring.state(0) == SectorTraversal.State.SKIPPED
+            && deferring.skippedCount() == 1 && deferring.finished(), "A second failure skips the sector and finishes the run");
+        SectorTraversal lone = new SectorTraversal(new Area(0, 0, 29, 29), 30, true, 0, 0);
+        require(lone.defer(new ChunkGrid(new Area(0, 0, 29, 29)), 2, 2) && lone.currentIndex() == 0 && lone.retrying(),
+            "The only sector left is retried at once");
+        SectorTraversal manual = new SectorTraversal(strip, 30, true, 2, 2);
+        ChunkGrid manualCoverage = new ChunkGrid(strip);
+        manual.prioritise(3);
+        require(manual.next(manualCoverage, 2, 2).minCX() == 90, "A sector picked on the map comes next");
+        require(manual.skip(0, manualCoverage, 2, 2) && manual.currentIndex() == 3, "Skipping the current sector moves on at once");
+        manual.prioritise(0);
+        require(manual.state(0) == SectorTraversal.State.OPEN && manual.priority() == 0, "A skipped sector can be put back first");
+        SectorTraversal saved = new SectorTraversal(strip, 30, true, 0, 0);
+        saved.restore(manual.currentIndex(), manual.completed(), manual.deferred(), manual.skipped(), manual.retrying(), manual.priority());
+        require(saved.currentIndex() == 3 && saved.priority() == 0, "Restore must keep the current and prioritised sectors");
+        SectorTraversal migrated = new SectorTraversal(islands, 30, 2, 1, 0, 0);
+        require(migrated.currentIndex() == 0 && migrated.visited() == 1,
+            "Legacy snake sessions must restore their exact current sector and completed prefix");
+        long[] beforeRepair = migrated.completed();
+        require(migrated.reanchorIfDistant(85, 15) && migrated.current().contains(85, 15),
+            "A distant legacy wrap target must resume at the player's local sector");
+        require(java.util.Arrays.equals(beforeRepair, migrated.completed()),
+            "Repairing a distant target must preserve completed sector identities");
+        SectorTraversal nearby = new SectorTraversal(islands, 30, 1, new long[0], 27, 15);
+        require(!nearby.reanchorIfDistant(27, 15) && nearby.currentIndex() == 1,
+            "A normal transition into a nearby saved neighbour must not be reanchored");
+    }
+
+    private static boolean adjacent(Area a, Area b) {
+        return (a.maxCX() + 1 == b.minCX() || b.maxCX() + 1 == a.minCX())
+            && Math.max(a.minCZ(), b.minCZ()) <= Math.min(a.maxCZ(), b.maxCZ())
+            || (a.maxCZ() + 1 == b.minCZ() || b.maxCZ() + 1 == a.minCZ())
+            && Math.max(a.minCX(), b.minCX()) <= Math.min(a.maxCX(), b.maxCX());
     }
 
     private static void nearbySweepEntry() {

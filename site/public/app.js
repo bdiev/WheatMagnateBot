@@ -201,6 +201,7 @@ const state = {
   accounts: [],
   activeAccountId: null,
   obsidianStatsScope: localStorage.getItem('wm-obsidian-stats-scope') === 'all' ? 'all' : 'personal',
+  obsidianScopeTransition: null,
   accountAbortController: null,
   adminControlToken: null,
   accountsRefreshedAt: 0,
@@ -6885,6 +6886,26 @@ function renderAreaExplorerMarkerNames(scope) {
     .join('');
 }
 
+const AREA_EXPLORER_SECTOR_CELLS = Object.freeze({ a: 'current', n: 'next', c: 'done', d: 'deferred', s: 'skipped' });
+
+/** A Sectors run's grid on its card, north up: finished, deferred, skipped, current and next sectors. */
+function renderAreaExplorerSectors(sectors) {
+  const parts = [`${formatNumber(Math.min(sectors.done + 1, sectors.count))} / ${formatNumber(sectors.count)} sectors`];
+  if (sectors.deferred) parts.push(`${formatNumber(sectors.deferred)} deferred`);
+  if (sectors.skipped) parts.push(`${formatNumber(sectors.skipped)} skipped`);
+  if (sectors.reach) parts.push(`swath ${sectors.reach}`);
+  const summary = `<p class="area-explorer-sectors-summary">${escapeHtml(parts.join(' · '))}</p>`;
+  if (!sectors.cells) return summary;
+  const cells = [];
+  for (let index = 0; index < sectors.cells.length; index++) {
+    const name = AREA_EXPLORER_SECTOR_CELLS[sectors.cells[index]];
+    if (name) cells.push(`<rect class="is-${name}" x="${index % sectors.cols}" y="${Math.floor(index / sectors.cols)}" width="1" height="1"/>`);
+  }
+  return `<svg class="area-explorer-sectors" viewBox="0 0 ${sectors.cols} ${sectors.rows}" preserveAspectRatio="xMidYMid meet" shape-rendering="crispEdges" role="img" aria-label="${escapeHtml(parts.join(', '))}">
+      <rect class="area-explorer-sectors-bg" width="${sectors.cols}" height="${sectors.rows}"/>${cells.join('')}
+    </svg>${summary}`;
+}
+
 function renderAreaExplorerStatus() {
   const ae = areaExplorerState();
   const container = $('#areaExplorerStatus');
@@ -6922,6 +6943,7 @@ function renderAreaExplorerStatus() {
         ${position ? `<div class="area-explorer-run-position"><dt>Position</dt><dd>${escapeHtml(position)}</dd></div>` : ''}
         <div><dt>Last report</dt><dd>${escapeHtml(formatDurationMs(Date.now() - new Date(status.updatedAt).getTime()))} ago</dd></div>
       </dl>
+      ${status.online && status.area?.sectors ? renderAreaExplorerSectors(status.area.sectors) : ''}
       ${found ? `<p class="area-explorer-run-finds">${escapeHtml(found)}</p>` : ''}
     </article>`;
   }).join('');
@@ -9575,28 +9597,46 @@ async function changeObsidianStatsScope(event) {
   const scope = button.dataset.obsidianScope === 'all' ? 'all' : 'personal';
   if (scope === state.obsidianStatsScope) return;
   const previousScope = state.obsidianStatsScope;
+  const accountId = state.activeAccountId;
+  const accountGeneration = state.accountSwitchGeneration;
+  state.obsidianScopeTransition?.animation.cancel();
+  const transition = { animation: null };
+  state.obsidianScopeTransition = transition;
+  const isCurrent = () => state.obsidianScopeTransition === transition
+    && state.activeAccountId === accountId
+    && state.accountSwitchGeneration === accountGeneration;
   state.obsidianStatsScope = scope;
   localStorage.setItem('wm-obsidian-stats-scope', scope);
-  updateObsidianScopeControl(scope, { disabled: true });
+  updateObsidianScopeControl(scope);
   const exitAnimation = startObsidianScopeAnimation('out');
+  transition.animation = exitAnimation;
   try {
     const payloadPromise = fetchJson(obsidianStatsPath());
-    await exitAnimation.finished;
-    renderObsidian(await payloadPromise);
-    updateObsidianScopeControl(state.obsidianStatsScope, { disabled: true });
+    const [payload] = await Promise.all([payloadPromise, exitAnimation.finished]);
+    if (!isCurrent()) return;
+    renderObsidian(payload);
   } catch (error) {
     await exitAnimation.finished;
+    if (!isCurrent()) return;
     state.obsidianStatsScope = previousScope;
     localStorage.setItem('wm-obsidian-stats-scope', previousScope);
-    renderObsidian(await fetchJson(obsidianStatsPath()));
-    updateObsidianScopeControl(state.obsidianStatsScope, { disabled: true });
+    updateObsidianScopeControl(previousScope);
+    const payload = await fetchJson(obsidianStatsPath());
+    if (!isCurrent()) return;
+    renderObsidian(payload);
     throw error;
   } finally {
     exitAnimation.cancel();
-    const enterAnimation = startObsidianScopeAnimation('in');
-    await enterAnimation.finished;
-    enterAnimation.cancel();
-    updateObsidianScopeControl(state.obsidianStatsScope);
+    if (isCurrent()) {
+      const enterAnimation = startObsidianScopeAnimation('in');
+      transition.animation = enterAnimation;
+      await enterAnimation.finished;
+      enterAnimation.cancel();
+      if (isCurrent()) {
+        state.obsidianScopeTransition = null;
+        updateObsidianScopeControl(state.obsidianStatsScope);
+      }
+    }
   }
 }
 
@@ -9732,7 +9772,11 @@ function estimateSupplyRefill(payload = {}) {
 
 function renderObsidian(payload) {
   const renderedScope = payload.scope === 'all' ? 'all' : 'personal';
-  if (activeAccountIsPrimary()) state.obsidianStatsScope = renderedScope;
+  const activeScope = activeAccountIsPrimary() && state.currentUser?.role === 'admin'
+    ? state.obsidianStatsScope
+    : 'personal';
+  // A background refresh may have started before the user changed scope.
+  if (renderedScope !== activeScope) return;
   updateObsidianFarmControlsVisibility(renderedScope);
   const scopeControl = $('#obsidianStatsScope');
   if (scopeControl) updateObsidianScopeControl(renderedScope);

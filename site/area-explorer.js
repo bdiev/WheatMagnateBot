@@ -151,6 +151,35 @@ function normalizeCoverage(raw) {
   return { version, cell, minCX, minCZ, cols, rows, bits };
 }
 
+/** Biggest sector grid whose cells are kept: one letter each. */
+const MAX_SECTOR_CELLS = 4096;
+
+/**
+ * A Sectors run's grid inside the status area: size and origin, counts, and one letter per cell row by
+ * row (a current, n next, c finished, d deferred, s skipped, o to do); null if it isn't one.
+ */
+function normalizeSectors(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const size = normalizeInteger(raw.size, 4096);
+  const cols = normalizeInteger(raw.cols, 1_000_000);
+  const rows = normalizeInteger(raw.rows, 1_000_000);
+  const count = normalizeInteger(raw.count, 1e12);
+  if (!(size > 0 && cols > 0 && rows > 0 && count > 0)) return null;
+  const counted = value => Math.min(Math.max(0, normalizeInteger(value, 1e12) ?? 0), count);
+  const cells = typeof raw.cells === 'string' && cols * rows <= MAX_SECTOR_CELLS
+    && raw.cells.length === cols * rows && /^[ancdso]*$/.test(raw.cells) ? raw.cells : null;
+  return {
+    size, cols, rows, count,
+    originX: normalizeInteger(raw.originX, MAX_COORDINATE) ?? 0,
+    originZ: normalizeInteger(raw.originZ, MAX_COORDINATE) ?? 0,
+    done: counted(raw.done),
+    deferred: counted(raw.deferred),
+    skipped: counted(raw.skipped),
+    reach: Math.max(0, normalizeInteger(raw.reach, 64) ?? 0),
+    cells
+  };
+}
+
 function normalizeStatus(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const percent = Number(raw.percent);
@@ -167,6 +196,8 @@ function normalizeStatus(raw) {
     signs: Math.max(0, normalizeInteger(raw.runFinds.signs, 1e9) ?? 0),
     items: Math.max(0, normalizeInteger(raw.runFinds.items, 1e9) ?? 0)
   } : null;
+  const sectors = area ? normalizeSectors(raw.area.sectors) : null;
+  if (area && sectors) area.sectors = sectors;
   return {
     player: normalizeText(raw.player, 16),
     phase: normalizeText(raw.phase, 16).toUpperCase() || 'IDLE',
@@ -178,7 +209,7 @@ function normalizeStatus(raw) {
     y: normalizeInteger(raw.y, MAX_Y),
     z: normalizeInteger(raw.z, MAX_COORDINATE),
     yaw: Number.isFinite(yaw) ? ((yaw % 360) + 360) % 360 : null,
-    area: area && Object.values(area).every(value => value !== null) ? area : null,
+    area: area && ['minX', 'minZ', 'maxX', 'maxZ'].every(key => area[key] !== null) ? area : null,
     runFinds,
     coverage: normalizeCoverage(raw.coverage)
   };
@@ -852,6 +883,7 @@ module.exports = {
   normalizeCoverage,
   normalizeEvent,
   normalizeFind,
+  normalizeSectors,
   normalizeStatus,
   publicEvent,
   publicFind,

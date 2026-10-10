@@ -18,6 +18,10 @@ import dev.onfocus.addon.explore.FindNames;
 import dev.onfocus.addon.explore.ContourPlanner;
 import dev.onfocus.addon.explore.Coverage;
 import dev.onfocus.addon.explore.CoveragePlanner;
+import dev.onfocus.addon.explore.SectorEta;
+import dev.onfocus.addon.explore.SectorReach;
+import dev.onfocus.addon.explore.SectorTraversal;
+import dev.onfocus.addon.explore.SectorPlanner;
 import dev.onfocus.addon.explore.CoveragePlanner.Area;
 import dev.onfocus.addon.explore.CoveragePlanner.Segment;
 import dev.onfocus.addon.explore.FindsArchive;
@@ -45,6 +49,8 @@ import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.meteor.KeyEvent;
 import meteordevelopment.meteorclient.events.entity.player.BreakBlockEvent;
 import meteordevelopment.meteorclient.events.entity.player.PlaceBlockEvent;
+import meteordevelopment.meteorclient.events.entity.player.PlayerMoveEvent;
+import meteordevelopment.meteorclient.mixininterface.IVec3d;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.gui.GuiTheme;
 import meteordevelopment.meteorclient.gui.widgets.WWidget;
@@ -306,14 +312,20 @@ public class AreaExplorer extends Module {
     private long diagnosticSequence;
     private long diagnosticMapRegions, diagnosticMapAdded;
 
-    public enum Mode { Area, Spiral }
+    public enum Mode { Area, Spiral, Sectors }
 
     /** How Area mode covers the blank ground. */
     public enum Pattern { Contour, Strips }
 
+    /** Sectors mode: what to do with a sector still blank after the cleanup limit. */
+    public enum UnfinishedSector { Defer, Pause }
+
+    /** Sector commands from Xaero's World Map. */
+    public enum SectorAction { Next, Skip, Rescan }
+
     private final Setting<Mode> mode = sgGeneral.add(new EnumSetting.Builder<Mode>()
         .name("mode")
-        .description("Area: explore a rectangle picked on Xaero's World Map (right click > Explore). Spiral: spiral outwards from where you turn it on - no map needed.")
+        .description("Area: explore a selected rectangle. Sectors (experimental): finish each square, including cleanup, before moving on; works with Explore and Rescan. Spiral: spiral outwards without a selection.")
         .defaultValue(Mode.Area)
         .build()
     );
@@ -323,6 +335,34 @@ public class AreaExplorer extends Module {
         .description("Contour: loops along the edge of the blank ground, each inside the last, spiralling in to its middle - fitted to whatever shape it has. Strips: straight parallel strips across the area.")
         .defaultValue(Pattern.Contour)
         .visible(() -> mode.get() == Mode.Area)
+        .build()
+    );
+
+    private final Setting<Integer> sectorSize = sgGeneral.add(new IntSetting.Builder()
+        .name("sector-size")
+        .description("Experimental Sectors mode: square size in chunks, on a grid shared by every selection. Applied when starting a new selection; saved runs keep their size. A whole number of strips (2 x reach + 1 chunks each: 30 or 35 for reach 2) wastes no flight.")
+        .defaultValue(30)
+        .range(8, 256)
+        .sliderRange(8, 100)
+        .visible(() -> mode.get() == Mode.Sectors)
+        .build()
+    );
+
+    private final Setting<Integer> sectorReachSetting = sgGeneral.add(new IntSetting.Builder()
+        .name("sector-reach")
+        .description("Sectors mode: chunks loaded to each side of a strip. 0 = auto: one chunk inside the view distance (or the width learned in flight), back to 2 after a sector whose route left gaps, one wider again after three clean sectors.")
+        .defaultValue(0)
+        .range(0, 12)
+        .sliderRange(0, 8)
+        .visible(() -> mode.get() == Mode.Sectors)
+        .build()
+    );
+
+    private final Setting<UnfinishedSector> unfinishedSector = sgGeneral.add(new EnumSetting.Builder<UnfinishedSector>()
+        .name("unfinished-sector")
+        .description("Sectors mode, for a sector still blank after the cleanup passes. Defer: move on, retry it once after every other sector, then skip it and report it at the end. Pause: stop until you press the bind to retry.")
+        .defaultValue(UnfinishedSector.Defer)
+        .visible(() -> mode.get() == Mode.Sectors)
         .build()
     );
 
@@ -351,6 +391,7 @@ public class AreaExplorer extends Module {
         .defaultValue(2)
         .range(0, 16)
         .sliderRange(0, 8)
+        .visible(() -> mode.get() != Mode.Sectors)
         .build()
     );
 
@@ -367,17 +408,17 @@ public class AreaExplorer extends Module {
         .name("use-xaero-map")
         .description("Before starting, treats chunks already drawn on Xaero's World Map as explored, so only the blank parts are flown.")
         .defaultValue(true)
-        .visible(() -> mode.get() == Mode.Area)
+        .visible(() -> mode.get() != Mode.Spiral)
         .build()
     );
 
     private final Setting<Integer> cleanupPasses = sgGeneral.add(new IntSetting.Builder()
         .name("cleanup-passes")
-        .description("Tours over the chunks the sweep missed. Whatever is still blank after these is given up on.")
+        .description("Tours over chunks the sweep missed. Area gives up after this limit; Sectors defers the sector or pauses, as unfinished-sector says.")
         .defaultValue(2)
         .range(0, 5)
         .sliderRange(0, 5)
-        .visible(() -> mode.get() == Mode.Area)
+        .visible(() -> mode.get() != Mode.Spiral)
         .build()
     );
 
@@ -423,7 +464,7 @@ public class AreaExplorer extends Module {
         .name("show-on-map")
         .description("Keeps the area being explored highlighted on Xaero's World Map while the module is on.")
         .defaultValue(true)
-        .visible(() -> mode.get() == Mode.Area)
+        .visible(() -> mode.get() != Mode.Spiral)
         .build()
     );
 
@@ -431,7 +472,15 @@ public class AreaExplorer extends Module {
         .name("map-color")
         .description("Fill colour of the area on the World Map.")
         .defaultValue(new SettingColor(80, 200, 255, 60))
-        .visible(() -> mode.get() == Mode.Area && showOnMap.get())
+        .visible(() -> mode.get() != Mode.Spiral && showOnMap.get())
+        .build()
+    );
+
+    private final Setting<Boolean> showSectorGrid = sgGeneral.add(new BoolSetting.Builder()
+        .name("show-sector-grid")
+        .description("Draws sectors on Xaero's World Map: the current one outlined in gold, the next dashed, finished ones tinted green, deferred ones orange and skipped ones red with their blank chunks. Right-click a sector to work it next, skip it or rescan it.")
+        .defaultValue(true)
+        .visible(() -> mode.get() == Mode.Sectors && showOnMap.get())
         .build()
     );
 
@@ -439,7 +488,7 @@ public class AreaExplorer extends Module {
         .name("show-flown")
         .description("Colours the part of the area already flown over this run on Xaero's World Map (and the site's map with site-sync). Gone once the run ends.")
         .defaultValue(true)
-        .visible(() -> mode.get() == Mode.Area)
+        .visible(() -> mode.get() != Mode.Spiral)
         .build()
     );
 
@@ -447,7 +496,7 @@ public class AreaExplorer extends Module {
         .name("flown-color")
         .description("Colour of the ground already flown over on the World Map.")
         .defaultValue(new SettingColor(255, 170, 40, 70))
-        .visible(() -> mode.get() == Mode.Area && showFlown.get())
+        .visible(() -> mode.get() != Mode.Spiral && showFlown.get())
         .build()
     );
 
@@ -1040,6 +1089,21 @@ public class AreaExplorer extends Module {
     private XaeroMappedChunkScan scan;
     private int mapCheckTicks;
     private int cleanupPass;
+    private SectorTraversal sectors;
+    private boolean sectorBlocked;
+    private boolean sectorEarlyReadDone;
+    private boolean sectorExitOnly;
+    private final SectorReach sectorSwath = new SectorReach();
+    private final SectorEta sectorEta = new SectorEta();
+    /** The current sector's own route was flown: its result says whether the swath was right. */
+    private boolean sectorWorked;
+    private int sectorTimed = -1, sectorTicks;
+    private long sectorStartMissing;
+    private long[] sectorWork;
+    private int sectorWorkTick;
+    private List<int[]> sectorGaps = List.of();
+    private long sectorGapsNanos;
+    private int[] restoredSwath;
 
     private int radius; // server view distance, in chunks
     private int reach;  // chunks to each side of a strip that actually get explored
@@ -1303,7 +1367,9 @@ public class AreaExplorer extends Module {
         territoryId = null;
         area = new Area(Math.min(x1, x2), Math.min(z1, z2), Math.max(x1, x2), Math.max(z1, z2));
         areaDimension = dimension;
-        if (mode.get() != Mode.Area) mode.set(Mode.Area);
+        sectors = null;
+        sectorBlocked = false;
+        if (mode.get() == Mode.Spiral) mode.set(Mode.Area);
 
         // A new area: the saved run is done with
         forgetSession();
@@ -1318,13 +1384,131 @@ public class AreaExplorer extends Module {
 
     /** The area to highlight on the World Map while it shows the given dimension, or null. */
     public Area mapHighlight(RegistryKey<World> dimension) {
-        if (!isActive() || !showOnMap.get() || mode.get() != Mode.Area || area == null) return null;
+        if (!isActive() || !showOnMap.get() || mode.get() == Mode.Spiral || area == null) return null;
         if (areaDimension != null && dimension != null && !areaDimension.equals(dimension)) return null;
         return area;
     }
 
     public SettingColor mapColor() {
         return mapColor.get();
+    }
+
+    /** The running sector grid to draw while the map shows its dimension, or null. */
+    public SectorTraversal mapSectors(RegistryKey<World> dimension) {
+        return showSectorGrid.get() && mapHighlight(dimension) != null ? sectors : null;
+    }
+
+    /**
+     * Unconfirmed chunks of deferred and skipped sectors, as row runs {minCX, minCZ, maxCX, maxCZ}:
+     * where the server never sent anything. Counted again every two seconds at most.
+     */
+    public List<int[]> mapSectorGaps() {
+        if (sectors == null) return List.of();
+        long now = System.nanoTime();
+        if (sectorGapsNanos != 0 && now - sectorGapsNanos < 2_000_000_000L) return sectorGaps;
+        sectorGapsNanos = now;
+        List<int[]> gaps = new ArrayList<>();
+        for (int i = 0, shown = 0; i < sectors.total() && shown < 64; i++) {
+            SectorTraversal.State state = sectors.state(i);
+            if (state != SectorTraversal.State.DEFERRED && state != SectorTraversal.State.SKIPPED) continue;
+            shown++;
+            Area sector = sectors.sector(i);
+            for (int z = sector.minCZ(); z <= sector.maxCZ(); z++) {
+                int start = Integer.MIN_VALUE;
+                for (int x = sector.minCX(); x <= sector.maxCX() + 1; x++) {
+                    boolean gap = x <= sector.maxCX() && !confirmedChunk(x, z);
+                    if (gap && start == Integer.MIN_VALUE) start = x;
+                    if (!gap && start != Integer.MIN_VALUE) {
+                        gaps.add(new int[]{start, z, x - 1, z});
+                        start = Integer.MIN_VALUE;
+                    }
+                }
+            }
+        }
+        sectorGaps = gaps;
+        return gaps;
+    }
+
+    /** The World Map commands for the sector under a right click at block (x, z), none outside the running grid. */
+    public List<SectorAction> sectorActions(int blockX, int blockZ, RegistryKey<World> dimension) {
+        if (sectors == null || mapHighlight(dimension) == null) return List.of();
+        int index = sectors.indexOf(blockX >> 4, blockZ >> 4);
+        if (index < 0) return List.of();
+        List<SectorAction> actions = new ArrayList<>();
+        SectorTraversal.State state = sectors.state(index);
+        boolean current = index == sectors.currentIndex();
+        if (!current && index != sectors.priority() && (state != SectorTraversal.State.COMPLETED || rescan)) actions.add(SectorAction.Next);
+        if (state != SectorTraversal.State.SKIPPED && state != SectorTraversal.State.COMPLETED) actions.add(SectorAction.Skip);
+        if (rescan && (state == SectorTraversal.State.COMPLETED || current)) actions.add(SectorAction.Rescan);
+        return actions;
+    }
+
+    public void sectorAction(int blockX, int blockZ, SectorAction action) {
+        if (sectors == null || area == null) return;
+        int index = sectors.indexOf(blockX >> 4, blockZ >> 4);
+        if (index < 0) return;
+        Area sector = sectors.sector(index);
+        String where = "X %d..%d, Z %d..%d".formatted(sector.minCX() * 16, sector.maxCX() * 16 + 15, sector.minCZ() * 16, sector.maxCZ() * 16 + 15);
+        boolean current = index == sectors.currentIndex();
+        switch (action) {
+            case Next -> {
+                sectors.prioritise(index);
+                info("Sector at (highlight)%s(default) comes next, after the current one.", where);
+            }
+            case Skip -> {
+                current = sectors.skip(index, this::confirmedChunk, playerChunkX(), playerChunkZ());
+                info("Sector at (highlight)%s(default) skipped for this run.", where);
+                if (current) {
+                    sectorBlocked = false;
+                    sectorTimed = -1;
+                    if (sectors.current() == null) {
+                        finish();
+                        return;
+                    }
+                    enteredSector();
+                    reportSector();
+                }
+            }
+            case Rescan -> {
+                for (int x = sector.minCX(); x <= sector.maxCX(); x++) {
+                    for (int z = sector.minCZ(); z <= sector.maxCZ(); z++) explored.remove(ChunkPos.toLong(x, z));
+                }
+                exploredGrid = null;
+                sectors.prioritise(index);
+                info("Sector at (highlight)%s(default) is rescanned %s.", where, current ? "now" : "next");
+            }
+        }
+        sectorWork = null;
+        sectorGapsNanos = 0;
+        // The current route ends at the old next sector's side, or belongs to a sector left behind
+        // (planned again on resuming when paused)
+        if (phase == Phase.SWEEP || phase == Phase.SETTLE || phase == Phase.CLEANUP) {
+            if (scan != null && phase == Phase.SETTLE) scan.cancel();
+            if (phase == Phase.SETTLE) scan = null;
+            if (pendingCleanup != null) pendingCleanup.cancel(false);
+            pendingCleanup = null;
+            endStrip(false);
+            phase = Phase.SWEEP;
+            phaseTicks = 0;
+            if (!paused) planSweep();
+        }
+        saveSession();
+    }
+
+    /** "Skipped sectors: X a..b, Z c..d (n blank), ..." for the end of a run. */
+    private String skippedSectorsText() {
+        List<String> listed = new ArrayList<>();
+        for (int i = 0; i < sectors.total(); i++) {
+            if (sectors.state(i) != SectorTraversal.State.SKIPPED) continue;
+            if (listed.size() == 8) {
+                listed.add("and %d more".formatted(sectors.skippedCount() - 8));
+                break;
+            }
+            Area sector = sectors.sector(i);
+            listed.add("X %d..%d, Z %d..%d (%d blank)".formatted(sector.minCX() * 16, sector.maxCX() * 16 + 15,
+                sector.minCZ() * 16, sector.maxCZ() * 16 + 15, sectors.missing(i, this::confirmedChunk)));
+        }
+        return "Skipped sectors: " + String.join("; ", listed) + ".";
     }
 
     /** The ground flown over this run to colour on the World Map while it shows the given dimension, or null. */
@@ -1393,6 +1577,13 @@ public class AreaExplorer extends Module {
         } else {
             lastX = mc.player.getX();
             lastZ = mc.player.getZ();
+            if (sectorBlocked) {
+                sectorBlocked = false;
+                cleanupPass = 0;
+                withheld = new WithheldChunks(area);
+                flownOver = new DeferredChunks(area);
+                phase = Phase.SWEEP;
+            }
             // The chunks around came while paused, maybe long ago: they're in reach all the same
             seedFreshChunks();
             loadedSamples.clear();
@@ -1421,6 +1612,25 @@ public class AreaExplorer extends Module {
         data.addProperty("paused", paused);
         data.addProperty("reconnecting", reconnecting);
         data.addProperty("pattern", pattern.get().name());
+        data.addProperty("mode", sectors != null ? "Sectors" : mode.get().name());
+        if (sectors != null && sectors.current() != null) {
+            Area sector = sectors.current();
+            data.addProperty("pattern", "Strips");
+            data.addProperty("sector", sectors.visited() + 1);
+            data.addProperty("sectorCount", sectors.total());
+            data.addProperty("sectorMinCX", sector.minCX());
+            data.addProperty("sectorMinCZ", sector.minCZ());
+            data.addProperty("sectorMaxCX", sector.maxCX());
+            data.addProperty("sectorMaxCZ", sector.maxCZ());
+            data.addProperty("sectorTransit", sectors.transit());
+            Area next = sectors.plannedNext();
+            if (next != null) {
+                data.addProperty("nextSectorMinCX", next.minCX());
+                data.addProperty("nextSectorMinCZ", next.minCZ());
+                data.addProperty("nextSectorMaxCX", next.maxCX());
+                data.addProperty("nextSectorMaxCZ", next.maxCZ());
+            }
+        }
         data.addProperty("rescan", rescan);
         data.addProperty("reach", reach);
         data.addProperty("radius", radius);
@@ -1745,14 +1955,18 @@ public class AreaExplorer extends Module {
         }
         if (area == null) return null;
         String info = infoText();
+        if (sectors != null && sectors.current() != null) info = "%s %d/%d%s ".formatted(
+            sectors.transit() ? "Transit" : "Sector", Math.min(sectors.visited() + 1, sectors.total()), sectors.total(),
+            sectors.deferredCount() > 0 ? " (%d deferred)".formatted(sectors.deferredCount()) : "") + info;
         return rescan ? "Rescan " + info : info;
     }
 
     private String infoText() {
         if (paused) return "Paused %d%%".formatted(percent());
         if (phase == Phase.SCAN) return "Reading map";
-        if (phase == Phase.SETTLE) return "%d%% checking".formatted(percent());
         int eta = etaSeconds();
+        if (phase == Phase.SETTLE) return "%d%% checking%s".formatted(percent(),
+            sectors != null && eta >= 0 ? " ~" + formatDuration(eta) : "");
         return eta < 0 ? "%d%%".formatted(percent()) : "%d%% ~%s".formatted(percent(), formatDuration(eta));
     }
 
@@ -1763,7 +1977,176 @@ public class AreaExplorer extends Module {
 
     /** A rescan always flies strips: the loops follow the edge of blank map, and there's none. */
     private boolean contour() {
-        return pattern.get() == Pattern.Contour && !rescan;
+        return sectors == null && mode.get() != Mode.Sectors && pattern.get() == Pattern.Contour && !rescan;
+    }
+
+    /** Coverage remains global; only route planning and cleanup are confined to the active sector. */
+    private Area planningArea() {
+        return sectors != null && sectors.current() != null ? sectors.current() : area;
+    }
+
+    /** Settings can change while an existing run is active; never keep its old global route. */
+    private boolean syncAreaMode() {
+        if (area == null || phase == Phase.IDLE || phase == Phase.SPIRAL || mode.get() == Mode.Spiral) return false;
+        boolean useSectors = mode.get() == Mode.Sectors;
+        if (useSectors == (sectors != null)) return false;
+
+        endStrip(false);
+        planGeneration++;
+        if (pendingSweep != null) pendingSweep.cancel(false);
+        pendingSweep = null;
+        if (pendingCleanup != null) pendingCleanup.cancel(false);
+        pendingCleanup = null;
+        cleanupPlan = List.of();
+        cleanupIndex = 0;
+        cleanupTailBlocks = 0;
+        cleanupPass = 0;
+        sectorBlocked = false;
+        follower.clear();
+        sweepHead = null;
+        shownEta.reset();
+        sectors = useSectors ? newSectors() : null;
+        if (useSectors) {
+            startSectorSwath();
+            enteredSector();
+        } else if (sectorSwath.auto()) reach = sectorSwath.ceiling() + 1;
+        report("Switched the current run to (highlight)%s(default); keeping %d confirmed chunks and rebuilding the route.",
+            useSectors ? "Sectors" : "Area", explored.size());
+
+        // Initial reads cover the whole selection and may continue. A settle read belongs to
+        // the old planning area, so discard it before constructing the new sweep.
+        if (phase != Phase.SCAN) {
+            if (phase == Phase.SETTLE && scan != null) {
+                scan.cancel();
+                scan = null;
+            }
+            phase = Phase.SWEEP;
+            phaseTicks = 0;
+            if (sectors != null) reportSector();
+            if (!paused) planSweep();
+        }
+        saveSession();
+        return true;
+    }
+
+    private boolean confirmedChunk(int x, int z) {
+        return explored.contains(ChunkPos.toLong(x, z));
+    }
+
+    private boolean prepareSector() {
+        if (sectors == null) return true;
+        int before = sectors.currentIndex();
+        while (sectors.advance(this::confirmedChunk, playerChunkX(), playerChunkZ())) {
+            sectorFinished();
+            cleanupPass = 0;
+        }
+        if (sectors.current() == null) {
+            finish();
+            return false;
+        }
+        if (before != sectors.currentIndex()) {
+            enteredSector();
+            reportSector();
+        }
+        return true;
+    }
+
+    /** New runs use the world-aligned grid: the same sectors whatever rectangle is selected. */
+    private SectorTraversal newSectors() {
+        return new SectorTraversal(area, sectorSize.get(), true, playerChunkX(), playerChunkZ());
+    }
+
+    /** Called with {@link #reach} holding the swath expected from the view distance or learned before. */
+    private void startSectorSwath() {
+        if (restoredSwath != null) sectorSwath.restore(restoredSwath[0], restoredSwath[1], sectorReachSetting.get());
+        else sectorSwath.start(reach, sectorReachSetting.get());
+        restoredSwath = null;
+        applySectorSwath();
+        int fitted = SectorPlanner.fittedSize(sectors.size(), reach);
+        log("Sectors: swath %d chunks to each side (%s), strips %d chunks apart%s", reach,
+            sectorSwath.auto() ? "auto, at most " + sectorSwath.ceiling() : "fixed", SectorPlanner.spacing(reach),
+            fitted == sectors.size() ? "" : "; sector-size %d would fit whole strips without overlap".formatted(fitted));
+    }
+
+    private void applySectorSwath() {
+        reach = sectorSwath.current();
+        pendingReach.clear();
+        if (sectors != null) sectors.setReach(reach);
+    }
+
+    /** The sector just left was finished: learn from it for the swath and the estimate. */
+    private void sectorFinished() {
+        if (sectorWorked && cleanupPass == 0 && sectorSwath.swept(false)) {
+            applySectorSwath();
+            log("Sectors: %d sectors in a row without gaps, swath widened to %d chunks", SectorReach.CLEAN_TO_WIDEN, reach);
+        }
+        if (sectorTimed >= 0) sectorEta.finished(sectorTicks / 20.0, sectorStartMissing);
+        sectorTimed = -1;
+    }
+
+    /** A new current sector: start timing it, and give a deferred one a fresh unavailable-chunk budget. */
+    private void enteredSector() {
+        sectorWorked = false;
+        sectorWork = null;
+        sectorGapsNanos = 0;
+        if (sectors == null || sectors.current() == null) return;
+        sectorTimed = sectors.currentIndex();
+        sectorTicks = 0;
+        sectorStartMissing = sectors.missing(this::confirmedChunk);
+        if (sectors.state(sectors.currentIndex()) == SectorTraversal.State.DEFERRED) {
+            withheld = new WithheldChunks(area);
+            flownOver = new DeferredChunks(area);
+        }
+    }
+
+    private void reportSector() {
+        Area sector = sectors.current();
+        boolean retry = sectors.state(sectors.currentIndex()) == SectorTraversal.State.DEFERRED;
+        report("%s (highlight)%d/%d(default): %dx%d chunks at X %d..%d, Z %d..%d; %d unconfirmed.",
+            sectors.transit() ? "Mapped transit sector" : retry ? "Retrying deferred sector" : "Sector",
+            Math.min(sectors.visited() + 1, sectors.total()), sectors.total(), sector.width(), sector.depth(),
+            sector.minCX() * 16, sector.maxCX() * 16 + 15, sector.minCZ() * 16, sector.maxCZ() * 16 + 15, sectors.missing(this::confirmedChunk));
+    }
+
+    /**
+     * The sector is still blank after its cleanup passes: carry on elsewhere and come back to it
+     * once, after every other sector; a second failure skips it. Pause mode waits for the bind instead.
+     */
+    private void deferSector() {
+        int index = sectors.currentIndex();
+        Area sector = sectors.current();
+        long left = sectors.missing(this::confirmedChunk);
+        if (pendingCleanup != null) pendingCleanup.cancel(false);
+        pendingCleanup = null;
+        if (scan != null) scan.cancel();
+        scan = null;
+        endStrip(false);
+        boolean more = sectors.defer(this::confirmedChunk, playerChunkX(), playerChunkZ());
+        boolean skipped = sectors.state(index) == SectorTraversal.State.SKIPPED;
+        warning("Sector at X %d..%d, Z %d..%d %s: %d chunks never confirmed.",
+            sector.minCX() * 16, sector.maxCX() * 16 + 15, sector.minCZ() * 16, sector.maxCZ() * 16 + 15,
+            skipped ? "skipped after its retry" : "deferred - retried after every other sector", left);
+        sectorTimed = -1;
+        cleanupPass = 0;
+        if (!more) {
+            finish();
+            return;
+        }
+        enteredSector();
+        reportSector();
+        phase = Phase.SWEEP;
+        phaseTicks = 0;
+        planSweep();
+        saveSession();
+    }
+
+    /** Unconfirmed chunks of every sector still to work, re-counted every few seconds for the estimate. */
+    private long[] sectorWork() {
+        if (sectorWork == null || activeTicks - sectorWorkTick >= 100 || activeTicks < sectorWorkTick) {
+            sectorWork = sectors.remainingWork(this::confirmedChunk);
+            sectorWorkTick = activeTicks;
+        }
+        return sectorWork;
     }
 
     private int percent() {
@@ -1777,8 +2160,12 @@ public class AreaExplorer extends Module {
             return;
         }
 
+        if (mode.get() == Mode.Sectors) {
+            if (sectors == null) sectors = newSectors();
+        } else sectors = null;
         resetFlightState();
         cleanupPass = 0;
+        sectorBlocked = false;
         onStrip = false;
         explored.clear();
         exploredGrid = null;
@@ -1821,8 +2208,8 @@ public class AreaExplorer extends Module {
             area.minCX() * 16, area.maxCX() * 16 + 15, area.minCZ() * 16, area.maxCZ() * 16 + 15));
 
         if (readsMap() && useXaeroMap.get()) {
-            scan = newScan();
             phase = Phase.SCAN;
+            scan = newScan();
             phaseTicks = 0;
             log("Reading %d World Map regions", scan.pendingRegions());
         } else {
@@ -1853,6 +2240,10 @@ public class AreaExplorer extends Module {
         loadedReachStability.reset();
         coverageEta.reset();
         shownEta.reset();
+        sectorEta.reset();
+        sectorTimed = -1;
+        sectorWorked = false;
+        sectorWork = null;
         if (pendingCleanup != null) pendingCleanup.cancel(false);
         pendingCleanup = null;
         cleanupPlan = List.of();
@@ -1870,6 +2261,7 @@ public class AreaExplorer extends Module {
             log("Using swath width %d learned in flight instead of %d from the view distance", learned, reach);
             reach = learned;
         }
+        if (sectors != null) startSectorSwath();
 
         if (useElytraKeeper.get()) {
             ElytraKeeper keeper = Modules.get().get(ElytraKeeper.class);
@@ -1896,7 +2288,8 @@ public class AreaExplorer extends Module {
     }
 
     private XaeroMappedChunkScan newScan() {
-        return new XaeroMappedChunkScan(area.minCX(), area.minCZ(), area.maxCX(), area.maxCZ(), true);
+        Area readArea = phase == Phase.SETTLE ? planningArea() : area;
+        return new XaeroMappedChunkScan(readArea.minCX(), readArea.minCZ(), readArea.maxCX(), readArea.maxCZ(), true);
     }
 
     /** Counts the chunk as explored, in the grid the planners use too. */
@@ -1953,6 +2346,11 @@ public class AreaExplorer extends Module {
 
     private void beginSweep() {
         phase = Phase.SWEEP;
+        if (sectors != null) {
+            if (!prepareSector()) return;
+            if (sectorTimed < 0) enteredSector();
+            reportSector();
+        }
         if (rescan) {
             report("Rescanning (highlight)%dx%d(default) chunks in strips, view distance (highlight)%d(default), strip spacing (highlight)%d(default): items, signs and markers are looked for again and the map is redrawn.",
                 area.width(), area.depth(), radius, spacing());
@@ -1967,6 +2365,7 @@ public class AreaExplorer extends Module {
 
     /** Plans the sweep over blank ground, deferring chunks actually loaded along the flight path. */
     private void planSweep() {
+        if (!prepareSector()) return;
         if (contour()) {
             planLoop();
             return;
@@ -1977,7 +2376,13 @@ public class AreaExplorer extends Module {
         long started = System.nanoTime();
         ChunkGrid done = planGrid(true);
         long gridDone = System.nanoTime();
-        List<Segment> plan = CoveragePlanner.sweep(area, reach, overlap.get(), done, playerChunkX(), playerChunkZ());
+        Area nextSector = sectors != null ? sectors.next(this::confirmedChunk, playerChunkX(), playerChunkZ()) : null;
+        sectorExitOnly = sectors != null && sectors.missing(this::confirmedChunk) == 0;
+        List<Segment> plan = sectorExitOnly && nextSector != null
+            ? List.of(SectorPlanner.exitPoint(planningArea(), reach, nextSector, playerChunkX(), playerChunkZ()))
+            : sectors != null ? SectorPlanner.sweep(planningArea(), reach, done, playerChunkX(), playerChunkZ(), nextSector)
+            : CoveragePlanner.sweep(area, reach, overlap.get(), done, playerChunkX(), playerChunkZ());
+        if (sectors != null && !sectorExitOnly && !plan.isEmpty()) sectorWorked = true;
         if (plan.isEmpty()) {
             startSettle();
             return;
@@ -1996,6 +2401,11 @@ public class AreaExplorer extends Module {
      * strip. The old route is followed meanwhile: the new one is in a tick or two later.
      */
     private void planSweepInBackground() {
+        if (sectors != null) {
+            planSweep();
+            return;
+        }
+        if (!prepareSector()) return;
         if (contour()) {
             planLoop();
             return;
@@ -2004,7 +2414,7 @@ public class AreaExplorer extends Module {
         long started = System.nanoTime();
         ChunkGrid done = planGrid(true).copy();
         int generation = ++planGeneration;
-        Area planArea = area;
+        Area planArea = planningArea();
         int planReach = reach, planOverlap = overlap.get();
         double fromX = playerChunkX(), fromZ = playerChunkZ();
         long prepareNanos = System.nanoTime() - started;
@@ -2085,10 +2495,16 @@ public class AreaExplorer extends Module {
             tickLoop();
             return;
         }
+        if (advanceConfirmedSector()) return;
+        if (sectors != null && !sectorExitOnly && sectors.missing(this::confirmedChunk) == 0) {
+            endStrip(false);
+            planSweep();
+            return;
+        }
         markFlownOver();
         if (awaitPlannedSweep() || phase != Phase.SWEEP) return;
 
-        if (rescan && sweepHead != null && activeTicks % MAP_CHECK_INTERVAL_TICKS == 0
+        if (sectors == null && rescan && sweepHead != null && activeTicks % MAP_CHECK_INTERVAL_TICKS == 0
             && !planGrid(false).hasOpenRect(Math.min(sweepHead.x1(), sweepHead.x2()) - reach,
                 Math.min(sweepHead.z1(), sweepHead.z2()) - reach,
                 Math.max(sweepHead.x1(), sweepHead.x2()) + reach,
@@ -2113,8 +2529,10 @@ public class AreaExplorer extends Module {
                 // Re-plan after every strip. The just-flown swath is now covered, and starting
                 // again from this endpoint keeps the explorer working through nearby blank ground
                 // instead of following a stale global route and returning to this pocket later.
-                planSweepInBackground();
-                return;
+                if (sectors == null) {
+                    planSweepInBackground();
+                    return;
+                }
             }
             if (follower.isDone()) {
                 startSettle();
@@ -2123,6 +2541,7 @@ public class AreaExplorer extends Module {
             if (follower.current().sweep()) beginStrip();
         }
 
+        if (sectors != null) return; // fixed two-chunk footprint and a stable route for this sector
         if (onStrip && readsMap() && ++measureTicks >= MEASURE_INTERVAL_TICKS) {
             measureTicks = 0;
             measureStrip();
@@ -2394,6 +2813,10 @@ public class AreaExplorer extends Module {
 
     /** Takes on the width measured in the middle of the strip just ended, before planning the next. */
     private void takePendingReach() {
+        if (sectors != null) {
+            applySectorSwath();
+            return;
+        }
         int measured = pendingReach.take(reach);
         if (measured == reach) return;
         diagnostic("reach-change", "old=" + reach + ", new=" + measured + ", measured on the strip before");
@@ -2495,6 +2918,7 @@ public class AreaExplorer extends Module {
      * drawn edge: either way the rest of the sweep is re-planned right away.
      */
     private void applyReach(int measured) {
+        if (sectors != null) return;
         if (measured < 1) return;
         learnedReach.put(reachKey(), measured);
         if (measured == reach) return;
@@ -2528,6 +2952,12 @@ public class AreaExplorer extends Module {
      * while the map catches up, then read it again.
      */
     private void startSettle() {
+        if (advanceConfirmedSector()) return;
+        if (sectors != null && sectors.missing(this::confirmedChunk) == 0) {
+            phase = Phase.SWEEP;
+            planSweep();
+            return;
+        }
         diagnosticSnapshot("before-settle", true);
         diagnostic("settle-start", "sweep or cleanup route exhausted");
         onStrip = false;
@@ -2535,12 +2965,14 @@ public class AreaExplorer extends Module {
         scan = null;
         phase = Phase.SETTLE;
         phaseTicks = 0;
+        sectorEarlyReadDone = false;
 
         ChunkPos p = mc.player.getChunkPos();
-        int bestX = Math.floorDiv(area.minCX() + area.maxCX(), 2), bestZ = Math.floorDiv(area.minCZ() + area.maxCZ(), 2);
+        Area settleArea = planningArea();
+        int bestX = Math.floorDiv(settleArea.minCX() + settleArea.maxCX(), 2), bestZ = Math.floorDiv(settleArea.minCZ() + settleArea.maxCZ(), 2);
         long bestDist = Long.MAX_VALUE;
-        for (int cx = area.minCX(); cx <= area.maxCX(); cx++) {
-            for (int cz = area.minCZ(); cz <= area.maxCZ(); cz++) {
+        for (int cx = settleArea.minCX(); cx <= settleArea.maxCX(); cx++) {
+            for (int cz = settleArea.minCZ(); cz <= settleArea.maxCZ(); cz++) {
                 if (explored.contains(ChunkPos.toLong(cx, cz)) || isWithheld(cx, cz)) continue;
                 long d = (long) (cx - p.x) * (cx - p.x) + (long) (cz - p.z) * (cz - p.z);
                 if (d < bestDist) {
@@ -2550,11 +2982,20 @@ public class AreaExplorer extends Module {
                 }
             }
         }
+        if (sectors != null) {
+            Area inner = SectorPlanner.flightArea(settleArea, reach);
+            bestX = MathHelper.clamp(bestX, inner.minCX(), inner.maxCX());
+            bestZ = MathHelper.clamp(bestZ, inner.minCZ(), inner.maxCZ());
+        }
         follower.setRoute(List.of(new Point(blockCentre(bestX), blockCentre(bestZ), false)), mc.player.getX(), mc.player.getZ());
         diagnostic("settle-target", "nearest unconfirmed chunk selected");
     }
 
     private void tickSettle() {
+        if (sectors != null && sectors.missing(this::confirmedChunk) == 0) {
+            startSettle();
+            return;
+        }
         if (pendingCleanup != null) {
             applyPlannedCleanup();
             return;
@@ -2564,7 +3005,9 @@ public class AreaExplorer extends Module {
         holdAtSettlePoint(arrive);
         phaseTicks++;
         if (scan == null) {
-            if (phaseTicks < (readsMap() ? SETTLE_TICKS : SETTLE_TICKS_NO_MAP)) return;
+            int wait = readsMap() ? SETTLE_TICKS : SETTLE_TICKS_NO_MAP;
+            if (sectors != null && !sectorEarlyReadDone) wait = SETTLE_TICKS_NO_MAP;
+            if (phaseTicks < wait) return;
             if (!readsMap()) {
                 planCleanup();
                 return;
@@ -2578,7 +3021,31 @@ public class AreaExplorer extends Module {
         diagnostic("settle-map-read", done ? "complete" : "timed out; remaining regions=" + scan.pendingRegions());
         scan.cancel();
         scan = null;
+        if (sectors != null) {
+            if (sectors.missing(this::confirmedChunk) == 0) {
+                startSettle();
+                return;
+            }
+            sectorEarlyReadDone = true;
+            // An early read can confirm completion after one second. Real gaps still get
+            // the original settling time and a final fresh read before consuming cleanup.
+            if (phaseTicks < SETTLE_TICKS) return;
+        }
         planCleanup();
+    }
+
+    /** Confirmed coverage can arrive during settling; no fixed wait or cleanup is needed then. */
+    private boolean advanceConfirmedSector() {
+        if (sectors == null || !sectors.canAdvance(this::confirmedChunk, playerChunkX(), playerChunkZ())) return false;
+        if (scan != null) scan.cancel();
+        scan = null;
+        if (pendingCleanup != null) pendingCleanup.cancel(false);
+        pendingCleanup = null;
+        if (!prepareSector()) return true;
+        phase = Phase.SWEEP;
+        phaseTicks = 0;
+        planSweep();
+        return true;
     }
 
     /**
@@ -2591,7 +3058,9 @@ public class AreaExplorer extends Module {
         Point hold = follower.previous();
         if (hold == null) {
             // Nothing flown to yet (a restored run): hold where we are, kept inside the area
-            hold = new Point(blockCentre(clampX(chunk(mc.player.getX()))), blockCentre(clampZ(chunk(mc.player.getZ()))), false);
+            Area holdArea = sectors != null ? SectorPlanner.flightArea(planningArea(), reach) : area;
+            hold = new Point(blockCentre(MathHelper.clamp(chunk(mc.player.getX()), holdArea.minCX(), holdArea.maxCX())),
+                blockCentre(MathHelper.clamp(chunk(mc.player.getZ()), holdArea.minCZ(), holdArea.maxCZ())), false);
         } else if (Math.hypot(hold.x() - mc.player.getX(), hold.z() - mc.player.getZ()) <= arrive) {
             return;
         }
@@ -2600,25 +3069,64 @@ public class AreaExplorer extends Module {
 
     private void planCleanup() {
         diagnosticSnapshot("before-cleanup", true);
+        if (sectors != null) {
+            if (sectors.missing(this::confirmedChunk) == 0) {
+                startSettle();
+                return;
+            }
+            int before = sectors.currentIndex();
+            if (!prepareSector()) return;
+            if (before != sectors.currentIndex()) {
+                phase = Phase.SWEEP;
+                planSweep();
+                return;
+            }
+            Area sector = sectors.current();
+            if (cleanupPass >= cleanupPasses.get()
+                || !planGrid(false).hasOpenRect(sector.minCX(), sector.minCZ(), sector.maxCX(), sector.maxCZ())) {
+                if (unfinishedSector.get() == UnfinishedSector.Defer) {
+                    deferSector();
+                    return;
+                }
+                sectorBlocked = true;
+                warning("Sector %d/%d remains unfinished: %d chunks unconfirmed. Paused; press the bind to retry this sector.",
+                    sectors.visited() + 1, sectors.total(), sectors.missing(this::confirmedChunk));
+                setPaused(true);
+                return;
+            }
+            // The sector's own route left gaps: the swath was wider than the server really loads
+            if (cleanupPass == 0 && sectorWorked) {
+                sectorWorked = false;
+                int was = reach;
+                if (sectorSwath.swept(true)) {
+                    applySectorSwath();
+                    log("Sectors: the route left %d chunks blank with a swath of %d, falling back to %d",
+                        sectors.missing(this::confirmedChunk), was, reach);
+                }
+            }
+        }
         long missing = area.total() - explored.size();
         // The ones the server won't send aren't worth another pass
-        if (missing - (withheld != null ? withheld.size() : 0) <= 0 || cleanupPass >= cleanupPasses.get()) {
+        if (sectors == null && (missing - (withheld != null ? withheld.size() : 0) <= 0 || cleanupPass >= cleanupPasses.get())) {
             finish();
             return;
         }
         cleanupPass++;
 
         // Spots are passed within the arrive distance, so each one covers that much less
-        cleanupRadius = CoveragePlanner.cleanupRadius(reach, cleanupArriveBlocks());
+        cleanupRadius = sectors != null ? reach : CoveragePlanner.cleanupRadius(reach, cleanupArriveBlocks());
         long started = System.nanoTime();
         ChunkGrid done = planGrid(false).copy();
         int generation = ++planGeneration;
-        Area planArea = area;
+        Area planArea = planningArea();
         int planRadius = cleanupRadius;
+        boolean sectorCleanup = sectors != null;
+        Area nextSector = sectorCleanup ? sectors.next(this::confirmedChunk, playerChunkX(), playerChunkZ()) : null;
         double fromX = playerChunkX(), fromZ = playerChunkZ();
         pendingCleanup = CompletableFuture.supplyAsync(() -> {
             long planStarted = System.nanoTime();
-            List<Segment> spots = CoveragePlanner.cleanup(planArea, planRadius, done, fromX, fromZ);
+            List<Segment> spots = sectorCleanup ? SectorPlanner.cleanup(planArea, planRadius, done, fromX, fromZ, nextSector)
+                : CoveragePlanner.cleanup(planArea, planRadius, done, fromX, fromZ);
             double tail = 0;
             for (int i = 1; i < spots.size(); i++) tail += Math.hypot(
                 spots.get(i).x1() - spots.get(i - 1).x1(), spots.get(i).z1() - spots.get(i - 1).z1()) * 16;
@@ -2654,7 +3162,7 @@ public class AreaExplorer extends Module {
         phase = Phase.CLEANUP;
         installCleanupBatch();
         notePlan("installing cleanup batch", System.nanoTime() - started);
-        long missing = area.total() - explored.size();
+        long missing = sectors != null ? sectors.missing(this::confirmedChunk) : area.total() - explored.size();
         log("Cleanup pass %d planned: %d spots, radius %d, %.0f blocks, in %d ms in the background",
             cleanupPass, cleanupPlan.size(), cleanupRadius, sweepBlocksLeft(), planned.nanos() / 1_000_000);
         diagnostic("cleanup-plan-ready", "background plan ready; bounded waypoint batches");
@@ -2662,7 +3170,7 @@ public class AreaExplorer extends Module {
         int eta = etaSeconds();
         String text = "%s: (highlight)%d(default) chunks still blank, picking them up at (highlight)%d(default) spots%s.".formatted(
             cleanupPass == 1 ? "Sweep done" : "Cleanup pass " + cleanupPass, missing, cleanupPlan.size(),
-            eta < 0 ? "" : ", about (highlight)%s(default)".formatted(formatDuration(eta)));
+            eta < 0 ? "" : (sectors != null ? ", about (highlight)%s(default) left for the whole selection" : ", about (highlight)%s(default)").formatted(formatDuration(eta)));
         report("%s", text);
         siteEvent("info", "phase", text);
     }
@@ -2680,6 +3188,10 @@ public class AreaExplorer extends Module {
     }
 
     private void tickCleanup() {
+        if (sectors != null && sectors.missing(this::confirmedChunk) == 0) {
+            startSettle();
+            return;
+        }
         updateFollower(cleanupArriveBlocks());
         // Check before steering on every tick: at 64 blocks/s a one-second delay can
         // send us several chunks back towards a spot that the map has already filled.
@@ -2703,8 +3215,9 @@ public class AreaExplorer extends Module {
 
     private boolean spotHasOpen(Point spot) {
         int x = chunk(spot.x()), z = chunk(spot.z());
-        for (int cx = Math.max(area.minCX(), x - cleanupRadius); cx <= Math.min(area.maxCX(), x + cleanupRadius); cx++) {
-            for (int cz = Math.max(area.minCZ(), z - cleanupRadius); cz <= Math.min(area.maxCZ(), z + cleanupRadius); cz++) {
+        Area spotArea = planningArea();
+        for (int cx = Math.max(spotArea.minCX(), x - cleanupRadius); cx <= Math.min(spotArea.maxCX(), x + cleanupRadius); cx++) {
+            for (int cz = Math.max(spotArea.minCZ(), z - cleanupRadius); cz <= Math.min(spotArea.maxCZ(), z + cleanupRadius); cz++) {
                 if (!explored.contains(ChunkPos.toLong(cx, cz)) && !isWithheld(cx, cz)) return true;
             }
         }
@@ -2722,12 +3235,15 @@ public class AreaExplorer extends Module {
         String took = formatDuration(activeTicks / 20);
         String text = missing <= 0 ? "Area fully %s in (highlight)%s(default).".formatted(rescan ? "rescanned" : "explored", took)
             : "Done in (highlight)%s(default), (highlight)%d(default) chunks could not be loaded.".formatted(took, missing);
+        if (sectors != null && sectors.skippedCount() > 0) text += " " + skippedSectorsText();
         report("%s", text);
         siteEvent("success", "finish", text + " Found: " + foundSummary() + ".");
         stopLogged = true;
         saveRunTerritory();
         territoryId = null;
         area = null;
+        sectors = null;
+        sectorBlocked = false;
         rescan = false;
         turnOff();
         forgetSession();
@@ -2811,6 +3327,7 @@ public class AreaExplorer extends Module {
         sweepHead = phase == Phase.SWEEP && !plan.isEmpty() ? plan.getFirst() : null;
         List<Point> points = new ArrayList<>();
         for (Segment s : plan) {
+            if (sectors != null) s = SectorPlanner.project(planningArea(), reach, s);
             points.add(new Point(blockCentre(s.x1()), blockCentre(s.z1()), false));
             if (!s.isSpot()) points.add(new Point(blockCentre(s.x2()), blockCentre(s.z2()), true));
         }
@@ -3990,6 +4507,7 @@ public class AreaExplorer extends Module {
             box.addProperty("minZ", area.minCZ() * 16);
             box.addProperty("maxX", area.maxCX() * 16 + 15);
             box.addProperty("maxZ", area.maxCZ() * 16 + 15);
+            if (sectors != null) box.add("sectors", siteSectors());
             status.add("area", box);
             if (coverage != null && showFlown.get()) addCoverage(status);
         }
@@ -4001,6 +4519,39 @@ public class AreaExplorer extends Module {
         found.addProperty("items", savedItems.size());
         status.add("runFinds", found);
         return status;
+    }
+
+    /**
+     * The sector grid for the site's run card: one letter per cell, row by row from the north-west:
+     * a current, n next, c finished, d deferred, s skipped, o still to do. Large grids send the counts only.
+     */
+    private JsonObject siteSectors() {
+        JsonObject grid = new JsonObject();
+        grid.addProperty("size", sectors.size());
+        grid.addProperty("cols", sectors.columns());
+        grid.addProperty("rows", sectors.rows());
+        grid.addProperty("originX", sectors.originX() * 16);
+        grid.addProperty("originZ", sectors.originZ() * 16);
+        grid.addProperty("done", sectors.visited());
+        grid.addProperty("count", sectors.total());
+        grid.addProperty("deferred", sectors.deferredCount());
+        grid.addProperty("skipped", sectors.skippedCount());
+        grid.addProperty("reach", reach);
+        if (sectors.total() > 4096) return grid;
+        StringBuilder cells = new StringBuilder(sectors.total());
+        for (int row = 0; row < sectors.rows(); row++) {
+            for (int column = 0; column < sectors.columns(); column++) {
+                int index = sectors.indexAt(column, row);
+                cells.append(index == sectors.currentIndex() ? 'a' : index == sectors.plannedNextIndex() ? 'n' : switch (sectors.state(index)) {
+                    case COMPLETED -> 'c';
+                    case DEFERRED -> 'd';
+                    case SKIPPED -> 's';
+                    case OPEN -> 'o';
+                });
+            }
+        }
+        grid.addProperty("cells", cells.toString());
+        return grid;
     }
 
     /**
@@ -4314,11 +4865,18 @@ public class AreaExplorer extends Module {
     }
 
     private void tickModule() {
+        // A sector run is one continuous job: short sweeps must not restart the 30 s
+        // throughput window every time they settle or clean up. Local reads confirm
+        // this run's work; the initial bulk map import remains excluded.
+        int etaStage = sectors != null ? Phase.SWEEP.ordinal() : phase.ordinal();
+        boolean sectorWork = sectors != null && (phase == Phase.SWEEP || phase == Phase.SETTLE || phase == Phase.CLEANUP)
+            && (scan == null || phase == Phase.SETTLE);
         coverageEta.observe(System.nanoTime(), explored.size(), !paused && !reconnecting
-            && mc.player != null && mc.world != null && scan == null
-            && (phase == Phase.SWEEP || phase == Phase.CLEANUP), phase.ordinal());
-        boolean flying = !paused && !reconnecting && mc.player != null && mc.world != null && scan == null;
-        shownEta.observe(System.nanoTime(), flying ? etaSeconds(estimateSpeed()) : -1, flying, phase.ordinal());
+            && mc.player != null && mc.world != null
+            && (sectorWork || scan == null && (phase == Phase.SWEEP || phase == Phase.CLEANUP)), phase.ordinal(), sectors != null);
+        boolean flying = !paused && !reconnecting && mc.player != null && mc.world != null && (scan == null || sectorWork);
+        if (sectors != null && flying && sectorTimed >= 0) sectorTicks++;
+        shownEta.observe(System.nanoTime(), flying ? etaSeconds(estimateSpeed()) : -1, flying, etaStage);
         if (phase == Phase.IDLE) return;
         if (reconnecting) {
             tickReconnect();
@@ -4326,6 +4884,7 @@ public class AreaExplorer extends Module {
         }
         if (mc.player == null || mc.world == null) return;
 
+        if (syncAreaMode()) return;
         tickStats();
         tickEstimate();
         checkFlying();
@@ -4376,7 +4935,7 @@ public class AreaExplorer extends Module {
             case CLEANUP -> tickCleanup();
             default -> {}
         }
-        if (phase != Phase.IDLE) steer();
+        if (phase != Phase.IDLE && !paused) steer();
     }
 
     /** A few seconds in: still standing about is worth a word - moving at flying speed isn't, gliding flag or not. */
@@ -4494,6 +5053,26 @@ public class AreaExplorer extends Module {
         if (holdForward.get()) mc.options.forwardKey.setPressed(true);
     }
 
+    /** Applied after flight modules choose movement; turns and settling cannot cross a sector edge. */
+    @EventHandler(priority = -10000)
+    private void onSectorMove(PlayerMoveEvent event) {
+        if (sectors == null || sectors.current() == null || paused || reconnecting || mc.player == null
+            || phase == Phase.IDLE || phase == Phase.SCAN || phase == Phase.SPIRAL) return;
+        Area sector = sectors.current();
+        // Leave room for the player's bounding box, not just its centre.
+        double margin = mc.player.getWidth() / 2.0 + 0.05;
+        double x = SectorPlanner.boundMovement(mc.player.getX(), event.movement.x,
+            sector.minCX() * 16.0 + margin, (sector.maxCX() + 1) * 16.0 - margin);
+        double z = SectorPlanner.boundMovement(mc.player.getZ(), event.movement.z,
+            sector.minCZ() * 16.0 + margin, (sector.maxCZ() + 1) * 16.0 - margin);
+        if (x == event.movement.x && z == event.movement.z) return;
+        if (diagnosticLogging.get() && activeTicks % 20 == 0)
+            diagnostic("sector-boundary-clamp", "limited horizontal movement at the current sector boundary");
+        ((IVec3d) event.movement).meteor$set(x, event.movement.y, z);
+        var velocity = mc.player.getVelocity();
+        mc.player.setVelocity(x, velocity.y, z);
+    }
+
     /** Largest square ring of loaded chunks around the player, i.e. the effective server view distance. */
     private int measureRadius() {
         ChunkPos p = mc.player.getChunkPos();
@@ -4509,11 +5088,13 @@ public class AreaExplorer extends Module {
     }
 
     private int spacing() {
+        if (sectors != null) return SectorPlanner.spacing(reach);
         return CoveragePlanner.spacing(reach, overlap.get());
     }
 
     /** Distance at which a point counts as reached: faster flight turns wider, so it turns earlier. */
     private double arriveBlocks() {
+        if (sectors != null) return SectorPlanner.ARRIVAL_BLOCKS;
         return Math.max(arriveDistance.get(), speed * TURN_LEAD_SECONDS);
     }
 
@@ -4547,6 +5128,8 @@ public class AreaExplorer extends Module {
 
     private void startSpiral() {
         rescan = false;
+        sectors = null;
+        sectorBlocked = false;
         resetFlightState();
         phase = Phase.SPIRAL;
         spiralCX = legCX = mc.player.getChunkPos().x;
@@ -4674,6 +5257,12 @@ public class AreaExplorer extends Module {
 
     private int etaSeconds(double speed, double x, double z) {
         if (phase == Phase.SPIRAL) return spiralEtaSeconds(speed);
+        if (sectors != null && area != null && (phase == Phase.SWEEP || phase == Phase.SETTLE || phase == Phase.CLEANUP)) {
+            // Fitted on whole sectors once a few are done; the rolling coverage rate until then
+            double fitted = sectorEta.secondsLeft(sectorWork());
+            if (fitted >= 0) return (int) Math.min(Integer.MAX_VALUE, Math.round(fitted));
+            return coverageEta.secondsLeft(Math.max(0, area.total() - explored.size()));
+        }
         if (area == null || scan != null || (phase != Phase.SWEEP && phase != Phase.CLEANUP)) return -1;
         long missing = Math.max(0, area.total() - explored.size());
         if (missing == 0) return 0;
@@ -4698,6 +5287,11 @@ public class AreaExplorer extends Module {
             if (eta < 0) return "time left shows once you're flying.";
             return "about (highlight)%s(default) left to (highlight)%s(default) out.".formatted(formatDuration(eta), formatBlocks(spiralMaxRadius.get()));
         }
+        if (sectors != null && phase != Phase.SCAN) {
+            int eta = etaSeconds(speed);
+            return eta < 0 ? "(highlight)%d%%(default) explored - estimating the whole selection after 30 seconds of sector work.".formatted(percent())
+                : "about (highlight)%s(default) left for the whole selection, (highlight)%d%%(default) explored.".formatted(formatDuration(eta), percent());
+        }
         if (phase == Phase.SCAN || scan != null) return "reading the World Map - time left shows once the map read finishes.";
         if (phase == Phase.SETTLE) return "(highlight)%d%%(default) explored, checking the map for gaps - the cleanup time shows next.".formatted(percent());
         int eta = etaSeconds(speed);
@@ -4716,10 +5310,15 @@ public class AreaExplorer extends Module {
         double speed = estimateSpeed();
         int eta = etaSeconds(speed);
         if (eta < 0) {
+            if (sectors != null) {
+                report("Sectors: estimating time for the whole selection after 30 seconds of sector work, including checks and cleanup.");
+                return;
+            }
             report("Sweep route: (highlight)%s(default) - time estimate will show up once you're flying.", formatBlocks((int) blocks));
             return;
         }
-        report("Sweep route: (highlight)%s(default), about (highlight)%s(default) at (highlight)%d(default) blocks/s, plus cleanup.",
+        if (sectors != null) report("Sectors: about (highlight)%s(default) left for the whole selection, including checks and cleanup.", formatDuration(eta));
+        else report("Sweep route: (highlight)%s(default), about (highlight)%s(default) at (highlight)%d(default) blocks/s, plus cleanup.",
             formatBlocks((int) blocks), formatDuration(eta), Math.round(speed));
 
         ElytraKeeper keeper = Modules.get().get(ElytraKeeper.class);
@@ -4818,7 +5417,7 @@ public class AreaExplorer extends Module {
 
         NbtCompound tag = new NbtCompound();
         tag.putString("dimension", dimension.getValue().toString());
-        tag.putString("mode", spiral ? "spiral" : "area");
+        tag.putString("mode", spiral ? "spiral" : sectors != null ? "sectors" : "area");
         if (spiral) {
             NbtCompound s = new NbtCompound();
             s.putInt("centre-x", spiralCX);
@@ -4839,8 +5438,22 @@ public class AreaExplorer extends Module {
             a.putInt("max-z", area.maxCZ());
             tag.put("area", a);
             tag.putBoolean("rescan", rescan);
+            if (sectors != null) {
+                tag.putInt("sector-size", sectors.size());
+                tag.putInt("sector-first", sectors.first());
+                tag.putInt("sector-visited", sectors.visited());
+                tag.putInt("sector-current", sectors.currentIndex());
+                tag.putLongArray("sector-completed", sectors.completed());
+                tag.putBoolean("sector-world-grid", sectors.worldGrid());
+                tag.putLongArray("sector-deferred", sectors.deferred());
+                tag.putLongArray("sector-skipped", sectors.skipped());
+                tag.putBoolean("sector-retrying", sectors.retrying());
+                tag.putInt("sector-priority", sectors.priority());
+                tag.putInt("sector-reach", sectorSwath.current());
+                tag.putInt("sector-reach-ceiling", sectorSwath.ceiling());
+            }
             // With the map, reading it again tells what's explored
-            if (!readsMap()) tag.putLongArray("explored", explored.toLongArray());
+            if (!readsMap() || sectors != null) tag.putLongArray("explored", explored.toLongArray());
             if (coverage != null) tag.putLongArray("coverage", coverage.toLongArray());
             if (territoryId != null) tag.putString("territory-id", territoryId);
             saveRunTerritory();
@@ -4908,9 +5521,26 @@ public class AreaExplorer extends Module {
                 spiralCX << 4, spiralCZ << 4, formatBlocks(spiralExtent() * 16), timeLeftText());
             siteEvent("info", "start", "Carrying on with the spiral around %d, %d, %s out so far".formatted(spiralCX << 4, spiralCZ << 4, formatBlocks(spiralExtent() * 16)));
         } else {
-            if (mode.get() != Mode.Area) mode.set(Mode.Area);
+            Mode savedMode = tag.getString("mode").equals("sectors") ? Mode.Sectors : Mode.Area;
+            if (mode.get() != savedMode) mode.set(savedMode);
             NbtCompound a = tag.getCompound("area");
             area = new Area(a.getInt("min-x"), a.getInt("min-z"), a.getInt("max-x"), a.getInt("max-z"));
+            sectors = savedMode == Mode.Sectors ? new SectorTraversal(area, Math.max(8, tag.getInt("sector-size")),
+                tag.getInt("sector-first"), tag.getInt("sector-visited"), playerChunkX(), playerChunkZ()) : null;
+            if (savedMode == Mode.Sectors && tag.contains("sector-current")) {
+                sectors = new SectorTraversal(area, Math.max(8, tag.getInt("sector-size")), tag.getBoolean("sector-world-grid"),
+                    playerChunkX(), playerChunkZ());
+                sectors.restore(tag.getInt("sector-current"), tag.getLongArray("sector-completed"), tag.getLongArray("sector-deferred"),
+                    tag.getLongArray("sector-skipped"), tag.getBoolean("sector-retrying"),
+                    tag.contains("sector-priority") ? tag.getInt("sector-priority") : -1);
+            }
+            restoredSwath = sectors != null && tag.contains("sector-reach")
+                ? new int[]{tag.getInt("sector-reach-ceiling"), tag.getInt("sector-reach")} : null;
+            if (sectors != null && sectors.reanchorIfDistant(playerChunkX(), playerChunkZ())) {
+                Area local = sectors.current();
+                warning("The saved sector is far from your position. Resuming locally at chunk X %d..%d, Z %d..%d; confirmed coverage is kept.",
+                    local.minCX(), local.maxCX(), local.minCZ(), local.maxCZ());
+            }
             areaDimension = mc.world.getRegistryKey();
             rescan = tag.getBoolean("rescan");
             territoryId = tag.contains("territory-id") ? tag.getString("territory-id") : null;

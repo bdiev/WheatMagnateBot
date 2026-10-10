@@ -706,7 +706,22 @@ async function testLoadingSkeletons() {
   await again;
 }
 
+function testSectorGrid() {
+  const context = vm.createContext({ escapeHtml: String, formatNumber: String });
+  vm.runInContext(source.slice(source.indexOf('const AREA_EXPLORER_SECTOR_CELLS'), source.indexOf('function renderAreaExplorerStatus(')), context);
+  const html = context.renderAreaExplorerSectors({ cols: 3, rows: 2, count: 6, done: 2, deferred: 1, skipped: 1, reach: 4, cells: 'cdaosn' });
+  assert.match(html, /viewBox="0 0 3 2"/, 'one unit per sector');
+  for (const [name, x, y] of [['done', 0, 0], ['deferred', 1, 0], ['current', 2, 0], ['skipped', 1, 1], ['next', 2, 1]]) {
+    assert.match(html, new RegExp(`class="is-${name}" x="${x}" y="${y}"`), `${name} sector drawn in its cell`);
+  }
+  assert.equal((html.match(/class="is-/g) || []).length, 5, 'sectors still to do stay background');
+  assert.match(html, /3 \/ 6 sectors · 1 deferred · 1 skipped · swath 4/);
+  const large = context.renderAreaExplorerSectors({ cols: 100, rows: 100, count: 10000, done: 9, deferred: 0, skipped: 0, reach: 2, cells: null });
+  assert.ok(!large.includes('<svg') && large.includes('10 / 10000 sectors'), 'grids too large for cells show the counts');
+}
+
 (async () => {
+  testSectorGrid();
   await testLoadingSkeletons();
   await testFindsRaceAndScroll();
   await testMapRace();

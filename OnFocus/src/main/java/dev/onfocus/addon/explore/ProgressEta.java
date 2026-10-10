@@ -38,6 +38,11 @@ public final class ProgressEta {
         }
     }
 
+    /** A sector job includes sweep, settling and cleanup in one throughput window. */
+    public void observe(long now, long explored, boolean enabled, int phase, boolean continuous) {
+        observe(now, explored, enabled, continuous ? Integer.MIN_VALUE : phase);
+    }
+
     public double chunksPerSecond() {
         if (samples.size() < 2) return -1;
         Sample first = samples.getFirst(), last = samples.getLast();

@@ -28,7 +28,7 @@ assert.match(appSource, /const supplyPanels = \$\('#obsidianSupplyPanels'\);[\s\
   'Bot Inventory Supplies and Supply Barrel are hidden immediately in All Bots scope');
 assert.match(appSource, /if \(aggregate\) state\.obsidianCoordinateEditorOpen = false;/,
   'switching to All Bots closes the coordinate editor');
-assert.match(appSource, /state\.obsidianStatsScope = scope;[\s\S]*?startObsidianScopeAnimation\('out'\)[\s\S]*?renderObsidian\(await payloadPromise\)/,
+assert.match(appSource, /state\.obsidianStatsScope = scope;[\s\S]*?startObsidianScopeAnimation\('out'\)[\s\S]*?Promise\.all\(\[payloadPromise, exitAnimation\.finished\]\)[\s\S]*?renderObsidian\(payload\)/,
   'farm controls and aggregate-only content swap between the exit and entrance phases');
 assert.match(appSource, /function startObsidianScopeAnimation[\s\S]*?filter: 'blur\(5px\)'[\s\S]*?cubic-bezier\(\.16, 1, \.3, 1\)/,
   'Personal and All Bots content uses a soft staggered exit and entrance animation');

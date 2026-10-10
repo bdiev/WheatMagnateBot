@@ -14,6 +14,7 @@ const {
   normalizeCoverage,
   normalizeEvent,
   normalizeFind,
+  normalizeSectors,
   normalizeStatus,
   publicStatus
 } = require('../area-explorer');
@@ -69,6 +70,17 @@ function testNormalization() {
   assert.equal(normalizeStatus({ yaw: null }).yaw, null);
   assert.equal(normalizeStatus({ yaw: 'invalid' }).yaw, null);
   assert.equal(status.area, null, 'an area needs all four sides');
+
+  const sectorStatus = normalizeStatus({ area: { minX: 0, minZ: 0, maxX: 959, maxZ: 479, sectors: {
+    size: 30, cols: 2, rows: 1, originX: 0, originZ: 0, done: 1, count: 2, deferred: 9, skipped: 0, reach: 4, cells: 'ca'
+  } } });
+  assert.deepEqual(sectorStatus.area.sectors, { size: 30, cols: 2, rows: 1, count: 2, originX: 0, originZ: 0, done: 1, deferred: 2, skipped: 0, reach: 4, cells: 'ca' },
+    'a sector grid rides along in the area, counts kept within the sector count');
+  assert.equal(normalizeSectors({ size: 30, cols: 2, rows: 1, count: 2, cells: 'cx' }).cells, null, 'unknown cell letters drop the cells, not the counts');
+  assert.equal(normalizeSectors({ size: 30, cols: 2, rows: 2, count: 4, cells: 'ca' }).cells, null, 'cells must fill the grid');
+  assert.equal(normalizeSectors({ size: 30, cols: 100, rows: 100, count: 10_000, cells: 'o'.repeat(10_000) }).cells, null, 'large grids keep their counts only');
+  assert.equal(normalizeSectors({ size: 0, cols: 1, rows: 1, count: 1 }), null);
+  assert.equal(normalizeStatus({ area: { minX: 0, minZ: 0, maxX: 1, maxZ: 1, sectors: 'bad' } }).area.sectors, undefined, 'Area runs carry no grid');
 
   assert.equal(bearerToken({ headers: { authorization: 'Bearer aex_0123456789abcdef' } }), 'aex_0123456789abcdef');
   assert.equal(bearerToken({ headers: { authorization: 'Basic abc' } }), '');

@@ -13472,6 +13472,32 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
   transition: width 400ms ease;
 }
 
+.area-explorer-sectors {
+  display: block;
+  width: 100%;
+  max-height: 180px;
+  margin: 10px 0 0;
+}
+
+.area-explorer-sectors rect {
+  fill: var(--panel);
+  stroke: var(--line);
+  stroke-width: 0.06;
+}
+
+.area-explorer-sectors .area-explorer-sectors-bg { stroke: none; }
+.area-explorer-sectors .is-done { fill: color-mix(in srgb, var(--accent) 55%, var(--panel)); }
+.area-explorer-sectors .is-deferred { fill: #f0a030; }
+.area-explorer-sectors .is-skipped { fill: #e0503c; }
+.area-explorer-sectors .is-next { fill: color-mix(in srgb, #4cc8f0 45%, var(--panel)); }
+.area-explorer-sectors .is-current { fill: #ffcc33; }
+
+.area-explorer-sectors-summary {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
 .area-explorer-run dl {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
