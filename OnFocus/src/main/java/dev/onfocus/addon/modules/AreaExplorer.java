@@ -25,6 +25,7 @@ import dev.onfocus.addon.explore.SectorPlanner;
 import dev.onfocus.addon.explore.CoveragePlanner.Area;
 import dev.onfocus.addon.explore.CoveragePlanner.Segment;
 import dev.onfocus.addon.explore.FindsArchive;
+import dev.onfocus.addon.explore.ItemDetails;
 import dev.onfocus.addon.explore.ExplorerDiagnostics;
 import dev.onfocus.addon.explore.MapSync;
 import dev.onfocus.addon.explore.SiteSync;
@@ -47,6 +48,7 @@ import it.unimi.dsi.fastutil.longs.LongSet;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.meteor.KeyEvent;
+import meteordevelopment.meteorclient.events.entity.EntityAddedEvent;
 import meteordevelopment.meteorclient.events.entity.player.BreakBlockEvent;
 import meteordevelopment.meteorclient.events.entity.player.PlaceBlockEvent;
 import meteordevelopment.meteorclient.events.entity.player.PlayerMoveEvent;
@@ -928,7 +930,8 @@ public class AreaExplorer extends Module {
     /** Items found, in the order found; written sorted by {@link #itemRank}. */
     private final List<FoundItem> foundItems = new ArrayList<>();
 
-    private record FoundItem(Item item, BlockPos pos, String what, LocalTime time) {}
+    /** {@code details}: what's on it and in it (see {@link ItemDetails#of}), written on the line under it. */
+    private record FoundItem(Item item, BlockPos pos, String what, LocalTime time, String details) {}
     private String fileHeader;
     /** This run's file, made on the first sign or item found. */
     private Path signFile;
@@ -1009,6 +1012,13 @@ public class AreaExplorer extends Module {
     /** How long, and how near a block the player broke, a new item on the ground counts as its drop. */
     private static final long PLAYER_DROP_MILLIS = 60_000;
     private static final double PLAYER_DROP_RADIUS = 3;
+    /** Where the player died this run: what lies around there was theirs, for the rest of the run. */
+    private final List<BlockPos> deathSpots = new ArrayList<>();
+    /** How far a death's drops scatter and roll. */
+    private static final double DEATH_DROP_RADIUS = 8;
+    private boolean wasDead;
+    /** How near the player an item just thrown has to come in to be taken for one it threw. */
+    private static final double TOSS_RADIUS = 4;
 
     /** Base clues seen while exploring, by chunk: rescanning a chunk replaces its blocks, its entities stay. */
     private final Long2ObjectOpenHashMap<BaseClues.Chunk> baseChunks = new Long2ObjectOpenHashMap<>();
@@ -1896,6 +1906,8 @@ public class AreaExplorer extends Module {
         playerPlaced.clear();
         playerBroken.clear();
         playerDrops.clear();
+        deathSpots.clear();
+        wasDead = false;
         if (mc.world != null) markLootPiles(true);
         lootPiles.clear();
         baseEntityCheckTicks = 0;
@@ -3266,9 +3278,34 @@ public class AreaExplorer extends Module {
         playerBroken.put(key, System.currentTimeMillis());
     }
 
-    /** True for an item that dropped where the player broke something lately; remembered after. */
+    /**
+     * An item coming in thrown (moving) right by the player is one it threw: by hand, or an inventory
+     * cleaner of its. Items lying still come in moving not at all, and from far off, as their chunks load.
+     */
+    @EventHandler
+    private void onEntityAdded(EntityAddedEvent event) {
+        if (phase == Phase.IDLE || mc.player == null || !(event.entity instanceof ItemEntity item)) return;
+        if (item.getVelocity().lengthSquared() > 1e-4 && item.squaredDistanceTo(mc.player) <= TOSS_RADIUS * TOSS_RADIUS) {
+            playerDrops.add(item.getUuid());
+        }
+    }
+
+    /** Notes where the player died, once per death. */
+    private void noteDeath() {
+        boolean dead = mc.player.isDead();
+        if (dead && !wasDead) deathSpots.add(mc.player.getBlockPos());
+        wasDead = dead;
+    }
+
+    /** True for an item the player threw, dropped dying, or that dropped where it broke something lately; remembered after. */
     private boolean isPlayerDrop(Entity item) {
         if (playerDrops.contains(item.getUuid())) return true;
+        for (BlockPos death : deathSpots) {
+            if (item.squaredDistanceTo(death.getX() + 0.5, death.getY() + 0.5, death.getZ() + 0.5) <= DEATH_DROP_RADIUS * DEATH_DROP_RADIUS) {
+                playerDrops.add(item.getUuid());
+                return true;
+            }
+        }
         if (playerBroken.isEmpty()) return false;
         long now = System.currentTimeMillis();
         playerBroken.values().removeIf(at -> now - at > PLAYER_DROP_MILLIS);
@@ -3668,11 +3705,13 @@ public class AreaExplorer extends Module {
 
     /**
      * Items lying close together: one marker for the lot, named after what's in it -
-     * "Loot: Elytra, Shulker Box ×2, Netherite Helmet +3".
+     * "Loot: Elytra, Shulker Box ×2 (Totem of Undying ×24, Elytra ×1 +3), Empty Shulker Box".
      */
     private static final class LootPile {
         final BlockPos first;
-        final Map<Item, Integer> counts = new HashMap<>();
+        final Map<LootKind, Integer> counts = new HashMap<>();
+        /** What the shulker boxes and bundles in it hold, together. */
+        final Map<Item, Integer> inside = new HashMap<>();
         /** Where the best item lies: the marker goes on it. */
         BlockPos best;
         int bestRank = Integer.MAX_VALUE;
@@ -3683,6 +3722,13 @@ public class AreaExplorer extends Module {
         }
     }
 
+    /** A kind of item in a pile: an empty shulker box is told from one with something in. */
+    private record LootKind(Item item, boolean empty) {
+        String name() {
+            return (empty ? "Empty " : "") + itemName(item);
+        }
+    }
+
     /** Items closer than this to a pile's first one are part of it. */
     private static final int LOOT_RADIUS = 16;
     /** Item scans a pile has to go without a new item before it's marked: the entities around come in over a few seconds. */
@@ -3690,18 +3736,34 @@ public class AreaExplorer extends Module {
     private static final String LOOT_PREFIX = "Loot: ";
     /** Kinds named in a pile's marker; the rest are "+N". */
     private static final int LOOT_NAMED_KINDS = 3;
+    /** Kinds of what's inside named after the shulker boxes holding them; the rest are "+N". */
+    private static final int LOOT_NAMED_INSIDE = 2;
     private final List<LootPile> lootPiles = new ArrayList<>();
 
-    /** Puts an item found on the ground into the pile it lies by, or starts one. */
-    private void addToLoot(List<LootPile> piles, Item item, int count, BlockPos pos) {
+    /**
+     * Puts an item found on the ground into the pile it lies by, or starts one. {@code empty}: a
+     * shulker box with nothing in; {@code inside}: what one holds, by kind.
+     */
+    private void addToLoot(List<LootPile> piles, Item item, int count, BlockPos pos, boolean empty, Map<Item, Integer> inside) {
+        // The nearest one: piles a little over LOOT_RADIUS apart both reach items between them
         LootPile pile = null;
+        double nearest = (double) LOOT_RADIUS * LOOT_RADIUS;
         for (LootPile p : piles) {
-            if (p.first.isWithinDistance(pos, LOOT_RADIUS)) pile = p;
+            double d = p.first.getSquaredDistance(pos);
+            if (d < nearest) {
+                nearest = d;
+                pile = p;
+            }
         }
         if (pile == null) piles.add(pile = new LootPile(pos));
-        pile.counts.merge(item, count, Integer::sum);
+        LootKind kind = new LootKind(item, empty);
+        pile.counts.merge(kind, count, Integer::sum);
+        LootPile into = pile;
+        inside.forEach((i, n) -> into.inside.merge(i, n, Integer::sum));
         pile.quietScans = 0;
-        int rank = lootRank(item);
+        // A box holding elytra puts the marker on it, as elytra lying there would
+        int rank = lootRank(kind);
+        for (Item i : inside.keySet()) rank = Math.min(rank, lootRank(i));
         if (rank < pile.bestRank) {
             pile.bestRank = rank;
             pile.best = pos;
@@ -3723,21 +3785,42 @@ public class AreaExplorer extends Module {
         for (XaeroWaypoints.Spot spot : existingMarkers()) {
             if (spot.name().startsWith(LOOT_PREFIX) && near(spot, pile.best, 2L * LOOT_RADIUS)) return false;
         }
-        List<Map.Entry<Item, Integer>> kinds = new ArrayList<>(pile.counts.entrySet());
-        kinds.sort(Comparator.<Map.Entry<Item, Integer>>comparingInt(e -> lootRank(e.getKey()))
-            .thenComparing(Map.Entry.<Item, Integer>comparingByValue().reversed()));
+        List<Map.Entry<LootKind, Integer>> kinds = new ArrayList<>(pile.counts.entrySet());
+        kinds.sort(Comparator.<Map.Entry<LootKind, Integer>>comparingInt(e -> lootRank(e.getKey()))
+            .thenComparing(Map.Entry.<LootKind, Integer>comparingByValue().reversed()));
         StringBuilder name = new StringBuilder(LOOT_PREFIX);
+        boolean insideNamed = false;
         for (int i = 0; i < kinds.size() && i < LOOT_NAMED_KINDS; i++) {
+            LootKind kind = kinds.get(i).getKey();
             if (i > 0) name.append(", ");
-            name.append(itemName(kinds.get(i).getKey()));
+            name.append(kind.name());
             if (kinds.get(i).getValue() > 1) name.append(" ×").append(kinds.get(i).getValue());
+            // What the boxes hold, after the first of them: "Shulker Box ×2 (Totem of Undying ×24, Elytra ×1 +3)"
+            if (!insideNamed && !kind.empty() && !pile.inside.isEmpty() && ItemDetails.holdsItems(kind.item())) {
+                insideNamed = true;
+                name.append(" (").append(insideSummary(pile.inside)).append(')');
+            }
         }
         if (kinds.size() > LOOT_NAMED_KINDS) name.append(" +").append(kinds.size() - LOOT_NAMED_KINDS);
 
         BlockPos pos = pile.best;
-        addMarker(ITEMS_GROUP, name.toString(), initials(itemName(kinds.getFirst().getKey())), "square", itemsColor.get(), pos);
+        addMarker(ITEMS_GROUP, name.toString(), initials(kinds.getFirst().getKey().name()), "square", itemsColor.get(), pos);
         if (announce) report("Marked (highlight)%s(default) on the ground at (highlight)%d, %d, %d(default).", name, pos.getX(), pos.getY(), pos.getZ());
         return true;
+    }
+
+    /** "Totem of Undying ×24, Elytra ×1 +3": the best kinds inside first, by {@link #lootRank(Item)}, then the most. */
+    private String insideSummary(Map<Item, Integer> inside) {
+        List<Map.Entry<Item, Integer>> kinds = new ArrayList<>(inside.entrySet());
+        kinds.sort(Comparator.<Map.Entry<Item, Integer>>comparingInt(e -> lootRank(e.getKey()))
+            .thenComparing(Map.Entry.<Item, Integer>comparingByValue().reversed()));
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < kinds.size() && i < LOOT_NAMED_INSIDE; i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(itemName(kinds.get(i).getKey())).append(" ×").append(kinds.get(i).getValue());
+        }
+        if (kinds.size() > LOOT_NAMED_INSIDE) sb.append(" +").append(kinds.size() - LOOT_NAMED_INSIDE);
+        return sb.toString();
     }
 
     /** What {@link #lootMarkersFromFile} did: piles marked, piles marked already, items whose kind wasn't known. */
@@ -3766,13 +3849,26 @@ public class AreaExplorer extends Module {
                         unknown++;
                         continue;
                     }
-                    addToLoot(piles, item, Math.max(1, f.count()), new BlockPos(f.x(), f.y(), f.z()));
+                    // A box's details are what it holds; ones found before they were kept hold nothing known
+                    boolean holds = ItemDetails.holdsItems(item);
+                    Map<Item, Integer> inside = new HashMap<>();
+                    if (holds) ItemDetails.parseContents(f.details()).forEach((n, c) -> {
+                        Item i = byName.get(n);
+                        if (i != null) inside.merge(i, c, Integer::sum);
+                    });
+                    addToLoot(piles, item, Math.max(1, f.count()), new BlockPos(f.x(), f.y(), f.z()),
+                        holds && f.details().equals(ItemDetails.EMPTY), inside);
                 }
                 int marked = 0;
                 for (LootPile pile : piles) if (placeLootMarker(pile, false)) marked++;
                 done.accept(new LootImport(marked, piles.size() - marked, unknown));
             });
         });
+    }
+
+    /** As {@link #lootRank(Item)}, but an empty shulker box goes after everything. */
+    private int lootRank(LootKind kind) {
+        return kind.empty() ? 4 + savedItemKinds.get().size() : lootRank(kind.item());
     }
 
     /** Elytra first, then shulker boxes, then netherite armour, then the rest in the items list's order. */
@@ -3937,6 +4033,7 @@ public class AreaExplorer extends Module {
         for (int i = 0; i < sorted.size(); i++) {
             FoundItem found = sorted.get(i);
             sb.append(entryLine(i + 1, found.pos(), found.what(), found.time()));
+            if (!found.details().isEmpty()) sb.append(SIGN_INDENT).append(found.details()).append('\n');
         }
         return sb.toString();
     }
@@ -3952,36 +4049,44 @@ public class AreaExplorer extends Module {
     // Items on the ground
 
     /**
-     * Writes and marks the picked items lying around the player that aren't written or marked yet.
-     * Entities don't come with the chunk, so they're polled.
+     * Writes and marks the picked items lying around the player that aren't written or marked yet,
+     * and shulker boxes and bundles holding any. Entities don't come with the chunk, so they're polled.
      */
     private void scanItems() {
         boolean save = saveItems.get(), mark = markingItems();
         if ((!save && !mark) || ++itemCheckTicks < ITEM_CHECK_INTERVAL_TICKS) return;
         itemCheckTicks = 0;
-        List<Item> kinds = savedItemKinds.get();
+        Set<Item> kinds = new HashSet<>(savedItemKinds.get());
         if (kinds.isEmpty()) return;
 
         int before = foundItems.size();
         for (Entity entity : mc.world.getEntities()) {
-            if (!(entity instanceof ItemEntity itemEntity) || isPlayerDrop(entity)) continue;
+            if (!(entity instanceof ItemEntity itemEntity)) continue;
             ItemStack stack = itemEntity.getStack();
-            if (stack.isEmpty() || !kinds.contains(stack.getItem())) continue;
+            if (stack.isEmpty()) continue;
+            if (!kinds.contains(stack.getItem()) && ItemDetails.contents(stack).stream().noneMatch(s -> kinds.contains(s.getItem()))) continue;
+            if (isPlayerDrop(entity)) continue;
 
             BlockPos pos = entity.getBlockPos();
-            if (mark && markedItems.add(entity.getUuid())) addToLoot(lootPiles, stack.getItem(), stack.getCount(), pos);
+            String details = ItemDetails.of(stack);
+            if (mark && markedItems.add(entity.getUuid())) {
+                Map<Item, Integer> inside = new HashMap<>();
+                for (ItemStack s : ItemDetails.contents(stack)) inside.merge(s.getItem(), s.getCount(), Integer::sum);
+                addToLoot(lootPiles, stack.getItem(), stack.getCount(), pos, details.equals(ItemDetails.EMPTY), inside);
+            }
             if (!save || !savedItems.add(entity.getUuid())) continue;
 
             // Diamond ×12 "Renamed one"
             String what = itemName(stack.getItem()) + " ×" + stack.getCount();
             if (stack.contains(DataComponentTypes.CUSTOM_NAME)) what += " \"" + Formatting.strip(stack.getName().getString()) + "\"";
-            foundItems.add(new FoundItem(stack.getItem(), pos, what, LocalTime.now()));
+            foundItems.add(new FoundItem(stack.getItem(), pos, what, LocalTime.now(), details));
             itemCounts.merge(stack.getItem(), stack.getCount(), Integer::sum);
             String label = stack.contains(DataComponentTypes.CUSTOM_NAME) ? Formatting.strip(stack.getName().getString()) : "";
             archiveFind(new FindsArchive.Find(FindsArchive.Kind.ITEM, pos.getX(), pos.getY(), pos.getZ(), LocalDateTime.now(),
-                itemName(stack.getItem()), stack.getCount(), label, ""));
+                itemName(stack.getItem()), stack.getCount(), label, details, entity.getUuid().toString()));
 
-            if (itemsInChat.get()) info("Item at (highlight)%d, %d, %d(default): %s", pos.getX(), pos.getY(), pos.getZ(), what);
+            if (itemsInChat.get()) info("Item at (highlight)%d, %d, %d(default): %s%s", pos.getX(), pos.getY(), pos.getZ(), what,
+                details.isEmpty() ? "" : " (" + details + ")");
         }
         if (foundItems.size() > before) foundFileDirty = true;
         if (mark) markLootPiles(false);
@@ -4888,6 +4993,7 @@ public class AreaExplorer extends Module {
         tickStats();
         tickEstimate();
         checkFlying();
+        noteDeath();
         scanItems();
         scanPets();
         scanBaseEntities();
@@ -5462,6 +5568,11 @@ public class AreaExplorer extends Module {
         tag.putDouble("flight-distance", flightDistance);
         tag.put("finds", findsTag());
         tag.putLongArray("player-placed", playerPlaced.toLongArray());
+        // What the player threw or lost dying stays theirs: it lies there still after a restart
+        tag.putLongArray("death-spots", deathSpots.stream().mapToLong(BlockPos::asLong).toArray());
+        NbtList drops = new NbtList();
+        for (UUID uuid : playerDrops) drops.add(NbtString.of(uuid.toString()));
+        tag.put("player-drops", drops);
 
         // The tag holds copies only, so it's written off the game thread while the run goes on
         onSessionFiles(() -> {
@@ -5499,6 +5610,11 @@ public class AreaExplorer extends Module {
         restoreFinds(tag.getCompound("finds"));
         playerPlaced.clear();
         for (long key : tag.getLongArray("player-placed")) playerPlaced.add(key);
+        deathSpots.clear();
+        for (long key : tag.getLongArray("death-spots")) deathSpots.add(BlockPos.fromLong(key));
+        playerDrops.clear();
+        NbtList drops = tag.getList("player-drops", NbtElement.STRING_TYPE);
+        for (int i = 0; i < drops.size(); i++) playerDrops.add(UUID.fromString(drops.getString(i)));
         // Taken by resetFlightState, so the run's average speed is there for the first estimate
         restoredActiveTicks = tag.getInt("active-ticks");
         restoredFlightDistance = tag.getDouble("flight-distance");
@@ -5585,6 +5701,7 @@ public class AreaExplorer extends Module {
             f.putLong("pos", item.pos().asLong());
             f.putString("what", item.what());
             f.putString("time", item.time().toString());
+            f.putString("details", item.details());
             found.add(f);
         }
         tag.put("found-items", found);
@@ -5618,7 +5735,7 @@ public class AreaExplorer extends Module {
         for (int i = 0; i < found.size(); i++) {
             NbtCompound f = found.getCompound(i);
             Registries.ITEM.getOptionalValue(Identifier.of(f.getString("item"))).ifPresent(item -> foundItems.add(
-                new FoundItem(item, BlockPos.fromLong(f.getLong("pos")), f.getString("what"), LocalTime.parse(f.getString("time")))));
+                new FoundItem(item, BlockPos.fromLong(f.getLong("pos")), f.getString("what"), LocalTime.parse(f.getString("time")), f.getString("details"))));
         }
 
         if (signFile != null) report("Writing on to (highlight)%s(default).", signFile);

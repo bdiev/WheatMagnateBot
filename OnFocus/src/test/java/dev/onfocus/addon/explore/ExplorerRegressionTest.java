@@ -37,6 +37,7 @@ public final class ExplorerRegressionTest {
         sectorReachAndEta();
         steadyEta();
         findNames();
+        itemFindsByEntity();
         diagnosticsFiles();
         System.out.println("Explorer regressions passed (deferred coverage, reach stability, mid-strip widths, fresh chunks, narrow corridors, route efficiency, ETA, waypoints and 240 patchy coverage scenarios).");
     }
@@ -668,6 +669,34 @@ public final class ExplorerRegressionTest {
             "Golden Apple (\uEFF4)", 1, "Custom label", "Details");
         require(find.name().equals("Golden Apple") && find.label().equals("Custom label")
             && find.details().equals("Details"), "Imported archive names must be cleaned without changing other fields");
+    }
+
+    private static void itemFindsByEntity() throws Exception {
+        var dir = java.nio.file.Files.createTempDirectory("finds");
+        var archive = FindsArchive.load(dir, "test", "overworld");
+        var now = java.time.LocalDateTime.now().withNano(0);
+        require(archive.add(new FindsArchive.Find(FindsArchive.Kind.ITEM, 1, 64, 2, now, "Shulker Box", 1, "",
+            "empty", "a-uuid")), "A new item must go in");
+        require(!archive.add(new FindsArchive.Find(FindsArchive.Kind.ITEM, 3, 63, 2, now, "Shulker Box", 1, "",
+            "empty", "a-uuid")), "The same item entity, drifted a little, must not go in twice");
+        require(archive.add(new FindsArchive.Find(FindsArchive.Kind.ITEM, 3, 63, 2, now, "Shulker Box", 1, "",
+            "", "b-uuid")), "Another entity must go in");
+        archive.write();
+        var again = FindsArchive.load(dir, "test", "overworld");
+        require(again.size() == 2 && again.all().getFirst().uuid().equals("a-uuid") && again.all().getFirst().details().equals("empty"),
+            "Items' UUIDs and details must survive the table");
+        require(!again.add(new FindsArchive.Find(FindsArchive.Kind.ITEM, 9, 70, 9, now, "Shulker Box", 1, "", "", "a-uuid")),
+            "An entity read back from the table must still be told");
+        var parsed = FindsArchive.parseRunFile(List.of(
+            "  Started:     04.10.2026 22:45",
+            "── ITEMS ON THE GROUND (1) ───",
+            "#1     X 1         Y 64    Z 2         Diamond Sword ×1 · 22:50:00",
+            "      Sharpness V, 87%"));
+        require(parsed.size() == 1 && parsed.getFirst().details().equals("Sharpness V, 87%"),
+            "A run file's item details line must be read back");
+        var inside = ItemDetails.parseContents("Elytra ×1, Totem of Undying ×12, +3");
+        require(inside.equals(java.util.Map.of("Elytra", 1, "Totem of Undying", 12)) && ItemDetails.parseContents(ItemDetails.EMPTY).isEmpty(),
+            "A shulker box's details must read back as what it holds");
     }
 
     private static void largeCleanup() {

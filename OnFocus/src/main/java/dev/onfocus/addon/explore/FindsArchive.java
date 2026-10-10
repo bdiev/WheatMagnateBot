@@ -26,8 +26,9 @@ import java.util.stream.Stream;
  * kept as a table ({@code all-finds_<dimension>.csv}) and written out for reading like a run's finds
  * file ({@code ALL FINDS - <dimension>.txt}).
  * <p>
- * The same sign is the one at the same block; the same item, one of the same kind, count and name at
- * the same block (items lying in unloaded chunks stay there for good); the same base, one within
+ * The same sign is the one at the same block; the same item, the same entity (its UUID, kept by the
+ * server while it lies there) or one of the same kind, count and name at the same block (items lying
+ * in unloaded chunks stay there for good); the same base, one within
  * {@link #SAME_BASE_DISTANCE} blocks of a base already in. The finds files of earlier runs are read
  * into it too ({@link #importRunFiles}), as many times as wanted - what's in already is skipped.
  * <p>
@@ -40,13 +41,20 @@ public final class FindsArchive {
      * One find. {@code name}: the base's ("Base #47"), the sign's block ("Oak Sign"), the item's
      * ("Elytra") or what a marker marks ("End Portal", "Shulker Box", "Named Cat", a custom block's name). For a
      * base, {@code details} is what it was scored on; for a sign, {@code details} is the front text
-     * and {@code label} the back; for an item or a named pet, {@code label} is its custom name.
+     * and {@code label} the back; for an item or a named pet, {@code label} is its custom name, and for
+     * an item {@code details} is what's on it and in it ("Mending, 87% · Elytra ×1, Totem of Undying ×12").
+     * {@code uuid}: an item's entity; empty for other finds and for items kept before it was.
      */
-    public record Find(Kind kind, int x, int y, int z, LocalDateTime found, String name, int count, String label, String details) {
+    public record Find(Kind kind, int x, int y, int z, LocalDateTime found, String name, int count, String label, String details, String uuid) {
         public Find {
             name = FindNames.clean(name);
             label = label == null ? "" : label;
             details = details == null ? "" : details;
+            uuid = uuid == null ? "" : uuid;
+        }
+
+        public Find(Kind kind, int x, int y, int z, LocalDateTime found, String name, int count, String label, String details) {
+            this(kind, x, y, z, found, name, count, label, details, "");
         }
     }
 
@@ -56,7 +64,7 @@ public final class FindsArchive {
     private static final DateTimeFormatter CSV_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final DateTimeFormatter TEXT_TIME = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss");
     private static final DateTimeFormatter HEADER_TIME = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm");
-    private static final String CSV_HEADER = "type,x,y,z,found,name,count,label,details";
+    private static final String CSV_HEADER = "type,x,y,z,found,name,count,label,details,uuid";
     private static final String INDENT = "      ";
 
     private final Path csvFile, textFile;
@@ -133,8 +141,11 @@ public final class FindsArchive {
                 if (dx * dx + dz * dz <= d2) return false;
             }
             bases.add(find);
-        } else if (!keys.add(key(find))) {
-            return false;
+        } else {
+            // The same item entity, moved a little (water, a fall) or grown by a stack merging in
+            if (!find.uuid().isEmpty() && keys.contains("UUID " + find.uuid())) return false;
+            if (!keys.add(key(find))) return false;
+            if (!find.uuid().isEmpty()) keys.add("UUID " + find.uuid());
         }
         finds.add(find);
         dirty = true;
@@ -234,8 +245,10 @@ public final class FindsArchive {
                 }
                 case ITEM -> {
                     Matcher item = ITEM.matcher(what);
-                    if (item.matches()) out.add(new Find(Kind.ITEM, x, y, z, found, item.group(1), Integer.parseInt(item.group(2)), item.group(3), ""));
-                    else out.add(new Find(Kind.ITEM, x, y, z, found, what, 1, "", ""));
+                    // What's on it and in it, on the line under it
+                    String details = i + 1 < lines.size() && lines.get(i + 1).startsWith(INDENT) ? lines.get(i + 1).strip() : "";
+                    if (item.matches()) out.add(new Find(Kind.ITEM, x, y, z, found, item.group(1), Integer.parseInt(item.group(2)), item.group(3), details));
+                    else out.add(new Find(Kind.ITEM, x, y, z, found, what, 1, "", details));
                 }
                 case MARKER -> {
                     // A named pet's: Named Cat "Whiskers", what it is on the line under it
@@ -257,7 +270,7 @@ public final class FindsArchive {
         for (Find f : finds) {
             csv.append(f.kind().name()).append(',').append(f.x()).append(',').append(f.y()).append(',').append(f.z()).append(',')
                 .append(f.found().format(CSV_TIME)).append(',').append(csvField(f.name())).append(',').append(f.count()).append(',')
-                .append(csvField(f.label())).append(',').append(csvField(f.details())).append('\n');
+                .append(csvField(f.label())).append(',').append(csvField(f.details())).append(',').append(f.uuid()).append('\n');
         }
         writeAtomically(csvFile, csv.toString());
         writeAtomically(textFile, text());
@@ -306,6 +319,7 @@ public final class FindsArchive {
         for (Find f : items) {
             String what = f.name() + " ×" + f.count() + (f.label().isEmpty() ? "" : " \"" + f.label() + "\"");
             sb.append(entryLine(++n, f, what));
+            if (!f.details().isEmpty()) sb.append(INDENT).append(f.details()).append('\n');
         }
         return sb.toString();
     }
@@ -421,7 +435,7 @@ public final class FindsArchive {
         if (r.size() < 9) return null;
         try {
             return new Find(Kind.valueOf(r.get(0)), Integer.parseInt(r.get(1)), Integer.parseInt(r.get(2)), Integer.parseInt(r.get(3)),
-                LocalDateTime.parse(r.get(4), CSV_TIME), r.get(5), Integer.parseInt(r.get(6)), r.get(7), r.get(8));
+                LocalDateTime.parse(r.get(4), CSV_TIME), r.get(5), Integer.parseInt(r.get(6)), r.get(7), r.get(8), r.size() > 9 ? r.get(9) : "");
         } catch (IllegalArgumentException | DateTimeParseException e) {
             return null;
         }
