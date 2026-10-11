@@ -1672,7 +1672,7 @@ function openAccountMenu(accountId, anchor) {
     ...(secondaryIndex > 0 ? ['move-left'] : []),
     ...(secondaryIndex >= 0 && secondaryIndex < secondaryAccounts.length - 1 ? ['move-right'] : [])
   ];
-  const actions=[...orderActions,'edit',...(paused?['resume','stop']:running?['stop','restart']:['start']),'reauthorize',...(account.isDefault?[]:['delete'])];
+  const actions=[...orderActions,'edit',...(paused?['resume','stop']:running?['stop','restart']:['start']),...(account.enabled?['reauthorize']:[]),...(account.isDefault?[]:['delete'])];
   const labels={ 'move-left':'Move left', 'move-right':'Move right' };
   for (const action of actions) { const button=document.createElement('button'); button.type='button'; button.dataset.action=action; button.textContent=labels[action] || action[0].toUpperCase()+action.slice(1); menu.append(button); }
   const rect=anchor.getBoundingClientRect(); menu.style.left=`${Math.min(innerWidth-180,rect.left)}px`; menu.style.top=`${rect.bottom+6}px`; document.body.append(menu);

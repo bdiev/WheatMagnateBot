@@ -1789,6 +1789,7 @@ function buildSecurityAlertComponents(playerName) {
 
 async function whitelistAlertPlayerAndReconnect(playerName, requestedBy) {
   const result = await addUsernameToWhitelist(playerName, requestedBy);
+  if (!(await isDefaultAccountEnabled())) return { ...result, reconnectMode: 'disabled' };
 
   shouldReconnect = true;
   reconnectTimestamp = 0;
@@ -3121,7 +3122,14 @@ if (DISCORD_BOT_TOKEN) {
     })
     .catch(err => {
       console.error('[DB] Initialization without Discord failed:', err.message);
-      if (shouldReconnect) createBot();
+      // Without a database there is no "Account enabled" checkbox, so keep the
+      // legacy always-on startup. With one, never connect unread.
+      if (pool) {
+        console.log('[Accounts] Default Minecraft profile state is unknown; automatic startup skipped.');
+        return;
+      }
+      shouldReconnect = true;
+      createBot();
     });
 }
 
@@ -5434,7 +5442,11 @@ function buildDisconnectReason(reason, fallback = 'Connection lost') {
 }
 
 var bot;
-let shouldReconnect = true;
+// Off until startup has read the site's "Account enabled" checkbox, so an
+// early error path cannot connect a stopped primary account.
+let shouldReconnect = false;
+let primaryEnabledCheckPending = false;
+let primaryEnabledChecked = false;
 let reconnectTimeRemaining = 0;
 let reconnectTimestamp = 0;
 let lastDisconnectReason = null;
@@ -6535,6 +6547,7 @@ async function executeBotCommand(command) {
     if (type === 'account_start' && pool) {
       await pool.query('UPDATE bot_accounts SET enabled=TRUE,updated_at=NOW() WHERE id=$1::uuid AND deleted_at IS NULL',[DEFAULT_ACCOUNT_ID]);
     }
+    if (type === 'account_resume') await assertDefaultAccountEnabled();
     shouldReconnect = true; clearResumeTimer(); clearReconnectTimer(); setDisconnectReason(null); if (!bot) createBot();
     return { message: 'Account start requested.', accountId: DEFAULT_ACCOUNT_ID };
   }
@@ -6551,6 +6564,7 @@ async function executeBotCommand(command) {
     return { message: type === 'account_pause' ? 'Account paused.' : 'Account stopped.', accountId: DEFAULT_ACCOUNT_ID };
   }
   if (type === 'account_restart' || type === 'account_reauthorize') {
+    await assertDefaultAccountEnabled();
     if (pool) {
       const refreshed = await pool.query('SELECT username,host,port,minecraft_version,auth_type FROM bot_accounts WHERE id=$1::uuid AND deleted_at IS NULL',[DEFAULT_ACCOUNT_ID]).catch(() => ({rows:[]}));
       const account = refreshed.rows[0];
@@ -6694,6 +6708,7 @@ async function executeBotCommand(command) {
   }
 
   if (type === 'resume') {
+    await assertDefaultAccountEnabled();
     shouldReconnect = true;
     clearResumeTimer();
     clearReconnectTimer();
@@ -6703,6 +6718,7 @@ async function executeBotCommand(command) {
   }
 
   if (type === 'restart') {
+    await assertDefaultAccountEnabled();
     shouldReconnect = true;
     clearResumeTimer();
     clearReconnectTimer();
@@ -7231,6 +7247,11 @@ async function executeManagedAccountCommand(command) {
   if (refreshedAccount?.role === PEARL_LOADER_ROLE &&
       ['account_start','account_restart','account_reauthorize','account_resume'].includes(type)) {
     throw new Error('Pearl Loader can start only for a player Load request.');
+  }
+  // Only Start may connect an account whose "Account enabled" is off.
+  if (refreshedAccount && !refreshedAccount.enabled &&
+      ['account_restart','account_reauthorize','account_resume','resume'].includes(type)) {
+    throw new Error(DISABLED_ACCOUNT_MESSAGE);
   }
   if (type === 'account_start') {
     await multiAccountRegistry.update(command.account_id, { enabled:true });
@@ -9982,6 +10003,29 @@ async function updateStatusMessage() {
   }
 }
 
+// The site's "Account enabled" checkbox. Without a database there is no
+// checkbox, so the primary account keeps its legacy always-on behaviour.
+async function isDefaultAccountEnabled() {
+  if (!pool) return true;
+  const result = await pool.query('SELECT enabled FROM bot_accounts WHERE id=$1::uuid AND deleted_at IS NULL', [DEFAULT_ACCOUNT_ID]);
+  return result.rows[0]?.enabled !== false;
+}
+
+const DISABLED_ACCOUNT_MESSAGE = 'Account enabled is off on the site; turn it on (Start) to connect.';
+
+function refuseDisabledDefaultAccountConnection() {
+  shouldReconnect = false;
+  clearReconnectTimer();
+  clearResumeTimer();
+  setDisconnectReason('Account disabled on the site');
+  console.log('[Bot] Connection attempt skipped: the primary account is disabled on the site.');
+  updateStatusMessage().catch(() => {});
+}
+
+async function assertDefaultAccountEnabled() {
+  if (!(await isDefaultAccountEnabled())) throw new Error(DISABLED_ACCOUNT_MESSAGE);
+}
+
 function createBot() {
   clearReconnectTimer();
 
@@ -9996,6 +10040,32 @@ function createBot() {
   // could otherwise clear the new global reference and leave an orphaned socket.
   if (bot) {
     console.log('[Bot] Connection attempt skipped: a bot instance already exists.');
+    return;
+  }
+
+  // The site's "Account enabled" checkbox is authoritative for every path
+  // (startup, reconnect timers, resume/restart commands, Discord buttons).
+  // Re-read it before each connection; a granted slot was already checked.
+  if (pool && !primaryEnabledChecked && !primaryConnectionSlotGranted) {
+    if (primaryEnabledCheckPending) return;
+    primaryEnabledCheckPending = true;
+    isDefaultAccountEnabled().then(enabled => {
+      primaryEnabledCheckPending = false;
+      if (!enabled) {
+        refuseDisabledDefaultAccountConnection();
+        return;
+      }
+      primaryEnabledChecked = true;
+      try {
+        createBot();
+      } finally {
+        primaryEnabledChecked = false;
+      }
+    }, error => {
+      primaryEnabledCheckPending = false;
+      console.error('[Bot] Could not read the primary account state:', error?.message || error);
+      if (shouldReconnect && !bot) scheduleReconnect(30_000, '[Bot] Retrying the primary account state check in 30s.');
+    });
     return;
   }
 
@@ -11720,7 +11790,9 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
 
             await interaction.editReply({
               content: changed
-                ? (reconnectMode === 'immediate'
+                ? (reconnectMode === 'disabled'
+                    ? `${STATUS_EMOJIS.connected} ${selectedUsername} added to whitelist. Alert removed; the account is disabled on the site, so the bot stays offline.`
+                    : reconnectMode === 'immediate'
                     ? `${STATUS_EMOJIS.connected} ${selectedUsername} added to whitelist. Alert removed, bot is reconnecting now.`
                     : `${STATUS_EMOJIS.connected} ${selectedUsername} added to whitelist. Alert removed, bot will reconnect automatically.`)
                 : `ℹ️ ${selectedUsername} is already in whitelist. Alert removed.`
@@ -12958,6 +13030,10 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
     }
 
     if (message.content === '!restart') {
+      if (!(await isDefaultAccountEnabled())) {
+        await message.reply(DISABLED_ACCOUNT_MESSAGE);
+        return;
+      }
       console.log(`[Command] restart by ${message.author.tag} via Discord`);
       lastCommandUser = message.author.tag;
       setDisconnectReason(`Restart requested by ${lastCommandUser}`);
@@ -13009,6 +13085,10 @@ if (DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID) {
     }
 
     if (message.content === '!resume') {
+      if (!(await isDefaultAccountEnabled())) {
+        await message.reply(DISABLED_ACCOUNT_MESSAGE);
+        return;
+      }
       setDisconnectReason(null);
       if (shouldReconnect) {
         await message.reply({

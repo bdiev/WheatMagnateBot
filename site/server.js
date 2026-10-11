@@ -3716,6 +3716,9 @@ async function handleAccountsApi(req, currentUser, url) {
     if (account.role === 'pearl_loader' && ['start','restart','resume','reauthorize'].includes(action)) {
       throw Object.assign(new Error('Pearl Loader can connect only in response to a player Load request.'), { statusCode:409 });
     }
+    if (!account.enabled && ['restart','resume','reauthorize'].includes(action)) {
+      throw Object.assign(new Error('Account enabled is off; turn it on (Start) to connect.'), { statusCode:409 });
+    }
     // `enabled` is the durable desired connection state. Persist it before
     // queueing the runtime command so Stop survives a process restart/redeploy,
     // even when the command worker is temporarily unavailable.

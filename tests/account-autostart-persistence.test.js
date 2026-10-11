@@ -40,6 +40,33 @@ assert.match(
 );
 assert.match(
   botSource,
+  /let shouldReconnect = false;/,
+  'the primary account must stay offline until startup has read Account enabled'
+);
+assert.match(
+  botSource,
+  /function createBot\(\) \{[\s\S]*?if \(pool && !primaryEnabledChecked && !primaryConnectionSlotGranted\)[\s\S]*?isDefaultAccountEnabled\(\)[\s\S]*?refuseDisabledDefaultAccountConnection\(\)/,
+  'every primary connection attempt must re-check Account enabled'
+);
+for (const type of ['account_resume', 'account_restart', 'resume', 'restart']) {
+  assert.match(
+    botSource,
+    new RegExp(`type === '${type}'[\\s\\S]{0,120}await assertDefaultAccountEnabled\\(\\)`),
+    `${type} must not connect a disabled primary account`
+  );
+}
+assert.match(
+  botSource,
+  /!refreshedAccount\.enabled &&\s*\['account_restart','account_reauthorize','account_resume','resume'\]\.includes\(type\)/,
+  'managed commands other than Start must not connect a disabled account'
+);
+assert.match(
+  serverSource,
+  /!account\.enabled && \['restart','resume','reauthorize'\]\.includes\(action\)/,
+  'the site API must refuse to connect a disabled account except through Start'
+);
+assert.match(
+  botSource,
   /accounts\.filter\(item => item\.enabled && !item\.isDefault\)/,
   'only enabled secondary profiles may start after redeploy'
 );
