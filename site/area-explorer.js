@@ -635,9 +635,11 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
                   WHERE t.revoked_at IS NULL ORDER BY s.updated_at DESC`),
       pool.query(`SELECT server, dimension, name, COUNT(*)::int AS count FROM area_explorer_finds
                   WHERE kind = 'MARKER' AND removed_at IS NULL GROUP BY server, dimension, name ORDER BY count DESC, name`),
-      // Every kind of loot with how much of it: the most valuable are picked from these below
-      pool.query(`SELECT server, dimension, name, COUNT(*)::int AS count, SUM(item_count)::int AS items
-                  FROM area_explorer_finds WHERE kind = 'ITEM' AND removed_at IS NULL GROUP BY server, dimension, name`),
+      // Every kind of loot with how much of it: the most valuable are picked from these below. Shulker
+      // boxes of every colour are one kind, as a click on it lists them all (the name is searched for)
+      pool.query(`SELECT server, dimension, CASE WHEN name LIKE '%Shulker Box' THEN 'Shulker Box' ELSE name END AS name,
+                    COUNT(*)::int AS count, SUM(item_count)::int AS items
+                  FROM area_explorer_finds WHERE kind = 'ITEM' AND removed_at IS NULL GROUP BY 1, 2, 3`),
       pool.query(`SELECT DISTINCT ON (server, dimension) * FROM area_explorer_finds WHERE removed_at IS NULL
                   ORDER BY server, dimension, found_at DESC, id DESC`)
     ]);

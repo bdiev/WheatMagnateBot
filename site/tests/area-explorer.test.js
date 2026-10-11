@@ -225,6 +225,12 @@ async function testIngestAndQueries() {
     const afterPickup = (await service.getSummary()).scopes.find(scope => scope.dimension === 'overworld');
     assert.equal(afterPickup.items, 0);
     assert.deepEqual(afterPickup.valuableItems, []);
+    // Shulker boxes of every colour are one kind of loot, as many as a click on it lists
+    const box = (name, x) => ({ kind: 'ITEM', x, y: 64, z: 900, foundAt: NOW, name, count: 1 });
+    await service.ingest(token, { server: 'oldfrog.org', dimension: 'the_end', finds: [box('Shulker Box', 1), box('Pink Shulker Box', 2), box('White Shulker Box', 3)] }, NOW);
+    const end = (await service.getSummary()).scopes.find(scope => scope.dimension === 'the_end');
+    assert.deepEqual(end.valuableItems, [{ name: 'Shulker Box', count: 3, items: 3, value: 75 }]);
+    assert.equal((await service.getFinds(url('dimension=the_end&kind=ITEM&q=Shulker%20Box'))).total, 3);
     const sentAgain = await service.ingest(token, { server: 'oldfrog.org', dimension: 'overworld', finds: [batch.finds[2]] }, NOW);
     assert.equal(sentAgain.added, 0, 'the mod sending it again does not bring it back');
     await assert.rejects(service.removeFind(admin, elytra.id), /removed already/);
