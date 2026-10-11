@@ -11973,7 +11973,7 @@ body.kill-aura-modal-open {
   }
 }
 
-.account-switcher { display:flex; align-items:center; gap:6px; width:auto; min-width:0; max-width:min(280px,32vw); transform-origin:left center; transition:opacity 180ms ease,width 240ms cubic-bezier(.2,.8,.2,1),max-width 240ms cubic-bezier(.2,.8,.2,1),margin 240ms cubic-bezier(.2,.8,.2,1),transform 220ms ease; }
+.account-switcher { display:flex; align-items:center; gap:6px; width:auto; min-width:0; max-width:min(400px,40vw); transform-origin:left center; transition:opacity 180ms ease,width 240ms cubic-bezier(.2,.8,.2,1),max-width 240ms cubic-bezier(.2,.8,.2,1),margin 240ms cubic-bezier(.2,.8,.2,1),transform 220ms ease; }
 .account-switcher[hidden] { display:none!important; }
 .account-switcher-list { display:flex; gap:6px; overflow-x:auto; scrollbar-width:none; padding:4px; }
 .account-switcher-list::-webkit-scrollbar { display:none; }
@@ -11998,6 +11998,7 @@ body.kill-aura-modal-open {
 @keyframes account-status-blink { 0%,100% { opacity:.55; } 50% { opacity:1; } }
 @media (prefers-reduced-motion:reduce) { .account-status-dot { animation:none!important; } }
 .account-add { flex:0 0 42px; width:42px; min-width:42px; max-width:42px; font-size:22px; font-weight:500; line-height:1; }
+.account-switcher-list .account-add { position:sticky; right:0; z-index:2; }
 .tab-button.account-tab-restricted { display:none!important; }
 .account-modal-overlay { position:fixed; inset:0; z-index:1200; display:grid; place-items:center; padding:18px; background:color-mix(in srgb,var(--bg) 72%,transparent); backdrop-filter:blur(8px); animation:overlayIn 180ms ease; }
 .account-modal-overlay[hidden] { display:none; }
