@@ -39,7 +39,7 @@ public final class FindsArchive {
 
     /**
      * One find. {@code name}: the base's ("Base #47"), the sign's block ("Oak Sign"), the item's
-     * ("Elytra") or what a marker marks ("End Portal", "Shulker Box", "Named Cat", a custom block's name). For a
+     * ("Elytra") or what a marker marks ("End Portal", "Placed Shulker Box", "Named Cat", a custom block's name). For a
      * base, {@code details} is what it was scored on; for a sign, {@code details} is the front text
      * and {@code label} the back; for an item or a named pet, {@code label} is its custom name, and for
      * an item {@code details} is what's on it and in it ("Mending, 87% · Elytra ×1, Totem of Undying ×12").
@@ -47,7 +47,7 @@ public final class FindsArchive {
      */
     public record Find(Kind kind, int x, int y, int z, LocalDateTime found, String name, int count, String label, String details, String uuid) {
         public Find {
-            name = FindNames.clean(name);
+            name = markerName(kind, FindNames.clean(name));
             label = label == null ? "" : label;
             details = details == null ? "" : details;
             uuid = uuid == null ? "" : uuid;
@@ -56,6 +56,16 @@ public final class FindsArchive {
         public Find(Kind kind, int x, int y, int z, LocalDateTime found, String name, int count, String label, String details) {
             this(kind, x, y, z, found, name, count, label, details, "");
         }
+    }
+
+    /** A shulker box block standing in the world: its contents never come to the client, unlike one lying on the ground. */
+    public static final String PLACED_SHULKER = "Placed Shulker Box";
+    /** What {@link #PLACED_SHULKER} markers were called before, too like "Loot: Shulker Box". */
+    public static final String OLD_PLACED_SHULKER = "Shulker Box";
+
+    /** A marker's name as it's called now: the old name of a placed shulker box's comes out new. */
+    public static String markerName(Kind kind, String name) {
+        return kind == Kind.MARKER && OLD_PLACED_SHULKER.equals(name) ? PLACED_SHULKER : name;
     }
 
     /** Bases closer than this are taken for one: the same base found again, a little off. */

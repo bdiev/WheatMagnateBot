@@ -12,6 +12,7 @@ import xaero.hud.minimap.world.MinimapWorld;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Function;
 
 /**
@@ -111,6 +112,37 @@ public final class XaeroWaypoints {
             }
         }
         return moved;
+    }
+
+    /**
+     * Renames the waypoints called {@code from} in the given sets - in every dimension of the server
+     * we're on - to {@code to}, with new initials. Returns how many; -1 if there's no world.
+     */
+    public static int rename(Set<String> sets, String from, String to, String initials) {
+        MinimapSession session = BuiltInHudModules.MINIMAP.getCurrentSession();
+        if (session == null || session.getWorldManager().getCurrentRootContainer() == null) return -1;
+        int renamed = 0;
+        for (MinimapWorld world : session.getWorldManager().getCurrentRootContainer().getAllWorldsIterable()) {
+            int renamedHere = 0;
+            for (String setName : sets) {
+                WaypointSet set = world.getWaypointSet(setName);
+                if (set == null) continue;
+                for (Waypoint w : set.getWaypoints()) {
+                    if (!from.equals(w.getName())) continue;
+                    w.setName(to);
+                    w.setInitials(initials);
+                    renamedHere++;
+                }
+            }
+            if (renamedHere == 0) continue;
+            renamed += renamedHere;
+            try {
+                session.getWorldManagerIO().saveWorld(world);
+            } catch (IOException e) {
+                AreaExplorer.FILE_LOG.error("Couldn't save Xaero waypoints", e);
+            }
+        }
+        return renamed;
     }
 
     /** A waypoint of the server, in any dimension: the dimension as the game names it ("overworld", "the_nether"). */

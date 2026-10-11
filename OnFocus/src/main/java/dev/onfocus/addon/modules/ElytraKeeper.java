@@ -32,7 +32,17 @@ import net.minecraft.sound.SoundEvents;
 public class ElytraKeeper extends Module {
     private static final int SWAP_COOLDOWN_TICKS = 10;
     private static final int REDEPLOY_WINDOW_TICKS = 60;
-    private static final int REDEPLOY_INTERVAL_TICKS = 4;
+    /**
+     * Ticks between reopens: long enough for the server's answer to come back first. A reopen the
+     * server gets while it has us gliding already closes the elytra (vanilla toggles on it), so
+     * resending sooner ping-pongs gliding on and off - and a fly module with it.
+     */
+    private static final int REDEPLOY_INTERVAL_TICKS = 20;
+    /**
+     * Ticks after joining (a reconnect too) before reopening: the server puts a player who left
+     * gliding back gliding, but says so a moment after the player appears - a reopen before that closes it.
+     */
+    private static final int JOIN_GRACE_TICKS = 30;
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
@@ -88,6 +98,9 @@ public class ElytraKeeper extends Module {
     private int swapCooldown;
     private int ticksSinceGlide = Integer.MAX_VALUE;
     private int redeployCooldown;
+    /** The player entity last ticked: a new one is a join. */
+    private Object lastPlayer;
+    private int joinGrace;
     private boolean warnedLow, warnedEmpty;
 
     public ElytraKeeper() {
@@ -98,6 +111,8 @@ public class ElytraKeeper extends Module {
     public void onActivate() {
         swapCooldown = 0;
         redeployCooldown = 0;
+        lastPlayer = mc.player;
+        joinGrace = 0;
         ticksSinceGlide = mc.player != null && mc.player.isGliding() ? 0 : Integer.MAX_VALUE;
         warnedLow = warnedEmpty = false;
     }
@@ -106,7 +121,19 @@ public class ElytraKeeper extends Module {
     private void onTick(TickEvent.Pre event) {
         if (mc.player == null || mc.world == null) return;
 
-        if (mc.player.isGliding()) ticksSinceGlide = 0;
+        if (mc.player != lastPlayer) {
+            lastPlayer = mc.player;
+            joinGrace = JOIN_GRACE_TICKS;
+            redeployCooldown = 0;
+            // Gliding when it left: the window to reopen in starts once the grace is over
+            if (ticksSinceGlide <= REDEPLOY_WINDOW_TICKS) ticksSinceGlide = 1;
+        }
+
+        if (mc.player.isGliding()) {
+            ticksSinceGlide = 0;
+            // Back gliding: the server's word is in, no more grace needed
+            joinGrace = 0;
+        } else if (joinGrace > 0) joinGrace--;
         else if (ticksSinceGlide != Integer.MAX_VALUE) ticksSinceGlide++;
 
         ItemStack chest = mc.player.getEquippedStack(EquipmentSlot.CHEST);
@@ -280,7 +307,7 @@ public class ElytraKeeper extends Module {
             redeployCooldown--;
             return;
         }
-        if (mc.player.isGliding() || ticksSinceGlide == 0 || ticksSinceGlide > REDEPLOY_WINDOW_TICKS) return;
+        if (joinGrace > 0 || mc.player.isGliding() || ticksSinceGlide == 0 || ticksSinceGlide > REDEPLOY_WINDOW_TICKS) return;
         if (mc.player.isOnGround() || mc.player.isTouchingWater() || mc.player.isInLava() || mc.player.hasVehicle()) return;
 
         ItemStack chest = mc.player.getEquippedStack(EquipmentSlot.CHEST);

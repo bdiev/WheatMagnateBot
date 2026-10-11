@@ -268,23 +268,23 @@ async function testMarkers() {
     const marker = (name, x, z) => ({ kind: 'MARKER', x, y: 30, z, foundAt: NOW, name });
     const result = await service.ingest(token, {
       server: 'oldfrog.org', dimension: 'overworld',
-      finds: [marker('End Portal', 100, 200), marker('End Portal', 100, 200), marker('Shulker Box', 5, 5), marker('Shulker Box', 900, 5), marker('Spawner', 0, 0),
+      finds: [marker('End Portal', 100, 200), marker('End Portal', 100, 200), marker('Shulker Box', 5, 5), marker('Placed Shulker Box', 900, 5), marker('Spawner', 0, 0),
         { kind: 'SIGN', x: 1, y: 64, z: 1, foundAt: NOW, name: 'Oak Sign', details: 'hi' }]
     }, NOW);
     assert.deepEqual([result.added, result.duplicates], [5, 1], 'a marker is one per block and name');
 
     const overworld = (await service.getSummary()).scopes[0];
     assert.equal(overworld.markers, 4);
-    assert.deepEqual(overworld.markerNames, [{ name: 'Shulker Box', count: 2 }, { name: 'End Portal', count: 1 }, { name: 'Spawner', count: 1 }],
-      'what the markers mark, most first');
+    assert.deepEqual(overworld.markerNames, [{ name: 'Placed Shulker Box', count: 2 }, { name: 'End Portal', count: 1 }, { name: 'Spawner', count: 1 }],
+      'what the markers mark, most first; a "Shulker Box" marker from an older build counts as a placed one');
 
     const url = query => new URL(`http://x/api/area-explorer/finds?${query}`);
     assert.equal((await service.getFinds(url('kind=MARKER'))).total, 3, 'the Markers tab leaves End Portals to their own');
     const portals = await service.getFinds(url('kind=END_PORTAL'));
     assert.deepEqual(portals.finds.map(find => [find.name, find.x]), [['End Portal', 100]], 'End Portals have a tab of their own');
     assert.equal((await service.getFinds(url('kind=MARKER&name=End%20Portal'))).total, 1, 'and can still be asked for by name');
-    const shulkers = await service.getFinds(url('kind=marker&name=Shulker%20Box'));
-    assert.deepEqual(shulkers.finds.map(find => [find.name, find.x]).sort(), [['Shulker Box', 5], ['Shulker Box', 900]]);
+    const shulkers = await service.getFinds(url('kind=marker&name=Placed%20Shulker%20Box'));
+    assert.deepEqual(shulkers.finds.map(find => [find.name, find.x]).sort(), [['Placed Shulker Box', 5], ['Placed Shulker Box', 900]]);
     assert.equal((await service.getFinds(url('name=Shulker%20Box'))).total, 5, 'the name only narrows markers');
     const points = await service.getMapPoints(new URL('http://x/api/area-explorer/map?kind=MARKER&name=End%20Portal'));
     assert.deepEqual(points.points.map(point => point.slice(1)), [['MARKER', 100, 200, 'End Portal']], "a marker's point carries its name");
@@ -295,10 +295,10 @@ async function testMarkers() {
     assert.equal(removed.removed.kind, 'MARKER');
     const afterRemoval = (await service.getSummary()).scopes[0];
     assert.equal(afterRemoval.markers, 3);
-    assert.deepEqual(afterRemoval.markerNames.find(item => item.name === 'Shulker Box'), { name: 'Shulker Box', count: 1 });
+    assert.deepEqual(afterRemoval.markerNames.find(item => item.name === 'Placed Shulker Box'), { name: 'Placed Shulker Box', count: 1 });
     const again = await service.ingest(token, { server: 'oldfrog.org', dimension: 'overworld', finds: [marker('Shulker Box', 5, 5)] }, NOW);
     assert.equal(again.added, 0, 'sent again by the mod: stays off');
-    assert.equal((await service.getFinds(url('kind=MARKER&name=Shulker%20Box'))).total, 1);
+    assert.equal((await service.getFinds(url('kind=MARKER&name=Placed%20Shulker%20Box'))).total, 1);
     const portal = (await service.getFinds(url('kind=MARKER&name=End%20Portal'))).finds[0];
     await assert.rejects(service.removeFind({ username: 'admin' }, portal.id), /removable marker/, 'an End Portal stays');
 
@@ -501,6 +501,33 @@ async function testCleanNames() {
       'cleaning existing names must be idempotent');
   } finally {
     await db.close();
+  }
+
+  // Placed shulker boxes' markers from before take the new name; one already in under it keeps the old one's removal
+  const shulkers = new PGlite();
+  try {
+    for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '072_area_explorer_picked_up.sql']) {
+      await shulkers.exec(fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8'));
+    }
+    const marker = (name, x, removed, kind = 'MARKER') => shulkers.query(`INSERT INTO area_explorer_finds
+      (server, dimension, kind, x, y, z, found_at, name, item_count, label, dedupe_key, removed_at)
+      VALUES ('s', 'overworld', $1, $2, 64, 0, NOW(), $3, 0, '', $4, $5)`,
+      [kind, x, name, `${kind}:${x}:64:0:${name}`, removed ? new Date(NOW) : null]);
+    await marker('Shulker Box', 1, false);
+    await marker('Shulker Box', 2, true);
+    await marker('Placed Shulker Box', 2, false);
+    await marker('Shulker Box', 3, false, 'ITEM');
+    const migration = fs.readFileSync(path.join(__dirname, '../migrations/081_area_explorer_placed_shulker.sql'), 'utf8');
+    await shulkers.exec(migration);
+    await shulkers.exec(migration);
+    const rows = (await shulkers.query('SELECT kind, x, name, dedupe_key, removed_at IS NOT NULL AS removed FROM area_explorer_finds ORDER BY x')).rows;
+    assert.deepEqual(rows.map(row => [row.kind, row.x, row.name, row.dedupe_key, row.removed]), [
+      ['MARKER', 1, 'Placed Shulker Box', 'MARKER:1:64:0:Placed Shulker Box', false],
+      ['MARKER', 2, 'Placed Shulker Box', 'MARKER:2:64:0:Placed Shulker Box', true],
+      ['ITEM', 3, 'Shulker Box', 'ITEM:3:64:0:Shulker Box', false]
+    ], 'old placed shulker markers renamed once, a removal kept, items left alone');
+  } finally {
+    await shulkers.close();
   }
 }
 

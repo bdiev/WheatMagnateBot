@@ -12,6 +12,7 @@ const SAME_BASE_DISTANCE = 64;
 const SAME_PET_DISTANCE = 48;
 /** The marker with a tab of its own; the Markers tab is the rest. */
 const END_PORTAL = 'End Portal';
+const PLACED_SHULKER = 'Placed Shulker Box';
 // A pet's name as compared: no case, spaces or invisible characters
 const PET_LABEL_SQL = "lower(regexp_replace(label, '[[:space:]\\u00a0\\u200b-\\u200f\\ufeff]', '', 'g'))";
 const MAX_FINDS_PER_BATCH = 1000;
@@ -104,7 +105,9 @@ function normalizeFind(raw, now = Date.now()) {
   const y = normalizeInteger(raw.y, MAX_Y);
   const z = normalizeInteger(raw.z, MAX_COORDINATE);
   const foundAt = normalizeFoundAt(raw.foundAt, now);
-  const name = normalizeText(cleanFindName(raw.name), 128);
+  const cleanName = normalizeText(cleanFindName(raw.name), 128);
+  // Builds of the mod before placed shulker boxes were told from loot called theirs "Shulker Box"
+  const name = kind === 'MARKER' && cleanName === 'Shulker Box' ? PLACED_SHULKER : cleanName;
   if (x === null || y === null || z === null || !foundAt || !name) return null;
   const count = kind === 'ITEM' ? Math.min(Math.max(normalizeInteger(raw.count, 1_000_000) ?? 1, 1), 1_000_000) : 0;
   return {

@@ -322,6 +322,9 @@ public class AreaExplorer extends Module {
     /** Sectors mode: what to do with a sector still blank after the cleanup limit. */
     public enum UnfinishedSector { Defer, Pause }
 
+    /** How routine progress (each sector, each cleanup pass) reaches chat: each step, a summary now and then, or not. */
+    public enum ChatProgress { Every, Summary, Off }
+
     /** Sector commands from Xaero's World Map. */
     public enum SectorAction { Next, Skip, Rescan }
 
@@ -462,6 +465,24 @@ public class AreaExplorer extends Module {
         .build()
     );
 
+    private final Setting<ChatProgress> chatProgress = sgGeneral.add(new EnumSetting.Builder<ChatProgress>()
+        .name("chat-progress")
+        .description("Routine progress in chat - each sector started, each sweep and cleanup pass: Every one, a Summary every summary-minutes (where it's got to, time left, what's found), or Off. It all goes to the log file either way; finds, start, finish and problems are said as before.")
+        .defaultValue(ChatProgress.Summary)
+        .visible(notify::get)
+        .build()
+    );
+
+    private final Setting<Integer> summaryMinutes = sgGeneral.add(new IntSetting.Builder()
+        .name("summary-minutes")
+        .description("How often chat-progress Summary says where the run has got to.")
+        .defaultValue(15)
+        .min(1)
+        .sliderRange(5, 60)
+        .visible(() -> notify.get() && chatProgress.get() == ChatProgress.Summary)
+        .build()
+    );
+
     private final Setting<Boolean> showOnMap = sgGeneral.add(new BoolSetting.Builder()
         .name("show-on-map")
         .description("Keeps the area being explored highlighted on Xaero's World Map while the module is on.")
@@ -562,7 +583,7 @@ public class AreaExplorer extends Module {
         ANCIENT_CITY("Ancient City", "Ancient Cities", "skull", new SettingColor(0, 170, 170), false, b -> b == Blocks.REINFORCED_DEEPSLATE),
         END_CITY("End City", "End Cities", "star", new SettingColor(85, 85, 255), false, b -> b == Blocks.PURPUR_BLOCK || b == Blocks.PURPUR_PILLAR),
         END_GATEWAY("End Gateway", "End Gateways", "circle", new SettingColor(0, 170, 0), false, b -> b == Blocks.END_GATEWAY),
-        SHULKER("Shulker Box", "Shulker Boxes", "square", new SettingColor(255, 85, 255), false, b -> b instanceof ShulkerBoxBlock);
+        SHULKER(FindsArchive.PLACED_SHULKER, "Shulker Boxes", "square", new SettingColor(255, 85, 255), false, b -> b instanceof ShulkerBoxBlock);
 
         final String title, group, icon;
         final SettingColor color;
@@ -1808,6 +1829,34 @@ public class AreaExplorer extends Module {
         else log(fmt, args);
     }
 
+    /** Routine progress: chat only with chat-progress on Every (see {@link #tickChatSummary} for Summary), the log file either way. */
+    private void progress(String fmt, Object... args) {
+        if (notify.get() && chatProgress.get() == ChatProgress.Every) info(fmt, args);
+        else log(fmt, args);
+    }
+
+    /** When chat-progress Summary last spoke, or the run started: the next is summary-minutes after. */
+    private long lastChatSummary;
+
+    /** chat-progress Summary: every summary-minutes of the run going on, one line for the progress chat isn't told step by step. */
+    private void tickChatSummary() {
+        if (!notify.get() || chatProgress.get() != ChatProgress.Summary || paused || phase == Phase.SPIRAL || area == null) {
+            lastChatSummary = System.currentTimeMillis();
+            return;
+        }
+        long now = System.currentTimeMillis();
+        // A run carried on from its save: the first summary-minutes from now, not at once
+        if (lastChatSummary == 0) lastChatSummary = now;
+        if (now - lastChatSummary < summaryMinutes.get() * 60_000L) return;
+        lastChatSummary = now;
+        int eta = etaSeconds();
+        String where = sectors != null
+            ? "Sector (highlight)%d/%d(default), ".formatted(Math.min(sectors.visited() + 1, sectors.total()), sectors.total())
+            : "";
+        info("%s(highlight)%d%%(default) %s%s. This run: %s.", where, percent(), rescan ? "rescanned" : "explored",
+            eta < 0 ? "" : ", about (highlight)%s(default) left".formatted(formatDuration(eta)), foundSummary());
+    }
+
     // Everything said in chat goes to the log file as well
 
     @Override
@@ -2114,7 +2163,7 @@ public class AreaExplorer extends Module {
     private void reportSector() {
         Area sector = sectors.current();
         boolean retry = sectors.state(sectors.currentIndex()) == SectorTraversal.State.DEFERRED;
-        report("%s (highlight)%d/%d(default): %dx%d chunks at X %d..%d, Z %d..%d; %d unconfirmed.",
+        progress("%s (highlight)%d/%d(default): %dx%d chunks at X %d..%d, Z %d..%d; %d unconfirmed.",
             sectors.transit() ? "Mapped transit sector" : retry ? "Retrying deferred sector" : "Sector",
             Math.min(sectors.visited() + 1, sectors.total()), sectors.total(), sector.width(), sector.depth(),
             sector.minCX() * 16, sector.maxCX() * 16 + 15, sector.minCZ() * 16, sector.maxCZ() * 16 + 15, sectors.missing(this::confirmedChunk));
@@ -2263,6 +2312,7 @@ public class AreaExplorer extends Module {
         cleanupTailBlocks = 0;
         planGeneration++;
         nextProgressReport = 25;
+        lastChatSummary = System.currentTimeMillis();
 
         radius = viewDistance.get() > 0 ? viewDistance.get() : measureRadius();
         // Xaero leaves the outermost loaded ring undrawn; the real value gets measured in flight
@@ -3183,7 +3233,9 @@ public class AreaExplorer extends Module {
         String text = "%s: (highlight)%d(default) chunks still blank, picking them up at (highlight)%d(default) spots%s.".formatted(
             cleanupPass == 1 ? "Sweep done" : "Cleanup pass " + cleanupPass, missing, cleanupPlan.size(),
             eta < 0 ? "" : (sectors != null ? ", about (highlight)%s(default) left for the whole selection" : ", about (highlight)%s(default)").formatted(formatDuration(eta)));
-        report("%s", text);
+        // Once a sector with sectors: routine, unlike the one sweep of a whole selection
+        if (sectors != null) progress("%s", text);
+        else report("%s", text);
         siteEvent("info", "phase", text);
     }
 
@@ -3646,7 +3698,9 @@ public class AreaExplorer extends Module {
 
     private void placeMarker(String name, BlockPos pos) {
         for (XaeroWaypoints.Spot spot : existingMarkers()) {
-            if (spot.name().equals(name) && near(spot, pos, markerSpacing.get())) return;
+            // One placed before the shulker box's was renamed is the same marker
+            String spotName = FindsArchive.markerName(FindsArchive.Kind.MARKER, spot.name());
+            if (spotName.equals(name) && near(spot, pos, markerSpacing.get())) return;
         }
 
         Marker kind = null;
@@ -3674,6 +3728,7 @@ public class AreaExplorer extends Module {
         if (!MARKERS_IMPORTED.add(server)) return;
         Set<String> titles = new HashSet<>();
         for (Marker marker : Marker.values()) titles.add(marker.title);
+        titles.add(FindsArchive.OLD_PLACED_SHULKER);
         for (Block block : customMarkerBlocks.get()) titles.add(block.getName().getString());
 
         Map<String, List<FindsArchive.Find>> byDimension = new HashMap<>();
@@ -3908,27 +3963,33 @@ public class AreaExplorer extends Module {
      * Moves the markers made before groups (all in marker-list) to their groups' Xaero sets, in every
      * dimension of this server, coloured as their group. Told by the name: "Base #3", "Loot: ...", a
      * marker's ("End Portal"), a picked item's; anything else in the list was a custom block.
-     * Returns how many moved, -1 if Xaero's Minimap isn't there to move them in.
+     * Placed shulker boxes' markers from before they were told from loot get their new name too.
+     * Returns how many moved or were renamed, -1 if Xaero's Minimap isn't there to move them in.
      */
     public int regroupMarkers() {
         if (!toXaero()) return -1;
         String from = markerListName.get().trim().isEmpty() ? "Area Explorer" : markerListName.get().trim();
+        // Only in the sets Area Explorer's markers go to: a waypoint of the player's own keeps its name
+        int renamed = XaeroWaypoints.rename(Set.of(from, Marker.SHULKER.group), FindsArchive.OLD_PLACED_SHULKER,
+            FindsArchive.PLACED_SHULKER, initials(FindsArchive.PLACED_SHULKER));
         Map<String, XaeroWaypoints.Target> byName = new HashMap<>();
         for (Item item : savedItemKinds.get()) byName.put(itemName(item), new XaeroWaypoints.Target(ITEMS_GROUP, itemsColor.get().getPacked()));
         for (Block block : customMarkerBlocks.get()) byName.put(block.getName().getString(), new XaeroWaypoints.Target(CUSTOM_GROUP, customColor.get().getPacked()));
         for (Marker marker : Marker.values()) byName.put(marker.title, new XaeroWaypoints.Target(marker.group, markerColors.get(marker).get().getPacked()));
+        byName.put(FindsArchive.OLD_PLACED_SHULKER, byName.get(FindsArchive.PLACED_SHULKER));
         XaeroWaypoints.Target bases = new XaeroWaypoints.Target(BASES_GROUP, basesColor.get().getPacked());
         XaeroWaypoints.Target loot = new XaeroWaypoints.Target(ITEMS_GROUP, itemsColor.get().getPacked());
         XaeroWaypoints.Target custom = new XaeroWaypoints.Target(CUSTOM_GROUP, customColor.get().getPacked());
         XaeroWaypoints.Target pets = new XaeroWaypoints.Target(PETS_GROUP, petsColor.get().getPacked());
         XaeroWaypoints.Target pearls = new XaeroWaypoints.Target(PEARLS_GROUP, pearlsColor.get().getPacked());
-        return XaeroWaypoints.regroup(from, name -> {
+        int moved = XaeroWaypoints.regroup(from, name -> {
             if (name.startsWith(BASE_PREFIX)) return bases;
             if (name.startsWith(LOOT_PREFIX)) return loot;
             if (name.startsWith(CAT_PREFIX) || name.startsWith(DOG_PREFIX)) return pets;
             if (name.startsWith(PEARL_PREFIX)) return pearls;
             return byName.getOrDefault(name, custom);
         });
+        return Math.max(0, renamed) + Math.max(0, moved);
     }
 
     /** Markers already there in the current dimension, whichever list they go to. */
@@ -4999,6 +5060,7 @@ public class AreaExplorer extends Module {
         scanBaseEntities();
         confirmBaseCandidates();
         tickFindFiles();
+        tickChatSummary();
         // In case the game goes down without turning the module off first; paused too, as the ground
         // flown by hand still counts
         if (++sessionSaveTicks >= SESSION_SAVE_INTERVAL_TICKS) {

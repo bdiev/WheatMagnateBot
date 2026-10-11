@@ -697,6 +697,10 @@ public final class ExplorerRegressionTest {
         var inside = ItemDetails.parseContents("Elytra ×1, Totem of Undying ×12, +3");
         require(inside.equals(java.util.Map.of("Elytra", 1, "Totem of Undying", 12)) && ItemDetails.parseContents(ItemDetails.EMPTY).isEmpty(),
             "A shulker box's details must read back as what it holds");
+        require(archive.add(new FindsArchive.Find(FindsArchive.Kind.MARKER, 7, 64, 7, now, "Shulker Box", 0, "", ""))
+            && !archive.add(new FindsArchive.Find(FindsArchive.Kind.MARKER, 7, 64, 7, now, "Placed Shulker Box", 0, "", ""))
+            && archive.finds(FindsArchive.Kind.MARKER).getFirst().name().equals("Placed Shulker Box"),
+            "An old placed shulker box marker must take the new name and be the same marker");
     }
 
     private static void largeCleanup() {

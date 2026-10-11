@@ -7061,7 +7061,8 @@ function areaExplorerFindTitle(find) {
 const AREA_EXPLORER_KIND_ICONS = Object.freeze({ '': 'filled_map', BASE: 'crafting_table', MARKER: 'ender_eye', ITEM: 'chest', SIGN: 'oak_sign' });
 const AREA_EXPLORER_MARKER_ICONS = Object.freeze({
   'End Portal': 'ender_eye', 'Nether Portal': 'obsidian', Spawner: 'spawner', 'Trial Chamber': 'trial_key',
-  'Ancient City': 'echo_shard', 'End City': 'purpur_block', 'End Gateway': 'ender_pearl', 'Shulker Box': 'shulker_box',
+  'Ancient City': 'echo_shard', 'End City': 'purpur_block', 'End Gateway': 'ender_pearl', 'Placed Shulker Box': 'shulker_box',
+  'Shulker Box': 'shulker_box',
   'Thrown Pearl': 'ender_pearl'
 });
 // A named pet shows its own face, from the icon service's mobs; what it's fed when that's missing
