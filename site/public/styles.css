@@ -13760,6 +13760,8 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
   box-shadow: var(--shadow-sm);
 }
 .area-explorer-new-finds:hover { transform: translateX(-50%); }
+/* Keep the overlay under the finger; the generic pressed transform shifts it off centre. */
+.area-explorer-new-finds:active:not(:disabled) { transform: translateX(-50%); }
 .area-explorer-new-finds[hidden] { display: none; }
 .area-explorer-find.is-new { animation: area-explorer-new-find 2.4s ease-out; }
 @keyframes area-explorer-new-find {

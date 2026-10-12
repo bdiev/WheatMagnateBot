@@ -6,6 +6,7 @@ import dev.onfocus.addon.commands.RegroupMarkersCommand;
 import dev.onfocus.addon.modules.AreaExplorer;
 import dev.onfocus.addon.modules.AutoEat;
 import dev.onfocus.addon.modules.AutoMend;
+import dev.onfocus.addon.modules.AutoSignDate;
 import dev.onfocus.addon.modules.AutoStripper;
 import dev.onfocus.addon.modules.CustomBlockEsp;
 import dev.onfocus.addon.modules.DeathMessageBlocker;
@@ -46,6 +47,7 @@ public class OnFocusAddon extends MeteorAddon {
         Modules.get().add(new AreaExplorer());
         Modules.get().add(new ElytraKeeper());
         Modules.get().add(new ElytraControl());
+        Modules.get().add(new AutoSignDate());
 
         Commands.add(new RegroupMarkersCommand());
         Commands.add(new LootMarkersCommand());
