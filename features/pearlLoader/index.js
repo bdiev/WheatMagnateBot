@@ -7,6 +7,12 @@ const { nextInteractionSequence } = require('../obsidianFarm/interaction-sequenc
 
 const PEARL_LOADER_ROLE = 'pearl_loader';
 const LOAD_COMMAND = /^load$/i;
+const CANCEL_COMMAND = /^cancel$/i;
+// Players waiting while the loader serves someone else: how many, and how long a place is held
+const MAX_QUEUE_LENGTH = 20;
+const QUEUE_TIMEOUT_MS = 15 * 60_000;
+// Stages a request can still be called off in: the trapdoor has not been touched yet
+const CANCELLABLE_STAGES = Object.freeze(['lookup', 'connecting', 'navigating', 'checking_pearl', 'aiming', 'awaiting_yes']);
 const READY_CONFIRMATIONS = Object.freeze([
   'yes', 'y', 'ye', 'yea', 'yeah', 'yeh', 'yah', 'ya', 'yep', 'yup', 'yas', 'yessir', 'yes sir',
   'yes please', 'yeah sure', 'yep sure', 'ok', 'okay', 'okey', 'k', 'kk', 'ok go', 'sure', 'sure thing',
@@ -265,6 +271,8 @@ function createPearlLoaderFeature({
   interactionSettleMs = 250,
   interactionTimeoutMs = 1_500,
   interactionAttempts = 3,
+  queueTimeoutMs = QUEUE_TIMEOUT_MS,
+  maxQueueLength = MAX_QUEUE_LENGTH,
   navigationRange = 2.5,
   interactionReach = 4.5,
   goalFactory = (x, y, z, range, bot, reach, block) => new GoalCompositeAll([
@@ -284,6 +292,10 @@ function createPearlLoaderFeature({
   // The request whose single summary log is still being written. It outlives
   // activeJob while the loader disconnects so that stop is part of the story.
   let reportingJob = null;
+  // Players who asked while the loader was busy, first come first served:
+  // { username, usernameKey, requestedAt, expiresAt, timer }
+  const queue = [];
+  let advanceTimer = null;
 
   // Each request writes one system log when it ends; everything that happened
   // on the way (steps, retries, runtime status changes) goes into its details.
@@ -620,6 +632,18 @@ function createPearlLoaderFeature({
       error: error?.message || String(error)
     });
     if (notify) await tellPrimary(job.username, `Pearl Loader unavailable: ${error?.message || String(error)}`).catch(() => {});
+    advanceQueue();
+  }
+
+  async function cancelJob(job) {
+    if (!job || activeJob !== job) return;
+    clearJobTimers(job);
+    job.runtime?.assignTask?.('idle');
+    activeJob = null;
+    note(job, 'info', 'Request cancelled by the player.', { stage:job.stage });
+    await job.runtime?.stop?.('Pearl Loader request cancelled').catch(() => {});
+    writeJobLog(job, 'info', `Pearl Loader request for ${job.username} was cancelled.`, { outcome:'cancelled', stage:job.stage });
+    advanceQueue();
   }
 
   async function finishJob(job) {
@@ -630,6 +654,7 @@ function createPearlLoaderFeature({
     note(job, 'info', 'Trapdoor opened; hatch cycle complete.');
     await job.runtime?.stop?.('Pearl Loader request complete').catch(() => {});
     writeJobLog(job, 'info', `Pearl Loader completed the hatch cycle for ${job.username}.`, { outcome:'completed' });
+    advanceQueue();
   }
 
   async function finishMissingPearl(job) {
@@ -643,6 +668,85 @@ function createPearlLoaderFeature({
       outcome:'no_pearl',
       radius:PEARL_SEARCH_RADIUS
     });
+    advanceQueue();
+  }
+
+  // The queue: a player who asks while the loader serves someone else waits
+  // their turn, can leave with "cancel", and loses the place after a while.
+
+  function queuePosition(key) {
+    return queue.findIndex(entry => entry.usernameKey === key) + 1;
+  }
+
+  function removeFromQueue(key) {
+    const index = queue.findIndex(entry => entry.usernameKey === key);
+    if (index < 0) return null;
+    const [entry] = queue.splice(index, 1);
+    clearTimer(entry.timer);
+    return entry;
+  }
+
+  function minutesText(ms) {
+    const minutes = Math.max(1, Math.round(ms / 60_000));
+    return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+  }
+
+  async function enqueue(username, key) {
+    const position = queuePosition(key);
+    if (position) {
+      await tellPrimary(username, `You are #${position} in the Pearl Loader queue. Whisper "cancel" to leave it.`);
+      return;
+    }
+    if (queue.length >= maxQueueLength) {
+      await tellPrimary(username, `Pearl Loader is busy and its queue is full (${maxQueueLength}). Try again later.`);
+      return;
+    }
+    const now = Date.now();
+    const entry = { username, usernameKey:key, requestedAt:new Date(now).toISOString(), expiresAt:new Date(now + queueTimeoutMs).toISOString(), timer:null };
+    entry.timer = setTimer(() => {
+      if (!removeFromQueue(key)) return;
+      log('info', `Pearl Loader queue place of ${username} expired.`, { username, requestedAt:entry.requestedAt });
+      void tellPrimary(username, 'Your place in the Pearl Loader queue expired. Whisper "load" to ask again.').catch(() => {});
+    }, queueTimeoutMs);
+    entry.timer?.unref?.();
+    queue.push(entry);
+    await tellPrimary(username,
+      `Pearl Loader is busy with ${activeJob?.username || 'another player'}. You are #${queue.length} in the queue; ` +
+      `your place is held for ${minutesText(queueTimeoutMs)}. Whisper "cancel" to leave it.`);
+  }
+
+  // The next waiting player is served once the current request has ended.
+  function advanceQueue() {
+    if (advanceTimer || activeJob || !queue.length) return;
+    advanceTimer = setTimer(() => {
+      advanceTimer = null;
+      if (activeJob) return;
+      const next = queue.shift();
+      if (!next) return;
+      clearTimer(next.timer);
+      void tellPrimary(next.username, 'Your turn: Pearl Loader is on its way to your pearl.').catch(() => {});
+      void begin(next.username).catch(error =>
+        tellPrimary(next.username, `Pearl Loader unavailable: ${error?.message || String(error)}`).catch(() => {}));
+    }, 0);
+  }
+
+  async function cancel(username) {
+    const key = String(username || '').toLowerCase();
+    if (removeFromQueue(key)) {
+      await tellPrimary(username, 'You left the Pearl Loader queue.');
+      return true;
+    }
+    const job = activeJob;
+    if (!job || job.usernameKey !== key) return false;
+    if (!CANCELLABLE_STAGES.includes(job.stage)) {
+      await tellPrimary(username, 'Too late to cancel: the trapdoor is already being worked.');
+      return true;
+    }
+    // Still starting the loader: begin() calls it off as soon as that is done
+    if (!job.runtime) job.cancelRequested = true;
+    else await cancelJob(job);
+    await tellPrimary(username, 'Your Pearl Loader request is cancelled.').catch(() => {});
+    return true;
   }
 
   function playerVisible(bot, username) {
@@ -683,10 +787,12 @@ function createPearlLoaderFeature({
   async function begin(username) {
     const key = String(username || '').toLowerCase();
     if (activeJob) {
-      const ownJob = activeJob.usernameKey === key;
-      await tellPrimary(username, ownJob ? 'Your Pearl Loader request is already in progress.' : `Pearl Loader is busy with ${activeJob.username}.`);
+      if (activeJob.usernameKey === key) await tellPrimary(username, 'Your Pearl Loader request is already in progress. Whisper "cancel" to call it off.');
+      else await enqueue(username, key);
       return;
     }
+    // Asked again while queued, just as the loader came free: served now
+    removeFromQueue(key);
     const job = {
       username,
       usernameKey: key,
@@ -699,20 +805,25 @@ function createPearlLoaderFeature({
       readyTimer: null,
       visibilityTimer: null,
       visibilityDeadlineTimer: null,
-      aimPromise: null
+      aimPromise: null,
+      cancelRequested: false
     };
     activeJob = job;
     try {
       const hatch = await loadPlayerHatch(username);
+      if (job.cancelRequested) { await cancelJob(job); return; }
       if (!hatch) {
         activeJob = null;
         await tellPrimary(username, 'Pearl hatch coordinates are not configured. Ask an administrator to add them to your player card.');
+        advanceQueue();
         return;
       }
       const account = await loaderAccount();
+      if (job.cancelRequested) { await cancelJob(job); return; }
       if (!account) {
         activeJob = null;
         await tellPrimary(username, 'Pearl Loader is not configured. Ask an administrator to assign the Pearl Loader role to one bot.');
+        advanceQueue();
         return;
       }
       const manager = getManager();
@@ -730,6 +841,8 @@ function createPearlLoaderFeature({
       const runtime = manager.get(account.id);
       if (!runtime) throw new Error('Pearl Loader runtime could not be started.');
       job.runtime = runtime;
+      // Cancelled while it was starting: the loader goes off again
+      if (job.cancelRequested) { await cancelJob(job); return; }
       const loaderBot = await waitForLoader(runtime);
       if (activeJob !== job) return;
       runtime.assignTask?.('pearl_loader');
@@ -778,7 +891,10 @@ function createPearlLoaderFeature({
   }
 
   async function handlePrimaryWhisper(username, message) {
-    if (!LOAD_COMMAND.test(cleanWhisperText(message))) return false;
+    const text = cleanWhisperText(message);
+    // "cancel" is only taken from someone queued or being served; anyone else's goes on as a whisper
+    if (CANCEL_COMMAND.test(text)) return cancel(username);
+    if (!LOAD_COMMAND.test(text)) return false;
     try { await begin(username); }
     catch (error) { await tellPrimary(username, `Pearl Loader unavailable: ${error?.message || String(error)}`).catch(() => {}); }
     return true;
@@ -787,7 +903,13 @@ function createPearlLoaderFeature({
   async function handleLoaderWhisper(accountId, username, message) {
     const job = activeJob;
     if (!job || job.accountId !== accountId || !['aiming','awaiting_yes'].includes(job.stage)) return false;
-    if (String(username || '').toLowerCase() !== job.usernameKey || !isReadyConfirmation(message)) return false;
+    if (String(username || '').toLowerCase() !== job.usernameKey) return false;
+    if (CANCEL_COMMAND.test(cleanWhisperText(message))) {
+      try { sendPrivateWhisper(job.runtime?.bot, job.username, 'Cancelled. I am leaving.'); } catch {}
+      await cancelJob(job);
+      return true;
+    }
+    if (!isReadyConfirmation(message)) return false;
     clearTimer(job.readyTimer);
     job.readyTimer = null;
     if (job.stage === 'aiming') {
@@ -825,13 +947,17 @@ function createPearlLoaderFeature({
   }
 
   function getStatus() {
-    if (!activeJob) return { active:false };
+    const waiting = queue.length
+      ? { queue:queue.map((entry, index) => ({ username:entry.username, position:index + 1, requestedAt:entry.requestedAt, expiresAt:entry.expiresAt })) }
+      : {};
+    if (!activeJob) return { active:false, ...waiting };
     return {
       active:true,
       accountId:activeJob.accountId,
       username:activeJob.username,
       stage:activeJob.stage,
-      hatch:{ ...activeJob.hatch }
+      hatch:{ ...activeJob.hatch },
+      ...waiting
     };
   }
 
@@ -839,6 +965,9 @@ function createPearlLoaderFeature({
     clearJobTimers(activeJob);
     activeJob = null;
     reportingJob = null;
+    clearTimer(advanceTimer);
+    advanceTimer = null;
+    for (const entry of queue.splice(0)) clearTimer(entry.timer);
   }
 
   return { handlePrimaryWhisper, handleLoaderWhisper, recordRuntimeEvent, isExpectedPlayer, getStatus, dispose, __test:{ isTrapdoor, trapdoorIsOpen, trapdoorInteraction, loadPlayerHatch } };
@@ -846,6 +975,7 @@ function createPearlLoaderFeature({
 
 module.exports = {
   PEARL_LOADER_ROLE,
+  QUEUE_TIMEOUT_MS,
   PEARL_RELOAD_REMINDERS,
   PEARL_SEARCH_RADIUS,
   READY_CONFIRMATIONS,

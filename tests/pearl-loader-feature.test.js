@@ -514,6 +514,79 @@ async function testReadyConfirmationTimeout() {
   assert.equal(runtime.stopReason,'Pearl Loader request ended');
 }
 
+async function testQueue() {
+  const replies = [];
+  const chats = [];
+  let releaseNavigation = null;
+  const bot = {
+    entity:{position:new Vec3(9,64,-20),eyeHeight:1.62},
+    entities:{},
+    world:{raycast:() => ({position:new Vec3(10,64,-20)})},
+    pathfinder:{setMovements() {},goto:() => new Promise(resolve => { releaseNavigation = resolve; })},
+    async waitForChunksToLoad() {},
+    blockAt:() => ({name:'oak_trapdoor',position:new Vec3(10,64,-20),getProperties:() => ({open:true})}),
+    canSeeBlock:() => true,
+    chat:message => chats.push(message)
+  };
+  const runtime = new EventEmitter();
+  runtime.assignTask = () => {};
+  const stops = [];
+  runtime.stop = async reason => { stops.push(reason); runtime.bot = null; };
+  const logs = [];
+  const recorded = [];
+  const feature = createPearlLoaderFeature({
+    log:(level,message,details) => logs.push({level,message,details}),
+    pool:{query:async (sql,params) => {
+      if (/INSERT INTO pearl_loader_requests/.test(sql)) { recorded.push(params[2]); return {rows:[]}; }
+      return {rows:[{username:params[0],pearl_hatch_x:10,pearl_hatch_y:64,pearl_hatch_z:-20}]};
+    }},
+    getRegistry:() => ({load:async () => {},list:() => [loaderAccount]}),
+    getManager:() => ({get:() => runtime,recreate:async () => { runtime.bot = bot; }}),
+    sendPrimaryWhisper:async (username,message) => replies.push({username,message}),
+    movementsFactory:() => ({}),
+    navigationSettleMs:1,
+    queueTimeoutMs:40
+  });
+
+  const first = feature.handlePrimaryWhisper('Alice','load');
+  await delay(5);
+  assert.equal(feature.getStatus().stage,'navigating');
+  await feature.handlePrimaryWhisper('Bob','load');
+  await feature.handlePrimaryWhisper('Carol','load');
+  assert.match(replies.find(r => r.username === 'Bob').message,/busy with Alice\. You are #1 in the queue; your place is held for 1 minute/);
+  assert.match(replies.find(r => r.username === 'Carol').message,/#2 in the queue/);
+  await feature.handlePrimaryWhisper('Carol','load');
+  assert.match(replies.at(-1).message,/You are #2 in the Pearl Loader queue/,'asking again tells the position');
+  assert.deepEqual(feature.getStatus().queue.map(entry => [entry.username,entry.position]),[['Bob',1],['Carol',2]]);
+
+  assert.equal(await feature.handlePrimaryWhisper('Bob','cancel'),true);
+  assert.equal(replies.at(-1).message,'You left the Pearl Loader queue.');
+  assert.deepEqual(feature.getStatus().queue.map(entry => [entry.username,entry.position]),[['Carol',1]],'the rest move up');
+  assert.equal(await feature.handlePrimaryWhisper('Dave','cancel'),false,'a cancel from someone not waiting is an ordinary whisper');
+
+  // Alice's run ends (no pearl): Carol is served next
+  releaseNavigation();
+  await first;
+  await delay(5);
+  assert.equal(feature.getStatus().username,'Carol');
+  assert.ok(replies.some(r => r.username === 'Carol' && /Your turn/.test(r.message)));
+
+  // Carol calls her own request off while the loader walks; Erin's place expires meanwhile
+  await feature.handlePrimaryWhisper('Erin','load');
+  assert.equal(await feature.handlePrimaryWhisper('Carol','cancel'),true);
+  assert.equal(replies.at(-1).message,'Your Pearl Loader request is cancelled.');
+  assert.equal(stops.at(-1),'Pearl Loader request cancelled');
+  await delay(5);
+  assert.equal(feature.getStatus().username,'Erin','the next one is served after a cancel');
+  assert.ok(recorded.includes('cancelled'));
+
+  await feature.handlePrimaryWhisper('Frank','load');
+  await delay(60);
+  assert.equal(feature.getStatus().queue,undefined,'an expired place leaves the queue');
+  assert.match(replies.filter(r => r.username === 'Frank').at(-1).message,/expired/);
+  feature.dispose();
+}
+
 function testEnderPearlRadius() {
   const hatch = {x:10,y:64,z:-20};
   const center = new Vec3(10.5,64.5,-19.5);
@@ -616,6 +689,7 @@ async function testLoaderRuntimeWhispers() {
   await testTrapdoorRaycastBoundaryMissDoesNotBlockClick();
   await testMissingEnderPearl();
   await testReadyConfirmationTimeout();
+  await testQueue();
   testEnderPearlRadius();
   await testMissingCoordinates();
   testRestrictedRuntimeModules();

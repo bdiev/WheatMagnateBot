@@ -111,6 +111,7 @@ async function testIngestAndQueries() {
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/072_area_explorer_yaw.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/074_area_explorer_coverage.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/076_area_explorer_commands.sql'), 'utf8'));
+    await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/083_area_explorer_command_states.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/073_area_explorer_events.sql'), 'utf8'));
     const published = [];
     const logs = [];
@@ -267,6 +268,7 @@ async function testMarkers() {
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/072_area_explorer_yaw.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/074_area_explorer_coverage.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/076_area_explorer_commands.sql'), 'utf8'));
+    await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/083_area_explorer_command_states.sql'), 'utf8'));
     const service = createAreaExplorerService({
       pool: poolFor(db), hashToken, readJsonBody: async () => ({}), sendJson() {}, sendError() {}, enforceRateLimit: () => true
     });
@@ -426,13 +428,15 @@ async function testCommands() {
   const db = new PGlite();
   try {
     for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '071_area_explorer_status_y.sql', '072_area_explorer_picked_up.sql',
-      '072_area_explorer_yaw.sql', '073_area_explorer_events.sql', '074_area_explorer_coverage.sql', '076_area_explorer_commands.sql']) {
+      '072_area_explorer_yaw.sql', '073_area_explorer_events.sql', '074_area_explorer_coverage.sql', '076_area_explorer_commands.sql',
+      '083_area_explorer_command_states.sql']) {
       await db.exec(fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8'));
     }
     const logs = [];
+    const published = [];
     const service = createAreaExplorerService({
       pool: poolFor(db), hashToken, readJsonBody: async () => ({}), sendJson() {}, sendError() {},
-      enforceRateLimit: () => true, publish() {}, recordSystemLog: async entry => logs.push(entry)
+      enforceRateLimit: () => true, publish: (type, payload) => published.push(payload), recordSystemLog: async entry => logs.push(entry)
     });
     const admin = { username: 'admin', role: 'admin' };
     const created = await service.createToken(admin, { name: 'PC' });
@@ -450,7 +454,52 @@ async function testCommands() {
     assert.deepEqual([answer.commands[0].kind, answer.commands[0].minCX, answer.commands[0].maxCX, answer.commands[0].minCZ, answer.commands[0].maxCZ, answer.commands[0].by],
       ['RESCAN', -2, 6, -3, 4, 'admin']);
     const again = await service.ingest(token, { server: 'oldfrog.org', dimension: 'overworld', status }, NOW);
-    assert.equal(again.commands, undefined, 'picked up once');
+    assert.equal(again.commands, undefined, 'a mod that does not confirm commands gets each once');
+    const stateOf = async id => (await db.query('SELECT state, state_reason FROM area_explorer_commands WHERE id = $1', [id])).rows[0];
+    assert.equal((await stateOf(command.id)).state, 'delivered');
+
+    // A mod that confirms: each command again until it reports, then never again
+    const confirming = { server: 'oldfrog.org', dimension: 'overworld', status, commandProtocol: 2 };
+    const { command: explore } = await service.createCommand(admin, area);
+    assert.equal(explore.state, 'queued');
+    assert.ok(published.some(payload => payload.commands?.some(item => item.id === explore.id && item.state === 'queued')), 'the page hears of it');
+    const first = await service.ingest(token, confirming, NOW);
+    assert.deepEqual(first.commands.map(item => item.id), [explore.id]);
+    assert.equal((await stateOf(explore.id)).state, 'delivered');
+    assert.equal((await service.ingest(token, confirming, NOW)).commands, undefined, 'not again within seconds');
+    await db.query("UPDATE area_explorer_commands SET delivered_at = NOW() - INTERVAL '10 seconds' WHERE id = $1", [explore.id]);
+    const resent = await service.ingest(token, confirming, NOW);
+    assert.deepEqual(resent.commands.map(item => item.id), [explore.id], 'the answer may have been lost: sent again by id');
+
+    const accepted = await service.ingest(token, { ...confirming, commandUpdates: [{ id: explore.id, state: 'running', reason: '' }, { id: '999', state: 'running' }] }, NOW);
+    assert.deepEqual(accepted.commandAcks, [explore.id], 'only its own, known commands are confirmed back');
+    assert.equal(accepted.commands, undefined, 'a confirmed command is not sent again');
+    await db.query("UPDATE area_explorer_commands SET delivered_at = NOW() - INTERVAL '10 seconds' WHERE id = $1", [explore.id]);
+    assert.equal((await service.ingest(token, confirming, NOW)).commands, undefined);
+    const running = (await db.query('SELECT state, accepted_at, started_at, finished_at FROM area_explorer_commands WHERE id = $1', [explore.id])).rows[0];
+    assert.equal(running.state, 'running');
+    assert.ok(running.accepted_at && running.started_at && !running.finished_at);
+
+    await service.ingest(token, { ...confirming, commandUpdates: [{ id: explore.id, state: 'completed', reason: 'Area fully explored in 5m.' }] }, NOW);
+    const late = await service.ingest(token, { ...confirming, commandUpdates: [{ id: explore.id, state: 'stopped', reason: 'old report' }] }, NOW);
+    assert.deepEqual(late.commandAcks, [explore.id], 'a stale report is confirmed so the mod stops sending it');
+    assert.deepEqual(await stateOf(explore.id), { state: 'completed', state_reason: 'Area fully explored in 5m.' }, 'but a finished command stays finished');
+
+    // Turned down by the mod: why shows on the site and in the system log
+    const { command: elsewhere } = await service.createCommand(admin, { ...area, dimension: 'the_nether' });
+    await service.ingest(token, confirming, NOW);
+    await service.ingest(token, { ...confirming, commandUpdates: [{ id: elsewhere.id, state: 'rejected', reason: 'The player is in Overworld on oldfrog.org, not in Nether on oldfrog.org' }] }, NOW);
+    const listed = (await service.handleApi({ method: 'GET' }, admin, new URL('http://x/api/area-explorer/commands'), { assertAdmin() {}, readBody: async () => ({}) })).payload.commands;
+    assert.deepEqual([listed[0].id, listed[0].state, listed[0].reason, listed[0].tokenName], [elsewhere.id, 'rejected', 'The player is in Overworld on oldfrog.org, not in Nether on oldfrog.org', 'PC']);
+    assert.equal(listed.find(item => item.id === explore.id).state, 'completed');
+    assert.match(logs.at(-1).message, /turned down the explore command #\d+: The player is in Overworld/);
+
+    // Never confirmed in time: given up on, not sent any more
+    const { command: stale } = await service.createCommand(admin, area);
+    await service.ingest(token, confirming, NOW);
+    await db.query("UPDATE area_explorer_commands SET created_at = NOW() - INTERVAL '11 minutes', delivered_at = NOW() - INTERVAL '1 minute' WHERE id = $1", [stale.id]);
+    assert.equal((await service.ingest(token, confirming, NOW)).commands, undefined);
+    assert.deepEqual(await stateOf(stale.id), { state: 'expired', state_reason: 'The mod never confirmed it' });
 
     const viewer = { username: 'viewer', role: 'user' };
     await assert.rejects(service.handleApi({ method: 'POST' }, viewer, new URL('http://x/api/area-explorer/commands'), {
@@ -548,7 +597,8 @@ async function testCoverage() {
   const db = new PGlite();
   try {
     for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '071_area_explorer_status_y.sql', '072_area_explorer_picked_up.sql',
-      '072_area_explorer_yaw.sql', '073_area_explorer_events.sql', '074_area_explorer_coverage.sql', '076_area_explorer_commands.sql']) {
+      '072_area_explorer_yaw.sql', '073_area_explorer_events.sql', '074_area_explorer_coverage.sql', '076_area_explorer_commands.sql',
+      '083_area_explorer_command_states.sql']) {
       await db.exec(fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8'));
     }
     const published = [];
@@ -587,6 +637,7 @@ async function testRunLog() {
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/072_area_explorer_yaw.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/074_area_explorer_coverage.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/076_area_explorer_commands.sql'), 'utf8'));
+    await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/083_area_explorer_command_states.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/073_area_explorer_events.sql'), 'utf8'));
     const published = [];
     const service = createAreaExplorerService({

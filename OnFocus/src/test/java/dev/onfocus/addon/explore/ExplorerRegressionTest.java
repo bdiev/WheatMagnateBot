@@ -39,7 +39,111 @@ public final class ExplorerRegressionTest {
         findNames();
         itemFindsByEntity();
         diagnosticsFiles();
+        siteCommandsStore();
+        siteSyncSendsEveryFind();
         System.out.println("Explorer regressions passed (deferred coverage, reach stability, mid-strip widths, fresh chunks, narrow corridors, route efficiency, ETA, waypoints and 240 patchy coverage scenarios).");
+    }
+
+    /** A site command is remembered by id across restarts; a report is resent until the site confirms that very report. */
+    private static void siteCommandsStore() throws Exception {
+        Path dir = Files.createTempDirectory("site-commands-test-");
+        try {
+            Path file = dir.resolve("site-commands.tsv");
+            String site = "https://site.example";
+            SiteCommands commands = new SiteCommands(file);
+            require(!commands.known(site, "7"), "A new command is unknown");
+            commands.set(site, "7", SiteCommands.State.ACCEPTED, "");
+            commands.setCurrent(site, "7");
+            commands.set(site, "7", SiteCommands.State.RUNNING, "line\twith\nbreaks");
+            com.google.gson.JsonArray sent = commands.pending(site);
+            require(sent.size() == 1 && sent.get(0).getAsJsonObject().get("state").getAsString().equals("running"), "Only the latest state is reported");
+            require(sent.get(0).getAsJsonObject().get("reason").getAsString().equals("line with breaks"), "Reasons are one line");
+
+            SiteCommands restarted = new SiteCommands(file);
+            require(restarted.known(site, "7"), "A handled command is remembered after a restart: it never runs twice");
+            require("7".equals(restarted.current(site)), "The running command is remembered");
+            require(restarted.current("https://other.example") == null, "Commands are per site");
+            require(restarted.hasPending(site), "An unconfirmed report is still to be sent after a restart");
+
+            com.google.gson.JsonArray acks = new com.google.gson.JsonArray();
+            acks.add("7");
+            restarted.set(site, "7", SiteCommands.State.COMPLETED, "done");
+            restarted.acknowledged(site, sent, acks);
+            require(restarted.hasPending(site), "A confirmation of an older report leaves the newer one to send");
+            restarted.acknowledged(site, restarted.pending(site), acks);
+            require(!restarted.hasPending(site), "Confirmed: nothing left to send");
+            restarted.resend(site, "7");
+            require(restarted.pending(site).size() == 1, "Sent again by the site: the report goes again");
+        } finally {
+            deleteTree(dir);
+        }
+    }
+
+    /** More finds than the old 50 000 queue held reach the site, an outage in between, none dropped. */
+    private static void siteSyncSendsEveryFind() throws Exception {
+        Path dir = Files.createTempDirectory("site-sync-test-");
+        com.sun.net.httpserver.HttpServer server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        java.util.Set<String> received = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        AtomicInteger requests = new AtomicInteger();
+        server.createContext("/api/area-explorer/ingest", exchange -> {
+            String body = new String(exchange.getRequestBody().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            // The site is down for a while in the middle
+            int n = requests.incrementAndGet();
+            int code = n >= 40 && n < 45 ? 503 : 200;
+            if (code == 200) {
+                for (var find : JsonParser.parseString(body).getAsJsonObject().getAsJsonArray("finds")) {
+                    JsonObject f = find.getAsJsonObject();
+                    received.add(f.get("x").getAsInt() + "," + f.get("z").getAsInt());
+                }
+            }
+            byte[] answer = "{}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(code, answer.length);
+            exchange.getResponseBody().write(answer);
+            exchange.close();
+        });
+        server.start();
+        try {
+            String site = "http://127.0.0.1:" + server.getAddress().getPort();
+            FindsArchive archive = FindsArchive.load(dir, "test.server", "overworld");
+            int total = 60_000;
+            java.time.LocalDateTime at = java.time.LocalDateTime.of(2026, 10, 12, 12, 0);
+            for (int i = 0; i < total; i++) archive.add(new FindsArchive.Find(FindsArchive.Kind.SIGN, i, 64, -i, at, "Oak Sign", 0, "", "sign " + i));
+            archive.write();
+            SiteSync sync = new SiteSync();
+            SiteSync.Scope scope = new SiteSync.Scope("test.server", "overworld");
+            require(sync.track(scope, archive, site) == total, "Every find of the file is waiting the first time");
+            List<String> problems = new java.util.ArrayList<>();
+            for (int round = 0; round < 10 && sync.queued() > 0; round++) sync.flush(site, "token", problems::add);
+            require(!problems.isEmpty(), "The outage was reported");
+            require(sync.queued() == 0, "Nothing left waiting once the site is back");
+            require(received.size() == total, "Every find reached the site, got " + received.size());
+
+            // Added later, then a restart: only what came after the mark goes
+            for (int i = total; i < total + 10; i++) archive.add(new FindsArchive.Find(FindsArchive.Kind.SIGN, i, 64, -i, at, "Oak Sign", 0, "", "sign " + i));
+            sync.flush(site, "token", problems::add);
+            require(received.size() == total + 10, "New finds go from the file too");
+            SiteSync again = new SiteSync();
+            require(again.track(scope, archive, site) == 10, "The mark never passes what the file holds on disk");
+            archive.write();
+            SiteSync reloaded = new SiteSync();
+            reloaded.track(scope, FindsArchive.load(dir, "test.server", "overworld"), site);
+            reloaded.flush(site, "token", problems::add);
+            SiteSync settled = new SiteSync();
+            require(settled.track(scope, FindsArchive.load(dir, "test.server", "overworld"), site) == 0, "Once written and sent, nothing goes again");
+
+            // A mark from before (no version line) may have skipped dropped finds: everything goes again
+            Files.writeString(archive.csvFile().resolveSibling(archive.csvFile().getFileName() + ".site"), site + "\n" + (total + 10) + "\n");
+            require(new SiteSync().track(scope, archive, site) == total + 10, "An old mark sends the whole file again");
+        } finally {
+            server.stop(0);
+            deleteTree(dir);
+        }
+    }
+
+    private static void deleteTree(Path dir) throws java.io.IOException {
+        try (var paths = Files.walk(dir)) {
+            for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) Files.deleteIfExists(path);
+        }
     }
 
     private static void diagnosticsFiles() throws Exception {

@@ -29,6 +29,15 @@ const TOP_LOOT_NAMES = 8;
 const COMMAND_KINDS = Object.freeze(['EXPLORE', 'RESCAN']);
 const MAX_COMMAND_SIDE_CHUNKS = 8192;
 const COMMAND_TTL_MINUTES = 10;
+// A command the mod hasn't confirmed goes again with its next check-in this many seconds on
+const COMMAND_REDELIVER_SECONDS = 5;
+// What a mod reports of a command it got (by id), and the states the site gives it itself
+const COMMAND_MOD_STATES = Object.freeze(['accepted', 'running', 'stopped', 'completed', 'rejected']);
+const COMMAND_STATES = Object.freeze(['queued', 'delivered', ...COMMAND_MOD_STATES, 'cancelled', 'expired']);
+const COMMAND_FINAL_STATES = Object.freeze(['completed', 'rejected']);
+const MAX_COMMAND_UPDATES = 100;
+const MAX_COMMAND_REASON = 300;
+const COMMAND_LIST_LIMIT = 50;
 // The flown-over grid: cells a side at most, and cells in all
 const MAX_COVERAGE_SIDE = 2000;
 const MAX_COVERAGE_CELLS = 250_000;
@@ -299,6 +308,49 @@ function publicStatus(row, now = Date.now()) {
   };
 }
 
+function publicCommand(row) {
+  return {
+    id: String(row.id),
+    tokenId: String(row.token_id),
+    tokenName: row.token_name || null,
+    kind: row.kind,
+    server: row.server,
+    dimension: row.dimension,
+    minX: row.min_cx * 16,
+    minZ: row.min_cz * 16,
+    maxX: row.max_cx * 16 + 15,
+    maxZ: row.max_cz * 16 + 15,
+    size: `${row.max_cx - row.min_cx + 1}x${row.max_cz - row.min_cz + 1} chunks`,
+    createdBy: row.created_by || null,
+    createdAt: row.created_at,
+    state: row.state,
+    reason: row.state_reason || null,
+    stateAt: row.state_at || row.created_at,
+    deliveredAt: row.delivered_at || null,
+    deliveries: row.delivery_count ?? 0,
+    confirms: Boolean(row.confirms),
+    acceptedAt: row.accepted_at || null,
+    startedAt: row.started_at || null,
+    finishedAt: row.finished_at || null
+  };
+}
+
+/** A mod's reports of what became of commands: {id, state, reason} each; bad ones are left out. */
+function normalizeCommandUpdates(raw) {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) throw httpError(400, 'commandUpdates must be a list.');
+  if (raw.length > MAX_COMMAND_UPDATES) throw httpError(413, `At most ${MAX_COMMAND_UPDATES} command updates per request.`);
+  const latest = new Map();
+  for (const update of raw) {
+    const id = String(update?.id ?? '');
+    const state = String(update?.state || '').toLowerCase();
+    if (!/^\d{1,18}$/.test(id) || !COMMAND_MOD_STATES.includes(state)) continue;
+    const reason = typeof update.reason === 'string' ? update.reason.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, MAX_COMMAND_REASON) : '';
+    latest.set(id, { id, state, reason: reason || null });
+  }
+  return [...latest.values()];
+}
+
 function publicToken(row) {
   return {
     id: String(row.id),
@@ -357,6 +409,9 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     const rawEvents = Array.isArray(body.events) ? body.events : [];
     if (rawEvents.length > MAX_EVENTS_PER_BATCH) throw httpError(413, `At most ${MAX_EVENTS_PER_BATCH} events per request.`);
     const events = rawEvents.map(raw => normalizeEvent(raw, now)).filter(Boolean);
+    const commandUpdates = normalizeCommandUpdates(body.commandUpdates);
+    // A mod that confirms its commands gets each again until it has; an older one gets each once
+    const confirms = Number(body.commandProtocol) >= 2;
 
     let added = 0;
     let liveStatus = null;
@@ -410,28 +465,114 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
       });
     }
     if (newEvents.length) pruneEvents(now);
-    // A status upload is the mod checking in: it gets the commands waiting for it, once
-    const commands = status ? await takeCommands(token.id) : [];
+    const commandAcks = commandUpdates.length ? await applyCommandUpdates(token, commandUpdates) : [];
+    // A status upload is the mod checking in: it gets the commands waiting for it
+    const commands = status ? await takeCommands(token, confirms) : [];
     return {
       received: rawFinds.length, accepted: finds.length, added, duplicates: finds.length - added,
       ...(rawEvents.length ? { events: newEvents.length } : {}),
+      ...(commandUpdates.length ? { commandAcks } : {}),
       ...(commands.length ? { commands } : {})
     };
   }
 
-  /** The mod's commands not picked up yet and not stale, marked as delivered. */
-  async function takeCommands(tokenId) {
-    const rows = (await pool.query(
-      `UPDATE area_explorer_commands SET delivered_at = NOW()
-       WHERE token_id = $1 AND delivered_at IS NULL AND cancelled_at IS NULL
-         AND created_at > NOW() - make_interval(mins => $2)
-       RETURNING *`,
-      [tokenId, COMMAND_TTL_MINUTES]
+  /** Command rows with their mod's token name, for the page. */
+  async function commandRows(ids) {
+    if (!ids.length) return [];
+    return (await pool.query(
+      `SELECT c.*, t.name AS token_name FROM area_explorer_commands c
+       JOIN area_explorer_tokens t ON t.id = c.token_id
+       WHERE c.id = ANY($1::bigint[]) ORDER BY c.id DESC`, [ids]
     )).rows;
+  }
+
+  async function publishCommands(ids) {
+    const rows = await commandRows(ids);
+    if (rows.length) publish('area_explorer_updated', { commands: rows.map(publicCommand) });
+  }
+
+  /**
+   * What the mod reports of its commands: stored, and the ids it can stop sending (those of this mod
+   * the site knows, changed or not). A command already completed or rejected stays so.
+   */
+  async function applyCommandUpdates(token, updates) {
+    const known = (await pool.query(
+      'SELECT id FROM area_explorer_commands WHERE token_id = $1 AND id = ANY($2::bigint[])',
+      [token.id, updates.map(update => update.id)]
+    )).rows.map(row => String(row.id));
+    const changed = [];
+    for (const update of updates.filter(item => known.includes(item.id))) {
+      const row = (await pool.query(
+        `UPDATE area_explorer_commands SET
+           state = $3, state_reason = $4, state_at = NOW(),
+           accepted_at = COALESCE(accepted_at, NOW()),
+           started_at = CASE WHEN $3 = 'running' THEN COALESCE(started_at, NOW()) ELSE started_at END,
+           finished_at = CASE WHEN $3 = ANY($5::text[]) THEN NOW() ELSE NULL END
+         WHERE id = $1 AND token_id = $2 AND NOT (state = ANY($5::text[]))
+           AND (state <> $3 OR state_reason IS DISTINCT FROM $4)
+         RETURNING id`,
+        [update.id, token.id, update.state, update.reason, COMMAND_FINAL_STATES]
+      )).rows[0];
+      if (row) changed.push(String(row.id));
+    }
+    if (changed.length) {
+      await publishCommands(changed);
+      const rows = await commandRows(changed);
+      for (const row of rows.filter(item => item.state === 'rejected')) {
+        await recordSystemLog({
+          category: 'area_explorer', level: 'warn', actor: token.name,
+          message: `"${token.name}" turned down the ${row.kind === 'RESCAN' ? 'rescan' : 'explore'} command #${row.id}: ${row.state_reason || 'no reason given'}.`
+        });
+      }
+    }
+    return known;
+  }
+
+  /**
+   * The mod's commands waiting for it, marked as delivered. A mod that confirms them gets each again
+   * (a few seconds on) until it has - the answer that carried it may never have arrived; one that
+   * doesn't gets each once, as before. Ones never confirmed in time are given up on.
+   */
+  async function takeCommands(token, confirms) {
+    const expired = (await pool.query(
+      `UPDATE area_explorer_commands SET state = 'expired', state_at = NOW(),
+         state_reason = CASE WHEN state = 'queued' THEN 'The mod did not check in in time' ELSE 'The mod never confirmed it' END
+       WHERE token_id = $1 AND (state = 'queued' OR (state = 'delivered' AND confirms))
+         AND created_at <= NOW() - make_interval(mins => $2)
+       RETURNING id`,
+      [token.id, COMMAND_TTL_MINUTES]
+    )).rows.map(row => String(row.id));
+    const rows = (await pool.query(
+      confirms
+        ? `UPDATE area_explorer_commands SET
+             state = 'delivered', confirms = TRUE, delivered_at = NOW(), delivery_count = delivery_count + 1,
+             state_at = CASE WHEN state = 'queued' THEN NOW() ELSE state_at END
+           WHERE token_id = $1 AND (state = 'queued' OR (state = 'delivered' AND confirms))
+             AND (delivered_at IS NULL OR delivered_at <= NOW() - make_interval(secs => $2))
+           RETURNING *`
+        : `UPDATE area_explorer_commands SET state = 'delivered', delivered_at = NOW(), delivery_count = delivery_count + 1, state_at = NOW()
+           WHERE token_id = $1 AND state = 'queued'
+           RETURNING *`,
+      confirms ? [token.id, COMMAND_REDELIVER_SECONDS] : [token.id]
+    )).rows;
+    // The page hears of the first delivery and of the ones given up on, not of every resend
+    const changed = [...expired, ...rows.filter(row => row.delivery_count === 1).map(row => String(row.id))];
+    if (changed.length) await publishCommands(changed);
     return rows.sort((a, b) => Number(a.id) - Number(b.id)).map(row => ({
       id: String(row.id), kind: row.kind, server: row.server, dimension: row.dimension,
       minCX: row.min_cx, minCZ: row.min_cz, maxCX: row.max_cx, maxCZ: row.max_cz, by: row.created_by || ''
     }));
+  }
+
+  /** The latest commands sent from the map, newest first, with what became of them. */
+  async function listCommands(url) {
+    const limit = Math.min(COMMAND_LIST_LIMIT, Math.max(1, Number(url?.searchParams?.get('limit')) || 20));
+    const rows = (await pool.query(
+      `SELECT c.*, t.name AS token_name FROM area_explorer_commands c
+       JOIN area_explorer_tokens t ON t.id = c.token_id
+       ORDER BY c.id DESC LIMIT $1`, [limit]
+    )).rows;
+    return { commands: rows.map(publicCommand) };
   }
 
   /**
@@ -458,15 +599,18 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     if (!token) throw httpError(404, 'That mod token is gone.');
     const client = await pool.connect();
     let row;
+    let cancelled = [];
     try {
       await client.query('BEGIN');
-      await client.query(
-        'UPDATE area_explorer_commands SET cancelled_at = NOW() WHERE token_id = $1 AND delivered_at IS NULL AND cancelled_at IS NULL', [tokenId]);
+      cancelled = (await client.query(
+        `UPDATE area_explorer_commands SET state = 'cancelled', cancelled_at = NOW(), state_at = NOW(), state_reason = 'Replaced by a newer command'
+         WHERE token_id = $1 AND (state = 'queued' OR (state = 'delivered' AND confirms)) RETURNING id`, [tokenId])).rows.map(item => String(item.id));
       row = (await client.query(
         `INSERT INTO area_explorer_commands (token_id, kind, server, dimension, min_cx, min_cz, max_cx, max_cz, created_by)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
         [tokenId, kind, server, dimension, minCX, minCZ, maxCX, maxCZ, currentUser.username]
       )).rows[0];
+      row.token_name = token.name;
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
@@ -479,7 +623,8 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
       category: 'area_explorer', actor: currentUser.username,
       message: `Sent "${token.name}" to ${kind === 'RESCAN' ? 'rescan' : 'explore'} ${size} at X ${minCX * 16}..${maxCX * 16 + 15}, Z ${minCZ * 16}..${maxCZ * 16 + 15} (${server}, ${dimension}).`
     });
-    return { command: { id: String(row.id), kind, tokenId, size, minCX, minCZ, maxCX, maxCZ } };
+    await publishCommands([...cancelled, String(row.id)]);
+    return { command: { ...publicCommand(row), minCX, minCZ, maxCX, maxCZ } };
   }
 
   /** The run log's events, skipping ones sent before (same mod, same id); oldest first. */
@@ -845,6 +990,10 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     if (path === '/api/area-explorer/coverage' && req.method === 'GET') return { statusCode: 200, payload: await getCoverage(url) };
     if (path === '/api/area-explorer/signs' && req.method === 'GET') return { statusCode: 200, payload: await getPlayerSigns(url) };
     // Sending a mod off to explore: administrators only - it flies someone's game
+    if (path === '/api/area-explorer/commands' && req.method === 'GET') {
+      assertAdmin(currentUser);
+      return { statusCode: 200, payload: await listCommands(url) };
+    }
     if (path === '/api/area-explorer/commands' && req.method === 'POST') {
       assertAdmin(currentUser);
       return { statusCode: 201, payload: await createCommand(currentUser, await readBody(req)) };
@@ -869,10 +1018,11 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     return null;
   }
 
-  return { authenticate, ingest, handleIngest, handleApi, getSummary, getEvents, getCoverage, createCommand, getFinds, getMapPoints, getFind, getPlayerSigns, removeFind, listTokens, createToken, revokeToken };
+  return { authenticate, ingest, handleIngest, handleApi, getSummary, getEvents, getCoverage, createCommand, listCommands, getFinds, getMapPoints, getFind, getPlayerSigns, removeFind, listTokens, createToken, revokeToken };
 }
 
 module.exports = {
+  COMMAND_STATES,
   CONNECTION_EVENT_TYPES,
   KINDS,
   PERMANENT_MARKERS,
@@ -885,11 +1035,13 @@ module.exports = {
   dedupeKey,
   generateToken,
   lootValue,
+  normalizeCommandUpdates,
   normalizeCoverage,
   normalizeEvent,
   normalizeFind,
   normalizeSectors,
   normalizeStatus,
+  publicCommand,
   publicEvent,
   publicFind,
   publicStatus

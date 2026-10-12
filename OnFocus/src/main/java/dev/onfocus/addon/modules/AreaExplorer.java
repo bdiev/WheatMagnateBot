@@ -28,6 +28,7 @@ import dev.onfocus.addon.explore.FindsArchive;
 import dev.onfocus.addon.explore.ItemDetails;
 import dev.onfocus.addon.explore.ExplorerDiagnostics;
 import dev.onfocus.addon.explore.MapSync;
+import dev.onfocus.addon.explore.SiteCommands;
 import dev.onfocus.addon.explore.SiteSync;
 import dev.onfocus.addon.explore.Territories;
 import dev.onfocus.addon.explore.Territories.Territory;
@@ -993,7 +994,11 @@ public class AreaExplorer extends Module {
     }
     /** Sends Xaero's map to the site, on a thread of its own. */
     private static final MapSync MAP = new MapSync();
-    /** Archives whose earlier finds were queued for the site this session, by archive and site. */
+    /** What became of the site's commands, by id: told to the site until it confirms, never run twice. */
+    private static final SiteCommands COMMANDS = new SiteCommands(FabricLoader.getInstance().getGameDir().resolve("onfocus").resolve("site-commands.tsv"));
+    /** The site command select() is starting, so it isn't taken for a run that replaces it. */
+    private String startingSiteCommand;
+    /** Archives whose earlier finds were tracked for the site this session, by archive and site. */
     private static final Set<String> SITE_BACKFILLED = new HashSet<>();
     private int archiveTicks;
     private long lastLiveSiteNanos;
@@ -1204,7 +1209,8 @@ public class AreaExplorer extends Module {
         @EventHandler
         private void onTick(TickEvent.Post event) {
             if (isActive() || mc.world == null || mc.player == null || mc.getCurrentServerEntry() == null) return;
-            if (!siteCommands.get() || siteTarget() == null || ++offCheckInTicks < OFF_CHECK_IN_TICKS) return;
+            String site = siteTarget();
+            if (site == null || (!siteCommands.get() && !COMMANDS.hasPending(site)) || ++offCheckInTicks < OFF_CHECK_IN_TICKS) return;
             offCheckInTicks = 0;
             syncLiveSite();
         }
@@ -1393,6 +1399,15 @@ public class AreaExplorer extends Module {
             reconnecting = false;
             reconnectServer = null;
             rescanOnReturn = false;
+        }
+        // The site command running until now is done with: another area takes its place
+        String site = siteTarget();
+        if (site != null) {
+            String running = COMMANDS.current(site);
+            if (running != null && !running.equals(startingSiteCommand)) {
+                reportSiteCommand(SiteCommands.State.STOPPED, "Replaced by another area" + (area != null && phase != Phase.SPIRAL && phase != Phase.IDLE ? " at %d%%".formatted(percent()) : ""), true);
+            }
+            COMMANDS.setCurrent(startingSiteCommand == null ? null : site, startingSiteCommand);
         }
         rescan = again;
         territoryId = null;
@@ -1924,6 +1939,8 @@ public class AreaExplorer extends Module {
         if (phase != Phase.IDLE && !stopLogged) {
             siteEvent("info", "stop", phase == Phase.SPIRAL ? "Stopped the spiral %s out - turning it on carries on".formatted(formatBlocks(spiralExtent() * 16))
                 : area == null ? "Stopped" : "Stopped at %d%% - the run is saved, turning it on carries on".formatted(percent()));
+            if (phase != Phase.SPIRAL) reportSiteCommand(SiteCommands.State.STOPPED, area == null ? "Stopped in game"
+                : "Stopped in game at %d%% - turning the module on carries on".formatted(percent()), false);
         }
         stopLogged = true;
         // Stopped before done: turning it on again carries on, even after a restart. Done runs forget it right after.
@@ -2267,6 +2284,7 @@ public class AreaExplorer extends Module {
         String verb = rescan ? (carryingOn ? "Carrying on rescanning" : "Started rescanning") : (carryingOn ? "Carrying on exploring" : "Started exploring");
         siteEvent("info", "start", "%s a %dx%d chunk area (X %d to %d, Z %d to %d)".formatted(verb, area.width(), area.depth(),
             area.minCX() * 16, area.maxCX() * 16 + 15, area.minCZ() * 16, area.maxCZ() * 16 + 15));
+        reportSiteCommand(SiteCommands.State.RUNNING, carryingOn ? "Carrying on" : "", false);
 
         if (readsMap() && useXaeroMap.get()) {
             phase = Phase.SCAN;
@@ -3302,6 +3320,7 @@ public class AreaExplorer extends Module {
         if (sectors != null && sectors.skippedCount() > 0) text += " " + skippedSectorsText();
         report("%s", text);
         siteEvent("success", "finish", text + " Found: " + foundSummary() + ".");
+        reportSiteCommand(SiteCommands.State.COMPLETED, text + " Found: " + foundSummary() + ".", true);
         stopLogged = true;
         saveRunTerritory();
         territoryId = null;
@@ -3745,9 +3764,7 @@ public class AreaExplorer extends Module {
             withArchive(spot, archive -> {
                 int added = 0;
                 for (FindsArchive.Find find : finds) {
-                    if (!archive.add(find)) continue;
-                    added++;
-                    if (spot.site() != null) SITE.add(spot.scope(), find);
+                    if (archive.add(find)) added++;
                 }
                 if (added == 0) return;
                 FILE_LOG.info("Markers: %d earlier ones of %s taken from Xaero's waypoints".formatted(added, spot.dimension()));
@@ -4498,7 +4515,7 @@ public class AreaExplorer extends Module {
                 }
                 // The site gets the finds from before it was set up too, once
                 if (spot.site() != null && SITE_BACKFILLED.add(spot.key() + " " + spot.site())) {
-                    int queued = SITE.backfill(spot.scope(), archive, spot.site());
+                    int queued = SITE.track(spot.scope(), archive, spot.site());
                     if (queued > 0) FILE_LOG.info("Site: %d earlier finds of %s queued for %s".formatted(queued, spot.key(), spot.site()));
                 }
                 action.accept(archive);
@@ -4511,11 +4528,8 @@ public class AreaExplorer extends Module {
 
     private void archiveFind(FindsArchive.Find find) {
         boolean toSite = siteTarget() != null;
-        SiteSync.Scope scope = mc.world != null ? archiveSpot().scope() : null;
-        withArchive(archive -> {
-            // Only what's new: the site would skip the rest anyway
-            if (archive.add(find) && toSite) SITE.add(scope, find);
-        });
+        // What's new goes to the site from the file, with the next flush
+        withArchive(archive -> archive.add(find));
         // A few seconds' wait gathers the finds of the same chunks into one request
         if (toSite && siteFindTicks == 0) siteFindTicks = SITE_FIND_DELAY_TICKS;
     }
@@ -4560,27 +4574,38 @@ public class AreaExplorer extends Module {
     private void syncLiveSite() {
         String site = siteTarget();
         if (site == null || mc.world == null || mc.player == null) return;
-        SITE.sendLiveStatus(site, siteToken.get().trim(), archiveSpot().scope(), siteStatus(), problem -> {
+        JsonArray updates = COMMANDS.pending(site);
+        SITE.sendLiveStatus(site, siteToken.get().trim(), archiveSpot().scope(), siteStatus(), updates, problem -> {
             FILE_LOG.warn("Site: " + problem);
             mc.execute(() -> warning("Site: %s", problem));
         }, commands -> mc.execute(() -> {
             for (JsonElement command : commands) {
-                if (command.isJsonObject()) siteCommand(command.getAsJsonObject());
+                if (command.isJsonObject()) siteCommand(site, command.getAsJsonObject());
             }
-        }));
+        }), acks -> COMMANDS.acknowledged(site, updates, acks));
     }
 
     /**
      * An area sent from the site's map: explored or rescanned as if picked on Xaero's World Map -
-     * if it's this server and the dimension the player is in.
+     * if it's this server and the dimension the player is in. Each command runs once: one sent again
+     * (the site didn't hear back) only has the site told again how it went. Taken or turned down, and
+     * why, goes back to the site with the next status upload.
      */
-    private void siteCommand(JsonObject command) {
+    private void siteCommand(String site, JsonObject command) {
+        // Not in a world: not handled, so the site sends it again
         if (mc.world == null || mc.player == null) return;
+        String id = command.has("id") ? command.get("id").getAsString() : "";
+        if (!id.isEmpty() && COMMANDS.known(site, id)) {
+            COMMANDS.resend(site, id);
+            syncLiveSite();
+            return;
+        }
         String kind = command.has("kind") ? command.get("kind").getAsString() : "";
         String by = command.has("by") ? command.get("by").getAsString() : "the site";
         String what = "RESCAN".equals(kind) ? "rescan" : "explore";
         if (!siteCommands.get()) {
             warning("%s asked from the site to %s an area, but site-commands is off.", by, what);
+            rejectSiteCommand(site, id, "site-commands is off in the mod");
             return;
         }
         SiteSync.Scope here = archiveSpot().scope();
@@ -4588,13 +4613,44 @@ public class AreaExplorer extends Module {
         if (!here.server().equalsIgnoreCase(server) || !here.dimension().equals(dimension)) {
             warning("%s asked from the site to %s an area in %s on %s - you're in %s on %s.", by, what,
                 FindsArchive.prettyName(dimension), server, FindsArchive.prettyName(here.dimension()), here.server());
+            rejectSiteCommand(site, id, "The player is in %s on %s, not in %s on %s".formatted(
+                FindsArchive.prettyName(here.dimension()), here.server(), FindsArchive.prettyName(dimension), server));
             return;
         }
         int x1 = command.get("minCX").getAsInt(), z1 = command.get("minCZ").getAsInt(), x2 = command.get("maxCX").getAsInt(), z2 = command.get("maxCZ").getAsInt();
         info("(highlight)%s(default) sent you from the site to %s (highlight)%dx%d(default) chunks at X %d..%d, Z %d..%d.", by, what,
             x2 - x1 + 1, z2 - z1 + 1, x1 * 16, x2 * 16 + 15, z1 * 16, z2 * 16 + 15);
-        if ("RESCAN".equals(kind)) rescan(x1, z1, x2, z2, mc.world.getRegistryKey());
-        else explore(x1, z1, x2, z2, mc.world.getRegistryKey());
+        if (!id.isEmpty()) {
+            COMMANDS.set(site, id, SiteCommands.State.ACCEPTED, "");
+            startingSiteCommand = id;
+        }
+        try {
+            if ("RESCAN".equals(kind)) rescan(x1, z1, x2, z2, mc.world.getRegistryKey());
+            else explore(x1, z1, x2, z2, mc.world.getRegistryKey());
+        } finally {
+            startingSiteCommand = null;
+        }
+        // start() marks it running; still only taken, the run didn't start (the game chat says why)
+        if (!id.isEmpty() && COMMANDS.state(site, id) == SiteCommands.State.ACCEPTED) {
+            COMMANDS.set(site, id, SiteCommands.State.REJECTED, "The run could not start - see the game chat");
+            COMMANDS.setCurrent(null, null);
+        }
+        syncLiveSite();
+    }
+
+    private void rejectSiteCommand(String site, String id, String reason) {
+        if (!id.isEmpty()) COMMANDS.set(site, id, SiteCommands.State.REJECTED, reason);
+        syncLiveSite();
+    }
+
+    /** The site command whose run this is, told how it went: {@code ended} lets it go, a stop keeps it to carry on. */
+    private void reportSiteCommand(SiteCommands.State state, String reason, boolean ended) {
+        String site = siteTarget();
+        String id = site == null ? null : COMMANDS.current(site);
+        if (id == null) return;
+        COMMANDS.set(site, id, state, reason.replace("(highlight)", "").replace("(default)", "").strip());
+        if (ended) COMMANDS.setCurrent(null, null);
+        syncLiveSite();
     }
 
     /** The site scope of the server and dimension we're in, remembered for when we're off the server. */
@@ -4800,6 +4856,7 @@ public class AreaExplorer extends Module {
         siteScope(); // remembered for the log while we're off
         if (!autoReconnect.get() || server == null || mc.player == null) {
             siteEvent("warn", "disconnect", "Left the server - auto-reconnect is off, stopped" + (area != null && phase != Phase.SPIRAL ? " at %d%%".formatted(percent()) : ""));
+            if (phase != Phase.SPIRAL) reportSiteCommand(SiteCommands.State.STOPPED, "Left the server - auto-reconnect is off", false);
             stopLogged = true;
             // The area stays selected, so turning it back on after rejoining carries on
             turnOff();
@@ -4837,6 +4894,7 @@ public class AreaExplorer extends Module {
             if (screen instanceof TitleScreen || screen instanceof MultiplayerScreen) {
                 log("Left the server - stopped exploring");
                 siteEvent("info", "stop", "Left the server by hand while reconnecting - stopped exploring");
+                reportSiteCommand(SiteCommands.State.STOPPED, "Left the server by hand while reconnecting", false);
                 stopLogged = true;
                 turnOff();
                 return;

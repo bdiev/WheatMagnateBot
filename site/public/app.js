@@ -6658,6 +6658,7 @@ async function loadAreaExplorerData(full) {
     ae.tokensDirty = false;
     work.push(loadAreaExplorerTokens());
   }
+  if (state.currentUser.role === 'admin' && full) work.push(loadAreaExplorerCommands());
   if (full || ae.logServer !== areaExplorerLogServer()) work.push(loadAreaExplorerLog());
   await Promise.all(work);
   // A sign opened from a player's profile: shown once its scope is loaded
@@ -7627,7 +7628,8 @@ async function sendAreaExplorerCommand(kind, mod, box) {
     });
     ae.areaSelection = null;
     queueAreaExplorerMapDraw();
-    showAreaExplorerNote(`Sent ${mod.player || mod.tokenName} to ${kind === 'RESCAN' ? 'rescan' : 'explore'} ${command.size} - it starts within seconds`);
+    applyAreaExplorerCommands([command]);
+    showAreaExplorerNote(`Sent ${mod.player || mod.tokenName} to ${kind === 'RESCAN' ? 'rescan' : 'explore'} ${command.size} - Site Commands shows when the mod takes it`);
   } catch (error) {
     showAreaExplorerNote(`Could not send it: ${error.message}`);
   }
@@ -8502,6 +8504,63 @@ function showAreaExplorerNearbyPage(box, index, focusStep) {
   if (count) count.innerHTML = `<strong>${formatNumber(index + 1)}</strong> of ${formatNumber(areaExplorerState().nearbyIds.length)} <small>· within ${AREA_EXPLORER_NEARBY_RADIUS} blocks</small>`;
   // Paging on with the keyboard or the arrows keeps the arrow in focus
   if (focusStep) box.querySelector(`[data-area-nearby-step="${focusStep}"]`)?.focus({ preventScroll: true });
+}
+
+// Commands sent from the map (administrators): what each mod did with them, kept up to date by live updates
+
+const AREA_EXPLORER_COMMANDS_SHOWN = 20;
+const AREA_EXPLORER_COMMAND_STATES = Object.freeze({
+  queued: { label: 'In queue', hint: 'Waiting for the mod to check in' },
+  delivered: { label: 'Sent', hint: 'Waiting for the mod to confirm it' },
+  accepted: { label: 'Accepted', hint: 'The mod took it' },
+  running: { label: 'Running', hint: 'The mod is flying it' },
+  stopped: { label: 'Stopped', hint: 'Stopped before the end' },
+  completed: { label: 'Completed', hint: '' },
+  rejected: { label: 'Rejected', hint: '' },
+  cancelled: { label: 'Cancelled', hint: '' },
+  expired: { label: 'Expired', hint: '' }
+});
+
+async function loadAreaExplorerCommands() {
+  const { commands } = await fetchJson(`/api/area-explorer/commands?limit=${AREA_EXPLORER_COMMANDS_SHOWN}`);
+  areaExplorerState().commands = commands;
+  renderAreaExplorerCommands();
+}
+
+/** Commands from a live update or a send: each replaces the one with its id, newest first. */
+function applyAreaExplorerCommands(commands) {
+  const ae = areaExplorerState();
+  if (!ae.commands) return;
+  const byId = new Map(ae.commands.map(command => [command.id, command]));
+  for (const command of commands) byId.set(command.id, command);
+  ae.commands = [...byId.values()].sort((a, b) => Number(b.id) - Number(a.id)).slice(0, AREA_EXPLORER_COMMANDS_SHOWN);
+  renderAreaExplorerCommands();
+}
+
+function renderAreaExplorerCommands() {
+  const list = $('#areaExplorerCommands');
+  const commands = areaExplorerState().commands || [];
+  if (!list) return;
+  if (!commands.length) {
+    list.innerHTML = '<li class="area-explorer-empty">No commands yet - pick an area on the map with a right click.</li>';
+    return;
+  }
+  list.innerHTML = commands.map(command => {
+    const known = AREA_EXPLORER_COMMAND_STATES[command.state] || { label: command.state, hint: '' };
+    // An older mod build takes a command once and never says what it did
+    const hint = command.state === 'delivered' && !command.confirms ? 'Sent once - this mod build does not confirm commands'
+      : command.reason || known.hint;
+    const sent = command.deliveries > 1 ? ` · sent ${command.deliveries} times` : '';
+    return `<li class="area-explorer-command state-${escapeHtml(command.state)}">
+      <div class="area-explorer-command-head">
+        <strong>${command.kind === 'RESCAN' ? 'Rescan' : 'Explore'} ${escapeHtml(command.size)}</strong>
+        <span class="area-explorer-command-state">${escapeHtml(known.label)}</span>
+      </div>
+      <p class="area-explorer-command-where">X ${command.minX}..${command.maxX}, Z ${command.minZ}..${command.maxZ} · ${escapeHtml(prettyDimension(command.dimension))} · ${escapeHtml(command.tokenName || 'mod')}</p>
+      ${hint ? `<p class="area-explorer-command-reason">${escapeHtml(hint)}</p>` : ''}
+      <small>#${escapeHtml(command.id)} by ${escapeHtml(command.createdBy || '?')} · ${escapeHtml(formatFullDateTime(command.stateAt || command.createdAt))}${sent}</small>
+    </li>`;
+  }).join('');
 }
 
 // Tokens for the mod (administrators)
@@ -13120,8 +13179,9 @@ function handleRealtimeEvent(event) {
       noteAreaExplorerUpdate(eventPayload);
       if (eventPayload.liveStatus) applyAreaExplorerLiveStatus(eventPayload.liveStatus);
       if (eventPayload.events) applyAreaExplorerEvents(eventPayload.events);
-      // Run log events alone come in the update itself: nothing else to load for them
-      const onlyEvents = eventPayload.events && !eventPayload.added && !eventPayload.status;
+      if (eventPayload.commands) applyAreaExplorerCommands(eventPayload.commands);
+      // Run log events and commands alone come in the update itself: nothing else to load for them
+      const onlyEvents = (eventPayload.events || eventPayload.commands) && !eventPayload.added && !eventPayload.status;
       if (eventPayload.added || eventPayload.tokenRevoked || (!eventPayload.liveStatus && !onlyEvents)) queueAreaExplorerRefresh(180);
     }
   }

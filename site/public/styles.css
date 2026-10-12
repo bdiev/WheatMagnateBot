@@ -12892,6 +12892,51 @@ body.kill-aura-modal-open {
 .area-explorer-pickup:hover { border-color: var(--danger); color: var(--danger); background: transparent; transform: none; }
 .area-explorer-pickup:disabled { opacity: 0.5; }
 
+/* Site commands: one card a command, its state as a coloured tag */
+.area-explorer-commands {
+  margin: 0;
+  padding: 0 14px 12px;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+  max-height: 420px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.area-explorer-command {
+  --command-color: var(--muted);
+  display: grid;
+  gap: 3px;
+  padding: 9px 11px;
+  border: 1px solid var(--line-soft);
+  border-left: 3px solid var(--command-color);
+  background: var(--panel-soft);
+  min-width: 0;
+}
+.area-explorer-command.state-running,
+.area-explorer-command.state-accepted,
+.area-explorer-command.state-completed { --command-color: var(--accent); }
+.area-explorer-command.state-stopped,
+.area-explorer-command.state-delivered,
+.area-explorer-command.state-expired { --command-color: var(--warn); }
+.area-explorer-command.state-rejected { --command-color: var(--danger); }
+.area-explorer-command-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; }
+.area-explorer-command-head strong { overflow-wrap: anywhere; }
+.area-explorer-command-state {
+  flex: none;
+  color: var(--command-color);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.area-explorer-command-where,
+.area-explorer-command-reason { margin: 0; font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
+.area-explorer-command-where { color: var(--muted); }
+.area-explorer-command.state-rejected .area-explorer-command-reason { color: var(--danger); font-weight: 600; }
+.area-explorer-command small { color: var(--muted); font-size: 12px; }
+
 .area-explorer-empty {
   margin: 0;
   padding: 16px 18px;

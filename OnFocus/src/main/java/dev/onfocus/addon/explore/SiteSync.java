@@ -16,7 +16,6 @@ import java.time.Duration;
 import java.time.ZoneId;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -28,10 +27,11 @@ import java.util.concurrent.atomic.AtomicReference;
  * Sends Area Explorer's finds and run status to the WheatMagnateBot site
  * ({@code POST <site>/api/area-explorer/ingest}, with an API token made on the site).
  * <p>
- * Finds wait in a queue per server and dimension and go in batches; a batch the site didn't take
- * (offline, an error) is sent again next time. The site keeps no find twice, so sending one again
- * is harmless. The all-finds file is sent once per site ({@link #backfill}): how far it got is kept
- * next to the file, and only the finds added after that go next time.
+ * Finds go straight from the all-finds file ({@link #track}), in batches, in the order they came in:
+ * per server and dimension only how far the site has taken them is kept, so none is ever dropped
+ * however long the site is out of reach. A batch the site didn't take (offline, an error) is sent
+ * again next time; the site keeps no find twice, so sending one again is harmless. How far it got is
+ * kept next to the file, and only the finds after that go next time.
  * <p>
  * Run log events ({@link #addEvent}) - started, kicked and why, reconnected... - wait in a queue of
  * their own and go as soon as they're added, ahead of the finds; the site keeps none twice (each has an id).
@@ -45,33 +45,37 @@ public final class SiteSync {
     private static final int EVENT_BATCH = 100;
     /** Events kept waiting at most while the site can't be reached: the oldest go first. */
     private static final int MAX_EVENTS = 2_000;
-    /** Finds kept waiting at most, per server and dimension, while the site can't be reached. */
-    private static final int MAX_QUEUED = 50_000;
+    /** The mark file's format: before it, a full queue dropped finds and still moved the mark past them. */
+    private static final String MARK_VERSION = "v2";
     private static final Duration TIMEOUT = Duration.ofSeconds(20);
 
     public record Scope(String server, String dimension) {}
 
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
-    private final Map<Scope, ArrayDeque<JsonObject>> queues = new LinkedHashMap<>();
+    /** Per server and dimension: the all-finds file and how far the site has taken it. */
+    private final Map<Scope, Cursor> cursors = new LinkedHashMap<>();
     private record Event(Scope scope, JsonObject json) {}
     private final ArrayDeque<Event> events = new ArrayDeque<>();
-    /** The all-finds file sent up to here (its finds' count) once the queue is empty: where to write that. */
-    private final Map<Scope, Mark> marks = new HashMap<>();
     private JsonObject status;
     private Scope statusScope;
     private String lastProblem;
     private final AtomicBoolean liveInFlight = new AtomicBoolean();
     private volatile String lastLiveProblem;
-    private record LiveUpload(String site, String token, Scope scope, JsonObject status, Consumer<String> problem, Consumer<JsonArray> commands) {}
+    private record LiveUpload(String site, String token, Scope scope, JsonObject status, JsonArray commandUpdates,
+                              Consumer<String> problem, Consumer<JsonArray> commands, Consumer<JsonArray> acks) {}
+    /** Tells the site this mod confirms the commands it gets, by id: it sends each until confirmed, never runs one twice. */
+    private static final int COMMAND_PROTOCOL = 2;
     private final AtomicReference<LiveUpload> latestLive = new AtomicReference<>();
 
     /**
      * Independent of archive uploads: at most one live request, never a queue of old positions.
-     * {@code commands} gets what the site's map sent this mod (explore / rescan an area), on the
-     * HTTP thread, when the answer has any.
+     * {@code commandUpdates}: what became of the site's commands, not confirmed yet ({@link SiteCommands#pending});
+     * {@code acks} gets the ids of those the site took. {@code commands} gets what the site's map sent
+     * this mod (explore / rescan an area). Both on the HTTP thread, when the answer has any.
      */
-    public void sendLiveStatus(String site, String token, Scope scope, JsonObject live, Consumer<String> problem, Consumer<JsonArray> commands) {
-        latestLive.set(new LiveUpload(site, token, scope, live, problem, commands));
+    public void sendLiveStatus(String site, String token, Scope scope, JsonObject live, JsonArray commandUpdates,
+                               Consumer<String> problem, Consumer<JsonArray> commands, Consumer<JsonArray> acks) {
+        latestLive.set(new LiveUpload(site, token, scope, live, commandUpdates, problem, commands, acks));
         flushLiveStatus();
     }
 
@@ -88,7 +92,7 @@ public final class SiteSync {
                 .timeout(Duration.ofSeconds(5))
                 .header("Authorization", "Bearer " + token)
                 .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(body(scope, new JsonArray(), live).toString(), StandardCharsets.UTF_8))
+                .POST(HttpRequest.BodyPublishers.ofString(liveBody(scope, live, next.commandUpdates()).toString(), StandardCharsets.UTF_8))
                 .build();
             http.sendAsync(request, HttpResponse.BodyHandlers.ofString()).whenComplete((response, error) -> {
                 try {
@@ -96,7 +100,7 @@ public final class SiteSync {
                         : response.statusCode() / 100 == 2 ? null : "live position upload returned " + response.statusCode();
                     if (message != null && !message.equals(lastLiveProblem)) problem.accept(message);
                     lastLiveProblem = message;
-                    if (message == null) readCommands(response.body(), next.commands());
+                    if (message == null) readAnswer(response.body(), next.commands(), next.acks());
                 } finally {
                     liveInFlight.set(false);
                     flushLiveStatus();
@@ -111,23 +115,42 @@ public final class SiteSync {
         }
     }
 
-    /** The commands in a status upload's answer, if any. */
-    private static void readCommands(String body, Consumer<JsonArray> commands) {
-        if (commands == null || body == null || !body.contains("\"commands\"")) return;
+    private static JsonObject liveBody(Scope scope, JsonObject live, JsonArray commandUpdates) {
+        JsonObject body = body(scope, new JsonArray(), live);
+        body.addProperty("commandProtocol", COMMAND_PROTOCOL);
+        if (commandUpdates != null && !commandUpdates.isEmpty()) body.add("commandUpdates", commandUpdates);
+        return body;
+    }
+
+    /** The commands, and the command reports the site took, in a status upload's answer, if any. */
+    private static void readAnswer(String body, Consumer<JsonArray> commands, Consumer<JsonArray> acks) {
+        if (body == null || !body.contains("\"command")) return;
         try {
             JsonObject answer = JsonParser.parseString(body).getAsJsonObject();
-            if (answer.has("commands") && answer.get("commands").isJsonArray()) commands.accept(answer.getAsJsonArray("commands"));
+            if (acks != null && answer.has("commandAcks") && answer.get("commandAcks").isJsonArray()) acks.accept(answer.getAsJsonArray("commandAcks"));
+            if (commands != null && answer.has("commands") && answer.get("commands").isJsonArray()) commands.accept(answer.getAsJsonArray("commands"));
         } catch (RuntimeException ignored) {
             // Not an answer to read: nothing sent
         }
     }
 
-    private record Mark(Path file, String site, int count) {}
+    /** An all-finds file going to a site: the finds before {@code sent} the site has; {@code marked} is what the mark file says. */
+    private static final class Cursor {
+        final FindsArchive archive;
+        final Path markFile;
+        final String site;
+        int sent, marked;
 
-    public void add(Scope scope, FindsArchive.Find find) {
-        ArrayDeque<JsonObject> queue = queues.computeIfAbsent(scope, s -> new ArrayDeque<>());
-        if (queue.size() >= MAX_QUEUED) queue.pollFirst();
-        queue.addLast(toJson(find));
+        Cursor(FindsArchive archive, Path markFile, String site, int sent) {
+            this.archive = archive;
+            this.markFile = markFile;
+            this.site = site;
+            this.sent = this.marked = sent;
+        }
+
+        int waiting() {
+            return Math.max(0, archive.size() - sent);
+        }
     }
 
     /** A line for the site's run log; see {@link #event} for what it holds. */
@@ -182,25 +205,27 @@ public final class SiteSync {
     }
 
     /**
-     * Queues the archive's finds the site hasn't had yet: all of them the first time, for this site,
-     * then only those after the count kept in {@code <table>.site}.
+     * Sends the archive's finds to the site from now on, as they come in: all of them the first time,
+     * for this site, then only those after the count kept in {@code <table>.site}. How many are waiting.
      */
-    public int backfill(Scope scope, FindsArchive archive, String site) {
+    public int track(Scope scope, FindsArchive archive, String site) {
         Path markFile = archive.csvFile().resolveSibling(archive.csvFile().getFileName() + ".site");
         int from = 0;
         try {
             if (Files.exists(markFile)) {
                 List<String> lines = Files.readAllLines(markFile, StandardCharsets.UTF_8);
-                if (lines.size() >= 2 && lines.get(0).equals(site)) from = Integer.parseInt(lines.get(1).trim());
+                // An older mark may have skipped finds a full queue dropped: those go again, all of them
+                if (lines.size() >= 3 && lines.get(0).equals(site) && lines.get(2).trim().equals(MARK_VERSION)) {
+                    from = Integer.parseInt(lines.get(1).trim());
+                }
             }
         } catch (IOException | NumberFormatException ignored) {
             // Sent again in full: the site skips what it has
         }
-        List<FindsArchive.Find> all = archive.all();
-        if (from > all.size()) from = 0; // a different file now
-        for (int i = from; i < all.size(); i++) add(scope, all.get(i));
-        marks.put(scope, new Mark(markFile, site, all.size()));
-        return all.size() - from;
+        if (from < 0 || from > archive.size()) from = 0; // a different file now
+        Cursor cursor = new Cursor(archive, markFile, site, from);
+        cursors.put(scope, cursor);
+        return cursor.waiting();
     }
 
     /**
@@ -211,26 +236,28 @@ public final class SiteSync {
         if (!flushEvents(site, token, problem)) return;
         String endpoint = site.replaceAll("/+$", "") + "/api/area-explorer/ingest";
         boolean statusSent = status == null;
-        for (Map.Entry<Scope, ArrayDeque<JsonObject>> entry : new ArrayList<>(queues.entrySet())) {
+        for (Map.Entry<Scope, Cursor> entry : new ArrayList<>(cursors.entrySet())) {
             Scope scope = entry.getKey();
-            ArrayDeque<JsonObject> queue = entry.getValue();
-            while (!queue.isEmpty()) {
+            Cursor cursor = entry.getValue();
+            // Tracked for another site: it's tracked again for this one when its archive is next used
+            if (!cursor.site.equals(site)) continue;
+            while (cursor.waiting() > 0) {
+                List<FindsArchive.Find> taken = cursor.archive.range(cursor.sent, Math.min(cursor.archive.size(), cursor.sent + BATCH));
                 JsonArray batch = new JsonArray();
-                List<JsonObject> taken = new ArrayList<>();
-                while (!queue.isEmpty() && taken.size() < BATCH) taken.add(queue.pollFirst());
-                taken.forEach(batch::add);
+                for (FindsArchive.Find find : taken) batch.add(toJson(find));
                 boolean withStatus = !statusSent && scope.equals(statusScope);
                 Result result = post(endpoint, token, body(scope, batch, withStatus ? status : null));
                 if (result.retry()) {
-                    // Back in front, in order, for next time
-                    for (int i = taken.size() - 1; i >= 0; i--) queue.addFirst(taken.get(i));
+                    // Still waiting in the file: from the same place next time
+                    writeMark(cursor);
                     report(problem, result.message());
                     return;
                 }
                 if (result.kind() == Result.Kind.REJECTED) report(problem, "the site refused a batch of finds (bad data?) - skipped it");
+                cursor.sent += taken.size();
                 if (withStatus) statusSent = true;
             }
-            writeMark(scope);
+            writeMark(cursor);
         }
         if (!statusSent) {
             Result result = post(endpoint, token, body(statusScope, new JsonArray(), status));
@@ -245,7 +272,7 @@ public final class SiteSync {
 
     public int queued() {
         int n = 0;
-        for (ArrayDeque<JsonObject> queue : queues.values()) n += queue.size();
+        for (Cursor cursor : cursors.values()) n += cursor.waiting();
         return n;
     }
 
@@ -255,11 +282,16 @@ public final class SiteSync {
         problem.accept(message);
     }
 
-    private void writeMark(Scope scope) {
-        Mark mark = marks.remove(scope);
-        if (mark == null) return;
+    /**
+     * Keeps how far the site has taken the file, but never past what the file holds on disk: finds not
+     * written yet are lost with a crash, and the ones read in instead next time would be skipped.
+     */
+    private static void writeMark(Cursor cursor) {
+        int mark = Math.min(cursor.sent, cursor.archive.savedSize());
+        if (mark == cursor.marked) return;
         try {
-            Files.writeString(mark.file(), mark.site() + "\n" + mark.count() + "\n", StandardCharsets.UTF_8);
+            Files.writeString(cursor.markFile, cursor.site + "\n" + mark + "\n" + MARK_VERSION + "\n", StandardCharsets.UTF_8);
+            cursor.marked = mark;
         } catch (IOException ignored) {
             // The finds go again next time; the site skips them
         }

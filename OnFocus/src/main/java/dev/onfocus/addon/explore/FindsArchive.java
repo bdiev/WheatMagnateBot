@@ -85,6 +85,8 @@ public final class FindsArchive {
     /** Item names in the order the items section lists them; the rest go after. */
     private Map<String, Integer> itemOrder = Map.of();
     private boolean dirty;
+    /** Finds the table on disk holds: the first this many, as it was read or last written. */
+    private int savedSize;
 
     private FindsArchive(Path dir, String server, String dimensionId) {
         this.csvFile = dir.resolve("all-finds_" + dimensionId + ".csv");
@@ -103,6 +105,7 @@ public final class FindsArchive {
                 if (find != null) archive.add(find);
             }
             archive.dirty = false;
+            archive.savedSize = archive.finds.size();
         }
         return archive;
     }
@@ -122,6 +125,16 @@ public final class FindsArchive {
 
     public int size() {
         return finds.size();
+    }
+
+    /** The finds from {@code from} (inclusive) to {@code to} (exclusive), in the order they came in. */
+    public List<Find> range(int from, int to) {
+        return List.copyOf(finds.subList(from, to));
+    }
+
+    /** How many of the finds, from the first, are in the table on disk. */
+    public int savedSize() {
+        return savedSize;
     }
 
     /** The finds of one kind, in the order they came in. */
@@ -284,6 +297,7 @@ public final class FindsArchive {
         }
         writeAtomically(csvFile, csv.toString());
         writeAtomically(textFile, text());
+        savedSize = finds.size();
         dirty = false;
     }
 
