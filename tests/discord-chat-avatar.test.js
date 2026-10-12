@@ -54,11 +54,11 @@ async function run() {
   assert.equal(urls.length, 6, 'failed refreshes must have a retry cooldown');
   const coldFailure = await load('PearlMagnate');
   assert.equal(coldFailure.files, undefined);
-  assert.equal(coldFailure.thumbnail.url, 'https://render.namemc.com/skin/2d/face.png?skin=PearlMagnate&scale=4');
+  assert.equal(coldFailure.thumbnail.url, 'https://mc-heads.net/avatar/pearlmagnate/40.png');
   const callsBeforePermissionCheck = urls.length;
   const noPermission = await load('ObbyMagnate', { attachFiles: false });
   assert.equal(noPermission.files, undefined);
-  assert.equal(noPermission.thumbnail.url, 'https://render.namemc.com/skin/2d/face.png?skin=ObbyMagnate&scale=4');
+  assert.equal(noPermission.thumbnail.url, 'https://mc-heads.net/avatar/obbymagnate/40.png');
   assert.equal(urls.length, callsBeforePermissionCheck, 'channels without upload permission must not fetch attachments');
   assert.deepEqual(await load('../bad name'), {});
 
@@ -139,7 +139,9 @@ async function run() {
     formatDiscordBridgeMessage: message => message,
     getChatPlayerColor,
     isWhitelistedPlayer: name => name === 'WhitelistedFriend',
-    publishFloodSummary: createFloodSummaryPublisher(),
+    publishFloodSummary: createFloodSummaryPublisher({
+      loadAvatar: async (name, options) => { loaded.push({ name, ...options }); return load(name, options); }
+    }),
     loadChatAvatar: async (name, options) => { loaded.push({ name, ...options }); return load(name, options); }
   });
   vm.runInContext(`${sender}\nthis.deliver = deliverGameChatMessageToDiscord;`, context);
@@ -152,17 +154,39 @@ async function run() {
   assert.equal(sent[0].embeds[0].description, 'Hello');
   await context.deliver({ username: 'Server', message: 'Announcement', allowMentions: false });
   await context.deliver({ username: 'ObbyMagnate', message: '', isSummary: true, summaryCount: 2, allowMentions: false });
-  assert.equal(loaded.length, 1, 'server messages and flood summaries must not request player avatars');
+  assert.equal(loaded.length, 2, 'flood summaries reuse the player avatar loader; server messages do not');
   assert.equal(sent[1].files, undefined);
-  assert.equal(sent[2].files, undefined);
-  assert.equal(sent[2].embeds[0].author.icon_url, 'https://render.namemc.com/skin/2d/face.png?skin=ObbyMagnate&scale=4',
-    'a flood summary shows the head beside the name without downloading it');
+  assert.ok(Buffer.isBuffer(sent[2].files[0].attachment));
+  assert.equal(sent[2].embeds[0].author.icon_url, `attachment://${sent[2].files[0].name}`,
+    'a flood summary uses an uploaded head beside the name');
   assert.equal(sent[2].embeds[0].color, FLOOD_SUMMARY_COLOR);
   assert.equal(sent[2].embeds[0].title, undefined, 'a flood summary is compact');
   canAttach = false;
   await context.deliver({ username: 'ObbyMagnate', message: 'Hello again', allowMentions: false });
   assert.equal(sent[3].files, undefined);
-  assert.equal(sent[3].embeds[0].author.icon_url, 'https://render.namemc.com/skin/2d/face.png?skin=ObbyMagnate&scale=4');
+  assert.equal(sent[3].embeds[0].author.icon_url, 'https://mc-heads.net/avatar/obbymagnate/40.png');
+  await context.deliver({ username: 'ObbyMagnate', message: '', isSummary: true, summaryCount: 3 });
+  assert.equal(sent[4].files, undefined, 'summaries respect missing upload permission');
+  assert.equal(sent[4].embeds[0].author.icon_url, 'https://mc-heads.net/avatar/obbymagnate/40.png');
+
+  const summaryEdits = [];
+  let summaryLoads = 0;
+  const publishWithAvatar = createFloodSummaryPublisher({
+    loadAvatar: async () => { summaryLoads += 1; return first; }
+  });
+  const summaryChannel = {
+    id: 'avatar-summary',
+    send: async options => {
+      assert.equal(options.embeds[0].author.icon_url, `attachment://${options.files[0].name}`);
+      return { edit: async options => summaryEdits.push(options) };
+    }
+  };
+  await publishWithAvatar(summaryChannel, { username: 'TheOnlySlash', summaryCount: 3 });
+  await publishWithAvatar(summaryChannel, { username: 'TheOnlySlash', summaryCount: 2 });
+  assert.equal(summaryLoads, 1, 'editing counters must reuse the existing attachment');
+  assert.equal(summaryEdits[0].embeds[0].author.icon_url, first.thumbnail.url);
+  assert.equal(summaryEdits[0].files, undefined, 'edits retain the original Discord attachment');
+  assert.ok(summaryEdits[0].embeds[0].description.includes('5 messages skipped'));
   assert.equal(CHAT_PLAYER_COLOR, 0x3498DB);
   assert.equal(CHAT_WHITELISTED_COLOR, 0x2ECC71);
   await context.deliver({ username: 'WhitelistedFriend', message: 'Hi', allowMentions: false });

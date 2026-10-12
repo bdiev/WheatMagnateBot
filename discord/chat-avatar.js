@@ -42,7 +42,7 @@ function createChatAvatarLoader({ fetchImpl = fetch, now = Date.now, ttlMs = 6 *
     ];
     const remote = {
       thumbnail: {
-        url: `https://render.namemc.com/skin/2d/face.png?skin=${encodeURIComponent(name)}&scale=4`
+        url: sources[0]
       }
     };
     if (!attachFiles) return remote;

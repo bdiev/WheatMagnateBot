@@ -1258,7 +1258,7 @@ const gameChatDiscordForwardQueue = new DiscordChatForwardQueue({
   },
   onError: error => console.error('[Discord Chat Queue]', error?.message || error)
 });
-const publishFloodSummary = createFloodSummaryPublisher({ editWindowMs: DISCORD_CHAT_FLOOD_SUMMARY_EDIT_WINDOW_MS });
+const publishFloodSummary = createFloodSummaryPublisher({ editWindowMs: DISCORD_CHAT_FLOOD_SUMMARY_EDIT_WINDOW_MS, loadAvatar: loadChatAvatar });
 
 let loadedSession = null;
 if (process.env.MINECRAFT_SESSION) {
@@ -6246,7 +6246,10 @@ async function deliverGameChatMessageToDiscord({
     const channel = await discordClient.channels.fetch(DISCORD_CHAT_CHANNEL_ID);
     if (!channel?.isTextBased?.()) return false;
     if (isSummary) {
-      return await publishFloodSummary(channel, { username, createdAt, summaryCount, summaryReasons });
+      return await publishFloodSummary(channel, {
+        username, createdAt, summaryCount, summaryReasons,
+        attachFiles: !channel.guild || Boolean(channel.permissionsFor(discordClient.user)?.has(PermissionsBitField.Flags.AttachFiles))
+      });
     }
 
     const avatar = !isSystemMessage

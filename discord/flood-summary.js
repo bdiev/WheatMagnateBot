@@ -42,13 +42,13 @@ function formatFloodSummaryDescription(reasons) {
   return `🛡️ **${total} ${total === 1 ? 'message' : 'messages'} skipped** — ${details}`;
 }
 
-function buildFloodSummaryEmbed({ username, reasons, createdAt = Date.now() }) {
+function buildFloodSummaryEmbed({ username, reasons, createdAt = Date.now(), avatar }) {
   const encodedName = encodeURIComponent(username);
   return {
     author: {
       name: username,
       url: `https://namemc.com/profile/${encodedName}`,
-      icon_url: `https://render.namemc.com/skin/2d/face.png?skin=${encodedName}&scale=4`
+      icon_url: avatar?.thumbnail?.url || `https://mc-heads.net/avatar/${encodedName}/40.png`
     },
     description: formatFloodSummaryDescription(reasons),
     color: FLOOD_SUMMARY_COLOR,
@@ -59,10 +59,10 @@ function buildFloodSummaryEmbed({ username, reasons, createdAt = Date.now() }) {
 // Posts one compact summary per player and, while that player keeps flooding
 // within the edit window, updates its counters in place instead of posting a
 // new Discord message each time.
-function createFloodSummaryPublisher({ editWindowMs = 60_000, maxEntries = 200, now = () => Date.now() } = {}) {
+function createFloodSummaryPublisher({ editWindowMs = 60_000, maxEntries = 200, now = () => Date.now(), loadAvatar } = {}) {
   const recent = new Map();
 
-  return async function publishFloodSummary(channel, { username, createdAt = now(), summaryCount, summaryReasons }) {
+  return async function publishFloodSummary(channel, { username, createdAt = now(), summaryCount, summaryReasons, attachFiles = true }) {
     const key = `${channel?.id || ''}:${String(username).toLowerCase()}`;
     const reasons = normalizeFloodSummaryReasons(summaryReasons, summaryCount);
     const current = now();
@@ -75,17 +75,20 @@ function createFloodSummaryPublisher({ editWindowMs = 60_000, maxEntries = 200, 
     if (previous) {
       const merged = mergeFloodSummaryReasons(previous.reasons, reasons);
       try {
-        await previous.message.edit({ embeds: [buildFloodSummaryEmbed({ username, reasons: merged, createdAt })] });
-        recent.set(key, { message: previous.message, reasons: merged, updatedAt: current });
+        await previous.message.edit({ embeds: [buildFloodSummaryEmbed({ username, reasons: merged, createdAt, avatar: previous.avatar })] });
+        recent.set(key, { message: previous.message, reasons: merged, updatedAt: current, avatar: previous.avatar });
         return true;
       } catch {
         // The earlier summary was deleted or is no longer editable; post anew.
       }
     }
 
-    const message = await channel.send({ embeds: [buildFloodSummaryEmbed({ username, reasons, createdAt })] });
+    const avatar = loadAvatar ? await loadAvatar(username, { attachFiles }) : undefined;
+    const options = { embeds: [buildFloodSummaryEmbed({ username, reasons, createdAt, avatar })] };
+    if (avatar?.files) options.files = avatar.files;
+    const message = await channel.send(options);
     if (message && typeof message.edit === 'function') {
-      recent.set(key, { message, reasons, updatedAt: current });
+      recent.set(key, { message, reasons, updatedAt: current, avatar });
       while (recent.size > maxEntries) recent.delete(recent.keys().next().value);
     }
     return true;
