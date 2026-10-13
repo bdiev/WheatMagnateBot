@@ -13,6 +13,7 @@ import dev.onfocus.addon.modules.DeathMessageBlocker;
 import dev.onfocus.addon.modules.ElytraControl;
 import dev.onfocus.addon.modules.ElytraKeeper;
 import dev.onfocus.addon.modules.JoinLeaveMessages;
+import dev.onfocus.addon.modules.MapArtCopier;
 import dev.onfocus.addon.modules.RandomPath;
 import dev.onfocus.addon.modules.StayFocused;
 import dev.onfocus.addon.modules.TrailExplorer;
@@ -48,6 +49,7 @@ public class OnFocusAddon extends MeteorAddon {
         Modules.get().add(new ElytraKeeper());
         Modules.get().add(new ElytraControl());
         Modules.get().add(new AutoSignDate());
+        Modules.get().add(new MapArtCopier());
 
         Commands.add(new RegroupMarkersCommand());
         Commands.add(new LootMarkersCommand());
