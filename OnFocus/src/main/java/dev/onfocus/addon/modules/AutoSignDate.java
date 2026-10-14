@@ -12,6 +12,9 @@ import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.orbit.EventHandler;
 import meteordevelopment.orbit.EventPriority;
+import net.minecraft.block.AbstractSignBlock;
+import net.minecraft.block.entity.SignBlockEntity;
+import net.minecraft.block.entity.SignText;
 import net.minecraft.client.gui.screen.ingame.AbstractSignEditScreen;
 import net.minecraft.client.util.InputUtil;
 import net.minecraft.item.HangingSignItem;
@@ -23,6 +26,7 @@ import net.minecraft.nbt.NbtList;
 import net.minecraft.nbt.NbtString;
 import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
 import net.minecraft.network.packet.c2s.play.UpdateSignC2SPacket;
+import net.minecraft.text.Text;
 import net.minecraft.util.math.BlockPos;
 import org.lwjgl.glfw.GLFW;
 
@@ -33,7 +37,7 @@ import java.time.format.DateTimeFormatter;
  * Writes every sign the player places: lines 1-3 are the text of the first sign written with the
  * module on, line 4 is today's date (dd/MM/yyyy). The text is kept until the Reset button.
  * Placing a sign with Shift held opens the normal editor, and that sign is not remembered.
- * Editing an existing sign (not just placed) is left alone.
+ * Editing an existing sign (clicking it, even with a sign in hand) is left alone.
  */
 public class AutoSignDate extends Module {
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd/MM/yyyy");
@@ -62,14 +66,20 @@ public class AutoSignDate extends Module {
 
     @EventHandler(priority = EventPriority.HIGH)
     private void onSendPacket(PacketEvent.Send event) {
-        if (sendingOwn || mc.player == null) return;
+        if (sendingOwn || mc.player == null || mc.world == null) return;
 
         if (event.packet instanceof PlayerInteractBlockC2SPacket interact) {
             Item item = mc.player.getStackInHand(interact.getHand()).getItem();
-            if (item instanceof SignItem || item instanceof HangingSignItem) {
-                placedAtMs = System.currentTimeMillis();
-                placedManual = isShiftHeld();
+            if (!(item instanceof SignItem || item instanceof HangingSignItem)) return;
+
+            boolean shift = isShiftHeld();
+            // Clicking an existing sign without Shift edits it instead of placing a new one.
+            if (!shift && mc.world.getBlockState(interact.getBlockHitResult().getBlockPos()).getBlock() instanceof AbstractSignBlock) {
+                placedAtMs = 0;
+                return;
             }
+            placedAtMs = System.currentTimeMillis();
+            placedManual = shift;
             return;
         }
 
@@ -100,7 +110,11 @@ public class AutoSignDate extends Module {
         // An existing sign being edited, or a Shift placement: the normal editor, nothing remembered.
         if (!justPlaced || manual) return;
 
-        BlockPos pos = ((AbstractSignEditScreenAccessor) screen).getSign().getPos();
+        SignBlockEntity sign = ((AbstractSignEditScreenAccessor) screen).getSign();
+        // A just-placed sign is blank; one with text is an existing sign being edited.
+        if (hasText(sign)) return;
+
+        BlockPos pos = sign.getPos();
         if (text == null) {
             learningPos = pos;
             info("Write the sign once: lines 1-3 are remembered, line 4 becomes the date.");
@@ -118,6 +132,15 @@ public class AutoSignDate extends Module {
         } finally {
             sendingOwn = false;
         }
+    }
+
+    private static boolean hasText(SignBlockEntity sign) {
+        for (SignText side : new SignText[] { sign.getFrontText(), sign.getBackText() }) {
+            for (Text line : side.getMessages(false)) {
+                if (!line.getString().isBlank()) return true;
+            }
+        }
+        return false;
     }
 
     private boolean isShiftHeld() {

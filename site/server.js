@@ -6203,20 +6203,19 @@ async function handleApi(req, res, url) {
       if (req.method !== 'GET') { sendError(res, 405, 'Method not allowed.'); return; }
       if (!enforceRateLimit(req, res, 'public_player', '', { limit: 120, windowMs: 60_000 })) return;
       if (url.pathname === '/api/public/player-search') {
-        const query = String(url.searchParams.get('q') || '').trim();
+        const query = String(url.searchParams.get('query') || url.searchParams.get('q') || '').trim();
         if (!query) { sendJson(res, 200, { players: [] }); return; }
         if (!/^[A-Za-z0-9_]{1,16}$/.test(query)) { sendError(res, 400, 'Invalid player name.'); return; }
-        assertDatabase();
-        const result = await pool.query(`
-          SELECT DISTINCT username
-          FROM player_activity
-          WHERE username ~ '^[A-Za-z0-9_]{1,16}$'
-            AND STRPOS(LOWER(username), LOWER($1)) > 0
-          ORDER BY username
-          LIMIT 8
-        `, [query]);
-        // Only public nicknames; never reuse the private player-search payload.
-        sendJson(res, 200, { players: result.rows.map(row => ({ username: row.username })) });
+        const searchUrl = new URL(url);
+        searchUrl.searchParams.set('query', query);
+        const result = await searchSeenPlayers(searchUrl);
+        sendJson(res, 200, { players: result.players.map(player => ({
+          username: player.username,
+          uuid: player.uuid,
+          isOnline: player.isOnline,
+          onlineSince: player.onlineSince,
+          lastSeen: player.lastSeen
+        })) });
         return;
       }
       const username = String(url.searchParams.get('username') || url.searchParams.get('player') || '');
@@ -6763,7 +6762,7 @@ async function requestHandler(req, res) {
     const html = (await fs.promises.readFile(path.join(PUBLIC_DIR, 'index.html'), 'utf8'))
       .replace('<title>WheatMagnateBot</title>', `<title>${username} - WheatMagnateBot</title>`)
       .replace('<body>', `<body data-public-player="${username}">`)
-      .replace('</head>', '<link rel="stylesheet" href="/public-player.css?v=7"><script src="/public-player-search.js?v=1" defer></script></head>');
+      .replace('</head>', '<link rel="stylesheet" href="/public-player.css?v=8"></head>');
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(req.method === 'HEAD' ? undefined : html);
     return;

@@ -1390,6 +1390,7 @@ async function fetchJson(path, { transientRetries = 0, signal = null } = {}) {
   if (publicPlayerUsername) {
     path = path.replace(/^\/api\/player\?/, '/api/public/player?')
       .replace(/^\/api\/player-skins\?/, '/api/public/player-skins?')
+      .replace(/^\/api\/seen-search\?/, '/api/public/player-search?')
       .replace(/^\/api\/area-explorer\/signs\?/, '/api/public/player-signs?');
     if (path.startsWith('/api/public/player?')) {
       path += `&timeZone=${encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')}`;
@@ -5110,6 +5111,12 @@ function handleSeenSuggestionClick(event) {
   if (!option) return;
   const player = state.seenPlayers[Number(option.dataset.index)];
   if (!player) return;
+  if (publicPlayerUsername) {
+    if (/^[A-Za-z0-9_]{1,16}$/.test(player.username)) {
+      window.location.assign(`/player/${encodeURIComponent(player.username)}`);
+    }
+    return;
+  }
   const input = $('#seenSearchInput');
   const returnToSeenSearch = {
     query: input?.value || '',
@@ -14009,14 +14016,8 @@ async function initPublicPlayer() {
   heading.className = 'public-player-brand';
   heading.innerHTML = `
     <a class="public-player-logo" href="/"><img src="/items/Wheat.png" width="32" height="32" alt=""><span>WheatMagnateBot<small>Minecraft community</small></span></a>
-    <form class="public-player-search" role="search" aria-label="Find a Minecraft player">
-      <svg class="public-player-search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg>
-      <input type="search" name="username" role="combobox" aria-label="Player nickname" aria-autocomplete="list" aria-expanded="false" aria-controls="publicPlayerSuggestions" placeholder="Find a player…" required maxlength="16" pattern="[A-Za-z0-9_]{1,16}" autocomplete="off" spellcheck="false" autocapitalize="none">
-      <div id="publicPlayerSuggestions" class="public-player-suggestions" role="listbox" aria-label="Players" hidden></div>
-      <span class="public-player-search-status" role="status" aria-live="polite"></span>
-    </form>
-    <div class="public-player-toolbar"></div>`;
-  setupPublicPlayerSearch(heading.querySelector('.public-player-search'));
+    <div class="public-player-toolbar topbar-actions"></div>`;
+  heading.querySelector('.public-player-toolbar').append($('#seenSearch'));
   const themeButton = $('#themeToggle');
   heading.querySelector('.public-player-toolbar').append(themeButton);
   applyTheme(document.documentElement.dataset.theme);
