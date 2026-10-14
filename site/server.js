@@ -6746,7 +6746,7 @@ async function requestHandler(req, res) {
     const html = (await fs.promises.readFile(path.join(PUBLIC_DIR, 'index.html'), 'utf8'))
       .replace('<title>WheatMagnateBot</title>', `<title>${username} - WheatMagnateBot</title>`)
       .replace('<body>', `<body data-public-player="${username}">`)
-      .replace('</head>', '<link rel="stylesheet" href="/public-player.css?v=3"></head>');
+      .replace('</head>', '<link rel="stylesheet" href="/public-player.css?v=4"></head>');
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(req.method === 'HEAD' ? undefined : html);
     return;
