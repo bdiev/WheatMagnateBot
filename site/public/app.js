@@ -14010,17 +14010,13 @@ async function initPublicPlayer() {
   heading.innerHTML = `
     <a class="public-player-logo" href="/"><img src="/items/Wheat.png" width="32" height="32" alt=""><span>WheatMagnateBot<small>Minecraft community</small></span></a>
     <form class="public-player-search" role="search" aria-label="Find a Minecraft player">
-      <input type="search" name="username" aria-label="Player nickname" placeholder="Search players by nickname" required maxlength="16" pattern="[A-Za-z0-9_]{1,16}" title="Minecraft nickname: 1–16 letters, numbers or underscores" autocomplete="off" spellcheck="false" autocapitalize="none">
-      <button type="submit">Search</button>
+      <svg class="public-player-search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg>
+      <input type="search" name="username" role="combobox" aria-label="Player nickname" aria-autocomplete="list" aria-expanded="false" aria-controls="publicPlayerSuggestions" placeholder="Find a player…" required maxlength="16" pattern="[A-Za-z0-9_]{1,16}" autocomplete="off" spellcheck="false" autocapitalize="none">
+      <div id="publicPlayerSuggestions" class="public-player-suggestions" role="listbox" aria-label="Players" hidden></div>
+      <span class="public-player-search-status" role="status" aria-live="polite"></span>
     </form>
     <div class="public-player-toolbar"></div>`;
-  heading.querySelector('.public-player-search').addEventListener('submit', event => {
-    event.preventDefault();
-    const username = event.currentTarget.elements.username.value.trim();
-    if (/^[A-Za-z0-9_]{1,16}$/.test(username)) {
-      window.location.assign(`/player/${encodeURIComponent(username)}`);
-    }
-  });
+  setupPublicPlayerSearch(heading.querySelector('.public-player-search'));
   const themeButton = $('#themeToggle');
   heading.querySelector('.public-player-toolbar').append(themeButton);
   applyTheme(document.documentElement.dataset.theme);

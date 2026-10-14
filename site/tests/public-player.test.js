@@ -10,6 +10,9 @@ process.env.DATABASE_URL = 'postgresql://test:test@localhost/public_player_test'
 const queries = [];
 Pool.prototype.query = async function (sql, params = []) {
   queries.push({ sql, params });
+  if (sql.includes('STRPOS(LOWER(username), LOWER($1))')) {
+    return { rows: params[0] === 'Unknown' ? [] : [{ username: 'bdiev_', admin_notes: 'PRIVATE NOTES', player_uuid: 'PRIVATE UUID' }] };
+  }
   if (sql.includes('FROM player_activity pa') && sql.includes('AS aliases')) {
     return { rows: params[0] === 'Unknown' ? [] : [{ username: 'bdiev_', player_uuid: '11111111-1111-4111-8111-111111111111', aliases: ['oldname'] }] };
   }
@@ -38,6 +41,18 @@ async function run() {
     const html = await page.text();
     assert.match(html, /data-public-player="bdiev_"/);
     assert.match(html, /public-player\.css/);
+    assert.match(html, /public-player-search\.js/);
+    const search = await fetch(`${base}/api/public/player-search?q=bd`);
+    assert.equal(search.status, 200);
+    assert.deepEqual(await search.json(), { players: [{ username: 'bdiev_' }] });
+    assert.deepEqual(await (await fetch(`${base}/api/public/player-search?q=Unknown`)).json(), { players: [] });
+    assert.deepEqual(await (await fetch(`${base}/api/public/player-search?q=`)).json(), { players: [] });
+    assert.equal((await fetch(`${base}/api/public/player-search?q=bad.name`)).status, 400);
+    assert.equal((await fetch(`${base}/api/public/player-search?q=abcdefghijklmnopq`)).status, 400);
+    assert.equal((await fetch(`${base}/api/public/player-search?q=bd`, { method: 'POST' })).status, 403);
+    const searchQuery = queries.find(query => query.sql.includes('STRPOS(LOWER(username), LOWER($1))'));
+    assert.deepEqual(searchQuery.params, ['bd']);
+    assert.match(searchQuery.sql, /LIMIT 8/);
     assert.equal((await fetch(`${base}/player/bad.name`)).status, 404);
     assert.equal((await fetch(`${base}/player/bdiev_/`, { method: 'HEAD' })).status, 200);
 
