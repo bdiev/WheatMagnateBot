@@ -14007,7 +14007,20 @@ async function initPublicPlayer() {
   card.removeAttribute('aria-modal');
   const heading = document.createElement('header');
   heading.className = 'public-player-brand';
-  heading.innerHTML = '<a class="public-player-logo" href="/"><img src="/items/Wheat.png" width="32" height="32" alt=""><span>WheatMagnateBot<small>Minecraft community</small></span></a><div class="public-player-toolbar"><span>Player profile</span></div>';
+  heading.innerHTML = `
+    <a class="public-player-logo" href="/"><img src="/items/Wheat.png" width="32" height="32" alt=""><span>WheatMagnateBot<small>Minecraft community</small></span></a>
+    <form class="public-player-search" role="search" aria-label="Find a Minecraft player">
+      <input type="search" name="username" aria-label="Player nickname" placeholder="Search players by nickname" required maxlength="16" pattern="[A-Za-z0-9_]{1,16}" title="Minecraft nickname: 1–16 letters, numbers or underscores" autocomplete="off" spellcheck="false" autocapitalize="none">
+      <button type="submit">Search</button>
+    </form>
+    <div class="public-player-toolbar"></div>`;
+  heading.querySelector('.public-player-search').addEventListener('submit', event => {
+    event.preventDefault();
+    const username = event.currentTarget.elements.username.value.trim();
+    if (/^[A-Za-z0-9_]{1,16}$/.test(username)) {
+      window.location.assign(`/player/${encodeURIComponent(username)}`);
+    }
+  });
   const themeButton = $('#themeToggle');
   heading.querySelector('.public-player-toolbar').append(themeButton);
   applyTheme(document.documentElement.dataset.theme);
