@@ -24,10 +24,74 @@ body[data-public-player] {
 .public-player-logo small { display: block; margin-top: 6px; font-family: var(--font-body); font-size: 11px; color: var(--muted); }
 .public-player-toolbar { display: flex; align-items: center; gap: 16px; font-size: 12px; }
 /* Reuse the main site's search component and its existing responsive rules. */
-.public-player-brand { position: relative; z-index: 140; }
+.public-player-brand {
+  position: relative;
+  z-index: 140;
+  container-type: inline-size;
+  padding-bottom: 0;
+  transition: padding-bottom 220ms ease;
+}
 .public-player-toolbar.topbar-actions { display: flex; flex: none; width: auto; margin: 0; gap: 12px; }
-body[data-public-player].search-focus-active #playerProfileOverlay,
-body[data-public-player].search-focus-active .public-player-logo { opacity: .48; transition: opacity 240ms ease; }
+body[data-public-player].search-focus-active .public-player-brand { padding-bottom: 56px; }
+/* Keep the trigger in its slot. Expand below the header rather than scaling
+   the text across the logo or switching the component to viewport positioning. */
+body[data-public-player] .public-player-toolbar .seen-search,
+body[data-public-player].search-focus-active .public-player-toolbar .seen-search.open {
+  position: relative;
+  top: auto;
+  left: auto;
+  right: auto;
+  width: var(--button-height);
+  grid-template-columns: var(--button-height);
+  transform: none;
+}
+body[data-public-player] .seen-search.open .seen-search-toggle {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: none;
+  border-color: var(--accent-strong);
+}
+body[data-public-player] .seen-search-box {
+  position: absolute;
+  top: calc(100% + 14px);
+  right: -86px;
+  width: min(560px, calc(100vw - 48px));
+  width: min(560px, 100cqw);
+  visibility: hidden;
+  transform: translateY(-6px);
+  transform-origin: top right;
+  transition: opacity 180ms ease, transform 220ms ease, visibility 0s linear 220ms;
+}
+body[data-public-player] .seen-search.open .seen-search-box {
+  visibility: visible;
+  transform: translateY(0);
+  transition-delay: 0s;
+}
+body[data-public-player] .seen-search.open .seen-search-box:focus-within {
+  box-shadow: var(--shadow), 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+body[data-public-player]::before { background: color-mix(in srgb, var(--bg) 28%, transparent); }
+body[data-public-player] #themeToggle {
+  flex: 0 0 74px;
+  width: 74px;
+  min-width: 74px !important;
+  max-width: 74px;
+  margin-left: 0;
+  padding: 0;
+  border-color: var(--line);
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+
+@media (max-width: 700px) {
+  body[data-public-player] .seen-search-box { width: calc(100vw - 32px); width: 100cqw; }
+}
+@media (prefers-reduced-motion: reduce) {
+  body[data-public-player] .public-player-brand,
+  body[data-public-player] .seen-search-box { transition: none; }
+}
 
 body[data-public-player] #playerProfileOverlay {
   position: static;
