@@ -85,9 +85,11 @@ body[data-public-player] .player-profile-grid { padding: var(--profile-space); g
 body[data-public-player] .player-profile-grid > div { min-width: 0; min-height: 80px; padding: 12px; }
 body[data-public-player] .player-profile-grid strong,
 body[data-public-player] .player-profile-grid .player-profile-value-button {
-  font-family: var(--font-pixel);
+  font-family: var(--font-body);
   font-size: 18px;
-  font-weight: 400;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-shadow: none;
   line-height: 1.4;
 }
 body[data-public-player] .player-profile-sessions,
