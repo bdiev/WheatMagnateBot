@@ -14007,7 +14007,10 @@ async function initPublicPlayer() {
   card.removeAttribute('aria-modal');
   const heading = document.createElement('header');
   heading.className = 'public-player-brand';
-  heading.innerHTML = '<a href="/">WheatMagnateBot</a><span>Player profile</span>';
+  heading.innerHTML = '<a class="public-player-logo" href="/"><img src="/items/Wheat.png" width="32" height="32" alt=""><span>WheatMagnateBot<small>Minecraft community</small></span></a><div class="public-player-toolbar"><span>Player profile</span></div>';
+  const themeButton = $('#themeToggle');
+  heading.querySelector('.public-player-toolbar').append(themeButton);
+  applyTheme(document.documentElement.dataset.theme);
   document.body.prepend(heading);
   $('#appLoader').hidden = true;
   await openPlayerProfile(publicPlayerUsername);

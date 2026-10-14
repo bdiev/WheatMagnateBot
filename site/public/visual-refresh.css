@@ -1,0 +1,129 @@
+/* Shared visual system: quieter surfaces, readable type, Minecraft accents. */
+:root {
+  --bg: #f3f5ee;
+  --bg-strong: #e5ebdd;
+  --panel: #fffef9;
+  --panel-soft: #f0f3e9;
+  --text: #253127;
+  --muted: #667263;
+  --line: #cbd3c1;
+  --line-soft: #e2e7da;
+  --accent: #38734b;
+  --accent-strong: #285b39;
+  --gold: #d7ad53;
+  --gold-text: #826019;
+  --card-radius: 12px;
+  --button-radius: 8px;
+  --bevel-light: transparent;
+  --bevel-dark: transparent;
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, .08);
+  --shadow: 0 12px 36px rgba(35, 53, 30, .08);
+  --shadow-sm: 0 3px 12px rgba(35, 53, 30, .06);
+}
+
+:root[data-theme="dark"] {
+  --bg: #101915;
+  --bg-strong: #17241c;
+  --panel: #1a251e;
+  --panel-soft: #202e25;
+  --text: #edf1e7;
+  --muted: #a4b2a0;
+  --line: #3c4d3e;
+  --line-soft: #2c3a2e;
+  --accent: #79b587;
+  --accent-strong: #a7d5ad;
+  --gold: #e1c077;
+  --gold-text: #e1c077;
+  --bevel-light: transparent;
+  --bevel-dark: transparent;
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, .04);
+  --shadow: 0 12px 36px rgba(0, 0, 0, .2);
+  --shadow-sm: 0 3px 12px rgba(0, 0, 0, .12);
+}
+
+body {
+  background: radial-gradient(ellipse at 10% 0, color-mix(in srgb, var(--accent) 8%, transparent), transparent 45%), var(--bg);
+  background-attachment: scroll;
+  line-height: 1.5;
+}
+
+.panel, .stat, .auth-card, .player-profile-card, .player-skins-dialog {
+  border-width: 1px;
+  background-image: none;
+  box-shadow: var(--shadow);
+}
+
+.panel-head {
+  padding: 20px 22px;
+  border-bottom-width: 1px;
+  border-radius: var(--card-radius) var(--card-radius) 0 0;
+  background: linear-gradient(110deg, color-mix(in srgb, var(--accent) 5%, var(--panel)), var(--panel));
+}
+
+.panel-head h2, .player-profile-card h3, .auth-card h1 {
+  font-family: var(--font-body);
+  font-weight: 750;
+  letter-spacing: -.025em;
+  text-shadow: none;
+}
+
+.panel-head h2 { font-size: 21px; }
+.panel-head p { line-height: 1.6; }
+.stat { padding: 20px; }
+.stat:hover, :root[data-theme="dark"] .stat:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+}
+
+.dashboard-brand h1 {
+  font-size: clamp(24px, 3vw, 36px);
+  letter-spacing: -.03em;
+  text-shadow: none;
+}
+
+button, input, select, textarea { border-width: 1px; }
+button { text-shadow: none; }
+button:hover, :root[data-theme="dark"] button:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+button:active:not(:disabled) { transform: translateY(0); }
+
+.player-profile-head { border-bottom-width: 1px; }
+.player-profile-head h2 { text-shadow: none; }
+.player-profile-actions {
+  border-top-width: 1px;
+  background: transparent;
+}
+.player-profile-message-action { border-width: 1px; font-weight: 650; }
+.player-profile-grid { gap: 12px; padding: 20px; }
+.player-profile-grid div {
+  border-width: 1px;
+  padding: 15px;
+  background: var(--panel-soft);
+  box-shadow: none;
+}
+.player-profile-grid span { letter-spacing: .06em; font-size: 10px; }
+.player-profile-grid strong, .player-profile-grid .player-profile-value-button {
+  font-family: var(--font-body);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+.player-profile-card h3 { font-size: 17px; }
+.player-profile-session { border-width: 1px; background: var(--panel); box-shadow: none; }
+.player-profile-session-marker { border-radius: 50%; }
+.player-profile-sessions, .player-profile-activity, .player-profile-chat { padding: 0 20px 22px; }
+.player-profile-message { border-radius: 8px; }
+
+@media (max-width: 700px) {
+  .panel-head { padding: 16px; }
+  .player-profile-grid { gap: 8px; padding: 14px; }
+  .player-profile-grid div { padding: 12px; }
+  .player-profile-sessions, .player-profile-activity, .player-profile-chat { padding: 0 14px 18px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button, .stat { transition: none; }
+  button:hover, .stat:hover { transform: none; }
+}

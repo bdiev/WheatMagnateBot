@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_VERSION = '349';
+const CACHE_VERSION = '350';
 const CACHE_NAME = `wheatmagnatebot-v${CACHE_VERSION}`;
 const APP_SHELL = [
   '/',
@@ -15,6 +15,8 @@ const APP_SHELL = [
   '/vendor/skinview3d/skinview3d.bundle.js',
   '/minecraft-skin-viewer.js',
   '/styles.css',
+  '/visual-refresh.css',
+  '/public-player.css',
   '/theme-init.js',
   '/app.js',
   '/manifest.webmanifest',
