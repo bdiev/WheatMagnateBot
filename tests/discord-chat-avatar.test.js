@@ -8,6 +8,7 @@ const sharp = require('sharp');
 const { PermissionsBitField } = require('discord.js');
 const { createChatAvatarLoader } = require('../discord/chat-avatar');
 const { createFloodSummaryPublisher, FLOOD_SUMMARY_COLOR } = require('../discord/flood-summary');
+const { playerProfileUrl } = require('../discord/player-profile-link');
 const { getChatPlayerColor, CHAT_BOT_COLOR, CHAT_NEW_PLAYER_COLOR, CHAT_PLAYER_COLOR, CHAT_WHITELISTED_COLOR } = require('../discord/chat-message-format');
 
 async function run() {
@@ -138,6 +139,7 @@ async function run() {
     resolvePlayerChatTags: async () => ({ isBot: false, isNewPlayer: false }),
     formatDiscordBridgeMessage: message => message,
     getChatPlayerColor,
+    playerProfileUrl,
     isWhitelistedPlayer: name => name === 'WhitelistedFriend',
     publishFloodSummary: createFloodSummaryPublisher({
       loadAvatar: async (name, options) => { loaded.push({ name, ...options }); return load(name, options); }
@@ -146,6 +148,7 @@ async function run() {
   });
   vm.runInContext(`${sender}\nthis.deliver = deliverGameChatMessageToDiscord;`, context);
   assert.equal(await context.deliver({ username: 'ObbyMagnate', message: 'Hello', allowMentions: false }), true);
+  assert.equal(sent[0].embeds[0].author.url, playerProfileUrl('ObbyMagnate'), 'clicking the author opens the public site profile');
   assert.equal(sent[0].embeds[0].author.icon_url, `attachment://${sent[0].files[0].name}`, 'the head sits beside the name');
   assert.equal(sent[0].embeds[0].thumbnail, undefined, 'compact chat has no large thumbnail');
   assert.ok(Number.isFinite(sent[0].embeds[0].timestamp?.getTime?.()),'the embed timestamp is shown in each viewer local time');

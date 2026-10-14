@@ -4165,7 +4165,7 @@ function playerProfileRuntimePresence(runtime = null, now = Date.now()) {
   };
 }
 
-async function getPlayerProfile(url, { includeAdminFields = false, timeZone = 'UTC' } = {}) {
+async function getPlayerProfile(url, { includeAdminFields = false, timeZone = 'UTC', publicOnly = false } = {}) {
   assertDatabase();
 
   const username = String(url.searchParams.get('username') || '').trim();
@@ -4206,6 +4206,7 @@ async function getPlayerProfile(url, { includeAdminFields = false, timeZone = 'U
     LIMIT 1
   `, [username]);
   const identity = identityResult.rows[0] || null;
+  if (publicOnly && !identity) throw Object.assign(new Error('Player not found.'), { statusCode: 404 });
   const currentUsername = identity?.username || username;
   const playerUuid = identity?.player_uuid || null;
   const aliases = [...new Set([
@@ -4422,6 +4423,7 @@ async function getPlayerProfile(url, { includeAdminFields = false, timeZone = 'U
           FROM game_chat_messages
           WHERE $1::uuid IS NOT NULL
             AND player_uuid = $1::uuid
+            AND (${publicOnly ? 'is_visible = TRUE' : 'TRUE'})
             AND message !~ '^Skipped [0-9]+ (message|messages) due to chat flooding\\.$'
             AND ($3::bigint IS NULL OR id < $3::bigint)
           ORDER BY created_at DESC, id DESC
@@ -4433,6 +4435,7 @@ async function getPlayerProfile(url, { includeAdminFields = false, timeZone = 'U
           FROM game_chat_messages
           WHERE player_uuid IS NULL
             AND LOWER(username) = ANY($2::text[])
+            AND (${publicOnly ? 'is_visible = TRUE' : 'TRUE'})
             AND message !~ '^Skipped [0-9]+ (message|messages) due to chat flooding\\.$'
             AND ($3::bigint IS NULL OR id < $3::bigint)
           ORDER BY created_at DESC, id DESC
@@ -6196,6 +6199,32 @@ async function handleApi(req, res, url) {
       return;
     }
 
+    if (url.pathname.startsWith('/api/public/')) {
+      if (req.method !== 'GET') { sendError(res, 405, 'Method not allowed.'); return; }
+      if (!enforceRateLimit(req, res, 'public_player', '', { limit: 120, windowMs: 60_000 })) return;
+      const username = String(url.searchParams.get('username') || url.searchParams.get('player') || '');
+      if (!/^[A-Za-z0-9_]{1,16}$/.test(username)) { sendError(res, 400, 'Invalid player name.'); return; }
+      if (url.pathname === '/api/public/player') {
+        sendJson(res, 200, await getPlayerProfile(url, { publicOnly: true, timeZone: url.searchParams.get('timeZone') || 'UTC' }));
+      } else if (url.pathname === '/api/public/player-skins') {
+        sendJson(res, 200, await getPlayerSkins(url));
+      } else if (url.pathname === '/api/public/player-signs') {
+        assertDatabase();
+        sendJson(res, 200, await getAreaExplorerService().getPlayerSigns(url));
+      } else {
+        sendError(res, 404, 'API route not found.');
+      }
+      return;
+    }
+    // Skin/cape textures are public assets; all control routes below still require a session.
+    const publicTexture = url.pathname.match(/^\/api\/minecraft-(skin|cape)\/([A-Za-z0-9_-]{1,128})\.png$/);
+    if (publicTexture && ['GET', 'HEAD'].includes(req.method)) {
+      if (!enforceRateLimit(req, res, 'public_texture', '', { limit: 300, windowMs: 60_000 })) return;
+      if (publicTexture[1] === 'skin') await sendMinecraftSkin(req, res, publicTexture[2]);
+      else await sendMinecraftCape(req, res, publicTexture[2]);
+      return;
+    }
+
     currentUser = await getCurrentUser(req);
     if (!currentUser) {
       sendError(res, 401, 'Login required.');
@@ -6204,18 +6233,6 @@ async function handleApi(req, res, url) {
     if (url.pathname === '/api/player-skins' && req.method === 'GET') {
       if (!enforceRateLimit(req, res, 'player_skins', currentUser.username, { limit: 60, windowMs: 60_000 })) return;
       sendJson(res, 200, await getPlayerSkins(url));
-      return;
-    }
-    const minecraftSkinRoute = url.pathname.match(/^\/api\/minecraft-skin\/([A-Za-z0-9_-]{1,128})\.png$/);
-    if (minecraftSkinRoute && ['GET', 'HEAD'].includes(req.method)) {
-      if (!enforceRateLimit(req, res, 'minecraft_skin', currentUser.username, { limit: 300, windowMs: 60_000 })) return;
-      await sendMinecraftSkin(req, res, minecraftSkinRoute[1]);
-      return;
-    }
-    const minecraftCapeRoute = url.pathname.match(/^\/api\/minecraft-cape\/([A-Za-z0-9_-]{1,128})\.png$/);
-    if (minecraftCapeRoute && ['GET', 'HEAD'].includes(req.method)) {
-      if (!enforceRateLimit(req, res, 'minecraft_cape', currentUser.username, { limit: 300, windowMs: 60_000 })) return;
-      await sendMinecraftCape(req, res, minecraftCapeRoute[1]);
       return;
     }
     const isAdminMutation = MUTATING_METHODS.has(req.method) && (url.pathname.startsWith('/api/admin/') || url.pathname === '/api/obsidian' || url.pathname === '/api/notifications/read');
@@ -6719,6 +6736,19 @@ async function requestHandler(req, res) {
   }
   if (url.pathname.startsWith('/api/')) {
     await handleApi(req, res, url);
+    return;
+  }
+  if (url.pathname.startsWith('/player/')) {
+    const match = url.pathname.match(/^\/player\/([A-Za-z0-9_]{1,16})\/?$/);
+    if (!match) { sendError(res, 404, 'Player not found.'); return; }
+    if (!['GET', 'HEAD'].includes(req.method)) { sendError(res, 405, 'Method not allowed.'); return; }
+    const username = match[1];
+    const html = (await fs.promises.readFile(path.join(PUBLIC_DIR, 'index.html'), 'utf8'))
+      .replace('<title>WheatMagnateBot</title>', `<title>${username} - WheatMagnateBot</title>`)
+      .replace('<body>', `<body data-public-player="${username}">`)
+      .replace('</head>', '<link rel="stylesheet" href="/public-player.css?v=1"></head>');
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(req.method === 'HEAD' ? undefined : html);
     return;
   }
   serveStatic(req, res);

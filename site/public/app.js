@@ -4,6 +4,8 @@ if ('scrollRestoration' in history) {
   history.scrollRestoration = 'manual';
 }
 
+const publicPlayerUsername = document.body.dataset.publicPlayer || '';
+
 const state = {
   timer: null,
   liveChatTimer: null,
@@ -1385,6 +1387,14 @@ async function openWhisperToast() {
 }
 
 async function fetchJson(path, { transientRetries = 0, signal = null } = {}) {
+  if (publicPlayerUsername) {
+    path = path.replace(/^\/api\/player\?/, '/api/public/player?')
+      .replace(/^\/api\/player-skins\?/, '/api/public/player-skins?')
+      .replace(/^\/api\/area-explorer\/signs\?/, '/api/public/player-signs?');
+    if (path.startsWith('/api/public/player?')) {
+      path += `&timeZone=${encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')}`;
+    }
+  }
   const accountIdAtStart = state.activeAccountId;
   const scopedToActiveAccount = path.startsWith('/api/')
     && !path.startsWith('/api/auth/')
@@ -1406,7 +1416,7 @@ async function fetchJson(path, { transientRetries = 0, signal = null } = {}) {
         throw staleError;
       }
       if (!response.ok) {
-        if (response.status === 401 && !path.startsWith('/api/auth/')) {
+        if (!publicPlayerUsername && response.status === 401 && !path.startsWith('/api/auth/')) {
           showAuthScreen('Please sign in to continue.');
         }
         const error = new Error(payload.error || `HTTP ${response.status}`);
@@ -4306,6 +4316,12 @@ function replacePlayerProfileContent(profile, { animate = false } = {}) {
   state.playerProfileRevealTimer = null;
   content.classList.remove('is-loading', 'profile-data-enter');
   content.innerHTML = renderPlayerProfile(profile);
+  if (publicPlayerUsername) {
+    content.querySelectorAll('[data-whisper-player], [data-player-refresh-command]').forEach(control => control.remove());
+    content.querySelectorAll('[data-chat-message-id]').forEach(message => {
+      for (const attribute of ['data-chat-message-id', 'role', 'tabindex', 'title']) message.removeAttribute(attribute);
+    });
+  }
   ensurePlayerSignCount(profile.username);
   fitPlayerProfileName();
   const nextHead = content.querySelector('.player-profile-head');
@@ -4361,6 +4377,7 @@ async function loadPlayerProfile(username, { showLoading = false } = {}) {
         profile.chat.nextBeforeMessageId = previous.chat.nextBeforeMessageId;
       }
     }
+    if (publicPlayerUsername) document.title = `${profile.username} - WheatMagnateBot`;
     state.playerProfileLastPayload = profile;
     const signature = playerProfileSignature(profile);
     if (state.playerProfileSignature !== signature) {
@@ -4394,6 +4411,7 @@ async function openPlayerProfile(username, { returnToSeenSearch = null } = {}) {
 }
 
 function closePlayerProfile({ restoreSeenSearch = true } = {}) {
+  if (publicPlayerUsername) return;
   const overlay = $('#playerProfileOverlay');
   if (!overlay) return;
   const seenSearchReturn = restoreSeenSearch ? state.playerProfileSeenSearchReturn : null;
@@ -4699,7 +4717,7 @@ function renderPlayerSigns(username, { signs, total }) {
     ? `${formatNumber(total)} sign${total === 1 ? '' : 's'}${total > signs.length ? `, newest ${formatNumber(signs.length)} shown` : ''}`
     : 'No signs';
   content.innerHTML = signs.length
-    ? `<ol class="area-explorer-finds player-signs-list">${signs.map(find => highlightPlayerSignName(renderAreaExplorerFind(find, { showScope: true }), username)).join('')}</ol>`
+    ? `<ol class="area-explorer-finds player-signs-list">${signs.map(find => highlightPlayerSignName(renderAreaExplorerFind(find, { showScope: true, selected: Boolean(publicPlayerUsername) }), username)).join('')}</ol>`
     : `<div class="player-signs-empty"><strong>No signs yet</strong><p>No sign the Area Explorer mod has read has ${escapeHtml(username)} written on it.</p></div>`;
 }
 
@@ -4774,7 +4792,7 @@ async function handlePlayerSignsClick(event) {
   const item = event.target.closest('[data-find-id]');
   if (!item || !(event.target.closest('[data-area-select]') || !event.target.closest('button, a, pre'))) return;
   const find = (state.playerSigns || []).find(sign => sign.id === item.dataset.findId);
-  if (find) showPlayerSignOnMap(find);
+  if (find && !publicPlayerUsername) showPlayerSignOnMap(find);
 }
 
 async function handlePlayerProfileClick(event) {
@@ -4800,6 +4818,7 @@ async function handlePlayerProfileClick(event) {
   const chatMessage = event.target.closest('[data-chat-message-id]');
   if (chatMessage) {
     event.preventDefault();
+    if (publicPlayerUsername) return;
     await openChatContext(chatMessage.dataset.chatMessageId);
     return;
   }
@@ -13726,6 +13745,7 @@ function scheduleViewportRedraw({ force = false } = {}) {
 
 window.addEventListener('resize', scheduleViewportRedraw, { passive: true });
 window.addEventListener('pageshow', event => {
+  if (publicPlayerUsername) return;
   // Standalone mobile PWAs may restore transient body classes from BFCache
   // after the popup itself was discarded. Clear them so the page stays usable.
   if (event.persisted) {
@@ -13977,8 +13997,31 @@ $('#playerSkinsOverlay').addEventListener('click', event => {
   if (event.target.id === 'playerSkinsOverlay') closePlayerSkins();
 });
 
-setupAreaExplorer();
-updateNavLabel('chat');
-initializeDashboardBrandVisibility();
-initLoopingCarousels();
-initAuth();
+async function initPublicPlayer() {
+  document.body.classList.add('public-player-page');
+  for (const id of ['playerProfileOverlay', 'playerSkinsOverlay', 'playerSignsOverlay']) {
+    document.body.append($('#' + id));
+  }
+  const card = $('#playerProfileOverlay .player-profile-card');
+  card.removeAttribute('role');
+  card.removeAttribute('aria-modal');
+  const heading = document.createElement('header');
+  heading.className = 'public-player-brand';
+  heading.innerHTML = '<a href="/">WheatMagnateBot</a><span>Player profile</span>';
+  document.body.prepend(heading);
+  $('#appLoader').hidden = true;
+  await openPlayerProfile(publicPlayerUsername);
+  window.setInterval(() => {
+    if (document.visibilityState === 'visible') loadPlayerProfile(state.playerProfileUsername || publicPlayerUsername);
+  }, 30_000);
+}
+
+if (publicPlayerUsername) {
+  initPublicPlayer();
+} else {
+  setupAreaExplorer();
+  updateNavLabel('chat');
+  initializeDashboardBrandVisibility();
+  initLoopingCarousels();
+  initAuth();
+}

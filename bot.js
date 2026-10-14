@@ -21,6 +21,7 @@ const {
 const { DiscordChatForwardQueue, positiveInteger } = require('./discord/chat-forward-queue');
 const { buildDiscordToGameEmbed, formatDiscordBridgeMessage, getChatPlayerColor } = require('./discord/chat-message-format');
 const { createFloodSummaryPublisher } = require('./discord/flood-summary');
+const { playerProfileUrl } = require('./discord/player-profile-link');
 const { createChatAvatarLoader } = require('./discord/chat-avatar');
 const loadChatAvatar = createChatAvatarLoader();
 const { NEW_PLAYER_WINDOW_DAYS } = require('./site/player-new-status');
@@ -6274,7 +6275,7 @@ async function deliverGameChatMessageToDiscord({
               name: [username, isBotPlayer ? 'BOT' : '', isNewPlayer ? 'New Player' : '']
                 .filter(Boolean)
                 .join(' • '),
-              url: `https://namemc.com/profile/${encodeURIComponent(username)}`,
+              url: playerProfileUrl(username),
               ...(avatar.thumbnail?.url ? { icon_url: avatar.thumbnail.url } : {})
             },
             description: displayMessage,

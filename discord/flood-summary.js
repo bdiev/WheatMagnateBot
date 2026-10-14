@@ -1,5 +1,7 @@
 'use strict';
 
+const { playerProfileUrl } = require('./player-profile-link');
+
 const FLOOD_SUMMARY_COLOR = 0xFFA500;
 
 // Viewer-facing wording for each summary reason from the forward queue.
@@ -47,7 +49,7 @@ function buildFloodSummaryEmbed({ username, reasons, createdAt = Date.now(), ava
   return {
     author: {
       name: username,
-      url: `https://namemc.com/profile/${encodedName}`,
+      url: playerProfileUrl(username),
       icon_url: avatar?.thumbnail?.url || `https://mc-heads.net/avatar/${encodedName}/40.png`
     },
     description: formatFloodSummaryDescription(reasons),

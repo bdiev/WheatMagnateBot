@@ -1,0 +1,48 @@
+body[data-public-player] > :not(.public-player-brand):not(#playerProfileOverlay):not(#playerSkinsOverlay):not(#playerSignsOverlay) {
+  display: none !important;
+}
+
+body[data-public-player] {
+  overflow: auto;
+}
+
+.public-player-brand {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  width: min(840px, calc(100% - 32px));
+  margin: 24px auto 16px;
+  color: var(--muted);
+}
+
+.public-player-brand a {
+  color: var(--text);
+  text-decoration: none;
+  font-weight: bold;
+}
+
+body[data-public-player] #playerProfileOverlay {
+  position: static;
+  display: block;
+  padding: 0 16px 32px;
+  background: none;
+  backdrop-filter: none;
+  animation: none;
+}
+
+body[data-public-player] .player-profile-card {
+  margin: 0 auto;
+  max-height: none;
+  overflow: visible;
+}
+
+body[data-public-player] #playerProfileClose,
+body[data-public-player] [data-whisper-player],
+body[data-public-player] [data-player-refresh-command] {
+  display: none;
+}
+
+body[data-public-player] .player-profile-message,
+body[data-public-player] [data-area-select] {
+  cursor: auto;
+}
