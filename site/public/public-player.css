@@ -85,6 +85,35 @@ body[data-public-player] #themeToggle {
   transform: none;
 }
 
+@media (min-width: 701px) {
+  .public-player-brand { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 24px; }
+  .public-player-toolbar.topbar-actions { display: grid; grid-template-columns: minmax(0, 1fr) 74px; width: 100%; }
+  body[data-public-player].search-focus-active .public-player-brand { padding-bottom: 0; }
+  body[data-public-player] .public-player-toolbar .seen-search,
+  body[data-public-player].search-focus-active .public-player-toolbar .seen-search.open {
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  body[data-public-player] .seen-search-toggle { justify-self: end; }
+  body[data-public-player] .seen-search.open .seen-search-toggle {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+  body[data-public-player] .seen-search-box {
+    top: 0;
+    right: 0;
+    width: 100%;
+    transform: none;
+    clip-path: inset(-8px -8px -260px calc(100% - 42px));
+    transition: opacity 180ms ease, clip-path 220ms ease, visibility 0s linear 220ms;
+  }
+  body[data-public-player] .seen-search.open .seen-search-box {
+    clip-path: inset(-8px -8px -260px -8px);
+    transition-delay: 0s;
+  }
+}
+
 @media (max-width: 700px) {
   body[data-public-player] .seen-search-box { width: calc(100vw - 32px); width: 100cqw; }
 }
