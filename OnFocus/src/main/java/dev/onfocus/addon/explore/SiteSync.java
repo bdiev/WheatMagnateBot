@@ -270,6 +270,15 @@ public final class SiteSync {
         lastProblem = null;
     }
 
+    /** Whether anything is still to go to this site: run log events, the status, or finds of its files. */
+    public boolean pending(String site) {
+        if (!events.isEmpty() || status != null) return true;
+        for (Cursor cursor : cursors.values()) {
+            if (cursor.site.equals(site) && cursor.waiting() > 0) return true;
+        }
+        return false;
+    }
+
     public int queued() {
         int n = 0;
         for (Cursor cursor : cursors.values()) n += cursor.waiting();

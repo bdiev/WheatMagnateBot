@@ -6364,7 +6364,7 @@ const AREA_EXPLORER_SKELETON_DELAY_MS = 180;
 const AREA_EXPLORER_KIND_LABELS = Object.freeze({ BASE: 'Base', ITEM: 'Loot', SIGN: 'Sign', MARKER: 'Marker' });
 const AREA_EXPLORER_PHASES = Object.freeze({
   SCAN: 'Reading the map', SWEEP: 'Sweeping', SETTLE: 'Letting the map catch up', CLEANUP: 'Cleaning up gaps',
-  SPIRAL: 'Spiralling out', IDLE: 'Stopped'
+  SPIRAL: 'Spiralling out', IDLE: 'Stopped', MENU: 'In the main menu'
 });
 // The map shows a square territory around 0, 0, and nothing past it: its tiles, finds and runs.
 // Picked by its radius: ±30k is -30,000 to 30,000 each way. ae.extent is the side, twice that.
@@ -6960,7 +6960,7 @@ function renderAreaExplorerStatus() {
       <header>
         <span class="area-explorer-dot" aria-hidden="true"></span>
         <strong>${escapeHtml(status.player || status.tokenName || 'Explorer')}</strong>
-        <span class="area-explorer-run-state">${status.online ? escapeHtml(phase) : checkingIn ? 'Ready - not exploring' : 'Offline'}</span>
+        <span class="area-explorer-run-state">${status.online ? escapeHtml(phase) : checkingIn ? (status.phase === 'MENU' ? 'Ready - in the main menu' : 'Ready - not exploring') : 'Offline'}</span>
         <span class="area-explorer-run-where">${escapeHtml(status.server || '-')} · ${escapeHtml(prettyDimension(status.dimension))}</span>
       </header>
       ${percent === null ? '' : `<div class="area-explorer-progress" role="progressbar" aria-label="Explored" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><span style="width:${percent}%"></span></div>`}
@@ -7566,8 +7566,11 @@ function drawAreaExplorerSelection(ctx, canvas, view) {
 function areaExplorerReachableMod() {
   const ae = areaExplorerState();
   const [server, dimension] = ae.scope.split('|');
-  return (ae.summary?.statuses || []).find(status => status.server === server && status.dimension === dimension
-    && Date.now() - new Date(status.updatedAt).getTime() < 20_000) || null;
+  const fresh = status => Date.now() - new Date(status.updatedAt).getTime() < 20_000;
+  const statuses = (ae.summary?.statuses || []).filter(fresh);
+  // A game in its main menu joins the map's server itself: it takes a command for any server and dimension
+  return statuses.find(status => status.server === server && status.dimension === dimension)
+    || statuses.find(status => status.phase === 'MENU') || null;
 }
 
 // The map has no height: the right-click menu's spot is given at the height the elytra flies, over the build limit
@@ -7596,7 +7599,7 @@ function openAreaExplorerMenu(sx, sz) {
     const inside = box && x >= box.minX && x <= box.maxX && z >= box.minZ && z <= box.maxZ;
     if (inside) {
       const mod = areaExplorerReachableMod();
-      const why = mod ? '' : 'No mod checking in on this server and dimension';
+      const why = mod ? '' : 'No mod checking in on this server and dimension, or from the main menu';
       const to = mod ? ` - ${mod.player || mod.tokenName}` : '';
       items.push({ separator: true });
       items.push({ label: `Explore ${box.width} × ${box.depth} chunks${to}`, disabled: !mod, title: why, run: () => sendAreaExplorerCommand('EXPLORE', mod, box) });
@@ -7647,9 +7650,11 @@ function copyAreaExplorerText(text, done) {
 
 async function sendAreaExplorerCommand(kind, mod, box) {
   const ae = areaExplorerState();
+  // The map's server and dimension: a mod in the main menu joins them
+  const [server, dimension] = ae.scope.split('|');
   try {
     const { command } = await postJson('/api/area-explorer/commands', {
-      kind, tokenId: mod.tokenId, server: mod.server, dimension: mod.dimension,
+      kind, tokenId: mod.tokenId, server, dimension,
       minX: box.minX, minZ: box.minZ, maxX: box.maxX, maxZ: box.maxZ
     });
     ae.areaSelection = null;

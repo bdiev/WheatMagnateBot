@@ -100,6 +100,7 @@ function testStatusOnline() {
   assert.equal(publicStatus(row, NOW).percent, 42.5);
   assert.equal(publicStatus({ ...row, updated_at: new Date(NOW - 120_000) }, NOW).online, false, 'silent for long: offline');
   assert.equal(publicStatus({ ...row, phase: 'IDLE' }, NOW).online, false, 'a stopped run is not online');
+  assert.equal(publicStatus({ ...row, phase: 'MENU' }, NOW).online, false, 'a game in its main menu runs nothing');
 }
 
 async function testIngestAndQueries() {

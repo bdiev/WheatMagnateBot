@@ -96,6 +96,7 @@ import net.minecraft.client.gui.screen.multiplayer.MultiplayerScreen;
 import net.minecraft.client.network.PlayerListEntry;
 import net.minecraft.client.network.ServerAddress;
 import net.minecraft.client.network.ServerInfo;
+import net.minecraft.client.option.ServerList;
 import net.minecraft.block.enums.ChestType;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.entity.Entity;
@@ -163,8 +164,13 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
 
 /**
@@ -994,6 +1000,26 @@ public class AreaExplorer extends Module {
     }
     /** Sends Xaero's map to the site, on a thread of its own. */
     private static final MapSync MAP = new MapSync();
+    /**
+     * With the module off or the server left, what the site didn't take yet (finds, run log lines)
+     * is tried again this often, on {@link #FILES}, until it has it all.
+     */
+    private static final long SITE_RETRY_SECONDS = 30;
+    private static final ScheduledExecutorService SITE_RETRY = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread thread = new Thread(r, "Area Explorer site retry");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private static ScheduledFuture<?> siteRetry;
+    /** A retry waits on {@link #FILES}: no second one goes behind it. */
+    private static final AtomicBoolean SITE_RETRY_QUEUED = new AtomicBoolean();
+    /** The site and token last sent to: the retries and the last try on closing the game use them. */
+    private static volatile String lastSite, lastSiteToken;
+    /** Servers (folder and site) whose leftovers were picked up this session with the module off. */
+    private static final Set<String> SITE_CAUGHT_UP = new HashSet<>();
+    static {
+        Runtime.getRuntime().addShutdownHook(new Thread(AreaExplorer::sendSiteOnExit, "Area Explorer site on exit"));
+    }
     /** What became of the site's commands, by id: told to the site until it confirms, never run twice. */
     private static final SiteCommands COMMANDS = new SiteCommands(FabricLoader.getInstance().getGameDir().resolve("onfocus").resolve("site-commands.tsv"));
     /** The site command select() is starting, so it isn't taken for a run that replaces it. */
@@ -1208,9 +1234,20 @@ public class AreaExplorer extends Module {
         /** Off, on a server, with site commands on: an idle status every few seconds, so an area sent from the site reaches us. */
         @EventHandler
         private void onTick(TickEvent.Post event) {
-            if (isActive() || mc.world == null || mc.player == null || mc.getCurrentServerEntry() == null) return;
+            if (isActive()) return;
+            if (joinCommand != null) {
+                tickJoinCommand();
+                return;
+            }
+            if (mc.world == null) {
+                if (++offCheckInTicks >= OFF_CHECK_IN_TICKS) checkInFromMenu();
+                return;
+            }
+            if (mc.player == null || mc.getCurrentServerEntry() == null) return;
             String site = siteTarget();
-            if (site == null || (!siteCommands.get() && !COMMANDS.hasPending(site)) || ++offCheckInTicks < OFF_CHECK_IN_TICKS) return;
+            if (site == null) return;
+            catchUpSite(site);
+            if ((!siteCommands.get() && !COMMANDS.hasPending(site)) || ++offCheckInTicks < OFF_CHECK_IN_TICKS) return;
             offCheckInTicks = 0;
             syncLiveSite();
         }
@@ -1905,6 +1942,9 @@ public class AreaExplorer extends Module {
         }
         paused = false;
         stopLogged = false;
+        stopSiteRetry(); // the run sends every half minute itself
+        // Turned on in game while joining for a site command: that run, not the command's
+        if (joinCommand != null) failJoin(joinCommand, "A run was started in game instead");
         boolean fresh = freshStart;
         freshStart = false;
         if (!fresh && resumeSession()) {
@@ -1951,7 +1991,6 @@ public class AreaExplorer extends Module {
         paused = false;
         if (scan != null) scan.cancel();
         scan = null;
-        MAP.stop();
         explored.clear();
         exploredGrid = null;
         coverage = null;
@@ -1988,8 +2027,10 @@ public class AreaExplorer extends Module {
             report("Saved (highlight)%s(default) to (highlight)%s(default).", foundSummary(), signFile);
         }
         flushArchive();
-        // The site hears the run stopped, and gets the finds still waiting
+        // The site hears the run stopped, and gets the finds still waiting - and what it doesn't take, later
         syncSite();
+        finishMap();
+        retrySite();
         foundFileDirty = false;
         foundFileTicks = 0;
         archiveTicks = 0;
@@ -4545,6 +4586,106 @@ public class AreaExplorer extends Module {
         }));
     }
 
+    /** Xaero's map drawn so far still goes to the site (with map-sync on), then the upload stops. */
+    private void finishMap() {
+        if (siteTarget() == null || !mapSync.get() || !xaero) MAP.stop();
+        else MAP.finish();
+    }
+
+    /**
+     * Keeps trying what the site didn't take - finds, run log lines - every half minute after the
+     * module is off or the server is left, until it has it all. Off with site-sync off.
+     */
+    private void retrySite() {
+        String site = siteTarget();
+        if (site == null) {
+            lastSite = null;
+            stopSiteRetry();
+            return;
+        }
+        lastSite = site;
+        lastSiteToken = siteToken.get().trim();
+        Consumer<String> problem = message -> {
+            FILE_LOG.warn("Site: " + message);
+            mc.execute(() -> warning("Site: %s", message));
+        };
+        synchronized (AreaExplorer.class) {
+            if (siteRetry != null && !siteRetry.isDone()) return;
+            siteRetry = SITE_RETRY.scheduleWithFixedDelay(() -> {
+                if (!SITE_RETRY_QUEUED.compareAndSet(false, true)) return;
+                FILES.execute(() -> {
+                    SITE_RETRY_QUEUED.set(false);
+                    String to = lastSite, token = lastSiteToken;
+                    if (to == null) return;
+                    writeArchives();
+                    SITE.flush(to, token, problem);
+                    if (!SITE.pending(to)) {
+                        FILE_LOG.info("Site: everything waiting was sent to " + to);
+                        stopSiteRetry();
+                    }
+                });
+            }, SITE_RETRY_SECONDS, SITE_RETRY_SECONDS, TimeUnit.SECONDS);
+        }
+    }
+
+    private static synchronized void stopSiteRetry() {
+        if (siteRetry != null) siteRetry.cancel(false);
+        siteRetry = null;
+    }
+
+    /** Writes the all-finds files with finds not on disk yet (on the files thread): the site's mark only goes as far as the file. */
+    private static void writeArchives() {
+        for (FindsArchive archive : ARCHIVES.values()) {
+            if (!archive.isDirty()) continue;
+            try {
+                archive.write();
+            } catch (IOException e) {
+                FILE_LOG.error("Writing the all finds file failed", e);
+            }
+        }
+    }
+
+    /** Closing the game: one last go at what the site didn't take, for a few seconds at most. Finds not sent go next time. */
+    private static void sendSiteOnExit() {
+        String site = lastSite, token = lastSiteToken;
+        if (site == null) return;
+        Future<?> last = FILES.submit(() -> {
+            writeArchives();
+            if (SITE.pending(site)) SITE.flush(site, token, problem -> FILE_LOG.warn("Site on exit: " + problem));
+        });
+        try {
+            last.get(10, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (ExecutionException | TimeoutException | CancellationException e) {
+            FILE_LOG.warn("Gave up sending the rest to the site on exit");
+        }
+    }
+
+    /**
+     * Off, on a server: the finds of its all-finds files the site didn't get (an earlier game, a run
+     * stopped with the site out of reach) and Xaero's map drawn so far go to it, once a session.
+     */
+    private void catchUpSite(String site) {
+        if (!allFinds.get() && !mapSync.get()) return;
+        ArchiveSpot here = archiveSpot();
+        if (!SITE_CAUGHT_UP.add(here.dir() + " " + site)) return;
+        if (allFinds.get() && Files.isDirectory(here.dir())) {
+            try (var files = Files.list(here.dir())) {
+                files.map(file -> file.getFileName().toString())
+                    .filter(name -> name.startsWith("all-finds_") && name.endsWith(".csv"))
+                    .map(name -> name.substring("all-finds_".length(), name.length() - ".csv".length()))
+                    .forEach(dimension -> withArchive(archiveSpot(dimension), archive -> {}));
+            } catch (IOException e) {
+                FILE_LOG.warn("Site: couldn't list the all-finds files of " + here.dir() + ": " + e);
+            }
+        }
+        String token = siteToken.get().trim();
+        syncMap(site, token, here.scope());
+        finishMap();
+        retrySite();
+    }
+
     /** The site's address with site-sync on and set up, else null. */
     private String siteTarget() {
         if (!siteSync.get()) return null;
@@ -4560,6 +4701,8 @@ public class AreaExplorer extends Module {
         String site = siteTarget();
         if (site == null) return;
         String token = siteToken.get().trim();
+        lastSite = site;
+        lastSiteToken = token;
         syncLiveSite();
         SiteSync.Scope scope = mc.world != null ? archiveSpot().scope() : null;
         FILES.execute(() -> {
@@ -4574,8 +4717,15 @@ public class AreaExplorer extends Module {
     private void syncLiveSite() {
         String site = siteTarget();
         if (site == null || mc.world == null || mc.player == null) return;
+        SiteSync.Scope scope = archiveSpot().scope();
+        if (mc.getCurrentServerEntry() != null) rememberSiteScope(scope);
+        sendLiveStatus(site, scope, siteStatus());
+    }
+
+    /** The status, with what became of the site's commands; the commands in the answer are handled on the game thread. */
+    private void sendLiveStatus(String site, SiteSync.Scope scope, JsonObject status) {
         JsonArray updates = COMMANDS.pending(site);
-        SITE.sendLiveStatus(site, siteToken.get().trim(), archiveSpot().scope(), siteStatus(), updates, problem -> {
+        SITE.sendLiveStatus(site, siteToken.get().trim(), scope, status, updates, problem -> {
             FILE_LOG.warn("Site: " + problem);
             mc.execute(() -> warning("Site: %s", problem));
         }, commands -> mc.execute(() -> {
@@ -4592,22 +4742,38 @@ public class AreaExplorer extends Module {
      * why, goes back to the site with the next status upload.
      */
     private void siteCommand(String site, JsonObject command) {
-        // Not in a world: not handled, so the site sends it again
-        if (mc.world == null || mc.player == null) return;
+        if (mc.world == null || mc.player == null) {
+            // In the main menu: joins the command's server first; anywhere else (connecting) the site sends it again
+            if (!isActive() && joinCommand == null && inMainMenu()) joinFromMenu(site, command);
+            return;
+        }
         String id = command.has("id") ? command.get("id").getAsString() : "";
         if (!id.isEmpty() && COMMANDS.known(site, id)) {
             COMMANDS.resend(site, id);
             syncLiveSite();
             return;
         }
-        String kind = command.has("kind") ? command.get("kind").getAsString() : "";
-        String by = command.has("by") ? command.get("by").getAsString() : "the site";
-        String what = "RESCAN".equals(kind) ? "rescan" : "explore";
         if (!siteCommands.get()) {
-            warning("%s asked from the site to %s an area, but site-commands is off.", by, what);
+            warning("%s asked from the site to %s an area, but site-commands is off.", commandBy(command), commandWhat(command));
             rejectSiteCommand(site, id, "site-commands is off in the mod");
             return;
         }
+        runSiteCommand(site, id, command);
+    }
+
+    private static String commandBy(JsonObject command) {
+        return command.has("by") ? command.get("by").getAsString() : "the site";
+    }
+
+    private static String commandWhat(JsonObject command) {
+        return command.has("kind") && "RESCAN".equals(command.get("kind").getAsString()) ? "rescan" : "explore";
+    }
+
+    /** Explores or rescans the command's area, if this is its server and dimension; turned down and why if not. */
+    private void runSiteCommand(String site, String id, JsonObject command) {
+        String kind = command.has("kind") ? command.get("kind").getAsString() : "";
+        String by = commandBy(command);
+        String what = commandWhat(command);
         SiteSync.Scope here = archiveSpot().scope();
         String server = command.get("server").getAsString(), dimension = command.get("dimension").getAsString();
         if (!here.server().equalsIgnoreCase(server) || !here.dimension().equals(dimension)) {
@@ -4636,6 +4802,181 @@ public class AreaExplorer extends Module {
             COMMANDS.setCurrent(null, null);
         }
         syncLiveSite();
+    }
+
+    /** A site command taken in the main menu: its server being joined, and the command run once there. */
+    private static final class JoinCommand {
+        final String site, id, server, dimension;
+        final JsonObject command;
+        final long since = System.currentTimeMillis();
+        /** The connection got under way: back on a menu screen now means it failed or was cancelled. */
+        boolean connecting;
+        boolean waitReported;
+        int readyTicks;
+
+        JoinCommand(String site, String id, JsonObject command, String server, String dimension) {
+            this.site = site;
+            this.id = id;
+            this.command = command;
+            this.server = server;
+            this.dimension = dimension;
+        }
+    }
+
+    private JoinCommand joinCommand;
+    /** In the right place after joining: this long for the world (and Xaero's map) to load before the run starts. */
+    private static final int JOIN_SETTLE_TICKS = 3 * 20;
+    /** Sent to join and still on a menu screen this long: the connection never started. */
+    private static final long JOIN_START_MS = 15_000;
+    /** The server and dimension last played in, for the site's card while in the main menu, after a restart too. */
+    private static final Path SITE_SCOPE_FILE = FabricLoader.getInstance().getGameDir().resolve("onfocus").resolve("site-scope.txt");
+
+    /** No world and no connection going: the title screen, the server list, a disconnect screen, options... */
+    private boolean inMainMenu() {
+        Screen screen = mc.currentScreen;
+        return mc.world == null && !(screen instanceof ConnectScreen) && !(screen instanceof DownloadingTerrainScreen) && !(screen instanceof ReconnectScreen);
+    }
+
+    /**
+     * In the main menu, with site-commands on: a status every few seconds, so the site can send this
+     * game to any server - it joins, then explores or rescans there.
+     */
+    private void checkInFromMenu() {
+        offCheckInTicks = 0;
+        String site = siteTarget();
+        if (site == null || (!siteCommands.get() && !COMMANDS.hasPending(site)) || !inMainMenu()) return;
+        SiteSync.Scope scope = menuScope();
+        if (scope == null) return; // never on a server, none saved: nothing to show the card under
+        JsonObject status = new JsonObject();
+        status.addProperty("player", mc.getSession().getUsername());
+        status.addProperty("phase", siteCommands.get() ? "MENU" : "IDLE");
+        status.addProperty("mode", mode.get().name());
+        status.addProperty("paused", false);
+        sendLiveStatus(site, scope, status);
+    }
+
+    /** The server and dimension the site's card shows while in the menu: the last played in, else the first saved server. */
+    private SiteSync.Scope menuScope() {
+        if (lastSiteScope != null) return lastSiteScope;
+        try {
+            List<String> lines = Files.exists(SITE_SCOPE_FILE) ? Files.readAllLines(SITE_SCOPE_FILE, StandardCharsets.UTF_8) : List.of();
+            if (lines.size() >= 2 && !lines.get(0).isBlank() && !lines.get(1).isBlank()) {
+                return lastSiteScope = new SiteSync.Scope(lines.get(0).trim(), lines.get(1).trim());
+            }
+        } catch (IOException e) {
+            FILE_LOG.warn("Site: couldn't read " + SITE_SCOPE_FILE + ": " + e);
+        }
+        ServerList servers = new ServerList(mc);
+        servers.loadFile();
+        return servers.size() == 0 ? null : (lastSiteScope = new SiteSync.Scope(servers.get(0).address.toLowerCase(Locale.ROOT), "overworld"));
+    }
+
+    private void rememberSiteScope(SiteSync.Scope scope) {
+        if (scope.equals(lastSiteScope)) return;
+        lastSiteScope = scope;
+        try {
+            Files.createDirectories(SITE_SCOPE_FILE.getParent());
+            Files.writeString(SITE_SCOPE_FILE, scope.server() + "\n" + scope.dimension() + "\n", StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            FILE_LOG.warn("Site: couldn't write " + SITE_SCOPE_FILE + ": " + e);
+        }
+    }
+
+    /** A command that came to the main menu: taken (the site hears so), and its server joined. */
+    private void joinFromMenu(String site, JsonObject command) {
+        String id = command.has("id") ? command.get("id").getAsString() : "";
+        if (!id.isEmpty() && COMMANDS.known(site, id)) {
+            COMMANDS.resend(site, id);
+            checkInFromMenu();
+            return;
+        }
+        String by = commandBy(command), what = commandWhat(command);
+        if (!siteCommands.get()) {
+            warning("%s asked from the site to %s an area, but site-commands is off.", by, what);
+            if (!id.isEmpty()) COMMANDS.set(site, id, SiteCommands.State.REJECTED, "site-commands is off in the mod");
+            checkInFromMenu();
+            return;
+        }
+        String server = command.get("server").getAsString(), dimension = command.get("dimension").getAsString();
+        if (server.equalsIgnoreCase("singleplayer")) {
+            warning("%s asked from the site to %s an area in singleplayer - open the world first.", by, what);
+            if (!id.isEmpty()) COMMANDS.set(site, id, SiteCommands.State.REJECTED, "The game is in the main menu and can't open a singleplayer world");
+            checkInFromMenu();
+            return;
+        }
+        ServerInfo info = savedServer(server);
+        info("(highlight)%s(default) sent you from the site to %s an area in %s on (highlight)%s(default) - joining.", by, what,
+            FindsArchive.prettyName(dimension), info.address);
+        if (!id.isEmpty()) COMMANDS.set(site, id, SiteCommands.State.ACCEPTED, "Joining %s from the main menu".formatted(info.address));
+        // The site hears it's taken before the connection takes the menu away
+        checkInFromMenu();
+        joinCommand = new JoinCommand(site, id, command, info.address, dimension);
+        log("Site command %s: joining %s to %s in %s", id, info.address, what, dimension);
+        mc.send(() -> ConnectScreen.connect(new MultiplayerScreen(new TitleScreen()), mc, ServerAddress.parse(info.address), info, false, null));
+    }
+
+    /** The server by address from the server list (its resource pack choice and all), else a new entry for it. */
+    private ServerInfo savedServer(String address) {
+        ServerList servers = new ServerList(mc);
+        servers.loadFile();
+        for (int i = 0; i < servers.size(); i++) {
+            if (servers.get(i).address.equalsIgnoreCase(address)) return servers.get(i);
+        }
+        return new ServerInfo(address, address, ServerInfo.ServerType.OTHER);
+    }
+
+    /** Joining for a site command: once on its server and in its dimension, the run starts; failing, the site hears why. */
+    private void tickJoinCommand() {
+        JoinCommand join = joinCommand;
+        if (mc.world == null) {
+            Screen screen = mc.currentScreen;
+            if (screen instanceof ConnectScreen || screen instanceof DownloadingTerrainScreen) {
+                join.connecting = true;
+                return;
+            }
+            if (screen instanceof DisconnectedScreen && join.connecting) {
+                String reason = disconnectReason(screen).replace('\n', ' ').strip();
+                failJoin(join, "Couldn't join %s: %s".formatted(join.server, reason.isEmpty() ? "no reason given" : reason));
+            } else if (join.connecting) {
+                failJoin(join, "Joining %s was cancelled in game".formatted(join.server));
+            } else if (System.currentTimeMillis() - join.since > JOIN_START_MS) {
+                failJoin(join, "Couldn't start joining %s".formatted(join.server));
+            }
+            return;
+        }
+        join.connecting = true;
+        if (mc.player == null) return;
+        ServerInfo server = mc.getCurrentServerEntry();
+        if (server == null || !server.address.equalsIgnoreCase(join.server)) {
+            failJoin(join, "Joined %s instead of %s".formatted(server == null ? "a singleplayer world" : server.address, join.server));
+            return;
+        }
+        if (mc.currentScreen instanceof DownloadingTerrainScreen) return;
+        String dimension = fileSafe(mc.world.getRegistryKey().getValue().getPath());
+        if (!dimension.equals(join.dimension)) {
+            // A queue or a lobby, or the player is elsewhere: waits for as long as we're on the server
+            join.readyTicks = 0;
+            if (!join.waitReported) {
+                join.waitReported = true;
+                String text = "On %s in %s - starting once in %s (a queue?)".formatted(join.server, FindsArchive.prettyName(dimension), FindsArchive.prettyName(join.dimension));
+                info(text + ".");
+                if (!join.id.isEmpty()) COMMANDS.set(join.site, join.id, SiteCommands.State.ACCEPTED, text);
+                syncLiveSite();
+            }
+            return;
+        }
+        if (++join.readyTicks < JOIN_SETTLE_TICKS) return;
+        joinCommand = null;
+        runSiteCommand(join.site, join.id, join.command);
+    }
+
+    private void failJoin(JoinCommand join, String reason) {
+        joinCommand = null;
+        warning("%s - the site's command is turned down.", reason);
+        log("Site command %s: %s", join.id, reason);
+        if (!join.id.isEmpty()) COMMANDS.set(join.site, join.id, SiteCommands.State.REJECTED, reason);
+        if (mc.world != null && mc.player != null) syncLiveSite();
+        else checkInFromMenu();
     }
 
     private void rejectSiteCommand(String site, String id, String reason) {
@@ -4682,17 +5023,26 @@ public class AreaExplorer extends Module {
         String token = siteToken.get().trim();
         FILES.execute(() -> {
             SITE.addEvent(scope, event);
-            SITE.flushEvents(site, token, problem -> {
+            boolean sent = SITE.flushEvents(site, token, problem -> {
                 FILE_LOG.warn("Site: " + problem);
                 mc.execute(() -> warning("Site: %s", problem));
+            });
+            // Off: no half-minute sync takes it later
+            if (!sent) mc.execute(() -> {
+                if (!isActive()) retrySite();
             });
         });
     }
 
     /** Keeps Xaero's map of this server going to the site: every dimension it has a map of. */
     private void syncMap(String site, String token, SiteSync.Scope scope) {
-        if (!mapSync.get() || !xaero || scope == null) {
+        if (!mapSync.get() || !xaero) {
             MAP.stop();
+            return;
+        }
+        if (scope == null) {
+            // Off the server: what's drawn of it still goes
+            MAP.finish();
             return;
         }
         List<MapSync.Target> targets = new ArrayList<>();

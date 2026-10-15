@@ -304,7 +304,8 @@ function publicStatus(row, now = Date.now()) {
     // The cells themselves are fetched on their own when this changes: not sent every second
     coverageVersion: row.coverage?.version ?? null,
     updatedAt: row.updated_at,
-    online: row.phase !== 'IDLE' && now - updatedAt.getTime() <= ONLINE_WINDOW_MS
+    // Stopped, or the game in its main menu (ready for a command to any server): no run going
+    online: row.phase !== 'IDLE' && row.phase !== 'MENU' && now - updatedAt.getTime() <= ONLINE_WINDOW_MS
   };
 }
 
@@ -710,7 +711,7 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
   async function upsertStatus(client, tokenId, server, dimension, status) {
     // The flown-over grid: a new one replaces it; none sent keeps the last while the run goes on,
     // and a run that's ended (or has no area) has none
-    const runEnded = status.phase === 'IDLE' || !status.area;
+    const runEnded = status.phase === 'IDLE' || status.phase === 'MENU' || !status.area;
     const replaceCoverage = runEnded || status.coverage !== undefined;
     const coverage = runEnded || !status.coverage ? null : JSON.stringify(status.coverage);
     const result = await client.query(

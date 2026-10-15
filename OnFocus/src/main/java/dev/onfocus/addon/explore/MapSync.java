@@ -65,7 +65,8 @@ public final class MapSync {
     /** A dimension's cache folder, for the site's server and dimension. */
     public record Target(String server, String dimension, Path folder) {}
 
-    private record Config(String site, String token, List<Target> targets, Consumer<String> problem, Consumer<String> info) {}
+    /** {@code untilDone}: stops once every region drawn so far is on the site, instead of waiting for new ones. */
+    private record Config(String site, String token, List<Target> targets, Consumer<String> problem, Consumer<String> info, boolean untilDone) {}
 
     private record Region(int x, int z, File file, long modified) {}
 
@@ -77,10 +78,12 @@ public final class MapSync {
     private String onSiteFor;
     private long onSiteAt;
     private String lastProblem;
+    /** The settings whose last look found nothing the site doesn't have. */
+    private volatile Config caughtUp;
 
     /** Starts sending, or carries on with these settings. */
     public synchronized void update(String site, String token, List<Target> targets, Consumer<String> problem, Consumer<String> info) {
-        config = new Config(site.replaceAll("/+$", ""), token, List.copyOf(targets), problem, info);
+        config = new Config(site.replaceAll("/+$", ""), token, List.copyOf(targets), problem, info, false);
         if (thread == null || !thread.isAlive()) {
             thread = new Thread(this::run, "OnFocus map upload");
             thread.setDaemon(true);
@@ -93,10 +96,28 @@ public final class MapSync {
         config = null;
     }
 
+    /** Sends what's drawn and not on the site yet - failures retried as usual - then stops; nothing if not sending. */
+    public synchronized void finish() {
+        Config current = config;
+        if (current == null || current.untilDone()) return;
+        config = new Config(current.site(), current.token(), current.targets(), current.problem(), current.info(), true);
+    }
+
     private void run() {
         while (true) {
             Config current = config;
             if (current == null) return;
+            if (current.untilDone() && caughtUp == current) {
+                synchronized (this) {
+                    if (config == current) {
+                        // Under the lock: an update() from now on starts a new thread
+                        config = null;
+                        thread = null;
+                        return;
+                    }
+                }
+                continue;
+            }
             if (!current.site().equals(onSiteFor) || System.currentTimeMillis() - onSiteAt > INDEX_REFRESH_MS) {
                 // Another site, or a while since it was asked: what it has is to be asked (again)
                 onSite.clear();
@@ -138,7 +159,10 @@ public final class MapSync {
                 targetOf.put(region, target);
             }
         }
-        if (due.isEmpty()) return IDLE_MS;
+        if (due.isEmpty()) {
+            caughtUp = current;
+            return IDLE_MS;
+        }
         due.sort(Comparator.comparingLong(Region::modified).reversed());
         boolean backlog = due.size() >= PROGRESS_EVERY;
         if (backlog) say(current, "Map: sending (highlight)%d(default) regions of Xaero's map to the site, the newest first.".formatted(due.size()));
