@@ -12,7 +12,8 @@ import java.util.zip.ZipInputStream;
  * in {@code cache_<version>}): 512 x 512 pixels, one a block, as Xaero draws them.
  * <p>
  * Mirrors {@code xaero.map.region.LeveledRegion.saveCacheTextures} and
- * {@code RegionTexture.writeCacheMapData} (World Map 1.40, cache format 1.24): the texture of each
+ * {@code RegionTexture.writeCacheMapData} (World Map 1.40, cache format 1.24; 1.46 and 1.47 write
+ * 1.25, laid out the same - the bump only makes Xaero redraw old caches): the texture of each
  * 64 x 64-pixel tile chunk is kept as it goes to the GPU - {@code GL_BGRA} packed as
  * {@code GL_UNSIGNED_INT_8_8_8_8}, so bytes light, red, green, blue - followed by heights and
  * biomes, which are skipped. Free of Minecraft and Xaero classes, so it can run on any thread.
@@ -30,7 +31,7 @@ public final class XaeroCacheFile {
 
     /** A region's pixels as ARGB, row by row, undrawn ones 0: by day, and at night lit by torches, lava and the like. */
     public record Pixels(int[] day, int[] night) {}
-    private static final int SUPPORTED_VERSION = (1 << 16) | 24;
+    private static final int OLDEST_VERSION = (1 << 16) | 24, NEWEST_VERSION = (1 << 16) | 25;
     private static final int TILE = 64;
     private static final int TEXTURE_BYTES = TILE * TILE * 4;
     /** 4096 13-bit values, 4 to a long. */
@@ -41,14 +42,14 @@ public final class XaeroCacheFile {
     /**
      * The region's pixels, by day and at night; null if no tile chunk in it has a texture this can read.
      *
-     * @throws IOException unreadable, or a cache format other than the one this knows
+     * @throws IOException unreadable, or a cache format other than the ones this knows
      */
     public static Pixels read(File file) throws IOException {
         try (ZipInputStream zip = new ZipInputStream(new BufferedInputStream(new FileInputStream(file), 1 << 16));
              DataInputStream in = new DataInputStream(zip)) {
             if (zip.getNextEntry() == null) throw new IOException("empty cache file");
             int version = in.readInt();
-            if (version != SUPPORTED_VERSION) {
+            if (version < OLDEST_VERSION || version > NEWEST_VERSION) {
                 throw new IOException("unsupported cache format " + (version >>> 16) + "." + (version & 0xFFFF));
             }
 
