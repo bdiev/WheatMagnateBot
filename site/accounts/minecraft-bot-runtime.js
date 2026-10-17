@@ -67,6 +67,8 @@ class MinecraftBotRuntime extends BotContext {
     this.reconnectAttempts = 0;
     this.obsidianResumeRetryMs = Math.max(25, Number(obsidianResumeRetryMs) || 5000);
     this.obsidianResumePromise = null;
+    this.obsidianStartPromise = null;
+    this.obsidianStartGeneration = 0;
     this.nextObsidianResumeAt = 0;
     this.safetyLockout = false;
     this.lastEatErrorAt = 0;
@@ -554,67 +556,89 @@ class MinecraftBotRuntime extends BotContext {
     this.obsidianFarm.configure(x, y, z, options);
     return this.obsidianFarm.getStatus();
   }
-  async setObsidianEnabled(enabled) {
-    if (enabled) {
-      let leverDisabled = false;
-      const startingBot = this.bot;
-      try {
-        const preflight = this.obsidianFarm.validateStart();
-        if (preflight?.accountId && preflight.accountId !== this.account.id) {
-          throw new Error('Obsidian Farm module belongs to another account.');
-        }
-        await this.obsidianFarm.setProtectionLeverState(false, startingBot);
-        leverDisabled = true;
-        if (this.bot !== startingBot || !startingBot?.entity) {
-          throw new Error('Obsidian Farm cannot start: Minecraft connection changed during lever preparation.');
-        }
-        await this.obsidianFarm.prepareStart(startingBot);
-        if (this.bot !== startingBot || !startingBot?.entity) {
-          throw new Error('Obsidian Farm cannot start: Minecraft connection changed during barrel preparation.');
-        }
-        this.killAura?.setEnabled(false);
-        this.follow?.stop?.();
-        const farmStatus = this.obsidianFarm.start();
-        if (!farmStatus?.enabled) throw new Error('Obsidian Farm cannot start: farm loop is not enabled.');
-        this.task = 'obsidian';
-        this.lastError = null;
-        this.nextObsidianResumeAt = 0;
-      } catch (error) {
-        if (leverDisabled) {
-          await Promise.resolve()
-            .then(() => this.obsidianFarm.setProtectionLeverState(true, startingBot))
-            .catch(() => {});
-        }
-        this.lastError = error?.message || String(error);
-        this.status = this.bot?.entity ? 'connected' : 'stopped';
+  setObsidianEnabled(enabled) {
+    if (!enabled) return this.stopObsidianFarm();
+    // A repeated Start while the lever and barrel are being prepared joins the
+    // running attempt instead of walking the bot through the same steps twice.
+    if (this.obsidianStartPromise) return this.obsidianStartPromise;
+    const attempt = this.startObsidianFarm().finally(() => {
+      if (this.obsidianStartPromise === attempt) {
+        this.obsidianStartPromise = null;
         this.emit('status', this.getStatus());
-        throw error;
       }
-    } else {
-      this.obsidianFarm.suspend();
-      this.nextObsidianResumeAt = 0;
-      this.task = this.killAura?.getStatus?.().enabled
-        ? 'kill_aura'
-        : this.follow?.getStatus?.().enabled ? 'follow' : 'idle';
-      this.status = this.bot?.entity ? 'connected' : 'stopped';
+    });
+    this.obsidianStartPromise = attempt;
+    this.emit('status', this.getStatus());
+    return attempt;
+  }
+  async startObsidianFarm() {
+    let leverDisabled = false;
+    const startingBot = this.bot;
+    const generation = this.obsidianStartGeneration;
+    const assertStillStarting = step => {
+      if (generation !== this.obsidianStartGeneration) {
+        throw Object.assign(new Error('Obsidian Farm start was cancelled.'), { cancelled:true });
+      }
+      if (this.bot !== startingBot || !startingBot?.entity) {
+        throw new Error(`Obsidian Farm cannot start: Minecraft connection changed during ${step} preparation.`);
+      }
+    };
+    try {
+      const preflight = this.obsidianFarm.validateStart();
+      if (preflight?.accountId && preflight.accountId !== this.account.id) {
+        throw new Error('Obsidian Farm module belongs to another account.');
+      }
+      await this.obsidianFarm.setProtectionLeverState(false, startingBot);
+      leverDisabled = true;
+      assertStillStarting('lever');
+      await this.obsidianFarm.prepareStart(startingBot);
+      assertStillStarting('barrel');
+      this.killAura?.setEnabled(false);
+      this.follow?.stop?.();
+      const farmStatus = this.obsidianFarm.start();
+      if (!farmStatus?.enabled) throw new Error('Obsidian Farm cannot start: farm loop is not enabled.');
+      this.task = 'obsidian';
       this.lastError = null;
-      // The farm loop and reconnect intent are already disabled. Publish that
-      // before a queued barrel/lever interaction delays physical protection.
-      this.emit('status', this.getStatus());
-      const leverProtected = await Promise.resolve()
-        .then(() => this.obsidianFarm.setProtectionLeverState(true))
-        .then(() => true)
-        .catch(error => {
-          this.lastError = error?.message || String(error);
-          return false;
-        });
+      this.nextObsidianResumeAt = 0;
+    } catch (error) {
+      // A Stop during preparation protects the lever itself.
+      if (leverDisabled && !error?.cancelled) {
+        await Promise.resolve()
+          .then(() => this.obsidianFarm.setProtectionLeverState(true, startingBot))
+          .catch(() => {});
+      }
+      if (!error?.cancelled) this.lastError = error?.message || String(error);
       this.status = this.bot?.entity ? 'connected' : 'stopped';
       this.emit('status', this.getStatus());
-      return { ...this.obsidianFarm.getStatus(), leverProtected };
+      throw error;
     }
     this.status = this.bot?.entity ? 'connected' : 'stopped';
     this.emit('status', this.getStatus());
     return this.obsidianFarm.getStatus();
+  }
+  async stopObsidianFarm() {
+    // Cancels a Start that is still preparing the lever or barrel.
+    this.obsidianStartGeneration += 1;
+    this.obsidianFarm.suspend();
+    this.nextObsidianResumeAt = 0;
+    this.task = this.killAura?.getStatus?.().enabled
+      ? 'kill_aura'
+      : this.follow?.getStatus?.().enabled ? 'follow' : 'idle';
+    this.status = this.bot?.entity ? 'connected' : 'stopped';
+    this.lastError = null;
+    // The farm loop and reconnect intent are already disabled. Publish that
+    // before a queued barrel/lever interaction delays physical protection.
+    this.emit('status', this.getStatus());
+    const leverProtected = await Promise.resolve()
+      .then(() => this.obsidianFarm.setProtectionLeverState(true))
+      .then(() => true)
+      .catch(error => {
+        this.lastError = error?.message || String(error);
+        return false;
+      });
+    this.status = this.bot?.entity ? 'connected' : 'stopped';
+    this.emit('status', this.getStatus());
+    return { ...this.obsidianFarm.getStatus(), leverProtected };
   }
   startFollowing(username, options) {
     this.obsidianFarm?.suspend?.();
@@ -632,6 +656,8 @@ class MinecraftBotRuntime extends BotContext {
   }
   isCritical() { return Boolean(this.criticalOperation); }
   getStatus() {
+    const obsidianStatus = this.obsidianFarm?.getStatus?.() || null;
+    const obsidian = obsidianStatus && { ...obsidianStatus, starting:Boolean(this.obsidianStartPromise) };
     const inventorySlots = this.bot?.inventory?.slots;
     const items = Array.isArray(inventorySlots)
       ? inventorySlots.filter(item => item && Number(item.slot) >= 9 && Number(item.slot) <= 45)
@@ -654,11 +680,11 @@ class MinecraftBotRuntime extends BotContext {
       nearbyPlayers:this.nearbySnapshot,lastThreat:this.lastThreat,
       farmPausedForHighPing:this.farmPausedForHighPing,
       modules:{
-        obsidianFarm:this.obsidianFarm?.getStatus?.() || null,
+        obsidianFarm:obsidian,
         killAura:this.killAura?.getStatus?.() || null,
         follow:this.follow?.getStatus?.() || null
       },
-      obsidian:this.obsidianFarm?.getStatus?.() || null,
+      obsidian,
       killAura:this.killAura?.getStatus?.() || null,
       followTarget:this.follow?.getStatus?.().targetUsername || null,
       authCachePath:undefined

@@ -7320,7 +7320,7 @@ async function executeManagedAccountCommand(command) {
     const current = runtime.obsidianFarm.getStatus();
     const enabled = typeof payload.enabled === 'boolean'
       ? payload.enabled
-      : !(current.enabled || current.desiredEnabled || runtime.task === 'obsidian');
+      : !(current.enabled || current.desiredEnabled || runtime.obsidianStartPromise || runtime.task === 'obsidian');
     const operation = runtime.setObsidianEnabled(enabled);
     if (!enabled) {
       // setObsidianEnabled(false) suspends synchronously before protecting the
@@ -7346,9 +7346,35 @@ async function executeManagedAccountCommand(command) {
         .catch(error => console.error(`[Accounts] Farm stop failed for ${command.account_id}:`, error.message));
       return { ...runtime.obsidianFarm.getStatus(), leverProtection: 'pending' };
     }
-    const status = await operation;
-    await persistManagedRuntimeStatus(runtime.getStatus()).catch(() => {});
-    return status;
+    // Walking to the lever and opening the barrel can outlast both the site's
+    // wait and the command lease, and managed commands run one at a time. Give
+    // a quick start (or an immediate preflight error) a few seconds, then
+    // acknowledge and let the start finish in background.
+    let ackTimer = null;
+    const outcome = await Promise.race([
+      operation.then(status => ({ status }), error => ({ error })),
+      new Promise(resolve => { ackTimer = setTimeout(resolve, 5_000, null); })
+    ]);
+    clearTimeout(ackTimer);
+    if (outcome) {
+      await persistManagedRuntimeStatus(runtime.getStatus()).catch(() => {});
+      if (outcome.error) throw outcome.error;
+      return outcome.status;
+    }
+    operation
+      .then(() => persistManagedRuntimeStatus(runtime.getStatus()).catch(() => {}))
+      .catch(error => {
+        persistManagedRuntimeStatus(runtime.getStatus()).catch(() => {});
+        if (error?.cancelled) return;
+        console.error(`[Accounts] Farm start failed for ${command.account_id}:`, error.message);
+        recordSystemLog({
+          level: 'warn',
+          category: 'obsidian',
+          message: `Obsidian Farm could not start: ${error.message}`,
+          details: { accountId: command.account_id, source: 'admin_control' }
+        }).catch(() => {});
+      });
+    return { ...runtime.getStatus().obsidian, queued: true };
   }
   if (type === 'kill_aura_targets') {
     const targets = normalizeKillAuraTargets(payload.targets);

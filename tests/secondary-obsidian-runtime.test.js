@@ -401,6 +401,43 @@ async function main() {
     assert.equal(followStops, 0, 'failed farm preflight does not stop Follow');
     assert.match(failingRuntime.getStatus().lastError, /Pathfinder plugin is not loaded/i);
 
+    const slowLeverStates = [];
+    let slowPrepareCalls = 0;
+    let releaseSlowPrepare = null;
+    let slowFarmStarts = 0;
+    const slowRuntime = new MinecraftBotRuntime({
+      account:account(OTHER_ID, 'SlowStartAlt'),
+      botFactory:() => farmBot('SlowStartAlt'),
+      moduleFactory:() => ({
+        obsidianFarm:{
+          attachBot() {}, onSpawn() {}, suspend() {},
+          validateStart() { return { accountId:OTHER_ID }; },
+          setProtectionLeverState(powered) { slowLeverStates.push(powered); },
+          prepareStart() {
+            slowPrepareCalls += 1;
+            return new Promise(resolve => { releaseSlowPrepare = resolve; });
+          },
+          start() { slowFarmStarts += 1; return { enabled:true }; },
+          getStatus() { return { enabled:false, desiredEnabled:false, config:{ x:1, y:2, z:3 } }; }
+        },
+        killAura:{ attachBot() {}, setEnabled() {}, getStatus() { return { enabled:false }; } },
+        follow:{ stop() {}, getStatus() { return { enabled:false }; } }
+      })
+    });
+    slowRuntime.bot = farmBot('SlowStartAlt');
+    slowRuntime.status = 'connected';
+    const slowStart = slowRuntime.setObsidianEnabled(true);
+    assert.equal(slowRuntime.setObsidianEnabled(true), slowStart, 'a repeated Start joins the start that is still preparing');
+    assert.equal(slowRuntime.getStatus().obsidian.starting, true, 'a preparing start is published as starting');
+    await waitFor(() => slowPrepareCalls === 1);
+    await slowRuntime.setObsidianEnabled(false);
+    releaseSlowPrepare({});
+    await assert.rejects(slowStart, error => error.cancelled === true, 'Stop cancels a start that is still preparing');
+    assert.equal(slowFarmStarts, 0, 'a cancelled start never enables the farm loop');
+    assert.deepEqual(slowLeverStates, [false, true], 'only the Stop switches the protection lever back ON');
+    assert.equal(slowRuntime.getStatus().obsidian.starting, false);
+    assert.equal(slowRuntime.getStatus().lastError, null, 'a cancelled start is not reported as an error');
+
     const reconnectBots = [];
     let runtimeNow = new Date('2026-08-14T05:00:00.000Z'); // 08:00 in Kyiv
     const reconnectRuntime = new MinecraftBotRuntime({

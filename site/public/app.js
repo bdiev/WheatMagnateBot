@@ -11780,7 +11780,7 @@ function renderAdminControlState(payload = {}) {
 
   const obsidianButton = $('#obsidianToggleButton');
   if (obsidianButton) {
-    const enabled = Boolean(bot?.obsidian?.desiredEnabled || bot?.obsidian?.enabled);
+    const enabled = Boolean(bot?.obsidian?.desiredEnabled || bot?.obsidian?.enabled || bot?.obsidian?.starting);
     obsidianButton.textContent = enabled ? 'Stop Farm' : 'Start Farm';
     obsidianButton.classList.add('ghost-button');
     obsidianButton.classList.remove('danger-button');
@@ -11974,7 +11974,7 @@ async function handleAdminBotCommand(event) {
   if (commandType === 'obsidian_toggle') {
     const farm = state.adminControlState?.bot?.obsidian || {};
     body.payload = {
-      enabled: !(farm.enabled || farm.desiredEnabled || state.adminControlState?.bot?.task === 'obsidian')
+      enabled: !(farm.enabled || farm.desiredEnabled || farm.starting || state.adminControlState?.bot?.task === 'obsidian')
     };
   }
   if (commandType === 'obsidian_reset_coordinates') {
