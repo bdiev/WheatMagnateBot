@@ -38,7 +38,8 @@ import java.util.Set;
  * their own. Clues that generated structures have too (furnaces, beds, farmland...) only count a
  * quarter near a structure: a tell-tale block (a village bell, a spawner, purpur...), or for a
  * village its paths or villagers. That's looked for wider around than the score is summed over -
- * a village spreads far past its bell.
+ * a village spreads far past its bell. Near a Trial Chamber they count nothing: its barrels,
+ * dispensers, hoppers and chests fill a whole chamber, while its spawners sit in a few rooms of it.
  */
 public final class BaseClues {
     /** Score left to the clues structures share, in a cluster with a structure in it. */
@@ -47,6 +48,21 @@ public final class BaseClues {
     private static final int VILLAGE_PATHS = 24;
     /** Villagers around that make a village (overworld): any village has a handful wandering about. */
     private static final int VILLAGE_VILLAGERS = 3;
+
+    /** What the clues structures share are scored near: how much of them is left. */
+    public enum Nearby {
+        NOTHING(1, ""),
+        STRUCTURE(STRUCTURE_FACTOR, " (village or structure nearby)"),
+        TRIAL_CHAMBER(0, " (Trial Chamber nearby)");
+
+        final double factor;
+        final String note;
+
+        Nearby(double factor, String note) {
+            this.factor = factor;
+            this.note = note;
+        }
+    }
 
     public enum Clue {
         // Never generated: players put these there
@@ -103,6 +119,9 @@ public final class BaseClues {
         Blocks.CRYING_OBSIDIAN, Blocks.NETHER_BRICK_FENCE, Blocks.INFESTED_STONE_BRICKS
     );
 
+    /** Blocks only a Trial Chamber has: players can't break them, so a looted one still has them. */
+    private static final Set<Block> TRIAL_CHAMBER_SIGNS = Set.of(Blocks.TRIAL_SPAWNER, Blocks.VAULT);
+
     private static final Map<RegistryKey<World>, Map<Block, Clue>> BLOCK_CLUES = new HashMap<>();
 
     private BaseClues() {
@@ -110,6 +129,10 @@ public final class BaseClues {
 
     public static boolean isStructureSign(BlockState state) {
         return STRUCTURE_SIGNS.contains(state.getBlock());
+    }
+
+    public static boolean isTrialChamberSign(BlockState state) {
+        return TRIAL_CHAMBER_SIGNS.contains(state.getBlock());
     }
 
     /** A village street block. */
@@ -186,7 +209,7 @@ public final class BaseClues {
     /** The clues found in one chunk. Its blocks are counted again whenever it loads; entities stay counted once. */
     public static final class Chunk {
         private final EnumMap<Clue, Integer> blocks = new EnumMap<>(Clue.class), entities = new EnumMap<>(Clue.class);
-        private boolean structure;
+        private boolean structure, trialChamber;
         private int villagePaths;
         // Positions of the clues, weighted by their points: where the marker goes
         private double blockX, blockY, blockZ, blockWeight;
@@ -212,6 +235,10 @@ public final class BaseClues {
             structure = true;
         }
 
+        public void markTrialChamber() {
+            structure = trialChamber = true;
+        }
+
         public void addVillagePath() {
             villagePaths++;
         }
@@ -233,19 +260,25 @@ public final class BaseClues {
     /** A cluster's score, where its clues are centred, and what they were - "ender chest ×3, beacon, double chest ×6". */
     public record Score(double total, BlockPos centre, String summary) {}
 
-    /** Whether the chunks around hold a structure: a tell-tale block, or a village's streets or villagers. */
-    public static boolean nearStructure(Iterable<Chunk> around) {
+    /**
+     * What the chunks around hold: a structure is a tell-tale block, or a village's streets or
+     * villagers; the Trial Chamber's chunks are the wider ones, as the chamber spreads further.
+     */
+    public static Nearby nearby(Iterable<Chunk> around, Iterable<Chunk> trialChamberAround) {
+        for (Chunk chunk : trialChamberAround) {
+            if (chunk.trialChamber) return Nearby.TRIAL_CHAMBER;
+        }
         int paths = 0, villagers = 0;
         for (Chunk chunk : around) {
-            if (chunk.structure) return true;
+            if (chunk.structure) return Nearby.STRUCTURE;
             paths += chunk.villagePaths;
             villagers += chunk.entities.getOrDefault(Clue.VILLAGER, 0);
         }
-        return paths >= VILLAGE_PATHS || villagers >= VILLAGE_VILLAGERS;
+        return paths >= VILLAGE_PATHS || villagers >= VILLAGE_VILLAGERS ? Nearby.STRUCTURE : Nearby.NOTHING;
     }
 
-    /** Scores the chunks together, as one place; near a structure (see {@link #nearStructure}) the clues structures share count less. */
-    public static Score score(Iterable<Chunk> chunks, boolean structure) {
+    /** Scores the chunks together, as one place; near a structure (see {@link #nearby}) the clues structures share count less. */
+    public static Score score(Iterable<Chunk> chunks, Nearby nearby) {
         EnumMap<Clue, Integer> counts = new EnumMap<>(Clue.class);
         double x = 0, y = 0, z = 0, weight = 0;
         for (Chunk chunk : chunks) {
@@ -263,7 +296,7 @@ public final class BaseClues {
         for (Map.Entry<Clue, Integer> e : counts.entrySet()) {
             Clue clue = e.getKey();
             double points = Math.min(clue.cap, clue.points * e.getValue());
-            if (structure && clue.structuresToo) points *= STRUCTURE_FACTOR;
+            if (clue.structuresToo) points *= nearby.factor;
             total += points;
             parts.add(Map.entry(clue, points));
         }
@@ -276,7 +309,7 @@ public final class BaseClues {
             summary.append(part.getKey().label);
             if (n > 1) summary.append(" ×").append(n);
         }
-        if (structure) summary.append(" (village or structure nearby)");
+        summary.append(nearby.note);
         return new Score(total, BlockPos.ofFloored(x / weight, y / weight, z / weight), summary.toString());
     }
 }

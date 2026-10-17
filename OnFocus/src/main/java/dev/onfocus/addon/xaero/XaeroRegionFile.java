@@ -32,7 +32,8 @@ public final class XaeroRegionFile {
      */
     public static void read(File file, int regionX, int regionZ, ChunkSink sink, BooleanSupplier cancelled) throws IOException {
         try (ZipInputStream zip = new ZipInputStream(new BufferedInputStream(new FileInputStream(file), 8192));
-             DataInputStream in = new DataInputStream(zip)) {
+             // Buffered after inflating too: a pixel is a handful of small reads
+             DataInputStream in = new DataInputStream(new BufferedInputStream(zip, 64 * 1024))) {
             if (zip.getNextEntry() == null) return;
 
             int minor = -1, major = 0;

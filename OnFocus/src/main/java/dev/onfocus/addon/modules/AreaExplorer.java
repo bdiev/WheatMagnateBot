@@ -28,6 +28,8 @@ import dev.onfocus.addon.explore.FindsArchive;
 import dev.onfocus.addon.explore.ItemDetails;
 import dev.onfocus.addon.explore.ExplorerDiagnostics;
 import dev.onfocus.addon.explore.MapSync;
+import dev.onfocus.addon.explore.ShareClient;
+import dev.onfocus.addon.explore.ShareServer;
 import dev.onfocus.addon.explore.SiteCommands;
 import dev.onfocus.addon.explore.SiteSync;
 import dev.onfocus.addon.explore.Territories;
@@ -91,6 +93,7 @@ import net.minecraft.client.gui.screen.DownloadingTerrainScreen;
 import net.minecraft.client.gui.screen.NoticeScreen;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.TitleScreen;
+import net.minecraft.client.toast.SystemToast;
 import net.minecraft.client.gui.screen.multiplayer.ConnectScreen;
 import net.minecraft.client.gui.screen.multiplayer.MultiplayerScreen;
 import net.minecraft.client.network.PlayerListEntry;
@@ -151,6 +154,7 @@ import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -171,6 +175,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Predicate;
 
 /**
@@ -853,6 +858,44 @@ public class AreaExplorer extends Module {
         .build()
     );
 
+    private final SettingGroup sgShare = settings.createGroup("Share with your PC");
+
+    /** Off; Serve: this PC explores (a VDS) and gives its markers and map; Take: the player's own PC takes them in. */
+    public enum ShareMode { Off, Serve, Take }
+
+    private final Setting<ShareMode> shareMode = sgShare.add(new EnumSetting.Builder<ShareMode>()
+        .name("share-mode")
+        .description("Serve: on the PC that explores (a VDS), gives your other PC this game's markers, with the group each is in, and Xaero's World Map files, straight from here. Take: on your own PC, takes them in - the markers into your groups here, the map merged into Xaero's chunk by chunk.")
+        .defaultValue(ShareMode.Off)
+        .build()
+    );
+
+    private final Setting<Integer> sharePort = sgShare.add(new IntSetting.Builder()
+        .name("share-port")
+        .description("The port your other PC connects to. Open it in the VDS's firewall (TCP).")
+        .defaultValue(25590)
+        .range(1024, 65535)
+        .noSlider()
+        .visible(() -> shareMode.get() == ShareMode.Serve)
+        .build()
+    );
+
+    private final Setting<String> takeFrom = sgShare.add(new StringSetting.Builder()
+        .name("take-from")
+        .description("The PC that serves: its address and share-port, e.g. 203.0.113.5:25590.")
+        .defaultValue("")
+        .visible(() -> shareMode.get() == ShareMode.Take)
+        .build()
+    );
+
+    private final Setting<String> shareSecret = sgShare.add(new StringSetting.Builder()
+        .name("share-secret")
+        .description("A password of your own, the same on both PCs: nobody without it gets anything.")
+        .defaultValue("")
+        .visible(() -> shareMode.get() != ShareMode.Off)
+        .build()
+    );
+
     private final Setting<Boolean> autoReconnect = sgReconnect.add(new BoolSetting.Builder()
         .name("auto-reconnect")
         .description("Kicked or dropped from the server while exploring: reconnects and carries on with the same area and the same sign file. Leaving by hand still stops it.")
@@ -1000,6 +1043,14 @@ public class AreaExplorer extends Module {
     }
     /** Sends Xaero's map to the site, on a thread of its own. */
     private static final MapSync MAP = new MapSync();
+    private static final Path SHARED = FabricLoader.getInstance().getGameDir().resolve("onfocus").resolve("shared");
+    /** Gives the markers and the map to the player's other PC (share-mode Serve), on threads of its own. */
+    private static final ShareServer SHARE_SERVER = new ShareServer(SHARED);
+    /** Takes them from the other PC (share-mode Take), on a thread of its own. */
+    private static final ShareClient SHARE_CLIENT = new ShareClient(SHARED);
+    /** How often what's shared is looked at again: the markers and the map folder handed over. */
+    private static final int SHARE_CHECK_TICKS = 5 * 20;
+    private int shareTicks = SHARE_CHECK_TICKS - 20;
     /**
      * With the module off or the server left, what the site didn't take yet (finds, run log lines)
      * is tried again this often, on {@link #FILES}, until it has it all.
@@ -1084,6 +1135,8 @@ public class AreaExplorer extends Module {
     private int basesFound;
     /** How much further than the base radius a structure (a village) is looked for. */
     private static final int STRUCTURE_REACH = 96;
+    /** How much further a Trial Chamber's spawners and vaults are looked for: its corridors run a hundred blocks and more from them. */
+    private static final int TRIAL_CHAMBER_REACH = 160;
     /** How long a place has to keep scoring before it's marked. */
     private static final int BASE_CONFIRM_TICKS = 10 * 20;
     /** Chunks around which a base scored, and the tick they first did. */
@@ -1223,6 +1276,18 @@ public class AreaExplorer extends Module {
         // Stays on through a disconnect so it can reconnect and carry on: Meteor turns other modules off on leaving
         runInMainMenu = true;
         MeteorClient.EVENT_BUS.subscribe(new OffBindListener());
+        MeteorClient.EVENT_BUS.subscribe(new ShareListener());
+    }
+
+    /** On or off, in a world or the main menu: sharing with the other PC goes on. */
+    private class ShareListener {
+        @EventHandler
+        private void onTick(TickEvent.Post event) {
+            // Off a server, every tick: joining one has to stop the merging into its map before Xaero opens it
+            if (++shareTicks < SHARE_CHECK_TICKS && mc.world != null) return;
+            shareTicks = 0;
+            tickShare();
+        }
     }
 
     /** How often the mod checks in with the site for commands while it's off. */
@@ -3625,7 +3690,8 @@ public class AreaExplorer extends Module {
         for (int i = 0; i < sections.length; i++) {
             ChunkSection section = sections[i];
             if (section.isEmpty()) continue;
-            if (bases && section.hasAny(BaseClues::isStructureSign)) baseChunk.markStructure();
+            if (bases && section.hasAny(BaseClues::isTrialChamberSign)) baseChunk.markTrialChamber();
+            else if (bases && section.hasAny(BaseClues::isStructureSign)) baseChunk.markStructure();
             // The palette says cheaply whether a section has any of the blocks at all
             if (!section.hasAny(state -> wanted.containsKey(state.getBlock())
                 || (bases && (clues.containsKey(state.getBlock()) || state.getBlock() instanceof ChestBlock || BaseClues.isVillagePath(state))))) continue;
@@ -3698,8 +3764,9 @@ public class AreaExplorer extends Module {
 
     /** What's within the base radius of the chunk, scored, with structures looked for further out: a village spreads far past its bell. */
     private BaseClues.Score scoreAround(ChunkPos around) {
-        boolean structure = BaseClues.nearStructure(chunksAround(around, baseRadius.get() + STRUCTURE_REACH));
-        return BaseClues.score(chunksAround(around, baseRadius.get()), structure);
+        BaseClues.Nearby nearby = BaseClues.nearby(chunksAround(around, baseRadius.get() + STRUCTURE_REACH),
+            chunksAround(around, baseRadius.get() + TRIAL_CHAMBER_REACH));
+        return BaseClues.score(chunksAround(around, baseRadius.get()), nearby);
     }
 
     /**
@@ -4030,24 +4097,175 @@ public class AreaExplorer extends Module {
         // Only in the sets Area Explorer's markers go to: a waypoint of the player's own keeps its name
         int renamed = XaeroWaypoints.rename(Set.of(from, Marker.SHULKER.group), FindsArchive.OLD_PLACED_SHULKER,
             FindsArchive.PLACED_SHULKER, initials(FindsArchive.PLACED_SHULKER));
-        Map<String, XaeroWaypoints.Target> byName = new HashMap<>();
-        for (Item item : savedItemKinds.get()) byName.put(itemName(item), new XaeroWaypoints.Target(ITEMS_GROUP, itemsColor.get().getPacked()));
-        for (Block block : customMarkerBlocks.get()) byName.put(block.getName().getString(), new XaeroWaypoints.Target(CUSTOM_GROUP, customColor.get().getPacked()));
-        for (Marker marker : Marker.values()) byName.put(marker.title, new XaeroWaypoints.Target(marker.group, markerColors.get(marker).get().getPacked()));
-        byName.put(FindsArchive.OLD_PLACED_SHULKER, byName.get(FindsArchive.PLACED_SHULKER));
-        XaeroWaypoints.Target bases = new XaeroWaypoints.Target(BASES_GROUP, basesColor.get().getPacked());
-        XaeroWaypoints.Target loot = new XaeroWaypoints.Target(ITEMS_GROUP, itemsColor.get().getPacked());
-        XaeroWaypoints.Target custom = new XaeroWaypoints.Target(CUSTOM_GROUP, customColor.get().getPacked());
-        XaeroWaypoints.Target pets = new XaeroWaypoints.Target(PETS_GROUP, petsColor.get().getPacked());
-        XaeroWaypoints.Target pearls = new XaeroWaypoints.Target(PEARLS_GROUP, pearlsColor.get().getPacked());
+        Function<String, String> groups = markerGroups();
         int moved = XaeroWaypoints.regroup(from, name -> {
-            if (name.startsWith(BASE_PREFIX)) return bases;
-            if (name.startsWith(LOOT_PREFIX)) return loot;
-            if (name.startsWith(CAT_PREFIX) || name.startsWith(DOG_PREFIX)) return pets;
-            if (name.startsWith(PEARL_PREFIX)) return pearls;
-            return byName.getOrDefault(name, custom);
+            String group = groups.apply(name);
+            return new XaeroWaypoints.Target(group, groupColor(group));
         });
         return Math.max(0, renamed) + Math.max(0, moved);
+    }
+
+    /**
+     * The group a marker is in, told by its name: "Base #3", "Loot: ...", a marker's ("End Portal"),
+     * a picked item's; anything else was a custom block.
+     */
+    private Function<String, String> markerGroups() {
+        Map<String, String> byName = new HashMap<>();
+        for (Item item : savedItemKinds.get()) byName.put(itemName(item), ITEMS_GROUP);
+        for (Block block : customMarkerBlocks.get()) byName.put(block.getName().getString(), CUSTOM_GROUP);
+        for (Marker marker : Marker.values()) byName.put(marker.title, marker.group);
+        byName.put(FindsArchive.OLD_PLACED_SHULKER, Marker.SHULKER.group);
+        return name -> {
+            if (name.startsWith(BASE_PREFIX)) return BASES_GROUP;
+            if (name.startsWith(LOOT_PREFIX)) return ITEMS_GROUP;
+            if (name.startsWith(CAT_PREFIX) || name.startsWith(DOG_PREFIX)) return PETS_GROUP;
+            if (name.startsWith(PEARL_PREFIX)) return PEARLS_GROUP;
+            return byName.getOrDefault(name, CUSTOM_GROUP);
+        };
+    }
+
+    /** The colour set here for a group's markers; a group this build doesn't know gets the custom blocks' one. */
+    private int groupColor(String group) {
+        for (Marker marker : Marker.values()) {
+            if (marker.group.equals(group)) return markerColors.get(marker).get().getPacked();
+        }
+        return (switch (group) {
+            case BASES_GROUP -> basesColor;
+            case ITEMS_GROUP -> itemsColor;
+            case PETS_GROUP -> petsColor;
+            case PEARLS_GROUP -> pearlsColor;
+            default -> customColor;
+        }).get().getPacked();
+    }
+
+    /** Every group's own Xaero set. */
+    private static Set<String> groupNames() {
+        Set<String> names = new HashSet<>(Set.of(BASES_GROUP, ITEMS_GROUP, PETS_GROUP, PEARLS_GROUP, CUSTOM_GROUP));
+        for (Marker marker : Marker.values()) names.add(marker.group);
+        return names;
+    }
+
+    // Sharing with the other PC
+
+    /** Hands the share server or client where things stand: the server the game is on, the markers, the map. */
+    private void tickShare() {
+        ShareMode mode = shareMode.get();
+        String secret = shareSecret.get().trim();
+        if (mode != ShareMode.Serve) SHARE_SERVER.stop();
+        if (mode != ShareMode.Take) SHARE_CLIENT.stop();
+        if (mode == ShareMode.Off) return;
+        if (secret.isEmpty() || mode == ShareMode.Take && takeFrom.get().isBlank()) {
+            SHARE_SERVER.stop();
+            SHARE_CLIENT.stop();
+            return;
+        }
+        FabricLoader loader = FabricLoader.getInstance();
+        boolean minimap = loader.isModLoaded("xaerominimap") || loader.isModLoaded("xaerobetterpvp");
+        var entry = mc.getCurrentServerEntry();
+        // Connecting counts as on it: Xaero opens the server's map as soon as the world comes
+        boolean joining = mc.world == null && (mc.currentScreen instanceof ConnectScreen || mc.currentScreen instanceof DownloadingTerrainScreen);
+        String server = entry != null && (mc.world != null && mc.player != null || joining) ? entry.address.toLowerCase(Locale.ROOT) : null;
+        boolean waypoints = server != null && mc.world != null && minimap && XaeroWaypoints.isReady();
+        XaeroMapFolders.MapWorld map = server != null && mc.world != null && loader.isModLoaded("xaeroworldmap") ? XaeroMapFolders.mapWorld() : null;
+        Consumer<String> problem = message -> {
+            FILE_LOG.warn("Sharing: " + message);
+            mc.execute(() -> warning("Sharing: %s", message));
+        };
+        Consumer<String> info = message -> mc.execute(() -> {
+            // The map is merged in the main menu, where there's no chat to read
+            if (mc.world == null) {
+                FILE_LOG.info(message);
+                mc.getToastManager().add(SystemToast.create(mc, SystemToast.Type.PERIODIC_NOTIFICATION,
+                    Text.literal("Area Explorer"), Text.literal(message.replace("(highlight)", "").replace("(default)", ""))));
+            } else {
+                report("%s", message); // the log file too
+            }
+        });
+        if (mode == ShareMode.Serve) {
+            SHARE_SERVER.update(sharePort.get(), secret, server, waypoints ? servedMarkers() : List.of(), map, problem, info);
+        } else {
+            SHARE_CLIENT.update(new ShareClient.Config(takeFrom.get().trim(), secret, server, map,
+                waypoints ? XaeroWaypoints.dimensions() : Set.of(),
+                dimension -> markers -> takeSharedMarkers(dimension, markers),
+                mc::execute, problem, info, message -> FILE_LOG.info("Sharing: " + message)));
+        }
+    }
+
+    /** Area Explorer's markers in Xaero, every dimension of this server, each with its group: the set it's in, or its name tells. */
+    private List<ShareServer.Marker> servedMarkers() {
+        Set<String> groups = groupNames();
+        String list = markerListName.get().trim().isEmpty() ? "Area Explorer" : markerListName.get().trim();
+        Function<String, String> byName = markerGroups();
+        List<ShareServer.Marker> markers = new ArrayList<>();
+        for (XaeroWaypoints.Saved w : XaeroWaypoints.allOnServer()) {
+            boolean grouped = groups.contains(w.set());
+            if (!grouped && !list.equals(w.set())) continue; // one of the player's own
+            markers.add(new ShareServer.Marker(w.dimension(), grouped ? w.set() : byName.apply(w.name()), w.name(),
+                w.initials() == null ? "" : w.initials(), w.x(), w.y(), w.z()));
+        }
+        return markers;
+    }
+
+    /**
+     * Puts markers from the other PC into Xaero's waypoints of a dimension here, each in its group's
+     * set, coloured as set here. One there's a marker for already is left out the way exploring leaves
+     * it out; a base gets the next number here, as the other PC numbers its own. On the game thread;
+     * false if Xaero has no waypoints to put them in (left the server meanwhile).
+     */
+    private boolean takeSharedMarkers(String dimension, List<ShareClient.Shared> shared) {
+        if (!XaeroWaypoints.isReady()) return false;
+        List<XaeroWaypoints.Spot> spots = new ArrayList<>(XaeroWaypoints.in(dimension));
+        int bases = 0;
+        for (XaeroWaypoints.Spot spot : spots) {
+            if (!spot.name().startsWith(BASE_PREFIX)) continue;
+            try {
+                bases = Math.max(bases, Integer.parseInt(spot.name().substring(BASE_PREFIX.length()).trim()));
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        Map<String, List<XaeroWaypoints.NewWaypoint>> bySet = new LinkedHashMap<>();
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        for (ShareClient.Shared marker : shared) {
+            BlockPos pos = new BlockPos(marker.x(), marker.y(), marker.z());
+            String name = marker.name(), initials = marker.initials().isBlank() ? initials(marker.name()) : marker.initials();
+            if (BASES_GROUP.equals(marker.group()) || name.startsWith(BASE_PREFIX)) {
+                long spacing = Math.max(markerSpacing.get(), baseRadius.get());
+                if (spots.stream().anyMatch(spot -> spot.name().startsWith(BASE_PREFIX) && near(spot, pos, spacing))) continue;
+                bases++;
+                name = BASE_PREFIX + bases;
+                initials = "B" + bases;
+            } else if (markedAlready(name, pos, spots)) {
+                continue;
+            }
+            spots.add(new XaeroWaypoints.Spot(name, pos.getX(), pos.getZ()));
+            bySet.computeIfAbsent(markerList(marker.group()), set -> new ArrayList<>())
+                .add(new XaeroWaypoints.NewWaypoint(name, initials, pos.getX(), pos.getY(), pos.getZ(), groupColor(marker.group())));
+            counts.merge(marker.group(), 1, Integer::sum);
+        }
+        if (bySet.isEmpty()) return true;
+        if (!XaeroWaypoints.addAllIn(dimension, bySet, !markersEnabled.get())) return false;
+        StringBuilder what = new StringBuilder();
+        int total = 0;
+        for (var count : counts.entrySet()) {
+            if (!what.isEmpty()) what.append(", ");
+            what.append(count.getKey()).append(' ').append(count.getValue());
+            total += count.getValue();
+        }
+        report("Took (highlight)%d(default) markers from the other PC into Xaero's waypoints of %s: %s.", total, FindsArchive.prettyName(dimension), what);
+        return true;
+    }
+
+    /** A marker of this name is here already: as near as exploring would have given it its own. */
+    private boolean markedAlready(String name, BlockPos pos, List<XaeroWaypoints.Spot> spots) {
+        for (XaeroWaypoints.Spot spot : spots) {
+            boolean same;
+            if (name.startsWith(LOOT_PREFIX)) same = spot.name().startsWith(LOOT_PREFIX) && near(spot, pos, 2L * LOOT_RADIUS);
+            else if (name.startsWith(PEARL_PREFIX)) same = spot.name().startsWith(PEARL_PREFIX) && near(spot, pos, 2L * PEARL_BUNCH_RADIUS);
+            else if (name.startsWith(CAT_PREFIX) || name.startsWith(DOG_PREFIX)) same = spot.name().equals(name) && near(spot, pos, PET_SPACING);
+            else same = spot.name().equals(name) && near(spot, pos, markerSpacing.get());
+            if (same) return true;
+        }
+        return false;
     }
 
     /** Markers already there in the current dimension, whichever list they go to. */
@@ -5032,6 +5250,11 @@ public class AreaExplorer extends Module {
                 if (!isActive()) retrySite();
             });
         });
+    }
+
+    /** Whether Xaero's map is going to the site: Xaero is then made to save what it draws sooner. */
+    public static boolean sendingMap() {
+        return MAP.isSending();
     }
 
     /** Keeps Xaero's map of this server going to the site: every dimension it has a map of. */

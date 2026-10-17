@@ -12,6 +12,8 @@ import java.util.Comparator;
 import java.util.concurrent.atomic.AtomicInteger;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import dev.onfocus.addon.xaero.XaeroMapFolders;
+import dev.onfocus.addon.xaero.XaeroRegionMerge;
 
 /** Dependency-free behavioral regressions, run by Gradle check. */
 public final class ExplorerRegressionTest {
@@ -41,7 +43,147 @@ public final class ExplorerRegressionTest {
         diagnosticsFiles();
         siteCommandsStore();
         siteSyncSendsEveryFind();
+        xaeroRegionMerge();
+        shareServer();
         System.out.println("Explorer regressions passed (deferred coverage, reach stability, mid-strip widths, fresh chunks, narrow corridors, route efficiency, ETA, waypoints and 240 patchy coverage scenarios).");
+    }
+
+    /**
+     * Two Xaero region files merged chunk by chunk: what the first lacks comes from the second, what
+     * both have stays the first's, and the palettes - each file's own - come out right.
+     */
+    private static void xaeroRegionMerge() throws Exception {
+        Path dir = Files.createTempDirectory("xaero-merge-test-");
+        try {
+            // Mine: chunk 0 of tile chunk (0, 0) in stone. Theirs: the same chunk in dirt, and chunk 5 of tile chunk (2, 3) in dirt
+            java.io.File mine = dir.resolve("mine.zip").toFile(), theirs = dir.resolve("theirs.zip").toFile(), out = dir.resolve("out.zip").toFile();
+            writeRegion(mine, java.util.Map.of(0, java.util.Map.of(0, "minecraft:stone")));
+            writeRegion(theirs, java.util.Map.of(0, java.util.Map.of(0, "minecraft:dirt"), 2 << 3 | 3, java.util.Map.of(5, "minecraft:dirt")));
+            require(XaeroRegionMerge.version(mine) == XaeroRegionMerge.FORMAT, "The region format is read");
+            XaeroRegionMerge.Result result = XaeroRegionMerge.merge(mine, theirs, out);
+            require(result.added() == 1 && result.total() == 2, "Only the chunk missing is taken: " + result);
+            require(XaeroRegionMerge.chunks(out) == 2, "The merged file reads back with both chunks");
+
+            // The merged one is what a file written that way from the start would be: palettes renumbered from scratch
+            java.io.File expected = dir.resolve("expected.zip").toFile();
+            writeRegion(expected, java.util.Map.of(0, java.util.Map.of(0, "minecraft:stone"), 2 << 3 | 3, java.util.Map.of(5, "minecraft:dirt")));
+            require(java.util.Arrays.equals(regionBytes(out), regionBytes(expected)), "The merged file is written the way Xaero writes one");
+
+            java.io.File again = dir.resolve("again.zip").toFile();
+            require(XaeroRegionMerge.merge(out, theirs, again).added() == 0 && !again.exists(), "Merging again adds nothing and writes nothing");
+        } finally {
+            deleteTree(dir);
+        }
+    }
+
+    /**
+     * A region file as World Map writes one: tiles by tile chunk (x << 3 | z) and chunk in it, every
+     * pixel the tile's block - stone in plains, anything else in desert - the first of each putting it
+     * in the palette, and a water overlay on a tile's first pixel.
+     */
+    private static void writeRegion(java.io.File file, java.util.Map<Integer, java.util.Map<Integer, String>> tiles) throws Exception {
+        try (var zip = new java.util.zip.ZipOutputStream(new java.io.FileOutputStream(file)); var out = new java.io.DataOutputStream(zip)) {
+            zip.putNextEntry(new java.util.zip.ZipEntry("region.xaero"));
+            out.write(255);
+            out.writeInt(XaeroRegionMerge.FORMAT);
+            java.util.Map<String, Integer> states = new java.util.HashMap<>(), biomes = new java.util.HashMap<>();
+            for (int c = 0; c < 64; c++) {
+                var chunk = tiles.get(c);
+                if (chunk == null) continue;
+                out.write((c >> 3) << 4 | (c & 7));
+                for (int t = 0; t < 16; t++) {
+                    String block = chunk.get(t);
+                    if (block == null) {
+                        out.writeInt(-1);
+                        continue;
+                    }
+                    String biome = block.equals("minecraft:stone") ? "minecraft:plains" : "minecraft:desert";
+                    for (int p = 0; p < 256; p++) {
+                        Integer state = states.get(block), biomeIndex = biomes.get(biome);
+                        // A block state, a biome, a height of 64 in the flags; overlays on the first pixel
+                        int params = 1 | 0x100000 | 64 << 12 | (p == 0 ? 2 : 0) | (state == null ? 0x200000 : 0) | (biomeIndex == null ? 0x400000 : 0);
+                        out.writeInt(params);
+                        if (state != null) out.writeInt(state);
+                        else {
+                            out.write(10);
+                            out.writeUTF("");
+                            out.write(8);
+                            out.writeUTF("Name");
+                            out.writeUTF(block);
+                            out.write(0);
+                            states.put(block, states.size());
+                        }
+                        if (p == 0) {
+                            out.write(1);
+                            out.writeInt(0); // plain water: no state
+                        }
+                        if (biomeIndex != null) out.writeInt(biomeIndex);
+                        else {
+                            out.writeUTF(biome);
+                            biomes.put(biome, biomes.size());
+                        }
+                    }
+                    out.write(7);
+                    out.writeInt(-64);
+                    out.write(32);
+                }
+            }
+            zip.closeEntry();
+        }
+    }
+
+    private static byte[] regionBytes(java.io.File file) throws Exception {
+        try (var zip = new java.util.zip.ZipInputStream(new java.io.FileInputStream(file))) {
+            zip.getNextEntry();
+            return zip.readAllBytes();
+        }
+    }
+
+    /** The exploring PC's server: the secret is needed, markers come with their groups, a region file only once Xaero has left it alone. */
+    private static void shareServer() throws Exception {
+        Path dir = Files.createTempDirectory("share-server-test-");
+        ShareServer server = new ShareServer(dir.resolve("shared"));
+        try {
+            XaeroMapFolders.MapWorld map = new XaeroMapFolders.MapWorld(dir.resolve("Multiplayer_oldfrog.org"), "mw$default");
+            Path regions = map.regionFolder("overworld");
+            Files.createDirectories(regions);
+            Files.write(regions.resolve("-3_2.zip"), new byte[]{1, 2, 3});
+            regions.resolve("-3_2.zip").toFile().setLastModified(System.currentTimeMillis() - 120_000);
+            Files.write(regions.resolve("4_4.zip"), new byte[]{9}); // just written: not yet
+
+            int port;
+            try (java.net.ServerSocket free = new java.net.ServerSocket(0)) {
+                port = free.getLocalPort();
+            }
+            List<String> problems = new java.util.ArrayList<>();
+            server.update(port, "s3cret", "oldfrog.org",
+                List.of(new ShareServer.Marker("overworld", "Bases", "Base #1", "B1", 100, 70, -5)), map, problems::add, message -> {});
+            require(problems.isEmpty(), "The server starts: " + problems);
+
+            java.net.http.HttpClient http = java.net.http.HttpClient.newHttpClient();
+            java.util.function.BiFunction<String, String, java.net.http.HttpResponse<byte[]>> get = (path, secret) -> {
+                try {
+                    return http.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create("http://127.0.0.1:" + port + path))
+                        .header("Authorization", "Bearer " + secret).GET().build(), java.net.http.HttpResponse.BodyHandlers.ofByteArray());
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            };
+            require(get.apply("/markers?server=oldfrog.org", "wrong").statusCode() == 401, "A wrong secret gets nothing");
+            JsonObject markers = JsonParser.parseString(new String(get.apply("/markers?server=Oldfrog.org", "s3cret").body())).getAsJsonObject();
+            require(markers.get("known").getAsBoolean() && markers.getAsJsonArray("markers").toString().equals("[[\"overworld\",\"Bases\",\"Base #1\",\"B1\",100,70,-5]]"),
+                "The markers come with their groups: " + markers);
+            JsonObject list = JsonParser.parseString(new String(get.apply("/regions?server=oldfrog.org", "s3cret").body())).getAsJsonObject();
+            require(list.getAsJsonArray("regions").size() == 1 && list.getAsJsonArray("regions").get(0).getAsJsonArray().get(1).getAsInt() == -3,
+                "Only the region Xaero has left alone is listed: " + list);
+            var file = get.apply("/regions/overworld/-3/2?server=oldfrog.org", "s3cret");
+            require(file.statusCode() == 200 && java.util.Arrays.equals(file.body(), new byte[]{1, 2, 3}), "The region file comes as it is");
+            require(get.apply("/regions/overworld/9/9?server=oldfrog.org", "s3cret").statusCode() == 404, "A region it hasn't: not found");
+            require(get.apply("/regions/../../x/1/1?server=oldfrog.org", "s3cret").statusCode() == 404, "Nothing outside the map");
+        } finally {
+            server.stop();
+            deleteTree(dir);
+        }
     }
 
     /** A site command is remembered by id across restarts; a report is resent until the site confirms that very report. */

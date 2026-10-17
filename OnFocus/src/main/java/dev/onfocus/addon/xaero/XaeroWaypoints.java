@@ -11,7 +11,9 @@ import xaero.hud.minimap.world.MinimapWorld;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 
@@ -146,7 +148,7 @@ public final class XaeroWaypoints {
     }
 
     /** A waypoint of the server, in any dimension: the dimension as the game names it ("overworld", "the_nether"). */
-    public record Saved(String dimension, String set, String name, int x, int y, int z, long createdAt) {}
+    public record Saved(String dimension, String set, String name, String initials, int x, int y, int z, long createdAt) {}
 
     /**
      * Every waypoint of every set, in every dimension of the server we're on; empty with no world.
@@ -161,7 +163,7 @@ public final class XaeroWaypoints {
             String dimension = world.getDimId().getValue().getPath();
             for (WaypointSet set : world.getIterableWaypointSets()) {
                 for (Waypoint w : set.getWaypoints()) {
-                    saved.add(new Saved(dimension, set.getName(), w.getName(), w.getX(), w.getY(), w.getZ(), w.getCreatedAt()));
+                    saved.add(new Saved(dimension, set.getName(), w.getName(), w.getInitials(), w.getX(), w.getY(), w.getZ(), w.getCreatedAt()));
                 }
             }
         }
@@ -196,6 +198,75 @@ public final class XaeroWaypoints {
             AreaExplorer.FILE_LOG.error("Couldn't save Xaero waypoints", e);
         }
         return true;
+    }
+
+    /** The dimensions of the server we're on that Xaero keeps waypoints for: those the player has been in. */
+    public static Set<String> dimensions() {
+        Set<String> dimensions = new LinkedHashSet<>();
+        MinimapSession session = BuiltInHudModules.MINIMAP.getCurrentSession();
+        if (session == null || session.getWorldManager().getCurrentRootContainer() == null) return dimensions;
+        for (MinimapWorld world : session.getWorldManager().getCurrentRootContainer().getAllWorldsIterable()) {
+            if (world.getDimId() != null) dimensions.add(world.getDimId().getValue().getPath());
+        }
+        return dimensions;
+    }
+
+    /** Waypoints of every set in a dimension of the server we're on; empty if Xaero has none for it. */
+    public static List<Spot> in(String dimension) {
+        List<Spot> spots = new ArrayList<>();
+        MinimapWorld world = worldOf(dimension);
+        if (world == null) return spots;
+        for (WaypointSet set : world.getIterableWaypointSets()) {
+            for (Waypoint w : set.getWaypoints()) spots.add(new Spot(w.getName(), w.getX(), w.getZ()));
+        }
+        return spots;
+    }
+
+    /**
+     * {@link #addAll} into a dimension of the server we're on, not just the one the player is in: by
+     * set, saved once. False if Xaero has no waypoints for that dimension yet.
+     */
+    public static boolean addAllIn(String dimension, Map<String, List<NewWaypoint>> bySet, boolean disabled) {
+        MinimapSession session = BuiltInHudModules.MINIMAP.getCurrentSession();
+        MinimapWorld world = worldOf(dimension);
+        if (world == null) return false;
+        for (var entry : bySet.entrySet()) {
+            WaypointSet set = world.getWaypointSet(entry.getKey());
+            if (set == null) {
+                world.addWaypointSet(entry.getKey());
+                set = world.getWaypointSet(entry.getKey());
+                if (set == null) return false;
+            }
+            for (NewWaypoint w : entry.getValue()) {
+                Waypoint waypoint = new Waypoint(w.x(), w.y(), w.z(), w.name(), w.initials(), nearestColor(w.rgb()), WaypointPurpose.NORMAL);
+                waypoint.setDisabled(disabled);
+                set.add(waypoint);
+            }
+        }
+        try {
+            session.getWorldManagerIO().saveWorld(world);
+        } catch (IOException e) {
+            AreaExplorer.FILE_LOG.error("Couldn't save Xaero waypoints", e);
+        }
+        return true;
+    }
+
+    /**
+     * Xaero's waypoints of a dimension of the server we're on: the current ones if the player is in
+     * it, else those of the same multiworld if there are any, else the first Xaero has.
+     */
+    private static MinimapWorld worldOf(String dimension) {
+        MinimapSession session = BuiltInHudModules.MINIMAP.getCurrentSession();
+        if (session == null || session.getWorldManager().getCurrentRootContainer() == null) return null;
+        MinimapWorld current = session.getWorldManager().getCurrentWorld();
+        if (current != null && current.getDimId() != null && dimension.equals(current.getDimId().getValue().getPath())) return current;
+        MinimapWorld found = null;
+        for (MinimapWorld world : session.getWorldManager().getCurrentRootContainer().getAllWorldsIterable()) {
+            if (world.getDimId() == null || !dimension.equals(world.getDimId().getValue().getPath())) continue;
+            if (current != null && world.getNode() != null && world.getNode().equals(current.getNode())) return world;
+            if (found == null) found = world;
+        }
+        return found;
     }
 
     private static MinimapWorld currentWorld() {

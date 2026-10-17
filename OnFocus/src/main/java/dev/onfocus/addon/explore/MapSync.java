@@ -34,8 +34,10 @@ import java.util.regex.Pattern;
  * <p>
  * The site says which regions it has and when each was drawn, so only newer ones go: the whole map
  * the first time - every dimension, what was explored before too, within 100,000 blocks of 0, 0 - then what changes as it gets
- * drawn. The most recently drawn regions go first, so the area being explored shows up within a
- * minute or two even while older ones are still on the way.
+ * drawn. The most recently drawn regions go first, so the area being explored shows up within
+ * seconds of Xaero saving it even while older ones are still on the way. Xaero saves the regions
+ * it draws every minute; while sending, it's made to every 10 seconds, as its own "force fast map
+ * writing" does (see {@link #isSending}).
  * <p>
  * The overworld goes twice: as by day, and as Xaero shows it at night - dark but for torches, lava
  * and the like, worked out from the light Xaero keeps in its cache - so the site can show either.
@@ -50,8 +52,8 @@ public final class MapSync {
     private static final int MAX_DISTANCE = 100_000;
     /** How often the cache folders are listed again, for regions redrawn since. */
     private static final long RESCAN_MS = 60_000;
-    /** Between looks at the folders once everything is sent: listing tens of thousands of files isn't free. */
-    private static final long IDLE_MS = 20_000;
+    /** Between looks at the folders once everything is sent: often enough to keep up with Xaero's saves. */
+    private static final long IDLE_MS = 5_000;
     private static final long RETRY_MS = 30_000;
     private static final long FULL_MS = 10 * 60_000;
     /**
@@ -89,6 +91,11 @@ public final class MapSync {
             thread.setDaemon(true);
             thread.start();
         }
+    }
+
+    /** Whether the map is going to the site: Xaero then saves what it draws every 10 seconds, not every minute. */
+    public boolean isSending() {
+        return config != null;
     }
 
     /** Stops after the region being sent. */

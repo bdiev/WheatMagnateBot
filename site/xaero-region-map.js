@@ -23,10 +23,11 @@ const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 const DEFAULT_MAX_BYTES = 8 * 1024 * 1024 * 1024;
 const SIZE_CHECK_INTERVAL_MS = 10 * 60_000;
 // A tile is rebuilt once it has been dirty this long, so a burst of uploads under it costs one rebuild
-const DIRTY_SETTLE_MS = 5_000;
+const DIRTY_SETTLE_MS = 2_000;
 const WORKER_BATCH = 16;
-const WORKER_IDLE_MS = 5_000;
-const PUBLISH_INTERVAL_MS = 5_000;
+const WORKER_IDLE_MS = 2_000;
+// Open dashboards hear of new tiles this soon: the live map keeps up with the flight
+const PUBLISH_INTERVAL_MS = 1_000;
 const MAX_PUBLISHED_TILES = 400;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const NIGHT_SUFFIX = '@night';

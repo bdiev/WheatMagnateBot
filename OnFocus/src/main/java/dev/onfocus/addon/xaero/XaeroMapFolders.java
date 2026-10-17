@@ -48,6 +48,41 @@ public final class XaeroMapFolders {
         return folders;
     }
 
+    /**
+     * A world's map: its folder ({@code <world-map>/Multiplayer_<server>}) and the multiworld
+     * (usually {@code mw$default}) whose region files are used. Safe to use without Xaero's World
+     * Map: only {@link #mapWorld} touches it.
+     */
+    public record MapWorld(Path folder, String mw) {
+        /** Where a dimension ("overworld", "the_nether") keeps its region files ({@code x_z.zip}). */
+        public Path regionFolder(String dimension) {
+            String name = switch (dimension) {
+                case "overworld" -> "null";
+                case "the_nether" -> "DIM-1";
+                case "the_end" -> "DIM1";
+                default -> "minecraft$" + dimension;
+            };
+            return folder.resolve(name).resolve(mw);
+        }
+    }
+
+    /** The map of the world the player is in; null while it isn't known yet, or for a singleplayer map drawn from the world save. */
+    public static MapWorld mapWorld() {
+        try {
+            WorldMapSession session = WorldMapSession.getCurrentSession();
+            MapProcessor processor = session == null ? null : session.getMapProcessor();
+            if (processor == null || processor.getMapWorld() == null) return null;
+            if (processor.getMapWorld().getCurrentDimension().isUsingWorldSave()) return null;
+            String worldId = processor.getCurrentWorldId(), dimId = processor.getCurrentDimId(), mwId = processor.getCurrentMWId();
+            if (worldId == null || dimId == null || mwId == null) return null;
+            Path mwFolder = processor.getMapSaveLoad().getMWSubFolder(worldId, dimId, mwId);
+            return new MapWorld(mwFolder.getParent().getParent(), mwFolder.getFileName().toString());
+        } catch (RuntimeException e) {
+            // Mid world change: next time
+            return null;
+        }
+    }
+
     /** Xaero's folder name of a dimension as the game names it; null for a folder that isn't one. */
     public static String dimensionName(String folder) {
         return switch (folder) {
