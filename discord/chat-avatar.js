@@ -29,16 +29,19 @@ function padAvatarForCircleCrop(input) {
     .toBuffer();
 }
 
-function createChatAvatarLoader({ fetchImpl = fetch, now = Date.now, ttlMs = 6 * 60 * 60_000, retryMs = 60_000, maxEntries = 512 } = {}) {
+function createChatAvatarLoader({
+  fetchImpl = fetch, now = Date.now, ttlMs = 6 * 60 * 60_000, fallbackTtlMs = 10 * 60_000, retryMs = 60_000, maxEntries = 512
+} = {}) {
   const cache = new Map();
 
   return async function loadChatAvatar(username, { attachFiles = true } = {}) {
     const name = String(username || '').trim();
     if (!/^[a-z0-9_]{1,16}$/i.test(name)) return {};
     const key = name.toLowerCase();
+    // Minotar first: mc-heads keeps serving Steve for some players long after their skin changed
     const sources = [
-      `https://mc-heads.net/avatar/${key}/${AVATAR_HEAD_SIZE}.png`,
-      `https://minotar.net/helm/${key}/${AVATAR_HEAD_SIZE}.png`
+      `https://minotar.net/helm/${key}/${AVATAR_HEAD_SIZE}.png`,
+      `https://mc-heads.net/avatar/${key}/${AVATAR_HEAD_SIZE}.png`
     ];
     const remote = {
       thumbnail: {
@@ -50,6 +53,7 @@ function createChatAvatarLoader({ fetchImpl = fetch, now = Date.now, ttlMs = 6 *
     let entry = cache.get(key);
     if (!entry || entry.expiresAt <= now()) {
       let buffer = null;
+      let official = false;
       try {
         const officialAvatar = await renderOfficialMinecraftAvatar({
           username: name,
@@ -57,6 +61,7 @@ function createChatAvatarLoader({ fetchImpl = fetch, now = Date.now, ttlMs = 6 *
           signal: AbortSignal.timeout(5_000)
         });
         buffer = await padAvatarForCircleCrop(officialAvatar);
+        official = true;
       } catch {
         // A third-party renderer is still useful during a Mojang API outage.
       }
@@ -78,7 +83,9 @@ function createChatAvatarLoader({ fetchImpl = fetch, now = Date.now, ttlMs = 6 *
           // Retry the second provider; an avatar outage must not drop chat.
         }
       }
-      entry = { buffer: buffer || entry?.buffer || null, expiresAt: now() + (buffer ? ttlMs : retryMs) };
+      // A third-party head may be stale: Mojang's own is tried again soon
+      const keepMs = official ? ttlMs : buffer ? Math.min(ttlMs, fallbackTtlMs) : retryMs;
+      entry = { buffer: buffer || entry?.buffer || null, expiresAt: now() + keepMs };
       cache.delete(key);
       cache.set(key, entry);
       if (cache.size > maxEntries) cache.delete(cache.keys().next().value);

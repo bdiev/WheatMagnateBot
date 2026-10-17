@@ -50,7 +50,7 @@ function buildFloodSummaryEmbed({ username, reasons, createdAt = Date.now(), ava
     author: {
       name: username,
       url: playerProfileUrl(username),
-      icon_url: avatar?.thumbnail?.url || `https://mc-heads.net/avatar/${encodedName}/40.png`
+      icon_url: avatar?.thumbnail?.url || `https://minotar.net/helm/${encodedName}/40.png`
     },
     description: formatFloodSummaryDescription(reasons),
     color: FLOOD_SUMMARY_COLOR,

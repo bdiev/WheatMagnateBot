@@ -722,8 +722,8 @@ async function fetchPlayerHeadImage(username) {
   if (!profile) return namemcResult;
 
   const fallbackUrls = [
-    `https://mc-heads.net/avatar/${profile.id}/64`,
-    `https://minotar.net/helm/${profile.id}/64`
+    `https://minotar.net/helm/${profile.id}/64`,
+    `https://mc-heads.net/avatar/${profile.id}/64`
   ];
   let lastError = namemcResult.error;
 

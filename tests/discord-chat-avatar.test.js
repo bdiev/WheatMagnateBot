@@ -25,14 +25,15 @@ async function run() {
     fetchImpl: async url => {
       urls.push(url);
       if (unavailable) throw new Error('Provider unavailable');
-      return url.includes('mc-heads.net')
+      return url.includes('minotar.net')
         ? new Response('<html>Unavailable</html>', { headers: { 'content-type': 'text/html' } })
         : new Response(png, { headers: { 'content-type': 'image/png' } });
     }
   });
   const first = await load('ObbyMagnate');
   assert.equal(urls.length, 3, 'an unavailable official skin must fall back through the avatar providers');
-  assert.equal(urls[2], 'https://minotar.net/helm/obbymagnate/40.png');
+  assert.equal(urls[1], 'https://minotar.net/helm/obbymagnate/40.png', 'minotar is tried first');
+  assert.equal(urls[2], 'https://mc-heads.net/avatar/obbymagnate/40.png');
   assert.equal(first.thumbnail.url, `attachment://${first.files[0].name}`);
   const avatarMetadata = await sharp(first.files[0].attachment).metadata();
   assert.equal(avatarMetadata.width, 64);
@@ -55,11 +56,11 @@ async function run() {
   assert.equal(urls.length, 6, 'failed refreshes must have a retry cooldown');
   const coldFailure = await load('PearlMagnate');
   assert.equal(coldFailure.files, undefined);
-  assert.equal(coldFailure.thumbnail.url, 'https://mc-heads.net/avatar/pearlmagnate/40.png');
+  assert.equal(coldFailure.thumbnail.url, 'https://minotar.net/helm/pearlmagnate/40.png');
   const callsBeforePermissionCheck = urls.length;
   const noPermission = await load('ObbyMagnate', { attachFiles: false });
   assert.equal(noPermission.files, undefined);
-  assert.equal(noPermission.thumbnail.url, 'https://mc-heads.net/avatar/obbymagnate/40.png');
+  assert.equal(noPermission.thumbnail.url, 'https://minotar.net/helm/obbymagnate/40.png');
   assert.equal(urls.length, callsBeforePermissionCheck, 'channels without upload permission must not fetch attachments');
   assert.deepEqual(await load('../bad name'), {});
 
@@ -167,10 +168,10 @@ async function run() {
   canAttach = false;
   await context.deliver({ username: 'ObbyMagnate', message: 'Hello again', allowMentions: false });
   assert.equal(sent[3].files, undefined);
-  assert.equal(sent[3].embeds[0].author.icon_url, 'https://mc-heads.net/avatar/obbymagnate/40.png');
+  assert.equal(sent[3].embeds[0].author.icon_url, 'https://minotar.net/helm/obbymagnate/40.png');
   await context.deliver({ username: 'ObbyMagnate', message: '', isSummary: true, summaryCount: 3 });
   assert.equal(sent[4].files, undefined, 'summaries respect missing upload permission');
-  assert.equal(sent[4].embeds[0].author.icon_url, 'https://mc-heads.net/avatar/obbymagnate/40.png');
+  assert.equal(sent[4].embeds[0].author.icon_url, 'https://minotar.net/helm/obbymagnate/40.png');
 
   const summaryEdits = [];
   let summaryLoads = 0;
