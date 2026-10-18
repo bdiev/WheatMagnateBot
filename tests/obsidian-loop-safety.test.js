@@ -146,12 +146,50 @@ async function testWornPickaxeDepositUsesExactSlot(tempDir) {
   assert.strictEqual(container.slots[55], healthy, 'the healthy pickaxe stays in the inventory');
 }
 
+async function testWaitingForLavaDoesNotNotify(tempDir) {
+  const farm = createFarm(tempDir);
+  const notifications = [];
+  const bot = createBot({
+    inventoryItems: [pickaxe, bread, { name: 'bucket', slot: 38, count: 1 }],
+    blockAt: position => ({ name: 'air', position, boundingBox: 'empty' })
+  });
+  const originalNow = Date.now;
+  let elapsed = 0;
+  Date.now = () => originalNow() + elapsed;
+  try {
+    farm.start(bot, event => notifications.push(event));
+    await farm.whenIdle();
+    assert.match(farm.getStatus().lastErrorMessage, /No lava cauldron/);
+    // Even prolonged waits must not open an alert (or queue a recovery).
+    elapsed = 30 * 60_000;
+    await sleep(1_100);
+    await farm.whenIdle();
+    assert.ok(farm.__test.getIsolationState().farmCycleSequence >= 2, 'dry farm keeps retrying');
+    assert.deepStrictEqual(notifications, []);
+    assert.strictEqual(farm.__test.getIsolationState().activeFarmNotificationTypes.size, 0);
+    assert.strictEqual(farm.__test.getIsolationState().farmFailureStartedAt, null);
+
+    // A different failure must still raise an alert without counting dry time.
+    bot.blockAt = position => ({ name: 'stone', position, boundingBox: 'block' });
+    await sleep(1_100);
+    await farm.whenIdle();
+    assert.strictEqual(notifications.length, 1);
+    assert.strictEqual(notifications[0].eventType, 'farm_stalled');
+    assert.match(notifications[0].message, /occupied by stone/);
+    assert.strictEqual(notifications[0].metadata.seconds, 0);
+  } finally {
+    Date.now = originalNow;
+    await farm.stop();
+  }
+}
+
 async function run() {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wheatmagnate-loop-safety-'));
   try {
     await testSuspendResumeDoesNotDuplicateLoop(tempDir);
     await testUnconfirmedPlacementKeepsFarming(tempDir);
     await testWornPickaxeDepositUsesExactSlot(tempDir);
+    await testWaitingForLavaDoesNotNotify(tempDir);
     console.log('Obsidian loop safety tests passed.');
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });

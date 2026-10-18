@@ -158,6 +158,12 @@ async function run() {
     );
     assert.strictEqual(clicks, previousClicks, 'server reach must still prevent distant clicks');
 
+    bot.findBlocks = () => [];
+    await assert.rejects(
+      fillBucket(bot),
+      err => err.code === constants.CAULDRON_DRY_CODE && /No lava cauldron/.test(err.message)
+    );
+
     clearCauldronMemory();
     farm.resetConfig();
   } finally {

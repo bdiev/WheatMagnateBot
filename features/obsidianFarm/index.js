@@ -92,7 +92,6 @@ const FARM_STOPPED_CODE = 'FARM_STOPPED';
 const CAULDRON_STALL_NOTIFY_MS = 60_000;
 // Waiting for reachable cauldrons to refill is the farm's normal pace, so it is
 // only reported when it lasts far longer than a refill should.
-const CAULDRON_DRY_NOTIFY_MS = 10 * 60_000;
 // suspend() waits at most this long for an in-flight cycle to reach a safe
 // phase boundary before callers may use the bot for something else.
 const SUSPEND_DRAIN_TIMEOUT_MS = 15_000;
@@ -2466,10 +2465,12 @@ async function fillBucket(bot, context = {}) {
     candidates: cauldronPositions.map(position => position.toString())
   });
   if (detectedCauldronPositions.length === 0) {
-    throw new Error(
+    const err = new Error(
       `No lava cauldron found within ${maxCauldronDist} blocks. ` +
       'Place a lava cauldron nearby and retry.'
     );
+    err.code = CAULDRON_DRY_CODE;
+    throw err;
   }
   if (cauldronPositions.length === 0) {
     const err = new Error(
@@ -3183,7 +3184,9 @@ async function persistentLoop(bot, notify, generation = loopGeneration) {
     if (!isLoopCurrent(generation) || err.code === FARM_STOPPED_CODE) return;
 
     farm.lastErrorMessage = err.message;
-    farmFailureStartedAt ||= Date.now();
+    // Waiting for lava is normal operation, not time spent stalled.
+    if (err.code === CAULDRON_DRY_CODE) farmFailureStartedAt = null;
+    else farmFailureStartedAt ||= Date.now();
     const stalledSeconds = farmFailureStartedAt == null
       ? 0
       : Math.max(0, Math.round((Date.now() - farmFailureStartedAt) / 1000));
@@ -3210,12 +3213,12 @@ async function persistentLoop(bot, notify, generation = loopGeneration) {
       }
     );
     const debugLogId = retryLogEntry?.logId || null;
-    if (err.code === CAULDRON_RETRY_CODE || err.code === CAULDRON_DRY_CODE) {
-      // A dry/temporarily rejected cauldron is routine. Retry quickly and only
-      // report a stall once filling has kept failing for a whole minute, or
-      // once reachable cauldrons have stayed empty much longer than a refill.
-      const notifyAfterMs = err.code === CAULDRON_DRY_CODE ? CAULDRON_DRY_NOTIFY_MS : CAULDRON_STALL_NOTIFY_MS;
-      if (stalledSeconds * 1000 >= notifyAfterMs) {
+    if (err.code === CAULDRON_DRY_CODE) {
+      // Empty reachable cauldrons are routine. Keep retrying silently and do
+      // not open an alert that would later generate a recovery notification.
+    } else if (err.code === CAULDRON_RETRY_CODE) {
+      // Repeatedly rejected clicks can indicate a real interaction problem.
+      if (stalledSeconds * 1000 >= CAULDRON_STALL_NOTIFY_MS) {
         activeFarmNotificationTypes.add('farm_stalled');
         notify?.({ eventType: 'farm_stalled', key: 'obsidian-farm', title: 'Obsidian farm stalled', message: err.message, metadata: { errorCode: err.code, phase: farm.phase, seconds: stalledSeconds, debugLogId } });
       }
