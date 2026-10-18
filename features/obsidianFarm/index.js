@@ -2397,9 +2397,10 @@ function findLavaCauldrons(bot, maxDistance, options = {}) {
   const unique = new Map();
   for (const pos of positions) unique.set(pos.toString(), pos);
 
+  const searchOrigin = bot.entity.position.floored();
   const sorted = [...unique.values()]
     .sort((a, b) => {
-      return bot.entity.position.distanceSquared(a) - bot.entity.position.distanceSquared(b);
+      return searchOrigin.distanceSquared(a) - searchOrigin.distanceSquared(b);
     });
 
   return options.includeCoolingDown
@@ -2500,7 +2501,10 @@ async function fillBucket(bot, context = {}) {
       }
 
       const clickPoint = position.offset(0.5, 0.8, 0.5);
-      const distance = bot.entity?.position?.distanceTo(clickPoint);
+      // Match findBlocks: radius is measured between block coordinates, from
+      // the bot's floored position. The aim point is only used for looking;
+      // server interaction reach is checked separately from the bot's eyes.
+      const distance = bot.entity?.position?.floored().distanceTo(position);
       if (!Number.isFinite(distance) || distance > maxCauldronDist) {
         failures.push(`${position}:outside_configured_radius_${Number.isFinite(distance) ? distance.toFixed(2) : 'unknown'}`);
         writeFarmDebug('cauldron_skipped', {

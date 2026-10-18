@@ -121,6 +121,43 @@ async function run() {
     assert.strictEqual(clicks, 3, 'a cauldron beyond interaction reach must not be clicked');
     assert.strictEqual(constants.CAULDRON_INTERACTION_REACH, 4.5);
 
+    // Mineflayer searches from the bot's floored position to block coordinates.
+    // These candidates pass that search but their aim points are outside radius 4.
+    farm.configure(0, 64, 0, { maxCauldronDist: 4 });
+    const boundaryCases = [
+      { feet: new Vec3(0, 64, 0), target: new Vec3(4, 64, 0) },
+      { feet: new Vec3(0, 64, 0), target: new Vec3(0, 67, 2) },
+      { feet: new Vec3(-0.9, 64.1, -0.9), target: new Vec3(3, 64, -1) }
+    ];
+    for (const { feet, target } of boundaryCases) {
+      clearCauldronMemory();
+      bot.entity.position = feet;
+      bot.findBlocks = ({ maxDistance }) =>
+        feet.floored().distanceTo(target) <= maxDistance ? [target] : [];
+      bot.blockAt = candidate => ({ name: 'lava_cauldron', position: candidate });
+      inventoryItems = [emptyBucket];
+      bot.heldItem = null;
+      const previousClicks = clicks;
+      assert.ok(feet.distanceTo(target.offset(0.5, 0.8, 0.5)) > 4);
+      await fillBucket(bot);
+      assert.strictEqual(clicks, previousClicks + 1, 'search boundary cauldron must be clicked');
+      assert.strictEqual(inventoryItems[0].name, 'lava_bucket');
+    }
+
+    // A generous search radius must still respect the independent server reach.
+    farm.configure(0, 64, 0, { maxCauldronDist: 6 });
+    clearCauldronMemory();
+    bot.entity.position = new Vec3(0.2, 64, 0.2);
+    bot.findBlocks = () => [new Vec3(5, 64, 0)];
+    inventoryItems = [emptyBucket];
+    bot.heldItem = null;
+    const previousClicks = clicks;
+    await assert.rejects(
+      fillBucket(bot),
+      err => err.code === constants.CAULDRON_DRY_CODE && /out of reach/.test(err.message)
+    );
+    assert.strictEqual(clicks, previousClicks, 'server reach must still prevent distant clicks');
+
     clearCauldronMemory();
     farm.resetConfig();
   } finally {
