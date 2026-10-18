@@ -106,6 +106,21 @@ async function run() {
       'a cauldron inside the configured 5-block radius must remain eligible'
     );
 
+    // A lava cauldron the server won't accept clicks on (beyond reach from the
+    // eyes) is never clicked; when it is the only lava left, the farm waits.
+    farm.configure(0, 64, 0, { maxCauldronDist: 6 });
+    clearCauldronMemory();
+    inventoryItems = [emptyBucket];
+    bot.heldItem = null;
+    const unreachablePosition = new Vec3(4, 64, 3);
+    bot.findBlocks = () => [unreachablePosition];
+    await assert.rejects(
+      fillBucket(bot),
+      err => err.code === constants.CAULDRON_DRY_CODE && /out of reach/.test(err.message)
+    );
+    assert.strictEqual(clicks, 3, 'a cauldron beyond interaction reach must not be clicked');
+    assert.strictEqual(constants.CAULDRON_INTERACTION_REACH, 4.5);
+
     clearCauldronMemory();
     farm.resetConfig();
   } finally {

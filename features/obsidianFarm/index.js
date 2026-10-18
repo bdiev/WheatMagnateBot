@@ -68,6 +68,12 @@ const CAULDRON_FILL_ATTEMPTS_PER_BLOCK = 1;
 const CAULDRON_FILL_CONFIRM_TIMEOUT_MS = 200;
 const CAULDRON_FAILURE_COOLDOWN_MS = 500;
 const CAULDRON_RETRY_DELAY_MS = 100;
+// How far the server accepts a block click, measured from the bot's eyes to the
+// nearest point of the block (the 1.20.5+ block_interaction_range). The server's
+// anti-cheat silently ignores clicks beyond it, so a farther lava cauldron is
+// never clicked: it would only fail and keep the anti-cheat busy.
+const CAULDRON_INTERACTION_REACH = 4.5;
+const CAULDRON_DRY_RETRY_DELAY_MS = 1_000;
 // Wait generously for the server/chunk update. This does not resend the bucket
 // action, so a slow response cannot cause placement at a second location.
 const LAVA_PLACEMENT_CONFIRM_TIMEOUT_MS = 5_000;
@@ -78,10 +84,15 @@ const LOW_PICKAXE_DURABILITY_CODE = 'LOW_PICKAXE_DURABILITY';
 const RESOURCE_EXHAUSTED_CODE = 'RESOURCE_EXHAUSTED';
 const PLACEMENT_RECHECK_CODE = 'PLACEMENT_STATE_RECHECK';
 const CAULDRON_RETRY_CODE = 'CAULDRON_RETRY';
+// Every lava cauldron the bot can reach is empty and refilling from dripstone.
+const CAULDRON_DRY_CODE = 'CAULDRON_DRY';
 const FARM_STOPPED_CODE = 'FARM_STOPPED';
 // Cauldron retries are routine, but a farm that cannot fill a bucket for this
 // long is stalled and must reach the notification pipeline.
 const CAULDRON_STALL_NOTIFY_MS = 60_000;
+// Waiting for reachable cauldrons to refill is the farm's normal pace, so it is
+// only reported when it lasts far longer than a refill should.
+const CAULDRON_DRY_NOTIFY_MS = 10 * 60_000;
 // suspend() waits at most this long for an in-flight cycle to reach a safe
 // phase boundary before callers may use the bot for something else.
 const SUSPEND_DRAIN_TIMEOUT_MS = 15_000;
@@ -2396,6 +2407,18 @@ function findLavaCauldrons(bot, maxDistance, options = {}) {
     : sorted.filter(pos => !getCauldronFailure(pos));
 }
 
+/** Distance from the bot's eyes to the nearest point of the block at `position`. */
+function getEyeToBlockDistance(bot, position) {
+  const feet = bot.entity?.position;
+  if (!feet) return NaN;
+  const eye = feet.offset(0, bot.entity.eyeHeight ?? 1.62, 0);
+  const axis = (value, min) => Math.max(min - value, 0, value - (min + 1));
+  const dx = axis(eye.x, position.x);
+  const dy = axis(eye.y, position.y);
+  const dz = axis(eye.z, position.z);
+  return Math.sqrt(dx * dx + dy * dy + dz * dz);
+}
+
 async function waitForLavaBucket(bot, timeoutMs = CAULDRON_FILL_CONFIRM_TIMEOUT_MS) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -2458,6 +2481,7 @@ async function fillBucket(bot, context = {}) {
   setFarmPhase('filling', context);
   stopAllMovement(bot);
   const failures = [];
+  const outOfReach = [];
 
   for (const position of cauldronPositions) {
     for (let attempt = 1; attempt <= CAULDRON_FILL_ATTEMPTS_PER_BLOCK; attempt++) {
@@ -2485,6 +2509,19 @@ async function fillBucket(bot, context = {}) {
           reason: 'outside_configured_radius',
           configuredRadius: maxCauldronDist,
           distance: Number.isFinite(distance) ? Number(distance.toFixed(2)) : null
+        });
+        break;
+      }
+      const reach = getEyeToBlockDistance(bot, position);
+      if (!Number.isFinite(reach) || reach > CAULDRON_INTERACTION_REACH) {
+        outOfReach.push(reach);
+        failures.push(`${position}:out_of_reach_${Number.isFinite(reach) ? reach.toFixed(2) : 'unknown'}`);
+        writeFarmDebug('cauldron_skipped', {
+          ...context,
+          position: position.toString(),
+          reason: 'out_of_reach',
+          reach: CAULDRON_INTERACTION_REACH,
+          eyeDistance: Number.isFinite(reach) ? Number(reach.toFixed(2)) : null
         });
         break;
       }
@@ -2613,6 +2650,19 @@ async function fillBucket(bot, context = {}) {
         heldItem: bot.heldItem?.name || null
       });
     }
+  }
+
+  if (outOfReach.length === cauldronPositions.length) {
+    // Nothing was clicked: the cauldrons next to the bot are drained and the
+    // only lava left is in cauldrons the server would not let it use.
+    const nearest = Math.min(...outOfReach.filter(Number.isFinite));
+    const err = new Error(
+      `Waiting for lava: every cauldron within reach (${CAULDRON_INTERACTION_REACH} blocks) is empty. ` +
+      `${outOfReach.length} cauldron(s) with lava are out of reach` +
+      (Number.isFinite(nearest) ? ` (nearest ${nearest.toFixed(2)} blocks from the bot's eyes).` : '.')
+    );
+    err.code = CAULDRON_DRY_CODE;
+    throw err;
   }
 
   const err = new Error(
@@ -3135,6 +3185,8 @@ async function persistentLoop(bot, notify, generation = loopGeneration) {
       : Math.max(0, Math.round((Date.now() - farmFailureStartedAt) / 1000));
     retryDelay = err.code === CAULDRON_RETRY_CODE
       ? CAULDRON_RETRY_DELAY_MS
+      : err.code === CAULDRON_DRY_CODE
+      ? CAULDRON_DRY_RETRY_DELAY_MS
       : err.code === PLACEMENT_RECHECK_CODE
       ? PLACEMENT_RECHECK_DELAY_MS
       : (
@@ -3154,10 +3206,12 @@ async function persistentLoop(bot, notify, generation = loopGeneration) {
       }
     );
     const debugLogId = retryLogEntry?.logId || null;
-    if (err.code === CAULDRON_RETRY_CODE) {
+    if (err.code === CAULDRON_RETRY_CODE || err.code === CAULDRON_DRY_CODE) {
       // A dry/temporarily rejected cauldron is routine. Retry quickly and only
-      // report a stall once filling has kept failing for a whole minute.
-      if (stalledSeconds * 1000 >= CAULDRON_STALL_NOTIFY_MS) {
+      // report a stall once filling has kept failing for a whole minute, or
+      // once reachable cauldrons have stayed empty much longer than a refill.
+      const notifyAfterMs = err.code === CAULDRON_DRY_CODE ? CAULDRON_DRY_NOTIFY_MS : CAULDRON_STALL_NOTIFY_MS;
+      if (stalledSeconds * 1000 >= notifyAfterMs) {
         activeFarmNotificationTypes.add('farm_stalled');
         notify?.({ eventType: 'farm_stalled', key: 'obsidian-farm', title: 'Obsidian farm stalled', message: err.message, metadata: { errorCode: err.code, phase: farm.phase, seconds: stalledSeconds, debugLogId } });
       }
@@ -3373,6 +3427,8 @@ return {
       CAULDRON_FAILURE_COOLDOWN_MS,
       CAULDRON_RETRY_DELAY_MS,
       CAULDRON_RETRY_CODE,
+      CAULDRON_DRY_CODE,
+      CAULDRON_INTERACTION_REACH,
       OBSIDIAN_DIG_BASE_HOLD_MS,
       OBSIDIAN_DIG_RETRY_HOLD_BONUS_MS,
       OBSIDIAN_DIG_AIM_SETTLE_MS,

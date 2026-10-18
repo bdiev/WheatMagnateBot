@@ -3,6 +3,7 @@
   "package": "dev.onfocus.addon.mixin",
   "compatibilityLevel": "JAVA_21",
   "client": [
+    "DrawContextMixin",
     "MinecraftClientMixin"
   ],
   "injectors": {
