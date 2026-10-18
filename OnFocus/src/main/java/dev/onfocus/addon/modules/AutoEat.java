@@ -65,13 +65,6 @@ public class AutoEat extends Module {
         .build()
     );
 
-    private final Setting<Boolean> notifyNoFood = sgGeneral.add(new BoolSetting.Builder()
-        .name("notify-no-food")
-        .description("Warns in chat (once per hungry spell) when it needs to eat but has nothing from the list.")
-        .defaultValue(true)
-        .build()
-    );
-
     // Threshold
 
     private final Setting<ThresholdMode> thresholdMode = sgThreshold.add(new EnumSetting.Builder<ThresholdMode>()
@@ -170,7 +163,6 @@ public class AutoEat extends Module {
 
     private int cooldown;
     private int failedStarts;
-    private boolean warnedNoFood;
 
     private final List<Class<? extends Module>> pausedAuras = new ArrayList<>();
     private boolean pausedBaritone;
@@ -182,7 +174,6 @@ public class AutoEat extends Module {
     @Override
     public void onActivate() {
         cooldown = 0;
-        warnedNoFood = false;
     }
 
     @Override
@@ -252,20 +243,15 @@ public class AutoEat extends Module {
             return;
         }
 
-        if (!shouldEat()) {
-            warnedNoFood = false;
-            return;
-        }
+        if (!shouldEat()) return;
 
         // Don't start in a GUI, or over a bow / shield / manual bite, or while another module eats.
         if (mc.currentScreen != null || mc.player.isUsingItem() || otherModuleEating()) return;
 
+        // Nothing listed, or low health on a full hunger bar (only always-edible food fits then) -
+        // wait quietly, natural regeneration heals a fed player anyway.
         int slot = findFood();
-        if (slot == -1) {
-            if (notifyNoFood.get() && !warnedNoFood) warning("Need to eat, but there's no edible food from your list%s.", pullFromInventory.get() ? " in the inventory" : " in the hotbar");
-            warnedNoFood = true;
-            return;
-        }
+        if (slot == -1) return;
 
         prevSlot = mc.player.getInventory().selectedSlot;
         failedStarts = 0;
@@ -316,7 +302,7 @@ public class AutoEat extends Module {
         }
 
         if (++failedStarts > MAX_START_ATTEMPTS) {
-            warning("Couldn't start eating - giving up for now.");
+            // Server lag or an item cooldown - give up quietly and retry after the cooldown.
             stop(true, false);
             return;
         }
