@@ -6673,6 +6673,15 @@ async function loadAreaExplorerData(full) {
   renderAreaExplorerScopes();
   renderAreaExplorerStatus();
   recordAreaExplorerTrail(areaExplorerLiveStatus());
+  // A sign opened from a player's profile: shown as soon as its scope is known, not after the
+  // map's regions, the finds, the log and the rest have all come in
+  const pending = ae.pendingFocus;
+  if (pending && pending.scope === ae.scope) {
+    ae.pendingFocus = null;
+    ae.keepView = pending.scope;
+    focusAreaExplorerMap(pending.x, pending.z);
+    selectAreaExplorerFind(pending.id).catch(error => setBanner(error.message));
+  }
   const work = [];
   if (full || ae.findsDirty || ae.pointsScope !== ae.scope) {
     ae.findsDirty = false;
@@ -6687,13 +6696,6 @@ async function loadAreaExplorerData(full) {
   if (state.currentUser.role === 'admin' && full) work.push(loadAreaExplorerCommands());
   if (full || ae.logServer !== areaExplorerLogServer()) work.push(loadAreaExplorerLog());
   await Promise.all(work);
-  // A sign opened from a player's profile: shown once its scope is loaded
-  const pending = ae.pendingFocus;
-  if (pending && pending.scope === ae.scope) {
-    ae.pendingFocus = null;
-    focusAreaExplorerMap(pending.x, pending.z);
-    selectAreaExplorerFind(pending.id).catch(error => setBanner(error.message));
-  }
 }
 
 // Run log: what happened to the mod's runs, newest first
@@ -7215,8 +7217,10 @@ async function loadAreaExplorerMap() {
   ae.points = data.points
     .map(([id, kind, x, z, name]) => ({ id, kind, x, z, name }))
     .sort((a, b) => AREA_EXPLORER_KIND_ORDER[a.kind] - AREA_EXPLORER_KIND_ORDER[b.kind]);
-  // A new server or dimension shows its whole territory; another kind of find keeps the view
-  if (ae.pointsScope !== scope || !ae.view) fitAreaExplorerMap();
+  // A new server or dimension shows its whole territory; another kind of find keeps the view, and
+  // so does a sign focused while the points were loading
+  if (ae.keepView !== scope && (ae.pointsScope !== scope || !ae.view)) fitAreaExplorerMap();
+  ae.keepView = null;
   ae.pointsScope = scope;
   queueAreaExplorerMapDraw();
 }

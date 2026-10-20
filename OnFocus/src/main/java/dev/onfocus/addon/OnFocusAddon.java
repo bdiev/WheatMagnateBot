@@ -2,6 +2,7 @@ package dev.onfocus.addon;
 
 import com.mojang.logging.LogUtils;
 import dev.onfocus.addon.commands.LootMarkersCommand;
+import dev.onfocus.addon.commands.MicrosoftLoginCommand;
 import dev.onfocus.addon.commands.RegroupMarkersCommand;
 import dev.onfocus.addon.modules.AreaExplorer;
 import dev.onfocus.addon.modules.AutoEat;
@@ -12,6 +13,7 @@ import dev.onfocus.addon.modules.CustomBlockEsp;
 import dev.onfocus.addon.modules.DeathMessageBlocker;
 import dev.onfocus.addon.modules.ElytraControl;
 import dev.onfocus.addon.modules.ElytraKeeper;
+import dev.onfocus.addon.modules.EzBundles;
 import dev.onfocus.addon.modules.JoinLeaveMessages;
 import dev.onfocus.addon.modules.MapArtCopier;
 import dev.onfocus.addon.modules.MapPreview;
@@ -52,9 +54,11 @@ public class OnFocusAddon extends MeteorAddon {
         Modules.get().add(new AutoSignDate());
         Modules.get().add(new MapArtCopier());
         Modules.get().add(new MapPreview());
+        Modules.get().add(new EzBundles());
 
         Commands.add(new RegroupMarkersCommand());
         Commands.add(new LootMarkersCommand());
+        Commands.add(new MicrosoftLoginCommand());
     }
 
     @Override

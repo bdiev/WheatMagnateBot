@@ -13,8 +13,13 @@ import xaero.map.region.MapTile;
 import xaero.map.region.MapTileChunk;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Queue;
+import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -56,6 +61,13 @@ public class XaeroMappedChunkScan {
 
     /** Region files queued to the reader thread at once; the rest wait, so they can still be reordered. */
     private static final int MAX_IN_FLIGHT = 4;
+    /**
+     * The game's thread spends at most this long a tick going through regions. A big area holds tens
+     * of thousands, most never mapped; going through them all in one tick froze a slow PC for minutes.
+     */
+    private static final long TICK_BUDGET_NANOS = 4_000_000L;
+    /** The order regions are read in is worked out again at least this often, in ticks. */
+    private static final int REORDER_TICKS = 40;
 
     private final int minCX, minCZ, maxCX, maxCZ;
     private int focusRX, focusRZ;
@@ -65,6 +77,13 @@ public class XaeroMappedChunkScan {
     private final Long2IntOpenHashMap attempts = new Long2IntOpenHashMap();
     private final Queue<Result> results = new ConcurrentLinkedQueue<>();
     private volatile boolean cancelled;
+    /** Pending regions nearest the focus first; worked out again when the focus or the regions change. */
+    private final LongArrayList order = new LongArrayList();
+    private boolean orderStale = true;
+    private int orderAge;
+    /** The map folder's region files ("3_-2.zip"), listed once on the reader thread; null until then. */
+    private volatile Set<String> folderFiles;
+    private Path listedFolder;
 
     /** @param readAll queue every region of the rectangle right away; otherwise only what gets {@link #request}ed */
     public XaeroMappedChunkScan(int minCX, int minCZ, int maxCX, int maxCZ, boolean readAll) {
@@ -105,7 +124,10 @@ public class XaeroMappedChunkScan {
     /** Queues the region holding this chunk to be (re)read. */
     public void request(int chunkX, int chunkZ) {
         long key = ChunkPos.toLong(chunkX >> 5, chunkZ >> 5);
-        if (pendingRegions.add(key)) attempts.remove(key);
+        if (pendingRegions.add(key)) {
+            attempts.remove(key);
+            orderStale = true;
+        }
     }
 
     // What happened to the regions, for the log
@@ -124,8 +146,10 @@ public class XaeroMappedChunkScan {
 
     /** Regions are read nearest this chunk first - where the player is. */
     public void focus(int chunkX, int chunkZ) {
+        if (focusRX == chunkX >> 5 && focusRZ == chunkZ >> 5) return;
         focusRX = chunkX >> 5;
         focusRZ = chunkZ >> 5;
+        orderStale = true;
     }
 
     private long focusDistance(long region) {
@@ -172,6 +196,8 @@ public class XaeroMappedChunkScan {
                 chunksFromFiles += result.mapped().size();
             } else if (attempts.addTo(result.region(), 1) + 1 >= MAX_READ_ATTEMPTS) {
                 pendingRegions.remove(result.region()); // give up, it'll just be flown over
+            } else {
+                orderStale = true; // read again, in its turn
             }
         }
         if (pendingRegions.isEmpty()) return true;
@@ -185,16 +211,23 @@ public class XaeroMappedChunkScan {
         if (!processor.getMapSaveLoad().isRegionDetectionComplete()) return false;
         int caveLayer = SURFACE_LAYER;
         Path mapFolder = mapFolder(processor);
+        listFolder(mapFolder);
 
         // Nearest the focus first, a few at a time: what's read later can still be put behind
         // regions that came closer as the player moved
-        LongArrayList order = new LongArrayList();
-        for (long key : pendingRegions) if (!reading.contains(key)) order.add(key);
-        order.sort((a, b) -> Long.compare(focusDistance(a), focusDistance(b)));
+        if (orderStale || ++orderAge >= REORDER_TICKS) {
+            order.clear();
+            for (long key : pendingRegions) order.add(key);
+            order.sort((a, b) -> Long.compare(focusDistance(a), focusDistance(b)));
+            orderStale = false;
+            orderAge = 0;
+        }
         int budget = MAX_IN_FLIGHT - reading.size();
+        long deadline = System.nanoTime() + TICK_BUDGET_NANOS;
 
-        for (int i = 0; i < order.size() && budget > 0; i++) {
+        for (int i = 0; i < order.size() && budget > 0 && System.nanoTime() < deadline; i++) {
             long key = order.getLong(i);
+            if (reading.contains(key) || !pendingRegions.contains(key)) continue;
             int rx = ChunkPos.getPackedX(key), rz = ChunkPos.getPackedZ(key);
 
             MapRegion region = processor.getLeafMapRegion(caveLayer, rx, rz, false);
@@ -214,8 +247,12 @@ public class XaeroMappedChunkScan {
                 // or the world unknown while joining, its detection is skipped but marked done anyway,
                 // and then only the regions around the player "exist" - that read half a mapped area
                 // as 0%. Whether the file is there says it for sure.
-                file = mapFolder != null ? mapFolder.resolve(rx + "_" + rz + ".zip").toFile() : null;
-                if (file == null || !file.exists()) {
+                // Told by the folder's listing: asking the disk region by region here stalled the game
+                Set<String> files = folderFiles;
+                if (mapFolder != null && files == null) continue; // listing still under way
+                String name = rx + "_" + rz + ".zip";
+                file = mapFolder != null ? mapFolder.resolve(name).toFile() : null;
+                if (file == null || !files.contains(name)) {
                     listener.onRegion(key, new LongArrayList()); // nothing was ever mapped here
                     pendingRegions.remove(key);
                     absent++;
@@ -254,6 +291,20 @@ public class XaeroMappedChunkScan {
             });
         }
         return pendingRegions.isEmpty();
+    }
+
+    /** Lists the map folder's region files on the reader thread, once per folder. */
+    private void listFolder(Path folder) {
+        if (folder == null || folder.equals(listedFolder)) return;
+        listedFolder = folder;
+        folderFiles = null;
+        IO.submit(() -> {
+            try (Stream<Path> files = Files.list(folder)) {
+                folderFiles = files.map(file -> file.getFileName().toString()).filter(name -> name.endsWith(".zip")).collect(Collectors.toSet());
+            } catch (IOException e) {
+                folderFiles = Set.of(); // no folder yet: nothing there was ever mapped
+            }
+        });
     }
 
     /**

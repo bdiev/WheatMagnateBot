@@ -45,7 +45,64 @@ public final class ExplorerRegressionTest {
         siteSyncSendsEveryFind();
         xaeroRegionMerge();
         shareServer();
+        sessionRefreshReasons();
+        mapCacheFiles();
         System.out.println("Explorer regressions passed (deferred coverage, reach stability, mid-strip widths, fresh chunks, narrow corridors, route efficiency, ETA, waypoints and 240 patchy coverage scenarios).");
+    }
+
+    /** A kept map picture reads back as written; blank maps aren't kept; only "<id>.map" files count. */
+    private static void mapCacheFiles() throws Exception {
+        byte[] colors = new byte[dev.onfocus.addon.maps.MapCache.SIZE];
+        new Random(7).nextBytes(colors);
+        var picture = new dev.onfocus.addon.maps.MapCache.Picture(4021, (byte) 0, true, "minecraft:overworld", colors);
+        var back = dev.onfocus.addon.maps.MapCache.decode(4021, dev.onfocus.addon.maps.MapCache.encode(picture));
+        require(back.scale() == 0 && back.locked() && back.dimension().equals("minecraft:overworld"), "A map's scale, lock and dimension are kept");
+        require(java.util.Arrays.equals(back.colors(), colors), "Every pixel of a map reads back");
+        require(dev.onfocus.addon.maps.MapCache.blank(new byte[dev.onfocus.addon.maps.MapCache.SIZE]), "A map with nothing drawn is blank");
+        require(!dev.onfocus.addon.maps.MapCache.blank(colors), "A drawn map isn't");
+
+        // Through the cache itself: kept in a folder, listed and read back by a fresh one as after a restart
+        Path dir = Files.createTempDirectory("map-cache-test-");
+        try {
+            var cache = new dev.onfocus.addon.maps.MapCache();
+            cache.open(dir);
+            for (int i = 0; i < 200 && !cache.ready(); i++) Thread.sleep(10);
+            cache.save(4021, (byte) 0, true, "minecraft:overworld", colors);
+            cache.save(77, (byte) 0, false, "minecraft:overworld", new byte[dev.onfocus.addon.maps.MapCache.SIZE]);
+            Files.writeString(dir.resolve("notes.txt"), "not a map");
+            for (int i = 0; i < 200 && !Files.exists(dir.resolve("4021.map")); i++) Thread.sleep(10);
+            require(Files.exists(dir.resolve("4021.map")) && !Files.exists(dir.resolve("77.map")), "The drawn map is written, the blank one isn't");
+
+            var restarted = new dev.onfocus.addon.maps.MapCache();
+            restarted.open(dir);
+            for (int i = 0; i < 200 && !restarted.ready(); i++) Thread.sleep(10);
+            require(restarted.has(4021) && !restarted.has(77), "After a restart the kept map is known");
+            restarted.request(4021);
+            dev.onfocus.addon.maps.MapCache.Picture read = null;
+            for (int i = 0; i < 200 && (read = restarted.poll()) == null; i++) Thread.sleep(10);
+            require(read != null && read.id() == 4021 && java.util.Arrays.equals(read.colors(), colors), "and its picture reads back");
+        } finally {
+            deleteTree(dir);
+        }
+    }
+
+    /** Only a session turned away gets refreshed: not a server that's down, full or kicking for something else. */
+    private static void sessionRefreshReasons() {
+        require(SessionRefresh.isInvalidSession("Failed to log in: Invalid session (Try restarting your game and the launcher)"), "The day-old token is seen");
+        require(SessionRefresh.isInvalidSession("Failed to verify username!"), "The server's side of it too");
+        require(!SessionRefresh.isInvalidSession("Connection refused: no further information"), "A server that's down isn't a session problem");
+        require(!SessionRefresh.isInvalidSession("Failed to log in: The authentication servers are currently not reachable. Please try again."), "Nor are Mojang's servers being down");
+        require(!SessionRefresh.isInvalidSession("Server is full"), "Nor a full server");
+        require(!SessionRefresh.isInvalidSession(null), "No reason is no session problem");
+        require(SessionRefresh.due(System.currentTimeMillis()), "Nothing tried yet: a refresh may start");
+        require(SessionRefresh.dashed("069a79f444e94726a5befca90e38aaf5").equals("069a79f4-44e9-4726-a5be-fca90e38aaf5"), "A profile id gets its dashes");
+
+        // A failed login step says why in words, not just a status
+        String noXbox = dev.onfocus.addon.auth.MicrosoftLogin.reason(dev.onfocus.addon.auth.MicrosoftLogin.parse("{\"Identity\":\"0\",\"XErr\":2148916233,\"Message\":\"\"}"), "");
+        require(noXbox.contains("no Xbox profile") && noXbox.contains("2148916233"), "Xbox's error numbers are spelled out: " + noXbox);
+        require(dev.onfocus.addon.auth.MicrosoftLogin.reason(dev.onfocus.addon.auth.MicrosoftLogin.parse("{\"error\":\"invalid_grant\",\"error_description\":\"The token has expired.\"}"), "")
+            .equals("The token has expired."), "Microsoft's own description is used");
+        require(dev.onfocus.addon.auth.MicrosoftLogin.reason(null, "  ").equals("no reason given"), "An empty answer still says something");
     }
 
     /**

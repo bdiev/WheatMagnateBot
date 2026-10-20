@@ -15,6 +15,7 @@ import dev.onfocus.addon.explore.ReachStability;
 import dev.onfocus.addon.explore.ProgressEta;
 import dev.onfocus.addon.explore.SteadyEta;
 import dev.onfocus.addon.explore.FindNames;
+import dev.onfocus.addon.explore.SessionRefresh;
 import dev.onfocus.addon.explore.ContourPlanner;
 import dev.onfocus.addon.explore.Coverage;
 import dev.onfocus.addon.explore.CoveragePlanner;
@@ -2012,7 +2013,9 @@ public class AreaExplorer extends Module {
         if (joinCommand != null) failJoin(joinCommand, "A run was started in game instead");
         boolean fresh = freshStart;
         freshStart = false;
+        long stepStart = System.nanoTime();
         if (!fresh && resumeSession()) {
+            stepStart = slowStep("carrying on with the saved run", stepStart);
             if (!isActive()) return;
         } else if (mode.get() == Mode.Spiral) {
             startSpiral();
@@ -2023,18 +2026,30 @@ public class AreaExplorer extends Module {
         } else {
             start();
         }
+        stepStart = slowStep("starting the run", stepStart);
         if (phase != Phase.IDLE) {
             scanLoadedChunksForMarkers();
             scanLoadedChunksForSigns();
+            stepStart = slowStep("checking the loaded chunks for markers and signs", stepStart);
             // Reads the all-finds file and takes the earlier runs' files in, before any find comes
             withArchive(archive -> {});
             importMarkerWaypoints();
+            stepStart = slowStep("taking earlier markers from Xaero's waypoints", stepStart);
             // Markers from before the groups: into their groups' sets, so the old and the new ones are together
             if (autoMarkers.get() && groupSets.get()) {
                 int moved = regroupMarkers();
                 if (moved > 0) report("Moved (highlight)%d(default) earlier markers into their groups' waypoint sets.", moved);
             }
+            slowStep("regrouping markers", stepStart);
         }
+    }
+
+    /** Logs a step of turning on that held the game up noticeably, so a freeze says where it was. Returns now. */
+    private static long slowStep(String step, long since) {
+        long now = System.nanoTime();
+        long ms = (now - since) / 1_000_000;
+        if (ms >= 100) FILE_LOG.warn("Turning on: %s took %d ms".formatted(step, ms));
+        return now;
     }
 
     @Override
@@ -2383,7 +2398,12 @@ public class AreaExplorer extends Module {
         }
         // A saved run carried on: what it had explored (with the map, reading it again tells that)
         if (restoredExplored != null) {
-            for (long key : restoredExplored) addExplored(key);
+            // In one go, so the set is sized for them first: added one by one in the order the saved set
+            // held them, millions of chunks pile up in a few spots of the growing table, which took minutes
+            int before = explored.size();
+            explored.addAll(LongArrayList.wrap(restoredExplored));
+            diagnosticProgress += explored.size() - before;
+            if (exploredGrid != null) exploredGrid.addAll(explored);
             restoredExplored = null;
         }
 
@@ -5458,6 +5478,15 @@ public class AreaExplorer extends Module {
         log("Disconnected from %s at %.0f, %.0f, waiting to reconnect", server.address, leftX, leftZ);
     }
 
+    /** A session refresh started while reconnecting is done: refreshed, the next attempt goes at once. */
+    private void sessionRefreshed(SessionRefresh.Result result) {
+        log("%s", result.message());
+        siteEvent(result.refreshed() ? "info" : "warn", "reconnect", result.refreshed()
+            ? "Session expired (Invalid session): %s - reconnecting".formatted(result.message())
+            : "Session expired (Invalid session): %s. Trying again in %s".formatted(result.message(), formatDuration((int) (SessionRefresh.RETRY_MS / 1000))));
+        if (result.refreshed() && reconnecting && mc.currentScreen instanceof ReconnectScreen) reconnectTicks = reconnectDelay.get() * 20;
+    }
+
     /** Off the server: reconnects after a kick, then waits to be back where we stopped before carrying on. */
     private void tickReconnect() {
         if (mc.world == null || mc.player == null) {
@@ -5500,6 +5529,8 @@ public class AreaExplorer extends Module {
                 mc.setScreen(new ReconnectScreen(this::reconnectStatus,
                     () -> reconnectTicks = reconnectDelay.get() * 20, // connects on the next tick
                     () -> mc.setScreen(new MultiplayerScreen(new TitleScreen())))); // seen as leaving by hand below
+                // The day-old login token turned away: a fresh one from Meteor's saved account, then straight back in
+                if (SessionRefresh.isInvalidSession(reconnectReason)) SessionRefresh.start(this::sessionRefreshed);
                 return;
             }
             // Anything else is a connection under way
@@ -5507,6 +5538,8 @@ public class AreaExplorer extends Module {
                 reconnectTicks = 0;
                 return;
             }
+            // Connecting while the session is being refreshed would only use the old one again
+            if (SessionRefresh.running()) return;
             if (++reconnectTicks < reconnectDelay.get() * 20) return;
             reconnectTicks = 0;
             reconnectTries++;
@@ -6302,7 +6335,7 @@ public class AreaExplorer extends Module {
 
         restoreFinds(tag.getCompound("finds"));
         playerPlaced.clear();
-        for (long key : tag.getLongArray("player-placed")) playerPlaced.add(key);
+        playerPlaced.addAll(LongArrayList.wrap(tag.getLongArray("player-placed"))); // in one go: see start()
         deathSpots.clear();
         for (long key : tag.getLongArray("death-spots")) deathSpots.add(BlockPos.fromLong(key));
         playerDrops.clear();
@@ -6413,7 +6446,7 @@ public class AreaExplorer extends Module {
         basesFound = tag.getInt("bases-found");
 
         savedSigns.clear();
-        for (long pos : tag.getLongArray("saved-signs")) savedSigns.add(pos);
+        savedSigns.addAll(LongArrayList.wrap(tag.getLongArray("saved-signs"))); // in one go: see start()
         savedItems.clear();
         NbtList items = tag.getList("saved-items", NbtElement.STRING_TYPE);
         for (int i = 0; i < items.size(); i++) savedItems.add(UUID.fromString(items.getString(i)));
