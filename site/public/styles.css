@@ -13427,6 +13427,9 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
 }
 .area-explorer-selected .area-explorer-find { border: 0; padding: 14px; cursor: default; }
 .area-explorer-selected .area-explorer-find-heading { padding-right: 34px; }
+/* One find: the star sits in the corner beside Close, level with it */
+.area-explorer-selected > .area-explorer-finds .area-explorer-find-heading { padding-right: 72px; }
+.area-explorer-selected > .area-explorer-finds .area-explorer-favorite { position: absolute; top: 6px; right: 42px; z-index: 2; margin: 0; }
 
 .area-explorer-selected-close {
   position: absolute;
@@ -14016,6 +14019,8 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
   .area-explorer-selected .area-explorer-find-heading { display: flex; align-items: center; min-height: 44px; padding-right: 44px; }
   .area-explorer-selected .area-explorer-find-main { gap: 6px; }
   .area-explorer-selected-close { top: 4px; right: 4px; width: 44px; height: 44px; }
+  .area-explorer-selected > .area-explorer-finds .area-explorer-find-heading { padding-right: 96px; }
+  .area-explorer-selected > .area-explorer-finds .area-explorer-favorite { top: 4px; right: 52px; width: 44px; height: 44px; }
   .area-explorer-selected .area-explorer-sign-text { display: block; -webkit-line-clamp: unset; overflow: visible; }
   .area-explorer-selected.is-paging { max-height: calc(100% - 140px); }
   .area-explorer-selected.is-paging .area-explorer-sign { padding: 5px 8px; font-size: 13px; line-height: 1.35; }
