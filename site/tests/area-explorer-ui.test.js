@@ -539,6 +539,40 @@ function testLocatePlayer() {
   assert.equal(context.focused, null, 'unknown positions cannot move the map');
 }
 
+function testFavorites() {
+  // Each find has a star; the Favorites tab lists the starred ones, its count kept up as stars change
+  const buttons = [];
+  const button = () => {
+    const item = { attributes: { 'aria-label': 'Add to favorites: Elytra ×1', 'aria-pressed': 'false' }, classes: new Set(), title: '' };
+    item.classList = { toggle: (name, on) => (on ? item.classes.add(name) : item.classes.delete(name)) };
+    item.setAttribute = (key, value) => { item.attributes[key] = String(value); };
+    item.getAttribute = key => item.attributes[key];
+    buttons.push(item);
+    return item;
+  };
+  const scope = { server: 'test', dimension: 'overworld', favorites: 1 };
+  const ae = { scope: 'test|overworld', kind: '' };
+  let rendered = 0, reloaded = 0;
+  const context = vm.createContext({
+    escapeHtml: String, areaExplorerState: () => ae, areaExplorerScopes: () => [scope], CSS: { escape: String },
+    $$: () => [button(), button()], renderAreaExplorerScopes() { rendered++; }, loadAreaExplorerFinds: async () => { reloaded++; },
+    areaExplorerFindTitle: find => find.name, setBanner() {}
+  });
+  for (const name of ['renderAreaExplorerFavoriteButton', 'setAreaExplorerFavorite']) vm.runInContext(functionSource(name), context);
+  assert.match(context.renderAreaExplorerFavoriteButton({ id: '7', name: 'Elytra', favorite: true }), /data-area-favorite="7" aria-pressed="true"[^>]*title="Remove from favorites"/);
+  assert.match(context.renderAreaExplorerFavoriteButton({ id: '7', name: 'Elytra' }), /class="ghost-button area-explorer-favorite" [^>]*aria-pressed="false"/);
+  context.setAreaExplorerFavorite('7', true);
+  assert.ok(buttons.every(item => item.attributes['aria-pressed'] === 'true' && item.classes.has('is-on')), 'every star of the find lights up');
+  assert.equal(buttons[0].attributes['aria-label'], 'Remove from favorites: Elytra ×1');
+  assert.deepEqual([scope.favorites, rendered, reloaded], [2, 1, 0], 'the tab count goes up; other tabs keep their list');
+  ae.kind = 'FAVORITE';
+  context.setAreaExplorerFavorite('7', false);
+  assert.deepEqual([scope.favorites, reloaded], [1, 1], 'unstarred in the Favorites tab: the list reloads without it');
+  assert.match(functionSource('renderAreaExplorerFind'), /renderAreaExplorerFavoriteButton\(find\)/, 'every find card has its star');
+  const html = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
+  assert.match(html, /data-area-kind="FAVORITE"[\s\S]*?data-area-count="FAVORITE"/, 'the Favorites tab, with its count');
+}
+
 function testCountsKeepUp() {
   // Steady uploads must not keep pushing the refresh back, so the finds count moves while the mod runs
   const queued = [];
@@ -741,6 +775,7 @@ function testSectorGrid() {
   testLootIcons();
   testLocatePlayer();
   testCountsKeepUp();
+  testFavorites();
   testPlayerSigns();
   testMenuHeight();
   testClusters();

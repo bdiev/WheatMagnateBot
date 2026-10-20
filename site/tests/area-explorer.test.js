@@ -114,6 +114,7 @@ async function testIngestAndQueries() {
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/076_area_explorer_commands.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/083_area_explorer_command_states.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/073_area_explorer_events.sql'), 'utf8'));
+    await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/084_area_explorer_favorites.sql'), 'utf8'));
     const published = [];
     const logs = [];
     const service = createAreaExplorerService({
@@ -266,6 +267,7 @@ async function testMarkers() {
     await db.exec(markersMigrationSql);
     await db.exec(statusYMigrationSql);
     await db.exec(pickedUpMigrationSql);
+    await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/084_area_explorer_favorites.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/072_area_explorer_yaw.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/074_area_explorer_coverage.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/076_area_explorer_commands.sql'), 'utf8'));
@@ -640,6 +642,7 @@ async function testRunLog() {
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/076_area_explorer_commands.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/083_area_explorer_command_states.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/073_area_explorer_events.sql'), 'utf8'));
+    await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/084_area_explorer_favorites.sql'), 'utf8'));
     const published = [];
     const service = createAreaExplorerService({
       pool: poolFor(db), hashToken, readJsonBody: async () => ({}), sendJson() {}, sendError() {},
@@ -735,6 +738,63 @@ async function testPlayerSigns() {
   }
 }
 
+async function testFavorites() {
+  const db = new PGlite();
+  try {
+    for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '072_area_explorer_picked_up.sql', '084_area_explorer_favorites.sql']) {
+      await db.exec(fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8'));
+    }
+    const find = (i, kind, name, dimension = 'overworld') => db.query(
+      `INSERT INTO area_explorer_finds (server, dimension, kind, x, y, z, found_at, name, dedupe_key)
+       VALUES ('s', $4, $1, $2::int, 64, 0, NOW() - make_interval(mins => $2::int), $3, $1 || $2::int) RETURNING id`,
+      [kind, i, name, dimension]
+    ).then(result => String(result.rows[0].id));
+    const portal = await find(1, 'MARKER', 'End Portal');
+    const base = await find(2, 'BASE', 'Base #1');
+    const elytra = await find(3, 'ITEM', 'Elytra');
+    const nether = await find(4, 'SIGN', 'Oak Sign', 'the_nether');
+    const service = createAreaExplorerService({
+      pool: poolFor(db), hashToken, readJsonBody: async () => ({}), sendJson() {}, sendError() {}, enforceRateLimit: () => true,
+      publish() {}, recordSystemLog: async () => {}
+    });
+    const steve = { id: 1, username: 'steve', role: 'user' };
+    const alex = { id: 2, username: 'alex', role: 'admin' };
+    const url = query => new URL(`http://x/api/area-explorer/finds?${query}`);
+
+    assert.deepEqual(await service.setFavorite(steve, portal, true), { id: portal, favorite: true });
+    await service.setFavorite(steve, portal, true);
+    await service.setFavorite(steve, elytra, true);
+    await service.setFavorite(steve, nether, true);
+    await service.setFavorite(alex, base, true);
+
+    const favorites = await service.getFinds(url('server=s&dimension=overworld&kind=FAVORITE'), steve);
+    assert.deepEqual(favorites.finds.map(item => item.id), [portal, elytra], "the user's own stars of every kind, starred twice kept once");
+    assert.ok(favorites.finds.every(item => item.favorite));
+    const all = await service.getFinds(url('server=s&dimension=overworld'), steve);
+    assert.deepEqual(all.finds.map(item => [item.id, item.favorite]), [[portal, true], [base, false], [elytra, true]], 'every list says which are starred');
+    assert.equal((await service.getFind(base, alex)).find.favorite, true, 'stars are per user');
+    assert.equal((await service.getFind(base, steve)).find.favorite, false);
+    assert.equal((await service.getFinds(url('kind=FAVORITE'))).total, 0, 'nobody signed in has none');
+
+    const scopes = (await service.getSummary(steve)).scopes;
+    assert.equal(scopes.find(scope => scope.dimension === 'overworld').favorites, 2, 'the Favorites tab counts the scope');
+    assert.equal(scopes.find(scope => scope.dimension === 'the_nether').favorites, 1);
+
+    await service.setFavorite(steve, portal, false);
+    assert.deepEqual((await service.getFinds(url('dimension=overworld&kind=FAVORITE'), steve)).finds.map(item => item.id), [elytra], 'the star comes off');
+    await service.removeFind(alex, elytra);
+    assert.equal((await service.getFinds(url('dimension=overworld&kind=FAVORITE'), steve)).total, 0, 'loot picked up leaves Favorites too');
+    await assert.rejects(service.setFavorite(steve, elytra, true), /not found/);
+    await assert.rejects(service.setFavorite(null, base, true), /Sign in/);
+    await assert.rejects(service.setFavorite(steve, 'x', true), /Invalid find id/);
+
+    const routed = await service.handleApi({ method: 'PUT' }, steve, new URL(`http://x/api/area-explorer/finds/${base}/favorite`), { assertAdmin() {}, readBody: async () => ({}) });
+    assert.deepEqual(routed, { statusCode: 200, payload: { id: base, favorite: true } });
+  } finally {
+    await db.close();
+  }
+}
+
 (async () => {
   testNormalization();
   testEventNormalization();
@@ -748,6 +808,7 @@ async function testPlayerSigns() {
   await testCommands();
   await testMapCrowds();
   await testPlayerSigns();
+  await testFavorites();
   testWiring();
   testRunLogWiring();
   testNightWiring();

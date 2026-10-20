@@ -278,7 +278,9 @@ function publicFind(row) {
     name: cleanFindName(row.name),
     count: row.item_count,
     label: row.label,
-    details: row.details
+    details: row.details,
+    // Starred by the user asking: their Favorites tab
+    favorite: row.favorite === true
   };
 }
 
@@ -771,9 +773,9 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     sendJson(res, 200, await ingest(token, body));
   }
 
-  async function getSummary() {
+  async function getSummary(currentUser = null) {
     // Loot picked up in game is left out of everything
-    const [counts, statuses, markerNames, itemNames, latest] = await Promise.all([
+    const [counts, statuses, markerNames, itemNames, latest, favorites] = await Promise.all([
       pool.query(`SELECT server, dimension, kind, COUNT(*)::int AS count, MAX(found_at) AS last_found_at
                   FROM area_explorer_finds WHERE removed_at IS NULL GROUP BY server, dimension, kind ORDER BY server, dimension, kind`),
       pool.query(`SELECT s.*, t.name AS token_name FROM area_explorer_status s
@@ -787,15 +789,23 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
                     COUNT(*)::int AS count, SUM(item_count)::int AS items
                   FROM area_explorer_finds WHERE kind = 'ITEM' AND removed_at IS NULL GROUP BY 1, 2, 3`),
       pool.query(`SELECT DISTINCT ON (server, dimension) * FROM area_explorer_finds WHERE removed_at IS NULL
-                  ORDER BY server, dimension, found_at DESC, id DESC`)
+                  ORDER BY server, dimension, found_at DESC, id DESC`),
+      // The user's own stars, for the Favorites tab
+      currentUser?.id ? pool.query(`SELECT f.server, f.dimension, COUNT(*)::int AS count FROM area_explorer_favorites fav
+                  JOIN area_explorer_finds f ON f.id = fav.find_id
+                  WHERE fav.user_id = $1 AND f.removed_at IS NULL GROUP BY f.server, f.dimension`, [currentUser.id]) : { rows: [] }
     ]);
     const scopes = new Map();
     for (const row of counts.rows) {
       const key = `${row.server}\u0000${row.dimension}`;
-      if (!scopes.has(key)) scopes.set(key, { server: row.server, dimension: row.dimension, bases: 0, signs: 0, items: 0, markers: 0, markerNames: [], valuableItems: [], latest: null, lastFoundAt: null });
+      if (!scopes.has(key)) scopes.set(key, { server: row.server, dimension: row.dimension, bases: 0, signs: 0, items: 0, markers: 0, favorites: 0, markerNames: [], valuableItems: [], latest: null, lastFoundAt: null });
       const scope = scopes.get(key);
       scope[{ BASE: 'bases', SIGN: 'signs', ITEM: 'items', MARKER: 'markers' }[row.kind]] = row.count;
       if (!scope.lastFoundAt || new Date(row.last_found_at) > new Date(scope.lastFoundAt)) scope.lastFoundAt = row.last_found_at;
+    }
+    for (const row of favorites.rows) {
+      const scope = scopes.get(`${row.server}\u0000${row.dimension}`);
+      if (scope) scope.favorites = row.count;
     }
     // What the markers mark, most first: End Portal 12, Shulker Box 5...
     for (const row of markerNames.rows) {
@@ -819,7 +829,7 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     return { scopes: [...scopes.values()], statuses: statuses.rows.map(row => publicStatus(row)) };
   }
 
-  function scopeFilter(url, params, where) {
+  function scopeFilter(url, params, where, currentUser = null) {
     const server = normalizeScopeName(url.searchParams.get('server'), 128);
     const dimension = normalizeScopeName(url.searchParams.get('dimension'), 64);
     if (server) { params.push(server); where.push(`server = $${params.length}`); }
@@ -827,6 +837,12 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     where.push('removed_at IS NULL');
     const kind = String(url.searchParams.get('kind') || '').toUpperCase();
     const name = normalizeText(url.searchParams.get('name'), 128);
+    // The user's starred finds, of every kind
+    if (kind === 'FAVORITE') {
+      params.push(currentUser?.id ?? null);
+      where.push(`id IN (SELECT find_id FROM area_explorer_favorites WHERE user_id = $${params.length})`);
+      return;
+    }
     // End Portals have a tab of their own: the markers' is the rest, unless one kind of them is asked for
     if (kind === 'END_PORTAL') {
       params.push(END_PORTAL);
@@ -839,10 +855,16 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     else if (kind === 'MARKER') { params.push(END_PORTAL); where.push(`name <> $${params.length}`); }
   }
 
-  async function getFinds(url) {
+  /** Whether the user starred each find, as a column: favorite. */
+  function favoriteColumn(params, currentUser) {
+    params.push(currentUser?.id ?? null);
+    return `EXISTS (SELECT 1 FROM area_explorer_favorites fav WHERE fav.find_id = area_explorer_finds.id AND fav.user_id = $${params.length}) AS favorite`;
+  }
+
+  async function getFinds(url, currentUser = null) {
     const params = [];
     const where = [];
-    scopeFilter(url, params, where);
+    scopeFilter(url, params, where, currentUser);
     const q = normalizeText(url.searchParams.get('q'), 100);
     if (q) {
       params.push(likePattern(q));
@@ -863,8 +885,9 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
       const ax = `$${orderParams.length - 1}`, az = `$${orderParams.length}`;
       orderSql = `ORDER BY (x - ${ax}::bigint) * (x - ${ax}::bigint) + (z - ${az}::bigint) * (z - ${az}::bigint), id DESC`;
     }
+    const favorite = favoriteColumn(orderParams, currentUser);
     const [rows, total] = await Promise.all([
-      pool.query(`SELECT * FROM area_explorer_finds ${whereSql} ${orderSql} LIMIT ${limit} OFFSET ${offset}`, orderParams),
+      pool.query(`SELECT *, ${favorite} FROM area_explorer_finds ${whereSql} ${orderSql} LIMIT ${limit} OFFSET ${offset}`, orderParams),
       pool.query(`SELECT COUNT(*)::int AS total FROM area_explorer_finds ${whereSql}`, params)
     ]);
     return { finds: rows.rows.map(publicFind), total: total.rows[0]?.total || 0, limit, offset };
@@ -917,11 +940,27 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     return { signs: rows.map(row => publicFind(row)), total: rows[0]?.total || 0 };
   }
 
-  async function getFind(id) {
+  async function getFind(id, currentUser = null) {
     if (!/^\d{1,18}$/.test(id)) throw httpError(400, 'Invalid find id.');
-    const row = (await pool.query('SELECT * FROM area_explorer_finds WHERE id = $1 AND removed_at IS NULL', [id])).rows[0];
+    const params = [id];
+    const favorite = favoriteColumn(params, currentUser);
+    const row = (await pool.query(`SELECT *, ${favorite} FROM area_explorer_finds WHERE id = $1 AND removed_at IS NULL`, params)).rows[0];
     if (!row) throw httpError(404, 'Find not found.');
     return { find: publicFind(row) };
+  }
+
+  /** Stars a find for the user (their Favorites tab), or takes the star off. */
+  async function setFavorite(currentUser, id, favorite) {
+    if (!/^\d{1,18}$/.test(id)) throw httpError(400, 'Invalid find id.');
+    if (!currentUser?.id) throw httpError(401, 'Sign in to keep favorites.');
+    const row = (await pool.query('SELECT id FROM area_explorer_finds WHERE id = $1 AND removed_at IS NULL', [id])).rows[0];
+    if (!row) throw httpError(404, 'Find not found.');
+    if (favorite) {
+      await pool.query('INSERT INTO area_explorer_favorites (user_id, find_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [currentUser.id, id]);
+    } else {
+      await pool.query('DELETE FROM area_explorer_favorites WHERE user_id = $1 AND find_id = $2', [currentUser.id, id]);
+    }
+    return { id: String(id), favorite: !!favorite };
   }
 
   /**
@@ -983,9 +1022,9 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
    */
   async function handleApi(req, currentUser, url, { assertAdmin, readBody }) {
     const path = url.pathname;
-    if (path === '/api/area-explorer/summary' && req.method === 'GET') return { statusCode: 200, payload: await getSummary() };
+    if (path === '/api/area-explorer/summary' && req.method === 'GET') return { statusCode: 200, payload: await getSummary(currentUser) };
     if (path === '/api/area-explorer/live' && req.method === 'GET') return { statusCode: 200, payload: await getLive() };
-    if (path === '/api/area-explorer/finds' && req.method === 'GET') return { statusCode: 200, payload: await getFinds(url) };
+    if (path === '/api/area-explorer/finds' && req.method === 'GET') return { statusCode: 200, payload: await getFinds(url, currentUser) };
     if (path === '/api/area-explorer/map' && req.method === 'GET') return { statusCode: 200, payload: await getMapPoints(url) };
     if (path === '/api/area-explorer/events' && req.method === 'GET') return { statusCode: 200, payload: await getEvents(url) };
     if (path === '/api/area-explorer/coverage' && req.method === 'GET') return { statusCode: 200, payload: await getCoverage(url) };
@@ -1000,7 +1039,12 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
       return { statusCode: 201, payload: await createCommand(currentUser, await readBody(req)) };
     }
     const findMatch = path.match(/^\/api\/area-explorer\/finds\/([^/]+)$/);
-    if (findMatch && req.method === 'GET') return { statusCode: 200, payload: await getFind(findMatch[1]) };
+    if (findMatch && req.method === 'GET') return { statusCode: 200, payload: await getFind(findMatch[1], currentUser) };
+    // A user's own stars: anyone signed in
+    const favoriteMatch = path.match(/^\/api\/area-explorer\/finds\/([^/]+)\/favorite$/);
+    if (favoriteMatch && (req.method === 'PUT' || req.method === 'DELETE')) {
+      return { statusCode: 200, payload: await setFavorite(currentUser, favoriteMatch[1], req.method === 'PUT') };
+    }
     // Loot picked up in game: administrators take it off the site
     if (findMatch && req.method === 'DELETE') {
       assertAdmin(currentUser);
@@ -1019,7 +1063,7 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     return null;
   }
 
-  return { authenticate, ingest, handleIngest, handleApi, getSummary, getEvents, getCoverage, createCommand, listCommands, getFinds, getMapPoints, getFind, getPlayerSigns, removeFind, listTokens, createToken, revokeToken };
+  return { authenticate, ingest, handleIngest, handleApi, getSummary, getEvents, getCoverage, createCommand, listCommands, getFinds, getMapPoints, getFind, setFavorite, getPlayerSigns, removeFind, listTokens, createToken, revokeToken };
 }
 
 module.exports = {

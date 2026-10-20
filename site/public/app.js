@@ -6841,7 +6841,8 @@ function renderAreaExplorerScopes() {
   const scope = scopes.find(item => `${item.server}|${item.dimension}` === ae.scope);
   const counts = {
     all: scope ? areaExplorerFindCount(scope) : 0, BASE: scope?.bases || 0, END_PORTAL: areaExplorerEndPortalCount(scope),
-    MARKER: (scope?.markers || 0) - areaExplorerEndPortalCount(scope), ITEM: scope?.items || 0, SIGN: scope?.signs || 0
+    MARKER: (scope?.markers || 0) - areaExplorerEndPortalCount(scope), ITEM: scope?.items || 0, SIGN: scope?.signs || 0,
+    FAVORITE: scope?.favorites || 0
   };
   $$('[data-area-count]').forEach(element => { element.textContent = formatNumber(counts[element.dataset.areaCount]); });
   $('#areaExplorerScopeSummary').textContent = scope
@@ -7013,7 +7014,7 @@ async function loadAreaExplorerFinds() {
     const shown = refresh ? areaExplorerListIds(list) : null;
     list.innerHTML = data.finds.length
       ? data.finds.map(find => renderAreaExplorerFind(find)).join('')
-      : `<li class="area-explorer-empty">${ae.q ? 'Nothing matches the search.' : 'No finds of this kind yet.'}</li>`;
+      : `<li class="area-explorer-empty">${ae.q ? 'Nothing matches the search.' : ae.kind === 'FAVORITE' ? 'No favorites here yet: star a find to keep it in this tab.' : 'No finds of this kind yet.'}</li>`;
     if (!refresh) {
       list.scrollTop = 0;
       setAreaExplorerNewFinds(0);
@@ -7154,6 +7155,7 @@ function renderAreaExplorerFind(find, { selected = false, showScope = false } = 
     <div class="area-explorer-find-main">
       <div class="area-explorer-find-heading">
       ${selected ? `<strong class="area-explorer-find-name">${name}${label}</strong>` : `<button class="area-explorer-find-title area-explorer-find-name" type="button" data-area-select aria-label="Show ${escapeHtml(areaExplorerFindTitle(find))} on map">${name}${label}</button>`}
+      ${renderAreaExplorerFavoriteButton(find)}
       </div>
       ${body}
       <div class="area-explorer-find-meta">
@@ -7164,6 +7166,13 @@ function renderAreaExplorerFind(find, { selected = false, showScope = false } = 
       </div>
     </div>
   </li>`;
+}
+
+/** The star that keeps a find in the user's Favorites tab. */
+function renderAreaExplorerFavoriteButton(find) {
+  const on = find.favorite === true;
+  const title = on ? 'Remove from favorites' : 'Add to favorites';
+  return `<button class="ghost-button area-explorer-favorite${on ? ' is-on' : ''}" type="button" data-area-favorite="${escapeHtml(find.id)}" aria-pressed="${on}" title="${title}" aria-label="${title}: ${escapeHtml(areaExplorerFindTitle(find))}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8-5.2-2.8-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z"/></svg></button>`;
 }
 
 function renderAreaExplorerPager() {
@@ -8466,6 +8475,22 @@ function revealAreaExplorerFind(find) {
   noteAreaExplorerViewMoved();
 }
 
+/** A find starred or unstarred: every star of it, the tab's count, and the Favorites list itself. */
+function setAreaExplorerFavorite(id, favorite) {
+  const ae = areaExplorerState();
+  const title = favorite ? 'Remove from favorites' : 'Add to favorites';
+  $$(`#tab-area-explorer [data-area-favorite="${CSS.escape(id)}"]`).forEach(button => {
+    button.classList.toggle('is-on', favorite);
+    button.setAttribute('aria-pressed', String(favorite));
+    button.title = title;
+    button.setAttribute('aria-label', button.getAttribute('aria-label').replace(/^[^:]*/, title));
+  });
+  const scope = areaExplorerScopes().find(item => `${item.server}|${item.dimension}` === ae.scope);
+  if (scope) scope.favorites = Math.max(0, (scope.favorites || 0) + (favorite ? 1 : -1));
+  renderAreaExplorerScopes();
+  if (ae.kind === 'FAVORITE') loadAreaExplorerFinds().catch(error => setBanner(error.message));
+}
+
 async function selectAreaExplorerFind(id, { focusStep = 0 } = {}) {
   const ae = areaExplorerState();
   const box = $('#areaExplorerSelected');
@@ -8794,6 +8819,24 @@ function setupAreaExplorer() {
     const step = event.target.closest('[data-area-nearby-step]');
     if (step) {
       stepAreaExplorerNearby(Number(step.dataset.areaNearbyStep));
+      return;
+    }
+    // A star: the find goes into (or out of) the user's Favorites tab
+    const star = event.target.closest('[data-area-favorite]');
+    if (star) {
+      const id = star.dataset.areaFavorite;
+      const favorite = star.getAttribute('aria-pressed') !== 'true';
+      star.disabled = true;
+      try {
+        const path = `/api/area-explorer/finds/${encodeURIComponent(id)}/favorite`;
+        if (favorite) await putJson(path, {});
+        else await deleteJson(path);
+        setAreaExplorerFavorite(id, favorite);
+      } catch (error) {
+        setBanner(`Could not ${favorite ? 'add the find to' : 'remove the find from'} favorites: ${error.message}`);
+      } finally {
+        star.disabled = false;
+      }
       return;
     }
     // Loot picked up in game: off the list, the map and the highlights

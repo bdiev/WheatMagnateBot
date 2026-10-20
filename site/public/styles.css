@@ -13574,7 +13574,7 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
 /* The kinds of find as inventory tiles: the kind's item, its name and how many there are */
 .area-explorer-kinds {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 8px;
   scrollbar-width: none;
 }
@@ -13607,6 +13607,7 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
 .area-explorer-kind-tab.kind-marker { --tab-color: var(--area-marker); }
 .area-explorer-kind-tab.kind-item { --tab-color: var(--area-loot); }
 .area-explorer-kind-tab.kind-sign { --tab-color: var(--area-sign); }
+.area-explorer-kind-tab.kind-favorite { --tab-color: var(--gold); }
 
 .area-explorer-kind-tab img {
   grid-row: 1 / span 2;
@@ -13756,6 +13757,29 @@ body.area-explorer-fullscreen .area-explorer-map-panel { animation: none; transf
 }
 .area-explorer-find-title:hover { color: var(--accent-strong); background: transparent; box-shadow: none; transform: none; }
 .area-explorer-find-label { color: var(--muted); font-size: 14px; font-style: italic; }
+/* The star that keeps a find in Favorites: an outline, filled gold once on */
+.area-explorer-favorite {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  min-width: 0;
+  height: 32px;
+  min-height: 0;
+  margin-left: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted);
+  transform: none;
+}
+.area-explorer-favorite svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
+.area-explorer-favorite:hover { color: var(--gold); background: transparent; box-shadow: none; transform: none; }
+.area-explorer-favorite.is-on { color: var(--gold); }
+.area-explorer-favorite.is-on svg { fill: currentColor; }
+.area-explorer-favorite:disabled { opacity: 0.5; }
+.area-explorer-favorite:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
 .area-explorer-kind {
   padding: 2px 7px;
   border: 1px solid color-mix(in srgb, var(--find-color) 55%, var(--line));
