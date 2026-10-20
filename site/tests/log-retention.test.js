@@ -1,9 +1,42 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { PGlite } = require('@electric-sql/pglite');
+const { createSystemLogRepository } = require('../../database');
 const { getLogRetentionConfig, pruneExpiredLogs } = require('../log-retention');
 
 async function run() {
+  const db = new PGlite();
+  try {
+    const migration = fs.readFileSync(path.join(__dirname, '../migrations/086_system_logs_autovacuum.sql'), 'utf8');
+    // The migration runs before optional tables on a fresh installation.
+    await db.exec(migration);
+    const database = { query: (sql, values) => db.query(sql, values) };
+    const logs = createSystemLogRepository(database);
+    await logs.ensureSystemLogTable();
+    await logs.recordSystemLog({ category: 'security', message: 'Keep this audit history.' });
+    // Verify the upgrade independently of fresh-table initialization.
+    await db.exec(`ALTER TABLE site_system_logs RESET (
+      autovacuum_vacuum_scale_factor, autovacuum_vacuum_threshold,
+      autovacuum_analyze_scale_factor, autovacuum_analyze_threshold,
+      toast.autovacuum_vacuum_scale_factor, toast.autovacuum_vacuum_threshold
+    )`);
+    await db.exec(migration);
+    assert.equal((await db.query('SELECT message FROM site_system_logs')).rows[0].message, 'Keep this audit history.');
+    const options = await db.query(`SELECT relname,reloptions FROM pg_class
+      WHERE oid='site_system_logs'::regclass
+         OR oid=(SELECT reltoastrelid FROM pg_class WHERE oid='site_system_logs'::regclass)`);
+    const tableOptions = options.rows.find(row => row.relname === 'site_system_logs').reloptions;
+    assert.ok(tableOptions.includes('autovacuum_vacuum_scale_factor=0.02'));
+    assert.ok(tableOptions.includes('autovacuum_vacuum_threshold=500'));
+    assert.ok(tableOptions.includes('autovacuum_analyze_scale_factor=0.05'));
+    assert.ok(options.rows.find(row => row.relname !== 'site_system_logs').reloptions.includes('autovacuum_vacuum_scale_factor=0.02'));
+  } finally {
+    await db.close();
+  }
+
   assert.deepEqual(getLogRetentionConfig({}), {
     verboseDays:7,
     systemDays:90,

@@ -1243,6 +1243,14 @@ async function ensureOptionalTables() {
     )
   `);
   await pool.query(`ALTER TABLE site_system_logs ADD COLUMN IF NOT EXISTS account_id UUID`);
+  await pool.query(`ALTER TABLE site_system_logs SET (
+    autovacuum_vacuum_scale_factor = 0.02,
+    autovacuum_vacuum_threshold = 500,
+    autovacuum_analyze_scale_factor = 0.05,
+    autovacuum_analyze_threshold = 500,
+    toast.autovacuum_vacuum_scale_factor = 0.02,
+    toast.autovacuum_vacuum_threshold = 500
+  )`);
   await pool.query(`CREATE INDEX IF NOT EXISTS site_system_logs_account_created_idx ON site_system_logs (account_id, created_at DESC)`);
   await pool.query(`
     CREATE INDEX IF NOT EXISTS site_system_logs_created_at_idx
