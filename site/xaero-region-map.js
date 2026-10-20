@@ -12,6 +12,7 @@
 // light Xaero keeps). The night one is kept as a dimension of its own, "overworld@night", so it
 // has its own tiles and index; the dashboard's list shows it as the overworld's night view.
 
+const crypto = require('node:crypto');
 const sharp = require('sharp');
 
 const REGION_PX = 512;
@@ -22,8 +23,12 @@ const MAX_LEVEL = 9;
 const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 const DEFAULT_MAX_BYTES = 8 * 1024 * 1024 * 1024;
 const SIZE_CHECK_INTERVAL_MS = 10 * 60_000;
-// A tile is rebuilt once it has been dirty this long, so a burst of uploads under it costs one rebuild
+// A tile is rebuilt once it has been dirty this long, so a burst of uploads under it costs one rebuild.
+// Zoomed-out levels wait longer: each rebuild rewrites a whole tile in the database (and its WAL), and
+// a region redrawn every few seconds in flight would otherwise rewrite all nine above it each time.
 const DIRTY_SETTLE_MS = 2_000;
+// Levels 1 to MAX_LEVEL, in order
+const LEVEL_SETTLE_MS = Object.freeze([2_000, 10_000, 30_000, 60_000, 300_000, 300_000, 300_000, 300_000, 300_000]);
 const WORKER_BATCH = 16;
 const WORKER_IDLE_MS = 2_000;
 // Open dashboards hear of new tiles this soon: the live map keeps up with the flight
@@ -45,6 +50,11 @@ const BIT_COUNTS = Uint8Array.from({ length: 256 }, (_, n) => {
   for (let v = n; v; v >>= 1) count += v & 1;
   return count;
 });
+
+/** What a stored tile is compared by: the same picture is never written again. */
+function tileHash(data) {
+  return crypto.createHash('md5').update(data).digest('hex');
+}
 
 function httpError(statusCode, message) {
   return Object.assign(new Error(message), { statusCode });
@@ -270,7 +280,7 @@ function createXaeroRegionMapService({
   /** Stores one region from the mod, unless the site has it from the same or a later drawing. */
   async function putRegion(scope, x, z, modifiedMs, png) {
     const existing = (await pool.query(
-      `SELECT (EXTRACT(EPOCH FROM source_modified_at) * 1000)::bigint AS modified FROM area_explorer_region_tiles
+      `SELECT (EXTRACT(EPOCH FROM source_modified_at) * 1000)::bigint AS modified, md5(data) AS hash FROM area_explorer_region_tiles
        WHERE server = $1 AND dimension = $2 AND level = 0 AND x = $3 AND z = $4`,
       [scope.server, scope.dimension, x, z]
     )).rows[0];
@@ -280,6 +290,16 @@ function createXaeroRegionMapService({
     }
     const drawn = await regionTileFromPng(png);
     const tile = drawn?.tile;
+    // Saved again by Xaero with nothing new drawn: only its date moves on (the tile's data isn't
+    // rewritten), and nothing above it needs rebuilding
+    if (tile && existing && existing.hash === tileHash(tile)) {
+      await pool.query(
+        `UPDATE area_explorer_region_tiles SET source_modified_at = to_timestamp($5 / 1000.0)
+         WHERE server = $1 AND dimension = $2 AND level = 0 AND x = $3 AND z = $4`,
+        [scope.server, scope.dimension, x, z, modifiedMs]
+      );
+      return { stored: false, reason: 'unchanged' };
+    }
     exploredCache.delete(`${scope.server}\u0000${scope.dimension}`);
     if (!tile) {
       if (existing) await pool.query('DELETE FROM area_explorer_region_tiles WHERE server = $1 AND dimension = $2 AND level = 0 AND x = $3 AND z = $4', [scope.server, scope.dimension, x, z]);
@@ -308,6 +328,12 @@ function createXaeroRegionMapService({
       [scope.server, scope.dimension, level - 1, x * 2, x * 2 + 1, z * 2, z * 2 + 1]
     )).rows.map(row => ({ dx: row.x - x * 2, dz: row.z - z * 2, data: Buffer.from(row.data) }));
     const tile = await parentTileFromChildren(children);
+    const stored = (await pool.query(
+      'SELECT md5(data) AS hash FROM area_explorer_region_tiles WHERE server = $1 AND dimension = $2 AND level = $3 AND x = $4 AND z = $5',
+      [scope.server, scope.dimension, level, x, z]
+    )).rows[0];
+    // The same picture as before (a change under it too small to show at this level): nothing to write or pass up
+    if (tile ? stored?.hash === tileHash(tile) : !stored) return;
     if (tile) {
       await pool.query(
         `INSERT INTO area_explorer_region_tiles (server, dimension, level, x, z, data, updated_at)
@@ -329,15 +355,17 @@ function createXaeroRegionMapService({
    * A tile built before a child of it is rebuilt again: the child marks it dirty once more.
    * True if there may be more to do right away.
    */
-  async function processDirty({ settleMs = DIRTY_SETTLE_MS } = {}) {
+  async function processDirty({ settleMs = null } = {}) {
+    // How long each level waits: its own, unless one wait for all is asked for
+    const settle = LEVEL_SETTLE_MS.map(ms => (settleMs === null ? ms : settleMs));
     // Taken off the list first: an upload under a tile while it's being rebuilt marks it again
     const rows = (await pool.query(
       `DELETE FROM area_explorer_region_dirty WHERE (server, dimension, level, x, z) IN (
          SELECT server, dimension, level, x, z FROM area_explorer_region_dirty
-         WHERE dirty_at <= NOW() - make_interval(secs => $1 / 1000.0)
+         WHERE dirty_at <= NOW() - make_interval(secs => COALESCE(($1::int[])[level], $3) / 1000.0)
          ORDER BY dirty_at, level LIMIT $2
        ) RETURNING server, dimension, level, x, z`,
-      [settleMs, WORKER_BATCH]
+      [settle, WORKER_BATCH, settleMs === null ? DIRTY_SETTLE_MS : settleMs]
     )).rows;
     for (const row of rows) {
       try {

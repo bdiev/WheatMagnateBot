@@ -8,7 +8,7 @@ const sharp = require('sharp');
 const { PGlite } = require('@electric-sql/pglite');
 const { createXaeroRegionMapService, chunkMaskFromPixels, countExploredChunks, parentOf, parentTileFromChildren, tileInRange, MAX_DISTANCE, MAX_LEVEL, REGION_PX } = require('../xaero-region-map');
 
-const migrationSql = ['069_area_explorer_region_map.sql', '080_area_explorer_region_chunk_mask.sql']
+const migrationSql = ['069_area_explorer_region_map.sql', '080_area_explorer_region_chunk_mask.sql', '085_xaero_tiles_autovacuum.sql']
   .map(name => fs.readFileSync(path.join(__dirname, '..', 'migrations', name), 'utf8')).join('\n');
 const serverSource = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
 const appSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
@@ -137,6 +137,26 @@ async function testService() {
     const levels = (await db.query('SELECT level, x, z FROM area_explorer_region_tiles ORDER BY level')).rows;
     assert.equal(levels.length, MAX_LEVEL + 1, 'a tile on every level up to the top');
     assert.deepEqual(levels.slice(0, 3).map(row => [row.level, row.x, row.z]), [[0, -3, 2], [1, -2, 1], [2, -1, 0]]);
+
+    // Saved again by Xaero with nothing new drawn: the date moves on, nothing is rewritten or rebuilt
+    const before = (await db.query('SELECT level, updated_at FROM area_explorer_region_tiles ORDER BY level')).rows;
+    res = recordingResponse();
+    await service.handleModRequest(request('PUT', png, auth), res, modUrl(-3, 2, DRAWN + 500));
+    assert.deepEqual(JSON.parse(res.body), { stored: false, reason: 'unchanged' });
+    assert.equal((await db.query('SELECT COUNT(*)::int AS count FROM area_explorer_region_dirty')).rows[0].count, 0, 'nothing above it is dirtied');
+    assert.deepEqual((await service.regionIndex({ server: 'oldfrog.org', dimension: 'overworld' })).regions, [[-3, 2, DRAWN + 500]], 'the mod is told the site has the new drawing');
+    // A tile rebuilt to the same picture isn't written, and doesn't pass the rebuild up
+    await db.query(`INSERT INTO area_explorer_region_dirty (server, dimension, level, x, z) VALUES ('oldfrog.org', 'overworld', 1, -2, 1)`);
+    await service.processDirty({ settleMs: 0 });
+    assert.equal((await db.query('SELECT COUNT(*)::int AS count FROM area_explorer_region_dirty')).rows[0].count, 0);
+    assert.deepEqual((await db.query('SELECT level, updated_at FROM area_explorer_region_tiles ORDER BY level')).rows, before, 'no tile rewritten');
+    await db.query(`UPDATE area_explorer_region_tiles SET source_modified_at = to_timestamp(${DRAWN} / 1000.0) WHERE level = 0`);
+    // Zoomed-out levels wait longer than the first: 5 s dirty is enough for level 1, not for level 5
+    await db.query(`INSERT INTO area_explorer_region_dirty (server, dimension, level, x, z, dirty_at) VALUES
+      ('oldfrog.org', 'overworld', 1, -2, 1, NOW() - INTERVAL '5 seconds'), ('oldfrog.org', 'overworld', 5, -1, 0, NOW() - INTERVAL '5 seconds')`);
+    await service.processDirty();
+    assert.deepEqual((await db.query('SELECT level FROM area_explorer_region_dirty')).rows, [{ level: 5 }]);
+    await db.query('DELETE FROM area_explorer_region_dirty');
 
     // Explored: the top-left quarter drawn is 16 x 16 chunks, well inside ±30k
     const scope = { server: 'oldfrog.org', dimension: 'overworld' };
