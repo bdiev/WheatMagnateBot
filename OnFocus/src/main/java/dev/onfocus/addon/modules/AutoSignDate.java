@@ -8,6 +8,9 @@ import meteordevelopment.meteorclient.gui.widgets.WWidget;
 import meteordevelopment.meteorclient.gui.widgets.containers.WVerticalList;
 import meteordevelopment.meteorclient.gui.widgets.pressable.WButton;
 import meteordevelopment.meteorclient.mixin.AbstractSignEditScreenAccessor;
+import meteordevelopment.meteorclient.settings.EnumSetting;
+import meteordevelopment.meteorclient.settings.Setting;
+import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.orbit.EventHandler;
@@ -32,15 +35,16 @@ import org.lwjgl.glfw.GLFW;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.Locale;
 
 /**
  * Writes every sign the player places: lines 1-3 are the text of the first sign written with the
- * module on, line 4 is today's date (dd/MM/yyyy). The text is kept until the Reset button.
+ * module on, line 4 is today's date in the chosen format (dd/MM/yyyy by default). The text is kept
+ * until the Reset button.
  * Placing a sign with Shift held opens the normal editor, and that sign is not remembered.
  * Editing an existing sign (clicking it, even with a sign in hand) is left alone.
  */
 public class AutoSignDate extends Module {
-    private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd/MM/yyyy");
     /** How long after a placement click the server's sign editor still counts as that sign's. */
     private static final long PLACE_WINDOW_MS = 5_000;
 
@@ -52,6 +56,18 @@ public class AutoSignDate extends Module {
     /** The sign whose editor is open to learn the text from. */
     private BlockPos learningPos;
     private boolean sendingOwn;
+    /** Redraws the open module screen's text preview, or null when it isn't open. */
+    private Runnable refreshWidget;
+
+    private final SettingGroup sgGeneral = settings.getDefaultGroup();
+
+    private final Setting<DateFormat> dateFormat = sgGeneral.add(new EnumSetting.Builder<DateFormat>()
+        .name("date-format")
+        .description("How the date on line 4 is written.")
+        .defaultValue(DateFormat.DayMonthYearSlash)
+        .onChanged(format -> { if (refreshWidget != null) refreshWidget.run(); })
+        .build()
+    );
 
     public AutoSignDate() {
         super(OnFocusAddon.CATEGORY, "auto-sign-date",
@@ -128,10 +144,14 @@ public class AutoSignDate extends Module {
     private void send(BlockPos pos, boolean front) {
         sendingOwn = true;
         try {
-            mc.player.networkHandler.sendPacket(new UpdateSignC2SPacket(pos, front, text[0], text[1], text[2], LocalDate.now().format(DATE)));
+            mc.player.networkHandler.sendPacket(new UpdateSignC2SPacket(pos, front, text[0], text[1], text[2], today()));
         } finally {
             sendingOwn = false;
         }
+    }
+
+    private String today() {
+        return LocalDate.now().format(dateFormat.get().formatter);
     }
 
     private static boolean hasText(SignBlockEntity sign) {
@@ -154,6 +174,7 @@ public class AutoSignDate extends Module {
     public WWidget getWidget(GuiTheme theme) {
         WVerticalList list = theme.verticalList();
         fillWidget(theme, list);
+        refreshWidget = () -> fillWidget(theme, list);
         return list;
     }
 
@@ -164,7 +185,7 @@ public class AutoSignDate extends Module {
             return;
         }
         for (int i = 0; i < 3; i++) list.add(theme.label((i + 1) + ": " + text[i]));
-        list.add(theme.label("4: " + LocalDate.now().format(DATE) + " (today's date)"));
+        list.add(theme.label("4: " + today() + " (today's date)"));
 
         WButton reset = list.add(theme.button("Reset text")).widget();
         reset.action = () -> {
@@ -197,5 +218,33 @@ public class AutoSignDate extends Module {
 
         super.fromTag(tag);
         return this;
+    }
+
+    public enum DateFormat {
+        DayMonthYearSlash("dd/MM/yyyy"),
+        DayMonthYearDot("dd.MM.yyyy"),
+        DayMonthYearDash("dd-MM-yyyy"),
+        MonthDayYearSlash("MM/dd/yyyy"),
+        YearMonthDayDash("yyyy-MM-dd"),
+        YearMonthDaySlash("yyyy/MM/dd"),
+        DayMonthShortYearSlash("dd/MM/yy"),
+        DayMonthShortYearDot("dd.MM.yy"),
+        MonthDayShortYearSlash("MM/dd/yy"),
+        DayMonthNameYear("d MMM yyyy"),
+        MonthNameDayYear("MMM d, yyyy");
+
+        /** Shown in the dropdown and saved in the config. */
+        private final String pattern;
+        private final DateTimeFormatter formatter;
+
+        DateFormat(String pattern) {
+            this.pattern = pattern;
+            this.formatter = DateTimeFormatter.ofPattern(pattern, Locale.ENGLISH);
+        }
+
+        @Override
+        public String toString() {
+            return pattern;
+        }
     }
 }

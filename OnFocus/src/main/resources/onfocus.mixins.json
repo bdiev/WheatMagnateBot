@@ -5,7 +5,8 @@
   "client": [
     "DrawContextMixin",
     "HandledScreenMixin",
-    "MinecraftClientMixin"
+    "MinecraftClientMixin",
+    "PacketInflaterMixin"
   ],
   "injectors": {
     "defaultRequire": 1
