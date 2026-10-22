@@ -49,8 +49,11 @@ public abstract class HandledScreenMixin {
         Slot slot = getSlotAt(x, y);
         if (slot == null) return; // outside the slots: the game's own (dropping the bundle)
         if (button == 0 && Screen.hasControlDown() && slot.hasStack()) {
-            ez.beginCollect();
+            ez.beginCollect(false);
             onfocus$collect(ez, slot);
+        } else if (button == 1 && Screen.hasControlDown() && !slot.hasStack()) {
+            ez.beginCollect(true);
+            onfocus$unloadAll(ez, slot);
         } else {
             ez.begin(slot, x, y, button == 1);
             onfocus$take(ez, slot);
@@ -97,6 +100,18 @@ public abstract class HandledScreenMixin {
         if (ez.collects(clicked, handler, item)) onfocus$click(clicked, 0);
         for (Slot slot : handler.slots) {
             if (slot != clicked && ez.collects(slot, handler, item)) onfocus$click(slot, 0);
+        }
+    }
+
+    /**
+     * Ctrl + right click on an empty slot: the bundle's stacks go out one per empty slot - the clicked
+     * one, then the rest of that inventory's (the chest's when clicked in the chest, the player's own
+     * when clicked there), until the bundle is empty.
+     */
+    private void onfocus$unloadAll(EzBundles ez, Slot clicked) {
+        if (ez.unloads(clicked, handler)) onfocus$click(clicked, 1);
+        for (Slot slot : handler.slots) {
+            if (slot != clicked && slot.inventory == clicked.inventory && ez.unloads(slot, handler)) onfocus$click(slot, 1);
         }
     }
 

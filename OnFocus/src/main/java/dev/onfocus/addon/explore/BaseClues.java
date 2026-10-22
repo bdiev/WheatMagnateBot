@@ -27,9 +27,11 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * What gives a player base away, and how much: the score behind Area Explorer's base markers.
@@ -40,6 +42,8 @@ import java.util.Set;
  * village its paths or villagers. That's looked for wider around than the score is summed over -
  * a village spreads far past its bell. Near a Trial Chamber they count nothing: its barrels,
  * dispensers, hoppers and chests fill a whole chamber, while its spawners sit in a few rooms of it.
+ * A place with a lot of copper building blocks is no base at all: it's the chamber itself, its
+ * walls, floors and bulbs, even when its spawners and vaults aren't loaded.
  */
 public final class BaseClues {
     /** Score left to the clues structures share, in a cluster with a structure in it. */
@@ -48,6 +52,10 @@ public final class BaseClues {
     private static final int VILLAGE_PATHS = 24;
     /** Villagers around that make a village (overworld): any village has a handful wandering about. */
     private static final int VILLAGE_VILLAGERS = 3;
+    /** Copper building blocks in a place that make it a Trial Chamber: one has hundreds, a player's base a few. */
+    private static final int TRIAL_CHAMBER_COPPER = 32;
+    /** Copper blocks that aren't a Trial Chamber's: ore, raw copper, and what players make of copper ingots. */
+    private static final Pattern NOT_CHAMBER_COPPER = Pattern.compile("ore|raw_|torch|lantern|chest|statue|chain|bars|golem");
 
     /** What the clues structures share are scored near: how much of them is left. */
     public enum Nearby {
@@ -123,6 +131,8 @@ public final class BaseClues {
     private static final Set<Block> TRIAL_CHAMBER_SIGNS = Set.of(Blocks.TRIAL_SPAWNER, Blocks.VAULT);
 
     private static final Map<RegistryKey<World>, Map<Block, Clue>> BLOCK_CLUES = new HashMap<>();
+    /** Copper blocks, cut, grates, bulbs, doors...: what a Trial Chamber is built of. Built on first use. */
+    private static Set<Block> chamberCopper;
 
     private BaseClues() {
     }
@@ -133,6 +143,19 @@ public final class BaseClues {
 
     public static boolean isTrialChamberSign(BlockState state) {
         return TRIAL_CHAMBER_SIGNS.contains(state.getBlock());
+    }
+
+    /** A copper building block, as Trial Chambers are built of. */
+    public static boolean isChamberCopper(BlockState state) {
+        if (chamberCopper == null) {
+            Set<Block> copper = new HashSet<>();
+            for (Block b : Registries.BLOCK) {
+                String id = Registries.BLOCK.getId(b).getPath();
+                if (id.contains("copper") && !NOT_CHAMBER_COPPER.matcher(id).find()) copper.add(b);
+            }
+            chamberCopper = copper;
+        }
+        return chamberCopper.contains(state.getBlock());
     }
 
     /** A village street block. */
@@ -210,7 +233,7 @@ public final class BaseClues {
     public static final class Chunk {
         private final EnumMap<Clue, Integer> blocks = new EnumMap<>(Clue.class), entities = new EnumMap<>(Clue.class);
         private boolean structure, trialChamber;
-        private int villagePaths;
+        private int villagePaths, copper;
         // Positions of the clues, weighted by their points: where the marker goes
         private double blockX, blockY, blockZ, blockWeight;
         private double entityX, entityY, entityZ, entityWeight;
@@ -243,6 +266,10 @@ public final class BaseClues {
             villagePaths++;
         }
 
+        public void addChamberCopper() {
+            copper++;
+        }
+
         /** Carries the entities counted in the chunk's last scan over to this one. */
         public void keepEntitiesOf(Chunk old) {
             entities.putAll(old.entities);
@@ -253,7 +280,7 @@ public final class BaseClues {
         }
 
         public boolean isEmpty() {
-            return blocks.isEmpty() && entities.isEmpty() && !structure && villagePaths == 0;
+            return blocks.isEmpty() && entities.isEmpty() && !structure && villagePaths == 0 && copper == 0;
         }
     }
 
@@ -277,11 +304,16 @@ public final class BaseClues {
         return paths >= VILLAGE_PATHS || villagers >= VILLAGE_VILLAGERS ? Nearby.STRUCTURE : Nearby.NOTHING;
     }
 
-    /** Scores the chunks together, as one place; near a structure (see {@link #nearby}) the clues structures share count less. */
+    /**
+     * Scores the chunks together, as one place; near a structure (see {@link #nearby}) the clues
+     * structures share count less, and a Trial Chamber's copper walls score nothing at all.
+     */
     public static Score score(Iterable<Chunk> chunks, Nearby nearby) {
         EnumMap<Clue, Integer> counts = new EnumMap<>(Clue.class);
         double x = 0, y = 0, z = 0, weight = 0;
+        int copper = 0;
         for (Chunk chunk : chunks) {
+            copper += chunk.copper;
             chunk.blocks.forEach((clue, n) -> counts.merge(clue, n, Integer::sum));
             chunk.entities.forEach((clue, n) -> counts.merge(clue, n, Integer::sum));
             x += chunk.blockX + chunk.entityX;
@@ -289,7 +321,7 @@ public final class BaseClues {
             z += chunk.blockZ + chunk.entityZ;
             weight += chunk.blockWeight + chunk.entityWeight;
         }
-        if (weight == 0) return new Score(0, BlockPos.ORIGIN, "");
+        if (weight == 0 || copper >= TRIAL_CHAMBER_COPPER) return new Score(0, BlockPos.ORIGIN, "");
 
         double total = 0;
         List<Map.Entry<Clue, Double>> parts = new ArrayList<>();

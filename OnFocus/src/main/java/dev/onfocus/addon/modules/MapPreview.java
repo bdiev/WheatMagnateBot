@@ -144,8 +144,8 @@ public class MapPreview extends Module {
         if (remember.get() && !cache.ready()) return;
         // The creative inventory's slots don't map onto real server slots
         if (mc.currentScreen instanceof CreativeInventoryScreen) return;
-        // Map Art Copier moves maps around itself; don't fight it over the slots
-        if (Modules.get().isActive(MapArtCopier.class)) return;
+        // Map Art Copier and Map Art Sorter move maps around themselves; don't fight them over the slots
+        if (Modules.get().isActive(MapArtCopier.class) || Modules.get().isActive(MapArtSorter.class)) return;
 
         // The open screen's handler (a chest, shulker...) or the player's own one when nothing is open
         ScreenHandler handler = mc.player.currentScreenHandler;

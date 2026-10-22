@@ -2,6 +2,7 @@ package dev.onfocus.addon.modules;
 
 import dev.onfocus.addon.OnFocusAddon;
 import meteordevelopment.meteorclient.events.entity.player.PlayerMoveEvent;
+import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.mixininterface.IVec3d;
 import meteordevelopment.meteorclient.settings.*;
@@ -14,6 +15,7 @@ import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.effect.StatusEffects;
 import net.minecraft.item.ItemStack;
 import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket;
+import net.minecraft.network.packet.s2c.play.PlayerPositionLookS2CPacket;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 
@@ -30,6 +32,12 @@ import net.minecraft.util.math.Vec3d;
  * Closing and reopening like that every few ticks keeps the count from ever reaching 20, so the
  * elytra isn't worn at all. Movement is set by this module either way, so the client keeps flying
  * through the gap.
+ * <p>
+ * Auto speed: anticheats cap elytra speed, and the cap isn't always one number - plugins like
+ * AnarchyExploitFixes allow more in old chunks than in new ones, and some scale it with TPS. Instead
+ * of a fixed speed the module speeds up while the server takes the movement, and when it answers
+ * with a setback (a position packet pulling the player back) it slows down a step, holds there and
+ * later tries again. So it flies at whatever the server allows right now.
  */
 public class ElytraControl extends Module {
     /** Ticks of the client showing no glide, past the expected round trip, before the server is taken to have stopped it. */
@@ -39,6 +47,7 @@ public class ElytraControl extends Module {
     private static final int REOPEN_COOLDOWN_TICKS = 10;
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
+    private final SettingGroup sgAutoSpeed = settings.createGroup("Auto Speed");
     private final SettingGroup sgDurability = settings.createGroup("Durability");
 
     private final Setting<Double> horizontalSpeed = sgGeneral.add(new DoubleSetting.Builder()
@@ -91,6 +100,53 @@ public class ElytraControl extends Module {
         .build()
     );
 
+    private final Setting<Boolean> autoSpeed = sgAutoSpeed.add(new BoolSetting.Builder()
+        .name("auto-speed")
+        .description("Starts at speed and keeps speeding up while the server accepts it; a setback slows it down a step. Finds the anticheat's limit by itself.")
+        .defaultValue(false)
+        .build()
+    );
+
+    private final Setting<Double> maxSpeed = sgAutoSpeed.add(new DoubleSetting.Builder()
+        .name("max-speed")
+        .description("Blocks per second auto speed never goes above.")
+        .defaultValue(150)
+        .range(1, 300)
+        .sliderRange(20, 200)
+        .visible(autoSpeed::get)
+        .build()
+    );
+
+    private final Setting<Double> rampRate = sgAutoSpeed.add(new DoubleSetting.Builder()
+        .name("ramp")
+        .description("Blocks per second added every second of flight without a setback.")
+        .defaultValue(2)
+        .range(0.1, 20)
+        .sliderRange(0.5, 10)
+        .visible(autoSpeed::get)
+        .build()
+    );
+
+    private final Setting<Double> backOff = sgAutoSpeed.add(new DoubleSetting.Builder()
+        .name("back-off")
+        .description("Blocks per second taken off the speed at each setback.")
+        .defaultValue(4)
+        .range(0.5, 50)
+        .sliderRange(1, 20)
+        .visible(autoSpeed::get)
+        .build()
+    );
+
+    private final Setting<Integer> probeDelay = sgAutoSpeed.add(new IntSetting.Builder()
+        .name("probe-delay")
+        .description("Seconds to hold below the last setback speed before trying faster again - the limit may be higher further on (old chunks, better TPS). Doubles, up to 16 times, while setbacks keep coming at the same speed.")
+        .defaultValue(20)
+        .range(1, 600)
+        .sliderRange(5, 120)
+        .visible(autoSpeed::get)
+        .build()
+    );
+
     private final Setting<Boolean> durabilitySaver = sgDurability.add(new BoolSetting.Builder()
         .name("durability-saver")
         .description("Closes and reopens the elytra on the server every few ticks, before it counts a full second of gliding - which is when it takes durability. Works on vanilla/Paper servers; strict anticheats may not like it.")
@@ -133,6 +189,13 @@ public class ElytraControl extends Module {
     private int closedFor;
     private int noGlideTicks, airTicks, reopenCooldown;
     private double velX, velZ;
+    /** Auto speed: the speed now, the last speed that drew a setback (0 = none yet), and ticks left holding below it. */
+    private double autoSpeedNow, ceiling;
+    private int holdTicks, setbacks;
+    /** Setbacks in a row at the same limit; each one doubles the hold, so a known limit isn't hit every probe-delay. */
+    private int sameCeiling;
+    /** Vertical speed set last tick, blocks per tick. */
+    private double velY;
 
     // Report
     private int flightTicks, durabilityLost, lastDamage = -1;
@@ -158,6 +221,10 @@ public class ElytraControl extends Module {
         }
         flightTicks = durabilityLost = 0;
         lastDamage = -1;
+        autoSpeedNow = horizontalSpeed.get();
+        ceiling = 0;
+        holdTicks = setbacks = sameCeiling = 0;
+        velY = 0;
     }
 
     @Override
@@ -166,12 +233,14 @@ public class ElytraControl extends Module {
         int seconds = flightTicks / 20;
         info("Flew (highlight)%dm %02ds(default), elytra lost (highlight)%d(default) durability (without the saver: about %d).",
             seconds / 60, seconds % 60, durabilityLost, seconds);
+        if (autoSpeed.get()) info("Setbacks: (highlight)%d(default), last one at (highlight)%.0f(default) b/s.", setbacks, ceiling);
     }
 
     @Override
     public String getInfoString() {
         if (mc.player == null || !flying()) return null;
-        return "%.0f b/s".formatted(Math.hypot(velX, velZ) * 20);
+        String speed = "%.0f b/s".formatted(Math.hypot(velX, velZ) * 20);
+        return autoSpeed.get() && ceiling > 0 ? speed + " (limit ~%.0f)".formatted(ceiling) : speed;
     }
 
     /** Whether this module is moving the player: gliding, or in the gap of a durability reset. */
@@ -221,6 +290,50 @@ public class ElytraControl extends Module {
         }
 
         if (durabilitySaver.get() && ++glideTicks >= resetInterval.get()) close();
+        tickAutoSpeed();
+    }
+
+    /** Speeds up a little each tick of flying at full speed, unless holding after a setback. */
+    private void tickAutoSpeed() {
+        if (!autoSpeed.get()) return;
+        if (holdTicks > 0) {
+            holdTicks--;
+            return;
+        }
+        // Only while actually going that fast, or standing still would wind it up with nothing tested
+        if (Math.hypot(velX, velZ) * 20 < autoSpeedNow - 1) return;
+        autoSpeedNow = Math.min(maxSpeed.get(), autoSpeedNow + rampRate.get() / 20);
+    }
+
+    /** Blocks per second this module flies at. */
+    private double speed() {
+        return autoSpeed.get() ? autoSpeedNow : horizontalSpeed.get();
+    }
+
+    /** A position packet while flying is the anticheat pulling us back. Comes on the network thread. */
+    @EventHandler
+    private void onPacket(PacketEvent.Receive event) {
+        if (event.packet instanceof PlayerPositionLookS2CPacket) mc.execute(this::onSetback);
+    }
+
+    private void onSetback() {
+        if (mc.player == null || !flying()) return;
+        setbacks++;
+        double was = Math.hypot(velX, velZ) * 20;
+        // Below full speed the horizontal speed isn't what was refused: climbing or sinking too fast is checked on its own
+        boolean horizontal = was >= speed() - 1;
+        OnFocusAddon.LOG.info("[ElytraControl] Setback at {} b/s (target {}), vertical {} b/s, y {}{}", "%.1f".formatted(was), "%.1f".formatted(speed()),
+            "%.1f".formatted(velY * 20), "%.1f".formatted(mc.player.getY()), horizontal ? "" : " - not at full speed, kept");
+        if (!autoSpeed.get() || !horizontal) return;
+        sameCeiling = ceiling > 0 && Math.abs(autoSpeedNow - ceiling) < backOff.get() ? Math.min(sameCeiling + 1, 4) : 0;
+        ceiling = autoSpeedNow;
+        autoSpeedNow = Math.max(1, autoSpeedNow - backOff.get());
+        holdTicks = probeDelay.get() * 20 << sameCeiling;
+        // Carry on from the new speed rather than the one that was refused
+        if (was > autoSpeedNow) {
+            velX *= autoSpeedNow / was;
+            velZ *= autoSpeedNow / was;
+        }
     }
 
     /** Asks the server to stop the glide: START_FALL_FLYING while gliding does that. */
@@ -276,7 +389,7 @@ public class ElytraControl extends Module {
         double len = Math.hypot(dx, dz);
 
         // Settings are in blocks per second, movement is per tick
-        double speed = horizontalSpeed.get() / 20, sink = fallSpeed.get() / 20;
+        double speed = speed() / 20, sink = fallSpeed.get() / 20;
         double y;
         if (mc.options.jumpKey.isPressed()) y = verticalSpeed.get() / 20;
         else if (mc.options.sneakKey.isPressed()) y = -verticalSpeed.get() / 20;
@@ -290,7 +403,7 @@ public class ElytraControl extends Module {
 
         double targetX = len > 0 ? dx / len * speed : 0, targetZ = len > 0 ? dz / len * speed : 0;
         // Full speed reached in acceleration-time seconds
-        double step = acceleration.get() > 0 ? horizontalSpeed.get() / 20 / (acceleration.get() * 20) : 0;
+        double step = acceleration.get() > 0 ? speed() / 20 / (acceleration.get() * 20) : 0;
         if (step <= 0) {
             velX = targetX;
             velZ = targetZ;
@@ -307,6 +420,7 @@ public class ElytraControl extends Module {
 
         ((IVec3d) event.movement).meteor$set(velX, y, velZ);
         mc.player.setVelocity(velX, y, velZ);
+        velY = y;
     }
 
     private static double key(boolean pressed) {

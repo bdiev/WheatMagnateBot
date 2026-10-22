@@ -873,13 +873,15 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get('limit'), 10) || 50, 1), MAX_PAGE_SIZE);
     const offset = Math.min(Math.max(Number.parseInt(url.searchParams.get('offset'), 10) || 0, 0), 1_000_000);
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-    // Newest first, by name, or nearest a spot (the middle of the map in view)
+    // Newest first, by name, highest base score, or nearest a spot (the middle of the map in view)
     const sort = url.searchParams.get('sort');
     const nearX = normalizeInteger(url.searchParams.get('nearX'), MAX_COORDINATE);
     const nearZ = normalizeInteger(url.searchParams.get('nearZ'), MAX_COORDINATE);
     let orderSql = 'ORDER BY found_at DESC, id DESC';
     const orderParams = [...params];
     if (sort === 'name') orderSql = 'ORDER BY name, found_at DESC, id DESC';
+    // A base's details start "score 30: ...": the rest have none and come after the bases
+    else if (sort === 'score') orderSql = `ORDER BY CASE WHEN kind = 'BASE' THEN substring(details from '^score ([0-9]{1,9})')::int END DESC NULLS LAST, found_at DESC, id DESC`;
     else if (sort === 'nearest' && nearX !== null && nearZ !== null) {
       orderParams.push(nearX, nearZ);
       const ax = `$${orderParams.length - 1}`, az = `$${orderParams.length}`;

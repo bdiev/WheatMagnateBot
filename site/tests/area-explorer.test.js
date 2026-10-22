@@ -207,6 +207,10 @@ async function testIngestAndQueries() {
     const nearest = await service.getFinds(url('dimension=overworld&sort=nearest&nearX=1090&nearZ=1000'));
     assert.equal(nearest.finds[0].name, 'Base #3', 'the closest to the spot first');
     assert.equal(nearest.finds.at(-1).name, 'Oak Sign');
+    const byScore = await service.getFinds(url('dimension=overworld&sort=score'));
+    assert.deepEqual(byScore.finds.slice(0, 2).map(find => find.name), ['Base #1', 'Base #3'], 'the highest scoring base first, the finds without a score after');
+    const basesByScore = await service.getFinds(url('kind=base&dimension=overworld&sort=score'));
+    assert.deepEqual(basesByScore.finds.map(find => find.name), ['Base #1', 'Base #3']);
     const summaryScope = (await service.getSummary()).scopes.find(scope => scope.dimension === 'overworld');
     assert.deepEqual(summaryScope.valuableItems, [{ name: 'Elytra', count: 1, items: 1, value: 95 }], 'the most valuable loot');
     assert.ok(summaryScope.latest?.name, 'and the latest find');

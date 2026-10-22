@@ -6398,7 +6398,7 @@ function areaExplorerState() {
       logFilter: '', logEvents: [], logHasMore: false, logServer: null, logRequestId: 0,
       showFinds: readAreaExplorerSetting('areaExplorerShowFinds', 'true') !== 'false',
       visibleKinds: readAreaExplorerMarkerKinds(),
-      sort: ['newest', 'nearest', 'name'].includes(readAreaExplorerSetting('areaExplorerSort', 'newest')) ? readAreaExplorerSetting('areaExplorerSort', 'newest') : 'newest',
+      sort: ['newest', 'nearest', 'name', 'score'].includes(readAreaExplorerSetting('areaExplorerSort', 'newest')) ? readAreaExplorerSetting('areaExplorerSort', 'newest') : 'newest',
       extent: readAreaExplorerExtent()
     };
   }

@@ -22,7 +22,8 @@ import net.minecraft.screen.slot.Slot;
  * bundle - the game's own left click with a bundle, once per slot swept over. Without this the
  * game only clicks on letting go, and a sweep spreads the cursor stack instead. Holding the right
  * button and sweeping over empty slots takes the bundle's stacks out, one per slot. Ctrl + left
- * click on an item puts every stack of it in the screen into the bundle. The mouse is followed by
+ * click on an item puts every stack of it in the screen into the bundle, and Ctrl + right click on
+ * an empty slot takes everything out of it into that slot and the empty slots of its inventory. The mouse is followed by
  * {@link dev.onfocus.addon.mixin.HandledScreenMixin}.
  */
 public class EzBundles extends Module {
@@ -41,7 +42,7 @@ public class EzBundles extends Module {
     private boolean dragging;
     /** The sweep takes the bundle's stacks out into empty slots instead of putting items in. */
     private boolean unloading;
-    /** A Ctrl + click: everything was done on the press, the rest of it only waits for the button to come up. */
+    /** A Ctrl + click (collect or unload all): everything was done on the press, the rest of it only waits for the button to come up. */
     private boolean collecting;
     private final IntSet swept = new IntOpenHashSet();
     private int pressedSlot;
@@ -51,7 +52,7 @@ public class EzBundles extends Module {
     private double lastX, lastY;
 
     public EzBundles() {
-        super(OnFocusAddon.CATEGORY, "ez-bundles", "Sweep over items with a bundle on the cursor to put them in (left button) or over empty slots to take them out (right button). Ctrl + click collects every stack of one item.");
+        super(OnFocusAddon.CATEGORY, "ez-bundles", "Sweep over items with a bundle on the cursor to put them in (left button) or over empty slots to take them out (right button). Ctrl + left click collects every stack of one item, Ctrl + right click on an empty slot takes everything out.");
     }
 
     @Override
@@ -77,9 +78,10 @@ public class EzBundles extends Module {
         lastY = y;
     }
 
-    /** Starts a Ctrl + click: the press collects, the sweep and letting go do nothing. */
-    public void beginCollect() {
+    /** Starts a Ctrl + click: the press collects (left) or unloads everything (right), the sweep and letting go do nothing. */
+    public void beginCollect(boolean unload) {
         dragging = true;
+        unloading = unload;
         collecting = true;
         moved = 1;
     }
@@ -109,8 +111,7 @@ public class EzBundles extends Module {
         if (!(bundle.getItem() instanceof BundleItem)) return false;
 
         if (unloading) {
-            ItemStack next = nextOut(bundle);
-            if (next.isEmpty() || slot.hasStack() || !slot.canInsert(next)) return false;
+            if (!canTakeOut(slot, bundle)) return false;
         } else {
             ItemStack stack = slot.getStack();
             if (!canPutIn(slot, bundle)) return false;
@@ -126,6 +127,18 @@ public class EzBundles extends Module {
     /** Ctrl + click: whether this slot's item is of that kind and goes in the bundle on the cursor. */
     public boolean collects(Slot slot, ScreenHandler handler, Item item) {
         return slot.getStack().isOf(item) && canPutIn(slot, handler.getCursorStack());
+    }
+
+    /** Ctrl + right click: whether the bundle on the cursor has a stack left to take out into this slot. */
+    public boolean unloads(Slot slot, ScreenHandler handler) {
+        ItemStack bundle = handler.getCursorStack();
+        return bundle.getItem() instanceof BundleItem && canTakeOut(slot, bundle);
+    }
+
+    /** Whether a right click on this slot takes the bundle's next stack out into it: it's empty and takes that item. */
+    private static boolean canTakeOut(Slot slot, ItemStack bundle) {
+        ItemStack next = nextOut(bundle);
+        return !next.isEmpty() && !slot.hasStack() && slot.canInsert(next);
     }
 
     /**

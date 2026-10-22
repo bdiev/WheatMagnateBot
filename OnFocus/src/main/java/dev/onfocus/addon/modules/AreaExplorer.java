@@ -3714,7 +3714,8 @@ public class AreaExplorer extends Module {
             else if (bases && section.hasAny(BaseClues::isStructureSign)) baseChunk.markStructure();
             // The palette says cheaply whether a section has any of the blocks at all
             if (!section.hasAny(state -> wanted.containsKey(state.getBlock())
-                || (bases && (clues.containsKey(state.getBlock()) || state.getBlock() instanceof ChestBlock || BaseClues.isVillagePath(state))))) continue;
+                || (bases && (clues.containsKey(state.getBlock()) || state.getBlock() instanceof ChestBlock
+                    || BaseClues.isVillagePath(state) || BaseClues.isChamberCopper(state))))) continue;
             int baseY = ChunkSectionPos.getBlockCoord(chunk.sectionIndexToCoord(i));
             for (int y = 0; y < 16; y++) {
                 for (int z = 0; z < 16; z++) {
@@ -3732,6 +3733,7 @@ public class AreaExplorer extends Module {
                         }
                         if (clue != null) baseChunk.addBlock(clue, baseX + x, baseY + y, baseZ + z);
                         else if (BaseClues.isVillagePath(state)) baseChunk.addVillagePath();
+                        else if (BaseClues.isChamberCopper(state)) baseChunk.addChamberCopper();
                     }
                 }
             }
