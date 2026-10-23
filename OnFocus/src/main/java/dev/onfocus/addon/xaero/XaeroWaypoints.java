@@ -203,7 +203,8 @@ public final class XaeroWaypoints {
 
     private static Saved saved(String dimension, WaypointSet set, Waypoint w) {
         return new Saved(dimension, set.getName(), w.getName(), w.getInitials(), w.getX(), w.getY(), w.getZ(), w.getCreatedAt(),
-            w.getWaypointColor() == null ? 0xFFFFFF : w.getWaypointColor().getHex());
+            // Xaero's colours are ARGB, opaque: the alpha would make every one a negative number
+            w.getWaypointColor() == null ? 0xFFFFFF : w.getWaypointColor().getHex() & 0xFFFFFF);
     }
 
     /** A waypoint to add: {@link #addAll} takes many at once. */

@@ -115,6 +115,7 @@ async function testIngestAndQueries() {
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/083_area_explorer_command_states.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/087_area_explorer_waypoints.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/088_area_explorer_unmark.sql'), 'utf8'));
+    await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/089_area_explorer_marker_color.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/073_area_explorer_events.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/084_area_explorer_favorites.sql'), 'utf8'));
     const published = [];
@@ -280,6 +281,7 @@ async function testMarkers() {
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/083_area_explorer_command_states.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/087_area_explorer_waypoints.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/088_area_explorer_unmark.sql'), 'utf8'));
+    await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/089_area_explorer_marker_color.sql'), 'utf8'));
     const service = createAreaExplorerService({
       pool: poolFor(db), hashToken, readJsonBody: async () => ({}), sendJson() {}, sendError() {}, enforceRateLimit: () => true
     });
@@ -440,7 +442,7 @@ async function testCommands() {
   try {
     for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '071_area_explorer_status_y.sql', '072_area_explorer_picked_up.sql',
       '072_area_explorer_yaw.sql', '073_area_explorer_events.sql', '074_area_explorer_coverage.sql', '076_area_explorer_commands.sql',
-      '083_area_explorer_command_states.sql', '087_area_explorer_waypoints.sql', '088_area_explorer_unmark.sql']) {
+      '083_area_explorer_command_states.sql', '087_area_explorer_waypoints.sql', '088_area_explorer_unmark.sql', '089_area_explorer_marker_color.sql']) {
       await db.exec(fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8'));
     }
     const logs = [];
@@ -529,7 +531,7 @@ async function testWaypoints() {
   try {
     for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '071_area_explorer_status_y.sql', '072_area_explorer_picked_up.sql',
       '072_area_explorer_yaw.sql', '073_area_explorer_events.sql', '074_area_explorer_coverage.sql', '076_area_explorer_commands.sql',
-      '083_area_explorer_command_states.sql', '084_area_explorer_favorites.sql', '087_area_explorer_waypoints.sql', '088_area_explorer_unmark.sql']) {
+      '083_area_explorer_command_states.sql', '084_area_explorer_favorites.sql', '087_area_explorer_waypoints.sql', '088_area_explorer_unmark.sql', '089_area_explorer_marker_color.sql']) {
       await db.exec(fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8'));
     }
     const logs = [];
@@ -550,6 +552,8 @@ async function testWaypoints() {
     assert.deepEqual(command.waypoint, { name: 'Stash north', x: -33, y: 70, z: 17, color: 0xFFAA00 });
     assert.deepEqual([find.kind, find.name, find.x, find.y, find.z, find.server], ['MARKER', 'Stash north', -33, 70, 17, 'oldfrog.org'], 'shows on the site\'s map at once');
     assert.match(find.details, /by admin/);
+    assert.equal(find.color, 0xFFAA00, 'a site marker keeps its colour: the site shows it as a banner of it');
+    assert.equal((await service.getFind(find.id)).find.color, 0xFFAA00);
     assert.match(logs.at(-1).message, /Sent "VDS" the marker "Stash north" at -33 70 17/);
     assert.ok(published.some(payload => payload.added === 1 && payload.server === 'oldfrog.org'), 'the maps reload');
     const stateOf = async id => (await db.query('SELECT state FROM area_explorer_commands WHERE id = $1', [id])).rows[0].state;
@@ -605,7 +609,7 @@ async function testRemovalSync() {
   try {
     for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '071_area_explorer_status_y.sql', '072_area_explorer_picked_up.sql',
       '072_area_explorer_yaw.sql', '073_area_explorer_events.sql', '074_area_explorer_coverage.sql', '076_area_explorer_commands.sql',
-      '083_area_explorer_command_states.sql', '084_area_explorer_favorites.sql', '087_area_explorer_waypoints.sql', '088_area_explorer_unmark.sql']) {
+      '083_area_explorer_command_states.sql', '084_area_explorer_favorites.sql', '087_area_explorer_waypoints.sql', '088_area_explorer_unmark.sql', '089_area_explorer_marker_color.sql']) {
       await db.exec(fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8'));
     }
     const logs = [];
@@ -760,7 +764,7 @@ async function testCoverage() {
   try {
     for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '071_area_explorer_status_y.sql', '072_area_explorer_picked_up.sql',
       '072_area_explorer_yaw.sql', '073_area_explorer_events.sql', '074_area_explorer_coverage.sql', '076_area_explorer_commands.sql',
-      '083_area_explorer_command_states.sql', '087_area_explorer_waypoints.sql', '088_area_explorer_unmark.sql']) {
+      '083_area_explorer_command_states.sql', '087_area_explorer_waypoints.sql', '088_area_explorer_unmark.sql', '089_area_explorer_marker_color.sql']) {
       await db.exec(fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8'));
     }
     const published = [];
@@ -802,6 +806,7 @@ async function testRunLog() {
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/083_area_explorer_command_states.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/087_area_explorer_waypoints.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/088_area_explorer_unmark.sql'), 'utf8'));
+    await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/089_area_explorer_marker_color.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/073_area_explorer_events.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/084_area_explorer_favorites.sql'), 'utf8'));
     const published = [];

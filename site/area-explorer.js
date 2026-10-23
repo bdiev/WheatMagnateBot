@@ -295,7 +295,9 @@ function publicFind(row) {
     label: row.label,
     details: row.details,
     // Starred by the user asking: their Favorites tab
-    favorite: row.favorite === true
+    favorite: row.favorite === true,
+    // A marker made on the site's map: the colour it was given there
+    ...(row.marker_color !== null && row.marker_color !== undefined ? { color: row.marker_color } : {})
   };
 }
 
@@ -718,11 +720,11 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
       await client.query('BEGIN');
       // The same marker made again (taken off the site before, say) is that one, back on
       findRow = (await client.query(
-        `INSERT INTO area_explorer_finds (server, dimension, kind, x, y, z, found_at, name, item_count, label, details, dedupe_key, token_id)
-         VALUES ($1, $2, 'MARKER', $3, $4, $5, NOW(), $6, 0, '', $7, $8, $9)
-         ON CONFLICT (server, dimension, dedupe_key) DO UPDATE SET removed_at = NULL, removed_by = NULL
+        `INSERT INTO area_explorer_finds (server, dimension, kind, x, y, z, found_at, name, item_count, label, details, dedupe_key, token_id, marker_color)
+         VALUES ($1, $2, 'MARKER', $3, $4, $5, NOW(), $6, 0, '', $7, $8, $9, $10)
+         ON CONFLICT (server, dimension, dedupe_key) DO UPDATE SET removed_at = NULL, removed_by = NULL, marker_color = EXCLUDED.marker_color
          RETURNING *`,
-        [server, dimension, x, y, z, name, details, dedupeKey({ kind: 'MARKER', x, y, z, name, label: '' }), tokenId]
+        [server, dimension, x, y, z, name, details, dedupeKey({ kind: 'MARKER', x, y, z, name, label: '' }), tokenId, color]
       )).rows[0];
       row = (await client.query(
         `INSERT INTO area_explorer_commands (token_id, kind, server, dimension, min_cx, min_cz, max_cx, max_cz, created_by,

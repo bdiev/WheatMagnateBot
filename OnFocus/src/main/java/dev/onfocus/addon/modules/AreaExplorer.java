@@ -31,6 +31,7 @@ import dev.onfocus.addon.explore.ExplorerDiagnostics;
 import dev.onfocus.addon.explore.MapSync;
 import dev.onfocus.addon.explore.MarkerDeletions;
 import dev.onfocus.addon.explore.ShareClient;
+import dev.onfocus.addon.explore.SiteMarkerColors;
 import dev.onfocus.addon.explore.ShareServer;
 import dev.onfocus.addon.explore.SiteCommands;
 import dev.onfocus.addon.explore.SiteSync;
@@ -1050,6 +1051,8 @@ public class AreaExplorer extends Module {
     private static final Path SHARED = FabricLoader.getInstance().getGameDir().resolve("onfocus").resolve("shared");
     /** The markers taken out here, on the other PC or on the site: the PC that keeps them (share-mode Serve, or the site alone) has these. */
     private static final MarkerDeletions DELETIONS = new MarkerDeletions(SHARED);
+    /** The colours markers from the site's map were given there: what the other PC gets, not the one given them here. */
+    private static final SiteMarkerColors SITE_COLORS = new SiteMarkerColors(SHARED);
     /** Gives the markers and the map to the player's other PC (share-mode Serve), on threads of its own. */
     private static final ShareServer SHARE_SERVER = new ShareServer(SHARED, DELETIONS);
     /** Takes them from the other PC (share-mode Take), on a thread of its own. */
@@ -4212,7 +4215,7 @@ public class AreaExplorer extends Module {
             }
         });
         if (mode == ShareMode.Serve) {
-            SHARE_SERVER.update(sharePort.get(), secret, server, waypoints ? servedMarkers() : List.of(), map, problem, info);
+            SHARE_SERVER.update(sharePort.get(), secret, server, waypoints ? servedMarkers(server) : List.of(), map, problem, info);
         } else {
             SHARE_CLIENT.update(new ShareClient.Config(takeFrom.get().trim(), secret, server, map,
                 waypoints ? XaeroWaypoints.dimensions() : Set.of(),
@@ -4224,8 +4227,12 @@ public class AreaExplorer extends Module {
         }
     }
 
-    /** Area Explorer's markers in Xaero, every dimension of this server, each with its group: the set it's in, or its name tells. */
-    private List<ShareServer.Marker> servedMarkers() {
+    /**
+     * Area Explorer's markers in Xaero, every dimension of this server, each with its group: the set
+     * it's in, or its name tells. A colour is each PC's own: a marker from the site goes with the one it
+     * was given there, not one given it here; the other PC colours the rest as it's set there.
+     */
+    private List<ShareServer.Marker> servedMarkers(String server) {
         Set<String> groups = groupNames();
         String list = markerListName.get().trim().isEmpty() ? "Area Explorer" : markerListName.get().trim();
         Function<String, String> byName = markerGroups();
@@ -4234,7 +4241,8 @@ public class AreaExplorer extends Module {
             boolean grouped = groups.contains(w.set());
             if (!grouped && !list.equals(w.set())) continue; // one of the player's own
             markers.add(new ShareServer.Marker(w.dimension(), grouped ? w.set() : byName.apply(w.name()), w.name(),
-                w.initials() == null ? "" : w.initials(), w.x(), w.y(), w.z(), w.rgb()));
+                w.initials() == null ? "" : w.initials(), w.x(), w.y(), w.z(),
+                SITE_GROUP.equals(w.set()) ? SITE_COLORS.get(server, w.dimension(), w.x(), w.y(), w.z(), w.rgb()) : -1));
         }
         return markers;
     }
@@ -4272,7 +4280,8 @@ public class AreaExplorer extends Module {
             }
             if (!add) continue;
             if (SITE_GROUP.equals(marker.group())) {
-                fromSite.add(new XaeroWaypoints.NewWaypoint(name, initials, pos.getX(), pos.getY(), pos.getZ(), marker.rgb() >= 0 ? marker.rgb() : 0xFFFFFF));
+                // -1: a build that doesn't say; an older one sent Xaero's ARGB, alpha and all
+                fromSite.add(new XaeroWaypoints.NewWaypoint(name, initials, pos.getX(), pos.getY(), pos.getZ(), marker.rgb() == -1 ? 0xFFFFFF : marker.rgb() & 0xFFFFFF));
                 counts.merge(SITE_GROUP, 1, Integer::sum);
             } else {
                 if (BASES_GROUP.equals(marker.group()) || name.startsWith(BASE_PREFIX)) {
@@ -5248,6 +5257,7 @@ public class AreaExplorer extends Module {
             Map.of(SITE_GROUP, List.of(new XaeroWaypoints.NewWaypoint(name, initials(name), x, y, z, rgb))), false)) {
             return; // never in that dimension here: Xaero has nowhere to put it yet
         }
+        SITE_COLORS.put(mc.getCurrentServerEntry().address.toLowerCase(Locale.ROOT), dimension, x, y, z, rgb);
         if (!there) {
             info("(highlight)%s(default) put a marker on the site's map: (highlight)%s(default) at %d %d %d in %s.", commandBy(command), name, x, y, z,
                 FindsArchive.prettyName(dimension));

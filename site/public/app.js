@@ -7095,6 +7095,12 @@ const AREA_EXPLORER_MARKER_ICONS = Object.freeze({
   'Shulker Box': 'shulker_box',
   'Thrown Pearl': 'ender_pearl'
 });
+// A marker made on the site's map is a banner of its colour: Xaero's 16 colours, as the nearest dye
+const AREA_EXPLORER_BANNER_DYES = Object.freeze({
+  0xFFFFFF: 'white', 0xFFAA00: 'orange', 0xFFFF55: 'yellow', 0x55FF55: 'lime', 0x55FFFF: 'light_blue', 0x5555FF: 'blue',
+  0xFF55FF: 'magenta', 0xFF5555: 'red', 0xAAAAAA: 'light_gray', 0x555555: 'gray', 0x00AA00: 'green', 0x00AAAA: 'cyan',
+  0x0000AA: 'blue', 0xAA00AA: 'purple', 0xAA0000: 'red', 0x000000: 'black'
+});
 // A named pet shows its own face, from the icon service's mobs; what it's fed when that's missing
 const AREA_EXPLORER_MARKER_MOBS = Object.freeze({
   'Named Cat': { mob: 'cat', fallback: '/items/Cod.png' }, 'Named Dog': { mob: 'wolf', fallback: '/items/Bone.png' }
@@ -7116,6 +7122,7 @@ function areaExplorerFindIcon(find) {
   if (find.kind === 'ITEM' || find.kind === 'SIGN') {
     key = itemIdForName(find.name).replace('_wall_', '_');
   }
+  else if (find.kind === 'MARKER' && find.color !== undefined) key = `${AREA_EXPLORER_BANNER_DYES[find.color] || 'white'}_banner`;
   else if (find.kind === 'MARKER') key = AREA_EXPLORER_MARKER_ICONS[find.name] || normalizeItemIconKey(find.name);
   return { src: areaExplorerIconUrl(key) || fallback, fallback };
 }
