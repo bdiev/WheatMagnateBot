@@ -7093,7 +7093,7 @@ const AREA_EXPLORER_MARKER_ICONS = Object.freeze({
   'End Portal': 'ender_eye', 'Nether Portal': 'obsidian', Spawner: 'spawner', 'Trial Chamber': 'trial_key',
   'Ancient City': 'echo_shard', 'End City': 'purpur_block', 'End Gateway': 'ender_pearl', 'Placed Shulker Box': 'shulker_box',
   'Shulker Box': 'shulker_box',
-  'Thrown Pearl': 'ender_pearl'
+  'Thrown Pearl': 'ender_pearl', 'Site Markers': 'white_banner'
 });
 // A marker made on the site's map is a banner of its colour: Xaero's 16 colours, as the nearest dye
 const AREA_EXPLORER_BANNER_DYES = Object.freeze({

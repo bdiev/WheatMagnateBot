@@ -420,7 +420,7 @@ function testEventNormalization() {
 async function testMapCrowds() {
   const db = new PGlite();
   try {
-    for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '072_area_explorer_picked_up.sql', '077_area_explorer_finds_xz.sql']) {
+    for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '072_area_explorer_picked_up.sql', '077_area_explorer_finds_xz.sql', '089_area_explorer_marker_color.sql']) {
       await db.exec(fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8'));
     }
     // 25,000 signs over 100,000 blocks, and a base
@@ -554,6 +554,13 @@ async function testWaypoints() {
     assert.match(find.details, /by admin/);
     assert.equal(find.color, 0xFFAA00, 'a site marker keeps its colour: the site shows it as a banner of it');
     assert.equal((await service.getFind(find.id)).find.color, 0xFFAA00);
+    // One kind of marker, whatever each is called: not "Stash north" next to the ones the mod finds
+    await service.ingest(token, { server: 'oldfrog.org', dimension: 'overworld', finds: [{ kind: 'MARKER', name: 'Stash north', x: 900, y: 64, z: 900, foundAt: NOW }] }, NOW);
+    const names = (await service.getSummary()).scopes.find(scope => scope.dimension === 'overworld').markerNames;
+    assert.deepEqual(names.map(item => [item.name, item.count]).sort(), [['Site Markers', 1], ['Stash north', 1]]);
+    const listOf = async name => (await service.getFinds(new URL(`http://x/?dimension=overworld&kind=MARKER&name=${encodeURIComponent(name)}`))).finds.map(item => item.x);
+    assert.deepEqual(await listOf('Site Markers'), [-33], "the site's markers, listed together");
+    assert.deepEqual(await listOf('Stash north'), [900], 'a find of the same name is not one of them');
     assert.match(logs.at(-1).message, /Sent "VDS" the marker "Stash north" at -33 70 17/);
     assert.ok(published.some(payload => payload.added === 1 && payload.server === 'oldfrog.org'), 'the maps reload');
     const stateOf = async id => (await db.query('SELECT state FROM area_explorer_commands WHERE id = $1', [id])).rows[0].state;
@@ -693,7 +700,7 @@ async function testCleanNames() {
   // Finds stored before: cleaned by the migration, and one that's the same as a clean find dropped
   const db = new PGlite();
   try {
-    for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '072_area_explorer_picked_up.sql']) {
+    for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '072_area_explorer_picked_up.sql', '089_area_explorer_marker_color.sql']) {
       await db.exec(fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8'));
     }
     const insert = (name, x, key) => db.query(`INSERT INTO area_explorer_finds (server, dimension, kind, x, y, z, found_at, name, item_count, label, dedupe_key)
@@ -727,7 +734,7 @@ async function testCleanNames() {
   // Placed shulker boxes' markers from before take the new name; one already in under it keeps the old one's removal
   const shulkers = new PGlite();
   try {
-    for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '072_area_explorer_picked_up.sql']) {
+    for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '072_area_explorer_picked_up.sql', '089_area_explorer_marker_color.sql']) {
       await shulkers.exec(fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8'));
     }
     const marker = (name, x, removed, kind = 'MARKER') => shulkers.query(`INSERT INTO area_explorer_finds
@@ -876,7 +883,7 @@ function testRunLogWiring() {
 async function testPlayerSigns() {
   const db = new PGlite();
   try {
-    for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '072_area_explorer_picked_up.sql']) {
+    for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '072_area_explorer_picked_up.sql', '089_area_explorer_marker_color.sql']) {
       await db.exec(fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8'));
     }
     const sign = (i, details, label = '', kind = 'SIGN', removed = false) => db.query(
@@ -907,7 +914,7 @@ async function testPlayerSigns() {
 async function testFavorites() {
   const db = new PGlite();
   try {
-    for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '072_area_explorer_picked_up.sql', '084_area_explorer_favorites.sql']) {
+    for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '072_area_explorer_picked_up.sql', '084_area_explorer_favorites.sql', '089_area_explorer_marker_color.sql']) {
       await db.exec(fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8'));
     }
     const find = (i, kind, name, dimension = 'overworld') => db.query(

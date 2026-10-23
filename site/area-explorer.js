@@ -13,6 +13,8 @@ const SAME_PET_DISTANCE = 48;
 /** The marker with a tab of its own; the Markers tab is the rest. */
 const END_PORTAL = 'End Portal';
 const PLACED_SHULKER = 'Placed Shulker Box';
+/** Markers made on the site's map (they have a colour): one kind of marker, whatever each is called. */
+const SITE_MARKERS = 'Site Markers';
 // A pet's name as compared: no case, spaces or invisible characters
 const PET_LABEL_SQL = "lower(regexp_replace(label, '[[:space:]\\u00a0\\u200b-\\u200f\\ufeff]', '', 'g'))";
 const MAX_FINDS_PER_BATCH = 1000;
@@ -927,8 +929,8 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
       pool.query(`SELECT s.*, t.name AS token_name FROM area_explorer_status s
                   JOIN area_explorer_tokens t ON t.id = s.token_id
                   WHERE t.revoked_at IS NULL ORDER BY s.updated_at DESC`),
-      pool.query(`SELECT server, dimension, name, COUNT(*)::int AS count FROM area_explorer_finds
-                  WHERE kind = 'MARKER' AND removed_at IS NULL GROUP BY server, dimension, name ORDER BY count DESC, name`),
+      pool.query(`SELECT server, dimension, CASE WHEN marker_color IS NOT NULL THEN $1::text ELSE name END AS name, COUNT(*)::int AS count
+                  FROM area_explorer_finds WHERE kind = 'MARKER' AND removed_at IS NULL GROUP BY 1, 2, 3 ORDER BY count DESC, name`, [SITE_MARKERS]),
       // Every kind of loot with how much of it: the most valuable are picked from these below. Shulker
       // boxes of every colour are one kind, as a click on it lists them all (the name is searched for)
       pool.query(`SELECT server, dimension, CASE WHEN name LIKE '%Shulker Box' THEN 'Shulker Box' ELSE name END AS name,
@@ -992,13 +994,14 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     // End Portals have a tab of their own: the markers' is the rest, unless one kind of them is asked for
     if (kind === 'END_PORTAL') {
       params.push(END_PORTAL);
-      where.push(`kind = 'MARKER' AND name = $${params.length}`);
+      where.push(`kind = 'MARKER' AND name = $${params.length} AND marker_color IS NULL`);
       return;
     }
     if (KINDS.includes(kind)) { params.push(kind); where.push(`kind = $${params.length}`); }
-    // One kind of marker: "Shulker Box"
-    if (kind === 'MARKER' && name) { params.push(name); where.push(`name = $${params.length}`); }
-    else if (kind === 'MARKER') { params.push(END_PORTAL); where.push(`name <> $${params.length}`); }
+    // One kind of marker: "Shulker Box", or the ones made on the site's map
+    if (kind === 'MARKER' && name === SITE_MARKERS) where.push('marker_color IS NOT NULL');
+    else if (kind === 'MARKER' && name) { params.push(name); where.push(`name = $${params.length} AND marker_color IS NULL`); }
+    else if (kind === 'MARKER') { params.push(END_PORTAL); where.push(`(name <> $${params.length} OR marker_color IS NOT NULL)`); }
   }
 
   /** Whether the user starred each find, as a column: favorite. */
