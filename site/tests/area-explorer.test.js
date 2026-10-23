@@ -113,6 +113,8 @@ async function testIngestAndQueries() {
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/074_area_explorer_coverage.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/076_area_explorer_commands.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/083_area_explorer_command_states.sql'), 'utf8'));
+    await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/087_area_explorer_waypoints.sql'), 'utf8'));
+    await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/088_area_explorer_unmark.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/073_area_explorer_events.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/084_area_explorer_favorites.sql'), 'utf8'));
     const published = [];
@@ -276,6 +278,8 @@ async function testMarkers() {
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/074_area_explorer_coverage.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/076_area_explorer_commands.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/083_area_explorer_command_states.sql'), 'utf8'));
+    await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/087_area_explorer_waypoints.sql'), 'utf8'));
+    await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/088_area_explorer_unmark.sql'), 'utf8'));
     const service = createAreaExplorerService({
       pool: poolFor(db), hashToken, readJsonBody: async () => ({}), sendJson() {}, sendError() {}, enforceRateLimit: () => true
     });
@@ -367,7 +371,7 @@ function testWiring() {
   // The most valuable loot in the highlights; loot picked up in game taken off by an administrator
   assert.match(appSource, /Most valuable<\/span>/);
   assert.match(appSource, /scope\.valuableItems\.map\(/);
-  assert.match(appSource, /const removable = find\.kind === 'ITEM' \|\| \(find\.kind === 'MARKER' && !AREA_EXPLORER_PERMANENT_MARKERS\.includes\(find\.name\)\);/, 'loot and markers, not signs or lasting structures');
+  assert.match(appSource, /const removable = find\.kind === 'ITEM' \|\| find\.kind === 'BASE' \|\| \(find\.kind === 'MARKER' && !AREA_EXPLORER_PERMANENT_MARKERS\.includes\(find\.name\)\);/, 'loot, bases and markers, not signs or lasting structures');
   const { PERMANENT_MARKERS } = require('../area-explorer');
   assert.ok(appSource.includes(`const AREA_EXPLORER_PERMANENT_MARKERS = Object.freeze(${JSON.stringify(PERMANENT_MARKERS).replace(/"/g, "'").replace(/,/g, ', ')});`), 'the page and the site agree on them');
   assert.match(appSource, /const pickup = removable && state\.currentUser\?\.role === 'admin'/, 'only for administrators');
@@ -436,7 +440,7 @@ async function testCommands() {
   try {
     for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '071_area_explorer_status_y.sql', '072_area_explorer_picked_up.sql',
       '072_area_explorer_yaw.sql', '073_area_explorer_events.sql', '074_area_explorer_coverage.sql', '076_area_explorer_commands.sql',
-      '083_area_explorer_command_states.sql']) {
+      '083_area_explorer_command_states.sql', '087_area_explorer_waypoints.sql', '088_area_explorer_unmark.sql']) {
       await db.exec(fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8'));
     }
     const logs = [];
@@ -515,6 +519,157 @@ async function testCommands() {
     }), /Admin access required/, 'only administrators send a mod off');
     await assert.rejects(service.createCommand(admin, { ...area, maxX: 200_000 }), /chunks a side/);
     await assert.rejects(service.createCommand(admin, { ...area, kind: 'DIG' }), /Explore or rescan/);
+  } finally {
+    await db.close();
+  }
+}
+
+async function testWaypoints() {
+  const db = new PGlite();
+  try {
+    for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '071_area_explorer_status_y.sql', '072_area_explorer_picked_up.sql',
+      '072_area_explorer_yaw.sql', '073_area_explorer_events.sql', '074_area_explorer_coverage.sql', '076_area_explorer_commands.sql',
+      '083_area_explorer_command_states.sql', '084_area_explorer_favorites.sql', '087_area_explorer_waypoints.sql', '088_area_explorer_unmark.sql']) {
+      await db.exec(fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8'));
+    }
+    const logs = [];
+    const published = [];
+    const service = createAreaExplorerService({
+      pool: poolFor(db), hashToken, readJsonBody: async () => ({}), sendJson() {}, sendError() {},
+      enforceRateLimit: () => true, publish: (type, payload) => published.push(payload), recordSystemLog: async entry => logs.push(entry)
+    });
+    const admin = { username: 'admin', role: 'admin' };
+    const created = await service.createToken(admin, { name: 'VDS' });
+    const token = await service.authenticate({ headers: { authorization: `Bearer ${created.token}` } });
+    const status = { player: 'Steve', phase: 'IDLE', x: 0, z: 0 };
+    const marker = { tokenId: token.id, server: 'OldFrog.org', dimension: 'overworld', name: '  Stash §cnorth ', x: -33, y: 70, z: 17, color: 0xFFAA00 };
+
+    const { command: explore } = await service.createCommand(admin, { kind: 'EXPLORE', tokenId: token.id, server: 'oldfrog.org', dimension: 'overworld', minX: 0, minZ: 0, maxX: 31, maxZ: 31 });
+    const { command, find } = await service.createWaypoint(admin, marker);
+    assert.deepEqual([command.kind, command.state, command.minX, command.minZ], ['WAYPOINT', 'queued', -48, 16], 'the marker\'s chunk');
+    assert.deepEqual(command.waypoint, { name: 'Stash north', x: -33, y: 70, z: 17, color: 0xFFAA00 });
+    assert.deepEqual([find.kind, find.name, find.x, find.y, find.z, find.server], ['MARKER', 'Stash north', -33, 70, 17, 'oldfrog.org'], 'shows on the site\'s map at once');
+    assert.match(find.details, /by admin/);
+    assert.match(logs.at(-1).message, /Sent "VDS" the marker "Stash north" at -33 70 17/);
+    assert.ok(published.some(payload => payload.added === 1 && payload.server === 'oldfrog.org'), 'the maps reload');
+    const stateOf = async id => (await db.query('SELECT state FROM area_explorer_commands WHERE id = $1', [id])).rows[0].state;
+    assert.equal(await stateOf(explore.id), 'queued', 'a marker does not replace an area waiting for the mod');
+
+    // A mod build that doesn't know markers never gets one: it would fly off to explore its chunk
+    const old = await service.ingest(token, { server: 'oldfrog.org', dimension: 'overworld', status, commandProtocol: 2 }, NOW);
+    assert.deepEqual(old.commands.map(item => item.kind), ['EXPLORE']);
+    const legacy = await service.ingest(token, { server: 'oldfrog.org', dimension: 'overworld', status }, NOW);
+    assert.equal(legacy.commands, undefined);
+    assert.equal(await stateOf(command.id), 'queued');
+
+    const confirming = { server: 'oldfrog.org', dimension: 'overworld', status, commandProtocol: 3 };
+    const taken = await service.ingest(token, confirming, NOW);
+    assert.deepEqual(taken.commands.map(item => [item.id, item.kind, item.name, item.x, item.y, item.z, item.color, item.by]),
+      [[command.id, 'WAYPOINT', 'Stash north', -33, 70, 17, 0xFFAA00, 'admin']]);
+
+    // Off its server for an hour: still sent, not given up on as an area would be
+    await db.query("UPDATE area_explorer_commands SET created_at = NOW() - INTERVAL '1 hour', delivered_at = NOW() - INTERVAL '10 seconds' WHERE id = $1", [command.id]);
+    assert.deepEqual((await service.ingest(token, confirming, NOW)).commands?.map(item => item.id), [command.id]);
+    const done = await service.ingest(token, { ...confirming, commandUpdates: [{ id: command.id, state: 'completed', reason: 'Added to Xaero' }] }, NOW);
+    assert.deepEqual(done.commandAcks, [command.id]);
+    assert.equal(await stateOf(command.id), 'completed');
+
+    // Days on, unconfirmed: given up on
+    const { command: stale } = await service.createWaypoint(admin, { ...marker, name: 'Old' });
+    await db.query("UPDATE area_explorer_commands SET created_at = NOW() - INTERVAL '31 days' WHERE id = $1", [stale.id]);
+    await service.ingest(token, confirming, NOW);
+    assert.equal(await stateOf(stale.id), 'expired');
+
+    // Taken off the site, made again: the same find, back on
+    await service.removeFind(admin, find.id);
+    const { find: again } = await service.createWaypoint(admin, marker);
+    assert.equal(again.id, find.id);
+    assert.equal((await service.getFind(find.id)).find.name, 'Stash north');
+
+    await assert.rejects(service.createWaypoint(admin, { ...marker, name: ' ' }), /name/);
+    await assert.rejects(service.createWaypoint(admin, { ...marker, color: 0x123456 }), /16 waypoint colours/);
+    await assert.rejects(service.createWaypoint(admin, { ...marker, x: 40_000_000 }), /outside the world/);
+    await assert.rejects(service.createWaypoint(admin, { ...marker, tokenId: '999' }), /token is gone/);
+    const viewer = { username: 'viewer', role: 'user' };
+    await assert.rejects(service.handleApi({ method: 'POST' }, viewer, new URL('http://x/api/area-explorer/waypoints'), {
+      assertAdmin(user) { if (user.role !== 'admin') throw Object.assign(new Error('Admin access required.'), { statusCode: 403 }); },
+      readBody: async () => marker
+    }), /Admin access required/, 'only administrators put markers in a game');
+  } finally {
+    await db.close();
+  }
+}
+
+async function testRemovalSync() {
+  const db = new PGlite();
+  try {
+    for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '071_area_explorer_status_y.sql', '072_area_explorer_picked_up.sql',
+      '072_area_explorer_yaw.sql', '073_area_explorer_events.sql', '074_area_explorer_coverage.sql', '076_area_explorer_commands.sql',
+      '083_area_explorer_command_states.sql', '084_area_explorer_favorites.sql', '087_area_explorer_waypoints.sql', '088_area_explorer_unmark.sql']) {
+      await db.exec(fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8'));
+    }
+    const logs = [];
+    const published = [];
+    const service = createAreaExplorerService({
+      pool: poolFor(db), hashToken, readJsonBody: async () => ({}), sendJson() {}, sendError() {},
+      enforceRateLimit: () => true, publish: (type, payload) => published.push(payload), recordSystemLog: async entry => logs.push(entry)
+    });
+    const admin = { username: 'admin', role: 'admin' };
+    const created = await service.createToken(admin, { name: 'VDS' });
+    const token = await service.authenticate({ headers: { authorization: `Bearer ${created.token}` } });
+    const scope = { server: 'oldfrog.org', dimension: 'overworld' };
+    const find = (kind, name, x, y, z, extra = {}) => ({ kind, name, x, y, z, foundAt: NOW, count: kind === 'ITEM' ? 1 : 0, ...extra });
+    await service.ingest(token, { ...scope, finds: [
+      find('BASE', 'Base', 100, 64, 100, { details: 'score 40: beds' }),
+      find('MARKER', 'Shulker Box', 500, 70, 500),
+      find('MARKER', 'End Portal', 900, 30, 900),
+      find('ITEM', 'Elytra', 2000, 64, 2000), find('ITEM', 'Totem of Undying', 2010, 64, 2005), find('ITEM', 'Diamond', 2100, 64, 2000),
+      find('ITEM', 'Mace', 3000, 64, 3000), find('ITEM', 'Trident', 3005, 64, 3000)
+    ] }, NOW);
+    const idOf = async name => (await db.query('SELECT id FROM area_explorer_finds WHERE name = $1', [name])).rows[0].id;
+    const removedOf = async name => (await db.query('SELECT removed_at, removed_by FROM area_explorer_finds WHERE name = $1', [name])).rows[0];
+
+    // Taken out in game (here, on the other PC): off the site too
+    const answer = await service.ingest(token, { ...scope, removedMarkers: [
+      { kind: 'BASE', name: 'Base #1', x: 100, y: 64, z: 100 },
+      { kind: 'MARKER', name: 'Placed Shulker Box', x: 500, y: 70, z: 500 },
+      { kind: 'MARKER', name: 'End Portal', x: 900, y: 30, z: 900 },
+      { kind: 'ITEM', name: 'Loot: Elytra, Totem of Undying', x: 2000, y: 64, z: 2000 },
+      { kind: 'MARKER', name: 'Nothing', x: 1, y: 1, z: 1 },
+      { kind: 'DIG', x: 1, y: 1, z: 1 }
+    ] }, NOW);
+    assert.equal(answer.removedFinds, 4, 'the base, the shulker box and the pile\'s two items');
+    assert.equal((await removedOf('Base')).removed_by, 'VDS (in game)');
+    assert.ok((await removedOf('Placed Shulker Box')).removed_at);
+    assert.ok((await removedOf('Elytra')).removed_at && (await removedOf('Totem of Undying')).removed_at);
+    assert.equal((await removedOf('Diamond')).removed_at, null, 'loot farther than the pile stays');
+    assert.equal((await removedOf('End Portal')).removed_at, null, 'a structure stays on the site');
+    assert.ok(published.some(payload => Array.isArray(payload.removed) && payload.removed.length === 4), 'open pages hear of it');
+    assert.match(logs.at(-1).message, /4 finds taken off the site: their markers were taken out in game/);
+    await assert.rejects(service.ingest(token, { ...scope, removedMarkers: 'x' }, NOW), /must be a list/);
+
+    // Taken off the site: out of the game of the mod that found it
+    const status = { player: 'Steve', phase: 'IDLE', x: 0, z: 0 };
+    await service.ingest(token, { ...scope, finds: [find('BASE', 'Second', 5000, 64, 5000, { details: 'score 30: chests' })] }, NOW);
+    await service.removeFind(admin, await idOf('Second'));
+    const unmarks = async protocol => (await service.ingest(token, { ...scope, status, commandProtocol: protocol }, NOW)).commands || [];
+    assert.deepEqual(await unmarks(3), [], 'a mod build that doesn\'t take them out never gets one');
+    const [unmark] = await unmarks(4);
+    assert.deepEqual([unmark.kind, unmark.findKind, unmark.name, unmark.x, unmark.y, unmark.z, unmark.by], ['UNMARK', 'BASE', 'Second', 5000, 64, 5000, 'admin']);
+    const listed = (await service.listCommands(new URL('http://x/?limit=5'))).commands[0];
+    assert.deepEqual([listed.kind, listed.waypoint.findKind, listed.waypoint.name], ['UNMARK', 'BASE', 'Second']);
+
+    // Loot: its pile's marker only goes once no loot is left by it
+    const commandCount = async () => (await db.query("SELECT COUNT(*)::int AS n FROM area_explorer_commands WHERE kind = 'UNMARK'")).rows[0].n;
+    await service.removeFind(admin, await idOf('Mace'));
+    assert.equal(await commandCount(), 1, 'the trident is still lying there');
+    await service.removeFind(admin, await idOf('Trident'));
+    assert.equal(await commandCount(), 2);
+
+    // A site marker the mod hasn't put in yet: not sent at all
+    const { command: waypoint, find: marker } = await service.createWaypoint(admin, { tokenId: token.id, ...scope, name: 'Stash', x: 7, y: 70, z: 7 });
+    await service.removeFind(admin, marker.id);
+    assert.equal((await db.query('SELECT state, state_reason FROM area_explorer_commands WHERE id = $1', [waypoint.id])).rows[0].state, 'cancelled');
   } finally {
     await db.close();
   }
@@ -605,7 +760,7 @@ async function testCoverage() {
   try {
     for (const file of ['067_area_explorer.sql', '070_area_explorer_markers.sql', '071_area_explorer_status_y.sql', '072_area_explorer_picked_up.sql',
       '072_area_explorer_yaw.sql', '073_area_explorer_events.sql', '074_area_explorer_coverage.sql', '076_area_explorer_commands.sql',
-      '083_area_explorer_command_states.sql']) {
+      '083_area_explorer_command_states.sql', '087_area_explorer_waypoints.sql', '088_area_explorer_unmark.sql']) {
       await db.exec(fs.readFileSync(path.join(__dirname, '../migrations', file), 'utf8'));
     }
     const published = [];
@@ -645,6 +800,8 @@ async function testRunLog() {
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/074_area_explorer_coverage.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/076_area_explorer_commands.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/083_area_explorer_command_states.sql'), 'utf8'));
+    await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/087_area_explorer_waypoints.sql'), 'utf8'));
+    await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/088_area_explorer_unmark.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/073_area_explorer_events.sql'), 'utf8'));
     await db.exec(fs.readFileSync(path.join(__dirname, '../migrations/084_area_explorer_favorites.sql'), 'utf8'));
     const published = [];
@@ -810,6 +967,8 @@ async function testFavorites() {
   await testCoverage();
   await testCleanNames();
   await testCommands();
+  await testWaypoints();
+  await testRemovalSync();
   await testMapCrowds();
   await testPlayerSigns();
   await testFavorites();

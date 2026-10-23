@@ -69,13 +69,20 @@ final class ShareFiles {
     static void writeNumbers(Path file, Map<String, Long> numbers) {
         StringBuilder text = new StringBuilder();
         numbers.forEach((key, value) -> text.append(key).append('\t').append(value).append('\n'));
+        // Not written: taken again next time - the merge and the marker check skip what's in already
+        writeText(file, text.toString());
+    }
+
+    /** The file's text, in whole or not at all; false if it couldn't be written. */
+    static boolean writeText(Path file, String text) {
         try {
             Files.createDirectories(file.getParent());
             Path temp = file.resolveSibling(file.getFileName() + ".tmp");
             Files.writeString(temp, text, StandardCharsets.UTF_8);
             Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING);
+            return true;
         } catch (IOException e) {
-            // Taken again next time: the merge and the marker check skip what's in already
+            return false;
         }
     }
 }

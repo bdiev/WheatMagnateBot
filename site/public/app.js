@@ -7148,9 +7148,9 @@ function renderAreaExplorerFind(find, { selected = false, showScope = false } = 
   const away = view ? Math.round(Math.hypot(find.x - view.cx, find.z - view.cz)) : null;
   const distance = away === null ? '' : `<span class="area-explorer-find-distance">${away >= 1000 ? `${(away / 1000).toFixed(1)}k` : away} blocks away</span>`;
   // Loot picked up in game, or a marker that's wrong or gone, comes off the site (administrators)
-  const removable = find.kind === 'ITEM' || (find.kind === 'MARKER' && !AREA_EXPLORER_PERMANENT_MARKERS.includes(find.name));
+  const removable = find.kind === 'ITEM' || find.kind === 'BASE' || (find.kind === 'MARKER' && !AREA_EXPLORER_PERMANENT_MARKERS.includes(find.name));
   const pickup = removable && state.currentUser?.role === 'admin'
-    ? `<button class="ghost-button area-explorer-pickup" type="button" data-area-pickup="${escapeHtml(find.id)}" data-area-pickup-kind="${find.kind}" data-area-pickup-name="${escapeHtml(areaExplorerFindTitle(find))}" title="${find.kind === 'ITEM' ? 'Picked up in game: take it off the site' : 'Wrong or no longer there: take it off the site'}">${find.kind === 'ITEM' ? 'Picked up' : 'Remove'}</button>`
+    ? `<button class="ghost-button area-explorer-pickup" type="button" data-area-pickup="${escapeHtml(find.id)}" data-area-pickup-kind="${find.kind}" data-area-pickup-name="${escapeHtml(areaExplorerFindTitle(find))}" title="${find.kind === 'ITEM' ? 'Picked up in game: take it off the site and its marker out of the game' : 'Wrong or no longer there: take it off the site and its marker out of the game'}">${find.kind === 'ITEM' ? 'Picked up' : 'Remove'}</button>`
     : '';
   return `<li class="area-explorer-find kind-${find.kind.toLowerCase()}" data-find-id="${escapeHtml(find.id)}" data-find-at="${find.x},${find.z}">
     <span class="area-explorer-find-icon" aria-hidden="true"><img src="${escapeHtml(icon.src)}" data-fallback="${escapeHtml(icon.fallback)}" alt="" loading="lazy" decoding="async" width="32" height="32">${count}</span>
@@ -7623,6 +7623,7 @@ function openAreaExplorerMenu(sx, sz) {
       items.push({ label: 'Select an area from here', run: () => { ae.areaSelection = { x1: x, z1: z, x2: x, z2: z, picking: true }; queueAreaExplorerMapDraw(); showAreaExplorerNote('Tap or click the opposite corner'); } });
       if (selection) items.push({ label: 'Clear selection', run: () => { ae.areaSelection = null; queueAreaExplorerMapDraw(); } });
     }
+    items.push({ label: 'Put a marker here…', run: () => openAreaExplorerWaypoint(x, z) });
   }
   menu.innerHTML = items.map((item, index) => item.separator
     ? '<hr class="area-explorer-menu-separator">'
@@ -7676,6 +7677,96 @@ async function sendAreaExplorerCommand(kind, mod, box) {
     showAreaExplorerNote(`Sent ${mod.player || mod.tokenName} to ${kind === 'RESCAN' ? 'rescan' : 'explore'} ${command.size} - Site Commands shows when the mod takes it`);
   } catch (error) {
     showAreaExplorerNote(`Could not send it: ${error.message}`);
+  }
+}
+
+// Markers put on the map for a mod (administrators): they show here as markers at once, and go into
+// the mod's Xaero waypoints - and from there to the PC that takes its markers through sharing
+
+// Xaero's waypoints come in Minecraft's 16 chat colours only
+const AREA_EXPLORER_WAYPOINT_COLORS = Object.freeze([
+  ['White', 0xFFFFFF], ['Gold', 0xFFAA00], ['Yellow', 0xFFFF55], ['Green', 0x55FF55], ['Aqua', 0x55FFFF], ['Blue', 0x5555FF],
+  ['Light Purple', 0xFF55FF], ['Red', 0xFF5555], ['Gray', 0xAAAAAA], ['Dark Gray', 0x555555], ['Dark Green', 0x00AA00],
+  ['Dark Aqua', 0x00AAAA], ['Dark Blue', 0x0000AA], ['Dark Purple', 0xAA00AA], ['Dark Red', 0xAA0000], ['Black', 0x000000]
+]);
+// The map has no height: a marker starts at sea level, changed in the form if it's wanted elsewhere
+const AREA_EXPLORER_WAYPOINT_Y = 64;
+
+function areaExplorerColorHex(color) {
+  return `#${Number(color).toString(16).padStart(6, '0')}`;
+}
+
+/** The mods a marker can go to: each that has checked in, the one on the map's server and dimension first. */
+function areaExplorerWaypointMods() {
+  const ae = areaExplorerState();
+  const [server, dimension] = ae.scope.split('|');
+  const rank = status => (status.server === server ? (status.dimension === dimension ? 0 : 1) : 2);
+  return [...(ae.summary?.statuses || [])].sort((a, b) => rank(a) - rank(b) || new Date(b.updatedAt) - new Date(a.updatedAt));
+}
+
+function areaExplorerModLabel(status) {
+  return status.player && status.player !== status.tokenName ? `${status.player} (${status.tokenName})` : status.tokenName;
+}
+
+function openAreaExplorerWaypoint(x, z) {
+  const ae = areaExplorerState();
+  const mods = areaExplorerWaypointMods();
+  if (!mods.length) {
+    showAreaExplorerNote('No mod has checked in with the site yet - give one a token and turn site-sync on');
+    return;
+  }
+  const [server, dimension] = ae.scope.split('|');
+  $('#areaExplorerWaypointWhere').textContent = `${prettyDimension(dimension)} on ${server}`;
+  $('#areaExplorerWaypointName').value = '';
+  $('#areaExplorerWaypointX').value = x;
+  $('#areaExplorerWaypointY').value = AREA_EXPLORER_WAYPOINT_Y;
+  $('#areaExplorerWaypointZ').value = z;
+  const chosen = ae.waypointColor ?? 0xFFFFFF;
+  $('#areaExplorerWaypointColors').innerHTML = AREA_EXPLORER_WAYPOINT_COLORS.map(([name, color]) => `<label class="area-explorer-waypoint-swatch" title="${escapeHtml(name)}">
+      <input type="radio" name="color" value="${color}"${color === chosen ? ' checked' : ''} aria-label="${escapeHtml(name)}">
+      <span style="--waypoint-color:${areaExplorerColorHex(color)}"></span>
+    </label>`).join('');
+  $('#areaExplorerWaypointMod').innerHTML = mods.map(status => {
+    const here = status.server === server ? (status.dimension === dimension ? ' - here' : ` - in ${prettyDimension(status.dimension)}`) : ` - on ${status.server || '?'}`;
+    return `<option value="${escapeHtml(status.tokenId)}">${escapeHtml(areaExplorerModLabel(status) + here)}</option>`;
+  }).join('');
+  $('#areaExplorerWaypointError').hidden = true;
+  $('#areaExplorerWaypointModal').hidden = false;
+  document.body.classList.add('modal-open');
+  $('#areaExplorerWaypointName').focus();
+}
+
+function closeAreaExplorerWaypoint() {
+  $('#areaExplorerWaypointModal').hidden = true;
+  document.body.classList.remove('modal-open');
+}
+
+async function sendAreaExplorerWaypoint(event) {
+  event.preventDefault();
+  const ae = areaExplorerState();
+  const [server, dimension] = ae.scope.split('|');
+  const error = $('#areaExplorerWaypointError');
+  const button = $('#areaExplorerWaypointSubmit');
+  const color = Number($('#areaExplorerWaypointColors input[name="color"]:checked')?.value ?? 0xFFFFFF);
+  const select = $('#areaExplorerWaypointMod');
+  const mod = areaExplorerWaypointMods().find(status => status.tokenId === select.value);
+  error.hidden = true;
+  button.disabled = true;
+  try {
+    const { command } = await postJson('/api/area-explorer/waypoints', {
+      tokenId: select.value, server, dimension, name: $('#areaExplorerWaypointName').value, color,
+      x: Number($('#areaExplorerWaypointX').value), y: Number($('#areaExplorerWaypointY').value), z: Number($('#areaExplorerWaypointZ').value)
+    });
+    ae.waypointColor = color;
+    closeAreaExplorerWaypoint();
+    applyAreaExplorerCommands([command]);
+    loadAreaExplorerMap().catch(() => {});
+    showAreaExplorerNote(`Marker "${command.waypoint.name}" sent to ${mod ? areaExplorerModLabel(mod) : command.tokenName} - Site Commands shows when it's in Xaero`);
+  } catch (err) {
+    error.textContent = `Could not send the marker: ${err.message}`;
+    error.hidden = false;
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -8607,16 +8698,26 @@ function renderAreaExplorerCommands() {
   }
   list.innerHTML = commands.map(command => {
     const known = AREA_EXPLORER_COMMAND_STATES[command.state] || { label: command.state, hint: '' };
-    // An older mod build takes a command once and never says what it did
-    const hint = command.state === 'delivered' && !command.confirms ? 'Sent once - this mod build does not confirm commands'
+    const waypoint = command.kind === 'WAYPOINT' || command.kind === 'UNMARK' ? command.waypoint : null;
+    const unmark = command.kind === 'UNMARK';
+    // An older mod build takes a command once and never says what it did; a marker waits for the game to be on its server
+    const hint = waypoint && (command.state === 'queued' || command.state === 'delivered')
+      ? `${unmark ? 'Goes out of' : 'Goes into'} Xaero once the game is on ${command.server}`
+      : command.state === 'delivered' && !command.confirms ? 'Sent once - this mod build does not confirm commands'
       : command.reason || known.hint;
-    const sent = command.deliveries > 1 ? ` · sent ${command.deliveries} times` : '';
+    // A marker goes with every check-in until the game is on its server: how often says nothing
+    const sent = command.deliveries > 1 && !waypoint ? ` · sent ${command.deliveries} times` : '';
+    const title = unmark ? `Take out "${escapeHtml(waypoint.name)}"`
+      : waypoint
+      ? `<span class="area-explorer-waypoint-dot" style="--waypoint-color:${areaExplorerColorHex(waypoint.color ?? 0xFFFFFF)}" aria-hidden="true"></span>Marker "${escapeHtml(waypoint.name)}"`
+      : `${command.kind === 'RESCAN' ? 'Rescan' : 'Explore'} ${escapeHtml(command.size)}`;
+    const where = waypoint ? `X ${waypoint.x} Y ${waypoint.y} Z ${waypoint.z}` : `X ${command.minX}..${command.maxX}, Z ${command.minZ}..${command.maxZ}`;
     return `<li class="area-explorer-command state-${escapeHtml(command.state)}">
       <div class="area-explorer-command-head">
-        <strong>${command.kind === 'RESCAN' ? 'Rescan' : 'Explore'} ${escapeHtml(command.size)}</strong>
+        <strong>${title}</strong>
         <span class="area-explorer-command-state">${escapeHtml(known.label)}</span>
       </div>
-      <p class="area-explorer-command-where">X ${command.minX}..${command.maxX}, Z ${command.minZ}..${command.maxZ} · ${escapeHtml(prettyDimension(command.dimension))} · ${escapeHtml(command.tokenName || 'mod')}</p>
+      <p class="area-explorer-command-where">${where} · ${escapeHtml(prettyDimension(command.dimension))} · ${escapeHtml(command.tokenName || 'mod')}</p>
       ${hint ? `<p class="area-explorer-command-reason">${escapeHtml(hint)}</p>` : ''}
       <small>#${escapeHtml(command.id)} by ${escapeHtml(command.createdBy || '?')} · ${escapeHtml(formatFullDateTime(command.stateAt || command.createdAt))}${sent}</small>
     </li>`;
@@ -8847,9 +8948,10 @@ function setupAreaExplorer() {
     const pickup = event.target.closest('[data-area-pickup]');
     if (pickup) {
       const id = pickup.dataset.areaPickup;
-      const loot = pickup.dataset.areaPickupKind !== 'MARKER';
-      if (!confirm(loot ? `Take ${pickup.dataset.areaPickupName} off the site? Do this once it's been picked up in game.`
-        : `Remove the ${pickup.dataset.areaPickupName} marker from the site? The mod finding it again won't bring it back.`)) return;
+      const loot = pickup.dataset.areaPickupKind === 'ITEM';
+      // Its marker goes out of the mod's Xaero too, and out of the PC taking its markers
+      if (!confirm(loot ? `Take ${pickup.dataset.areaPickupName} off the site? Do this once it's been picked up in game. Its loot marker goes out of the game once no other loot is left there.`
+        : `Remove the ${pickup.dataset.areaPickupName} marker from the site and from the game? The mod finding it again won't bring it back.`)) return;
       pickup.disabled = true;
       try {
         await deleteJson(`/api/area-explorer/finds/${encodeURIComponent(id)}`);
@@ -13631,6 +13733,10 @@ for (const axis of ['X', 'Y', 'Z']) {
     $('#adminPlayerEditForm').dataset.hatchEdited = 'true';
   });
 }
+$('#areaExplorerWaypointForm')?.addEventListener('submit', sendAreaExplorerWaypoint);
+$('#areaExplorerWaypointClose')?.addEventListener('click', closeAreaExplorerWaypoint);
+$('#areaExplorerWaypointCancel')?.addEventListener('click', closeAreaExplorerWaypoint);
+$('#areaExplorerWaypointModal')?.addEventListener('click', event => { if (event.target.id === 'areaExplorerWaypointModal') closeAreaExplorerWaypoint(); });
 $('#adminPlayerEditForm')?.addEventListener('submit', saveAdminPlayer);
 $('#adminPlayerEditClose')?.addEventListener('click', closeAdminPlayerEdit);
 $('#adminPlayerEditCancel')?.addEventListener('click', closeAdminPlayerEdit);
@@ -13982,6 +14088,10 @@ document.addEventListener('keydown', event => {
   }
   if (event.key === 'Escape' && !$('#adminPlayerDeleteModal')?.hidden) {
     closeAdminPlayerDelete();
+    return;
+  }
+  if (event.key === 'Escape' && !$('#areaExplorerWaypointModal')?.hidden) {
+    closeAreaExplorerWaypoint();
     return;
   }
   if (event.key === 'Escape' && !$('#adminPlayerEditModal')?.hidden) {

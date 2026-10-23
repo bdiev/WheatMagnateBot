@@ -63,8 +63,14 @@ public final class SiteSync {
     private volatile String lastLiveProblem;
     private record LiveUpload(String site, String token, Scope scope, JsonObject status, JsonArray commandUpdates,
                               Consumer<String> problem, Consumer<JsonArray> commands, Consumer<JsonArray> acks) {}
-    /** Tells the site this mod confirms the commands it gets, by id: it sends each until confirmed, never runs one twice. */
-    private static final int COMMAND_PROTOCOL = 2;
+    /**
+     * Tells the site this mod confirms the commands it gets, by id: it sends each until confirmed, never
+     * runs one twice (2); takes markers made on the site's map, WAYPOINT commands (3); and takes the
+     * waypoints of finds taken off the site out of Xaero, UNMARK commands (4).
+     */
+    private static final int COMMAND_PROTOCOL = 4;
+    /** Markers taken out per request; the site takes up to 500. */
+    public static final int REMOVED_BATCH = 500;
     private final AtomicReference<LiveUpload> latestLive = new AtomicReference<>();
 
     /**
@@ -196,6 +202,22 @@ public final class SiteSync {
             }
             if (result.kind() == Result.Kind.REJECTED) report(problem, "the site refused some run log events (bad data?) - skipped them");
         }
+        return true;
+    }
+
+    /**
+     * Markers taken out of Xaero here, on the other PC or by the site ({kind, name, x, y, z} each): the
+     * site takes their finds off too. True once the site has them; false to send them again later.
+     */
+    public boolean sendRemovedMarkers(String site, String token, Scope scope, JsonArray removed, Consumer<String> problem) {
+        JsonObject body = body(scope, new JsonArray(), null);
+        body.add("removedMarkers", removed);
+        Result result = post(site.replaceAll("/+$", "") + "/api/area-explorer/ingest", token, body);
+        if (result.retry()) {
+            report(problem, result.message());
+            return false;
+        }
+        if (result.kind() == Result.Kind.REJECTED) report(problem, "the site refused markers taken out (bad data?) - skipped them");
         return true;
     }
 

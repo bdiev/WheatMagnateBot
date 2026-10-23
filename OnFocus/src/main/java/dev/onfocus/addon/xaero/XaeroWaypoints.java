@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.function.Predicate;
 
 /**
  * Waypoints of Xaero's Minimap - the ones Xaero's World Map shows. They're kept per world and
@@ -147,8 +148,8 @@ public final class XaeroWaypoints {
         return renamed;
     }
 
-    /** A waypoint of the server, in any dimension: the dimension as the game names it ("overworld", "the_nether"). */
-    public record Saved(String dimension, String set, String name, String initials, int x, int y, int z, long createdAt) {}
+    /** A waypoint of the server, in any dimension: the dimension as the game names it ("overworld", "the_nether"); its colour as 0xRRGGBB. */
+    public record Saved(String dimension, String set, String name, String initials, int x, int y, int z, long createdAt, int rgb) {}
 
     /**
      * Every waypoint of every set, in every dimension of the server we're on; empty with no world.
@@ -163,11 +164,46 @@ public final class XaeroWaypoints {
             String dimension = world.getDimId().getValue().getPath();
             for (WaypointSet set : world.getIterableWaypointSets()) {
                 for (Waypoint w : set.getWaypoints()) {
-                    saved.add(new Saved(dimension, set.getName(), w.getName(), w.getInitials(), w.getX(), w.getY(), w.getZ(), w.getCreatedAt()));
+                    saved.add(saved(dimension, set, w));
                 }
             }
         }
         return saved;
+    }
+
+    /**
+     * Takes out the waypoints {@code which} picks of a dimension of the server we're on, from every set
+     * and multiworld, saved once a world. Returns how many; -1 if there's no world.
+     */
+    public static int remove(String dimension, Predicate<Saved> which) {
+        MinimapSession session = BuiltInHudModules.MINIMAP.getCurrentSession();
+        if (session == null || session.getWorldManager().getCurrentRootContainer() == null) return -1;
+        int removed = 0;
+        for (MinimapWorld world : session.getWorldManager().getCurrentRootContainer().getAllWorldsIterable()) {
+            if (world.getDimId() == null || !dimension.equals(world.getDimId().getValue().getPath())) continue;
+            int removedHere = 0;
+            for (WaypointSet set : world.getIterableWaypointSets()) {
+                List<Waypoint> picked = new ArrayList<>();
+                for (Waypoint w : set.getWaypoints()) {
+                    if (which.test(saved(dimension, set, w))) picked.add(w);
+                }
+                for (Waypoint w : picked) set.remove(w);
+                removedHere += picked.size();
+            }
+            if (removedHere == 0) continue;
+            removed += removedHere;
+            try {
+                session.getWorldManagerIO().saveWorld(world);
+            } catch (IOException e) {
+                AreaExplorer.FILE_LOG.error("Couldn't save Xaero waypoints", e);
+            }
+        }
+        return removed;
+    }
+
+    private static Saved saved(String dimension, WaypointSet set, Waypoint w) {
+        return new Saved(dimension, set.getName(), w.getName(), w.getInitials(), w.getX(), w.getY(), w.getZ(), w.getCreatedAt(),
+            w.getWaypointColor() == null ? 0xFFFFFF : w.getWaypointColor().getHex());
     }
 
     /** A waypoint to add: {@link #addAll} takes many at once. */

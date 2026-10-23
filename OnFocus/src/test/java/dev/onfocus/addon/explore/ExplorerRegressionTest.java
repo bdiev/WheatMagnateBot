@@ -45,6 +45,7 @@ public final class ExplorerRegressionTest {
         siteSyncSendsEveryFind();
         xaeroRegionMerge();
         shareServer();
+        markerDeletions();
         sessionRefreshReasons();
         mapCacheFiles();
         System.out.println("Explorer regressions passed (deferred coverage, reach stability, mid-strip widths, fresh chunks, narrow corridors, route efficiency, ETA, waypoints and 240 patchy coverage scenarios).");
@@ -199,7 +200,8 @@ public final class ExplorerRegressionTest {
     /** The exploring PC's server: the secret is needed, markers come with their groups, a region file only once Xaero has left it alone. */
     private static void shareServer() throws Exception {
         Path dir = Files.createTempDirectory("share-server-test-");
-        ShareServer server = new ShareServer(dir.resolve("shared"));
+        MarkerDeletions deletions = new MarkerDeletions(dir.resolve("shared"));
+        ShareServer server = new ShareServer(dir.resolve("shared"), deletions);
         try {
             XaeroMapFolders.MapWorld map = new XaeroMapFolders.MapWorld(dir.resolve("Multiplayer_oldfrog.org"), "mw$default");
             Path regions = map.regionFolder("overworld");
@@ -214,7 +216,7 @@ public final class ExplorerRegressionTest {
             }
             List<String> problems = new java.util.ArrayList<>();
             server.update(port, "s3cret", "oldfrog.org",
-                List.of(new ShareServer.Marker("overworld", "Bases", "Base #1", "B1", 100, 70, -5)), map, problems::add, message -> {});
+                List.of(new ShareServer.Marker("overworld", "Bases", "Base #1", "B1", 100, 70, -5, 0xFFAA00)), map, problems::add, message -> {});
             require(problems.isEmpty(), "The server starts: " + problems);
 
             java.net.http.HttpClient http = java.net.http.HttpClient.newHttpClient();
@@ -228,8 +230,8 @@ public final class ExplorerRegressionTest {
             };
             require(get.apply("/markers?server=oldfrog.org", "wrong").statusCode() == 401, "A wrong secret gets nothing");
             JsonObject markers = JsonParser.parseString(new String(get.apply("/markers?server=Oldfrog.org", "s3cret").body())).getAsJsonObject();
-            require(markers.get("known").getAsBoolean() && markers.getAsJsonArray("markers").toString().equals("[[\"overworld\",\"Bases\",\"Base #1\",\"B1\",100,70,-5]]"),
-                "The markers come with their groups: " + markers);
+            require(markers.get("known").getAsBoolean() && markers.getAsJsonArray("markers").toString().equals("[[\"overworld\",\"Bases\",\"Base #1\",\"B1\",100,70,-5," + 0xFFAA00 + "]]"),
+                "The markers come with their groups and colours: " + markers);
             JsonObject list = JsonParser.parseString(new String(get.apply("/regions?server=oldfrog.org", "s3cret").body())).getAsJsonObject();
             require(list.getAsJsonArray("regions").size() == 1 && list.getAsJsonArray("regions").get(0).getAsJsonArray().get(1).getAsInt() == -3,
                 "Only the region Xaero has left alone is listed: " + list);
@@ -237,8 +239,85 @@ public final class ExplorerRegressionTest {
             require(file.statusCode() == 200 && java.util.Arrays.equals(file.body(), new byte[]{1, 2, 3}), "The region file comes as it is");
             require(get.apply("/regions/overworld/9/9?server=oldfrog.org", "s3cret").statusCode() == 404, "A region it hasn't: not found");
             require(get.apply("/regions/../../x/1/1?server=oldfrog.org", "s3cret").statusCode() == 404, "Nothing outside the map");
+
+            // The other PC's markers taken out there: kept, to go here too
+            java.util.function.BiFunction<String, String, java.net.http.HttpResponse<String>> post = (path, body) -> {
+                try {
+                    return http.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create("http://127.0.0.1:" + port + path))
+                        .header("Authorization", "Bearer s3cret").POST(java.net.http.HttpRequest.BodyPublishers.ofString(body)).build(),
+                        java.net.http.HttpResponse.BodyHandlers.ofString());
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            };
+            var removed = post.apply("/markers/removed?server=oldfrog.org", "{\"markers\":[[\"overworld\",100,70,-5],[\"mars\",1,2,3]]}");
+            require(removed.statusCode() == 200 && removed.body().equals("{\"taken\":1}"), "Taken-out markers are taken, of a known dimension: " + removed.body());
+            require(deletions.requests("oldfrog.org").equals(java.util.Set.of(new MarkerDeletions.Spot("overworld", 100, 70, -5))), "They wait for the game to be on the server");
+            require(post.apply("/markers/removed?server=oldfrog.org", "nonsense").statusCode() == 400, "Not a list: refused");
+            require(post.apply("/regions?server=oldfrog.org", "{}").statusCode() == 405, "Nothing else is posted to");
+            var baseSpot = new MarkerDeletions.Spot("overworld", 100, 70, -5);
+            var portalSpot = new MarkerDeletions.Spot("overworld", 1, 1, 1);
+            deletions.look("oldfrog.org", java.util.Map.of(baseSpot, "Base #1", portalSpot, "End Portal"), java.util.Set.of("overworld"), new java.util.HashSet<>(), 2);
+            deletions.look("oldfrog.org", java.util.Map.of(portalSpot, "End Portal"), java.util.Set.of("overworld"), new java.util.HashSet<>(), 3);
+            JsonObject withRemoved = JsonParser.parseString(new String(get.apply("/markers?server=oldfrog.org", "s3cret").body())).getAsJsonObject();
+            require(withRemoved.getAsJsonArray("removed").toString().equals("[[\"overworld\",100,70,-5,3]]"), "The markers come with the ones taken out here: " + withRemoved);
+            require(deletions.requests("oldfrog.org").isEmpty(), "Taken out: the request is done");
         } finally {
             server.stop();
+            deleteTree(dir);
+        }
+    }
+
+    /**
+     * Markers gone from Xaero since the last look are taken out - but not on the first look, nor when
+     * Xaero has nothing or most of a dimension went at once; the site's own aren't told back to it;
+     * all of it is still there after a restart.
+     */
+    private static void markerDeletions() throws Exception {
+        Path dir = Files.createTempDirectory("marker-deletions-test-");
+        try {
+            MarkerDeletions deletions = new MarkerDeletions(dir);
+            var base = new MarkerDeletions.Spot("overworld", 100, 64, 100);
+            var loot = new MarkerDeletions.Spot("overworld", 200, 64, 200);
+            var portal = new MarkerDeletions.Spot("the_end", 0, 50, 0);
+            java.util.Set<String> all = java.util.Set.of("overworld", "the_end");
+            java.util.Set<MarkerDeletions.Spot> quiet = new java.util.HashSet<>();
+            require(deletions.look("s", java.util.Map.of(base, "Base #1", loot, "Loot: Elytra"), all, quiet, 1).isEmpty(), "The first look only learns what's there");
+            require(deletions.look("s", java.util.Map.of(), all, quiet, 2).isEmpty(), "Nothing at all: Xaero isn't loaded, nothing's taken out");
+            var renamed = deletions.look("s", java.util.Map.of(base, "Base #7", loot, "Loot: Elytra", portal, "End Portal"), all, quiet, 3);
+            require(renamed.isEmpty(), "Renamed, it's the same marker; a new one is only learnt");
+            quiet.add(loot);
+            var gone = deletions.look("s", java.util.Map.of(), java.util.Set.of("overworld"), quiet, 4);
+            require(gone.isEmpty(), "Nothing at all is still nothing");
+            gone = deletions.look("s", java.util.Map.of(new MarkerDeletions.Spot("overworld", 9, 9, 9), "Other"), java.util.Set.of("overworld"), quiet, 4);
+            require(gone.size() == 2 && deletions.unreported("s").size() == 1 && deletions.unreported("s").getFirst().name().equals("Base #7"),
+                "Both are taken out; the site hears of the base, not of the loot it took off itself: " + gone);
+            require(quiet.isEmpty(), "A quiet one is quiet once");
+            require(deletions.removedIn("s", "the_end").isEmpty(), "A dimension Xaero has nothing of now isn't taken out: the portal is kept");
+            deletions.reported("s", deletions.unreported("s"));
+            require(deletions.unreported("s").isEmpty(), "Told once");
+            var other = new MarkerDeletions.Spot("overworld", 9, 9, 9);
+            deletions.request("s", java.util.List.of(base, other));
+            require(deletions.requests("s").equals(java.util.Set.of(other)), "Asking for a marker taken out already does nothing");
+
+            MarkerDeletions again = new MarkerDeletions(dir);
+            require(again.removedIn("s", "overworld").size() == 2 && again.requests("s").equals(java.util.Set.of(other)), "Kept across a restart");
+            again.look("s", java.util.Map.of(portal, "End Portal"), all, new java.util.HashSet<>(), 6);
+            require(again.requests("s").isEmpty() && again.removedIn("s", "overworld").size() == 3, "A request done is let go");
+
+            // Most of a dimension gone at once: lost by Xaero, not taken out
+            java.util.Map<MarkerDeletions.Spot, String> many = new java.util.LinkedHashMap<>();
+            for (int i = 0; i < 150; i++) many.put(new MarkerDeletions.Spot("overworld", i, 70, 5000), "Loot: " + i);
+            MarkerDeletions wiped = new MarkerDeletions(dir.resolve("wiped"));
+            wiped.look("w", many, all, new java.util.HashSet<>(), 1);
+            java.util.Map<MarkerDeletions.Spot, String> few = new java.util.LinkedHashMap<>();
+            many.entrySet().stream().limit(10).forEach(e -> few.put(e.getKey(), e.getValue()));
+            require(wiped.look("w", few, all, new java.util.HashSet<>(), 2).isEmpty() && wiped.lost() == 140 && wiped.removed("w").isEmpty(),
+                "140 of 150 gone at once are taken as lost");
+            var some = new java.util.LinkedHashMap<>(few);
+            some.remove(few.keySet().iterator().next());
+            require(wiped.look("w", some, all, new java.util.HashSet<>(), 4).size() == 1, "After that, one taken out is taken out");
+        } finally {
             deleteTree(dir);
         }
     }

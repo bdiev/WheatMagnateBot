@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,6 +34,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -44,8 +46,13 @@ import java.util.regex.Pattern;
  * downloaded to {@code .minecraft/onfocus/shared/<server>/inbox} and merged into this PC's map
  * chunk by chunk ({@link XaeroRegionMerge}) - only while the game isn't on that server, as Xaero
  * keeps what it has drawn in memory and would write over them; so the new ground shows from the
- * next time the server is joined. What's taken is remembered: nothing comes twice, and a marker
- * deleted here stays deleted.
+ * next time the server is joined. What's taken is remembered: nothing comes twice.
+ * <p>
+ * The three - the other PC, this one and the site - keep one set of markers: one taken out here is
+ * taken out on the other PC ({@code POST /markers/removed}), and so on the site; one taken out
+ * there (on the site too) is taken out here. Which waypoint here each marker of the other PC's went
+ * to is kept for that ({@code markers-local.tsv}), by its block: renamed or moved to another set
+ * here, it's the same one.
  * <p>
  * Runs on a thread of its own; {@link #update} and {@link #stop} may be called from any thread.
  */
@@ -68,22 +75,34 @@ public final class ShareClient {
     /** Merging this many regions or more is said in chat as it goes. */
     private static final int PROGRESS_EVERY = 2000;
 
-    /** A marker the other PC has: the group it's in there, its name and initials. */
-    public record Shared(String group, String name, String initials, int x, int y, int z) {
+    /** A marker the other PC has: the group it's in there, its name and initials; its colour there (0xRRGGBB), -1 from a build that doesn't say. */
+    public record Shared(String group, String name, String initials, int x, int y, int z, int rgb) {
         String key(String dimension) {
             return dimension + " " + name + " " + x + " " + y + " " + z;
         }
     }
 
+    /** A waypoint here: its name and block. */
+    public record Local(String name, int x, int y, int z) {}
+
+    /** A marker of the other PC's taken here: its dimension and block there, and the waypoint here it is (null: none). */
+    private record Mapped(String dimension, int x, int y, int z, Local local) {}
+
     /**
      * Where things stand, from the game thread: the other PC ({@code host:port}) and the secret; the
      * server the game is on (null off one), where Xaero keeps its map, and the dimensions it keeps
-     * waypoints for; {@code addMarkers} puts markers of a dimension in Xaero, run on
-     * {@code onGameThread} - false if it couldn't. {@code info} is said to the player, {@code log}
-     * only written down: what comes every few minutes.
+     * waypoints for. Run on {@code onGameThread}: {@code addMarkers} puts markers of a dimension in
+     * Xaero and says which waypoint here each is (one already here: that one) - null if it couldn't;
+     * {@code findMarkers} only says which waypoint here each is; {@code localMarkers} is every
+     * waypoint of the server here by dimension (null: none to tell); {@code removeMarkers} takes
+     * waypoints of a dimension out - false if it couldn't. {@code info} is said to the player,
+     * {@code log} only written down: what comes every few minutes.
      */
     public record Config(String address, String secret, String server, MapWorld map, Set<String> markerDimensions,
-                         Function<String, Function<List<Shared>, Boolean>> addMarkers, Executor onGameThread,
+                         Function<String, Function<List<Shared>, Map<Shared, Local>>> addMarkers,
+                         Function<String, Function<List<Shared>, Map<Shared, Local>>> findMarkers,
+                         Supplier<Map<String, List<Local>>> localMarkers,
+                         Function<String, Function<List<Local>, Boolean>> removeMarkers, Executor onGameThread,
                          Consumer<String> problem, Consumer<String> info, Consumer<String> log) {}
 
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15)).build();
@@ -212,41 +231,215 @@ public final class ShareClient {
 
     // ---- Markers ----
 
-    /** The other PC's markers of each dimension this PC has waypoints in, but those taken before. */
+    /**
+     * The markers taken out on the other PC, out here too; the ones taken out here, told to it; then
+     * its markers of each dimension this PC has waypoints in, but those taken before.
+     */
     private long takeMarkers(Config current) throws InterruptedException {
         HttpResponse<String> response = get(current, "/markers", current.server());
         if (response == null) return RETRY_MS;
         if (response.statusCode() != 200) return failed(current, response.statusCode());
         JsonObject answer = JsonParser.parseString(response.body()).getAsJsonObject();
-        Path file = ShareFiles.serverFolder(root, current.server()).resolve("markers-taken.tsv");
+        Path folder = ShareFiles.serverFolder(root, current.server());
+        Path file = folder.resolve("markers-taken.tsv");
+        Path localFile = folder.resolve("markers-local.tsv");
         Map<String, Long> taken = ShareFiles.readNumbers(file);
+        Map<String, Mapped> here = readLocal(localFile);
+
+        long pause = removeTakenOut(current, answer, here, localFile);
+        if (pause != IDLE_MS) return pause;
+        pause = tellTakenOut(current, here, localFile);
+        if (pause != IDLE_MS) return pause;
+
         Map<String, List<Shared>> byDimension = new LinkedHashMap<>();
+        Map<String, List<Shared>> unmapped = new LinkedHashMap<>();
         for (JsonElement element : answer.getAsJsonArray("markers")) {
             JsonArray m = element.getAsJsonArray();
             String dimension = m.get(0).getAsString();
             if (!current.markerDimensions().contains(dimension)) continue; // never there on this PC: Xaero has nowhere to put it yet
             Shared marker = new Shared(m.get(1).getAsString(), m.get(2).getAsString(), m.get(3).getAsString(),
-                m.get(4).getAsInt(), m.get(5).getAsInt(), m.get(6).getAsInt());
+                m.get(4).getAsInt(), m.get(5).getAsInt(), m.get(6).getAsInt(), m.size() > 7 ? m.get(7).getAsInt() : -1);
             if (!taken.containsKey(marker.key(dimension))) byDimension.computeIfAbsent(dimension, d -> new ArrayList<>()).add(marker);
+            // Taken before which waypoints here were kept: looked for once
+            else if (!here.containsKey(spotKey(dimension, marker.x(), marker.y(), marker.z()))) unmapped.computeIfAbsent(dimension, d -> new ArrayList<>()).add(marker);
         }
         for (var entry : byDimension.entrySet()) {
             if (stale(current)) return 0;
-            Function<List<Shared>, Boolean> add = current.addMarkers().apply(entry.getKey());
             List<Shared> markers = entry.getValue();
-            boolean done;
-            try {
-                done = CompletableFuture.supplyAsync(() -> add.apply(markers), current.onGameThread()).get(30, TimeUnit.SECONDS);
-            } catch (InterruptedException e) {
-                throw e;
-            } catch (Exception e) {
-                done = false;
-            }
-            if (!done) return RETRY_MS; // left the server meanwhile, say: next time
+            Map<Shared, Local> added = onGame(current, () -> current.addMarkers().apply(entry.getKey()).apply(markers));
+            if (added == null) return RETRY_MS; // left the server meanwhile, say: next time
             long now = System.currentTimeMillis();
-            for (Shared marker : markers) taken.put(marker.key(entry.getKey()), now);
+            for (Shared marker : markers) {
+                taken.put(marker.key(entry.getKey()), now);
+                here.put(spotKey(entry.getKey(), marker.x(), marker.y(), marker.z()),
+                    new Mapped(entry.getKey(), marker.x(), marker.y(), marker.z(), added.get(marker)));
+            }
             ShareFiles.writeNumbers(file, taken);
+            writeLocal(localFile, here);
+        }
+        for (var entry : unmapped.entrySet()) {
+            if (stale(current)) return 0;
+            List<Shared> markers = entry.getValue();
+            Map<Shared, Local> found = onGame(current, () -> current.findMarkers().apply(entry.getKey()).apply(markers));
+            if (found == null) return RETRY_MS;
+            for (Shared marker : markers) {
+                here.put(spotKey(entry.getKey(), marker.x(), marker.y(), marker.z()),
+                    new Mapped(entry.getKey(), marker.x(), marker.y(), marker.z(), found.get(marker)));
+            }
+            writeLocal(localFile, here);
         }
         return IDLE_MS;
+    }
+
+    /** The other PC's markers taken out there (or on the site): their waypoints here go too. */
+    private long removeTakenOut(Config current, JsonObject answer, Map<String, Mapped> here, Path localFile) throws InterruptedException {
+        if (!answer.has("removed") || !answer.get("removed").isJsonArray()) return IDLE_MS; // a build before: it doesn't say
+        Map<String, List<String>> byDimension = new LinkedHashMap<>();
+        boolean changed = false;
+        for (JsonElement element : answer.getAsJsonArray("removed")) {
+            JsonArray r = element.getAsJsonArray();
+            String key = spotKey(r.get(0).getAsString(), r.get(1).getAsInt(), r.get(2).getAsInt(), r.get(3).getAsInt());
+            Mapped mapped = here.get(key);
+            if (mapped == null) continue;
+            if (mapped.local() == null) {
+                here.remove(key);
+                changed = true;
+            } else if (current.markerDimensions().contains(mapped.dimension())) {
+                byDimension.computeIfAbsent(mapped.dimension(), d -> new ArrayList<>()).add(key);
+            }
+        }
+        int removed = 0;
+        for (var entry : byDimension.entrySet()) {
+            if (stale(current)) return 0;
+            List<Local> locals = new ArrayList<>();
+            for (String key : entry.getValue()) locals.add(here.get(key).local());
+            Boolean done = onGame(current, () -> current.removeMarkers().apply(entry.getKey()).apply(locals));
+            if (!Boolean.TRUE.equals(done)) {
+                if (changed) writeLocal(localFile, here);
+                return RETRY_MS;
+            }
+            for (String key : entry.getValue()) here.remove(key);
+            removed += locals.size();
+            changed = true;
+        }
+        if (changed) writeLocal(localFile, here);
+        if (removed > 0) say(current, "Took out (highlight)%d(default) markers taken out on the other PC or the site.".formatted(removed));
+        return IDLE_MS;
+    }
+
+    /** The waypoints the other PC's markers went to that are gone from here: the other PC takes those markers out too. */
+    private long tellTakenOut(Config current, Map<String, Mapped> here, Path localFile) throws InterruptedException {
+        if (here.isEmpty()) return IDLE_MS;
+        Map<String, List<Local>> present = onGame(current, current.localMarkers());
+        // Xaero not loaded, or nothing at all: nothing told
+        if (present == null || present.values().stream().allMatch(List::isEmpty)) return IDLE_MS;
+        Map<String, Set<String>> blocks = new HashMap<>();
+        present.forEach((dimension, locals) -> {
+            Set<String> set = new HashSet<>();
+            for (Local local : locals) set.add(local.x() + " " + local.z());
+            blocks.put(dimension, set);
+        });
+        List<String> gone = new ArrayList<>();
+        JsonArray list = new JsonArray();
+        for (var entry : here.entrySet()) {
+            Mapped mapped = entry.getValue();
+            Set<String> there = blocks.get(mapped.dimension());
+            if (mapped.local() == null || there == null) continue; // no waypoint here, or Xaero has nothing of that dimension now
+            // By the column: a waypoint found here already may stand at another height
+            if (there.contains(mapped.local().x() + " " + mapped.local().z())) continue;
+            gone.add(entry.getKey());
+            JsonArray m = new JsonArray();
+            m.add(mapped.dimension());
+            m.add(mapped.x());
+            m.add(mapped.y());
+            m.add(mapped.z());
+            list.add(m);
+        }
+        if (gone.isEmpty()) return IDLE_MS;
+        // Most of a dimension's gone at once: Xaero lost its waypoints here (wiped, reinstalled), they weren't taken out
+        Map<String, int[]> perDimension = new HashMap<>(); // mapped, gone
+        for (Mapped mapped : here.values()) {
+            if (mapped.local() != null) perDimension.computeIfAbsent(mapped.dimension(), d -> new int[2])[0]++;
+        }
+        for (String key : gone) perDimension.get(here.get(key).dimension())[1]++;
+        List<String> lost = new ArrayList<>();
+        for (int i = gone.size() - 1; i >= 0; i--) {
+            int[] counts = perDimension.get(here.get(gone.get(i)).dimension());
+            if (counts[1] > MarkerDeletions.MASS_LOSS && counts[1] * 2 > counts[0]) {
+                lost.add(gone.get(i));
+                list.remove(i);
+                gone.remove(i);
+            }
+        }
+        if (!lost.isEmpty()) {
+            for (String key : lost) here.remove(key);
+            writeLocal(localFile, here);
+            say(current, "(highlight)%d(default) markers from the other PC are gone from Xaero here at once - taken as Xaero losing them, not as taken out: they stay on the other PC and the site.".formatted(lost.size()));
+        }
+        if (gone.isEmpty()) return IDLE_MS;
+        JsonObject body = new JsonObject();
+        body.add("markers", list);
+        HttpResponse<String> told = post(current, "/markers/removed", current.server(), body.toString());
+        if (told == null) return RETRY_MS;
+        if (told.statusCode() == 405) {
+            report(current, "the other PC's OnFocus is older and doesn't take markers taken out here - update it there");
+            return RETRY_MS;
+        }
+        if (told.statusCode() != 200) return failed(current, told.statusCode());
+        for (String key : gone) here.remove(key);
+        writeLocal(localFile, here);
+        current.log().accept("Told the other PC of " + gone.size() + " markers taken out here: they go there and on the site too.");
+        return IDLE_MS;
+    }
+
+    private static String spotKey(String dimension, int x, int y, int z) {
+        return dimension + " " + x + " " + y + " " + z;
+    }
+
+    // markers-local.tsv: "dimension x y z" of the other PC's marker, then "name x y z" of the waypoint
+    // here, or "-" for none - tab-separated
+
+    private static Map<String, Mapped> readLocal(Path file) {
+        Map<String, Mapped> here = new LinkedHashMap<>();
+        for (String line : ShareFiles.readLines(file)) {
+            String[] parts = line.split("\t", -1);
+            try {
+                if (parts.length == 5 && parts[4].equals("-")) {
+                    Mapped mapped = new Mapped(parts[0], Integer.parseInt(parts[1]), Integer.parseInt(parts[2]), Integer.parseInt(parts[3]), null);
+                    here.put(spotKey(mapped.dimension(), mapped.x(), mapped.y(), mapped.z()), mapped);
+                } else if (parts.length == 8) {
+                    Local local = new Local(parts[4], Integer.parseInt(parts[5]), Integer.parseInt(parts[6]), Integer.parseInt(parts[7]));
+                    Mapped mapped = new Mapped(parts[0], Integer.parseInt(parts[1]), Integer.parseInt(parts[2]), Integer.parseInt(parts[3]), local);
+                    here.put(spotKey(mapped.dimension(), mapped.x(), mapped.y(), mapped.z()), mapped);
+                }
+            } catch (NumberFormatException ignored) {
+                // A line from something else: skipped
+            }
+        }
+        return here;
+    }
+
+    private static void writeLocal(Path file, Map<String, Mapped> here) {
+        StringBuilder text = new StringBuilder();
+        for (Mapped mapped : here.values()) {
+            text.append(mapped.dimension()).append('\t').append(mapped.x()).append('\t').append(mapped.y()).append('\t').append(mapped.z()).append('\t');
+            Local local = mapped.local();
+            if (local == null) text.append('-');
+            else text.append(local.name().replaceAll("[\\t\\r\\n]+", " ")).append('\t').append(local.x()).append('\t').append(local.y()).append('\t').append(local.z());
+            text.append('\n');
+        }
+        ShareFiles.writeText(file, text.toString());
+    }
+
+    /** What the game thread gives back, or null if it didn't within half a minute (or failed). */
+    private static <T> T onGame(Config current, Supplier<T> task) throws InterruptedException {
+        try {
+            return CompletableFuture.supplyAsync(task, current.onGameThread()).get(30, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            throw e;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     // ---- Map regions ----
@@ -414,6 +607,26 @@ public final class ShareClient {
             .header("Authorization", "Bearer " + current.secret())
             .GET()
             .build();
+    }
+
+    /** A JSON body sent; the answer, or null when the other PC couldn't be reached (said once). */
+    private HttpResponse<String> post(Config current, String path, String server, String body) throws InterruptedException {
+        String address = current.address().replaceFirst("^https?://", "").replaceAll("/+$", "");
+        try {
+            HttpRequest request = HttpRequest.newBuilder(URI.create("http://" + address + path + "?server=" + URLEncoder.encode(server, StandardCharsets.UTF_8)))
+                .timeout(TIMEOUT)
+                .header("Authorization", "Bearer " + current.secret())
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+                .build();
+            return http.send(request, HttpResponse.BodyHandlers.ofString());
+        } catch (IllegalArgumentException e) {
+            report(current, "take-from isn't a valid address: " + current.address());
+            return null;
+        } catch (IOException e) {
+            report(current, "can't reach the other PC at " + current.address() + " (" + e.getClass().getSimpleName() + "), trying again in a bit");
+            return null;
+        }
     }
 
     /** The answer, or null when the other PC couldn't be reached (said once). */

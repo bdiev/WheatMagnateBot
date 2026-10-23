@@ -29,6 +29,7 @@ import dev.onfocus.addon.explore.FindsArchive;
 import dev.onfocus.addon.explore.ItemDetails;
 import dev.onfocus.addon.explore.ExplorerDiagnostics;
 import dev.onfocus.addon.explore.MapSync;
+import dev.onfocus.addon.explore.MarkerDeletions;
 import dev.onfocus.addon.explore.ShareClient;
 import dev.onfocus.addon.explore.ShareServer;
 import dev.onfocus.addon.explore.SiteCommands;
@@ -622,6 +623,8 @@ public class AreaExplorer extends Module {
     }
 
     private static final String BASES_GROUP = "Bases", ITEMS_GROUP = "Items on the ground", PETS_GROUP = "Named Pets", PEARLS_GROUP = "Thrown Pearls", CUSTOM_GROUP = "Custom Blocks";
+    /** Markers an administrator put on the site's map: a Xaero set of their own whatever group-sets says, coloured as made there, always shown. */
+    private static final String SITE_GROUP = "Site Markers";
 
     private final Setting<Boolean> autoMarkers = sgMarkers.add(new BoolSetting.Builder()
         .name("auto-markers")
@@ -1045,8 +1048,10 @@ public class AreaExplorer extends Module {
     /** Sends Xaero's map to the site, on a thread of its own. */
     private static final MapSync MAP = new MapSync();
     private static final Path SHARED = FabricLoader.getInstance().getGameDir().resolve("onfocus").resolve("shared");
+    /** The markers taken out here, on the other PC or on the site: the PC that keeps them (share-mode Serve, or the site alone) has these. */
+    private static final MarkerDeletions DELETIONS = new MarkerDeletions(SHARED);
     /** Gives the markers and the map to the player's other PC (share-mode Serve), on threads of its own. */
-    private static final ShareServer SHARE_SERVER = new ShareServer(SHARED);
+    private static final ShareServer SHARE_SERVER = new ShareServer(SHARED, DELETIONS);
     /** Takes them from the other PC (share-mode Take), on a thread of its own. */
     private static final ShareClient SHARE_CLIENT = new ShareClient(SHARED);
     /** How often what's shared is looked at again: the markers and the map folder handed over. */
@@ -1287,6 +1292,7 @@ public class AreaExplorer extends Module {
             // Off a server, every tick: joining one has to stop the merging into its map before Xaero opens it
             if (++shareTicks < SHARE_CHECK_TICKS && mc.world != null) return;
             shareTicks = 0;
+            tickMarkerDeletions();
             tickShare();
         }
     }
@@ -3832,7 +3838,7 @@ public class AreaExplorer extends Module {
         }
 
         String name = BASE_PREFIX + (number + 1);
-        addMarker(BASES_GROUP, name, "B" + (number + 1), "star", basesColor.get(), centre);
+        if (!addMarker(BASES_GROUP, name, "B" + (number + 1), "star", basesColor.get(), centre)) return;
         int points = (int) Math.round(score.total());
         report("Marked (highlight)%s(default) at (highlight)%d, %d, %d(default), score (highlight)%d(default): %s.",
             name, centre.getX(), centre.getY(), centre.getZ(), points, score.summary());
@@ -3856,8 +3862,9 @@ public class AreaExplorer extends Module {
         for (Marker marker : Marker.values()) {
             if (marker.title.equals(name)) kind = marker;
         }
-        if (kind != null) addMarker(kind.group, name, initials(name), kind.icon, markerColors.get(kind).get(), pos);
-        else addMarker(CUSTOM_GROUP, name, initials(name), "star", customColor.get(), pos);
+        boolean added = kind != null ? addMarker(kind.group, name, initials(name), kind.icon, markerColors.get(kind).get(), pos)
+            : addMarker(CUSTOM_GROUP, name, initials(name), "star", customColor.get(), pos);
+        if (!added) return;
         report("Marked (highlight)%s(default) at (highlight)%d, %d, %d(default).", name, pos.getX(), pos.getY(), pos.getZ());
         // Into the all-finds file too, and so to the site
         archiveFind(new FindsArchive.Find(FindsArchive.Kind.MARKER, pos.getX(), pos.getY(), pos.getZ(), LocalDateTime.now(), name, 0, "", ""));
@@ -3882,6 +3889,7 @@ public class AreaExplorer extends Module {
 
         Map<String, List<FindsArchive.Find>> byDimension = new HashMap<>();
         for (XaeroWaypoints.Saved w : XaeroWaypoints.allOnServer()) {
+            if (SITE_GROUP.equals(w.set())) continue; // made on the site: there already
             if (!titles.contains(w.name()) && !CUSTOM_GROUP.equals(w.set())) continue;
             LocalDateTime found = w.createdAt() > 0
                 ? LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(w.createdAt()), java.time.ZoneId.systemDefault())
@@ -4006,7 +4014,7 @@ public class AreaExplorer extends Module {
         if (kinds.size() > LOOT_NAMED_KINDS) name.append(" +").append(kinds.size() - LOOT_NAMED_KINDS);
 
         BlockPos pos = pile.best;
-        addMarker(ITEMS_GROUP, name.toString(), initials(kinds.getFirst().getKey().name()), "square", itemsColor.get(), pos);
+        if (!addMarker(ITEMS_GROUP, name.toString(), initials(kinds.getFirst().getKey().name()), "square", itemsColor.get(), pos)) return false;
         if (announce) report("Marked (highlight)%s(default) on the ground at (highlight)%d, %d, %d(default).", name, pos.getX(), pos.getY(), pos.getZ());
         return true;
     }
@@ -4162,7 +4170,7 @@ public class AreaExplorer extends Module {
 
     /** Every group's own Xaero set. */
     private static Set<String> groupNames() {
-        Set<String> names = new HashSet<>(Set.of(BASES_GROUP, ITEMS_GROUP, PETS_GROUP, PEARLS_GROUP, CUSTOM_GROUP));
+        Set<String> names = new HashSet<>(Set.of(BASES_GROUP, ITEMS_GROUP, PETS_GROUP, PEARLS_GROUP, CUSTOM_GROUP, SITE_GROUP));
         for (Marker marker : Marker.values()) names.add(marker.group);
         return names;
     }
@@ -4208,7 +4216,10 @@ public class AreaExplorer extends Module {
         } else {
             SHARE_CLIENT.update(new ShareClient.Config(takeFrom.get().trim(), secret, server, map,
                 waypoints ? XaeroWaypoints.dimensions() : Set.of(),
-                dimension -> markers -> takeSharedMarkers(dimension, markers),
+                dimension -> markers -> takeSharedMarkers(dimension, markers, true),
+                dimension -> markers -> takeSharedMarkers(dimension, markers, false),
+                this::localWaypoints,
+                dimension -> locals -> removeSharedMarkers(dimension, locals),
                 mc::execute, problem, info, message -> FILE_LOG.info("Sharing: " + message)));
         }
     }
@@ -4223,7 +4234,7 @@ public class AreaExplorer extends Module {
             boolean grouped = groups.contains(w.set());
             if (!grouped && !list.equals(w.set())) continue; // one of the player's own
             markers.add(new ShareServer.Marker(w.dimension(), grouped ? w.set() : byName.apply(w.name()), w.name(),
-                w.initials() == null ? "" : w.initials(), w.x(), w.y(), w.z()));
+                w.initials() == null ? "" : w.initials(), w.x(), w.y(), w.z(), w.rgb()));
         }
         return markers;
     }
@@ -4231,11 +4242,13 @@ public class AreaExplorer extends Module {
     /**
      * Puts markers from the other PC into Xaero's waypoints of a dimension here, each in its group's
      * set, coloured as set here. One there's a marker for already is left out the way exploring leaves
-     * it out; a base gets the next number here, as the other PC numbers its own. On the game thread;
-     * false if Xaero has no waypoints to put them in (left the server meanwhile).
+     * it out; a base gets the next number here, as the other PC numbers its own. Markers from the site's
+     * map keep their own set and colour, and are shown. Says which waypoint here each marker is (the
+     * one there already, for one left out); with {@code add} false, only that - nothing is put in. On
+     * the game thread; null if Xaero has no waypoints to put them in (left the server meanwhile).
      */
-    private boolean takeSharedMarkers(String dimension, List<ShareClient.Shared> shared) {
-        if (!XaeroWaypoints.isReady()) return false;
+    private Map<ShareClient.Shared, ShareClient.Local> takeSharedMarkers(String dimension, List<ShareClient.Shared> shared, boolean add) {
+        if (!XaeroWaypoints.isReady()) return null;
         List<XaeroWaypoints.Spot> spots = new ArrayList<>(XaeroWaypoints.in(dimension));
         int bases = 0;
         for (XaeroWaypoints.Spot spot : spots) {
@@ -4245,27 +4258,38 @@ public class AreaExplorer extends Module {
             } catch (NumberFormatException ignored) {
             }
         }
+        Map<ShareClient.Shared, ShareClient.Local> here = new HashMap<>();
         Map<String, List<XaeroWaypoints.NewWaypoint>> bySet = new LinkedHashMap<>();
+        List<XaeroWaypoints.NewWaypoint> fromSite = new ArrayList<>();
         Map<String, Integer> counts = new LinkedHashMap<>();
         for (ShareClient.Shared marker : shared) {
             BlockPos pos = new BlockPos(marker.x(), marker.y(), marker.z());
             String name = marker.name(), initials = marker.initials().isBlank() ? initials(marker.name()) : marker.initials();
-            if (BASES_GROUP.equals(marker.group()) || name.startsWith(BASE_PREFIX)) {
-                long spacing = Math.max(markerSpacing.get(), baseRadius.get());
-                if (spots.stream().anyMatch(spot -> spot.name().startsWith(BASE_PREFIX) && near(spot, pos, spacing))) continue;
-                bases++;
-                name = BASE_PREFIX + bases;
-                initials = "B" + bases;
-            } else if (markedAlready(name, pos, spots)) {
+            XaeroWaypoints.Spot there = sameMarker(marker, pos, spots);
+            if (there != null) {
+                here.put(marker, new ShareClient.Local(there.name(), there.x(), pos.getY(), there.z()));
                 continue;
             }
+            if (!add) continue;
+            if (SITE_GROUP.equals(marker.group())) {
+                fromSite.add(new XaeroWaypoints.NewWaypoint(name, initials, pos.getX(), pos.getY(), pos.getZ(), marker.rgb() >= 0 ? marker.rgb() : 0xFFFFFF));
+                counts.merge(SITE_GROUP, 1, Integer::sum);
+            } else {
+                if (BASES_GROUP.equals(marker.group()) || name.startsWith(BASE_PREFIX)) {
+                    bases++;
+                    name = BASE_PREFIX + bases;
+                    initials = "B" + bases;
+                }
+                bySet.computeIfAbsent(markerList(marker.group()), set -> new ArrayList<>())
+                    .add(new XaeroWaypoints.NewWaypoint(name, initials, pos.getX(), pos.getY(), pos.getZ(), groupColor(marker.group())));
+                counts.merge(marker.group(), 1, Integer::sum);
+            }
             spots.add(new XaeroWaypoints.Spot(name, pos.getX(), pos.getZ()));
-            bySet.computeIfAbsent(markerList(marker.group()), set -> new ArrayList<>())
-                .add(new XaeroWaypoints.NewWaypoint(name, initials, pos.getX(), pos.getY(), pos.getZ(), groupColor(marker.group())));
-            counts.merge(marker.group(), 1, Integer::sum);
+            here.put(marker, new ShareClient.Local(name, pos.getX(), pos.getY(), pos.getZ()));
         }
-        if (bySet.isEmpty()) return true;
-        if (!XaeroWaypoints.addAllIn(dimension, bySet, !markersEnabled.get())) return false;
+        if (!add || bySet.isEmpty() && fromSite.isEmpty()) return here;
+        if (!bySet.isEmpty() && !XaeroWaypoints.addAllIn(dimension, bySet, !markersEnabled.get())) return null;
+        if (!fromSite.isEmpty() && !XaeroWaypoints.addAllIn(dimension, Map.of(SITE_GROUP, fromSite), false)) return null;
         StringBuilder what = new StringBuilder();
         int total = 0;
         for (var count : counts.entrySet()) {
@@ -4274,20 +4298,186 @@ public class AreaExplorer extends Module {
             total += count.getValue();
         }
         report("Took (highlight)%d(default) markers from the other PC into Xaero's waypoints of %s: %s.", total, FindsArchive.prettyName(dimension), what);
-        return true;
+        return here;
+    }
+
+    /** The waypoint here a marker of the other PC's is already: the same site marker, a base near enough, or as exploring tells one. */
+    private XaeroWaypoints.Spot sameMarker(ShareClient.Shared marker, BlockPos pos, List<XaeroWaypoints.Spot> spots) {
+        if (SITE_GROUP.equals(marker.group())) {
+            for (XaeroWaypoints.Spot spot : spots) {
+                if (spot.name().equals(marker.name()) && spot.x() == pos.getX() && spot.z() == pos.getZ()) return spot;
+            }
+            return null;
+        }
+        if (BASES_GROUP.equals(marker.group()) || marker.name().startsWith(BASE_PREFIX)) {
+            long spacing = Math.max(markerSpacing.get(), baseRadius.get());
+            for (XaeroWaypoints.Spot spot : spots) {
+                if (spot.name().startsWith(BASE_PREFIX) && near(spot, pos, spacing)) return spot;
+            }
+            return null;
+        }
+        return markedAt(marker.name(), pos, spots);
+    }
+
+    /** Every waypoint of the server here, by dimension - each dimension Xaero keeps waypoints for, empty or not; null with no world. */
+    private Map<String, List<ShareClient.Local>> localWaypoints() {
+        if (!XaeroWaypoints.isReady()) return null;
+        Map<String, List<ShareClient.Local>> byDimension = new HashMap<>();
+        for (String dimension : XaeroWaypoints.dimensions()) byDimension.put(dimension, new ArrayList<>());
+        for (XaeroWaypoints.Saved w : XaeroWaypoints.allOnServer()) {
+            byDimension.computeIfAbsent(w.dimension(), d -> new ArrayList<>()).add(new ShareClient.Local(w.name(), w.x(), w.y(), w.z()));
+        }
+        return byDimension;
+    }
+
+    /**
+     * Takes out the waypoints here the other PC's markers went to, now taken out there: at their block,
+     * with their name, or in one of Area Explorer's sets. False if there's no world to take them from.
+     */
+    private boolean removeSharedMarkers(String dimension, List<ShareClient.Local> locals) {
+        if (!XaeroWaypoints.isReady()) return false;
+        Map<String, String> byBlock = new HashMap<>();
+        for (ShareClient.Local local : locals) byBlock.put(local.x() + " " + local.z(), local.name());
+        return XaeroWaypoints.remove(dimension, w -> {
+            String name = byBlock.get(w.x() + " " + w.z());
+            return name != null && (name.equals(w.name()) || managedSet(w.set()));
+        }) >= 0;
+    }
+
+    /** One of the sets Area Explorer's markers go into: a group's, or marker-list. */
+    private boolean managedSet(String set) {
+        String list = markerListName.get().trim().isEmpty() ? "Area Explorer" : markerListName.get().trim();
+        return groupNames().contains(set) || list.equals(set);
+    }
+
+    // Markers taken out: one set for the three sharing them
+
+    /** How long the site is left alone after it couldn't take the markers taken out. */
+    private static final long REMOVALS_RETRY_MS = 30_000;
+    /** Taken out by the site's own say: it isn't told of them again. */
+    private final Set<MarkerDeletions.Spot> removedBySite = new HashSet<>();
+    private final AtomicBoolean removalsInFlight = new AtomicBoolean();
+    private volatile long removalsFailedAt;
+
+    /** This PC's markers are the ones the other PC and the site have: it explores (share-mode Serve), or there's only the site. */
+    private boolean keepsMarkers() {
+        ShareMode mode = shareMode.get();
+        return mode == ShareMode.Serve || mode == ShareMode.Off && siteTarget() != null;
+    }
+
+    private static boolean minimapInstalled() {
+        FabricLoader loader = FabricLoader.getInstance();
+        return loader.isModLoaded("xaerominimap") || loader.isModLoaded("xaerobetterpvp");
+    }
+
+    /** Area Explorer's markers in Xaero, every dimension of this server, by block, with their names. */
+    private Map<MarkerDeletions.Spot, String> trackedMarkers() {
+        Map<MarkerDeletions.Spot, String> tracked = new LinkedHashMap<>();
+        for (XaeroWaypoints.Saved w : XaeroWaypoints.allOnServer()) {
+            if (managedSet(w.set())) tracked.putIfAbsent(new MarkerDeletions.Spot(w.dimension(), w.x(), w.y(), w.z()), w.name());
+        }
+        return tracked;
+    }
+
+    /**
+     * On the PC that keeps the markers: the ones the other PC took out go here too; then the ones gone
+     * from Xaero since the last look are kept as taken out - the other PC takes them out as well, the
+     * site is told (but of the ones it took out itself), and exploring doesn't put them back.
+     */
+    private void tickMarkerDeletions() {
+        if (!keepsMarkers() || mc.world == null || mc.player == null) return;
+        var entry = mc.getCurrentServerEntry();
+        if (entry == null || !minimapInstalled() || !XaeroWaypoints.isReady()) return;
+        String server = entry.address.toLowerCase(Locale.ROOT);
+        Set<MarkerDeletions.Spot> asked = DELETIONS.requests(server);
+        Set<String> dimensions = XaeroWaypoints.dimensions();
+        Map<String, Set<MarkerDeletions.Spot>> askedIn = new HashMap<>();
+        for (MarkerDeletions.Spot spot : asked) askedIn.computeIfAbsent(spot.dimension(), d -> new HashSet<>()).add(spot);
+        askedIn.forEach((dimension, spots) -> XaeroWaypoints.remove(dimension,
+            w -> managedSet(w.set()) && spots.contains(new MarkerDeletions.Spot(dimension, w.x(), w.y(), w.z()))));
+        Map<MarkerDeletions.Spot, String> now = trackedMarkers();
+        List<MarkerDeletions.Removed> gone = DELETIONS.look(server, now, dimensions, removedBySite, System.currentTimeMillis());
+        // Asked for and not here: gone already, or never was
+        List<MarkerDeletions.Spot> nothing = new ArrayList<>();
+        for (MarkerDeletions.Spot spot : asked) {
+            if (dimensions.contains(spot.dimension()) && !now.containsKey(spot)) nothing.add(spot);
+        }
+        if (!nothing.isEmpty()) DELETIONS.dropRequests(server, nothing);
+        int lost = DELETIONS.lost();
+        if (lost > 0) {
+            FILE_LOG.warn("Markers: %d gone from Xaero at once - taken as lost, not taken out".formatted(lost));
+            warning("(highlight)%d(default) markers are gone from Xaero's waypoints at once - taken as Xaero losing them, not as taken out: they stay on the other PC and the site.", lost);
+        }
+        long told = gone.stream().filter(MarkerDeletions.Removed::toSite).count();
+        if (!gone.isEmpty()) {
+            FILE_LOG.info("Markers: %d taken out of Xaero's waypoints (%d by the other PC's say) - kept as taken out".formatted(gone.size(), asked.size() - nothing.size()));
+        }
+        if (told > 0) {
+            String others = shareMode.get() == ShareMode.Serve ? siteTarget() != null ? "the other PC and the site" : "the other PC" : "the site";
+            info("(highlight)%d(default) markers taken out - %s take%s them out too.", told, others, others.equals("the site") ? "s" : "");
+        }
+        reportRemovedToSite(server);
+    }
+
+    /** The markers taken out the site hasn't heard of: sent on the files thread, a dimension at a time. */
+    private void reportRemovedToSite(String server) {
+        String site = siteTarget();
+        if (site == null || System.currentTimeMillis() - removalsFailedAt < REMOVALS_RETRY_MS) return;
+        List<MarkerDeletions.Removed> waiting = DELETIONS.unreported(server);
+        if (waiting.isEmpty() || !removalsInFlight.compareAndSet(false, true)) return;
+        String token = siteToken.get().trim();
+        FILES.execute(() -> {
+            try {
+                Map<String, List<MarkerDeletions.Removed>> byDimension = new LinkedHashMap<>();
+                for (MarkerDeletions.Removed removed : waiting) byDimension.computeIfAbsent(removed.spot().dimension(), d -> new ArrayList<>()).add(removed);
+                for (var entry : byDimension.entrySet()) {
+                    List<MarkerDeletions.Removed> all = entry.getValue();
+                    for (int from = 0; from < all.size(); from += SiteSync.REMOVED_BATCH) {
+                        List<MarkerDeletions.Removed> batch = all.subList(from, Math.min(all.size(), from + SiteSync.REMOVED_BATCH));
+                        JsonArray list = new JsonArray();
+                        for (MarkerDeletions.Removed removed : batch) {
+                            JsonObject json = new JsonObject();
+                            String name = removed.name();
+                            json.addProperty("kind", name.startsWith(BASE_PREFIX) ? "BASE" : name.startsWith(LOOT_PREFIX) ? "ITEM" : "MARKER");
+                            json.addProperty("name", name);
+                            json.addProperty("x", removed.spot().x());
+                            json.addProperty("y", removed.spot().y());
+                            json.addProperty("z", removed.spot().z());
+                            list.add(json);
+                        }
+                        boolean taken = SITE.sendRemovedMarkers(site, token, new SiteSync.Scope(server, fileSafe(entry.getKey())), list, problem -> {
+                            FILE_LOG.warn("Site: " + problem);
+                            mc.execute(() -> warning("Site: %s", problem));
+                        });
+                        if (!taken) {
+                            removalsFailedAt = System.currentTimeMillis();
+                            return;
+                        }
+                        DELETIONS.reported(server, batch);
+                    }
+                }
+            } finally {
+                removalsInFlight.set(false);
+            }
+        });
     }
 
     /** A marker of this name is here already: as near as exploring would have given it its own. */
     private boolean markedAlready(String name, BlockPos pos, List<XaeroWaypoints.Spot> spots) {
+        return markedAt(name, pos, spots) != null;
+    }
+
+    /** {@link #markedAlready}: the marker that's there, or null. */
+    private XaeroWaypoints.Spot markedAt(String name, BlockPos pos, List<XaeroWaypoints.Spot> spots) {
         for (XaeroWaypoints.Spot spot : spots) {
             boolean same;
             if (name.startsWith(LOOT_PREFIX)) same = spot.name().startsWith(LOOT_PREFIX) && near(spot, pos, 2L * LOOT_RADIUS);
             else if (name.startsWith(PEARL_PREFIX)) same = spot.name().startsWith(PEARL_PREFIX) && near(spot, pos, 2L * PEARL_BUNCH_RADIUS);
             else if (name.startsWith(CAT_PREFIX) || name.startsWith(DOG_PREFIX)) same = spot.name().equals(name) && near(spot, pos, PET_SPACING);
             else same = spot.name().equals(name) && near(spot, pos, markerSpacing.get());
-            if (same) return true;
+            if (same) return spot;
         }
-        return false;
+        return null;
     }
 
     /** Markers already there in the current dimension, whichever list they go to. */
@@ -4301,8 +4491,10 @@ public class AreaExplorer extends Module {
         return spots;
     }
 
-    private void addMarker(String group, String name, String initials, String icon, SettingColor color, BlockPos pos) {
-        if (toXaero() && XaeroWaypoints.add(markerList(group), name, initials, pos.getX(), pos.getY(), pos.getZ(), color.getPacked(), !markersEnabled.get())) return;
+    /** False, and nothing added, for a marker taken out before - here, on the other PC or on the site. */
+    private boolean addMarker(String group, String name, String initials, String icon, SettingColor color, BlockPos pos) {
+        if (removedBefore(name, pos)) return false;
+        if (toXaero() && XaeroWaypoints.add(markerList(group), name, initials, pos.getX(), pos.getY(), pos.getZ(), color.getPacked(), !markersEnabled.get())) return true;
 
         Waypoint waypoint = new Waypoint.Builder()
             .name(name)
@@ -4314,6 +4506,22 @@ public class AreaExplorer extends Module {
         // Set before adding: adding saves the list
         waypoint.visible.set(markersEnabled.get());
         Waypoints.get().add(waypoint);
+        return true;
+    }
+
+    /** A marker taken out here, on the other PC or on the site before, as near as exploring would give it again: not put back. */
+    private boolean removedBefore(String name, BlockPos pos) {
+        var entry = mc.getCurrentServerEntry();
+        if (entry == null || mc.world == null) return false;
+        List<MarkerDeletions.Removed> removed = DELETIONS.removedIn(entry.address.toLowerCase(Locale.ROOT), mc.world.getRegistryKey().getValue().getPath());
+        if (removed.isEmpty()) return false;
+        List<XaeroWaypoints.Spot> spots = new ArrayList<>();
+        for (MarkerDeletions.Removed r : removed) spots.add(new XaeroWaypoints.Spot(r.name(), r.spot().x(), r.spot().z()));
+        if (name.startsWith(BASE_PREFIX)) {
+            long spacing = Math.max(markerSpacing.get(), baseRadius.get());
+            return spots.stream().anyMatch(spot -> spot.name().startsWith(BASE_PREFIX) && near(spot, pos, spacing));
+        }
+        return markedAlready(name, pos, spots);
     }
 
     /** What Xaero shows inside the waypoint: the first letters of the first two words, "EP" for End Portal. */
@@ -4525,7 +4733,7 @@ public class AreaExplorer extends Module {
         for (XaeroWaypoints.Spot spot : existingMarkers()) {
             if (spot.name().equals(name) && near(spot, pos, PET_SPACING)) return;
         }
-        addMarker(PETS_GROUP, name, kind.substring(0, 1), "circle", petsColor.get(), pos);
+        if (!addMarker(PETS_GROUP, name, kind.substring(0, 1), "circle", petsColor.get(), pos)) return;
         String details = !pet.isTamed() ? "not tamed"
             : (owner.isEmpty() ? "tamed, owner unknown" : "tamed by " + owner) + (pet.isInSittingPose() ? ", sitting" : "");
         report("Marked (highlight)%s(default) (%s) at (highlight)%d, %d, %d(default).", name, details, pos.getX(), pos.getY(), pos.getZ());
@@ -4597,7 +4805,7 @@ public class AreaExplorer extends Module {
         String who = String.join(", ", throwers);
         // Pearls ×3 (Steve)
         String name = (bunch.size() == 1 ? PEARL_PREFIX : PEARL_PREFIX + "s ×" + bunch.size()) + (who.isEmpty() ? "" : " (" + who + ")");
-        addMarker(PEARLS_GROUP, name, "EP", "circle", pearlsColor.get(), pos);
+        if (!addMarker(PEARLS_GROUP, name, "EP", "circle", pearlsColor.get(), pos)) return;
         String details = (bunch.size() == 1 ? "1 pearl" : bunch.size() + " pearls")
             + (inWater ? ", in water - a stasis chamber" : "")
             + (who.isEmpty() ? ", thrower unknown" : ", thrown by " + who);
@@ -4982,6 +5190,14 @@ public class AreaExplorer extends Module {
      * why, goes back to the site with the next status upload.
      */
     private void siteCommand(String site, JsonObject command) {
+        if (command.has("kind") && "WAYPOINT".equals(command.get("kind").getAsString())) {
+            siteWaypoint(site, command);
+            return;
+        }
+        if (command.has("kind") && "UNMARK".equals(command.get("kind").getAsString())) {
+            siteUnmark(site, command);
+            return;
+        }
         if (mc.world == null || mc.player == null) {
             // In the main menu: joins the command's server first; anywhere else (connecting) the site sends it again
             if (!isActive() && joinCommand == null && inMainMenu()) joinFromMenu(site, command);
@@ -4999,6 +5215,93 @@ public class AreaExplorer extends Module {
             return;
         }
         runSiteCommand(site, id, command);
+    }
+
+    /**
+     * A marker an administrator put on the site's map: into Xaero's waypoints of its dimension, in a set
+     * of its own ("Site Markers"), shown - and so, with share-mode Serve, to the PC that takes them. Only
+     * on the marker's server: until the game is there (in the main menu, on another server, never in
+     * that dimension yet) it isn't confirmed, so the site sends it again and it goes in then. One that's
+     * there already counts as put in.
+     */
+    private void siteWaypoint(String site, JsonObject command) {
+        String id = command.has("id") ? command.get("id").getAsString() : "";
+        if (!id.isEmpty() && COMMANDS.known(site, id)) {
+            COMMANDS.resend(site, id);
+            return;
+        }
+        if (mc.world == null || mc.player == null || mc.getCurrentServerEntry() == null) return;
+        String server = command.get("server").getAsString(), dimension = command.get("dimension").getAsString();
+        if (!archiveSpot().scope().server().equalsIgnoreCase(server)) return;
+        String name = command.get("name").getAsString();
+        int x = command.get("x").getAsInt(), y = command.get("y").getAsInt(), z = command.get("z").getAsInt();
+        int rgb = command.has("color") && !command.get("color").isJsonNull() ? command.get("color").getAsInt() : 0xFFFFFF;
+        FabricLoader loader = FabricLoader.getInstance();
+        if (!loader.isModLoaded("xaerominimap") && !loader.isModLoaded("xaerobetterpvp")) {
+            warning("%s put the marker %s on the site's map, but Xaero's Minimap isn't installed to put it in.", commandBy(command), name);
+            rejectSiteCommand(site, id, "Xaero's Minimap isn't installed");
+            return;
+        }
+        if (!XaeroWaypoints.isReady()) return;
+        boolean there = XaeroWaypoints.in(dimension).stream().anyMatch(spot -> spot.name().equals(name) && spot.x() == x && spot.z() == z);
+        if (!there && !XaeroWaypoints.addAllIn(dimension,
+            Map.of(SITE_GROUP, List.of(new XaeroWaypoints.NewWaypoint(name, initials(name), x, y, z, rgb))), false)) {
+            return; // never in that dimension here: Xaero has nowhere to put it yet
+        }
+        if (!there) {
+            info("(highlight)%s(default) put a marker on the site's map: (highlight)%s(default) at %d %d %d in %s.", commandBy(command), name, x, y, z,
+                FindsArchive.prettyName(dimension));
+        }
+        if (!id.isEmpty()) COMMANDS.set(site, id, SiteCommands.State.COMPLETED,
+            there ? "Already in Xaero's waypoints" : "Put in Xaero's waypoints (set " + SITE_GROUP + ")");
+        syncLiveSite();
+    }
+
+    /**
+     * A find an administrator took off the site: its waypoint goes from Xaero here - and so from the
+     * other PC. A base's at its block, a marker's at its block, loot's near enough to be its pile's.
+     * As a marker from the site, only once the game is on the find's server.
+     */
+    private void siteUnmark(String site, JsonObject command) {
+        String id = command.has("id") ? command.get("id").getAsString() : "";
+        if (!id.isEmpty() && COMMANDS.known(site, id)) {
+            COMMANDS.resend(site, id);
+            return;
+        }
+        if (mc.world == null || mc.player == null || mc.getCurrentServerEntry() == null) return;
+        String server = command.get("server").getAsString(), dimension = command.get("dimension").getAsString();
+        if (!archiveSpot().scope().server().equalsIgnoreCase(server)) return;
+        if (!minimapInstalled()) {
+            if (!id.isEmpty()) COMMANDS.set(site, id, SiteCommands.State.COMPLETED, "Xaero's Minimap isn't installed: no waypoint to take out");
+            syncLiveSite();
+            return;
+        }
+        if (!XaeroWaypoints.isReady()) return;
+        String kind = command.has("findKind") ? command.get("findKind").getAsString() : "MARKER";
+        String name = command.get("name").getAsString();
+        int x = command.get("x").getAsInt(), y = command.get("y").getAsInt(), z = command.get("z").getAsInt();
+        long reach = 2L * LOOT_RADIUS;
+        List<MarkerDeletions.Spot> taken = new ArrayList<>();
+        int removed = XaeroWaypoints.remove(dimension, w -> {
+            if (!managedSet(w.set())) return false;
+            long dx = w.x() - x, dz = w.z() - z;
+            boolean same = switch (kind) {
+                case "BASE" -> w.name().startsWith(BASE_PREFIX) && w.x() == x && w.z() == z;
+                case "ITEM" -> w.name().startsWith(LOOT_PREFIX) && dx * dx + dz * dz <= reach * reach;
+                default -> w.x() == x && w.y() == y && w.z() == z;
+            };
+            if (same) taken.add(new MarkerDeletions.Spot(dimension, w.x(), w.y(), w.z()));
+            return same;
+        });
+        if (removed < 0) return;
+        removedBySite.addAll(taken);
+        if (removed > 0) {
+            info("(highlight)%s(default) took (highlight)%s(default) off the site: its marker is taken out here%s.", commandBy(command), name,
+                shareMode.get() == ShareMode.Serve ? " and on the other PC" : "");
+        }
+        if (!id.isEmpty()) COMMANDS.set(site, id, SiteCommands.State.COMPLETED,
+            removed > 0 ? "Took out " + removed + (removed == 1 ? " waypoint" : " waypoints") : "No waypoint of it here");
+        syncLiveSite();
     }
 
     private static String commandBy(JsonObject command) {

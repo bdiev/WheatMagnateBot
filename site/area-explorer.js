@@ -27,6 +27,19 @@ const PLAYER_NAME_PATTERN = /^[.*]?[A-Za-z0-9_]{1,32}$/;
 const TOP_LOOT_NAMES = 8;
 // Commands from the site's map to a mod: what they can be, how big an area, how long they wait to be picked up
 const COMMAND_KINDS = Object.freeze(['EXPLORE', 'RESCAN']);
+// A marker made on the site's map waits far longer for its mod than an area: it goes into Xaero once the game is on its server
+const WAYPOINT_TTL_DAYS = 30;
+// The command protocol a mod needs for a kind of command: an older one would take a marker for an area to explore
+const COMMAND_PROTOCOLS = Object.freeze({ EXPLORE: 0, RESCAN: 0, WAYPOINT: 3, UNMARK: 4 });
+// Commands that wait for the mod to be on their server, for days, and don't replace each other
+const MARKER_COMMANDS = Object.freeze(['WAYPOINT', 'UNMARK']);
+// Markers taken out in game per request, and how near a loot marker's items lie (twice the mod's pile radius)
+const MAX_REMOVED_MARKERS = 500;
+const LOOT_MARKER_REACH = 32;
+const MAX_WAYPOINT_NAME = 32;
+// Xaero's waypoints come in Minecraft's 16 chat colours only
+const WAYPOINT_COLORS = Object.freeze([0x000000, 0x0000AA, 0x00AA00, 0x00AAAA, 0xAA0000, 0xAA00AA, 0xFFAA00, 0xAAAAAA,
+  0x555555, 0x5555FF, 0x55FF55, 0x55FFFF, 0xFF5555, 0xFF55FF, 0xFFFF55, 0xFFFFFF]);
 const MAX_COMMAND_SIDE_CHUNKS = 8192;
 const COMMAND_TTL_MINUTES = 10;
 // A command the mod hasn't confirmed goes again with its next check-in this many seconds on
@@ -38,6 +51,8 @@ const COMMAND_FINAL_STATES = Object.freeze(['completed', 'rejected']);
 const MAX_COMMAND_UPDATES = 100;
 const MAX_COMMAND_REASON = 300;
 const COMMAND_LIST_LIMIT = 50;
+// How the system log names a command of each kind
+const COMMAND_NOUNS = Object.freeze({ EXPLORE: 'explore', RESCAN: 'rescan', WAYPOINT: 'marker', UNMARK: 'take-out' });
 // The flown-over grid: cells a side at most, and cells in all
 const MAX_COVERAGE_SIDE = 2000;
 const MAX_COVERAGE_CELLS = 250_000;
@@ -334,8 +349,34 @@ function publicCommand(row) {
     confirms: Boolean(row.confirms),
     acceptedAt: row.accepted_at || null,
     startedAt: row.started_at || null,
-    finishedAt: row.finished_at || null
+    finishedAt: row.finished_at || null,
+    ...(MARKER_COMMANDS.includes(row.kind) ? { waypoint: publicWaypoint(row) } : {})
   };
+}
+
+/** A WAYPOINT command's marker: its name, block and colour (0xRRGGBB); an UNMARK's find, with its kind. */
+function publicWaypoint(row) {
+  return {
+    name: row.waypoint_name, x: row.waypoint_x, y: row.waypoint_y, z: row.waypoint_z, color: row.waypoint_color,
+    ...(row.kind === 'UNMARK' ? { findKind: row.waypoint_find_kind } : {})
+  };
+}
+
+/** Markers the mod took out of Xaero ({kind, name, x, y, z} each), checked; bad ones are left out. */
+function normalizeRemovedMarkers(raw) {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) throw httpError(400, 'removedMarkers must be a list.');
+  if (raw.length > MAX_REMOVED_MARKERS) throw httpError(413, `At most ${MAX_REMOVED_MARKERS} removed markers per request.`);
+  const markers = [];
+  for (const item of raw) {
+    const kind = String(item?.kind || '').toUpperCase();
+    const x = normalizeInteger(item?.x, MAX_COORDINATE);
+    const y = normalizeInteger(item?.y, MAX_Y);
+    const z = normalizeInteger(item?.z, MAX_COORDINATE);
+    if (!['BASE', 'ITEM', 'MARKER'].includes(kind) || x === null || y === null || z === null) continue;
+    markers.push({ kind, name: normalizeText(item.name, 128), x, y, z });
+  }
+  return markers;
 }
 
 /** A mod's reports of what became of commands: {id, state, reason} each; bad ones are left out. */
@@ -415,10 +456,13 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     const commandUpdates = normalizeCommandUpdates(body.commandUpdates);
     // A mod that confirms its commands gets each again until it has; an older one gets each once
     const confirms = Number(body.commandProtocol) >= 2;
+    const protocol = Number(body.commandProtocol) || 0;
+    const removedMarkers = normalizeRemovedMarkers(body.removedMarkers);
 
     let added = 0;
     let liveStatus = null;
     let newEvents = [];
+    let removedIds = [];
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -453,6 +497,7 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
       if (others.length) added += (await insertFinds(client, server, dimension, others, token.id)).length;
       if (status) liveStatus = await upsertStatus(client, token.id, server, dimension, status);
       if (events.length) newEvents = await insertEvents(client, server, dimension, events, token.id);
+      if (removedMarkers.length) removedIds = await removeInGame(client, token, server, dimension, removedMarkers);
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
@@ -468,11 +513,19 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
       });
     }
     if (newEvents.length) pruneEvents(now);
+    if (removedIds.length) {
+      publish('area_explorer_updated', { server, dimension, removed: removedIds });
+      await recordSystemLog({
+        category: 'area_explorer', actor: token.name,
+        message: `${removedIds.length} ${removedIds.length === 1 ? 'find' : 'finds'} taken off the site: their markers were taken out in game (${server}, ${dimension}).`
+      });
+    }
     const commandAcks = commandUpdates.length ? await applyCommandUpdates(token, commandUpdates) : [];
     // A status upload is the mod checking in: it gets the commands waiting for it
-    const commands = status ? await takeCommands(token, confirms) : [];
+    const commands = status ? await takeCommands(token, confirms, protocol) : [];
     return {
       received: rawFinds.length, accepted: finds.length, added, duplicates: finds.length - added,
+      ...(body.removedMarkers !== undefined ? { removedFinds: removedIds.length } : {}),
       ...(rawEvents.length ? { events: newEvents.length } : {}),
       ...(commandUpdates.length ? { commandAcks } : {}),
       ...(commands.length ? { commands } : {})
@@ -524,7 +577,7 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
       for (const row of rows.filter(item => item.state === 'rejected')) {
         await recordSystemLog({
           category: 'area_explorer', level: 'warn', actor: token.name,
-          message: `"${token.name}" turned down the ${row.kind === 'RESCAN' ? 'rescan' : 'explore'} command #${row.id}: ${row.state_reason || 'no reason given'}.`
+          message: `"${token.name}" turned down the ${COMMAND_NOUNS[row.kind] || 'explore'} command #${row.id}: ${row.state_reason || 'no reason given'}.`
         });
       }
     }
@@ -534,16 +587,18 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
   /**
    * The mod's commands waiting for it, marked as delivered. A mod that confirms them gets each again
    * (a few seconds on) until it has - the answer that carried it may never have arrived; one that
-   * doesn't gets each once, as before. Ones never confirmed in time are given up on.
+   * doesn't gets each once, as before. Ones never confirmed in time are given up on. A kind of command
+   * only goes to a mod on the protocol it needs ({@link COMMAND_PROTOCOLS}); markers wait for it for
+   * days: it confirms one only once the game is on the marker's server.
    */
-  async function takeCommands(token, confirms) {
+  async function takeCommands(token, confirms, protocol = 0) {
     const expired = (await pool.query(
       `UPDATE area_explorer_commands SET state = 'expired', state_at = NOW(),
          state_reason = CASE WHEN state = 'queued' THEN 'The mod did not check in in time' ELSE 'The mod never confirmed it' END
        WHERE token_id = $1 AND (state = 'queued' OR (state = 'delivered' AND confirms))
-         AND created_at <= NOW() - make_interval(mins => $2)
+         AND created_at <= NOW() - CASE WHEN kind = ANY($4::text[]) THEN make_interval(days => $3) ELSE make_interval(mins => $2) END
        RETURNING id`,
-      [token.id, COMMAND_TTL_MINUTES]
+      [token.id, COMMAND_TTL_MINUTES, WAYPOINT_TTL_DAYS, MARKER_COMMANDS]
     )).rows.map(row => String(row.id));
     const rows = (await pool.query(
       confirms
@@ -551,19 +606,23 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
              state = 'delivered', confirms = TRUE, delivered_at = NOW(), delivery_count = delivery_count + 1,
              state_at = CASE WHEN state = 'queued' THEN NOW() ELSE state_at END
            WHERE token_id = $1 AND (state = 'queued' OR (state = 'delivered' AND confirms))
+             AND (kind <> ALL($4::text[]) OR (kind = 'WAYPOINT' AND $3::int >= $5::int) OR (kind = 'UNMARK' AND $3::int >= $6::int))
              AND (delivered_at IS NULL OR delivered_at <= NOW() - make_interval(secs => $2))
            RETURNING *`
         : `UPDATE area_explorer_commands SET state = 'delivered', delivered_at = NOW(), delivery_count = delivery_count + 1, state_at = NOW()
-           WHERE token_id = $1 AND state = 'queued'
+           WHERE token_id = $1 AND state = 'queued' AND kind <> ALL($2::text[])
            RETURNING *`,
-      confirms ? [token.id, COMMAND_REDELIVER_SECONDS] : [token.id]
+      confirms
+        ? [token.id, COMMAND_REDELIVER_SECONDS, protocol, MARKER_COMMANDS, COMMAND_PROTOCOLS.WAYPOINT, COMMAND_PROTOCOLS.UNMARK]
+        : [token.id, MARKER_COMMANDS]
     )).rows;
     // The page hears of the first delivery and of the ones given up on, not of every resend
     const changed = [...expired, ...rows.filter(row => row.delivery_count === 1).map(row => String(row.id))];
     if (changed.length) await publishCommands(changed);
     return rows.sort((a, b) => Number(a.id) - Number(b.id)).map(row => ({
       id: String(row.id), kind: row.kind, server: row.server, dimension: row.dimension,
-      minCX: row.min_cx, minCZ: row.min_cz, maxCX: row.max_cx, maxCZ: row.max_cz, by: row.created_by || ''
+      minCX: row.min_cx, minCZ: row.min_cz, maxCX: row.max_cx, maxCZ: row.max_cz, by: row.created_by || '',
+      ...(MARKER_COMMANDS.includes(row.kind) ? publicWaypoint(row) : {})
     }));
   }
 
@@ -607,7 +666,7 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
       await client.query('BEGIN');
       cancelled = (await client.query(
         `UPDATE area_explorer_commands SET state = 'cancelled', cancelled_at = NOW(), state_at = NOW(), state_reason = 'Replaced by a newer command'
-         WHERE token_id = $1 AND (state = 'queued' OR (state = 'delivered' AND confirms)) RETURNING id`, [tokenId])).rows.map(item => String(item.id));
+         WHERE token_id = $1 AND kind <> ALL($2::text[]) AND (state = 'queued' OR (state = 'delivered' AND confirms)) RETURNING id`, [tokenId, MARKER_COMMANDS])).rows.map(item => String(item.id));
       row = (await client.query(
         `INSERT INTO area_explorer_commands (token_id, kind, server, dimension, min_cx, min_cz, max_cx, max_cz, created_by)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
@@ -628,6 +687,91 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     });
     await publishCommands([...cancelled, String(row.id)]);
     return { command: { ...publicCommand(row), minCX, minCZ, maxCX, maxCZ } };
+  }
+
+  /**
+   * An administrator puts a marker on the map for a mod: it shows on the site's map as a marker find
+   * at once, and a WAYPOINT command takes it to the mod's Xaero waypoints - the PC that takes that
+   * mod's markers through sharing gets it from there. Doesn't replace the mod's other commands.
+   */
+  async function createWaypoint(currentUser, body) {
+    const tokenId = String(body?.tokenId || '');
+    if (!/^\d{1,18}$/.test(tokenId)) throw httpError(400, 'Which mod?');
+    const server = normalizeScopeName(body?.server, 128);
+    const dimension = normalizeScopeName(body?.dimension, 64);
+    if (!server || !dimension) throw httpError(400, 'server and dimension are required.');
+    const name = normalizeText(cleanFindName(body?.name), MAX_WAYPOINT_NAME);
+    if (!name) throw httpError(400, 'Give the marker a name.');
+    const x = normalizeInteger(body?.x, MAX_COORDINATE);
+    const y = normalizeInteger(body?.y, MAX_Y);
+    const z = normalizeInteger(body?.z, MAX_COORDINATE);
+    if (x === null || y === null || z === null) throw httpError(400, 'The marker is outside the world.');
+    const color = body?.color === undefined || body?.color === null ? 0xFFFFFF : Number(body.color);
+    if (!WAYPOINT_COLORS.includes(color)) throw httpError(400, "Pick one of Xaero's 16 waypoint colours.");
+    const token = (await pool.query('SELECT id, name FROM area_explorer_tokens WHERE id = $1 AND revoked_at IS NULL', [tokenId])).rows[0];
+    if (!token) throw httpError(404, 'That mod token is gone.');
+    const details = `Put on the map on the site by ${currentUser.username}`;
+    const client = await pool.connect();
+    let row;
+    let findRow;
+    try {
+      await client.query('BEGIN');
+      // The same marker made again (taken off the site before, say) is that one, back on
+      findRow = (await client.query(
+        `INSERT INTO area_explorer_finds (server, dimension, kind, x, y, z, found_at, name, item_count, label, details, dedupe_key, token_id)
+         VALUES ($1, $2, 'MARKER', $3, $4, $5, NOW(), $6, 0, '', $7, $8, $9)
+         ON CONFLICT (server, dimension, dedupe_key) DO UPDATE SET removed_at = NULL, removed_by = NULL
+         RETURNING *`,
+        [server, dimension, x, y, z, name, details, dedupeKey({ kind: 'MARKER', x, y, z, name, label: '' }), tokenId]
+      )).rows[0];
+      row = (await client.query(
+        `INSERT INTO area_explorer_commands (token_id, kind, server, dimension, min_cx, min_cz, max_cx, max_cz, created_by,
+           waypoint_name, waypoint_x, waypoint_y, waypoint_z, waypoint_color)
+         VALUES ($1, 'WAYPOINT', $2, $3, $4, $5, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+        [tokenId, server, dimension, Math.floor(x / 16), Math.floor(z / 16), currentUser.username, name, x, y, z, color]
+      )).rows[0];
+      row.token_name = token.name;
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+    await recordSystemLog({
+      category: 'area_explorer', actor: currentUser.username,
+      message: `Sent "${token.name}" the marker "${name}" at ${x} ${y} ${z} (${server}, ${dimension}).`
+    });
+    publish('area_explorer_updated', { server, dimension, added: 1 });
+    await publishCommands([String(row.id)]);
+    return { command: publicCommand(row), find: publicFind(findRow) };
+  }
+
+  /**
+   * Markers taken out of Xaero in game - on the mod's PC, the PC taking its markers, or by the site's
+   * own say - take their finds off the site: a base's and a marker's at its block, loot's lying near
+   * enough to be its pile's. Structures that stay where they are stay on the site. The ids taken off.
+   */
+  async function removeInGame(client, token, server, dimension, markers) {
+    const by = `${token.name} (in game)`;
+    const ids = [];
+    for (const marker of markers) {
+      const rows = marker.kind === 'ITEM'
+        ? await client.query(
+          `UPDATE area_explorer_finds SET removed_at = NOW(), removed_by = $6
+           WHERE server = $1 AND dimension = $2 AND kind = 'ITEM' AND removed_at IS NULL
+             AND (x - $3::bigint) * (x - $3::bigint) + (z - $4::bigint) * (z - $4::bigint) <= $5::bigint
+           RETURNING id`,
+          [server, dimension, marker.x, marker.z, LOOT_MARKER_REACH * LOOT_MARKER_REACH, by])
+        : await client.query(
+          `UPDATE area_explorer_finds SET removed_at = NOW(), removed_by = $7
+           WHERE server = $1 AND dimension = $2 AND kind = $3 AND removed_at IS NULL AND x = $4 AND z = $6
+             AND ($3 = 'BASE' OR (y = $5 AND name <> ALL($8::text[])))
+           RETURNING id`,
+          [server, dimension, marker.kind, marker.x, marker.y, marker.z, by, PERMANENT_MARKERS]);
+      ids.push(...rows.rows.map(row => String(row.id)));
+    }
+    return ids;
   }
 
   /** The run log's events, skipping ones sent before (same mod, same id); oldest first. */
@@ -966,27 +1110,64 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
   }
 
   /**
-   * Takes loot off the site once it's been picked up in game, or a marker that's wrong or no longer
-   * there (a shulker box taken, a portal broken). It stays in the table, marked, so the mod sending
-   * it again (it's in its all-finds file for good) doesn't bring it back.
+   * Takes loot off the site once it's been picked up in game, a base, or a marker that's wrong or no
+   * longer there (a shulker box taken, a portal broken). It stays in the table, marked, so the mod
+   * sending it again (it's in its all-finds file for good) doesn't bring it back. Its waypoint goes
+   * out of the game of the mod that found it ({@link #unmark}).
    */
   async function removeFind(currentUser, id) {
     if (!/^\d{1,18}$/.test(id)) throw httpError(400, 'Invalid find id.');
     const row = (await pool.query(
       `UPDATE area_explorer_finds SET removed_at = NOW(), removed_by = $2
        WHERE id = $1 AND removed_at IS NULL
-         AND (kind = 'ITEM' OR (kind = 'MARKER' AND name <> ALL($3::text[])))
+         AND (kind IN ('ITEM', 'BASE') OR (kind = 'MARKER' AND name <> ALL($3::text[])))
        RETURNING *`,
       [id, currentUser.username, PERMANENT_MARKERS]
     )).rows[0];
-    if (!row) throw httpError(404, 'No loot or removable marker like that on the site (removed already?).');
-    const what = row.kind === 'ITEM' ? `Loot picked up: ${row.name} ×${row.item_count}` : `Marker removed: ${row.name}`;
+    if (!row) throw httpError(404, 'No loot, base or removable marker like that on the site (removed already?).');
+    await unmark(currentUser, row);
+    const what = row.kind === 'ITEM' ? `Loot picked up: ${row.name} ×${row.item_count}` : row.kind === 'BASE' ? `Base removed: ${row.name}` : `Marker removed: ${row.name}`;
     await recordSystemLog({
       category: 'area_explorer', actor: currentUser.username,
       message: `${what} at ${row.x} ${row.y} ${row.z} (${row.server}, ${row.dimension}).`
     });
     publish('area_explorer_updated', { server: row.server, dimension: row.dimension, removed: String(row.id) });
     return { removed: publicFind(row) };
+  }
+
+  /**
+   * A find taken off the site: an UNMARK command takes its waypoint out of the game of the mod that
+   * found it - and that mod's sharing takes it out of the other PC. Loot only once no other loot is left
+   * near it: the mod has one marker for the pile. A site marker the mod hasn't taken yet just isn't sent.
+   */
+  async function unmark(currentUser, row) {
+    if (!row.token_id) return;
+    if (row.kind === 'MARKER') {
+      await pool.query(
+        `UPDATE area_explorer_commands SET state = 'cancelled', cancelled_at = NOW(), state_at = NOW(), state_reason = 'Taken off the site'
+         WHERE token_id = $1 AND kind = 'WAYPOINT' AND state IN ('queued', 'delivered')
+           AND server = $2 AND dimension = $3 AND waypoint_x = $4 AND waypoint_y = $5 AND waypoint_z = $6`,
+        [row.token_id, row.server, row.dimension, row.x, row.y, row.z]);
+    }
+    if (row.kind === 'ITEM') {
+      const left = (await pool.query(
+        `SELECT 1 FROM area_explorer_finds
+         WHERE server = $1 AND dimension = $2 AND kind = 'ITEM' AND removed_at IS NULL
+           AND (x - $3::bigint) * (x - $3::bigint) + (z - $4::bigint) * (z - $4::bigint) <= $5::bigint
+         LIMIT 1`,
+        [row.server, row.dimension, row.x, row.z, LOOT_MARKER_REACH * LOOT_MARKER_REACH])).rows.length;
+      if (left) return;
+    }
+    const token = (await pool.query('SELECT id FROM area_explorer_tokens WHERE id = $1 AND revoked_at IS NULL', [row.token_id])).rows[0];
+    if (!token) return;
+    const command = (await pool.query(
+      `INSERT INTO area_explorer_commands (token_id, kind, server, dimension, min_cx, min_cz, max_cx, max_cz, created_by,
+         waypoint_name, waypoint_x, waypoint_y, waypoint_z, waypoint_find_kind)
+       VALUES ($1, 'UNMARK', $2, $3, $4, $5, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+      [row.token_id, row.server, row.dimension, Math.floor(row.x / 16), Math.floor(row.z / 16), currentUser.username,
+        cleanFindName(row.name), row.x, row.y, row.z, row.kind]
+    )).rows[0];
+    await publishCommands([String(command.id)]);
   }
 
   async function listTokens() {
@@ -1040,6 +1221,11 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
       assertAdmin(currentUser);
       return { statusCode: 201, payload: await createCommand(currentUser, await readBody(req)) };
     }
+    // A marker for a mod's Xaero waypoints: administrators only, as it changes someone's game
+    if (path === '/api/area-explorer/waypoints' && req.method === 'POST') {
+      assertAdmin(currentUser);
+      return { statusCode: 201, payload: await createWaypoint(currentUser, await readBody(req)) };
+    }
     const findMatch = path.match(/^\/api\/area-explorer\/finds\/([^/]+)$/);
     if (findMatch && req.method === 'GET') return { statusCode: 200, payload: await getFind(findMatch[1], currentUser) };
     // A user's own stars: anyone signed in
@@ -1065,7 +1251,7 @@ function createAreaExplorerService({ pool, hashToken, readJsonBody, sendJson, se
     return null;
   }
 
-  return { authenticate, ingest, handleIngest, handleApi, getSummary, getEvents, getCoverage, createCommand, listCommands, getFinds, getMapPoints, getFind, setFavorite, getPlayerSigns, removeFind, listTokens, createToken, revokeToken };
+  return { authenticate, ingest, handleIngest, handleApi, getSummary, getEvents, getCoverage, createCommand, createWaypoint, listCommands, getFinds, getMapPoints, getFind, setFavorite, getPlayerSigns, removeFind, listTokens, createToken, revokeToken };
 }
 
 module.exports = {
@@ -1076,7 +1262,9 @@ module.exports = {
   SAME_BASE_DISTANCE,
   MAX_FINDS_PER_BATCH,
   TOKEN_PREFIX,
+  WAYPOINT_COLORS,
   bearerToken,
+  normalizeRemovedMarkers,
   cleanFindName,
   createAreaExplorerService,
   dedupeKey,

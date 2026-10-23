@@ -1,7 +1,9 @@
 package dev.onfocus.addon.explore;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import dev.onfocus.addon.xaero.XaeroMapFolders.MapWorld;
 
 import java.io.BufferedOutputStream;
@@ -19,6 +21,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -37,7 +40,9 @@ import java.util.regex.Pattern;
  * <p>
  * {@code GET /markers?server=}, {@code GET /regions?server=} and {@code GET /regions/<dimension>/<x>/<z>?server=},
  * each with {@code Authorization: Bearer <secret>}. A region file Xaero wrote less than a minute ago
- * isn't listed: it may be written again any moment.
+ * isn't listed: it may be written again any moment. The markers come with the ones taken out here
+ * ({@link MarkerDeletions}), for the other PC to take out too; {@code POST /markers/removed?server=}
+ * is the other PC's markers taken out there, to go here too.
  * <p>
  * Its own threads; {@link #update} and {@link #stop} may be called from any thread.
  */
@@ -47,12 +52,15 @@ public final class ShareServer {
     /** A region file Xaero wrote less than this long ago may be written again any moment: it waits. */
     private static final long SETTLE_MS = 60_000;
     private static final int MAX_HEAD_BYTES = 16 * 1024;
+    /** A list of markers taken out on the other PC: a few hundred thousand at most. */
+    private static final int MAX_BODY_BYTES = 8 * 1024 * 1024;
     private static final int SOCKET_TIMEOUT_MS = 60_000;
 
-    /** One of Area Explorer's markers: the dimension as the game names it ("overworld"). */
-    public record Marker(String dimension, String group, String name, String initials, int x, int y, int z) {}
+    /** One of Area Explorer's markers: the dimension as the game names it ("overworld"); its colour here as 0xRRGGBB. */
+    public record Marker(String dimension, String group, String name, String initials, int x, int y, int z, int rgb) {}
 
     private final Path root;
+    private final MarkerDeletions deletions;
     private final Map<String, List<Marker>> markers = new ConcurrentHashMap<>();
     private volatile String secret = "";
     private ServerSocket socket;
@@ -60,8 +68,9 @@ public final class ShareServer {
     private ExecutorService handlers;
     private String lastProblem;
 
-    public ShareServer(Path root) {
+    public ShareServer(Path root, MarkerDeletions deletions) {
         this.root = root;
+        this.deletions = deletions;
     }
 
     /**
@@ -145,13 +154,18 @@ public final class ShareServer {
                 respond(out, 401, "text/plain", "Wrong share-secret".getBytes(StandardCharsets.UTF_8));
                 return;
             }
-            if (!request.method().equals("GET")) {
+            boolean removing = request.method().equals("POST") && request.path().equals("/markers/removed");
+            if (!request.method().equals("GET") && !removing) {
                 respond(out, 405, "text/plain", "Use GET".getBytes(StandardCharsets.UTF_8));
                 return;
             }
             String server = request.query().getOrDefault("server", "").toLowerCase(Locale.ROOT);
             if (server.isEmpty()) {
                 respond(out, 400, "text/plain", "server is required".getBytes(StandardCharsets.UTF_8));
+                return;
+            }
+            if (removing) {
+                takeRemoved(client.getInputStream(), out, request, server);
                 return;
             }
             if (request.path().equals("/markers")) {
@@ -183,7 +197,44 @@ public final class ShareServer {
         }
     }
 
-    /** {"markers": [[dimension, group, name, initials, x, y, z], ...], "known": whether the game's been on the server}. */
+    /**
+     * The other PC's markers taken out there: {"markers": [[dimension, x, y, z], ...]}. Kept, and taken
+     * out here once the game is on the server; answered {"taken": how many}.
+     */
+    private void takeRemoved(InputStream in, OutputStream out, Request request, String server) throws IOException {
+        int length;
+        try {
+            length = Integer.parseInt(request.headers().getOrDefault("content-length", "-1"));
+        } catch (NumberFormatException e) {
+            length = -1;
+        }
+        if (length < 0 || length > MAX_BODY_BYTES) {
+            respond(out, 400, "text/plain", "A Content-Length up to 8 MB is required".getBytes(StandardCharsets.UTF_8));
+            return;
+        }
+        byte[] body = in.readNBytes(length);
+        List<MarkerDeletions.Spot> spots = new ArrayList<>();
+        try {
+            for (JsonElement element : JsonParser.parseString(new String(body, StandardCharsets.UTF_8)).getAsJsonObject().getAsJsonArray("markers")) {
+                JsonArray m = element.getAsJsonArray();
+                String dimension = m.get(0).getAsString();
+                if (ShareFiles.DIMENSIONS.contains(dimension)) spots.add(new MarkerDeletions.Spot(dimension, m.get(1).getAsInt(), m.get(2).getAsInt(), m.get(3).getAsInt()));
+            }
+        } catch (RuntimeException e) {
+            respond(out, 400, "text/plain", "Not a list of markers".getBytes(StandardCharsets.UTF_8));
+            return;
+        }
+        deletions.request(server, spots);
+        JsonObject answer = new JsonObject();
+        answer.addProperty("taken", spots.size());
+        respond(out, 200, "application/json", answer.toString().getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * {"markers": [[dimension, group, name, initials, x, y, z, rgb], ...], "removed": [[dimension, x, y, z, at], ...],
+     * "known": whether the game's been on the server}. The colour and the removed ones came later: a
+     * build before takes the first seven and leaves "removed" be.
+     */
     private String markersOf(String server) {
         List<Marker> list = markers.get(server);
         JsonArray array = new JsonArray();
@@ -197,11 +248,23 @@ public final class ShareServer {
                 m.add(marker.x());
                 m.add(marker.y());
                 m.add(marker.z());
+                m.add(marker.rgb());
                 array.add(m);
             }
         }
+        JsonArray removed = new JsonArray();
+        for (MarkerDeletions.Removed gone : deletions.removed(server)) {
+            JsonArray r = new JsonArray();
+            r.add(gone.spot().dimension());
+            r.add(gone.spot().x());
+            r.add(gone.spot().y());
+            r.add(gone.spot().z());
+            r.add(gone.at());
+            removed.add(r);
+        }
         JsonObject answer = new JsonObject();
         answer.add("markers", array);
+        answer.add("removed", removed);
         answer.addProperty("known", list != null);
         return answer.toString();
     }
@@ -249,7 +312,7 @@ public final class ShareServer {
         out.flush();
     }
 
-    /** A request's first line and headers (names lower case); the body, if any, isn't read: only GETs are answered. */
+    /** A request's first line and headers (names lower case); the body, if any, is read by what answers it. */
     private record Request(String method, String path, Map<String, String> query, Map<String, String> headers) {
         static Request read(InputStream in) throws IOException {
             ByteArrayOutputStream head = new ByteArrayOutputStream();
